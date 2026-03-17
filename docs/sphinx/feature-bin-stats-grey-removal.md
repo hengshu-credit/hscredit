@@ -55,7 +55,7 @@ else:
 ### 示例1: 单目标分析（不剔除灰客户）
 
 ```python
-from hscredit.analysis import feature_bin_stats
+from hscredit.report import feature_bin_stats
 
 table = feature_bin_stats(
     data=df,

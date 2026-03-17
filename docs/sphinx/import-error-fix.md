@@ -148,7 +148,7 @@ jupyter notebook
 | `hscredit.core.metrics` | 📋 占位符 | 指标计算 |
 | `hscredit.model.linear` | 📋 占位符 | 线性模型 |
 | `hscredit.model.scorecard` | 📋 占位符 | 评分卡 |
-| `hscredit.analysis.strategy` | 📋 占位符 | 策略分析 |
+| `hscredit.report.feature_analyzer` | ✅ 已迁移 | 特征分箱统计分析 |
 
 ## 常见问题
 

@@ -7,7 +7,7 @@ sys.path.insert(0, '/Users/xiaoxi/CodeBuddy/hscredit/hscredit')
 
 import pandas as pd
 import numpy as np
-from hscredit.analysis import feature_bin_stats
+from hscredit.report import feature_bin_stats
 
 # 创建测试数据
 np.random.seed(42)

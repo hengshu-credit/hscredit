@@ -8,7 +8,7 @@ sys.path.insert(0, '/Users/xiaoxi/CodeBuddy/hscredit/hscredit')
 import numpy as np
 import pandas as pd
 from hscredit.core.binning import OptimalBinning
-from hscredit.analysis import feature_bin_stats
+from hscredit.report import feature_bin_stats
 import json
 
 print("="*80)

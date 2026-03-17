@@ -18,7 +18,7 @@ class NumExprDerive(BaseEstimator, TransformerMixin):
 
     示例:
         >>> import pandas as pd
-        >>> from hscredit.feature_engineering import NumExprDerive
+        >>> from hscredit.core.feature_engineering import NumExprDerive
         >>> X = pd.DataFrame({
         ...     "f0": [2, 1.0, 3],
         ...     "f1": [np.inf, 2, 3],

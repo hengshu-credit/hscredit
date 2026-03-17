@@ -16,7 +16,7 @@ import pandas as pd
 from tqdm import tqdm
 from openpyxl.worksheet.worksheet import Worksheet
 
-from ..viz import (
+from ..core.viz import (
     bin_plot,
     corr_plot,
     ks_plot,
@@ -24,7 +24,7 @@ from ..viz import (
     distribution_plot,
 )
 from ..utils import init_setting
-from ..analysis.feature_analyzer import feature_bin_stats
+from .feature_analyzer import feature_bin_stats
 from .excel import ExcelWriter, dataframe2excel
 
 
@@ -82,7 +82,7 @@ def auto_feature_analysis_report(
 
     >>> import numpy as np
     >>> import pandas as pd
-    >>> from hscredit.report import auto_feature_analysis_report
+    >>> from hscredit.report.feature_report import auto_feature_analysis_report
 
     >>> # 准备数据
     >>> data = pd.DataFrame({

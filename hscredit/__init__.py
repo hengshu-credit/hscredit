@@ -25,18 +25,18 @@ __email__ = "hscredit@hengshucredit.com"
 # from .model.scorecard import ScoreCard
 
 # 分析模块导入
-# from .analysis.strategy import RuleExtractor, RuleEvaluator
+# 注意：feature_bin_stats 和 FeatureAnalyzer 已从 analysis 迁移到 report 模块
 
 # 报告模块导入
 from .report.excel import ExcelWriter, dataframe2excel
 
 try:
-    from .report.auto_report import auto_feature_analysis_report
+    from .report.feature_report import auto_feature_analysis_report
 except ImportError:
     pass
 
 # 可视化模块导入 (viz - 简洁命名)
-from .viz import (
+from .core.viz import (
     bin_plot,
     corr_plot,
     ks_plot,
@@ -47,7 +47,7 @@ from .viz import (
 )
 
 # 分析模块导入
-from .analysis import feature_bin_stats, FeatureAnalyzer
+from .report import feature_bin_stats, FeatureAnalyzer
 
 # 核心模块导入
 from .core.binning import (
@@ -119,20 +119,20 @@ from .core.models import (
 )
 
 # 特征工程模块导入
-from .feature_engineering import NumExprDerive
+from .core.feature_engineering import NumExprDerive
 
 # 规则引擎模块导入
-from .rules import (
+from .core.rules import (
     Rule,
     get_columns_from_query,
-    ruleset_report,
     optimize_expr,
     beautify_expr,
     get_expr_variables,
 )
+from .report import ruleset_report
 
 # 金融计算模块导入
-from .financial import (
+from .core.financial import (
     fv, pv, pmt, nper, ipmt, ppmt, rate,
     npv, irr, mirr,
 )

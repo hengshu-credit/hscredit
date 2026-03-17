@@ -18,7 +18,7 @@ enable_dataframe_show()
 ### 2. 基本使用
 
 ```python
-from hscredit.analysis import feature_bin_stats
+from hscredit.report import feature_bin_stats
 
 # 生成分箱表
 table = feature_bin_stats(data, 'score', target='target', method='mdlp')
@@ -117,7 +117,7 @@ styler
 
 ```python
 import pandas as pd
-from hscredit.analysis import feature_bin_stats
+from hscredit.report import feature_bin_stats
 from hscredit.utils import enable_dataframe_show
 
 # 1. 启用功能

@@ -13,7 +13,7 @@ if str(project_root) not in sys.path:
 
 import numpy as np
 import pandas as pd
-from hscredit.analysis import feature_bin_stats
+from hscredit.report import feature_bin_stats
 
 print("="*80)
 print("测试feature_bin_stats的灰客户剔除功能")
