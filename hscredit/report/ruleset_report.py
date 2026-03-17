@@ -17,6 +17,7 @@ def ruleset_report(
     overdue: Optional[Union[str, List[str]]] = None,
     dpds: Optional[Union[int, List[int]]] = None,
     filter_cols: Optional[List[str]] = None,
+    amount: Optional[str] = None,
     **kwargs
 ) -> pd.DataFrame:
     """规则集报告，评估多个规则的综合效果。
@@ -34,6 +35,7 @@ def ruleset_report(
     :param overdue: 逾期天数字段名称（支持多标签，传入列表）
     :param dpds: 逾期定义方式（支持多标签，传入列表）
     :param filter_cols: 指定返回的字段列表
+    :param amount: 金额字段名称，用于金额口径分析
     :return: pd.DataFrame，规则集效果评估表。
              单标签时返回单层列结构，多标签时返回多层列结构（MultiIndex）
     """
@@ -50,7 +52,7 @@ def ruleset_report(
 
     # 获取汇总报告（所有规则的合计）
     table_total = all_rules.report(datasets, target=target, overdue=overdue, dpds=dpds,
-                                   filter_cols=filter_cols, margins=True, **kwargs)
+                                   filter_cols=filter_cols, margins=True, amount=amount, **kwargs)
 
     # 重命名分箱列
     if isinstance(table_total.columns, pd.MultiIndex):
@@ -79,7 +81,7 @@ def ruleset_report(
     for rule in rules:
         # 获取当前规则在当前数据集上的报告
         table = rule.report(datasets, target=target, overdue=overdue, dpds=dpds,
-                           filter_cols=filter_cols, margins=False, **kwargs)
+                           filter_cols=filter_cols, margins=False, amount=amount, **kwargs)
 
         # 重命名分箱列为规则表达式和"剩余样本"
         if isinstance(table.columns, pd.MultiIndex):

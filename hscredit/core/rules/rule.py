@@ -211,15 +211,18 @@ class Rule:
             """生成单标签的规则报告。
             
             直接手动计算统计指标，规则只有命中/未命中两种状态，不需要分箱器。
+            支持金额口径分析，当传入 amount 参数时会计算金额相关指标。
+            列名与 feature_bin_stats 保持一致，便于统一处理。
             """
             if prior_rules:
-                prior_tables = prior_rules.report(data, target=target, desc=desc, prior_rules=None, margins=margins)
+                prior_tables = prior_rules.report(data, target=target, desc=desc, prior_rules=None, 
+                                                  margins=margins, amount=amount)
                 prior_tables["规则分类"] = "先验规则"
                 temp = data[~prior_rules.predict(data)]
-                if amount is not None:
+                if amount is not None and amount in temp.columns:
                     rule_result = pd.DataFrame({
                         rule_expr: np.where(self.predict(temp), "命中", "未命中"),
-                        amount: temp[amount],
+                        amount: temp[amount].values,
                         "target": temp[target].tolist()
                     })
                 else:
@@ -229,10 +232,10 @@ class Rule:
                     })
             else:
                 prior_tables = pd.DataFrame(columns=return_cols)
-                if amount is not None:
+                if amount is not None and amount in data.columns:
                     rule_result = pd.DataFrame({
                         rule_expr: np.where(self.predict(data), "命中", "未命中"),
-                        amount: data[amount],
+                        amount: data[amount].values,
                         "target": data[target].tolist()
                     })
                 else:
@@ -241,49 +244,119 @@ class Rule:
                         "target": data[target].tolist()
                     })
 
-            # 手动计算统计数据（规则只有命中/未命中两种状态）
-            total = len(rule_result)
-            overall_bad_rate = rule_result["target"].mean() if total > 0 else 0
+            # 判断是否使用金额口径
+            has_amount = amount is not None and amount in rule_result.columns
             
-            rows = []
-            for bin_name in ["命中", "未命中"]:
-                matched = rule_result[rule_result[rule_expr] == bin_name]
-                bin_total = len(matched)
-                bin_bad = matched["target"].sum() if bin_total > 0 else 0
-                bin_good = bin_total - bin_bad
+            if has_amount:
+                # 金额口径：使用金额替代样本数，但列名保持统一
+                total_amount = rule_result[amount].sum()
+                total_good_amount = rule_result[rule_result["target"] == 0][amount].sum()
+                total_bad_amount = rule_result[rule_result["target"] == 1][amount].sum()
+                overall_bad_rate = total_bad_amount / total_amount if total_amount > 0 else 0
                 
-                # 计算各项指标
-                sample_ratio = bin_total / total if total > 0 else 0
-                good_ratio = bin_good / total if total > 0 else 0
-                bad_ratio = bin_bad / total if total > 0 else 0
-                bad_rate = bin_bad / bin_total if bin_total > 0 else 0
-                lift = bad_rate / overall_bad_rate if overall_bad_rate > 0 else 0
-                bad_decrease = lift * sample_ratio - sample_ratio
-                
-                row = {
-                    '指标名称': rule_expr,
-                    '指标含义': desc if desc else '',
-                    '分箱': bin_name,
-                    '样本总数': bin_total,
-                    '样本占比': sample_ratio,
-                    '好样本数': bin_good,
-                    '好样本占比': good_ratio,
-                    '坏样本数': bin_bad,
-                    '坏样本占比': bad_ratio,
-                    '坏样本率': bad_rate,
-                    'LIFT值': lift,
-                    '坏账改善': bad_decrease,
-                }
-                
-                # 添加金额统计（如果有）
-                if amount is not None and bin_total > 0:
+                rows = []
+                for bin_name in ["命中", "未命中"]:
+                    matched = rule_result[rule_result[rule_expr] == bin_name]
                     bin_amount = matched[amount].sum()
-                    row['金额总数'] = bin_amount
-                    row['金额占比'] = bin_amount / rule_result[amount].sum() if rule_result[amount].sum() > 0 else 0
+                    bin_bad_amount = matched[matched["target"] == 1][amount].sum()
+                    bin_good_amount = bin_amount - bin_bad_amount
+                    
+                    # 使用统一的列名，但存储金额数据
+                    sample_ratio = bin_amount / total_amount if total_amount > 0 else 0
+                    good_ratio = bin_good_amount / total_good_amount if total_good_amount > 0 else 0
+                    bad_ratio = bin_bad_amount / total_bad_amount if total_bad_amount > 0 else 0
+                    bad_rate = bin_bad_amount / bin_amount if bin_amount > 0 else 0
+                    lift = bad_rate / overall_bad_rate if overall_bad_rate > 0 else 0
+                    bad_decrease = lift * sample_ratio - sample_ratio
+                    
+                    row = {
+                        '指标名称': rule_expr,
+                        '指标含义': desc if desc else '',
+                        '分箱': bin_name,
+                        '样本总数': bin_amount,  # 金额口径：存储金额
+                        '样本占比': sample_ratio,  # 金额占比
+                        '好样本数': bin_good_amount,  # 好金额
+                        '好样本占比': good_ratio,  # 好金额占比
+                        '坏样本数': bin_bad_amount,  # 坏金额
+                        '坏样本占比': bad_ratio,  # 坏金额占比
+                        '坏样本率': bad_rate,  # 金额口径坏账率
+                        'LIFT值': lift,
+                        '坏账改善': bad_decrease,
+                    }
+                    rows.append(row)
                 
-                rows.append(row)
-            
-            table = pd.DataFrame(rows)
+                table = pd.DataFrame(rows)
+                
+                # 计算合计行
+                total_row_data = {
+                    '指标名称': '合计',
+                    '指标含义': '',
+                    '分箱': '合计',
+                    '样本总数': total_amount,
+                    '样本占比': 1.0,
+                    '好样本数': total_good_amount,
+                    '好样本占比': 1.0,
+                    '坏样本数': total_bad_amount,
+                    '坏样本占比': 1.0,
+                    '坏样本率': overall_bad_rate,
+                    'LIFT值': 1.0,
+                    '坏账改善': 0.0,
+                }
+            else:
+                # 样本数口径（原有逻辑）
+                total = len(rule_result)
+                overall_bad_rate = rule_result["target"].mean() if total > 0 else 0
+                
+                rows = []
+                for bin_name in ["命中", "未命中"]:
+                    matched = rule_result[rule_result[rule_expr] == bin_name]
+                    bin_total = len(matched)
+                    bin_bad = matched["target"].sum() if bin_total > 0 else 0
+                    bin_good = bin_total - bin_bad
+                    
+                    sample_ratio = bin_total / total if total > 0 else 0
+                    good_ratio = bin_good / total if total > 0 else 0
+                    bad_ratio = bin_bad / total if total > 0 else 0
+                    bad_rate = bin_bad / bin_total if bin_total > 0 else 0
+                    lift = bad_rate / overall_bad_rate if overall_bad_rate > 0 else 0
+                    bad_decrease = lift * sample_ratio - sample_ratio
+                    
+                    row = {
+                        '指标名称': rule_expr,
+                        '指标含义': desc if desc else '',
+                        '分箱': bin_name,
+                        '样本总数': bin_total,
+                        '样本占比': sample_ratio,
+                        '好样本数': bin_good,
+                        '好样本占比': good_ratio,
+                        '坏样本数': bin_bad,
+                        '坏样本占比': bad_ratio,
+                        '坏样本率': bad_rate,
+                        'LIFT值': lift,
+                        '坏账改善': bad_decrease,
+                    }
+                    rows.append(row)
+                
+                table = pd.DataFrame(rows)
+                
+                # 计算合计行
+                y_true = rule_result["target"]
+                y_pred = rule_result[rule_expr].map({"命中": 1, "未命中": 0})
+                
+                total_row_data = {
+                    '指标名称': '合计',
+                    '指标含义': '',
+                    '分箱': '合计',
+                    '样本总数': total,
+                    '样本占比': 1.0,
+                    '好样本数': rule_result["target"].eq(0).sum(),
+                    '好样本占比': rule_result["target"].eq(0).sum() / total if total > 0 else 0,
+                    '坏样本数': rule_result["target"].sum(),
+                    '坏样本占比': rule_result["target"].sum() / total if total > 0 else 0,
+                    '坏样本率': rule_result["target"].mean(),
+                    'LIFT值': 1.0,
+                    '坏账改善': 0.0,
+                }
             
             # 添加风险拒绝比
             table["风险拒绝比"] = table["坏账改善"] / table["样本占比"]
@@ -318,30 +391,14 @@ class Rule:
 
             # 如果需要合计行，添加合计
             if margins:
-                total_row = {
-                    '指标名称': '合计',
-                    '指标含义': '',
-                    '分箱': '合计',
-                    '样本总数': total,
-                    '样本占比': 1.0,
-                    '好样本数': rule_result["target"].eq(0).sum(),
-                    '好样本占比': rule_result["target"].eq(0).sum() / total if total > 0 else 0,
-                    '坏样本数': rule_result["target"].sum(),
-                    '坏样本占比': rule_result["target"].sum() / total if total > 0 else 0,
-                    '坏样本率': rule_result["target"].mean(),
-                    'LIFT值': 1.0,
-                    '坏账改善': 0.0,
+                total_row_data.update({
                     '风险拒绝比': 0.0,
                     '准确率': accuracy_score(y_true, y_pred) if len(y_true) > 0 else 0,
                     '精确率': precision_score(y_true, y_pred, zero_division=0) if len(y_true) > 0 else 0,
                     '召回率': recall_score(y_true, y_pred, zero_division=0) if len(y_true) > 0 else 0,
                     'F1分数': f1_score(y_true, y_pred, zero_division=0) if len(y_true) > 0 else 0,
-                }
-                if amount is not None:
-                    total_amount = rule_result[amount].sum()
-                    total_row['金额总数'] = total_amount
-                    total_row['金额占比'] = 1.0
-                table = pd.concat([table, pd.DataFrame([total_row])], ignore_index=True)
+                })
+                table = pd.concat([table, pd.DataFrame([total_row_data])], ignore_index=True)
 
             if prior_rules:
                 table.insert(loc=0, column="规则分类", value=["验证规则"] * len(table))

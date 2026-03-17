@@ -129,10 +129,15 @@ from .core.financial import (
 from .report.excel import ExcelWriter, dataframe2excel
 from .report.feature_analyzer import feature_bin_stats, FeatureAnalyzer
 from .report.ruleset_report import ruleset_report
-from .report.swapin_prediction import (
-    swapin_risk_prediction,
-    SwapinRiskAnalyzer,
-    swapin_summary_report,
+from .report.swap_analysis_report import (
+    ReferenceDataProvider,
+    SwapAnalyzer,
+    SwapAnalysisResult,
+    SwapRiskConfig,
+    create_swap_dataset,
+    create_swap_dataset_from_rules,
+    swap_analysis_report,
+    SwapType,
 )
 
 try:
@@ -177,10 +182,15 @@ __all__ = [
     "feature_bin_stats",
     "FeatureAnalyzer",
 
-    # 规则置换风险预估模块
-    "swapin_risk_prediction",
-    "SwapinRiskAnalyzer",
-    "swapin_summary_report",
+    # 规则置换风险分析模块
+    "ReferenceDataProvider",
+    "SwapAnalyzer",
+    "SwapAnalysisResult",
+    "SwapRiskConfig",
+    "create_swap_dataset",
+    "create_swap_dataset_from_rules",
+    "swap_analysis_report",
+    "SwapType",
 
     # 分箱模块
     "UniformBinning",

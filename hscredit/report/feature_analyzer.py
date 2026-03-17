@@ -30,6 +30,7 @@ def _add_margins(table: pd.DataFrame) -> pd.DataFrame:
     """为分箱表添加合计行.
     
     缺失值和特殊值放在正常分箱之后、合计之前。
+    列名已统一，同时支持样本口径和金额口径。
     
     :param table: 分箱统计表
     :return: 添加合计行后的分箱表
@@ -68,7 +69,7 @@ def _add_margins(table: pd.DataFrame) -> pd.DataFrame:
     total_row = table.iloc[0].copy()
     total_row[bin_label_col] = '合计'
     
-    # 需要汇总的数值列
+    # 需要汇总的数值列（列名已统一）
     numeric_cols = []
     sample_total_col = None
     bad_sample_col = None
@@ -86,7 +87,7 @@ def _add_margins(table: pd.DataFrame) -> pd.DataFrame:
     for col in numeric_cols:
         total_row[col] = table[col].sum()
     
-    # 计算占比类指标（样本占比、好样本占比、坏样本占比 = 1）
+    # 计算占比类指标 = 1
     ratio_cols = []
     for col in table.columns:
         col_name = col[1] if is_multi else col
@@ -96,7 +97,7 @@ def _add_margins(table: pd.DataFrame) -> pd.DataFrame:
     for col in ratio_cols:
         total_row[col] = 1.0
     
-    # 计算坏样本率 = 坏样本数 / 样本总数
+    # 计算坏样本率
     bad_rate_col = None
     for col in table.columns:
         col_name = col[1] if is_multi else col
@@ -136,7 +137,7 @@ def _add_margins(table: pd.DataFrame) -> pd.DataFrame:
     if bin_iv_col:
         total_row[bin_iv_col] = 0.0
     if total_iv_col:
-        total_row[total_iv_col] = table[total_iv_col].iloc[0]  # 使用原有的指标IV值
+        total_row[total_iv_col] = table[total_iv_col].iloc[0]
     
     # KS值：取最大KS
     ks_col = None
@@ -179,7 +180,8 @@ def _create_bin_table(
     y: np.ndarray,
     feature_name: str,
     desc: str = "",
-    splits: Optional[np.ndarray] = None
+    splits: Optional[np.ndarray] = None,
+    amount: Optional[np.ndarray] = None
 ) -> pd.DataFrame:
     """创建分箱统计表.
     
@@ -188,13 +190,19 @@ def _create_bin_table(
     :param feature_name: 特征名称
     :param desc: 特征描述
     :param splits: 切分点
+    :param amount: 金额数组，用于金额口径分析
     :return: 分箱统计表
     """
     # 生成分箱标签
     bin_labels = _get_bin_labels(splits, bins)
     
-    # 使用 metrics 模块计算分箱统计，传入分箱标签
-    stats = compute_bin_stats(bins, y, bin_labels=bin_labels)
+    # 根据是否有金额字段，选择统计口径
+    if amount is not None:
+        # 金额口径：所有统计基于金额而非样本数
+        stats = _compute_bin_stats_amount(bins, y, amount, bin_labels=bin_labels)
+    else:
+        # 样本数口径：使用 metrics 模块计算分箱统计
+        stats = compute_bin_stats(bins, y, bin_labels=bin_labels)
     
     # 添加特征信息（插入到最前面）
     stats.insert(0, '指标含义', desc if desc else feature_name)
@@ -205,6 +213,152 @@ def _create_bin_table(
         stats = stats.drop(columns=['分箱'])
     
     return stats
+
+
+def _compute_bin_stats_amount(
+    bins: np.ndarray,
+    y: np.ndarray,
+    amount: np.ndarray,
+    bin_labels: Optional[List[str]] = None
+) -> pd.DataFrame:
+    """计算金额口径的分箱统计信息.
+    
+    参考 scorecardpipeline 实现，所有指标基于金额而非样本数计算。
+    列名与样本口径保持一致，便于统一处理。
+    
+    :param bins: 分箱索引数组
+    :param y: 目标变量 (0/1)
+    :param amount: 金额数组
+    :param bin_labels: 可选的分箱标签列表
+    :return: 分箱统计DataFrame，列名与样本口径统一
+    """
+    bins = np.asarray(bins)
+    y = np.asarray(y)
+    amount = np.asarray(amount)
+    
+    # 使用np.unique获取唯一的bin索引和计数
+    unique_bins, bin_indices = np.unique(bins, return_inverse=True)
+    
+    # 重新排序：将缺失值(-1)和特殊值(-2)放在最后
+    sort_keys = []
+    for b in unique_bins:
+        if b == -2:
+            sort_keys.append((2, b))  # 特殊值最后
+        elif b == -1:
+            sort_keys.append((1, b))  # 缺失值倒数第二
+        else:
+            sort_keys.append((0, b))  # 正常分箱在前
+    
+    sort_order = np.argsort([sk[0] * 10000 + sk[1] for sk in sort_keys])
+    unique_bins_sorted = unique_bins[sort_order]
+    
+    # 重新映射 bin_indices
+    old_to_new = {int(old_pos): new_pos for new_pos, old_pos in enumerate(sort_order)}
+    bin_indices_sorted = np.array([old_to_new[int(idx)] for idx in bin_indices])
+    
+    # 如果提供了分箱标签，也按相同顺序重新排列
+    if bin_labels is not None and len(bin_labels) == len(unique_bins):
+        bin_labels_sorted = [bin_labels[int(sort_order[i])] for i in range(len(sort_order))]
+        bin_labels = bin_labels_sorted
+    
+    unique_bins = unique_bins_sorted
+    bin_indices = bin_indices_sorted
+    
+    n_bins = len(unique_bins)
+    
+    # 计算每个分箱的好金额和坏金额（金额口径的核心）
+    good_amounts = np.bincount(bin_indices, weights=(y == 0).astype(float) * amount, minlength=n_bins)
+    bad_amounts = np.bincount(bin_indices, weights=y.astype(float) * amount, minlength=n_bins)
+    amount_totals = good_amounts + bad_amounts
+    
+    # 计算占比
+    total_amount = amount_totals.sum()
+    total_good_amount = good_amounts.sum()
+    total_bad_amount = bad_amounts.sum()
+    
+    amount_ratios = amount_totals / total_amount if total_amount > 0 else np.zeros(n_bins)
+    good_amount_ratios = good_amounts / total_good_amount if total_good_amount > 0 else np.zeros(n_bins)
+    bad_amount_ratios = bad_amounts / total_bad_amount if total_bad_amount > 0 else np.zeros(n_bins)
+    
+    # 计算金额口径坏样本率
+    bad_rate = np.where(amount_totals > 0, bad_amounts / amount_totals, 0.0)
+    
+    # 计算WOE和IV（基于金额占比）
+    epsilon = 1e-10
+    good_amounts_smooth = np.where(good_amounts == 0, epsilon, good_amounts)
+    bad_amounts_smooth = np.where(bad_amounts == 0, epsilon, bad_amounts)
+    total_good_smooth = good_amounts_smooth.sum()
+    total_bad_smooth = bad_amounts_smooth.sum()
+    
+    good_distr = good_amounts_smooth / total_good_smooth if total_good_smooth > 0 else np.zeros(n_bins)
+    bad_distr = bad_amounts_smooth / total_bad_smooth if total_bad_smooth > 0 else np.zeros(n_bins)
+    
+    woe = np.log(bad_distr / good_distr)
+    bin_iv = (bad_distr - good_distr) * woe
+    total_iv = bin_iv.sum()
+    
+    # 计算LIFT值（金额口径）
+    overall_bad_rate = total_bad_amount / total_amount if total_amount > 0 else 0.0
+    lift = np.where(bad_rate > 0, bad_rate / (overall_bad_rate + epsilon), 0.0)
+    
+    # 计算坏账改善
+    other_bad = total_bad_amount - bad_amounts
+    other_total = total_amount - amount_totals
+    bad_improve = np.where(
+        other_total > 0,
+        (overall_bad_rate - other_bad / other_total) / (overall_bad_rate + epsilon),
+        0.0
+    )
+    
+    # 按分箱顺序计算累积指标
+    cum_good = np.cumsum(good_amounts)
+    cum_bad = np.cumsum(bad_amounts)
+    cum_total = cum_good + cum_bad
+    
+    cum_lift = np.where(cum_total > 0, (cum_bad / cum_total) / (overall_bad_rate + epsilon), 0.0)
+    other_cum_bad = total_bad_amount - cum_bad
+    other_cum_total = total_amount - cum_total
+    cum_bad_improve = np.where(
+        other_cum_total > 0,
+        (overall_bad_rate - other_cum_bad / other_cum_total) / (overall_bad_rate + epsilon),
+        0.0
+    )
+    
+    # 计算KS值（基于金额累积占比）
+    cum_good_rate = cum_good / (total_good_amount + epsilon)
+    cum_bad_rate = cum_bad / (total_bad_amount + epsilon)
+    ks_values = np.abs(cum_bad_rate - cum_good_rate)
+    
+    # 构建DataFrame（使用与样本口径统一的列名）
+    data = {
+        '分箱': unique_bins,
+    }
+    
+    if bin_labels is not None and len(bin_labels) == n_bins:
+        data['分箱标签'] = bin_labels
+    
+    # 使用与样本口径相同的列名，便于统一处理
+    data.update({
+        '样本总数': np.round(amount_totals, 2),
+        '好样本数': np.round(good_amounts, 2),
+        '坏样本数': np.round(bad_amounts, 2),
+        '样本占比': np.round(amount_ratios, 6),
+        '好样本占比': np.round(good_amount_ratios, 6),
+        '坏样本占比': np.round(bad_amount_ratios, 6),
+        '坏样本率': np.round(bad_rate, 6),
+        '分档WOE值': np.round(woe, 6),
+        '分档IV值': np.round(bin_iv, 6),
+        '指标IV值': np.round(total_iv, 6),
+        'LIFT值': np.round(lift, 4),
+        '坏账改善': np.round(bad_improve, 4),
+        '累积LIFT值': np.round(cum_lift, 4),
+        '累积坏账改善': np.round(cum_bad_improve, 4),
+        '累积好样本数': np.round(cum_good, 2),
+        '累积坏样本数': np.round(cum_bad, 2),
+        '分档KS值': np.round(ks_values, 6),
+    })
+    
+    return pd.DataFrame(data)
 
 
 def _get_bin_labels(splits: Optional[np.ndarray], bins: np.ndarray) -> List[str]:
@@ -327,6 +481,7 @@ def feature_bin_stats(
     return_rules: bool = False,
     del_grey: bool = False,
     margins: bool = False,
+    amount: Optional[str] = None,
     verbose: int = 0,
     **kwargs
 ) -> Union[pd.DataFrame, Tuple[pd.DataFrame, Dict]]:
@@ -362,6 +517,7 @@ def feature_bin_stats(
         - False: 保留灰样本，不同目标下样本数相同，样本数相关列作为公共列
     :param margins: 是否在分箱表最后添加合计行，默认 False
         - True: 在最后一行显示合计，缺失值和特殊值放在正常分箱之后、合计之前
+    :param amount: 金额字段名称，用于金额口径分析。传入后会增加金额总数、金额占比等指标
     :param verbose: 是否输出详细信息，默认 0
     :param kwargs: 其他分箱器参数，如 monotonic='peak' 等
     
@@ -385,6 +541,9 @@ def feature_bin_stats(
     >>> 
     >>> # 使用单调性分箱
     >>> table = feature_bin_stats(data, 'score', method='monotonic', monotonic='peak')
+    >>> 
+    >>> # 金额口径分析
+    >>> table = feature_bin_stats(data, 'score', target='target', amount='loan_amount')
     """
     # 统一处理 feature 参数
     if isinstance(feature, str):
@@ -537,6 +696,7 @@ def feature_bin_stats(
         # 当 del_grey=True 时，不同目标下样本数不同，样本数相关列不应该合并
         # 当 del_grey=False 时，样本数相同，可以合并样本数相关列
         # 注意：样本占比也受 del_grey 影响，因为分母（总样本数）可能不同
+        # 列名已统一，无论金额口径还是样本口径都使用相同的列名
         base_merge_cols = ['指标名称', '指标含义', '分箱标签']
         
         if isinstance(del_grey, bool) and del_grey:
@@ -552,7 +712,11 @@ def feature_bin_stats(
             
             # 准备数据
             if target_cfg['mob_col'] is not None:
-                analysis_data = data[[feat, target_cfg['mob_col']]].copy()
+                # 逾期模式：需要包含金额字段（如果有）
+                cols_to_select = [feat, target_cfg['mob_col']]
+                if amount is not None and amount in data.columns:
+                    cols_to_select.append(amount)
+                analysis_data = data[cols_to_select].copy()
                 y = (analysis_data[target_cfg['mob_col']] > target_cfg['dpd']).astype(int)
                 
                 # 剔除灰客户：只保留好样本(overdue==0)和坏样本(overdue>dpd)
@@ -562,7 +726,11 @@ def feature_bin_stats(
                     analysis_data = analysis_data[mask].reset_index(drop=True)
                     y = y[mask].reset_index(drop=True)
             else:
-                analysis_data = data[[feat, target_name]].copy()
+                # 普通目标模式：需要包含金额字段（如果有）
+                cols_to_select = [feat, target_name]
+                if amount is not None and amount in data.columns:
+                    cols_to_select.append(amount)
+                analysis_data = data[cols_to_select].copy()
                 y = analysis_data[target_name]
             
             # 分箱转换
@@ -576,6 +744,9 @@ def feature_bin_stats(
             bins = bins.astype(float)
             bins[missing_mask] = -1  # 缺失值标记为 -1
             
+            # 准备金额数据（如果有）
+            amount_values = analysis_data[amount].values if amount is not None and amount in analysis_data.columns else None
+            
             # 创建分箱表
             splits = current_binner.splits_.get(feat)
             bin_table = _create_bin_table(
@@ -583,7 +754,8 @@ def feature_bin_stats(
                 y=y.values,
                 feature_name=feat,
                 desc=desc_dict.get(feat, feat),
-                splits=splits
+                splits=splits,
+                amount=amount_values
             )
             
             # 筛选指定列
@@ -662,6 +834,7 @@ class FeatureAnalyzer:
         dpds: Optional[Union[int, List[int]]] = None,
         target: Optional[str] = None,
         desc: Optional[Union[str, Dict[str, str]]] = None,
+        amount: Optional[str] = None,
         **kwargs
     ) -> pd.DataFrame:
         """批量分析多个特征.
@@ -672,6 +845,7 @@ class FeatureAnalyzer:
         :param dpds: 逾期定义天数
         :param target: 目标变量（可选，与overdue+dpds二选一）
         :param desc: 特征描述
+        :param amount: 金额字段名称，用于金额口径分析
         :param kwargs: 其他参数传递给 feature_bin_stats
         :return: 合并的分箱统计表
         """
@@ -686,6 +860,7 @@ class FeatureAnalyzer:
             max_n_bins=self.max_n_bins,
             min_bin_size=self.min_bin_size,
             missing_separate=self.missing_separate,
+            amount=amount,
             **kwargs
         )
     
