@@ -98,5 +98,5 @@ class FTestSelector(BaseFeatureSelector):
             # 使用阈值
             selected_mask = f_scores >= self.threshold
 
-        self.select_columns = X.columns[selected_mask].tolist()
+        self.selected_features_ = X.columns[selected_mask].tolist()
         self._drop_reason = f'F值 < {self.threshold}'

@@ -28,7 +28,7 @@ from .null_selector import NullSelector
 from .mode_selector import ModeSelector
 from .corr_selector import CorrSelector
 from .vif_selector import VIFSelector
-from .iv_selector import InformationValueSelector
+from .iv_selector import IVSelector
 from .lift_selector import LiftSelector
 from .psi_selector import PSISelector
 from .cardinality_selector import CardinalitySelector
@@ -63,7 +63,7 @@ __all__ = [
     'VIFSelector',
     
     # 过滤法 - 目标导向筛选
-    'InformationValueSelector',
+    'IVSelector',
     'LiftSelector',
     'PSISelector',
     

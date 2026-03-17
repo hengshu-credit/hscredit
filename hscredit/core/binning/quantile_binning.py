@@ -54,6 +54,7 @@ class QuantileBinning(BaseBinning):
 
     def __init__(
         self,
+        target: str = 'target',
         n_bins: int = 5,
         min_n_bins: int = 2,
         max_n_bins: int = 10,
@@ -69,6 +70,7 @@ class QuantileBinning(BaseBinning):
         verbose: Union[bool, int] = False,
     ):
         super().__init__(
+            target=target,
             min_n_bins=min_n_bins,
             max_n_bins=max_n_bins,
             min_bin_size=min_bin_size,

@@ -97,5 +97,5 @@ class FeatureImportanceSelector(BaseFeatureSelector):
             selected_mask = importances >= self.threshold
             selected_cols = X.columns[selected_mask].tolist()
 
-        self.select_columns = selected_cols
+        self.selected_features_ = selected_cols
         self._drop_reason = f'特征重要性 < {self.threshold}'

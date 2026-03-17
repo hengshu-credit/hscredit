@@ -207,6 +207,14 @@ class GBMEncoder(BaseEncoder):
         self.classes_: Optional[np.ndarray] = None
         self.missing_stats_: Dict[str, Dict[str, Any]] = {}
 
+    def _get_category_cols(self, X: pd.DataFrame) -> List[str]:
+        """获取所有列名（GBMEncoder使用所有特征，不限于类别特征）。
+
+        :param X: 输入数据
+        :return: 所有列名列表
+        """
+        return X.columns.tolist()
+
     def _fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None):
         """拟合GBM编码器。
 

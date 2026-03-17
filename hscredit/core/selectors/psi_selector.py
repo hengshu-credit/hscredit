@@ -139,5 +139,5 @@ class PSISelector(BaseFeatureSelector):
 
         # 选择PSI值小于阈值的特征（PSI越小越稳定）
         selected_mask = psi_values < self.threshold
-        self.select_columns = X.columns[selected_mask].tolist()
+        self.selected_features_ = X.columns[selected_mask].tolist()
         self._drop_reason = f'PSI值 >= {self.threshold}'

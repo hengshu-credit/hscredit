@@ -65,5 +65,5 @@ class CardinalitySelector(BaseFeatureSelector):
 
         # 选择基数低于阈值的特征
         selected_mask = cardinalities <= self.threshold
-        self.select_columns = X.columns[selected_mask].tolist()
+        self.selected_features_ = X.columns[selected_mask].tolist()
         self._drop_reason = f'唯一值数量 > {self.threshold}'

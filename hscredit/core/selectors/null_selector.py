@@ -68,5 +68,5 @@ class NullSelector(BaseFeatureSelector):
 
         # 选择缺失率低于阈值的特征
         selected_mask = null_rates < self.threshold
-        self.select_columns = X.columns[selected_mask].tolist()
+        self.selected_features_ = X.columns[selected_mask].tolist()
         self._drop_reason = f'缺失率 >= {self.threshold:.2%}'

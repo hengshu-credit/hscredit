@@ -56,7 +56,12 @@ def init_setting(font_path=None, seed=None, freeze_torch=False, logger=False, **
     if font_path is not None and font_path.lower() in [font.fname.lower() for font in font_manager.fontManager.ttflist]:
         plt.rcParams['font.family'] = font_path
     else:
-        font_path = font_path or os.path.join(os.path.dirname(os.path.abspath(__file__)), 'font.ttf')
+        # 使用resources目录下的字体文件
+        if font_path is None:
+            font_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                'resources', 'fonts', 'SimHei.ttf'
+            )
 
         if os.path.isfile(font_path):
             font_manager.fontManager.addfont(font_path)

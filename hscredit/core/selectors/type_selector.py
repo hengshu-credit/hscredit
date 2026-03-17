@@ -44,6 +44,7 @@ class TypeSelector(BaseFeatureSelector):
         self,
         dtype_include: Optional[Union[str, Type, List[str]]] = None,
         dtype_exclude: Optional[Union[str, Type, List[str]]] = None,
+        include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
     ):
         super().__init__(include=include, exclude=exclude)
@@ -73,5 +74,5 @@ class TypeSelector(BaseFeatureSelector):
             selected_cols = X.columns.tolist()
 
         self.scores_ = X.dtypes
-        self.select_columns = selected_cols
+        self.selected_features_ = selected_cols
         self._drop_reason = '数据类型不匹配'

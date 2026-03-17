@@ -102,10 +102,10 @@ class ExcelWriter:
 
         # 加载模板
         if style_excel is None:
-            # 使用包内的template.xlsx
+            # 使用resources目录下的template.xlsx
             style_excel = os.path.join(
-                os.path.dirname(os.path.abspath(__file__)),
-                'template.xlsx'
+                os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                'resources', 'templates', 'template.xlsx'
             )
 
         self.workbook = load_workbook(style_excel)

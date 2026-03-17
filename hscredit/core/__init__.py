@@ -24,7 +24,7 @@ from .selectors import (
     ModeSelector,
     CorrSelector,
     VIFSelector,
-    InformationValueSelector,
+    IVSelector,
     LiftSelector,
     PSISelector,
     CardinalitySelector,
@@ -71,6 +71,7 @@ from .viz import (
     psi_plot,
     dataframe_plot,
     distribution_plot,
+    plot_weights,
 )
 
 # 金融计算模块
@@ -118,7 +119,7 @@ __all__ = [
     'ModeSelector',
     'CorrSelector',
     'VIFSelector',
-    'InformationValueSelector',
+    'IVSelector',
     'LiftSelector',
     'PSISelector',
     'CardinalitySelector',
@@ -161,6 +162,7 @@ __all__ = [
     'psi_plot',
     'dataframe_plot',
     'distribution_plot',
+    'plot_weights',
 
     # 金融计算
     'fv',

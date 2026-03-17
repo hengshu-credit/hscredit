@@ -11,6 +11,7 @@
 - CSI特征稳定性图 (csi_plot)
 - DataFrame表格图 (dataframe_plot)
 - 时间分布图 (distribution_plot)
+- 逻辑回归系数误差图 (plot_weights)
 
 辅助函数已移至 utils 模块：
 - init_setting -> hscredit.utils.init_setting
@@ -31,8 +32,10 @@ from .binning_plots import (
     distribution_plot,
 )
 
+from .model_plots import plot_weights
+
 __all__ = [
-    # 画图方法
+    # 特征分箱相关
     "bin_plot",
     "corr_plot", 
     "ks_plot",
@@ -40,4 +43,6 @@ __all__ = [
     "psi_plot",
     "dataframe_plot",
     "distribution_plot",
+    # 模型相关
+    "plot_weights",
 ]

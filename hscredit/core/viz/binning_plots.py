@@ -15,20 +15,183 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from matplotlib.ticker import PercentFormatter
 from sklearn.metrics import roc_curve, roc_auc_score
+from typing import Union, Optional, List
 
 
 # 默认配色方案
 DEFAULT_COLORS = ["#2639E9", "#F76E6C", "#FE7715"]
 
 
-def bin_plot(feature_table, desc="", figsize=(10, 6), colors=None, save=None, 
-             anchor=0.935, max_len=35, fontdict=None, hatch=True, ending="分箱图"):
+def _is_feature_table(data):
+    """判断是否为特征分箱统计表"""
+    required_cols = ['分箱', '好样本数', '坏样本数', '样本总数', '坏样本率']
+    if isinstance(data, pd.DataFrame):
+        return all(col in data.columns for col in required_cols)
+    return False
+
+
+def _compute_bin_stats_from_raw_data(
+    data: Union[pd.DataFrame, pd.Series],
+    target: Union[str, pd.Series, np.ndarray],
+    feature: Optional[str] = None,
+    n_bins: int = 10,
+    method: str = 'quantile',
+    rules: Optional[List] = None,
+) -> pd.DataFrame:
+    """从原始数据计算分箱统计表
+    
+    :param data: 特征数据（DataFrame 或 Series）
+    :param target: 目标变量（列名或数据）
+    :param feature: 特征列名（当 data 为 DataFrame 时需要）
+    :param n_bins: 分箱数量
+    :param method: 分箱方法
+    :param rules: 自定义分箱边界
+    :return: 分箱统计表
+    """
+    # 处理输入数据
+    if isinstance(data, pd.Series):
+        feature_name = data.name if data.name is not None else 'feature'
+        X = data.values
+    elif isinstance(data, pd.DataFrame):
+        if feature is None:
+            # 如果没有指定特征列，使用第一列
+            feature = data.columns[0]
+        feature_name = feature
+        X = data[feature].values
+    else:
+        feature_name = 'feature'
+        X = np.array(data)
+    
+    # 处理目标变量
+    if isinstance(target, str):
+        if isinstance(data, pd.DataFrame) and target in data.columns:
+            y = data[target].values
+        else:
+            raise ValueError(f"目标列 '{target}' 不在数据中")
+    elif isinstance(target, (pd.Series, np.ndarray)):
+        y = np.array(target)
+    else:
+        raise ValueError("target 必须是列名、Series 或数组")
+    
+    # 确保数据长度一致
+    if len(X) != len(y):
+        raise ValueError(f"特征数据长度 ({len(X)}) 与目标变量长度 ({len(y)}) 不一致")
+    
+    # 移除缺失值
+    valid_mask = ~(pd.isna(X) | pd.isna(y))
+    X_valid = X[valid_mask]
+    y_valid = y[valid_mask]
+    
+    if len(X_valid) == 0:
+        raise ValueError("没有有效数据（全部为缺失值）")
+    
+    # 分箱
+    if rules is not None:
+        # 使用自定义分箱边界
+        bins = rules
+        if not np.isinf(bins[-1]):
+            bins = list(bins) + [np.inf]
+        if not np.isinf(bins[0]) and bins[0] > -np.inf:
+            bins = [-np.inf] + list(bins)
+    else:
+        # 自动分箱
+        if method == 'quantile':
+            bins = np.percentile(X_valid, np.linspace(0, 100, n_bins + 1))
+            bins = np.unique(bins)  # 去重
+            bins[0] = -np.inf
+            bins[-1] = np.inf
+        elif method == 'uniform':
+            bins = np.linspace(np.min(X_valid), np.max(X_valid), n_bins + 1)
+            bins[0] = -np.inf
+            bins[-1] = np.inf
+        else:
+            # 默认使用等频分箱
+            bins = np.percentile(X_valid, np.linspace(0, 100, n_bins + 1))
+            bins = np.unique(bins)
+            bins[0] = -np.inf
+            bins[-1] = np.inf
+    
+    # 生成分箱标签
+    bin_labels = []
+    for i in range(len(bins) - 1):
+        if i == 0:
+            label = f"(-∞, {bins[i+1]:.2f})"
+        elif i == len(bins) - 2:
+            label = f"[{bins[i]:.2f}, +∞)"
+        else:
+            label = f"[{bins[i]:.2f}, {bins[i+1]:.2f})"
+        bin_labels.append(label)
+    
+    # 分配样本到各箱
+    bin_indices = np.digitize(X_valid, bins) - 1
+    bin_indices = np.clip(bin_indices, 0, len(bin_labels) - 1)
+    
+    # 计算统计信息
+    results = []
+    for i, label in enumerate(bin_labels):
+        mask = bin_indices == i
+        total = np.sum(mask)
+        good = np.sum((y_valid[mask] == 0)) if total > 0 else 0
+        bad = np.sum((y_valid[mask] == 1)) if total > 0 else 0
+        bad_rate = bad / total if total > 0 else 0
+        
+        results.append({
+            '分箱': label,
+            '样本总数': total,
+            '好样本数': good,
+            '坏样本数': bad,
+            '坏样本率': bad_rate,
+            '样本占比': total / len(X_valid)
+        })
+    
+    return pd.DataFrame(results)
+
+
+def bin_plot(
+    data: Union[pd.DataFrame, pd.Series],
+    target: Optional[Union[str, pd.Series, np.ndarray]] = None,
+    feature: Optional[str] = None,
+    desc: str = "",
+    figsize: tuple = (10, 6),
+    colors: Optional[List[str]] = None,
+    save: Optional[str] = None,
+    anchor: float = 0.935,
+    max_len: int = 35,
+    fontdict: Optional[dict] = None,
+    hatch: bool = True,
+    ending: str = "分箱图",
+    title: Optional[str] = None,
+    n_bins: int = 10,
+    method: str = 'quantile',
+    rules: Optional[List] = None,
+    show_data_points: bool = True,
+    iv: bool = True,
+    return_frame: bool = False,
+    **kwargs
+):
     """
     特征分箱可视化图.
+    
+    支持两种使用方式：
+    
+    **方式1：传入原始数据（toad 模式）**
+    ```python
+    # DataFrame + 列名
+    bin_plot(df, x='feature_name', target='target')
+    
+    # Series + 目标数组
+    bin_plot(df['feature'], target=df['target'])
+    ```
+    
+    **方式2：传入分箱统计表（scorecardpipeline 模式）**
+    ```python
+    # 传入已计算好的分箱统计表
+    bin_plot(feature_table, desc="特征描述")
+    ```
 
-    显示每个分箱的好坏样本数量分布及坏样本率。
-
-    :param feature_table: 特征分箱统计表
+    :param data: 数据（DataFrame、Series 或分箱统计表）
+    :param target: 目标变量（列名、Series 或数组）
+    :param feature: 特征列名（当 data 为 DataFrame 且不明确时使用）
     :param desc: 特征中文描述
     :param figsize: 图像尺寸
     :param colors: 配色方案
@@ -38,19 +201,55 @@ def bin_plot(feature_table, desc="", figsize=(10, 6), colors=None, save=None,
     :param fontdict: 字体样式
     :param hatch: 是否显示斜线
     :param ending: 标题后缀
-    :return: matplotlib Figure
+    :param title: 完整标题（优先级高于 desc + ending）
+    :param n_bins: 分箱数量（仅用于方式1）
+    :param method: 分箱方法（仅用于方式1），可选 'quantile' 或 'uniform'
+    :param rules: 自定义分箱边界（仅用于方式1）
+    :param show_data_points: 是否显示数据点标记
+    :param iv: 是否显示 IV 值（暂不支持）
+    :param return_frame: 是否返回分箱统计表
+    :param kwargs: 其他参数（兼容性）
+    :return: matplotlib Figure 或 (Figure, DataFrame)
     """
     if colors is None:
         colors = DEFAULT_COLORS
     if fontdict is None:
         fontdict = {"color": "#000000"}
 
-    feature_table = feature_table.copy()
+    # 判断输入类型并处理
+    if _is_feature_table(data):
+        # 方式2：传入的是分箱统计表
+        feature_table = data.copy()
+    else:
+        # 方式1：传入的是原始数据，需要计算分箱统计
+        if target is None:
+            raise ValueError(
+                "当传入原始数据时，必须提供 target 参数。\n"
+                "用法示例:\n"
+                "  bin_plot(df, x='feature', target='target')\n"
+                "  bin_plot(df['feature'], target=df['target'])"
+            )
+        
+        # 兼容 toad 的参数命名（x 参数）
+        if 'x' in kwargs:
+            feature = kwargs.pop('x')
+        
+        feature_table = _compute_bin_stats_from_raw_data(
+            data=data,
+            target=target,
+            feature=feature,
+            n_bins=n_bins,
+            method=method,
+            rules=rules,
+        )
+
+    # 处理分箱标签
     feature_table["分箱"] = feature_table["分箱"].apply(
         lambda x: x if not pd.isnull(x) and re.match(r"^\[.*\)$", str(x)) 
         else (str(x)[:max_len] + ".." if len(str(x)) > max_len else str(x))
     )
 
+    # 绘图
     fig, ax1 = plt.subplots(figsize=figsize)
     ax1.barh(feature_table['分箱'], feature_table['好样本数'], color=colors[0], label='好样本', hatch="/" if hatch else None)
     ax1.barh(feature_table['分箱'], feature_table['坏样本数'], left=feature_table['好样本数'], color=colors[1], label='坏样本', hatch="\\" if hatch else None)
@@ -61,9 +260,12 @@ def bin_plot(feature_table, desc="", figsize=(10, 6), colors=None, save=None,
     ax2.set_xlabel('坏样本率: 坏样本数 / 样本总数')
     ax2.set_xlim(xmin=0.)
 
-    for i, rate in enumerate(feature_table['坏样本率']):
-        ax2.scatter(rate, i, color=colors[2])
+    # 显示数据点
+    if show_data_points:
+        for i, rate in enumerate(feature_table['坏样本率']):
+            ax2.scatter(rate, i, color=colors[2])
 
+    # 显示文本标注
     if fontdict and fontdict.get("color"):
         for i, v in feature_table[['样本总数', '好样本数', '坏样本数', '坏样本率']].iterrows():
             ax1.text(v['样本总数'] / 2, i + len(feature_table) / 60, 
@@ -71,7 +273,12 @@ def bin_plot(feature_table, desc="", figsize=(10, 6), colors=None, save=None,
 
     ax1.invert_yaxis()
     ax2.xaxis.set_major_formatter(PercentFormatter(1, decimals=0, is_latex=True))
-    fig.suptitle(f'{desc}{ending}\n\n')
+    
+    # 标题处理
+    if title is not None:
+        fig.suptitle(f'{title}\n\n')
+    else:
+        fig.suptitle(f'{desc}{ending}\n\n')
 
     handles1, labels1 = ax1.get_legend_handles_labels()
     handles2, labels2 = ax2.get_legend_handles_labels()
@@ -84,6 +291,9 @@ def bin_plot(feature_table, desc="", figsize=(10, 6), colors=None, save=None,
         os.makedirs(os.path.dirname(save), exist_ok=True)
         fig.savefig(save, dpi=240, format="png", bbox_inches="tight")
 
+    if return_frame:
+        return fig, feature_table
+    
     return fig
 
 
@@ -223,7 +433,7 @@ def ks_plot(score, target, title="", fontsize=14, figsize=(16, 8), save=None,
 
 
 def hist_plot(score, y_true=None, figsize=(15, 10), bins=30, save=None, 
-              labels=None, desc="", anchor=1.11, fontsize=14, kde=False, **kwargs):
+              labels=None, desc="", anchor=1.11, fontsize=14, kde=False, title=None, **kwargs):
     """
     特征值分布直方图.
 
@@ -237,6 +447,8 @@ def hist_plot(score, y_true=None, figsize=(15, 10), bins=30, save=None,
     :param anchor: 图例位置
     :param fontsize: 字体大小
     :param kde: 是否显示核密度估计
+    :param title: 完整标题（优先级高于 desc）
+    :param kwargs: 其他参数
     :return: matplotlib Figure
     """
     if labels is None:
@@ -258,9 +470,15 @@ def hist_plot(score, y_true=None, figsize=(15, 10), bins=30, save=None,
     fig, ax = plt.subplots(1, 1, figsize=figsize)
     palette = sns.diverging_palette(340, 267, n=target_unique, s=100, l=40)
 
+    # 处理 hue_order 参数
+    if hue_order is not None:
+        hue_order_final = hue_order[::-1]
+    else:
+        hue_order_final = None
+
     sns.histplot(
         x=score, hue=y_true, element="step", stat="probability", bins=bins,
-        common_bins=True, common_norm=True, palette=palette, hue_order=hue_order[::-1],
+        common_bins=True, common_norm=True, palette=palette, hue_order=hue_order_final,
         ax=ax, kde=kde, **kwargs
     )
 
@@ -272,7 +490,12 @@ def hist_plot(score, y_true=None, figsize=(15, 10), bins=30, save=None,
     ax.set_xlabel("值域范围", fontsize=fontsize)
     ax.set_ylabel("样本占比", fontsize=fontsize)
     ax.yaxis.set_major_formatter(PercentFormatter(1))
-    ax.set_title(f"{desc + ' ' if desc else '特征'}分布情况\n\n", fontsize=fontsize)
+    
+    # 标题处理：优先使用 title 参数
+    if title is not None:
+        ax.set_title(f"{title}\n\n", fontsize=fontsize)
+    else:
+        ax.set_title(f"{desc + ' ' if desc else '特征'}分布情况\n\n", fontsize=fontsize)
 
     if y_true is not None:
         ax.legend([t for t in hue_order for _ in range(2)] if kde else hue_order, 
@@ -290,7 +513,7 @@ def hist_plot(score, y_true=None, figsize=(15, 10), bins=30, save=None,
 
 def psi_plot(expected, actual, labels=None, desc="", save=None, colors=None, 
              figsize=(15, 8), anchor=0.94, width=0.35, result=False, plot=True, 
-             max_len=None, hatch=True):
+             max_len=None, hatch=True, title=None):
     """
     PSI稳定性分析图.
 
@@ -307,6 +530,7 @@ def psi_plot(expected, actual, labels=None, desc="", save=None, colors=None,
     :param plot: 是否绘图
     :param max_len: 标签最大长度
     :param hatch: 是否显示斜线
+    :param title: 完整标题（优先级高于 desc）
     :return: pd.DataFrame when result=True
     """
     if labels is None:
@@ -358,10 +582,14 @@ def psi_plot(expected, actual, labels=None, desc="", save=None, colors=None,
         ax2.scatter(x, df_psi[f"{labels[1]}坏样本率"], marker=".")
         ax2.set_ylabel('坏样本率')
 
-        fig.suptitle(
-            f"{desc + ' ' if desc else ''}{labels[0]} vs {labels[1]} "
-            f"群体稳定性指数(PSI): {df_psi['分档PSI值'].sum():.4f}\n\n"
-        )
+        # 标题处理：优先使用 title 参数
+        if title is not None:
+            fig.suptitle(f"{title}\n\n")
+        else:
+            fig.suptitle(
+                f"{desc + ' ' if desc else ''}{labels[0]} vs {labels[1]} "
+                f"群体稳定性指数(PSI): {df_psi['分档PSI值'].sum():.4f}\n\n"
+            )
 
         handles1, labels1 = ax1.get_legend_handles_labels()
         handles2, labels2 = ax2.get_legend_handles_labels()
@@ -426,7 +654,7 @@ def dataframe_plot(df, row_height=0.4, font_size=14, header_color='#2639E9',
     )
 
     mpl_table.auto_set_font_size(False)
-    mpl_table.set_fontsize(font_size)
+    mpl_table.set_font_size(font_size)
 
     for k, cell in six.iteritems(mpl_table._cells):
         cell.set_edgecolor(edge_color)

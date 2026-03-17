@@ -139,7 +139,7 @@ class BorutaSelector(BaseFeatureSelector):
                 break
         
         # 选中特征
-        self.select_columns = [feature_names[i] for i in selected]
+        self.selected_features_ = [feature_names[i] for i in selected]
         
         # 计算得分
         self.scores_ = pd.Series(real_importances, index=feature_names)

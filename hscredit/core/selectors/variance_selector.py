@@ -84,5 +84,5 @@ class VarianceSelector(BaseFeatureSelector):
 
         # 选择方差大于阈值的特征
         selected_mask = self.scores_ > self.threshold
-        self.select_columns = X.columns[selected_mask].tolist()
+        self.selected_features_ = X.columns[selected_mask].tolist()
         self._drop_reason = f'方差 <= {self.threshold}'

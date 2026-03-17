@@ -98,7 +98,7 @@ class SequentialFeatureSelector(BaseFeatureSelector):
 
         # 获取选中特征
         selected_mask = sfs.get_support()
-        self.select_columns = X.columns[selected_mask].tolist()
+        self.selected_features_ = X.columns[selected_mask].tolist()
         self.scores_ = pd.Series(
             selected_mask.astype(int),
             index=X.columns

@@ -101,5 +101,5 @@ class ModeSelector(BaseFeatureSelector):
 
         # 选择众数占比低于阈值的特征
         selected_mask = mode_ratios < self.threshold
-        self.select_columns = X.columns[selected_mask].tolist()
+        self.selected_features_ = X.columns[selected_mask].tolist()
         self._drop_reason = f'单一值占比 >= {self.threshold:.2%}'

@@ -49,6 +49,7 @@ class TreeBinning(BaseBinning):
 
     def __init__(
         self,
+        target: str = 'target',
         max_depth: int = 5,
         max_leaf_nodes: Optional[int] = None,
         min_samples_leaf: Union[float, int] = 0.05,
@@ -65,6 +66,7 @@ class TreeBinning(BaseBinning):
         verbose: Union[bool, int] = False,
     ):
         super().__init__(
+            target=target,
             min_n_bins=min_n_bins,
             max_n_bins=max_n_bins,
             min_bin_size=min_bin_size,

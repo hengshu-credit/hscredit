@@ -90,5 +90,5 @@ class Chi2Selector(BaseFeatureSelector):
             selected_mask = chi2_scores >= self.threshold
             selected_cols = X.columns[selected_mask].tolist()
 
-        self.select_columns = selected_cols
+        self.selected_features_ = selected_cols
         self._drop_reason = f'卡方得分 < {self.threshold}'

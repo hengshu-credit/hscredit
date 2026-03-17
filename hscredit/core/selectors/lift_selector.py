@@ -119,5 +119,5 @@ class LiftSelector(BaseFeatureSelector):
 
         # 选择LIFT值大于等于阈值的特征
         selected_mask = lift_values >= self.threshold
-        self.select_columns = X.columns[selected_mask].tolist()
+        self.selected_features_ = X.columns[selected_mask].tolist()
         self._drop_reason = f'LIFT值 < {self.threshold}'

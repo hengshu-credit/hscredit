@@ -63,7 +63,7 @@ def _compute_iv_single(x: np.ndarray, y: np.ndarray, regularization: float = 1.0
     return np.sum(ivs).item()
 
 
-class InformationValueSelector(BaseFeatureSelector):
+class IVSelector(BaseFeatureSelector):
     """IV值筛选器.
 
     使用信息价值（Information Value）筛选特征。
@@ -88,14 +88,14 @@ class InformationValueSelector(BaseFeatureSelector):
 
     ::
 
-        >>> from hscredit.core.selection import InformationValueSelector
+        >>> from hscredit.core.selection import IVSelector
         >>> import pandas as pd
         >>> X = pd.DataFrame({
         ...     'income': [5000, 8000, 12000, 2000, 15000],
         ...     'age': [25, 35, 45, 55, 23],
         ... })
         >>> y = pd.Series([0, 0, 1, 0, 1])
-        >>> selector = InformationValueSelector(threshold=0.02)
+        >>> selector = IVSelector(threshold=0.02)
         >>> selector.fit(X, y)
         >>> print(selector.select_columns_)
         >>> print(selector.scores_)  # 查看IV值
@@ -158,7 +158,7 @@ class InformationValueSelector(BaseFeatureSelector):
 
         # 选择IV值大于等于阈值的特征
         selected_mask = iv_values >= self.threshold
-        self.select_columns = X.columns[selected_mask].tolist()
+        self.selected_features_ = X.columns[selected_mask].tolist()
         self._drop_reason = f'IV值 <= {self.threshold}'
 
     def get_iv_interpretation(self) -> pd.DataFrame:

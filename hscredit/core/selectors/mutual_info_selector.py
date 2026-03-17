@@ -27,7 +27,7 @@ class MutualInfoSelector(BaseFeatureSelector):
     :param n_neighbors: 邻居数，用于估计互信息，默认为3
     :param random_state: 随机种子
     :param target: 目标变量列名，默认为'target'
-    :param n_jobs: 并行计算的任务数
+    :param n_jobs: 并行计算的任务数（注意：mutual_info_classif 不支持并行，此参数保留用于未来扩展）
 
     **示例**
 
@@ -78,18 +78,18 @@ class MutualInfoSelector(BaseFeatureSelector):
                 X_encoded[col] = pd.factorize(X[col])[0]
 
         # 计算互信息
+        # 注意: mutual_info_classif 不支持 n_jobs 参数
         mi_scores = mutual_info_classif(
             X_encoded.values,
             y,
             discrete_features=False,
             n_neighbors=self.n_neighbors,
             random_state=self.random_state,
-            n_jobs=self.n_jobs
         )
 
         self.scores_ = pd.Series(mi_scores, index=X.columns)
 
         # 选择互信息大于阈值的特征
         selected_mask = mi_scores >= self.threshold
-        self.select_columns = X.columns[selected_mask].tolist()
+        self.selected_features_ = X.columns[selected_mask].tolist()
         self._drop_reason = f'互信息值 < {self.threshold}'

@@ -68,5 +68,5 @@ class RegexSelector(BaseFeatureSelector):
             selected_cols = X.columns[matches].tolist()
             self.scores_ = matches.astype(int)
 
-        self.select_columns = selected_cols
+        self.selected_features_ = selected_cols
         self._drop_reason = f'特征名不匹配正则表达式: {self.pattern}'

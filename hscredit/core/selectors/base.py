@@ -1,12 +1,12 @@
 """特征筛选器基类.
 
 定义特征筛选器的统一接口和通用方法。
-所有筛选器都继承此类，确保API的一致性。
+所有筛选器都继承此类,确保API的一致性。
 
 报告系统设计:
-1. 单个筛选器报告: 每个筛选器实现 get_selection_report()，返回标准化报告
+1. 单个筛选器报告: 每个筛选器实现 get_selection_report(),返回标准化报告
 2. 全局报告收集器: SelectionReportCollector 自动收集 Pipeline 中所有筛选器的结果
-3. 报告格式: 统一的中文格式，包含统计信息、选中/剔除特征、得分等
+3. 报告格式: 统一的中文格式,包含统计信息、选中/剔除特征、得分等
 """
 
 from abc import ABC, abstractmethod
@@ -20,8 +20,8 @@ from sklearn.base import BaseEstimator, TransformerMixin
 class SelectionReportCollector:
     """特征筛选报告收集器.
 
-    自动收集 Pipeline 中所有筛选器的结果，生成汇总报告。
-    支持在 sklearn Pipeline 中作为回调使用，或手动添加筛选器。
+    自动收集 Pipeline 中所有筛选器的结果,生成汇总报告。
+    支持在 sklearn Pipeline 中作为回调使用,或手动添加筛选器。
 
     **使用方式**
 
@@ -54,7 +54,7 @@ class SelectionReportCollector:
     def __init__(self, name: str = "特征筛选流程"):
         """初始化报告收集器。
 
-        :param name: 流程名称，用于报告中显示
+        :param name: 流程名称,用于报告中显示
         """
         self.name = name
         self.reports: List[Dict[str, Any]] = []
@@ -69,7 +69,7 @@ class SelectionReportCollector:
         """添加筛选器报告。
 
         :param selector: 已拟合的筛选器对象
-        :param stage_name: 阶段名称，如'粗筛''精筛'等
+        :param stage_name: 阶段名称,如'粗筛''精筛'等
         :return: self
         """
         if not hasattr(selector, 'get_selection_report'):
@@ -317,25 +317,26 @@ class SelectionReportCollector:
 class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
     """特征筛选器基类.
 
-    所有特征筛选器都继承此类，实现统一的fit/transform接口。
+    所有特征筛选器都继承此类,实现统一的fit/transform接口。
     支持中文筛选报告生成。
-    支持可选的分箱器，在筛选前对数据进行分箱处理。
+    支持可选的分箱器,在筛选前对数据进行分箱处理。
 
     **参数**
 
-    :param target: 目标变量列名，默认为'target'
-    :param include: 强制保留的特征列表，这些特征无论如何都会被保留
-    :param exclude: 强制剔除的特征列表，这些特征无论如何都会被剔除
-    :param binner: 可选的分箱器，支持:
+    :param target: 目标变量列名,默认为'target'
+    :param include: 强制保留的特征列表,这些特征无论如何都会被保留
+    :param exclude: 强制剔除的特征列表,这些特征无论如何都会被剔除
+    :param binner: 可选的分箱器,支持:
         - 训练好的分箱器（有fit方法）
-        - 分箱器类（未训练的，需要传入类而非实例）
+        - 分箱器类（未训练的,需要传入类而非实例）
         - 分箱器实例（未训练的）
-    :param threshold: 筛选阈值，不同筛选器含义不同
-    :param n_jobs: 并行计算的任务数，默认为1
+    :param threshold: 筛选阈值,不同筛选器含义不同
+    :param n_jobs: 并行计算的任务数,默认为1
 
     **属性**
 
-    - select_columns_: 选中的特征列表
+    - selected_features_: 选中的特征列表
+    - removed_features_: 被剔除的特征列表
     - dropped_: 被剔除的特征及原因DataFrame
     - scores_: 各特征的筛选得分
     - n_features_in_: 输入特征数量
@@ -357,10 +358,10 @@ class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
         >>> from hscredit.core.selectors import VarianceSelector
         >>> import pandas as pd
         >>> X = pd.DataFrame({'a': [1,2,3], 'b': [1,1,1], 'c': [1,2,3]})
-        >>> # 强制保留特征a，强制剔除特征c
+        >>> # 强制保留特征a,强制剔除特征c
         >>> selector = VarianceSelector(threshold=0.1, include=['a'], exclude=['c'])
         >>> selector.fit(X)
-        >>> print(selector.select_columns_)
+        >>> print(selector.selected_features_)
         ['a']
     """
 
@@ -387,10 +388,10 @@ class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
         X: Union[pd.DataFrame, np.ndarray],
         y: Optional[Union[pd.Series, np.ndarray]] = None,
     ) -> 'BaseFeatureSelector':
-        """拟合筛选器，学习特征重要性。
+        """拟合筛选器,学习特征重要性。
 
-        :param X: 输入特征，DataFrame或numpy数组
-        :param y: 目标变量，仅部分筛选器需要
+        :param X: 输入特征,DataFrame或numpy数组
+        :param y: 目标变量,仅部分筛选器需要
         :return: self
         """
         if not isinstance(X, pd.DataFrame):
@@ -418,7 +419,7 @@ class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
         else:
             self.exclude_ = []
 
-        # 如果有分箱器，先进行分箱
+        # 如果有分箱器,先进行分箱
         if self.binner is not None:
             X = self._apply_binner(X, y)
 
@@ -426,16 +427,18 @@ class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
         self._fit_impl(X, y)
 
         # 创建初始dropped_（记录_fit_impl中剔除的特征）
-        if hasattr(self, 'select_columns') and self.select_columns is not None:
-            dropped_cols = [c for c in X.columns if c not in self.select_columns]
+        if hasattr(self, 'selected_features_') and self.selected_features_ is not None:
+            dropped_cols = [c for c in X.columns if c not in self.selected_features_]
             if len(dropped_cols) > 0:
                 reason = getattr(self, '_drop_reason', '不满足筛选条件')
                 self.dropped_ = pd.DataFrame({
                     '特征': dropped_cols,
                     '剔除原因': [reason] * len(dropped_cols)
                 })
+                self.removed_features_ = dropped_cols
             else:
                 self.dropped_ = pd.DataFrame(columns=['特征', '剔除原因'])
+                self.removed_features_ = []
 
         # 确保include的特征被保留
         self._apply_include(X)
@@ -463,7 +466,7 @@ class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
         is_class = isinstance(binner, type)
 
         if is_class:
-            # 未训练的分箱器类，需要实例化并fit
+            # 未训练的分箱器类,需要实例化并fit
             binner_instance = binner()
             if hasattr(binner_instance, 'fit'):
                 if y is not None:
@@ -488,7 +491,7 @@ class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
             # 某些分箱器使用apply方法
             X_binned = self._binner_instance.apply(X)
         else:
-            # 如果没有transform方法，原样返回
+            # 如果没有transform方法,原样返回
             return X
 
         # 确保返回DataFrame
@@ -501,25 +504,27 @@ class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
 
         :param X: 输入特征DataFrame
         """
-        if hasattr(self, 'select_columns') and self.select_columns is not None:
+        if hasattr(self, 'selected_features_') and self.selected_features_ is not None:
             # 添加include的特征
             added = False
             for col in self.include_:
-                if col in X.columns and col not in self.select_columns:
-                    self.select_columns.append(col)
+                if col in X.columns and col not in self.selected_features_:
+                    self.selected_features_.append(col)
                     added = True
 
-            # 如果有添加特征且dropped_不存在，则创建空的dropped_
+            # 如果有添加特征且dropped_不存在,则创建空的dropped_
             if added and not hasattr(self, 'dropped_'):
-                dropped_cols = [c for c in X.columns if c not in self.select_columns]
+                dropped_cols = [c for c in X.columns if c not in self.selected_features_]
                 if len(dropped_cols) > 0:
                     reason = getattr(self, '_drop_reason', '不满足筛选条件')
                     self.dropped_ = pd.DataFrame({
                         '特征': dropped_cols,
                         '剔除原因': [reason] * len(dropped_cols)
                     })
+                    self.removed_features_ = dropped_cols
                 else:
                     self.dropped_ = pd.DataFrame(columns=['特征', '剔除原因'])
+                    self.removed_features_ = []
 
     @abstractmethod
     def _fit_impl(
@@ -539,7 +544,7 @@ class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
 
         :param X: 输入特征DataFrame
         """
-        if not hasattr(self, 'select_columns') or self.select_columns is None:
+        if not hasattr(self, 'selected_features_') or self.selected_features_ is None:
             return
 
         # 记录被强制剔除的特征
@@ -547,16 +552,16 @@ class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
 
         # 移除exclude的特征（遍历用户传入的exclude_列表）
         for col in self.exclude_:
-            if col in self.select_columns:
-                self.select_columns.remove(col)
+            if col in self.selected_features_:
+                self.selected_features_.remove(col)
                 self.forced_dropped_.append(col)
             elif col in X.columns:
-                # 特征原本在X中但不在select_columns中（已被筛选掉）
+                # 特征原本在X中但不在selected_features_中（已被筛选掉）
                 # 仍然记录为强制剔除
                 if col not in self.forced_dropped_:
                     self.forced_dropped_.append(col)
 
-        # 更新dropped_报告，添加强制剔除的原因
+        # 更新dropped_报告,添加强制剔除的原因
         if hasattr(self, 'dropped_') and self.dropped_ is not None and len(self.dropped_) > 0:
             # 添加强制剔除的特征到dropped_
             for col in self.forced_dropped_:
@@ -576,6 +581,12 @@ class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
                 '特征': self.forced_dropped_,
                 '剔除原因': ['强制剔除'] * len(self.forced_dropped_)
             })
+        
+        # 更新 removed_features_
+        if hasattr(self, 'dropped_') and len(self.dropped_) > 0:
+            self.removed_features_ = self.dropped_['特征'].tolist()
+        else:
+            self.removed_features_ = []
 
     def transform(
         self,
@@ -587,13 +598,13 @@ class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
         :return: 筛选后的特征
         """
         if not hasattr(self, '_is_fitted'):
-            raise ValueError("筛选器尚未拟合，请先调用fit方法")
+            raise ValueError("筛选器尚未拟合,请先调用fit方法")
 
         if not isinstance(X, pd.DataFrame):
             X = pd.DataFrame(X)
 
         # 返回选中的特征
-        selected = [c for c in self.select_columns_ if c in X.columns]
+        selected = [c for c in self.selected_features_ if c in X.columns]
         return X[selected]
 
     def fit_transform(
@@ -611,24 +622,24 @@ class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
 
     @property
     def select_columns_(self) -> List[str]:
-        """获取选中的特征列表。
+        """获取选中的特征列表（向后兼容属性）。
 
         :return: 选中特征的列表
         """
-        if hasattr(self, 'select_columns'):
-            return self.select_columns
+        if hasattr(self, 'selected_features_'):
+            return self.selected_features_
         return []
 
     def get_support_mask(self) -> np.ndarray:
         """获取特征选择掩码。
 
-        :return: 布尔数组，True表示选中
+        :return: 布尔数组,True表示选中
         """
         if not hasattr(self, '_is_fitted'):
             raise ValueError("筛选器尚未拟合")
 
         mask = np.zeros(self.n_features_in_, dtype=bool)
-        for col in self.select_columns_:
+        for col in self.selected_features_:
             if col in self._feature_names:
                 idx = self._feature_names.index(col)
                 mask[idx] = True
@@ -652,7 +663,7 @@ class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
         # 收集参数
         params = {}
         for key, value in self.__dict__.items():
-            if not key.startswith('_') and key not in ['n_features_in_', 'select_columns', 'scores_', 'dropped_']:
+            if not key.startswith('_') and key not in ['n_features_in_', 'selected_features_', 'removed_features_', 'scores_', 'dropped_']:
                 if isinstance(value, (str, int, float, bool, type(None))):
                     params[key] = value
         
@@ -683,15 +694,15 @@ class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
 
             # 统计信息
             "输入特征数": self.n_features_in_,
-            "选中特征数": len(self.select_columns_),
-            "剔除特征数": self.n_features_in_ - len(self.select_columns_),
-            "特征保留率": f"{len(self.select_columns_) / self.n_features_in_ * 100:.2f}%" if self.n_features_in_ > 0 else "0%",
+            "选中特征数": len(self.selected_features_),
+            "剔除特征数": self.n_features_in_ - len(self.selected_features_),
+            "特征保留率": f"{len(self.selected_features_) / self.n_features_in_ * 100:.2f}%" if self.n_features_in_ > 0 else "0%",
 
             # 特征列表
-            "选中特征": self.select_columns_,
+            "选中特征": self.selected_features_,
         }
 
-        # 添加dropped信息（DataFrame格式，便于后续分析）
+        # 添加dropped信息（DataFrame格式,便于后续分析）
         if hasattr(self, 'dropped_') and len(self.dropped_) > 0:
             report["剔除特征"] = self.dropped_['特征'].tolist()
             report["剔除原因"] = self.dropped_['剔除原因'].tolist()
@@ -751,7 +762,7 @@ class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
             return pd.DataFrame(columns=['特征', '得分', '状态'])
         
         scores = self.scores_.copy()
-        selected = set(self.select_columns_)
+        selected = set(self.selected_features_)
         
         records = []
         for feat, score in scores.items():
@@ -797,18 +808,18 @@ class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
 class CompositeFeatureSelector(BaseFeatureSelector):
     """组合特征筛选器.
 
-    将多个筛选器组合在一起，按顺序执行筛选。
+    将多个筛选器组合在一起,按顺序执行筛选。
     后续筛选器基于前面筛选器的结果进行筛选。
     支持通过include和exclude参数强制保留或剔除特定特征。
 
     **参数**
 
-    :param selectors: 筛选器列表，按执行顺序排列
-    :param strategy: 组合策略，'sequential'或'intersection'
-        - 'sequential': 按顺序筛选，每轮剔除不满足条件的特征
+    :param selectors: 筛选器列表,按执行顺序排列
+    :param strategy: 组合策略,'sequential'或'intersection'
+        - 'sequential': 按顺序筛选,每轮剔除不满足条件的特征
         - 'intersection': 取所有筛选器选中特征的交集
-    :param include: 强制保留的特征列表，这些特征无论如何都会被保留
-    :param exclude: 强制剔除的特征列表，这些特征无论如何都会被剔除
+    :param include: 强制保留的特征列表,这些特征无论如何都会被保留
+    :param exclude: 强制剔除的特征列表,这些特征无论如何都会被剔除
 
     **示例**
 
@@ -817,11 +828,11 @@ class CompositeFeatureSelector(BaseFeatureSelector):
         >>> from hscredit.core.selectors import (
         ...     VarianceSelector, CorrSelector, IVSelector
         ... )
-        >>> # 强制保留特征id，强制剔除特征useless_col
+        >>> # 强制保留特征id,强制剔除特征useless_col
         >>> composite = CompositeFeatureSelector([
         ...     VarianceSelector(threshold=0.01),
         ...     CorrSelector(threshold=0.8),
-        ...     InformationValueSelector(threshold=0.02),
+        ...     IVSelector(threshold=0.02),
         ... ], include=['id'], exclude=['useless_col'])
         >>> composite.fit(X, y)
     """
@@ -868,7 +879,7 @@ class CompositeFeatureSelector(BaseFeatureSelector):
             selector.fit(current_X, y)
 
             # 获取选中特征
-            selected = selector.select_columns_
+            selected = selector.selected_features_
 
             # 记录被剔除的特征
             if hasattr(selector, 'dropped_') and len(selector.dropped_) > 0:
@@ -884,15 +895,17 @@ class CompositeFeatureSelector(BaseFeatureSelector):
                 break
 
         # 最终选中的特征
-        self.select_columns = current_X.columns.tolist()
+        self.selected_features_ = current_X.columns.tolist()
         self.scores_ = None
         self.forced_dropped_ = []  # 初始化forced_dropped_
 
         # 合并所有剔除记录
         if len(all_dropped) > 0:
             self.dropped_ = pd.concat(all_dropped, ignore_index=True)
+            self.removed_features_ = self.dropped_['特征'].tolist()
         else:
             self.dropped_ = pd.DataFrame(columns=['特征', '剔除原因', '筛选轮次', '筛选器'])
+            self.removed_features_ = []
 
     def _fit_intersection(self, X: pd.DataFrame, y: Optional[Union[pd.Series, np.ndarray]]) -> None:
         """交集筛选策略。
@@ -904,13 +917,14 @@ class CompositeFeatureSelector(BaseFeatureSelector):
 
         for selector in self.selectors:
             selector.fit(X, y)
-            selected_sets.append(set(selector.select_columns_))
+            selected_sets.append(set(selector.selected_features_))
 
         # 取交集
-        self.select_columns = list(set.intersection(*selected_sets))
+        self.selected_features_ = list(set.intersection(*selected_sets))
         self.scores_ = None
         self.forced_dropped_ = []  # 初始化forced_dropped_
         self.dropped_ = pd.DataFrame({
-            '特征': [c for c in X.columns if c not in self.select_columns],
+            '特征': [c for c in X.columns if c not in self.selected_features_],
             '剔除原因': '未被所有筛选器同时选中'
         })
+        self.removed_features_ = self.dropped_['特征'].tolist()

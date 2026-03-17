@@ -36,6 +36,14 @@ from .core.binning import (
     OptimalIVBinning,
     MDLPBinning,
     OptimalBinning,
+    CartBinning,
+    KMeansBinning,
+    MonotonicBinning,
+    GeneticBinning,
+    SmoothBinning,
+    KernelDensityBinning,
+    BestLiftBinning,
+    TargetBadRateBinning,
 )
 
 # 核心编码器模块
@@ -48,6 +56,7 @@ from .core.encoders import (
     OrdinalEncoder,
     QuantileEncoder,
     CatBoostEncoder,
+    GBMEncoder,
 )
 
 # 核心特征筛选模块
@@ -59,7 +68,7 @@ from .core.selectors import (
     ModeSelector,
     CorrSelector,
     VIFSelector,
-    InformationValueSelector,
+    IVSelector,
     LiftSelector,
     PSISelector,
     CardinalitySelector,
@@ -93,6 +102,8 @@ from .core.models import (
     LightGBMLossAdapter,
     CatBoostLossAdapter,
     TabNetLossAdapter,
+    LogisticRegression,
+    ScoreCard,
 )
 
 # 核心可视化模块
@@ -104,6 +115,7 @@ from .core.viz import (
     psi_plot,
     dataframe_plot,
     distribution_plot,
+    plot_weights,
 )
 
 # 核心特征工程模块
@@ -122,6 +134,15 @@ from .core.rules import (
 from .core.financial import (
     fv, pv, pmt, nper, ipmt, ppmt, rate,
     npv, irr, mirr,
+)
+
+# 核心指标计算模块
+from .core.metrics import (
+    KS, AUC, Gini, PSI, IV,
+    KS_bucket, ROC_curve,
+    PSI_table, CSI_table,
+    IV_table,
+    MSE, MAE, RMSE, R2,
 )
 
 # ========== 报告模块导入 (在core之后导入，避免循环导入) ==========
@@ -177,6 +198,7 @@ __all__ = [
     # "csi_plot",
     "dataframe_plot",
     "distribution_plot",
+    "plot_weights",
 
     # 分析模块
     "feature_bin_stats",
@@ -201,6 +223,14 @@ __all__ = [
     "OptimalIVBinning",
     "MDLPBinning",
     "OptimalBinning",
+    "CartBinning",
+    "KMeansBinning",
+    "MonotonicBinning",
+    "GeneticBinning",
+    "SmoothBinning",
+    "KernelDensityBinning",
+    "BestLiftBinning",
+    "TargetBadRateBinning",
 
     # 编码器模块（core.encoders）
     "BaseEncoder",
@@ -211,6 +241,7 @@ __all__ = [
     "OrdinalEncoder",
     "QuantileEncoder",
     "CatBoostEncoder",
+    "GBMEncoder",
 
     # 特征筛选模块（core.selection）
     "BaseFeatureSelector",
@@ -220,7 +251,7 @@ __all__ = [
     "ModeSelector",
     "CorrSelector",
     "VIFSelector",
-    "InformationValueSelector",
+    "IVSelector",
     "LiftSelector",
     "PSISelector",
     "CardinalitySelector",
@@ -252,6 +283,24 @@ __all__ = [
     "LightGBMLossAdapter",
     "CatBoostLossAdapter",
     "TabNetLossAdapter",
+    "LogisticRegression",
+    "ScoreCard",
+
+    # 指标计算模块
+    "KS",
+    "AUC",
+    "Gini",
+    "PSI",
+    "IV",
+    "KS_bucket",
+    "ROC_curve",
+    "PSI_table",
+    "CSI_table",
+    "IV_table",
+    "MSE",
+    "MAE",
+    "RMSE",
+    "R2",
 
     # 特征工程模块
     "NumExprDerive",

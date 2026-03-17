@@ -49,6 +49,7 @@ class CorrSelector(BaseFeatureSelector):
         threshold: float = 0.7,
         method: str = 'pearson',
         weights: Optional[Union[pd.Series, List[float]]] = None,
+        include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
     ):
         super().__init__(threshold=threshold, include=include, exclude=exclude)
@@ -102,7 +103,7 @@ class CorrSelector(BaseFeatureSelector):
 
         # 获取保留的特征
         keep_idx = [idx for idx in range(n_features) if idx not in drops]
-        self.select_columns = [sorted_names[idx] for idx in keep_idx]
+        self.selected_features_ = [sorted_names[idx] for idx in keep_idx]
 
         # 保存scores
         self.scores_ = corr_matrix.max(axis=1)
