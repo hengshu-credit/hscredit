@@ -1,0 +1,130 @@
+[build-system]
+requires = ["setuptools>=45", "wheel", "setuptools-scm[toml]>=6.2"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hscredit"
+version = "0.1.0"
+description = "金融风控建模工具包 - 完整的评分卡建模解决方案"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "hscredit team", email = "hscredit@example.com"}
+]
+maintainers = [
+    {name = "hscredit team", email = "hscredit@example.com"}
+]
+keywords = [
+    "credit",
+    "risk",
+    "scorecard",
+    "modeling",
+    "finance",
+    "machine-learning",
+    "woe",
+    "binning"
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Financial and Insurance Industry",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Office/Business :: Financial",
+]
+requires-python = ">=3.8"
+dependencies = [
+    "numpy>=1.19.0",
+    "pandas>=1.2.0",
+    "scipy>=1.5.0",
+    "scikit-learn>=0.24.0",
+    "openpyxl>=3.0.0",
+    "matplotlib>=3.3.0",
+    "seaborn>=0.11.0",
+]
+
+[project.optional-dependencies]
+xgboost = ["xgboost>=1.4.0"]
+lightgbm = ["lightgbm>=3.2.0"]
+catboost = ["catboost>=1.0.0"]
+deep-learning = ["torch>=1.8.0", "pytorch-tabnet>=3.1"]
+pmml = ["sklearn2pmml>=0.82.0"]
+dev = [
+    "pytest>=6.0.0",
+    "pytest-cov>=2.0.0",
+    "black>=21.0",
+    "flake8>=3.9.0",
+]
+docs = [
+    "sphinx>=4.0.0",
+    "sphinx-rtd-theme>=0.5.0",
+    "nbsphinx>=0.8.0",
+]
+all = [
+    "hscredit[xgboost,lightgbm,catboost,deep-learning,pmml,dev,docs]"
+]
+
+[project.urls]
+Homepage = "https://github.com/hscredit/hscredit"
+Documentation = "https://hscredit.readthedocs.io"
+Repository = "https://github.com/hscredit/hscredit.git"
+Issues = "https://github.com/hscredit/hscredit/issues"
+
+[tool.setuptools]
+packages = ["hscredit"]
+
+[tool.setuptools.package-data]
+hscredit = ["report/excel/template.xlsx"]
+
+[tool.black]
+line-length = 120
+target-version = ['py38', 'py39', 'py310', 'py311', 'py312']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+    \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | _build
+  | buck-out
+  | build
+  | dist
+  # 保留原有项目
+  | scorecardpipeline
+  | scorecardpy
+  | toad
+  | optbinning
+  | skorecard
+)/
+'''
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+
+[tool.coverage.run]
+source = ["hscredit"]
+omit = ["tests/*", "*/__pycache__/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]

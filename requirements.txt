@@ -1,0 +1,37 @@
+# hscredit - 金融风控建模工具包
+# Python 3.8+ 兼容
+
+# 核心依赖
+numpy>=1.19.0
+pandas>=1.2.0
+scipy>=1.5.0
+scikit-learn>=0.24.0
+
+# Excel处理
+openpyxl>=3.0.0
+
+# 可视化
+matplotlib>=3.3.0
+seaborn>=0.11.0
+
+# 机器学习框架（可选，根据需要安装）
+# xgboost>=1.4.0
+# lightgbm>=3.2.0
+# catboost>=1.0.0
+
+# 深度学习（可选，用于TabNet）
+# torch>=1.8.0
+# pytorch-tabnet>=3.1
+
+# 模型导出
+# sklearn2pmml>=0.82.0
+
+# 测试和开发
+pytest>=6.0.0
+pytest-cov>=2.0.0
+black>=21.0
+flake8>=3.9.0
+
+# 文档
+# sphinx>=4.0.0
+# sphinx-rtd-theme>=0.5.0
