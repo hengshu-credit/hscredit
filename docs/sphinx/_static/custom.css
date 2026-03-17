@@ -1,0 +1,563 @@
+/* HSCredit 科幻主题文档样式 */
+
+/* CSS变量 - 科幻霓虹配色 */
+:root {
+    /* 主色调 - 赛博朋克霓虹蓝 */
+    --hs-primary: #00ffff;
+    --hs-primary-dark: #00cccc;
+    --hs-primary-light: #66ffff;
+
+    /* 辅助色 - 霓虹紫 */
+    --hs-secondary: #bf00ff;
+    --hs-secondary-dark: #9900cc;
+    --hs-secondary-light: #d966ff;
+
+    /* 强调色 - 霓虹粉 */
+    --hs-accent: #ff00ff;
+    --hs-accent-dark: #cc00cc;
+    --hs-accent-light: #ff66ff;
+
+    /* 警告/成功色 - 霓虹绿 */
+    --hs-success: #00ff66;
+    --hs-warning: #ffcc00;
+    --hs-danger: #ff3366;
+
+    /* 背景色 - 深色科幻风 */
+    --hs-bg-dark: #0a0a14;
+    --hs-bg-darker: #05050a;
+    --hs-bg-light: #12121f;
+    --hs-bg-card: #161625;
+
+    /* 文字颜色 */
+    --hs-text-primary: #e0e0e0;
+    --hs-text-secondary: #a0a0a0;
+    --hs-text-muted: #606060;
+
+    /* 边框颜色 */
+    --hs-border: #2a2a3f;
+    --hs-border-light: #3a3a5f;
+
+    /* 渐变 */
+    --hs-gradient: linear-gradient(135deg, #00ffff 0%, #bf00ff 100%);
+    --hs-gradient-dark: linear-gradient(135deg, #0a0a14 0%, #1a1a2f 100%);
+}
+
+/* 全局样式 */
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+    background: var(--hs-bg-dark);
+    color: var(--hs-text-primary);
+    line-height: 1.6;
+}
+
+/* 滚动条样式 */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: var(--hs-bg-darker);
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--hs-primary-dark);
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: var(--hs-primary);
+}
+
+/* 链接样式 */
+a {
+    color: var(--hs-primary);
+    text-decoration: none;
+    transition: all 0.3s ease;
+}
+
+a:hover {
+    color: var(--hs-secondary);
+    text-shadow: 0 0 8px var(--hs-primary);
+}
+
+/* 标题样式 */
+h1, h2, h3, h4, h5, h6 {
+    color: var(--hs-primary);
+    margin-top: 1.5em;
+    margin-bottom: 0.5em;
+    font-weight: 600;
+    text-shadow: 0 0 10px rgba(0, 255, 255, 0.3);
+}
+
+h1 {
+    border-bottom: 2px solid var(--hs-primary);
+    padding-bottom: 0.3em;
+    background: linear-gradient(90deg, var(--hs-primary), var(--hs-secondary));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+h2 {
+    border-bottom: 1px solid var(--hs-border);
+    padding-bottom: 0.3em;
+}
+
+h3 {
+    color: var(--hs-secondary);
+}
+
+/* 代码块样式 */
+pre {
+    background: var(--hs-bg-darker);
+    border: 1px solid var(--hs-border);
+    border-radius: 8px;
+    padding: 1em;
+    overflow-x: auto;
+    box-shadow: 0 0 20px rgba(0, 255, 255, 0.1);
+    position: relative;
+}
+
+pre::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: var(--hs-gradient);
+    border-radius: 8px 8px 0 0;
+}
+
+code {
+    background: var(--hs-bg-card);
+    color: var(--hs-primary-light);
+    padding: 0.2em 0.4em;
+    border-radius: 4px;
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    border: 1px solid var(--hs-border);
+}
+
+pre code {
+    background: transparent;
+    border: none;
+    color: var(--hs-text-primary);
+}
+
+/* 表格样式 */
+table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 1em 0;
+    background: var(--hs-bg-card);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+th, td {
+    border: 1px solid var(--hs-border);
+    padding: 0.75em 1em;
+    text-align: left;
+}
+
+th {
+    background: linear-gradient(135deg, var(--hs-bg-light), var(--hs-bg-dark));
+    color: var(--hs-primary);
+    font-weight: bold;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    border-bottom: 2px solid var(--hs-primary);
+}
+
+tr:nth-child(even) {
+    background-color: var(--hs-bg-light);
+}
+
+tr:hover {
+    background-color: rgba(0, 255, 255, 0.05);
+}
+
+/* 警告框样式 */
+.admonition {
+    padding: 1em;
+    margin: 1em 0;
+    border-left: 4px solid var(--hs-primary);
+    background: var(--hs-bg-card);
+    border-radius: 8px;
+    box-shadow: 0 0 15px rgba(0, 255, 255, 0.1);
+}
+
+.admonition::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 60px;
+    height: 60px;
+    background: radial-gradient(circle at top right, rgba(0, 255, 255, 0.1), transparent);
+}
+
+.admonition.note {
+    border-left-color: var(--hs-primary);
+}
+
+.admonition.warning {
+    border-left-color: var(--hs-warning);
+    background: rgba(255, 204, 0, 0.05);
+}
+
+.admonition.danger {
+    border-left-color: var(--hs-danger);
+    background: rgba(255, 51, 102, 0.05);
+}
+
+.admonition.tip {
+    border-left-color: var(--hs-success);
+    background: rgba(0, 255, 102, 0.05);
+}
+
+/* 导航栏样式 */
+.bd-navbar {
+    background: var(--hs-bg-darker) !important;
+    border-bottom: 1px solid var(--hs-border);
+    box-shadow: 0 2px 20px rgba(0, 255, 255, 0.1);
+}
+
+.bd-sidebar {
+    background: var(--hs-bg-dark);
+    border-right: 1px solid var(--hs-border);
+}
+
+/* 侧边栏链接 */
+.bd-sidebar .toctree-l1 > a {
+    color: var(--hs-text-primary);
+    padding: 0.5em 1em;
+    border-radius: 4px;
+    transition: all 0.3s ease;
+}
+
+.bd-sidebar .toctree-l1 > a:hover {
+    background: rgba(0, 255, 255, 0.1);
+    color: var(--hs-primary);
+}
+
+.bd-sidebar .toctree-l1.current > a {
+    background: linear-gradient(90deg, rgba(0, 255, 255, 0.1), transparent);
+    border-left: 3px solid var(--hs-primary);
+    color: var(--hs-primary);
+}
+
+/* 目录样式 */
+.toctree-wrapper {
+    margin: 2em 0;
+}
+
+.toctree-l1 > a {
+    font-weight: bold;
+    color: var(--hs-primary);
+}
+
+.toctree-l2 > a {
+    color: var(--hs-text-secondary);
+    padding-left: 1.5em;
+}
+
+.toctree-l2 > a:hover {
+    color: var(--hs-secondary);
+}
+
+/* API文档样式 */
+.py.class, .py.method, .py.function {
+    margin: 1.5em 0;
+    padding: 1em;
+    border: 1px solid var(--hs-border);
+    border-radius: 8px;
+    background: var(--hs-bg-card);
+    box-shadow: 0 0 15px rgba(0, 0, 0, 0.3);
+}
+
+.py.class .sig-name, .py.method .sig-name, .py.function .sig-name {
+    color: var(--hs-primary);
+    font-weight: bold;
+}
+
+.py .sig-param {
+    color: var(--hs-text-secondary);
+}
+
+/* 参数列表样式 */
+.field-list {
+    margin: 1em 0;
+}
+
+.field-list dt {
+    font-weight: bold;
+    color: var(--hs-primary);
+}
+
+.field-list dd {
+    margin-left: 2em;
+    margin-bottom: 0.5em;
+    color: var(--hs-text-secondary);
+}
+
+/* 页脚样式 */
+.footer {
+    text-align: center;
+    padding: 2em 0;
+    border-top: 1px solid var(--hs-border);
+    margin-top: 2em;
+    background: var(--hs-bg-darker);
+    color: var(--hs-text-muted);
+}
+
+.footer a {
+    color: var(--hs-primary);
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+    .bd-sidebar {
+        display: none;
+    }
+
+    .bd-content {
+        padding: 0 1em;
+    }
+
+    pre {
+        font-size: 0.9em;
+    }
+}
+
+/* 打印样式 */
+@media print {
+    .bd-sidebar, .bd-toc {
+        display: none;
+    }
+
+    a {
+        color: black;
+    }
+
+    pre {
+        border: none;
+        background-color: transparent;
+    }
+}
+
+/* 版本提示 */
+.versionadded, .versionchanged, .deprecated {
+    padding: 0.5em;
+    margin: 0.5em 0;
+    border-radius: 4px;
+    font-size: 0.9em;
+    border: 1px solid var(--hs-border);
+}
+
+.versionadded {
+    background: rgba(0, 255, 255, 0.05);
+    border-left: 4px solid var(--hs-primary);
+}
+
+.versionchanged {
+    background: rgba(255, 204, 0, 0.05);
+    border-left: 4px solid var(--hs-warning);
+}
+
+.deprecated {
+    background: rgba(255, 51, 102, 0.05);
+    border-left: 4px solid var(--hs-danger);
+}
+
+/* 搜索框样式 */
+.search-button {
+    background: linear-gradient(135deg, var(--hs-primary), var(--hs-secondary));
+    color: white;
+    border: none;
+    padding: 0.5em 1em;
+    border-radius: 20px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.search-button:hover {
+    box-shadow: 0 0 15px var(--hs-primary);
+}
+
+/* 徽章样式 */
+.badge {
+    display: inline-block;
+    padding: 0.25em 0.5em;
+    border-radius: 3px;
+    font-size: 0.85em;
+    font-weight: bold;
+    border: 1px solid;
+}
+
+.badge-primary {
+    background: rgba(0, 255, 255, 0.1);
+    color: var(--hs-primary);
+    border-color: var(--hs-primary);
+}
+
+.badge-secondary {
+    background: rgba(191, 0, 255, 0.1);
+    color: var(--hs-secondary);
+    border-color: var(--hs-secondary);
+}
+
+.badge-success {
+    background: rgba(0, 255, 102, 0.1);
+    color: var(--hs-success);
+    border-color: var(--hs-success);
+}
+
+.badge-warning {
+    background: rgba(255, 204, 0, 0.1);
+    color: var(--hs-warning);
+    border-color: var(--hs-warning);
+}
+
+.badge-danger {
+    background: rgba(255, 51, 102, 0.1);
+    color: var(--hs-danger);
+    border-color: var(--hs-danger);
+}
+
+/* 卡片样式 */
+.card {
+    background: var(--hs-bg-card);
+    border: 1px solid var(--hs-border);
+    border-radius: 8px;
+    padding: 1em;
+    margin: 1em 0;
+    transition: all 0.3s ease;
+}
+
+.card:hover {
+    border-color: var(--hs-primary);
+    box-shadow: 0 0 20px rgba(0, 255, 255, 0.1);
+}
+
+/* 科幻分割线 */
+hr {
+    border: none;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--hs-primary), transparent);
+    margin: 2em 0;
+}
+
+/* 引用块样式 */
+blockquote {
+    border-left: 4px solid var(--hs-secondary);
+    background: var(--hs-bg-card);
+    padding: 1em;
+    margin: 1em 0;
+    border-radius: 0 8px 8px 0;
+    color: var(--hs-text-secondary);
+}
+
+blockquote p {
+    margin: 0;
+}
+
+/* 项目列表样式 */
+ ul.simple > li {
+    padding: 0.25em 0;
+}
+
+ ul.simple > li::before {
+    content: '>';
+    color: var(--hs-primary);
+    margin-right: 0.5em;
+}
+
+/* 定义列表样式 */
+dl dt {
+    color: var(--hs-primary);
+    font-weight: 600;
+}
+
+dl dd {
+    color: var(--hs-text-secondary);
+    margin-left: 1em;
+    padding: 0.5em 0;
+}
+
+/* 进度条样式 */
+.progress {
+    background: var(--hs-bg-darker);
+    border-radius: 4px;
+    height: 20px;
+    overflow: hidden;
+}
+
+.progress-bar {
+    background: linear-gradient(90deg, var(--hs-primary), var(--hs-secondary));
+    height: 100%;
+    border-radius: 4px;
+}
+
+/* 标签页样式 */
+.sphinx-tabs {
+    border: 1px solid var(--hs-border);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.sphinx-tabs .tab {
+    background: var(--hs-bg-dark);
+    border: none;
+    color: var(--hs-text-secondary);
+    padding: 0.75em 1.5em;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.sphinx-tabs .tab:hover {
+    background: var(--hs-bg-card);
+    color: var(--hs-primary);
+}
+
+.sphinx-tabs .tab.active {
+    background: var(--hs-bg-card);
+    color: var(--hs-primary);
+    border-bottom: 2px solid var(--hs-primary);
+}
+
+/* 动画效果 */
+@keyframes neon-glow {
+    0%, 100% {
+        text-shadow: 0 0 5px var(--hs-primary),
+                     0 0 10px var(--hs-primary),
+                     0 0 20px var(--hs-primary);
+    }
+    50% {
+        text-shadow: 0 0 10px var(--hs-primary),
+                     0 0 20px var(--hs-primary),
+                     0 0 30px var(--hs-primary);
+    }
+}
+
+@keyframes border-glow {
+    0%, 100% {
+        border-color: var(--hs-primary);
+        box-shadow: 0 0 5px var(--hs-primary);
+    }
+    50% {
+        border-color: var(--hs-secondary);
+        box-shadow: 0 0 10px var(--hs-secondary);
+    }
+}
+
+/* 应用动画到标题 */
+h1 {
+    animation: neon-glow 2s ease-in-out infinite;
+}
+
+/* 代码块焦点效果 */
+pre:hover {
+    animation: border-glow 2s ease-in-out infinite;
+}
