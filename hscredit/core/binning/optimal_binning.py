@@ -1,0 +1,1664 @@
+"""统一分箱接口 - 整合所有分箱方法.
+
+提供统一的 fit/transform 接口，支持所有分箱方法：
+- 基础方法: uniform, quantile, tree, chi_merge
+- 优化方法: optimal_ks, optimal_iv, mdlp
+- 高级方法: cart, kmeans, monotonic, genetic, smooth, kernel_density, best_lift, target_bad_rate
+
+支持指定切割点 (user_splits) 和单调性约束。
+使用 core.metrics 中的指标计算方法。
+"""
+
+from typing import Union, List, Dict, Optional, Any, Callable
+import numpy as np
+import pandas as pd
+import warnings
+from scipy import stats
+
+from .base import BaseBinning
+from .optimal_ks_binning import OptimalKSBinning
+from .optimal_iv_binning import OptimalIVBinning
+from .mdlp_binning import MDLPBinning
+from .cart_binning import CartBinning
+from .kmeans_binning import KMeansBinning
+from .genetic_binning import GeneticBinning
+from .smooth_binning import SmoothBinning
+from .kernel_density_binning import KernelDensityBinning
+from .best_lift_binning import BestLiftBinning
+from .target_bad_rate_binning import TargetBadRateBinning
+from .monotonic_binning import MonotonicBinning
+
+# 从 metrics 导入指标计算方法
+from ..metrics.binning_metrics import (
+    woe_iv_vectorized,
+    iv_for_splits,
+    ks_for_splits,
+    compare_splits_iv,
+    compare_splits_ks,
+)
+
+
+class UniformBinning(BaseBinning):
+    """等宽分箱."""
+    
+    def __init__(
+        self,
+        target: str = 'target',
+        n_bins: int = 5,
+        **kwargs
+    ):
+        if 'max_n_bins' not in kwargs:
+            kwargs['max_n_bins'] = n_bins
+        super().__init__(target=target, **kwargs)
+        self.n_bins = n_bins
+
+    def fit(
+        self,
+        X: Union[pd.DataFrame, np.ndarray],
+        y: Optional[Union[pd.Series, np.ndarray]] = None,
+        **kwargs
+    ) -> 'UniformBinning':
+        X, y = self._check_input(X, y)
+
+        for feature in X.columns:
+            feature_type = self._detect_feature_type(X[feature])
+            self.feature_types_[feature] = feature_type
+
+            if feature_type == 'categorical':
+                unique_cats = X[feature].dropna().unique()
+                self.splits_[feature] = np.array([])
+                self.n_bins_[feature] = len(unique_cats)
+            else:
+                x_clean = X[feature].dropna()
+                if len(x_clean) > 0:
+                    x_min, x_max = x_clean.min(), x_clean.max()
+                    splits = np.linspace(x_min, x_max, self.n_bins + 1)[1:-1]
+                    self.splits_[feature] = self._round_splits(splits)
+                    self.n_bins_[feature] = self.n_bins
+                else:
+                    self.splits_[feature] = np.array([])
+                    self.n_bins_[feature] = 1
+
+            bins = self._apply_splits(X[feature], self.splits_[feature], feature_type)
+            self.bin_tables_[feature] = self._compute_bin_stats(
+                feature, X[feature], y, bins
+            )
+
+        self._is_fitted = True
+        return self
+
+    def _apply_splits(
+        self,
+        x: pd.Series,
+        splits: np.ndarray,
+        feature_type: str
+    ) -> np.ndarray:
+        if feature_type == 'categorical':
+            cat_map = {cat: i for i, cat in enumerate(x.dropna().unique())}
+            bins = x.map(cat_map).fillna(-1).values
+        else:
+            if len(splits) > 0:
+                bins = np.digitize(x.fillna(-np.inf).values, splits, right=True)
+            else:
+                bins = np.zeros(len(x), dtype=int)
+            bins[x.isna()] = -1
+        return bins
+
+    def transform(
+        self,
+        X: Union[pd.DataFrame, np.ndarray],
+        metric: str = 'indices',
+        **kwargs
+    ) -> Union[pd.DataFrame, np.ndarray]:
+        if not self._is_fitted:
+            raise ValueError("分箱器尚未拟合")
+
+        if not isinstance(X, pd.DataFrame):
+            X = pd.DataFrame(X)
+
+        result = pd.DataFrame(index=X.index)
+
+        for feature in X.columns:
+            splits = self.splits_[feature]
+            feature_type = self.feature_types_[feature]
+            bins = self._apply_splits(X[feature], splits, feature_type)
+
+            if metric == 'indices':
+                result[feature] = bins
+            elif metric == 'bins':
+                labels = self._get_bin_labels(splits, bins)
+                result[feature] = [labels[b] if b >= 0 else 'missing' for b in bins]
+            elif metric == 'woe':
+                bin_table = self.bin_tables_[feature]
+                woe_map = {i: bin_table.iloc[i]['分档WOE值'] for i in range(len(bin_table))}
+                result[feature] = [woe_map.get(b, 0) for b in bins]
+            else:
+                raise ValueError(f"不支持的metric: {metric}")
+
+        return result if isinstance(X, pd.DataFrame) else result.values
+
+
+class QuantileBinning(BaseBinning):
+    """等频分箱."""
+    
+    def __init__(
+        self,
+        target: str = 'target',
+        n_bins: int = 5,
+        **kwargs
+    ):
+        if 'max_n_bins' not in kwargs:
+            kwargs['max_n_bins'] = n_bins
+        super().__init__(target=target, **kwargs)
+        self.n_bins = n_bins
+
+    def fit(
+        self,
+        X: Union[pd.DataFrame, np.ndarray],
+        y: Optional[Union[pd.Series, np.ndarray]] = None,
+        **kwargs
+    ) -> 'QuantileBinning':
+        X, y = self._check_input(X, y)
+
+        for feature in X.columns:
+            feature_type = self._detect_feature_type(X[feature])
+            self.feature_types_[feature] = feature_type
+
+            if feature_type == 'categorical':
+                cat_counts = X[feature].value_counts()
+                if self.cat_cutoff is not None and self.cat_cutoff < 1:
+                    n_samples = len(X[feature])
+                    mask = cat_counts / n_samples >= self.cat_cutoff
+                    keep_cats = cat_counts[mask].index.tolist()
+                else:
+                    keep_cats = cat_counts.head(self.n_bins).index.tolist()
+
+                cat_to_bin = {cat: i for i, cat in enumerate(keep_cats)}
+                self._cat_mappings = getattr(self, '_cat_mappings', {})
+                self._cat_mappings[feature] = cat_to_bin
+                self.splits_[feature] = np.array([])
+                self.n_bins_[feature] = len(keep_cats) + 1
+            else:
+                x_clean = X[feature].dropna()
+                if len(x_clean) > 0:
+                    quantiles = np.linspace(0, 1, self.n_bins + 1)
+                    splits = np.percentile(
+                        x_clean, quantiles[1:-1] * 100
+                    )
+                    self.splits_[feature] = self._round_splits(splits)
+                    self.n_bins_[feature] = self.n_bins
+                else:
+                    self.splits_[feature] = np.array([])
+                    self.n_bins_[feature] = 1
+
+            bins = self._apply_splits(X[feature], self.splits_[feature], feature_type)
+            self.bin_tables_[feature] = self._compute_bin_stats(
+                feature, X[feature], y, bins
+            )
+
+        self._is_fitted = True
+        return self
+
+    def _apply_splits(
+        self,
+        x: pd.Series,
+        splits: np.ndarray,
+        feature_type: str
+    ) -> np.ndarray:
+        if feature_type == 'categorical':
+            cat_to_bin = self._cat_mappings.get(x.name, {})
+            bins = x.map(cat_to_bin).fillna(-1).values
+            bins[bins == -1] = len(cat_to_bin)
+        else:
+            if len(splits) > 0:
+                bins = np.digitize(x.fillna(-np.inf).values, splits, right=True)
+            else:
+                bins = np.zeros(len(x), dtype=int)
+            bins[x.isna()] = -1
+        return bins
+
+    def transform(
+        self,
+        X: Union[pd.DataFrame, np.ndarray],
+        metric: str = 'indices',
+        **kwargs
+    ) -> Union[pd.DataFrame, np.ndarray]:
+        if not self._is_fitted:
+            raise ValueError("分箱器尚未拟合")
+
+        if not isinstance(X, pd.DataFrame):
+            X = pd.DataFrame(X)
+
+        result = pd.DataFrame(index=X.index)
+
+        for feature in X.columns:
+            splits = self.splits_[feature]
+            feature_type = self.feature_types_[feature]
+            bins = self._apply_splits(X[feature], splits, feature_type)
+
+            if metric == 'indices':
+                result[feature] = bins
+            elif metric == 'bins':
+                labels = self._get_bin_labels(splits, bins)
+                result[feature] = [labels[b] if b >= 0 else 'missing' for b in bins]
+            elif metric == 'woe':
+                bin_table = self.bin_tables_[feature]
+                woe_map = {i: bin_table.iloc[i]['分档WOE值'] for i in range(len(bin_table))}
+                result[feature] = [woe_map.get(b, 0) for b in bins]
+            else:
+                raise ValueError(f"不支持的metric: {metric}")
+
+        return result if isinstance(X, pd.DataFrame) else result.values
+
+
+class TreeBinning(BaseBinning):
+    """决策树分箱."""
+    
+    def __init__(
+        self,
+        target: str = 'target',
+        max_n_bins: int = 5,
+        min_bin_size: float = 0.01,
+        **kwargs
+    ):
+        super().__init__(target=target, max_n_bins=max_n_bins, min_bin_size=min_bin_size, **kwargs)
+        self.max_n_bins = max_n_bins
+        self.min_bin_size = min_bin_size
+
+    def fit(
+        self,
+        X: Union[pd.DataFrame, np.ndarray],
+        y: Optional[Union[pd.Series, np.ndarray]] = None,
+        **kwargs
+    ) -> 'TreeBinning':
+        from sklearn.tree import DecisionTreeClassifier
+
+        X, y = self._check_input(X, y)
+
+        for feature in X.columns:
+            feature_type = self._detect_feature_type(X[feature])
+            self.feature_types_[feature] = feature_type
+
+            if feature_type == 'categorical':
+                cat_map = {cat: i for i, cat in enumerate(X[feature].dropna().unique())}
+                x_numeric = X[feature].map(cat_map).fillna(-1).values.reshape(-1, 1)
+            else:
+                x_numeric = X[feature].fillna(X[feature].median()).values.reshape(-1, 1)
+
+            n_samples = len(y)
+            if self.min_bin_size < 1:
+                min_samples = max(int(self.min_bin_size * n_samples), 1)
+            else:
+                min_samples = int(self.min_bin_size)
+
+            tree = DecisionTreeClassifier(
+                max_leaf_nodes=self.max_n_bins,
+                min_samples_leaf=min_samples,
+                random_state=self.random_state
+            )
+            tree.fit(x_numeric, y)
+
+            tree_ = tree.tree_
+            splits = set()
+
+            def extract_splits(node_id):
+                if tree_.feature[node_id] != -2:
+                    threshold = tree_.threshold[node_id]
+                    splits.add(threshold)
+                    extract_splits(tree_.children_left[node_id])
+                    extract_splits(tree_.children_right[node_id])
+
+            extract_splits(0)
+            self.splits_[feature] = self._round_splits(np.array(sorted(splits)))
+            self.n_bins_[feature] = len(splits) + 1
+
+            bins = self._apply_splits(X[feature], self.splits_[feature], feature_type)
+            self.bin_tables_[feature] = self._compute_bin_stats(
+                feature, X[feature], y, bins
+            )
+
+        self._is_fitted = True
+        return self
+
+    def _apply_splits(
+        self,
+        x: pd.Series,
+        splits: np.ndarray,
+        feature_type: str
+    ) -> np.ndarray:
+        if feature_type == 'categorical':
+            cat_map = {cat: i for i, cat in enumerate(x.dropna().unique())}
+            x_numeric = x.map(cat_map).fillna(-1).values
+        else:
+            x_numeric = x.fillna(-np.inf).values
+
+        if len(splits) > 0:
+            bins = np.digitize(x_numeric, splits, right=True)
+        else:
+            bins = np.zeros(len(x), dtype=int)
+
+        if feature_type != 'categorical':
+            bins[x.isna()] = -1
+
+        return bins
+
+    def transform(
+        self,
+        X: Union[pd.DataFrame, np.ndarray],
+        metric: str = 'indices',
+        **kwargs
+    ) -> Union[pd.DataFrame, np.ndarray]:
+        if not self._is_fitted:
+            raise ValueError("分箱器尚未拟合")
+
+        if not isinstance(X, pd.DataFrame):
+            X = pd.DataFrame(X)
+
+        result = pd.DataFrame(index=X.index)
+
+        for feature in X.columns:
+            splits = self.splits_[feature]
+            feature_type = self.feature_types_[feature]
+            bins = self._apply_splits(X[feature], splits, feature_type)
+
+            if metric == 'indices':
+                result[feature] = bins
+            elif metric == 'bins':
+                labels = self._get_bin_labels(splits, bins)
+                result[feature] = [labels[b] if b >= 0 else 'missing' for b in bins]
+            elif metric == 'woe':
+                bin_table = self.bin_tables_[feature]
+                woe_map = {i: bin_table.iloc[i]['分档WOE值'] for i in range(len(bin_table))}
+                result[feature] = [woe_map.get(b, 0) for b in bins]
+            else:
+                raise ValueError(f"不支持的metric: {metric}")
+
+        return result if isinstance(X, pd.DataFrame) else result.values
+
+
+class ChiMergeBinning(BaseBinning):
+    """卡方合并分箱."""
+    
+    def __init__(
+        self,
+        target: str = 'target',
+        max_n_bins: int = 5,
+        min_chi2: float = 3.841,
+        **kwargs
+    ):
+        super().__init__(target=target, max_n_bins=max_n_bins, **kwargs)
+        self.min_chi2 = min_chi2
+
+    def _calculate_chi2(self, obs: np.ndarray) -> float:
+        row_sum = obs.sum(axis=1)
+        col_sum = obs.sum(axis=0)
+        total = obs.sum()
+
+        if total == 0:
+            return 0.0
+
+        expected = np.outer(row_sum, col_sum) / total
+        expected = np.maximum(expected, 1e-10)
+        chi2 = ((obs - expected) ** 2 / expected).sum()
+        return chi2
+
+    def fit(
+        self,
+        X: Union[pd.DataFrame, np.ndarray],
+        y: Optional[Union[pd.Series, np.ndarray]] = None,
+        **kwargs
+    ) -> 'ChiMergeBinning':
+        X, y = self._check_input(X, y)
+
+        for feature in X.columns:
+            feature_type = self._detect_feature_type(X[feature])
+            self.feature_types_[feature] = feature_type
+
+            x_clean = X[feature].dropna()
+            if len(x_clean) < 2:
+                self.splits_[feature] = np.array([])
+                self.n_bins_[feature] = 1
+                continue
+
+            n_initial_bins = min(self.max_n_bins * 2, 20)
+            quantiles = np.linspace(0, 1, n_initial_bins + 1)
+            initial_splits = np.percentile(x_clean, quantiles[1:-1] * 100)
+            initial_splits = np.unique(initial_splits)
+
+            def get_contingency_table(splits):
+                if len(splits) == 0:
+                    bins = np.zeros(len(X), dtype=int)
+                else:
+                    bins = np.digitize(X[feature].fillna(-np.inf).values, splits, right=True)
+                contingency = pd.crosstab(bins, y)
+                return contingency.values
+
+            current_splits = list(initial_splits)
+
+            while len(current_splits) >= self.max_n_bins:
+                if len(current_splits) == 0:
+                    break
+
+                min_chi2 = float('inf')
+                min_idx = -1
+
+                for i in range(len(current_splits)):
+                    temp_splits = current_splits[:i] + current_splits[i+1:]
+                    obs = get_contingency_table(np.array(temp_splits))
+
+                    if obs.shape[0] < 2:
+                        continue
+
+                    chi2 = self._calculate_chi2(obs)
+
+                    if chi2 < min_chi2:
+                        min_chi2 = chi2
+                        min_idx = i
+
+                if min_chi2 > self.min_chi2 or len(current_splits) <= 1:
+                    break
+
+                if min_idx >= 0:
+                    current_splits.pop(min_idx)
+
+            self.splits_[feature] = self._round_splits(np.array(current_splits))
+            self.n_bins_[feature] = len(current_splits) + 1
+
+            bins = self._apply_splits(X[feature], self.splits_[feature], feature_type)
+            self.bin_tables_[feature] = self._compute_bin_stats(
+                feature, X[feature], y, bins
+            )
+
+        self._is_fitted = True
+        return self
+
+    def _apply_splits(
+        self,
+        x: pd.Series,
+        splits: np.ndarray,
+        feature_type: str
+    ) -> np.ndarray:
+        if len(splits) > 0:
+            bins = np.digitize(x.fillna(-np.inf).values, splits, right=True)
+        else:
+            bins = np.zeros(len(x), dtype=int)
+        bins[x.isna()] = -1
+        return bins
+
+    def transform(
+        self,
+        X: Union[pd.DataFrame, np.ndarray],
+        metric: str = 'indices',
+        **kwargs
+    ) -> Union[pd.DataFrame, np.ndarray]:
+        if not self._is_fitted:
+            raise ValueError("分箱器尚未拟合")
+
+        if not isinstance(X, pd.DataFrame):
+            X = pd.DataFrame(X)
+
+        result = pd.DataFrame(index=X.index)
+
+        for feature in X.columns:
+            splits = self.splits_[feature]
+            feature_type = self.feature_types_[feature]
+            bins = self._apply_splits(X[feature], splits, feature_type)
+
+            if metric == 'indices':
+                result[feature] = bins
+            elif metric == 'bins':
+                labels = self._get_bin_labels(splits, bins)
+                result[feature] = [labels[b] if b >= 0 else 'missing' for b in bins]
+            elif metric == 'woe':
+                bin_table = self.bin_tables_[feature]
+                woe_map = {i: bin_table.iloc[i]['分档WOE值'] for i in range(len(bin_table))}
+                result[feature] = [woe_map.get(b, 0) for b in bins]
+            else:
+                raise ValueError(f"不支持的metric: {metric}")
+
+        return result if isinstance(X, pd.DataFrame) else result.values
+
+
+class OptimalBinning(BaseBinning):
+    """统一分箱接口 - 整合所有分箱方法.
+
+    提供统一的 fit/transform 接口，支持所有分箱方法。
+    融合 MonotonicBinning 的单调性约束功能。
+    支持指定切割点 (user_splits) 和预分箱。
+
+    :param target: 目标变量列名，默认为'target'
+    :param method: 分箱方法，可选:
+        - 基础方法: 'uniform', 'quantile', 'tree', 'chi_merge'
+        - 优化方法: 'optimal_ks', 'optimal_iv', 'mdlp'
+        - 高级方法: 'cart', 'kmeans', 'monotonic', 'genetic', 
+                   'smooth', 'kernel_density', 'best_lift', 'target_bad_rate'
+        默认为'optimal_iv'
+    :param max_n_bins: 最大分箱数，默认为5
+    :param min_n_bins: 最小分箱数，默认为2
+    :param min_bin_size: 每箱最小样本数或占比，默认为0.01
+    :param monotonic: 坏样本率单调性约束，默认为False
+        - False: 不要求单调性
+        - True 或 'auto': 自动检测并应用最佳单调方向
+        - 'ascending': 强制坏样本率递增
+        - 'descending': 强制坏样本率递减
+        - 'peak': 允许单峰形态(先升后降)
+        - 'valley': 允许单谷形态(先降后升)
+    :param user_splits: 用户指定的切分点，支持:
+        - Dict[str, List]: 每个特征的切分点，如 {'age': [25, 35, 45]}
+        - Callable: 函数返回切分点
+    :param prebinning: 预分箱方法，支持:
+        - str: 预分箱方法名，如 'cart', 'quantile', 'uniform'
+        - BaseBinning: 预分箱器实例
+        - Dict: 预分箱配置，如 {'method': 'cart', 'max_n_bins': 20}
+        默认为None（不进行预分箱）
+    :param prebinning_params: 预分箱参数，当prebinning为str时使用
+    :param special_codes: 特殊值列表，默认为None
+    :param cat_cutoff: 类别型变量处理阈值，默认为None
+    :param random_state: 随机种子，默认为None
+    :param verbose: 是否输出详细信息，默认为False
+    :param kwargs: 其他分箱方法特定参数
+
+    **示例**
+
+    >>> from hscredit.core.binning import OptimalBinning
+    >>> # 使用最优IV分箱
+    >>> binner = OptimalBinning(method='optimal_iv', max_n_bins=5)
+    >>> binner.fit(X, y)
+    >>> # 使用CART分箱
+    >>> binner = OptimalBinning(method='cart', max_n_bins=5)
+    >>> binner.fit(X, y)
+    >>> # 使用预分箱（MDLP先进行CART预分箱）
+    >>> binner = OptimalBinning(method='mdlp', prebinning='cart', prebinning_params={'max_n_bins': 20})
+    >>> binner.fit(X, y)
+    >>> # 使用预分箱器实例
+    >>> pre_binner = OptimalBinning(method='cart', max_n_bins=20)
+    >>> binner = OptimalBinning(method='optimal_iv', prebinning=pre_binner)
+    >>> binner.fit(X, y)
+    """
+
+    # 所有支持的分箱方法
+    VALID_METHODS = [
+        'uniform', 'quantile', 'tree', 'chi_merge',
+        'optimal_ks', 'optimal_iv', 'mdlp',
+        'cart', 'kmeans', 'monotonic', 'genetic',
+        'smooth', 'kernel_density', 'best_lift', 'target_bad_rate'
+    ]
+
+    def __init__(
+        self,
+        target: str = 'target',
+        method: str = 'optimal_iv',
+        max_n_bins: int = 5,
+        min_n_bins: int = 2,
+        min_bin_size: Union[float, int] = 0.01,
+        max_bin_size: Optional[Union[float, int]] = None,
+        monotonic: Union[bool, str] = False,
+        user_splits: Optional[Union[Dict[str, List], Callable]] = None,
+        prebinning: Optional[Union[str, 'BaseBinning', Dict]] = None,
+        prebinning_params: Optional[Dict] = None,
+        special_codes: Optional[List] = None,
+        cat_cutoff: Optional[Union[float, int]] = None,
+        random_state: Optional[int] = None,
+        verbose: Union[bool, int] = False,
+        **kwargs
+    ):
+        super().__init__(
+            target=target,
+            max_n_bins=max_n_bins,
+            min_n_bins=min_n_bins,
+            min_bin_size=min_bin_size,
+            max_bin_size=max_bin_size,
+            monotonic=monotonic,
+            special_codes=special_codes,
+            cat_cutoff=cat_cutoff,
+            random_state=random_state,
+            verbose=verbose,
+        )
+
+        if method not in self.VALID_METHODS:
+            raise ValueError(f"不支持的method: {method}，可选: {self.VALID_METHODS}")
+
+        self.method = method
+        self.user_splits = user_splits
+        self.prebinning = prebinning
+        self.prebinning_params = prebinning_params or {}
+        self.kwargs = kwargs
+        self._binner = None
+        self._prebinner = None
+        self.monotonic_trend_ = {}
+
+    def fit(
+        self,
+        X: Union[pd.DataFrame, np.ndarray],
+        y: Optional[Union[pd.Series, np.ndarray]] = None,
+        **kwargs
+    ) -> 'OptimalBinning':
+        """拟合分箱.
+
+        :param X: 训练数据
+        :param y: 目标变量
+        :param kwargs: 其他参数
+        :return: 拟合后的分箱器
+        """
+        X, y = self._check_input(X, y)
+
+        # 如果已经拟合过（例如通过import_rules），只计算统计信息
+        if self._is_fitted:
+            self._update_bin_stats(X, y)
+            return self
+
+        # 如果指定了 user_splits，优先使用
+        if self.user_splits is not None:
+            self._fit_with_user_splits(X, y)
+        elif self.prebinning is not None:
+            # 使用预分箱
+            self._fit_with_prebinning(X, y)
+        else:
+            # 使用指定方法
+            self._fit_with_method(X, y)
+
+        # 如果设置了单调性约束，对结果进行单调性调整
+        if self.monotonic and self.method != 'monotonic':
+            self._apply_monotonic_adjustment(X, y)
+
+        self._is_fitted = True
+        return self
+    
+    def _update_bin_stats(
+        self,
+        X: pd.DataFrame,
+        y: pd.Series
+    ):
+        """更新分箱统计信息（用于已导入规则的情况）.
+        
+        :param X: 特征数据
+        :param y: 目标变量
+        """
+        for feature in self.splits_.keys():
+            if feature not in X.columns:
+                continue
+            
+            # 获取特征类型
+            feature_type = self.feature_types_.get(feature, 'numerical')
+            
+            # 获取切分点
+            splits = self.splits_[feature]
+            
+            # 对于类别型变量，优先使用_cat_bins_
+            if feature_type == 'categorical' and feature in self._cat_bins_:
+                bins = self._apply_bins(X[feature], self._cat_bins_[feature], feature_type, feature)
+            else:
+                bins = self._apply_bins(X[feature], splits, feature_type, feature)
+            
+            # 计算分箱统计
+            self.bin_tables_[feature] = self._compute_bin_stats(
+                feature, X[feature], y, bins
+            )
+
+    def _fit_with_user_splits(
+        self,
+        X: pd.DataFrame,
+        y: pd.Series
+    ):
+        """使用用户指定的切分点进行分箱."""
+        for feature in X.columns:
+            feature_type = self._detect_feature_type(X[feature])
+            self.feature_types_[feature] = feature_type
+
+            # 获取切分点
+            if callable(self.user_splits):
+                splits = self.user_splits(X[feature])
+            elif isinstance(self.user_splits, dict) and feature in self.user_splits:
+                splits = self.user_splits[feature]
+            else:
+                # 如果没有指定该特征的切分点，使用默认方法
+                splits = self._get_default_splits(X[feature], y, feature_type)
+
+            if feature_type == 'numerical':
+                splits = np.array(sorted(splits))
+                # 确保切分点在数据范围内
+                x_min, x_max = X[feature].min(), X[feature].max()
+                splits = splits[(splits > x_min) & (splits < x_max)]
+                self.splits_[feature] = self._round_splits(splits)
+                self.n_bins_[feature] = len(splits) + 1
+            else:
+                # 类别型特征
+                splits = list(splits)
+                
+                # 检查是否为List[List]格式
+                if len(splits) > 0 and isinstance(splits[0], list):
+                    # List[List]格式，保存到_cat_bins_
+                    self._cat_bins_[feature] = splits
+                    # splits_保存为List[List]格式（用于export_rules）
+                    self.splits_[feature] = splits
+                    self.n_bins_[feature] = len(splits)
+                else:
+                    # 字符串格式（向后兼容）
+                    self.splits_[feature] = splits
+                    self.n_bins_[feature] = len(splits) + 1
+
+            # 计算分箱统计
+            bins = self._apply_bins(X[feature], self.splits_[feature], feature_type, feature)
+            self.bin_tables_[feature] = self._compute_bin_stats(
+                feature, X[feature], y, bins
+            )
+
+    def _fit_with_prebinning(
+        self,
+        X: pd.DataFrame,
+        y: pd.Series
+    ):
+        """使用预分箱进行分箱.
+        
+        先使用预分箱方法生成初始切分点，再使用主方法进行优化。
+        参考optbinning的实现，如MDLP分箱前先用CART预分箱。
+        """
+        # 1. 创建预分箱器
+        if isinstance(self.prebinning, BaseBinning):
+            # 传入的是分箱器实例
+            self._prebinner = self.prebinning
+        elif isinstance(self.prebinning, str):
+            # 传入的是方法名
+            pre_params = {
+                'max_n_bins': self.prebinning_params.get('max_n_bins', 20),
+                'min_bin_size': self.prebinning_params.get('min_bin_size', self.min_bin_size),
+                'random_state': self.prebinning_params.get('random_state', self.random_state),
+                'verbose': self.prebinning_params.get('verbose', False),
+            }
+            self._prebinner = OptimalBinning(method=self.prebinning, **pre_params)
+        elif isinstance(self.prebinning, dict):
+            # 传入的是配置字典
+            pre_method = self.prebinning.get('method', 'cart')
+            pre_params = {
+                'max_n_bins': self.prebinning.get('max_n_bins', 20),
+                'min_bin_size': self.prebinning.get('min_bin_size', self.min_bin_size),
+                'random_state': self.prebinning.get('random_state', self.random_state),
+                'verbose': self.prebinning.get('verbose', False),
+            }
+            self._prebinner = OptimalBinning(method=pre_method, **pre_params)
+        else:
+            raise ValueError(f"不支持的prebinning类型: {type(self.prebinning)}")
+        
+        # 2. 执行预分箱
+        if self.verbose:
+            print(f"执行预分箱: {self._prebinner.method}")
+        self._prebinner.fit(X, y)
+        
+        # 3. 获取预分箱的切分点作为初始切分点
+        pre_splits = {}
+        for feature in X.columns:
+            if feature in self._prebinner.splits_:
+                pre_splits[feature] = self._prebinner.splits_[feature]
+        
+        # 4. 使用主方法，但限制在预分箱的切分点上
+        # 对于支持初始切分点的方法，传入预分箱结果
+        if self.method in ['optimal_ks', 'optimal_iv', 'chi_merge', 'mdlp']:
+            # 这些方法可以在预分箱基础上进一步优化
+            self._fit_with_method_and_prebins(X, y, pre_splits)
+        else:
+            # 其他方法直接使用预分箱结果
+            self.splits_ = self._prebinner.splits_
+            self.n_bins_ = self._prebinner.n_bins_
+            self.bin_tables_ = self._prebinner.bin_tables_
+            self.feature_types_ = self._prebinner.feature_types_
+
+    def _fit_with_method_and_prebins(
+        self,
+        X: pd.DataFrame,
+        y: pd.Series,
+        pre_splits: Dict[str, np.ndarray]
+    ):
+        """使用预分箱切分点进行优化分箱."""
+        for feature in X.columns:
+            feature_type = self._detect_feature_type(X[feature])
+            self.feature_types_[feature] = feature_type
+            
+            if feature_type == 'categorical':
+                # 类别型特征直接使用预分箱结果
+                if feature in self._prebinner.splits_:
+                    self.splits_[feature] = self._prebinner.splits_[feature]
+                    self.n_bins_[feature] = self._prebinner.n_bins_[feature]
+                    self.bin_tables_[feature] = self._prebinner.bin_tables_[feature]
+                continue
+            
+            # 数值型特征：在预分箱切分点基础上优化
+            initial_splits = pre_splits.get(feature, np.array([]))
+            
+            if len(initial_splits) == 0:
+                # 没有预分箱切分点，使用默认方法
+                self._fit_single_feature(X[[feature]], y, feature)
+                continue
+            
+            # 使用预分箱切分点生成初始分箱
+            x_clean = X[feature].dropna()
+            y_clean = y[x_clean.index]
+            
+            # 基于预分箱切分点计算每个箱的统计信息
+            bins = np.digitize(x_clean, initial_splits, right=True)
+            
+            # 根据主方法进行优化
+            if self.method == 'optimal_iv':
+                optimized_splits = self._optimize_iv_splits(
+                    x_clean, y_clean, initial_splits
+                )
+            elif self.method == 'optimal_ks':
+                optimized_splits = self._optimize_ks_splits(
+                    x_clean, y_clean, initial_splits
+                )
+            elif self.method == 'chi_merge':
+                optimized_splits = self._optimize_chi_merge_splits(
+                    x_clean, y_clean, initial_splits
+                )
+            elif self.method == 'mdlp':
+                # MDLP: 如果预分箱超出限制，使用IV优化进行合并
+                optimized_splits = self._optimize_mdlp_splits(
+                    x_clean, y_clean, initial_splits
+                )
+            else:
+                optimized_splits = initial_splits
+            
+            self.splits_[feature] = self._round_splits(optimized_splits)
+            self.n_bins_[feature] = len(optimized_splits) + 1
+            
+            # 计算最终分箱统计
+            final_bins = self._apply_bins(X[feature], optimized_splits, feature_type)
+            self.bin_tables_[feature] = self._compute_bin_stats(
+                feature, X[feature], y, final_bins
+            )
+
+    def _fit_single_feature(
+        self,
+        X: pd.DataFrame,
+        y: pd.Series,
+        feature: str
+    ):
+        """对单个特征使用主方法分箱."""
+        temp_binner = OptimalBinning(
+            method=self.method,
+            max_n_bins=self.max_n_bins,
+            min_bin_size=self.min_bin_size,
+            random_state=self.random_state,
+            verbose=False
+        )
+        temp_binner.fit(X, y)
+        
+        self.splits_[feature] = temp_binner.splits_[feature]
+        self.n_bins_[feature] = temp_binner.n_bins_[feature]
+        self.bin_tables_[feature] = temp_binner.bin_tables_[feature]
+
+    def _optimize_iv_splits(
+        self,
+        x: pd.Series,
+        y: pd.Series,
+        initial_splits: np.ndarray
+    ) -> np.ndarray:
+        """基于预分箱切分点优化IV."""
+        if len(initial_splits) <= self.max_n_bins - 1:
+            return initial_splits
+        
+        # 计算每个预分箱的IV贡献
+        bins = np.digitize(x, initial_splits, right=True)
+        bin_stats = []
+        
+        for bin_idx in range(len(initial_splits) + 1):
+            mask = bins == bin_idx
+            if mask.sum() == 0:
+                continue
+            
+            y_bin = y[mask]
+            bad_rate = y_bin.mean()
+            bin_stats.append({
+                'bin': bin_idx,
+                'count': mask.sum(),
+                'bad_rate': bad_rate,
+                'split': initial_splits[bin_idx] if bin_idx < len(initial_splits) else None
+            })
+        
+        # 基于IV贡献合并相邻箱，直到满足max_n_bins
+        current_splits = list(initial_splits)
+        
+        while len(current_splits) >= self.max_n_bins:
+            # 找到IV损失最小的合并方案
+            min_iv_loss = float('inf')
+            merge_idx = -1
+            
+            for i in range(len(current_splits)):
+                temp_splits = current_splits[:i] + current_splits[i+1:]
+                iv_loss = self._calculate_iv_loss(x, y, current_splits, temp_splits)
+                
+                if iv_loss < min_iv_loss:
+                    min_iv_loss = iv_loss
+                    merge_idx = i
+            
+            if merge_idx >= 0:
+                current_splits.pop(merge_idx)
+            else:
+                break
+        
+        return np.array(current_splits)
+
+    def _optimize_ks_splits(
+        self,
+        x: pd.Series,
+        y: pd.Series,
+        initial_splits: np.ndarray
+    ) -> np.ndarray:
+        """基于预分箱切分点优化KS."""
+        if len(initial_splits) <= self.max_n_bins - 1:
+            return initial_splits
+        
+        # 类似IV优化，但基于KS统计量
+        current_splits = list(initial_splits)
+        
+        while len(current_splits) >= self.max_n_bins:
+            # 找到KS损失最小的合并方案
+            min_ks_loss = float('inf')
+            merge_idx = -1
+            
+            for i in range(len(current_splits)):
+                temp_splits = current_splits[:i] + current_splits[i+1:]
+                ks_loss = self._calculate_ks_loss(x, y, current_splits, temp_splits)
+                
+                if ks_loss < min_ks_loss:
+                    min_ks_loss = ks_loss
+                    merge_idx = i
+            
+            if merge_idx >= 0:
+                current_splits.pop(merge_idx)
+            else:
+                break
+        
+        return np.array(current_splits)
+
+    def _optimize_chi_merge_splits(
+        self,
+        x: pd.Series,
+        y: pd.Series,
+        initial_splits: np.ndarray
+    ) -> np.ndarray:
+        """基于预分箱切分点进行卡方合并."""
+        if len(initial_splits) <= self.max_n_bins - 1:
+            return initial_splits
+        
+        current_splits = list(initial_splits)
+        
+        while len(current_splits) >= self.max_n_bins:
+            min_chi2 = float('inf')
+            merge_idx = -1
+            
+            for i in range(len(current_splits)):
+                temp_splits = current_splits[:i] + current_splits[i+1:]
+                chi2 = self._calculate_chi2_for_splits(x, y, temp_splits)
+                
+                if chi2 < min_chi2:
+                    min_chi2 = chi2
+                    merge_idx = i
+            
+            if merge_idx >= 0 and min_chi2 < 3.841:  # 卡方阈值
+                current_splits.pop(merge_idx)
+            else:
+                break
+        
+        return np.array(current_splits)
+
+    def _optimize_mdlp_splits(
+        self,
+        x: pd.Series,
+        y: pd.Series,
+        initial_splits: np.ndarray
+    ) -> np.ndarray:
+        """基于预分箱切分点优化MDLP分箱.
+        
+        MDLP算法本身会根据信息增益自动确定分箱数。
+        当使用预分箱时，如果预分箱的分箱数超过max_n_bins，
+        使用坏样本率差异最小的策略合并相邻分箱。
+        
+        :param x: 特征数据
+        :param y: 目标变量
+        :param initial_splits: 预分箱切分点
+        :return: 优化后的切分点
+        """
+        if len(initial_splits) <= self.max_n_bins - 1:
+            return initial_splits
+        
+        # 使用坏样本率差异作为合并标准
+        current_splits = list(initial_splits)
+        
+        while len(current_splits) >= self.max_n_bins:
+            # 计算每个分箱的统计信息
+            bins = np.digitize(x, current_splits, right=True)
+            
+            bin_stats = []
+            for bin_idx in range(len(current_splits) + 1):
+                mask = bins == bin_idx
+                if mask.sum() > 0:
+                    y_bin = y[mask]
+                    bin_stats.append({
+                        'bin': bin_idx,
+                        'count': mask.sum(),
+                        'bad_rate': y_bin.mean()
+                    })
+            
+            # 找到坏样本率差异最小的相邻分箱
+            min_diff = float('inf')
+            merge_idx = -1
+            
+            for i in range(len(bin_stats) - 1):
+                diff = abs(bin_stats[i]['bad_rate'] - bin_stats[i+1]['bad_rate'])
+                if diff < min_diff:
+                    min_diff = diff
+                    merge_idx = i
+            
+            # 合并选中的切分点
+            if merge_idx >= 0:
+                current_splits.pop(merge_idx)
+            else:
+                break
+        
+        return np.array(current_splits)
+
+    def _calculate_iv_loss(
+        self,
+        x: pd.Series,
+        y: pd.Series,
+        splits_before: List,
+        splits_after: List
+    ) -> float:
+        """计算合并前后的IV损失.
+        
+        IV损失 = 合并前IV - 合并后IV
+        值越小表示合并带来的信息损失越小。
+        
+        使用 metrics.binning_metrics.compare_splits_iv 方法。
+        """
+        return compare_splits_iv(
+            x.values if isinstance(x, pd.Series) else x,
+            y.values if isinstance(y, pd.Series) else y,
+            np.array(splits_before),
+            np.array(splits_after)
+        )
+
+    def _calculate_ks_loss(
+        self,
+        x: pd.Series,
+        y: pd.Series,
+        splits_before: List,
+        splits_after: List
+    ) -> float:
+        """计算合并前后的KS损失.
+        
+        KS损失 = 合并前KS - 合并后KS
+        值越小表示合并带来的区分度损失越小。
+        
+        使用 metrics.binning_metrics.compare_splits_ks 方法。
+        """
+        return compare_splits_ks(
+            x.values if isinstance(x, pd.Series) else x,
+            y.values if isinstance(y, pd.Series) else y,
+            np.array(splits_before),
+            np.array(splits_after)
+        )
+
+    def _calculate_total_iv(
+        self,
+        x: pd.Series,
+        y: pd.Series,
+        splits: List
+    ) -> float:
+        """计算给定切分点的总IV值.
+        
+        使用 metrics.binning_metrics.iv_for_splits 方法。
+        """
+        if len(splits) == 0:
+            return 0.0
+        return iv_for_splits(
+            x.values if isinstance(x, pd.Series) else x,
+            y.values if isinstance(y, pd.Series) else y,
+            np.array(splits)
+        )
+
+    def _calculate_max_ks(
+        self,
+        x: pd.Series,
+        y: pd.Series,
+        splits: List
+    ) -> float:
+        """计算给定切分点的最大KS值.
+        
+        使用 metrics.binning_metrics.ks_for_splits 方法。
+        """
+        if len(splits) == 0:
+            return 0.0
+        return ks_for_splits(
+            x.values if isinstance(x, pd.Series) else x,
+            y.values if isinstance(y, pd.Series) else y,
+            np.array(splits)
+        )
+
+    def _calculate_chi2_for_splits(
+        self,
+        x: pd.Series,
+        y: pd.Series,
+        splits: List
+    ) -> float:
+        """计算给定切分点的卡方统计量."""
+        if len(splits) == 0:
+            return 0.0
+        
+        bins = np.digitize(x, splits, right=True)
+        contingency = pd.crosstab(bins, y).values
+        
+        if contingency.shape[0] < 2:
+            return 0.0
+        
+        row_sum = contingency.sum(axis=1)
+        col_sum = contingency.sum(axis=0)
+        total = contingency.sum()
+        
+        if total == 0:
+            return 0.0
+        
+        expected = np.outer(row_sum, col_sum) / total
+        expected = np.maximum(expected, 1e-10)
+        chi2 = ((contingency - expected) ** 2 / expected).sum()
+        
+        return chi2
+
+    def _fit_with_method(
+        self,
+        X: pd.DataFrame,
+        y: pd.Series
+    ):
+        """使用指定方法进行分箱."""
+        # 基础参数（适用于大多数方法）
+        base_params = {
+            'max_n_bins': self.max_n_bins,
+            'min_n_bins': self.min_n_bins,
+            'min_bin_size': self.min_bin_size,
+            'special_codes': self.special_codes,
+            'random_state': self.random_state,
+            'verbose': self.verbose,
+        }
+        base_params.update(self.kwargs)
+
+        # 需要 target 参数的方法
+        target_params = {
+            'target': self.target,
+            **base_params
+        }
+
+        # 需要 cat_cutoff 参数的方法
+        full_params = {
+            'target': self.target,
+            'max_n_bins': self.max_n_bins,
+            'min_n_bins': self.min_n_bins,
+            'min_bin_size': self.min_bin_size,
+            'max_bin_size': self.max_bin_size,
+            'special_codes': self.special_codes,
+            'cat_cutoff': self.cat_cutoff,
+            'random_state': self.random_state,
+            'verbose': self.verbose,
+        }
+        full_params.update(self.kwargs)
+
+        if self.method == 'uniform':
+            self._binner = UniformBinning(**target_params)
+        elif self.method == 'quantile':
+            self._binner = QuantileBinning(**target_params)
+        elif self.method == 'tree':
+            self._binner = TreeBinning(**target_params)
+        elif self.method == 'chi_merge':
+            self._binner = ChiMergeBinning(**target_params)
+        elif self.method == 'optimal_ks':
+            self._binner = OptimalKSBinning(**full_params)
+        elif self.method == 'optimal_iv':
+            self._binner = OptimalIVBinning(**full_params)
+        elif self.method == 'mdlp':
+            self._binner = MDLPBinning(**target_params)
+        elif self.method == 'cart':
+            self._binner = CartBinning(**full_params)
+        elif self.method == 'kmeans':
+            kmeans_params = {
+                'max_n_bins': self.max_n_bins,
+                'min_n_bins': self.min_n_bins,
+                'min_bin_size': self.min_bin_size,
+                'special_codes': self.special_codes,
+                'random_state': self.random_state,
+                'verbose': self.verbose,
+                'force_numerical': True,  # 强制作为数值型处理
+            }
+            kmeans_params.update(self.kwargs)
+            self._binner = KMeansBinning(**kmeans_params)
+        elif self.method == 'monotonic':
+            mono_params = {
+                'monotonic': self.monotonic if self.monotonic else 'auto',
+                'max_n_bins': self.max_n_bins,
+                'min_n_bins': self.min_n_bins,
+                'min_bin_size': self.min_bin_size,
+                'special_codes': self.special_codes,
+                'random_state': self.random_state,
+                'verbose': self.verbose,
+            }
+            mono_params.update(self.kwargs)
+            self._binner = MonotonicBinning(**mono_params)
+        elif self.method == 'genetic':
+            self._binner = GeneticBinning(**base_params)
+        elif self.method == 'smooth':
+            self._binner = SmoothBinning(**base_params)
+        elif self.method == 'kernel_density':
+            self._binner = KernelDensityBinning(**base_params)
+        elif self.method == 'best_lift':
+            self._binner = BestLiftBinning(**target_params)
+        elif self.method == 'target_bad_rate':
+            self._binner = TargetBadRateBinning(**base_params)
+
+        self._binner.fit(X, y)
+
+        # 复制属性
+        self.splits_ = self._binner.splits_
+        self.n_bins_ = self._binner.n_bins_
+        self.bin_tables_ = self._binner.bin_tables_
+        self.feature_types_ = self._binner.feature_types_
+
+        if hasattr(self._binner, 'ks_stats_'):
+            self.ks_stats_ = self._binner.ks_stats_
+        if hasattr(self._binner, 'iv_stats_'):
+            self.iv_stats_ = self._binner.iv_stats_
+        if hasattr(self._binner, 'monotonic_trend_'):
+            self.monotonic_trend_ = self._binner.monotonic_trend_
+
+    def _get_default_splits(
+        self,
+        x: pd.Series,
+        y: pd.Series,
+        feature_type: str
+    ):
+        """获取默认切分点."""
+        if feature_type == 'categorical':
+            return x.dropna().unique().tolist()
+        else:
+            # 使用等频分箱
+            x_clean = x.dropna()
+            if len(x_clean) > 0:
+                quantiles = np.linspace(0, 1, self.max_n_bins + 1)
+                return np.percentile(x_clean, quantiles[1:-1] * 100)
+            return np.array([])
+
+    def _apply_bins(
+        self,
+        x: pd.Series,
+        splits: Union[np.ndarray, List],
+        feature_type: str,
+        feature: Optional[str] = None
+    ) -> np.ndarray:
+        """应用分箱.
+        
+        对于类别型变量，支持两种格式：
+        1. List[List]格式: [['A', 'B'], ['C'], [np.nan]]
+        2. 字符串列表格式: ['A,B', 'C'] (向后兼容)
+        """
+        if isinstance(splits, list):
+            bins = np.zeros(len(x), dtype=int)
+            
+            # 检查是否为List[List]格式（类别型变量的新格式）
+            if len(splits) > 0 and isinstance(splits[0], list):
+                # List[List]格式: [['A', 'B'], ['C'], [np.nan]]
+                for i, group in enumerate(splits):
+                    if isinstance(group, list):
+                        for value in group:
+                            # 处理np.nan
+                            if isinstance(value, float) and np.isnan(value):
+                                bins[x.isna()] = i
+                            else:
+                                bins[x == value] = i
+                    else:
+                        # 单个值（向后兼容）
+                        bins[x == group] = i
+            else:
+                # 字符串列表格式: ['A,B', 'C'] (向后兼容)
+                for i, cat in enumerate(splits):
+                    if ',' in str(cat):
+                        cats = str(cat).split(',')
+                        for c in cats:
+                            bins[x == c] = i
+                    else:
+                        bins[x == cat] = i
+                bins[x.isna()] = -1
+            
+            if self.special_codes:
+                for code in self.special_codes:
+                    bins[x == code] = -2
+            return bins
+        else:
+            bins = np.zeros(len(x), dtype=int)
+
+            if self.missing_separate:
+                bins[x.isna()] = -1
+
+            if self.special_codes:
+                for code in self.special_codes:
+                    bins[x == code] = -2
+
+            mask = x.notna()
+            if self.special_codes:
+                for code in self.special_codes:
+                    mask = mask & (x != code)
+
+            if len(splits) > 0:
+                bins[mask] = np.digitize(x[mask], splits)
+            else:
+                bins[mask] = 0
+
+            return bins
+
+    def _apply_monotonic_adjustment(
+        self,
+        X: pd.DataFrame,
+        y: pd.Series
+    ):
+        """对现有分箱结果进行单调性调整."""
+        for feature in list(self.splits_.keys()):
+            splits = self.splits_[feature]
+            feature_type = self.feature_types_[feature]
+            
+            if feature_type == 'categorical':
+                continue  # 类别型特征暂不调整
+            
+            # 检查当前分箱是否满足单调性
+            bin_table = self.bin_tables_[feature]
+            valid_bins = bin_table[bin_table['分箱标签'] != '缺失']
+            bad_rates = valid_bins['坏样本率'].values
+            
+            is_ascending = all(bad_rates[i] <= bad_rates[i+1] + 1e-10 
+                              for i in range(len(bad_rates)-1))
+            is_descending = all(bad_rates[i] >= bad_rates[i+1] - 1e-10 
+                               for i in range(len(bad_rates)-1))
+            
+            if self.monotonic == 'ascending' and not is_ascending:
+                # 使用 MonotonicBinning 重新分箱
+                binner = MonotonicBinning(
+                    monotonic='ascending',
+                    max_n_bins=self.max_n_bins,
+                    min_bin_size=self.min_bin_size,
+                    verbose=False
+                )
+                binner.fit(X[[feature]], y)
+                self.splits_[feature] = binner.splits_[feature]
+                self.n_bins_[feature] = binner.n_bins_[feature]
+                self.bin_tables_[feature] = binner.bin_tables_[feature]
+                self.monotonic_trend_[feature] = 'ascending'
+            elif self.monotonic == 'descending' and not is_descending:
+                binner = MonotonicBinning(
+                    monotonic='descending',
+                    max_n_bins=self.max_n_bins,
+                    min_bin_size=self.min_bin_size,
+                    verbose=False
+                )
+                binner.fit(X[[feature]], y)
+                self.splits_[feature] = binner.splits_[feature]
+                self.n_bins_[feature] = binner.n_bins_[feature]
+                self.bin_tables_[feature] = binner.bin_tables_[feature]
+                self.monotonic_trend_[feature] = 'descending'
+
+    def _get_bin_labels_dict(
+        self,
+        splits: Union[np.ndarray, List],
+        feature_type: str,
+        feature: Optional[str] = None
+    ) -> Dict[int, str]:
+        """生成分箱标签字典.
+        
+        对于类别型变量，支持List[List]格式。
+        """
+        labels = {}
+        labels[-1] = 'missing'
+        labels[-2] = 'special'
+        
+        # 对于类别型变量，优先使用_cat_bins_
+        if feature_type == 'categorical' and feature and feature in self._cat_bins_:
+            cat_bins = self._cat_bins_[feature]
+            for i, group in enumerate(cat_bins):
+                if isinstance(group, list):
+                    # List[List]格式
+                    # 将np.nan转换为字符串"nan"或保持为np.nan
+                    group_str = [str(v) if not (isinstance(v, float) and np.isnan(v)) else 'nan' 
+                                for v in group]
+                    labels[i] = ','.join(group_str)
+                else:
+                    labels[i] = str(group)
+        elif isinstance(splits, list) and len(splits) > 0:
+            # 字符串列表格式（向后兼容）
+            if isinstance(splits[0], list):
+                # List[List]格式
+                for i, group in enumerate(splits):
+                    if isinstance(group, list):
+                        group_str = [str(v) if not (isinstance(v, float) and np.isnan(v)) else 'nan' 
+                                    for v in group]
+                        labels[i] = ','.join(group_str)
+                    else:
+                        labels[i] = str(group)
+            else:
+                # 字符串列表格式
+                for i, cat in enumerate(splits):
+                    labels[i] = str(cat)
+        elif isinstance(splits, np.ndarray) and len(splits) > 0:
+            # 数值型切分点
+            sp_l = [-np.inf] + splits.tolist() + [np.inf]
+            for i in range(len(sp_l) - 1):
+                labels[i] = f'({sp_l[i]:.2f}, {sp_l[i+1]:.2f}]'
+        else:
+            # 只有一个箱
+            labels[0] = 'all'
+        
+        return labels
+
+        if feature_type == 'categorical':
+            if isinstance(splits, list):
+                for i, cat in enumerate(splits):
+                    labels[i] = str(cat)
+                labels[len(splits)] = 'others'
+            else:
+                labels[0] = 'category_0'
+        else:
+            if isinstance(splits, np.ndarray) and len(splits) > 0:
+                n_bins = len(splits) + 1
+                for i in range(n_bins):
+                    if i == 0:
+                        labels[i] = f'(-inf, {splits[0]}]'
+                    elif i == n_bins - 1:
+                        labels[i] = f'({splits[-1]}, +inf]'
+                    else:
+                        labels[i] = f'({splits[i-1]}, {splits[i]}]'
+            else:
+                labels[0] = '(-inf, +inf)'
+
+        return labels
+
+    def transform(
+        self,
+        X: Union[pd.DataFrame, np.ndarray],
+        metric: str = 'indices',
+        **kwargs
+    ) -> Union[pd.DataFrame, np.ndarray]:
+        """应用分箱转换.
+        
+        将原始特征值转换为分箱索引、分箱标签或WOE值。
+        
+        :param X: 待转换数据, DataFrame或数组格式
+        :param metric: 转换类型, 可选值:
+            - 'indices': 返回分箱索引 (0, 1, 2, ...), 用于后续处理
+            - 'bins': 返回分箱标签字符串, 用于可视化或报告
+            - 'woe': 返回WOE值, 用于逻辑回归建模
+        :param kwargs: 其他参数(保留兼容性)
+        :return: 转换后的数据, 格式与输入X相同
+        
+        :example:
+        >>> binner = OptimalBinning()
+        >>> binner.fit(X_train, y_train)
+        >>> 
+        >>> # 获取分箱索引
+        >>> X_binned = binner.transform(X_test, metric='indices')
+        >>> 
+        >>> # 获取WOE编码 (用于建模)
+        >>> X_woe = binner.transform(X_test, metric='woe')
+        """
+        if not self._is_fitted:
+            raise ValueError("分箱器尚未拟合，请先调用fit方法")
+
+        if self._binner is not None:
+            return self._binner.transform(X, metric=metric, **kwargs)
+
+        # 直接使用本类的分箱逻辑
+        if not isinstance(X, pd.DataFrame):
+            X = pd.DataFrame(X)
+
+        result = pd.DataFrame(index=X.index)
+
+        for feature in X.columns:
+            if feature not in self.splits_:
+                result[feature] = X[feature]
+                continue
+
+            splits = self.splits_[feature]
+            feature_type = self.feature_types_[feature]
+            
+            # 对于类别型变量，优先使用_cat_bins_
+            if feature_type == 'categorical' and feature in self._cat_bins_:
+                bins = self._apply_bins(X[feature], self._cat_bins_[feature], feature_type, feature)
+            else:
+                bins = self._apply_bins(X[feature], splits, feature_type, feature)
+
+            if metric == 'indices':
+                result[feature] = bins
+            elif metric == 'bins':
+                labels_dict = self._get_bin_labels_dict(splits, feature_type, feature)
+                result[feature] = [labels_dict.get(b, f'bin_{b}') for b in bins]
+            elif metric == 'woe':
+                bin_table = self.bin_tables_[feature]
+                woe_map = dict(zip(range(len(bin_table)), bin_table['分档WOE值'].values))
+                woe_map[-1] = 0
+                woe_map[-2] = 0
+                result[feature] = pd.Series(bins).map(woe_map).values
+            else:
+                raise ValueError(f"不支持的metric: {metric}")
+
+        return result
+
+    def get_stats(self, feature: Optional[str] = None) -> Dict[str, Any]:
+        """获取分箱统计信息."""
+        if not self._is_fitted:
+            raise ValueError("分箱器尚未拟合")
+
+        if feature is not None:
+            if feature not in self.bin_tables_:
+                raise KeyError(f"特征 '{feature}' 未找到")
+
+            stats = {
+                'n_bins': self.n_bins_[feature],
+                'bin_table': self.bin_tables_[feature],
+            }
+
+            if hasattr(self, 'ks_stats_') and feature in self.ks_stats_:
+                stats['ks'] = self.ks_stats_[feature]
+            if hasattr(self, 'iv_stats_') and feature in self.iv_stats_:
+                stats['iv'] = self.iv_stats_[feature]
+            if feature in self.monotonic_trend_:
+                stats['monotonic_trend'] = self.monotonic_trend_[feature]
+
+            return stats
+        else:
+            return {f: self.get_stats(f) for f in self.splits_.keys()}
+
+    @staticmethod
+    def auto_select_method(
+        X: pd.DataFrame,
+        y: pd.Series,
+        feature: str,
+        methods: Optional[List[str]] = None,
+        criterion: str = 'iv'
+    ) -> str:
+        """自动选择最优分箱方法.
+        
+        :param X: 特征数据
+        :param y: 目标变量
+        :param feature: 特征名
+        :param methods: 待评估的方法列表，默认为所有方法
+        :param criterion: 选择标准，'iv' 或 'ks'
+        :return: 最优方法名
+        """
+        if methods is None:
+            methods = ['uniform', 'quantile', 'tree', 'chi_merge', 
+                      'optimal_ks', 'optimal_iv', 'cart', 'kmeans']
+
+        best_method = methods[0]
+        best_score = -1
+
+        for method in methods:
+            try:
+                binner = OptimalBinning(method=method, verbose=False)
+                binner.fit(X[[feature]], y)
+
+                if criterion == 'iv' and hasattr(binner, 'iv_stats_'):
+                    score = binner.iv_stats_.get(feature, 0)
+                elif criterion == 'ks' and hasattr(binner, 'ks_stats_'):
+                    score = binner.ks_stats_.get(feature, 0)
+                else:
+                    bin_table = binner.bin_tables_.get(feature)
+                    if bin_table is not None:
+                        # 使用中文列名
+                        if '分档IV值' in bin_table.columns:
+                            score = bin_table['分档IV值'].sum()
+                        else:
+                            score = 0
+                    else:
+                        score = 0
+
+                if score > best_score:
+                    best_score = score
+                    best_method = method
+
+            except Exception as e:
+                warnings.warn(f"方法 {method} 在特征 {feature} 上失败: {e}")
+                continue
+
+        return best_method
+
+
+if __name__ == '__main__':
+    # 测试代码
+    print("=" * 70)
+    print("OptimalBinning - 统一分箱接口测试")
+    print("=" * 70)
+    
+    import numpy as np
+    import pandas as pd
+    
+    # 生成测试数据
+    np.random.seed(42)
+    n = 1000
+    X = pd.DataFrame({
+        'feature1': np.random.normal(0, 1, n),
+        'feature2': np.random.uniform(0, 100, n),
+    })
+    y = (X['feature1'] + X['feature2'] / 100 > 0.5).astype(int)
+    
+    # 测试各种方法
+    methods_to_test = ['uniform', 'quantile', 'tree', 'chi_merge', 
+                       'optimal_iv', 'cart', 'kmeans']
+    
+    for method in methods_to_test:
+        print(f"\n测试方法: {method}")
+        print("-" * 50)
+        try:
+            binner = OptimalBinning(method=method, max_n_bins=5, verbose=False)
+            binner.fit(X, y)
+            
+            table = binner.get_bin_table('feature1')
+            print(f"  分箱数: {len(table)}")
+            print(f"  前3行:\n{table[['bin', 'count', 'bad_rate']].head(3)}")
+        except Exception as e:
+            print(f"  错误: {e}")
+    
+    print("\n" + "=" * 70)
+    print("测试完成!")
+    print("=" * 70)
