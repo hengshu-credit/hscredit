@@ -13,7 +13,6 @@ from pandas import DataFrame
 from sklearn.utils import check_array
 from sklearn.metrics import f1_score, recall_score, accuracy_score, precision_score
 
-from ...report.feature_analyzer import feature_bin_stats
 from ..binning import OptimalBinning
 from .expr_optimizer import optimize_expr, beautify_expr
 

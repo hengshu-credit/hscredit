@@ -18,24 +18,36 @@ class WOEEncoder(BaseEncoder):
     WOE计算公式：
     WOE = ln(P(好样本|类别) / P(坏样本|类别)) = ln(好样本占比/坏样本占比)
 
-    属性:
-        cols: 需要编码的列名列表。
-        bins: 分箱数（已废弃，保留参数兼容性）。
-        binning_method: 分箱方法（已废弃）。
-        min_bin_size: 每箱最小样本占比（已废弃）。
-        regularization: 正则化参数，防止除零。
-        handle_unknown: 处理未知类别的方式。
-        handle_missing: 处理缺失值的方式。
-        drop_invariant: 是否删除方差为0的列。
-        return_df: 是否返回DataFrame。
-        mapping_: WOE编码映射字典。
-        iv_: 各特征的IV值。
+    **参数**
 
-    示例:
+    :param cols: 需要编码的列名列表。如果为None，则自动识别所有类别型列
+    :param bins: 分箱数（已废弃，保留参数兼容性），默认为None
+    :param binning_method: 分箱方法（已废弃），默认为None
+    :param min_bin_size: 每箱最小样本占比（已废弃），默认为None
+    :param regularization: 正则化参数，防止除零，默认为1.0
+    :param handle_unknown: 处理未知类别的方式，默认为'value'
+    :param handle_missing: 处理缺失值的方式，默认为'value'
+    :param drop_invariant: 是否删除方差为0的列，默认为False
+    :param return_df: 是否返回DataFrame，默认为True
+
+    **属性**
+
+    - mapping_: WOE编码映射字典，格式为 {col: {category: woe_value}}
+    - iv_: 各特征的IV值，格式为 {col: iv_value}
+
+    **参考样例**
+
+    基本使用::
+
         >>> from hscredit.core.encoders import WOEEncoder
         >>> encoder = WOEEncoder(cols=['category', 'score'])
         >>> X_encoded = encoder.fit_transform(X, y)
         >>> print(encoder.iv_)
+
+    获取IV摘要::
+
+        >>> summary = encoder.summary()
+        >>> print(summary)
 
     参考:
         https://www.listendata.com/2015/03/weight-of-evidence-woe-and-information.html
@@ -55,15 +67,15 @@ class WOEEncoder(BaseEncoder):
     ):
         """初始化WOE编码器。
 
-        :param cols: 需要编码的列名列表。
-        :param bins: 已废弃参数，保留兼容性。
-        :param binning_method: 已废弃参数，保留兼容性。
-        :param min_bin_size: 已废弃参数，保留兼容性。
-        :param regularization: 正则化参数，防止除零。默认为1.0。
-        :param handle_unknown: 处理未知类别的方式，默认为'value'。
-        :param handle_missing: 处理缺失值的方式，默认为'value'。
-        :param drop_invariant: 是否删除方差为0的列，默认为False。
-        :param return_df: 是否返回DataFrame，默认为True。
+        :param cols: 需要编码的列名列表
+        :param bins: 已废弃参数，保留兼容性
+        :param binning_method: 已废弃参数，保留兼容性
+        :param min_bin_size: 已废弃参数，保留兼容性
+        :param regularization: 正则化参数，防止除零，默认为1.0
+        :param handle_unknown: 处理未知类别的方式，默认为'value'
+        :param handle_missing: 处理缺失值的方式，默认为'value'
+        :param drop_invariant: 是否删除方差为0的列，默认为False
+        :param return_df: 是否返回DataFrame，默认为True
         """
         super().__init__(
             cols=cols,
@@ -82,9 +94,9 @@ class WOEEncoder(BaseEncoder):
     def _fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None):
         """拟合WOE编码器。
 
-        :param X: 输入数据。
-        :param y: 目标变量。
-        :raises ValueError: 当y为空或目标变量不是二元时抛出。
+        :param X: 输入数据，shape (n_samples, n_features)
+        :param y: 目标变量，二分类 (0/1)
+        :raises ValueError: 当y为空或目标变量不是二元时抛出
         """
         if y is None:
             raise ValueError("WOEEncoder是有监督编码器，必须提供目标变量y")
@@ -110,11 +122,11 @@ class WOEEncoder(BaseEncoder):
     ) -> tuple:
         """拟合类别特征的WOE。
 
-        :param x: 特征列。
-        :param y: 目标变量。
-        :param total_good: 好样本总数。
-        :param total_bad: 坏样本总数。
-        :return: WOE映射和IV值的元组。
+        :param x: 特征列
+        :param y: 目标变量
+        :param total_good: 好样本总数
+        :param total_bad: 坏样本总数
+        :return: WOE映射和IV值的元组 (woe_map, iv)
         """
         woe_map = {}
 
@@ -148,11 +160,11 @@ class WOEEncoder(BaseEncoder):
     ) -> float:
         """计算WOE值（带正则化）。
 
-        :param good_count: 好样本数量。
-        :param bad_count: 坏样本数量。
-        :param total_good: 好样本总数。
-        :param total_bad: 坏样本总数。
-        :return: WOE值。
+        :param good_count: 好样本数量
+        :param bad_count: 坏样本数量
+        :param total_good: 好样本总数
+        :param total_bad: 坏样本总数
+        :return: WOE值
         """
         good_rate = (good_count + self.regularization) / (total_good + 2 * self.regularization)
         bad_rate = (bad_count + self.regularization) / (total_bad + 2 * self.regularization)
@@ -165,11 +177,11 @@ class WOEEncoder(BaseEncoder):
     ) -> float:
         """计算类别特征的IV。
 
-        :param x: 特征列。
-        :param y: 目标变量。
-        :param total_good: 好样本总数。
-        :param total_bad: 坏样本总数。
-        :return: IV值。
+        :param x: 特征列
+        :param y: 目标变量
+        :param total_good: 好样本总数
+        :param total_bad: 坏样本总数
+        :return: IV值
         """
         iv = 0.0
         for category in x.dropna().unique():
@@ -187,9 +199,9 @@ class WOEEncoder(BaseEncoder):
     def _transform(self, X: pd.DataFrame, y: Optional[pd.Series] = None) -> pd.DataFrame:
         """转换数据为WOE编码。
 
-        :param X: 输入数据。
-        :param y: 目标变量（可选）。
-        :return: 编码后的数据。
+        :param X: 输入数据，shape (n_samples, n_features)
+        :param y: 目标变量（可选）
+        :return: 编码后的数据
         """
         for col in self.cols_:
             if col not in self.mapping_:
@@ -208,14 +220,14 @@ class WOEEncoder(BaseEncoder):
     def get_iv(self) -> Dict[str, float]:
         """获取各特征的IV值。
 
-        :return: 特征名到IV值的映射字典。
+        :return: 特征名到IV值的映射字典
         """
         return self.iv_
 
     def summary(self) -> pd.DataFrame:
         """获取WOE编码摘要。
 
-        :return: 包含各特征IV值和预测能力的摘要表。
+        :return: 包含各特征IV值和预测能力的摘要表
         """
         if not self.iv_:
             return pd.DataFrame()

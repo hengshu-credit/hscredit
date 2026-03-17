@@ -16,20 +16,31 @@ class OrdinalEncoder(BaseEncoder):
     将每个类别映射为一个整数，保留类别的顺序关系（如果存在）。
     适用于树模型和需要保留单一特征维度的场景。
 
-    属性:
-        cols: 需要编码的列名列表。
-        mapping: 自定义映射字典。
-        handle_unknown: 处理未知类别的方式。
-        handle_missing: 处理缺失值的方式。
-        drop_invariant: 是否删除方差为0的列。
-        return_df: 是否返回DataFrame。
+    **参数**
 
-    示例:
+    :param cols: 需要编码的列名列表。如果为None，则自动识别所有类别型列
+    :param mapping: 自定义映射字典，如{'col': {'a': 1, 'b': 2}}，默认为None
+    :param handle_unknown: 处理未知类别的方式，默认为'value'
+    :param handle_missing: 处理缺失值的方式，默认为'value'
+    :param drop_invariant: 是否删除方差为0的列，默认为False
+    :param return_df: 是否返回DataFrame，默认为True
+
+    **属性**
+
+    - mapping_: 序数编码映射字典，格式为 {col: {category: integer}}
+
+    **参考样例**
+
+    基本使用::
+
         >>> encoder = OrdinalEncoder(cols=['education'])
         >>> X_encoded = encoder.fit_transform(X)
-        >>> # 自定义映射
+
+    自定义映射::
+
         >>> mapping = {'education': {'high': 3, 'medium': 2, 'low': 1}}
         >>> encoder = OrdinalEncoder(cols=['education'], mapping=mapping)
+        >>> X_encoded = encoder.fit_transform(X)
 
     参考:
         https://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.OrdinalEncoder.html
@@ -46,12 +57,12 @@ class OrdinalEncoder(BaseEncoder):
     ):
         """初始化序数编码器。
 
-        :param cols: 需要编码的列名列表。
-        :param mapping: 自定义映射字典，如{'col': {'a': 1, 'b': 2}}，默认为None。
-        :param handle_unknown: 处理未知类别的方式，默认为'value'。
-        :param handle_missing: 处理缺失值的方式，默认为'value'。
-        :param drop_invariant: 是否删除方差为0的列，默认为False。
-        :param return_df: 是否返回DataFrame，默认为True。
+        :param cols: 需要编码的列名列表
+        :param mapping: 自定义映射字典，如{'col': {'a': 1, 'b': 2}}，默认为None
+        :param handle_unknown: 处理未知类别的方式，默认为'value'
+        :param handle_missing: 处理缺失值的方式，默认为'value'
+        :param drop_invariant: 是否删除方差为0的列，默认为False
+        :param return_df: 是否返回DataFrame，默认为True
         """
         super().__init__(
             cols=cols,
@@ -65,8 +76,8 @@ class OrdinalEncoder(BaseEncoder):
     def _fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None):
         """拟合序数编码器。
 
-        :param X: 输入数据。
-        :param y: 目标变量（可选）。
+        :param X: 输入数据，shape (n_samples, n_features)
+        :param y: 目标变量（可选），序数编码器不需要
         """
         for col in self.cols_:
             if col in self.mapping:
@@ -92,9 +103,9 @@ class OrdinalEncoder(BaseEncoder):
     def _transform(self, X: pd.DataFrame, y: Optional[pd.Series] = None) -> pd.DataFrame:
         """转换数据。
 
-        :param X: 输入数据。
-        :param y: 目标变量（可选）。
-        :return: 编码后的数据。
+        :param X: 输入数据，shape (n_samples, n_features)
+        :param y: 目标变量（可选），序数编码器不需要
+        :return: 编码后的数据
         """
         for col in self.cols_:
             if col not in self.mapping_:
@@ -114,8 +125,8 @@ class OrdinalEncoder(BaseEncoder):
     def get_mapping(self, col: Optional[str] = None) -> Dict:
         """获取序数映射。
 
-        :param col: 列名。如果为None，返回所有映射。
-        :return: 序数映射字典。
+        :param col: 列名，如果为None则返回所有映射
+        :return: 序数映射字典
         """
         if col is not None:
             return self.mapping_.get(col, {})

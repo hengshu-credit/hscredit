@@ -34,6 +34,7 @@ def load_hscredit_data(bad_threshold: int = 15, target_col: str = 'target'):
     feature_cols = [col for col in df.columns if col not in ['MOB1', 'MOB2', target_col]]
 
     # 分离数值型和类别型特征
+    # 注意：所有特征都是数值型（包括'放款期数'）
     numeric_cols = df[feature_cols].select_dtypes(include=[np.number]).columns.tolist()
     categorical_cols = df[feature_cols].select_dtypes(include=['object']).columns.tolist()
 

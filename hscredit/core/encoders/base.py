@@ -1,6 +1,12 @@
 """编码器基类.
 
 提供统一的编码器接口和通用功能。
+所有编码器都继承此类，确保API的一致性。
+
+设计原则:
+1. 参数命名统一，与其他库保持一致
+2. 支持高度自定义，但提供合理默认值
+3. 遵循sklearn API风格
 """
 
 from abc import ABC, abstractmethod
@@ -16,14 +22,25 @@ class BaseEncoder(BaseEstimator, TransformerMixin, ABC):
     所有编码器的抽象基类，提供统一的接口和通用功能。
     遵循sklearn Transformer接口规范。
 
-    属性:
-        cols: 需要编码的列名列表。
-        drop_invariant: 是否删除方差为0的列。
-        return_df: 是否返回DataFrame。
-        handle_unknown: 处理未知类别的方式。
-        handle_missing: 处理缺失值的方式。
-        mapping_: 编码映射字典。
-        cols_: 实际进行编码的列名列表。
+    **参数**
+
+    :param cols: 需要编码的列名列表。如果为None，则自动识别所有类别型列
+    :param drop_invariant: 是否删除方差为0的列，默认为False
+    :param return_df: 是否返回DataFrame，默认为True
+    :param handle_unknown: 处理未知类别的方式，默认为'value'
+        - 'value': 使用默认值（通常是0或全局均值）
+        - 'error': 抛出错误
+        - 'return_nan': 返回NaN
+    :param handle_missing: 处理缺失值的方式，默认为'value'
+        - 'value': 使用默认值（通常是0或全局均值）
+        - 'error': 抛出错误
+        - 'return_nan': 返回NaN
+
+    **属性**
+
+    - mapping\_: 编码映射字典，格式为 {col: {category: encoded_value}}
+    - cols_: 实际进行编码的列名列表（经过自动识别或过滤后）
+    - _dropped_cols: 被删除的方差为0的列
     """
 
     def __init__(
@@ -36,17 +53,11 @@ class BaseEncoder(BaseEstimator, TransformerMixin, ABC):
     ):
         """初始化编码器基类。
 
-        :param cols: 需要编码的列名列表。如果为None，则自动识别所有类别型列。
-        :param drop_invariant: 是否删除方差为0的列，默认为False。
-        :param return_df: 是否返回DataFrame，默认为True。
-        :param handle_unknown: 处理未知类别的方式，默认为'value'。
-            - 'value': 使用默认值（通常是0）
-            - 'error': 抛出错误
-            - 'return_nan': 返回NaN
-        :param handle_missing: 处理缺失值的方式，默认为'value'。
-            - 'value': 使用默认值（通常是0）
-            - 'error': 抛出错误
-            - 'return_nan': 返回NaN
+        :param cols: 需要编码的列名列表。如果为None，则自动识别所有类别型列
+        :param drop_invariant: 是否删除方差为0的列，默认为False
+        :param return_df: 是否返回DataFrame，默认为True
+        :param handle_unknown: 处理未知类别的方式，默认为'value'
+        :param handle_missing: 处理缺失值的方式，默认为'value'
         """
         self.cols = cols
         self.drop_invariant = drop_invariant
@@ -61,9 +72,17 @@ class BaseEncoder(BaseEstimator, TransformerMixin, ABC):
     def fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None) -> 'BaseEncoder':
         """拟合编码器。
 
-        :param X: 训练数据。
-        :param y: 目标变量。对于有监督编码器（如WOE、Target）必须提供。
-        :return: 编码器自身。
+        :param X: 训练数据，shape (n_samples, n_features)
+        :param y: 目标变量，对于有监督编码器（如WOE、Target）必须提供
+        :return: 拟合后的编码器自身
+
+        **注意**
+
+        fit方法会进行以下操作:
+        1. 数据验证和预处理
+        2. 自动识别类别型列（如果cols为None）
+        3. 删除方差为0的列（如果drop_invariant=True）
+        4. 计算编码映射
         """
         X = self._check_input(X)
 
@@ -86,9 +105,21 @@ class BaseEncoder(BaseEstimator, TransformerMixin, ABC):
     def transform(self, X: pd.DataFrame, y: Optional[pd.Series] = None) -> Union[pd.DataFrame, np.ndarray]:
         """转换数据。
 
-        :param X: 需要转换的数据。
-        :param y: 目标变量。某些编码器需要。
-        :return: 编码后的数据，类型由return_df参数决定。
+        将原始类别特征值转换为编码后的数值。
+        这是编码器的核心方法，用于将新数据应用到已训练的编码规则。
+
+        :param X: 需要转换的数据，shape (n_samples, n_features)
+            - 支持DataFrame
+            - 列名必须与fit时的特征名一致
+        :param y: 目标变量，某些编码器需要，默认为None
+        :return: 编码后的数据，类型由return_df参数决定
+        :raises ValueError: 当编码器尚未拟合时抛出
+
+        **注意**
+
+        transform方法会自动处理:
+        1. 缺失值: 根据handle_missing参数处理
+        2. 未知类别: 根据handle_unknown参数处理
         """
         X = self._check_input(X)
 
@@ -106,10 +137,11 @@ class BaseEncoder(BaseEstimator, TransformerMixin, ABC):
     def fit_transform(self, X: pd.DataFrame, y: Optional[pd.Series] = None) -> Union[pd.DataFrame, np.ndarray]:
         """拟合并转换数据。
 
-        :param X: 训练数据。
-        :param y: 目标变量。
-        :return: 编码后的数据。
+        :param X: 训练数据，shape (n_samples, n_features)
+        :param y: 目标变量，对于某些编码器是必需的
+        :return: 编码后的数据
         """
+        return self.fit(X, y).transform(X, y)
         return self.fit(X, y).transform(X, y)
 
     @abstractmethod
@@ -125,9 +157,9 @@ class BaseEncoder(BaseEstimator, TransformerMixin, ABC):
     def _check_input(self, X) -> pd.DataFrame:
         """检查并转换输入数据。
 
-        :param X: 输入数据。
-        :return: 转换后的DataFrame。
-        :raises TypeError: 当输入类型不正确时抛出。
+        :param X: 输入数据，支持DataFrame或ndarray
+        :return: 转换后的DataFrame
+        :raises TypeError: 当输入类型不正确时抛出
         """
         if isinstance(X, np.ndarray):
             X = pd.DataFrame(X)
@@ -138,16 +170,16 @@ class BaseEncoder(BaseEstimator, TransformerMixin, ABC):
     def _get_category_cols(self, X: pd.DataFrame) -> List[str]:
         """自动识别类别型列。
 
-        :param X: 输入数据。
-        :return: 类别型列名列表。
+        :param X: 输入数据
+        :return: 类别型列名列表
         """
         return X.select_dtypes(include=['object', 'category']).columns.tolist()
 
     def _find_invariant_cols(self, X: pd.DataFrame) -> List[str]:
         """查找方差为0的列。
 
-        :param X: 输入数据。
-        :return: 不变列名列表。
+        :param X: 输入数据
+        :return: 不变列名列表
         """
         invariant_cols = []
         for col in self.cols_:
@@ -158,14 +190,22 @@ class BaseEncoder(BaseEstimator, TransformerMixin, ABC):
     def get_mapping(self) -> Dict[str, Any]:
         """获取编码映射。
 
-        :return: 编码映射字典。
+        :return: 编码映射字典，格式为 {col: {category: encoded_value}}
         """
         return self.mapping_
 
     def export_mapping(self) -> Dict[str, Any]:
         """导出编码映射（可序列化）。
 
-        :return: 可序列化的编码映射字典。
+        :return: 可序列化的编码映射字典
+
+        **参考样例**
+
+        >>> encoder.fit(X, y)
+        >>> mapping = encoder.export_mapping()
+        >>> import json
+        >>> with open('encoder_mapping.json', 'w') as f:
+        ...     json.dump(mapping, f)
         """
         return {
             'encoder_type': self.__class__.__name__,
@@ -180,7 +220,14 @@ class BaseEncoder(BaseEstimator, TransformerMixin, ABC):
     def import_mapping(self, mapping: Dict[str, Any]):
         """导入编码映射。
 
-        :param mapping: 编码映射字典。
+        :param mapping: 编码映射字典
+
+        **参考样例**
+
+        >>> import json
+        >>> with open('encoder_mapping.json', 'r') as f:
+        ...     mapping = json.load(f)
+        >>> encoder.import_mapping(mapping)
         """
         self.cols = mapping.get('cols')
         self.cols_ = mapping.get('cols_')
@@ -192,8 +239,8 @@ class BaseEncoder(BaseEstimator, TransformerMixin, ABC):
     def _serialize_mapping(self, mapping: Dict) -> Dict:
         """序列化映射（处理特殊类型）。
 
-        :param mapping: 映射字典。
-        :return: 序列化后的字典。
+        :param mapping: 映射字典
+        :return: 序列化后的字典
         """
         serialized = {}
         for key, value in mapping.items():
@@ -208,8 +255,8 @@ class BaseEncoder(BaseEstimator, TransformerMixin, ABC):
     def _deserialize_mapping(self, mapping: Dict) -> Dict:
         """反序列化映射。
 
-        :param mapping: 序列化后的字典。
-        :return: 反序列化后的字典。
+        :param mapping: 序列化后的字典
+        :return: 反序列化后的字典
         """
         deserialized = {}
         for key, value in mapping.items():

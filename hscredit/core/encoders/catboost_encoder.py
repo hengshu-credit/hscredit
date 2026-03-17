@@ -16,18 +16,31 @@ class CatBoostEncoder(BaseEncoder):
     使用有序目标统计（Ordered Target Statistics）方法，
     通过随机排序和累积统计来防止过拟合和目标泄漏。
 
-    属性:
-        cols: 需要编码的列名列表。
-        sigma: 添加的高斯噪声标准差。
-        handle_unknown: 处理未知类别的方式。
-        handle_missing: 处理缺失值的方式。
-        drop_invariant: 是否删除方差为0的列。
-        return_df: 是否返回DataFrame。
-        random_state: 随机种子。
-        global_mean_: 全局目标均值。
+    **参数**
 
-    示例:
+    :param cols: 需要编码的列名列表。如果为None，则自动识别所有类别型列
+    :param sigma: 添加的高斯噪声标准差，默认为None
+    :param handle_unknown: 处理未知类别的方式，默认为'value'
+    :param handle_missing: 处理缺失值的方式，默认为'value'
+    :param drop_invariant: 是否删除方差为0的列，默认为False
+    :param return_df: 是否返回DataFrame，默认为True
+    :param random_state: 随机种子，用于可复现性，默认为None
+
+    **属性**
+
+    - mapping_: 目标编码映射字典，格式为 {col: {category: encoded_value}}
+    - global_mean_: 全局目标均值
+
+    **参考样例**
+
+    基本使用::
+
         >>> encoder = CatBoostEncoder(cols=['category'])
+        >>> X_encoded = encoder.fit_transform(X, y)
+
+    添加噪声::
+
+        >>> encoder = CatBoostEncoder(cols=['category'], sigma=0.05, random_state=42)
         >>> X_encoded = encoder.fit_transform(X, y)
 
     参考:
@@ -46,13 +59,13 @@ class CatBoostEncoder(BaseEncoder):
     ):
         """初始化CatBoost编码器。
 
-        :param cols: 需要编码的列名列表。
-        :param sigma: 添加的高斯噪声标准差，默认为None。
-        :param handle_unknown: 处理未知类别的方式，默认为'value'。
-        :param handle_missing: 处理缺失值的方式，默认为'value'。
-        :param drop_invariant: 是否删除方差为0的列，默认为False。
-        :param return_df: 是否返回DataFrame，默认为True。
-        :param random_state: 随机种子，默认为None。
+        :param cols: 需要编码的列名列表
+        :param sigma: 添加的高斯噪声标准差，默认为None
+        :param handle_unknown: 处理未知类别的方式，默认为'value'
+        :param handle_missing: 处理缺失值的方式，默认为'value'
+        :param drop_invariant: 是否删除方差为0的列，默认为False
+        :param return_df: 是否返回DataFrame，默认为True
+        :param random_state: 随机种子，默认为None
         """
         super().__init__(
             cols=cols,
@@ -69,9 +82,9 @@ class CatBoostEncoder(BaseEncoder):
     def _fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None):
         """拟合CatBoost编码器。
 
-        :param X: 输入数据。
-        :param y: 目标变量。
-        :raises ValueError: 当y为空时抛出。
+        :param X: 输入数据，shape (n_samples, n_features)
+        :param y: 目标变量
+        :raises ValueError: 当y为空时抛出
         """
         if y is None:
             raise ValueError("CatBoostEncoder是有监督编码器，必须提供目标变量y")
@@ -103,9 +116,9 @@ class CatBoostEncoder(BaseEncoder):
     def _transform(self, X: pd.DataFrame, y: Optional[pd.Series] = None) -> pd.DataFrame:
         """转换数据。
 
-        :param X: 输入数据。
-        :param y: 目标变量（可选）。
-        :return: 编码后的数据。
+        :param X: 输入数据，shape (n_samples, n_features)
+        :param y: 目标变量（可选），如果提供则使用有序统计
+        :return: 编码后的数据
         """
         if y is not None and self.random_state is not None:
             np.random.seed(self.random_state)
@@ -136,10 +149,10 @@ class CatBoostEncoder(BaseEncoder):
     ) -> pd.Series:
         """使用有序统计进行转换（防止目标泄漏）。
 
-        :param x: 特征列。
-        :param y: 目标变量。
-        :param mapping: 编码映射。
-        :return: 编码后的序列。
+        :param x: 特征列
+        :param y: 目标变量
+        :param mapping: 编码映射
+        :return: 编码后的序列
         """
         if not isinstance(y, pd.Series):
             y = pd.Series(y, index=x.index)

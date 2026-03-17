@@ -24,32 +24,9 @@ __email__ = "hscredit@hengshucredit.com"
 # from .model.linear import LogisticRegression
 # from .model.scorecard import ScoreCard
 
-# 分析模块导入
-# 注意：feature_bin_stats 和 FeatureAnalyzer 已从 analysis 迁移到 report 模块
+# ========== 核心模块导入 (先导入core，避免循环导入) ==========
 
-# 报告模块导入
-from .report.excel import ExcelWriter, dataframe2excel
-
-try:
-    from .report.feature_report import auto_feature_analysis_report
-except ImportError:
-    pass
-
-# 可视化模块导入 (viz - 简洁命名)
-from .core.viz import (
-    bin_plot,
-    corr_plot,
-    ks_plot,
-    hist_plot,
-    psi_plot,
-    dataframe_plot,
-    distribution_plot,
-)
-
-# 分析模块导入
-from .report import feature_bin_stats, FeatureAnalyzer
-
-# 核心模块导入
+# 核心分箱模块
 from .core.binning import (
     UniformBinning,
     QuantileBinning,
@@ -61,7 +38,7 @@ from .core.binning import (
     OptimalBinning,
 )
 
-# 核心模块编码器导入
+# 核心编码器模块
 from .core.encoders import (
     BaseEncoder,
     WOEEncoder,
@@ -73,7 +50,7 @@ from .core.encoders import (
     CatBoostEncoder,
 )
 
-# 核心模块特征筛选导入
+# 核心特征筛选模块
 from .core.selectors import (
     BaseFeatureSelector,
     SelectionReportCollector,
@@ -99,7 +76,7 @@ from .core.selectors import (
     CompositeFeatureSelector,
 )
 
-# 模型/损失函数模块导入
+# 核心模型/损失函数模块
 from .core.models import (
     BaseLoss,
     BaseMetric,
@@ -118,10 +95,21 @@ from .core.models import (
     TabNetLossAdapter,
 )
 
-# 特征工程模块导入
+# 核心可视化模块
+from .core.viz import (
+    bin_plot,
+    corr_plot,
+    ks_plot,
+    hist_plot,
+    psi_plot,
+    dataframe_plot,
+    distribution_plot,
+)
+
+# 核心特征工程模块
 from .core.feature_engineering import NumExprDerive
 
-# 规则引擎模块导入
+# 核心规则引擎模块
 from .core.rules import (
     Rule,
     get_columns_from_query,
@@ -129,15 +117,31 @@ from .core.rules import (
     beautify_expr,
     get_expr_variables,
 )
-from .report import ruleset_report
 
-# 金融计算模块导入
+# 核心金融计算模块
 from .core.financial import (
     fv, pv, pmt, nper, ipmt, ppmt, rate,
     npv, irr, mirr,
 )
 
-# 工具函数导入
+# ========== 报告模块导入 (在core之后导入，避免循环导入) ==========
+
+from .report.excel import ExcelWriter, dataframe2excel
+from .report.feature_analyzer import feature_bin_stats, FeatureAnalyzer
+from .report.ruleset_report import ruleset_report
+from .report.swapin_prediction import (
+    swapin_risk_prediction,
+    SwapinRiskAnalyzer,
+    swapin_summary_report,
+)
+
+try:
+    from .report.feature_report import auto_feature_analysis_report
+except ImportError:
+    pass
+
+# ========== 工具函数导入 ==========
+
 from .utils import (
     seed_everything,
     load_pickle,
@@ -172,6 +176,11 @@ __all__ = [
     # 分析模块
     "feature_bin_stats",
     "FeatureAnalyzer",
+
+    # 规则置换风险预估模块
+    "swapin_risk_prediction",
+    "SwapinRiskAnalyzer",
+    "swapin_summary_report",
 
     # 分箱模块
     "UniformBinning",
@@ -281,19 +290,25 @@ def info():
     print(f"Email: {__email__}")
     print("一个完整的金融信贷风险建模工具包")
     print()
-    print("已实现模块:")
-    print("  - report.excel: Excel报告生成")
-    print("  - analysis: 特征分析 (feature_bin_stats, FeatureAnalyzer)")
+    print("核心模块 (core):")
     print("  - core.binning: 分箱算法 (Uniform/Quantile/Tree/ChiMerge/OptimalKS/OptimalIV/MDLP)")
     print("  - core.selectors: 特征筛选 (Variance/Null/IV/Corr/VIF/Lift/PSI...)")
     print("  - core.encoders: 编码器 (WOE/Target/Count/OneHot...)")
     print("  - core.models: 自定义损失函数和评估指标")
-    print("  - feature_engineering: 特征工程 (表达式衍生)")
-    print("  - rules: 规则引擎")
-    print("  - financial: 金融计算 (FV/PV/PMT/NPER/IRR/NPV)")
+    print("  - core.viz: 可视化 (bin_plot/ks_plot/corr_plot...)")
+    print("  - core.feature_engineering: 特征工程 (NumExprDerive)")
+    print("  - core.rules: 规则引擎 (Rule)")
+    print("  - core.financial: 金融计算 (FV/PV/PMT/NPER/IRR/NPV)")
+    print()
+    print("报告模块 (report):")
+    print("  - report.excel: Excel报告生成")
+    print("  - report.feature_analyzer: 特征分箱统计分析")
+    print("  - report.ruleset_report: 规则集综合评估报告")
+    print("  - report.feature_report: 特征分析报告")
+    print()
+    print("工具模块 (utils):")
     print("  - utils: 工具函数 (随机种子、数据集、pickleIO)")
     print()
     print("待实现模块:")
     print("  - core.encoding: 编码转换")
     print("  - core.metrics: 指标计算 (KS/AUC/PSI/IV/Gini)")
-    print("  - analysis.strategy: 策略分析")

@@ -16,19 +16,32 @@ class QuantileEncoder(BaseEncoder):
     用目标变量的指定分位数（如中位数）对每个类别进行编码。
     适用于回归任务和存在异常值的场景。
 
-    属性:
-        cols: 需要编码的列名列表。
-        quantile: 分位数。
-        smoothing: 平滑参数。
-        m: 先验权重参数。
-        handle_unknown: 处理未知类别的方式。
-        handle_missing: 处理缺失值的方式。
-        drop_invariant: 是否删除方差为0的列。
-        return_df: 是否返回DataFrame。
-        global_quantile_: 全局分位数。
+    **参数**
 
-    示例:
+    :param cols: 需要编码的列名列表。如果为None，则自动识别所有类别型列
+    :param quantile: 分位数，范围[0, 1]，默认为0.5（中位数）
+    :param smoothing: 平滑参数，默认为1.0
+    :param m: 先验权重参数，默认为1.0
+    :param handle_unknown: 处理未知类别的方式，默认为'value'
+    :param handle_missing: 处理缺失值的方式，默认为'value'
+    :param drop_invariant: 是否删除方差为0的列，默认为False
+    :param return_df: 是否返回DataFrame，默认为True
+
+    **属性**
+
+    - mapping_: 分位数编码映射字典，格式为 {col: {category: quantile_value}}
+    - global_quantile_: 全局分位数
+
+    **参考样例**
+
+    使用中位数编码::
+
         >>> encoder = QuantileEncoder(cols=['category'], quantile=0.5)
+        >>> X_encoded = encoder.fit_transform(X, y)
+
+    使用第90百分位数::
+
+        >>> encoder = QuantileEncoder(cols=['category'], quantile=0.9)
         >>> X_encoded = encoder.fit_transform(X, y)
 
     参考:
@@ -48,14 +61,14 @@ class QuantileEncoder(BaseEncoder):
     ):
         """初始化分位数编码器。
 
-        :param cols: 需要编码的列名列表。
-        :param quantile: 分位数，范围[0, 1]，默认为0.5（中位数）。
-        :param smoothing: 平滑参数，默认为1.0。
-        :param m: 先验权重参数，默认为1.0。
-        :param handle_unknown: 处理未知类别的方式，默认为'value'。
-        :param handle_missing: 处理缺失值的方式，默认为'value'。
-        :param drop_invariant: 是否删除方差为0的列，默认为False。
-        :param return_df: 是否返回DataFrame，默认为True。
+        :param cols: 需要编码的列名列表
+        :param quantile: 分位数，范围[0, 1]，默认为0.5（中位数）
+        :param smoothing: 平滑参数，默认为1.0
+        :param m: 先验权重参数，默认为1.0
+        :param handle_unknown: 处理未知类别的方式，默认为'value'
+        :param handle_missing: 处理缺失值的方式，默认为'value'
+        :param drop_invariant: 是否删除方差为0的列，默认为False
+        :param return_df: 是否返回DataFrame，默认为True
         """
         super().__init__(
             cols=cols,
@@ -73,9 +86,9 @@ class QuantileEncoder(BaseEncoder):
     def _fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None):
         """拟合分位数编码器。
 
-        :param X: 输入数据。
-        :param y: 目标变量。
-        :raises ValueError: 当y为空时抛出。
+        :param X: 输入数据，shape (n_samples, n_features)
+        :param y: 目标变量
+        :raises ValueError: 当y为空时抛出
         """
         if y is None:
             raise ValueError("QuantileEncoder是有监督编码器，必须提供目标变量y")
@@ -114,9 +127,9 @@ class QuantileEncoder(BaseEncoder):
     def _transform(self, X: pd.DataFrame, y: Optional[pd.Series] = None) -> pd.DataFrame:
         """转换数据。
 
-        :param X: 输入数据。
-        :param y: 目标变量（可选）。
-        :return: 编码后的数据。
+        :param X: 输入数据，shape (n_samples, n_features)
+        :param y: 目标变量（可选）
+        :return: 编码后的数据
         """
         for col in self.cols_:
             if col not in self.mapping_:

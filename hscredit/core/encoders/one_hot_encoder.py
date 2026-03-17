@@ -15,18 +15,33 @@ class OneHotEncoder(BaseEncoder):
 
     将每个类别转换为一个二进制列，适用于类别数量不多的特征。
 
-    属性:
-        cols: 需要编码的列名列表。
-        drop: 是否删除某一列以避免多重共线性。
-        handle_unknown: 处理未知类别的方式。
-        handle_missing: 处理缺失值的方式。
-        drop_invariant: 是否删除方差为0的列。
-        return_df: 是否返回DataFrame。
-        categories_: 各列的类别列表。
-        feature_names_: 编码后的特征名列表。
+    **参数**
 
-    示例:
+    :param cols: 需要编码的列名列表。如果为None，则自动识别所有类别型列
+    :param drop: 是否删除某一列以避免多重共线性，默认为None
+        - None: 保留所有列
+        - 'first': 删除第一列
+        - 'if_binary': 二值特征时删除一列
+    :param handle_unknown: 处理未知类别的方式，默认为'value'
+    :param handle_missing: 处理缺失值的方式，默认为'value'
+    :param drop_invariant: 是否删除方差为0的列，默认为False
+    :param return_df: 是否返回DataFrame，默认为True
+
+    **属性**
+
+    - categories_: 各列的类别列表，格式为 {col: [category1, category2, ...]}
+    - feature_names_: 编码后的特征名列表
+
+    **参考样例**
+
+    基本使用::
+
         >>> encoder = OneHotEncoder(cols=['color'])
+        >>> X_encoded = encoder.fit_transform(X)
+
+    删除第一列避免多重共线性::
+
+        >>> encoder = OneHotEncoder(cols=['color'], drop='first')
         >>> X_encoded = encoder.fit_transform(X)
 
     参考:
@@ -44,15 +59,12 @@ class OneHotEncoder(BaseEncoder):
     ):
         """初始化独热编码器。
 
-        :param cols: 需要编码的列名列表。
-        :param drop: 是否删除某一列以避免多重共线性，默认为None。
-            - None: 保留所有列
-            - 'first': 删除第一列
-            - 'if_binary': 二值特征时删除一列
-        :param handle_unknown: 处理未知类别的方式，默认为'value'。
-        :param handle_missing: 处理缺失值的方式，默认为'value'。
-        :param drop_invariant: 是否删除方差为0的列，默认为False。
-        :param return_df: 是否返回DataFrame，默认为True。
+        :param cols: 需要编码的列名列表
+        :param drop: 是否删除某一列以避免多重共线性，默认为None
+        :param handle_unknown: 处理未知类别的方式，默认为'value'
+        :param handle_missing: 处理缺失值的方式，默认为'value'
+        :param drop_invariant: 是否删除方差为0的列，默认为False
+        :param return_df: 是否返回DataFrame，默认为True
         """
         super().__init__(
             cols=cols,
@@ -69,8 +81,8 @@ class OneHotEncoder(BaseEncoder):
     def _fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None):
         """拟合独热编码器。
 
-        :param X: 输入数据。
-        :param y: 目标变量（可选）。
+        :param X: 输入数据，shape (n_samples, n_features)
+        :param y: 目标变量（可选），独热编码器不需要
         """
         for col in self.cols_:
             categories = X[col].dropna().unique().tolist()
@@ -92,9 +104,9 @@ class OneHotEncoder(BaseEncoder):
     def _transform(self, X: pd.DataFrame, y: Optional[pd.Series] = None) -> pd.DataFrame:
         """转换数据。
 
-        :param X: 输入数据。
-        :param y: 目标变量（可选）。
-        :return: 编码后的数据。
+        :param X: 输入数据，shape (n_samples, n_features)
+        :param y: 目标变量（可选），独热编码器不需要
+        :return: 编码后的数据
         """
         result_dfs = []
 
@@ -124,6 +136,6 @@ class OneHotEncoder(BaseEncoder):
     def get_feature_names(self) -> List[str]:
         """获取编码后的特征名。
 
-        :return: 编码后的特征名列表。
+        :return: 编码后的特征名列表
         """
         return self.feature_names_

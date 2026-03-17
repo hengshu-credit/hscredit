@@ -20,19 +20,32 @@ class TargetEncoder(BaseEncoder):
     使用平滑技术防止过拟合：
     encoded = (count * mean + smoothing * global_mean) / (count + smoothing)
 
-    属性:
-        cols: 需要编码的列名列表。
-        smoothing: 平滑参数。
-        min_samples_leaf: 每个类别的最小样本数。
-        noise: 添加的高斯噪声标准差。
-        handle_unknown: 处理未知类别的方式。
-        handle_missing: 处理缺失值的方式。
-        drop_invariant: 是否删除方差为0的列。
-        return_df: 是否返回DataFrame。
-        global_mean_: 全局目标均值。
+    **参数**
 
-    示例:
+    :param cols: 需要编码的列名列表。如果为None，则自动识别所有类别型列
+    :param smoothing: 平滑参数，值越大收缩到全局均值的程度越大，默认为1.0
+    :param min_samples_leaf: 每个类别的最小样本数，少于该值则使用全局均值，默认为1
+    :param noise: 添加的高斯噪声标准差，用于防止过拟合，默认为None
+    :param handle_unknown: 处理未知类别的方式，默认为'value'
+    :param handle_missing: 处理缺失值的方式，默认为'value'
+    :param drop_invariant: 是否删除方差为0的列，默认为False
+    :param return_df: 是否返回DataFrame，默认为True
+
+    **属性**
+
+    - mapping_: 目标编码映射字典，格式为 {col: {category: encoded_value}}
+    - global_mean_: 全局目标均值
+
+    **参考样例**
+
+    基本使用::
+
         >>> encoder = TargetEncoder(cols=['category'])
+        >>> X_encoded = encoder.fit_transform(X, y)
+
+    添加噪声防止过拟合::
+
+        >>> encoder = TargetEncoder(cols=['category'], noise=0.05)
         >>> X_encoded = encoder.fit_transform(X, y)
 
     参考:
@@ -52,14 +65,14 @@ class TargetEncoder(BaseEncoder):
     ):
         """初始化目标编码器。
 
-        :param cols: 需要编码的列名列表。
-        :param smoothing: 平滑参数，值越大收缩到全局均值的程度越大，默认为1.0。
-        :param min_samples_leaf: 每个类别的最小样本数，少于该值则使用全局均值，默认为1。
-        :param noise: 添加的高斯噪声标准差，用于防止过拟合，默认为None。
-        :param handle_unknown: 处理未知类别的方式，默认为'value'。
-        :param handle_missing: 处理缺失值的方式，默认为'value'。
-        :param drop_invariant: 是否删除方差为0的列，默认为False。
-        :param return_df: 是否返回DataFrame，默认为True。
+        :param cols: 需要编码的列名列表
+        :param smoothing: 平滑参数，值越大收缩到全局均值的程度越大，默认为1.0
+        :param min_samples_leaf: 每个类别的最小样本数，少于该值则使用全局均值，默认为1
+        :param noise: 添加的高斯噪声标准差，用于防止过拟合，默认为None
+        :param handle_unknown: 处理未知类别的方式，默认为'value'
+        :param handle_missing: 处理缺失值的方式，默认为'value'
+        :param drop_invariant: 是否删除方差为0的列，默认为False
+        :param return_df: 是否返回DataFrame，默认为True
         """
         super().__init__(
             cols=cols,
@@ -77,9 +90,9 @@ class TargetEncoder(BaseEncoder):
     def _fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None):
         """拟合目标编码器。
 
-        :param X: 输入数据。
-        :param y: 目标变量。
-        :raises ValueError: 当y为空时抛出。
+        :param X: 输入数据，shape (n_samples, n_features)
+        :param y: 目标变量
+        :raises ValueError: 当y为空时抛出
         """
         if y is None:
             raise ValueError("TargetEncoder是有监督编码器，必须提供目标变量y")
@@ -120,9 +133,9 @@ class TargetEncoder(BaseEncoder):
     def _transform(self, X: pd.DataFrame, y: Optional[pd.Series] = None) -> pd.DataFrame:
         """转换数据。
 
-        :param X: 输入数据。
-        :param y: 目标变量（可选）。
-        :return: 编码后的数据。
+        :param X: 输入数据，shape (n_samples, n_features)
+        :param y: 目标变量（可选），如果提供则添加噪声
+        :return: 编码后的数据
         """
         for col in self.cols_:
             if col not in self.mapping_:

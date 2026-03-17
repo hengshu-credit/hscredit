@@ -8,6 +8,7 @@
 - OrdinalEncoder: 序数编码
 - QuantileEncoder: 分位数编码
 - CatBoostEncoder: CatBoost编码
+- GBMEncoder: 梯度提升树编码器（支持XGBoost/LightGBM/CatBoost+LR）
 
 所有编码器均遵循sklearn Transformer接口规范。
 """
@@ -20,6 +21,7 @@ from .one_hot_encoder import OneHotEncoder
 from .ordinal_encoder import OrdinalEncoder
 from .quantile_encoder import QuantileEncoder
 from .catboost_encoder import CatBoostEncoder
+from .gbm_encoder import GBMEncoder
 
 __all__ = [
     'BaseEncoder',
@@ -30,4 +32,5 @@ __all__ = [
     'OrdinalEncoder',
     'QuantileEncoder',
     'CatBoostEncoder',
+    'GBMEncoder',
 ]
