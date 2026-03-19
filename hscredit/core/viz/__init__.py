@@ -34,6 +34,16 @@ from .binning_plots import (
 
 from .model_plots import plot_weights
 
+# 导出工具函数供外部使用
+from .utils import (
+    setup_axis_style,
+    save_figure,
+    get_or_create_ax,
+    create_legend,
+    format_bin_label,
+    DEFAULT_COLORS,
+)
+
 __all__ = [
     # 特征分箱相关
     "bin_plot",
@@ -45,4 +55,11 @@ __all__ = [
     "distribution_plot",
     # 模型相关
     "plot_weights",
+    # 工具函数
+    "setup_axis_style",
+    "save_figure",
+    "get_or_create_ax",
+    "create_legend",
+    "format_bin_label",
+    "DEFAULT_COLORS",
 ]

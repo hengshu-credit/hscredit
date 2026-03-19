@@ -590,16 +590,26 @@ class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
 
     def transform(
         self,
-        X: Union[pd.DataFrame, np.ndarray],
-    ) -> Union[pd.DataFrame, np.ndarray]:
+        X: Union[pd.DataFrame, np.ndarray, List[str]],
+    ) -> Union[pd.DataFrame, np.ndarray, List[str]]:
         """根据筛选结果转换数据。
 
-        :param X: 输入特征
-        :return: 筛选后的特征
+        支持两种使用方式:
+        1. 传入 DataFrame - 返回筛选后的 DataFrame
+        2. 传入特征列表 - 返回筛选后的特征列表
+
+        :param X: 输入特征 (DataFrame, ndarray 或特征名列表)
+        :return: 筛选后的特征 (与输入类型一致)
         """
         if not hasattr(self, '_is_fitted'):
             raise ValueError("筛选器尚未拟合,请先调用fit方法")
 
+        # 如果传入的是列表，返回筛选后的特征列表
+        if isinstance(X, list):
+            selected = [c for c in X if c in self.selected_features_]
+            return selected
+
+        # 如果传入的是 DataFrame 或 ndarray
         if not isinstance(X, pd.DataFrame):
             X = pd.DataFrame(X)
 

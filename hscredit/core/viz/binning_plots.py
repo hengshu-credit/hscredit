@@ -15,11 +15,12 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from matplotlib.ticker import PercentFormatter
 from sklearn.metrics import roc_curve, roc_auc_score
-from typing import Union, Optional, List
+from typing import Union, Optional, List, Any
 
-
-# 默认配色方案
-DEFAULT_COLORS = ["#2639E9", "#F76E6C", "#FE7715"]
+from .utils import (
+    DEFAULT_COLORS, setup_axis_style, save_figure, 
+    get_or_create_ax, create_legend, format_bin_label
+)
 
 
 def _is_feature_table(data):
@@ -167,6 +168,7 @@ def bin_plot(
     show_data_points: bool = True,
     iv: bool = True,
     return_frame: bool = False,
+    ax: Optional[Any] = None,
     **kwargs
 ):
     """
@@ -181,6 +183,11 @@ def bin_plot(
     
     # Series + 目标数组
     bin_plot(df['feature'], target=df['target'])
+    
+    # 使用已创建的画布
+    fig, axes = plt.subplots(2, 3, figsize=(18, 10))
+    for i, col in enumerate(features):
+        bin_plot(df[col], target=y, ax=axes[i], title=f'{col}分箱')
     ```
     
     **方式2：传入分箱统计表（scorecardpipeline 模式）**
@@ -193,7 +200,7 @@ def bin_plot(
     :param target: 目标变量（列名、Series 或数组）
     :param feature: 特征列名（当 data 为 DataFrame 且不明确时使用）
     :param desc: 特征中文描述
-    :param figsize: 图像尺寸
+    :param figsize: 图像尺寸（创建新图时使用）
     :param colors: 配色方案
     :param save: 保存路径
     :param anchor: 图例位置
@@ -208,8 +215,9 @@ def bin_plot(
     :param show_data_points: 是否显示数据点标记
     :param iv: 是否显示 IV 值（暂不支持）
     :param return_frame: 是否返回分箱统计表
+    :param ax: 可选的 matplotlib Axes 对象，用于在已有画布上绘图
     :param kwargs: 其他参数（兼容性）
-    :return: matplotlib Figure 或 (Figure, DataFrame)
+    :return: matplotlib Figure 或 (Figure, DataFrame)，如果传入 ax 则返回 ax
     """
     if colors is None:
         colors = DEFAULT_COLORS
@@ -245,12 +253,19 @@ def bin_plot(
 
     # 处理分箱标签
     feature_table["分箱"] = feature_table["分箱"].apply(
-        lambda x: x if not pd.isnull(x) and re.match(r"^\[.*\)$", str(x)) 
-        else (str(x)[:max_len] + ".." if len(str(x)) > max_len else str(x))
+        lambda x: format_bin_label(x, max_len)
     )
 
+    # 获取或创建 Axes
+    if ax is not None:
+        ax1 = ax
+        fig = ax.figure
+        return_ax = True
+    else:
+        fig, ax1 = plt.subplots(figsize=figsize)
+        return_ax = False
+
     # 绘图
-    fig, ax1 = plt.subplots(figsize=figsize)
     ax1.barh(feature_table['分箱'], feature_table['好样本数'], color=colors[0], label='好样本', hatch="/" if hatch else None)
     ax1.barh(feature_table['分箱'], feature_table['坏样本数'], left=feature_table['好样本数'], color=colors[1], label='坏样本', hatch="\\" if hatch else None)
     ax1.set_xlabel('样本数')
@@ -260,12 +275,10 @@ def bin_plot(
     ax2.set_xlabel('坏样本率: 坏样本数 / 样本总数')
     ax2.set_xlim(xmin=0.)
 
-    # 显示数据点
     if show_data_points:
         for i, rate in enumerate(feature_table['坏样本率']):
             ax2.scatter(rate, i, color=colors[2])
 
-    # 显示文本标注
     if fontdict and fontdict.get("color"):
         for i, v in feature_table[['样本总数', '好样本数', '坏样本数', '坏样本率']].iterrows():
             ax1.text(v['样本总数'] / 2, i + len(feature_table) / 60, 
@@ -274,36 +287,39 @@ def bin_plot(
     ax1.invert_yaxis()
     ax2.xaxis.set_major_formatter(PercentFormatter(1, decimals=0, is_latex=True))
     
-    # 标题处理
-    if title is not None:
-        fig.suptitle(f'{title}\n\n')
+    if not return_ax:
+        if title is not None:
+            fig.suptitle(f'{title}\n\n')
+        else:
+            fig.suptitle(f'{desc}{ending}\n\n')
+
+        handles1, labels1 = ax1.get_legend_handles_labels()
+        handles2, labels2 = ax2.get_legend_handles_labels()
+        fig.legend(handles1 + handles2, labels1 + labels2, loc='upper center', 
+                   ncol=len(labels1 + labels2), bbox_to_anchor=(0.5, anchor), frameon=False)
+
+        plt.tight_layout()
+        save_figure(fig, save)
+
+        if return_frame:
+            return fig, feature_table
+        return fig
     else:
-        fig.suptitle(f'{desc}{ending}\n\n')
-
-    handles1, labels1 = ax1.get_legend_handles_labels()
-    handles2, labels2 = ax2.get_legend_handles_labels()
-    fig.legend(handles1 + handles2, labels1 + labels2, loc='upper center', 
-               ncol=len(labels1 + labels2), bbox_to_anchor=(0.5, anchor), frameon=False)
-
-    plt.tight_layout()
-
-    if save:
-        os.makedirs(os.path.dirname(save), exist_ok=True)
-        fig.savefig(save, dpi=240, format="png", bbox_inches="tight")
-
-    if return_frame:
-        return fig, feature_table
-    
-    return fig
+        if title is not None:
+            ax1.set_title(title)
+        else:
+            ax1.set_title(f'{desc}{ending}')
+        return ax1
 
 
 def corr_plot(data, figure_size=(16, 8), fontsize=16, mask=False, save=None, 
-              annot=True, max_len=35, linewidths=0.1, fmt='.2f', step=11, linecolor='white', **kwargs):
+              annot=True, max_len=35, linewidths=0.1, fmt='.2f', step=11, linecolor='white', 
+              ax=None, **kwargs):
     """
     特征相关性热力图.
 
     :param data: 特征数据
-    :param figure_size: 图像尺寸
+    :param figure_size: 图像尺寸（创建新图时使用）
     :param fontsize: 字体大小
     :param mask: 是否只显示下三角
     :param save: 保存路径
@@ -313,7 +329,8 @@ def corr_plot(data, figure_size=(16, 8), fontsize=16, mask=False, save=None,
     :param step: 色阶步数
     :param linewidths: 边框宽度
     :param linecolor: 边框颜色
-    :return: matplotlib Figure
+    :param ax: 可选的 matplotlib Axes 对象
+    :return: matplotlib Figure 或 Axes
     """
     if max_len is None:
         corr = data.corr()
@@ -324,7 +341,14 @@ def corr_plot(data, figure_size=(16, 8), fontsize=16, mask=False, save=None,
     corr_mask = np.zeros_like(corr, dtype=bool)
     corr_mask[np.triu_indices_from(corr_mask)] = True
 
-    fig, ax = plt.subplots(figsize=figure_size)
+    # 获取或创建 Axes
+    if ax is None:
+        fig, ax = plt.subplots(figsize=figure_size)
+        return_ax = False
+    else:
+        fig = ax.figure
+        return_ax = True
+
     map_plot = sns.heatmap(
         corr, cmap=sns.diverging_palette(267, 267, n=step, s=100, l=40),
         vmax=1, vmin=-1, center=0, square=True, linewidths=linewidths,
@@ -335,15 +359,15 @@ def corr_plot(data, figure_size=(16, 8), fontsize=16, mask=False, save=None,
     map_plot.tick_params(axis='x', labelrotation=270, labelsize=fontsize)
     map_plot.tick_params(axis='y', labelrotation=0, labelsize=fontsize)
 
-    if save:
-        os.makedirs(os.path.dirname(save), exist_ok=True)
-        fig.savefig(save, dpi=240, format="png", bbox_inches="tight")
-
-    return fig
+    if not return_ax:
+        save_figure(fig, save)
+        return fig
+    else:
+        return ax
 
 
 def ks_plot(score, target, title="", fontsize=14, figsize=(16, 8), save=None, 
-            colors=None, anchor=0.945):
+            colors=None, anchor=0.945, axes=None):
     """
     KS曲线和ROC曲线.
 
@@ -351,23 +375,54 @@ def ks_plot(score, target, title="", fontsize=14, figsize=(16, 8), save=None,
     :param target: 真实标签
     :param title: 图表标题
     :param fontsize: 字体大小
-    :param figsize: 图像尺寸
+    :param figsize: 图像尺寸（创建新图时使用）
     :param save: 保存路径
     :param colors: 配色方案
     :param anchor: 图例位置
-    :return: matplotlib Figure
+    :param axes: 可选的 matplotlib Axes 对象数组 [ax1, ax2]
+    :return: matplotlib Figure 或 Axes 数组
     """
     if colors is None:
         colors = DEFAULT_COLORS
 
-    auc_value = roc_auc_score(target, score)
+    # 转换 target 和 score 为 numpy 数组
+    # 注意：函数签名是 ks_plot(score, target, ...)
+    score_arr = np.asarray(score, dtype=float)
+    target_arr = np.asarray(target)
+
+    # 检查 target 是否为二分类
+    unique_labels = np.unique(target_arr[~pd.isna(target_arr)])  # 排除 NaN
+    if len(unique_labels) != 2:
+        raise ValueError(
+            f"target 必须是二分类标签（包含2个唯一值），当前有 {len(unique_labels)} 个唯一值。"
+            f"请确保传入正确的 y_test 标签（如 0/1 或 True/False），而不是预测概率。"
+        )
+
+    # 确保 target 是数值型的 0/1 格式
+    # 检查是否已经是 0/1 数值
+    try:
+        unique_numeric = [float(x) for x in unique_labels]
+        is_01 = all(x in [0.0, 1.0] for x in unique_numeric)
+    except (ValueError, TypeError):
+        is_01 = False
+
+    if is_01:
+        # 已经是 0/1，直接转换类型
+        target_arr = target_arr.astype(float)
+    else:
+        # 非 0/1 标签（如 -1/1, 'good'/'bad', True/False），映射为 0/1
+        # 第一个唯一值映射为 0，第二个映射为 1
+        label_0, label_1 = unique_labels[0], unique_labels[1]
+        target_arr = np.where(target_arr == label_0, 0.0, 1.0)
+
+    auc_value = roc_auc_score(target_arr, score_arr)
 
     if auc_value < 0.5:
         warnings.warn('评分AUC指标小于50%, 推断数据值越大, 正样本率越高, 将数据值转为负数后进行绘图')
-        score = -score
+        score_arr = -score_arr
         auc_value = 1 - auc_value
 
-    df = pd.DataFrame({'label': target, 'pred': score})
+    df = pd.DataFrame({'label': target_arr, 'pred': score_arr})
 
     df_ks = df.sort_values('pred', ascending=False).reset_index(drop=True) \
         .assign(group=lambda x: np.ceil((x.index + 1) / (len(x.index) / len(df.index)))) \
@@ -379,67 +434,90 @@ def ks_plot(score, target, title="", fontsize=14, figsize=(16, 8), save=None,
             cumbad=lambda x: np.cumsum(x.bad) / sum(x.bad)
         ).assign(ks=lambda x: abs(x.cumbad - x.cumgood))
 
-    fig, ax = plt.subplots(1, 2, figsize=figsize)
+    # 获取或创建 Axes
+    if axes is not None:
+        # 检查是否为单个 Axes（使用 matplotlib 的 Axes 类型判断）
+        if hasattr(axes, 'plot') and not hasattr(axes, '__len__'):
+            # 传入的是单个 Axes，只用第一个子图
+            fig = axes.figure
+            ax1 = axes
+            # 创建第二个 axes 用于 ROC 曲线
+            ax2 = fig.add_subplot(122)
+            return_axes = True
+        elif hasattr(axes, '__len__') and len(axes) >= 2:
+            # 传入的是 Axes 列表/数组
+            ax1, ax2 = axes[0], axes[1]
+            fig = ax1.figure
+            return_axes = True
+        else:
+            # 其他情况，创建新图
+            fig, ax = plt.subplots(1, 2, figsize=figsize)
+            ax1, ax2 = ax[0], ax[1]
+            return_axes = False
+    else:
+        fig, ax = plt.subplots(1, 2, figsize=figsize)
+        ax1, ax2 = ax[0], ax[1]
+        return_axes = False
 
     # KS曲线
     dfks = df_ks.loc[lambda x: x.ks == max(x.ks)].sort_values('group').iloc[0]
 
-    ax[0].plot(df_ks.group, df_ks.ks, color=colors[0], label="KS曲线")
-    ax[0].plot(df_ks.group, df_ks.cumgood, color=colors[1], label="累积好客户占比")
-    ax[0].plot(df_ks.group, df_ks.cumbad, color=colors[2], label="累积坏客户占比")
-    ax[0].fill_between(df_ks.group, df_ks.cumbad, df_ks.cumgood, color=colors[0], alpha=0.25)
+    ax1.plot(df_ks.group, df_ks.ks, color=colors[0], label="KS曲线")
+    ax1.plot(df_ks.group, df_ks.cumgood, color=colors[1], label="累积好客户占比")
+    ax1.plot(df_ks.group, df_ks.cumbad, color=colors[2], label="累积坏客户占比")
+    ax1.fill_between(df_ks.group, df_ks.cumbad, df_ks.cumgood, color=colors[0], alpha=0.25)
 
-    ax[0].plot([dfks['group'], dfks['group']], [0, dfks['ks']], 'r--')
-    ax[0].text(dfks['group'], dfks['ks'], f"KS: {round(dfks['ks'], 4)} at: {dfks.group:.2%}", 
-               horizontalalignment='center', fontsize=fontsize)
+    ax1.plot([dfks['group'], dfks['group']], [0, dfks['ks']], 'r--')
+    ax1.text(dfks['group'], dfks['ks'], f"KS: {round(dfks['ks'], 4)} at: {dfks.group:.2%}", 
+             horizontalalignment='center', fontsize=fontsize)
 
-    ax[0].set_xlabel('% of Population', fontsize=fontsize)
-    ax[0].set_ylabel('% of Total Bad / Good', fontsize=fontsize)
-    ax[0].set_xlim((0, 1))
-    ax[0].set_ylim((0, 1))
-    handles1, labels1 = ax[0].get_legend_handles_labels()
+    ax1.set_xlabel('% of Population', fontsize=fontsize)
+    ax1.set_ylabel('% of Total Bad / Good', fontsize=fontsize)
+    ax1.set_xlim((0, 1))
+    ax1.set_ylim((0, 1))
+    handles1, labels1 = ax1.get_legend_handles_labels()
 
     # ROC曲线
-    fpr, tpr, thresholds = roc_curve(target, score)
+    fpr, tpr, thresholds = roc_curve(target_arr, score_arr)
 
-    ax[1].plot(fpr, tpr, color=colors[0], label="ROC Curve")
-    ax[1].stackplot(fpr, tpr, color=colors[0], alpha=0.25)
-    ax[1].plot([0, 1], [0, 1], color=colors[1], lw=2, linestyle=':')
-    ax[1].text(0.5, 0.5, f"AUC: {auc_value:.4f}", fontsize=fontsize, 
-               horizontalalignment="center", transform=ax[1].transAxes)
+    ax2.plot(fpr, tpr, color=colors[0], label="ROC Curve")
+    ax2.stackplot(fpr, tpr, color=colors[0], alpha=0.25)
+    ax2.plot([0, 1], [0, 1], color=colors[1], lw=2, linestyle=':')
+    ax2.text(0.5, 0.5, f"AUC: {auc_value:.4f}", fontsize=fontsize, 
+             horizontalalignment="center", transform=ax2.transAxes)
 
-    ax[1].set_xlabel("False Positive Rate", fontsize=fontsize)
-    ax[1].set_ylabel('True Positive Rate', fontsize=fontsize)
-    ax[1].set_xlim((0, 1))
-    ax[1].set_ylim((0, 1))
-    ax[1].yaxis.tick_right()
-    ax[1].yaxis.set_label_position("right")
-    handles2, labels2 = ax[1].get_legend_handles_labels()
+    ax2.set_xlabel("False Positive Rate", fontsize=fontsize)
+    ax2.set_ylabel('True Positive Rate', fontsize=fontsize)
+    ax2.set_xlim((0, 1))
+    ax2.set_ylim((0, 1))
+    ax2.yaxis.tick_right()
+    ax2.yaxis.set_label_position("right")
+    handles2, labels2 = ax2.get_legend_handles_labels()
 
-    if title:
-        title += " "
-    fig.suptitle(f"{title}K-S & ROC CURVE\n", fontsize=fontsize, fontweight="bold")
+    if not return_axes:
+        if title:
+            title += " "
+        fig.suptitle(f"{title}K-S & ROC CURVE\n", fontsize=fontsize, fontweight="bold")
 
-    fig.legend(handles1 + handles2, labels1 + labels2, loc='upper center', 
-               ncol=len(labels1 + labels2), bbox_to_anchor=(0.5, anchor), frameon=False)
+        fig.legend(handles1 + handles2, labels1 + labels2, loc='upper center', 
+                   ncol=len(labels1 + labels2), bbox_to_anchor=(0.5, anchor), frameon=False)
 
-    plt.tight_layout()
-
-    if save:
-        os.makedirs(os.path.dirname(save), exist_ok=True)
-        plt.savefig(save, dpi=240, format="png", bbox_inches="tight")
-
-    return fig
+        plt.tight_layout()
+        save_figure(fig, save)
+        return fig
+    else:
+        return axes
 
 
-def hist_plot(score, y_true=None, figsize=(15, 10), bins=30, save=None, 
-              labels=None, desc="", anchor=1.11, fontsize=14, kde=False, title=None, **kwargs):
+def hist_plot(score, y_true=None, figsize=(15, 10), bins=30, save=None,
+              labels=None, desc="", anchor=1.11, fontsize=14, kde=False, title=None,
+              ax=None, **kwargs):
     """
     特征值分布直方图.
 
     :param score: 特征值
     :param y_true: 标签
-    :param figsize: 图像尺寸
+    :param figsize: 图像尺寸（创建新图时使用）
     :param bins: 分箱数
     :param save: 保存路径
     :param labels: 图例标签
@@ -448,8 +526,9 @@ def hist_plot(score, y_true=None, figsize=(15, 10), bins=30, save=None,
     :param fontsize: 字体大小
     :param kde: 是否显示核密度估计
     :param title: 完整标题（优先级高于 desc）
+    :param ax: 可选的 matplotlib Axes 对象
     :param kwargs: 其他参数
-    :return: matplotlib Figure
+    :return: matplotlib Figure 或 Axes
     """
     if labels is None:
         labels = ["好样本", "坏样本"]
@@ -467,7 +546,14 @@ def hist_plot(score, y_true=None, figsize=(15, 10), bins=30, save=None,
         y_true = None
         hue_order = None
 
-    fig, ax = plt.subplots(1, 1, figsize=figsize)
+    # 获取或创建 Axes
+    if ax is not None:
+        return_ax = True
+        fig = ax.figure
+    else:
+        return_ax = False
+        fig, ax = plt.subplots(1, 1, figsize=figsize)
+
     palette = sns.diverging_palette(340, 267, n=target_unique, s=100, l=40)
 
     # 处理 hue_order 参数
@@ -482,15 +568,13 @@ def hist_plot(score, y_true=None, figsize=(15, 10), bins=30, save=None,
         ax=ax, kde=kde, **kwargs
     )
 
-    ax.spines['top'].set_color("#2639E9")
-    ax.spines['bottom'].set_color("#2639E9")
-    ax.spines['right'].set_color("#2639E9")
-    ax.spines['left'].set_color("#2639E9")
+    # 使用公共函数设置坐标轴样式
+    setup_axis_style(ax)
 
     ax.set_xlabel("值域范围", fontsize=fontsize)
     ax.set_ylabel("样本占比", fontsize=fontsize)
     ax.yaxis.set_major_formatter(PercentFormatter(1))
-    
+
     # 标题处理：优先使用 title 参数
     if title is not None:
         ax.set_title(f"{title}\n\n", fontsize=fontsize)
@@ -498,17 +582,16 @@ def hist_plot(score, y_true=None, figsize=(15, 10), bins=30, save=None,
         ax.set_title(f"{desc + ' ' if desc else '特征'}分布情况\n\n", fontsize=fontsize)
 
     if y_true is not None:
-        ax.legend([t for t in hue_order for _ in range(2)] if kde else hue_order, 
-                  loc='upper center', ncol=target_unique * 2 if kde else target_unique, 
+        ax.legend([t for t in hue_order for _ in range(2)] if kde else hue_order,
+                  loc='upper center', ncol=target_unique * 2 if kde else target_unique,
                   bbox_to_anchor=(0.5, anchor), frameon=False, fontsize=fontsize)
 
-    fig.tight_layout()
-
-    if save:
-        os.makedirs(os.path.dirname(save), exist_ok=True)
-        plt.savefig(save, dpi=240, format="png", bbox_inches="tight")
-
-    return fig
+    if not return_ax:
+        fig.tight_layout()
+        save_figure(fig, save)
+        return fig
+    else:
+        return ax
 
 
 def psi_plot(expected, actual, labels=None, desc="", save=None, colors=None, 

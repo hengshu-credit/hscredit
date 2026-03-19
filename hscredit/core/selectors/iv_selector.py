@@ -19,8 +19,19 @@ def _compute_iv_single(x: np.ndarray, y: np.ndarray, regularization: float = 1.0
     :param regularization: 正则化参数，避免除零
     :return: IV值
     """
-    # 处理缺失值
-    valid = ~np.isnan(x)
+    # 处理缺失值 - 兼容category和object类型
+    # 先转换为object类型，然后用isnull判断
+    if isinstance(x, pd.Series):
+        has_missing = x.isnull().values
+    else:
+        # 如果是numpy数组，尝试转换为Series以使用isnull
+        try:
+            has_missing = pd.Series(x).isnull().values
+        except:
+            # 如果转换失败，使用pd.isnull直接判断
+            has_missing = pd.isnull(x)
+    
+    valid = ~has_missing
     x_valid = x[valid]
     y_valid = y[valid]
     
@@ -75,6 +86,10 @@ class IVSelector(BaseFeatureSelector):
     - 0.1 - 0.3: 中等预测能力
     - 0.3 - 0.5: 强预测能力
     - > 0.5: 极强预测能力（可能过拟合）
+
+    **支持的数据类型:**
+    - 数值型特征（int, float）
+    - 类别型特征（object, category）
 
     **参数**
 
@@ -131,11 +146,12 @@ class IVSelector(BaseFeatureSelector):
             X = X.drop(columns=self.target)
 
         self._get_feature_names(X)
-        
-        # 编码类别变量
+
+        # 编码类别变量 - 支持 object 和 category 类型
         X_encoded = X.copy()
         for col in X.columns:
-            if X[col].dtype == 'object':
+            # 检查是否为类别型变量（object 或 category 类型）
+            if X[col].dtype.name in ['object', 'category']:
                 X_encoded[col] = pd.factorize(X[col])[0]
 
         y = np.asarray(y)

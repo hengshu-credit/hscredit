@@ -42,7 +42,7 @@ from .boruta_selector import BorutaSelector
 from .mutual_info_selector import MutualInfoSelector
 from .chi2_selector import Chi2Selector
 from .f_test_selector import FTestSelector
-from .step_wise_selector import StepwiseSelector, StepwiseFeatureSelector
+from .stepwise_selector import StepwiseSelector
 
 # 导出所有筛选器
 __all__ = [
@@ -73,7 +73,6 @@ __all__ = [
     'RFESelector',
     'SequentialFeatureSelector',
     'StepwiseSelector',
-    'StepwiseFeatureSelector',
     
     # 高级方法
     'BorutaSelector',

@@ -16,7 +16,7 @@ import matplotlib.pyplot as plt
 DEFAULT_COLORS = ["#2639E9", "#F76E6C", "#FE7715"]
 
 
-def plot_weights(summary, save=None, figsize=(15, 8), fontsize=14, colors=None):
+def plot_weights(summary, save=None, figsize=(15, 8), fontsize=14, colors=None, ax=None):
     """
     逻辑回归模型系数误差图.
     
@@ -29,13 +29,14 @@ def plot_weights(summary, save=None, figsize=(15, 8), fontsize=14, colors=None):
         - pd.DataFrame: LogisticRegression.summary() 的返回结果
         - LogisticRegression: hscredit 的 LogisticRegression 模型对象
     :param save: 图片保存路径，如果传入路径中有文件夹不存在，会自动创建，默认 None
-    :param figsize: 图片大小，默认 (15, 8)
+    :param figsize: 图片大小（创建新图时使用），默认 (15, 8)
     :param fontsize: 字体大小，默认 14
     :param colors: 图片主题颜色列表，长度为3，默认为 ["#2639E9", "#F76E6C", "#FE7715"]
+    :param ax: 可选的 matplotlib Axes 对象，用于在已有画布上绘图
 
     **返回**
 
-    :return: matplotlib Figure 对象
+    :return: matplotlib Figure 或 Axes 对象
 
     **参考样例**
 
@@ -54,6 +55,12 @@ def plot_weights(summary, save=None, figsize=(15, 8), fontsize=14, colors=None):
         >>> 
         >>> # 方式2：直接传入模型对象
         >>> fig = plot_weights(model)
+
+    在已有画布上绘图::
+
+        >>> fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+        >>> plot_weights(model1, ax=axes[0])
+        >>> plot_weights(model2, ax=axes[1])
 
     保存图片::
 
@@ -133,8 +140,13 @@ def plot_weights(summary, save=None, figsize=(15, 8), fontsize=14, colors=None):
     lower_error = summary_df['Coef.'] - summary_df[ci_lower_col]
     upper_error = summary_df[ci_upper_col] - summary_df['Coef.']
     
-    # 创建图形
-    fig, ax = plt.subplots(1, 1, figsize=figsize)
+    # 获取或创建 Axes
+    if ax is not None:
+        return_ax = True
+        fig = ax.figure
+    else:
+        return_ax = False
+        fig, ax = plt.subplots(1, 1, figsize=figsize)
     
     # 绘制误差图
     ax.errorbar(
@@ -169,16 +181,19 @@ def plot_weights(summary, save=None, figsize=(15, 8), fontsize=14, colors=None):
     # 设置网格
     ax.grid(True, axis='x', alpha=0.3, linestyle='--')
     
-    # 自动调整布局
-    plt.tight_layout()
-    
-    # 保存图片
-    if save:
-        save_dir = os.path.dirname(save)
-        if save_dir and not os.path.exists(save_dir):
-            os.makedirs(save_dir, exist_ok=True)
+    if not return_ax:
+        # 自动调整布局
+        plt.tight_layout()
         
-        fig.savefig(save, dpi=240, format="png", bbox_inches="tight")
-        print(f"图片已保存至: {save}")
-    
-    return fig
+        # 保存图片
+        if save:
+            save_dir = os.path.dirname(save)
+            if save_dir and not os.path.exists(save_dir):
+                os.makedirs(save_dir, exist_ok=True)
+            
+            fig.savefig(save, dpi=240, format="png", bbox_inches="tight")
+            print(f"图片已保存至: {save}")
+        
+        return fig
+    else:
+        return ax

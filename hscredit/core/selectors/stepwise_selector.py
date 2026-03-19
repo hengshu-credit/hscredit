@@ -810,15 +810,3 @@ class StepwiseSelector(BaseFeatureSelector):
         lines.append("=" * 70)
 
         return "\n".join(lines)
-
-
-class StepwiseFeatureSelector(StepwiseSelector):
-    """逐步特征筛选器（别名）.
-
-    为了保持与项目中其他筛选器命名风格一致，
-    StepwiseSelector 也可用作 StepwiseFeatureSelector。
-    
-    这是 StepwiseSelector 的别名类，功能完全相同。
-    """
-
-    pass
