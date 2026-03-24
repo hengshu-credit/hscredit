@@ -8,6 +8,11 @@
 1. GBM + LR: 使用 GBM 提取特征，输入逻辑回归
 2. 特征增强: 将树模型的叶子节点作为新的特征
 3. Embedding 提取: 获取树模型的中间表示
+
+**依赖**
+- XGBoost: pip install xgboost
+- LightGBM: pip install lightgbm
+- CatBoost: pip install catboost
 """
 
 from typing import Optional, List, Dict, Union, Any, Literal
@@ -16,6 +21,13 @@ import pandas as pd
 import warnings
 
 from .base import BaseEncoder
+
+# 从 hscredit.core.models 统一导入模型
+from ..models import (
+    XGBoostRiskModel,
+    LightGBMRiskModel,
+    CatBoostRiskModel,
+)
 
 
 class GBMEncoder(BaseEncoder):
@@ -352,13 +364,6 @@ class GBMEncoder(BaseEncoder):
         :param y: 目标变量
         :raises ImportError: 当xgboost未安装时抛出
         """
-        try:
-            import xgboost as xgb
-        except ImportError:
-            raise ImportError(
-                "使用XGBoost需要安装xgboost: pip install xgboost"
-            )
-
         # 基础参数
         params = {
             'n_estimators': self.n_estimators,
@@ -386,10 +391,10 @@ class GBMEncoder(BaseEncoder):
         # 合并用户自定义参数
         params.update(self.model_params)
 
-        # 创建并训练模型
-        self.model_ = xgb.XGBClassifier(**params) if self.task == 'classification' else xgb.XGBRegressor(**params)
+        # 使用 hscredit 的 XGBoostRiskModel
+        self.model_ = XGBoostRiskModel(**params)
         self.model_.fit(X, y)
-        self.n_trees_ = self.model_.n_estimators
+        self.n_trees_ = self.n_estimators
 
     def _fit_lightgbm(self, X: pd.DataFrame, y: pd.Series):
         """拟合LightGBM模型。
@@ -398,13 +403,6 @@ class GBMEncoder(BaseEncoder):
         :param y: 目标变量
         :raises ImportError: 当lightgbm未安装时抛出
         """
-        try:
-            import lightgbm as lgb
-        except ImportError:
-            raise ImportError(
-                "使用LightGBM需要安装lightgbm: pip install lightgbm"
-            )
-
         # 基础参数
         params = {
             'n_estimators': self.n_estimators,
@@ -415,7 +413,7 @@ class GBMEncoder(BaseEncoder):
             'min_child_samples': self.min_child_samples,
             'random_state': self.random_state,
             'n_jobs': -1,
-            'verbose': -1,
+            'verbose': False,
         }
 
         # 添加任务相关参数
@@ -431,10 +429,10 @@ class GBMEncoder(BaseEncoder):
         # 合并用户自定义参数
         params.update(self.model_params)
 
-        # 创建并训练模型
-        self.model_ = lgb.LGBMClassifier(**params) if self.task == 'classification' else lgb.LGBMRegressor(**params)
+        # 使用 hscredit 的 LightGBMRiskModel
+        self.model_ = LightGBMRiskModel(**params)
         self.model_.fit(X, y)
-        self.n_trees_ = self.model_.n_estimators
+        self.n_trees_ = self.n_estimators
 
     def _fit_catboost(self, X: pd.DataFrame, y: pd.Series):
         """拟合CatBoost模型。
@@ -443,13 +441,6 @@ class GBMEncoder(BaseEncoder):
         :param y: 目标变量
         :raises ImportError: 当catboost未安装时抛出
         """
-        try:
-            import catboost as cb
-        except ImportError:
-            raise ImportError(
-                "使用CatBoost需要安装catboost: pip install catboost"
-            )
-
         # 复制数据，避免修改原始数据
         X_cb = X.copy()
 
@@ -463,38 +454,34 @@ class GBMEncoder(BaseEncoder):
             # 确保列为字符串类型
             X_cb[col] = X_cb[col].astype(str)
 
-        # 基础参数
+        # 基础参数 (CatBoostRiskModel使用不同的参数名)
         params = {
             'iterations': self.n_estimators,
             'depth': self.max_depth,
             'learning_rate': self.learning_rate,
             'subsample': self.subsample,
             'min_data_in_leaf': self.min_child_samples,
-            'random_seed': self.random_state,
+            'random_state': self.random_state,
             'verbose': False,
         }
 
         # 添加任务相关参数
         if self.task == 'classification':
             if len(self.classes_) == 2:
-                params['loss_function'] = 'Logloss'
+                params['objective'] = 'Logloss'
             else:
-                params['loss_function'] = 'MultiClass'
-                params['classes_count'] = len(self.classes_)
+                params['objective'] = 'MultiClass'
         else:
-            params['loss_function'] = 'RMSE'
+            params['objective'] = 'RMSE'
 
         # 合并用户自定义参数
         params.update(self.model_params)
 
-        # 创建并训练模型
-        if self.task == 'classification':
-            self.model_ = cb.CatBoostClassifier(**params)
-        else:
-            self.model_ = cb.CatBoostRegressor(**params)
+        # 使用 hscredit 的 CatBoostRiskModel
+        self.model_ = CatBoostRiskModel(**params)
 
         self.model_.fit(X_cb, y, cat_features=cat_features if cat_features else None)
-        self.n_trees_ = self.model_.tree_count_
+        self.n_trees_ = self.n_estimators
 
     def _transform(self, X: pd.DataFrame, y: Optional[pd.Series] = None) -> pd.DataFrame:
         """转换数据为GBM特征。
@@ -563,8 +550,8 @@ class GBMEncoder(BaseEncoder):
         :param X: 输入数据
         :return: 叶子节点索引DataFrame
         """
-        # 获取叶子索引 (n_samples, n_trees)
-        leaf_indices = self.model_.apply(X)
+        # 使用 hscredit 模型类的 get_leaf_indices 方法
+        leaf_indices = self.model_.get_leaf_indices(X)
 
         # 转换为DataFrame
         columns = [f'gbm_tree_{i}' for i in range(leaf_indices.shape[1])]
@@ -576,8 +563,8 @@ class GBMEncoder(BaseEncoder):
         :param X: 输入数据
         :return: 叶子节点索引DataFrame
         """
-        # 获取叶子索引
-        leaf_indices = self.model_.predict(X, pred_leaf=True)
+        # 使用 hscredit 模型类的 get_leaf_indices 方法
+        leaf_indices = self.model_.get_leaf_indices(X)
 
         # 转换为DataFrame
         columns = [f'gbm_tree_{i}' for i in range(leaf_indices.shape[1])]
@@ -589,10 +576,8 @@ class GBMEncoder(BaseEncoder):
         :param X: 输入数据
         :return: 叶子节点索引DataFrame
         """
-        import catboost as cb
-
-        # 获取叶子索引
-        leaf_indices = self.model_.calc_leaf_indexes(X)
+        # 使用 hscredit 模型类的 get_leaf_indices 方法
+        leaf_indices = self.model_.get_leaf_indices(X)
 
         # 转换为DataFrame
         columns = [f'gbm_tree_{i}' for i in range(leaf_indices.shape[1])]
@@ -658,40 +643,8 @@ class GBMEncoder(BaseEncoder):
         :param X: 输入数据
         :return: embedding DataFrame
         """
-        if self.model_type == 'xgboost':
-            # XGBoost: 使用每棵树的输出值
-            leaf_df = self._get_xgboost_leaves(X)
-            # 获取每棵树的预测值
-            n_trees = leaf_df.shape[1]
-            embeddings = []
-
-            for i in range(n_trees):
-                # 获取第i棵树的预测值
-                tree_pred = self.model_.predict(X, iteration_range=(i, i+1))
-                embeddings.append(tree_pred)
-
-            embedding_matrix = np.column_stack(embeddings)
-            columns = [f'gbm_emb_{i}' for i in range(n_trees)]
-            return pd.DataFrame(embedding_matrix, index=X.index, columns=columns)
-
-        elif self.model_type == 'lightgbm':
-            # LightGBM: 使用叶子索引作为embedding
-            return self._transform_to_leaves(X)
-
-        elif self.model_type == 'catboost':
-            # CatBoost: 使用每棵树的输出
-            leaf_df = self._get_catboost_leaves(X)
-            n_trees = leaf_df.shape[1]
-            embeddings = []
-
-            for i in range(n_trees):
-                # 获取前i+1棵树的累积预测
-                tree_pred = self.model_.predict(X, ntree_start=i, ntree_end=i+1)
-                embeddings.append(tree_pred)
-
-            embedding_matrix = np.column_stack(embeddings)
-            columns = [f'gbm_emb_{i}' for i in range(n_trees)]
-            return pd.DataFrame(embedding_matrix, index=X.index, columns=columns)
+        # 统一使用叶子索引作为embedding（跨模型通用方法）
+        return self._transform_to_leaves(X)
 
     def _generate_feature_names(self):
         """生成编码后的特征名列表。"""
@@ -724,11 +677,12 @@ class GBMEncoder(BaseEncoder):
         if self.model_ is None:
             raise ValueError("模型尚未拟合")
 
-        importances = self.model_.feature_importances_
+        # 使用 hscredit 模型类的 get_feature_importances 方法
+        importance_series = self.model_.get_feature_importances()
 
         return pd.DataFrame({
-            'feature': self.cols_,
-            'importance': importances
+            'feature': importance_series.index,
+            'importance': importance_series.values
         }).sort_values('importance', ascending=False)
 
     def get_missing_stats(self) -> pd.DataFrame:
@@ -759,24 +713,13 @@ class GBMEncoder(BaseEncoder):
         if self.model_ is None:
             raise ValueError("模型尚未拟合")
 
-        if self.model_type == 'xgboost':
-            try:
-                import xgboost as xgb
-                import matplotlib.pyplot as plt
-                xgb.plot_tree(self.model_, num_trees=tree_idx, **kwargs)
-                plt.show()
-            except ImportError:
-                raise ImportError("绘制树需要安装matplotlib: pip install matplotlib")
-        elif self.model_type == 'lightgbm':
-            try:
-                import lightgbm as lgb
-                import matplotlib.pyplot as plt
-                lgb.plot_tree(self.model_, tree_index=tree_idx, **kwargs)
-                plt.show()
-            except ImportError:
-                raise ImportError("绘制树需要安装matplotlib: pip install matplotlib")
-        else:
-            raise NotImplementedError(f"{self.model_type} 暂不支持树可视化")
+        try:
+            import matplotlib.pyplot as plt
+            # 使用 hscredit 模型类的 plot_tree 方法
+            self.model_.plot_tree(tree_idx, **kwargs)
+            plt.show()
+        except ImportError:
+            raise ImportError("绘制树需要安装matplotlib: pip install matplotlib")
 
     def __repr__(self) -> str:
         return (

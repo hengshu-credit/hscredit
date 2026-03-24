@@ -383,6 +383,27 @@ class BaseRiskModel(BaseEstimator, ClassifierMixin, ABC):
         else:
             return X, None, y, None, sample_weight, None
 
+    def get_native_model(self) -> Any:
+        """获取底层原生模型对象.
+
+        用于需要访问底层模型特定功能的场景，如:
+        - 获取叶子节点索引
+        - 绘制树结构
+        - 访问底层模型特有的方法
+
+        :return: 底层模型对象（如xgboost.Booster、lgb.Booster等）
+
+        **示例**
+
+        >>> model = XGBoostRiskModel()
+        >>> model.fit(X, y)
+        >>> native_model = model.get_native_model()
+        >>> # 使用底层模型方法
+        >>> leaf_indices = native_model.apply(X)
+        """
+        check_is_fitted(self, '_is_fitted')
+        return self._model
+
     def _get_metric_func(self, metric: str) -> Callable:
         """获取评估指标函数.
 

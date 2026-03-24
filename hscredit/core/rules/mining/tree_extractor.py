@@ -4,21 +4,25 @@
 - 决策树 (Decision Tree)
 - 随机森林 (Random Forest)
 - 卡方决策树 (Chi-square Tree)
-- XGBoost/GBDT
+- GBDT
 - 孤立森林 (Isolation Forest)
 """
 
 import numpy as np
 import pandas as pd
 from typing import Union, List, Dict, Optional, Tuple, Any
-from sklearn.tree import DecisionTreeClassifier
-from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, IsolationForest
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 import warnings
 
 from .base import BaseRuleMiner, RuleCondition, MinedRule
 from ..rule import Rule
+
+# 从 hscredit.core.models 统一导入 sklearn 模型
+from ...models import (
+    RandomForestRiskModel,
+    GradientBoostingRiskModel,
+)
 
 
 class TreeRuleExtractor(BaseRuleMiner):
@@ -208,19 +212,23 @@ class TreeRuleExtractor(BaseRuleMiner):
         return X_encoded.fillna(0)
     
     def _initialize_model(self):
-        """初始化模型，支持通过**kwargs传入任意参数."""
+        """初始化模型，支持通过**kwargs传入任意参数.
+        
+        从 hscredit.core.models 导入模型，通过 get_native_model() 获取底层 sklearn 模型。
+        """
         # 构建基础参数字典
         base_params = {
             'random_state': self.random_state
         }
         
         if self.algorithm == 'dt':
+            # 决策树直接使用 sklearn（hscredit 暂无 DecisionTreeRiskModel）
+            from sklearn.tree import DecisionTreeClassifier
             base_params.update({
                 'max_depth': self.max_depth,
                 'min_samples_split': self.min_samples_split,
                 'min_samples_leaf': self.min_samples_leaf,
             })
-            # 合并额外参数
             base_params.update(self.model_kwargs)
             return DecisionTreeClassifier(**base_params)
         
@@ -233,9 +241,9 @@ class TreeRuleExtractor(BaseRuleMiner):
                 'max_features': self.max_features,
                 'n_jobs': -1
             })
-            # 合并额外参数
             base_params.update(self.model_kwargs)
-            return RandomForestClassifier(**base_params)
+            # 使用 hscredit 的 RandomForestRiskModel
+            return RandomForestRiskModel(**base_params)
         
         elif self.algorithm == 'gbdt':
             base_params.update({
@@ -245,18 +253,19 @@ class TreeRuleExtractor(BaseRuleMiner):
                 'min_samples_leaf': self.min_samples_leaf,
                 'max_features': self.max_features,
             })
-            # 合并额外参数
             base_params.update(self.model_kwargs)
-            return GradientBoostingClassifier(**base_params)
+            # 使用 hscredit 的 GradientBoostingRiskModel
+            return GradientBoostingRiskModel(**base_params)
         
         elif self.algorithm == 'isf':
+            # 孤立森林直接使用 sklearn（hscredit 暂无 IsolationForestRiskModel）
+            from sklearn.ensemble import IsolationForest
             base_params.update({
                 'n_estimators': self.n_estimators,
                 'max_samples': min(256, 1000),  # 限制最大样本数
                 'contamination': 0.1,
                 'n_jobs': -1
             })
-            # 合并额外参数（如contamination, max_samples等）
             base_params.update(self.model_kwargs)
             return IsolationForest(**base_params)
     
@@ -374,11 +383,16 @@ class TreeRuleExtractor(BaseRuleMiner):
     ) -> List[Dict[str, Any]]:
         """从单棵树提取规则.
         
-        :param tree_model: 树模型
+        :param tree_model: 树模型 (sklearn Tree 或 hscredit RiskModel)
         :param tree_id: 树ID
         :return: 规则列表
         """
-        tree = tree_model.tree_
+        # 如果是 hscredit 模型，获取底层 sklearn 模型
+        if hasattr(tree_model, 'get_native_model'):
+            native_model = tree_model.get_native_model()
+            tree = native_model.tree_
+        else:
+            tree = tree_model.tree_
         rules = []
         
         def recurse(node_id, conditions):
@@ -429,14 +443,24 @@ class TreeRuleExtractor(BaseRuleMiner):
         recurse(0, [])
         return rules
     
+    def _get_native_model(self):
+        """获取底层 sklearn 模型.
+        
+        :return: 底层 sklearn 模型对象
+        """
+        if hasattr(self.model_, 'get_native_model'):
+            return self.model_.get_native_model()
+        return self.model_
+    
     def _extract_from_forest(self) -> List[Dict[str, Any]]:
         """从随机森林提取规则.
         
         :return: 规则列表
         """
         all_rules = []
+        native_model = self._get_native_model()
         
-        for i, tree in enumerate(self.model_.estimators_):
+        for i, tree in enumerate(native_model.estimators_):
             tree_rules = self._extract_from_tree(tree, tree_id=i)
             all_rules.extend(tree_rules)
         
@@ -448,9 +472,10 @@ class TreeRuleExtractor(BaseRuleMiner):
         :return: 规则列表
         """
         all_rules = []
+        native_model = self._get_native_model()
         
-        for i in range(self.model_.n_estimators_):
-            tree = self.model_.estimators_[i, 0]
+        for i in range(native_model.n_estimators_):
+            tree = native_model.estimators_[i, 0]
             tree_rules = self._extract_from_tree(tree, tree_id=i)
             
             # 过滤命中样本过少的规则
@@ -474,8 +499,10 @@ class TreeRuleExtractor(BaseRuleMiner):
         
         :return: 规则列表
         """
+        native_model = self._get_native_model()
+        
         # 计算异常分数
-        scores = self.model_.score_samples(self.X_train_)
+        scores = native_model.score_samples(self.X_train_)
         threshold = np.percentile(scores, 10)  # 取异常分数最低的10%
         
         anomaly_mask = scores < threshold
@@ -483,7 +510,7 @@ class TreeRuleExtractor(BaseRuleMiner):
         rules = []
         
         # 从每棵树提取路径
-        for tree_idx, estimator in enumerate(self.model_.estimators_):
+        for tree_idx, estimator in enumerate(native_model.estimators_):
             tree = estimator.tree_
             
             def extract_path(node_id, conditions, depth):
@@ -781,10 +808,13 @@ class TreeRuleExtractor(BaseRuleMiner):
         
         :return: 特征重要性DataFrame
         """
-        if not hasattr(self.model_, 'feature_importances_'):
+        # 获取底层模型
+        native_model = self._get_native_model()
+        
+        if not hasattr(native_model, 'feature_importances_'):
             raise ValueError(f"算法 '{self.algorithm}' 不支持特征重要性")
         
-        importance = self.model_.feature_importances_
+        importance = native_model.feature_importances_
         
         return pd.DataFrame({
             'feature': self.feature_names_,

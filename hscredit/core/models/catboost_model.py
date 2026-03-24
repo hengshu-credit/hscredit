@@ -285,6 +285,25 @@ class CatBoostRiskModel(BaseRiskModel):
         check_is_fitted(self, '_is_fitted')
         return self._model.plot_tree(tree_idx=tree_index, **kwargs)
 
+    def get_leaf_indices(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
+        """获取叶子节点索引.
+
+        返回每棵树上的叶子节点索引，用于GBDT+LR等场景。
+
+        :param X: 特征矩阵
+        :return: 叶子节点索引，形状 (n_samples, n_trees)
+
+        **示例**
+
+        >>> model = CatBoostRiskModel(iterations=50)
+        >>> model.fit(X, y)
+        >>> leaf_indices = model.get_leaf_indices(X)
+        >>> print(leaf_indices.shape)  # (n_samples, 50)
+        """
+        check_is_fitted(self, '_is_fitted')
+        X = self._prepare_data(X)[0]
+        return self._model.calc_leaf_indexes(X)
+
     def save_model(self, path: str):
         """保存模型.
 

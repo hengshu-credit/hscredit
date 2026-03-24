@@ -1,97 +1,232 @@
 # hscredit 示例代码
 
-本目录包含 hscredit 包的各种使用示例和教程，按功能模块分类组织。
+本目录包含 hscredit 库各个模块的功能演示代码，使用真实信贷数据（hscredit.xlsx）。
 
-## 快速导航
+## 数据说明
 
-### 新手入门
-- [01. 项目概述](tutorials/01_project_overview.ipynb) - 了解 hscredit 的整体架构和核心功能
-
-### 核心功能
-
-#### 02. 分箱 (Binning)
-分箱是信贷风控建模的关键步骤，支持数值型和类别型特征的分箱。
-
-- [02_binning_separate_methods.ipynb](binning/02_binning_separate_methods.ipynb) - 分箱方法独立使用
-- [03_optimal_binning_unified.ipynb](binning/03_optimal_binning_unified.ipynb) - 最优分箱统一接口
-- [04_feature_bin_stats.ipynb](binning/04_feature_bin_stats.ipynb) - 特征分箱统计
-- [05_categorical_binning.ipynb](binning/05_categorical_binning.ipynb) - 类别型特征分箱
-- [06_bin_table_display.ipynb](binning/06_bin_table_display.ipynb) - 分箱表格展示
-
-#### 03. 特征编码 (Encoding)
-支持多种编码方式，包括传统的编码方法和基于模型的编码。
-
-- [07_encoders.ipynb](encoding/07_encoders.ipynb) - 编码器演示
-- [08_gbm_encoder.ipynb](encoding/08_gbm_encoder.ipynb) - GBM编码器教程
-
-#### 04. 特征选择 (Feature Selection)
-提供多种特征筛选方法，包括相关性筛选、VIF筛选、IV筛选等。
-
-- [09_feature_selectors.ipynb](feature_selection/09_feature_selectors.ipynb) - 特征筛选器演示
-
-#### 05. 建模 (Modeling)
-支持逻辑回归、评分卡等传统风控模型的构建。
-
-- [10_logistic_regression.ipynb](modeling/10_logistic_regression.ipynb) - 逻辑回归演示
-- [11_scorecard.ipynb](modeling/11_scorecard.ipynb) - 评分卡教程
-
-#### 06. 报告生成 (Reports)
-支持生成精美的Excel报告和自动化分析报告。
-
-- [12_excel_writer.ipynb](reports/12_excel_writer.ipynb) - Excel写入器使用
-- [13_feature_analysis_report.ipynb](reports/13_feature_analysis_report.ipynb) - 自动特征分析报告
-
-#### 07. 策略分析 (Strategy Analysis)
-支持规则挖掘、Swap分析等策略分析功能。
-
-- [14_rule_usage.ipynb](strategy_analysis/14_rule_usage.ipynb) - 规则使用演示
-- [15_swap_analysis.ipynb](strategy_analysis/15_swap_analysis.ipynb) - Swap分析演示
+**数据集**: `hscredit.xlsx`
+- **样本数**: 12,448 条信贷记录
+- **目标变量**: 
+  - FPD15: 首逾标签（0=未逾期，1=逾期），逾期率 6.64%
+  - SFPD15: 首二逾标签
+- **特征**: 82个信贷相关特征，包括：
+  - 贷款行为特征（loan_behavior_score等）
+  - 机构查询特征（lender_count_12m等）
+  - 逾期记录特征（overdue_loan_m1_count_6m等）
+  - 网贷特征（network_loan_lender_count等）
+  - 消费金融特征
+  - 履约记录特征
+- **时间范围**: 放款时间从 2024-11 到 2025-08
+- **MOB字段**: 
+  - MOB1: 首期逾期天数
+  - MOB2: 前两期逾期天数
 
 ## 目录结构
 
 ```
 examples/
-├── tutorials/          # 教程和项目概述
-├── binning/            # 分箱相关示例
-├── encoding/           # 编码相关示例
-├── feature_selection/  # 特征选择示例
-├── modeling/           # 建模相关示例
-├── reports/            # 报告生成示例
-├── strategy_analysis/  # 策略分析示例
-└── utils/              # 工具和数据文件
+├── 01_binning.ipynb          # 分箱模块演示
+├── 02_encoders.ipynb         # 编码器模块演示
+├── 03_selectors.ipynb        # 特征筛选模块演示
+├── 04_models.ipynb           # 模型模块演示
+├── 05_rules.ipynb            # 规则引擎演示
+├── 06_viz.ipynb              # 可视化模块演示
+├── 07_metrics.ipynb          # 指标计算演示
+├── 08_complete_workflow.ipynb # 完整工作流程演示
+├── hscredit.xlsx             # 真实信贷数据
+├── output/                   # 输出结果目录
+│   ├── *.png                 # 可视化图表
+│   └── *.pkl                 # 模型和组件文件
+└── README.md                 # 本文件
 ```
 
-## 学习路径
+## 快速开始
 
-### 建模人员路径
-01. 项目概述 → 02. 分箱方法 → 03. 特征编码 → 04. 特征选择 → 05. 建模 → 06. 报告生成
+1. 确保已安装 hscredit 库
+```bash
+pip install -e ..
+```
 
-### 策略人员路径
-01. 项目概述 → 02. 分箱方法 → 04. 特征选择 → 07. 策略分析 → 06. 报告生成
+2. 启动 Jupyter Notebook
+```bash
+jupyter notebook
+```
 
-## 运行示例
+3. 按顺序运行各个 Notebook 学习 hscredit 的功能
 
-所有示例都是 Jupyter Notebook 格式，可以直接在 Jupyter 中打开运行。
+## 各 Notebook 说明
+
+### 01_binning.ipynb - 分箱模块
+演示 hscredit 的各种分箱算法，使用真实信贷数据：
+- **基础分箱**: 等宽分箱、等频分箱
+- **目标导向分箱**: 决策树分箱、卡方分箱
+- **优化分箱**: 最优KS分箱、最优IV分箱、MDLP分箱
+- **高级分箱**: 单调性约束分箱
+- **统一接口**: OptimalBinning
+
+**重点特征**:
+- loan_behavior_score (贷款行为评分)
+- lender_count_12m (12个月机构查询数)
+- overdue_loan_m1_count_6m (6个月M1逾期次数)
+
+### 02_encoders.ipynb - 编码器模块
+演示各种特征编码方法：
+- **WOE编码**: 评分卡建模最常用
+- **Target编码**: 目标均值编码
+- **Count编码**: 频次编码
+- **GBM编码**: 梯度提升树编码器
+
+**应用场景**:
+- 评分卡建模推荐 WOEEncoder
+- 组合模型推荐 GBMEncoder
+
+### 03_selectors.ipynb - 特征筛选模块
+演示各种特征筛选方法：
+- **基础筛选**: 方差、缺失率、单一值
+- **相关性筛选**: 相关系数、VIF
+- **目标导向筛选**: IV、PSI
+- **模型-based筛选**: 特征重要性
+- **组合筛选**: 多步骤筛选流程
+
+**评分卡推荐筛选流程**:
+1. VarianceSelector (方差筛选)
+2. VIFSelector (共线性筛选)
+3. CorrSelector (相关性筛选)
+4. IVSelector (IV>0.02)
+5. PSISelector (PSI<0.2)
+
+### 04_models.ipynb - 模型模块
+演示各种风控模型：
+- **XGBoost模型**: 高精度
+- **LightGBM模型**: 训练快速
+- **CatBoost模型**: 类别特征友好
+- **逻辑回归**: 评分卡基础
+- **评分卡模型**: 业务可解释
+
+### 05_rules.ipynb - 规则引擎
+演示规则引擎功能：
+- 规则定义和使用
+- 规则评估指标（支持度、置信度、Lift）
+- 单特征规则挖掘
+- 决策树规则提取
+
+**业务规则示例**:
+- 历史逾期规则: `overdue_loan_m1_count_6m > 0`
+- 高风险客户规则: `(loan_behavior_score < 500) & (lender_count_12m > 5)`
+
+### 06_viz.ipynb - 可视化模块
+演示各种可视化功能：
+- 分箱图 (bin_plot)
+- 相关性图 (corr_plot)
+- KS曲线 (ks_plot)
+- 分布图 (hist_plot)
+- PSI图 (psi_plot)
+
+### 07_metrics.ipynb - 指标计算
+演示各种评估指标：
+- **分类指标**: KS、AUC、Gini
+- **特征重要性**: IV
+- **稳定性指标**: PSI
+
+**IV值解读**:
+- IV < 0.02: 预测能力弱
+- 0.02 <= IV < 0.1: 预测能力中等
+- 0.1 <= IV < 0.3: 预测能力强
+- IV >= 0.3: 预测能力过强（需检查）
+
+**PSI值解读**:
+- PSI < 0.1: 稳定性好
+- 0.1 <= PSI < 0.25: 稳定性一般
+- PSI >= 0.25: 稳定性差
+
+### 08_complete_workflow.ipynb - 完整工作流程
+演示完整的信贷风险建模流程：
+1. 数据准备（加载真实信贷数据）
+2. 特征工程（IV筛选、VIF筛选、分箱、WOE编码）
+3. 模型训练（XGBoost、逻辑回归）
+4. 模型评估（KS、AUC、Gini）
+5. 评分卡构建（基础分600，PDO=50）
+6. 规则挖掘（单特征规则）
+7. 保存模型和组件
+
+## 输出文件
+
+运行 Notebook 后，会在 `output/` 目录下生成：
+
+### 可视化图表
+- `01_*.png`: 分箱相关图表
+- `02_*.png`: 编码器相关图表
+- `03_*.png`: 特征筛选相关图表
+- `04_*.png`: 模型相关图表
+- `05_*.png`: 规则引擎相关图表
+- `06_*.png`: 可视化相关图表
+- `07_*.png`: 指标计算相关图表
+- `08_*.png`: 完整工作流程相关图表
+
+### 模型文件
+- `workflow_xgb_model.pkl`: XGBoost模型
+- `workflow_lr_model.pkl`: 逻辑回归模型
+- `workflow_scorecard.pkl`: 评分卡模型
+- `workflow_binner.pkl`: 分箱器
+- `workflow_iv_selector.pkl`: IV筛选器
+- `woe_encoder.pkl`: WOE编码器
+- `composite_selector.pkl`: 组合筛选器
+
+## 依赖项
+
+- Python >= 3.8
+- hscredit
+- jupyter
+- matplotlib
+- pandas
+- numpy
+- scikit-learn
+- openpyxl (读取Excel)
+
+## 安装依赖
 
 ```bash
-# 安装 Jupyter（如果尚未安装）
-pip install jupyter
-
-# 启动 Jupyter
-jupyter notebook
-
-# 打开 examples/tutorials/01_project_overview.ipynb 开始学习
+pip install jupyter matplotlib pandas numpy scikit-learn openpyxl
 ```
 
 ## 注意事项
 
-1. 运行示例前请确保已安装所有依赖包（参见项目根目录的 `requirements.txt`）
-2. 部分示例需要数据文件，数据文件位于 `utils/hscredit.xlsx`
-3. 如需导入 hscredit 包，请确保 Python 路径设置正确
-4. 所有 notebook 中的数据路径已统一为相对路径
+1. 所有 Notebook 都使用真实信贷数据（hscredit.xlsx）进行演示
+2. 数据已脱敏处理，仅用于演示目的
+3. 部分功能可能需要额外安装依赖（如 XGBoost、LightGBM、CatBoost）
+4. 运行前请确保 hscredit 库已正确安装
+5. 建议按编号顺序运行 Notebook
 
-## 更多信息
+## 信贷建模最佳实践
 
-- [项目主文档](../README.md)
-- [目录结构详细说明](../DIRECTORY_STRUCTURE.md)
-- [API 文档](../docs/)
+### 1. 数据准备
+- 检查目标变量分布（逾期率）
+- 处理缺失值
+- 划分训练集/测试集（注意时间顺序）
+
+### 2. 特征工程
+- IV筛选（阈值0.02）剔除弱特征
+- VIF筛选（阈值10）剔除共线性特征
+- 分箱（最优IV或最优KS）
+- WOE编码（评分卡必备）
+
+### 3. 模型选择
+- **评分卡**: LogisticRegression + WOE编码
+- **高精度**: XGBoost / LightGBM / CatBoost
+- **可解释性**: 逻辑回归 + 评分卡
+
+### 4. 模型评估
+- KS > 0.3 可用
+- AUC > 0.7 良好
+- PSI < 0.1 稳定
+
+### 5. 生产部署
+- 保存分箱器、编码器、模型
+- 监控模型稳定性（PSI）
+- 定期更新模型
+
+## 更多资源
+
+- [hscredit 文档](../docs/)
+- [API 参考](../docs/api.md)
+- [使用指南](../docs/guide.md)

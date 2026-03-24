@@ -380,6 +380,25 @@ class XGBoostRiskModel(BaseRiskModel):
             **kwargs
         )
 
+    def get_leaf_indices(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
+        """获取叶子节点索引.
+
+        返回每棵树上的叶子节点索引，用于GBDT+LR等场景。
+
+        :param X: 特征矩阵
+        :return: 叶子节点索引，形状 (n_samples, n_trees)
+
+        **示例**
+
+        >>> model = XGBoostRiskModel(n_estimators=50)
+        >>> model.fit(X, y)
+        >>> leaf_indices = model.get_leaf_indices(X)
+        >>> print(leaf_indices.shape)  # (n_samples, 50)
+        """
+        check_is_fitted(self, '_is_fitted')
+        X = self._prepare_data(X)[0]
+        return self._model.apply(X)
+
     def _convert_metrics(self, metrics: Union[str, List[str]]) -> Union[str, List[str]]:
         """转换评估指标名称.
 

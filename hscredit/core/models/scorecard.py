@@ -943,44 +943,59 @@ class ScoreCard(BaseEstimator, TransformerMixin):
         
         return stats
 
-    def save_pickle(self, file: str, engine: str = 'joblib') -> None:
-        """保存模型."""
+    def save_pickle(
+        self,
+        file: str,
+        engine: str = 'joblib',
+        compression: Optional[str] = None,
+        compression_level: Optional[int] = None
+    ) -> str:
+        """保存模型.
+
+        使用 utils.io.save_pickle 进行持久化存储，支持多种序列化引擎和压缩格式。
+
+        :param file: 文件路径
+        :param engine: 序列化引擎，可选 'joblib'/'pickle'/'dill'/'cloudpickle'，默认 'joblib'
+        :param compression: 压缩格式，可选 'gzip'/'bz2'/'xz'/'lz4'/'zstd'，默认 None
+        :param compression_level: 压缩级别（1-9），默认 None
+        :return: 保存的文件路径
+        """
+        from ...utils.io import save_pickle as _save_pickle
+
         file_dir = os.path.dirname(file)
         if file_dir and not os.path.exists(file_dir):
             os.makedirs(file_dir, exist_ok=True)
 
-        if engine == 'pickle':
-            import pickle
-            with open(file, 'wb') as f:
-                pickle.dump(self, f)
-        elif engine == 'joblib':
-            import joblib
-            joblib.dump(self, file)
-        elif engine == 'dill':
-            import dill
-            with open(file, 'wb') as f:
-                dill.dump(self, f)
-        else:
-            raise ValueError(f"engine 必须是 'pickle'/'joblib'/'dill' 之一")
+        _save_pickle(
+            self,
+            file,
+            engine=engine,
+            compression=compression,
+            compression_level=compression_level
+        )
 
         print(f"模型已保存至: {file}")
+        return file
 
     @classmethod
-    def load_pickle(cls, file: str, engine: str = 'joblib') -> 'ScoreCard':
-        """加载模型."""
-        if engine == 'pickle':
-            import pickle
-            with open(file, 'rb') as f:
-                return pickle.load(f)
-        elif engine == 'joblib':
-            import joblib
-            return joblib.load(file)
-        elif engine == 'dill':
-            import dill
-            with open(file, 'rb') as f:
-                return dill.load(f)
-        else:
-            raise ValueError(f"engine 必须是 'pickle'/'joblib'/'dill' 之一")
+    def load_pickle(
+        cls,
+        file: str,
+        engine: str = 'auto',
+        compression: Optional[str] = None
+    ) -> 'ScoreCard':
+        """加载模型.
+
+        使用 utils.io.load_pickle 进行持久化读取，支持多种序列化引擎和压缩格式。
+
+        :param file: 文件路径
+        :param engine: 序列化引擎，可选 'auto'/'joblib'/'pickle'/'dill'/'cloudpickle'，默认 'auto'
+        :param compression: 压缩格式，可选 'gzip'/'bz2'/'xz'/'lz4'/'zstd'，默认 None（自动检测）
+        :return: 加载的 ScoreCard 模型实例
+        """
+        from ...utils.io import load_pickle as _load_pickle
+
+        return _load_pickle(file, engine=engine, compression=compression)
 
     def export_pmml(self, pmml_file: str = 'scorecard.pmml', debug: bool = False):
         """导出 PMML 文件."""
@@ -1360,3 +1375,245 @@ class ScoreCard(BaseEstimator, TransformerMixin):
             reasons_list.append('; '.join(reasons))
 
         return reasons_list
+
+    def export(
+        self,
+        to_json: Optional[str] = None,
+        to_frame: bool = False,
+        decimal: int = 2
+    ) -> Union[Dict, pd.DataFrame]:
+        """导出评分卡规则，兼容 toad/scorecardpipeline 格式.
+
+        导出格式与 toad.ScoreCard.export() 和 scorecardpipeline.ScoreCard.export() 保持一致。
+
+        :param to_json: 可选，JSON 文件保存路径。如果提供，将规则保存到该文件
+        :param to_frame: 是否返回 DataFrame 格式，默认为 False
+        :param decimal: 分数保留小数位数，默认为 2
+        :return: 评分卡规则字典或 DataFrame
+            - 字典格式: {'feature': {'bin_label': score, ...}, ...}
+            - DataFrame格式: columns=['name', 'value', 'score']
+
+        **示例**
+
+        >>> card = ScoreCard(pdo=60, rate=2, base_odds=35, base_score=750)
+        >>> card.fit(X_woe, y, combiner=combiner)
+        >>> 
+        >>> # 导出为字典
+        >>> rules = card.export()
+        >>> # 返回格式: {'age': {'[18, 25)': 50, '[25, 35)': 45, ...}, ...}
+        >>> 
+        >>> # 导出并保存到 JSON 文件
+        >>> rules = card.export(to_json='scorecard_rules.json')
+        >>> 
+        >>> # 导出为 DataFrame
+        >>> df = card.export(to_frame=True)
+        
+        **与 toad/scorecardpipeline 的兼容性**
+
+        导出的规则可以直接被 toad 和 scorecardpipeline 加载:
+        
+        >>> # toad 加载
+        >>> import toad
+        >>> toad_card = toad.ScoreCard(pdo=60, rate=2, base_odds=35, base_score=750)
+        >>> toad_card.load(rules)
+        >>> 
+        >>> # scorecardpipeline 加载
+        >>> from scorecardpipeline import ScoreCard
+        >>> scp_card = ScoreCard(pdo=60, rate=2, base_odds=35, base_score=750)
+        >>> scp_card.load(rules)
+        """
+        import json
+        
+        check_is_fitted(self)
+
+        # 构建与 toad 兼容的格式
+        card = {}
+        for col in self.feature_names_:
+            rule = self.rules_[col]
+            bins = rule['bins']
+            scores = rule['scores']
+
+            if bins is None or len(bins) == 0:
+                continue
+
+            feature_rules = {}
+            if isinstance(bins[0], (list, np.ndarray)):
+                # 类别特征
+                for bin_vals, score in zip(bins, scores):
+                    bin_label = ', '.join([str(v) for v in bin_vals])
+                    feature_rules[bin_label] = round(float(score), decimal)
+            else:
+                # 数值特征 - 格式化为区间标签
+                has_string_bins = (len(bins) > 0 and isinstance(bins[0], str) and
+                                 ('[' in str(bins[0]) or '(' in str(bins[0])))
+                
+                if has_string_bins:
+                    # 已经是格式化的标签
+                    for bin_label, score in zip(bins, scores):
+                        feature_rules[str(bin_label)] = round(float(score), decimal)
+                else:
+                    # 数值切分点，格式化为区间
+                    for i, score in enumerate(scores):
+                        if i == 0:
+                            bin_label = f'[-inf, {bins[0]})' if len(bins) > 0 else '[-inf, +inf)'
+                        elif i == len(scores) - 1:
+                            bin_label = f'[{bins[-1]}, +inf)' if len(bins) > 0 else '[-inf, +inf)'
+                        else:
+                            bin_label = f'[{bins[i-1]}, {bins[i]})'
+                        feature_rules[bin_label] = round(float(score), decimal)
+
+            card[col] = feature_rules
+
+        # 保存到 JSON 文件
+        if to_json is not None:
+            import os
+            dir_path = os.path.dirname(to_json)
+            if dir_path and not os.path.exists(dir_path):
+                os.makedirs(dir_path, exist_ok=True)
+
+            with open(to_json, 'w', encoding='utf-8') as f:
+                json.dump(card, f, ensure_ascii=False, indent=2)
+
+        # 返回 DataFrame 格式
+        if to_frame:
+            rows = []
+            for name in card:
+                for value, score in card[name].items():
+                    rows.append({
+                        'name': name,
+                        'value': value,
+                        'score': score,
+                    })
+            return pd.DataFrame(rows)
+
+        return card
+
+    def load(
+        self,
+        from_json: Union[str, Dict],
+        update: bool = False
+    ) -> 'ScoreCard':
+        """加载评分卡规则，兼容 toad/scorecardpipeline 格式.
+
+        从字典或 JSON 文件加载评分卡规则，支持 toad 和 scorecardpipeline 导出的格式。
+
+        :param from_json: 评分卡规则字典或 JSON 文件路径
+            - 字典: {'feature': {'bin_label': score, ...}, ...}
+            - 文件路径: 'scorecard_rules.json'
+        :param update: 是否更新现有规则（而非替换），默认为 False
+        :return: self，支持链式调用
+
+        **示例**
+
+        >>> card = ScoreCard(pdo=60, rate=2, base_odds=35, base_score=750)
+        >>> 
+        >>> # 从字典加载
+        >>> rules = {'age': {'[18, 25)': 50, '[25, 35)': 45}}
+        >>> card.load(rules)
+        >>> 
+        >>> # 从 JSON 文件加载
+        >>> card.load('scorecard_rules.json')
+        >>> 
+        >>> # 更新现有规则
+        >>> card.load({'new_feature': {'bin1': 10, 'bin2': 20}}, update=True)
+        
+        **与 toad/scorecardpipeline 的兼容性**
+
+        可以直接加载 toad 和 scorecardpipeline 导出的规则:
+        
+        >>> # toad 导出
+        >>> import toad
+        >>> toad_card = toad.ScoreCard()
+        >>> toad_card.fit(X, y, combiner=combiner, transer=transformer)
+        >>> rules = toad_card.export()
+        >>> 
+        >>> # hscredit 加载
+        >>> from hscredit.core.models import ScoreCard
+        >>> card = ScoreCard(pdo=60, rate=2, base_odds=35, base_score=750)
+        >>> card.load(rules)
+        """
+        import json
+        import re
+
+        if isinstance(from_json, str):
+            # 从文件加载
+            with open(from_json, 'r', encoding='utf-8') as f:
+                card = json.load(f)
+        else:
+            # 直接使用字典
+            card = from_json
+
+        if not update:
+            self.rules_ = {}
+            self.feature_names_ = []
+
+        # 解析规则
+        for feature, feature_rules in card.items():
+            if feature not in self.feature_names_:
+                self.feature_names_.append(feature)
+
+            bins = []
+            scores = []
+
+            for bin_label, score in feature_rules.items():
+                scores.append(float(score))
+
+                # 尝试解析区间标签
+                # 格式如: [-inf, 25), [25, 35), [35, +inf)
+                # 或类别: 'A, B', 'C, D'
+                if ',' in bin_label and ('[' in bin_label or '(' in bin_label):
+                    # 数值区间
+                    try:
+                        # 提取数字
+                        nums = re.findall(r'[-+]?(?:\d*\.?\d+|inf)', bin_label)
+                        if len(nums) == 2:
+                            lower, upper = nums
+                            # 只保留上界作为切分点（除了第一个区间）
+                            if upper == '+inf':
+                                pass  # 最后一个区间，不添加切分点
+                            elif lower == '-inf':
+                                bins.append(float(upper) if upper != 'inf' else np.inf)
+                    except (ValueError, TypeError):
+                        # 解析失败，作为类别处理
+                        bins.append([bin_label])
+                else:
+                    # 类别值
+                    if isinstance(bin_label, str) and ',' in bin_label:
+                        # 多个类别值
+                        vals = [v.strip() for v in bin_label.split(',')]
+                        bins.append(vals)
+                    else:
+                        bins.append([bin_label])
+
+            # 区分数值型和类别型
+            is_numeric = False
+            if bins and len(bins) > 0:
+                if isinstance(bins[0], (int, float, np.number)):
+                    is_numeric = True
+                elif isinstance(bins[0], list) and len(bins[0]) > 0:
+                    # 检查是否是数值
+                    try:
+                        float(bins[0][0])
+                        is_numeric = True
+                    except (ValueError, TypeError):
+                        is_numeric = False
+
+            if is_numeric and bins:
+                # 数值型：转换为切分点列表
+                numeric_bins = [b for b in bins if isinstance(b, (int, float, np.number))]
+                splits = sorted(list(set(numeric_bins)))
+            else:
+                # 类别型：保持列表格式
+                splits = bins
+
+            self.rules_[feature] = {
+                'bins': splits,
+                'scores': np.array(scores),
+            }
+
+        # 计算基础效应
+        if not hasattr(self, 'base_effect_') or self.base_effect_ is None:
+            self.base_effect_ = np.zeros(len(self.feature_names_))
+
+        self._is_fitted = True
+        return self

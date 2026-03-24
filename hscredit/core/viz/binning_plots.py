@@ -266,8 +266,10 @@ def bin_plot(
         return_ax = False
 
     # 绘图
-    ax1.barh(feature_table['分箱'], feature_table['好样本数'], color=colors[0], label='好样本', hatch="/" if hatch else None)
-    ax1.barh(feature_table['分箱'], feature_table['坏样本数'], left=feature_table['好样本数'], color=colors[1], label='坏样本', hatch="\\" if hatch else None)
+    ax1.barh(feature_table['分箱'], feature_table['好样本数'], color=colors[0], label='好样本', 
+             hatch="/" if hatch else None, edgecolor='white' if hatch else None)
+    ax1.barh(feature_table['分箱'], feature_table['坏样本数'], left=feature_table['好样本数'], color=colors[1], 
+             label='坏样本', hatch="\\" if hatch else None, edgecolor='white' if hatch else None)
     ax1.set_xlabel('样本数')
 
     ax2 = ax1.twiny()
@@ -647,9 +649,11 @@ def psi_plot(expected, actual, labels=None, desc="", save=None, colors=None,
         fig, ax1 = plt.subplots(figsize=figsize)
 
         ax1.bar(x_indexes - width / 2, df_psi[f'{labels[0]}样本占比'], width, 
-                label=f'{labels[0]}样本占比', color=colors[0], hatch="/" if hatch else None)
+                label=f'{labels[0]}样本占比', color=colors[0], hatch="/" if hatch else None, 
+                edgecolor='white' if hatch else None)
         ax1.bar(x_indexes + width / 2, df_psi[f'{labels[1]}样本占比'], width, 
-                label=f'{labels[1]}样本占比', color=colors[1], hatch="\\" if hatch else None)
+                label=f'{labels[1]}样本占比', color=colors[1], hatch="\\" if hatch else None, 
+                edgecolor='white' if hatch else None)
 
         ax1.set_ylabel('样本占比')
         ax1.set_xticks(x_indexes)
@@ -790,7 +794,7 @@ def distribution_plot(data, date="date", target="target", save=None, figsize=(10
 
     fig, ax1 = plt.subplots(1, 1, figsize=figsize)
     temp.plot(kind='bar', stacked=True, ax=ax1, color=colors[:2], 
-             hatch="/" if hatch else None, legend=False)
+             hatch="/" if hatch else None, edgecolor='white' if hatch else None, legend=False)
     ax1.tick_params(axis='x', labelrotation=-90)
     ax1.set(xlabel=None)
     ax1.set_ylabel('样本数')

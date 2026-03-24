@@ -892,6 +892,157 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
         # TODO: 实现可视化功能
         raise NotImplementedError("可视化功能将在后续版本实现")
 
+    def export(self, to_json: Optional[str] = None) -> Dict[str, Union[List, List[List]]]:
+        """导出分箱规则，兼容 toad/scorecardpipeline 格式.
+
+        数值型变量返回切分点列表，类别型变量返回分组列表。
+        数据格式与 toad.Combiner.export() 和 scorecardpipeline.Combiner.export() 保持一致。
+
+        :param to_json: 可选，JSON 文件保存路径。如果提供，将规则保存到该文件
+        :return: 分箱规则字典
+            - 数值型: {'age': [25, 35, 45, 55]}
+            - 类别型: {'city': [['北京', '上海'], ['广州', '深圳'], [np.nan]]}
+
+        **示例**
+
+        >>> binner = OptimalBinning()
+        >>> binner.fit(X, y)
+        >>> 
+        >>> # 导出为字典
+        >>> rules = binner.export()
+        >>> 
+        >>> # 导出并保存到 JSON 文件
+        >>> rules = binner.export(to_json='binning_rules.json')
+        
+        **与 toad/scorecardpipeline 的兼容性**
+
+        导出的规则可以直接被 toad 和 scorecardpipeline 加载:
+        
+        >>> # toad 加载
+        >>> import toad
+        >>> combiner = toad.transform.Combiner()
+        >>> combiner.load(rules)
+        >>> 
+        >>> # scorecardpipeline 加载
+        >>> from scorecardpipeline import Combiner
+        >>> combiner = Combiner()
+        >>> combiner.load(rules)
+        """
+        import json
+        
+        rules = self.export_rules()
+        
+        # 处理 numpy 类型和 np.nan，使其可 JSON 序列化
+        def convert_for_json(obj):
+            if isinstance(obj, dict):
+                return {k: convert_for_json(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [convert_for_json(item) for item in obj]
+            elif isinstance(obj, np.ndarray):
+                return convert_for_json(obj.tolist())
+            elif isinstance(obj, float) and np.isnan(obj):
+                return None  # JSON 中 null
+            elif isinstance(obj, (np.integer, np.floating)):
+                return float(obj)
+            return obj
+        
+        rules_json = convert_for_json(rules)
+        
+        if to_json is not None:
+            # 确保目录存在
+            import os
+            dir_path = os.path.dirname(to_json)
+            if dir_path and not os.path.exists(dir_path):
+                os.makedirs(dir_path, exist_ok=True)
+            
+            with open(to_json, 'w', encoding='utf-8') as f:
+                json.dump(rules_json, f, ensure_ascii=False, indent=2)
+        
+        return rules
+
+    def load(self, from_json: Union[str, Dict], update: bool = False) -> 'BaseBinning':
+        """加载分箱规则，兼容 toad/scorecardpipeline 格式.
+
+        从字典或 JSON 文件加载分箱规则，支持 toad 和 scorecardpipeline 导出的格式。
+
+        :param from_json: 分箱规则字典或 JSON 文件路径
+            - 字典: {'age': [25, 35, 45, 55]}
+            - 文件路径: 'binning_rules.json'
+        :param update: 是否更新现有规则（而非替换），默认为 False
+        :return: self，支持链式调用
+
+        **示例**
+
+        >>> binner = OptimalBinning()
+        >>> 
+        >>> # 从字典加载
+        >>> rules = {'age': [25, 35, 45, 55], 'gender': [['M'], ['F']]}
+        >>> binner.load(rules)
+        >>> 
+        >>> # 从 JSON 文件加载
+        >>> binner.load('binning_rules.json')
+        >>> 
+        >>> # 更新现有规则
+        >>> binner.load({'new_feature': [1, 2, 3]}, update=True)
+        
+        **与 toad/scorecardpipeline 的兼容性**
+
+        可以直接加载 toad 和 scorecardpipeline 导出的规则:
+        
+        >>> # toad 导出
+        >>> import toad
+        >>> toad_combiner = toad.transform.Combiner()
+        >>> toad_combiner.fit(df, y)
+        >>> rules = toad_combiner.export()
+        >>> 
+        >>> # hscredit 加载
+        >>> from hscredit.core.binning import OptimalBinning
+        >>> binner = OptimalBinning()
+        >>> binner.load(rules)
+        """
+        import json
+        
+        if isinstance(from_json, str):
+            # 从文件加载
+            with open(from_json, 'r', encoding='utf-8') as f:
+                rules = json.load(f)
+        else:
+            # 直接使用字典
+            rules = from_json
+        
+        # 处理 JSON 中的 null 转换为 np.nan
+        def convert_from_json(obj):
+            if isinstance(obj, dict):
+                return {k: convert_from_json(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [convert_from_json(item) for item in obj]
+            elif obj is None:
+                return np.nan
+            return obj
+        
+        rules = convert_from_json(rules)
+        
+        if update:
+            # 更新模式：逐个特征更新
+            for feature, rule in rules.items():
+                if isinstance(rule, list) and len(rule) > 0 and isinstance(rule[0], list):
+                    # 类别型
+                    self._cat_bins_[feature] = rule
+                    self.feature_types_[feature] = 'categorical'
+                    self.splits_[feature] = rule
+                    self.n_bins_[feature] = len(rule)
+                else:
+                    # 数值型
+                    self.splits_[feature] = np.array(rule)
+                    self.feature_types_[feature] = 'numerical'
+                    self.n_bins_[feature] = len(rule) + 1
+            self._is_fitted = True
+        else:
+            # 替换模式：使用 import_rules
+            self.import_rules(rules)
+        
+        return self
+
     def __repr__(self):
         if self._is_fitted:
             n_features = len(self.splits_)
