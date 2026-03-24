@@ -17,8 +17,8 @@ from hscredit.core.binning import (
     QuantileBinning,
     TreeBinning,
     ChiMergeBinning,
-    OptimalKSBinning,
-    OptimalIVBinning,
+    BestKSBinning,
+    BestIVBinning,
     MDLPBinning,
     OptimalBinning,
 )
@@ -182,13 +182,13 @@ class TestChiMergeBinning(unittest.TestCase):
         self.assertEqual(X_transformed.shape, self.X.shape)
 
 
-class TestOptimalKSBinning(unittest.TestCase):
+class TestBestKSBinning(unittest.TestCase):
     """测试最优 KS 分箱."""
 
     def setUp(self):
         """设置测试数据."""
         self.X, self.y = TestDataGenerator.create_binary_data()
-        self.binner = OptimalKSBinning(max_n_bins=5)
+        self.binner = BestKSBinning(max_n_bins=5)
 
     def test_fit(self):
         """测试拟合."""
@@ -202,13 +202,13 @@ class TestOptimalKSBinning(unittest.TestCase):
         self.assertIn('分档KS值', bin_table.columns)
 
 
-class TestOptimalIVBinning(unittest.TestCase):
+class TestBestIVBinning(unittest.TestCase):
     """测试最优 IV 分箱."""
 
     def setUp(self):
         """设置测试数据."""
         self.X, self.y = TestDataGenerator.create_binary_data()
-        self.binner = OptimalIVBinning(max_n_bins=5)
+        self.binner = BestIVBinning(max_n_bins=5)
 
     def test_fit(self):
         """测试拟合."""
@@ -305,7 +305,7 @@ class TestMissingValues(unittest.TestCase):
     def setUp(self):
         """设置包含缺失值的测试数据."""
         self.X, self.y = TestDataGenerator.create_data_with_missing()
-        self.binner = OptimalIVBinning(max_n_bins=5)
+        self.binner = BestIVBinning(max_n_bins=5)
 
     def test_fit_with_missing(self):
         """测试拟合包含缺失值的数据."""
@@ -370,7 +370,7 @@ class TestWOEEncoding(unittest.TestCase):
     def setUp(self):
         """设置测试数据."""
         self.X, self.y = TestDataGenerator.create_binary_data()
-        self.binner = OptimalIVBinning(max_n_bins=5)
+        self.binner = BestIVBinning(max_n_bins=5)
         self.binner.fit(self.X, self.y)
 
     def test_woe_values(self):

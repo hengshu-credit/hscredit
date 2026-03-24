@@ -32,9 +32,11 @@ from .core.binning import (
     QuantileBinning,
     TreeBinning,
     ChiMergeBinning,
-    OptimalKSBinning,
-    OptimalIVBinning,
+    BestKSBinning,
+    BestIVBinning,
     MDLPBinning,
+    ORBinning,
+    CustomObjectives,
     OptimalBinning,
     CartBinning,
     KMeansBinning,
@@ -219,9 +221,11 @@ __all__ = [
     "QuantileBinning",
     "TreeBinning",
     "ChiMergeBinning",
-    "OptimalKSBinning",
-    "OptimalIVBinning",
+    "BestKSBinning",
+    "BestIVBinning",
     "MDLPBinning",
+    "ORBinning",
+    "CustomObjectives",
     "OptimalBinning",
     "CartBinning",
     "KMeansBinning",
@@ -350,7 +354,7 @@ def info():
     print("一个完整的金融信贷风险建模工具包")
     print()
     print("核心模块 (core):")
-    print("  - core.binning: 分箱算法 (Uniform/Quantile/Tree/ChiMerge/OptimalKS/OptimalIV/MDLP)")
+    print("  - core.binning: 分箱算法 (Uniform/Quantile/Tree/ChiMerge/BestKS/BestIV/MDLP)")
     print("  - core.selectors: 特征筛选 (Variance/Null/IV/Corr/VIF/Lift/PSI...)")
     print("  - core.encoders: 编码器 (WOE/Target/Count/OneHot...)")
     print("  - core.models: 自定义损失函数和评估指标")

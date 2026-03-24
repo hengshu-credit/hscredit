@@ -157,6 +157,7 @@ class GBMEncoder(BaseEncoder):
         return_df: bool = True,
         model_params: Optional[Dict[str, Any]] = None,
         task: Literal['classification', 'regression'] = 'classification',
+        target: Optional[str] = None,
     ):
         """初始化GBM编码器。
 
@@ -177,6 +178,7 @@ class GBMEncoder(BaseEncoder):
         :param return_df: 是否返回DataFrame，默认为True
         :param model_params: 额外的模型参数，默认为None
         :param task: 任务类型，默认为'classification'
+        :param target: scorecardpipeline风格的目标列名。如果提供，fit时从X中提取该列作为y
         """
         super().__init__(
             cols=cols,
@@ -184,6 +186,7 @@ class GBMEncoder(BaseEncoder):
             return_df=return_df,
             handle_unknown=handle_unknown,
             handle_missing=handle_missing,
+            target=target,
         )
         self.model_type = model_type
         self.n_estimators = n_estimators

@@ -323,7 +323,9 @@ class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
 
     **参数**
 
-    :param target: 目标变量列名,默认为'target'
+    :param target: 目标变量列名,默认为'target'。
+        - 在scorecardpipeline风格中使用: fit(df)时从df中提取目标列
+        - 在sklearn风格中可选: fit(X, y)时y参数优先于target
     :param include: 强制保留的特征列表,这些特征无论如何都会被保留
     :param exclude: 强制剔除的特征列表,这些特征无论如何都会被剔除
     :param binner: 可选的分箱器,支持:
@@ -353,16 +355,50 @@ class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
 
     **使用示例**
 
+    **方式1: sklearn风格 (推荐用于纯特征矩阵)**
+
     ::
 
         >>> from hscredit.core.selectors import VarianceSelector
         >>> import pandas as pd
+        >>> import numpy as np
+        >>> 
+        >>> # 准备数据
         >>> X = pd.DataFrame({'a': [1,2,3], 'b': [1,1,1], 'c': [1,2,3]})
+        >>> y = pd.Series([0, 1, 0])
+        >>> 
         >>> # 强制保留特征a,强制剔除特征c
         >>> selector = VarianceSelector(threshold=0.1, include=['a'], exclude=['c'])
-        >>> selector.fit(X)
+        >>> selector.fit(X, y)  # sklearn风格: X是特征, y是目标变量
         >>> print(selector.selected_features_)
         ['a']
+
+    **方式2: scorecardpipeline风格 (推荐用于完整数据框)**
+
+    ::
+
+        >>> from hscredit.core.selectors import IVSelector
+        >>> import pandas as pd
+        >>> 
+        >>> # 准备完整数据框
+        >>> df = pd.DataFrame({
+        ...     'feat1': [1, 2, 3, 4, 5],
+        ...     'feat2': [1, 1, 1, 1, 1],  # 低方差,会被剔除
+        ...     'target': [0, 1, 0, 1, 0]
+        ... })
+        >>> 
+        >>> # 指定目标列名,传入完整数据框
+        >>> selector = IVSelector(threshold=0.02, target='target')
+        >>> selector.fit(df)  # scorecardpipeline风格: df包含特征和目标
+        >>> print(selector.selected_features_)
+
+    **方式3: 混合风格 (y参数优先)**
+
+    ::
+
+        >>> # 即使初始化时指定了target, fit时传入y会优先使用y
+        >>> selector = IVSelector(threshold=0.02, target='target')
+        >>> selector.fit(df, y=df['target'])  # y参数优先于target列
     """
 
     def __init__(
@@ -383,6 +419,45 @@ class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
         self.n_jobs = n_jobs
         self.force_drop = force_drop
 
+    def _check_input(
+        self,
+        X: Union[pd.DataFrame, np.ndarray],
+        y: Optional[Union[pd.Series, np.ndarray]] = None,
+    ) -> Tuple[pd.DataFrame, Optional[Union[pd.Series, np.ndarray]]]:
+        """检查并处理输入数据,支持两种API风格。
+
+        **API风格说明:**
+        
+        1. **sklearn风格**: fit(X, y) - X是特征矩阵, y是目标变量
+        2. **scorecardpipeline风格**: fit(df) - df是完整数据框,目标列名在初始化时通过target参数传入
+
+        **处理逻辑:**
+        - 如果y不为None,使用sklearn风格(X作为特征, y作为目标)
+        - 如果y为None且X是DataFrame且包含target列,从X中分离出目标列
+        - 支持DataFrame和numpy数组输入
+
+        :param X: 输入特征或完整数据框
+        :param y: 目标变量(可选),如果不为None则优先使用
+        :return: 处理后的特征DataFrame和目标变量
+        """
+        # 转换为DataFrame
+        if not isinstance(X, pd.DataFrame):
+            X = pd.DataFrame(X)
+
+        # 如果y不为None,使用sklearn风格
+        if y is not None:
+            return X, y
+
+        # y为None时,检查是否是scorecardpipeline风格
+        if isinstance(X, pd.DataFrame) and self.target in X.columns:
+            # 从X中分离目标列
+            y = X[self.target]
+            X = X.drop(columns=[self.target])
+            return X, y
+
+        # 没有目标变量(如无监督筛选器)
+        return X, None
+
     def fit(
         self,
         X: Union[pd.DataFrame, np.ndarray],
@@ -390,14 +465,28 @@ class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
     ) -> 'BaseFeatureSelector':
         """拟合筛选器,学习特征重要性。
 
-        :param X: 输入特征,DataFrame或numpy数组
-        :param y: 目标变量,仅部分筛选器需要
+        支持两种API风格:
+
+        **sklearn风格**: fit(X, y)
+            - X: 特征矩阵 (DataFrame或numpy数组)
+            - y: 目标变量 (Series或numpy数组)
+
+        **scorecardpipeline风格**: fit(df)
+            - df: 完整数据框,包含特征和目标列
+            - 目标列名在初始化时通过target参数指定(默认为'target')
+
+        **优先级规则**: 如果y不为None,优先使用y;否则从X中提取target列
+
+        :param X: 输入特征或完整数据框
+        :param y: 目标变量(可选),如果不为None则优先使用
         :return: self
         """
-        if not isinstance(X, pd.DataFrame):
-            X = pd.DataFrame(X)
+        # 检查输入并分离特征和目标
+        X_processed, y_processed = self._check_input(X, y)
 
-        self.n_features_in_ = X.shape[1]
+        # 保存特征名
+        self._get_feature_names(X_processed)
+        self.n_features_in_ = X_processed.shape[1]
 
         # 处理include参数（强制保留的特征）
         if self.include is None:
@@ -421,14 +510,14 @@ class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
 
         # 如果有分箱器,先进行分箱
         if self.binner is not None:
-            X = self._apply_binner(X, y)
+            X_processed = self._apply_binner(X_processed, y_processed)
 
         # 执行子类实现的具体fit逻辑
-        self._fit_impl(X, y)
+        self._fit_impl(X_processed, y_processed)
 
         # 创建初始dropped_（记录_fit_impl中剔除的特征）
         if hasattr(self, 'selected_features_') and self.selected_features_ is not None:
-            dropped_cols = [c for c in X.columns if c not in self.selected_features_]
+            dropped_cols = [c for c in X_processed.columns if c not in self.selected_features_]
             if len(dropped_cols) > 0:
                 reason = getattr(self, '_drop_reason', '不满足筛选条件')
                 self.dropped_ = pd.DataFrame({
@@ -441,10 +530,10 @@ class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
                 self.removed_features_ = []
 
         # 确保include的特征被保留
-        self._apply_include(X)
+        self._apply_include(X_processed)
 
         # 应用exclude（强制剔除）
-        self._apply_exclude(X)
+        self._apply_exclude(X_processed)
 
         self._is_fitted = True
         return self
@@ -624,8 +713,18 @@ class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
     ) -> Union[pd.DataFrame, np.ndarray]:
         """拟合并转换数据。
 
-        :param X: 输入特征
-        :param y: 目标变量
+        支持两种API风格:
+
+        **sklearn风格**: fit_transform(X, y)
+            - X: 特征矩阵 (DataFrame或numpy数组)
+            - y: 目标变量 (Series或numpy数组)
+
+        **scorecardpipeline风格**: fit_transform(df)
+            - df: 完整数据框,包含特征和目标列
+            - 目标列名在初始化时通过target参数指定
+
+        :param X: 输入特征或完整数据框
+        :param y: 目标变量(可选),如果不为None则优先使用
         :return: 筛选后的特征
         """
         return self.fit(X, y).transform(X)

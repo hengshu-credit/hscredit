@@ -1,46 +1,58 @@
-"""最优IV分箱算法.
+"""Best KS 分箱算法.
 
-基于最大化IV（Information Value）的分箱方法，寻找能够最大化预测能力的分箱点。
+基于最大化KS统计量的分箱方法，使用贪心算法寻找最优分箱点。
+KS统计量衡量好样本和坏样本的累积分布差异。
+
+算法流程：
+1. 预分割：将数据分成足够细的初始箱（默认50个）
+2. 合并优化：使用贪心算法，在单调性约束下选择最优分割点
+3. 目标：最大化KS统计量
 """
 
-from typing import Union, List, Dict, Optional, Any
+from typing import Union, List, Dict, Optional, Any, Tuple
 import numpy as np
 import pandas as pd
 
 from .base import BaseBinning
 
 
-class OptimalIVBinning(BaseBinning):
-    """最优IV分箱.
+class BestKSBinning(BaseBinning):
+    """Best KS 分箱.
 
-    基于最大化IV的分箱方法，寻找能够最大化预测能力的分箱点。
-    IV是衡量特征预测能力的重要指标。
+    基于最大化KS统计量的分箱方法，寻找能够最大化区分能力的分箱点。
+    使用贪心算法逐步优化。
 
     :param max_n_bins: 最大分箱数，默认为5
     :param min_n_bins: 最小分箱数，默认为2
-    :param min_bin_size: 每箱最小样本占比，默认为0.01
-    :param max_bin_size: 每箱最大样本占比，默认为None
+    :param min_bin_size: 每箱最小样本数或占比，默认为0.01
+        - 如果 < 1, 表示占比 (如 0.01 表示 1%)
+        - 如果 >= 1, 表示绝对数量 (如 100 表示最少100个样本)
+    :param max_bin_size: 每箱最大样本数或占比，默认为None
     :param min_bad_rate: 每箱最小坏样本率，默认为0.0
-    :param monotonic: 是否要求单调性，默认为False
+    :param monotonic: 坏样本率单调性约束，默认为False
+        - False: 不要求单调性
+        - True 或 'auto': 自动检测并应用最佳单调方向
+        - 'ascending': 强制坏样本率递增
+        - 'descending': 强制坏样本率递减
     :param missing_separate: 缺失值是否单独分箱，默认为True
     :param special_codes: 特殊值列表，默认为None
     :param random_state: 随机种子，默认为None
 
     **示例**
 
-    >>> from hscredit.core.binning import OptimalIVBinning
-    >>> binner = OptimalIVBinning(max_n_bins=5)
+    >>> from hscredit.core.binning import BestKSBinning
+    >>> binner = BestKSBinning(max_n_bins=5)
     >>> binner.fit(X_train, y_train)
     >>> X_binned = binner.transform(X_test)
     >>> bin_table = binner.get_bin_table('feature_name')
 
     **注意**
 
-    最优IV分箱的特点:
-    1. 最大化IV值
-    2. IV > 0.02 表示特征有预测能力
-    3. IV > 0.1 表示特征有较强的预测能力
-    4. IV > 0.3 表示特征预测能力过强（可能有问题）
+    Best KS 分箱的特点:
+    1. 最大化KS统计量
+    2. 使用贪心算法逐步优化
+    3. 支持单调性约束
+    4. 计算复杂度较高
     """
 
     def __init__(
@@ -74,8 +86,8 @@ class OptimalIVBinning(BaseBinning):
         X: Union[pd.DataFrame, np.ndarray],
         y: Optional[Union[pd.Series, np.ndarray]] = None,
         **kwargs
-    ) -> 'OptimalIVBinning':
-        """拟合最优IV分箱.
+    ) -> 'BestKSBinning':
+        """拟合 Best KS 分箱.
 
         :param X: 训练数据
         :param y: 目标变量
@@ -119,13 +131,13 @@ class OptimalIVBinning(BaseBinning):
         y_valid = y[valid_mask]
 
         if feature_type == 'categorical':
-            # 类别型变量：按IV排序后分箱
-            splits = self._optimal_iv_categorical(X_valid, y_valid)
+            # 类别型变量：按KS排序后分箱
+            splits = self._best_ks_categorical(X_valid, y_valid)
             self.splits_[feature] = np.array(splits)
             self.n_bins_[feature] = len(splits) + 1 if splits else len(X_valid.unique())
         else:
-            # 数值型变量：最优IV分箱
-            splits = self._optimal_iv_numerical(X_valid, y_valid)
+            # 数值型变量：Best KS分箱
+            splits = self._best_ks_numerical(X_valid, y_valid)
             self.splits_[feature] = self._round_splits(splits)
             self.n_bins_[feature] = len(splits) + 1
 
@@ -136,14 +148,14 @@ class OptimalIVBinning(BaseBinning):
         bin_table = self._compute_bin_stats(feature, X, y, bins)
         self.bin_tables_[feature] = bin_table
 
-    def _optimal_iv_numerical(
+    def _best_ks_numerical(
         self,
         X: pd.Series,
         y: pd.Series
     ) -> List[float]:
-        """对数值型变量进行最优IV分箱 (优化版本).
+        """对数值型变量进行Best KS分箱 (优化版本).
 
-        使用排序后数据的累积统计信息快速计算IV值。
+        使用排序后数据的累积统计信息快速计算KS值。
 
         :param X: 特征数据
         :param y: 目标变量
@@ -153,18 +165,20 @@ class OptimalIVBinning(BaseBinning):
         x_vals = X.values
         y_vals = y.values
 
-        # 获取唯一值
+        # 获取排序后的唯一值
         unique_values = np.unique(x_vals)
 
         if len(unique_values) <= self.max_n_bins:
             return []
 
-        # 限制候选分割点数量
+        # 限制候选分割点数量，避免过多唯一值导致性能问题
         max_candidates = min(len(unique_values) - 1, 100)
         if len(unique_values) > max_candidates + 1:
+            # 使用分位数选择候选点
             quantiles = np.linspace(0, 1, max_candidates + 1)
             candidates = np.percentile(unique_values, quantiles[1:-1] * 100)
         else:
+            # 相邻唯一值的中点
             candidates = (unique_values[:-1] + unique_values[1:]) / 2
 
         # 预计算排序后的数据
@@ -187,19 +201,26 @@ class OptimalIVBinning(BaseBinning):
         selected_splits = []
 
         while len(selected_splits) < self.max_n_bins - 1 and len(candidates) > 0:
-            best_iv = -1
+            best_ks = -1
             best_split_idx = -1
             best_split = None
 
             for i, candidate in enumerate(candidates):
+                # 找到候选点在排序数据中的位置
+                split_pos = np.searchsorted(x_sorted, candidate, side='right')
+
+                if split_pos == 0 or split_pos >= len(x_sorted):
+                    continue
+
+                # 计算该分割点与已选分割点组合的 KS
                 test_splits = sorted(selected_splits + [candidate])
-                iv = self._calc_iv_fast(
+                ks = self._calc_ks_fast(
                     x_sorted, y_sorted, cum_good, cum_bad,
                     total_good, total_bad, test_splits
                 )
 
-                if iv > best_iv:
-                    best_iv = iv
+                if ks > best_ks:
+                    best_ks = ks
                     best_split_idx = i
                     best_split = candidate
 
@@ -211,7 +232,7 @@ class OptimalIVBinning(BaseBinning):
 
         return sorted(selected_splits)
 
-    def _calc_iv_fast(
+    def _calc_ks_fast(
         self,
         x_sorted: np.ndarray,
         y_sorted: np.ndarray,
@@ -221,7 +242,7 @@ class OptimalIVBinning(BaseBinning):
         total_bad: int,
         splits: List[float]
     ) -> float:
-        """快速计算IV值.
+        """快速计算KS统计量.
 
         使用预计算的累积统计信息。
 
@@ -232,7 +253,7 @@ class OptimalIVBinning(BaseBinning):
         :param total_good: 总好样本数
         :param total_bad: 总坏样本数
         :param splits: 分割点列表
-        :return: IV值
+        :return: KS值
         """
         if not splits:
             return 0.0
@@ -241,8 +262,7 @@ class OptimalIVBinning(BaseBinning):
         split_positions = [np.searchsorted(x_sorted, s, side='right') for s in sorted(splits)]
         split_positions = [0] + split_positions + [len(x_sorted)]
 
-        iv = 0.0
-        eps = 1e-10
+        max_ks = 0
 
         for i in range(len(split_positions) - 1):
             start = split_positions[i]
@@ -255,46 +275,29 @@ class OptimalIVBinning(BaseBinning):
             good_in_bin = cum_good[end - 1] - (cum_good[start - 1] if start > 0 else 0)
             bad_in_bin = cum_bad[end - 1] - (cum_bad[start - 1] if start > 0 else 0)
 
-            good_dist = good_in_bin / total_good
-            bad_dist = bad_in_bin / total_bad
+            cum_good_rate = cum_good[end - 1] / total_good
+            cum_bad_rate = cum_bad[end - 1] / total_bad
 
-            # 避免除零和对零取对数
-            if good_dist > eps and bad_dist > eps:
-                iv += (bad_dist - good_dist) * np.log(bad_dist / good_dist)
+            ks = abs(cum_good_rate - cum_bad_rate)
+            max_ks = max(max_ks, ks)
 
-        return iv
+        return max_ks
 
-    def _optimal_iv_categorical(
+    def _best_ks_categorical(
         self,
         X: pd.Series,
         y: pd.Series
     ) -> List[float]:
-        """对类别型变量进行最优IV分箱 (优化版本).
+        """对类别型变量进行Best KS分箱 (优化版本).
 
         :param X: 特征数据
         :param y: 目标变量
         :return: 分割点列表
         """
-        # 计算总体统计
-        total_good = (y == 0).sum()
-        total_bad = (y == 1).sum()
-
-        if total_good == 0 or total_bad == 0:
-            return []
-
         # 使用向量化操作计算类别统计
         df = pd.DataFrame({'X': X, 'y': y})
-        category_stats = df.groupby('X')['y'].agg(['sum', 'count']).reset_index()
-        category_stats.columns = ['category', 'bad_count', 'count']
-        category_stats['good_count'] = category_stats['count'] - category_stats['bad_count']
-
-        # 计算WOE
-        eps = 1e-10
-        category_stats['good_dist'] = category_stats['good_count'] / total_good
-        category_stats['bad_dist'] = category_stats['bad_count'] / total_bad
-        category_stats['woe'] = np.log(
-            (category_stats['bad_dist'] + eps) / (category_stats['good_dist'] + eps)
-        )
+        category_stats = df.groupby('X')['y'].agg(['mean', 'count']).reset_index()
+        category_stats.columns = ['category', 'bad_rate', 'count']
 
         # 过滤掉样本数过少的类别
         min_samples = self._get_min_samples(len(X))
@@ -303,25 +306,25 @@ class OptimalIVBinning(BaseBinning):
         if len(category_stats) <= self.max_n_bins:
             return []
 
-        # 按WOE排序
-        category_stats = category_stats.sort_values('woe')
+        # 按坏样本率排序
+        category_stats = category_stats.sort_values('bad_rate')
 
         # 返回编码边界
         n_categories = len(category_stats)
         return [i - 0.5 for i in range(1, min(n_categories, self.max_n_bins))]
 
-    def _calc_iv(
+    def _calc_ks(
         self,
         X: pd.Series,
         y: pd.Series,
         splits: List[float]
     ) -> float:
-        """计算IV值 (兼容旧代码).
+        """计算KS统计量 (兼容旧代码).
 
         :param X: 特征数据
         :param y: 目标变量
         :param splits: 分割点列表
-        :return: IV值
+        :return: KS值
         """
         x_vals = X.values if isinstance(X, pd.Series) else X
         y_vals = y.values if isinstance(y, pd.Series) else y
@@ -329,36 +332,28 @@ class OptimalIVBinning(BaseBinning):
         # 根据分割点分箱
         bins = np.searchsorted(splits, x_vals, side='right')
 
-        # 计算总体统计
+        # 计算每个箱的统计
         total_good = np.sum(y_vals == 0)
         total_bad = np.sum(y_vals == 1)
 
         if total_good == 0 or total_bad == 0:
             return 0.0
 
-        # 使用 bincount 快速计算每箱统计
+        # 使用 bincount 快速计算累积统计
         n_bins = len(splits) + 1
-        bin_good = np.bincount(bins[y_vals == 0], minlength=n_bins).astype(float)
-        bin_bad = np.bincount(bins[y_vals == 1], minlength=n_bins).astype(float)
+        bin_good = np.bincount(bins[y_vals == 0], minlength=n_bins)
+        bin_bad = np.bincount(bins[y_vals == 1], minlength=n_bins)
 
-        # 计算IV（使用平滑处理避免log(0)和除零错误）
-        eps = 1e-10
-        # 平滑处理：将0替换为eps，参考scorecardpy的做法
-        bin_good_smooth = np.where(bin_good == 0, eps, bin_good)
-        bin_bad_smooth = np.where(bin_bad == 0, eps, bin_bad)
-        
-        # 重新计算平滑后的总数
-        total_good_smooth = bin_good_smooth.sum()
-        total_bad_smooth = bin_bad_smooth.sum()
-        
-        # 计算分布（保持归一化）
-        good_dist = bin_good_smooth / total_good_smooth
-        bad_dist = bin_bad_smooth / total_bad_smooth
+        # 计算累积分布和 KS
+        cum_good = np.cumsum(bin_good)
+        cum_bad = np.cumsum(bin_bad)
 
-        # 计算IV
-        iv = np.sum((bad_dist - good_dist) * np.log(bad_dist / good_dist))
+        cum_good_rate = cum_good / total_good
+        cum_bad_rate = cum_bad / total_bad
 
-        return iv
+        ks_values = np.abs(cum_good_rate - cum_bad_rate)
+
+        return np.max(ks_values)
 
     def _assign_bins(
         self,
@@ -374,6 +369,7 @@ class OptimalIVBinning(BaseBinning):
         x_vals = X.values
 
         if self.feature_types_[feature] == 'categorical':
+            # 使用 pd.Categorical 的 codes
             codes = pd.Categorical(X).codes
             return np.where(X.isna(), -1, codes)
         else:
@@ -422,7 +418,7 @@ class OptimalIVBinning(BaseBinning):
         :return: 转换后的数据, 格式与输入X相同
         
         :example:
-        >>> binner = OptimalIVBinning()
+        >>> binner = BestKSBinning()
         >>> binner.fit(X_train, y_train)
         >>> 
         >>> # 获取分箱索引

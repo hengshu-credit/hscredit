@@ -37,7 +37,8 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
 
     **参数**
 
-    :param target: 目标变量列名，默认为'target'
+    :param target: 目标变量列名，默认为'target'。在scorecardpipeline风格中使用，
+        当fit时只传入df且y为None时，从df中提取该列作为目标变量。
     :param missing_separate: 是否将缺失值单独分为一箱，默认为True
     :param min_n_bins: 最小分箱数，默认为2
     :param max_n_bins: 最大分箱数，默认为5
@@ -99,8 +100,8 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
     | quantile | QuantileBinning | 等频分箱，每箱样本数相等 |
     | tree | TreeBinning | 决策树分箱，基于信息增益 |
     | chi_merge | ChiMergeBinning | 卡方分箱，基于卡方统计量合并 |
-    | optimal_ks | OptimalKSBinning | 最优KS分箱，最大化KS统计量 |
-    | optimal_iv | OptimalIVBinning | 最优IV分箱，最大化IV值(推荐) |
+    | optimal_ks | BestKSBinning | 最优KS分箱，最大化KS统计量 |
+    | optimal_iv | BestIVBinning | 最优IV分箱，最大化IV值(推荐) |
     | mdlp | MDLPBinning | MDLP分箱，信息论方法 |
     | cart | CartBinning | CART分箱，参考optbinning实现 |
     | monotonic | MonotonicBinning | 单调性约束分箱，支持U型/倒U型 |
@@ -114,13 +115,28 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
 
     **参考样例**
 
-    基本使用::
+    基本使用 (sklearn风格)::
 
         >>> from hscredit.core.binning import OptimalBinning
         >>> binner = OptimalBinning(method='optimal_iv', max_n_bins=5)
-        >>> binner.fit(X, y)
+        >>> binner.fit(X, y)  # X是特征矩阵，y是目标变量
         >>> X_binned = binner.transform(X)
         >>> bin_table = binner.get_bin_table('feature_name')
+
+    scorecardpipeline风格 (目标列在DataFrame中)::
+
+        >>> from hscredit.core.binning import OptimalBinning
+        >>> # 初始化时指定目标列名，fit时传入完整DataFrame
+        >>> binner = OptimalBinning(target='target', method='optimal_iv', max_n_bins=5)
+        >>> binner.fit(df)  # df包含特征列和目标列'target'
+        >>> X_binned = binner.transform(df.drop(columns=['target']))
+        >>> bin_table = binner.get_bin_table('feature_name')
+
+    混合风格 (y参数优先)::
+
+        >>> # 即使初始化时指定了target，fit时传入y会优先使用y
+        >>> binner = OptimalBinning(target='target', method='optimal_iv')
+        >>> binner.fit(df, y=external_y)  # 使用external_y，忽略df中的'target'列
 
     设置切分点精度::
 
@@ -136,7 +152,7 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
 
     使用独立分箱类::
 
-        >>> from hscredit.core.binning import ChiMergeBinning, OptimalIVBinning
+        >>> from hscredit.core.binning import ChiMergeBinning, BestIVBinning
         >>> chi_binner = ChiMergeBinning(max_n_bins=5)
         >>> chi_binner.fit(X, y)
 
@@ -207,21 +223,56 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
         y: Optional[Union[pd.Series, np.ndarray]] = None,
         **kwargs
     ) -> 'BaseBinning':
-        """拟合分箱.
+        """拟合分箱。
 
-        :param X: 训练数据，可以是数值型或类别型特征，shape (n_samples, n_features)
-        :param y: 目标变量，如果X中包含target列，可以不提供。必须是二分类 (0/1 或 False/True)
+        支持两种API风格：
+        1. sklearn风格: fit(X, y) - X是特征矩阵，y是目标变量
+        2. scorecardpipeline风格: fit(df) - df是完整数据框，目标列名在初始化时通过target参数传入
+
+        优先级规则：如果y不是None，直接使用y（优先）；否则从X中提取target列。
+
+        :param X: 训练数据
+            - sklearn风格: 特征矩阵，shape (n_samples, n_features)，可以是数值型或类别型特征
+            - scorecardpipeline风格: 完整数据框，包含特征列和目标列
+            - 支持DataFrame或numpy数组
+        :param y: 目标变量（可选）
+            - sklearn风格: 传入目标变量，必须是二分类 (0/1 或 False/True)
+            - scorecardpipeline风格: 不传，从X中提取
+            - 如果传入y，优先使用y而忽略X中的target列
         :param kwargs: 其他参数，传递给具体的分箱算法
         :return: 拟合后的分箱器
 
         **注意**
 
         fit方法会进行以下操作:
-        1. 数据验证和预处理
+        1. 数据验证和预处理（通过_check_input方法）
         2. 识别特征类型 (数值型/类别型)
         3. 处理缺失值和特殊值
         4. 计算最优分箱切分点
         5. 生成分箱统计表
+
+        **使用示例**
+
+        sklearn风格::
+
+            >>> X = pd.DataFrame({'age': [25, 30, 35], 'income': [5000, 6000, 7000]})
+            >>> y = pd.Series([0, 1, 0])
+            >>> binner.fit(X, y)
+
+        scorecardpipeline风格::
+
+            >>> df = pd.DataFrame({
+            ...     'age': [25, 30, 35],
+            ...     'income': [5000, 6000, 7000],
+            ...     'target': [0, 1, 0]
+            ... })
+            >>> binner = OptimalBinning(target='target')
+            >>> binner.fit(df)  # 自动从df中提取'target'列
+
+        混合风格（y参数优先）::
+
+            >>> binner = OptimalBinning(target='target')
+            >>> binner.fit(df, y=external_y)  # 使用external_y，忽略df中的'target'列
         """
         pass
 
@@ -301,12 +352,34 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
         metric: str = 'indices',
         **kwargs
     ) -> Union[pd.DataFrame, np.ndarray]:
-        """拟合并应用分箱.
+        """拟合并应用分箱。
+
+        支持两种API风格：
+        1. sklearn风格: fit_transform(X, y) - X是特征矩阵，y是目标变量
+        2. scorecardpipeline风格: fit_transform(df) - df是完整数据框，目标列名在初始化时通过target参数传入
 
         :param X: 训练数据
-        :param y: 目标变量
+            - sklearn风格: 特征矩阵，shape (n_samples, n_features)
+            - scorecardpipeline风格: 完整数据框，包含特征列和目标列
+        :param y: 目标变量（可选）
+            - sklearn风格: 传入目标变量
+            - scorecardpipeline风格: 不传，从X中提取
         :param metric: 返回值的类型，默认为'indices'
+            - 'indices': 返回分箱索引
+            - 'bins': 返回分箱标签
+            - 'woe': 返回WOE值
         :return: 分箱后的数据
+
+        **使用示例**
+
+        sklearn风格::
+
+            >>> X_binned = binner.fit_transform(X, y, metric='woe')
+
+        scorecardpipeline风格::
+
+            >>> binner = OptimalBinning(target='target')
+            >>> X_binned = binner.fit_transform(df, metric='woe')  # 自动提取target列
         """
         return self.fit(X, y, **kwargs).transform(X, metric=metric, **kwargs)
 
@@ -315,48 +388,111 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
         X: Union[pd.DataFrame, np.ndarray],
         y: Optional[Union[pd.Series, np.ndarray]] = None
     ) -> Tuple[pd.DataFrame, pd.Series]:
-        """检查并准备输入数据.
+        """检查并准备输入数据，支持sklearn和scorecardpipeline两种API风格。
 
-        :param X: 输入特征
-        :param y: 目标变量
+        该方法统一处理两种风格的输入：
+        1. sklearn风格: fit(X, y) - X是特征矩阵，y是目标变量
+        2. scorecardpipeline风格: fit(df) - df是完整数据框，目标列名在初始化时通过target参数传入
+
+        优先级规则：
+        - 如果y不是None，直接使用y（优先）
+        - 如果y是None且X是DataFrame，从X中提取target列
+
+        :param X: 输入特征或完整数据框
+            - sklearn风格: 特征矩阵，shape (n_samples, n_features)
+            - scorecardpipeline风格: 完整数据框，包含特征和目标列
+            - 支持DataFrame或numpy数组
+        :param y: 目标变量（可选）
+            - sklearn风格: 传入目标变量
+            - scorecardpipeline风格: 不传，从X中提取
+            - 支持pd.Series或numpy数组
         :return: (特征DataFrame, 目标Series)
-        :raises ValueError: 如果输入数据格式不正确
+            - 特征DataFrame: 纯特征数据，不含目标列
+            - 目标Series: 二分类目标变量
+        :raises ValueError: 如果输入数据格式不正确或目标变量不符合要求
+
+        **使用示例**
+
+        sklearn风格::
+
+            >>> X = pd.DataFrame({'age': [25, 30, 35], 'income': [5000, 6000, 7000]})
+            >>> y = pd.Series([0, 1, 0])
+            >>> X_processed, y_processed = binner._check_input(X, y)
+
+        scorecardpipeline风格::
+
+            >>> df = pd.DataFrame({
+            ...     'age': [25, 30, 35],
+            ...     'income': [5000, 6000, 7000],
+            ...     'target': [0, 1, 0]
+            ... })
+            >>> binner = OptimalBinning(target='target')
+            >>> X_processed, y_processed = binner._check_input(df)  # y=None
+
+        numpy数组输入::
+
+            >>> X = np.array([[25, 5000], [30, 6000], [35, 7000]])
+            >>> y = np.array([0, 1, 0])
+            >>> X_processed, y_processed = binner._check_input(X, y)
         """
+        # 保存原始索引，用于后续对齐
+        original_index = None
+
         # 转换为DataFrame
         if not isinstance(X, pd.DataFrame):
             if isinstance(X, np.ndarray):
                 if X.ndim == 1:
                     X = pd.DataFrame(X, columns=['feature'])
                 else:
-                    X = pd.DataFrame(X)
+                    # 为numpy数组生成默认列名 feature_0, feature_1, ...
+                    n_cols = X.shape[1]
+                    columns = [f'feature_{i}' for i in range(n_cols)]
+                    X = pd.DataFrame(X, columns=columns)
             else:
                 X = pd.DataFrame(X)
 
+        original_index = X.index
+
         # 获取目标变量
-        if y is None:
+        if y is not None:
+            # sklearn风格: 使用传入的y（优先）
+            if isinstance(y, np.ndarray):
+                if y.ndim != 1:
+                    raise ValueError(f"目标变量y必须是一维数组，但得到 {y.ndim} 维")
+                y = pd.Series(y, index=original_index, name=self.target)
+            elif isinstance(y, pd.Series):
+                # 确保索引对齐
+                if not y.index.equals(original_index):
+                    y = y.reset_index(drop=True)
+                    y.index = original_index
+                y.name = self.target
+            else:
+                # 其他可迭代类型
+                y = pd.Series(y, index=original_index, name=self.target)
+        else:
+            # scorecardpipeline风格: 从X中提取target列
             if self.target in X.columns:
-                y = X[self.target]
+                y = X[self.target].copy()
+                y.name = self.target
                 X = X.drop(columns=[self.target])
             else:
                 raise ValueError(
-                    f"目标变量 '{self.target}' 未在数据中找到，请提供y参数"
+                    f"目标变量 '{self.target}' 未在数据中找到。"
+                    f"请提供y参数（sklearn风格）或在数据中包含 '{self.target}' 列（scorecardpipeline风格）。"
+                    f"可用列: {list(X.columns)}"
                 )
-        elif isinstance(y, np.ndarray):
-            y = pd.Series(y, index=X.index, name=self.target)
-        elif isinstance(y, pd.Series):
-            y.name = self.target
 
-        # 验证数据
+        # 验证数据长度
         if len(X) != len(y):
             raise ValueError(
                 f"特征和标签数量不匹配: {len(X)} != {len(y)}"
             )
 
         # 验证目标变量
-        unique_values = y.unique()
+        unique_values = y.dropna().unique()
         if len(unique_values) != 2:
             raise ValueError(
-                f"目标变量必须是二分类，但发现 {len(unique_values)} 个唯一值"
+                f"目标变量必须是二分类，但发现 {len(unique_values)} 个唯一值: {unique_values}"
             )
 
         if not set(unique_values).issubset({0, 1, False, True}):

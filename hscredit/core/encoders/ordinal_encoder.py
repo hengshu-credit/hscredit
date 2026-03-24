@@ -54,6 +54,7 @@ class OrdinalEncoder(BaseEncoder):
         handle_missing: str = 'value',
         drop_invariant: bool = False,
         return_df: bool = True,
+        target: Optional[str] = None,
     ):
         """初始化序数编码器。
 
@@ -63,6 +64,7 @@ class OrdinalEncoder(BaseEncoder):
         :param handle_missing: 处理缺失值的方式，默认为'value'
         :param drop_invariant: 是否删除方差为0的列，默认为False
         :param return_df: 是否返回DataFrame，默认为True
+        :param target: scorecardpipeline风格的目标列名。序数编码器不使用此参数，仅为API一致性保留
         """
         super().__init__(
             cols=cols,
@@ -70,6 +72,7 @@ class OrdinalEncoder(BaseEncoder):
             return_df=return_df,
             handle_unknown=handle_unknown,
             handle_missing=handle_missing,
+            target=target,
         )
         self.mapping = mapping or {}
 

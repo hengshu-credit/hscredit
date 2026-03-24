@@ -9,7 +9,7 @@ sys.path.insert(0, '/Users/xiaoxi/CodeBuddy/hscredit/hscredit')
 
 from hscredit.core.binning import (
     UniformBinning, QuantileBinning, TreeBinning, 
-    ChiMergeBinning, OptimalKSBinning, OptimalIVBinning,
+    ChiMergeBinning, BestKSBinning, BestIVBinning,
     MDLPBinning, OptimalBinning
 )
 
@@ -74,15 +74,15 @@ except Exception as e:
     traceback.print_exc()
 
 print("\n" + "=" * 80)
-print("问题3: OptimalKSBinning/OptimalIVBinning - 产生过多分箱")
+print("问题3: BestKSBinning/BestIVBinning - 产生过多分箱")
 print("=" * 80)
 
 try:
-    binner = OptimalKSBinning(max_n_bins=5)
+    binner = BestKSBinning(max_n_bins=5)
     binner.fit(X, y)
     
-    print(f"\nOptimalKSBinning splits_: {binner.splits_}")
-    print(f"OptimalKSBinning n_bins_: {binner.n_bins_}")
+    print(f"\nBestKSBinning splits_: {binner.splits_}")
+    print(f"BestKSBinning n_bins_: {binner.n_bins_}")
     
     bin_table = binner.get_bin_table('青云24')
     print(f"\nBin table rows: {len(bin_table)}")

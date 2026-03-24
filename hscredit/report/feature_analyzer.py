@@ -604,8 +604,8 @@ def feature_bin_stats(
                 'tree': 'TreeBinning',
                 'chi_merge': 'ChiMergeBinning',
                 # 优化方法
-                'optimal_ks': 'OptimalKSBinning',
-                'optimal_iv': 'OptimalIVBinning',
+                'optimal_ks': 'BestKSBinning',
+                'optimal_iv': 'BestIVBinning',
                 'mdlp': 'MDLPBinning',
                 # 高级方法
                 'cart': 'CartBinning',

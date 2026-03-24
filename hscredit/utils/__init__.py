@@ -14,6 +14,14 @@ from .bin_table_display import (
     BinTableDisplay,
     enable_dataframe_show,
 )
+from .input_utils import (
+    check_xy_inputs,
+    convert_to_dataframe,
+    extract_target_from_df,
+    check_array_1d,
+    get_feature_dtypes,
+    check_missing_values,
+)
 
 __all__ = [
     # 随机种子
@@ -36,4 +44,11 @@ __all__ = [
     'style_bin_table',
     'BinTableDisplay',
     'enable_dataframe_show',
+    # 输入处理工具
+    'check_xy_inputs',
+    'convert_to_dataframe',
+    'extract_target_from_df',
+    'check_array_1d',
+    'get_feature_dtypes',
+    'check_missing_values',
 ]

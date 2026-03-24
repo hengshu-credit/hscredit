@@ -13,23 +13,6 @@ import matplotlib.pyplot as plt
 from matplotlib import font_manager
 
 
-def round_float(num, decimal: int = 4):
-    """调整数值分箱的上下界小数点精度，如未超出精度保持原样输出。
-
-    :param num: 分箱的上界或者下界
-    :param decimal: 小数点保留的精度
-    :return: 精度调整后的数值
-
-    示例:
-        >>> round_float(3.14159265, decimal=4)
-        3.1415
-    """
-    if ~pd.isnull(num) and isinstance(num, float):
-        return float(str(num).split(".")[0] + "." + str(num).split(".")[1][:decimal])
-    else:
-        return num
-
-
 def init_setting(font_path=None, seed=None, freeze_torch=False, logger=False, **kwargs):
     """初始化环境配置。
 
@@ -81,3 +64,20 @@ def init_setting(font_path=None, seed=None, freeze_torch=False, logger=False, **
     if logger:
         import logging
         return logging.getLogger(**kwargs)
+
+
+def round_float(num, decimal: int = 4):
+    """调整数值分箱的上下界小数点精度，如未超出精度保持原样输出。
+
+    :param num: 分箱的上界或者下界
+    :param decimal: 小数点保留的精度
+    :return: 精度调整后的数值
+
+    示例:
+        >>> round_float(3.14159265, decimal=4)
+        3.1415
+    """
+    if ~pd.isnull(num) and isinstance(num, float):
+        return float(str(num).split(".")[0] + "." + str(num).split(".")[1][:decimal])
+    else:
+        return num

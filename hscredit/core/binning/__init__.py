@@ -13,6 +13,9 @@
 - optimal_iv: 最优IV分箱
 - mdlp: MDLP分箱（基于信息论）
 
+**运筹规划方法:**
+- or_tools: OR-Tools 最优化分箱（基于 Google OR-Tools）
+
 **高级方法:**
 - cart: CART分箱（参考optbinning实现）
 - monotonic: 单调性约束分箱（支持U型/倒U型/凸/凹）
@@ -27,7 +30,7 @@
 - BaseBinning: 分箱算法基类
 - OptimalBinning: 统一分箱接口（推荐）
 - 各具体分箱类: UniformBinning, QuantileBinning, TreeBinning, CartBinning,
-  ChiMergeBinning, OptimalKSBinning, OptimalIVBinning, MDLPBinning,
+  ChiMergeBinning, BestKSBinning, BestIVBinning, MDLPBinning, ORBinning,
   KMeansBinning, MonotonicBinning, GeneticBinning, SmoothBinning,
   KernelDensityBinning, BestLiftBinning, TargetBadRateBinning
 
@@ -60,10 +63,11 @@ from .quantile_binning import QuantileBinning
 from .tree_binning import TreeBinning
 from .cart_binning import CartBinning
 from .chi_merge_binning import ChiMergeBinning
-from .optimal_ks_binning import OptimalKSBinning
-from .optimal_iv_binning import OptimalIVBinning
+from .best_ks_binning import BestKSBinning
+from .best_iv_binning import BestIVBinning
 from .optimal_binning import OptimalBinning
 from .mdlp_binning import MDLPBinning
+from .or_binning import ORBinning, CustomObjectives
 from .kmeans_binning import KMeansBinning
 from .monotonic_binning import MonotonicBinning
 from .genetic_binning import GeneticBinning
@@ -79,10 +83,12 @@ __all__ = [
     'TreeBinning',
     'CartBinning',
     'ChiMergeBinning',
-    'OptimalKSBinning',
-    'OptimalIVBinning',
+    'BestKSBinning',
+    'BestIVBinning',
     'OptimalBinning',
     'MDLPBinning',
+    'ORBinning',
+    'CustomObjectives',
     'KMeansBinning',
     'MonotonicBinning',
     'GeneticBinning',

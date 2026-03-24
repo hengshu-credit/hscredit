@@ -9,7 +9,7 @@ sys.path.insert(0, '/Users/xiaoxi/CodeBuddy/hscredit/hscredit')
 
 from hscredit.core.binning import (
     UniformBinning, QuantileBinning, TreeBinning, 
-    ChiMergeBinning, OptimalKSBinning, OptimalIVBinning,
+    ChiMergeBinning, BestKSBinning, BestIVBinning,
     MDLPBinning, OptimalBinning
 )
 

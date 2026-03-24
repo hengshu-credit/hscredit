@@ -20,9 +20,10 @@ from .uniform_binning import UniformBinning
 from .quantile_binning import QuantileBinning
 from .tree_binning import TreeBinning
 from .chi_merge_binning import ChiMergeBinning
-from .optimal_ks_binning import OptimalKSBinning
-from .optimal_iv_binning import OptimalIVBinning
+from .best_ks_binning import BestKSBinning
+from .best_iv_binning import BestIVBinning
 from .mdlp_binning import MDLPBinning
+from .or_binning import ORBinning, ORTOOLS_AVAILABLE
 from .cart_binning import CartBinning
 from .kmeans_binning import KMeansBinning
 from .genetic_binning import GeneticBinning
@@ -102,7 +103,7 @@ class OptimalBinning(BaseBinning):
     # 所有支持的分箱方法
     VALID_METHODS = [
         'uniform', 'quantile', 'tree', 'chi_merge',
-        'optimal_ks', 'optimal_iv', 'mdlp',
+        'optimal_ks', 'optimal_iv', 'mdlp', 'or_tools',
         'cart', 'kmeans', 'monotonic', 'genetic',
         'smooth', 'kernel_density', 'best_lift', 'target_bad_rate'
     ]
@@ -733,11 +734,21 @@ class OptimalBinning(BaseBinning):
         elif self.method == 'chi_merge':
             self._binner = ChiMergeBinning(**target_params)
         elif self.method == 'optimal_ks':
-            self._binner = OptimalKSBinning(**full_params)
+            self._binner = BestKSBinning(**full_params)
         elif self.method == 'optimal_iv':
-            self._binner = OptimalIVBinning(**full_params)
+            self._binner = BestIVBinning(**full_params)
         elif self.method == 'mdlp':
             self._binner = MDLPBinning(**target_params)
+        elif self.method == 'or_tools':
+            if not ORTOOLS_AVAILABLE:
+                raise ImportError(
+                    "OR-Tools 未安装，无法使用 or_tools 方法。"
+                    "请使用 pip install ortools 安装。"
+                )
+            or_params = full_params.copy()
+            or_params['objective'] = self.kwargs.get('or_objective', 'iv')
+            or_params['time_limit'] = self.kwargs.get('or_time_limit', 30)
+            self._binner = ORBinning(**or_params)
         elif self.method == 'cart':
             self._binner = CartBinning(**full_params)
         elif self.method == 'kmeans':

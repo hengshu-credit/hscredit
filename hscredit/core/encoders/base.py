@@ -6,7 +6,11 @@
 设计原则:
 1. 参数命名统一，与其他库保持一致
 2. 支持高度自定义，但提供合理默认值
-3. 遵循sklearn API风格
+3. 遵循sklearn API风格，同时支持scorecardpipeline风格
+
+API风格说明:
+- sklearn风格: fit(X, y) - X是特征矩阵，y是目标变量
+- scorecardpipeline风格: fit(df) - df是完整数据框，目标列名在初始化时通过target参数传入
 """
 
 from abc import ABC, abstractmethod
@@ -20,7 +24,7 @@ class BaseEncoder(BaseEstimator, TransformerMixin, ABC):
     """编码器基类.
 
     所有编码器的抽象基类，提供统一的接口和通用功能。
-    遵循sklearn Transformer接口规范。
+    遵循sklearn Transformer接口规范，同时支持scorecardpipeline风格。
 
     **参数**
 
@@ -35,6 +39,7 @@ class BaseEncoder(BaseEstimator, TransformerMixin, ABC):
         - 'value': 使用默认值（通常是0或全局均值）
         - 'error': 抛出错误
         - 'return_nan': 返回NaN
+    :param target: scorecardpipeline风格的目标列名。如果提供，fit时从X中提取该列作为y
 
     **属性**
 
@@ -50,6 +55,7 @@ class BaseEncoder(BaseEstimator, TransformerMixin, ABC):
         return_df: bool = True,
         handle_unknown: str = 'value',
         handle_missing: str = 'value',
+        target: Optional[str] = None,
     ):
         """初始化编码器基类。
 
@@ -58,12 +64,14 @@ class BaseEncoder(BaseEstimator, TransformerMixin, ABC):
         :param return_df: 是否返回DataFrame，默认为True
         :param handle_unknown: 处理未知类别的方式，默认为'value'
         :param handle_missing: 处理缺失值的方式，默认为'value'
+        :param target: scorecardpipeline风格的目标列名。如果提供，fit时从X中提取该列作为y
         """
         self.cols = cols
         self.drop_invariant = drop_invariant
         self.return_df = return_df
         self.handle_unknown = handle_unknown
         self.handle_missing = handle_missing
+        self.target = target
 
         self.mapping_: Dict = {}
         self.cols_: Optional[List[str]] = None
@@ -72,8 +80,15 @@ class BaseEncoder(BaseEstimator, TransformerMixin, ABC):
     def fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None) -> 'BaseEncoder':
         """拟合编码器。
 
-        :param X: 训练数据，shape (n_samples, n_features)
-        :param y: 目标变量，对于有监督编码器（如WOE、Target）必须提供
+        支持两种API风格:
+        1. sklearn风格: fit(X, y) - X是特征矩阵，y是目标变量
+        2. scorecardpipeline风格: fit(df) - df是完整数据框，目标列名在初始化时通过target参数传入
+
+        优先级: fit时传入的y > 从X中提取target列
+
+        :param X: 训练数据，shape (n_samples, n_features) 或包含目标列的完整数据框
+        :param y: 目标变量，对于有监督编码器（如WOE、Target）必须提供。
+                  如果为None且初始化时提供了target参数，则从X中提取target列
         :return: 拟合后的编码器自身
 
         **注意**
@@ -85,6 +100,9 @@ class BaseEncoder(BaseEstimator, TransformerMixin, ABC):
         4. 计算编码映射
         """
         X = self._check_input(X)
+
+        # 处理两种API风格：如果y为None且提供了target参数，从X中提取目标列
+        X, y = self._extract_target(X, y)
 
         if self.cols is None:
             self.cols_ = self._get_category_cols(X)
@@ -137,11 +155,15 @@ class BaseEncoder(BaseEstimator, TransformerMixin, ABC):
     def fit_transform(self, X: pd.DataFrame, y: Optional[pd.Series] = None) -> Union[pd.DataFrame, np.ndarray]:
         """拟合并转换数据。
 
-        :param X: 训练数据，shape (n_samples, n_features)
-        :param y: 目标变量，对于某些编码器是必需的
+        支持两种API风格:
+        1. sklearn风格: fit_transform(X, y) - X是特征矩阵，y是目标变量
+        2. scorecardpipeline风格: fit_transform(df) - df是完整数据框，目标列名在初始化时通过target参数传入
+
+        :param X: 训练数据，shape (n_samples, n_features) 或包含目标列的完整数据框
+        :param y: 目标变量，对于某些编码器是必需的。
+                  如果为None且初始化时提供了target参数，则从X中提取target列
         :return: 编码后的数据
         """
-        return self.fit(X, y).transform(X, y)
         return self.fit(X, y).transform(X, y)
 
     @abstractmethod
@@ -166,6 +188,35 @@ class BaseEncoder(BaseEstimator, TransformerMixin, ABC):
         elif not isinstance(X, pd.DataFrame):
             raise TypeError(f"输入必须是DataFrame或ndarray，got {type(X)}")
         return X
+
+    def _extract_target(
+        self, X: pd.DataFrame, y: Optional[pd.Series]
+    ) -> tuple[pd.DataFrame, Optional[pd.Series]]:
+        """提取目标变量，支持两种API风格。
+
+        优先级: fit时传入的y > 从X中提取target列
+
+        :param X: 输入数据框
+        :param y: 目标变量（可能为None）
+        :return: (X_features, y_target) 元组
+                  X_features: 不包含目标列的特征数据框
+                  y_target: 目标变量Series或None
+        """
+        # 如果y不为None，直接使用sklearn风格
+        if y is not None:
+            return X, y
+
+        # 如果y为None且提供了target参数，从X中提取目标列（scorecardpipeline风格）
+        if self.target is not None:
+            if self.target not in X.columns:
+                raise ValueError(f"目标列'{self.target}'不在数据框中。可用的列: {list(X.columns)}")
+
+            y_extracted = X[self.target].copy()
+            X_features = X.drop(columns=[self.target])
+            return X_features, y_extracted
+
+        # y为None且没有提供target参数，返回原数据
+        return X, None
 
     def _get_category_cols(self, X: pd.DataFrame) -> List[str]:
         """自动识别类别型列。

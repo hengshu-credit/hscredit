@@ -56,6 +56,7 @@ class CatBoostEncoder(BaseEncoder):
         drop_invariant: bool = False,
         return_df: bool = True,
         random_state: Optional[int] = None,
+        target: Optional[str] = None,
     ):
         """初始化CatBoost编码器。
 
@@ -66,6 +67,7 @@ class CatBoostEncoder(BaseEncoder):
         :param drop_invariant: 是否删除方差为0的列，默认为False
         :param return_df: 是否返回DataFrame，默认为True
         :param random_state: 随机种子，默认为None
+        :param target: scorecardpipeline风格的目标列名。如果提供，fit时从X中提取该列作为y
         """
         super().__init__(
             cols=cols,
@@ -73,6 +75,7 @@ class CatBoostEncoder(BaseEncoder):
             return_df=return_df,
             handle_unknown=handle_unknown,
             handle_missing=handle_missing,
+            target=target,
         )
         self.sigma = sigma
         self.random_state = random_state

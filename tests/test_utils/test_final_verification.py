@@ -45,12 +45,12 @@ for name, Binner, kwargs in [
 print("\n2. 高级分箱方法")
 print("-" * 60)
 
-from hscredit.core.binning import ChiMergeBinning, OptimalKSBinning, OptimalIVBinning, MDLPBinning
+from hscredit.core.binning import ChiMergeBinning, BestKSBinning, BestIVBinning, MDLPBinning
 
 for name, Binner, kwargs in [
     ('ChiMergeBinning', ChiMergeBinning, {'n_bins': 5}),
-    ('OptimalKSBinning', OptimalKSBinning, {'max_n_bins': 5}),
-    ('OptimalIVBinning', OptimalIVBinning, {'max_n_bins': 5}),
+    ('BestKSBinning', BestKSBinning, {'max_n_bins': 5}),
+    ('BestIVBinning', BestIVBinning, {'max_n_bins': 5}),
     ('MDLPBinning', MDLPBinning, {'max_n_bins': 5})
 ]:
     try:

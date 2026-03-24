@@ -37,7 +37,7 @@ sys.path.insert(0, '/Users/xiaoxi/CodeBuddy/hscredit/hscredit')
 
 from hscredit.core.binning import (
     UniformBinning, QuantileBinning, TreeBinning, 
-    ChiMergeBinning, OptimalKSBinning, OptimalIVBinning,
+    ChiMergeBinning, BestKSBinning, BestIVBinning,
     MDLPBinning, OptimalBinning
 )
 
@@ -47,8 +47,8 @@ results = {
     'QuantileBinning': {'status': 'PENDING', 'issues': []},
     'TreeBinning': {'status': 'PENDING', 'issues': []},
     'ChiMergeBinning': {'status': 'PENDING', 'issues': []},
-    'OptimalKSBinning': {'status': 'PENDING', 'issues': []},
-    'OptimalIVBinning': {'status': 'PENDING', 'issues': []},
+    'BestKSBinning': {'status': 'PENDING', 'issues': []},
+    'BestIVBinning': {'status': 'PENDING', 'issues': []},
     'MDLPBinning': {'status': 'PENDING', 'issues': []},
     'OptimalBinning': {'status': 'PENDING', 'issues': []},
 }
@@ -343,9 +343,9 @@ except Exception as e:
     results['ChiMergeBinning']['issues'].append(f"测试执行失败: {str(e)}")
     print(f"  ✗ 测试失败: {str(e)}")
 
-# ==================== 5. 测试 OptimalKSBinning ====================
+# ==================== 5. 测试 BestKSBinning ====================
 print("\n" + "=" * 80)
-print("5. 测试 OptimalKSBinning (最优KS分箱)")
+print("5. 测试 BestKSBinning (最优KS分箱)")
 print("=" * 80)
 
 try:
@@ -353,38 +353,38 @@ try:
     y = df['target'].copy()
     
     # 测试1: 基本功能
-    binner = OptimalKSBinning(max_n_bins=5)
+    binner = BestKSBinning(max_n_bins=5)
     binner.fit(X, y)
     
     # 检查分箱数
     ok, msg = check_max_bins(binner, 5, '青云24')
     if not ok:
-        results['OptimalKSBinning']['issues'].append(f"max_n_bins不生效: {msg}")
+        results['BestKSBinning']['issues'].append(f"max_n_bins不生效: {msg}")
     
     # 检查WOE/IV计算
     bin_table = binner.get_bin_table('青云24')
     woe_issues = check_woe_iv_calculation(bin_table)
-    results['OptimalKSBinning']['issues'].extend(woe_issues)
+    results['BestKSBinning']['issues'].extend(woe_issues)
     
     # 检查transform
     transform_issues = check_transform_works(binner, X, '青云24')
-    results['OptimalKSBinning']['issues'].extend(transform_issues)
+    results['BestKSBinning']['issues'].extend(transform_issues)
     
-    if not results['OptimalKSBinning']['issues']:
-        results['OptimalKSBinning']['status'] = 'PASSED'
+    if not results['BestKSBinning']['issues']:
+        results['BestKSBinning']['status'] = 'PASSED'
     else:
-        results['OptimalKSBinning']['status'] = 'FAILED'
+        results['BestKSBinning']['status'] = 'FAILED'
     
     print(f"  分箱统计表:\n{bin_table}")
     
 except Exception as e:
-    results['OptimalKSBinning']['status'] = 'ERROR'
-    results['OptimalKSBinning']['issues'].append(f"测试执行失败: {str(e)}")
+    results['BestKSBinning']['status'] = 'ERROR'
+    results['BestKSBinning']['issues'].append(f"测试执行失败: {str(e)}")
     print(f"  ✗ 测试失败: {str(e)}")
 
-# ==================== 6. 测试 OptimalIVBinning ====================
+# ==================== 6. 测试 BestIVBinning ====================
 print("\n" + "=" * 80)
-print("6. 测试 OptimalIVBinning (最优IV分箱)")
+print("6. 测试 BestIVBinning (最优IV分箱)")
 print("=" * 80)
 
 try:
@@ -392,33 +392,33 @@ try:
     y = df['target'].copy()
     
     # 测试1: 基本功能
-    binner = OptimalIVBinning(max_n_bins=5)
+    binner = BestIVBinning(max_n_bins=5)
     binner.fit(X, y)
     
     # 检查分箱数
     ok, msg = check_max_bins(binner, 5, '青云24')
     if not ok:
-        results['OptimalIVBinning']['issues'].append(f"max_n_bins不生效: {msg}")
+        results['BestIVBinning']['issues'].append(f"max_n_bins不生效: {msg}")
     
     # 检查WOE/IV计算
     bin_table = binner.get_bin_table('青云24')
     woe_issues = check_woe_iv_calculation(bin_table)
-    results['OptimalIVBinning']['issues'].extend(woe_issues)
+    results['BestIVBinning']['issues'].extend(woe_issues)
     
     # 检查transform
     transform_issues = check_transform_works(binner, X, '青云24')
-    results['OptimalIVBinning']['issues'].extend(transform_issues)
+    results['BestIVBinning']['issues'].extend(transform_issues)
     
-    if not results['OptimalIVBinning']['issues']:
-        results['OptimalIVBinning']['status'] = 'PASSED'
+    if not results['BestIVBinning']['issues']:
+        results['BestIVBinning']['status'] = 'PASSED'
     else:
-        results['OptimalIVBinning']['status'] = 'FAILED'
+        results['BestIVBinning']['status'] = 'FAILED'
     
     print(f"  分箱统计表:\n{bin_table}")
     
 except Exception as e:
-    results['OptimalIVBinning']['status'] = 'ERROR'
-    results['OptimalIVBinning']['issues'].append(f"测试执行失败: {str(e)}")
+    results['BestIVBinning']['status'] = 'ERROR'
+    results['BestIVBinning']['issues'].append(f"测试执行失败: {str(e)}")
     print(f"  ✗ 测试失败: {str(e)}")
 
 # ==================== 7. 测试 MDLPBinning ====================
