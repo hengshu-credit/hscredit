@@ -7,22 +7,6 @@ __version__ = "0.1.0"
 __author__ = "hscredit team"
 __email__ = "hscredit@hengshucredit.com"
 
-# 注意: 以下模块尚未实现，暂时注释
-# 核心模块导入
-# from .core.binning import OptimalBinning, TreeBinning, ChiMergeBinning
-# from .core.encoding import WOEEncoder, TargetEncoder
-# from .core.selection import (
-#     FeatureSelector,
-#     StepwiseSelector,
-#     IVSelector,
-#     CorrelationSelector,
-#     VIFSelector
-# )
-# from .core.metrics import KS, AUC, PSI, IV, Gini
-
-# 模型模块导入
-# from .model.linear import LogisticRegression
-# from .model.scorecard import ScoreCard
 
 # ========== 核心模块导入 (先导入core，避免循环导入) ==========
 

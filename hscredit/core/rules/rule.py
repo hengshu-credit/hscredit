@@ -68,23 +68,38 @@ class Rule:
     支持使用 pandas eval 语法的规则定义和评估。
 
     :param expr: 规则表达式字符串
+    :param name: 规则名称，用于标识和展示，默认为None（使用表达式作为名称）
+    :param description: 规则描述，默认为空字符串
+    :param weight: 规则权重，用于规则集分类器，默认为1.0
 
     示例:
         >>> from hscredit.core.rules import Rule
-        >>> rule1 = Rule("age > 18")
-        >>> rule2 = Rule("income > 5000")
+        >>> rule1 = Rule("age > 18", name="成年规则", description="判断用户是否成年")
+        >>> rule2 = Rule("income > 5000", name="高收入规则")
         >>> # 规则组合
         >>> combined = rule1 & rule2
         >>> # 应用规则
         >>> result = combined.predict(df)
     """
 
-    def __init__(self, expr: str):
+    def __init__(
+        self, 
+        expr: str,
+        name: Optional[str] = None,
+        description: str = "",
+        weight: float = 1.0
+    ):
         """
         :param expr: 规则表达式字符串，支持 pandas eval 语法
+        :param name: 规则名称
+        :param description: 规则描述
+        :param weight: 规则权重
         """
         self._state = RuleState.INITIALIZED
         self.expr = expr
+        self.name = name or expr
+        self.description = description
+        self.weight = weight
         self.feature_names_in_ = get_columns_from_query(self.expr)
         self.result_ = None
 
@@ -100,7 +115,14 @@ class Rule:
             raise TypeError(f"unsupported operand type(s) for &: 'Rule' and '{type(other).__name__}'")
         combined_expr = f"({self.expr}) & ({other.expr})"
         optimized = optimize_expr(beautify_expr(combined_expr))
-        return Rule(optimized)
+        self_name = getattr(self, 'name', None) or self.expr
+        other_name = getattr(other, 'name', None) or other.expr
+        return Rule(
+            optimized,
+            name=f"({self_name})_AND_({other_name})",
+            description=f"{self.description} 且 {other.description}" if self.description or other.description else "",
+            weight=max(self.weight, other.weight)
+        )
 
     def __or__(self, other):
         """规则或操作。"""
@@ -108,13 +130,25 @@ class Rule:
             raise TypeError(f"unsupported operand type(s) for |: 'Rule' and '{type(other).__name__}'")
         combined_expr = f"({self.expr}) | ({other.expr})"
         optimized = optimize_expr(beautify_expr(combined_expr))
-        return Rule(optimized)
+        self_name = getattr(self, 'name', None) or self.expr
+        other_name = getattr(other, 'name', None) or other.expr
+        return Rule(
+            optimized,
+            name=f"({self_name})_OR_({other_name})",
+            description=f"{self.description} 或 {other.description}" if self.description or other.description else "",
+            weight=max(self.weight, other.weight)
+        )
 
     def __invert__(self):
         """规则非操作。"""
         combined_expr = f"~({self.expr})"
         optimized = optimize_expr(beautify_expr(combined_expr))
-        return Rule(optimized)
+        return Rule(
+            optimized,
+            name=f"NOT_({self.name})",
+            description=f"非: {self.description}" if self.description else "",
+            weight=self.weight
+        )
 
     def __xor__(self, other):
         """规则异或操作。"""
@@ -122,7 +156,14 @@ class Rule:
             raise TypeError(f"unsupported operand type(s) for ^: 'Rule' and '{type(other).__name__}'")
         combined_expr = f"({self.expr}) ^ ({other.expr})"
         optimized = optimize_expr(beautify_expr(combined_expr))
-        return Rule(optimized)
+        self_name = getattr(self, 'name', None) or self.expr
+        other_name = getattr(other, 'name', None) or other.expr
+        return Rule(
+            optimized,
+            name=f"({self_name})_XOR_({other_name})",
+            description=f"{self.description} 异或 {other.description}" if self.description or other.description else "",
+            weight=max(self.weight, other.weight)
+        )
 
     def __eq__(self, other):
         """规则相等比较。"""
