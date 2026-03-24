@@ -160,6 +160,7 @@ class LogisticRegression(SklearnLogisticRegression):
         warm_start: bool = False,
         n_jobs: Optional[int] = None,
         l1_ratio: Optional[float] = None,
+        target: Optional[str] = None,
     ):
         super().__init__(
             penalty=penalty,
@@ -179,15 +180,20 @@ class LogisticRegression(SklearnLogisticRegression):
             l1_ratio=l1_ratio,
         )
         self.calculate_stats = calculate_stats
+        self.target = target
 
     def fit(
         self,
         X: Union[pd.DataFrame, np.ndarray],
-        y: Union[pd.Series, np.ndarray],
+        y: Optional[Union[pd.Series, np.ndarray]] = None,
         sample_weight: Optional[np.ndarray] = None,
         **kwargs
     ) -> "LogisticRegression":
         """训练逻辑回归模型.
+
+        支持两种调用方式:
+        1. 常规方式: fit(X, y)
+        2. scorecardpipeline风格: 在__init__中指定target，然后fit(X)
 
         在 sklearn LogisticRegression.fit() 的基础上，
         当 calculate_stats=True 时额外计算统计信息。
@@ -196,8 +202,10 @@ class LogisticRegression(SklearnLogisticRegression):
 
         :param X: 训练数据，形状 (n_samples, n_features)
             支持 numpy array 或 pandas DataFrame
-        :param y: 目标变量，形状 (n_samples,)
+            如果是DataFrame且y为None，会尝试从X中提取target列
+        :param y: 目标变量，形状 (n_samples,)，可选
             二分类时为 0/1 或 -1/1
+            如果为None且init中指定了target，则从X中提取
         :param sample_weight: 样本权重，形状 (n_samples,)
             默认 None，所有样本权重为1
         :param kwargs: 其他传递给父类 fit 方法的参数
@@ -222,7 +230,18 @@ class LogisticRegression(SklearnLogisticRegression):
 
             >>> sample_weight = np.where(y_train == 1, 2.0, 1.0)
             >>> model.fit(X_train, y_train, sample_weight=sample_weight)
+
+        scorecardpipeline风格::
+
+            >>> model = LogisticRegression(target='label')
+            >>> model.fit(X_train)  # 从X_train中提取'label'列作为y
         """
+        # 处理 scorecardpipeline 风格：从 X 中提取 y
+        if y is None and hasattr(self, 'target') and self.target is not None:
+            if isinstance(X, pd.DataFrame) and self.target in X.columns:
+                y = X[self.target]
+                X = X.drop(columns=[self.target])
+
         # 保存特征名
         if isinstance(X, pd.DataFrame):
             self.feature_names_in_ = X.columns.tolist()
@@ -398,6 +417,58 @@ class LogisticRegression(SklearnLogisticRegression):
         if scipy.sparse.issparse(X):
             return X.toarray()
         return X
+
+    def get_feature_importances(self, importance_type: str = 'coef') -> pd.Series:
+        """获取特征重要性.
+
+        对于逻辑回归模型，使用系数绝对值作为特征重要性。
+
+        :param importance_type: 重要性类型，默认'coef'
+            - 'coef': 系数绝对值
+            - 'p_value': 基于p值的重要性 (1 - p_value)
+            - 'z_score': z统计量绝对值
+        :return: 特征重要性Series
+        """
+        check_is_fitted(self)
+
+        # 获取特征名称
+        if self.feature_names_in_ is None:
+            feature_names = [f'feature_{i}' for i in range(self.coef_.shape[1])]
+        else:
+            feature_names = self.feature_names_in_
+
+        # 根据类型计算重要性
+        if importance_type == 'coef':
+            importances = np.abs(self.coef_[0])  # 取绝对值
+        elif importance_type == 'p_value':
+            if not hasattr(self, 'p_val_coef_'):
+                raise ValueError("未计算p值，请在fit时设置calculate_stats=True")
+            importances = 1 - self.p_val_coef_[0]  # p值越小越重要
+        elif importance_type == 'z_score':
+            if not hasattr(self, 'z_coef_'):
+                raise ValueError("未计算z统计量，请在fit时设置calculate_stats=True")
+            importances = np.abs(self.z_coef_[0])
+        else:
+            raise ValueError(f"不支持的重要性类型: {importance_type}")
+
+        # 创建Series
+        importance_series = pd.Series(
+            importances,
+            index=feature_names,
+            name='importance'
+        ).sort_values(ascending=False)
+
+        self._feature_importances = importance_series
+
+        return importance_series
+
+    @property
+    def feature_importances_(self) -> np.ndarray:
+        """特征重要性属性 (兼容sklearn风格)."""
+        check_is_fitted(self)
+        if not hasattr(self, '_feature_importances'):
+            self._feature_importances = self.get_feature_importances()
+        return self._feature_importances.values
 
     def summary(self) -> pd.DataFrame:
         """获取回归结果的统计摘要.

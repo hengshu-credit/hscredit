@@ -470,7 +470,7 @@ try:
     y = df['target'].copy()
     
     # 测试所有方法
-    methods = ['uniform', 'quantile', 'tree', 'chi_merge', 'optimal_ks', 'optimal_iv', 'mdlp']
+    methods = ['uniform', 'quantile', 'tree', 'chi', 'best_ks', 'best_iv', 'mdlp']
     
     for method in methods:
         try:

@@ -52,7 +52,7 @@ def test_extreme_imbalance():
     
     # 测试不同分箱方法
     methods = [
-        ('optimal_iv', OptimalBinning(method='optimal_iv', max_n_bins=5)),
+        ('best_iv', OptimalBinning(method='best_iv', max_n_bins=5)),
         ('kernel_density', KernelDensityBinning(max_n_bins=5)),
         ('genetic', GeneticBinning(max_n_bins=5)),
     ]
@@ -222,7 +222,7 @@ if __name__ == '__main__':
         print("2. 平滑方法：将0替换为epsilon，然后重新归一化")
         print("3. 修复文件：")
         print("   - binning_metrics.py (woe_iv_vectorized)")
-        print("   - optimal_iv_binning.py (_calc_iv)")
+        print("   - best_iv_binning.py (_calc_iv)")
         print("   - kernel_density_binning.py (_calculate_iv)")
         print("   - genetic_binning.py (_calculate_iv)")
         print("   - importance.py (IV, IV_table)")

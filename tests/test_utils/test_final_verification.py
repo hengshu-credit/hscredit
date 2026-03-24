@@ -69,7 +69,7 @@ print("-" * 60)
 
 from hscredit.core.binning import OptimalBinning
 
-methods = ['uniform', 'quantile', 'tree', 'chi_merge', 'optimal_ks', 'optimal_iv', 'mdlp']
+methods = ['uniform', 'quantile', 'tree', 'chi', 'best_ks', 'best_iv', 'mdlp']
 for method in methods:
     try:
         binner = OptimalBinning(method=method, max_n_bins=5)

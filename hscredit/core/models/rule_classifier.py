@@ -518,6 +518,51 @@ class RulesClassifier(BaseEstimator, ClassifierMixin):
         for rule in self.rules:
             check_rule_columns(rule)
     
+    def get_feature_importances(self, importance_type: str = 'frequency') -> pd.Series:
+        """获取特征重要性（基于规则使用频率）.
+        
+        规则分类器通过统计特征在规则中的使用频率来计算重要性。
+        
+        :param importance_type: 重要性类型，默认'frequency'
+            - 'frequency': 特征在规则中出现的次数
+            - 'weighted': 考虑规则权重的加权频率
+        :return: 特征重要性Series
+        """
+        check_is_fitted(self)
+        
+        if not hasattr(self, 'feature_names_in_') or self.feature_names_in_ is None:
+            raise ValueError("未获取特征名称")
+        
+        # 统计特征使用频率
+        feature_counts = {name: 0 for name in self.feature_names_in_}
+        
+        def count_features(rule: Union[Rule, RuleSet], weight: float = 1.0) -> None:
+            if isinstance(rule, RuleSet):
+                for r in rule.rules:
+                    count_features(r, weight * rule.weight)
+            elif isinstance(rule, Rule):
+                from ..rules.rule import get_columns_from_query
+                used_cols = get_columns_from_query(rule.expr)
+                for col in used_cols:
+                    if col in feature_counts:
+                        if importance_type == 'frequency':
+                            feature_counts[col] += 1
+                        elif importance_type == 'weighted':
+                            feature_counts[col] += weight
+        
+        for rule in self.rules:
+            count_features(rule)
+        
+        # 创建Series
+        importance_series = pd.Series(
+            feature_counts,
+            name='importance'
+        ).sort_values(ascending=False)
+        
+        self._feature_importances = importance_series
+        
+        return importance_series
+    
     def predict(
         self, 
         X: Union[pd.DataFrame, np.ndarray],

@@ -1,8 +1,9 @@
 """统一分箱接口 - 整合所有分箱方法.
 
 提供统一的 fit/transform 接口，支持所有分箱方法：
-- 基础方法: uniform, quantile, tree, chi_merge
-- 优化方法: optimal_ks, optimal_iv, mdlp
+- 基础方法: uniform, quantile, tree, chi
+- 优化方法: best_ks, best_iv, mdlp
+- 运筹规划: or_tools
 - 高级方法: cart, kmeans, monotonic, genetic, smooth, kernel_density, best_lift, target_bad_rate
 
 支持指定切割点 (user_splits) 和单调性约束。
@@ -52,11 +53,12 @@ class OptimalBinning(BaseBinning):
 
     :param target: 目标变量列名，默认为'target'
     :param method: 分箱方法，可选:
-        - 基础方法: 'uniform', 'quantile', 'tree', 'chi_merge'
-        - 优化方法: 'optimal_ks', 'optimal_iv', 'mdlp'
-        - 高级方法: 'cart', 'kmeans', 'monotonic', 'genetic', 
+        - 基础方法: 'uniform', 'quantile', 'tree', 'chi'
+        - 优化方法: 'best_ks', 'best_iv', 'mdlp'
+        - 运筹规划: 'or_tools'
+        - 高级方法: 'cart', 'kmeans', 'monotonic', 'genetic',
                    'smooth', 'kernel_density', 'best_lift', 'target_bad_rate'
-        默认为'optimal_iv'
+        默认为'mdlp'
     :param max_n_bins: 最大分箱数，默认为5
     :param min_n_bins: 最小分箱数，默认为2
     :param min_bin_size: 每箱最小样本数或占比，默认为0.01
@@ -85,8 +87,11 @@ class OptimalBinning(BaseBinning):
     **示例**
 
     >>> from hscredit.core.binning import OptimalBinning
+    >>> # 使用MDLP分箱（默认）
+    >>> binner = OptimalBinning(method='mdlp', max_n_bins=5)
+    >>> binner.fit(X, y)
     >>> # 使用最优IV分箱
-    >>> binner = OptimalBinning(method='optimal_iv', max_n_bins=5)
+    >>> binner = OptimalBinning(method='best_iv', max_n_bins=5)
     >>> binner.fit(X, y)
     >>> # 使用CART分箱
     >>> binner = OptimalBinning(method='cart', max_n_bins=5)
@@ -96,14 +101,14 @@ class OptimalBinning(BaseBinning):
     >>> binner.fit(X, y)
     >>> # 使用预分箱器实例
     >>> pre_binner = OptimalBinning(method='cart', max_n_bins=20)
-    >>> binner = OptimalBinning(method='optimal_iv', prebinning=pre_binner)
+    >>> binner = OptimalBinning(method='best_iv', prebinning=pre_binner)
     >>> binner.fit(X, y)
     """
 
     # 所有支持的分箱方法
     VALID_METHODS = [
-        'uniform', 'quantile', 'tree', 'chi_merge',
-        'optimal_ks', 'optimal_iv', 'mdlp', 'or_tools',
+        'uniform', 'quantile', 'tree', 'chi',
+        'best_ks', 'best_iv', 'mdlp', 'or_tools',
         'cart', 'kmeans', 'monotonic', 'genetic',
         'smooth', 'kernel_density', 'best_lift', 'target_bad_rate'
     ]
@@ -111,7 +116,7 @@ class OptimalBinning(BaseBinning):
     def __init__(
         self,
         target: str = 'target',
-        method: str = 'optimal_iv',
+        method: str = 'mdlp',
         max_n_bins: int = 5,
         min_n_bins: int = 2,
         min_bin_size: Union[float, int] = 0.01,
@@ -316,7 +321,7 @@ class OptimalBinning(BaseBinning):
         
         # 4. 使用主方法，但限制在预分箱的切分点上
         # 对于支持初始切分点的方法，传入预分箱结果
-        if self.method in ['optimal_ks', 'optimal_iv', 'chi_merge', 'mdlp']:
+        if self.method in ['best_ks', 'best_iv', 'chi', 'mdlp']:
             # 这些方法可以在预分箱基础上进一步优化
             self._fit_with_method_and_prebins(X, y, pre_splits)
         else:
@@ -361,15 +366,15 @@ class OptimalBinning(BaseBinning):
             bins = np.digitize(x_clean, initial_splits, right=True)
             
             # 根据主方法进行优化
-            if self.method == 'optimal_iv':
+            if self.method == 'best_iv':
                 optimized_splits = self._optimize_iv_splits(
                     x_clean, y_clean, initial_splits
                 )
-            elif self.method == 'optimal_ks':
+            elif self.method == 'best_ks':
                 optimized_splits = self._optimize_ks_splits(
                     x_clean, y_clean, initial_splits
                 )
-            elif self.method == 'chi_merge':
+            elif self.method == 'chi':
                 optimized_splits = self._optimize_chi_merge_splits(
                     x_clean, y_clean, initial_splits
                 )
@@ -731,11 +736,11 @@ class OptimalBinning(BaseBinning):
             self._binner = QuantileBinning(**target_params)
         elif self.method == 'tree':
             self._binner = TreeBinning(**target_params)
-        elif self.method == 'chi_merge':
+        elif self.method == 'chi':
             self._binner = ChiMergeBinning(**target_params)
-        elif self.method == 'optimal_ks':
+        elif self.method == 'best_ks':
             self._binner = BestKSBinning(**full_params)
-        elif self.method == 'optimal_iv':
+        elif self.method == 'best_iv':
             self._binner = BestIVBinning(**full_params)
         elif self.method == 'mdlp':
             self._binner = MDLPBinning(**target_params)
@@ -1121,8 +1126,8 @@ class OptimalBinning(BaseBinning):
         :return: 最优方法名
         """
         if methods is None:
-            methods = ['uniform', 'quantile', 'tree', 'chi_merge', 
-                      'optimal_ks', 'optimal_iv', 'cart', 'kmeans']
+            methods = ['uniform', 'quantile', 'tree', 'chi',
+                      'best_ks', 'best_iv', 'mdlp', 'cart', 'kmeans']
 
         best_method = methods[0]
         best_score = -1
@@ -1177,8 +1182,8 @@ if __name__ == '__main__':
     y = (X['feature1'] + X['feature2'] / 100 > 0.5).astype(int)
     
     # 测试各种方法
-    methods_to_test = ['uniform', 'quantile', 'tree', 'chi_merge', 
-                       'optimal_iv', 'cart', 'kmeans']
+    methods_to_test = ['uniform', 'quantile', 'tree', 'chi',
+                       'best_iv', 'cart', 'kmeans', 'mdlp']
     
     for method in methods_to_test:
         print(f"\n测试方法: {method}")

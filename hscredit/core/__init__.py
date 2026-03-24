@@ -3,6 +3,52 @@
 包含分箱、编码、特征筛选、指标计算、可视化、金融计算、特征工程等核心功能。
 """
 
+# 分箱模块
+from .binning import (
+    BaseBinning,
+    UniformBinning,
+    QuantileBinning,
+    TreeBinning,
+    CartBinning,
+    ChiMergeBinning,
+    BestKSBinning,
+    BestIVBinning,
+    OptimalBinning,
+    MDLPBinning,
+    ORBinning,
+    CustomObjectives,
+    KMeansBinning,
+    MonotonicBinning,
+    GeneticBinning,
+    SmoothBinning,
+    KernelDensityBinning,
+    BestLiftBinning,
+    TargetBadRateBinning,
+)
+
+# 指标计算模块
+from .metrics import (
+    KS,
+    AUC,
+    Gini,
+    KS_bucket,
+    ROC_curve,
+    confusion_matrix,
+    classification_report,
+    PSI,
+    CSI,
+    PSI_table,
+    CSI_table,
+    IV,
+    IV_table,
+    gini_importance,
+    entropy_importance,
+    MSE,
+    MAE,
+    RMSE,
+    R2,
+)
+
 # 编码器模块
 from .encoders import (
     BaseEncoder,
@@ -100,6 +146,48 @@ from .rules import (
 )
 
 __all__ = [
+    # 分箱
+    'BaseBinning',
+    'UniformBinning',
+    'QuantileBinning',
+    'TreeBinning',
+    'CartBinning',
+    'ChiMergeBinning',
+    'BestKSBinning',
+    'BestIVBinning',
+    'OptimalBinning',
+    'MDLPBinning',
+    'ORBinning',
+    'CustomObjectives',
+    'KMeansBinning',
+    'MonotonicBinning',
+    'GeneticBinning',
+    'SmoothBinning',
+    'KernelDensityBinning',
+    'BestLiftBinning',
+    'TargetBadRateBinning',
+
+    # 指标计算
+    'KS',
+    'AUC',
+    'Gini',
+    'KS_bucket',
+    'ROC_curve',
+    'confusion_matrix',
+    'classification_report',
+    'PSI',
+    'CSI',
+    'PSI_table',
+    'CSI_table',
+    'IV',
+    'IV_table',
+    'gini_importance',
+    'entropy_importance',
+    'MSE',
+    'MAE',
+    'RMSE',
+    'R2',
+
     # 编码器
     'BaseEncoder',
     'WOEEncoder',

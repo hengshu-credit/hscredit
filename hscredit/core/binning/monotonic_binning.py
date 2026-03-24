@@ -79,6 +79,7 @@ class MonotonicBinning(BaseBinning):
 
     def __init__(
         self,
+        target: str = 'target',
         monotonic: Union[bool, str, None] = 'auto',
         init_method: str = 'quantile',
         init_n_bins: int = 20,
@@ -93,6 +94,7 @@ class MonotonicBinning(BaseBinning):
         verbose: Union[bool, int] = False,
     ):
         super().__init__(
+            target=target,
             min_n_bins=min_n_bins,
             max_n_bins=max_n_bins,
             min_bin_size=min_bin_size,

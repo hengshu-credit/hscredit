@@ -57,6 +57,7 @@ class KernelDensityBinning(BaseBinning):
 
     def __init__(
         self,
+        target: str = 'target',
         kernel: str = 'gaussian',
         bandwidth: Union[str, float] = 'scott',
         min_peak_height: float = 0.05,
@@ -74,6 +75,7 @@ class KernelDensityBinning(BaseBinning):
         verbose: Union[bool, int] = False,
     ):
         super().__init__(
+            target=target,
             max_n_bins=max_n_bins,
             min_n_bins=min_n_bins,
             min_bin_size=min_bin_size,

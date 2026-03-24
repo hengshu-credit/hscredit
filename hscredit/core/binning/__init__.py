@@ -6,12 +6,12 @@
 - uniform: 等宽分箱
 - quantile: 等频分箱
 - tree: 决策树分箱
-- chi_merge: 卡方分箱
+- chi: 卡方分箱
 
 **优化方法:**
-- optimal_ks: 最优KS分箱
-- optimal_iv: 最优IV分箱
-- mdlp: MDLP分箱（基于信息论）
+- best_ks: 最优KS分箱
+- best_iv: 最优IV分箱
+- mdlp: MDLP分箱（基于信息论，默认）
 
 **运筹规划方法:**
 - or_tools: OR-Tools 最优化分箱（基于 Google OR-Tools）
@@ -37,8 +37,11 @@
 **快速开始**
 
 >>> from hscredit.core.binning import OptimalBinning
+>>> # 使用MDLP分箱（默认）
+>>> binner = OptimalBinning(method='mdlp', max_n_bins=5)
+>>>
 >>> # 使用最优IV分箱
->>> binner = OptimalBinning(method='optimal_iv', max_n_bins=5)
+>>> binner = OptimalBinning(method='best_iv', max_n_bins=5)
 >>> binner.fit(X_train, y_train)
 >>> X_binned = binner.transform(X_test)
 >>> bin_table = binner.get_bin_table('feature_name')

@@ -63,6 +63,7 @@ class TargetBadRateBinning(BaseBinning):
 
     def __init__(
         self,
+        target: str = 'target',
         target_bad_rates: Optional[List[float]] = None,
         max_n_bins: int = 5,
         min_n_bins: int = 2,
@@ -78,6 +79,7 @@ class TargetBadRateBinning(BaseBinning):
         **kwargs
     ):
         super().__init__(
+            target=target,
             max_n_bins=max_n_bins,
             min_n_bins=min_n_bins,
             min_bin_size=min_bin_size,

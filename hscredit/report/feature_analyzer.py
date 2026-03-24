@@ -498,8 +498,8 @@ def feature_bin_stats(
         - 逾期天数 > dpds 为坏样本(1)，其他为好样本(0)
     :param rules: 自定义分箱规则，支持 list（单个特征）或 dict（多个特征）
     :param method: 分箱方法，可选：
-        - 基础方法: 'uniform'(等宽), 'quantile'(等频), 'tree'(决策树), 'chi_merge'(卡方)
-        - 优化方法: 'optimal_ks'(最优KS), 'optimal_iv'(最优IV), 'mdlp'(信息论)
+        - 基础方法: 'uniform'(等宽), 'quantile'(等频), 'tree'(决策树), 'chi'(卡方)
+        - 优化方法: 'best_ks'(最优KS), 'best_iv'(最优IV), 'mdlp'(信息论)
         - 高级方法: 'cart'(CART), 'monotonic'(单调性), 'genetic'(遗传算法),
                     'smooth'(平滑), 'kernel_density'(核密度), 
                     'best_lift'(Best Lift), 'target_bad_rate'(目标坏样本率)
@@ -602,10 +602,10 @@ def feature_bin_stats(
                 'uniform': 'UniformBinning',
                 'quantile': 'QuantileBinning',
                 'tree': 'TreeBinning',
-                'chi_merge': 'ChiMergeBinning',
+                'chi': 'ChiMergeBinning',
                 # 优化方法
-                'optimal_ks': 'BestKSBinning',
-                'optimal_iv': 'BestIVBinning',
+                'best_ks': 'BestKSBinning',
+                'best_iv': 'BestIVBinning',
                 'mdlp': 'MDLPBinning',
                 # 高级方法
                 'cart': 'CartBinning',

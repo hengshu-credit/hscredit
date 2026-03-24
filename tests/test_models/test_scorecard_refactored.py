@@ -33,7 +33,7 @@ class TestScoreCardRefactored(unittest.TestCase):
         self.y = (np.random.random(n_samples) < y_prob).astype(int)
         
         # 分箱并转换 WOE
-        self.binner = OptimalBinning(method='optimal_iv', max_n_bins=5)
+        self.binner = OptimalBinning(method='best_iv', max_n_bins=5)
         self.binner.fit(self.X, self.y)
         self.X_woe = self.binner.transform(self.X, metric='woe')
     
@@ -120,7 +120,7 @@ class TestScoreCardRefactored(unittest.TestCase):
         """测试从 pipeline 提取组件."""
         # 创建 pipeline
         pipeline = Pipeline([
-            ('binner', OptimalBinning(method='optimal_iv', max_n_bins=5)),
+            ('binner', OptimalBinning(method='best_iv', max_n_bins=5)),
             ('lr', LogisticRegression())
         ])
         

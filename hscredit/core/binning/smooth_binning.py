@@ -54,6 +54,7 @@ class SmoothBinning(BaseBinning):
 
     def __init__(
         self,
+        target: str = 'target',
         method: str = 'laplace',
         smoothing_param: float = 1.0,
         max_n_bins: int = 5,
@@ -70,6 +71,7 @@ class SmoothBinning(BaseBinning):
         verbose: Union[bool, int] = False,
     ):
         super().__init__(
+            target=target,
             max_n_bins=max_n_bins,
             min_n_bins=min_n_bins,
             min_bin_size=min_bin_size,

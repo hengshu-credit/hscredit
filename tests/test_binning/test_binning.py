@@ -269,21 +269,21 @@ class TestOptimalBinning(unittest.TestCase):
         binner.fit(self.X, self.y)
         self.assertTrue(binner._is_fitted)
 
-    def test_chi_merge_method(self):
-        """测试 chi_merge 方法."""
-        binner = OptimalBinning(method='chi_merge', max_n_bins=5)
+    def test_chi_method(self):
+        """测试 chi 方法."""
+        binner = OptimalBinning(method='chi', max_n_bins=5)
         binner.fit(self.X, self.y)
         self.assertTrue(binner._is_fitted)
 
-    def test_optimal_ks_method(self):
-        """测试 optimal_ks 方法."""
-        binner = OptimalBinning(method='optimal_ks', max_n_bins=5)
+    def test_best_ks_method(self):
+        """测试 best_ks 方法."""
+        binner = OptimalBinning(method='best_ks', max_n_bins=5)
         binner.fit(self.X, self.y)
         self.assertTrue(binner._is_fitted)
 
-    def test_optimal_iv_method(self):
-        """测试 optimal_iv 方法."""
-        binner = OptimalBinning(method='optimal_iv', max_n_bins=5)
+    def test_best_iv_method(self):
+        """测试 best_iv 方法."""
+        binner = OptimalBinning(method='best_iv', max_n_bins=5)
         binner.fit(self.X, self.y)
         self.assertTrue(binner._is_fitted)
 

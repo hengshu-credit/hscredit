@@ -134,7 +134,7 @@ def test_optimal_binning():
     y[X['feature1'] > 2] = 1
     
     # 分箱
-    binner = OptimalBinning(max_n_bins=5, method='optimal_iv')
+    binner = OptimalBinning(max_n_bins=5, method='best_iv')
     binner.fit(X, y)
     
     # 获取分箱表

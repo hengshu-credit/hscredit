@@ -43,6 +43,7 @@ class GeneticBinning(BaseBinning):
 
     def __init__(
         self,
+        target: str = 'target',
         population_size: int = 50,
         generations: int = 100,
         mutation_rate: float = 0.1,
@@ -61,6 +62,7 @@ class GeneticBinning(BaseBinning):
         verbose: Union[bool, int] = False,
     ):
         super().__init__(
+            target=target,
             max_n_bins=max_n_bins,
             min_n_bins=min_n_bins,
             min_bin_size=min_bin_size,

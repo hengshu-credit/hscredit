@@ -99,10 +99,11 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
     | uniform | UniformBinning | 等宽分箱，将数值范围等分 |
     | quantile | QuantileBinning | 等频分箱，每箱样本数相等 |
     | tree | TreeBinning | 决策树分箱，基于信息增益 |
-    | chi_merge | ChiMergeBinning | 卡方分箱，基于卡方统计量合并 |
-    | optimal_ks | BestKSBinning | 最优KS分箱，最大化KS统计量 |
-    | optimal_iv | BestIVBinning | 最优IV分箱，最大化IV值(推荐) |
+    | chi | ChiMergeBinning | 卡方分箱，基于卡方统计量合并 |
+    | best_ks | BestKSBinning | 最优KS分箱，最大化KS统计量 |
+    | best_iv | BestIVBinning | 最优IV分箱，最大化IV值(推荐) |
     | mdlp | MDLPBinning | MDLP分箱，信息论方法 |
+    | or_tools | ORBinning | 运筹规划分箱（基于Google OR-Tools） |
     | cart | CartBinning | CART分箱，参考optbinning实现 |
     | monotonic | MonotonicBinning | 单调性约束分箱，支持U型/倒U型 |
     | genetic | GeneticBinning | 遗传算法分箱，全局优化 |
@@ -118,7 +119,7 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
     基本使用 (sklearn风格)::
 
         >>> from hscredit.core.binning import OptimalBinning
-        >>> binner = OptimalBinning(method='optimal_iv', max_n_bins=5)
+        >>> binner = OptimalBinning(method='best_iv', max_n_bins=5)
         >>> binner.fit(X, y)  # X是特征矩阵，y是目标变量
         >>> X_binned = binner.transform(X)
         >>> bin_table = binner.get_bin_table('feature_name')
@@ -127,7 +128,7 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
 
         >>> from hscredit.core.binning import OptimalBinning
         >>> # 初始化时指定目标列名，fit时传入完整DataFrame
-        >>> binner = OptimalBinning(target='target', method='optimal_iv', max_n_bins=5)
+        >>> binner = OptimalBinning(target='target', method='best_iv', max_n_bins=5)
         >>> binner.fit(df)  # df包含特征列和目标列'target'
         >>> X_binned = binner.transform(df.drop(columns=['target']))
         >>> bin_table = binner.get_bin_table('feature_name')
@@ -135,19 +136,19 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
     混合风格 (y参数优先)::
 
         >>> # 即使初始化时指定了target，fit时传入y会优先使用y
-        >>> binner = OptimalBinning(target='target', method='optimal_iv')
+        >>> binner = OptimalBinning(target='target', method='best_iv')
         >>> binner.fit(df, y=external_y)  # 使用external_y，忽略df中的'target'列
 
     设置切分点精度::
 
         >>> # 默认4位小数
-        >>> binner = OptimalBinning(method='optimal_iv', decimal=4)
+        >>> binner = OptimalBinning(method='best_iv', decimal=4)
         >>> # 设置为2位小数
-        >>> binner = OptimalBinning(method='optimal_iv', decimal=2)
+        >>> binner = OptimalBinning(method='best_iv', decimal=2)
 
     单调性约束::
 
-        >>> binner = OptimalBinning(method='optimal_iv', monotonic='descending')
+        >>> binner = OptimalBinning(method='best_iv', monotonic='descending')
         >>> binner.fit(X, y)
 
     使用独立分箱类::

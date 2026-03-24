@@ -3,6 +3,7 @@
 评分卡模型.
 
 将逻辑回归模型转换为评分卡，支持评分卡输出、保存和导出等功能。
+基于 StandardScoreTransformer 实现评分计算。
 
 **核心设计原则:**
 
@@ -10,6 +11,12 @@
 2. **predict 阶段**: 输入原始数据，自动进行 WOE 转换
 3. **灵活配置**: 支持多种方式传入分箱器、WOE转换器和LR模型
 4. **pipeline 支持**: 自动识别和提取 pipeline 中的组件
+5. **评分计算**: 基于 StandardScoreTransformer，统一参数命名
+
+**评分公式:**
+    Score = A - B × ln(odds)
+    其中: A = base_score + B × ln(base_odds)
+          B = pdo / ln(rate)
 """
 
 import os
@@ -23,21 +30,23 @@ from sklearn.utils.validation import check_is_fitted
 import inspect
 
 from .logistic_regression import LogisticRegression
+from .probability_to_score import StandardScoreTransformer
 
 
 class ScoreCard(BaseEstimator, TransformerMixin):
     """评分卡模型.
 
     将逻辑回归模型转换为评分卡，支持评分卡输出、保存和导出等功能。
+    基于 StandardScoreTransformer 实现评分计算，统一参数命名。
 
     **参数**
 
-    :param pdo: odds 每增加 rate 倍时减少的分值，默认 60
+    :param pdo: Point of Double Odds，odds增加rate倍时分数变化量，默认 60
     :param rate: 倍率，默认 2
-    :param base_odds: 基础 odds，默认 35
-        - 通常根据业务经验设置的基础比率（违约概率/正常概率）
-        - 估算方法：（1-样本坏客户占比）/坏客户占比
-        - 例如：35:1 => 0.972 => 坏样本率 2.8%
+        - odds增加的倍数
+    :param base_odds: 基础 odds（违约概率/正常概率），默认 35
+        - 表示在base_score对应的坏样本率
+        - 例如：35:1 => 坏样本率 ~2.8%
     :param base_score: 基础 odds 对应的分数，默认 750
     :param lr_model: 预训练的逻辑回归模型，可选
     :param lr_kwargs: 未传入 lr_model 时，通过 kwargs 传入 LR 参数进行训练，可选
@@ -52,13 +61,22 @@ class ScoreCard(BaseEstimator, TransformerMixin):
         - 包含分箱器+WOE转换器+LR：提取所有组件
     :param calculate_stats: 是否计算统计信息，默认 True
     :param verbose: 是否输出详细信息，默认 False
+    :param target: 目标列名，默认'target'
 
     **属性**
 
-    :ivar factor: 补偿值 B，计算方式：pdo / ln(rate)
-    :ivar offset: 刻度 A，计算方式：base_score - B * ln(base_odds)
+    :ivar A_: 刻度参数 A = base_score + B × ln(base_odds)
+    :ivar B_: 补偿参数 B = pdo / ln(rate)
     :ivar rules_: 评分卡规则字典，包含每个特征的分箱和对应分数
     :ivar base_effect_: 每个特征的基础效应分数
+
+    **评分公式**
+
+    基于 StandardScoreTransformer:
+        Score = A - B × ln(odds)
+        其中: odds = P / (1 - P)
+              A = base_score + B × ln(base_odds)
+              B = pdo / ln(rate)
 
     **使用方式**
 
@@ -66,10 +84,9 @@ class ScoreCard(BaseEstimator, TransformerMixin):
 
         >>> from hscredit.core.models import ScoreCard
         >>> from hscredit.core.binning import OptimalBinning
-        >>> from hscredit.core.encoders import WOEEncoder
         >>> 
         >>> # 步骤1：分箱和 WOE 转换
-        >>> binner = OptimalBinning(method='optimal_iv', max_n_bins=5)
+        >>> binner = OptimalBinning(method='best_iv', max_n_bins=5)
         >>> binner.fit(X_train, y_train)
         >>> X_train_woe = binner.transform(X_train, metric='woe')
         >>> 
@@ -83,48 +100,13 @@ class ScoreCard(BaseEstimator, TransformerMixin):
     **方式2：配置 combiner（分箱器自动作为 WOE 转换器）**
 
         >>> # hscredit 分箱器支持 transform(X, metric='woe')
-        >>> binner = OptimalBinning(method='optimal_iv', max_n_bins=5)
+        >>> binner = OptimalBinning(method='best_iv', max_n_bins=5)
         >>> binner.fit(X_train, y_train)
         >>> 
         >>> # 配置 combiner，predict 时会自动使用 combiner.transform(X, metric='woe')
         >>> scorecard = ScoreCard(combiner=binner)
         >>> scorecard.fit(X_train_woe, y_train)  # fit 仍需传入 WOE 数据
         >>> scores = scorecard.predict(X_test)   # predict 传入原始数据
-
-    **方式3：配置 combiner + transfer（toad/scorecardpipeline 风格）**
-
-        >>> # toad 风格：分箱器和 WOE 转换器分开
-        >>> from toad import Combiner, WOETransformer
-        >>> combiner = Combiner()
-        >>> combiner.fit(X_train, y_train)
-        >>> transfer = WOETransformer()
-        >>> transfer.fit(combiner.transform(X_train), y_train)
-        >>> 
-        >>> scorecard = ScoreCard(combiner=combiner, transfer=transfer)
-        >>> X_train_woe = transfer.transform(combiner.transform(X_train))
-        >>> scorecard.fit(X_train_woe, y_train)
-        >>> scores = scorecard.predict(X_test)
-
-    **方式4：使用预训练的 LR 模型**
-
-        >>> from hscredit.core.models import LogisticRegression
-        >>> lr = LogisticRegression(calculate_stats=True)
-        >>> lr.fit(X_woe, y)
-        >>> scorecard = ScoreCard(lr_model=lr)
-        >>> scorecard.fit(X_woe, y)  # 主要用于生成评分规则
-
-    **方式5：传入已训练的 pipeline**
-
-        >>> from sklearn.pipeline import Pipeline
-        >>> pipeline = Pipeline([
-        ...     ('binner', OptimalBinning(method='optimal_iv')),
-        ...     ('woe', WOEEncoder()),
-        ...     ('lr', LogisticRegression())
-        ... ])
-        >>> pipeline.fit(X_train, y_train)
-        >>> scorecard = ScoreCard(pipeline=pipeline)
-        >>> scorecard.fit(X_train_woe, y_train)
-        >>> scores = scorecard.predict(X_test)
 
     参考:
         - toad.ScoreCard
@@ -145,6 +127,7 @@ class ScoreCard(BaseEstimator, TransformerMixin):
         pipeline: Optional[Any] = None,
         calculate_stats: bool = True,
         verbose: bool = False,
+        target: str = 'target',
         **kwargs
     ):
         self.pdo = pdo
@@ -158,10 +141,31 @@ class ScoreCard(BaseEstimator, TransformerMixin):
         self.pipeline = pipeline
         self.calculate_stats = calculate_stats
         self.verbose = verbose
+        self.target = target
 
-        # 计算评分转换参数
-        self.factor = pdo / np.log(rate)
-        self.offset = base_score - self.factor * np.log(base_odds)
+        # 创建 StandardScoreTransformer 用于评分计算
+        # ScoreCard 使用 descending 方向（概率越低，分数越高，信用分模式）
+        self._score_transformer = StandardScoreTransformer(
+            lower=None,
+            upper=None,
+            direction='descending',
+            base_odds=base_odds,
+            base_score=base_score,
+            pdo=pdo,
+            rate=rate,
+            precision=2,  # 评分卡保留2位小数
+            clip=False
+        )
+        
+        # 评分参数通过 StandardScoreTransformer 计算
+        # A_ = base_score + B_ * ln(base_odds)
+        # B_ = pdo / ln(rate)
+        self.A_ = self._score_transformer._compute_parameters()[0]
+        self.B_ = self._score_transformer._compute_parameters()[1]
+        
+        # 保留旧参数名兼容（factor->B_, offset->A_）
+        self.factor = self.B_
+        self.offset = self.A_
 
         # 初始化属性
         self.rules_ = {}
@@ -179,6 +183,7 @@ class ScoreCard(BaseEstimator, TransformerMixin):
         
         if verbose:
             print(f"ScoreCard 初始化: pdo={pdo}, rate={rate}, base_odds={base_odds}, base_score={base_score}")
+            print(f"  - A_ (offset)={self.A_:.4f}, B_ (factor)={self.B_:.4f}")
             if self.combiner is not None:
                 print(f"  - combiner: {self.combiner.__class__.__name__}, 支持WOE转换: {self._combiner_is_woe_transformer}")
 
@@ -198,6 +203,64 @@ class ScoreCard(BaseEstimator, TransformerMixin):
     def n_features_(self) -> int:
         """获取非零系数特征数量."""
         return (self.coef_ != 0).sum()
+
+    def get_feature_importances(self, importance_type: str = 'coef') -> pd.Series:
+        """获取特征重要性.
+
+        基于底层逻辑回归模型的系数计算特征重要性。
+
+        :param importance_type: 重要性类型，默认'coef'
+            - 'coef': 系数绝对值
+            - 'score_range': 评分范围（最大-最小分）
+        :return: 特征重要性Series
+        """
+        check_is_fitted(self)
+
+        # 获取特征名称
+        feature_names = self.feature_names_
+        if not feature_names:
+            n_features = len(self.coef_)
+            feature_names = [f'feature_{i}' for i in range(n_features)]
+
+        if importance_type == 'coef':
+            # 使用系数绝对值
+            importances = np.abs(self.coef_)
+        elif importance_type == 'score_range':
+            # 使用评分卡中的分数范围
+            if not hasattr(self, 'rules_') or not self.rules_:
+                raise ValueError("评分卡规则未生成，无法使用score_range类型")
+            importances = []
+            for feature in feature_names:
+                if feature in self.rules_:
+                    scores = [v['score'] for v in self.rules_[feature].values() if isinstance(v, dict) and 'score' in v]
+                    if scores:
+                        importances.append(max(scores) - min(scores))
+                    else:
+                        importances.append(0)
+                else:
+                    importances.append(0)
+            importances = np.array(importances)
+        else:
+            raise ValueError(f"不支持的重要性类型: {importance_type}")
+
+        # 创建Series
+        importance_series = pd.Series(
+            importances,
+            index=feature_names,
+            name='importance'
+        ).sort_values(ascending=False)
+
+        self._feature_importances = importance_series
+
+        return importance_series
+
+    @property
+    def feature_importances_(self) -> np.ndarray:
+        """特征重要性属性 (兼容sklearn风格)."""
+        check_is_fitted(self)
+        if not hasattr(self, '_feature_importances'):
+            self._feature_importances = self.get_feature_importances()
+        return self._feature_importances.values
 
     @property
     def feature_names_(self) -> list:
@@ -225,7 +288,7 @@ class ScoreCard(BaseEstimator, TransformerMixin):
 
         results = []
         for score in scores:
-            odds = np.exp((self.offset - score) / self.factor)
+            odds = np.exp((self.A_ - score) / self.B_)
             prob = odds / (1 + odds)
             prob = np.clip(prob, 0, 1)
 
@@ -252,7 +315,7 @@ class ScoreCard(BaseEstimator, TransformerMixin):
         results = []
         for prob in probs:
             odds = prob / (1 - prob)
-            score = self.offset - self.factor * np.log(odds)
+            score = self.A_ - self.B_ * np.log(odds)
 
             results.append({
                 '理论逾期率': round(prob, 6),
@@ -469,10 +532,14 @@ class ScoreCard(BaseEstimator, TransformerMixin):
     def fit(
         self,
         X: Union[pd.DataFrame, np.ndarray],
-        y: Union[pd.Series, np.ndarray],
+        y: Optional[Union[pd.Series, np.ndarray]] = None,
         sample_weight: Optional[np.ndarray] = None,
     ) -> 'ScoreCard':
         """训练评分卡模型.
+
+        支持两种调用方式:
+        1. 常规方式: fit(X, y)
+        2. scorecardpipeline风格: 在__init__中指定target，然后fit(X)
 
         **重要说明**: fit 方法期望输入的是 **WOE 转换后的数据**。
         这是参考 toad 和 scorecardpipeline 的主流设计。
@@ -484,7 +551,10 @@ class ScoreCard(BaseEstimator, TransformerMixin):
             >>> scorecard.fit(X_train_woe, y_train)
 
         :param X: WOE 转换后的训练数据（特征矩阵）
-        :param y: 目标变量
+            支持 numpy array 或 pandas DataFrame
+            如果是DataFrame且y为None，会尝试从X中提取target列作为y
+        :param y: 目标变量，可选
+            如果为None且init中指定了target，则从X中提取
         :param sample_weight: 样本权重，可选
         :return: self
         """
@@ -493,9 +563,23 @@ class ScoreCard(BaseEstimator, TransformerMixin):
             print("ScoreCard.fit() 开始训练")
             print(f"输入数据类型: {type(X).__name__}")
 
-        # 转换为 DataFrame/Series
+        # 转换为 DataFrame
         if not isinstance(X, pd.DataFrame):
             X = pd.DataFrame(X)
+
+        # 处理 scorecardpipeline 风格：从 X 中提取 y
+        if y is None and self.target is not None:
+            if self.target in X.columns:
+                y = X[self.target]
+                X = X.drop(columns=[self.target])
+                if self.verbose:
+                    print(f"从X中提取target列 '{self.target}' 作为y")
+            else:
+                raise ValueError(f"指定的target列 '{self.target}' 不存在于X中")
+
+        if y is None:
+            raise ValueError("必须提供y参数或在__init__中指定target参数")
+
         if not isinstance(y, pd.Series):
             y = pd.Series(y, index=X.index if len(y) == len(X) else None)
 
@@ -534,7 +618,7 @@ class ScoreCard(BaseEstimator, TransformerMixin):
 
         if self.verbose:
             print(f"评分卡训练完成，总分 = 截距分数 + 各特征分数之和")
-            print(f"截距分数: {self.offset - self.factor * self.intercept_:.2f}")
+            print(f"截距分数: {self.A_ - self.B_ * self.intercept_:.2f}")
             print("=" * 60)
 
         return self
@@ -617,32 +701,51 @@ class ScoreCard(BaseEstimator, TransformerMixin):
         return categorical_splits if categorical_splits else []
 
     def _woe_to_point(self, woe: float, coef: float) -> float:
-        """将 WOE 值转换为分数."""
-        return -self.factor * coef * woe
+        """将 WOE 值转换为分数.
+        
+        基于 StandardScoreTransformer 的参数:
+            score = -B_ * coef * woe
+        """
+        return -self.B_ * coef * woe
 
     def _woe_to_score(self, X: pd.DataFrame) -> np.ndarray:
-        """将 WOE 数据转换为分数矩阵."""
+        """将 WOE 数据转换为分数矩阵.
+        
+        基于 StandardScoreTransformer 的参数:
+            score_i = -B_ * coef_i * woe_i
+        """
         scores = np.zeros((X.shape[0], len(self.feature_names_)))
         
         for i, col in enumerate(self.feature_names_):
             if col in X.columns:
                 coef = self.coef_[i]
-                scores[:, i] = -self.factor * coef * X[col].values
+                scores[:, i] = -self.B_ * coef * X[col].values
         
         return scores
 
     def predict(
         self, 
         X: Union[pd.DataFrame, np.ndarray],
-        input_type: str = 'auto'
+        input_type: str = 'raw'
     ) -> np.ndarray:
         """预测评分.
 
         :param X: 输入数据
         :param input_type: 输入数据类型，可选：
-            - 'auto': 自动检测（默认）
-            - 'raw': 原始数据，会进行 WOE 转换
+            - 'raw': 原始数据，会进行 WOE 转换（默认）
             - 'woe': WOE 数据，直接使用
+            - 'auto': 自动检测，通过数据特征推断输入类型
+        
+        input_type='auto' 时的判断逻辑：
+            1. 数值范围检测：WOE数据通常取值范围在[-5, 5]之间，若所有数值列的min/max
+               都在[-10, 10]范围内且主要分布集中在[-5, 5]，则判定为WOE数据
+            2. 整数列检测：若存在int64/int32类型的列且唯一值数量>10，判定为原始数据
+               （原始数据常包含年龄、收入等整数特征）
+            3. 默认策略：当无法明确判断时，为安全起见默认按原始数据处理
+            
+            注意：auto检测基于启发式规则，对于边界情况（如原始数据本身就是小数值范围）
+            可能误判。生产环境建议显式指定input_type='raw'或'woe'。
+        
         :return: 评分数组
         """
         check_is_fitted(self)
@@ -679,7 +782,8 @@ class ScoreCard(BaseEstimator, TransformerMixin):
         sub_scores = self._woe_to_score(X_woe)
 
         # 总分 = 截距分数 + 各特征分数之和
-        intercept_score = self.offset - self.factor * self.intercept_
+        # intercept_score = A_ - B_ * intercept
+        intercept_score = self.A_ - self.B_ * self.intercept_
         total_score = intercept_score + sub_scores.sum(axis=1)
 
         return total_score
@@ -737,13 +841,13 @@ class ScoreCard(BaseEstimator, TransformerMixin):
             {"刻度项": "base_score", "刻度值": self.base_score,
              "备注": "基础 odds 对应的分数"},
             {"刻度项": "rate", "刻度值": self.rate,
-             "备注": "odds 倍数"},
+             "备注": "odds 增加的倍率"},
             {"刻度项": "pdo", "刻度值": self.pdo,
-             "备注": "odds 翻倍时分数减少量"},
-            {"刻度项": "B (factor)", "刻度值": round(self.factor, 4),
-             "备注": "pdo / ln(rate)"},
-            {"刻度项": "A (offset)", "刻度值": round(self.offset, 4),
-             "备注": "base_score - B * ln(base_odds)"},
+             "备注": f"odds 增加 {self.rate} 倍时分数变化量"},
+            {"刻度项": "B (pdo/ln(rate))", "刻度值": round(self.B_, 4),
+             "备注": f"pdo / ln({self.rate})"},
+            {"刻度项": "A (offset)", "刻度值": round(self.A_, 4),
+             "备注": "base_score + B * ln(base_odds)"},
         ])
 
     def scorecard_points(
@@ -890,7 +994,7 @@ class ScoreCard(BaseEstimator, TransformerMixin):
 
         check_is_fitted(self)
 
-        intercept_score = self.offset - self.factor * self.intercept_
+        intercept_score = self.A_ - self.B_ * self.intercept_
 
         mapper = []
         samples = {}
@@ -1092,7 +1196,7 @@ class ScoreCard(BaseEstimator, TransformerMixin):
                 continue
 
             score_median = np.median(bin_scores)
-            odds_theoretical = np.exp((self.offset - score_median) / self.factor)
+            odds_theoretical = np.exp((self.A_ - score_median) / self.B_)
             prob_theoretical = odds_theoretical / (1 + odds_theoretical)
 
             row = {
@@ -1146,7 +1250,7 @@ class ScoreCard(BaseEstimator, TransformerMixin):
             X_woe = X_woe.iloc[sample_idx]
 
         sub_scores = self._woe_to_score(X_woe[self.feature_names_])
-        intercept_score = self.offset - self.factor * self.intercept_
+        intercept_score = self.A_ - self.B_ * self.intercept_
         total_scores = intercept_score + sub_scores.sum(axis=1)
 
         data_dict = {

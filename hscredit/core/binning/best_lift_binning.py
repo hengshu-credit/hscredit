@@ -71,6 +71,7 @@ class BestLiftBinning(BaseBinning):
 
     def __init__(
         self,
+        target: str = 'target',
         max_n_bins: int = 5,
         min_n_bins: int = 2,
         min_bin_size: Union[float, int] = 0.01,
@@ -85,6 +86,7 @@ class BestLiftBinning(BaseBinning):
         **kwargs
     ):
         super().__init__(
+            target=target,
             max_n_bins=max_n_bins,
             min_n_bins=min_n_bins,
             min_bin_size=min_bin_size,

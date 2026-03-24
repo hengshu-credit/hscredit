@@ -95,7 +95,7 @@ except Exception as e:
 # 4. 测试 OptimalBinning 统一接口修复
 print("\n4. 测试 OptimalBinning 统一接口 (参数冲突修复)")
 print("-" * 60)
-methods = ['uniform', 'quantile', 'tree', 'chi_merge', 'optimal_ks', 'optimal_iv', 'mdlp']
+methods = ['uniform', 'quantile', 'tree', 'chi', 'best_ks', 'best_iv', 'mdlp']
 
 for method in methods:
     try:
