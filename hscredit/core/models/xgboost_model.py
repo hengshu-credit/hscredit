@@ -30,6 +30,57 @@ except ImportError:
     XGBOOST_AVAILABLE = False
     xgb = None
 
+# 检测XGBoost版本和API支持情况
+def _check_xgboost_api_support():
+    """检测XGBoost API支持情况.
+    
+    返回: (支持callbacks, 支持_early_stopping_rounds)
+    """
+    if not XGBOOST_AVAILABLE:
+        return False, False
+
+    supports_callbacks = False
+    supports_early_stopping = False
+
+    # 方法1: 检查XGBClassifier.fit签名
+    try:
+        import inspect
+        fit_signature = inspect.signature(xgb.XGBClassifier.fit)
+        params = list(fit_signature.parameters.keys())
+        supports_callbacks = 'callbacks' in params
+        supports_early_stopping = 'early_stopping_rounds' in params
+    except Exception:
+        pass
+
+    # 方法2: 通过版本号检测（如果方法1失败）
+    if not supports_callbacks and not supports_early_stopping:
+        try:
+            from packaging import version
+            xgb_version = xgb.__version__
+            ver = version.parse(xgb_version)
+            if ver >= version.parse("2.0.0"):
+                supports_callbacks = True
+            elif ver >= version.parse("0.90"):
+                supports_early_stopping = True
+        except Exception:
+            pass
+
+    return supports_callbacks, supports_early_stopping
+
+XGBOOST_CALLBACKS_AVAILABLE, XGBOOST_EARLY_STOPPING_AVAILABLE = _check_xgboost_api_support()
+
+# 导入回调（如果可用）
+if XGBOOST_CALLBACKS_AVAILABLE:
+    try:
+        from xgboost.callback import EarlyStopping, EvaluationMonitor
+    except ImportError:
+        EarlyStopping = None
+        EvaluationMonitor = None
+        XGBOOST_CALLBACKS_AVAILABLE = False
+else:
+    EarlyStopping = None
+    EvaluationMonitor = None
+
 from .base import BaseRiskModel
 
 
@@ -71,7 +122,13 @@ class XGBoostRiskModel(BaseRiskModel):
     :param objective: 目标函数，默认'binary:logistic'
     :param eval_metric: 评估指标，可选列表
         - 支持'ks'作为自定义评估指标（风控常用）
+        - 多个指标时，默认使用第一个指标进行早停
     :param early_stopping_rounds: 早停轮数，默认None
+    :param early_stopping_metric: 用于早停的评估指标名称，默认None（使用第一个指标）
+        - 当eval_metric有多个时，指定用哪个指标进行早停判断
+        - 例如: 'auc', 'logloss', 'validation_0-auc'
+    :param early_stopping_data: 用于早停的验证集名称，默认None（使用第一个验证集）
+        - 例如: 'validation_0', 'validation_1'
     :param validation_fraction: 验证集比例，默认0.2
     :param random_state: 随机种子，默认None
     :param n_jobs: 并行任务数，默认-1
@@ -128,6 +185,8 @@ class XGBoostRiskModel(BaseRiskModel):
         objective: str = 'binary:logistic',
         eval_metric: Union[str, List[str], None] = None,
         early_stopping_rounds: Optional[int] = None,
+        early_stopping_metric: Optional[str] = None,
+        early_stopping_data: Optional[str] = None,
         validation_fraction: float = 0.2,
         random_state: Optional[int] = None,
         n_jobs: int = -1,
@@ -172,6 +231,10 @@ class XGBoostRiskModel(BaseRiskModel):
             verbose=verbose,
             **kwargs
         )
+
+        # 早停相关参数
+        self.early_stopping_metric = early_stopping_metric
+        self.early_stopping_data = early_stopping_data
 
         # XGBoost特有参数
         self.max_depth = max_depth
@@ -282,16 +345,66 @@ class XGBoostRiskModel(BaseRiskModel):
         if sample_weight is not None:
             fit_kwargs['sample_weight'] = sample_weight
 
-        # 处理早停和自定义评估指标
+        # 处理早停 - 适配新旧版本XGBoost
+        use_callbacks = False
+        early_stopping_enabled = False
         if self.early_stopping_rounds is not None and eval_set:
-            fit_kwargs['early_stopping_rounds'] = self.early_stopping_rounds
-            fit_kwargs['verbose'] = self.verbose
-            
+            # 检测XGBoost版本和可用的早停方式
+            callbacks = self._build_early_stopping_callbacks()
+            if callbacks is not None:
+                # XGBoost 2.0+ 使用 callbacks
+                fit_kwargs['callbacks'] = callbacks
+                use_callbacks = True
+                early_stopping_enabled = True
+            elif XGBOOST_EARLY_STOPPING_AVAILABLE:
+                # 旧版本API (< 2.0, >= 0.90)
+                fit_kwargs['early_stopping_rounds'] = self.early_stopping_rounds
+                fit_kwargs['verbose'] = self.verbose
+                early_stopping_enabled = True
+            else:
+                # 非常旧的版本(< 0.90)不支持早停，给出警告
+                import warnings
+                warnings.warn(
+                    f"当前XGBoost版本({xgb.__version__})不支持early_stopping_rounds参数，"
+                    f"将忽略早停设置。建议升级XGBoost: pip install -U xgboost",
+                    UserWarning
+                )
+
             # 支持KS作为自定义评估指标
             if self.eval_metric == 'ks' or (isinstance(self.eval_metric, list) and 'ks' in self.eval_metric):
                 fit_kwargs['eval_metric'] = self._ks_metric
+        
+        # 传递verbose参数（如果没有使用早停或者旧版本）
+        if not early_stopping_enabled or not use_callbacks:
+            fit_kwargs['verbose'] = self.verbose
 
-        self._model.fit(X_train, y_train, **fit_kwargs)
+        # 尝试训练，如果失败则自动回退
+        try:
+            self._model.fit(X_train, y_train, **fit_kwargs)
+        except TypeError as e:
+            error_msg = str(e).lower()
+            if 'callbacks' in error_msg and use_callbacks:
+                # callbacks参数不被支持，回退到旧API
+                if self.verbose:
+                    print(f"callbacks参数不被支持，回退到旧版early_stopping_rounds API")
+                del fit_kwargs['callbacks']
+                fit_kwargs['early_stopping_rounds'] = self.early_stopping_rounds
+                fit_kwargs['verbose'] = self.verbose
+                self._model.fit(X_train, y_train, **fit_kwargs)
+            elif 'early_stopping_rounds' in error_msg:
+                # 旧版本不支持early_stopping_rounds，忽略早停
+                import warnings
+                warnings.warn(
+                    f"当前XGBoost版本不支持early_stopping_rounds参数，"
+                    f"将忽略早停设置。建议升级XGBoost: pip install -U xgboost",
+                    UserWarning
+                )
+                if 'early_stopping_rounds' in fit_kwargs:
+                    del fit_kwargs['early_stopping_rounds']
+                fit_kwargs['verbose'] = self.verbose
+                self._model.fit(X_train, y_train, **fit_kwargs)
+            else:
+                raise
 
         # 保存结果
         self._best_iteration = getattr(self._model, 'best_iteration', None)
@@ -303,7 +416,7 @@ class XGBoostRiskModel(BaseRiskModel):
 
     def _ks_metric(self, y_pred, dtrain):
         """KS评估指标（用于XGBoost内部评估）.
-        
+
         参考内部建模常用KS作为评估指标。
         """
         from sklearn.metrics import roc_curve
@@ -311,6 +424,53 @@ class XGBoostRiskModel(BaseRiskModel):
         fpr, tpr, _ = roc_curve(y_true, y_pred, pos_label=1)
         ks = abs(tpr - fpr).max()
         return 'KS', ks
+
+    def _build_early_stopping_callbacks(self) -> Optional[List[Any]]:
+        """构建早停回调函数列表。
+
+        适配XGBoost 2.0+版本的callbacks机制，同时兼容旧版本。
+
+        :return: 回调函数列表，如果无法使用新机制则返回None（使用旧API）
+        """
+        if not XGBOOST_CALLBACKS_AVAILABLE:
+            # XGBoost < 2.0，返回None使用旧API
+            return None
+
+        try:
+            callbacks = []
+
+            # 构建早停回调参数
+            es_kwargs = {
+                'rounds': self.early_stopping_rounds,
+                'save_best': True,
+            }
+
+            # 指定用于早停的评估指标
+            if self.early_stopping_metric is not None:
+                es_kwargs['metric_name'] = self.early_stopping_metric
+
+            # 指定用于早停的验证集
+            if self.early_stopping_data is not None:
+                es_kwargs['data_name'] = self.early_stopping_data
+
+            # 创建早停回调
+            callbacks.append(EarlyStopping(**es_kwargs))
+
+            # 添加日志监控回调（如果需要verbose）
+            if self.verbose and EvaluationMonitor is not None:
+                try:
+                    callbacks.append(EvaluationMonitor(period=1))
+                except (TypeError, ValueError):
+                    # 某些版本可能不支持
+                    pass
+
+            return callbacks
+
+        except Exception as e:
+            # 其他异常，降级到旧API
+            if self.verbose:
+                print(f"无法创建早停回调: {e}，降级到旧API")
+            return None
 
     def predict(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
         """预测类别标签."""

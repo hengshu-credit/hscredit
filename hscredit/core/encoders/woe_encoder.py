@@ -94,6 +94,16 @@ class WOEEncoder(BaseEncoder):
 
         self.iv_: Dict[str, float] = {}
 
+    def _get_category_cols(self, X: pd.DataFrame) -> List[str]:
+        """自动识别需要编码的列。
+
+        WOEEncoder支持数值型和类别型列，因此返回所有列（除了目标列）。
+
+        :param X: 输入数据
+        :return: 列名列表
+        """
+        return X.columns.tolist()
+
     def _fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None):
         """拟合WOE编码器。
 

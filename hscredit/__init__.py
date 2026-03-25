@@ -147,6 +147,8 @@ from .report.swap_analysis_report import (
     SwapType,
 )
 
+from .report.overdue_predictor import OverduePredictor, overdue_prediction_report
+
 try:
     from .report.feature_report import auto_feature_analysis_report
 except ImportError:
@@ -199,6 +201,10 @@ __all__ = [
     "create_swap_dataset_from_rules",
     "swap_analysis_report",
     "SwapType",
+
+    # 逾期数据预测模块
+    "OverduePredictor",
+    "overdue_prediction_report",
 
     # 分箱模块
     "UniformBinning",

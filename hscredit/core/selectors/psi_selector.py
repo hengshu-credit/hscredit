@@ -140,4 +140,15 @@ class PSISelector(BaseFeatureSelector):
         # 选择PSI值小于阈值的特征（PSI越小越稳定）
         selected_mask = psi_values < self.threshold
         self.selected_features_ = X.columns[selected_mask].tolist()
-        self._drop_reason = f'PSI值 >= {self.threshold}'
+
+        # 构建详细的dropped_记录，包含PSI值
+        dropped_cols = X.columns[~selected_mask].tolist()
+        if len(dropped_cols) > 0:
+            self.dropped_ = pd.DataFrame({
+                '特征': dropped_cols,
+                '剔除原因': [f'PSI值({self.scores_[col]:.4f}) >= 阈值({self.threshold})' for col in dropped_cols],
+                'PSI值': [self.scores_[col] for col in dropped_cols],
+                '阈值': [self.threshold] * len(dropped_cols),
+            })
+        else:
+            self.dropped_ = pd.DataFrame(columns=['特征', '剔除原因', 'PSI值', '阈值'])

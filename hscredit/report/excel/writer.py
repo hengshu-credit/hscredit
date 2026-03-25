@@ -41,6 +41,7 @@ class ExcelWriter:
     """Excel写入器，提供专业的Excel报告生成功能。
 
     支持DataFrame数据写入、图片插入、超链接等功能。
+    支持上下文管理器（with语句）自动保存。
 
     :param style_excel: 样式模板文件路径，默认使用包内的template.xlsx
     :param style_sheet_name: 模板文件内初始样式sheet名称，默认为"初始化"
@@ -58,20 +59,20 @@ class ExcelWriter:
     >>> import pandas as pd
     >>> from hscredit.report.excel import ExcelWriter
     >>>
-    >>> # 创建写入器
+    >>> # 方法1：使用with语句（推荐，自动保存）
+    >>> with ExcelWriter(theme_color='3f1dba').set_filename("report.xlsx") as writer:
+    ...     worksheet = writer.get_sheet_by_name("模型报告")
+    ...     writer.insert_value2sheet(worksheet, "B2", value="模型报告", style="header")
+    ...     df = pd.DataFrame({'A': [1, 2, 3], 'B': [4, 5, 6]})
+    ...     writer.insert_df2sheet(worksheet, df, "B4")
+    >>> # 文件在退出with块时自动保存
+    >>>
+    >>> # 方法2：手动调用save（原有方式）
     >>> writer = ExcelWriter(theme_color='3f1dba')
-    >>>
-    >>> # 获取或创建sheet
     >>> worksheet = writer.get_sheet_by_name("模型报告")
-    >>>
-    >>> # 插入标题
     >>> writer.insert_value2sheet(worksheet, "B2", value="模型报告", style="header")
-    >>>
-    >>> # 插入DataFrame
     >>> df = pd.DataFrame({'A': [1, 2, 3], 'B': [4, 5, 6]})
     >>> writer.insert_df2sheet(worksheet, df, "B4")
-    >>>
-    >>> # 保存文件
     >>> writer.save("report.xlsx")
     """
 
@@ -119,6 +120,51 @@ class ExcelWriter:
         for style in self.name_styles:
             if style.name not in self.workbook.style_names:
                 self.workbook.add_named_style(style)
+
+        # 用于上下文管理器的文件路径
+        self._filename: Optional[str] = None
+
+    def __enter__(self) -> 'ExcelWriter':
+        """进入上下文管理器。
+
+        :return: ExcelWriter实例
+        """
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        """退出上下文管理器时自动保存文件。
+
+        :param exc_type: 异常类型
+        :param exc_val: 异常值
+        :param exc_tb: 异常追踪信息
+        """
+        if self._filename is not None:
+            self.save(self._filename)
+
+    def set_filename(self, filename: str) -> 'ExcelWriter':
+        """设置用于上下文管理器自动保存的文件路径。
+
+        支持链式调用，可以与with语句配合使用。
+
+        :param filename: 保存路径
+        :return: self
+
+        **参考样例**
+
+        >>> # 方法1：使用set_filename设置路径
+        >>> with ExcelWriter().set_filename("report.xlsx") as writer:
+        ...     worksheet = writer.get_sheet_by_name("Sheet1")
+        ...     writer.insert_value2sheet(worksheet, "B2", "Hello")
+        >>> # 文件自动保存到report.xlsx
+
+        >>> # 方法2：手动调用save（原有方式）
+        >>> writer = ExcelWriter()
+        >>> worksheet = writer.get_sheet_by_name("Sheet1")
+        >>> writer.insert_value2sheet(worksheet, "B2", "Hello")
+        >>> writer.save("report.xlsx")
+        """
+        self._filename = filename
+        return self
 
     def add_conditional_formatting(
         self,

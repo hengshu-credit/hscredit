@@ -85,4 +85,15 @@ class VarianceSelector(BaseFeatureSelector):
         # 选择方差大于阈值的特征
         selected_mask = self.scores_ > self.threshold
         self.selected_features_ = X.columns[selected_mask].tolist()
-        self._drop_reason = f'方差 <= {self.threshold}'
+
+        # 构建详细的dropped_记录，包含方差值
+        dropped_cols = X.columns[~selected_mask].tolist()
+        if len(dropped_cols) > 0:
+            self.dropped_ = pd.DataFrame({
+                '特征': dropped_cols,
+                '剔除原因': [f'方差({self.scores_[col]:.6f}) <= 阈值({self.threshold})' for col in dropped_cols],
+                '方差': [self.scores_[col] for col in dropped_cols],
+                '阈值': [self.threshold] * len(dropped_cols),
+            })
+        else:
+            self.dropped_ = pd.DataFrame(columns=['特征', '剔除原因', '方差', '阈值'])

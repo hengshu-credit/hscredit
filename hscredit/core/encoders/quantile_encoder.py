@@ -18,7 +18,7 @@ class QuantileEncoder(BaseEncoder):
 
     **参数**
 
-    :param cols: 需要编码的列名列表。如果为None，则自动识别所有类别型列
+    :param cols: 需要编码的列名列表。如果为None，则自动识别所有列（支持类别型和数值型）
     :param quantile: 分位数，范围[0, 1]，默认为0.5（中位数）
     :param smoothing: 平滑参数，默认为1.0
     :param m: 先验权重参数，默认为1.0
@@ -47,6 +47,16 @@ class QuantileEncoder(BaseEncoder):
     参考:
         https://contrib.scikit-learn.org/category_encoders/quantile.html
     """
+
+    def _get_category_cols(self, X: pd.DataFrame) -> List[str]:
+        """自动识别需要编码的列。
+
+        QuantileEncoder支持数值型和类别型列，因此返回所有列。
+
+        :param X: 输入数据
+        :return: 列名列表
+        """
+        return X.columns.tolist()
 
     def __init__(
         self,

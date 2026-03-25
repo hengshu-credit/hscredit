@@ -468,10 +468,16 @@ class BestIVBinning(BaseBinning):
                     result[feature] = [labels[b] if b >= 0 else ('missing' if b == -1 else 'special')
                                       for b in bins]
                 elif metric == 'woe':
-                    woe_map = dict(zip(
-                        range(len(self.bin_tables_[feature])),
-                        self.bin_tables_[feature]['分档WOE值']
-                    ))
+                    # 优先使用_woe_maps_（从export/load导入）
+                    if hasattr(self, '_woe_maps_') and feature in self._woe_maps_:
+                        woe_map = self._woe_maps_[feature]
+                    elif feature in self.bin_tables_:
+                        woe_map = dict(zip(
+                            range(len(self.bin_tables_[feature])),
+                            self.bin_tables_[feature]['分档WOE值']
+                        ))
+                    else:
+                        raise ValueError(f"特征 '{feature}' 没有WOE映射信息")
                     result[feature] = [woe_map.get(b, 0) for b in bins]
                 else:
                     raise ValueError(f"不支持的metric: {metric}")

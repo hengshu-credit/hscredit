@@ -69,4 +69,15 @@ class NullSelector(BaseFeatureSelector):
         # 选择缺失率低于阈值的特征
         selected_mask = null_rates < self.threshold
         self.selected_features_ = X.columns[selected_mask].tolist()
-        self._drop_reason = f'缺失率 >= {self.threshold:.2%}'
+
+        # 构建详细的dropped_记录，包含缺失率数值
+        dropped_cols = X.columns[~selected_mask].tolist()
+        if len(dropped_cols) > 0:
+            self.dropped_ = pd.DataFrame({
+                '特征': dropped_cols,
+                '剔除原因': [f'缺失率({null_rates[col]:.2%}) >= 阈值({self.threshold:.2%})' for col in dropped_cols],
+                '缺失率': [null_rates[col] for col in dropped_cols],
+                '阈值': [self.threshold] * len(dropped_cols),
+            })
+        else:
+            self.dropped_ = pd.DataFrame(columns=['特征', '剔除原因', '缺失率', '阈值'])

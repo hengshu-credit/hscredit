@@ -440,17 +440,20 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
         original_index = None
 
         # 转换为DataFrame
-        if not isinstance(X, pd.DataFrame):
-            if isinstance(X, np.ndarray):
-                if X.ndim == 1:
-                    X = pd.DataFrame(X, columns=['feature'])
-                else:
-                    # 为numpy数组生成默认列名 feature_0, feature_1, ...
-                    n_cols = X.shape[1]
-                    columns = [f'feature_{i}' for i in range(n_cols)]
-                    X = pd.DataFrame(X, columns=columns)
+        if isinstance(X, pd.Series):
+            # 将Series转换为DataFrame，保留Series的名称作为列名
+            col_name = X.name if X.name is not None else 'feature'
+            X = X.to_frame(name=col_name)
+        elif isinstance(X, np.ndarray):
+            if X.ndim == 1:
+                X = pd.DataFrame(X, columns=['feature'])
             else:
-                X = pd.DataFrame(X)
+                # 为numpy数组生成默认列名 feature_0, feature_1, ...
+                n_cols = X.shape[1]
+                columns = [f'feature_{i}' for i in range(n_cols)]
+                X = pd.DataFrame(X, columns=columns)
+        elif not isinstance(X, pd.DataFrame):
+            X = pd.DataFrame(X)
 
         original_index = X.index
 
@@ -896,12 +899,14 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
         """导出分箱规则，兼容 toad/scorecardpipeline 格式.
 
         数值型变量返回切分点列表，类别型变量返回分组列表。
+        同时导出WOE映射信息，支持加载后直接进行WOE转换。
         数据格式与 toad.Combiner.export() 和 scorecardpipeline.Combiner.export() 保持一致。
 
         :param to_json: 可选，JSON 文件保存路径。如果提供，将规则保存到该文件
         :return: 分箱规则字典
             - 数值型: {'age': [25, 35, 45, 55]}
             - 类别型: {'city': [['北京', '上海'], ['广州', '深圳'], [np.nan]]}
+            - WOE映射: {'_woe_maps_': {'age': {0: 0.5, 1: -0.3, ...}}}
 
         **示例**
 
@@ -927,10 +932,34 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
         >>> from scorecardpipeline import Combiner
         >>> combiner = Combiner()
         >>> combiner.load(rules)
+        
+        **WOE转换支持**
+        
+        导出的规则包含WOE映射信息，加载后可直接进行WOE转换:
+        
+        >>> binner = OptimalBinning()
+        >>> binner.load('binning_rules.json')
+        >>> X_woe = binner.transform(X_test, metric='woe')  # 直接使用，无需重新fit
         """
         import json
         
         rules = self.export_rules()
+        
+        # 导出WOE映射信息，支持加载后直接进行WOE转换
+        woe_maps = {}
+        for feature in self.splits_:
+            if feature in self.bin_tables_:
+                bin_table = self.bin_tables_[feature]
+                woe_map = {}
+                for idx, row in bin_table.iterrows():
+                    woe_map[int(idx)] = float(row['分档WOE值'])
+                # 添加缺失值和特殊值的WOE
+                woe_map[-1] = 0.0  # 缺失值
+                woe_map[-2] = 0.0  # 特殊值
+                woe_maps[feature] = woe_map
+        
+        if woe_maps:
+            rules['_woe_maps_'] = woe_maps
         
         # 处理 numpy 类型和 np.nan，使其可 JSON 序列化
         def convert_for_json(obj):
@@ -964,6 +993,7 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
         """加载分箱规则，兼容 toad/scorecardpipeline 格式.
 
         从字典或 JSON 文件加载分箱规则，支持 toad 和 scorecardpipeline 导出的格式。
+        同时加载WOE映射信息，支持加载后直接进行WOE转换。
 
         :param from_json: 分箱规则字典或 JSON 文件路径
             - 字典: {'age': [25, 35, 45, 55]}
@@ -999,6 +1029,13 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
         >>> from hscredit.core.binning import OptimalBinning
         >>> binner = OptimalBinning()
         >>> binner.load(rules)
+        
+        **WOE转换支持**
+        
+        加载包含WOE映射信息的规则后，可直接进行WOE转换:
+        
+        >>> binner.load('binning_rules.json')
+        >>> X_woe = binner.transform(X_test, metric='woe')  # 直接使用，无需重新fit
         """
         import json
         
@@ -1009,6 +1046,9 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
         else:
             # 直接使用字典
             rules = from_json
+        
+        # 提取WOE映射信息（如果存在）
+        woe_maps = rules.pop('_woe_maps_', None)
         
         # 处理 JSON 中的 null 转换为 np.nan
         def convert_from_json(obj):
@@ -1040,6 +1080,13 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
         else:
             # 替换模式：使用 import_rules
             self.import_rules(rules)
+        
+        # 恢复WOE映射信息，支持直接WOE转换
+        if woe_maps is not None:
+            self._woe_maps_ = {}
+            for feature, woe_map in woe_maps.items():
+                # 将字符串键转换为整数键
+                self._woe_maps_[feature] = {int(k): float(v) for k, v in woe_map.items()}
         
         return self
 

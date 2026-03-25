@@ -107,4 +107,29 @@ class CorrSelector(BaseFeatureSelector):
 
         # 保存scores
         self.scores_ = corr_matrix.max(axis=1)
-        self._drop_reason = f'与其它特征相关系数 >= {self.threshold}'
+
+        # 构建详细的dropped_记录，包含相关性信息
+        if len(drops) > 0:
+            dropped_cols = [sorted_names[idx] for idx in drops]
+            # 找到每个被剔除特征的最大相关系数及对应的特征
+            max_corr_values = []
+            max_corr_features = []
+            for idx in drops:
+                col_name = sorted_names[idx]
+                # 获取该特征与其他特征的相关系数
+                corr_values = corr_matrix.loc[col_name, :].copy()
+                corr_values[col_name] = 0  # 排除自身
+                max_corr = corr_values.max()
+                max_corr_feat = corr_values.idxmax()
+                max_corr_values.append(max_corr)
+                max_corr_features.append(max_corr_feat)
+
+            self.dropped_ = pd.DataFrame({
+                '特征': dropped_cols,
+                '剔除原因': [f'与{max_corr_features[i]}相关系数({max_corr_values[i]:.4f}) >= 阈值({self.threshold})' for i in range(len(dropped_cols))],
+                '最大相关系数': max_corr_values,
+                '相关特征': max_corr_features,
+                '阈值': [self.threshold] * len(dropped_cols),
+            })
+        else:
+            self.dropped_ = pd.DataFrame(columns=['特征', '剔除原因', '最大相关系数', '相关特征', '阈值'])

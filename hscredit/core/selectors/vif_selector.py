@@ -229,14 +229,23 @@ class VIFSelector(BaseFeatureSelector):
         self.vif_history_ = vif_history
         self.n_iterations_ = iteration + 1
         
-        # 构建dropped_ DataFrame
+        # 构建dropped_ DataFrame（提取VIF数值）
         if len(dropped_features) > 0:
+            # 从原因字符串中提取VIF数值
+            import re
+            vif_values = []
+            for reason in dropped_reasons:
+                match = re.search(r'VIF=([\d.]+)', reason)
+                vif_values.append(float(match.group(1)) if match else np.nan)
+
             self.dropped_ = pd.DataFrame({
                 '特征': dropped_features,
-                '剔除原因': dropped_reasons
+                '剔除原因': dropped_reasons,
+                'VIF值': vif_values,
+                '阈值': [self.threshold] * len(dropped_features),
             })
         else:
-            self.dropped_ = pd.DataFrame(columns=['特征', '剔除原因'])
+            self.dropped_ = pd.DataFrame(columns=['特征', '剔除原因', 'VIF值', '阈值'])
         
         self._drop_reason = f'VIF值 > {self.threshold}'
         

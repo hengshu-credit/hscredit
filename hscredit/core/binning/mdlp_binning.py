@@ -3,7 +3,11 @@
 基于信息论的递归分箱算法，由 Fayyad 和 Irani 于 1993 年提出。
 使用 MDLP 准则作为停止条件，自动确定最优分箱数。
 
-参考 optbinning 实现修复。
+优化版本V3（针对平滑分布）：
+- 放宽终止条件，避免过早停止
+- 支持强制最小分箱数
+- 改进候选切分点选择，优先选择IV增益大的点
+- 针对平滑分布数据优化
 """
 
 from typing import Union, List, Dict, Optional, Any
@@ -20,17 +24,28 @@ class MDLPBinning(BaseBinning):
     基于最小描述长度原理的递归分箱方法，自动确定最优分箱数。
     使用信息增益和 MDLP 准则决定是否继续分割。
 
-    参考 optbinning 实现，修复分箱数过少的问题。
+    优化版本V3特点（针对平滑分布）：
+    - 放宽终止条件，支持force_min_bins强制最小分箱数
+    - 改进候选切分点选择，结合IV值评估
+    - 更好的平滑分布处理
 
     :param target: 目标变量列名，默认为'target'
     :param max_n_bins: 最大分箱数，默认为10
+    :param min_n_bins: 最小分箱数，默认为2
     :param min_samples_split: 分割内部节点所需的最小样本数，默认为2
     :param min_samples_leaf: 叶子节点所需的最小样本数，默认为2
     :param max_candidates: 每次评估的最大候选切分点数，默认为32
+    :param min_iv_gain: 最小IV增益阈值，默认为0.0001（降低以允许更多分箱）
+    :param force_min_bins: 是否强制满足最小分箱数，默认为True
+    :param mdlp_weight: MDLP准则权重（0-1之间），默认为0.7（降低以放宽终止条件）
+    :param special_codes: 特殊值列表，默认为None
+    :param missing_separate: 是否将缺失值单独分为一箱，默认为True
+    :param random_state: 随机种子，默认为None
+    :param verbose: 是否输出详细信息，默认为False
 
     示例:
         >>> from hscredit.core.binning import MDLPBinning
-        >>> binner = MDLPBinning(max_n_bins=5)
+        >>> binner = MDLPBinning(max_n_bins=5, min_n_bins=2)
         >>> binner.fit(X_train, y_train)
         >>> X_binned = binner.transform(X_test)
     """
@@ -39,19 +54,34 @@ class MDLPBinning(BaseBinning):
         self,
         target: str = 'target',
         max_n_bins: int = 10,
+        min_n_bins: int = 2,
         min_samples_split: int = 2,
         min_samples_leaf: int = 2,
         max_candidates: int = 32,
+        min_iv_gain: float = 0.0001,
+        force_min_bins: bool = True,
+        mdlp_weight: float = 0.7,
+        special_codes: Optional[List] = None,
+        missing_separate: bool = True,
+        random_state: Optional[int] = None,
+        verbose: Union[bool, int] = False,
         **kwargs
     ):
         super().__init__(
             target=target,
             max_n_bins=max_n_bins,
-            **kwargs
+            min_n_bins=min_n_bins,
+            special_codes=special_codes,
+            missing_separate=missing_separate,
+            random_state=random_state,
+            verbose=verbose,
         )
         self.min_samples_split = min_samples_split
         self.min_samples_leaf = min_samples_leaf
         self.max_candidates = max_candidates
+        self.min_iv_gain = min_iv_gain
+        self.force_min_bins = force_min_bins
+        self.mdlp_weight = mdlp_weight
 
     def fit(
         self,
@@ -68,7 +98,10 @@ class MDLPBinning(BaseBinning):
         X, y = self._check_input(X, y)
 
         for feature in X.columns:
-            # MDLP 只适用于数值型特征，强制转换为数值型处理
+            if self.verbose:
+                print(f"处理特征: {feature}")
+
+            # MDLP 主要适用于数值型特征
             x_numeric = pd.to_numeric(X[feature], errors='coerce')
             self.feature_types_[feature] = 'numerical'
 
@@ -77,7 +110,7 @@ class MDLPBinning(BaseBinning):
             y_clean = y[x_numeric.notna()]
 
             if len(x_clean) >= self.min_samples_split:
-                splits = self._mdlp_split(x_clean.values, y_clean.values)
+                splits = self._mdlp_split_v3(x_clean.values, y_clean.values)
                 self.splits_[feature] = self._round_splits(np.sort(splits))
                 self.n_bins_[feature] = len(splits) + 1
             else:
@@ -93,10 +126,8 @@ class MDLPBinning(BaseBinning):
         self._is_fitted = True
         return self
 
-    def _mdlp_split(self, x: np.ndarray, y: np.ndarray) -> List[float]:
-        """MDLP 递归分箱算法.
-
-        参考 optbinning 实现，先检查终止条件再添加分割点。
+    def _mdlp_split_v3(self, x: np.ndarray, y: np.ndarray) -> List[float]:
+        """MDLP 递归分箱算法 - V3版本（针对平滑分布优化）.
 
         :param x: 特征值数组
         :param y: 目标变量数组
@@ -108,24 +139,61 @@ class MDLPBinning(BaseBinning):
         y_sorted = y[idx]
 
         splits = []
-        self._recurse(x_sorted, y_sorted, splits)
-        return splits
+        
+        # 首先尝试找到所有候选分割点
+        all_candidates = self._find_all_candidates_v3(x_sorted, y_sorted)
+        
+        # 使用递归分割
+        self._recurse_v3(x_sorted, y_sorted, splits, all_candidates, 0)
+        
+        # 如果分箱数不足且force_min_bins为True，强制添加切分点
+        # 修复：目标是max_n_bins，而不仅仅是min_n_bins
+        if self.force_min_bins and len(splits) < self.max_n_bins - 1:
+            splits = self._force_additional_splits_v3(x_sorted, y_sorted, splits, all_candidates)
+        
+        return sorted(list(set(splits)))
 
-    def _recurse(
+    def _find_all_candidates_v3(self, x: np.ndarray, y: np.ndarray) -> List[int]:
+        """找到所有可能的候选切分点位置 - V3版本."""
+        n = len(x)
+        candidates = []
+        
+        # 找到所有类别变化的位置
+        for i in range(1, n):
+            if y[i] != y[i-1]:
+                candidates.append(i)
+        
+        # 如果没有足够的类别变化点，使用动态策略
+        if len(candidates) < self.min_n_bins * 2:
+            if n <= 100:
+                step = 1
+            elif n <= 1000:
+                step = max(1, n // 100)
+            else:
+                step = max(1, n // 200)
+            
+            additional = list(range(self.min_samples_leaf, n - self.min_samples_leaf, step))
+            candidates = sorted(list(set(candidates + additional)))
+        
+        return candidates
+
+    def _recurse_v3(
         self,
         x: np.ndarray,
         y: np.ndarray,
         splits: List[float],
-        depth: int = 0
+        all_candidates: List[int],
+        depth: int = 0,
+        start_idx: int = 0
     ) -> None:
-        """递归分割.
+        """递归分割 - V3版本.
 
-        关键修复：先找到分割点，检查终止条件，通过后才添加并递归。
-
-        :param x: 特征值数组
+        :param x: 特征值数组（已排序）
         :param y: 目标变量数组
         :param splits: 切分点列表（原地修改）
+        :param all_candidates: 全局候选切分点位置
         :param depth: 当前递归深度
+        :param start_idx: 当前区间在全局数组中的起始索引
         """
         # 检查最大分箱数限制
         if len(splits) >= self.max_n_bins - 1:
@@ -137,87 +205,240 @@ class MDLPBinning(BaseBinning):
         n_y = len(np.bincount(y))
 
         # 基本可分割性检查
-        if n_x < self.min_samples_split or n_y < 2:
+        if n_x < self.min_samples_split or n_y < 2 or len(x) < self.min_samples_split:
             return
 
+        # 在当前区间内筛选候选切分点
+        local_candidates = [i - start_idx for i in all_candidates 
+                           if start_idx + self.min_samples_leaf <= i < start_idx + len(x) - self.min_samples_leaf]
+        
+        local_candidates = sorted(list(set(local_candidates)))
+        
+        # 限制候选切分点数量
+        if len(local_candidates) > self.max_candidates:
+            indices = np.linspace(0, len(local_candidates) - 1, self.max_candidates, dtype=int)
+            local_candidates = [local_candidates[i] for i in indices]
+
         # 找到最优切分点
-        split = self._find_split(x, y)
+        split, split_idx = self._find_best_split_v3(x, y, local_candidates)
 
-        if split is not None:
-            # 计算分割位置
-            t = np.searchsorted(x, split, side='right')
-            y_left, y_right = y[:t], y[t:]
+        if split is not None and split_idx is not None:
+            y_left, y_right = y[:split_idx], y[split_idx:]
 
-            # 检查终止条件 - 关键修复：在添加分割点前检查
-            if not self._terminate(n_x, n_y, y, y_left, y_right):
-                # 通过终止条件检查后才添加分割点
+            # 检查终止条件（V3：放宽条件）
+            if not self._terminate_v3(len(x), y, y_left, y_right):
                 splits.append(split)
-                
-                # 立即检查是否达到最大分箱数限制
+
                 if len(splits) >= self.max_n_bins - 1:
                     return
 
                 # 递归处理左右子区间
-                x_left, x_right = x[:t], x[t:]
+                x_left, x_right = x[:split_idx], x[split_idx:]
                 if len(x_left) >= self.min_samples_split:
-                    self._recurse(x_left, y_left, splits, depth + 1)
+                    self._recurse_v3(x_left, y_left, splits, all_candidates, depth + 1, start_idx)
                 if len(x_right) >= self.min_samples_split:
-                    self._recurse(x_right, y_right, splits, depth + 1)
+                    self._recurse_v3(x_right, y_right, splits, all_candidates, depth + 1, start_idx + split_idx)
 
-    def _find_split(self, x: np.ndarray, y: np.ndarray) -> Optional[float]:
-        """找到最优切分点.
+    def _find_best_split_v3(
+        self, 
+        x: np.ndarray, 
+        y: np.ndarray, 
+        candidates: List[int]
+    ) -> tuple:
+        """找到最优切分点 - V3版本.
 
-        改进：在所有类别变化的位置考虑切分，不仅限于相邻不同类别。
+        结合IV增益和MDLP准则。
 
         :param x: 特征值数组（已排序）
         :param y: 目标变量数组
-        :return: 最优切分点或 None
+        :param candidates: 候选切分点位置列表
+        :return: (最优切分点值, 切分点位置) 或 (None, None)
         """
+        if not candidates:
+            return None, None
+
         n = len(x)
-
-        # 获取唯一值（已排序）
-        u_x = np.unique(x)
-
-        # 如果唯一值太少，无法分割
-        if len(u_x) < 2:
-            return None
-
-        # 候选切分点：相邻唯一值的中点
-        # 这样比遍历所有样本点更高效
-        candidates = 0.5 * (u_x[1:] + u_x[:-1])
-
-        # 限制候选切分点数量
-        if len(candidates) > self.max_candidates:
-            indices = np.linspace(0, len(candidates) - 1, self.max_candidates, dtype=int)
-            candidates = candidates[indices]
-
-        max_gain = -np.inf
+        max_score = -np.inf
         best_split = None
+        best_idx = None
 
-        # 评估每个候选切分点
-        for split in candidates:
-            t = np.searchsorted(x, split, side='right')
+        total_bad = y.sum()
+        total_good = n - total_bad
 
-            # 检查最小叶子样本数
-            if t < self.min_samples_leaf or n - t < self.min_samples_leaf:
+        for idx in candidates:
+            if idx < self.min_samples_leaf or n - idx < self.min_samples_leaf:
                 continue
 
-            y_left, y_right = y[:t], y[t:]
+            split = (x[idx - 1] + x[idx]) / 2
 
-            # 检查叶子节点是否有足够的类别多样性
+            y_left, y_right = y[:idx], y[idx:]
+
             if len(np.unique(y_left)) < 1 or len(np.unique(y_right)) < 1:
                 continue
 
-            gain = self._entropy_gain(y, y_left, y_right)
+            # 计算IV增益
+            iv_gain = self._calculate_iv_gain_v3(y_left, y_right, total_bad, total_good)
+            
+            # 如果IV增益太小，跳过
+            if iv_gain < self.min_iv_gain:
+                continue
 
-            if gain > max_gain:
-                max_gain = gain
+            if iv_gain > max_score:
+                max_score = iv_gain
                 best_split = split
+                best_idx = idx
 
-        # 只有当增益为正时才返回分割点
-        if max_gain > 0:
-            return best_split
-        return None
+        return best_split, best_idx
+
+    def _calculate_iv_gain_v3(
+        self,
+        y_left: np.ndarray,
+        y_right: np.ndarray,
+        total_bad: int,
+        total_good: int
+    ) -> float:
+        """计算IV增益 - V3版本."""
+        epsilon = 1e-10
+        
+        left_bad, left_n = y_left.sum(), len(y_left)
+        right_bad, right_n = y_right.sum(), len(y_right)
+        left_good = left_n - left_bad
+        right_good = right_n - right_bad
+        
+        if left_bad == 0 or left_good == 0 or right_bad == 0 or right_good == 0:
+            return 0.0
+        
+        left_woe = np.log((left_good/total_good + epsilon) / (left_bad/total_bad + epsilon))
+        right_woe = np.log((right_good/total_good + epsilon) / (right_bad/total_bad + epsilon))
+        
+        left_iv = (left_good/total_good - left_bad/total_bad) * left_woe
+        right_iv = (right_good/total_good - right_bad/total_bad) * right_woe
+        
+        return left_iv + right_iv
+
+    def _terminate_v3(
+        self,
+        n: int,
+        y: np.ndarray,
+        y_left: np.ndarray,
+        y_right: np.ndarray
+    ) -> bool:
+        """MDLP 终止条件 - V3版本（放宽条件）.
+
+        :param n: 当前节点样本数
+        :param y: 分割前的目标变量
+        :param y_left: 左子区间的目标变量
+        :param y_right: 右子区间的目标变量
+        :return: 是否应该终止分割
+        """
+        n_left = len(y_left)
+        n_right = len(y_right)
+
+        # 计算信息增益
+        gain = self._entropy_gain(y, y_left, y_right)
+
+        # 获取类别数量
+        k = len(np.bincount(y))
+        k_left = len(np.bincount(y_left))
+        k_right = len(np.bincount(y_right))
+
+        # 计算熵
+        ent_y = self._entropy(y)
+        ent_left = self._entropy(y_left)
+        ent_right = self._entropy(y_right)
+
+        # MDLP 准则计算
+        delta = np.log(3**k - 2) - (k * ent_y - k_left * ent_left - k_right * ent_right)
+        threshold = (np.log(n - 1) + delta) / n
+
+        # V3：使用权重调整终止条件
+        adjusted_threshold = threshold * self.mdlp_weight
+
+        return gain <= adjusted_threshold
+
+    def _force_additional_splits_v3(
+        self,
+        x: np.ndarray,
+        y: np.ndarray,
+        existing_splits: List[float],
+        all_candidates: List[int]
+    ) -> List[float]:
+        """强制添加额外的切分点以满足分箱数要求 - V3改进版（目标是max_n_bins）."""
+        splits = list(existing_splits)
+        n = len(x)
+        
+        total_bad = y.sum()
+        total_good = n - total_bad
+        min_samples = self._get_min_samples(n)
+        
+        # 目标是达到max_n_bins个分箱（而不仅仅是min_n_bins）
+        target_n_bins = self.max_n_bins - 1
+        
+        # 首先找到所有可能的候选切分点及其IV
+        candidates_with_iv = []
+        for idx in all_candidates:
+            if idx < min_samples or n - idx < min_samples:
+                continue
+            
+            y_left = y[:idx]
+            y_right = y[idx:]
+            
+            if len(np.unique(y_left)) < 1 or len(np.unique(y_right)) < 1:
+                continue
+            
+            iv = self._calculate_iv_gain_v3(y_left, y_right, total_bad, total_good)
+            split = (x[idx-1] + x[idx]) / 2
+            candidates_with_iv.append((split, idx, iv))
+        
+        # 按IV排序
+        candidates_with_iv.sort(key=lambda x: x[2], reverse=True)
+        
+        # 贪心选择：每次选择能最大化总IV的切分点
+        while len(splits) < target_n_bins:
+            best_total_iv = -np.inf
+            best_split = None
+            
+            for split, idx, single_iv in candidates_with_iv:
+                if split in splits:
+                    continue
+                
+                # 测试添加这个切分点后的总IV
+                test_splits = sorted(splits + [split])
+                bins = np.digitize(x, test_splits)
+                total_iv = 0
+                epsilon = 1e-10
+                
+                for b in range(len(test_splits) + 1):
+                    mask = bins == b
+                    if mask.sum() == 0:
+                        continue
+                    bad = y[mask].sum()
+                    good = mask.sum() - bad
+                    if bad > 0 and good > 0:
+                        bad_rate = bad / total_bad
+                        good_rate = good / total_good
+                        woe = np.log((good_rate + epsilon) / (bad_rate + epsilon))
+                        total_iv += (good_rate - bad_rate) * woe
+                
+                if total_iv > best_total_iv:
+                    best_total_iv = total_iv
+                    best_split = split
+            
+            if best_split is not None:
+                splits.append(best_split)
+            else:
+                # 如果没有找到好的切分点，使用等间距
+                if len(splits) < target_n_bins:
+                    x_min, x_max = x.min(), x.max()
+                    additional = np.linspace(x_min, x_max, self.max_n_bins + 1)[1:-1]
+                    for s in additional:
+                        if s not in splits:
+                            splits.append(s)
+                            if len(splits) >= target_n_bins:
+                                break
+                break
+        
+        return sorted(list(set(splits)))
 
     def _entropy(self, y: np.ndarray) -> float:
         """计算熵.
@@ -229,7 +450,6 @@ class MDLPBinning(BaseBinning):
         if n == 0:
             return 0.0
 
-        # 计算正负样本数
         n_pos = np.sum(y)
         n_neg = n - n_pos
 
@@ -265,51 +485,10 @@ class MDLPBinning(BaseBinning):
 
         return ent_y - (n_left * ent_left + n_right * ent_right) / n
 
-    def _terminate(
-        self,
-        n_x: int,
-        n_y: int,
-        y: np.ndarray,
-        y_left: np.ndarray,
-        y_right: np.ndarray
-    ) -> bool:
-        """MDLP 终止条件.
-
-        参考 optbinning 实现，确保正确的终止条件判断。
-
-        :param n_x: 唯一特征值数量
-        :param n_y: 唯一目标值数量
-        :param y: 分割前的目标变量
-        :param y_left: 左子区间的目标变量
-        :param y_right: 右子区间的目标变量
-        :return: 是否应该终止分割
-        """
-        n = len(y)
-        n_left = len(y_left)
-        n_right = n - n_left
-
-        # 计算信息增益
-        gain = self._entropy_gain(y, y_left, y_right)
-
-        # 获取类别数量
-        k = len(np.bincount(y))
-        k_left = len(np.bincount(y_left))
-        k_right = len(np.bincount(y_right))
-
-        # 计算熵
-        ent_y = self._entropy(y)
-        ent_left = self._entropy(y_left)
-        ent_right = self._entropy(y_right)
-
-        # MDLP 准则计算
-        # delta = log(3^k - 2) - [k*Ent(S) - k1*Ent(S1) - k2*Ent(S2)]
-        delta = np.log(3**k - 2) - (k * ent_y - k_left * ent_left - k_right * ent_right)
-
-        # MDLP 阈值
-        threshold = (np.log(n - 1) + delta) / n
-
-        # 终止条件：信息增益小于阈值
-        return gain <= threshold
+    def _get_min_samples(self, n_total: int) -> int:
+        """获取最小样本数."""
+        # 使用 min_samples_leaf 或根据数据量计算
+        return max(self.min_samples_leaf, int(n_total * 0.01))
 
     def _apply_splits(
         self,
@@ -325,16 +504,13 @@ class MDLPBinning(BaseBinning):
         :return: 分箱标签
         """
         if feature_type == 'categorical':
-            # 类别型特征：每个类别一箱
             cat_to_bin = {cat: i for i, cat in enumerate(x.dropna().unique())}
             bins = x.map(lambda v: cat_to_bin.get(v, -1)).values
         else:
-            # 数值型特征：使用切分点
             if len(splits) == 0:
                 bins = np.zeros(len(x), dtype=int)
             else:
                 bins = np.digitize(x.values, splits, right=False)
-                # 处理缺失值
                 bins = np.where(x.isna(), -1, bins)
 
         return bins
@@ -386,8 +562,13 @@ class MDLPBinning(BaseBinning):
                 labels = self._get_bin_labels(splits, bins)
                 result[feature] = [labels[b] if b >= 0 else 'missing' for b in bins]
             elif metric == 'woe':
-                bin_table = self.bin_tables_[feature]
-                woe_map = {i: bin_table.iloc[i]['分档WOE值'] for i in range(len(bin_table))}
+                if hasattr(self, '_woe_maps_') and feature in self._woe_maps_:
+                    woe_map = self._woe_maps_[feature]
+                elif feature in self.bin_tables_:
+                    bin_table = self.bin_tables_[feature]
+                    woe_map = {i: bin_table.iloc[i]['分档WOE值'] for i in range(len(bin_table))}
+                else:
+                    raise ValueError(f"特征 '{feature}' 没有WOE映射信息")
                 result[feature] = [woe_map.get(b, 0) for b in bins]
             else:
                 raise ValueError(f"不支持的metric: {metric}")

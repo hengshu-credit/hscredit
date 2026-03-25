@@ -175,7 +175,18 @@ class IVSelector(BaseFeatureSelector):
         # 选择IV值大于等于阈值的特征
         selected_mask = iv_values >= self.threshold
         self.selected_features_ = X.columns[selected_mask].tolist()
-        self._drop_reason = f'IV值 <= {self.threshold}'
+
+        # 构建详细的dropped_记录，包含IV值
+        dropped_cols = X.columns[~selected_mask].tolist()
+        if len(dropped_cols) > 0:
+            self.dropped_ = pd.DataFrame({
+                '特征': dropped_cols,
+                '剔除原因': [f'IV值({self.scores_[col]:.4f}) <= 阈值({self.threshold})' for col in dropped_cols],
+                'IV值': [self.scores_[col] for col in dropped_cols],
+                '阈值': [self.threshold] * len(dropped_cols),
+            })
+        else:
+            self.dropped_ = pd.DataFrame(columns=['特征', '剔除原因', 'IV值', '阈值'])
 
     def get_iv_interpretation(self) -> pd.DataFrame:
         """获取IV值的中文解释。

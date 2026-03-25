@@ -29,6 +29,56 @@ except ImportError:
     LIGHTGBM_AVAILABLE = False
     lgb = None
 
+# 检测LightGBM版本和API支持情况
+def _check_lightgbm_api_support():
+    """检测LightGBM API支持情况.
+    
+    返回: (支持callbacks, 支持_early_stopping_rounds)
+    """
+    if not LIGHTGBM_AVAILABLE:
+        return False, False
+
+    supports_callbacks = False
+    supports_early_stopping = False
+
+    # 方法1: 检查LGBMClassifier.fit签名
+    try:
+        import inspect
+        fit_signature = inspect.signature(lgb.LGBMClassifier.fit)
+        params = list(fit_signature.parameters.keys())
+        supports_callbacks = 'callbacks' in params
+        supports_early_stopping = 'early_stopping_rounds' in params
+    except Exception:
+        pass
+
+    # 方法2: 通过版本号检测（如果方法1失败）
+    if not supports_callbacks and not supports_early_stopping:
+        try:
+            from packaging import version
+            lgb_version = lgb.__version__
+            ver = version.parse(lgb_version)
+            if ver >= version.parse("4.0.0"):
+                supports_callbacks = True
+            elif ver >= version.parse("2.0.0"):
+                supports_early_stopping = True
+        except Exception:
+            pass
+
+    return supports_callbacks, supports_early_stopping
+
+LIGHTGBM_CALLBACKS_AVAILABLE, LIGHTGBM_EARLY_STOPPING_AVAILABLE = _check_lightgbm_api_support()
+
+# 导入回调（如果可用）
+if LIGHTGBM_CALLBACKS_AVAILABLE:
+    try:
+        from lightgbm import early_stopping, log_evaluation
+    except ImportError:
+        early_stopping = None
+        log_evaluation = None
+else:
+    early_stopping = None
+    log_evaluation = None
+
 from .base import BaseRiskModel
 
 
@@ -59,7 +109,12 @@ class LightGBMRiskModel(BaseRiskModel):
         - 'rf': 随机森林
     :param objective: 目标函数，默认'binary'
     :param eval_metric: 评估指标，可选列表
+        - 多个指标时，默认使用第一个指标进行早停
     :param early_stopping_rounds: 早停轮数，默认None
+    :param early_stopping_metric: 用于早停的评估指标名称，默认None（使用第一个指标）
+        - 当eval_metric有多个时，可通过此参数指定用哪个指标进行早停判断
+    :param first_metric_only: 是否只用第一个评估指标进行早停，默认True
+        - 当eval_metric为列表时，True表示只用第一个指标早停，False表示监控所有指标
     :param validation_fraction: 验证集比例，默认0.2
     :param random_state: 随机种子，默认None
     :param n_jobs: 并行任务数，默认-1
@@ -107,6 +162,8 @@ class LightGBMRiskModel(BaseRiskModel):
         objective: str = 'binary',
         eval_metric: Union[str, List[str], None] = None,
         early_stopping_rounds: Optional[int] = None,
+        early_stopping_metric: Optional[str] = None,
+        first_metric_only: bool = True,
         validation_fraction: float = 0.2,
         random_state: Optional[int] = None,
         n_jobs: int = -1,
@@ -151,6 +208,10 @@ class LightGBMRiskModel(BaseRiskModel):
             verbose=verbose,
             **kwargs
         )
+
+        # 早停相关参数
+        self.early_stopping_metric = early_stopping_metric
+        self.first_metric_only = first_metric_only
 
         # LightGBM特有参数
         self.num_leaves = num_leaves
@@ -244,21 +305,39 @@ class LightGBMRiskModel(BaseRiskModel):
         if sample_weight is not None:
             fit_kwargs['sample_weight'] = sample_weight
 
-        # 处理早停 - 新版本的LightGBM使用callbacks
+        # 处理早停 - 适配新旧版本LightGBM
+        use_callbacks = False
         if self.early_stopping_rounds is not None and eval_set:
-            try:
-                # 新版本API (>=4.0.0)
-                from lightgbm import early_stopping, log_evaluation
-                callbacks = [early_stopping(self.early_stopping_rounds)]
-                if self.verbose:
-                    callbacks.append(log_evaluation(period=10))
+            callbacks = self._build_early_stopping_callbacks()
+            if callbacks is not None:
+                # LightGBM 4.0+ 使用 callbacks
                 fit_kwargs['callbacks'] = callbacks
-            except ImportError:
-                # 旧版本API
+                use_callbacks = True
+            elif not LIGHTGBM_CALLBACKS_AVAILABLE:
+                # 旧版本API (< 4.0)
                 fit_kwargs['early_stopping_rounds'] = self.early_stopping_rounds
                 fit_kwargs['verbose'] = self.verbose
+            else:
+                # LightGBM 4.0+ 但 callbacks 创建失败，报错
+                raise RuntimeError(
+                    f"LightGBM {lgb.__version__} 需要使用 callbacks 进行早停，"
+                    f"但创建 early_stopping 回调失败。请检查参数设置。"
+                )
 
-        self._model.fit(X_train, y_train, **fit_kwargs)
+        # 尝试训练，如果callbacks失败则自动回退到旧API
+        try:
+            self._model.fit(X_train, y_train, **fit_kwargs)
+        except TypeError as e:
+            if 'callbacks' in str(e) and use_callbacks:
+                # callbacks参数不被支持，回退到旧API
+                if self.verbose:
+                    print(f"callbacks参数不被支持，回退到旧版early_stopping_rounds API")
+                del fit_kwargs['callbacks']
+                fit_kwargs['early_stopping_rounds'] = self.early_stopping_rounds
+                fit_kwargs['verbose'] = self.verbose
+                self._model.fit(X_train, y_train, **fit_kwargs)
+            else:
+                raise
 
         # 保存结果
         self._best_iteration = getattr(self._model, 'best_iteration_', None)
@@ -267,6 +346,45 @@ class LightGBMRiskModel(BaseRiskModel):
         self._is_fitted = True
 
         return self
+
+    def _build_early_stopping_callbacks(self) -> Optional[List[Any]]:
+        """构建早停回调函数列表。
+
+        适配LightGBM 4.0+版本的callbacks机制，同时兼容旧版本。
+
+        :return: 回调函数列表，如果无法使用新机制则返回None（使用旧API）
+        """
+        if not LIGHTGBM_CALLBACKS_AVAILABLE:
+            # LightGBM < 4.0，返回None使用旧API
+            return None
+
+        try:
+            callbacks = []
+
+            # 构建早停回调参数
+            es_kwargs = {
+                'stopping_rounds': self.early_stopping_rounds,
+                'first_metric_only': self.first_metric_only,
+                'verbose': self.verbose,
+            }
+
+            # 创建早停回调
+            callbacks.append(early_stopping(**es_kwargs))
+
+            # 添加日志监控回调（如果需要verbose）
+            if self.verbose and log_evaluation is not None:
+                try:
+                    callbacks.append(log_evaluation(period=1))
+                except (TypeError, ValueError):
+                    pass
+
+            return callbacks
+
+        except Exception as e:
+            # 其他异常，降级到旧API
+            if self.verbose:
+                print(f"无法创建早停回调: {e}，降级到旧API")
+            return None
 
     def predict(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
         """预测类别标签."""

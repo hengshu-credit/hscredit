@@ -149,6 +149,10 @@ class BaseEncoder(BaseEstimator, TransformerMixin, ABC):
         X_transformed = self._transform(X_transformed, y)
 
         if not self.return_df:
+            # 处理稀疏矩阵的情况
+            if hasattr(X_transformed, 'toarray'):
+                # 已经是稀疏矩阵，直接返回
+                return X_transformed
             return X_transformed.values
         return X_transformed
 
@@ -179,14 +183,21 @@ class BaseEncoder(BaseEstimator, TransformerMixin, ABC):
     def _check_input(self, X) -> pd.DataFrame:
         """检查并转换输入数据。
 
-        :param X: 输入数据，支持DataFrame或ndarray
+        :param X: 输入数据，支持DataFrame、ndarray或Series
         :return: 转换后的DataFrame
         :raises TypeError: 当输入类型不正确时抛出
         """
-        if isinstance(X, np.ndarray):
-            X = pd.DataFrame(X)
+        if isinstance(X, pd.Series):
+            # 将Series转换为DataFrame
+            X = X.to_frame()
+        elif isinstance(X, np.ndarray):
+            if X.ndim == 1:
+                # 一维数组转换为单列DataFrame
+                X = pd.DataFrame(X, columns=['feature'])
+            else:
+                X = pd.DataFrame(X)
         elif not isinstance(X, pd.DataFrame):
-            raise TypeError(f"输入必须是DataFrame或ndarray，got {type(X)}")
+            raise TypeError(f"输入必须是DataFrame、ndarray或Series，got {type(X)}")
         return X
 
     def _extract_target(

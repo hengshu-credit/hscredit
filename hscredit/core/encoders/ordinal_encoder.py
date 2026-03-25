@@ -18,6 +18,50 @@ class OrdinalEncoder(BaseEncoder):
 
     **参数**
 
+    :param cols: 需要编码的列名列表。如果为None，则自动识别所有列（支持类别型和数值型）
+    :param mapping: 自定义映射字典，如{'col': {'a': 1, 'b': 2}}，默认为None
+    :param handle_unknown: 处理未知类别的方式，默认为'value'
+    :param handle_missing: 处理缺失值的方式，默认为'value'
+    :param drop_invariant: 是否删除方差为0的列，默认为False
+    :param return_df: 是否返回DataFrame，默认为True
+
+    **属性**
+
+    - mapping_: 序数编码映射字典，格式为 {col: {category: integer}}
+
+    **参考样例**
+
+    基本使用::
+
+        >>> encoder = OrdinalEncoder(cols=['education'])
+        >>> X_encoded = encoder.fit_transform(X)
+
+    自定义映射::
+
+        >>> mapping = {'education': {'high': 3, 'medium': 2, 'low': 1}}
+        >>> encoder = OrdinalEncoder(cols=['education'], mapping=mapping)
+        >>> X_encoded = encoder.fit_transform(X)
+
+    参考:
+        https://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.OrdinalEncoder.html
+    """
+
+    def _get_category_cols(self, X: pd.DataFrame) -> List[str]:
+        """自动识别需要编码的列。
+
+        OrdinalEncoder支持数值型和类别型列，因此返回所有列。
+
+        :param X: 输入数据
+        :return: 列名列表
+        """
+        return X.columns.tolist()
+    """序数编码器.
+
+    将每个类别映射为一个整数，保留类别的顺序关系（如果存在）。
+    适用于树模型和需要保留单一特征维度的场景。
+
+    **参数**
+
     :param cols: 需要编码的列名列表。如果为None，则自动识别所有类别型列
     :param mapping: 自定义映射字典，如{'col': {'a': 1, 'b': 2}}，默认为None
     :param handle_unknown: 处理未知类别的方式，默认为'value'

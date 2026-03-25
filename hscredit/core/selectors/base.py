@@ -515,19 +515,21 @@ class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
         # 执行子类实现的具体fit逻辑
         self._fit_impl(X_processed, y_processed)
 
-        # 创建初始dropped_（记录_fit_impl中剔除的特征）
+        # 创建初始dropped_（只在子类没有设置dropped_时）
         if hasattr(self, 'selected_features_') and self.selected_features_ is not None:
-            dropped_cols = [c for c in X_processed.columns if c not in self.selected_features_]
-            if len(dropped_cols) > 0:
-                reason = getattr(self, '_drop_reason', '不满足筛选条件')
-                self.dropped_ = pd.DataFrame({
-                    '特征': dropped_cols,
-                    '剔除原因': [reason] * len(dropped_cols)
-                })
-                self.removed_features_ = dropped_cols
-            else:
-                self.dropped_ = pd.DataFrame(columns=['特征', '剔除原因'])
-                self.removed_features_ = []
+            # 如果子类已经设置了详细的dropped_，则保留
+            if not hasattr(self, 'dropped_') or self.dropped_ is None or len(self.dropped_) == 0:
+                dropped_cols = [c for c in X_processed.columns if c not in self.selected_features_]
+                if len(dropped_cols) > 0:
+                    reason = getattr(self, '_drop_reason', '不满足筛选条件')
+                    self.dropped_ = pd.DataFrame({
+                        '特征': dropped_cols,
+                        '剔除原因': [reason] * len(dropped_cols)
+                    })
+                    self.removed_features_ = dropped_cols
+                else:
+                    self.dropped_ = pd.DataFrame(columns=['特征', '剔除原因'])
+                    self.removed_features_ = []
 
         # 确保include的特征被保留
         self._apply_include(X_processed)
@@ -602,7 +604,7 @@ class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
                     added = True
 
             # 如果有添加特征且dropped_不存在,则创建空的dropped_
-            if added and not hasattr(self, 'dropped_'):
+            if added and (not hasattr(self, 'dropped_') or self.dropped_ is None):
                 dropped_cols = [c for c in X.columns if c not in self.selected_features_]
                 if len(dropped_cols) > 0:
                     reason = getattr(self, '_drop_reason', '不满足筛选条件')
@@ -656,14 +658,13 @@ class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
             for col in self.forced_dropped_:
                 # 检查是否已经在dropped_中
                 if col not in self.dropped_['特征'].values:
-                    new_row = pd.DataFrame({
-                        '特征': [col],
-                        '剔除原因': ['强制剔除']
-                    })
+                    new_row = pd.DataFrame({'特征': [col], '剔除原因': ['强制剔除']})
                     self.dropped_ = pd.concat([self.dropped_, new_row], ignore_index=True)
                 else:
-                    # 更新原因为强制剔除
-                    self.dropped_.loc[self.dropped_['特征'] == col, '剔除原因'] = '强制剔除'
+                    # 在原原因后附加"[强制剔除]"标记
+                    current_reason = self.dropped_.loc[self.dropped_['特征'] == col, '剔除原因'].iloc[0]
+                    if '[强制剔除]' not in str(current_reason):
+                        self.dropped_.loc[self.dropped_['特征'] == col, '剔除原因'] = f'{current_reason} [强制剔除]'
         elif len(self.forced_dropped_) > 0:
             # 创建新的dropped_记录
             self.dropped_ = pd.DataFrame({
@@ -983,18 +984,27 @@ class CompositeFeatureSelector(BaseFeatureSelector):
         current_X = X.copy()
         all_dropped = []
 
-        for i, selector in enumerate(self.selectors):
+        for i, item in enumerate(self.selectors):
+            # 处理 ('name', selector) 元组格式或直接的 selector 对象
+            if isinstance(item, tuple) and len(item) == 2:
+                selector_name = item[0]
+                selector = item[1]
+            else:
+                selector_name = item.__class__.__name__
+                selector = item
+
             # 使用当前特征进行筛选
             selector.fit(current_X, y)
 
             # 获取选中特征
             selected = selector.selected_features_
 
-            # 记录被剔除的特征
+            # 记录被剔除的特征（穿透收集详细指标）
             if hasattr(selector, 'dropped_') and len(selector.dropped_) > 0:
                 dropped = selector.dropped_.copy()
                 dropped['筛选轮次'] = i + 1
-                dropped['筛选器'] = selector.__class__.__name__
+                dropped['筛选器'] = selector_name
+                dropped['筛选器类型'] = selector.__class__.__name__
                 all_dropped.append(dropped)
 
             # 更新当前特征
@@ -1013,7 +1023,7 @@ class CompositeFeatureSelector(BaseFeatureSelector):
             self.dropped_ = pd.concat(all_dropped, ignore_index=True)
             self.removed_features_ = self.dropped_['特征'].tolist()
         else:
-            self.dropped_ = pd.DataFrame(columns=['特征', '剔除原因', '筛选轮次', '筛选器'])
+            self.dropped_ = pd.DataFrame(columns=['特征', '剔除原因', '筛选轮次', '筛选器', '筛选器类型'])
             self.removed_features_ = []
 
     def _fit_intersection(self, X: pd.DataFrame, y: Optional[Union[pd.Series, np.ndarray]]) -> None:
@@ -1023,17 +1033,65 @@ class CompositeFeatureSelector(BaseFeatureSelector):
         :param y: 目标变量
         """
         selected_sets = []
+        all_dropped = []
 
-        for selector in self.selectors:
+        for item in self.selectors:
+            # 处理 ('name', selector) 元组格式或直接的 selector 对象
+            if isinstance(item, tuple) and len(item) == 2:
+                selector_name = item[0]
+                selector = item[1]
+            else:
+                selector_name = item.__class__.__name__
+                selector = item
+
             selector.fit(X, y)
             selected_sets.append(set(selector.selected_features_))
+
+            # 收集每个筛选器的剔除信息
+            if hasattr(selector, 'dropped_') and len(selector.dropped_) > 0:
+                dropped = selector.dropped_.copy()
+                dropped['筛选器'] = selector_name
+                dropped['筛选器类型'] = selector.__class__.__name__
+                all_dropped.append(dropped)
 
         # 取交集
         self.selected_features_ = list(set.intersection(*selected_sets))
         self.scores_ = None
         self.forced_dropped_ = []  # 初始化forced_dropped_
-        self.dropped_ = pd.DataFrame({
-            '特征': [c for c in X.columns if c not in self.selected_features_],
-            '剔除原因': '未被所有筛选器同时选中'
-        })
-        self.removed_features_ = self.dropped_['特征'].tolist()
+
+        # 构建详细的剔除原因
+        removed_features = [c for c in X.columns if c not in self.selected_features_]
+        if len(removed_features) > 0:
+            # 对于每个被剔除的特征，记录其被哪些筛选器剔除
+            drop_reasons = []
+            for feature in removed_features:
+                rejected_by = []
+                for item in self.selectors:
+                    if isinstance(item, tuple) and len(item) == 2:
+                        sel_name = item[0]
+                        sel = item[1]
+                    else:
+                        sel_name = item.__class__.__name__
+                        sel = item
+                    if hasattr(sel, 'dropped_') and len(sel.dropped_) > 0:
+                        if feature in sel.dropped_['特征'].values:
+                            rejected_by.append(sel_name)
+                if rejected_by:
+                    drop_reasons.append(f"被以下筛选器剔除: {', '.join(rejected_by)}")
+                else:
+                    drop_reasons.append("未被所有筛选器同时选中")
+
+            self.dropped_ = pd.DataFrame({
+                '特征': removed_features,
+                '剔除原因': drop_reasons
+            })
+        else:
+            self.dropped_ = pd.DataFrame(columns=['特征', '剔除原因'])
+
+        self.removed_features_ = removed_features
+
+        # 保存详细的筛选器结果（用于穿透查询）
+        if len(all_dropped) > 0:
+            self.detailed_dropped_ = pd.concat(all_dropped, ignore_index=True)
+        else:
+            self.detailed_dropped_ = pd.DataFrame()

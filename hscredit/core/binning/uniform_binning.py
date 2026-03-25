@@ -310,16 +310,21 @@ class UniformBinning(BaseBinning):
                     result[feature] = [labels[b] if b >= 0 else ('missing' if b == -1 else 'special')
                                       for b in bins]
                 elif metric == 'woe':
-                    # 转换为WOE值
-                    bin_table = self.bin_tables_[feature]
-                    woe_map = {}
-                    for idx, row in bin_table.iterrows():
-                        bin_idx = idx
-                        woe_map[bin_idx] = row['分档WOE值']
-                    # 添加缺失值和特殊值的WOE映射
-                    for b in np.unique(bins):
-                        if b not in woe_map:
-                            woe_map[b] = 0.0
+                    # 转换为WOE值，优先使用_woe_maps_（从export/load导入）
+                    if hasattr(self, '_woe_maps_') and feature in self._woe_maps_:
+                        woe_map = self._woe_maps_[feature]
+                    elif feature in self.bin_tables_:
+                        bin_table = self.bin_tables_[feature]
+                        woe_map = {}
+                        for idx, row in bin_table.iterrows():
+                            bin_idx = idx
+                            woe_map[bin_idx] = row['分档WOE值']
+                        # 添加缺失值和特殊值的WOE映射
+                        for b in np.unique(bins):
+                            if b not in woe_map:
+                                woe_map[b] = 0.0
+                    else:
+                        raise ValueError(f"特征 '{feature}' 没有WOE映射信息")
                     result[feature] = [woe_map.get(b, 0) for b in bins]
                 else:
                     raise ValueError(f"不支持的metric: {metric}")

@@ -18,7 +18,7 @@ class CatBoostEncoder(BaseEncoder):
 
     **参数**
 
-    :param cols: 需要编码的列名列表。如果为None，则自动识别所有类别型列
+    :param cols: 需要编码的列名列表。如果为None，则自动识别所有列（支持类别型和数值型）
     :param sigma: 添加的高斯噪声标准差，默认为None
     :param handle_unknown: 处理未知类别的方式，默认为'value'
     :param handle_missing: 处理缺失值的方式，默认为'value'
@@ -46,6 +46,16 @@ class CatBoostEncoder(BaseEncoder):
     参考:
         https://arxiv.org/abs/1706.09516
     """
+
+    def _get_category_cols(self, X: pd.DataFrame) -> List[str]:
+        """自动识别需要编码的列。
+
+        CatBoostEncoder支持数值型和类别型列，因此返回所有列。
+
+        :param X: 输入数据
+        :return: 列名列表
+        """
+        return X.columns.tolist()
 
     def __init__(
         self,

@@ -1073,10 +1073,16 @@ class OptimalBinning(BaseBinning):
                 labels_dict = self._get_bin_labels_dict(splits, feature_type, feature)
                 result[feature] = [labels_dict.get(b, f'bin_{b}') for b in bins]
             elif metric == 'woe':
-                bin_table = self.bin_tables_[feature]
-                woe_map = dict(zip(range(len(bin_table)), bin_table['分档WOE值'].values))
-                woe_map[-1] = 0
-                woe_map[-2] = 0
+                # 优先使用_woe_maps_（从export/load导入）
+                if hasattr(self, '_woe_maps_') and feature in self._woe_maps_:
+                    woe_map = self._woe_maps_[feature]
+                elif feature in self.bin_tables_:
+                    bin_table = self.bin_tables_[feature]
+                    woe_map = dict(zip(range(len(bin_table)), bin_table['分档WOE值'].values))
+                    woe_map[-1] = 0
+                    woe_map[-2] = 0
+                else:
+                    raise ValueError(f"特征 '{feature}' 没有WOE映射信息")
                 result[feature] = pd.Series(bins).map(woe_map).values
             else:
                 raise ValueError(f"不支持的metric: {metric}")

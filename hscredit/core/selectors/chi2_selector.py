@@ -91,4 +91,19 @@ class Chi2Selector(BaseFeatureSelector):
             selected_cols = X.columns[selected_mask].tolist()
 
         self.selected_features_ = selected_cols
-        self._drop_reason = f'卡方得分 < {self.threshold}'
+
+        # 构建详细的dropped_记录，包含卡方得分
+        dropped_cols = [c for c in X.columns if c not in selected_cols]
+        if len(dropped_cols) > 0:
+            if isinstance(self.k, int):
+                # top-k模式
+                reason = f'未进入前{self.k}名'
+            else:
+                reason = f'卡方得分 < {self.threshold}'
+            self.dropped_ = pd.DataFrame({
+                '特征': dropped_cols,
+                '剔除原因': [f'{reason} (得分: {self.scores_[col]:.4f})' for col in dropped_cols],
+                '卡方得分': [self.scores_[col] for col in dropped_cols],
+            })
+        else:
+            self.dropped_ = pd.DataFrame(columns=['特征', '剔除原因', '卡方得分'])

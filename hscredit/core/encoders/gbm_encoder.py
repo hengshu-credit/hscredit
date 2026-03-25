@@ -79,6 +79,7 @@ class GBMEncoder(BaseEncoder):
     - leaf_indices_: 每棵树的叶子节点索引映射
     - feature_names_: 编码后的特征名列表
     - classes_: 类别标签（分类任务）
+    - mapping_: 类别特征编码映射（仅当输入包含object/category类型列时填充）
 
     **缺失值支持**
 
@@ -393,7 +394,7 @@ class GBMEncoder(BaseEncoder):
 
         # 使用 hscredit 的 XGBoostRiskModel
         self.model_ = XGBoostRiskModel(**params)
-        self.model_.fit(X, y)
+        self.model_.fit(X, y, verbose=False)
         self.n_trees_ = self.n_estimators
 
     def _fit_lightgbm(self, X: pd.DataFrame, y: pd.Series):
