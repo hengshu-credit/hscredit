@@ -51,6 +51,14 @@ class OptimalBinning(BaseBinning):
     融合 MonotonicBinning 的单调性约束功能。
     支持指定切割点 (user_splits) 和预分箱。
 
+    **架构设计原则**
+
+    1. **OptimalBinning 作为统一入口**：集成所有分箱方法，支持预分箱功能
+    2. **独立分箱模块保持简单**：各个具体分箱类（如BestIVBinning、MDLPBinning等）
+       只执行一次分箱，不包含预分箱逻辑
+    3. **预分箱在 OptimalBinning 层面实现**：通过 prebinning 参数在统一接口层实现
+       预分箱+二次分箱的两阶段分箱流程
+
     :param target: 目标变量列名，默认为'target'
     :param method: 分箱方法，可选:
         - 基础方法: 'uniform', 'quantile', 'tree', 'chi'
@@ -73,7 +81,7 @@ class OptimalBinning(BaseBinning):
         - Dict[str, List]: 每个特征的切分点，如 {'age': [25, 35, 45]}
         - Callable: 函数返回切分点
     :param prebinning: 预分箱方法，支持:
-        - str: 预分箱方法名，如 'cart', 'quantile', 'uniform'
+        - str: 预分箱方法名（所有VALID_METHODS中的方法都可作为预分箱方法）
         - BaseBinning: 预分箱器实例
         - Dict: 预分箱配置，如 {'method': 'cart', 'max_n_bins': 20}
         默认为None（不进行预分箱）
@@ -87,21 +95,24 @@ class OptimalBinning(BaseBinning):
     **示例**
 
     >>> from hscredit.core.binning import OptimalBinning
-    >>> # 使用MDLP分箱（默认）
+    >>> # 使用MDLP分箱（默认，直接分箱）
     >>> binner = OptimalBinning(method='mdlp', max_n_bins=5)
     >>> binner.fit(X, y)
-    >>> # 使用最优IV分箱
+    >>> # 使用最优IV分箱（直接分箱）
     >>> binner = OptimalBinning(method='best_iv', max_n_bins=5)
     >>> binner.fit(X, y)
-    >>> # 使用CART分箱
+    >>> # 使用CART分箱（直接分箱）
     >>> binner = OptimalBinning(method='cart', max_n_bins=5)
     >>> binner.fit(X, y)
-    >>> # 使用预分箱（MDLP先进行CART预分箱）
+    >>> # 使用预分箱（MDLP先进行CART预分箱成20箱，再优化为5箱）
     >>> binner = OptimalBinning(method='mdlp', prebinning='cart', prebinning_params={'max_n_bins': 20})
     >>> binner.fit(X, y)
     >>> # 使用预分箱器实例
     >>> pre_binner = OptimalBinning(method='cart', max_n_bins=20)
     >>> binner = OptimalBinning(method='best_iv', prebinning=pre_binner)
+    >>> binner.fit(X, y)
+    >>> # 使用quantile预分箱（先将数据分成20等份，再进行MDLP分箱）
+    >>> binner = OptimalBinning(method='mdlp', prebinning='quantile', prebinning_params={'max_n_bins': 20})
     >>> binner.fit(X, y)
     """
 
@@ -131,6 +142,13 @@ class OptimalBinning(BaseBinning):
         verbose: Union[bool, int] = False,
         **kwargs
     ):
+        # 处理预分箱相关参数（从kwargs中提取）
+        prebinning_params_from_kwargs = {}
+        prebinning_keys = ['prebinning_method', 'prebinning_max_bins', 'prebinning_min_bins']
+        for key in prebinning_keys:
+            if key in kwargs:
+                prebinning_params_from_kwargs[key.replace('prebinning_', '')] = kwargs.pop(key)
+        
         super().__init__(
             target=target,
             max_n_bins=max_n_bins,
@@ -151,10 +169,26 @@ class OptimalBinning(BaseBinning):
         self.user_splits = user_splits
         self.prebinning = prebinning
         self.prebinning_params = prebinning_params or {}
-        self.kwargs = kwargs
+        # 合并从kwargs中提取的预分箱参数
+        self.prebinning_params.update(prebinning_params_from_kwargs)
+        
+        # 清理kwargs，移除不应该传递给底层分箱器的参数
+        self.kwargs = self._clean_kwargs(kwargs)
         self._binner = None
         self._prebinner = None
         self.monotonic_trend_ = {}
+    
+    def _clean_kwargs(self, kwargs: Dict) -> Dict:
+        """清理kwargs，移除不应该传递给底层分箱器的参数.
+        
+        这些参数是OptimalBinning特有的，底层分箱器不需要。
+        """
+        # 需要过滤的参数列表
+        invalid_keys = [
+            'prebinning', 'prebinning_params', 'prebinning_method',
+            'user_splits', 'method'
+        ]
+        return {k: v for k, v in kwargs.items() if k not in invalid_keys}
 
     def fit(
         self,
@@ -272,6 +306,41 @@ class OptimalBinning(BaseBinning):
                 feature, X[feature], y, bins
             )
 
+    def _get_prebinning_params(self, override_dict: Optional[Dict] = None) -> Dict:
+        """获取预分箱参数.
+        
+        :param override_dict: 覆盖默认参数的字典
+        :return: 预分箱器参数字典
+        """
+        base_params = {
+            'target': self.target,
+            'max_n_bins': 20,  # 默认预分箱为20箱
+            'min_n_bins': 2,
+            'min_bin_size': self.min_bin_size,
+            'max_bin_size': self.max_bin_size,
+            'special_codes': self.special_codes,
+            'cat_cutoff': self.cat_cutoff,
+            'random_state': self.random_state,
+            'verbose': False,  # 预分箱默认不输出详细信息
+        }
+        
+        # 应用 prebinning_params 中的参数
+        if self.prebinning_params:
+            # 处理可能的键名映射（如 prebinning_method -> method）
+            for key, value in self.prebinning_params.items():
+                if key in ['method'] and key not in base_params:
+                    continue  # method通过其他方式传递
+                if key in base_params:
+                    base_params[key] = value
+        
+        # 应用覆盖字典
+        if override_dict:
+            for key, value in override_dict.items():
+                if key != 'method':  # method单独处理
+                    base_params[key] = value
+        
+        return base_params
+    
     def _fit_with_prebinning(
         self,
         X: pd.DataFrame,
@@ -281,6 +350,8 @@ class OptimalBinning(BaseBinning):
         
         先使用预分箱方法生成初始切分点，再使用主方法进行优化。
         参考optbinning的实现，如MDLP分箱前先用CART预分箱。
+        
+        支持的预分箱方法：所有 VALID_METHODS 中的方法都可以作为预分箱方法。
         """
         # 1. 创建预分箱器
         if isinstance(self.prebinning, BaseBinning):
@@ -288,22 +359,12 @@ class OptimalBinning(BaseBinning):
             self._prebinner = self.prebinning
         elif isinstance(self.prebinning, str):
             # 传入的是方法名
-            pre_params = {
-                'max_n_bins': self.prebinning_params.get('max_n_bins', 20),
-                'min_bin_size': self.prebinning_params.get('min_bin_size', self.min_bin_size),
-                'random_state': self.prebinning_params.get('random_state', self.random_state),
-                'verbose': self.prebinning_params.get('verbose', False),
-            }
+            pre_params = self._get_prebinning_params()
             self._prebinner = OptimalBinning(method=self.prebinning, **pre_params)
         elif isinstance(self.prebinning, dict):
             # 传入的是配置字典
             pre_method = self.prebinning.get('method', 'cart')
-            pre_params = {
-                'max_n_bins': self.prebinning.get('max_n_bins', 20),
-                'min_bin_size': self.prebinning.get('min_bin_size', self.min_bin_size),
-                'random_state': self.prebinning.get('random_state', self.random_state),
-                'verbose': self.prebinning.get('verbose', False),
-            }
+            pre_params = self._get_prebinning_params(self.prebinning)
             self._prebinner = OptimalBinning(method=pre_method, **pre_params)
         else:
             raise ValueError(f"不支持的prebinning类型: {type(self.prebinning)}")
@@ -698,8 +759,13 @@ class OptimalBinning(BaseBinning):
         X: pd.DataFrame,
         y: pd.Series
     ):
-        """使用指定方法进行分箱."""
-        # 基础参数（适用于大多数方法）
+        """使用指定方法进行分箱.
+        
+        注意：各个独立的分箱模块（如BestIVBinning、MDLPBinning等）
+        保持简单，只执行一次分箱。预分箱功能是OptimalBinning特有的，
+        通过prebinning参数在OptimalBinning层面实现。
+        """
+        # 基础参数（适用于大多数方法）- 过滤掉不相关的参数
         base_params = {
             'max_n_bins': self.max_n_bins,
             'min_n_bins': self.min_n_bins,
@@ -708,7 +774,11 @@ class OptimalBinning(BaseBinning):
             'random_state': self.random_state,
             'verbose': self.verbose,
         }
-        base_params.update(self.kwargs)
+        
+        # 安全地更新参数，过滤无效参数
+        for k, v in self.kwargs.items():
+            if k not in ['prebinning', 'prebinning_params', 'prebinning_method', 'user_splits']:
+                base_params[k] = v
 
         # 需要 target 参数的方法
         target_params = {
@@ -728,7 +798,11 @@ class OptimalBinning(BaseBinning):
             'random_state': self.random_state,
             'verbose': self.verbose,
         }
-        full_params.update(self.kwargs)
+        
+        # 安全地更新参数
+        for k, v in self.kwargs.items():
+            if k not in ['prebinning', 'prebinning_params', 'prebinning_method', 'user_splits']:
+                full_params[k] = v
 
         if self.method == 'uniform':
             self._binner = UniformBinning(**target_params)

@@ -3,7 +3,7 @@
 评分卡模型.
 
 将逻辑回归模型转换为评分卡，支持评分卡输出、保存和导出等功能。
-基于 StandardScoreTransformer 实现评分计算。
+继承 StandardScoreTransformer 实现评分计算。
 
 **核心设计原则:**
 
@@ -11,7 +11,10 @@
 2. **predict 阶段**: 输入原始数据，自动进行 WOE 转换
 3. **灵活配置**: 支持多种方式传入分箱器、WOE转换器和LR模型
 4. **pipeline 支持**: 自动识别和提取 pipeline 中的组件
-5. **评分计算**: 基于 StandardScoreTransformer，统一参数命名
+5. **评分计算**: 继承 StandardScoreTransformer，统一参数命名
+
+**继承关系:**
+    ScoreCard -> StandardScoreTransformer -> BaseScoreTransformer
 
 **评分公式:**
     Score = A - B × ln(odds)
@@ -33,11 +36,11 @@ from .logistic_regression import LogisticRegression
 from .probability_to_score import StandardScoreTransformer
 
 
-class ScoreCard(BaseEstimator, TransformerMixin):
+class ScoreCard(StandardScoreTransformer):
     """评分卡模型.
 
     将逻辑回归模型转换为评分卡，支持评分卡输出、保存和导出等功能。
-    基于 StandardScoreTransformer 实现评分计算，统一参数命名。
+    继承 StandardScoreTransformer 实现评分计算，统一参数命名。
 
     **参数**
 
@@ -49,11 +52,13 @@ class ScoreCard(BaseEstimator, TransformerMixin):
         - 例如：35:1 => 坏样本率 ~2.8%
     :param base_score: 基础 odds 对应的分数，默认 750
     :param lr_model: 预训练的逻辑回归模型，可选
+        - 如果传入，predict前不需要调用fit
+        - 如果未传入，predict前必须先调用fit训练
     :param lr_kwargs: 未传入 lr_model 时，通过 kwargs 传入 LR 参数进行训练，可选
-    :param combiner: 特征分箱器，可选。支持以下类型：
+    :param binner: 特征分箱器，可选。支持以下类型：
         - hscredit 分箱器：支持 transform(X, metric='woe')
         - toad/scorecardpipeline 分箱器：输出分箱索引
-    :param transfer: WOE 转换器，可选。支持以下类型：
+    :param encoder: WOE 转换器，可选。支持以下类型：
         - hscredit WOEEncoder：支持 transform(X)
         - toad WOETransformer
     :param pipeline: 已训练的 pipeline，支持以下类型：
@@ -70,9 +75,16 @@ class ScoreCard(BaseEstimator, TransformerMixin):
     :ivar rules_: 评分卡规则字典，包含每个特征的分箱和对应分数
     :ivar base_effect_: 每个特征的基础效应分数
 
+    **继承方法**
+
+    从 StandardScoreTransformer 继承的方法:
+        - transform(proba): 将概率转换为评分
+        - inverse_transform(scores): 将评分反向转换为概率
+        - predict_score(X, proba): 通过概率预测评分
+
     **评分公式**
 
-    基于 StandardScoreTransformer:
+    继承自 StandardScoreTransformer:
         Score = A - B × ln(odds)
         其中: odds = P / (1 - P)
               A = base_score + B × ln(base_odds)
@@ -80,7 +92,7 @@ class ScoreCard(BaseEstimator, TransformerMixin):
 
     **使用方式**
 
-    **方式1：从零开始训练（推荐，传入 WOE 数据）**
+    **方式1：从零开始训练（fit传入 WOE 数据，predict传入原始数据）**
 
         >>> from hscredit.core.models import ScoreCard
         >>> from hscredit.core.binning import OptimalBinning
@@ -92,27 +104,33 @@ class ScoreCard(BaseEstimator, TransformerMixin):
         >>> 
         >>> # 步骤2：训练评分卡（传入 WOE 数据）
         >>> scorecard = ScoreCard(pdo=60, rate=2, base_odds=35, base_score=750)
-        >>> scorecard.fit(X_train_woe, y_train)
+        >>> scorecard.fit(X_train_woe, y_train)  # 默认 input_type='woe'
         >>> 
         >>> # 步骤3：预测（传入原始数据，自动转换）
-        >>> scores = scorecard.predict(X_test)  # 自动进行 WOE 转换
+        >>> scores = scorecard.predict(X_test)  # 默认 input_type='raw'
 
-    **方式2：配置 combiner（分箱器自动作为 WOE 转换器）**
+    **方式2：fit传入原始数据（需要配置binner进行WOE转换）**
 
-        >>> # hscredit 分箱器支持 transform(X, metric='woe')
-        >>> binner = OptimalBinning(method='best_iv', max_n_bins=5)
-        >>> binner.fit(X_train, y_train)
-        >>> 
-        >>> # 配置 combiner，predict 时会自动使用 combiner.transform(X, metric='woe')
-        >>> scorecard = ScoreCard(combiner=binner)
-        >>> scorecard.fit(X_train_woe, y_train)  # fit 仍需传入 WOE 数据
-        >>> scores = scorecard.predict(X_test)   # predict 传入原始数据
+        >>> scorecard = ScoreCard(binner=binner)  # 配置binner用于WOE转换
+        >>> scorecard.fit(X_train, y_train, input_type='raw')  # 传入原始数据
+        >>> scores = scorecard.predict(X_test)  # predict默认传入原始数据
+
+    **方式3：使用预训练LR模型（无需fit，直接predict）**
+
+        >>> lr = LogisticRegression()
+        >>> lr.fit(X_train_woe, y_train)
+        >>> scorecard = ScoreCard(lr_model=lr)  # 传入预训练模型
+        >>> # 不需要调用fit，直接predict
+        >>> scores = scorecard.predict(X_test, input_type='woe')  # 传入WOE数据
 
     参考:
         - toad.ScoreCard
         - scorecardpipeline.ScoreCard
         - optbinning.Scorecard
     """
+
+    # 标记是否需要fit（根据是否传入lr_model决定）
+    _skip_fit_check = False
 
     def __init__(
         self,
@@ -122,30 +140,17 @@ class ScoreCard(BaseEstimator, TransformerMixin):
         base_score: float = 750,
         lr_model: Optional[Any] = None,
         lr_kwargs: Optional[Dict[str, Any]] = None,
-        combiner: Optional[Any] = None,
-        transfer: Optional[Any] = None,
+        binner: Optional[Any] = None,
+        encoder: Optional[Any] = None,
         pipeline: Optional[Any] = None,
         calculate_stats: bool = True,
         verbose: bool = False,
         target: str = 'target',
         **kwargs
     ):
-        self.pdo = pdo
-        self.rate = rate
-        self.base_odds = base_odds
-        self.base_score = base_score
-        self.lr_model = lr_model
-        self.lr_kwargs = lr_kwargs
-        self.combiner = combiner
-        self.transfer = transfer
-        self.pipeline = pipeline
-        self.calculate_stats = calculate_stats
-        self.verbose = verbose
-        self.target = target
-
-        # 创建 StandardScoreTransformer 用于评分计算
+        # 调用父类 StandardScoreTransformer 的初始化
         # ScoreCard 使用 descending 方向（概率越低，分数越高，信用分模式）
-        self._score_transformer = StandardScoreTransformer(
+        super().__init__(
             lower=None,
             upper=None,
             direction='descending',
@@ -157,11 +162,23 @@ class ScoreCard(BaseEstimator, TransformerMixin):
             clip=False
         )
         
-        # 评分参数通过 StandardScoreTransformer 计算
+        # ScoreCard 特有属性
+        self.lr_model = lr_model
+        self.lr_kwargs = lr_kwargs
+        self.binner = binner
+        self.encoder = encoder
+        self.pipeline = pipeline
+        self.calculate_stats = calculate_stats
+        self.verbose = verbose
+        self.target = target
+        
+        # 评分参数通过父类 _compute_parameters 计算
         # A_ = base_score + B_ * ln(base_odds)
         # B_ = pdo / ln(rate)
-        self.A_ = self._score_transformer._compute_parameters()[0]
-        self.B_ = self._score_transformer._compute_parameters()[1]
+        self.A_, self.B_ = self._compute_parameters()
+        
+        # 设置方向属性（父类 transform 方法需要）
+        self.direction_ = self._determine_direction()
         
         # 保留旧参数名兼容（factor->B_, offset->A_）
         self.factor = self.B_
@@ -174,29 +191,43 @@ class ScoreCard(BaseEstimator, TransformerMixin):
         self.lr_model_ = None
         self._pipeline_components = {}
         
-        # 内部标志：combiner 是否可以直接作为 WOE 转换器（hscredit 风格）
-        self._combiner_is_woe_transformer = False
+        # 内部标志：binner 是否可以直接作为 WOE 转换器（hscredit 风格）
+        self._binner_is_woe_transformer = False
         
-        # 检查外部传入的 combiner 是否支持直接 WOE 转换
-        if self.combiner is not None:
-            self._check_combiner_woe_capability()
+        # 检查外部传入的 binner 是否支持直接 WOE 转换
+        if self.binner is not None:
+            self._check_binner_woe_capability()
+        
+        # 如果传入了预训练LR模型或pipeline，标记为跳过fit检查
+        # 因为可以直接使用预训练模型进行predict
+        self._skip_fit_check = (self.lr_model is not None) or (self.pipeline is not None)
         
         if verbose:
             print(f"ScoreCard 初始化: pdo={pdo}, rate={rate}, base_odds={base_odds}, base_score={base_score}")
             print(f"  - A_ (offset)={self.A_:.4f}, B_ (factor)={self.B_:.4f}")
-            if self.combiner is not None:
-                print(f"  - combiner: {self.combiner.__class__.__name__}, 支持WOE转换: {self._combiner_is_woe_transformer}")
+            if self.binner is not None:
+                print(f"  - binner: {self.binner.__class__.__name__}, 支持WOE转换: {self._binner_is_woe_transformer}")
 
     @property
     def coef_(self) -> np.ndarray:
         """获取逻辑回归系数."""
+        # 如果传入了预训练模型但未调用fit，直接返回预训练模型的系数
+        if self._skip_fit_check and self.lr_model is not None:
+            return self.lr_model.coef_[0]
         check_is_fitted(self)
+        if self.lr_model_ is None:
+            raise ValueError("lr_model_ 为 None，请先调用fit方法或传入预训练lr_model")
         return self.lr_model_.coef_[0]
 
     @property
     def intercept_(self) -> float:
         """获取逻辑回归截距."""
+        # 如果传入了预训练模型但未调用fit，直接返回预训练模型的截距
+        if self._skip_fit_check and self.lr_model is not None:
+            return self.lr_model.intercept_[0]
         check_is_fitted(self)
+        if self.lr_model_ is None:
+            raise ValueError("lr_model_ 为 None，请先调用fit方法或传入预训练lr_model")
         return self.lr_model_.intercept_[0]
 
     @property
@@ -269,11 +300,16 @@ class ScoreCard(BaseEstimator, TransformerMixin):
             return self._feature_names
         if hasattr(self, 'rules_') and self.rules_:
             return list(self.rules_.keys())
-        # 如果 lr_model_ 已设置，从模型获取特征数量
+        # 如果 lr_model_ 或 lr_model 已设置，从模型获取特征数量
+        lr_model = None
         if hasattr(self, 'lr_model_') and self.lr_model_ is not None:
-            if hasattr(self.lr_model_, 'coef_'):
-                n_features = len(self.lr_model_.coef_[0])
-                return [f'feature_{i}' for i in range(n_features)]
+            lr_model = self.lr_model_
+        elif hasattr(self, 'lr_model') and self.lr_model is not None:
+            lr_model = self.lr_model
+        
+        if lr_model is not None and hasattr(lr_model, 'coef_'):
+            n_features = len(lr_model.coef_[0])
+            return [f'feature_{i}' for i in range(n_features)]
         return []
 
     @property
@@ -331,8 +367,8 @@ class ScoreCard(BaseEstimator, TransformerMixin):
         
         识别 pipeline 中的 LR 模型、分箱器和 WOE 转换器。
         """
-        # 首先检查外部传入的 combiner
-        self._check_combiner_woe_capability()
+        # 首先检查外部传入的 binner
+        self._check_binner_woe_capability()
         
         if self.pipeline is None:
             return
@@ -352,42 +388,42 @@ class ScoreCard(BaseEstimator, TransformerMixin):
                     print(f"  - 识别到 LR 模型: {name} ({obj.__class__.__name__})")
                 continue
 
-            # 识别 combiner（如果尚未传入）
-            if self.combiner is None and self._is_combiner(obj):
-                self.combiner = obj
+            # 识别 binner（如果尚未传入）
+            if self.binner is None and self._is_binner(obj):
+                self.binner = obj
                 if self.verbose:
                     print(f"  - 识别到分箱器: {name} ({obj.__class__.__name__})")
                 continue
 
-            # 识别 transfer
-            if self.transfer is None and self._is_woe_transformer(obj):
-                self.transfer = obj
+            # 识别 encoder
+            if self.encoder is None and self._is_woe_encoder(obj):
+                self.encoder = obj
                 if self.verbose:
                     print(f"  - 识别到 WOE 转换器: {name} ({obj.__class__.__name__})")
                 continue
 
-        # 再次检查 combiner 是否可以直接作为 WOE 转换器
-        self._check_combiner_woe_capability()
+        # 再次检查 binner 是否可以直接作为 WOE 转换器
+        self._check_binner_woe_capability()
 
-    def _check_combiner_woe_capability(self):
-        """检查 combiner 是否可以直接输出 WOE（hscredit 风格）."""
-        if self.combiner is None:
+    def _check_binner_woe_capability(self):
+        """检查 binner 是否可以直接输出 WOE（hscredit 风格）."""
+        if self.binner is None:
             return
 
         # 方法1：检查是否有 bin_tables_ 属性（hscredit 分箱器特征）
-        if hasattr(self.combiner, 'bin_tables_'):
-            self._combiner_is_woe_transformer = True
+        if hasattr(self.binner, 'bin_tables_'):
+            self._binner_is_woe_transformer = True
             if self.verbose:
                 print("  - 分箱器支持直接 WOE 转换（hscredit 风格）")
             return
 
         # 方法2：检查 transform 是否支持 metric='woe' 参数
-        if hasattr(self.combiner, 'transform'):
+        if hasattr(self.binner, 'transform'):
             try:
-                sig = inspect.signature(self.combiner.transform)
+                sig = inspect.signature(self.binner.transform)
                 params = list(sig.parameters.keys())
                 if 'metric' in params:
-                    self._combiner_is_woe_transformer = True
+                    self._binner_is_woe_transformer = True
                     if self.verbose:
                         print("  - 分箱器支持 metric='woe' 参数")
                     return
@@ -395,13 +431,13 @@ class ScoreCard(BaseEstimator, TransformerMixin):
                 pass
 
         # 方法3：检查是否有专门的方法用于 WOE 转换
-        if hasattr(self.combiner, 'transform_woe') or hasattr(self.combiner, 'woe_transform'):
-            self._combiner_is_woe_transformer = True
+        if hasattr(self.binner, 'transform_woe') or hasattr(self.binner, 'woe_transform'):
+            self._binner_is_woe_transformer = True
             if self.verbose:
                 print("  - 分箱器有专门的 WOE 转换方法")
             return
 
-        self._combiner_is_woe_transformer = False
+        self._binner_is_woe_transformer = False
 
     def _is_lr_model(self, obj) -> bool:
         """判断对象是否为 LR 模型."""
@@ -422,13 +458,13 @@ class ScoreCard(BaseEstimator, TransformerMixin):
 
         return False
 
-    def _is_combiner(self, obj) -> bool:
+    def _is_binner(self, obj) -> bool:
         """判断对象是否为分箱器."""
         # 检查类名
         class_name = obj.__class__.__name__.lower()
-        combiner_keywords = ('combiner', 'binner', 'binning', 'bins', 'chimerge', 
-                            'dtreebinner', 'optimalbinning', 'uniformbinning')
-        if any(kw in class_name for kw in combiner_keywords):
+        binner_keywords = ('combiner', 'binner', 'binning', 'bins', 'chimerge', 
+                          'dtreebinner', 'optimalbinning', 'uniformbinning')
+        if any(kw in class_name for kw in binner_keywords):
             return True
 
         # 检查是否有分箱相关属性
@@ -438,7 +474,7 @@ class ScoreCard(BaseEstimator, TransformerMixin):
 
         return False
 
-    def _is_woe_transformer(self, obj) -> bool:
+    def _is_woe_encoder(self, obj) -> bool:
         """判断对象是否为 WOE 转换器."""
         # 检查类名
         class_name = obj.__class__.__name__.lower()
@@ -478,9 +514,9 @@ class ScoreCard(BaseEstimator, TransformerMixin):
         """将原始数据转换为 WOE 数据.
 
         转换优先级：
-        1. 如果 combiner 支持直接 WOE 转换（hscredit 风格），使用 combiner.transform(X, metric='woe')
-        2. 如果配置了 combiner + transfer（toad 风格），先分箱再转 WOE
-        3. 如果只有 transfer，直接使用 transfer
+        1. 如果 binner 支持直接 WOE 转换（hscredit 风格），使用 binner.transform(X, metric='woe')
+        2. 如果配置了 binner + encoder（toad 风格），先分箱再转 WOE
+        3. 如果只有 encoder，直接使用 encoder
         4. 如果没有转换器，假设输入已是 WOE 数据
 
         :param X: 原始数据
@@ -489,39 +525,39 @@ class ScoreCard(BaseEstimator, TransformerMixin):
         if not isinstance(X, pd.DataFrame):
             X = pd.DataFrame(X)
 
-        # 情况1：combiner 支持直接 WOE 转换（hscredit 风格）
-        if self._combiner_is_woe_transformer and self.combiner is not None:
+        # 情况1：binner 支持直接 WOE 转换（hscredit 风格）
+        if self._binner_is_woe_transformer and self.binner is not None:
             try:
                 # 尝试使用 metric='woe' 参数
-                X_woe = self.combiner.transform(X, metric='woe')
+                X_woe = self.binner.transform(X, metric='woe')
                 if self.verbose:
-                    print(f"使用 combiner.transform(X, metric='woe') 进行 WOE 转换")
+                    print(f"使用 binner.transform(X, metric='woe') 进行 WOE 转换")
                 return X_woe
             except Exception as e:
                 if self.verbose:
-                    print(f"combiner.transform(X, metric='woe') 失败: {e}")
+                    print(f"binner.transform(X, metric='woe') 失败: {e}")
                 # 尝试其他方法
                 try:
-                    X_woe = self.combiner.transform_woe(X)
+                    X_woe = self.binner.transform_woe(X)
                     if self.verbose:
-                        print(f"使用 combiner.transform_woe(X) 进行 WOE 转换")
+                        print(f"使用 binner.transform_woe(X) 进行 WOE 转换")
                     return X_woe
                 except:
                     pass
 
-        # 情况2：既有 combiner 又有 transfer（toad/scp 风格）
-        if self.combiner is not None and self.transfer is not None:
-            X_binned = self.combiner.transform(X)
-            X_woe = self.transfer.transform(X_binned)
+        # 情况2：既有 binner 又有 encoder（toad/scp 风格）
+        if self.binner is not None and self.encoder is not None:
+            X_binned = self.binner.transform(X)
+            X_woe = self.encoder.transform(X_binned)
             if self.verbose:
-                print(f"使用 combiner + transfer 进行 WOE 转换")
+                print(f"使用 binner + encoder 进行 WOE 转换")
             return X_woe
 
-        # 情况3：仅有 transfer
-        if self.transfer is not None:
-            X_woe = self.transfer.transform(X)
+        # 情况3：仅有 encoder
+        if self.encoder is not None:
+            X_woe = self.encoder.transform(X)
             if self.verbose:
-                print(f"使用 transfer 进行 WOE 转换")
+                print(f"使用 encoder 进行 WOE 转换")
             return X_woe
 
         # 情况4：无转换器，假设输入已是 WOE 数据
@@ -534,6 +570,7 @@ class ScoreCard(BaseEstimator, TransformerMixin):
         X: Union[pd.DataFrame, np.ndarray],
         y: Optional[Union[pd.Series, np.ndarray]] = None,
         sample_weight: Optional[np.ndarray] = None,
+        input_type: str = 'woe',
     ) -> 'ScoreCard':
         """训练评分卡模型.
 
@@ -541,27 +578,41 @@ class ScoreCard(BaseEstimator, TransformerMixin):
         1. 常规方式: fit(X, y)
         2. scorecardpipeline风格: 在__init__中指定target，然后fit(X)
 
-        **重要说明**: fit 方法期望输入的是 **WOE 转换后的数据**。
-        这是参考 toad 和 scorecardpipeline 的主流设计。
+        **输入数据类型**
 
-        如果您有原始数据，请先使用分箱器进行 WOE 转换：
+        fit 方法支持两种输入数据类型，通过 `input_type` 参数控制：
+        - 'woe': WOE 转换后的数据（默认）
+        - 'raw': 原始数据（需要配置 binner 进行 WOE 转换）
+
+        **使用 WOE 数据（推荐）**:
             >>> binner = OptimalBinning()
             >>> binner.fit(X_train, y_train)
             >>> X_train_woe = binner.transform(X_train, metric='woe')
-            >>> scorecard.fit(X_train_woe, y_train)
+            >>> scorecard.fit(X_train_woe, y_train)  # 默认 input_type='woe'
 
-        :param X: WOE 转换后的训练数据（特征矩阵）
+        **使用原始数据**:
+            >>> scorecard = ScoreCard(binner=binner)  # 需要配置binner
+            >>> scorecard.fit(X_train, y_train, input_type='raw')
+
+        :param X: 训练数据（特征矩阵）
             支持 numpy array 或 pandas DataFrame
             如果是DataFrame且y为None，会尝试从X中提取target列作为y
+            数据类型由 input_type 参数决定（woe或raw）
         :param y: 目标变量，可选
             如果为None且init中指定了target，则从X中提取
         :param sample_weight: 样本权重，可选
+        :param input_type: 输入数据类型，默认为'woe'
+            - 'woe': WOE 转换后的数据（默认，推荐）
+            - 'raw': 原始数据（需要配置 binner 进行 WOE 转换）
         :return: self
         """
         if self.verbose:
             print("=" * 60)
             print("ScoreCard.fit() 开始训练")
-            print(f"输入数据类型: {type(X).__name__}")
+            print(f"输入数据类型: {type(X).__name__}, input_type={input_type}")
+
+        if input_type not in ['woe', 'raw']:
+            raise ValueError(f"input_type 必须是 'woe' 或 'raw'，当前为: {input_type}")
 
         # 转换为 DataFrame
         if not isinstance(X, pd.DataFrame):
@@ -586,13 +637,21 @@ class ScoreCard(BaseEstimator, TransformerMixin):
         # 1. 验证并提取 pipeline 组件
         self._validate_pipeline_components()
 
-        # 2. 记录特征名
+        # 2. 根据 input_type 处理数据
+        if input_type == 'raw':
+            # 需要将原始数据转换为 WOE 数据
+            if self.verbose:
+                print("将原始数据转换为 WOE 数据...")
+            X = self._transform_to_woe(X)
+        # else: input_type == 'woe', 直接使用输入数据
+
+        # 3. 记录特征名
         self._feature_names = X.columns.tolist()
         if self.verbose:
             print(f"特征数量: {len(self._feature_names)}")
             print(f"特征列表: {self._feature_names}")
 
-        # 3. 构建并训练/获取 LR 模型
+        # 4. 构建并训练/获取 LR 模型
         self.lr_model_ = self._build_lr_model()
 
         # 如果 LR 模型未训练，则训练
@@ -604,10 +663,10 @@ class ScoreCard(BaseEstimator, TransformerMixin):
             if self.verbose:
                 print("使用预训练的 LR 模型")
 
-        # 4. 生成评分卡规则
+        # 5. 生成评分卡规则
         self._generate_rules(X)
 
-        # 5. 计算基础效应
+        # 6. 计算基础效应
         sub_scores = self._woe_to_score(X)
         self.base_effect_ = pd.Series(
             np.median(sub_scores, axis=0),
@@ -635,28 +694,28 @@ class ScoreCard(BaseEstimator, TransformerMixin):
             bins = None
             values = None
 
-            # 从 hscredit 的 combiner 获取分箱信息
-            if self.combiner is not None and hasattr(self.combiner, 'bin_tables_'):
-                if col in self.combiner.bin_tables_:
-                    bin_table = self.combiner.bin_tables_[col]
+            # 从 hscredit 的 binner 获取分箱信息
+            if self.binner is not None and hasattr(self.binner, 'bin_tables_'):
+                if col in self.binner.bin_tables_:
+                    bin_table = self.binner.bin_tables_[col]
                     if '分档WOE值' in bin_table.columns:
                         woe_values = bin_table['分档WOE值'].values
                         if '分箱标签' in bin_table.columns:
                             bins = self._parse_bin_labels(bin_table['分箱标签'].values)
 
-            # 从 toad 的 transfer 获取
-            elif self.transfer is not None and hasattr(self.transfer, 'get'):
-                if col in self.transfer:
-                    transfer_rule = self.transfer[col]
-                    if isinstance(transfer_rule, dict):
-                        woe_values = transfer_rule.get('woe')
-                        values = transfer_rule.get('value')
-                        # 尝试从 combiner 获取 bins
-                        if self.combiner is not None and hasattr(self.combiner, 'get'):
-                            if col in self.combiner:
-                                combiner_rule = self.combiner[col]
-                                if isinstance(combiner_rule, dict):
-                                    bins = combiner_rule.get('bins')
+            # 从 toad 的 encoder 获取
+            elif self.encoder is not None and hasattr(self.encoder, 'get'):
+                if col in self.encoder:
+                    encoder_rule = self.encoder[col]
+                    if isinstance(encoder_rule, dict):
+                        woe_values = encoder_rule.get('woe')
+                        values = encoder_rule.get('value')
+                        # 尝试从 binner 获取 bins
+                        if self.binner is not None and hasattr(self.binner, 'get'):
+                            if col in self.binner:
+                                binner_rule = self.binner[col]
+                                if isinstance(binner_rule, dict):
+                                    bins = binner_rule.get('bins')
 
             # 从训练数据推断
             if woe_values is None:
@@ -708,54 +767,113 @@ class ScoreCard(BaseEstimator, TransformerMixin):
         """
         return -self.B_ * coef * woe
 
-    def _woe_to_score(self, X: pd.DataFrame) -> np.ndarray:
+    def _woe_to_score(self, X: pd.DataFrame, feature_names: Optional[List[str]] = None) -> np.ndarray:
         """将 WOE 数据转换为分数矩阵.
         
         基于 StandardScoreTransformer 的参数:
             score_i = -B_ * coef_i * woe_i
+            
+        :param X: WOE 数据
+        :param feature_names: 特征名列表，默认使用 self.feature_names_
+        :return: 分数矩阵
         """
-        scores = np.zeros((X.shape[0], len(self.feature_names_)))
+        if feature_names is None:
+            feature_names = self.feature_names_
         
-        for i, col in enumerate(self.feature_names_):
+        scores = np.zeros((X.shape[0], len(feature_names)))
+        
+        for i, col in enumerate(feature_names):
             if col in X.columns:
                 coef = self.coef_[i]
                 scores[:, i] = -self.B_ * coef * X[col].values
         
         return scores
 
+    def predict_score(
+        self,
+        X: Optional[Union[pd.DataFrame, np.ndarray]] = None,
+        proba: Optional[Union[np.ndarray, pd.Series]] = None
+    ) -> np.ndarray:
+        """预测评分（通过LR模型概率）。
+
+        继承自 StandardScoreTransformer 的 predict_score 方法，
+        但使用 ScoreCard 内部的 LR 模型来预测概率。
+
+        可通过传入X或proba之一来获取评分。
+
+        :param X: 特征矩阵（WOE数据），用于预测概率
+        :param proba: 直接传入预测概率（正类概率）
+        :return: 评分数组
+
+        **示例**
+
+        >>> # 通过特征矩阵预测
+        >>> scores = scorecard.predict_score(X_test_woe)
+
+        >>> # 通过概率直接转换
+        >>> proba = scorecard.lr_model_.predict_proba(X_test_woe)[:, 1]
+        >>> scores = scorecard.predict_score(proba=proba)
+        """
+        if not self._skip_fit_check:
+            check_is_fitted(self)
+
+        if proba is None:
+            if X is None:
+                raise ValueError("必须提供X或proba参数之一")
+            # 使用内部LR模型预测概率
+            lr_model = self.lr_model_ if hasattr(self, 'lr_model_') and self.lr_model_ is not None else self.lr_model
+            if lr_model is None:
+                raise ValueError("未找到LR模型，请先调用fit()或传入预训练lr_model")
+            proba = lr_model.predict_proba(X)[:, 1]
+
+        # 调用父类的transform方法将概率转换为评分
+        return self.transform(proba)
+
     def predict(
-        self, 
+        self,
         X: Union[pd.DataFrame, np.ndarray],
         input_type: str = 'raw'
     ) -> np.ndarray:
-        """预测评分.
+        """预测评分（基于WOE特征的线性评分卡公式）。
+
+        与 predict_score 不同，此方法使用评分卡公式：
+        Score = A_ - B_ * (intercept + sum(coef_i * WOE_i))
 
         :param X: 输入数据
         :param input_type: 输入数据类型，可选：
             - 'raw': 原始数据，会进行 WOE 转换（默认）
             - 'woe': WOE 数据，直接使用
             - 'auto': 自动检测，通过数据特征推断输入类型
-        
+
         input_type='auto' 时的判断逻辑：
             1. 数值范围检测：WOE数据通常取值范围在[-5, 5]之间，若所有数值列的min/max
                都在[-10, 10]范围内且主要分布集中在[-5, 5]，则判定为WOE数据
             2. 整数列检测：若存在int64/int32类型的列且唯一值数量>10，判定为原始数据
                （原始数据常包含年龄、收入等整数特征）
             3. 默认策略：当无法明确判断时，为安全起见默认按原始数据处理
-            
+
             注意：auto检测基于启发式规则，对于边界情况（如原始数据本身就是小数值范围）
             可能误判。生产环境建议显式指定input_type='raw'或'woe'。
-        
+
         :return: 评分数组
+
+        :raises NotFittedError: 如果未传入lr_model且未调用fit方法
         """
-        check_is_fitted(self)
+        # 检查是否需要fit
+        # 如果未传入预训练模型且未调用fit，则报错
+        if not self._skip_fit_check:
+            check_is_fitted(self)
+        elif not hasattr(self, '_is_fitted') or not self._is_fitted:
+            # 传入了预训练模型但未调用fit，使用预训练模型进行预测
+            if self.verbose:
+                print("使用预训练模型进行预测（未调用fit）")
 
         if not isinstance(X, pd.DataFrame):
             X = pd.DataFrame(X)
 
         # 检测输入数据类型
         is_woe_data = self._detect_input_type(X)
-        
+
         if input_type == 'auto':
             # 自动检测
             if is_woe_data:
@@ -776,10 +894,17 @@ class ScoreCard(BaseEstimator, TransformerMixin):
             raise ValueError(f"input_type 必须是 'auto'/'raw'/'woe' 之一，当前为: {input_type}")
 
         # 确保列顺序一致
-        X_woe = X_woe[self.feature_names_]
+        # 如果传入了预训练模型但未fit，使用输入数据的列名
+        if self._skip_fit_check and not getattr(self, '_is_fitted', False):
+            # 未fit，直接使用输入数据的列
+            feature_names = X_woe.columns.tolist()
+        else:
+            # 已fit，使用保存的特征名
+            feature_names = self.feature_names_
+            X_woe = X_woe[feature_names]
 
         # 计算每个特征的分数
-        sub_scores = self._woe_to_score(X_woe)
+        sub_scores = self._woe_to_score(X_woe, feature_names)
 
         # 总分 = 截距分数 + 各特征分数之和
         # intercept_score = A_ - B_ * intercept
@@ -1396,7 +1521,7 @@ class ScoreCard(BaseEstimator, TransformerMixin):
         **示例**
 
         >>> card = ScoreCard(pdo=60, rate=2, base_odds=35, base_score=750)
-        >>> card.fit(X_woe, y, combiner=combiner)
+        >>> card.fit(X_woe, y, binner=binner)
         >>> 
         >>> # 导出为字典
         >>> rules = card.export()
@@ -1524,7 +1649,7 @@ class ScoreCard(BaseEstimator, TransformerMixin):
         >>> # toad 导出
         >>> import toad
         >>> toad_card = toad.ScoreCard()
-        >>> toad_card.fit(X, y, combiner=combiner, transer=transformer)
+        >>> toad_card.fit(X, y, combiner=combiner, transer=transformer)  # toad 保持原参数名
         >>> rules = toad_card.export()
         >>> 
         >>> # hscredit 加载
@@ -1545,12 +1670,14 @@ class ScoreCard(BaseEstimator, TransformerMixin):
 
         if not update:
             self.rules_ = {}
-            self.feature_names_ = []
+            self._feature_names = []
 
         # 解析规则
         for feature, feature_rules in card.items():
-            if feature not in self.feature_names_:
-                self.feature_names_.append(feature)
+            if self._feature_names is None:
+                self._feature_names = []
+            if feature not in self._feature_names:
+                self._feature_names.append(feature)
 
             bins = []
             scores = []

@@ -1095,3 +1095,195 @@ class CompositeFeatureSelector(BaseFeatureSelector):
             self.detailed_dropped_ = pd.concat(all_dropped, ignore_index=True)
         else:
             self.detailed_dropped_ = pd.DataFrame()
+
+    def get_selection_report_df(self) -> pd.DataFrame:
+        """获取详细的DataFrame格式报告，穿透底层筛选器。
+        
+        记录每一步具体的筛选情况和具体筛选原因，包括:
+        - 每个特征在每个筛选阶段的状态
+        - 被剔除的原因和具体数值指标
+        - 每个子筛选器的详细信息
+        
+        :return: 详细的筛选报告DataFrame
+        """
+        if not hasattr(self, '_is_fitted'):
+            return pd.DataFrame({'状态': ['未拟合'], 'message': ['请先调用fit方法']})
+        
+        records = []
+        
+        # 获取原始特征列表（从第一个筛选器的输入）
+        all_features = set()
+        for item in self.selectors:
+            if isinstance(item, tuple) and len(item) == 2:
+                selector = item[1]
+            else:
+                selector = item
+            if hasattr(selector, '_feature_names'):
+                all_features.update(selector._feature_names)
+        
+        all_features = sorted(list(all_features))
+        
+        if self.strategy == 'sequential':
+            # 顺序策略：记录每个特征在每个阶段的状态变化
+            current_features = set(all_features)
+            
+            for i, item in enumerate(self.selectors):
+                if isinstance(item, tuple) and len(item) == 2:
+                    selector_name = item[0]
+                    selector = item[1]
+                else:
+                    selector_name = item.__class__.__name__
+                    selector = item
+                
+                input_count = len(current_features)
+                selected = set(selector.selected_features_) if hasattr(selector, 'selected_features_') else set()
+                dropped_in_stage = current_features - selected
+                
+                # 获取该筛选器的详细报告
+                selector_report = selector.get_selection_report() if hasattr(selector, 'get_selection_report') else {}
+                scores = selector_report.get('特征得分', {}) if isinstance(selector_report, dict) else {}
+                
+                # 获取剔除详情
+                dropped_details = {}
+                if hasattr(selector, 'dropped_') and len(selector.dropped_) > 0:
+                    for _, row in selector.dropped_.iterrows():
+                        feat = row.get('特征', '')
+                        reason = row.get('剔除原因', '不满足筛选条件')
+                        dropped_details[feat] = reason
+                
+                # 为每个特征创建记录
+                for feat in sorted(current_features):
+                    score = scores.get(feat, 'N/A') if isinstance(scores, dict) else 'N/A'
+                    
+                    if feat in selected:
+                        status = '选中'
+                        reason = '满足筛选条件'
+                    else:
+                        status = '剔除'
+                        reason = dropped_details.get(feat, '不满足筛选条件')
+                    
+                    records.append({
+                        '特征': feat,
+                        '筛选轮次': i + 1,
+                        '筛选器': selector_name,
+                        '筛选器类型': selector.__class__.__name__,
+                        '策略': self.strategy,
+                        '状态': status,
+                        '得分': score if isinstance(score, (int, float)) else 'N/A',
+                        '剔除原因': reason if status == '剔除' else '',
+                        '该轮输入特征数': input_count,
+                        '该轮输出特征数': len(selected),
+                        '该轮剔除特征数': input_count - len(selected),
+                    })
+                
+                # 更新当前特征集
+                current_features = selected
+        
+        else:  # intersection 策略
+            # 收集每个筛选器的结果
+            selector_results = []
+            
+            for item in self.selectors:
+                if isinstance(item, tuple) and len(item) == 2:
+                    selector_name = item[0]
+                    selector = item[1]
+                else:
+                    selector_name = item.__class__.__name__
+                    selector = item
+                
+                selected = set(selector.selected_features_) if hasattr(selector, 'selected_features_') else set()
+                
+                # 获取剔除详情
+                dropped_details = {}
+                if hasattr(selector, 'dropped_') and len(selector.dropped_) > 0:
+                    for _, row in selector.dropped_.iterrows():
+                        feat = row.get('特征', '')
+                        reason = row.get('剔除原因', '不满足筛选条件')
+                        dropped_details[feat] = reason
+                
+                selector_results.append({
+                    'name': selector_name,
+                    'type': selector.__class__.__name__,
+                    'selected': selected,
+                    'dropped_details': dropped_details,
+                    'report': selector.get_selection_report() if hasattr(selector, 'get_selection_report') else {}
+                })
+            
+            final_selected = set(self.selected_features_) if hasattr(self, 'selected_features_') else set()
+            
+            # 为每个原始特征创建记录
+            for feat in all_features:
+                # 确定最终状态
+                if feat in final_selected:
+                    final_status = '选中'
+                    final_reason = '被所有筛选器同时选中'
+                else:
+                    final_status = '剔除'
+                    rejected_by = []
+                    for result in selector_results:
+                        if feat not in result['selected']:
+                            rejected_by.append(result['name'])
+                    final_reason = f"被以下筛选器剔除: {', '.join(rejected_by)}" if rejected_by else '未被所有筛选器同时选中'
+                
+                # 为每个筛选器创建一行记录
+                for i, result in enumerate(selector_results):
+                    scores = result['report'].get('特征得分', {}) if isinstance(result['report'], dict) else {}
+                    score = scores.get(feat, 'N/A') if isinstance(scores, dict) else 'N/A'
+                    
+                    if feat in result['selected']:
+                        stage_status = '选中'
+                        stage_reason = '满足筛选条件'
+                    else:
+                        stage_status = '剔除'
+                        stage_reason = result['dropped_details'].get(feat, '不满足筛选条件')
+                    
+                    records.append({
+                        '特征': feat,
+                        '筛选轮次': i + 1,
+                        '筛选器': result['name'],
+                        '筛选器类型': result['type'],
+                        '策略': self.strategy,
+                        '状态': stage_status,
+                        '得分': score if isinstance(score, (int, float)) else 'N/A',
+                        '剔除原因': stage_reason if stage_status == '剔除' else '',
+                        '该轮输入特征数': len(all_features),
+                        '该轮输出特征数': len(result['selected']),
+                        '该轮剔除特征数': len(all_features) - len(result['selected']),
+                        '最终状态': final_status,
+                        '最终剔除原因': final_reason if final_status == '剔除' else '',
+                    })
+        
+        df = pd.DataFrame(records)
+        
+        # 添加汇总信息行
+        summary_records = []
+        for i, item in enumerate(self.selectors):
+            if isinstance(item, tuple) and len(item) == 2:
+                selector_name = item[0]
+                selector = item[1]
+            else:
+                selector_name = item.__class__.__name__
+                selector = item
+            
+            report = selector.get_selection_report() if hasattr(selector, 'get_selection_report') else {}
+            if isinstance(report, dict):
+                summary_records.append({
+                    '特征': '[SUMMARY]',
+                    '筛选轮次': i + 1,
+                    '筛选器': selector_name,
+                    '筛选器类型': selector.__class__.__name__,
+                    '策略': self.strategy,
+                    '状态': '汇总',
+                    '得分': '',
+                    '剔除原因': '',
+                    '该轮输入特征数': report.get('输入特征数', 'N/A'),
+                    '该轮输出特征数': report.get('选中特征数', 'N/A'),
+                    '该轮剔除特征数': report.get('剔除特征数', 'N/A'),
+                    '阈值': report.get('阈值', 'N/A'),
+                })
+        
+        if summary_records:
+            summary_df = pd.DataFrame(summary_records)
+            df = pd.concat([df, summary_df], ignore_index=True)
+        
+        return df

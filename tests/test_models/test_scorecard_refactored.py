@@ -84,17 +84,17 @@ class TestScoreCardRefactored(unittest.TestCase):
         # 结果应该相同（因为 X 经过 WOE 转换后应该等于 X_woe）
         self.assertEqual(len(scores_raw), len(scores_woe))
     
-    def test_combiner_as_woe_transformer(self):
+    def test_binner_as_woe_transformer(self):
         """测试分箱器作为 WOE 转换器."""
-        # 配置 combiner
+        # 配置 binner
         scorecard = ScoreCard(
-            combiner=self.binner,
+            binner=self.binner,
             pdo=60, rate=2, base_odds=35, base_score=750,
             verbose=True
         )
         
-        # fit 前检查是否识别到 combiner 的 WOE 能力
-        self.assertTrue(hasattr(scorecard, '_combiner_is_woe_transformer'))
+        # fit 前检查是否识别到 binner 的 WOE 能力
+        self.assertTrue(hasattr(scorecard, '_binner_is_woe_transformer'))
         
         scorecard.fit(self.X_woe, self.y)
         

@@ -142,7 +142,7 @@ lr.fit(X_train_woe, y_train)
 
 # 转换为评分卡
 scorecard = ScoreCard(pdo=60, rate=2, base_odds=35, base_score=750, 
-                      lr_model=lr, combiner=binner)
+                      lr_model=lr, binner=binner)
 ```
 
 ## 使用示例
