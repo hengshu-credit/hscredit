@@ -1,173 +1,244 @@
 """稳定性指标计算.
 
-提供评估模型稳定性和分布变化的指标。
+提供评估模型稳定性和分布变化的指标.
 
 主要指标:
-- PSI (Population Stability Index): 评估总体分布稳定性
-- CSI (Characteristic Stability Index): 评估特征分布稳定性
-- PSI_table: PSI详细统计表
-- CSI_table: CSI详细统计表
+- psi: Population Stability Index，评估总体分布稳定性
+- csi: Characteristic Stability Index，评估特征分布稳定性
+- psi_rating: PSI稳定性评级
+- batch_psi: 批量计算多特征PSI
 """
 
 import numpy as np
 import pandas as pd
-from typing import Union, Tuple, Optional, Dict, Any
+from typing import Union, Tuple, Optional, List
 from scipy.stats import chi2_contingency
 
+from ._base import _create_bin_edges
 
-def PSI(expected: Union[np.ndarray, pd.Series],
+
+def psi(expected: Union[np.ndarray, pd.Series],
         actual: Union[np.ndarray, pd.Series],
-        bins: Optional[Union[int, list]] = 10) -> float:
+        method: str = 'quantile',
+        max_n_bins: int = 10,
+        min_bin_size: float = 0.01,
+        **kwargs) -> float:
     """计算Population Stability Index (PSI).
 
     PSI用于衡量两个分布之间的差异，评估模型或特征的稳定性。
-    PSI值越小表示分布越稳定，越大表示分布变化越大。
-
-    PSI计算公式:
-    PSI = Σ [(实际占比 - 期望占比) * ln(实际占比 / 期望占比)]
+    PSI值越小表示分布越稳定。
 
     PSI分级标准:
     - PSI < 0.1: 没有显著变化
-    - 0.1 ≤ PSI < 0.25: 有轻微变化
-    - PSI ≥ 0.25: 有显著变化
+    - 0.1 <= PSI < 0.25: 有轻微变化
+    - PSI >= 0.25: 有显著变化
 
     :param expected: 期望分布数据 (通常是训练集或基准数据)
     :param actual: 实际分布数据 (通常是测试集或新数据)
-    :param bins: 分箱数量或自定义分箱边界
+    :param method: 分箱方法，默认'quantile'
+    :param max_n_bins: 最大分箱数，默认10
+    :param min_bin_size: 每箱最小样本占比，默认0.01
+    :param kwargs: 其他传递给OptimalBinning的参数
     :return: PSI值
     """
-    expected = np.asarray(expected)
-    actual = np.asarray(actual)
-
-    # 处理分箱
-    if isinstance(bins, int):
-        # 等频分箱
-        combined = np.concatenate([expected, actual])
-        if len(np.unique(combined)) <= bins:
-            # 如果唯一值少于bins，直接使用唯一值
-            bin_edges = np.sort(np.unique(combined))
-        else:
-            # 使用分位数分箱
-            quantiles = np.linspace(0, 1, bins + 1)
-            bin_edges = np.quantile(combined, quantiles)
-            bin_edges = np.unique(bin_edges)  # 去重
-    else:
-        bin_edges = np.array(bins)
-
-    # 计算期望分布的直方图
-    expected_hist, _ = np.histogram(expected, bins=bin_edges)
-    actual_hist, _ = np.histogram(actual, bins=bin_edges)
-
-    # 转换为比例
-    expected_prop = expected_hist / len(expected)
-    actual_prop = actual_hist / len(actual)
-
-    # 避免除零和log(0)
-    epsilon = 1e-10
-    expected_prop = np.where(expected_prop == 0, epsilon, expected_prop)
-    actual_prop = np.where(actual_prop == 0, epsilon, actual_prop)
-
-    # 计算PSI
-    psi = np.sum((actual_prop - expected_prop) * np.log(actual_prop / expected_prop))
-
-    return psi
+    table = psi_table(expected, actual, method, max_n_bins, min_bin_size, **kwargs)
+    return table['PSI贡献'].sum()
 
 
-def CSI(expected: Union[np.ndarray, pd.Series],
-        actual: Union[np.ndarray, pd.Series]) -> float:
-    """计算Characteristic Stability Index (CSI).
-
-    CSI是PSI的变体，用于衡量特征分布的稳定性。
-    计算方法与PSI相同，但通常用于特征级别的稳定性评估。
+def psi_table(expected: Union[np.ndarray, pd.Series],
+              actual: Union[np.ndarray, pd.Series],
+              method: str = 'quantile',
+              max_n_bins: int = 10,
+              min_bin_size: float = 0.01,
+              **kwargs) -> pd.DataFrame:
+    """计算PSI详细统计表.
 
     :param expected: 期望分布数据
     :param actual: 实际分布数据
-    :return: CSI值
-    """
-    # CSI的计算与PSI相同，只是命名不同
-    return PSI(expected, actual, bins=10)
-
-
-def PSI_table(expected: Union[np.ndarray, pd.Series],
-              actual: Union[np.ndarray, pd.Series],
-              bins: Optional[Union[int, list]] = 10) -> pd.DataFrame:
-    """计算PSI详细统计表.
-
-    提供每个分箱的PSI贡献信息。
-
-    :param expected: 期望分布数据 (通常是训练集或基准数据)
-    :param actual: 实际分布数据 (通常是测试集或新数据)
-    :param bins: 分箱数量或自定义分箱边界，默认为10
-    :return: PSI统计表，包含以下列:
-        - 分箱区间: 分箱区间
-        - 期望样本数: 期望分布样本数
-        - 实际样本数: 实际分布样本数
-        - 期望占比: 期望分布占比
-        - 实际占比: 实际分布占比
-        - PSI贡献: 该箱的PSI贡献
+    :param method: 分箱方法，默认'quantile'
+    :param max_n_bins: 最大分箱数，默认10
+    :param min_bin_size: 每箱最小样本占比，默认0.01
+    :param kwargs: 其他传递给OptimalBinning的参数
+    :return: PSI统计表
     """
     expected = np.asarray(expected)
     actual = np.asarray(actual)
 
-    # 处理分箱
-    if isinstance(bins, int):
-        combined = np.concatenate([expected, actual])
-        if len(np.unique(combined)) <= bins:
-            bin_edges = np.sort(np.unique(combined))
-        else:
-            quantiles = np.linspace(0, 1, bins + 1)
-            bin_edges = np.quantile(combined, quantiles)
-            bin_edges = np.unique(bin_edges)
-    else:
-        bin_edges = np.array(bins)
+    # 移除缺失值
+    expected_clean = expected[~pd.isna(expected)]
+    actual_clean = actual[~pd.isna(actual)]
 
-    # 计算直方图
-    expected_hist, _ = np.histogram(expected, bins=bin_edges)
-    actual_hist, _ = np.histogram(actual, bins=bin_edges)
+    # 合并数据确定分箱边界
+    combined = np.concatenate([expected_clean, actual_clean])
 
-    # 转换为比例
-    expected_prop = expected_hist / len(expected)
-    actual_prop = actual_hist / len(actual)
+    # 使用OptimalBinning进行分箱
+    from ..binning import OptimalBinning
 
-    # 计算PSI贡献
-    epsilon = 1e-10
-    psi_contrib = (actual_prop - expected_prop) * np.log(
-        np.where(actual_prop == 0, epsilon, actual_prop) /
-        np.where(expected_prop == 0, epsilon, expected_prop)
+    # 构建DataFrame
+    df_expected = pd.DataFrame({'value': expected_clean, 'is_expected': 1})
+    df_actual = pd.DataFrame({'value': actual_clean, 'is_expected': 0})
+    df_combined = pd.concat([df_expected, df_actual], ignore_index=True)
+
+    # 创建临时目标用于分箱
+    dummy_target = np.random.randint(0, 2, size=len(df_combined))
+
+    binner = OptimalBinning(
+        method=method,
+        max_n_bins=max_n_bins,
+        min_bin_size=min_bin_size,
+        verbose=False,
+        **kwargs
     )
+    binner.fit(df_combined[['value']], dummy_target)
+
+    # 分别转换expected和actual
+    bins_expected = binner.transform(df_expected[['value']], metric='indices').values.flatten()
+    bins_actual = binner.transform(df_actual[['value']], metric='indices').values.flatten()
+
+    # 计算每个箱的统计
+    unique_bins = sorted(set(bins_expected) | set(bins_actual))
 
     results = []
-    for i in range(len(bin_edges) - 1):
-        if i == 0:
-            bin_label = f"(-inf, {bin_edges[i + 1]:.3f}]"
-        elif i == len(bin_edges) - 2:
-            bin_label = f"({bin_edges[i]:.3f}, +inf)"
-        else:
-            bin_label = f"({bin_edges[i]:.3f}, {bin_edges[i + 1]:.3f}]"
+    epsilon = 1e-10
+
+    total_expected = len(expected_clean)
+    total_actual = len(actual_clean)
+
+    for bin_idx in unique_bins:
+        expected_count = np.sum(bins_expected == bin_idx)
+        actual_count = np.sum(bins_actual == bin_idx)
+
+        expected_prop = expected_count / total_expected if total_expected > 0 else epsilon
+        actual_prop = actual_count / total_actual if total_actual > 0 else epsilon
+
+        # 避免除零
+        expected_prop = max(expected_prop, epsilon)
+        actual_prop = max(actual_prop, epsilon)
+
+        psi_contrib = (actual_prop - expected_prop) * np.log(actual_prop / expected_prop)
+
+        # 获取分箱标签
+        bin_label = f"Bin_{bin_idx}"
+        if 'value' in binner.bin_tables_:
+            bin_table = binner.bin_tables_['value']
+            if bin_idx < len(bin_table) and '分箱标签' in bin_table.columns:
+                bin_label = bin_table.iloc[bin_idx]['分箱标签']
 
         results.append({
-            '分箱区间': bin_label,
-            '期望样本数': expected_hist[i],
-            '实际样本数': actual_hist[i],
-            '期望占比': expected_prop[i],
-            '实际占比': actual_prop[i],
-            'PSI贡献': psi_contrib[i]
+            '分箱': bin_label,
+            '期望样本数': expected_count,
+            '实际样本数': actual_count,
+            '期望占比': expected_prop,
+            '实际占比': actual_prop,
+            'PSI贡献': psi_contrib,
         })
 
     return pd.DataFrame(results)
 
 
-def CSI_table(expected: Union[np.ndarray, pd.Series],
-              actual: Union[np.ndarray, pd.Series],
-              bins: Optional[Union[int, list]] = 10) -> pd.DataFrame:
-    """计算CSI详细统计表.
+def psi_rating(psi_value: float) -> str:
+    """根据PSI值返回稳定性评级.
+
+    :param psi_value: PSI值
+    :return: 稳定性评级描述
+    """
+    if psi_value < 0.1:
+        return "没有显著变化 (PSI < 0.1)"
+    elif psi_value < 0.25:
+        return "有轻微变化 (0.1 <= PSI < 0.25)"
+    else:
+        return "有显著变化 (PSI >= 0.25)"
+
+
+def csi(expected: Union[np.ndarray, pd.Series],
+        actual: Union[np.ndarray, pd.Series],
+        method: str = 'quantile',
+        max_n_bins: int = 10,
+        min_bin_size: float = 0.01,
+        **kwargs) -> float:
+    """计算Characteristic Stability Index (CSI).
 
     CSI是PSI的变体，用于衡量特征分布的稳定性。
 
     :param expected: 期望分布数据
     :param actual: 实际分布数据
-    :param bins: 分箱数量或自定义分箱边界，默认为10
+    :param method: 分箱方法，默认'quantile'
+    :param max_n_bins: 最大分箱数，默认10
+    :param min_bin_size: 每箱最小样本占比，默认0.01
+    :param kwargs: 其他传递给OptimalBinning的参数
+    :return: CSI值
+    """
+    return psi(expected, actual, method, max_n_bins, min_bin_size, **kwargs)
+
+
+def csi_table(expected: Union[np.ndarray, pd.Series],
+              actual: Union[np.ndarray, pd.Series],
+              method: str = 'quantile',
+              max_n_bins: int = 10,
+              min_bin_size: float = 0.01,
+              **kwargs) -> pd.DataFrame:
+    """计算CSI详细统计表.
+
+    :param expected: 期望分布数据
+    :param actual: 实际分布数据
+    :param method: 分箱方法，默认'quantile'
+    :param max_n_bins: 最大分箱数，默认10
+    :param min_bin_size: 每箱最小样本占比，默认0.01
+    :param kwargs: 其他传递给OptimalBinning的参数
     :return: CSI统计表
     """
-    # CSI_table与PSI_table相同
-    return PSI_table(expected, actual, bins)
+    table = psi_table(expected, actual, method, max_n_bins, min_bin_size, **kwargs)
+    table = table.rename(columns={'PSI贡献': 'CSI贡献'})
+    return table
+
+
+def batch_psi(X_train: pd.DataFrame,
+              X_test: pd.DataFrame,
+              features: Optional[List[str]] = None,
+              method: str = 'quantile',
+              max_n_bins: int = 10,
+              min_bin_size: float = 0.01,
+              **kwargs) -> pd.DataFrame:
+    """批量计算多特征的PSI.
+
+    :param X_train: 训练集特征
+    :param X_test: 测试集特征
+    :param features: 需要计算的特征列表，默认全部
+    :param method: 分箱方法，默认'quantile'
+    :param max_n_bins: 最大分箱数，默认10
+    :param min_bin_size: 每箱最小样本占比，默认0.01
+    :param kwargs: 其他传递给OptimalBinning的参数
+    :return: PSI结果DataFrame
+    """
+    if features is None:
+        features = list(X_train.columns)
+
+    results = []
+    for feature in features:
+        if feature in X_train.columns and feature in X_test.columns:
+            try:
+                psi_value = psi(
+                    X_train[feature], X_test[feature],
+                    method, max_n_bins, min_bin_size, **kwargs
+                )
+                rating = psi_rating(psi_value)
+                results.append({
+                    '特征': feature,
+                    'PSI': psi_value,
+                    '评级': rating,
+                })
+            except Exception as e:
+                results.append({
+                    '特征': feature,
+                    'PSI': np.nan,
+                    '评级': f'计算失败: {str(e)}',
+                })
+
+    return pd.DataFrame(results)
+
+
+# 向后兼容（Deprecated）
+PSI = psi
+PSI_table = psi_table
+CSI = csi
+CSI_table = csi_table

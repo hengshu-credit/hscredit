@@ -338,13 +338,45 @@ class LightGBMRiskModel(BaseRiskModel):
             self._model.fit(X_train, y_train, **fit_kwargs)
         except TypeError as e:
             error_msg = str(e).lower()
-            if 'callbacks' in error_msg and use_callbacks:
+            if 'verbose' in error_msg:
+                # 某些版本的LightGBM不接受verbose参数
+                if self.verbose:
+                    print(f"当前LightGBM版本不接受verbose参数，移除后重试")
+                if 'verbose' in fit_kwargs:
+                    del fit_kwargs['verbose']
+                # 再次尝试训练
+                try:
+                    self._model.fit(X_train, y_train, **fit_kwargs)
+                except TypeError as e2:
+                    error_msg2 = str(e2).lower()
+                    if 'callbacks' in error_msg2 and use_callbacks:
+                        # callbacks参数不被支持，回退到旧API
+                        if self.verbose:
+                            print(f"callbacks参数不被支持，回退到旧版early_stopping_rounds API")
+                        del fit_kwargs['callbacks']
+                        fit_kwargs['early_stopping_rounds'] = self.early_stopping_rounds
+                        self._model.fit(X_train, y_train, **fit_kwargs)
+                    elif 'early_stopping_rounds' in error_msg2:
+                        # 旧版本不支持early_stopping_rounds，忽略早停
+                        import warnings
+                        warnings.warn(
+                            f"当前LightGBM版本不支持early_stopping_rounds参数，"
+                            f"将忽略早停设置。建议升级LightGBM: pip install -U lightgbm",
+                            UserWarning
+                        )
+                        if 'early_stopping_rounds' in fit_kwargs:
+                            del fit_kwargs['early_stopping_rounds']
+                        self._model.fit(X_train, y_train, **fit_kwargs)
+                    else:
+                        raise
+            elif 'callbacks' in error_msg and use_callbacks:
                 # callbacks参数不被支持，回退到旧API
                 if self.verbose:
                     print(f"callbacks参数不被支持，回退到旧版early_stopping_rounds API")
                 del fit_kwargs['callbacks']
                 fit_kwargs['early_stopping_rounds'] = self.early_stopping_rounds
-                fit_kwargs['verbose'] = self.verbose
+                if 'verbose' not in fit_kwargs:
+                    fit_kwargs['verbose'] = self.verbose
                 self._model.fit(X_train, y_train, **fit_kwargs)
             elif 'early_stopping_rounds' in error_msg:
                 # 旧版本不支持early_stopping_rounds，忽略早停
@@ -356,7 +388,8 @@ class LightGBMRiskModel(BaseRiskModel):
                 )
                 if 'early_stopping_rounds' in fit_kwargs:
                     del fit_kwargs['early_stopping_rounds']
-                fit_kwargs['verbose'] = self.verbose
+                if 'verbose' not in fit_kwargs:
+                    fit_kwargs['verbose'] = self.verbose
                 self._model.fit(X_train, y_train, **fit_kwargs)
             else:
                 raise

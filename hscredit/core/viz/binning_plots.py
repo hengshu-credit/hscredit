@@ -3,6 +3,8 @@
 评分卡可视化函数.
 
 提供常用的绘图功能，包括分箱图、KS/ROC曲线、分布图、PSI/CSI分析图等。
+
+注：分箱统计计算已统一收口到hscredit.core.metrics.compute_bin_stats
 """
 
 import re
@@ -22,6 +24,9 @@ from .utils import (
     get_or_create_ax, create_legend, format_bin_label
 )
 
+# 从统一metrics模块导入分箱统计计算
+from ..metrics import compute_bin_stats
+
 
 def _is_feature_table(data):
     """判断是否为特征分箱统计表"""
@@ -35,42 +40,53 @@ def _compute_bin_stats_from_raw_data(
     data: Union[pd.DataFrame, pd.Series],
     target: Union[str, pd.Series, np.ndarray],
     feature: Optional[str] = None,
-    n_bins: int = 10,
     method: str = 'quantile',
+    max_n_bins: int = 10,
+    min_bin_size: float = 0.01,
     rules: Optional[List] = None,
+    **kwargs
 ) -> pd.DataFrame:
     """从原始数据计算分箱统计表
+    
+    此函数基于hscredit.core.binning.OptimalBinning进行分箱，
+    使用hscredit.core.metrics.compute_bin_stats计算分箱统计。
     
     :param data: 特征数据（DataFrame 或 Series）
     :param target: 目标变量（列名或数据）
     :param feature: 特征列名（当 data 为 DataFrame 时需要）
-    :param n_bins: 分箱数量
-    :param method: 分箱方法
-    :param rules: 自定义分箱边界
+    :param method: 分箱方法，可选：
+        - 基础方法: 'uniform'(等宽), 'quantile'(等频), 'tree'(决策树), 'chi'(卡方)
+        - 优化方法: 'best_ks'(最优KS), 'best_iv'(最优IV), 'mdlp'(信息论)
+        - 高级方法: 'cart'(CART), 'monotonic'(单调性), 'genetic'(遗传算法),
+                    'smooth'(平滑), 'kernel_density'(核密度)
+        默认: 'quantile'
+    :param max_n_bins: 最大分箱数，默认10
+    :param min_bin_size: 每箱最小样本占比，默认0.01
+    :param rules: 自定义分箱边界（优先级高于method）
+    :param kwargs: 其他传递给OptimalBinning的参数
     :return: 分箱统计表
     """
     # 处理输入数据
     if isinstance(data, pd.Series):
-        feature_name = data.name if data.name is not None else 'feature'
-        X = data.values
+        X = data.copy()
+        if feature is None:
+            feature = data.name if data.name else 'feature'
     elif isinstance(data, pd.DataFrame):
         if feature is None:
-            # 如果没有指定特征列，使用第一列
             feature = data.columns[0]
-        feature_name = feature
-        X = data[feature].values
+        X = data[feature].copy()
     else:
-        feature_name = 'feature'
-        X = np.array(data)
+        X = pd.Series(data)
+        feature = 'feature'
     
     # 处理目标变量
     if isinstance(target, str):
         if isinstance(data, pd.DataFrame) and target in data.columns:
-            y = data[target].values
+            y = data[target].copy()
         else:
             raise ValueError(f"目标列 '{target}' 不在数据中")
     elif isinstance(target, (pd.Series, np.ndarray)):
-        y = np.array(target)
+        y = pd.Series(target)
     else:
         raise ValueError("target 必须是列名、Series 或数组")
     
@@ -86,63 +102,64 @@ def _compute_bin_stats_from_raw_data(
     if len(X_valid) == 0:
         raise ValueError("没有有效数据（全部为缺失值）")
     
-    # 分箱
+    # 构建DataFrame
+    df = pd.DataFrame({
+        feature: X_valid,
+        'target': y_valid
+    })
+    
+    # 使用OptimalBinning进行分箱
+    from ..binning import OptimalBinning
+    
     if rules is not None:
-        # 使用自定义分箱边界
-        bins = rules
-        if not np.isinf(bins[-1]):
-            bins = list(bins) + [np.inf]
-        if not np.isinf(bins[0]) and bins[0] > -np.inf:
-            bins = [-np.inf] + list(bins)
+        # 使用自定义分箱规则
+        binner = OptimalBinning(
+            user_splits={feature: rules},
+            max_n_bins=max_n_bins,
+            min_bin_size=min_bin_size,
+            verbose=False,
+            **kwargs
+        )
     else:
-        # 自动分箱
-        if method == 'quantile':
-            bins = np.percentile(X_valid, np.linspace(0, 100, n_bins + 1))
-            bins = np.unique(bins)  # 去重
-            bins[0] = -np.inf
-            bins[-1] = np.inf
-        elif method == 'uniform':
-            bins = np.linspace(np.min(X_valid), np.max(X_valid), n_bins + 1)
-            bins[0] = -np.inf
-            bins[-1] = np.inf
-        else:
-            # 默认使用等频分箱
-            bins = np.percentile(X_valid, np.linspace(0, 100, n_bins + 1))
-            bins = np.unique(bins)
-            bins[0] = -np.inf
-            bins[-1] = np.inf
+        binner = OptimalBinning(
+            method=method,
+            max_n_bins=max_n_bins,
+            min_bin_size=min_bin_size,
+            verbose=False,
+            **kwargs
+        )
     
-    # 生成分箱标签
-    bin_labels = []
-    for i in range(len(bins) - 1):
-        if i == 0:
-            label = f"(-∞, {bins[i+1]:.2f})"
-        elif i == len(bins) - 2:
-            label = f"[{bins[i]:.2f}, +∞)"
-        else:
-            label = f"[{bins[i]:.2f}, {bins[i+1]:.2f})"
-        bin_labels.append(label)
+    binner.fit(df[[feature]], df['target'])
     
-    # 分配样本到各箱
-    bin_indices = np.digitize(X_valid, bins) - 1
-    bin_indices = np.clip(bin_indices, 0, len(bin_labels) - 1)
+    # 应用分箱获取分箱索引
+    bin_indices = binner.transform(df[[feature]], metric='indices').values.flatten()
     
-    # 计算统计信息
+    # 获取分箱标签
+    bin_labels = None
+    if feature in binner.bin_tables_:
+        bin_table = binner.bin_tables_[feature]
+        if '分箱标签' in bin_table.columns:
+            bin_labels = bin_table['分箱标签'].tolist()
+    
+    # 使用统一的compute_bin_stats计算分箱统计
+    stats_df = compute_bin_stats(bin_indices, y_valid.values, bin_labels=bin_labels, round_digits=False)
+    
+    # 构建结果DataFrame（兼容viz模块的期望格式）
     results = []
-    for i, label in enumerate(bin_labels):
-        mask = bin_indices == i
-        total = np.sum(mask)
-        good = np.sum((y_valid[mask] == 0)) if total > 0 else 0
-        bad = np.sum((y_valid[mask] == 1)) if total > 0 else 0
-        bad_rate = bad / total if total > 0 else 0
+    for _, row in stats_df.iterrows():
+        # 获取分箱标签
+        if '分箱标签' in row and pd.notna(row['分箱标签']):
+            label = row['分箱标签']
+        else:
+            label = f"Bin_{int(row['分箱'])}"
         
         results.append({
             '分箱': label,
-            '样本总数': total,
-            '好样本数': good,
-            '坏样本数': bad,
-            '坏样本率': bad_rate,
-            '样本占比': total / len(X_valid)
+            '样本总数': int(row['样本总数']),
+            '好样本数': int(row['好样本数']),
+            '坏样本数': int(row['坏样本数']),
+            '坏样本率': row['坏样本率'],
+            '样本占比': row['样本占比'],
         })
     
     return pd.DataFrame(results)
@@ -741,7 +758,7 @@ def dataframe_plot(df, row_height=0.4, font_size=14, header_color='#2639E9',
     )
 
     mpl_table.auto_set_font_size(False)
-    mpl_table.set_font_size(font_size)
+    mpl_table.set_fontsize(font_size)
 
     for k, cell in six.iteritems(mpl_table._cells):
         cell.set_edgecolor(edge_color)

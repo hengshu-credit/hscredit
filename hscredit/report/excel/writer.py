@@ -204,6 +204,145 @@ class ExcelWriter:
         col_letter = column if isinstance(column, str) else get_column_letter(column)
         worksheet.column_dimensions[col_letter].width = width
 
+    def _get_column_cells_data(self, worksheet: Worksheet, col_letter: str) -> List[Tuple[int, Any, str, Any]]:
+        """获取指定列的所有单元格数据。
+        
+        :param worksheet: 工作表对象
+        :param col_letter: 列字母
+        :return: 列表，每项为 (row_idx, value, style_name, fill)
+        """
+        col_idx = column_index_from_string(col_letter)
+        cells_data = []
+        # 使用模板的max_row作为上限，确保处理所有行（包括空白行）
+        max_row = max(worksheet.max_row, self.style_sheet.max_row)
+        for row_idx in range(1, max_row + 1):
+            cell = worksheet.cell(row=row_idx, column=col_idx)
+            style_name = cell.style if cell.style else None
+            # 保存填充样式，用于后续恢复
+            fill_copy = copy.copy(cell.fill) if cell.fill else None
+            cells_data.append((row_idx, cell.value, style_name, fill_copy))
+        return cells_data
+
+    def _reapply_styles_to_column(self, worksheet: Worksheet, col_letter: str, cells_data: List[Tuple[int, Any, str, Any]]) -> None:
+        """重新应用样式到指定列的单元格。
+        
+        :param worksheet: 工作表对象
+        :param col_letter: 列字母
+        :param cells_data: 单元格数据列表
+        """
+        from openpyxl.styles import PatternFill
+        
+        col_idx = column_index_from_string(col_letter)
+        white_fill = PatternFill(fill_type='solid', start_color='FFFFFF')
+        
+        for row_idx, value, style_name, original_fill in cells_data:
+            cell = worksheet.cell(row=row_idx, column=col_idx)
+            # 检查是否需要保留文本格式（用于消除绿色感叹号）
+            need_text_format = isinstance(value, str) and self.is_numeric_like_string(value)
+            
+            # 重新应用样式
+            if style_name and style_name in self.workbook.named_styles:
+                cell.style = style_name
+            
+            # 恢复原始填充样式（空白单元格的背景色）
+            if original_fill and original_fill.fill_type:
+                # 如果原始有填充，恢复原始填充
+                cell.fill = original_fill
+            elif not value and (not style_name or style_name == '常规'):
+                # 如果原始无填充且是空白单元格（style为None或'常规'），设置白色填充以保持一致性
+                cell.fill = white_fill
+            
+            # 如果值是类似数字的字符串，强制设置为文本格式以消除绿色感叹号
+            # 这必须在应用样式之后执行，因为命名样式可能包含数字格式
+            if need_text_format:
+                cell.number_format = '@'
+
+    def adjust_columns_width(
+        self,
+        worksheet: Worksheet,
+        columns: Optional[Union[str, List[str], int, List[int]]] = None,
+        start_col: Optional[Union[str, int]] = None,
+        end_col: Optional[Union[str, int]] = None,
+        max_width: float = 50,
+        min_width: float = 8,
+        extra_padding: float = 2.0
+    ) -> None:
+        """批量调整多列宽度，确保边框样式不丢失。
+
+        通过重新应用命名样式的方式来确保样式不丢失。
+
+        :param worksheet: 工作表对象
+        :param columns: 需要调整宽度的列，可以是列字母或列索引列表，默认为None（自动检测所有有数据的列）
+        :param start_col: 起始列，与 columns 参数互斥
+        :param end_col: 结束列，与 columns 参数互斥
+        :param max_width: 最大列宽，默认为50
+        :param min_width: 最小列宽，默认为8
+        :param extra_padding: 额外填充宽度，默认为2.0
+
+        **参考样例**
+
+        >>> # 调整指定列
+        >>> writer.adjust_columns_width(worksheet, columns=['A', 'B', 'C'])
+        >>>
+        >>> # 调整列范围
+        >>> writer.adjust_columns_width(worksheet, start_col='A', end_col='F')
+        >>>
+        >>> # 自动检测并调整所有有数据的列
+        >>> writer.adjust_columns_width(worksheet)
+        """
+        # 确定要调整的列
+        if columns is not None:
+            if isinstance(columns, (str, int)):
+                columns = [columns]
+            col_letters = [c if isinstance(c, str) else get_column_letter(c) for c in columns]
+        elif start_col is not None and end_col is not None:
+            start_idx = column_index_from_string(start_col) if isinstance(start_col, str) else start_col
+            end_idx = column_index_from_string(end_col) if isinstance(end_col, str) else end_col
+            col_letters = [get_column_letter(i) for i in range(start_idx, end_idx + 1)]
+        else:
+            # 自动检测所有有数据的列
+            max_col = worksheet.max_column
+            col_letters = [get_column_letter(i) for i in range(1, max_col + 1)]
+
+        # 保存每列的单元格数据
+        columns_data = {}
+        for col_letter in col_letters:
+            columns_data[col_letter] = self._get_column_cells_data(worksheet, col_letter)
+
+        # 计算并设置每列的宽度
+        for col_letter in col_letters:
+            col_idx = column_index_from_string(col_letter)
+            max_content_width = min_width
+
+            # 遍历该列所有单元格，计算最大内容宽度
+            for row_idx in range(1, worksheet.max_row + 1):
+                cell = worksheet.cell(row=row_idx, column=col_idx)
+                if cell.value is not None:
+                    value_str = str(cell.value)
+                    _, eng_cnt, chi_cnt = self.check_contain_chinese(value_str)
+                    content_width = (eng_cnt * self.english_width + chi_cnt * self.chinese_width) * self.fontsize + extra_padding
+                    max_content_width = max(max_content_width, content_width)
+
+            # 应用列宽限制
+            final_width = min(max_content_width, max_width)
+            worksheet.column_dimensions[col_letter].width = final_width
+
+        # 重新应用样式到所有列
+        for col_letter, cells_data in columns_data.items():
+            self._reapply_styles_to_column(worksheet, col_letter, cells_data)
+        
+        # 为数据区域的空白单元格添加白色填充（确保视觉效果一致）
+        # 只填充到实际数据行 + 缓冲行数，不填充整个Excel（100万+行）
+        white_fill = PatternFill(fill_type='solid', start_color='FFFFFF')
+        max_row_to_fill = min(worksheet.max_row + 10, 1000)  # 最多填充到数据行+10行或1000行
+        for col_letter in col_letters:
+            col_idx = column_index_from_string(col_letter)
+            for row_idx in range(1, max_row_to_fill + 1):
+                cell = worksheet.cell(row=row_idx, column=col_idx)
+                # 如果没有值且没有填充，设置为白色填充
+                if not cell.value and (not cell.fill or not cell.fill.fill_type):
+                    cell.fill = white_fill
+
     @staticmethod
     def set_number_format(
         worksheet: Worksheet,
@@ -364,7 +503,7 @@ class ExcelWriter:
         :param insert_space: 插入位置，如'B2'或(2, 2)
         :param value: 插入的内容，默认为""
         :param style: 样式名称，默认为"content"
-        :param auto_width: 是否自动调整列宽，默认为False
+        :param auto_width: 是否自动调整列宽，默认为False（推荐在数据全部写入后使用 adjust_columns_width 批量调整）
         :param end_space: 合并单元格的结束位置，默认为None
         :param align: 文本对齐方式，默认为None，例如{'horizontal': 'left', 'vertical': 'center'}
         :param max_col_width: 最大列宽，默认为50
@@ -378,8 +517,8 @@ class ExcelWriter:
         >>> # 合并单元格
         >>> writer.insert_value2sheet(worksheet, "B2", value="标题", style="header", end_space="D2")
         >>>
-        >>> # 自动调整列宽
-        >>> writer.insert_value2sheet(worksheet, "B2", value="内容", auto_width=True)
+        >>> # 批量调整列宽（推荐在所有数据写入完成后调用）
+        >>> writer.adjust_columns_width(worksheet, columns=['A', 'B', 'C'])
         """
         # 解析位置
         if isinstance(insert_space, str):
@@ -410,14 +549,25 @@ class ExcelWriter:
 
             worksheet.merge_cells(f"{start_col}{start_row}:{end_col}{end_row}")
 
+        # 格式化值
+        formatted_value = self.astype_insertvalue(value)
+
         # 设置值
-        worksheet[f"{start_col}{start_row}"] = value
+        worksheet[f"{start_col}{start_row}"] = formatted_value
+
+        # 如果是类似数字的字符串，设置单元格为文本格式以避免绿色感叹号
+        if self.is_numeric_like_string(value):
+            cell.number_format = '@'
 
         # 自动调整列宽
         if auto_width:
+            # 保存当前列的单元格数据
+            cells_data = self._get_column_cells_data(worksheet, start_col)
+            
+            # 计算新宽度
             curr_width = worksheet.column_dimensions[start_col].width
-            _, eng_cnt, chi_cnt = self.check_contain_chinese(value)
-            auto_width = min(
+            _, eng_cnt, chi_cnt = self.check_contain_chinese(str(formatted_value))
+            calculated_width = min(
                 max([
                     (eng_cnt * self.english_width + chi_cnt * self.chinese_width) * self.fontsize,
                     10,
@@ -425,7 +575,12 @@ class ExcelWriter:
                 ]),
                 max_col_width
             )
-            worksheet.column_dimensions[start_col].width = auto_width
+            
+            # 设置列宽
+            worksheet.column_dimensions[start_col].width = calculated_width
+            
+            # 重新应用样式
+            self._reapply_styles_to_column(worksheet, start_col, cells_data)
 
         # 返回下一个位置
         if end_space is not None:
@@ -488,7 +643,7 @@ class ExcelWriter:
         :param merge_column: 需要分组显示的列，默认为None
         :param header: 是否存储DataFrame的header，默认为True
         :param index: 是否存储DataFrame的index，默认为False
-        :param auto_width: 是否自动调整列宽，默认为False
+        :param auto_width: 是否自动调整列宽，默认为False（在所有数据写入完成后统一调整，避免边框样式丢失）
         :param fill: 是否使用颜色填充而非边框，默认为False
         :param merge: 是否合并单元格，默认为False
         :param merge_index: 当存储index时，是否合并连续相同的index值，默认为True
@@ -517,8 +672,10 @@ class ExcelWriter:
         if isinstance(insert_space, str):
             start_row = int(re.findall(r"\d+", insert_space)[0])
             start_col = re.findall(r'\D+', insert_space)[0]
+            start_col_idx = column_index_from_string(start_col)
         else:
             start_row, start_col = insert_space
+            start_col_idx = start_col
             start_col = get_column_letter(start_col)
 
         # 计算合并行
@@ -715,6 +872,15 @@ class ExcelWriter:
                         self.merge_cells(worksheet, f"{merge_col}{s}", f"{merge_col}{e - 1}")
 
         end_row = start_row + len(data) + df.columns.nlevels if header else start_row + len(data)
+        end_col_idx = column_index_from_string(start_col) + len(data.columns) + (df.index.nlevels if index else 0)
+
+        # 批量调整列宽（在所有数据写入完成后统一调整，避免边框样式丢失）
+        if auto_width:
+            self.adjust_columns_width(
+                worksheet,
+                start_col=start_col_idx,
+                end_col=end_col_idx - 1
+            )
 
         return end_row, column_index_from_string(start_col) + len(data.columns)
 
@@ -738,7 +904,7 @@ class ExcelWriter:
         :param col_index: 起始列索引或字母
         :param merge_rows: 需要合并的行索引列表，默认为None
         :param style: 样式名称，默认为空
-        :param auto_width: 是否自动调整列宽，默认为False
+        :param auto_width: 是否自动调整列宽，默认为False（推荐在数据全部写入后使用 adjust_columns_width 批量调整）
         :param style_only: 是否仅应用样式，默认为False
         :param multi_levels: 是否多层索引，默认为False
         """
@@ -754,7 +920,7 @@ class ExcelWriter:
                         self.insert_value2sheet(
                             worksheet,
                             f'{get_column_letter(curr_col + start)}{row_index}',
-                            self.astype_insertvalue(item),
+                            item,
                             style=f"{style}_left" if style else "left",
                             auto_width=auto_width,
                             end_space=f'{get_column_letter(curr_col + start + length - 1)}{row_index}'
@@ -763,7 +929,7 @@ class ExcelWriter:
                         self.insert_value2sheet(
                             worksheet,
                             f'{get_column_letter(curr_col + start)}{row_index}',
-                            self.astype_insertvalue(item),
+                            item,
                             style=f"{style}_middle" if style else "middle",
                             auto_width=auto_width,
                             end_space=f'{get_column_letter(curr_col + start + length - 1)}{row_index}'
@@ -772,7 +938,7 @@ class ExcelWriter:
                     self.insert_value2sheet(
                         worksheet,
                         f'{get_column_letter(curr_col + start)}{row_index}',
-                        self.astype_insertvalue(item),
+                        item,
                         style=f"{style}_right" if style else "right",
                         auto_width=auto_width,
                         end_space=f'{get_column_letter(curr_col + start + length - 1)}{row_index}'
@@ -786,7 +952,7 @@ class ExcelWriter:
                         self.insert_value2sheet(
                             worksheet,
                             f'{get_column_letter(curr_col + j)}{row_index}',
-                            self.astype_insertvalue(v),
+                            v,
                             style="merge_left",
                             auto_width=auto_width
                         )
@@ -794,7 +960,7 @@ class ExcelWriter:
                         self.insert_value2sheet(
                             worksheet,
                             f'{get_column_letter(curr_col + j)}{row_index}',
-                            self.astype_insertvalue(v),
+                            v,
                             style="merge_right",
                             auto_width=auto_width
                         )
@@ -802,7 +968,7 @@ class ExcelWriter:
                         self.insert_value2sheet(
                             worksheet,
                             f'{get_column_letter(curr_col + j)}{row_index}',
-                            self.astype_insertvalue(v),
+                            v,
                             style="merge_middle",
                             auto_width=auto_width
                         )
@@ -810,7 +976,7 @@ class ExcelWriter:
                     self.insert_value2sheet(
                         worksheet,
                         f'{get_column_letter(curr_col + j)}{row_index}',
-                        self.astype_insertvalue(v),
+                        v,
                         style=style or "middle",
                         auto_width=auto_width
                     )
@@ -819,7 +985,7 @@ class ExcelWriter:
                         self.insert_value2sheet(
                             worksheet,
                             f'{get_column_letter(curr_col + j)}{row_index}',
-                            self.astype_insertvalue(v),
+                            v,
                             style=f"{style}_left" if style else "left",
                             auto_width=auto_width
                         )
@@ -827,7 +993,7 @@ class ExcelWriter:
                         self.insert_value2sheet(
                             worksheet,
                             f'{get_column_letter(curr_col + j)}{row_index}',
-                            self.astype_insertvalue(v),
+                            v,
                             style=f"{style}_right" if style else "right",
                             auto_width=auto_width
                         )
@@ -835,7 +1001,7 @@ class ExcelWriter:
                         self.insert_value2sheet(
                             worksheet,
                             f'{get_column_letter(curr_col + j)}{row_index}',
-                            self.astype_insertvalue(v),
+                            v,
                             style=f"{style}_middle" if style else "middle",
                             auto_width=auto_width
                         )
@@ -933,6 +1099,59 @@ class ExcelWriter:
             return round(float(value), decimal_point)
         else:
             return value
+
+    @staticmethod
+    def is_numeric_like_string(value: Any) -> bool:
+        """检查值是否为类似数字的字符串（如 "00123"、"123.45"、"12.34%"、"1,234.56"）。
+
+        这类字符串在Excel中会显示绿色感叹号（以文本形式存储的数字）。
+
+        :param value: 需要检查的值
+        :return: 如果是类似数字的字符串返回True，否则返回False
+        """
+        if not isinstance(value, str):
+            return False
+        if not value:
+            return False
+        
+        # 去除首尾空格
+        value = value.strip()
+        
+        # 排除纯空格字符串
+        if not value:
+            return False
+        
+        # 排除常见的非数字字符串（如日期格式）
+        if re.match(r'^\d{4}[-/\.]\d{1,2}[-/\.]\d{1,2}$', value):
+            return False
+        
+        # 检查是否为百分比格式（如 "12.34%"）
+        if re.match(r'^[+-]?(\d{1,3}(,\d{3})*|\d+)(\.\d+)?%$', value):
+            return True
+        
+        # 检查是否为带千位分隔符的数字（如 "1,234.56" 或 "1,234"）
+        if re.match(r'^[+-]?(\d{1,3}(,\d{3})+|\d+)(\.\d+)?$', value):
+            return True
+        
+        # 检查是否为纯数字字符串（包括前导零，如 "00123"）
+        if re.match(r'^[+-]?\d+\.?\d*$', value):
+            # 排除纯整数（非前导零情况）
+            # 如果字符串长度大于1且以0开头且后面跟着数字，则是前导零数字
+            if len(value) > 1 and value[0] == '0' and value[1].isdigit():
+                return True
+            # 检查是否包含小数点
+            if '.' in value:
+                return True
+            # 检查是否带正负号
+            if value[0] in '+-':
+                return True
+            return False
+        
+        # 检查是否为科学计数法（如 "1e5"、"1.2E-3"）
+        if re.match(r'^[+-]?\d+(\.\d+)?[eE][+-]?\d+$', value):
+            return True
+        
+        return False
 
     @staticmethod
     def calc_continuous_cnt(list_: List, index_: int = 0) -> Tuple[Any, Optional[int], Optional[int]]:

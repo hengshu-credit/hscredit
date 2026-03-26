@@ -168,9 +168,11 @@ class OptimalBinning(BaseBinning):
         self.method = method
         self.user_splits = user_splits
         self.prebinning = prebinning
-        self.prebinning_params = prebinning_params or {}
-        # 合并从kwargs中提取的预分箱参数
-        self.prebinning_params.update(prebinning_params_from_kwargs)
+        # 保存原始 prebinning_params，不修改传入的参数（为了sklearn clone兼容）
+        original_params = prebinning_params or {}
+        # 合并从kwargs中提取的预分箱参数，创建新的字典而不是修改原字典
+        merged_params = {**original_params, **prebinning_params_from_kwargs}
+        self.prebinning_params = merged_params if merged_params else None
         
         # 清理kwargs，移除不应该传递给底层分箱器的参数
         self.kwargs = self._clean_kwargs(kwargs)
@@ -325,7 +327,7 @@ class OptimalBinning(BaseBinning):
         }
         
         # 应用 prebinning_params 中的参数
-        if self.prebinning_params:
+        if self.prebinning_params is not None:
             # 处理可能的键名映射（如 prebinning_method -> method）
             for key, value in self.prebinning_params.items():
                 if key in ['method'] and key not in base_params:

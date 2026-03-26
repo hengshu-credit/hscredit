@@ -1,9 +1,10 @@
 """概率转评分模块.
 
-提供多种将模型预测概率转换为评分的方法，支持信用评分和欺诈评分两种场景。
+提供多种将概率值转换为评分的方法，支持信用评分和欺诈评分两种场景。
 
-**核心功能**
+**核心特点**
 
+- **纯概率输入**: fit和predict方法只接收概率值，不依赖外部模型
 - 标准评分卡方法: 基于log-odds的标准信用评分转换
 - 线性映射方法: 简单直接的线性转换
 - 分位数映射: 基于数据分布的分位数映射
@@ -45,14 +46,12 @@
 - numpy
 - pandas
 
-**示例**
+**使用示例**
 
->>> from hscredit.core.models import XGBoostRiskModel
 >>> from hscredit.core.models.probability_to_score import ScoreTransformer
 >>>
->>> # 训练基础模型
->>> model = XGBoostRiskModel()
->>> model.fit(X_train, y_train)
+>>> # 假设已有概率值(从任何模型获取)
+>>> proba = model.predict_proba(X)[:, 1]  # 或其他方式获取概率
 >>>
 >>> # 信用评分(概率越高分越低): 300-1000分
 >>> transformer = ScoreTransformer(
@@ -65,8 +64,8 @@
 ...     pdo=20,
 ...     precision=0
 ... )
->>> transformer.fit(model, X_train)
->>> credit_scores = transformer.predict_score(X_test)
+>>> transformer.fit(proba)  # 只传入概率值
+>>> credit_scores = transformer.predict(proba)  # 输出评分
 >>>
 >>> # 欺诈评分(概率越高分越高): 0-100分
 >>> fraud_transformer = ScoreTransformer(
@@ -76,8 +75,8 @@
 ...     direction='ascending',
 ...     precision=0
 ... )
->>> fraud_transformer.fit(model, X_train)
->>> fraud_scores = fraud_transformer.predict_score(X_test)
+>>> fraud_transformer.fit(proba)  # 只传入概率值
+>>> fraud_scores = fraud_transformer.predict(proba)  # 输出评分
 """
 
 import warnings
@@ -167,16 +166,12 @@ class BaseScoreTransformer(BaseEstimator, ABC):
     @abstractmethod
     def fit(
         self,
-        model: Any,
-        X: Union[np.ndarray, pd.DataFrame],
-        y: Optional[Union[np.ndarray, pd.Series]] = None,
+        proba: Union[np.ndarray, pd.Series],
         **kwargs
     ) -> 'BaseScoreTransformer':
         """拟合评分转换器.
 
-        :param model: 已训练的分类模型，需有predict_proba方法
-        :param X: 特征矩阵或包含target的DataFrame
-        :param y: 目标变量，可选
+        :param proba: 训练数据的预测概率(正类概率)
         :return: self
         """
         pass
@@ -190,36 +185,18 @@ class BaseScoreTransformer(BaseEstimator, ABC):
         """
         pass
 
-    def predict_score(
-        self,
-        X: Optional[Union[np.ndarray, pd.DataFrame]] = None,
-        proba: Optional[Union[np.ndarray, pd.Series]] = None
-    ) -> np.ndarray:
+    def predict(self, proba: Union[np.ndarray, pd.Series]) -> np.ndarray:
         """预测评分.
 
-        可通过传入X或proba之一来获取评分。
-
-        :param X: 特征矩阵，用于预测概率
-        :param proba: 直接传入预测概率
+        :param proba: 预测概率(正类概率)
         :return: 评分数组
 
         **示例**
 
-        >>> # 通过特征矩阵预测
-        >>> scores = transformer.predict_score(X_test)
-
-        >>> # 通过概率直接转换
-        >>> proba = model.predict_proba(X_test)[:, 1]
-        >>> scores = transformer.predict_score(proba=proba)
+        >>> proba = model.predict_proba(X_test)[:, 1]  # 从模型获取概率
+        >>> scores = transformer.predict(proba)  # 转换为评分
         """
         check_is_fitted(self)
-
-        if proba is None:
-            if X is None:
-                raise ValueError("必须提供X或proba参数之一")
-            if not hasattr(self, 'model_'):
-                raise ValueError("未找到模型，请先调用fit()")
-            proba = self.model_.predict_proba(X)[:, 1]
 
         proba = np.asarray(proba)
 
@@ -237,6 +214,9 @@ class BaseScoreTransformer(BaseEstimator, ABC):
 
         return scores
 
+    # 向后兼容的方法别名
+    predict_score = predict
+
     def inverse_transform(self, scores: Union[np.ndarray, pd.Series]) -> np.ndarray:
         """将评分反向转换为概率.
 
@@ -247,35 +227,6 @@ class BaseScoreTransformer(BaseEstimator, ABC):
         """
         check_is_fitted(self)
         raise NotImplementedError("此方法需要在子类中实现")
-
-    def _prepare_data(
-        self,
-        X: Union[np.ndarray, pd.DataFrame],
-        y: Optional[Union[np.ndarray, pd.Series]] = None,
-        target: str = 'target'
-    ) -> Tuple[np.ndarray, Optional[np.ndarray]]:
-        """准备数据，支持两种传参风格.
-
-        :param X: 特征矩阵或包含target的DataFrame
-        :param y: 目标变量，可选
-        :param target: 目标列名
-        :return: (X, y) 处理后的数据
-        """
-        # scorecardpipeline风格：从X中提取target
-        if y is None:
-            if isinstance(X, pd.DataFrame) and target in X.columns:
-                y = X[target].values
-                X = X.drop(columns=[target])
-            else:
-                raise ValueError(f"y为None时，X必须是包含'{target}'列的DataFrame")
-        else:
-            if isinstance(y, pd.Series):
-                y = y.values
-
-        if isinstance(X, pd.DataFrame):
-            X = X.values
-
-        return X, y
 
 
 class StandardScoreTransformer(BaseScoreTransformer):
@@ -297,11 +248,15 @@ class StandardScoreTransformer(BaseScoreTransformer):
         - 当odds增加rate倍时，分数的变化量
     :param rate: 倍率，默认2
         - odds增加的倍数
+    :param step: score_odds_reference的步长，默认None(自动计算为pdo/10)
     :param precision: 评分精度，默认0
     :param clip: 是否截断，默认True
 
     **示例**
 
+    >>> # 从模型获取概率值
+    >>> proba = model.predict_proba(X_train)[:, 1]
+    >>>
     >>> transformer = StandardScoreTransformer(
     ...     lower=300,
     ...     upper=1000,
@@ -309,10 +264,13 @@ class StandardScoreTransformer(BaseScoreTransformer):
     ...     base_odds=0.02,
     ...     base_score=600,
     ...     pdo=20,
-    ...     rate=2
+    ...     rate=2,
+    ...     step=5  # 自定义步长
     ... )
-    >>> transformer.fit(model, X_train)
-    >>> scores = transformer.predict_score(X_test)
+    >>> transformer.fit(proba)  # 只传入概率值
+    >>> scores = transformer.predict(proba_test)  # 输出评分
+    >>> # 查看评分与odds对应关系
+    >>> ref = transformer.score_odds_reference
     """
 
     def __init__(
@@ -324,6 +282,7 @@ class StandardScoreTransformer(BaseScoreTransformer):
         base_score: float = 600,
         pdo: float = 20,
         rate: float = 2,
+        step: Optional[int] = None,
         precision: int = 0,
         clip: bool = True
     ):
@@ -332,6 +291,7 @@ class StandardScoreTransformer(BaseScoreTransformer):
         self.base_score = base_score
         self.pdo = pdo
         self.rate = rate
+        self.step = step
 
     def _compute_parameters(self) -> Tuple[float, float]:
         """计算评分公式中的参数A和B.
@@ -352,29 +312,18 @@ class StandardScoreTransformer(BaseScoreTransformer):
 
     def fit(
         self,
-        model: Any,
-        X: Union[np.ndarray, pd.DataFrame],
-        y: Optional[Union[np.ndarray, pd.Series]] = None,
-        target: str = 'target',
+        proba: Union[np.ndarray, pd.Series],
         **kwargs
     ) -> 'StandardScoreTransformer':
         """拟合评分转换器.
 
-        主要保存模型引用，参数在初始化时已确定。
+        标准评分卡方法的参数在初始化时已确定，fit主要用于验证参数合理性。
 
-        :param model: 已训练的分类模型
-        :param X: 特征矩阵或包含target的DataFrame
-        :param y: 目标变量，可选
-        :param target: 目标列名，默认'target'
+        :param proba: 训练数据的预测概率(用于验证参数合理性)
         :return: self
         """
-        # 准备数据(用于验证，实际参数已预设)
-        X_prep, y_prep = self._prepare_data(X, y, target)
-
-        # 保存模型
-        if not hasattr(model, 'predict_proba'):
-            raise ValueError("模型必须有predict_proba方法")
-        self.model_ = model
+        # 保存训练概率用于参考
+        self.train_proba_ = np.asarray(proba)
 
         # 计算参数
         self.A_, self.B_ = self._compute_parameters()
@@ -473,6 +422,72 @@ class StandardScoreTransformer(BaseScoreTransformer):
 
         return proba
 
+    @property
+    def score_odds_reference(self) -> pd.DataFrame:
+        """评分与逾期率理论对应参照表.
+
+        基于当前评分参数生成评分与odds、逾期率的对应关系表。
+        可通过 step 参数控制步长，或在初始化时设置 self.step。
+
+        :return: DataFrame包含评分、odds、好坏客户比例、逾期率等列
+        """
+        # 计算评分范围（默认以base_score为中心，±5个pdo）
+        step = self.step if self.step is not None else max(1, int(self.pdo / 10))
+        min_score = max(0, int(self.base_score - 5 * self.pdo))
+        max_score = int(self.base_score + 5 * self.pdo)
+        scores = np.arange(min_score, max_score + 1, step)
+
+        results = []
+        for score in scores:
+            odds = np.exp((self.A_ - score) / self.B_)
+            prob = odds / (1 + odds)
+            prob = np.clip(prob, 0, 1)
+
+            # 计算好客户:坏客户比例
+            # odds = 好客户数/坏客户数，即 好:坏 = odds:1
+            if odds >= 1:
+                good_to_bad_ratio = f"{odds:.1f}:1"
+            else:
+                good_to_bad_ratio = f"1:{1/odds:.1f}"
+
+            results.append({
+                '评分': score,
+                '理论Odds': round(odds, 4),
+                '好客户:坏客户': good_to_bad_ratio,
+                '理论逾期率': round(prob, 6),
+                '理论逾期率(%)': f"{prob*100:.4f}%",
+                '对数Odds': round(np.log(odds), 4) if odds > 0 else -np.inf,
+            })
+
+        return pd.DataFrame(results)
+
+    def get_score_reference_by_prob(self, prob_range: tuple = (0.001, 0.5),
+                                     n_points: int = 50) -> pd.DataFrame:
+        """根据逾期率范围获取对应的评分参照表.
+
+        :param prob_range: 概率范围，默认(0.001, 0.5)
+        :param n_points: 采样点数，默认50
+        :return: DataFrame包含概率、odds、评分等列
+        """
+        min_prob, max_prob = prob_range
+        min_prob = max(0.0001, min(min_prob, 0.9999))
+        max_prob = max(0.0001, min(max_prob, 0.9999))
+        probs = np.linspace(min_prob, max_prob, n_points)
+
+        results = []
+        for prob in probs:
+            odds = prob / (1 - prob)
+            score = self.A_ - self.B_ * np.log(odds)
+
+            results.append({
+                '理论逾期率': round(prob, 6),
+                '理论逾期率(%)': f"{prob*100:.4f}%",
+                '理论Odds': round(odds, 4),
+                '评分': round(score, 2),
+            })
+
+        return pd.DataFrame(results)
+
 
 class LinearScoreTransformer(BaseScoreTransformer):
     """线性评分转换器.
@@ -495,14 +510,17 @@ class LinearScoreTransformer(BaseScoreTransformer):
 
     **示例**
 
+    >>> # 从模型获取概率值
+    >>> proba = model.predict_proba(X_train)[:, 1]
+    >>>
     >>> # 欺诈分(0-100, 越大越危险)
     >>> transformer = LinearScoreTransformer(
     ...     lower=0,
     ...     upper=100,
     ...     direction='ascending'
     ... )
-    >>> transformer.fit(model, X_train)
-    >>> scores = transformer.predict_score(X_test)
+    >>> transformer.fit(proba)  # 只传入概率值
+    >>> scores = transformer.predict(proba_test)  # 输出评分
     """
 
     def __init__(
@@ -517,27 +535,18 @@ class LinearScoreTransformer(BaseScoreTransformer):
 
     def fit(
         self,
-        model: Any,
-        X: Union[np.ndarray, pd.DataFrame],
-        y: Optional[Union[np.ndarray, pd.Series]] = None,
-        target: str = 'target',
+        proba: Union[np.ndarray, pd.Series],
         **kwargs
     ) -> 'LinearScoreTransformer':
         """拟合评分转换器.
 
-        :param model: 已训练的分类模型
-        :param X: 特征矩阵或包含target的DataFrame
-        :param y: 目标变量，可选
-        :param target: 目标列名，默认'target'
+        线性方法的参数在初始化时已确定，fit主要用于保存训练概率分布。
+
+        :param proba: 训练数据的预测概率
         :return: self
         """
-        # 准备数据
-        X_prep, y_prep = self._prepare_data(X, y, target)
-
-        # 保存模型
-        if not hasattr(model, 'predict_proba'):
-            raise ValueError("模型必须有predict_proba方法")
-        self.model_ = model
+        # 保存训练概率用于参考
+        self.train_proba_ = np.asarray(proba)
 
         # 确定方向
         self.direction_ = self._determine_direction()
@@ -612,14 +621,17 @@ class QuantileScoreTransformer(BaseScoreTransformer):
 
     **示例**
 
+    >>> # 从模型获取概率值
+    >>> proba = model.predict_proba(X_train)[:, 1]
+    >>>
     >>> transformer = QuantileScoreTransformer(
     ...     lower=0,
     ...     upper=100,
     ...     direction='ascending',
     ...     n_quantiles=100
     ... )
-    >>> transformer.fit(model, X_train, y_train)
-    >>> scores = transformer.predict_score(X_test)
+    >>> transformer.fit(proba)  # 只传入概率值，学习概率分布
+    >>> scores = transformer.predict(proba_test)  # 输出评分
     """
 
     def __init__(
@@ -636,32 +648,18 @@ class QuantileScoreTransformer(BaseScoreTransformer):
 
     def fit(
         self,
-        model: Any,
-        X: Union[np.ndarray, pd.DataFrame],
-        y: Optional[Union[np.ndarray, pd.Series]] = None,
-        target: str = 'target',
+        proba: Union[np.ndarray, pd.Series],
         **kwargs
     ) -> 'QuantileScoreTransformer':
         """拟合评分转换器.
 
         学习训练数据的概率分布，用于后续分位数映射。
 
-        :param model: 已训练的分类模型
-        :param X: 特征矩阵或包含target的DataFrame
-        :param y: 目标变量，可选
-        :param target: 目标列名，默认'target'
+        :param proba: 训练数据的预测概率
         :return: self
         """
-        # 准备数据
-        X_prep, y_prep = self._prepare_data(X, y, target)
-
-        # 保存模型
-        if not hasattr(model, 'predict_proba'):
-            raise ValueError("模型必须有predict_proba方法")
-        self.model_ = model
-
-        # 计算训练集概率
-        self.train_proba_ = model.predict_proba(X_prep)[:, 1]
+        # 保存训练概率
+        self.train_proba_ = np.asarray(proba)
 
         # 保存分位数
         quantiles = np.linspace(0, 1, self.n_quantiles + 1)
@@ -761,6 +759,8 @@ class ScoreTransformer(BaseScoreTransformer):
     ...     base_score=600,
     ...     pdo=20
     ... )
+    >>> transformer.fit(proba_train)  # 只传入概率值
+    >>> credit_scores = transformer.predict(proba_test)
 
     **欺诈评分(概率越高分越高)**
     >>> transformer = ScoreTransformer(
@@ -769,18 +769,22 @@ class ScoreTransformer(BaseScoreTransformer):
     ...     upper=100,
     ...     direction='ascending'
     ... )
+    >>> transformer.fit(proba_train)  # 只传入概率值
+    >>> fraud_scores = transformer.predict(proba_test)
 
-    **示例**
-
-    **sklearn风格**
+    **完整示例**
+    >>> from hscredit.core.models.probability_to_score import ScoreTransformer
+    >>>
+    >>> # 从模型获取概率值(可从任何模型获取)
+    >>> proba_train = model.predict_proba(X_train)[:, 1]
+    >>> proba_test = model.predict_proba(X_test)[:, 1]
+    >>>
+    >>> # 创建并拟合转换器
     >>> transformer = ScoreTransformer(method='standard')
-    >>> transformer.fit(model, X_train, y_train)
-    >>> scores = transformer.predict_score(X_test)
-
-    **scorecardpipeline风格**
-    >>> transformer = ScoreTransformer(method='standard')
-    >>> transformer.fit(model, df_train)  # df_train包含target列
-    >>> scores = transformer.predict_score(df_test)
+    >>> transformer.fit(proba_train)
+    >>>
+    >>> # 转换概率为评分
+    >>> scores = transformer.predict(proba_test)
     """
 
     def __init__(
@@ -801,31 +805,14 @@ class ScoreTransformer(BaseScoreTransformer):
 
     def fit(
         self,
-        model: Any,
-        X: Union[np.ndarray, pd.DataFrame],
-        y: Optional[Union[np.ndarray, pd.Series]] = None,
-        target: Optional[str] = None,
+        proba: Union[np.ndarray, pd.Series],
         **kwargs
     ) -> 'ScoreTransformer':
         """拟合评分转换器.
 
-        支持两种传参风格:
-
-        **sklearn风格**::
-            transformer.fit(model, X_train, y_train)
-
-        **scorecardpipeline风格**::
-            transformer.fit(model, df_train)  # df_train包含target列
-
-        :param model: 已训练的分类模型
-        :param X: 特征矩阵或包含target的DataFrame
-        :param y: 目标变量，可选
-        :param target: 目标列名，默认使用初始化时设置的target
+        :param proba: 训练数据的预测概率(正类概率)
         :return: self
         """
-        # 使用初始化时设置的target
-        target = target or self.target
-
         # 创建具体的转换器
         if self.method == 'standard':
             self.transformer_ = StandardScoreTransformer(
@@ -857,11 +844,12 @@ class ScoreTransformer(BaseScoreTransformer):
             raise ValueError(f"不支持的转换方法: {self.method}")
 
         # 拟合具体转换器
-        self.transformer_.fit(model, X, y, target=target, **kwargs)
+        self.transformer_.fit(proba, **kwargs)
 
         # 复制重要属性
-        self.model_ = self.transformer_.model_
         self.direction_ = self.transformer_.direction_
+        if hasattr(self.transformer_, 'train_proba_'):
+            self.train_proba_ = self.transformer_.train_proba_
 
         self._is_fitted = True
 
@@ -977,7 +965,8 @@ def plot_score_transformation_curve(
     proba_range: Optional[np.ndarray] = None,
     figsize: Tuple[int, int] = (10, 6),
     title: Optional[str] = None,
-    show: bool = True
+    show: bool = True,
+    colors: Optional[List[str]] = None
 ) -> Any:
     """绘制概率-评分转换曲线.
 
@@ -986,19 +975,34 @@ def plot_score_transformation_curve(
     :param figsize: 图表大小，默认(10, 6)
     :param title: 图表标题，可选
     :param show: 是否显示图表，默认True
+    :param colors: 颜色列表，默认使用hscredit配色 ["#2639E9", "#F76E6C", "#FE7715"]
     :return: matplotlib Figure对象
 
     **示例**
 
+    >>> proba = model.predict_proba(X_train)[:, 1]  # 从模型获取概率
     >>> transformer = ScoreTransformer(method='standard')
-    >>> transformer.fit(model, X_train)
+    >>> transformer.fit(proba)  # 只传入概率值
     >>> fig = plot_score_transformation_curve(transformer)
     >>> fig.savefig('transformation_curve.png')
     """
     if not MATPLOTLIB_AVAILABLE:
         raise ImportError("需要安装matplotlib才能绘图")
 
+    # hscredit默认配色
+    if colors is None:
+        colors = ["#2639E9", "#F76E6C", "#FE7715"]
+
     check_is_fitted(transformer)
+
+    # 辅助函数：设置坐标轴样式
+    def _setup_axis_style(ax, color="#2639E9"):
+        ax.spines['top'].set_color(color)
+        ax.spines['bottom'].set_color(color)
+        ax.spines['right'].set_color(color)
+        ax.spines['left'].set_color(color)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
 
     if proba_range is None:
         proba_range = np.linspace(0.001, 0.999, 100)
@@ -1009,25 +1013,26 @@ def plot_score_transformation_curve(
     # 创建图表
     fig, ax = plt.subplots(figsize=figsize)
 
-    ax.plot(proba_range, scores, 'b-', linewidth=2, label='转换曲线')
+    ax.plot(proba_range, scores, color=colors[0], linewidth=2, label='转换曲线')
 
     # 添加参考线
     if transformer.lower is not None:
-        ax.axhline(y=transformer.lower, color='r', linestyle='--', alpha=0.5, label=f'下界={transformer.lower}')
+        ax.axhline(y=transformer.lower, color=colors[1], linestyle='--', alpha=0.5, label=f'下界={transformer.lower}')
     if transformer.upper is not None:
-        ax.axhline(y=transformer.upper, color='r', linestyle='--', alpha=0.5, label=f'上界={transformer.upper}')
+        ax.axhline(y=transformer.upper, color=colors[1], linestyle='--', alpha=0.5, label=f'上界={transformer.upper}')
 
     # 设置标签
     direction_text = "递增(ascending)" if transformer.direction_ == 'ascending' else "递减(descending)"
-    ax.set_xlabel('预测概率 (P)', fontsize=12)
-    ax.set_ylabel('评分', fontsize=12)
+    ax.set_xlabel('预测概率 (P)', fontsize=12, fontweight='bold')
+    ax.set_ylabel('评分', fontsize=12, fontweight='bold')
 
     if title is None:
         title = f'概率-评分转换曲线 ({direction_text})'
-    ax.set_title(title, fontsize=14)
+    ax.set_title(title, fontsize=14, fontweight='bold')
 
-    ax.grid(True, alpha=0.3)
-    ax.legend(loc='best')
+    ax.grid(True, alpha=0.3, linestyle='--')
+    ax.legend(loc='best', frameon=False)
+    _setup_axis_style(ax)
 
     if show:
         plt.tight_layout()
@@ -1037,40 +1042,53 @@ def plot_score_transformation_curve(
 
 
 def compare_score_transformers(
-    model: Any,
-    X: Union[np.ndarray, pd.DataFrame],
+    proba: Union[np.ndarray, pd.Series],
     methods: List[str] = None,
     lower: Optional[float] = None,
     upper: Optional[float] = None,
     direction: str = 'descending',
     figsize: Tuple[int, int] = (12, 5),
-    show: bool = True
+    show: bool = True,
+    colors: Optional[List[str]] = None
 ) -> Any:
     """对比多种评分转换方法.
 
-    :param model: 已训练的分类模型
-    :param X: 特征矩阵
+    :param proba: 预测概率值(用于fit和对比)
     :param methods: 要对比的方法列表，默认['standard', 'linear', 'quantile']
     :param lower: 评分下界，默认None
     :param upper: 评分上界，默认None
     :param direction: 评分方向，默认'descending'
     :param figsize: 图表大小，默认(12, 5)
     :param show: 是否显示图表，默认True
+    :param colors: 颜色列表，默认使用hscredit配色 ["#2639E9", "#F76E6C", "#FE7715"]
     :return: matplotlib Figure对象
 
     **示例**
 
-    >>> fig = compare_score_transformers(model, X_test)
+    >>> proba = model.predict_proba(X_test)[:, 1]  # 从模型获取概率
+    >>> fig = compare_score_transformers(proba)
     >>> fig.savefig('transformer_comparison.png')
     """
     if not MATPLOTLIB_AVAILABLE:
         raise ImportError("需要安装matplotlib才能绘图")
 
+    # hscredit默认配色
+    if colors is None:
+        colors = ["#2639E9", "#F76E6C", "#FE7715", "#2E8B57", "#9370DB"]
+
     if methods is None:
         methods = ['standard', 'linear', 'quantile']
 
-    # 获取概率
-    proba = model.predict_proba(X)[:, 1]
+    # 辅助函数：设置坐标轴样式
+    def _setup_axis_style(ax, color="#2639E9"):
+        ax.spines['top'].set_color(color)
+        ax.spines['bottom'].set_color(color)
+        ax.spines['right'].set_color(color)
+        ax.spines['left'].set_color(color)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+
+    proba = np.asarray(proba)
 
     # 创建图表
     fig, axes = plt.subplots(1, 2, figsize=figsize)
@@ -1079,9 +1097,7 @@ def compare_score_transformers(
     ax1 = axes[0]
     proba_range = np.linspace(0.001, 0.999, 100)
 
-    colors = plt.cm.tab10(np.linspace(0, 1, len(methods)))
-
-    for method, color in zip(methods, colors):
+    for i, method in enumerate(methods):
         try:
             transformer = ScoreTransformer(
                 method=method,
@@ -1089,22 +1105,23 @@ def compare_score_transformers(
                 upper=upper,
                 direction=direction
             )
-            transformer.fit(model, X)
+            transformer.fit(proba)
             scores = transformer.transform(proba_range)
-            ax1.plot(proba_range, scores, label=method, color=color, linewidth=2)
+            ax1.plot(proba_range, scores, label=method, color=colors[i % len(colors)], linewidth=2)
         except Exception as e:
             warnings.warn(f"方法 {method} 失败: {e}")
 
-    ax1.set_xlabel('预测概率 (P)', fontsize=11)
-    ax1.set_ylabel('评分', fontsize=11)
-    ax1.set_title('转换曲线对比', fontsize=12)
-    ax1.legend(loc='best')
-    ax1.grid(True, alpha=0.3)
+    ax1.set_xlabel('预测概率 (P)', fontsize=11, fontweight='bold')
+    ax1.set_ylabel('评分', fontsize=11, fontweight='bold')
+    ax1.set_title('转换曲线对比', fontsize=12, fontweight='bold')
+    ax1.legend(loc='best', frameon=False)
+    ax1.grid(True, alpha=0.3, linestyle='--')
+    _setup_axis_style(ax1)
 
     # 右图: 评分分布对比
     ax2 = axes[1]
 
-    for method, color in zip(methods, colors):
+    for i, method in enumerate(methods):
         try:
             transformer = ScoreTransformer(
                 method=method,
@@ -1112,16 +1129,18 @@ def compare_score_transformers(
                 upper=upper,
                 direction=direction
             )
-            transformer.fit(model, X)
-            scores = transformer.predict_score(proba=proba)
-            ax2.hist(scores, bins=30, alpha=0.5, label=method, color=color)
+            transformer.fit(proba)
+            scores = transformer.predict(proba)
+            ax2.hist(scores, bins=30, alpha=0.6, label=method, color=colors[i % len(colors)], edgecolor='white')
         except Exception as e:
             warnings.warn(f"方法 {method} 失败: {e}")
 
-    ax2.set_xlabel('评分', fontsize=11)
-    ax2.set_ylabel('频数', fontsize=11)
-    ax2.set_title('评分分布对比', fontsize=12)
-    ax2.legend(loc='best')
+    ax2.set_xlabel('评分', fontsize=11, fontweight='bold')
+    ax2.set_ylabel('频数', fontsize=11, fontweight='bold')
+    ax2.set_title('评分分布对比', fontsize=12, fontweight='bold')
+    ax2.legend(loc='best', frameon=False)
+    ax2.grid(True, alpha=0.3, linestyle='--')
+    _setup_axis_style(ax2)
 
     if show:
         plt.tight_layout()

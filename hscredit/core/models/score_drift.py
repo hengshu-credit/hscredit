@@ -912,7 +912,8 @@ def plot_drift_comparison(
     X_reference: Union[np.ndarray, pd.DataFrame],
     X_current: Union[np.ndarray, pd.DataFrame],
     figsize: Tuple[int, int] = (15, 5),
-    show: bool = True
+    show: bool = True,
+    colors: Optional[List[str]] = None
 ) -> Any:
     """绘制漂移对比图.
 
@@ -921,6 +922,7 @@ def plot_drift_comparison(
     :param X_current: 当前数据
     :param figsize: 图表大小，默认(15, 5)
     :param show: 是否显示图表，默认True
+    :param colors: 颜色列表，默认使用hscredit配色 ["#2639E9", "#F76E6C", "#FE7715"]
     :return: matplotlib Figure对象
 
     **示例**
@@ -933,7 +935,20 @@ def plot_drift_comparison(
     if not MATPLOTLIB_AVAILABLE:
         raise ImportError("需要安装matplotlib才能绘图")
 
+    # hscredit默认配色
+    if colors is None:
+        colors = ["#2639E9", "#F76E6C", "#FE7715"]
+
     check_is_fitted(calibrator)
+
+    # 辅助函数：设置坐标轴样式
+    def _setup_axis_style(ax, color="#2639E9"):
+        ax.spines['top'].set_color(color)
+        ax.spines['bottom'].set_color(color)
+        ax.spines['right'].set_color(color)
+        ax.spines['left'].set_color(color)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
 
     # 获取评分
     scores_ref = calibrator.model_.predict_proba(X_reference)[:, 1]
@@ -945,23 +960,25 @@ def plot_drift_comparison(
 
     # 左图: 分布对比
     ax1 = axes[0]
-    ax1.hist(scores_ref, bins=30, alpha=0.5, label='Reference', color='blue', density=True)
-    ax1.hist(scores_cur, bins=30, alpha=0.5, label='Current (Raw)', color='red', density=True)
-    ax1.set_xlabel('Score')
-    ax1.set_ylabel('Density')
-    ax1.set_title('Distribution Comparison')
-    ax1.legend()
-    ax1.grid(True, alpha=0.3)
+    ax1.hist(scores_ref, bins=30, alpha=0.6, label='Reference', color=colors[0], density=True, edgecolor='white')
+    ax1.hist(scores_cur, bins=30, alpha=0.6, label='Current (Raw)', color=colors[1], density=True, edgecolor='white')
+    ax1.set_xlabel('Score', fontweight='bold')
+    ax1.set_ylabel('Density', fontweight='bold')
+    ax1.set_title('Distribution Comparison', fontweight='bold')
+    ax1.legend(frameon=False)
+    ax1.grid(True, alpha=0.3, linestyle='--')
+    _setup_axis_style(ax1)
 
     # 中图: 校准后对比
     ax2 = axes[1]
-    ax2.hist(scores_ref, bins=30, alpha=0.5, label='Reference', color='blue', density=True)
-    ax2.hist(scores_cur_calib, bins=30, alpha=0.5, label='Current (Calibrated)', color='green', density=True)
-    ax2.set_xlabel('Score')
-    ax2.set_ylabel('Density')
-    ax2.set_title('After Calibration')
-    ax2.legend()
-    ax2.grid(True, alpha=0.3)
+    ax2.hist(scores_ref, bins=30, alpha=0.6, label='Reference', color=colors[0], density=True, edgecolor='white')
+    ax2.hist(scores_cur_calib, bins=30, alpha=0.6, label='Current (Calibrated)', color=colors[2], density=True, edgecolor='white')
+    ax2.set_xlabel('Score', fontweight='bold')
+    ax2.set_ylabel('Density', fontweight='bold')
+    ax2.set_title('After Calibration', fontweight='bold')
+    ax2.legend(frameon=False)
+    ax2.grid(True, alpha=0.3, linestyle='--')
+    _setup_axis_style(ax2)
 
     # 右图: Q-Q图
     ax3 = axes[2]
@@ -970,14 +987,15 @@ def plot_drift_comparison(
     cur_q = np.quantile(scores_cur, quantiles)
     cur_calib_q = np.quantile(scores_cur_calib, quantiles)
 
-    ax3.plot(ref_q, cur_q, 'r.', label='Raw', alpha=0.5)
-    ax3.plot(ref_q, cur_calib_q, 'g.', label='Calibrated', alpha=0.5)
-    ax3.plot([ref_q.min(), ref_q.max()], [ref_q.min(), ref_q.max()], 'k--', label='Ideal')
-    ax3.set_xlabel('Reference Quantiles')
-    ax3.set_ylabel('Current Quantiles')
-    ax3.set_title('Q-Q Plot')
-    ax3.legend()
-    ax3.grid(True, alpha=0.3)
+    ax3.plot(ref_q, cur_q, 'o', color=colors[1], label='Raw', alpha=0.5, markersize=4)
+    ax3.plot(ref_q, cur_calib_q, 'o', color=colors[2], label='Calibrated', alpha=0.5, markersize=4)
+    ax3.plot([ref_q.min(), ref_q.max()], [ref_q.min(), ref_q.max()], 'k--', label='Ideal', alpha=0.5)
+    ax3.set_xlabel('Reference Quantiles', fontweight='bold')
+    ax3.set_ylabel('Current Quantiles', fontweight='bold')
+    ax3.set_title('Q-Q Plot', fontweight='bold')
+    ax3.legend(frameon=False)
+    ax3.grid(True, alpha=0.3, linestyle='--')
+    _setup_axis_style(ax3)
 
     if show:
         plt.tight_layout()
@@ -993,7 +1011,8 @@ def compare_drift_methods(
     y_current: Optional[Union[np.ndarray, pd.Series]] = None,
     methods: List[str] = None,
     figsize: Tuple[int, int] = (12, 4),
-    show: bool = True
+    show: bool = True,
+    colors: Optional[List[str]] = None
 ) -> Any:
     """对比多种漂移校准方法.
 
@@ -1004,6 +1023,7 @@ def compare_drift_methods(
     :param methods: 要对比的方法列表，默认['linear', 'quantile']
     :param figsize: 图表大小，默认(12, 4)
     :param show: 是否显示图表，默认True
+    :param colors: 颜色列表，默认使用hscredit配色 ["#2639E9", "#F76E6C", "#FE7715"]
     :return: matplotlib Figure对象
 
     **示例**
@@ -1014,8 +1034,21 @@ def compare_drift_methods(
     if not MATPLOTLIB_AVAILABLE:
         raise ImportError("需要安装matplotlib才能绘图")
 
+    # hscredit默认配色
+    if colors is None:
+        colors = ["#2639E9", "#F76E6C", "#FE7715"]
+
     if methods is None:
         methods = ['linear', 'quantile']
+
+    # 辅助函数：设置坐标轴样式
+    def _setup_axis_style(ax, color="#2639E9"):
+        ax.spines['top'].set_color(color)
+        ax.spines['bottom'].set_color(color)
+        ax.spines['right'].set_color(color)
+        ax.spines['left'].set_color(color)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
 
     # 获取评分
     scores_ref = model.predict_proba(X_reference)[:, 1]
@@ -1027,13 +1060,14 @@ def compare_drift_methods(
 
     # 第一个子图: 原始分布
     ax = axes[0]
-    ax.hist(scores_ref, bins=30, alpha=0.5, label='Reference', color='blue', density=True)
-    ax.hist(scores_cur, bins=30, alpha=0.5, label='Current', color='red', density=True)
-    ax.set_xlabel('Score')
-    ax.set_ylabel('Density')
-    ax.set_title('Original')
-    ax.legend()
-    ax.grid(True, alpha=0.3)
+    ax.hist(scores_ref, bins=30, alpha=0.6, label='Reference', color=colors[0], density=True, edgecolor='white')
+    ax.hist(scores_cur, bins=30, alpha=0.6, label='Current', color=colors[1], density=True, edgecolor='white')
+    ax.set_xlabel('Score', fontweight='bold')
+    ax.set_ylabel('Density', fontweight='bold')
+    ax.set_title('Original', fontweight='bold')
+    ax.legend(frameon=False)
+    ax.grid(True, alpha=0.3, linestyle='--')
+    _setup_axis_style(ax)
 
     # 其他子图: 各种校准方法
     for idx, method in enumerate(methods):
@@ -1049,17 +1083,19 @@ def compare_drift_methods(
 
             scores_calib = calibrator.predict_score(X_current)
 
-            ax.hist(scores_ref, bins=30, alpha=0.5, label='Reference', color='blue', density=True)
-            ax.hist(scores_calib, bins=30, alpha=0.5, label='Calibrated', color='green', density=True)
-            ax.set_xlabel('Score')
-            ax.set_ylabel('Density')
-            ax.set_title(f'Method: {method}')
-            ax.legend()
-            ax.grid(True, alpha=0.3)
+            ax.hist(scores_ref, bins=30, alpha=0.6, label='Reference', color=colors[0], density=True, edgecolor='white')
+            ax.hist(scores_calib, bins=30, alpha=0.6, label='Calibrated', color=colors[2], density=True, edgecolor='white')
+            ax.set_xlabel('Score', fontweight='bold')
+            ax.set_ylabel('Density', fontweight='bold')
+            ax.set_title(f'Method: {method}', fontweight='bold')
+            ax.legend(frameon=False)
+            ax.grid(True, alpha=0.3, linestyle='--')
+            _setup_axis_style(ax)
 
         except Exception as e:
             ax.text(0.5, 0.5, f'Error: {e}', ha='center', va='center', transform=ax.transAxes)
-            ax.set_title(f'Method: {method}')
+            ax.set_title(f'Method: {method}', fontweight='bold')
+            _setup_axis_style(ax)
 
     if show:
         plt.tight_layout()

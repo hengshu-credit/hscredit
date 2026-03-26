@@ -10,7 +10,6 @@ from typing import List, Union, Optional
 import numpy as np
 import pandas as pd
 from pandas import DataFrame
-from sklearn.utils import check_array
 from sklearn.metrics import f1_score, recall_score, accuracy_score, precision_score
 
 from ..binning import OptimalBinning
@@ -180,9 +179,7 @@ class Rule:
         if not isinstance(X, DataFrame):
             raise ValueError("Rule can only predict on DataFrame.")
 
-        check_array(X, dtype=None, ensure_2d=True, force_all_finite="allow-nan")
-
-        # 检查必需的列是否存在
+        # 检查必需的列是否存在（规则集基于pandas eval实现，支持各种数据类型）
         missing_cols = set(self.feature_names_in_) - set(X.columns)
         if missing_cols:
             raise ValueError(f"Missing columns: {missing_cols}")

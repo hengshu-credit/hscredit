@@ -216,7 +216,8 @@ class BaseCalibrator(BaseEstimator, ABC):
         y_prob_calibrated: Optional[Union[np.ndarray, pd.Series]] = None,
         figsize: Tuple[int, int] = (10, 8),
         title: Optional[str] = None,
-        show: bool = True
+        show: bool = True,
+        colors: Optional[List[str]] = None
     ) -> 'matplotlib.figure.Figure':
         """绘制可靠性曲线.
 
@@ -229,38 +230,54 @@ class BaseCalibrator(BaseEstimator, ABC):
         :param figsize: 图表大小，默认(10, 8)
         :param title: 图表标题，可选
         :param show: 是否显示图表，默认True
+        :param colors: 颜色列表，默认使用hscredit配色 ["#2639E9", "#F76E6C", "#FE7715"]
         :return: matplotlib Figure对象
         """
         import matplotlib.pyplot as plt
+
+        # hscredit默认配色
+        if colors is None:
+            colors = ["#2639E9", "#F76E6C", "#FE7715"]
 
         y_true = np.asarray(y_true)
         y_prob = np.asarray(y_prob)
 
         fig, axes = plt.subplots(2, 2, figsize=figsize)
 
+        # 辅助函数：设置坐标轴样式
+        def _setup_axis_style(ax, color="#2639E9"):
+            ax.spines['top'].set_color(color)
+            ax.spines['bottom'].set_color(color)
+            ax.spines['right'].set_color(color)
+            ax.spines['left'].set_color(color)
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
+
         # 1. 可靠性曲线
         ax1 = axes[0, 0]
-        self._plot_reliability_curve(ax1, y_true, y_prob, 'Original', 'blue')
+        self._plot_reliability_curve(ax1, y_true, y_prob, 'Original', colors[0])
         if y_prob_calibrated is not None:
             y_prob_calibrated = np.asarray(y_prob_calibrated)
-            self._plot_reliability_curve(ax1, y_true, y_prob_calibrated, 'Calibrated', 'red')
-        ax1.plot([0, 1], [0, 1], 'k--', label='Perfectly Calibrated')
-        ax1.set_xlabel('Mean Predicted Probability')
-        ax1.set_ylabel('Fraction of Positives')
-        ax1.set_title('Reliability Diagram')
-        ax1.legend(loc='lower right')
-        ax1.grid(True, alpha=0.3)
+            self._plot_reliability_curve(ax1, y_true, y_prob_calibrated, 'Calibrated', colors[1])
+        ax1.plot([0, 1], [0, 1], 'k--', label='Perfectly Calibrated', alpha=0.5)
+        ax1.set_xlabel('Mean Predicted Probability', fontweight='bold')
+        ax1.set_ylabel('Fraction of Positives', fontweight='bold')
+        ax1.set_title('Reliability Diagram', fontweight='bold')
+        ax1.legend(loc='lower right', frameon=False)
+        ax1.grid(True, alpha=0.3, linestyle='--')
+        _setup_axis_style(ax1)
 
         # 2. 概率分布直方图
         ax2 = axes[0, 1]
-        ax2.hist(y_prob, bins=self.n_bins, range=(0, 1), alpha=0.5, color='blue', label='Original')
+        ax2.hist(y_prob, bins=self.n_bins, range=(0, 1), alpha=0.6, color=colors[0], label='Original', edgecolor='white')
         if y_prob_calibrated is not None:
-            ax2.hist(y_prob_calibrated, bins=self.n_bins, range=(0, 1), alpha=0.5, color='red', label='Calibrated')
-        ax2.set_xlabel('Predicted Probability')
-        ax2.set_ylabel('Count')
-        ax2.set_title('Probability Distribution')
-        ax2.legend()
-        ax2.grid(True, alpha=0.3)
+            ax2.hist(y_prob_calibrated, bins=self.n_bins, range=(0, 1), alpha=0.6, color=colors[1], label='Calibrated', edgecolor='white')
+        ax2.set_xlabel('Predicted Probability', fontweight='bold')
+        ax2.set_ylabel('Count', fontweight='bold')
+        ax2.set_title('Probability Distribution', fontweight='bold')
+        ax2.legend(frameon=False)
+        ax2.grid(True, alpha=0.3, linestyle='--')
+        _setup_axis_style(ax2)
 
         # 3. 校准前后对比
         ax3 = axes[1, 0]
@@ -270,32 +287,34 @@ class BaseCalibrator(BaseEstimator, ABC):
             metrics_names = ['Brier Score', 'ECE', 'MCE']
             x = np.arange(len(metrics_names))
             width = 0.35
-            ax3.bar(x - width/2, [metrics_orig['brier_score'], metrics_orig['expected_calibration_error'], metrics_orig['max_calibration_error']], 
-                   width, label='Original', color='blue', alpha=0.7)
-            ax3.bar(x + width/2, [metrics_calib['brier_score'], metrics_calib['expected_calibration_error'], metrics_calib['max_calibration_error']], 
-                   width, label='Calibrated', color='red', alpha=0.7)
+            ax3.bar(x - width/2, [metrics_orig['brier_score'], metrics_orig['expected_calibration_error'], metrics_orig['max_calibration_error']],
+                   width, label='Original', color=colors[0], alpha=0.8)
+            ax3.bar(x + width/2, [metrics_calib['brier_score'], metrics_calib['expected_calibration_error'], metrics_calib['max_calibration_error']],
+                   width, label='Calibrated', color=colors[1], alpha=0.8)
             ax3.set_xticks(x)
             ax3.set_xticklabels(metrics_names)
-            ax3.set_ylabel('Score')
-            ax3.set_title('Calibration Metrics Comparison')
-            ax3.legend()
-            ax3.grid(True, alpha=0.3, axis='y')
+            ax3.set_ylabel('Score', fontweight='bold')
+            ax3.set_title('Calibration Metrics Comparison', fontweight='bold')
+            ax3.legend(frameon=False)
+            ax3.grid(True, alpha=0.3, axis='y', linestyle='--')
         else:
             ax3.text(0.5, 0.5, 'No Calibrated Data', ha='center', va='center')
-            ax3.set_title('Calibration Metrics Comparison')
+            ax3.set_title('Calibration Metrics Comparison', fontweight='bold')
+        _setup_axis_style(ax3)
 
         # 4. 预测概率变化散点图
         ax4 = axes[1, 1]
         if y_prob_calibrated is not None:
-            ax4.scatter(y_prob, y_prob_calibrated, alpha=0.3)
-            ax4.plot([0, 1], [0, 1], 'k--')
-            ax4.set_xlabel('Original Probability')
-            ax4.set_ylabel('Calibrated Probability')
-            ax4.set_title('Probability Transformation')
-            ax4.grid(True, alpha=0.3)
+            ax4.scatter(y_prob, y_prob_calibrated, alpha=0.4, color=colors[0], s=20)
+            ax4.plot([0, 1], [0, 1], 'k--', alpha=0.5)
+            ax4.set_xlabel('Original Probability', fontweight='bold')
+            ax4.set_ylabel('Calibrated Probability', fontweight='bold')
+            ax4.set_title('Probability Transformation', fontweight='bold')
+            ax4.grid(True, alpha=0.3, linestyle='--')
         else:
             ax4.text(0.5, 0.5, 'No Calibrated Data', ha='center', va='center')
-            ax4.set_title('Probability Transformation')
+            ax4.set_title('Probability Transformation', fontweight='bold')
+        _setup_axis_style(ax4)
 
         if title:
             fig.suptitle(title, fontsize=14, fontweight='bold')
@@ -984,7 +1003,8 @@ def plot_calibration_comparison(
     n_bins: int = 10,
     figsize: Tuple[int, int] = (12, 5),
     title: Optional[str] = None,
-    show: bool = True
+    show: bool = True,
+    colors: Optional[List[str]] = None
 ) -> 'matplotlib.figure.Figure':
     """绘制多个模型的校准对比图.
 
@@ -994,6 +1014,7 @@ def plot_calibration_comparison(
     :param figsize: 图表大小，默认(12, 5)
     :param title: 图表标题，可选
     :param show: 是否显示图表，默认True
+    :param colors: 颜色列表，默认使用hscredit配色 ["#2639E9", "#F76E6C", "#FE7715"]
     :return: matplotlib Figure对象
 
     **示例**
@@ -1006,26 +1027,40 @@ def plot_calibration_comparison(
     """
     import matplotlib.pyplot as plt
 
+    # hscredit默认配色
+    if colors is None:
+        colors = ["#2639E9", "#F76E6C", "#FE7715", "#2E8B57", "#9370DB", "#FF6347"]
+
     y_true = np.asarray(y_true)
 
     fig, axes = plt.subplots(1, 2, figsize=figsize)
 
+    # 辅助函数：设置坐标轴样式
+    def _setup_axis_style(ax, color="#2639E9"):
+        ax.spines['top'].set_color(color)
+        ax.spines['bottom'].set_color(color)
+        ax.spines['right'].set_color(color)
+        ax.spines['left'].set_color(color)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+
     # 1. 可靠性曲线
     ax1 = axes[0]
-    colors = plt.cm.tab10(np.linspace(0, 1, len(y_prob_dict)))
+    color_list = colors[:len(y_prob_dict)]
 
-    for (name, y_prob), color in zip(y_prob_dict.items(), colors):
+    for (name, y_prob), color in zip(y_prob_dict.items(), color_list):
         y_prob = np.asarray(y_prob)
         # 使用PlattCalibrator实例来调用方法
         calibrator = PlattCalibrator(n_bins=n_bins)
         calibrator._plot_reliability_curve(ax1, y_true, y_prob, name, color)
 
-    ax1.plot([0, 1], [0, 1], 'k--', label='Perfectly Calibrated')
-    ax1.set_xlabel('Mean Predicted Probability')
-    ax1.set_ylabel('Fraction of Positives')
-    ax1.set_title('Reliability Diagram')
-    ax1.legend(loc='lower right')
-    ax1.grid(True, alpha=0.3)
+    ax1.plot([0, 1], [0, 1], 'k--', label='Perfectly Calibrated', alpha=0.5)
+    ax1.set_xlabel('Mean Predicted Probability', fontweight='bold')
+    ax1.set_ylabel('Fraction of Positives', fontweight='bold')
+    ax1.set_title('Reliability Diagram', fontweight='bold')
+    ax1.legend(loc='lower right', frameon=False)
+    ax1.grid(True, alpha=0.3, linestyle='--')
+    _setup_axis_style(ax1)
 
     # 2. 指标对比
     ax2 = axes[1]
@@ -1039,14 +1074,15 @@ def plot_calibration_comparison(
         calibrator = PlattCalibrator(n_bins=n_bins)
         metrics = calibrator.compute_calibration_metrics(y_true, y_prob)
         values = [metrics['brier_score'], metrics['expected_calibration_error']]
-        ax2.bar(x + i * width, values, width, label=name, alpha=0.8)
+        ax2.bar(x + i * width, values, width, label=name, color=colors[i % len(colors)], alpha=0.8)
 
     ax2.set_xticks(x + width * (len(y_prob_dict) - 1) / 2)
     ax2.set_xticklabels(metrics_names)
-    ax2.set_ylabel('Score (lower is better)')
-    ax2.set_title('Calibration Metrics Comparison')
-    ax2.legend()
-    ax2.grid(True, alpha=0.3, axis='y')
+    ax2.set_ylabel('Score (lower is better)', fontweight='bold')
+    ax2.set_title('Calibration Metrics Comparison', fontweight='bold')
+    ax2.legend(frameon=False)
+    ax2.grid(True, alpha=0.3, axis='y', linestyle='--')
+    _setup_axis_style(ax2)
 
     if title:
         fig.suptitle(title, fontsize=14, fontweight='bold')

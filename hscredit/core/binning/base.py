@@ -729,7 +729,7 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
         """获取指定特征的分箱表.
 
         :param feature: 特征名
-        :return: 分箱统计表
+        :return: 分箱统计表（返回副本，修改不会影响分箱器内部数据）
         :raises ValueError: 如果分箱器尚未拟合
         :raises KeyError: 如果特征不存在
         """
@@ -739,7 +739,7 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
         if feature not in self.bin_tables_:
             raise KeyError(f"特征 '{feature}' 未找到")
 
-        return self.bin_tables_[feature]
+        return self.bin_tables_[feature].copy()
 
     def get_splits(self, feature: str) -> np.ndarray:
         """获取指定特征的切分点.

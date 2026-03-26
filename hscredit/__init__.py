@@ -8,6 +8,19 @@ __author__ = "hscredit team"
 __email__ = "hscredit@hengshucredit.com"
 
 
+# ========== sklearn Pipeline 和集成学习组件 ==========
+# 为了方便用户，直接从hscredit导入sklearn的Pipeline相关组件
+
+from sklearn.pipeline import Pipeline, make_pipeline
+from sklearn.ensemble import (
+    VotingClassifier,
+    VotingRegressor,
+    StackingClassifier,
+    StackingRegressor,
+)
+from sklearn.compose import ColumnTransformer, make_column_selector, make_column_transformer
+from sklearn.preprocessing import FunctionTransformer
+
 # ========== 核心模块导入 (先导入core，避免循环导入) ==========
 
 # 核心分箱模块
@@ -122,6 +135,17 @@ from .core.financial import (
     npv, irr, mirr,
 )
 
+# 核心EDA模块
+from .core.eda import (
+    DataOverview,
+    TargetAnalysis,
+    FeatureAnalysis,
+    FeatureLabelRelationship,
+    StabilityAnalysis,
+    CorrelationAnalysis,
+    EDAReport,
+)
+
 # 核心指标计算模块
 from .core.metrics import (
     KS, AUC, Gini, PSI, IV,
@@ -171,6 +195,18 @@ from .utils import (
 __all__ = [
     # 版本信息
     "__version__",
+
+    # sklearn Pipeline 和集成学习组件
+    "Pipeline",
+    "make_pipeline",
+    "VotingClassifier",
+    "VotingRegressor",
+    "StackingClassifier",
+    "StackingRegressor",
+    "ColumnTransformer",
+    "make_column_selector",
+    "make_column_transformer",
+    "FunctionTransformer",
 
     # 报告模块
     "ExcelWriter",
@@ -296,6 +332,15 @@ __all__ = [
     "RMSE",
     "R2",
 
+    # EDA模块
+    "DataOverview",
+    "TargetAnalysis",
+    "FeatureAnalysis",
+    "FeatureLabelRelationship",
+    "StabilityAnalysis",
+    "CorrelationAnalysis",
+    "EDAReport",
+
     # 特征工程模块
     "NumExprDerive",
 
@@ -343,6 +388,14 @@ def info():
     print(f"Email: {__email__}")
     print("一个完整的金融信贷风险建模工具包")
     print()
+    print("Pipeline 和集成学习组件 (从sklearn导入):")
+    print("  - Pipeline: 管道，串联多个转换器和模型")
+    print("  - make_pipeline: 快速创建Pipeline")
+    print("  - VotingClassifier/VotingRegressor: 投票分类器/回归器")
+    print("  - StackingClassifier/StackingRegressor: 堆叠分类器/回归器")
+    print("  - ColumnTransformer: 列转换器，对不同列应用不同转换")
+    print("  - FunctionTransformer: 函数转换器，将函数包装成Transformer")
+    print()
     print("核心模块 (core):")
     print("  - core.binning: 分箱算法 (Uniform/Quantile/Tree/ChiMerge/BestKS/BestIV/MDLP)")
     print("  - core.selectors: 特征筛选 (Variance/Null/IV/Corr/VIF/Lift/PSI...)")
@@ -352,6 +405,7 @@ def info():
     print("  - core.feature_engineering: 特征工程 (NumExprDerive)")
     print("  - core.rules: 规则引擎 (Rule)")
     print("  - core.financial: 金融计算 (FV/PV/PMT/NPER/IRR/NPV)")
+    print("  - core.eda: 数据探索分析 (EDAReport/DataOverview/TargetAnalysis/IV/PSI...)")
     print()
     print("报告模块 (report):")
     print("  - report.excel: Excel报告生成")
