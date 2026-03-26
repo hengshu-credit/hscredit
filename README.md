@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="https://hengshucredit.com/images/hengshucredit_animated.svg" alt="衡枢真信" width="200">
+</p>
+
 # HSCredit - 金融信贷风险建模工具包
 
 [![Python Version](https://img.shields.io/badge/python-3.8%2B-blue)](https://www.python.org/)
