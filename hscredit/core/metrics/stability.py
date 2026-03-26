@@ -50,6 +50,7 @@ def psi_table(expected: Union[np.ndarray, pd.Series],
               method: str = 'quantile',
               max_n_bins: int = 10,
               min_bin_size: float = 0.01,
+              bins: int = None,
               **kwargs) -> pd.DataFrame:
     """计算PSI详细统计表.
 
@@ -58,11 +59,16 @@ def psi_table(expected: Union[np.ndarray, pd.Series],
     :param method: 分箱方法，默认'quantile'
     :param max_n_bins: 最大分箱数，默认10
     :param min_bin_size: 每箱最小样本占比，默认0.01
+    :param bins: 分箱数（兼容参数，等同于max_n_bins）
     :param kwargs: 其他传递给OptimalBinning的参数
     :return: PSI统计表
     """
     expected = np.asarray(expected)
     actual = np.asarray(actual)
+    
+    # 兼容 bins 参数
+    if bins is not None:
+        max_n_bins = bins
 
     # 移除缺失值
     expected_clean = expected[~pd.isna(expected)]

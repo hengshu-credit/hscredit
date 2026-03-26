@@ -23,15 +23,20 @@ class MonotonicBinning(BaseBinning):
 
     通过初始分箱后合并相邻箱，确保坏样本率或WOE值满足指定的单调性约束。
     支持多种单调性模式，包括递增、递减、峰值、谷值、凸函数、凹函数等。
+    参考optbinning的monotonic_trend参数实现。
 
     :param monotonic: 单调性约束类型，默认为'auto'
-        - 'auto': 自动检测数据趋势（递增、递减、峰值、谷值等）
+        - 'auto': 自动检测最佳趋势（允许单增、单减、正U、倒U）
+        - 'auto_asc_desc': 自动检测，但只允许单增或单减
+        - 'auto_heuristic': 使用启发式方法自动检测
         - 'ascending': 强制坏样本率递增
         - 'descending': 强制坏样本率递减
         - 'peak': 倒U型/峰值（先增后减）
         - 'valley': U型/谷值（先减后增）
         - 'convex': 凸函数（U型近似）
         - 'concave': 凹函数（倒U型近似）
+        - 'peak_heuristic': 使用启发式方法检测峰值
+        - 'valley_heuristic': 使用启发式方法检测谷值
         - False/None: 不强制单调性
     :param init_method: 初始分箱方法，默认为'quantile'
         - 'quantile': 等频分箱
@@ -71,10 +76,13 @@ class MonotonicBinning(BaseBinning):
     >>> print(f"检测到的模式: {binner.monotonic_trend_}")
     """
 
-    # 支持的单调性模式
+    # 支持的单调性模式（参考optbinning的monotonic_trend参数）
     VALID_MONOTONIC_MODES = [
-        'auto', 'ascending', 'descending',
-        'peak', 'valley', 'convex', 'concave', None, False
+        'auto', 'auto_asc_desc', 'auto_heuristic',
+        'ascending', 'descending',
+        'peak', 'valley', 'convex', 'concave',
+        'peak_heuristic', 'valley_heuristic',
+        None, False
     ]
 
     def __init__(
@@ -262,18 +270,23 @@ class MonotonicBinning(BaseBinning):
     ) -> str:
         """检测单调性模式（参考optbinning实现）.
 
+        支持auto和auto_asc_desc两种自动检测模式：
+        - auto: 允许单增、单减、peak（倒U）、valley（正U）
+        - auto_asc_desc: 只允许单增或单减
+
         :param x: 特征数据
         :param y: 目标变量
         :param splits: 初始切分点
         :return: 检测到的单调性模式
         """
-        # 如果用户指定了模式，直接使用
-        if self.monotonic in ['ascending', 'descending', 'peak', 'valley', 'convex', 'concave']:
+        # 如果用户指定了具体模式，直接使用
+        if self.monotonic in ['ascending', 'descending', 'peak', 'valley', 'convex', 'concave',
+                             'peak_heuristic', 'valley_heuristic']:
             return self.monotonic
         elif self.monotonic is False or self.monotonic is None:
             return 'none'
 
-        # auto模式：自动检测最佳模式
+        # 自动检测模式：auto, auto_asc_desc, auto_heuristic
         if len(splits) == 0:
             return 'ascending'
 
@@ -294,49 +307,186 @@ class MonotonicBinning(BaseBinning):
             return 'ascending' if asc_score >= desc_score else 'descending'
 
         bad_rates = bin_stats['mean'].values
+        n_prebins = len(bad_rates)
 
-        # 检测各种模式
-        is_peak = self._is_peak_pattern(bad_rates)
-        is_valley = self._is_valley_pattern(bad_rates)
-        is_convex = self._is_convex(bad_rates)
-        is_concave = self._is_concave(bad_rates)
+        # 计算统计特征（参考optbinning的auto_monotonic_data）
+        # 1. 趋势变化次数
+        n_trend_changes = self._n_peaks_valleys(bad_rates)
+        p_trend_changes = n_trend_changes / n_prebins
 
-        # 计算线性回归系数判断整体趋势
-        lr_coef = np.polyfit(np.arange(len(bad_rates)), bad_rates, deg=1)[0]
+        # 2. 线性回归系数方向
+        lr_coef = np.polyfit(np.arange(n_prebins), bad_rates, deg=1)[0]
+        lr_sense = int(lr_coef > 0)  # 1 for ascending, 0 for descending
 
-        # 评分系统
-        scores = {
-            'ascending': 0,
-            'descending': 0,
-            'peak': 0,
-            'valley': 0,
-            'convex': 0,
-            'concave': 0
-        }
+        # 3. 峰值/谷值位置
+        pos_min = np.argmin(bad_rates)
+        pos_max = np.argmax(bad_rates)
 
-        if is_peak:
-            scores['peak'] += 2
-        if is_valley:
-            scores['valley'] += 2
-        if is_convex:
-            scores['convex'] += 1
-        if is_concave:
-            scores['concave'] += 1
+        # 4. 极值点统计
+        n1 = n_prebins - 1
+        p_bins_min_left = pos_min / n1 if n1 > 0 else 0
+        p_bins_min_right = (n_prebins - pos_min - 1) / n1 if n1 > 0 else 0
+        p_bins_max_left = pos_max / n1 if n1 > 0 else 0
+        p_bins_max_right = (n_prebins - pos_max - 1) / n1 if n1 > 0 else 0
 
-        # 根据线性趋势加分
-        if lr_coef > 0:
-            scores['ascending'] += 1
+        total_records = bin_stats['count'].sum()
+        p_records_min_left = bin_stats['count'].iloc[:pos_min].sum() / total_records if pos_min > 0 else 0
+        p_records_min_right = bin_stats['count'].iloc[pos_min+1:].sum() / total_records if pos_min < n_prebins - 1 else 0
+        p_records_max_left = bin_stats['count'].iloc[:pos_max].sum() / total_records if pos_max > 0 else 0
+        p_records_max_right = bin_stats['count'].iloc[pos_max+1:].sum() / total_records if pos_max < n_prebins - 1 else 0
+
+        # 5. 极值点三角形面积比例
+        p_area = self._extreme_points_area(bad_rates)
+
+        # 根据模式选择决策逻辑
+        if self.monotonic == 'auto_asc_desc':
+            # auto_asc_desc模式：只允许单增或单减
+            return self._auto_asc_desc_decision(
+                p_trend_changes, lr_sense,
+                p_records_min_left, p_records_min_right,
+                p_records_max_left, p_records_max_right,
+                p_area
+            )
         else:
-            scores['descending'] += 1
+            # auto/auto_heuristic模式：允许单增、单减、peak、valley
+            return self._auto_decision(
+                lr_sense,
+                p_records_min_left, p_records_min_right,
+                p_records_max_left, p_records_max_right,
+                p_area
+            )
 
-        # 选择得分最高的模式
-        best_mode = max(scores, key=scores.get)
+    def _n_peaks_valleys(self, x: np.ndarray) -> int:
+        """计算数组中峰值和谷值的数量（趋势变化次数）.
 
-        # 如果得分都很低，退化为简单单调性
-        if scores[best_mode] < 2:
-            return 'ascending' if lr_coef > 0 else 'descending'
+        :param x: 数据数组
+        :return: 趋势变化次数
+        """
+        if len(x) < 3:
+            return 0
+        diff_sign = np.sign(x[1:] - x[:-1])
+        return np.count_nonzero(diff_sign[1:] != diff_sign[:-1])
 
-        return best_mode
+    def _extreme_points_area(self, x: np.ndarray) -> float:
+        """计算极值点三角形面积与总矩形面积的比例.
+
+        参考optbinning的extreme_points_area实现。
+
+        :param x: 数据数组
+        :return: 面积比例
+        """
+        n = len(x)
+        if n < 3:
+            return 0.0
+
+        pos_min = np.argmin(x)
+        pos_max = np.argmax(x)
+
+        x_iter = x[1:-1]
+        if len(x_iter) == 0:
+            return 0.0
+
+        xinit, xmin, xmax, xlast = 0, pos_min, pos_max, n
+        yinit, ymin, ymax, ylast = x[0], x[pos_min], x[pos_max], x[-1]
+
+        # 两个三角形面积
+        triangle1 = np.array([[xinit, xmin, xmax], [yinit, ymin, ymax], [1, 1, 1]])
+        triangle2 = np.array([[xmin, xmax, xlast], [ymin, ymax, ylast], [1, 1, 1]])
+
+        area_1 = 0.5 * np.abs(np.linalg.det(triangle1))
+        area_2 = 0.5 * np.abs(np.linalg.det(triangle2))
+        sum_area = area_1 + area_2
+
+        p_area = sum_area / ((ymax - ymin) * n) if (ymax - ymin) > 0 else 0
+        return p_area
+
+    def _auto_decision(self, lr_sense: int,
+                       p_records_min_left: float, p_records_min_right: float,
+                       p_records_max_left: float, p_records_max_right: float,
+                       p_area: float) -> str:
+        """auto模式决策逻辑（允许单增、单减、peak、valley）.
+
+        简化版决策树，参考optbinning的auto_monotonic_decision。
+
+        :param lr_sense: 线性回归方向 (0=descending, 1=ascending)
+        :param p_records_min_left: 谷值左侧样本比例
+        :param p_records_min_right: 谷值右侧样本比例
+        :param p_records_max_left: 峰值左侧样本比例
+        :param p_records_max_right: 峰值右侧样本比例
+        :param p_area: 极值点面积比例
+        :return: 检测到的单调性模式
+        """
+        # 基于面积和极值点位置的决策
+        if p_area <= 0.25:
+            # 低面积比例，趋势较平缓
+            if lr_sense == 0:
+                # 整体下降趋势
+                if p_records_min_right <= 0.05:
+                    return 'descending'
+                else:
+                    return 'valley'
+            else:
+                return 'ascending'
+        else:
+            # 高面积比例，有明显极值点
+            if p_records_min_right <= 0.1:
+                if lr_sense == 0:
+                    return 'descending'
+                else:
+                    return 'ascending'
+            else:
+                # 检查peak或valley
+                if p_records_max_left > 0.1 and p_records_max_right > 0.1:
+                    # 峰值在中间
+                    return 'peak'
+                elif p_records_min_left > 0.1 and p_records_min_right > 0.1:
+                    # 谷值在中间
+                    return 'valley'
+                else:
+                    # 默认根据线性趋势
+                    return 'ascending' if lr_sense == 1 else 'descending'
+
+    def _auto_asc_desc_decision(self, p_trend_changes: float, lr_sense: int,
+                                p_records_min_left: float, p_records_min_right: float,
+                                p_records_max_left: float, p_records_max_right: float,
+                                p_area: float) -> str:
+        """auto_asc_desc模式决策逻辑（只允许单增或单减）.
+
+        参考optbinning的auto_monotonic_asc_desc_decision。
+
+        :param p_trend_changes: 趋势变化比例
+        :param lr_sense: 线性回归方向
+        :param p_records_min_left: 谷值左侧样本比例
+        :param p_records_min_right: 谷值右侧样本比例
+        :param p_records_max_left: 峰值左侧样本比例
+        :param p_records_max_right: 峰值右侧样本比例
+        :param p_area: 极值点面积比例
+        :return: 'ascending' 或 'descending'
+        """
+        if lr_sense == 0:
+            # 整体下降趋势
+            if p_area <= 0.5:
+                if p_records_max_right <= 0.05:
+                    return 'descending'
+                else:
+                    return 'ascending'
+            else:
+                return 'descending'
+        else:
+            # 整体上升趋势
+            if p_records_max_left <= 0.05:
+                return 'ascending'
+            else:
+                if p_records_min_left <= 0.8:
+                    if p_area <= 0.5:
+                        return 'descending'
+                    else:
+                        return 'ascending'
+                else:
+                    if p_trend_changes <= 0.5:
+                        return 'descending'
+                    else:
+                        return 'ascending'
 
     def _is_peak_pattern(self, x: np.ndarray) -> bool:
         """检查是否为峰值模式（倒U型）.

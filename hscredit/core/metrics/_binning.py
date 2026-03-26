@@ -700,3 +700,104 @@ def _chi2_by_bin(bins: np.ndarray, y: np.ndarray) -> Tuple[float, float, np.ndar
     chi2_contrib = ((contingency - expected) ** 2 / expected).sum(axis=1)
 
     return chi2_stat, p_value, chi2_contrib
+
+
+# 分箱优化相关的辅助函数，供binning模块使用
+def woe_iv_vectorized(
+    good_counts: np.ndarray,
+    bad_counts: np.ndarray,
+    epsilon: float = 1e-10
+) -> Tuple[np.ndarray, np.ndarray, float]:
+    """向量化计算WOE和IV（供binning模块使用）.
+    
+    :param good_counts: 每个箱的好样本数
+    :param bad_counts: 每个箱的坏样本数
+    :param epsilon: 平滑参数
+    :return: (woe_array, bin_iv_array, total_iv)
+    """
+    return _woe_iv_vectorized(good_counts, bad_counts, epsilon)
+
+
+def iv_for_splits(
+    x: np.ndarray,
+    y: np.ndarray,
+    splits: List[float],
+    epsilon: float = 1e-10
+) -> float:
+    """计算给定分割点的IV值（供binning模块使用）.
+    
+    :param x: 特征数组
+    :param y: 目标变量 (0/1)
+    :param splits: 分割点列表
+    :param epsilon: 平滑参数
+    :return: IV值
+    """
+    bins = np.digitize(x, bins=splits, right=True)
+    
+    unique_bins = np.unique(bins)
+    good_counts = np.array([((y == 0) & (bins == b)).sum() for b in unique_bins])
+    bad_counts = np.array([y[bins == b].sum() for b in unique_bins])
+    
+    _, _, total_iv = _woe_iv_vectorized(good_counts, bad_counts, epsilon)
+    return total_iv
+
+
+def ks_for_splits(
+    x: np.ndarray,
+    y: np.ndarray,
+    splits: List[float]
+) -> float:
+    """计算给定分割点的KS值（供binning模块使用）.
+    
+    :param x: 特征数组
+    :param y: 目标变量 (0/1)
+    :param splits: 分割点列表
+    :return: KS值
+    """
+    bins = np.digitize(x, bins=splits, right=True)
+    max_ks, _ = _ks_by_bin(bins, y)
+    return max_ks
+
+
+def compare_splits_iv(
+    x: np.ndarray,
+    y: np.ndarray,
+    splits1: List[float],
+    splits2: List[float],
+    epsilon: float = 1e-10
+) -> Tuple[float, float, str]:
+    """比较两组分割点的IV值（供binning模块使用）.
+    
+    :param x: 特征数组
+    :param y: 目标变量 (0/1)
+    :param splits1: 第一组分割点
+    :param splits2: 第二组分割点
+    :param epsilon: 平滑参数
+    :return: (iv1, iv2, better)
+    """
+    iv1 = iv_for_splits(x, y, splits1, epsilon)
+    iv2 = iv_for_splits(x, y, splits2, epsilon)
+    
+    better = 'splits1' if iv1 >= iv2 else 'splits2'
+    return iv1, iv2, better
+
+
+def compare_splits_ks(
+    x: np.ndarray,
+    y: np.ndarray,
+    splits1: List[float],
+    splits2: List[float]
+) -> Tuple[float, float, str]:
+    """比较两组分割点的KS值（供binning模块使用）.
+    
+    :param x: 特征数组
+    :param y: 目标变量 (0/1)
+    :param splits1: 第一组分割点
+    :param splits2: 第二组分割点
+    :return: (ks1, ks2, better)
+    """
+    ks1 = ks_for_splits(x, y, splits1)
+    ks2 = ks_for_splits(x, y, splits2)
+    
+    better = 'splits1' if ks1 >= ks2 else 'splits2'
+    return ks1, ks2, better

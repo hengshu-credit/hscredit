@@ -19,7 +19,7 @@ from sklearn.base import BaseEstimator, TransformerMixin
 from ...utils.misc import round_float
 
 # 从 metrics 导入指标计算方法
-from ..metrics.binning_metrics import (
+from ..metrics._binning import (
     compute_bin_stats,
     woe_iv_vectorized,
     iv_for_splits,
@@ -49,11 +49,15 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
     :param min_bad_rate: 每箱最小坏样本率，用于避免极端情况，默认为0.0
     :param monotonic: 坏样本率单调性约束，默认为False
         - False: 不要求单调性
-        - True 或 'auto': 自动检测并应用最佳单调方向(递增或递减)
+        - True 或 'auto': 自动检测最佳趋势（允许单增、单减、正U、倒U）
+        - 'auto_asc_desc': 自动检测，但只允许单增或单减（不允许U型）
+        - 'auto_heuristic': 使用启发式方法自动确定单调方向
         - 'ascending': 强制坏样本率递增(分箱索引增大时坏样本率增大)
         - 'descending': 强制坏样本率递减(分箱索引增大时坏样本率减小)
-        - 'auto_heuristic': 使用启发式方法自动确定单调方向
-        - 'peak' 或 'valley': 允许单峰或单谷形态,即先升后降或先降后升
+        - 'peak': 倒U型/峰值（先增后降）
+        - 'valley': U型/谷值（先降后增）
+        - 'peak_heuristic': 使用启发式方法检测峰值
+        - 'valley_heuristic': 使用启发式方法检测谷值
     :param special_codes: 特殊值列表，这些值会被单独分箱，例如[-99, -98, 'missing']
     :param split_points: 自定义分箱切分点，例如{'age': [25, 35, 45, 55]}
     :param cat_cutoff: 类别型变量处理阈值，默认为None

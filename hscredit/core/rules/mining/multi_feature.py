@@ -354,7 +354,7 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
         
         # 计算KS值（如果可能）
         try:
-            from ...metrics.binning_metrics import ks_statistic
+            from ...metrics.classification import ks as ks_statistic
             ks_matrix = pd.DataFrame(index=count_matrix.index, columns=count_matrix.columns)
             for f1_val in count_matrix.index:
                 for f2_val in count_matrix.columns:

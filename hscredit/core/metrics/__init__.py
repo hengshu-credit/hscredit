@@ -36,11 +36,15 @@ from .classification import (
     KS, AUC, Gini,
 )
 
+# 向后兼容别名
+KS_bucket = ks_bucket
+ROC_curve = roc_curve
+
 # 特征评估
 from .feature import (
     iv, iv_table,
     chi2_test, cramers_v,
-    feature_importance, bin_stats,
+    feature_importance,
     feature_summary,
     # 向后兼容
     IV, IV_table,
@@ -82,7 +86,7 @@ __all__ = [
     # 特征评估
     'iv', 'iv_table',
     'chi2_test', 'cramers_v',
-    'feature_importance', 'bin_stats',
+    'feature_importance',
     'feature_summary',
     
     # 稳定性

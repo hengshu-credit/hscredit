@@ -5,8 +5,8 @@
 核心功能:
 - ExcelWriter: Excel写入器，支持DataFrame、图片、超链接等
 - dataframe2excel: 快速将DataFrame写入Excel的便捷函数
-- DataFrame.save(): pandas DataFrame的save方法扩展
-- Series.save(): pandas Series的save方法扩展
+- DataFrame.save(): pandas DataFrame的save方法扩展（在utils.pandas_extensions中统一注册）
+- Series.save(): pandas Series的save方法扩展（在utils.pandas_extensions中统一注册）
 
 使用示例:
     >>> import pandas as pd
@@ -29,8 +29,9 @@
 
 from .writer import ExcelWriter, dataframe2excel
 
-# 自动安装pandas扩展（导入时自动为DataFrame和Series添加save方法）
-from . import pandas_extension
+# 注意：pandas扩展方法（df.save(), df.show(), df.summary()等）
+# 现在在 utils.pandas_extensions 模块中统一注册
+# 导入hscredit时会自动注册所有扩展方法
 
 __all__ = [
     "ExcelWriter",

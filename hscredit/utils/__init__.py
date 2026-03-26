@@ -12,7 +12,11 @@ from .logger import init_logger, get_logger
 from .bin_table_display import (
     style_bin_table,
     BinTableDisplay,
+)
+from .pandas_extensions import (
+    BinTableDisplay as PandasBinTableDisplay,
     enable_dataframe_show,
+    register_extensions,
 )
 from .input_utils import (
     check_xy_inputs,
@@ -44,6 +48,7 @@ __all__ = [
     'style_bin_table',
     'BinTableDisplay',
     'enable_dataframe_show',
+    'register_extensions',
     # 输入处理工具
     'check_xy_inputs',
     'convert_to_dataframe',

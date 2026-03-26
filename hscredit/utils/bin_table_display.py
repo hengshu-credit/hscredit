@@ -483,45 +483,6 @@ class BinTableDisplay:
         return self
 
 
-def _add_show_method_to_dataframe():
-    """向 DataFrame 注入 show 方法."""
-    def show(self, **kwargs):
-        """展示美化的分箱表.
-        
-        :param kwargs: 传递给 BinTableDisplay.show() 的参数
-        :return: BinTableDisplay 对象，支持链式调用
-        
-        **示例**
-        
-        >>> table = feature_bin_stats(data, 'score', target='target')
-        >>> table.show()  # 展示美化表格
-        >>> table.show(compact=True)  # 紧凑模式
-        """
-        display_obj = BinTableDisplay(self)
-        return display_obj.show(**kwargs)
-    
-    # 检查是否已经注入
-    if not hasattr(pd.DataFrame, 'show'):
-        pd.DataFrame.show = show
-
-
-def enable_dataframe_show():
-    """启用 DataFrame 的 show 方法.
-    
-    调用此函数后，可以直接在分箱表 DataFrame 上调用 .show() 方法。
-    
-    **示例**
-    
-    >>> from hscredit.utils.bin_table_display import enable_dataframe_show
-    >>> enable_dataframe_show()
-    >>> 
-    >>> table = feature_bin_stats(data, 'score', target='target')
-    >>> table.show()  # 美化展示
-    """
-    _add_show_method_to_dataframe()
-    print("✓ 已启用 DataFrame.show() 方法")
-    print("使用方法: table.show() 或 table.show(compact=True)")
-
-
-# 自动启用（可选，用户也可以手动调用 enable_dataframe_show()）
-_add_show_method_to_dataframe()
+# 注意：DataFrame.show() 方法现在在 pandas_extensions 模块中统一注册
+# 保留此处的 BinTableDisplay 类供其他代码使用
+# 如需启用 show 方法，请使用: from hscredit.utils import enable_dataframe_show

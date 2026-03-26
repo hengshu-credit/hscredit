@@ -107,6 +107,7 @@ from .core.models import (
 
 # 核心可视化模块
 from .core.viz import (
+    # 基础图表
     bin_plot,
     corr_plot,
     ks_plot,
@@ -115,6 +116,27 @@ from .core.viz import (
     dataframe_plot,
     distribution_plot,
     plot_weights,
+    # 特征趋势分析
+    bin_trend_plot,
+    batch_bin_trend_plot,
+    overdues_bin_plot,
+    # 模型评估
+    roc_plot,
+    pr_plot,
+    lift_plot,
+    gain_plot,
+    confusion_matrix_plot,
+    calibration_plot,
+    # 评分卡
+    score_dist_plot,
+    score_bin_plot,
+    # 风控策略
+    threshold_analysis_plot,
+    strategy_compare_plot,
+    vintage_plot,
+    feature_importance_plot,
+    approval_rate_trend_plot,
+    bad_rate_trend_plot,
 )
 
 # 核心特征工程模块
@@ -135,15 +157,46 @@ from .core.financial import (
     npv, irr, mirr,
 )
 
-# 核心EDA模块
+# 核心EDA模块（函数式API）
+from .core import eda
 from .core.eda import (
-    DataOverview,
-    TargetAnalysis,
-    FeatureAnalysis,
-    FeatureLabelRelationship,
-    StabilityAnalysis,
-    CorrelationAnalysis,
-    EDAReport,
+    # 数据概览
+    data_info,
+    missing_analysis,
+    feature_summary,
+    numeric_summary,
+    category_summary,
+    data_quality_report,
+    feature_group_analysis,
+    population_stability_monitor,
+    # 目标变量分析
+    target_distribution,
+    bad_rate_overall,
+    bad_rate_by_dimension,
+    bad_rate_trend,
+    bad_rate_by_bins,
+    sample_distribution,
+    # 特征分析
+    numeric_distribution,
+    categorical_distribution,
+    outlier_detection,
+    # 特征标签关系
+    iv_analysis,
+    batch_iv_analysis,
+    woe_analysis,
+    binning_bad_rate,
+    # 相关性分析
+    correlation_matrix,
+    high_correlation_pairs,
+    vif_analysis,
+    # 稳定性分析
+    psi_analysis,
+    batch_psi_analysis,
+    csi_analysis,
+    # Vintage分析
+    vintage_analysis,
+    # 综合报告
+    eda_summary,
 )
 
 # 核心指标计算模块
@@ -191,6 +244,10 @@ from .utils import (
     init_setting,
 )
 
+# ========== Pandas DataFrame 扩展方法 ==========
+# 导入 pandas_extensions 模块，自动注册 df.summary(), df.save(), df.show() 等扩展方法
+from .utils import pandas_extensions
+
 # 导出的公共API
 __all__ = [
     # 版本信息
@@ -213,16 +270,36 @@ __all__ = [
     "dataframe2excel",
     "auto_feature_analysis_report",
 
-    # 可视化模块 (viz)
+    # 可视化模块 (viz) - 基础图表
     "bin_plot",
     "corr_plot",
     "ks_plot",
     "hist_plot",
     "psi_plot",
-    # "csi_plot",
     "dataframe_plot",
     "distribution_plot",
     "plot_weights",
+    # 特征趋势分析
+    "bin_trend_plot",
+    "batch_bin_trend_plot",
+    "overdues_bin_plot",
+    # 模型评估
+    "roc_plot",
+    "pr_plot",
+    "lift_plot",
+    "gain_plot",
+    "confusion_matrix_plot",
+    "calibration_plot",
+    # 评分卡
+    "score_dist_plot",
+    "score_bin_plot",
+    # 风控策略
+    "threshold_analysis_plot",
+    "strategy_compare_plot",
+    "vintage_plot",
+    "feature_importance_plot",
+    "approval_rate_trend_plot",
+    "bad_rate_trend_plot",
 
     # 分析模块
     "feature_bin_stats",
@@ -332,14 +409,36 @@ __all__ = [
     "RMSE",
     "R2",
 
-    # EDA模块
-    "DataOverview",
-    "TargetAnalysis",
-    "FeatureAnalysis",
-    "FeatureLabelRelationship",
-    "StabilityAnalysis",
-    "CorrelationAnalysis",
-    "EDAReport",
+    # EDA模块 (函数式API)
+    "data_info",
+    "missing_analysis",
+    "feature_summary",
+    "numeric_summary",
+    "category_summary",
+    "data_quality_report",
+    "feature_group_analysis",
+    "population_stability_monitor",
+    "target_distribution",
+    "bad_rate_overall",
+    "bad_rate_by_dimension",
+    "bad_rate_trend",
+    "bad_rate_by_bins",
+    "sample_distribution",
+    "numeric_distribution",
+    "categorical_distribution",
+    "outlier_detection",
+    "iv_analysis",
+    "batch_iv_analysis",
+    "woe_analysis",
+    "binning_bad_rate",
+    "correlation_matrix",
+    "high_correlation_pairs",
+    "vif_analysis",
+    "psi_analysis",
+    "batch_psi_analysis",
+    "csi_analysis",
+    "vintage_analysis",
+    "eda_summary",
 
     # 特征工程模块
     "NumExprDerive",

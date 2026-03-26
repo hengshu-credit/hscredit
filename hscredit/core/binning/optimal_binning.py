@@ -35,7 +35,7 @@ from .target_bad_rate_binning import TargetBadRateBinning
 from .monotonic_binning import MonotonicBinning
 
 # 从 metrics 导入指标计算方法
-from ..metrics.binning_metrics import (
+from ..metrics._binning import (
     woe_iv_vectorized,
     iv_for_splits,
     ks_for_splits,
@@ -72,11 +72,15 @@ class OptimalBinning(BaseBinning):
     :param min_bin_size: 每箱最小样本数或占比，默认为0.01
     :param monotonic: 坏样本率单调性约束，默认为False
         - False: 不要求单调性
-        - True 或 'auto': 自动检测并应用最佳单调方向
+        - True 或 'auto': 自动检测最佳趋势（允许单增、单减、正U、倒U）
+        - 'auto_asc_desc': 自动检测，但只允许单增或单减（不允许U型）
+        - 'auto_heuristic': 使用启发式方法自动检测
         - 'ascending': 强制坏样本率递增
         - 'descending': 强制坏样本率递减
-        - 'peak': 允许单峰形态(先升后降)
-        - 'valley': 允许单谷形态(先降后升)
+        - 'peak': 允许单峰形态(先升后降，倒U型)
+        - 'valley': 允许单谷形态(先降后升，正U型)
+        - 'peak_heuristic': 使用启发式方法检测峰值
+        - 'valley_heuristic': 使用启发式方法检测谷值
     :param user_splits: 用户指定的切分点，支持:
         - Dict[str, List]: 每个特征的切分点，如 {'age': [25, 35, 45]}
         - Callable: 函数返回切分点
@@ -971,28 +975,106 @@ class OptimalBinning(BaseBinning):
         X: pd.DataFrame,
         y: pd.Series
     ):
-        """对现有分箱结果进行单调性调整."""
+        """对现有分箱结果进行单调性调整.
+
+        支持多种单调性模式：
+        - auto: 自动检测最佳趋势（允许单增、单减、正U、倒U）
+        - auto_asc_desc: 自动检测，但只允许单增或单减
+        - ascending/descending: 强制单调递增/递减
+        - peak/valley: 强制倒U型/正U型
+        """
+        # 定义需要调整的模式
+        needs_adjustment_modes = [
+            'auto', 'auto_asc_desc', 'auto_heuristic',
+            'ascending', 'descending',
+            'peak', 'valley',
+            'peak_heuristic', 'valley_heuristic'
+        ]
+
+        if self.monotonic not in needs_adjustment_modes:
+            return
+
         for feature in list(self.splits_.keys()):
             splits = self.splits_[feature]
             feature_type = self.feature_types_[feature]
-            
+
             if feature_type == 'categorical':
                 continue  # 类别型特征暂不调整
-            
+
             # 检查当前分箱是否满足单调性
             bin_table = self.bin_tables_[feature]
             valid_bins = bin_table[bin_table['分箱标签'] != '缺失']
             bad_rates = valid_bins['坏样本率'].values
-            
-            is_ascending = all(bad_rates[i] <= bad_rates[i+1] + 1e-10 
+
+            is_ascending = all(bad_rates[i] <= bad_rates[i+1] + 1e-10
                               for i in range(len(bad_rates)-1))
-            is_descending = all(bad_rates[i] >= bad_rates[i+1] - 1e-10 
+            is_descending = all(bad_rates[i] >= bad_rates[i+1] - 1e-10
                                for i in range(len(bad_rates)-1))
-            
-            if self.monotonic == 'ascending' and not is_ascending:
+            is_peak = self._is_peak_pattern(bad_rates)
+            is_valley = self._is_valley_pattern(bad_rates)
+
+            # 根据当前分箱结果和检测模式，确定目标趋势
+            need_adjust = False
+            target_mode = self.monotonic
+            detected_trend = 'unknown'
+
+            # 先检测当前分箱的趋势
+            if is_ascending:
+                detected_trend = 'ascending'
+            elif is_descending:
+                detected_trend = 'descending'
+            elif is_peak:
+                detected_trend = 'peak'
+            elif is_valley:
+                detected_trend = 'valley'
+
+            # 根据monotonic参数判断是否满足要求
+            if self.monotonic in ['auto', True, 'auto_heuristic']:
+                # auto模式：允许单增、单减、peak、valley
+                if is_ascending or is_descending or is_peak or is_valley:
+                    # 当前分箱已满足要求，记录检测到的趋势
+                    self.monotonic_trend_[feature] = detected_trend
+                else:
+                    # 需要重新分箱
+                    need_adjust = True
+                    target_mode = 'auto'
+            elif self.monotonic == 'auto_asc_desc':
+                # auto_asc_desc模式：只允许单增或单减
+                if is_ascending or is_descending:
+                    self.monotonic_trend_[feature] = detected_trend
+                else:
+                    need_adjust = True
+                    target_mode = 'auto_asc_desc'
+            elif self.monotonic == 'ascending':
+                if is_ascending:
+                    self.monotonic_trend_[feature] = 'ascending'
+                else:
+                    need_adjust = True
+                    target_mode = 'ascending'
+            elif self.monotonic == 'descending':
+                if is_descending:
+                    self.monotonic_trend_[feature] = 'descending'
+                else:
+                    need_adjust = True
+                    target_mode = 'descending'
+            elif self.monotonic in ['peak', 'peak_heuristic']:
+                if is_peak:
+                    self.monotonic_trend_[feature] = 'peak'
+                else:
+                    need_adjust = True
+                    target_mode = 'peak'
+            elif self.monotonic in ['valley', 'valley_heuristic']:
+                if is_valley:
+                    self.monotonic_trend_[feature] = 'valley'
+                else:
+                    need_adjust = True
+                    target_mode = 'valley'
+
+            if need_adjust:
                 # 使用 MonotonicBinning 重新分箱
+                from .monotonic_binning import MonotonicBinning
                 binner = MonotonicBinning(
-                    monotonic='ascending',
+                    monotonic=target_mode,
                     max_n_bins=self.max_n_bins,
                     min_bin_size=self.min_bin_size,
                     verbose=False
@@ -1001,19 +1083,45 @@ class OptimalBinning(BaseBinning):
                 self.splits_[feature] = binner.splits_[feature]
                 self.n_bins_[feature] = binner.n_bins_[feature]
                 self.bin_tables_[feature] = binner.bin_tables_[feature]
-                self.monotonic_trend_[feature] = 'ascending'
-            elif self.monotonic == 'descending' and not is_descending:
-                binner = MonotonicBinning(
-                    monotonic='descending',
-                    max_n_bins=self.max_n_bins,
-                    min_bin_size=self.min_bin_size,
-                    verbose=False
-                )
-                binner.fit(X[[feature]], y)
-                self.splits_[feature] = binner.splits_[feature]
-                self.n_bins_[feature] = binner.n_bins_[feature]
-                self.bin_tables_[feature] = binner.bin_tables_[feature]
-                self.monotonic_trend_[feature] = 'descending'
+                self.monotonic_trend_[feature] = binner.monotonic_trend_.get(feature, target_mode)
+
+    def _is_peak_pattern(self, bad_rates: np.ndarray) -> bool:
+        """检查是否为峰值模式（倒U型）.
+
+        :param bad_rates: 坏样本率数组
+        :return: 是否为峰值模式
+        """
+        if len(bad_rates) < 3:
+            return False
+
+        t = np.argmax(bad_rates)
+        if t == 0 or t == len(bad_rates) - 1:
+            return False
+
+        # 检查前半部分递增，后半部分递减
+        left_asc = np.all(bad_rates[1:t+1] - bad_rates[:t] >= -1e-10)
+        right_desc = np.all(bad_rates[t+1:] - bad_rates[t:-1] <= 1e-10)
+
+        return left_asc and right_desc
+
+    def _is_valley_pattern(self, bad_rates: np.ndarray) -> bool:
+        """检查是否为谷值模式（U型）.
+
+        :param bad_rates: 坏样本率数组
+        :return: 是否为谷值模式
+        """
+        if len(bad_rates) < 3:
+            return False
+
+        t = np.argmin(bad_rates)
+        if t == 0 or t == len(bad_rates) - 1:
+            return False
+
+        # 检查前半部分递减，后半部分递增
+        left_desc = np.all(bad_rates[1:t+1] - bad_rates[:t] <= 1e-10)
+        right_asc = np.all(bad_rates[t+1:] - bad_rates[t:-1] >= -1e-10)
+
+        return left_desc and right_asc
 
     def _get_bin_labels_dict(
         self,
