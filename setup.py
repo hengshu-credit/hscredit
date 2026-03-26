@@ -32,7 +32,7 @@ setup(
     long_description=long_description,
     long_description_content_type="text/markdown",
     author="hscredit team",
-    author_email="hscredit@example.com",
+    author_email="hscredit@hengshucredit.com",
     url="https://github.com/hscredit/hscredit",
     license="MIT",
     packages=find_packages(exclude=["tests", "docs", "examples"]),

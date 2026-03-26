@@ -2,22 +2,44 @@
   <img src="https://hengshucredit.com/images/hengshucredit_animated.svg" alt="衡枢真信" width="200">
 </p>
 
-# HSCredit - 金融信贷风险建模工具包
+<h1 align="center">HSCredit - 金融信贷风险建模工具包</h1>
 
-[![Python Version](https://img.shields.io/badge/python-3.8%2B-blue)](https://www.python.org/)
-[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.1.0-orange)](https://github.com/hscredit/hscredit)
+<p align="center">
+  <b>鉴真伪，斟信用，衡风险，枢定策 —— 智能风控，一站掌控</b>
+</p>
 
-**HSCredit** 是一个功能完整的金融信贷风险建模工具包，提供从数据探索、特征工程、分箱、编码、筛选到建模和报告生成的全流程解决方案。专为金融风控场景设计，支持评分卡建模、策略分析、规则挖掘等核心功能。
+<p align="center">
+  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/python-3.8%2B-blue" alt="Python Version"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="License"></a>
+  <a href="https://github.com/hscredit/hscredit"><img src="https://img.shields.io/badge/version-0.1.0-orange" alt="Version"></a>
+</p>
 
-## 核心特性
+---
 
-- **完整性**: 覆盖评分卡建模全流程，一站式解决风控建模需求
-- **统一性**: 所有模块遵循统一API设计，完美支持 sklearn Pipeline 集成
-- **灵活性**: 支持双API风格、自定义参数、多种算法选择
-- **专业性**: 针对金融风控场景优化，提供专业的评估指标和报告
-- **易用性**: 中文输出、Pandas扩展、详细的文档和示例
-- **可扩展性**: 基类抽象、插件化设计，便于扩展新功能
+## 为什么选择 HSCredit
+
+**HSCredit** 是一个专为金融风控场景设计的评分卡建模工具包，提供从数据探索、特征工程、分箱、编码、筛选到建模和报告生成的**全流程解决方案**。
+
+### 核心优势
+
+| 优势 | 说明 |
+|------|------|
+| **完整性** | 覆盖评分卡建模全流程，一站式解决风控建模需求 |
+| **统一性** | 所有模块遵循统一API设计，完美支持 sklearn Pipeline 集成 |
+| **灵活性** | 支持双API风格、自定义参数、多种算法选择 |
+| **专业性** | 16种分箱算法、20+种筛选器、8种编码器、7种风控专用损失函数 |
+| **易用性** | 中文输出、Pandas扩展、25+可视化图表、详细文档 |
+| **可扩展性** | 基类抽象、插件化设计，便于扩展新功能 |
+| **兼容性** | 与 toad、scorecardpipeline 等主流风控库无缝兼容 |
+
+### 支持的算法一览
+
+- **16种分箱算法**: 等宽、等频、决策树、卡方、最优IV、最优KS、MDLP、遗传算法、单调约束等
+- **20+种特征筛选**: IV、VIF、相关性、Boruta、Null Importance、逐步回归等
+- **8种编码器**: WOE、Target、CatBoost、GBM、Count、OneHot等
+- **7种损失函数**: Focal Loss、成本敏感、坏账损失、利润最大化等风控专用损失
+
+---
 
 ## 安装
 
@@ -39,6 +61,8 @@ pip install hscredit[pmml]         # PMML导出支持
 pip install hscredit[dev]          # 开发工具
 pip install hscredit[docs]         # 文档工具
 ```
+
+---
 
 ## 快速开始
 
@@ -180,7 +204,9 @@ df.save('report.xlsx', sheet_name='数据', title='统计表')
 bin_table.show(compact=True)
 ```
 
-## 模块概览
+---
+
+## 项目结构
 
 ### 核心模块 (Core)
 
@@ -212,7 +238,9 @@ bin_table.show(compact=True)
 | `utils` | 工具函数 | `seed_everything`, `germancredit`, `feature_describe` |
 | `utils.pandas_extensions` | Pandas扩展 | `df.summary()`, `df.save()`, `df.show()` |
 
-## 支持的算法
+---
+
+## 详细功能说明
 
 ### 分箱算法 (16种)
 
@@ -275,6 +303,8 @@ bin_table.show(compact=True)
 - `BadDebtLoss` - 坏账损失
 - `ApprovalRateLoss` - 审批率损失
 - `ProfitMaxLoss` - 利润最大化损失
+
+---
 
 ## 设计特点
 
@@ -374,6 +404,8 @@ rules = binner.export(to_json='binning_rules.json')
 binner.load('binning_rules.json')
 ```
 
+---
+
 ## 示例代码
 
 详见 `examples/` 目录：
@@ -385,11 +417,15 @@ binner.load('binning_rules.json')
 - `05_eda.ipynb` - 探索性数据分析演示
 - `06_viz.ipynb` - 可视化演示
 
+---
+
 ## 文档
 
 - [API文档](https://hscredit.readthedocs.io/)
 - [用户指南](https://hscredit.readthedocs.io/user_guide/)
 - [示例教程](https://hscredit.readthedocs.io/tutorials/)
+
+---
 
 ## 贡献
 
@@ -413,14 +449,20 @@ isort hscredit/
 mypy hscredit/
 ```
 
+---
+
 ## 许可证
 
 MIT License - 详见 [LICENSE](LICENSE) 文件
 
+---
+
 ## 联系我们
 
 - GitHub: [https://github.com/hscredit/hscredit](https://github.com/hscredit/hscredit)
-- Email: hscredit@example.com
+- Email: hscredit@hengshucredit.com
+
+---
 
 ## 致谢
 
@@ -433,4 +475,6 @@ MIT License - 详见 [LICENSE](LICENSE) 文件
 
 ---
 
-**HSCredit** - 让金融风控建模更简单！
+<p align="center">
+  <b>HSCredit</b> - 鉴真伪，斟信用，衡风险，枢定策 —— 智能风控，一站掌控
+</p>
