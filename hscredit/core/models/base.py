@@ -26,6 +26,7 @@ from sklearn.model_selection import train_test_split
 
 from ..metrics.classification import KS, AUC, Gini
 from ..metrics.stability import PSI
+from ..metrics.finance import lift_at, lift_monotonicity_check
 
 
 def _lift_score(y_true, y_proba, top_ratio=0.1):
@@ -90,7 +91,13 @@ class BaseRiskModel(BaseEstimator, ClassifierMixin, ABC):
     """
 
     # 支持的评估指标
-    SUPPORTED_METRICS = ['auc', 'ks', 'gini', 'lift', 'logloss', 'accuracy', 'precision', 'recall', 'f1']
+    SUPPORTED_METRICS = [
+        'auc', 'ks', 'gini', 'lift',
+        'lift@1%', 'lift@3%', 'lift@5%', 'lift@10%',
+        'logloss', 'accuracy', 'precision', 'recall', 'f1',
+    ]
+    # 默认评估指标（evaluate() 不传 metrics 时使用）
+    DEFAULT_METRICS = ['auc', 'ks', 'gini', 'lift@1%', 'lift@3%', 'lift@5%', 'lift@10%']
 
     def __init__(
         self,
@@ -239,7 +246,7 @@ class BaseRiskModel(BaseEstimator, ClassifierMixin, ABC):
         y_proba = self.predict_proba(X)[:, 1]
 
         if metrics is None:
-            metrics = self.SUPPORTED_METRICS
+            metrics = self.DEFAULT_METRICS
 
         results = {}
 
@@ -254,6 +261,14 @@ class BaseRiskModel(BaseEstimator, ClassifierMixin, ABC):
                     results['Gini'] = Gini(y, y_proba)
                 elif metric_lower == 'lift':
                     results['Lift@10%'] = _lift_score(y, y_proba, top_ratio=0.1)
+                elif metric_lower in ('lift@1%', 'lift_1'):
+                    results['LIFT@1%'] = _lift_score(y, y_proba, top_ratio=0.01)
+                elif metric_lower in ('lift@3%', 'lift_3'):
+                    results['LIFT@3%'] = _lift_score(y, y_proba, top_ratio=0.03)
+                elif metric_lower in ('lift@5%', 'lift_5'):
+                    results['LIFT@5%'] = _lift_score(y, y_proba, top_ratio=0.05)
+                elif metric_lower in ('lift@10%', 'lift_10'):
+                    results['LIFT@10%'] = _lift_score(y, y_proba, top_ratio=0.10)
                 elif metric_lower == 'logloss':
                     from sklearn.metrics import log_loss
                     results['LogLoss'] = log_loss(y, y_proba, sample_weight=sample_weight)
@@ -273,6 +288,15 @@ class BaseRiskModel(BaseEstimator, ClassifierMixin, ABC):
                 if self.verbose:
                     warnings.warn(f"计算指标 {metric} 时出错: {e}")
                 continue
+
+        # 头部单调性检验（始终计算，不依赖 metrics 参数）
+        try:
+            mono = lift_monotonicity_check(y, y_proba, n_bins=10, direction='both')
+            results['头部LIFT单调'] = mono['head_monotonic']
+            results['头部违反单调比例'] = mono['head_violation_ratio']
+            results['尾部LIFT单调'] = mono['tail_monotonic']
+        except Exception:
+            pass
 
         return results
 

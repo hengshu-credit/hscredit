@@ -105,6 +105,28 @@ from .core.models import (
     ScoreCard,
 )
 
+# 模型类单独导入（避免可选依赖失败影响整体）
+try:
+    from .core.models import (
+        BaseRiskModel,
+        XGBoostRiskModel,
+        LightGBMRiskModel,
+        CatBoostRiskModel,
+        RandomForestRiskModel,
+        ExtraTreesRiskModel,
+        GradientBoostingRiskModel,
+        ModelReport,
+    )
+except ImportError:
+    pass
+
+try:
+    from .core.models import ModelTuner, AutoTuner, TuningObjective
+except ImportError:
+    ModelTuner = None
+    AutoTuner = None
+    TuningObjective = None
+
 # 核心可视化模块
 from .core.viz import (
     # 基础图表
@@ -137,6 +159,25 @@ from .core.viz import (
     feature_importance_plot,
     approval_rate_trend_plot,
     bad_rate_trend_plot,
+    # 新增：变量分析图表
+    variable_iv_plot,
+    variable_woe_trend_plot,
+    variable_psi_heatmap,
+    variable_importance_grouped_plot,
+    variable_missing_badrate_plot,
+    # 新增：评分分析图表
+    score_ks_plot,
+    score_distribution_comparison_plot,
+    score_badrate_bin_plot,
+    score_lift_plot,
+    score_approval_badrate_curve,
+    # 新增：策略分析图表
+    feature_trend_by_time,
+    feature_drift_comparison,
+    feature_effectiveness_by_segment,
+    feature_cross_heatmap,
+    population_drift_monitor,
+    segment_scorecard_comparison,
 )
 
 # 核心特征工程模块
@@ -207,6 +248,8 @@ from .core.metrics import (
     IV_table,
     MSE, MAE, RMSE, R2,
 )
+# 新增金融风控指标
+from .core.metrics.finance import lift_at, lift_monotonicity_check
 
 # ========== 报告模块导入 (在core之后导入，避免循环导入) ==========
 
@@ -408,6 +451,9 @@ __all__ = [
     "MAE",
     "RMSE",
     "R2",
+    # 新增金融风控指标
+    "lift_at",
+    "lift_monotonicity_check",
 
     # EDA模块 (函数式API)
     "data_info",

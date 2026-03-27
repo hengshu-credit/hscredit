@@ -74,6 +74,34 @@ from .risk_plots import (
     bad_rate_trend_plot,
 )
 
+# 新增：变量分析图表
+from .variable_plots import (
+    variable_iv_plot,
+    variable_woe_trend_plot,
+    variable_psi_heatmap,
+    variable_importance_grouped_plot,
+    variable_missing_badrate_plot,
+)
+
+# 新增：评分分析图表
+from .score_plots import (
+    score_ks_plot,
+    score_distribution_comparison_plot,
+    score_badrate_bin_plot,
+    score_lift_plot,
+    score_approval_badrate_curve,
+)
+
+# 新增：策略分析图表
+from .strategy_plots import (
+    feature_trend_by_time,
+    feature_drift_comparison,
+    feature_effectiveness_by_segment,
+    feature_cross_heatmap,
+    population_drift_monitor,
+    segment_scorecard_comparison,
+)
+
 # 导出工具函数供外部使用
 from .utils import (
     setup_axis_style,
@@ -116,6 +144,25 @@ __all__ = [
     "feature_importance_plot",
     "approval_rate_trend_plot",
     "bad_rate_trend_plot",
+    # 新增：变量分析图表
+    "variable_iv_plot",
+    "variable_woe_trend_plot",
+    "variable_psi_heatmap",
+    "variable_importance_grouped_plot",
+    "variable_missing_badrate_plot",
+    # 新增：评分分析图表
+    "score_ks_plot",
+    "score_distribution_comparison_plot",
+    "score_badrate_bin_plot",
+    "score_lift_plot",
+    "score_approval_badrate_curve",
+    # 新增：策略分析图表
+    "feature_trend_by_time",
+    "feature_drift_comparison",
+    "feature_effectiveness_by_segment",
+    "feature_cross_heatmap",
+    "population_drift_monitor",
+    "segment_scorecard_comparison",
     # 工具函数
     "setup_axis_style",
     "save_figure",

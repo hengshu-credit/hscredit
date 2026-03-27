@@ -137,12 +137,13 @@ from .report import ModelReport
 
 # 导入超参数调优 (可选依赖)
 try:
-    from .tuning import ModelTuner, AutoTuner
+    from .tuning import ModelTuner, AutoTuner, TuningObjective
     TUNING_AVAILABLE = True
 except ImportError:
     TUNING_AVAILABLE = False
     ModelTuner = None
     AutoTuner = None
+    TuningObjective = None
 
 __all__ = [
     # 损失函数基类
@@ -194,4 +195,4 @@ __all__ = [
 
 # 如果optuna可用，添加调优类
 if TUNING_AVAILABLE:
-    __all__.extend(["ModelTuner", "AutoTuner"])
+    __all__.extend(["ModelTuner", "AutoTuner", "TuningObjective"])

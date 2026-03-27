@@ -116,6 +116,207 @@ def _calc_ks_with_diff(y_train: np.ndarray, y_train_pred: np.ndarray,
     return ks_val, ks_diff
 
 
+class TuningObjective:
+    """内置调参目标函数集合.
+
+    所有静态方法签名均为 ``(y_true, y_prob, **kwargs) -> float``，
+    值越大越好（均已设计为 maximize 方向）。
+
+    可通过字符串名称传给 ``ModelTuner(objective=...)``：
+    - ``'ks'``            : 标准 KS（默认）
+    - ``'auc'``           : ROC-AUC
+    - ``'lift_head'``     : 头部 LIFT（高概率前 ratio 比例）
+    - ``'lift_tail'``     : 尾部 LIFT（低概率前 ratio 比例的纯净度）
+    - ``'lift_head_monotonic'`` : KS × (1 - 违反单调比例 × penalty)
+    - ``'ks_with_lift_constraint'`` : 满足头部 LIFT 约束下的 KS
+    - ``'head_ks'``       : 仅头部 ratio 比例样本的 KS
+
+    Example:
+        >>> from hscredit.core.models import ModelTuner, XGBoostRiskModel
+        >>> tuner = ModelTuner(
+        ...     model_class=XGBoostRiskModel,
+        ...     objective='lift_head',
+        ...     objective_kwargs={'ratio': 0.05},
+        ... )
+        >>> tuner.fit(X_train, y_train, n_trials=50)
+    """
+
+    # 支持的字符串名称
+    BUILTIN_OBJECTIVES = [
+        'ks', 'auc', 'lift_head', 'lift_tail',
+        'lift_head_monotonic', 'ks_with_lift_constraint', 'head_ks',
+    ]
+
+    @staticmethod
+    def ks(y_true: np.ndarray, y_prob: np.ndarray, **kwargs) -> float:
+        """标准 KS 目标."""
+        return _calc_ks(y_true, y_prob)
+
+    @staticmethod
+    def auc(y_true: np.ndarray, y_prob: np.ndarray, **kwargs) -> float:
+        """ROC-AUC 目标."""
+        try:
+            from sklearn.metrics import roc_auc_score
+            return float(roc_auc_score(y_true, y_prob))
+        except Exception:
+            return 0.0
+
+    @staticmethod
+    def lift_head(
+        y_true: np.ndarray,
+        y_prob: np.ndarray,
+        ratio: float = 0.10,
+        **kwargs,
+    ) -> float:
+        """头部 LIFT 目标：优化预测概率最高 ratio 比例样本的 LIFT 值.
+
+        :param ratio: 覆盖率，默认 0.10（即 Top 10%）
+        """
+        total = len(y_true)
+        n_top = max(1, int(total * ratio))
+        sorted_idx = np.argsort(y_prob)[::-1]
+        y_sorted = y_true[sorted_idx]
+        overall_br = y_true.mean()
+        if overall_br == 0:
+            return 0.0
+        top_br = y_sorted[:n_top].mean()
+        return float(top_br / overall_br)
+
+    @staticmethod
+    def lift_tail(
+        y_true: np.ndarray,
+        y_prob: np.ndarray,
+        ratio: float = 0.10,
+        **kwargs,
+    ) -> float:
+        """尾部 LIFT 目标：优化预测概率最低 ratio 比例样本（低风险客群）的纯净度.
+
+        纯净度定义为：(1 - 尾部坏率) / (1 - 整体坏率)，值越大表示尾部越纯净。
+
+        :param ratio: 尾部覆盖率，默认 0.10
+        """
+        total = len(y_true)
+        n_tail = max(1, int(total * ratio))
+        sorted_idx = np.argsort(y_prob)   # 升序，低概率在前
+        y_sorted = y_true[sorted_idx]
+        overall_br = y_true.mean()
+        if overall_br == 1.0:
+            return 0.0
+        tail_br = y_sorted[:n_tail].mean()
+        tail_purity = (1.0 - tail_br) / (1.0 - overall_br) if (1.0 - overall_br) > 0 else 0.0
+        return float(tail_purity)
+
+    @staticmethod
+    def lift_head_monotonic(
+        y_true: np.ndarray,
+        y_prob: np.ndarray,
+        n_bins: int = 10,
+        penalty: float = 0.5,
+        **kwargs,
+    ) -> float:
+        """头部单调 LIFT 目标：KS × (1 - 违反单调性比例 × penalty).
+
+        单调性违反比例越低，目标越高；完全单调时等同于 KS 目标。
+
+        :param n_bins: 分箱数，默认 10
+        :param penalty: 单调性惩罚强度，默认 0.5
+        """
+        ks_val = _calc_ks(y_true, y_prob)
+        try:
+            total = len(y_true)
+            n_bin = max(2, n_bins)
+            bin_size = total // n_bin
+            sorted_idx = np.argsort(y_prob)[::-1]
+            y_sorted = y_true[sorted_idx]
+            overall_br = y_true.mean()
+            if overall_br == 0:
+                return 0.0
+            brs = []
+            for i in range(n_bin):
+                start = i * bin_size
+                end = (i + 1) * bin_size if i < n_bin - 1 else total
+                seg = y_sorted[start:end]
+                brs.append(seg.mean() if len(seg) > 0 else 0.0)
+            violations = sum(
+                1 for i in range(1, len(brs)) if brs[i] > brs[i - 1] + 1e-8
+            )
+            n_pairs = n_bin - 1
+            violation_ratio = violations / n_pairs if n_pairs > 0 else 0.0
+            return float(ks_val * (1.0 - violation_ratio * penalty))
+        except Exception:
+            return float(ks_val)
+
+    @staticmethod
+    def ks_with_lift_constraint(
+        y_true: np.ndarray,
+        y_prob: np.ndarray,
+        min_lift_ratio: float = 0.05,
+        min_lift_value: float = 2.0,
+        **kwargs,
+    ) -> float:
+        """KS + LIFT 约束：满足头部 LIFT >= min_lift_value 前提下最大化 KS.
+
+        若不满足约束，返回 0（惩罚）。
+
+        :param min_lift_ratio: 头部覆盖率，默认 0.05（Top 5%）
+        :param min_lift_value: 最低 LIFT 要求，默认 2.0
+        """
+        head_lift = TuningObjective.lift_head(y_true, y_prob, ratio=min_lift_ratio)
+        if head_lift < min_lift_value:
+            return 0.0   # 不满足约束，惩罚为0
+        return _calc_ks(y_true, y_prob)
+
+    @staticmethod
+    def head_ks(
+        y_true: np.ndarray,
+        y_prob: np.ndarray,
+        ratio: float = 0.30,
+        **kwargs,
+    ) -> float:
+        """头部 KS：仅计算预测概率最高 ratio 比例样本的 KS（头部区分能力）.
+
+        :param ratio: 头部覆盖率，默认 0.30
+        """
+        total = len(y_true)
+        n_top = max(2, int(total * ratio))
+        sorted_idx = np.argsort(y_prob)[::-1]
+        y_top = y_true[sorted_idx[:n_top]]
+        prob_top = y_prob[sorted_idx[:n_top]]
+        if y_top.sum() == 0 or y_top.sum() == n_top:
+            return 0.0
+        try:
+            return _calc_ks(y_top, prob_top)
+        except Exception:
+            return 0.0
+
+    @classmethod
+    def get(
+        cls,
+        name: str,
+        **kwargs,
+    ):
+        """按名称获取目标函数（偏函数形式）.
+
+        :param name: 目标函数名称，见 BUILTIN_OBJECTIVES
+        :param kwargs: 额外参数（如 ratio/penalty 等）
+        :return: 可调用对象 (y_true, y_prob) -> float
+
+        Example:
+            >>> obj = TuningObjective.get('lift_head', ratio=0.05)
+            >>> score = obj(y_true, y_prob)
+        """
+        name_lower = name.lower()
+        if name_lower not in cls.BUILTIN_OBJECTIVES:
+            raise ValueError(
+                f"未知目标函数 '{name}'，可选: {cls.BUILTIN_OBJECTIVES}"
+            )
+        func = getattr(cls, name_lower)
+        if kwargs:
+            import functools
+            return functools.partial(func, **kwargs)
+        return func
+
+
 class Metric:
     """评估指标包装类.
     
@@ -270,6 +471,9 @@ class ModelTuner:
         metric: Union[str, Callable, List[Union[str, Callable]]] = 'ks',
         direction: Union[str, List[str]] = 'maximize',
         metric_names: Optional[List[str]] = None,
+        objective: Union[str, Callable, None] = None,
+        objective_kwargs: Optional[Dict[str, Any]] = None,
+        eval_ratios: List[float] = None,
         target: str = 'target',
         cv: int = 5,
         n_jobs: int = -1,
@@ -277,6 +481,18 @@ class ModelTuner:
         verbose: bool = False,
         early_stopping_rounds: int = 20
     ):
+        """初始化 ModelTuner.
+
+        :param objective: 调参优化目标，支持字符串名称（见 TuningObjective.BUILTIN_OBJECTIVES）
+            或自定义函数 (y_true, y_prob) -> float。
+            若指定此参数，则覆盖 metric 参数。
+            支持：'ks' / 'auc' / 'lift_head' / 'lift_tail' /
+                   'lift_head_monotonic' / 'ks_with_lift_constraint' / 'head_ks'
+        :param objective_kwargs: 透传给 TuningObjective 目标函数的额外参数，
+            如 {'ratio': 0.05, 'penalty': 0.3}
+        :param eval_ratios: 调参过程中额外追踪的 LIFT 覆盖率列表，
+            如 [0.01, 0.03, 0.05, 0.10]，结果记录在 optimization_history_ 中
+        """
         if not OPTUNA_AVAILABLE:
             raise ImportError(
                 "Optuna未安装，请使用 pip install optuna 安装"
@@ -285,12 +501,30 @@ class ModelTuner:
         self.model_class = model_class
         self.search_space = search_space
         self.fixed_params = fixed_params or {}
+        self.objective = objective
+        self.objective_kwargs = objective_kwargs or {}
+        self.eval_ratios = eval_ratios or [0.01, 0.03, 0.05, 0.10]
         self.target = target
         self.cv = cv
         self.n_jobs = n_jobs if n_jobs != -1 else None
         self.random_state = random_state
         self.verbose = verbose
         self.early_stopping_rounds = early_stopping_rounds
+
+        # 若指定了 objective（TuningObjective 风格），将其转换为 metric callable
+        if objective is not None:
+            if isinstance(objective, str):
+                if objective in TuningObjective.BUILTIN_OBJECTIVES:
+                    _obj_func = TuningObjective.get(objective, **self.objective_kwargs)
+                    metric = _obj_func
+                    direction = 'maximize'
+                    metric_names = metric_names or [objective]
+                else:
+                    # 可能是旧式 metric 字符串，直接透传
+                    metric = objective
+            elif callable(objective):
+                metric = objective
+                direction = 'maximize'
 
         # 处理metric和direction
         self._setup_metrics(metric, direction, metric_names)

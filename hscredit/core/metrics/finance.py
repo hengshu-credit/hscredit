@@ -4,8 +4,10 @@
 
 主要指标:
 - lift: 模型提升度
+- lift_at: 指定覆盖率下的LIFT值（支持1%/3%/5%/10%/任意值）
 - lift_table: Lift详细统计表
-- lift_curve: Lift曲线数据
+- lift_curve: Lift曲线数据（扩充默认比例，支持tail参数）
+- lift_monotonicity_check: LIFT单调性检验（头部/尾部）
 - rule_lift: 规则Lift指标
 - badrate: 坏账率计算
 - badrate_by_group: 分组坏账率
@@ -133,14 +135,19 @@ def lift_table(y_true: Union[np.ndarray, pd.Series],
 
 def lift_curve(y_true: Union[np.ndarray, pd.Series],
                y_prob: Union[np.ndarray, pd.Series],
-               percentages: List[float] = [0.02, 0.05, 0.1, 0.2, 0.3, 0.5]) -> pd.DataFrame:
+               percentages: List[float] = None,
+               tail: bool = False) -> pd.DataFrame:
     """计算Lift曲线数据.
 
     :param y_true: 真实标签 (0/1)
     :param y_prob: 预测概率或评分
-    :param percentages: 百分比切分点列表
+    :param percentages: 百分比切分点列表，默认 [0.01, 0.03, 0.05, 0.10, 0.20, 0.30, 0.50]
+    :param tail: False=从高概率端截取（头部高风险），True=从低概率端截取（尾部低风险客群）
     :return: Lift曲线数据
     """
+    if percentages is None:
+        percentages = [0.01, 0.03, 0.05, 0.10, 0.20, 0.30, 0.50]
+
     y_true = np.asarray(y_true)
     y_prob = np.asarray(y_prob)
 
@@ -150,8 +157,12 @@ def lift_curve(y_true: Union[np.ndarray, pd.Series],
     total_bad = np.sum(y_true)
     overall_badrate = total_bad / total if total > 0 else 0.0
 
-    desc_indices = np.argsort(y_prob)[::-1]
-    y_true_sorted = y_true[desc_indices]
+    # tail=True时从低概率端截取（分析低风险客群纯净度）
+    if tail:
+        sorted_indices = np.argsort(y_prob)   # 升序，低概率在前
+    else:
+        sorted_indices = np.argsort(y_prob)[::-1]  # 降序，高概率在前
+    y_true_sorted = y_true[sorted_indices]
 
     results = []
     for pct in percentages:
@@ -166,14 +177,226 @@ def lift_curve(y_true: Union[np.ndarray, pd.Series],
         capture_rate = hit_bad / total_bad if total_bad > 0 else 0.0
 
         results.append({
-            '覆盖率': f"{pct:.0%}",
+            '覆盖率': f"{pct:.0%}" if pct >= 0.01 else f"{pct*100:.1f}%",
             '样本数': n_samples,
-            '坏样本数': hit_bad,
+            '坏样本数': int(hit_bad),
             '坏样本捕获率': f"{capture_rate:.2%}",
             'Lift值': round(lift_value, 4),
         })
 
     return pd.DataFrame(results)
+
+
+def lift_at(
+    y_true: Union[np.ndarray, pd.Series],
+    y_prob: Union[np.ndarray, pd.Series],
+    ratios: Union[float, List[float]] = None,
+    ascending: bool = False,
+) -> Union[float, pd.DataFrame]:
+    """计算指定覆盖率下的LIFT值.
+
+    支持 1%/3%/5%/10% 等任意比例，适配风控场景中头部/尾部区分能力分析。
+
+    :param y_true: 真实标签 (0/1)
+    :param y_prob: 预测概率
+    :param ratios: 覆盖率，标量（如 0.05）或列表（如 [0.01, 0.03, 0.05, 0.10]）。
+        默认 [0.01, 0.03, 0.05, 0.10]
+    :param ascending: False=高概率排前（风险模型头部），True=低概率排前（尾部分析）
+    :return: 单个 float（ratios 为标量时）或 DataFrame（ratios 为列表时）
+
+    Example:
+        >>> from hscredit.core.metrics import lift_at
+        >>> lift_at(y_true, y_prob, ratios=0.05)          # 单值，返回float
+        3.42
+        >>> lift_at(y_true, y_prob, ratios=[0.01, 0.03, 0.05, 0.10])  # 返回DataFrame
+           覆盖率  样本数  坏样本数  坏样本率  坏样本捕获率  LIFT值
+        0    1%      50      35   70.00%     12.50%    5.83
+        1    3%     150      98   65.33%     35.00%    4.83
+    """
+    _return_scalar = isinstance(ratios, (int, float))
+    if ratios is None:
+        ratios = [0.01, 0.03, 0.05, 0.10]
+    elif _return_scalar:
+        ratios = [float(ratios)]
+    else:
+        ratios = list(ratios)
+
+    y_true = np.asarray(y_true)
+    y_prob = np.asarray(y_prob)
+    _validate_same_length(y_true, y_prob, ("y_true", "y_prob"))
+
+    total = len(y_true)
+    total_bad = int(np.sum(y_true))
+    overall_badrate = total_bad / total if total > 0 else 0.0
+
+    if ascending:
+        sorted_indices = np.argsort(y_prob)
+    else:
+        sorted_indices = np.argsort(y_prob)[::-1]
+    y_sorted = y_true[sorted_indices]
+
+    results = []
+    for ratio in ratios:
+        n_samples = max(1, min(int(total * ratio), total))
+        hit_y = y_sorted[:n_samples]
+        hit_bad = int(np.sum(hit_y))
+        hit_badrate = hit_bad / n_samples if n_samples > 0 else 0.0
+        lift_value = hit_badrate / overall_badrate if overall_badrate > 0 else 0.0
+        capture_rate = hit_bad / total_bad if total_bad > 0 else 0.0
+
+        pct_label = f"{ratio*100:.0f}%" if ratio >= 0.01 else f"{ratio*100:.1f}%"
+        results.append({
+            '覆盖率': pct_label,
+            '样本数': n_samples,
+            '坏样本数': hit_bad,
+            '坏样本率': f"{hit_badrate:.2%}",
+            '坏样本捕获率': f"{capture_rate:.2%}",
+            'LIFT值': round(lift_value, 4),
+        })
+
+    if _return_scalar:
+        return results[0]['LIFT值']
+    return pd.DataFrame(results)
+
+
+def lift_monotonicity_check(
+    y_true: Union[np.ndarray, pd.Series],
+    y_prob: Union[np.ndarray, pd.Series],
+    n_bins: int = 10,
+    direction: str = 'both',
+) -> Dict[str, Any]:
+    """检查LIFT单调性.
+
+    风控场景理想状态：高风险端（头部）坏率单调递减，低风险端（尾部）坏率单调递增。
+    违反单调性意味着评分在某区间区分能力弱，可作为调参约束目标。
+
+    :param y_true: 真实标签 (0/1)
+    :param y_prob: 预测概率
+    :param n_bins: 分箱数，默认10
+    :param direction: 检验方向。'head'=仅检验头部（高概率→低概率坏率是否递减），
+        'tail'=仅检验尾部，'both'=头尾均检验
+    :return: 字典，含以下键：
+        - head_monotonic (bool): 头部是否单调
+        - tail_monotonic (bool): 尾部是否单调
+        - head_lift_values (list): 头部各分箱LIFT值（由高风险到低风险）
+        - tail_lift_values (list): 尾部各分箱LIFT值（由低风险到高风险）
+        - head_violations (list): 头部违反单调性的分箱对 [(i, j, 差值)]
+        - tail_violations (list): 尾部违反单调性的分箱对
+        - head_violation_ratio (float): 头部违反比例 0.0~1.0
+        - tail_violation_ratio (float): 尾部违反比例 0.0~1.0
+        - head_bin_table (pd.DataFrame): 头部分箱坏率统计表
+        - tail_bin_table (pd.DataFrame): 尾部分箱坏率统计表
+
+    Example:
+        >>> from hscredit.core.metrics import lift_monotonicity_check
+        >>> result = lift_monotonicity_check(y_true, y_prob, n_bins=10)
+        >>> print(result['head_monotonic'])        # True / False
+        >>> print(result['head_violation_ratio'])  # 0.0 ~ 1.0
+        >>> print(result['head_bin_table'])
+    """
+    y_true = np.asarray(y_true)
+    y_prob = np.asarray(y_prob)
+    _validate_same_length(y_true, y_prob, ("y_true", "y_prob"))
+
+    total = len(y_true)
+    total_bad = int(np.sum(y_true))
+    overall_badrate = total_bad / total if total > 0 else 0.0
+
+    def _check_direction(sorted_indices: np.ndarray, label: str) -> Dict[str, Any]:
+        """对给定排序（头部/尾部）计算各分箱坏率和单调性."""
+        y_sorted = y_true[sorted_indices]
+        prob_sorted = y_prob[sorted_indices]
+        bin_size = total // n_bins
+
+        bin_badrates = []
+        bin_lifts = []
+        bin_rows = []
+        for i in range(n_bins):
+            start = i * bin_size
+            end = (i + 1) * bin_size if i < n_bins - 1 else total
+            seg = y_sorted[start:end]
+            seg_prob = prob_sorted[start:end]
+            n = len(seg)
+            n_bad = int(np.sum(seg))
+            br = n_bad / n if n > 0 else 0.0
+            lv = br / overall_badrate if overall_badrate > 0 else 0.0
+            bin_badrates.append(br)
+            bin_lifts.append(round(lv, 4))
+            bin_rows.append({
+                '分箱': i + 1,
+                '样本数': n,
+                '坏样本数': n_bad,
+                '坏样本率': round(br, 6),
+                'LIFT值': round(lv, 4),
+                '概率均值': round(float(seg_prob.mean()), 6),
+            })
+
+        bin_table = pd.DataFrame(bin_rows)
+
+        # 检测单调性：对于头部，坏率应单调递减（每个箱 <= 前一个箱）
+        violations = []
+        for i in range(1, len(bin_badrates)):
+            if bin_badrates[i] > bin_badrates[i - 1] + 1e-8:  # 允许极小数值误差
+                diff = bin_badrates[i] - bin_badrates[i - 1]
+                violations.append((i, i + 1, round(diff, 6)))
+
+        n_pairs = n_bins - 1
+        violation_ratio = len(violations) / n_pairs if n_pairs > 0 else 0.0
+        is_monotonic = len(violations) == 0
+
+        return {
+            'monotonic': is_monotonic,
+            'lift_values': bin_lifts,
+            'violations': violations,
+            'violation_ratio': round(violation_ratio, 4),
+            'bin_table': bin_table,
+        }
+
+    result: Dict[str, Any] = {}
+
+    if direction in ('head', 'both'):
+        # 头部：高概率排前，坏率应递减
+        head_indices = np.argsort(y_prob)[::-1]
+        head = _check_direction(head_indices, 'head')
+        result['head_monotonic'] = head['monotonic']
+        result['head_lift_values'] = head['lift_values']
+        result['head_violations'] = head['violations']
+        result['head_violation_ratio'] = head['violation_ratio']
+        result['head_bin_table'] = head['bin_table']
+    else:
+        result['head_monotonic'] = None
+        result['head_lift_values'] = []
+        result['head_violations'] = []
+        result['head_violation_ratio'] = None
+        result['head_bin_table'] = pd.DataFrame()
+
+    if direction in ('tail', 'both'):
+        # 尾部：低概率排前，坏率应递增（即低风险区纯净度递增）
+        # 注：对尾部客群而言，越靠前概率越低，坏率应越小，
+        # 若坏率单调递增（从低风险到高风险）即合理
+        tail_indices = np.argsort(y_prob)          # 升序
+        tail = _check_direction(tail_indices, 'tail')
+        # 尾部单调性：坏率应单调递增（violations定义为坏率[i] < 坏率[i-1]）
+        tail_violations = []
+        br_list = [row['坏样本率'] for _, row in tail['bin_table'].iterrows()]
+        for i in range(1, len(br_list)):
+            if br_list[i] < br_list[i - 1] - 1e-8:
+                tail_violations.append((i, i + 1, round(br_list[i - 1] - br_list[i], 6)))
+        n_pairs = n_bins - 1
+        tail_vr = len(tail_violations) / n_pairs if n_pairs > 0 else 0.0
+        result['tail_monotonic'] = len(tail_violations) == 0
+        result['tail_lift_values'] = tail['lift_values']
+        result['tail_violations'] = tail_violations
+        result['tail_violation_ratio'] = round(tail_vr, 4)
+        result['tail_bin_table'] = tail['bin_table']
+    else:
+        result['tail_monotonic'] = None
+        result['tail_lift_values'] = []
+        result['tail_violations'] = []
+        result['tail_violation_ratio'] = None
+        result['tail_bin_table'] = pd.DataFrame()
+
+    return result
 
 
 def rule_lift(y_true: Union[np.ndarray, pd.Series],

@@ -61,7 +61,7 @@ from .stability import (
 
 # 金融风控
 from .finance import (
-    lift, lift_table, lift_curve, rule_lift,
+    lift, lift_at, lift_table, lift_curve, lift_monotonicity_check, rule_lift,
     badrate, badrate_by_group, badrate_trend, badrate_by_score_bin,
     score_stats, score_stability,
 )
@@ -95,7 +95,7 @@ __all__ = [
     'batch_psi',
     
     # 金融风控
-    'lift', 'lift_table', 'lift_curve', 'rule_lift',
+    'lift', 'lift_at', 'lift_table', 'lift_curve', 'lift_monotonicity_check', 'rule_lift',
     'badrate', 'badrate_by_group', 'badrate_trend', 'badrate_by_score_bin',
     'score_stats', 'score_stability',
     
