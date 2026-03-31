@@ -293,6 +293,41 @@ class TestOptimalBinning(unittest.TestCase):
         binner.fit(self.X, self.y)
         self.assertTrue(binner._is_fitted)
 
+    def test_user_splits_with_nan_for_numerical(self):
+        """测试数值型自定义切分点包含np.nan时可正常工作."""
+        X = self.X[['feature_1']].copy()
+        y = self.y.copy()
+
+        binner = OptimalBinning(user_splits={'feature_1': [-0.5, 0.0, 0.5, np.nan]})
+        binner.fit(X, y)
+
+        # 能成功拟合并生成分箱表（含缺失箱标签体系）
+        self.assertTrue(binner._is_fitted)
+        bin_table = binner.get_bin_table('feature_1')
+        self.assertIn('分箱标签', bin_table.columns)
+
+    def test_check_input_align_by_common_index(self):
+        """测试X/y长度不一致时按共同索引自动对齐."""
+        X = self.X[['feature_1']].copy()
+        y_filtered = self.y.loc[X['feature_1'] > 0]
+
+        binner = OptimalBinning(method='mdlp', max_n_bins=5)
+        # 不应抛出长度不匹配错误
+        binner.fit(X, y_filtered)
+        self.assertTrue(binner._is_fitted)
+
+    def test_getitem_returns_feature_rules(self):
+        """测试通过[]获取特征分箱规则."""
+        X = self.X[['feature_1']].copy()
+        y = self.y.copy()
+
+        binner = OptimalBinning(user_splits={'feature_1': [-0.5, 0.0, 0.5]})
+        binner.fit(X, y)
+
+        rules = binner['feature_1']
+        self.assertIsNotNone(rules)
+        self.assertEqual(len(rules), 3)
+
     def test_invalid_method(self):
         """测试无效方法."""
         with self.assertRaises(ValueError):

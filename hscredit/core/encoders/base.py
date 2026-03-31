@@ -256,6 +256,16 @@ class BaseEncoder(BaseEstimator, TransformerMixin, ABC):
         """
         return self.mapping_
 
+    def __getitem__(self, feature: str):
+        """通过 `encoder['feature']` 获取该特征的编码映射（toad/scorecardpipeline风格）."""
+        if not hasattr(self, 'mapping_') or self.mapping_ is None or len(self.mapping_) == 0:
+            raise ValueError("编码器尚未拟合，请先调用fit()")
+
+        if feature not in self.mapping_:
+            raise KeyError(f"特征 '{feature}' 未找到")
+
+        return self.mapping_[feature]
+
     def export_mapping(self) -> Dict[str, Any]:
         """导出编码映射（可序列化）。
 

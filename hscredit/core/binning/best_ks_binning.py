@@ -171,14 +171,18 @@ class BestKSBinning(BaseBinning):
         unique_values = np.unique(x_vals)
 
         if len(unique_values) <= self.max_n_bins:
-            return []
+            # 唯一值较少时，直接使用唯一值边界（避免退化为单箱）
+            return unique_values[:-1].tolist()
 
         # 限制候选分割点数量，避免过多唯一值导致性能问题
         max_candidates = min(len(unique_values) - 1, 100)
         if len(unique_values) > max_candidates + 1:
             # 使用分位数选择候选点
             quantiles = np.linspace(0, 1, max_candidates + 1)
-            candidates = np.percentile(unique_values, quantiles[1:-1] * 100)
+            candidates = np.quantile(x_vals, quantiles[1:-1])
+            x_min, x_max = np.min(x_vals), np.max(x_vals)
+            candidates = np.unique(candidates)
+            candidates = candidates[(candidates > x_min) & (candidates < x_max)]
         else:
             # 相邻唯一值的中点
             candidates = (unique_values[:-1] + unique_values[1:]) / 2
@@ -201,6 +205,7 @@ class BestKSBinning(BaseBinning):
 
         # 使用贪心算法选择最优分割点
         selected_splits = []
+        min_samples = self._get_min_samples(len(x_sorted))
 
         while len(selected_splits) < self.max_n_bins - 1 and len(candidates) > 0:
             best_ks = -1
@@ -216,6 +221,10 @@ class BestKSBinning(BaseBinning):
 
                 # 计算该分割点与已选分割点组合的 KS
                 test_splits = sorted(selected_splits + [candidate])
+                split_positions = [np.searchsorted(x_sorted, s, side='right') for s in test_splits]
+                split_positions = [0] + split_positions + [len(x_sorted)]
+                if any((split_positions[j + 1] - split_positions[j]) < min_samples for j in range(len(split_positions) - 1)):
+                    continue
                 ks = self._calc_ks_fast(
                     x_sorted, y_sorted, cum_good, cum_bad,
                     total_good, total_bad, test_splits

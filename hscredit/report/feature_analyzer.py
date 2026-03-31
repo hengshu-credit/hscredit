@@ -210,6 +210,7 @@ def feature_bin_stats(
     :param method: 分箱方法，可选：
         - 基础方法: 'uniform'(等宽), 'quantile'(等频), 'tree'(决策树), 'chi'(卡方)
         - 优化方法: 'best_ks'(最优KS), 'best_iv'(最优IV), 'mdlp'(信息论)
+        - 运筹规划方法: 'or_tools'(OR-Tools整数规划，需安装 ortools)
         - 高级方法: 'cart'(CART), 'monotonic'(单调性), 'genetic'(遗传算法),
                     'smooth'(平滑), 'kernel_density'(核密度), 
                     'best_lift'(Best Lift), 'target_bad_rate'(目标坏样本率)
@@ -317,6 +318,8 @@ def feature_bin_stats(
                 'best_ks': 'BestKSBinning',
                 'best_iv': 'BestIVBinning',
                 'mdlp': 'MDLPBinning',
+                # 运筹规划方法
+                'or_tools': 'ORBinning',
                 # 高级方法
                 'cart': 'CartBinning',
                 'monotonic': 'MonotonicBinning',

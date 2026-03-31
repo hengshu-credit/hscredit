@@ -79,6 +79,17 @@ class TestBestIVBinning(unittest.TestCase):
         iv_value = table['指标IV值'].iloc[0]
         self.assertGreater(iv_value, 0)
 
+    def test_low_unique_values_should_keep_multiple_bins(self):
+        """测试低唯一值数值特征不会退化成单箱."""
+        X = pd.DataFrame({'x': [1, 1, 2, 2, 3, 3, 4, 4]})
+        y = pd.Series([0, 1, 0, 1, 0, 1, 0, 1])
+
+        binner = BestIVBinning(max_n_bins=5)
+        binner.fit(X, y)
+
+        # 至少应有2个箱（切分点>=1）
+        self.assertGreaterEqual(binner.n_bins_['x'], 2)
+
 
 class TestBestKSBinning(unittest.TestCase):
     """测试 BestKSBinning."""
@@ -105,6 +116,17 @@ class TestBestKSBinning(unittest.TestCase):
         self.binner.fit(self.X, self.y)
         table = self.binner.get_bin_table('feature_1')
         self.assertIn('分档KS值', table.columns)
+
+
+    def test_low_unique_values_should_keep_multiple_bins(self):
+        """测试低唯一值数值特征不会退化成单箱."""
+        X = pd.DataFrame({'x': [1, 1, 2, 2, 3, 3, 4, 4]})
+        y = pd.Series([0, 1, 0, 1, 0, 1, 0, 1])
+
+        binner = BestKSBinning(max_n_bins=5)
+        binner.fit(X, y)
+
+        self.assertGreaterEqual(binner.n_bins_['x'], 2)
 
 
 class TestBestBinningAPI(unittest.TestCase):

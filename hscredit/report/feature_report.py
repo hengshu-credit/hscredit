@@ -48,7 +48,10 @@ def auto_feature_analysis_report(
     corr=False,
     pictures=None,
     suffix="",
-    output_dir="model_report"
+    output_dir="model_report",
+    margins=False,
+    amount=None,
+    image_table_gap_rows=None,
 ):
     """
     自动特征分析报告.
@@ -76,6 +79,13 @@ def auto_feature_analysis_report(
     :param pictures: 需要生成的图片列表，支持 ["ks", "hist", "bin"]
     :param suffix: 文件名后缀，避免同名文件被覆盖
     :param output_dir: 图片输出目录
+    :param margins: 是否在每个特征分箱表末尾添加合计行，默认 False
+    :param amount: 放款金额或余额字段名称（每位客户的放款金额或余额）。
+        传入后同时生成订单口径和金额口径两张分箱表，在 Excel 中左右并排展示，
+        订单口径在左，金额口径在右，中间空一列。默认 None（仅生成订单口径）。
+    :param image_table_gap_rows: 图片区与分箱表之间的额外空行数。
+        - None: 根据系统自动设置（Windows=2, mac/linux=1）
+        - int: 使用指定空行数
     :return: (end_row, end_col) 报告结束位置
 
     **使用示例**
@@ -91,14 +101,16 @@ def auto_feature_analysis_report(
     ...     'target': np.random.randint(0, 2, 1000)
     ... })
 
-    >>> # 生成报告
+    >>> # 生成报告（含合计行和金额口径）
     >>> auto_feature_analysis_report(
     ...     data,
     ...     features=['feature1', 'feature2'],
     ...     target='target',
     ...     excel_writer='数据测试报告.xlsx',
     ...     pictures=['bin', 'ks', 'hist'],
-    ...     corr=True
+    ...     corr=True,
+    ...     margins=True,
+    ...     amount='loan_amount',
     ... )
     """
     if writer_params is None:
@@ -128,6 +140,19 @@ def auto_feature_analysis_report(
         target = f"{overdue[0]} {dpds[0]}+"
         data[target] = (data[overdue[0]] > dpds[0]).astype(int)
 
+    # 自动转换日期字段为 datetime，避免调用方预处理
+    if date is not None and date in data.columns and not pd.api.types.is_datetime64_any_dtype(data[date]):
+        # 先按常规日期解析（字符串/时间戳等）
+        converted_date = pd.to_datetime(data[date], errors='coerce')
+
+        # 若解析失败较多且为数值型，尝试按 Excel 序列日期解析
+        if converted_date.notna().sum() < len(data) * 0.5 and pd.api.types.is_numeric_dtype(data[date]):
+            converted_date_excel = pd.to_datetime(data[date], unit='D', errors='coerce')
+            if converted_date_excel.notna().sum() > converted_date.notna().sum():
+                converted_date = converted_date_excel
+
+        data[date] = converted_date
+
     if isinstance(excel_writer, ExcelWriter):
         writer = excel_writer
     else:
@@ -135,10 +160,14 @@ def auto_feature_analysis_report(
 
     worksheet = writer.get_sheet_by_name(sheet)
 
+    # 图片区与分箱表之间的系统差异化空行，避免 Windows 下图片覆盖表头
+    if image_table_gap_rows is None:
+        image_table_gap_rows = 2 if getattr(writer, "system", "windows") == "windows" else 1
+
     if bin_params and "del_grey" in bin_params and bin_params.get("del_grey"):
-        merge_columns = ["指标名称", "指标含义", "分箱"]
+        merge_columns = ["指标名称", "指标含义", "分箱标签"]
     else:
-        merge_columns = ["指标名称", "指标含义", "分箱", "样本总数", "样本占比"]
+        merge_columns = ["指标名称", "指标含义", "分箱标签", "样本总数", "样本占比"]
 
     return_cols = []
     if bin_params:
@@ -168,7 +197,7 @@ def auto_feature_analysis_report(
             end_date = data[date].max().strftime("%Y-%m-%d")
 
         dataset_summary = pd.DataFrame(
-            [[start_date, end_date, len(data), data[target].sum(), 
+            [[start_date, end_date, len(data), data[target].sum(),
               data[target].sum() / len(data), data_summary_comment]],
             columns=["开始时间", "结束时间", "样本总数", "坏客户数", "坏客户占比", "备注"],
         )
@@ -228,14 +257,21 @@ def auto_feature_analysis_report(
         style="header_middle", end_space=(end_row, start_col + max_columns_len - 1)
     )
 
+    # 判断是否启用金额口径
+    use_amount = amount is not None and amount in data.columns
+
     features_iter = tqdm(features)
     for col in features_iter:
         features_iter.set_postfix(feature=feature_map.get(col, col))
         try:
+            # 准备所需列
             if overdue is None:
-                temp = data[[col, target]]
+                cols_needed = [col, target]
             else:
-                temp = data[list(set([col, target] + overdue))]
+                cols_needed = list(set([col, target] + overdue))
+            if use_amount:
+                cols_needed = list(set(cols_needed + [amount]))
+            temp = data[cols_needed]
 
             if isinstance(dropna, bool) and dropna is True:
                 temp = temp.dropna(subset=col).reset_index(drop=True)
@@ -247,13 +283,59 @@ def auto_feature_analysis_report(
             if overdue:
                 actual_target = f"{overdue[0]} {dpds[0]}+"
 
+            # ---- 订单口径分箱表 ----
             score_table_train = feature_bin_stats(
                 temp, col, overdue=overdue, dpds=dpds,
-                desc=f"{feature_map.get(col, col)}", target=target, **bin_params
+                desc=f"{feature_map.get(col, col)}", target=target,
+                margins=margins,
+                **bin_params
             )
 
-            # 根据 score_table_train 的实际列数计算 end_space 宽度
-            actual_columns_len = len(score_table_train.columns)
+            # ---- 金额口径分箱表（若启用）----
+            if use_amount:
+                score_table_amount = feature_bin_stats(
+                    temp, col, overdue=overdue, dpds=dpds,
+                    desc=f"{feature_map.get(col, col)}", target=target,
+                    amount=amount,
+                    margins=margins,
+                    **bin_params
+                )
+            else:
+                score_table_amount = None
+
+            # 标题覆盖宽度需要与实际写入的分箱表宽度一致
+            train_title_columns_len = len(score_table_train.columns)
+            amount_title_columns_len = len(score_table_amount.columns) if (use_amount and score_table_amount is not None) else 0
+
+            if return_cols:
+                # 订单口径：按实际输出列计算（merge列 + return_cols列）
+                if score_table_train.columns.nlevels > 1 and not isinstance(merge_columns[0], tuple):
+                    _merge_cols_for_title = [("分箱详情", c) for c in merge_columns]
+                else:
+                    _merge_cols_for_title = merge_columns
+                train_title_columns_len = len(
+                    _merge_cols_for_title + [
+                        c for c in score_table_train.columns
+                        if (isinstance(c, (tuple, list)) and c[-1] in return_cols)
+                        or (not isinstance(c, (tuple, list)) and c in return_cols)
+                        or (isinstance(return_cols[0], (tuple, list)) and isinstance(c, (tuple, list)) and c in return_cols)
+                    ]
+                )
+
+                # 金额口径：按实际输出列计算（merge列 + return_cols列）
+                if use_amount and score_table_amount is not None:
+                    if score_table_amount.columns.nlevels > 1 and not isinstance(merge_columns[0], tuple):
+                        _merge_cols_amt_for_title = [("分箱详情", c) for c in merge_columns]
+                    else:
+                        _merge_cols_amt_for_title = merge_columns
+                    amount_title_columns_len = len(
+                        _merge_cols_amt_for_title + [
+                            c for c in score_table_amount.columns
+                            if (isinstance(c, (tuple, list)) and c[-1] in return_cols)
+                            or (not isinstance(c, (tuple, list)) and c in return_cols)
+                            or (isinstance(return_cols[0], (tuple, list)) and isinstance(c, (tuple, list)) and c in return_cols)
+                        ]
+                    )
 
             if pictures and len(pictures) > 0:
                 if "bin" in pictures:
@@ -296,18 +378,26 @@ def auto_feature_analysis_report(
                                 save=os.path.join(output_dir, f"feature_hist_plot_{col}{suffix}.png")
                             )
 
+            # 写入特征标题行
+            # 如果有金额口径，标题需要覆盖两张表的宽度（订单列+1空列+金额列）
+            if use_amount and score_table_amount is not None:
+                # 标题覆盖：订单列数 + 1（间隔列）+ 金额列数
+                title_span = train_title_columns_len + 1 + amount_title_columns_len
+            else:
+                title_span = train_title_columns_len
+
             if (len(temp) < len(data)) and (isinstance(dropna, bool) and dropna is True) or \
                isinstance(dropna, (float, int, str)):
                 end_row, end_col = writer.insert_value2sheet(
                     worksheet, (end_row + 2, start_col),
                     value=f"数据字段: {feature_map.get(col, col)} (缺失率: {round((1 - len(temp) / len(data)) * 100, 2)}%)",
-                    style="header", end_space=(end_row + 2, start_col + actual_columns_len - 1)
+                    style="header", end_space=(end_row + 2, start_col + title_span - 1)
                 )
             else:
                 end_row, end_col = writer.insert_value2sheet(
                     worksheet, (end_row + 2, start_col),
                     value=f"数据字段: {feature_map.get(col, col)}",
-                    style="header", end_space=(end_row + 2, start_col + actual_columns_len - 1)
+                    style="header", end_space=(end_row + 2, start_col + title_span - 1)
                 )
 
             if pictures and len(pictures) > 0:
@@ -330,14 +420,17 @@ def auto_feature_analysis_report(
                             (ks_row, end_col - 1), figsize=(600, 350)
                         )
 
+            # 写入订单口径分箱表
+            table_start_row = end_row + image_table_gap_rows
             if return_cols:
                 if score_table_train.columns.nlevels > 1 and not isinstance(merge_columns[0], tuple):
-                    merge_columns = [("分箱详情", c) for c in merge_columns]
-
+                    _merge_cols = [("分箱详情", c) for c in merge_columns]
+                else:
+                    _merge_cols = merge_columns
                 end_row, end_col = dataframe2excel(
                     score_table_train[
-                        merge_columns + [
-                            c for c in score_table_train.columns 
+                        _merge_cols + [
+                            c for c in score_table_train.columns
                             if (isinstance(c, (tuple, list)) and c[-1] in return_cols)
                             or (not isinstance(c, (tuple, list)) and c in return_cols)
                             or (isinstance(return_cols[0], (tuple, list)) and isinstance(c, (tuple, list)) and c in return_cols)
@@ -345,15 +438,48 @@ def auto_feature_analysis_report(
                     ], writer, worksheet,
                     percent_cols=["样本占比", "好样本占比", "坏样本占比", "坏样本率", "LIFT值", "坏账改善", "累积LIFT值", "累积坏账改善"],
                     condition_cols=["坏样本率", "LIFT值"], merge_column=["指标名称", "指标含义"],
-                    merge=True, fill=True, start_row=end_row
+                    merge=True, fill=True, start_row=table_start_row
                 )
             else:
                 end_row, end_col = dataframe2excel(
                     score_table_train, writer, worksheet,
                     percent_cols=["样本占比", "好样本占比", "坏样本占比", "坏样本率", "LIFT值", "坏账改善", "累积LIFT值", "累积坏账改善"],
                     condition_cols=["坏样本率", "LIFT值"], merge_column=["指标名称", "指标含义"],
-                    merge=True, fill=True, start_row=end_row
+                    merge=True, fill=True, start_row=table_start_row
                 )
+
+            # 写入金额口径分箱表（紧接订单表右侧，间隔一列）
+            if use_amount and score_table_amount is not None:
+                # 金额表起始列 = 订单表结束列 + 1（间隔列）+ 1
+                amount_start_col = end_col + 1
+                if return_cols:
+                    if score_table_amount.columns.nlevels > 1 and not isinstance(merge_columns[0], tuple):
+                        _merge_cols_amt = [("分箱详情", c) for c in merge_columns]
+                    else:
+                        _merge_cols_amt = merge_columns
+                    dataframe2excel(
+                        score_table_amount[
+                            _merge_cols_amt + [
+                                c for c in score_table_amount.columns
+                                if (isinstance(c, (tuple, list)) and c[-1] in return_cols)
+                                or (not isinstance(c, (tuple, list)) and c in return_cols)
+                                or (isinstance(return_cols[0], (tuple, list)) and isinstance(c, (tuple, list)) and c in return_cols)
+                            ]
+                        ], writer, worksheet,
+                        percent_cols=["样本占比", "好样本占比", "坏样本占比", "坏样本率", "LIFT值", "坏账改善", "累积LIFT值", "累积坏账改善"],
+                        condition_cols=["坏样本率", "LIFT值"], merge_column=["指标名称", "指标含义"],
+                        merge=True, fill=True,
+                        start_row=table_start_row, start_col=amount_start_col
+                    )
+                else:
+                    dataframe2excel(
+                        score_table_amount, writer, worksheet,
+                        percent_cols=["样本占比", "好样本占比", "坏样本占比", "坏样本率", "LIFT值", "坏账改善", "累积LIFT值", "累积坏账改善"],
+                        condition_cols=["坏样本率", "LIFT值"], merge_column=["指标名称", "指标含义"],
+                        merge=True, fill=True,
+                        start_row=table_start_row, start_col=amount_start_col
+                    )
+
         except Exception as e:
             print(f"数据字段 {col} 分析时发生异常，请排查数据中是否存在异常:\n{traceback.format_exc()}")
 
@@ -361,3 +487,4 @@ def auto_feature_analysis_report(
         writer.save(excel_writer)
 
     return end_row, end_col
+                    

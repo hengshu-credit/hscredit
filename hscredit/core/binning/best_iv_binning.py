@@ -172,13 +172,22 @@ class BestIVBinning(BaseBinning):
         unique_values = np.unique(x_vals)
 
         if len(unique_values) <= self.max_n_bins:
-            return []
+            # 唯一值较少时，直接使用唯一值边界（避免退化为单箱）
+            return unique_values[:-1].tolist()
 
         # 限制候选分割点数量
         max_candidates = min(len(unique_values) - 1, 100)
         if len(unique_values) > max_candidates + 1:
+            # 使用样本分位点（按频次加权），而非唯一值分位点
             quantiles = np.linspace(0, 1, max_candidates + 1)
-            candidates = np.percentile(unique_values, quantiles[1:-1] * 100)
+            candidates = np.quantile(x_vals, quantiles[1:-1])
+            x_min, x_max = np.min(x_vals), np.max(x_vals)
+            candidates = np.unique(candidates)
+            candidates = candidates[(candidates > x_min) & (candidates < x_max)]
+            # 去重并确保在开区间内
+            x_min, x_max = np.min(x_vals), np.max(x_vals)
+            candidates = np.unique(candidates)
+            candidates = candidates[(candidates > x_min) & (candidates < x_max)]
         else:
             candidates = (unique_values[:-1] + unique_values[1:]) / 2
 
@@ -258,6 +267,7 @@ class BestIVBinning(BaseBinning):
 
         iv = 0.0
         eps = 1e-10
+        min_samples = self._get_min_samples(len(x_sorted))
 
         for i in range(len(split_positions) - 1):
             start = split_positions[i]
@@ -265,6 +275,10 @@ class BestIVBinning(BaseBinning):
 
             if start >= end:
                 continue
+
+            # 约束：每箱最小样本数
+            if (end - start) < min_samples:
+                return -1.0
 
             # 使用累积统计计算该箱的好/坏样本数
             good_in_bin = cum_good[end - 1] - (cum_good[start - 1] if start > 0 else 0)

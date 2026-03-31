@@ -467,15 +467,36 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
             if isinstance(y, np.ndarray):
                 if y.ndim != 1:
                     raise ValueError(f"目标变量y必须是一维数组，但得到 {y.ndim} 维")
+                if len(y) != len(original_index):
+                    raise ValueError(
+                        f"特征和标签数量不匹配: {len(original_index)} != {len(y)}"
+                    )
                 y = pd.Series(y, index=original_index, name=self.target)
             elif isinstance(y, pd.Series):
-                # 确保索引对齐
-                if not y.index.equals(original_index):
+                y = y.copy()
+                if y.index.equals(original_index):
+                    pass
+                elif len(y) == len(original_index):
+                    # 长度一致但索引不同：按位置对齐
                     y = y.reset_index(drop=True)
                     y.index = original_index
+                else:
+                    # 长度不一致：尝试按索引交集对齐（常见于调用方先对y做过滤）
+                    common_index = original_index.intersection(y.index)
+                    if len(common_index) == 0:
+                        raise ValueError(
+                            f"特征和标签数量不匹配且无公共索引: {len(original_index)} != {len(y)}"
+                        )
+                    X = X.loc[common_index].copy()
+                    original_index = X.index
+                    y = y.loc[common_index].copy()
                 y.name = self.target
             else:
                 # 其他可迭代类型
+                if len(y) != len(original_index):
+                    raise ValueError(
+                        f"特征和标签数量不匹配: {len(original_index)} != {len(y)}"
+                    )
                 y = pd.Series(y, index=original_index, name=self.target)
         else:
             # scorecardpipeline风格: 从X中提取target列
@@ -744,6 +765,19 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
             raise KeyError(f"特征 '{feature}' 未找到")
 
         return self.bin_tables_[feature].copy()
+
+    def __getitem__(self, feature: str):
+        """通过 `binner['feature']` 获取分箱规则（toad/scorecardpipeline风格）."""
+        if not self._is_fitted:
+            raise ValueError("分箱器尚未拟合，请先调用fit方法")
+
+        if feature in self._cat_bins_:
+            return self._cat_bins_[feature]
+
+        if feature in self.splits_:
+            return self.splits_[feature]
+
+        raise KeyError(f"特征 '{feature}' 未找到")
 
     def get_splits(self, feature: str) -> np.ndarray:
         """获取指定特征的切分点.

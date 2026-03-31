@@ -208,3 +208,4 @@ __marimo__/
 
 # itlubber
 .DS_Store
+examples/model_report_demo/*

@@ -284,10 +284,20 @@ class OptimalBinning(BaseBinning):
                 splits = self._get_default_splits(X[feature], y, feature_type)
 
             if feature_type == 'numerical':
-                splits = np.array(sorted(splits))
+                # 数值型自定义切分点：允许用户传入 np.nan/None 表示缺失箱，
+                # 实际切分点中自动忽略这些值（缺失值由 missing_separate 统一处理）
+                numeric_splits = pd.to_numeric(pd.Series(list(splits)), errors='coerce')
+                splits = numeric_splits[~numeric_splits.isna()].to_numpy(dtype=float)
+                splits = np.unique(np.sort(splits))
+
                 # 确保切分点在数据范围内
-                x_min, x_max = X[feature].min(), X[feature].max()
-                splits = splits[(splits > x_min) & (splits < x_max)]
+                x_non_missing = pd.to_numeric(X[feature], errors='coerce').dropna()
+                if len(x_non_missing) > 0:
+                    x_min, x_max = x_non_missing.min(), x_non_missing.max()
+                    splits = splits[(splits > x_min) & (splits < x_max)]
+                else:
+                    splits = np.array([])
+
                 self.splits_[feature] = self._round_splits(splits)
                 self.n_bins_[feature] = len(splits) + 1
             else:
