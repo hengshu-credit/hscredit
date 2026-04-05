@@ -16,11 +16,10 @@ class QuantileBinning(BaseBinning):
     将特征值按照分位数切分成多个区间，确保每个区间的样本数大致相等。
     适用于数据分布不均匀或存在异常值的场景。
 
-    :param n_bins: 目标分箱数，默认为5
     :param min_n_bins: 最小分箱数，默认为2
     :param max_n_bins: 最大分箱数，默认为10
     :param quantiles: 自定义分位点列表，如[0, 0.2, 0.5, 0.8, 1.0]，默认为None
-        - 如果提供，将直接使用这些分位点进行分箱，忽略n_bins
+        - 如果提供，将直接使用这些分位点进行分箱
     :param force_numerical: 是否强制作为数值型处理，默认为True
         - True: 将所有特征视为数值型进行等频分箱
         - False: 自动检测特征类型
@@ -43,7 +42,7 @@ class QuantileBinning(BaseBinning):
 
     >>> from hscredit.core.binning import QuantileBinning
     >>> # 基础用法
-    >>> binner = QuantileBinning(n_bins=5)
+    >>> binner = QuantileBinning(max_n_bins=5)
     >>> binner.fit(X, y)
     >>> X_binned = binner.transform(X)
     >>>
@@ -55,7 +54,6 @@ class QuantileBinning(BaseBinning):
     def __init__(
         self,
         target: str = 'target',
-        n_bins: int = 5,
         min_n_bins: int = 2,
         max_n_bins: int = 10,
         quantiles: Optional[List[float]] = None,
@@ -82,7 +80,6 @@ class QuantileBinning(BaseBinning):
             random_state=random_state,
             verbose=verbose,
         )
-        self.n_bins = n_bins
         self.quantiles = quantiles
         self.force_numerical = force_numerical
         
@@ -134,11 +131,26 @@ class QuantileBinning(BaseBinning):
             else:
                 # 数值型特征：等频分箱
                 splits = self._fit_numerical(X[feature], y)
-                self.splits_[feature] = self._round_splits(splits)
+                splits = self._round_splits(splits)
+                if self.monotonic not in [False, None, 'none'] and len(splits) > 0:
+                    from .monotonic_binning import MonotonicBinning
+                    mono = MonotonicBinning(
+                        monotonic=self.monotonic,
+                        max_n_bins=self.max_n_bins,
+                        min_n_bins=self.min_n_bins,
+                        min_bin_size=self.min_bin_size,
+                        special_codes=self.special_codes,
+                        missing_separate=self.missing_separate,
+                        random_state=self.random_state,
+                        verbose=False,
+                    )
+                    splits = mono._ensure_monotonic(X[feature].dropna(), y.loc[X[feature].dropna().index], splits, mono._detect_monotonic_mode(X[feature].dropna(), y.loc[X[feature].dropna().index], splits))
+                    splits = self._round_splits(splits)
+                self.splits_[feature] = splits
             self.n_bins_[feature] = len(splits) + 1
 
             # 计算分箱统计信息
-            bins = self._apply_bins(X[feature], splits)
+            bins = self._apply_bins(X[feature], self.splits_[feature])
             self.bin_tables_[feature] = self._compute_bin_stats(
                 feature, X[feature], y, bins
             )
@@ -171,14 +183,14 @@ class QuantileBinning(BaseBinning):
         if len(x_valid) == 0:
             return np.array([])
 
-        # 使用自定义分位点或基于n_bins计算
+        # 使用自定义分位点或基于max_n_bins计算
         if self.quantiles is not None:
             # 使用自定义分位点
             quantiles_to_use = self.quantiles
             target_n_bins = len(self.quantiles) - 1
         else:
-            # 基于n_bins计算分位点
-            target_n_bins = self.n_bins
+            # 基于max_n_bins计算分位点
+            target_n_bins = self.max_n_bins
             quantiles_to_use = np.linspace(0, 1, target_n_bins + 1)
 
         # 确保目标分箱数在约束范围内
@@ -537,7 +549,7 @@ if __name__ == '__main__':
     print("=" * 50)
 
     # 创建分箱器
-    binner = QuantileBinning(n_bins=5, verbose=True)
+    binner = QuantileBinning(max_n_bins=5, verbose=True)
 
     # 拟合
     binner.fit(X, y)

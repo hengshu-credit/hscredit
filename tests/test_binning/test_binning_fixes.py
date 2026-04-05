@@ -2,10 +2,15 @@
 验证分箱方法修复情况
 """
 
-import pandas as pd
+from pathlib import Path
+
 import numpy as np
+import pandas as pd
 import sys
-sys.path.insert(0, '/Users/xiaoxi/CodeBuddy/hscredit/hscredit')
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 
 from hscredit.core.binning import (
     UniformBinning, QuantileBinning, TreeBinning, 
@@ -14,7 +19,7 @@ from hscredit.core.binning import (
 )
 
 # 加载测试数据
-df = pd.read_excel('/Users/xiaoxi/CodeBuddy/hscredit/hscredit/examples/utils/hscredit.xlsx')
+df = pd.read_excel(_PROJECT_ROOT / "examples" / "hscredit.xlsx")
 df['target'] = ((df['MOB1'] > 15) | (df['MOB2'] > 15)).astype(int)
 
 X = df[['青云24']].copy()
@@ -31,7 +36,7 @@ print("\n1. 测试 QuantileBinning (force_numerical 和自定义分位点)")
 print("-" * 60)
 try:
     # 测试 force_numerical
-    binner = QuantileBinning(n_bins=5, force_numerical=True)
+    binner = QuantileBinning(max_n_bins=5, force_numerical=True)
     binner.fit(X, y)
     print(f"  ✓ force_numerical=True 工作正常")
     print(f"    特征类型: {binner.feature_types_}")
@@ -70,7 +75,7 @@ except Exception as e:
 print("\n3. 测试 ChiMergeBinning (max_n_bins)")
 print("-" * 60)
 try:
-    binner = ChiMergeBinning(n_bins=5, max_n_bins=5)
+    binner = ChiMergeBinning(max_n_bins=5)
     binner.fit(X, y)
     print(f"  ✓ max_n_bins 工作正常")
     print(f"    分箱数: {binner.n_bins_}")

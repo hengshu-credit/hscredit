@@ -103,6 +103,7 @@ class BestIVBinning(BaseBinning):
         for feature in X.columns:
             self._fit_feature(feature, X[feature], y)
 
+        self._apply_post_fit_constraints(X, y, enforce_monotonic=True)
         self._is_fitted = True
         return self
 

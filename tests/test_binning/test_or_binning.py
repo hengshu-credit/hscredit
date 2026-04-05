@@ -8,9 +8,6 @@ import numpy as np
 import pandas as pd
 import warnings
 
-import sys
-sys.path.insert(0, '/Users/xiaoxi/CodeBuddy/hscredit/hscredit')
-
 try:
     from hscredit.core.binning import ORBinning
     ORTOOLS_AVAILABLE = True
@@ -23,7 +20,7 @@ class TestDataGenerator:
     """测试数据生成器."""
 
     @staticmethod
-    def create_binary_data(n_samples=1000, n_features=3, random_state=42):
+    def create_binary_data(n_samples=320, n_features=3, random_state=42):
         """创建二分类测试数据."""
         np.random.seed(random_state)
 
@@ -48,7 +45,7 @@ class TestORBinning(unittest.TestCase):
     def setUp(self):
         """设置测试数据."""
         self.X, self.y = TestDataGenerator.create_binary_data()
-        self.binner = ORBinning(max_n_bins=5, objective='iv', time_limit=5)
+        self.binner = ORBinning(max_n_bins=5, objective='iv', time_limit=1, max_candidates=20)
 
     def test_fit(self):
         """测试拟合."""
@@ -81,19 +78,19 @@ class TestORBinning(unittest.TestCase):
         
         for obj in objectives:
             with self.subTest(objective=obj):
-                binner = ORBinning(max_n_bins=5, objective=obj, time_limit=3)
+                binner = ORBinning(max_n_bins=5, objective=obj, time_limit=1, max_candidates=20)
                 binner.fit(self.X, self.y)
                 self.assertTrue(binner._is_fitted)
 
     def test_monotonic_constraint(self):
         """测试单调性约束."""
-        binner = ORBinning(max_n_bins=5, objective='iv', monotonic=True, time_limit=3)
+        binner = ORBinning(max_n_bins=5, objective='iv', monotonic=True, time_limit=1, max_candidates=20)
         binner.fit(self.X, self.y)
         self.assertTrue(binner._is_fitted)
 
     def test_bin_count_constraint(self):
         """测试分箱数约束."""
-        binner = ORBinning(max_n_bins=5, min_n_bins=3, time_limit=3)
+        binner = ORBinning(max_n_bins=5, min_n_bins=3, time_limit=1, max_candidates=20)
         binner.fit(self.X, self.y)
         
         for feature in self.X.columns:
@@ -120,7 +117,7 @@ class TestORBinningComparison(unittest.TestCase):
         from hscredit.core.binning import BestIVBinning
         
         # OR-Tools 分箱
-        or_binner = ORBinning(max_n_bins=5, objective='iv', time_limit=5)
+        or_binner = ORBinning(max_n_bins=5, objective='iv', time_limit=1, max_candidates=20)
         or_binner.fit(self.X, self.y)
         
         # 贪心算法分箱

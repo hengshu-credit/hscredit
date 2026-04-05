@@ -152,6 +152,7 @@ class CartBinning(BaseBinning):
                 feature, X[feature], y, bins
             )
 
+        self._apply_post_fit_constraints(X, y, enforce_monotonic=True)
         self._is_fitted = True
         return self
 
@@ -205,16 +206,17 @@ class CartBinning(BaseBinning):
         else:
             min_samples_leaf = int(self.min_bin_size)
 
-        # 训练决策树
+        # 训练决策树：先做更细的内部预分箱，再通过约束合并到目标箱数
+        tree_leaf_nodes = max(self.max_n_bins * 4, 20)
         if self.problem_type_ == "regression":
             tree = DecisionTreeRegressor(
-                max_leaf_nodes=self.max_n_bins,
+                max_leaf_nodes=tree_leaf_nodes,
                 min_samples_leaf=min_samples_leaf,
                 random_state=self.random_state
             )
         else:
             tree = DecisionTreeClassifier(
-                max_leaf_nodes=self.max_n_bins,
+                max_leaf_nodes=tree_leaf_nodes,
                 min_samples_leaf=min_samples_leaf,
                 class_weight=self.class_weight,
                 random_state=self.random_state
@@ -397,7 +399,13 @@ class CartBinning(BaseBinning):
                 target_ascending = True
             elif self.monotonic == 'descending':
                 target_ascending = False
-            else:  # auto
+            elif self.monotonic == 'auto_asc_desc':
+                corr = pd.Series(x).corr(pd.Series(y), method='spearman')
+                if pd.notna(corr) and abs(corr) >= 0.02:
+                    target_ascending = bool(corr > 0)
+                else:
+                    target_ascending = bool(bin_means[-1] >= bin_means[0])
+            else:  # auto / True
                 target_ascending = is_ascending or not is_descending
 
             # 检查是否满足单调性
@@ -821,9 +829,6 @@ class CartBinning(BaseBinning):
 
 
 if __name__ == '__main__':
-    import sys
-    sys.path.insert(0, '/Users/xiaoxi/CodeBuddy/hscredit/hscredit')
-
     # 测试代码
     np.random.seed(42)
     n_samples = 5000

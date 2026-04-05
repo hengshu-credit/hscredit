@@ -121,14 +121,26 @@ class KMeansBinning(BaseBinning):
             else:
                 # 数值型特征：K-Means聚类分箱
                 splits = self._fit_numerical(X[feature], y)
-                self.splits_[feature] = self._round_splits(splits)
-            self.n_bins_[feature] = len(splits) + 1
-
-            self.splits_[feature] = splits
+                splits = self._round_splits(splits)
+                if self.monotonic not in [False, None, 'none'] and len(splits) > 0:
+                    from .monotonic_binning import MonotonicBinning
+                    mono = MonotonicBinning(
+                        monotonic=self.monotonic,
+                        max_n_bins=self.max_n_bins,
+                        min_n_bins=self.min_n_bins,
+                        min_bin_size=self.min_bin_size,
+                        special_codes=self.special_codes,
+                        missing_separate=self.missing_separate,
+                        random_state=self.random_state,
+                        verbose=False,
+                    )
+                    splits = mono._ensure_monotonic(X[feature].dropna(), y.loc[X[feature].dropna().index], splits, mono._detect_monotonic_mode(X[feature].dropna(), y.loc[X[feature].dropna().index], splits))
+                    splits = self._round_splits(splits)
+                self.splits_[feature] = splits
             self.n_bins_[feature] = len(splits) + 1
 
             # 计算分箱统计信息
-            bins = self._apply_bins(X[feature], splits)
+            bins = self._apply_bins(X[feature], self.splits_[feature])
             self.bin_tables_[feature] = self._compute_bin_stats(
                 feature, X[feature], y, bins
             )

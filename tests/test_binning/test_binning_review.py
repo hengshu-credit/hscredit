@@ -10,16 +10,21 @@ hscredit 分箱方法全面测试脚本
 6. 边界条件处理（如所有值相同、只有一个唯一值等）
 """
 
+from pathlib import Path
+
 import pandas as pd
 import numpy as np
 import warnings
 warnings.filterwarnings('ignore')
 
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+_DEMO_XLSX = _PROJECT_ROOT / "examples" / "hscredit.xlsx"
+
 # 加载测试数据
 print("=" * 80)
 print("加载测试数据")
 print("=" * 80)
-df = pd.read_excel('/Users/xiaoxi/CodeBuddy/hscredit/hscredit/examples/utils/hscredit.xlsx')
+df = pd.read_excel(_DEMO_XLSX)
 df['target'] = ((df['MOB1'] > 15) | (df['MOB2'] > 15)).astype(int)
 
 # 选择几个特征进行测试
@@ -33,7 +38,8 @@ print(f"类别型特征: {categorical_features}")
 
 # 导入所有分箱方法
 import sys
-sys.path.insert(0, '/Users/xiaoxi/CodeBuddy/hscredit/hscredit')
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 
 from hscredit.core.binning import (
     UniformBinning, QuantileBinning, TreeBinning, 
@@ -196,7 +202,7 @@ try:
     y = df['target'].copy()
     
     # 测试1: 基本功能
-    binner = QuantileBinning(n_bins=5, max_n_bins=10)
+    binner = QuantileBinning(max_n_bins=10)
     binner.fit(X, y)
     
     # 检查分箱数
@@ -225,7 +231,7 @@ try:
     X_dup = pd.DataFrame({'dup_feature': [50] * 200 + list(range(800))})
     y_dup = pd.Series([0] * 500 + [1] * 500)
     try:
-        binner_dup = QuantileBinning(n_bins=5)
+        binner_dup = QuantileBinning(max_n_bins=5)
         binner_dup.fit(X_dup, y_dup)
         print("  ✓ 大量重复值处理正常")
     except Exception as e:
@@ -306,7 +312,7 @@ try:
     y = df['target'].copy()
     
     # 测试1: 基本功能
-    binner = ChiMergeBinning(n_bins=5, max_n_bins=10)
+    binner = ChiMergeBinning(max_n_bins=10)
     binner.fit(X, y)
     
     # 检查分箱数
@@ -325,7 +331,7 @@ try:
     
     # 测试2: 自定义卡方阈值
     try:
-        binner_chi = ChiMergeBinning(n_bins=5, min_chi2_threshold=5.0)
+        binner_chi = ChiMergeBinning(max_n_bins=5, min_chi2_threshold=5.0)
         binner_chi.fit(X, y)
         print("  ✓ 自定义卡方阈值功能正常")
     except Exception as e:
@@ -529,7 +535,7 @@ print("\n" + "=" * 80)
 print("保存详细测试结果到 binning_test_results.txt")
 print("=" * 80)
 
-with open('/Users/xiaoxi/CodeBuddy/hscredit/binning_test_results.txt', 'w') as f:
+with open(_PROJECT_ROOT / "binning_test_results.txt", "w", encoding="utf-8") as f:
     f.write("hscredit 分箱方法测试报告\n")
     f.write("=" * 80 + "\n\n")
     

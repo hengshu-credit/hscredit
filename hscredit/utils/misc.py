@@ -43,7 +43,7 @@ def init_setting(font_path=None, seed=None, freeze_torch=False, logger=False, **
         if font_path is None:
             font_path = os.path.join(
                 os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                'resources', 'fonts', 'SimHei.ttf'
+                'resources', 'fonts', 'font.ttf'
             )
 
         if os.path.isfile(font_path):

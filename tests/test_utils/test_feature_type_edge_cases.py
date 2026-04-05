@@ -2,10 +2,15 @@
 测试特征类型检测的边界情况
 """
 
-import pandas as pd
+from pathlib import Path
+
 import numpy as np
+import pandas as pd
 import sys
-sys.path.insert(0, '/Users/xiaoxi/CodeBuddy/hscredit/hscredit')
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 
 from hscredit.core.binning import UniformBinning
 
@@ -110,7 +115,7 @@ except Exception as e:
 # 测试7: 使用真实数据 - 青云24
 print("\n7. 真实数据 - 青云24")
 print("-" * 60)
-df = pd.read_excel('/Users/xiaoxi/CodeBuddy/hscredit/hscredit/examples/utils/hscredit.xlsx')
+df = pd.read_excel(_PROJECT_ROOT / "examples" / "hscredit.xlsx")
 df['target'] = ((df['MOB1'] > 15) | (df['MOB2'] > 15)).astype(int)
 X7 = df[['青云24']].copy()
 y7 = df['target'].copy()

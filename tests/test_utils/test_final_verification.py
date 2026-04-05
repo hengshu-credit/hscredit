@@ -2,17 +2,22 @@
 最终验证 - 所有10种分箱方法
 """
 
-import pandas as pd
+from pathlib import Path
+
 import numpy as np
+import pandas as pd
 import sys
-sys.path.insert(0, '/Users/xiaoxi/CodeBuddy/hscredit/hscredit')
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 
 print("=" * 80)
 print("最终验证 - 所有10种分箱方法")
 print("=" * 80)
 
 # 加载测试数据
-df = pd.read_excel('/Users/xiaoxi/CodeBuddy/hscredit/hscredit/examples/utils/hscredit.xlsx')
+df = pd.read_excel(_PROJECT_ROOT / "examples" / "hscredit.xlsx")
 df['target'] = ((df['MOB1'] > 15) | (df['MOB2'] > 15)).astype(int)
 
 X = df[['青云24']].copy()

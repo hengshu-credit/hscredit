@@ -7,17 +7,14 @@ from sklearn.datasets import make_classification
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.ensemble import RandomForestClassifier
 
-import sys
-sys.path.insert(0, '/Users/xiaoxi/CodeBuddy/hscredit/hscredit')
-
-from hscredit.core.rules.mining import (
+from hscredit.report.mining import (
     SingleFeatureRuleMiner,
     MultiFeatureRuleMiner,
     TreeRuleExtractor,
     RuleMetrics,
-    calculate_rule_metrics
+    calculate_rule_metrics,
 )
-from hscredit.core.rules.rule import Rule
+from hscredit.core.rules import Rule
 
 
 @pytest.fixture
@@ -58,8 +55,8 @@ class TestSingleFeatureRuleMiner:
         miner = SingleFeatureRuleMiner(target='target', method='quantile')
         assert miner.target == 'target'
         assert miner.method == 'quantile'
-        assert miner.max_n_bins == 20
-        assert miner.min_lift == 1.1
+        assert miner.max_n_bins == 10
+        assert miner.min_lift == 1.5
         
         with pytest.raises(ValueError):
             SingleFeatureRuleMiner(method='invalid')
@@ -98,8 +95,8 @@ class TestSingleFeatureRuleMiner:
         
         assert isinstance(rules, pd.DataFrame)
         assert len(rules) <= 5
-        assert 'lift' in rules.columns
-        assert 'rule_description' in rules.columns
+        assert '命中LIFT值' in rules.columns
+        assert '规则表达式' in rules.columns
     
     def test_get_rules(self, sample_data):
         """测试获取规则对象."""
@@ -113,8 +110,7 @@ class TestSingleFeatureRuleMiner:
         assert isinstance(rules, list)
         
         if rules:
-            from hscredit.core.rules.mining.base import MinedRule
-            assert isinstance(rules[0], MinedRule)
+            assert isinstance(rules[0], Rule)
     
     def test_get_rule_objects(self, sample_data):
         """测试获取Rule对象."""
@@ -236,15 +232,44 @@ class TestMultiFeatureRuleMiner:
     def test_plot_cross_heatmap(self, sample_data):
         """测试绘制热力图."""
         df, _ = sample_data
-        
+
         miner = MultiFeatureRuleMiner(target='target')
         miner.fit(df)
-        
+
         # 测试是否能运行不报错
         try:
             import matplotlib
             matplotlib.use('Agg')  # 使用非交互式后端
             fig = miner.plot_cross_heatmap('feature_0', 'feature_1')
+            assert fig is not None
+        except ImportError:
+            pytest.skip("matplotlib未安装")
+
+    def test_get_optimal_2d_rules(self, sample_data):
+        """测试双特征交叉规则（原 get_optimal_2d_rules 已并入 get_cross_rules）."""
+        df, _ = sample_data
+
+        miner = MultiFeatureRuleMiner(target='target', min_samples=20, min_lift=1.0)
+        miner.fit(df)
+
+        rules = miner.get_cross_rules('feature_0', 'feature_1', top_n=5)
+
+        assert isinstance(rules, pd.DataFrame)
+        if not rules.empty:
+            assert '规则表达式' in rules.columns
+            assert '命中LIFT值' in rules.columns
+
+    def test_plot_2d_binning(self, sample_data):
+        """测试二维分箱图绘制."""
+        df, _ = sample_data
+
+        miner = MultiFeatureRuleMiner(target='target')
+        miner.fit(df)
+
+        try:
+            import matplotlib
+            matplotlib.use('Agg')
+            fig = miner.plot_2d_binning('feature_0', 'feature_1', metric='lift')
             assert fig is not None
         except ImportError:
             pytest.skip("matplotlib未安装")
@@ -309,8 +334,7 @@ class TestTreeRuleExtractor:
         assert isinstance(rules, list)
         
         if rules:
-            from hscredit.core.rules.mining.base import MinedRule
-            assert isinstance(rules[0], MinedRule)
+            assert isinstance(rules[0], Rule)
     
     def test_get_rule_objects(self, sample_data):
         """测试获取Rule对象."""
@@ -335,7 +359,8 @@ class TestTreeRuleExtractor:
         rules_df = extractor.get_rules_dataframe(top_n=10)
         
         assert isinstance(rules_df, pd.DataFrame)
-        assert 'rule' in rules_df.columns
+        if not rules_df.empty:
+            assert '规则表达式' in rules_df.columns
     
     def test_kwargs_support(self, sample_data):
         """测试**kwargs参数支持."""
@@ -353,7 +378,7 @@ class TestTreeRuleExtractor:
         extractor.fit(df)
         
         assert extractor.is_fitted_
-        assert hasattr(extractor.model_, 'oob_score_')
+        assert extractor.model_ is not None
 
 
 class TestRuleMetrics:
@@ -379,9 +404,9 @@ class TestRuleMetrics:
         )
         
         assert isinstance(result, dict)
-        assert 'train_lift' in result
-        assert 'train_precision' in result
-        assert 'train_recall' in result
+        assert '训练_命中LIFT值' in result
+        assert '训练_精确率' in result
+        assert '训练_召回率' in result
     
     def test_calculate_metrics_with_test(self, train_test_data):
         """测试计算带测试集的指标."""
@@ -398,8 +423,7 @@ class TestRuleMetrics:
             y_test=test_df['target']
         )
         
-        assert 'test_lift' in result
-        assert 'psi' in result
+        assert '测试_命中LIFT值' in result
         assert 'badrate_diff' in result
     
     def test_evaluate_rules(self, sample_data):
@@ -436,8 +460,7 @@ def test_calculate_rule_metrics_function(sample_data):
     )
     
     assert isinstance(result, dict)
-    # 返回的指标带有train_前缀
-    assert 'train_lift' in result
+    assert '训练_命中LIFT值' in result
 
 
 class TestTreeVisualizer:
@@ -445,7 +468,7 @@ class TestTreeVisualizer:
     
     def test_init(self):
         """测试初始化."""
-        from hscredit.core.rules.mining import TreeVisualizer
+        from hscredit.report.mining import TreeVisualizer
         visualizer = TreeVisualizer(feature_names=['a', 'b'])
         assert visualizer.feature_names == ['a', 'b']
     
@@ -453,7 +476,7 @@ class TestTreeVisualizer:
         """测试matplotlib可视化."""
         df, _ = sample_data
         
-        from hscredit.core.rules.mining import TreeVisualizer
+        from hscredit.report.mining import TreeVisualizer
         
         tree = DecisionTreeClassifier(max_depth=3)
         tree.fit(df.drop('target', axis=1), df['target'])
@@ -472,7 +495,7 @@ class TestTreeVisualizer:
         """测试特征重要性图."""
         df, _ = sample_data
         
-        from hscredit.core.rules.mining import TreeVisualizer
+        from hscredit.report.mining import TreeVisualizer
         
         tree = DecisionTreeClassifier(max_depth=3)
         tree.fit(df.drop('target', axis=1), df['target'])

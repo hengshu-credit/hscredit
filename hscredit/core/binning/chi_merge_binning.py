@@ -18,7 +18,6 @@ class ChiMergeBinning(BaseBinning):
     初始将每个唯一值作为一个箱，然后迭代合并卡方值最小的相邻箱，
     直到满足停止条件（卡方阈值或最大分箱数）。
 
-    :param n_bins: 目标分箱数，默认为5
     :param max_n_bins: 最大分箱数，默认为10
     :param min_n_bins: 最小分箱数，默认为2
     :param min_chi2_threshold: 卡方阈值，默认为None
@@ -44,7 +43,7 @@ class ChiMergeBinning(BaseBinning):
     **示例**
 
     >>> from hscredit.core.binning import ChiMergeBinning
-    >>> binner = ChiMergeBinning(n_bins=5)
+    >>> binner = ChiMergeBinning(max_n_bins=5)
     >>> binner.fit(X, y)
     >>> X_binned = binner.transform(X)
     """
@@ -52,7 +51,6 @@ class ChiMergeBinning(BaseBinning):
     def __init__(
         self,
         target: str = 'target',
-        n_bins: int = 5,
         max_n_bins: int = 10,
         min_n_bins: int = 2,
         min_chi2_threshold: Optional[float] = None,
@@ -80,7 +78,6 @@ class ChiMergeBinning(BaseBinning):
             random_state=random_state,
             verbose=verbose,
         )
-        self.n_bins = n_bins
         # 支持 min_chi2 作为 min_chi2_threshold 的别名
         if min_chi2 is not None and min_chi2_threshold is not None:
             raise ValueError("不能同时指定 min_chi2 和 min_chi2_threshold")
@@ -135,6 +132,7 @@ class ChiMergeBinning(BaseBinning):
                 feature, X[feature], y, bins
             )
 
+        self._apply_post_fit_constraints(X, y, enforce_monotonic=True)
         self._is_fitted = True
         return self
 
@@ -172,9 +170,12 @@ class ChiMergeBinning(BaseBinning):
         # 限制初始分箱数量，避免过多的唯一值导致性能问题
         max_initial_bins = min(len(unique_values) - 1, 100)
         if len(unique_values) > max_initial_bins + 1:
-            # 使用分位数选择初始切分点
+            # 使用样本分位数而非唯一值分位数，效果更接近 optbinning/toad
             quantiles = np.linspace(0, 1, max_initial_bins + 1)
-            splits = np.percentile(unique_values, quantiles[1:-1] * 100)
+            splits = np.quantile(x_valid.astype(float), quantiles[1:-1])
+            x_min, x_max = x_valid.min(), x_valid.max()
+            splits = np.unique(splits)
+            splits = splits[(splits > x_min) & (splits < x_max)].astype(float)
         else:
             # 初始分箱：每个唯一值作为一个箱
             splits = unique_values[:-1].astype(float)
@@ -746,7 +747,7 @@ if __name__ == '__main__':
 
     # 测试卡方分箱
     binner = ChiMergeBinning(
-        n_bins=5,
+        max_n_bins=5,
         significance_level=0.05,
         verbose=True
     )

@@ -2,9 +2,6 @@
 # -*- coding: utf-8 -*-
 """测试notebook修复."""
 
-import sys
-sys.path.insert(0, '/Users/xiaoxi/CodeBuddy/hscredit/hscredit')
-
 import pandas as pd
 import numpy as np
 from hscredit.report import feature_bin_stats

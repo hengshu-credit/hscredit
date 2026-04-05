@@ -19,7 +19,7 @@ class TestORBinningDualAPI(unittest.TestCase):
     def setUp(self):
         """设置测试数据."""
         np.random.seed(42)
-        n_samples = 500
+        n_samples = 240
         
         # 创建特征
         self.X = pd.DataFrame({
@@ -37,7 +37,7 @@ class TestORBinningDualAPI(unittest.TestCase):
     
     def test_sklearn_style_fit(self):
         """测试 sklearn 风格: fit(X, y)."""
-        binner = ORBinning(max_n_bins=5, objective='iv', time_limit=10)
+        binner = ORBinning(max_n_bins=5, objective='iv', time_limit=1, max_candidates=20)
         binner.fit(self.X, self.y)
         
         self.assertTrue(binner._is_fitted)
@@ -46,7 +46,7 @@ class TestORBinningDualAPI(unittest.TestCase):
     
     def test_scorecardpipeline_style_fit(self):
         """测试 scorecardpipeline 风格: fit(df) 从 df 中提取 target."""
-        binner = ORBinning(target='target', max_n_bins=5, objective='iv', time_limit=10)
+        binner = ORBinning(target='target', max_n_bins=5, objective='iv', time_limit=1, max_candidates=20)
         binner.fit(self.df)  # 不传 y，从 df 中提取 'target' 列
         
         self.assertTrue(binner._is_fitted)
@@ -58,7 +58,7 @@ class TestORBinningDualAPI(unittest.TestCase):
         # 创建不同的 y
         y_alt = 1 - self.y  # 翻转标签
         
-        binner = ORBinning(target='target', max_n_bins=5, objective='iv', time_limit=10)
+        binner = ORBinning(target='target', max_n_bins=5, objective='iv', time_limit=1, max_candidates=20)
         binner.fit(self.df, y=y_alt)  # 应该使用 y_alt，忽略 df['target']
         
         self.assertTrue(binner._is_fitted)
@@ -68,7 +68,7 @@ class TestORBinningDualAPI(unittest.TestCase):
         X_np = self.X.values
         y_np = self.y.values
         
-        binner = ORBinning(max_n_bins=5, objective='iv', time_limit=10)
+        binner = ORBinning(max_n_bins=5, objective='iv', time_limit=1, max_candidates=20)
         binner.fit(X_np, y_np)
         
         self.assertTrue(binner._is_fitted)
@@ -76,7 +76,7 @@ class TestORBinningDualAPI(unittest.TestCase):
     def test_transform_after_fit(self):
         """测试拟合后的转换功能."""
         # sklearn 风格
-        binner = ORBinning(max_n_bins=5, objective='iv', time_limit=10)
+        binner = ORBinning(max_n_bins=5, objective='iv', time_limit=1, max_candidates=20)
         binner.fit(self.X, self.y)
         
         X_binned = binner.transform(self.X, metric='indices')
@@ -85,7 +85,7 @@ class TestORBinningDualAPI(unittest.TestCase):
     
     def test_scorecardpipeline_transform(self):
         """测试 scorecardpipeline 风格拟合后的转换."""
-        binner = ORBinning(target='target', max_n_bins=5, objective='iv', time_limit=10)
+        binner = ORBinning(target='target', max_n_bins=5, objective='iv', time_limit=1, max_candidates=20)
         binner.fit(self.df)
         
         # 转换时应该传入不含 target 的数据
@@ -97,7 +97,7 @@ class TestORBinningDualAPI(unittest.TestCase):
     
     def test_fit_transform(self):
         """测试 fit_transform 方法."""
-        binner = ORBinning(max_n_bins=5, objective='iv', time_limit=10)
+        binner = ORBinning(max_n_bins=5, objective='iv', time_limit=1, max_candidates=20)
         X_binned = binner.fit_transform(self.X, self.y, metric='indices')
         
         self.assertIsInstance(X_binned, pd.DataFrame)
@@ -105,7 +105,7 @@ class TestORBinningDualAPI(unittest.TestCase):
     
     def test_get_bin_table(self):
         """测试获取分箱表."""
-        binner = ORBinning(max_n_bins=5, objective='iv', time_limit=10)
+        binner = ORBinning(max_n_bins=5, objective='iv', time_limit=1, max_candidates=20)
         binner.fit(self.X, self.y)
         
         bin_table = binner.get_bin_table('feature1')

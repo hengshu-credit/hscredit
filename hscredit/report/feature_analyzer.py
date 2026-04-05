@@ -187,6 +187,8 @@ def feature_bin_stats(
     max_n_bins: int = 5,
     min_bin_size: float = 0.05,
     missing_separate: bool = True,
+    prebinning: Optional[Union[str, BaseBinning, Dict]] = 'quantile',
+    prebinning_params: Optional[Dict[str, Any]] = None,
     return_cols: Optional[List[str]] = None,
     return_rules: bool = False,
     del_grey: bool = False,
@@ -221,6 +223,13 @@ def feature_bin_stats(
     :param max_n_bins: 最大分箱数，默认 5
     :param min_bin_size: 每箱最小样本占比，默认 0.05
     :param missing_separate: 是否将缺失值单独分箱，默认 True
+    :param prebinning: 预分箱配置，参数格式与 OptimalBinning 保持一致，默认 'quantile'。
+        - None: 不使用预分箱
+        - str: 预分箱方法名（如 'quantile' / 'tree'）
+        - BaseBinning: 预分箱器实例
+        - Dict: 预分箱配置字典
+    :param prebinning_params: 预分箱参数（传给 OptimalBinning.prebinning_params）。
+        默认 None，此时会使用 {'max_n_bins': 100}，即先等频100箱再合并。
     :param return_cols: 指定返回的列名列表，默认返回所有列
     :param return_rules: 是否返回分箱规则，默认 False
     :param del_grey: 是否删除逾期天数 (0, dpds] 的灰样本，仅 overdue 起作用时有用
@@ -306,57 +315,40 @@ def feature_bin_stats(
         if binner is not None:
             current_binner = deepcopy(binner)
         else:
-            # 根据 method 创建分箱器
-            # 定义方法到类的映射
-            method_mapping = {
-                # 基础方法
-                'uniform': 'UniformBinning',
-                'quantile': 'QuantileBinning',
-                'tree': 'TreeBinning',
-                'chi': 'ChiMergeBinning',
-                # 优化方法
-                'best_ks': 'BestKSBinning',
-                'best_iv': 'BestIVBinning',
-                'mdlp': 'MDLPBinning',
-                # 运筹规划方法
-                'or_tools': 'ORBinning',
-                # 高级方法
-                'cart': 'CartBinning',
-                'monotonic': 'MonotonicBinning',
-                'genetic': 'GeneticBinning',
-                'smooth': 'SmoothBinning',
-                'kernel_density': 'KernelDensityBinning',
-                'best_lift': 'BestLiftBinning',
-                'target_bad_rate': 'TargetBadRateBinning',
-                # 聚类方法
-                'kmeans': 'KMeansBinning',
-                # 兼容旧版本
-                'optimal': 'OptimalBinning',
-            }
-            
-            if method not in method_mapping:
-                raise ValueError(
-                    f"不支持的分箱方法: {method}。"
-                    f"可选方法: {', '.join(sorted(method_mapping.keys()))}"
-                )
-            
-            # 动态导入分箱类
-            class_name = method_mapping[method]
-            from ..core import binning as binning_module
-            binning_class = getattr(binning_module, class_name)
-            
-            # 构建分箱器参数
+            # 统一通过OptimalBinning创建分箱器，保证可使用预分箱、单调约束与lift微调能力
+            method_for_binner = 'mdlp' if method == 'optimal' else method
+
+            # 预分箱默认：先等频100箱，再进行目标分箱方法合并；用户可通过参数覆盖
+            effective_prebinning_params = {'max_n_bins': 100}
+            if prebinning_params:
+                effective_prebinning_params.update(prebinning_params)
+
             binner_params = {
+                'method': method_for_binner,
                 'max_n_bins': max_n_bins,
                 'min_bin_size': min_bin_size,
-                'missing_separate': missing_separate
+                'missing_separate': missing_separate,
+                'prebinning': prebinning,
+                'prebinning_params': effective_prebinning_params,
             }
-            
-            # 添加额外的kwargs参数（如monotonic='peak'等）
+
+            # MDLP默认开启后处理微调，用户可通过 kwargs 覆盖
+            if method_for_binner == 'mdlp':
+                binner_params.setdefault('lift_refine', True)
+                binner_params.setdefault('lift_focus_weight', 3.0)
+                binner_params.setdefault('sample_stability_weight', 0.2)
+                binner_params.setdefault('monotonic_bonus_weight', 0.4)
+                binner_params.setdefault('lift_refine_max_bins', max_n_bins)
+
+            # 添加额外参数（如monotonic='auto_asc_desc'）
             binner_params.update(kwargs)
-            
-            # 创建分箱器实例
-            current_binner = binning_class(**binner_params)
+
+            # 显式关闭预分箱
+            if prebinning is None:
+                binner_params.pop('prebinning', None)
+                binner_params.pop('prebinning_params', None)
+
+            current_binner = OptimalBinning(**binner_params)
         
         # 第一个目标用于训练分箱器
         first_target = target_configs[0]
@@ -511,6 +503,143 @@ def feature_bin_stats(
     if return_rules:
         return final_table, all_feature_rules
     return final_table
+
+
+def benchmark_binning_methods(
+    data: pd.DataFrame,
+    feature: str,
+    overdue_col: str = 'MOB1',
+    dpds: Optional[List[int]] = None,
+    max_n_bins: int = 5,
+    min_bin_size: float = 0.01,
+    monotonic: str = 'auto_asc_desc',
+    hscredit_methods: Optional[List[str]] = None,
+) -> pd.DataFrame:
+    """逐方法对比分箱效果（hscredit / toad / optbinning）。
+
+    重点指标：头部/尾部Lift、头尾差(edge_gap)、是否单调。
+    """
+    if dpds is None:
+        dpds = [3, 0]
+    if hscredit_methods is None:
+        hscredit_methods = ['mdlp', 'cart', 'chi', 'tree', 'kmeans', 'best_ks', 'best_iv', 'quantile']
+
+    x = pd.to_numeric(data[feature], errors='coerce')
+
+    def _eval_splits(x_s: pd.Series, y_s: pd.Series, splits: Optional[List], model_name: str, dpd: int) -> Dict[str, Any]:
+        mask = x_s.notna() & y_s.notna()
+        xv = x_s[mask].values.astype(float)
+        yv = y_s[mask].values.astype(int)
+        if len(xv) == 0:
+            return {'method': model_name, 'dpd': dpd, 'error': 'no valid samples'}
+
+        sp = np.array(splits if splits is not None else [], dtype=float)
+        bins = np.digitize(xv, sp, right=True)
+        n_bins = len(sp) + 1
+
+        counts = np.bincount(bins, minlength=n_bins).astype(float)
+        bad = np.bincount(bins, weights=yv, minlength=n_bins).astype(float)
+        bad_rate = bad / np.maximum(counts, 1.0)
+        overall_bad_rate = max(yv.mean(), 1e-12)
+        lift = bad_rate / overall_bad_rate
+
+        diffs = np.diff(bad_rate)
+        asc = bool(np.all(diffs >= -1e-12))
+        desc = bool(np.all(diffs <= 1e-12))
+        nz = np.sign(diffs)
+        nz = nz[nz != 0]
+        turns = 0 if len(nz) <= 1 else int(np.sum(nz[1:] * nz[:-1] < 0))
+
+        return {
+            'method': model_name,
+            'dpd': dpd,
+            'n_bins': int(n_bins),
+            'head_lift': float(lift[0]),
+            'tail_lift': float(lift[-1]),
+            'edge_gap': float(abs(lift[-1] - lift[0])),
+            'max_lift': float(np.max(lift)),
+            'min_lift': float(np.min(lift)),
+            'monotonic': bool(asc or desc),
+            'turns': turns,
+            'splits': sp.tolist(),
+        }
+
+    rows = []
+
+    for d in dpds:
+        y = (data[overdue_col] > d).astype(int)
+
+        # hscredit
+        for method in hscredit_methods:
+            try:
+                binner = OptimalBinning(
+                    method=method,
+                    max_n_bins=max_n_bins,
+                    min_bin_size=min_bin_size,
+                    monotonic=monotonic,
+                    prebinning='quantile',
+                    prebinning_params={'max_n_bins': 100},
+                    lift_refine=True,
+                )
+                binner.fit(pd.DataFrame({feature: x}), y)
+                rows.append(_eval_splits(x, y, binner.splits_.get(feature, []), f'hscredit-{method}', d))
+            except Exception as e:
+                rows.append({'method': f'hscredit-{method}', 'dpd': d, 'error': str(e)})
+
+        # toad
+        try:
+            import toad
+            m = x.notna() & y.notna()
+            xv, yv = x[m], y[m]
+            for tm in ['chi', 'dt', 'kmeans']:
+                try:
+                    kwargs = {'method': tm, 'return_splits': True, 'n_bins': max_n_bins}
+                    if tm != 'kmeans':
+                        kwargs['min_samples'] = min_bin_size
+                    _, sp = toad.merge(xv, yv, **kwargs)
+                    rows.append(_eval_splits(x, y, sp, f'toad-{tm}', d))
+                except Exception as e:
+                    rows.append({'method': f'toad-{tm}', 'dpd': d, 'error': str(e)})
+        except Exception as e:
+            rows.append({'method': 'toad', 'dpd': d, 'error': f'import failed: {str(e)}'})
+
+        # optbinning
+        try:
+            from optbinning import OptimalBinning as OptBinning
+            m = x.notna() & y.notna()
+            for om, pre_method in [('cart', 'cart'), ('mdlp', 'mdlp')]:
+                try:
+                    ob = OptBinning(
+                        name=feature,
+                        dtype='numerical',
+                        prebinning_method=pre_method,
+                        max_n_prebins=100,
+                        max_n_bins=max_n_bins,
+                        min_bin_size=min_bin_size,
+                        monotonic_trend=monotonic,
+                    )
+                    ob.fit(x[m].values, y[m].values)
+                    sp = list(ob.splits) if ob.splits is not None else []
+                    rows.append(_eval_splits(x, y, sp, f'optbinning-{om}', d))
+                except Exception as e:
+                    rows.append({'method': f'optbinning-{om}', 'dpd': d, 'error': str(e)})
+        except Exception as e:
+            rows.append({'method': 'optbinning', 'dpd': d, 'error': f'import failed: {str(e)}'})
+
+    result = pd.DataFrame(rows)
+    if result.empty:
+        return result
+
+    if 'error' in result.columns:
+        ok = result[result['error'].isna()] if result['error'].notna().any() else result
+    else:
+        ok = result
+
+    if not ok.empty:
+        ok = ok.sort_values(['dpd', 'monotonic', 'edge_gap', 'head_lift'], ascending=[True, False, False, False])
+        return ok.reset_index(drop=True)
+
+    return result.reset_index(drop=True)
 
 
 class FeatureAnalyzer:

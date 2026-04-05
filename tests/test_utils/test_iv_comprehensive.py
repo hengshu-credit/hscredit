@@ -6,14 +6,6 @@
 3. 公式顺序正确
 """
 
-import sys
-from pathlib import Path
-
-# 添加项目路径
-project_root = Path(__file__).parent / "hscredit"
-if str(project_root) not in sys.path:
-    sys.path.insert(0, str(project_root))
-
 import numpy as np
 import pandas as pd
 from hscredit.core.binning import (
@@ -21,8 +13,8 @@ from hscredit.core.binning import (
     KernelDensityBinning,
     GeneticBinning,
 )
-from hscredit.core.metrics.binning_metrics import woe_iv_vectorized, compute_bin_stats
-from hscredit.core.metrics.importance import IV, IV_table
+from hscredit.core.metrics._binning import woe_iv_vectorized, compute_bin_stats
+from hscredit.core.metrics.feature import IV, iv_table as IV_table
 
 
 def test_extreme_imbalance():
@@ -128,13 +120,13 @@ def test_iv_table_function():
     print(f"坏样本数: {np.sum(y_true == 1)}")
     
     # 计算IV表
-    iv_table = IV_table(y_true, feature, bins=5, feature_name="test_feature")
+    iv_table = IV_table(y_true, feature, max_n_bins=5)
     
     print(f"\nIV表:")
     print(iv_table)
     
     # 计算总IV
-    iv_value = IV(y_true, feature, bins=5)
+    iv_value = IV(y_true, feature, max_n_bins=5)
     print(f"\n总IV值: {iv_value:.6f}")
     print(f"✓ 测试{'通过' if iv_value >= 0 else '失败'}")
     
@@ -225,7 +217,7 @@ if __name__ == '__main__':
         print("   - best_iv_binning.py (_calc_iv)")
         print("   - kernel_density_binning.py (_calculate_iv)")
         print("   - genetic_binning.py (_calculate_iv)")
-        print("   - importance.py (IV, IV_table)")
+        print("   - feature.py (IV, iv_table)")
         
     except AssertionError as e:
         print("\n" + "=" * 80)

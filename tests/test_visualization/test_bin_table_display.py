@@ -1,8 +1,6 @@
 """测试分箱表美化展示功能."""
 
 import sys
-sys.path.insert(0, '/Users/xiaoxi/CodeBuddy/hscredit/hscredit')
-
 import pandas as pd
 import numpy as np
 from hscredit.report import feature_bin_stats

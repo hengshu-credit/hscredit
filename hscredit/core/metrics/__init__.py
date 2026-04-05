@@ -74,7 +74,7 @@ from .regression import (
 )
 
 # 分箱统计（供其他模块直接使用）
-from ._binning import compute_bin_stats, add_margins
+from ._binning import compute_bin_stats, add_margins, quadratic_curve_coefficient, composite_binning_quality
 
 __all__ = [
     # 分类指标
@@ -103,7 +103,7 @@ __all__ = [
     'mse', 'mae', 'rmse', 'r2',
     
     # 分箱统计
-    'compute_bin_stats', 'add_margins',
+    'compute_bin_stats', 'add_margins', 'quadratic_curve_coefficient', 'composite_binning_quality',
     
     # 向后兼容（Deprecated）
     'KS', 'AUC', 'Gini',

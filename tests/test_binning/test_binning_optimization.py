@@ -3,8 +3,6 @@
 import numpy as np
 import pandas as pd
 import sys
-sys.path.insert(0, '/Users/xiaoxi/CodeBuddy/hscredit/hscredit')
-
 from hscredit.core.binning import SmoothBinning, KernelDensityBinning
 from hscredit.core.binning import OptimalBinning  # 作为对比
 

@@ -115,7 +115,7 @@ class MonotonicBinning(BaseBinning):
             verbose=verbose,
         )
         self.init_method = init_method
-        self.init_n_bins = init_n_bins
+        self.init_n_bins = max(init_n_bins, max_n_bins * 3)
         self.monotonic_trend_ = {}
 
         # 验证参数
@@ -340,7 +340,10 @@ class MonotonicBinning(BaseBinning):
 
         # 根据模式选择决策逻辑
         if self.monotonic == 'auto_asc_desc':
-            # auto_asc_desc模式：只允许单增或单减
+            # auto_asc_desc模式：只允许单增或单减，优先使用整体相关方向，避免误判塌缩成2箱
+            corr = pd.Series(x).corr(pd.Series(y), method='spearman')
+            if pd.notna(corr) and abs(corr) >= 0.02:
+                return 'ascending' if corr > 0 else 'descending'
             return self._auto_asc_desc_decision(
                 p_trend_changes, lr_sense,
                 p_records_min_left, p_records_min_right,

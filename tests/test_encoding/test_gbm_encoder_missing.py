@@ -8,8 +8,6 @@ from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score
 
-import sys
-sys.path.insert(0, '/Users/xiaoxi/CodeBuddy/hscredit/hscredit')
 from hscredit.core.encoders import GBMEncoder
 
 

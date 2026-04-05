@@ -209,3 +209,9 @@ __marimo__/
 # itlubber
 .DS_Store
 examples/model_report_demo/*
+examples/*.png
+examples/*.jpg
+examples/hscredit_yyp.xlsx
+examples/hengshucredit_yyp.xlsx
+_patch_or_*.py
+catboost_info/*

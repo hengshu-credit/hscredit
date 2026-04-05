@@ -3,8 +3,6 @@
 """测试 feature_bin_stats 函数更新 - dpds参数和所有分箱方法."""
 
 import sys
-sys.path.insert(0, '/Users/xiaoxi/CodeBuddy/hscredit/hscredit')
-
 import numpy as np
 import pandas as pd
 from hscredit import feature_bin_stats

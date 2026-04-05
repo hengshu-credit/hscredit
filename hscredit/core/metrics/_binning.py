@@ -12,6 +12,267 @@ from scipy import stats
 from ._base import _woe_iv_vectorized
 
 
+def _normalize_curve_metric(metric: str) -> str:
+    metric_norm = str(metric).strip().lower()
+    aliases = {
+        'lift': 'lift',
+        'badrate': 'bad_rate',
+        'bad_rate': 'bad_rate',
+        '坏样本率': 'bad_rate',
+    }
+    if metric_norm not in aliases:
+        raise ValueError("metric 必须是 'lift' 或 'bad_rate'")
+    return aliases[metric_norm]
+
+
+
+def _normalize_curve_trend(monotonic: str) -> str:
+    trend_norm = str(monotonic).strip().lower()
+    aliases = {
+        'ascending': 'ascending', '单增': 'ascending', 'increase': 'ascending',
+        'descending': 'descending', '单减': 'descending', 'decrease': 'descending',
+        'valley': 'valley', 'u': 'valley', '正u': 'valley', '正u型': 'valley',
+        'peak': 'peak', 'inverted_u': 'peak', '倒u': 'peak', '倒u型': 'peak',
+    }
+    if trend_norm not in aliases:
+        raise ValueError("monotonic 必须是 ascending/descending/valley/peak")
+    return aliases[trend_norm]
+
+
+
+def _count_curve_violations(values: np.ndarray, trend: str) -> int:
+    vals = np.asarray(values, dtype=float)
+    if len(vals) <= 1:
+        return 0
+    tol = 1e-10
+    diffs = np.diff(vals)
+    if trend == 'ascending':
+        return int(np.sum(diffs < -tol))
+    if trend == 'descending':
+        return int(np.sum(diffs > tol))
+    if len(vals) < 3:
+        return 0
+    if trend == 'peak':
+        return min(
+            int(np.sum(np.diff(vals[:pivot + 1]) < -tol)) + int(np.sum(np.diff(vals[pivot:]) > tol))
+            for pivot in range(1, len(vals) - 1)
+        )
+    if trend == 'valley':
+        return min(
+            int(np.sum(np.diff(vals[:pivot + 1]) > tol)) + int(np.sum(np.diff(vals[pivot:]) < -tol))
+            for pivot in range(1, len(vals) - 1)
+        )
+    return 0
+
+
+
+def quadratic_curve_coefficient(
+    bins: np.ndarray,
+    y: np.ndarray,
+    metric: Literal['lift', 'bad_rate'] = 'lift',
+    monotonic: Literal['ascending', 'descending', 'valley', 'peak'] = 'descending'
+) -> float:
+    """计算分箱曲线的二次项系数指标.
+
+    基于分箱后的 `LIFT值` 或 `坏样本率` 序列做二次拟合，
+    返回经趋势方向标准化后的二次项系数。返回值越大，表示曲线越符合指定趋势且弯曲度越明显。
+
+    :param bins: 分箱索引数组
+    :param y: 目标变量 (0/1)
+    :param metric: 拟合曲线类型，`lift` 或 `bad_rate`，默认 `lift`
+    :param monotonic: 目标趋势，支持 `ascending`、`descending`、`valley`、`peak`
+    :return: 标准化后的二次项系数；若不满足目标趋势，会返回负值惩罚
+    """
+    metric = _normalize_curve_metric(metric)
+    monotonic = _normalize_curve_trend(monotonic)
+
+    table = compute_bin_stats(np.asarray(bins), np.asarray(y), round_digits=False)
+    valid = table[table['分箱'] >= 0].reset_index(drop=True)
+    if len(valid) < 3:
+        return 0.0
+
+    curve_values = valid['LIFT值'].to_numpy(dtype=float) if metric == 'lift' else valid['坏样本率'].to_numpy(dtype=float)
+    if np.allclose(curve_values, curve_values[0], atol=1e-12, rtol=0):
+        return 0.0
+
+    x_axis = np.linspace(-1.0, 1.0, len(curve_values), dtype=float)
+    coef = float(np.polyfit(x_axis, curve_values, 2)[0])
+
+    if monotonic == 'peak':
+        oriented_coef = -coef
+    elif monotonic == 'valley':
+        oriented_coef = coef
+    else:
+        oriented_coef = abs(coef)
+
+    violations = _count_curve_violations(curve_values, monotonic)
+    return oriented_coef if violations == 0 else -abs(oriented_coef)
+
+
+def _composite_binning_quality_components(
+    bins: np.ndarray,
+    y: np.ndarray,
+    metric: Literal['lift', 'bad_rate'] = 'lift',
+    monotonic: Literal['ascending', 'descending', 'valley', 'peak'] = 'descending'
+) -> dict:
+    """拆解复合分箱评分的组成部分，供评分和搜索复用。"""
+    metric = _normalize_curve_metric(metric)
+    monotonic = _normalize_curve_trend(monotonic)
+
+    table = compute_bin_stats(np.asarray(bins), np.asarray(y), round_digits=False)
+    valid = table[table['分箱'] >= 0].reset_index(drop=True)
+    if len(valid) == 0:
+        return {
+            'quadratic_score': 0.0,
+            'head_score': 0.0,
+            'tail_score': 0.0,
+            'head_peak_bonus': 0.0,
+            'tail_zero_bonus': 0.0,
+            'tail_collapse_penalty': 0.0,
+            'head_cumulative_gain': 0.0,
+            'tail_compression_gain': 0.0,
+            'marginal_return': 0.0,
+            'marginal_decay_penalty': 0.0,
+            'share_floor_bonus': 0.0,
+            'spread': 0.0,
+            'step_sum': 0.0,
+            'tail_slope_bonus': 0.0,
+            'monotonic_bonus': 0.0,
+            'zero_pairs_penalty': 0.0,
+            'n_bins_bonus': 0.0,
+            'violations': 0,
+            'n_bins': 0,
+        }
+
+    curve_values = valid['LIFT值'].to_numpy(dtype=float) if metric == 'lift' else valid['坏样本率'].to_numpy(dtype=float)
+    shares = valid['样本占比'].to_numpy(dtype=float)
+    bad_rates = valid['坏样本率'].to_numpy(dtype=float)
+
+    quadratic_score = quadratic_curve_coefficient(
+        bins=np.asarray(bins),
+        y=np.asarray(y),
+        metric=metric,
+        monotonic=monotonic,
+    )
+
+    head_value = float(curve_values[0]) if len(curve_values) > 0 else 0.0
+    tail_value = float(curve_values[-1]) if len(curve_values) > 0 else 0.0
+    head_share = float(shares[0]) if len(shares) > 0 else 0.0
+    tail_share = float(shares[-1]) if len(shares) > 0 else 0.0
+
+    head_score = head_value * np.sqrt(max(head_share, 1e-12))
+    if monotonic == 'descending':
+        tail_score = max(0.0, 1.0 - tail_value) * np.sqrt(max(tail_share, 1e-12))
+        oriented_diffs = curve_values[:-1] - curve_values[1:] if len(curve_values) > 1 else np.array([], dtype=float)
+    elif monotonic == 'ascending':
+        tail_score = tail_value * np.sqrt(max(tail_share, 1e-12))
+        oriented_diffs = curve_values[1:] - curve_values[:-1] if len(curve_values) > 1 else np.array([], dtype=float)
+    else:
+        tail_score = abs(tail_value) * np.sqrt(max(tail_share, 1e-12))
+        oriented_diffs = np.abs(np.diff(curve_values)) if len(curve_values) > 1 else np.array([], dtype=float)
+
+    shared_exposure = (shares[:-1] + shares[1:]) / 2.0 if len(shares) > 1 else np.array([], dtype=float)
+    positive_margins = np.maximum(oriented_diffs, 0.0) if len(oriented_diffs) > 0 else np.array([], dtype=float)
+    marginal_return = float(np.sum(positive_margins * shared_exposure)) if len(positive_margins) > 0 else 0.0
+
+    if len(curve_values) > 0:
+        head_window = max(1, min(2, len(curve_values)))
+        tail_window = max(1, min(2, len(curve_values)))
+        head_cumulative_gain = float(np.sum(curve_values[:head_window] * shares[:head_window]))
+        if monotonic == 'descending':
+            tail_compression_gain = float(np.sum(np.maximum(1.0 - curve_values[-tail_window:], 0.0) * shares[-tail_window:]))
+        elif monotonic == 'ascending':
+            tail_compression_gain = float(np.sum(curve_values[-tail_window:] * shares[-tail_window:]))
+        else:
+            tail_compression_gain = float(np.sum(np.abs(curve_values[-tail_window:]) * shares[-tail_window:]))
+    else:
+        head_cumulative_gain = 0.0
+        tail_compression_gain = 0.0
+
+    if len(positive_margins) > 1:
+        marginal_decay_penalty = float(np.sum(np.maximum(positive_margins[1:] - positive_margins[:-1], 0.0) * shared_exposure[1:]))
+    else:
+        marginal_decay_penalty = 0.0
+
+    share_floor_bonus = float(min(head_share, 0.08) + min(tail_share, 0.08))
+    head_peak_bonus = float(max(head_value - 1.0, 0.0) ** 2 * np.sqrt(max(head_share, 1e-12)))
+    tail_zero_bonus = float(max(1.0 - tail_value, 0.0) ** 2 * np.sqrt(max(tail_share, 1e-12)))
+    tail_collapse_penalty = float(max(tail_value, 0.0) * max(tail_share, 1e-12))
+    spread = float(np.max(curve_values) - np.min(curve_values)) if len(curve_values) > 1 else 0.0
+    step_sum = float(np.sum(np.abs(np.diff(curve_values)))) if len(curve_values) > 1 else 0.0
+    tail_slope_bonus = float(max(0.0, positive_margins[-1]) * tail_share) if len(positive_margins) > 0 else 0.0
+    zero_pairs_penalty = float(np.sum((bad_rates[:-1] <= 1e-12) & (bad_rates[1:] <= 1e-12))) * 0.5 if len(bad_rates) > 1 else 0.0
+    violations = _count_curve_violations(curve_values, monotonic)
+    monotonic_bonus = 0.15 if violations == 0 else -0.25 * float(violations)
+    n_bins_bonus = len(valid) * 0.04
+
+    return {
+        'quadratic_score': float(quadratic_score),
+        'head_score': float(head_score),
+        'tail_score': float(tail_score),
+        'head_peak_bonus': float(head_peak_bonus),
+        'tail_zero_bonus': float(tail_zero_bonus),
+        'tail_collapse_penalty': float(tail_collapse_penalty),
+        'head_cumulative_gain': float(head_cumulative_gain),
+        'tail_compression_gain': float(tail_compression_gain),
+        'marginal_return': float(marginal_return),
+        'marginal_decay_penalty': float(marginal_decay_penalty),
+        'share_floor_bonus': float(share_floor_bonus),
+        'spread': float(spread),
+        'step_sum': float(step_sum),
+        'tail_slope_bonus': float(tail_slope_bonus),
+        'monotonic_bonus': float(monotonic_bonus),
+        'zero_pairs_penalty': float(zero_pairs_penalty),
+        'n_bins_bonus': float(n_bins_bonus),
+        'violations': int(violations),
+        'n_bins': int(len(valid)),
+    }
+
+
+def composite_binning_quality(
+    bins: np.ndarray,
+    y: np.ndarray,
+    metric: Literal['lift', 'bad_rate'] = 'lift',
+    monotonic: Literal['ascending', 'descending', 'valley', 'peak'] = 'descending'
+) -> float:
+    """计算复合分箱质量评分.
+
+    方案 A 将以下量显式纳入目标：
+    - quadratic_lift
+    - 头部累计收益
+    - 尾部压降收益
+    - 样本占比加权边际收益
+    - 边际收益递减惩罚
+    - 头尾样本占比下限偏好
+    - 尾部塌陷/相邻零坏样本率惩罚
+    """
+    comp = _composite_binning_quality_components(
+        bins=np.asarray(bins),
+        y=np.asarray(y),
+        metric=metric,
+        monotonic=monotonic,
+    )
+    return float(
+        comp['quadratic_score'] * 1.0
+        + comp['head_score'] * 1.05
+        + comp['head_peak_bonus'] * 1.40
+        + comp['tail_score'] * 0.12
+        + comp['tail_zero_bonus'] * 1.25
+        - comp['tail_collapse_penalty'] * 1.10
+        + comp['head_cumulative_gain'] * 1.80
+        + comp['tail_compression_gain'] * 0.55
+        + comp['marginal_return'] * 1.05
+        - comp['marginal_decay_penalty'] * 0.35
+        + comp['share_floor_bonus'] * 0.25
+        + comp['spread'] * 0.12
+        + comp['step_sum'] * 0.03
+        + comp['tail_slope_bonus'] * 0.15
+        + comp['n_bins_bonus']
+        + comp['monotonic_bonus']
+        - comp['zero_pairs_penalty']
+    )
+
+
 def compute_bin_stats(
     bins: np.ndarray,
     y: np.ndarray,

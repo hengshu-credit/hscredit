@@ -31,6 +31,8 @@ except ImportError:
     )
 
 from .base import BaseBinning
+from hscredit.core.metrics import composite_binning_quality
+from hscredit.core.metrics._binning import _composite_binning_quality_components
 
 
 class ORBinning(BaseBinning):
@@ -51,7 +53,7 @@ class ORBinning(BaseBinning):
         - 如果 >= 1, 表示绝对数量 (如 100 表示最少100个样本)
     :param max_bin_size: 每箱最大样本数或占比，默认为None
     :param min_bad_rate: 每箱最小坏样本率，默认为0.0
-    :param monotonic: 坏样本率单调性约束，默认为False
+    :param monotonic: 坏样本率单调性约束，默认为auto
         - False: 不要求单调性
         - True 或 'auto': 自动检测并应用最佳单调方向
         - 'ascending': 强制坏样本率递增
@@ -72,7 +74,7 @@ class ORBinning(BaseBinning):
         - 候选点越多，求解越精确，但计算时间越长
     :param max_candidates: 最大候选分割点数，默认为50
         - 如果唯一值超过此数，将使用分位数采样
-    :param time_limit: 求解时间限制（秒），默认为30
+    :param time_limit: 求解时间限制（秒），默认为60
         - 超过此时间将返回当前找到的最优解
     :param missing_separate: 缺失值是否单独分箱，默认为True
     :param special_codes: 特殊值列表，默认为None
@@ -158,12 +160,12 @@ class ORBinning(BaseBinning):
         min_bin_size: Union[float, int] = 0.01,
         max_bin_size: Optional[Union[float, int]] = None,
         min_bad_rate: float = 0.0,
-        monotonic: Union[bool, str] = False,
+        monotonic: Union[bool, str] = 'auto',
         objective: str = 'iv',
         custom_objective: Optional[callable] = None,
         n_prebins: int = 20,
         max_candidates: int = 50,
-        time_limit: int = 30,
+        time_limit: int = 60,
         missing_separate: bool = True,
         special_codes: Optional[List] = None,
         random_state: Optional[int] = None,
@@ -233,6 +235,7 @@ class ORBinning(BaseBinning):
         for feature in X.columns:
             self._fit_feature(feature, X[feature], y)
 
+        self._apply_post_fit_constraints(X, y, enforce_monotonic=True)
         self._is_fitted = True
         return self
 
@@ -395,6 +398,30 @@ class ORBinning(BaseBinning):
         else:
             model.Maximize(objective_var)
         
+        # 先准备启发式候选，避免求解器给出可行但质量较差的结果
+        greedy_splits = self._greedy_fallback(x_sorted, y_sorted, candidates)
+        greedy_score = self._score_splits(
+            x_sorted, y_sorted, total_good, total_bad, greedy_splits
+        )
+        composite_search_splits = self._search_composite_optimal_splits(
+            x_sorted, y_sorted, candidates
+        )
+        composite_search_score = self._score_splits(
+            x_sorted, y_sorted, total_good, total_bad, composite_search_splits
+        )
+        graph_search_splits = self._search_segment_graph_splits(
+            x_sorted, y_sorted, candidates
+        )
+        graph_search_score = self._score_splits(
+            x_sorted, y_sorted, total_good, total_bad, graph_search_splits
+        )
+        segment_dp_splits = self._search_segment_dp_splits(
+            x_sorted, y_sorted, candidates
+        )
+        segment_dp_score = self._score_splits(
+            x_sorted, y_sorted, total_good, total_bad, segment_dp_splits
+        )
+
         # 求解
         solver = cp_model.CpSolver()
         solver.parameters.max_time_in_seconds = self.time_limit
@@ -408,14 +435,30 @@ class ORBinning(BaseBinning):
                 candidates[i] for i in range(n_candidates)
                 if solver.Value(select[i]) == 1
             ]
-            return sorted(selected_splits)
+            selected_splits = sorted(selected_splits)
+            solver_score = self._score_splits(
+                x_sorted, y_sorted, total_good, total_bad, selected_splits
+            )
+            scored_candidates = [
+                (solver_score, selected_splits),
+                (greedy_score, greedy_splits),
+                (composite_search_score, composite_search_splits),
+                (graph_search_score, graph_search_splits),
+                (segment_dp_score, segment_dp_splits),
+            ]
+            return max(scored_candidates, key=lambda item: item[0])[1]
         else:
-            # 求解失败，使用贪心算法作为 fallback
             warnings.warn(
-                f"OR-Tools 求解失败（状态: {status}），使用贪心算法作为备选",
+                f"OR-Tools 求解失败（状态: {status}），使用启发式搜索作为备选",
                 UserWarning
             )
-            return self._greedy_fallback(x_sorted, y_sorted, candidates)
+            fallback_candidates = [
+                (greedy_score, greedy_splits),
+                (composite_search_score, composite_search_splits),
+                (graph_search_score, graph_search_splits),
+                (segment_dp_score, segment_dp_splits),
+            ]
+            return max(fallback_candidates, key=lambda item: item[0])[1]
 
     def _compute_bin_stats_for_candidates(
         self,
@@ -613,6 +656,318 @@ class ORBinning(BaseBinning):
         
         return processed_stats
 
+    def _lift_quality_bonus(
+        self,
+        bin_stats: List[Dict],
+        total_good: int,
+        total_bad: int
+    ) -> float:
+        """通过统一 metrics 复合指标评估分箱质量。"""
+        bins = []
+        for idx, stat in enumerate(bin_stats):
+            bins.extend([idx] * int(stat.get('count', 0)))
+
+        if len(bins) == 0:
+            return 0.0
+
+        y_parts = []
+        for stat in bin_stats:
+            good = int(stat.get('good', 0))
+            bad = int(stat.get('bad', 0))
+            if good > 0:
+                y_parts.append(np.zeros(good, dtype=int))
+            if bad > 0:
+                y_parts.append(np.ones(bad, dtype=int))
+        y = np.concatenate(y_parts) if y_parts else np.array([], dtype=int)
+        if len(y) == 0:
+            return 0.0
+
+        monotonic = self.monotonic if self.monotonic in ['ascending', 'descending', 'peak', 'valley'] else 'descending'
+        return composite_binning_quality(
+            bins=np.asarray(bins, dtype=int),
+            y=y,
+            metric='lift',
+            monotonic=monotonic,
+        )
+
+    def _build_bins_from_splits(
+        self,
+        x_sorted: np.ndarray,
+        splits: List[float]
+    ) -> np.ndarray:
+        if len(x_sorted) == 0:
+            return np.array([], dtype=int)
+        return np.searchsorted(np.asarray(sorted(splits), dtype=float), x_sorted, side='right').astype(int)
+
+    def _lift_profile_focus_score(
+        self,
+        bins: np.ndarray,
+        y_sorted: np.ndarray
+    ) -> float:
+        monotonic = self.monotonic if self.monotonic in ['ascending', 'descending', 'peak', 'valley'] else 'descending'
+        comp = _composite_binning_quality_components(
+            bins=bins,
+            y=y_sorted,
+            metric='lift',
+            monotonic=monotonic,
+        )
+        return float(
+            comp.get('head_peak_bonus', 0.0) * 2.20
+            + comp.get('tail_zero_bonus', 0.0) * 1.80
+            - comp.get('tail_collapse_penalty', 0.0) * 1.50
+            + comp.get('head_cumulative_gain', 0.0) * 1.10
+            + comp.get('spread', 0.0) * 0.18
+            + comp.get('marginal_return', 0.0) * 0.55
+            - comp.get('marginal_decay_penalty', 0.0) * 0.35
+            - comp.get('zero_pairs_penalty', 0.0) * 0.50
+        )
+
+    def _score_splits(
+        self,
+        x_sorted: np.ndarray,
+        y_sorted: np.ndarray,
+        total_good: int,
+        total_bad: int,
+        splits: List[float]
+    ) -> float:
+        base_score = self._calculate_objective_score(
+            x_sorted, y_sorted, total_good, total_bad, splits
+        )
+        bins = self._build_bins_from_splits(x_sorted, splits)
+        monotonic = self.monotonic if self.monotonic in ['ascending', 'descending', 'peak', 'valley'] else 'descending'
+        composite_score = composite_binning_quality(
+            bins=bins,
+            y=y_sorted,
+            metric='lift',
+            monotonic=monotonic,
+        )
+        focus_score = self._lift_profile_focus_score(bins, y_sorted)
+        return float(base_score + composite_score * 1.35 + focus_score * 1.15)
+
+    def _segment_composite_score(
+        self,
+        x_sorted: np.ndarray,
+        y_sorted: np.ndarray,
+        splits: List[float]
+    ) -> float:
+        bins = self._build_bins_from_splits(x_sorted, splits)
+        monotonic = self.monotonic if self.monotonic in ['ascending', 'descending', 'peak', 'valley'] else 'descending'
+        comp = _composite_binning_quality_components(
+            bins=bins,
+            y=y_sorted,
+            metric='lift',
+            monotonic=monotonic,
+        )
+        return float(
+            comp['quadratic_score']
+            + comp.get('head_peak_bonus', 0.0) * 1.50
+            + comp['head_cumulative_gain'] * 1.35
+            + comp.get('tail_zero_bonus', 0.0) * 1.20
+            - comp.get('tail_collapse_penalty', 0.0) * 1.10
+            + comp['tail_compression_gain'] * 0.85
+            + comp['marginal_return'] * 0.90
+            - comp['marginal_decay_penalty'] * 0.35
+            + comp['share_floor_bonus'] * 0.20
+            - comp['zero_pairs_penalty']
+            + comp['monotonic_bonus']
+        )
+
+    def _search_segment_dp_splits(
+        self,
+        x_sorted: np.ndarray,
+        y_sorted: np.ndarray,
+        candidates: List[float]
+    ) -> List[float]:
+        """方案B第三阶段：段级路径搜索，直接偏向高头部 lift 与低尾部 lift。"""
+        total_good = int(np.sum(y_sorted == 0))
+        total_bad = int(np.sum(y_sorted == 1))
+        n_samples = len(x_sorted)
+        if total_good == 0 or total_bad == 0 or n_samples == 0:
+            return []
+
+        candidate_pool = sorted(set(candidates))
+        if len(candidate_pool) == 0:
+            return []
+
+        positions = [int(np.searchsorted(x_sorted, value, side='right')) for value in candidate_pool]
+        prefix_bad = np.concatenate([[0], np.cumsum(y_sorted == 1)])
+        prefix_good = np.concatenate([[0], np.cumsum(y_sorted == 0)])
+        overall_bad_rate = total_bad / max(n_samples, 1)
+        eps = 1e-12
+
+        def segment_stats(start: int, end: int) -> Tuple[float, float, float]:
+            count = end - start
+            if count <= 0:
+                return 0.0, 0.0, 0.0
+            bad = float(prefix_bad[end] - prefix_bad[start])
+            good = float(prefix_good[end] - prefix_good[start])
+            bad_rate = bad / count if count > 0 else 0.0
+            lift = bad_rate / max(overall_bad_rate, eps) if bad_rate > 0 else 0.0
+            share = count / n_samples
+            return bad_rate, lift, share
+
+        beam_width = min(12, max(5, len(candidate_pool) // 3))
+        states: List[Tuple[float, List[int], int, float]] = [(0.0, [], 0, np.inf)]
+        best_score = -np.inf
+        best_splits: List[float] = []
+
+        for depth in range(self.max_n_bins - 1):
+            next_states: List[Tuple[float, List[int], int, float]] = []
+            for partial_score, path, start_idx, last_bad_rate in states:
+                for pos_idx in range(start_idx, len(positions)):
+                    end = positions[pos_idx]
+                    bad_rate, lift, share = segment_stats(0 if len(path) == 0 else positions[path[-1]], end)
+                    if end <= (0 if len(path) == 0 else positions[path[-1]]):
+                        continue
+                    monotonic_penalty = 0.0
+                    if self.monotonic in [True, 'auto', 'descending'] and last_bad_rate < np.inf and bad_rate > last_bad_rate + 1e-10:
+                        monotonic_penalty = (bad_rate - last_bad_rate) * 8.0
+                    segment_gain = (
+                        max(lift - 1.0, 0.0) * (2.4 if len(path) == 0 else 0.8)
+                        + max(1.0 - lift, 0.0) * (0.15 if depth < self.max_n_bins - 2 else 1.6)
+                        + share * (0.45 if len(path) == 0 else 0.1)
+                        - monotonic_penalty
+                    )
+                    next_states.append((partial_score + segment_gain, path + [pos_idx], pos_idx + 1, bad_rate))
+
+            if not next_states:
+                break
+
+            next_states = sorted(next_states, key=lambda item: item[0], reverse=True)
+            dedup = {}
+            for score, path, next_idx, last_bad_rate in next_states:
+                dedup.setdefault(tuple(path), (score, next_idx, last_bad_rate))
+            states = [
+                (score, list(path), next_idx, last_bad_rate)
+                for path, (score, next_idx, last_bad_rate) in list(dedup.items())[:beam_width]
+            ]
+
+            for _, path, _, _ in states:
+                splits = [candidate_pool[idx] for idx in path]
+                refined = self._local_refine_splits(
+                    x_sorted, y_sorted, total_good, total_bad, splits, candidate_pool
+                )
+                final_score = self._score_splits(
+                    x_sorted, y_sorted, total_good, total_bad, refined
+                )
+                if final_score > best_score:
+                    best_score = final_score
+                    best_splits = refined
+
+        return sorted(set(best_splits))
+
+    def _search_segment_graph_splits(
+        self,
+        x_sorted: np.ndarray,
+        y_sorted: np.ndarray,
+        candidates: List[float]
+    ) -> List[float]:
+        """方案B第二阶段：基于候选段图的动态组合搜索。"""
+        total_good = int(np.sum(y_sorted == 0))
+        total_bad = int(np.sum(y_sorted == 1))
+        if total_good == 0 or total_bad == 0:
+            return []
+
+        candidate_pool = sorted(set(candidates))
+        if len(candidate_pool) == 0:
+            return []
+
+        beam_width = min(10, max(4, len(candidate_pool) // 3))
+        states: List[Tuple[float, List[float], int]] = [(0.0, [], -1)]
+        best_score = -np.inf
+        best_splits: List[float] = []
+
+        for _depth in range(self.max_n_bins - 1):
+            next_states: List[Tuple[float, List[float], int]] = []
+            for _, current, last_idx in states:
+                for idx in range(last_idx + 1, len(candidate_pool)):
+                    candidate = candidate_pool[idx]
+                    trial = current + [candidate]
+                    full_score = self._score_splits(
+                        x_sorted, y_sorted, total_good, total_bad, trial
+                    )
+                    seg_score = self._segment_composite_score(x_sorted, y_sorted, trial)
+                    next_states.append((full_score + seg_score * 0.55, trial, idx))
+
+            if not next_states:
+                break
+
+            next_states = sorted(next_states, key=lambda item: item[0], reverse=True)
+            dedup = {}
+            for score, trial, idx in next_states:
+                dedup.setdefault(tuple(trial), (score, idx))
+            states = [(score, list(trial), idx) for trial, (score, idx) in list(dedup.items())[:beam_width]]
+
+            for _, trial, _ in states:
+                refined = self._local_refine_splits(
+                    x_sorted, y_sorted, total_good, total_bad, trial, candidate_pool
+                )
+                refined_score = self._score_splits(
+                    x_sorted, y_sorted, total_good, total_bad, refined
+                )
+                if refined_score > best_score:
+                    best_score = refined_score
+                    best_splits = refined
+
+        return sorted(set(best_splits))
+
+    def _search_composite_optimal_splits(
+        self,
+        x_sorted: np.ndarray,
+        y_sorted: np.ndarray,
+        candidates: List[float]
+    ) -> List[float]:
+        """方案B当前实现：候选段组合 + beam search + 动态复合评分。"""
+        total_good = int(np.sum(y_sorted == 0))
+        total_bad = int(np.sum(y_sorted == 1))
+        if total_good == 0 or total_bad == 0:
+            return []
+
+        candidate_pool = sorted(set(candidates))
+        if len(candidate_pool) == 0:
+            return []
+
+        beam_width = min(8, max(3, len(candidate_pool) // 4))
+        states: List[Tuple[float, List[float]]] = [(0.0, [])]
+        best_splits: List[float] = []
+        best_score = -np.inf
+
+        for _depth in range(self.max_n_bins - 1):
+            next_states: List[Tuple[float, List[float]]] = []
+            for _, current in states:
+                used = set(current)
+                last_value = current[-1] if current else None
+                for candidate in candidate_pool:
+                    if candidate in used:
+                        continue
+                    if last_value is not None and candidate <= last_value:
+                        continue
+                    trial = sorted(current + [candidate])
+                    score = self._score_splits(x_sorted, y_sorted, total_good, total_bad, trial)
+                    segment_score = self._segment_composite_score(x_sorted, y_sorted, trial)
+                    next_states.append((score + segment_score * 0.35, trial))
+
+            if not next_states:
+                break
+
+            dedup = {}
+            for score, trial in sorted(next_states, key=lambda item: item[0], reverse=True):
+                dedup[tuple(trial)] = score
+            states = [(score, list(trial)) for trial, score in list(dedup.items())[:beam_width]]
+
+            for score, trial in states:
+                refined = self._local_refine_splits(
+                    x_sorted, y_sorted, total_good, total_bad, trial, candidate_pool
+                )
+                refined_score = self._score_splits(x_sorted, y_sorted, total_good, total_bad, refined)
+                if refined_score > best_score:
+                    best_score = refined_score
+                    best_splits = refined
+
+        if len(best_splits) == 0:
+            return []
+        return sorted(set(best_splits))
+
     def _greedy_fallback(
         self,
         x_sorted: np.ndarray,
@@ -654,8 +1009,85 @@ class ORBinning(BaseBinning):
                 remaining_candidates.pop(best_idx)
             else:
                 break
-        
+
+        selected_splits = self._local_refine_splits(
+            x_sorted, y_sorted, total_good, total_bad, selected_splits, candidates
+        )
         return sorted(selected_splits)
+
+    def _local_refine_splits(
+        self,
+        x_sorted: np.ndarray,
+        y_sorted: np.ndarray,
+        total_good: int,
+        total_bad: int,
+        splits: List[float],
+        candidates: List[float]
+    ) -> List[float]:
+        """在贪心结果基础上做局部替换搜索，强化复合 lift 目标。"""
+        current = sorted(set(splits))
+        if len(current) == 0:
+            return current
+
+        candidate_pool = sorted(set(candidates))
+        best_score = self._score_splits(
+            x_sorted, y_sorted, total_good, total_bad, current
+        )
+
+        improved = True
+        for _ in range(6):
+            if not improved:
+                break
+            improved = False
+            best_candidate = current
+
+            # 1) 替换一个切分点
+            for i in range(len(current)):
+                for candidate in candidate_pool:
+                    if candidate in current and not np.isclose(candidate, current[i], atol=1e-10, rtol=0):
+                        continue
+                    trial = current.copy()
+                    trial[i] = candidate
+                    trial = sorted(set(trial))
+                    if len(trial) != len(current):
+                        continue
+                    score = self._score_splits(
+                        x_sorted, y_sorted, total_good, total_bad, trial
+                    )
+                    if score > best_score + 1e-12:
+                        best_score = score
+                        best_candidate = trial
+                        improved = True
+
+            # 2) 在允许范围内尝试加一个切分点
+            if len(current) < self.max_n_bins - 1:
+                for candidate in candidate_pool:
+                    if candidate in current:
+                        continue
+                    trial = sorted(set(current + [candidate]))
+                    score = self._score_splits(
+                        x_sorted, y_sorted, total_good, total_bad, trial
+                    )
+                    if score > best_score + 1e-12:
+                        best_score = score
+                        best_candidate = trial
+                        improved = True
+
+            # 3) 尝试删一个切分点，避免局部坏点拖累整体
+            if len(current) > max(1, self.min_n_bins - 1):
+                for i in range(len(current)):
+                    trial = current[:i] + current[i + 1:]
+                    score = self._score_splits(
+                        x_sorted, y_sorted, total_good, total_bad, trial
+                    )
+                    if score > best_score + 1e-12:
+                        best_score = score
+                        best_candidate = trial
+                        improved = True
+
+            current = sorted(set(best_candidate))
+
+        return current
 
     def _calculate_objective_score(
         self,
@@ -724,7 +1156,7 @@ class ORBinning(BaseBinning):
                 
                 if good_dist > eps and bad_dist > eps:
                     iv += (bad_dist - good_dist) * np.log(bad_dist / good_dist)
-            return iv
+            return iv + self._lift_quality_bonus(bin_stats, total_good, total_bad)
         
         elif self.objective == 'ks':
             max_ks = 0

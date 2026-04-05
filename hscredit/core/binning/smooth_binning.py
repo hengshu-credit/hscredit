@@ -140,6 +140,7 @@ class SmoothBinning(BaseBinning):
                 feature, X[feature], y, bins
             )
 
+        self._apply_post_fit_constraints(X, y, enforce_monotonic=True)
         self._is_fitted = True
         return self
 

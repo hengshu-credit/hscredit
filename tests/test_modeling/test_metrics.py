@@ -3,14 +3,10 @@
 测试所有指标模块
 """
 
-import sys
-import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-
 import numpy as np
 import pandas as pd
 from hscredit.core.metrics.classification import KS, AUC, Gini
-from hscredit.core.metrics.importance import IV
+from hscredit.core.metrics.feature import IV
 from hscredit.core.metrics.stability import PSI, CSI
 from hscredit.core.metrics.regression import MSE, MAE, RMSE, R2
 

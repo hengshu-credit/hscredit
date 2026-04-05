@@ -965,7 +965,7 @@ def population_stability_monitor(
             elif binning_method == 'tree':
                 binner = TreeBinning(max_depth=int(np.log2(n_bins)) + 1)
             else:
-                binner = QuantileBinning(n_bins=n_bins)
+                binner = QuantileBinning(max_n_bins=n_bins)
             
             binner.fit(expected[[col]])
             edges = binner.edges_.get(col, [])

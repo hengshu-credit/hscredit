@@ -61,6 +61,9 @@ class MDLPBinning(BaseBinning):
         min_iv_gain: float = 0.0001,
         force_min_bins: bool = True,
         mdlp_weight: float = 0.7,
+        min_bin_size: Union[float, int] = 0.01,
+        max_bin_size: Optional[Union[float, int]] = None,
+        monotonic: Union[bool, str] = False,
         special_codes: Optional[List] = None,
         missing_separate: bool = True,
         random_state: Optional[int] = None,
@@ -71,6 +74,9 @@ class MDLPBinning(BaseBinning):
             target=target,
             max_n_bins=max_n_bins,
             min_n_bins=min_n_bins,
+            min_bin_size=min_bin_size,
+            max_bin_size=max_bin_size,
+            monotonic=monotonic,
             special_codes=special_codes,
             missing_separate=missing_separate,
             random_state=random_state,
@@ -123,6 +129,7 @@ class MDLPBinning(BaseBinning):
                 feature, X[feature], y, bins
             )
 
+        self._apply_post_fit_constraints(X, y, enforce_monotonic=True)
         self._is_fitted = True
         return self
 
@@ -146,9 +153,8 @@ class MDLPBinning(BaseBinning):
         # 使用递归分割
         self._recurse_v3(x_sorted, y_sorted, splits, all_candidates, 0)
         
-        # 如果分箱数不足且force_min_bins为True，强制添加切分点
-        # 修复：目标是max_n_bins，而不仅仅是min_n_bins
-        if self.force_min_bins and len(splits) < self.max_n_bins - 1:
+        # 如果分箱数不足且force_min_bins为True，只补足到 min_n_bins
+        if self.force_min_bins and len(splits) < self.min_n_bins - 1:
             splits = self._force_additional_splits_v3(x_sorted, y_sorted, splits, all_candidates)
         
         return sorted(list(set(splits)))

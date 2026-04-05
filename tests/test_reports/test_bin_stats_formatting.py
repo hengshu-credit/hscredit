@@ -2,10 +2,8 @@
 
 import numpy as np
 import pandas as pd
-import sys
-sys.path.insert(0, '/Users/xiaoxi/CodeBuddy/hscredit/hscredit')
 
-from hscredit.core.metrics.binning_metrics import compute_bin_stats
+from hscredit.core.metrics import compute_bin_stats
 
 
 def test_formatting():

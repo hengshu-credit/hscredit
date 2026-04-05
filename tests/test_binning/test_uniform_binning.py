@@ -6,12 +6,24 @@
 3. special_codes: 处理特殊值
 """
 
-import sys
-sys.path.insert(0, '/Users/xiaoxi/CodeBuddy/hscredit/hscredit')
+from pathlib import Path
 
-import pandas as pd
 import numpy as np
+import pandas as pd
+import pytest
+
 from hscredit.core.binning import UniformBinning
+
+_ROOT = Path(__file__).resolve().parents[2]
+_DEMO_XLSX = _ROOT / "examples" / "hscredit.xlsx"
+
+
+def _load_qingyun_frame():
+    if not _DEMO_XLSX.exists():
+        pytest.skip("缺少 examples/hscredit.xlsx")
+    df = pd.read_excel(_DEMO_XLSX)
+    df["target"] = ((df["MOB1"] > 15) | (df["MOB2"] > 15)).astype(int)
+    return df[["青云24"]].copy(), df["target"].copy()
 
 
 def test_basic():
@@ -20,11 +32,7 @@ def test_basic():
     print("测试1: 基础功能（force_numerical=True）")
     print("=" * 60)
     
-    df = pd.read_excel('/Users/xiaoxi/CodeBuddy/hscredit/hscredit/examples/utils/hscredit.xlsx')
-    df['target'] = ((df['MOB1'] > 15) | (df['MOB2'] > 15)).astype(int)
-    
-    X = df[['青云24']].copy()
-    y = df['target'].copy()
+    X, y = _load_qingyun_frame()
     
     print(f"特征范围: [{X['青云24'].min()}, {X['青云24'].max()}]")
     print(f"-999 的数量: {(X['青云24'] == -999).sum()}")
@@ -87,10 +95,7 @@ def test_woe_transform():
     print("测试3: WOE 转换")
     print("=" * 60)
     
-    df = pd.read_excel('/Users/xiaoxi/CodeBuddy/hscredit/hscredit/examples/utils/hscredit.xlsx')
-    df['target'] = ((df['MOB1'] > 15) | (df['MOB2'] > 15)).astype(int)
-    X = df[['青云24']].copy()
-    y = df['target'].copy()
+    X, y = _load_qingyun_frame()
     
     binner = UniformBinning(max_n_bins=5, special_codes=[-999])
     binner.fit(X, y)
@@ -110,10 +115,7 @@ def test_bin_labels():
     print("测试4: 分箱标签转换")
     print("=" * 60)
     
-    df = pd.read_excel('/Users/xiaoxi/CodeBuddy/hscredit/hscredit/examples/utils/hscredit.xlsx')
-    df['target'] = ((df['MOB1'] > 15) | (df['MOB2'] > 15)).astype(int)
-    X = df[['青云24']].copy()
-    y = df['target'].copy()
+    X, y = _load_qingyun_frame()
     
     binner = UniformBinning(max_n_bins=5, special_codes=[-999])
     binner.fit(X, y)

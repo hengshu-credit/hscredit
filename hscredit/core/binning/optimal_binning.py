@@ -192,7 +192,9 @@ class OptimalBinning(BaseBinning):
         # 需要过滤的参数列表
         invalid_keys = [
             'prebinning', 'prebinning_params', 'prebinning_method',
-            'user_splits', 'method'
+            'user_splits', 'method',
+            'lift_refine', 'lift_focus_weight', 'sample_stability_weight',
+            'lift_refine_max_bins', 'monotonic_bonus_weight'
         ]
         return {k: v for k, v in kwargs.items() if k not in invalid_keys}
 
@@ -226,9 +228,13 @@ class OptimalBinning(BaseBinning):
             # 使用指定方法
             self._fit_with_method(X, y)
 
-        # 如果设置了单调性约束，对结果进行单调性调整
-        if self.monotonic and self.method != 'monotonic':
-            self._apply_monotonic_adjustment(X, y)
+        # 统一后处理：围绕头尾Lift与样本稳定性微调切分点
+        # 默认开启，可通过 lift_refine=False 关闭
+        if self.kwargs.get('lift_refine', True) and self.method != 'uniform':
+            self._refine_splits_for_lift_stability(X, y)
+
+        # 统一收口约束：确保不同方法都遵守单调性/最小箱/最大箱限制
+        self._apply_post_fit_constraints(X, y, enforce_monotonic=self.method != 'monotonic')
 
         self._is_fitted = True
         return self
@@ -429,6 +435,29 @@ class OptimalBinning(BaseBinning):
             
             # 数值型特征：在预分箱切分点基础上优化
             initial_splits = pre_splits.get(feature, np.array([]))
+
+            # 兼容异常格式（如 tuple/list 嵌套），统一清洗为有序数值切分点
+            if len(initial_splits) > 0:
+                cleaned = []
+                for v in list(initial_splits):
+                    if isinstance(v, (list, tuple, np.ndarray)):
+                        for t in v:
+                            if pd.notna(t):
+                                try:
+                                    tv = float(t)
+                                    if np.isfinite(tv):
+                                        cleaned.append(tv)
+                                except Exception:
+                                    pass
+                    else:
+                        if pd.notna(v):
+                            try:
+                                vv = float(v)
+                                if np.isfinite(vv):
+                                    cleaned.append(vv)
+                            except Exception:
+                                pass
+                initial_splits = np.unique(np.sort(np.array(cleaned, dtype=float))) if cleaned else np.array([])
             
             if len(initial_splits) == 0:
                 # 没有预分箱切分点，使用默认方法
@@ -671,18 +700,21 @@ class OptimalBinning(BaseBinning):
         splits_after: List
     ) -> float:
         """计算合并前后的IV损失.
-        
+
         IV损失 = 合并前IV - 合并后IV
         值越小表示合并带来的信息损失越小。
-        
+
         使用 metrics.binning_metrics.compare_splits_iv 方法。
         """
-        return compare_splits_iv(
+        result = compare_splits_iv(
             x.values if isinstance(x, pd.Series) else x,
             y.values if isinstance(y, pd.Series) else y,
             np.array(splits_before),
             np.array(splits_after)
         )
+        if isinstance(result, (tuple, list)):
+            return float(result[0])
+        return float(result)
 
     def _calculate_ks_loss(
         self,
@@ -692,18 +724,21 @@ class OptimalBinning(BaseBinning):
         splits_after: List
     ) -> float:
         """计算合并前后的KS损失.
-        
+
         KS损失 = 合并前KS - 合并后KS
         值越小表示合并带来的区分度损失越小。
-        
+
         使用 metrics.binning_metrics.compare_splits_ks 方法。
         """
-        return compare_splits_ks(
+        result = compare_splits_ks(
             x.values if isinstance(x, pd.Series) else x,
             y.values if isinstance(y, pd.Series) else y,
             np.array(splits_before),
             np.array(splits_after)
         )
+        if isinstance(result, (tuple, list)):
+            return float(result[0])
+        return float(result)
 
     def _calculate_total_iv(
         self,
@@ -770,7 +805,217 @@ class OptimalBinning(BaseBinning):
         
         return chi2
 
+
+    def _evaluate_lift_stability_score(
+        self,
+        x: pd.Series,
+        y: pd.Series,
+        splits: np.ndarray,
+        min_samples: int,
+        focus_weight: float,
+        sample_weight: float
+    ) -> float:
+        """评估切分点综合分数（越大越好）：头尾Lift + 稳定性 + 单调性倾向."""
+        if len(splits) == 0:
+            return -np.inf
+
+        bins = np.digitize(x, splits, right=True)
+        n_bins = len(splits) + 1
+        total = len(y)
+        total_bad = float(np.sum(y))
+
+        if total == 0 or total_bad <= 0 or total_bad >= total:
+            return -np.inf
+
+        counts = np.bincount(bins, minlength=n_bins).astype(float)
+        bad_counts = np.bincount(bins, weights=y, minlength=n_bins).astype(float)
+
+        if np.any(counts < min_samples):
+            return -np.inf
+
+        bad_rates = bad_counts / np.maximum(counts, 1.0)
+        overall_bad_rate = total_bad / total
+        lifts = bad_rates / np.maximum(overall_bad_rate, 1e-10)
+
+        # 1) 头尾Lift：优先看两端箱体（按数值顺序）
+        edge_lift_left = float(lifts[0])
+        edge_lift_right = float(lifts[-1])
+        edge_strength = abs(edge_lift_right - edge_lift_left)
+        edge_extreme = max(
+            max(0.0, edge_lift_left - 1.0),
+            max(0.0, 1.0 - edge_lift_left),
+            max(0.0, edge_lift_right - 1.0),
+            max(0.0, 1.0 - edge_lift_right),
+        )
+
+        # 2) 全局头尾（最大/最小Lift）
+        max_lift = float(np.max(lifts))
+        min_lift = float(np.min(lifts))
+        global_tail_strength = max(0.0, max_lift - 1.0) + max(0.0, 1.0 - min_lift)
+
+        tail_strength = 0.65 * edge_strength + 0.2 * edge_extreme + 0.15 * global_tail_strength
+
+        # 3) 样本稳定性（极端箱不能太小）
+        top_idx = int(np.argmax(lifts))
+        bottom_idx = int(np.argmin(lifts))
+        top_ratio = counts[top_idx] / total
+        bottom_ratio = counts[bottom_idx] / total
+        min_ratio = float(np.min(counts) / total)
+
+        stability = (
+            np.log1p(top_ratio * 100.0)
+            + np.log1p(bottom_ratio * 100.0)
+            + np.log1p(min_ratio * 100.0)
+        )
+
+        # 4) 单调性倾向：减少拐点，尤其在auto_asc_desc下
+        diffs = np.diff(bad_rates)
+        signs = np.sign(diffs)
+        non_zero = signs[signs != 0]
+        sign_changes = 0 if len(non_zero) <= 1 else int(np.sum(non_zero[1:] * non_zero[:-1] < 0))
+
+        monotonic_bonus_weight = float(self.kwargs.get('monotonic_bonus_weight', 0.4))
+        monotonic_bonus = -float(sign_changes)
+        if self.monotonic in ['ascending', 'descending', 'auto_asc_desc']:
+            monotonic_bonus *= 1.5
+
+        iv_value = iv_for_splits(
+            x.values if isinstance(x, pd.Series) else x,
+            y.values if isinstance(y, pd.Series) else y,
+            np.array(splits)
+        )
+
+        n_bins_score = np.log1p(max(0, len(splits)))
+
+        return (
+            focus_weight * tail_strength
+            + sample_weight * stability
+            + monotonic_bonus_weight * monotonic_bonus
+            + 0.08 * iv_value
+            + 0.25 * n_bins_score
+        )
+
+    def _refine_splits_for_lift_stability(
+        self,
+        X: pd.DataFrame,
+        y: pd.Series
+    ):
+        """对已有分箱结果做局部搜索：先删点，再补点，兼顾头尾Lift与单调性."""
+        methods_to_refine = {
+            'uniform', 'quantile', 'tree', 'chi', 'best_ks', 'best_iv',
+            'mdlp', 'cart', 'kmeans', 'genetic', 'smooth',
+            'kernel_density', 'best_lift', 'target_bad_rate'
+        }
+        if self.method not in methods_to_refine:
+            return
+
+        min_samples_abs = self._get_min_samples(len(y))
+        focus_weight = float(self.kwargs.get('lift_focus_weight', 3.0))
+        sample_weight = float(self.kwargs.get('sample_stability_weight', 0.2))
+        max_search_bins = int(self.kwargs.get('lift_refine_max_bins', self.max_n_bins))
+
+        strict_mono = self.monotonic in ['ascending', 'descending', 'auto_asc_desc']
+
+        def _is_ok_monotonic(xv: pd.Series, yv: pd.Series, sp: np.ndarray) -> bool:
+            if not strict_mono:
+                return True
+            b = np.digitize(xv, sp, right=True)
+            cnt = np.bincount(b, minlength=len(sp) + 1).astype(float)
+            bad = np.bincount(b, weights=yv, minlength=len(sp) + 1).astype(float)
+            br = bad / np.maximum(cnt, 1.0)
+            d = np.diff(br)
+            return bool(np.all(d >= -1e-10) or np.all(d <= 1e-10))
+
+        for feature, splits in list(self.splits_.items()):
+            if self.feature_types_.get(feature) != 'numerical':
+                continue
+
+            splits_arr = np.array(splits, dtype=float) if len(splits) > 0 else np.array([])
+            if len(splits_arr) == 0:
+                continue
+
+            x = pd.to_numeric(X[feature], errors='coerce')
+            valid_mask = x.notna()
+            if self.special_codes:
+                for code in self.special_codes:
+                    valid_mask &= (x != code)
+
+            x_valid = x[valid_mask]
+            y_valid = y[valid_mask]
+
+            if len(x_valid) < max(min_samples_abs * self.min_n_bins, 50):
+                continue
+
+            current = np.unique(np.sort(splits_arr))
+            best = current.copy()
+            best_score = self._evaluate_lift_stability_score(
+                x_valid, y_valid, best, min_samples_abs, focus_weight, sample_weight
+            )
+
+            # Step1: 删点搜索（提升鲁棒性）
+            improved = True
+            while improved and len(best) > 1 and len(best) >= self.min_n_bins:
+                improved = False
+                candidate_best = None
+                candidate_score = best_score
+
+                for i in range(len(best)):
+                    cand = np.delete(best, i)
+                    if len(cand) < max(1, self.min_n_bins - 1):
+                        continue
+                    if not _is_ok_monotonic(x_valid, y_valid, cand):
+                        continue
+                    score = self._evaluate_lift_stability_score(
+                        x_valid, y_valid, cand, min_samples_abs, focus_weight, sample_weight
+                    )
+                    if score > candidate_score:
+                        candidate_score = score
+                        candidate_best = cand
+
+                if candidate_best is not None:
+                    best = candidate_best
+                    best_score = candidate_score
+                    improved = True
+
+            # Step2: 补点搜索（避免过度合并，强化头尾区分）
+            max_splits_allowed = max(1, max_search_bins - 1)
+            pool = np.unique(np.quantile(x_valid, np.linspace(0.05, 0.95, 19)))
+            pool = np.array([v for v in pool if np.isfinite(v)], dtype=float)
+
+            improved = True
+            while improved and len(best) < max_splits_allowed:
+                improved = False
+                candidate_best = None
+                candidate_score = best_score
+
+                for c in pool:
+                    if np.any(np.isclose(best, c, atol=1e-10, rtol=0)):
+                        continue
+                    cand = np.unique(np.sort(np.append(best, c)))
+                    if len(cand) > max_splits_allowed:
+                        continue
+                    if not _is_ok_monotonic(x_valid, y_valid, cand):
+                        continue
+                    score = self._evaluate_lift_stability_score(
+                        x_valid, y_valid, cand, min_samples_abs, focus_weight, sample_weight
+                    )
+                    if score > candidate_score:
+                        candidate_score = score
+                        candidate_best = cand
+
+                if candidate_best is not None:
+                    best = candidate_best
+                    best_score = candidate_score
+                    improved = True
+
+            if len(best) > 0 and not np.array_equal(best, current):
+                self.splits_[feature] = self._round_splits(best)
+                self.n_bins_[feature] = len(best) + 1
+                bins = self._apply_bins(X[feature], best, 'numerical', feature)
+                self.bin_tables_[feature] = self._compute_bin_stats(feature, X[feature], y, bins)
+
     def _fit_with_method(
+
         self,
         X: pd.DataFrame,
         y: pd.Series
@@ -786,6 +1031,8 @@ class OptimalBinning(BaseBinning):
             'max_n_bins': self.max_n_bins,
             'min_n_bins': self.min_n_bins,
             'min_bin_size': self.min_bin_size,
+            'max_bin_size': self.max_bin_size,
+            'monotonic': self.monotonic,
             'special_codes': self.special_codes,
             'random_state': self.random_state,
             'verbose': self.verbose,
@@ -821,13 +1068,26 @@ class OptimalBinning(BaseBinning):
                 full_params[k] = v
 
         if self.method == 'uniform':
-            self._binner = UniformBinning(**target_params)
+            uniform_params = target_params.copy()
+            legacy_n_bins = uniform_params.pop('n_bins', None)
+            if legacy_n_bins is not None and self.max_n_bins == 5:
+                uniform_params['max_n_bins'] = legacy_n_bins
+                self.max_n_bins = legacy_n_bins
+            self._binner = UniformBinning(**uniform_params)
         elif self.method == 'quantile':
-            self._binner = QuantileBinning(**target_params)
+            quantile_params = target_params.copy()
+            legacy_n_bins = quantile_params.pop('n_bins', None)
+            if legacy_n_bins is not None and self.max_n_bins == 5:
+                quantile_params['max_n_bins'] = legacy_n_bins
+            self._binner = QuantileBinning(**quantile_params)
         elif self.method == 'tree':
             self._binner = TreeBinning(**target_params)
         elif self.method == 'chi':
-            self._binner = ChiMergeBinning(**target_params)
+            chi_params = target_params.copy()
+            legacy_n_bins = chi_params.pop('n_bins', None)
+            if legacy_n_bins is not None and self.max_n_bins == 5:
+                chi_params['max_n_bins'] = legacy_n_bins
+            self._binner = ChiMergeBinning(**chi_params)
         elif self.method == 'best_ks':
             self._binner = BestKSBinning(**full_params)
         elif self.method == 'best_iv':
@@ -851,6 +1111,7 @@ class OptimalBinning(BaseBinning):
                 'max_n_bins': self.max_n_bins,
                 'min_n_bins': self.min_n_bins,
                 'min_bin_size': self.min_bin_size,
+                'max_bin_size': self.max_bin_size,
                 'special_codes': self.special_codes,
                 'random_state': self.random_state,
                 'verbose': self.verbose,
@@ -875,7 +1136,21 @@ class OptimalBinning(BaseBinning):
         elif self.method == 'smooth':
             self._binner = SmoothBinning(**base_params)
         elif self.method == 'kernel_density':
-            self._binner = KernelDensityBinning(**base_params)
+            kernel_params = {
+                'target': self.target,
+                'max_n_bins': self.max_n_bins,
+                'min_n_bins': self.min_n_bins,
+                'min_bin_size': self.min_bin_size,
+                'monotonic': self.monotonic,
+                'special_codes': self.special_codes,
+                'missing_separate': self.missing_separate,
+                'random_state': self.random_state,
+                'verbose': self.verbose,
+            }
+            for k, v in self.kwargs.items():
+                if k not in ['prebinning', 'prebinning_params', 'prebinning_method', 'user_splits', 'max_bin_size', 'cat_cutoff', 'decimal']:
+                    kernel_params[k] = v
+            self._binner = KernelDensityBinning(**kernel_params)
         elif self.method == 'best_lift':
             self._binner = BestLiftBinning(**target_params)
         elif self.method == 'target_bad_rate':
@@ -985,115 +1260,9 @@ class OptimalBinning(BaseBinning):
         X: pd.DataFrame,
         y: pd.Series
     ):
-        """对现有分箱结果进行单调性调整.
+        """基于当前 method 切分点执行单调性收口。"""
+        super()._apply_monotonic_adjustment(X, y)
 
-        支持多种单调性模式：
-        - auto: 自动检测最佳趋势（允许单增、单减、正U、倒U）
-        - auto_asc_desc: 自动检测，但只允许单增或单减
-        - ascending/descending: 强制单调递增/递减
-        - peak/valley: 强制倒U型/正U型
-        """
-        # 定义需要调整的模式
-        needs_adjustment_modes = [
-            'auto', 'auto_asc_desc', 'auto_heuristic',
-            'ascending', 'descending',
-            'peak', 'valley',
-            'peak_heuristic', 'valley_heuristic'
-        ]
-
-        if self.monotonic not in needs_adjustment_modes:
-            return
-
-        for feature in list(self.splits_.keys()):
-            splits = self.splits_[feature]
-            feature_type = self.feature_types_[feature]
-
-            if feature_type == 'categorical':
-                continue  # 类别型特征暂不调整
-
-            # 检查当前分箱是否满足单调性
-            bin_table = self.bin_tables_[feature]
-            valid_bins = bin_table[bin_table['分箱标签'] != '缺失']
-            bad_rates = valid_bins['坏样本率'].values
-
-            is_ascending = all(bad_rates[i] <= bad_rates[i+1] + 1e-10
-                              for i in range(len(bad_rates)-1))
-            is_descending = all(bad_rates[i] >= bad_rates[i+1] - 1e-10
-                               for i in range(len(bad_rates)-1))
-            is_peak = self._is_peak_pattern(bad_rates)
-            is_valley = self._is_valley_pattern(bad_rates)
-
-            # 根据当前分箱结果和检测模式，确定目标趋势
-            need_adjust = False
-            target_mode = self.monotonic
-            detected_trend = 'unknown'
-
-            # 先检测当前分箱的趋势
-            if is_ascending:
-                detected_trend = 'ascending'
-            elif is_descending:
-                detected_trend = 'descending'
-            elif is_peak:
-                detected_trend = 'peak'
-            elif is_valley:
-                detected_trend = 'valley'
-
-            # 根据monotonic参数判断是否满足要求
-            if self.monotonic in ['auto', True, 'auto_heuristic']:
-                # auto模式：允许单增、单减、peak、valley
-                if is_ascending or is_descending or is_peak or is_valley:
-                    # 当前分箱已满足要求，记录检测到的趋势
-                    self.monotonic_trend_[feature] = detected_trend
-                else:
-                    # 需要重新分箱
-                    need_adjust = True
-                    target_mode = 'auto'
-            elif self.monotonic == 'auto_asc_desc':
-                # auto_asc_desc模式：只允许单增或单减
-                if is_ascending or is_descending:
-                    self.monotonic_trend_[feature] = detected_trend
-                else:
-                    need_adjust = True
-                    target_mode = 'auto_asc_desc'
-            elif self.monotonic == 'ascending':
-                if is_ascending:
-                    self.monotonic_trend_[feature] = 'ascending'
-                else:
-                    need_adjust = True
-                    target_mode = 'ascending'
-            elif self.monotonic == 'descending':
-                if is_descending:
-                    self.monotonic_trend_[feature] = 'descending'
-                else:
-                    need_adjust = True
-                    target_mode = 'descending'
-            elif self.monotonic in ['peak', 'peak_heuristic']:
-                if is_peak:
-                    self.monotonic_trend_[feature] = 'peak'
-                else:
-                    need_adjust = True
-                    target_mode = 'peak'
-            elif self.monotonic in ['valley', 'valley_heuristic']:
-                if is_valley:
-                    self.monotonic_trend_[feature] = 'valley'
-                else:
-                    need_adjust = True
-                    target_mode = 'valley'
-
-            if need_adjust:
-                # 使用 MonotonicBinning 重新分箱
-                from .monotonic_binning import MonotonicBinning
-                binner = MonotonicBinning(
-                    monotonic=target_mode,
-                    max_n_bins=self.max_n_bins,
-                    min_bin_size=self.min_bin_size,
-                    verbose=False
-                )
-                binner.fit(X[[feature]], y)
-                self.splits_[feature] = binner.splits_[feature]
-                self.n_bins_[feature] = binner.n_bins_[feature]
-                self.bin_tables_[feature] = binner.bin_tables_[feature]
-                self.monotonic_trend_[feature] = binner.monotonic_trend_.get(feature, target_mode)
 
     def _is_peak_pattern(self, bad_rates: np.ndarray) -> bool:
         """检查是否为峰值模式（倒U型）.
@@ -1183,28 +1352,6 @@ class OptimalBinning(BaseBinning):
             # 只有一个箱
             labels[0] = 'all'
         
-        return labels
-
-        if feature_type == 'categorical':
-            if isinstance(splits, list):
-                for i, cat in enumerate(splits):
-                    labels[i] = str(cat)
-                labels[len(splits)] = 'others'
-            else:
-                labels[0] = 'category_0'
-        else:
-            if isinstance(splits, np.ndarray) and len(splits) > 0:
-                n_bins = len(splits) + 1
-                for i in range(n_bins):
-                    if i == 0:
-                        labels[i] = f'(-inf, {splits[0]}]'
-                    elif i == n_bins - 1:
-                        labels[i] = f'({splits[-1]}, +inf]'
-                    else:
-                        labels[i] = f'({splits[i-1]}, {splits[i]}]'
-            else:
-                labels[0] = '(-inf, +inf)'
-
         return labels
 
     def transform(

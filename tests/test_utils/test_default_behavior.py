@@ -2,17 +2,22 @@
 验证 force_numerical 默认值为 False 后的行为
 """
 
-import pandas as pd
+from pathlib import Path
+
 import numpy as np
+import pandas as pd
 import sys
-sys.path.insert(0, '/Users/xiaoxi/CodeBuddy/hscredit/hscredit')
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 
 from hscredit.core.binning import (
     UniformBinning, QuantileBinning, TreeBinning
 )
 
 # 加载测试数据
-df = pd.read_excel('/Users/xiaoxi/CodeBuddy/hscredit/hscredit/examples/utils/hscredit.xlsx')
+df = pd.read_excel(_PROJECT_ROOT / "examples" / "hscredit.xlsx")
 df['target'] = ((df['MOB1'] > 15) | (df['MOB2'] > 15)).astype(int)
 
 X = df[['青云24']].copy()
@@ -44,7 +49,7 @@ except Exception as e:
 print("\n2. QuantileBinning - 默认行为 (force_numerical=False)")
 print("-" * 60)
 try:
-    binner = QuantileBinning(n_bins=5)
+    binner = QuantileBinning(max_n_bins=5)
     binner.fit(X, y)
     print(f"  特征类型: {binner.feature_types_}")
     print(f"  切分点: {binner.splits_}")
@@ -82,7 +87,7 @@ try:
     binner.fit(X, y)
     print(f"  UniformBinning: {binner.feature_types_}")
     
-    binner2 = QuantileBinning(n_bins=5, force_numerical=True)
+    binner2 = QuantileBinning(max_n_bins=5, force_numerical=True)
     binner2.fit(X, y)
     print(f"  QuantileBinning: {binner2.feature_types_}")
     

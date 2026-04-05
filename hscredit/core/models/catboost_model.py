@@ -195,6 +195,14 @@ class CatBoostRiskModel(BaseRiskModel):
         :param fit_params: 其他fit参数
         :return: self
         """
+        # CatBoost 在 numpy 矩阵上要求 cat_features 为列下标；若传入列名则先映射
+        if cat_features is not None and isinstance(X, pd.DataFrame):
+            cols = list(X.columns)
+            cat_features = [
+                cols.index(c) if isinstance(c, str) else int(c)
+                for c in cat_features
+            ]
+
         # 准备数据（支持从X中提取target）
         X, y, sample_weight = self._prepare_data(X, y, sample_weight, extract_target=True)
 

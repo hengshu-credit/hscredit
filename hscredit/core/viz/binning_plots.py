@@ -155,14 +155,112 @@ def _compute_bin_stats_from_raw_data(
         
         results.append({
             '分箱': label,
+            '分箱标签': label,
             '样本总数': int(row['样本总数']),
             '好样本数': int(row['好样本数']),
             '坏样本数': int(row['坏样本数']),
             '坏样本率': row['坏样本率'],
             '样本占比': row['样本占比'],
+            '指标IV值': row.get('指标IV值', np.nan),
+            '分档KS值': row.get('分档KS值', np.nan),
+            'LIFT值': row.get('LIFT值', np.nan),
         })
     
     return pd.DataFrame(results)
+
+
+def _is_missing_bin_label(label: Any) -> bool:
+    """判断是否为缺失分箱标签。"""
+    if pd.isna(label):
+        return True
+    text = str(label).strip().lower()
+    return text in {'missing', 'nan', 'none', 'null', '缺失', '缺失值'}
+
+
+def _is_interval_like_label(label: Any) -> bool:
+    """判断分箱标签是否像数值区间。"""
+    if pd.isna(label):
+        return False
+    text = str(label).strip()
+    if _is_missing_bin_label(text):
+        return False
+    return bool(re.match(r'^[\(\[].*,.*[\)\]]$', text))
+
+
+def _infer_numeric_feature_table(feature_table: pd.DataFrame) -> bool:
+    """根据分箱标签粗略判断是否为数值型特征分箱表。"""
+    label_col = '分箱标签' if '分箱标签' in feature_table.columns else '分箱'
+    labels = feature_table[label_col].dropna() if label_col in feature_table.columns else pd.Series(dtype=object)
+    labels = labels[~labels.apply(_is_missing_bin_label)]
+    if labels.empty:
+        return False
+    interval_hits = labels.apply(_is_interval_like_label)
+    return bool(interval_hits.any())
+
+
+def _detect_bad_rate_trend(feature_table: pd.DataFrame) -> str:
+    """判断坏样本率趋势，排除缺失值分箱。"""
+    if '坏样本率' not in feature_table.columns:
+        return '未知'
+
+    label_col = '分箱标签' if '分箱标签' in feature_table.columns else '分箱'
+    working = feature_table.copy()
+    if label_col in working.columns:
+        working = working[~working[label_col].apply(_is_missing_bin_label)]
+
+    rates = pd.to_numeric(working['坏样本率'], errors='coerce').dropna().to_numpy()
+    if len(rates) <= 1:
+        return '未知'
+
+    diffs = np.diff(rates)
+    tol = 1e-6
+    diffs = diffs[np.abs(diffs) > tol]
+    if len(diffs) == 0:
+        return '平稳'
+    if np.all(diffs >= 0):
+        return '上升'
+    if np.all(diffs <= 0):
+        return '下降'
+
+    signs = np.sign(diffs)
+    non_zero = signs[signs != 0]
+    sign_changes = 0 if len(non_zero) <= 1 else int(np.sum(non_zero[1:] != non_zero[:-1]))
+    if sign_changes == 1:
+        return 'U型' if non_zero[0] < 0 < non_zero[-1] else '倒U型'
+    return '波动'
+
+
+def _build_bin_metric_summary(feature_table: pd.DataFrame) -> str:
+    """构建分箱图角标摘要（紧凑两列表达）。"""
+    items = []
+
+    if '指标IV值' in feature_table.columns:
+        iv_values = pd.to_numeric(feature_table['指标IV值'], errors='coerce').dropna()
+        if not iv_values.empty:
+            items.append(f"IV {iv_values.iloc[-1]:.4f}")
+
+    if _infer_numeric_feature_table(feature_table) and '分档KS值' in feature_table.columns:
+        ks_values = pd.to_numeric(feature_table['分档KS值'], errors='coerce').dropna()
+        if not ks_values.empty:
+            items.append(f"KS {ks_values.max():.4f}")
+
+    if 'LIFT值' in feature_table.columns:
+        lift_values = pd.to_numeric(feature_table['LIFT值'], errors='coerce').dropna()
+        if not lift_values.empty:
+            items.append(f"LIFT {lift_values.min():.2f}~{lift_values.max():.2f}")
+
+    trend = _detect_bad_rate_trend(feature_table)
+    if trend != '未知':
+        items.append(f"趋势 {trend}")
+
+    if not items:
+        return ''
+
+    rows = []
+    for i in range(0, len(items), 2):
+        rows.append('    '.join(items[i:i + 2]))
+
+    return '\n'.join(rows)
 
 
 def bin_plot(
@@ -183,6 +281,7 @@ def bin_plot(
     method: str = 'quantile',
     rules: Optional[List] = None,
     show_data_points: bool = True,
+    show_overall_bad_rate: bool = True,
     iv: bool = True,
     return_frame: bool = False,
     ax: Optional[Any] = None,
@@ -231,10 +330,11 @@ def bin_plot(
     :param method: 分箱方法（仅用于方式1），可选 'quantile' 或 'uniform'
     :param rules: 自定义分箱边界（仅用于方式1）
     :param show_data_points: 是否显示数据点标记
+    :param show_overall_bad_rate: 是否显示整体坏样本率参考线
     :param iv: 是否显示 IV 值（暂不支持）
     :param return_frame: 是否返回分箱统计表
     :param ax: 可选的 matplotlib Axes 对象，用于在已有画布上绘图
-    :param orientation: 图表方向，'horizontal'(横向，默认) 或 'vertical'(纵向)
+    :param orientation: 图表方向，'horizontal'/'h'(横向，默认) 或 'vertical'/'v'(纵向)
     :param kwargs: 其他参数（兼容性）
     :return: matplotlib Figure 或 (Figure, DataFrame)，如果传入 ax 则返回 ax
     """
@@ -270,10 +370,31 @@ def bin_plot(
             rules=rules,
         )
 
-    # 处理分箱标签
-    feature_table["分箱"] = feature_table["分箱"].apply(
+    # 处理分箱标签：优先显示具体分箱标签，而不是分箱索引
+    plot_labels = None
+    if '分箱标签' in feature_table.columns:
+        candidate_labels = feature_table['分箱标签']
+        if candidate_labels.notna().any():
+            plot_labels = candidate_labels.astype(str)
+
+    if plot_labels is None:
+        plot_labels = feature_table['分箱'].astype(str)
+
+    feature_table = feature_table.copy()
+    feature_table['_plot_bin_label'] = plot_labels.apply(
         lambda x: format_bin_label(x, max_len)
     )
+
+    overall_bad_rate = float(feature_table['坏样本率'].mul(feature_table['样本总数']).sum() / feature_table['样本总数'].sum())
+    axis_theme = colors[0]
+    line_color = '#E85D4A'
+    reference_color = '#4C8DFF'
+    rate_fontdict = {
+        'color': line_color,
+        'fontsize': 10,
+        'fontweight': 'semibold',
+        'bbox': dict(boxstyle='round,pad=0.18', facecolor='white', edgecolor=line_color, linewidth=0.6, alpha=0.92)
+    }
 
     # 获取或创建 Axes
     if ax is not None:
@@ -285,31 +406,41 @@ def bin_plot(
         return_ax = False
 
     # 根据方向选择绘图方式
-    is_horizontal = orientation.lower() in ['horizontal', 'h', '横向']
+    orientation_key = orientation.lower()
+    if orientation_key not in ['horizontal', 'h', '横向', 'vertical', 'v', '纵向']:
+        raise ValueError("orientation 仅支持 'horizontal'/'h'/'横向' 或 'vertical'/'v'/'纵向'")
+    is_horizontal = orientation_key in ['horizontal', 'h', '横向']
 
     if is_horizontal:
         # 横向柱状图（默认）
-        ax1.barh(feature_table['分箱'], feature_table['好样本数'], color=colors[0], label='好样本',
-                 hatch="/" if hatch else None, edgecolor='white' if hatch else None)
-        ax1.barh(feature_table['分箱'], feature_table['坏样本数'], left=feature_table['好样本数'], color=colors[1],
-                 label='坏样本', hatch="\\" if hatch else None, edgecolor='white' if hatch else None)
-        ax1.set_xlabel('样本数')
+        y_pos = np.arange(len(feature_table))
+        ax1.barh(feature_table['_plot_bin_label'], feature_table['好样本数'], color=colors[0], label='好样本',
+                 hatch="/" if hatch else None, edgecolor='white' if hatch else None, alpha=0.92)
+        ax1.barh(feature_table['_plot_bin_label'], feature_table['坏样本数'], left=feature_table['好样本数'], color=colors[1],
+                 label='坏样本', hatch="\\" if hatch else None, edgecolor='white' if hatch else None, alpha=0.92)
+        ax1.set_xlabel('样本数', color=axis_theme)
 
         ax2 = ax1.twiny()
-        ax2.plot(feature_table['坏样本率'], feature_table['分箱'], colors[2], label='坏样本率', linestyle='-.')
-        ax2.set_xlabel('坏样本率: 坏样本数 / 样本总数')
-        ax2.set_xlim(xmin=0.)
+        ax2.plot(feature_table['坏样本率'], y_pos, color=line_color, label='坏样本率', linestyle=(0, (4, 3)), linewidth=2.1,
+                 marker='o' if show_data_points else None, markersize=5.5, markerfacecolor='white',
+                 markeredgecolor=line_color, markeredgewidth=1.4)
+        ax2.set_xlabel('坏样本率', color=axis_theme)
+        ax2.set_xlim(left=0.)
+        ax2.set_yticks(y_pos)
+        ax2.set_yticklabels(feature_table['_plot_bin_label'])
 
-        if show_data_points:
-            for i, rate in enumerate(feature_table['坏样本率']):
-                ax2.scatter(rate, i, color=colors[2])
+        if show_overall_bad_rate:
+            ax2.axvline(overall_bad_rate, color=reference_color, linestyle=(0, (2, 2)), linewidth=1.8, alpha=0.9,
+                        label='整体坏样本率')
 
-        if fontdict and fontdict.get("color"):
-            for i, v in feature_table[['样本总数', '好样本数', '坏样本数', '坏样本率']].iterrows():
-                ax1.text(v['样本总数'] / 2, i + len(feature_table) / 60,
-                        f"{int(v['好样本数'])}:{int(v['坏样本数'])}:{v['坏样本率']:.2%}", fontdict=fontdict)
+        x_right = max(ax2.get_xlim()[1], float(feature_table['坏样本率'].max()) * 1.15 if len(feature_table) > 0 else 0.1)
+        ax2.set_xlim(right=x_right)
+        x_offset = max((ax2.get_xlim()[1] - ax2.get_xlim()[0]) * 0.012, 0.003)
+        for i, rate in enumerate(feature_table['坏样本率']):
+            ax2.text(rate + x_offset, i, f'{rate:.2%}', va='center', ha='left', fontdict=rate_fontdict, clip_on=False)
 
         ax1.invert_yaxis()
+        ax2.invert_yaxis()
         ax2.xaxis.set_major_formatter(PercentFormatter(1, decimals=0, is_latex=True))
     else:
         # 纵向柱状图
@@ -317,26 +448,40 @@ def bin_plot(
         width = 0.6
 
         ax1.bar(x_pos, feature_table['好样本数'], width, color=colors[0], label='好样本',
-                hatch="/" if hatch else None, edgecolor='white' if hatch else None)
+                hatch="/" if hatch else None, edgecolor='white' if hatch else None, alpha=0.92)
         ax1.bar(x_pos, feature_table['坏样本数'], width, bottom=feature_table['好样本数'], color=colors[1],
-                label='坏样本', hatch="\\" if hatch else None, edgecolor='white' if hatch else None)
-        ax1.set_ylabel('样本数')
+                label='坏样本', hatch="\\" if hatch else None, edgecolor='white' if hatch else None, alpha=0.92)
+        ax1.set_ylabel('样本数', color=axis_theme)
         ax1.set_xticks(x_pos)
-        ax1.set_xticklabels(feature_table['分箱'], rotation=45, ha='right')
+        ax1.set_xticklabels(feature_table['_plot_bin_label'], rotation=45, ha='right')
 
         ax2 = ax1.twinx()
-        ax2.plot(x_pos, feature_table['坏样本率'], colors[2], label='坏样本率', linestyle='-.', marker='o' if show_data_points else None)
-        ax2.set_ylabel('坏样本率: 坏样本数 / 样本总数')
-        ax2.set_ylim(ymin=0.)
+        ax2.plot(x_pos, feature_table['坏样本率'], color=line_color, label='坏样本率', linestyle=(0, (4, 3)), linewidth=2.1,
+                 marker='o' if show_data_points else None, markersize=5.5, markerfacecolor='white',
+                 markeredgecolor=line_color, markeredgewidth=1.4)
+        ax2.set_ylabel('坏样本率', color=axis_theme)
+        ax2.set_ylim(bottom=0.)
 
-        if fontdict and fontdict.get("color"):
-            for i, v in feature_table[['样本总数', '好样本数', '坏样本数', '坏样本率']].iterrows():
-                ax1.text(i, v['样本总数'] / 2,
-                        f"{int(v['好样本数'])}:{int(v['坏样本数'])}:{v['坏样本率']:.2%}",
-                        fontdict=fontdict, ha='center', va='center')
+        if show_overall_bad_rate:
+            ax2.axhline(overall_bad_rate, color=reference_color, linestyle=(0, (2, 2)), linewidth=1.8, alpha=0.9,
+                        label='整体坏样本率')
+
+        y_top = max(float(feature_table['坏样本率'].max()) if len(feature_table) > 0 else 0.0, overall_bad_rate)
+        ax2.set_ylim(top=max(ax2.get_ylim()[1], y_top * 1.18 if y_top > 0 else 0.1))
+        y_offset = max(ax2.get_ylim()[1] * 0.015, 0.003)
+        for i, rate in enumerate(feature_table['坏样本率']):
+            ax2.text(i, rate + y_offset, f'{rate:.2%}', ha='center', va='bottom', fontdict=rate_fontdict, clip_on=False)
 
         ax2.yaxis.set_major_formatter(PercentFormatter(1, decimals=0, is_latex=True))
-    
+
+    setup_axis_style(ax1, [axis_theme], hide_top_right=False)
+    setup_axis_style(ax2, [axis_theme], hide_top_right=False)
+    ax1.tick_params(axis='both', colors=axis_theme)
+    ax2.tick_params(axis='both', colors=axis_theme)
+    ax1.grid(False)
+    ax2.grid(False)
+
+    metric_summary = _build_bin_metric_summary(feature_table.drop(columns=['_plot_bin_label'], errors='ignore'))
     if not return_ax:
         if title is not None:
             fig.suptitle(f'{title}\n\n')
@@ -345,16 +490,28 @@ def bin_plot(
 
         handles1, labels1 = ax1.get_legend_handles_labels()
         handles2, labels2 = ax2.get_legend_handles_labels()
-        fig.legend(handles1 + handles2, labels1 + labels2, loc='upper center', 
-                   ncol=len(labels1 + labels2), bbox_to_anchor=(0.5, anchor), frameon=False)
+        legend = fig.legend(handles1 + handles2, labels1 + labels2, loc='upper center', 
+                            ncol=len(labels1 + labels2), bbox_to_anchor=(0.5, anchor), frameon=False)
 
         plt.tight_layout()
+        if metric_summary:
+            fig.canvas.draw()
+            ax_pos = ax1.get_position()
+            legend_bbox = legend.get_window_extent(fig.canvas.get_renderer()).transformed(fig.transFigure.inverted())
+            fig.text(ax_pos.x0, legend_bbox.y0, metric_summary, ha='left', va='bottom',
+                     fontsize=10, color=axis_theme,
+                     bbox=dict(boxstyle='round,pad=0.28', facecolor='white', edgecolor=axis_theme, alpha=0.9, linewidth=0.8))
         save_figure(fig, save)
 
         if return_frame:
-            return fig, feature_table
+            return fig, feature_table.drop(columns=['_plot_bin_label'], errors='ignore')
         return fig
     else:
+        if metric_summary:
+            ax2.text(0.0, 1.02, metric_summary, transform=ax2.transAxes, ha='left', va='bottom',
+                     fontsize=10, color=axis_theme,
+                     bbox=dict(boxstyle='round,pad=0.28', facecolor='white', edgecolor=axis_theme, alpha=0.9, linewidth=0.8),
+                     clip_on=False)
         if title is not None:
             ax1.set_title(title)
         else:

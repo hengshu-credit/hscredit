@@ -26,6 +26,15 @@ from .swap_analysis_report import (
 )
 
 from .overdue_predictor import OverduePredictor, overdue_prediction_report
+from .mining import (
+    SingleFeatureRuleMiner,
+    MultiFeatureRuleMiner,
+    TreeRuleExtractor,
+    RuleMetrics,
+    calculate_rule_metrics,
+    TreeVisualizer,
+    plot_decision_tree,
+)
 
 try:
     from .feature_report import auto_feature_analysis_report
@@ -50,5 +59,13 @@ __all__ = [
     # 逾期预测
     "OverduePredictor",
     "overdue_prediction_report",
+    # 规则挖掘（迁移自 core.rules.mining）
+    "SingleFeatureRuleMiner",
+    "MultiFeatureRuleMiner",
+    "TreeRuleExtractor",
+    "RuleMetrics",
+    "calculate_rule_metrics",
+    "TreeVisualizer",
+    "plot_decision_tree",
     "auto_feature_analysis_report",
 ]

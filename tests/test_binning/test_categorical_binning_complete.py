@@ -3,8 +3,6 @@
 """测试05_categorical_binning.ipynb的所有功能."""
 
 import sys
-sys.path.insert(0, '/Users/xiaoxi/CodeBuddy/hscredit/hscredit')
-
 import numpy as np
 import pandas as pd
 import pytest

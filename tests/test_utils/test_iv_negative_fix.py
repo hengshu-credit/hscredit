@@ -6,18 +6,10 @@
 3. 单个样本的bin
 """
 
-import sys
-from pathlib import Path
-
-# 添加项目路径
-project_root = Path(__file__).parent / "hscredit"
-if str(project_root) not in sys.path:
-    sys.path.insert(0, str(project_root))
-
 import numpy as np
 import pandas as pd
 from hscredit.core.binning import OptimalBinning
-from hscredit.core.metrics.binning_metrics import woe_iv_vectorized, compute_bin_stats
+from hscredit.core.metrics._binning import woe_iv_vectorized, compute_bin_stats
 
 
 def test_woe_iv_vectorized():

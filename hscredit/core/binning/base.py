@@ -546,6 +546,589 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
             # 绝对数量
             return max(1, int(self.min_bin_size))
 
+    def _get_max_samples(self, n_samples: int) -> Optional[int]:
+        """计算最大样本数。"""
+        if self.max_bin_size is None:
+            return None
+        if self.max_bin_size < 1:
+            return max(1, int(np.ceil(n_samples * self.max_bin_size)))
+        return max(1, int(self.max_bin_size))
+
+    def _choose_merge_split_index(
+        self,
+        counts: np.ndarray,
+        bad_counts: np.ndarray,
+        bin_idx: int
+    ) -> Optional[int]:
+        """为样本量不足的分箱选择要删除的切分点索引。"""
+        n_bins = len(counts)
+        if n_bins <= max(1, self.min_n_bins):
+            return None
+        if bin_idx <= 0:
+            return 0
+        if bin_idx >= n_bins - 1:
+            return n_bins - 2
+
+        bad_rates = bad_counts / np.maximum(counts, 1.0)
+        left_score = abs(bad_rates[bin_idx] - bad_rates[bin_idx - 1])
+        right_score = abs(bad_rates[bin_idx] - bad_rates[bin_idx + 1])
+        return bin_idx - 1 if left_score <= right_score else bin_idx
+
+    def _choose_split_point_within_bin(
+        self,
+        x: pd.Series,
+        bins: np.ndarray,
+        bin_idx: int,
+        min_samples: int
+    ) -> Optional[float]:
+        """为样本量过大的分箱选择新的切分点。"""
+        values = np.sort(pd.to_numeric(x[bins == bin_idx], errors='coerce').dropna().to_numpy(dtype=float))
+        if len(values) < max(2, min_samples * 2):
+            return None
+
+        center = len(values) // 2
+        candidate_positions = sorted(
+            range(min_samples, len(values) - min_samples + 1),
+            key=lambda pos: abs(pos - center)
+        )
+
+        for pos in candidate_positions:
+            left_value = values[pos - 1]
+            right_value = values[pos]
+            if np.isclose(left_value, right_value, atol=1e-12, rtol=0):
+                continue
+            return float((left_value + right_value) / 2.0)
+        return None
+
+    def _adjust_splits_for_bin_size_constraints(
+        self,
+        x: pd.Series,
+        y: pd.Series,
+        splits: Union[np.ndarray, list],
+        min_samples: int,
+        max_samples: Optional[int]
+    ) -> np.ndarray:
+        """调整切分点以满足最小/最大样本量约束。"""
+        if splits is None or len(splits) == 0:
+            return np.array([])
+
+        current = np.unique(np.sort(np.asarray(splits, dtype=float)))
+        x_numeric = pd.to_numeric(x, errors='coerce')
+        valid_mask = x_numeric.notna()
+        if self.special_codes:
+            for code in self.special_codes:
+                valid_mask &= (x_numeric != code)
+        x_valid = x_numeric[valid_mask]
+        y_valid = y[valid_mask]
+
+        if len(x_valid) == 0:
+            return current
+
+        max_splits_allowed = max(0, self.max_n_bins - 1)
+        min_splits_allowed = max(0, self.min_n_bins - 1)
+
+        for _ in range(200):
+            bins = np.digitize(x_valid, current) if len(current) > 0 else np.zeros(len(x_valid), dtype=int)
+            counts = np.bincount(bins, minlength=len(current) + 1).astype(int)
+            bad_counts = np.bincount(bins, weights=y_valid, minlength=len(current) + 1).astype(float)
+
+            small_bins = np.where(counts < min_samples)[0]
+            large_bins = np.array([], dtype=int) if max_samples is None else np.where(counts > max_samples)[0]
+
+            changed = False
+
+            if len(small_bins) > 0 and len(current) > min_splits_allowed:
+                merge_bin = int(small_bins[np.argmin(counts[small_bins])])
+                split_idx = self._choose_merge_split_index(counts, bad_counts, merge_bin)
+                if split_idx is not None and 0 <= split_idx < len(current):
+                    current = np.delete(current, split_idx)
+                    changed = True
+
+            if changed:
+                continue
+
+            if len(large_bins) > 0 and len(current) < max_splits_allowed:
+                split_bin = int(large_bins[np.argmax(counts[large_bins])])
+                new_split = self._choose_split_point_within_bin(x_valid, bins, split_bin, min_samples)
+                if new_split is not None and np.isfinite(new_split):
+                    current = np.unique(np.sort(np.append(current, new_split)))
+                    changed = True
+
+            if not changed:
+                break
+
+        return current
+
+    def _enforce_bin_size_constraints(
+        self,
+        X: pd.DataFrame,
+        y: pd.Series
+    ) -> None:
+        """统一收口最小/最大分箱样本量约束。"""
+        for feature in list(self.splits_.keys()):
+            if self.feature_types_.get(feature) != 'numerical':
+                continue
+
+            splits = self.splits_.get(feature)
+            if splits is None:
+                continue
+
+            min_samples = self._get_min_samples(len(y))
+            max_samples = self._get_max_samples(len(y))
+            adjusted = self._adjust_splits_for_bin_size_constraints(X[feature], y, splits, min_samples, max_samples)
+            adjusted = self._round_splits(adjusted)
+
+            old_splits = np.asarray(splits, dtype=float) if len(splits) > 0 else np.array([])
+            if np.array_equal(adjusted, old_splits):
+                continue
+
+            self.splits_[feature] = adjusted
+            self.n_bins_[feature] = len(adjusted) + 1
+
+            apply_bins = getattr(self, '_apply_bins', None)
+            if callable(apply_bins):
+                try:
+                    bins = apply_bins(X[feature], adjusted, 'numerical', feature)
+                except TypeError:
+                    try:
+                        bins = apply_bins(X[feature], adjusted, feature)
+                    except TypeError:
+                        bins = apply_bins(X[feature], adjusted)
+            else:
+                values = X[feature]
+                bins = np.zeros(len(values), dtype=int)
+                if self.missing_separate:
+                    bins[pd.isna(values)] = -1
+                mask = pd.notna(values)
+                if self.special_codes:
+                    for code in self.special_codes:
+                        bins[values == code] = -2
+                        mask &= (values != code)
+                if len(adjusted) > 0:
+                    bins[mask] = np.digitize(pd.to_numeric(values[mask], errors='coerce'), adjusted)
+                else:
+                    bins[mask] = 0
+            self.bin_tables_[feature] = self._compute_bin_stats(feature, X[feature], y, bins)
+
+    def _apply_post_fit_constraints(
+        self,
+        X: pd.DataFrame,
+        y: pd.Series,
+        enforce_monotonic: bool = True
+    ) -> None:
+        """拟合后统一收口约束。"""
+        self._enforce_bin_size_constraints(X, y)
+
+        monotonic_adjuster = getattr(self, '_apply_monotonic_adjustment', None)
+        if enforce_monotonic and self.monotonic and callable(monotonic_adjuster):
+            monotonic_adjuster(X, y)
+            self._enforce_bin_size_constraints(X, y)
+
+    def _get_feature_bins(
+        self,
+        feature: str,
+        x: pd.Series,
+        splits: Union[np.ndarray, list]
+    ) -> np.ndarray:
+        """获取指定特征切分点对应的分箱索引。"""
+        apply_bins = getattr(self, '_apply_bins', None)
+        if callable(apply_bins):
+            try:
+                return apply_bins(x, splits, 'numerical', feature)
+            except TypeError:
+                try:
+                    return apply_bins(x, splits, feature)
+                except TypeError:
+                    return apply_bins(x, splits)
+
+        bins = np.zeros(len(x), dtype=int)
+        if self.missing_separate:
+            bins[pd.isna(x)] = -1
+
+        mask = pd.notna(x)
+        if self.special_codes:
+            for code in self.special_codes:
+                bins[x == code] = -2
+                mask &= (x != code)
+
+        if len(splits) > 0:
+            bins[mask] = np.digitize(pd.to_numeric(x[mask], errors='coerce'), splits)
+        else:
+            bins[mask] = 0
+        return bins
+
+    def _resolve_monotonic_target_mode(self, bad_rates: np.ndarray, target_mode: Union[bool, str]) -> str:
+        """为自动单调模式选择目标趋势。"""
+        if target_mode in ['ascending', 'descending', 'peak', 'valley']:
+            return target_mode
+
+        if target_mode in ['auto_asc_desc']:
+            candidates = ['ascending', 'descending']
+        else:
+            candidates = ['ascending', 'descending', 'peak', 'valley']
+
+        best_mode = candidates[0]
+        best_score = None
+        for mode in candidates:
+            violations = self._count_monotonic_violations(bad_rates, mode)
+            score = (violations, 0 if mode in ['ascending', 'descending'] else 1)
+            if best_score is None or score < best_score:
+                best_score = score
+                best_mode = mode
+        return best_mode
+
+    def _count_monotonic_violations(self, bad_rates: np.ndarray, mode: str) -> int:
+        """计算指定趋势下的违例数量。"""
+        tol = 1e-10
+        diffs = np.diff(bad_rates)
+        if len(diffs) == 0:
+            return 0
+        if mode == 'ascending':
+            return int(np.sum(diffs < -tol))
+        if mode == 'descending':
+            return int(np.sum(diffs > tol))
+        if mode == 'peak':
+            if len(bad_rates) < 3:
+                return self._count_monotonic_violations(bad_rates, 'descending')
+            return min(
+                self._count_monotonic_violations(bad_rates[:pivot + 1], 'ascending') +
+                self._count_monotonic_violations(bad_rates[pivot:], 'descending')
+                for pivot in range(1, len(bad_rates) - 1)
+            )
+        if mode == 'valley':
+            if len(bad_rates) < 3:
+                return self._count_monotonic_violations(bad_rates, 'ascending')
+            return min(
+                self._count_monotonic_violations(bad_rates[:pivot + 1], 'descending') +
+                self._count_monotonic_violations(bad_rates[pivot:], 'ascending')
+                for pivot in range(1, len(bad_rates) - 1)
+            )
+        return 0
+
+    def _choose_monotonic_merge_index(self, bad_rates: np.ndarray, mode: str) -> int:
+        """选择需要移除的切分点索引。"""
+        tol = 1e-10
+        diffs = np.diff(bad_rates)
+        if len(diffs) == 0:
+            return 0
+        if mode == 'ascending':
+            violations = np.where(diffs < -tol)[0]
+            return int(violations[np.argmin(diffs[violations])]) if len(violations) > 0 else 0
+        if mode == 'descending':
+            violations = np.where(diffs > tol)[0]
+            return int(violations[np.argmax(diffs[violations])]) if len(violations) > 0 else 0
+        if mode == 'peak':
+            best_pivot = min(
+                range(1, len(bad_rates) - 1),
+                key=lambda pivot: self._count_monotonic_violations(bad_rates[:pivot + 1], 'ascending') +
+                                  self._count_monotonic_violations(bad_rates[pivot:], 'descending')
+            )
+            left_diffs = diffs[:best_pivot]
+            right_diffs = diffs[best_pivot:]
+            left_idx = np.where(left_diffs < -tol)[0]
+            right_idx = np.where(right_diffs > tol)[0]
+            left_choice = None if len(left_idx) == 0 else int(left_idx[np.argmin(left_diffs[left_idx])])
+            right_choice = None if len(right_idx) == 0 else int(best_pivot + right_idx[np.argmax(right_diffs[right_idx])])
+            if left_choice is None:
+                return right_choice if right_choice is not None else 0
+            if right_choice is None:
+                return left_choice
+            return left_choice if abs(diffs[left_choice]) >= abs(diffs[right_choice]) else right_choice
+        if mode == 'valley':
+            best_pivot = min(
+                range(1, len(bad_rates) - 1),
+                key=lambda pivot: self._count_monotonic_violations(bad_rates[:pivot + 1], 'descending') +
+                                  self._count_monotonic_violations(bad_rates[pivot:], 'ascending')
+            )
+            left_diffs = diffs[:best_pivot]
+            right_diffs = diffs[best_pivot:]
+            left_idx = np.where(left_diffs > tol)[0]
+            right_idx = np.where(right_diffs < -tol)[0]
+            left_choice = None if len(left_idx) == 0 else int(left_idx[np.argmax(left_diffs[left_idx])])
+            right_choice = None if len(right_idx) == 0 else int(best_pivot + right_idx[np.argmin(right_diffs[right_idx])])
+            if left_choice is None:
+                return right_choice if right_choice is not None else 0
+            if right_choice is None:
+                return left_choice
+            return left_choice if abs(diffs[left_choice]) >= abs(diffs[right_choice]) else right_choice
+        return 0
+
+    def _merge_splits_for_monotonicity(
+        self,
+        feature: str,
+        x: pd.Series,
+        y: pd.Series,
+        splits: Union[np.ndarray, list],
+        target_mode: Union[bool, str]
+    ) -> tuple[np.ndarray, str]:
+        """基于当前切分点，通过相邻合并满足单调约束。"""
+        current = np.unique(np.sort(np.asarray(splits, dtype=float))) if len(splits) > 0 else np.array([])
+        if len(current) == 0:
+            return current, 'unknown'
+
+        min_splits_allowed = max(0, self.min_n_bins - 1)
+        final_mode = str(target_mode)
+
+        for _ in range(200):
+            bins = self._get_feature_bins(feature, x, current)
+            bin_table = self._compute_bin_stats(feature, x, y, bins)
+            valid_bins = bin_table[bin_table['分箱'] >= 0]
+            bad_rates = valid_bins['坏样本率'].to_numpy(dtype=float)
+            if len(bad_rates) <= 1:
+                return current, final_mode
+
+            final_mode = self._resolve_monotonic_target_mode(bad_rates, target_mode)
+            violations = self._count_monotonic_violations(bad_rates, final_mode)
+            max_splits_allowed = max(0, self.max_n_bins - 1)
+            if violations == 0 and len(current) <= max_splits_allowed:
+                return current, final_mode
+            if len(current) <= min_splits_allowed:
+                return current, final_mode
+
+            if violations == 0:
+                diffs = np.abs(np.diff(bad_rates))
+                merge_idx = int(np.argmin(diffs)) if len(diffs) > 0 else len(current) - 1
+            else:
+                merge_idx = self._choose_monotonic_merge_index(bad_rates, final_mode)
+            if merge_idx < 0 or merge_idx >= len(current):
+                break
+            current = np.delete(current, merge_idx)
+
+        return current, final_mode
+
+    def _count_adjacent_zero_bad_rate_pairs(
+        self,
+        bad_rates: np.ndarray
+    ) -> int:
+        """统计相邻全零坏样本率箱对数。"""
+        arr = np.asarray(bad_rates, dtype=float)
+        if len(arr) <= 1:
+            return 0
+        zero_mask = arr <= 1e-12
+        return int(np.sum(zero_mask[:-1] & zero_mask[1:]))
+
+    def _merge_adjacent_zero_bad_rate_bins(
+        self,
+        feature: str,
+        x: pd.Series,
+        y: pd.Series,
+        splits: Union[np.ndarray, list]
+    ) -> np.ndarray:
+        """合并相邻坏样本率全为 0 的分箱。"""
+        current = np.unique(np.sort(np.asarray(splits, dtype=float))) if len(splits) > 0 else np.array([])
+        if len(current) == 0:
+            return current
+
+        for _ in range(200):
+            bins = self._get_feature_bins(feature, x, current)
+            bin_table = self._compute_bin_stats(feature, x, y, bins)
+            valid = bin_table[bin_table['分箱'] >= 0].reset_index(drop=True)
+            bad_rates = valid['坏样本率'].to_numpy(dtype=float)
+            zero_pairs = np.where((bad_rates[:-1] <= 1e-12) & (bad_rates[1:] <= 1e-12))[0] if len(bad_rates) > 1 else np.array([])
+            if len(zero_pairs) == 0:
+                break
+            if len(current) == 0:
+                break
+            merge_idx = int(zero_pairs[0])
+            if merge_idx < 0 or merge_idx >= len(current):
+                break
+            current = np.delete(current, merge_idx)
+
+        return current
+
+    def _apply_monotonic_adjustment(
+        self,
+        X: pd.DataFrame,
+        y: pd.Series
+    ) -> None:
+        """基于当前方法的切分点执行单调性收口。"""
+        needs_adjustment_modes = [
+            'auto', 'auto_asc_desc', 'auto_heuristic',
+            'ascending', 'descending',
+            'peak', 'valley',
+            'peak_heuristic', 'valley_heuristic', True
+        ]
+        if self.monotonic not in needs_adjustment_modes:
+            return
+
+        monotonic_trend = getattr(self, 'monotonic_trend_', None)
+        if monotonic_trend is None:
+            self.monotonic_trend_ = {}
+
+        for feature in list(self.splits_.keys()):
+            if self.feature_types_.get(feature) != 'numerical':
+                continue
+            splits = self.splits_.get(feature)
+            if splits is None or len(splits) == 0:
+                continue
+
+            bins = self._get_feature_bins(feature, X[feature], splits)
+            bin_table = self._compute_bin_stats(feature, X[feature], y, bins)
+            valid_bins = bin_table[bin_table['分箱'] >= 0]
+            bad_rates = valid_bins['坏样本率'].to_numpy(dtype=float)
+            if len(bad_rates) <= 1:
+                continue
+
+            target_mode = self._resolve_monotonic_target_mode(bad_rates, self.monotonic)
+            if self._count_monotonic_violations(bad_rates, target_mode) == 0:
+                adjusted_splits = np.unique(np.sort(np.asarray(splits, dtype=float)))
+                final_mode = target_mode
+            else:
+                adjusted_splits, final_mode = self._merge_splits_for_monotonicity(
+                    feature, X[feature], y, splits, target_mode
+                )
+
+            adjusted_splits = self._expand_splits_with_monotonicity(
+                feature, X[feature], y, adjusted_splits, final_mode
+            )
+            adjusted_splits = self._merge_adjacent_zero_bad_rate_bins(
+                feature, X[feature], y, adjusted_splits
+            )
+            self.splits_[feature] = self._round_splits(adjusted_splits)
+            self.n_bins_[feature] = len(self.splits_[feature]) + 1
+            bins = self._get_feature_bins(feature, X[feature], self.splits_[feature])
+            self.bin_tables_[feature] = self._compute_bin_stats(feature, X[feature], y, bins)
+            self.monotonic_trend_[feature] = final_mode
+
+    def _quadratic_curve_coefficient(
+        self,
+        values: np.ndarray
+    ) -> float:
+        """计算曲线二次拟合系数。"""
+        arr = np.asarray(values, dtype=float)
+        if len(arr) < 3 or np.allclose(arr, arr[0], atol=1e-12, rtol=0):
+            return 0.0
+        x = np.linspace(-1.0, 1.0, len(arr), dtype=float)
+        coeffs = np.polyfit(x, arr, 2)
+        return float(coeffs[0])
+
+    def _quadratic_curve_score(
+        self,
+        values: np.ndarray,
+        mode: str
+    ) -> float:
+        """根据目标趋势解释二次拟合系数方向。"""
+        coef = self._quadratic_curve_coefficient(values)
+        if mode == 'peak':
+            return -coef
+        return coef
+
+    def _evaluate_split_scheme(
+        self,
+        feature: str,
+        x: pd.Series,
+        y: pd.Series,
+        splits: np.ndarray,
+        mode: str
+    ) -> tuple[bool, float, np.ndarray, np.ndarray]:
+        """评估切分方案是否满足单调与样本约束，并给出 lift 导向评分。"""
+        bins = self._get_feature_bins(feature, x, splits)
+        bin_table = self._compute_bin_stats(feature, x, y, bins)
+        valid = bin_table[bin_table['分箱'] >= 0].reset_index(drop=True)
+        bad_rates = valid['坏样本率'].to_numpy(dtype=float)
+        counts = valid['样本总数'].to_numpy(dtype=int)
+        min_samples = self._get_min_samples(len(y))
+        max_samples = self._get_max_samples(len(y))
+
+        is_valid = len(valid) >= self.min_n_bins
+        if len(bad_rates) > 1:
+            is_valid = is_valid and self._count_monotonic_violations(bad_rates, mode) == 0
+        if len(bad_rates) > 2:
+            is_valid = is_valid and self._count_adjacent_zero_bad_rate_pairs(bad_rates) == 0
+        is_valid = is_valid and np.all(counts >= min_samples)
+        if max_samples is not None:
+            is_valid = is_valid and np.all(counts <= max_samples)
+
+        curve_values = valid['LIFT值'].to_numpy(dtype=float) if 'LIFT值' in valid.columns else bad_rates
+        curve_spread = float(np.max(curve_values) - np.min(curve_values)) if len(curve_values) > 0 else 0.0
+        curve_step_sum = float(np.sum(np.abs(np.diff(curve_values)))) if len(curve_values) > 1 else 0.0
+        quad_score = self._quadratic_curve_score(curve_values, mode)
+        flat_penalty = float(np.sum(np.abs(np.diff(curve_values)) < 1e-8)) if len(curve_values) > 1 else 0.0
+        iv_value = float(valid['分档IV值'].sum()) if '分档IV值' in valid.columns else 0.0
+        score = (
+            quad_score * 1000.0
+            + curve_spread * 100.0
+            + curve_step_sum * 10.0
+            + len(valid) * 80.0
+            - flat_penalty * 200.0
+            + iv_value * 1e-3
+        )
+        return is_valid, score, bad_rates, counts
+
+    def _expand_splits_with_monotonicity(
+        self,
+        feature: str,
+        x: pd.Series,
+        y: pd.Series,
+        splits: Union[np.ndarray, list],
+        mode: str
+    ) -> np.ndarray:
+        """在保持单调的前提下，尽量补足到允许的分箱预算。"""
+        current = np.unique(np.sort(np.asarray(splits, dtype=float))) if len(splits) > 0 else np.array([])
+        max_splits_allowed = max(0, self.max_n_bins - 1)
+        if len(current) >= max_splits_allowed:
+            return current
+
+        x_numeric = pd.to_numeric(x, errors='coerce')
+        valid_mask = x_numeric.notna()
+        if self.special_codes:
+            for code in self.special_codes:
+                valid_mask &= (x_numeric != code)
+        x_valid = x_numeric[valid_mask]
+        y_valid = y[valid_mask]
+        if len(x_valid) == 0:
+            return current
+
+        base_ok, base_score, _, _ = self._evaluate_split_scheme(feature, x, y, current, mode)
+        if not base_ok:
+            return current
+
+        min_samples = self._get_min_samples(len(y_valid))
+        quantiles = [0.25, 0.5, 0.75]
+
+        for _ in range(max_splits_allowed - len(current)):
+            bins = np.digitize(x_valid, current) if len(current) > 0 else np.zeros(len(x_valid), dtype=int)
+            best_candidate = None
+            best_score = None
+
+            for bin_idx in range(len(current) + 1):
+                bin_values = np.sort(x_valid[bins == bin_idx].to_numpy(dtype=float))
+                if len(bin_values) < max(2 * min_samples, 8):
+                    continue
+
+                candidate_positions = set()
+                for q in quantiles:
+                    pos = int(round(q * (len(bin_values) - 1)))
+                    pos = min(max(pos, min_samples - 1), len(bin_values) - min_samples - 1)
+                    if 0 <= pos < len(bin_values) - 1:
+                        candidate_positions.add(pos)
+
+                for pos in sorted(candidate_positions):
+                    left_value = bin_values[pos]
+                    right_value = bin_values[pos + 1]
+                    if np.isclose(left_value, right_value, atol=1e-12, rtol=0):
+                        continue
+
+                    candidate = float((left_value + right_value) / 2.0)
+                    if len(current) > 0 and np.any(np.isclose(current, candidate, atol=1e-12, rtol=0)):
+                        continue
+
+                    trial = np.unique(np.sort(np.append(current, candidate)))
+                    ok, score, _, _ = self._evaluate_split_scheme(feature, x, y, trial, mode)
+                    if not ok:
+                        continue
+                    if best_score is None or score > best_score + 1e-9:
+                        best_score = score
+                        best_candidate = candidate
+
+            if best_candidate is None:
+                break
+
+            current = np.unique(np.sort(np.append(current, best_candidate)))
+            base_score = best_score
+
+        return current
+
     def _round_splits(self, splits: Union[np.ndarray, list]) -> np.ndarray:
         """对数值型切分点进行四舍五入.
 

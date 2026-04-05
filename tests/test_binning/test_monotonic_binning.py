@@ -1,16 +1,20 @@
 #!/usr/bin/env python
 """测试 MonotonicBinning 单调性约束分箱."""
 
-import sys
-import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'hscredit'))
+from pathlib import Path
 
-import pandas as pd
 import numpy as np
+import pandas as pd
+import sys
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
 from hscredit.core.binning import MonotonicBinning
 
 # 读取测试数据
-df = pd.read_excel('/Users/xiaoxi/CodeBuddy/hscredit/hscredit/examples/utils/hscredit.xlsx')
+df = pd.read_excel(_PROJECT_ROOT / "examples" / "hscredit.xlsx")
 df['target'] = ((df['MOB1'] > 15) | (df['MOB2'] > 15)).astype(int)
 X = df[['青云24']].copy()
 y = df['target'].copy()
