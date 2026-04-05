@@ -211,6 +211,7 @@ __marimo__/
 examples/model_report_demo/*
 examples/*.png
 examples/*.jpg
+examples/*.xlsx
 examples/hscredit_yyp.xlsx
 examples/hengshucredit_yyp.xlsx
 _patch_or_*.py
