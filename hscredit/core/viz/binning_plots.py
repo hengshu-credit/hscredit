@@ -16,6 +16,8 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 from matplotlib.ticker import PercentFormatter
+from matplotlib.lines import Line2D
+from matplotlib.patches import Patch
 from sklearn.metrics import roc_curve, roc_auc_score
 from typing import Union, Optional, List, Dict, Any
 
@@ -385,6 +387,48 @@ def bin_plot(
         lambda x: format_bin_label(x, max_len)
     )
 
+    # 判断方向
+    orientation_key = orientation.lower()
+    if orientation_key not in ['horizontal', 'h', '横向', 'vertical', 'v', '纵向']:
+        raise ValueError("orientation 仅支持 'horizontal'/'h'/'横向' 或 'vertical'/'v'/'纵向'")
+    is_horizontal = orientation_key in ['horizontal', 'h', '横向']
+
+    # 横向模式下，分箱从小到大排序（missing会自动到最后）
+    if is_horizontal:
+        # 分离缺失值分箱和数值分箱（检查分箱标签）
+        label_col = '分箱标签' if '分箱标签' in feature_table.columns else '分箱'
+        missing_mask = feature_table[label_col].apply(_is_missing_bin_label)
+        missing_rows = feature_table[missing_mask].copy()
+        numeric_rows = feature_table[~missing_mask].copy()
+        
+        # 对数值分箱按分箱值从小到大排序
+        if len(numeric_rows) > 0:
+            # 尝试提取分箱的下界进行排序
+            def extract_lower_bound(bin_label):
+                try:
+                    # 处理区间格式如 "(495.3, 550.0]" 或 "(-inf, 495.3]"
+                    text = str(bin_label).strip()
+                    if text.startswith('('):
+                        # 提取左边界
+                        left = text[1:].split(',')[0].strip()
+                        if left == '-inf' or left == '-∞':
+                            return float('-inf')
+                        return float(left)
+                    elif text.startswith('['):
+                        left = text[1:].split(',')[0].strip()
+                        if left == '-inf' or left == '-∞':
+                            return float('-inf')
+                        return float(left)
+                except:
+                    pass
+                return float('inf')  # 无法解析的放最后
+            
+            numeric_rows['_sort_key'] = numeric_rows['分箱'].apply(extract_lower_bound)
+            numeric_rows = numeric_rows.sort_values('_sort_key').drop(columns=['_sort_key'])
+        
+        # 重新组合：数值分箱（从小到大）+ missing分箱（最后）
+        feature_table = pd.concat([numeric_rows, missing_rows], ignore_index=True)
+
     overall_bad_rate = float(feature_table['坏样本率'].mul(feature_table['样本总数']).sum() / feature_table['样本总数'].sum())
     axis_theme = colors[0]
     line_color = '#E85D4A'
@@ -404,12 +448,6 @@ def bin_plot(
     else:
         fig, ax1 = plt.subplots(figsize=figsize)
         return_ax = False
-
-    # 根据方向选择绘图方式
-    orientation_key = orientation.lower()
-    if orientation_key not in ['horizontal', 'h', '横向', 'vertical', 'v', '纵向']:
-        raise ValueError("orientation 仅支持 'horizontal'/'h'/'横向' 或 'vertical'/'v'/'纵向'")
-    is_horizontal = orientation_key in ['horizontal', 'h', '横向']
 
     if is_horizontal:
         # 横向柱状图（默认）
@@ -1037,9 +1075,6 @@ def distribution_plot(data, date="date", target="target", save=None, figsize=(10
 
 # ==================== 多维度分箱趋势图 ====================
 
-from matplotlib.ticker import FuncFormatter
-import matplotlib.gridspec as gridspec
-
 
 def _compute_feature_bin_stats(
     df: pd.DataFrame,
@@ -1250,6 +1285,9 @@ def bin_trend_plot(
     if colors is None:
         colors = DEFAULT_COLORS
 
+    orientation_key = orientation.lower()
+    is_horizontal = orientation_key in ['horizontal', 'h', '横向']
+
     # 处理维度列
     if dimension_cols is not None:
         if isinstance(dimension_cols, str):
@@ -1263,16 +1301,13 @@ def bin_trend_plot(
         if not pd.api.types.is_datetime64_any_dtype(df[date_col]):
             df[date_col] = pd.to_datetime(df[date_col])
 
-        # 创建日期分组列
-        if date_freq == 'D':
-            df['_date_group'] = df[date_col].dt.date
-        elif date_freq == 'W':
-            df['_date_group'] = df[date_col].dt.to_period('W').astype(str)
-        elif date_freq == 'M':
-            df['_date_group'] = df[date_col].dt.to_period('M').astype(str)
-        elif date_freq == 'Q':
-            df['_date_group'] = df[date_col].dt.to_period('Q').astype(str)
-        else:
+        try:
+            if date_freq == 'D':
+                df['_date_group'] = df[date_col].dt.strftime('%Y-%m-%d')
+            else:
+                df['_date_group'] = df[date_col].dt.to_period(date_freq).astype(str)
+        except Exception:
+            warnings.warn(f"无法识别 date_freq={date_freq}，已回退为按月分组")
             df['_date_group'] = df[date_col].dt.to_period('M').astype(str)
 
         dimension_cols.append('_date_group')
@@ -1285,7 +1320,6 @@ def bin_trend_plot(
     else:
         group_col = None
 
-    # 计算整体分箱统计
     overall_stats = _compute_feature_bin_stats(
         df, feature, target,
         method=method, n_bins=n_bins, min_bin_size=min_bin_size,
@@ -1295,13 +1329,10 @@ def bin_trend_plot(
     if overall_stats.empty:
         raise ValueError(f"无法计算特征 '{feature}' 的分箱统计")
 
-    # 计算各分组的分箱统计
-    group_stats_list = []
+    panel_stats = [('Overall', overall_stats.copy())] if show_overall else []
 
     if group_col is not None:
         groups = df[group_col].unique()
-
-        # 排序
         if sort_by is not None and sort_by in df.columns:
             group_order = df.groupby(group_col)[sort_by].first().sort_values(
                 ascending=(sort_order == 'asc')
@@ -1309,7 +1340,6 @@ def bin_trend_plot(
         else:
             group_order = sorted(groups)
 
-        # 限制分组数
         if max_groups is not None and len(group_order) > max_groups:
             group_order = group_order[:max_groups]
 
@@ -1321,151 +1351,87 @@ def bin_trend_plot(
                 bin_rules=bin_rules, special_values=special_values, **kwargs
             )
             if not stats.empty:
-                stats['group'] = group_val
-                group_stats_list.append(stats)
+                panel_stats.append((group_val, stats.copy()))
 
-    # 合并所有统计
-    all_stats = [overall_stats.assign(group='Overall')] if show_overall else []
-    all_stats.extend(group_stats_list)
-
-    if not all_stats:
+    if not panel_stats:
         raise ValueError("没有可用的分箱统计数据")
 
-    combined_stats = pd.concat(all_stats, ignore_index=True)
-
-    # 创建图表
-    n_panels = len(all_stats)
+    n_panels = len(panel_stats)
+    if is_horizontal:
+        n_cols = 1
+        n_rows = n_panels
+    else:
+        n_cols = min(3, n_panels)
+        n_rows = int(np.ceil(n_panels / n_cols))
 
     if figsize is None:
-        if orientation == 'horizontal':
-            figsize = (12, 4 * n_panels)
+        if is_horizontal:
+            figsize = (10.5, max(4.8 * n_rows, 5.2))
         else:
-            unit_width = 3
-            total_width = unit_width * n_panels
-            figsize = (max(total_width, 10), 6)
+            figsize = (max(5.2 * n_cols, 10.5), max(5.4 * n_rows, 5.2))
 
-    fig = plt.figure(figsize=figsize)
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=figsize, squeeze=False)
+    axes_flat = axes.flatten()
 
-    # 创建 GridSpec
-    if orientation == 'horizontal':
-        gs = gridspec.GridSpec(n_panels, 1, figure=fig, hspace=0.4,
-                               left=0.08, right=0.92, top=0.88, bottom=0.08)
-    else:
-        gs = gridspec.GridSpec(1, n_panels, figure=fig, wspace=0.15,
-                               left=0.05, right=0.95, top=0.78, bottom=0.15)
-
-    # 全局统计
-    total_count = overall_stats['total_count'].iloc[0]
-    total_bad = overall_stats['total_bad'].iloc[0]
-    global_bad_rate = total_bad / total_count if total_count > 0 else 0
-
-    # 标题
     if title is None:
         title = f"{feature} - Risk Trend Analysis"
+    fig.suptitle(title, fontsize=14, fontweight='bold', y=0.98)
 
-    fig.suptitle(title, fontsize=14, fontweight='bold', y=0.96)
+    legend_handles = [
+        Patch(facecolor=colors[0], edgecolor='white', label='好样本'),
+        Patch(facecolor=colors[1], edgecolor='white', label='坏样本'),
+        Line2D([0], [0], color='#E85D4A', linestyle=(0, (4, 3)), linewidth=2.1, marker='o', markersize=5, markerfacecolor='white', label='坏样本率'),
+        Line2D([0], [0], color='#4C8DFF', linestyle=(0, (2, 2)), linewidth=1.8, label='整体坏样本率'),
+    ]
 
-    # 添加全局统计信息
-    if show_stats:
-        info_text = f"Total: {int(total_count)}, Bad: {int(total_bad)}, BadRate: {global_bad_rate:.2%}"
-        fig.text(0.5, 0.92, info_text, ha='center', fontsize=10,
-                bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+    summary_cols = ['指标IV值', '分档KS值', 'LIFT值']
+    panel_max_len = 22 if is_horizontal else 18
 
-    # 绘制每个面板
-    to_percent = FuncFormatter(lambda y, _: '{:.0%}'.format(y))
-
-    for idx, (group_name, group_df) in enumerate(combined_stats.groupby('group')):
-        if orientation == 'horizontal':
-            ax = plt.subplot(gs[idx, 0])
-        else:
-            ax = plt.subplot(gs[0, idx])
-
-        # 过滤掉缺失值行用于绘图
-        df_plot = group_df[group_df['分箱'] != -1].copy()
-
-        if len(df_plot) == 0:
-            ax.text(0.5, 0.5, 'No Data', ha='center', va='center', transform=ax.transAxes)
-            continue
-
-        # 计算当前分组的统计
+    for idx, (group_name, group_df) in enumerate(panel_stats):
+        ax = axes_flat[idx]
         group_total = group_df['样本总数'].sum()
         group_bad = group_df['坏样本数'].sum()
-        group_bad_rate = group_bad / group_total if group_total > 0 else 0
-
-        # 计算样本分布占比
-        df_plot['count_dist'] = df_plot['样本占比']
-
-        # X轴位置
-        x_pos = np.arange(len(df_plot))
-
-        # 绘制柱状图（样本分布）
-        ax.bar(x_pos, df_plot['count_dist'], color='grey', alpha=0.4, label='Count Dist')
-
-        # 设置Y轴
-        ax.set_ylim(0, df_plot['count_dist'].max() * 1.5)
-        if idx == 0 or orientation == 'horizontal':
-            ax.yaxis.set_major_formatter(to_percent)
-        else:
-            ax.set_yticks([])
-
-        # 设置X轴
-        labels = df_plot['分箱标签'].tolist() if '分箱标签' in df_plot.columns else [str(i) for i in df_plot['分箱']]
-        ax.set_xticks(x_pos)
-        ax.set_xticklabels(labels, rotation=45 if orientation == 'vertical' else 0,
-                          ha='right' if orientation == 'vertical' else 'center',
-                          fontsize=8)
-
-        # 绘制折线图（坏样本率）
-        ax2 = ax.twinx()
-        ax2.plot(x_pos, df_plot['坏样本率'], color=colors[2], linewidth=1.5,
-                marker='o', markersize=4, label='Bad Rate')
-
-        # 设置Y轴范围
-        max_bad_rate = df_plot['坏样本率'].max()
-        ax2.set_ylim(0, max_bad_rate * 1.3 if max_bad_rate > 0 else 1)
-
-        if idx == n_panels - 1 or orientation == 'horizontal':
-            ax2.yaxis.set_major_formatter(to_percent)
-        else:
-            ax2.set_yticks([])
-
-        # 添加数据标注
-        for i, row in df_plot.iterrows():
-            idx_pos = row.name
-            # 坏样本率标注
-            ax2.text(idx_pos, row['坏样本率'], f"{row['坏样本率']:.1%}",
-                    ha='center', va='bottom', fontsize=7, color=colors[2])
-            # 样本占比标注
-            ax.text(idx_pos, row['count_dist'] / 2, f"{row['count_dist']:.1%}",
-                   ha='center', va='center', fontsize=7, color='#333333')
-
-        # 添加平均坏率参考线
-        ax2.axhline(group_bad_rate, color='grey', linestyle='--', alpha=0.5, linewidth=0.8)
-
-        # 面板标题
+        group_bad_rate = group_bad / group_total if group_total > 0 else 0.0
         panel_title = f"{group_name}\n({int(group_bad)}/{int(group_total)}, {group_bad_rate:.1%})"
-        ax.set_title(panel_title, fontsize=10, pad=10)
 
-        # 添加统计指标（子图内）
-        if show_stats:
-            iv_val = group_df['iv_bin'].sum()
-            ks_val = group_df['ks_bin'].max()
-            stats_text = f"IV: {iv_val:.2f}, KS: {ks_val:.1f}"
-            ax.text(0.98, 0.98, stats_text, transform=ax.transAxes,
-                   ha='right', va='top', fontsize=8,
-                   bbox=dict(boxstyle='round', facecolor='white', alpha=0.7))
+        panel_df = group_df.copy()
+        if not show_stats:
+            panel_df = panel_df.drop(columns=summary_cols, errors='ignore')
 
-    # 添加图例
-    lines1, labels1 = ax.get_legend_handles_labels() if n_panels > 0 else ([], [])
-    lines2, labels2 = ax2.get_legend_handles_labels() if n_panels > 0 else ([], [])
+        try:
+            bin_plot(
+                data=panel_df,
+                ax=ax,
+                title=panel_title,
+                colors=colors,
+                orientation='horizontal' if is_horizontal else 'vertical',
+                max_len=panel_max_len,
+                show_overall_bad_rate=True,
+            )
+        except Exception as e:
+            ax.text(0.5, 0.5, f'Error: {e}', ha='center', va='center', transform=ax.transAxes)
+            ax.set_title(panel_title)
 
-    if lines1 or lines2:
-        fig.legend(lines1 + lines2, labels1 + labels2,
-                  loc='upper center', ncol=len(labels1 + labels2),
-                  bbox_to_anchor=(0.5, 0.88), frameon=False, fontsize=9)
+    for idx in range(n_panels, len(axes_flat)):
+        axes_flat[idx].axis('off')
 
-    plt.tight_layout()
-    plt.subplots_adjust(top=0.85)
+    fig.legend(
+        handles=legend_handles,
+        loc='upper center',
+        ncol=4,
+        bbox_to_anchor=(0.5, 0.94),
+        frameon=False,
+        fontsize=9,
+    )
+
+    fig.subplots_adjust(
+        top=0.84 if n_rows > 1 else 0.80,
+        bottom=0.08,
+        left=0.06,
+        right=0.98,
+        hspace=0.62 if n_rows > 1 else 0.42,
+        wspace=0.28,
+    )
 
     if save:
         save_figure(fig, save)
