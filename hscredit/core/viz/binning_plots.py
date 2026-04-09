@@ -447,6 +447,9 @@ def bin_plot(
     # 重新组合：普通分箱(升序) + 特殊值分箱 + 缺失值分箱(最后)
     feature_table = pd.concat([normal_rows, special_rows, missing_rows], ignore_index=True)
 
+    # 保存升序排列的表用于 return_frame（不受横向反转影响）
+    _sorted_table = feature_table.copy()
+
     if is_horizontal:
         # barh 第一行在底部、最后一行在顶部，反转使视觉从上到下为升序
         feature_table = feature_table.iloc[::-1].reset_index(drop=True)
@@ -562,7 +565,7 @@ def bin_plot(
         save_figure(fig, save)
 
         if return_frame:
-            return fig, feature_table.drop(columns=['_plot_bin_label'], errors='ignore')
+            return fig, _sorted_table.drop(columns=['_plot_bin_label'], errors='ignore')
         return fig
     else:
         if metric_summary:
