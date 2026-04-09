@@ -60,7 +60,7 @@ class TestScoreCardPointsBinLabels(unittest.TestCase):
             return True
         # 匹配区间格式: (-inf, x], (x, y], (x, +inf]
         return bool(re.match(
-            r'\((-inf|[\d.e+-]+),\s*([\d.e+-]+|\+inf)\]',
+            r'\((-inf|[-+]?\d+\.?\d*(?:[eE][-+]?\d+)?),\s*([-+]?\d+\.?\d*(?:[eE][-+]?\d+)?|\+inf)\]',
             str(label)
         ))
     
@@ -194,7 +194,7 @@ class TestScoreCardPointsBinLabels(unittest.TestCase):
         points = scorecard.scorecard_points(feature_map=feature_map)
         
         age_rows = points[points['变量名称'] == 'age']
-        self.assertTrue(all(age_rows['变量含义'] == '年龄'))
+        self.assertTrue((age_rows['变量含义'] == '年龄').all())
 
 
 if __name__ == '__main__':

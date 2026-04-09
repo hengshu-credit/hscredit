@@ -1224,7 +1224,7 @@ class ScoreCard(StandardScoreTransformer):
             for group in splits_array:
                 group_strs = []
                 for v in group:
-                    if v is None or (isinstance(v, float) and np.isnan(v)):
+                    if pd.isna(v):
                         group_strs.append('nan')
                     else:
                         group_strs.append(str(v))
@@ -1242,10 +1242,7 @@ class ScoreCard(StandardScoreTransformer):
         
         # 检查末尾是否有 NaN（缺失值箱标记）
         has_missing = False
-        if len(splits_list) > 0 and (
-            splits_list[-1] is None 
-            or (isinstance(splits_list[-1], float) and np.isnan(splits_list[-1]))
-        ):
+        if len(splits_list) > 0 and pd.isna(splits_list[-1]):
             has_missing = True
             splits_list = splits_list[:-1]
         
