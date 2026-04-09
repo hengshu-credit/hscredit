@@ -45,7 +45,12 @@ class NumExprDerive(BaseEstimator, TransformerMixin):
     def fit(self, X, y=None):
         """拟合特征衍生器。"""
         self._check_keywords()
-        self._validate_data(X, dtype=None, ensure_2d=True, force_all_finite=False)
+        # 仅验证数据结构，不强制 dtype=numeric（允许含非数值列）
+        if isinstance(X, pd.DataFrame):
+            if X.ndim != 2:
+                raise ValueError("X must be 2-dimensional")
+        else:
+            self._validate_data(X, dtype=None, ensure_2d=True, force_all_finite=False)
         return self
 
     def _check_keywords(self):
@@ -81,8 +86,17 @@ class NumExprDerive(BaseEstimator, TransformerMixin):
         feature_names = X.columns.tolist()
         self.features_names_ = feature_names
         index = X.index
-        X = self._validate_data(X, dtype="numeric", ensure_2d=True, force_all_finite=False)
-        context = self._get_context(X, feature_names=feature_names)
+
+        # 分离数值列和非数值列（datetime、object等），仅对数值列做 numexpr 计算
+        numeric_cols = X.select_dtypes(include=[np.number]).columns.tolist()
+        non_numeric_cols = [c for c in feature_names if c not in numeric_cols]
+
+        X_numeric = X[numeric_cols] if numeric_cols else pd.DataFrame(index=index)
+        X_numeric_arr = self._validate_data(
+            X_numeric, dtype="numeric", ensure_2d=True, force_all_finite=False
+        ) if len(numeric_cols) > 0 else np.empty((len(index), 0), dtype=np.float64)
+
+        context = self._get_context(X_numeric_arr, feature_names=numeric_cols)
         n_derived = len(self.derivings)
         X_derived = np.empty((X.shape[0], n_derived), dtype=np.float64)
         derived_names = []
@@ -91,9 +105,16 @@ class NumExprDerive(BaseEstimator, TransformerMixin):
             derived_names.append(name)
             X_derived[:, i] = ne.evaluate(expr, local_dict=context)
 
-        data = np.hstack((X, X_derived))
-        columns = feature_names + derived_names
-        return DataFrame(data=data, columns=columns, index=index)
+        # 拼回：原始数值列 + 非数值列 + 衍生列
+        result = pd.DataFrame(X_numeric_arr, columns=numeric_cols, index=index)
+        for col in non_numeric_cols:
+            result[col] = X[col].values
+        for j, dname in enumerate(derived_names):
+            result[dname] = X_derived[:, j]
+
+        # 保持原始列顺序 + 衍生列
+        result = result[feature_names + derived_names]
+        return result
 
     def _transform_ndarray(self, X):
         """转换 ndarray。"""

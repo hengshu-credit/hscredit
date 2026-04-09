@@ -43,6 +43,7 @@ from .mutual_info_selector import MutualInfoSelector
 from .chi2_selector import Chi2Selector
 from .f_test_selector import FTestSelector
 from .stepwise_selector import StepwiseSelector
+from .stability_selector import StabilityAwareSelector
 
 # 导出所有筛选器
 __all__ = [
@@ -79,6 +80,7 @@ __all__ = [
     'MutualInfoSelector',
     'Chi2Selector',
     'FTestSelector',
+    'StabilityAwareSelector',
     
     # 组合筛选器
     'CompositeFeatureSelector',

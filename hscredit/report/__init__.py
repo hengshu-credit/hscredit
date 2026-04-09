@@ -29,6 +29,7 @@ from .overdue_predictor import OverduePredictor, overdue_prediction_report
 from .mining import (
     SingleFeatureRuleMiner,
     MultiFeatureRuleMiner,
+    MultiLabelRuleMiner,
     TreeRuleExtractor,
     RuleMetrics,
     calculate_rule_metrics,
@@ -40,6 +41,16 @@ try:
     from .feature_report import auto_feature_analysis_report
 except ImportError:
     auto_feature_analysis_report = None
+
+try:
+    from .rule_analysis_report import multi_label_rule_report
+except ImportError:
+    multi_label_rule_report = None
+
+try:
+    from .population_drift_report import population_drift_report
+except ImportError:
+    population_drift_report = None
 
 __all__ = [
     "ExcelWriter",
@@ -62,10 +73,13 @@ __all__ = [
     # 规则挖掘（迁移自 core.rules.mining）
     "SingleFeatureRuleMiner",
     "MultiFeatureRuleMiner",
+    "MultiLabelRuleMiner",
     "TreeRuleExtractor",
     "RuleMetrics",
     "calculate_rule_metrics",
     "TreeVisualizer",
     "plot_decision_tree",
     "auto_feature_analysis_report",
+    "multi_label_rule_report",
+    "population_drift_report",
 ]

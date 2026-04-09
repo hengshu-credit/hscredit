@@ -1253,6 +1253,19 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
                             bin_labels.append(str(group))
                     else:
                         bin_labels.append(f'bin_{bin_idx}')
+            elif feature_type == 'categorical' and isinstance(splits, list) and len(splits) > 0 and not isinstance(splits[0], list):
+                # 扁平列表格式：每个元素对应一个分箱的类别名
+                unique_bins = np.unique(bins)
+                bin_labels = []
+                for bin_idx in unique_bins:
+                    if bin_idx == -1:
+                        bin_labels.append('missing')
+                    elif bin_idx == -2:
+                        bin_labels.append('special')
+                    elif 0 <= bin_idx < len(splits):
+                        bin_labels.append(str(splits[bin_idx]))
+                    else:
+                        bin_labels.append(f'bin_{bin_idx}')
             else:
                 # 数值型或字符串格式的类别型
                 bin_labels = self._get_bin_labels(splits, bins)

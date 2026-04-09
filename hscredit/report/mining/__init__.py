@@ -23,6 +23,7 @@
 
 from .single_feature import SingleFeatureRuleMiner
 from .multi_feature import MultiFeatureRuleMiner
+from .multi_label import MultiLabelRuleMiner
 from .tree_extractor import TreeRuleExtractor
 from .metrics import RuleMetrics, calculate_rule_metrics
 from .visualization import TreeVisualizer, plot_decision_tree
@@ -30,6 +31,7 @@ from .visualization import TreeVisualizer, plot_decision_tree
 __all__ = [
     'SingleFeatureRuleMiner',
     'MultiFeatureRuleMiner', 
+    'MultiLabelRuleMiner',
     'TreeRuleExtractor',
     'RuleMetrics',
     'calculate_rule_metrics',

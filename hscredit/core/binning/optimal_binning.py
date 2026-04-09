@@ -1203,6 +1203,8 @@ class OptimalBinning(BaseBinning):
         """
         if isinstance(splits, list):
             bins = np.zeros(len(x), dtype=int)
+            # 类别型比较时，将 Series 转为字符串以避免类型不匹配导致的静默失败
+            x_str = x.astype(str).where(x.notna(), other=np.nan)
             
             # 检查是否为List[List]格式（类别型变量的新格式）
             if len(splits) > 0 and isinstance(splits[0], list):
@@ -1214,24 +1216,24 @@ class OptimalBinning(BaseBinning):
                             if isinstance(value, float) and np.isnan(value):
                                 bins[x.isna()] = i
                             else:
-                                bins[x == value] = i
+                                bins[x_str == str(value)] = i
                     else:
                         # 单个值（向后兼容）
-                        bins[x == group] = i
+                        bins[x_str == str(group)] = i
             else:
                 # 字符串列表格式: ['A,B', 'C'] (向后兼容)
                 for i, cat in enumerate(splits):
                     if ',' in str(cat):
                         cats = str(cat).split(',')
                         for c in cats:
-                            bins[x == c] = i
+                            bins[x_str == c.strip()] = i
                     else:
-                        bins[x == cat] = i
+                        bins[x_str == str(cat)] = i
                 bins[x.isna()] = -1
             
             if self.special_codes:
                 for code in self.special_codes:
-                    bins[x == code] = -2
+                    bins[(x == code) | (x_str == str(code))] = -2
             return bins
         else:
             bins = np.zeros(len(x), dtype=int)

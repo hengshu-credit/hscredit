@@ -145,6 +145,7 @@ class TuningObjective:
     BUILTIN_OBJECTIVES = [
         'ks', 'auc', 'lift_head', 'lift_tail',
         'lift_head_monotonic', 'ks_with_lift_constraint', 'head_ks',
+        'ks_lift_combined', 'tail_purity_ks',
     ]
 
     @staticmethod
@@ -288,6 +289,47 @@ class TuningObjective:
             return _calc_ks(y_top, prob_top)
         except Exception:
             return 0.0
+
+    @staticmethod
+    def ks_lift_combined(
+        y_true: np.ndarray,
+        y_prob: np.ndarray,
+        ks_weight: float = 0.5,
+        lift_ratio: float = 0.05,
+        **kwargs,
+    ) -> float:
+        """KS + LIFT 联合目标：加权组合 KS 和头部 LIFT.
+
+        score = ks_weight × KS + (1 - ks_weight) × normalized_LIFT
+
+        :param ks_weight: KS 权重，默认 0.5
+        :param lift_ratio: LIFT 覆盖率，默认 0.05
+        """
+        ks_val = _calc_ks(y_true, y_prob)
+        lift_val = TuningObjective.lift_head(y_true, y_prob, ratio=lift_ratio)
+        # 归一化 LIFT 到 [0, 1] 范围（假设最大合理 LIFT 为 10）
+        norm_lift = min(lift_val / 10.0, 1.0)
+        return float(ks_weight * ks_val + (1.0 - ks_weight) * norm_lift)
+
+    @staticmethod
+    def tail_purity_ks(
+        y_true: np.ndarray,
+        y_prob: np.ndarray,
+        tail_ratio: float = 0.30,
+        **kwargs,
+    ) -> float:
+        """尾部纯净度 + 整体 KS 联合目标.
+
+        适用于「放量优先」场景：确保通过（低风险）部分的坏率尽量低，同时保持整体区分度.
+        score = 0.5 × KS + 0.5 × tail_purity
+
+        :param tail_ratio: 尾部覆盖率，默认 0.30（即通过的低风险比例）
+        """
+        ks_val = _calc_ks(y_true, y_prob)
+        purity = TuningObjective.lift_tail(y_true, y_prob, ratio=tail_ratio)
+        # purity 已经在 [0, 1+] 范围
+        norm_purity = min(purity, 1.0)
+        return float(0.5 * ks_val + 0.5 * norm_purity)
 
     @classmethod
     def get(

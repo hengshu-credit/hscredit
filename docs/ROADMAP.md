@@ -1,8 +1,33 @@
 # hscredit 重新设计规划方案
 
-> 版本：2026-03-27（修订版）  
+> 版本：2026-03-27（修订版 v2）  
 > 定位：面向金融信贷场景的完整风控建模工具包，覆盖策略分析人员与模型开发人员的全链路需求。  
-> 修订说明：根据用户反馈，对原规划方案进行全面修订，聚焦7大核心修正点。
+> 修订说明：根据用户反馈，对原规划方案进行全面修订，聚焦7大核心修正点。  
+> 最近更新：完成 Bug 修复、参数名统一、部分 Phase 1-5 功能实现。
+
+---
+
+## 已完成事项 ✅
+
+### Bug 修复
+- ✅ `BaseFeatureSelector._get_feature_names()` 补充 `feature_names_in_` 属性，修复 sklearn Pipeline 兼容性
+- ✅ `NumExprDerive._transform_frame()` 分离数值/非数值列处理，修复 datetime/object 列 TypeError
+- ✅ `ExcelWriter.__init__` 优雅处理模板文件缺失，fallback 到空 Workbook
+- ✅ `examples/12_complete_workflow.ipynb` 修复 JSON 转义错误
+
+### 参数名统一
+- ✅ `eda/target.py` 5个函数添加 `target` 别名（兼容 `target_col`）
+- ✅ `eda/target.py` `bad_rate_by_dimension` 添加 `segment_col` 别名（兼容 `dim_col`）
+- ✅ `viz/binning_plots.py` `corr_plot` 添加 `figsize` 别名（兼容 `figure_size`）
+- ✅ `viz/binning_plots.py` `ks_plot` 添加 `ax` 别名（兼容 `axes`）
+
+### 功能新增
+- ✅ **#6 多标签规则挖掘**：`report/mining/multi_label.py` `MultiLabelRuleMiner` 类 + `report/rule_analysis_report.py` `multi_label_rule_report` 函数
+- ✅ **#7 调参目标扩展**：`models/tuning.py` 新增 `ks_lift_combined` 和 `tail_purity_ks` 内置目标
+- ✅ **#9 评分卡部署代码导出**：`models/scorecard.py` 新增 `export_deployment_code()` 支持 SQL/Python/Java
+- ✅ **#11 viz 统一样式系统**：`viz/style.py` 提供 `set_style(theme)` 主题管理、配色方案、中文字体自动检测
+- ✅ **#12 客群偏移监控报告**：`report/population_drift_report.py` `population_drift_report()` 生成 PSI 总览 + 特征分布对比 + 逾期率对比 + 评分分布 Excel 报告
+- ✅ **#15 StabilityAwareSelector**：`selectors/stability_selector.py` 综合 IV 有效性与 PSI 稳定性的加权评分特征筛选器
 
 ---
 
@@ -29,15 +54,15 @@ hscredit/
 ├── core/
 │   ├── binning/          # 17种分箱算法 + OptimalBinning  ✅ 持续扩充
 │   ├── encoders/         # 8种编码器  ✅
-│   ├── selectors/        # 21种特征筛选 + 组合器  ✅
-│   ├── models/           # 7种模型+评分卡+损失函数+调参+解释  ✅ 调参待扩充
+│   ├── selectors/        # 22种特征筛选 + 组合器  ✅ 新增 StabilityAwareSelector
+│   ├── models/           # 7种模型+评分卡+损失函数+调参+解释  ✅ 调参目标已扩充，评分卡部署代码已实现
 │   ├── metrics/          # 分类/特征/稳定性/金融/回归指标  ⚠️ LIFT待扩充
-│   ├── viz/              # 25+图表  ⚠️ API待统一，方法待扩充
-│   ├── eda/              # 多个EDA函数  ⚠️ 待体系化补强
-│   ├── rules/            # 规则引擎+挖掘  ⚠️ 待整合进Report
-│   ├── feature_engineering/  # 仅NumExprDerive  ⚠️ 待扩充
+│   ├── viz/              # 40+图表 + 统一样式系统  ✅ style.py 主题管理已实现
+│   ├── eda/              # 多个EDA函数  ⚠️ 待体系化补强（population.py / strategy.py）
+│   ├── rules/            # 规则引擎+挖掘  ✅ 多标签规则挖掘已整合进Report
+│   ├── feature_engineering/  # NumExprDerive  ⚠️ 待扩充（已修复非数值列bug）
 │   └── financial/        # 金融计算  ✅
-├── report/               # 特征/规则/置换报告  ⚠️ 待新增模型报告和多标签规则报告
+├── report/               # 特征/规则/置换/偏移监控报告  ✅ 新增客群偏移报告、多标签规则报告
 └── utils/                # 工具函数  ✅
 ```
 
@@ -50,24 +75,24 @@ hscredit/
 | 模块 | 现状 | 差距 | 优先级 |
 |------|------|------|--------|
 | `metrics/finance.py` | `lift_curve` 仅固定比例 | **缺 LIFT@1%/3%/5%/10%/任意值；缺LIFT单调性检验** | P0 |
-| `models/tuning.py` | Optuna 调参，优化 KS/AUC | **缺头/尾部区分能力目标、LIFT单调性约束** | P0 |
-| `viz/` | 25+图表，API各自独立 | **缺统一绘图入口；缺跨时间/客群/交叉特征有效性和偏移图** | P0 |
+| `models/tuning.py` | ✅ 已扩充 `ks_lift_combined` / `tail_purity_ks` | ~~缺头/尾部区分能力目标~~ 已完成 | ✅ Done |
+| `viz/` | ✅ 40+图表 + `style.py` 统一样式 | ~~缺统一绘图入口~~ 已完成样式系统 | ✅ Done (样式) |
 | `eda/` | 方法多但不成体系 | **缺金融策略分析体系、客群监控、特征偏移专项分析** | P0 |
 | `report/model_report.py` | 不存在 | **缺完整模型报告（参考examples/模型报告.xlsx）** | P0 |
-| `rules/` + `report/` | 单标签挖掘，未整合进Report | **缺多标签联合挖掘、规则跨标签有效性分析报告** | P1 |
-| `feature_engineering/` | 仅 NumExprDerive | 时序特征/交叉特征/预处理Transformer | P2 |
+| `rules/` + `report/` | ✅ 多标签挖掘已整合进Report | ~~缺多标签联合挖掘~~ 已完成 | ✅ Done |
+| `feature_engineering/` | NumExprDerive（已修复bug） | 时序特征/交叉特征/预处理Transformer | P2 |
 
 ### 2.2 中低优先级（持续迭代）
 
 | 模块 | 内容 | 优先级 |
 |------|------|--------|
 | `binning/` | 分箱结果批量Excel输出完善 | P2 |
-| `selectors/` | 筛选全流程Pipeline示例完善 | P2 |
-| `models/scorecard.py` | SQL/Python/Java 部署代码生成 | P2 |
+| `selectors/` | ✅ StabilityAwareSelector 已实现；筛选全流程Pipeline示例完善 | P2 |
+| `models/scorecard.py` | ✅ SQL/Python/Java 部署代码生成已实现 | ✅ Done |
 | `models/interpretability.py` | SHAP 结果落 Excel | P2 |
 | `models/tuning.py` | 调参报告 Excel 输出 | P2 |
 | `models/losses/` | 损失函数进一步完善 | P2 |
-| `report/` | 监控报告、策略对比报告 | P2 |
+| `report/` | ✅ 客群偏移监控报告已实现；策略对比报告待补充 | P2 |
 
 ---
 
@@ -865,7 +890,7 @@ class FeatureScaler(BaseEstimator, TransformerMixin):
 
 - `LiftSelector` 增加 `ratio` 参数（支持 LIFT@1%/5% 等自定义比例）
 - `CompositeFeatureSelector` 增加 `to_excel()` 输出筛选报告
-- 新增 `StabilityAwareSelector`：同时考虑有效性（IV/KS）和稳定性（PSI）的平衡筛选
+- ✅ ~~新增 `StabilityAwareSelector`~~ 已实现：`selectors/stability_selector.py`
 
 #### 8.3 损失函数扩充
 
@@ -875,7 +900,7 @@ class FeatureScaler(BaseEstimator, TransformerMixin):
 
 #### 8.4 评分卡扩充
 
-- `ScoreCard.export_deployment_code(language='sql'/'python'/'java')`：部署代码生成
+- ✅ ~~`ScoreCard.export_deployment_code(language='sql'/'python'/'java')`~~ 已实现：`models/scorecard.py`
 - `ScoreCard.score_segment_analysis(df, target)`：各评分段的样本特征分析
 
 ---
@@ -916,14 +941,34 @@ class FeatureScaler(BaseEstimator, TransformerMixin):
 
 | 文件 | 新增类 |
 |------|--------|
-| `multi_label.py` 🆕 | `MultiLabelRuleMiner` |
+| `multi_label.py` ✅ | `MultiLabelRuleMiner` |
 
 ### 4.6 `report/` 新增
 
 | 文件 | 新增函数 |
 |------|----------|
 | `model_report.py` 🆕 | `auto_model_report` |
-| `rule_analysis_report.py` 🆕 | `multi_label_rule_report` |
+| `rule_analysis_report.py` ✅ | `multi_label_rule_report` |
+| `population_drift_report.py` ✅ | `population_drift_report` |
+
+### 4.7 `core/selectors/` 新增
+
+| 文件 | 新增类 |
+|------|--------|
+| `stability_selector.py` ✅ | `StabilityAwareSelector` |
+
+### 4.8 `core/viz/` 新增
+
+| 文件 | 新增内容 |
+|------|----------|
+| `style.py` ✅ | `set_style` / `reset_style` / `get_palette` / `get_font_sizes` / 主题系统 / 中文字体自动检测 |
+
+### 4.9 `core/models/` 新增
+
+| 文件 | 新增内容 |
+|------|----------|
+| `tuning.py` ✅ | `TuningObjective.ks_lift_combined` / `TuningObjective.tail_purity_ks` |
+| `scorecard.py` ✅ | `ScoreCard.export_deployment_code()` (SQL/Python/Java) |
 
 ### 4.7 顶层 `hscredit/__init__.py` 新增导出
 
@@ -963,13 +1008,14 @@ from .report import auto_model_report, multi_label_rule_report
 
 ## 五、版本规划
 
-| 版本 | 主要内容 | Phase | 预计工期 |
-|------|----------|-------|----------|
-| `v0.2.0` | LIFT@任意值 + 单调性检验 + 调参扩充 | Phase 1-2 | 3-5天 |
-| `v0.3.0` | viz 模块重新设计（变量分析/评分分析/策略分析图） | Phase 3 | 3-5天 |
-| `v0.4.0` | EDA 体系化（客群监控 + 金融策略分析 + 偏移专项） | Phase 4 | 3-5天 |
-| `v0.5.0` | 多标签规则挖掘 + 规则分析报告 | Phase 5 | 3-5天 |
-| `v0.6.0` | 模型报告完整实现（10-sheet Excel模板） | Phase 6 | 5-7天 |
+| 版本 | 主要内容 | Phase | 状态 |
+|------|----------|-------|------|
+| `v0.1.1` | Bug 修复 + 参数名统一 + 调参目标扩展 + 评分卡部署代码 + 多标签规则挖掘 + viz 统一样式 + 客群偏移监控报告 + StabilityAwareSelector | Phase 1-5 部分 | ✅ 已完成 |
+| `v0.2.0` | LIFT@任意值 + 单调性检验 + 调参报告 | Phase 1-2 剩余 | 待开发 |
+| `v0.3.0` | viz 模块持续扩充（变量分析/评分分析/策略分析图样式统一化） | Phase 3 | 待开发 |
+| `v0.4.0` | EDA 体系化（population.py / strategy.py / 偏移专项） | Phase 4 | 待开发 |
+| `v0.5.0` | 规则报告深化（单规则详细分析、规则集模拟Sheet） | Phase 5 | 待开发 |
+| `v0.6.0` | 模型报告完整实现（10-sheet Excel模板） | Phase 6 | 待开发 |
 | `v0.7.0` | 特征工程扩充 + 已有功能持续迭代 | Phase 7-8 | 持续 |
 
 ---

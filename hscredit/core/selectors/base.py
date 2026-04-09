@@ -912,6 +912,8 @@ class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
             self._feature_names = X.columns.tolist()
         else:
             self._feature_names = [f'feature_{i}' for i in range(X.shape[1])]
+        # sklearn 兼容：设置 feature_names_in_ 属性
+        self.feature_names_in_ = np.array(self._feature_names)
         return self._feature_names
 
 

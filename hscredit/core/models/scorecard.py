@@ -1385,6 +1385,230 @@ class ScoreCard(StandardScoreTransformer):
         if debug:
             return pipeline
 
+    def export_deployment_code(
+        self,
+        language: str = 'python',
+        output_file: Optional[str] = None,
+        function_name: str = 'calculate_score',
+    ) -> str:
+        """导出评分卡部署代码.
+
+        支持生成 SQL、Python、Java 格式的评分卡计算代码，可直接用于生产部署。
+
+        :param language: 目标语言，可选 'sql'/'python'/'java'，默认 'python'
+        :param output_file: 输出文件路径，为 None 时仅返回字符串
+        :param function_name: 函数/存储过程名称，默认 'calculate_score'
+        :return: 生成的部署代码字符串
+
+        示例::
+
+            >>> sc = ScoreCard(...)
+            >>> sc.fit(X_train, y_train)
+            >>> # 生成 SQL
+            >>> sql = sc.export_deployment_code(language='sql', output_file='scorecard.sql')
+            >>> # 生成 Python
+            >>> py = sc.export_deployment_code(language='python', output_file='scorecard.py')
+        """
+        check_is_fitted(self)
+
+        card = self.export()
+        base_score = float(self.base_score_) if hasattr(self, 'base_score_') else 0.0
+
+        if language.lower() == 'sql':
+            code = self._generate_sql(card, base_score, function_name)
+        elif language.lower() == 'python':
+            code = self._generate_python(card, base_score, function_name)
+        elif language.lower() == 'java':
+            code = self._generate_java(card, base_score, function_name)
+        else:
+            raise ValueError(f"不支持的语言: {language}，可选: sql/python/java")
+
+        if output_file:
+            import os
+            dir_path = os.path.dirname(output_file)
+            if dir_path and not os.path.exists(dir_path):
+                os.makedirs(dir_path, exist_ok=True)
+            with open(output_file, 'w', encoding='utf-8') as f:
+                f.write(code)
+
+        return code
+
+    def _generate_sql(self, card: dict, base_score: float, func_name: str) -> str:
+        """生成 SQL CASE WHEN 评分卡代码."""
+        lines = [f"-- 评分卡 SQL 部署代码（自动生成）", f"-- base_score = {base_score}", ""]
+        lines.append(f"SELECT")
+        lines.append(f"    {base_score}")
+
+        for feature, bins in card.items():
+            lines.append(f"    + CASE")
+            for bin_label, score in bins.items():
+                cond = self._bin_label_to_sql_condition(feature, bin_label)
+                lines.append(f"        WHEN {cond} THEN {score}")
+            lines.append(f"        ELSE 0")
+            lines.append(f"      END  -- {feature}")
+
+        lines.append(f"    AS score")
+        lines.append(f"FROM your_table;")
+        return '\n'.join(lines)
+
+    def _generate_python(self, card: dict, base_score: float, func_name: str) -> str:
+        """生成 Python 评分卡函数代码."""
+        lines = [
+            f'"""评分卡 Python 部署代码（自动生成）"""',
+            f'import numpy as np',
+            f'import pandas as pd',
+            f'',
+            f'',
+            f'def {func_name}(row: dict) -> float:',
+            f'    """计算单条样本的评分卡分数.',
+            f'',
+            f'    :param row: 样本特征字典',
+            f'    :return: 评分',
+            f'    """',
+            f'    score = {base_score}  # base_score',
+        ]
+
+        for feature, bins in card.items():
+            lines.append(f'')
+            lines.append(f'    # {feature}')
+            lines.append(f'    val = row.get("{feature}")')
+            first = True
+            for bin_label, sc in bins.items():
+                prefix = 'if' if first else 'elif'
+                cond = self._bin_label_to_python_condition('val', bin_label)
+                lines.append(f'    {prefix} {cond}:')
+                lines.append(f'        score += {sc}')
+                first = False
+
+        lines.append(f'')
+        lines.append(f'    return score')
+        lines.append(f'')
+        lines.append(f'')
+        lines.append(f'def batch_{func_name}(df: pd.DataFrame) -> pd.Series:')
+        lines.append(f'    """批量计算评分."""')
+        lines.append(f'    return df.apply(lambda row: {func_name}(row.to_dict()), axis=1)')
+        return '\n'.join(lines)
+
+    def _generate_java(self, card: dict, base_score: float, func_name: str) -> str:
+        """生成 Java 评分卡方法代码."""
+        lines = [
+            f'/**',
+            f' * 评分卡 Java 部署代码（自动生成）',
+            f' */',
+            f'public class ScoreCard {{',
+            f'',
+            f'    public static double {func_name}(Map<String, Object> row) {{',
+            f'        double score = {base_score};  // base_score',
+        ]
+
+        for feature, bins in card.items():
+            lines.append(f'')
+            lines.append(f'        // {feature}')
+            lines.append(f'        Object {self._safe_java_var(feature)} = row.get("{feature}");')
+            first = True
+            for bin_label, sc in bins.items():
+                prefix = 'if' if first else 'else if'
+                cond = self._bin_label_to_java_condition(self._safe_java_var(feature), bin_label)
+                lines.append(f'        {prefix} ({cond}) {{')
+                lines.append(f'            score += {sc};')
+                lines.append(f'        }}')
+                first = False
+
+        lines.append(f'')
+        lines.append(f'        return score;')
+        lines.append(f'    }}')
+        lines.append(f'}}')
+        return '\n'.join(lines)
+
+    @staticmethod
+    def _bin_label_to_sql_condition(feature: str, label: str) -> str:
+        """将分箱标签转为 SQL CASE WHEN 条件."""
+        label = str(label).strip()
+        if label in ('缺失值', 'missing', 'nan', 'null', 'None'):
+            return f"{feature} IS NULL"
+        if label in ('特殊值', 'special'):
+            return f"1=1 /* special */"
+        # 区间格式: [a, b) 或 (a, b] 或 (-inf, b) 等
+        import re
+        m = re.match(r'[\[\(]([-\d.inf+]+)\s*,\s*([-\d.inf+]+)[\]\)]', label)
+        if m:
+            lo, hi = m.group(1), m.group(2)
+            conds = []
+            left_closed = label[0] == '['
+            right_closed = label[-1] == ']'
+            if lo not in ('-inf', '-Infinity', '-inf'):
+                op = '>=' if left_closed else '>'
+                conds.append(f"{feature} {op} {lo}")
+            if hi not in ('inf', 'Infinity', '+inf'):
+                op = '<=' if right_closed else '<'
+                conds.append(f"{feature} {op} {hi}")
+            if conds:
+                return ' AND '.join(conds)
+            return f"1=1"
+        # 类别值
+        return f"{feature} = '{label}'"
+
+    @staticmethod
+    def _bin_label_to_python_condition(var: str, label: str) -> str:
+        """将分箱标签转为 Python 条件表达式."""
+        label = str(label).strip()
+        if label in ('缺失值', 'missing', 'nan', 'null', 'None'):
+            return f"{var} is None or (isinstance({var}, float) and np.isnan({var}))"
+        if label in ('特殊值', 'special'):
+            return f"True  # special"
+        import re
+        m = re.match(r'[\[\(]([-\d.inf+]+)\s*,\s*([-\d.inf+]+)[\]\)]', label)
+        if m:
+            lo, hi = m.group(1), m.group(2)
+            conds = []
+            left_closed = label[0] == '['
+            right_closed = label[-1] == ']'
+            if lo not in ('-inf', '-Infinity', '-inf'):
+                op = '>=' if left_closed else '>'
+                conds.append(f"{var} {op} {lo}")
+            if hi not in ('inf', 'Infinity', '+inf'):
+                op = '<=' if right_closed else '<'
+                conds.append(f"{var} {op} {hi}")
+            if conds:
+                return ' and '.join(conds)
+            return 'True'
+        return f"{var} == '{label}'"
+
+    @staticmethod
+    def _bin_label_to_java_condition(var: str, label: str) -> str:
+        """将分箱标签转为 Java 条件表达式."""
+        label = str(label).strip()
+        if label in ('缺失值', 'missing', 'nan', 'null', 'None'):
+            return f"{var} == null"
+        if label in ('特殊值', 'special'):
+            return f"true /* special */"
+        import re
+        m = re.match(r'[\[\(]([-\d.inf+]+)\s*,\s*([-\d.inf+]+)[\]\)]', label)
+        if m:
+            lo, hi = m.group(1), m.group(2)
+            conds = []
+            left_closed = label[0] == '['
+            right_closed = label[-1] == ']'
+            if lo not in ('-inf', '-Infinity', '-inf'):
+                op = '>=' if left_closed else '>'
+                conds.append(f"((Number){var}).doubleValue() {op} {lo}")
+            if hi not in ('inf', 'Infinity', '+inf'):
+                op = '<=' if right_closed else '<'
+                conds.append(f"((Number){var}).doubleValue() {op} {hi}")
+            if conds:
+                return ' && '.join(conds)
+            return 'true'
+        return f"\"{label}\".equals({var})"
+
+    @staticmethod
+    def _safe_java_var(name: str) -> str:
+        """将特征名转为合法的 Java 变量名."""
+        import re
+        safe = re.sub(r'[^a-zA-Z0-9_]', '_', name)
+        if safe[0].isdigit():
+            safe = 'f_' + safe
+        return safe
+
     def _build_pmml_expression(self, bins: Union[np.ndarray, list], scores: np.ndarray) -> str:
         """构建 PMML 表达式字符串."""
         bins = np.asarray(bins)

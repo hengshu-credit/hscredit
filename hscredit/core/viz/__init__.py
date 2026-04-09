@@ -48,7 +48,7 @@ from .binning_plots import (
     distribution_plot,
     bin_trend_plot,
     batch_bin_trend_plot,
-    overdues_bin_plot,
+    bin_overdues_plot,
 )
 
 from .model_plots import plot_weights
@@ -102,6 +102,20 @@ from .strategy_plots import (
     segment_scorecard_comparison,
 )
 
+# 统一样式系统
+from .style import (
+    set_style,
+    reset_style,
+    get_current_theme,
+    get_palette,
+    get_font_sizes,
+    get_defaults,
+    PRIMARY_COLORS,
+    EXTENDED_COLORS,
+    SEMANTIC_COLORS,
+    GRADIENT_PALETTES,
+)
+
 # 导出工具函数供外部使用
 from .utils import (
     setup_axis_style,
@@ -124,7 +138,7 @@ __all__ = [
     # 特征趋势分析
     "bin_trend_plot",
     "batch_bin_trend_plot",
-    "overdues_bin_plot",
+    "bin_overdues_plot",
     # 模型相关
     "plot_weights",
     # 模型评估
@@ -170,4 +184,15 @@ __all__ = [
     "create_legend",
     "format_bin_label",
     "DEFAULT_COLORS",
+    # 统一样式系统
+    "set_style",
+    "reset_style",
+    "get_current_theme",
+    "get_palette",
+    "get_font_sizes",
+    "get_defaults",
+    "PRIMARY_COLORS",
+    "EXTENDED_COLORS",
+    "SEMANTIC_COLORS",
+    "GRADIENT_PALETTES",
 ]

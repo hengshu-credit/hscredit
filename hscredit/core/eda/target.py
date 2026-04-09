@@ -63,11 +63,14 @@ def _create_binary_target(df: pd.DataFrame,
 
 
 def target_distribution(df: pd.DataFrame,
-                       target_col: str) -> pd.DataFrame:
+                       target_col: str = None,
+                       *,
+                       target: str = None) -> pd.DataFrame:
     """目标变量分布统计.
     
     :param df: 输入数据
-    :param target_col: 目标变量列名
+    :param target_col: 目标变量列名（向后兼容，推荐使用 target）
+    :param target: 目标变量列名（推荐）
     :return: 目标分布DataFrame，列包括[类别, 样本数, 占比, 累计占比]
     
     Example:
@@ -77,6 +80,9 @@ def target_distribution(df: pd.DataFrame,
         0   0    8500   85.00      85.00
         1   1    1500   15.00     100.00
     """
+    target_col = target or target_col
+    if target_col is None:
+        raise ValueError("必须指定 target 或 target_col 参数")
     validate_dataframe(df, required_cols=[target_col])
     
     value_counts = df[target_col].value_counts().sort_index()
@@ -102,7 +108,9 @@ def bad_rate_overall(df: pd.DataFrame,
                     target_col: Optional[str] = None,
                     overdue: Optional[Union[str, List[str]]] = None,
                     dpds: Optional[Union[int, List[int]]] = None,
-                    del_grey: bool = False) -> Union[Dict, pd.DataFrame]:
+                    del_grey: bool = False,
+                    *,
+                    target: Optional[str] = None) -> Union[Dict, pd.DataFrame]:
     """计算整体逾期率.
     
     支持单标签分析（通过target_col）或多标签分析（通过overdue+dpds）。
@@ -128,6 +136,7 @@ def bad_rate_overall(df: pd.DataFrame,
         0  MOB1>7     9800    8820     980    10.00
         1  MOB1>30    9800    9400     400     4.08
     """
+    target_col = target or target_col
     validate_dataframe(df)
     
     # 单标签模式
@@ -183,12 +192,15 @@ def bad_rate_overall(df: pd.DataFrame,
 
 
 def bad_rate_by_dimension(df: pd.DataFrame,
-                         dim_col: str,
+                         dim_col: str = None,
                          target_col: Optional[str] = None,
                          overdue: Optional[Union[str, List[str]]] = None,
                          dpds: Optional[Union[int, List[int]]] = None,
                          del_grey: bool = False,
-                         sort_by: str = 'bad_rate') -> Union[pd.DataFrame, Dict[str, pd.DataFrame]]:
+                         sort_by: str = 'bad_rate',
+                         *,
+                         target: Optional[str] = None,
+                         segment_col: Optional[str] = None) -> Union[pd.DataFrame, Dict[str, pd.DataFrame]]:
     """分维度逾期率分析.
     
     支持单标签或多标签分析。
@@ -210,6 +222,10 @@ def bad_rate_by_dimension(df: pd.DataFrame,
         >>> result = bad_rate_by_dimension(df, 'channel', overdue='MOB1', dpds=[7, 30])
         >>> print(result['MOB1>7'])
     """
+    target_col = target or target_col
+    dim_col = segment_col or dim_col
+    if dim_col is None:
+        raise ValueError("必须指定 dim_col 或 segment_col 参数")
     validate_dataframe(df, required_cols=[dim_col])
     
     # 单标签模式
@@ -281,7 +297,9 @@ def bad_rate_trend(df: pd.DataFrame,
                   dpds: Optional[Union[int, List[int]]] = None,
                   del_grey: bool = False,
                   freq: str = 'M',
-                  dimensions: Optional[List[str]] = None) -> Union[pd.DataFrame, Dict[str, pd.DataFrame]]:
+                  dimensions: Optional[List[str]] = None,
+                  *,
+                  target: Optional[str] = None) -> Union[pd.DataFrame, Dict[str, pd.DataFrame]]:
     """逾期率时间趋势分析.
     
     支持单标签或多标签分析。
@@ -304,6 +322,7 @@ def bad_rate_trend(df: pd.DataFrame,
         >>> trend = bad_rate_trend(df, 'apply_date', overdue=['MOB1', 'MOB3'], dpds=30, freq='M')
         >>> print(trend['MOB1>30'])
     """
+    target_col = target or target_col
     validate_dataframe(df, required_cols=[date_col])
     
     # 确保日期格式正确
@@ -486,7 +505,9 @@ def bad_rate_by_bins(df: pd.DataFrame,
 def sample_distribution(df: pd.DataFrame,
                        date_col: str,
                        freq: str = 'M',
-                       target_col: Optional[str] = None) -> pd.DataFrame:
+                       target_col: Optional[str] = None,
+                       *,
+                       target: Optional[str] = None) -> pd.DataFrame:
     """样本时间分布分析.
     
     :param df: 输入数据
@@ -499,6 +520,7 @@ def sample_distribution(df: pd.DataFrame,
         >>> dist = sample_distribution(df, 'apply_date', target_col='fpd15')
         >>> print(dist[['时间周期', '样本数', '坏样本数', '逾期率(%)']])
     """
+    target_col = target or target_col
     validate_dataframe(df, required_cols=[date_col])
     
     df = df.copy()

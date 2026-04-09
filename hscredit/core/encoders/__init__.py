@@ -22,6 +22,7 @@ from .ordinal_encoder import OrdinalEncoder
 from .quantile_encoder import QuantileEncoder
 from .catboost_encoder import CatBoostEncoder
 from .gbm_encoder import GBMEncoder
+from .cardinality_encoder import CardinalityEncoder
 
 __all__ = [
     'BaseEncoder',
@@ -33,4 +34,5 @@ __all__ = [
     'QuantileEncoder',
     'CatBoostEncoder',
     'GBMEncoder',
+    'CardinalityEncoder',
 ]

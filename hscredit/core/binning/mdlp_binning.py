@@ -107,24 +107,32 @@ class MDLPBinning(BaseBinning):
             if self.verbose:
                 print(f"处理特征: {feature}")
 
-            # MDLP 主要适用于数值型特征
-            x_numeric = pd.to_numeric(X[feature], errors='coerce')
-            self.feature_types_[feature] = 'numerical'
+            # 检测特征类型
+            feature_type = self._detect_feature_type(X[feature])
+            self.feature_types_[feature] = feature_type
 
-            # 数值型特征：使用 MDLP 算法
-            x_clean = x_numeric.dropna()
-            y_clean = y[x_numeric.notna()]
-
-            if len(x_clean) >= self.min_samples_split:
-                splits = self._mdlp_split_v3(x_clean.values, y_clean.values)
-                self.splits_[feature] = self._round_splits(np.sort(splits))
+            if feature_type == 'categorical':
+                # 类别型特征：按坏样本率排序分组
+                splits = self._fit_categorical(X[feature], y)
+                self.splits_[feature] = splits
                 self.n_bins_[feature] = len(splits) + 1
+                bins = self._apply_splits(X[feature], splits, 'categorical')
             else:
-                self.splits_[feature] = np.array([])
-                self.n_bins_[feature] = 1
+                # 数值型特征：使用 MDLP 算法
+                x_numeric = pd.to_numeric(X[feature], errors='coerce')
+                x_clean = x_numeric.dropna()
+                y_clean = y[x_numeric.notna()]
+
+                if len(x_clean) >= self.min_samples_split:
+                    splits = self._mdlp_split_v3(x_clean.values, y_clean.values)
+                    self.splits_[feature] = self._round_splits(np.sort(splits))
+                    self.n_bins_[feature] = len(splits) + 1
+                else:
+                    self.splits_[feature] = np.array([])
+                    self.n_bins_[feature] = 1
+                bins = self._apply_splits(X[feature], self.splits_[feature], 'numerical')
 
             # 计算分箱统计
-            bins = self._apply_splits(X[feature], self.splits_[feature], 'numerical')
             self.bin_tables_[feature] = self._compute_bin_stats(
                 feature, X[feature], y, bins
             )
@@ -132,6 +140,42 @@ class MDLPBinning(BaseBinning):
         self._apply_post_fit_constraints(X, y, enforce_monotonic=True)
         self._is_fitted = True
         return self
+
+    def _fit_categorical(
+        self,
+        x: pd.Series,
+        y: pd.Series
+    ) -> list:
+        """对类别型特征进行分箱（按坏样本率排序）.
+
+        MDLP 算法仅适用于数值型特征，对于类别型特征回退到按坏样本率排序的方式。
+
+        :param x: 特征数据
+        :param y: 目标变量
+        :return: 类别列表（按坏样本率排序）
+        """
+        x_clean = x.copy()
+        mask = x_clean.notna()
+
+        if self.special_codes:
+            for code in self.special_codes:
+                mask = mask & (x_clean != code)
+
+        x_valid = x_clean[mask]
+        y_valid = y[mask]
+
+        if len(x_valid) == 0:
+            return []
+
+        # 计算每个类别的坏样本率并按其排序
+        cat_stats = pd.DataFrame({
+            'category': x_valid,
+            'target': y_valid
+        }).groupby('category')['target'].agg(['mean', 'count'])
+
+        cat_stats = cat_stats.sort_values('mean')
+
+        return cat_stats.index.tolist()
 
     def _mdlp_split_v3(self, x: np.ndarray, y: np.ndarray) -> List[float]:
         """MDLP 递归分箱算法 - V3版本（针对平滑分布优化）.
@@ -499,19 +543,27 @@ class MDLPBinning(BaseBinning):
     def _apply_splits(
         self,
         x: pd.Series,
-        splits: np.ndarray,
+        splits,
         feature_type: str
     ) -> np.ndarray:
         """应用切分点.
 
         :param x: 特征数据
-        :param splits: 切分点数组
+        :param splits: 切分点数组（数值型为np.ndarray, 类别型为list）
         :param feature_type: 特征类型
         :return: 分箱标签
         """
         if feature_type == 'categorical':
-            cat_to_bin = {cat: i for i, cat in enumerate(x.dropna().unique())}
-            bins = x.map(lambda v: cat_to_bin.get(v, -1)).values
+            # 基于 splits 列表中的顺序映射类别到分箱索引
+            x_str = x.astype(str).where(x.notna(), other=np.nan)
+            cat_to_bin = {str(cat): i for i, cat in enumerate(splits)}
+            bins = np.full(len(x), 0, dtype=int)
+            bins[x.isna()] = -1
+            for cat_str, bin_idx in cat_to_bin.items():
+                bins[x_str == cat_str] = bin_idx
+            if self.special_codes:
+                for code in self.special_codes:
+                    bins[(x == code) | (x_str == str(code))] = -2
         else:
             if len(splits) == 0:
                 bins = np.zeros(len(x), dtype=int)

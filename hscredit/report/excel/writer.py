@@ -109,8 +109,17 @@ class ExcelWriter:
                 'resources', 'templates', 'template.xlsx'
             )
 
-        self.workbook = load_workbook(style_excel)
-        self.style_sheet = self.workbook[style_sheet_name]
+        if os.path.exists(style_excel):
+            self.workbook = load_workbook(style_excel)
+            if style_sheet_name in self.workbook.sheetnames:
+                self.style_sheet = self.workbook[style_sheet_name]
+            else:
+                self.style_sheet = self.workbook.active
+        else:
+            # 模板文件不存在时，创建新的空 Workbook
+            self.workbook = Workbook()
+            self.style_sheet = self.workbook.active
+            self.style_sheet.title = style_sheet_name
 
         # 初始化样式
         self.name_styles = []

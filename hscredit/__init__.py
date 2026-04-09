@@ -141,7 +141,7 @@ from .core.viz import (
     # 特征趋势分析
     bin_trend_plot,
     batch_bin_trend_plot,
-    overdues_bin_plot,
+    bin_overdues_plot,
     # 模型评估
     roc_plot,
     pr_plot,
@@ -325,7 +325,7 @@ __all__ = [
     # 特征趋势分析
     "bin_trend_plot",
     "batch_bin_trend_plot",
-    "overdues_bin_plot",
+    "bin_overdues_plot",
     # 模型评估
     "roc_plot",
     "pr_plot",
