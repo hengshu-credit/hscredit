@@ -273,6 +273,8 @@ class ScoreCard(StandardScoreTransformer):
             woe_values = None
             bins = None
             bin_labels = None
+            splits = None
+            feature_type = None
             
             if self.binner is not None and hasattr(self.binner, 'bin_tables_'):
                 if col in self.binner.bin_tables_:
@@ -282,6 +284,13 @@ class ScoreCard(StandardScoreTransformer):
                         if '分箱标签' in bin_table.columns:
                             bin_labels = bin_table['分箱标签'].values
                             bins = self._parse_bin_labels(bin_labels)
+            
+            # 获取实际分箱切分点
+            if self.binner is not None and hasattr(self.binner, 'splits_'):
+                if col in self.binner.splits_:
+                    splits = self.binner.splits_[col]
+            if self.binner is not None and hasattr(self.binner, 'feature_types_'):
+                feature_type = self.binner.feature_types_.get(col)
             
             if woe_values is None:
                 continue
@@ -294,6 +303,8 @@ class ScoreCard(StandardScoreTransformer):
             self.rules_[col] = {
                 'bins': bins if bins is not None else woe_values,
                 'bin_labels': bin_labels,
+                'splits': splits,
+                'feature_type': feature_type,
                 'woe': woe_values,
                 'scores': np.array(scores),
                 'coef': coef,
@@ -757,6 +768,8 @@ class ScoreCard(StandardScoreTransformer):
             woe_values = None
             bins = None
             bin_labels = None
+            splits = None
+            feature_type = None
             values = None
 
             # 从 hscredit 的 binner 获取分箱信息
@@ -769,8 +782,15 @@ class ScoreCard(StandardScoreTransformer):
                             bin_labels = bin_table['分箱标签'].values
                             bins = self._parse_bin_labels(bin_labels)
 
+            # 获取实际分箱切分点
+            if self.binner is not None and hasattr(self.binner, 'splits_'):
+                if col in self.binner.splits_:
+                    splits = self.binner.splits_[col]
+            if self.binner is not None and hasattr(self.binner, 'feature_types_'):
+                feature_type = self.binner.feature_types_.get(col)
+
             # 从 toad 的 encoder 获取
-            elif self.encoder is not None and hasattr(self.encoder, 'get'):
+            if woe_values is None and self.encoder is not None and hasattr(self.encoder, 'get'):
                 if col in self.encoder:
                     encoder_rule = self.encoder[col]
                     if isinstance(encoder_rule, dict):
@@ -797,6 +817,8 @@ class ScoreCard(StandardScoreTransformer):
             self.rules_[col] = {
                 'bins': bins if bins is not None else woe_values,
                 'bin_labels': bin_labels,  # 保存原始分箱标签
+                'splits': splits,  # 保存实际分箱切分点
+                'feature_type': feature_type,  # 保存特征类型
                 'woe': woe_values,
                 'scores': np.array(scores),
                 'coef': coef,
@@ -1067,6 +1089,7 @@ class ScoreCard(StandardScoreTransformer):
         - 特殊值分箱（标记为 'special'）
         
         参考 scorecardpipeline 的实现方式，确保与分箱器格式兼容。
+        使用分箱切分点生成区间标签，而非 WOE 阈值。
         """
         check_is_fitted(self)
 
@@ -1097,21 +1120,14 @@ class ScoreCard(StandardScoreTransformer):
             scores = rule['scores']
             woe_values = rule.get('woe', [])
             
-            # 优先使用 bin_labels（完整的分箱标签）
-            bin_labels = rule.get('bin_labels')
-            bins = rule.get('bins', [])
-            
-            # 确定要使用的分箱标签
-            if bin_labels is not None and len(bin_labels) > 0:
-                labels_to_use = bin_labels
-            elif bins is not None and len(bins) > 0:
-                labels_to_use = bins
-            else:
-                labels_to_use = [f'箱{i}' for i in range(len(scores))]
+            # 生成分箱标签：优先使用 bin_labels，其次使用 splits 生成
+            labels_to_use = self._get_scorecard_bin_labels(rule, len(scores))
             
             if len(labels_to_use) != len(scores):
                 # 如果标签和分数数量不匹配，重新生成标签
-                labels_to_use = self._format_bin_labels(bins if bins else labels_to_use, len(scores))
+                labels_to_use = self._format_bin_labels(
+                    rule.get('bins', labels_to_use), len(scores)
+                )
             
             # 处理每个分箱
             for bin_label, score, woe in zip(labels_to_use, scores, woe_values):
@@ -1130,6 +1146,124 @@ class ScoreCard(StandardScoreTransformer):
             return pd.DataFrame(columns=['变量名称', '变量含义', '变量分箱', '对应分数', 'WOE值'])
             
         return pd.DataFrame(rows)
+
+    def _get_scorecard_bin_labels(self, rule: dict, n_scores: int) -> list:
+        """根据规则信息生成评分卡的分箱标签.
+        
+        优先级：
+        1. 使用 bin_labels（从分箱器 bin_tables_ 获取的完整标签）
+        2. 使用 splits（分箱切分点）生成区间标签
+        3. 使用 bins（已解析的标签或 WOE 值）
+        4. 生成默认标签
+        
+        参考 scorecardpipeline 的 format_bins 方法。
+        """
+        # 1. 优先使用 bin_labels
+        bin_labels = rule.get('bin_labels')
+        if bin_labels is not None and len(bin_labels) > 0:
+            return list(bin_labels)
+        
+        # 2. 使用 splits 生成区间标签
+        splits = rule.get('splits')
+        if splits is not None:
+            feature_type = rule.get('feature_type')
+            return self._format_bins(splits, n_scores, feature_type)
+        
+        # 3. 使用 bins（如果是字符串标签则使用，否则生成默认标签）
+        bins = rule.get('bins', [])
+        if bins is not None and len(bins) > 0:
+            # 检查 bins 是否为字符串标签（非 WOE 值）
+            first_bin = bins[0] if len(bins) > 0 else None
+            if isinstance(first_bin, str):
+                return list(bins)
+        
+        # 4. 生成默认标签
+        return [f'箱{i}' for i in range(n_scores)]
+
+    def _format_bins(
+        self,
+        splits: Any,
+        n_scores: int,
+        feature_type: Optional[str] = None,
+        decimal: int = 4
+    ) -> list:
+        """将分箱切分点格式化为区间标签.
+        
+        参考 scorecardpipeline 的 format_bins 方法。
+        
+        对于数值型特征：
+        - 切分点 [a, b, c] 生成: (-inf, a], (a, b], (b, c], (c, +inf]
+        - 如果切分点末尾为 NaN，则生成缺失值标签
+        
+        对于类别型特征：
+        - List[List] 格式: 每个子列表为一个分箱的类别组
+        
+        :param splits: 分箱切分点
+        :param n_scores: 期望的分箱数量
+        :param feature_type: 特征类型 ('numerical' 或 'categorical')
+        :param decimal: 数值精度
+        :return: 格式化的分箱标签列表
+        """
+        if splits is None:
+            return [f'箱{i}' for i in range(n_scores)]
+        
+        labels = []
+        
+        if isinstance(splits, np.ndarray):
+            splits_array = splits
+        elif isinstance(splits, list):
+            splits_array = splits
+        else:
+            return [f'箱{i}' for i in range(n_scores)]
+        
+        # 类别型特征: List[List] 格式
+        if (feature_type == 'categorical' 
+                and isinstance(splits_array, list) 
+                and len(splits_array) > 0 
+                and isinstance(splits_array[0], (list, np.ndarray))):
+            for group in splits_array:
+                group_strs = []
+                for v in group:
+                    if v is None or (isinstance(v, float) and np.isnan(v)):
+                        group_strs.append('nan')
+                    else:
+                        group_strs.append(str(v))
+                labels.append(','.join(group_strs))
+            # 补齐缺失值箱
+            while len(labels) < n_scores:
+                labels.append('缺失值')
+            return labels[:n_scores]
+        
+        # 数值型特征: 切分点数组
+        if isinstance(splits_array, np.ndarray):
+            splits_list = splits_array.tolist()
+        else:
+            splits_list = list(splits_array)
+        
+        # 检查末尾是否有 NaN（缺失值箱标记）
+        has_missing = False
+        if len(splits_list) > 0 and (
+            splits_list[-1] is None 
+            or (isinstance(splits_list[-1], float) and np.isnan(splits_list[-1]))
+        ):
+            has_missing = True
+            splits_list = splits_list[:-1]
+        
+        # 生成数值区间标签
+        n_splits = len(splits_list)
+        for i in range(n_splits + 1):
+            if i == 0:
+                labels.append(f'(-inf, {splits_list[i]}]')
+            elif i == n_splits:
+                labels.append(f'({splits_list[i-1]}, +inf]')
+            else:
+                labels.append(f'({splits_list[i-1]}, {splits_list[i]}]')
+        
+        # 添加缺失值标签
+        if has_missing or len(labels) < n_scores:
+            labels.append('缺失值')
+        
+        return labels[:n_scores]
     
     def _format_bin_labels(self, bins, n_scores):
         """根据分箱信息格式化为显示标签."""
