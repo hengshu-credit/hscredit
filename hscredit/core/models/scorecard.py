@@ -824,8 +824,11 @@ class ScoreCard(StandardScoreTransformer):
                 parsed_labels.append('special')
                 continue
             
-            # 匹配数值区间
-            match = re.match(r'\((-inf|[\d.-]+),\s*([\d.]+)\]|\[([\d.]+),\s*(inf|[\d.]+)\)', label_str)
+            # 匹配数值区间: (a, b] 或 (a, +inf)
+            match = re.match(
+                r'\((-inf|[-\d.]+),\s*(\+?inf|[-\d.]+)[)\]]',
+                label_str
+            )
             if match:
                 parsed_labels.append(label_str)
             else:

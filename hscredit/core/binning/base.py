@@ -1325,7 +1325,7 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
                     if i == 0:
                         labels.append(f'(-inf, {splits[i]}]')
                     elif i == n_bins - 1:
-                        labels.append(f'({splits[i-1]}, +inf]')
+                        labels.append(f'({splits[i-1]}, +inf)')
                     else:
                         labels.append(f'({splits[i-1]}, {splits[i]}]')
                 else:
@@ -1340,7 +1340,7 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
                     if i == 0:
                         labels.append(f'(-inf, {splits[i]}]')
                     elif i == n_splits:
-                        labels.append(f'({splits[i-1]}, +inf]')
+                        labels.append(f'({splits[i-1]}, +inf)')
                     else:
                         labels.append(f'({splits[i-1]}, {splits[i]}]')
 

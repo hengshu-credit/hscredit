@@ -608,7 +608,7 @@ class TargetBadRateBinning(BaseBinning):
             elif i == 0:
                 labels[i] = f'(-inf, {splits[0]}]'
             elif i == n_normal_bins - 1:
-                labels[i] = f'({splits[-1]}, +inf]'
+                labels[i] = f'({splits[-1]}, +inf)'
             else:
                 labels[i] = f'({splits[i-1]}, {splits[i]}]'
 

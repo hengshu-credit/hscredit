@@ -743,7 +743,7 @@ class CartBinning(BaseBinning):
                 else:
                     labels[i] = f'({splits[i-1]}, {cat}]'
             # 最后一个箱
-            labels[len(splits)] = f'({splits[-1] if splits else "-inf"}, +inf]'
+            labels[len(splits)] = f'({splits[-1] if splits else "-inf"}, +inf)'
         else:
             # 数值型特征
             n_splits = len(splits) if splits is not None else 0
@@ -753,7 +753,7 @@ class CartBinning(BaseBinning):
                 elif i == 0:
                     labels[i] = f'(-inf, {splits[i]}]'
                 elif i == n_splits:
-                    labels[i] = f'({splits[i-1]}, +inf]'
+                    labels[i] = f'({splits[i-1]}, +inf)'
                 else:
                     labels[i] = f'({splits[i-1]}, {splits[i]}]'
 
