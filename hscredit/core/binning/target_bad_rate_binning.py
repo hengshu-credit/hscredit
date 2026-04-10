@@ -138,9 +138,14 @@ class TargetBadRateBinning(BaseBinning):
         y_valid = y[valid_mask]
 
         if feature_type == 'categorical':
-            splits = self._fit_categorical(X_valid, y_valid)
-            self.splits_[feature] = np.array(splits) if splits else np.array([])
-            self.n_bins_[feature] = len(splits) + 1 if splits else len(X_valid.unique())
+            splits, cat_bins = self._fit_categorical(X_valid, y_valid)
+            if cat_bins:
+                self._cat_bins_[feature] = cat_bins
+                self.splits_[feature] = cat_bins
+                self.n_bins_[feature] = len(cat_bins)
+            else:
+                self.splits_[feature] = []
+                self.n_bins_[feature] = len(X_valid.unique()) if len(X_valid) > 0 else 0
         else:
             splits = self._fit_numerical(X_valid, y_valid)
             self.splits_[feature] = self._round_splits(splits)
@@ -151,7 +156,16 @@ class TargetBadRateBinning(BaseBinning):
         self.bin_tables_[feature] = bin_table
 
         # 记录实际坏样本率
-        self._actual_rates[feature] = self._compute_actual_rates(X_valid, y_valid, splits)
+        if feature_type == 'categorical':
+            valid_bins = self._assign_bins(X_valid, feature)
+            actual_rates = []
+            for bin_idx in sorted(idx for idx in np.unique(valid_bins) if idx >= 0):
+                bin_mask = valid_bins == bin_idx
+                if bin_mask.any():
+                    actual_rates.append(float(y_valid[bin_mask].mean()))
+            self._actual_rates[feature] = actual_rates
+        else:
+            self._actual_rates[feature] = self._compute_actual_rates(X_valid, y_valid, splits)
 
     def _fit_numerical(self, X: pd.Series, y: pd.Series) -> List[float]:
         """对数值型变量进行分箱."""
@@ -380,7 +394,7 @@ class TargetBadRateBinning(BaseBinning):
 
         return valid_splits
 
-    def _fit_categorical(self, X: pd.Series, y: pd.Series) -> List[float]:
+    def _fit_categorical(self, X: pd.Series, y: pd.Series) -> Tuple[List[float], List[List[Any]]]:
         """对类别型变量进行分箱."""
         # 计算每个类别的坏样本率
         df = pd.DataFrame({'X': X, 'y': y})
@@ -394,17 +408,42 @@ class TargetBadRateBinning(BaseBinning):
         category_stats = category_stats[category_stats['count'] >= min_samples]
 
         if len(category_stats) <= 1:
-            return []
+            categories = category_stats['category'].tolist()
+            return [], [[category] for category in categories]
 
         # 按坏样本率排序
         category_stats = category_stats.sort_values('bad_rate').reset_index(drop=True)
 
         if self.target_bad_rates is not None:
             # 严格边界模式
-            return self._fit_categorical_with_target_rates(category_stats, n_total, min_samples)
+            splits = self._fit_categorical_with_target_rates(category_stats, n_total, min_samples)
         else:
             # 自动模式
-            return self._fit_categorical_auto(category_stats, n_total, min_samples)
+            splits = self._fit_categorical_auto(category_stats, n_total, min_samples)
+
+        categories = category_stats['category'].tolist()
+        cat_bins = self._build_categorical_bins(categories, splits)
+        return splits, cat_bins
+
+    @staticmethod
+    def _build_categorical_bins(categories: List[Any], splits: List[float]) -> List[List[Any]]:
+        """根据排序后的类别和切分点构造类别分组."""
+        if not categories:
+            return []
+
+        if not splits:
+            return [[category] for category in categories]
+
+        boundaries = [0]
+        boundaries.extend(int(split + 0.5) for split in sorted(splits))
+        boundaries.append(len(categories))
+
+        cat_bins = []
+        for start, end in zip(boundaries[:-1], boundaries[1:]):
+            if start < end:
+                cat_bins.append(categories[start:end])
+
+        return cat_bins
 
     def _fit_categorical_with_target_rates(
         self,
@@ -497,10 +536,17 @@ class TargetBadRateBinning(BaseBinning):
         if not splits:
             return [y.mean()]
 
-        x_vals = X.values
         y_vals = y.values
 
         sorted_splits = sorted(splits)
+
+        # 数值特征直接按切分点分箱；非数值特征先转为类别编码，
+        # 避免 np.searchsorted 在字符串与浮点切分点比较时报错。
+        if pd.api.types.is_numeric_dtype(X):
+            x_vals = X.values
+        else:
+            x_vals = pd.Categorical(X).codes
+
         bins = np.searchsorted(sorted_splits, x_vals, side='right')
 
         rates = []
@@ -518,6 +564,23 @@ class TargetBadRateBinning(BaseBinning):
         x_vals = X.values
 
         if self.feature_types_[feature] == 'categorical':
+            if feature in self._cat_bins_ and self._cat_bins_[feature]:
+                bins = np.zeros(len(X), dtype=int)
+                x_str = X.astype(str).where(X.notna(), other=np.nan)
+
+                for i, group in enumerate(self._cat_bins_[feature]):
+                    for value in group:
+                        if isinstance(value, float) and np.isnan(value):
+                            bins[X.isna()] = i
+                        else:
+                            bins[x_str == str(value)] = i
+
+                bins[X.isna()] = -1
+                if self.special_codes:
+                    for code in self.special_codes:
+                        bins[(X == code) | (x_str == str(code))] = -2
+                return bins
+
             codes = pd.Categorical(X).codes
             bins = np.where(X.isna(), -1, codes)
             if self.special_codes:
@@ -595,6 +658,13 @@ class TargetBadRateBinning(BaseBinning):
 
     def _get_bin_labels_dict(self, feature: str) -> Dict[int, str]:
         """获取分箱标签字典."""
+        if feature in self._cat_bins_ and self._cat_bins_[feature]:
+            labels = {-1: 'missing', -2: 'special'}
+            for i, group in enumerate(self._cat_bins_[feature]):
+                group_str = [str(v) if not (isinstance(v, float) and np.isnan(v)) else 'nan' for v in group]
+                labels[i] = ','.join(group_str)
+            return labels
+
         splits = self.splits_[feature]
         n_splits = len(splits) if splits is not None else 0
         n_normal_bins = n_splits + 1

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """OR-Tools 运筹规划分箱算法.
 
 基于 Google OR-Tools CP-SAT 求解器的最优化分箱方法。

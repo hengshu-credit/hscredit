@@ -1356,7 +1356,7 @@ class AutoTuner:
         :param kwargs: 其他参数
         :return: ModelTuner实例
         """
-        from . import (
+        from .. import (
             XGBoostRiskModel,
             LightGBMRiskModel,
             CatBoostRiskModel,

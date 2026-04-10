@@ -428,6 +428,9 @@ class StandardScoreTransformer(BaseScoreTransformer):
 
         基于当前评分参数生成评分与odds、逾期率的对应关系表。
         可通过 step 参数控制步长，或在初始化时设置 self.step。
+        根据 direction 参数调整表的排列和含义：
+        - descending: 分数越高，逾期率越低（信用分，默认）
+        - ascending: 分数越高，逾期率越高（欺诈分）
 
         :return: DataFrame包含评分、odds、好坏客户比例、逾期率等列
         """
@@ -437,29 +440,48 @@ class StandardScoreTransformer(BaseScoreTransformer):
         max_score = int(self.base_score + 5 * self.pdo)
         scores = np.arange(min_score, max_score + 1, step)
 
+        # 获取当前方向
+        direction = getattr(self, 'direction_', self.direction)
+
         results = []
         for score in scores:
-            odds = np.exp((self.A_ - score) / self.B_)
-            prob = odds / (1 + odds)
+            # odds_lr = P(bad)/P(good)，从标准公式 Score = A - B*ln(odds_lr) 反推
+            odds_lr = np.exp((self.A_ - score) / self.B_)
+            prob = odds_lr / (1 + odds_lr)
             prob = np.clip(prob, 0, 1)
 
-            # 计算好客户:坏客户比例
-            # odds = 好客户数/坏客户数，即 好:坏 = odds:1
-            if odds >= 1:
-                good_to_bad_ratio = f"{odds:.1f}:1"
+            # 好坏比 = P(good)/P(bad) = 1/odds_lr
+            good_bad_ratio = 1.0 / odds_lr if odds_lr > 0 else np.inf
+
+            # 格式化好坏比显示
+            if good_bad_ratio >= 1:
+                ratio_display = f"{good_bad_ratio:.1f}:1"
             else:
-                good_to_bad_ratio = f"1:{1/odds:.1f}"
+                ratio_display = f"1:{1/good_bad_ratio:.1f}"
+
+            # ascending 模式下翻转显示分数，与 predict 的翻转逻辑一致
+            display_score = (2 * self.base_score - score) if direction == 'ascending' else score
 
             results.append({
-                '评分': score,
-                '理论Odds': round(odds, 4),
-                '好客户:坏客户': good_to_bad_ratio,
+                '评分': display_score,
+                '理论Odds(坏好比)': round(odds_lr, 4),
+                '好客户:坏客户': ratio_display,
                 '理论逾期率': round(prob, 6),
                 '理论逾期率(%)': f"{prob*100:.4f}%",
-                '对数Odds': round(np.log(odds), 4) if odds > 0 else -np.inf,
+                '对数Odds': round(np.log(odds_lr), 4) if odds_lr > 0 else -np.inf,
             })
 
-        return pd.DataFrame(results)
+        df = pd.DataFrame(results)
+
+        # 根据方向排序：
+        # descending（信用分）: 分数从高到低，逾期率从低到高 → 分越高越好
+        # ascending（欺诈分）: 分数从低到高，逾期率从低到高 → 分越高越差
+        if direction == 'descending':
+            df = df.sort_values('评分', ascending=False).reset_index(drop=True)
+        else:
+            df = df.sort_values('评分', ascending=True).reset_index(drop=True)
+
+        return df
 
     def get_score_reference_by_prob(self, prob_range: tuple = (0.001, 0.5),
                                      n_points: int = 50) -> pd.DataFrame:

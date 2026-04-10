@@ -19,7 +19,7 @@ from sklearn.ensemble import (
 )
 from sklearn.utils.validation import check_is_fitted
 
-from .base import BaseRiskModel
+from ..base import BaseRiskModel
 
 
 class SklearnRiskModel(BaseRiskModel):

@@ -16,8 +16,8 @@ from sklearn.metrics import (
     confusion_matrix, classification_report
 )
 
-from ..metrics.classification import KS, AUC, Gini
-from ..metrics.stability import PSI
+from ...metrics.classification import KS, AUC, Gini
+from ...metrics.stability import PSI
 
 
 def _lift_score(y_true, y_proba, top_ratio=0.1):

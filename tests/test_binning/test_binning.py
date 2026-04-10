@@ -267,6 +267,32 @@ class TestOptimalBinning(unittest.TestCase):
         binner.fit(self.X, self.y)
         self.assertTrue(binner._is_fitted)
 
+    def test_uniform_method_default_decimal_precision(self):
+        """测试默认切分点精度为4位小数."""
+        X = pd.DataFrame({'feature_1': [0.123456, 0.223456, 0.323456, 0.423456, 0.523456, 0.623456]})
+        y = pd.Series([0, 1, 0, 1, 0, 1])
+
+        binner = OptimalBinning(method='uniform', max_n_bins=4)
+        binner.fit(X, y)
+
+        np.testing.assert_allclose(
+            binner.splits_['feature_1'],
+            np.array([0.2485, 0.3735, 0.4985])
+        )
+
+    def test_uniform_method_custom_decimal_precision(self):
+        """测试可通过 decimal 调整切分点精度."""
+        X = pd.DataFrame({'feature_1': [0.123456, 0.223456, 0.323456, 0.423456, 0.523456, 0.623456]})
+        y = pd.Series([0, 1, 0, 1, 0, 1])
+
+        binner = OptimalBinning(method='uniform', max_n_bins=4, decimal=2)
+        binner.fit(X, y)
+
+        np.testing.assert_allclose(
+            binner.splits_['feature_1'],
+            np.array([0.25, 0.37, 0.5])
+        )
+
     def test_tree_method(self):
         """测试 tree 方法."""
         binner = OptimalBinning(method='tree', max_n_bins=5)
@@ -309,6 +335,16 @@ class TestOptimalBinning(unittest.TestCase):
         self.assertTrue(binner._is_fitted)
         bin_table = binner.get_bin_table('feature_1')
         self.assertIn('分箱标签', bin_table.columns)
+
+    def test_import_rules_respects_decimal_precision(self):
+        """测试 import_rules 也遵循 decimal 精度设置."""
+        binner = OptimalBinning(decimal=2)
+        binner.import_rules({'feature_1': [np.float64(0.123456), np.float64(0.987654), np.nan]})
+
+        np.testing.assert_allclose(
+            binner.splits_['feature_1'],
+            np.array([0.12, 0.99])
+        )
 
     def test_check_input_align_by_common_index(self):
         """测试X/y长度不一致时按共同索引自动对齐."""

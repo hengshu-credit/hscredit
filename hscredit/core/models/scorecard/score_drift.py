@@ -74,7 +74,7 @@ from sklearn.base import BaseEstimator
 from sklearn.utils.validation import check_is_fitted
 
 try:
-    from ..metrics.stability import PSI
+    from ...metrics.stability import PSI
     PSI_AVAILABLE = True
 except ImportError:
     PSI_AVAILABLE = False

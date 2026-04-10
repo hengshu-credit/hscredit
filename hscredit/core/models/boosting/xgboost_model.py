@@ -30,7 +30,7 @@ except ImportError:
     XGBOOST_AVAILABLE = False
     xgb = None
 
-from .base import BaseRiskModel
+from ..base import BaseRiskModel
 
 
 class XGBoostRiskModel(BaseRiskModel):

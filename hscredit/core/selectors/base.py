@@ -17,6 +17,67 @@ import pandas as pd
 from sklearn.base import BaseEstimator, TransformerMixin
 
 
+def get_feature_importances(estimator) -> np.ndarray:
+    """从任意模型中提取特征重要性.
+
+    兼容以下模型类型:
+    - 树模型 (feature_importances_): sklearn RandomForest/GradientBoosting,
+      hscredit RiskModels, XGBClassifier, LGBMClassifier, CatBoostClassifier
+    - 线性模型 (coef_): sklearn LogisticRegression, LinearSVC 等
+    - 原生 xgboost Booster (get_score)
+    - 原生 lightgbm Booster (feature_importance)
+    - 原生 catboost CatBoost (get_feature_importance)
+
+    :param estimator: 已训练的模型
+    :return: 一维 numpy 数组，长度为特征数
+    :raises ValueError: 当无法从模型中提取重要性时
+    """
+    # 1. feature_importances_ — 最通用 (sklearn tree models, hscredit models, XGB/LGB/CB sklearn API)
+    if hasattr(estimator, 'feature_importances_'):
+        importances = estimator.feature_importances_
+        if isinstance(importances, pd.Series):
+            return importances.values.astype(float)
+        return np.asarray(importances, dtype=float)
+
+    # 2. coef_ — 线性模型 (sklearn LogisticRegression, LinearSVC, etc.)
+    if hasattr(estimator, 'coef_'):
+        coef = np.asarray(estimator.coef_, dtype=float)
+        if coef.ndim > 1:
+            coef = coef[0]
+        return np.abs(coef)
+
+    # 3. 原生 xgboost Booster
+    if hasattr(estimator, 'get_score'):
+        try:
+            scores = estimator.get_score(importance_type='gain')
+            if hasattr(estimator, 'feature_names') and estimator.feature_names:
+                return np.array([scores.get(f, 0.0) for f in estimator.feature_names], dtype=float)
+            n = max(int(k.replace('f', '')) for k in scores) + 1 if scores else 0
+            return np.array([scores.get(f'f{i}', 0.0) for i in range(n)], dtype=float)
+        except Exception:
+            pass
+
+    # 4. 原生 lightgbm Booster
+    if hasattr(estimator, 'feature_importance') and callable(estimator.feature_importance):
+        try:
+            return np.asarray(estimator.feature_importance(importance_type='gain'), dtype=float)
+        except Exception:
+            pass
+
+    # 5. 原生 catboost (Pool-based API)
+    if hasattr(estimator, 'get_feature_importance') and callable(estimator.get_feature_importance):
+        try:
+            return np.asarray(estimator.get_feature_importance(), dtype=float)
+        except Exception:
+            pass
+
+    raise ValueError(
+        f"无法从 {type(estimator).__name__} 中提取特征重要性。"
+        f"模型需要提供 feature_importances_、coef_ 属性，"
+        f"或 get_score / feature_importance / get_feature_importance 方法。"
+    )
+
+
 class SelectionReportCollector:
     """特征筛选报告收集器.
 

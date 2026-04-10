@@ -68,6 +68,7 @@ class KMeansBinning(BaseBinning):
         n_init: int = 10,
         max_iter: int = 300,
         verbose: Union[bool, int] = False,
+        decimal: int = 4,
     ):
         super().__init__(
             target=target,
@@ -81,6 +82,7 @@ class KMeansBinning(BaseBinning):
             missing_separate=missing_separate,
             random_state=random_state,
             verbose=verbose,
+            decimal=decimal,
         )
         self.n_init = n_init
         self.max_iter = max_iter

@@ -7,7 +7,8 @@ from .random import seed_everything
 from .io import load_pickle, save_pickle
 from .describe import feature_describe, groupby_feature_describe
 from .datasets import germancredit
-from .misc import init_setting, round_float
+from .misc import round_float
+from .init import init_setting
 from .logger import init_logger, get_logger
 from .bin_table_display import (
     style_bin_table,

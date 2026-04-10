@@ -10,7 +10,7 @@ from sklearn.base import clone
 from sklearn.model_selection import check_cv
 from joblib import Parallel, delayed
 
-from .base import BaseFeatureSelector
+from .base import BaseFeatureSelector, get_feature_importances
 
 
 class BorutaSelector(BaseFeatureSelector):
@@ -107,8 +107,8 @@ class BorutaSelector(BaseFeatureSelector):
             model = clone(self.estimator)
             model.fit(X_with_shadow, y)
             
-            # 获取特征重要性
-            importances = model.feature_importances_
+            # 获取特征重要性（兼容所有模型类型）
+            importances = get_feature_importances(model)
             
             # 分离真实和影子特征重要性
             real_importances = importances[:n_features]

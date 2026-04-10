@@ -64,6 +64,7 @@ class ChiMergeBinning(BaseBinning):
         missing_separate: bool = True,
         random_state: Optional[int] = None,
         verbose: Union[bool, int] = False,
+        decimal: int = 4,
     ):
         super().__init__(
             target=target,
@@ -77,6 +78,7 @@ class ChiMergeBinning(BaseBinning):
             missing_separate=missing_separate,
             random_state=random_state,
             verbose=verbose,
+            decimal=decimal,
         )
         # 支持 min_chi2 作为 min_chi2_threshold 的别名
         if min_chi2 is not None and min_chi2_threshold is not None:

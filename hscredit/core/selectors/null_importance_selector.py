@@ -10,7 +10,7 @@ from sklearn.model_selection import check_cv
 from sklearn.base import clone
 from sklearn.utils import check_random_state
 
-from .base import BaseFeatureSelector
+from .base import BaseFeatureSelector, get_feature_importances
 
 
 class NullImportanceSelector(BaseFeatureSelector):
@@ -77,6 +77,13 @@ class NullImportanceSelector(BaseFeatureSelector):
             y = X[self.target].values
             X = X.drop(columns=self.target)
 
+        # 确保 y 是 numpy 数组（base.fit 传入的可能是 Series，索引不连续会导致 y[idx] KeyError）
+        if isinstance(y, pd.Series):
+            y = y.values
+
+        # 重置 DataFrame 索引以确保 iloc 与 positional index 一致
+        X = X.reset_index(drop=True)
+
         self._get_feature_names(X)
         
         rng = check_random_state(self.random_state)
@@ -97,7 +104,7 @@ class NullImportanceSelector(BaseFeatureSelector):
             for fold_idx, (train_idx, _) in enumerate(cv.split(y_shuffled, y_shuffled)):
                 model = clone(self.estimator)
                 model.fit(X.iloc[train_idx], y_shuffled[train_idx])
-                null_importance = model.feature_importances_
+                null_importance = get_feature_importances(model)
                 null_importances[:, n_splits * run + fold_idx] = null_importance
         
         # 计算真实的特征重要性
@@ -112,7 +119,7 @@ class NullImportanceSelector(BaseFeatureSelector):
             for fold_idx, (train_idx, _) in enumerate(cv.split(y_shuffled, y_shuffled)):
                 model = clone(self.estimator)
                 model.fit(X_shuffled.iloc[train_idx], y_shuffled[train_idx])
-                actual_importance = model.feature_importances_
+                actual_importance = get_feature_importances(model)
                 actual_importances[:, n_splits * run + fold_idx] = actual_importance
         
         # 计算得分: 真实重要性/shuffle后重要性的均值

@@ -7,7 +7,7 @@ import warnings
 
 try:
     from hscredit.core.binning import ORBinning, CustomObjectives
-    ORTOOLS_AVAILABLE = True
+    from hscredit.core.binning.or_binning import ORTOOLS_AVAILABLE
 except ImportError:
     ORTOOLS_AVAILABLE = False
 

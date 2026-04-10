@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, ClassifierMixin
 
-from ..rules.rule import Rule
+from ...rules.rule import Rule
 
 
 def _check_input_data(
@@ -509,7 +509,7 @@ class RulesClassifier(BaseEstimator, ClassifierMixin):
                     check_rule_columns(r)
             elif isinstance(rule, Rule):
                 # 获取规则使用的特征
-                from ..rules.rule import get_columns_from_query
+                from ...rules.rule import get_columns_from_query
                 used_cols = set(get_columns_from_query(rule.expr))
                 missing = used_cols - available_cols
                 if missing:
@@ -541,7 +541,7 @@ class RulesClassifier(BaseEstimator, ClassifierMixin):
                 for r in rule.rules:
                     count_features(r, weight * rule.weight)
             elif isinstance(rule, Rule):
-                from ..rules.rule import get_columns_from_query
+                from ...rules.rule import get_columns_from_query
                 used_cols = get_columns_from_query(rule.expr)
                 for col in used_cols:
                     if col in feature_counts:

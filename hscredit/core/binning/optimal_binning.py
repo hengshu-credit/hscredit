@@ -94,6 +94,7 @@ class OptimalBinning(BaseBinning):
     :param cat_cutoff: 类别型变量处理阈值，默认为None
     :param random_state: 随机种子，默认为None
     :param verbose: 是否输出详细信息，默认为False
+    :param decimal: 数值型切分点保留的小数位数，默认为4
     :param kwargs: 其他分箱方法特定参数
 
     **示例**
@@ -145,6 +146,7 @@ class OptimalBinning(BaseBinning):
         cat_cutoff: Optional[Union[float, int]] = None,
         random_state: Optional[int] = None,
         verbose: Union[bool, int] = False,
+        decimal: int = 4,
         **kwargs
     ):
         # 处理预分箱相关参数（从kwargs中提取）
@@ -166,6 +168,7 @@ class OptimalBinning(BaseBinning):
             cat_cutoff=cat_cutoff,
             random_state=random_state,
             verbose=verbose,
+            decimal=decimal,
         )
 
         if method not in self.VALID_METHODS:
@@ -307,7 +310,7 @@ class OptimalBinning(BaseBinning):
                     splits = np.array([])
 
                 self.splits_[feature] = self._round_splits(splits)
-                self.n_bins_[feature] = len(splits) + 1
+                self.n_bins_[feature] = len(self.splits_[feature]) + 1
             else:
                 # 类别型特征
                 splits = list(splits)
@@ -346,6 +349,7 @@ class OptimalBinning(BaseBinning):
             'cat_cutoff': self.cat_cutoff,
             'random_state': self.random_state,
             'verbose': False,  # 预分箱默认不输出详细信息
+            'decimal': self.decimal,
         }
         
         # 应用 prebinning_params 中的参数
@@ -495,10 +499,10 @@ class OptimalBinning(BaseBinning):
                 optimized_splits = initial_splits
             
             self.splits_[feature] = self._round_splits(optimized_splits)
-            self.n_bins_[feature] = len(optimized_splits) + 1
+            self.n_bins_[feature] = len(self.splits_[feature]) + 1
             
             # 计算最终分箱统计
-            final_bins = self._apply_bins(X[feature], optimized_splits, feature_type)
+            final_bins = self._apply_bins(X[feature], self.splits_[feature], feature_type)
             self.bin_tables_[feature] = self._compute_bin_stats(
                 feature, X[feature], y, final_bins
             )
@@ -515,7 +519,8 @@ class OptimalBinning(BaseBinning):
             max_n_bins=self.max_n_bins,
             min_bin_size=self.min_bin_size,
             random_state=self.random_state,
-            verbose=False
+            verbose=False,
+            decimal=self.decimal,
         )
         temp_binner.fit(X, y)
         
@@ -1012,8 +1017,8 @@ class OptimalBinning(BaseBinning):
 
             if len(best) > 0 and not np.array_equal(best, current):
                 self.splits_[feature] = self._round_splits(best)
-                self.n_bins_[feature] = len(best) + 1
-                bins = self._apply_bins(X[feature], best, 'numerical', feature)
+                self.n_bins_[feature] = len(self.splits_[feature]) + 1
+                bins = self._apply_bins(X[feature], self.splits_[feature], 'numerical', feature)
                 self.bin_tables_[feature] = self._compute_bin_stats(feature, X[feature], y, bins)
 
     def _fit_with_method(
@@ -1038,6 +1043,7 @@ class OptimalBinning(BaseBinning):
             'special_codes': self.special_codes,
             'random_state': self.random_state,
             'verbose': self.verbose,
+            'decimal': self.decimal,
         }
         
         # 安全地更新参数，过滤无效参数
@@ -1062,6 +1068,7 @@ class OptimalBinning(BaseBinning):
             'cat_cutoff': self.cat_cutoff,
             'random_state': self.random_state,
             'verbose': self.verbose,
+            'decimal': self.decimal,
         }
         
         # 安全地更新参数
@@ -1148,9 +1155,10 @@ class OptimalBinning(BaseBinning):
                 'missing_separate': self.missing_separate,
                 'random_state': self.random_state,
                 'verbose': self.verbose,
+                'decimal': self.decimal,
             }
             for k, v in self.kwargs.items():
-                if k not in ['prebinning', 'prebinning_params', 'prebinning_method', 'user_splits', 'max_bin_size', 'cat_cutoff', 'decimal']:
+                if k not in ['prebinning', 'prebinning_params', 'prebinning_method', 'user_splits', 'max_bin_size', 'cat_cutoff']:
                     kernel_params[k] = v
             self._binner = KernelDensityBinning(**kernel_params)
         elif self.method == 'best_lift':
@@ -1165,6 +1173,8 @@ class OptimalBinning(BaseBinning):
         self.n_bins_ = self._binner.n_bins_
         self.bin_tables_ = self._binner.bin_tables_
         self.feature_types_ = self._binner.feature_types_
+        if hasattr(self._binner, '_cat_bins_'):
+            self._cat_bins_ = self._binner._cat_bins_
 
         if hasattr(self._binner, 'ks_stats_'):
             self.ks_stats_ = self._binner.ks_stats_

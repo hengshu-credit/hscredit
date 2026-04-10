@@ -10,7 +10,7 @@ import warnings
 
 try:
     from hscredit.core.binning import ORBinning
-    ORTOOLS_AVAILABLE = True
+    from hscredit.core.binning.or_binning import ORTOOLS_AVAILABLE
 except ImportError:
     ORTOOLS_AVAILABLE = False
     warnings.warn("OR-Tools 未安装，跳过 ORBinning 测试")

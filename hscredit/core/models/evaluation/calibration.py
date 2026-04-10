@@ -986,7 +986,7 @@ class CalibratedModel:
         :param y: 真实标签
         :return: 性能指标字典
         """
-        from ..metrics.classification import KS, AUC
+        from ...metrics.classification import KS, AUC
 
         y_proba = self.predict_proba(X)
 
