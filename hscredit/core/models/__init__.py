@@ -105,13 +105,26 @@ from .losses import (
 # 导入模型基类
 from .base import BaseRiskModel
 
-# 导入提升树模型 (boosting/)
-from .boosting import (
-    XGBoostRiskModel,
-    LightGBMRiskModel,
-    CatBoostRiskModel,
-    NGBoostRiskModel,
-)
+# 导入提升树模型 (boosting/, 可选依赖)
+try:
+    from .boosting import XGBoostRiskModel
+except (ImportError, Exception):
+    XGBoostRiskModel = None
+
+try:
+    from .boosting import LightGBMRiskModel
+except (ImportError, Exception):
+    LightGBMRiskModel = None
+
+try:
+    from .boosting import CatBoostRiskModel
+except (ImportError, Exception):
+    CatBoostRiskModel = None
+
+try:
+    from .boosting import NGBoostRiskModel
+except (ImportError, Exception):
+    NGBoostRiskModel = None
 
 # 导入经典模型 (classical/)
 from .classical import (

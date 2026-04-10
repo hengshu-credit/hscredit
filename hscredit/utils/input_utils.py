@@ -11,6 +11,8 @@ import warnings
 import numpy as np
 import pandas as pd
 
+from ..exceptions import FeatureNotFoundError, InputTypeError, InputValidationError
+
 
 ArrayLike = Union[np.ndarray, pd.DataFrame, pd.Series, List]
 
@@ -61,13 +63,13 @@ def check_xy_inputs(
         
         # 检查长度是否匹配
         if len(X_df) != len(y_series):
-            raise ValueError(
+            raise InputValidationError(
                 f"X和y的长度不匹配: X有{len(X_df)}行, y有{len(y_series)}个元素"
             )
     else:
         # scorecardpipeline风格: 从X中提取target列
         if target not in X_df.columns:
-            raise ValueError(
+            raise FeatureNotFoundError(
                 f"当y为None时，X中必须包含target列 '{target}'，"
                 f"当前列: {list(X_df.columns)}"
             )
@@ -106,7 +108,7 @@ def convert_to_dataframe(
         >>> df = convert_to_dataframe([[1, 2], [3, 4]])
     """
     if X is None:
-        raise ValueError("输入数据X不能为None")
+        raise InputValidationError("输入数据X不能为None")
     
     # 已经是DataFrame
     if isinstance(X, pd.DataFrame):
@@ -118,13 +120,13 @@ def convert_to_dataframe(
             # 一维数组转为单列DataFrame
             X = X.reshape(-1, 1)
         elif X.ndim > 2:
-            raise ValueError(f"不支持{X.ndim}维数组，只支持1维或2维数组")
+            raise InputValidationError(f"不支持{X.ndim}维数组，只支持1维或2维数组")
         
         # 生成默认列名或验证列名
         if columns is None:
             columns = [f'feature_{i}' for i in range(X.shape[1])]
         elif len(columns) != X.shape[1]:
-            raise ValueError(
+            raise InputValidationError(
                 f"列名数量({len(columns)})与数据列数({X.shape[1]})不匹配"
             )
         
@@ -139,7 +141,7 @@ def convert_to_dataframe(
         arr = np.array(X)
         return convert_to_dataframe(arr, columns=columns)
     
-    raise TypeError(
+    raise InputTypeError(
         f"不支持的输入类型: {type(X).__name__}，"
         "只支持DataFrame, numpy数组, list, tuple或Series"
     )
@@ -170,10 +172,10 @@ def extract_target_from_df(
         >>> X, y = extract_target_from_df(df, target='label', drop=False)
     """
     if not isinstance(df, pd.DataFrame):
-        raise TypeError(f"输入必须是DataFrame，而不是{type(df).__name__}")
+        raise InputTypeError(f"输入必须是DataFrame，而不是{type(df).__name__}")
     
     if target not in df.columns:
-        raise ValueError(
+        raise FeatureNotFoundError(
             f"DataFrame中不存在target列 '{target}'，"
             f"可用列: {list(df.columns)}"
         )
@@ -218,7 +220,7 @@ def _convert_to_series(
     if isinstance(y, (list, tuple)):
         return pd.Series(y, name=name)
     
-    raise TypeError(
+    raise InputTypeError(
         f"不支持的y类型: {type(y).__name__}，"
         "只支持numpy数组, list, tuple或Series"
     )
@@ -239,10 +241,10 @@ def _validate_data(
     """
     # 检查空数据
     if X.empty:
-        raise ValueError("特征数据X为空")
+        raise InputValidationError("特征数据X为空")
     
     if y.empty:
-        raise ValueError("目标变量y为空")
+        raise InputValidationError("目标变量y为空")
     
     # 检查索引一致性
     if not X.index.equals(y.index):
@@ -254,11 +256,11 @@ def _validate_data(
     
     # 检查目标变量是否全为缺失值
     if y.isna().all():
-        raise ValueError("目标变量y全部为缺失值")
+        raise InputValidationError("目标变量y全部为缺失值")
     
     # 检查特征是否全为缺失值
     if X.isna().all().all():
-        raise ValueError("特征数据X全部为缺失值")
+        raise InputValidationError("特征数据X全部为缺失值")
     
     # 检查目标变量的类型（二分类问题的常见检查）
     unique_values = y.dropna().unique()
@@ -290,7 +292,7 @@ def check_array_1d(
     series = _convert_to_series(arr, name=name)
     
     if series.empty:
-        raise ValueError(f"{name}不能为空")
+        raise InputValidationError(f"{name}不能为空")
     
     return series
 
@@ -360,9 +362,9 @@ def check_missing_values(
         result['y_missing_ratio'] = y.isna().sum() / len(y)
     
     if raise_error and result['X_missing'] > 0:
-        raise ValueError(f"特征数据X存在{result['X_missing']}个缺失值")
+        raise InputValidationError(f"特征数据X存在{result['X_missing']}个缺失值")
     
     if raise_error and y is not None and result['y_missing'] > 0:
-        raise ValueError(f"目标变量y存在{result['y_missing']}个缺失值")
+        raise InputValidationError(f"目标变量y存在{result['y_missing']}个缺失值")
     
     return result

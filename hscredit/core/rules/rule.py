@@ -14,6 +14,7 @@ from sklearn.metrics import f1_score, recall_score, accuracy_score, precision_sc
 
 from ..binning import OptimalBinning
 from .expr_optimizer import optimize_expr, beautify_expr
+from ...exceptions import FeatureNotFoundError, InputTypeError, StateError
 
 
 def get_columns_from_query(query_str: str) -> List[str]:
@@ -51,7 +52,7 @@ class RuleState(str, Enum):
     APPLIED = "applied"
 
 
-class RuleStateError(RuntimeError):
+class RuleStateError(StateError):
     """规则状态错误."""
     pass
 
@@ -111,7 +112,7 @@ class Rule:
     def __and__(self, other):
         """规则与操作。"""
         if not isinstance(other, Rule):
-            raise TypeError(f"unsupported operand type(s) for &: 'Rule' and '{type(other).__name__}'")
+            raise InputTypeError(f"unsupported operand type(s) for &: 'Rule' and '{type(other).__name__}'")
         combined_expr = f"({self.expr}) & ({other.expr})"
         optimized = optimize_expr(beautify_expr(combined_expr))
         self_name = getattr(self, 'name', None) or self.expr
@@ -126,7 +127,7 @@ class Rule:
     def __or__(self, other):
         """规则或操作。"""
         if not isinstance(other, Rule):
-            raise TypeError(f"unsupported operand type(s) for |: 'Rule' and '{type(other).__name__}'")
+            raise InputTypeError(f"unsupported operand type(s) for |: 'Rule' and '{type(other).__name__}'")
         combined_expr = f"({self.expr}) | ({other.expr})"
         optimized = optimize_expr(beautify_expr(combined_expr))
         self_name = getattr(self, 'name', None) or self.expr
@@ -152,7 +153,7 @@ class Rule:
     def __xor__(self, other):
         """规则异或操作。"""
         if not isinstance(other, Rule):
-            raise TypeError(f"unsupported operand type(s) for ^: 'Rule' and '{type(other).__name__}'")
+            raise InputTypeError(f"unsupported operand type(s) for ^: 'Rule' and '{type(other).__name__}'")
         combined_expr = f"({self.expr}) ^ ({other.expr})"
         optimized = optimize_expr(beautify_expr(combined_expr))
         self_name = getattr(self, 'name', None) or self.expr
@@ -167,7 +168,7 @@ class Rule:
     def __eq__(self, other):
         """规则相等比较。"""
         if not isinstance(other, Rule):
-            raise TypeError(f"Input should be of type Rule, got {type(other)} instead.")
+            raise InputTypeError(f"Input should be of type Rule, got {type(other)} instead.")
         return self.expr == other.expr
 
     def predict(self, X: DataFrame) -> pd.Series:
@@ -177,12 +178,12 @@ class Rule:
         :return: 规则匹配结果 Series (bool 类型)
         """
         if not isinstance(X, DataFrame):
-            raise ValueError("Rule can only predict on DataFrame.")
+            raise InputTypeError("Rule can only predict on DataFrame.")
 
         # 检查必需的列是否存在（规则集基于pandas eval实现，支持各种数据类型）
         missing_cols = set(self.feature_names_in_) - set(X.columns)
         if missing_cols:
-            raise ValueError(f"Missing columns: {missing_cols}")
+            raise FeatureNotFoundError(f"Missing columns: {missing_cols}")
 
         result = X.eval(self.expr)
         self.result_ = result
@@ -193,7 +194,7 @@ class Rule:
     def result(self):
         """获取规则预测结果。"""
         if self._state != RuleState.APPLIED:
-            raise RuleUnAppliedError("Invoke `predict` to make a rule applied.")
+            raise RuleUnAppliedError("规则尚未应用，请先调用 predict()")
         return self.result_
 
     def filter(self, X: DataFrame) -> DataFrame:

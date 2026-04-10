@@ -11,6 +11,8 @@ from typing import Any, Optional, Union
 
 import joblib
 
+from ..exceptions import DependencyError, ValidationError
+
 
 def _open_file(
     file: Union[str, Path],
@@ -28,19 +30,19 @@ def _open_file(
             import lzma
             return lzma.open(file, mode)
         except ImportError:
-            raise ImportError("lzma is not available. Use gzip or bz2 instead.")
+            raise DependencyError("缺少可选依赖 lzma，请改用 gzip 或 bz2 压缩格式")
     elif compression == 'lz4' or str(file).lower().endswith('.lz4'):
         try:
             import lz4.frame
             return lz4.frame.open(file, mode)
         except ImportError:
-            raise ImportError("lz4 is not installed. Install it with: pip install lz4")
+            raise DependencyError("缺少可选依赖 lz4，请先安装: pip install lz4")
     elif compression in ('zstd', 'zstandard') or str(file).lower().endswith(('.zst', '.zstd')):
         try:
             import zstandard
             return zstandard.open(file, mode)
         except ImportError:
-            raise ImportError("zstandard is not installed. Install it with: pip install zstandard")
+            raise DependencyError("缺少可选依赖 zstandard，请先安装: pip install zstandard")
     else:
         return open(file, mode)
 
@@ -129,7 +131,7 @@ def load_pickle(
             with _open_file(file, "rb", comp) as f:
                 return dill.load(f)
         except ImportError:
-            raise ImportError("dill is not installed. Install it with: pip install dill")
+            raise DependencyError("缺少可选依赖 dill，请先安装: pip install dill")
 
     elif eng == "cloudpickle":
         try:
@@ -137,14 +139,14 @@ def load_pickle(
             with _open_file(file, "rb", comp) as f:
                 return cloudpickle.load(f)
         except ImportError:
-            raise ImportError("cloudpickle is not installed. Install it with: pip install cloudpickle")
+            raise DependencyError("缺少可选依赖 cloudpickle，请先安装: pip install cloudpickle")
 
     elif eng == "pickle":
         with _open_file(file, "rb", comp) as f:
             return pickle.load(f)
 
     else:
-        raise ValueError(
+        raise ValidationError(
             f"engine 目前只支持 ['auto', 'joblib', 'dill', 'cloudpickle', 'pickle'], "
             f"不支持 {eng}"
         )
@@ -240,7 +242,7 @@ def save_pickle(
             with _open_file(file, "wb", comp) as f:
                 dill.dump(obj, f, protocol=proto)
         except ImportError:
-            raise ImportError("dill is not installed. Install it with: pip install dill")
+            raise DependencyError("缺少可选依赖 dill，请先安装: pip install dill")
 
     elif engine == "cloudpickle":
         try:
@@ -248,14 +250,14 @@ def save_pickle(
             with _open_file(file, "wb", comp) as f:
                 cloudpickle.dump(obj, f, protocol=proto)
         except ImportError:
-            raise ImportError("cloudpickle is not installed. Install it with: pip install cloudpickle")
+            raise DependencyError("缺少可选依赖 cloudpickle，请先安装: pip install cloudpickle")
 
     elif engine == "pickle":
         with _open_file(file, "wb", comp) as f:
             pickle.dump(obj, f, protocol=proto)
 
     else:
-        raise ValueError(
+        raise ValidationError(
             f"engine 目前只支持 ['joblib', 'dill', 'cloudpickle', 'pickle'], "
             f"不支持 {engine}"
         )

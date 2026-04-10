@@ -16,6 +16,7 @@ import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, TransformerMixin
 
+from ...exceptions import FeatureNotFoundError, NotFittedError
 from ...utils.misc import round_float
 
 # 从 metrics 导入指标计算方法
@@ -1417,14 +1418,14 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
 
         :param feature: 特征名
         :return: 分箱统计表（返回副本，修改不会影响分箱器内部数据）
-        :raises ValueError: 如果分箱器尚未拟合
-        :raises KeyError: 如果特征不存在
+        :raises NotFittedError: 如果分箱器尚未拟合
+        :raises FeatureNotFoundError: 如果特征不存在
         """
         if not self._is_fitted:
-            raise ValueError("分箱器尚未拟合，请先调用fit方法")
+            raise NotFittedError("分箱器尚未拟合，请先调用fit方法")
 
         if feature not in self.bin_tables_:
-            raise KeyError(f"特征 '{feature}' 未找到")
+            raise FeatureNotFoundError(f"特征 '{feature}' 未找到")
 
         return self.bin_tables_[feature].copy()
 
@@ -1453,10 +1454,10 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
         类别型特征返回 List[List] 分组列表。
         """
         if not self._is_fitted:
-            raise ValueError("分箱器尚未拟合，请先调用fit方法")
+            raise NotFittedError("分箱器尚未拟合，请先调用fit方法")
 
         if feature not in self.splits_ and feature not in self._cat_bins_:
-            raise KeyError(f"特征 '{feature}' 未找到")
+            raise FeatureNotFoundError(f"特征 '{feature}' 未找到")
 
         return self._splits_with_nan(feature)
 
@@ -1470,10 +1471,10 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
         :return: 切分点列表
         """
         if not self._is_fitted:
-            raise ValueError("分箱器尚未拟合，请先调用fit方法")
+            raise NotFittedError("分箱器尚未拟合，请先调用fit方法")
 
         if feature not in self.splits_:
-            raise KeyError(f"特征 '{feature}' 未找到")
+            raise FeatureNotFoundError(f"特征 '{feature}' 未找到")
 
         return self._splits_with_nan(feature)
 
@@ -1516,7 +1517,7 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
         ...     json.dump(convert_nan(rules), f, indent=2)
         """
         if not self._is_fitted:
-            raise ValueError("分箱器尚未拟合，请先调用fit方法")
+            raise NotFittedError("分箱器尚未拟合，请先调用fit方法")
 
         rules = {}
         for feature in self.splits_:

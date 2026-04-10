@@ -19,6 +19,8 @@ import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, TransformerMixin
 
+from ...exceptions import FeatureNotFoundError, NotFittedError
+
 
 class BaseEncoder(BaseEstimator, TransformerMixin, ABC):
     """编码器基类.
@@ -259,10 +261,10 @@ class BaseEncoder(BaseEstimator, TransformerMixin, ABC):
     def __getitem__(self, feature: str):
         """通过 `encoder['feature']` 获取该特征的编码映射（toad/scorecardpipeline风格）."""
         if not hasattr(self, 'mapping_') or self.mapping_ is None or len(self.mapping_) == 0:
-            raise ValueError("编码器尚未拟合，请先调用fit()")
+            raise NotFittedError("编码器尚未拟合，请先调用fit()")
 
         if feature not in self.mapping_:
-            raise KeyError(f"特征 '{feature}' 未找到")
+            raise FeatureNotFoundError(f"特征 '{feature}' 未找到")
 
         return self.mapping_[feature]
 

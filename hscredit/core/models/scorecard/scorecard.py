@@ -32,6 +32,7 @@ from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.utils.validation import check_is_fitted
 import inspect
 
+from ....exceptions import DependencyError, NotFittedError, ValidationError
 from ..classical.logistic_regression import LogisticRegression
 from .score_transformer import StandardScoreTransformer
 
@@ -1128,11 +1129,11 @@ class ScoreCard(StandardScoreTransformer):
 
         if proba is None:
             if X is None:
-                raise ValueError("必须提供X或proba参数之一")
+                raise ValidationError("必须提供X或proba参数之一")
             # 使用内部LR模型预测概率
             lr_model = self.lr_model_ if hasattr(self, 'lr_model_') and self.lr_model_ is not None else self.lr_model
             if lr_model is None:
-                raise ValueError("未找到LR模型，请先调用fit()或传入预训练lr_model")
+                raise NotFittedError("未找到LR模型，请先调用fit()或传入预训练lr_model")
             proba = lr_model.predict_proba(X)[:, 1]
 
         # 调用父类的transform方法将概率转换为评分
@@ -1534,7 +1535,7 @@ class ScoreCard(StandardScoreTransformer):
         :param compression_level: 压缩级别（1-9），默认 None
         :return: 保存的文件路径
         """
-        from ...utils.io import save_pickle as _save_pickle
+        from ....utils.io import save_pickle as _save_pickle
 
         file_dir = os.path.dirname(file)
         if file_dir and not os.path.exists(file_dir):
@@ -1567,7 +1568,7 @@ class ScoreCard(StandardScoreTransformer):
         :param compression: 压缩格式，可选 'gzip'/'bz2'/'xz'/'lz4'/'zstd'，默认 None（自动检测）
         :return: 加载的 ScoreCard 模型实例
         """
-        from ...utils.io import load_pickle as _load_pickle
+        from ....utils.io import load_pickle as _load_pickle
 
         return _load_pickle(file, engine=engine, compression=compression)
 
@@ -1623,7 +1624,7 @@ class ScoreCard(StandardScoreTransformer):
             from sklearn2pmml import sklearn2pmml, PMMLPipeline
             from sklearn2pmml.preprocessing import LookupTransformer, ExpressionTransformer
         except ImportError as e:
-            raise ImportError("导出 PMML 需要: pip install sklearn-pandas sklearn2pmml") from e
+            raise DependencyError("导出 PMML 需要: pip install sklearn-pandas sklearn2pmml") from e
 
         check_is_fitted(self)
 
@@ -1639,24 +1640,19 @@ class ScoreCard(StandardScoreTransformer):
             if bins is None or len(bins) == 0:
                 continue
 
-            if isinstance(bins[0], (np.ndarray, list)):
-                # 类别特征
-                mapping = {}
-                default_value = 0.0
-                
-                for bin_vals, score in zip(bins, scores):
-                    for bin_val in bin_vals:
-                        if pd.isna(bin_val) or bin_val == 'nan':
-                            default_value = float(score)
-                        else:
-                            mapping[str(bin_val)] = float(score)
+            is_grouped_categorical_bins = isinstance(bins[0], (np.ndarray, list))
+            is_string_bins = len(bins) > 0 and isinstance(bins[0], str)
+            has_interval_like_labels = is_string_bins and (
+                '[' in str(bins[0]) or '(' in str(bins[0])
+            )
 
+            if is_grouped_categorical_bins or (is_string_bins and not has_interval_like_labels):
+                mapping, default_value = self._build_pmml_lookup_mapping(bins, scores)
                 mapper.append(([var], LookupTransformer(mapping=mapping, default_value=default_value)))
-                samples[var] = [list(mapping.keys())[0]] * 20 if mapping else ['A'] * 20
+                samples[var] = [next(iter(mapping), 'A')] * 20
             else:
                 # 数值特征
-                has_string_bins = (len(bins) > 0 and isinstance(bins[0], str) and
-                                 ('[' in str(bins[0]) or '(' in str(bins[0])))
+                has_string_bins = is_string_bins and has_interval_like_labels
                 
                 if has_string_bins:
                     # 分离缺失值/特殊值箱的分数
@@ -1980,6 +1976,34 @@ class ScoreCard(StandardScoreTransformer):
         if safe[0].isdigit():
             safe = 'f_' + safe
         return safe
+
+    @staticmethod
+    def _build_pmml_lookup_mapping(
+        bins: Union[np.ndarray, list],
+        scores: Union[np.ndarray, list],
+    ) -> Tuple[Dict[str, float], float]:
+        """为类别分箱构建 PMML LookupTransformer 所需的映射."""
+        mapping: Dict[str, float] = {}
+        default_value = 0.0
+        default_labels = {
+            'missing', '缺失值', '缺失', 'nan', 'none', 'null',
+            'special', '特殊值', '特殊',
+        }
+
+        for bin_value, score in zip(bins, scores):
+            values = bin_value if isinstance(bin_value, (list, np.ndarray)) else [bin_value]
+            for value in values:
+                if pd.isna(value):
+                    default_value = float(score)
+                    continue
+
+                label = str(value).strip()
+                if label.lower() in default_labels:
+                    default_value = float(score)
+                else:
+                    mapping[label] = float(score)
+
+        return mapping, default_value
 
     def _build_pmml_expression(self, bins: Union[np.ndarray, list], scores: np.ndarray) -> str:
         """构建 PMML 表达式字符串."""

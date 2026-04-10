@@ -7,6 +7,18 @@ __version__ = "0.1.0"
 __author__ = "hscredit team"
 __email__ = "hscredit@hengshucredit.com"
 
+from .exceptions import (
+    HSCreditError,
+    ValidationError,
+    InputValidationError,
+    InputTypeError,
+    FeatureNotFoundError,
+    StateError,
+    NotFittedError,
+    DependencyError,
+    SerializationError,
+)
+
 
 # ========== sklearn Pipeline 和集成学习组件 ==========
 # 为了方便用户，直接从hscredit导入sklearn的Pipeline相关组件
@@ -25,6 +37,7 @@ from sklearn.preprocessing import FunctionTransformer
 
 # 核心分箱模块
 from .core.binning import (
+    BaseBinning,
     UniformBinning,
     QuantileBinning,
     TreeBinning,
@@ -56,6 +69,7 @@ from .core.encoders import (
     QuantileEncoder,
     CatBoostEncoder,
     GBMEncoder,
+    CardinalityEncoder,
 )
 
 # 核心特征筛选模块
@@ -82,6 +96,8 @@ from .core.selectors import (
     Chi2Selector,
     FTestSelector,
     CompositeFeatureSelector,
+    StepwiseSelector,
+    StabilityAwareSelector,
 )
 
 # 核心模型/损失函数模块
@@ -103,6 +119,15 @@ from .core.models import (
     TabNetLossAdapter,
     LogisticRegression,
     ScoreCard,
+    # 规则集分类
+    RuleSet,
+    RulesClassifier,
+    RuleSetClassifier,
+    LogicOperator,
+    RuleResult,
+    create_and_ruleset,
+    create_or_ruleset,
+    combine_rules,
 )
 
 # 模型类单独导入（避免可选依赖失败影响整体）
@@ -242,14 +267,20 @@ from .core.eda import (
 
 # 核心指标计算模块
 from .core.metrics import (
+    # 小写 (推荐)
+    ks, auc, gini, iv, psi, csi,
+    iv_table, psi_table, csi_table, ks_bucket, roc_curve,
+    lift, lift_at, lift_table, lift_curve, lift_monotonicity_check, rule_lift,
+    badrate, badrate_by_group, badrate_trend, badrate_by_score_bin,
+    score_stats, score_stability,
+    mse, mae, rmse, r2,
+    # 向后兼容 (大写)
     KS, AUC, Gini, PSI, IV,
     KS_bucket, ROC_curve,
     PSI_table, CSI_table,
     IV_table,
     MSE, MAE, RMSE, R2,
 )
-# 新增金融风控指标
-from .core.metrics.finance import lift_at, lift_monotonicity_check
 
 # ========== 报告模块导入 (在core之后导入，避免循环导入) ==========
 
@@ -268,6 +299,17 @@ from .report.swap_analysis_report import (
 )
 
 from .report.overdue_predictor import OverduePredictor, overdue_prediction_report
+from .report.model_report import QuickModelReport, auto_model_report, compare_models
+from .report.mining import (
+    SingleFeatureRuleMiner,
+    MultiFeatureRuleMiner,
+    MultiLabelRuleMiner,
+    TreeRuleExtractor,
+    RuleMetrics,
+    calculate_rule_metrics,
+    TreeVisualizer,
+    plot_decision_tree,
+)
 
 try:
     from .report.feature_report import auto_feature_analysis_report
@@ -285,6 +327,8 @@ from .utils import (
     germancredit,
     round_float,
     init_setting,
+    init_logger,
+    get_logger,
 )
 
 # ========== Pandas DataFrame 扩展方法 ==========
@@ -343,6 +387,25 @@ __all__ = [
     "feature_importance_plot",
     "approval_rate_trend_plot",
     "bad_rate_trend_plot",
+    # 变量分析图表
+    "variable_iv_plot",
+    "variable_woe_trend_plot",
+    "variable_psi_heatmap",
+    "variable_importance_grouped_plot",
+    "variable_missing_badrate_plot",
+    # 评分分析图表
+    "score_ks_plot",
+    "score_distribution_comparison_plot",
+    "score_badrate_bin_plot",
+    "score_lift_plot",
+    "score_approval_badrate_curve",
+    # 策略分析图表
+    "feature_trend_by_time",
+    "feature_drift_comparison",
+    "feature_effectiveness_by_segment",
+    "feature_cross_heatmap",
+    "population_drift_monitor",
+    "segment_scorecard_comparison",
 
     # 分析模块
     "feature_bin_stats",
@@ -363,6 +426,7 @@ __all__ = [
     "overdue_prediction_report",
 
     # 分箱模块
+    "BaseBinning",
     "UniformBinning",
     "QuantileBinning",
     "TreeBinning",
@@ -392,6 +456,7 @@ __all__ = [
     "QuantileEncoder",
     "CatBoostEncoder",
     "GBMEncoder",
+    "CardinalityEncoder",
 
     # 特征筛选模块（core.selection）
     "BaseFeatureSelector",
@@ -416,6 +481,8 @@ __all__ = [
     "Chi2Selector",
     "FTestSelector",
     "CompositeFeatureSelector",
+    "StepwiseSelector",
+    "StabilityAwareSelector",
 
     # 模型/损失函数模块
     "BaseLoss",
@@ -435,8 +502,45 @@ __all__ = [
     "TabNetLossAdapter",
     "LogisticRegression",
     "ScoreCard",
+    # 规则集分类
+    "RuleSet",
+    "RulesClassifier",
+    "RuleSetClassifier",
+    "LogicOperator",
+    "RuleResult",
+    "create_and_ruleset",
+    "create_or_ruleset",
+    "combine_rules",
 
-    # 指标计算模块
+    # 指标计算模块（小写推荐）
+    "ks",
+    "auc",
+    "gini",
+    "iv",
+    "psi",
+    "csi",
+    "iv_table",
+    "psi_table",
+    "csi_table",
+    "ks_bucket",
+    "roc_curve",
+    "lift",
+    "lift_at",
+    "lift_table",
+    "lift_curve",
+    "lift_monotonicity_check",
+    "rule_lift",
+    "badrate",
+    "badrate_by_group",
+    "badrate_trend",
+    "badrate_by_score_bin",
+    "score_stats",
+    "score_stability",
+    "mse",
+    "mae",
+    "rmse",
+    "r2",
+    # 向后兼容（大写）
     "KS",
     "AUC",
     "Gini",
@@ -451,9 +555,6 @@ __all__ = [
     "MAE",
     "RMSE",
     "R2",
-    # 新增金融风控指标
-    "lift_at",
-    "lift_monotonicity_check",
 
     # EDA模块 (函数式API)
     "data_info",
@@ -518,6 +619,34 @@ __all__ = [
     "germancredit",
     "round_float",
     "init_setting",
+    "init_logger",
+    "get_logger",
+
+    # 模型报告
+    "QuickModelReport",
+    "auto_model_report",
+    "compare_models",
+
+    # 规则挖掘
+    "SingleFeatureRuleMiner",
+    "MultiFeatureRuleMiner",
+    "MultiLabelRuleMiner",
+    "TreeRuleExtractor",
+    "RuleMetrics",
+    "calculate_rule_metrics",
+    "TreeVisualizer",
+    "plot_decision_tree",
+
+    # 异常体系
+    "HSCreditError",
+    "ValidationError",
+    "InputValidationError",
+    "InputTypeError",
+    "FeatureNotFoundError",
+    "StateError",
+    "NotFittedError",
+    "DependencyError",
+    "SerializationError",
 ]
 
 

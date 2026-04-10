@@ -26,6 +26,7 @@ from .swap_analysis_report import (
 )
 
 from .overdue_predictor import OverduePredictor, overdue_prediction_report
+from .model_report import QuickModelReport, auto_model_report, compare_models
 from .mining import (
     SingleFeatureRuleMiner,
     MultiFeatureRuleMiner,
@@ -79,6 +80,10 @@ __all__ = [
     "calculate_rule_metrics",
     "TreeVisualizer",
     "plot_decision_tree",
+    # 模型报告
+    "QuickModelReport",
+    "auto_model_report",
+    "compare_models",
     "auto_feature_analysis_report",
     "multi_label_rule_report",
     "population_drift_report",

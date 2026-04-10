@@ -16,6 +16,8 @@ import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, TransformerMixin
 
+from ...exceptions import NotFittedError, ValidationError
+
 
 def get_feature_importances(estimator) -> np.ndarray:
     """从任意模型中提取特征重要性.
@@ -71,7 +73,7 @@ def get_feature_importances(estimator) -> np.ndarray:
         except Exception:
             pass
 
-    raise ValueError(
+    raise ValidationError(
         f"无法从 {type(estimator).__name__} 中提取特征重要性。"
         f"模型需要提供 feature_importances_、coef_ 属性，"
         f"或 get_score / feature_importance / get_feature_importance 方法。"
@@ -134,7 +136,7 @@ class SelectionReportCollector:
         :return: self
         """
         if not hasattr(selector, 'get_selection_report'):
-            raise ValueError("selector 必须实现 get_selection_report() 方法")
+            raise ValidationError("selector 必须实现 get_selection_report() 方法")
 
         report = selector.get_selection_report()
         
@@ -756,7 +758,7 @@ class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
         :return: 筛选后的特征 (与输入类型一致)
         """
         if not hasattr(self, '_is_fitted'):
-            raise ValueError("筛选器尚未拟合,请先调用fit方法")
+            raise NotFittedError("筛选器尚未拟合，请先调用fit方法")
 
         # 如果传入的是列表，返回筛选后的特征列表
         if isinstance(X, list):
@@ -816,7 +818,7 @@ class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
         :return: 布尔数组,True表示选中
         """
         if not hasattr(self, '_is_fitted'):
-            raise ValueError("筛选器尚未拟合")
+            raise NotFittedError("筛选器尚未拟合，请先调用fit方法")
 
         mask = np.zeros(self.n_features_in_, dtype=bool)
         for col in self.selected_features_:

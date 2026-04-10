@@ -1,3 +1,6 @@
+import sys
+import types
+
 import numpy as np
 from sklearn.model_selection import train_test_split
 
@@ -72,3 +75,63 @@ def test_scorecard_python_deployment_code_matches_predict():
     deployed_scores = sample.apply(lambda row: namespace['calculate_score'](row.to_dict()), axis=1).to_numpy()
 
     np.testing.assert_allclose(reference, deployed_scores, atol=1e-9)
+
+
+def test_scorecard_pmml_export_uses_lookup_transformer_for_string_categories(tmp_path, monkeypatch):
+    scorecard, _, _ = _train_scorecard(direction='descending')
+    captured = {}
+
+    class FakeDataFrameMapper:
+        def __init__(self, mapper, df_out=True):
+            self.mapper = mapper
+            self.df_out = df_out
+
+    class FakeLookupTransformer:
+        def __init__(self, mapping, default_value=0.0):
+            self.mapping = mapping
+            self.default_value = default_value
+
+    class FakeExpressionTransformer:
+        def __init__(self, expression):
+            self.expression = expression
+
+    class FakePMMLPipeline:
+        def __init__(self, steps):
+            self.steps = steps
+            self.named_steps = dict(steps)
+
+        def fit(self, X, y):
+            captured['sample_df'] = X
+            captured['sample_y'] = y
+            return self
+
+    def fake_sklearn2pmml(pipeline, pmml_file, with_repr=True, debug=False):
+        captured['pipeline'] = pipeline
+        captured['pmml_file'] = pmml_file
+
+    fake_sklearn_pandas = types.ModuleType('sklearn_pandas')
+    fake_sklearn_pandas.DataFrameMapper = FakeDataFrameMapper
+
+    fake_sklearn2pmml_module = types.ModuleType('sklearn2pmml')
+    fake_sklearn2pmml_module.sklearn2pmml = fake_sklearn2pmml
+    fake_sklearn2pmml_module.PMMLPipeline = FakePMMLPipeline
+
+    fake_preprocessing = types.ModuleType('sklearn2pmml.preprocessing')
+    fake_preprocessing.LookupTransformer = FakeLookupTransformer
+    fake_preprocessing.ExpressionTransformer = FakeExpressionTransformer
+
+    monkeypatch.setitem(sys.modules, 'sklearn_pandas', fake_sklearn_pandas)
+    monkeypatch.setitem(sys.modules, 'sklearn2pmml', fake_sklearn2pmml_module)
+    monkeypatch.setitem(sys.modules, 'sklearn2pmml.preprocessing', fake_preprocessing)
+
+    scorecard.export_pmml(str(tmp_path / 'scorecard.pmml'))
+
+    mapper = captured['pipeline'].named_steps['preprocessing'].mapper
+    categorical_transformer = next(
+        transformer
+        for features, transformer in mapper
+        if features == ['status_of_existing_checking_account']
+    )
+
+    assert isinstance(categorical_transformer, FakeLookupTransformer)
+    assert 'no checking account' in categorical_transformer.mapping

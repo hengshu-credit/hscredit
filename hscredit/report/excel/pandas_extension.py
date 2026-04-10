@@ -20,9 +20,9 @@ Pandas扩展 - 为DataFrame和Series添加save方法
 from ...utils.pandas_extensions import (
     _dataframe_save,
     _series_save,
-    install_save_method,
+    register_extensions,
 )
 
 # 自动安装（当导入此模块时）- 已由utils.pandas_extensions处理
 # 这里调用是为了保持向后兼容
-install_save_method()
+register_extensions()
