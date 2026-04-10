@@ -319,10 +319,7 @@ class UniformBinning(BaseBinning):
                         for idx, row in bin_table.iterrows():
                             bin_idx = idx
                             woe_map[bin_idx] = row['分档WOE值']
-                        # 添加缺失值和特殊值的WOE映射
-                        for b in np.unique(bins):
-                            if b not in woe_map:
-                                woe_map[b] = 0.0
+                        self._enrich_woe_map(woe_map, bin_table)
                     else:
                         raise ValueError(f"特征 '{feature}' 没有WOE映射信息")
                     result[feature] = [woe_map.get(b, 0) for b in bins]

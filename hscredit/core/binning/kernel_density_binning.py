@@ -817,8 +817,7 @@ class KernelDensityBinning(BaseBinning):
                 elif feature in self.bin_tables_:
                     bin_table = self.bin_tables_[feature]
                     woe_map = dict(zip(range(len(bin_table)), bin_table['分档WOE值'].values))
-                    woe_map[-1] = 0
-                    woe_map[-2] = 0
+                    self._enrich_woe_map(woe_map, bin_table)
                 else:
                     raise ValueError(f"特征 '{feature}' 没有WOE映射信息")
                 result[feature] = pd.Series(bins).map(woe_map).values

@@ -183,8 +183,9 @@ def score_badrate_bin_plot(
     bin_edges = np.unique(bin_edges)
     labels_cut = pd.cut(s, bins=bin_edges, include_lowest=True)
 
+    categories = labels_cut.categories if hasattr(labels_cut, 'categories') else labels_cut.cat.categories
     rows = []
-    for i, bl in enumerate(labels_cut.cat.categories):
+    for i, bl in enumerate(categories):
         m = labels_cut == bl
         n = m.sum()
         n_bad = int(y[m].sum())

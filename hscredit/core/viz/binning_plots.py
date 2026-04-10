@@ -1353,6 +1353,7 @@ def bin_trend_plot(
     min_bin_size: float = 0.02,
     rules: Optional[Dict] = None,
     special_values: Optional[List] = None,
+    shared_bins: Optional[Union[str, bool]] = 'max_samples',
     sort_by: Optional[str] = None,
     sort_order: str = 'asc',
     max_groups: Optional[int] = None,
@@ -1382,6 +1383,11 @@ def bin_trend_plot(
     :param min_bin_size: 最小箱占比，默认0.02
     :param rules: 预定义分箱规则 {特征名: 分箱边界列表}
     :param special_values: 特殊值列表
+    :param shared_bins: 各分组是否共享同一切分点，默认 'max_samples'
+        - 'first': 使用第一个分组（最早时间/第一个维度值）的切分点
+        - 'last': 使用最后一个分组（最近时间/最后一个维度值）的切分点
+        - 'max_samples': 使用样本量最多的分组的切分点（默认）
+        - False 或 None: 每个分组独立计算切分点
     :param sort_by: 排序列名，None表示不排序，默认按维度值排序
     :param sort_order: 排序方向，'asc'/'desc'
     :param max_groups: 最大展示分组数，None表示全部展示
@@ -1417,6 +1423,12 @@ def bin_trend_plot(
         >>> fig = bin_trend_plot(
         ...     df, feature='score', target='bad',
         ...     rules={'score': [300, 500, 600, 700, 800]}
+        ... )
+
+        >>> # 各分组使用第一个分组的切分点
+        >>> fig = bin_trend_plot(
+        ...     df, feature='score', target='bad', date_col='apply_date',
+        ...     shared_bins='first'
         ... )
     """
     if colors is None:
@@ -1456,6 +1468,45 @@ def bin_trend_plot(
         group_col = '_group_key'
     else:
         group_col = None
+
+    # 处理 shared_bins：从指定分组提取切分点，统一应用到所有分组
+    if shared_bins and group_col is not None and rules is None:
+        groups = data[group_col].unique()
+        _sort_by = sort_by if (sort_by is not None and sort_by in data.columns) else None
+        if _sort_by is not None:
+            _group_order = data.groupby(group_col)[_sort_by].first().sort_values(
+                ascending=(sort_order == 'asc')
+            ).index.tolist()
+        else:
+            _group_order = sorted(groups)
+
+        _shared_bins = str(shared_bins).lower()
+        if _shared_bins == 'first':
+            ref_group = _group_order[0] if _group_order else None
+        elif _shared_bins == 'last':
+            ref_group = _group_order[-1] if _group_order else None
+        else:  # 'max_samples' 或其他真值
+            group_sizes = data.groupby(group_col).size()
+            ref_group = group_sizes.idxmax()
+
+        if ref_group is not None:
+            from ..binning import OptimalBinning
+            ref_data = data[data[group_col] == ref_group]
+            _valid = ~(pd.isna(ref_data[feature]) | pd.isna(ref_data[target]))
+            X_ref = ref_data.loc[_valid, feature]
+            y_ref = ref_data.loc[_valid, target]
+            if len(X_ref) > 0:
+                _binner = OptimalBinning(
+                    method=method, max_n_bins=max_n_bins,
+                    min_bin_size=min_bin_size, verbose=False, **kwargs
+                )
+                try:
+                    _binner.fit(X_ref.to_frame(), y_ref)
+                    _splits = _binner.splits_.get(feature, [])
+                    if len(_splits) > 0:
+                        rules = {feature: list(_splits)}
+                except Exception:
+                    pass  # 回退到独立分箱
 
     overall_stats = _compute_feature_bin_stats(
         data, feature, target,
@@ -1733,6 +1784,7 @@ def bin_overdues_plot(
     max_n_bins: int = 10,
     min_bin_size: float = 0.02,
     rules: Optional[Dict] = None,
+    shared_bins: Optional[Union[str, bool]] = 'max_samples',
     figsize: Optional[tuple] = None,
     colors: Optional[List[str]] = None,
     title: Optional[str] = None,
@@ -1758,6 +1810,11 @@ def bin_overdues_plot(
     :param max_n_bins: 最大分箱数，默认10
     :param min_bin_size: 最小箱占比，默认0.02
     :param rules: 预定义分箱规则 {特征名: 分箱边界列表}
+    :param shared_bins: 各逾期目标是否共享同一切分点，默认 'max_samples'
+        - 'first': 使用第一个逾期定义的切分点
+        - 'last': 使用最后一个逾期定义的切分点
+        - 'max_samples': 使用有效样本量最多的逾期定义的切分点（默认）
+        - False 或 None: 每个逾期定义独立计算切分点
     :param figsize: 图像尺寸，None时自动计算
     :param colors: 配色方案
     :param title: 图表总标题
@@ -1925,24 +1982,35 @@ def bin_overdues_plot(
         axes = np.array([axes])
     axes = axes.flatten() if n_plots > 1 else [axes]
 
-    # 计算全局分箱规则（使用第一个逾期定义）
+    # 计算全局分箱规则
     if rules is None or feature not in rules:
-        from ..binning import OptimalBinning
-        dpd_col = overdue[0]
-        threshold = dpds[0]
-        y = (data[dpd_col] >= threshold).astype(int)
-        valid_mask = ~(pd.isna(data[feature]) | pd.isna(y))
-        X_valid = data.loc[valid_mask, feature]
-        y_valid = y[valid_mask]
+        global_rules = None
+        if shared_bins:
+            from ..binning import OptimalBinning
+            _shared = str(shared_bins).lower()
+            if _shared == 'first':
+                ref_idx = 0
+            elif _shared == 'last':
+                ref_idx = len(overdue) - 1
+            else:  # 'max_samples' 或其他真值
+                valid_counts = []
+                for dpd_col, threshold in zip(overdue, dpds):
+                    y_tmp = (data[dpd_col] >= threshold).astype(int)
+                    valid_counts.append((~(pd.isna(data[feature]) | pd.isna(y_tmp))).sum())
+                ref_idx = int(np.argmax(valid_counts))
 
-        binner = OptimalBinning(method=method, max_n_bins=max_n_bins, min_bin_size=min_bin_size, verbose=False)
-        binner.fit(X_valid.to_frame(), y_valid)
+            dpd_col = overdue[ref_idx]
+            threshold = dpds[ref_idx]
+            y = (data[dpd_col] >= threshold).astype(int)
+            valid_mask = ~(pd.isna(data[feature]) | pd.isna(y))
+            X_valid = data.loc[valid_mask, feature]
+            y_valid = y[valid_mask]
 
-        if feature in binner.bin_tables_:
+            binner = OptimalBinning(method=method, max_n_bins=max_n_bins, min_bin_size=min_bin_size, verbose=False)
+            binner.fit(X_valid.to_frame(), y_valid)
+
             bin_edges = binner.splits_.get(feature, [])
-        else:
-            bin_edges = []
-        global_rules = {feature: bin_edges} if len(bin_edges) > 0 else None
+            global_rules = {feature: list(bin_edges)} if len(bin_edges) > 0 else None
     else:
         global_rules = rules
 

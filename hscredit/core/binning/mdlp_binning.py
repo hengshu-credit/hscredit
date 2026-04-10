@@ -610,6 +610,9 @@ class MDLPBinning(BaseBinning):
         result = pd.DataFrame(index=X.index)
 
         for feature in X.columns:
+            if feature not in self.splits_:
+                result[feature] = X[feature]
+                continue
             splits = self.splits_[feature]
             feature_type = self.feature_types_[feature]
             bins = self._apply_splits(X[feature], splits, feature_type)
@@ -625,6 +628,7 @@ class MDLPBinning(BaseBinning):
                 elif feature in self.bin_tables_:
                     bin_table = self.bin_tables_[feature]
                     woe_map = {i: bin_table.iloc[i]['分档WOE值'] for i in range(len(bin_table))}
+                    self._enrich_woe_map(woe_map, bin_table)
                 else:
                     raise ValueError(f"特征 '{feature}' 没有WOE映射信息")
                 result[feature] = [woe_map.get(b, 0) for b in bins]

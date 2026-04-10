@@ -498,7 +498,8 @@ class QuantileBinning(BaseBinning):
 
         for feature in X.columns:
             if feature not in self.splits_:
-                raise KeyError(f"特征 '{feature}' 未在训练数据中找到")
+                result[feature] = X[feature]
+                continue
 
             splits = self.splits_[feature]
             bins = self._apply_bins(X[feature], splits)
@@ -515,8 +516,7 @@ class QuantileBinning(BaseBinning):
                 elif feature in self.bin_tables_:
                     bin_table = self.bin_tables_[feature]
                     woe_map = dict(zip(range(len(bin_table)), bin_table['分档WOE值'].values))
-                    woe_map[-1] = 0  # 缺失值
-                    woe_map[-2] = 0  # 特殊值
+                    self._enrich_woe_map(woe_map, bin_table)
                 else:
                     raise ValueError(f"特征 '{feature}' 没有WOE映射信息，请先fit或加载包含WOE信息的规则")
                 result[feature] = pd.Series(bins).map(woe_map).values

@@ -688,6 +688,9 @@ class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
         1. 传入 DataFrame - 返回筛选后的 DataFrame
         2. 传入特征列表 - 返回筛选后的特征列表
 
+        scorecardpipeline 风格: 如果传入的 DataFrame 包含目标变量列（target），
+        目标变量列会被保留在输出中（透传）。
+
         :param X: 输入特征 (DataFrame, ndarray 或特征名列表)
         :return: 筛选后的特征 (与输入类型一致)
         """
@@ -705,6 +708,12 @@ class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
 
         # 返回选中的特征
         selected = [c for c in self.selected_features_ if c in X.columns]
+
+        # scorecardpipeline 风格: 如果 X 中包含 target 列，透传到输出
+        target_col = getattr(self, 'target', None)
+        if target_col and target_col in X.columns and target_col not in selected:
+            return X[selected + [target_col]]
+
         return X[selected]
 
     def fit_transform(

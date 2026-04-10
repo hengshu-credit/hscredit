@@ -141,6 +141,8 @@ class BestIVBinning(BaseBinning):
             self.n_bins_[feature] = len(splits) + 1 if splits else len(X_valid.unique())
         else:
             # 数值型变量：Best IV分箱
+            # 使用全量样本规模对齐后处理约束（避免 valid-only 与 full-data 约束不一致）
+            self._n_total_samples = len(X)
             splits = self._best_iv_numerical(X_valid, y_valid)
             self.splits_[feature] = self._round_splits(splits)
             self.n_bins_[feature] = len(splits) + 1
@@ -200,6 +202,7 @@ class BestIVBinning(BaseBinning):
         # 计算总体统计
         total_good = np.sum(y_vals == 0)
         total_bad = np.sum(y_vals == 1)
+        n_total_samples = int(getattr(self, '_n_total_samples', len(x_vals)))
 
         if total_good == 0 or total_bad == 0:
             return []
@@ -210,9 +213,15 @@ class BestIVBinning(BaseBinning):
 
         # 使用贪心算法选择最优分割点
         selected_splits = []
+        enforce_monotonic = self.monotonic in [
+            True, 'auto', 'auto_asc_desc', 'auto_heuristic',
+            'ascending', 'descending', 'peak', 'valley',
+            'peak_heuristic', 'valley_heuristic'
+        ]
 
         while len(selected_splits) < self.max_n_bins - 1 and len(candidates) > 0:
-            best_iv = -1
+            best_iv = -1.0
+            best_violation = np.inf
             best_split_idx = -1
             best_split = None
 
@@ -220,13 +229,38 @@ class BestIVBinning(BaseBinning):
                 test_splits = sorted(selected_splits + [candidate])
                 iv = self._calc_iv_fast(
                     x_sorted, y_sorted, cum_good, cum_bad,
-                    total_good, total_bad, test_splits
+                    total_good, total_bad, test_splits,
+                    n_total_samples=n_total_samples
                 )
 
-                if iv > best_iv:
+                if iv < 0:
+                    continue
+
+                violation = 0
+                if enforce_monotonic and len(test_splits) > 0:
+                    bad_rates = self._calc_bad_rates_fast(
+                        x_sorted, cum_good, cum_bad, test_splits
+                    )
+                    target_mode = self._resolve_monotonic_target_mode(
+                        bad_rates, self.monotonic
+                    )
+                    violation = self._count_monotonic_violations(
+                        bad_rates, target_mode
+                    )
+
+                # 优先减少单调违例，其次最大化 IV
+                if (violation < best_violation) or (
+                    violation == best_violation and iv > best_iv + 1e-12
+                ):
                     best_iv = iv
+                    best_violation = violation
                     best_split_idx = i
                     best_split = candidate
+
+            # 若新增分割点会引入单调违例，且已满足最小分箱数，则停止扩展
+            min_splits_required = max(1, self.min_n_bins - 1)
+            if enforce_monotonic and best_split is not None and best_violation > 0 and len(selected_splits) >= min_splits_required:
+                break
 
             if best_split is not None:
                 selected_splits.append(best_split)
@@ -244,7 +278,8 @@ class BestIVBinning(BaseBinning):
         cum_bad: np.ndarray,
         total_good: int,
         total_bad: int,
-        splits: List[float]
+        splits: List[float],
+        n_total_samples: Optional[int] = None
     ) -> float:
         """快速计算IV值.
 
@@ -268,7 +303,8 @@ class BestIVBinning(BaseBinning):
 
         iv = 0.0
         eps = 1e-10
-        min_samples = self._get_min_samples(len(x_sorted))
+        base_n_samples = int(len(x_sorted) if n_total_samples is None else n_total_samples)
+        min_samples = self._get_min_samples(base_n_samples)
 
         for i in range(len(split_positions) - 1):
             start = split_positions[i]
@@ -293,6 +329,33 @@ class BestIVBinning(BaseBinning):
                 iv += (bad_dist - good_dist) * np.log(bad_dist / good_dist)
 
         return iv
+
+    def _calc_bad_rates_fast(
+        self,
+        x_sorted: np.ndarray,
+        cum_good: np.ndarray,
+        cum_bad: np.ndarray,
+        splits: List[float]
+    ) -> np.ndarray:
+        """基于累积统计快速计算各箱坏样本率。"""
+        if not splits:
+            return np.array([], dtype=float)
+
+        split_positions = [np.searchsorted(x_sorted, s, side='right') for s in sorted(splits)]
+        split_positions = [0] + split_positions + [len(x_sorted)]
+
+        bad_rates: List[float] = []
+        for i in range(len(split_positions) - 1):
+            start = split_positions[i]
+            end = split_positions[i + 1]
+            if start >= end:
+                continue
+            good_in_bin = cum_good[end - 1] - (cum_good[start - 1] if start > 0 else 0)
+            bad_in_bin = cum_bad[end - 1] - (cum_bad[start - 1] if start > 0 else 0)
+            count = float(good_in_bin + bad_in_bin)
+            bad_rates.append(float(bad_in_bin / count) if count > 0 else 0.0)
+
+        return np.asarray(bad_rates, dtype=float)
 
     def _best_iv_categorical(
         self,
@@ -491,6 +554,7 @@ class BestIVBinning(BaseBinning):
                             range(len(self.bin_tables_[feature])),
                             self.bin_tables_[feature]['分档WOE值']
                         ))
+                        self._enrich_woe_map(woe_map, self.bin_tables_[feature])
                     else:
                         raise ValueError(f"特征 '{feature}' 没有WOE映射信息")
                     result[feature] = [woe_map.get(b, 0) for b in bins]

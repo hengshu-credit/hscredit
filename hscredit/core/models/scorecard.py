@@ -292,7 +292,7 @@ class ScoreCard(StandardScoreTransformer):
             scores = [self._woe_to_point(woe, coef) for woe in woe_values]
             
             self.rules_[col] = {
-                'bins': bins if bins is not None else woe_values,
+                'bins': bins,
                 'bin_labels': bin_labels,
                 'woe': woe_values,
                 'scores': np.array(scores),
@@ -791,12 +791,21 @@ class ScoreCard(StandardScoreTransformer):
 
             woe_values = np.asarray(woe_values)
 
+            # 最终兜底：如果仍然没有分箱标签，尝试从 binner 获取
+            if bin_labels is None and self.binner is not None:
+                if hasattr(self.binner, 'bin_tables_') and col in getattr(self.binner, 'bin_tables_', {}):
+                    bt = self.binner.bin_tables_[col]
+                    if '分箱标签' in bt.columns and '分档WOE值' in bt.columns:
+                        bin_labels = bt['分箱标签'].values
+                        woe_values = bt['分档WOE值'].values
+                        bins = self._parse_bin_labels(bin_labels)
+
             # 计算每个 WOE 对应的分数
             scores = [self._woe_to_point(woe, coef) for woe in woe_values]
 
             self.rules_[col] = {
-                'bins': bins if bins is not None else woe_values,
-                'bin_labels': bin_labels,  # 保存原始分箱标签
+                'bins': bins,
+                'bin_labels': bin_labels,
                 'woe': woe_values,
                 'scores': np.array(scores),
                 'coef': coef,
@@ -1058,7 +1067,8 @@ class ScoreCard(StandardScoreTransformer):
 
     def scorecard_points(
         self,
-        feature_map: Optional[Dict[str, str]] = None
+        feature_map: Optional[Dict[str, str]] = None,
+        decimal: int = 2
     ) -> pd.DataFrame:
         """输出评分卡分箱信息及其对应的分数.
         
@@ -1070,6 +1080,9 @@ class ScoreCard(StandardScoreTransformer):
         - 特殊值分箱（标记为 'special'）
         
         参考 scorecardpipeline 的实现方式，确保与分箱器格式兼容。
+
+        :param feature_map: 特征名到中文含义的映射字典
+        :param decimal: 分数保留小数位数，默认 2
         """
         check_is_fitted(self)
 
@@ -1085,7 +1098,7 @@ class ScoreCard(StandardScoreTransformer):
             '变量名称': '基础分',
             '变量含义': '截距项（基准分数）',
             '变量分箱': '-',
-            '对应分数': round(float(intercept_score), 2),
+            '对应分数': round(float(intercept_score), decimal),
             'WOE值': None
         })
         
@@ -1102,7 +1115,8 @@ class ScoreCard(StandardScoreTransformer):
             
             # 优先使用 bin_labels（完整的分箱标签）
             bin_labels = rule.get('bin_labels')
-            bins = rule.get('bins', [])
+            bins = rule.get('bins')
+            woe_values = rule.get('woe', [])
             
             # 确定要使用的分箱标签
             if bin_labels is not None and len(bin_labels) > 0:
@@ -1110,7 +1124,8 @@ class ScoreCard(StandardScoreTransformer):
             elif bins is not None and len(bins) > 0:
                 labels_to_use = bins
             else:
-                labels_to_use = [f'箱{i}' for i in range(len(scores))]
+                # 无分箱标签，使用 WOE 值格式化为标签
+                labels_to_use = [f'WOE: {w:.4f}' for w in woe_values]
             
             if len(labels_to_use) != len(scores):
                 # 如果标签和分数数量不匹配，重新生成标签
@@ -1125,7 +1140,7 @@ class ScoreCard(StandardScoreTransformer):
                     '变量名称': col,
                     '变量含义': feature_map.get(col, ''),
                     '变量分箱': display_label,
-                    '对应分数': round(float(score), 2),
+                    '对应分数': round(float(score), decimal),
                     'WOE值': round(float(woe), 4) if woe is not None else None
                 })
 
@@ -1186,7 +1201,7 @@ class ScoreCard(StandardScoreTransformer):
         check_is_fitted(self)
 
         # 使用 scorecard_points 获取完整信息
-        points_df = self.scorecard_points()
+        points_df = self.scorecard_points(decimal=decimal)
         
         # 构建与 toad/scorecardpipeline 兼容的格式
         card = {}
@@ -1327,7 +1342,7 @@ class ScoreCard(StandardScoreTransformer):
         samples = {}
 
         for var, rule in self.rules_.items():
-            bins = rule['bins']
+            bins = rule.get('bins') or rule.get('bin_labels')
             scores = rule['scores']
 
             if bins is None or len(bins) == 0:
@@ -1353,9 +1368,30 @@ class ScoreCard(StandardScoreTransformer):
                                  ('[' in str(bins[0]) or '(' in str(bins[0])))
                 
                 if has_string_bins:
-                    numeric_bins = self._extract_numeric_bins(list(bins))
+                    # 分离缺失值/特殊值箱的分数
+                    normal_scores = []
+                    missing_score = None
+                    bin_labels = list(bins)
+                    for lbl, sc in zip(bin_labels, scores):
+                        lbl_lower = str(lbl).strip().lower()
+                        if lbl_lower in ('missing', '缺失值', '缺失', 'nan', 'none', 'null',
+                                         'special', '特殊值', '特殊'):
+                            if missing_score is None:
+                                missing_score = float(sc)
+                        else:
+                            normal_scores.append(float(sc))
+                    normal_scores = np.array(normal_scores)
+
+                    numeric_bins = self._extract_numeric_bins(bin_labels)
                     if numeric_bins:
-                        expression_string = self._build_pmml_expression(numeric_bins, scores)
+                        # 构建 cut points + NaN 标记（如有缺失箱）
+                        if missing_score is not None:
+                            pmml_bins = np.array(numeric_bins + [np.nan])
+                            pmml_scores = np.append(normal_scores, missing_score)
+                        else:
+                            pmml_bins = np.array(numeric_bins)
+                            pmml_scores = normal_scores
+                        expression_string = self._build_pmml_expression(pmml_bins, pmml_scores)
                     else:
                         # 简化处理
                         expression_string = f"{scores[0]}"
@@ -1393,6 +1429,7 @@ class ScoreCard(StandardScoreTransformer):
         language: str = 'python',
         output_file: Optional[str] = None,
         function_name: str = 'calculate_score',
+        decimal: int = 4,
     ) -> str:
         """导出评分卡部署代码.
 
@@ -1401,6 +1438,7 @@ class ScoreCard(StandardScoreTransformer):
         :param language: 目标语言，可选 'sql'/'python'/'java'，默认 'python'
         :param output_file: 输出文件路径，为 None 时仅返回字符串
         :param function_name: 函数/存储过程名称，默认 'calculate_score'
+        :param decimal: 分数保留小数位数，默认 4
         :return: 生成的部署代码字符串
 
         示例::
@@ -1414,8 +1452,12 @@ class ScoreCard(StandardScoreTransformer):
         """
         check_is_fitted(self)
 
-        card = self.export()
-        base_score = float(self.base_score_) if hasattr(self, 'base_score_') else 0.0
+        card = self.export(decimal=decimal)
+        # 移除基础分行（截距项不作为特征处理）
+        card.pop('基础分', None)
+        # 基础分 = 截距分数 = A_ - B_ * intercept_，与 predict() 一致
+        intercept_score = self.A_ - self.B_ * self.intercept_
+        base_score = round(float(intercept_score), decimal)
 
         if language.lower() == 'sql':
             code = self._generate_sql(card, base_score, function_name)

@@ -137,6 +137,7 @@ class OptimalBinning(BaseBinning):
         min_bin_size: Union[float, int] = 0.01,
         max_bin_size: Optional[Union[float, int]] = None,
         monotonic: Union[bool, str] = False,
+        missing_separate: bool = True,
         user_splits: Optional[Union[Dict[str, List], Callable]] = None,
         prebinning: Optional[Union[str, 'BaseBinning', Dict]] = None,
         prebinning_params: Optional[Dict] = None,
@@ -155,6 +156,7 @@ class OptimalBinning(BaseBinning):
         
         super().__init__(
             target=target,
+            missing_separate=missing_separate,
             max_n_bins=max_n_bins,
             min_n_bins=min_n_bins,
             min_bin_size=min_bin_size,
@@ -469,7 +471,7 @@ class OptimalBinning(BaseBinning):
             y_clean = y[x_clean.index]
             
             # 基于预分箱切分点计算每个箱的统计信息
-            bins = np.digitize(x_clean, initial_splits, right=True)
+            bins = np.digitize(x_clean, initial_splits)
             
             # 根据主方法进行优化
             if self.method == 'best_iv':
@@ -532,7 +534,7 @@ class OptimalBinning(BaseBinning):
             return initial_splits
         
         # 计算每个预分箱的IV贡献
-        bins = np.digitize(x, initial_splits, right=True)
+        bins = np.digitize(x, initial_splits)
         bin_stats = []
         
         for bin_idx in range(len(initial_splits) + 1):
@@ -661,7 +663,7 @@ class OptimalBinning(BaseBinning):
         
         while len(current_splits) >= self.max_n_bins:
             # 计算每个分箱的统计信息
-            bins = np.digitize(x, current_splits, right=True)
+            bins = np.digitize(x, current_splits)
             
             bin_stats = []
             for bin_idx in range(len(current_splits) + 1):
@@ -786,7 +788,7 @@ class OptimalBinning(BaseBinning):
         if len(splits) == 0:
             return 0.0
         
-        bins = np.digitize(x, splits, right=True)
+        bins = np.digitize(x, splits)
         contingency = pd.crosstab(bins, y).values
         
         if contingency.shape[0] < 2:
@@ -819,7 +821,7 @@ class OptimalBinning(BaseBinning):
         if len(splits) == 0:
             return -np.inf
 
-        bins = np.digitize(x, splits, right=True)
+        bins = np.digitize(x, splits)
         n_bins = len(splits) + 1
         total = len(y)
         total_bad = float(np.sum(y))
@@ -919,7 +921,7 @@ class OptimalBinning(BaseBinning):
         def _is_ok_monotonic(xv: pd.Series, yv: pd.Series, sp: np.ndarray) -> bool:
             if not strict_mono:
                 return True
-            b = np.digitize(xv, sp, right=True)
+            b = np.digitize(xv, sp)
             cnt = np.bincount(b, minlength=len(sp) + 1).astype(float)
             bad = np.bincount(b, weights=yv, minlength=len(sp) + 1).astype(float)
             br = bad / np.maximum(cnt, 1.0)
@@ -1346,10 +1348,10 @@ class OptimalBinning(BaseBinning):
                 for i, cat in enumerate(splits):
                     labels[i] = str(cat)
         elif isinstance(splits, np.ndarray) and len(splits) > 0:
-            # 数值型切分点
+            # 数值型切分点（左闭右开 [a, b) 格式）
             sp_l = [-np.inf] + splits.tolist() + [np.inf]
             for i in range(len(sp_l) - 1):
-                labels[i] = f'({sp_l[i]:.2f}, {sp_l[i+1]:.2f}]'
+                labels[i] = f'[{sp_l[i]:.2f}, {sp_l[i+1]:.2f})'
         else:
             # 只有一个箱
             labels[0] = 'all'
@@ -1422,8 +1424,7 @@ class OptimalBinning(BaseBinning):
                 elif feature in self.bin_tables_:
                     bin_table = self.bin_tables_[feature]
                     woe_map = dict(zip(range(len(bin_table)), bin_table['分档WOE值'].values))
-                    woe_map[-1] = 0
-                    woe_map[-2] = 0
+                    self._enrich_woe_map(woe_map, bin_table)
                 else:
                     raise ValueError(f"特征 '{feature}' 没有WOE映射信息")
                 result[feature] = pd.Series(bins).map(woe_map).values

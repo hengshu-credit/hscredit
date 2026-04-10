@@ -350,6 +350,27 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
         """
         pass
 
+    @staticmethod
+    def _enrich_woe_map(woe_map: dict, bin_table) -> None:
+        """为 woe_map 补充缺失值/特殊值箱的 WOE 映射.
+
+        ``_apply_splits`` 对缺失值返回 -1、特殊值返回 -2，而 ``woe_map``
+        默认只包含 0..n-1 的映射。本方法从 bin_table 的 missing/special
+        行中提取真实 WOE 值写入 woe_map[-1] / woe_map[-2]。
+        """
+        if '分箱标签' not in bin_table.columns:
+            woe_map.setdefault(-1, 0.0)
+            woe_map.setdefault(-2, 0.0)
+            return
+        for idx in range(len(bin_table)):
+            lbl = str(bin_table.iloc[idx].get('分箱标签', '')).lower()
+            if lbl in ('missing', '缺失值', '缺失'):
+                woe_map[-1] = float(bin_table.iloc[idx]['分档WOE值'])
+            elif lbl in ('special', '特殊值', '特殊'):
+                woe_map[-2] = float(bin_table.iloc[idx]['分档WOE值'])
+        woe_map.setdefault(-1, 0.0)
+        woe_map.setdefault(-2, 0.0)
+
     def fit_transform(
         self,
         X: Union[pd.DataFrame, np.ndarray],
@@ -710,6 +731,46 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
                     bins[mask] = 0
             self.bin_tables_[feature] = self._compute_bin_stats(feature, X[feature], y, bins)
 
+    def _enforce_max_n_bins_hard_cap(
+        self,
+        X: pd.DataFrame,
+        y: pd.Series
+    ) -> None:
+        """硬性限制最大分箱数，不超过 max_n_bins。
+
+        当其他约束调整后切分点仍超出限制时，按相邻箱坏样本率差异最小的
+        优先合并策略进行截断。
+        """
+        max_splits = max(0, self.max_n_bins - 1)
+        for feature in list(self.splits_.keys()):
+            if self.feature_types_.get(feature) != 'numerical':
+                continue
+            splits = self.splits_[feature]
+            if splits is None or len(splits) <= max_splits:
+                continue
+
+            current = np.unique(np.sort(np.asarray(splits, dtype=float)))
+            x = X[feature]
+            while len(current) > max_splits:
+                bins = self._get_feature_bins(feature, x, current)
+                bin_table = self._compute_bin_stats(feature, x, y, bins)
+                valid = bin_table[bin_table['分箱'] >= 0].reset_index(drop=True)
+                bad_rates = valid['坏样本率'].to_numpy(dtype=float)
+                if len(bad_rates) <= 2:
+                    current = current[:max_splits]
+                    break
+                diffs = np.abs(np.diff(bad_rates))
+                merge_idx = int(np.argmin(diffs))
+                if merge_idx < 0 or merge_idx >= len(current):
+                    current = current[:max_splits]
+                    break
+                current = np.delete(current, merge_idx)
+
+            self.splits_[feature] = self._round_splits(current)
+            self.n_bins_[feature] = len(current) + 1
+            bins = self._get_feature_bins(feature, x, current)
+            self.bin_tables_[feature] = self._compute_bin_stats(feature, x, y, bins)
+
     def _apply_post_fit_constraints(
         self,
         X: pd.DataFrame,
@@ -723,6 +784,9 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
         if enforce_monotonic and self.monotonic and callable(monotonic_adjuster):
             monotonic_adjuster(X, y)
             self._enforce_bin_size_constraints(X, y)
+
+        # 最终硬性限制：确保不超过 max_n_bins
+        self._enforce_max_n_bins_hard_cap(X, y)
 
     def _get_feature_bins(
         self,
@@ -1299,7 +1363,7 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
         splits: np.ndarray,
         bins: Optional[np.ndarray] = None
     ) -> List[str]:
-        """根据切分点生成分箱标签.
+        """根据切分点生成分箱标签（左闭右开 [a, b) 风格，与 toad/scorecardpipeline 一致）.
 
         :param splits: 切分点数组
         :param bins: 分箱索引，用于处理缺失值和特殊值
@@ -1320,29 +1384,29 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
                     labels.append('special')
                 elif n_splits == 0:
                     # 没有切分点时，所有正常值在一个箱
-                    labels.append('(-inf, +inf)')
+                    labels.append('[-inf, +inf)')
                 elif i < n_bins:
                     if i == 0:
-                        labels.append(f'(-inf, {splits[i]}]')
+                        labels.append(f'[-inf, {splits[i]})')
                     elif i == n_bins - 1:
-                        labels.append(f'({splits[i-1]}, +inf)')
+                        labels.append(f'[{splits[i-1]}, +inf)')
                     else:
-                        labels.append(f'({splits[i-1]}, {splits[i]}]')
+                        labels.append(f'[{splits[i-1]}, {splits[i]})')
                 else:
                     labels.append(f'bin_{i}')
         else:
             # 只根据切分点生成标签
             if n_splits == 0:
                 # 没有切分点时，只有一个箱
-                labels.append('(-inf, +inf)')
+                labels.append('[-inf, +inf)')
             else:
                 for i in range(n_splits + 1):
                     if i == 0:
-                        labels.append(f'(-inf, {splits[i]}]')
+                        labels.append(f'[-inf, {splits[i]})')
                     elif i == n_splits:
-                        labels.append(f'({splits[i-1]}, +inf)')
+                        labels.append(f'[{splits[i-1]}, +inf)')
                     else:
-                        labels.append(f'({splits[i-1]}, {splits[i]}]')
+                        labels.append(f'[{splits[i-1]}, {splits[i]})')
 
         return labels
 
@@ -1362,24 +1426,46 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
 
         return self.bin_tables_[feature].copy()
 
+    def _splits_with_nan(self, feature: str) -> Union[np.ndarray, list]:
+        """返回包含缺失值标记的切分点（scorecardpipeline 格式）.
+
+        数值型特征：如果 missing_separate=True，在切分点末尾追加 np.nan。
+        类别型特征：直接返回 _cat_bins_（已包含 np.nan）。
+        """
+        if self.feature_types_.get(feature) == 'categorical':
+            if feature in self._cat_bins_:
+                return self._cat_bins_[feature]
+            return self.splits_.get(feature, [])
+
+        splits = self.splits_.get(feature, np.array([]))
+        if self.missing_separate:
+            arr = splits.tolist() if isinstance(splits, np.ndarray) else list(splits)
+            arr.append(np.nan)
+            return arr
+        return splits
+
     def __getitem__(self, feature: str):
-        """通过 `binner['feature']` 获取分箱规则（toad/scorecardpipeline风格）."""
+        """通过 `binner['feature']` 获取分箱规则（toad/scorecardpipeline风格）.
+
+        数值型特征返回切分点列表，末尾 np.nan 表示缺失值单独一箱。
+        类别型特征返回 List[List] 分组列表。
+        """
         if not self._is_fitted:
             raise ValueError("分箱器尚未拟合，请先调用fit方法")
 
-        if feature in self._cat_bins_:
-            return self._cat_bins_[feature]
+        if feature not in self.splits_ and feature not in self._cat_bins_:
+            raise KeyError(f"特征 '{feature}' 未找到")
 
-        if feature in self.splits_:
-            return self.splits_[feature]
+        return self._splits_with_nan(feature)
 
-        raise KeyError(f"特征 '{feature}' 未找到")
+    def get_splits(self, feature: str) -> Union[np.ndarray, list]:
+        """获取指定特征的切分点（scorecardpipeline 格式）.
 
-    def get_splits(self, feature: str) -> np.ndarray:
-        """获取指定特征的切分点.
+        数值型特征：切分点末尾 np.nan 表示缺失值单独一箱。
+        类别型特征：返回 List[List] 分组列表。
 
         :param feature: 特征名
-        :return: 切分点数组
+        :return: 切分点列表
         """
         if not self._is_fitted:
             raise ValueError("分箱器尚未拟合，请先调用fit方法")
@@ -1387,7 +1473,7 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
         if feature not in self.splits_:
             raise KeyError(f"特征 '{feature}' 未找到")
 
-        return self.splits_[feature]
+        return self._splits_with_nan(feature)
 
     def export_rules(self) -> Dict[str, Union[List, List[List]]]:
         """导出分箱规则.
@@ -1446,9 +1532,12 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
                     # 如果没有分组信息，返回空列表
                     rules[feature] = []
             else:
-                # 数值型变量：返回切分点列表
+                # 数值型变量：返回切分点列表（scorecardpipeline 格式，末尾 nan 表示缺失箱）
                 splits = self.splits_[feature]
-                rules[feature] = splits.tolist() if isinstance(splits, np.ndarray) else list(splits)
+                arr = splits.tolist() if isinstance(splits, np.ndarray) else list(splits)
+                if self.missing_separate:
+                    arr.append(np.nan)
+                rules[feature] = arr
         
         return rules
 
@@ -1500,10 +1589,12 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
                 self.splits_[feature] = rule  # 保持List[List]格式
                 self.n_bins_[feature] = len(rule)
             else:
-                # 数值型变量：切分点列表
-                self.splits_[feature] = np.array(rule)
+                # 数值型变量：切分点列表（兼容 scorecardpipeline 格式，自动剥离末尾 nan）
+                numeric_splits = pd.to_numeric(pd.Series(list(rule)), errors='coerce')
+                clean = numeric_splits[numeric_splits.notna()].to_numpy(dtype=float)
+                self.splits_[feature] = np.unique(np.sort(clean))
                 self.feature_types_[feature] = 'numerical'
-                self.n_bins_[feature] = len(rule) + 1
+                self.n_bins_[feature] = len(self.splits_[feature]) + 1
         
         self._is_fitted = True
 
@@ -1588,8 +1679,7 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
                 for idx, row in bin_table.iterrows():
                     woe_map[int(idx)] = float(row['分档WOE值'])
                 # 添加缺失值和特殊值的WOE
-                woe_map[-1] = 0.0  # 缺失值
-                woe_map[-2] = 0.0  # 特殊值
+                self._enrich_woe_map(woe_map, bin_table)
                 woe_maps[feature] = woe_map
         
         if woe_maps:
@@ -1706,10 +1796,12 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
                     self.splits_[feature] = rule
                     self.n_bins_[feature] = len(rule)
                 else:
-                    # 数值型
-                    self.splits_[feature] = np.array(rule)
+                    # 数值型：兼容 scorecardpipeline 格式，自动剥离末尾 nan
+                    numeric_splits = pd.to_numeric(pd.Series(list(rule)), errors='coerce')
+                    clean = numeric_splits[numeric_splits.notna()].to_numpy(dtype=float)
+                    self.splits_[feature] = np.unique(np.sort(clean))
                     self.feature_types_[feature] = 'numerical'
-                    self.n_bins_[feature] = len(rule) + 1
+                    self.n_bins_[feature] = len(self.splits_[feature]) + 1
             self._is_fitted = True
         else:
             # 替换模式：使用 import_rules

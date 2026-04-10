@@ -469,6 +469,7 @@ class BestKSBinning(BaseBinning):
                             range(len(self.bin_tables_[feature])),
                             self.bin_tables_[feature]['分档WOE值']
                         ))
+                        self._enrich_woe_map(woe_map, self.bin_tables_[feature])
                     else:
                         raise ValueError(f"特征 '{feature}' 没有WOE映射信息")
                     result[feature] = [woe_map.get(b, 0) for b in bins]

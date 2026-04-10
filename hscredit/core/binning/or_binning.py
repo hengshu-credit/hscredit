@@ -72,7 +72,7 @@ class ORBinning(BaseBinning):
         - 箱统计字典包含: 'count', 'good', 'bad', 'bad_rate', 'good_rate', 'lift', 'woe'
     :param n_prebins: 预分箱数量（候选分割点数），默认为20
         - 候选点越多，求解越精确，但计算时间越长
-    :param max_candidates: 最大候选分割点数，默认为50
+    :param max_candidates: 最大候选分割点数，默认为100
         - 如果唯一值超过此数，将使用分位数采样
     :param time_limit: 求解时间限制（秒），默认为60
         - 超过此时间将返回当前找到的最优解
@@ -164,7 +164,7 @@ class ORBinning(BaseBinning):
         objective: str = 'iv',
         custom_objective: Optional[callable] = None,
         n_prebins: int = 20,
-        max_candidates: int = 50,
+        max_candidates: int = 100,
         time_limit: int = 60,
         missing_separate: bool = True,
         special_codes: Optional[List] = None,
@@ -273,6 +273,7 @@ class ORBinning(BaseBinning):
             self.n_bins_[feature] = len(splits) + 1 if splits else len(X_valid.unique())
         else:
             # 数值型变量：使用 OR-Tools 优化
+            self._n_total_samples = len(X)  # 记录全量样本数供 _score_splits 使用
             splits = self._or_numerical(X_valid, y_valid)
             self.splits_[feature] = self._round_splits(splits)
             self.n_bins_[feature] = len(splits) + 1
@@ -321,6 +322,9 @@ class ORBinning(BaseBinning):
     ) -> List[float]:
         """对数值型变量使用 OR-Tools 优化分箱.
 
+        使用前缀和预计算 + 多策略搜索 + 复合评分精化，
+        在保证速度的同时获得高质量分箱结果。
+
         :param X: 特征数据
         :param y: 目标变量
         :return: 最优分割点列表
@@ -328,137 +332,734 @@ class ORBinning(BaseBinning):
         x_vals = X.values
         y_vals = y.values
         n_samples = len(x_vals)
-        
+
         if n_samples == 0:
             return []
-        
+
         # 获取候选分割点
         candidates = self._get_candidate_splits(X, y)
         n_candidates = len(candidates)
-        
+
         if n_candidates == 0:
             return []
-        
+
         if n_candidates < self.min_n_bins - 1:
-            # 候选点太少，直接返回
             return candidates[:max(0, self.max_n_bins - 1)]
-        
+
         # 排序数据
         sorted_indices = np.argsort(x_vals)
         x_sorted = x_vals[sorted_indices]
         y_sorted = y_vals[sorted_indices]
-        
-        # 计算总体统计
-        total_good = np.sum(y_vals == 0)
-        total_bad = np.sum(y_vals == 1)
-        
+
+        total_good = int(np.sum(y_vals == 0))
+        total_bad = int(np.sum(y_vals == 1))
+
         if total_good == 0 or total_bad == 0:
             return []
-        
-        # 计算样本数约束
-        min_samples = self._get_min_samples(n_samples)
-        max_samples = self._get_max_samples(n_samples) if self.max_bin_size else n_samples
-        
-        # 创建 CP-SAT 模型
-        model = cp_model.CpModel()
-        
-        # 决策变量：每个候选分割点是否被选中
-        select = [model.NewBoolVar(f'select_{i}') for i in range(n_candidates)]
-        
-        # 约束1：选中的分割点数量在 [min_n_bins-1, max_n_bins-1] 范围内
-        model.Add(sum(select) >= self.min_n_bins - 1)
-        model.Add(sum(select) <= self.max_n_bins - 1)
-        
-        # 预计算每个候选分割点分割后的箱统计
-        bin_stats = self._compute_bin_stats_for_candidates(
-            x_sorted, y_sorted, candidates
-        )
-        
-        # 约束2：每箱样本数约束
-        for i in range(len(candidates) + 1):
-            # 计算第 i 个箱的样本数
-            bin_count = self._get_bin_count_var(model, select, bin_stats, i)
-            model.Add(bin_count >= min_samples)
-            if self.max_bin_size:
-                model.Add(bin_count <= max_samples)
-        
-        # 约束3：单调性约束
-        if self.monotonic:
-            self._add_monotonic_constraints(model, select, bin_stats)
-        
-        # 目标函数
-        objective_var = self._create_objective(model, select, bin_stats, total_good, total_bad)
-        
-        # 设置优化方向
-        # 注意：OR-Tools 求解器始终最大化目标函数
-        # 对于需要最小化的目标（如 entropy），返回负值
-        # 对于自定义目标，假设用户已考虑优化方向
-        if self.objective == 'entropy':
-            model.Minimize(objective_var)
-        else:
-            model.Maximize(objective_var)
-        
-        # 先准备启发式候选，避免求解器给出可行但质量较差的结果
-        greedy_splits = self._greedy_fallback(x_sorted, y_sorted, candidates)
-        greedy_score = self._score_splits(
-            x_sorted, y_sorted, total_good, total_bad, greedy_splits
-        )
-        composite_search_splits = self._search_composite_optimal_splits(
-            x_sorted, y_sorted, candidates
-        )
-        composite_search_score = self._score_splits(
-            x_sorted, y_sorted, total_good, total_bad, composite_search_splits
-        )
-        graph_search_splits = self._search_segment_graph_splits(
-            x_sorted, y_sorted, candidates
-        )
-        graph_search_score = self._score_splits(
-            x_sorted, y_sorted, total_good, total_bad, graph_search_splits
-        )
-        segment_dp_splits = self._search_segment_dp_splits(
-            x_sorted, y_sorted, candidates
-        )
-        segment_dp_score = self._score_splits(
-            x_sorted, y_sorted, total_good, total_bad, segment_dp_splits
+
+        min_samples = self._get_min_samples(
+            getattr(self, '_n_total_samples', n_samples)
         )
 
-        # 求解
-        solver = cp_model.CpSolver()
-        solver.parameters.max_time_in_seconds = self.time_limit
-        solver.parameters.num_search_workers = 8
-        
-        status = solver.Solve(model)
-        
-        # 提取结果
-        if status in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
-            selected_splits = [
-                candidates[i] for i in range(n_candidates)
-                if solver.Value(select[i]) == 1
-            ]
-            selected_splits = sorted(selected_splits)
-            solver_score = self._score_splits(
-                x_sorted, y_sorted, total_good, total_bad, selected_splits
+        # ====== 前缀和预计算（O(n)，只执行一次）======
+        is_bad = (y_sorted == 1).astype(np.int64)
+        prefix_bad = np.empty(n_samples + 1, dtype=np.int64)
+        prefix_bad[0] = 0
+        np.cumsum(is_bad, out=prefix_bad[1:])
+        prefix_good = np.arange(n_samples + 1, dtype=np.int64) - prefix_bad
+
+        cand_pos = np.searchsorted(x_sorted, candidates, side='right')
+        positions = np.empty(n_candidates + 2, dtype=np.int64)
+        positions[0] = 0
+        positions[1:-1] = cand_pos
+        positions[-1] = n_samples
+
+        cum_bad = prefix_bad[positions]
+        cum_good = prefix_good[positions]
+
+        # ====== 策略1: DP 最优 IV 分割 ======
+        dp_splits = self._dp_optimal_splits(
+            candidates, cum_bad, cum_good, total_good, total_bad, min_samples
+        )
+
+        # ====== 策略2: 单调性感知 DP ======
+        mono_dp_splits = self._dp_monotonic_splits(
+            candidates, cum_bad, cum_good, total_good, total_bad, min_samples
+        )
+
+        # ====== 策略3: 快速贪心 ======
+        greedy_splits = self._greedy_splits_fast(
+            candidates, cum_bad, cum_good, total_good, total_bad, n_samples, min_samples
+        )
+
+        # ====== 策略4: DP top-K 候选 + 复合评分筛选 ======
+        topk_splits = self._dp_topk_with_composite(
+            candidates, cum_bad, cum_good, total_good, total_bad,
+            min_samples, x_sorted, y_sorted
+        )
+
+        # ====== 从所有策略中选出最优 ======
+        best_score = -np.inf
+        best_splits = []
+
+        for splits in [dp_splits, mono_dp_splits, greedy_splits, topk_splits]:
+            if not splits:
+                continue
+            # 评估原始策略输出（保护 composite 友好的分割点）
+            score_raw = self._score_splits(
+                x_sorted, y_sorted, total_good, total_bad, splits
             )
-            scored_candidates = [
-                (solver_score, selected_splits),
-                (greedy_score, greedy_splits),
-                (composite_search_score, composite_search_splits),
-                (graph_search_score, graph_search_splits),
-                (segment_dp_score, segment_dp_splits),
-            ]
-            return max(scored_candidates, key=lambda item: item[0])[1]
+            if score_raw > best_score:
+                best_score = score_raw
+                best_splits = list(splits)
+            # 也尝试 IV 精化版本（可能进一步提升）
+            refined = self._local_refine_fast(
+                splits, candidates, cum_bad, cum_good,
+                total_good, total_bad, n_samples, min_samples
+            )
+            score_refined = self._score_splits(
+                x_sorted, y_sorted, total_good, total_bad, refined
+            )
+            if score_refined > best_score:
+                best_score = score_refined
+                best_splits = refined
+
+        # 对最优候选做复合评分精化（仅一次，避免重复计算）
+        if best_splits:
+            best_splits = self._local_refine_composite(
+                best_splits, candidates, x_sorted, y_sorted,
+                total_good, total_bad
+            )
+
+        if not best_splits:
+            best_splits = dp_splits or greedy_splits or []
+
+        return sorted(best_splits)
+
+    # ------------------------------------------------------------------
+    # 快速搜索方法（利用前缀和，评分 O(K) 而非 O(n)）
+    # ------------------------------------------------------------------
+
+    def _dp_monotonic_splits(
+        self,
+        candidates: List[float],
+        cum_bad: np.ndarray,
+        cum_good: np.ndarray,
+        total_good: int,
+        total_bad: int,
+        min_samples: int,
+    ) -> List[float]:
+        """单调性感知 DP：在 IV 最优化中加入单调性约束.
+
+        对于 ascending/descending，仅允许相邻箱的 bad_rate 满足单调约束；
+        对于 auto 模式，分别尝试 ascending 和 descending，返回较优结果。
+        """
+        mono = self.monotonic
+        if mono in (False, None, 'none'):
+            return []  # 不需要单调约束，退回普通 DP
+
+        if mono in (True, 'auto', 'auto_asc_desc', 'auto_heuristic'):
+            # 尝试两个方向
+            asc_indices = self._dp_mono_direction(
+                candidates, cum_bad, cum_good, total_good, total_bad,
+                min_samples, 'ascending'
+            )
+            desc_indices = self._dp_mono_direction(
+                candidates, cum_bad, cum_good, total_good, total_bad,
+                min_samples, 'descending'
+            )
+            # 选 IV 更大的
+            iv_asc = self._iv_from_split_indices(
+                asc_indices, cum_bad, cum_good, total_good, total_bad, len(candidates)
+            ) if asc_indices else -np.inf
+            iv_desc = self._iv_from_split_indices(
+                desc_indices, cum_bad, cum_good, total_good, total_bad, len(candidates)
+            ) if desc_indices else -np.inf
+            best_indices = asc_indices if iv_asc >= iv_desc else desc_indices
         else:
-            warnings.warn(
-                f"OR-Tools 求解失败（状态: {status}），使用启发式搜索作为备选",
-                UserWarning
+            best_indices = self._dp_mono_direction(
+                candidates, cum_bad, cum_good, total_good, total_bad,
+                min_samples, mono
             )
-            fallback_candidates = [
-                (greedy_score, greedy_splits),
-                (composite_search_score, composite_search_splits),
-                (graph_search_score, graph_search_splits),
-                (segment_dp_score, segment_dp_splits),
-            ]
-            return max(fallback_candidates, key=lambda item: item[0])[1]
+
+        return [candidates[i] for i in best_indices]
+
+    def _dp_mono_direction(
+        self,
+        candidates: List[float],
+        cum_bad: np.ndarray,
+        cum_good: np.ndarray,
+        total_good: int,
+        total_bad: int,
+        min_samples: int,
+        direction: str,
+    ) -> List[int]:
+        """单方向单调性 DP，返回候选点的段索引列表."""
+        C = len(candidates)
+        n_seg = C + 1
+        K_max = min(self.max_n_bins, n_seg)
+        K_min = max(self.min_n_bins, 2)
+        eps = 1e-10
+        NEG_INF = -1e18
+
+        if K_max < K_min:
+            return []
+
+        # 预计算合并段的 IV 和 bad_rate
+        def seg_stats(s, e):
+            bad = int(cum_bad[e + 1] - cum_bad[s])
+            good = int(cum_good[e + 1] - cum_good[s])
+            count = bad + good
+            if count < min_samples:
+                return NEG_INF, 0.0
+            bad_dist = bad / total_bad if total_bad > 0 else 0.0
+            good_dist = good / total_good if total_good > 0 else 0.0
+            iv = (bad_dist - good_dist) * np.log(bad_dist / good_dist) if bad_dist > eps and good_dist > eps else 0.0
+            br = bad / count
+            return iv, br
+
+        # dp[k][j] = (最优IV, 最后一箱的bad_rate)
+        dp_val = np.full((K_max + 1, n_seg), NEG_INF)
+        dp_br = np.zeros((K_max + 1, n_seg))
+        parent = np.full((K_max + 1, n_seg), -1, dtype=np.int32)
+
+        for j in range(n_seg):
+            iv, br = seg_stats(0, j)
+            dp_val[1][j] = iv
+            dp_br[1][j] = br
+
+        for k in range(2, K_max + 1):
+            for j in range(k - 1, n_seg):
+                for i in range(k - 2, j):
+                    if dp_val[k - 1][i] <= NEG_INF:
+                        continue
+                    iv_new, br_new = seg_stats(i + 1, j)
+                    if iv_new <= NEG_INF:
+                        continue
+                    prev_br = dp_br[k - 1][i]
+                    # 单调性检查
+                    if direction == 'ascending' and br_new < prev_br - 1e-10:
+                        continue
+                    if direction == 'descending' and br_new > prev_br + 1e-10:
+                        continue
+                    val = dp_val[k - 1][i] + iv_new
+                    if val > dp_val[k][j]:
+                        dp_val[k][j] = val
+                        dp_br[k][j] = br_new
+                        parent[k][j] = i
+
+        best_score = NEG_INF
+        best_k = -1
+        for k in range(K_min, K_max + 1):
+            if dp_val[k][n_seg - 1] > best_score:
+                best_score = dp_val[k][n_seg - 1]
+                best_k = k
+
+        if best_k < 0:
+            return []
+
+        splits_seg = []
+        j = n_seg - 1
+        for k in range(best_k, 1, -1):
+            i = parent[k][j]
+            if i < 0:
+                return []
+            splits_seg.append(i)
+            j = i
+        splits_seg.reverse()
+
+        return splits_seg  # 返回段索引
+
+    def _iv_from_split_indices(
+        self,
+        split_seg_indices: List[int],
+        cum_bad: np.ndarray,
+        cum_good: np.ndarray,
+        total_good: int,
+        total_bad: int,
+        n_candidates: int,
+    ) -> float:
+        """从段索引列表快速计算 IV，O(K) 复杂度."""
+        if not split_seg_indices:
+            return -np.inf
+        eps = 1e-10
+        n_seg = n_candidates + 1
+        # 箱边界段: [0..idx0], [idx0+1..idx1], ..., [idxN+1..n_seg-1]
+        boundaries = [0] + [idx + 1 for idx in split_seg_indices] + [n_seg]
+        iv = 0.0
+        for i in range(len(boundaries) - 1):
+            s, e = boundaries[i], boundaries[i + 1]
+            bad = int(cum_bad[e] - cum_bad[s])
+            good = int(cum_good[e] - cum_good[s])
+            bad_dist = bad / total_bad if total_bad > 0 else 0.0
+            good_dist = good / total_good if total_good > 0 else 0.0
+            if bad_dist > eps and good_dist > eps:
+                iv += (bad_dist - good_dist) * np.log(bad_dist / good_dist)
+        return iv
+
+    def _dp_topk_with_composite(
+        self,
+        candidates: List[float],
+        cum_bad: np.ndarray,
+        cum_good: np.ndarray,
+        total_good: int,
+        total_bad: int,
+        min_samples: int,
+        x_sorted: np.ndarray,
+        y_sorted: np.ndarray,
+    ) -> List[float]:
+        """DP top-K beam search + 复合评分筛选.
+
+        在 DP 过程中保留 top-K 个候选方案（不仅仅是最优 IV），
+        然后用完整的 _score_splits 评分，选出复合评分最高的方案。
+        """
+        C = len(candidates)
+        n_seg = C + 1
+        K_max = min(self.max_n_bins, n_seg)
+        K_min = max(self.min_n_bins, 2)
+        eps = 1e-10
+        NEG_INF = -1e18
+        beam_size = min(8, max(3, C // 5))
+
+        if K_max < K_min:
+            return []
+
+        # 预计算 seg_iv[s][e]
+        seg_iv = np.full((n_seg, n_seg), NEG_INF)
+        for s in range(n_seg):
+            for e in range(s, n_seg):
+                bad = int(cum_bad[e + 1] - cum_bad[s])
+                good = int(cum_good[e + 1] - cum_good[s])
+                count = bad + good
+                if count < min_samples:
+                    continue
+                bad_dist = bad / total_bad if total_bad > 0 else 0.0
+                good_dist = good / total_good if total_good > 0 else 0.0
+                if bad_dist > eps and good_dist > eps:
+                    seg_iv[s, e] = (bad_dist - good_dist) * np.log(bad_dist / good_dist)
+                else:
+                    seg_iv[s, e] = 0.0
+
+        # beam[k] = list of (iv_score, [split_seg_indices])
+        beam: Dict[int, List[Tuple[float, List[int]]]] = {}
+        # k=1: single bin covering 0..j
+        beam[1] = []
+        for j in range(n_seg):
+            if seg_iv[0, j] > NEG_INF:
+                beam[1].append((seg_iv[0, j], []))
+        # 只保留 beam_size 个
+        beam[1] = sorted(beam[1], key=lambda x: x[0], reverse=True)[:beam_size * 2]
+
+        for k in range(2, K_max + 1):
+            beam[k] = []
+            prev = beam.get(k - 1, [])
+            for prev_iv, prev_splits in prev:
+                # 上一个方案覆盖到段索引 last_end
+                last_end = prev_splits[-1] if prev_splits else -1
+                start_seg = last_end + 1
+                for j in range(start_seg + 1, n_seg):
+                    # 新箱覆盖 (start_seg+1)..j — 但边界需要对齐
+                    # 第 k-1 个箱的最后一段是 prev_splits[-1]
+                    # 第 k 个箱从 (prev_splits[-1]+1) 开始
+                    new_start = last_end + 1
+                    if seg_iv[new_start, j] > NEG_INF:
+                        new_iv = prev_iv + seg_iv[new_start, j]
+                        # 分割点是第 j 段和第 j+1 段之间 → 段索引 j
+                        # 但只有不是最后一段时才加分割点
+                        if j < n_seg - 1:
+                            beam[k].append((new_iv, prev_splits + [j]))
+                        elif j == n_seg - 1:
+                            # 这是最后一段，完整方案
+                            beam[k].append((new_iv, prev_splits[:]))
+            beam[k] = sorted(beam[k], key=lambda x: x[0], reverse=True)[:beam_size]
+
+        # 从所有完整方案中用复合评分选最佳
+        best_score = -np.inf
+        best_splits: List[float] = []
+
+        for k in range(K_min, K_max + 1):
+            for iv_score, split_indices in beam.get(k, []):
+                if not split_indices:
+                    continue
+                splits = [candidates[i] for i in split_indices]
+                score = self._score_splits(
+                    x_sorted, y_sorted, total_good, total_bad, splits
+                )
+                if score > best_score:
+                    best_score = score
+                    best_splits = splits
+
+        return best_splits
+
+    def _local_refine_composite(
+        self,
+        splits: List[float],
+        candidates: List[float],
+        x_sorted: np.ndarray,
+        y_sorted: np.ndarray,
+        total_good: int,
+        total_bad: int,
+    ) -> List[float]:
+        """使用完整复合评分（_score_splits）进行局部精化.
+
+        对每个切分点尝试替换为邻近候选点，选择复合评分最高的方案。
+        使用邻域搜索（±5 个候选）限制计算量。
+        """
+        current = sorted(set(splits))
+        if not current:
+            return current
+
+        candidate_pool = sorted(set(candidates))
+        cand_idx = {v: i for i, v in enumerate(candidate_pool)}
+        C = len(candidate_pool)
+        NEIGHBOR = 20  # 每侧搜索半径（需要足够大以跨越局部最优）
+
+        best_score = self._score_splits(
+            x_sorted, y_sorted, total_good, total_bad, current
+        )
+
+        for _ in range(2):
+            improved = False
+            best_result = current[:]
+
+            # 替换每个切分点（仅搜索邻域）
+            for i in range(len(current)):
+                ci = cand_idx.get(current[i], -1)
+                if ci < 0:
+                    # 当前切分点不在候选列表中，用最近匹配
+                    ci = int(np.searchsorted(candidate_pool, current[i]))
+                lo = max(0, ci - NEIGHBOR)
+                hi = min(C, ci + NEIGHBOR + 1)
+                for j in range(lo, hi):
+                    cand = candidate_pool[j]
+                    if cand == current[i]:
+                        continue
+                    if cand in current:
+                        continue
+                    trial = current[:]
+                    trial[i] = cand
+                    trial = sorted(set(trial))
+                    if len(trial) != len(current):
+                        continue
+                    score = self._score_splits(
+                        x_sorted, y_sorted, total_good, total_bad, trial
+                    )
+                    if score > best_score + 1e-12:
+                        best_score = score
+                        best_result = trial
+                        improved = True
+
+            # 添加一个切分点（仅在箱间中间位置搜索）
+            if len(current) < self.max_n_bins - 1:
+                # 构建搜索区间（每两个相邻切分点之间的中间区域）
+                boundaries = [candidate_pool[0]] + current + [candidate_pool[-1]]
+                for bi in range(len(boundaries) - 1):
+                    lo_val, hi_val = boundaries[bi], boundaries[bi + 1]
+                    lo_ci = int(np.searchsorted(candidate_pool, lo_val))
+                    hi_ci = int(np.searchsorted(candidate_pool, hi_val))
+                    # 只在区间中间 ±2 处搜索
+                    mid = (lo_ci + hi_ci) // 2
+                    for j in range(max(lo_ci, mid - 2), min(hi_ci, mid + 3)):
+                        if j >= C:
+                            continue
+                        cand = candidate_pool[j]
+                        if cand in current:
+                            continue
+                        trial = sorted(set(current + [cand]))
+                        score = self._score_splits(
+                            x_sorted, y_sorted, total_good, total_bad, trial
+                        )
+                        if score > best_score + 1e-12:
+                            best_score = score
+                            best_result = trial
+                            improved = True
+
+            current = sorted(set(best_result))
+            if not improved:
+                break
+
+        return current
+
+    def _dp_optimal_splits(
+        self,
+        candidates: List[float],
+        cum_bad: np.ndarray,
+        cum_good: np.ndarray,
+        total_good: int,
+        total_bad: int,
+        min_samples: int,
+    ) -> List[float]:
+        """DP 最优分割搜索，时间复杂度 O(C² × K).
+
+        利用 IV 可分解性（各箱贡献之和），通过动态规划找到全局最优的 K 个分箱。
+        对于 C=50, K=5 仅需约 12,500 次 O(1) 的段 IV 计算。
+        """
+        C = len(candidates)
+        n_seg = C + 1  # 段数 = 候选点数 + 1
+        K_max = min(self.max_n_bins, n_seg)
+        K_min = max(self.min_n_bins, 2)
+        eps = 1e-10
+        NEG_INF = -1e18
+
+        if K_max < K_min:
+            return []
+
+        # 预计算 seg_iv[s][e] = 将段 s..e 合并为一个箱时的 IV 贡献
+        # 段 s 覆盖 positions[s] 到 positions[s+1]
+        # 合并段 s..e 的箱覆盖 positions[s] 到 positions[e+1]
+        seg_iv = np.full((n_seg, n_seg), NEG_INF)
+        for s in range(n_seg):
+            bad_s = int(cum_bad[s])
+            good_s = int(cum_good[s])
+            for e in range(s, n_seg):
+                bad = int(cum_bad[e + 1]) - bad_s
+                good = int(cum_good[e + 1]) - good_s
+                count = bad + good
+                if count < min_samples:
+                    continue
+                bad_dist = bad / total_bad if total_bad > 0 else 0.0
+                good_dist = good / total_good if total_good > 0 else 0.0
+                if bad_dist > eps and good_dist > eps:
+                    seg_iv[s, e] = (bad_dist - good_dist) * np.log(bad_dist / good_dist)
+                else:
+                    seg_iv[s, e] = 0.0
+
+        # dp[k][j] = 使用 k 个箱覆盖段 0..j 的最优 IV
+        dp = np.full((K_max + 1, n_seg), NEG_INF)
+        parent = np.full((K_max + 1, n_seg), -1, dtype=np.int32)
+
+        # 基础：1 个箱覆盖段 0..j
+        for j in range(n_seg):
+            dp[1][j] = seg_iv[0, j]
+
+        # 递推
+        for k in range(2, K_max + 1):
+            for j in range(k - 1, n_seg):
+                for i in range(k - 2, j):
+                    if dp[k - 1][i] > NEG_INF and seg_iv[i + 1, j] > NEG_INF:
+                        val = dp[k - 1][i] + seg_iv[i + 1, j]
+                        if val > dp[k][j]:
+                            dp[k][j] = val
+                            parent[k][j] = i
+
+        # 选最优 k
+        best_score = NEG_INF
+        best_k = -1
+        for k in range(K_min, K_max + 1):
+            if dp[k][n_seg - 1] > best_score:
+                best_score = dp[k][n_seg - 1]
+                best_k = k
+
+        if best_k < 0:
+            return []
+
+        # 回溯得到分割段索引
+        splits_seg = []
+        j = n_seg - 1
+        for k in range(best_k, 1, -1):
+            i = parent[k][j]
+            if i < 0:
+                return []
+            splits_seg.append(i)
+            j = i
+        splits_seg.reverse()
+
+        return [candidates[i] for i in splits_seg]
+
+    def _fast_objective_from_indices(
+        self,
+        split_indices: List[int],
+        cum_bad: np.ndarray,
+        cum_good: np.ndarray,
+        total_good: int,
+        total_bad: int,
+        n_samples: int,
+        min_samples: int,
+    ) -> float:
+        """利用前缀和快速计算目标函数，O(K) 复杂度.
+
+        :param split_indices: 候选点索引列表（在 candidates 数组中的下标）
+        """
+        eps = 1e-10
+        n_pos = len(cum_bad) - 1  # C + 1
+
+        # 箱边界：[0, idx+1, ..., C+1]
+        boundaries = [0] + [idx + 1 for idx in split_indices] + [n_pos]
+        n_bins = len(boundaries) - 1
+
+        # 可行性检查
+        for i in range(n_bins):
+            count = int(cum_bad[boundaries[i + 1]] - cum_bad[boundaries[i]]
+                        + cum_good[boundaries[i + 1]] - cum_good[boundaries[i]])
+            if count < min_samples:
+                return -np.inf
+
+        if self.objective in ('iv', 'custom'):
+            iv = 0.0
+            for i in range(n_bins):
+                bad = int(cum_bad[boundaries[i + 1]] - cum_bad[boundaries[i]])
+                good = int(cum_good[boundaries[i + 1]] - cum_good[boundaries[i]])
+                bad_dist = bad / total_bad if total_bad > 0 else 0.0
+                good_dist = good / total_good if total_good > 0 else 0.0
+                if bad_dist > eps and good_dist > eps:
+                    iv += (bad_dist - good_dist) * np.log(bad_dist / good_dist)
+            return iv
+
+        elif self.objective == 'ks':
+            max_ks = 0.0
+            run_bad = 0
+            run_good = 0
+            for i in range(n_bins):
+                run_bad += int(cum_bad[boundaries[i + 1]] - cum_bad[boundaries[i]])
+                run_good += int(cum_good[boundaries[i + 1]] - cum_good[boundaries[i]])
+                ks = abs(run_good / total_good - run_bad / total_bad)
+                max_ks = max(max_ks, ks)
+            return max_ks
+
+        elif self.objective == 'gini':
+            gini = 0.0
+            for i in range(n_bins):
+                bad = int(cum_bad[boundaries[i + 1]] - cum_bad[boundaries[i]])
+                good = int(cum_good[boundaries[i + 1]] - cum_good[boundaries[i]])
+                count = bad + good
+                if count > 0:
+                    p = bad / count
+                    gini += (count / n_samples) * p * (1 - p)
+            return 1 - gini
+
+        elif self.objective == 'entropy':
+            entropy = 0.0
+            for i in range(n_bins):
+                bad = int(cum_bad[boundaries[i + 1]] - cum_bad[boundaries[i]])
+                good = int(cum_good[boundaries[i + 1]] - cum_good[boundaries[i]])
+                count = bad + good
+                if count > 0:
+                    p = bad / count
+                    if 0 < p < 1:
+                        entropy -= (count / n_samples) * (p * np.log2(p) + (1 - p) * np.log2(1 - p))
+            return -entropy
+
+        else:  # chi2
+            expected_bad = total_bad / n_bins if n_bins > 0 else 1
+            chi2 = 0.0
+            for i in range(n_bins):
+                bad = int(cum_bad[boundaries[i + 1]] - cum_bad[boundaries[i]])
+                if expected_bad > 0:
+                    chi2 += (bad - expected_bad) ** 2 / expected_bad
+            return chi2
+
+    def _greedy_splits_fast(
+        self,
+        candidates: List[float],
+        cum_bad: np.ndarray,
+        cum_good: np.ndarray,
+        total_good: int,
+        total_bad: int,
+        n_samples: int,
+        min_samples: int,
+    ) -> List[float]:
+        """快速贪心分割选择，利用前缀和评分，O(C×K) 复杂度."""
+        C = len(candidates)
+        selected: List[int] = []
+
+        for _ in range(self.max_n_bins - 1):
+            best_score = -np.inf
+            best_idx = -1
+            for idx in range(C):
+                if idx in selected:
+                    continue
+                trial = sorted(selected + [idx])
+                score = self._fast_objective_from_indices(
+                    trial, cum_bad, cum_good, total_good, total_bad, n_samples, min_samples
+                )
+                if score > best_score:
+                    best_score = score
+                    best_idx = idx
+            if best_idx >= 0 and best_score > -np.inf:
+                selected.append(best_idx)
+                selected.sort()
+            else:
+                break
+
+        return [candidates[i] for i in selected]
+
+    def _local_refine_fast(
+        self,
+        splits: List[float],
+        candidates: List[float],
+        cum_bad: np.ndarray,
+        cum_good: np.ndarray,
+        total_good: int,
+        total_bad: int,
+        n_samples: int,
+        min_samples: int,
+    ) -> List[float]:
+        """快速局部精化，利用前缀和评分，O(iterations × C × K) 复杂度."""
+        C = len(candidates)
+        cand_arr = np.asarray(candidates)
+
+        # 将 splits 映射回候选索引
+        current = sorted(set(
+            int(np.argmin(np.abs(cand_arr - s))) for s in splits
+        ))
+
+        best_score = self._fast_objective_from_indices(
+            current, cum_bad, cum_good, total_good, total_bad, n_samples, min_samples
+        )
+
+        for _ in range(4):
+            improved = False
+            best_indices = current
+
+            # 1) 替换一个切分点
+            for i in range(len(current)):
+                for idx in range(C):
+                    if idx in current and idx != current[i]:
+                        continue
+                    trial = current.copy()
+                    trial[i] = idx
+                    trial = sorted(set(trial))
+                    if len(trial) != len(current):
+                        continue
+                    score = self._fast_objective_from_indices(
+                        trial, cum_bad, cum_good, total_good, total_bad, n_samples, min_samples
+                    )
+                    if score > best_score + 1e-12:
+                        best_score = score
+                        best_indices = trial
+                        improved = True
+
+            # 2) 添加一个切分点
+            if len(current) < self.max_n_bins - 1:
+                for idx in range(C):
+                    if idx in current:
+                        continue
+                    trial = sorted(set(current + [idx]))
+                    score = self._fast_objective_from_indices(
+                        trial, cum_bad, cum_good, total_good, total_bad, n_samples, min_samples
+                    )
+                    if score > best_score + 1e-12:
+                        best_score = score
+                        best_indices = trial
+                        improved = True
+
+            # 3) 删除一个切分点
+            if len(current) > max(1, self.min_n_bins - 1):
+                for i in range(len(current)):
+                    trial = current[:i] + current[i + 1:]
+                    score = self._fast_objective_from_indices(
+                        trial, cum_bad, cum_good, total_good, total_bad, n_samples, min_samples
+                    )
+                    if score > best_score + 1e-12:
+                        best_score = score
+                        best_indices = trial
+                        improved = True
+
+            current = sorted(set(best_indices))
+            if not improved:
+                break
+
+        return [candidates[i] for i in current]
 
     def _compute_bin_stats_for_candidates(
         self,
@@ -730,7 +1331,20 @@ class ORBinning(BaseBinning):
         total_bad: int,
         splits: List[float]
     ) -> float:
-        base_score = self._calculate_objective_score(
+        if not splits:
+            return -1e18
+        # 验证所有箱的样本数 >= min_samples，避免后处理合并
+        # 使用全量样本数计算（与 _apply_post_fit_constraints 一致）
+        n_samples = len(x_sorted)
+        n_total = getattr(self, '_n_total_samples', n_samples)
+        min_samples = self._get_min_samples(n_total)
+        split_pos = [0] + [int(np.searchsorted(x_sorted, s, side='right'))
+                           for s in sorted(splits)] + [n_samples]
+        for i in range(len(split_pos) - 1):
+            if split_pos[i + 1] - split_pos[i] < min_samples:
+                return -1e18
+        # 计算纯目标值（IV/KS/gini等），不含 lift bonus
+        raw_objective = self._raw_objective_score(
             x_sorted, y_sorted, total_good, total_bad, splits
         )
         bins = self._build_bins_from_splits(x_sorted, splits)
@@ -742,7 +1356,64 @@ class ORBinning(BaseBinning):
             monotonic=monotonic,
         )
         focus_score = self._lift_profile_focus_score(bins, y_sorted)
-        return float(base_score + composite_score * 1.35 + focus_score * 1.15)
+        # 箱数利用率奖励：强力鼓励充分利用用户允许的分箱数
+        n_splits = len(splits)
+        target_splits = max(self.max_n_bins - 1, 1)
+        bin_utilization_bonus = (n_splits / target_splits) ** 2 * 2.0
+        # 综合评分：IV为基础 + composite为质量指标 + 箱数利用率
+        return float(
+            raw_objective
+            + composite_score * 0.40
+            + focus_score * 0.30
+            + bin_utilization_bonus
+        )
+
+    def _raw_objective_score(
+        self,
+        x_sorted: np.ndarray,
+        y_sorted: np.ndarray,
+        total_good: int,
+        total_bad: int,
+        splits: List[float]
+    ) -> float:
+        """计算纯目标函数值（IV/KS/gini/entropy/chi2），不含 lift bonus."""
+        if not splits:
+            return 0.0
+        eps = 1e-10
+        split_positions = [0] + [int(np.searchsorted(x_sorted, s, side='right'))
+                                  for s in sorted(splits)] + [len(x_sorted)]
+
+        if self.objective in ('iv', 'custom'):
+            iv = 0.0
+            for i in range(len(split_positions) - 1):
+                s, e = split_positions[i], split_positions[i + 1]
+                if s >= e:
+                    continue
+                good = int(np.sum(y_sorted[s:e] == 0))
+                bad = int(np.sum(y_sorted[s:e] == 1))
+                gd = good / total_good if total_good > 0 else 0.0
+                bd = bad / total_bad if total_bad > 0 else 0.0
+                if gd > eps and bd > eps:
+                    iv += (bd - gd) * np.log(bd / gd)
+            return iv
+        elif self.objective == 'ks':
+            max_ks = 0.0
+            cum_good = 0
+            cum_bad = 0
+            for i in range(len(split_positions) - 1):
+                s, e = split_positions[i], split_positions[i + 1]
+                if s >= e:
+                    continue
+                cum_good += int(np.sum(y_sorted[s:e] == 0))
+                cum_bad += int(np.sum(y_sorted[s:e] == 1))
+                ks = abs(cum_good / total_good - cum_bad / total_bad)
+                max_ks = max(max_ks, ks)
+            return max_ks
+        else:
+            # gini / entropy / chi2 → delegate to existing method
+            return self._calculate_objective_score(
+                x_sorted, y_sorted, total_good, total_bad, splits
+            )
 
     def _segment_composite_score(
         self,
@@ -1374,6 +2045,7 @@ class ORBinning(BaseBinning):
                             range(len(self.bin_tables_[feature])),
                             self.bin_tables_[feature]['分档WOE值']
                         ))
+                        self._enrich_woe_map(woe_map, self.bin_tables_[feature])
                     else:
                         raise ValueError(f"特征 '{feature}' 没有WOE映射信息")
                     result[feature] = [woe_map.get(b, 0) for b in bins]

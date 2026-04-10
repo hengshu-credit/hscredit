@@ -91,7 +91,7 @@ def _get_bin_labels(splits: Optional[np.ndarray], bins: np.ndarray) -> List[str]
             elif b_int == -2:
                 labels.append('特殊')
             else:
-                labels.append('(-inf, +inf)')
+                labels.append('[-inf, +inf)')
         return labels
     
     # 有切分点的情况
@@ -105,11 +105,11 @@ def _get_bin_labels(splits: Optional[np.ndarray], bins: np.ndarray) -> List[str]
         elif b_int == -2:
             labels.append('特殊')
         elif b_int == 0:
-            labels.append(f'(-inf, {splits[0]}]')
+            labels.append(f'[-inf, {splits[0]})')
         elif b_int >= n_splits:
-            labels.append(f'({splits[-1]}, +inf)')
+            labels.append(f'[{splits[-1]}, +inf)')
         else:
-            labels.append(f'({splits[b_int-1]}, {splits[b_int]}]')
+            labels.append(f'[{splits[b_int-1]}, {splits[b_int]})')
     
     return labels
 

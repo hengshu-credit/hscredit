@@ -210,7 +210,10 @@ __marimo__/
 .DS_Store
 examples/model_report_demo/*
 examples/*.png
+examples/*/*.png
 examples/*.jpg
+examples/*.pmml
+examples/*.html
 examples/*.xlsx
 examples/hscredit_yyp.xlsx
 examples/hengshucredit_yyp.xlsx
