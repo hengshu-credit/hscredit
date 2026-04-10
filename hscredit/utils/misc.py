@@ -75,9 +75,21 @@ def round_float(num, decimal: int = 4):
 
     示例:
         >>> round_float(3.14159265, decimal=4)
-        3.1415
+        3.1416
     """
-    if ~pd.isnull(num) and isinstance(num, float):
-        return float(str(num).split(".")[0] + "." + str(num).split(".")[1][:decimal])
-    else:
+    if decimal is None:
         return num
+
+    if isinstance(decimal, (bool, np.bool_)) or not isinstance(decimal, (int, np.integer)) or int(decimal) < 0:
+        raise ValueError("decimal 必须是大于等于 0 的整数")
+
+    if pd.isna(num) or isinstance(num, (bool, np.bool_)):
+        return num
+
+    if isinstance(num, (int, np.integer)):
+        return int(num)
+
+    if isinstance(num, (float, np.floating)):
+        return round(float(num), int(decimal))
+
+    return num

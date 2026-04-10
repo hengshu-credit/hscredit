@@ -211,7 +211,9 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
         self.random_state = random_state
         self.n_jobs = n_jobs
         self.verbose = verbose
-        self.decimal = decimal
+        if isinstance(decimal, (bool, np.bool_)) or not isinstance(decimal, (int, np.integer)) or int(decimal) < 0:
+            raise ValueError("decimal 必须是大于等于 0 的整数")
+        self.decimal = int(decimal)
 
         # 拟合后的属性
         self.splits_ = {}
@@ -1209,7 +1211,7 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
             splits = np.array(splits)
 
         # 对每个切分点进行四舍五入，使用 self.decimal 指定精度
-        rounded_splits = np.array([round_float(s, decimal=self.decimal) for s in splits])
+        rounded_splits = np.array([round_float(s, decimal=self.decimal) for s in splits], dtype=float)
         return rounded_splits
 
     def _detect_feature_type(self, data: Union[pd.Series, np.ndarray]) -> str:
@@ -1592,7 +1594,7 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
                 # 数值型变量：切分点列表（兼容 scorecardpipeline 格式，自动剥离末尾 nan）
                 numeric_splits = pd.to_numeric(pd.Series(list(rule)), errors='coerce')
                 clean = numeric_splits[numeric_splits.notna()].to_numpy(dtype=float)
-                self.splits_[feature] = np.unique(np.sort(clean))
+                self.splits_[feature] = self._round_splits(np.unique(np.sort(clean)))
                 self.feature_types_[feature] = 'numerical'
                 self.n_bins_[feature] = len(self.splits_[feature]) + 1
         
@@ -1799,7 +1801,7 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
                     # 数值型：兼容 scorecardpipeline 格式，自动剥离末尾 nan
                     numeric_splits = pd.to_numeric(pd.Series(list(rule)), errors='coerce')
                     clean = numeric_splits[numeric_splits.notna()].to_numpy(dtype=float)
-                    self.splits_[feature] = np.unique(np.sort(clean))
+                    self.splits_[feature] = self._round_splits(np.unique(np.sort(clean)))
                     self.feature_types_[feature] = 'numerical'
                     self.n_bins_[feature] = len(self.splits_[feature]) + 1
             self._is_fitted = True

@@ -60,6 +60,7 @@ class GeneticBinning(BaseBinning):
         missing_separate: bool = True,
         random_state: Optional[int] = None,
         verbose: Union[bool, int] = False,
+        decimal: int = 4,
     ):
         super().__init__(
             target=target,
@@ -73,6 +74,7 @@ class GeneticBinning(BaseBinning):
             missing_separate=missing_separate,
             random_state=random_state,
             verbose=verbose,
+            decimal=decimal,
         )
         self.population_size = population_size
         self.generations = generations

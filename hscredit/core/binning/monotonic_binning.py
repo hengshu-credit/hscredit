@@ -100,6 +100,7 @@ class MonotonicBinning(BaseBinning):
         missing_separate: bool = True,
         random_state: Optional[int] = None,
         verbose: Union[bool, int] = False,
+        decimal: int = 4,
     ):
         super().__init__(
             target=target,
@@ -113,6 +114,7 @@ class MonotonicBinning(BaseBinning):
             missing_separate=missing_separate,
             random_state=random_state,
             verbose=verbose,
+            decimal=decimal,
         )
         self.init_method = init_method
         self.init_n_bins = max(init_n_bins, max_n_bins * 3)

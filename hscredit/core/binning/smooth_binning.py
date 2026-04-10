@@ -74,6 +74,7 @@ class SmoothBinning(BaseBinning):
         missing_separate: bool = True,
         random_state: Optional[int] = None,
         verbose: Union[bool, int] = False,
+        decimal: int = 4,
     ):
         super().__init__(
             target=target,
@@ -87,6 +88,7 @@ class SmoothBinning(BaseBinning):
             missing_separate=missing_separate,
             random_state=random_state,
             verbose=verbose,
+            decimal=decimal,
         )
         self.method = method
         self.smoothing_param = smoothing_param

@@ -64,6 +64,7 @@ class TreeBinning(BaseBinning):
         missing_separate: bool = True,
         random_state: Optional[int] = None,
         verbose: Union[bool, int] = False,
+        decimal: int = 4,
     ):
         super().__init__(
             target=target,
@@ -77,6 +78,7 @@ class TreeBinning(BaseBinning):
             missing_separate=missing_separate,
             random_state=random_state,
             verbose=verbose,
+            decimal=decimal,
         )
         self.max_depth = max_depth
         self.max_leaf_nodes = max_leaf_nodes
