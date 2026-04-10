@@ -3,10 +3,12 @@
 
 参考风控建模标准报告模板，提供多 Sheet 结构的模型报告，包括：
 - 目录（带超链接）
-- 模型性能（KS/AUC/PSI、评分分箱有效性、KS 曲线、评分分布、分箱坏率）
+- 基本信息（项目目标、样本统计、分月分布）
+- 模型性能（KS/AUC/PSI、TOP n% LIFT、分月PSI、评分分箱）
 - 入模变量重要性 & 分布
-- 入模变量有效性分析（逐特征分箱表 + KS 曲线 + 分箱图）
-- 模型参数
+- 入模变量有效性分析（逐特征分箱表 + 金额口径 + PSI）
+- 模型参数（评分卡详情）
+- 模型部署需求
 """
 
 from __future__ import annotations
@@ -152,13 +154,7 @@ class QuickModelReport:
         )
 
     def add_dataset(self, key: str, label: str, X, y, feature_names: Optional[List[str]] = None):
-        """添加额外数据集（如 OOT）用于报告.
-
-        :param key: 数据集标识（如 "oot"）
-        :param label: 显示标签（如 "跨时间样本"）
-        :param X: 特征数据
-        :param y: 标签
-        """
+        """添加额外数据集（如 OOT）用于报告."""
         X = _ensure_dataframe(X, feature_names=feature_names or list(self.X_train.columns))
         y = _ensure_series(y, name=self.y_train.name)
         self._add_dataset(key, label, X, y)
@@ -367,94 +363,266 @@ class QuickModelReport:
             table = table[0]
         return table
 
-    # ---------- 7. 图表导出 ----------
+    # ---------- 7. 新增辅助方法 ----------
 
-    def _export_plots(self, output_dir: Path, n_bins: int = 10, bin_method: str = "quantile", amount_col: Optional[str] = None) -> Dict[str, List[str]]:
-        """导出所有图表到 output_dir，返回 { 分类 -> [path...] }."""
-        from ..core.viz import ks_plot, bin_plot, hist_plot, corr_plot
+    def _get_top_n_lift_table(self, percentiles: Tuple[float, ...] = (0.01, 0.03, 0.05, 0.10)) -> pd.DataFrame:
+        """构建 TOP n% 尾部区分能力表."""
+        rows: List[Dict[str, Any]] = []
+        for ds_key, ds in self._datasets.items():
+            tag = ds.label
+            n = len(ds.y)
+            overall_bad_rate = float(ds.y.mean())
 
+            sorted_idx = np.argsort(-ds.y_proba)
+            sorted_y = ds.y.iloc[sorted_idx].values
+
+            bad_rates: Dict[str, float] = {}
+            lifts: Dict[str, float] = {}
+            improvements: Dict[str, float] = {}
+
+            for pct in percentiles:
+                top_n = max(1, int(n * pct))
+                top_bad_rate = float(sorted_y[:top_n].mean())
+                lift = top_bad_rate / overall_bad_rate if overall_bad_rate > 0 else 0.0
+                improvement = (top_bad_rate - overall_bad_rate) / overall_bad_rate if overall_bad_rate > 0 else 0.0
+                key = f"TOP {int(pct * 100)}%"
+                bad_rates[key] = top_bad_rate
+                lifts[key] = lift
+                improvements[key] = improvement
+
+            bad_rates["TOTAL"] = overall_bad_rate
+            lifts["TOTAL"] = 1.0
+            improvements["TOTAL"] = 0.0
+
+            rows.append({"数据集": tag, "统计项": "坏样本率", **bad_rates})
+            rows.append({"数据集": tag, "统计项": "LIFT值", **lifts})
+            rows.append({"数据集": tag, "统计项": "坏账改善", **improvements})
+
+        return pd.DataFrame(rows)
+
+    def _get_features_summary(self) -> pd.DataFrame:
+        """使用 pd.DataFrame.summary() 获取入模变量综合统计."""
+        importance = self.get_feature_importance()
+        features = importance.index.tolist() if not importance.empty else self.feature_names
+
+        target_col = self.y_train.name or "target"
+        train_df = self._datasets["train"].X[features].copy()
+        train_df[target_col] = self._datasets["train"].y.values
+
+        test_df = None
+        if "test" in self._datasets:
+            test_df = self._datasets["test"].X[features].copy()
+            test_df[target_col] = self._datasets["test"].y.values
+
+        try:
+            summary_result = train_df.summary(
+                features=features,
+                y=target_col,
+                val_df=test_df,
+            )
+            return summary_result
+        except Exception:
+            return self.get_features_describe()
+
+    def _get_monthly_metrics(self, date_col: str) -> pd.DataFrame:
+        """分月计算 KS/AUC."""
+        from ..core.metrics import ks, auc
+
+        rows: List[Dict[str, Any]] = []
+        for ds_key, ds in self._datasets.items():
+            if date_col not in ds.X.columns:
+                continue
+            dates = pd.to_datetime(ds.X[date_col])
+            months = dates.dt.to_period("M")
+            for month in sorted(months.unique()):
+                mask = months == month
+                y_m = ds.y[mask.values]
+                proba_m = ds.y_proba[mask.values]
+                if len(y_m) < 10 or y_m.nunique() < 2:
+                    continue
+                try:
+                    rows.append({
+                        "数据集": ds.label,
+                        "月份": str(month),
+                        "样本数": len(y_m),
+                        "坏样本率": float(y_m.mean()),
+                        "KS": ks(y_m, proba_m),
+                        "AUC": auc(y_m, proba_m),
+                    })
+                except Exception:
+                    pass
+        return pd.DataFrame(rows) if rows else pd.DataFrame()
+
+    def _get_monthly_psi_matrix(self, date_col: str) -> pd.DataFrame:
+        """分月 PSI 交叉矩阵."""
+        from ..core.metrics import psi
+
+        month_scores: Dict[str, np.ndarray] = {}
+        for ds in self._datasets.values():
+            if date_col not in ds.X.columns:
+                continue
+            dates = pd.to_datetime(ds.X[date_col])
+            months = dates.dt.to_period("M")
+            for month in sorted(months.unique()):
+                mask = months == month
+                key = str(month)
+                if key in month_scores:
+                    month_scores[key] = np.concatenate([month_scores[key], ds.score[mask.values]])
+                else:
+                    month_scores[key] = ds.score[mask.values]
+
+        if len(month_scores) < 2:
+            return pd.DataFrame()
+
+        labels = sorted(month_scores.keys())
+        matrix = pd.DataFrame(np.nan, index=labels, columns=labels)
+        for i, m1 in enumerate(labels):
+            for j, m2 in enumerate(labels):
+                try:
+                    matrix.loc[m1, m2] = psi(month_scores[m1], month_scores[m2])
+                except Exception:
+                    pass
+        return matrix
+
+    # ---------- 8. 图表导出 ----------
+
+    def _export_plots(
+        self,
+        output_dir: Path,
+        n_bins: int = 10,
+        bin_method: str = "quantile",
+        amount_col: Optional[str] = None,
+    ) -> Tuple[Dict[str, List[str]], Dict[str, pd.DataFrame]]:
+        """导出所有图表，返回 (图表路径字典, PSI数据表字典)."""
+        from ..core.viz import ks_plot, bin_plot, hist_plot, corr_plot, psi_plot
+
+        output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         paths: Dict[str, List[str]] = {}
+        tables: Dict[str, pd.DataFrame] = {}
 
+        # --- 模型级图表（用于模型性能 Sheet） ---
         for ds_key, ds in self._datasets.items():
             tag = ds.label
             model_figs: List[str] = []
 
-            # 评分分箱效果图
             try:
-                bin_table = self.get_bin_table(ds_key, method=bin_method, max_n_bins=n_bins, amount_col=amount_col, margins=True)
-                bin_data = bin_table.iloc[:-1].reset_index(drop=True) if len(bin_table) > 1 else bin_table
-                bin_path = str(output_dir / f"bin_{ds_key}.png")
-                bin_plot(bin_data, desc="模型评分", ending=f" {tag}", save=bin_path)
+                bt = self.get_bin_table(ds_key, method=bin_method, max_n_bins=n_bins, margins=True)
+                bd = bt.iloc[:-1].reset_index(drop=True) if len(bt) > 1 else bt
+                p = str(output_dir / f"bin_{ds_key}.png")
+                bin_plot(bd, desc="模型评分", ending=f" {tag}", save=p)
                 _safe_close_figs()
-                model_figs.append(bin_path)
+                model_figs.append(p)
             except Exception:
                 pass
 
-            # KS 曲线
             try:
-                ks_path = str(output_dir / f"ks_{ds_key}.png")
-                ks_plot(ds.score, ds.y, title=f"{tag} KS曲线", save=ks_path)
+                p = str(output_dir / f"ks_{ds_key}.png")
+                ks_plot(ds.score, ds.y, title=f"{tag} KS曲线", save=p)
                 _safe_close_figs()
-                model_figs.append(ks_path)
+                model_figs.append(p)
             except Exception:
                 pass
 
-            # 评分分布
             try:
-                hist_path = str(output_dir / f"hist_{ds_key}.png")
-                hist_plot(ds.score, ds.y, kde=True, desc=f"{tag} 模型评分", save=hist_path, bins=20)
+                p = str(output_dir / f"hist_{ds_key}.png")
+                hist_plot(ds.score, ds.y, kde=True, desc=f"{tag} 模型评分", save=p, bins=20)
                 _safe_close_figs()
-                model_figs.append(hist_path)
+                model_figs.append(p)
             except Exception:
                 pass
 
             if model_figs:
                 paths[f"model_{ds_key}"] = model_figs
 
-        # 特征相关性图
+        # --- 特征相关性图 ---
         importance = self.get_feature_importance()
         top_features = importance.index.tolist()
         if len(top_features) >= 2:
             try:
-                corr_path = str(output_dir / "feature_corr.png")
-                corr_plot(self._datasets["train"].X[top_features], annot=False, save=corr_path)
+                p = str(output_dir / "feature_corr.png")
+                corr_plot(self._datasets["train"].X[top_features], annot=False, save=p)
                 _safe_close_figs()
-                paths["feature_corr"] = [corr_path]
+                paths["feature_corr"] = [p]
             except Exception:
                 pass
 
-        # 逐特征图表
-        for feat in (importance.index.tolist() or self.feature_names):
-            feat_figs: List[str] = []
+        # --- 逐特征图表（分箱图、分布图、PSI图） ---
+        ds_keys = list(self._datasets.keys())
+        for feat in (top_features or self.feature_names):
+            # 分箱图：按 train/test 顺序分组
+            bin_figs: List[str] = []
             for ds_key, ds in self._datasets.items():
-                tag = ds.label
                 try:
-                    ft = self.get_feature_bin_table(feat, ds_key, max_n_bins=n_bins, method=bin_method, margins=True, amount_col=amount_col)
-                    ft_data = ft.iloc[:-1].reset_index(drop=True) if len(ft) > 1 else ft
-                    feat_bin_path = str(output_dir / f"bin_{feat}_{ds_key}.png")
-                    bin_plot(ft_data, desc=feat, ending=f" {tag}", save=feat_bin_path)
+                    ft = self.get_feature_bin_table(feat, ds_key, max_n_bins=n_bins, method=bin_method, margins=True)
+                    fd = ft.iloc[:-1].reset_index(drop=True) if len(ft) > 1 else ft
+                    p = str(output_dir / f"bin_{feat}_{ds_key}.png")
+                    bin_plot(fd, desc=feat, ending=f" {ds.label}", save=p)
                     _safe_close_figs()
-                    feat_figs.append(feat_bin_path)
+                    bin_figs.append(p)
                 except Exception:
                     pass
+            if bin_figs:
+                paths[f"feat_bin_{feat}"] = bin_figs
 
+            # 分布图：按 train/test 顺序分组
+            hist_figs: List[str] = []
+            for ds_key, ds in self._datasets.items():
                 try:
                     col = ds.X[feat].dropna()
-                    y_feat = ds.y.loc[col.index]
-                    feat_ks_path = str(output_dir / f"ks_{feat}_{ds_key}.png")
-                    ks_plot(col, y_feat, title=f"{tag} {feat}", save=feat_ks_path)
+                    y_f = ds.y.loc[col.index]
+                    p = str(output_dir / f"hist_{feat}_{ds_key}.png")
+                    hist_plot(col, y_f, kde=True, desc=f"{ds.label} {feat}", save=p, bins=20)
                     _safe_close_figs()
-                    feat_figs.append(feat_ks_path)
+                    hist_figs.append(p)
+                except Exception:
+                    pass
+            if hist_figs:
+                paths[f"feat_hist_{feat}"] = hist_figs
+
+            # PSI 图（训练集 vs 第一个非训练集）
+            if len(ds_keys) >= 2:
+                try:
+                    train_vals = self._datasets[ds_keys[0]].X[feat].dropna()
+                    test_vals = self._datasets[ds_keys[1]].X[feat].dropna()
+                    p = str(output_dir / f"psi_{feat}.png")
+                    psi_result = psi_plot(train_vals, test_vals, desc=feat, save=p, result=True, plot=True)
+                    _safe_close_figs()
+                    paths[f"feat_psi_{feat}"] = [p]
+                    if isinstance(psi_result, pd.DataFrame):
+                        tables[f"feat_psi_{feat}"] = psi_result
                 except Exception:
                     pass
 
-            if feat_figs:
-                paths[f"feature_{feat}"] = feat_figs
+        # --- 评分卡专属图表 ---
+        if hasattr(self.model, "lr_model"):
+            try:
+                from ..core.viz import plot_weights as _pw
+                p = str(output_dir / "plot_weights.png")
+                _pw(self.model.lr_model, save=p)
+                _safe_close_figs()
+                paths["model_weights"] = [p]
+            except Exception:
+                pass
 
-        return paths
+            if len(ds_keys) >= 2:
+                try:
+                    p = str(output_dir / "score_psi.png")
+                    score_psi_df = psi_plot(
+                        self._datasets[ds_keys[0]].score,
+                        self._datasets[ds_keys[1]].score,
+                        desc="模型评分", save=p, result=True, plot=True,
+                    )
+                    _safe_close_figs()
+                    paths["score_psi"] = [p]
+                    if isinstance(score_psi_df, pd.DataFrame):
+                        tables["score_psi"] = score_psi_df
+                except Exception:
+                    pass
 
-    # ---------- 8. 模型摘要 ----------
+        return paths, tables
+
+    # ---------- 9. 模型摘要 ----------
 
     def summary(self) -> pd.DataFrame:
         from ..core.metrics import ks, auc
@@ -480,7 +648,7 @@ class QuickModelReport:
 
         return pd.DataFrame([rows])
 
-    # ---------- 9. 控制台输出 ----------
+    # ---------- 10. 控制台输出 ----------
 
     def print_report(self, n_bins: int = 10, **kwargs) -> None:
         print("=" * 72)
@@ -499,7 +667,7 @@ class QuickModelReport:
             print(self.get_bin_table(ds_key, max_n_bins=n_bins).to_string(index=False))
         print("\n" + "=" * 72)
 
-    # ---------- 10. to_excel ----------
+    # ---------- 11. to_excel ----------
 
     def to_excel(
         self,
@@ -508,17 +676,23 @@ class QuickModelReport:
         n_bins: int = 10,
         bin_method: str = "quantile",
         amount_col: Optional[str] = None,
+        date_col: Optional[str] = None,
         with_plots: bool = True,
         model_name: Optional[str] = None,
+        project_desc: Optional[str] = None,
+        feature_map: Optional[Dict[str, str]] = None,
+        feature_info: Optional[pd.DataFrame] = None,
     ) -> str:
         """生成多 Sheet 结构的 Excel 模型报告.
 
         Sheet 结构：
         - 目录
-        - 1-模型性能（指标、各数据集分箱效果表、图表）
-        - 2-入模变量重要性&分布
-        - 3-入模变量分析（相关性 + 逐特征分箱）
-        - 4-模型参数
+        - 1-基本信息（项目目标、样本统计、分月分布）
+        - 2-模型性能（指标、TOP n%、PSI矩阵、分箱效果）
+        - 3-入模变量重要性&分布
+        - 4-入模变量分析（相关性 + 逐特征分箱 + PSI）
+        - 5-模型参数（评分卡详情）
+        - 6-模型部署需求
         """
         from .excel import ExcelWriter, dataframe2excel
 
@@ -526,11 +700,14 @@ class QuickModelReport:
         max_col = 35
 
         plot_paths: Dict[str, List[str]] = {}
+        psi_tables: Dict[str, pd.DataFrame] = {}
         if with_plots:
             plot_dir = Path(filepath).parent / f"{Path(filepath).stem}_assets"
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
-                plot_paths = self._export_plots(plot_dir, n_bins=n_bins, bin_method=bin_method, amount_col=amount_col)
+                plot_paths, psi_tables = self._export_plots(
+                    plot_dir, n_bins=n_bins, bin_method=bin_method, amount_col=amount_col,
+                )
 
         writer = ExcelWriter()
 
@@ -538,10 +715,12 @@ class QuickModelReport:
         # 目录 Sheet
         # ============================================================
         contents = pd.DataFrame([
-            {"序号": 1, "内容": "1-模型性能", "备注": "模型效果、区分度、稳定性等内容"},
-            {"序号": 2, "内容": "2-入模变量重要性&分布", "备注": "模型变量重要性及分布情况"},
-            {"序号": 3, "内容": "3-入模变量分析", "备注": "模型变量有效性及不同数据集分箱情况"},
-            {"序号": 4, "内容": "4-模型参数", "备注": "模型选型及超参数"},
+            {"序号": 1, "内容": "1-基本信息", "备注": "项目目标、样本选取、样本坏率分布"},
+            {"序号": 2, "内容": "2-模型性能", "备注": "模型效果、区分度、稳定性等内容"},
+            {"序号": 3, "内容": "3-入模变量重要性&分布", "备注": "模型变量重要性及分布情况"},
+            {"序号": 4, "内容": "4-入模变量分析", "备注": "模型变量有效性及不同数据集分箱情况"},
+            {"序号": 5, "内容": "5-模型参数", "备注": "模型选型及超参数"},
+            {"序号": 6, "内容": "6-模型部署需求", "备注": "入模变量信息及测试用例"},
         ])
 
         ws = writer.get_sheet_by_name("目录")
@@ -563,42 +742,143 @@ class QuickModelReport:
         end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 3), value=model_name, style="middle", end_space=(end_row + 1, 4))
 
         # ============================================================
-        # 1-模型性能 Sheet
+        # 1-基本信息 Sheet
         # ============================================================
-        ws = writer.get_sheet_by_name("1-模型性能")
-
-        end_row, _ = writer.insert_value2sheet(ws, (2, 2), value="一、模型性能评估", style="header_middle", end_space=(2, max_col))
+        ws = writer.get_sheet_by_name("1-基本信息")
+        end_row, _ = writer.insert_value2sheet(ws, (2, 2), value="一、基本信息", style="header_middle", end_space=(2, max_col))
         try:
             writer.insert_hyperlink2sheet(ws, (2, 2), hyperlink="#'目录'!B2")
         except Exception:
             pass
 
-        # 1.1 性能指标
-        end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value="1、模型性能验证指标", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
+        # 1.1 项目目标
+        end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value="1、项目目标", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
+        desc_text = project_desc or f"使用 {model_name} 模型进行信用风险评估"
+        end_row, _ = writer.insert_value2sheet(ws, (end_row, 2), value=desc_text, style="middle", end_space=(end_row, max_col), align={"horizontal": "left"})
+
+        # 1.2 数据样本统计
+        end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value="2、数据样本统计", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
+        sample_rows: List[Dict[str, Any]] = []
+        for ds_key, ds in self._datasets.items():
+            sample_rows.append({
+                "数据集": ds.label,
+                "样本数": len(ds.y),
+                "好样本数": int((1 - ds.y).sum()),
+                "坏样本数": int(ds.y.sum()),
+                "坏样本率": float(ds.y.mean()),
+            })
+        sample_df = pd.DataFrame(sample_rows)
+        end_row, _ = dataframe2excel(sample_df, writer, sheet_name=ws, start_row=end_row + 1, percent_cols=["坏样本率"])
+
+        # 1.3 样本分月分布
+        if date_col:
+            end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value="3、样本分月分布", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
+            for ds_key, ds in self._datasets.items():
+                if date_col in ds.X.columns:
+                    dates = pd.to_datetime(ds.X[date_col])
+                    months = dates.dt.to_period("M")
+                    monthly_stats = ds.y.groupby(months).agg(["count", "sum", "mean"]).reset_index()
+                    monthly_stats.columns = ["月份", "样本数", "坏样本数", "坏样本率"]
+                    monthly_stats["月份"] = monthly_stats["月份"].astype(str)
+                    monthly_stats["坏样本数"] = monthly_stats["坏样本数"].astype(int)
+                    end_row, _ = dataframe2excel(
+                        monthly_stats, writer, sheet_name=ws,
+                        title=f"{ds.label} 月度分布", start_row=end_row + 1,
+                        percent_cols=["坏样本率"],
+                    )
+
+        try:
+            writer.set_freeze_panes(ws, (5, 4))
+        except Exception:
+            pass
+
+        # ============================================================
+        # 2-模型性能 Sheet
+        # ============================================================
+        ws = writer.get_sheet_by_name("2-模型性能")
+        end_row, _ = writer.insert_value2sheet(ws, (2, 2), value="二、模型性能评估", style="header_middle", end_space=(2, max_col))
+        try:
+            writer.insert_hyperlink2sheet(ws, (2, 2), hyperlink="#'目录'!B2")
+        except Exception:
+            pass
+
+        section_idx = 1
+
+        # 2.1 性能指标
+        end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value=f"{section_idx}、模型性能验证指标", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
         metrics = self.get_metrics()
         end_row, _ = dataframe2excel(
             metrics, writer, sheet_name=ws, title="模型性能指标",
             start_row=end_row + 1,
-            percent_cols=[c for c in ["训练集", "测试集"] if c in metrics.columns],
+            percent_cols=[c for c in metrics.columns if c != "统计项"],
         )
+        section_idx += 1
 
-        # 1.2 各数据集评分分箱效果
-        section_idx = 2
+        # 2.2 分月模型效果
+        if date_col:
+            monthly_metrics = self._get_monthly_metrics(date_col)
+            if not monthly_metrics.empty:
+                end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value=f"{section_idx}、分月模型效果", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
+                end_row, _ = dataframe2excel(
+                    monthly_metrics, writer, sheet_name=ws, start_row=end_row + 1,
+                    percent_cols=["坏样本率", "KS", "AUC"],
+                )
+                section_idx += 1
+
+        # 2.3 模型尾部区分能力
+        end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value=f"{section_idx}、模型尾部区分能力（TOP n%）", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
+        lift_table = self._get_top_n_lift_table()
+        end_row, _ = dataframe2excel(
+            lift_table, writer, sheet_name=ws, start_row=end_row + 1,
+            percent_cols=["TOP 1%", "TOP 3%", "TOP 5%", "TOP 10%", "TOTAL"],
+        )
+        section_idx += 1
+
+        # 2.4 分月PSI矩阵
+        if date_col:
+            psi_matrix = self._get_monthly_psi_matrix(date_col)
+            if not psi_matrix.empty:
+                end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value=f"{section_idx}、分月对比PSI", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
+                end_row, _ = dataframe2excel(psi_matrix, writer, sheet_name=ws, start_row=end_row + 1, index=True)
+                section_idx += 1
+
+        # 2.5 各数据集评分排序性
         for ds_key, ds in self._datasets.items():
             tag = ds.label
             end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value=f"{section_idx}、{tag}评分排序性", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
 
-            bin_table = self.get_bin_table(ds_key, method=bin_method, max_n_bins=n_bins, amount_col=amount_col, margins=True)
             figs = plot_paths.get(f"model_{ds_key}", [])
-            end_row, _ = dataframe2excel(
-                bin_table, writer, sheet_name=ws,
-                title=f"{tag} 评分有效性",
-                start_row=end_row + 1,
-                percent_cols=[c for c in self._PERCENT_COLS if c in bin_table.columns],
-                condition_cols=[c for c in self._CONDITION_COLS if c in bin_table.columns],
-                condition_color="F76E6C",
-                figures=figs,
-            )
+            order_table = self.get_bin_table(ds_key, method=bin_method, max_n_bins=n_bins, margins=True)
+            pct_cols = [c for c in self._PERCENT_COLS if c in order_table.columns]
+            cond_cols = [c for c in self._CONDITION_COLS if c in order_table.columns]
+
+            if amount_col:
+                table_start = end_row + 1
+                end_row1, end_col1 = dataframe2excel(
+                    order_table, writer, sheet_name=ws,
+                    title=f"{tag} 订单口径", start_row=table_start, start_col=2,
+                    percent_cols=pct_cols, condition_cols=cond_cols, condition_color="F76E6C",
+                    figures=figs,
+                )
+                try:
+                    amount_table = self.get_bin_table(ds_key, method=bin_method, max_n_bins=n_bins, amount_col=amount_col, margins=True)
+                    amt_pct = [c for c in self._PERCENT_COLS if c in amount_table.columns]
+                    amt_cond = [c for c in self._CONDITION_COLS if c in amount_table.columns]
+                    end_row2, _ = dataframe2excel(
+                        amount_table, writer, sheet_name=ws,
+                        title=f"{tag} 金额口径", start_row=table_start, start_col=end_col1 + 2,
+                        percent_cols=amt_pct, condition_cols=amt_cond, condition_color="F76E6C",
+                    )
+                    end_row = max(end_row1, end_row2)
+                except Exception:
+                    end_row = end_row1
+            else:
+                end_row, _ = dataframe2excel(
+                    order_table, writer, sheet_name=ws,
+                    title=f"{tag} 评分有效性", start_row=end_row + 1,
+                    percent_cols=pct_cols, condition_cols=cond_cols, condition_color="F76E6C",
+                    figures=figs,
+                )
             section_idx += 1
 
         try:
@@ -607,41 +887,39 @@ class QuickModelReport:
             pass
 
         # ============================================================
-        # 2-入模变量重要性&分布 Sheet
+        # 3-入模变量重要性&分布 Sheet
         # ============================================================
-        ws = writer.get_sheet_by_name("2-入模变量重要性&分布")
-        end_row, _ = writer.insert_value2sheet(ws, (2, 2), value="二、入模变量信息", style="header_middle", end_space=(2, max_col))
+        ws = writer.get_sheet_by_name("3-入模变量重要性&分布")
+        end_row, _ = writer.insert_value2sheet(ws, (2, 2), value="三、入模变量信息", style="header_middle", end_space=(2, max_col))
         try:
             writer.insert_hyperlink2sheet(ws, (2, 2), hyperlink="#'目录'!B2")
         except Exception:
             pass
 
-        features_desc = self.get_features_describe()
+        features_summary = self._get_features_summary()
         end_row, _ = dataframe2excel(
-            features_desc, writer, sheet_name=ws,
+            features_summary, writer, sheet_name=ws,
             title="1、入模变量重要性及分布情况",
             start_row=end_row + 1,
-            percent_cols=[c for c in ["特征重要性", "KS", "PSI", "缺失率"] if c in features_desc.columns],
-            condition_color="F76E6C",
-            condition_cols=[c for c in ["特征重要性"] if c in features_desc.columns],
             index=True,
         )
+
         try:
             writer.set_freeze_panes(ws, (5, 4))
         except Exception:
             pass
 
         # ============================================================
-        # 3-入模变量分析 Sheet
+        # 4-入模变量分析 Sheet
         # ============================================================
-        ws = writer.get_sheet_by_name("3-入模变量分析")
-        end_row, _ = writer.insert_value2sheet(ws, (2, 2), value="三、入模变量分析", style="header_middle", end_space=(2, max_col))
+        ws = writer.get_sheet_by_name("4-入模变量分析")
+        end_row, _ = writer.insert_value2sheet(ws, (2, 2), value="四、入模变量分析", style="header_middle", end_space=(2, max_col))
         try:
             writer.insert_hyperlink2sheet(ws, (2, 2), hyperlink="#'目录'!B2")
         except Exception:
             pass
 
-        # 3.1 相关性
+        # 4.1 相关性
         end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value="1、入模变量相关性", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
         corr_df = self.get_features_corr()
         corr_figs = plot_paths.get("feature_corr", [])
@@ -653,31 +931,74 @@ class QuickModelReport:
             figures=corr_figs,
         )
 
-        # 3.2 逐特征分箱
+        # 4.2 逐特征分箱
         end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value="2、入模变量有效性分析", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
 
         importance = self.get_feature_importance()
         feature_list = importance.index.tolist() if not importance.empty else self.feature_names
+        ds_keys_list = list(self._datasets.keys())
+
         for i, feat in enumerate(feature_list):
             end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value=f"2.{i + 1}、{feat} 有效性分析", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
 
-            feat_figs = plot_paths.get(f"feature_{feat}", [])
+            # 插入图表：分箱图(train, test) + 分布图(train, test)
+            bin_figs = plot_paths.get(f"feat_bin_{feat}", [])
+            hist_figs = plot_paths.get(f"feat_hist_{feat}", [])
+            all_figs = bin_figs + hist_figs
+
+            # 各数据集分箱表（订单口径 + 金额口径）
             first_ds = True
             for ds_key, ds in self._datasets.items():
                 try:
-                    ft = self.get_feature_bin_table(feat, ds_key, max_n_bins=n_bins, method=bin_method, margins=True, amount_col=amount_col)
-                    end_row, _ = dataframe2excel(
-                        ft, writer, sheet_name=ws,
-                        title=f"{ds.label}",
-                        start_row=end_row + 1,
-                        percent_cols=[c for c in self._PERCENT_COLS if c in ft.columns],
-                        condition_color="F76E6C",
-                        condition_cols=[c for c in self._CONDITION_COLS if c in ft.columns],
-                        figures=feat_figs if first_ds else [],
-                    )
+                    ft = self.get_feature_bin_table(feat, ds_key, max_n_bins=n_bins, method=bin_method, margins=True)
+                    ft_pct = [c for c in self._PERCENT_COLS if c in ft.columns]
+                    ft_cond = [c for c in self._CONDITION_COLS if c in ft.columns]
+
+                    if amount_col:
+                        table_start = end_row + 1
+                        end_row1, end_col1 = dataframe2excel(
+                            ft, writer, sheet_name=ws,
+                            title=f"{ds.label} 订单口径", start_row=table_start, start_col=2,
+                            percent_cols=ft_pct, condition_cols=ft_cond, condition_color="F76E6C",
+                            figures=all_figs if first_ds else [],
+                        )
+                        try:
+                            ft_amt = self.get_feature_bin_table(feat, ds_key, max_n_bins=n_bins, method=bin_method, margins=True, amount_col=amount_col)
+                            amt_pct = [c for c in self._PERCENT_COLS if c in ft_amt.columns]
+                            amt_cond = [c for c in self._CONDITION_COLS if c in ft_amt.columns]
+                            end_row2, _ = dataframe2excel(
+                                ft_amt, writer, sheet_name=ws,
+                                title=f"{ds.label} 金额口径", start_row=table_start, start_col=end_col1 + 2,
+                                percent_cols=amt_pct, condition_cols=amt_cond, condition_color="F76E6C",
+                            )
+                            end_row = max(end_row1, end_row2)
+                        except Exception:
+                            end_row = end_row1
+                    else:
+                        end_row, _ = dataframe2excel(
+                            ft, writer, sheet_name=ws,
+                            title=f"{ds.label}", start_row=end_row + 1,
+                            percent_cols=ft_pct, condition_cols=ft_cond, condition_color="F76E6C",
+                            figures=all_figs if first_ds else [],
+                        )
                     first_ds = False
                 except Exception:
                     pass
+
+            # PSI 图表和数据表
+            psi_fig_paths = plot_paths.get(f"feat_psi_{feat}", [])
+            psi_df = psi_tables.get(f"feat_psi_{feat}")
+            if psi_fig_paths:
+                for fig_path in psi_fig_paths:
+                    try:
+                        end_row, _ = writer.insert_pic2sheet(ws, fig_path, (end_row + 1, 2))
+                    except Exception:
+                        pass
+            if isinstance(psi_df, pd.DataFrame) and not psi_df.empty:
+                end_row, _ = dataframe2excel(
+                    psi_df, writer, sheet_name=ws,
+                    title="PSI稳定性分析", start_row=end_row + 1,
+                )
 
         try:
             writer.set_freeze_panes(ws, (5, 4))
@@ -685,19 +1006,24 @@ class QuickModelReport:
             pass
 
         # ============================================================
-        # 4-模型参数 Sheet
+        # 5-模型参数 Sheet
         # ============================================================
-        ws = writer.get_sheet_by_name("4-模型参数")
-        end_row, _ = writer.insert_value2sheet(ws, (2, 2), value="四、模型选型及参数", style="header_middle", end_space=(2, max_col))
+        ws = writer.get_sheet_by_name("5-模型参数")
+        end_row, _ = writer.insert_value2sheet(ws, (2, 2), value="五、模型选型及参数", style="header_middle", end_space=(2, max_col))
         try:
             writer.insert_hyperlink2sheet(ws, (2, 2), hyperlink="#'目录'!B2")
         except Exception:
             pass
 
-        end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value="1、模型选型", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
-        end_row, _ = writer.insert_value2sheet(ws, (end_row, 2), value=model_name, style="middle", end_space=(end_row, max_col), align={"horizontal": "left"})
+        param_section = 1
 
-        end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value="2、模型参数", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
+        # 5.1 模型选型
+        end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value=f"{param_section}、模型选型", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
+        end_row, _ = writer.insert_value2sheet(ws, (end_row, 2), value=model_name, style="middle", end_space=(end_row, max_col), align={"horizontal": "left"})
+        param_section += 1
+
+        # 5.2 模型参数
+        end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value=f"{param_section}、模型参数", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
         params_str = ""
         if hasattr(self.model, "get_params"):
             try:
@@ -707,11 +1033,115 @@ class QuickModelReport:
         if not params_str and hasattr(self.model, "__dict__"):
             params_str = str({k: v for k, v in self.model.__dict__.items() if not k.startswith("_") and not callable(v)})
         end_row, _ = writer.insert_value2sheet(ws, (end_row, 2), value=params_str or "N/A", style="middle", end_space=(end_row, max_col), align={"horizontal": "left"})
+        param_section += 1
 
-        # 3. 入模特征列表
-        end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value="3、入模特征列表", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
+        # 5.3 入模特征列表
+        end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value=f"{param_section}、入模特征列表", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
         features_df = pd.DataFrame({"序号": range(1, len(self.feature_names) + 1), "变量名": self.feature_names})
+        if feature_map:
+            features_df["变量含义"] = [feature_map.get(f, "") for f in self.feature_names]
         end_row, _ = dataframe2excel(features_df, writer, sheet_name=ws, start_row=end_row + 1)
+        param_section += 1
+
+        # 5.4+ 评分卡专属内容
+        is_scorecard = hasattr(self.model, "lr_model") and hasattr(self.model, "scorecard_points")
+        if is_scorecard:
+            # plot_weights + LR 拟合结果
+            end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value=f"{param_section}、逻辑回归拟合结果", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
+            weights_figs = plot_paths.get("model_weights", [])
+            if weights_figs:
+                for fig_path in weights_figs:
+                    try:
+                        end_row, _ = writer.insert_pic2sheet(ws, fig_path, (end_row + 1, 2))
+                    except Exception:
+                        pass
+            try:
+                lr_summary = self.model.lr_model.summary()
+                end_row, _ = dataframe2excel(lr_summary, writer, sheet_name=ws, start_row=end_row + 1, title="逻辑回归系数")
+            except Exception:
+                pass
+            param_section += 1
+
+            # 评分卡
+            end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value=f"{param_section}、评分卡", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
+            try:
+                sc_points = self.model.scorecard_points(feature_map=feature_map)
+                end_row, _ = dataframe2excel(sc_points, writer, sheet_name=ws, start_row=end_row + 1, title="评分卡分值表")
+            except Exception:
+                pass
+            param_section += 1
+
+            # 评分与 Odds 对照
+            end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value=f"{param_section}、评分与Odds对照表", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
+            try:
+                odds_ref = self.model.score_odds_reference
+                end_row, _ = dataframe2excel(odds_ref, writer, sheet_name=ws, start_row=end_row + 1)
+            except Exception:
+                pass
+            param_section += 1
+
+            # 评分漂移分析
+            if len(self._datasets) >= 2:
+                end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value=f"{param_section}、评分漂移分析", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
+                score_psi_figs = plot_paths.get("score_psi", [])
+                if score_psi_figs:
+                    for fig_path in score_psi_figs:
+                        try:
+                            end_row, _ = writer.insert_pic2sheet(ws, fig_path, (end_row + 1, 2))
+                        except Exception:
+                            pass
+                score_psi_df = psi_tables.get("score_psi")
+                if isinstance(score_psi_df, pd.DataFrame) and not score_psi_df.empty:
+                    end_row, _ = dataframe2excel(score_psi_df, writer, sheet_name=ws, start_row=end_row + 1, title="评分PSI")
+
+        try:
+            writer.set_freeze_panes(ws, (5, 4))
+        except Exception:
+            pass
+
+        # ============================================================
+        # 6-模型部署需求 Sheet
+        # ============================================================
+        ws = writer.get_sheet_by_name("6-模型部署需求")
+        end_row, _ = writer.insert_value2sheet(ws, (2, 2), value="六、模型部署需求", style="header_middle", end_space=(2, max_col))
+        try:
+            writer.insert_hyperlink2sheet(ws, (2, 2), hyperlink="#'目录'!B2")
+        except Exception:
+            pass
+
+        # 6.1 入模变量信息
+        end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value="1、入模变量信息", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
+        if feature_info is not None and isinstance(feature_info, pd.DataFrame) and not feature_info.empty:
+            end_row, _ = dataframe2excel(feature_info, writer, sheet_name=ws, start_row=end_row + 1)
+        else:
+            fi_rows: List[Dict[str, Any]] = []
+            for idx, feat in enumerate(self.feature_names):
+                fi_rows.append({
+                    "序号": idx + 1,
+                    "特征名称": feat,
+                    "特征含义": (feature_map or {}).get(feat, ""),
+                    "字段类型": str(self._datasets["train"].X[feat].dtype),
+                    "缺失值处理": "默认处理",
+                })
+            end_row, _ = dataframe2excel(pd.DataFrame(fi_rows), writer, sheet_name=ws, start_row=end_row + 1)
+
+        # 6.2 生产订单测试用例
+        end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value="2、生产订单测试用例", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
+        try:
+            train_ds = self._datasets["train"]
+            sample_n = min(5, len(train_ds.X))
+            sample_X = train_ds.X[self.feature_names].iloc[:sample_n].copy()
+            test_cases = sample_X.reset_index(drop=True)
+            test_cases.insert(0, "序号", range(1, sample_n + 1))
+            test_cases["模型分数"] = train_ds.score[:sample_n]
+            end_row, _ = dataframe2excel(test_cases, writer, sheet_name=ws, start_row=end_row + 1)
+        except Exception:
+            pass
+
+        try:
+            writer.set_freeze_panes(ws, (5, 4))
+        except Exception:
+            pass
 
         # ============================================================
         # 保存
@@ -719,7 +1149,7 @@ class QuickModelReport:
         writer.save(filepath)
         return filepath
 
-    # ---------- 11. to_html ----------
+    # ---------- 12. to_html ----------
 
     def to_html(
         self,
@@ -752,7 +1182,7 @@ class QuickModelReport:
         Path(filepath).write_text("\n".join(html_parts), encoding="utf-8")
         return filepath
 
-    # ---------- 12. to_dict ----------
+    # ---------- 13. to_dict ----------
 
     def to_dict(self) -> Dict[str, Any]:
         result: Dict[str, Any] = {
@@ -781,8 +1211,12 @@ def auto_model_report(
     n_bins: int = 10,
     bin_method: str = "quantile",
     amount_col: Optional[str] = None,
+    date_col: Optional[str] = None,
     with_plots: bool = True,
     model_name: Optional[str] = None,
+    project_desc: Optional[str] = None,
+    feature_map: Optional[Dict[str, str]] = None,
+    feature_info: Optional[pd.DataFrame] = None,
     # 兼容旧参数
     ratios: Optional[List[float]] = None,
     show_lift: bool = True,
@@ -801,8 +1235,12 @@ def auto_model_report(
     :param n_bins: 分箱数
     :param bin_method: 分箱方法
     :param amount_col: 金额字段（用于金额口径分析）
+    :param date_col: 日期字段（用于分月分析）
     :param with_plots: 是否生成图表
     :param model_name: 模型名称
+    :param project_desc: 项目描述
+    :param feature_map: 特征名称到含义的映射
+    :param feature_info: 特征部署信息表
     :return: QuickModelReport 实例
     """
     report = QuickModelReport(
@@ -823,8 +1261,12 @@ def auto_model_report(
             n_bins=n_bins,
             bin_method=bin_method,
             amount_col=amount_col,
+            date_col=date_col,
             with_plots=with_plots,
             model_name=model_name,
+            project_desc=project_desc,
+            feature_map=feature_map,
+            feature_info=feature_info,
         )
         if verbose:
             print(f"\nExcel 报告已保存: {excel_path}")
