@@ -19,6 +19,7 @@ import warnings
 import re
 import os
 import copy
+import math
 from typing import Optional, Union, List, Tuple, Dict, Any
 
 import numpy as np
@@ -627,7 +628,7 @@ class ExcelWriter:
 
         # 计算占用的行数
         row_height = 16.0 if self.system != 'mac' else 17.5
-        occupied_rows = int(figsize[1] / row_height)
+        occupied_rows = max(1, math.ceil(figsize[1] / row_height))
 
         return start_row + occupied_rows, column_index_from_string(start_col) + 8
 
@@ -1455,6 +1456,7 @@ def dataframe2excel(
     mode: str = "replace",
     figures: Optional[Union[str, List[str]]] = None,
     figsize: Tuple[int, int] = (600, 350),
+    image_bottom_padding_rows: int = 1,
     writer_params: Optional[Dict] = None,
     **kwargs
 ) -> Tuple[int, int]:
@@ -1484,6 +1486,7 @@ def dataframe2excel(
     :param mode: 写入模式，默认为"replace"
     :param figures: 需要插入的图片路径，默认为None
     :param figsize: 图片大小，默认为(600, 350)
+    :param image_bottom_padding_rows: 图片区与下方表格之间的额外空行数，默认为1
     :param writer_params: ExcelWriter参数，默认为None
     :param kwargs: 其他参数，传递给insert_df2sheet
     :return: (下一行行号, 下一列列号)
@@ -1524,6 +1527,8 @@ def dataframe2excel(
     else:
         worksheet = writer.get_sheet_by_name(sheet_name or "Sheet1")
 
+    image_bottom_padding_rows = 0 if image_bottom_padding_rows is None else max(int(image_bottom_padding_rows), 0)
+
     # 插入标题
     if title:
         col_width = len(data.columns) + data.index.nlevels if kwargs.get("index", False) else len(data.columns)
@@ -1540,12 +1545,17 @@ def dataframe2excel(
         if isinstance(figures, str):
             figures = [figures]
 
-        pic_row = start_row
-        for i, pic in enumerate(figures):
-            if i == 0:
-                start_row, end_col = writer.insert_pic2sheet(worksheet, pic, (pic_row, start_col), figsize=figsize)
-            else:
-                start_row, end_col = writer.insert_pic2sheet(worksheet, pic, (pic_row, end_col - 1), figsize=figsize)
+        figures = [pic for pic in figures if pic]
+
+        if figures:
+            pic_row = start_row
+            for i, pic in enumerate(figures):
+                if i == 0:
+                    start_row, end_col = writer.insert_pic2sheet(worksheet, pic, (pic_row, start_col), figsize=figsize)
+                else:
+                    start_row, end_col = writer.insert_pic2sheet(worksheet, pic, (pic_row, end_col - 1), figsize=figsize)
+
+            start_row += image_bottom_padding_rows
 
     # 处理merge_column参数
     if "merge_column" in kwargs and kwargs["merge_column"]:

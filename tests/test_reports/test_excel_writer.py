@@ -12,6 +12,7 @@ import numpy as np
 from openpyxl import load_workbook
 
 from hscredit.report.excel import ExcelWriter, dataframe2excel
+import hscredit.report.excel.writer as writer_module
 
 
 class TestExcelWriter:
@@ -207,6 +208,24 @@ class TestExcelWriter:
         assert 'Sheet1' in loaded_wb.sheetnames
         assert 'Sheet2' in loaded_wb.sheetnames
 
+    def test_insert_picture_row_span_uses_ceil(self, monkeypatch):
+        """测试图片占用行数使用向上取整，避免覆盖下方内容"""
+
+        class DummyImage:
+            def __init__(self, _fig):
+                self.width = None
+                self.height = None
+
+        monkeypatch.setattr(writer_module, "Image", DummyImage)
+
+        writer = ExcelWriter(system="windows")
+        ws = writer.get_sheet_by_name("Test")
+
+        end_row, end_col = writer.insert_pic2sheet(ws, "dummy.png", "B2", figsize=(600, 250))
+
+        assert end_row == 18
+        assert end_col == 10
+
 
 class TestDataframe2Excel:
     """测试dataframe2excel便捷函数"""
@@ -302,6 +321,28 @@ class TestDataframe2Excel:
         ws = loaded_wb.active
         
         assert ws["B3"].number_format == "#,##0"
+
+    def test_write_with_figures_keeps_gap_before_header(self, monkeypatch):
+        """测试插图后表头会自动下移，避免被图片覆盖"""
+
+        def fake_insert_pic2sheet(self, worksheet, fig, insert_space, figsize=(600, 250)):
+            if isinstance(insert_space, str):
+                row = int(''.join(ch for ch in insert_space if ch.isdigit()))
+                col = 2
+            else:
+                row, col = insert_space
+            return row + 10, col + 8
+
+        monkeypatch.setattr(ExcelWriter, "insert_pic2sheet", fake_insert_pic2sheet)
+
+        writer = ExcelWriter()
+        ws = writer.get_sheet_by_name("Test")
+        df = pd.DataFrame({'A': [1, 2], 'B': [3, 4]})
+
+        dataframe2excel(df, writer, sheet_name=ws, figures=["dummy.png"], start_row=2)
+
+        assert ws["B12"].value is None
+        assert ws["B13"].value == "A"
 
 
 class TestUtilityFunctions:

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Pandas DataFrame/Series 扩展模块.
 
 为 pandas DataFrame 和 Series 提供额外的方法，包括：
@@ -25,8 +27,11 @@
 
 import pandas as pd
 import numpy as np
-from typing import Optional, List, Dict, Any, Literal, Union, Tuple
+from typing import Optional, List, Dict, Any, Literal, Union, Tuple, TYPE_CHECKING
 from IPython.display import display
+
+if TYPE_CHECKING:
+    from ..report.excel import ExcelWriter
 
 
 # =============================================================================
@@ -143,7 +148,7 @@ def _missing_analysis_method(self, threshold: float = 0.0) -> pd.DataFrame:
 
 def _dataframe_save(
     self,
-    excel_writer: Union[str, 'ExcelWriter'],
+    excel_writer: Union[str, ExcelWriter],
     worksheet: Optional[Any] = None,
     sheet_name: Optional[str] = None,
     title: Optional[str] = None,
@@ -165,9 +170,10 @@ def _dataframe_save(
     mode: str = "replace",
     figures: Optional[Union[str, List[str]]] = None,
     figsize: Tuple[int, int] = (600, 350),
+    image_bottom_padding_rows: int = 1,
     writer_params: Optional[Dict] = None,
     **kwargs
-) -> Union[Tuple[int, int], 'ExcelWriter']:
+) -> Union[Tuple[int, int], ExcelWriter]:
     """
     将DataFrame保存到Excel文件或已有的ExcelWriter中。
 
@@ -193,6 +199,7 @@ def _dataframe_save(
     :param mode: 写入模式，默认为"replace"
     :param figures: 需要插入的图片路径，默认为None
     :param figsize: 图片大小，默认为(600, 350)
+    :param image_bottom_padding_rows: 图片区与下方表格之间的额外空行数，默认为1
     :param writer_params: ExcelWriter参数，默认为None
     :param kwargs: 其他参数，传递给insert_df2sheet
     :return: 如果传入文件路径返回(end_row, end_col)；如果传入ExcelWriter且提供了worksheet，返回ExcelWriter
@@ -237,12 +244,16 @@ def _dataframe_save(
         if figures is not None:
             if isinstance(figures, str):
                 figures = [figures]
-            pic_row = start_row
-            for i, pic in enumerate(figures):
-                if i == 0:
-                    start_row, end_col = writer.insert_pic2sheet(worksheet, pic, (pic_row, start_col), figsize=figsize)
-                else:
-                    start_row, end_col = writer.insert_pic2sheet(worksheet, pic, (pic_row, end_col - 1), figsize=figsize)
+            figures = [pic for pic in figures if pic]
+            if figures:
+                pic_row = start_row
+                for i, pic in enumerate(figures):
+                    if i == 0:
+                        start_row, end_col = writer.insert_pic2sheet(worksheet, pic, (pic_row, start_col), figsize=figsize)
+                    else:
+                        start_row, end_col = writer.insert_pic2sheet(worksheet, pic, (pic_row, end_col - 1), figsize=figsize)
+
+                start_row += 0 if image_bottom_padding_rows is None else max(int(image_bottom_padding_rows), 0)
         
         # 处理merge_column参数
         if "merge_column" in kwargs and kwargs["merge_column"]:
@@ -316,6 +327,7 @@ def _dataframe_save(
         mode=mode,
         figures=figures,
         figsize=figsize,
+        image_bottom_padding_rows=image_bottom_padding_rows,
         writer_params=writer_params,
         **kwargs
     )
@@ -323,7 +335,7 @@ def _dataframe_save(
 
 def _series_save(
     self,
-    excel_writer: Union[str, 'ExcelWriter'],
+    excel_writer: Union[str, ExcelWriter],
     worksheet: Optional[Any] = None,
     sheet_name: Optional[str] = None,
     title: Optional[str] = None,
@@ -345,9 +357,10 @@ def _series_save(
     mode: str = "replace",
     figures: Optional[Union[str, List[str]]] = None,
     figsize: Tuple[int, int] = (600, 350),
+    image_bottom_padding_rows: int = 1,
     writer_params: Optional[Dict] = None,
     **kwargs
-) -> Union[Tuple[int, int], 'ExcelWriter']:
+) -> Union[Tuple[int, int], ExcelWriter]:
     """
     将Series保存到Excel文件或已有的ExcelWriter中。
     Series会被转换为单列DataFrame（保留name作为列名）。
@@ -374,6 +387,7 @@ def _series_save(
     :param mode: 写入模式，默认为"replace"
     :param figures: 需要插入的图片路径，默认为None
     :param figsize: 图片大小，默认为(600, 350)
+    :param image_bottom_padding_rows: 图片区与下方表格之间的额外空行数，默认为1
     :param writer_params: ExcelWriter参数，默认为None
     :param kwargs: 其他参数，传递给insert_df2sheet
     :return: 如果传入文件路径返回(end_row, end_col)；如果传入ExcelWriter且提供了worksheet，返回ExcelWriter
@@ -421,6 +435,7 @@ def _series_save(
         mode=mode,
         figures=figures,
         figsize=figsize,
+        image_bottom_padding_rows=image_bottom_padding_rows,
         writer_params=writer_params,
         **kwargs
     )
