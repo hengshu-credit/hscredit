@@ -8,20 +8,22 @@ import numpy as np
 import pandas as pd
 from sklearn.base import clone
 
-from .base import BaseFeatureSelector
+from .base import BaseFeatureSelector, get_feature_importances
 
 
 class FeatureImportanceSelector(BaseFeatureSelector):
     """特征重要性筛选器.
 
     使用模型的特征重要性进行筛选。
-    支持任意有feature_importances_属性的模型。
+    支持任意有feature_importances_或coef_属性的模型，
+    以及原生xgboost/lightgbm/catboost模型。
 
     **参数**
 
-    :param estimator: 评估器，必须有feature_importances_属性
-        - 随机森林: RandomForestClassifier, RandomForestRegressor
-        - 梯度提升: GradientBoostingClassifier, XGBClassifier, LightGBMClassifier
+    :param estimator: 评估器
+        - 树模型: RandomForestClassifier, XGBClassifier, LGBMClassifier, CatBoostClassifier
+        - 线性模型: LogisticRegression, LinearSVC 等
+        - hscredit模型: XGBoostRiskModel, LightGBMRiskModel, CatBoostRiskModel 等
     :param threshold: 重要性阈值或保留特征数
         - 浮点数: 保留重要性 >= threshold的特征
         - 整数: 保留top-k个特征
@@ -82,8 +84,8 @@ class FeatureImportanceSelector(BaseFeatureSelector):
         model = clone(self.estimator)
         model.fit(X, y)
 
-        # 获取特征重要性
-        importances = model.feature_importances_
+        # 获取特征重要性（兼容所有模型类型）
+        importances = get_feature_importances(model)
         self.scores_ = pd.Series(importances, index=X.columns)
 
         # 根据阈值筛选

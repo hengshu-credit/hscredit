@@ -173,6 +173,11 @@ class WOEEncoder(BaseEncoder):
     ) -> float:
         """计算WOE值（带正则化）。
 
+        WOE = ln(坏样本占比 / 好样本占比)
+        与 toad、scorecardpipeline 及 hscredit 分箱模块保持一致。
+        坏样本集中的箱 WOE > 0，好样本集中的箱 WOE < 0，
+        LR 系数为正，便于理解。
+
         :param good_count: 好样本数量
         :param bad_count: 坏样本数量
         :param total_good: 好样本总数
@@ -182,7 +187,7 @@ class WOEEncoder(BaseEncoder):
         good_rate = (good_count + self.regularization) / (total_good + 2 * self.regularization)
         bad_rate = (bad_count + self.regularization) / (total_bad + 2 * self.regularization)
 
-        woe = np.log(good_rate / bad_rate)
+        woe = np.log(bad_rate / good_rate)
         return woe
 
     def _compute_iv_categorical(
@@ -205,7 +210,7 @@ class WOEEncoder(BaseEncoder):
             good_dist = (good_count + self.regularization) / (total_good + 2 * self.regularization)
             bad_dist = (bad_count + self.regularization) / (total_bad + 2 * self.regularization)
 
-            iv += (good_dist - bad_dist) * np.log(good_dist / bad_dist)
+            iv += (bad_dist - good_dist) * np.log(bad_dist / good_dist)
 
         return iv
 

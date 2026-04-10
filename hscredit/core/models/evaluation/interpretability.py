@@ -49,7 +49,7 @@ except ImportError:
     SHAP_AVAILABLE = False
     shap = None
 
-from .base import BaseRiskModel
+from ..base import BaseRiskModel
 
 
 class ModelExplainer:

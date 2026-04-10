@@ -1173,6 +1173,8 @@ class OptimalBinning(BaseBinning):
         self.n_bins_ = self._binner.n_bins_
         self.bin_tables_ = self._binner.bin_tables_
         self.feature_types_ = self._binner.feature_types_
+        if hasattr(self._binner, '_cat_bins_'):
+            self._cat_bins_ = self._binner._cat_bins_
 
         if hasattr(self._binner, 'ks_stats_'):
             self.ks_stats_ = self._binner.ks_stats_

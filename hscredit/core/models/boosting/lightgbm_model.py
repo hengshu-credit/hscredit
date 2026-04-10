@@ -79,7 +79,7 @@ else:
     early_stopping = None
     log_evaluation = None
 
-from .base import BaseRiskModel
+from ..base import BaseRiskModel
 
 
 class LightGBMRiskModel(BaseRiskModel):

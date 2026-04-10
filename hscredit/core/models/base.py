@@ -317,7 +317,7 @@ class BaseRiskModel(BaseEstimator, ClassifierMixin, ABC):
         :param feature_names: 特征名称列表，可选
         :return: ModelReport对象
         """
-        from .report import ModelReport
+        from .evaluation.report import ModelReport
 
         return ModelReport(
             model=self,
@@ -487,7 +487,7 @@ class BaseRiskModel(BaseEstimator, ClassifierMixin, ABC):
         >>> # 组合对比图
         >>> fig = model.plot_feature_importance(X_test, method='combined', top_n=10)
         """
-        from .interpretability import (
+        from .evaluation.interpretability import (
             plot_feature_importance,
             plot_shap_importance,
             plot_importance_comparison
@@ -532,5 +532,5 @@ class BaseRiskModel(BaseEstimator, ClassifierMixin, ABC):
         >>> shap_values = explainer.compute_shap_values(X_test)
         >>> explainer.plot_shap_summary(X_test)
         """
-        from .interpretability import ModelExplainer
+        from .evaluation.interpretability import ModelExplainer
         return ModelExplainer(self, **kwargs)

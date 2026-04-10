@@ -42,7 +42,7 @@ def _get_catboost_version():
 
 CATBOOST_VERSION = _get_catboost_version()
 
-from .base import BaseRiskModel
+from ..base import BaseRiskModel
 
 
 class CatBoostRiskModel(BaseRiskModel):

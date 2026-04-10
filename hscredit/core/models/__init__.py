@@ -22,6 +22,7 @@
 | RandomForest | RandomForestRiskModel | 随机森林 |
 | ExtraTrees | ExtraTreesRiskModel | 极端随机树 |
 | GradientBoosting | GradientBoostingRiskModel | 梯度提升树 |
+| NGBoost | NGBoostRiskModel | 自然梯度提升（概率预测） |
 | LogisticRegression | LogisticRegression | 扩展逻辑回归 |
 | ScoreCard | ScoreCard | 评分卡模型 |
 
@@ -104,24 +105,27 @@ from .losses import (
 # 导入模型基类
 from .base import BaseRiskModel
 
-# 导入各模型类
-from .xgboost_model import XGBoostRiskModel
-from .lightgbm_model import LightGBMRiskModel
-from .catboost_model import CatBoostRiskModel
-from .sklearn_models import (
+# 导入提升树模型 (boosting/)
+from .boosting import (
+    XGBoostRiskModel,
+    LightGBMRiskModel,
+    CatBoostRiskModel,
+    NGBoostRiskModel,
+)
+
+# 导入经典模型 (classical/)
+from .classical import (
     RandomForestRiskModel,
     ExtraTreesRiskModel,
     GradientBoostingRiskModel,
+    LogisticRegression,
 )
 
-# 导入逻辑回归模型
-from .logistic_regression import LogisticRegression
-
-# 导入评分卡模型
+# 导入评分卡 (scorecard/)
 from .scorecard import ScoreCard
 
-# 导入规则集分类模型
-from .rule_classifier import (
+# 导入规则集分类模型 (rules/)
+from .rules import (
     RuleSet,
     RulesClassifier,
     RuleSetClassifier,
@@ -132,10 +136,10 @@ from .rule_classifier import (
     combine_rules,
 )
 
-# 导入评估报告
-from .report import ModelReport
+# 导入评估报告 (evaluation/)
+from .evaluation import ModelReport
 
-# 导入超参数调优 (可选依赖)
+# 导入超参数调优 (tuning/, 可选依赖)
 try:
     from .tuning import ModelTuner, AutoTuner, TuningObjective
     TUNING_AVAILABLE = True
@@ -173,6 +177,7 @@ __all__ = [
     "XGBoostRiskModel",
     "LightGBMRiskModel",
     "CatBoostRiskModel",
+    "NGBoostRiskModel",
     "RandomForestRiskModel",
     "ExtraTreesRiskModel",
     "GradientBoostingRiskModel",
