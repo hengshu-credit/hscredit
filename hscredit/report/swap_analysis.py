@@ -1,4 +1,4 @@
-"""Swap规则置换分析报告模块.
+"""Swap规则置换分析模块.
 
 提供金融信贷业务中规则置换时的风险指标分析功能，
 支持基于评分的风险预估和swap四象限分析。
@@ -979,7 +979,7 @@ def create_swap_dataset_from_rules(
     )
 
 
-def swap_analysis_report(
+def swap_analysis(
     swap_df: pd.DataFrame,
     reference_df: pd.DataFrame,
     score_col: str = "score",
@@ -993,7 +993,7 @@ def swap_analysis_report(
     target_aliases: Optional[Dict[str, str]] = None,
     **kwargs
 ) -> SwapAnalysisResult:
-    """统一的Swap分析报告入口函数.
+    """统一的Swap分析入口函数.
     
     传入数据集和参数配置，直接得到完整的swap分析结果。
     
@@ -1015,14 +1015,14 @@ def swap_analysis_report(
     **示例**
     
     >>> # 单标签分析
-    >>> result = swap_analysis_report(
+    >>> result = swap_analysis(
     ...     swap_df, reference_df,
     ...     score_col='score',
     ...     target='target_dpd15'
     ... )
     >>> 
     >>> # 多标签分析（使用overdue+dpds）
-    >>> result = swap_analysis_report(
+    >>> result = swap_analysis(
     ...     swap_df, reference_df,
     ...     score_col='score',
     ...     overdue='MOB1',

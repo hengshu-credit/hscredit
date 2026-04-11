@@ -1,15 +1,15 @@
 # -*- coding: utf-8 -*-
 """
-客群偏移监控报告.
+客群偏移监控模块.
 
 整合客群稳定性分析（PSI）、特征分布漂移、逾期率漂移等，
 生成综合 Excel 监控报告，适用于模型上线后的定期监控场景。
 
 用法::
 
-    from hscredit.report import population_drift_report
+    from hscredit.report import population_drift
 
-    population_drift_report(
+    population_drift(
         expected=train_df,
         actual=prod_df,
         features=['age', 'income', 'credit_score'],
@@ -23,10 +23,10 @@ import numpy as np
 import pandas as pd
 from typing import List, Optional
 
-from .excel import ExcelWriter, dataframe2excel
+from ..excel import ExcelWriter, dataframe2excel
 
 
-def population_drift_report(
+def population_drift(
     expected: pd.DataFrame,
     actual: pd.DataFrame,
     features: List[str],
@@ -38,7 +38,7 @@ def population_drift_report(
     *,
     target: Optional[str] = None,
 ) -> str:
-    """生成客群偏移综合监控报告（Excel）.
+    """生成客群偏移综合监控结果（Excel）.
 
     报告包含以下Sheet:
     - **总览**: 各特征PSI汇总及稳定性等级

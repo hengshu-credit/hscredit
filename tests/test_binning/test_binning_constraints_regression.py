@@ -7,7 +7,6 @@
 """
 
 import unittest
-import importlib.util
 from pathlib import Path
 import numpy as np
 import pandas as pd
@@ -15,6 +14,7 @@ import pandas as pd
 from hscredit.core.binning import OptimalBinning
 from hscredit.core.metrics import quadratic_curve_coefficient
 from hscredit.core.binning.or_binning import ORTOOLS_AVAILABLE
+from hscredit.report.feature_analyzer import benchmark_binning_methods
 
 
 class TestBinningConstraintRegression(unittest.TestCase):
@@ -130,10 +130,6 @@ if TARGET_DATA_PATH is None:
     TARGET_DATA_PATH = _EXAMPLES_DIR / 'hscredit_yyp.xlsx'
 
 
-TOAD_AVAILABLE = importlib.util.find_spec('toad') is not None
-OPTBINNING_AVAILABLE = importlib.util.find_spec('optbinning') is not None
-
-
 class TestORBinningConstraintRegression(unittest.TestCase):
     """验证 OR-Tools 方法在可用环境下也遵守单调性约束。"""
 
@@ -191,62 +187,30 @@ class TestORBinningConstraintRegression(unittest.TestCase):
         self.assertLessEqual(len(valid), 5, msg=table.to_dict('records'))
         self.assertTrue(np.all(np.diff(bad_rates) <= 1e-10), msg=bad_rates.tolist())
 
-class TestQuadraticCurveBenchmark(unittest.TestCase):
-    """验证 hscredit 在目标字段上的二次曲线指标不弱于对比库。"""
+class TestBinningMethodBenchmark(unittest.TestCase):
+    """验证分箱方法基准只依赖 hscredit 内部实现。"""
 
-    @staticmethod
-    def _quad_coef(values: np.ndarray) -> float:
-        arr = np.asarray(values, dtype=float)
-        if len(arr) < 3:
-            return 0.0
-        return float(np.polyfit(np.linspace(-1.0, 1.0, len(arr)), arr, 2)[0])
+    def test_benchmark_binning_methods_returns_hscredit_methods_only(self):
+        X, y = TestBinningConstraintRegression.create_monotonic_test_data(n_samples=240, random_state=19)
+        df = X.copy()
+        df['MOB1'] = np.where(y.to_numpy() > 0, 5, 0)
 
-    @staticmethod
-    def _valid_lift(table: pd.DataFrame) -> np.ndarray:
-        valid = table[table['分箱'] >= 0].reset_index(drop=True)
-        return valid['LIFT值'].to_numpy(dtype=float)
+        result = benchmark_binning_methods(
+            df,
+            feature='x',
+            overdue_col='MOB1',
+            dpds=[3],
+            max_n_bins=5,
+            min_bin_size=0.05,
+            monotonic='descending',
+            hscredit_methods=['chi', 'cart', 'mdlp'],
+        )
 
-    @unittest.skipUnless(TARGET_DATA_PATH.exists() and TOAD_AVAILABLE and OPTBINNING_AVAILABLE, 'benchmark dependencies unavailable')
-    def test_hscredit_curve_quality_is_better_than_toad_and_optbinning(self):
-        import toad
-        from optbinning import OptimalBinning as OptBinning
-
-        df = pd.read_excel(TARGET_DATA_PATH)
-        x = df['中智小牛分C3']
-        y = (df['MOB1'] > 3).astype(int)
-        X = pd.DataFrame({'x': x})
-        df_toad = pd.DataFrame({'x': x, 'target': y})
-
-        hs_chi = OptimalBinning(method='chi', max_n_bins=5, min_n_bins=2, monotonic='descending', verbose=False, lift_refine=False)
-        hs_chi.fit(X, y)
-        hs_cart = OptimalBinning(method='cart', max_n_bins=5, min_n_bins=2, monotonic='descending', verbose=False, lift_refine=False)
-        hs_cart.fit(X, y)
-        hs_or = OptimalBinning(method='or_tools', max_n_bins=5, min_n_bins=2, monotonic='descending', time_limit=10, verbose=False, lift_refine=False)
-        hs_or.fit(X, y)
-
-        hs_chi_quad = self._quad_coef(self._valid_lift(hs_chi.get_bin_table('x')))
-        hs_cart_quad = self._quad_coef(self._valid_lift(hs_cart.get_bin_table('x')))
-        hs_or_quad = self._quad_coef(self._valid_lift(hs_or.get_bin_table('x')))
-
-        comb = toad.transform.Combiner()
-        comb.fit(df_toad, y='target', method='chi', n_bins=5)
-        toad_bins = comb.transform(df_toad[['x']], labels=False)['x'].to_numpy()
-        toad_chi_lift = pd.DataFrame({'bin': toad_bins, 'y': y}).groupby('bin')['y'].mean().to_numpy() / max(y.mean(), 1e-10)
-
-        comb = toad.transform.Combiner()
-        comb.fit(df_toad, y='target', method='dt', n_bins=5)
-        toad_bins = comb.transform(df_toad[['x']], labels=False)['x'].to_numpy()
-        toad_dt_lift = pd.DataFrame({'bin': toad_bins, 'y': y}).groupby('bin')['y'].mean().to_numpy() / max(y.mean(), 1e-10)
-
-        opt = OptBinning(name='x', dtype='numerical', max_n_bins=5, monotonic_trend='descending')
-        opt.fit(x.to_numpy(), y.to_numpy())
-        opt_idx = opt.transform(x.to_numpy(), metric='indices')
-        opt_lift = pd.DataFrame({'bin': opt_idx, 'y': y}).groupby('bin')['y'].mean().to_numpy() / max(y.mean(), 1e-10)
-        opt_quad = self._quad_coef(opt_lift)
-
-        self.assertGreater(hs_chi_quad, self._quad_coef(toad_chi_lift))
-        self.assertGreater(hs_cart_quad, self._quad_coef(toad_dt_lift))
-        self.assertGreater(hs_or_quad, opt_quad)
+        self.assertFalse(result.empty)
+        self.assertTrue(result['method'].str.startswith('hscredit-').all(), msg=result['method'].tolist())
+        self.assertFalse(result['method'].str.contains('toad|optbinning', regex=True).any())
+        self.assertEqual(set(result['dpd'].tolist()), {3})
+        self.assertTrue({'n_bins', 'head_lift', 'tail_lift', 'edge_gap', 'turns'}.issubset(result.columns))
 
 class TestNotebookTargetFieldRegression(unittest.TestCase):
     """覆盖 notebook 中暴露的目标字段问题。"""

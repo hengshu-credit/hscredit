@@ -22,11 +22,11 @@
 - ✅ `viz/binning_plots.py` `ks_plot` 添加 `ax` 别名（兼容 `axes`）
 
 ### 功能新增
-- ✅ **#6 多标签规则挖掘**：`report/mining/multi_label.py` `MultiLabelRuleMiner` 类 + `report/rule_analysis_report.py` `multi_label_rule_report` 函数
+- ✅ **#6 多标签规则挖掘**：`report/mining/multi_label.py` `MultiLabelRuleMiner` 类 + `report/rule_analysis.py` `multi_label_rule_analysis` 函数
 - ✅ **#7 调参目标扩展**：`models/tuning.py` 新增 `ks_lift_combined` 和 `tail_purity_ks` 内置目标
 - ✅ **#9 评分卡部署代码导出**：`models/scorecard.py` 新增 `export_deployment_code()` 支持 SQL/Python/Java
 - ✅ **#11 viz 统一样式系统**：`viz/style.py` 提供 `set_style(theme)` 主题管理、配色方案、中文字体自动检测
-- ✅ **#12 客群偏移监控报告**：`report/population_drift_report.py` `population_drift_report()` 生成 PSI 总览 + 特征分布对比 + 逾期率对比 + 评分分布 Excel 报告
+- ✅ **#12 客群偏移监控报告**：`report/population_drift.py` `population_drift()` 生成 PSI 总览 + 特征分布对比 + 逾期率对比 + 评分分布 Excel 报告
 - ✅ **#15 StabilityAwareSelector**：`selectors/stability_selector.py` 综合 IV 有效性与 PSI 稳定性的加权评分特征筛选器
 
 ---
@@ -652,16 +652,16 @@ class MultiLabelRuleMiner:
         """完整规则分析报告，含规则分类和业务解读."""
 ```
 
-#### 5.2 规则分析报告（`report/rule_analysis_report.py`）🆕
+#### 5.2 规则分析（`report/rule_analysis.py`）🆕
 
 ```python
-def multi_label_rule_report(
+def multi_label_rule_analysis(
     df: pd.DataFrame,
     features: List[str],
     labels: Dict[str, str],
     # 如 {'短期标签': 'mob3_30', '长期标签': 'mob6_30'}
     miner_params: dict = None,
-    output_path: str = 'rule_analysis_report.xlsx',
+    output_path: str = 'rule_analysis.xlsx',
 ) -> str:
     """多标签规则挖掘分析报告（Excel输出）.
 
@@ -680,7 +680,7 @@ def multi_label_rule_report(
         - 各特征的最优切分点及双标签效果对比
 
     Example:
-        >>> multi_label_rule_report(
+        >>> multi_label_rule_analysis(
         ...     df=df,
         ...     features=['age', 'income', 'credit_score'],
         ...     labels={'短期标签(MOB3@30)': 'mob3_30', '长期标签(MOB6@30)': 'mob6_30'},
@@ -689,7 +689,7 @@ def multi_label_rule_report(
     """
 ```
 
-更新 `report/__init__.py` 导出 `multi_label_rule_report`。
+更新 `report/__init__.py` 导出 `multi_label_rule_analysis`。
 
 ---
 
@@ -948,8 +948,8 @@ class FeatureScaler(BaseEstimator, TransformerMixin):
 | 文件 | 新增函数 |
 |------|----------|
 | `model_report.py` 🆕 | `auto_model_report` |
-| `rule_analysis_report.py` ✅ | `multi_label_rule_report` |
-| `population_drift_report.py` ✅ | `population_drift_report` |
+| `rule_analysis.py` ✅ | `multi_label_rule_analysis` |
+| `population_drift.py` ✅ | `population_drift` |
 
 ### 4.7 `core/selectors/` 新增
 
@@ -1001,7 +1001,7 @@ from .core.eda import (
 from .core.rules.mining import MultiLabelRuleMiner
 
 # Phase 6
-from .report import auto_model_report, multi_label_rule_report
+from .report import auto_model_report, multi_label_rule_analysis
 ```
 
 ---
@@ -1057,4 +1057,4 @@ Phase 7-8（持续迭代）
 4. **输出格式**：统计表列名使用中文，与现有模块保持一致
 5. **Optional 依赖**：缺失时给出清晰的安装提示（如 `pip install shap`）
 6. **只增不改**：不破坏现有 API，大写别名保留，旧参数名兼容
-7. **Excel 报告**：统一使用 `ExcelWriter`，样式参考 `feature_report.py`
+7. **Excel 报告**：统一使用 `ExcelWriter`，样式参考 `feature_analyzer.py`

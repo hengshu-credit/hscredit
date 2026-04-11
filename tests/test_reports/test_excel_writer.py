@@ -1,8 +1,4 @@
-"""
-Excel写入模块测试
-
-测试ExcelWriter和dataframe2excel的功能。
-"""
+"""Excel写入模块测试."""
 
 import os
 import tempfile
@@ -11,8 +7,8 @@ import pandas as pd
 import numpy as np
 from openpyxl import load_workbook
 
-from hscredit.report.excel import ExcelWriter, dataframe2excel
-import hscredit.report.excel.writer as writer_module
+from hscredit.excel import ExcelWriter, dataframe2excel
+import hscredit.excel.writer as writer_module
 
 
 class TestExcelWriter:
@@ -114,7 +110,7 @@ class TestExcelWriter:
         assert ws["B3"].value == 'X'
         assert ws["B4"].value == 'Y'
         assert ws["B5"].value == 'Z'
-    
+
     def test_insert_dataframe_with_merge(self):
         """测试插入DataFrame并合并相同值"""
         writer = ExcelWriter()

@@ -927,7 +927,7 @@ def overdue_prediction_report(
     # 输出到Excel
     if excel_writer is not None:
         try:
-            from .excel import ExcelWriter, dataframe2excel
+            from ..excel import ExcelWriter, dataframe2excel
             from ..utils import init_setting
 
             init_setting()

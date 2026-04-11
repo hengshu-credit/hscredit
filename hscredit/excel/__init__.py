@@ -10,7 +10,7 @@
 
 使用示例:
     >>> import pandas as pd
-    >>> from hscredit.report.excel import ExcelWriter
+    >>> from hscredit.excel import ExcelWriter
     >>> 
     >>> # DataFrame直接保存
     >>> df = pd.DataFrame({'A': [1, 2, 3], 'B': [4, 5, 6]})

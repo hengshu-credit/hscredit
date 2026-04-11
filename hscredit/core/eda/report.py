@@ -15,7 +15,7 @@ from .target import target_distribution, bad_rate_overall, bad_rate_trend
 from .relationship import batch_iv_analysis
 from .correlation import high_correlation_pairs
 
-from ...report.excel import ExcelWriter, dataframe2excel
+from ...excel import ExcelWriter, dataframe2excel
 
 
 def eda_summary(df: pd.DataFrame,

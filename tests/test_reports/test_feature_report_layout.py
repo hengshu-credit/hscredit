@@ -2,9 +2,9 @@ import types
 
 import pandas as pd
 
-from hscredit.report.excel import ExcelWriter
-from hscredit.report.feature_report import auto_feature_analysis_report
-import hscredit.report.feature_report as feature_report_module
+from hscredit.excel import ExcelWriter
+from hscredit.report.feature_analyzer import auto_feature_analysis
+import hscredit.report.feature_analyzer as feature_analyzer_module
 
 
 def _mock_insert_pic2sheet(self, worksheet, fig, insert_space, figsize=(600, 250)):
@@ -32,9 +32,9 @@ def _get_feature_title_and_table_header_rows(ws):
     return feature_title_row, table_header_row
 
 
-def test_auto_feature_analysis_report_system_gap(monkeypatch):
+def test_auto_feature_analysis_system_gap(monkeypatch):
     # 屏蔽绘图函数，避免真实生成图片
-    monkeypatch.setattr(feature_report_module, "bin_plot", lambda *args, **kwargs: None)
+    monkeypatch.setattr(feature_analyzer_module, "bin_plot", lambda *args, **kwargs: None)
 
     data = pd.DataFrame({
         "x": [1, 2, 3, 4, 5, 6, 7, 8],
@@ -45,7 +45,7 @@ def test_auto_feature_analysis_report_system_gap(monkeypatch):
         writer = ExcelWriter(system=system_name)
         writer.insert_pic2sheet = types.MethodType(_mock_insert_pic2sheet, writer)
 
-        auto_feature_analysis_report(
+        auto_feature_analysis(
             data,
             features=["x"],
             target="target",
@@ -70,7 +70,7 @@ def test_auto_feature_analysis_report_system_gap(monkeypatch):
 
 
 def test_feature_title_end_space_with_return_cols(monkeypatch):
-    monkeypatch.setattr(feature_report_module, "bin_plot", lambda *args, **kwargs: None)
+    monkeypatch.setattr(feature_analyzer_module, "bin_plot", lambda *args, **kwargs: None)
 
     data = pd.DataFrame({
         "x": [1, 2, 3, 4, 5, 6, 7, 8],
@@ -80,7 +80,7 @@ def test_feature_title_end_space_with_return_cols(monkeypatch):
     writer = ExcelWriter(system="windows")
     writer.insert_pic2sheet = types.MethodType(_mock_insert_pic2sheet, writer)
 
-    auto_feature_analysis_report(
+    auto_feature_analysis(
         data,
         features=["x"],
         target="target",

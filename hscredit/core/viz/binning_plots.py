@@ -782,7 +782,7 @@ def ks_plot(score, target, title="", fontsize=14, figsize=(16, 8), save=None,
 
 
 def hist_plot(score, y_true=None, figsize=(15, 10), bins=30, save=None,
-              labels=None, desc="", anchor=1.11, fontsize=14, kde=False, title=None,
+              labels=None, desc="", anchor=1.15, fontsize=14, kde=False, title=None,
               ax=None, **kwargs):
     """
     特征值分布直方图.
@@ -834,11 +834,23 @@ def hist_plot(score, y_true=None, figsize=(15, 10), bins=30, save=None,
     else:
         hue_order_final = None
 
-    sns.histplot(
-        x=score, hue=y_true, element="step", stat="probability", bins=bins,
-        common_bins=True, common_norm=True, palette=palette, hue_order=hue_order_final,
-        ax=ax, kde=kde, **kwargs
+    hist_kwargs = dict(
+        x=score,
+        hue=y_true,
+        element="step",
+        stat="probability",
+        bins=bins,
+        common_bins=True,
+        common_norm=True,
+        ax=ax,
+        kde=kde,
     )
+    if y_true is not None:
+        hist_kwargs.update(palette=palette, hue_order=hue_order_final)
+    else:
+        hist_kwargs.update(color=kwargs.pop('color', DEFAULT_COLORS[0]))
+
+    sns.histplot(**hist_kwargs, **kwargs)
 
     # 使用公共函数设置坐标轴样式
     setup_axis_style(ax)
@@ -932,6 +944,7 @@ def psi_plot(expected, actual, labels=None, desc="", save=None, colors=None,
                 edgecolor='white' if hatch else None)
 
         ax1.set_ylabel('样本占比')
+        ax1.yaxis.set_major_formatter(PercentFormatter(1))
         ax1.set_xticks(x_indexes)
         ax1.set_xticklabels(x)
         ax1.tick_params(axis='x', labelrotation=90)
@@ -944,6 +957,7 @@ def psi_plot(expected, actual, labels=None, desc="", save=None, colors=None,
         ax2.scatter(x, df_psi[f"{labels[0]}坏样本率"], marker=".")
         ax2.scatter(x, df_psi[f"{labels[1]}坏样本率"], marker=".")
         ax2.set_ylabel('坏样本率')
+        ax2.yaxis.set_major_formatter(PercentFormatter(1))
 
         # 标题处理：优先使用 title 参数
         if title is not None:
@@ -1178,10 +1192,12 @@ def distribution_plot(data, date="date", target="target", save=None, figsize=(10
         title = f'{title}\n\n'
     ax1.set_title(title)
 
-    ax2 = plt.twinx()
+    ax2 = ax1.twinx()
     (temp["坏样本"] / temp.sum(axis=1)).plot(
         ax=ax2, color=colors[-1], style="--", linewidth=2, label="坏样本率"
     )
+    ax2.set_ylabel('坏样本率')
+    ax2.yaxis.set_major_formatter(PercentFormatter(1))
 
     handles1, labels1 = ax1.get_legend_handles_labels()
     handles2, labels2 = ax2.get_legend_handles_labels()

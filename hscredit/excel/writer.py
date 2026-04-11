@@ -58,7 +58,7 @@ class ExcelWriter:
     **参考样例**
 
     >>> import pandas as pd
-    >>> from hscredit.report.excel import ExcelWriter
+    >>> from hscredit.excel import ExcelWriter
     >>>
     >>> # 方法1：使用with语句（推荐，自动保存）
     >>> with ExcelWriter(theme_color='3f1dba').set_filename("report.xlsx") as writer:
@@ -105,8 +105,9 @@ class ExcelWriter:
         # 加载模板
         if style_excel is None:
             # 使用resources目录下的template.xlsx
+            package_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             style_excel = os.path.join(
-                os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                package_root,
                 'resources', 'templates', 'template.xlsx'
             )
 
@@ -1494,7 +1495,7 @@ def dataframe2excel(
     **参考样例**
 
     >>> import pandas as pd
-    >>> from hscredit.report.excel import dataframe2excel
+    >>> from hscredit.excel import dataframe2excel
     >>>
     >>> # 创建示例数据
     >>> df = pd.DataFrame({

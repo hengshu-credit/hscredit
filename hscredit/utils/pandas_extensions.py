@@ -31,7 +31,7 @@ from typing import Optional, List, Dict, Any, Literal, Union, Tuple, TYPE_CHECKI
 from IPython.display import display
 
 if TYPE_CHECKING:
-    from ..report.excel import ExcelWriter
+    from ..excel import ExcelWriter
 
 
 # =============================================================================
@@ -207,7 +207,7 @@ def _dataframe_save(
     **参考样例**
 
     >>> import pandas as pd
-    >>> from hscredit.report.excel import ExcelWriter
+    >>> from hscredit.excel import ExcelWriter
     >>> 
     >>> df = pd.DataFrame({'A': [1, 2, 3], 'B': [4, 5, 6]})
     >>> 
@@ -220,7 +220,7 @@ def _dataframe_save(
     >>> df.save(writer, worksheet=worksheet)
     >>> writer.save("report.xlsx")
     """
-    from ..report.excel import ExcelWriter, dataframe2excel
+    from ..excel import ExcelWriter, dataframe2excel
     from openpyxl.worksheet.worksheet import Worksheet
     from openpyxl.utils import get_column_letter
     
@@ -395,7 +395,7 @@ def _series_save(
     **参考样例**
 
     >>> import pandas as pd
-    >>> from hscredit.report.excel import ExcelWriter
+    >>> from hscredit.excel import ExcelWriter
     >>> 
     >>> s = pd.Series([1, 2, 3], name='数值', index=['a', 'b', 'c'])
     >>> 

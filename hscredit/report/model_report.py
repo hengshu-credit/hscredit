@@ -694,7 +694,7 @@ class QuickModelReport:
         - 5-模型参数（评分卡详情）
         - 6-模型部署需求
         """
-        from .excel import ExcelWriter, dataframe2excel
+        from ..excel import ExcelWriter, dataframe2excel
 
         model_name = model_name or self.model.__class__.__name__
         max_col = 35

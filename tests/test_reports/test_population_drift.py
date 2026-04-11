@@ -1,7 +1,7 @@
 import pandas as pd
 from openpyxl import load_workbook
 
-from hscredit.report.population_drift_report import population_drift_report
+from hscredit.report.population_drift import population_drift
 
 
 def _read_feature_rows(worksheet):
@@ -16,7 +16,7 @@ def _read_feature_rows(worksheet):
     return rows
 
 
-def test_population_drift_report_generates_expected_sheets(tmp_path):
+def test_population_drift_generates_expected_sheets(tmp_path):
     expected = pd.DataFrame(
         {
             "age": [23, 25, 27, 30, 35, 38, 42, 45],
@@ -33,9 +33,9 @@ def test_population_drift_report_generates_expected_sheets(tmp_path):
             "target": [0, 0, 1, 1, 0, 1, 1, 1],
         }
     )
-    output = tmp_path / "population_drift_report.xlsx"
+    output = tmp_path / "population_drift.xlsx"
 
-    result = population_drift_report(
+    result = population_drift(
         expected=expected,
         actual=actual,
         features=["age", "const_feature", "missing_feature"],

@@ -276,17 +276,17 @@ from .core.metrics import (
 
 # ========== 报告模块导入 (在core之后导入，避免循环导入) ==========
 
-from .report.excel import ExcelWriter, dataframe2excel
-from .report.feature_analyzer import feature_bin_stats, FeatureAnalyzer
-from .report.ruleset_report import ruleset_report
-from .report.swap_analysis_report import (
+from .excel import ExcelWriter, dataframe2excel
+from .report.feature_analyzer import feature_bin_stats, auto_feature_analysis
+from .report.rule_analysis import ruleset_analysis
+from .report.swap_analysis import (
     ReferenceDataProvider,
     SwapAnalyzer,
     SwapAnalysisResult,
     SwapRiskConfig,
     create_swap_dataset,
     create_swap_dataset_from_rules,
-    swap_analysis_report,
+    swap_analysis,
     SwapType,
 )
 
@@ -302,11 +302,6 @@ from .report.mining import (
     TreeVisualizer,
     plot_decision_tree,
 )
-
-try:
-    from .report.feature_report import auto_feature_analysis_report
-except ImportError:
-    pass
 
 # ========== 工具函数导入 ==========
 
@@ -347,7 +342,7 @@ __all__ = [
     # 报告模块
     "ExcelWriter",
     "dataframe2excel",
-    "auto_feature_analysis_report",
+    "auto_feature_analysis",
 
     # 可视化模块 (viz) - 基础图表
     "bin_plot",
@@ -401,8 +396,6 @@ __all__ = [
 
     # 分析模块
     "feature_bin_stats",
-    "FeatureAnalyzer",
-
     # 规则置换风险分析模块
     "ReferenceDataProvider",
     "SwapAnalyzer",
@@ -410,7 +403,7 @@ __all__ = [
     "SwapRiskConfig",
     "create_swap_dataset",
     "create_swap_dataset_from_rules",
-    "swap_analysis_report",
+    "swap_analysis",
     "SwapType",
 
     # 逾期数据预测模块
@@ -568,7 +561,7 @@ __all__ = [
     # 规则引擎模块
     "Rule",
     "get_columns_from_query",
-    "ruleset_report",
+    "ruleset_analysis",
     "optimize_expr",
     "beautify_expr",
     "get_expr_variables",
@@ -657,10 +650,9 @@ def info():
     print("  - core.eda: 数据探索分析 (EDAReport/DataOverview/TargetAnalysis/IV/PSI...)")
     print()
     print("报告模块 (report):")
-    print("  - report.excel: Excel报告生成")
-    print("  - report.feature_analyzer: 特征分箱统计分析")
-    print("  - report.ruleset_report: 规则集综合评估报告")
-    print("  - report.feature_report: 特征分析报告")
+    print("  - excel: Excel报告生成")
+    print("  - report.feature_analyzer: 特征分箱统计与自动分析")
+    print("  - report.rule_analysis: 规则集与多标签规则分析")
     print()
     print("工具模块 (utils):")
     print("  - utils: 工具函数 (随机种子、数据集、pickleIO)")

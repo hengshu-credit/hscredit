@@ -226,9 +226,9 @@ bin_table.show(compact=True)
 
 | 模块 | 功能 | 主要类/函数 |
 |------|------|------------|
-| `report.excel` | Excel报告 | `ExcelWriter`, `dataframe2excel` |
-| `report.feature_analyzer` | 特征分析 | `feature_bin_stats`, `FeatureAnalyzer` |
-| `report.swap_analysis_report` | 置换风险分析 | `SwapAnalyzer`, `swap_analysis_report` |
+| `excel` | Excel报告 | `ExcelWriter`, `dataframe2excel` |
+| `report.feature_analyzer` | 特征分析 | `feature_bin_stats`, `auto_feature_analysis` |
+| `report.swap_analysis` | 置换风险分析 | `SwapAnalyzer`, `swap_analysis` |
 | `report.overdue_predictor` | 逾期预测 | `OverduePredictor` |
 
 ### 工具模块 (Utils)

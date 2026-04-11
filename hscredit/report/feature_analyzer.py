@@ -1,29 +1,25 @@
-"""特征分析器.
+"""特征分析模块.
 
-提供特征分箱统计分析功能，支持多逾期标签和逾期天数组合分析。
-参考 scorecardpipeline 的 feature_bin_stats 实现。
+提供特征分箱统计分析与自动化特征分析输出功能，支持多逾期标签、
+多逾期天数组合分析以及 Excel 报告生成。
 """
+
+import os
+import traceback
+from copy import deepcopy
+from typing import Union, List, Dict, Optional, Tuple, Any
 
 import numpy as np
 import pandas as pd
-from typing import Union, List, Dict, Optional, Tuple, Any
-from copy import deepcopy
+from openpyxl.worksheet.worksheet import Worksheet
+from tqdm import tqdm
 
 from ..core.binning import OptimalBinning
 from ..core.binning.base import BaseBinning
+from ..core.viz import bin_plot, corr_plot, distribution_plot, hist_plot, ks_plot
 from ..core.metrics._binning import compute_bin_stats, add_margins
-
-
-def _calculate_lift(bad_rate: float, overall_bad_rate: float) -> float:
-    """计算LIFT值."""
-    if overall_bad_rate <= 0:
-        return 1.0
-    return bad_rate / overall_bad_rate
-
-
-def _calculate_ks(cum_bad_rate: np.ndarray, cum_good_rate: np.ndarray) -> np.ndarray:
-    """计算KS值."""
-    return np.abs(cum_bad_rate - cum_good_rate)
+from ..excel import ExcelWriter, dataframe2excel
+from ..utils import init_setting
 
 
 def _create_bin_table(
@@ -32,39 +28,25 @@ def _create_bin_table(
     feature_name: str,
     desc: str = "",
     splits: Optional[np.ndarray] = None,
-    amount: Optional[np.ndarray] = None
+    amount: Optional[np.ndarray] = None,
 ) -> pd.DataFrame:
-    """创建分箱统计表.
-    
-    :param bins: 分箱索引
-    :param y: 目标变量
-    :param feature_name: 特征名称
-    :param desc: 特征描述
-    :param splits: 切分点
-    :param amount: 金额数组，用于金额口径分析
-    :return: 分箱统计表
-    """
-    # 生成分箱标签
+    """创建分箱统计表。"""
     bin_labels = _get_bin_labels(splits, bins)
 
-    # 根据是否有金额字段，选择统计口径
     if amount is not None:
-        # 金额口径：所有统计基于金额而非样本数
         stats = compute_bin_stats(
-            bins, y,
+            bins,
+            y,
             target_type='amount_weighted',
             amount=amount,
-            bin_labels=bin_labels
+            bin_labels=bin_labels,
         )
     else:
-        # 样本数口径：使用 metrics 模块计算分箱统计
         stats = compute_bin_stats(bins, y, target_type='binary', bin_labels=bin_labels)
 
-    # 添加特征信息（插入到最前面）
     stats.insert(0, '指标含义', desc if desc else feature_name)
     stats.insert(0, '指标名称', feature_name)
 
-    # 删除"分箱"列，只保留"分箱标签"（分箱标签更具可读性）
     if '分箱' in stats.columns:
         stats = stats.drop(columns=['分箱'])
 
@@ -72,105 +54,77 @@ def _create_bin_table(
 
 
 def _get_bin_labels(splits: Optional[np.ndarray], bins: np.ndarray) -> List[str]:
-    """根据切分点生成分箱标签.
-    
-    :param splits: 切分点数组
-    :param bins: 分箱索引数组
-    :return: 分箱标签列表
-    """
+    """根据切分点生成分箱标签。"""
     unique_bins = np.unique(bins)
-    n_unique = len(unique_bins)
-    
-    # 没有切分点的情况
+
     if splits is None or len(splits) == 0:
         labels = []
-        for b in unique_bins:
-            b_int = int(b)
-            if b_int == -1:
+        for current_bin in unique_bins:
+            bin_value = int(current_bin)
+            if bin_value == -1:
                 labels.append('缺失')
-            elif b_int == -2:
+            elif bin_value == -2:
                 labels.append('特殊')
             else:
                 labels.append('[-inf, +inf)')
         return labels
-    
-    # 有切分点的情况
+
     n_splits = len(splits)
     labels = []
-    
-    for b in unique_bins:
-        b_int = int(b)
-        if b_int == -1:
+    for current_bin in unique_bins:
+        bin_value = int(current_bin)
+        if bin_value == -1:
             labels.append('缺失')
-        elif b_int == -2:
+        elif bin_value == -2:
             labels.append('特殊')
-        elif b_int == 0:
+        elif bin_value == 0:
             labels.append(f'[-inf, {splits[0]})')
-        elif b_int >= n_splits:
+        elif bin_value >= n_splits:
             labels.append(f'[{splits[-1]}, +inf)')
         else:
-            labels.append(f'[{splits[b_int-1]}, {splits[b_int]})')
-    
+            labels.append(f'[{splits[bin_value - 1]}, {splits[bin_value]})')
+
     return labels
 
 
 def _merge_multi_target_tables(
     tables: List[pd.DataFrame],
     target_names: List[str],
-    merge_columns: List[str]
+    merge_columns: List[str],
 ) -> pd.DataFrame:
-    """合并多目标的分箱表.
-    
-    参考 scp 实现：使用 merge 基于共同列合并，确保列名对齐正确。
-    修复：确保列名顺序正确，分箱详情列在前，各目标列连续排列。
-    
-    :param tables: 各目标的分箱表列表
-    :param target_names: 目标名称列表
-    :param merge_columns: 合并键列名（会作为公共列出现在所有目标中）
-    :return: 合并后的多级表头DataFrame
-    """
+    """合并多目标的分箱表。"""
     if not tables:
         return pd.DataFrame()
-    
+
     if len(tables) == 1:
         return tables[0]
-    
-    # 第一个表作为基础
+
     base_table = tables[0].copy()
-    
-    # 确定哪些列是公共列（merge_columns）
-    available_merge_cols = [c for c in merge_columns if c in base_table.columns]
-    # 非公共列
-    non_merge_cols = [c for c in base_table.columns if c not in available_merge_cols]
-    
-    # 修复：重新排列列顺序，确保 merge_columns 在前，非 merge 列在后
+    available_merge_cols = [column for column in merge_columns if column in base_table.columns]
+    non_merge_cols = [column for column in base_table.columns if column not in available_merge_cols]
     base_table = base_table[available_merge_cols + non_merge_cols]
-    
-    # 为第一个表设置多级表头
+
     multi_cols = []
-    for col in base_table.columns:
-        if col in available_merge_cols:
-            multi_cols.append(('分箱详情', col))
+    for column in base_table.columns:
+        if column in available_merge_cols:
+            multi_cols.append(('分箱详情', column))
         else:
-            multi_cols.append((target_names[0], col))
+            multi_cols.append((target_names[0], column))
     base_table.columns = pd.MultiIndex.from_tuples(multi_cols)
-    
-    # 合并后续表 - 使用 merge 基于 merge_columns 合并（参考 scp 实现）
-    for i, (table, target_name) in enumerate(zip(tables[1:], target_names[1:]), 1):
-        # 为当前表设置多级表头
+
+    for table, target_name in zip(tables[1:], target_names[1:]):
         table_multi_cols = []
-        for col in table.columns:
-            if col in available_merge_cols:
-                table_multi_cols.append(('分箱详情', col))
+        for column in table.columns:
+            if column in available_merge_cols:
+                table_multi_cols.append(('分箱详情', column))
             else:
-                table_multi_cols.append((target_name, col))
+                table_multi_cols.append((target_name, column))
         table_copy = table.copy()
         table_copy.columns = pd.MultiIndex.from_tuples(table_multi_cols)
-        
-        # 使用 merge 基于分箱详情列合并（参考 scp）
-        merge_on = [('分箱详情', c) for c in available_merge_cols]
+
+        merge_on = [('分箱详情', column) for column in available_merge_cols]
         base_table = base_table.merge(table_copy, on=merge_on)
-    
+
     return base_table
 
 
@@ -515,9 +469,10 @@ def benchmark_binning_methods(
     monotonic: str = 'auto_asc_desc',
     hscredit_methods: Optional[List[str]] = None,
 ) -> pd.DataFrame:
-    """逐方法对比分箱效果（hscredit / toad / optbinning）。
+    """逐方法对比 hscredit 内部分箱效果。
 
-    重点指标：头部/尾部Lift、头尾差(edge_gap)、是否单调。
+    仅使用 hscredit 内置分箱器，不依赖额外第三方分箱库。
+    重点指标：头部/尾部 Lift、头尾差(edge_gap)、是否单调。
     """
     if dpds is None:
         dpds = [3, 0]
@@ -569,7 +524,6 @@ def benchmark_binning_methods(
     for d in dpds:
         y = (data[overdue_col] > d).astype(int)
 
-        # hscredit
         for method in hscredit_methods:
             try:
                 binner = OptimalBinning(
@@ -585,46 +539,6 @@ def benchmark_binning_methods(
                 rows.append(_eval_splits(x, y, binner.splits_.get(feature, []), f'hscredit-{method}', d))
             except Exception as e:
                 rows.append({'method': f'hscredit-{method}', 'dpd': d, 'error': str(e)})
-
-        # toad
-        try:
-            import toad
-            m = x.notna() & y.notna()
-            xv, yv = x[m], y[m]
-            for tm in ['chi', 'dt', 'kmeans']:
-                try:
-                    kwargs = {'method': tm, 'return_splits': True, 'n_bins': max_n_bins}
-                    if tm != 'kmeans':
-                        kwargs['min_samples'] = min_bin_size
-                    _, sp = toad.merge(xv, yv, **kwargs)
-                    rows.append(_eval_splits(x, y, sp, f'toad-{tm}', d))
-                except Exception as e:
-                    rows.append({'method': f'toad-{tm}', 'dpd': d, 'error': str(e)})
-        except Exception as e:
-            rows.append({'method': 'toad', 'dpd': d, 'error': f'import failed: {str(e)}'})
-
-        # optbinning
-        try:
-            from optbinning import OptimalBinning as OptBinning
-            m = x.notna() & y.notna()
-            for om, pre_method in [('cart', 'cart'), ('mdlp', 'mdlp')]:
-                try:
-                    ob = OptBinning(
-                        name=feature,
-                        dtype='numerical',
-                        prebinning_method=pre_method,
-                        max_n_prebins=100,
-                        max_n_bins=max_n_bins,
-                        min_bin_size=min_bin_size,
-                        monotonic_trend=monotonic,
-                    )
-                    ob.fit(x[m].values, y[m].values)
-                    sp = list(ob.splits) if ob.splits is not None else []
-                    rows.append(_eval_splits(x, y, sp, f'optbinning-{om}', d))
-                except Exception as e:
-                    rows.append({'method': f'optbinning-{om}', 'dpd': d, 'error': str(e)})
-        except Exception as e:
-            rows.append({'method': 'optbinning', 'dpd': d, 'error': f'import failed: {str(e)}'})
 
     result = pd.DataFrame(rows)
     if result.empty:
@@ -642,162 +556,412 @@ def benchmark_binning_methods(
     return result.reset_index(drop=True)
 
 
-class FeatureAnalyzer:
-    """特征分析器.
-    
-    提供批量特征分析、多维度对比分析等功能。
+def auto_feature_analysis(
+    data: pd.DataFrame,
+    features=None,
+    target="target",
+    overdue=None,
+    dpds=None,
+    date=None,
+    data_summary_comment="",
+    freq="M",
+    excel_writer=None,
+    sheet="分析报告",
+    start_col=2,
+    start_row=2,
+    dropna=False,
+    writer_params=None,
+    bin_params=None,
+    feature_map=None,
+    corr=False,
+    pictures=None,
+    suffix="",
+    output_dir="model_report",
+    margins=False,
+    amount=None,
+    image_table_gap_rows=None,
+):
+    """自动特征分析.
+
+    用于三方数据评估或自有评分效果评估。生成包含数据集概况、特征分箱统计、
+    KS 曲线、分布图等内容的 Excel 分析结果。
+
+    :param data: 需要评估的数据集，需要包含目标变量
+    :param features: 需要进行分析的特征名称，支持单个字符串或列表
+    :param target: 目标变量名称
+    :param overdue: 逾期天数字段名称，传入时会覆盖 target 参数
+    :param dpds: 逾期定义方式，逾期天数 > DPD 为坏样本
+    :param date: 日期列，用于时间维度分布分析
+    :param freq: 日期统计粒度，默认按月 "M"
+    :param data_summary_comment: 数据备注信息
+    :param excel_writer: Excel 文件路径或 ExcelWriter 对象
+    :param sheet: 工作表名称
+    :param start_col: 起始列
+    :param start_row: 起始行
+    :param dropna: 是否剔除缺失值
+    :param writer_params: Excel 写入器初始化参数
+    :param bin_params: 分箱统计参数，支持 feature_bin_stats 的参数
+    :param feature_map: 特征名称映射字典
+    :param corr: 是否计算特征相关性
+    :param pictures: 需要生成的图片列表，支持 ["ks", "hist", "bin"]
+    :param suffix: 文件名后缀，避免同名文件被覆盖
+    :param output_dir: 图片输出目录
+    :param margins: 是否在每个特征分箱表末尾添加合计行，默认 False
+    :param amount: 放款金额或余额字段名称。传入后同时生成订单口径和金额口径两张分箱表
+    :param image_table_gap_rows: 图片区与分箱表之间的额外空行数
+    :return: (end_row, end_col) 分析结束位置
+
+    示例::
+
+        >>> from hscredit.report.feature_analyzer import auto_feature_analysis
+        >>> auto_feature_analysis(data, features=['feature1'], target='target', excel_writer='分析结果.xlsx')
     """
-    
-    def __init__(
-        self,
-        method: str = 'mdlp',
-        max_n_bins: int = 5,
-        min_bin_size: float = 0.05,
-        missing_separate: bool = True
-    ):
-        """初始化特征分析器.
-        
-        :param method: 分箱方法
-        :param max_n_bins: 最大分箱数
-        :param min_bin_size: 每箱最小样本占比
-        :param missing_separate: 是否将缺失值单独分箱
-        """
-        self.method = method
-        self.max_n_bins = max_n_bins
-        self.min_bin_size = min_bin_size
-        self.missing_separate = missing_separate
-        self.binners_: Dict[str, BaseBinning] = {}
-    
-    def analyze(
-        self,
-        data: pd.DataFrame,
-        feature: Union[str, List[str]],
-        overdue: Optional[Union[str, List[str]]] = None,
-        dpds: Optional[Union[int, List[int]]] = None,
-        target: Optional[str] = None,
-        desc: Optional[Union[str, Dict[str, str]]] = None,
-        amount: Optional[str] = None,
-        **kwargs
-    ) -> pd.DataFrame:
-        """批量分析多个特征.
-        
-        :param data: 数据集
-        :param feature: 特征名称或特征名称列表
-        :param overdue: 逾期天数字段
-        :param dpds: 逾期定义天数
-        :param target: 目标变量（可选，与overdue+dpds二选一）
-        :param desc: 特征描述
-        :param amount: 金额字段名称，用于金额口径分析
-        :param kwargs: 其他参数传递给 feature_bin_stats
-        :return: 合并的分箱统计表
-        """
-        return feature_bin_stats(
-            data=data,
-            feature=feature,
-            overdue=overdue,
-            dpds=dpds,
-            target=target,
-            method=self.method,
-            desc=desc,
-            max_n_bins=self.max_n_bins,
-            min_bin_size=self.min_bin_size,
-            missing_separate=self.missing_separate,
-            amount=amount,
-            **kwargs
+    if writer_params is None:
+        writer_params = {}
+    if bin_params is None:
+        bin_params = {}
+    if feature_map is None:
+        feature_map = {}
+    if pictures is None:
+        pictures = ["bin", "ks", "hist"]
+
+    init_setting()
+
+    data = data.copy()
+    os.makedirs(output_dir, exist_ok=True)
+
+    if not isinstance(features, (list, tuple)):
+        features = [features]
+
+    if overdue and not isinstance(overdue, list):
+        overdue = [overdue]
+
+    if dpds and not isinstance(dpds, list):
+        dpds = [dpds]
+
+    if overdue:
+        target = f"{overdue[0]} {dpds[0]}+"
+        data[target] = (data[overdue[0]] > dpds[0]).astype(int)
+
+    if date is not None and date in data.columns and not pd.api.types.is_datetime64_any_dtype(data[date]):
+        converted_date = pd.to_datetime(data[date], errors='coerce')
+        if converted_date.notna().sum() < len(data) * 0.5 and pd.api.types.is_numeric_dtype(data[date]):
+            converted_date_excel = pd.to_datetime(data[date], unit='D', errors='coerce')
+            if converted_date_excel.notna().sum() > converted_date.notna().sum():
+                converted_date = converted_date_excel
+        data[date] = converted_date
+
+    if isinstance(excel_writer, ExcelWriter):
+        writer = excel_writer
+    else:
+        writer = ExcelWriter(**writer_params)
+
+    worksheet = writer.get_sheet_by_name(sheet)
+
+    if image_table_gap_rows is None:
+        image_table_gap_rows = 2 if getattr(writer, "system", "windows") == "windows" else 1
+
+    if bin_params and "del_grey" in bin_params and bin_params.get("del_grey"):
+        merge_columns = ["指标名称", "指标含义", "分箱标签"]
+    else:
+        merge_columns = ["指标名称", "指标含义", "分箱标签", "样本总数", "样本占比"]
+
+    return_cols = []
+    if bin_params:
+        if "return_cols" in bin_params and bin_params.get("return_cols"):
+            return_cols = bin_params.pop("return_cols")
+            if not isinstance(return_cols, (list, np.ndarray)):
+                return_cols = [return_cols]
+            return_cols = list(set(return_cols) - set(merge_columns))
+        else:
+            return_cols = []
+
+    max_columns_len = len(merge_columns) + len(return_cols) * len(overdue) * len(dpds) \
+        if overdue and len(overdue) > 0 else len(merge_columns) + len(return_cols)
+
+    end_row, end_col = writer.insert_value2sheet(
+        worksheet, (start_row, start_col), value="数据有效性分析报告",
+        style="header_middle", end_space=(start_row, start_col + max_columns_len - 1)
+    )
+
+    if date is not None and date in data.columns:
+        if data[date].dtype.name in ["str", "object"]:
+            start_date = pd.to_datetime(data[date]).min().strftime("%Y-%m-%d")
+            end_date = pd.to_datetime(data[date]).max().strftime("%Y-%m-%d")
+        else:
+            start_date = data[date].min().strftime("%Y-%m-%d")
+            end_date = data[date].max().strftime("%Y-%m-%d")
+
+        dataset_summary = pd.DataFrame(
+            [[start_date, end_date, len(data), data[target].sum(),
+              data[target].sum() / len(data), data_summary_comment]],
+            columns=["开始时间", "结束时间", "样本总数", "坏客户数", "坏客户占比", "备注"],
         )
-    
-    def compare_targets(
-        self,
-        data: pd.DataFrame,
-        feature: str,
-        overdue_list: List[str],
-        dpds_list: List[int],
-        desc: str = "",
-        **kwargs
-    ) -> pd.DataFrame:
-        """对比不同目标下的特征分箱效果.
-        
-        :param data: 数据集
-        :param feature: 特征名称
-        :param overdue_list: 多个逾期天数字段列表
-        :param dpds_list: 多个逾期定义天数列表
-        :param desc: 特征描述
-        :param kwargs: 其他参数
-        :return: 对比分析表
-        """
-        return feature_bin_stats(
-            data=data,
-            feature=feature,
-            overdue=overdue_list,
-            dpds=dpds_list,
-            method=self.method,
-            desc=desc,
-            max_n_bins=self.max_n_bins,
-            min_bin_size=self.min_bin_size,
-            missing_separate=self.missing_separate,
-            **kwargs
+        end_row, end_col = dataframe2excel(
+            dataset_summary, writer, worksheet, percent_cols=["坏客户占比"],
+            start_row=end_row + 2, title="样本总体分布情况"
         )
-    
-    def get_iv_summary(
-        self,
-        data: pd.DataFrame,
-        features: List[str],
-        target: str
-    ) -> pd.DataFrame:
-        """获取特征IV值汇总表.
-        
-        :param data: 数据集
-        :param features: 特征名称列表
-        :param target: 目标变量
-        :return: IV值汇总表
-        """
-        results = []
-        
-        for feat in features:
-            table = feature_bin_stats(
-                data=data,
-                feature=feat,
-                target=target,
-                method=self.method,
-                max_n_bins=self.max_n_bins,
-                min_bin_size=self.min_bin_size,
-                return_cols=['指标IV值']
+
+        distribution = distribution_plot(
+            data, date=date, freq=freq, target=target,
+            save=os.path.join(output_dir, f"sample_time_distribution{suffix}.png"), result=True
+        )
+        end_row, end_col = writer.insert_value2sheet(
+            worksheet, (end_row + 2, start_col), value="样本时间分布情况", style="header",
+            end_space=(end_row + 2, start_col + len(distribution.columns) - 1)
+        )
+        end_row, end_col = writer.insert_pic2sheet(
+            worksheet, os.path.join(output_dir, f"sample_time_distribution{suffix}.png"),
+            (end_row + 1, start_col), figsize=(720, 370)
+        )
+        end_row, end_col = dataframe2excel(
+            distribution, writer, worksheet,
+            percent_cols=["样本占比", "好样本占比", "坏样本占比", "坏样本率"],
+            condition_cols=["坏样本率"], start_row=end_row
+        )
+        end_row += 2
+    else:
+        dataset_summary = pd.DataFrame(
+            [[len(data), data[target].sum(), data[target].sum() / len(data), data_summary_comment]],
+            columns=["样本总数", "坏客户数", "坏客户占比", "备注"],
+        )
+        end_row, end_col = dataframe2excel(
+            dataset_summary, writer, worksheet, percent_cols=["坏客户占比"],
+            start_row=end_row + 2, title="样本总体分布情况"
+        )
+        end_row += 2
+
+    if corr:
+        temp = data[features].select_dtypes(include="number")
+        corr_plot(
+            temp, save=os.path.join(output_dir, f"auto_report_corr_plot{suffix}.png"),
+            annot=True if len(temp.columns) <= 10 else False,
+            fontsize=14 if len(temp.columns) <= 10 else 12
+        )
+        end_row, end_col = dataframe2excel(
+            temp.corr(), writer, worksheet, color_cols=list(temp.columns),
+            start_row=end_row, figures=[os.path.join(output_dir, f"auto_report_corr_plot{suffix}.png")],
+            title="数值类变量相关性",
+            figsize=(min(60 * len(temp.columns), 1080), min(55 * len(temp.columns), 950)),
+            index=True, custom_cols=list(temp.columns), custom_format="0.00"
+        )
+        end_row += 2
+
+    end_row, end_col = writer.insert_value2sheet(
+        worksheet, (end_row, start_col), value="数值类特征 OR 评分效果评估",
+        style="header_middle", end_space=(end_row, start_col + max_columns_len - 1)
+    )
+
+    use_amount = amount is not None and amount in data.columns
+
+    features_iter = tqdm(features)
+    for col in features_iter:
+        features_iter.set_postfix(feature=feature_map.get(col, col))
+        try:
+            if overdue is None:
+                cols_needed = [col, target]
+            else:
+                cols_needed = list(set([col, target] + overdue))
+            if use_amount:
+                cols_needed = list(set(cols_needed + [amount]))
+            temp = data[cols_needed]
+
+            if isinstance(dropna, bool) and dropna is True:
+                temp = temp.dropna(subset=col).reset_index(drop=True)
+            elif isinstance(dropna, (float, int, str)):
+                temp = temp[temp[col] != dropna].reset_index(drop=True)
+
+            actual_target = target
+            if overdue:
+                actual_target = f"{overdue[0]} {dpds[0]}+"
+
+            sample_table = feature_bin_stats(
+                temp, col, overdue=overdue, dpds=dpds,
+                desc=f"{feature_map.get(col, col)}", target=target,
+                margins=margins,
+                **bin_params
             )
-            
-            # 处理单层列和多层级列的情况
-            if isinstance(table.columns, pd.MultiIndex):
-                # 多层级列：获取第一行的指标IV值
-                iv_col = [c for c in table.columns if c[1] == '指标IV值']
-                if iv_col:
-                    iv_value = table[iv_col[0]].iloc[0]
+
+            if use_amount:
+                amount_table = feature_bin_stats(
+                    temp, col, overdue=overdue, dpds=dpds,
+                    desc=f"{feature_map.get(col, col)}", target=target,
+                    amount=amount,
+                    margins=margins,
+                    **bin_params
+                )
+            else:
+                amount_table = None
+
+            sample_title_columns_len = len(sample_table.columns)
+            amount_title_columns_len = len(amount_table.columns) if (use_amount and amount_table is not None) else 0
+
+            if return_cols:
+                if sample_table.columns.nlevels > 1 and not isinstance(merge_columns[0], tuple):
+                    _merge_cols_for_title = [("分箱详情", c) for c in merge_columns]
                 else:
-                    iv_value = 0.0
+                    _merge_cols_for_title = merge_columns
+                sample_title_columns_len = len(
+                    _merge_cols_for_title + [
+                        c for c in sample_table.columns
+                        if (isinstance(c, (tuple, list)) and c[-1] in return_cols)
+                        or (not isinstance(c, (tuple, list)) and c in return_cols)
+                        or (isinstance(return_cols[0], (tuple, list)) and isinstance(c, (tuple, list)) and c in return_cols)
+                    ]
+                )
+
+                if use_amount and amount_table is not None:
+                    if amount_table.columns.nlevels > 1 and not isinstance(merge_columns[0], tuple):
+                        _merge_cols_amt_for_title = [("分箱详情", c) for c in merge_columns]
+                    else:
+                        _merge_cols_amt_for_title = merge_columns
+                    amount_title_columns_len = len(
+                        _merge_cols_amt_for_title + [
+                            c for c in amount_table.columns
+                            if (isinstance(c, (tuple, list)) and c[-1] in return_cols)
+                            or (not isinstance(c, (tuple, list)) and c in return_cols)
+                            or (isinstance(return_cols[0], (tuple, list)) and isinstance(c, (tuple, list)) and c in return_cols)
+                        ]
+                    )
+
+            if pictures and len(pictures) > 0:
+                if "bin" in pictures:
+                    if sample_table.columns.nlevels > 1:
+                        level1_cols = sample_table.columns.get_level_values(0).unique().tolist()
+                        target_col = actual_target if actual_target in level1_cols else level1_cols[-1] if len(level1_cols) > 1 else level1_cols[0]
+                        plot_table = sample_table[["分箱详情", target_col]]
+                        plot_table.columns = [c[-1] for c in plot_table.columns]
+                    else:
+                        plot_table = sample_table.copy()
+
+                    if "分箱标签" in plot_table.columns:
+                        plot_table.rename(columns={"分箱标签": "分箱"}, inplace=True)
+
+                    bin_plot(
+                        plot_table, desc=f"{feature_map.get(col, col)}", figsize=(10, 5),
+                        anchor=0.935, save=os.path.join(output_dir, f"feature_bins_plot_{col}{suffix}.png")
+                    )
+
+                if temp[col].dtypes.name not in ['object', 'str', 'category']:
+                    if "ks" in pictures:
+                        plot_source = temp.dropna().reset_index(drop=True)
+                        has_ks = len(plot_source) > 0 and plot_source[col].nunique() > 1 and plot_source[actual_target].nunique() > 1
+                        if has_ks:
+                            ks_plot(
+                                plot_source[col], plot_source[actual_target], figsize=(10, 5),
+                                title=f"{feature_map.get(col, col)}",
+                                save=os.path.join(output_dir, f"feature_ks_plot_{col}{suffix}.png")
+                            )
+                    if "hist" in pictures:
+                        plot_source = temp.dropna().reset_index(drop=True)
+                        if len(plot_source) > 0:
+                            hist_plot(
+                                plot_source[col], y_true=plot_source[actual_target], figsize=(10, 6),
+                                desc=f"{feature_map.get(col, col)} 好客户 VS 坏客户",
+                                bins=30, anchor=1.11, fontsize=14,
+                                labels={0: "好客户", 1: "坏客户"},
+                                save=os.path.join(output_dir, f"feature_hist_plot_{col}{suffix}.png")
+                            )
+
+            if use_amount and amount_table is not None:
+                title_span = sample_title_columns_len + 1 + amount_title_columns_len
             else:
-                # 单层列
-                iv_value = table['指标IV值'].iloc[0]
-            
-            results.append({
-                '特征名称': feat,
-                'IV值': iv_value,
-                '分箱数': len(table)
-            })
-        
-        # 排序
-        iv_summary = pd.DataFrame(results).sort_values('IV值', ascending=False)
-        
-        # 添加IV解释
-        def iv_interpret(iv):
-            if iv < 0.02:
-                return '无预测力'
-            elif iv < 0.1:
-                return '弱预测力'
-            elif iv < 0.3:
-                return '中等预测力'
-            elif iv < 0.5:
-                return '强预测力'
+                title_span = sample_title_columns_len
+
+            if (len(temp) < len(data)) and (isinstance(dropna, bool) and dropna is True) or \
+               isinstance(dropna, (float, int, str)):
+                end_row, end_col = writer.insert_value2sheet(
+                    worksheet, (end_row + 2, start_col),
+                    value=f"数据字段: {feature_map.get(col, col)} (缺失率: {round((1 - len(temp) / len(data)) * 100, 2)}%)",
+                    style="header", end_space=(end_row + 2, start_col + title_span - 1)
+                )
             else:
-                return '超强预测力(需检查)'
-        
-        iv_summary['预测力'] = iv_summary['IV值'].apply(iv_interpret)
-        
-        return iv_summary
+                end_row, end_col = writer.insert_value2sheet(
+                    worksheet, (end_row + 2, start_col),
+                    value=f"数据字段: {feature_map.get(col, col)}",
+                    style="header", end_space=(end_row + 2, start_col + title_span - 1)
+                )
+
+            if pictures and len(pictures) > 0:
+                chart_row = end_row + 1
+                if "bin" in pictures:
+                    end_row, end_col = writer.insert_pic2sheet(
+                        worksheet, os.path.join(output_dir, f"feature_bins_plot_{col}{suffix}.png"),
+                        (chart_row, start_col), figsize=(600, 350)
+                    )
+                if temp[col].dtypes.name not in ['object', 'str', 'category'] and temp[col].isnull().sum() != len(temp):
+                    if "ks" in pictures and has_ks:
+                        end_row, end_col = writer.insert_pic2sheet(
+                            worksheet, os.path.join(output_dir, f"feature_ks_plot_{col}{suffix}.png"),
+                            (chart_row, end_col - 1), figsize=(600, 350)
+                        )
+                    if "hist" in pictures:
+                        end_row, end_col = writer.insert_pic2sheet(
+                            worksheet, os.path.join(output_dir, f"feature_hist_plot_{col}{suffix}.png"),
+                            (chart_row, end_col - 1), figsize=(600, 350)
+                        )
+
+            table_start_row = end_row + image_table_gap_rows
+            if return_cols:
+                if sample_table.columns.nlevels > 1 and not isinstance(merge_columns[0], tuple):
+                    sample_merge_cols = [("分箱详情", c) for c in merge_columns]
+                else:
+                    sample_merge_cols = merge_columns
+                end_row, end_col = dataframe2excel(
+                    sample_table[
+                        sample_merge_cols + [
+                            c for c in sample_table.columns
+                            if (isinstance(c, (tuple, list)) and c[-1] in return_cols)
+                            or (not isinstance(c, (tuple, list)) and c in return_cols)
+                            or (isinstance(return_cols[0], (tuple, list)) and isinstance(c, (tuple, list)) and c in return_cols)
+                        ]
+                    ], writer, worksheet,
+                    percent_cols=["样本占比", "好样本占比", "坏样本占比", "坏样本率", "LIFT值", "坏账改善", "累积LIFT值", "累积坏账改善"],
+                    condition_cols=["坏样本率", "LIFT值"], merge_column=["指标名称", "指标含义"],
+                    merge=True, fill=True, start_row=table_start_row
+                )
+            else:
+                end_row, end_col = dataframe2excel(
+                    sample_table, writer, worksheet,
+                    percent_cols=["样本占比", "好样本占比", "坏样本占比", "坏样本率", "LIFT值", "坏账改善", "累积LIFT值", "累积坏账改善"],
+                    condition_cols=["坏样本率", "LIFT值"], merge_column=["指标名称", "指标含义"],
+                    merge=True, fill=True, start_row=table_start_row
+                )
+
+            if use_amount and amount_table is not None:
+                amount_start_col = end_col + 1
+                if return_cols:
+                    if amount_table.columns.nlevels > 1 and not isinstance(merge_columns[0], tuple):
+                        amount_merge_cols = [("分箱详情", c) for c in merge_columns]
+                    else:
+                        amount_merge_cols = merge_columns
+                    dataframe2excel(
+                        amount_table[
+                            amount_merge_cols + [
+                                c for c in amount_table.columns
+                                if (isinstance(c, (tuple, list)) and c[-1] in return_cols)
+                                or (not isinstance(c, (tuple, list)) and c in return_cols)
+                                or (isinstance(return_cols[0], (tuple, list)) and isinstance(c, (tuple, list)) and c in return_cols)
+                            ]
+                        ], writer, worksheet,
+                        percent_cols=["样本占比", "好样本占比", "坏样本占比", "坏样本率", "LIFT值", "坏账改善", "累积LIFT值", "累积坏账改善"],
+                        condition_cols=["坏样本率", "LIFT值"], merge_column=["指标名称", "指标含义"],
+                        merge=True, fill=True,
+                        start_row=table_start_row, start_col=amount_start_col
+                    )
+                else:
+                    dataframe2excel(
+                        amount_table, writer, worksheet,
+                        percent_cols=["样本占比", "好样本占比", "坏样本占比", "坏样本率", "LIFT值", "坏账改善", "累积LIFT值", "累积坏账改善"],
+                        condition_cols=["坏样本率", "LIFT值"], merge_column=["指标名称", "指标含义"],
+                        merge=True, fill=True,
+                        start_row=table_start_row, start_col=amount_start_col
+                    )
+
+        except Exception:
+            print(f"数据字段 {col} 分析时发生异常，请排查数据中是否存在异常:\n{traceback.format_exc()}")
+
+    if not isinstance(excel_writer, ExcelWriter) and not isinstance(sheet, Worksheet):
+        writer.save(excel_writer)
+
+    return end_row, end_col

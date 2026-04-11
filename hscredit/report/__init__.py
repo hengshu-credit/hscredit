@@ -3,25 +3,22 @@
 提供专业的模型报告生成功能。
 
 子模块:
-- excel: Excel报告生成
-- feature_report: 特征分析报告（三方数据评估）
-- feature_analyzer: 特征分箱统计分析
-- ruleset_report: 规则集综合评估报告
-- swap_analysis_report: 规则置换风险分析报告
+- feature_analyzer: 特征分箱统计与自动分析
+- rule_analysis: 规则集与多标签规则分析
+- swap_analysis: 规则置换风险分析
 - overdue_estimator: 逾期数据预估
 """
-
-from .excel import ExcelWriter, dataframe2excel
-from .feature_analyzer import feature_bin_stats, FeatureAnalyzer
-from .ruleset_report import ruleset_report
-from .swap_analysis_report import (
+from ..excel import ExcelWriter, dataframe2excel
+from .feature_analyzer import feature_bin_stats, auto_feature_analysis
+from .rule_analysis import ruleset_analysis, multi_label_rule_analysis
+from .swap_analysis import (
     ReferenceDataProvider,
     SwapAnalyzer,
     SwapAnalysisResult,
     SwapRiskConfig,
     create_swap_dataset,
     create_swap_dataset_from_rules,
-    swap_analysis_report,
+    swap_analysis,
     SwapType,
 )
 
@@ -39,26 +36,16 @@ from .mining import (
 )
 
 try:
-    from .feature_report import auto_feature_analysis_report
+    from .population_drift import population_drift
 except ImportError:
-    auto_feature_analysis_report = None
-
-try:
-    from .rule_analysis_report import multi_label_rule_report
-except ImportError:
-    multi_label_rule_report = None
-
-try:
-    from .population_drift_report import population_drift_report
-except ImportError:
-    population_drift_report = None
+    population_drift = None
 
 __all__ = [
     "ExcelWriter",
     "dataframe2excel",
     "feature_bin_stats",
-    "FeatureAnalyzer",
-    "ruleset_report",
+    "auto_feature_analysis",
+    "ruleset_analysis",
     # swap分析
     "ReferenceDataProvider",
     "SwapAnalyzer",
@@ -66,7 +53,7 @@ __all__ = [
     "SwapRiskConfig",
     "create_swap_dataset",
     "create_swap_dataset_from_rules",
-    "swap_analysis_report",
+    "swap_analysis",
     "SwapType",
     # 逾期预测
     "OverduePredictor",
@@ -84,7 +71,6 @@ __all__ = [
     "QuickModelReport",
     "auto_model_report",
     "compare_models",
-    "auto_feature_analysis_report",
-    "multi_label_rule_report",
-    "population_drift_report",
+    "multi_label_rule_analysis",
+    "population_drift",
 ]
