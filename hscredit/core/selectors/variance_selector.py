@@ -32,7 +32,7 @@ class VarianceSelector(BaseFeatureSelector):
         >>> X = pd.DataFrame({'a': [1,2,3], 'b': [1,1,1], 'c': [1,2,3]})
         >>> selector = VarianceSelector(threshold=0.1)
         >>> selector.fit(X)
-        >>> print(selector.select_columns_)
+        >>> print(selector.selected_features_)
         ['a', 'c']
     """
 

@@ -153,19 +153,6 @@ class SelectionReportCollector:
         self.reports.append(report)
         return self
 
-    def add_selector(
-        self,
-        selector: 'BaseFeatureSelector',
-        stage_name: Optional[str] = None
-    ) -> 'SelectionReportCollector':
-        """添加筛选器（add_report的别名）。
-
-        :param selector: 已拟合的筛选器对象
-        :param stage_name: 阶段名称
-        :return: self
-        """
-        return self.add_report(selector, stage_name)
-
     def get_summary(self) -> Dict[str, Any]:
         """获取汇总报告。
 
@@ -801,16 +788,6 @@ class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
         :return: 筛选后的特征
         """
         return self.fit(X, y).transform(X)
-
-    @property
-    def select_columns_(self) -> List[str]:
-        """获取选中的特征列表（向后兼容属性）。
-
-        :return: 选中特征的列表
-        """
-        if hasattr(self, 'selected_features_'):
-            return self.selected_features_
-        return []
 
     def get_support_mask(self) -> np.ndarray:
         """获取特征选择掩码。

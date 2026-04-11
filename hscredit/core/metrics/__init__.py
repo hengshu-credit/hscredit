@@ -32,13 +32,7 @@ from .classification import (
     accuracy, precision, recall, f1,
     ks_bucket, roc_curve,
     confusion_matrix, classification_report,
-    # 向后兼容
-    KS, AUC, Gini,
 )
-
-# 向后兼容别名
-KS_bucket = ks_bucket
-ROC_curve = roc_curve
 
 # 特征评估
 from .feature import (
@@ -46,8 +40,6 @@ from .feature import (
     chi2_test, cramers_v,
     feature_importance,
     feature_summary,
-    # 向后兼容
-    IV, IV_table,
 )
 
 # 稳定性
@@ -55,8 +47,6 @@ from .stability import (
     psi, psi_table, psi_rating,
     csi, csi_table,
     batch_psi,
-    # 向后兼容
-    PSI, PSI_table, CSI, CSI_table,
 )
 
 # 金融风控
@@ -69,8 +59,6 @@ from .finance import (
 # 回归指标
 from .regression import (
     mse, mae, rmse, r2,
-    # 向后兼容
-    MSE, MAE, RMSE, R2,
 )
 
 # 分箱统计（供其他模块直接使用）
@@ -104,10 +92,4 @@ __all__ = [
     
     # 分箱统计
     'compute_bin_stats', 'add_margins', 'quadratic_curve_coefficient', 'composite_binning_quality',
-    
-    # 向后兼容（Deprecated）
-    'KS', 'AUC', 'Gini',
-    'IV', 'IV_table',
-    'PSI', 'PSI_table', 'CSI', 'CSI_table',
-    'MSE', 'MAE', 'RMSE', 'R2',
 ]

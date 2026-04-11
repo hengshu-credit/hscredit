@@ -55,7 +55,7 @@ class ModeSelector(BaseFeatureSelector):
         ... })
         >>> selector = ModeSelector(threshold=0.8)
         >>> selector.fit(X)
-        >>> print(selector.select_columns_)
+        >>> print(selector.selected_features_)
         ['a', 'b']
     """
 

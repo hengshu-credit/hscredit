@@ -214,9 +214,6 @@ class BaseScoreTransformer(BaseEstimator, ABC):
 
         return scores
 
-    # 向后兼容的方法别名
-    predict_score = predict
-
     def inverse_transform(self, scores: Union[np.ndarray, pd.Series]) -> np.ndarray:
         """将评分反向转换为概率.
 

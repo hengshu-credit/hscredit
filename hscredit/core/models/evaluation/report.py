@@ -16,8 +16,8 @@ from sklearn.metrics import (
     confusion_matrix, classification_report
 )
 
-from ...metrics.classification import KS, AUC, Gini
-from ...metrics.stability import PSI
+from ...metrics.classification import ks, auc, gini
+from ...metrics.stability import psi
 
 
 def _lift_score(y_true, y_proba, top_ratio=0.1):
@@ -211,7 +211,7 @@ class ModelReport:
         train_scores = (1 - self.y_train_proba) * 1000
         test_scores = (1 - self.y_test_proba) * 1000
 
-        return PSI(train_scores, test_scores, bins=n_bins)
+        return psi(train_scores, test_scores, max_n_bins=n_bins)
 
     def get_confusion_matrix(self, threshold: float = 0.5, dataset: str = 'train') -> pd.DataFrame:
         """获取混淆矩阵.
@@ -259,7 +259,7 @@ class ModelReport:
             'fpr': fpr,
             'tpr': tpr,
             'thresholds': thresholds,
-            'auc': AUC(y_true, y_proba)
+            'auc': auc(y_true, y_proba)
         }
 
     def get_lift_curve(self, dataset: str = 'train', n_bins: int = 10) -> pd.DataFrame:

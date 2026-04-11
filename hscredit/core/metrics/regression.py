@@ -65,10 +65,3 @@ def r2(y_true: Union[np.ndarray, pd.Series],
     :return: R²值，取值范围[0, 1]
     """
     return r2_score(y_true, y_pred)
-
-
-# 向后兼容（Deprecated）
-MSE = mse
-MAE = mae
-RMSE = rmse
-R2 = r2

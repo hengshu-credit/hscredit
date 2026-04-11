@@ -871,7 +871,3 @@ def combine_rules(
         >>> combined = combine_rules(rule1, rule2, logic='and', name="高风险")
     """
     return RuleSet(name=name, logic=logic, rules=list(rules), description=description)
-
-
-# 保留别名以保持向后兼容
-RuleSetClassifier = RulesClassifier

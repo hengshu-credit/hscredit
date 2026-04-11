@@ -16,7 +16,6 @@ from .bin_table_display import (
 )
 from .pandas_extensions import (
     BinTableDisplay as PandasBinTableDisplay,
-    enable_dataframe_show,
     register_extensions,
 )
 from .input_utils import (
@@ -48,7 +47,6 @@ __all__ = [
     # 分箱表展示
     'style_bin_table',
     'BinTableDisplay',
-    'enable_dataframe_show',
     'register_extensions',
     # 输入处理工具
     'check_xy_inputs',

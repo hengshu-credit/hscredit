@@ -7,8 +7,7 @@ import pandas as pd
 from hscredit.core.rules import Rule
 from hscredit.core.models import (
     RuleSet, 
-    RulesClassifier,  # 统一入口
-    RuleSetClassifier,  # 别名
+    RulesClassifier,
     LogicOperator,
     RuleResult,
     create_and_ruleset,
@@ -661,13 +660,9 @@ class TestRulesClassifierAdvanced:
         # 总计: inner(2) + outer的income规则(1) + 外层单规则(1) = 4
         assert clf._count_total_rules() == 4
     
-    def test_rules_classifier_alias(self, sample_data):
-        """测试 RuleSetClassifier 是 RulesClassifier 的别名."""
-        # 验证两者是同一个类
-        assert RuleSetClassifier is RulesClassifier
-        
-        # 验证可以使用 RuleSetClassifier 创建实例
-        clf = RuleSetClassifier(
+    def test_rules_classifier_instantiation(self, sample_data):
+        """测试 RulesClassifier 可正常创建和预测."""
+        clf = RulesClassifier(
             rules=[Rule("age < 20")],
             logic='or'
         )

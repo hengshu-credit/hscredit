@@ -962,12 +962,5 @@ def register_extensions():
     _EXTENSIONS_REGISTERED = True
 
 
-def enable_dataframe_show():
-    """启用 DataFrame 的 show 方法（向后兼容）."""
-    register_extensions()
-    print("✓ 已启用 DataFrame.show() 方法")
-    print("使用方法: table.show() 或 table.show(compact=True)")
-
-
 # 自动注册扩展
 register_extensions()

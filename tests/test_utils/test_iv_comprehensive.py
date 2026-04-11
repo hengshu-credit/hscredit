@@ -14,7 +14,7 @@ from hscredit.core.binning import (
     GeneticBinning,
 )
 from hscredit.core.metrics._binning import woe_iv_vectorized, compute_bin_stats
-from hscredit.core.metrics.feature import IV, iv_table as IV_table
+from hscredit.core.metrics.feature import iv, iv_table
 
 
 def test_extreme_imbalance():
@@ -120,13 +120,13 @@ def test_iv_table_function():
     print(f"坏样本数: {np.sum(y_true == 1)}")
     
     # 计算IV表
-    iv_table = IV_table(y_true, feature, max_n_bins=5)
+    iv_detail = iv_table(y_true, feature, max_n_bins=5)
     
     print(f"\nIV表:")
-    print(iv_table)
+    print(iv_detail)
     
     # 计算总IV
-    iv_value = IV(y_true, feature, max_n_bins=5)
+    iv_value = iv(y_true, feature, max_n_bins=5)
     print(f"\n总IV值: {iv_value:.6f}")
     print(f"✓ 测试{'通过' if iv_value >= 0 else '失败'}")
     

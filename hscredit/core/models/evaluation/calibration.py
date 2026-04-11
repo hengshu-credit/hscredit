@@ -986,13 +986,13 @@ class CalibratedModel:
         :param y: 真实标签
         :return: 性能指标字典
         """
-        from ...metrics.classification import KS, AUC
+        from ...metrics.classification import ks, auc
 
         y_proba = self.predict_proba(X)
 
         return {
-            'AUC': AUC(y, y_proba),
-            'KS': KS(y, y_proba),
+            'AUC': auc(y, y_proba),
+            'KS': ks(y, y_proba),
             'Brier': self.calibrator.calibrator_.compute_brier_score(y, y_proba)
         }
 

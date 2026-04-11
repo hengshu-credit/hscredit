@@ -13,9 +13,9 @@ from sklearn.metrics import (
 
 # 从统一metrics模块导入指标
 from ...core.metrics import (
-    KS, AUC, Gini,
-    PSI, PSI_table,
-    IV, IV_table,
+    ks, auc, gini,
+    psi, psi_table,
+    iv, iv_table,
     lift as metrics_lift,
     lift_table as metrics_lift_table,
     rule_lift,
@@ -227,7 +227,7 @@ class RuleMetrics:
         :param y_score: 预测分数
         :return: KS值
         """
-        return KS(y_true, y_score)
+        return ks(y_true, y_score)
     
     def calculate_iv(
         self,
@@ -244,7 +244,7 @@ class RuleMetrics:
         :param n_bins: 分箱数
         :return: IV值
         """
-        return IV(target, feature, bins=n_bins)
+        return iv(target, feature, max_n_bins=n_bins)
     
     def calculate_gini(self, y_true: np.ndarray, y_score: np.ndarray) -> float:
         """计算Gini系数.
@@ -255,7 +255,7 @@ class RuleMetrics:
         :param y_score: 预测分数
         :return: Gini系数
         """
-        return Gini(y_true, y_score)
+        return gini(y_true, y_score)
 
 
 def calculate_rule_metrics(

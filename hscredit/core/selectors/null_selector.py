@@ -36,7 +36,7 @@ class NullSelector(BaseFeatureSelector):
         ... })
         >>> selector = NullSelector(threshold=0.5)
         >>> selector.fit(X)
-        >>> print(selector.select_columns_)
+        >>> print(selector.selected_features_)
         ['a', 'b']
     """
 

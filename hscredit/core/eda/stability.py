@@ -32,7 +32,7 @@ def psi_analysis(base_df: pd.DataFrame,
     from ..metrics import psi_table
     
     # 计算PSI表
-    psi_df = psi_table(base_df[feature], current_df[feature], bins=n_bins)
+    psi_df = psi_table(base_df[feature], current_df[feature], max_n_bins=n_bins)
     
     # 计算总PSI
     psi_value = psi_df['PSI贡献'].sum()

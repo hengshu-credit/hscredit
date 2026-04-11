@@ -246,8 +246,3 @@ def feature_summary(feature: Union[np.ndarray, pd.Series],
                 result['IV'] = np.nan
 
     return pd.DataFrame([result])
-
-
-# 向后兼容（Deprecated）
-IV = iv
-IV_table = iv_table

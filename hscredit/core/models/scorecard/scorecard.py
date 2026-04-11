@@ -199,10 +199,6 @@ class ScoreCard(StandardScoreTransformer):
         
         # 设置方向属性（父类 transform 方法需要）
         self.direction_ = self._determine_direction()
-        
-        # 保留旧参数名兼容（factor->B_, offset->A_）
-        self.factor = self.B_
-        self.offset = self.A_
 
         # 初始化属性
         self.rules_ = {}
@@ -2453,8 +2449,6 @@ class ScoreCard(StandardScoreTransformer):
 
         self.A_, self.B_ = self._compute_parameters()
         self.direction_ = self._determine_direction()
-        self.factor = self.B_
-        self.offset = self.A_
 
         intercept_score = meta.get('intercept_score')
         if intercept_score is not None:

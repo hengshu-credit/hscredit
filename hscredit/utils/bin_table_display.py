@@ -485,4 +485,3 @@ class BinTableDisplay:
 
 # 注意：DataFrame.show() 方法现在在 pandas_extensions 模块中统一注册
 # 保留此处的 BinTableDisplay 类供其他代码使用
-# 如需启用 show 方法，请使用: from hscredit.utils import enable_dataframe_show

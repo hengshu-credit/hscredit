@@ -24,8 +24,8 @@ from sklearn.utils.validation import check_X_y, check_array, check_is_fitted
 from sklearn.utils.multiclass import type_of_target
 from sklearn.model_selection import train_test_split
 
-from ..metrics.classification import KS, AUC, Gini
-from ..metrics.stability import PSI
+from ..metrics.classification import ks, auc, gini
+from ..metrics.stability import psi
 from ..metrics.finance import lift_at, lift_monotonicity_check
 
 
@@ -254,11 +254,11 @@ class BaseRiskModel(BaseEstimator, ClassifierMixin, ABC):
             metric_lower = metric.lower()
             try:
                 if metric_lower == 'auc':
-                    results['AUC'] = AUC(y, y_proba)
+                    results['AUC'] = auc(y, y_proba)
                 elif metric_lower == 'ks':
-                    results['KS'] = KS(y, y_proba)
+                    results['KS'] = ks(y, y_proba)
                 elif metric_lower == 'gini':
-                    results['Gini'] = Gini(y, y_proba)
+                    results['Gini'] = gini(y, y_proba)
                 elif metric_lower == 'lift':
                     results['Lift@10%'] = _lift_score(y, y_proba, top_ratio=0.1)
                 elif metric_lower in ('lift@1%', 'lift_1'):
@@ -435,9 +435,9 @@ class BaseRiskModel(BaseEstimator, ClassifierMixin, ABC):
         :return: 评估函数
         """
         metric_map = {
-            'auc': lambda y, p: AUC(y, p),
-            'ks': lambda y, p: KS(y, p),
-            'gini': lambda y, p: Gini(y, p),
+            'auc': lambda y, p: auc(y, p),
+            'ks': lambda y, p: ks(y, p),
+            'gini': lambda y, p: gini(y, p),
         }
         return metric_map.get(metric.lower())
 

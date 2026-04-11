@@ -281,15 +281,6 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
                 warnings.warn(f"分箱失败，使用原始值: {str(e)}")
             return self.X_[feature]
     
-    def _bin_numeric_legacy(self, feature: str, bins: List[float]) -> pd.Series:
-        """使用自定义边界分箱（兼容旧接口）.
-        
-        :param feature: 特征名
-        :param bins: 分箱边界
-        :return: 分箱后的区间
-        """
-        return pd.cut(self.X_[feature], bins=bins, right=True)
-    
     def generate_cross_matrix(
         self,
         feature1: str,

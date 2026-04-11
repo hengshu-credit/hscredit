@@ -399,8 +399,8 @@ self, feature_values: pd.Series) -> List[float]:
         f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
 
         try:
-            from ...core.metrics.classification import KS
-            ks = KS(target_values, mask.astype(int))
+            from ...core.metrics.classification import ks as ks_metric
+            ks = ks_metric(target_values, mask.astype(int))
         except Exception:
             ks = np.nan
 

@@ -4,7 +4,7 @@ import sys
 import pandas as pd
 import numpy as np
 from hscredit.report import feature_bin_stats
-from hscredit.utils import enable_dataframe_show, style_bin_table, BinTableDisplay
+from hscredit.utils import register_extensions, style_bin_table, BinTableDisplay
 
 
 def test_basic_functionality():
@@ -30,7 +30,7 @@ def test_basic_functionality():
     print("\n" + "-"*80)
     print("测试 1: 启用 DataFrame.show() 方法")
     print("-"*80)
-    enable_dataframe_show()
+    register_extensions()
     
     # 测试 2: 生成分箱表
     print("\n" + "-"*80)
@@ -111,8 +111,8 @@ def test_basic_functionality():
     print("="*80)
     print("\n使用说明:")
     print("1. 在 Jupyter Notebook 中导入:")
-    print("   from hscredit.utils import enable_dataframe_show")
-    print("   enable_dataframe_show()")
+    print("   from hscredit.utils import register_extensions")
+    print("   register_extensions()")
     print("\n2. 使用方法:")
     print("   table = feature_bin_stats(data, 'feature', target='target')")
     print("   table.show()  # 美化展示")

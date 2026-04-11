@@ -251,11 +251,3 @@ def classification_report(y_true: Union[np.ndarray, pd.Series],
         target_names=target_names,
         output_dict=output_dict
     )
-
-
-# 向后兼容（Deprecated）
-KS = ks
-AUC = auc
-Gini = gini
-KS_bucket = ks_bucket
-ROC_curve = roc_curve

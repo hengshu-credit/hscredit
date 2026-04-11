@@ -28,7 +28,6 @@ from .binning import (
 
 # 指标计算模块
 from .metrics import (
-    # 新命名（小写）
     ks, auc, gini,
     accuracy, precision, recall, f1,
     ks_bucket, roc_curve,
@@ -38,13 +37,6 @@ from .metrics import (
     iv, iv_table,
     feature_importance,
     mse, mae, rmse, r2,
-    # 向后兼容（大写）
-    KS, AUC, Gini,
-    KS_bucket, ROC_curve,
-    PSI, CSI,
-    PSI_table, CSI_table,
-    IV, IV_table,
-    MSE, MAE, RMSE, R2,
 )
 
 # 编码器模块
@@ -165,7 +157,6 @@ __all__ = [
     'BestLiftBinning',
     'TargetBadRateBinning',
 
-    # 指标计算（新命名）
     'ks', 'auc', 'gini',
     'accuracy', 'precision', 'recall', 'f1',
     'ks_bucket', 'roc_curve',
@@ -175,13 +166,6 @@ __all__ = [
     'iv', 'iv_table',
     'feature_importance',
     'mse', 'mae', 'rmse', 'r2',
-    # 指标计算（向后兼容）
-    'KS', 'AUC', 'Gini',
-    'KS_bucket', 'ROC_curve',
-    'PSI', 'CSI',
-    'PSI_table', 'CSI_table',
-    'IV', 'IV_table',
-    'MSE', 'MAE', 'RMSE', 'R2',
 
     # 编码器
     'BaseEncoder',

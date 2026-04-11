@@ -80,10 +80,9 @@ class ChiMergeBinning(BaseBinning):
             verbose=verbose,
             decimal=decimal,
         )
-        # 支持 min_chi2 作为 min_chi2_threshold 的别名
-        if min_chi2 is not None and min_chi2_threshold is not None:
-            raise ValueError("不能同时指定 min_chi2 和 min_chi2_threshold")
-        self.min_chi2_threshold = min_chi2 if min_chi2 is not None else min_chi2_threshold
+        if min_chi2 is not None:
+            raise ValueError("min_chi2 参数已移除，请使用 min_chi2_threshold")
+        self.min_chi2_threshold = min_chi2_threshold
         self.significance_level = significance_level
 
     def fit(

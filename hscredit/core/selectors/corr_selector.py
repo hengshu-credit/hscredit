@@ -44,7 +44,6 @@ class CorrSelector(BaseFeatureSelector):
         指标通过分箱后的 bin_tables_ 计算得到。
     :param weights: 特征权重，用于决定保留哪个特征，默认为None
         如果同时传入 weights 和 metric，weights 优先。
-    :param by: metric 的别名（与 weights 互斥），方便使用
     :param binning_params: 透传给 OptimalBinning 的分箱参数，例如:
         - method: 分箱方法，默认'cart'
         - max_n_bins: 最大分箱数，默认5
@@ -88,7 +87,6 @@ class CorrSelector(BaseFeatureSelector):
         method: str = 'pearson',
         metric: str = 'iv',
         weights: Optional[Union[pd.Series, Dict[str, float], List[float]]] = None,
-        by: Optional[str] = None,
         binning_params: Optional[Dict[str, Any]] = None,
         target: str = 'target',
         include: Optional[List[str]] = None,
@@ -96,9 +94,8 @@ class CorrSelector(BaseFeatureSelector):
     ):
         super().__init__(target=target, threshold=threshold, include=include, exclude=exclude)
         self.method = method
-        self.metric = by if by is not None else metric
+        self.metric = metric
         self.weights = weights
-        self.by = by
         self.binning_params = binning_params
         self.method_name = '相关性筛选'
 

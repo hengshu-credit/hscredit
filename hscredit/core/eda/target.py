@@ -63,14 +63,11 @@ def _create_binary_target(df: pd.DataFrame,
 
 
 def target_distribution(df: pd.DataFrame,
-                       target_col: str = None,
-                       *,
-                       target: str = None) -> pd.DataFrame:
+                       target_col: str) -> pd.DataFrame:
     """目标变量分布统计.
     
     :param df: 输入数据
-    :param target_col: 目标变量列名（向后兼容，推荐使用 target）
-    :param target: 目标变量列名（推荐）
+    :param target_col: 目标变量列名
     :return: 目标分布DataFrame，列包括[类别, 样本数, 占比, 累计占比]
     
     Example:
@@ -80,9 +77,6 @@ def target_distribution(df: pd.DataFrame,
         0   0    8500   85.00      85.00
         1   1    1500   15.00     100.00
     """
-    target_col = target or target_col
-    if target_col is None:
-        raise ValueError("必须指定 target 或 target_col 参数")
     validate_dataframe(df, required_cols=[target_col])
     
     value_counts = df[target_col].value_counts().sort_index()

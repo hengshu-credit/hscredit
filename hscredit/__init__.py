@@ -122,7 +122,6 @@ from .core.models import (
     # 规则集分类
     RuleSet,
     RulesClassifier,
-    RuleSetClassifier,
     LogicOperator,
     RuleResult,
     create_and_ruleset,
@@ -267,19 +266,12 @@ from .core.eda import (
 
 # 核心指标计算模块
 from .core.metrics import (
-    # 小写 (推荐)
     ks, auc, gini, iv, psi, csi,
     iv_table, psi_table, csi_table, ks_bucket, roc_curve,
     lift, lift_at, lift_table, lift_curve, lift_monotonicity_check, rule_lift,
     badrate, badrate_by_group, badrate_trend, badrate_by_score_bin,
     score_stats, score_stability,
     mse, mae, rmse, r2,
-    # 向后兼容 (大写)
-    KS, AUC, Gini, PSI, IV,
-    KS_bucket, ROC_curve,
-    PSI_table, CSI_table,
-    IV_table,
-    MSE, MAE, RMSE, R2,
 )
 
 # ========== 报告模块导入 (在core之后导入，避免循环导入) ==========
@@ -505,14 +497,12 @@ __all__ = [
     # 规则集分类
     "RuleSet",
     "RulesClassifier",
-    "RuleSetClassifier",
     "LogicOperator",
     "RuleResult",
     "create_and_ruleset",
     "create_or_ruleset",
     "combine_rules",
 
-    # 指标计算模块（小写推荐）
     "ks",
     "auc",
     "gini",
@@ -540,21 +530,6 @@ __all__ = [
     "mae",
     "rmse",
     "r2",
-    # 向后兼容（大写）
-    "KS",
-    "AUC",
-    "Gini",
-    "PSI",
-    "IV",
-    "KS_bucket",
-    "ROC_curve",
-    "PSI_table",
-    "CSI_table",
-    "IV_table",
-    "MSE",
-    "MAE",
-    "RMSE",
-    "R2",
 
     # EDA模块 (函数式API)
     "data_info",

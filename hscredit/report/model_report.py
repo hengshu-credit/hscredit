@@ -1217,8 +1217,6 @@ def auto_model_report(
     project_desc: Optional[str] = None,
     feature_map: Optional[Dict[str, str]] = None,
     feature_info: Optional[pd.DataFrame] = None,
-    # 兼容旧参数
-    ratios: Optional[List[float]] = None,
     show_lift: bool = True,
     show_importance: bool = True,
 ) -> QuickModelReport:
@@ -1285,7 +1283,6 @@ def compare_models(
     y_train,
     X_test=None,
     y_test=None,
-    ratios: Optional[List[float]] = None,
     excel_path: Optional[str] = None,
 ) -> pd.DataFrame:
     rows: List[pd.DataFrame] = []

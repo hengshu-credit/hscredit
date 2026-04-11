@@ -141,7 +141,6 @@ from .scorecard import ScoreCard
 from .rules import (
     RuleSet,
     RulesClassifier,
-    RuleSetClassifier,
     LogicOperator,
     RuleResult,
     create_and_ruleset,
@@ -200,7 +199,6 @@ __all__ = [
     "ScoreCard",
     # 规则集分类
     "RuleSet",
-    "RuleSetClassifier",
     "RulesClassifier",
     "LogicOperator",
     "RuleResult",

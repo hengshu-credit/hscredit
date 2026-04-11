@@ -112,7 +112,7 @@ class IVSelector(BaseFeatureSelector):
         >>> y = pd.Series([0, 0, 1, 0, 1])
         >>> selector = IVSelector(threshold=0.02)
         >>> selector.fit(X, y)
-        >>> print(selector.select_columns_)
+        >>> print(selector.selected_features_)
         >>> print(selector.scores_)  # 查看IV值
     """
 
