@@ -91,6 +91,27 @@ from .stability import (
     time_psi_tracking,
     stability_report,
     psi_cross_analysis,
+    feature_drift_report,
+    score_drift_report,
+)
+
+# 客群分析与偏移监控
+from .population import (
+    population_profile,
+    population_shift_analysis,
+    population_monitoring_report,
+    segment_drift_analysis,
+    feature_cross_segment_effectiveness,
+)
+
+# 策略分析
+from .strategy import (
+    approval_badrate_tradeoff,
+    score_strategy_simulation,
+    vintage_performance_summary,
+    roll_rate_matrix,
+    label_leakage_check,
+    multi_label_correlation,
 )
 
 # Vintage分析
@@ -160,7 +181,24 @@ __all__ = [
     'time_psi_tracking',
     'stability_report',
     'psi_cross_analysis',
-    
+    'feature_drift_report',
+    'score_drift_report',
+
+    # 客群分析与偏移监控
+    'population_profile',
+    'population_shift_analysis',
+    'population_monitoring_report',
+    'segment_drift_analysis',
+    'feature_cross_segment_effectiveness',
+
+    # 策略分析
+    'approval_badrate_tradeoff',
+    'score_strategy_simulation',
+    'vintage_performance_summary',
+    'roll_rate_matrix',
+    'label_leakage_check',
+    'multi_label_correlation',
+
     # Vintage分析
     'vintage_analysis',
     'vintage_summary',

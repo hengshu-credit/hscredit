@@ -1,455 +1,150 @@
-# hscredit 重新设计规划方案
+# hscredit 规划方案（2026 重新梳理版）
 
-> 版本：2026-03-27（修订版 v2）  
+> 版本：2026-04-11  
 > 定位：面向金融信贷场景的完整风控建模工具包，覆盖策略分析人员与模型开发人员的全链路需求。  
-> 修订说明：根据用户反馈，对原规划方案进行全面修订，聚焦7大核心修正点。  
-> 最近更新：完成 Bug 修复、参数名统一、部分 Phase 1-5 功能实现。
+> 说明：在全面梳理现有代码基础上重新编写，按「功能主题」组织，不沿用旧的 Phase 编号。
 
 ---
 
-## 已完成事项 ✅
+## 一、现有功能全景（2026-04 实际状态）
 
-### Bug 修复
-- ✅ `BaseFeatureSelector._get_feature_names()` 补充 `feature_names_in_` 属性，修复 sklearn Pipeline 兼容性
-- ✅ `NumExprDerive._transform_frame()` 分离数值/非数值列处理，修复 datetime/object 列 TypeError
-- ✅ `ExcelWriter.__init__` 优雅处理模板文件缺失，fallback 到空 Workbook
-- ✅ `examples/12_complete_workflow.ipynb` 修复 JSON 转义错误
-
-### 参数名统一
-- ✅ `eda/target.py` 5个函数添加 `target` 别名（兼容 `target_col`）
-- ✅ `eda/target.py` `bad_rate_by_dimension` 添加 `segment_col` 别名（兼容 `dim_col`）
-- ✅ `viz/binning_plots.py` `corr_plot` 添加 `figsize` 别名（兼容 `figure_size`）
-- ✅ `viz/binning_plots.py` `ks_plot` 添加 `ax` 别名（兼容 `axes`）
-
-### 功能新增
-- ✅ **#6 多标签规则挖掘**：`report/mining/multi_label.py` `MultiLabelRuleMiner` 类 + `report/rule_analysis.py` `multi_label_rule_analysis` 函数
-- ✅ **#7 调参目标扩展**：`models/tuning.py` 新增 `ks_lift_combined` 和 `tail_purity_ks` 内置目标
-- ✅ **#9 评分卡部署代码导出**：`models/scorecard.py` 新增 `export_deployment_code()` 支持 SQL/Python/Java
-- ✅ **#11 viz 统一样式系统**：`viz/style.py` 提供 `set_style(theme)` 主题管理、配色方案、中文字体自动检测
-- ✅ **#12 客群偏移监控报告**：`report/population_drift.py` `population_drift()` 生成 PSI 总览 + 特征分布对比 + 逾期率对比 + 评分分布 Excel 报告
-- ✅ **#15 StabilityAwareSelector**：`selectors/stability_selector.py` 综合 IV 有效性与 PSI 稳定性的加权评分特征筛选器
-
----
-
-## 修订说明
-
-原规划方案整体方向正确，本次修订针对以下7点进行调整：
-
-1. **Sphinx API 文档暂缓**：库尚未成型，不生成文档站点，节省精力专注功能实现
-2. **已有功能继续扩充**：分箱/特征筛选/模型/自定义loss 仍有完善空间，持续迭代
-3. **画图模块重新设计**：API 统一重设计，方法扩充，聚焦「模型报告变量分析/评分分析」和「策略人员跨时间/客群/交叉特征有效性和偏移分析」
-4. **EDA 体系化重构**：当前方法多但不成体系，金融策略/模型相关分析不够，客群监控和偏移分析专项补强
-5. **规则挖掘整合进 Report**：支持多标签联合规则挖掘（如 MOB3@30 + MOB6@30），形成可读的规则有效性分析报告
-6. **模型报告完整设计**：参考 `examples/模型报告.xlsx` 和 `examples/建模参考代码.ipynb`，设计更完整的模板和内容
-7. **指标和调参扩充**：LIFT@1%/3%/5%/10%/任意值、头/尾部区分能力目标、LIFT单调性约束调参
-
----
-
-## 一、现有功能全景（只增不改原则）
-
-### 1.1 模块现状速览
+### 1.1 代码结构总览
 
 ```
 hscredit/
 ├── core/
-│   ├── binning/          # 17种分箱算法 + OptimalBinning  ✅ 持续扩充
-│   ├── encoders/         # 8种编码器  ✅
-│   ├── selectors/        # 22种特征筛选 + 组合器  ✅ 新增 StabilityAwareSelector
-│   ├── models/           # 7种模型+评分卡+损失函数+调参+解释  ✅ 调参目标已扩充，评分卡部署代码已实现
-│   ├── metrics/          # 分类/特征/稳定性/金融/回归指标  ⚠️ LIFT待扩充
-│   ├── viz/              # 40+图表 + 统一样式系统  ✅ style.py 主题管理已实现
-│   ├── eda/              # 多个EDA函数  ⚠️ 待体系化补强（population.py / strategy.py）
-│   ├── rules/            # 规则引擎+挖掘  ✅ 多标签规则挖掘已整合进Report
-│   ├── feature_engineering/  # NumExprDerive  ⚠️ 待扩充（已修复非数值列bug）
-│   └── financial/        # 金融计算  ✅
-├── report/               # 特征/规则/置换/偏移监控报告  ✅ 新增客群偏移报告、多标签规则报告
-└── utils/                # 工具函数  ✅
+│   ├── binning/          # 17种分箱算法 + OptimalBinning 统一接口  ✅ 成熟
+│   ├── encoders/         # 9种编码器（WOE/Target/Count/OHE/OE/Quantile/CatBoost/GBM/Cardinality）  ✅ 成熟
+│   ├── selectors/        # 23种特征筛选 + CompositeFeatureSelector + StabilityAwareSelector  ✅ 成熟
+│   ├── models/           # 完整建模生态  ✅ 成熟
+│   │   ├── boosting/     # XGBoost / LightGBM / CatBoost / NGBoost
+│   │   ├── classical/    # LogisticRegression（扩展版）/ sklearn 包装
+│   │   ├── scorecard/    # ScoreCard（含 export_deployment_code SQL/Python/Java）
+│   │   ├── losses/       # 7种自定义损失函数（Focal/WeightedBCE/CostSensitive/BadDebt/ApprovalRate/ProfitMax）
+│   │   ├── tuning/       # ModelTuner / AutoTuner / TuningObjective（含 lift_head / head_ks / ks_lift_combined 等）
+│   │   ├── evaluation/   # ModelReport / QuickModelReport / ModelExplainer（SHAP）/ CalibratedModel
+│   │   └── rules/        # RuleSet / RulesClassifier / LogicOperator
+│   ├── metrics/          # 全面指标库  ✅ 成熟
+│   │   ├── classification.py  # ks / auc / gini / accuracy / f1 / ks_bucket / roc_curve
+│   │   ├── feature.py         # iv / iv_table / chi2_test / cramers_v / feature_importance
+│   │   ├── stability.py       # psi / csi / batch_psi / psi_rating
+│   │   └── finance.py         # lift / lift_at / lift_table / lift_curve / lift_monotonicity_check / badrate
+│   ├── viz/              # 50+ 图表  ✅ 成熟
+│   │   ├── binning_plots.py   # bin_plot / ks_plot / hist_plot / psi_plot / bin_trend_plot
+│   │   ├── risk_plots.py      # roc_plot / lift_plot / score_dist_plot / vintage_plot / threshold_analysis_plot
+│   │   ├── variable_plots.py  # variable_iv_plot / variable_woe_trend_plot / variable_psi_heatmap / variable_missing_badrate_plot
+│   │   ├── score_plots.py     # score_ks_plot / score_distribution_comparison_plot / score_badrate_bin_plot / score_lift_plot
+│   │   ├── strategy_plots.py  # feature_trend_by_time / feature_drift_comparison / feature_cross_heatmap / segment_scorecard_comparison
+│   │   └── style.py           # set_style / reset_style / 主题管理 / 中文字体自动检测
+│   ├── eda/              # 结构化探索性分析  ✅ 基本成熟
+│   │   ├── overview.py        # data_info / missing_analysis / feature_summary / data_quality_report
+│   │   ├── target.py          # target_distribution / bad_rate_overall / bad_rate_by_dimension / bad_rate_trend
+│   │   ├── feature.py         # numeric_distribution / categorical_distribution / outlier_detection / feature_stability_over_time
+│   │   ├── relationship.py    # iv_analysis / batch_iv_analysis / woe_analysis / binning_bad_rate / univariate_auc
+│   │   ├── correlation.py     # correlation_matrix / high_correlation_pairs / vif_analysis
+│   │   ├── stability.py       # psi_analysis / batch_psi_analysis / csi_analysis / time_psi_tracking / psi_cross_analysis
+│   │   ├── vintage.py         # vintage_analysis / vintage_summary / roll_rate_analysis
+│   │   └── report.py          # eda_summary / generate_report / export_report_to_excel
+│   ├── rules/            # 规则引擎  ✅ 基础完整
+│   │   ├── rule.py            # Rule / get_columns_from_query / RuleSet / RulesClassifier
+│   │   └── expr_optimizer.py  # optimize_expr / beautify_expr
+│   ├── feature_engineering/  # 特征工程  ⚠️ 当前仅有 NumExprDerive
+│   └── financial/        # 金融计算（fv/pv/pmt/nper/npv/irr/mirr）  ✅ 基础完整
+├── report/               # 报告模块  ✅ 成熟
+│   ├── feature_analyzer.py   # feature_bin_stats / auto_feature_analysis（Excel 特征报告）
+│   ├── model_report.py       # QuickModelReport / auto_model_report / compare_models
+│   ├── rule_analysis.py      # ruleset_analysis / multi_label_rule_analysis
+│   ├── swap_analysis.py      # SwapAnalyzer / swap_analysis（规则置换四象限分析）
+│   ├── overdue_predictor.py  # OverduePredictor / overdue_prediction_report
+│   ├── population_drift.py   # population_drift（客群偏移 Excel 报告）
+│   └── mining/               # SingleFeatureRuleMiner / MultiFeatureRuleMiner / MultiLabelRuleMiner / TreeRuleExtractor
+├── excel/                # ExcelWriter / dataframe2excel  ✅
+└── utils/                # seed_everything / 数据集 / describe / pandas 扩展 / logger  ✅
 ```
+
+### 1.2 已实现核心 API 速查
+
+| 模块 | 主要类/函数 |
+|------|-----------|
+| 分箱 | `OptimalBinning(method=...)`, `BestIVBinning`, `MDLPBinning`, `MonotonicBinning`, `ORBinning`, `GeneticBinning` 等 17 种 |
+| 编码 | `WOEEncoder`, `TargetEncoder`, `GBMEncoder`, `CatBoostEncoder` 等 9 种 |
+| 筛选 | `IVSelector`, `PSISelector`, `StabilityAwareSelector`, `CompositeFeatureSelector`, `BorutaSelector`, `StepwiseSelector` 等 23 种 |
+| 模型 | `XGBoostRiskModel`, `LightGBMRiskModel`, `LogisticRegression`, `ScoreCard` |
+| 调参 | `ModelTuner(objective='ks'/'lift_head'/'lift_head_monotonic'/'head_ks')`, `AutoTuner` |
+| 损失 | `FocalLoss`, `BadDebtLoss`, `ApprovalRateLoss`, `ProfitMaxLoss` |
+| 解释 | `ModelExplainer`（SHAP）, `CalibratedModel` |
+| 部署 | `ScoreCard.export_deployment_code(language='sql'/'python'/'java')` |
+| 报告 | `auto_model_report(model, X_train, y_train, ...)`, `auto_feature_analysis(...)` |
+| 指标 | `ks`, `auc`, `lift_at(ratios=[...])`, `lift_monotonicity_check`, `psi`, `iv` |
+| 可视化 | `bin_plot`, `ks_plot`, `score_ks_plot`, `variable_iv_plot`, `feature_trend_by_time`, `feature_cross_heatmap` |
+| 规则 | `Rule`, `RulesClassifier`, `MultiLabelRuleMiner`, `SwapAnalyzer`, `population_drift` |
+| EDA | `batch_iv_analysis`, `bad_rate_trend`, `vintage_analysis`, `psi_cross_analysis`, `eda_summary` |
 
 ---
 
-## 二、差距分析与优先级
+## 二、差距分析（真实缺口）
 
-### 2.1 高优先级差距（本次规划重点）
+经过完整代码梳理，以下是 **实际尚未实现** 或 **明显薄弱** 的部分：
 
-| 模块 | 现状 | 差距 | 优先级 |
-|------|------|------|--------|
-| `metrics/finance.py` | `lift_curve` 仅固定比例 | **缺 LIFT@1%/3%/5%/10%/任意值；缺LIFT单调性检验** | P0 |
-| `models/tuning.py` | ✅ 已扩充 `ks_lift_combined` / `tail_purity_ks` | ~~缺头/尾部区分能力目标~~ 已完成 | ✅ Done |
-| `viz/` | ✅ 40+图表 + `style.py` 统一样式 | ~~缺统一绘图入口~~ 已完成样式系统 | ✅ Done (样式) |
-| `eda/` | 方法多但不成体系 | **缺金融策略分析体系、客群监控、特征偏移专项分析** | P0 |
-| `report/model_report.py` | 不存在 | **缺完整模型报告（参考examples/模型报告.xlsx）** | P0 |
-| `rules/` + `report/` | ✅ 多标签挖掘已整合进Report | ~~缺多标签联合挖掘~~ 已完成 | ✅ Done |
-| `feature_engineering/` | NumExprDerive（已修复bug） | 时序特征/交叉特征/预处理Transformer | P2 |
+### 2.1 缺失：EDA 策略域与客群域
 
-### 2.2 中低优先级（持续迭代）
+| 缺失文件 | 缺失函数 | 说明 |
+|----------|----------|------|
+| `core/eda/population.py` | `population_profile` / `population_shift_analysis` / `population_monitoring_report` / `segment_drift_analysis` / `feature_cross_segment_effectiveness` | 客群画像、多期偏移分析，当前 EDA 无此域 |
+| `core/eda/strategy.py` | `approval_badrate_tradeoff` / `score_strategy_simulation` / `vintage_performance_summary` / `roll_rate_matrix` / `label_leakage_check` / `multi_label_correlation` | 策略仿真与风险决策分析，当前完全空白 |
+| `core/eda/stability.py` 扩充 | `feature_drift_report` / `score_drift_report` | 当前 stability.py 有 PSI 分析但缺统一偏移报告函数 |
 
-| 模块 | 内容 | 优先级 |
-|------|------|--------|
-| `binning/` | 分箱结果批量Excel输出完善 | P2 |
-| `selectors/` | ✅ StabilityAwareSelector 已实现；筛选全流程Pipeline示例完善 | P2 |
-| `models/scorecard.py` | ✅ SQL/Python/Java 部署代码生成已实现 | ✅ Done |
-| `models/interpretability.py` | SHAP 结果落 Excel | P2 |
-| `models/tuning.py` | 调参报告 Excel 输出 | P2 |
-| `models/losses/` | 损失函数进一步完善 | P2 |
-| `report/` | ✅ 客群偏移监控报告已实现；策略对比报告待补充 | P2 |
+### 2.2 缺失：特征工程模块
 
----
+`core/feature_engineering/` 目前仅有 `NumExprDerive`（表达式衍生），以下能力完全空白：
 
-## 三、实现步骤（按优先级分阶段）
+| 缺失文件 | 缺失类 | 说明 |
+|----------|--------|------|
+| `time_features.py` | `TimeFeatureGenerator` | 时序特征（年/月/周/季度/节假日/距关键时间点天数） |
+| `cross_features.py` | `CrossFeatureGenerator` | 交叉特征（差/比/积/对数比），sklearn Pipeline 兼容 |
+| `preprocessing.py` | `MissingValueImputer` / `OutlierClipper` / `FeatureScaler` | 缺失值、异常值、标准化 Transformer，保留 DataFrame 列名 |
 
----
+### 2.3 薄弱：规则模块
 
-### Phase 1 —— 指标扩充：LIFT@任意比例 + 单调性检验（1-2天）
+| 项目 | 当前状态 | 缺口 |
+|------|----------|------|
+| 规则组合挖掘 | `MultiFeatureRuleMiner` 在 `report/mining/` 中，但核心 `core/rules/` 无复杂规则组合能力 | 规则集覆盖率模拟、规则冲突检测 |
+| 规则解释 | 无 | 单条规则的各期、各客群有效性追踪 |
+| 规则库管理 | 无 | 规则版本管理、规则 A/B 评估 |
 
-**目标**：`lift_at` 支持任意比例 LIFT，`lift_monotonicity_check` 支持头/尾部单调性检验，为调参目标和模型报告提供基础指标。
+### 2.4 薄弱：分箱模块扩展
 
-#### 1.1 新增 `lift_at` 函数（`core/metrics/finance.py`）
+| 项目 | 当前状态 | 缺口 |
+|------|----------|------|
+| 批量分箱 Excel 输出 | `auto_feature_analysis` 支持，但 `OptimalBinning` 本身无 `batch_to_excel()` | 缺独立的 `OptimalBinning.batch_to_excel()` 快捷方法 |
+| PSI 导向分箱 | 无 | `BestPSIBinning`：最小化训练/测试分布差异的分箱 |
+| 自动分箱数选择 | `auto_select_method` 已有，但基于样本量的自动 `max_n_bins` 推断无 | `auto_select_bins(X, y, feature)` |
 
-```python
-def lift_at(
-    y_true: Union[np.ndarray, pd.Series],
-    y_prob: Union[np.ndarray, pd.Series],
-    ratios: Union[float, List[float]] = [0.01, 0.03, 0.05, 0.10],
-    ascending: bool = False,
-) -> Union[float, pd.DataFrame]:
-    """计算指定覆盖率下的LIFT值.
+### 2.5 薄弱：特征筛选
 
-    :param y_true: 真实标签 (0/1)
-    :param y_prob: 预测概率
-    :param ratios: 覆盖率，如 0.05 或 [0.01, 0.03, 0.05, 0.10]
-    :param ascending: False=高概率排前（风险模型头部），True=低概率排前（尾部分析）
-    :return: 单个 float（ratios 为标量时）或 DataFrame（ratios 为列表时）
+| 项目 | 当前状态 | 缺口 |
+|------|----------|------|
+| `LiftSelector` | 已有，但 `ratio` 固定 | 增加 `ratio` 参数支持 `lift@1%/5%` 等自定义比例 |
+| 筛选报告 Excel | 无 | `CompositeFeatureSelector.to_excel()` 输出筛选全流程报告 |
 
-    Example:
-        >>> lift_at(y_true, y_prob, ratios=0.05)          # 单值
-        3.42
-        >>> lift_at(y_true, y_prob, ratios=[0.01, 0.03, 0.05, 0.10])
-           覆盖率  样本数  坏样本数  坏样本捕获率  LIFT值
-        0    1%      50      35       12.5%    5.83
-        1    3%     150      98       35.0%    4.83
-        2    5%     250     155       55.4%    4.11
-        3   10%     500     285       101.8%   3.76
-    """
-```
+### 2.6 薄弱：模型与报告
 
-扩充现有 `lift_curve`：
-- 默认 `percentages=[0.01, 0.03, 0.05, 0.10, 0.20, 0.30, 0.50]`
-- 新增 `tail` 参数（`tail=True` 时从低概率端截取，分析尾部低风险客群）
-
-#### 1.2 新增 `lift_monotonicity_check` 函数（`core/metrics/finance.py`）
-
-```python
-def lift_monotonicity_check(
-    y_true: Union[np.ndarray, pd.Series],
-    y_prob: Union[np.ndarray, pd.Series],
-    n_bins: int = 10,
-    direction: str = 'both',   # 'head' / 'tail' / 'both'
-) -> Dict[str, Any]:
-    """检查LIFT单调性.
-
-    风控场景理想状态：高风险端（头部）坏率单调递减，低风险端（尾部）坏率单调递增。
-    违反单调性意味着评分中间段区分能力弱，可作为调参约束。
-
-    :return: {
-        'head_monotonic': bool,
-        'tail_monotonic': bool,
-        'head_lift_values': list,       # 各分箱LIFT（由高风险到低风险）
-        'tail_lift_values': list,
-        'head_violations': list,        # 违反单调性的分箱 [(bin_i, bin_j, 差值)]
-        'tail_violations': list,
-        'head_violation_ratio': float,  # 违反比例 0.0~1.0
-        'tail_violation_ratio': float,
-    }
-
-    Example:
-        >>> result = lift_monotonicity_check(y_true, y_prob, n_bins=10)
-        >>> print(result['head_monotonic'])        # True/False
-        >>> print(result['head_violation_ratio'])  # 0.0
-    """
-```
-
-#### 1.3 扩充 `BaseRiskModel.evaluate()` 返回字典（`core/models/base.py`）
-
-```python
-# 原有
-{'KS': ..., 'AUC': ..., 'Gini': ...}
-
-# 新增
-{
-    'KS': ..., 'AUC': ..., 'Gini': ...,
-    'LIFT@1%': ..., 'LIFT@3%': ..., 'LIFT@5%': ..., 'LIFT@10%': ...,
-    'LIFT_HEAD_MONOTONIC': True/False,
-}
-```
-
-导出路径：更新 `core/metrics/__init__.py` 和 `hscredit/__init__.py`。
+| 项目 | 当前状态 | 缺口 |
+|------|----------|------|
+| SHAP 导出 Excel | `ModelExplainer` 有 SHAP 分析，但 `auto_model_report` 中 SHAP Sheet 暂未集成 | `include_shap=True` 时生成 SHAP 汇总 Sheet |
+| 损失函数 | 7 种已有 | `OrdinalRankLoss`（评分排序一致性）/ `LiftFocusedLoss`（头部 LIFT 导向） |
+| ScoreCard 分析 | 已有分值表、部署代码 | `score_segment_analysis(df, target)` 各评分段客群特征分析 |
+| 多模型比较报告 | `compare_models(...)` 存在 | 对比 Excel 报告格式待完善 |
 
 ---
 
-### Phase 2 —— 调参扩充：头尾区分能力 + LIFT单调性约束（2-3天）
+## 三、迭代规划（按价值主题）
 
-**目标**：`ModelTuner` 支持以头部/尾部区分能力或 LIFT 单调性为优化目标，适配「重点管控头部高风险客群」的风控建模需求。
+### Theme A：完善 EDA 策略分析体系（高优先，最大价值缺口）
 
-#### 2.1 新增内置调参目标类（`core/models/tuning.py`）
+**目标**：补齐 `core/eda/` 缺失的两大分析域，让策略分析人员有完整的客群与策略分析工具链。
 
-```python
-class TuningObjective:
-    """内置调参目标函数集合.
-
-    所有目标函数签名：(y_true, y_prob) -> float（值越大越好）
-    """
-
-    @staticmethod
-    def ks(y_true, y_prob) -> float:
-        """标准KS目标."""
-
-    @staticmethod
-    def auc(y_true, y_prob) -> float:
-        """AUC目标."""
-
-    @staticmethod
-    def lift_head(y_true, y_prob, ratio: float = 0.10) -> float:
-        """头部LIFT目标：优化预测概率最高 ratio 比例样本的 LIFT 值."""
-
-    @staticmethod
-    def lift_tail(y_true, y_prob, ratio: float = 0.10) -> float:
-        """尾部LIFT目标：优化预测概率最低 ratio 比例样本（低风险客群）的纯净度."""
-
-    @staticmethod
-    def lift_head_monotonic(
-        y_true, y_prob,
-        n_bins: int = 10,
-        penalty: float = 0.5,
-    ) -> float:
-        """头部单调LIFT目标：KS × (1 - 违反单调性比例 × penalty).
-
-        单调性违反比例越低，目标越高；完全单调时等同于 KS 目标。
-        """
-
-    @staticmethod
-    def ks_with_lift_constraint(
-        y_true, y_prob,
-        min_lift_ratio: float = 0.05,
-        min_lift_value: float = 2.0,
-    ) -> float:
-        """KS + LIFT约束：满足头部 min_lift_ratio 处 LIFT >= min_lift_value 前提下最大化KS."""
-
-    @staticmethod
-    def head_ks(
-        y_true, y_prob,
-        ratio: float = 0.30,
-    ) -> float:
-        """头部KS：仅计算预测概率前 ratio 比例样本的KS（头部区分能力）."""
-```
-
-#### 2.2 `ModelTuner` 扩充参数
-
-```python
-class ModelTuner:
-    def __init__(
-        self,
-        model_class,
-        param_space: dict = None,
-        objective: Union[str, Callable] = 'ks',
-        # 支持字符串：'ks' / 'auc' / 'lift_head' / 'lift_tail' /
-        #              'lift_head_monotonic' / 'ks_with_lift_constraint' / 'head_ks'
-        # 或自定义函数 (y_true, y_prob) -> float
-        objective_kwargs: dict = None,  # 透传给目标函数的额外参数，如 ratio=0.05
-        n_trials: int = 100,
-        direction: str = 'maximize',
-        cv: int = 0,                  # >0 启用交叉验证
-        eval_ratios: List[float] = [0.01, 0.03, 0.05, 0.10],  # 调参过程中额外追踪的 LIFT 比例
-        ...
-    )
-```
-
-调参过程中，每个 trial 的 history 除记录主目标值外，还记录 `LIFT@1%/3%/5%/10%`，方便事后分析「用哪个目标调参更能满足业务需要」。
-
----
-
-### Phase 3 —— 画图模块重新设计（3-5天）
-
-**目标**：统一 API 风格，扩充模型报告变量分析/评分分析图，以及策略人员需要的跨时间/客群/交叉特征有效性和偏移分析图。
-
-#### 3.1 设计原则
-
-- **统一函数签名**：所有绘图函数遵循 `func(data, ..., ax=None, figsize=(...), title=..., save=None) -> Figure`
-- **统一样式系统**：通过 `viz/style.py` 管理调色板/字体/网格，提供 `set_style(theme='risk')` 入口
-- **支持批量输出**：所有函数支持 `save` 参数，图片保存后供 Excel 报告插入
-- **中英文支持**：标题和轴标签默认中文，可通过 `lang='en'` 切换
-
-#### 3.2 新增：模型报告变量分析图（`core/viz/variable_plots.py`）
-
-```python
-def variable_iv_plot(
-    df: pd.DataFrame,
-    features: List[str],
-    target: str,
-    top_n: int = 20,
-    ax=None, figsize=(12, 8), title='特征IV值排名', save=None,
-) -> Figure:
-    """特征IV值横向柱状图，按IV降序排列，标注IV阈值参考线（0.02/0.1/0.3）."""
-
-def variable_woe_trend_plot(
-    bin_table: pd.DataFrame,
-    feature: str = None,
-    ax=None, figsize=(10, 5), title=None, save=None,
-) -> Figure:
-    """WOE折线图+坏率柱状图（双轴），用于变量分析报告."""
-
-def variable_psi_heatmap(
-    psi_matrix: pd.DataFrame,
-    ax=None, figsize=(14, 8), title='特征PSI热力图', save=None,
-) -> Figure:
-    """特征PSI矩阵热力图，颜色反映偏移程度（绿/黄/红）."""
-
-def variable_importance_grouped_plot(
-    importance_df: pd.DataFrame,
-    group_col: str = 'category',
-    value_col: str = 'importance',
-    ax=None, figsize=(12, 8), title='分类特征重要性', save=None,
-) -> Figure:
-    """按特征类别（资产/负债/行为/人口学等）分组的重要性堆叠图."""
-
-def variable_missing_badrate_plot(
-    df: pd.DataFrame,
-    features: List[str],
-    target: str,
-    ax=None, figsize=(12, 6), title='缺失率 vs 坏账率', save=None,
-) -> Figure:
-    """散点图：横轴=缺失率，纵轴=缺失样本坏账率（用于评估缺失值信息价值）."""
-```
-
-#### 3.3 新增：评分分析图（`core/viz/score_plots.py`）
-
-```python
-def score_ks_plot(
-    y_true, y_prob,
-    datasets: Dict[str, Tuple] = None,  # {'训练集': (y_true, y_prob), '测试集': ...}
-    ax=None, figsize=(10, 6), title='KS曲线', save=None,
-) -> Figure:
-    """KS曲线图，支持多数据集叠加（训练集/测试集/OOT）."""
-
-def score_distribution_comparison_plot(
-    scores: Dict[str, np.ndarray],  # {'训练集': array, '测试集': array}
-    ax=None, figsize=(10, 5), title='评分分布对比', save=None,
-) -> Figure:
-    """多数据集评分分布对比（KDE + 直方图），直观反映分布偏移."""
-
-def score_badrate_bin_plot(
-    y_true, score,
-    n_bins: int = 10,
-    show_psi: bool = True,
-    ax=None, figsize=(12, 6), title='评分分箱坏率图', save=None,
-) -> Figure:
-    """评分分箱图：柱=样本量，折线=坏率，支持同时展示PSI."""
-
-def score_lift_plot(
-    y_true, y_prob,
-    ratios: List[float] = [0.01, 0.03, 0.05, 0.10, 0.20, 0.30, 0.50],
-    datasets: Dict[str, Tuple] = None,
-    ax=None, figsize=(10, 6), title='LIFT曲线', save=None,
-) -> Figure:
-    """LIFT曲线图，支持多数据集叠加，标注 1%/5%/10% 参考点."""
-
-def score_approval_badrate_curve(
-    y_true, score,
-    ax=None, figsize=(10, 6), title='通过率-坏率权衡曲线', save=None,
-) -> Figure:
-    """审批通过率 vs 坏账率曲线（策略人员必备），同时展示不同阈值下的通过数量."""
-```
-
-#### 3.4 新增：策略分析图 - 跨时间/客群/交叉（`core/viz/strategy_plots.py`）
-
-```python
-def feature_trend_by_time(
-    df: pd.DataFrame,
-    feature: str,
-    date_col: str,
-    target: str = None,
-    stat: str = 'mean',   # 'mean' / 'median' / 'psi' / 'badrate'
-    ax=None, figsize=(12, 5), title=None, save=None,
-) -> Figure:
-    """特征随时间的均值/中位数/PSI/坏率趋势图，用于检测特征偏移."""
-
-def feature_drift_comparison(
-    df_base: pd.DataFrame,
-    df_target: pd.DataFrame,
-    features: List[str],
-    top_n: int = 20,
-    ax=None, figsize=(12, 8), title='特征分布偏移（PSI）', save=None,
-) -> Figure:
-    """多特征偏移瀑布图：横轴=PSI值，颜色标注偏移等级（绿/黄/红），快速定位偏移特征."""
-
-def feature_effectiveness_by_segment(
-    df: pd.DataFrame,
-    feature: str,
-    target: str,
-    segment_col: str,
-    metric: str = 'iv',   # 'iv' / 'ks' / 'auc' / 'lift@5%'
-    ax=None, figsize=(10, 6), title=None, save=None,
-) -> Figure:
-    """特征在不同客群（渠道/产品/时间段）下的有效性对比热力图或分组柱状图."""
-
-def feature_cross_heatmap(
-    df: pd.DataFrame,
-    feature_x: str,
-    feature_y: str,
-    target: str,
-    stat: str = 'badrate',   # 'badrate' / 'count' / 'lift'
-    ax=None, figsize=(10, 8), title=None, save=None,
-) -> Figure:
-    """两个特征交叉分析热力图：行=feature_x分箱，列=feature_y分箱，格=坏率/样本数/LIFT."""
-
-def population_drift_monitor(
-    df_list: List[pd.DataFrame],
-    labels: List[str],
-    features: List[str],
-    target: str = None,
-    ax=None, figsize=(14, 10), title='客群偏移监控', save=None,
-) -> Figure:
-    """多期客群特征分布偏移监控大图：上方为PSI矩阵，下方为关键特征分布叠加对比图."""
-
-def segment_scorecard_comparison(
-    df: pd.DataFrame,
-    score_col: str,
-    target: str,
-    segment_col: str,
-    ax=None, figsize=(14, 6), title='分客群评分效果对比', save=None,
-) -> Figure:
-    """按客群分组的评分KS/AUC/LIFT对比柱状图，用于验证模型在不同客群的稳定性."""
-```
-
-#### 3.5 更新 `viz/__init__.py` 统一导出
-
-将 `variable_plots`、`score_plots`、`strategy_plots` 中所有新增函数统一导出至 `core/viz/__init__.py` 和顶层 `hscredit/__init__.py`。
-
----
-
-### Phase 4 —— EDA 体系化重构（3-5天）
-
-**目标**：将现有 EDA 函数重新组织为「金融策略体系」，新增客群监控、特征偏移、金融指标分析三大专项模块，形成有章可循的分析框架。
-
-#### 4.1 EDA 分析体系设计
-
-现有 EDA 函数按金融风控场景重组为以下5个分析域：
-
-```
-core/eda/
-├── overview.py       # 域1：数据质量与概览  ✅ 已有，持续完善
-├── target.py         # 域2：目标变量分析  ✅ 已有，持续完善
-├── feature.py        # 域3：特征分析  ✅ 已有，持续完善
-├── relationship.py   # 域4：特征-标签关系  ✅ 已有，持续完善
-├── correlation.py    # 域5：相关性分析  ✅ 已有
-├── stability.py      # 域6：稳定性分析  ✅ 已有，待扩充
-├── vintage.py        # 域7：Vintage分析  ✅ 已有
-├── population.py     # 域8：客群监控与偏移分析  🆕 新增
-├── strategy.py       # 域9：金融策略分析  🆕 新增
-└── report.py         # 综合报告  ✅ 已有，待扩充
-```
-
-#### 4.2 新增：客群监控与偏移分析（`core/eda/population.py`）🆕
+#### A-1  新增 `core/eda/population.py`
 
 ```python
 def population_profile(
@@ -459,7 +154,10 @@ def population_profile(
     date_col: str = None,
     target: str = None,
 ) -> pd.DataFrame:
-    """客群画像分析：各特征均值/分位数/坏率，支持按客群/时间分组."""
+    """客群画像：各特征均值/分位数/坏率，支持按客群/时间分组.
+    
+    :return: 行=特征+统计量，列=客群/时间分组
+    """
 
 def population_shift_analysis(
     df_base: pd.DataFrame,
@@ -468,9 +166,9 @@ def population_shift_analysis(
     target: str = None,
     psi_threshold: float = 0.1,
 ) -> pd.DataFrame:
-    """客群偏移分析：计算各特征PSI/KS/均值变化，标注偏移等级，输出偏移摘要表.
-
-    :return: DataFrame，含特征名/PSI/均值变化/偏移等级/建议
+    """客群偏移分析：各特征 PSI/均值变化/偏移等级，输出摘要表.
+    
+    :return: 含 特征名/PSI/均值变化/偏移等级/建议 的 DataFrame
     """
 
 def population_monitoring_report(
@@ -481,14 +179,7 @@ def population_monitoring_report(
     target: str = None,
     output_path: str = 'population_monitor.xlsx',
 ) -> str:
-    """多期客群监控报告（Excel输出）.
-
-    报告包含：
-    - 各期客群规模和坏率趋势
-    - 特征PSI时序矩阵（热力图）
-    - 偏移特征Top10详细分布对比
-    - 目标变量趋势（若传入）
-    """
+    """多期客群监控 Excel 报告（各期规模+坏率趋势 / PSI 时序矩阵 / 偏移 Top10）."""
 
 def segment_drift_analysis(
     df: pd.DataFrame,
@@ -498,34 +189,27 @@ def segment_drift_analysis(
     target: str = None,
     base_period: str = None,
 ) -> pd.DataFrame:
-    """分客群、分时间的特征偏移分析.
-
-    每个 (segment, period) 组合计算相对于基准期的特征PSI，
-    输出三维矩阵：特征 × 时间 × 客群。
-    """
+    """分客群、分时间的特征偏移三维矩阵（特征×时间×客群）."""
 
 def feature_cross_segment_effectiveness(
     df: pd.DataFrame,
     features: List[str],
     target: str,
     segment_col: str,
-    metric: str = 'iv',   # 'iv' / 'ks' / 'auc' / 'lift@5%'
+    metric: str = 'iv',     # 'iv' / 'ks' / 'auc' / 'lift@5%'
 ) -> pd.DataFrame:
-    """各特征在不同客群下的有效性矩阵（行=特征，列=客群，格=IV/KS/AUC）."""
+    """特征在不同客群下的有效性矩阵（行=特征，列=客群，格=IV/KS/AUC）."""
 ```
 
-#### 4.3 新增：金融策略分析（`core/eda/strategy.py`）🆕
+#### A-2  新增 `core/eda/strategy.py`
 
 ```python
 def approval_badrate_tradeoff(
-    y_true: Union[np.ndarray, pd.Series],
-    score: Union[np.ndarray, pd.Series],
+    y_true,
+    score,
     n_points: int = 100,
 ) -> pd.DataFrame:
-    """通过率-坏率权衡曲线数据.
-
-    :return: DataFrame，含阈值/通过率/拒绝率/通过样本坏率/拒绝样本坏率/整体坏率改善
-    """
+    """通过率-坏率权衡曲线：阈值/通过率/拒绝率/通过坏率/拒绝坏率/坏率改善."""
 
 def score_strategy_simulation(
     df: pd.DataFrame,
@@ -534,7 +218,7 @@ def score_strategy_simulation(
     thresholds: List[float],
     amount_col: str = None,
 ) -> pd.DataFrame:
-    """评分策略模拟：给定多个阈值，计算各策略下的通过率/坏率/损失额/利润."""
+    """多阈值策略仿真：每个阈值下通过率/坏率/损失额/利润对比."""
 
 def vintage_performance_summary(
     df: pd.DataFrame,
@@ -543,7 +227,7 @@ def vintage_performance_summary(
     target_col: str,
     mob_points: List[int] = [3, 6, 9, 12],
 ) -> pd.DataFrame:
-    """Vintage表现摘要：各放款批次在指定 MOB 节点的坏率，输出矩阵表."""
+    """Vintage 矩阵摘要：各放款批次在指定 MOB 节点的坏率."""
 
 def roll_rate_matrix(
     df: pd.DataFrame,
@@ -551,7 +235,7 @@ def roll_rate_matrix(
     dpd_t1: str,
     bins: List[int] = [0, 1, 7, 15, 30, 60, 90, 120],
 ) -> pd.DataFrame:
-    """滚动率矩阵：从 DPD_t0 到 DPD_t1 的迁移率矩阵，用于判断资产质量变化."""
+    """DPD 迁移率矩阵：判断资产质量演变趋势."""
 
 def label_leakage_check(
     df: pd.DataFrame,
@@ -560,27 +244,26 @@ def label_leakage_check(
     threshold_iv: float = 0.5,
     threshold_auc: float = 0.9,
 ) -> pd.DataFrame:
-    """标签泄露检查：IV/AUC 异常高的特征预警，输出疑似泄露特征列表."""
+    """标签泄露检查：IV/AUC 异常高的特征预警列表."""
 
 def multi_label_correlation(
     df: pd.DataFrame,
     labels: List[str],
 ) -> pd.DataFrame:
-    """多标签相关性分析（如 FPD15/FPD30/MOB3@30/MOB6@30 相互关系），
-    输出标签间 Spearman 相关矩阵和一致性率表."""
+    """多标签相关性（FPD15/FPD30/MOB3@30/MOB6@30 等）Spearman 矩阵+一致性率."""
 ```
 
-#### 4.4 完善 `stability.py`：增加偏移专项分析
+#### A-3  扩充 `core/eda/stability.py`
 
 ```python
 def feature_drift_report(
     df_base: pd.DataFrame,
     df_target: pd.DataFrame,
     features: List[str] = None,
-    method: str = 'psi',   # 'psi' / 'ks' / 'wasserstein'
+    method: str = 'psi',     # 'psi' / 'ks' / 'wasserstein'
     psi_bins: int = 10,
 ) -> pd.DataFrame:
-    """批量特征偏移报告：计算所有特征的偏移指标，按偏移程度排序，标注等级."""
+    """批量特征偏移报告：所有特征偏移指标，按偏移程度降序，标注等级."""
 
 def score_drift_report(
     score_base: pd.Series,
@@ -592,469 +275,344 @@ def score_drift_report(
     """评分偏移综合报告：PSI + 分布对比 + 坏率变化（若传入标签）."""
 ```
 
-#### 4.5 更新 `eda/__init__.py`
-
-将所有新增函数统一导出，按域分组注释，方便用户查找。
+#### A-4  更新 `eda/__init__.py` 和顶层 `hscredit/__init__.py`
 
 ---
 
-### Phase 5 —— 规则挖掘整合进 Report：多标签规则分析（3-5天）
+### Theme B：扩充特征工程模块（高优先，当前空白最大）
 
-**目标**：支持设置多个标签（如 MOB3@30 和 MOB6@30），挖掘规则时同时考虑多个标签的有效性，生成可解读的规则分析报告。
+**目标**：将 `core/feature_engineering/` 从单一的 `NumExprDerive` 扩展为完整的 sklearn-compatible Transformer 体系。
 
-#### 5.1 多标签规则挖掘（`core/rules/mining/multi_label.py`）🆕
-
-```python
-class MultiLabelRuleMiner:
-    """多标签规则挖掘器.
-
-    支持同时针对多个标签（如短期标签 MOB3@30 和长期标签 MOB6@30）挖掘规则，
-    并分析规则在不同标签下的有效性差异。
-
-    典型应用场景：
-    - 长短期标签都有效的强规则（稳定拒绝规则）
-    - 仅短期标签有效（可能是偶发风险，谨慎使用）
-    - 仅长期标签有效（长期风险，可做预警规则）
-    - 两标签均无效（噪声规则，丢弃）
-
-    Example:
-        >>> miner = MultiLabelRuleMiner(
-        ...     labels=['mob3_30', 'mob6_30'],
-        ...     label_names=['短期标签(MOB3@30)', '长期标签(MOB6@30)'],
-        ...     min_support=0.02,
-        ...     min_lift=1.5,
-        ... )
-        >>> miner.fit(df, features=['age', 'income', 'credit_score'])
-        >>> rules = miner.get_rules(effectiveness='both')  # 'both'/'short_only'/'long_only'/'any'
-        >>> report = miner.get_report()
-    """
-
-    def fit(self, df, features=None): ...
-
-    def get_rules(
-        self,
-        effectiveness: str = 'any',
-        # 'both'=所有标签均有效, 'short_only'=仅短期有效,
-        # 'long_only'=仅长期有效, 'any'=任一标签有效
-        min_lift_per_label: float = 1.5,
-        min_support: float = 0.01,
-        top_n: int = None,
-    ) -> pd.DataFrame:
-        """获取筛选后的规则表.
-
-        :return: DataFrame，含规则表达式/各标签支持度/各标签LIFT/规则类型/建议
-        """
-
-    def get_effectiveness_matrix(self) -> pd.DataFrame:
-        """规则有效性矩阵：行=规则，列=各标签，格=LIFT值，高亮显示有效规则."""
-
-    def get_report(self) -> pd.DataFrame:
-        """完整规则分析报告，含规则分类和业务解读."""
-```
-
-#### 5.2 规则分析（`report/rule_analysis.py`）🆕
-
-```python
-def multi_label_rule_analysis(
-    df: pd.DataFrame,
-    features: List[str],
-    labels: Dict[str, str],
-    # 如 {'短期标签': 'mob3_30', '长期标签': 'mob6_30'}
-    miner_params: dict = None,
-    output_path: str = 'rule_analysis.xlsx',
-) -> str:
-    """多标签规则挖掘分析报告（Excel输出）.
-
-    报告包含：
-    Sheet 1 - 规则汇总
-        - 各规则在每个标签下的覆盖率/坏率/LIFT/支持度
-        - 规则有效性分类（长短期均有效/仅短期/仅长期/均无效）
-        - 规则建议（强拒绝/预警/观察/放弃）
-    Sheet 2 - 规则有效性矩阵热力图
-        - 行=规则，列=标签，颜色=LIFT强度
-    Sheet 3 - 单规则详细分析
-        - 每条规则在各标签下的分箱分布和坏率
-    Sheet 4 - 规则集模拟
-        - 多条规则组合后的整体覆盖率/坏率改善
-    Sheet 5 - 单特征规则概览
-        - 各特征的最优切分点及双标签效果对比
-
-    Example:
-        >>> multi_label_rule_analysis(
-        ...     df=df,
-        ...     features=['age', 'income', 'credit_score'],
-        ...     labels={'短期标签(MOB3@30)': 'mob3_30', '长期标签(MOB6@30)': 'mob6_30'},
-        ...     output_path='rule_report.xlsx',
-        ... )
-    """
-```
-
-更新 `report/__init__.py` 导出 `multi_label_rule_analysis`。
-
----
-
-### Phase 6 —— 模型报告完整实现（5-7天）
-
-**目标**：参考 `examples/模型报告.xlsx` 和 `examples/建模参考代码.ipynb`，实现 `auto_model_report`，产出格式规范、内容详尽的模型评估 Excel 报告。
-
-#### 6.1 报告结构设计（参考示例文件）
-
-```
-auto_model_report 输出的 Excel 结构：
-├── Sheet 1：封面
-│   - 模型名称、版本、生成时间
-│   - 数据概况（训练/测试/OOT 样本量、坏率）
-│   - 报告目录索引
-│
-├── Sheet 2：模型性能总览
-│   - KS / AUC / Gini / LIFT@1%/3%/5%/10% 三数据集对比表
-│   - 头部单调性标注（✓/✗）
-│   - PSI 稳定性评级
-│
-├── Sheet 3：KS / ROC 曲线
-│   - 训练集 + 测试集 + OOT KS曲线叠加图
-│   - 训练集 + 测试集 + OOT ROC曲线叠加图
-│
-├── Sheet 4：LIFT 曲线
-│   - 多数据集 LIFT 曲线叠加
-│   - LIFT@1%/3%/5%/10% 标注点
-│
-├── Sheet 5：评分分布
-│   - 训练集 / 测试集 / OOT 评分分布（KDE + 直方图）
-│   - 好坏样本评分分布叠加（检验区分度）
-│
-├── Sheet 6：评分分箱坏率
-│   - 训练集 / 测试集 / OOT 分箱坏率表（支持率/坏率/LIFT/累积KS）
-│   - 分箱坏率图（柱+折线双轴）
-│
-├── Sheet 7：PSI 稳定性
-│   - 训练集 vs 测试集 评分 PSI 分箱表
-│   - 训练集 vs OOT 评分 PSI 分箱表（若有OOT）
-│
-├── Sheet 8：变量分析（特征有效性）
-│   - 入模特征 IV 排名表（含 WOE 单调性）
-│   - 特征重要性 Top20 图
-│   - 每个入模特征的分箱表（WOE/坏率/样本量）
-│
-├── Sheet 9：变量稳定性
-│   - 入模特征 PSI 汇总表（训练 vs 测试，含偏移等级）
-│   - 偏移较大特征的分布对比图
-│
-└── Sheet 10：SHAP 解释性（可选，需 shap 库）
-    - SHAP Summary Plot
-    - SHAP Bar Plot
-    - Top 5 特征 SHAP 依赖图
-```
-
-#### 6.2 `auto_model_report` 函数签名（`report/model_report.py`）
-
-```python
-def auto_model_report(
-    model,
-    X_train: pd.DataFrame,
-    y_train: pd.Series,
-    X_test: pd.DataFrame = None,
-    y_test: pd.Series = None,
-    X_oot: pd.DataFrame = None,
-    y_oot: pd.Series = None,
-    feature_map: Dict[str, str] = None,    # 特征英文名 -> 中文名映射
-    feature_groups: Dict[str, List[str]] = None,  # 特征分组，如 {'行为类': ['f1','f2']}
-    include_shap: bool = False,
-    output_path: str = 'model_report.xlsx',
-    model_name: str = None,
-    model_version: str = 'v1.0',
-) -> str:
-    """一键生成模型评估 Excel 报告.
-
-    :param model: 训练好的 BaseRiskModel 实例
-    :param X_train/y_train: 训练集特征和标签
-    :param X_test/y_test: 测试集（可选）
-    :param X_oot/y_oot: OOT集（可选，跨时间验证集）
-    :param feature_map: 特征中文名映射，用于报告展示
-    :param feature_groups: 特征分组，用于分类展示重要性
-    :param include_shap: 是否包含 SHAP 解释性 Sheet（需安装 shap）
-    :param output_path: 输出路径
-    :param model_name: 模型名称（用于封面）
-    :param model_version: 模型版本（用于封面）
-    :return: 输出文件路径
-
-    Example:
-        >>> from hscredit.report import auto_model_report
-        >>> auto_model_report(
-        ...     model=lgbm_model,
-        ...     X_train=X_train, y_train=y_train,
-        ...     X_test=X_test,   y_test=y_test,
-        ...     X_oot=X_oot,     y_oot=y_oot,
-        ...     feature_map={'age': '年龄', 'income': '收入'},
-        ...     output_path='lgbm_report.xlsx',
-        ...     model_name='贷后风险模型',
-        ... )
-    """
-```
-
-#### 6.3 `ModelReport` 类扩充（`core/models/report.py`）
-
-在现有 `ModelReport` 基础上新增：
-
-```python
-class ModelReport:
-    # 现有方法保持不变，新增：
-
-    def get_lift_table_at(
-        self,
-        ratios: List[float] = [0.01, 0.03, 0.05, 0.10],
-        dataset: str = 'test',
-    ) -> pd.DataFrame:
-        """获取指定比例的LIFT汇总表."""
-
-    def get_feature_psi(
-        self,
-        n_bins: int = 10,
-    ) -> pd.DataFrame:
-        """获取入模特征在训练集 vs 测试集的 PSI 汇总表."""
-
-    def get_woe_bin_tables(self) -> Dict[str, pd.DataFrame]:
-        """获取各入模特征的分箱统计表（WOE/IV/坏率）."""
-
-    def to_excel(
-        self,
-        output_path: str,
-        include_oot: bool = True,
-        include_shap: bool = False,
-        writer: 'ExcelWriter' = None,
-    ) -> str:
-        """输出完整模型报告 Excel."""
-```
-
----
-
-### Phase 7 —— 特征工程扩充（持续迭代，P2）
-
-**目标**：补强 `core/feature_engineering/`，支持时序特征、交叉特征和标准化预处理 Transformer。
-
-#### 7.1 时序特征（`core/feature_engineering/time_features.py`）
+#### B-1  `core/feature_engineering/time_features.py`
 
 ```python
 class TimeFeatureGenerator(BaseEstimator, TransformerMixin):
-    """时序特征生成器.
+    """时序特征生成器（sklearn Pipeline 兼容）.
+
+    :param date_col: 日期列名
+    :param features: 生成的时序特征列表，支持：
+        'year' / 'month' / 'day' / 'weekday' / 'quarter' /
+        'is_weekend' / 'is_month_end' / 'is_month_start' /
+        'days_since_epoch' / 'days_to_year_end' /
+        'days_since_{ref_col}' （计算与某参考日期列的天数差）
+    :param ref_cols: 参考日期列名列表，用于计算天数差
 
     Example:
         >>> gen = TimeFeatureGenerator(
         ...     date_col='apply_date',
         ...     features=['year', 'month', 'weekday', 'is_weekend',
-        ...               'days_since_epoch', 'quarter', 'is_month_end']
+        ...               'days_since_epoch', 'quarter']
         ... )
         >>> X_new = gen.fit_transform(X)
     """
 ```
 
-#### 7.2 交叉特征（`core/feature_engineering/cross_features.py`）
+#### B-2  `core/feature_engineering/cross_features.py`
 
 ```python
 class CrossFeatureGenerator(BaseEstimator, TransformerMixin):
-    """交叉特征生成器（加/减/乘/除/比率/对数比）.
+    """交叉特征生成器.
+
+    :param pairs: 特征对列表 [('income', 'debt'), ...]
+    :param operations: 运算列表，支持 'ratio' / 'diff' / 'product' / 'log_ratio' / 'square_diff'
+    :param naming: 命名规则，'auto' 自动命名，或自定义 lambda
 
     Example:
         >>> gen = CrossFeatureGenerator(
         ...     pairs=[('income', 'debt'), ('age', 'credit_limit')],
-        ...     operations=['ratio', 'diff', 'product', 'log_ratio']
+        ...     operations=['ratio', 'diff']
         ... )
         >>> X_new = gen.fit_transform(X)
     """
 ```
 
-#### 7.3 预处理 Transformer（`core/feature_engineering/preprocessing.py`）
+#### B-3  `core/feature_engineering/preprocessing.py`
 
 ```python
 class MissingValueImputer(BaseEstimator, TransformerMixin):
-    """缺失值填充器（均值/中位数/众数/常数）."""
+    """缺失值填充器.
+
+    :param strategy: 'mean' / 'median' / 'mode' / 'constant' / 'model'（用简单模型预测填充）
+    :param fill_value: strategy='constant' 时的填充值
+    :param infer_per_column: 是否对每列单独推断策略（True 时按列数据类型自动选择）
+
+    保留 DataFrame 格式和列名，兼容 sklearn Pipeline。
+    """
 
 class OutlierClipper(BaseEstimator, TransformerMixin):
-    """异常值截断（分位数/固定边界）."""
+    """异常值截断.
+
+    :param method: 'quantile' / 'iqr' / 'fixed'
+    :param lower_quantile: 下截断分位数，默认 0.01
+    :param upper_quantile: 上截断分位数，默认 0.99
+    :param clip_value: method='fixed' 时的 (min, max) 边界
+
+    保留 DataFrame 格式，fit 阶段记录截断边界，transform 阶段应用。
+    """
 
 class FeatureScaler(BaseEstimator, TransformerMixin):
-    """标准化/归一化（封装sklearn，保留列名和DataFrame格式）."""
+    """特征标准化/归一化（封装 sklearn，保留 DataFrame 列名和格式）.
+
+    :param method: 'standard' / 'minmax' / 'robust' / 'maxabs'
+    :param features: 需要缩放的特征列表，None 时处理所有数值列
+    """
 ```
 
----
-
-### Phase 8 —— 已有功能持续扩充（持续迭代，P2）
-
-#### 8.1 分箱模块扩充
-
-- `OptimalBinning.batch_to_excel()`：批量分箱结果输出到 Excel
-- `OptimalBinning` 增加 `auto_select_bins` 模式：基于样本量自动确定最优分箱数
-- 增加 `BestPSIBinning`：最优 PSI 分箱（使训练/测试分布差异最小）
-
-#### 8.2 特征筛选扩充
-
-- `LiftSelector` 增加 `ratio` 参数（支持 LIFT@1%/5% 等自定义比例）
-- `CompositeFeatureSelector` 增加 `to_excel()` 输出筛选报告
-- ✅ ~~新增 `StabilityAwareSelector`~~ 已实现：`selectors/stability_selector.py`
-
-#### 8.3 损失函数扩充
-
-- `FocalLoss` 增加 `class_weights` 参数（支持非对称类别权重）
-- 新增 `OrdinalRankLoss`：序数损失，优化评分的排序一致性
-- 新增 `LiftFocusedLoss`：头部 LIFT 导向损失（对高风险样本施加更高惩罚）
-
-#### 8.4 评分卡扩充
-
-- ✅ ~~`ScoreCard.export_deployment_code(language='sql'/'python'/'java')`~~ 已实现：`models/scorecard.py`
-- `ScoreCard.score_segment_analysis(df, target)`：各评分段的样本特征分析
+#### B-4  更新 `core/feature_engineering/__init__.py`
 
 ---
 
-## 四、新增 API 总览
+### Theme C：补齐分箱模块实用功能（中优先）
 
-### 4.1 `core/metrics/finance.py` 新增
-
-| 函数 | 说明 |
-|------|------|
-| `lift_at(y_true, y_prob, ratios)` | LIFT@任意比例，支持标量或列表 |
-| `lift_monotonicity_check(y_true, y_prob)` | 头/尾部 LIFT 单调性检验 |
-
-### 4.2 `core/models/tuning.py` 新增
-
-| 类/函数 | 说明 |
-|---------|------|
-| `TuningObjective` | 内置目标函数集合（ks/auc/lift_head/lift_tail/lift_head_monotonic/head_ks）|
-| `ModelTuner.objective` 参数扩充 | 支持字符串名称或自定义函数 |
-
-### 4.3 `core/viz/` 新增
-
-| 文件 | 新增函数 |
-|------|----------|
-| `variable_plots.py` | `variable_iv_plot` / `variable_woe_trend_plot` / `variable_psi_heatmap` / `variable_importance_grouped_plot` / `variable_missing_badrate_plot` |
-| `score_plots.py` | `score_ks_plot` / `score_distribution_comparison_plot` / `score_badrate_bin_plot` / `score_lift_plot` / `score_approval_badrate_curve` |
-| `strategy_plots.py` | `feature_trend_by_time` / `feature_drift_comparison` / `feature_effectiveness_by_segment` / `feature_cross_heatmap` / `population_drift_monitor` / `segment_scorecard_comparison` |
-
-### 4.4 `core/eda/` 新增
-
-| 文件 | 新增函数 |
-|------|----------|
-| `population.py` 🆕 | `population_profile` / `population_shift_analysis` / `population_monitoring_report` / `segment_drift_analysis` / `feature_cross_segment_effectiveness` |
-| `strategy.py` 🆕 | `approval_badrate_tradeoff` / `score_strategy_simulation` / `vintage_performance_summary` / `roll_rate_matrix` / `label_leakage_check` / `multi_label_correlation` |
-| `stability.py` 扩充 | `feature_drift_report` / `score_drift_report` |
-
-### 4.5 `core/rules/mining/` 新增
-
-| 文件 | 新增类 |
-|------|--------|
-| `multi_label.py` ✅ | `MultiLabelRuleMiner` |
-
-### 4.6 `report/` 新增
-
-| 文件 | 新增函数 |
-|------|----------|
-| `model_report.py` 🆕 | `auto_model_report` |
-| `rule_analysis.py` ✅ | `multi_label_rule_analysis` |
-| `population_drift.py` ✅ | `population_drift` |
-
-### 4.7 `core/selectors/` 新增
-
-| 文件 | 新增类 |
-|------|--------|
-| `stability_selector.py` ✅ | `StabilityAwareSelector` |
-
-### 4.8 `core/viz/` 新增
-
-| 文件 | 新增内容 |
-|------|----------|
-| `style.py` ✅ | `set_style` / `reset_style` / `get_palette` / `get_font_sizes` / 主题系统 / 中文字体自动检测 |
-
-### 4.9 `core/models/` 新增
-
-| 文件 | 新增内容 |
-|------|----------|
-| `tuning.py` ✅ | `TuningObjective.ks_lift_combined` / `TuningObjective.tail_purity_ks` |
-| `scorecard.py` ✅ | `ScoreCard.export_deployment_code()` (SQL/Python/Java) |
-
-### 4.7 顶层 `hscredit/__init__.py` 新增导出
+#### C-1  `OptimalBinning.batch_to_excel()`
 
 ```python
-# Phase 1
-from .core.metrics.finance import lift_at, lift_monotonicity_check
+def batch_to_excel(
+    self,
+    output_path: str,
+    feature_map: Dict[str, str] = None,
+) -> str:
+    """批量分箱结果输出到 Excel（每特征一行，含分箱表和分箱图）.
 
-# Phase 3
-from .core.viz import (
-    variable_iv_plot, variable_woe_trend_plot, variable_psi_heatmap,
-    variable_importance_grouped_plot, variable_missing_badrate_plot,
-    score_ks_plot, score_distribution_comparison_plot,
-    score_badrate_bin_plot, score_lift_plot, score_approval_badrate_curve,
-    feature_trend_by_time, feature_drift_comparison,
-    feature_effectiveness_by_segment, feature_cross_heatmap,
-    population_drift_monitor, segment_scorecard_comparison,
-)
+    :param output_path: 输出 Excel 路径
+    :param feature_map: 特征英文名→中文名映射
+    :return: 输出路径
+    """
+```
 
-# Phase 4
-from .core.eda import (
-    population_profile, population_shift_analysis, population_monitoring_report,
-    segment_drift_analysis, feature_cross_segment_effectiveness,
-    approval_badrate_tradeoff, score_strategy_simulation,
-    vintage_performance_summary, roll_rate_matrix,
-    label_leakage_check, multi_label_correlation,
-    feature_drift_report, score_drift_report,
-)
+#### C-2  新增 `BestPSIBinning`（`core/binning/best_psi_binning.py`）
 
-# Phase 5
-from .core.rules.mining import MultiLabelRuleMiner
+```python
+class BestPSIBinning(BaseBinning):
+    """PSI 最优分箱：在约束条件下寻找使训练集/验证集 PSI 最小的切分点.
 
-# Phase 6
-from .report import auto_model_report, multi_label_rule_analysis
+    适用场景：特征分布在训练集和测试集有偏移时，选择
+    使两个数据集分布差异最小的分箱方案。
+
+    :param max_n_bins: 最大分箱数，默认 5
+    :param min_bin_size: 每箱最小样本占比，默认 0.05
+    :param psi_target: PSI 约束（分箱方案总 PSI ≤ psi_target），默认 0.1
+
+    Example:
+        >>> binner = BestPSIBinning(max_n_bins=5)
+        >>> binner.fit(X_train, y_train, X_val=X_val)
+        >>> X_binned = binner.transform(X_test)
+    """
 ```
 
 ---
 
-## 五、版本规划
+### Theme D：强化规则模块（中优先）
 
-| 版本 | 主要内容 | Phase | 状态 |
-|------|----------|-------|------|
-| `v0.1.1` | Bug 修复 + 参数名统一 + 调参目标扩展 + 评分卡部署代码 + 多标签规则挖掘 + viz 统一样式 + 客群偏移监控报告 + StabilityAwareSelector | Phase 1-5 部分 | ✅ 已完成 |
-| `v0.2.0` | LIFT@任意值 + 单调性检验 + 调参报告 | Phase 1-2 剩余 | 待开发 |
-| `v0.3.0` | viz 模块持续扩充（变量分析/评分分析/策略分析图样式统一化） | Phase 3 | 待开发 |
-| `v0.4.0` | EDA 体系化（population.py / strategy.py / 偏移专项） | Phase 4 | 待开发 |
-| `v0.5.0` | 规则报告深化（单规则详细分析、规则集模拟Sheet） | Phase 5 | 待开发 |
-| `v0.6.0` | 模型报告完整实现（10-sheet Excel模板） | Phase 6 | 待开发 |
-| `v0.7.0` | 特征工程扩充 + 已有功能持续迭代 | Phase 7-8 | 持续 |
+当前规则模块的核心能力（Rule/RuleSet/RulesClassifier + 三类 RuleMiner）已具备，缺少的是**规则集运营工具**。
+
+#### D-1  规则集覆盖率模拟（`report/rule_analysis.py` 扩充）
+
+```python
+def ruleset_coverage_simulation(
+    df: pd.DataFrame,
+    rules: List[str],    # pandas query 表达式列表
+    target: str,
+    labels: List[str] = None,
+) -> pd.DataFrame:
+    """多规则组合下的整体覆盖率/坏率改善仿真.
+
+    计算各规则独立贡献和规则集叠加后的整体效果：
+    - 各规则覆盖率、坏率、LIFT
+    - 规则间覆盖重叠矩阵
+    - 规则集合并后的最终效果（通过率/坏率/坏率改善）
+    """
+
+def rule_effectiveness_tracking(
+    df_list: List[pd.DataFrame],
+    labels: List[str],
+    rule_expr: str,
+    target: str,
+) -> pd.DataFrame:
+    """单条规则跨期有效性追踪（各期覆盖率、坏率、LIFT 趋势）."""
+```
+
+#### D-2  规则冲突检测（`core/rules/rule.py` 扩充）
+
+```python
+def detect_rule_conflicts(
+    rules: List[Rule],
+    df: pd.DataFrame = None,
+) -> pd.DataFrame:
+    """检测规则集中逻辑矛盾或高度重叠的规则对.
+
+    输出规则对覆盖重叠率，标注高重叠（>80%）和逻辑矛盾。
+    """
+```
 
 ---
 
-## 六、实现顺序建议
+### Theme E：提升模型报告完整性（中优先）
+
+当前 `auto_model_report` / `QuickModelReport` 已相当完整（6 个 Sheet），以下是高价值补充。
+
+#### E-1  SHAP 报告集成
+
+`QuickModelReport.to_excel(include_shap=True)` 时补充 Sheet：
 
 ```
-Phase 1（指标扩充）
-    → 为 Phase 2（调参）和 Phase 6（报告）提供基础指标
-    → 优先实现，1-2天可完成
+Sheet 7 - SHAP 解释性（可选）
+  - SHAP Summary Plot（蜂群图）
+  - SHAP Bar Plot（平均|SHAP|特征重要性）
+  - Top 5 特征 SHAP 依赖图
+  - SHAP 均值汇总表（可导出）
+```
 
-Phase 2（调参扩充）
-    → 依赖 Phase 1 的 lift_at 和 lift_monotonicity_check
-    → 2-3天可完成
+需借助已有的 `ModelExplainer` 完成，`ModelExplainer.to_excel()` 方法一并实现。
 
-Phase 3（viz重设计）和 Phase 4（EDA补强）
-    → 相互独立，可并行实现
-    → 各3-5天
+#### E-2  `ScoreCard.score_segment_analysis()`
 
-Phase 5（多标签规则报告）
-    → 依赖 viz 的图表函数（Phase 3）
-    → 3-5天
+```python
+def score_segment_analysis(
+    self,
+    df: pd.DataFrame,
+    target: str,
+    n_bins: int = 10,
+    features: List[str] = None,
+) -> pd.DataFrame:
+    """各评分段的客群特征分布对比分析.
 
-Phase 6（模型报告）
-    → 依赖 Phase 1（LIFT指标）+ Phase 3（viz图表）
-    → 5-7天，是阶段性最大交付物
+    输出各评分分箱下：样本量/坏率/主要特征均值，
+    帮助理解模型在不同风险段的决策依据。
+    """
+```
 
-Phase 7-8（持续迭代）
-    → 无强依赖，随时穿插实现
+#### E-3  `compare_models` Excel 报告完善
+
+```python
+def compare_models(
+    models: Dict[str, Any],
+    X_train, y_train,
+    X_test=None, y_test=None,
+    output_path: str = 'model_comparison.xlsx',
+    metrics: List[str] = ['KS', 'AUC', 'LIFT@5%', 'PSI'],
+) -> pd.DataFrame:
+    """多模型性能对比报告（含雷达图/折线图/评分分布对比）."""
 ```
 
 ---
 
-## 七、代码规范（继承现有风格）
+### Theme F：特征筛选器补强（低优先）
+
+#### F-1  `LiftSelector` 增加 `ratio` 参数
+
+```python
+class LiftSelector(BaseFeatureSelector):
+    def __init__(
+        self,
+        threshold: float = 1.5,
+        ratio: float = 0.10,    # 新增：LIFT 计算的覆盖率（默认 10%）
+        ascending: bool = False,
+        ...
+    ):
+        """支持 lift@1%/5%/10% 等自定义比例."""
+```
+
+#### F-2  `CompositeFeatureSelector.to_excel()`
+
+```python
+def to_excel(
+    self,
+    output_path: str,
+    feature_map: Dict[str, str] = None,
+) -> str:
+    """筛选全流程报告 Excel.
+
+    每个筛选步骤一个 Sheet，输出：
+    - 各步骤通过/剔除特征列表及剔除原因
+    - 各特征完整筛选轨迹汇总表
+    """
+```
+
+---
+
+### Theme G：损失函数扩充（低优先）
+
+#### G-1  新增 `OrdinalRankLoss`（`core/models/losses/`）
+
+```python
+class OrdinalRankLoss(BaseLoss):
+    """序数损失：优化预测评分的排序一致性（最大化 AUC 代理目标）.
+
+    适用于评分卡场景，直接优化样本对相对排序，
+    比交叉熵损失更贴近"区分好坏"的业务目标。
+    """
+```
+
+#### G-2  新增 `LiftFocusedLoss`（`core/models/losses/`）
+
+```python
+class LiftFocusedLoss(BaseLoss):
+    """头部 LIFT 导向损失：对高风险样本施加更高惩罚.
+
+    在高概率端不正确预测的惩罚远大于低概率端，
+    引导模型在头部风险区间有更强区分能力。
+
+    :param top_ratio: 头部比例，默认 0.10
+    :param penalty_factor: 头部惩罚倍数，默认 3.0
+    """
+```
+
+---
+
+## 四、版本规划
+
+| 版本 | 主要内容 | 涉及 Theme | 预期状态 |
+|------|----------|-----------|---------|
+| `v0.1.x` | 现有代码稳定版（Bug修复、测试补全） | — | ✅ 当前 |
+| `v0.2.0` | EDA 策略域与客群域补齐 | Theme A | 待开发 |
+| `v0.3.0` | 特征工程模块大幅扩充 | Theme B | 待开发 |
+| `v0.4.0` | 分箱批量导出 + BestPSIBinning + 规则运营工具 | Theme C + D | 待开发 |
+| `v0.5.0` | 模型报告 SHAP 集成 + compare_models 完善 + ScoreCard 分析扩充 | Theme E | 待开发 |
+| `v0.6.0` | 筛选器补强 + 损失函数扩充 | Theme F + G | 待开发 |
+
+---
+
+## 五、实现顺序建议
+
+```
+Theme A（EDA 策略/客群）
+  → 策略分析师最迫切需要，无其他模块依赖
+  → 纯函数实现，风险低，预计 4-6 天
+
+Theme B（特征工程）
+  → 模型开发链路的基础短板，sklearn 标准接口
+  → 独立模块，预计 3-5 天
+
+Theme C（分箱扩展）+ Theme F（筛选器补强）
+  → 在现有代码上追加，改动小
+  → 可并行，合计 2-3 天
+
+Theme D（规则运营）
+  → 依赖现有 report/mining，在其基础上追加函数
+  → 预计 2-3 天
+
+Theme E（报告完善）
+  → 依赖 Theme B（特征工程完善后报告更完整）
+  → 依赖已有 ModelExplainer，SHAP 集成相对独立
+  → 预计 3-4 天
+
+Theme G（损失函数）
+  → 独立数学组件，随时可实现
+  → 预计 1-2 天
+```
+
+---
+
+## 六、代码规范（继承现有风格）
 
 1. **命名规范**：类名 PascalCase，函数/方法 snake_case，常量 UPPER_SNAKE_CASE
 2. **Docstring**：Google 风格，每个 public API 含最小可运行示例
-3. **输入处理**：所有 public API 输入走 `hscredit.utils.input_utils` 统一处理
+3. **输入处理**：所有 public API 入参走 `hscredit.utils.input_utils` 统一处理
 4. **输出格式**：统计表列名使用中文，与现有模块保持一致
-5. **Optional 依赖**：缺失时给出清晰的安装提示（如 `pip install shap`）
-6. **只增不改**：不破坏现有 API，大写别名保留，旧参数名兼容
+5. **Optional 依赖**：缺失时给出清晰安装提示，如 `pip install shap`
+6. **只增不改**：不破坏现有 API，参数别名保留向后兼容
 7. **Excel 报告**：统一使用 `ExcelWriter`，样式参考 `feature_analyzer.py`
+8. **sklearn 兼容**：所有 Transformer 类实现 `fit` / `transform` / `get_params` / `set_params`，通过 `check_estimator` 验证
+9. **类型注解**：新增代码全部加 Python 类型注解
+10. **测试覆盖**：每个新模块对应 `tests/` 下的测试文件，核心路径覆盖率 ≥ 80%

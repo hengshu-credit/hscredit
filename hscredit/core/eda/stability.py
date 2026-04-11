@@ -419,3 +419,174 @@ def psi_cross_analysis(
     if len(results) == 1:
         return list(results.values())[0]
     return results
+
+
+# ---------------------------------------------------------------------------
+# feature_drift_report
+# ---------------------------------------------------------------------------
+
+def feature_drift_report(
+    df_base: pd.DataFrame,
+    df_target: pd.DataFrame,
+    features=None,
+    method: str = 'psi',
+    psi_bins: int = 10,
+) -> pd.DataFrame:
+    """特征偏移综合报告.
+
+    对一批特征计算基准集与目标集之间的偏移指标，
+    返回含 PSI / 均值变化 / 缺失率变化 / 偏移等级 的汇总表，
+    可用于上线前的数据质量检查和模型再训练决策。
+
+    :param df_base: 基准数据集（如训练集）
+    :param df_target: 目标数据集（如生产数据）
+    :param features: 特征列表，None 时取两个数据集的公共数值列
+    :param method: 偏移度量方法，目前仅支持 'psi'
+    :param psi_bins: PSI 计算分箱数，默认 10
+    :return: 特征偏移报告 DataFrame，含 特征名/PSI/均值变化/缺失率变化/偏移等级
+
+    Example:
+        >>> report = feature_drift_report(train_df, prod_df)
+        >>> drifted = report[report['偏移等级'] == '显著偏移']
+        >>> print(drifted[['特征名', 'PSI', '偏移等级']])
+    """
+    validate_dataframe(df_base)
+    validate_dataframe(df_target)
+
+    if features is None:
+        num_cols_base = set(df_base.select_dtypes(include=[np.number]).columns)
+        num_cols_tgt = set(df_target.select_dtypes(include=[np.number]).columns)
+        features = sorted(num_cols_base & num_cols_tgt)
+    else:
+        features = list(features)
+
+    rows = []
+    for feat in features:
+        if feat not in df_base.columns or feat not in df_target.columns:
+            continue
+        base_col = pd.to_numeric(df_base[feat], errors='coerce')
+        tgt_col = pd.to_numeric(df_target[feat], errors='coerce')
+        base_arr = base_col.dropna().values
+        tgt_arr = tgt_col.dropna().values
+
+        if len(base_arr) == 0 or len(tgt_arr) == 0:
+            rows.append({'特征名': feat, 'PSI': np.nan, '偏移等级': '数据不足', '均值变化(%)': np.nan,
+                         '缺失率变化(%)': np.nan})
+            continue
+
+        try:
+            from ..metrics import psi_table as _psi_table
+            psi_df = _psi_table(pd.Series(base_arr), pd.Series(tgt_arr), max_n_bins=psi_bins)
+            psi_val = float(psi_df['PSI贡献'].sum())
+        except Exception:
+            psi_val = np.nan
+
+        mean_base = float(base_col.mean())
+        mean_tgt = float(tgt_col.mean())
+        mean_change = round((mean_tgt - mean_base) / abs(mean_base) * 100, 2) if mean_base != 0 else np.nan
+
+        missing_base = round(df_base[feat].isna().mean() * 100, 2)
+        missing_tgt = round(df_target[feat].isna().mean() * 100, 2)
+
+        rows.append({
+            '特征名': feat,
+            'PSI': round(psi_val, 4) if not np.isnan(psi_val) else np.nan,
+            '偏移等级': psi_rating(psi_val) if not np.isnan(psi_val) else '未知',
+            '基准均值': round(mean_base, 4),
+            '目标均值': round(mean_tgt, 4),
+            '均值变化(%)': mean_change,
+            '基准缺失率(%)': missing_base,
+            '目标缺失率(%)': missing_tgt,
+            '缺失率变化(%)': round(missing_tgt - missing_base, 2),
+        })
+
+    result = pd.DataFrame(rows)
+    if not result.empty and 'PSI' in result.columns:
+        result = result.sort_values('PSI', ascending=False).reset_index(drop=True)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# score_drift_report
+# ---------------------------------------------------------------------------
+
+def score_drift_report(
+    score_base: pd.Series,
+    score_target: pd.Series,
+    y_base=None,
+    y_target=None,
+    n_bins: int = 10,
+) -> dict:
+    """评分分布偏移报告.
+
+    比较基准评分与目标评分分布，输出 PSI、均值/中位数/标准差变化，
+    以及可选的 KS/AUC 变化，用于模型监控场景的评分稳定性预警。
+
+    :param score_base: 基准评分 Series
+    :param score_target: 目标评分 Series
+    :param y_base: 基准真实标签（0/1），可选，提供时计算模型性能变化
+    :param y_target: 目标真实标签（0/1），可选
+    :param n_bins: PSI 分箱数，默认 10
+    :return: 偏移报告字典，含 PSI / 分布统计 / 模型性能变化
+
+    Example:
+        >>> report = score_drift_report(train_score, prod_score, y_base=train_y, y_target=prod_y)
+        >>> print(report['PSI'], report['偏移等级'])
+        >>> print(report['分布统计'])
+    """
+    s_base = pd.to_numeric(score_base, errors='coerce').dropna()
+    s_tgt = pd.to_numeric(score_target, errors='coerce').dropna()
+
+    try:
+        from ..metrics import psi_table as _psi_table
+        psi_df = _psi_table(s_base, s_tgt, max_n_bins=n_bins)
+        psi_val = float(psi_df['PSI贡献'].sum())
+    except Exception:
+        psi_val = np.nan
+
+    def _stats(s: pd.Series) -> dict:
+        return {
+            '样本数': len(s),
+            '均值': round(float(s.mean()), 4),
+            '中位数': round(float(s.median()), 4),
+            '标准差': round(float(s.std()), 4),
+            'P10': round(float(np.percentile(s, 10)), 4),
+            'P90': round(float(np.percentile(s, 90)), 4),
+        }
+
+    stats_base = _stats(s_base)
+    stats_tgt = _stats(s_tgt)
+    stats_base['数据集'] = '基准'
+    stats_tgt['数据集'] = '目标'
+    dist_df = pd.DataFrame([stats_base, stats_tgt])
+
+    report: dict = {
+        'PSI': round(psi_val, 4) if not np.isnan(psi_val) else np.nan,
+        '偏移等级': psi_rating(psi_val) if not np.isnan(psi_val) else '未知',
+        '分布统计': dist_df,
+        '分箱明细': psi_df if not np.isnan(psi_val) else None,
+    }
+
+    if y_base is not None and y_target is not None:
+        from ..metrics import ks as _ks, auc as _auc  # type: ignore[attr-defined]
+        yb = pd.to_numeric(y_base, errors='coerce')
+        yt = pd.to_numeric(y_target, errors='coerce')
+        mask_b = yb.notna() & pd.to_numeric(score_base, errors='coerce').notna()
+        mask_t = yt.notna() & pd.to_numeric(score_target, errors='coerce').notna()
+        s_b_aligned = pd.to_numeric(score_base, errors='coerce')[mask_b]
+        s_t_aligned = pd.to_numeric(score_target, errors='coerce')[mask_t]
+        try:
+            ks_base = round(float(_ks(yb[mask_b], s_b_aligned)), 4)
+            ks_tgt = round(float(_ks(yt[mask_t], s_t_aligned)), 4)
+            auc_base = round(float(_auc(yb[mask_b], s_b_aligned)), 4)
+            auc_tgt = round(float(_auc(yt[mask_t], s_t_aligned)), 4)
+        except Exception:
+            ks_base = ks_tgt = auc_base = auc_tgt = np.nan
+        report['模型性能'] = {
+            '基准KS': ks_base, '目标KS': ks_tgt,
+            'KS变化': round(ks_tgt - ks_base, 4) if not np.isnan(ks_base) else np.nan,
+            '基准AUC': auc_base, '目标AUC': auc_tgt,
+            'AUC变化': round(auc_tgt - auc_base, 4) if not np.isnan(auc_base) else np.nan,
+        }
+
+    return report
