@@ -57,10 +57,20 @@ pip install hscredit[xgboost]      # XGBoost支持
 pip install hscredit[lightgbm]     # LightGBM支持
 pip install hscredit[catboost]     # CatBoost支持
 pip install hscredit[deep-learning] # 深度学习支持
-pip install hscredit[pmml]         # PMML导出支持
+pip install hscredit[pmml]         # PMML导出/加载支持
 pip install hscredit[dev]          # 开发工具
 pip install hscredit[docs]         # 文档工具
+
+# Windows + Python 3.8/3.9 下如果单独安装 pypmml，建议先固定 JPype1 版本，
+# 否则 pip 可能拉取 JPype1 1.7.0 并退回源码编译而失败。
+pip install "JPype1<1.7" "pypmml>=1.5.8"
 ```
+
+PMML 相关说明:
+
+- `hscredit[pmml]` 会安装 `sklearn-pandas`、`sklearn2pmml` 和 `pypmml`。
+- `pypmml` 运行时需要本机可用的 Java（建议 Java 11+）。
+- Windows 上的 Python 3.8/3.9 环境建议保留 `JPype1<1.7`，避免 `pip install pypmml` 时触发 `JPype1` 源码构建失败。
 
 ---
 

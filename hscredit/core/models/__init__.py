@@ -84,6 +84,7 @@ from .losses import (
     BaseMetric,
     # 不平衡数据处理
     FocalLoss,
+    AsymmetricFocalLoss,
     WeightedBCELoss,
     # 成本敏感
     CostSensitiveLoss,
@@ -91,6 +92,8 @@ from .losses import (
     BadDebtLoss,
     ApprovalRateLoss,
     ProfitMaxLoss,
+    OrdinalRankLoss,
+    LiftFocusedLoss,
     # 自定义评估指标
     KSMetric,
     GiniMetric,
@@ -167,6 +170,7 @@ __all__ = [
     "BaseMetric",
     # 不平衡数据处理
     "FocalLoss",
+    "AsymmetricFocalLoss",
     "WeightedBCELoss",
     # 成本敏感
     "CostSensitiveLoss",
@@ -174,6 +178,8 @@ __all__ = [
     "BadDebtLoss",
     "ApprovalRateLoss",
     "ProfitMaxLoss",
+    "OrdinalRankLoss",
+    "LiftFocusedLoss",
     # 自定义评估指标
     "KSMetric",
     "GiniMetric",

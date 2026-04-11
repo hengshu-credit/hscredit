@@ -18,8 +18,10 @@
 
 from .base import BaseLoss, BaseMetric
 from .focal_loss import FocalLoss
+from .asymmetric_focal_loss import AsymmetricFocalLoss
 from .weighted_loss import WeightedBCELoss, CostSensitiveLoss
 from .risk_loss import BadDebtLoss, ApprovalRateLoss, ProfitMaxLoss
+from .ranking_loss import OrdinalRankLoss, LiftFocusedLoss
 from .custom_metrics import KSMetric, GiniMetric, PSIMetric
 from .adapters import (
     XGBoostLossAdapter,
@@ -34,6 +36,7 @@ __all__ = [
     "BaseMetric",
     # 不平衡数据处理
     "FocalLoss",
+    "AsymmetricFocalLoss",
     "WeightedBCELoss",
     # 成本敏感
     "CostSensitiveLoss",
@@ -41,6 +44,8 @@ __all__ = [
     "BadDebtLoss",
     "ApprovalRateLoss",
     "ProfitMaxLoss",
+    "OrdinalRankLoss",
+    "LiftFocusedLoss",
     # 自定义评估指标
     "KSMetric",
     "GiniMetric",

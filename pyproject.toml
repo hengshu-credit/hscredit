@@ -55,7 +55,12 @@ xgboost = ["xgboost>=1.4.0"]
 lightgbm = ["lightgbm>=3.2.0"]
 catboost = ["catboost>=1.0.0"]
 deep-learning = ["torch>=1.8.0", "pytorch-tabnet>=3.1"]
-pmml = ["sklearn2pmml>=0.82.0"]
+pmml = [
+    "sklearn-pandas>=2.2.0",
+    "sklearn2pmml>=0.82.0",
+    "pypmml>=1.5.8",
+    "JPype1<1.7; python_version < '3.10' and platform_system == 'Windows'",
+]
 dev = [
     "pytest>=6.0.0",
     "pytest-cov>=2.0.0",

@@ -1618,70 +1618,70 @@ class ScoreCard(StandardScoreTransformer):
             from sklearn_pandas import DataFrameMapper
             from sklearn.linear_model import LinearRegression
             from sklearn2pmml import sklearn2pmml, PMMLPipeline
+            from sklearn2pmml.decoration import Alias, CategoricalDomain, ContinuousDomain
             from sklearn2pmml.preprocessing import LookupTransformer, ExpressionTransformer
         except ImportError as e:
-            raise DependencyError("导出 PMML 需要: pip install sklearn-pandas sklearn2pmml") from e
+            raise DependencyError(
+                "导出 PMML 需要安装 hscredit[pmml]，或至少安装 sklearn-pandas 和 sklearn2pmml"
+            ) from e
 
         check_is_fitted(self)
 
         base_score, score_sign = self._get_deployment_base_score_and_sign()
+        special_codes = self._get_deployment_special_codes()
+        feature_types = getattr(self.binner, 'feature_types_', {}) if self.binner is not None else {}
 
         mapper = []
         samples = {}
 
-        for var, rule in self.rules_.items():
-            bins = rule.get('bins') or rule.get('bin_labels')
-            scores = rule['scores']
+        deployment_rules = self._get_deployment_rules(decimal=12)
+
+        for var, bins in deployment_rules.items():
+            feature_type = feature_types.get(var)
+            default_score = self._get_deployment_default_score(bins) if feature_type == 'categorical' else 0.0
 
             if bins is None or len(bins) == 0:
                 continue
 
-            is_grouped_categorical_bins = isinstance(bins[0], (np.ndarray, list))
-            is_string_bins = len(bins) > 0 and isinstance(bins[0], str)
-            has_interval_like_labels = is_string_bins and (
-                '[' in str(bins[0]) or '(' in str(bins[0])
-            )
+            if feature_type == 'categorical':
+                lookup_mapping, missing_score = self._build_pmml_categorical_lookup_mapping(
+                    bins,
+                    special_codes=special_codes,
+                )
+                missing_replacement = '__MISSING__'
+                if missing_score is not None:
+                    lookup_mapping[missing_replacement] = float(missing_score)
 
-            if is_grouped_categorical_bins or (is_string_bins and not has_interval_like_labels):
-                mapping, default_value = self._build_pmml_lookup_mapping(bins, scores)
-                mapper.append(([var], LookupTransformer(mapping=mapping, default_value=default_value)))
-                samples[var] = [next(iter(mapping), 'A')] * 20
+                domain = CategoricalDomain(
+                    with_data=False,
+                    invalid_value_treatment='as_is',
+                    missing_value_treatment='as_value' if missing_score is not None else 'as_is',
+                    missing_value_replacement=missing_replacement if missing_score is not None else None,
+                )
+                transformer = LookupTransformer(lookup_mapping, default_value=float(default_score))
             else:
-                # 数值特征
-                has_string_bins = is_string_bins and has_interval_like_labels
-                
-                if has_string_bins:
-                    # 分离缺失值/特殊值箱的分数
-                    normal_scores = []
-                    missing_score = None
-                    bin_labels = list(bins)
-                    for lbl, sc in zip(bin_labels, scores):
-                        lbl_lower = str(lbl).strip().lower()
-                        if lbl_lower in ('missing', '缺失值', '缺失', 'nan', 'none', 'null',
-                                         'special', '特殊值', '特殊'):
-                            if missing_score is None:
-                                missing_score = float(sc)
-                        else:
-                            normal_scores.append(float(sc))
-                    normal_scores = np.array(normal_scores)
+                expression_string = self._build_pmml_expression_from_rules(
+                    bins,
+                    default_score=default_score,
+                    special_codes=special_codes,
+                )
+                domain = ContinuousDomain(
+                    with_data=False,
+                    invalid_value_treatment='as_is',
+                    missing_value_treatment='as_is',
+                )
+                transformer = ExpressionTransformer(expression_string)
 
-                    numeric_bins = self._extract_numeric_bins(bin_labels)
-                    if numeric_bins:
-                        # 构建 cut points + NaN 标记（如有缺失箱）
-                        if missing_score is not None:
-                            pmml_bins = np.array(numeric_bins + [np.nan])
-                            pmml_scores = np.append(normal_scores, missing_score)
-                        else:
-                            pmml_bins = np.array(numeric_bins)
-                            pmml_scores = normal_scores
-                        expression_string = self._build_pmml_expression(pmml_bins, pmml_scores)
-                    else:
-                        # 简化处理
-                        expression_string = f"{scores[0]}"
-                else:
-                    expression_string = self._build_pmml_expression(bins, scores)
-                
-                mapper.append(([var], ExpressionTransformer(expression_string)))
+            mapper.append(([var], [domain, Alias(transformer, f'__score_{var}', prefit=True)]))
+
+            if feature_type == 'categorical':
+                sample_value = None
+                for lookup_key in lookup_mapping:
+                    if lookup_key != '__MISSING__':
+                        sample_value = lookup_key
+                        break
+                samples[var] = [sample_value if sample_value is not None else 'UNKNOWN'] * 20
+            else:
                 samples[var] = np.random.random(20) * 100
 
         if not mapper:
@@ -1701,7 +1701,21 @@ class ScoreCard(StandardScoreTransformer):
         pipeline.named_steps['scorecard'].coef_ = np.full(len(mapper), score_sign, dtype=float)
         pipeline.named_steps['scorecard'].intercept_ = float(base_score)
 
-        sklearn2pmml(pipeline, pmml_file, with_repr=True, debug=debug)
+        try:
+            sklearn2pmml(pipeline, pmml_file, with_repr=True, debug=debug)
+        except TypeError as exc:
+            # sklearn2pmml can raise a spurious TypeError("object of type 'NoneType' has no len()")
+            # in notebook environments while decoding Java subprocess output, even though the PMML
+            # artifact has already been written successfully.
+            pmml_exists = os.path.exists(pmml_file) and os.path.getsize(pmml_file) > 0
+            is_output_decode_bug = "NoneType" in str(exc) and "len()" in str(exc)
+            if not (pmml_exists and is_output_decode_bug):
+                raise
+            warnings.warn(
+                "sklearn2pmml reported a subprocess output decoding error after generating the PMML file; "
+                "continuing with the exported artifact.",
+                RuntimeWarning,
+            )
         print(f"PMML 文件已导出至: {pmml_file}")
 
         if debug:
@@ -1766,17 +1780,22 @@ class ScoreCard(StandardScoreTransformer):
 
     def _generate_sql(self, card: dict, base_score: float, func_name: str, score_sign: float = 1.0) -> str:
         """生成 SQL CASE WHEN 评分卡代码."""
+        special_codes = self._get_deployment_special_codes()
+        feature_types = getattr(self.binner, 'feature_types_', {}) if self.binner is not None else {}
+
         lines = [f"-- 评分卡 SQL 部署代码（自动生成）", f"-- base_score = {base_score}", ""]
         lines.append(f"SELECT")
         lines.append(f"    {base_score}")
 
         for feature, bins in card.items():
+            feature_type = feature_types.get(feature)
+            default_score = self._get_deployment_default_score(bins) if feature_type == 'categorical' else 0.0
             lines.append(f"    + CASE")
             for bin_descriptor, score in bins:
-                cond = self._bin_label_to_sql_condition(feature, bin_descriptor)
+                cond = self._bin_label_to_sql_condition(feature, bin_descriptor, special_codes=special_codes)
                 adjusted_score = self._format_deployment_score(score, score_sign)
                 lines.append(f"        WHEN {cond} THEN {adjusted_score}")
-            lines.append(f"        ELSE 0")
+            lines.append(f"        ELSE {self._format_deployment_score(default_score, score_sign)}")
             lines.append(f"      END  -- {feature}")
 
         lines.append(f"    AS score")
@@ -1785,6 +1804,9 @@ class ScoreCard(StandardScoreTransformer):
 
     def _generate_python(self, card: dict, base_score: float, func_name: str, score_sign: float = 1.0) -> str:
         """生成 Python 评分卡函数代码."""
+        special_codes = self._get_deployment_special_codes()
+        feature_types = getattr(self.binner, 'feature_types_', {}) if self.binner is not None else {}
+
         lines = [
             f'"""评分卡 Python 部署代码（自动生成）"""',
             f'import numpy as np',
@@ -1801,17 +1823,21 @@ class ScoreCard(StandardScoreTransformer):
         ]
 
         for feature, bins in card.items():
+            feature_type = feature_types.get(feature)
+            default_score = self._get_deployment_default_score(bins) if feature_type == 'categorical' else 0.0
             lines.append(f'')
             lines.append(f'    # {feature}')
             lines.append(f'    val = row.get("{feature}")')
             first = True
             for bin_descriptor, sc in bins:
                 prefix = 'if' if first else 'elif'
-                cond = self._bin_label_to_python_condition('val', bin_descriptor)
+                cond = self._bin_label_to_python_condition('val', bin_descriptor, special_codes=special_codes)
                 adjusted_score = self._format_deployment_score(sc, score_sign)
                 lines.append(f'    {prefix} {cond}:')
                 lines.append(f'        score += {adjusted_score}')
                 first = False
+            lines.append(f'    else:')
+            lines.append(f'        score += {self._format_deployment_score(default_score, score_sign)}')
 
         lines.append(f'')
         lines.append(f'    return score')
@@ -1824,6 +1850,9 @@ class ScoreCard(StandardScoreTransformer):
 
     def _generate_java(self, card: dict, base_score: float, func_name: str, score_sign: float = 1.0) -> str:
         """生成 Java 评分卡方法代码."""
+        special_codes = self._get_deployment_special_codes()
+        feature_types = getattr(self.binner, 'feature_types_', {}) if self.binner is not None else {}
+
         lines = [
             f'/**',
             f' * 评分卡 Java 部署代码（自动生成）',
@@ -1835,18 +1864,25 @@ class ScoreCard(StandardScoreTransformer):
         ]
 
         for feature, bins in card.items():
+            feature_type = feature_types.get(feature)
+            default_score = self._get_deployment_default_score(bins) if feature_type == 'categorical' else 0.0
             lines.append(f'')
             lines.append(f'        // {feature}')
             lines.append(f'        Object {self._safe_java_var(feature)} = row.get("{feature}");')
             first = True
             for bin_descriptor, sc in bins:
                 prefix = 'if' if first else 'else if'
-                cond = self._bin_label_to_java_condition(self._safe_java_var(feature), bin_descriptor)
+                cond = self._bin_label_to_java_condition(
+                    self._safe_java_var(feature), bin_descriptor, special_codes=special_codes
+                )
                 adjusted_score = self._format_deployment_score(sc, score_sign)
                 lines.append(f'        {prefix} ({cond}) {{')
                 lines.append(f'            score += {adjusted_score};')
                 lines.append(f'        }}')
                 first = False
+            lines.append(f'        else {{')
+            lines.append(f'            score += {self._format_deployment_score(default_score, score_sign)};')
+            lines.append(f'        }}')
 
         lines.append(f'')
         lines.append(f'        return score;')
@@ -1855,7 +1891,7 @@ class ScoreCard(StandardScoreTransformer):
         return '\n'.join(lines)
 
     @staticmethod
-    def _bin_label_to_sql_condition(feature: str, label: Any) -> str:
+    def _bin_label_to_sql_condition(feature: str, label: Any, special_codes: Optional[List[Any]] = None) -> str:
         """将分箱标签转为 SQL CASE WHEN 条件."""
         if isinstance(label, (list, np.ndarray)):
             values = [str(value) for value in label if not pd.isna(value)]
@@ -1871,7 +1907,18 @@ class ScoreCard(StandardScoreTransformer):
         if label in ('缺失值', 'missing', 'nan', 'null', 'None'):
             return f"{feature} IS NULL"
         if label in ('特殊值', 'special'):
-            return f"1=1 /* special */"
+            if special_codes:
+                comparisons = []
+                for code in special_codes:
+                    if pd.isna(code):
+                        comparisons.append(f"{feature} IS NULL")
+                    elif isinstance(code, str):
+                        escaped = code.replace("'", "''")
+                        comparisons.append(f"{feature} = '{escaped}'")
+                    else:
+                        comparisons.append(f"{feature} = {code}")
+                return ' OR '.join(comparisons)
+            return '1=0 /* no special codes configured */'
         # 区间格式: [a, b) 或 (a, b] 或 (-inf, b) 等
         import re
         m = re.match(r'[\[\(]([-\d.inf+]+)\s*,\s*([-\d.inf+]+)[\]\)]', label)
@@ -1893,22 +1940,34 @@ class ScoreCard(StandardScoreTransformer):
         return f"{feature} = '{escaped_label}'"
 
     @staticmethod
-    def _bin_label_to_python_condition(var: str, label: Any) -> str:
+    def _bin_label_to_python_condition(var: str, label: Any, special_codes: Optional[List[Any]] = None) -> str:
         """将分箱标签转为 Python 条件表达式."""
         if isinstance(label, (list, np.ndarray)):
-            values = [str(value) for value in label if not pd.isna(value)]
-            if not values:
-                return f"{var} is None or (isinstance({var}, float) and np.isnan({var}))"
-            if len(values) > 1:
-                value_set = ', '.join(repr(value) for value in values)
-                return f"{var} in {{{value_set}}}"
-            return f"{var} == {values[0]!r}"
+            value_exprs = [repr(str(value)) for value in label if not pd.isna(value)]
+            missing_cond = f"pd.isna({var})" if any(pd.isna(value) for value in label) else None
+            if value_exprs and missing_cond:
+                if len(value_exprs) == 1:
+                    return f"({missing_cond}) or ({var} == {value_exprs[0]})"
+                return f"({missing_cond}) or ({var} in {{{', '.join(value_exprs)}}})"
+            if not value_exprs:
+                return f"pd.isna({var})"
+            if len(value_exprs) > 1:
+                return f"{var} in {{{', '.join(value_exprs)}}}"
+            return f"{var} == {value_exprs[0]}"
 
         label = str(label).strip()
         if label in ('缺失值', 'missing', 'nan', 'null', 'None'):
-            return f"{var} is None or (isinstance({var}, float) and np.isnan({var}))"
+            return f"pd.isna({var})"
         if label in ('特殊值', 'special'):
-            return f"True  # special"
+            if special_codes:
+                comparisons = []
+                for code in special_codes:
+                    if pd.isna(code):
+                        comparisons.append(f"pd.isna({var})")
+                    else:
+                        comparisons.append(f"{var} == {code!r}")
+                return ' or '.join(comparisons)
+            return 'False'
         import re
         m = re.match(r'[\[\(]([-\d.inf+]+)\s*,\s*([-\d.inf+]+)[\]\)]', label)
         if m:
@@ -1928,7 +1987,7 @@ class ScoreCard(StandardScoreTransformer):
         return f"{var} == {label!r}"
 
     @staticmethod
-    def _bin_label_to_java_condition(var: str, label: Any) -> str:
+    def _bin_label_to_java_condition(var: str, label: Any, special_codes: Optional[List[Any]] = None) -> str:
         """将分箱标签转为 Java 条件表达式."""
         if isinstance(label, (list, np.ndarray)):
             values = [str(value) for value in label if not pd.isna(value)]
@@ -1944,7 +2003,18 @@ class ScoreCard(StandardScoreTransformer):
         if label in ('缺失值', 'missing', 'nan', 'null', 'None'):
             return f"{var} == null"
         if label in ('特殊值', 'special'):
-            return f"true /* special */"
+            if special_codes:
+                conditions = []
+                for code in special_codes:
+                    if pd.isna(code):
+                        conditions.append(f"{var} == null")
+                    elif isinstance(code, str):
+                        escaped_code = code.replace('\\', '\\\\').replace('"', '\\"')
+                        conditions.append(f"\"{escaped_code}\".equals({var})")
+                    else:
+                        conditions.append(f"((Number){var}).doubleValue() == {float(code)}")
+                return '(' + ' || '.join(conditions) + ')'
+            return 'false'
         import re
         m = re.match(r'[\[\(]([-\d.inf+]+)\s*,\s*([-\d.inf+]+)[\]\)]', label)
         if m:
@@ -1972,6 +2042,141 @@ class ScoreCard(StandardScoreTransformer):
         if safe[0].isdigit():
             safe = 'f_' + safe
         return safe
+
+    def _get_deployment_special_codes(self) -> List[Any]:
+        """获取部署导出时需要识别的特殊值编码."""
+        if self.binner is None:
+            return []
+        special_codes = getattr(self.binner, 'special_codes', None)
+        return list(special_codes) if special_codes else []
+
+    @staticmethod
+    def _is_missing_descriptor(descriptor: Any) -> bool:
+        """判断部署规则描述符是否表示缺失值箱."""
+        if isinstance(descriptor, (list, np.ndarray)):
+            return len(descriptor) == 0 or all(pd.isna(value) for value in descriptor)
+        label = str(descriptor).strip().lower()
+        return label in ('missing', '缺失值', '缺失', 'nan', 'none', 'null')
+
+    @staticmethod
+    def _is_special_descriptor(descriptor: Any) -> bool:
+        """判断部署规则描述符是否表示特殊值箱."""
+        if isinstance(descriptor, (list, np.ndarray)):
+            return False
+        label = str(descriptor).strip().lower()
+        return label in ('special', '特殊值', '特殊')
+
+    def _get_deployment_default_score(self, bins: List[Tuple[Any, float]]) -> float:
+        """获取部署规则的默认回退分数.
+
+        类别变量在分箱器里默认落到第 0 箱，因此部署导出也需要保持一致。
+        """
+        for descriptor, score in bins:
+            if not self._is_missing_descriptor(descriptor) and not self._is_special_descriptor(descriptor):
+                return float(score)
+        return 0.0
+
+    def _build_pmml_expression_from_rules(
+        self,
+        bins: List[Tuple[Any, float]],
+        default_score: float,
+        special_codes: Optional[List[Any]] = None,
+    ) -> str:
+        """基于部署规则构建 PMML ExpressionTransformer 表达式."""
+        expression = repr(float(default_score))
+
+        for descriptor, score in reversed(bins):
+            condition = self._bin_label_to_pmml_condition('X[0]', descriptor, special_codes=special_codes)
+            expression = f"({float(score)!r}) if ({condition}) else ({expression})"
+
+        return expression
+
+    def _build_pmml_categorical_lookup_mapping(
+        self,
+        bins: List[Tuple[Any, float]],
+        special_codes: Optional[List[Any]] = None,
+    ) -> Tuple[Dict[str, float], Optional[float]]:
+        """为类别变量构建 PMML LookupTransformer 映射."""
+        mapping: Dict[str, float] = {}
+        missing_score: Optional[float] = None
+
+        for descriptor, score in bins:
+            if isinstance(descriptor, (list, np.ndarray)):
+                contains_missing = False
+                for value in descriptor:
+                    if pd.isna(value):
+                        contains_missing = True
+                    else:
+                        mapping[str(value)] = float(score)
+                if contains_missing:
+                    missing_score = float(score)
+                continue
+
+            if self._is_missing_descriptor(descriptor):
+                missing_score = float(score)
+                continue
+
+            if self._is_special_descriptor(descriptor):
+                for code in special_codes or []:
+                    if pd.isna(code):
+                        if missing_score is None:
+                            missing_score = float(score)
+                    else:
+                        mapping[str(code)] = float(score)
+                continue
+
+            mapping[str(descriptor)] = float(score)
+
+        return mapping, missing_score
+
+    @staticmethod
+    def _bin_label_to_pmml_condition(var: str, label: Any, special_codes: Optional[List[Any]] = None) -> str:
+        """将部署规则描述符转为 PMML ExpressionTransformer 使用的条件表达式."""
+        if isinstance(label, (list, np.ndarray)):
+            value_exprs = [repr(str(value)) for value in label if not pd.isna(value)]
+            missing_cond = f"pandas.isnull({var})" if any(pd.isna(value) for value in label) else None
+            if value_exprs and missing_cond:
+                if len(value_exprs) == 1:
+                    return f"({missing_cond}) or ({var} == {value_exprs[0]})"
+                return f"({missing_cond}) or ({var} in [{', '.join(value_exprs)}])"
+            if not value_exprs:
+                return f"pandas.isnull({var})"
+            if len(value_exprs) == 1:
+                return f"{var} == {value_exprs[0]}"
+            return f"{var} in [{', '.join(value_exprs)}]"
+
+        label = str(label).strip()
+        label_lower = label.lower()
+
+        if label_lower in ('missing', '缺失值', '缺失', 'nan', 'none', 'null'):
+            return f"pandas.isnull({var})"
+
+        if label_lower in ('special', '特殊值', '特殊'):
+            if special_codes:
+                comparisons = []
+                for code in special_codes:
+                    if pd.isna(code):
+                        comparisons.append(f"pandas.isnull({var})")
+                    else:
+                        comparisons.append(f"{var} == {code!r}")
+                return ' or '.join(comparisons)
+            return 'False'
+
+        interval_match = re.match(r'^([\[(])\s*([^,]+)\s*,\s*([^\])]+)\s*([\])])$', label)
+        if interval_match:
+            left_bracket, lower, upper, right_bracket = interval_match.groups()
+            conditions = []
+            lower = lower.strip()
+            upper = upper.strip()
+            if lower not in ('-inf', '-Infinity', '-INF'):
+                operator = '>=' if left_bracket == '[' else '>'
+                conditions.append(f"{var} {operator} {lower}")
+            if upper not in ('+inf', 'inf', 'Infinity', '+INF', 'INF'):
+                operator = '<=' if right_bracket == ']' else '<'
+                conditions.append(f"{var} {operator} {upper}")
+            return ' and '.join(conditions) if conditions else 'True'
+
+        return f"{var} == {label!r}"
 
     @staticmethod
     def _build_pmml_lookup_mapping(

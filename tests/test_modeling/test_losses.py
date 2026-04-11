@@ -8,11 +8,14 @@ import numpy as np
 import pytest
 from hscredit.core.models import (
     FocalLoss,
+    AsymmetricFocalLoss,
     WeightedBCELoss,
     CostSensitiveLoss,
     BadDebtLoss,
     ApprovalRateLoss,
     ProfitMaxLoss,
+    OrdinalRankLoss,
+    LiftFocusedLoss,
     KSMetric,
     GiniMetric,
     PSIMetric,
@@ -64,6 +67,63 @@ class TestFocalLoss:
         # 获取目标函数
         obj_fn = adapter.objective()
         assert callable(obj_fn)
+
+
+class TestAsymmetricFocalLoss:
+    """测试不对称Focal Loss"""
+
+    def test_basic_functionality(self):
+        """测试基本功能"""
+        loss = AsymmetricFocalLoss(alpha=0.7, gamma_pos=2.5, gamma_neg=1.0)
+
+        y_true = np.array([0, 0, 1, 1])
+        y_pred = np.array([0.1, 0.4, 0.6, 0.9])
+
+        loss_value = loss(y_true, y_pred)
+        assert isinstance(loss_value, float)
+        assert loss_value >= 0
+
+        grad = loss.gradient(y_true, y_pred)
+        hess = loss.hessian(y_true, y_pred)
+        assert grad.shape == y_true.shape
+        assert hess.shape == y_true.shape
+        assert np.all(hess > 0)
+
+    def test_asymmetric_focus_changes_penalty(self):
+        """测试正负样本聚焦参数差异会影响梯度"""
+        y_true = np.array([0, 1])
+        y_pred = np.array([0.3, 0.7])
+
+        loss_low = AsymmetricFocalLoss(gamma_pos=1.0, gamma_neg=1.0)
+        loss_high = AsymmetricFocalLoss(gamma_pos=4.0, gamma_neg=0.5)
+
+        grad_low = np.abs(loss_low.gradient(y_true, y_pred))
+        grad_high = np.abs(loss_high.gradient(y_true, y_pred))
+
+        assert not np.allclose(grad_low, grad_high)
+
+    def test_clip_value_stability(self):
+        """测试clip_value在极端概率下的稳定性"""
+        loss = AsymmetricFocalLoss(clip_value=0.05)
+
+        y_true = np.array([0, 1])
+        y_pred = np.array([1e-12, 1 - 1e-12])
+
+        value = loss(y_true, y_pred)
+        grad = loss.gradient(y_true, y_pred)
+        hess = loss.hessian(y_true, y_pred)
+
+        assert np.isfinite(value)
+        assert np.all(np.isfinite(grad))
+        assert np.all(np.isfinite(hess))
+
+    def test_adapter_compatibility(self):
+        """测试与框架适配器兼容"""
+        loss = AsymmetricFocalLoss()
+
+        assert callable(XGBoostLossAdapter(loss).objective())
+        assert callable(LightGBMLossAdapter(loss).objective())
+        assert hasattr(CatBoostLossAdapter(loss).objective(), 'calc_ders_range')
 
 
 class TestWeightedBCELoss:
@@ -183,6 +243,68 @@ class TestRiskLosses:
         
         grad = loss.gradient(y_true, y_pred)
         assert grad.shape == y_true.shape
+
+    def test_ordinal_rank_loss_prefers_better_ordering(self):
+        """测试排序损失更偏好正确排序"""
+        loss = OrdinalRankLoss(rank_weight=2.0, bce_weight=1.0, max_pairs=1000)
+
+        y_true = np.array([0, 0, 0, 1, 1, 1])
+        y_pred_good = np.array([0.1, 0.2, 0.3, 0.7, 0.8, 0.9])
+        y_pred_bad = np.array([0.8, 0.7, 0.6, 0.4, 0.3, 0.2])
+
+        assert loss(y_true, y_pred_good) < loss(y_true, y_pred_bad)
+
+        grad = loss.gradient(y_true, y_pred_good)
+        hess = loss.hessian(y_true, y_pred_good)
+        assert grad.shape == y_true.shape
+        assert hess.shape == y_true.shape
+        assert np.all(hess > 0)
+
+    def test_ordinal_rank_loss_single_class_fallback(self):
+        """测试单类样本下排序损失退化为稳定BCE"""
+        loss = OrdinalRankLoss()
+
+        y_true = np.array([1, 1, 1, 1])
+        y_pred = np.array([0.6, 0.7, 0.8, 0.9])
+
+        value = loss(y_true, y_pred)
+        grad = loss.gradient(y_true, y_pred)
+        hess = loss.hessian(y_true, y_pred)
+
+        assert np.isfinite(value)
+        assert np.all(np.isfinite(grad))
+        assert np.all(np.isfinite(hess))
+        assert np.all(hess > 0)
+
+    def test_lift_focused_loss_emphasizes_head_samples(self):
+        """测试头部样本具有更高惩罚权重"""
+        loss = LiftFocusedLoss(top_ratio=0.25, penalty_factor=4.0, positive_class_boost=2.0)
+
+        y_true = np.array([0, 0, 1, 1])
+        y_pred = np.array([0.2, 0.5, 0.8, 0.9])
+
+        weights = loss._get_sample_weights(y_true, y_pred)
+        assert weights.shape == y_true.shape
+        assert weights[np.argmax(y_pred)] > weights[np.argmin(y_pred)]
+
+        value = loss(y_true, y_pred)
+        grad = loss.gradient(y_true, y_pred)
+        hess = loss.hessian(y_true, y_pred)
+
+        assert np.isfinite(value)
+        assert grad.shape == y_true.shape
+        assert hess.shape == y_true.shape
+        assert np.all(hess > 0)
+
+    def test_lift_focused_loss_penalizes_head_bad_sample_more(self):
+        """测试头部坏样本错误具有更大梯度惩罚"""
+        loss = LiftFocusedLoss(top_ratio=0.5, penalty_factor=3.0, positive_class_boost=2.0)
+
+        y_true = np.array([1, 1, 0, 0])
+        y_pred = np.array([0.95, 0.85, 0.40, 0.10])
+
+        grad = np.abs(loss.gradient(y_true, y_pred))
+        assert grad[0] > grad[-1]
 
 
 class TestMetrics:
