@@ -254,12 +254,10 @@ class TestOptimalBinning(unittest.TestCase):
         binner.fit(self.X, self.y)
         self.assertTrue(binner._is_fitted)
 
-    def test_uniform_method_accepts_legacy_n_bins(self):
-        """测试 uniform 方法兼容 legacy n_bins 参数."""
-        binner = OptimalBinning(method='uniform', n_bins=4)
-        binner.fit(self.X, self.y)
-        self.assertTrue(binner._is_fitted)
-        self.assertEqual(binner.n_bins_['feature_1'], 4)
+    def test_uniform_method_rejects_removed_n_bins(self):
+        """测试 uniform 方法拒绝已移除的 n_bins 参数."""
+        with self.assertRaisesRegex(ValueError, 'max_n_bins'):
+            OptimalBinning(method='uniform', n_bins=4)
 
     def test_quantile_method(self):
         """测试 quantile 方法."""

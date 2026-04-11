@@ -415,7 +415,7 @@ class RulesClassifier(BaseEstimator, ClassifierMixin):
         :param y: 目标变量（可选）
             - sklearn风格: 传入目标变量
             - scorecardpipeline风格: 不传，从X中提取target列
-        :param kwargs: 其他参数（保留兼容性）
+        :param kwargs: 其他参数
         :return: 拟合后的分类器
         """
         # 处理输入数据

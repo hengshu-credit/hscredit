@@ -470,7 +470,7 @@ class QuantileBinning(BaseBinning):
             - 'indices': 返回分箱索引 (0, 1, 2, ...), 用于后续处理
             - 'bins': 返回分箱标签字符串, 用于可视化或报告
             - 'woe': 返回WOE值, 用于逻辑回归建模
-        :param kwargs: 其他参数(保留兼容性)
+        :param kwargs: 其他参数
         :return: 转换后的数据, 格式与输入X相同
         
         :example:

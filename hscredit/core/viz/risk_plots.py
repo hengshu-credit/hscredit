@@ -32,7 +32,7 @@ from matplotlib.ticker import PercentFormatter
 
 from .utils import (
     DEFAULT_COLORS, setup_axis_style, save_figure,
-    get_or_create_ax, create_legend
+    get_or_create_ax
 )
 
 

@@ -661,7 +661,7 @@ class BestLiftBinning(BaseBinning):
             - 'bins': 返回分箱标签字符串, 用于可视化或报告
             - 'woe': 返回WOE值, 用于逻辑回归建模
             - 'lift': 返回LIFT值, 用于评估分箱效果
-        :param kwargs: 其他参数(保留兼容性)
+        :param kwargs: 其他参数
         :return: 转换后的数据, 格式与输入X相同
         
         :example:

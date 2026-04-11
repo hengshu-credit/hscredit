@@ -149,6 +149,9 @@ class OptimalBinning(BaseBinning):
         decimal: int = 4,
         **kwargs
     ):
+        if 'n_bins' in kwargs:
+            raise ValueError("n_bins 参数已移除，请使用 max_n_bins")
+
         # 处理预分箱相关参数（从kwargs中提取）
         prebinning_params_from_kwargs = {}
         prebinning_keys = ['prebinning_method', 'prebinning_max_bins', 'prebinning_min_bins']
@@ -1077,26 +1080,13 @@ class OptimalBinning(BaseBinning):
                 full_params[k] = v
 
         if self.method == 'uniform':
-            uniform_params = target_params.copy()
-            legacy_n_bins = uniform_params.pop('n_bins', None)
-            if legacy_n_bins is not None and self.max_n_bins == 5:
-                uniform_params['max_n_bins'] = legacy_n_bins
-                self.max_n_bins = legacy_n_bins
-            self._binner = UniformBinning(**uniform_params)
+            self._binner = UniformBinning(**target_params)
         elif self.method == 'quantile':
-            quantile_params = target_params.copy()
-            legacy_n_bins = quantile_params.pop('n_bins', None)
-            if legacy_n_bins is not None and self.max_n_bins == 5:
-                quantile_params['max_n_bins'] = legacy_n_bins
-            self._binner = QuantileBinning(**quantile_params)
+            self._binner = QuantileBinning(**target_params)
         elif self.method == 'tree':
             self._binner = TreeBinning(**target_params)
         elif self.method == 'chi':
-            chi_params = target_params.copy()
-            legacy_n_bins = chi_params.pop('n_bins', None)
-            if legacy_n_bins is not None and self.max_n_bins == 5:
-                chi_params['max_n_bins'] = legacy_n_bins
-            self._binner = ChiMergeBinning(**chi_params)
+            self._binner = ChiMergeBinning(**target_params)
         elif self.method == 'best_ks':
             self._binner = BestKSBinning(**full_params)
         elif self.method == 'best_iv':
@@ -1383,7 +1373,7 @@ class OptimalBinning(BaseBinning):
             - 'indices': 返回分箱索引 (0, 1, 2, ...), 用于后续处理
             - 'bins': 返回分箱标签字符串, 用于可视化或报告
             - 'woe': 返回WOE值, 用于逻辑回归建模
-        :param kwargs: 其他参数(保留兼容性)
+        :param kwargs: 其他参数
         :return: 转换后的数据, 格式与输入X相同
         
         :example:

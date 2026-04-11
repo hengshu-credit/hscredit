@@ -23,7 +23,7 @@ from typing import Union, Optional, List, Dict, Any
 
 from .utils import (
     DEFAULT_COLORS, setup_axis_style, save_figure, 
-    get_or_create_ax, create_legend, format_bin_label
+    get_or_create_ax, format_bin_label
 )
 
 # 从统一metrics模块导入分箱统计计算

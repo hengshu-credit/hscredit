@@ -310,7 +310,7 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
             - 'woe': 返回WOE值
                 * 用途: 逻辑回归建模
                 * 示例: [0.234, -0.456, 0.123, ...]
-        :param kwargs: 其他参数(保留兼容性)
+        :param kwargs: 其他参数
         :return: 转换后的数据，返回类型与输入类型一致
         
         **重要说明**

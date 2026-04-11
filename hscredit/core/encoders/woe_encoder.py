@@ -21,9 +21,6 @@ class WOEEncoder(BaseEncoder):
     **参数**
 
     :param cols: 需要编码的列名列表。如果为None，则自动识别所有类别型列
-    :param bins: 分箱数（已废弃，保留参数兼容性），默认为None
-    :param binning_method: 分箱方法（已废弃），默认为None
-    :param min_bin_size: 每箱最小样本占比（已废弃），默认为None
     :param regularization: 正则化参数，防止除零，默认为1.0
     :param handle_unknown: 处理未知类别的方式，默认为'value'
     :param handle_missing: 处理缺失值的方式，默认为'value'
@@ -56,9 +53,6 @@ class WOEEncoder(BaseEncoder):
     def __init__(
         self,
         cols: Optional[List[str]] = None,
-        bins: Optional[int] = None,
-        binning_method: Optional[str] = None,
-        min_bin_size: Optional[float] = None,
         regularization: float = 1.0,
         handle_unknown: str = 'value',
         handle_missing: str = 'value',
@@ -69,9 +63,6 @@ class WOEEncoder(BaseEncoder):
         """初始化WOE编码器。
 
         :param cols: 需要编码的列名列表
-        :param bins: 已废弃参数，保留兼容性
-        :param binning_method: 已废弃参数，保留兼容性
-        :param min_bin_size: 已废弃参数，保留兼容性
         :param regularization: 正则化参数，防止除零，默认为1.0
         :param handle_unknown: 处理未知类别的方式，默认为'value'
         :param handle_missing: 处理缺失值的方式，默认为'value'
@@ -87,9 +78,6 @@ class WOEEncoder(BaseEncoder):
             handle_missing=handle_missing,
             target=target,
         )
-        self.bins = bins
-        self.binning_method = binning_method
-        self.min_bin_size = min_bin_size
         self.regularization = regularization
 
         self.iv_: Dict[str, float] = {}
