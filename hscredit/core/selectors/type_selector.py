@@ -44,10 +44,16 @@ class TypeSelector(BaseFeatureSelector):
         self,
         dtype_include: Optional[Union[str, Type, List[str]]] = None,
         dtype_exclude: Optional[Union[str, Type, List[str]]] = None,
+        target: str = 'target',
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
+        force_drop: Optional[List[str]] = None,
+        n_jobs: int = 1,
     ):
-        super().__init__(include=include, exclude=exclude)
+        super().__init__(
+            target=target, include=include, exclude=exclude,
+            force_drop=force_drop, n_jobs=n_jobs,
+        )
         self.dtype_include = dtype_include
         self.dtype_exclude = dtype_exclude
         self.method_name = '类型筛选'

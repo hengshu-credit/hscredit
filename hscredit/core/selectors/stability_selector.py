@@ -106,9 +106,13 @@ class StabilityAwareSelector(BaseFeatureSelector):
         target: str = "target",
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
+        force_drop: Optional[List[str]] = None,
         n_jobs: int = 1,
     ):
-        super().__init__(target=target, threshold=iv_threshold, include=include, exclude=exclude, n_jobs=n_jobs)
+        super().__init__(
+            target=target, threshold=iv_threshold, include=include,
+            exclude=exclude, force_drop=force_drop, n_jobs=n_jobs,
+        )
         self.iv_threshold = iv_threshold
         self.psi_threshold = psi_threshold
         self.score_threshold = score_threshold

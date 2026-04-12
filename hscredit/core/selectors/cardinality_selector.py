@@ -40,10 +40,16 @@ class CardinalitySelector(BaseFeatureSelector):
         self,
         threshold: int = 10,
         dropna: bool = True,
+        target: str = 'target',
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
+        force_drop: Optional[List[str]] = None,
+        n_jobs: int = 1,
     ):
-        super().__init__(threshold=threshold, include=include, exclude=exclude)
+        super().__init__(
+            target=target, threshold=threshold, include=include,
+            exclude=exclude, force_drop=force_drop, n_jobs=n_jobs,
+        )
         self.dropna = dropna
         self.method_name = '基数筛选'
 

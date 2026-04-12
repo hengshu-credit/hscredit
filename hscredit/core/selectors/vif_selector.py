@@ -123,12 +123,17 @@ class VIFSelector(BaseFeatureSelector):
         threshold: float = 4.0,
         missing: float = -1.0,
         max_iter: int = 100,
+        target: str = 'target',
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
+        force_drop: Optional[List[str]] = None,
         n_jobs: int = 1,
         verbose: bool = False,
     ):
-        super().__init__(threshold=threshold, include=include, exclude=exclude, n_jobs=n_jobs)
+        super().__init__(
+            target=target, threshold=threshold, include=include,
+            exclude=exclude, force_drop=force_drop, n_jobs=n_jobs,
+        )
         self.missing = missing
         self.max_iter = max_iter
         self.verbose = verbose

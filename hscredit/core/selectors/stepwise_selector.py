@@ -115,6 +115,7 @@ class StepwiseSelector(BaseFeatureSelector):
         target: str = 'target',
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
+        force_drop: Optional[List[str]] = None,
         threshold: Union[float, int, str] = 0.0,
         n_jobs: int = 1,
     ):
@@ -122,8 +123,9 @@ class StepwiseSelector(BaseFeatureSelector):
             target=target,
             include=include,
             exclude=exclude,
+            force_drop=force_drop,
             threshold=threshold,
-            n_jobs=n_jobs
+            n_jobs=n_jobs,
         )
         self.estimator = estimator
         self.direction = direction

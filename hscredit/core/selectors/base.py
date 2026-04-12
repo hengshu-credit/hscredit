@@ -558,6 +558,17 @@ class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
         else:
             self.exclude_ = []
 
+        # 处理force_drop参数（合并到exclude_中）
+        if self.force_drop is not None:
+            if isinstance(self.force_drop, str):
+                force_drop_list = [self.force_drop]
+            elif isinstance(self.force_drop, (list, tuple, np.ndarray)):
+                force_drop_list = list(self.force_drop)
+            else:
+                force_drop_list = []
+            # 合并到exclude_（去重）
+            self.exclude_ = list(set(self.exclude_ + force_drop_list))
+
         # 如果有分箱器,先进行分箱
         if self.binner is not None:
             X_processed = self._apply_binner(X_processed, y_processed)

@@ -92,8 +92,8 @@ Documentation = "https://hscredit.readthedocs.io"
 Repository = "https://github.com/hscredit/hscredit.git"
 Issues = "https://github.com/hscredit/hscredit/issues"
 
-[tool.setuptools]
-packages = ["hscredit"]
+[tool.setuptools.packages.find]
+exclude = ["tests", "tests.*", "docs", "docs.*", "examples", "examples.*"]
 
 [tool.setuptools.package-data]
 hscredit = ["report/excel/template.xlsx"]

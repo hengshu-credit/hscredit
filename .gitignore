@@ -222,3 +222,4 @@ catboost_info/*
 nul
 .claude/settings.local.json
 .claude/*
+CLAUDE.md

@@ -56,8 +56,13 @@ class FeatureImportanceSelector(BaseFeatureSelector):
         target: str = 'target',
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
+        force_drop: Optional[List[str]] = None,
+        n_jobs: int = 1,
     ):
-        super().__init__(target=target, threshold=threshold, include=include, exclude=exclude)
+        super().__init__(
+            target=target, threshold=threshold, include=include,
+            exclude=exclude, force_drop=force_drop, n_jobs=n_jobs,
+        )
         self.estimator = estimator
         self.importance_getter = importance_getter
         self.method_name = '特征重要性筛选'

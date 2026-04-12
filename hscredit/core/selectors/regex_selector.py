@@ -39,10 +39,16 @@ class RegexSelector(BaseFeatureSelector):
     def __init__(
         self,
         pattern: str,
+        target: str = 'target',
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
+        force_drop: Optional[List[str]] = None,
+        n_jobs: int = 1,
     ):
-        super().__init__(include=include, exclude=exclude)
+        super().__init__(
+            target=target, include=include, exclude=exclude,
+            force_drop=force_drop, n_jobs=n_jobs,
+        )
         self.pattern = pattern
         self.method_name = '正则筛选'
 
