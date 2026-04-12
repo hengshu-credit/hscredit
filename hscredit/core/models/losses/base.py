@@ -112,6 +112,85 @@ class BaseLoss(ABC):
 
         return catboost_loss
 
+    def to_ngboost(self):
+        """转换为NGBoost格式的Score类（仅支持 Bernoulli 二分类）。
+
+        NGBoost 使用自然梯度 + 概率分布框架，自定义 loss 需要实现 Score 子类。
+        本方法通过链式法则将 ``dL/dp``（BaseLoss.gradient 的输出）转换为
+        ``dL/d(logit)``（NGBoost 需要的分布参数梯度）::
+
+            dL/d(logit) = dL/dp × dp/d(logit) = dL/dp × p × (1 - p)
+
+        :return: NGBoost Score 子类（未实例化），可直接传给 ``NGBClassifier(Score=...)``
+
+        **参考样例**
+
+        >>> from ngboost import NGBClassifier
+        >>> from hscredit.core.models.losses import ExpectedProfitLoss
+        >>>
+        >>> loss = ExpectedProfitLoss(revenue=100, default_cost=1000)
+        >>> model = NGBClassifier(
+        ...     Score=loss.to_ngboost(),
+        ...     n_estimators=500,
+        ...     learning_rate=0.01
+        ... )
+        >>> model.fit(X_train, y_train)
+
+        **注意**
+
+        - 仅支持 ``Dist=Bernoulli``（NGBoost 默认二分类分布）
+        - ``score()`` 使用标准 BCE 作为监控指标
+        - ``d_score()`` 使用自定义 loss 的梯度驱动参数更新
+        """
+        try:
+            from ngboost.scores import Score as _NGBScore
+        except ImportError:
+            raise ImportError(
+                "NGBoost未安装，请使用 pip install ngboost 安装"
+            )
+
+        loss_obj = self
+
+        class _CustomNGBoostScore(_NGBScore):
+            """由 BaseLoss 自动生成的 NGBoost Score 类。"""
+
+            def score(self, Y):
+                """计算每个样本的损失值（用于监控 / 早停）。
+
+                :param Y: 真实标签, shape (n_samples,)
+                :return: 每样本损失, shape (n_samples,)
+                """
+                p = np.clip(self.prob, 1e-7, 1 - 1e-7)
+                Y = np.asarray(Y, dtype=float)
+                # 使用标准 BCE 作为监控指标
+                return -(Y * np.log(p) + (1 - Y) * np.log(1 - p))
+
+            def d_score(self, Y):
+                """计算损失对 logit 参数的导数（驱动自然梯度更新）。
+
+                通过链式法则: dL/d(logit) = dL/dp × p(1-p)
+
+                :param Y: 真实标签, shape (n_samples,)
+                :return: 梯度, shape (1, n_samples)
+                """
+                p = np.clip(self.prob, 1e-7, 1 - 1e-7)
+                Y = np.asarray(Y, dtype=float)
+
+                # 自定义 loss 的 dL/dp
+                grad_p = loss_obj.gradient(Y, p)
+
+                # 链式法则: dp/d(logit) = p(1-p)
+                grad_logit = grad_p * p * (1 - p)
+
+                # NGBoost 要求 shape = (n_params, n_samples), Bernoulli n_params=1
+                return grad_logit.reshape(1, -1)
+
+        # 设置可读名称
+        _CustomNGBoostScore.__name__ = f"NGBoost_{loss_obj.name}"
+        _CustomNGBoostScore.__qualname__ = f"NGBoost_{loss_obj.name}"
+
+        return _CustomNGBoostScore
+
 
 class BaseMetric(ABC):
     """评估指标基类。

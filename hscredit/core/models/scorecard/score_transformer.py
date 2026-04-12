@@ -744,6 +744,243 @@ class QuantileScoreTransformer(BaseScoreTransformer):
         return proba
 
 
+class BoxCoxScoreTransformer(BaseScoreTransformer):
+    """Box-Cox 评分转换器.
+
+    对 odds = P/(1-P) 进行 Box-Cox 幂变换后线性映射到评分区间。
+    相比标准评分卡的 log-odds 线性映射，Box-Cox 可通过数据驱动的 λ
+    参数自适应选择最优变换，使评分分布更接近正态，区分度更均匀。
+
+    **变换公式**
+
+    Box-Cox 变换::
+
+        λ ≠ 0:  z = (odds^λ - 1) / λ
+        λ = 0:  z = ln(odds)          ← 退化为标准评分卡
+
+    然后将 z 线性映射到 [lower, upper]::
+
+        descending(信用分): Score = upper - (z - z_min) / (z_max - z_min) × (upper - lower)
+        ascending(欺诈分):  Score = lower + (z - z_min) / (z_max - z_min) × (upper - lower)
+
+    **与 StandardScoreTransformer 的区别**
+
+    | 特性 | StandardScoreTransformer | BoxCoxScoreTransformer |
+    |------|--------------------------|------------------------|
+    | 变换 | log(odds)（固定 λ=0） | odds^λ 幂变换（自适应 λ） |
+    | 参数 | 手动设定 base_odds/PDO | 数据驱动，MLE 估计 λ |
+    | 分布 | 依赖数据原始分布 | 趋近正态，区分度更均匀 |
+    | 场景 | 经典评分卡、监管报告 | 分布偏斜严重、追求均匀区分度 |
+
+    **参数**
+
+    :param lower: 评分下界，默认300
+    :param upper: 评分上界，默认1000
+    :param direction: 评分方向，默认'descending'(信用分模式)
+    :param lmbda: Box-Cox λ 参数，默认None(从数据自动估计)
+        - None: 使用 MLE 从训练 odds 分布中估计最优 λ
+        - 0: 退化为 ln(odds)，等价于标准评分卡
+        - 0.5: 平方根变换
+        - 1.0: 线性变换（不推荐）
+        - 内部经验: 信贷场景通常 λ ∈ [-0.5, 0.5]
+    :param shift: odds 偏移量，防止 odds=0 时 Box-Cox 失败，默认1e-6
+    :param precision: 评分精度(小数位数)，默认0(整数)
+    :param clip: 是否对超出范围的评分进行截断，默认True
+
+    **示例**
+
+    >>> import numpy as np
+    >>> from hscredit.core.models.scorecard.score_transformer import BoxCoxScoreTransformer
+    >>>
+    >>> # 从模型获取概率值
+    >>> proba = model.predict_proba(X_train)[:, 1]
+    >>>
+    >>> # 自动估计 λ（推荐）
+    >>> transformer = BoxCoxScoreTransformer(lower=300, upper=1000)
+    >>> transformer.fit(proba)
+    >>> scores = transformer.predict(proba_test)
+    >>> print(f"λ = {transformer.lmbda_:.4f}")
+    >>>
+    >>> # 手动指定 λ=0（等价于标准评分卡的 log-odds）
+    >>> transformer_log = BoxCoxScoreTransformer(lower=300, upper=1000, lmbda=0)
+    >>> transformer_log.fit(proba)
+    >>>
+    >>> # 欺诈评分（概率越高分越高）
+    >>> fraud_transformer = BoxCoxScoreTransformer(
+    ...     lower=0, upper=100, direction='ascending'
+    ... )
+    >>> fraud_transformer.fit(proba)
+    """
+
+    def __init__(
+        self,
+        lower: Optional[float] = 300,
+        upper: Optional[float] = 1000,
+        direction: Literal['descending', 'ascending', 'auto'] = 'descending',
+        lmbda: Optional[float] = None,
+        shift: float = 1e-6,
+        precision: int = 0,
+        clip: bool = True,
+    ):
+        super().__init__(lower, upper, direction, precision, clip)
+        self.lmbda = lmbda
+        self.shift = shift
+
+    @staticmethod
+    def _boxcox(x: np.ndarray, lmbda: float) -> np.ndarray:
+        """Box-Cox 正向变换。
+
+        :param x: 正值数组
+        :param lmbda: λ 参数
+        :return: 变换后的数组
+        """
+        if abs(lmbda) < 1e-12:
+            return np.log(x)
+        return (np.power(x, lmbda) - 1.0) / lmbda
+
+    @staticmethod
+    def _inv_boxcox(z: np.ndarray, lmbda: float) -> np.ndarray:
+        """Box-Cox 逆变换。
+
+        :param z: 变换后的值
+        :param lmbda: λ 参数
+        :return: 原始正值数组
+        """
+        if abs(lmbda) < 1e-12:
+            return np.exp(z)
+        inner = z * lmbda + 1.0
+        # 防止负数的幂运算
+        inner = np.maximum(inner, 1e-12)
+        return np.power(inner, 1.0 / lmbda)
+
+    def _estimate_lambda(self, odds: np.ndarray) -> float:
+        """使用 MLE 估计最优 λ。
+
+        优先使用 scipy.stats.boxcox；若 scipy 不可用则使用网格搜索。
+
+        :param odds: odds 数组（必须全正）
+        :return: 最优 λ
+        """
+        try:
+            from scipy.stats import boxcox as _scipy_boxcox
+
+            _, lmbda = _scipy_boxcox(odds)
+            return float(lmbda)
+        except ImportError:
+            pass
+
+        # fallback: 简单网格搜索，最大化 log-likelihood 的正态近似
+        best_lmbda, best_ll = 0.0, -np.inf
+        for lmbda_candidate in np.linspace(-2, 2, 81):
+            z = self._boxcox(odds, lmbda_candidate)
+            # 正态 log-likelihood 近似: -n/2 * ln(var) + (λ-1) * Σln(x)
+            var = np.var(z)
+            if var <= 0:
+                continue
+            ll = -0.5 * len(z) * np.log(var) + (lmbda_candidate - 1) * np.sum(np.log(odds))
+            if ll > best_ll:
+                best_ll = ll
+                best_lmbda = lmbda_candidate
+        return float(best_lmbda)
+
+    def fit(
+        self,
+        proba: Union[np.ndarray, pd.Series],
+        **kwargs,
+    ) -> 'BoxCoxScoreTransformer':
+        """拟合 Box-Cox 评分转换器。
+
+        1. 计算训练数据的 odds
+        2. 估计最优 λ（或使用用户指定值）
+        3. 记录变换后的值域 [z_min, z_max] 用于线性映射
+
+        :param proba: 训练数据的预测概率（正类概率）
+        :return: self
+        """
+        self.train_proba_ = np.asarray(proba, dtype=float)
+
+        # 确保概率在合理范围
+        proba_safe = np.clip(self.train_proba_, 1e-10, 1 - 1e-10)
+
+        # 计算 odds 并偏移
+        odds = proba_safe / (1 - proba_safe) + self.shift
+
+        # 估计 λ
+        if self.lmbda is not None:
+            self.lmbda_ = float(self.lmbda)
+        else:
+            self.lmbda_ = self._estimate_lambda(odds)
+
+        # 计算变换后的值域
+        z = self._boxcox(odds, self.lmbda_)
+        self.z_min_ = float(np.min(z))
+        self.z_max_ = float(np.max(z))
+
+        # 防止退化（z_min == z_max）
+        if abs(self.z_max_ - self.z_min_) < 1e-12:
+            self.z_max_ = self.z_min_ + 1.0
+
+        # 确定方向
+        self.direction_ = self._determine_direction()
+
+        self._is_fitted = True
+        return self
+
+    def transform(self, proba: Union[np.ndarray, pd.Series]) -> np.ndarray:
+        """将概率转换为评分。
+
+        :param proba: 预测概率
+        :return: 评分数组
+        """
+        check_is_fitted(self)
+        proba = np.clip(np.asarray(proba, dtype=float), 1e-10, 1 - 1e-10)
+
+        lower = self.lower if self.lower is not None else 300
+        upper = self.upper if self.upper is not None else 1000
+
+        # odds → Box-Cox → 归一化 → 线性映射
+        odds = proba / (1 - proba) + self.shift
+        z = self._boxcox(odds, self.lmbda_)
+        z_norm = (z - self.z_min_) / (self.z_max_ - self.z_min_)
+        z_norm = np.clip(z_norm, 0, 1)
+
+        if self.direction_ == 'descending':
+            # 信用分: odds 越大(坏) → z 越大 → 分数越低
+            scores = upper - (upper - lower) * z_norm
+        else:
+            # 欺诈分: odds 越大(坏) → z 越大 → 分数越高
+            scores = lower + (upper - lower) * z_norm
+
+        return scores
+
+    def inverse_transform(self, scores: Union[np.ndarray, pd.Series]) -> np.ndarray:
+        """将评分反向转换为概率。
+
+        :param scores: 评分
+        :return: 概率
+        """
+        check_is_fitted(self)
+        scores = np.asarray(scores, dtype=float)
+
+        lower = self.lower if self.lower is not None else 300
+        upper = self.upper if self.upper is not None else 1000
+
+        # 评分 → 归一化 z → 逆 Box-Cox → odds → 概率
+        if self.direction_ == 'descending':
+            z_norm = (upper - scores) / (upper - lower)
+        else:
+            z_norm = (scores - lower) / (upper - lower)
+
+        z_norm = np.clip(z_norm, 0, 1)
+        z = self.z_min_ + z_norm * (self.z_max_ - self.z_min_)
+
+        odds = self._inv_boxcox(z, self.lmbda_) - self.shift
+        odds = np.maximum(odds, 1e-12)
+        proba = odds / (1 + odds)
+
+        return np.clip(proba, 0, 1)
+
+
 class ScoreTransformer(BaseScoreTransformer):
     """统一评分转换器接口.
 
@@ -755,6 +992,7 @@ class ScoreTransformer(BaseScoreTransformer):
         - 'standard': 标准评分卡方法(StandardScoreTransformer)
         - 'linear': 线性映射(LinearScoreTransformer)
         - 'quantile': 分位数映射(QuantileScoreTransformer)
+        - 'boxcox': Box-Cox幂变换映射(BoxCoxScoreTransformer)
     :param lower: 评分下界，默认None
     :param upper: 评分上界，默认None
     :param direction: 评分方向，默认'auto'
@@ -808,7 +1046,7 @@ class ScoreTransformer(BaseScoreTransformer):
 
     def __init__(
         self,
-        method: Literal['standard', 'linear', 'quantile'] = 'standard',
+        method: Literal['standard', 'linear', 'quantile', 'boxcox'] = 'standard',
         lower: Optional[float] = None,
         upper: Optional[float] = None,
         direction: Literal['descending', 'ascending', 'auto'] = 'auto',
@@ -852,6 +1090,15 @@ class ScoreTransformer(BaseScoreTransformer):
             )
         elif self.method == 'quantile':
             self.transformer_ = QuantileScoreTransformer(
+                lower=self.lower,
+                upper=self.upper,
+                direction=self.direction,
+                precision=self.precision,
+                clip=self.clip,
+                **self.transformer_params
+            )
+        elif self.method == 'boxcox':
+            self.transformer_ = BoxCoxScoreTransformer(
                 lower=self.lower,
                 upper=self.upper,
                 direction=self.direction,

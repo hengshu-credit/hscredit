@@ -220,3 +220,5 @@ examples/hengshucredit_yyp.xlsx
 _patch_or_*.py
 catboost_info/*
 nul
+.claude/settings.local.json
+.claude/*

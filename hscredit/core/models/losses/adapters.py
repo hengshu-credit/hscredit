@@ -1,6 +1,6 @@
 """框架适配器.
 
-为XGBoost、LightGBM、CatBoost、TabNet等框架提供统一的损失函数和评估指标接口。
+为XGBoost、LightGBM、CatBoost、TabNet、NGBoost等框架提供统一的损失函数和评估指标接口。
 """
 
 from typing import Callable, Union, Tuple
@@ -327,3 +327,50 @@ class TabNetLossAdapter:
                 return torch.tensor(loss_value, dtype=torch.float32, device=y_pred.device)
 
         return CustomLoss()
+
+
+class NGBoostLossAdapter:
+    """NGBoost损失函数适配器.
+
+    将自定义损失函数转换为NGBoost可用的Score类。
+
+    NGBoost使用自然梯度 + 概率分布框架，与XGBoost/LightGBM的 ``(grad, hess)``
+    接口完全不同。本适配器通过链式法则将 ``BaseLoss`` 的梯度（对概率 p 求导）
+    转换为NGBoost所需的分布参数梯度（对 logit 求导）::
+
+        dL/d(logit) = dL/dp × dp/d(logit) = dL/dp × p × (1 - p)
+
+    :param loss: 损失函数对象
+
+    **参考样例**
+
+    >>> from ngboost import NGBClassifier
+    >>> from hscredit.core.models.losses import ExpectedProfitLoss, NGBoostLossAdapter
+    >>>
+    >>> loss = ExpectedProfitLoss(revenue=100, default_cost=1000)
+    >>> adapter = NGBoostLossAdapter(loss)
+    >>>
+    >>> model = NGBClassifier(
+    ...     Score=adapter.score_class(),
+    ...     n_estimators=500,
+    ...     learning_rate=0.01
+    ... )
+    >>> model.fit(X_train, y_train)
+
+    **注意**
+
+    - 仅支持 ``Dist=Bernoulli``（NGBoost默认二分类分布）
+    - ``score()`` 使用标准BCE作为监控/早停指标
+    - ``d_score()`` 使用自定义loss的梯度驱动自然梯度更新
+    - 也可直接使用 ``BaseLoss.to_ngboost()`` 快捷方法
+    """
+
+    def __init__(self, loss: BaseLoss):
+        self.loss = loss
+
+    def score_class(self):
+        """获取NGBoost Score子类.
+
+        :return: NGBoost Score子类（未实例化），可直接传给 ``NGBClassifier(Score=...)``
+        """
+        return self.loss.to_ngboost()

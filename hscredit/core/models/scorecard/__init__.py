@@ -5,6 +5,7 @@
 - StandardScoreTransformer: 标准评分转换器
 - LinearScoreTransformer: 线性评分转换器
 - QuantileScoreTransformer: 分位数评分转换器
+- BoxCoxScoreTransformer: Box-Cox幂变换评分转换器
 - ScoreTransformer: 统一评分转换接口
 - ScoreDriftCalibrator: 评分漂移校准
 """
@@ -15,6 +16,7 @@ from .score_transformer import (
     StandardScoreTransformer,
     LinearScoreTransformer,
     QuantileScoreTransformer,
+    BoxCoxScoreTransformer,
     ScoreTransformer,
 )
 from .score_drift import ScoreDriftCalibrator
@@ -25,6 +27,7 @@ __all__ = [
     "StandardScoreTransformer",
     "LinearScoreTransformer",
     "QuantileScoreTransformer",
+    "BoxCoxScoreTransformer",
     "ScoreTransformer",
     "ScoreDriftCalibrator",
 ]
