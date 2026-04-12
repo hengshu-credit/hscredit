@@ -6,7 +6,6 @@
 import pandas as pd
 import numpy as np
 from typing import Optional, List, Union, Dict, Any
-from IPython.display import display, HTML
 
 
 def style_bin_table(
@@ -55,6 +54,7 @@ def style_bin_table(
     if index_as_bin:
         # 查找分箱标签列
         bin_label_col = None
+        bin_col = None
         indicator_name_col = None
         indicator_desc_col = None
         
@@ -62,6 +62,8 @@ def style_bin_table(
             col_name = col[1] if isinstance(col, tuple) else col
             if col_name == '分箱标签':
                 bin_label_col = col
+            if col_name == '分箱':
+                bin_col = col
             if col_name == '指标名称':
                 indicator_name_col = col
             if col_name == '指标含义':
@@ -183,8 +185,8 @@ def style_bin_table(
         for col in df_display.columns:
             col_name = col[1]
             if percent_format and col_name in percent_columns:
-                precision = percent_columns[col_name]
-                format_dict[col] = percent_formats.get(precision, '{:.2%}')
+                col_precision = percent_columns[col_name]
+                format_dict[col] = percent_formats.get(col_precision, '{:.2%}')
             elif col_name in default_precision:
                 precision_val = default_precision[col_name]
                 if precision_val == 0:
@@ -199,8 +201,8 @@ def style_bin_table(
         for col in df_display.columns:
             col_name = str(col)
             if percent_format and col_name in percent_columns:
-                precision = percent_columns[col_name]
-                format_dict[col] = percent_formats.get(precision, '{:.2%}')
+                col_precision = percent_columns[col_name]
+                format_dict[col] = percent_formats.get(col_precision, '{:.2%}')
             elif col_name in default_precision:
                 precision_val = default_precision[col_name]
                 if precision_val == 0:
@@ -412,7 +414,12 @@ class BinTableDisplay:
             percent_format=percent_format,
             high_tech_style=high_tech_style
         )
-        display(self._styler)
+        try:
+            from IPython.display import display
+            display(self._styler)
+        except ImportError:
+            # 非Jupyter环境下不执行展示
+            pass
         return self
     
     def highlight_bins(self, bins: Union[int, List[int]], color: str = '#e3f2fd') -> 'BinTableDisplay':
@@ -434,7 +441,11 @@ class BinTableDisplay:
             return [''] * len(row)
         
         self._styler = self._styler.apply(highlight_row, axis=1)
-        display(self._styler)
+        try:
+            from IPython.display import display
+            display(self._styler)
+        except ImportError:
+            pass
         return self
     
     def export_html(self, filename: str) -> 'BinTableDisplay':

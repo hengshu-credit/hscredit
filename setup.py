@@ -19,7 +19,7 @@ requirements_path = Path(__file__).parent / "requirements.txt"
 if requirements_path.exists():
     requirements = [
         line.strip()
-        for line in requirements_path.read_text().split("\n")
+        for line in requirements_path.read_text(encoding="utf-8").split("\n")
         if line.strip() and not line.startswith("#")
     ]
 else:
@@ -44,6 +44,8 @@ setup(
         "openpyxl>=3.0.0",
         "matplotlib>=3.3.0",
         "seaborn>=0.11.0",
+        "IPython>=7.0.0",
+        "Cython>=0.29.0",
     ],
     extras_require={
         "xgboost": ["xgboost>=1.4.0"],

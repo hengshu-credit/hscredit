@@ -1,8 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(curl:*)",
-      "Bash(python -c \"\nimport urllib.request, json\nurl = ''https://cursor.scihub.edu.kg/api/v1/chat/completions''\ndata = json.dumps\\({''model'':''claude-sonnet-4-6'',''messages'':[{''role'':''user'',''content'':''Say hi''}],''max_tokens'':100}\\).encode\\(\\)\nreq = urllib.request.Request\\(url, data=data, headers={''Content-Type'':''application/json'',''Authorization'':''Bearer cr_8c92de1c305ba0fc2627e83bdb9e6471658bdc5aa5a35267514ed6993e99f165''}\\)\nresp = urllib.request.urlopen\\(req\\)\nprint\\(resp.read\\(\\).decode\\(\\)\\)\n\")"
-    ]
-  }
-}

@@ -28,7 +28,6 @@ from __future__ import annotations
 import pandas as pd
 import numpy as np
 from typing import Optional, List, Dict, Any, Literal, Union, Tuple, TYPE_CHECKING
-from IPython.display import display
 
 if TYPE_CHECKING:
     from ..excel import ExcelWriter
@@ -508,7 +507,11 @@ class BinTableDisplay:
             percent_format=percent_format,
             high_tech_style=high_tech_style
         )
-        display(self._styler)
+        try:
+            from IPython.display import display
+            display(self._styler)
+        except ImportError:
+            pass
         return self
     
     def highlight_bins(self, bins: Union[int, List[int]], color: str = '#e3f2fd') -> 'BinTableDisplay':
@@ -530,7 +533,11 @@ class BinTableDisplay:
             return [''] * len(row)
         
         self._styler = self._styler.apply(highlight_row, axis=1)
-        display(self._styler)
+        try:
+            from IPython.display import display
+            display(self._styler)
+        except ImportError:
+            pass
         return self
     
     def export_html(self, filename: str) -> 'BinTableDisplay':
