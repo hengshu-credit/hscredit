@@ -76,6 +76,7 @@ from .selectors import (
     Chi2Selector,
     FTestSelector,
     CompositeFeatureSelector,
+    ScorecardFeatureSelection,
 )
 
 # 模型模块
@@ -204,6 +205,7 @@ __all__ = [
     'Chi2Selector',
     'FTestSelector',
     'CompositeFeatureSelector',
+    'ScorecardFeatureSelection',
 
     # 模型/损失函数
     'BaseLoss',

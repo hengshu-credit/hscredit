@@ -44,6 +44,7 @@ from .chi2_selector import Chi2Selector
 from .f_test_selector import FTestSelector
 from .stepwise_selector import StepwiseSelector
 from .stability_selector import StabilityAwareSelector
+from .scorecard_feature_selection import ScorecardFeatureSelection
 
 # 导出所有筛选器
 __all__ = [
@@ -81,6 +82,7 @@ __all__ = [
     'Chi2Selector',
     'FTestSelector',
     'StabilityAwareSelector',
+    'ScorecardFeatureSelection',
     
     # 组合筛选器
     'CompositeFeatureSelector',

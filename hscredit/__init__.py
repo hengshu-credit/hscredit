@@ -98,6 +98,7 @@ from .core.selectors import (
     CompositeFeatureSelector,
     StepwiseSelector,
     StabilityAwareSelector,
+    ScorecardFeatureSelection,
 )
 
 # 核心模型/损失函数模块
