@@ -25,10 +25,15 @@
 
 import numpy as np
 import pandas as pd
+import scipy.special
 import scipy.stats
+import inspect
 from typing import Union, Optional, List
 from sklearn.linear_model import LogisticRegression as SklearnLogisticRegression
 from sklearn.utils.validation import check_is_fitted
+
+
+_SKLEARN_LOGISTIC_PARAMS = set(inspect.signature(SklearnLogisticRegression.__init__).parameters)
 
 
 class LogisticRegression(SklearnLogisticRegression):
@@ -83,6 +88,10 @@ class LogisticRegression(SklearnLogisticRegression):
         -1 表示使用所有可用核心
     :param l1_ratio: 弹性网络混合参数，默认 None
         0 <= l1_ratio <= 1，仅当 penalty='elasticnet' 时有效
+    :param positive_woe_coef: WOE 模型系数正向化策略，默认 'auto'
+        - 'auto': 仅当输入 DataFrame 被标记为 hscredit 的 WOE 编码结果时启用
+        - True: 始终启用。会将负系数对应列乘以 -1，并把系数改为正值
+        - False: 禁用，保持 sklearn 原始系数符号
 
     **属性**
 
@@ -99,6 +108,8 @@ class LogisticRegression(SklearnLogisticRegression):
     - p_val_coef_: 系数的p值
     - p_val_intercept_: 截距的p值
     - vif_: 方差膨胀因子数组
+    - woe_coef_signs_: WOE 列方向调整向量，1 表示不变，-1 表示该列已翻转
+    - raw_coef_: 原始拟合系数（正向化前，仅在启用 positive_woe_coef 后提供）
 
     **参考样例**
 
@@ -160,26 +171,33 @@ class LogisticRegression(SklearnLogisticRegression):
         warm_start: bool = False,
         n_jobs: Optional[int] = None,
         l1_ratio: Optional[float] = None,
+        positive_woe_coef: Union[bool, str] = 'auto',
         target: Optional[str] = None,
     ):
-        super().__init__(
-            penalty=penalty,
-            dual=dual,
-            tol=tol,
-            C=C,
-            fit_intercept=fit_intercept,
-            intercept_scaling=intercept_scaling,
-            class_weight=class_weight,
-            random_state=random_state,
-            solver=solver,
-            max_iter=max_iter,
-            multi_class=multi_class,
-            verbose=verbose,
-            warm_start=warm_start,
-            n_jobs=n_jobs,
-            l1_ratio=l1_ratio,
-        )
+        init_kwargs = {
+            "penalty": penalty,
+            "calculate_stats": calculate_stats,
+            "dual": dual,
+            "tol": tol,
+            "C": C,
+            "fit_intercept": fit_intercept,
+            "intercept_scaling": intercept_scaling,
+            "class_weight": class_weight,
+            "random_state": random_state,
+            "solver": solver,
+            "max_iter": max_iter,
+            "multi_class": multi_class,
+            "verbose": verbose,
+            "warm_start": warm_start,
+            "n_jobs": n_jobs,
+            "l1_ratio": l1_ratio,
+        }
+        init_kwargs = {k: v for k, v in init_kwargs.items() if k in _SKLEARN_LOGISTIC_PARAMS}
+
+        super().__init__(**init_kwargs)
         self.calculate_stats = calculate_stats
+        self.multi_class = multi_class
+        self.positive_woe_coef = positive_woe_coef
         self.target = target
 
     def fit(
@@ -249,8 +267,13 @@ class LogisticRegression(SklearnLogisticRegression):
             self.feature_names_in_ = None
 
         # 如果不计算统计信息，直接调用父类方法
+        apply_positive_woe_coef = self._should_apply_positive_woe_coef(X)
+
         if not self.calculate_stats:
-            return super().fit(X, y, sample_weight=sample_weight, **kwargs)
+            fitted_model = super().fit(X, y, sample_weight=sample_weight, **kwargs)
+            if apply_positive_woe_coef:
+                self.ensure_positive_woe_coefficients()
+            return fitted_model
 
         # 转换稀疏矩阵
         X = self._convert_sparse_matrix(X)
@@ -264,19 +287,126 @@ class LogisticRegression(SklearnLogisticRegression):
         # 调用父类fit方法
         lr = super().fit(X, y, sample_weight=sample_weight, **kwargs)
 
+        if apply_positive_woe_coef:
+            self.ensure_positive_woe_coefficients()
+
+        X_model = self._prepare_input_for_model(X)
+
         # 获取预测概率
-        pred_probs = self.predict_proba(X)
+        pred_probs = self._predict_proba_from_prepared_input(X_model)
 
         # 构建设计矩阵（添加截距列）
         if self.fit_intercept:
-            X_design = np.hstack([np.ones((X.shape[0], 1)), X])
+            X_design = np.hstack([np.ones((X_model.shape[0], 1)), X_model])
         else:
-            X_design = X
+            X_design = X_model
 
         # 计算协方差矩阵和统计信息
         self._compute_statistics(X_design, pred_probs)
 
         return self
+
+    def _should_apply_positive_woe_coef(
+        self,
+        X: Union[pd.DataFrame, np.ndarray]
+    ) -> bool:
+        """判断是否需要对 WOE 模型做系数正向化."""
+        if self.positive_woe_coef is True:
+            return True
+        if self.positive_woe_coef is False:
+            return False
+        if self.positive_woe_coef != 'auto':
+            raise ValueError("positive_woe_coef 仅支持 True/False/'auto'")
+
+        return isinstance(X, pd.DataFrame) and X.attrs.get('hscredit_encoding') == 'woe'
+
+    def ensure_positive_woe_coefficients(
+        self,
+        X: Optional[Union[pd.DataFrame, np.ndarray]] = None,
+    ) -> "LogisticRegression":
+        """将 WOE 逻辑回归的负系数归一为正，并保持预测结果不变.
+
+        做法是：对负系数对应的输入列乘以 -1，同时把系数改成绝对值。
+        这样线性预测值保持不变，但模型摘要和评分卡解释更符合 WOE 场景。
+        """
+        check_is_fitted(self)
+
+        if getattr(self, 'woe_coef_signs_', None) is None:
+            coef_vector = np.asarray(self.coef_[0], dtype=float)
+            self.raw_coef_ = self.coef_.copy()
+            self.woe_coef_signs_ = np.where(coef_vector < 0, -1.0, 1.0)
+            if np.any(self.woe_coef_signs_ < 0):
+                self.coef_ = self.coef_.copy()
+                self.coef_[0] = np.abs(coef_vector)
+        elif X is None:
+            return self
+
+        if X is not None and self.calculate_stats:
+            X_model = self._prepare_input_for_model(X)
+            pred_probs = self._predict_proba_from_prepared_input(X_model)
+            if self.fit_intercept:
+                X_design = np.hstack([np.ones((X_model.shape[0], 1)), X_model])
+            else:
+                X_design = X_model
+            self._compute_statistics(X_design, pred_probs)
+
+        return self
+
+    def _prepare_input_for_model(
+        self,
+        X: Union[pd.DataFrame, np.ndarray]
+    ) -> Union[pd.DataFrame, np.ndarray]:
+        """按 WOE 方向调整输入，使正向化后的系数仍保持原始预测结果."""
+        X_model = self._convert_sparse_matrix(X)
+        signs = getattr(self, 'woe_coef_signs_', None)
+        if signs is None:
+            return X_model
+
+        if isinstance(X_model, pd.DataFrame):
+            adjusted = X_model.copy()
+            for feature_index, sign in enumerate(signs):
+                if sign >= 0 or feature_index >= adjusted.shape[1]:
+                    continue
+                adjusted.iloc[:, feature_index] = adjusted.iloc[:, feature_index] * sign
+            return adjusted
+
+        adjusted = np.asarray(X_model).copy()
+        adjusted = adjusted * signs
+        return adjusted
+
+    def _predict_proba_from_prepared_input(
+        self,
+        X_model: Union[pd.DataFrame, np.ndarray]
+    ) -> np.ndarray:
+        """对已经完成 WOE 方向处理的输入计算概率，避免重复变换."""
+        decision = super().decision_function(X_model)
+        if np.ndim(decision) == 1:
+            positive_proba = scipy.special.expit(decision)
+            return np.column_stack([1.0 - positive_proba, positive_proba])
+        return scipy.special.softmax(decision, axis=1)
+
+    def predict_proba(self, X: Union[pd.DataFrame, np.ndarray]) -> np.ndarray:
+        """预测概率，必要时自动应用 WOE 列方向调整."""
+        X_model = self._prepare_input_for_model(X)
+        return self._predict_proba_from_prepared_input(X_model)
+
+    def predict_log_proba(self, X: Union[pd.DataFrame, np.ndarray]) -> np.ndarray:
+        """预测对数概率，必要时自动应用 WOE 列方向调整."""
+        probabilities = self.predict_proba(X)
+        return np.log(np.clip(probabilities, 1e-15, 1.0))
+
+    def decision_function(self, X: Union[pd.DataFrame, np.ndarray]) -> np.ndarray:
+        """计算决策函数，必要时自动应用 WOE 列方向调整."""
+        X_model = self._prepare_input_for_model(X)
+        return super().decision_function(X_model)
+
+    def predict(self, X: Union[pd.DataFrame, np.ndarray]) -> np.ndarray:
+        """预测类别，必要时自动应用 WOE 列方向调整."""
+        X_model = self._prepare_input_for_model(X)
+        decision = super().decision_function(X_model)
+        if np.ndim(decision) == 1:
+            return np.where(decision > 0, self.classes_[1], self.classes_[0])
+        return self.classes_[np.argmax(decision, axis=1)]
 
     def _compute_statistics(
         self,

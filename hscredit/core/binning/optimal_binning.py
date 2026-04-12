@@ -1390,7 +1390,11 @@ class OptimalBinning(BaseBinning):
             raise ValueError("分箱器尚未拟合，请先调用fit方法")
 
         if self._binner is not None:
-            return self._binner.transform(X, metric=metric, **kwargs)
+            result = self._binner.transform(X, metric=metric, **kwargs)
+            if metric == 'woe' and isinstance(result, pd.DataFrame):
+                result.attrs['hscredit_encoding'] = 'woe'
+                result.attrs['hscredit_source'] = 'OptimalBinning'
+            return result
 
         # 直接使用本类的分箱逻辑
         if not isinstance(X, pd.DataFrame):
@@ -1430,6 +1434,10 @@ class OptimalBinning(BaseBinning):
                 result[feature] = pd.Series(bins).map(woe_map).values
             else:
                 raise ValueError(f"不支持的metric: {metric}")
+
+        if metric == 'woe':
+            result.attrs['hscredit_encoding'] = 'woe'
+            result.attrs['hscredit_source'] = 'OptimalBinning'
 
         return result
 

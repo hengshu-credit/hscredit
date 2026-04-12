@@ -269,6 +269,9 @@ class ScoreCard(StandardScoreTransformer):
 
     def _initialize_from_pretrained(self):
         """从预训练模型初始化规则和特征名."""
+        if hasattr(self.lr_model, 'ensure_positive_woe_coefficients'):
+            self.lr_model.ensure_positive_woe_coefficients()
+
         # 从lr_model获取特征数量
         if hasattr(self.lr_model, 'coef_'):
             n_features = len(self.lr_model.coef_[0])
@@ -302,6 +305,35 @@ class ScoreCard(StandardScoreTransformer):
             # 生成规则
             self._generate_rules_from_binner()
             self._is_fitted = True
+
+    def _get_lr_model(self) -> Optional[Any]:
+        """获取当前生效的 LR 模型."""
+        if self.lr_model_ is not None:
+            return self.lr_model_
+        return self.lr_model
+
+    def _get_feature_woe_sign(self, feature_index: int) -> float:
+        """获取指定特征的 WOE 方向调整系数（1 或 -1）."""
+        lr_model = self._get_lr_model()
+        if lr_model is None:
+            return 1.0
+
+        signs = getattr(lr_model, 'woe_coef_signs_', None)
+        if signs is None or feature_index >= len(signs):
+            return 1.0
+        return float(signs[feature_index])
+
+    def _prepare_woe_for_scoring(self, X_woe: pd.DataFrame) -> pd.DataFrame:
+        """按 LR 模型的 WOE 方向约定调整输入，保证评分与概率保持一致."""
+        lr_model = self._get_lr_model()
+        if lr_model is None or not hasattr(lr_model, '_prepare_input_for_model'):
+            return X_woe
+
+        prepared = lr_model._prepare_input_for_model(X_woe)
+        if isinstance(prepared, pd.DataFrame):
+            return prepared
+
+        return pd.DataFrame(prepared, columns=X_woe.columns, index=X_woe.index)
     
     def _generate_rules_from_binner(self):
         """从binner生成评分卡规则（用于预训练模型）."""
@@ -340,7 +372,7 @@ class ScoreCard(StandardScoreTransformer):
             if woe_values is None:
                 continue
                 
-            woe_values = np.asarray(woe_values)
+            woe_values = np.asarray(woe_values) * self._get_feature_woe_sign(i)
             
             # 计算每个 WOE 对应的分数
             scores = [self._woe_to_point(woe, coef) for woe in woe_values]
@@ -703,11 +735,13 @@ class ScoreCard(StandardScoreTransformer):
         if self.lr_kwargs is not None:
             lr_params = dict(self.lr_kwargs)
             lr_params.setdefault('calculate_stats', self.calculate_stats)
+            lr_params.setdefault('positive_woe_coef', True)
             return LogisticRegression(**lr_params)
 
         # 4. 使用默认参数
         return LogisticRegression(
             calculate_stats=self.calculate_stats,
+            positive_woe_coef=True,
             max_iter=1000
         )
 
@@ -731,6 +765,8 @@ class ScoreCard(StandardScoreTransformer):
             try:
                 # 尝试使用 metric='woe' 参数
                 X_woe = self.binner.transform(X, metric='woe')
+                if isinstance(X_woe, pd.DataFrame):
+                    X_woe.attrs['hscredit_encoding'] = 'woe'
                 if self.verbose:
                     print(f"使用 binner.transform(X, metric='woe') 进行 WOE 转换")
                 return X_woe
@@ -740,6 +776,8 @@ class ScoreCard(StandardScoreTransformer):
                 # 尝试其他方法
                 try:
                     X_woe = self.binner.transform_woe(X)
+                    if isinstance(X_woe, pd.DataFrame):
+                        X_woe.attrs['hscredit_encoding'] = 'woe'
                     if self.verbose:
                         print(f"使用 binner.transform_woe(X) 进行 WOE 转换")
                     return X_woe
@@ -750,6 +788,8 @@ class ScoreCard(StandardScoreTransformer):
         if self.binner is not None and self.encoder is not None:
             X_binned = self.binner.transform(X)
             X_woe = self.encoder.transform(X_binned)
+            if isinstance(X_woe, pd.DataFrame):
+                X_woe.attrs['hscredit_encoding'] = 'woe'
             if self.verbose:
                 print(f"使用 binner + encoder 进行 WOE 转换")
             return X_woe
@@ -757,6 +797,8 @@ class ScoreCard(StandardScoreTransformer):
         # 情况3：仅有 encoder
         if self.encoder is not None:
             X_woe = self.encoder.transform(X)
+            if isinstance(X_woe, pd.DataFrame):
+                X_woe.attrs['hscredit_encoding'] = 'woe'
             if self.verbose:
                 print(f"使用 encoder 进行 WOE 转换")
             return X_woe
@@ -877,6 +919,9 @@ class ScoreCard(StandardScoreTransformer):
             if self.verbose:
                 print("使用预训练的 LR 模型")
 
+        if hasattr(self.lr_model_, 'ensure_positive_woe_coefficients'):
+            self.lr_model_.ensure_positive_woe_coefficients(X)
+
         # 5. 生成评分卡规则
         self._generate_rules(X)
 
@@ -953,7 +998,7 @@ class ScoreCard(StandardScoreTransformer):
                 woe_values = sorted(unique_woe)
                 bins = None
 
-            woe_values = np.asarray(woe_values)
+            woe_values = np.asarray(woe_values) * self._get_feature_woe_sign(i)
 
             # 最终兜底：如果仍然没有分箱标签，尝试从 binner 获取
             if bin_labels is None and self.binner is not None:
@@ -1030,13 +1075,15 @@ class ScoreCard(StandardScoreTransformer):
         """
         if feature_names is None:
             feature_names = self.feature_names_
+
+        X_effective = self._prepare_woe_for_scoring(X)
         
         scores = np.zeros((X.shape[0], len(feature_names)))
         
         for i, col in enumerate(feature_names):
-            if col in X.columns:
+            if col in X_effective.columns:
                 coef = self.coef_[i]
-                scores[:, i] = -self.B_ * coef * X[col].values
+                scores[:, i] = -self.B_ * coef * X_effective[col].values
         
         return scores
 

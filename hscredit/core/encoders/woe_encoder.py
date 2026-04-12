@@ -16,7 +16,7 @@ class WOEEncoder(BaseEncoder):
     直接对类别特征计算WOE值，不依赖分箱功能。
 
     WOE计算公式：
-    WOE = ln(P(好样本|类别) / P(坏样本|类别)) = ln(好样本占比/坏样本占比)
+    WOE = ln(P(坏样本|类别) / P(好样本|类别)) = ln(坏样本占比/好样本占比)
 
     **参数**
 
@@ -221,6 +221,8 @@ class WOEEncoder(BaseEncoder):
             elif self.handle_unknown == 'error' and X[col].isna().any():
                 raise ValueError(f"列'{col}'包含未知类别")
 
+        X.attrs['hscredit_encoding'] = 'woe'
+        X.attrs['hscredit_source'] = 'WOEEncoder'
         return X
 
     def get_iv(self) -> Dict[str, float]:
