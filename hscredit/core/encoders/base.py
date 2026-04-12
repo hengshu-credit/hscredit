@@ -14,7 +14,7 @@ API风格说明:
 """
 
 from abc import ABC, abstractmethod
-from typing import List, Optional, Union, Dict, Any
+from typing import List, Optional, Tuple, Union, Dict, Any
 import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, TransformerMixin
@@ -204,7 +204,7 @@ class BaseEncoder(BaseEstimator, TransformerMixin, ABC):
 
     def _extract_target(
         self, X: pd.DataFrame, y: Optional[pd.Series]
-    ) -> tuple[pd.DataFrame, Optional[pd.Series]]:
+    ) -> Tuple[pd.DataFrame, Optional[pd.Series]]:
         """提取目标变量，支持两种API风格。
 
         优先级: fit时传入的y > 从X中提取target列

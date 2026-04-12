@@ -927,7 +927,7 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
         y: pd.Series,
         splits: Union[np.ndarray, list],
         target_mode: Union[bool, str]
-    ) -> tuple[np.ndarray, str]:
+    ) -> Tuple[np.ndarray, str]:
         """基于当前切分点，通过相邻合并满足单调约束。"""
         current = np.unique(np.sort(np.asarray(splits, dtype=float))) if len(splits) > 0 else np.array([])
         if len(current) == 0:
@@ -1087,7 +1087,7 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
         y: pd.Series,
         splits: np.ndarray,
         mode: str
-    ) -> tuple[bool, float, np.ndarray, np.ndarray]:
+    ) -> Tuple[bool, float, np.ndarray, np.ndarray]:
         """评估切分方案是否满足单调与样本约束，并给出 lift 导向评分。"""
         bins = self._get_feature_bins(feature, x, splits)
         bin_table = self._compute_bin_stats(feature, x, y, bins)

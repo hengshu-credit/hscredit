@@ -137,7 +137,7 @@ def feature_bin_stats(
     rules: Optional[Union[List, Dict[str, List]]] = None,
     method: str = 'mdlp',
     desc: Optional[Union[str, Dict[str, str]]] = None,
-    binner: Optional[BaseBinning] = None,
+    binner: Optional[Union[BaseBinning, Dict[str, BaseBinning]]] = None,
     max_n_bins: int = 5,
     min_bin_size: float = 0.05,
     missing_separate: bool = True,
@@ -162,7 +162,9 @@ def feature_bin_stats(
     :param overdue: 逾期天数字段名称或列表，如 'MOB1' 或 ['MOB1', 'MOB3']
     :param dpds: 逾期定义天数或列表，如 7 或 [0, 7, 30]
         - 逾期天数 > dpds 为坏样本(1)，其他为好样本(0)
-    :param rules: 自定义分箱规则，支持 list（单个特征）或 dict（多个特征）
+    :param rules: 自定义分箱规则，支持 list（所有特征统一规则）或 dict（按特征名映射规则）。
+        对 rules 中未包含的特征，按 method 参数重新训练分箱器。
+        优先级: binner > rules > method
     :param method: 分箱方法，可选：
         - 基础方法: 'uniform'(等宽), 'quantile'(等频), 'tree'(决策树), 'chi'(卡方)
         - 优化方法: 'best_ks'(最优KS), 'best_iv'(最优IV), 'mdlp'(信息论)
@@ -173,7 +175,11 @@ def feature_bin_stats(
         - 聚类方法: 'kmeans'
         默认: 'mdlp'
     :param desc: 特征描述，支持 str（单个特征）或 dict（多个特征）
-    :param binner: 预训练的分箱器，优先级高于 method
+    :param binner: 分箱器，支持以下三种传入方式：
+        - BaseBinning（已训练）: 对其中已包含的特征直接使用，未包含的特征按 method 参数重新训练
+        - BaseBinning（未训练）: 作为模板，对每个特征 deepcopy 后 fit
+        - Dict[str, BaseBinning]: 按特征名映射的已训练分箱器字典，未包含的特征按 method 参数重新训练
+        优先级: binner > rules > method
     :param max_n_bins: 最大分箱数，默认 5
     :param min_bin_size: 每箱最小样本占比，默认 0.05
     :param missing_separate: 是否将缺失值单独分箱，默认 True
@@ -264,87 +270,107 @@ def feature_bin_stats(
     all_feature_tables = []
     all_feature_rules = {}
     
+    # 构建默认分箱器参数（在循环外，避免重复计算）
+    method_for_binner = 'mdlp' if method == 'optimal' else method
+    effective_prebinning_params = {'max_n_bins': 100}
+    if prebinning_params:
+        effective_prebinning_params.update(prebinning_params)
+
+    default_binner_params = {
+        'method': method_for_binner,
+        'max_n_bins': max_n_bins,
+        'min_bin_size': min_bin_size,
+        'missing_separate': missing_separate,
+        'prebinning': prebinning,
+        'prebinning_params': effective_prebinning_params,
+    }
+
+    # MDLP默认开启后处理微调，用户可通过 kwargs 覆盖
+    if method_for_binner == 'mdlp':
+        default_binner_params.setdefault('lift_refine', True)
+        default_binner_params.setdefault('lift_focus_weight', 3.0)
+        default_binner_params.setdefault('sample_stability_weight', 0.2)
+        default_binner_params.setdefault('monotonic_bonus_weight', 0.4)
+        default_binner_params.setdefault('lift_refine_max_bins', max_n_bins)
+
+    # 添加额外参数（如monotonic='auto_asc_desc'）
+    default_binner_params.update(kwargs)
+
+    # 显式关闭预分箱
+    if prebinning is None:
+        default_binner_params.pop('prebinning', None)
+        default_binner_params.pop('prebinning_params', None)
+
     for feat in features:
-        # 获取当前特征的分箱器
+        # === 确定当前特征的分箱器 ===
+        # 优先级: binner(已训练且覆盖该特征) > rules(覆盖该特征) > binner(未训练模板) > method(新建)
+        current_binner = None
+        need_fit = False
+
+        # 1. 检查 binner 是否覆盖该特征
         if binner is not None:
-            current_binner = deepcopy(binner)
-        else:
-            # 统一通过OptimalBinning创建分箱器，保证可使用预分箱、单调约束与lift微调能力
-            method_for_binner = 'mdlp' if method == 'optimal' else method
+            if isinstance(binner, dict):
+                # 按特征名映射的分箱器字典
+                if feat in binner:
+                    feat_binner = binner[feat]
+                    if getattr(feat_binner, '_is_fitted', False) and hasattr(feat_binner, 'splits_') and feat in feat_binner.splits_:
+                        current_binner = feat_binner  # 直接使用已训练的分箱器
+            elif isinstance(binner, BaseBinning):
+                if getattr(binner, '_is_fitted', False) and hasattr(binner, 'splits_') and feat in binner.splits_:
+                    # 已训练的分箱器且包含该特征 → 直接使用
+                    current_binner = binner
+                elif not getattr(binner, '_is_fitted', False):
+                    # 未训练的分箱器 → 作为模板 deepcopy 后训练
+                    current_binner = deepcopy(binner)
+                    need_fit = True
 
-            # 预分箱默认：先等频100箱，再进行目标分箱方法合并；用户可通过参数覆盖
-            effective_prebinning_params = {'max_n_bins': 100}
-            if prebinning_params:
-                effective_prebinning_params.update(prebinning_params)
-
-            binner_params = {
-                'method': method_for_binner,
-                'max_n_bins': max_n_bins,
-                'min_bin_size': min_bin_size,
-                'missing_separate': missing_separate,
-                'prebinning': prebinning,
-                'prebinning_params': effective_prebinning_params,
-            }
-
-            # MDLP默认开启后处理微调，用户可通过 kwargs 覆盖
-            if method_for_binner == 'mdlp':
-                binner_params.setdefault('lift_refine', True)
-                binner_params.setdefault('lift_focus_weight', 3.0)
-                binner_params.setdefault('sample_stability_weight', 0.2)
-                binner_params.setdefault('monotonic_bonus_weight', 0.4)
-                binner_params.setdefault('lift_refine_max_bins', max_n_bins)
-
-            # 添加额外参数（如monotonic='auto_asc_desc'）
-            binner_params.update(kwargs)
-
-            # 显式关闭预分箱
-            if prebinning is None:
-                binner_params.pop('prebinning', None)
-                binner_params.pop('prebinning_params', None)
-
-            current_binner = OptimalBinning(**binner_params)
-        
-        # 第一个目标用于训练分箱器
-        first_target = target_configs[0]
-        
-        # 准备训练数据
-        if first_target['mob_col'] is not None:
-            # 逾期模式
-            train_data = data[[feat, first_target['mob_col']]].copy()
-            y_train = (train_data[first_target['mob_col']] > first_target['dpd']).astype(int)
-            
-            if del_grey:
-                mask = (train_data[first_target['mob_col']] > first_target['dpd']) | (train_data[first_target['mob_col']] == 0)
-                train_data = train_data[mask]
-                y_train = y_train[mask]
-        else:
-            # 普通目标模式
-            train_data = data[[feat, first_target['name']]].copy()
-            y_train = train_data[first_target['name']]
-        
-        # 应用自定义规则或拟合分箱器
-        if rules is not None:
-            # 使用自定义规则
+        # 2. 检查 rules 是否覆盖该特征
+        feat_rule = None
+        if current_binner is None and rules is not None:
             if isinstance(rules, dict) and feat in rules:
-                custom_splits = np.array(rules[feat])
+                feat_rule = np.array(rules[feat])
             elif isinstance(rules, list):
-                custom_splits = np.array(rules)
+                feat_rule = np.array(rules)
+
+        # 3. 如果 binner 和 rules 都没覆盖，创建新的分箱器
+        if current_binner is None and feat_rule is None:
+            current_binner = OptimalBinning(**default_binner_params)
+            need_fit = True
+
+        # 需要训练或应用规则时，准备训练数据
+        if need_fit or feat_rule is not None:
+            first_target = target_configs[0]
+
+            # 准备训练数据
+            if first_target['mob_col'] is not None:
+                # 逾期模式
+                train_data = data[[feat, first_target['mob_col']]].copy()
+                y_train = (train_data[first_target['mob_col']] > first_target['dpd']).astype(int)
+
+                if del_grey:
+                    mask = (train_data[first_target['mob_col']] > first_target['dpd']) | (train_data[first_target['mob_col']] == 0)
+                    train_data = train_data[mask]
+                    y_train = y_train[mask]
             else:
-                custom_splits = np.array([])
-            
-            # 手动设置分箱器状态
-            current_binner.splits_ = {feat: custom_splits}
-            current_binner.feature_types_ = {feat: 'numerical'}
-            current_binner.n_bins_ = {feat: len(custom_splits) + 1}
-            current_binner._is_fitted = True
-            
-            # 生成bin_table用于后续的transform
-            bins = np.digitize(train_data[feat].values, custom_splits, right=True)
-            temp_stats = compute_bin_stats(bins, y_train.values, target_type='binary')
-            current_binner.bin_tables_ = {feat: temp_stats}
-        else:
-            # 拟合分箱器
-            current_binner.fit(train_data[[feat]], y_train)
+                # 普通目标模式
+                train_data = data[[feat, first_target['name']]].copy()
+                y_train = train_data[first_target['name']]
+
+            if feat_rule is not None:
+                # 从规则生成分箱器
+                current_binner = OptimalBinning(method='quantile')
+                current_binner.splits_ = {feat: feat_rule}
+                current_binner.feature_types_ = {feat: 'numerical'}
+                current_binner.n_bins_ = {feat: len(feat_rule) + 1}
+                current_binner._is_fitted = True
+
+                # 生成bin_table用于后续的transform
+                bins_tmp = np.digitize(train_data[feat].values, feat_rule, right=True)
+                temp_stats = compute_bin_stats(bins_tmp, y_train.values, target_type='binary')
+                current_binner.bin_tables_ = {feat: temp_stats}
+            else:
+                # 拟合分箱器
+                current_binner.fit(train_data[[feat]], y_train)
         
         # 为每个目标生成分箱表
         feat_tables = []

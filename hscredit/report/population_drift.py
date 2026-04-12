@@ -21,7 +21,7 @@
 
 import numpy as np
 import pandas as pd
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from ..excel import ExcelWriter, dataframe2excel
 
@@ -155,7 +155,7 @@ def _compute_distribution_percentages(
     expected: pd.Series,
     actual: pd.Series,
     breakpoints: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> Tuple[np.ndarray, np.ndarray]:
     """根据统一分箱边界计算基准/实际占比。"""
     exp_counts = np.histogram(expected, bins=breakpoints)[0]
     act_counts = np.histogram(actual, bins=breakpoints)[0]
