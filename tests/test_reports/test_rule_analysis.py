@@ -19,6 +19,23 @@ def test_ruleset_analysis_returns_expected_rows():
     assert list(result["分箱"]) == ["原始样本", "age >= 21", "剩余样本", "所有规则"]
 
 
+def test_ruleset_analysis_handles_multiindex_rule_report_columns():
+    data = pd.DataFrame(
+        {
+            "age": [18, 22, 30, 17],
+            "MOB1": [0, 4, 1, 7],
+        }
+    )
+
+    result = ruleset_analysis(data, [Rule("age >= 21")], overdue="MOB1", dpds=[3, 1])
+
+    assert isinstance(result.columns, pd.MultiIndex)
+    assert ("分箱详情", "分箱") in result.columns
+    assert ("MOB1 3+", "坏样本率") in result.columns
+    assert ("MOB1 1+", "LIFT值") in result.columns
+    assert list(result[("分箱详情", "分箱")]) == ["原始样本", "age >= 21", "剩余样本", "所有规则"]
+
+
 def test_multi_label_rule_analysis_writes_excel(tmp_path, monkeypatch):
     class DummyMiner:
         def __init__(self, **kwargs):

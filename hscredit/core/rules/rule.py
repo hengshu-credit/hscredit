@@ -238,6 +238,7 @@ class Rule:
         :return: pd.DataFrame，规则效果评估表。
                  单标签时返回单层列结构，多标签时返回多层列结构（MultiIndex）
         """
+        detail_group_name = "分箱详情"
         return_cols = ['指标名称', '指标含义', '分箱', '样本总数', '样本占比', '好样本数',
                        '好样本占比', '坏样本数', '坏样本占比', '坏样本率', 'LIFT值', '坏账改善']
         if not desc:
@@ -344,6 +345,8 @@ class Rule:
             else:
                 # 样本数口径（原有逻辑）
                 total = len(rule_result)
+                total_good = rule_result["target"].eq(0).sum()
+                total_bad = rule_result["target"].eq(1).sum()
                 overall_bad_rate = rule_result["target"].mean() if total > 0 else 0
                 
                 rows = []
@@ -354,8 +357,8 @@ class Rule:
                     bin_good = bin_total - bin_bad
                     
                     sample_ratio = bin_total / total if total > 0 else 0
-                    good_ratio = bin_good / total if total > 0 else 0
-                    bad_ratio = bin_bad / total if total > 0 else 0
+                    good_ratio = bin_good / total_good if total_good > 0 else 0
+                    bad_ratio = bin_bad / total_bad if total_bad > 0 else 0
                     bad_rate = bin_bad / bin_total if bin_total > 0 else 0
                     lift = bad_rate / overall_bad_rate if overall_bad_rate > 0 else 0
                     bad_decrease = lift * sample_ratio - sample_ratio
@@ -388,17 +391,22 @@ class Rule:
                     '分箱': '合计',
                     '样本总数': total,
                     '样本占比': 1.0,
-                    '好样本数': rule_result["target"].eq(0).sum(),
-                    '好样本占比': rule_result["target"].eq(0).sum() / total if total > 0 else 0,
-                    '坏样本数': rule_result["target"].sum(),
-                    '坏样本占比': rule_result["target"].sum() / total if total > 0 else 0,
+                    '好样本数': total_good,
+                    '好样本占比': 1.0 if total_good > 0 else 0.0,
+                    '坏样本数': total_bad,
+                    '坏样本占比': 1.0 if total_bad > 0 else 0.0,
                     '坏样本率': rule_result["target"].mean(),
                     'LIFT值': 1.0,
                     '坏账改善': 0.0,
                 }
             
             # 添加风险拒绝比
-            table["风险拒绝比"] = table["坏账改善"] / table["样本占比"]
+            table["风险拒绝比"] = np.divide(
+                table["坏账改善"],
+                table["样本占比"],
+                out=np.zeros(len(table), dtype=float),
+                where=table["样本占比"].to_numpy() != 0,
+            )
 
             # 计算准确率、精确率、召回率、F1分数
             y_true = rule_result["target"]
@@ -439,6 +447,9 @@ class Rule:
                 })
                 table = pd.concat([table, pd.DataFrame([total_row_data])], ignore_index=True)
 
+            if not desc and "指标含义" in table.columns:
+                table = table.drop(columns=["指标含义"])
+
             if prior_rules:
                 table.insert(loc=0, column="规则分类", value=["验证规则"] * len(table))
                 table = pd.concat([prior_tables, table], ignore_index=True)
@@ -453,12 +464,24 @@ class Rule:
                 overdue = [overdue]
             if not isinstance(dpds, list):
                 dpds = [dpds] if dpds is not None else [0]
+            # 处理dpds中的None值并转换为整数
+            dpds = [0 if d is None else int(d) for d in dpds]
+            # 去重，保留顺序，保留第一个出现的
+            seen = set()
+            dpds_unique = []
+            for d in dpds:
+                if d not in seen:
+                    seen.add(d)
+                    dpds_unique.append(d)
+            dpds = dpds_unique
 
             # 确定merge_columns（多标签时需要的列）
             if isinstance(del_grey, bool) and del_grey:
                 merge_columns = ["规则分类", "指标名称", "分箱"]
             else:
                 merge_columns = ["规则分类", "指标名称", "分箱", "样本总数", "样本占比"]
+            if "指标含义" in return_cols and "指标含义" not in merge_columns:
+                merge_columns = ["指标含义"] + merge_columns
 
             # 遍历所有逾期标签组合
             for i, col in enumerate(overdue):
@@ -472,24 +495,20 @@ class Rule:
                     # 生成当前标签的报告
                     _table = _report_one_rule(_datasets, f"{col}_{d}", desc=desc, prior_rules=prior_rules)
 
-                    # 构建多层级列名
-                    if "指标含义" in return_cols:
-                        merge_columns.insert(0, "指标含义")
-
                     if i == 0 and j == 0:
                         # 第一个标签，作为基础表
                         table = _table
                         # 转换为多层级列结构
                         table.columns = pd.MultiIndex.from_tuples(
-                            [("规则详情", c) if c in merge_columns else (f"{col} DPD{d}+", c) for c in table.columns]
+                            [(detail_group_name, c) if c in merge_columns else (f"{col} {d}+", c) for c in table.columns]
                         )
                     else:
                         # 后续标签，合并到基础表
                         _table.columns = pd.MultiIndex.from_tuples(
-                            [("规则详情", c) if c in merge_columns else (f"{col} DPD{d}+", c) for c in _table.columns]
+                            [(detail_group_name, c) if c in merge_columns else (f"{col} {d}+", c) for c in _table.columns]
                         )
                         # 合并表
-                        table = table.merge(_table, on=[("规则详情", c) for c in merge_columns])
+                        table = table.merge(_table, on=[(detail_group_name, c) for c in merge_columns])
         else:
             # 单标签情况
             table = _report_one_rule(datasets, target, desc=desc, prior_rules=prior_rules)

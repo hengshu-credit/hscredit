@@ -12,6 +12,19 @@ from ..core.rules import Rule
 from .mining.multi_label import MultiLabelRuleMiner
 
 
+def _get_detail_group_name(table: pd.DataFrame) -> str:
+    """兼容旧版 `规则详情` 和新版 `分箱详情` 顶层分组名。"""
+    if not isinstance(table.columns, pd.MultiIndex):
+        return ""
+
+    level0_names = set(table.columns.get_level_values(0))
+    if "分箱详情" in level0_names:
+        return "分箱详情"
+    if "规则详情" in level0_names:
+        return "规则详情"
+    raise KeyError("未找到多层表头中的详情分组列")
+
+
 def ruleset_analysis(
     datasets: pd.DataFrame,
     rules: List[Rule],
@@ -57,10 +70,11 @@ def ruleset_analysis(
     )
 
     if isinstance(table_total.columns, pd.MultiIndex):
-        table_total[("规则详情", "分箱")] = ["所有规则", "剩余样本", "原始样本"]
-        cols_to_drop = [("规则详情", "规则分类"), ("规则详情", "指标名称")]
+        detail_group = _get_detail_group_name(table_total)
+        table_total[(detail_group, "分箱")] = ["所有规则", "剩余样本", "原始样本"]
+        cols_to_drop = [(detail_group, "规则分类"), (detail_group, "指标名称")]
         table_total = table_total.drop(columns=[c for c in cols_to_drop if c in table_total.columns])
-        original_row = table_total.loc[table_total[("规则详情", "分箱")] == "原始样本", :]
+        original_row = table_total.loc[table_total[(detail_group, "分箱")] == "原始样本", :]
     else:
         table_total["分箱"] = ["所有规则", "剩余样本", "原始样本"]
         cols_to_drop = ["规则分类", "指标名称"]
@@ -81,8 +95,9 @@ def ruleset_analysis(
         )
 
         if isinstance(table.columns, pd.MultiIndex):
-            table[("规则详情", "分箱")] = [rule.expr, "剩余样本"]
-            cols_to_drop = [("规则详情", "规则分类"), ("规则详情", "指标名称")]
+            detail_group = _get_detail_group_name(table)
+            table[(detail_group, "分箱")] = [rule.expr, "剩余样本"]
+            cols_to_drop = [(detail_group, "规则分类"), (detail_group, "指标名称")]
             table = table.drop(columns=[c for c in cols_to_drop if c in table.columns])
         else:
             table["分箱"] = [rule.expr, "剩余样本"]
@@ -93,7 +108,8 @@ def ruleset_analysis(
         datasets = datasets[~rule.predict(datasets)]
 
     if isinstance(table_total.columns, pd.MultiIndex):
-        summary_row = table_total.loc[table_total[("规则详情", "分箱")] == "所有规则", :]
+        detail_group = _get_detail_group_name(table_total)
+        summary_row = table_total.loc[table_total[(detail_group, "分箱")] == "所有规则", :]
     else:
         summary_row = table_total.loc[table_total["分箱"] == "所有规则", :]
 

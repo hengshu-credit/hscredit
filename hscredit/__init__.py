@@ -33,105 +33,49 @@ from sklearn.ensemble import (
 from sklearn.compose import ColumnTransformer, make_column_selector, make_column_transformer
 from sklearn.preprocessing import FunctionTransformer
 
-# ========== 核心模块导入 (先导入core，避免循环导入) ==========
+# ========== 顶层公开 API 聚合 ==========
 
-# 核心分箱模块
-from .core.binning import (
-    BaseBinning,
-    UniformBinning,
-    QuantileBinning,
-    TreeBinning,
-    ChiMergeBinning,
-    BestKSBinning,
-    BestIVBinning,
-    MDLPBinning,
-    ORBinning,
-    CustomObjectives,
-    OptimalBinning,
-    CartBinning,
-    KMeansBinning,
-    MonotonicBinning,
-    GeneticBinning,
-    SmoothBinning,
-    KernelDensityBinning,
-    BestLiftBinning,
-    TargetBadRateBinning,
-)
+from .core import binning as _binning
+from .core import encoders as _encoders
+from .core import selectors as _selectors
+from .core import models as _models
+from .core import metrics as _metrics
+from .core import viz as _viz
+from .core import eda as _eda
+from .core import rules as _rules
+from .core import financial as _financial
+from .core import feature_engineering as _feature_engineering
+from . import excel as _excel
+from . import report as _report
+from . import utils as _utils
 
-# 核心编码器模块
-from .core.encoders import (
-    BaseEncoder,
-    WOEEncoder,
-    TargetEncoder,
-    CountEncoder,
-    OneHotEncoder,
-    OrdinalEncoder,
-    QuantileEncoder,
-    CatBoostEncoder,
-    GBMEncoder,
-    CardinalityEncoder,
-)
+from .core.binning import *
+from .core.encoders import *
+from .core.selectors import *
+from .core.models import *
+from .core.metrics import *
+from .core.viz import *
+# EDA 放在 metrics 之后导入，顶层 feature_summary 默认指向更常用的 EDA API。
+from .core.eda import *
+from .core.rules import *
+from .core.financial import *
+from .core.feature_engineering import *
+from .excel import *
+from .report import *
+from .utils import *
 
-# 核心特征筛选模块
-from .core.selectors import (
-    BaseFeatureSelector,
-    SelectionReportCollector,
-    VarianceSelector,
-    NullSelector,
-    ModeSelector,
-    CorrSelector,
-    VIFSelector,
-    IVSelector,
-    LiftSelector,
-    PSISelector,
-    CardinalitySelector,
-    TypeSelector,
-    RegexSelector,
-    FeatureImportanceSelector,
-    NullImportanceSelector,
-    RFESelector,
-    SequentialFeatureSelector,
-    BorutaSelector,
-    MutualInfoSelector,
-    Chi2Selector,
-    FTestSelector,
-    CompositeFeatureSelector,
-    StepwiseSelector,
-    StabilityAwareSelector,
-    ScorecardFeatureSelection,
-)
 
-# 核心模型/损失函数模块
-from .core.models import (
-    BaseLoss,
-    BaseMetric,
-    FocalLoss,
-    AsymmetricFocalLoss,
-    WeightedBCELoss,
-    CostSensitiveLoss,
-    BadDebtLoss,
-    ApprovalRateLoss,
-    ProfitMaxLoss,
-    OrdinalRankLoss,
-    LiftFocusedLoss,
-    KSMetric,
-    GiniMetric,
-    PSIMetric,
-    XGBoostLossAdapter,
-    LightGBMLossAdapter,
-    CatBoostLossAdapter,
-    TabNetLossAdapter,
-    LogisticRegression,
-    ScoreCard,
-    # 规则集分类
-    RuleSet,
-    RulesClassifier,
-    LogicOperator,
-    RuleResult,
-    create_and_ruleset,
-    create_or_ruleset,
-    combine_rules,
-)
+def _collect_public_exports(*modules):
+    """汇总模块 __all__，过滤私有符号并去重。"""
+    exports = []
+    seen = set()
+    for module in modules:
+        for name in getattr(module, "__all__", []):
+            if name.startswith("_") or name in seen:
+                continue
+            exports.append(name)
+            seen.add(name)
+    return exports
 
 
 def get_version():
@@ -176,3 +120,46 @@ def info():
     print("待实现模块:")
     print("  - core.encoding: 编码转换")
     print("  - core.metrics: 指标计算 (KS/AUC/PSI/IV/Gini)")
+
+
+_BASE_EXPORTS = [
+    "HSCreditError",
+    "ValidationError",
+    "InputValidationError",
+    "InputTypeError",
+    "FeatureNotFoundError",
+    "StateError",
+    "NotFittedError",
+    "DependencyError",
+    "SerializationError",
+    "Pipeline",
+    "make_pipeline",
+    "VotingClassifier",
+    "VotingRegressor",
+    "StackingClassifier",
+    "StackingRegressor",
+    "ColumnTransformer",
+    "make_column_selector",
+    "make_column_transformer",
+    "FunctionTransformer",
+    "get_version",
+    "info",
+]
+
+_MODULE_EXPORTS = _collect_public_exports(
+    _binning,
+    _encoders,
+    _selectors,
+    _models,
+    _metrics,
+    _viz,
+    _eda,
+    _rules,
+    _financial,
+    _feature_engineering,
+    _excel,
+    _report,
+    _utils,
+)
+
+__all__ = _BASE_EXPORTS + [name for name in _MODULE_EXPORTS if name not in _BASE_EXPORTS]
