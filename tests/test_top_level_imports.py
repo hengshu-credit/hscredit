@@ -16,6 +16,7 @@ def test_star_import_exposes_key_top_level_apis():
             'OptimalBinning',
             'WOEEncoder',
             'feature_bin_stats',
+            'feature_efficiency_analysis',
             'ruleset_analysis',
             'germancredit',
             'bin_plot',

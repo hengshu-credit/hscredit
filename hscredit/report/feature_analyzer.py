@@ -9,6 +9,7 @@ import traceback
 from copy import deepcopy
 from typing import Union, List, Dict, Optional, Tuple, Any
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from openpyxl.worksheet.worksheet import Worksheet
@@ -16,7 +17,7 @@ from tqdm import tqdm
 
 from ..core.binning import OptimalBinning
 from ..core.binning.base import BaseBinning
-from ..core.viz import bin_plot, corr_plot, distribution_plot, hist_plot, ks_plot
+from ..core.viz import bin_plot, bin_trend_plot, corr_plot, distribution_plot, hist_plot, ks_plot
 from ..core.metrics._binning import compute_bin_stats, add_margins
 from ..excel import ExcelWriter, dataframe2excel
 from ..utils import init_setting
@@ -580,6 +581,284 @@ def benchmark_binning_methods(
         return ok.reset_index(drop=True)
 
     return result.reset_index(drop=True)
+
+
+def _normalize_efficiency_rules(
+    feature: str,
+    manual_rules: Union[List, Tuple, np.ndarray, Dict[str, List]],
+) -> Tuple[List, Dict[str, List]]:
+    """标准化手工分箱规则，兼容 list 和 dict 两种输入方式。"""
+    if manual_rules is None:
+        raise ValueError("manual_rules 不能为空，请传入手工分箱边界列表或 {特征名: 边界列表} 字典")
+
+    if isinstance(manual_rules, dict):
+        if feature not in manual_rules:
+            raise ValueError(f"manual_rules 中未找到特征 '{feature}' 的分箱边界")
+        feature_rules = manual_rules[feature]
+    else:
+        feature_rules = manual_rules
+
+    if not isinstance(feature_rules, (list, tuple, np.ndarray)):
+        raise ValueError("manual_rules 必须是列表、元组、ndarray 或按特征名映射的字典")
+
+    normalized_rules = list(feature_rules)
+    if len(normalized_rules) == 0:
+        raise ValueError("manual_rules 不能为空列表")
+
+    return normalized_rules, {feature: normalized_rules}
+
+
+def _prepare_efficiency_dataset(
+    data: pd.DataFrame,
+    feature: str,
+    target: str,
+    overdue: Optional[Union[str, List[str]]] = None,
+    dpd: int = 0,
+    del_grey: bool = False,
+) -> Tuple[pd.DataFrame, pd.DataFrame, str]:
+    """为效率分析准备目标变量和可绘图数据。"""
+    if feature not in data.columns:
+        raise ValueError(f"数据中不存在特征列 '{feature}'")
+
+    working_data = data.copy()
+
+    if overdue is not None:
+        if isinstance(overdue, (list, tuple)):
+            if len(overdue) != 1:
+                raise ValueError("feature_efficiency_analysis 仅支持单个 overdue 字段，请传入字符串或单元素列表")
+            overdue = overdue[0]
+
+        if overdue not in working_data.columns:
+            raise ValueError(f"数据中不存在 overdue 字段 '{overdue}'")
+
+        actual_target = f"{overdue} {int(dpd)}+"
+        working_data[actual_target] = (working_data[overdue] > int(dpd)).astype(int)
+
+        if del_grey:
+            working_data = working_data.loc[
+                (working_data[overdue] > int(dpd)) | (working_data[overdue] == 0)
+            ].reset_index(drop=True)
+    else:
+        actual_target = target
+        if actual_target not in working_data.columns:
+            raise ValueError(f"数据中不存在目标列 '{actual_target}'")
+
+    score_series = pd.to_numeric(working_data[feature], errors='coerce')
+    valid_mask = ~(score_series.isna() | pd.isna(working_data[actual_target]))
+    plot_data = working_data.loc[valid_mask].copy()
+    plot_data[feature] = score_series.loc[valid_mask]
+
+    if plot_data.empty:
+        raise ValueError(f"特征 '{feature}' 没有可用于绘制 KS/ROC 曲线的有效数值数据")
+
+    if plot_data[actual_target].nunique(dropna=True) != 2:
+        raise ValueError(f"目标列 '{actual_target}' 必须是二分类标签，当前唯一值数量为 {plot_data[actual_target].nunique(dropna=True)}")
+
+    return working_data, plot_data, actual_target
+
+
+def feature_efficiency_analysis(
+    data: pd.DataFrame,
+    feature: str,
+    manual_rules: Union[List, Tuple, np.ndarray, Dict[str, List]],
+    target: str = "target",
+    overdue: Optional[Union[str, List[str]]] = None,
+    dpd: int = 0,
+    auto_method: str = "mdlp",
+    desc: Optional[str] = None,
+    date_col: Optional[str] = None,
+    group_cols: Optional[Union[str, List[str]]] = None,
+    date_freq: str = "M",
+    max_n_bins: int = 5,
+    min_bin_size: float = 0.05,
+    missing_separate: bool = True,
+    prebinning: Optional[Union[str, BaseBinning, Dict]] = "quantile",
+    prebinning_params: Optional[Dict[str, Any]] = None,
+    del_grey: bool = False,
+    margins: bool = False,
+    amount: Optional[str] = None,
+    figsize: Tuple[float, float] = (24, 5),
+    trend_figsize: Optional[Tuple[float, float]] = None,
+    comparison_orientation: str = "horizontal",
+    auto_kwargs: Optional[Dict[str, Any]] = None,
+    trend_kwargs: Optional[Dict[str, Any]] = None,
+    output_dir: Optional[str] = None,
+    suffix: str = "",
+) -> Dict[str, Any]:
+    """特征效率分析：对比手工分箱与自动分箱效果，并输出趋势图。
+
+    适用于单个数值型指标或评分变量的快速效果评估。函数会：
+    1. 生成手工分箱与自动分箱两张分箱表
+    2. 输出一行四列的组合图：手工分箱图、自动分箱图、KS 曲线、ROC 曲线
+    3. 当传入日期字段或分组字段时，额外输出手工分箱与自动分箱两张 bin_trend_plot 趋势图
+
+    :param data: 输入数据集
+    :param feature: 需要分析的特征名，建议为数值型指标/评分
+    :param manual_rules: 手工分箱边界，支持 list 或 {feature: list}
+    :param target: 目标变量列名，默认 target
+    :param overdue: 逾期列名。传入后会基于 overdue > dpd 自动构造二分类目标
+    :param dpd: 逾期阈值，仅在 overdue 模式下使用，默认 0
+    :param auto_method: 自动分箱方法，默认 mdlp
+    :param desc: 特征中文描述，默认使用 feature
+    :param date_col: 日期列，传入后生成按时间分组的趋势图
+    :param group_cols: 分组字段，支持单列或多列，传入后生成分组趋势图
+    :param date_freq: 日期聚合频率，默认 M
+    :param max_n_bins: 自动分箱最大箱数，默认 5
+    :param min_bin_size: 自动分箱最小箱占比，默认 0.05
+    :param missing_separate: 缺失值是否单独分箱，默认 True
+    :param prebinning: 预分箱配置，默认 quantile
+    :param prebinning_params: 预分箱参数，默认 None
+    :param del_grey: overdue 模式下是否剔除灰样本，默认 False
+    :param margins: 是否追加合计行，默认 False
+    :param amount: 金额字段，传入后输出金额口径分箱表
+    :param figsize: 一行四列组合图尺寸，默认 (24, 5)
+    :param trend_figsize: 趋势图尺寸，默认 None（由 bin_trend_plot 自动计算）
+    :param comparison_orientation: 两张分箱图的方向，默认 horizontal
+    :param auto_kwargs: 额外传给自动分箱 feature_bin_stats 的参数
+    :param trend_kwargs: 额外传给 bin_trend_plot 的参数
+    :param output_dir: 图片保存目录，默认 None（不落盘）
+    :param suffix: 保存文件名后缀，默认空字符串
+    :return: dict，包含分箱表、分箱规则、组合图与趋势图
+
+    Example::
+
+        >>> result = feature_efficiency_analysis(
+        ...     data=df,
+        ...     feature='score',
+        ...     manual_rules=[450, 520, 600, 680],
+        ...     target='target',
+        ...     auto_method='mdlp',
+        ...     date_col='apply_date'
+        ... )
+        >>> result['manual_table']
+        >>> result['comparison_figure']
+    """
+    feature_desc = desc or feature
+    auto_kwargs = auto_kwargs.copy() if auto_kwargs else {}
+    trend_kwargs = trend_kwargs.copy() if trend_kwargs else {}
+    for reserved_key in ["data", "feature", "target", "dimension_cols", "date_col", "date_freq", "figsize", "title", "rules", "method"]:
+        trend_kwargs.pop(reserved_key, None)
+
+    manual_rules_list, manual_rules_dict = _normalize_efficiency_rules(feature, manual_rules)
+    working_data, plot_data, actual_target = _prepare_efficiency_dataset(
+        data=data,
+        feature=feature,
+        target=target,
+        overdue=overdue,
+        dpd=dpd,
+        del_grey=del_grey,
+    )
+
+    common_bin_params = dict(
+        max_n_bins=max_n_bins,
+        min_bin_size=min_bin_size,
+        missing_separate=missing_separate,
+        prebinning=prebinning,
+        prebinning_params=prebinning_params,
+        del_grey=del_grey,
+        margins=margins,
+        amount=amount,
+        desc=feature_desc,
+    )
+    target_params = {"target": target} if overdue is None else {"target": target, "overdue": overdue, "dpds": int(dpd)}
+
+    manual_table = feature_bin_stats(
+        working_data,
+        feature,
+        rules=manual_rules_list,
+        **target_params,
+        **common_bin_params,
+    )
+
+    auto_table, auto_rules_map = feature_bin_stats(
+        working_data,
+        feature,
+        method=auto_method,
+        return_rules=True,
+        **target_params,
+        **common_bin_params,
+        **auto_kwargs,
+    )
+    auto_rules = auto_rules_map.get(feature, [])
+
+    comparison_fig, comparison_axes = plt.subplots(1, 4, figsize=figsize)
+    comparison_axes = np.atleast_1d(comparison_axes)
+
+    bin_plot(
+        manual_table.copy(),
+        ax=comparison_axes[0],
+        title=f"手工分箱图\n{feature_desc}",
+        desc="",
+        orientation=comparison_orientation,
+    )
+    bin_plot(
+        auto_table.copy(),
+        ax=comparison_axes[1],
+        title=f"自动分箱图({auto_method})\n{feature_desc}",
+        desc="",
+        orientation=comparison_orientation,
+    )
+    ks_plot(plot_data[feature], plot_data[actual_target], axes=[comparison_axes[2], comparison_axes[3]])
+    comparison_axes[2].set_title("KS 曲线")
+    comparison_axes[3].set_title("ROC 曲线")
+    comparison_fig.suptitle(f"{feature_desc} 分箱效率分析", fontsize=14, fontweight="bold")
+    comparison_fig.tight_layout(rect=(0, 0, 1, 0.94))
+
+    trend_figures: Dict[str, plt.Figure] = {}
+    if date_col is not None or group_cols is not None:
+        common_trend_params = dict(
+            data=working_data,
+            feature=feature,
+            target=actual_target,
+            dimension_cols=group_cols,
+            date_col=date_col,
+            date_freq=date_freq,
+            figsize=trend_figsize,
+            **trend_kwargs,
+        )
+
+        trend_figures["manual"] = bin_trend_plot(
+            **common_trend_params,
+            rules=manual_rules_dict,
+            title=f"{feature_desc} 手工分箱趋势图",
+        )
+
+        auto_trend_params = common_trend_params.copy()
+        auto_trend_params["title"] = f"{feature_desc} 自动分箱趋势图({auto_method})"
+        if auto_rules:
+            auto_trend_params["rules"] = {feature: auto_rules}
+        else:
+            auto_trend_params["method"] = auto_method
+            auto_trend_params["max_n_bins"] = max_n_bins
+            auto_trend_params["min_bin_size"] = min_bin_size
+            auto_trend_params.update(auto_kwargs)
+        trend_figures["auto"] = bin_trend_plot(**auto_trend_params)
+
+    saved_paths: Dict[str, str] = {}
+    if output_dir is not None:
+        os.makedirs(output_dir, exist_ok=True)
+
+        comparison_path = os.path.join(output_dir, f"feature_efficiency_comparison_{feature}{suffix}.png")
+        comparison_fig.savefig(comparison_path, dpi=150, bbox_inches="tight")
+        saved_paths["comparison"] = comparison_path
+
+        for trend_name, trend_fig in trend_figures.items():
+            trend_path = os.path.join(output_dir, f"feature_efficiency_trend_{trend_name}_{feature}{suffix}.png")
+            trend_fig.savefig(trend_path, dpi=150, bbox_inches="tight")
+            saved_paths[f"trend_{trend_name}"] = trend_path
+
+    return {
+        "feature": feature,
+        "feature_desc": feature_desc,
+        "target": actual_target,
+        "manual_table": manual_table,
+        "auto_table": auto_table,
+        "manual_rules": manual_rules_list,
+        "auto_rules": auto_rules,
+        "comparison_figure": comparison_fig,
+        "trend_figures": trend_figures,
+        "saved_paths": saved_paths,
+    }
 
 
 def auto_feature_analysis(

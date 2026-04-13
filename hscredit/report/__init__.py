@@ -9,7 +9,7 @@
 - overdue_estimator: 逾期数据预估
 """
 from ..excel import ExcelWriter, dataframe2excel
-from .feature_analyzer import feature_bin_stats, auto_feature_analysis
+from .feature_analyzer import feature_bin_stats, feature_efficiency_analysis, auto_feature_analysis
 from .rule_analysis import ruleset_analysis, multi_label_rule_analysis
 from .swap_analysis import (
     ReferenceDataProvider,
@@ -44,6 +44,7 @@ __all__ = [
     "ExcelWriter",
     "dataframe2excel",
     "feature_bin_stats",
+    "feature_efficiency_analysis",
     "auto_feature_analysis",
     "ruleset_analysis",
     # swap分析
