@@ -1361,6 +1361,37 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
 
         return bin_stats
 
+    def _detect_decimal_precision(self, values: np.ndarray) -> int:
+        """检测数值的小数精度，智能决定保留位数.
+
+        :param values: 数值数组
+        :return: 推荐的小数位数
+        """
+        if values is None or len(values) == 0:
+            return 2
+        
+        # 过滤掉inf/nan
+        valid_values = values[np.isfinite(values)]
+        if len(valid_values) == 0:
+            return 2
+        
+        # 检查是否所有值都是整数
+        all_integer = np.all(np.equal(np.mod(valid_values, 1), 0))
+        if all_integer:
+            return 0
+        
+        # 计算最大小数位数
+        max_decimals = 0
+        for val in valid_values:
+            # 转换为字符串计算小数位数
+            s = f"{val:.10f}".rstrip('0').rstrip('.') if '.' in f"{val:.10f}" else f"{val:.10f}"
+            if '.' in s:
+                decimals = len(s.split('.')[1])
+                max_decimals = max(max_decimals, decimals)
+        
+        # 智能截断：如果小数位超过4位，统一保留4位；否则保留实际位数
+        return min(max_decimals, 4)
+
     def _get_bin_labels(
         self,
         splits: np.ndarray,
@@ -1374,6 +1405,10 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
         """
         labels = []
         n_splits = len(splits) if splits is not None else 0
+        
+        # 检测切分点的小数精度
+        decimal_precision = self._detect_decimal_precision(splits) if splits is not None else 2
+        format_str = f".{decimal_precision}f"
 
         # 如果有分箱索引，需要处理缺失值等特殊箱
         if bins is not None:
@@ -1390,11 +1425,15 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
                     labels.append('[-inf, +inf)')
                 elif i < n_bins:
                     if i == 0:
-                        labels.append(f'[-inf, {splits[i]})')
+                        val = splits[i]
+                        labels.append(f'[-inf, {val:{format_str}})')
                     elif i == n_bins - 1:
-                        labels.append(f'[{splits[i-1]}, +inf)')
+                        val = splits[i-1]
+                        labels.append(f'[{val:{format_str}}, +inf)')
                     else:
-                        labels.append(f'[{splits[i-1]}, {splits[i]})')
+                        val1 = splits[i-1]
+                        val2 = splits[i]
+                        labels.append(f'[{val1:{format_str}}, {val2:{format_str}})')
                 else:
                     labels.append(f'bin_{i}')
         else:
@@ -1405,11 +1444,15 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
             else:
                 for i in range(n_splits + 1):
                     if i == 0:
-                        labels.append(f'[-inf, {splits[i]})')
+                        val = splits[i]
+                        labels.append(f'[-inf, {val:{format_str}})')
                     elif i == n_splits:
-                        labels.append(f'[{splits[i-1]}, +inf)')
+                        val = splits[i-1]
+                        labels.append(f'[{val:{format_str}}, +inf)')
                     else:
-                        labels.append(f'[{splits[i-1]}, {splits[i]})')
+                        val1 = splits[i-1]
+                        val2 = splits[i]
+                        labels.append(f'[{val1:{format_str}}, {val2:{format_str}})')
 
         return labels
 
