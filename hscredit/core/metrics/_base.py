@@ -33,13 +33,17 @@ def _handle_missing_values(*arrays: np.ndarray) -> Tuple[np.ndarray, ...]:
 def _woe_iv_vectorized(
     good_counts: np.ndarray,
     bad_counts: np.ndarray,
-    epsilon: float = 1e-10
+    epsilon: float = 1e-10,
+    woe_clip: Optional[float] = None
 ) -> Tuple[np.ndarray, np.ndarray, float]:
     """向量化计算WOE和IV.
     
     :param good_counts: 每个箱的好样本数
     :param bad_counts: 每个箱的坏样本数
     :param epsilon: 平滑参数，避免log(0)
+    :param woe_clip: WOE值截断阈值，默认None不截断
+        当某个分箱无坏样本或无好样本时，WOE可能变得极大，
+        设置此参数可将WOE限制在[-woe_clip, woe_clip]范围内
     :return: (woe_array, bin_iv_array, total_iv)
     """
     good_counts = np.asarray(good_counts, dtype=np.float64)
@@ -64,6 +68,11 @@ def _woe_iv_vectorized(
 
     # 计算WOE和IV
     woe = np.log(bad_distr / good_distr)
+    
+    # 截断极端WOE值，防止评分卡分数异常
+    if woe_clip is not None:
+        woe = np.clip(woe, -woe_clip, woe_clip)
+    
     bin_iv = (bad_distr - good_distr) * woe
     total_iv = bin_iv.sum()
 

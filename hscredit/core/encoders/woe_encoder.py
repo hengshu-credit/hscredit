@@ -22,6 +22,11 @@ class WOEEncoder(BaseEncoder):
 
     :param cols: 需要编码的列名列表。如果为None，则自动识别所有类别型列
     :param regularization: 正则化参数，防止除零，默认为1.0
+    :param woe_clip: WOE值截断阈值，默认为5.0
+        当某个分箱无坏样本或无好样本时，WOE可能变得极大（如±10以上），
+        这会导致评分卡中对应分箱的分数异常。
+        设置此参数可将WOE限制在[-woe_clip, woe_clip]范围内。
+        设置为None则不进行截断。
     :param handle_unknown: 处理未知类别的方式，默认为'value'
     :param handle_missing: 处理缺失值的方式，默认为'value'
     :param drop_invariant: 是否删除方差为0的列，默认为False
@@ -54,6 +59,7 @@ class WOEEncoder(BaseEncoder):
         self,
         cols: Optional[List[str]] = None,
         regularization: float = 1.0,
+        woe_clip: Optional[float] = 5.0,
         handle_unknown: str = 'value',
         handle_missing: str = 'value',
         drop_invariant: bool = False,
@@ -64,6 +70,11 @@ class WOEEncoder(BaseEncoder):
 
         :param cols: 需要编码的列名列表
         :param regularization: 正则化参数，防止除零，默认为1.0
+        :param woe_clip: WOE值截断阈值，默认为5.0
+            当某个分箱的WOE绝对值超过此阈值时会被截断。
+            这可以防止因分箱中无坏样本或无好样本导致的极端WOE值，
+            避免评分卡中对应分箱的分数过大。
+            设置为None则不进行截断。
         :param handle_unknown: 处理未知类别的方式，默认为'value'
         :param handle_missing: 处理缺失值的方式，默认为'value'
         :param drop_invariant: 是否删除方差为0的列，默认为False
@@ -79,6 +90,7 @@ class WOEEncoder(BaseEncoder):
             target=target,
         )
         self.regularization = regularization
+        self.woe_clip = woe_clip
 
         self.iv_: Dict[str, float] = {}
 
@@ -159,12 +171,15 @@ class WOEEncoder(BaseEncoder):
     def _compute_woe(
         self, good_count: int, bad_count: int, total_good: int, total_bad: int
     ) -> float:
-        """计算WOE值（带正则化）。
+        """计算WOE值（带正则化和截断）。
 
         WOE = ln(坏样本占比 / 好样本占比)
         与 toad、scorecardpipeline 及 hscredit 分箱模块保持一致。
         坏样本集中的箱 WOE > 0，好样本集中的箱 WOE < 0，
         LR 系数为正，便于理解。
+
+        当某个分箱无坏样本或无好样本时，WOE值可能变得极大，
+        此时会根据 woe_clip 参数进行截断，防止评分卡分数异常。
 
         :param good_count: 好样本数量
         :param bad_count: 坏样本数量
@@ -176,6 +191,11 @@ class WOEEncoder(BaseEncoder):
         bad_rate = (bad_count + self.regularization) / (total_bad + 2 * self.regularization)
 
         woe = np.log(bad_rate / good_rate)
+
+        # 截断极端WOE值，防止评分卡分数异常
+        if self.woe_clip is not None:
+            woe = np.clip(woe, -self.woe_clip, self.woe_clip)
+
         return woe
 
     def _compute_iv_categorical(

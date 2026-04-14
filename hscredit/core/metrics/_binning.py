@@ -280,7 +280,8 @@ def compute_bin_stats(
     amount: Optional[np.ndarray] = None,
     epsilon: float = 1e-10,
     bin_labels: Optional[List[str]] = None,
-    round_digits: bool = True
+    round_digits: bool = True,
+    woe_clip: Optional[float] = None
 ) -> pd.DataFrame:
     """计算分箱统计信息.
 
@@ -299,6 +300,10 @@ def compute_bin_stats(
     :param epsilon: 平滑参数
     :param bin_labels: 可选的分箱标签列表
     :param round_digits: 是否对浮点数进行四舍五入格式化，默认为True
+    :param woe_clip: WOE值截断阈值，默认None不截断
+        当某个分箱无坏样本或无好样本时，WOE可能变得极大，
+        设置此参数可将WOE限制在[-woe_clip, woe_clip]范围内，
+        避免评分卡中对应分箱的分数异常
     :return: 分箱统计DataFrame，包含中文列名
     
     Example:
@@ -320,14 +325,14 @@ def compute_bin_stats(
     y = np.asarray(y, dtype=np.float64)
     
     if target_type == 'binary':
-        return _compute_bin_stats_binary(bins, y, epsilon, bin_labels, round_digits)
+        return _compute_bin_stats_binary(bins, y, epsilon, bin_labels, round_digits, woe_clip)
     elif target_type == 'continuous':
         return _compute_bin_stats_continuous(bins, y, epsilon, bin_labels, round_digits)
     elif target_type == 'amount_weighted':
         if amount is None:
             raise ValueError("target_type='amount_weighted'时必须提供amount参数")
         amount = np.asarray(amount, dtype=np.float64)
-        return _compute_bin_stats_amount_weighted(bins, y, amount, epsilon, bin_labels, round_digits)
+        return _compute_bin_stats_amount_weighted(bins, y, amount, epsilon, bin_labels, round_digits, woe_clip)
     else:
         raise ValueError(f"target_type必须是'binary'/'continuous'/'amount_weighted'，得到: {target_type}")
 
@@ -337,7 +342,8 @@ def _compute_bin_stats_binary(
     y: np.ndarray,
     epsilon: float = 1e-10,
     bin_labels: Optional[List[str]] = None,
-    round_digits: bool = True
+    round_digits: bool = True,
+    woe_clip: Optional[float] = None
 ) -> pd.DataFrame:
     """计算二元目标的分箱统计.
     
@@ -346,6 +352,7 @@ def _compute_bin_stats_binary(
     :param epsilon: 平滑参数
     :param bin_labels: 可选的分箱标签列表
     :param round_digits: 是否对浮点数进行四舍五入格式化
+    :param woe_clip: WOE值截断阈值
     :return: 分箱统计DataFrame
     """
     # 使用np.unique获取唯一的bin索引和计数
@@ -380,7 +387,7 @@ def _compute_bin_stats_binary(
     bad_rate = np.where(counts > 0, bad_counts / counts, 0.0)
 
     # 计算WOE和IV
-    woe, bin_iv, total_iv = _woe_iv_vectorized(good_counts, bad_counts, epsilon)
+    woe, bin_iv, total_iv = _woe_iv_vectorized(good_counts, bad_counts, epsilon, woe_clip)
 
     # 计算占比
     total = counts.sum()
@@ -617,7 +624,8 @@ def _compute_bin_stats_amount_weighted(
     amount: np.ndarray,
     epsilon: float = 1e-10,
     bin_labels: Optional[List[str]] = None,
-    round_digits: bool = True
+    round_digits: bool = True,
+    woe_clip: Optional[float] = None
 ) -> pd.DataFrame:
     """计算金额加权的分箱统计（基于二元标签，但按金额加权）.
     
@@ -630,6 +638,7 @@ def _compute_bin_stats_amount_weighted(
     :param epsilon: 平滑参数
     :param bin_labels: 可选的分箱标签列表
     :param round_digits: 是否对浮点数进行四舍五入格式化
+    :param woe_clip: WOE值截断阈值
     :return: 分箱统计DataFrame（列名与binary模式保持一致，便于对比）
     """
     bins = np.asarray(bins)
@@ -694,6 +703,11 @@ def _compute_bin_stats_amount_weighted(
     bad_distr = bad_amounts_smooth / total_bad_smooth if total_bad_smooth > 0 else np.zeros(n_bins)
     
     woe = np.log(bad_distr / good_distr)
+    
+    # 截断极端WOE值，防止评分卡分数异常
+    if woe_clip is not None:
+        woe = np.clip(woe, -woe_clip, woe_clip)
+    
     bin_iv = (bad_distr - good_distr) * woe
     total_iv = bin_iv.sum()
     

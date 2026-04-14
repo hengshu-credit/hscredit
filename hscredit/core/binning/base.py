@@ -72,6 +72,11 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
         - n: 使用n个进程
     :param verbose: 是否输出详细信息，默认为False
     :param decimal: 数值型切分点小数点保留精度，默认为4
+    :param woe_clip: WOE值截断阈值，默认为None
+        当某个分箱无坏样本或无好样本时，WOE可能变得极大（如±10以上），
+        这会导致评分卡中对应分箱的分数异常。
+        设置此参数可将WOE限制在[-woe_clip, woe_clip]范围内。
+        例如 woe_clip=5.0 可将WOE限制在[-5, 5]之间。
 
     **属性**
 
@@ -196,6 +201,7 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
         n_jobs: int = 1,
         verbose: Union[bool, int] = False,
         decimal: int = 4,
+        woe_clip: Optional[float] = None,
     ):
         self.target = target
         self.missing_separate = missing_separate
@@ -215,6 +221,7 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
         if isinstance(decimal, (bool, np.bool_)) or not isinstance(decimal, (int, np.integer)) or int(decimal) < 0:
             raise ValueError("decimal 必须是大于等于 0 的整数")
         self.decimal = int(decimal)
+        self.woe_clip = woe_clip
 
         # 拟合后的属性
         self.splits_ = {}
@@ -1337,8 +1344,8 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
                 # 数值型或字符串格式的类别型
                 bin_labels = self._get_bin_labels(splits, bins)
         
-        # 使用 metrics 模块的向量化计算，传入分箱标签
-        bin_stats = compute_bin_stats(bins, y.values, bin_labels=bin_labels)
+        # 使用 metrics 模块的向量化计算，传入分箱标签和WOE截断参数
+        bin_stats = compute_bin_stats(bins, y.values, bin_labels=bin_labels, woe_clip=self.woe_clip)
         
         # 如果没有分箱标签，生成默认标签
         if '分箱标签' not in bin_stats.columns:

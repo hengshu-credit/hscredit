@@ -98,6 +98,10 @@ class OptimalBinning(BaseBinning):
     :param random_state: 随机种子，默认为None
     :param verbose: 是否输出详细信息，默认为False
     :param decimal: 数值型切分点保留的小数位数，默认为4
+    :param woe_clip: WOE值截断阈值，默认为None
+        当某个分箱无坏样本或无好样本时，WOE可能变得极大（如±10以上），
+        这会导致评分卡中对应分箱的分数异常。
+        设置此参数可将WOE限制在[-woe_clip, woe_clip]范围内。
     :param kwargs: 其他分箱方法特定参数
 
     **示例**
@@ -151,6 +155,7 @@ class OptimalBinning(BaseBinning):
         random_state: Optional[int] = None,
         verbose: Union[bool, int] = False,
         decimal: int = 4,
+        woe_clip: Optional[float] = None,
         **kwargs
     ):
         if 'n_bins' in kwargs:
@@ -176,6 +181,7 @@ class OptimalBinning(BaseBinning):
             random_state=random_state,
             verbose=verbose,
             decimal=decimal,
+            woe_clip=woe_clip,
         )
 
         if method not in self.VALID_METHODS:

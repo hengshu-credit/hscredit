@@ -763,3 +763,19 @@ class LogisticRegression(SklearnLogisticRegression):
         mask = (summary.index != "const") & (summary["VIF"] > threshold)
 
         return summary[mask][["Coef.", "VIF"]].sort_values("VIF", ascending=False)
+
+    def __getstate__(self):
+        """支持 pickle 序列化.
+
+        确保 dill/joblib 等序列化引擎能正确处理继承自 sklearn 的类。
+        """
+        state = self.__dict__.copy()
+        return state
+
+    def __setstate__(self, state):
+        """支持 pickle 反序列化."""
+        self.__dict__.update(state)
+        # 确保父类状态正确恢复
+        if not hasattr(self, 'classes_'):
+            # 如果模型未拟合，不需要额外处理
+            pass
