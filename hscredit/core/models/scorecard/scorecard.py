@@ -151,6 +151,7 @@ class ScoreCard(StandardScoreTransformer):
         lower: Optional[float] = None,
         upper: Optional[float] = None,
         direction: str = 'descending',
+        decimal: int = 2,
         lr_model: Optional[Any] = None,
         lr_kwargs: Optional[Dict[str, Any]] = None,
         binner: Optional[Any] = None,
@@ -172,10 +173,11 @@ class ScoreCard(StandardScoreTransformer):
             'pdo': pdo,
             'rate': rate,
             'step': step,
-            'precision': 2,  # 评分卡保留2位小数
+            'decimal': decimal,
             'clip': True,
             **kwargs  # 用户传入的kwargs可以覆盖上述默认值
         }
+
 
         # 调用父类 StandardScoreTransformer 的初始化
         # ScoreCard 使用 descending 方向（概率越低，分数越高，信用分模式）
@@ -286,6 +288,17 @@ class ScoreCard(StandardScoreTransformer):
                         self._feature_names = list(self.lr_model.feature_names_in_)
                     else:
                         # 使用前n_features个特征名
+                        self._feature_names = feature_names[:n_features]
+                else:
+                    self._feature_names = [f'feature_{i}' for i in range(n_features)]
+            elif hasattr(self.binner, 'splits_') and self.binner.splits_:
+                # load() 导入规则后，bin_tables_ 可能为空，但 splits_ 有数据
+                # 此时从 splits_ 获取特征名
+                feature_names = list(self.binner.splits_.keys())
+                if len(feature_names) >= n_features:
+                    if hasattr(self.lr_model, 'feature_names_in_'):
+                        self._feature_names = list(self.lr_model.feature_names_in_)
+                    else:
                         self._feature_names = feature_names[:n_features]
                 else:
                     self._feature_names = [f'feature_{i}' for i in range(n_features)]
@@ -494,6 +507,16 @@ class ScoreCard(StandardScoreTransformer):
             return list(self.rules_.keys())
         if self._feature_names is not None:
             return self._feature_names
+        # 优先从binner/encoder获取真实特征名（即使lr_model已训练）
+        # 这确保使用load导入规则后能正确获取特征名
+        if self.binner is not None and hasattr(self.binner, 'splits_'):
+            cols = list(self.binner.splits_.keys())
+            if len(cols) > 0:
+                return cols
+        if self.encoder is not None and hasattr(self.encoder, 'mapping_'):
+            cols = list(self.encoder.mapping_.keys())
+            if len(cols) > 0:
+                return cols
         # 如果 lr_model_ 或 lr_model 已设置，从模型获取特征数量
         lr_model = None
         if hasattr(self, 'lr_model_') and self.lr_model_ is not None:
@@ -872,7 +895,17 @@ class ScoreCard(StandardScoreTransformer):
 
         # 转换为 DataFrame
         if not isinstance(X, pd.DataFrame):
-            X = pd.DataFrame(X)
+            # 如果已配置binner或encoder，优先使用其特征名
+            if self.binner is not None and hasattr(self.binner, 'splits_'):
+                cols = list(self.binner.splits_.keys())
+                if len(cols) == X.shape[1]:
+                    X = pd.DataFrame(X, columns=cols)
+            elif self.encoder is not None and hasattr(self.encoder, 'mapping_'):
+                cols = list(self.encoder.mapping_.keys())
+                if len(cols) == X.shape[1]:
+                    X = pd.DataFrame(X, columns=cols)
+            else:
+                X = pd.DataFrame(X)
 
         # 处理 scorecardpipeline 风格：从 X 中提取 y
         if y is None and self.target is not None:
@@ -1035,7 +1068,8 @@ class ScoreCard(StandardScoreTransformer):
             label_str = str(label)
             
             # 检查是否为缺失值或特殊值标记
-            if label_str.lower() in ('missing', '缺失', 'nan', 'none', 'null'):
+            if label_str.lower() in ('missing', '缺失', 'nan', 'null'):
+
                 parsed_labels.append('missing')
                 continue
             elif label_str.lower() in ('special', '特殊'):
@@ -1093,8 +1127,9 @@ class ScoreCard(StandardScoreTransformer):
         label_str = str(label).strip()
         label_lower = label_str.lower()
 
-        if label_lower in ('missing', '缺失值', '缺失', 'nan', 'none', 'null'):
+        if label_lower in ('missing', '缺失值', '缺失', 'nan', 'null'):
             return 'missing'
+
         if label_lower in ('special', '特殊值', '特殊'):
             return 'special'
 
@@ -1468,7 +1503,8 @@ class ScoreCard(StandardScoreTransformer):
                 return '缺失值'
             elif bin_label.lower() in ('special', '特殊'):
                 return '特殊值'
-            elif bin_label.lower() in ('nan', 'none', 'null'):
+            elif bin_label.lower() in ('nan', 'null'):
+
                 return '缺失值'
         return str(bin_label)
 
@@ -2103,7 +2139,8 @@ class ScoreCard(StandardScoreTransformer):
         if isinstance(descriptor, (list, np.ndarray)):
             return len(descriptor) == 0 or all(pd.isna(value) for value in descriptor)
         label = str(descriptor).strip().lower()
-        return label in ('missing', '缺失值', '缺失', 'nan', 'none', 'null')
+        return label in ('missing', '缺失值', '缺失', 'nan', 'null')
+
 
     @staticmethod
     def _is_special_descriptor(descriptor: Any) -> bool:
@@ -2195,8 +2232,9 @@ class ScoreCard(StandardScoreTransformer):
         label = str(label).strip()
         label_lower = label.lower()
 
-        if label_lower in ('missing', '缺失值', '缺失', 'nan', 'none', 'null'):
+        if label_lower in ('missing', '缺失值', '缺失', 'nan', 'null'):
             return f"pandas.isnull({var})"
+
 
         if label_lower in ('special', '特殊值', '特殊'):
             if special_codes:
@@ -2234,7 +2272,8 @@ class ScoreCard(StandardScoreTransformer):
         mapping: Dict[str, float] = {}
         default_value = 0.0
         default_labels = {
-            'missing', '缺失值', '缺失', 'nan', 'none', 'null',
+            'missing', '缺失值', '缺失', 'nan', 'null',
+
             'special', '特殊值', '特殊',
         }
 
@@ -2849,3 +2888,580 @@ class ScoreCard(StandardScoreTransformer):
 
         self._is_fitted = True
         return self
+
+
+class RoundScoreCard(ScoreCard):
+    """按分箱分数精度进行一致性计分的评分卡模型.
+
+    与 `ScoreCard` 不同，`RoundScoreCard` 会先将基础分和各特征分箱分数
+    按初始化指定的 `decimal` 精度进行调整，再基于这份调整后的评分卡完成
+    预测、原因分析与部署导出，确保对外结果与 `scorecard_points()` 完全一致。
+
+    **参数**
+
+    :param decimal: 评分卡分数保留小数位数，默认 2
+    """
+
+    def __init__(
+        self,
+        pdo: float = 60,
+        rate: float = 2,
+        base_odds: float = 35,
+        base_score: float = 750,
+        step: Optional[int] = None,
+        lower: Optional[float] = None,
+        upper: Optional[float] = None,
+        direction: str = 'descending',
+        decimal: int = 2,
+        lr_model: Optional[Any] = None,
+        lr_kwargs: Optional[Dict[str, Any]] = None,
+        binner: Optional[Any] = None,
+        encoder: Optional[Any] = None,
+        pipeline: Optional[Any] = None,
+        calculate_stats: bool = True,
+        verbose: bool = False,
+        target: str = 'target',
+        **kwargs
+    ):
+        super().__init__(
+            pdo=pdo,
+            rate=rate,
+            base_odds=base_odds,
+            base_score=base_score,
+            step=step,
+            lower=lower,
+            upper=upper,
+            direction=direction,
+            decimal=decimal,
+            lr_model=lr_model,
+            lr_kwargs=lr_kwargs,
+            binner=binner,
+            encoder=encoder,
+            pipeline=pipeline,
+            calculate_stats=calculate_stats,
+            verbose=verbose,
+            target=target,
+            **kwargs
+        )
+        self.decimal = decimal
+
+    def _round_score_value(self, value: float, decimal: Optional[int] = None) -> float:
+        """对单个分数值按指定精度进行四舍五入."""
+        digits = self.decimal if decimal is None else decimal
+        rounded = round(float(value), digits)
+        return 0.0 if rounded == -0.0 else float(rounded)
+
+    def _round_score_array(self, values: Union[np.ndarray, pd.Series], decimal: Optional[int] = None) -> np.ndarray:
+        """对分数数组按指定精度进行四舍五入."""
+        digits = self.decimal if decimal is None else decimal
+        arr = np.round(np.asarray(values, dtype=float), digits)
+        arr[np.isclose(arr, 0.0)] = 0.0
+        return arr
+
+    def _format_score_text(self, value: float, decimal: Optional[int] = None) -> str:
+        """格式化分数字符串显示."""
+        digits = self.decimal if decimal is None else decimal
+        rounded = self._round_score_value(value, digits)
+        if digits <= 0:
+            return str(int(round(rounded)))
+        return f"{rounded:.{digits}f}"
+
+    def _get_score_sign(self) -> float:
+        """获取当前评分方向对应的子分符号."""
+        return -1.0 if self.direction_ == 'ascending' else 1.0
+
+    def _get_rounded_base_score(self, decimal: Optional[int] = None) -> float:
+        """获取按评分卡精度调整后的基础分."""
+        base_score = float(self.A_ - self.B_ * self.intercept_)
+        if self.direction_ == 'ascending':
+            flip_constant = self.lower + self.upper if self.lower is not None and self.upper is not None else 2 * self.base_score
+            base_score = float(flip_constant - base_score)
+        return self._round_score_value(base_score, decimal)
+
+    def _get_rounded_rule_scores(self, rule: Dict[str, Any], decimal: Optional[int] = None) -> np.ndarray:
+        """获取按评分卡精度调整后的规则分数."""
+        score_sign = self._get_score_sign()
+        return np.array([
+            self._round_score_value(score_sign * float(score), decimal)
+            for score in rule.get('scores', [])
+        ], dtype=float)
+
+    def _round_sub_scores_from_woe(
+        self,
+        X_woe: pd.DataFrame,
+        feature_names: Optional[List[str]] = None,
+        decimal: Optional[int] = None
+    ) -> np.ndarray:
+        """基于 WOE 数据计算按评分卡精度调整后的子分矩阵."""
+        if feature_names is None:
+            feature_names = self.feature_names_
+
+        X_effective = self._prepare_woe_for_scoring(X_woe)
+        scores = np.zeros((X_effective.shape[0], len(feature_names)))
+        score_sign = self._get_score_sign()
+
+        for i, col in enumerate(feature_names):
+            if col not in X_effective.columns:
+                continue
+            raw_scores = -self.B_ * self.coef_[i] * X_effective[col].to_numpy(dtype=float)
+            scores[:, i] = self._round_score_array(score_sign * raw_scores, decimal)
+
+        return scores
+
+    def _bin_labels_to_rounded_score(
+        self,
+        X_bins: pd.DataFrame,
+        feature_names: Optional[List[str]] = None,
+        decimal: Optional[int] = None
+    ) -> np.ndarray:
+        """将分箱标签数据映射为按评分卡精度调整后的子分矩阵."""
+        if feature_names is None:
+            feature_names = self.feature_names_
+
+        scores = np.zeros((X_bins.shape[0], len(feature_names)))
+
+        for i, col in enumerate(feature_names):
+            if col not in X_bins.columns or col not in self.rules_:
+                continue
+
+            rule = self.rules_[col]
+            rule_labels = rule.get('bin_labels')
+            if rule_labels is None:
+                rule_labels = rule.get('bins', [])
+
+            rounded_scores = self._get_rounded_rule_scores(rule, decimal=decimal)
+            score_map = {
+                self._normalize_rule_label(label): float(score)
+                for label, score in zip(rule_labels, rounded_scores)
+            }
+
+            label_series = X_bins[col].map(self._normalize_rule_label)
+            scores[:, i] = label_series.map(score_map).fillna(0.0).to_numpy(dtype=float)
+
+        return scores
+
+    def _resolve_round_scoring_inputs(
+        self,
+        X: Union[pd.DataFrame, np.ndarray],
+        input_type: str = 'raw'
+    ) -> Dict[str, Any]:
+        """统一解析 RoundScoreCard 评分时需要的输入数据."""
+        if not isinstance(X, pd.DataFrame):
+            X = pd.DataFrame(X)
+
+        uses_loaded_rule_scoring = (
+            getattr(self, '_loaded_intercept', None) is not None
+            and self.lr_model_ is None
+            and self.lr_model is None
+        )
+
+        is_woe_data = self._detect_input_type(X)
+
+        if uses_loaded_rule_scoring:
+            if input_type == 'woe' or (input_type == 'auto' and is_woe_data):
+                raise ValueError("当前 RoundScoreCard 由离线规则加载，请传入原始数据并设置 input_type='raw'")
+
+            feature_names = self.feature_names_
+            X_bins = self._transform_to_bins(X)[feature_names]
+            sub_scores = self._bin_labels_to_rounded_score(X_bins, feature_names)
+            return {
+                'X_raw': X,
+                'X_woe': None,
+                'X_bins': X_bins,
+                'feature_names': feature_names,
+                'sub_scores': sub_scores,
+            }
+
+        if input_type == 'auto':
+            X_woe = X if is_woe_data else self._transform_to_woe(X)
+        elif input_type == 'raw':
+            X_woe = self._transform_to_woe(X)
+        elif input_type == 'woe':
+            X_woe = X
+        else:
+            raise ValueError(f"input_type 必须是 'auto'/'raw'/'woe' 之一，当前为: {input_type}")
+
+        if self._skip_fit_check and not getattr(self, '_is_fitted', False):
+            feature_names = X_woe.columns.tolist()
+        else:
+            feature_names = self.feature_names_
+            X_woe = X_woe[feature_names]
+
+        X_bins = None
+        if input_type == 'raw' or (input_type == 'auto' and not is_woe_data):
+            try:
+                X_bins = self._transform_to_bins(X)
+                X_bins = X_bins[feature_names]
+            except Exception:
+                X_bins = None
+
+        sub_scores = self._round_sub_scores_from_woe(X_woe, feature_names)
+
+        return {
+            'X_raw': X,
+            'X_woe': X_woe,
+            'X_bins': X_bins,
+            'feature_names': feature_names,
+            'sub_scores': sub_scores,
+        }
+
+    def _get_base_effect_values(self, feature_names: List[str]) -> np.ndarray:
+        """获取与当前特征顺序对齐的基础效应值."""
+        if self.base_effect_ is None:
+            return np.zeros(len(feature_names), dtype=float)
+
+        if isinstance(self.base_effect_, pd.Series):
+            return self.base_effect_.reindex(feature_names).fillna(0.0).to_numpy(dtype=float)
+
+        base_effect = np.asarray(self.base_effect_, dtype=float)
+        if base_effect.shape[0] != len(feature_names):
+            return np.zeros(len(feature_names), dtype=float)
+        return base_effect
+
+    def _find_bin_label_from_woe(self, feature: str, woe_value: float) -> str:
+        """根据 WOE 值查找对应的分箱标签."""
+        rule = self.rules_.get(feature, {})
+        woe_values = rule.get('woe')
+        bin_labels = rule.get('bin_labels')
+        if woe_values is None or bin_labels is None:
+            return '未知'
+
+        candidates = [woe_value]
+        if feature in self.feature_names_:
+            feature_index = self.feature_names_.index(feature)
+            sign = self._get_feature_woe_sign(feature_index)
+            candidates.append(float(woe_value) * sign)
+
+        for label, stored_woe in zip(bin_labels, woe_values):
+            if any(pd.isna(candidate) and pd.isna(stored_woe) for candidate in candidates):
+                return self._format_bin_display(label)
+            for candidate in candidates:
+                try:
+                    if np.isclose(float(candidate), float(stored_woe), atol=1e-12, rtol=0):
+                        return self._format_bin_display(label)
+                except (TypeError, ValueError):
+                    continue
+        return '未知'
+
+
+    def fit(
+        self,
+        X: Union[pd.DataFrame, np.ndarray],
+        y: Optional[Union[pd.Series, np.ndarray]] = None,
+        sample_weight: Optional[np.ndarray] = None,
+        input_type: str = 'woe',
+    ) -> 'RoundScoreCard':
+        """训练按评分卡精度一致计分的评分卡模型."""
+        X_for_base_effect = X.copy() if isinstance(X, pd.DataFrame) else pd.DataFrame(X).copy()
+
+        result = super().fit(X, y=y, sample_weight=sample_weight, input_type=input_type)
+
+        if isinstance(X_for_base_effect, pd.DataFrame) and y is None and self.target is not None and self.target in X_for_base_effect.columns:
+            X_for_base_effect = X_for_base_effect.drop(columns=[self.target])
+
+        if not isinstance(X_for_base_effect, pd.DataFrame):
+            X_for_base_effect = pd.DataFrame(X_for_base_effect)
+
+        if input_type == 'raw':
+            X_woe = self._transform_to_woe(X_for_base_effect)
+        else:
+            X_woe = X_for_base_effect
+
+        X_woe = X_woe[self.feature_names_]
+        rounded_sub_scores = self._round_sub_scores_from_woe(X_woe, self.feature_names_)
+        self.base_effect_ = pd.Series(np.median(rounded_sub_scores, axis=0), index=self.feature_names_)
+
+        return result
+
+    def scorecard_points(
+        self,
+        feature_map: Optional[Dict[str, str]] = None,
+        decimal: Optional[int] = None
+    ) -> pd.DataFrame:
+        """输出按初始化精度调整后的评分卡分箱信息及其分数."""
+        check_is_fitted(self)
+
+        digits = self.decimal if decimal is None else decimal
+        feature_map = feature_map or {}
+        rows = [{
+            '变量名称': '基础分',
+            '变量含义': '截距项（基准分数）',
+            '变量分箱': '-',
+            '对应分数': self._get_rounded_base_score(digits),
+            'WOE值': None,
+        }]
+
+        for col in self.feature_names_:
+            if col not in self.rules_:
+                continue
+
+            rule = self.rules_[col]
+            rounded_scores = self._get_rounded_rule_scores(rule, decimal=digits)
+            woe_values = rule.get('woe', [])
+            bin_labels = rule.get('bin_labels')
+            bins = rule.get('bins')
+
+            if bin_labels is not None and len(bin_labels) > 0:
+                labels_to_use = bin_labels
+            elif bins is not None and len(bins) > 0:
+                labels_to_use = bins
+            else:
+                labels_to_use = [f'WOE: {w:.4f}' for w in woe_values]
+
+            if len(labels_to_use) != len(rounded_scores):
+                labels_to_use = self._format_bin_labels(bins if bins else labels_to_use, len(rounded_scores))
+
+            for bin_label, score, woe in zip(labels_to_use, rounded_scores, woe_values):
+                rows.append({
+                    '变量名称': col,
+                    '变量含义': feature_map.get(col, ''),
+                    '变量分箱': self._format_bin_display(bin_label),
+                    '对应分数': self._round_score_value(score, digits),
+                    'WOE值': round(float(woe), 4) if woe is not None else None,
+                })
+
+        return pd.DataFrame(rows)
+
+    def predict_score(
+        self,
+        X: Optional[Union[pd.DataFrame, np.ndarray]] = None,
+        proba: Optional[Union[np.ndarray, pd.Series]] = None,
+        input_type: str = 'auto'
+    ) -> np.ndarray:
+        """预测评分，优先基于调整精度后的评分卡规则进行计算."""
+        if X is not None:
+            return self.predict(X, input_type=input_type)
+
+        if proba is None:
+            raise ValidationError("必须提供X或proba参数之一")
+
+        scores = self.transform(proba)
+        scores = self._clip_scores(scores)
+        return self._round_score_array(scores)
+
+    def predict(
+        self,
+        X: Union[pd.DataFrame, np.ndarray],
+        input_type: str = 'raw'
+    ) -> np.ndarray:
+        """基于调整精度后的评分卡规则预测评分."""
+        if not self._skip_fit_check:
+            check_is_fitted(self)
+        elif not hasattr(self, '_is_fitted') or not self._is_fitted:
+            if self.verbose:
+                print("使用预训练模型进行预测（未调用fit）")
+
+        resolved = self._resolve_round_scoring_inputs(X, input_type=input_type)
+        total_score = self._get_rounded_base_score() + resolved['sub_scores'].sum(axis=1)
+        total_score = self._clip_scores(total_score)
+        return self._round_score_array(total_score)
+
+    def get_reason(self, X: Union[pd.DataFrame, np.ndarray], keep: int = 3) -> pd.DataFrame:
+        """获取基于调整精度后评分卡的主要评分原因."""
+        check_is_fitted(self)
+        resolved = self._resolve_round_scoring_inputs(X, input_type='auto')
+
+        sub_scores = resolved['sub_scores']
+        feature_names = resolved['feature_names']
+        effect_diff = sub_scores - self._get_base_effect_values(feature_names)
+
+        reasons_list = []
+        for row_diff in effect_diff:
+            top_indices = np.argsort(np.abs(row_diff))[::-1][:keep]
+            reasons = []
+            for idx in top_indices:
+                feature = feature_names[idx]
+                diff = row_diff[idx]
+                direction = '降低' if diff < 0 else '提升'
+                reasons.append(f"{feature}({direction}{self._format_score_text(abs(diff))}分)")
+            reasons_list.append('; '.join(reasons))
+
+        return pd.DataFrame({'reason': reasons_list})
+
+    def get_detailed_score(
+        self,
+        X: Union[pd.DataFrame, np.ndarray],
+        sample_idx: Optional[Union[int, list]] = None,
+        include_reason: bool = True
+    ) -> pd.DataFrame:
+        """获取按调整后评分卡计算的样本详细评分信息."""
+        check_is_fitted(self)
+
+        if not isinstance(X, pd.DataFrame):
+            X = pd.DataFrame(X)
+
+        if sample_idx is not None:
+            if isinstance(sample_idx, int):
+                sample_idx = [sample_idx]
+            X = X.iloc[sample_idx]
+
+        resolved = self._resolve_round_scoring_inputs(X, input_type='auto')
+        feature_names = resolved['feature_names']
+        X_raw = resolved['X_raw']
+        X_woe = resolved['X_woe']
+        X_bins = resolved['X_bins']
+        sub_scores = resolved['sub_scores']
+        base_score = self._get_rounded_base_score()
+        total_scores = self._round_score_array(base_score + sub_scores.sum(axis=1))
+
+        data_dict = {
+            ('样本信息', '样本索引'): [],
+            ('样本信息', '总分'): [],
+            ('样本信息', '截距分数'): [],
+        }
+
+        for col in feature_names:
+            data_dict[(col, '原始值')] = []
+            data_dict[(col, '分箱')] = []
+            data_dict[(col, 'WOE')] = []
+            data_dict[(col, '分数')] = []
+
+        for i, (idx, row) in enumerate(X_raw.iterrows()):
+            data_dict[('样本信息', '样本索引')].append(idx)
+            data_dict[('样本信息', '总分')].append(self._round_score_value(total_scores[i]))
+            data_dict[('样本信息', '截距分数')].append(self._get_rounded_base_score())
+
+            for j, col in enumerate(feature_names):
+                raw_value = row[col] if col in row.index else np.nan
+                if X_woe is not None and col in X_woe.columns:
+                    bin_label = self._find_bin_label_from_woe(col, X_woe.iloc[i][col])
+                elif X_bins is not None and col in X_bins.columns:
+                    bin_label = self._format_bin_display(X_bins.iloc[i][col])
+                else:
+                    bin_label = '未知'
+
+
+                woe_value = X_woe.iloc[i][col] if X_woe is not None and col in X_woe.columns else None
+                score = sub_scores[i, j]
+
+                data_dict[(col, '原始值')].append(raw_value)
+                data_dict[(col, '分箱')].append(bin_label)
+                data_dict[(col, 'WOE')].append(round(float(woe_value), 4) if woe_value is not None else None)
+                data_dict[(col, '分数')].append(self._round_score_value(score))
+
+        result_df = pd.DataFrame(data_dict)
+        result_df.columns = pd.MultiIndex.from_tuples(result_df.columns)
+
+        if include_reason:
+            reasons = self._generate_reasons(X_woe, sub_scores, n_reasons=3)
+            result_df[('评分分析', '评分原因')] = reasons
+
+        return result_df
+
+    def _generate_reasons(self, X_woe: pd.DataFrame, sub_scores: np.ndarray, n_reasons: int = 3) -> list:
+        """基于调整精度后的子分生成评分原因."""
+        feature_names = self.feature_names_
+        effect_diff = sub_scores - self._get_base_effect_values(feature_names)
+
+        reasons_list = []
+        for i in range(len(sub_scores)):
+            row_diff = effect_diff[i]
+            top_indices = np.argsort(np.abs(row_diff))[::-1][:n_reasons]
+
+            reasons = []
+            for idx in top_indices:
+                feature = feature_names[idx]
+                diff = row_diff[idx]
+                score = sub_scores[i, idx]
+
+                if diff < 0:
+                    reasons.append(
+                        f"{feature}拉低{self._format_score_text(abs(diff))}分(当前{self._format_score_text(score)}分)"
+                    )
+                else:
+                    reasons.append(
+                        f"{feature}提升{self._format_score_text(abs(diff))}分(当前{self._format_score_text(score)}分)"
+                    )
+
+            reasons_list.append('; '.join(reasons))
+
+        return reasons_list
+
+    def _get_deployment_base_score_and_sign(self) -> Tuple[float, float]:
+        """获取基于调整后评分卡的部署基础分和分数符号."""
+        return self._get_rounded_base_score(), 1.0
+
+    def _get_deployment_rules(self, decimal: int) -> Dict[str, List[Tuple[Any, float]]]:
+        """获取基于调整后评分卡的部署规则定义."""
+        deployment_rules: Dict[str, List[Tuple[Any, float]]] = {}
+        feature_types = getattr(self.binner, 'feature_types_', {}) if self.binner is not None else {}
+        cat_bins = getattr(self.binner, '_cat_bins_', {}) if self.binner is not None else {}
+
+        for feature in self.feature_names_:
+            rule = self.rules_.get(feature)
+            if not rule:
+                continue
+
+            descriptors = None
+            rounded_scores = self._get_rounded_rule_scores(rule, decimal=self.decimal)
+
+            if feature_types.get(feature) == 'categorical' and feature in cat_bins and len(cat_bins[feature]) == len(rounded_scores):
+                descriptors = cat_bins[feature]
+            elif rule.get('bin_labels') is not None and len(rule['bin_labels']) == len(rounded_scores):
+                descriptors = rule['bin_labels']
+            elif rule.get('bins') is not None and len(rule['bins']) == len(rounded_scores):
+                descriptors = rule['bins']
+
+            if descriptors is None:
+                continue
+
+            deployment_rules[feature] = [
+                (descriptor, float(score))
+                for descriptor, score in zip(descriptors, rounded_scores)
+            ]
+
+        return deployment_rules
+
+    def export(
+        self,
+        to_json: Optional[str] = None,
+        to_frame: bool = False,
+        decimal: Optional[int] = None,
+        include_meta: bool = False
+    ) -> Union[Dict, pd.DataFrame]:
+        """导出按调整后评分卡计算的规则定义."""
+        import json
+
+        check_is_fitted(self)
+        digits = self.decimal if decimal is None else decimal
+        points_df = self.scorecard_points(decimal=digits)
+
+        card = {}
+        for _, row in points_df.iterrows():
+            feature = row['变量名称']
+            bin_label = row['变量分箱']
+            score = self._round_score_value(row['对应分数'], digits)
+            card.setdefault(feature, {})[bin_label] = score
+
+        if include_meta:
+            card['__meta__'] = {
+                'direction': self.direction_,
+                'pdo': self.pdo,
+                'rate': self.rate,
+                'base_odds': self.base_odds,
+                'base_score': self.base_score,
+                'lower': self.lower,
+                'upper': self.upper,
+                'decimal': digits,
+                'rounded_scorecard': True,
+                'intercept_score': self._get_rounded_base_score(digits),
+            }
+
+        if to_json is not None:
+            dir_path = os.path.dirname(to_json)
+            if dir_path and not os.path.exists(dir_path):
+                os.makedirs(dir_path, exist_ok=True)
+            with open(to_json, 'w', encoding='utf-8') as f:
+                json.dump(card, f, ensure_ascii=False, indent=2)
+
+        if to_frame:
+            rows = []
+            for name, feature_rules in card.items():
+                if name == '__meta__':
+                    continue
+                for value, score in feature_rules.items():
+                    rows.append({'name': name, 'value': value, 'score': score})
+            return pd.DataFrame(rows)
+
+        return card
+

@@ -10,7 +10,8 @@
 - ScoreDriftCalibrator: 评分漂移校准
 """
 
-from .scorecard import ScoreCard
+from .scorecard import ScoreCard, RoundScoreCard
+
 from .score_transformer import (
     BaseScoreTransformer,
     StandardScoreTransformer,
@@ -23,6 +24,7 @@ from .score_drift import ScoreDriftCalibrator
 
 __all__ = [
     "ScoreCard",
+    "RoundScoreCard",
     "BaseScoreTransformer",
     "StandardScoreTransformer",
     "LinearScoreTransformer",

@@ -84,6 +84,9 @@ class OptimalBinning(BaseBinning):
     :param user_splits: 用户指定的切分点，支持:
         - Dict[str, List]: 每个特征的切分点，如 {'age': [25, 35, 45]}
         - Callable: 函数返回切分点
+    :param strict_user_splits: 是否强制使用用户指定的分箱，默认为False
+        - False: 允许根据数据范围过滤切分点，对切分点进行四舍五入
+        - True: 完全保留用户指定的切分点，不做任何修改
     :param prebinning: 预分箱方法，支持:
         - str: 预分箱方法名（所有VALID_METHODS中的方法都可作为预分箱方法）
         - BaseBinning: 预分箱器实例
@@ -140,6 +143,7 @@ class OptimalBinning(BaseBinning):
         monotonic: Union[bool, str] = False,
         missing_separate: bool = True,
         user_splits: Optional[Union[Dict[str, List], Callable]] = None,
+        strict_user_splits: bool = False,
         prebinning: Optional[Union[str, 'BaseBinning', Dict]] = None,
         prebinning_params: Optional[Dict] = None,
         special_codes: Optional[List] = None,
@@ -179,6 +183,7 @@ class OptimalBinning(BaseBinning):
 
         self.method = method
         self.user_splits = user_splits
+        self.strict_user_splits = strict_user_splits
         self.prebinning = prebinning
         # 保存原始 prebinning_params，不修改传入的参数（为了sklearn clone兼容）
         original_params = prebinning_params or {}
@@ -200,7 +205,7 @@ class OptimalBinning(BaseBinning):
         # 需要过滤的参数列表
         invalid_keys = [
             'prebinning', 'prebinning_params', 'prebinning_method',
-            'user_splits', 'method',
+            'user_splits', 'strict_user_splits', 'method',
             'lift_refine', 'lift_focus_weight', 'sample_stability_weight',
             'lift_refine_max_bins', 'monotonic_bonus_weight'
         ]
@@ -229,20 +234,37 @@ class OptimalBinning(BaseBinning):
         # 如果指定了 user_splits，优先使用
         if self.user_splits is not None:
             self._fit_with_user_splits(X, y)
+            # strict_user_splits=True 时，跳过所有后处理，完全保留用户指定的切分点
+            if not self.strict_user_splits:
+                # 统一后处理：围绕头尾Lift与样本稳定性微调切分点
+                # 默认开启，可通过 lift_refine=False 关闭
+                if self.kwargs.get('lift_refine', True) and self.method != 'uniform':
+                    self._refine_splits_for_lift_stability(X, y)
+
+                # 统一收口约束：确保不同方法都遵守单调性/最小箱/最大箱限制
+                self._apply_post_fit_constraints(X, y, enforce_monotonic=self.method != 'monotonic')
         elif self.prebinning is not None:
             # 使用预分箱
             self._fit_with_prebinning(X, y)
+
+            # 统一后处理：围绕头尾Lift与样本稳定性微调切分点
+            # 默认开启，可通过 lift_refine=False 关闭
+            if self.kwargs.get('lift_refine', True) and self.method != 'uniform':
+                self._refine_splits_for_lift_stability(X, y)
+
+            # 统一收口约束：确保不同方法都遵守单调性/最小箱/最大箱限制
+            self._apply_post_fit_constraints(X, y, enforce_monotonic=self.method != 'monotonic')
         else:
             # 使用指定方法
             self._fit_with_method(X, y)
 
-        # 统一后处理：围绕头尾Lift与样本稳定性微调切分点
-        # 默认开启，可通过 lift_refine=False 关闭
-        if self.kwargs.get('lift_refine', True) and self.method != 'uniform':
-            self._refine_splits_for_lift_stability(X, y)
+            # 统一后处理：围绕头尾Lift与样本稳定性微调切分点
+            # 默认开启，可通过 lift_refine=False 关闭
+            if self.kwargs.get('lift_refine', True) and self.method != 'uniform':
+                self._refine_splits_for_lift_stability(X, y)
 
-        # 统一收口约束：确保不同方法都遵守单调性/最小箱/最大箱限制
-        self._apply_post_fit_constraints(X, y, enforce_monotonic=self.method != 'monotonic')
+            # 统一收口约束：确保不同方法都遵守单调性/最小箱/最大箱限制
+            self._apply_post_fit_constraints(X, y, enforce_monotonic=self.method != 'monotonic')
 
         self._is_fitted = True
         return self
@@ -304,31 +326,50 @@ class OptimalBinning(BaseBinning):
                 splits = numeric_splits[~numeric_splits.isna()].to_numpy(dtype=float)
                 splits = np.unique(np.sort(splits))
 
-                # 确保切分点在数据范围内
-                x_non_missing = pd.to_numeric(X[feature], errors='coerce').dropna()
-                if len(x_non_missing) > 0:
-                    x_min, x_max = x_non_missing.min(), x_non_missing.max()
-                    splits = splits[(splits > x_min) & (splits < x_max)]
+                if self.strict_user_splits:
+                    # 强制模式：完全保留用户指定的切分点，不做任何修改
+                    self.splits_[feature] = splits
+                    self.n_bins_[feature] = len(self.splits_[feature]) + 1
                 else:
-                    splits = np.array([])
+                    # 非强制模式：确保切分点在数据范围内
+                    x_non_missing = pd.to_numeric(X[feature], errors='coerce').dropna()
+                    if len(x_non_missing) > 0:
+                        x_min, x_max = x_non_missing.min(), x_non_missing.max()
+                        splits = splits[(splits > x_min) & (splits < x_max)]
+                    else:
+                        splits = np.array([])
 
-                self.splits_[feature] = self._round_splits(splits)
-                self.n_bins_[feature] = len(self.splits_[feature]) + 1
+                    self.splits_[feature] = self._round_splits(splits)
+                    self.n_bins_[feature] = len(self.splits_[feature]) + 1
             else:
                 # 类别型特征
                 splits = list(splits)
-                
-                # 检查是否为List[List]格式
-                if len(splits) > 0 and isinstance(splits[0], list):
-                    # List[List]格式，保存到_cat_bins_
-                    self._cat_bins_[feature] = splits
-                    # splits_保存为List[List]格式（用于export_rules）
-                    self.splits_[feature] = splits
-                    self.n_bins_[feature] = len(splits)
+
+                if self.strict_user_splits:
+                    # 强制模式：完全保留用户指定的分箱，不做任何修改
+                    # 检查是否为List[List]格式
+                    if len(splits) > 0 and isinstance(splits[0], list):
+                        # List[List]格式，保存到_cat_bins_
+                        self._cat_bins_[feature] = splits
+                        self.splits_[feature] = splits
+                        self.n_bins_[feature] = len(splits)
+                    else:
+                        # 字符串格式（向后兼容）
+                        self.splits_[feature] = splits
+                        self.n_bins_[feature] = len(splits) + 1
                 else:
-                    # 字符串格式（向后兼容）
-                    self.splits_[feature] = splits
-                    self.n_bins_[feature] = len(splits) + 1
+                    # 非强制模式：保持原有逻辑
+                    # 检查是否为List[List]格式
+                    if len(splits) > 0 and isinstance(splits[0], list):
+                        # List[List]格式，保存到_cat_bins_
+                        self._cat_bins_[feature] = splits
+                        # splits_保存为List[List]格式（用于export_rules）
+                        self.splits_[feature] = splits
+                        self.n_bins_[feature] = len(splits)
+                    else:
+                        # 字符串格式（向后兼容）
+                        self.splits_[feature] = splits
+                        self.n_bins_[feature] = len(splits) + 1
 
             # 计算分箱统计
             bins = self._apply_bins(X[feature], self.splits_[feature], feature_type, feature)
@@ -1051,7 +1092,7 @@ class OptimalBinning(BaseBinning):
         
         # 安全地更新参数，过滤无效参数
         for k, v in self.kwargs.items():
-            if k not in ['prebinning', 'prebinning_params', 'prebinning_method', 'user_splits']:
+            if k not in ['prebinning', 'prebinning_params', 'prebinning_method', 'user_splits', 'strict_user_splits']:
                 base_params[k] = v
 
         # 需要 target 参数的方法
@@ -1076,7 +1117,7 @@ class OptimalBinning(BaseBinning):
         
         # 安全地更新参数
         for k, v in self.kwargs.items():
-            if k not in ['prebinning', 'prebinning_params', 'prebinning_method', 'user_splits']:
+            if k not in ['prebinning', 'prebinning_params', 'prebinning_method', 'user_splits', 'strict_user_splits']:
                 full_params[k] = v
 
         if self.method == 'uniform':
@@ -1148,7 +1189,7 @@ class OptimalBinning(BaseBinning):
                 'decimal': self.decimal,
             }
             for k, v in self.kwargs.items():
-                if k not in ['prebinning', 'prebinning_params', 'prebinning_method', 'user_splits', 'max_bin_size', 'cat_cutoff']:
+                if k not in ['prebinning', 'prebinning_params', 'prebinning_method', 'user_splits', 'strict_user_splits', 'max_bin_size', 'cat_cutoff']:
                     kernel_params[k] = v
             self._binner = KernelDensityBinning(**kernel_params)
         elif self.method == 'best_lift':

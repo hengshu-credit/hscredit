@@ -1644,6 +1644,96 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
         
         self._is_fitted = True
 
+    def update(
+        self,
+        splits_dict: Dict[str, Union[List, List[List]]],
+        X: Optional[Union[pd.DataFrame, np.ndarray]] = None,
+        y: Optional[Union[pd.Series, np.ndarray]] = None,
+    ) -> 'BaseBinning':
+        """手动更新特征的切分点并重新计算相关属性.
+
+        参考 toad.Combiner.update 方法，允许在分箱器训练完成后手工修改切分点。
+        更新后会自动重新计算 n_bins_、feature_types_、_cat_bins_ 等属性。
+        如果提供 X 和 y，还会重新计算 bin_tables_ 分箱统计表。
+
+        **参数**
+
+        :param splits_dict: 新的切分点字典，格式与 export_rules() 返回的相同
+            - 数值型: {'age': [25, 35, 45, 55]}
+            - 类别型: {'city': [['北京', '上海'], ['广州', '深圳'], [np.nan]]}
+        :param X: 可选，训练数据。如果提供，会重新计算分箱统计表
+        :param y: 可选，目标变量
+
+        **返回**
+
+        :return: self，支持链式调用
+
+        **参考样例**
+
+        >>> # 只更新切分点（不重新计算统计表）
+        >>> binner.update({'age': [20, 30, 40, 50]})
+        
+        >>> # 更新切分点并重新计算统计表
+        >>> binner.update({'age': [20, 30, 40, 50]}, X=X_train, y=y_train)
+        
+        >>> # 批量更新多个特征
+        >>> binner.update({
+        ...     'age': [20, 30, 40],
+        ...     'income': [5000, 10000, 20000],
+        ...     'city': [['北京', '上海'], ['广州', '深圳']]
+        ... })
+        
+        >>> # 链式调用
+        >>> binner.update({'age': [20, 30, 40]}).transform(X_test)
+        """
+        import numpy as np
+
+        # 检查分箱器是否已拟合
+        if not self._is_fitted:
+            raise NotFittedError("分箱器尚未拟合，请先调用 fit 方法")
+
+        # 处理数据（如果提供）
+        if X is not None:
+            X, y = self._check_input(X, y)
+
+        # 更新每个特征的切分点
+        for feature, new_splits in splits_dict.items():
+            # 判断特征类型并更新
+            if isinstance(new_splits, list) and len(new_splits) > 0 and isinstance(new_splits[0], list):
+                # 类别型变量：List[List] 格式
+                self._cat_bins_[feature] = new_splits
+                self.feature_types_[feature] = 'categorical'
+                self.splits_[feature] = new_splits
+                self.n_bins_[feature] = len(new_splits)
+            else:
+                # 数值型变量：切分点列表
+                numeric_splits = pd.to_numeric(pd.Series(list(new_splits)), errors='coerce')
+                clean = numeric_splits[numeric_splits.notna()].to_numpy(dtype=float)
+                self.splits_[feature] = self._round_splits(np.unique(np.sort(clean)))
+                self.feature_types_[feature] = 'numerical'
+                self.n_bins_[feature] = len(self.splits_[feature]) + 1
+                # 清除可能存在的旧类别型数据
+                if feature in self._cat_bins_:
+                    del self._cat_bins_[feature]
+
+            # 如果提供了 X 和 y，重新计算该特征的分箱统计表
+            if X is not None and y is not None and feature in X.columns:
+                feature_type = self.feature_types_[feature]
+                splits = self.splits_[feature]
+
+                # 对于类别型变量，优先使用 _cat_bins_
+                if feature_type == 'categorical' and feature in self._cat_bins_:
+                    bins = self._apply_bins(X[feature], self._cat_bins_[feature], feature_type, feature)
+                else:
+                    bins = self._apply_bins(X[feature], splits, feature_type, feature)
+
+                # 计算分箱统计
+                self.bin_tables_[feature] = self._compute_bin_stats(
+                    feature, X[feature], y, bins
+                )
+
+        return self
+
     def plot(
         self,
         feature: str,

@@ -258,6 +258,12 @@ class BaseEncoder(BaseEstimator, TransformerMixin, ABC):
         """
         return self.mapping_
 
+    def __contains__(self, feature: str) -> bool:
+        """检查特征是否在编码器中（支持 `feature in encoder` 语法）."""
+        if not hasattr(self, 'mapping_') or self.mapping_ is None:
+            return False
+        return feature in self.mapping_
+
     def __getitem__(self, feature: str):
         """通过 `encoder['feature']` 获取该特征的编码映射（toad/scorecardpipeline风格）."""
         if not hasattr(self, 'mapping_') or self.mapping_ is None or len(self.mapping_) == 0:

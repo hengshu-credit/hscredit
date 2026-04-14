@@ -62,7 +62,7 @@
 ...     base_odds=0.02,
 ...     base_score=600,
 ...     pdo=20,
-...     precision=0
+...     decimal=0
 ... )
 >>> transformer.fit(proba)  # 只传入概率值
 >>> credit_scores = transformer.predict(proba)  # 输出评分
@@ -73,7 +73,7 @@
 ...     lower=0,
 ...     upper=100,
 ...     direction='ascending',
-...     precision=0
+...     decimal=0
 ... )
 >>> fraud_transformer.fit(proba)  # 只传入概率值
 >>> fraud_scores = fraud_transformer.predict(proba)  # 输出评分
@@ -102,7 +102,7 @@ class BaseScoreTransformer(BaseEstimator, ABC):
         - 'descending': 概率越高分数越低(信用分)
         - 'ascending': 概率越高分数越高(欺诈分)
         - 'auto': 根据lower/upper自动判断
-    :param precision: 评分精度(小数位数)，默认0(整数)
+    :param decimal: 评分精度(小数位数)，默认0(整数)
     :param clip: 是否对超出范围的评分进行截断，默认True
     """
 
@@ -111,15 +111,17 @@ class BaseScoreTransformer(BaseEstimator, ABC):
         lower: Optional[float] = None,
         upper: Optional[float] = None,
         direction: Literal['descending', 'ascending', 'auto'] = 'auto',
-        precision: int = 0,
+        decimal: int = 0,
         clip: bool = True
     ):
         self.lower = lower
         self.upper = upper
         self.direction = direction
-        self.precision = precision
+        self.decimal = decimal
+        self.precision = decimal
         self.clip = clip
         self._is_fitted = False
+
 
     def _determine_direction(self) -> str:
         """确定评分方向.
@@ -161,7 +163,7 @@ class BaseScoreTransformer(BaseEstimator, ABC):
         :param scores: 原始评分
         :return: 四舍五入后的评分
         """
-        return np.round(scores, self.precision)
+        return np.round(scores, self.decimal)
 
     @abstractmethod
     def fit(
@@ -246,7 +248,7 @@ class StandardScoreTransformer(BaseScoreTransformer):
     :param rate: 倍率，默认2
         - odds增加的倍数
     :param step: score_odds_reference的步长，默认None(自动计算为pdo/10)
-    :param precision: 评分精度，默认0
+    :param decimal: 评分精度，默认0
     :param clip: 是否截断，默认True
 
     **示例**
@@ -280,10 +282,10 @@ class StandardScoreTransformer(BaseScoreTransformer):
         pdo: float = 20,
         rate: float = 2,
         step: Optional[int] = None,
-        precision: int = 0,
+        decimal: int = 0,
         clip: bool = True
     ):
-        super().__init__(lower, upper, direction, precision, clip)
+        super().__init__(lower, upper, direction, decimal, clip)
         self.base_odds = base_odds
         self.base_score = base_score
         self.pdo = pdo
@@ -519,7 +521,7 @@ class LinearScoreTransformer(BaseScoreTransformer):
     :param lower: 评分下界，默认0
     :param upper: 评分上界，默认100
     :param direction: 评分方向，默认'ascending'(欺诈分模式)
-    :param precision: 评分精度，默认0
+    :param decimal: 评分精度，默认0
     :param clip: 是否截断，默认True
 
     **转换公式**
@@ -547,10 +549,10 @@ class LinearScoreTransformer(BaseScoreTransformer):
         lower: Optional[float] = 0,
         upper: Optional[float] = 100,
         direction: Literal['descending', 'ascending', 'auto'] = 'ascending',
-        precision: int = 0,
+        decimal: int = 0,
         clip: bool = True
     ):
-        super().__init__(lower, upper, direction, precision, clip)
+        super().__init__(lower, upper, direction, decimal, clip)
 
     def fit(
         self,
@@ -629,7 +631,7 @@ class QuantileScoreTransformer(BaseScoreTransformer):
     :param upper: 评分上界，默认100
     :param direction: 评分方向，默认'ascending'(欺诈分模式)
     :param n_quantiles: 分位数数量，默认100
-    :param precision: 评分精度，默认0
+    :param decimal: 评分精度，默认0
     :param clip: 是否截断，默认True
 
     **转换原理**
@@ -659,10 +661,10 @@ class QuantileScoreTransformer(BaseScoreTransformer):
         upper: Optional[float] = 100,
         direction: Literal['descending', 'ascending', 'auto'] = 'ascending',
         n_quantiles: int = 100,
-        precision: int = 0,
+        decimal: int = 0,
         clip: bool = True
     ):
-        super().__init__(lower, upper, direction, precision, clip)
+        super().__init__(lower, upper, direction, decimal, clip)
         self.n_quantiles = n_quantiles
 
     def fit(
@@ -784,7 +786,7 @@ class BoxCoxScoreTransformer(BaseScoreTransformer):
         - 1.0: 线性变换（不推荐）
         - 内部经验: 信贷场景通常 λ ∈ [-0.5, 0.5]
     :param shift: odds 偏移量，防止 odds=0 时 Box-Cox 失败，默认1e-6
-    :param precision: 评分精度(小数位数)，默认0(整数)
+    :param decimal: 评分精度(小数位数)，默认0(整数)
     :param clip: 是否对超出范围的评分进行截断，默认True
 
     **示例**
@@ -819,10 +821,10 @@ class BoxCoxScoreTransformer(BaseScoreTransformer):
         direction: Literal['descending', 'ascending', 'auto'] = 'descending',
         lmbda: Optional[float] = None,
         shift: float = 1e-6,
-        precision: int = 0,
+        decimal: int = 0,
         clip: bool = True,
     ):
-        super().__init__(lower, upper, direction, precision, clip)
+        super().__init__(lower, upper, direction, decimal, clip)
         self.lmbda = lmbda
         self.shift = shift
 
@@ -996,7 +998,7 @@ class ScoreTransformer(BaseScoreTransformer):
     :param lower: 评分下界，默认None
     :param upper: 评分上界，默认None
     :param direction: 评分方向，默认'auto'
-    :param precision: 评分精度，默认0
+    :param decimal: 评分精度，默认0
     :param clip: 是否截断，默认True
     :param target: 目标列名，默认'target'
         - 用于从DataFrame中提取目标变量
@@ -1050,12 +1052,12 @@ class ScoreTransformer(BaseScoreTransformer):
         lower: Optional[float] = None,
         upper: Optional[float] = None,
         direction: Literal['descending', 'ascending', 'auto'] = 'auto',
-        precision: int = 0,
+        decimal: int = 0,
         clip: bool = True,
         target: str = 'target',
         **kwargs
     ):
-        super().__init__(lower, upper, direction, precision, clip)
+        super().__init__(lower, upper, direction, decimal, clip)
         self.method = method
         self.target = target
         self.transformer_params = kwargs
@@ -1076,7 +1078,7 @@ class ScoreTransformer(BaseScoreTransformer):
                 lower=self.lower,
                 upper=self.upper,
                 direction=self.direction,
-                precision=self.precision,
+                decimal=self.decimal,
                 clip=self.clip,
                 **self.transformer_params
             )
@@ -1085,7 +1087,7 @@ class ScoreTransformer(BaseScoreTransformer):
                 lower=self.lower,
                 upper=self.upper,
                 direction=self.direction,
-                precision=self.precision,
+                decimal=self.decimal,
                 clip=self.clip
             )
         elif self.method == 'quantile':
@@ -1093,7 +1095,7 @@ class ScoreTransformer(BaseScoreTransformer):
                 lower=self.lower,
                 upper=self.upper,
                 direction=self.direction,
-                precision=self.precision,
+                decimal=self.decimal,
                 clip=self.clip,
                 **self.transformer_params
             )
@@ -1102,7 +1104,7 @@ class ScoreTransformer(BaseScoreTransformer):
                 lower=self.lower,
                 upper=self.upper,
                 direction=self.direction,
-                precision=self.precision,
+                decimal=self.decimal,
                 clip=self.clip,
                 **self.transformer_params
             )
@@ -1146,7 +1148,7 @@ def transform_probability_to_score(
     lower: Optional[float] = None,
     upper: Optional[float] = None,
     direction: str = 'descending',
-    precision: int = 0,
+    decimal: int = 0,
     **kwargs
 ) -> np.ndarray:
     """便捷函数: 将概率转换为评分.
@@ -1159,7 +1161,7 @@ def transform_probability_to_score(
     :param lower: 评分下界，默认None
     :param upper: 评分上界，默认None
     :param direction: 评分方向，默认'descending'
-    :param precision: 评分精度，默认0
+    :param decimal: 评分精度，默认0
     :param kwargs: 其他参数
     :return: 评分数组
 
@@ -1213,7 +1215,7 @@ def transform_probability_to_score(
         scores = np.clip(scores, lower_val, upper_val)
 
     # 四舍五入
-    scores = np.round(scores, precision)
+    scores = np.round(scores, decimal)
 
     return scores
 

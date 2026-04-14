@@ -138,7 +138,8 @@ from .classical import (
 )
 
 # 导入评分卡 (scorecard/)
-from .scorecard import ScoreCard
+from .scorecard import ScoreCard, RoundScoreCard
+
 
 # 导入规则集分类模型 (rules/)
 from .rules import (
