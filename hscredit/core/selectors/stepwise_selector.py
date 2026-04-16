@@ -14,9 +14,9 @@
 >>> import pandas as pd
 >>> import numpy as np
 >>> np.random.seed(42)
->>> X = pd.DataFrame(np.random.randn(200, 5), columns=[f'f{i}' for i in range(5)])
->>> y = pd.Series(np.random.randint(0, 2, 200))
->>> selector = StepwiseSelector(estimator='logit', direction='both', criterion='aic')
+>>> X = pd.DataFrame(np.random.randn(200, 5), columns=[f'f{i}' for i in range(5)])  # 5个特征
+>>> y = pd.Series(np.random.randint(0, 2, 200))  # 目标变量
+>>> selector = StepwiseSelector(estimator='logit', direction='both', criterion='aic')  # 双向逐步选择
 >>> selector.fit(X, y)
 >>> print(selector.selected_features_)
 """

@@ -8,11 +8,11 @@
 >>> import pandas as pd
 >>> import numpy as np
 >>> X = pd.DataFrame({
-...     'a': [1, 2, np.nan, 4, 5],
-...     'b': [1, 2, 3, 4, 5],
-...     'c': [np.nan, np.nan, np.nan, np.nan, np.nan]
+...     'a': [1, 2, np.nan, 4, 5],     # 缺失率20%
+...     'b': [1, 2, 3, 4, 5],           # 无缺失
+...     'c': [np.nan, np.nan, np.nan, np.nan, np.nan]  # 全部缺失
 ... })
->>> selector = NullSelector(threshold=0.5)
+>>> selector = NullSelector(threshold=0.5)  # 移除缺失率>50%的特征
 >>> selector.fit(X)
 >>> print(selector.selected_features_)
 ['a', 'b']

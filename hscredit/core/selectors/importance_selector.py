@@ -9,10 +9,10 @@
 >>> import pandas as pd
 >>> import numpy as np
 >>> np.random.seed(42)
->>> X = pd.DataFrame(np.random.randn(100, 5), columns=[f'f{i}' for i in range(5)])
->>> y = np.random.randint(0, 2, 100)
+>>> X = pd.DataFrame(np.random.randn(100, 5), columns=[f'f{i}' for i in range(5)])  # 5个特征
+>>> y = np.random.randint(0, 2, 100)  # 目标变量
 >>> rf = RandomForestClassifier(n_estimators=100, random_state=42)
->>> selector = FeatureImportanceSelector(rf, threshold=0.1)
+>>> selector = FeatureImportanceSelector(rf, threshold=0.1)  # 保留重要性>0.1的特征
 >>> selector.fit(X, y)
 >>> print(selector.selected_features_)
 """

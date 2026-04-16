@@ -7,10 +7,10 @@
 >>> from hscredit.core.metrics import psi, psi_table, batch_psi, psi_rating
 >>> import numpy as np
 >>> np.random.seed(42)
->>> train = np.random.randn(1000)
->>> test = np.random.randn(1000) + 0.5  # 测试集分布偏移
->>> print(f"PSI={psi(train, test):.4f}")
->>> print(psi_rating(psi(train, test)))
+>>> train = np.random.randn(1000)  # 训练集分布（期望）
+>>> test = np.random.randn(1000) + 0.5  # 测试集分布偏移（实际）
+>>> print(f"PSI={psi(train, test):.4f}")  # PSI>0.25表示分布变化显著
+>>> print(psi_rating(psi(train, test)))  # 稳定性评级
 >>> print(psi_table(train, test).head())
 """
 
@@ -54,9 +54,9 @@ def psi(expected: Union[np.ndarray, pd.Series],
     >>> from hscredit.core.metrics import psi, psi_rating
     >>> import numpy as np
     >>> np.random.seed(42)
-    >>> train_scores = np.random.randn(1000)
-    >>> test_scores = np.random.randn(1000) + 0.3
-    >>> p = psi(train_scores, test_scores)
+    >>> train_scores = np.random.randn(1000)  # 训练集评分分布
+    >>> test_scores = np.random.randn(1000) + 0.3  # 测试集评分分布偏移
+    >>> p = psi(train_scores, test_scores)  # 计算PSI评估分布稳定性
     >>> print(f"PSI={p:.4f}, 评级: {psi_rating(p)}")
     """
     table = psi_table(expected, actual, method, max_n_bins, min_bin_size, **kwargs)

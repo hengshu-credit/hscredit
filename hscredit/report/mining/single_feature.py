@@ -69,14 +69,14 @@ class SingleFeatureRuleMiner(BaseRuleMiner):
     
     **参考样例**
 
-    >>> miner = SingleFeatureRuleMiner(target='ISBAD', method='quantile', max_n_bins=20)
+    >>> miner = SingleFeatureRuleMiner(target='ISBAD', method='quantile', max_n_bins=20)  # 等频分箱：每箱样本数大致相等
     >>> miner.fit(df)
-    >>> rules = miner.get_top_rules(top_n=10, metric='lift')
-    >>> miner = SingleFeatureRuleMiner(target='ISBAD', method='chi2', max_n_bins=10, chi2_threshold=3.841)
+    >>> rules = miner.get_top_rules(top_n=10, metric='lift')  # 获取TOP10规则，按LIFT降序
+    >>> miner = SingleFeatureRuleMiner(target='ISBAD', method='chi2', max_n_bins=10, chi2_threshold=3.841)  # 卡方分箱：相近坏率的箱自动合并
     >>> miner.fit(df)
-    >>> miner = SingleFeatureRuleMiner(target='ISBAD', method='optimal_iv', max_n_bins=5, monotonic=True)
+    >>> miner = SingleFeatureRuleMiner(target='ISBAD', method='optimal_iv', max_n_bins=5, monotonic=True)  # 最优IV分箱：自动选择IV最大且坏率单调的分箱方案
     >>> miner.fit(df)
-    >>> feature_rules = miner.analyze_feature('age', max_n_bins=10)
+    >>> feature_rules = miner.analyze_feature('age', max_n_bins=10)  # 分析单个特征的规则分布
     """
     
     # 支持的分箱方法映射

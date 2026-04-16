@@ -10,9 +10,9 @@
 >>> import pandas as pd
 >>> import numpy as np
 >>> np.random.seed(42)
->>> X = pd.DataFrame(np.abs(np.random.randn(1000, 5)), columns=[f'f{i}' for i in range(5)])
->>> y = pd.Series(np.random.randint(0, 2, 1000))
->>> selector = Chi2Selector(k=3)
+>>> X = pd.DataFrame(np.abs(np.random.randn(1000, 5)), columns=[f'f{i}' for i in range(5)])  # 非负特征（chi2要求）
+>>> y = pd.Series(np.random.randint(0, 2, 1000))  # 目标变量
+>>> selector = Chi2Selector(k=3)  # 选择得分最高的前3个特征
 >>> selector.fit(X, y)
 >>> print(selector.selected_features_)
 """

@@ -8,13 +8,13 @@
 >>> import pandas as pd
 >>> X = pd.DataFrame({
 ...     'a': [1, 2, 3, 4, 5],
-...     'b': [1, 2, 3, 4, 5],  # 与a完全相关
+...     'b': [1, 2, 3, 4, 5],  # 与a完全线性相关，VIF会很高
 ...     'c': [5, 4, 3, 2, 1]
 ... })
->>> selector = VIFSelector(threshold=4.0)
+>>> selector = VIFSelector(threshold=4.0)  # VIF>4表示存在多重共线性
 >>> selector.fit(X)
 >>> print(selector.selected_features_)
-['a', 'c']  # 或 ['b', 'c']，保留其中一个高相关特征
+['a', 'c']
 """
 
 from typing import Union, List, Optional

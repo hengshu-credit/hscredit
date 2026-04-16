@@ -11,8 +11,8 @@
 >>> from hscredit.core.metrics import ks, auc, gini, accuracy
 >>> import numpy as np
 >>> np.random.seed(42)
->>> y_true = np.random.randint(0, 2, 1000)
->>> y_prob = np.random.uniform(0, 1, 1000)
+>>> y_true = np.random.randint(0, 2, 1000)  # 模拟真实标签（0=好，1=坏）
+>>> y_prob = np.random.uniform(0, 1, 1000)  # 模拟模型预测概率
 >>> print(f"KS={ks(y_true, y_prob):.4f}, AUC={auc(y_true, y_prob):.4f}, Gini={gini(y_true, y_prob):.4f}")
 """
 
@@ -48,8 +48,8 @@ def ks(y_true: Union[np.ndarray, pd.Series],
     **参考样例**
 
     >>> from hscredit.core.metrics import ks
-    >>> y_true = [0, 0, 1, 1, 1, 0, 1, 0]
-    >>> y_prob = [0.1, 0.3, 0.7, 0.6, 0.8, 0.2, 0.9, 0.4]
+    >>> y_true = [0, 0, 1, 1, 1, 0, 1, 0]  # 真实标签序列
+    >>> y_prob = [0.1, 0.3, 0.7, 0.6, 0.8, 0.2, 0.9, 0.4]  # 预测概率（高分对应坏样本）
     >>> ks(y_true, y_prob)
     0.75
     """

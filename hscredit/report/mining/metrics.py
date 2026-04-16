@@ -33,8 +33,8 @@ class RuleMetrics:
 
     >>> from hscredit.core.rules.mining import RuleMetrics
     >>> metrics = RuleMetrics()
-    >>> result = metrics.evaluate_rule(rule, X_train, y_train, X_test, y_test)
-    >>> results = metrics.evaluate_rules(rules, X_train, y_train, X_test, y_test)
+    >>> result = metrics.evaluate_rule(rule, X_train, y_train, X_test, y_test)  # 单规则评估：返回KS/AUC/IV等指标
+    >>> results = metrics.evaluate_rules(rules, X_train, y_train, X_test, y_test)  # 批量规则评估：返回规则列表各自的指标
     """
     
     def __init__(self, target_positive: int = 1):

@@ -36,14 +36,14 @@ class MultiLabelRuleMiner(BaseRuleMiner):
     **参考样例**
 
     >>> miner = MultiLabelRuleMiner(
-    ...     labels=['mob3_30', 'mob6_30'],
+    ...     labels=['mob3_30', 'mob6_30'],  # 同时分析两个标签
     ...     label_names=['短期标签(MOB3@30)', '长期标签(MOB6@30)'],
-    ...     min_support=0.02,
-    ...     min_lift=1.5,
+    ...     min_support=0.02,   # 规则覆盖率>2%
+    ...     min_lift=1.5,      # LIFT值>1.5
     ... )
     >>> miner.fit(df, features=['age', 'income', 'credit_score'])
-    >>> rules = miner.get_rules(effectiveness='both')
-    >>> report = miner.get_effectiveness_matrix()
+    >>> rules = miner.get_rules(effectiveness='both')  # 获取两标签均有效的规则
+    >>> report = miner.get_effectiveness_matrix()  # 获取规则有效性矩阵
     """
 
     def __init__(

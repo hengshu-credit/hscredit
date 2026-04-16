@@ -57,11 +57,11 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
     
     **参考样例**
 
-    >>> miner = MultiFeatureRuleMiner(target='ISBAD', method='quantile', max_n_bins=5)
+    >>> miner = MultiFeatureRuleMiner(target='ISBAD', method='quantile', max_n_bins=5)  # 等频分箱：双特征交叉规则挖掘
     >>> miner.fit(df)
-    >>> cross_matrix = miner.generate_cross_matrix('age', 'income')
-    >>> rules = miner.get_cross_rules('age', 'income', top_n=10)
-    >>> miner = MultiFeatureRuleMiner(target='ISBAD', method='chi2', max_n_bins=4)
+    >>> cross_matrix = miner.generate_cross_matrix('age', 'income')  # 生成年龄×收入的交叉分箱矩阵
+    >>> rules = miner.get_cross_rules('age', 'income', top_n=10)  # 获取TOP10交叉规则，按LIFT排序
+    >>> miner = MultiFeatureRuleMiner(target='ISBAD', method='chi2', max_n_bins=4)  # 卡方分箱：自动合并坏率相近的交叉箱
     >>> miner.fit(df)
     """
     

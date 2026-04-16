@@ -6,8 +6,8 @@
 
 >>> from hscredit.core.selectors import VarianceSelector
 >>> import pandas as pd
->>> X = pd.DataFrame({'a': [1,2,3], 'b': [1,1,1], 'c': [1,2,3]})
->>> selector = VarianceSelector(threshold=0.1)
+>>> X = pd.DataFrame({'a': [1,2,3], 'b': [1,1,1], 'c': [1,2,3]})  # b为常量特征，方差为0
+>>> selector = VarianceSelector(threshold=0.1)  # 移除方差<0.1的特征
 >>> selector.fit(X)
 >>> print(selector.selected_features_)
 ['a', 'c']

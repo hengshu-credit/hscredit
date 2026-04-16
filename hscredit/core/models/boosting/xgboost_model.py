@@ -6,16 +6,17 @@
 pip install xgboost
 
 **参考样例**
+
 >>> from hscredit.core.models import XGBoostRiskModel
 >>> model = XGBoostRiskModel(
-...     max_depth=5,
-...     learning_rate=0.1,
-...     n_estimators=100,
-...     eval_metric=['auc', 'ks']
+...     max_depth=5,          # 树最大深度
+...     learning_rate=0.1,    # 学习率
+...     n_estimators=100,     # 树数量
+...     eval_metric=['auc', 'ks']  # 评估指标
 ... )
->>> model.fit(X_train, y_train)
->>> proba = model.predict_proba(X_test)
->>> report = model.generate_report(X_train, y_train, X_test, y_test)
+>>> model.fit(X_train, y_train)           # 训练模型
+>>> proba = model.predict_proba(X_test)    # 预测概率
+>>> report = model.generate_report(X_train, y_train, X_test, y_test)  # 生成评估报告
 """
 
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union

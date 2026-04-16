@@ -3,10 +3,11 @@
 提供RandomForest、ExtraTrees、GradientBoosting等模型的统一封装。
 
 **参考样例**
+
 >>> from hscredit.core.models import RandomForestRiskModel, GradientBoostingRiskModel
->>> model = RandomForestRiskModel(n_estimators=100, max_depth=10)
->>> model.fit(X_train, y_train)
->>> proba = model.predict_proba(X_test)
+>>> model = RandomForestRiskModel(n_estimators=100, max_depth=10)  # 随机森林模型
+>>> model.fit(X_train, y_train)  # 训练模型
+>>> proba = model.predict_proba(X_test)  # 预测概率
 """
 
 from typing import Any, Dict, List, Optional, Tuple, Union

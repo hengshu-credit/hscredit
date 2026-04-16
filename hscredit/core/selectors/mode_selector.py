@@ -7,11 +7,11 @@
 >>> from hscredit.core.selectors import ModeSelector
 >>> import pandas as pd
 >>> X = pd.DataFrame({
-...     'a': [1, 1, 1, 1, 2],
-...     'b': [1, 2, 3, 4, 5],
-...     'c': [1, 1, 1, 1, 1]
+...     'a': [1, 1, 1, 1, 2],    # 众数(1)占比80%
+...     'b': [1, 2, 3, 4, 5],    # 众数(1)占比20%
+...     'c': [1, 1, 1, 1, 1]     # 常量特征，众数占比100%
 ... })
->>> selector = ModeSelector(threshold=0.8)
+>>> selector = ModeSelector(threshold=0.8)  # 移除众数占比>80%的特征
 >>> selector.fit(X)
 >>> print(selector.selected_features_)
 ['a', 'b']

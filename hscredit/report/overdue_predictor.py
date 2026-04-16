@@ -89,20 +89,20 @@ class OverduePredictor(BaseEstimator, TransformerMixin):
     ...     'target': np.random.randint(0, 2, 1000)
     ... })
     >>>
-    >>> # 方式一：从原始数据拟合
+    >>> # 方式一：从原始数据拟合（自动分箱计算各箱逾期率）
     >>> predictor = OverduePredictor(feature='score', target='target', max_n_bins=5)
     >>> predictor.fit(train_df)
     >>>
-    >>> # 对无标签数据预测
+    >>> # 对无标签数据预测（根据样本所在分箱加权计算逾期率）
     >>> test_df = pd.DataFrame({'score': np.random.randn(200) * 100 + 500})
     >>> result = predictor.transform(test_df)
     >>> print(result.head())
     >>>
-    >>> # 设置调整系数
+    >>> # 设置调整系数（对逾期率进行整体缩放校正）
     >>> predictor.set_coefficients(1.1)
     >>> result_adjusted = predictor.transform(test_df)
     >>>
-    >>> # 方式二：从分箱表拟合
+    >>> # 方式二：从分箱表拟合（直接使用现成分箱逾期率，无需原始数据）
     >>> bin_table = pd.DataFrame({
     ...     '分箱标签': ['(-inf, 400]', '(400, 500]', '(500, 600]', '(600, +inf)'],
     ...     '坏样本率': [0.15, 0.08, 0.04, 0.02]
@@ -742,9 +742,9 @@ class OverduePredictor(BaseEstimator, TransformerMixin):
 
         **参考样例**
 
-        >>> predictor = OverduePredictor(feature='score', target='target')
-        >>> predictor.fit(train_df)
-        >>> report = predictor.get_report()
+        >>> predictor = OverduePredictor(feature='score', target='target')  # 初始化逾期率预估器
+        >>> predictor.fit(train_df)  # 拟合分箱表并计算各箱逾期率
+        >>> report = predictor.get_report()  # 获取分箱统计报告（含逾期率、样本数等）
         >>> print(report)
         """
         if not hasattr(self, 'bin_table_'):
@@ -813,7 +813,7 @@ class OverduePredictor(BaseEstimator, TransformerMixin):
 
         >>> predictor = OverduePredictor(feature='score', target='target')
         >>> predictor.fit(train_df)
-        >>> predicted_rates = predictor.predict(test_df)
+        >>> predicted_rates = predictor.predict(test_df)  # 直接返回逾期率Series（单标签）或字典（多标签）
         """
         result = self.transform(X)
 
@@ -875,19 +875,19 @@ def overdue_prediction_report(
 
     >>> from hscredit.report.overdue_estimator import overdue_estimation_report
     >>>
-    >>> # 方式一：从原始数据生成报告
+    >>> # 方式一：从原始数据生成报告（自动拟合+预估）
     >>> report = overdue_prediction_report(
     ...     train_df, feature='score', target='target',
     ...     predict_data=test_df, coefficients=1.1
     ... )
     >>>
-    >>> # 方式二：从分箱表生成报告
+    >>> # 方式二：从分箱表生成报告（复用现成分箱逾期率）
     >>> report = overdue_estimation_report(
     ...     bin_table, feature='score',
     ...     predict_data=test_df
     ... )
     >>>
-    >>> # 方式三：多标签场景
+    >>> # 方式三：多标签场景（同时预估MOB1/MOB3等多个时间窗口的逾期率）
     >>> report = overdue_estimation_report(
     ...     train_df, feature='score',
     ...     overdue='MOB1', dpds=[7, 15, 30],

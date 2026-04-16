@@ -11,11 +11,11 @@
 >>> import pandas as pd
 >>> import numpy as np
 >>> np.random.seed(42)
->>> X = pd.DataFrame(np.random.randn(200, 10), columns=[f'f{i}' for i in range(10)])
->>> y = np.random.randint(0, 2, 200)
+>>> X = pd.DataFrame(np.random.randn(200, 10), columns=[f'f{i}' for i in range(10)])  # 10个特征
+>>> y = np.random.randint(0, 2, 200)  # 目标变量
 >>> selector = RFESelector(
 ...     RandomForestClassifier(n_estimators=100, random_state=42),
-...     n_features_to_select=5
+...     n_features_to_select=5  # 递归消除至剩余5个特征
 ... )
 >>> selector.fit(X, y)
 >>> print(selector.selected_features_)

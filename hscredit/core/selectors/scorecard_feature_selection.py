@@ -10,13 +10,13 @@
 >>> import pandas as pd
 >>> import numpy as np
 >>> np.random.seed(42)
->>> X = pd.DataFrame(np.random.randn(1000, 10), columns=[f'f{i}' for i in range(10)])
->>> y = pd.Series(np.random.randint(0, 2, 1000))
+>>> X = pd.DataFrame(np.random.randn(1000, 10), columns=[f'f{i}' for i in range(10)])  # 10个特征
+>>> y = pd.Series(np.random.randint(0, 2, 1000))  # 目标变量
 >>> selector = ScorecardFeatureSelection(
-...     null_threshold=0.95,
-...     iv_threshold=0.02,
-...     corr_threshold=0.7,
-...     mode_threshold=0.95,
+...     null_threshold=0.95,  # 移除缺失率>95%的特征
+...     iv_threshold=0.02,    # 移除IV<0.02的特征
+...     corr_threshold=0.7,   # 移除相关性>0.7的特征
+...     mode_threshold=0.95,  # 移除众数占比>95%的特征
 ... )
 >>> selector.fit(X, y)
 >>> print(selector.selected_features_)

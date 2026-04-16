@@ -9,9 +9,9 @@
 >>> import pandas as pd
 >>> import numpy as np
 >>> np.random.seed(42)
->>> X = pd.DataFrame(np.random.randn(1000, 5), columns=[f'f{i}' for i in range(5)])
->>> y = pd.Series(np.random.randint(0, 2, 1000))
->>> selector = CorrSelector(threshold=0.7, metric='iv')
+>>> X = pd.DataFrame(np.random.randn(1000, 5), columns=[f'f{i}' for i in range(5)])  # 5个特征
+>>> y = pd.Series(np.random.randint(0, 2, 1000))  # 目标变量（用于IV计算）
+>>> selector = CorrSelector(threshold=0.7, metric='iv')  # 相关性>0.7时移除，保留IV更高的特征
 >>> selector.fit(X, y)
 >>> print(selector.selected_features_)
 """

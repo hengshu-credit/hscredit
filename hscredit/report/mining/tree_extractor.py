@@ -53,11 +53,11 @@ class TreeRuleExtractor(BaseRuleMiner):
     
     **参考样例**
 
-    >>> extractor = TreeRuleExtractor(algorithm='dt', max_depth=5)
+    >>> extractor = TreeRuleExtractor(algorithm='dt', max_depth=5)  # 决策树提取：从单棵树提取可解释规则
     >>> extractor.fit(df)
     >>> rules = extractor.extract_rules()
     >>> extractor = TreeRuleExtractor(
-    ...     algorithm='rf',
+    ...     algorithm='rf',  # 随机森林提取：多棵树投票，提取泛化性更好的规则
     ...     n_estimators=50,
     ...     max_depth=10,
     ...     class_weight='balanced',
@@ -67,11 +67,11 @@ class TreeRuleExtractor(BaseRuleMiner):
     >>> extractor.fit(X, y)
     >>> rules = extractor.extract_rules()
     >>> extractor = TreeRuleExtractor(
-    ...     algorithm='isf',
+    ...     algorithm='isf',  # 孤立森林异常检测：识别偏离正常模式的异常样本规则（无监督）
     ...     contamination=0.05,
     ...     max_samples=256
     ... )
-    >>> extractor.fit(X)
+    >>> extractor.fit(X)  # 无监督，不需要y
     >>> anomaly_rules = extractor.extract_rules()
     """
     

@@ -11,13 +11,13 @@
 >>> import pandas as pd
 >>> import numpy as np
 >>> np.random.seed(42)
->>> X = pd.DataFrame(np.random.randn(1000, 5), columns=[f'f{i}' for i in range(5)])
->>> y = pd.Series(np.random.randint(0, 2, 1000))
->>> oot_data = pd.DataFrame(np.random.randn(500, 5), columns=[f'f{i}' for i in range(5)])
+>>> X = pd.DataFrame(np.random.randn(1000, 5), columns=[f'f{i}' for i in range(5)])  # 训练集特征
+>>> y = pd.Series(np.random.randint(0, 2, 1000))  # 目标变量
+>>> oot_data = pd.DataFrame(np.random.randn(500, 5), columns=[f'f{i}' for i in range(5)])  # OOT验证集
 >>> selector = StabilityAwareSelector(
-...     iv_threshold=0.02,
-...     psi_threshold=0.25,
-...     oot_df=oot_data,
+...     iv_threshold=0.02,  # IV>0.02表示有预测能力
+...     psi_threshold=0.25,  # PSI>0.25表示分布不稳定
+...     oot_df=oot_data,    # 传入OOT数据计算PSI
 ... )
 >>> selector.fit(X, y)
 >>> print(selector.selected_features_)

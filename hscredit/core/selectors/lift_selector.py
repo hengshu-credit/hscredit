@@ -8,9 +8,9 @@
 >>> import pandas as pd
 >>> import numpy as np
 >>> np.random.seed(42)
->>> X = pd.DataFrame(np.random.randn(1000, 5), columns=[f'f{i}' for i in range(5)])
->>> y = pd.Series(np.random.randint(0, 2, 1000))
->>> selector = LiftSelector(threshold=0.5, ratio=0.10)
+>>> X = pd.DataFrame(np.random.randn(1000, 5), columns=[f'f{i}' for i in range(5)])  # 5个特征
+>>> y = pd.Series(np.random.randint(0, 2, 1000))  # 目标变量
+>>> selector = LiftSelector(threshold=0.5, ratio=0.10)  # 筛选LIFT>0.5且覆盖率10%的特征
 >>> selector.fit(X, y)
 >>> print(selector.selected_features_)
 """

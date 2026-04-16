@@ -7,10 +7,10 @@
 >>> from hscredit.core.metrics import iv, iv_table, chi2_test, cramers_v
 >>> import numpy as np
 >>> np.random.seed(42)
->>> y_true = np.random.randint(0, 2, 1000)
->>> feature = np.random.randn(1000)
->>> print(f"IV={iv(y_true, feature):.4f}")
->>> chi2, p = chi2_test(feature, y_true)
+>>> y_true = np.random.randint(0, 2, 1000)  # 模拟目标变量（0=好，1=坏）
+>>> feature = np.random.randn(1000)  # 模拟特征
+>>> print(f"IV={iv(y_true, feature):.4f}")  # IV>0.02表示有预测能力
+>>> chi2, p = chi2_test(feature, y_true)  # 卡方检验评估独立性
 >>> print(f"chi2={chi2:.4f}, p={p:.4f}")
 """
 

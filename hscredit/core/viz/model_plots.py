@@ -174,9 +174,9 @@ def plot_weights(summary, save=None, figsize=(15, 8), fontsize=14, colors=None, 
     ax.spines['right'].set_visible(False)
     
     # 设置标题和标签
-    ax.set_title("Regression Meta Analysis - Weight Plot\n", fontsize=fontsize, fontweight="bold")
-    ax.set_xlabel("Weight Estimates", fontsize=fontsize, weight="bold")
-    ax.set_ylabel("Variable", fontsize=fontsize, weight="bold")
+    ax.set_title("逻辑回归系数分析 - 权重图\n", fontsize=fontsize, fontweight="bold")
+    ax.set_xlabel("系数估计值", fontsize=fontsize, weight="bold")
+    ax.set_ylabel("特征变量", fontsize=fontsize, weight="bold")
     
     # 设置网格
     ax.grid(True, axis='x', alpha=0.3, linestyle='--')

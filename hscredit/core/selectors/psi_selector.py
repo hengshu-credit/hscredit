@@ -8,9 +8,9 @@
 >>> import pandas as pd
 >>> import numpy as np
 >>> np.random.seed(42)
->>> X = pd.DataFrame(np.random.randn(1000, 5), columns=[f'f{i}' for i in range(5)])
->>> y = pd.Series(np.random.randint(0, 2, 1000))
->>> selector = PSISelector(threshold=0.25, n_splits=5)
+>>> X = pd.DataFrame(np.random.randn(1000, 5), columns=[f'f{i}' for i in range(5)])  # 5个特征
+>>> y = pd.Series(np.random.randint(0, 2, 1000))  # 目标变量
+>>> selector = PSISelector(threshold=0.25, n_splits=5)  # 筛选PSI<0.25的稳定特征
 >>> selector.fit(X, y)
 >>> print(selector.selected_features_)
 """

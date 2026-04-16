@@ -12,13 +12,13 @@
 >>> import pandas as pd
 >>> import numpy as np
 >>> np.random.seed(42)
->>> X = pd.DataFrame(np.random.randn(200, 10), columns=[f'f{i}' for i in range(10)])
->>> y = np.random.randint(0, 2, 200)
+>>> X = pd.DataFrame(np.random.randn(200, 10), columns=[f'f{i}' for i in range(10)])  # 10个特征
+>>> y = np.random.randint(0, 2, 200)  # 目标变量
 >>> selector = SequentialFeatureSelector(
 ...     RandomForestClassifier(n_estimators=50, random_state=42),
-...     n_features_to_select=5,
-...     direction='forward',
-...     cv=3
+...     n_features_to_select=5,  # 选择5个最优特征
+...     direction='forward',    # 前向选择（从空集开始逐步加入）
+...     cv=3                     # 3折交叉验证评估
 ... )
 >>> selector.fit(X, y)
 >>> print(selector.selected_features_)

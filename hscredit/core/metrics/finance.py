@@ -7,10 +7,10 @@
 >>> from hscredit.core.metrics import lift, lift_at, badrate, rule_lift
 >>> import numpy as np
 >>> np.random.seed(42)
->>> y_true = np.random.randint(0, 2, 1000)
->>> y_prob = np.random.uniform(0, 1, 1000)
->>> print(f"Lift@0.5={lift(y_true, y_prob, 0.5):.4f}")
->>> print(f"Badrate={badrate(y_true):.4f}")
+>>> y_true = np.random.randint(0, 2, 1000)  # 模拟真实标签（0=好，1=坏）
+>>> y_prob = np.random.uniform(0, 1, 1000)  # 模拟模型预测概率
+>>> print(f"Lift@0.5={lift(y_true, y_prob, 0.5):.4f}")  # threshold=0.5时命中的LIFT值
+>>> print(f"Badrate={badrate(y_true):.4f}")  # 整体坏账率
 """
 
 import numpy as np
@@ -42,9 +42,9 @@ def lift(y_true: Union[np.ndarray, pd.Series],
     >>> from hscredit.core.metrics import lift
     >>> import numpy as np
     >>> np.random.seed(42)
-    >>> y_true = np.random.randint(0, 2, 1000)
-    >>> y_prob = np.random.uniform(0, 1, 1000)
-    >>> lift(y_true, y_prob, threshold=0.8)
+    >>> y_true = np.random.randint(0, 2, 1000)  # 真实标签（0=好，1=坏）
+    >>> y_prob = np.random.uniform(0, 1, 1000)  # 预测概率
+    >>> lift(y_true, y_prob, threshold=0.8)  # 高阈值命中高分样本，计算LIFT值
     1.5
     """
     y_true = np.asarray(y_true)

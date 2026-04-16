@@ -27,10 +27,10 @@ class NumExprDerive(BaseEstimator, TransformerMixin):
     ...     "f3": [2.1, 1.4, -6.2]
     ... })
     >>> fd = NumExprDerive(derivings=[
-    ...     ("f4", "where(f1>1, 0, 1)"),
-    ...     ("f5", "f1+f2"),
-    ...     ("f6", "sin(f1)"),
-    ...     ("f7", "abs(f3)")
+    ...     ("f4", "where(f1>1, 0, 1)"),  # 条件表达式
+    ...     ("f5", "f1+f2"),              # 加法运算
+    ...     ("f6", "sin(f1)"),            # 三角函数
+    ...     ("f7", "abs(f3)")             # 绝对值
     ... ])
     >>> fd.fit_transform(X)
     """

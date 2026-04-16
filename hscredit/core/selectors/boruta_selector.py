@@ -9,10 +9,10 @@
 >>> import pandas as pd
 >>> import numpy as np
 >>> np.random.seed(42)
->>> X = pd.DataFrame(np.random.randn(200, 10), columns=[f'f{i}' for i in range(10)])
->>> y = np.random.randint(0, 2, 200)
+>>> X = pd.DataFrame(np.random.randn(200, 10), columns=[f'f{i}' for i in range(10)])  # 10个特征
+>>> y = np.random.randint(0, 2, 200)  # 目标变量
 >>> selector = BorutaSelector(
-...     RandomForestClassifier(n_estimators=50, n_jobs=-1, random_state=42)
+...     RandomForestClassifier(n_estimators=50, n_jobs=-1, random_state=42)  # Boruta需传入基模型
 ... )
 >>> selector.fit(X, y)
 >>> print(selector.selected_features_)
