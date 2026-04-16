@@ -2,20 +2,32 @@
 
 提供多种特征筛选方法，从多个维度评估和筛选特征。
 
-核心特性:
+**筛选方法分类**
+
 - 过滤法: 方差、相关性、VIF、缺失率、单一值率、基数、IV、Lift、PSI
 - 包装法: 穷举搜索、逐步回归、Boruta
 - 嵌入法: 特征重要性、Lasso、树模型重要性、Permutation Importance
 
-所有筛选器支持:
-- 独立使用: fit/transform接口
-- Pipeline集成
+**通用特性**
+
+- 独立使用: fit/transform 接口
+- sklearn Pipeline 集成
 - 统一的中文筛选报告
 
-筛选报告包含:
-- 选择的特征列表
-- 被剔除的特征及原因
-- 筛选得分统计
+**参考样例**
+
+>>> from hscredit.core.selectors import VarianceSelector, IVSelector, CorrSelector
+>>> from hscredit.core.selectors.base import SelectionReportCollector
+>>> import pandas as pd
+>>> import numpy as np
+>>> np.random.seed(42)
+>>> X = pd.DataFrame(np.random.randn(1000, 10), columns=[f'f{i}' for i in range(10)])
+>>> y = pd.Series(np.random.randint(0, 2, 1000))
+>>> selector = VarianceSelector(threshold=0.01)
+>>> selector.fit(X, y)
+VarianceSelector(...)
+>>> report = selector.get_selection_report()
+>>> print(f"输入特征数: {report['输入特征数']}, 选中特征数: {report['选中特征数']}")
 """
 
 from typing import Union, List, Dict, Optional, Any, Callable

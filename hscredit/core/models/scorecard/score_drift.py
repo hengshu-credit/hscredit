@@ -40,7 +40,7 @@
 - pandas
 - scipy
 
-**示例**
+**参考样例**
 
 >>> from hscredit.core.models import XGBoostRiskModel
 >>> from hscredit.core.models.score_drift import ScoreDriftCalibrator
@@ -199,7 +199,7 @@ class BaseDriftCalibrator(BaseEstimator, ABC):
         :param proba: 直接传入概率
         :return: 校准后的评分数组
 
-        **示例**
+        **参考样例**
 
         >>> # 通过特征矩阵预测
         >>> scores_calib = calibrator.predict_score(X_test)
@@ -330,7 +330,7 @@ class LinearDriftCalibrator(BaseDriftCalibrator):
     :param target_std: 目标标准差，默认None(使用参考分布标准差)
     :param clip_bounds: 是否限制边界，默认True
 
-    **示例**
+    **参考样例**
 
     >>> calibrator = LinearDriftCalibrator()
     >>> calibrator.fit(model, X_production, X_reference=X_train)
@@ -459,7 +459,7 @@ class QuantileAligner(BaseDriftCalibrator):
     :param interpolation: 插值方法，默认'linear'
     :param clip_bounds: 是否限制边界，默认True
 
-    **示例**
+    **参考样例**
 
     >>> calibrator = QuantileAligner(n_quantiles=100)
     >>> calibrator.fit(model, X_production, X_reference=X_train)
@@ -582,7 +582,7 @@ class BinningRecalibrator(BaseDriftCalibrator):
         - 'uniform': 等宽分箱
     :param clip_bounds: 是否限制边界，默认True
 
-    **示例**
+    **参考样例**
 
     >>> calibrator = BinningRecalibrator(n_bins=10)
     >>> calibrator.fit(model, X_production, y_production, X_reference=X_train, y_reference=y_train)
@@ -794,7 +794,7 @@ class ScoreDriftCalibrator(BaseDriftCalibrator):
     >>> calibrator = ScoreDriftCalibrator(method='binning', n_bins=10)
     >>> calibrator.fit(model, X_production, y_production, X_reference=X_train, y_reference=y_train)
 
-    **示例**
+    **参考样例**
 
     **sklearn风格**
     >>> calibrator = ScoreDriftCalibrator(method='linear')
@@ -925,7 +925,7 @@ def plot_drift_comparison(
     :param colors: 颜色列表，默认使用hscredit配色 ["#2639E9", "#F76E6C", "#FE7715"]
     :return: matplotlib Figure对象
 
-    **示例**
+    **参考样例**
 
     >>> calibrator = ScoreDriftCalibrator(method='linear')
     >>> calibrator.fit(model, X_production, X_reference=X_train)
@@ -1026,7 +1026,7 @@ def compare_drift_methods(
     :param colors: 颜色列表，默认使用hscredit配色 ["#2639E9", "#F76E6C", "#FE7715"]
     :return: matplotlib Figure对象
 
-    **示例**
+    **参考样例**
 
     >>> fig = compare_drift_methods(model, X_train, X_production)
     >>> fig.savefig('drift_methods_comparison.png')

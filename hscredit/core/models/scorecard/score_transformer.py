@@ -193,10 +193,10 @@ class BaseScoreTransformer(BaseEstimator, ABC):
         :param proba: 预测概率(正类概率)
         :return: 评分数组
 
-        **示例**
+        **参考样例**
 
-        >>> proba = model.predict_proba(X_test)[:, 1]  # 从模型获取概率
-        >>> scores = transformer.predict(proba)  # 转换为评分
+        >>> proba = model.predict_proba(X_test)[:, 1]
+        >>> scores = transformer.predict(proba)
         """
         check_is_fitted(self)
 
@@ -251,7 +251,7 @@ class StandardScoreTransformer(BaseScoreTransformer):
     :param decimal: 评分精度，默认0
     :param clip: 是否截断，默认True
 
-    **示例**
+    **参考样例**
 
     >>> # 从模型获取概率值
     >>> proba = model.predict_proba(X_train)[:, 1]
@@ -259,14 +259,15 @@ class StandardScoreTransformer(BaseScoreTransformer):
     >>> transformer = StandardScoreTransformer(
     ...     lower=300,
     ...     upper=1000,
-    ...     direction='descending',  # 信用分
+    ...     direction='descending',
     ...     base_odds=0.02,
     ...     base_score=600,
     ...     pdo=20,
     ...     rate=2,
-    ...     step=5  # 自定义步长
+    ...     step=5
     ... )
-    >>> transformer.fit(proba)  # 只传入概率值
+    >>> transformer.fit(proba)
+    >>> scores = transformer.transform(proba)
     >>> scores = transformer.predict(proba_test)  # 输出评分
     >>> # 查看评分与odds对应关系
     >>> ref = transformer.score_odds_reference
@@ -529,7 +530,7 @@ class LinearScoreTransformer(BaseScoreTransformer):
     - descending(信用分): Score = upper - (upper - lower) × P
     - ascending(欺诈分): Score = lower + (upper - lower) × P
 
-    **示例**
+    **参考样例**
 
     >>> # 从模型获取概率值
     >>> proba = model.predict_proba(X_train)[:, 1]
@@ -540,8 +541,8 @@ class LinearScoreTransformer(BaseScoreTransformer):
     ...     upper=100,
     ...     direction='ascending'
     ... )
-    >>> transformer.fit(proba)  # 只传入概率值
-    >>> scores = transformer.predict(proba_test)  # 输出评分
+    >>> transformer.fit(proba)
+    >>> scores = transformer.predict(proba_test)
     """
 
     def __init__(
@@ -640,7 +641,7 @@ class QuantileScoreTransformer(BaseScoreTransformer):
     2. 将概率映射到对应的分位数
     3. 将分位数线性映射到评分区间
 
-    **示例**
+    **参考样例**
 
     >>> # 从模型获取概率值
     >>> proba = model.predict_proba(X_train)[:, 1]
@@ -651,8 +652,8 @@ class QuantileScoreTransformer(BaseScoreTransformer):
     ...     direction='ascending',
     ...     n_quantiles=100
     ... )
-    >>> transformer.fit(proba)  # 只传入概率值，学习概率分布
-    >>> scores = transformer.predict(proba_test)  # 输出评分
+    >>> transformer.fit(proba)
+    >>> scores = transformer.predict(proba_test)
     """
 
     def __init__(
@@ -789,12 +790,11 @@ class BoxCoxScoreTransformer(BaseScoreTransformer):
     :param decimal: 评分精度(小数位数)，默认0(整数)
     :param clip: 是否对超出范围的评分进行截断，默认True
 
-    **示例**
+    **参考样例**
 
     >>> import numpy as np
     >>> from hscredit.core.models.scorecard.score_transformer import BoxCoxScoreTransformer
     >>>
-    >>> # 从模型获取概率值
     >>> proba = model.predict_proba(X_train)[:, 1]
     >>>
     >>> # 自动估计 λ（推荐）
@@ -1165,7 +1165,7 @@ def transform_probability_to_score(
     :param kwargs: 其他参数
     :return: 评分数组
 
-    **示例**
+    **参考样例**
 
     >>> scores = transform_probability_to_score(
     ...     proba,
@@ -1246,11 +1246,11 @@ def plot_score_transformation_curve(
     :param colors: 颜色列表，默认使用hscredit配色 ["#2639E9", "#F76E6C", "#FE7715"]
     :return: matplotlib Figure对象
 
-    **示例**
+    **参考样例**
 
-    >>> proba = model.predict_proba(X_train)[:, 1]  # 从模型获取概率
+    >>> proba = model.predict_proba(X_train)[:, 1]
     >>> transformer = ScoreTransformer(method='standard')
-    >>> transformer.fit(proba)  # 只传入概率值
+    >>> transformer.fit(proba)
     >>> fig = plot_score_transformation_curve(transformer)
     >>> fig.savefig('transformation_curve.png')
     """
@@ -1331,9 +1331,9 @@ def compare_score_transformers(
     :param colors: 颜色列表，默认使用hscredit配色 ["#2639E9", "#F76E6C", "#FE7715"]
     :return: matplotlib Figure对象
 
-    **示例**
+    **参考样例**
 
-    >>> proba = model.predict_proba(X_test)[:, 1]  # 从模型获取概率
+    >>> proba = model.predict_proba(X_test)[:, 1]
     >>> fig = compare_score_transformers(proba)
     >>> fig.savefig('transformer_comparison.png')
     """

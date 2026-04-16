@@ -43,22 +43,22 @@ class TargetBadRateBinning(BaseBinning):
     :param special_codes: 特殊值列表，默认为None
     :param decimal: 切分点小数点保留精度，默认为4
 
-    **示例**
+    **参考样例**
 
-    严格边界模式::
+    严格边界模式:
 
-        >>> # 指定坏样本率边界：5%, 10%, 20%
-        >>> binner = TargetBadRateBinning(
-        ...     target_bad_rates=[0.05, 0.10, 0.20],
-        ...     strict_mode=True
-        ... )
-        >>> # 结果：4个分箱，坏样本率分别在 <=5%, 5%-10%, 10%-20%, >20%
+    >>> # 指定坏样本率边界：5%, 10%, 20%
+    >>> binner = TargetBadRateBinning(
+    ...     target_bad_rates=[0.05, 0.10, 0.20],
+    ...     strict_mode=True
+    ... )
+    >>> # 结果：4个分箱，坏样本率分别在 <=5%, 5%-10%, 10%-20%, >20%
 
-    自动模式::
+    自动模式:
 
-        >>> # 自动寻找最优划分
-        >>> binner = TargetBadRateBinning(max_n_bins=5)
-        >>> # 结果：5个分箱，每箱间坏样本率差异最大
+    >>> # 自动寻找最优划分
+    >>> binner = TargetBadRateBinning(max_n_bins=5)
+    >>> # 结果：5个分箱，每箱间坏样本率差异最大
     """
 
     def __init__(

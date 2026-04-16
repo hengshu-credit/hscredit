@@ -1,6 +1,14 @@
 """规则引擎.
 
 提供规则定义、评估和规则挖掘功能。
+
+**参考样例**
+
+>>> from hscredit.core.rules import Rule, get_columns_from_query, get_rule_columns
+>>> rule1 = Rule("age > 18", name="成年规则")
+>>> rule2 = Rule("income > 5000", name="高收入规则")
+>>> cols = get_columns_from_query("age > 18 and income < 5000")
+>>> print(cols)
 """
 
 import ast
@@ -20,12 +28,20 @@ from ...exceptions import FeatureNotFoundError, InputTypeError, StateError
 def get_columns_from_query(query_str: str) -> List[str]:
     """获取 pandas query 语句使用的列。
 
-    :param query_str: pandas query 支持的查询语句
-    :return: query 语句使用的列名列表
+    解析 query 语法树，提取其中涉及的全部列名，返回去重排序后的列表。
 
-    示例:
-        >>> get_columns_from_query("age > 18 and income < 5000")
-        ['age', 'income']
+    **参数**
+
+    :param query_str: pandas query 支持的查询语句，如 "age > 18 and income < 5000"
+    :return: query 语句使用的列名列表（去重后按字母排序）
+
+    **参考样例**
+
+    >>> from hscredit.core.rules import get_columns_from_query
+    >>> get_columns_from_query("age > 18 and income < 5000")
+    ['age', 'income']
+    >>> get_columns_from_query("salary >= 3000 & age.between(20, 60)")
+    ['age', 'salary']
     """
     tree = ast.parse(query_str, mode='eval')
     columns = set()
@@ -65,35 +81,49 @@ class RuleUnAppliedError(RuleStateError):
 class Rule:
     """规则类。
 
-    支持使用 pandas eval 语法的规则定义和评估。
+    支持使用 pandas eval 语法的规则定义和评估，支持 &（与）、|（或）、
+    ~（非）、^（异或）等运算符组合多个规则为复合规则。
+
+    **属性**
 
     :param expr: 规则表达式字符串
     :param name: 规则名称，用于标识和展示，默认为None（使用表达式作为名称）
     :param description: 规则描述，默认为空字符串
     :param weight: 规则权重，用于规则集分类器，默认为1.0
+    :ivar feature_names_in_: 从表达式中解析出的特征名列表
+    :ivar result_: 最近一次 predict 的结果 Series
+    :ivar _state: 当前规则状态（initialized/applied）
 
-    示例:
-        >>> from hscredit.core.rules import Rule
-        >>> rule1 = Rule("age > 18", name="成年规则", description="判断用户是否成年")
-        >>> rule2 = Rule("income > 5000", name="高收入规则")
-        >>> # 规则组合
-        >>> combined = rule1 & rule2
-        >>> # 应用规则
-        >>> result = combined.predict(df)
+    **参考样例**
+
+    >>> from hscredit.core.rules import Rule
+    >>> import pandas as pd
+    >>> df = pd.DataFrame({'age': [20, 30, 40], 'income': [3000, 8000, 12000]})
+    >>> rule1 = Rule("age > 18", name="成年规则", description="判断用户是否成年")
+    >>> rule2 = Rule("income > 5000", name="高收入规则")
+    >>> # 规则组合
+    >>> combined = rule1 & rule2
+    >>> # 应用规则
+    >>> result = combined.predict(df)
+    >>> print(result)
     """
 
     def __init__(
-        self, 
+        self,
         expr: str,
         name: Optional[str] = None,
         description: str = "",
         weight: float = 1.0
     ):
-        """
-        :param expr: 规则表达式字符串，支持 pandas eval 语法
-        :param name: 规则名称
-        :param description: 规则描述
-        :param weight: 规则权重
+        """初始化规则。
+
+        **参数**
+
+        :param expr: 规则表达式字符串，支持 pandas eval 语法，
+            如 "age > 18 and income < 5000"
+        :param name: 规则名称，用于标识和展示，默认为None（使用表达式作为名称）
+        :param description: 规则描述，默认为空字符串
+        :param weight: 规则权重，用于规则集分类器，默认为1.0
         """
         self._state = RuleState.INITIALIZED
         self.expr = expr
@@ -174,8 +204,22 @@ class Rule:
     def predict(self, X: DataFrame) -> pd.Series:
         """应用规则进行预测。
 
-        :param X: 输入数据 DataFrame
-        :return: 规则匹配结果 Series (bool 类型)
+        使用 pandas eval 对 DataFrame 执行规则表达式，返回命中的布尔 Series。
+
+        **参数**
+
+        :param X: 输入数据 DataFrame（必须包含规则表达式中引用的全部列）
+        :return: 规则匹配结果 Series（布尔类型，True表示命中）
+        :raises InputTypeError: X 不是 DataFrame 时
+        :raises FeatureNotFoundError: X 缺少规则表达式所需的列时
+
+        **参考样例**
+
+        >>> from hscredit.core.rules import Rule
+        >>> import pandas as pd
+        >>> df = pd.DataFrame({'age': [20, 30, 40], 'income': [3000, 8000, 12000]})
+        >>> rule = Rule("age > 25 and income > 5000")
+        >>> rule.predict(df)
         """
         if not isinstance(X, DataFrame):
             raise InputTypeError("Rule can only predict on DataFrame.")
@@ -192,7 +236,22 @@ class Rule:
         return result
 
     def result(self):
-        """获取规则预测结果。"""
+        """获取规则预测结果。
+
+        返回最近一次调用 predict() 的结果。必须先调用 predict() 才能使用此方法。
+
+        :return: 最近一次预测的布尔 Series
+        :raises RuleUnAppliedError: 尚未调用 predict() 时
+
+        **参考样例**
+
+        >>> from hscredit.core.rules import Rule
+        >>> import pandas as pd
+        >>> df = pd.DataFrame({'age': [20, 30, 40]})
+        >>> rule = Rule("age > 25")
+        >>> rule.predict(df)
+        >>> rule.result()
+        """
         if self._state != RuleState.APPLIED:
             raise RuleUnAppliedError("规则尚未应用，请先调用 predict()")
         return self.result_
@@ -200,8 +259,22 @@ class Rule:
     def filter(self, X: DataFrame) -> DataFrame:
         """根据规则过滤数据。
 
+        应用规则后返回满足条件（命中）的数据子集。
+
+        **参数**
+
         :param X: 输入数据 DataFrame
-        :return: 满足规则的数据子集
+        :return: 满足规则的数据子集 DataFrame
+        :raises InputTypeError: X 不是 DataFrame 时
+        :raises FeatureNotFoundError: X 缺少规则表达式所需的列时
+
+        **参考样例**
+
+        >>> from hscredit.core.rules import Rule
+        >>> import pandas as pd
+        >>> df = pd.DataFrame({'age': [20, 30, 40], 'name': ['A', 'B', 'C']})
+        >>> rule = Rule("age > 25")
+        >>> rule.filter(df)
         """
         prediction = self.predict(X)
         return X[prediction]
@@ -222,21 +295,45 @@ class Rule:
     ) -> pd.DataFrame:
         """规则效果报告表格输出。
 
-        参考 scorecardpipeline 的实现方式，使用 feature_bin_stats 进行统计分析。
-        规则只有命中和未命中两种状态，不需要复杂的分箱器。
+        将规则命中与否作为二分类，对数据集计算统计指标，
+        包括样本数、坏账率、LIFT值、风险拒绝比、精确率、召回率、F1分数等。
+        支持金额口径分析与多标签（不同逾期天数定义）联合输出。
 
-        :param datasets: 数据集，需要包含目标变量或逾期天数
-        :param target: 目标变量名称，默认 target
-        :param desc: 规则相关的描述
-        :param filter_cols: 指定返回的字段列表
-        :param prior_rules: 先验规则
-        :param overdue: 逾期天数字段名称
-        :param dpds: 逾期定义方式，逾期天数 > DPD 为 1
-        :param del_grey: 是否删除逾期天数 (0, DPD] 的数据
-        :param amount: 金额字段名称
-        :param margins: 是否添加合计行
-        :return: pd.DataFrame，规则效果评估表。
-                 单标签时返回单层列结构，多标签时返回多层列结构（MultiIndex）
+        **参数**
+
+        :param datasets: 数据集 DataFrame，需要包含目标变量列或逾期天数列
+        :param target: 目标变量列名，默认为"target"，0=好样本，1=坏样本
+        :param overdue: 逾期天数字段名（可选，传入时以逾期天数>DPD定义坏样本，
+            支持多标签多DPD联合分析）
+        :param dpds: 逾期定义方式，逾期天数 > DPD 为坏样本，默认为0；
+            传入列表时支持多DPD联合分析
+        :param del_grey: 是否删除逾期天数在(0, DPD]区间内的灰度样本，默认为False
+        :param desc: 规则描述，用于报告的"指标含义"列，默认为空字符串
+        :param filter_cols: 指定返回的字段列表（可选）
+        :param prior_rules: 先验规则（可选），先对数据应用先验规则排除部分样本，
+            再对当前规则进行评估
+        :param amount: 金额字段名（可选），传入时以金额口径而非样本数口径进行统计
+        :param margins: 是否在报告末尾添加合计行，默认为False
+        :return: 规则效果评估表DataFrame。
+            单标签时返回单层列结构，多标签时返回多层列结构（MultiIndex）；
+            列包括：规则分类、指标名称、指标含义、分箱、样本总数、样本占比、
+            好样本数、好样本占比、坏样本数、坏样本占比、坏账率、LIFT值、
+            坏账改善、风险拒绝比、准确率、精确率、召回率、F1分数
+        :raises FeatureNotFoundError: 数据集缺少规则表达式所需的列时
+        :raises KeyError: overdue字段在数据集中不存在时
+
+        **参考样例**
+
+        >>> from hscredit.core.rules import Rule
+        >>> import pandas as pd
+        >>> df = pd.DataFrame({
+        ...     'age': [20, 30, 40, 50],
+        ...     'income': [3000, 8000, 12000, 5000],
+        ...     'target': [0, 1, 1, 0]
+        ... })
+        >>> rule = Rule("age > 25 and income > 5000")
+        >>> report = rule.report(df, target='target')
+        >>> print(report)
         """
         detail_group_name = "分箱详情"
         return_cols = ['指标名称', '指标含义', '分箱', '样本总数', '样本占比', '好样本数',
@@ -540,11 +637,24 @@ class Rule:
              excel_params: dict = None) -> "ExcelWriter":
         """保存规则报告到 Excel。
 
-        :param report: 规则报告 DataFrame
-        :param excel_writer: Excel 文件路径或 ExcelWriter 对象
-        :param sheet_name: 工作表名称
-        :param excel_params: 额外的 pandas Excel 写入参数
+        **参数**
+
+        :param report: 规则报告 DataFrame（由 report() 方法生成）
+        :param excel_writer: Excel 文件路径（字符串）或 ExcelWriter 对象；
+            传入路径时会自动创建并写入后关闭，传入对象时追加写入不关闭
+        :param sheet_name: 工作表名称，默认为None（使用默认名称Sheet1）
+        :param excel_params: 额外的 pandas to_excel 写入参数（可选）
         :return: ExcelWriter 对象
+        :raises TypeError: excel_writer 类型不正确时
+
+        **参考样例**
+
+        >>> from hscredit.core.rules import Rule
+        >>> import pandas as pd
+        >>> df = pd.DataFrame({'age': [20, 30], 'income': [3000, 8000], 'target': [0, 1]})
+        >>> rule = Rule("age > 25")
+        >>> report = rule.report(df)
+        >>> writer = Rule.save(report, "rule_report.xlsx", sheet_name="规则报告")
         """
         from ..report import ExcelWriter
 
@@ -570,11 +680,17 @@ class Rule:
 def get_rule_columns(rule_expr: str) -> List[str]:
     """从规则表达式中提取列名。
 
-    :param rule_expr: 规则表达式字符串
-    :return: 列名列表
+    封装 get_columns_from_query，提供更直观的函数名称。
 
-    示例:
-        >>> get_rule_columns("age > 18 and income < 5000")
-        ['age', 'income']
+    **参数**
+
+    :param rule_expr: 规则表达式字符串，如 "age > 18 and income < 5000"
+    :return: 规则表达式中引用的列名列表（去重后按字母排序）
+
+    **参考样例**
+
+    >>> from hscredit.core.rules import get_rule_columns
+    >>> get_rule_columns("age > 18 and income < 5000")
+    ['age', 'income']
     """
     return get_columns_from_query(rule_expr)

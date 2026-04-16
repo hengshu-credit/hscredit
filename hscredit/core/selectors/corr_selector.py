@@ -2,6 +2,18 @@
 
 移除与其它特征高度相关的特征，保留指标值更优的特征。
 参考 scorecardpipeline / toad 的相关性筛选逻辑。
+
+**参考样例**
+
+>>> from hscredit.core.selectors import CorrSelector
+>>> import pandas as pd
+>>> import numpy as np
+>>> np.random.seed(42)
+>>> X = pd.DataFrame(np.random.randn(1000, 5), columns=[f'f{i}' for i in range(5)])
+>>> y = pd.Series(np.random.randint(0, 2, 1000))
+>>> selector = CorrSelector(threshold=0.7, metric='iv')
+>>> selector.fit(X, y)
+>>> print(selector.selected_features_)
 """
 
 from typing import Union, List, Optional, Dict, Any
@@ -52,33 +64,28 @@ class CorrSelector(BaseFeatureSelector):
         - prebinning: 预分箱方法
         等等，详见 OptimalBinning 文档。
 
-    **示例**
+    **参考样例**
 
-    基于 IV 的相关性筛选（推荐）::
-
-        >>> from hscredit.core.selectors import CorrSelector
-        >>> selector = CorrSelector(threshold=0.7, metric='iv')
-        >>> selector.fit(X, y)
-        >>> print(selector.selected_features_)
-
-    基于 KS 的相关性筛选::
-
-        >>> selector = CorrSelector(threshold=0.7, metric='ks')
-        >>> selector.fit(X, y)
-
-    自定义分箱参数::
-
-        >>> selector = CorrSelector(
-        ...     threshold=0.7,
-        ...     metric='iv',
-        ...     binning_params={'method': 'cart', 'max_n_bins': 8}
-        ... )
-        >>> selector.fit(X, y)
-
-    使用自定义权重（不做分箱）::
-
-        >>> selector = CorrSelector(threshold=0.7, weights=iv_series)
-        >>> selector.fit(X)
+    >>> from hscredit.core.selectors import CorrSelector
+    >>> selector = CorrSelector(threshold=0.7, metric='iv')
+    >>> selector.fit(X, y)
+    >>> print(selector.selected_features_)
+    >>>
+    >>> # 基于 KS 的相关性筛选
+    >>> selector = CorrSelector(threshold=0.7, metric='ks')
+    >>> selector.fit(X, y)
+    >>>
+    >>> # 自定义分箱参数
+    >>> selector = CorrSelector(
+    ...     threshold=0.7,
+    ...     metric='iv',
+    ...     binning_params={'method': 'cart', 'max_n_bins': 8}
+    ... )
+    >>> selector.fit(X, y)
+    >>>
+    >>> # 使用自定义权重（不做分箱）
+    >>> selector = CorrSelector(threshold=0.7, weights=iv_series)
+    >>> selector.fit(X)
     """
 
     def __init__(

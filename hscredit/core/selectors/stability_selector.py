@@ -4,6 +4,23 @@
 
 同时考虑特征有效性（IV/KS）和稳定性（PSI），通过综合评分筛选特征，
 避免选出区分力强但分布不稳定的特征。
+
+**参考样例**
+
+>>> from hscredit.core.selectors import StabilityAwareSelector
+>>> import pandas as pd
+>>> import numpy as np
+>>> np.random.seed(42)
+>>> X = pd.DataFrame(np.random.randn(1000, 5), columns=[f'f{i}' for i in range(5)])
+>>> y = pd.Series(np.random.randint(0, 2, 1000))
+>>> oot_data = pd.DataFrame(np.random.randn(500, 5), columns=[f'f{i}' for i in range(5)])
+>>> selector = StabilityAwareSelector(
+...     iv_threshold=0.02,
+...     psi_threshold=0.25,
+...     oot_df=oot_data,
+... )
+>>> selector.fit(X, y)
+>>> print(selector.selected_features_)
 """
 
 from typing import Union, List, Optional
@@ -98,16 +115,22 @@ class StabilityAwareSelector(BaseFeatureSelector):
     :param target: 目标变量列名（当通过DataFrame入参时使用）
     :param n_jobs: 并行数
 
-    示例::
+    **参考样例**
 
-        >>> selector = StabilityAwareSelector(
-        ...     iv_threshold=0.02,
-        ...     psi_threshold=0.25,
-        ...     oot_df=oot_data,
-        ... )
-        >>> selector.fit(train_df, y_train)
-        >>> X_selected = selector.transform(train_df)
-        >>> print(selector.get_detail())
+    >>> from hscredit.core.selectors import StabilityAwareSelector
+    >>> import pandas as pd
+    >>> import numpy as np
+    >>> np.random.seed(42)
+    >>> X = pd.DataFrame(np.random.randn(1000, 5), columns=[f'f{i}' for i in range(5)])
+    >>> y = pd.Series(np.random.randint(0, 2, 1000))
+    >>> oot_data = pd.DataFrame(np.random.randn(500, 5), columns=[f'f{i}' for i in range(5)])
+    >>> selector = StabilityAwareSelector(
+    ...     iv_threshold=0.02,
+    ...     psi_threshold=0.25,
+    ...     oot_df=oot_data,
+    ... )
+    >>> selector.fit(X, y)
+    >>> print(selector.selected_features_)
     """
 
     def __init__(

@@ -2,13 +2,16 @@
 
 提供评估特征预测能力和质量的指标。
 
-主要指标:
-- iv: Information Value，衡量特征的预测能力
-- iv_table: IV详细统计表
-- chi2_test: 卡方独立性检验
-- cramers_v: Cramer's V关联强度
-- feature_importance: 基于树模型的特征重要性
-- bin_stats: 分箱统计计算
+**参考样例**
+
+>>> from hscredit.core.metrics import iv, iv_table, chi2_test, cramers_v
+>>> import numpy as np
+>>> np.random.seed(42)
+>>> y_true = np.random.randint(0, 2, 1000)
+>>> feature = np.random.randn(1000)
+>>> print(f"IV={iv(y_true, feature):.4f}")
+>>> chi2, p = chi2_test(feature, y_true)
+>>> print(f"chi2={chi2:.4f}, p={p:.4f}")
 """
 
 import numpy as np
@@ -33,19 +36,35 @@ def iv(y_true: Union[np.ndarray, pd.Series],
     IV用于衡量特征的预测能力，值越大表示特征的区分能力越强。
 
     IV分级标准:
-    - IV < 0.02: 无预测能力
+
+    - IV < 0.02: 无预测能力，应剔除
     - 0.02 <= IV < 0.1: 弱预测能力
     - 0.1 <= IV < 0.3: 中等预测能力
     - 0.3 <= IV < 0.5: 强预测能力
-    - IV >= 0.5: 极强预测能力
+    - IV >= 0.5: 极强预测能力，但需警惕过拟合
 
-    :param y_true: 目标变量 (0/1)
-    :param feature: 特征变量
-    :param method: 分箱方法，默认'quantile'
-    :param max_n_bins: 最大分箱数，默认10
-    :param min_bin_size: 每箱最小样本占比，默认0.01
+    **参数**
+
+    :param y_true: 目标变量 (0/1)，0为负样本（好样本），1为正样本（坏样本）
+    :param feature: 特征变量（支持数值型和分类型，自动处理缺失值）
+    :param method: 分箱方法，默认为'quantile'（等频分箱），
+        支持与OptimalBinning相同的全部分箱方法
+    :param max_n_bins: 最大分箱数，默认为10
+    :param min_bin_size: 每箱最小样本占比，默认为0.01
     :param kwargs: 其他传递给OptimalBinning的参数
     :return: IV值
+    :raises ValueError: 数据全部为缺失值或y_true非二值时
+    :raises ValueError: y_true和feature长度不一致时
+
+    **参考样例**
+
+    >>> from hscredit.core.metrics import iv
+    >>> import numpy as np
+    >>> np.random.seed(42)
+    >>> y = np.random.randint(0, 2, 1000)
+    >>> x = np.random.randn(1000) + y * 0.5   # 与目标有一定关联的特征
+    >>> iv(y, x)
+    0.15
     """
     table = iv_table(y_true, feature, method, max_n_bins, min_bin_size, **kwargs)
     return table['分档IV值'].sum()
@@ -59,13 +78,29 @@ def iv_table(y_true: Union[np.ndarray, pd.Series],
              **kwargs) -> pd.DataFrame:
     """计算IV详细统计表.
 
-    :param y_true: 目标变量 (0/1)
-    :param feature: 特征变量
-    :param method: 分箱方法，默认'quantile'
-    :param max_n_bins: 最大分箱数，默认10
-    :param min_bin_size: 每箱最小样本占比，默认0.01
+    对特征进行分箱后，计算每箱的好坏样本数、占比、WOE、IV贡献等详细指标。
+
+    **参数**
+
+    :param y_true: 目标变量 (0/1)，0为负样本（好样本），1为正样本（坏样本）
+    :param feature: 特征变量（支持数值型和分类型，自动处理缺失值）
+    :param method: 分箱方法，默认为'quantile'（等频分箱）
+    :param max_n_bins: 最大分箱数，默认为10
+    :param min_bin_size: 每箱最小样本占比，默认为0.01
     :param kwargs: 其他传递给OptimalBinning的参数
-    :return: IV统计表
+    :return: 包含各分箱详细统计的DataFrame，列包括：分箱标签、样本数、坏样本数、好样本数、
+        坏样本率、好样本率、WOE值、分档IV值、累积IV值等
+    :raises ValueError: 数据全部为缺失值时
+
+    **参考样例**
+
+    >>> from hscredit.core.metrics import iv_table
+    >>> import numpy as np
+    >>> np.random.seed(42)
+    >>> y = np.random.randint(0, 2, 1000)
+    >>> x = np.random.randn(1000) + y * 0.5
+    >>> table = iv_table(y, x, max_n_bins=5)
+    >>> print(table[['分箱标签', '样本数', '坏样本率', '分档IV值']])
     """
     y_true = np.asarray(y_true)
     feature = np.asarray(feature)
@@ -107,11 +142,28 @@ def iv_table(y_true: Union[np.ndarray, pd.Series],
 
 def chi2_test(x: Union[np.ndarray, pd.Series],
               y: Union[np.ndarray, pd.Series]) -> Tuple[float, float]:
-    """计算卡方独立性检验.
+    """计算卡方独立性检验 (Chi-Square Test).
 
-    :param x: 特征变量（可以是分类或数值，数值会自动分箱）
+    检验特征变量与目标变量之间是否存在统计学显著的关联关系。
+
+    **参数**
+
+    :param x: 特征变量（可以是分类或数值型，数值型会自动进行等频分箱）
     :param y: 目标变量 (0/1)
-    :return: (卡方统计量, p值)
+    :return: 二元组 (卡方统计量, p值)
+        - 卡方统计量: 值越大表示偏离独立假设越远
+        - p值: 小于显著性水平（通常0.05）时拒绝独立假设
+    :raises ValueError: x和y长度不一致时
+
+    **参考样例**
+
+    >>> from hscredit.core.metrics import chi2_test
+    >>> import numpy as np
+    >>> np.random.seed(42)
+    >>> y = np.random.randint(0, 2, 1000)
+    >>> x = np.random.randn(1000)
+    >>> chi2, p = chi2_test(x, y)
+    >>> print(f"chi2={chi2:.4f}, p={p:.4f}")
     """
     x = np.asarray(x)
     y = np.asarray(y)
@@ -134,13 +186,31 @@ def chi2_test(x: Union[np.ndarray, pd.Series],
 
 def cramers_v(x: Union[np.ndarray, pd.Series],
               y: Union[np.ndarray, pd.Series]) -> float:
-    """计算Cramer's V关联强度.
+    """计算Cramer's V关联强度 (Cramér's V).
 
-    Cramer's V是卡方检验的效应量，范围0-1，值越大表示关联越强。
+    Cramer's V是卡方检验的效应量，衡量两个分类变量之间的关联强度，
+    取值范围0-1，值越大表示关联越强。
 
-    :param x: 特征变量
-    :param y: 目标变量
-    :return: Cramer's V值
+    **参数**
+
+    :param x: 特征变量（数值型会自动分箱为10个区间）
+    :param y: 目标变量 (0/1)
+    :return: Cramer's V值，取值范围[0, 1]
+        - 0: 完全独立
+        - 0.1: 弱关联
+        - 0.3: 中等关联
+        - 0.5+: 强关联
+    :raises ValueError: x和y长度不一致时
+
+    **参考样例**
+
+    >>> from hscredit.core.metrics import cramers_v
+    >>> import numpy as np
+    >>> np.random.seed(42)
+    >>> y = np.random.randint(0, 2, 1000)
+    >>> x = np.random.randn(1000)
+    >>> cramers_v(x, y)
+    0.05
     """
     x = np.asarray(x)
     y = np.asarray(y)
@@ -173,13 +243,29 @@ def feature_importance(X: Union[pd.DataFrame, np.ndarray],
                        **kwargs) -> pd.Series:
     """计算特征重要性.
 
-    使用树模型计算特征重要性。
+    使用树模型基于特征对目标变量的分裂增益计算特征重要性。
 
-    :param X: 特征矩阵
-    :param y: 目标变量
-    :param method: 计算方法，'gini'或'entropy'
-    :param kwargs: 其他传递给模型的参数
-    :return: 特征重要性得分
+    **参数**
+
+    :param X: 特征矩阵（DataFrame或numpy数组，DataFrame时使用列名作为索引名）
+    :param y: 目标变量 (0/1)
+    :param method: 计算方法
+        - 'gini': 使用决策树（max_depth=3）基于基尼重要性计算，默认为此值
+        - 'entropy': 使用随机森林（默认100棵树，max_depth=3）基于信息熵计算
+    :param kwargs: 其他传递给模型的参数（如n_estimators、max_depth等）
+    :return: 特征重要性Series，索引为特征名（DataFrame输入时）或feature_0, feature_1...，
+        值为重要性得分（归一化和为1）
+
+    **参考样例**
+
+    >>> from hscredit.core.metrics import feature_importance
+    >>> import pandas as pd
+    >>> import numpy as np
+    >>> np.random.seed(42)
+    >>> X = pd.DataFrame({f'f{i}': np.random.randn(500) for i in range(5)})
+    >>> y = np.random.randint(0, 2, 500)
+    >>> importance = feature_importance(X, y, method='gini')
+    >>> print(importance.sort_values(ascending=False))
     """
     if isinstance(X, pd.DataFrame):
         feature_names = X.columns
@@ -209,9 +295,29 @@ def feature_summary(feature: Union[np.ndarray, pd.Series],
                    y: Optional[Union[np.ndarray, pd.Series]] = None) -> pd.DataFrame:
     """计算特征描述统计.
 
-    :param feature: 特征变量
-    :param y: 目标变量（可选），如果提供会计算目标关系统计
-    :return: 描述统计DataFrame
+    提供特征的完整描述性统计信息，包括样本量、缺失情况、分布特征，
+    以及（当提供目标变量时）IV值和目标关联统计。
+
+    **参数**
+
+    :param feature: 特征变量（支持数值型和分类型）
+    :param y: 目标变量（可选，0/1。如果提供则计算IV和目标关联统计）
+    :return: 单行DataFrame，包含以下列（数值型特征额外包含均值、标准差、最小最大值、中位数）：
+        - 样本数: 特征总样本数
+        - 缺失数: 缺失值数量
+        - 缺失率: 缺失值占比
+        - 唯一值数: 不同取值的数量
+        - 均值/标准差/最小值/最大值/中位数: （仅数值型特征）
+        - IV: （仅当y不为None时）
+
+    **参考样例**
+
+    >>> from hscredit.core.metrics import feature_summary
+    >>> import numpy as np
+    >>> feature = np.random.randn(1000)
+    >>> print(feature_summary(feature))
+    >>> y = np.random.randint(0, 2, 1000)
+    >>> print(feature_summary(feature, y))
     """
     feature = np.asarray(feature)
 

@@ -1,12 +1,17 @@
 """稳定性指标计算.
 
-提供评估模型稳定性和分布变化的指标.
+提供评估模型稳定性和分布变化的指标。
 
-主要指标:
-- psi: Population Stability Index，评估总体分布稳定性
-- csi: Characteristic Stability Index，评估特征分布稳定性
-- psi_rating: PSI稳定性评级
-- batch_psi: 批量计算多特征PSI
+**参考样例**
+
+>>> from hscredit.core.metrics import psi, psi_table, batch_psi, psi_rating
+>>> import numpy as np
+>>> np.random.seed(42)
+>>> train = np.random.randn(1000)
+>>> test = np.random.randn(1000) + 0.5  # 测试集分布偏移
+>>> print(f"PSI={psi(train, test):.4f}")
+>>> print(psi_rating(psi(train, test)))
+>>> print(psi_table(train, test).head())
 """
 
 import numpy as np
@@ -23,23 +28,36 @@ def psi(expected: Union[np.ndarray, pd.Series],
         max_n_bins: int = 10,
         min_bin_size: float = 0.01,
         **kwargs) -> float:
-    """计算Population Stability Index (PSI).
+    """计算Population Stability Index (群体稳定性指标).
 
     PSI用于衡量两个分布之间的差异，评估模型或特征的稳定性。
-    PSI值越小表示分布越稳定。
+    值越小表示两个分布越接近，模型越稳定。
 
     PSI分级标准:
-    - PSI < 0.1: 没有显著变化
-    - 0.1 <= PSI < 0.25: 有轻微变化
-    - PSI >= 0.25: 有显著变化
 
-    :param expected: 期望分布数据 (通常是训练集或基准数据)
-    :param actual: 实际分布数据 (通常是测试集或新数据)
-    :param method: 分箱方法，默认'quantile'
-    :param max_n_bins: 最大分箱数，默认10
-    :param min_bin_size: 每箱最小样本占比，默认0.01
+    - PSI < 0.1: 没有显著变化，分布稳定
+    - 0.1 <= PSI < 0.25: 有轻微变化，需关注
+    - PSI >= 0.25: 有显著变化，模型可能需要重新训练
+
+    **参数**
+
+    :param expected: 期望分布数据（通常是训练集或基准数据的特征/评分）
+    :param actual: 实际分布数据（通常是测试集或新上线数据的特征/评分）
+    :param method: 分箱方法，默认为'quantile'（等频分箱）
+    :param max_n_bins: 最大分箱数，默认为10
+    :param min_bin_size: 每箱最小样本占比，默认为0.01
     :param kwargs: 其他传递给OptimalBinning的参数
     :return: PSI值
+
+    **参考样例**
+
+    >>> from hscredit.core.metrics import psi, psi_rating
+    >>> import numpy as np
+    >>> np.random.seed(42)
+    >>> train_scores = np.random.randn(1000)
+    >>> test_scores = np.random.randn(1000) + 0.3
+    >>> p = psi(train_scores, test_scores)
+    >>> print(f"PSI={p:.4f}, 评级: {psi_rating(p)}")
     """
     table = psi_table(expected, actual, method, max_n_bins, min_bin_size, **kwargs)
     return table['PSI贡献'].sum()
@@ -53,13 +71,33 @@ def psi_table(expected: Union[np.ndarray, pd.Series],
               **kwargs) -> pd.DataFrame:
     """计算PSI详细统计表.
 
-    :param expected: 期望分布数据
-    :param actual: 实际分布数据
-    :param method: 分箱方法，默认'quantile'
-    :param max_n_bins: 最大分箱数，默认10
-    :param min_bin_size: 每箱最小样本占比，默认0.01
+    返回每个分箱的期望占比、实际占比及PSI贡献，用于分析分布变化的具体来源。
+
+    **参数**
+
+    :param expected: 期望分布数据（通常是训练集或基准数据）
+    :param actual: 实际分布数据（通常是测试集或新数据）
+    :param method: 分箱方法，默认为'quantile'（等频分箱）
+    :param max_n_bins: 最大分箱数，默认为10
+    :param min_bin_size: 每箱最小样本占比，默认为0.01
     :param kwargs: 其他传递给OptimalBinning的参数
-    :return: PSI统计表
+    :return: 包含各分箱详细统计的DataFrame，列包括：
+        - 分箱: 分箱标签
+        - 期望样本数: 该分箱内期望数据量
+        - 实际样本数: 该分箱内实际数据量
+        - 期望占比: 期望样本占总样本比例
+        - 实际占比: 实际样本占总样本比例
+        - PSI贡献: 该分箱对总PSI的贡献
+
+    **参考样例**
+
+    >>> from hscredit.core.metrics import psi_table
+    >>> import numpy as np
+    >>> np.random.seed(42)
+    >>> train = np.random.randn(1000)
+    >>> test = np.random.randn(1000) + 0.5
+    >>> table = psi_table(train, test)
+    >>> print(table)
     """
     expected = np.asarray(expected)
     actual = np.asarray(actual)
@@ -139,8 +177,21 @@ def psi_table(expected: Union[np.ndarray, pd.Series],
 def psi_rating(psi_value: float) -> str:
     """根据PSI值返回稳定性评级.
 
-    :param psi_value: PSI值
-    :return: 稳定性评级描述
+    **参数**
+
+    :param psi_value: PSI值（通常由psi()函数计算得到）
+    :return: 稳定性评级描述字符串
+        - PSI < 0.1: "没有显著变化 (PSI < 0.1)"
+        - 0.1 <= PSI < 0.25: "有轻微变化 (0.1 <= PSI < 0.25)"
+        - PSI >= 0.25: "有显著变化 (PSI >= 0.25)"
+
+    **参考样例**
+
+    >>> from hscredit.core.metrics import psi_rating
+    >>> psi_rating(0.05)
+    '没有显著变化 (PSI < 0.1)'
+    >>> psi_rating(0.3)
+    '有显著变化 (PSI >= 0.25)'
     """
     if psi_value < 0.1:
         return "没有显著变化 (PSI < 0.1)"
@@ -156,17 +207,31 @@ def csi(expected: Union[np.ndarray, pd.Series],
         max_n_bins: int = 10,
         min_bin_size: float = 0.01,
         **kwargs) -> float:
-    """计算Characteristic Stability Index (CSI).
+    """计算Characteristic Stability Index (特征稳定性指标).
 
-    CSI是PSI的变体，用于衡量特征分布的稳定性。
+    CSI是PSI的变体，专门用于衡量单个特征分布的稳定性。
+    与PSI的区别在于CSI通常针对单一特征，而非模型评分。
 
-    :param expected: 期望分布数据
-    :param actual: 实际分布数据
-    :param method: 分箱方法，默认'quantile'
-    :param max_n_bins: 最大分箱数，默认10
-    :param min_bin_size: 每箱最小样本占比，默认0.01
+    **参数**
+
+    :param expected: 期望分布数据（通常是训练集的特征数据）
+    :param actual: 实际分布数据（通常是测试集或新数据的特征）
+    :param method: 分箱方法，默认为'quantile'（等频分箱）
+    :param max_n_bins: 最大分箱数，默认为10
+    :param min_bin_size: 每箱最小样本占比，默认为0.01
     :param kwargs: 其他传递给OptimalBinning的参数
-    :return: CSI值
+    :return: CSI值（计算方法与PSI相同）
+    :raises ValueError: 数据为空时
+
+    **参考样例**
+
+    >>> from hscredit.core.metrics import csi
+    >>> import numpy as np
+    >>> np.random.seed(42)
+    >>> train = np.random.randn(1000)
+    >>> test = np.random.randn(1000) + 0.5
+    >>> csi(train, test)
+    0.34
     """
     return psi(expected, actual, method, max_n_bins, min_bin_size, **kwargs)
 
@@ -179,13 +244,25 @@ def csi_table(expected: Union[np.ndarray, pd.Series],
               **kwargs) -> pd.DataFrame:
     """计算CSI详细统计表.
 
-    :param expected: 期望分布数据
-    :param actual: 实际分布数据
-    :param method: 分箱方法，默认'quantile'
-    :param max_n_bins: 最大分箱数，默认10
-    :param min_bin_size: 每箱最小样本占比，默认0.01
+    **参数**
+
+    :param expected: 期望分布数据（通常是训练集的特征数据）
+    :param actual: 实际分布数据（通常是测试集或新数据的特征）
+    :param method: 分箱方法，默认为'quantile'（等频分箱）
+    :param max_n_bins: 最大分箱数，默认为10
+    :param min_bin_size: 每箱最小样本占比，默认为0.01
     :param kwargs: 其他传递给OptimalBinning的参数
-    :return: CSI统计表
+    :return: 包含各分箱详细统计的DataFrame，列与psi_table相同，PSI贡献列重命名为CSI贡献
+
+    **参考样例**
+
+    >>> from hscredit.core.metrics import csi_table
+    >>> import numpy as np
+    >>> np.random.seed(42)
+    >>> train = np.random.randn(1000)
+    >>> test = np.random.randn(1000) + 0.5
+    >>> table = csi_table(train, test)
+    >>> print(table)
     """
     table = psi_table(expected, actual, method, max_n_bins, min_bin_size, **kwargs)
     table = table.rename(columns={'PSI贡献': 'CSI贡献'})
@@ -201,14 +278,33 @@ def batch_psi(X_train: pd.DataFrame,
               **kwargs) -> pd.DataFrame:
     """批量计算多特征的PSI.
 
-    :param X_train: 训练集特征
-    :param X_test: 测试集特征
-    :param features: 需要计算的特征列表，默认全部
-    :param method: 分箱方法，默认'quantile'
-    :param max_n_bins: 最大分箱数，默认10
-    :param min_bin_size: 每箱最小样本占比，默认0.01
+    对指定的多个特征同时计算PSI，返回各特征的PSI值和稳定性评级。
+
+    **参数**
+
+    :param X_train: 训练集特征DataFrame
+    :param X_test: 测试集特征DataFrame（与X_train列结构一致）
+    :param features: 需要计算PSI的特征列表，默认为None（计算全部共同列）
+    :param method: 分箱方法，默认为'quantile'（等频分箱）
+    :param max_n_bins: 最大分箱数，默认为10
+    :param min_bin_size: 每箱最小样本占比，默认为0.01
     :param kwargs: 其他传递给OptimalBinning的参数
-    :return: PSI结果DataFrame
+    :return: 包含各特征PSI结果的DataFrame，列包括：
+        - 特征: 特征名称
+        - PSI: PSI值
+        - 评级: 稳定性评级（由psi_rating函数返回）
+
+    **参考样例**
+
+    >>> from hscredit.core.metrics import batch_psi
+    >>> import numpy as np
+    >>> import pandas as pd
+    >>> np.random.seed(42)
+    >>> cols = ['age', 'income', 'credit_score']
+    >>> X_train = pd.DataFrame(np.random.randn(1000, 3), columns=cols)
+    >>> X_test = pd.DataFrame(np.random.randn(1000, 3) + 0.5, columns=cols)
+    >>> result = batch_psi(X_train, X_test)
+    >>> print(result)
     """
     if features is None:
         features = list(X_train.columns)

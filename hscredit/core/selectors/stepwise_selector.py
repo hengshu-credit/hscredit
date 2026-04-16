@@ -7,6 +7,18 @@
 - toad.selection.stepwise
 - sklearn.feature_selection.SequentialFeatureSelector
 - statsmodels based stepwise regression
+
+**参考样例**
+
+>>> from hscredit.core.selectors import StepwiseSelector
+>>> import pandas as pd
+>>> import numpy as np
+>>> np.random.seed(42)
+>>> X = pd.DataFrame(np.random.randn(200, 5), columns=[f'f{i}' for i in range(5)])
+>>> y = pd.Series(np.random.randint(0, 2, 200))
+>>> selector = StepwiseSelector(estimator='logit', direction='both', criterion='aic')
+>>> selector.fit(X, y)
+>>> print(selector.selected_features_)
 """
 
 from typing import Union, List, Optional, Dict, Any, Tuple
@@ -69,35 +81,24 @@ class StepwiseSelector(BaseFeatureSelector):
     :param model_results_: 最终模型的统计结果
     :param n_features_: 选中的特征数量
 
-    **示例**
+    **参考样例**
 
-    ::
-
-        >>> from hscredit.core.selectors import StepwiseSelector
-        >>> import pandas as pd
-        >>> import numpy as np
-        >>>
-        >>> # 创建示例数据
-        >>> np.random.seed(42)
-        >>> X = pd.DataFrame({
-        ...     'feature1': np.random.randn(100),
-        ...     'feature2': np.random.randn(100),
-        ...     'feature3': np.random.randn(100),
-        ... })
-        >>> y = np.random.randint(0, 2, 100)
-        >>>
-        >>> # 使用逐步回归筛选特征
-        >>> selector = StepwiseSelector(
-        ...     estimator='logit',
-        ...     direction='both',
-        ...     criterion='aic',
-        ...     max_features=10,
-        ...     p_enter=0.05,
-        ...     p_remove=0.05
-        ... )
-        >>> selector.fit(X, y)
-        >>> print(selector.selected_features_)
-        ['feature1', 'feature2']
+    >>> from hscredit.core.selectors import StepwiseSelector
+    >>> import pandas as pd
+    >>> import numpy as np
+    >>> np.random.seed(42)
+    >>> X = pd.DataFrame(np.random.randn(200, 5), columns=[f'f{i}' for i in range(5)])
+    >>> y = pd.Series(np.random.randint(0, 2, 200))
+    >>> selector = StepwiseSelector(
+    ...     estimator='logit',
+    ...     direction='both',
+    ...     criterion='aic',
+    ...     max_features=10,
+    ...     p_enter=0.05,
+    ...     p_remove=0.05,
+    ... )
+    >>> selector.fit(X, y)
+    >>> print(selector.selected_features_)
     """
 
     def __init__(

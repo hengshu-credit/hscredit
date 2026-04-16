@@ -93,56 +93,51 @@ class GBMEncoder(BaseEncoder):
 
     **参考样例**
 
-    基本使用（XGBoost + 叶子节点特征）::
-
-        >>> from hscredit.core.encoders import GBMEncoder
-        >>> encoder = GBMEncoder(
-        ...     model_type='xgboost',
-        ...     n_estimators=50,
-        ...     max_depth=4,
-        ...     output_type='leaves'
-        ... )
-        >>> X_encoded = encoder.fit_transform(X, y)
-
-    LightGBM + 独热编码::
-
-        >>> encoder = GBMEncoder(
-        ...     model_type='lightgbm',
-        ...     output_type='onehot',
-        ...     n_estimators=30,
-        ...     max_depth=3
-        ... )
-        >>> X_encoded = encoder.fit_transform(X, y)
-
-    CatBoost + 概率输出::
-
-        >>> encoder = GBMEncoder(
-        ...     model_type='catboost',
-        ...     output_type='probability',
-        ...     n_estimators=100
-        ... )
-        >>> X_encoded = encoder.fit_transform(X, y)
-
-    GBM + LR 组合训练::
-
-        >>> from sklearn.linear_model import LogisticRegression
-        >>> from sklearn.pipeline import Pipeline
-        >>> 
-        >>> # 创建GBM编码器
-        >>> gbm_encoder = GBMEncoder(
-        ...     model_type='xgboost',
-        ...     output_type='leaves',
-        ...     n_estimators=50,
-        ...     max_depth=3
-        ... )
-        >>> 
-        >>> # 与LR组合
-        >>> pipeline = Pipeline([
-        ...     ('gbm', gbm_encoder),
-        ...     ('lr', LogisticRegression(max_iter=1000))
-        ... ])
-        >>> pipeline.fit(X_train, y_train)
-        >>> y_pred = pipeline.predict(X_test)
+    >>> from hscredit.core.encoders import GBMEncoder
+    >>> encoder = GBMEncoder(
+    ...     model_type='xgboost',
+    ...     n_estimators=50,
+    ...     max_depth=4,
+    ...     output_type='leaves'
+    ... )
+    >>> X_encoded = encoder.fit_transform(X, y)
+    >>>
+    >>> # LightGBM + 独热编码
+    >>> encoder = GBMEncoder(
+    ...     model_type='lightgbm',
+    ...     output_type='onehot',
+    ...     n_estimators=30,
+    ...     max_depth=3
+    ... )
+    >>> X_encoded = encoder.fit_transform(X, y)
+    >>>
+    >>> # CatBoost + 概率输出
+    >>> encoder = GBMEncoder(
+    ...     model_type='catboost',
+    ...     output_type='probability',
+    ...     n_estimators=100
+    ... )
+    >>> X_encoded = encoder.fit_transform(X, y)
+    >>>
+    >>> # GBM + LR 组合训练
+    >>> from sklearn.linear_model import LogisticRegression
+    >>> from sklearn.pipeline import Pipeline
+    >>>
+    >>> # 创建GBM编码器
+    >>> gbm_encoder = GBMEncoder(
+    ...     model_type='xgboost',
+    ...     output_type='leaves',
+    ...     n_estimators=50,
+    ...     max_depth=3
+    ... )
+    >>>
+    >>> # 与LR组合
+    >>> pipeline = Pipeline([
+    ...     ('gbm', gbm_encoder),
+    ...     ('lr', LogisticRegression(max_iter=1000))
+    ... ])
+    >>> pipeline.fit(X_train, y_train)
+    >>> y_pred = pipeline.predict(X_test)
 
     参考:
         - Facebook GBDT + LR: https://dl.acm.org/doi/10.1145/2648584.2648589

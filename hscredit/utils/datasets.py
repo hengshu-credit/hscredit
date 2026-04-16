@@ -15,10 +15,11 @@ def germancredit():
 
     :return: pd.DataFrame
 
-    示例:
-        >>> df = germancredit()
-        >>> print(df.shape)
-        (1000, 21)
+    **参考样例**
+
+    >>> df = germancredit()
+    >>> print(df.shape)
+    (1000, 21)
     """
     # 方案1：优先读取仓库内置数据（离线可用）
     local_path = os.path.join(
@@ -80,8 +81,9 @@ def load_titanic():
 
     :return: pd.DataFrame
 
-    示例:
-        >>> df = load_titanic()
+    **参考样例**
+
+    >>> df = load_titanic()
     """
     try:
         import seaborn as sns
@@ -96,8 +98,9 @@ def load_iris():
 
     :return: pd.DataFrame
 
-    示例:
-        >>> df = load_iris()
+    **参考样例**
+
+    >>> df = load_iris()
     """
     from sklearn.datasets import load_iris as sklearn_load_iris
     iris = sklearn_load_iris()

@@ -2,7 +2,7 @@
 
 提供RandomForest、ExtraTrees、GradientBoosting等模型的统一封装。
 
-**示例**
+**参考样例**
 >>> from hscredit.core.models import RandomForestRiskModel, GradientBoostingRiskModel
 >>> model = RandomForestRiskModel(n_estimators=100, max_depth=10)
 >>> model.fit(X_train, y_train)

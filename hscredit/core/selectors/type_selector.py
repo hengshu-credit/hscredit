@@ -1,6 +1,19 @@
 """类型筛选器.
 
 按数据类型筛选特征。
+
+**参考样例**
+
+>>> from hscredit.core.selectors import TypeSelector
+>>> import pandas as pd
+>>> X = pd.DataFrame({
+...     'a': [1, 2, 3],
+...     'b': ['x', 'y', 'z'],
+...     'c': [1.0, 2.0, 3.0]
+... })
+>>> # 仅保留数值类型
+>>> selector = TypeSelector(dtype_include='number')
+>>> selector.fit(X)
 """
 
 from typing import Union, List, Optional, Type
@@ -24,11 +37,11 @@ class TypeSelector(BaseFeatureSelector):
         - 'category': 类别类型
     :param dtype_exclude: 排除的数据类型，默认为None
 
-    **示例**
+    **参考样例**
 
     ::
 
-        >>> from hscredit.core.selection import TypeSelector
+        >>> from hscredit.core.selectors import TypeSelector
         >>> import pandas as pd
         >>> X = pd.DataFrame({
         ...     'a': [1, 2, 3],

@@ -33,18 +33,13 @@ class CatBoostEncoder(BaseEncoder):
 
     **参考样例**
 
-    基本使用::
-
-        >>> encoder = CatBoostEncoder(cols=['category'])
-        >>> X_encoded = encoder.fit_transform(X, y)
-
-    添加噪声::
-
-        >>> encoder = CatBoostEncoder(cols=['category'], sigma=0.05, random_state=42)
-        >>> X_encoded = encoder.fit_transform(X, y)
-
-    参考:
-        https://arxiv.org/abs/1706.09516
+    >>> from hscredit.core.encoders import CatBoostEncoder
+    >>> encoder = CatBoostEncoder(cols=['category'])
+    >>> X_encoded = encoder.fit_transform(X, y)
+    >>>
+    >>> # 添加噪声
+    >>> encoder = CatBoostEncoder(cols=['category'], sigma=0.05, random_state=42)
+    >>> X_encoded = encoder.fit_transform(X, y)
     """
 
     def _get_category_cols(self, X: pd.DataFrame) -> List[str]:

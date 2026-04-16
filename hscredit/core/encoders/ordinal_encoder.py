@@ -31,19 +31,14 @@ class OrdinalEncoder(BaseEncoder):
 
     **参考样例**
 
-    基本使用::
-
-        >>> encoder = OrdinalEncoder(cols=['education'])
-        >>> X_encoded = encoder.fit_transform(X)
-
-    自定义映射::
-
-        >>> mapping = {'education': {'high': 3, 'medium': 2, 'low': 1}}
-        >>> encoder = OrdinalEncoder(cols=['education'], mapping=mapping)
-        >>> X_encoded = encoder.fit_transform(X)
-
-    参考:
-        https://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.OrdinalEncoder.html
+    >>> from hscredit.core.encoders import OrdinalEncoder
+    >>> encoder = OrdinalEncoder(cols=['education'])
+    >>> X_encoded = encoder.fit_transform(X)
+    >>>
+    >>> # 自定义映射
+    >>> mapping = {'education': {'high': 3, 'medium': 2, 'low': 1}}
+    >>> encoder = OrdinalEncoder(cols=['education'], mapping=mapping)
+    >>> X_encoded = encoder.fit_transform(X)
     """
 
     def _get_category_cols(self, X: pd.DataFrame) -> List[str]:

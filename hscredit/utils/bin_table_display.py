@@ -38,10 +38,10 @@ def style_bin_table(
     :param high_tech_style: 是否使用高科技/AI风格样式
     :return: 格式化后的 Styler 对象
 
-    **示例**
+    **参考样例**
 
     >>> table = feature_bin_stats(data, 'score', target='target')
-    >>> style_bin_table(table).show()  # 在 Jupyter 中显示美化表格
+    >>> style_bin_table(table).show()
     """
     # 检查是否为多级表头
     is_multi_level = isinstance(df.columns, pd.MultiIndex)
@@ -356,12 +356,12 @@ class BinTableDisplay:
     
     提供链式调用接口，方便在 Jupyter 中展示美观的分箱表。
     
-    **示例**
+    **参考样例**
     
     >>> table = feature_bin_stats(data, 'score', target='target')
-    >>> table.show()  # 默认展示
-    >>> table.show(compact=True)  # 紧凑模式
-    >>> table.show(highlight_iv=False)  # 不高亮 IV
+    >>> table.show()
+    >>> table.show(compact=True)
+    >>> table.show(highlight_iv=False)
     """
     
     def __init__(self, df: pd.DataFrame):

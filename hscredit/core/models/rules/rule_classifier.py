@@ -100,26 +100,21 @@ class RuleSet:
     :param weight: 规则集权重，用于最终得分计算，默认为1.0
     :param description: 规则集描述
     
-    示例:
-        >>> from hscredit.core.rules import Rule
-        >>> from hscredit.core.models.rule_classifier import RuleSet
-        >>> 
-        >>> # 创建单规则
-        >>> rule1 = Rule("age < 18", name="未成年")
-        >>> rule2 = Rule("income > 100000", name="高收入")
-        >>> 
-        >>> # 创建规则集（且关系）
-        >>> rule_set = RuleSet(
-        ...     name="高风险用户",
-        ...     logic="and",
-        ...     rules=[rule1, rule2],
-        ...     description="年龄小且收入高"
-        ... )
-        >>> 
-        >>> # 嵌套规则集
-        >>> inner_set = RuleSet(name="子规则集", logic="or", rules=[rule1])
-        >>> outer_set = RuleSet(name="外层规则集", logic="and", 
-        ...                     rules=[inner_set, rule2])
+    **参考样例**
+
+    >>> from hscredit.core.rules import Rule
+    >>> from hscredit.core.models.rule_classifier import RuleSet
+    >>> rule1 = Rule("age < 18", name="未成年")
+    >>> rule2 = Rule("income > 100000", name="高收入")
+    >>> rule_set = RuleSet(
+    ...     name="高风险用户",
+    ...     logic="and",
+    ...     rules=[rule1, rule2],
+    ...     description="年龄小且收入高"
+    ... )
+    >>> inner_set = RuleSet(name="子规则集", logic="or", rules=[rule1])
+    >>> outer_set = RuleSet(name="外层规则集", logic="and",
+    ...                     rules=[inner_set, rule2])
     """
     
     def __init__(
@@ -307,46 +302,40 @@ class RulesClassifier(BaseEstimator, ClassifierMixin):
     - n_features_in_: 输入特征数
     - feature_names_in_: 特征名称
     
-    示例:
-        >>> from hscredit.core.rules import Rule
-        >>> from hscredit.core.models import RulesClassifier, RuleSet
-        >>> 
-        >>> # 方式1：使用单规则列表
-        >>> rules = [
-        ...     Rule("age < 18", name="未成年", description="用户未成年"),
-        ...     Rule("income > 100000", name="高收入", description="月收入超过10万"),
-        ...     Rule("credit_score < 500", name="低信用分", description="信用分低于500")
-        ... ]
-        >>> clf = RulesClassifier(rules=rules, logic='or', output_mode='both')
-        >>> clf.fit(X_train)
-        >>> final, individual = clf.predict(X_test)
-        >>> 
-        >>> # 方式2：使用规则集（支持嵌套）
-        >>> high_risk = RuleSet(
-        ...     name="高风险",
-        ...     logic="and",
-        ...     rules=[
-        ...         Rule("age < 25", name="年轻"),
-        ...         Rule("debt_ratio > 0.6", name="高负债")
-        ...     ],
-        ...     description="年轻且高负债"
-        ... )
-        >>> medium_risk = RuleSet(
-        ...     name="中风险",
-        ...     logic="or",
-        ...     rules=[
-        ...         Rule("credit_score < 550"),
-        ...         Rule("employment_years < 1")
-        ...     ]
-        ... )
-        >>> clf = RulesClassifier(
-        ...     rules=[high_risk, medium_risk],  # 外层使用 or 逻辑
-        ...     logic='or',
-        ...     output_mode='reason'
-        ... )
-        >>> clf.fit(X_train)
-        >>> result, reasons = clf.predict(X_test, return_reason=True)
-        >>> 
+    **参考样例**
+
+    >>> rules = [
+    ...     Rule("age < 18", name="未成年", description="用户未成年"),
+    ...     Rule("income > 100000", name="高收入", description="月收入超过10万"),
+    ...     Rule("credit_score < 500", name="低信用分", description="信用分低于500")
+    ... ]
+    >>> clf = RulesClassifier(rules=rules, logic='or', output_mode='both')
+    >>> clf.fit(X_train)
+    >>> final, individual = clf.predict(X_test)
+    >>> high_risk = RuleSet(
+    ...     name="高风险",
+    ...     logic="and",
+    ...     rules=[
+    ...         Rule("age < 25", name="年轻"),
+    ...         Rule("debt_ratio > 0.6", name="高负债")
+    ...     ],
+    ...     description="年轻且高负债"
+    ... )
+    >>> medium_risk = RuleSet(
+    ...     name="中风险",
+    ...     logic="or",
+    ...     rules=[
+    ...         Rule("credit_score < 550"),
+    ...         Rule("employment_years < 1")
+    ...     ]
+    ... )
+    >>> clf = RulesClassifier(
+    ...     rules=[high_risk, medium_risk],
+    ...     logic='or',
+    ...     output_mode='reason'
+    ... )
+    >>> clf.fit(X_train)
+    >>> result, reasons = clf.predict(X_test, return_reason=True)
         >>> # 方式3：混合使用单规则和规则集
         >>> nested_rules = RuleSet(
         ...     name="嵌套规则",
@@ -864,10 +853,11 @@ def combine_rules(
     :param description: 规则集描述
     :return: RuleSet对象
     
-    示例:
-        >>> from hscredit.core.rules import Rule
-        >>> rule1 = Rule("age < 18", name="未成年")
-        >>> rule2 = Rule("income > 100000", name="高收入")
-        >>> combined = combine_rules(rule1, rule2, logic='and', name="高风险")
+    **参考样例**
+
+    >>> from hscredit.core.rules import Rule
+    >>> rule1 = Rule("age < 18", name="未成年")
+    >>> rule2 = Rule("income > 100000", name="高收入")
+    >>> combined = combine_rules(rule1, rule2, logic='and', name="高风险")
     """
     return RuleSet(name=name, logic=logic, rules=list(rules), description=description)

@@ -1,6 +1,17 @@
 """基数筛选器.
 
 移除基数（唯一值数量）过高的类别型特征。
+
+**参考样例**
+
+>>> from hscredit.core.selectors import CardinalitySelector
+>>> import pandas as pd
+>>> X = pd.DataFrame({
+...     'city': ['北京', '上海', '广州', '北京', '深圳'],
+...     'id': [1, 2, 3, 4, 5],  # 高基数
+... })
+>>> selector = CardinalitySelector(threshold=4)
+>>> selector.fit(X)
 """
 
 from typing import Union, List, Optional
@@ -22,11 +33,11 @@ class CardinalitySelector(BaseFeatureSelector):
         - 10: 移除唯一值数量超过10的类别型特征
     :param dropna: 是否将NaN视为独立类别，默认为True
 
-    **示例**
+    **参考样例**
 
     ::
 
-        >>> from hscredit.core.selection import CardinalitySelector
+        >>> from hscredit.core.selectors import CardinalitySelector
         >>> import pandas as pd
         >>> X = pd.DataFrame({
         ...     'city': ['北京', '上海', '广州', '北京', '深圳'],

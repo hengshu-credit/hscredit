@@ -14,9 +14,10 @@ def seed_everything(seed: int, freeze_torch: bool = False):
     :param seed: 随机种子
     :param freeze_torch: 是否固定 pytorch 的随机种子
 
-    示例:
-        >>> seed_everything(42)
-        >>> seed_everything(42, freeze_torch=True)  # 也固定 PyTorch 种子
+    **参考样例**
+
+    >>> seed_everything(42)
+    >>> seed_everything(42, freeze_torch=True)
     """
     random.seed(seed)
     os.environ['PYTHONHASHSEED'] = str(seed)

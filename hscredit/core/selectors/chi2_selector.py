@@ -3,6 +3,18 @@
 使用卡方检验（Chi-Squared Test）评估特征与目标变量的独立性，
 筛选出与目标显著相关的特征。适用于分类问题，需要非负特征值。
 基于 sklearn.feature_selection.chi2 实现。
+
+**参考样例**
+
+>>> from hscredit.core.selectors import Chi2Selector
+>>> import pandas as pd
+>>> import numpy as np
+>>> np.random.seed(42)
+>>> X = pd.DataFrame(np.abs(np.random.randn(1000, 5)), columns=[f'f{i}' for i in range(5)])
+>>> y = pd.Series(np.random.randint(0, 2, 1000))
+>>> selector = Chi2Selector(k=3)
+>>> selector.fit(X, y)
+>>> print(selector.selected_features_)
 """
 
 from typing import Union, List, Optional
@@ -28,13 +40,19 @@ class Chi2Selector(BaseFeatureSelector):
     :param k: 保留的特征数，默认为'all'
     :param target: 目标变量列名，默认为'target'
 
-    **示例**
+    **参考样例**
 
     ::
 
-        >>> from hscredit.core.selection import Chi2Selector
-        >>> selector = Chi2Selector(k=10)
+        >>> from hscredit.core.selectors import Chi2Selector
+        >>> import pandas as pd
+        >>> import numpy as np
+        >>> np.random.seed(42)
+        >>> X = pd.DataFrame(np.abs(np.random.randn(1000, 5)), columns=[f'f{i}' for i in range(5)])
+        >>> y = pd.Series(np.random.randint(0, 2, 1000))
+        >>> selector = Chi2Selector(k=3)
         >>> selector.fit(X, y)
+        >>> print(selector.selected_features_)
     """
 
     def __init__(

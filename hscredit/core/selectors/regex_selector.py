@@ -1,6 +1,19 @@
 """正则表达式筛选器.
 
 按特征名称正则表达式筛选特征。
+
+**参考样例**
+
+>>> from hscredit.core.selectors import RegexSelector
+>>> import pandas as pd
+>>> X = pd.DataFrame({
+...     'income_1': [1, 2, 3],
+...     'income_2': [4, 5, 6],
+...     'age': [1, 2, 3]
+... })
+>>> # 选择以income开头的特征
+>>> selector = RegexSelector(pattern='^income')
+>>> selector.fit(X)
 """
 
 from typing import Union, List, Optional
@@ -20,11 +33,11 @@ class RegexSelector(BaseFeatureSelector):
     :param pattern: 正则表达式模式
     :param exclude: 是否排除匹配的特征，默认为False
 
-    **示例**
+    **参考样例**
 
     ::
 
-        >>> from hscredit.core.selection import RegexSelector
+        >>> from hscredit.core.selectors import RegexSelector
         >>> import pandas as pd
         >>> X = pd.DataFrame({
         ...     'income_1': [1, 2, 3],

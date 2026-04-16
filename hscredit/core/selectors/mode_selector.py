@@ -1,6 +1,20 @@
 """单一值筛选器.
 
 移除单一值（众数）占比过高的特征。
+
+**参考样例**
+
+>>> from hscredit.core.selectors import ModeSelector
+>>> import pandas as pd
+>>> X = pd.DataFrame({
+...     'a': [1, 1, 1, 1, 2],
+...     'b': [1, 2, 3, 4, 5],
+...     'c': [1, 1, 1, 1, 1]
+... })
+>>> selector = ModeSelector(threshold=0.8)
+>>> selector.fit(X)
+>>> print(selector.selected_features_)
+['a', 'b']
 """
 
 from typing import Union, List, Optional
@@ -42,11 +56,11 @@ class ModeSelector(BaseFeatureSelector):
     :param dropna: 是否将NaN视为独立类别，默认为True
     :param n_jobs: 并行计算的任务数
 
-    **示例**
+    **参考样例**
 
     ::
 
-        >>> from hscredit.core.selection import ModeSelector
+        >>> from hscredit.core.selectors import ModeSelector
         >>> import pandas as pd
         >>> X = pd.DataFrame({
         ...     'a': [1, 1, 1, 1, 2],

@@ -361,11 +361,12 @@ def optimize_expr(expr: str) -> str:
     :param expr: 原始表达式字符串
     :return: 简化后的表达式字符串
 
-    示例:
-        >>> optimize_expr("(age > 18) & (age > 18)")
-        'age > 18'
-        >>> optimize_expr("~~(age > 18)")
-        'age > 18'
+    **参考样例**
+
+    >>> optimize_expr("(age > 18) & (age > 18)")
+    'age > 18'
+    >>> optimize_expr("~~(age > 18)")
+    'age > 18'
     """
     return _optimizer.optimize(expr)
 
@@ -378,9 +379,10 @@ def beautify_expr(expr: str) -> str:
     :param expr: 原始表达式字符串
     :return: 美化后的表达式字符串
 
-    示例:
-        >>> beautify_expr("(age > 18) & (income > 5000)")
-        'age > 18 & income > 5000'
+    **参考样例**
+
+    >>> beautify_expr("(age > 18) & (income > 5000)")
+    'age > 18 & income > 5000'
     """
     return _optimizer.beautify(expr)
 
@@ -391,9 +393,10 @@ def get_expr_variables(expr: str) -> List[str]:
     :param expr: 表达式字符串
     :return: 变量名列表
 
-    示例:
-        >>> get_expr_variables("(age > 18) & (income > 5000)")
-        ['age', 'income']
+    **参考样例**
+
+    >>> get_expr_variables("(age > 18) & (income > 5000)")
+    ['age', 'income']
     """
     # 直接使用正则表达式提取变量名
     variables = set()

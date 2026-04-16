@@ -1,6 +1,18 @@
 """互信息筛选器.
 
 使用互信息进行特征选择。
+
+**参考样例**
+
+>>> from hscredit.core.selectors import MutualInfoSelector
+>>> import pandas as pd
+>>> import numpy as np
+>>> np.random.seed(42)
+>>> X = pd.DataFrame(np.random.randn(1000, 5), columns=[f'f{i}' for i in range(5)])
+>>> y = pd.Series(np.random.randint(0, 2, 1000))
+>>> selector = MutualInfoSelector(threshold=0.1)
+>>> selector.fit(X, y)
+>>> print(selector.selected_features_)
 """
 
 from typing import Union, List, Optional
@@ -29,13 +41,19 @@ class MutualInfoSelector(BaseFeatureSelector):
     :param target: 目标变量列名，默认为'target'
     :param n_jobs: 并行计算的任务数（注意：mutual_info_classif 不支持并行，此参数保留用于未来扩展）
 
-    **示例**
+    **参考样例**
 
     ::
 
-        >>> from hscredit.core.selection import MutualInfoSelector
+        >>> from hscredit.core.selectors import MutualInfoSelector
+        >>> import pandas as pd
+        >>> import numpy as np
+        >>> np.random.seed(42)
+        >>> X = pd.DataFrame(np.random.randn(1000, 5), columns=[f'f{i}' for i in range(5)])
+        >>> y = pd.Series(np.random.randint(0, 2, 1000))
         >>> selector = MutualInfoSelector(threshold=0.1)
         >>> selector.fit(X, y)
+        >>> print(selector.selected_features_)
     """
 
     def __init__(

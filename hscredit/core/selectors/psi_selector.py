@@ -1,6 +1,18 @@
 """PSI稳定性筛选器.
 
 使用群体稳定性指标（PSI）筛选特征。
+
+**参考样例**
+
+>>> from hscredit.core.selectors import PSISelector
+>>> import pandas as pd
+>>> import numpy as np
+>>> np.random.seed(42)
+>>> X = pd.DataFrame(np.random.randn(1000, 5), columns=[f'f{i}' for i in range(5)])
+>>> y = pd.Series(np.random.randint(0, 2, 1000))
+>>> selector = PSISelector(threshold=0.25, n_splits=5)
+>>> selector.fit(X, y)
+>>> print(selector.selected_features_)
 """
 
 from typing import Union, List, Optional
@@ -72,15 +84,19 @@ class PSISelector(BaseFeatureSelector):
     :param target: 目标变量列名，默认为'target'
     :param n_jobs: 并行计算的任务数
 
-    **示例**
+    **参考样例**
 
     ::
 
-        >>> from hscredit.core.selection import PSISelector
+        >>> from hscredit.core.selectors import PSISelector
         >>> import pandas as pd
-        >>> X_train = pd.DataFrame({'income': [5000]*100 + [8000]*100})
-        >>> X_test = pd.DataFrame({'income': [5000]*150 + [8000]*50})
-        >>> # 训练集划分计算PSI
+        >>> import numpy as np
+        >>> np.random.seed(42)
+        >>> X = pd.DataFrame(np.random.randn(1000, 5), columns=[f'f{i}' for i in range(5)])
+        >>> y = pd.Series(np.random.randint(0, 2, 1000))
+        >>> selector = PSISelector(threshold=0.25, n_splits=5)
+        >>> selector.fit(X, y)
+        >>> print(selector.selected_features_)
     """
 
     def __init__(

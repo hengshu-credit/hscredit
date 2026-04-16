@@ -20,9 +20,10 @@ def round_float(num, decimal: int = 4):
     :param decimal: 小数点保留的精度
     :return: 精度调整后的数值
 
-    示例:
-        >>> round_float(3.14159265, decimal=4)
-        3.1416
+    **参考样例**
+
+    >>> round_float(3.14159265, decimal=4)
+    3.1416
     """
     if decimal is None:
         return num
@@ -48,10 +49,11 @@ def force_reload_module(module_name):
     :param module_name: 模块名称
     :return: 重新导入的模块
 
-    示例:
-        >>> import hscredit.utils.misc
-        >>> hscredit.utils.misc.force_reload_module('hscredit.utils.misc')
-        <module 'hscredit.utils.misc' from '...'>
+    **参考样例**
+
+    >>> import hscredit.utils.misc
+    >>> hscredit.utils.misc.force_reload_module('hscredit.utils.misc')
+    <module 'hscredit.utils.misc' from '...'>
     """
     if module_name in sys.modules:
         # 获取旧模块

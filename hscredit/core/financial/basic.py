@@ -28,16 +28,19 @@ def _convert_when(when):
 def fv(rate, nper, pmt, pv, when='end'):
     """计算未来值 (Future Value).
 
-    :param rate: 每期利率
-    :param nper: 总期数
-    :param pmt: 每期付款额
-    :param pv: 现值
-    :param when: 付款时间 ('end' 期末或 'begin' 期初)
-    :return: 未来值
+    基于固定利率和等额付款条件，计算投资的未来值。
 
-    示例:
-        >>> fv(0.05/12, 10*12, -100, -100)  # 每月存100，年利率5%，10年后
-        15692.92889433575
+    :param rate: 每期利率（如月利率为年利率/12）
+    :param nper: 总付款期数
+    :param pmt: 每期固定付款额（通常为负值表示支出）
+    :param pv: 现值（初始投资，通常为负值）
+    :param when: 付款时机，'end'为期初，'begin'为期末，默认为'end'
+    :return: 未来值（正值表示收入）
+
+    **参考样例**
+
+    >>> fv(0.05/12, 10*12, -100, -100)
+    15692.92889433575
     """
     when = _convert_when(when)
     rate = np.asarray(rate)
@@ -72,16 +75,19 @@ def fv(rate, nper, pmt, pv, when='end'):
 def pv(rate, nper, pmt, fv=0, when='end'):
     """计算现值 (Present Value).
 
-    :param rate: 每期利率
-    :param nper: 总期数
-    :param pmt: 每期付款额
-    :param fv: 未来值，默认为0
-    :param when: 付款时间 ('end' 期末或 'begin' 期初)
-    :return: 现值
+    基于固定利率和等额付款条件，计算未来现金流在当前的等价价值。
 
-    示例:
-        >>> pv(0.05/12, 10*12, -100)  # 每月还款100，年利率5%，10年期的现值
-        9428.135032823439
+    :param rate: 每期利率（如月利率为年利率/12）
+    :param nper: 总付款期数
+    :param pmt: 每期固定付款额（通常为负值表示支出）
+    :param fv: 未来值（最后一笔付款后的余额），默认为0
+    :param when: 付款时机，'end'为期初，'begin'为期末，默认为'end'
+    :return: 现值（负值表示初始支出）
+
+    **参考样例**
+
+    >>> pv(0.05/12, 10*12, -100)
+    9428.135032823439
     """
     when = _convert_when(when)
     rate = np.asarray(rate)
@@ -114,16 +120,19 @@ def pv(rate, nper, pmt, fv=0, when='end'):
 def pmt(rate, nper, pv, fv=0, when='end'):
     """计算每期付款额 (Payment).
 
-    :param rate: 每期利率
-    :param nper: 总期数
-    :param pv: 现值
-    :param fv: 未来值，默认为0
-    :param when: 付款时间 ('end' 期末或 'begin' 期初)
-    :return: 每期付款额
+    在给定现值、利率和期数条件下，计算每期等额偿付额。
 
-    示例:
-        >>> pmt(0.05/12, 10*12, 10000)  # 贷款10000，年利率5%，10年，每月还款额
-        -106.06557415332299
+    :param rate: 每期利率（如月利率为年利率/12）
+    :param nper: 总付款期数
+    :param pv: 现值（贷款本金或投资额）
+    :param fv: 未来值（最后一笔付款后的余额），默认为0
+    :param when: 付款时机，'end'为期初，'begin'为期末，默认为'end'
+    :return: 每期付款额（负值表示支出）
+
+    **参考样例**
+
+    >>> pmt(0.05/12, 10*12, 10000)
+    -106.06557415332299
     """
     when = _convert_when(when)
     rate = np.asarray(rate)
@@ -156,16 +165,19 @@ def pmt(rate, nper, pv, fv=0, when='end'):
 def nper(rate, pmt, pv, fv=0, when='end'):
     """计算期数 (Number of Periods).
 
-    :param rate: 每期利率
-    :param pmt: 每期付款额
-    :param pv: 现值
-    :param fv: 未来值，默认为0
-    :param when: 付款时间 ('end' 期末或 'begin' 期初)
-    :return: 期数
+    在给定利率、每期付款额和现值条件下，计算达到目标未来值所需的期数。
 
-    示例:
-        >>> nper(0.05/12, -100, 10000)  # 每月还100，利率5%，还清10000贷款需要多少期
-        129.62843690651015
+    :param rate: 每期利率（如月利率为年利率/12）
+    :param pmt: 每期固定付款额（通常为负值表示支出）
+    :param pv: 现值（初始投资或贷款本金）
+    :param fv: 未来值（目标余额），默认为0
+    :param when: 付款时机，'end'为期初，'begin'为期末，默认为'end'
+    :return: 所需期数
+
+    **参考样例**
+
+    >>> nper(0.05/12, -100, 10000)
+    129.62843690651015
     """
     when = _convert_when(when)
     rate = np.asarray(rate)
@@ -199,14 +211,20 @@ def nper(rate, pmt, pv, fv=0, when='end'):
 def ipmt(rate, per, nper, pv, fv=0, when='end'):
     """计算给定期间的利息部分 (Interest Payment).
 
-    :param rate: 每期利率
-    :param per: 特定期间 (1 到 nper)
-    :param nper: 总期数
-    :param pv: 现值
-    :param fv: 未来值，默认为0
-    :param when: 付款时间 ('end' 期末或 'begin' 期初)
-    :return: 利息部分
-    """
+    使用摊销公式计算在指定期间内支付的利息金额。
+
+    :param rate: 每期利率（如月利率为年利率/12）
+    :param per: 指定期间（第1期到第nper期）
+    :param nper: 总付款期数
+    :param pv: 现值（贷款本金或投资额）
+    :param fv: 未来值（最后一笔付款后的余额），默认为0
+    :param when: 付款时机，'end'为期初，'begin'为期末，默认为'end'
+    :return: 指定期间的利息支付额（负值）
+
+    **参考样例**
+
+    >>> ipmt(0.05/12, 1, 12*10, 10000)
+"""
     when = _convert_when(when)
     total_pmt = pmt(rate, nper, pv, fv, when)
 
@@ -230,14 +248,20 @@ def ipmt(rate, per, nper, pv, fv=0, when='end'):
 def ppmt(rate, per, nper, pv, fv=0, when='end'):
     """计算给定期间的本金部分 (Principal Payment).
 
-    :param rate: 每期利率
-    :param per: 特定期间 (1 到 nper)
-    :param nper: 总期数
-    :param pv: 现值
-    :param fv: 未来值，默认为0
-    :param when: 付款时间 ('end' 期末或 'begin' 期初)
-    :return: 本金部分
-    """
+    使用摊销公式计算在指定期间内支付的本金金额。
+
+    :param rate: 每期利率（如月利率为年利率/12）
+    :param per: 指定期间（第1期到第nper期）
+    :param nper: 总付款期数
+    :param pv: 现值（贷款本金或投资额）
+    :param fv: 未来值（最后一笔付款后的余额），默认为0
+    :param when: 付款时机，'end'为期初，'begin'为期末，默认为'end'
+    :return: 指定期间的本金支付额（负值）
+
+    **参考样例**
+
+    >>> ppmt(0.05/12, 1, 12*10, 10000)
+"""
     total = pmt(rate, nper, pv, fv, when)
     interest = ipmt(rate, per, nper, pv, fv, when)
     return total - interest
@@ -246,21 +270,23 @@ def ppmt(rate, per, nper, pv, fv=0, when='end'):
 def rate(nper, pmt, pv, fv=0, when='end', guess=0.1, tol=1e-6, max_iter=100):
     """计算利率 (Rate).
 
-    使用牛顿迭代法求解。
+    使用牛顿迭代法求解给定条件下使净现值为零的利率。
 
-    :param nper: 总期数
-    :param pmt: 每期付款额
-    :param pv: 现值
-    :param fv: 未来值，默认为0
-    :param when: 付款时间 ('end' 期末或 'begin' 期初)
-    :param guess: 初始猜测值
-    :param tol: 收敛容差
-    :param max_iter: 最大迭代次数
-    :return: 利率
+    :param nper: 总付款期数
+    :param pmt: 每期固定付款额（通常为负值表示支出）
+    :param pv: 现值（通常为负值表示初始支出）
+    :param fv: 未来值（最后一笔付款后的余额），默认为0
+    :param when: 付款时机，'end'为期初，'begin'为期末，默认为'end'
+    :param guess: 迭代初始猜测值，默认为0.1（10%）
+    :param tol: 收敛容差，默认为1e-6
+    :param max_iter: 最大迭代次数，默认为100
+    :return: 每期利率
+    :raises ValueError: 牛顿迭代法无法收敛时
 
-    示例:
-        >>> rate(10*12, -100, 10000)  # 每月还100，10年还清10000，求月利率
-        0.004291074821880434
+    **参考样例**
+
+    >>> rate(10*12, -100, 10000)
+    0.004291074821880434
     """
     when = _convert_when(when)
 

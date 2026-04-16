@@ -82,34 +82,34 @@ class ORBinning(BaseBinning):
     :param special_codes: 特殊值列表，默认为None
     :param random_state: 随机种子，默认为None
 
-    **示例**
+    **参考样例**
 
-    sklearn风格 (推荐)::
+    sklearn风格 (推荐):
 
-        >>> from hscredit.core.binning import ORBinning
-        >>> # 最大化 IV
-        >>> binner = ORBinning(max_n_bins=5, objective='iv', monotonic=True)
-        >>> binner.fit(X_train, y_train)
-        >>> X_binned = binner.transform(X_test)
-        >>> bin_table = binner.get_bin_table('feature_name')
+    >>> from hscredit.core.binning import ORBinning
+    >>> # 最大化 IV
+    >>> binner = ORBinning(max_n_bins=5, objective='iv', monotonic=True)
+    >>> binner.fit(X_train, y_train)
+    >>> X_binned = binner.transform(X_test)
+    >>> bin_table = binner.get_bin_table('feature_name')
 
-    scorecardpipeline风格 (目标列在DataFrame中)::
+    scorecardpipeline风格 (目标列在DataFrame中):
 
-        >>> from hscredit.core.binning import ORBinning
-        >>> # 初始化时指定目标列名，fit时传入完整DataFrame
-        >>> binner = ORBinning(target='target', max_n_bins=5, objective='ks', time_limit=60)
-        >>> binner.fit(df)  # df包含特征列和目标列'target'
-        >>> X_binned = binner.transform(df.drop(columns=['target']))
+    >>> from hscredit.core.binning import ORBinning
+    >>> # 初始化时指定目标列名，fit时传入完整DataFrame
+    >>> binner = ORBinning(target='target', max_n_bins=5, objective='ks', time_limit=60)
+    >>> binner.fit(df)  # df包含特征列和目标列'target'
+    >>> X_binned = binner.transform(df.drop(columns=['target']))
 
-    混合风格 (y参数优先)::
+    混合风格 (y参数优先):
 
-        >>> # 即使初始化时指定了target，fit时传入y会优先使用y
-        >>> binner = ORBinning(target='target', objective='iv')
-        >>> binner.fit(df, y=external_y)  # 使用external_y，忽略df中的'target'列
+    >>> # 即使初始化时指定了target，fit时传入y会优先使用y
+    >>> binner = ORBinning(target='target', objective='iv')
+    >>> binner.fit(df, y=external_y)  # 使用external_y，忽略df中的'target'列
     >>>
     >>> # 自定义目标：最大化 LIFT + IV
     >>> def custom_obj(bin_stats, total_good, total_bad):
-    ...     total_iv = sum(stat.get('woe', 0) * (stat.get('bad_rate', 0) - stat.get('good_rate', 0)) 
+    ...     total_iv = sum(stat.get('woe', 0) * (stat.get('bad_rate', 0) - stat.get('good_rate', 0))
     ...                    for stat in bin_stats if 'woe' in stat)
     ...     total_lift = sum(abs(stat.get('lift', 1) - 1) for stat in bin_stats)
     ...     return total_iv + total_lift * 0.1  # IV + 0.1 * LIFT偏差

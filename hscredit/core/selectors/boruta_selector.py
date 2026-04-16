@@ -1,6 +1,21 @@
 """Boruta特征筛选器.
 
 使用Boruta算法进行特征选择。
+
+**参考样例**
+
+>>> from hscredit.core.selectors import BorutaSelector
+>>> from sklearn.ensemble import RandomForestClassifier
+>>> import pandas as pd
+>>> import numpy as np
+>>> np.random.seed(42)
+>>> X = pd.DataFrame(np.random.randn(200, 10), columns=[f'f{i}' for i in range(10)])
+>>> y = np.random.randint(0, 2, 200)
+>>> selector = BorutaSelector(
+...     RandomForestClassifier(n_estimators=50, n_jobs=-1, random_state=42)
+... )
+>>> selector.fit(X, y)
+>>> print(selector.selected_features_)
 """
 
 from typing import Union, List, Optional
@@ -29,16 +44,22 @@ class BorutaSelector(BaseFeatureSelector):
     :param target: 目标变量列名，默认为'target'
     :param n_jobs: 并行计算的任务数
 
-    **示例**
+    **参考样例**
 
     ::
 
-        >>> from hscredit.core.selection import BorutaSelector
+        >>> from hscredit.core.selectors import BorutaSelector
         >>> from sklearn.ensemble import RandomForestClassifier
+        >>> import pandas as pd
+        >>> import numpy as np
+        >>> np.random.seed(42)
+        >>> X = pd.DataFrame(np.random.randn(200, 10), columns=[f'f{i}' for i in range(10)])
+        >>> y = np.random.randint(0, 2, 200)
         >>> selector = BorutaSelector(
-        ...     RandomForestClassifier(n_estimators=100, n_jobs=-1)
+        ...     RandomForestClassifier(n_estimators=50, n_jobs=-1, random_state=42)
         ... )
         >>> selector.fit(X, y)
+        >>> print(selector.selected_features_)
     """
 
     def __init__(

@@ -39,7 +39,7 @@ class TreeBinning(BaseBinning):
     - bin_tables_: 每个特征的分箱统计表
     - tree_models_: 每个特征的决策树模型
 
-    **示例**
+    **参考样例**
 
     >>> from hscredit.core.binning import TreeBinning
     >>> binner = TreeBinning(max_depth=5, monotonic=True)

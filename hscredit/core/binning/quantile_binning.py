@@ -38,7 +38,7 @@ class QuantileBinning(BaseBinning):
     - n_bins_: 每个特征的实际分箱数
     - bin_tables_: 每个特征的分箱统计表
 
-    **示例**
+    **参考样例**
 
     >>> from hscredit.core.binning import QuantileBinning
     >>> # 基础用法

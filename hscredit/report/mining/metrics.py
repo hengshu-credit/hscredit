@@ -29,15 +29,12 @@ class RuleMetrics:
     提供全面的规则评估指标，支持训练集和测试集的对比分析。
     所有指标计算统一收口到hscredit.core.metrics。
     
-    示例:
-        >>> from hscredit.core.rules.mining import RuleMetrics
-        >>> metrics = RuleMetrics()
-        >>> 
-        >>> # 评估单个规则
-        >>> result = metrics.evaluate_rule(rule, X_train, y_train, X_test, y_test)
-        >>> 
-        >>> # 批量评估
-        >>> results = metrics.evaluate_rules(rules, X_train, y_train, X_test, y_test)
+    **参考样例**
+
+    >>> from hscredit.core.rules.mining import RuleMetrics
+    >>> metrics = RuleMetrics()
+    >>> result = metrics.evaluate_rule(rule, X_train, y_train, X_test, y_test)
+    >>> results = metrics.evaluate_rules(rules, X_train, y_train, X_test, y_test)
     """
     
     def __init__(self, target_positive: int = 1):

@@ -29,19 +29,14 @@ class TreeVisualizer:
     
     使用hscredit统一主题色，无需手动设置字体。
     
-    示例:
-        >>> from hscredit.core.rules.mining import TreeVisualizer
-        >>> visualizer = TreeVisualizer()
-        >>> 
-        >>> # 使用dtreeviz（需要安装dtreeviz）
-        >>> viz = visualizer.plot_dtreeviz(tree_model, X, y)
-        >>> 
-        >>> # 使用graphviz
-        >>> dot = visualizer.plot_graphviz(tree_model, X.columns)
-        >>> dot.render('tree')
-        >>> 
-        >>> # 使用matplotlib
-        >>> visualizer.plot_matplotlib(tree_model, X.columns, save_path='tree.png')
+    **参考样例**
+
+    >>> from hscredit.core.rules.mining import TreeVisualizer
+    >>> visualizer = TreeVisualizer()
+    >>> viz = visualizer.plot_dtreeviz(tree_model, X, y)
+    >>> dot = visualizer.plot_graphviz(tree_model, X.columns)
+    >>> dot.render('tree')
+    >>> visualizer.plot_matplotlib(tree_model, X.columns, save_path='tree.png')
     """
     
     def __init__(self, feature_names: Optional[List[str]] = None):

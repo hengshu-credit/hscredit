@@ -1,6 +1,21 @@
 """缺失值筛选器.
 
 移除缺失率过高的特征。
+
+**参考样例**
+
+>>> from hscredit.core.selectors import NullSelector
+>>> import pandas as pd
+>>> import numpy as np
+>>> X = pd.DataFrame({
+...     'a': [1, 2, np.nan, 4, 5],
+...     'b': [1, 2, 3, 4, 5],
+...     'c': [np.nan, np.nan, np.nan, np.nan, np.nan]
+... })
+>>> selector = NullSelector(threshold=0.5)
+>>> selector.fit(X)
+>>> print(selector.selected_features_)
+['a', 'b']
 """
 
 from typing import Union, List, Optional
@@ -22,11 +37,11 @@ class NullSelector(BaseFeatureSelector):
         - 0.95: 移除缺失率超过95%的特征
         - 范围: 0-1之间的浮点数
 
-    **示例**
+    **参考样例**
 
     ::
 
-        >>> from hscredit.core.selection import NullSelector
+        >>> from hscredit.core.selectors import NullSelector
         >>> import pandas as pd
         >>> import numpy as np
         >>> X = pd.DataFrame({

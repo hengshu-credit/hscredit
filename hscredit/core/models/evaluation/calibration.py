@@ -31,7 +31,7 @@
 - scipy
 - sklearn
 
-**示例**
+**参考样例**
 >>> from hscredit.core.models import XGBoostRiskModel
 >>> from hscredit.core.models.calibration import ProbabilityCalibrator
 >>>
@@ -369,7 +369,7 @@ class PlattCalibrator(BaseCalibrator):
     :param strategy: 分箱策略，默认'uniform'
     :param C: 逻辑回归正则化强度，默认1.0
 
-    **示例**
+    **参考样例**
 
     >>> calibrator = PlattCalibrator()
     >>> calibrator.fit(y_true, y_prob)
@@ -434,7 +434,7 @@ class IsotonicCalibrator(BaseCalibrator):
         - 'clip': 裁剪到拟合范围
         - 'nan': 返回NaN
 
-    **示例**
+    **参考样例**
 
     >>> calibrator = IsotonicCalibrator()
     >>> calibrator.fit(y_true, y_prob)
@@ -500,7 +500,7 @@ class BetaCalibrator(BaseCalibrator):
     :param n_bins: 可靠性曲线的分箱数，默认10
     :param strategy: 分箱策略，默认'uniform'
 
-    **示例**
+    **参考样例**
 
     >>> calibrator = BetaCalibrator()
     >>> calibrator.fit(y_true, y_prob)
@@ -576,7 +576,7 @@ class HistogramCalibrator(BaseCalibrator):
         - 'uniform': 等宽分箱
         - 'quantile': 等频分箱
 
-    **示例**
+    **参考样例**
 
     >>> calibrator = HistogramCalibrator(n_bins=10)
     >>> calibrator.fit(y_true, y_prob)
@@ -673,7 +673,7 @@ class ProbabilityCalibrator:
     :ivar is_fitted_: 是否已拟合
     :ivar calib_metrics_: 校准前后的指标对比
 
-    **示例**
+    **参考样例**
 
     >>> # 方式1：使用独立校准集
     >>> calibrator = ProbabilityCalibrator(method='isotonic')
@@ -929,7 +929,7 @@ class CalibratedModel:
     :param base_model: 基础模型
     :param calibrator: 概率校准器实例
 
-    **示例**
+    **参考样例**
 
     >>> from hscredit.core.models import XGBoostRiskModel
     >>> from hscredit.core.models.calibration import ProbabilityCalibrator, CalibratedModel
@@ -1017,7 +1017,7 @@ def plot_calibration_comparison(
     :param colors: 颜色列表，默认使用hscredit配色 ["#2639E9", "#F76E6C", "#FE7715"]
     :return: matplotlib Figure对象
 
-    **示例**
+    **参考样例**
 
     >>> plot_calibration_comparison(
     ...     y_test,
@@ -1113,7 +1113,7 @@ def calibrate_model(
     :param kwargs: 其他参数
     :return: 拟合好的ProbabilityCalibrator
 
-    **示例**
+    **参考样例**
 
     >>> calibrator = calibrate_model(model, X_calib, y_calib, method='isotonic')
     >>> proba_calib = calibrator.predict_proba(X_test)

@@ -12,9 +12,9 @@
 **依赖**
 pip install optuna
 
-**示例**
+**参考样例**
 >>> from hscredit.core.models import XGBoostRiskModel, ModelTuner
->>> 
+>>>
 >>> # 定义搜索空间
 >>> search_space = {
 ...     'max_depth': {'type': 'int', 'low': 3, 'high': 10},
@@ -22,30 +22,30 @@ pip install optuna
 ...     'n_estimators': {'type': 'int', 'low': 50, 'high': 500},
 ... }
 >>>
-    >>> # sklearn风格 - 传入X和y
-    >>> tuner = ModelTuner(
-    ...     model_class=XGBoostRiskModel,
-    ...     search_space=search_space,
-    ...     metric='ks',
-    ...     direction='maximize'
-    ... )
-    >>> best_params = tuner.fit(X_train, y_train, n_trials=100)
-
-    >>> # scorecardpipeline风格 - 只传入DataFrame（包含target列）
-    >>> tuner = ModelTuner(
-    ...     model_class=XGBoostRiskModel,
-    ...     search_space=search_space,
-    ...     metric='ks',
-    ...     target='label'  # 指定目标列名
-    ... )
-    >>> best_params = tuner.fit(df, n_trials=100)  # df包含'label'列
-
-    >>> # 多目标调优（KS + 稳定性）
+>>> # sklearn风格
 >>> tuner = ModelTuner(
 ...     model_class=XGBoostRiskModel,
 ...     search_space=search_space,
-...     metric=['ks', 'ks_diff'],  # 多目标
-...     direction=['maximize', 'minimize'],  # 对应方向
+...     metric='ks',
+...     direction='maximize'
+... )
+>>> best_params = tuner.fit(X_train, y_train, n_trials=100)
+>>>
+>>> # scorecardpipeline风格
+>>> tuner = ModelTuner(
+...     model_class=XGBoostRiskModel,
+...     search_space=search_space,
+...     metric='ks',
+...     target='label'
+... )
+>>> best_params = tuner.fit(df, n_trials=100)
+>>>
+>>> # 多目标调优（KS + 稳定性）
+>>> tuner = ModelTuner(
+...     model_class=XGBoostRiskModel,
+...     search_space=search_space,
+...     metric=['ks', 'ks_diff'],
+...     direction=['maximize', 'minimize'],
 ... )
 >>> best_params = tuner.fit(X_train, y_train, n_trials=100)
 
@@ -1303,7 +1303,7 @@ class AutoTuner:
 
     为常见模型提供预定义的搜索空间，并根据数据特征自动调整。
 
-    **示例**
+    **参考样例**
 
     >>> from hscredit.core.models import AutoTuner
     >>> 

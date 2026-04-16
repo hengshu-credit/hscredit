@@ -104,7 +104,7 @@ class OptimalBinning(BaseBinning):
         设置此参数可将WOE限制在[-woe_clip, woe_clip]范围内。
     :param kwargs: 其他分箱方法特定参数
 
-    **示例**
+    **参考样例**
 
     >>> from hscredit.core.binning import OptimalBinning
     >>> # 使用MDLP分箱（默认，直接分箱）
@@ -1489,9 +1489,36 @@ class OptimalBinning(BaseBinning):
         return result
 
     def get_stats(self, feature: Optional[str] = None) -> Dict[str, Any]:
-        """获取分箱统计信息."""
+        """获取分箱统计信息.
+
+        返回各特征的IV值、KS值、分箱表等统计指标。
+
+        :param feature: 特征名，如果为None则返回所有特征的统计，默认为None
+        :return: 统计信息字典
+            - 如果指定了feature，返回 {'n_bins': int, 'bin_table': DataFrame, 'ks': float, 'iv': float, 'monotonic_trend': str}
+            - 如果未指定feature，返回 {feature_name: stats, ...} 格式的字典
+        :raises ValueError: 如果分箱器尚未拟合
+        :raises KeyError: 如果指定特征不存在
+
+        **参考样例**
+
+        >>> binner = OptimalBinning(method='best_iv')
+        >>> binner.fit(X, y)
+        >>>
+        >>> # 获取单个特征的统计
+        >>> stats = binner.get_stats('age')
+        >>> print(stats['n_bins'])   # 分箱数
+        >>> print(stats['iv'])      # IV值
+        >>> print(stats['ks'])      # KS值
+        >>> print(stats['bin_table'])  # 分箱统计表
+        >>>
+        >>> # 获取所有特征的统计
+        >>> all_stats = binner.get_stats()
+        >>> for feat, s in all_stats.items():
+        ...     print(f"{feat}: IV={s.get('iv', 'N/A')}")
+        """
         if not self._is_fitted:
-            raise ValueError("分箱器尚未拟合")
+            raise ValueError("分箱器尚未拟合，请先调用fit方法")
 
         if feature is not None:
             if feature not in self.bin_tables_:
@@ -1522,13 +1549,37 @@ class OptimalBinning(BaseBinning):
         criterion: str = 'iv'
     ) -> str:
         """自动选择最优分箱方法.
-        
-        :param X: 特征数据
-        :param y: 目标变量
-        :param feature: 特征名
-        :param methods: 待评估的方法列表，默认为所有方法
-        :param criterion: 选择标准，'iv' 或 'ks'
-        :return: 最优方法名
+
+        对指定特征遍历多种分箱方法，选择最优的一个。
+        适用于在不了解特征分布时自动选择最佳分箱策略。
+
+        :param X: 特征数据 DataFrame
+        :param y: 目标变量 Series，二分类 (0/1)
+        :param feature: 待评估的特征名（必须是X中的列）
+        :param methods: 待评估的方法列表，默认为 ['uniform', 'quantile', 'tree', 'chi',
+            'best_ks', 'best_iv', 'mdlp', 'cart', 'kmeans']
+        :param criterion: 选择标准，默认为 'iv'
+            - 'iv': 选择IV值最大的方法
+            - 'ks': 选择KS值最大的方法
+        :return: 最优方法名（字符串）
+        :raises Warning: 某个方法执行失败时输出警告但继续评估其他方法
+
+        **参考样例**
+
+        >>> binner = OptimalBinning()
+        >>> best_method = OptimalBinning.auto_select_method(X, y, 'age')
+        >>> print(f"最优方法: {best_method}")
+        >>>
+        >>> # 自定义方法列表
+        >>> best = OptimalBinning.auto_select_method(
+        ...     X, y, 'income',
+        ...     methods=['best_iv', 'cart', 'mdlp'],
+        ...     criterion='ks'
+        ... )
+        >>>
+        >>> # 使用最优方法进行分箱
+        >>> binner = OptimalBinning(method=best_method)
+        >>> binner.fit(X[[feature]], y)
         """
         if methods is None:
             methods = ['uniform', 'quantile', 'tree', 'chi',

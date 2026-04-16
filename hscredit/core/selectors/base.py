@@ -7,6 +7,20 @@
 1. 单个筛选器报告: 每个筛选器实现 get_selection_report(),返回标准化报告
 2. 全局报告收集器: SelectionReportCollector 自动收集 Pipeline 中所有筛选器的结果
 3. 报告格式: 统一的中文格式,包含统计信息、选中/剔除特征、得分等
+
+**参考样例**
+
+>>> from hscredit.core.selectors.base import BaseFeatureSelector, SelectionReportCollector
+>>> from hscredit.core.selectors import VarianceSelector
+>>> import pandas as pd
+>>> import numpy as np
+>>> np.random.seed(42)
+>>> X = pd.DataFrame(np.random.randn(100, 5), columns=[f'feat_{i}' for i in range(5)])
+>>> y = pd.Series(np.random.randint(0, 2, 100))
+>>> selector = VarianceSelector(threshold=0.1)
+>>> selector.fit(X, y)
+>>> report = selector.get_selection_report()
+>>> print(f"选中特征数: {report['选中特征数']}")
 """
 
 from abc import ABC, abstractmethod
@@ -30,9 +44,11 @@ def get_feature_importances(estimator) -> np.ndarray:
     - 原生 lightgbm Booster (feature_importance)
     - 原生 catboost CatBoost (get_feature_importance)
 
-    :param estimator: 已训练的模型
+    **参数**
+
+    :param estimator: 已训练的模型对象
     :return: 一维 numpy 数组，长度为特征数
-    :raises ValueError: 当无法从模型中提取重要性时
+    :raises ValidationError: 当无法从模型中提取重要性时
     """
     # 1. feature_importances_ — 最通用 (sklearn tree models, hscredit models, XGB/LGB/CB sklearn API)
     if hasattr(estimator, 'feature_importances_'):
@@ -117,7 +133,14 @@ class SelectionReportCollector:
     def __init__(self, name: str = "特征筛选流程"):
         """初始化报告收集器。
 
-        :param name: 流程名称,用于报告中显示
+        **参数**
+
+        :param name: 流程名称，用于报告中显示，默认值为 "特征筛选流程"
+
+        **参考样例**
+
+        >>> from hscredit.core.selectors.base import SelectionReportCollector
+        >>> collector = SelectionReportCollector(name="我的筛选流程")
         """
         self.name = name
         self.reports: List[Dict[str, Any]] = []
@@ -131,9 +154,31 @@ class SelectionReportCollector:
     ) -> 'SelectionReportCollector':
         """添加筛选器报告。
 
-        :param selector: 已拟合的筛选器对象
-        :param stage_name: 阶段名称,如'粗筛''精筛'等
-        :return: self
+        将已拟合的筛选器结果添加到收集器中，并生成阶段名称。阶段名称默认为"阶段{序号}"。
+
+        **参数**
+
+        :param selector: 已拟合的筛选器对象，必须实现 `get_selection_report()` 方法
+        :param stage_name: 阶段名称，如 '粗筛'、'精筛' 等，默认根据已有报告数量自动生成
+
+        :returns: self（支持链式调用）
+
+        :raises ValidationError: 当 selector 未实现 `get_selection_report()` 方法时
+
+        **参考样例**
+
+        >>> from hscredit.core.selectors.base import SelectionReportCollector
+        >>> from hscredit.core.selectors import VarianceSelector
+        >>> import pandas as pd
+        >>> import numpy as np
+        >>> np.random.seed(42)
+        >>> X = pd.DataFrame(np.random.randn(100, 5), columns=[f'f{i}' for i in range(5)])
+        >>> y = pd.Series(np.random.randint(0, 2, 100))
+        >>> collector = SelectionReportCollector()
+        >>> selector = VarianceSelector(threshold=0.1)
+        >>> selector.fit(X, y)
+        >>> collector.add_report(selector, stage_name="粗筛")
+        SelectionReportCollector(name='特征筛选流程', stages=1)
         """
         if not hasattr(selector, 'get_selection_report'):
             raise ValidationError("selector 必须实现 get_selection_report() 方法")
@@ -156,7 +201,37 @@ class SelectionReportCollector:
     def get_summary(self) -> Dict[str, Any]:
         """获取汇总报告。
 
-        :return: 包含所有筛选器结果的字典
+        汇总报告包含筛选流程的整体统计信息和各阶段的筛选详情。
+
+        **返回字典键值说明**
+
+        - **流程名称** (`str`): 筛选流程名称
+        - **创建时间** (`str`): 报告创建时间，格式为 YYYY-MM-DD HH:MM:SS
+        - **筛选轮次** (`int`): 执行的筛选阶段总数
+        - **原始特征数** (`int`): 第一阶段输入的特征数量
+        - **最终特征数** (`int`): 最后一个阶段输出的特征数量
+        - **累计剔除特征数** (`int`): 所有阶段累计剔除的特征总数
+        - **特征保留率** (`str`): 特征保留比例，格式为 "XX.XX%"，无记录时为 "N/A"
+        - **筛选器列表** (`List[Dict]`): 各阶段的筛选器详情列表，每项包含阶段、筛选器、输入、输出、剔除、阈值
+
+        :returns: 包含汇总统计和阶段详情的字典，无记录时返回包含 "状态" 和 "message" 的字典
+
+        **参考样例**
+
+        >>> from hscredit.core.selectors.base import SelectionReportCollector
+        >>> from hscredit.core.selectors import VarianceSelector
+        >>> import pandas as pd
+        >>> import numpy as np
+        >>> np.random.seed(42)
+        >>> X = pd.DataFrame(np.random.randn(100, 5), columns=[f'f{i}' for i in range(5)])
+        >>> y = pd.Series(np.random.randint(0, 2, 100))
+        >>> collector = SelectionReportCollector()
+        >>> selector = VarianceSelector(threshold=0.1)
+        >>> selector.fit(X, y)
+        >>> collector.add_report(selector)
+        >>> summary = collector.get_summary()
+        >>> print(f"原始特征数: {summary['原始特征数']}, 最终特征数: {summary['最终特征数']}")
+        原始特征数: 5, 最终特征数: ...
         """
         if len(self.reports) == 0:
             return {
@@ -194,9 +269,33 @@ class SelectionReportCollector:
     def get_feature_trace(self) -> pd.DataFrame:
         """获取特征追踪表。
 
-        记录每个特征在每个筛选阶段的状态。
+        记录每个特征在每个筛选阶段的状态变化，包括选中、剔除或未处理。
 
-        :return: 特征追踪DataFrame
+        **返回 DataFrame 列说明**
+
+        - **特征** (`str`): 特征名称
+        - **阶段** (`str`): 筛选阶段的名称
+        - **筛选器** (`str`): 该阶段使用的筛选器类名
+        - **状态** (`str`): 特征在当前阶段的状态，取值为 '选中'、'剔除' 或 '未处理'
+        - **得分/原因** (`Any`): 选中特征的得分，或剔除特征的原因
+
+        :returns: 特征追踪 DataFrame，无记录时返回空 DataFrame
+
+        **参考样例**
+
+        >>> from hscredit.core.selectors.base import SelectionReportCollector
+        >>> from hscredit.core.selectors import VarianceSelector
+        >>> import pandas as pd
+        >>> import numpy as np
+        >>> np.random.seed(42)
+        >>> X = pd.DataFrame(np.random.randn(100, 5), columns=[f'f{i}' for i in range(5)])
+        >>> y = pd.Series(np.random.randint(0, 2, 100))
+        >>> collector = SelectionReportCollector()
+        >>> selector = VarianceSelector(threshold=0.1)
+        >>> selector.fit(X, y)
+        >>> collector.add_report(selector)
+        >>> trace = collector.get_feature_trace()
+        >>> print(trace.head())
         """
         if len(self.reports) == 0:
             return pd.DataFrame()
@@ -248,7 +347,33 @@ class SelectionReportCollector:
     def get_dropped_summary(self) -> pd.DataFrame:
         """获取被剔除特征的汇总表。
 
-        :return: 剔除特征汇总DataFrame
+        汇总所有筛选阶段中被剔除的特征及其剔除原因。
+
+        **返回 DataFrame 列说明**
+
+        - **特征** (`str`): 被剔除的特征名称
+        - **阶段** (`str`): 该特征被剔除的阶段名称
+        - **筛选器** (`str`): 该阶段使用的筛选器类名
+        - **剔除原因** (`str`): 特征被剔除的原因描述
+        - **得分** (`Any`): 特征在筛选器中的得分，无得分时为 'N/A'
+
+        :returns: 剔除特征汇总 DataFrame，无记录时返回空 DataFrame
+
+        **参考样例**
+
+        >>> from hscredit.core.selectors.base import SelectionReportCollector
+        >>> from hscredit.core.selectors import VarianceSelector
+        >>> import pandas as pd
+        >>> import numpy as np
+        >>> np.random.seed(42)
+        >>> X = pd.DataFrame(np.random.randn(100, 5), columns=[f'f{i}' for i in range(5)])
+        >>> y = pd.Series(np.random.randint(0, 2, 100))
+        >>> collector = SelectionReportCollector()
+        >>> selector = VarianceSelector(threshold=0.1)
+        >>> selector.fit(X, y)
+        >>> collector.add_report(selector)
+        >>> dropped = collector.get_dropped_summary()
+        >>> print(f"共剔除 {len(dropped)} 个特征")
         """
         if len(self.reports) == 0:
             return pd.DataFrame()
@@ -271,9 +396,36 @@ class SelectionReportCollector:
         return pd.DataFrame(dropped_records)
 
     def to_dataframe(self) -> pd.DataFrame:
-        """转换为DataFrame格式。
+        """转换为 DataFrame 格式。
 
-        :return: 筛选结果DataFrame
+        将收集到的各筛选阶段报告汇总为一个 DataFrame，每行对应一个筛选阶段。
+
+        **返回 DataFrame 列说明**
+
+        - **阶段** (`str`): 筛选阶段的名称
+        - **筛选器** (`str`): 该阶段使用的筛选器类名
+        - **阈值** (`Any`): 该阶段使用的筛选阈值
+        - **输入特征数** (`int`): 该阶段输入的特征数量
+        - **选中特征数** (`int`): 该阶段输出的特征数量
+        - **剔除特征数** (`int`): 该阶段剔除的特征数量
+
+        :returns: 筛选结果汇总 DataFrame，无记录时返回空 DataFrame
+
+        **参考样例**
+
+        >>> from hscredit.core.selectors.base import SelectionReportCollector
+        >>> from hscredit.core.selectors import VarianceSelector
+        >>> import pandas as pd
+        >>> import numpy as np
+        >>> np.random.seed(42)
+        >>> X = pd.DataFrame(np.random.randn(100, 5), columns=[f'f{i}' for i in range(5)])
+        >>> y = pd.Series(np.random.randint(0, 2, 100))
+        >>> collector = SelectionReportCollector()
+        >>> selector = VarianceSelector(threshold=0.1)
+        >>> selector.fit(X, y)
+        >>> collector.add_report(selector)
+        >>> df = collector.to_dataframe()
+        >>> print(df)
         """
         if len(self.reports) == 0:
             return pd.DataFrame()
@@ -293,9 +445,33 @@ class SelectionReportCollector:
         return pd.DataFrame(rows)
 
     def to_excel(self, filepath: str) -> None:
-        """导出为Excel文件。
+        """导出为 Excel 文件。
 
-        :param filepath: 保存路径
+        将筛选报告导出为多 Sheet 的 Excel 文件，同时生成一份 JSON 格式的详细报告。
+
+        **Excel 文件内容**
+
+        - **筛选汇总** Sheet: 各筛选阶段的统计汇总
+        - **特征追踪** Sheet: 每个特征在各阶段的状态变化（仅在有记录时生成）
+        - **剔除特征** Sheet: 被剔除特征的详细信息（仅在有记录时生成）
+        - **JSON 报告**: 与 Excel 同目录的 `{文件名}_report.json`，包含完整汇总信息
+
+        :param filepath: 保存路径，必须以 `.xlsx` 结尾
+
+        **参考样例**
+
+        >>> from hscredit.core.selectors.base import SelectionReportCollector
+        >>> from hscredit.core.selectors import VarianceSelector
+        >>> import pandas as pd
+        >>> import numpy as np
+        >>> np.random.seed(42)
+        >>> X = pd.DataFrame(np.random.randn(100, 5), columns=[f'f{i}' for i in range(5)])
+        >>> y = pd.Series(np.random.randint(0, 2, 100))
+        >>> collector = SelectionReportCollector()
+        >>> selector = VarianceSelector(threshold=0.1)
+        >>> selector.fit(X, y)
+        >>> collector.add_report(selector)
+        >>> collector.to_excel("筛选报告.xlsx")
         """
         with pd.ExcelWriter(filepath, engine='openpyxl') as writer:
             # 写入汇总表
@@ -335,7 +511,31 @@ class SelectionReportCollector:
                 f.write(summary_json)
 
     def print_summary(self) -> None:
-        """打印汇总报告到控制台。"""
+        """打印汇总报告到控制台。
+
+        以格式化的方式打印筛选流程的整体统计信息和各阶段详情。
+
+        **打印内容**
+
+        - 筛选流程名称和创建时间
+        - 筛选轮次、原始/最终特征数、累计剔除数、特征保留率
+        - 各阶段筛选器详情（阶段名、筛选器名称、输入/输出/剔除特征数）
+
+        **参考样例**
+
+        >>> from hscredit.core.selectors.base import SelectionReportCollector
+        >>> from hscredit.core.selectors import VarianceSelector
+        >>> import pandas as pd
+        >>> import numpy as np
+        >>> np.random.seed(42)
+        >>> X = pd.DataFrame(np.random.randn(100, 5), columns=[f'f{i}' for i in range(5)])
+        >>> y = pd.Series(np.random.randint(0, 2, 100))
+        >>> collector = SelectionReportCollector()
+        >>> selector = VarianceSelector(threshold=0.1)
+        >>> selector.fit(X, y)
+        >>> collector.add_report(selector)
+        >>> collector.print_summary()  # doctest: +SKIP
+        """
         summary = self.get_summary()
 
         print("=" * 60)
@@ -357,98 +557,86 @@ class SelectionReportCollector:
         print("=" * 60)
 
     def __len__(self) -> int:
-        """返回筛选器数量。"""
+        """返回已添加的筛选器数量。
+
+        :returns: 已收集的报告数量
+        """
         return len(self.reports)
 
     def __repr__(self) -> str:
+        """返回收集器的字符串表示。
+
+        :returns: 形如 ``SelectionReportCollector(name='...', stages=N)`` 的字符串
+        """
         return f"SelectionReportCollector(name='{self.name}', stages={len(self.reports)})"
 
 
 class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
     """特征筛选器基类.
 
-    所有特征筛选器都继承此类,实现统一的fit/transform接口。
-    支持中文筛选报告生成。
-    支持可选的分箱器,在筛选前对数据进行分箱处理。
+    所有特征筛选器都继承此类，实现统一的 fit/transform 接口。
+    支持中文筛选报告生成。支持可选的分箱器，在筛选前对数据进行分箱处理。
 
     **参数**
 
-    :param target: 目标变量列名,默认为'target'。
-        - 在scorecardpipeline风格中使用: fit(df)时从df中提取目标列
-        - 在sklearn风格中可选: fit(X, y)时y参数优先于target
-    :param include: 强制保留的特征列表,这些特征无论如何都会被保留
-    :param exclude: 强制剔除的特征列表,这些特征无论如何都会被剔除
-    :param binner: 可选的分箱器,支持:
-        - 训练好的分箱器（有fit方法）
-        - 分箱器类（未训练的,需要传入类而非实例）
-        - 分箱器实例（未训练的）
-    :param threshold: 筛选阈值,不同筛选器含义不同
-    :param n_jobs: 并行计算的任务数,默认为1
+    :param target: 目标变量列名，默认为 'target'。在 scorecardpipeline 风格中用于
+        从 DataFrame 中提取目标列；在 sklearn 风格中若 fit 传入了 y 参数则优先使用 y
+    :param include: 强制保留的特征列表，这些特征无论如何都会被保留
+    :param exclude: 强制剔除的特征列表，这些特征无论如何都会被剔除
+    :param binner: 可选的分箱器，支持已训练的分箱器实例、待训练的分箱器类（传入类而非实例）、
+        或待训练的分箱器实例
+    :param threshold: 筛选阈值，不同筛选器含义不同
+    :param n_jobs: 并行计算的任务数，默认为 1
+    :param force_drop: 强制剔除的特征列表，效果与 exclude 合并
 
     **属性**
 
-    - selected_features_: 选中的特征列表
+    - selected_features_: 选中保留的特征列表
     - removed_features_: 被剔除的特征列表
-    - dropped_: 被剔除的特征及原因DataFrame
-    - scores_: 各特征的筛选得分
-    - n_features_in_: 输入特征数量
+    - dropped_: 被剔除的特征及原因 DataFrame，包含 '特征' 和 '剔除原因' 两列
+    - scores_: 各特征的筛选得分的 Series
+    - n_features_in_: fit 时输入的特征数量
     - forced_dropped_: 被强制剔除的特征列表
+    - include_: 处理后的强制保留特征列表（字符串会被转为单元素列表）
+    - exclude_: 处理后的强制剔除特征列表（包含 force_drop 的合并结果）
 
-    **中文筛选报告**
+    **参考样例**
 
-    报告包含以下内容:
-    - 筛选方法名称
-    - 阈值设置
-    - 选中的特征数量和列表
-    - 被剔除的特征及原因
-    - 各特征的得分统计
-
-    **使用示例**
-
-    **方式1: sklearn风格 (推荐用于纯特征矩阵)**
+    **sklearn 风格（推荐用于纯特征矩阵）**
 
     ::
 
         >>> from hscredit.core.selectors import VarianceSelector
         >>> import pandas as pd
         >>> import numpy as np
-        >>> 
-        >>> # 准备数据
-        >>> X = pd.DataFrame({'a': [1,2,3], 'b': [1,1,1], 'c': [1,2,3]})
-        >>> y = pd.Series([0, 1, 0])
-        >>> 
-        >>> # 强制保留特征a,强制剔除特征c
-        >>> selector = VarianceSelector(threshold=0.1, include=['a'], exclude=['c'])
-        >>> selector.fit(X, y)  # sklearn风格: X是特征, y是目标变量
+        >>> np.random.seed(42)
+        >>> X = pd.DataFrame(np.random.randn(100, 5), columns=[f'feat_{i}' for i in range(5)])
+        >>> y = pd.Series(np.random.randint(0, 2, 100))
+        >>> selector = VarianceSelector(threshold=0.1, include=['feat_0'], exclude=['feat_4'])
+        >>> selector.fit(X, y)
+        VarianceSelector(...)
         >>> print(selector.selected_features_)
-        ['a']
+        ['feat_0', ...]
 
-    **方式2: scorecardpipeline风格 (推荐用于完整数据框)**
+    **scorecardpipeline 风格（推荐用于完整数据框）**
 
     ::
 
         >>> from hscredit.core.selectors import IVSelector
         >>> import pandas as pd
-        >>> 
-        >>> # 准备完整数据框
+        >>> import numpy as np
+        >>> np.random.seed(42)
         >>> df = pd.DataFrame({
-        ...     'feat1': [1, 2, 3, 4, 5],
-        ...     'feat2': [1, 1, 1, 1, 1],  # 低方差,会被剔除
-        ...     'target': [0, 1, 0, 1, 0]
+        ...     'feat1': np.random.randn(1000),
+        ...     'feat2': [1] * 1000,  # 低方差，会被剔除
+        ...     'target': np.random.randint(0, 2, 1000)
         ... })
-        >>> 
-        >>> # 指定目标列名,传入完整数据框
         >>> selector = IVSelector(threshold=0.02, target='target')
-        >>> selector.fit(df)  # scorecardpipeline风格: df包含特征和目标
-        >>> print(selector.selected_features_)
-
-    **方式3: 混合风格 (y参数优先)**
-
-    ::
-
-        >>> # 即使初始化时指定了target, fit时传入y会优先使用y
-        >>> selector = IVSelector(threshold=0.02, target='target')
-        >>> selector.fit(df, y=df['target'])  # y参数优先于target列
+        >>> selector.fit(df)
+        IVSelector(...)
+        >>> report = selector.get_selection_report()
+        >>> print(f"输入: {report['输入特征数']}, 输出: {report['选中特征数']}")
+        输入: 2, 输出: 1
     """
 
     def __init__(
@@ -461,6 +649,18 @@ class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
         n_jobs: int = 1,
         force_drop: Optional[List[str]] = None,
     ):
+        """初始化特征筛选器。
+
+        **参数**
+
+        :param target: 目标变量列名，默认为 'target'。当 fit 传入 y 参数时优先使用 y
+        :param include: 强制保留的特征列表，这些特征无论如何都会被保留
+        :param exclude: 强制剔除的特征列表，这些特征无论如何都会被剔除
+        :param binner: 可选的分箱器，支持已训练/未训练的分箱器实例或类
+        :param threshold: 筛选阈值，不同筛选器含义不同
+        :param n_jobs: 并行计算的任务数，默认为 1
+        :param force_drop: 强制剔除的特征列表，效果与 exclude 合并
+        """
         self.target = target
         self.include = include
         self.exclude = exclude
@@ -474,21 +674,37 @@ class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
         X: Union[pd.DataFrame, np.ndarray],
         y: Optional[Union[pd.Series, np.ndarray]] = None,
     ) -> Tuple[pd.DataFrame, Optional[Union[pd.Series, np.ndarray]]]:
-        """检查并处理输入数据,支持两种API风格。
+        """检查并处理输入数据，支持两种 API 风格。
 
-        **API风格说明:**
-        
-        1. **sklearn风格**: fit(X, y) - X是特征矩阵, y是目标变量
-        2. **scorecardpipeline风格**: fit(df) - df是完整数据框,目标列名在初始化时通过target参数传入
+        **API 风格**
 
-        **处理逻辑:**
-        - 如果y不为None,使用sklearn风格(X作为特征, y作为目标)
-        - 如果y为None且X是DataFrame且包含target列,从X中分离出目标列
-        - 支持DataFrame和numpy数组输入
+        1. **sklearn 风格**: ``fit(X, y)`` — X 是特征矩阵，y 是目标变量
+        2. **scorecardpipeline 风格**: ``fit(df)`` — df 是包含特征和目标列的完整 DataFrame，
+           目标列名通过初始化参数 target 指定
 
-        :param X: 输入特征或完整数据框
-        :param y: 目标变量(可选),如果不为None则优先使用
-        :return: 处理后的特征DataFrame和目标变量
+        **优先级规则**: 如果 y 不为 None，使用 sklearn 风格；否则检查 X 中是否包含 target 列。
+
+        **参数**
+
+        :param X: 输入特征矩阵（DataFrame 或 numpy 数组）或包含目标列的完整数据框
+        :param y: 目标变量，可选。如果不为 None 则优先使用
+
+        :returns: 二元组 ``(处理后的特征 DataFrame, 目标变量或 None)``
+
+        **参考样例**
+
+        >>> from hscredit.core.selectors.base import BaseFeatureSelector
+        >>> import pandas as pd
+        >>> class DummySelector(BaseFeatureSelector):
+        ...     def _fit_impl(self, X, y): pass
+        >>> import numpy as np
+        >>> np.random.seed(42)
+        >>> X_df = pd.DataFrame(np.random.randn(5, 3), columns=['a', 'b', 'c'])
+        >>> y_s = pd.Series([0, 1, 0, 1, 0])
+        >>> sel = DummySelector()
+        >>> X_out, y_out = sel._check_input(X_df, y_s)
+        >>> X_out.shape
+        (5, 3)
         """
         # 转换为DataFrame
         if not isinstance(X, pd.DataFrame):
@@ -513,23 +729,32 @@ class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
         X: Union[pd.DataFrame, np.ndarray],
         y: Optional[Union[pd.Series, np.ndarray]] = None,
     ) -> 'BaseFeatureSelector':
-        """拟合筛选器,学习特征重要性。
+        """拟合筛选器，学习特征重要性。
 
-        支持两种API风格:
+        支持两种 API 风格：sklearn 风格 ``fit(X, y)`` 和 scorecardpipeline 风格 ``fit(df)``。
 
-        **sklearn风格**: fit(X, y)
-            - X: 特征矩阵 (DataFrame或numpy数组)
-            - y: 目标变量 (Series或numpy数组)
+        **参数**
 
-        **scorecardpipeline风格**: fit(df)
-            - df: 完整数据框,包含特征和目标列
-            - 目标列名在初始化时通过target参数指定(默认为'target')
+        :param X: 输入特征矩阵（DataFrame 或 numpy 数组），或包含目标列的完整数据框
+        :param y: 目标变量，可选。如果不为 None 则优先使用
 
-        **优先级规则**: 如果y不为None,优先使用y;否则从X中提取target列
+        :returns: self
 
-        :param X: 输入特征或完整数据框
-        :param y: 目标变量(可选),如果不为None则优先使用
-        :return: self
+        :raises NotFittedError: 如果在子类实现中需要目标变量但 y 为 None
+
+        **参考样例**
+
+        >>> from hscredit.core.selectors import VarianceSelector
+        >>> import pandas as pd
+        >>> import numpy as np
+        >>> np.random.seed(42)
+        >>> X = pd.DataFrame(np.random.randn(100, 5), columns=[f'f{i}' for i in range(5)])
+        >>> y = pd.Series(np.random.randint(0, 2, 100))
+        >>> selector = VarianceSelector(threshold=0.1)
+        >>> selector.fit(X, y)
+        VarianceSelector(...)
+        >>> len(selector.selected_features_)
+        ...
         """
         # 检查输入并分离特征和目标
         X_processed, y_processed = self._check_input(X, y)
@@ -608,9 +833,30 @@ class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
     ) -> pd.DataFrame:
         """应用分箱器对数据进行分箱。
 
-        :param X: 输入特征DataFrame
-        :param y: 目标变量
-        :return: 分箱后的DataFrame
+        支持传入已训练的分箱器实例或待训练的分箱器类/实例。如果传入未训练的分箱器，
+        将自动在输入数据上进行拟合。
+
+        **参数**
+
+        :param X: 输入特征 DataFrame
+        :param y: 目标变量，可选
+
+        :returns: 分箱后的 DataFrame，列名与输入保持一致
+
+        **参考样例**
+
+        >>> from hscredit.core.selectors.base import BaseFeatureSelector
+        >>> from hscredit.core.binning import DecisionTreeBinner
+        >>> import pandas as pd
+        >>> class DummySelector(BaseFeatureSelector):
+        ...     def _fit_impl(self, X, y): pass
+        >>> import numpy as np
+        >>> np.random.seed(42)
+        >>> X = pd.DataFrame(np.random.randn(100, 3), columns=['a', 'b', 'c'])
+        >>> sel = DummySelector(binner=DecisionTreeBinner(max_depth=2))
+        >>> X_binned = sel._apply_binner(X)
+        >>> X_binned.shape
+        (100, 3)
         """
         binner = self.binner
 
@@ -652,9 +898,13 @@ class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
         return X_binned
 
     def _apply_include(self, X: pd.DataFrame) -> None:
-        """确保include的特征被保留。
+        """确保 include 的特征被保留。
 
-        :param X: 输入特征DataFrame
+        将初始化时传入的 include 参数中的特征添加到 selected_features_ 列表中。
+
+        **参数**
+
+        :param X: 输入特征 DataFrame
         """
         if hasattr(self, 'selected_features_') and self.selected_features_ is not None:
             # 添加include的特征
@@ -684,17 +934,27 @@ class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
         X: pd.DataFrame,
         y: Optional[Union[pd.Series, np.ndarray]],
     ) -> None:
-        """子类实现的fit逻辑。
+        """子类实现的 fit 逻辑。
 
-        :param X: 输入特征DataFrame
-        :param y: 目标变量
+        子类必须重写此方法，在其中实现具体的特征筛选计算逻辑，
+        并设置 self.selected_features_ 和 self.scores_ 属性。
+
+        **参数**
+
+        :param X: 输入特征 DataFrame（已通过 _check_input 处理）
+        :param y: 目标变量，可选
         """
         pass
 
     def _apply_exclude(self, X: pd.DataFrame) -> None:
         """强制剔除指定的特征。
 
-        :param X: 输入特征DataFrame
+        将初始化时传入的 exclude 和 force_drop 参数中的特征从 selected_features_ 中移除，
+        并记录到 forced_dropped_ 和 dropped_ 属性中。
+
+        **参数**
+
+        :param X: 输入特征 DataFrame
         """
         if not hasattr(self, 'selected_features_') or self.selected_features_ is None:
             return
@@ -732,7 +992,7 @@ class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
                 '特征': self.forced_dropped_,
                 '剔除原因': ['强制剔除'] * len(self.forced_dropped_)
             })
-        
+
         # 更新 removed_features_
         if hasattr(self, 'dropped_') and len(self.dropped_) > 0:
             self.removed_features_ = self.dropped_['特征'].tolist()
@@ -745,15 +1005,32 @@ class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
     ) -> Union[pd.DataFrame, np.ndarray, List[str]]:
         """根据筛选结果转换数据。
 
-        支持两种使用方式:
-        1. 传入 DataFrame - 返回筛选后的 DataFrame
-        2. 传入特征列表 - 返回筛选后的特征列表
+        根据 fit 阶段选中的特征，对输入数据进行筛选。
 
-        scorecardpipeline 风格: 如果传入的 DataFrame 包含目标变量列（target），
-        目标变量列会被保留在输出中（透传）。
+        **参数**
 
-        :param X: 输入特征 (DataFrame, ndarray 或特征名列表)
-        :return: 筛选后的特征 (与输入类型一致)
+        :param X: 输入数据，支持 DataFrame、numpy 数组或特征名列表
+
+        :returns: 筛选后的数据，类型与输入一致
+            - DataFrame/ndarray 输入：返回仅包含选中特征的 DataFrame（若包含 target 列则透传）
+            - 列表输入：返回筛选后的特征名列表
+
+        :raises NotFittedError: 当筛选器尚未拟合时
+
+        **参考样例**
+
+        >>> from hscredit.core.selectors import VarianceSelector
+        >>> import pandas as pd
+        >>> import numpy as np
+        >>> np.random.seed(42)
+        >>> X = pd.DataFrame(np.random.randn(100, 5), columns=[f'f{i}' for i in range(5)])
+        >>> y = pd.Series(np.random.randint(0, 2, 100))
+        >>> selector = VarianceSelector(threshold=0.1)
+        >>> selector.fit(X, y)
+        VarianceSelector(...)
+        >>> X_selected = selector.transform(X)
+        >>> X_selected.shape[1] < X.shape[1]
+        True
         """
         if not hasattr(self, '_is_fitted'):
             raise NotFittedError("筛选器尚未拟合，请先调用fit方法")
@@ -784,26 +1061,40 @@ class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
     ) -> Union[pd.DataFrame, np.ndarray]:
         """拟合并转换数据。
 
-        支持两种API风格:
+        等价于依次调用 fit(X, y) 和 transform(X)。
 
-        **sklearn风格**: fit_transform(X, y)
-            - X: 特征矩阵 (DataFrame或numpy数组)
-            - y: 目标变量 (Series或numpy数组)
+        **参数**
 
-        **scorecardpipeline风格**: fit_transform(df)
-            - df: 完整数据框,包含特征和目标列
-            - 目标列名在初始化时通过target参数指定
+        :param X: 输入特征矩阵（DataFrame 或 numpy 数组），或包含目标列的完整数据框
+        :param y: 目标变量，可选
 
-        :param X: 输入特征或完整数据框
-        :param y: 目标变量(可选),如果不为None则优先使用
-        :return: 筛选后的特征
+        :returns: 筛选后的特征数据
         """
         return self.fit(X, y).transform(X)
 
     def get_support_mask(self) -> np.ndarray:
         """获取特征选择掩码。
 
-        :return: 布尔数组,True表示选中
+        返回一个布尔数组，长度为输入特征数，True 表示该特征被选中。
+
+        :returns: 布尔 numpy 数组，True 对应选中特征的下标
+
+        :raises NotFittedError: 当筛选器尚未拟合时
+
+        **参考样例**
+
+        >>> from hscredit.core.selectors import VarianceSelector
+        >>> import pandas as pd
+        >>> import numpy as np
+        >>> np.random.seed(42)
+        >>> X = pd.DataFrame(np.random.randn(100, 5), columns=[f'f{i}' for i in range(5)])
+        >>> y = pd.Series(np.random.randint(0, 2, 100))
+        >>> selector = VarianceSelector(threshold=0.1)
+        >>> selector.fit(X, y)
+        VarianceSelector(...)
+        >>> mask = selector.get_support_mask()
+        >>> mask.sum() == len(selector.selected_features_)
+        True
         """
         if not hasattr(self, '_is_fitted'):
             raise NotFittedError("筛选器尚未拟合，请先调用fit方法")
@@ -818,14 +1109,43 @@ class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
     def get_selection_report(self) -> Dict[str, Any]:
         """获取中文筛选报告。
 
-        报告格式说明:
-        - 基础信息: 筛选器名称、方法、阈值、参数
-        - 统计信息: 输入/输出特征数、剔除数、保留率
-        - 选中特征: 选中的特征列表
-        - 剔除特征: 被剔除的特征及原因（DataFrame格式）
-        - 特征得分: 各特征的筛选得分
+        报告包含筛选器的基础信息、统计信息、选中/剔除特征列表及特征得分。
 
-        :return: 包含筛选结果的字典
+        **返回字典键值说明**
+
+        - **筛选器** (`str`): 筛选器类名
+        - **筛选方法** (`str`): 筛选方法名称
+        - **时间戳** (`str`): 报告生成时间，格式为 YYYY-MM-DD HH:MM:SS
+        - **阈值** (`Any`): 筛选阈值
+        - **参数** (`Dict`): 筛选器初始化参数（过滤后的有效参数）
+        - **强制操作** (`Dict` | `None`): 强制保留/剔除的特征信息
+        - **输入特征数** (`int`): fit 时的输入特征数量
+        - **选中特征数** (`int`): 选中的特征数量
+        - **剔除特征数** (`int`): 被剔除的特征数量
+        - **特征保留率** (`str`): 保留比例，格式为 "XX.XX%"
+        - **选中特征** (`List[str]`): 选中特征名称列表
+        - **剔除特征** (`List[str]`，可选): 被剔除特征名称列表
+        - **剔除原因** (`List[str]`，可选): 各剔除特征对应的原因
+        - **剔除详情** (`List[Dict]`，可选): 剔除特征的详细信息
+        - **特征得分** (`Dict`): 各特征得分的字典
+        - **得分统计** (`Dict`，可选): 得分的统计摘要（最大值、最小值、平均值、中位数）
+
+        :returns: 包含筛选结果的字典，未拟合时返回包含 "状态" 和 "message" 的字典
+
+        **参考样例**
+
+        >>> from hscredit.core.selectors import VarianceSelector
+        >>> import pandas as pd
+        >>> import numpy as np
+        >>> np.random.seed(42)
+        >>> X = pd.DataFrame(np.random.randn(100, 5), columns=[f'f{i}' for i in range(5)])
+        >>> y = pd.Series(np.random.randint(0, 2, 100))
+        >>> selector = VarianceSelector(threshold=0.1)
+        >>> selector.fit(X, y)
+        VarianceSelector(...)
+        >>> report = selector.get_selection_report()
+        >>> print(f"输入: {report['输入特征数']}, 选中: {report['选中特征数']}")
+        输入: 5, 选中: ...
         """
         if not hasattr(self, '_is_fitted'):
             return {"状态": "未拟合", "message": "请先调用fit方法"}
@@ -902,11 +1222,35 @@ class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
         return report
 
     def get_selection_report_df(self) -> pd.DataFrame:
-        """获取简化的DataFrame格式报告。
+        """获取简化的 DataFrame 格式报告。
 
-        适用于快速查看和导出。
+        适用于快速查看和导出到 Excel 等场景。
 
-        :return: 报告DataFrame
+        **返回 DataFrame 列说明**
+
+        - **筛选器** (`str`): 筛选器类名
+        - **筛选方法** (`str`): 筛选方法名称
+        - **阈值** (`Any`): 筛选阈值
+        - **输入特征数** (`int`): 输入特征数量
+        - **选中特征数** (`int`): 选中特征数量
+        - **剔除特征数** (`int`): 剔除特征数量
+        - **保留率** (`str`): 特征保留比例
+
+        :returns: 包含筛选报告关键指标的 DataFrame（单行）
+
+        **参考样例**
+
+        >>> from hscredit.core.selectors import VarianceSelector
+        >>> import pandas as pd
+        >>> import numpy as np
+        >>> np.random.seed(42)
+        >>> X = pd.DataFrame(np.random.randn(100, 5), columns=[f'f{i}' for i in range(5)])
+        >>> y = pd.Series(np.random.randint(0, 2, 100))
+        >>> selector = VarianceSelector(threshold=0.1)
+        >>> selector.fit(X, y)
+        VarianceSelector(...)
+        >>> report_df = selector.get_selection_report_df()
+        >>> print(report_df)
         """
         report = self.get_selection_report()
         
@@ -924,39 +1268,80 @@ class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
         return pd.DataFrame([row])
 
     def get_scores_df(self) -> pd.DataFrame:
-        """获取特征得分的DataFrame。
+        """获取特征得分的 DataFrame。
 
-        :return: 包含特征和得分的DataFrame
+        **返回 DataFrame 列说明**
+
+        - **特征** (`str`): 特征名称
+        - **得分** (`float`): 特征在筛选器中的得分
+        - **状态** (`str`): 特征状态，取值为 '选中' 或 '剔除'
+
+        DataFrame 按得分降序排列。
+
+        :returns: 包含特征得分的 DataFrame，无得分时返回仅含列名的空 DataFrame
+
+        **参考样例**
+
+        >>> from hscredit.core.selectors import VarianceSelector
+        >>> import pandas as pd
+        >>> import numpy as np
+        >>> np.random.seed(42)
+        >>> X = pd.DataFrame(np.random.randn(100, 5), columns=[f'f{i}' for i in range(5)])
+        >>> y = pd.Series(np.random.randint(0, 2, 100))
+        >>> selector = VarianceSelector(threshold=0.1)
+        >>> selector.fit(X, y)
+        VarianceSelector(...)
+        >>> scores_df = selector.get_scores_df()
+        >>> print(scores_df.head())
         """
         if not hasattr(self, 'scores_') or self.scores_ is None:
             return pd.DataFrame(columns=['特征', '得分', '状态'])
-        
+
         scores = self.scores_.copy()
         selected = set(self.selected_features_)
-        
+
         records = []
         for feat, score in scores.items():
             # 转换numpy类型
             if isinstance(score, (np.integer, np.floating)):
                 score = float(score)
-            
+
             status = '选中' if feat in selected else '剔除'
             records.append({
                 '特征': feat,
                 '得分': score,
                 '状态': status
             })
-        
+
         df = pd.DataFrame(records)
         if len(df) > 0:
             df = df.sort_values('得分', ascending=False)
-        
+
         return df
 
     def get_dropped_df(self) -> pd.DataFrame:
-        """获取被剔除特征的DataFrame。
+        """获取被剔除特征的 DataFrame。
 
-        :return: 包含被剔除特征及原因的DataFrame
+        **返回 DataFrame 列说明**
+
+        - **特征** (`str`): 被剔除的特征名称
+        - **剔除原因** (`str`): 特征被剔除的原因描述
+
+        :returns: 包含被剔除特征及原因的 DataFrame，无数据时返回仅含列名的空 DataFrame
+
+        **参考样例**
+
+        >>> from hscredit.core.selectors import VarianceSelector
+        >>> import pandas as pd
+        >>> import numpy as np
+        >>> np.random.seed(42)
+        >>> X = pd.DataFrame(np.random.randn(100, 5), columns=[f'f{i}' for i in range(5)])
+        >>> y = pd.Series(np.random.randint(0, 2, 100))
+        >>> selector = VarianceSelector(threshold=0.1)
+        >>> selector.fit(X, y)
+        VarianceSelector(...)
+        >>> dropped_df = selector.get_dropped_df()
+        >>> print(f"共剔除 {len(dropped_df)} 个特征")
         """
         if hasattr(self, 'dropped_'):
             return self.dropped_
@@ -965,8 +1350,11 @@ class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
     def _get_feature_names(self, X: pd.DataFrame) -> List[str]:
         """获取特征名称列表。
 
-        :param X: 输入特征DataFrame
-        :return: 特征名称列表
+        **参数**
+
+        :param X: 输入特征 DataFrame
+
+        :returns: 特征名称列表，同时设置 sklearn 兼容的 feature_names_in_ 属性
         """
         if hasattr(X, 'columns'):
             self._feature_names = X.columns.tolist()
@@ -980,33 +1368,41 @@ class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
 class CompositeFeatureSelector(BaseFeatureSelector):
     """组合特征筛选器.
 
-    将多个筛选器组合在一起,按顺序执行筛选。
-    后续筛选器基于前面筛选器的结果进行筛选。
-    支持通过include和exclude参数强制保留或剔除特定特征。
+    将多个筛选器组合在一起，按顺序执行筛选。后续筛选器基于前面筛选器的结果进行筛选。
+    支持通过 include 和 exclude 参数强制保留或剔除特定特征。
 
     **参数**
 
-    :param selectors: 筛选器列表,按执行顺序排列
-    :param strategy: 组合策略,'sequential'或'intersection'
-        - 'sequential': 按顺序筛选,每轮剔除不满足条件的特征
+    :param selectors: 筛选器列表，按执行顺序排列
+    :param strategy: 组合策略，可选 'sequential' 或 'intersection'
+        - 'sequential': 按顺序筛选，每轮剔除不满足条件的特征
         - 'intersection': 取所有筛选器选中特征的交集
-    :param include: 强制保留的特征列表,这些特征无论如何都会被保留
-    :param exclude: 强制剔除的特征列表,这些特征无论如何都会被剔除
+    :param include: 强制保留的特征列表，这些特征无论如何都会被保留
+    :param exclude: 强制剔除的特征列表，这些特征无论如何都会被剔除
+    :param target: 目标变量列名，默认为 'target'
+    :param binner: 可选的分箱器
 
-    **示例**
+    **参考样例**
 
     ::
 
         >>> from hscredit.core.selectors import (
         ...     VarianceSelector, CorrSelector, IVSelector
         ... )
-        >>> # 强制保留特征id,强制剔除特征useless_col
+        >>> import pandas as pd
+        >>> import numpy as np
+        >>> np.random.seed(42)
+        >>> X = pd.DataFrame(np.random.randn(200, 10), columns=[f'f{i}' for i in range(10)])
+        >>> y = pd.Series(np.random.randint(0, 2, 200))
         >>> composite = CompositeFeatureSelector([
         ...     VarianceSelector(threshold=0.01),
         ...     CorrSelector(threshold=0.8),
         ...     IVSelector(threshold=0.02),
-        ... ], include=['id'], exclude=['useless_col'])
+        ... ])
         >>> composite.fit(X, y)
+        CompositeFeatureSelector(...)
+        >>> len(composite.selected_features_)
+        ...
     """
 
     def __init__(
@@ -1018,6 +1414,17 @@ class CompositeFeatureSelector(BaseFeatureSelector):
         exclude: Optional[List[str]] = None,
         binner: Optional[Any] = None,
     ):
+        """初始化组合特征筛选器。
+
+        **参数**
+
+        :param selectors: 筛选器列表，按执行顺序排列
+        :param strategy: 组合策略，默认为 'sequential'
+        :param target: 目标变量列名，默认为 'target'
+        :param include: 强制保留的特征列表
+        :param exclude: 强制剔除的特征列表
+        :param binner: 可选的分箱器
+        """
         super().__init__(target=target, include=include, exclude=exclude, binner=binner)
         self.selectors = selectors
         self.strategy = strategy
@@ -1029,7 +1436,9 @@ class CompositeFeatureSelector(BaseFeatureSelector):
     ) -> None:
         """执行组合筛选。
 
-        :param X: 输入特征DataFrame
+        **参数**
+
+        :param X: 输入特征 DataFrame
         :param y: 目标变量
         """
         if self.strategy == 'sequential':
@@ -1040,7 +1449,11 @@ class CompositeFeatureSelector(BaseFeatureSelector):
     def _fit_sequential(self, X: pd.DataFrame, y: Optional[Union[pd.Series, np.ndarray]]) -> None:
         """顺序筛选策略。
 
-        :param X: 输入特征DataFrame
+        按列表顺序依次执行每个筛选器，后续筛选器仅在上一轮选中的特征上进行筛选。
+
+        **参数**
+
+        :param X: 输入特征 DataFrame
         :param y: 目标变量
         """
         current_X = X.copy()
@@ -1091,7 +1504,11 @@ class CompositeFeatureSelector(BaseFeatureSelector):
     def _fit_intersection(self, X: pd.DataFrame, y: Optional[Union[pd.Series, np.ndarray]]) -> None:
         """交集筛选策略。
 
-        :param X: 输入特征DataFrame
+        所有筛选器独立对全量特征进行筛选，最终取各筛选器选中特征的交集。
+
+        **参数**
+
+        :param X: 输入特征 DataFrame
         :param y: 目标变量
         """
         selected_sets = []
@@ -1159,14 +1576,19 @@ class CompositeFeatureSelector(BaseFeatureSelector):
             self.detailed_dropped_ = pd.DataFrame()
 
     def get_selection_report_df(self) -> pd.DataFrame:
-        """获取详细的DataFrame格式报告，穿透底层筛选器。
-        
-        记录每一步具体的筛选情况和具体筛选原因，包括:
-        - 每个特征在每个筛选阶段的状态
-        - 被剔除的原因和具体数值指标
-        - 每个子筛选器的详细信息
-        
-        :return: 详细的筛选报告DataFrame
+        """获取详细的 DataFrame 格式报告，穿透底层筛选器。
+
+        记录每一步具体的筛选情况和筛选原因，包括每个特征在各阶段的状态变化、
+        被剔除的原因和具体数值指标、以及每个子筛选器的详细信息。
+
+        **返回 DataFrame 列说明**
+
+        - **状态** (`str`): 报告生成状态，未拟合时为 '未拟合'
+        - **message** (`str`): 状态消息，未拟合时为 '请先调用fit方法'
+
+        未拟合时返回包含状态和消息的单行 DataFrame。
+
+        :returns: 详细的筛选报告 DataFrame
         """
         if not hasattr(self, '_is_fitted'):
             return pd.DataFrame({'状态': ['未拟合'], 'message': ['请先调用fit方法']})

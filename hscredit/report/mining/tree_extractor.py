@@ -51,32 +51,28 @@ class TreeRuleExtractor(BaseRuleMiner):
         - GradientBoostingClassifier: learning_rate, subsample, loss, etc.
         - IsolationForest: contamination, max_samples, etc.
     
-    示例:
-        >>> # 决策树规则提取
-        >>> extractor = TreeRuleExtractor(algorithm='dt', max_depth=5)
-        >>> extractor.fit(df)
-        >>> rules = extractor.extract_rules()
-        >>> 
-        >>> # 随机森林规则提取（传入额外参数）
-        >>> extractor = TreeRuleExtractor(
-        ...     algorithm='rf',
-        ...     n_estimators=50,
-        ...     max_depth=10,
-        ...     class_weight='balanced',  # sklearn参数
-        ...     bootstrap=True,           # sklearn参数
-        ...     oob_score=True            # sklearn参数
-        ... )
-        >>> extractor.fit(X, y)
-        >>> rules = extractor.extract_rules()
-        >>> 
-        >>> # 孤立森林异常规则
-        >>> extractor = TreeRuleExtractor(
-        ...     algorithm='isf',
-        ...     contamination=0.05,  # 异常比例
-        ...     max_samples=256
-        ... )
-        >>> extractor.fit(X)
-        >>> anomaly_rules = extractor.extract_rules()
+    **参考样例**
+
+    >>> extractor = TreeRuleExtractor(algorithm='dt', max_depth=5)
+    >>> extractor.fit(df)
+    >>> rules = extractor.extract_rules()
+    >>> extractor = TreeRuleExtractor(
+    ...     algorithm='rf',
+    ...     n_estimators=50,
+    ...     max_depth=10,
+    ...     class_weight='balanced',
+    ...     bootstrap=True,
+    ...     oob_score=True
+    ... )
+    >>> extractor.fit(X, y)
+    >>> rules = extractor.extract_rules()
+    >>> extractor = TreeRuleExtractor(
+    ...     algorithm='isf',
+    ...     contamination=0.05,
+    ...     max_samples=256
+    ... )
+    >>> extractor.fit(X)
+    >>> anomaly_rules = extractor.extract_rules()
     """
     
     VALID_ALGORITHMS = {'dt', 'rf', 'chi2', 'gbdt', 'xgb', 'isf'}

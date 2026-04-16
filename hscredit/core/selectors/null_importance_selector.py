@@ -1,6 +1,22 @@
 """零重要性筛选器（Permutation Importance）.
 
 使用置换重要性识别真正有价值的特征。
+
+**参考样例**
+
+>>> from hscredit.core.selectors import NullImportanceSelector
+>>> from sklearn.ensemble import RandomForestClassifier
+>>> import pandas as pd
+>>> import numpy as np
+>>> np.random.seed(42)
+>>> X = pd.DataFrame(np.random.randn(200, 5), columns=[f'f{i}' for i in range(5)])
+>>> y = np.random.randint(0, 2, 200)
+>>> selector = NullImportanceSelector(
+...     RandomForestClassifier(n_estimators=50, random_state=42),
+...     threshold=1.0, cv=3, n_runs=3
+... )
+>>> selector.fit(X, y)
+>>> print(selector.selected_features_)
 """
 
 from typing import Union, List, Optional
@@ -29,17 +45,23 @@ class NullImportanceSelector(BaseFeatureSelector):
     :param random_state: 随机种子
     :param target: 目标变量列名，默认为'target'
 
-    **示例**
+    **参考样例**
 
     ::
 
-        >>> from hscredit.core.selection import NullImportanceSelector
+        >>> from hscredit.core.selectors import NullImportanceSelector
         >>> from sklearn.ensemble import RandomForestClassifier
+        >>> import pandas as pd
+        >>> import numpy as np
+        >>> np.random.seed(42)
+        >>> X = pd.DataFrame(np.random.randn(200, 5), columns=[f'f{i}' for i in range(5)])
+        >>> y = np.random.randint(0, 2, 200)
         >>> selector = NullImportanceSelector(
-        ...     RandomForestClassifier(n_estimators=100),
-        ...     threshold=1.0
+        ...     RandomForestClassifier(n_estimators=50, random_state=42),
+        ...     threshold=1.0, cv=3, n_runs=3
         ... )
         >>> selector.fit(X, y)
+        >>> print(selector.selected_features_)
     """
 
     def __init__(

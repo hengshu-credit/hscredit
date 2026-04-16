@@ -5,7 +5,7 @@
 **依赖**
 pip install xgboost
 
-**示例**
+**参考样例**
 >>> from hscredit.core.models import XGBoostRiskModel
 >>> model = XGBoostRiskModel(
 ...     max_depth=5,
@@ -101,7 +101,7 @@ class XGBoostRiskModel(BaseRiskModel):
     :ivar scale_pos_weight_: 实际使用的scale_pos_weight值
     :ivar booster_: 底层XGBoost模型
 
-    **示例**
+    **参考样例**
 
     >>> # 基础使用
     >>> model = XGBoostRiskModel(max_depth=5, learning_rate=0.1)
@@ -109,7 +109,7 @@ class XGBoostRiskModel(BaseRiskModel):
     
     >>> # 自动处理不平衡数据
     >>> model = XGBoostRiskModel(scale_pos_weight='auto')
-    >>> model.fit(X_train, y_train)  # 自动计算权重
+    >>> model.fit(X_train, y_train)
     
     >>> # 使用KS作为评估指标
     >>> model = XGBoostRiskModel(eval_metric='ks')
@@ -123,9 +123,9 @@ class XGBoostRiskModel(BaseRiskModel):
     >>> # 早停设置 - 使用多个评估指标，指定logloss作为早停指标（越小越好）
     >>> model = XGBoostRiskModel(
     ...     n_estimators=1000,
-    ...     eval_metric=['auc', 'logloss'],  # 同时监控AUC和logloss
-    ...     early_stopping_rounds=10,       # 10轮没有改善则停止
-    ...     early_stopping_metric='logloss' # 使用logloss作为早停判断标准
+    ...     eval_metric=['auc', 'logloss'],
+    ...     early_stopping_rounds=10,
+    ...     early_stopping_metric='logloss'
     ... )
     >>> model.fit(X_train, y_train)
     >>> print(f'最佳迭代次数: {model.best_iteration_}')
@@ -135,7 +135,7 @@ class XGBoostRiskModel(BaseRiskModel):
     ...     n_estimators=1000,
     ...     eval_metric=['auc', 'logloss'],
     ...     early_stopping_rounds=10,
-    ...     early_stopping_metric='auc'  # 使用AUC作为早停判断标准（默认）
+    ...     early_stopping_metric='auc'
     ... )
     >>> model.fit(X_train, y_train)
     """
@@ -473,12 +473,12 @@ class XGBoostRiskModel(BaseRiskModel):
         :param X: 特征矩阵
         :return: 叶子节点索引，形状 (n_samples, n_trees)
 
-        **示例**
+        **参考样例**
 
         >>> model = XGBoostRiskModel(n_estimators=50)
         >>> model.fit(X, y)
         >>> leaf_indices = model.get_leaf_indices(X)
-        >>> print(leaf_indices.shape)  # (n_samples, 50)
+        >>> print(leaf_indices.shape)
         """
         check_is_fitted(self, '_is_fitted')
         X = self._prepare_data(X)[0]

@@ -1,6 +1,20 @@
 """特征重要性筛选器.
 
 使用模型特征重要性筛选特征。
+
+**参考样例**
+
+>>> from hscredit.core.selectors import FeatureImportanceSelector
+>>> from sklearn.ensemble import RandomForestClassifier
+>>> import pandas as pd
+>>> import numpy as np
+>>> np.random.seed(42)
+>>> X = pd.DataFrame(np.random.randn(100, 5), columns=[f'f{i}' for i in range(5)])
+>>> y = np.random.randint(0, 2, 100)
+>>> rf = RandomForestClassifier(n_estimators=100, random_state=42)
+>>> selector = FeatureImportanceSelector(rf, threshold=0.1)
+>>> selector.fit(X, y)
+>>> print(selector.selected_features_)
 """
 
 from typing import Union, List, Optional, Callable
@@ -30,19 +44,17 @@ class FeatureImportanceSelector(BaseFeatureSelector):
     :param importance_getter: 重要性获取方式，默认为'auto'
     :param target: 目标变量列名，默认为'target'
 
-    **示例**
+    **参考样例**
 
     ::
 
-        >>> from hscredit.core.selection import FeatureImportanceSelector
+        >>> from hscredit.core.selectors import FeatureImportanceSelector
         >>> from sklearn.ensemble import RandomForestClassifier
         >>> import pandas as pd
-        >>> X = pd.DataFrame({
-        ...     'a': [1, 2, 3, 4, 5],
-        ...     'b': [2, 3, 4, 5, 6],
-        ...     'c': [1, 1, 1, 1, 1]  # 无用特征
-        ... })
-        >>> y = [0, 0, 1, 1, 1]
+        >>> import numpy as np
+        >>> np.random.seed(42)
+        >>> X = pd.DataFrame(np.random.randn(100, 5), columns=[f'f{i}' for i in range(5)])
+        >>> y = np.random.randint(0, 2, 100)
         >>> rf = RandomForestClassifier(n_estimators=100, random_state=42)
         >>> selector = FeatureImportanceSelector(rf, threshold=0.1)
         >>> selector.fit(X, y)

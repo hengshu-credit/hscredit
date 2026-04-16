@@ -3,6 +3,22 @@
 递归特征消除（Recursive Feature Elimination）通过递归方式逐步剔除
 最不重要的特征，直到达到目标数量。适用于任何有 feature_importances_
 或 coef_ 属性的模型。基于 sklearn.feature_selection.RFE 实现。
+
+**参考样例**
+
+>>> from hscredit.core.selectors import RFESelector
+>>> from sklearn.ensemble import RandomForestClassifier
+>>> import pandas as pd
+>>> import numpy as np
+>>> np.random.seed(42)
+>>> X = pd.DataFrame(np.random.randn(200, 10), columns=[f'f{i}' for i in range(10)])
+>>> y = np.random.randint(0, 2, 200)
+>>> selector = RFESelector(
+...     RandomForestClassifier(n_estimators=100, random_state=42),
+...     n_features_to_select=5
+... )
+>>> selector.fit(X, y)
+>>> print(selector.selected_features_)
 """
 
 from typing import Union, List, Optional
@@ -28,17 +44,23 @@ class RFESelector(BaseFeatureSelector):
     :param step: 每次剔除的特征数，默认为1
     :param target: 目标变量列名，默认为'target'
 
-    **示例**
+    **参考样例**
 
     ::
 
-        >>> from hscredit.core.selection import RFESelector
+        >>> from hscredit.core.selectors import RFESelector
         >>> from sklearn.ensemble import RandomForestClassifier
+        >>> import pandas as pd
+        >>> import numpy as np
+        >>> np.random.seed(42)
+        >>> X = pd.DataFrame(np.random.randn(200, 10), columns=[f'f{i}' for i in range(10)])
+        >>> y = np.random.randint(0, 2, 200)
         >>> selector = RFESelector(
-        ...     RandomForestClassifier(n_estimators=100),
-        ...     n_features_to_select=10
+        ...     RandomForestClassifier(n_estimators=100, random_state=42),
+        ...     n_features_to_select=5
         ... )
         >>> selector.fit(X, y)
+        >>> print(selector.selected_features_)
     """
 
     def __init__(

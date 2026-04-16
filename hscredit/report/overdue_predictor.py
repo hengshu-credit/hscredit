@@ -77,7 +77,7 @@ class OverduePredictor(BaseEstimator, TransformerMixin):
     - target_names_: 目标标签名称列表
     - coefficients_: 实际使用的调整系数
 
-    **示例**
+    **参考样例**
 
     >>> import numpy as np
     >>> import pandas as pd
@@ -740,11 +740,11 @@ class OverduePredictor(BaseEstimator, TransformerMixin):
         :param metric: 统计口径，'count'（订单口径）或 'amount'（金额口径）
         :return: 报告DataFrame
 
-        **示例**
+        **参考样例**
 
         >>> predictor = OverduePredictor(feature='score', target='target')
-        >>> estimator.fit(train_df)
-        >>> report = estimator.get_report()
+        >>> predictor.fit(train_df)
+        >>> report = predictor.get_report()
         >>> print(report)
         """
         if not hasattr(self, 'bin_table_'):
@@ -809,7 +809,7 @@ class OverduePredictor(BaseEstimator, TransformerMixin):
         :param X: 待预测数据
         :return: 逾期率Series（单标签）或 {目标名: 逾期率Series}（多标签）
 
-        **示例**
+        **参考样例**
 
         >>> predictor = OverduePredictor(feature='score', target='target')
         >>> predictor.fit(train_df)
@@ -871,7 +871,7 @@ def overdue_prediction_report(
     :param sheet: Excel工作表名称
     :return: 包含预估结果的DataFrame
 
-    **示例**
+    **参考样例**
 
     >>> from hscredit.report.overdue_estimator import overdue_estimation_report
     >>>

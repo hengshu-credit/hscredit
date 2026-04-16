@@ -16,22 +16,23 @@ class NumExprDerive(BaseEstimator, TransformerMixin):
 
     :param derivings: 衍生规则列表，每个元素是 (name, expr) 元组
 
-    示例:
-        >>> import pandas as pd
-        >>> from hscredit.core.feature_engineering import NumExprDerive
-        >>> X = pd.DataFrame({
-        ...     "f0": [2, 1.0, 3],
-        ...     "f1": [np.inf, 2, 3],
-        ...     "f2": [2, 3, 4],
-        ...     "f3": [2.1, 1.4, -6.2]
-        ... })
-        >>> fd = NumExprDerive(derivings=[
-        ...     ("f4", "where(f1>1, 0, 1)"),
-        ...     ("f5", "f1+f2"),
-        ...     ("f6", "sin(f1)"),
-        ...     ("f7", "abs(f3)")
-        ... ])
-        >>> fd.fit_transform(X)
+    **参考样例**
+
+    >>> import pandas as pd
+    >>> from hscredit.core.feature_engineering import NumExprDerive
+    >>> X = pd.DataFrame({
+    ...     "f0": [2, 1.0, 3],
+    ...     "f1": [np.inf, 2, 3],
+    ...     "f2": [2, 3, 4],
+    ...     "f3": [2.1, 1.4, -6.2]
+    ... })
+    >>> fd = NumExprDerive(derivings=[
+    ...     ("f4", "where(f1>1, 0, 1)"),
+    ...     ("f5", "f1+f2"),
+    ...     ("f6", "sin(f1)"),
+    ...     ("f7", "abs(f3)")
+    ... ])
+    >>> fd.fit_transform(X)
     """
 
     def __init__(self, derivings=None):

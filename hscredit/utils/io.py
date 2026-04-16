@@ -73,17 +73,13 @@ def load_pickle(
         - 'zstd'/'zstandard': zstd 压缩（需安装 zstandard）
     :return: 反序列化后的对象
 
-    示例:
-        >>> # 自动检测
-        >>> data = load_pickle('model.pkl')
-        >>> data = load_pickle('model.pkl.gz')  # 自动解压
-        >>>
-        >>> # 指定引擎
-        >>> data = load_pickle('model.dill', engine='dill')
-        >>> data = load_pickle('model.pkl', engine='cloudpickle')
-        >>>
-        >>> # 指定压缩
-        >>> data = load_pickle('model.pkl', compression='gzip')
+    **参考样例**
+
+    >>> data = load_pickle('model.pkl')
+    >>> data = load_pickle('model.pkl.gz')
+    >>> data = load_pickle('model.dill', engine='dill')
+    >>> data = load_pickle('model.pkl', engine='cloudpickle')
+    >>> data = load_pickle('model.pkl', compression='gzip')
     """
     file_str = str(file).lower()
 
@@ -184,24 +180,14 @@ def save_pickle(
     :param protocol: pickle 协议版本（默认使用最高可用版本）
     :return: 保存的文件路径
 
-    示例:
-        >>> # 基本用法（默认 joblib）
-        >>> save_pickle(model, 'model.pkl')
-        >>>
-        >>> # 使用 dill 保存复杂对象
-        >>> save_pickle(lambda_func, 'func.dill', engine='dill')
-        >>>
-        >>> # 使用 cloudpickle（适用于分布式计算）
-        >>> save_pickle(model, 'model.pkl', engine='cloudpickle')
-        >>>
-        >>> # gzip 压缩（自动根据扩展名）
-        >>> save_pickle(model, 'model.pkl.gz')
-        >>>
-        >>> # 显式指定压缩
-        >>> save_pickle(model, 'model.pkl', compression='zstd', compression_level=3)
-        >>>
-        >>> # 最高压缩率
-        >>> save_pickle(model, 'model.pkl.xz', compression='xz')
+    **参考样例**
+
+    >>> save_pickle(model, 'model.pkl')
+    >>> save_pickle(lambda_func, 'func.dill', engine='dill')
+    >>> save_pickle(model, 'model.pkl', engine='cloudpickle')
+    >>> save_pickle(model, 'model.pkl.gz')
+    >>> save_pickle(model, 'model.pkl', compression='zstd', compression_level=3)
+    >>> save_pickle(model, 'model.pkl.xz', compression='xz')
     """
     file_str = str(file).lower()
 

@@ -38,18 +38,13 @@ class TargetEncoder(BaseEncoder):
 
     **参考样例**
 
-    基本使用::
-
-        >>> encoder = TargetEncoder(cols=['category'])
-        >>> X_encoded = encoder.fit_transform(X, y)
-
-    添加噪声防止过拟合::
-
-        >>> encoder = TargetEncoder(cols=['category'], noise=0.05)
-        >>> X_encoded = encoder.fit_transform(X, y)
-
-    参考:
-        https://dl.acm.org/doi/10.1145/507533.507538
+    >>> from hscredit.core.encoders import TargetEncoder
+    >>> encoder = TargetEncoder(cols=['category'])
+    >>> X_encoded = encoder.fit_transform(X, y)
+    >>>
+    >>> # 添加噪声防止过拟合
+    >>> encoder = TargetEncoder(cols=['category'], noise=0.05)
+    >>> X_encoded = encoder.fit_transform(X, y)
     """
 
     def _get_category_cols(self, X: pd.DataFrame) -> List[str]:

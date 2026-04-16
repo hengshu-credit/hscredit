@@ -3,6 +3,18 @@
 使用单因素方差分析（ANOVA F-Test）评估特征与目标变量的线性相关性，
 筛选出组间差异显著的特征。适用于分类问题中的特征筛选。
 基于 sklearn.feature_selection.f_classif 实现。
+
+**参考样例**
+
+>>> from hscredit.core.selectors import FTestSelector
+>>> import pandas as pd
+>>> import numpy as np
+>>> np.random.seed(42)
+>>> X = pd.DataFrame(np.random.randn(1000, 5), columns=[f'f{i}' for i in range(5)])
+>>> y = pd.Series(np.random.randint(0, 2, 1000))
+>>> selector = FTestSelector(k=3)
+>>> selector.fit(X, y)
+>>> print(selector.selected_features_)
 """
 
 from typing import Union, List, Optional
@@ -29,13 +41,19 @@ class FTestSelector(BaseFeatureSelector):
     :param percentile: 保留的特征百分比，默认为None
     :param target: 目标变量列名，默认为'target'
 
-    **示例**
+    **参考样例**
 
     ::
 
-        >>> from hscredit.core.selection import FTestSelector
-        >>> selector = FTestSelector(k=10)
+        >>> from hscredit.core.selectors import FTestSelector
+        >>> import pandas as pd
+        >>> import numpy as np
+        >>> np.random.seed(42)
+        >>> X = pd.DataFrame(np.random.randn(1000, 5), columns=[f'f{i}' for i in range(5)])
+        >>> y = pd.Series(np.random.randint(0, 2, 1000))
+        >>> selector = FTestSelector(k=3)
         >>> selector.fit(X, y)
+        >>> print(selector.selected_features_)
     """
 
     def __init__(

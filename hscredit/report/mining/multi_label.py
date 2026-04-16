@@ -33,17 +33,17 @@ class MultiLabelRuleMiner(BaseRuleMiner):
     :param n_bins: 数值特征分箱数，默认 10
     :param exclude_cols: 需要排除的列名列表
 
-    示例::
+    **参考样例**
 
-        >>> miner = MultiLabelRuleMiner(
-        ...     labels=['mob3_30', 'mob6_30'],
-        ...     label_names=['短期标签(MOB3@30)', '长期标签(MOB6@30)'],
-        ...     min_support=0.02,
-        ...     min_lift=1.5,
-        ... )
-        >>> miner.fit(df, features=['age', 'income', 'credit_score'])
-        >>> rules = miner.get_rules(effectiveness='both')
-        >>> report = miner.get_effectiveness_matrix()
+    >>> miner = MultiLabelRuleMiner(
+    ...     labels=['mob3_30', 'mob6_30'],
+    ...     label_names=['短期标签(MOB3@30)', '长期标签(MOB6@30)'],
+    ...     min_support=0.02,
+    ...     min_lift=1.5,
+    ... )
+    >>> miner.fit(df, features=['age', 'income', 'credit_score'])
+    >>> rules = miner.get_rules(effectiveness='both')
+    >>> report = miner.get_effectiveness_matrix()
     """
 
     def __init__(

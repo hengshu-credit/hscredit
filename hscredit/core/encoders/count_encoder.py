@@ -33,23 +33,17 @@ class CountEncoder(BaseEncoder):
 
     **参考样例**
 
-    基本使用::
-
-        >>> encoder = CountEncoder(cols=['category'])
-        >>> X_encoded = encoder.fit_transform(X)
-
-    返回频率::
-
-        >>> encoder = CountEncoder(cols=['category'], normalize=True)
-        >>> X_encoded = encoder.fit_transform(X)
-
-    合并低频类别::
-
-        >>> encoder = CountEncoder(cols=['category'], min_group_size=10)
-        >>> X_encoded = encoder.fit_transform(X)
-
-    参考:
-        https://www.kaggle.com/c/avazu-ctr-prediction/discussion/10928
+    >>> from hscredit.core.encoders import CountEncoder
+    >>> encoder = CountEncoder(cols=['category'])
+    >>> X_encoded = encoder.fit_transform(X)
+    >>>
+    >>> # 返回频率
+    >>> encoder = CountEncoder(cols=['category'], normalize=True)
+    >>> X_encoded = encoder.fit_transform(X)
+    >>>
+    >>> # 合并低频类别
+    >>> encoder = CountEncoder(cols=['category'], min_group_size=10)
+    >>> X_encoded = encoder.fit_transform(X)
     """
 
     def _get_category_cols(self, X: pd.DataFrame) -> List[str]:

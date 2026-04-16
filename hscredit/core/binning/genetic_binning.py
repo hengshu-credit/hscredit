@@ -33,7 +33,7 @@ class GeneticBinning(BaseBinning):
     :param random_state: 随机种子，默认为None
     :param verbose: 是否输出详细信息，默认为False
 
-    **示例**
+    **参考样例**
 
     >>> from hscredit.core.binning import GeneticBinning
     >>> binner = GeneticBinning(objective='iv', max_n_bins=5, generations=100)

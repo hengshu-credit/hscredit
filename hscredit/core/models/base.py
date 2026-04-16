@@ -417,12 +417,11 @@ class BaseRiskModel(BaseEstimator, ClassifierMixin, ABC):
 
         :return: 底层模型对象（如xgboost.Booster、lgb.Booster等）
 
-        **示例**
+        **参考样例**
 
         >>> model = XGBoostRiskModel()
         >>> model.fit(X, y)
         >>> native_model = model.get_native_model()
-        >>> # 使用底层模型方法
         >>> leaf_indices = native_model.apply(X)
         """
         check_is_fitted(self, '_is_fitted')
@@ -475,7 +474,7 @@ class BaseRiskModel(BaseEstimator, ClassifierMixin, ABC):
         :param kwargs: 其他绘图参数
         :return: matplotlib Figure对象
 
-        **示例**
+        **参考样例**
 
         >>> # 传统特征重要性
         >>> fig = model.plot_feature_importance(top_n=15)
@@ -526,7 +525,7 @@ class BaseRiskModel(BaseEstimator, ClassifierMixin, ABC):
         :param kwargs: ModelExplainer的初始化参数
         :return: ModelExplainer对象
 
-        **示例**
+        **参考样例**
 
         >>> explainer = model.get_shap_explainer()
         >>> shap_values = explainer.compute_shap_values(X_test)

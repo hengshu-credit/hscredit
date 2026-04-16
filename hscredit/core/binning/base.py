@@ -130,7 +130,7 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
 
         >>> from hscredit.core.binning import OptimalBinning
         >>> binner = OptimalBinning(method='best_iv', max_n_bins=5)
-        >>> binner.fit(X, y)  # X是特征矩阵，y是目标变量
+        >>> binner.fit(X, y)
         >>> X_binned = binner.transform(X)
         >>> bin_table = binner.get_bin_table('feature_name')
 
@@ -139,7 +139,7 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
         >>> from hscredit.core.binning import OptimalBinning
         >>> # 初始化时指定目标列名，fit时传入完整DataFrame
         >>> binner = OptimalBinning(target='target', method='best_iv', max_n_bins=5)
-        >>> binner.fit(df)  # df包含特征列和目标列'target'
+        >>> binner.fit(df)
         >>> X_binned = binner.transform(df.drop(columns=['target']))
         >>> bin_table = binner.get_bin_table('feature_name')
 
@@ -147,7 +147,7 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
 
         >>> # 即使初始化时指定了target，fit时传入y会优先使用y
         >>> binner = OptimalBinning(target='target', method='best_iv')
-        >>> binner.fit(df, y=external_y)  # 使用external_y，忽略df中的'target'列
+        >>> binner.fit(df, y=external_y)
 
     设置切分点精度::
 
@@ -287,7 +287,7 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
         混合风格（y参数优先）::
 
             >>> binner = OptimalBinning(target='target')
-            >>> binner.fit(df, y=external_y)  # 使用external_y，忽略df中的'target'列
+            >>> binner.fit(df, y=external_y)
         """
         pass
 
@@ -331,7 +331,7 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
            - 使用 binner.get_bin_table(feature) 查看
            - 列名: '分箱', '样本总数', '坏样本率', '分档WOE值'等
         
-        **示例**
+        **参考样例**
         
         >>> binner = OptimalBinning()
         >>> binner.fit(X_train, y_train)
@@ -415,7 +415,7 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
         scorecardpipeline风格::
 
             >>> binner = OptimalBinning(target='target')
-            >>> X_binned = binner.fit_transform(df, metric='woe')  # 自动提取target列
+            >>> X_binned = binner.fit_transform(df, metric='woe')
         """
         return self.fit(X, y, **kwargs).transform(X, metric=metric, **kwargs)
 
@@ -463,7 +463,7 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
             ...     'target': [0, 1, 0]
             ... })
             >>> binner = OptimalBinning(target='target')
-            >>> X_processed, y_processed = binner._check_input(df)  # y=None
+            >>> X_processed, y_processed = binner._check_input(df)
 
         numpy数组输入::
 
@@ -1776,7 +1776,7 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
             - 类别型: {'city': [['北京', '上海'], ['广州', '深圳'], [np.nan]]}
             - WOE映射: {'_woe_maps_': {'age': {0: 0.5, 1: -0.3, ...}}}
 
-        **示例**
+        **参考样例**
 
         >>> binner = OptimalBinning()
         >>> binner.fit(X, y)
@@ -1868,7 +1868,7 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
         :param update: 是否更新现有规则（而非替换），默认为 False
         :return: self，支持链式调用
 
-        **示例**
+        **参考样例**
 
         >>> binner = OptimalBinning()
         >>> 

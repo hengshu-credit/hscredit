@@ -55,18 +55,14 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
     :param verbose: 是否输出详细信息，默认False
     :param binning_kwargs: 分箱方法的其他参数，通过**kwargs传入
     
-    示例:
-        >>> # 使用等频分箱
-        >>> miner = MultiFeatureRuleMiner(target='ISBAD', method='quantile', max_n_bins=5)
-        >>> miner.fit(df)
-        >>> 
-        >>> # 分析特定特征对
-        >>> cross_matrix = miner.generate_cross_matrix('age', 'income')
-        >>> rules = miner.get_cross_rules('age', 'income', top_n=10)
-        >>> 
-        >>> # 使用卡方分箱
-        >>> miner = MultiFeatureRuleMiner(target='ISBAD', method='chi2', max_n_bins=4)
-        >>> miner.fit(df)
+    **参考样例**
+
+    >>> miner = MultiFeatureRuleMiner(target='ISBAD', method='quantile', max_n_bins=5)
+    >>> miner.fit(df)
+    >>> cross_matrix = miner.generate_cross_matrix('age', 'income')
+    >>> rules = miner.get_cross_rules('age', 'income', top_n=10)
+    >>> miner = MultiFeatureRuleMiner(target='ISBAD', method='chi2', max_n_bins=4)
+    >>> miner.fit(df)
     """
     
     # 支持的分箱方法映射

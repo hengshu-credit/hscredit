@@ -1,6 +1,18 @@
 """IV值筛选器.
 
 使用信息价值（IV）进行特征筛选，是金融风控场景的核心筛选方法。
+
+**参考样例**
+
+>>> from hscredit.core.selectors import IVSelector
+>>> import pandas as pd
+>>> import numpy as np
+>>> np.random.seed(42)
+>>> X = pd.DataFrame(np.random.randn(1000, 5), columns=[f'f{i}' for i in range(5)])
+>>> y = pd.Series(np.random.randint(0, 2, 1000))
+>>> selector = IVSelector(threshold=0.02)
+>>> selector.fit(X, y)
+>>> print(selector.selected_features_)
 """
 
 from typing import Union, List, Optional
@@ -99,17 +111,16 @@ class IVSelector(BaseFeatureSelector):
     :param regularization: 正则化参数，默认为1.0
     :param n_jobs: 并行计算的任务数
 
-    **示例**
+    **参考样例**
 
     ::
 
-        >>> from hscredit.core.selection import IVSelector
+        >>> from hscredit.core.selectors import IVSelector
         >>> import pandas as pd
-        >>> X = pd.DataFrame({
-        ...     'income': [5000, 8000, 12000, 2000, 15000],
-        ...     'age': [25, 35, 45, 55, 23],
-        ... })
-        >>> y = pd.Series([0, 0, 1, 0, 1])
+        >>> import numpy as np
+        >>> np.random.seed(42)
+        >>> X = pd.DataFrame(np.random.randn(1000, 5), columns=[f'f{i}' for i in range(5)])
+        >>> y = pd.Series(np.random.randint(0, 2, 1000))
         >>> selector = IVSelector(threshold=0.02)
         >>> selector.fit(X, y)
         >>> print(selector.selected_features_)

@@ -62,19 +62,18 @@ def get_or_create_ax(figsize: Tuple[float, float] = (10, 6),
     :param ax: 可选的 matplotlib Axes 对象
     :param return_fig: 是否返回 Figure 对象
     :return: 如果 return_fig=True 返回 (fig, ax)，否则返回 ax
-    
-    **示例**
-    
-    ::
-    
-        # 方式1：自动创建新的 figure 和 ax
-        fig, ax = get_or_create_ax(figsize=(10, 6))
-        
-        # 方式2：使用传入的 ax
-        fig, axes = plt.subplots(2, 3, figsize=(18, 10))
-        for i, col in enumerate(features):
-            _, ax = get_or_create_ax(ax=axes[i])
-            # 绘图...
+
+    **参考样例**
+
+    >>> # 方式1：自动创建新的 figure 和 ax
+    >>> fig, ax = get_or_create_ax(figsize=(10, 6))
+    >>>
+    >>> # 方式2：使用传入的 ax
+    >>> import matplotlib.pyplot as plt
+    >>> _, axes = plt.subplots(2, 3, figsize=(18, 10))
+    >>> for i, col in enumerate(features):
+    ...     _, ax = get_or_create_ax(ax=axes[i])
+    ...     # 绘图...
     """
     if ax is not None:
         if return_fig:

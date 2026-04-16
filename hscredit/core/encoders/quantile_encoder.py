@@ -34,18 +34,13 @@ class QuantileEncoder(BaseEncoder):
 
     **参考样例**
 
-    使用中位数编码::
-
-        >>> encoder = QuantileEncoder(cols=['category'], quantile=0.5)
-        >>> X_encoded = encoder.fit_transform(X, y)
-
-    使用第90百分位数::
-
-        >>> encoder = QuantileEncoder(cols=['category'], quantile=0.9)
-        >>> X_encoded = encoder.fit_transform(X, y)
-
-    参考:
-        https://contrib.scikit-learn.org/category_encoders/quantile.html
+    >>> from hscredit.core.encoders import QuantileEncoder
+    >>> encoder = QuantileEncoder(cols=['category'], quantile=0.5)
+    >>> X_encoded = encoder.fit_transform(X, y)
+    >>>
+    >>> # 使用第90百分位数
+    >>> encoder = QuantileEncoder(cols=['category'], quantile=0.9)
+    >>> X_encoded = encoder.fit_transform(X, y)
     """
 
     def _get_category_cols(self, X: pd.DataFrame) -> List[str]:

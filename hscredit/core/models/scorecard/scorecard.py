@@ -1284,7 +1284,7 @@ class ScoreCard(StandardScoreTransformer):
         :param proba: 直接传入预测概率（正类概率）
         :return: 评分数组
 
-        **示例**
+        **参考样例**
 
         >>> # 通过特征矩阵预测
         >>> scores = scorecard.predict_score(X_test_woe)
@@ -1948,14 +1948,14 @@ class ScoreCard(StandardScoreTransformer):
         :param decimal: 分数保留小数位数，默认 4
         :return: 生成的部署代码字符串
 
-        示例::
+        **参考样例**
 
-            >>> sc = ScoreCard(...)
-            >>> sc.fit(X_train, y_train)
-            >>> # 生成 SQL
-            >>> sql = sc.export_deployment_code(language='sql', output_file='scorecard.sql')
-            >>> # 生成 Python
-            >>> py = sc.export_deployment_code(language='python', output_file='scorecard.py')
+        >>> sc = ScoreCard(...)
+        >>> sc.fit(X_train, y_train)
+        >>> # 生成 SQL
+        >>> sql = sc.export_deployment_code(language='sql', output_file='scorecard.sql')
+        >>> # 生成 Python
+        >>> py = sc.export_deployment_code(language='python', output_file='scorecard.py')
         """
         check_is_fitted(self)
 
@@ -2748,30 +2748,29 @@ class ScoreCard(StandardScoreTransformer):
             - 字典格式: {'feature': {'bin_label': score, ...}, ...}
             - DataFrame格式: columns=['name', 'value', 'score']
 
-        **示例**
+        **参考样例**
 
         >>> card = ScoreCard(pdo=60, rate=2, base_odds=35, base_score=750)
         >>> card.fit(X_woe, y, binner=binner)
-        >>> 
+        >>>
         >>> # 导出为字典
         >>> rules = card.export()
-        >>> # 返回格式: {'age': {'[18, 25)': 50, '[25, 35)': 45, ...}, ...}
-        >>> 
+        >>>
         >>> # 导出并保存到 JSON 文件
         >>> rules = card.export(to_json='scorecard_rules.json')
-        >>> 
+        >>>
         >>> # 导出为 DataFrame
         >>> df = card.export(to_frame=True)
-        
+
         **与 toad/scorecardpipeline 的兼容性**
 
         导出的规则可以直接被 toad 和 scorecardpipeline 加载:
-        
+
         >>> # toad 加载
         >>> import toad
         >>> toad_card = toad.ScoreCard(pdo=60, rate=2, base_odds=35, base_score=750)
         >>> toad_card.load(rules)
-        >>> 
+        >>>
         >>> # scorecardpipeline 加载
         >>> from scorecardpipeline import ScoreCard
         >>> scp_card = ScoreCard(pdo=60, rate=2, base_odds=35, base_score=750)
@@ -2904,30 +2903,30 @@ class ScoreCard(StandardScoreTransformer):
             - 如果不提供，将基于规则中的分箱信息进行转换
         :return: self，支持链式调用
 
-        **示例**
+        **参考样例**
 
         >>> card = ScoreCard(pdo=60, rate=2, base_odds=35, base_score=750)
         >>>
         >>> # 从字典加载
         >>> rules = {'age': {'[18, 25)': 50, '[25, 35)': 45}}
         >>> card.load(rules)
-        >>> 
+        >>>
         >>> # 从 JSON 文件加载
         >>> card.load('scorecard_rules.json')
-        >>> 
+        >>>
         >>> # 更新现有规则
         >>> card.load({'new_feature': {'bin1': 10, 'bin2': 20}}, update=True)
-        
+
         **与 toad/scorecardpipeline 的兼容性**
 
         可以直接加载 toad 和 scorecardpipeline 导出的规则:
-        
+
         >>> # toad 导出
         >>> import toad
         >>> toad_card = toad.ScoreCard()
-        >>> toad_card.fit(X, y, combiner=combiner, transer=transformer)  # toad 保持原参数名
+        >>> toad_card.fit(X, y, combiner=combiner, transer=transformer)
         >>> rules = toad_card.export()
-        >>> 
+        >>>
         >>> # hscredit 加载
         >>> from hscredit.core.models import ScoreCard
         >>> card = ScoreCard(pdo=60, rate=2, base_odds=35, base_score=750)

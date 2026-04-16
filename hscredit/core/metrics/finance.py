@@ -1,18 +1,16 @@
 """金融风控专用指标.
 
-提供金融风控场景下的评估指标。
+提供金融风控场景下的评估指标，包括Lift类指标、坏账率分析、评分统计与稳定性分析。
 
-主要指标:
-- lift: 模型提升度
-- lift_at: 指定覆盖率下的LIFT值（支持1%/3%/5%/10%/任意值）
-- lift_table: Lift详细统计表
-- lift_curve: Lift曲线数据（扩充默认比例，支持tail参数）
-- lift_monotonicity_check: LIFT单调性检验（头部/尾部）
-- rule_lift: 规则Lift指标
-- badrate: 坏账率计算
-- badrate_by_group: 分组坏账率
-- badrate_trend: 坏账率时间趋势
-- badrate_by_score_bin: 按评分分箱的坏账率
+**参考样例**
+
+>>> from hscredit.core.metrics import lift, lift_at, badrate, rule_lift
+>>> import numpy as np
+>>> np.random.seed(42)
+>>> y_true = np.random.randint(0, 2, 1000)
+>>> y_prob = np.random.uniform(0, 1, 1000)
+>>> print(f"Lift@0.5={lift(y_true, y_prob, 0.5):.4f}")
+>>> print(f"Badrate={badrate(y_true):.4f}")
 """
 
 import numpy as np
@@ -26,15 +24,28 @@ from ._binning import compute_bin_stats
 def lift(y_true: Union[np.ndarray, pd.Series],
          y_prob: Union[np.ndarray, pd.Series],
          threshold: float = 0.5) -> float:
-    """计算Lift值.
+    """计算Lift值 (模型提升度).
 
-    Lift = 命中样本坏账率 / 总体坏账率
-    Lift > 1 表示模型效果优于随机。
+    Lift = 命中样本坏账率 / 总体坏账率。
+    Lift > 1 表示模型效果优于随机，Lift值越高表示模型对高风险群体的区分能力越强。
 
-    :param y_true: 真实标签 (0/1)
-    :param y_prob: 预测概率或评分
-    :param threshold: 分类阈值，默认0.5
-    :return: Lift值
+    **参数**
+
+    :param y_true: 真实标签 (0/1)，0为负样本（好样本），1为正样本（坏样本）
+    :param y_prob: 预测概率或评分（高值表示高风险）
+    :param threshold: 分类阈值，默认为0.5。高于此阈值的样本视为"命中"
+    :return: Lift值（>1表示有效，>3表示良好）
+    :raises ValueError: y_true和y_prob长度不一致时
+
+    **参考样例**
+
+    >>> from hscredit.core.metrics import lift
+    >>> import numpy as np
+    >>> np.random.seed(42)
+    >>> y_true = np.random.randint(0, 2, 1000)
+    >>> y_prob = np.random.uniform(0, 1, 1000)
+    >>> lift(y_true, y_prob, threshold=0.8)
+    1.5
     """
     y_true = np.asarray(y_true)
     y_prob = np.asarray(y_prob)
@@ -63,15 +74,30 @@ def lift_table(y_true: Union[np.ndarray, pd.Series],
                **kwargs) -> pd.DataFrame:
     """计算Lift详细统计表.
 
-    按分箱计算每箱的Lift值、累积Lift值、坏账改善等指标。
+    按预测概率分箱后计算每箱的样本统计、Lift值和累积Lift值。
 
-    :param y_true: 真实标签 (0/1)
+    **参数**
+
+    :param y_true: 真实标签 (0/1)，0为负样本（好样本），1为正样本（坏样本）
     :param y_prob: 预测概率或评分
-    :param method: 分箱方法，默认'quantile'
-    :param max_n_bins: 最大分箱数，默认10
-    :param min_bin_size: 每箱最小样本占比，默认0.01
+    :param method: 分箱方法，默认为'quantile'（等频分箱）
+    :param max_n_bins: 最大分箱数，默认为10
+    :param min_bin_size: 每箱最小样本占比，默认为0.01
     :param kwargs: 其他传递给OptimalBinning的参数
-    :return: Lift统计表
+    :return: 包含各分箱详细统计的DataFrame，列包括：分箱序号、最小概率、最大概率、
+        样本数、好样本数、坏样本数、坏样本率、样本占比、Lift值、坏账改善、
+        累积Lift值、累积坏账改善
+    :raises ValueError: 数据全部为缺失值时
+
+    **参考样例**
+
+    >>> from hscredit.core.metrics import lift_table
+    >>> import numpy as np
+    >>> np.random.seed(42)
+    >>> y_true = np.random.randint(0, 2, 1000)
+    >>> y_prob = np.random.uniform(0, 1, 1000)
+    >>> table = lift_table(y_true, y_prob, max_n_bins=5)
+    >>> print(table[['分箱', '样本数', '坏样本率', 'Lift值']])
     """
     y_true = np.asarray(y_true)
     y_prob = np.asarray(y_prob)
@@ -139,11 +165,32 @@ def lift_curve(y_true: Union[np.ndarray, pd.Series],
                tail: bool = False) -> pd.DataFrame:
     """计算Lift曲线数据.
 
-    :param y_true: 真实标签 (0/1)
-    :param y_prob: 预测概率或评分
-    :param percentages: 百分比切分点列表，默认 [0.01, 0.03, 0.05, 0.10, 0.20, 0.30, 0.50]
-    :param tail: False=从高概率端截取（头部高风险），True=从低概率端截取（尾部低风险客群）
-    :return: Lift曲线数据
+    返回在不同覆盖率下的样本统计和Lift值，用于绘制Lift曲线和Decile Lift分析。
+
+    **参数**
+
+    :param y_true: 真实标签 (0/1)，0为负样本（好样本），1为正样本（坏样本）
+    :param y_prob: 预测概率或评分（高值表示高风险）
+    :param percentages: 百分比切分点列表，默认为 [0.01, 0.03, 0.05, 0.10, 0.20, 0.30, 0.50]
+        支持任意比例组合
+    :param tail: False=从高概率端截取（头部高风险客群，适合风险识别场景），
+        True=从低概率端截取（尾部低风险客群，适合优质客群筛选），默认为False
+    :return: 包含各覆盖率统计的DataFrame，列包括：
+        - 覆盖率: 百分比标签
+        - 样本数: 截取的样本数
+        - 坏样本数: 截取样本中的坏样本数
+        - 坏样本捕获率: 坏样本捕获率
+        - Lift值: 该覆盖率下的Lift值
+
+    **参考样例**
+
+    >>> from hscredit.core.metrics import lift_curve
+    >>> import numpy as np
+    >>> np.random.seed(42)
+    >>> y_true = np.random.randint(0, 2, 1000)
+    >>> y_prob = np.random.uniform(0, 1, 1000)
+    >>> curve = lift_curve(y_true, y_prob, percentages=[0.05, 0.10, 0.20])
+    >>> print(curve)
     """
     if percentages is None:
         percentages = [0.01, 0.03, 0.05, 0.10, 0.20, 0.30, 0.50]
@@ -197,22 +244,29 @@ def lift_at(
 
     支持 1%/3%/5%/10% 等任意比例，适配风控场景中头部/尾部区分能力分析。
 
-    :param y_true: 真实标签 (0/1)
-    :param y_prob: 预测概率
-    :param ratios: 覆盖率，标量（如 0.05）或列表（如 [0.01, 0.03, 0.05, 0.10]）。
-        默认 [0.01, 0.03, 0.05, 0.10]
-    :param ascending: False=高概率排前（风险模型头部），True=低概率排前（尾部分析）
-    :return: 单个 float（ratios 为标量时）或 DataFrame（ratios 为列表时）
+    **参数**
 
-    Example:
-        >>> from hscredit.core.metrics import lift_at
-        >>> lift_at(y_true, y_prob, ratios=0.05)          # 单值，返回float
-        3.42
-        >>> lift_at(y_true, y_prob, ratios=[0.01, 0.03, 0.05, 0.10])  # 返回DataFrame
-           覆盖率  样本数  坏样本数  坏样本率  坏样本捕获率  LIFT值
-        0    1%      50      35   70.00%     12.50%    5.83
-        1    3%     150      98   65.33%     35.00%    4.83
-    """
+    :param y_true: 真实标签 (0/1)，0为负样本（好样本），1为正样本（坏样本）
+    :param y_prob: 预测概率或评分（高值表示高风险）
+    :param ratios: 覆盖率，标量（如 0.05）或列表（如 [0.01, 0.03, 0.05, 0.10]）。
+        默认为 [0.01, 0.03, 0.05, 0.10]
+    :param ascending: False=高概率排前（风险模型头部），True=低概率排前（尾部分析），
+        默认为False
+    :return: 单个 float（ratios 为标量时）或 DataFrame（ratios 为列表时），
+        DataFrame列包括：覆盖率、样本数、坏样本数、坏样本率、坏样本捕获率、LIFT值
+
+    **参考样例**
+
+    >>> from hscredit.core.metrics import lift_at
+    >>> import numpy as np
+    >>> np.random.seed(42)
+    >>> y_true = np.random.randint(0, 2, 1000)
+    >>> y_prob = np.random.uniform(0, 1, 1000)
+    >>> lift_at(y_true, y_prob, ratios=0.05)
+    1.4
+    >>> result = lift_at(y_true, y_prob, ratios=[0.01, 0.03, 0.05, 0.10])
+    >>> print(result)
+"""
     _return_scalar = isinstance(ratios, (int, float))
     if ratios is None:
         ratios = [0.01, 0.03, 0.05, 0.10]
@@ -270,11 +324,15 @@ def lift_monotonicity_check(
     风控场景理想状态：高风险端（头部）坏率单调递减，低风险端（尾部）坏率单调递增。
     违反单调性意味着评分在某区间区分能力弱，可作为调参约束目标。
 
-    :param y_true: 真实标签 (0/1)
-    :param y_prob: 预测概率
-    :param n_bins: 分箱数，默认10
-    :param direction: 检验方向。'head'=仅检验头部（高概率→低概率坏率是否递减），
-        'tail'=仅检验尾部，'both'=头尾均检验
+    **参数**
+
+    :param y_true: 真实标签 (0/1)，0为负样本（好样本），1为正样本（坏样本）
+    :param y_prob: 预测概率或评分（高值表示高风险）
+    :param n_bins: 分箱数，默认为10
+    :param direction: 检验方向，默认为'both'
+        - 'head': 仅检验头部（高概率→低概率坏率是否递减）
+        - 'tail': 仅检验尾部
+        - 'both': 头尾均检验
     :return: 字典，含以下键：
         - head_monotonic (bool): 头部是否单调
         - tail_monotonic (bool): 尾部是否单调
@@ -287,12 +345,15 @@ def lift_monotonicity_check(
         - head_bin_table (pd.DataFrame): 头部分箱坏率统计表
         - tail_bin_table (pd.DataFrame): 尾部分箱坏率统计表
 
-    Example:
-        >>> from hscredit.core.metrics import lift_monotonicity_check
-        >>> result = lift_monotonicity_check(y_true, y_prob, n_bins=10)
-        >>> print(result['head_monotonic'])        # True / False
-        >>> print(result['head_violation_ratio'])  # 0.0 ~ 1.0
-        >>> print(result['head_bin_table'])
+    **参考样例**
+
+    >>> from hscredit.core.metrics import lift_monotonicity_check
+    >>> import numpy as np
+    >>> np.random.seed(42)
+    >>> y_true = np.random.randint(0, 2, 1000)
+    >>> y_prob = np.random.uniform(0, 1, 1000)
+    >>> result = lift_monotonicity_check(y_true, y_prob, n_bins=10)
+    >>> print(result['head_monotonic'])
     """
     y_true = np.asarray(y_true)
     y_prob = np.asarray(y_prob)
@@ -404,11 +465,39 @@ def rule_lift(y_true: Union[np.ndarray, pd.Series],
               amount: Optional[Union[np.ndarray, pd.Series]] = None) -> Dict[str, Any]:
     """计算规则的Lift指标.
 
-    :param y_true: 真实标签 (0/1)
-    :param rule_mask: 规则命中掩码
-    :param amount: 金额数据（可选）
-    :return: Lift指标字典
-    """
+    评估单一规则的命中样本相对于总体的坏账率提升，用于规则效果评估与对比。
+
+    **参数**
+
+    :param y_true: 真实标签 (0/1)，0为负样本（好样本），1为正样本（坏样本）
+    :param rule_mask: 规则命中掩码（布尔数组或0/1数组，True/1表示样本命中该规则）
+    :param amount: 金额数据（可选，用于计算金额维度的Lift指标）
+    :return: Lift指标字典，包含以下键：
+        - hit_count: 命中样本数
+        - hit_rate: 命中率（命中样本占总样本比例）
+        - bad_count: 命中样本中的坏样本数
+        - good_count: 命中样本中的好样本数
+        - badrate: 命中样本坏账率
+        - overall_badrate: 总体坏账率
+        - lift: Lift值（命中坏账率/总体坏账率）
+        - bad_improve: 坏账改善度（总体坏账率-非命中坏账率）/总体坏账率
+        - total_amount: 总金额（当amount非None时）
+        - hit_amount: 命中金额（当amount非None时）
+        - bad_amount: 命中金额中的坏样本对应金额（当amount非None时）
+        - amount_lift: 金额维度Lift值（当amount非None时）
+    :raises ValueError: y_true和rule_mask长度不一致时
+    :raises ValueError: amount长度与y_true不一致时
+
+    **参考样例**
+
+    >>> from hscredit.core.metrics import rule_lift
+    >>> import numpy as np
+    >>> np.random.seed(42)
+    >>> y_true = np.random.randint(0, 2, 1000)
+    >>> rule_mask = np.random.rand(1000) > 0.8  # 20%样本命中规则
+    >>> result = rule_lift(y_true, rule_mask)
+    >>> print(f"命中数={result['hit_count']}, Lift={result['lift']:.4f}")
+"""
     y_true = np.asarray(y_true)
     rule_mask = np.asarray(rule_mask)
 
@@ -477,10 +566,23 @@ def badrate(y_true: Union[np.ndarray, pd.Series],
             weights: Optional[Union[np.ndarray, pd.Series]] = None) -> float:
     """计算总体坏账率.
 
-    :param y_true: 真实标签 (0/1)
-    :param weights: 样本权重（可选）
-    :return: 坏账率
-    """
+    坏账率 = 坏样本数 / 总样本数，即目标变量为1的样本占比。
+
+    **参数**
+
+    :param y_true: 真实标签 (0/1)，0为负样本（好样本），1为正样本（坏样本）
+    :param weights: 样本权重（可选），用于加权计算坏账率
+    :return: 坏账率，取值范围[0, 1]
+
+    **参考样例**
+
+    >>> from hscredit.core.metrics import badrate
+    >>> import numpy as np
+    >>> np.random.seed(42)
+    >>> y_true = np.random.randint(0, 2, 1000)
+    >>> badrate(y_true)
+    0.5
+"""
     y_true = np.asarray(y_true)
 
     if weights is not None:
@@ -495,11 +597,33 @@ def badrate_by_group(y_true: Union[np.ndarray, pd.Series],
                      weights: Optional[Union[np.ndarray, pd.Series]] = None) -> pd.DataFrame:
     """按分组计算坏账率.
 
-    :param y_true: 真实标签 (0/1)
-    :param group: 分组标签
-    :param weights: 样本权重（可选）
-    :return: 各组坏账率统计
-    """
+    将样本按指定分组变量进行分群，分别计算各组的坏账率，用于群体风险对比分析。
+
+    **参数**
+
+    :param y_true: 真实标签 (0/1)，0为负样本（好样本），1为正样本（坏样本）
+    :param group: 分组标签（支持数值型或分类型，如渠道、地区、年龄段等）
+    :param weights: 样本权重（可选），用于加权计算各组坏账率
+    :return: 各组坏账率统计的DataFrame，按坏账率降序排列，列包括：
+        - 分组: 分组标签
+        - 样本数: 该组总样本数
+        - 好样本数: 该组好样本数量
+        - 坏样本数: 该组坏样本数量
+        - 坏账率: 该组坏账率
+        - 样本占比: 该组样本占总样本比例
+        - 与总体差异: 该组坏账率与总体坏账率的差值
+    :raises ValueError: y_true和group长度不一致时
+
+    **参考样例**
+
+    >>> from hscredit.core.metrics import badrate_by_group
+    >>> import numpy as np
+    >>> np.random.seed(42)
+    >>> y_true = np.random.randint(0, 2, 1000)
+    >>> groups = np.random.choice(['A', 'B', 'C', 'D'], size=1000)
+    >>> result = badrate_by_group(y_true, groups)
+    >>> print(result)
+"""
     y_true = np.asarray(y_true)
     group = np.asarray(group)
 
@@ -540,11 +664,41 @@ def badrate_trend(y_true: Union[np.ndarray, pd.Series],
                   freq: str = 'M') -> pd.DataFrame:
     """计算坏账率时间趋势.
 
-    :param y_true: 真实标签 (0/1)
-    :param date: 日期数据
-    :param freq: 时间频率，'D'日/'W'周/'M'月/'Q'季度
-    :return: 时间趋势数据
-    """
+    按指定时间频率聚合样本，计算各时间段的坏账率及环比变化，
+    支持日/周/月/季度多时间粒度分析。
+
+    **参数**
+
+    :param y_true: 真实标签 (0/1)，0为负样本（好样本），1为正样本（坏样本）
+    :param date: 日期数据（支持pandas datetime、numpy datetime64或字符串日期）
+    :param freq: 时间频率，默认为'M'（月）
+        - 'D': 按日统计
+        - 'W': 按周统计
+        - 'M': 按月统计
+        - 'Q': 按季度统计
+    :return: 时间趋势数据DataFrame，列包括：
+        - 时间周期: 统计时间段标签
+        - 样本数: 该时间段内样本总数
+        - 好样本数: 该时间段内好样本数量
+        - 坏样本数: 该时间段内坏样本数量
+        - 坏账率: 该时间段内坏账率
+        - 环比变化: 与上一期坏账率的差值
+        - 累积坏账率: 截至该时间段的累积坏账率
+    :raises ValueError: y_true和date长度不一致时
+    :raises ValueError: freq不在'D'/'W'/'M'/'Q'范围内时
+
+    **参考样例**
+
+    >>> from hscredit.core.metrics import badrate_trend
+    >>> import numpy as np
+    >>> import pandas as pd
+    >>> np.random.seed(42)
+    >>> n = 1000
+    >>> y_true = np.random.randint(0, 2, n)
+    >>> dates = pd.date_range('2024-01-01', periods=n, freq='D')
+    >>> result = badrate_trend(y_true, dates, freq='M')
+    >>> print(result)
+"""
     y_true = np.asarray(y_true)
     date = pd.to_datetime(date)
 
@@ -603,14 +757,40 @@ def badrate_by_score_bin(y_true: Union[np.ndarray, pd.Series],
                          **kwargs) -> pd.DataFrame:
     """按评分分箱计算坏账率.
 
-    :param y_true: 真实标签 (0/1)
-    :param score: 评分或概率
-    :param method: 分箱方法，默认'quantile'
-    :param max_n_bins: 最大分箱数，默认10
-    :param min_bin_size: 每箱最小样本占比，默认0.01
+    将评分按指定分箱方法划分为多个区间，计算各区间的坏账率及与总体坏账率的差异，
+    用于评分卡分布分析与区间风险对比。
+
+    **参数**
+
+    :param y_true: 真实标签 (0/1)，0为负样本（好样本），1为正样本（坏样本）
+    :param score: 评分或预测概率（高评分/高概率表示高风险）
+    :param method: 分箱方法，默认为'quantile'（等频分箱），
+        支持与OptimalBinning相同的全部分箱方法
+    :param max_n_bins: 最大分箱数，默认为10
+    :param min_bin_size: 每箱最小样本占比，默认为0.01
     :param kwargs: 其他传递给OptimalBinning的参数
-    :return: 分箱坏账率统计
-    """
+    :return: 分箱坏账率统计DataFrame，列包括：
+        - 分箱: 分箱序号
+        - 最小评分: 该分箱内评分最小值
+        - 最大评分: 该分箱内评分最大值
+        - 样本数: 该分箱内样本总数
+        - 好样本数: 该分箱内好样本数量
+        - 坏样本数: 该分箱内坏样本数量
+        - 坏账率: 该分箱内坏账率
+        - 与总体差异: 该分箱坏账率与总体坏账率的差值
+    :raises ValueError: 数据全部为缺失值时
+    :raises ValueError: y_true和score长度不一致时
+
+    **参考样例**
+
+    >>> from hscredit.core.metrics import badrate_by_score_bin
+    >>> import numpy as np
+    >>> np.random.seed(42)
+    >>> y_true = np.random.randint(0, 2, 1000)
+    >>> score = np.random.randn(1000) * 50 + 600  # 模拟评分分布
+    >>> result = badrate_by_score_bin(y_true, score, max_n_bins=5)
+    >>> print(result)
+"""
     y_true = np.asarray(y_true)
     score = np.asarray(score)
 
@@ -673,10 +853,39 @@ def score_stats(score: Union[np.ndarray, pd.Series],
                 y_true: Optional[Union[np.ndarray, pd.Series]] = None) -> Dict[str, Any]:
     """计算评分统计信息.
 
-    :param score: 评分数据
-    :param y_true: 真实标签（可选）
-    :return: 评分统计字典
-    """
+    提供评分的完整描述性统计信息，包括样本量、缺失情况、分布特征，
+    以及（当提供目标变量时）KS值和AUC值。
+
+    **参数**
+
+    :param score: 评分或预测概率数据（支持数值型数组）
+    :param y_true: 真实标签（可选，0/1。如果提供则计算KS和AUC）
+    :return: 评分统计字典，包含以下键：
+        - 样本数: 评分总样本数
+        - 缺失数: 缺失值数量
+        - 缺失率: 缺失值占比
+        - 均值: 评分均值
+        - 标准差: 评分标准差
+        - 最小值: 评分最小值
+        - 最大值: 评分最大值
+        - 中位数: 评分中位数
+        - 分位数_25: 25%分位数
+        - 分位数_75: 75%分位数
+        - KS: （仅当y_true非None时）KS统计量
+        - AUC: （仅当y_true非None时）AUC值
+
+    **参考样例**
+
+    >>> from hscredit.core.metrics import score_stats
+    >>> import numpy as np
+    >>> np.random.seed(42)
+    >>> score = np.random.randn(1000) * 50 + 600
+    >>> stats = score_stats(score)
+    >>> print(f"均值={stats['均值']:.2f}, 标准差={stats['标准差']:.2f}")
+    >>> y_true = np.random.randint(0, 2, 1000)
+    >>> stats_with_target = score_stats(score, y_true)
+    >>> print(f"KS={stats_with_target.get('KS', 0):.4f}")
+"""
     score = np.asarray(score)
 
     result = {
@@ -714,14 +923,36 @@ def score_stability(score_train: Union[np.ndarray, pd.Series],
                     **kwargs) -> pd.DataFrame:
     """计算评分稳定性.
 
-    :param score_train: 训练集评分
-    :param score_test: 测试集评分
-    :param method: 分箱方法，默认'quantile'
-    :param max_n_bins: 最大分箱数，默认10
-    :param min_bin_size: 每箱最小样本占比，默认0.01
+    使用PSI（群体稳定性指标）评估训练集评分与测试集（新数据）评分之间的分布差异，
+    封装了psi_table函数，提供简化的稳定性分析接口。
+
+    **参数**
+
+    :param score_train: 训练集评分（期望分布）
+    :param score_test: 测试集评分（实际分布）
+    :param method: 分箱方法，默认为'quantile'（等频分箱），
+        支持与OptimalBinning相同的全部分箱方法
+    :param max_n_bins: 最大分箱数，默认为10
+    :param min_bin_size: 每箱最小样本占比，默认为0.01
     :param kwargs: 其他传递给OptimalBinning的参数
-    :return: 稳定性分析表
-    """
+    :return: PSI详细统计表DataFrame，列包括：
+        - 分箱: 分箱标签
+        - 期望样本数: 训练集该分箱内样本数
+        - 实际样本数: 测试集该分箱内样本数
+        - 期望占比: 训练集该分箱样本占总样本比例
+        - 实际占比: 测试集该分箱样本占总样本比例
+        - PSI贡献: 该分箱对总PSI的贡献
+
+    **参考样例**
+
+    >>> from hscredit.core.metrics import score_stability
+    >>> import numpy as np
+    >>> np.random.seed(42)
+    >>> train_scores = np.random.randn(1000) * 50 + 600
+    >>> test_scores = np.random.randn(1000) * 50 + 605
+    >>> result = score_stability(train_scores, test_scores)
+    >>> print(result)
+"""
     from .stability import psi_table
 
     return psi_table(score_train, score_test, method, max_n_bins, min_bin_size, **kwargs)

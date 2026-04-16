@@ -59,7 +59,7 @@ class MonotonicBinning(BaseBinning):
     - bin_tables_: 每个特征的分箱统计表
     - monotonic_trend_: 每个特征检测到的单调趋势
 
-    **示例**
+    **参考样例**
 
     >>> from hscredit.core.binning import MonotonicBinning
     >>> # 峰值模式（倒U型）

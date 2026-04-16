@@ -449,12 +449,12 @@ class BinTableDisplay:
     
     提供链式调用接口，方便在 Jupyter 中展示美观的分箱表。
     
-    **示例**
+    **参考样例**
     
     >>> table = feature_bin_stats(data, 'score', target='target')
-    >>> table.show()  # 默认展示
-    >>> table.show(compact=True)  # 紧凑模式
-    >>> table.show(highlight_iv=False)  # 不高亮 IV
+    >>> table.show()
+    >>> table.show(compact=True)
+    >>> table.show(highlight_iv=False)
     """
     
     def __init__(self, df: pd.DataFrame):
@@ -903,11 +903,11 @@ def _show_method(self, **kwargs):
     :param kwargs: 传递给 BinTableDisplay.show() 的参数
     :return: BinTableDisplay 对象，支持链式调用
     
-    **示例**
+    **参考样例**
     
     >>> table = feature_bin_stats(data, 'score', target='target')
-    >>> table.show()  # 展示美化表格
-    >>> table.show(compact=True)  # 紧凑模式
+    >>> table.show()
+    >>> table.show(compact=True)
     """
     display_obj = BinTableDisplay(self)
     return display_obj.show(**kwargs)

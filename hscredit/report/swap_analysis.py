@@ -1012,7 +1012,7 @@ def swap_analysis(
     :param kwargs: 其他配置参数，如bin_method, max_n_bins, custom_bins等
     :return: SwapAnalysisResult分析结果对象
     
-    **示例**
+    **参考样例**
     
     >>> # 单标签分析
     >>> result = swap_analysis(
@@ -1031,10 +1031,10 @@ def swap_analysis(
     ... )
     >>> 
     >>> # 获取结果
-    >>> result.summary_report_count  # 订单口径汇总报告
-    >>> result.summary_report_amount  # 金额口径汇总报告（如有）
-    >>> result.pass_rate_report  # 通过率分析报告
-    >>> result.risk_rejection_report  # 风险拒绝率报告
+    >>> result.summary_report_count
+    >>> result.summary_report_amount
+    >>> result.pass_rate_report
+    >>> result.risk_rejection_report
     """
     # 构建目标变量列表
     target_cols = []

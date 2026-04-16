@@ -45,32 +45,26 @@ class CardinalityEncoder(BaseEncoder):
 
     **参考样例**
 
-    基本使用::
-
-        >>> encoder = CardinalityEncoder(cols=['city'], max_categories=10)
-        >>> X_encoded = encoder.fit_transform(X)
-        >>> # city列：保留频次最高的前9个城市，其余合并为 'other'
-
-    自定义标签::
-
-        >>> encoder = CardinalityEncoder(
-        ...     cols=['city'], max_categories=5, other_label='其他城市'
-        ... )
-        >>> X_encoded = encoder.fit_transform(X)
-
-    特殊值独立成类::
-
-        >>> encoder = CardinalityEncoder(
-        ...     cols=['score_level'],
-        ...     max_categories=8,
-        ...     special_values=[-999, 'missing'],
-        ... )
-        >>> X_encoded = encoder.fit_transform(X)
-        >>> # -999 和 'missing' 不计入 max_categories 限制，始终独立保留
-
-    逆编码（注意：被合并的类别无法恢复为原始值）::
-
-        >>> X_original = encoder.inverse_transform(X_encoded)
+    >>> from hscredit.core.encoders import CardinalityEncoder
+    >>> encoder = CardinalityEncoder(cols=['city'], max_categories=10)
+    >>> X_encoded = encoder.fit_transform(X)
+    >>>
+    >>> # 自定义标签
+    >>> encoder = CardinalityEncoder(
+    ...     cols=['city'], max_categories=5, other_label='其他城市'
+    ... )
+    >>> X_encoded = encoder.fit_transform(X)
+    >>>
+    >>> # 特殊值独立成类
+    >>> encoder = CardinalityEncoder(
+    ...     cols=['score_level'],
+    ...     max_categories=8,
+    ...     special_values=[-999, 'missing'],
+    ... )
+    >>> X_encoded = encoder.fit_transform(X)
+    >>>
+    >>> # 逆编码
+    >>> X_original = encoder.inverse_transform(X_encoded)
     """
 
     def __init__(

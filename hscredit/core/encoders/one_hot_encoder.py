@@ -40,18 +40,13 @@ class OneHotEncoder(BaseEncoder):
 
     **参考样例**
 
-    基本使用::
-
-        >>> encoder = OneHotEncoder(cols=['color'])
-        >>> X_encoded = encoder.fit_transform(X)
-
-    删除第一列避免多重共线性::
-
-        >>> encoder = OneHotEncoder(cols=['color'], drop='first')
-        >>> X_encoded = encoder.fit_transform(X)
-
-    参考:
-        https://en.wikipedia.org/wiki/One-hot
+    >>> from hscredit.core.encoders import OneHotEncoder
+    >>> encoder = OneHotEncoder(cols=['color'])
+    >>> X_encoded = encoder.fit_transform(X)
+    >>>
+    >>> # 删除第一列避免多重共线性
+    >>> encoder = OneHotEncoder(cols=['color'], drop='first')
+    >>> X_encoded = encoder.fit_transform(X)
     """
 
     def __init__(

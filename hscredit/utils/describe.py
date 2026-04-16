@@ -26,9 +26,10 @@ def feature_describe(
     :param cardinality: 基数阈值，小于等于此值按类别型处理
     :return: 描述统计结果Series
 
-    示例:
-        >>> feature_describe(df, feature='age')
-        >>> feature_describe(df['age'])
+    **参考样例**
+
+    >>> feature_describe(df, feature='age')
+    >>> feature_describe(df['age'])
     """
     if feature and feature not in data.columns:
         raise ValueError(f"feature {feature} must in columns.")
@@ -93,9 +94,10 @@ def groupby_feature_describe(
     :param kwargs: 传递给feature_describe的其他参数
     :return: 描述统计结果DataFrame
 
-    示例:
-        >>> groupby_feature_describe(df, by='gender')
-        >>> groupby_feature_describe(df, by=['gender', 'age_group'])
+    **参考样例**
+
+    >>> groupby_feature_describe(df, by='gender')
+    >>> groupby_feature_describe(df, by=['gender', 'age_group'])
     """
     if not isinstance(by, (tuple, list, np.ndarray)):
         by = [by]

@@ -43,11 +43,12 @@ class MDLPBinning(BaseBinning):
     :param random_state: 随机种子，默认为None
     :param verbose: 是否输出详细信息，默认为False
 
-    示例:
-        >>> from hscredit.core.binning import MDLPBinning
-        >>> binner = MDLPBinning(max_n_bins=5, min_n_bins=2)
-        >>> binner.fit(X_train, y_train)
-        >>> X_binned = binner.transform(X_test)
+    **参考样例**
+
+    >>> from hscredit.core.binning import MDLPBinning
+    >>> binner = MDLPBinning(max_n_bins=5, min_n_bins=2)
+    >>> binner.fit(X_train, y_train)
+    >>> X_binned = binner.transform(X_test)
     """
 
     def __init__(

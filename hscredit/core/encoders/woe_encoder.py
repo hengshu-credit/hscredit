@@ -39,17 +39,14 @@ class WOEEncoder(BaseEncoder):
 
     **参考样例**
 
-    基本使用::
-
-        >>> from hscredit.core.encoders import WOEEncoder
-        >>> encoder = WOEEncoder(cols=['category', 'score'])
-        >>> X_encoded = encoder.fit_transform(X, y)
-        >>> print(encoder.iv_)
-
-    获取IV摘要::
-
-        >>> summary = encoder.summary()
-        >>> print(summary)
+    >>> from hscredit.core.encoders import WOEEncoder
+    >>> encoder = WOEEncoder(cols=['category', 'score'])
+    >>> X_encoded = encoder.fit_transform(X, y)
+    >>> print(encoder.iv_)
+    >>>
+    >>> # 获取IV摘要
+    >>> summary = encoder.summary()
+    >>> print(summary)
 
     参考:
         https://www.listendata.com/2015/03/weight-of-evidence-woe-and-information.html
@@ -289,28 +286,26 @@ class WOEEncoder(BaseEncoder):
         :param to_json: 可选，JSON 文件保存路径。如果提供，将规则保存到该文件
         :return: WOE编码规则字典，格式为 {feature: {value: woe_value, ...}, ...}
 
-        **示例**
+        **参考样例**
 
+        >>> from hscredit.core.encoders import WOEEncoder
         >>> encoder = WOEEncoder(cols=['category', 'city'])
         >>> encoder.fit(X, y)
-        >>> 
+        >>>
         >>> # 导出为字典
         >>> rules = encoder.export()
-        >>> # 返回格式: {'category': {'A': 0.5, 'B': -0.3, ...}, 'city': {...}}
-        >>> 
+        >>>
         >>> # 导出并保存到 JSON 文件
         >>> rules = encoder.export(to_json='woe_rules.json')
-        
+
         **与 toad/scorecardpipeline 的兼容性**
 
         导出的规则可以直接被 toad 和 scorecardpipeline 加载:
-        
-        >>> # toad 加载
+
         >>> import toad
         >>> transformer = toad.transform.WOETransformer()
         >>> transformer.load(rules)
-        >>> 
-        >>> # scorecardpipeline 加载
+        >>>
         >>> from scorecardpipeline import WOETransformer
         >>> transformer = WOETransformer()
         >>> transformer.load(rules)
@@ -358,32 +353,30 @@ class WOEEncoder(BaseEncoder):
         :param update: 是否更新现有规则（而非替换），默认为 False
         :return: self，支持链式调用
 
-        **示例**
+        **参考样例**
 
+        >>> from hscredit.core.encoders import WOEEncoder
         >>> encoder = WOEEncoder()
-        >>> 
+        >>>
         >>> # 从字典加载
         >>> rules = {'category': {'A': 0.5, 'B': -0.3}}
         >>> encoder.load(rules)
-        >>> 
+        >>>
         >>> # 从 JSON 文件加载
         >>> encoder.load('woe_rules.json')
-        >>> 
+        >>>
         >>> # 更新现有规则
         >>> encoder.load({'new_feature': {'X': 0.2}}, update=True)
-        
+
         **与 toad/scorecardpipeline 的兼容性**
 
         可以直接加载 toad 和 scorecardpipeline 导出的规则:
-        
-        >>> # toad 导出
+
         >>> import toad
         >>> toad_transformer = toad.transform.WOETransformer()
         >>> toad_transformer.fit(df, y)
         >>> rules = toad_transformer.export()
-        >>> 
-        >>> # hscredit 加载
-        >>> from hscredit.core.encoders import WOEEncoder
+        >>>
         >>> encoder = WOEEncoder()
         >>> encoder.load(rules)
         """

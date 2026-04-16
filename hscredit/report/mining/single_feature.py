@@ -67,22 +67,16 @@ class SingleFeatureRuleMiner(BaseRuleMiner):
     :param verbose: 是否输出详细信息，默认False
     :param binning_kwargs: 分箱方法的其他参数，通过**kwargs传入
     
-    示例:
-        >>> # 使用等频分箱
-        >>> miner = SingleFeatureRuleMiner(target='ISBAD', method='quantile', max_n_bins=20)
-        >>> miner.fit(df)
-        >>> rules = miner.get_top_rules(top_n=10, metric='lift')
-        >>> 
-        >>> # 使用卡方分箱
-        >>> miner = SingleFeatureRuleMiner(target='ISBAD', method='chi2', max_n_bins=10, chi2_threshold=3.841)
-        >>> miner.fit(df)
-        >>> 
-        >>> # 使用最优IV分箱
-        >>> miner = SingleFeatureRuleMiner(target='ISBAD', method='optimal_iv', max_n_bins=5, monotonic=True)
-        >>> miner.fit(df)
-        >>> 
-        >>> # 分析单个特征
-        >>> feature_rules = miner.analyze_feature('age', max_n_bins=10)
+    **参考样例**
+
+    >>> miner = SingleFeatureRuleMiner(target='ISBAD', method='quantile', max_n_bins=20)
+    >>> miner.fit(df)
+    >>> rules = miner.get_top_rules(top_n=10, metric='lift')
+    >>> miner = SingleFeatureRuleMiner(target='ISBAD', method='chi2', max_n_bins=10, chi2_threshold=3.841)
+    >>> miner.fit(df)
+    >>> miner = SingleFeatureRuleMiner(target='ISBAD', method='optimal_iv', max_n_bins=5, monotonic=True)
+    >>> miner.fit(df)
+    >>> feature_rules = miner.analyze_feature('age', max_n_bins=10)
     """
     
     # 支持的分箱方法映射

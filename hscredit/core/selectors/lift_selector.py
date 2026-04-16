@@ -2,20 +2,17 @@
 
 使用LIFT@ratio值进行特征筛选，支持自定义覆盖率和方向。
 
-LIFT@ratio% 计算方式:
-    1. 将样本按特征值排序
-    2. 取头部 ratio 比例的样本
-    3. LIFT = 该子群坏样本率 / 整体坏样本率
+**参考样例**
 
-**方向说明**
-
-| direction | 含义 | LIFT 表现 | 典型场景 |
-|-----------|------|-----------|----------|
-| bad | 找坏人能力 | LIFT >> 1，越高越强 | 尾部高风险客户识别 |
-| good | 找好人能力 | LIFT << 1，越低越强 | 头部优质客户识别 |
-| auto | 自动取最优方向 | 取 |LIFT-1| 最大的方向 | 通用特征筛选（默认） |
-
-- 内部经验: 风控场景常用 lift@5% 或 lift@10%
+>>> from hscredit.core.selectors import LiftSelector
+>>> import pandas as pd
+>>> import numpy as np
+>>> np.random.seed(42)
+>>> X = pd.DataFrame(np.random.randn(1000, 5), columns=[f'f{i}' for i in range(5)])
+>>> y = pd.Series(np.random.randint(0, 2, 1000))
+>>> selector = LiftSelector(threshold=0.5, ratio=0.10)
+>>> selector.fit(X, y)
+>>> print(selector.selected_features_)
 """
 
 from typing import Union, List, Optional, Literal, Tuple
@@ -167,25 +164,27 @@ class LiftSelector(BaseFeatureSelector):
     - lift_detail\_: 各特征的LIFT详情表，pd.DataFrame
         包含列: LIFT_bad, LIFT_good, best_direction, score
 
-    **示例**
+    **参考样例**
 
-    ::
-
-        >>> from hscredit.core.selectors import LiftSelector
-        >>> import pandas as pd
-        >>>
-        >>> # 自动模式（推荐）: 同时检测找坏人和找好人能力
-        >>> selector = LiftSelector(threshold=0.5, ratio=0.10)
-        >>> selector.fit(X, y)
-        >>> print(selector.lift_detail_)  # 查看各特征两个方向的LIFT
-        >>>
-        >>> # 仅评估找坏人能力
-        >>> selector = LiftSelector(direction='bad', threshold=0.5)
-        >>> selector.fit(X, y)
-        >>>
-        >>> # 仅评估找好人能力
-        >>> selector = LiftSelector(direction='good', threshold=0.5)
-        >>> selector.fit(X, y)
+    >>> from hscredit.core.selectors import LiftSelector
+    >>> import pandas as pd
+    >>> import numpy as np
+    >>> np.random.seed(42)
+    >>> X = pd.DataFrame(np.random.randn(1000, 5), columns=[f'f{i}' for i in range(5)])
+    >>> y = pd.Series(np.random.randint(0, 2, 1000))
+    >>>
+    >>> # 自动模式（推荐）: 同时检测找坏人和找好人能力
+    >>> selector = LiftSelector(threshold=0.5, ratio=0.10)
+    >>> selector.fit(X, y)
+    >>> print(selector.lift_detail_)  # 查看各特征两个方向的LIFT
+    >>>
+    >>> # 仅评估找坏人能力
+    >>> selector = LiftSelector(direction='bad', threshold=0.5)
+    >>> selector.fit(X, y)
+    >>>
+    >>> # 仅评估找好人能力
+    >>> selector = LiftSelector(direction='good', threshold=0.5)
+    >>> selector.fit(X, y)
     """
 
     def __init__(

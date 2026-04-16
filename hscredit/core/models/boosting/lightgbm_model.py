@@ -5,7 +5,7 @@
 **依赖**
 pip install lightgbm
 
-**示例**
+**参考样例**
 >>> from hscredit.core.models import LightGBMRiskModel
 >>> model = LightGBMRiskModel(
 ...     num_leaves=31,
@@ -132,7 +132,7 @@ class LightGBMRiskModel(BaseRiskModel):
     :ivar best_score_: 最佳得分
     :ivar booster_: 底层LightGBM模型
     
-    **示例**
+    **参考样例**
     
     >>> # 基础使用
     >>> model = LightGBMRiskModel(num_leaves=31, learning_rate=0.1)
@@ -514,12 +514,12 @@ class LightGBMRiskModel(BaseRiskModel):
         :param X: 特征矩阵
         :return: 叶子节点索引，形状 (n_samples, n_trees)
 
-        **示例**
+        **参考样例**
 
         >>> model = LightGBMRiskModel(n_estimators=50)
         >>> model.fit(X, y)
         >>> leaf_indices = model.get_leaf_indices(X)
-        >>> print(leaf_indices.shape)  # (n_samples, 50)
+        >>> print(leaf_indices.shape)
         """
         check_is_fitted(self, '_is_fitted')
         X = self._prepare_data(X)[0]

@@ -3,6 +3,23 @@
 参考 scorecardpipeline.FeatureSelection 的常用粗筛流程，
 按缺失率、IV、相关性、单一值占比顺序筛选特征，
 但完整复用 hscredit 现有筛选器体系与双风格 API。
+
+**参考样例**
+
+>>> from hscredit.core.selectors import ScorecardFeatureSelection
+>>> import pandas as pd
+>>> import numpy as np
+>>> np.random.seed(42)
+>>> X = pd.DataFrame(np.random.randn(1000, 10), columns=[f'f{i}' for i in range(10)])
+>>> y = pd.Series(np.random.randint(0, 2, 1000))
+>>> selector = ScorecardFeatureSelection(
+...     null_threshold=0.95,
+...     iv_threshold=0.02,
+...     corr_threshold=0.7,
+...     mode_threshold=0.95,
+... )
+>>> selector.fit(X, y)
+>>> print(selector.selected_features_)
 """
 
 from typing import Union, List, Optional, Dict, Any
@@ -38,22 +55,50 @@ class ScorecardFeatureSelection(BaseFeatureSelector):
     - 支持 sklearn 风格 ``fit(X, y)``
     - 支持 scorecardpipeline 风格 ``fit(df)``
 
-    :param null_threshold: 缺失率阈值，默认 0.95；设为 None 可关闭该阶段
-    :param iv_threshold: IV阈值，默认 0.02；设为 None 可关闭该阶段
-    :param corr_threshold: 相关性阈值，默认 0.7；设为 None 可关闭该阶段
-    :param mode_threshold: 单一值占比阈值，默认 0.95；设为 None 可关闭该阶段
-    :param corr_method: 相关系数计算方法，默认 ``pearson``
-    :param corr_metric: 相关性筛选的保留指标，默认 ``iv``
-    :param corr_weights: 自定义相关性筛选权重，优先级高于 corr_metric
-    :param corr_binning_params: 透传给 CorrSelector 的分箱参数
-    :param iv_regularization: IV计算正则项，默认 1.0
-    :param mode_dropna: 计算单一值占比时是否将缺失值作为独立类别，默认 True
-    :param target: 目标变量列名，默认 ``target``
+    **参数**
+
+    :param null_threshold: 缺失率阈值，默认为0.95；设为None可关闭该阶段
+    :param iv_threshold: IV阈值，默认为0.02；设为None可关闭该阶段
+    :param corr_threshold: 相关性阈值，默认为0.7；设为None可关闭该阶段
+    :param mode_threshold: 单一值占比阈值，默认为0.95；设为None可关闭该阶段
+    :param corr_method: 相关系数计算方法，默认为'pearson'
+        - 'pearson': 皮尔逊相关系数
+        - 'spearman': 斯皮尔曼等级相关系数
+        - 'kendall': 肯德尔相关系数
+    :param corr_metric: 相关性筛选的保留指标，默认为'iv'
+        - 'iv': 信息值（需要目标变量y）
+        - 'ks': KS统计量
+        - 'lift': LIFT值
+        - 'bad_rate': 坏样本率
+        指标通过分箱后的bin_tables_计算得到。
+    :param corr_weights: 自定义相关性筛选权重，优先级高于corr_metric
+    :param corr_binning_params: 透传给CorrSelector的分箱参数
+    :param iv_regularization: IV计算正则项，默认为1.0
+    :param mode_dropna: 计算单一值占比时是否将缺失值作为独立类别，默认为True
+    :param target: 目标变量列名，默认为'target'
     :param include: 强制保留特征列表
     :param exclude: 强制剔除特征列表
-    :param force_drop: 强制剔除特征列表，最终会合并到 exclude
-    :param target_rm: transform 时是否移除目标列，默认 False
+    :param force_drop: 强制剔除特征列表，最终会合并到exclude
+    :param target_rm: transform时是否移除目标列，默认为False
     :param n_jobs: 并行任务数
+
+    **参考样例**
+
+    >>> from hscredit.core.selectors import ScorecardFeatureSelection
+    >>> import pandas as pd
+    >>> import numpy as np
+    >>> np.random.seed(42)
+    >>> X = pd.DataFrame(np.random.randn(1000, 10), columns=[f'f{i}' for i in range(10)])
+    >>> y = pd.Series(np.random.randint(0, 2, 1000))
+    >>> selector = ScorecardFeatureSelection(
+    ...     null_threshold=0.95,
+    ...     iv_threshold=0.02,
+    ...     corr_threshold=0.7,
+    ...     mode_threshold=0.95,
+    ... )
+    >>> selector.fit(X, y)
+    >>> print(selector.selected_features_)
+    >>> print(selector.stage_report_df_)
     """
 
     def __init__(

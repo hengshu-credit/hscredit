@@ -1,6 +1,20 @@
 """VIF筛选器.
 
 使用方差膨胀因子（VIF）检测和移除多重共线性特征。
+
+**参考样例**
+
+>>> from hscredit.core.selectors import VIFSelector
+>>> import pandas as pd
+>>> X = pd.DataFrame({
+...     'a': [1, 2, 3, 4, 5],
+...     'b': [1, 2, 3, 4, 5],  # 与a完全相关
+...     'c': [5, 4, 3, 2, 1]
+... })
+>>> selector = VIFSelector(threshold=4.0)
+>>> selector.fit(X)
+>>> print(selector.selected_features_)
+['a', 'c']  # 或 ['b', 'c']，保留其中一个高相关特征
 """
 
 from typing import Union, List, Optional
@@ -100,22 +114,19 @@ class VIFSelector(BaseFeatureSelector):
     :param n_jobs: 并行计算的任务数
     :param verbose: 是否显示详细过程，默认为False
 
-    **示例**
+    **参考样例**
 
-    ::
-
-        >>> from hscredit.core.selection import VIFSelector
-        >>> import pandas as pd
-        >>> import numpy as np
-        >>> X = pd.DataFrame({
-        ...     'a': [1, 2, 3, 4, 5],
-        ...     'b': [1, 2, 3, 4, 5],  # 与a完全相关
-        ...     'c': [5, 4, 3, 2, 1]
-        ... })
-        >>> selector = VIFSelector(threshold=4.0)
-        >>> selector.fit(X)
-        >>> print(selector.selected_features_)
-        ['a', 'c']  # 或 ['b', 'c']，保留其中一个高相关特征
+    >>> from hscredit.core.selectors import VIFSelector
+    >>> import pandas as pd
+    >>> X = pd.DataFrame({
+    ...     'a': [1, 2, 3, 4, 5],
+    ...     'b': [1, 2, 3, 4, 5],  # 与a完全相关
+    ...     'c': [5, 4, 3, 2, 1]
+    ... })
+    >>> selector = VIFSelector(threshold=4.0)
+    >>> selector.fit(X)
+    >>> print(selector.selected_features_)
+    ['a', 'c']  # 或 ['b', 'c']，保留其中一个高相关特征
     """
 
     def __init__(

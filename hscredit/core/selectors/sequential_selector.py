@@ -4,6 +4,24 @@
 前向选择从空集开始逐步添加最有价值的特征；
 后向消除从全特征集开始逐步剔除最无价值的特征。
 基于 sklearn.feature_selection.SequentialFeatureSelector 实现。
+
+**参考样例**
+
+>>> from hscredit.core.selectors import SequentialFeatureSelector
+>>> from sklearn.ensemble import RandomForestClassifier
+>>> import pandas as pd
+>>> import numpy as np
+>>> np.random.seed(42)
+>>> X = pd.DataFrame(np.random.randn(200, 10), columns=[f'f{i}' for i in range(10)])
+>>> y = np.random.randint(0, 2, 200)
+>>> selector = SequentialFeatureSelector(
+...     RandomForestClassifier(n_estimators=50, random_state=42),
+...     n_features_to_select=5,
+...     direction='forward',
+...     cv=3
+... )
+>>> selector.fit(X, y)
+>>> print(selector.selected_features_)
 """
 
 from typing import Union, List, Optional
@@ -36,18 +54,25 @@ class SequentialFeatureSelector(BaseFeatureSelector):
     :param cv: 交叉验证折数，默认为5
     :param target: 目标变量列名，默认为'target'
 
-    **示例**
+    **参考样例**
 
     ::
 
-        >>> from hscredit.core.selection import SequentialFeatureSelector
+        >>> from hscredit.core.selectors import SequentialFeatureSelector
         >>> from sklearn.ensemble import RandomForestClassifier
+        >>> import pandas as pd
+        >>> import numpy as np
+        >>> np.random.seed(42)
+        >>> X = pd.DataFrame(np.random.randn(200, 10), columns=[f'f{i}' for i in range(10)])
+        >>> y = np.random.randint(0, 2, 200)
         >>> selector = SequentialFeatureSelector(
-        ...     RandomForestClassifier(n_estimators=100),
-        ...     n_features_to_select=10,
-        ...     direction='forward'
+        ...     RandomForestClassifier(n_estimators=50, random_state=42),
+        ...     n_features_to_select=5,
+        ...     direction='forward',
+        ...     cv=3
         ... )
         >>> selector.fit(X, y)
+        >>> print(selector.selected_features_)
     """
 
     def __init__(

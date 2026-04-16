@@ -206,7 +206,7 @@ def feature_bin_stats(
         - pd.DataFrame: 特征分箱统计表
         - Tuple[pd.DataFrame, Dict]: 当 return_rules=True 时返回 (统计表, 分箱规则)
     
-    **示例**
+    **参考样例**
     
     >>> # 单特征单目标分析
     >>> table = feature_bin_stats(data, 'score', target='target', method='mdlp')
@@ -916,10 +916,10 @@ def auto_feature_analysis(
     :param image_table_gap_rows: 图片区与分箱表之间的额外空行数
     :return: (end_row, end_col) 分析结束位置
 
-    示例::
+    **参考样例**
 
-        >>> from hscredit.report.feature_analyzer import auto_feature_analysis
-        >>> auto_feature_analysis(data, features=['feature1'], target='target', excel_writer='分析结果.xlsx')
+    >>> from hscredit.report.feature_analyzer import auto_feature_analysis
+    >>> auto_feature_analysis(data, features=['feature1'], target='target', excel_writer='分析结果.xlsx')
     """
     if writer_params is None:
         writer_params = {}

@@ -1,6 +1,16 @@
 """方差筛选器.
 
 移除低方差特征。
+
+**参考样例**
+
+>>> from hscredit.core.selectors import VarianceSelector
+>>> import pandas as pd
+>>> X = pd.DataFrame({'a': [1,2,3], 'b': [1,1,1], 'c': [1,2,3]})
+>>> selector = VarianceSelector(threshold=0.1)
+>>> selector.fit(X)
+>>> print(selector.selected_features_)
+['a', 'c']
 """
 
 from typing import Union, List, Optional
@@ -23,11 +33,11 @@ class VarianceSelector(BaseFeatureSelector):
         - 0.0: 移除常量特征（方差为0）
         - 其他值: 移除方差小于该值的特征
 
-    **示例**
+    **参考样例**
 
     ::
 
-        >>> from hscredit.core.selection import VarianceSelector
+        >>> from hscredit.core.selectors import VarianceSelector
         >>> import pandas as pd
         >>> X = pd.DataFrame({'a': [1,2,3], 'b': [1,1,1], 'c': [1,2,3]})
         >>> selector = VarianceSelector(threshold=0.1)

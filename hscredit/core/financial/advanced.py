@@ -9,13 +9,16 @@ import numpy as np
 def npv(rate, values):
     """计算净现值 (Net Present Value).
 
-    :param rate: 折现率
-    :param values: 现金流序列，第0期为初始投资（通常为负）
-    :return: 净现值
+    将未来各期现金流按指定折现率折算为当前时点的总价值。
 
-    示例:
-        >>> npv(0.05, [-1000, 300, 400, 400, 300])  # 初始投资1000，后续回报
-        265.6913368537139
+    :param rate: 折现率（每期利率）
+    :param values: 现金流序列（第0期为初始投资，通常为负；后续为各期回报）
+    :return: 净现值（正值表示收益，负值表示亏损）
+
+    **参考样例**
+
+    >>> npv(0.05, [-1000, 300, 400, 400, 300])
+    265.6913368537139
     """
     values = np.asarray(values)
     rate = np.asarray(rate)
@@ -30,12 +33,16 @@ def npv(rate, values):
 def irr(values):
     """计算内部收益率 (Internal Rate of Return).
 
-    :param values: 现金流序列
-    :return: 内部收益率
+    使用二分法求解使净现值为零的折现率，即项目的真实回报率。
 
-    示例:
-        >>> irr([-1000, 300, 400, 400, 300])  # 投资项目的内部收益率
-        0.14299334826891236
+    :param values: 现金流序列（第0期为初始投资必须为负，至少有一个正值和一个负值）
+    :return: 内部收益率
+    :raises ValueError: 现金流不包含正负值混合或迭代无法收敛时
+
+    **参考样例**
+
+    >>> irr([-1000, 300, 400, 400, 300])
+    0.14299334826891236
     """
     values = np.asarray(values)
 
@@ -87,15 +94,18 @@ def irr(values):
 def mirr(values, finance_rate, reinvest_rate):
     """计算修正内部收益率 (Modified Internal Rate of Return).
 
-    MIRR 假设正现金流按再投资利率进行再投资，负现金流按融资成本进行融资。
+    MIRR 假设正现金流按再投资利率进行再投资，负现金流按融资成本进行融资，
+    相比 IRR 更符合实际资金运作场景。
 
-    :param values: 现金流序列
-    :param finance_rate: 融资成本率
-    :param reinvest_rate: 再投资收益率
+    :param values: 现金流序列（第0期为初始投资必须为负，至少有一个正值和一个负值）
+    :param finance_rate: 融资成本率（负现金流的折现率）
+    :param reinvest_rate: 再投资收益率（正现金流的再投资回报率）
     :return: 修正内部收益率
+    :raises ValueError: 现金流中不包含负值或正值时
 
-    示例:
-        >>> mirr([-1000, 300, 400, 400, 300], 0.05, 0.08)
+    **参考样例**
+
+    >>> mirr([-1000, 300, 400, 400, 300], 0.05, 0.08)
     """
     values = np.asarray(values)
     n = len(values)

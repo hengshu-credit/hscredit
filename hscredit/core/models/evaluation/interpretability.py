@@ -10,7 +10,7 @@
 **依赖**
 pip install shap
 
-**示例**
+**参考样例**
 >>> from hscredit.core.models import XGBoostRiskModel
 >>> from hscredit.core.models.interpretability import ModelExplainer
 >>>
@@ -66,7 +66,7 @@ class ModelExplainer:
         - 'kernel': KernelSHAP (通用)
         - 'linear': LinearSHAP (线性模型)
 
-    **示例**
+    **参考样例**
 
     >>> explainer = ModelExplainer(model)
     >>> shap_values = explainer.compute_shap_values(X_test)
@@ -665,7 +665,7 @@ def plot_feature_importance(
     :param show: 是否显示图表，默认True
     :return: matplotlib Figure对象
 
-    **示例**
+    **参考样例**
 
     >>> from hscredit.core.models.interpretability import plot_feature_importance
     >>> fig = plot_feature_importance(model, top_n=15)
@@ -730,7 +730,7 @@ def plot_shap_importance(
     :param show: 是否显示图表，默认True
     :return: matplotlib Figure对象
 
-    **示例**
+    **参考样例**
 
     >>> from hscredit.core.models.interpretability import plot_shap_importance
     >>> fig = plot_shap_importance(model, X_test, top_n=15)
@@ -759,7 +759,7 @@ def plot_importance_comparison(
     :param show: 是否显示图表，默认True
     :return: matplotlib Figure对象
 
-    **示例**
+    **参考样例**
 
     >>> from hscredit.core.models.interpretability import plot_importance_comparison
     >>> fig = plot_importance_comparison(model, X_test, top_n=10)

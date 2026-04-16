@@ -31,7 +31,7 @@ class UniformBinning(BaseBinning):
         - False: 自动检测特征类型（根据dtype判断）
     :param random_state: 随机种子，默认为None
 
-    **示例**
+    **参考样例**
 
     >>> from hscredit.core.binning import UniformBinning
     >>> # 基础用法

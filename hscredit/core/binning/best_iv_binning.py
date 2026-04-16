@@ -38,7 +38,7 @@ class BestIVBinning(BaseBinning):
     :param special_codes: 特殊值列表，默认为None
     :param random_state: 随机种子，默认为None
 
-    **示例**
+    **参考样例**
 
     >>> from hscredit.core.binning import BestIVBinning
     >>> binner = BestIVBinning(max_n_bins=5)

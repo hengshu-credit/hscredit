@@ -5,7 +5,7 @@
 **依赖**
 pip install catboost
 
-**示例**
+**参考样例**
 >>> from hscredit.core.models import CatBoostRiskModel
 >>> model = CatBoostRiskModel(
 ...     depth=6,
@@ -89,7 +89,7 @@ class CatBoostRiskModel(BaseRiskModel):
     :ivar best_iteration_: 最佳迭代次数
     :ivar best_score_: 最佳得分
     
-    **示例**
+    **参考样例**
     
     >>> # 基础使用
     >>> model = CatBoostRiskModel(depth=6, learning_rate=0.1)
@@ -337,12 +337,12 @@ class CatBoostRiskModel(BaseRiskModel):
         :param X: 特征矩阵
         :return: 叶子节点索引，形状 (n_samples, n_trees)
 
-        **示例**
+        **参考样例**
 
         >>> model = CatBoostRiskModel(iterations=50)
         >>> model.fit(X, y)
         >>> leaf_indices = model.get_leaf_indices(X)
-        >>> print(leaf_indices.shape)  # (n_samples, 50)
+        >>> print(leaf_indices.shape)
         """
         check_is_fitted(self, '_is_fitted')
         X = self._prepare_data(X)[0]
