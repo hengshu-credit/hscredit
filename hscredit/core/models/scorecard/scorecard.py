@@ -192,6 +192,8 @@ class ScoreCard(StandardScoreTransformer):
         self.calculate_stats = calculate_stats
         self.verbose = verbose
         self.target = target
+        # 兼容旧版本 pickle：确保 decimal 属性存在
+        self.decimal = decimal
         
         # 评分参数通过 _compute_parameters 计算（ScoreCard 重写了此方法）
         # 正确处理 base_odds 的好坏比含义
@@ -831,18 +833,107 @@ class ScoreCard(StandardScoreTransformer):
             print(f"无转换器配置，假设输入已是 WOE 数据")
         return X
 
+    def _setup_rule_based_binner(self) -> None:
+        """从加载的规则中设置基于规则的分箱器.
+
+        创建一个虚拟的分箱器，用于基于规则中的分箱信息对原始数据进行分箱。
+        这样可以在不提供外部 binner 的情况下，对原始数据进行评分。
+        """
+        # 创建虚拟的分箱器对象
+        class RuleBasedBinner:
+            """基于规则的分箱器，用于离线规则评分."""
+            def __init__(self, rules_dict, feature_names):
+                self.rules_dict = rules_dict
+                self.feature_names = feature_names
+
+            def transform(self, X, metric='bins'):
+                # 复制输入
+                if not isinstance(X, pd.DataFrame):
+                    X = pd.DataFrame(X)
+
+                # 确保列存在
+                X = X[self.feature_names].copy()
+
+                # 对每个特征进行分箱
+                for col in self.feature_names:
+                    if col not in self.rules_dict:
+                        continue
+
+                    rule = self.rules_dict[col]
+                    bins = rule.get('bins', [])
+                    bin_labels = rule.get('bin_labels', [])
+
+                    if not bins or not bin_labels:
+                        continue
+
+                    # 创建分箱函数
+                    def get_bin_label(value):
+                        if pd.isna(value):
+                            return '缺失值'
+
+                        # 尝试匹配数值区间
+                        try:
+                            val = float(value)
+                            for i, b in enumerate(bins):
+                                if pd.isna(b):
+                                    continue
+                                b = float(b)
+                                if i == 0 and val < b:
+                                    return bin_labels[i]
+                                elif i > 0:
+                                    prev = float(bins[i-1])
+                                    if not pd.isna(prev) and prev <= val < b:
+                                        return bin_labels[i]
+                            # 最后一个区间
+                            if not pd.isna(bins[-1]) and val >= float(bins[-1]):
+                                return bin_labels[-1]
+                        except (TypeError, ValueError):
+                            pass
+
+                        # 尝试匹配类别值
+                        for b in bins:
+                            if isinstance(b, list):
+                                if str(value) in [str(v) for v in b]:
+                                    idx = bins.index(b)
+                                    if idx < len(bin_labels):
+                                        return bin_labels[idx]
+                            elif str(value).strip() == str(b).strip():
+                                idx = bins.index(b)
+                                if idx < len(bin_labels):
+                                    return bin_labels[idx]
+
+                        return '其他'
+
+                    X[col] = X[col].apply(get_bin_label)
+
+                return X
+
+        # 设置虚拟 binner
+        self._rule_binner = RuleBasedBinner(self.rules_, self.feature_names_)
+        self.binner = self._rule_binner
+        self._binner_is_woe_transformer = False
+
     def _transform_to_bins(self, X: pd.DataFrame) -> pd.DataFrame:
         """将原始数据转换为分箱标签数据."""
         if not isinstance(X, pd.DataFrame):
             X = pd.DataFrame(X)
 
-        if self.binner is None:
-            raise ValueError("当前评分卡仅加载了规则，predict(input_type='raw') 需要提供支持 transform(metric='bins') 的 binner")
+        # 如果有外部 binner，优先使用
+        if self.binner is not None and not hasattr(self, '_rule_binner'):
+            try:
+                return self.binner.transform(X, metric='bins')
+            except Exception as exc:
+                # 如果外部 binner 不支持，尝试基于规则的转换
+                pass
 
-        try:
-            return self.binner.transform(X, metric='bins')
-        except Exception as exc:
-            raise ValueError("当前 binner 不支持分箱标签转换，无法使用离线规则评分") from exc
+        # 如果有基于规则的 binner，使用它
+        if hasattr(self, '_rule_binner'):
+            try:
+                return self._rule_binner.transform(X, metric='bins')
+            except Exception as exc:
+                raise ValueError("基于规则的分箱失败") from exc
+
+        raise ValueError("当前评分卡仅加载了规则，predict(input_type='raw') 需要提供支持 transform(metric='bins') 的 binner")
 
     def fit(
         self,
@@ -1512,34 +1603,57 @@ class ScoreCard(StandardScoreTransformer):
         self,
         to_json: Optional[str] = None,
         to_frame: bool = False,
-        decimal: int = 2
+        decimal: int = 2,
+        include_meta: bool = False
     ) -> Union[Dict, pd.DataFrame]:
         """导出评分卡规则，兼容 toad/scorecardpipeline 格式.
 
         :param to_json: 可选，JSON 文件保存路径。如果提供，将规则保存到该文件
         :param to_frame: 是否返回 DataFrame 格式，默认为 False
         :param decimal: 分数保留小数位数，默认为 2
+        :param include_meta: 是否包含元数据（用于 hscredit 的 load 方法）。
+            - True: 导出完整格式，包含 __meta__ 信息，可被 ScoreCard.load() 完整恢复
+            - False: 导出 toad/scorecardpipeline 兼容的简洁格式
         :return: 评分卡规则字典或 DataFrame
-            - 字典格式: {'feature': {'bin_label': score, ...}, ...}
+            - 字典格式(默认): {'feature': {'bin_label': score, ...}, ...}
+            - 完整格式(include_meta=True): {'__meta__': {...}, 'feature': {...}, ...}
             - DataFrame格式: columns=['name', 'value', 'score']
         """
         import json
-        
+
         check_is_fitted(self)
 
         # 使用 scorecard_points 获取完整信息
         points_df = self.scorecard_points(decimal=decimal)
-        
+
         # 构建与 toad/scorecardpipeline 兼容的格式
         card = {}
         for _, row in points_df.iterrows():
             feature = row['变量名称']
             bin_label = row['变量分箱']
             score = row['对应分数']
-            
+
             if feature not in card:
                 card[feature] = {}
             card[feature][bin_label] = round(float(score), decimal)
+
+        # 如果需要包含元数据（用于 hscredit load 方法）
+        if include_meta:
+            # 计算截距分数
+            intercept_score = float(self.A_ - self.B_ * self.intercept_)
+
+            card['__meta__'] = {
+                'intercept_score': intercept_score,
+                'base_score': float(self.base_score),
+                'direction': self.direction_,
+                'pdo': self.pdo,
+                'rate': self.rate,
+                'base_odds': self.base_odds,
+                'lower': self.lower,
+                'upper': self.upper,
+                'A': float(self.A_),
+                'B': float(self.B_),
+            }
 
         # 保存到 JSON 文件
         if to_json is not None:
@@ -1555,6 +1669,8 @@ class ScoreCard(StandardScoreTransformer):
         if to_frame:
             rows = []
             for name in card:
+                if name == '__meta__':
+                    continue  # 跳过元数据
                 for value, score in card[name].items():
                     rows.append({
                         'name': name,
@@ -1695,8 +1811,19 @@ class ScoreCard(StandardScoreTransformer):
 
         return deployment_rules
 
-    def export_pmml(self, pmml_file: str = 'scorecard.pmml', debug: bool = False):
-        """导出 PMML 文件."""
+    def export_pmml(
+        self,
+        pmml_file: str = 'scorecard.pmml',
+        decimal: int = 2,
+        debug: bool = False
+    ):
+        """导出 PMML 文件.
+
+        :param pmml_file: PMML 文件保存路径，默认 'scorecard.pmml'
+        :param decimal: 特征子分保留小数位数，默认 2
+        :param debug: 是否返回中间对象进行调试，默认 False
+        :return: debug=True 时返回 PMMLPipeline，否则返回 None
+        """
         try:
             from sklearn_pandas import DataFrameMapper
             from sklearn.linear_model import LinearRegression
@@ -1717,7 +1844,7 @@ class ScoreCard(StandardScoreTransformer):
         mapper = []
         samples = {}
 
-        deployment_rules = self._get_deployment_rules(decimal=12)
+        deployment_rules = self._get_deployment_rules(decimal=decimal)
 
         for var, bins in deployment_rules.items():
             feature_type = feature_types.get(var)
@@ -2370,7 +2497,12 @@ class ScoreCard(StandardScoreTransformer):
             X = self._transform_to_woe(X)
 
         sub_scores = self._woe_to_score(X[self.feature_names_])
-        effect_diff = sub_scores - self.base_effect_.values
+        # 兼容 base_effect_ 为 numpy array 或 pandas Series 的情况
+        if isinstance(self.base_effect_, pd.Series):
+            base_effect_values = self.base_effect_.values
+        else:
+            base_effect_values = np.asarray(self.base_effect_)
+        effect_diff = sub_scores - base_effect_values
         
         reasons_list = []
         for i in range(len(X)):
@@ -2570,7 +2702,12 @@ class ScoreCard(StandardScoreTransformer):
 
     def _generate_reasons(self, X_woe: pd.DataFrame, sub_scores: np.ndarray, n_reasons: int = 3) -> list:
         """生成评分原因."""
-        effect_diff = sub_scores - self.base_effect_.values
+        # 兼容 base_effect_ 为 numpy array 或 pandas Series 的情况
+        if isinstance(self.base_effect_, pd.Series):
+            base_effect_values = self.base_effect_.values
+        else:
+            base_effect_values = np.asarray(self.base_effect_)
+        effect_diff = sub_scores - base_effect_values
 
         reasons_list = []
         for i in range(len(X_woe)):
@@ -2690,6 +2827,7 @@ class ScoreCard(StandardScoreTransformer):
             intercept_score = float(self.A_ - self.B_ * self.intercept_)
             card['__meta__'] = {
                 'intercept_score': intercept_score,
+                'base_score': float(self.base_score),
                 'direction': self.direction_,
                 'pdo': self.pdo,
                 'rate': self.rate,
@@ -2697,6 +2835,8 @@ class ScoreCard(StandardScoreTransformer):
                 'base_score': self.base_score,
                 'lower': self.lower,
                 'upper': self.upper,
+                'A': float(self.A_),
+                'B': float(self.B_),
             }
 
         # 保存到 JSON 文件
@@ -2748,7 +2888,8 @@ class ScoreCard(StandardScoreTransformer):
     def load(
         self,
         from_json: Union[str, Dict],
-        update: bool = False
+        update: bool = False,
+        binner: Optional[Any] = None
     ) -> 'ScoreCard':
         """加载评分卡规则，兼容 toad/scorecardpipeline 格式.
 
@@ -2758,12 +2899,15 @@ class ScoreCard(StandardScoreTransformer):
             - 字典: {'feature': {'bin_label': score, ...}, ...}
             - 文件路径: 'scorecard_rules.json'
         :param update: 是否更新现有规则（而非替换），默认为 False
+        :param binner: 可选的分箱器，用于对原始数据进行分箱后评分。
+            - 如果提供，将用于 predict(input_type='raw') 时的数据转换
+            - 如果不提供，将基于规则中的分箱信息进行转换
         :return: self，支持链式调用
 
         **示例**
 
         >>> card = ScoreCard(pdo=60, rate=2, base_odds=35, base_score=750)
-        >>> 
+        >>>
         >>> # 从字典加载
         >>> rules = {'age': {'[18, 25)': 50, '[25, 35)': 45}}
         >>> card.load(rules)
@@ -2886,6 +3030,15 @@ class ScoreCard(StandardScoreTransformer):
         if not hasattr(self, 'base_effect_') or self.base_effect_ is None:
             self.base_effect_ = np.zeros(len(self.feature_names_))
 
+        # 如果提供了 binner，保存并设置标志
+        if binner is not None:
+            self.binner = binner
+            self._binner_is_woe_transformer = True
+
+        # 如果没有 binner 但有规则（来自 export JSON），尝试从规则中恢复分箱能力
+        if self.binner is None and self.rules_:
+            self._setup_rule_based_binner()
+
         self._is_fitted = True
         return self
 
@@ -2899,7 +3052,7 @@ class RoundScoreCard(ScoreCard):
 
     **参数**
 
-    :param decimal: 评分卡分数保留小数位数，默认 2
+    :param decimal: 评分卡分数保留小数位数默认 2
     """
 
     def __init__(
@@ -2918,6 +3071,7 @@ class RoundScoreCard(ScoreCard):
         binner: Optional[Any] = None,
         encoder: Optional[Any] = None,
         pipeline: Optional[Any] = None,
+        scorecard: Optional['ScoreCard'] = None,
         calculate_stats: bool = True,
         verbose: bool = False,
         target: str = 'target',
@@ -2944,6 +3098,85 @@ class RoundScoreCard(ScoreCard):
             **kwargs
         )
         self.decimal = decimal
+
+        # 如果传入了 ScoreCard 对象，从中复制配置
+        if scorecard is not None:
+            self._copy_from_scorecard(scorecard)
+
+    def _copy_from_scorecard(self, scorecard: 'ScoreCard') -> None:
+        """从传入的 ScoreCard 对象复制必要属性，实现即插即用.
+
+        复制以下属性：
+        - rules_: 特征与分箱规则
+        - feature_names_: 特征名称列表
+        - intercept_: 截距项
+        - coef_: 系数向量
+        - A_, B_: 缩放参数
+        - direction_: 评分方向
+        - base_effect_: 基础效应（用于 get_detailed_score）
+        - binner: 分箱器（如果有）
+        - _is_fitted: 拟合标志
+        - _binner_is_woe_transformer: 分箱器类型标志
+        - lr_model_: 逻辑回归模型（如果有）
+
+        设置以下标志：
+        - _skip_fit_check: 跳过拟合检查
+        - _uses_woe_input: 使用 WOE 输入
+        - _binner_is_woe_transformer: 基于 binner 类型
+        """
+        # 复制基础属性
+        self.rules_ = scorecard.rules_
+        self._feature_names = scorecard._feature_names  # 使用内部属性
+        # intercept_ 和 coef_ 是只读属性，通过 lr_model 或 _loaded_intercept 设置
+        # 尝试从 lr_model 获取
+        if hasattr(scorecard, 'lr_model') and scorecard.lr_model is not None:
+            self.lr_model = scorecard.lr_model
+        elif hasattr(scorecard, 'lr_model_') and scorecard.lr_model_ is not None:
+            self.lr_model_ = scorecard.lr_model_
+        # 如果有 _loaded_intercept（从 load 方法设置），也会被 intercept_ property 正确获取
+        if hasattr(scorecard, '_loaded_intercept'):
+            self._loaded_intercept = scorecard._loaded_intercept
+
+        self.A_ = scorecard.A_
+        self.B_ = scorecard.B_
+        self.direction_ = scorecard.direction_
+        self.base_effect_ = scorecard.base_effect_
+        self.lower = scorecard.lower
+        self.upper = scorecard.upper
+
+        # 复制分箱器（如果有）
+        if hasattr(scorecard, 'binner') and scorecard.binner is not None:
+            self.binner = scorecard.binner
+            # 根据 binner 类型设置标志
+            if hasattr(scorecard, '_binner_is_woe_transformer'):
+                self._binner_is_woe_transformer = scorecard._binner_is_woe_transformer
+            else:
+                # 默认为 WOE 转换器模式
+                self._binner_is_woe_transformer = True
+
+        # 复制逻辑回归模型（如果有）
+        if hasattr(scorecard, 'lr_model_') and scorecard.lr_model_ is not None:
+            self.lr_model_ = scorecard.lr_model_
+        elif hasattr(scorecard, 'lr_model') and scorecard.lr_model is not None:
+            self.lr_model_ = scorecard.lr_model
+
+        # 设置必要标志
+        self._is_fitted = True
+        self._skip_fit_check = True
+
+        # 设置评分方向相关属性
+        if hasattr(scorecard, 'base_score'):
+            self.base_score = scorecard.base_score
+        if hasattr(scorecard, 'pdo'):
+            self.pdo = scorecard.pdo
+        if hasattr(scorecard, 'rate'):
+            self.rate = scorecard.rate
+        if hasattr(scorecard, 'base_odds'):
+            self.base_odds = scorecard.base_odds
+        if hasattr(scorecard, 'step'):
+            self.step = scorecard.step
+        if hasattr(scorecard, 'target'):
+            self.target = scorecard.target
 
     def _round_score_value(self, value: float, decimal: Optional[int] = None) -> float:
         """对单个分数值按指定精度进行四舍五入."""
@@ -3417,7 +3650,7 @@ class RoundScoreCard(ScoreCard):
         to_json: Optional[str] = None,
         to_frame: bool = False,
         decimal: Optional[int] = None,
-        include_meta: bool = False
+        include_meta: bool = True
     ) -> Union[Dict, pd.DataFrame]:
         """导出按调整后评分卡计算的规则定义."""
         import json
