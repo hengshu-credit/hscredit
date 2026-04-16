@@ -1,6 +1,8 @@
 """F检验筛选器.
 
-使用F检验（ANOVA）进行特征选择。
+使用单因素方差分析（ANOVA F-Test）评估特征与目标变量的线性相关性，
+筛选出组间差异显著的特征。适用于分类问题中的特征筛选。
+基于 sklearn.feature_selection.f_classif 实现。
 """
 
 from typing import Union, List, Optional

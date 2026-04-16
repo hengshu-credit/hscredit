@@ -1,6 +1,9 @@
 """逐步特征筛选器.
 
-使用逐步选择（前向/后向）进行特征筛选。
+使用前向逐步选择或后向逐步消除搜索最优特征子集。
+前向选择从空集开始逐步添加最有价值的特征；
+后向消除从全特征集开始逐步剔除最无价值的特征。
+基于 sklearn.feature_selection.SequentialFeatureSelector 实现。
 """
 
 from typing import Union, List, Optional

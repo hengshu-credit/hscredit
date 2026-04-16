@@ -723,6 +723,10 @@ class GBMEncoder(BaseEncoder):
             raise ImportError("绘制树需要安装matplotlib: pip install matplotlib")
 
     def __repr__(self) -> str:
+        """返回该编码器的字符串表示。
+
+        :return: 编码器类型及关键参数的字符串表示
+        """
         return (
             f"GBMEncoder(model_type='{self.model_type}', "
             f"n_estimators={self.n_estimators}, "

@@ -15,7 +15,15 @@ from .base import BaseFeatureSelector
 
 
 def _compute_iv(x: np.ndarray, y: np.ndarray, regularization: float = 1.0) -> float:
-    """计算单个特征的IV值."""
+    """计算单个特征的IV值.
+
+    使用信息价值(Information Value)评估特征的区分能力，支持正则化平滑处理。
+
+    :param x: 特征值数组
+    :param y: 目标变量数组（0/1）
+    :param regularization: 正则化系数，默认1.0，用于平滑分箱占比避免零除
+    :return: IV值，类型为float
+    """
     try:
         s = pd.Series(x)
         valid = ~s.isnull().values
@@ -43,7 +51,15 @@ def _compute_iv(x: np.ndarray, y: np.ndarray, regularization: float = 1.0) -> fl
 
 
 def _compute_psi(expected: np.ndarray, actual: np.ndarray, n_bins: int = 10) -> float:
-    """计算单个特征的PSI."""
+    """计算单个特征的PSI.
+
+    使用群体稳定性指数(Population Stability Index)评估特征在期望分布与实际分布间的差异。
+
+    :param expected: 期望分布数组（训练集/基准期数据）
+    :param actual: 实际分布数组（验证集/新数据）
+    :param n_bins: 分箱数量，默认10，用于计算各分箱的占比差异
+    :return: PSI值，类型为float
+    """
     bins = np.percentile(expected, np.linspace(0, 100, n_bins + 1))
     bins = np.unique(bins)
     if len(bins) < 2:

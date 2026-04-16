@@ -1,6 +1,8 @@
 """卡方筛选器.
 
-使用卡方检验进行特征选择。
+使用卡方检验（Chi-Squared Test）评估特征与目标变量的独立性，
+筛选出与目标显著相关的特征。适用于分类问题，需要非负特征值。
+基于 sklearn.feature_selection.chi2 实现。
 """
 
 from typing import Union, List, Optional
