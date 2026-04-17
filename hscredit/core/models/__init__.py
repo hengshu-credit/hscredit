@@ -94,6 +94,11 @@ from .losses import (
     ProfitMaxLoss,
     OrdinalRankLoss,
     LiftFocusedLoss,
+    RankingAUCProxyLoss,
+    KSFocusedLoss,
+    TopKBadCaptureLoss,
+    AmountWeightedLoss,
+    ExpectedValueLoss,
     # 自定义评估指标
     KSMetric,
     GiniMetric,
@@ -103,7 +108,14 @@ from .losses import (
     LightGBMLossAdapter,
     CatBoostLossAdapter,
     TabNetLossAdapter,
+    NGBoostLossAdapter,
 )
+
+# 导入 BalancedFocalLoss
+try:
+    from .losses import BalancedFocalLoss
+except ImportError:
+    BalancedFocalLoss = None
 
 # 导入模型基类
 from .base import BaseRiskModel
