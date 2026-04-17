@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 from pandas import DataFrame
 from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.utils.validation import check_array
 
 
 class NumExprDerive(BaseEstimator, TransformerMixin):
@@ -43,6 +44,15 @@ class NumExprDerive(BaseEstimator, TransformerMixin):
         """
         self.derivings = derivings
 
+    def __sklearn_tags__(self):
+        from sklearn.utils._tags import Tags, TargetTags, TransformerTags
+
+        return Tags(
+            estimator_type=None,
+            target_tags=TargetTags(required=False),
+            transformer_tags=TransformerTags(),
+        )
+
     def fit(self, X, y=None):
         """拟合特征衍生器。"""
         self._check_keywords()
@@ -51,7 +61,7 @@ class NumExprDerive(BaseEstimator, TransformerMixin):
             if X.ndim != 2:
                 raise ValueError("X must be 2-dimensional")
         else:
-            self._validate_data(X, dtype=None, ensure_2d=True, force_all_finite=False)
+            check_array(X, dtype=None, ensure_2d=True, ensure_all_finite=False)
         return self
 
     def _check_keywords(self):
@@ -93,8 +103,8 @@ class NumExprDerive(BaseEstimator, TransformerMixin):
         non_numeric_cols = [c for c in feature_names if c not in numeric_cols]
 
         X_numeric = X[numeric_cols] if numeric_cols else pd.DataFrame(index=index)
-        X_numeric_arr = self._validate_data(
-            X_numeric, dtype="numeric", ensure_2d=True, force_all_finite=False
+        X_numeric_arr = check_array(
+            X_numeric, dtype="numeric", ensure_2d=True, ensure_all_finite=False
         ) if len(numeric_cols) > 0 else np.empty((len(index), 0), dtype=np.float64)
 
         context = self._get_context(X_numeric_arr, feature_names=numeric_cols)
@@ -124,7 +134,7 @@ class NumExprDerive(BaseEstimator, TransformerMixin):
         except ImportError:
             raise ImportError("numexpr is not installed. Install it with: pip install numexpr")
 
-        X = self._validate_data(X, dtype="numeric", ensure_2d=True, force_all_finite=False)
+        X = check_array(X, dtype="numeric", ensure_2d=True, ensure_all_finite=False)
         context = self._get_context(X, feature_names=None)
         n_derived = len(self.derivings)
         X_derived = np.empty((X.shape[0], n_derived), dtype=np.float64)

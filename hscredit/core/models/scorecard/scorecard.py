@@ -1485,7 +1485,7 @@ class ScoreCard(StandardScoreTransformer):
     def scorecard_points(
         self,
         feature_map: Optional[Dict[str, str]] = None,
-        decimal: int = 2
+        decimal: int = 4
     ) -> pd.DataFrame:
         """输出评分卡分箱信息及其对应的分数.
         
@@ -1830,10 +1830,13 @@ class ScoreCard(StandardScoreTransformer):
             from sklearn2pmml import sklearn2pmml, PMMLPipeline
             from sklearn2pmml.decoration import Alias, CategoricalDomain, ContinuousDomain
             from sklearn2pmml.preprocessing import LookupTransformer, ExpressionTransformer
-        except ImportError as e:
-            raise DependencyError(
-                "导出 PMML 需要安装 hscredit[pmml]，或至少安装 sklearn-pandas 和 sklearn2pmml"
-            ) from e
+        except ImportError:
+            import warnings
+            warnings.warn(
+                "PMML 导出需要安装依赖: pip install hscredit[pmml] 或分别安装 sklearn-pandas 和 sklearn2pmml。"
+                "当前环境中相关依赖不可用，PMML 导出已跳过。"
+            )
+            return
 
         check_is_fitted(self)
 

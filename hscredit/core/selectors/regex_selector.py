@@ -52,6 +52,7 @@ class RegexSelector(BaseFeatureSelector):
     def __init__(
         self,
         pattern: str,
+        flags: int = 0,
         target: str = 'target',
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
@@ -63,6 +64,7 @@ class RegexSelector(BaseFeatureSelector):
             force_drop=force_drop, n_jobs=n_jobs,
         )
         self.pattern = pattern
+        self.flags = flags
         self.method_name = '正则筛选'
 
     def _fit_impl(
@@ -78,7 +80,7 @@ class RegexSelector(BaseFeatureSelector):
         self._get_feature_names(X)
 
         # 正则匹配
-        matches = X.columns.str.contains(self.pattern, regex=True)
+        matches = X.columns.str.contains(self.pattern, regex=True, flags=self.flags)
         
         if self.exclude:
             selected_cols = X.columns[~matches].tolist()

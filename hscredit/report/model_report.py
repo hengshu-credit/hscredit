@@ -365,8 +365,16 @@ class QuickModelReport:
 
     # ---------- 7. 新增辅助方法 ----------
 
-    def _get_top_n_lift_table(self, percentiles: Tuple[float, ...] = (0.01, 0.03, 0.05, 0.10)) -> pd.DataFrame:
-        """构建 TOP n% 尾部区分能力表."""
+    def _get_top_n_lift_table(
+        self,
+        percentiles: Tuple[float, ...] = (0.01, 0.03, 0.05, 0.10),
+        amount_col: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """构建 TOP n% 尾部区分能力表.
+
+        :param percentiles: TOP n% 的百分位列表
+        :param amount_col: 金额字段名（可选），指定时同时输出金额口径
+        """
         rows: List[Dict[str, Any]] = []
         for ds_key, ds in self._datasets.items():
             tag = ds.label
@@ -397,6 +405,41 @@ class QuickModelReport:
             rows.append({"数据集": tag, "统计项": "坏样本率", **bad_rates})
             rows.append({"数据集": tag, "统计项": "LIFT值", **lifts})
             rows.append({"数据集": tag, "统计项": "坏账改善", **improvements})
+
+            # 金额口径
+            if amount_col and amount_col in ds.X.columns:
+                amounts = ds.X[amount_col].values
+                amounts_sorted = amounts[sorted_idx]
+                overall_bad_amount = float(
+                    (ds.y.iloc[sorted_idx].values * amounts_sorted).sum()
+                    / amounts_sorted.sum()
+                ) if amounts_sorted.sum() > 0 else overall_bad_rate
+
+                amt_bad_rates: Dict[str, float] = {}
+                amt_lifts: Dict[str, float] = {}
+                amt_improvements: Dict[str, float] = {}
+
+                for pct in percentiles:
+                    top_n = max(1, int(n * pct))
+                    top_amt = amounts_sorted[:top_n]
+                    top_y_sorted = sorted_y[:top_n]
+                    top_bad_amt = float(
+                        (top_y_sorted * top_amt).sum() / top_amt.sum()
+                    ) if top_amt.sum() > 0 else 0.0
+                    lift_amt = top_bad_amt / overall_bad_amount if overall_bad_amount > 0 else 0.0
+                    imp_amt = (top_bad_amt - overall_bad_amount) / overall_bad_amount if overall_bad_amount > 0 else 0.0
+                    key = f"TOP {int(pct * 100)}%"
+                    amt_bad_rates[key] = top_bad_amt
+                    amt_lifts[key] = lift_amt
+                    amt_improvements[key] = imp_amt
+
+                amt_bad_rates["TOTAL"] = overall_bad_amount
+                amt_lifts["TOTAL"] = 1.0
+                amt_improvements["TOTAL"] = 0.0
+
+                rows.append({"数据集": tag, "统计项": "金额坏样本率", **amt_bad_rates})
+                rows.append({"数据集": tag, "统计项": "金额LIFT值", **amt_lifts})
+                rows.append({"数据集": tag, "统计项": "金额坏账改善", **amt_improvements})
 
         return pd.DataFrame(rows)
 
@@ -494,7 +537,7 @@ class QuickModelReport:
         amount_col: Optional[str] = None,
     ) -> Tuple[Dict[str, List[str]], Dict[str, pd.DataFrame]]:
         """导出所有图表，返回 (图表路径字典, PSI数据表字典)."""
-        from ..core.viz import ks_plot, bin_plot, hist_plot, corr_plot, psi_plot
+        from ..core.viz import ks_plot, bin_plot, hist_plot, corr_plot, psi_plot, lift_plot
 
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -510,7 +553,7 @@ class QuickModelReport:
                 bt = self.get_bin_table(ds_key, method=bin_method, max_n_bins=n_bins, margins=True)
                 bd = bt.iloc[:-1].reset_index(drop=True) if len(bt) > 1 else bt
                 p = str(output_dir / f"bin_{ds_key}.png")
-                bin_plot(bd, desc="模型评分", ending=f" {tag}", save=p)
+                bin_plot(bd, desc="模型评分", ending=f" {tag}", save=p, figsize=(8, 5))
                 _safe_close_figs()
                 model_figs.append(p)
             except Exception:
@@ -518,15 +561,15 @@ class QuickModelReport:
 
             try:
                 p = str(output_dir / f"ks_{ds_key}.png")
-                ks_plot(ds.score, ds.y, title=f"{tag} KS曲线", save=p)
+                ks_plot(ds.score, ds.y, title=f"{tag} KS曲线", save=p, figsize=(8, 5))
                 _safe_close_figs()
                 model_figs.append(p)
             except Exception:
                 pass
 
             try:
-                p = str(output_dir / f"hist_{ds_key}.png")
-                hist_plot(ds.score, ds.y, kde=True, desc=f"{tag} 模型评分", save=p, bins=20)
+                p = str(output_dir / f"lift_{ds_key}.png")
+                lift_plot(ds.y, ds.y_proba, n_bins=20, title=f"{tag} LIFT曲线", save=p, figsize=(8, 5))
                 _safe_close_figs()
                 model_figs.append(p)
             except Exception:
@@ -557,7 +600,7 @@ class QuickModelReport:
                     ft = self.get_feature_bin_table(feat, ds_key, max_n_bins=n_bins, method=bin_method, margins=True)
                     fd = ft.iloc[:-1].reset_index(drop=True) if len(ft) > 1 else ft
                     p = str(output_dir / f"bin_{feat}_{ds_key}.png")
-                    bin_plot(fd, desc=feat, ending=f" {ds.label}", save=p)
+                    bin_plot(fd, desc=feat, ending=f" {ds.label}", save=p, figsize=(8, 5))
                     _safe_close_figs()
                     bin_figs.append(p)
                 except Exception:
@@ -827,11 +870,28 @@ class QuickModelReport:
 
         # 2.3 模型尾部区分能力
         end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value=f"{section_idx}、模型尾部区分能力（TOP n%）", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
-        lift_table = self._get_top_n_lift_table()
-        end_row, _ = dataframe2excel(
-            lift_table, writer, sheet_name=ws, start_row=end_row + 1,
-            percent_cols=["TOP 1%", "TOP 3%", "TOP 5%", "TOP 10%", "TOTAL"],
-        )
+        pct_keys = ["TOP 1%", "TOP 3%", "TOP 5%", "TOP 10%", "TOTAL"]
+        if amount_col:
+            lift_table = self._get_top_n_lift_table(percentiles=(0.01, 0.03, 0.05, 0.10), amount_col=None)
+            lift_amt = self._get_top_n_lift_table(percentiles=(0.01, 0.03, 0.05, 0.10), amount_col=amount_col)
+            table_start = end_row + 1
+            end_row1, end_col1 = dataframe2excel(
+                lift_table, writer, sheet_name=ws,
+                title="订单口径", start_row=table_start, start_col=2,
+                percent_cols=pct_keys,
+            )
+            end_row2, _ = dataframe2excel(
+                lift_amt, writer, sheet_name=ws,
+                title="金额口径", start_row=table_start, start_col=end_col1 + 2,
+                percent_cols=pct_keys,
+            )
+            end_row = max(end_row1, end_row2)
+        else:
+            lift_table = self._get_top_n_lift_table()
+            end_row, _ = dataframe2excel(
+                lift_table, writer, sheet_name=ws, start_row=end_row + 1,
+                percent_cols=pct_keys,
+            )
         section_idx += 1
 
         # 2.4 分月PSI矩阵
@@ -1149,40 +1209,7 @@ class QuickModelReport:
         writer.save(filepath)
         return filepath
 
-    # ---------- 12. to_html ----------
-
-    def to_html(
-        self,
-        filepath: str,
-        *,
-        n_bins: int = 10,
-        bin_method: str = "quantile",
-    ) -> str:
-        sections = [
-            ("模型性能指标", self.get_metrics()),
-            ("入模变量重要性", self.get_feature_importance()),
-        ]
-        for ds_key, ds in self._datasets.items():
-            sections.append((f"{ds.label}评分分箱效果", self.get_bin_table(ds_key, method=bin_method, max_n_bins=n_bins)))
-
-        sections.append(("入模变量相关性", self.get_features_corr()))
-
-        html_parts = [
-            "<html><head><meta charset='utf-8'><title>模型报告</title>",
-            "<style>body{font-family:Arial,'PingFang SC','Microsoft YaHei',sans-serif;margin:24px;} h1,h2{color:#17324d;} table{border-collapse:collapse;margin:12px 0 24px 0;font-size:13px;} th,td{border:1px solid #d9e2ec;padding:6px 10px;} th{background:#f3f7fb;} tr:nth-child(even){background:#fafcff;}</style>",
-            "</head><body>",
-            "<h1>模型评估报告</h1>",
-        ]
-        for title, df in sections:
-            if df is None or len(df) == 0:
-                continue
-            html_parts.append(f"<h2>{title}</h2>")
-            html_parts.append(df.to_html(border=0))
-        html_parts.append("</body></html>")
-        Path(filepath).write_text("\n".join(html_parts), encoding="utf-8")
-        return filepath
-
-    # ---------- 13. to_dict ----------
+    # ---------- 12. to_dict ----------
 
     def to_dict(self) -> Dict[str, Any]:
         result: Dict[str, Any] = {
@@ -1206,7 +1233,6 @@ def auto_model_report(
     y_test=None,
     feature_names: Optional[List[str]] = None,
     excel_path: Optional[str] = None,
-    html_path: Optional[str] = None,
     verbose: bool = True,
     n_bins: int = 10,
     bin_method: str = "quantile",
@@ -1228,7 +1254,6 @@ def auto_model_report(
     :param X_test: 测试集/OOT 特征
     :param y_test: 测试集/OOT 标签
     :param excel_path: Excel 报告输出路径
-    :param html_path: HTML 报告输出路径
     :param verbose: 是否打印控制台报告
     :param n_bins: 分箱数
     :param bin_method: 分箱方法
@@ -1268,11 +1293,6 @@ def auto_model_report(
         )
         if verbose:
             print(f"\nExcel 报告已保存: {excel_path}")
-
-    if html_path:
-        report.to_html(html_path, n_bins=n_bins, bin_method=bin_method)
-        if verbose:
-            print(f"HTML 报告已保存: {html_path}")
 
     return report
 

@@ -249,6 +249,22 @@ class WOEEncoder(BaseEncoder):
         """
         return self.iv_
 
+    def get_mapping(self, col: Optional[str] = None) -> Union[Dict, Dict[str, Dict]]:
+        """获取WOE编码映射。
+
+        :param col: 列名。如果提供，返回该列的映射；
+            如果为None，返回所有列的映射
+        :return: WOE映射字典。当 col 指定时返回 {category: woe_value}，
+            col 为 None 时返回 {col: {category: woe_value}}
+        """
+        if not hasattr(self, 'mapping_') or not self.mapping_:
+            raise ValueError("WOEEncoder 尚未拟合，请先调用 fit 方法")
+        if col is None:
+            return self.mapping_
+        if col not in self.mapping_:
+            raise KeyError(f"列 '{col}' 不在编码器中，请检查列名是否正确")
+        return self.mapping_[col]
+
     def summary(self) -> pd.DataFrame:
         """获取WOE编码摘要。
 

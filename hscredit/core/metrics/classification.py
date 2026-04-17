@@ -20,7 +20,7 @@ import numpy as np
 import pandas as pd
 from typing import Union, Tuple, Optional, Dict, Any
 from sklearn.metrics import (
-    roc_auc_score, roc_curve,
+    roc_auc_score, roc_curve as sklearn_roc_curve,
     confusion_matrix as sk_confusion_matrix,
     classification_report as sk_classification_report,
     accuracy_score, precision_score, recall_score, f1_score
@@ -349,7 +349,7 @@ def roc_curve(y_true: Union[np.ndarray, pd.Series],
     >>> y_prob = [0.1, 0.3, 0.7, 0.6, 0.8, 0.2, 0.9, 0.4]
     >>> fpr, tpr, thresholds = roc_curve(y_true, y_prob)
     """
-    return roc_curve(y_true, y_prob)
+    return sklearn_roc_curve(y_true, y_prob)
 
 
 def confusion_matrix(y_true: Union[np.ndarray, pd.Series],
