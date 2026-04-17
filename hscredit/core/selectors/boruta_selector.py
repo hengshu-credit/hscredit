@@ -149,15 +149,15 @@ class BorutaSelector(BaseFeatureSelector):
                 'shadow_max': shadow_max
             })
             
-            # 更新选中特征
+            # 更新选中特征：简化版，只保留重要性高于影子特征最大值的特征
+            # （与标准Boruta不同，这里不追踪hits数，直接按阈值过滤）
             new_selected = set()
             for i in range(n_features):
-                if i in selected and real_importances[i] > shadow_max:
-                    new_selected.add(i)
-                elif i in selected:
-                    # 进行统计检验
-                    pass  # 简化版直接保留
-            
+                if i in selected:
+                    if real_importances[i] > shadow_max:
+                        new_selected.add(i)
+                    # else: 重要性未超过影子特征阈值，移除
+
             selected = new_selected
             
             if len(selected) == 0:

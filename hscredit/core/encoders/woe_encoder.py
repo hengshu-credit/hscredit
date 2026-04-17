@@ -423,5 +423,5 @@ class WOEEncoder(BaseEncoder):
             elif self.handle_unknown == 'return_nan':
                 self.mapping_[col]['__UNKNOWN__'] = np.nan
         
-        self._fitted = True
+        self._is_fitted = True
         return self

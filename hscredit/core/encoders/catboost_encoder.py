@@ -97,11 +97,8 @@ class CatBoostEncoder(BaseEncoder):
         if y is None:
             raise ValueError("CatBoostEncoder是有监督编码器，必须提供目标变量y")
 
-        y = pd.Series(y)
+        y = pd.Series(y, name='target')
         self.global_mean_ = y.mean()
-
-        if not isinstance(y, pd.Series):
-            y = pd.Series(y, name='target')
 
         for col in self.cols_:
             df_temp = pd.DataFrame({col: X[col], 'target': y.values})

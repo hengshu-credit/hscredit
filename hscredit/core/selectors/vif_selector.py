@@ -236,8 +236,11 @@ class VIFSelector(BaseFeatureSelector):
         
         # 保存最终的VIF值作为scores_
         if len(remaining_features) > 0:
-            final_vif = self._compute_vif_all(X[remaining_features])
-            self.scores_ = final_vif
+            # 优先使用最后一次迭代计算的VIF值（避免重复计算）
+            if vif_history and set(vif_history[-1].index) == set(remaining_features):
+                self.scores_ = vif_history[-1]
+            else:
+                self.scores_ = self._compute_vif_all(X[remaining_features])
         else:
             self.scores_ = pd.Series(dtype=float)
         

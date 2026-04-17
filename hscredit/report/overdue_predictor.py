@@ -190,14 +190,19 @@ class OverduePredictor(BaseEstimator, TransformerMixin):
             for c in cols:
                 if isinstance(c, str) and '坏样本率' in c:
                     return True
-            return True  # 有分箱标签列即认为是分箱表
+            return False  # 有分箱标签列但无坏样本率列，不是有效分箱表
 
         # 多级表头检查
         if isinstance(df.columns, pd.MultiIndex):
             for c in df.columns:
                 col_name = c[-1] if isinstance(c, (tuple, list)) else c
                 if col_name == self.bin_label_col:
-                    return True
+                    # 多级表头时也检查是否有坏样本率
+                    for c2 in df.columns:
+                        col_name2 = c2[-1] if isinstance(c2, (tuple, list)) else c2
+                        if isinstance(col_name2, str) and '坏样本率' in col_name2:
+                            return True
+                    return False
 
         return False
 

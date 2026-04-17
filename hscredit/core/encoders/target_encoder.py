@@ -67,6 +67,7 @@ class TargetEncoder(BaseEncoder):
         handle_missing: str = 'value',
         drop_invariant: bool = False,
         return_df: bool = True,
+        random_state: Optional[int] = None,
         target: Optional[str] = None,
     ):
         """初始化目标编码器。
@@ -79,6 +80,7 @@ class TargetEncoder(BaseEncoder):
         :param handle_missing: 处理缺失值的方式，默认为'value'
         :param drop_invariant: 是否删除方差为0的列，默认为False
         :param return_df: 是否返回DataFrame，默认为True
+        :param random_state: 随机种子，用于噪声生成，默认为None
         :param target: scorecardpipeline风格的目标列名。如果提供，fit时从X中提取该列作为y
         """
         super().__init__(
@@ -92,6 +94,7 @@ class TargetEncoder(BaseEncoder):
         self.smoothing = smoothing
         self.min_samples_leaf = min_samples_leaf
         self.noise = noise
+        self.random_state = random_state
 
         self.global_mean_: float = 0.0
 
@@ -105,11 +108,8 @@ class TargetEncoder(BaseEncoder):
         if y is None:
             raise ValueError("TargetEncoder是有监督编码器，必须提供目标变量y")
 
-        y = pd.Series(y)
+        y = pd.Series(y, name='target')
         self.global_mean_ = y.mean()
-
-        if not isinstance(y, pd.Series):
-            y = pd.Series(y, name='target')
 
         for col in self.cols_:
             mapping = {}
@@ -161,6 +161,8 @@ class TargetEncoder(BaseEncoder):
                 raise ValueError(f"列'{col}'包含未知类别")
 
             if self.noise is not None and y is not None:
+                if self.random_state is not None:
+                    np.random.seed(self.random_state)
                 X[col] = X[col] * (1 + np.random.normal(0, self.noise, len(X)))
 
         return X

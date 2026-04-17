@@ -875,7 +875,7 @@ class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
         else:
             # 已经是实例
             self._binner_instance = binner
-            if hasattr(binner, 'fit') and not hasattr(binner, 'fitted_') or not getattr(binner, 'is_fitted_', False):
+            if hasattr(binner, 'fit') and (not hasattr(binner, 'fitted_') or not getattr(binner, 'is_fitted_', False)):
                 # 未训练的分箱器实例
                 if y is not None:
                     binner.fit(X, y)

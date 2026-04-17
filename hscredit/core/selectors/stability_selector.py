@@ -147,6 +147,7 @@ class StabilityAwareSelector(BaseFeatureSelector):
         exclude: Optional[List[str]] = None,
         force_drop: Optional[List[str]] = None,
         n_jobs: int = 1,
+        random_state: Optional[int] = None,
     ):
         super().__init__(
             target=target, threshold=iv_threshold, include=include,
@@ -159,6 +160,7 @@ class StabilityAwareSelector(BaseFeatureSelector):
         self.psi_weight = psi_weight
         self.oot_df = oot_df
         self.psi_bins = psi_bins
+        self.random_state = random_state
         self.method_name = "稳定性感知筛选"
 
     # ----------------------------------------------------------
@@ -204,6 +206,8 @@ class StabilityAwareSelector(BaseFeatureSelector):
         else:
             # 随机对半拆分
             n = len(X_enc)
+            if self.random_state is not None:
+                np.random.seed(self.random_state)
             idx = np.random.permutation(n)
             oot_enc = X_enc.iloc[idx[n // 2:]]
             X_enc_half = X_enc.iloc[idx[: n // 2]]
