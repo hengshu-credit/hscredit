@@ -178,6 +178,64 @@ class UnaryOpNode(ExprNode):
         return self
 
 
+def _ast_unparse(node: ast.AST) -> str:
+    """Python 3.8 兼容的 AST 转字符串函数 (ast.unparse 是 Python 3.9+).
+
+    手动格式化常见 AST 节点类型。
+    """
+    if isinstance(node, ast.Compare):
+        # e.g. age > 18
+        left = _ast_unparse(node.left)
+        parts = [left]
+        for op, comparator in zip(node.ops, node.comparators):
+            op_str = _get_op_symbol(op)
+            parts.append(f" {op_str} {_ast_unparse(comparator)}")
+        return "".join(parts)
+    elif isinstance(node, ast.BinOp):
+        left = _ast_unparse(node.left)
+        right = _ast_unparse(node.right)
+        op_str = _get_op_symbol(node.op)
+        return f"{left} {op_str} {right}"
+    elif isinstance(node, ast.Name):
+        return node.id
+    elif isinstance(node, ast.Constant):
+        return repr(node.value)
+    elif isinstance(node, ast.Num):  # Python 3.8 fallback
+        return repr(node.n)
+    elif isinstance(node, ast.Str):  # Python 3.8 fallback
+        return repr(node.s)
+    elif isinstance(node, ast.NameConstant):  # Python 3.8 fallback
+        return repr(node.value)
+    else:
+        return ""
+
+
+def _get_op_symbol(op):
+    """获取比较/二元运算符的符号."""
+    ops = {
+        ast.Gt: ">",
+        ast.Lt: "<",
+        ast.GtE: ">=",
+        ast.LtE: "<=",
+        ast.Eq: "==",
+        ast.NotEq: "!=",
+        ast.Is: "is",
+        ast.IsNot: "is not",
+        ast.In: "in",
+        ast.NotIn: "not in",
+        ast.Add: "+",
+        ast.Sub: "-",
+        ast.Mult: "*",
+        ast.Div: "/",
+        ast.BitAnd: "&",
+        ast.BitOr: "|",
+        ast.BitXor: "^",
+        ast.And: "&",
+        ast.Or: "|",
+    }
+    return ops.get(type(op), str(op))
+
+
 class ExprParser:
     """表达式解析器，将字符串解析为 AST。"""
 
@@ -292,7 +350,7 @@ class ExprParser:
 
         elif isinstance(node, ast.Compare):
             # 处理比较表达式 (age > 18)
-            comp_expr = ast.unparse(node)
+            comp_expr = _ast_unparse(node)
             self.variables.extend(self._extract_variables(comp_expr))
             return VariableNode(comp_expr)
 
@@ -307,7 +365,7 @@ class ExprParser:
         else:
             # 其他情况作为原子表达式处理
             try:
-                comp_expr = ast.unparse(node)
+                comp_expr = _ast_unparse(node)
                 return VariableNode(comp_expr)
             except:
                 return VariableNode(self.expr)
