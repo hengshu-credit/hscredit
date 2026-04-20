@@ -27,7 +27,7 @@ from .utils import (
 )
 
 # 从统一metrics模块导入分箱统计计算
-from ..metrics import compute_bin_stats
+from ..metrics import compute_bin_stats, psi_table
 
 
 def _is_feature_table(data):
@@ -884,14 +884,18 @@ def hist_plot(score, y_true=None, figsize=(15, 10), bins=30, save=None,
         return ax
 
 
-def psi_plot(expected, actual, labels=None, desc="", save=None, colors=None, 
-             figsize=(15, 8), anchor=0.94, width=0.35, result=False, plot=True, 
-             max_len=None, hatch=True, title=None):
+def psi_plot(expected, actual, labels=None, desc="", save=None, colors=None,
+             figsize=(15, 8), anchor=0.94, width=0.35, result=False, plot=True,
+             max_len=None, hatch=True, title=None, **kwargs):
     """
     PSI稳定性分析图.
 
-    :param expected: 期望分布
-    :param actual: 实际分布
+    支持两种输入方式：
+    1. 直接传入原始分数数据（pd.Series 或单列 pd.DataFrame），自动分箱计算PSI
+    2. 传入已计算好的分箱表（pd.DataFrame，含 '分箱' 列），直接绘图
+
+    :param expected: 期望分布（原始数据或分箱表）
+    :param actual: 实际分布（原始数据或分箱表）
     :param labels: 标签
     :param desc: 描述
     :param save: 保存路径
@@ -911,23 +915,70 @@ def psi_plot(expected, actual, labels=None, desc="", save=None, colors=None,
     if colors is None:
         colors = DEFAULT_COLORS
 
-    expected = expected.rename(columns={
-        "样本总数": f"{labels[0]}样本数", "样本占比": f"{labels[0]}样本占比", 
-        "坏样本率": f"{labels[0]}坏样本率"
-    })
-    actual = actual.rename(columns={
-        "样本总数": f"{labels[1]}样本数", "样本占比": f"{labels[1]}样本占比", 
-        "坏样本率": f"{labels[1]}坏样本率"
-    })
-    df_psi = expected.merge(actual, on="分箱", how="outer").replace(np.nan, 0)
-    df_psi[f"{labels[1]}% - {labels[0]}%"] = df_psi[f"{labels[1]}样本占比"] - df_psi[f"{labels[0]}样本占比"]
-    df_psi[f"ln({labels[1]}% / {labels[0]}%)"] = np.log(
-        df_psi[f"{labels[1]}样本占比"] / df_psi[f"{labels[0]}样本占比"]
-    )
-    df_psi["分档PSI值"] = df_psi[f"{labels[1]}% - {labels[0]}%"] * df_psi[f"ln({labels[1]}% / {labels[0]}%)"]
-    df_psi = df_psi.fillna(0).replace([np.inf, -np.inf], 0)
-    df_psi["总体PSI值"] = df_psi["分档PSI值"].sum()
-    df_psi["指标名称"] = desc
+    # 统一提取一维数值数组
+    def _to_series(data):
+        if isinstance(data, np.ndarray):
+            return pd.Series(data.ravel(), name=data.name if hasattr(data, 'name') else None)
+        if isinstance(data, pd.Series):
+            return data
+        return data.iloc[:, 0]
+
+    def _has_bins(data):
+        if isinstance(data, np.ndarray):
+            return False
+        if isinstance(data, pd.Series):
+            return False
+        # Pre-binned bin tables have '分箱' + '样本总数'; psi_table output has '分箱' without '样本总数'
+        return "分箱" in data.columns and "样本总数" in data.columns
+
+    exp_series = _to_series(expected)
+    act_series = _to_series(actual)
+
+    if _has_bins(expected) and _has_bins(actual):
+        # 路径A：传入分箱表 → 分别重命名再 merge
+        exp_df = expected if isinstance(expected, pd.DataFrame) else pd.DataFrame({"分箱": expected.index, expected.name or 0: expected})
+        act_df = actual if isinstance(actual, pd.DataFrame) else pd.DataFrame({"分箱": actual.index, actual.name or 0: actual})
+
+        exp_renamed = exp_df.rename(columns={
+            "样本总数": f"{labels[0]}样本数",
+            "样本占比": f"{labels[0]}样本占比",
+            "坏样本率": f"{labels[0]}坏样本率",
+        })
+        act_renamed = act_df.rename(columns={
+            "样本总数": f"{labels[1]}样本数",
+            "样本占比": f"{labels[1]}样本占比",
+            "坏样本率": f"{labels[1]}坏样本率",
+        })
+        df_psi = exp_renamed.merge(act_renamed, on="分箱", how="outer").replace(np.nan, 0)
+        df_psi[f"{labels[1]}% - {labels[0]}%"] = df_psi[f"{labels[1]}样本占比"] - df_psi[f"{labels[0]}样本占比"]
+        df_psi[f"ln({labels[1]}% / {labels[0]}%)"] = np.log(
+            df_psi[f"{labels[1]}样本占比"] / df_psi[f"{labels[0]}样本占比"]
+        )
+        df_psi["分档PSI值"] = df_psi[f"{labels[1]}% - {labels[0]}%"] * df_psi[f"ln({labels[1]}% / {labels[0]}%)"]
+        df_psi = df_psi.fillna(0).replace([np.inf, -np.inf], 0)
+        df_psi["总体PSI值"] = df_psi["分档PSI值"].sum()
+        df_psi["指标名称"] = desc
+    else:
+        # 路径B：传入原始分数 → 用 psi_table 计算一次（返回含期望/实际两套值的合并表）
+        # 列: 分箱, 期望样本数, 实际样本数, 期望占比, 实际占比, PSI贡献
+        df_psi = psi_table(exp_series, act_series, method='quantile', **kwargs)
+        df_psi = df_psi.rename(columns={
+            "期望样本数": f"{labels[0]}样本数",
+            "实际样本数": f"{labels[1]}样本数",
+            "期望占比": f"{labels[0]}样本占比",
+            "实际占比": f"{labels[1]}样本占比",
+        })
+        df_psi["分档PSI值"] = df_psi["PSI贡献"].fillna(0).replace([np.inf, -np.inf], 0)
+        # 坏样本率列不存在于 psi_table 输出，设 0 避免绘图时缺失
+        for lbl in labels:
+            df_psi[f"{lbl}坏样本率"] = 0.0
+        # 补充 result=True 需要的差值列
+        df_psi[f"{labels[1]}% - {labels[0]}%"] = df_psi[f"{labels[1]}样本占比"] - df_psi[f"{labels[0]}样本占比"]
+        df_psi[f"ln({labels[1]}% / {labels[0]}%)"] = np.log(
+            df_psi[f"{labels[1]}样本占比"] / df_psi[f"{labels[0]}样本占比"]
+        )
+        df_psi["总体PSI值"] = df_psi["分档PSI值"].sum()
+        df_psi["指标名称"] = desc
 
     if plot:
         x = df_psi['分箱'].apply(

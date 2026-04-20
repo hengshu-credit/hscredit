@@ -518,8 +518,8 @@ def calibration_plot(
 # ==================== 评分卡相关图表 ====================
 
 def score_dist_plot(
-    df: pd.DataFrame,
-    score_col: str,
+    df: Union[pd.DataFrame, pd.Series],
+    score_col: Optional[str] = None,
     target_col: Optional[str] = None,
     ax: Optional[plt.Axes] = None,
     figsize: Tuple[float, float] = (12, 6),
@@ -551,43 +551,76 @@ def score_dist_plot(
         >>> fig = score_dist_plot(df, 'score', 'target')
     """
     fig, ax = get_or_create_ax(figsize=figsize, ax=ax)
-    
+
     if colors is None:
         colors = DEFAULT_COLORS
-    
+
     if title is None:
         title = f'{score_col} Distribution'
+
+    # 支持两种调用方式：
+    # 1. score_dist_plot(df, 'score', 'target')        # 原始：df + 列名
+    # 2. score_dist_plot(scores_series, targets_series)  # 简化：直接传 Series
+    if isinstance(df, pd.Series):
+        score_series = df
+        target_series = score_col if isinstance(score_col, pd.Series) else None
+        score_col = score_series.name or 'score'
+    else:
+        score_series = None
+        target_series = None
     
-    if target_col is not None:
-        # 区分好坏样本
+    if score_series is not None:
+        # 路径B：直接传 Series（不区分好坏 or 用 target_series）
+        if target_series is not None:
+            good_scores = score_series[target_series == 0].dropna()
+            bad_scores = score_series[target_series == 1].dropna()
+            sns.histplot(good_scores, bins=n_bins, kde=kde, ax=ax,
+                         color=colors[0], alpha=0.6, label=f'Good (n={len(good_scores)})')
+            sns.histplot(bad_scores, bins=n_bins, kde=kde, ax=ax,
+                         color=colors[1], alpha=0.6, label=f'Bad (n={len(bad_scores)})')
+            if show_stats:
+                from ..metrics import ks_2samps as ks_metric
+                ks_val = ks_metric(good_scores, bad_scores)
+                ax.text(0.98, 0.98, f'KS: {ks_val:.3f}', transform=ax.transAxes,
+                       ha='right', va='top', fontsize=10,
+                       bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+            ax.legend(loc='upper right', frameon=True)
+        else:
+            sns.histplot(score_series.dropna(), bins=n_bins, kde=kde, ax=ax,
+                         color=colors[0], alpha=0.6)
+        _path_b_done = True
+    else:
+        _path_b_done = False
+
+    if not _path_b_done and target_col is not None:
+        # 路径A：原始方式 — df + 列名
         good_scores = df[df[target_col] == 0][score_col].dropna()
         bad_scores = df[df[target_col] == 1][score_col].dropna()
-        
-        # 绘制分布
+
         sns.histplot(good_scores, bins=n_bins, kde=kde, ax=ax,
                      color=colors[0], alpha=0.6, label=f'Good (n={len(good_scores)})')
         sns.histplot(bad_scores, bins=n_bins, kde=kde, ax=ax,
                      color=colors[1], alpha=0.6, label=f'Bad (n={len(bad_scores)})')
-        
-        # 计算统计信息
+
         if show_stats:
-            from ..metrics import ks as ks_metric
+            from ..metrics import ks_2samps as ks_metric
             ks_val = ks_metric(good_scores, bad_scores)
             stats_text = f'KS: {ks_val:.3f}'
             ax.text(0.98, 0.98, stats_text, transform=ax.transAxes,
                    ha='right', va='top', fontsize=10,
                    bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
-    else:
-        # 不区分好坏
+    elif not _path_b_done:
+        # 不区分好坏（df 方式）
         sns.histplot(df[score_col].dropna(), bins=n_bins, kde=kde, ax=ax,
                      color=colors[0], alpha=0.6)
     
-    ax.set_xlabel(score_col, fontsize=12)
-    ax.set_ylabel('Count', fontsize=12)
-    ax.set_title(title, fontsize=14, fontweight='bold')
-    
-    if target_col is not None:
-        ax.legend(loc='upper right', frameon=True)
+    # legend / xlabel / title：路径A/B 共用（路径B已在内部处理过 legend）
+    if not _path_b_done:
+        ax.set_xlabel(score_col, fontsize=12)
+        ax.set_ylabel('Count', fontsize=12)
+        ax.set_title(title, fontsize=14, fontweight='bold')
+        if target_col is not None:
+            ax.legend(loc='upper right', frameon=True)
     
     setup_axis_style(ax, colors, hide_top_right=True)
     

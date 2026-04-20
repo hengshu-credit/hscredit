@@ -440,6 +440,8 @@ self, feature_values: pd.Series) -> List[float]:
                 raise ValueError(f"特征 '{feature}' 未被分析")
             all_rules = self.results_[feature].copy()
         else:
+            if not self.results_:
+                return pd.DataFrame()
             all_rules = pd.concat(self.results_.values(), ignore_index=True)
 
         if all_rules.empty:

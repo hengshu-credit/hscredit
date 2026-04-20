@@ -209,6 +209,7 @@ __marimo__/
 # itlubber
 .DS_Store
 examples/model_report_demo/*
+examples/model_report/*
 examples/*.png
 examples/*/*.png
 examples/*.jpg

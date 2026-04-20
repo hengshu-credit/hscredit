@@ -28,6 +28,7 @@ from sklearn.metrics import (
 
 from ._base import _validate_same_length, _validate_binary_target
 from ._binning import compute_bin_stats
+from scipy.stats import ks_2samp as _ks_2samp
 
 
 def ks(y_true: Union[np.ndarray, pd.Series],
@@ -74,6 +75,34 @@ def ks(y_true: Union[np.ndarray, pd.Series],
     cum_neg = np.cumsum(1 - y_true_sorted) / n_neg
 
     return np.max(np.abs(cum_pos - cum_neg))
+
+
+def ks_2samps(sample1: Union[np.ndarray, pd.Series],
+               sample2: Union[np.ndarray, pd.Series]) -> float:
+    """计算两组独立样本之间的 Kolmogorov-Smirnov 统计量（两样本KS）.
+
+    与 ks(y_true, y_prob) 不同，本函数比较两个独立样本的分布，
+    适用于好坏样本分布对比分析。
+
+    :param sample1: 第一组样本（通常是好样本的分数）
+    :param sample2: 第二组样本（通常是坏样本的分数）
+    :return: KS统计量，取值范围[0, 1]
+
+    **参考样例**
+
+    >>> from hscredit.core.metrics import ks_2samps
+    >>> import numpy as np
+    >>> np.random.seed(42)
+    >>> good_scores = np.random.normal(0.5, 0.1, 500)
+    >>> bad_scores = np.random.normal(0.7, 0.1, 500)
+    >>> ks_2samps(good_scores, bad_scores)
+    0.69
+    """
+    s1 = np.asarray(sample1).ravel()
+    s2 = np.asarray(sample2).ravel()
+    if len(s1) == 0 or len(s2) == 0:
+        return 0.0
+    return _ks_2samp(s1, s2)[0]
 
 
 def auc(y_true: Union[np.ndarray, pd.Series],

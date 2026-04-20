@@ -32,6 +32,7 @@ from .classification import (
     accuracy, precision, recall, f1,
     ks_bucket, roc_curve,
     confusion_matrix, classification_report,
+    ks_2samps,
 )
 
 # 特征评估
@@ -70,6 +71,7 @@ __all__ = [
     'accuracy', 'precision', 'recall', 'f1',
     'ks_bucket', 'roc_curve',
     'confusion_matrix', 'classification_report',
+    'ks_2samps',
     
     # 特征评估
     'iv', 'iv_table',
