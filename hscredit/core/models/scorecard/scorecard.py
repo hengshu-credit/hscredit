@@ -1692,9 +1692,9 @@ class ScoreCard(StandardScoreTransformer):
         df = pd.DataFrame({'score': scores, 'y': y})
         
         if method == 'quantile':
-            df['score_bin'] = pd.qcut(df['score'], q=n_bins, duplicates='drop')
+            df['score_bin'] = pd.qcut(df['score'], q=n_bins, duplicates='drop', precision=4)
         else:
-            df['score_bin'] = pd.cut(df['score'], bins=n_bins)
+            df['score_bin'] = pd.cut(df['score'], bins=n_bins, precision=4)
         
         stats = df.groupby('score_bin').agg({
             'y': ['count', 'sum', 'mean']
@@ -1831,7 +1831,6 @@ class ScoreCard(StandardScoreTransformer):
             from sklearn2pmml.decoration import Alias, CategoricalDomain, ContinuousDomain
             from sklearn2pmml.preprocessing import LookupTransformer, ExpressionTransformer
         except ImportError:
-            import warnings
             warnings.warn(
                 "PMML 导出需要安装依赖: pip install hscredit[pmml] 或分别安装 sklearn-pandas 和 sklearn2pmml。"
                 "当前环境中相关依赖不可用，PMML 导出已跳过。"
