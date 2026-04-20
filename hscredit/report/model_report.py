@@ -117,29 +117,146 @@ class QuickModelReport:
     def __init__(
         self,
         model,
-        X_train,
-        y_train,
+        X_train=None,
+        y_train=None,
         X_test=None,
         y_test=None,
         feature_names: Optional[List[str]] = None,
+        target: Optional[Union[str, Dict]] = None,
+        datasets: Optional[Union[List, Dict]] = None,
     ):
+        """初始化模型报告.
+
+        支持两种调用方式：
+        1. 兼容 API：传入 X_train/y_train/X_test/y_test（推荐）
+           - scorecard pipeline 风格：target='target' 或 target={'overdue': 'col', 'dpds': 'col'}
+        2. 新 API（pipeline 风格）：传入 datasets 参数
+           - dict: {'train': (X, y), 'test': (X, y), 'oot': (X, y)}
+           - list: [(X, y), (X, y)] 自动命名为训练集、测试集、OOT集...
+        3. datasets dict: 显式指定各数据集（最高优先级）
+           - 覆盖 X_train/y_train/X_test/y_test
+
+        :param model: 训练好的模型
+        :param datasets: 数据集字典/列表，字典键为数据集名称，值为 (X, y) 元组
+        :param X_train: 训练集特征（兼容旧 API）
+        :param y_train: 训练集标签（兼容旧 API）
+        :param X_test: 测试集特征（兼容旧 API）
+        :param y_test: 测试集标签（兼容旧 API）
+        :param feature_names: 特征名称列表
+        :param target: 目标列配置，str 为列名，dict 为 {'overdue': col, 'dpds': col, 'threshold': days}
+        """
         self.model = model
-        self.X_train = _ensure_dataframe(X_train, feature_names=feature_names)
-        self.y_train = _ensure_series(y_train, name="target")
-        self.X_test = None if X_test is None else _ensure_dataframe(X_test, feature_names=list(self.X_train.columns))
-        self.y_test = None if y_test is None else _ensure_series(y_test, name=self.y_train.name)
-        self.feature_names = list(self.X_train.columns)
+        self._target_cfg = target
+        self._feature_names = feature_names
 
         # 构建数据集
         self._datasets: Dict[str, ReportDataset] = {}
-        self._add_dataset("train", "训练集", self.X_train, self.y_train)
-        if self.X_test is not None and self.y_test is not None:
-            self._add_dataset("test", "测试集", self.X_test, self.y_test)
+        self._datasets_info: Dict[str, str] = {}  # key -> label
+
+        # 确定目标列名
+        self._target_name = self._resolve_target_name(target)
+
+        if datasets is not None:
+            self._init_from_datasets(datasets)
+        else:
+            self._init_from_xy(X_train, y_train, X_test, y_test)
+
+        # 从第一个数据集获取特征名
+        if not hasattr(self, 'feature_names') or not self.feature_names:
+            if self._datasets:
+                first_ds = next(iter(self._datasets.values()))
+                self.feature_names = list(first_ds.X.columns)
+            elif self._feature_names:
+                self.feature_names = self._feature_names
+            else:
+                self.feature_names = []
 
         # 缓存
         self._metrics_cache: Optional[pd.DataFrame] = None
         self._importance_cache: Optional[pd.DataFrame] = None
         self._features_describe_cache: Optional[pd.DataFrame] = None
+
+    def _resolve_target_name(self, target) -> str:
+        """解析目标配置，返回标签列名."""
+        if isinstance(target, str):
+            return target
+        if isinstance(target, dict) and "overdue" in target:
+            return target.get("label", "target")
+        return "target"
+
+    def _build_y(self, X: pd.DataFrame, target_cfg) -> pd.Series:
+        """根据 target 配置从 X 构建 y 标签."""
+        if target_cfg is None:
+            if "target" in X.columns:
+                return _ensure_series(X["target"])
+            raise ValueError("未找到目标列 'target'，请通过 target 参数指定标签列")
+
+        if isinstance(target_cfg, str):
+            if target_cfg in X.columns:
+                return _ensure_series(X[target_cfg], name=target_cfg)
+            raise ValueError(f"目标列 '{target_cfg}' 不存在于数据中")
+
+        if isinstance(target_cfg, dict) and "overdue" in target_cfg:
+            overdue_col = target_cfg["overdue"]
+            dpds_col = target_cfg.get("dpds")
+            threshold = target_cfg.get("threshold", 3)
+            label_name = target_cfg.get("label", "target")
+
+            if overdue_col not in X.columns:
+                raise ValueError(f"逾期列 '{overdue_col}' 不存在")
+            if dpds_col and dpds_col not in X.columns:
+                raise ValueError(f"逾期天数列 '{dpds_col}' 不存在")
+
+            if dpds_col:
+                y = ((X[overdue_col] == 1) & (X[dpds_col] > threshold)).astype(int)
+            else:
+                y = X[overdue_col].astype(int)
+            return _ensure_series(y, name=label_name)
+
+        return _ensure_series(X.get("target", pd.Series([0] * len(X), index=X.index) if hasattr(X, 'index') else pd.Series([0] * len(X))), name="target")
+
+    def _init_from_datasets(self, datasets):
+        """从 datasets 初始化数据集."""
+        if isinstance(datasets, dict):
+            # {'train': (X, y), 'test': (X, y), ...}
+            default_labels = {
+                "train": "训练集", "test": "测试集",
+                "oot": "OOT集", "val": "验证集",
+            }
+            for key, value in datasets.items():
+                if not isinstance(value, (tuple, list)) or len(value) < 2:
+                    raise ValueError(f"数据集 '{key}' 格式错误，应为 (X, y) 元组")
+                X, y = value[0], value[1]
+                label = default_labels.get(key, key)
+                X_df = _ensure_dataframe(X, feature_names=self._feature_names)
+                y_s = _ensure_series(y, name=self._target_name)
+                self._add_dataset(key, label, X_df, y_s)
+                self._datasets_info[key] = label
+
+        elif isinstance(datasets, (list, tuple)):
+            # [(X, y), (X, y), ...] - 自动命名
+            default_names = ["train", "test", "oot", "val", "dev"]
+            default_labels = ["训练集", "测试集", "OOT集", "验证集", "开发集"]
+            for i, (X, y) in enumerate(datasets):
+                key = default_names[i] if i < len(default_names) else f"dataset_{i}"
+                label = default_labels[i] if i < len(default_labels) else f"数据集{i+1}"
+                X_df = _ensure_dataframe(X, feature_names=self._feature_names)
+                y_s = _ensure_series(y, name=self._target_name)
+                self._add_dataset(key, label, X_df, y_s)
+                self._datasets_info[key] = label
+
+    def _init_from_xy(self, X_train, y_train, X_test, y_test):
+        """从 X/y 参数初始化（兼容旧 API）."""
+        X_train_df = _ensure_dataframe(X_train, feature_names=self._feature_names)
+        y_train_s = _ensure_series(y_train, name=self._target_name)
+        self._add_dataset("train", "训练集", X_train_df, y_train_s)
+        self._datasets_info["train"] = "训练集"
+
+        if X_test is not None and y_test is not None:
+            X_test_df = _ensure_dataframe(X_test, feature_names=list(X_train_df.columns))
+            y_test_s = _ensure_series(y_test, name=self._target_name)
+            self._add_dataset("test", "测试集", X_test_df, y_test_s)
+            self._datasets_info["test"] = "测试集"
 
     # ---------- 数据集管理 ----------
 
@@ -155,8 +272,8 @@ class QuickModelReport:
 
     def add_dataset(self, key: str, label: str, X, y, feature_names: Optional[List[str]] = None):
         """添加额外数据集（如 OOT）用于报告."""
-        X = _ensure_dataframe(X, feature_names=feature_names or list(self.X_train.columns))
-        y = _ensure_series(y, name=self.y_train.name)
+        X = _ensure_dataframe(X, feature_names=feature_names or self.feature_names)
+        y = _ensure_series(y, name=self._target_name)
         self._add_dataset(key, label, X, y)
 
     # ---------- 1. 模型性能指标 ----------
@@ -448,7 +565,7 @@ class QuickModelReport:
         importance = self.get_feature_importance()
         features = importance.index.tolist() if not importance.empty else self.feature_names
 
-        target_col = self.y_train.name or "target"
+        target_col = self._target_name or "target"
         train_df = self._datasets["train"].X[features].copy()
         train_df[target_col] = self._datasets["train"].y.values
 
@@ -537,7 +654,7 @@ class QuickModelReport:
         amount_col: Optional[str] = None,
     ) -> Tuple[Dict[str, List[str]], Dict[str, pd.DataFrame]]:
         """导出所有图表，返回 (图表路径字典, PSI数据表字典)."""
-        from ..core.viz import ks_plot, bin_plot, hist_plot, corr_plot, psi_plot, lift_plot
+        from ..core.viz import ks_plot, bin_plot, corr_plot, psi_plot, lift_plot
 
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -608,20 +725,32 @@ class QuickModelReport:
             if bin_figs:
                 paths[f"feat_bin_{feat}"] = bin_figs
 
-            # 分布图：按 train/test 顺序分组
-            hist_figs: List[str] = []
+            # 特征KS分布图（替换直方图，显示特征对好坏样本的区分能力）
+            # 处理缺失值和类别特征
+            ks_figs: List[str] = []
             for ds_key, ds in self._datasets.items():
                 try:
-                    col = ds.X[feat].dropna()
+                    col_raw = ds.X[feat]
+                    col = col_raw.dropna()
+                    # 检查是否为类别特征或低基数的数值特征
+                    is_categorical = col.dtype == 'object' or (
+                        col.dtype in ['int64', 'float64'] and col.nunique() <= 10
+                    )
+                    if is_categorical:
+                        # 类别特征跳过KS图
+                        continue
                     y_f = ds.y.loc[col.index]
-                    p = str(output_dir / f"hist_{feat}_{ds_key}.png")
-                    hist_plot(col, y_f, kde=True, desc=f"{ds.label} {feat}", save=p, bins=20)
+                    # 确保标签是二分类
+                    if y_f.nunique() < 2:
+                        continue
+                    p = str(output_dir / f"ks_{feat}_{ds_key}.png")
+                    ks_plot(col, y_f, title=f"{ds.label} {feat}", save=p, figsize=(8, 5))
                     _safe_close_figs()
-                    hist_figs.append(p)
+                    ks_figs.append(p)
                 except Exception:
                     pass
-            if hist_figs:
-                paths[f"feat_hist_{feat}"] = hist_figs
+            if ks_figs:
+                paths[f"feat_hist_{feat}"] = ks_figs
 
             # PSI 图（训练集 vs 第一个非训练集）
             if len(ds_keys) >= 2:
@@ -720,6 +849,8 @@ class QuickModelReport:
         bin_method: str = "quantile",
         amount_col: Optional[str] = None,
         date_col: Optional[str] = None,
+        date_freq: Optional[str] = None,
+        group_col: Optional[str] = None,
         with_plots: bool = True,
         model_name: Optional[str] = None,
         project_desc: Optional[str] = None,
@@ -730,12 +861,9 @@ class QuickModelReport:
 
         Sheet 结构：
         - 目录
-        - 1-基本信息（项目目标、样本统计、分月分布）
+        - 1-基本信息（项目目标、样本统计、分月/分组分布）
         - 2-模型性能（指标、TOP n%、PSI矩阵、分箱效果）
-        - 3-入模变量重要性&分布
-        - 4-入模变量分析（相关性 + 逐特征分箱 + PSI）
-        - 5-模型参数（评分卡详情）
-        - 6-模型部署需求
+        - 3-入模变量分析（重要性、相关性、逐特征分箱/KS/PSI）
         """
         from ..excel import ExcelWriter, dataframe2excel
 
@@ -760,10 +888,9 @@ class QuickModelReport:
         contents = pd.DataFrame([
             {"序号": 1, "内容": "1-基本信息", "备注": "项目目标、样本选取、样本坏率分布"},
             {"序号": 2, "内容": "2-模型性能", "备注": "模型效果、区分度、稳定性等内容"},
-            {"序号": 3, "内容": "3-入模变量重要性&分布", "备注": "模型变量重要性及分布情况"},
-            {"序号": 4, "内容": "4-入模变量分析", "备注": "模型变量有效性及不同数据集分箱情况"},
-            {"序号": 5, "内容": "5-模型参数", "备注": "模型选型及超参数"},
-            {"序号": 6, "内容": "6-模型部署需求", "备注": "入模变量信息及测试用例"},
+            {"序号": 3, "内容": "3-入模变量分析", "备注": "模型变量有效性及不同数据集分箱情况"},
+            {"序号": 4, "内容": "4-稳定性分析", "备注": "评分分布、PSI、CSI等稳定性分析"},
+            {"序号": 5, "内容": "5-模型部署需求", "备注": "入模变量信息及测试用例"},
         ])
 
         ws = writer.get_sheet_by_name("目录")
@@ -777,12 +904,12 @@ class QuickModelReport:
             except Exception:
                 pass
 
-        end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value="版本号:", style="middle", end_space=(end_row + 1, 2))
-        end_row, _ = writer.insert_value2sheet(ws, (end_row - 1, 3), value="V1.0", style="middle", end_space=(end_row - 1, 4))
-        _, _ = writer.insert_value2sheet(ws, (end_row, 2), value="创建日期:", style="middle", end_space=(end_row, 2))
-        end_row, _ = writer.insert_value2sheet(ws, (end_row, 3), value=date.today().strftime("%Y-%m-%d"), style="middle", end_space=(end_row, 4))
-        _, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value="模型名称:", style="middle", end_space=(end_row + 1, 2))
-        end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 3), value=model_name, style="middle", end_space=(end_row + 1, 4))
+        _, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value="版本号:", style="middle", end_space=(end_row + 1, 2))
+        end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 3), value="V1.0", style="middle", end_space=(end_row + 1, 4))
+        _, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value="创建日期:", style="middle", end_space=(end_row + 2, 2))
+        end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 3), value=date.today().strftime("%Y-%m-%d"), style="middle", end_space=(end_row + 2, 4))
+        _, _ = writer.insert_value2sheet(ws, (end_row + 3, 2), value="模型名称:", style="middle", end_space=(end_row + 3, 2))
+        end_row, _ = writer.insert_value2sheet(ws, (end_row + 3, 3), value=model_name, style="middle", end_space=(end_row + 3, 4))
 
         # ============================================================
         # 1-基本信息 Sheet
@@ -813,22 +940,51 @@ class QuickModelReport:
         sample_df = pd.DataFrame(sample_rows)
         end_row, _ = dataframe2excel(sample_df, writer, sheet_name=ws, start_row=end_row + 1, percent_cols=["坏样本率"])
 
-        # 1.3 样本分月分布
-        if date_col:
-            end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value="3、样本分月分布", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
-            for ds_key, ds in self._datasets.items():
-                if date_col in ds.X.columns:
-                    dates = pd.to_datetime(ds.X[date_col])
-                    months = dates.dt.to_period("M")
-                    monthly_stats = ds.y.groupby(months).agg(["count", "sum", "mean"]).reset_index()
-                    monthly_stats.columns = ["月份", "样本数", "坏样本数", "坏样本率"]
-                    monthly_stats["月份"] = monthly_stats["月份"].astype(str)
-                    monthly_stats["坏样本数"] = monthly_stats["坏样本数"].astype(int)
-                    end_row, _ = dataframe2excel(
-                        monthly_stats, writer, sheet_name=ws,
-                        title=f"{ds.label} 月度分布", start_row=end_row + 1,
-                        percent_cols=["坏样本率"],
-                    )
+        # 1.3 样本时间/分组分布
+        freq_label_map = {"D": "日", "W": "周", "M": "月", "Q": "季度", "Y": "年"}
+        if date_col or group_col:
+            end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value="3、样本分布情况", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
+
+            # 时间分布
+            if date_col:
+                period_labels = {"D": "日期", "W": "周", "M": "月份", "Q": "季度", "Y": "年份"}
+                freq = date_freq or "M"
+                period_label = period_labels.get(freq, "周期")
+                period_col_name = freq_label_map.get(freq, freq)
+
+                for ds_key, ds in self._datasets.items():
+                    if date_col in ds.X.columns:
+                        dates = pd.to_datetime(ds.X[date_col])
+                        try:
+                            periods = dates.dt.to_period(freq)
+                        except Exception:
+                            periods = dates.dt.to_period("M")
+                        period_stats = ds.y.groupby(periods).agg(["count", "sum", "mean"]).reset_index()
+                        period_stats.columns = [period_label, "样本数", "坏样本数", "坏样本率"]
+                        period_stats[period_label] = period_stats[period_label].astype(str)
+                        period_stats["坏样本数"] = period_stats["坏样本数"].astype(int)
+                        end_row, _ = dataframe2excel(
+                            period_stats, writer, sheet_name=ws,
+                            title=f"{ds.label} {period_col_name}度分布", start_row=end_row + 1,
+                            percent_cols=["坏样本率"],
+                        )
+
+            # 分组分布
+            if group_col:
+                for ds_key, ds in self._datasets.items():
+                    if group_col in ds.X.columns:
+                        groups = ds.X[group_col]
+                        group_stats = pd.DataFrame({
+                            "分组": groups,
+                            "样本数": 1,
+                            "坏样本": ds.y.values,
+                        }).groupby("分组").agg({"样本数": "count", "坏样本": "sum"}).reset_index()
+                        group_stats["坏样本率"] = group_stats["坏样本"] / group_stats["样本数"]
+                        end_row, _ = dataframe2excel(
+                            group_stats, writer, sheet_name=ws,
+                            title=f"{ds.label} 分组分布", start_row=end_row + 1,
+                            percent_cols=["坏样本率"],
+                        )
 
         try:
             writer.set_freeze_panes(ws, (5, 4))
@@ -947,40 +1103,27 @@ class QuickModelReport:
             pass
 
         # ============================================================
-        # 3-入模变量重要性&分布 Sheet
         # ============================================================
-        ws = writer.get_sheet_by_name("3-入模变量重要性&分布")
-        end_row, _ = writer.insert_value2sheet(ws, (2, 2), value="三、入模变量信息", style="header_middle", end_space=(2, max_col))
+        # 3-入模变量分析 Sheet
+        # ============================================================
+        ws = writer.get_sheet_by_name("3-入模变量分析")
+        end_row, _ = writer.insert_value2sheet(ws, (2, 2), value="三、入模变量分析", style="header_middle", end_space=(2, max_col))
         try:
             writer.insert_hyperlink2sheet(ws, (2, 2), hyperlink="#'目录'!B2")
         except Exception:
             pass
 
+        # 3.1 入模变量重要性及分布情况
+        end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value="1、入模变量重要性及分布情况", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
         features_summary = self._get_features_summary()
         end_row, _ = dataframe2excel(
             features_summary, writer, sheet_name=ws,
-            title="1、入模变量重要性及分布情况",
             start_row=end_row + 1,
             index=True,
         )
 
-        try:
-            writer.set_freeze_panes(ws, (5, 4))
-        except Exception:
-            pass
-
-        # ============================================================
-        # 4-入模变量分析 Sheet
-        # ============================================================
-        ws = writer.get_sheet_by_name("4-入模变量分析")
-        end_row, _ = writer.insert_value2sheet(ws, (2, 2), value="四、入模变量分析", style="header_middle", end_space=(2, max_col))
-        try:
-            writer.insert_hyperlink2sheet(ws, (2, 2), hyperlink="#'目录'!B2")
-        except Exception:
-            pass
-
-        # 4.1 相关性
-        end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value="1、入模变量相关性", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
+        # 3.2 相关性
+        end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value="2、入模变量相关性", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
         corr_df = self.get_features_corr()
         corr_figs = plot_paths.get("feature_corr", [])
         end_row, _ = dataframe2excel(
@@ -991,15 +1134,15 @@ class QuickModelReport:
             figures=corr_figs,
         )
 
-        # 4.2 逐特征分箱
-        end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value="2、入模变量有效性分析", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
+        # 3.3 入模变量有效性分析
+        end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value="3、入模变量有效性分析", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
 
         importance = self.get_feature_importance()
         feature_list = importance.index.tolist() if not importance.empty else self.feature_names
         ds_keys_list = list(self._datasets.keys())
 
         for i, feat in enumerate(feature_list):
-            end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value=f"2.{i + 1}、{feat} 有效性分析", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
+            end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value=f"3.{i + 1}、{feat} 有效性分析", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
 
             # 插入图表：分箱图(train, test) + 分布图(train, test)
             bin_figs = plot_paths.get(f"feat_bin_{feat}", [])
@@ -1142,7 +1285,7 @@ class QuickModelReport:
 
             # 评分漂移分析
             if len(self._datasets) >= 2:
-                end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value=f"{param_section}、评分漂移分析", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
+                end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value=f"{param_section}、稳定性分析", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
                 score_psi_figs = plot_paths.get("score_psi", [])
                 if score_psi_figs:
                     for fig_path in score_psi_figs:
@@ -1227,17 +1370,21 @@ class QuickModelReport:
 
 def auto_model_report(
     model,
-    X_train,
-    y_train,
+    datasets: Optional[Union[List, Dict]] = None,
+    X_train=None,
+    y_train=None,
     X_test=None,
     y_test=None,
     feature_names: Optional[List[str]] = None,
+    target: Optional[Union[str, Dict]] = None,
     excel_path: Optional[str] = None,
     verbose: bool = True,
     n_bins: int = 10,
     bin_method: str = "quantile",
     amount_col: Optional[str] = None,
     date_col: Optional[str] = None,
+    date_freq: Optional[str] = None,
+    group_col: Optional[str] = None,
     with_plots: bool = True,
     model_name: Optional[str] = None,
     project_desc: Optional[str] = None,
@@ -1248,17 +1395,28 @@ def auto_model_report(
 ) -> QuickModelReport:
     """一键生成模型报告.
 
+    支持两种调用方式：
+    1. 新 API（推荐）：传入 datasets 参数
+       - dict: {'train': (X, y), 'test': (X, y), 'oot': (X, y)}
+       - list: [(X, y), (X, y), ...] 自动命名为训练集、测试集、OOT集...
+    2. 兼容 API：传入 X_train/y_train/X_test/y_test
+
     :param model: 训练好的模型（ScoreCard / BaseRiskModel / sklearn 等）
-    :param X_train: 训练集特征
-    :param y_train: 训练集标签
-    :param X_test: 测试集/OOT 特征
-    :param y_test: 测试集/OOT 标签
+    :param datasets: 数据集字典/列表，字典键为数据集名称，值为 (X, y) 元组
+    :param X_train: 训练集特征（兼容旧 API）
+    :param y_train: 训练集标签（兼容旧 API）
+    :param X_test: 测试集/OOT 特征（兼容旧 API）
+    :param y_test: 测试集/OOT 标签（兼容旧 API）
+    :param feature_names: 特征名称列表
+    :param target: 目标列配置，str 为列名，dict 为 {'overdue': col, 'dpds': col, 'threshold': days}
     :param excel_path: Excel 报告输出路径
     :param verbose: 是否打印控制台报告
     :param n_bins: 分箱数
     :param bin_method: 分箱方法
     :param amount_col: 金额字段（用于金额口径分析）
     :param date_col: 日期字段（用于分月分析）
+    :param date_freq: 日期频率，支持 'D', 'W', 'M', 'Q' 等（默认自动推断）
+    :param group_col: 分组字段（用于分组坏样本率分析）
     :param with_plots: 是否生成图表
     :param model_name: 模型名称
     :param project_desc: 项目描述
@@ -1268,11 +1426,13 @@ def auto_model_report(
     """
     report = QuickModelReport(
         model=model,
+        datasets=datasets,
         X_train=X_train,
         y_train=y_train,
         X_test=X_test,
         y_test=y_test,
         feature_names=feature_names,
+        target=target,
     )
 
     if verbose:
@@ -1285,6 +1445,8 @@ def auto_model_report(
             bin_method=bin_method,
             amount_col=amount_col,
             date_col=date_col,
+            date_freq=date_freq,
+            group_col=group_col,
             with_plots=with_plots,
             model_name=model_name,
             project_desc=project_desc,
