@@ -146,7 +146,7 @@ def variable_woe_trend_plot(
     """
     # 兼容列名
     label_col = next((c for c in ['分箱标签', 'bin_label', 'Bin'] if c in bin_table.columns), None)
-    woe_col = next((c for c in ['WOE', 'woe'] if c in bin_table.columns), None)
+    woe_col = next((c for c in ['分档WOE值', 'WOE', 'woe'] if c in bin_table.columns), None)
     br_col = next((c for c in ['坏样本率', 'bad_rate', 'BadRate'] if c in bin_table.columns), None)
     cnt_col = next((c for c in ['样本总数', 'count', 'Count'] if c in bin_table.columns), None)
 

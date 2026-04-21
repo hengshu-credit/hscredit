@@ -152,15 +152,45 @@ class NumExprDerive(BaseEstimator, TransformerMixin):
                 raise ValueError(f"The {i}-th deriving rule is not a two-string tuple!")
 
     def _transform_frame(self, X):
-        """转换 DataFrame，支持任意类型数据。"""
+        """转换 DataFrame，支持任意类型数据。
+
+        策略：
+        - 纯数值列 -> numpy eval（最快）
+        - 含字符串/布尔/日期等 -> pandas Series eval（类型安全）
+        np.where 接收 Series 时行为正确（字符串/布尔/数值均能正确处理）。
+        """
+        import re
+
         feature_names = X.columns.tolist()
         self.features_names_ = feature_names
         result = X.copy()
 
+        # 预检测列是否全为数值型
+        col_pattern = re.compile(r'\b([A-Za-z_]\w*)\b')
+        reserved = {
+            'np', 'where', 'sin', 'cos', 'tan', 'abs', 'exp', 'log',
+            'sqrt', 'power', 'floor', 'ceil', 'round', 'max', 'min',
+            'mean', 'sum', 'std', 'var', 'median', 'nan', 'inf',
+            'True', 'False', 'None', 'and', 'or', 'not', 'is', 'in',
+        }
+
         for name, expr in self.derivings:
             converted = self._convert_where_to_np(expr)
-            context = {col: X[col].values for col in X.columns}
-            context['np'] = np
+
+            # 找出表达式中涉及的列
+            raw_cols = col_pattern.findall(converted)
+            involved = [c for c in raw_cols if c not in reserved and c in X.columns]
+            all_numeric = all(pd.api.types.is_numeric_dtype(X[c].dtype) for c in involved)
+
+            if all_numeric:
+                # 数值型：numpy eval（最快）
+                context = {col: X[col].values for col in involved}
+                context['np'] = np
+            else:
+                # 混合类型：pandas Series eval（支持字符串/布尔）
+                context = {col: X[col] for col in X.columns}
+                context['np'] = np
+
             result[name] = eval(converted, context)
 
         derived_names = [name for name, _ in self.derivings]
@@ -191,6 +221,6 @@ class NumExprDerive(BaseEstimator, TransformerMixin):
 
     def _more_tags(self):
         return {
-            "X_types": ["2darray"],
+            "X_types": ["2darray", "dataframe"],
             "allow_nan": True,
         }

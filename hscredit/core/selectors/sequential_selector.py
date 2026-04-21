@@ -118,13 +118,14 @@ class SequentialFeatureSelector(BaseFeatureSelector):
         self._get_feature_names(X)
 
         # 使用sklearn的SequentialFeatureSelector
+        # 基于交叉验证评分评估特征子集，无需 importance_getter
         sfs = SklearnSFS(
             estimator=clone(self.estimator),
             n_features_to_select=self.n_features_to_select,
             direction=self.direction,
             scoring=self.scoring,
             cv=self.cv,
-            n_jobs=self.n_jobs
+            n_jobs=self.n_jobs,
         )
         sfs.fit(X, y)
 

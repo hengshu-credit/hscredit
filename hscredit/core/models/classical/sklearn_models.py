@@ -71,6 +71,7 @@ class SklearnRiskModel(BaseRiskModel):
 
         # 保存特征信息
         self.n_features_in_ = X.shape[1]
+        # _prepare_data 已在内部设置 feature_names_in_（DataFrame 或人工命名）
         self.classes_ = np.unique(y)
 
         # 构建参数
@@ -128,6 +129,16 @@ class SklearnRiskModel(BaseRiskModel):
         self._feature_importances = importance_series
 
         return importance_series
+
+    @property
+    def feature_importances_(self) -> np.ndarray:
+        """特征重要性属性 (兼容sklearn风格).
+
+        直接在包装类上暴露重要性，兼容sklearn RFE/SFS等组件的 importance_getter。
+        """
+        check_is_fitted(self, '_is_fitted')
+        # 直接从内部模型获取，避免缓存逻辑在clone后出错
+        return self._model.feature_importances_
 
 
 class RandomForestRiskModel(SklearnRiskModel):

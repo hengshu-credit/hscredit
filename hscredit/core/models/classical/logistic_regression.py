@@ -559,7 +559,7 @@ class LogisticRegression(SklearnLogisticRegression):
             - 'z_score': z统计量绝对值
         :return: 特征重要性Series
         """
-        check_is_fitted(self)
+        check_is_fitted(self, 'coef_')
 
         # 获取特征名称
         if self.feature_names_in_ is None:
@@ -594,11 +594,12 @@ class LogisticRegression(SklearnLogisticRegression):
 
     @property
     def feature_importances_(self) -> np.ndarray:
-        """特征重要性属性 (兼容sklearn风格)."""
-        check_is_fitted(self)
-        if not hasattr(self, '_feature_importances'):
-            self._feature_importances = self.get_feature_importances()
-        return self._feature_importances.values
+        """特征重要性属性 (兼容sklearn风格).
+
+        直接从内部模型获取系数绝对值，避免缓存逻辑在clone后出错。
+        """
+        check_is_fitted(self, 'coef_')
+        return np.abs(self.coef_[0])
 
     def summary(self) -> pd.DataFrame:
         """获取回归结果的统计摘要.

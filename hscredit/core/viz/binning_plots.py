@@ -928,28 +928,57 @@ def psi_plot(expected, actual, labels=None, desc="", save=None, colors=None,
             return False
         if isinstance(data, pd.Series):
             return False
-        # Pre-binned bin tables have '分箱' + '样本总数'; psi_table output has '分箱' without '样本总数'
-        return "分箱" in data.columns and "样本总数" in data.columns
+        # 分箱表: 有 '分箱' + '样本总数' (分箱统计表)
+        if "分箱" in data.columns and "样本总数" in data.columns:
+            return True
+        # psi_table 输出: 有 '分箱' + '期望样本数' + '实际样本数'
+        if "分箱" in data.columns and "期望样本数" in data.columns and "实际样本数" in data.columns:
+            return True
+        return False
 
     exp_series = _to_series(expected)
     act_series = _to_series(actual)
 
     if _has_bins(expected) and _has_bins(actual):
-        # 路径A：传入分箱表 → 分别重命名再 merge
-        exp_df = expected if isinstance(expected, pd.DataFrame) else pd.DataFrame({"分箱": expected.index, expected.name or 0: expected})
-        act_df = actual if isinstance(actual, pd.DataFrame) else pd.DataFrame({"分箱": actual.index, actual.name or 0: actual})
+        # 检查是否为 psi_table 输出格式（有 '期望样本数' 列）
+        is_psi_table_fmt = (
+            "期望样本数" in expected.columns and "实际样本数" in expected.columns and
+            "期望样本数" in actual.columns and "实际样本数" in actual.columns
+        )
 
-        exp_renamed = exp_df.rename(columns={
-            "样本总数": f"{labels[0]}样本数",
-            "样本占比": f"{labels[0]}样本占比",
-            "坏样本率": f"{labels[0]}坏样本率",
-        })
-        act_renamed = act_df.rename(columns={
-            "样本总数": f"{labels[1]}样本数",
-            "样本占比": f"{labels[1]}样本占比",
-            "坏样本率": f"{labels[1]}坏样本率",
-        })
-        df_psi = exp_renamed.merge(act_renamed, on="分箱", how="outer").replace(np.nan, 0)
+        if is_psi_table_fmt:
+            # psi_table 格式：重命名期望/实际列，再 merge
+            exp_renamed = expected.rename(columns={
+                "期望样本数": f"{labels[0]}样本数",
+                "期望占比": f"{labels[0]}样本占比",
+            })
+            act_renamed = actual.rename(columns={
+                "实际样本数": f"{labels[1]}样本数",
+                "实际占比": f"{labels[1]}样本占比",
+            })
+            cols_to_keep = ["分箱", f"{labels[0]}样本数", f"{labels[0]}样本占比",
+                           f"{labels[1]}样本数", f"{labels[1]}样本占比"]
+            exp_cols = {c: c for c in cols_to_keep if c in exp_renamed.columns}
+            act_cols = {c: c for c in cols_to_keep if c in act_renamed.columns}
+            df_psi = exp_renamed[list(exp_cols.values())].merge(
+                act_renamed[list(act_cols.values())], on="分箱", how="outer"
+            ).replace(np.nan, 0)
+            # psi_table 输出没有坏样本率列，设为0避免绘图报错
+            for lbl in labels:
+                df_psi[f"{lbl}坏样本率"] = 0.0
+        else:
+            # 分箱表格式：分别重命名 '样本总数' + '样本占比' + '坏样本率' 列
+            exp_renamed = expected.rename(columns={
+                "样本总数": f"{labels[0]}样本数",
+                "样本占比": f"{labels[0]}样本占比",
+                "坏样本率": f"{labels[0]}坏样本率",
+            })
+            act_renamed = actual.rename(columns={
+                "样本总数": f"{labels[1]}样本数",
+                "样本占比": f"{labels[1]}样本占比",
+                "坏样本率": f"{labels[1]}坏样本率",
+            })
+            df_psi = exp_renamed.merge(act_renamed, on="分箱", how="outer").replace(np.nan, 0)
         df_psi[f"{labels[1]}% - {labels[0]}%"] = df_psi[f"{labels[1]}样本占比"] - df_psi[f"{labels[0]}样本占比"]
         df_psi[f"ln({labels[1]}% / {labels[0]}%)"] = np.log(
             df_psi[f"{labels[1]}样本占比"] / df_psi[f"{labels[0]}样本占比"]

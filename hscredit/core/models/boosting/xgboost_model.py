@@ -436,6 +436,17 @@ class XGBoostRiskModel(BaseRiskModel):
 
         return importance_series
 
+    @property
+    def feature_importances_(self) -> np.ndarray:
+        """特征重要性属性 (兼容sklearn风格).
+
+        直接在包装类上暴露重要性，兼容sklearn RFE/SFS等组件的 importance_getter。
+        """
+        check_is_fitted(self, '_is_fitted')
+        if self._feature_importances is None:
+            self._feature_importances = self.get_feature_importances()
+        return self._feature_importances.values
+
     def get_booster(self) -> 'xgb.Booster':
         """获取底层XGBoost booster对象.
 
