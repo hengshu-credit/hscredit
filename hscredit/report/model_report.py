@@ -345,18 +345,26 @@ class QuickModelReport:
     # ---------- 数据集管理 ----------
 
     def _add_dataset(self, key: str, label: str, X: pd.DataFrame, y: pd.Series):
+        # scorecardpipeline 风格：X 可能包含 target 列，预测前需移除
+        X_for_pred = X.drop(columns=[self._target_name], errors='ignore')
         self._datasets[key] = ReportDataset(
             name=key,
             label=label,
             X=X,
             y=y,
-            y_proba=_proba_pos(self.model, X),
-            score=_score_from_model(self.model, X),
+            y_proba=_proba_pos(self.model, X_for_pred),
+            score=_score_from_model(self.model, X_for_pred),
         )
 
     def add_dataset(self, key: str, label: str, X, y, feature_names: Optional[List[str]] = None):
         """添加额外数据集（如 OOT）用于报告."""
         X = _ensure_dataframe(X, feature_names=feature_names or self.feature_names)
+        # scorecardpipeline 风格：y=None 时从 X 中提取目标列
+        if y is None:
+            if self._target_name in X.columns:
+                y = X[self._target_name].copy()
+            else:
+                raise ValueError(f"y 为 None 且 X 中不包含目标列 '{self._target_name}'")
         y = _ensure_series(y, name=self._target_name)
         self._add_dataset(key, label, X, y)
 
@@ -1345,7 +1353,7 @@ class QuickModelReport:
             end_row, _ = dataframe2excel(psi_matrix, writer, sheet_name=ws, start_row=end_row + 1, index=True)
 
             # 评分PSI参考阈值说明
-            end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value="PSI参考标准：<0.1 稳定 | 0.1~0.25 略变 | >0.25 不稳定", style="middle", end_space=(end_row, max_col), align={"horizontal": "left"})
+            end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value="PSI参考标准：<0.1 稳定 | 0.1~0.25 略变 | >0.25 不稳定", style="middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
             stab_section += 1
 
         # 4.3 评分漂移分析（以训练集为基准）
