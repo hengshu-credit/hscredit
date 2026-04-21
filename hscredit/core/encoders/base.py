@@ -147,8 +147,19 @@ class BaseEncoder(BaseEstimator, TransformerMixin, ABC):
             raise ValueError("编码器尚未拟合，请先调用fit()")
 
         X_transformed = X.copy()
-
         X_transformed = self._transform(X_transformed, y)
+
+        # scorecardpipeline 风格: 如果输入的 X 中包含 target 列，透传到输出
+        target_col = getattr(self, 'target', None)
+        if (
+            target_col is not None
+            and isinstance(X_transformed, pd.DataFrame)
+            and target_col not in X_transformed.columns
+            and target_col in X.columns
+        ):
+            X_transformed = pd.concat(
+                [X_transformed, X[[target_col]].reset_index(drop=True)], axis=1
+            )
 
         if not self.return_df:
             # 处理稀疏矩阵的情况
