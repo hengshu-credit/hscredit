@@ -292,7 +292,7 @@ def bin_plot(
     target: Optional[Union[str, pd.Series, np.ndarray]] = None,
     feature: Optional[str] = None,
     desc: str = "",
-    figsize: tuple = (10, 6),
+    figsize: tuple = (12, 7),
     colors: Optional[List[str]] = None,
     save: Optional[str] = None,
     anchor: float = 0.935,

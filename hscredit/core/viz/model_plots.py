@@ -192,7 +192,6 @@ def plot_weights(summary, save=None, figsize=(15, 8), fontsize=14, colors=None, 
                 os.makedirs(save_dir, exist_ok=True)
             
             fig.savefig(save, dpi=240, format="png", bbox_inches="tight")
-            print(f"图片已保存至: {save}")
         
         return fig
     else:

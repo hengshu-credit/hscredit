@@ -762,7 +762,7 @@ class QuickModelReport:
                 bt = self.get_bin_table(ds_key, method=bin_method, max_n_bins=n_bins, margins=True)
                 bd = bt.iloc[:-1].reset_index(drop=True) if len(bt) > 1 else bt
                 p = str(output_dir / f"bin_{ds_key}.png")
-                bin_plot(bd, desc="模型评分", ending=f" {tag}", save=p, figsize=(8, 5))
+                bin_plot(bd, desc="模型评分", ending=f" {tag}", save=p, figsize=(12, 7))
                 _safe_close_figs()
                 model_figs.append(p)
             except Exception:
@@ -770,7 +770,7 @@ class QuickModelReport:
 
             try:
                 p = str(output_dir / f"ks_{ds_key}.png")
-                ks_plot(ds.score, ds.y, title=f"{tag} KS曲线", save=p, figsize=(8, 5))
+                ks_plot(ds.score, ds.y, title=f"{tag} KS曲线", save=p, figsize=(12, 7))
                 _safe_close_figs()
                 model_figs.append(p)
             except Exception:
@@ -778,7 +778,7 @@ class QuickModelReport:
 
             try:
                 p = str(output_dir / f"lift_{ds_key}.png")
-                lift_plot(ds.y, ds.y_proba, n_bins=20, title=f"{tag} LIFT曲线", save=p, figsize=(8, 5))
+                lift_plot(ds.y, ds.y_proba, n_bins=20, title=f"{tag} LIFT曲线", save=p, figsize=(12, 7))
                 _safe_close_figs()
                 model_figs.append(p)
             except Exception:
@@ -809,7 +809,7 @@ class QuickModelReport:
                     ft = self.get_feature_bin_table(feat, ds_key, max_n_bins=n_bins, method=bin_method, margins=True)
                     fd = ft.iloc[:-1].reset_index(drop=True) if len(ft) > 1 else ft
                     p = str(output_dir / f"bin_{feat}_{ds_key}.png")
-                    bin_plot(fd, desc=feat, ending=f" {ds.label}", save=p, figsize=(8, 5))
+                    bin_plot(fd, desc=feat, ending=f" {ds.label}", save=p, figsize=(12, 7))
                     _safe_close_figs()
                     bin_figs.append(p)
                 except Exception:
@@ -836,7 +836,7 @@ class QuickModelReport:
                     if y_f.nunique() < 2:
                         continue
                     p = str(output_dir / f"ks_{feat}_{ds_key}.png")
-                    ks_plot(col, y_f, title=f"{ds.label} {feat}", save=p, figsize=(8, 5))
+                    ks_plot(col, y_f, title=f"{ds.label} {feat}", save=p, figsize=(12, 7))
                     _safe_close_figs()
                     ks_figs.append(p)
                 except Exception:
@@ -998,10 +998,10 @@ class QuickModelReport:
 
         _, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value="版本号:", style="middle", end_space=(end_row + 1, 2))
         end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 3), value="V1.0", style="middle", end_space=(end_row + 1, 4))
-        _, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value="创建日期:", style="middle", end_space=(end_row + 2, 2))
-        end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 3), value=date.today().strftime("%Y-%m-%d"), style="middle", end_space=(end_row + 2, 4))
-        _, _ = writer.insert_value2sheet(ws, (end_row + 3, 2), value="模型名称:", style="middle", end_space=(end_row + 3, 2))
-        end_row, _ = writer.insert_value2sheet(ws, (end_row + 3, 3), value=model_name, style="middle", end_space=(end_row + 3, 4))
+        _, _ = writer.insert_value2sheet(ws, (end_row, 2), value="创建日期:", style="middle", end_space=(end_row, 2))
+        end_row, _ = writer.insert_value2sheet(ws, (end_row, 3), value=date.today().strftime("%Y-%m-%d"), style="middle", end_space=(end_row, 4))
+        _, _ = writer.insert_value2sheet(ws, (end_row, 2), value="模型名称:", style="middle", end_space=(end_row, 2))
+        end_row, _ = writer.insert_value2sheet(ws, (end_row, 3), value=model_name, style="middle", end_space=(end_row, 4))
 
         # ============================================================
         # 1-基本信息 Sheet
@@ -1077,11 +1077,6 @@ class QuickModelReport:
                             title=f"{ds.label} 分组分布", start_row=end_row + 1,
                             percent_cols=["坏样本率"],
                         )
-
-        try:
-            writer.set_freeze_panes(ws, (5, 4))
-        except Exception:
-            pass
 
         # ============================================================
         # 2-模型性能 Sheet
@@ -1160,39 +1155,47 @@ class QuickModelReport:
             pct_cols = [c for c in self._PERCENT_COLS if c in order_table.columns]
             cond_cols = [c for c in self._CONDITION_COLS if c in order_table.columns]
 
+            # 先插入图表（同一行、左右排列，避免 figures 参数导致标题与分箱表之间出现图）
+            img_start_row = end_row + 1
+            current_col = 2
+            max_img_end_row = img_start_row
+            for fig in figs:
+                try:
+                    img_end_row, new_col = writer.insert_pic2sheet(ws, fig, (img_start_row, current_col))
+                    current_col = new_col
+                    max_img_end_row = max(max_img_end_row, img_end_row)
+                except Exception:
+                    pass
+            if figs:
+                end_row = max_img_end_row  # 跳过图片占用的所有行，避免重叠
+
             if amount_col:
-                table_start = end_row + 1
-                end_row1, end_col1 = dataframe2excel(
+                # 订单口径和金额口径左右并排（参考3-入模变量分析的分箱表布局）
+                order_start_row = end_row + 1
+                order_end_row, order_end_col = dataframe2excel(
                     order_table, writer, sheet_name=ws,
-                    title=f"{tag} 订单口径", start_row=table_start, start_col=2,
+                    title=f"{tag} 订单口径", start_row=order_start_row, start_col=2,
                     percent_cols=pct_cols, condition_cols=cond_cols, condition_color="F76E6C",
-                    figures=figs,
                 )
                 try:
                     amount_table = self.get_bin_table(ds_key, method=bin_method, max_n_bins=n_bins, amount_col=amount_col, margins=True)
                     amt_pct = [c for c in self._PERCENT_COLS if c in amount_table.columns]
                     amt_cond = [c for c in self._CONDITION_COLS if c in amount_table.columns]
-                    end_row2, _ = dataframe2excel(
+                    _, _ = dataframe2excel(
                         amount_table, writer, sheet_name=ws,
-                        title=f"{tag} 金额口径", start_row=table_start, start_col=end_col1 + 2,
+                        title=f"{tag} 金额口径", start_row=order_start_row, start_col=order_end_col + 2,
                         percent_cols=amt_pct, condition_cols=amt_cond, condition_color="F76E6C",
                     )
-                    end_row = max(end_row1, end_row2)
                 except Exception:
-                    end_row = end_row1
+                    pass
+                end_row = order_end_row  # 更新 end_row 为两个表中较靠下的位置
             else:
                 end_row, _ = dataframe2excel(
                     order_table, writer, sheet_name=ws,
                     title=f"{tag} 评分有效性", start_row=end_row + 1,
                     percent_cols=pct_cols, condition_cols=cond_cols, condition_color="F76E6C",
-                    figures=figs,
                 )
             section_idx += 1
-
-        try:
-            writer.set_freeze_panes(ws, (5, 4))
-        except Exception:
-            pass
 
         # ============================================================
         # ============================================================
@@ -1236,13 +1239,24 @@ class QuickModelReport:
         for i, feat in enumerate(feature_list):
             end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value=f"3.{i + 1}、{feat} 有效性分析", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
 
-            # 插入图表：分箱图(train, test) + 分布图(train, test)
+            # 插入图表（同一行、左右排列，避免 figures 参数导致标题与分箱表之间出现图）
             bin_figs = plot_paths.get(f"feat_bin_{feat}", [])
             hist_figs = plot_paths.get(f"feat_hist_{feat}", [])
             all_figs = bin_figs + hist_figs
+            img_start_row = end_row + 1
+            current_col = 2
+            max_img_end_row = img_start_row
+            for fig in all_figs:
+                try:
+                    img_end_row, new_col = writer.insert_pic2sheet(ws, fig, (img_start_row, current_col))
+                    current_col = new_col
+                    max_img_end_row = max(max_img_end_row, img_end_row)
+                except Exception:
+                    pass
+            if all_figs:
+                end_row = max_img_end_row  # 跳过图片占用的所有行，避免重叠
 
             # 各数据集分箱表（订单口径 + 金额口径）
-            first_ds = True
             for ds_key, ds in self._datasets.items():
                 try:
                     ft = self.get_feature_bin_table(feat, ds_key, max_n_bins=n_bins, method=bin_method, margins=True)
@@ -1255,18 +1269,16 @@ class QuickModelReport:
                             ft, writer, sheet_name=ws,
                             title=f"{ds.label} 订单口径", start_row=table_start, start_col=2,
                             percent_cols=ft_pct, condition_cols=ft_cond, condition_color="F76E6C",
-                            figures=all_figs if first_ds else [],
                         )
                         try:
                             ft_amt = self.get_feature_bin_table(feat, ds_key, max_n_bins=n_bins, method=bin_method, margins=True, amount_col=amount_col)
                             amt_pct = [c for c in self._PERCENT_COLS if c in ft_amt.columns]
                             amt_cond = [c for c in self._CONDITION_COLS if c in ft_amt.columns]
-                            end_row2, _ = dataframe2excel(
+                            end_row, _ = dataframe2excel(
                                 ft_amt, writer, sheet_name=ws,
                                 title=f"{ds.label} 金额口径", start_row=table_start, start_col=end_col1 + 2,
                                 percent_cols=amt_pct, condition_cols=amt_cond, condition_color="F76E6C",
                             )
-                            end_row = max(end_row1, end_row2)
                         except Exception:
                             end_row = end_row1
                     else:
@@ -1274,9 +1286,7 @@ class QuickModelReport:
                             ft, writer, sheet_name=ws,
                             title=f"{ds.label}", start_row=end_row + 1,
                             percent_cols=ft_pct, condition_cols=ft_cond, condition_color="F76E6C",
-                            figures=all_figs if first_ds else [],
                         )
-                    first_ds = False
                 except Exception:
                     pass
 
@@ -1417,11 +1427,6 @@ class QuickModelReport:
                 )
             stab_section += 1
 
-        try:
-            writer.set_freeze_panes(ws, (5, 4))
-        except Exception:
-            pass
-
         # ============================================================
         # 5-模型参数 Sheet
         # ============================================================
@@ -1511,11 +1516,6 @@ class QuickModelReport:
                 if isinstance(score_psi_df, pd.DataFrame) and not score_psi_df.empty:
                     end_row, _ = dataframe2excel(score_psi_df, writer, sheet_name=ws, start_row=end_row + 1, title="评分PSI")
 
-        try:
-            writer.set_freeze_panes(ws, (5, 4))
-        except Exception:
-            pass
-
         # ============================================================
         # 6-模型部署需求 Sheet
         # ============================================================
@@ -1552,11 +1552,6 @@ class QuickModelReport:
             test_cases.insert(0, "序号", range(1, sample_n + 1))
             test_cases["模型分数"] = train_ds.score[:sample_n]
             end_row, _ = dataframe2excel(test_cases, writer, sheet_name=ws, start_row=end_row + 1)
-        except Exception:
-            pass
-
-        try:
-            writer.set_freeze_panes(ws, (5, 4))
         except Exception:
             pass
 

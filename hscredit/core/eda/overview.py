@@ -530,95 +530,105 @@ def feature_summary(
     # 特征重要性（传入已训练模型）
     if models is not None:
         for model_name, model in models.items():
-            importance_values = {}
-            
-            # 获取特征重要性
-            if hasattr(model, 'feature_importances_'):
-                importances = model.feature_importances_
-            elif hasattr(model, 'get_feature_importance'):
-                importances = model.get_feature_importance()
-            elif hasattr(model, 'feature_importance'):
-                importances = model.feature_importance()
-            else:
-                continue
-            
-            # 获取特征名
-            if hasattr(model, 'feature_names_in_'):
-                model_features = model.feature_names_in_
-            elif hasattr(model, 'feature_name_'):
-                model_features = model.feature_name_
-            elif hasattr(model, 'feature_names'):
-                model_features = model.feature_names
-            else:
-                # 假设顺序与传入features一致
-                model_features = features[:len(importances)]
-            
-            # 构建映射
-            for i, feat in enumerate(model_features):
-                if i < len(importances) and feat in features:
-                    importance_values[feat] = round(importances[i], 6)
-            
-            results_df[f'{model_name}重要性'] = pd.Series(importance_values)
+            # 统一使用 BaseRiskModel 的 get_feature_importances() 方法
+            if hasattr(model, 'get_feature_importances'):
+                try:
+                    importances = model.get_feature_importances()
+                    if isinstance(importances, pd.Series):
+                        # Series索引为特征名，值为重要性
+                        results_df[f'{model_name}重要性'] = importances.reindex(features).round(6)
+                except Exception:
+                    pass
     
-    # 自动训练模型获取特征重要性
+    # 自动训练模型获取特征重要性（使用hscredit统一封装模型）
     if model_type is not None and y_series is not None:
         try:
-            # 准备数据
+            # 过滤有效特征：存在于df中、且有非空值
             valid_features = [f for f in features if f in df.columns and df[f].notna().sum() > 0]
-            X_train = df[valid_features].fillna(df[valid_features].median())
-            
+
+            # 只保留数值型特征（模型无法处理object/datetime等类型）
+            numeric_features = [
+                f for f in valid_features
+                if pd.api.types.is_numeric_dtype(df[f])
+            ]
+
+            if len(numeric_features) == 0:
+                raise ValueError("没有数值型特征可用于训练模型")
+
+            X_train = df[numeric_features].fillna(df[numeric_features].median())
+
             # 默认参数
             default_params = {'random_state': random_state}
             if model_params:
                 default_params.update(model_params)
-            
-            # 根据模型类型导入并训练
+
+            # 根据模型类型使用hscredit统一封装的模型类
+            model_class = None
             if model_type == 'xgboost':
                 try:
-                    from xgboost import XGBClassifier
-                    model = XGBClassifier(**default_params)
-                    model.fit(X_train, y_series)
-                    importances = model.feature_importances_
+                    from ..models import XGBoostRiskModel
+                    model_class = XGBoostRiskModel
                 except ImportError:
-                    importances = None
+                    pass
             elif model_type == 'lightgbm':
                 try:
-                    from lightgbm import LGBMClassifier
-                    model = LGBMClassifier(**default_params)
-                    model.fit(X_train, y_series)
-                    importances = model.feature_importances_
+                    from ..models import LightGBMRiskModel
+                    model_class = LightGBMRiskModel
                 except ImportError:
-                    importances = None
+                    pass
             elif model_type == 'catboost':
                 try:
-                    from catboost import CatBoostClassifier
-                    model = CatBoostClassifier(**default_params, verbose=False)
-                    model.fit(X_train, y_series)
-                    importances = model.get_feature_importance()
+                    from ..models import CatBoostRiskModel
+                    model_class = CatBoostRiskModel
                 except ImportError:
-                    importances = None
-            elif model_type == 'randomforest':
-                from sklearn.ensemble import RandomForestClassifier
-                model = RandomForestClassifier(**default_params)
-                model.fit(X_train, y_series)
-                importances = model.feature_importances_
-            else:
-                importances = None
-            
-            # 记录特征重要性
-            if importances is not None:
-                importance_values = {}
-                for i, feat in enumerate(valid_features):
-                    if i < len(importances):
-                        importance_values[feat] = round(importances[i], 6)
-                results_df[f'{model_type}重要性'] = pd.Series(importance_values)
-        except Exception as e:
+                    pass
+            elif model_type in ('randomforest', 'rf'):
+                try:
+                    from ..models import RandomForestRiskModel
+                    model_class = RandomForestRiskModel
+                except ImportError:
+                    pass
+            elif model_type == 'logistic':
+                try:
+                    from ..models import LogisticRegression
+                    model_class = LogisticRegression
+                except ImportError:
+                    pass
+
+            # 使用统一接口训练并获取特征重要性
+            if model_class is None:
+                raise ImportError(f"无法导入模型类: {model_type}")
+
+            model = model_class(**default_params)
+            model.fit(X_train, y_series)
+            importances = model.get_feature_importances()
+            if isinstance(importances, pd.Series):
+                results_df[f'{model_type}重要性'] = importances.reindex(numeric_features).round(6)
+        except Exception:
             # 训练失败不中断
             pass
     
     # 重置索引，使特征名成为列
     results_df = results_df.reset_index()
-    
+
+    # 将特征效果指标（特征重要性、KS、IV、PSI、趋势）调整到靠前位置
+    # 基础统计列之后的合理位置：放在缺失率之后，唯一值数之前
+    base_cols = ['特征名', '字段类型', '样本数', '缺失数', '缺失率']
+    effect_cols = [c for c in results_df.columns if c not in base_cols]
+    # 特征重要性列（包含"重要性"字样）放最前，KS/IV/趋势/PSI紧随其后，其他放最后
+    importance_cols = []
+    metric_cols = []
+    other_effect = []
+    for c in effect_cols:
+        if '重要性' in c:
+            importance_cols.append(c)
+        elif c in ('KS', 'IV', 'PSI', '趋势'):
+            metric_cols.append(c)
+        else:
+            other_effect.append(c)
+    # 保持原有顺序：特征重要性 -> KS/IV/PSI/趋势 -> 其他
+    results_df = results_df[base_cols + importance_cols + metric_cols + other_effect]
+
     return results_df
 
 
