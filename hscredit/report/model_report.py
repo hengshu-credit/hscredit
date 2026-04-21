@@ -124,12 +124,17 @@ class QuickModelReport:
         feature_names: Optional[List[str]] = None,
         target: Optional[Union[str, Dict]] = None,
         datasets: Optional[Union[List, Dict]] = None,
+        overdue: Optional[Union[str, List[str]]] = None,
+        dpds: Optional[Union[int, float, List[Union[int, float]]]] = None,
     ):
         """初始化模型报告.
 
         支持两种调用方式：
         1. 兼容 API：传入 X_train/y_train/X_test/y_test（推荐）
-           - scorecard pipeline 风格：target='target' 或 target={'overdue': 'col', 'dpds': 'col'}
+           - sklearn 风格：target='target'
+           - scorecardpipeline 风格：target='target' 且 X 中包含目标列
+           - overdue/dpds 风格：target={'overdue': col, 'dpds': threshold} 或
+                               传入单独的 overdue/dpds 参数
         2. 新 API（pipeline 风格）：传入 datasets 参数
            - dict: {'train': (X, y), 'test': (X, y), 'oot': (X, y)}
            - list: [(X, y), (X, y)] 自动命名为训练集、测试集、OOT集...
@@ -144,10 +149,20 @@ class QuickModelReport:
         :param y_test: 测试集标签（兼容旧 API）
         :param feature_names: 特征名称列表
         :param target: 目标列配置，str 为列名，dict 为 {'overdue': col, 'dpds': col, 'threshold': days}
+        :param overdue: 逾期列名列名（str）或多个列名（List[str]），与 dpds 配合使用构建标签
+        :param dpds: 逾期天数阈值（int/float）或多个阈值（List），与 overdue 配合使用
         """
         self.model = model
-        self._target_cfg = target
         self._feature_names = feature_names
+
+        # overdue/dpds 优先，构造 target dict
+        if overdue is not None and dpds is not None:
+            self._target_cfg: Optional[Union[str, Dict]] = {
+                "overdue": overdue,
+                "dpds": dpds,
+            }
+        else:
+            self._target_cfg = target
 
         # 构建数据集
         self._datasets: Dict[str, ReportDataset] = {}
@@ -177,7 +192,11 @@ class QuickModelReport:
         self._features_describe_cache: Optional[pd.DataFrame] = None
 
     def _resolve_target_name(self, target) -> str:
-        """解析目标配置，返回标签列名."""
+        """解析目标配置，返回标签列名.
+
+        overdue/dpds 作为单独参数传入时，target 参数将被忽略，
+        标签列名默认为 'target'。
+        """
         if isinstance(target, str):
             return target
         if isinstance(target, dict) and "overdue" in target:
@@ -185,11 +204,27 @@ class QuickModelReport:
         return "target"
 
     def _build_y(self, X: pd.DataFrame, target_cfg) -> pd.Series:
-        """根据 target 配置从 X 构建 y 标签."""
+        """根据 target 配置从 X 构建 y 标签.
+
+        支持三种配置：
+        - None: 从 X 中查找 'target' 列
+        - str: 直接取 X[target] 作为标签
+        - dict: 联合构建标签
+            - 单逾期列:  target={'overdue': col, 'dpds': threshold} 或
+                        target={'overdue': col, 'dpds': [t1, t2, ...]}
+            - 多逾期列:  target={'overdue': [col1, col2], 'dpds': [t1, t2, ...]}
+                          每列 × 每阈值生成指标，任一为真则 label=1
+
+        注：overdue/dpds 也可通过 __init__ 单独参数传入，内部会合并为 dict。
+        """
         if target_cfg is None:
-            if "target" in X.columns:
-                return _ensure_series(X["target"])
-            raise ValueError("未找到目标列 'target'，请通过 target 参数指定标签列")
+            for col in ("target", "label", "y", "flag", "overdue"):
+                if col in X.columns:
+                    return _ensure_series(X[col], name="target")
+            raise ValueError(
+                "未找到目标列（target），请通过 target 参数指定标签列名，"
+                "或传入 dict={'overdue': col, 'dpds': threshold} 联合构建"
+            )
 
         if isinstance(target_cfg, str):
             if target_cfg in X.columns:
@@ -197,23 +232,52 @@ class QuickModelReport:
             raise ValueError(f"目标列 '{target_cfg}' 不存在于数据中")
 
         if isinstance(target_cfg, dict) and "overdue" in target_cfg:
-            overdue_col = target_cfg["overdue"]
-            dpds_col = target_cfg.get("dpds")
-            threshold = target_cfg.get("threshold", 3)
+            overdue_cols = target_cfg["overdue"]
+            dpds_vals = target_cfg.get("dpds")
+            threshold = target_cfg.get("threshold")
             label_name = target_cfg.get("label", "target")
 
-            if overdue_col not in X.columns:
-                raise ValueError(f"逾期列 '{overdue_col}' 不存在")
-            if dpds_col and dpds_col not in X.columns:
-                raise ValueError(f"逾期天数列 '{dpds_col}' 不存在")
+            # 统一为列表
+            if isinstance(overdue_cols, str):
+                overdue_cols = [overdue_cols]
 
-            if dpds_col:
-                y = ((X[overdue_col] == 1) & (X[dpds_col] > threshold)).astype(int)
+            # 支持旧格式 threshold 键，或新格式 dpds 作为阈值
+            # 旧格式: {'overdue': col, 'dpds': col, 'threshold': 3}
+            # 新格式: {'overdue': col, 'dpds': [15, 7, 0]}
+            if threshold is not None:
+                # 旧格式：dpds 为列名，threshold 为阈值
+                dpds_col = dpds_vals if isinstance(dpds_vals, str) else None
+                thresholds = [threshold]
+            elif dpds_vals is not None:
+                if isinstance(dpds_vals, (int, float)):
+                    dpds_vals = [dpds_vals]
+                thresholds = dpds_vals
+                dpds_col = None
             else:
-                y = X[overdue_col].astype(int)
+                # 只有 overdue，无 dpds/threshold：overdue 列值 > 0 → y=1
+                thresholds = [0]
+                dpds_col = None
+
+            # 验证列名
+            for col in overdue_cols:
+                if col not in X.columns:
+                    raise ValueError(f"逾期列 '{col}' 不存在，请检查列名")
+
+            # 每列 × 每阈值，生成全指标，任一为真则 y=1
+            indicators = pd.DataFrame(index=X.index)
+            for col in overdue_cols:
+                for t in thresholds:
+                    if dpds_col is not None and dpds_col in X.columns:
+                        # dpds 列 > threshold
+                        indicators[f"{col}>{t}"] = X[dpds_col] > t
+                    else:
+                        # col 列 > threshold
+                        indicators[f"{col}>{t}"] = X[col] > t
+
+            y = indicators.any(axis=1).astype(int)
             return _ensure_series(y, name=label_name)
 
-        return _ensure_series(X.get("target", pd.Series([0] * len(X), index=X.index) if hasattr(X, 'index') else pd.Series([0] * len(X))), name="target")
+        raise ValueError(f"target 参数格式错误：{target_cfg}")
 
     def _init_from_datasets(self, datasets):
         """从 datasets 初始化数据集."""
@@ -226,10 +290,16 @@ class QuickModelReport:
             for key, value in datasets.items():
                 if not isinstance(value, (tuple, list)) or len(value) < 2:
                     raise ValueError(f"数据集 '{key}' 格式错误，应为 (X, y) 元组")
-                X, y = value[0], value[1]
+                X_raw, y_raw = value[0], value[1]
                 label = default_labels.get(key, key)
-                X_df = _ensure_dataframe(X, feature_names=self._feature_names)
-                y_s = _ensure_series(y, name=self._target_name)
+                X_df = _ensure_dataframe(X_raw, feature_names=self._feature_names)
+
+                # y 为 None 时，根据 target 配置从 X 推导标签
+                if y_raw is None:
+                    y_s = self._build_y(X_df, self._target_cfg)
+                else:
+                    y_s = _ensure_series(y_raw, name=self._target_name)
+
                 self._add_dataset(key, label, X_df, y_s)
                 self._datasets_info[key] = label
 
@@ -237,24 +307,38 @@ class QuickModelReport:
             # [(X, y), (X, y), ...] - 自动命名
             default_names = ["train", "test", "oot", "val", "dev"]
             default_labels = ["训练集", "测试集", "OOT集", "验证集", "开发集"]
-            for i, (X, y) in enumerate(datasets):
+            for i, (X_raw, y_raw) in enumerate(datasets):
                 key = default_names[i] if i < len(default_names) else f"dataset_{i}"
                 label = default_labels[i] if i < len(default_labels) else f"数据集{i+1}"
-                X_df = _ensure_dataframe(X, feature_names=self._feature_names)
-                y_s = _ensure_series(y, name=self._target_name)
+                X_df = _ensure_dataframe(X_raw, feature_names=self._feature_names)
+
+                if y_raw is None:
+                    y_s = self._build_y(X_df, self._target_cfg)
+                else:
+                    y_s = _ensure_series(y_raw, name=self._target_name)
+
                 self._add_dataset(key, label, X_df, y_s)
                 self._datasets_info[key] = label
 
     def _init_from_xy(self, X_train, y_train, X_test, y_test):
-        """从 X/y 参数初始化（兼容旧 API）."""
+        """从 X/y 参数初始化（兼容旧 API 及 scorecardpipeline 风格）."""
         X_train_df = _ensure_dataframe(X_train, feature_names=self._feature_names)
-        y_train_s = _ensure_series(y_train, name=self._target_name)
+
+        # 支持 y_train 为 None 的 scorecardpipeline 风格（从 X 中推导标签）
+        if y_train is None:
+            y_train_s = self._build_y(X_train_df, self._target_cfg)
+        else:
+            y_train_s = _ensure_series(y_train, name=self._target_name)
+
         self._add_dataset("train", "训练集", X_train_df, y_train_s)
         self._datasets_info["train"] = "训练集"
 
-        if X_test is not None and y_test is not None:
+        if X_test is not None:
             X_test_df = _ensure_dataframe(X_test, feature_names=list(X_train_df.columns))
-            y_test_s = _ensure_series(y_test, name=self._target_name)
+            if y_test is None:
+                y_test_s = self._build_y(X_test_df, self._target_cfg)
+            else:
+                y_test_s = _ensure_series(y_test, name=self._target_name)
             self._add_dataset("test", "测试集", X_test_df, y_test_s)
             self._datasets_info["test"] = "测试集"
 
@@ -480,7 +564,7 @@ class QuickModelReport:
             table = table[0]
         return table
 
-    # ---------- 7. 新增辅助方法 ----------
+    # ---------- 8. 图表导出 ----------
 
     def _get_top_n_lift_table(
         self,
@@ -1209,6 +1293,128 @@ class QuickModelReport:
             pass
 
         # ============================================================
+        # 4-稳定性分析 Sheet
+        # ============================================================
+        ws = writer.get_sheet_by_name("4-稳定性分析")
+        end_row, _ = writer.insert_value2sheet(ws, (2, 2), value="四、模型稳定性分析", style="header_middle", end_space=(2, max_col))
+        try:
+            writer.insert_hyperlink2sheet(ws, (2, 2), hyperlink="#'目录'!B2")
+        except Exception:
+            pass
+
+        stab_section = 1
+
+        # 4.1 评分分布统计
+        end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value=f"{stab_section}、评分分布统计", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
+        score_dist_rows: List[Dict[str, Any]] = []
+        for ds_key, ds in self._datasets.items():
+            sc = ds.score
+            row: Dict[str, Any] = {"数据集": ds.label}
+            row["样本数"] = len(sc)
+            row["均值"] = float(np.nanmean(sc))
+            row["标准差"] = float(np.nanstd(sc))
+            row["最小值"] = float(np.nanmin(sc))
+            row["25%分位"] = float(np.nanpercentile(sc, 25))
+            row["中位数"] = float(np.nanpercentile(sc, 50))
+            row["75%分位"] = float(np.nanpercentile(sc, 75))
+            row["最大值"] = float(np.nanmax(sc))
+            score_dist_rows.append(row)
+        score_dist_df = pd.DataFrame(score_dist_rows)
+        end_row, _ = dataframe2excel(
+            score_dist_df, writer, sheet_name=ws, start_row=end_row + 1,
+        )
+        stab_section += 1
+
+        # 4.2 评分PSI矩阵（数据集两两对比）
+        if len(self._datasets) >= 2:
+            from ..core.metrics import psi as _psi
+
+            end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value=f"{stab_section}、评分PSI对比矩阵", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
+            ds_keys_list = list(self._datasets.keys())
+            labels = [self._datasets[k].label for k in ds_keys_list]
+            psi_matrix = pd.DataFrame(np.nan, index=labels, columns=labels)
+            for i, k1 in enumerate(ds_keys_list):
+                for j, k2 in enumerate(ds_keys_list):
+                    if i == j:
+                        psi_matrix.iloc[i, j] = 0.0
+                    else:
+                        try:
+                            psi_matrix.iloc[i, j] = _psi(self._datasets[k1].score, self._datasets[k2].score)
+                        except Exception:
+                            pass
+            end_row, _ = dataframe2excel(psi_matrix, writer, sheet_name=ws, start_row=end_row + 1, index=True)
+
+            # 评分PSI参考阈值说明
+            end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value="PSI参考标准：<0.1 稳定 | 0.1~0.25 略变 | >0.25 不稳定", style="middle", end_space=(end_row, max_col), align={"horizontal": "left"})
+            stab_section += 1
+
+        # 4.3 评分漂移分析（以训练集为基准）
+        if "train" in self._datasets and len(self._datasets) >= 2:
+            end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value=f"{stab_section}、评分漂移分析（vs 训练集）", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
+            drift_rows: List[Dict[str, Any]] = []
+            base_scores = self._datasets["train"].score
+            for ds_key, ds in self._datasets.items():
+                if ds_key == "train":
+                    continue
+                sc = ds.score
+                drift = {
+                    "数据集": ds.label,
+                    "vs": "训练集",
+                    "均值偏移": float(np.nanmean(sc) - np.nanmean(base_scores)),
+                    "均值偏移%": float((np.nanmean(sc) - np.nanmean(base_scores)) / (np.nanstd(base_scores) + 1e-9)),
+                    "中位数偏移": float(np.nanmedian(sc) - np.nanmedian(base_scores)),
+                    "好样本(评分>600)占比": float((sc > 600).sum() / len(sc)),
+                    "坏样本(评分<500)占比": float((sc < 500).sum() / len(sc)),
+                }
+                drift_rows.append(drift)
+            if drift_rows:
+                drift_df = pd.DataFrame(drift_rows)
+                pct_cols = [c for c in drift_df.columns if "%" in c or "占比" in c]
+                end_row, _ = dataframe2excel(
+                    drift_df, writer, sheet_name=ws, start_row=end_row + 1,
+                    percent_cols=pct_cols,
+                )
+            stab_section += 1
+
+        # 4.4 逐特征PSI稳定性表
+        if len(self._datasets) >= 2:
+            from ..core.metrics import psi as _psi_feat
+
+            end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value=f"{stab_section}、入模特征PSI稳定性", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
+            importance = self.get_feature_importance()
+            feat_list = importance.index.tolist() if not importance.empty else self.feature_names
+            psi_rows: List[Dict[str, Any]] = []
+            base_ds = self._datasets.get("train") or self._datasets[list(self._datasets.keys())[0]]
+            other_ds_keys = [k for k in self._datasets if k != "train"]
+            if not other_ds_keys:
+                other_ds_keys = [k for k in self._datasets if k != list(self._datasets.keys())[0]]
+
+            for feat in feat_list:
+                row: Dict[str, Any] = {"特征": feat}
+                has_psi = False
+                for dk in other_ds_keys:
+                    if dk in self._datasets and feat in self._datasets[dk].X.columns:
+                        try:
+                            psi_val = _psi_feat(base_ds.X[feat], self._datasets[dk].X[feat])
+                            row[f"PSI({self._datasets[dk].label})"] = psi_val
+                            has_psi = True
+                        except Exception:
+                            row[f"PSI({self._datasets[dk].label})"] = np.nan
+                if has_psi:
+                    psi_rows.append(row)
+            if psi_rows:
+                psi_feat_df = pd.DataFrame(psi_rows)
+                end_row, _ = dataframe2excel(
+                    psi_feat_df, writer, sheet_name=ws, start_row=end_row + 1,
+                )
+            stab_section += 1
+
+        try:
+            writer.set_freeze_panes(ws, (5, 4))
+        except Exception:
+            pass
+
+        # ============================================================
         # 5-模型参数 Sheet
         # ============================================================
         ws = writer.get_sheet_by_name("5-模型参数")
@@ -1377,6 +1583,8 @@ def auto_model_report(
     y_test=None,
     feature_names: Optional[List[str]] = None,
     target: Optional[Union[str, Dict]] = None,
+    overdue: Optional[Union[str, List[str]]] = None,
+    dpds: Optional[Union[int, float, List[Union[int, float]]]] = None,
     excel_path: Optional[str] = None,
     verbose: bool = True,
     n_bins: int = 10,
@@ -1401,6 +1609,14 @@ def auto_model_report(
        - list: [(X, y), (X, y), ...] 自动命名为训练集、测试集、OOT集...
     2. 兼容 API：传入 X_train/y_train/X_test/y_test
 
+    overdue/dpds 用法（scorecardpipeline 风格）：
+      overdue: 逾期列名列名（str）或多个列名（List[str]）
+      dpds: 逾期天数阈值（int/float）或多个阈值（List[int/float]）
+      示例：
+        auto_model_report(model, X_train=df, overdue='dpds', dpds=[15, 7, 0])
+        auto_model_report(model, X_train=df, overdue=['dpds_m1', 'dpds_m3'], dpds=[30, 15, 7, 0])
+      等价于传 target={'overdue': ..., 'dpds': ...}
+
     :param model: 训练好的模型（ScoreCard / BaseRiskModel / sklearn 等）
     :param datasets: 数据集字典/列表，字典键为数据集名称，值为 (X, y) 元组
     :param X_train: 训练集特征（兼容旧 API）
@@ -1409,6 +1625,8 @@ def auto_model_report(
     :param y_test: 测试集/OOT 标签（兼容旧 API）
     :param feature_names: 特征名称列表
     :param target: 目标列配置，str 为列名，dict 为 {'overdue': col, 'dpds': col, 'threshold': days}
+    :param overdue: 逾期列名列名（str）或多个列名（List[str]），与 dpds 配合使用构建标签
+    :param dpds: 逾期天数阈值（int/float）或多个阈值（List），与 overdue 配合使用
     :param excel_path: Excel 报告输出路径
     :param verbose: 是否打印控制台报告
     :param n_bins: 分箱数
@@ -1433,6 +1651,8 @@ def auto_model_report(
         y_test=y_test,
         feature_names=feature_names,
         target=target,
+        overdue=overdue,
+        dpds=dpds,
     )
 
     if verbose:
