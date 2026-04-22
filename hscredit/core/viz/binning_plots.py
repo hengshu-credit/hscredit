@@ -292,7 +292,7 @@ def bin_plot(
     target: Optional[Union[str, pd.Series, np.ndarray]] = None,
     feature: Optional[str] = None,
     desc: str = "",
-    figsize: tuple = (10, 6),
+    figsize: tuple = (12, 7),
     colors: Optional[List[str]] = None,
     save: Optional[str] = None,
     anchor: float = 0.935,
@@ -884,7 +884,7 @@ def hist_plot(score, y_true=None, figsize=(15, 10), bins=30, save=None,
         return ax
 
 
-def psi_plot(expected, actual, labels=None, desc="", save=None, colors=None,
+def psi_plot(expected, actual, y=None, labels=None, desc="", save=None, colors=None,
              figsize=(15, 8), anchor=0.94, width=0.35, result=False, plot=True,
              max_len=None, hatch=True, title=None, **kwargs):
     """
@@ -896,6 +896,8 @@ def psi_plot(expected, actual, labels=None, desc="", save=None, colors=None,
 
     :param expected: 期望分布（原始数据或分箱表）
     :param actual: 实际分布（原始数据或分箱表）
+    :param y: 目标变量（pd.Series），用于绘制坏样本率折线图。当传入原始数据时，
+        应与 expected/actual 长度一致，按相同分箱计算坏样本率。
     :param labels: 标签
     :param desc: 描述
     :param save: 保存路径
@@ -990,6 +992,35 @@ def psi_plot(expected, actual, labels=None, desc="", save=None, colors=None,
     else:
         # 路径B：传入原始分数 → 用 psi_table 计算一次（返回含期望/实际两套值的合并表）
         # 列: 分箱, 期望样本数, 实际样本数, 期望占比, 实际占比, PSI贡献
+
+        # 创建 binner 用于计算坏样本率（与 psi_table 内部使用相同的分箱）
+        from ..binning import OptimalBinning
+        combined = pd.concat([exp_series.rename('value'), act_series.rename('value')], ignore_index=True)
+        dummy_y = np.random.randint(0, 2, size=len(combined))
+        binner = OptimalBinning(method='quantile', max_n_bins=10, min_bin_size=0.01, verbose=False)
+        binner.fit(combined.to_frame(), dummy_y)
+
+        # 如果传入了 y，计算各分箱的坏样本率
+        if y is not None:
+            y_combined = pd.concat([pd.Series(y, name='y').reset_index(drop=True)], ignore_index=True)
+            exp_bins = binner.transform(exp_series.to_frame())['value'].values
+            act_bins = binner.transform(act_series.to_frame())['value'].values
+            # 用原始索引对应回 y（取前 len(exp_series) 个期望对应部分）
+            exp_y = y_combined.iloc[:len(exp_series)].values
+            act_y = y_combined.iloc[len(exp_series):len(exp_series) + len(act_series)].values
+
+            bad_exp = pd.Series(exp_bins).groupby(exp_bins).apply(
+                lambda idx: np.mean(exp_y[idx]) if len(idx) > 0 else 0.0
+            )
+            bad_act = pd.Series(act_bins).groupby(act_bins).apply(
+                lambda idx: np.mean(act_y[idx]) if len(idx) > 0 else 0.0
+            )
+            _bad_exp_map = bad_exp.to_dict()
+            _bad_act_map = bad_act.to_dict()
+        else:
+            _bad_exp_map = {}
+            _bad_act_map = {}
+
         df_psi = psi_table(exp_series, act_series, method='quantile', **kwargs)
         df_psi = df_psi.rename(columns={
             "期望样本数": f"{labels[0]}样本数",
@@ -998,9 +1029,14 @@ def psi_plot(expected, actual, labels=None, desc="", save=None, colors=None,
             "实际占比": f"{labels[1]}样本占比",
         })
         df_psi["分档PSI值"] = df_psi["PSI贡献"].fillna(0).replace([np.inf, -np.inf], 0)
-        # 坏样本率列不存在于 psi_table 输出，设 0 避免绘图时缺失
-        for lbl in labels:
-            df_psi[f"{lbl}坏样本率"] = 0.0
+        # 坏样本率：优先使用 y 计算的值，否则设为 0
+        for lbl, bad_map in [(labels[0], _bad_exp_map), (labels[1], _bad_act_map)]:
+            if bad_map:
+                df_psi[f"{lbl}坏样本率"] = df_psi['分箱'].apply(
+                    lambda b: bad_map.get(b, 0.0)
+                )
+            else:
+                df_psi[f"{lbl}坏样本率"] = 0.0
         # 补充 result=True 需要的差值列
         df_psi[f"{labels[1]}% - {labels[0]}%"] = df_psi[f"{labels[1]}样本占比"] - df_psi[f"{labels[0]}样本占比"]
         df_psi[f"ln({labels[1]}% / {labels[0]}%)"] = np.log(
@@ -1016,11 +1052,11 @@ def psi_plot(expected, actual, labels=None, desc="", save=None, colors=None,
         x_indexes = np.arange(len(x))
         fig, ax1 = plt.subplots(figsize=figsize)
 
-        ax1.bar(x_indexes - width / 2, df_psi[f'{labels[0]}样本占比'], width, 
-                label=f'{labels[0]}样本占比', color=colors[0], hatch="/" if hatch else None, 
+        ax1.bar(x_indexes - width / 2, df_psi[f'{labels[0]}样本占比'], width,
+                label=f'{labels[0]}样本占比', color=colors[0], hatch="/" if hatch else None,
                 edgecolor='white' if hatch else None)
-        ax1.bar(x_indexes + width / 2, df_psi[f'{labels[1]}样本占比'], width, 
-                label=f'{labels[1]}样本占比', color=colors[1], hatch="\\" if hatch else None, 
+        ax1.bar(x_indexes + width / 2, df_psi[f'{labels[1]}样本占比'], width,
+                label=f'{labels[1]}样本占比', color=colors[1], hatch="\\" if hatch else None,
                 edgecolor='white' if hatch else None)
 
         ax1.set_ylabel('样本占比')

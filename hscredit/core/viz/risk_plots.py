@@ -645,7 +645,9 @@ def score_bin_plot(
     **kwargs
 ) -> plt.Figure:
     """绘制评分分箱效果图（分箱区间+坏样本率）.
-    
+
+    使用 bin_plot（横向） + dataframe_plot 实现。
+
     :param df: 数据DataFrame
     :param score_col: 评分列名
     :param target_col: 目标变量列名
@@ -659,101 +661,86 @@ def score_bin_plot(
     :param save: 保存路径
     :param kwargs: 其他参数
     :return: matplotlib Figure对象
-    
+
     Example:
         >>> fig = score_bin_plot(df, 'score', 'target', n_bins=10)
     """
-    from ..metrics import compute_bin_stats
-    
+    # 导入需要的函数
+    from .binning_plots import bin_plot, dataframe_plot
+
     if colors is None:
         colors = DEFAULT_COLORS
-    
-    # 计算分箱
-    if bin_type == 'quantile':
-        df['_bin'] = pd.qcut(df[score_col], q=n_bins, duplicates='drop')
-    else:
-        df['_bin'] = pd.cut(df[score_col], bins=n_bins)
-    
-    # 计算每箱统计
-    bin_stats = df.groupby('_bin').agg({
-        target_col: ['count', 'sum', 'mean'],
-        score_col: ['min', 'max']
-    }).reset_index()
-    
-    bin_stats.columns = ['bin', 'count', 'bad_count', 'bad_rate', 'min_score', 'max_score']
-    bin_stats['good_count'] = bin_stats['count'] - bin_stats['bad_count']
-    bin_stats['bin_label'] = bin_stats.apply(
-        lambda x: f'[{x["min_score"]:.0f}, {x["max_score"]:.0f})', axis=1
+
+    # 提取数据
+    score_series = df[score_col]
+    target_series = df[target_col]
+
+    # 使用 bin_plot 绘制横向分箱图
+    fig_charts, axes = plt.subplots(1, 2, figsize=figsize,
+                                    gridspec_kw={'width_ratios': [2.5, 1]})
+    ax_chart = axes[0]
+    ax_table = axes[1]
+
+    # 1) bin_plot（横向）
+    from matplotlib.figure import Figure
+    if isinstance(ax_chart, Figure):
+        # ax_chart 实际上是 Figure，ax 参数传入的是子 axes
+        pass
+
+    # 让 bin_plot 在 ax_chart 上绘图
+    _ = bin_plot(
+        score_series,
+        target=target_series,
+        desc=title or f'{score_col}分箱',
+        figsize=(figsize[0] * 0.65, figsize[1]),
+        colors=colors,
+        ax=ax_chart,
+        orientation='horizontal',
+        show_data_points=True,
+        show_overall_bad_rate=True,
+        save=None,
     )
-    
-    # 创建图表
+
+    # 2) dataframe_plot 显示分箱统计表
     if show_table:
-        fig = plt.figure(figsize=figsize)
-        gs = fig.add_gridspec(2, 1, height_ratios=[3, 1], hspace=0.3)
-        ax_chart = fig.add_subplot(gs[0])
-        ax_table = fig.add_subplot(gs[1])
-        ax_table.axis('off')
-    else:
-        fig, ax_chart = get_or_create_ax(figsize=figsize, ax=ax)
-    
-    # 绘制柱状图
-    x = range(len(bin_stats))
-    width = 0.4
-    
-    ax_chart.bar([i - width/2 for i in x], bin_stats['good_count'],
-                 width=width, label='Good', color=colors[0], alpha=0.8)
-    ax_chart.bar([i + width/2 for i in x], bin_stats['bad_count'],
-                 width=width, label='Bad', color=colors[1], alpha=0.8)
-    
-    # 绘制坏样本率曲线
-    ax2 = ax_chart.twinx()
-    ax2.plot(x, bin_stats['bad_rate'] * 100, 'o-', color=colors[2], 
-             lw=2, markersize=6, label='Bad Rate (%)')
-    ax2.set_ylabel('Bad Rate (%)', fontsize=12, color=colors[2])
-    ax2.tick_params(axis='y', labelcolor=colors[2])
-    ax2.yaxis.set_major_formatter(PercentFormatter())
-    
-    ax_chart.set_xlabel('Score Bin', fontsize=12)
-    ax_chart.set_ylabel('Count', fontsize=12)
-    
-    if title is None:
-        title = f'{score_col} Bins Analysis'
-    ax_chart.set_title(title, fontsize=14, fontweight='bold')
-    
-    ax_chart.set_xticks(x)
-    ax_chart.set_xticklabels(bin_stats['bin_label'], rotation=45, ha='right')
-    
-    # 合并图例
-    lines1, labels1 = ax_chart.get_legend_handles_labels()
-    lines2, labels2 = ax2.get_legend_handles_labels()
-    ax_chart.legend(lines1 + lines2, labels1 + labels2, loc='upper right', frameon=True)
-    
-    setup_axis_style(ax_chart, colors)
-    ax_chart.grid(True, alpha=0.3, axis='y')
-    
-    # 显示表格
-    if show_table:
-        table_data = bin_stats[['bin_label', 'count', 'bad_count', 'bad_rate']].copy()
-        table_data['bad_rate'] = table_data['bad_rate'].apply(lambda x: f'{x:.2%}')
-        
-        table = ax_table.table(
-            cellText=table_data.values,
-            colLabels=['Bin Range', 'Total', 'Bad', 'Bad Rate'],
-            cellLoc='center',
-            loc='center',
-            bbox=[0, 0, 1, 1]
+        # 先计算分箱统计
+        if bin_type == 'quantile':
+            bins = pd.qcut(df[score_col], q=n_bins, duplicates='drop')
+        else:
+            bins = pd.cut(df[score_col], bins=n_bins)
+
+        bin_stats = df.groupby(bins).agg({
+            target_col: ['count', 'sum', 'mean'],
+            score_col: ['min', 'max']
+        }).reset_index()
+        bin_stats.columns = ['bin', 'count', 'bad_count', 'bad_rate', 'min_score', 'max_score']
+        bin_stats['good_count'] = bin_stats['count'] - bin_stats['bad_count']
+        bin_stats['bin_label'] = bin_stats.apply(
+            lambda x: f'[{x["min_score"]:.0f}, {x["max_score"]:.0f})', axis=1
         )
-        table.auto_set_font_size(False)
-        table.set_fontsize(9)
-        table.scale(1, 1.5)
-    
+
+        table_df = bin_stats[['bin_label', 'count', 'bad_count', 'bad_rate']].copy()
+        table_df.columns = ['评分区间', '样本总数', '坏样本数', '坏样本率']
+        table_df['坏样本率'] = table_df['坏样本率'].apply(lambda x: f'{x:.2%}')
+
+        ax_table.axis('off')
+        dataframe_plot(
+            table_df,
+            row_height=0.35,
+            font_size=10,
+            header_color=colors[0],
+            ax=ax_table,
+            save=None,
+        )
+    else:
+        ax_table.axis('off')
+
+    fig_charts.tight_layout()
+
     if save:
-        save_figure(fig, save)
-    
-    # 清理临时列
-    df.drop(columns=['_bin'], inplace=True, errors='ignore')
-    
-    return fig
+        save_figure(fig_charts, save)
+
+    return fig_charts
 
 
 # ==================== 风控策略相关图表 ====================
