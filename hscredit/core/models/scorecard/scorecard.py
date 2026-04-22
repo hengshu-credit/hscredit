@@ -3099,6 +3099,7 @@ class RoundScoreCard(ScoreCard):
             **kwargs
         )
         self.decimal = decimal
+        self.scorecard = scorecard
 
         # 如果传入了 ScoreCard 对象，从中复制配置
         if scorecard is not None:
