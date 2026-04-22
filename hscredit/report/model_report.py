@@ -849,8 +849,11 @@ class QuickModelReport:
                 try:
                     train_vals = self._datasets[ds_keys[0]].X[feat].dropna()
                     test_vals = self._datasets[ds_keys[1]].X[feat].dropna()
+                    y_train = self._datasets[ds_keys[0]].y.loc[train_vals.index]
+                    y_test = self._datasets[ds_keys[1]].y.loc[test_vals.index]
+                    y_combined = pd.concat([y_train, y_test], ignore_index=True)
                     p = str(output_dir / f"psi_{feat}.png")
-                    psi_result = psi_plot(train_vals, test_vals, desc=feat, save=p, result=True, plot=True)
+                    psi_result = psi_plot(train_vals, test_vals, y=y_combined, desc=feat, save=p, result=True, plot=True, figsize=(15, 8))
                     _safe_close_figs()
                     paths[f"feat_psi_{feat}"] = [p]
                     if isinstance(psi_result, pd.DataFrame):
@@ -871,11 +874,16 @@ class QuickModelReport:
 
             if len(ds_keys) >= 2:
                 try:
+                    score_train = self._datasets[ds_keys[0]].score.dropna()
+                    score_test = self._datasets[ds_keys[1]].score.dropna()
+                    y_train = self._datasets[ds_keys[0]].y.loc[score_train.index]
+                    y_test = self._datasets[ds_keys[1]].y.loc[score_test.index]
+                    y_combined = pd.concat([y_train, y_test], ignore_index=True)
                     p = str(output_dir / "score_psi.png")
                     score_psi_df = psi_plot(
-                        self._datasets[ds_keys[0]].score,
-                        self._datasets[ds_keys[1]].score,
+                        score_train, score_test, y=y_combined,
                         desc="模型评分", save=p, result=True, plot=True,
+                        figsize=(15, 8),
                     )
                     _safe_close_figs()
                     paths["score_psi"] = [p]
@@ -948,6 +956,7 @@ class QuickModelReport:
         project_desc: Optional[str] = None,
         feature_map: Optional[Dict[str, str]] = None,
         feature_info: Optional[pd.DataFrame] = None,
+        data_source: Optional[str] = None,
     ) -> str:
         """生成多 Sheet 结构的 Excel 模型报告.
 
@@ -1014,12 +1023,12 @@ class QuickModelReport:
             pass
 
         # 1.1 项目目标
-        end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value="1、项目目标", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
+        end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value="1、项目目标", style="header_middle", align={"horizontal": "left"})
         desc_text = project_desc or f"使用 {model_name} 模型进行信用风险评估"
         end_row, _ = writer.insert_value2sheet(ws, (end_row, 2), value=desc_text, style="middle", end_space=(end_row, max_col), align={"horizontal": "left"})
 
-        # 1.2 数据样本统计
-        end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value="2、数据样本统计", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
+        # 1.3 数据样本统计
+        end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value="3、数据样本统计", style="header_middle", align={"horizontal": "left"})
         sample_rows: List[Dict[str, Any]] = []
         for ds_key, ds in self._datasets.items():
             sample_rows.append({
@@ -1032,10 +1041,88 @@ class QuickModelReport:
         sample_df = pd.DataFrame(sample_rows)
         end_row, _ = dataframe2excel(sample_df, writer, sheet_name=ws, start_row=end_row + 1, percent_cols=["坏样本率"])
 
-        # 1.3 样本时间/分组分布
+        # 1.2 数据样本描述
+        end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value="2、数据样本描述", style="header_middle", align={"horizontal": "left"})
+
+        # 从 _target_cfg 推断 dpd 阈值
+        dpd_val: Optional[Union[int, float]] = None
+        if isinstance(self._target_cfg, dict):
+            if "dpds" in self._target_cfg:
+                dpd_val = self._target_cfg["dpds"]
+            elif "threshold" in self._target_cfg:
+                dpd_val = self._target_cfg["threshold"]
+
+        # 从各数据集提取日期
+        def _extract_dates(ds, col):
+            if col and ds and col in ds.X.columns:
+                dates = pd.to_datetime(ds.X[col])
+                if not dates.isna().all():
+                    return dates.min().strftime("%Y-%m-%d"), dates.max().strftime("%Y-%m-%d")
+            return "N/A", "N/A"
+
+        train_date_min, train_date_max = _extract_dates(train_ds, date_col)
+        oot_date_min, oot_date_max = _extract_dates(oot_ds, date_col)
+
+        sample_interval = f"{train_date_min} ~ {oot_date_max}"
+        if train_date_min == "N/A" and oot_date_max == "N/A":
+            sample_interval = "N/A"
+
+        data_source_str = data_source if data_source else "N/A"
+
+        # 动态构建数据样本描述行
+        desc_rows: List[Dict[str, Any]] = [
+            {"统计项": "样本区间", "统计内容": sample_interval},
+            {"统计项": "模型名称", "统计内容": model_name or "N/A"},
+            {"统计项": "取样逻辑", "统计内容": project_desc or "N/A"},
+            {"统计项": "数据源", "统计内容": data_source_str},
+        ]
+
+        # 建模标签：根据 target/overdue+dpds 推断
+        if dpd_val is not None:
+            if isinstance(self._target_cfg, dict) and "overdue" in self._target_cfg:
+                overdue_name = self._target_cfg["overdue"]
+                if isinstance(overdue_name, list):
+                    overdue_name = overdue_name[0]
+                label_text = f"{overdue_name} EVER DPD{dpd_val}+"
+            else:
+                label_text = f"EVER DPD{dpd_val}+"
+        else:
+            label_text = "N/A"
+        desc_rows.append({"统计项": "建模标签", "统计内容": label_text})
+
+        # 建模样本：根据 dpd 推断
+        if dpd_val is not None:
+            sample_text = f"建模集剔除 EVER DPD (1, {dpd_val}] 的灰样本, OOT不剔除"
+        else:
+            sample_text = "N/A"
+        desc_rows.append({"统计项": "建模样本", "统计内容": sample_text})
+
+        # 各数据集动态生成
+        for ds_key, ds in self._datasets.items():
+            label = ds.label
+            n_samples = len(ds.y)
+            bad_rate = round(ds.y.mean() * 100, 2)
+
+            if label.lower() in ("train", "训练集", "建模集"):
+                this_date_min, this_date_max = train_date_min, train_date_max
+            elif label.lower() in ("oot", "跨时间验证集"):
+                this_date_min, this_date_max = oot_date_min, oot_date_max
+            else:
+                this_date_min, this_date_max = "N/A", "N/A"
+
+            if dpd_val is not None:
+                content = f"放款时间: {this_date_min} ~ {this_date_max} , 样本数: {n_samples}, DPD{dpd_val}%: {bad_rate}%"
+            else:
+                content = f"放款时间: {this_date_min} ~ {this_date_max} , 样本数: {n_samples}, 坏样本率: {bad_rate}%"
+
+            desc_rows.append({"统计项": label, "统计内容": content})
+        desc_df = pd.DataFrame(desc_rows)
+        end_row, _ = dataframe2excel(desc_df, writer, sheet_name=ws, start_row=end_row + 1)
+
+        # 1.3 样本分布情况
         freq_label_map = {"D": "日", "W": "周", "M": "月", "Q": "季度", "Y": "年"}
         if date_col or group_col:
-            end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value="3、样本分布情况", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
+            end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value="4、样本分布情况", style="header_middle", align={"horizontal": "left"})
 
             # 时间分布
             if date_col:
@@ -1091,7 +1178,7 @@ class QuickModelReport:
         section_idx = 1
 
         # 2.1 性能指标
-        end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value=f"{section_idx}、模型性能验证指标", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
+        end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value=f"{section_idx}、模型性能验证指标", style="header_middle", align={"horizontal": "left"})
         metrics = self.get_metrics()
         end_row, _ = dataframe2excel(
             metrics, writer, sheet_name=ws, title="模型性能指标",
@@ -1104,7 +1191,7 @@ class QuickModelReport:
         if date_col:
             monthly_metrics = self._get_monthly_metrics(date_col)
             if not monthly_metrics.empty:
-                end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value=f"{section_idx}、分月模型效果", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
+                end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value=f"{section_idx}、分月模型效果", style="header_middle", align={"horizontal": "left"})
                 end_row, _ = dataframe2excel(
                     monthly_metrics, writer, sheet_name=ws, start_row=end_row + 1,
                     percent_cols=["坏样本率", "KS", "AUC"],
@@ -1112,7 +1199,7 @@ class QuickModelReport:
                 section_idx += 1
 
         # 2.3 模型尾部区分能力
-        end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value=f"{section_idx}、模型尾部区分能力（TOP n%）", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
+        end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value=f"{section_idx}、模型尾部区分能力（TOP n%）", style="header_middle", align={"horizontal": "left"})
         pct_keys = ["TOP 1%", "TOP 3%", "TOP 5%", "TOP 10%", "TOTAL"]
         if amount_col:
             lift_table = self._get_top_n_lift_table(percentiles=(0.01, 0.03, 0.05, 0.10), amount_col=None)
@@ -1129,26 +1216,39 @@ class QuickModelReport:
                 percent_cols=pct_keys,
             )
             end_row = max(end_row1, end_row2)
+            try:
+                n_lift_cols = len(lift_table.columns)
+                filter_end_col = end_col1 + 2 + n_lift_cols - 1
+                from openpyxl.utils import get_column_letter
+                writer.add_auto_filter(ws, f"B{table_start}:{get_column_letter(filter_end_col)}{end_row - 1}")
+            except Exception:
+                pass
         else:
             lift_table = self._get_top_n_lift_table()
+            table_start = end_row + 1
             end_row, _ = dataframe2excel(
-                lift_table, writer, sheet_name=ws, start_row=end_row + 1,
+                lift_table, writer, sheet_name=ws, start_row=table_start,
                 percent_cols=pct_keys,
             )
+            try:
+                from openpyxl.utils import get_column_letter
+                writer.add_auto_filter(ws, f"B{table_start}:{get_column_letter(len(lift_table.columns) + 1)}{end_row - 1}")
+            except Exception:
+                pass
         section_idx += 1
 
         # 2.4 分月PSI矩阵
         if date_col:
             psi_matrix = self._get_monthly_psi_matrix(date_col)
             if not psi_matrix.empty:
-                end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value=f"{section_idx}、分月对比PSI", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
+                end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value=f"{section_idx}、分月对比PSI", style="header_middle", align={"horizontal": "left"})
                 end_row, _ = dataframe2excel(psi_matrix, writer, sheet_name=ws, start_row=end_row + 1, index=True)
                 section_idx += 1
 
         # 2.5 各数据集评分排序性
         for ds_key, ds in self._datasets.items():
             tag = ds.label
-            end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value=f"{section_idx}、{tag}评分排序性", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
+            end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value=f"{section_idx}、{tag}评分排序性", style="header_middle", align={"horizontal": "left"})
 
             figs = plot_paths.get(f"model_{ds_key}", [])
             order_table = self.get_bin_table(ds_key, method=bin_method, max_n_bins=n_bins, margins=True)
@@ -1161,8 +1261,8 @@ class QuickModelReport:
             max_img_end_row = img_start_row
             for fig in figs:
                 try:
-                    img_end_row, new_col = writer.insert_pic2sheet(ws, fig, (img_start_row, current_col))
-                    current_col = new_col
+                    img_end_row, new_col = writer.insert_pic2sheet(ws, fig, (img_start_row, current_col), figsize=(500, 300))
+                    current_col = current_col + 2
                     max_img_end_row = max(max_img_end_row, img_end_row)
                 except Exception:
                     pass
@@ -1209,7 +1309,7 @@ class QuickModelReport:
             pass
 
         # 3.1 入模变量重要性及分布情况
-        end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value="1、入模变量重要性及分布情况", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
+        end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value="1、入模变量重要性及分布情况", style="header_middle", align={"horizontal": "left"})
         features_summary = self._get_features_summary()
         end_row, _ = dataframe2excel(
             features_summary, writer, sheet_name=ws,
@@ -1218,7 +1318,7 @@ class QuickModelReport:
         )
 
         # 3.2 相关性
-        end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value="2、入模变量相关性", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
+        end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value="2、入模变量相关性", style="header_middle", align={"horizontal": "left"})
         corr_df = self.get_features_corr()
         corr_figs = plot_paths.get("feature_corr", [])
         end_row, _ = dataframe2excel(
@@ -1230,14 +1330,14 @@ class QuickModelReport:
         )
 
         # 3.3 入模变量有效性分析
-        end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value="3、入模变量有效性分析", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
+        end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value="3、入模变量有效性分析", style="header_middle", align={"horizontal": "left"})
 
         importance = self.get_feature_importance()
         feature_list = importance.index.tolist() if not importance.empty else self.feature_names
         ds_keys_list = list(self._datasets.keys())
 
         for i, feat in enumerate(feature_list):
-            end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value=f"3.{i + 1}、{feat} 有效性分析", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
+            end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value=f"3.{i + 1}、{feat} 有效性分析", style="header_middle", align={"horizontal": "left"})
 
             # 插入图表（同一行、左右排列，避免 figures 参数导致标题与分箱表之间出现图）
             bin_figs = plot_paths.get(f"feat_bin_{feat}", [])
@@ -1248,8 +1348,8 @@ class QuickModelReport:
             max_img_end_row = img_start_row
             for fig in all_figs:
                 try:
-                    img_end_row, new_col = writer.insert_pic2sheet(ws, fig, (img_start_row, current_col))
-                    current_col = new_col
+                    img_end_row, new_col = writer.insert_pic2sheet(ws, fig, (img_start_row, current_col), figsize=(500, 300))
+                    current_col = current_col + 2
                     max_img_end_row = max(max_img_end_row, img_end_row)
                 except Exception:
                     pass
@@ -1296,7 +1396,7 @@ class QuickModelReport:
             if psi_fig_paths:
                 for fig_path in psi_fig_paths:
                     try:
-                        end_row, _ = writer.insert_pic2sheet(ws, fig_path, (end_row + 1, 2))
+                        end_row, _ = writer.insert_pic2sheet(ws, fig_path, (end_row + 1, 2), figsize=(500, 300))
                     except Exception:
                         pass
             if isinstance(psi_df, pd.DataFrame) and not psi_df.empty:
@@ -1323,7 +1423,7 @@ class QuickModelReport:
         stab_section = 1
 
         # 4.1 评分分布统计
-        end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value=f"{stab_section}、评分分布统计", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
+        end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value=f"{stab_section}、评分分布统计", style="header_middle", align={"horizontal": "left"})
         score_dist_rows: List[Dict[str, Any]] = []
         for ds_key, ds in self._datasets.items():
             sc = ds.score
@@ -1347,7 +1447,7 @@ class QuickModelReport:
         if len(self._datasets) >= 2:
             from ..core.metrics import psi as _psi
 
-            end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value=f"{stab_section}、评分PSI对比矩阵", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
+            end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value=f"{stab_section}、评分PSI对比矩阵", style="header_middle", align={"horizontal": "left"})
             ds_keys_list = list(self._datasets.keys())
             labels = [self._datasets[k].label for k in ds_keys_list]
             psi_matrix = pd.DataFrame(np.nan, index=labels, columns=labels)
@@ -1363,12 +1463,12 @@ class QuickModelReport:
             end_row, _ = dataframe2excel(psi_matrix, writer, sheet_name=ws, start_row=end_row + 1, index=True)
 
             # 评分PSI参考阈值说明
-            end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value="PSI参考标准：<0.1 稳定 | 0.1~0.25 略变 | >0.25 不稳定", style="middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
+            end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value="PSI参考标准：<0.1 稳定 | 0.1~0.25 略变 | >0.25 不稳定", style="middle", align={"horizontal": "left"})
             stab_section += 1
 
         # 4.3 评分漂移分析（以训练集为基准）
         if "train" in self._datasets and len(self._datasets) >= 2:
-            end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value=f"{stab_section}、评分漂移分析（vs 训练集）", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
+            end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value=f"{stab_section}、评分漂移分析（vs 训练集）", style="header_middle", align={"horizontal": "left"})
             drift_rows: List[Dict[str, Any]] = []
             base_scores = self._datasets["train"].score
             for ds_key, ds in self._datasets.items():
@@ -1398,7 +1498,7 @@ class QuickModelReport:
         if len(self._datasets) >= 2:
             from ..core.metrics import psi as _psi_feat
 
-            end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value=f"{stab_section}、入模特征PSI稳定性", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
+            end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value=f"{stab_section}、入模特征PSI稳定性", style="header_middle", align={"horizontal": "left"})
             importance = self.get_feature_importance()
             feat_list = importance.index.tolist() if not importance.empty else self.feature_names
             psi_rows: List[Dict[str, Any]] = []
@@ -1440,12 +1540,12 @@ class QuickModelReport:
         param_section = 1
 
         # 5.1 模型选型
-        end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value=f"{param_section}、模型选型", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
-        end_row, _ = writer.insert_value2sheet(ws, (end_row, 2), value=model_name, style="middle", end_space=(end_row, max_col), align={"horizontal": "left"})
+        end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value=f"{param_section}、模型选型", style="header_middle", align={"horizontal": "left"})
+        end_row, _ = writer.insert_value2sheet(ws, (end_row, 2), value=model_name, style="middle", align={"horizontal": "left"})
         param_section += 1
 
         # 5.2 模型参数
-        end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value=f"{param_section}、模型参数", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
+        end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value=f"{param_section}、模型参数", style="header_middle", align={"horizontal": "left"})
         params_str = ""
         if hasattr(self.model, "get_params"):
             try:
@@ -1454,11 +1554,12 @@ class QuickModelReport:
                 pass
         if not params_str and hasattr(self.model, "__dict__"):
             params_str = str({k: v for k, v in self.model.__dict__.items() if not k.startswith("_") and not callable(v)})
-        end_row, _ = writer.insert_value2sheet(ws, (end_row, 2), value=params_str or "N/A", style="middle", end_space=(end_row, max_col), align={"horizontal": "left"})
+        end_row, _ = writer.insert_value2sheet(ws, (end_row, 2), value=params_str or "N/A", style="middle", align={"horizontal": "left"})
         param_section += 1
 
+
         # 5.3 入模特征列表
-        end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value=f"{param_section}、入模特征列表", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
+        end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value=f"{param_section}、入模特征列表", style="header_middle", align={"horizontal": "left"})
         features_df = pd.DataFrame({"序号": range(1, len(self.feature_names) + 1), "变量名": self.feature_names})
         if feature_map:
             features_df["变量含义"] = [feature_map.get(f, "") for f in self.feature_names]
@@ -1466,15 +1567,17 @@ class QuickModelReport:
         param_section += 1
 
         # 5.4+ 评分卡专属内容
+        # 判断是否为评分卡模型
         is_scorecard = hasattr(self.model, "lr_model") and hasattr(self.model, "scorecard_points")
+
         if is_scorecard:
             # plot_weights + LR 拟合结果
-            end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value=f"{param_section}、逻辑回归拟合结果", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
+            end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value=f"{param_section}、逻辑回归拟合结果", style="header_middle", align={"horizontal": "left"})
             weights_figs = plot_paths.get("model_weights", [])
             if weights_figs:
                 for fig_path in weights_figs:
                     try:
-                        end_row, _ = writer.insert_pic2sheet(ws, fig_path, (end_row + 1, 2))
+                        end_row, _ = writer.insert_pic2sheet(ws, fig_path, (end_row + 1, 2), figsize=(500, 300))
                     except Exception:
                         pass
             try:
@@ -1484,17 +1587,26 @@ class QuickModelReport:
                 pass
             param_section += 1
 
+            # 评分卡刻度配置
+            end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value=f"{param_section}、评分卡刻度配置", style="header_middle", align={"horizontal": "left"})
+            try:
+                scale_df = self.model.scorecard_scale()
+                end_row, _ = dataframe2excel(scale_df, writer, sheet_name=ws, start_row=end_row + 1)
+            except Exception:
+                pass
+            param_section += 1
+
             # 评分卡
-            end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value=f"{param_section}、评分卡", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
+            end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value=f"{param_section}、评分卡分值表", style="header_middle", align={"horizontal": "left"})
             try:
                 sc_points = self.model.scorecard_points(feature_map=feature_map)
-                end_row, _ = dataframe2excel(sc_points, writer, sheet_name=ws, start_row=end_row + 1, title="评分卡分值表")
+                end_row, _ = dataframe2excel(sc_points, writer, sheet_name=ws, start_row=end_row + 1)
             except Exception:
                 pass
             param_section += 1
 
             # 评分与 Odds 对照
-            end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value=f"{param_section}、评分与Odds对照表", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
+            end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value=f"{param_section}、评分与Odds对照表", style="header_middle", align={"horizontal": "left"})
             try:
                 odds_ref = self.model.score_odds_reference
                 end_row, _ = dataframe2excel(odds_ref, writer, sheet_name=ws, start_row=end_row + 1)
@@ -1504,12 +1616,12 @@ class QuickModelReport:
 
             # 评分漂移分析
             if len(self._datasets) >= 2:
-                end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value=f"{param_section}、稳定性分析", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
+                end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value=f"{param_section}、稳定性分析", style="header_middle", align={"horizontal": "left"})
                 score_psi_figs = plot_paths.get("score_psi", [])
                 if score_psi_figs:
                     for fig_path in score_psi_figs:
                         try:
-                            end_row, _ = writer.insert_pic2sheet(ws, fig_path, (end_row + 1, 2))
+                            end_row, _ = writer.insert_pic2sheet(ws, fig_path, (end_row + 1, 2), figsize=(500, 300))
                         except Exception:
                             pass
                 score_psi_df = psi_tables.get("score_psi")
@@ -1527,7 +1639,7 @@ class QuickModelReport:
             pass
 
         # 6.1 入模变量信息
-        end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value="1、入模变量信息", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
+        end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value="1、入模变量信息", style="header_middle", align={"horizontal": "left"})
         if feature_info is not None and isinstance(feature_info, pd.DataFrame) and not feature_info.empty:
             end_row, _ = dataframe2excel(feature_info, writer, sheet_name=ws, start_row=end_row + 1)
         else:
@@ -1543,7 +1655,7 @@ class QuickModelReport:
             end_row, _ = dataframe2excel(pd.DataFrame(fi_rows), writer, sheet_name=ws, start_row=end_row + 1)
 
         # 6.2 生产订单测试用例
-        end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value="2、生产订单测试用例", style="header_middle", end_space=(end_row + 1, max_col), align={"horizontal": "left"})
+        end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value="2、生产订单测试用例", style="header_middle", align={"horizontal": "left"})
         try:
             train_ds = self._datasets["train"]
             sample_n = min(5, len(train_ds.X))
@@ -1603,6 +1715,7 @@ def auto_model_report(
     feature_info: Optional[pd.DataFrame] = None,
     show_lift: bool = True,
     show_importance: bool = True,
+    data_source: Optional[str] = None,
 ) -> QuickModelReport:
     """一键生成模型报告.
 
@@ -1643,6 +1756,7 @@ def auto_model_report(
     :param project_desc: 项目描述
     :param feature_map: 特征名称到含义的映射
     :param feature_info: 特征部署信息表
+    :param data_source: 数据源描述
     :return: QuickModelReport 实例
     """
     report = QuickModelReport(
@@ -1675,6 +1789,7 @@ def auto_model_report(
             project_desc=project_desc,
             feature_map=feature_map,
             feature_info=feature_info,
+            data_source=data_source,
         )
         if verbose:
             print(f"\nExcel 报告已保存: {excel_path}")

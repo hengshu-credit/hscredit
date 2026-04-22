@@ -395,6 +395,24 @@ class ExcelWriter:
 
         worksheet.freeze_panes = space
 
+    def add_auto_filter(
+        self,
+        worksheet: Union[Worksheet, str],
+        ref: Optional[str] = None,
+    ) -> None:
+        """给工作表添加自动筛选（auto_filter）。
+
+        :param worksheet: 工作表对象或名称
+        :param ref: 筛选区域，如"A1:E10"，默认为整个有数据的区域
+        """
+        if not isinstance(worksheet, Worksheet):
+            worksheet = self.get_sheet_by_name(worksheet)
+
+        if ref is None:
+            worksheet.auto_filter.ref = worksheet.dimensions
+        else:
+            worksheet.auto_filter.ref = ref
+
     def get_sheet_by_name(self, name: str) -> Worksheet:
         """获取或创建指定名称的工作表。
 
@@ -604,7 +622,7 @@ class ExcelWriter:
         worksheet: Worksheet,
         fig: str,
         insert_space: Union[str, Tuple[int, int]],
-        figsize: Tuple[int, int] = (600, 250)
+        figsize: Tuple[int, int] = (600, 250),
     ) -> Tuple[int, int]:
         """向Excel插入图片。
 
@@ -1459,6 +1477,7 @@ def dataframe2excel(
     figsize: Tuple[int, int] = (600, 350),
     image_bottom_padding_rows: int = 1,
     writer_params: Optional[Dict] = None,
+    auto_filter: bool = False,
     **kwargs
 ) -> Tuple[int, int]:
     """快速将DataFrame写入Excel。
@@ -1680,5 +1699,13 @@ def dataframe2excel(
     # 保存文件（如果不是传入的ExcelWriter对象）
     if not isinstance(excel_writer, ExcelWriter) and not isinstance(sheet_name, Worksheet):
         writer.save(excel_writer)
+
+    if auto_filter:
+        last_data_row = end_row - 1
+        last_data_col = end_col - 1
+        writer.add_auto_filter(
+            worksheet,
+            f"{get_column_letter(start_col)}{start_row}:{get_column_letter(last_data_col)}{last_data_row}"
+        )
 
     return end_row, end_col
