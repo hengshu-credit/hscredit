@@ -129,27 +129,58 @@ class QuickModelReport:
     ):
         """初始化模型报告.
 
-        支持两种调用方式：
-        1. 兼容 API：传入 X_train/y_train/X_test/y_test（推荐）
-           - sklearn 风格：target='target'
-           - scorecardpipeline 风格：target='target' 且 X 中包含目标列
-           - overdue/dpds 风格：target={'overdue': col, 'dpds': threshold} 或
-                               传入单独的 overdue/dpds 参数
-        2. 新 API（pipeline 风格）：传入 datasets 参数
-           - dict: {'train': (X, y), 'test': (X, y), 'oot': (X, y)}
-           - list: [(X, y), (X, y)] 自动命名为训练集、测试集、OOT集...
-        3. datasets dict: 显式指定各数据集（最高优先级）
-           - 覆盖 X_train/y_train/X_test/y_test
+        支持三种调用方式：
 
-        :param model: 训练好的模型
-        :param datasets: 数据集字典/列表，字典键为数据集名称，值为 (X, y) 元组
+        1. datasets API（推荐）：传入数据集字典/列表
+           - dict: {'train': DataFrame, 'test': DataFrame, 'oot': DataFrame}
+             DataFrame 需包含目标列，或通过 overdue/dpds 自动构建标签
+           - list: [DataFrame, DataFrame, ...] 自动命名为训练集、测试集、OOT集...
+
+        2. 兼容 API：传入 X_train/y_train/X_test/y_test
+           - sklearn 风格：target='target'
+           - overdue/dpds 风格：传入单独的 overdue/dpds 参数
+
+        3. datasets dict（最高优先级）：显式指定各数据集
+           覆盖 X_train/y_train/X_test/y_test
+
+        示例::
+
+            # 方式1: datasets dict（DataFrame 直接传入，X 中含目标列）
+            report = QuickModelReport(model, datasets={'train': train_df, 'test': test_df})
+
+            # 方式1: datasets list（自动命名为训练集、测试集）
+            report = QuickModelReport(model, datasets=[train_df, test_df])
+
+            # 方式1: overdue/dpds 自动构建标签（X 中不含目标列）
+            report = QuickModelReport(
+                model,
+                datasets={'train': df},
+                overdue='dpds',     # 逾期天数列名
+                dpds=[15, 7, 0],    # 任一 MOB 下 DPD > threshold 则 y=1
+            )
+
+            # 方式2: 兼容 sklearn API
+            report = QuickModelReport(model, X_train=X, y_train=y, X_test=X_val, y_test=y_val)
+
+            # 方式2: overdue/dpds 作为独立参数
+            report = QuickModelReport(
+                model,
+                X_train=df,
+                overdue='dpds',    # 逾期列名
+                dpds=5,            # DPD > 5 则标记为坏样本
+            )
+
+        :param model: 训练好的模型（ScoreCard / XGBoost / LightGBM / sklearn 等）
+        :param datasets: 数据集字典/列表（推荐方式）
         :param X_train: 训练集特征（兼容旧 API）
         :param y_train: 训练集标签（兼容旧 API）
         :param X_test: 测试集特征（兼容旧 API）
         :param y_test: 测试集标签（兼容旧 API）
         :param feature_names: 特征名称列表
-        :param target: 目标列配置，str 为列名，dict 为 {'overdue': col, 'dpds': col, 'threshold': days}
-        :param overdue: 逾期列名列名（str）或多个列名（List[str]），与 dpds 配合使用构建标签
+        :param target: 目标列配置
+            - str: 列名，如 'target'
+            - dict: {'overdue': col, 'dpds': threshold} 或 {'overdue': col, 'dpds': [15, 7, 0]}
+        :param overdue: 逾期列名（str）或多个列名（List[str]），与 dpds 配合自动构建标签
         :param dpds: 逾期天数阈值（int/float）或多个阈值（List），与 overdue 配合使用
         """
         self.model = model
@@ -176,7 +207,7 @@ class QuickModelReport:
         else:
             self._init_from_xy(X_train, y_train, X_test, y_test)
 
-        # 从第一个数据集获取特征名
+        # 从第一个数据集获取特征名，再过滤为模型实际入模特征
         if not hasattr(self, 'feature_names') or not self.feature_names:
             if self._datasets:
                 first_ds = next(iter(self._datasets.values()))
@@ -185,6 +216,17 @@ class QuickModelReport:
                 self.feature_names = self._feature_names
             else:
                 self.feature_names = []
+
+        # 统一为模型实际入模特征（排除数据集传入的非入模字段如 MOB1、放款金额 等）
+        model_required: Optional[List[str]] = None
+        if hasattr(self.model, 'feature_names_') and self.model.feature_names_ is not None:
+            model_required = list(self.model.feature_names_)
+        elif hasattr(self.model, 'feature_names_in_') and self.model.feature_names_in_ is not None:
+            model_required = list(self.model.feature_names_in_)
+
+        if model_required:
+            # 只保留模型实际入模特征，同时保留原始顺序
+            self.feature_names = [f for f in self.feature_names if f in model_required]
 
         # 缓存
         self._metrics_cache: Optional[pd.DataFrame] = None
@@ -283,10 +325,10 @@ class QuickModelReport:
         """从 datasets 初始化数据集.
 
         datasets 支持两种格式：
-        - dict: {'train': (X, y), 'test': (X, y), ...}  传统元组格式
-        - dict: {'train': X, 'test': X, ...}             DataFrame 直接传入，
-                  y 从 X 中通过 target / overdue+dpds 自动构建
-        - list: [(X, y), (X, y), ...] / [X, X, ...]     同上，y 可选
+        - dict: {'train': DataFrame, 'test': DataFrame, ...}
+                  DataFrame 直接传入，y 从 X 中通过 target / overdue+dpds 自动构建
+        - list: [DataFrame, DataFrame, ...]
+                  自动命名为训练集、测试集、OOT集...，y 从 X 中自动构建
         """
         if isinstance(datasets, dict):
             default_labels = {
@@ -361,10 +403,13 @@ class QuickModelReport:
 
     def _add_dataset(self, key: str, label: str, X: pd.DataFrame, y: pd.Series):
         # 获取模型实际需要的特征列表，过滤掉额外列，避免预测时报错
-        required_features = None
-        if hasattr(self.model, 'binner') and hasattr(self.model.binner, 'feature_names'):
-            required_features = list(self.model.binner.feature_names)
-        elif hasattr(self.model, 'feature_names_in_'):
+        # 优先级：ScoreCard.feature_names_ > sklearn.feature_names_in_ > None
+        required_features: Optional[List[str]] = None
+        if hasattr(self.model, 'feature_names_') and self.model.feature_names_ is not None:
+            # ScoreCard 等模型：使用 fit 后确定的入模特征名
+            required_features = list(self.model.feature_names_)
+        elif hasattr(self.model, 'feature_names_in_') and self.model.feature_names_in_ is not None:
+            # sklearn 模型
             required_features = list(self.model.feature_names_in_)
 
         if required_features:
@@ -373,7 +418,7 @@ class QuickModelReport:
                 raise ValueError(f"数据集缺少以下模型特征: {missing}")
             X_for_pred = X[required_features]
         else:
-            X_for_pred = X.drop(columns=[self._target_name], errors='ignore')
+            X_for_pred = X
         self._datasets[key] = ReportDataset(
             name=key,
             label=label,
@@ -456,6 +501,7 @@ class QuickModelReport:
             max_n_bins=max_n_bins,
             missing_separate=True,
             margins=margins,
+            return_cols=['样本总数', '好样本数', '坏样本数', '样本占比', '好样本占比', '坏样本占比', '坏样本率', 'LIFT值', '累积LIFT值', '坏账改善', '累积坏账改善', '分档KS值'],
         )
         if amount_col and amount_col in df.columns:
             kw["amount"] = amount_col
@@ -677,9 +723,9 @@ class QuickModelReport:
                 amt_lifts["TOTAL"] = 1.0
                 amt_improvements["TOTAL"] = 0.0
 
-                rows.append({"数据集": tag, "统计项": "金额坏样本率", **amt_bad_rates})
-                rows.append({"数据集": tag, "统计项": "金额LIFT值", **amt_lifts})
-                rows.append({"数据集": tag, "统计项": "金额坏账改善", **amt_improvements})
+                rows.append({"数据集": tag, "统计项": "坏样本率", **amt_bad_rates})
+                rows.append({"数据集": tag, "统计项": "LIFT值", **amt_lifts})
+                rows.append({"数据集": tag, "统计项": "坏账改善", **amt_improvements})
 
         return pd.DataFrame(rows)
 
@@ -988,6 +1034,7 @@ class QuickModelReport:
         feature_map: Optional[Dict[str, str]] = None,
         feature_info: Optional[pd.DataFrame] = None,
         data_source: Optional[str] = None,
+        loc_cols: Optional[Union[str, List[str]]] = None,
     ) -> str:
         """生成多 Sheet 结构的 Excel 模型报告.
 
@@ -996,6 +1043,8 @@ class QuickModelReport:
         - 1-基本信息（项目目标、样本统计、分月/分组分布）
         - 2-模型性能（指标、TOP n%、PSI矩阵、分箱效果）
         - 3-入模变量分析（重要性、相关性、逐特征分箱/KS/PSI）
+
+        :param loc_cols: 定位字段（订单号等），支持 str 或 List[str]，仅用于生产订单测试用例
         """
         from ..excel import ExcelWriter, dataframe2excel
 
@@ -1262,7 +1311,7 @@ class QuickModelReport:
         if amount_col:
             lift_table = self._get_top_n_lift_table(percentiles=(0.01, 0.03, 0.05, 0.10), amount_col=None)
             lift_amt = self._get_top_n_lift_table(percentiles=(0.01, 0.03, 0.05, 0.10), amount_col=amount_col)
-            table_start = end_row + 3
+            table_start = end_row + 1
             end_row1, end_col1 = dataframe2excel(
                 lift_table, writer, sheet_name=ws,
                 title="订单口径", start_row=table_start, start_col=2,
@@ -1278,7 +1327,7 @@ class QuickModelReport:
                 n_lift_cols = len(lift_table.columns)
                 filter_end_col = end_col1 + 2 + n_lift_cols - 1
                 from openpyxl.utils import get_column_letter
-                writer.add_auto_filter(ws, f"B{table_start}:{get_column_letter(filter_end_col)}{end_row - 1}")
+                writer.add_auto_filter(ws, f"B{table_start + 2}:{get_column_letter(filter_end_col)}{end_row - 1}")
             except Exception:
                 pass
         else:
@@ -1523,7 +1572,7 @@ class QuickModelReport:
             end_row, _ = dataframe2excel(psi_matrix, writer, sheet_name=ws, start_row=end_row + 1, index=True)
 
             # 评分PSI参考阈值说明
-            end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value="PSI参考标准：<0.1 稳定 | 0.1~0.25 略变 | >0.25 不稳定", style="middle", align={"horizontal": "left"})
+            end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value="PSI参考标准：<0.1 稳定 | 0.1~0.25 略变 | >0.25 不稳定", style="middle", align={"horizontal": "left"})
             stab_section += 1
 
         # 4.3 评分漂移分析（以训练集为基准）
@@ -1662,7 +1711,7 @@ class QuickModelReport:
             end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value=f"{param_section}、评分卡分值表", style="header_middle", align={"horizontal": "left"})
             try:
                 sc_points = self.model.scorecard_points(feature_map=feature_map)
-                end_row, _ = dataframe2excel(sc_points, writer, sheet_name=ws, start_row=end_row + 1, right_cols=["对应分数", "变量名称"])
+                end_row, _ = dataframe2excel(sc_points, writer, sheet_name=ws, start_row=end_row + 1, right_cols=["对应分数", "变量分箱", "变量名称"])
             except Exception:
                 pass
             param_section += 1
@@ -1722,7 +1771,18 @@ class QuickModelReport:
             train_ds = self._datasets["train"]
             sample_n = min(5, len(train_ds.X))
             sample_X = train_ds.X[self.feature_names].iloc[:sample_n].copy()
+
+            # 支持定位字段（订单号等）显示在最前方
+            if loc_cols:
+                if isinstance(loc_cols, str):
+                    loc_cols = [loc_cols]
+                loc_cols = [c for c in loc_cols if c in train_ds.X.columns]
+
             test_cases = sample_X.reset_index(drop=True)
+            if loc_cols:
+                loc_df = train_ds.X[loc_cols].iloc[:sample_n].reset_index(drop=True)
+                for i, col in enumerate(loc_cols):
+                    test_cases.insert(i, col, loc_df[col])
             test_cases.insert(0, "序号", range(1, sample_n + 1))
             test_cases["模型分数"] = train_ds.score[:sample_n]
             end_row, _ = dataframe2excel(test_cases, writer, sheet_name=ws, start_row=end_row + 1)
@@ -1778,32 +1838,68 @@ def auto_model_report(
     show_lift: bool = True,
     show_importance: bool = True,
     data_source: Optional[str] = None,
+    loc_cols: Optional[Union[str, List[str]]] = None,
 ) -> QuickModelReport:
     """一键生成模型报告.
 
-    支持两种调用方式：
-    1. 新 API（推荐）：传入 datasets 参数
-       - dict: {'train': (X, y), 'test': (X, y), 'oot': (X, y)}
-       - list: [(X, y), (X, y), ...] 自动命名为训练集、测试集、OOT集...
+    支持三种调用方式：
+
+    1. datasets API（推荐）：传入数据集字典/列表
+       - dict: {'train': DataFrame, 'test': DataFrame, 'oot': DataFrame}
+         DataFrame 需包含目标列，或通过 overdue/dpds 自动构建标签
+       - list: [DataFrame, DataFrame, ...] 自动命名为训练集、测试集、OOT集...
+
     2. 兼容 API：传入 X_train/y_train/X_test/y_test
+       - sklearn 风格：target='target'
+       - overdue/dpds 风格：传入单独的 overdue/dpds 参数
 
-    overdue/dpds 用法（scorecardpipeline 风格）：
-      overdue: 逾期列名列名（str）或多个列名（List[str]）
-      dpds: 逾期天数阈值（int/float）或多个阈值（List[int/float]）
-      示例：
-        auto_model_report(model, X_train=df, overdue='dpds', dpds=[15, 7, 0])
-        auto_model_report(model, X_train=df, overdue=['dpds_m1', 'dpds_m3'], dpds=[30, 15, 7, 0])
-      等价于传 target={'overdue': ..., 'dpds': ...}
+    overdue/dpds 用法（自动从 X 构建二分类标签）::
 
-    :param model: 训练好的模型（ScoreCard / BaseRiskModel / sklearn 等）
-    :param datasets: 数据集字典/列表，字典键为数据集名称，值为 (X, y) 元组
+        # 单阈值：MOB 任一期间 DPD > 5 则 y=1
+        auto_model_report(model, X_train=df, overdue='dpds', dpds=5)
+
+        # 多阈值：MOB1 DPD>15 或 MOB3 DPD>7 任一触发则 y=1
+        auto_model_report(
+            model,
+            X_train=df,
+            overdue=['dpds_m1', 'dpds_m3'],
+            dpds=[15, 7, 0],
+        )
+
+    示例::
+
+        # 方式1: datasets dict（DataFrame 直接传入，X 中含目标列）
+        auto_model_report(model, datasets={'train': train_df, 'test': test_df}, excel_path='report.xlsx')
+
+        # 方式1: datasets list（自动命名）
+        auto_model_report(model, datasets=[train_df, test_df], excel_path='report.xlsx')
+
+        # 方式1: overdue/dpds 自动构建标签
+        auto_model_report(
+            model,
+            datasets={'train': df},
+            overdue='dpds',
+            dpds=[15, 7, 0],
+            excel_path='report.xlsx',
+        )
+
+        # 方式2: 兼容 sklearn API（分离 X/y）
+        auto_model_report(
+            model,
+            X_train=X, y_train=y,
+            X_test=X_val, y_test=y_val,
+            excel_path='report.xlsx',
+        )
+
+    :param model: 训练好的模型（ScoreCard / XGBoost / LightGBM / sklearn 等）
+    :param datasets: 数据集字典/列表，字典键为数据集名称（推荐）
     :param X_train: 训练集特征（兼容旧 API）
     :param y_train: 训练集标签（兼容旧 API）
     :param X_test: 测试集/OOT 特征（兼容旧 API）
     :param y_test: 测试集/OOT 标签（兼容旧 API）
     :param feature_names: 特征名称列表
-    :param target: 目标列配置，str 为列名，dict 为 {'overdue': col, 'dpds': col, 'threshold': days}
-    :param overdue: 逾期列名列名（str）或多个列名（List[str]），与 dpds 配合使用构建标签
+    :param target: 目标列配置，str 为列名，dict 为 {'overdue': col, 'dpds': threshold}
+    :param overdue: 逾期列名（str）或多个列名（List[str]），与 dpds 配合自动构建标签
     :param dpds: 逾期天数阈值（int/float）或多个阈值（List），与 overdue 配合使用
     :param excel_path: Excel 报告输出路径
     :param verbose: 是否打印控制台报告
@@ -1818,7 +1914,10 @@ def auto_model_report(
     :param project_desc: 项目描述
     :param feature_map: 特征名称到含义的映射
     :param feature_info: 特征部署信息表
+    :param show_lift: 是否在报告中显示 LIFT 曲线
+    :param show_importance: 是否在报告中显示特征重要性
     :param data_source: 数据源描述
+    :param loc_cols: 定位字段（订单号等），支持 str 或 List[str]，用于生产测试用例列
     :return: QuickModelReport 实例
     """
     report = QuickModelReport(
@@ -1852,6 +1951,7 @@ def auto_model_report(
             feature_map=feature_map,
             feature_info=feature_info,
             data_source=data_source,
+            loc_cols=loc_cols,
         )
         if verbose:
             print(f"\nExcel 报告已保存: {excel_path}")

@@ -2147,7 +2147,8 @@ class ScoreCard(StandardScoreTransformer):
                 conds.append(f"{feature} {op} {hi}")
             if conds:
                 return ' AND '.join(conds)
-            return f"1=1"
+            # 两端都是 inf / -inf 时代表全范围区间，跳过（fallback 到 else）
+            return '1=0 /* full range fallback */'
         escaped_label = label.replace("'", "''")
         return f"{feature} = '{escaped_label}'"
 
@@ -2155,6 +2156,9 @@ class ScoreCard(StandardScoreTransformer):
     def _bin_label_to_python_condition(var: str, label: Any, special_codes: Optional[List[Any]] = None) -> str:
         """将分箱标签转为 Python 条件表达式."""
         if isinstance(label, (list, np.ndarray)):
+            # 全 NaN 的 list：缺失值描述符应返回 pd.isna()，不参与后续 value_exprs 匹配
+            if len(label) > 0 and all(pd.isna(v) for v in label):
+                return f"pd.isna({var})"
             value_exprs = [repr(str(value)) for value in label if not pd.isna(value)]
             missing_cond = f"pd.isna({var})" if any(pd.isna(value) for value in label) else None
             if value_exprs and missing_cond:
@@ -2195,13 +2199,17 @@ class ScoreCard(StandardScoreTransformer):
                 conds.append(f"{var} {op} {hi}")
             if conds:
                 return ' and '.join(conds)
-            return 'True'
+            # 两端都是 inf / -inf 时代表全范围区间，跳过（fallback 到 else）
+            return 'False  # full range fallback'
         return f"{var} == {label!r}"
 
     @staticmethod
     def _bin_label_to_java_condition(var: str, label: Any, special_codes: Optional[List[Any]] = None) -> str:
         """将分箱标签转为 Java 条件表达式."""
         if isinstance(label, (list, np.ndarray)):
+            # 全 NaN 的 list：缺失值描述符应返回 {var} == null，不参与后续值匹配
+            if len(label) > 0 and all(pd.isna(v) for v in label):
+                return f"{var} == null"
             values = [str(value) for value in label if not pd.isna(value)]
             if not values:
                 return f"{var} == null"
@@ -2346,6 +2354,9 @@ class ScoreCard(StandardScoreTransformer):
     def _bin_label_to_pmml_condition(var: str, label: Any, special_codes: Optional[List[Any]] = None) -> str:
         """将部署规则描述符转为 PMML ExpressionTransformer 使用的条件表达式."""
         if isinstance(label, (list, np.ndarray)):
+            # 全 NaN 的 list：缺失值描述符应返回 pandas.isnull()，不参与后续 value_exprs 匹配
+            if len(label) > 0 and all(pd.isna(v) for v in label):
+                return f"pandas.isnull({var})"
             value_exprs = [repr(str(value)) for value in label if not pd.isna(value)]
             missing_cond = f"pandas.isnull({var})" if any(pd.isna(value) for value in label) else None
             if value_exprs and missing_cond:
@@ -2388,7 +2399,8 @@ class ScoreCard(StandardScoreTransformer):
             if upper not in ('+inf', 'inf', 'Infinity', '+INF', 'INF'):
                 operator = '<=' if right_bracket == ']' else '<'
                 conditions.append(f"{var} {operator} {upper}")
-            return ' and '.join(conditions) if conditions else 'True'
+            # 两端都是 inf / -inf 时代表全范围区间，跳过（fallback 到 else）
+            return ' and '.join(conditions) if conditions else 'False  # full range fallback'
 
         return f"{var} == {label!r}"
 

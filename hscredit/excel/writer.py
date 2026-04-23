@@ -649,7 +649,7 @@ class ExcelWriter:
         row_height = 16.0 if self.system != 'mac' else 17.5
         occupied_rows = max(1, math.ceil(figsize[1] / row_height))
 
-        return start_row + occupied_rows, column_index_from_string(start_col) + 8
+        return start_row + occupied_rows, column_index_from_string(start_col) + 6
 
     def insert_df2sheet(
         self,
