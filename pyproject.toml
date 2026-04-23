@@ -69,7 +69,13 @@ pmml = [
     "sklearn-pandas>=2.2.0",
     "sklearn2pmml>=0.82.0",
 ]
-tune = ["optuna>=3.0.0"]
+tune = [
+    "optuna>=3.0.0",
+    "optuna-dashboard",
+    "optunahub",
+    "cmaes",
+    "plotly",
+]
 explain = ["shap>=0.40.0"]
 dev = [
     "pytest>=6.0.0",
