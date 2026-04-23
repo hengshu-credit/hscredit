@@ -477,10 +477,8 @@ def rule_swap_analysis(
     N_oi = int(n_oi * scale)
 
     # 使用 OverduePredictor.predict() 获取每个样本的预测逾期率
-    if bin_table is not None:
-        _pred_df = predictor.predict(df[[list(score_map.values())[0]]])
-    else:
-        _pred_df = predictor.predict(df[list(score_map.values())[0]].to_frame())
+    # _swap_score_combined 在前面多模型加权综合评分步骤中已创建于 df
+    _pred_df = predictor.predict(df[['_swap_score_combined']])
 
     # 全量预测逾期率（用于 全部样本 步骤的 lift 基准）
     _overall_pred_bad = float(_pred_df.mean()) if len(_pred_df) > 0 else 0.0
@@ -488,7 +486,7 @@ def rule_swap_analysis(
         _overall_pred_bad = df[target].mean() if target in df.columns else 0.05
 
     # Extra columns to add to each step
-    _extra_cols = ['调整方向', '通过率(绝对值)', '通过率(相对值)']
+    _extra_cols = ['调整方向', '通过率', '通过率(绝对值)', '通过率(相对值)']
 
     def _build_full_step(step_name, quadrant, step_n, cum_remain, is_rem_step=False, adj_dir='-'):
         """构建完整一步（含命中/未命中/合计三行 + extra列）。"""
@@ -498,6 +496,7 @@ def rule_swap_analysis(
         cur_pass_rate = cum_remain / N_total if N_total > 0 else 0.0
         extra = {
             '调整方向': adj_dir,
+            '通过率': cur_pass_rate,
             '通过率(绝对值)': cur_pass_rate,
             '通过率(相对值)': cur_pass_rate,
         }
@@ -618,6 +617,7 @@ def rule_swap_analysis(
         cur_pass_rate = cum_remain / N_total if N_total > 0 else 0.0
         extra = {
             '调整方向': '-',
+            '通过率': cur_pass_rate,
             '通过率(绝对值)': cur_pass_rate,
             '通过率(相对值)': cur_pass_rate,
         }
