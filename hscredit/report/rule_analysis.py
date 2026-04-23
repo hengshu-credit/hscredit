@@ -177,6 +177,59 @@ def multi_label_rule_analysis(
     return output_path
 
 
+def _merge_label_tables(tables: List[pd.DataFrame], label_names: List[str]) -> pd.DataFrame:
+    """将多标签的 rule.report() 结果合并为多层列头DataFrame。
+
+    参考 feature_analyzer.py 的多标签合并逻辑：
+    - merge_columns（分箱详情）作为左侧固定列
+    - 每张表的非merge列按标签名作为顶层列名合并
+    """
+    if len(tables) == 0:
+        return pd.DataFrame()
+    if len(tables) == 1:
+        return tables[0]
+
+    detail_group = "分箱详情"
+    base_table = tables[0].copy()
+
+    # 找出可合并的列（merge columns）
+    available_merge = [c for c in base_table.columns
+                      if isinstance(c, tuple) and c[0] == detail_group and c[1] in ["规则分类", "指标名称", "分箱", "样本总数", "样本占比"]
+                      or isinstance(c, str) and c in ["规则分类", "指标名称", "分箱", "样本总数", "样本占比"]]
+    non_merge = [c for c in base_table.columns if c not in available_merge]
+
+    # 重建列结构：第一层为标签名，第二层为列名
+    multi_cols = []
+    for col in base_table.columns:
+        if isinstance(col, tuple) and col[0] == detail_group:
+            multi_cols.append(col)
+        elif col in ["规则分类", "指标名称", "分箱", "样本总数", "样本占比"]:
+            multi_cols.append((detail_group, col))
+        else:
+            multi_cols.append((label_names[0] if label_names else "标签0", col))
+    base_table.columns = pd.MultiIndex.from_tuples(multi_cols)
+
+    merge_on = [(detail_group, c) for c in ["规则分类", "指标名称", "分箱"]]
+
+    for tbl, lbl in zip(tables[1:], label_names[1:]):
+        tbl_copy = tbl.copy()
+        tc_cols = []
+        for col in tbl.columns:
+            if isinstance(col, tuple) and col[0] == detail_group:
+                tc_cols.append(col)
+            elif col in ["规则分类", "指标名称", "分箱", "样本总数", "样本占比"]:
+                tc_cols.append((detail_group, col))
+            else:
+                tc_cols.append((lbl, col))
+        tbl_copy.columns = pd.MultiIndex.from_tuples(tc_cols)
+        try:
+            base_table = base_table.merge(tbl_copy, on=merge_on)
+        except Exception:
+            pass
+
+    return base_table
+
+
 def rule_swap_analysis(
     df: pd.DataFrame,
     score: Union[str, Dict[str, str]],
@@ -192,6 +245,8 @@ def rule_swap_analysis(
     amount: Optional[str] = None,
     sample_survival_rate: float = 1.0,
     reverse_order: bool = False,
+    out_in_amount_fill: Optional[float] = None,
+    out_in_amount_col: Optional[str] = None,
 ) -> Dict[str, pd.DataFrame]:
     """规则置入置出（Swap）分析.
 
@@ -223,6 +278,9 @@ def rule_swap_analysis(
     - ``sample_survival_rate``: 样本集幸存比例，默认 1.0（100%%）；若传 0.5，
       则表示本数据集仅为全量样本集的 50%%，通过率从 50%% 开始计算
     - ``out_in_uplift``: 置入风险上浮系数，默认 2.0；仅对 out_in 样本生效
+    - ``out_in_amount_fill``: out_in 置入样本的额度填充定值；当客户无额度时使用该值填充
+    - ``out_in_amount_col``: out_in 置入样本的额度填充字段名（从 df 中取每客户额度）；
+      优先级：先取 ``out_in_amount_col``，再取 ``out_in_amount_fill``，都无则按 0 处理
 
     :param df: 全量样本集（包含 score 列 + rules_in/rules_out/rules_base 用到的所有特征列）
     :param score: 评分字段名（str）或多评分映射（Dict）
@@ -238,6 +296,8 @@ def rule_swap_analysis(
     :param amount: 金额字段（可选）
     :param sample_survival_rate: 样本集幸存比例，默认 1.0
     :param reverse_order: 是否逆序展示（True: 从置入效果开始展示）
+    :param out_in_amount_fill: out_in 置入样本额度填充定值（可选）
+    :param out_in_amount_col: out_in 置入样本额度填充字段名（可选，优先级高于 out_in_amount_fill）
     :return: 包含三张表的字典
 
         - ``swap_summary``：四象限样本汇总
@@ -271,7 +331,7 @@ def rule_swap_analysis(
     >>> print(result['swap_result'])        # 业务增益
     """
     # ------------------------------------------------------------------
-    # 0. 参数预处理
+    # 0. 参数预处理与输入验证
     # ------------------------------------------------------------------
     df = df.copy()
 
@@ -280,6 +340,18 @@ def rule_swap_analysis(
         score_map = {'_default': score}
     else:
         score_map = score
+
+    # 验证所有评分列存在
+    for name, col in score_map.items():
+        if col not in df.columns:
+            raise ValueError(f"评分列 '{col}' 不在数据集中")
+
+    # 验证规则所需特征列存在
+    for rules in [rules_in, rules_out or [], rules_base or []]:
+        for rule in rules:
+            missing = set(rule.feature_names_in_) - set(df.columns)
+            if missing:
+                raise ValueError(f"数据集缺少以下规则特征列: {missing}")
 
     # 解析多模型权重
     if score_weights is None:
@@ -294,84 +366,47 @@ def rule_swap_analysis(
     # ------------------------------------------------------------------
     # 1. 分类样本象限
     # ------------------------------------------------------------------
-    df['_swap_in'] = np.nan   # 模型通过标记
-    df['_swap_rule'] = np.nan  # 规则通过标记
-
-    # 1.1 标记模型通过（所有评分均达到阈值）
-    # 阈值策略：取各评分在中位数以上的样本为"通过"
+    # 1.1 标记模型通过（所有评分均达到阈值，取各评分中位数以上为通过）
     score_pass_mask = pd.Series(True, index=df.index)
     for name, col in score_map.items():
-        if col in df.columns:
-            median_val = df[col].median()
-            score_pass_mask = score_pass_mask & (df[col] >= median_val)
-        else:
-            raise ValueError(f"评分列 '{col}' 不在数据集中")
-    df['_swap_in'] = score_pass_mask.astype(int)
+        median_val = df[col].median()
+        score_pass_mask = score_pass_mask & (df[col] >= median_val)
 
     # 1.2 标记规则通过（rules_in 命中即通过；rules_out 命中即拒绝）
     rule_in_hit = pd.Series(False, index=df.index)
     for r in rules_in:
         rule_in_hit = rule_in_hit | r.predict(df)
-    df['_swap_rule'] = rule_in_hit.astype(int)
 
-    # 若有 rules_out，叠加拒绝标记
+    # 1.3 标记 rules_out（置出）
+    rule_out_hit = pd.Series(False, index=df.index)
     if rules_out:
-        rule_out_hit = pd.Series(False, index=df.index)
         for r in rules_out:
             rule_out_hit = rule_out_hit | r.predict(df)
-        df.loc[rule_out_hit, '_swap_rule'] = 0
 
-    # 1.3 若有 rules_base，标记 out_out（基准拒绝）
+    # 1.4 标记 rules_base（out_out 基准拒绝）
     out_out_mask = pd.Series(False, index=df.index)
     if rules_base:
         for r in rules_base:
             out_out_mask = out_out_mask | r.predict(df)
 
-    # 1.4 构建四象限
-    def _get_quadrant(row):
-        in_model = bool(row['_swap_in'])
-        in_rule = bool(row['_swap_rule'])
-        if out_out_mask is not None and out_out_mask.get(row.name, False):
-            return 'out_out'
-        if in_model and in_rule:
-            return 'in_in'
-        elif in_model and not in_rule:
-            return 'in_out'
-        elif not in_model and in_rule:
-            return 'out_in'
-        else:
-            return 'out_out'
+    # 1.5 构建四象限
+    model_pass = score_pass_mask.values  # already boolean
+    rule_pass = rule_in_hit.values & (~rule_out_hit.values)
 
-    df['_swap_quadrant'] = df.apply(_get_quadrant, axis=1)
+    conditions = [
+        model_pass & rule_pass,       # in_in: 模型通过 + 规则通过
+        model_pass & ~rule_pass,      # in_out: 模型通过 + 规则拒绝
+        ~model_pass & rule_pass,       # out_in: 模型拒绝 + 规则通过
+    ]
+    choices = ['in_in', 'in_out', 'out_in']
+    df['_swap_quadrant'] = np.select(conditions, choices, default='out_out')
 
     # ------------------------------------------------------------------
-    # 2. 构建评分→逾期率映射（分箱表或自动生成）
+    # 2. 构建多模型加权综合评分（归一化到 [0,1]）
     # ------------------------------------------------------------------
-    if bin_table is not None:
-        # 复用 OverduePredictor 从现成分箱表提取逾期率
-        predictor = OverduePredictor(feature='_swap_score_combined')
-        predictor.fit(bin_table)
-        # 构建 {分箱标签: 逾期率} 字典
-        bin_rates = predictor.bin_rates_.get('_default', {})
-    else:
-        # 自动分箱：从 df（含 target/overdue+dpds）生成分箱表
-        predictor = OverduePredictor(
-            feature=list(score_map.values())[0],
-            target=target,
-            overdue=overdue,
-            dpds=dpds,
-            method='quantile',
-            max_n_bins=10,
-            missing_separate=True,
-        )
-        predictor.fit(df)
-        bin_rates = predictor.bin_rates_.get('_default', {})
-
-    # 多模型加权综合评分（归一化）
     df['_swap_score_combined'] = 0.0
     for name, col in score_map.items():
         w = score_weights[name] / total_weight
-        # 归一化到 [0,1]（按 max-min）
         col_min = df[col].min()
         col_max = df[col].max()
         if col_max > col_min:
@@ -381,408 +416,799 @@ def rule_swap_analysis(
         df['_swap_score_combined'] += w * df[f'_tmp_norm_{name}']
 
     # ------------------------------------------------------------------
-    # 3. 计算各象限逾期率
+    # 3. 构建评分→逾期率映射（分箱表或自动生成）
+    # ------------------------------------------------------------------
+    if bin_table is not None:
+        predictor = OverduePredictor(feature='_swap_score_combined')
+        predictor.fit(bin_table)
+    else:
+        if target is None and (overdue is None or dpds is None):
+            raise ValueError("未传入 bin_table 时，必须传入 target 或 overdue+dpds 参数")
+        predictor = OverduePredictor(
+            feature='_swap_score_combined',
+            target=target,
+            overdue=overdue,
+            dpds=dpds,
+            method='quantile',
+            max_n_bins=10,
+            missing_separate=True,
+        )
+        predictor.fit(df)
+
+    # ------------------------------------------------------------------
+    # 4. 计算各象限逾期率
     # ------------------------------------------------------------------
     def _calc_bad_rate(q_df: pd.DataFrame, amount_col: Optional[str] = None) -> float:
-        """计算象限的坏样本率（加权/金额口径）。"""
+        """计算象限的坏样本率（订单口径或金额口径）。"""
         if q_df.empty:
             return 0.0
         if target is not None:
             col = target
+            if amount_col is not None and amount_col in q_df.columns:
+                y = q_df[col]
+                amt = q_df[amount_col]
+                amt_sum = float(amt.sum())
+                # out_in 象限：额度为 0 时使用填充值
+                if amt_sum == 0.0 and (q_df['_swap_quadrant'] == 'out_in').any():
+                    if out_in_amount_col and out_in_amount_col in q_df.columns:
+                        amt = q_df[out_in_amount_col]
+                    elif out_in_amount_fill is not None:
+                        amt = pd.Series(out_in_amount_fill, index=q_df.index)
+                if float(amt.sum()) > 0:
+                    return float((y * amt).sum() / amt.sum())
+            if col in q_df.columns:
+                return float(q_df[col].mean())
         elif overdue is not None:
             mob_col = overdue[0] if isinstance(overdue, list) else overdue
             dpd_val = dpds[0] if isinstance(dpds, list) else dpds
-            col = mob_col
-            if col in q_df.columns:
-                y = (q_df[col] > dpd_val).astype(int)
+            if mob_col in q_df.columns:
+                y = (q_df[mob_col] > dpd_val).astype(float)
+                if amount_col is not None and amount_col in q_df.columns:
+                    amt = q_df[amount_col]
+                    amt_sum = float(amt.sum())
+                    # out_in 象限：额度为 0 时使用填充值
+                    if amt_sum == 0.0 and (q_df['_swap_quadrant'] == 'out_in').any():
+                        if out_in_amount_col and out_in_amount_col in q_df.columns:
+                            amt = q_df[out_in_amount_col]
+                        elif out_in_amount_fill is not None:
+                            amt = pd.Series(out_in_amount_fill, index=q_df.index)
+                    if float(amt.sum()) > 0:
+                        return float((y * amt).sum() / amt.sum())
                 return float(y.mean())
-        if col in q_df.columns:
-            return float(q_df[col].mean())
         return 0.0
 
-    # 为 out_in 应用 uplift
+    # 基准坏样本率：使用 IN-IN 象限的实际坏样本率作为基准
     _overall_bad_rate = _calc_bad_rate(df[df['_swap_quadrant'] == 'in_in'], amount)
     if _overall_bad_rate <= 0:
         _overall_bad_rate = df[target].mean() if target in df.columns else 0.05
 
+    # ------------------------------------------------------------------
+    # 5. 获取预测逾期率（使用 OverduePredictor）
+    # ------------------------------------------------------------------
+    _pred_df = predictor.predict(df[['_swap_score_combined']])
+    if isinstance(_pred_df, dict):
+        _pred_df = _pred_df.get('_default', pd.Series(0.0, index=df.index))
+    _pred_df = pd.Series(_pred_df, index=df.index)
+
+    _overall_pred_bad = float(_pred_df.mean()) if len(_pred_df) > 0 else _overall_bad_rate
+    if _overall_pred_bad <= 0:
+        _overall_pred_bad = _overall_bad_rate
+
+    # ------------------------------------------------------------------
+    # 6. 构建 Swap Summary 表
+    # ------------------------------------------------------------------
     quadrants = ['in_in', 'in_out', 'out_in', 'out_out']
     if reverse_order:
         quadrants = ['out_out', 'out_in', 'in_out', 'in_in']
 
-    # ------------------------------------------------------------------
-    # 4. 构建 Swap Summary 表
-    # ------------------------------------------------------------------
     summary_rows = []
     for q in quadrants:
-        q_df = df[df['_swap_quadrant'] == q]
-        n = len(q_df)
+        q_mask = df['_swap_quadrant'] == q
+        q_df = df[q_mask]
+        n = q_mask.sum()
         if n == 0:
             continue
 
         bad_rate = _calc_bad_rate(q_df, amount)
-        # 对 out_in 应用 uplift
         if q == 'out_in':
             bad_rate = min(bad_rate * out_in_uplift, 1.0)
 
         lift = bad_rate / _overall_bad_rate if _overall_bad_rate > 0 else 0.0
-
         n_bad = int(n * bad_rate)
         n_good = n - n_bad
         good_rate = 1 - bad_rate
 
         if amount is not None and amount in q_df.columns:
-            amt_total = q_df[amount].sum()
-            amt_bad = amt_total * bad_rate
+            amt = q_df[amount]
+            amt_sum = float(amt.sum())
+            # out_in 象限：额度为 0 时使用填充值
+            if amt_sum == 0.0 and q == 'out_in':
+                if out_in_amount_col and out_in_amount_col in q_df.columns:
+                    amt_sum = float(q_df[out_in_amount_col].sum())
+                elif out_in_amount_fill is not None:
+                    amt_sum = float(out_in_amount_fill * n)
+            amt_total = amt_sum
+            amt_bad = float(amt_total * bad_rate)
         else:
             amt_total = None
             amt_bad = None
 
         summary_rows.append({
             '象限': q,
-            '样本数': n,
-            '样本占比': n / len(df),
+            '样本数': int(n),
+            '样本占比': float(n / len(df)),
             '好样本数': n_good,
             '好样本占比': good_rate,
             '坏样本数': n_bad,
             '坏样本占比': bad_rate,
             '坏样本率': bad_rate,
             'LIFT': lift,
-            '金额总数': amt_total,
-            '预估坏金额': amt_bad,
+            '金额总数': float(amt_total) if amt_total is not None else None,
+            '预估坏金额': float(amt_bad) if amt_bad is not None else None,
         })
 
     swap_summary = pd.DataFrame(summary_rows)
 
     # ------------------------------------------------------------------
-    # 5. 构建 Swap Pipeline 表（Rule.report() 风格 + 三列额外指标）
+    # 7. 构建 Swap Pipeline 表（分析流程 + 规则集 + 样本占比 + 通过率列）
     # ------------------------------------------------------------------
-    # 7步顺序（reverse_order=False）:
-    #   全部样本 → OUT-OUT拒绝 → 剩余 → IN-OUT置出 → 剩余 → IN-IN通过 → OUT-IN置入
-    # reverse_order=True 时逆序遍历，先展示置入效果，逐步到全量样本
-    n_total = len(df) / sample_survival_rate  # 还原全量样本数（支持幸存比例缩放）
     scale = 1.0 / sample_survival_rate if sample_survival_rate > 0 else 1.0
-    N_total = int(n_total)
+    N_total_actual = len(df)  # 实际样本数（不乘 scale）
+    N_total = int(N_total_actual * scale)  # 调整后总样本数（用于通过率计算）
 
-    # 归一化各象限到全量口径
-    def _quadrant_n(name):
-        return int(len(df[df['_swap_quadrant'] == name]))
-
-    n_ii = _quadrant_n('in_in')
-    n_io = _quadrant_n('in_out')
-    n_oi = _quadrant_n('out_in')
-    n_oo = _quadrant_n('out_out')
-    N_oo = int(n_oo * scale)
-    N_io = int(n_io * scale)
-    N_ii = int(n_ii * scale)
-    N_oi = int(n_oi * scale)
-
-    # 使用 OverduePredictor.predict() 获取每个样本的预测逾期率
-    # _swap_score_combined 在前面多模型加权综合评分步骤中已创建于 df
-    _pred_df = predictor.predict(df[['_swap_score_combined']])
-
-    # 全量预测逾期率（用于 全部样本 步骤的 lift 基准）
-    _overall_pred_bad = float(_pred_df.mean()) if len(_pred_df) > 0 else 0.0
-    if _overall_pred_bad <= 0:
-        _overall_pred_bad = df[target].mean() if target in df.columns else 0.05
-
-    # Extra columns to add to each step
-    _extra_cols = ['调整方向', '通过率', '通过率(绝对值)', '通过率(相对值)']
-
-    def _build_full_step(step_name, quadrant, step_n, cum_remain, is_rem_step=False, adj_dir='-'):
-        """构建完整一步（含命中/未命中/合计三行 + extra列）。"""
-        if step_n == 0:
-            return pd.DataFrame()
-
-        cur_pass_rate = cum_remain / N_total if N_total > 0 else 0.0
-        extra = {
-            '调整方向': adj_dir,
-            '通过率': cur_pass_rate,
-            '通过率(绝对值)': cur_pass_rate,
-            '通过率(相对值)': cur_pass_rate,
-        }
-
-        if is_rem_step:
-            rem_mask = df['_swap_quadrant'] == quadrant
-            rem_pred = _pred_df[rem_mask]
-            step_bad_rate = float(rem_pred.mean()) if len(rem_pred) > 0 else 0.0
-            lift_val = step_bad_rate / _overall_pred_bad if _overall_pred_bad > 0 else 1.0
-            step_rows = [
-                {**{
-                    '规则分类': quadrant,
-                    '指标名称': step_name,
-                    '分箱': '命中',
-                    '样本总数': step_n,
-                    '样本占比': step_n / N_total,
-                    '好样本数': int(step_n * (1 - step_bad_rate)),
-                    '好样本占比': 1 - step_bad_rate,
-                    '坏样本数': int(step_n * step_bad_rate),
-                    '坏样本占比': step_bad_rate,
-                    '坏样本率': step_bad_rate,
-                    'LIFT值': lift_val,
-                    '坏账改善': 0.0,
-                    '风险拒绝比': 0.0,
-                    '准确率': 0.0,
-                    '精确率': 0.0,
-                    '召回率': 0.0,
-                    'F1分数': 0.0,
-                }, **extra},
-                {**{
-                    '规则分类': quadrant,
-                    '指标名称': step_name,
-                    '分箱': '未命中',
-                    '样本总数': 0,
-                    '样本占比': 0.0,
-                    '好样本数': 0,
-                    '好样本占比': 0.0,
-                    '坏样本数': 0,
-                    '坏样本占比': 0.0,
-                    '坏样本率': 0.0,
-                    'LIFT值': 0.0,
-                    '坏账改善': 0.0,
-                    '风险拒绝比': 0.0,
-                    '准确率': 0.0,
-                    '精确率': 0.0,
-                    '召回率': 0.0,
-                    'F1分数': 0.0,
-                }, **extra},
-            ]
-            table = pd.DataFrame(step_rows)
-        else:
-            quad_mask = df['_swap_quadrant'] == quadrant
-            quad_pred = _pred_df[quad_mask]
-            step_bad_rate = float(quad_pred.mean()) if len(quad_pred) > 0 else 0.0
-            if quadrant == 'out_in':
-                step_bad_rate = min(step_bad_rate * out_in_uplift, 1.0)
-            lift_hit = step_bad_rate / _overall_pred_bad if _overall_pred_bad > 0 else 1.0
-            step_rows = [
-                {**{
-                    '规则分类': quadrant,
-                    '指标名称': step_name,
-                    '分箱': '命中',
-                    '样本总数': step_n,
-                    '样本占比': step_n / N_total,
-                    '好样本数': int(step_n * (1 - step_bad_rate)),
-                    '好样本占比': 1 - step_bad_rate,
-                    '坏样本数': int(step_n * step_bad_rate),
-                    '坏样本占比': step_bad_rate,
-                    '坏样本率': step_bad_rate,
-                    'LIFT值': lift_hit,
-                    '坏账改善': 0.0,
-                    '风险拒绝比': 0.0,
-                    '准确率': 0.0,
-                    '精确率': 0.0,
-                    '召回率': 0.0,
-                    'F1分数': 0.0,
-                }, **extra},
-                {**{
-                    '规则分类': quadrant,
-                    '指标名称': step_name,
-                    '分箱': '未命中',
-                    '样本总数': 0,
-                    '样本占比': 0.0,
-                    '好样本数': 0,
-                    '好样本占比': 0.0,
-                    '坏样本数': 0,
-                    '坏样本占比': 0.0,
-                    '坏样本率': 0.0,
-                    'LIFT值': 0.0,
-                    '坏账改善': 0.0,
-                    '风险拒绝比': 0.0,
-                    '准确率': 0.0,
-                    '精确率': 0.0,
-                    '召回率': 0.0,
-                    'F1分数': 0.0,
-                }, **extra},
-            ]
-            table = pd.DataFrame(step_rows)
-
-        table_total = {
-            **{'规则分类': quadrant, '指标名称': step_name, '分箱': '合计',
-               '样本总数': step_n, '样本占比': 1.0,
-               '好样本数': int(step_n * (1 - step_bad_rate)),
-               '好样本占比': 1.0, '坏样本数': int(step_n * step_bad_rate),
-               '坏样本占比': 1.0, '坏样本率': step_bad_rate,
-               'LIFT值': 1.0, '坏账改善': 0.0, '风险拒绝比': 0.0,
-               '准确率': 0.0, '精确率': 0.0, '召回率': 0.0, 'F1分数': 0.0},
-            **extra,
-        }
-        return pd.concat([table, pd.DataFrame([table_total])], ignore_index=True)
-
-    def _build_total_step(step_name, step_n, cum_remain):
-        """构建 全部样本 步骤的表（用 predictor 计算预测逾期率）。"""
-        if step_n == 0:
-            return pd.DataFrame()
-        step_bad_rate = _overall_pred_bad
-        lift_hit = step_bad_rate / _overall_pred_bad if _overall_pred_bad > 0 else 1.0
-        cur_pass_rate = cum_remain / N_total if N_total > 0 else 0.0
-        extra = {
-            '调整方向': '-',
-            '通过率': cur_pass_rate,
-            '通过率(绝对值)': cur_pass_rate,
-            '通过率(相对值)': cur_pass_rate,
-        }
-        step_rows = [
-            {**{'规则分类': '_all_', '指标名称': step_name, '分箱': '命中',
-                '样本总数': step_n, '样本占比': 1.0,
-                '好样本数': int(step_n * (1 - step_bad_rate)),
-                '好样本占比': 1 - step_bad_rate,
-                '坏样本数': int(step_n * step_bad_rate),
-                '坏样本占比': step_bad_rate,
-                '坏样本率': step_bad_rate,
-                'LIFT值': lift_hit,
-                '坏账改善': 0.0, '风险拒绝比': 0.0,
-                '准确率': 0.0, '精确率': 0.0, '召回率': 0.0, 'F1分数': 0.0},
-             **extra},
-            {**{'规则分类': '_all_', '指标名称': step_name, '分箱': '未命中',
-                '样本总数': 0, '样本占比': 0.0,
-                '好样本数': 0, '好样本占比': 0.0,
-                '坏样本数': 0, '坏样本占比': 0.0,
-                '坏样本率': 0.0, 'LIFT值': 0.0,
-                '坏账改善': 0.0, '风险拒绝比': 0.0,
-                '准确率': 0.0, '精确率': 0.0, '召回率': 0.0, 'F1分数': 0.0},
-             **extra},
-        ]
-        table = pd.DataFrame(step_rows)
-        table_total = {
-            **{'规则分类': '_all_', '指标名称': step_name, '分箱': '合计',
-               '样本总数': step_n, '样本占比': 1.0,
-               '好样本数': int(step_n * (1 - step_bad_rate)),
-               '好样本占比': 1.0, '坏样本数': int(step_n * step_bad_rate),
-               '坏样本占比': 1.0, '坏样本率': step_bad_rate,
-               'LIFT值': 1.0, '坏账改善': 0.0, '风险拒绝比': 0.0,
-               '准确率': 0.0, '精确率': 0.0, '召回率': 0.0, 'F1分数': 0.0},
-            **extra,
-        }
-        return pd.concat([table, pd.DataFrame([table_total])], ignore_index=True)
-
-    # 步骤定义: (quadrant, step_name, is_rem_step, adj_direction)
-    # 全部样本步骤用 _ALL_ sentinel 值表示
-    # 注意：两个"剩余样本"步骤使用不同 step_name，避免 cum_map 键冲突
-    if not reverse_order:
-        step_defs = [
-            ('_all_',    '全部样本',             None),
-            ('out_out',  'OUT-OUT 拒绝样本',      None),
-            ('_rem_oo',  'OUT-OUT后剩余样本',     'out_out'),
-            ('in_out',   'IN-OUT 置出样本',       None),
-            ('_rem_io',  'IN-OUT后剩余样本',      'in_out'),
-            ('in_in',    'IN-IN 通过样本',        None),
-            ('out_in',   'OUT-IN 置入样本',       None),
-        ]
-        adj_dirs = {
-            '全部样本': '-',
-            'OUT-OUT 拒绝样本': '收紧',
-            'OUT-OUT后剩余样本': '-',
-            'IN-OUT 置出样本': '释放',
-            'IN-OUT后剩余样本': '-',
-            'IN-IN 通过样本': '释放',
-            'OUT-IN 置入样本': '收紧',
-        }
-    else:
-        step_defs = [
-            ('out_in',   'OUT-IN 置入样本',       None),
-            ('in_in',    'IN-IN 通过样本',         None),
-            ('_rem_ii',  'IN-IN后剩余样本',        'in_in'),
-            ('in_out',   'IN-OUT 置出样本',        None),
-            ('_rem_io2', 'IN-OUT后剩余样本',       'in_out'),
-            ('out_out',  'OUT-OUT 拒绝样本',       None),
-            ('_all_',    '全部样本',               None),
-        ]
-        adj_dirs = {
-            '全部样本': '-',
-            'OUT-OUT 拒绝样本': '收紧',
-            'IN-OUT 置出样本': '释放',
-            'IN-IN后剩余样本': '-',
-            'IN-OUT后剩余样本': '-',
-            'IN-IN 通过样本': '释放',
-            'OUT-IN 置入样本': '收紧',
-        }
-
-    # 预计算每个象限的样本数（全量口径）
-    quad_counts = {q: int((df['_swap_quadrant'] == q).sum() * scale) for q in ['in_in', 'in_out', 'out_in', 'out_out']}
+    quad_counts = {
+        q: int((df['_swap_quadrant'] == q).sum())
+        for q in ['in_in', 'in_out', 'out_in', 'out_out']
+    }
     N_ii = quad_counts['in_in']
     N_io = quad_counts['in_out']
     N_oi = quad_counts['out_in']
     N_oo = quad_counts['out_out']
 
-    # 正序累计剩余（用于计算通过率）
-    # 各 step 的 cum_remain = 经过该步骤之前所有步骤后的剩余样本数
-    cum_map_normal = {
-        '全部样本': N_total,
-        'OUT-OUT 拒绝样本': N_total,
-        'OUT-OUT后剩余样本': N_total - N_oo,
-        'IN-OUT 置出样本': N_total - N_oo,
-        'IN-OUT后剩余样本': N_total - N_oo - N_io,
-        'IN-IN 通过样本': N_total - N_oo - N_io - N_ii,
-        'OUT-IN 置入样本': N_total - N_oo - N_io - N_ii - N_oi,
-    }
-    cum_map_reverse = {
-        '全部样本': N_total,
-        'OUT-IN 置入样本': N_total,
-        'IN-IN 通过样本': N_total - N_oi,
-        'IN-IN后剩余样本': N_oi + N_ii,
-        'IN-OUT 置出样本': N_oi + N_ii,
-        'IN-OUT后剩余样本': N_oi + N_ii + N_io,
-        'OUT-OUT 拒绝样本': N_oi + N_ii + N_io + N_oo,
-    }
+    # 获取多标签列结构（用于构建 MultiIndex 列）
+    # 先用一个 dummy call 探测 rule.report() 返回的列结构
+    _demo_tbl = None
+    for _r in (rules_in or []):
+        _demo_tbl = _r.report(
+            df.head(1), target=target, overdue=overdue, dpds=dpds, margins=False, amount=amount
+        )
+        break
 
-    cum_map = cum_map_reverse if reverse_order else cum_map_normal
+    def _is_multi_label(tbl: pd.DataFrame) -> bool:
+        return isinstance(tbl.columns, pd.MultiIndex)
 
-    pipeline_tables = []
-    for quadrant, step_name, rem_q in step_defs:
-        if quadrant == '_all_':
-            step_n = N_total
-            cum_remain = cum_map.get(step_name, N_total)
-            t = _build_total_step(step_name, step_n, cum_remain)
-        elif rem_q is not None:
-            # 剩余样本步骤
-            cum_remain = cum_map.get(step_name, N_total)
-            step_n = cum_remain
-            t = _build_full_step(step_name, rem_q, step_n, cum_remain, is_rem_step=True, adj_dir='-')
+    def _get_label_names(tbl: pd.DataFrame) -> List[str]:
+        if not isinstance(tbl.columns, pd.MultiIndex):
+            return []
+        return [c for c in tbl.columns.get_level_values(0)
+                if c not in ('分箱详情', '规则详情')]
+
+    is_multi = _is_multi_label(_demo_tbl) if _demo_tbl is not None else False
+    label_names = _get_label_names(_demo_tbl) if _demo_tbl is not None else []
+
+    def _build_detail_col(tbl: pd.DataFrame, expr_text: str = '') -> pd.DataFrame:
+        """仅处理 MultiIndex 场景：追加 规则详情 tuple 列到 detail group 内。
+        非 MultiIndex 场景直接返回，由调用方追加数据列。
+        """
+        tbl = tbl.copy()
+        if isinstance(tbl.columns, pd.MultiIndex):
+            detail_group = _get_detail_group_name(tbl)
+            new_cols = []
+            for col in tbl.columns:
+                if col[0] == detail_group and col[1] == '规则分类':
+                    new_cols.append(col)
+                    new_cols.append((detail_group, '规则详情'))
+                else:
+                    new_cols.append(col)
+            tbl.columns = pd.MultiIndex.from_tuples(new_cols)
+            # 填充规则详情数据列（所有行相同）
+            if (detail_group, '规则详情') in tbl.columns:
+                tbl[(detail_group, '规则详情')] = expr_text
+        return tbl
+
+    def _filter_hit_rows(tbl: pd.DataFrame) -> pd.DataFrame:
+        """只保留 命中 行（移除 未命中 和 合计 行）。"""
+        tbl = tbl.copy()
+        if isinstance(tbl.columns, pd.MultiIndex):
+            detail_group = _get_detail_group_name(tbl)
+            bin_col = (detail_group, '分箱')
+            if bin_col in tbl.columns:
+                mask = tbl[bin_col] == '命中'
+                tbl = tbl[mask]
         else:
-            cum_remain = cum_map.get(step_name, N_total)
-            step_n = quad_counts.get(quadrant, 0)
-            adj_dir = adj_dirs.get(step_name, '-')
-            t = _build_full_step(step_name, quadrant, step_n, cum_remain, is_rem_step=False, adj_dir=adj_dir)
+            if '分箱' in tbl.columns:
+                tbl = tbl[tbl['分箱'] == '命中']
+        return tbl
 
-        if len(t) == 0:
-            continue
+    def _append_rate_change_col(tbl: pd.DataFrame, prev_rate: float) -> Tuple[pd.DataFrame, float]:
+        """追加 通过率变化 列，返回 (新表, 当前通过率)。"""
+        tbl = tbl.copy()
+        cur_rate = float(tbl['通过率(绝对值)'].iloc[0]) if len(tbl) > 0 else prev_rate
+        change = cur_rate - prev_rate if prev_rate is not None else None
+        tbl['通过率变化'] = change if change is not None else None
+        return tbl, cur_rate
 
-        # 更新 extra 列
-        for col in _extra_cols:
-            if col not in t.columns:
-                t[col] = '-'
-        pipeline_tables.append(t)
+    def _build_rule_row(rule_name, rule_obj, df_subset, step_label, adj_dir,
+                        parent_n, cum_remain, prev_rate, is_out_in=False):
+        """生成单条规则的命中行，附加分析流程、规则详情、通过率变化等信息。"""
+        if len(df_subset) == 0:
+            return None, prev_rate
 
-    swap_pipeline = pd.concat(pipeline_tables, ignore_index=True)
+        # 调用 rule.report() 获取多标签表（只取命中行）
+        raw_tbl = rule_obj.report(
+            df_subset, target=target, overdue=overdue, dpds=dpds,
+            margins=False, amount=amount,
+        )
+        raw_tbl = raw_tbl.reset_index(drop=True)
+
+        # 只保留 命中 行
+        tbl = _filter_hit_rows(raw_tbl)
+        if len(tbl) == 0:
+            return None, prev_rate
+
+        # 添加 规则详情 列（MultiIndex 和单层列都在 _build_detail_col 中处理）
+        expr_text = rule_obj.expr
+        tbl = _build_detail_col(tbl, expr_text=expr_text)
+
+        # 标准化列名（MultiIndex → 单层，兼容单标签）
+        if isinstance(tbl.columns, pd.MultiIndex):
+            detail_group = _get_detail_group_name(tbl)
+            new_cols = {}
+            for col in tbl.columns:
+                name = col[1]
+                if col[0] == detail_group:
+                    if name == '规则分类':
+                        name = '规则分类_out'
+                    new_cols[col] = name
+                else:
+                    new_cols[col] = f'{name}({col[0]})'
+            tbl = tbl.rename(columns=new_cols)
+        else:
+            if '规则分类' in tbl.columns:
+                tbl = tbl.rename(columns={'规则分类': '规则分类_out'})
+            if '规则详情' not in tbl.columns:
+                tbl['规则详情'] = ''
+            if '指标名称' not in tbl.columns:
+                tbl['指标名称'] = ''
+
+        # 计算样本数（实际值，不乘 scale）
+        n_hit = len(tbl)
+        sample_ratio = n_hit / N_total_actual if N_total_actual > 0 else 0.0
+        sample_ratio_rel = n_hit / parent_n if parent_n > 0 else 0.0
+
+        # 样本数用实际值，但通过率用调整后值
+        abs_pass = cum_remain / N_total if N_total > 0 else 0.0
+        rel_pass = cum_remain / parent_n if parent_n > 0 else 0.0
+
+        # 添加固定列
+        tbl['分析流程'] = step_label
+        tbl['规则集'] = rule_name
+        tbl['样本总数'] = n_hit
+        tbl['样本占比'] = sample_ratio
+        tbl['样本占比(相对)'] = sample_ratio_rel
+        tbl['通过率(绝对值)'] = abs_pass
+        tbl['通过率(相对值)'] = rel_pass
+        # 通过率（绝对）列：用于后续计算通过率变化
+        tbl['通过率'] = abs_pass
+        tbl['调整方向'] = adj_dir
+
+        # out_in 特殊处理：应用 uplift 系数到坏样本率
+        if is_out_in and '坏样本率' in tbl.columns:
+            tbl['坏样本率'] = tbl['坏样本率'].apply(lambda x: min(float(x) * out_in_uplift, 1.0))
+            if 'LIFT值' in tbl.columns:
+                base_bad = _overall_pred_bad if _overall_pred_bad > 0 else 0.01
+                tbl['LIFT值'] = tbl['坏样本率'] / base_bad
+
+        # 金额口径支持
+        if amount is not None and amount in df_subset.columns:
+            amt_hit = float(df_subset[amount].sum())
+            if amt_hit == 0.0 and is_out_in:
+                n_oi = len(df_subset)
+                if out_in_amount_col and out_in_amount_col in df_subset.columns:
+                    amt_hit = float(df_subset[out_in_amount_col].sum())
+                elif out_in_amount_fill is not None:
+                    amt_hit = float(out_in_amount_fill * n_oi)
+            if '金额总数' not in tbl.columns:
+                tbl['金额总数'] = amt_hit
+            else:
+                tbl['金额总数'] = amt_hit
+            bad_rate_col = '坏样本率' if '坏样本率' in tbl.columns else None
+            if bad_rate_col and '预估坏金额' not in tbl.columns:
+                br = float(tbl[bad_rate_col].iloc[0]) if len(tbl) > 0 else 0.0
+                tbl['预估坏金额'] = float(amt_hit * br)
+
+        # 计算通过率变化
+        cur_rate = abs_pass
+        change = cur_rate - prev_rate if prev_rate is not None else None
+        tbl['通过率变化'] = change if change is not None else None
+
+        return tbl, cur_rate
+
+    def _build_subtotal_row(step_label, sub_n, parent_n, cum_remain, prev_rate, adj_dir, label_suffix=''):
+        """生成合计小计行（只显示样本数、占比、通过率等，不含 rule.report 详情）。"""
+        if sub_n == 0:
+            return None, prev_rate
+
+        # 计算小计行的坏样本率（基于 OverduePredictor 预测）
+        q_name_map = {
+            'OUT-OUT 拒绝样本': 'out_out',
+            'IN-OUT 置出样本': 'in_out',
+            'OUT-IN 置入样本': 'out_in',
+        }
+        q_key = q_name_map.get(step_label, step_label)
+        q_mask = df['_swap_quadrant'] == q_key
+        q_pred = _pred_df[q_mask]
+        sub_bad_rate = float(q_pred.mean()) if len(q_pred) > 0 else _overall_pred_bad
+        if q_key == 'out_in':
+            sub_bad_rate = min(sub_bad_rate * out_in_uplift, 1.0)
+
+        sub_lift = sub_bad_rate / _overall_pred_bad if _overall_pred_bad > 0 else 1.0
+        sub_good = int(sub_n * (1 - sub_bad_rate))
+        sub_bad = int(sub_n * sub_bad_rate)
+        sample_ratio = sub_n / N_total_actual if N_total_actual > 0 else 0.0
+        sample_ratio_rel = sub_n / parent_n if parent_n > 0 else 0.0
+        abs_pass = cum_remain / N_total if N_total > 0 else 0.0
+        rel_pass = cum_remain / parent_n if parent_n > 0 else 0.0
+        cur_rate = abs_pass
+        change = cur_rate - prev_rate if prev_rate is not None else None
+
+        # 构建列结构（与 rule.report 保持一致）
+        row = {}
+        # 先填入指标列
+        if is_multi and label_names:
+            for lbl in label_names:
+                for metric in ('好样本数', '坏样本数', '坏样本率', 'LIFT值',
+                              '好样本占比', '坏样本占比'):
+                    row[f'{metric}({lbl})'] = None  # placeholder，合计行不展开
+            # 小计行只显示综合坏样本率
+            row['坏样本率'] = sub_bad_rate
+            row['LIFT值'] = sub_lift
+            row['好样本数'] = sub_good
+            row['坏样本数'] = sub_bad
+            row['好样本占比'] = 1 - sub_bad_rate
+            row['坏样本占比'] = sub_bad_rate
+        else:
+            row = {
+                '规则分类_out': step_label,
+                '规则详情': '',
+                '指标名称': '合计',
+                '分箱': '合计',
+                '样本总数': sub_n,
+                '样本占比': sample_ratio,
+                '样本占比(相对)': sample_ratio_rel,
+                '好样本数': sub_good,
+                '好样本占比': 1 - sub_bad_rate,
+                '坏样本数': sub_bad,
+                '坏样本占比': sub_bad_rate,
+                '坏样本率': sub_bad_rate,
+                'LIFT值': sub_lift,
+                '通过率': abs_pass,
+                '通过率(绝对值)': abs_pass,
+                '通过率(相对值)': rel_pass,
+                '通过率变化': change,
+                '调整方向': adj_dir,
+            }
+            return pd.DataFrame([row]), cur_rate
+
+        row.update({
+            '分析流程': step_label,
+            '规则集': '合计',
+            '样本总数': sub_n,
+            '样本占比': sample_ratio,
+            '样本占比(相对)': sample_ratio_rel,
+            '通过率': abs_pass,
+            '通过率(绝对值)': abs_pass,
+            '通过率(相对值)': rel_pass,
+            '通过率变化': change,
+            '调整方向': adj_dir,
+        })
+        return pd.DataFrame([row]), cur_rate
+
+    def _build_remaining_row(step_label, rem_n, parent_n, cum_remain, prev_rate):
+        """生成剩余样本行。"""
+        if rem_n == 0:
+            return None, prev_rate
+        rem_bad_rate = _overall_pred_bad
+        rem_lift = rem_bad_rate / _overall_pred_bad if _overall_pred_bad > 0 else 1.0
+        rem_good = int(rem_n * (1 - rem_bad_rate))
+        rem_bad = int(rem_n * rem_bad_rate)
+        sample_ratio = rem_n / N_total_actual if N_total_actual > 0 else 0.0
+        sample_ratio_rel = rem_n / parent_n if parent_n > 0 else 0.0
+        abs_pass = cum_remain / N_total if N_total > 0 else 0.0
+        rel_pass = cum_remain / parent_n if parent_n > 0 else 0.0
+        cur_rate = abs_pass
+        change = cur_rate - prev_rate if prev_rate is not None else None
+
+        row = {
+            '分析流程': step_label,
+            '规则集': '',
+            '规则分类_out': step_label,
+            '规则详情': '',
+            '指标名称': '',
+            '分箱': '剩余样本',
+            '样本总数': rem_n,
+            '样本占比': sample_ratio,
+            '样本占比(相对)': sample_ratio_rel,
+            '好样本数': rem_good,
+            '好样本占比': 1 - rem_bad_rate,
+            '坏样本数': rem_bad,
+            '坏样本占比': rem_bad_rate,
+            '坏样本率': rem_bad_rate,
+            'LIFT值': rem_lift,
+            '通过率': abs_pass,
+            '通过率(绝对值)': abs_pass,
+            '通过率(相对值)': rel_pass,
+            '通过率变化': change,
+            '调整方向': '-',
+        }
+        return pd.DataFrame([row]), cur_rate
+
+    def _build_total_row(step_label, parent_n, prev_rate):
+        """生成全部样本汇总行。"""
+        if parent_n == 0:
+            return None, prev_rate
+        total_bad = _overall_pred_bad
+        sample_ratio = parent_n / N_total_actual if N_total_actual > 0 else 1.0
+        abs_pass = 1.0
+        rel_pass = 1.0
+        cur_rate = 1.0
+        change = cur_rate - prev_rate if prev_rate is not None else None
+        row = {
+            '分析流程': step_label,
+            '规则集': '',
+            '规则分类_out': step_label,
+            '规则详情': '',
+            '指标名称': '',
+            '分箱': '全部样本',
+            '样本总数': parent_n,
+            '样本占比': sample_ratio,
+            '样本占比(相对)': 1.0,
+            '好样本数': int(parent_n * (1 - total_bad)),
+            '好样本占比': 1 - total_bad,
+            '坏样本数': int(parent_n * total_bad),
+            '坏样本占比': total_bad,
+            '坏样本率': total_bad,
+            'LIFT值': 1.0,
+            '通过率': abs_pass,
+            '通过率(绝对值)': abs_pass,
+            '通过率(相对值)': rel_pass,
+            '通过率变化': change,
+            '调整方向': '-',
+        }
+        return pd.DataFrame([row]), cur_rate
+
+    def _build_all_in_row(cum_remain, prev_rate):
+        """生成 ALL-IN 置换样本最终汇总行。"""
+        all_in_n = N_ii + N_oi
+        if all_in_n == 0:
+            return None, prev_rate
+        all_in_pass = cum_remain / N_total if N_total > 0 else 0.0
+        all_in_bad = (N_ii * _overall_pred_bad + N_oi * min(_overall_pred_bad * out_in_uplift, 1.0)) \
+            / max(all_in_n, 1)
+        all_in_lift = all_in_bad / _overall_pred_bad if _overall_pred_bad > 0 else 1.0
+        sample_ratio = all_in_n / N_total_actual if N_total_actual > 0 else 0.0
+        cur_rate = all_in_pass
+        change = cur_rate - prev_rate if prev_rate is not None else None
+        row = {
+            '分析流程': 'ALL-IN 置换样本',
+            '规则集': '',
+            '规则分类_out': 'ALL-IN 置换样本',
+            '规则详情': '',
+            '指标名称': '',
+            '分箱': 'ALL-IN',
+            '样本总数': all_in_n,
+            '样本占比': sample_ratio,
+            '样本占比(相对)': 1.0,
+            '好样本数': int(all_in_n * (1 - all_in_bad)),
+            '好样本占比': 1 - all_in_bad,
+            '坏样本数': int(all_in_n * all_in_bad),
+            '坏样本占比': all_in_bad,
+            '坏样本率': all_in_bad,
+            'LIFT值': all_in_lift,
+            '通过率': all_in_pass,
+            '通过率(绝对值)': all_in_pass,
+            '通过率(相对值)': 1.0,
+            '通过率变化': change,
+            '调整方向': '-',
+        }
+        return pd.DataFrame([row]), cur_rate
+
+    # 统计各象限内每条规则的命中数（用于决定规则展示顺序）
+    def _count_rule_hits(df_quad, rules_list):
+        result = []
+        for r in (rules_list or []):
+            hit = r.predict(df_quad)
+            n_hit = int(hit.sum())
+            result.append((n_hit, r.name or r.expr, r))
+        return sorted(result, key=lambda x: -x[0])
+
+    out_in_hits = _count_rule_hits(df[df['_swap_quadrant'] == 'out_in'], rules_in)
+    out_out_hits = _count_rule_hits(df[df['_swap_quadrant'] == 'out_out'], rules_base)
+    in_out_hits = _count_rule_hits(df[df['_swap_quadrant'] == 'in_out'], rules_out)
+
+    # ── 正序流程 ────────────────────────────────────────────────────────
+    if not reverse_order:
+        pipeline_tables = []
+        prev_rate = None
+
+        # 1. 全部样本
+        t, prev_rate = _build_total_row('全部样本', N_total, prev_rate)
+        if t is not None:
+            pipeline_tables.append(t)
+
+        # 2. OUT-OUT 拒绝样本（per-rule）
+        parent_oo = N_total
+        cum_oo = N_total
+        for n_hit, rule_name, rule_obj in out_out_hits:
+            df_oo_subset = df[df['_swap_quadrant'] == 'out_out']
+            t, prev_rate = _build_rule_row(
+                rule_name, rule_obj, df_oo_subset,
+                step_label='OUT-OUT 拒绝样本',
+                adj_dir='收紧',
+                parent_n=parent_oo,
+                cum_remain=cum_oo,
+                prev_rate=prev_rate,
+                is_out_in=False,
+            )
+            if t is not None:
+                pipeline_tables.append(t)
+        if N_oo > 0:
+            t, prev_rate = _build_subtotal_row('OUT-OUT 拒绝样本', N_oo, parent_oo, cum_oo, prev_rate, '收紧')
+            if t is not None:
+                pipeline_tables.append(t)
+
+        # 3. OUT-OUT 后剩余样本
+        rem_after_oo = N_total - N_oo
+        if rem_after_oo > 0:
+            t, prev_rate = _build_remaining_row('OUT-OUT后剩余样本', rem_after_oo, parent_oo, rem_after_oo, prev_rate)
+            if t is not None:
+                pipeline_tables.append(t)
+
+        # 4. IN-OUT 置出样本（per-rule）
+        parent_io = rem_after_oo
+        cum_io = rem_after_oo
+        for n_hit, rule_name, rule_obj in in_out_hits:
+            df_io_subset = df[df['_swap_quadrant'] == 'in_out']
+            t, prev_rate = _build_rule_row(
+                rule_name, rule_obj, df_io_subset,
+                step_label='IN-OUT 置出样本',
+                adj_dir='释放',
+                parent_n=parent_io,
+                cum_remain=cum_io,
+                prev_rate=prev_rate,
+                is_out_in=False,
+            )
+            if t is not None:
+                pipeline_tables.append(t)
+        if N_io > 0:
+            t, prev_rate = _build_subtotal_row('IN-OUT 置出样本', N_io, parent_io, cum_io, prev_rate, '释放')
+            if t is not None:
+                pipeline_tables.append(t)
+
+        # 5. IN-OUT 后剩余样本
+        rem_after_io = rem_after_oo - N_io
+        if rem_after_io > 0:
+            t, prev_rate = _build_remaining_row('IN-OUT后剩余样本', rem_after_io, parent_io, rem_after_io, prev_rate)
+            if t is not None:
+                pipeline_tables.append(t)
+
+        # 6. IN-IN 通过样本
+        if N_ii > 0:
+            t, prev_rate = _build_subtotal_row('IN-IN 通过样本', N_ii, rem_after_io, rem_after_io, prev_rate, '释放')
+            if t is not None:
+                pipeline_tables.append(t)
+
+        # 7. OUT-IN 置入样本（per-rule）
+        parent_oi = N_oi
+        cum_oi = rem_after_io
+        for n_hit, rule_name, rule_obj in out_in_hits:
+            df_oi_subset = df[df['_swap_quadrant'] == 'out_in']
+            t, prev_rate = _build_rule_row(
+                rule_name, rule_obj, df_oi_subset,
+                step_label='OUT-IN 置入样本',
+                adj_dir='收紧',
+                parent_n=parent_oi,
+                cum_remain=cum_oi,
+                prev_rate=prev_rate,
+                is_out_in=True,
+            )
+            if t is not None:
+                pipeline_tables.append(t)
+        if N_oi > 0:
+            t, prev_rate = _build_subtotal_row('OUT-IN 置入样本', N_oi, parent_oi, cum_oi, prev_rate, '收紧')
+            if t is not None:
+                pipeline_tables.append(t)
+
+        # 8. ALL-IN 置换样本
+        t, prev_rate = _build_all_in_row(cum_oi, prev_rate)
+        if t is not None:
+            pipeline_tables.append(t)
+
+    # ── 逆序流程 ────────────────────────────────────────────────────────
+    else:
+        pipeline_tables = []
+        prev_rate = None
+
+        # 1. 全部样本
+        t, prev_rate = _build_total_row('全部样本', N_total, prev_rate)
+        if t is not None:
+            pipeline_tables.append(t)
+
+        # OUT-IN 置入样本（per-rule）— 逆序先展示
+        parent_oi_rev = N_oi
+        cum_oi_rev = N_total
+        for n_hit, rule_name, rule_obj in out_in_hits:
+            df_oi_subset = df[df['_swap_quadrant'] == 'out_in']
+            t, prev_rate = _build_rule_row(
+                rule_name, rule_obj, df_oi_subset,
+                step_label='OUT-IN 置入样本',
+                adj_dir='收紧',
+                parent_n=parent_oi_rev,
+                cum_remain=cum_oi_rev,
+                prev_rate=prev_rate,
+                is_out_in=True,
+            )
+            if t is not None:
+                pipeline_tables.append(t)
+        if N_oi > 0:
+            t, prev_rate = _build_subtotal_row('OUT-IN 置入样本', N_oi, parent_oi_rev, cum_oi_rev, prev_rate, '收紧')
+            if t is not None:
+                pipeline_tables.append(t)
+
+        # OUT-IN 后剩余样本（IN-IN）
+        rem_after_oi = N_oi + N_ii
+        if rem_after_oi > 0:
+            t, prev_rate = _build_remaining_row('IN-IN后剩余样本', rem_after_oi, cum_oi_rev, rem_after_oi, prev_rate)
+            if t is not None:
+                pipeline_tables.append(t)
+
+        # IN-IN 通过样本
+        if N_ii > 0:
+            t, prev_rate = _build_subtotal_row('IN-IN 通过样本', N_ii, rem_after_oi, rem_after_oi, prev_rate, '释放')
+            if t is not None:
+                pipeline_tables.append(t)
+
+        # IN-OUT 置出样本（per-rule）
+        parent_io_rev = N_io
+        cum_io_rev = rem_after_oi
+        for n_hit, rule_name, rule_obj in in_out_hits:
+            df_io_subset = df[df['_swap_quadrant'] == 'in_out']
+            t, prev_rate = _build_rule_row(
+                rule_name, rule_obj, df_io_subset,
+                step_label='IN-OUT 置出样本',
+                adj_dir='释放',
+                parent_n=parent_io_rev,
+                cum_remain=cum_io_rev,
+                prev_rate=prev_rate,
+                is_out_in=False,
+            )
+            if t is not None:
+                pipeline_tables.append(t)
+        if N_io > 0:
+            t, prev_rate = _build_subtotal_row('IN-OUT 置出样本', N_io, parent_io_rev, cum_io_rev, prev_rate, '释放')
+            if t is not None:
+                pipeline_tables.append(t)
+
+        # IN-OUT 后剩余样本
+        rem_after_io_rev = N_oi + N_ii + N_io
+        if rem_after_io_rev > 0:
+            t, prev_rate = _build_remaining_row('IN-OUT后剩余样本', rem_after_io_rev, cum_io_rev, rem_after_io_rev, prev_rate)
+            if t is not None:
+                pipeline_tables.append(t)
+
+        # OUT-OUT 拒绝样本（per-rule）
+        parent_oo_rev = N_oo
+        cum_oo_rev = rem_after_io_rev
+        for n_hit, rule_name, rule_obj in out_out_hits:
+            df_oo_subset = df[df['_swap_quadrant'] == 'out_out']
+            t, prev_rate = _build_rule_row(
+                rule_name, rule_obj, df_oo_subset,
+                step_label='OUT-OUT 拒绝样本',
+                adj_dir='收紧',
+                parent_n=parent_oo_rev,
+                cum_remain=cum_oo_rev,
+                prev_rate=prev_rate,
+                is_out_in=False,
+            )
+            if t is not None:
+                pipeline_tables.append(t)
+        if N_oo > 0:
+            t, prev_rate = _build_subtotal_row('OUT-OUT 拒绝样本', N_oo, parent_oo_rev, cum_oo_rev, prev_rate, '收紧')
+            if t is not None:
+                pipeline_tables.append(t)
+
+        # ALL-IN 置换样本
+        t, prev_rate = _build_all_in_row(cum_oo_rev, prev_rate)
+        if t is not None:
+            pipeline_tables.append(t)
+
+    # 合并所有表，统一列顺序
+    if len(pipeline_tables) > 0:
+        swap_pipeline = pd.concat(pipeline_tables, ignore_index=True)
+
+        # 确保关键列存在
+        standard_cols = [
+            '分析流程', '规则集', '规则详情',
+            '样本总数', '样本占比', '样本占比(相对)',
+            '好样本数', '好样本占比', '坏样本数', '坏样本占比',
+            '坏样本率', 'LIFT值', '坏帐改善', '风险拒绝比',
+            '准确率', '精确率', '召回率', 'F1分数',
+            '通过率', '通过率(绝对值)', '通过率(相对值)', '通过率变化', '调整方向',
+            # rule.report MultiIndex 列兼容
+            '规则分类_out', '指标名称', '分箱',
+        ]
+        for col in standard_cols:
+            if col not in swap_pipeline.columns:
+                swap_pipeline[col] = None
+
+        # 按标准顺序排列列（保留出现的列，未出现的跳过）
+        final_cols = [c for c in standard_cols if c in swap_pipeline.columns]
+        # 补充任何额外列
+        extra_cols = [c for c in swap_pipeline.columns if c not in standard_cols]
+        swap_pipeline = swap_pipeline[final_cols + extra_cols]
+    else:
+        swap_pipeline = pd.DataFrame(columns=[
+            '分析流程', '规则集', '规则详情',
+            '样本总数', '样本占比', '样本占比(相对)',
+            '好样本数', '好样本占比', '坏样本数', '坏样本占比',
+            '坏样本率', 'LIFT值', '通过率', '通过率(绝对值)', '通过率(相对值)',
+            '通过率变化', '调整方向',
+        ])
 
     # ------------------------------------------------------------------
-    # 6. 构建 Swap Result 表（置换对比与业务增益）
+    # 8. 构建 Swap Result 表（置换前后对比与业务增益）
     # ------------------------------------------------------------------
+    # 基于预测逾期率计算（使用 _pred_df 保持一致性）
+    ii_mask = df['_swap_quadrant'] == 'in_in'
+    oi_mask = df['_swap_quadrant'] == 'out_in'
+    io_mask = df['_swap_quadrant'] == 'in_out'
+
+    # 置换前：仅 in_in 通过，基准逾期率
     pass_rate_before = N_ii / N_total if N_total > 0 else 0.0
     pass_rate_after = (N_ii + N_oi) / N_total if N_total > 0 else 0.0
 
-    # 从 predictor 获取 in_in 的预测不良率
-    ii_mask = df['_swap_quadrant'] == 'in_in'
     bad_rate_before = float(_pred_df[ii_mask].mean()) if ii_mask.sum() > 0 else _overall_pred_bad
-    oi_mask = df['_swap_quadrant'] == 'out_in'
-    bad_rate_after_raw = float(_pred_df[oi_mask].mean()) if oi_mask.sum() > 0 else bad_rate_before
-    bad_rate_after = min(bad_rate_after_raw * out_in_uplift, 1.0)
+    io_pred = float(_pred_df[io_mask].mean()) if io_mask.sum() > 0 else bad_rate_before
+    oi_pred_raw = float(_pred_df[oi_mask].mean()) if oi_mask.sum() > 0 else bad_rate_before
+    bad_rate_oi = min(oi_pred_raw * out_in_uplift, 1.0)
 
-    loan_increase_abs = N_oi
-    loan_increase_rel = N_oi / N_ii if N_ii > 0 else 0.0
+    # 置换后整体逾期率（加权平均）
+    n_after_total = N_ii + N_oi
+    bad_rate_after = (N_ii * bad_rate_before + N_oi * bad_rate_oi) / n_after_total if n_after_total > 0 else 0.0
 
-    bad_in_out = int(N_io * bad_rate_before)
-    bad_out_in = int(N_oi * bad_rate_before * out_in_uplift)
+    # 业务增益（支持金额口径：优先用金额计算，fallback 到样本数）
+    if amount is not None and amount in df.columns:
+        # 金额口径
+        amt_ii = float(df[ii_mask][amount].sum())
+        amt_oi_raw = float(df[oi_mask][amount].sum())
+        amt_io = float(df[io_mask][amount].sum())
+        # out_in 填充
+        n_oi = oi_mask.sum()
+        if amt_oi_raw == 0.0 and n_oi > 0:
+            if out_in_amount_col and out_in_amount_col in df.columns:
+                amt_oi_raw = float(df[oi_mask][out_in_amount_col].sum())
+            elif out_in_amount_fill is not None:
+                amt_oi_raw = float(out_in_amount_fill * n_oi)
+        amt_oi = amt_oi_raw
+        loan_increase_abs = amt_oi
+        loan_increase_rel = amt_oi / amt_ii if amt_ii > 0 else 0.0
+        bad_in_out = int(amt_io * io_pred)
+        bad_out_in = int(amt_oi * oi_pred_raw * out_in_uplift)
+    else:
+        loan_increase_abs = N_oi
+        loan_increase_rel = N_oi / N_ii if N_ii > 0 else 0.0
+        bad_in_out = int(N_io * io_pred)
+        bad_out_in = int(N_oi * oi_pred_raw * out_in_uplift)
     risk_delta_abs = bad_out_in - bad_in_out
-    risk_delta_rel = risk_delta_abs / N_ii if N_ii > 0 else 0.0
+    risk_delta_rel = risk_delta_abs / max(N_ii, 1)
 
     swap_result_rows = [
         {'指标': '通过率变化', '变化前': pass_rate_before, '变化后': pass_rate_after,
          '绝对变化': pass_rate_after - pass_rate_before,
-         '相对变化': (pass_rate_after - pass_rate_before) / max(pass_rate_before, 1e-9)},
+         '相对变化': (pass_rate_after - pass_rate_before) / max(abs(pass_rate_before), 1e-9)},
         {'指标': '逾期率变化', '变化前': bad_rate_before, '变化后': bad_rate_after,
          '绝对变化': bad_rate_after - bad_rate_before,
-         '相对变化': (bad_rate_after - bad_rate_before) / max(bad_rate_before, 1e-9)},
+         '相对变化': (bad_rate_after - bad_rate_before) / max(abs(bad_rate_before), 1e-9)},
         {'指标': '风险上浮系数', '变化前': 1.0, '变化后': out_in_uplift,
          '绝对变化': out_in_uplift - 1.0, '相对变化': out_in_uplift - 1.0},
         {'指标': '放款增量（绝对）', '变化前': 0, '变化后': loan_increase_abs,
@@ -790,7 +1216,7 @@ def rule_swap_analysis(
         {'指标': '放款增量（相对）', '变化前': 0, '变化后': loan_increase_rel,
          '绝对变化': loan_increase_rel, '相对变化': loan_increase_rel},
         {'指标': '坏样本变化（绝对）', '变化前': 0, '变化后': risk_delta_abs,
-         '绝对变化': risk_delta_abs, '相对变化': risk_delta_abs / max(N_ii, 1)},
+         '绝对变化': risk_delta_abs, '相对变化': risk_delta_rel},
         {'指标': '坏样本变化（相对）', '变化前': 0, '变化后': risk_delta_rel,
          '绝对变化': risk_delta_rel, '相对变化': risk_delta_rel},
         {'指标': '样本集幸存比例', '变化前': sample_survival_rate, '变化后': sample_survival_rate,
@@ -800,53 +1226,7 @@ def rule_swap_analysis(
     swap_result = pd.DataFrame(swap_result_rows)
 
     # ------------------------------------------------------------------
-    # 6. 构建 Swap Result 表（置换对比与业务增益）
-    # ------------------------------------------------------------------
-    # 使用 section 5 中已归一化到全量口径的计数（N_ii, N_io, N_oi, N_oo, N_total）
-    pass_rate_before = N_ii / N_total if N_total > 0 else 0.0   # 仅 IN-IN 通过
-    pass_rate_after = (N_ii + N_oi) / N_total if N_total > 0 else 0.0
-
-    # bad_rate_before 从 df 的 in_in 部分计算（坏样本率不受样本数缩放影响）
-    bad_rate_before = _calc_bad_rate(df[df['_swap_quadrant'] == 'in_in'], amount)
-    bad_rate_after = (
-        N_ii * bad_rate_before + N_oi * min(bad_rate_before * out_in_uplift, 1.0)
-    ) / (N_ii + N_oi) if (N_ii + N_oi) > 0 else 0.0
-
-    # 放款增量（基于全量口径）
-    loan_increase_abs = N_oi
-    loan_increase_rel = N_oi / N_ii if N_ii > 0 else 0.0
-
-    # 坏样本增量（基于全量口径）
-    bad_in_out = int(N_io * bad_rate_before)
-    bad_out_in = int(N_oi * bad_rate_before * out_in_uplift)
-    risk_delta_abs = bad_out_in - bad_in_out
-    risk_delta_rel = risk_delta_abs / N_ii if N_ii > 0 else 0.0
-
-    swap_result_rows = [
-        {'指标': '通过率变化', '变化前': pass_rate_before, '变化后': pass_rate_after,
-         '绝对变化': pass_rate_after - pass_rate_before,
-         '相对变化': (pass_rate_after - pass_rate_before) / max(pass_rate_before, 1e-9)},
-        {'指标': '逾期率变化', '变化前': bad_rate_before, '变化后': bad_rate_after,
-         '绝对变化': bad_rate_after - bad_rate_before,
-         '相对变化': (bad_rate_after - bad_rate_before) / max(bad_rate_before, 1e-9)},
-        {'指标': '风险上浮系数', '变化前': 1.0, '变化后': out_in_uplift,
-         '绝对变化': out_in_uplift - 1.0, '相对变化': out_in_uplift - 1.0},
-        {'指标': '放款增量（绝对）', '变化前': 0, '变化后': loan_increase_abs,
-         '绝对变化': loan_increase_abs, '相对变化': loan_increase_rel},
-        {'指标': '放款增量（相对）', '变化前': 0, '变化后': loan_increase_rel,
-         '绝对变化': loan_increase_rel, '相对变化': loan_increase_rel},
-        {'指标': '坏样本变化（绝对）', '变化前': 0, '变化后': risk_delta_abs,
-         '绝对变化': risk_delta_abs, '相对变化': risk_delta_abs / max(N_ii, 1)},
-        {'指标': '坏样本变化（相对）', '变化前': 0, '变化后': risk_delta_rel,
-         '绝对变化': risk_delta_rel, '相对变化': risk_delta_rel},
-        {'指标': '样本集幸存比例', '变化前': sample_survival_rate, '变化后': sample_survival_rate,
-         '绝对变化': 0.0, '相对变化': 0.0},
-    ]
-
-    swap_result = pd.DataFrame(swap_result_rows)
-
-    # ------------------------------------------------------------------
-    # 7. 清理临时列
+    # 9. 清理临时列
     # ------------------------------------------------------------------
     drop_cols = [c for c in df.columns if c.startswith('_swap') or c.startswith('_tmp_norm')]
     df.drop(columns=drop_cols, inplace=True, errors='ignore')

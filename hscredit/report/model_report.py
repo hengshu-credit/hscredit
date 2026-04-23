@@ -84,6 +84,50 @@ def _safe_close_figs():
         pass
 
 
+def _merge_multi_label_bin_tables(tables: List[pd.DataFrame], labels: List[str]) -> pd.DataFrame:
+    """将多个单标签分箱表合并为 MultiIndex 列的合并表。
+
+    列结构：分箱详情列保持不变，其余列变为 (标签名, 列名) 的 MultiIndex。
+    """
+    if not tables:
+        return pd.DataFrame()
+    if len(tables) == 1:
+        return tables[0]
+
+    import itertools
+
+    base = tables[0].copy()
+    merge_cols = ['指标含义', '指标名称', '指标明细']
+    available_merge = [c for c in merge_cols if c in base.columns]
+    other_cols = [c for c in base.columns if c not in available_merge]
+
+    # 重排列：合并列在前，明细列在后
+    base = base[available_merge + other_cols]
+
+    # 构建 MultiIndex 列
+    multi_cols = []
+    for col in base.columns:
+        if col in available_merge:
+            multi_cols.append(('分箱详情', col))
+        else:
+            multi_cols.append((labels[0], col))
+    base.columns = pd.MultiIndex.from_tuples(multi_cols)
+
+    for table, lbl in zip(tables[1:], labels[1:]):
+        table_copy = table.copy()
+        table_multi_cols = []
+        for col in table_copy.columns:
+            if col in available_merge:
+                table_multi_cols.append(('分箱详情', col))
+            else:
+                table_multi_cols.append((lbl, col))
+        table_copy.columns = pd.MultiIndex.from_tuples(table_multi_cols)
+        merge_on = [('分箱详情', c) for c in available_merge]
+        base = base.merge(table_copy, on=merge_on)
+
+    return base
+
+
 # ---------------------------------------------------------------------------
 # 数据容器
 # ---------------------------------------------------------------------------
@@ -96,6 +140,7 @@ class ReportDataset:
     y: pd.Series
     y_proba: np.ndarray
     score: np.ndarray
+    y_dict: Optional[Dict[str, np.ndarray]] = None  # {label_name: y_array}，多标签场景下各标签的独立标签
 
 
 # ---------------------------------------------------------------------------
@@ -199,6 +244,10 @@ class QuickModelReport:
         self._datasets: Dict[str, ReportDataset] = {}
         self._datasets_info: Dict[str, str] = {}  # key -> label
 
+        # 多标签指标名列表（用于多标签报告），按构建顺序从第一个数据集获取
+        # 当 overdue/dpds 产生多指标时填充，如 ['dpds_m1>15', 'dpds_m1>7', 'dpds_m1>0', ...]
+        self._label_names: List[str] = []
+
         # 确定目标列名
         self._target_name = self._resolve_target_name(target)
 
@@ -245,7 +294,7 @@ class QuickModelReport:
             return target.get("label", "target")
         return "target"
 
-    def _build_y(self, X: pd.DataFrame, target_cfg) -> pd.Series:
+    def _build_y(self, X: pd.DataFrame, target_cfg) -> Tuple[pd.Series, Optional[Dict[str, np.ndarray]]]:
         """根据 target 配置从 X 构建 y 标签.
 
         支持三种配置：
@@ -257,12 +306,15 @@ class QuickModelReport:
             - 多逾期列:  target={'overdue': [col1, col2], 'dpds': [t1, t2, ...]}
                           每列 × 每阈值生成指标，任一为真则 label=1
 
-        注：overdue/dpds 也可通过 __init__ 单独参数传入，内部会合并为 dict。
+        返回 (y_series, y_dict)：
+        - y_series: 聚合标签（任一指标为真则 y=1）
+        - y_dict: 多标签场景下各指标的独立标签数组（key 如 'dpds_m1>15'）
+                  单标签或非多指标场景下返回 None
         """
         if target_cfg is None:
             for col in ("target", "label", "y", "flag", "overdue"):
                 if col in X.columns:
-                    return _ensure_series(X[col], name="target")
+                    return _ensure_series(X[col], name="target"), None
             raise ValueError(
                 "未找到目标列（target），请通过 target 参数指定标签列名，"
                 "或传入 dict={'overdue': col, 'dpds': threshold} 联合构建"
@@ -270,7 +322,7 @@ class QuickModelReport:
 
         if isinstance(target_cfg, str):
             if target_cfg in X.columns:
-                return _ensure_series(X[target_cfg], name=target_cfg)
+                return _ensure_series(X[target_cfg], name=target_cfg), None
             raise ValueError(f"目标列 '{target_cfg}' 不存在于数据中")
 
         if isinstance(target_cfg, dict) and "overdue" in target_cfg:
@@ -305,7 +357,7 @@ class QuickModelReport:
                 if col not in X.columns:
                     raise ValueError(f"逾期列 '{col}' 不存在，请检查列名")
 
-            # 每列 × 每阈值，生成全指标，任一为真则 y=1
+            # 每列 × 每阈值，生成全指标
             indicators = pd.DataFrame(index=X.index)
             for col in overdue_cols:
                 for t in thresholds:
@@ -316,8 +368,13 @@ class QuickModelReport:
                         # col 列 > threshold
                         indicators[f"{col}>{t}"] = X[col] > t
 
+            # 聚合标签（任一指标为真则 y=1）
             y = indicators.any(axis=1).astype(int)
-            return _ensure_series(y, name=label_name)
+            # 多指标时返回各指标独立标签，供多标签报告使用
+            y_dict: Optional[Dict[str, np.ndarray]] = None
+            if len(overdue_cols) > 1 or (isinstance(dpds_vals, list) and len(dpds_vals) > 1):
+                y_dict = {col: indicators[col].values.astype(np.int8) for col in indicators.columns}
+            return _ensure_series(y, name=label_name), y_dict
 
         raise ValueError(f"target 参数格式错误：{target_cfg}")
 
@@ -343,17 +400,22 @@ class QuickModelReport:
                     label = default_labels.get(key, key)
                     X_df = _ensure_dataframe(X_raw, feature_names=self._feature_names)
                     if y_raw is None:
-                        y_s = self._build_y(X_df, self._target_cfg)
+                        y_s, y_dict = self._build_y(X_df, self._target_cfg)
+                        if y_dict and not self._label_names:
+                            self._label_names = list(y_dict.keys())
                     else:
                         y_s = _ensure_series(y_raw, name=self._target_name)
+                        y_dict = None
                 else:
                     # DataFrame 直接传入: X 中含目标列或通过 overdue+dpds 构建标签
                     X_raw = value
                     label = default_labels.get(key, key)
                     X_df = _ensure_dataframe(X_raw, feature_names=self._feature_names)
-                    y_s = self._build_y(X_df, self._target_cfg)
+                    y_s, y_dict = self._build_y(X_df, self._target_cfg)
+                    if y_dict and not self._label_names:
+                        self._label_names = list(y_dict.keys())
 
-                self._add_dataset(key, label, X_df, y_s)
+                self._add_dataset(key, label, X_df, y_s, y_dict)
                 self._datasets_info[key] = label
 
         elif isinstance(datasets, (list, tuple)):
@@ -366,15 +428,20 @@ class QuickModelReport:
                     X_raw, y_raw = value[0], value[1]
                     X_df = _ensure_dataframe(X_raw, feature_names=self._feature_names)
                     if y_raw is None:
-                        y_s = self._build_y(X_df, self._target_cfg)
+                        y_s, y_dict = self._build_y(X_df, self._target_cfg)
+                        if y_dict and not self._label_names:
+                            self._label_names = list(y_dict.keys())
                     else:
                         y_s = _ensure_series(y_raw, name=self._target_name)
+                        y_dict = None
                 else:
                     X_raw = value
                     X_df = _ensure_dataframe(X_raw, feature_names=self._feature_names)
-                    y_s = self._build_y(X_df, self._target_cfg)
+                    y_s, y_dict = self._build_y(X_df, self._target_cfg)
+                    if y_dict and not self._label_names:
+                        self._label_names = list(y_dict.keys())
 
-                self._add_dataset(key, label, X_df, y_s)
+                self._add_dataset(key, label, X_df, y_s, y_dict)
                 self._datasets_info[key] = label
 
     def _init_from_xy(self, X_train, y_train, X_test, y_test):
@@ -383,25 +450,32 @@ class QuickModelReport:
 
         # 支持 y_train 为 None 的 scorecardpipeline 风格（从 X 中推导标签）
         if y_train is None:
-            y_train_s = self._build_y(X_train_df, self._target_cfg)
+            y_train_s, y_dict_train = self._build_y(X_train_df, self._target_cfg)
+            if y_dict_train and not self._label_names:
+                self._label_names = list(y_dict_train.keys())
         else:
             y_train_s = _ensure_series(y_train, name=self._target_name)
+            y_dict_train = None
 
-        self._add_dataset("train", "训练集", X_train_df, y_train_s)
+        self._add_dataset("train", "训练集", X_train_df, y_train_s, y_dict_train)
         self._datasets_info["train"] = "训练集"
 
         if X_test is not None:
             X_test_df = _ensure_dataframe(X_test, feature_names=list(X_train_df.columns))
             if y_test is None:
-                y_test_s = self._build_y(X_test_df, self._target_cfg)
+                y_test_s, y_dict_test = self._build_y(X_test_df, self._target_cfg)
+                if y_dict_test and not self._label_names:
+                    self._label_names = list(y_dict_test.keys())
             else:
                 y_test_s = _ensure_series(y_test, name=self._target_name)
-            self._add_dataset("test", "测试集", X_test_df, y_test_s)
+                y_dict_test = None
+            self._add_dataset("test", "测试集", X_test_df, y_test_s, y_dict_test)
             self._datasets_info["test"] = "测试集"
 
     # ---------- 数据集管理 ----------
 
-    def _add_dataset(self, key: str, label: str, X: pd.DataFrame, y: pd.Series):
+    def _add_dataset(self, key: str, label: str, X: pd.DataFrame, y: pd.Series,
+                       y_dict: Optional[Dict[str, np.ndarray]] = None):
         # 获取模型实际需要的特征列表，过滤掉额外列，避免预测时报错
         # 优先级：ScoreCard.feature_names_ > sklearn.feature_names_in_ > None
         required_features: Optional[List[str]] = None
@@ -426,6 +500,7 @@ class QuickModelReport:
             y=y,
             y_proba=_proba_pos(self.model, X_for_pred),
             score=_score_from_model(self.model, X_for_pred),
+            y_dict=y_dict,
         )
 
     def add_dataset(self, key: str, label: str, X, y=None, feature_names: Optional[List[str]] = None):
@@ -440,38 +515,66 @@ class QuickModelReport:
         X = _ensure_dataframe(X, feature_names=feature_names or self.feature_names)
         # y=None 时从 X 中通过 overdue+dpds 自动构建标签（scorecardpipeline 风格）
         if y is None:
-            y = self._build_y(X, self._target_cfg)
+            y, y_dict = self._build_y(X, self._target_cfg)
+            if y_dict and not self._label_names:
+                self._label_names = list(y_dict.keys())
+        else:
+            y_dict = None
         y = _ensure_series(y, name=self._target_name)
-        self._add_dataset(key, label, X, y)
+        self._add_dataset(key, label, X, y, y_dict)
 
-    # ---------- 1. 模型性能指标 ----------
+    def _is_multi_label(self) -> bool:
+        """是否多标签模式."""
+        return bool(self._label_names)
 
-    def get_metrics(self) -> pd.DataFrame:
-        """KS / AUC / PSI 等核心指标."""
-        if self._metrics_cache is not None:
-            return self._metrics_cache.copy()
+    def _get_y(self, dataset_key: str, label: Optional[str] = None) -> np.ndarray:
+        """获取指定数据集的 y 数组.
 
+        :param dataset_key: 数据集标识
+        :param label: 标签名，None 时返回 combined y
+        """
+        ds = self._datasets[dataset_key]
+        if label and ds.y_dict and label in ds.y_dict:
+            return ds.y_dict[label]
+        return ds.y.to_numpy()
+
+# ---------- 1. 模型性能指标 ----------
+
+    def get_metrics(self, label: Optional[str] = None) -> pd.DataFrame:
+        """KS / AUC / PSI 等核心指标.
+
+        :param label: 多标签模式下指定标签名，None 时使用 combined y
+        """
         from ..core.metrics import ks, auc, psi
 
         ds_keys = [k for k in ["train", "test"] + [k for k in self._datasets if k not in ("train", "test")] if k in self._datasets]
-        labels = {k: self._datasets[k].label for k in ds_keys}
+        labels_map = {k: self._datasets[k].label for k in ds_keys}
 
+        if self._is_multi_label() and label:
+            # 多标签模式：每列对应一个数据集，多行对应 KS/AUC/样本数/坏样本率
+            rows = []
+            rows.append({"统计项": "KS", **{labels_map[k]: ks(self._get_y(k, label), self._datasets[k].y_proba) for k in ds_keys}})
+            rows.append({"统计项": "AUC", **{labels_map[k]: auc(self._get_y(k, label), self._datasets[k].y_proba) for k in ds_keys}})
+            rows.append({"统计项": "样本数", **{labels_map[k]: len(self._get_y(k, label)) for k in ds_keys}})
+            rows.append({"统计项": "坏样本率", **{labels_map[k]: float(self._get_y(k, label).mean()) for k in ds_keys}})
+            return pd.DataFrame(rows)
+
+        # 单标签模式或 combined y
         rows = []
-        rows.append({"统计项": "KS", **{labels[k]: ks(self._datasets[k].y, self._datasets[k].y_proba) for k in ds_keys}})
-        rows.append({"统计项": "AUC", **{labels[k]: auc(self._datasets[k].y, self._datasets[k].y_proba) for k in ds_keys}})
-        rows.append({"统计项": "样本数", **{labels[k]: len(self._datasets[k].y) for k in ds_keys}})
-        rows.append({"统计项": "坏样本率", **{labels[k]: float(self._datasets[k].y.mean()) for k in ds_keys}})
+        rows.append({"统计项": "KS", **{labels_map[k]: ks(self._datasets[k].y, self._datasets[k].y_proba) for k in ds_keys}})
+        rows.append({"统计项": "AUC", **{labels_map[k]: auc(self._datasets[k].y, self._datasets[k].y_proba) for k in ds_keys}})
+        rows.append({"统计项": "样本数", **{labels_map[k]: len(self._datasets[k].y) for k in ds_keys}})
+        rows.append({"统计项": "坏样本率", **{labels_map[k]: float(self._datasets[k].y.mean()) for k in ds_keys}})
         if len(ds_keys) >= 2:
-            psi_row: Dict[str, Any] = {"统计项": "PSI", labels[ds_keys[0]]: "\\"}
+            psi_row: Dict[str, Any] = {"统计项": "PSI", labels_map[ds_keys[0]]: "\\"}
             for k in ds_keys[1:]:
                 try:
-                    psi_row[labels[k]] = psi(self._datasets[ds_keys[0]].score, self._datasets[k].score)
+                    psi_row[labels_map[k]] = psi(self._datasets[ds_keys[0]].score, self._datasets[k].score)
                 except Exception:
-                    psi_row[labels[k]] = np.nan
+                    psi_row[labels_map[k]] = np.nan
             rows.append(psi_row)
 
-        self._metrics_cache = pd.DataFrame(rows)
-        return self._metrics_cache.copy()
+        return pd.DataFrame(rows)
 
     # ---------- 2. 评分分箱效果表 ----------
 
@@ -482,15 +585,32 @@ class QuickModelReport:
         max_n_bins: int = 10,
         amount_col: Optional[str] = None,
         margins: bool = True,
+        label: Optional[str] = None,
+        labels: Optional[List[str]] = None,
     ) -> pd.DataFrame:
-        """使用 feature_bin_stats 生成评分分箱效果表."""
+        """使用 feature_bin_stats 生成评分分箱效果表。
+
+        :param label: 多标签模式下指定单个标签名
+        :param labels: 多标签合并模式，传入标签名列表，返回 MultiIndex 列合并表
+        """
         from .feature_analyzer import feature_bin_stats
+
+        # 多标签合并模式
+        if labels and self._is_multi_label():
+            tables: List[pd.DataFrame] = []
+            for lbl in labels:
+                t = self.get_bin_table(
+                    dataset=dataset, method=method, max_n_bins=max_n_bins,
+                    amount_col=amount_col, margins=margins, label=lbl,
+                )
+                tables.append(t)
+            return _merge_multi_label_bin_tables(tables, labels)
 
         ds = self._datasets[dataset]
         target_col = "__target__"
         score_col = "__score__"
         df = ds.X.copy()
-        df[target_col] = ds.y.to_numpy()
+        df[target_col] = self._get_y(dataset, label)
         df[score_col] = ds.score
 
         kw: Dict[str, Any] = dict(
@@ -620,14 +740,31 @@ class QuickModelReport:
         method: str = "quantile",
         margins: bool = True,
         amount_col: Optional[str] = None,
+        label: Optional[str] = None,
+        labels: Optional[List[str]] = None,
     ) -> pd.DataFrame:
-        """单特征分箱效果表，优先使用模型 binner."""
+        """单特征分箱效果表，优先使用模型 binner。
+
+        :param label: 多标签模式下指定单个标签名
+        :param labels: 多标签合并模式，传入标签名列表，返回 MultiIndex 列合并表
+        """
         from .feature_analyzer import feature_bin_stats
+
+        # 多标签合并模式
+        if labels and self._is_multi_label():
+            tables: List[pd.DataFrame] = []
+            for lbl in labels:
+                t = self.get_feature_bin_table(
+                    feature=feature, dataset=dataset, max_n_bins=max_n_bins,
+                    method=method, margins=margins, amount_col=amount_col, label=lbl,
+                )
+                tables.append(t)
+            return _merge_multi_label_bin_tables(tables, labels)
 
         ds = self._datasets[dataset]
         target_col = "__target__"
         df = ds.X.copy()
-        df[target_col] = ds.y.to_numpy()
+        df[target_col] = self._get_y(dataset, label)
 
         kw: Dict[str, Any] = dict(
             feature=feature,
@@ -655,20 +792,33 @@ class QuickModelReport:
         self,
         percentiles: Tuple[float, ...] = (0.01, 0.03, 0.05, 0.10),
         amount_col: Optional[str] = None,
+        label: Optional[str] = None,
+        labels: Optional[List[str]] = None,
     ) -> pd.DataFrame:
-        """构建 TOP n% 尾部区分能力表.
+        """构建 TOP n% 尾部区分能力表。
 
         :param percentiles: TOP n% 的百分位列表
-        :param amount_col: 金额字段名（可选），指定时同时输出金额口径
+        :param amount_col: 金额字段名（可选），指定时输出金额口径
+        :param label: 单标签模式下指定标签名，None 时使用 combined y
+        :param labels: 多标签合并模式，返回 MultiIndex 列合并表
         """
+        # 多标签合并模式：labels 列表优先，返回 MultiIndex 列结构
+        if labels and self._is_multi_label():
+            return self._get_top_n_lift_table_multi(
+                percentiles=percentiles,
+                amount_col=amount_col,
+                labels=labels,
+            )
+
         rows: List[Dict[str, Any]] = []
         for ds_key, ds in self._datasets.items():
             tag = ds.label
-            n = len(ds.y)
-            overall_bad_rate = float(ds.y.mean())
+            y_arr = self._get_y(ds_key, label)
+            n = len(y_arr)
+            overall_bad_rate = float(y_arr.mean())
 
             sorted_idx = np.argsort(-ds.y_proba)
-            sorted_y = ds.y.iloc[sorted_idx].values
+            sorted_y = y_arr[sorted_idx]
 
             bad_rates: Dict[str, float] = {}
             lifts: Dict[str, float] = {}
@@ -697,7 +847,7 @@ class QuickModelReport:
                 amounts = ds.X[amount_col].values
                 amounts_sorted = amounts[sorted_idx]
                 overall_bad_amount = float(
-                    (ds.y.iloc[sorted_idx].values * amounts_sorted).sum()
+                    (sorted_y * amounts_sorted).sum()
                     / amounts_sorted.sum()
                 ) if amounts_sorted.sum() > 0 else overall_bad_rate
 
@@ -728,6 +878,82 @@ class QuickModelReport:
                 rows.append({"数据集": tag, "统计项": "坏账改善", **amt_improvements})
 
         return pd.DataFrame(rows)
+
+    def _get_top_n_lift_table_multi(
+        self,
+        percentiles: Tuple[float, ...] = (0.01, 0.03, 0.05, 0.10),
+        amount_col: Optional[str] = None,
+        labels: Optional[List[str]] = None,
+    ) -> pd.DataFrame:
+        """多标签合并模式的 LIFT 表，返回 MultiIndex 列结构。
+
+        列层级: (数据集, 标签名) -> metric_type (坏样本率/LIFT值/坏账改善)
+        行: 每个指标类型一行
+        """
+        if labels is None:
+            labels = self._label_names
+        pct_keys = [f"TOP {int(p * 100)}%" for p in percentiles] + ["TOTAL"]
+        metric_types = ["坏样本率", "LIFT值", "坏账改善"]
+
+        import itertools
+        ds_keys_list = list(self._datasets.keys())
+        dataset_labels = [self._datasets[k].label for k in ds_keys_list]
+
+        # 收集每个 (数据集, 标签) 组合的指标数据
+        all_pairs = list(itertools.product(dataset_labels, labels))
+        metrics_data: Dict[str, Dict[str, Dict[str, float]]] = {
+            metric: {} for metric in metric_types
+        }
+
+        for ds_key, ds_label in zip(ds_keys_list, dataset_labels):
+            for lbl in labels:
+                pair_key = (ds_label, lbl)
+                y_arr = self._get_y(ds_key, lbl)
+                n = len(y_arr)
+                overall_bad_rate = float(y_arr.mean())
+
+                sorted_idx = np.argsort(-self._datasets[ds_key].y_proba)
+                sorted_y = y_arr[sorted_idx]
+
+                bad_rates: Dict[str, float] = {}
+                lifts: Dict[str, float] = {}
+                improvements: Dict[str, float] = {}
+
+                for pct in percentiles:
+                    top_n = max(1, int(n * pct))
+                    top_bad_rate = float(sorted_y[:top_n].mean())
+                    lift = top_bad_rate / overall_bad_rate if overall_bad_rate > 0 else 0.0
+                    improvement = (top_bad_rate - overall_bad_rate) / overall_bad_rate if overall_bad_rate > 0 else 0.0
+                    key = f"TOP {int(pct * 100)}%"
+                    bad_rates[key] = top_bad_rate
+                    lifts[key] = lift
+                    improvements[key] = improvement
+
+                bad_rates["TOTAL"] = overall_bad_rate
+                lifts["TOTAL"] = 1.0
+                improvements["TOTAL"] = 0.0
+
+                metrics_data["坏样本率"][pair_key] = bad_rates
+                metrics_data["LIFT值"][pair_key] = lifts
+                metrics_data["坏账改善"][pair_key] = improvements
+
+        # 构建 MultiIndex 列: ((ds_label, lbl), metric_type)
+        col_tuples = list(itertools.product(all_pairs, metric_types))
+        multi_cols = pd.MultiIndex.from_tuples(col_tuples, names=["数据集|标签", "指标"])
+
+        # 构建行数据
+        rows_list: List[Dict[tuple, Any]] = []
+        for metric in metric_types:
+            row_dict: Dict[tuple, Any] = {}
+            for pair_key, sub_dict in metrics_data[metric].items():
+                for pct_key in pct_keys:
+                    col_key = (pair_key, metric)
+                    row_dict[col_key] = sub_dict.get(pct_key)
+            rows_list.append(row_dict)
+
+        result_df = pd.DataFrame(rows_list, columns=multi_cols, index=metric_types)
+        result_df.index.name = "统计项"
+        return result_df
 
     def _get_features_summary(self) -> pd.DataFrame:
         """使用 pd.DataFrame.summary() 获取入模变量综合统计."""
@@ -1191,40 +1417,94 @@ class QuickModelReport:
         ]
 
         # ---- Step 5: 各数据集的描述行 ----
-        ds_rows: List[Dict[str, Any]] = []
-        for ds_key, ds in self._datasets.items():
-            if ds is None:
-                continue
-            n_samples = len(ds.y)
-            bad_rate = round(ds.y.mean() * 100, 2)
-            d_min, d_max = label_date_map.get(ds.label, (None, None))
+        # 多标签模式：每个数据集需要展示各标签的逾期率
+        is_multi = self._is_multi_label()
+        if is_multi:
+            # 多标签：生成多行，每行一个标签
+            for lbl in self._label_names:
+                content_parts = []
+                for ds_key, ds in self._datasets.items():
+                    n_samples = len(ds.y)
+                    y_arr = self._get_y(ds_key, lbl)
+                    bad_rate = round(y_arr.mean() * 100, 2)
+                    d_min, d_max = label_date_map.get(ds.label, (None, None))
+                    if d_min and d_max:
+                        date_prefix = f"放款时间: {d_min} ~ {d_max}  |  "
+                    else:
+                        date_prefix = ""
+                    content_parts.append(f"{date_prefix}{ds.label}: 样本{n_samples}, {lbl}坏率{bad_rate}%")
+                desc_df = pd.DataFrame({"统计项": [f"坏标签-{lbl}"], "统计内容": ["; ".join(content_parts)]})
+                end_row, _ = dataframe2excel(desc_df, writer, sheet_name=ws, start_row=end_row + 1,
+                                             left_cols=["统计项", "统计内容"])
+        else:
+            ds_rows: List[Dict[str, Any]] = []
+            for ds_key, ds in self._datasets.items():
+                if ds is None:
+                    continue
+                n_samples = len(ds.y)
+                bad_rate = round(ds.y.mean() * 100, 2)
+                d_min, d_max = label_date_map.get(ds.label, (None, None))
 
-            # 日期前缀
-            if d_min and d_max:
-                date_prefix = f"放款时间: {d_min} ~ {d_max}  |  "
-            else:
-                date_prefix = ""
+                # 日期前缀
+                if d_min and d_max:
+                    date_prefix = f"放款时间: {d_min} ~ {d_max}  |  "
+                else:
+                    date_prefix = ""
 
-            content = f"{date_prefix}样本数: {n_samples}, {label_text}: {bad_rate}%"
-            ds_rows.append({"统计项": ds.label, "统计内容": content})
+                content = f"{date_prefix}样本数: {n_samples}, {label_text}: {bad_rate}%"
+                ds_rows.append({"统计项": ds.label, "统计内容": content})
 
-        desc_df = pd.DataFrame(fixed_rows + ds_rows)
-        end_row, _ = dataframe2excel(desc_df, writer, sheet_name=ws, start_row=end_row + 1,
-                                     left_cols=["统计项", "统计内容"])
+            desc_df = pd.DataFrame(fixed_rows + ds_rows)
+            end_row, _ = dataframe2excel(desc_df, writer, sheet_name=ws, start_row=end_row + 1,
+                                         left_cols=["统计项", "统计内容"])
 
         # 1.3 数据样本统计
         end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value="3、数据样本统计", style="header_middle", align={"horizontal": "left"})
-        sample_rows: List[Dict[str, Any]] = []
-        for ds_key, ds in self._datasets.items():
-            sample_rows.append({
-                "数据集": ds.label,
-                "样本数": len(ds.y),
-                "好样本数": int((1 - ds.y).sum()),
-                "坏样本数": int(ds.y.sum()),
-                "坏样本率": float(ds.y.mean()),
-            })
-        sample_df = pd.DataFrame(sample_rows)
-        end_row, _ = dataframe2excel(sample_df, writer, sheet_name=ws, start_row=end_row + 1, percent_cols=["坏样本率"])
+        ds_keys_list = list(self._datasets.keys())
+        dataset_labels = [self._datasets[k].label for k in ds_keys_list]
+
+        if is_multi:
+            # 多标签模式：多层级列头（数据集/标签）
+            import itertools
+            all_cols = list(itertools.product(dataset_labels, self._label_names))
+            multi_cols = pd.MultiIndex.from_tuples(all_cols, names=["数据集", "标签"])
+            rows_list: List[Dict[tuple, Any]] = []
+            for stat_item in ["样本数", "好样本数", "坏样本数", "坏样本率"]:
+                row: Dict[tuple, Any] = {}
+                for ds_key, ds_label in zip(ds_keys_list, dataset_labels):
+                    for lbl in self._label_names:
+                        y_arr = self._get_y(ds_key, lbl)
+                        n = len(y_arr)
+                        nb = int(y_arr.sum())
+                        ng = n - nb
+                        if stat_item == "样本数":
+                            val = n
+                        elif stat_item == "好样本数":
+                            val = ng
+                        elif stat_item == "坏样本数":
+                            val = nb
+                        else:
+                            val = float(y_arr.mean())
+                        row[(ds_label, lbl)] = val
+                rows_list.append(row)
+            stat_df = pd.DataFrame(rows_list, index=["样本数", "好样本数", "坏样本数", "坏样本率"], columns=multi_cols)
+            stat_df.index.name = "统计项"
+            end_row, _ = dataframe2excel(
+                stat_df, writer, sheet_name=ws, start_row=end_row + 1,
+                percent_cols=["坏样本率"],
+            )
+        else:
+            sample_rows: List[Dict[str, Any]] = []
+            for ds_key, ds in self._datasets.items():
+                sample_rows.append({
+                    "数据集": ds.label,
+                    "样本数": len(ds.y),
+                    "好样本数": int((1 - ds.y).sum()),
+                    "坏样本数": int(ds.y.sum()),
+                    "坏样本率": float(ds.y.mean()),
+                })
+            sample_df = pd.DataFrame(sample_rows)
+            end_row, _ = dataframe2excel(sample_df, writer, sheet_name=ws, start_row=end_row + 1, percent_cols=["坏样本率"])
         
         # 1.4 样本分布情况
         freq_label_map = {"D": "日", "W": "周", "M": "月", "Q": "季度", "Y": "年"}
@@ -1245,15 +1525,31 @@ class QuickModelReport:
                             periods = dates.dt.to_period(freq)
                         except Exception:
                             periods = dates.dt.to_period("M")
-                        period_stats = ds.y.groupby(periods).agg(["count", "sum", "mean"]).reset_index()
-                        period_stats.columns = [period_label, "样本数", "坏样本数", "坏样本率"]
-                        period_stats[period_label] = period_stats[period_label].astype(str)
-                        period_stats["坏样本数"] = period_stats["坏样本数"].astype(int)
-                        end_row, _ = dataframe2excel(
-                            period_stats, writer, sheet_name=ws,
-                            title=f"{ds.label} {period_col_name}度分布", start_row=end_row + 1,
-                            percent_cols=["坏样本率"],
-                        )
+
+                        if is_multi:
+                            # 多标签模式：为每个标签生成分布表
+                            for lbl in self._label_names:
+                                y_arr = self._get_y(ds_key, lbl)
+                                y_series = pd.Series(y_arr, index=ds.y.index)
+                                period_stats = y_series.groupby(periods).agg(["count", "sum", "mean"]).reset_index()
+                                period_stats.columns = [period_label, "样本数", "坏样本数", "坏样本率"]
+                                period_stats[period_label] = period_stats[period_label].astype(str)
+                                period_stats["坏样本数"] = period_stats["坏样本数"].astype(int)
+                                end_row, _ = dataframe2excel(
+                                    period_stats, writer, sheet_name=ws,
+                                    title=f"{ds.label} {lbl} {period_col_name}度分布", start_row=end_row + 1,
+                                    percent_cols=["坏样本率"],
+                                )
+                        else:
+                            period_stats = ds.y.groupby(periods).agg(["count", "sum", "mean"]).reset_index()
+                            period_stats.columns = [period_label, "样本数", "坏样本数", "坏样本率"]
+                            period_stats[period_label] = period_stats[period_label].astype(str)
+                            period_stats["坏样本数"] = period_stats["坏样本数"].astype(int)
+                            end_row, _ = dataframe2excel(
+                                period_stats, writer, sheet_name=ws,
+                                title=f"{ds.label} {period_col_name}度分布", start_row=end_row + 1,
+                                percent_cols=["坏样本率"],
+                            )
 
             # 分组分布
             if group_col:
@@ -1286,12 +1582,60 @@ class QuickModelReport:
 
         # 2.1 性能指标
         end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value=f"{section_idx}、模型性能验证指标", style="header_middle", align={"horizontal": "left"})
-        metrics = self.get_metrics()
-        end_row, _ = dataframe2excel(
-            metrics, writer, sheet_name=ws, # title="模型性能指标",
-            start_row=end_row + 1,
-            percent_cols=[c for c in metrics.columns if c not in ("统计项", "样本数")],
-        )
+        if is_multi:
+            # 多标签模式：KS/AUC/样本数/坏样本率用多层级列头，PSI单独列
+            import itertools
+            metric_items = ["KS", "AUC", "样本数", "坏样本率"]
+            all_cols = list(itertools.product(dataset_labels, self._label_names))
+            multi_cols = pd.MultiIndex.from_tuples(all_cols, names=["数据集", "标签"])
+            rows_list: List[Dict[tuple, Any]] = []
+            for metric in metric_items:
+                row: Dict[tuple, Any] = {}
+                for ds_key, ds_label in zip(ds_keys_list, dataset_labels):
+                    for lbl in self._label_names:
+                        if metric == "样本数":
+                            val = len(self._get_y(ds_key, lbl))
+                        elif metric == "坏样本率":
+                            val = float(self._get_y(ds_key, lbl).mean())
+                        else:
+                            from ..core.metrics import ks, auc
+                            if metric == "KS":
+                                val = ks(self._get_y(ds_key, lbl), self._datasets[ds_key].y_proba)
+                            else:
+                                val = auc(self._get_y(ds_key, lbl), self._datasets[ds_key].y_proba)
+                        row[(ds_label, lbl)] = val
+                rows_list.append(row)
+            metrics_df = pd.DataFrame(rows_list, index=metric_items, columns=multi_cols)
+            metrics_df.index.name = "统计项"
+            pct_cols_metric = ["坏样本率"]
+            end_row, _ = dataframe2excel(metrics_df, writer, sheet_name=ws, start_row=end_row + 1,
+                                         percent_cols=pct_cols_metric)
+            # PSI 单独行（不需要多标签）
+            if len(ds_keys_list) >= 2:
+                from ..core.metrics import psi as _psi_metric
+                psi_row_data: Dict[str, Any] = {"统计项": "PSI"}
+                for ds_key, ds_label in zip(ds_keys_list, dataset_labels):
+                    for lbl in self._label_names:
+                        if lbl == self._label_names[0]:
+                            psi_row_data[ds_label] = "\\"
+                        else:
+                            try:
+                                psi_row_data[ds_label] = _psi_metric(
+                                    self._datasets[ds_keys_list[0]].score,
+                                    self._datasets[ds_key].score,
+                                )
+                            except Exception:
+                                psi_row_data[ds_label] = np.nan
+                        break  # PSI only needs one value per dataset
+                psi_df = pd.DataFrame([psi_row_data])
+                end_row, _ = dataframe2excel(psi_df, writer, sheet_name=ws, start_row=end_row + 1)
+        else:
+            metrics = self.get_metrics()
+            end_row, _ = dataframe2excel(
+                metrics, writer, sheet_name=ws,
+                start_row=end_row + 1,
+                percent_cols=[c for c in metrics.columns if c not in ("统计项", "样本数")],
+            )
         section_idx += 1
 
         # 2.2 分月模型效果
@@ -1308,7 +1652,54 @@ class QuickModelReport:
         # 2.3 模型尾部区分能力
         end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value=f"{section_idx}、模型尾部区分能力（TOP n%）", style="header_middle", align={"horizontal": "left"})
         pct_keys = ["TOP 1%", "TOP 3%", "TOP 5%", "TOP 10%", "TOTAL"]
-        if amount_col:
+        if is_multi:
+            # 多标签合并模式：一次性生成 MultiIndex 列的 LIFT 表
+            if amount_col:
+                # 订单口径 + 金额口径左右并排
+                lift_table = self._get_top_n_lift_table(
+                    percentiles=(0.01, 0.03, 0.05, 0.10),
+                    labels=self._label_names,
+                )
+                lift_amt = self._get_top_n_lift_table(
+                    percentiles=(0.01, 0.03, 0.05, 0.10),
+                    amount_col=amount_col,
+                    labels=self._label_names,
+                )
+                table_start = end_row + 1
+                end_row1, end_col1 = dataframe2excel(
+                    lift_table, writer, sheet_name=ws,
+                    title="订单口径", start_row=table_start, start_col=2,
+                    percent_cols=[c for c in pct_keys if c in lift_table.columns],
+                )
+                end_row2, _ = dataframe2excel(
+                    lift_amt, writer, sheet_name=ws,
+                    title="金额口径", start_row=table_start, start_col=end_col1 + 2,
+                    percent_cols=[c for c in pct_keys if c in lift_amt.columns],
+                )
+                end_row = max(end_row1, end_row2)
+                try:
+                    from openpyxl.utils import get_column_letter
+                    n_cols = len(lift_table.columns)
+                    writer.add_auto_filter(ws, f"B{table_start + 2}:{get_column_letter(end_col1 + 1)}{end_row - 1}")
+                except Exception:
+                    pass
+            else:
+                lift_table = self._get_top_n_lift_table(
+                    percentiles=(0.01, 0.03, 0.05, 0.10),
+                    labels=self._label_names,
+                )
+                table_start = end_row + 1
+                end_row, _ = dataframe2excel(
+                    lift_table, writer, sheet_name=ws, start_row=table_start,
+                    percent_cols=[c for c in pct_keys if c in lift_table.columns],
+                )
+                try:
+                    from openpyxl.utils import get_column_letter
+                    writer.add_auto_filter(ws, f"B{table_start}:{get_column_letter(len(lift_table.columns))}{end_row - 1}")
+                except Exception:
+                    pass
+            section_idx += 1
+        elif amount_col:
             lift_table = self._get_top_n_lift_table(percentiles=(0.01, 0.03, 0.05, 0.10), amount_col=None)
             lift_amt = self._get_top_n_lift_table(percentiles=(0.01, 0.03, 0.05, 0.10), amount_col=amount_col)
             table_start = end_row + 1
@@ -1342,7 +1733,8 @@ class QuickModelReport:
                 writer.add_auto_filter(ws, f"B{table_start}:{get_column_letter(len(lift_table.columns) + 1)}{end_row - 1}")
             except Exception:
                 pass
-        section_idx += 1
+        if not is_multi:
+            section_idx += 1
 
         # 2.4 分月PSI矩阵
         if date_col:
@@ -1358,9 +1750,6 @@ class QuickModelReport:
             end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value=f"{section_idx}、{tag}评分排序性", style="header_middle", align={"horizontal": "left"})
 
             figs = plot_paths.get(f"model_{ds_key}", [])
-            order_table = self.get_bin_table(ds_key, method=bin_method, max_n_bins=n_bins, margins=True)
-            pct_cols = [c for c in self._PERCENT_COLS if c in order_table.columns]
-            cond_cols = [c for c in self._CONDITION_COLS if c in order_table.columns]
 
             # 先插入图表（同一行、左右排列，避免 figures 参数导致标题与分箱表之间出现图）
             img_start_row = end_row + 1
@@ -1369,16 +1758,64 @@ class QuickModelReport:
             for fig in figs:
                 try:
                     img_end_row, current_col = writer.insert_pic2sheet(ws, fig, (img_start_row, current_col), figsize=(500, 300))
-                    # current_col = current_col + 2
                     max_img_end_row = max(max_img_end_row, img_end_row)
                 except Exception:
                     pass
             if figs:
-                end_row = max_img_end_row  # 跳过图片占用的所有行，避免重叠
+                end_row = max_img_end_row
 
-            if amount_col:
+            if is_multi:
+                # 多标签合并模式：所有标签合并为一个 MultiIndex 列的分箱表
+                if amount_col:
+                    order_table = self.get_bin_table(
+                        ds_key, method=bin_method, max_n_bins=n_bins,
+                        margins=True, labels=self._label_names,
+                    )
+                    amount_table = self.get_bin_table(
+                        ds_key, method=bin_method, max_n_bins=n_bins,
+                        amount_col=amount_col, margins=True, labels=self._label_names,
+                    )
+                    # 从 MultiIndex 列中提取百分位列
+                    pct_cols = [c for c in order_table.columns
+                                if (c[1] if isinstance(c, tuple) else c) in self._PERCENT_COLS]
+                    cond_cols = [c for c in order_table.columns
+                                 if (c[1] if isinstance(c, tuple) else c) in self._CONDITION_COLS]
+                    amt_pct = [c for c in amount_table.columns
+                               if (c[1] if isinstance(c, tuple) else c) in self._PERCENT_COLS]
+                    amt_cond = [c for c in amount_table.columns
+                                if (c[1] if isinstance(c, tuple) else c) in self._CONDITION_COLS]
+                    order_start_row = end_row + 1
+                    order_end_row, order_end_col = dataframe2excel(
+                        order_table, writer, sheet_name=ws,
+                        title=f"{tag} 订单口径", start_row=order_start_row, start_col=2,
+                        percent_cols=pct_cols, condition_cols=cond_cols, condition_color="F76E6C",
+                    )
+                    _, _ = dataframe2excel(
+                        amount_table, writer, sheet_name=ws,
+                        title=f"{tag} 金额口径", start_row=order_start_row, start_col=order_end_col + 1,
+                        percent_cols=amt_pct, condition_cols=amt_cond, condition_color="F76E6C",
+                    )
+                    end_row = order_end_row
+                else:
+                    order_table = self.get_bin_table(
+                        ds_key, method=bin_method, max_n_bins=n_bins,
+                        margins=True, labels=self._label_names,
+                    )
+                    pct_cols = [c for c in order_table.columns
+                                if (c[1] if isinstance(c, tuple) else c) in self._PERCENT_COLS]
+                    cond_cols = [c for c in order_table.columns
+                                 if (c[1] if isinstance(c, tuple) else c) in self._CONDITION_COLS]
+                    end_row, _ = dataframe2excel(
+                        order_table, writer, sheet_name=ws,
+                        title=f"{tag} 评分有效性", start_row=end_row + 1,
+                        percent_cols=pct_cols, condition_cols=cond_cols, condition_color="F76E6C",
+                    )
+            elif amount_col:
                 # 订单口径和金额口径左右并排（参考3-入模变量分析的分箱表布局）
+                order_table = self.get_bin_table(ds_key, method=bin_method, max_n_bins=n_bins, margins=True)
                 order_start_row = end_row + 1
+                pct_cols = [c for c in self._PERCENT_COLS if c in order_table.columns]
+                cond_cols = [c for c in self._CONDITION_COLS if c in order_table.columns]
                 order_end_row, order_end_col = dataframe2excel(
                     order_table, writer, sheet_name=ws,
                     title=f"{tag} 订单口径", start_row=order_start_row, start_col=2,
@@ -1397,6 +1834,9 @@ class QuickModelReport:
                     pass
                 end_row = order_end_row  # 更新 end_row 为两个表中较靠下的位置
             else:
+                order_table = self.get_bin_table(ds_key, method=bin_method, max_n_bins=n_bins, margins=True)
+                pct_cols = [c for c in self._PERCENT_COLS if c in order_table.columns]
+                cond_cols = [c for c in self._CONDITION_COLS if c in order_table.columns]
                 end_row, _ = dataframe2excel(
                     order_table, writer, sheet_name=ws,
                     title=f"{tag} 评分有效性", start_row=end_row + 1,
@@ -1465,39 +1905,112 @@ class QuickModelReport:
             if all_figs:
                 end_row = max_img_end_row  # 跳过图片占用的所有行，避免重叠
 
-            # 各数据集分箱表（订单口径 + 金额口径）
-            for ds_key, ds in self._datasets.items():
-                try:
-                    ft = self.get_feature_bin_table(feat, ds_key, max_n_bins=n_bins, method=bin_method, margins=True)
-                    ft_pct = [c for c in self._PERCENT_COLS if c in ft.columns]
-                    ft_cond = [c for c in self._CONDITION_COLS if c in ft.columns]
-
-                    if amount_col:
-                        table_start = end_row + 1
-                        end_row1, end_col1 = dataframe2excel(
-                            ft, writer, sheet_name=ws,
-                            title=f"{ds.label} 订单口径", start_row=table_start, start_col=2,
-                            percent_cols=ft_pct, condition_cols=ft_cond, condition_color="F76E6C",
-                        )
+            # 多标签：合并分箱表（MultiIndex 列）；单标签：保持原有逻辑
+            if is_multi:
+                if amount_col:
+                    # 订单+金额左右并排
+                    order_tables = {}
+                    for ds_key, ds in self._datasets.items():
                         try:
-                            ft_amt = self.get_feature_bin_table(feat, ds_key, max_n_bins=n_bins, method=bin_method, margins=True, amount_col=amount_col)
-                            amt_pct = [c for c in self._PERCENT_COLS if c in ft_amt.columns]
-                            amt_cond = [c for c in self._CONDITION_COLS if c in ft_amt.columns]
-                            end_row, _ = dataframe2excel(
-                                ft_amt, writer, sheet_name=ws,
-                                title=f"{ds.label} 金额口径", start_row=table_start, start_col=end_col1 + 1,
-                                percent_cols=amt_pct, condition_cols=amt_cond, condition_color="F76E6C",
+                            order_tables[ds_key] = self.get_feature_bin_table(
+                                feat, ds_key, max_n_bins=n_bins, method=bin_method,
+                                margins=True, labels=self._label_names,
                             )
                         except Exception:
-                            end_row = end_row1
-                    else:
-                        end_row, _ = dataframe2excel(
-                            ft, writer, sheet_name=ws,
-                            title=f"{ds.label}", start_row=end_row + 1,
+                            pass
+                    if order_tables:
+                        table_start = end_row + 1
+                        # 使用第一个表确定 percent/condition 列
+                        first_order = next(iter(order_tables.values()))
+                        if isinstance(first_order.columns, pd.MultiIndex):
+                            ft_pct = [c for c in first_order.columns if c[1] in self._PERCENT_COLS]
+                            ft_cond = [c for c in first_order.columns if c[1] in self._CONDITION_COLS]
+                        else:
+                            ft_pct = [c for c in first_order.columns if c in self._PERCENT_COLS]
+                            ft_cond = [c for c in first_order.columns if c in self._CONDITION_COLS]
+                        end_row1, end_col1 = dataframe2excel(
+                            first_order, writer, sheet_name=ws,
+                            title=f"{feat} 订单口径", start_row=table_start, start_col=2,
                             percent_cols=ft_pct, condition_cols=ft_cond, condition_color="F76E6C",
                         )
-                except Exception:
-                    pass
+                        # 金额口径
+                        amount_tables = {}
+                        for ds_key, ds in self._datasets.items():
+                            try:
+                                amount_tables[ds_key] = self.get_feature_bin_table(
+                                    feat, ds_key, max_n_bins=n_bins, method=bin_method,
+                                    margins=True, amount_col=amount_col, labels=self._label_names,
+                                )
+                            except Exception:
+                                pass
+                        if amount_tables:
+                            first_amt = next(iter(amount_tables.values()))
+                            if isinstance(first_amt.columns, pd.MultiIndex):
+                                amt_pct = [c for c in first_amt.columns if c[1] in self._PERCENT_COLS]
+                                amt_cond = [c for c in first_amt.columns if c[1] in self._CONDITION_COLS]
+                            else:
+                                amt_pct = [c for c in first_amt.columns if c in self._PERCENT_COLS]
+                                amt_cond = [c for c in first_amt.columns if c in self._CONDITION_COLS]
+                            _, _ = dataframe2excel(
+                                first_amt, writer, sheet_name=ws,
+                                title=f"{feat} 金额口径", start_row=table_start, start_col=end_col1 + 1,
+                                percent_cols=amt_pct, condition_cols=amt_cond, condition_color="F76E6C",
+                            )
+                        end_row = end_row1
+                else:
+                    # 仅订单口径
+                    for ds_key, ds in self._datasets.items():
+                        try:
+                            ft = self.get_feature_bin_table(
+                                feat, ds_key, max_n_bins=n_bins, method=bin_method,
+                                margins=True, labels=self._label_names,
+                            )
+                            if isinstance(ft.columns, pd.MultiIndex):
+                                ft_pct = [c for c in ft.columns if c[1] in self._PERCENT_COLS]
+                                ft_cond = [c for c in ft.columns if c[1] in self._CONDITION_COLS]
+                            else:
+                                ft_pct = [c for c in ft.columns if c in self._PERCENT_COLS]
+                                ft_cond = [c for c in ft.columns if c in self._CONDITION_COLS]
+                            end_row, _ = dataframe2excel(
+                                ft, writer, sheet_name=ws,
+                                title=f"{ds.label}", start_row=end_row + 1,
+                                percent_cols=ft_pct, condition_cols=ft_cond, condition_color="F76E6C",
+                            )
+                        except Exception:
+                            pass
+            else:
+                for ds_key, ds in self._datasets.items():
+                    try:
+                        ft = self.get_feature_bin_table(feat, ds_key, max_n_bins=n_bins, method=bin_method, margins=True)
+                        ft_pct = [c for c in self._PERCENT_COLS if c in ft.columns]
+                        ft_cond = [c for c in self._CONDITION_COLS if c in ft.columns]
+
+                        if amount_col:
+                            table_start = end_row + 1
+                            end_row1, end_col1 = dataframe2excel(
+                                ft, writer, sheet_name=ws,
+                                title=f"{ds.label} 订单口径", start_row=table_start, start_col=2,
+                                percent_cols=ft_pct, condition_cols=ft_cond, condition_color="F76E6C",
+                            )
+                            try:
+                                ft_amt = self.get_feature_bin_table(feat, ds_key, max_n_bins=n_bins, method=bin_method, margins=True, amount_col=amount_col)
+                                amt_pct = [c for c in self._PERCENT_COLS if c in ft_amt.columns]
+                                amt_cond = [c for c in self._CONDITION_COLS if c in ft_amt.columns]
+                                end_row, _ = dataframe2excel(
+                                    ft_amt, writer, sheet_name=ws,
+                                    title=f"{ds.label} 金额口径", start_row=table_start, start_col=end_col1 + 1,
+                                    percent_cols=amt_pct, condition_cols=amt_cond, condition_color="F76E6C",
+                                )
+                            except Exception:
+                                end_row = end_row1
+                        else:
+                            end_row, _ = dataframe2excel(
+                                ft, writer, sheet_name=ws,
+                                title=f"{ds.label}", start_row=end_row + 1,
+                                percent_cols=ft_pct, condition_cols=ft_cond, condition_color="F76E6C",
+                            )
+                    except Exception:
+                        pass
 
             # PSI 图表和数据表
             psi_fig_paths = plot_paths.get(f"feat_psi_{feat}", [])
