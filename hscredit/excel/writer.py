@@ -1470,6 +1470,8 @@ def dataframe2excel(
     condition_rows: Optional[List] = None,
     custom_rows: Optional[List] = None,
     color_rows: Optional[List] = None,
+    left_cols: Optional[List] = None,
+    right_cols: Optional[List] = None,
     start_col: int = 2,
     start_row: int = 2,
     mode: str = "replace",
@@ -1501,6 +1503,8 @@ def dataframe2excel(
     :param condition_rows: 需要显示数据条的行，默认为None
     :param custom_rows: 需要自定义格式的行，默认为None
     :param color_rows: 需要显示颜色渐变的行，默认为None
+    :param left_cols: 需要左对齐的列名或列索引列表，默认为None（数据行，非表头）
+    :param right_cols: 需要右对齐的列名或列索引列表，默认为None（数据行，非表头）
     :param start_col: 起始列，默认为2
     :param start_row: 起始行，默认为2
     :param mode: 写入模式，默认为"replace"
@@ -1695,6 +1699,50 @@ def dataframe2excel(
             except Exception:
                 import traceback
                 traceback.print_exc()
+
+    # 应用自定义列对齐（仅数据行，非表头）
+    if left_cols or right_cols:
+        from openpyxl.styles import Alignment
+        from openpyxl.utils import get_column_letter as _gcl
+
+        # 计算表头行数（1行或 MultiIndex 层数）
+        n_header_rows = data.columns.nlevels if header else 0
+        data_start_row = start_row + n_header_rows
+        data_end_row = end_row - 1
+
+        # index 列的层数
+        idx_levels = data.index.nlevels if kwargs.get("index", False) else 0
+
+        # 解析 left_cols / right_cols → DataFrame 列索引集合
+        def _resolve_col_items(items, df_cols):
+            result = set()
+            if not items:
+                return result
+            for c in items:
+                if isinstance(c, int):
+                    if 0 <= c < len(df_cols):
+                        result.add(c)
+                elif isinstance(c, str):
+                    try:
+                        loc = df_cols.get_loc(c)
+                        if isinstance(loc, int):
+                            result.add(loc)
+                        else:
+                            result.update(range(loc.start, loc.stop))
+                    except Exception:
+                        pass
+            return result
+
+        left_idx_set = _resolve_col_items(left_cols, data.columns)
+        right_idx_set = _resolve_col_items(right_cols, data.columns)
+
+        for col_idx in (left_idx_set | right_idx_set):
+            horiz = "left" if col_idx in left_idx_set else "right"
+            excel_col = start_col + col_idx + idx_levels
+            col_letter = _gcl(excel_col)
+            for row in range(data_start_row, data_end_row + 1):
+                cell = worksheet[f"{col_letter}{row}"]
+                cell.alignment = Alignment(horizontal=horiz, vertical="center")
 
     # 保存文件（如果不是传入的ExcelWriter对象）
     if not isinstance(excel_writer, ExcelWriter) and not isinstance(sheet_name, Worksheet):

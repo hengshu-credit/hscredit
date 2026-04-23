@@ -280,42 +280,57 @@ class QuickModelReport:
         raise ValueError(f"target 参数格式错误：{target_cfg}")
 
     def _init_from_datasets(self, datasets):
-        """从 datasets 初始化数据集."""
+        """从 datasets 初始化数据集.
+
+        datasets 支持两种格式：
+        - dict: {'train': (X, y), 'test': (X, y), ...}  传统元组格式
+        - dict: {'train': X, 'test': X, ...}             DataFrame 直接传入，
+                  y 从 X 中通过 target / overdue+dpds 自动构建
+        - list: [(X, y), (X, y), ...] / [X, X, ...]     同上，y 可选
+        """
         if isinstance(datasets, dict):
-            # {'train': (X, y), 'test': (X, y), ...}
             default_labels = {
                 "train": "训练集", "test": "测试集",
                 "oot": "OOT集", "val": "验证集",
             }
             for key, value in datasets.items():
-                if not isinstance(value, (tuple, list)) or len(value) < 2:
-                    raise ValueError(f"数据集 '{key}' 格式错误，应为 (X, y) 元组")
-                X_raw, y_raw = value[0], value[1]
-                label = default_labels.get(key, key)
-                X_df = _ensure_dataframe(X_raw, feature_names=self._feature_names)
-
-                # y 为 None 时，根据 target 配置从 X 推导标签
-                if y_raw is None:
-                    y_s = self._build_y(X_df, self._target_cfg)
+                # 区分 (X, y) 元组 和 直接传入 DataFrame 两种格式
+                if isinstance(value, (tuple, list)) and len(value) >= 2:
+                    # 传统元组格式: (X, y)
+                    X_raw, y_raw = value[0], value[1]
+                    label = default_labels.get(key, key)
+                    X_df = _ensure_dataframe(X_raw, feature_names=self._feature_names)
+                    if y_raw is None:
+                        y_s = self._build_y(X_df, self._target_cfg)
+                    else:
+                        y_s = _ensure_series(y_raw, name=self._target_name)
                 else:
-                    y_s = _ensure_series(y_raw, name=self._target_name)
+                    # DataFrame 直接传入: X 中含目标列或通过 overdue+dpds 构建标签
+                    X_raw = value
+                    label = default_labels.get(key, key)
+                    X_df = _ensure_dataframe(X_raw, feature_names=self._feature_names)
+                    y_s = self._build_y(X_df, self._target_cfg)
 
                 self._add_dataset(key, label, X_df, y_s)
                 self._datasets_info[key] = label
 
         elif isinstance(datasets, (list, tuple)):
-            # [(X, y), (X, y), ...] - 自动命名
             default_names = ["train", "test", "oot", "val", "dev"]
             default_labels = ["训练集", "测试集", "OOT集", "验证集", "开发集"]
-            for i, (X_raw, y_raw) in enumerate(datasets):
+            for i, value in enumerate(datasets):
                 key = default_names[i] if i < len(default_names) else f"dataset_{i}"
                 label = default_labels[i] if i < len(default_labels) else f"数据集{i+1}"
-                X_df = _ensure_dataframe(X_raw, feature_names=self._feature_names)
-
-                if y_raw is None:
-                    y_s = self._build_y(X_df, self._target_cfg)
+                if isinstance(value, (tuple, list)) and len(value) >= 2:
+                    X_raw, y_raw = value[0], value[1]
+                    X_df = _ensure_dataframe(X_raw, feature_names=self._feature_names)
+                    if y_raw is None:
+                        y_s = self._build_y(X_df, self._target_cfg)
+                    else:
+                        y_s = _ensure_series(y_raw, name=self._target_name)
                 else:
-                    y_s = _ensure_series(y_raw, name=self._target_name)
+                    X_raw = value
+                    X_df = _ensure_dataframe(X_raw, feature_names=self._feature_names)
+                    y_s = self._build_y(X_df, self._target_cfg)
 
                 self._add_dataset(key, label, X_df, y_s)
                 self._datasets_info[key] = label
@@ -345,8 +360,20 @@ class QuickModelReport:
     # ---------- 数据集管理 ----------
 
     def _add_dataset(self, key: str, label: str, X: pd.DataFrame, y: pd.Series):
-        # scorecardpipeline 风格：X 可能包含 target 列，预测前需移除
-        X_for_pred = X.drop(columns=[self._target_name], errors='ignore')
+        # 获取模型实际需要的特征列表，过滤掉额外列，避免预测时报错
+        required_features = None
+        if hasattr(self.model, 'binner') and hasattr(self.model.binner, 'feature_names'):
+            required_features = list(self.model.binner.feature_names)
+        elif hasattr(self.model, 'feature_names_in_'):
+            required_features = list(self.model.feature_names_in_)
+
+        if required_features:
+            missing = set(required_features) - set(X.columns)
+            if missing:
+                raise ValueError(f"数据集缺少以下模型特征: {missing}")
+            X_for_pred = X[required_features]
+        else:
+            X_for_pred = X.drop(columns=[self._target_name], errors='ignore')
         self._datasets[key] = ReportDataset(
             name=key,
             label=label,
@@ -356,15 +383,19 @@ class QuickModelReport:
             score=_score_from_model(self.model, X_for_pred),
         )
 
-    def add_dataset(self, key: str, label: str, X, y, feature_names: Optional[List[str]] = None):
-        """添加额外数据集（如 OOT）用于报告."""
+    def add_dataset(self, key: str, label: str, X, y=None, feature_names: Optional[List[str]] = None):
+        """添加额外数据集（如 OOT）用于报告.
+
+        :param key: 数据集标识
+        :param label: 数据集标签
+        :param X: DataFrame（含目标列时 y 可为 None，自动构建标签）
+        :param y: 标签列，None 时从 X 中通过 target / overdue+dpds 自动构建
+        :param feature_names: 特征名列表
+        """
         X = _ensure_dataframe(X, feature_names=feature_names or self.feature_names)
-        # scorecardpipeline 风格：y=None 时从 X 中提取目标列
+        # y=None 时从 X 中通过 overdue+dpds 自动构建标签（scorecardpipeline 风格）
         if y is None:
-            if self._target_name in X.columns:
-                y = X[self._target_name].copy()
-            else:
-                raise ValueError(f"y 为 None 且 X 中不包含目标列 '{self._target_name}'")
+            y = self._build_y(X, self._target_cfg)
         y = _ensure_series(y, name=self._target_name)
         self._add_dataset(key, label, X, y)
 
@@ -996,7 +1027,8 @@ class QuickModelReport:
 
         ws = writer.get_sheet_by_name("目录")
         end_row, _ = writer.insert_value2sheet(ws, (2, 2), value="模型评估报告", style="header_middle", end_space=(2, max_col))
-        end_row, _ = dataframe2excel(contents, writer, sheet_name=ws, start_row=end_row + 1)
+        end_row, _ = dataframe2excel(contents, writer, sheet_name=ws, start_row=end_row + 1,
+                                       left_cols=["内容", "备注"])
 
         for i, row in contents.iterrows():
             try:
@@ -1027,6 +1059,110 @@ class QuickModelReport:
         desc_text = project_desc or f"使用 {model_name} 模型进行信用风险评估"
         end_row, _ = writer.insert_value2sheet(ws, (end_row, 2), value=desc_text, style="middle", end_space=(end_row, max_col), align={"horizontal": "left"})
 
+
+        # 1.2 数据样本描述
+        end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value="2、数据样本描述", style="header_middle", align={"horizontal": "left"})
+
+        # 辅助函数：从数据集提取日期范围
+        def _extract_dates(ds, col):
+            if col and ds is not None and col in ds.X.columns:
+                dates = pd.to_datetime(ds.X[col])
+                if not dates.isna().all():
+                    return dates.min().strftime("%Y-%m-%d"), dates.max().strftime("%Y-%m-%d")
+            return None, None
+
+        # ---- Step 1: 生成逾期标签描述文本 ----
+        if isinstance(self._target_cfg, dict) and "dpds" in self._target_cfg:
+            dpd_val = self._target_cfg["dpds"]
+            if "overdue" in self._target_cfg:
+                overdue_name = self._target_cfg["overdue"]
+                if isinstance(overdue_name, list):
+                    overdue_name = overdue_name[0]
+                label_text = f"{overdue_name} EVER DPD{dpd_val}+"
+            else:
+                label_text = f"OVERDUE EVER DPD{dpd_val}+"
+        else:
+            label_text = "TARGET"
+
+        # ---- Step 2: 合并所有数据集，计算整体各逾期标签的逾期数据 ----
+        # 如果有日期字段，先提取全局日期范围
+        global_date_prefix = ""
+        if date_col:
+            all_dates = []
+            for ds in self._datasets.values():
+                if ds is not None and date_col in ds.X.columns:
+                    all_dates.append(pd.to_datetime(ds.X[date_col]))
+            if all_dates:
+                all_dates_combined = pd.concat(all_dates, ignore_index=True).dropna()
+                if not all_dates_combined.empty:
+                    global_date_prefix = (
+                        f"{all_dates_combined.min().strftime('%Y-%m-%d')} ~ "
+                        f"{all_dates_combined.max().strftime('%Y-%m-%d')}  "
+                    )
+        sample_interval = global_date_prefix if global_date_prefix else ""
+
+        # 合并所有 X（带 label 标识）
+        concat_parts = []
+        for ds_key, ds in self._datasets.items():
+            if ds is None:
+                continue
+            part = ds.X.copy()
+            part["_ds_label_"] = ds.label
+            part["_ds_y_"] = ds.y.values
+            concat_parts.append(part)
+        if concat_parts:
+            all_X = pd.concat(concat_parts, ignore_index=True)
+            overall_n = len(all_X)
+            overall_bad = int(all_X["_ds_y_"].sum())
+            overall_bad_rate = overall_bad / overall_n * 100 if overall_n > 0 else 0
+            overall_desc = (
+                f"{global_date_prefix}样本数: {overall_n}, "
+                f"{label_text}: {round(overall_bad_rate, 2)}%"
+            )
+        else:
+            overall_desc = "N/A"
+
+        # ---- Step 3: 各数据集的逾期数据（带日期区间前缀） ----
+        # 先收集各数据集的日期范围（映射 label → date range）
+        label_date_map: Dict[str, tuple] = {}
+        for ds in self._datasets.values():
+            if ds is None:
+                continue
+            d_min, d_max = _extract_dates(ds, date_col)
+            label_date_map[ds.label] = (d_min, d_max)
+
+        # ---- Step 4: 固定描述行 ----
+        data_source_str = data_source if data_source else "N/A"
+        fixed_rows: List[Dict[str, Any]] = [
+            {"统计项": "样本区间", "统计内容": sample_interval or "N/A"},
+            {"统计项": "整体样本", "统计内容": overall_desc},
+            {"统计项": "模型名称", "统计内容": model_name or "N/A"},
+            {"统计项": "取样逻辑", "统计内容": project_desc or "N/A"},
+            {"统计项": "数据源", "统计内容": data_source_str},
+        ]
+
+        # ---- Step 5: 各数据集的描述行 ----
+        ds_rows: List[Dict[str, Any]] = []
+        for ds_key, ds in self._datasets.items():
+            if ds is None:
+                continue
+            n_samples = len(ds.y)
+            bad_rate = round(ds.y.mean() * 100, 2)
+            d_min, d_max = label_date_map.get(ds.label, (None, None))
+
+            # 日期前缀
+            if d_min and d_max:
+                date_prefix = f"放款时间: {d_min} ~ {d_max}  |  "
+            else:
+                date_prefix = ""
+
+            content = f"{date_prefix}样本数: {n_samples}, {label_text}: {bad_rate}%"
+            ds_rows.append({"统计项": ds.label, "统计内容": content})
+
+        desc_df = pd.DataFrame(fixed_rows + ds_rows)
+        end_row, _ = dataframe2excel(desc_df, writer, sheet_name=ws, start_row=end_row + 1,
+                                     left_cols=["统计项", "统计内容"])
+
         # 1.3 数据样本统计
         end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value="3、数据样本统计", style="header_middle", align={"horizontal": "left"})
         sample_rows: List[Dict[str, Any]] = []
@@ -1040,86 +1176,8 @@ class QuickModelReport:
             })
         sample_df = pd.DataFrame(sample_rows)
         end_row, _ = dataframe2excel(sample_df, writer, sheet_name=ws, start_row=end_row + 1, percent_cols=["坏样本率"])
-
-        # 1.2 数据样本描述
-        end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value="2、数据样本描述", style="header_middle", align={"horizontal": "left"})
-
-        # 从 _target_cfg 推断 dpd 阈值
-        dpd_val: Optional[Union[int, float]] = None
-        if isinstance(self._target_cfg, dict):
-            if "dpds" in self._target_cfg:
-                dpd_val = self._target_cfg["dpds"]
-            elif "threshold" in self._target_cfg:
-                dpd_val = self._target_cfg["threshold"]
-
-        # 从各数据集提取日期
-        def _extract_dates(ds, col):
-            if col and ds and col in ds.X.columns:
-                dates = pd.to_datetime(ds.X[col])
-                if not dates.isna().all():
-                    return dates.min().strftime("%Y-%m-%d"), dates.max().strftime("%Y-%m-%d")
-            return "N/A", "N/A"
-
-        train_date_min, train_date_max = _extract_dates(train_ds, date_col)
-        oot_date_min, oot_date_max = _extract_dates(oot_ds, date_col)
-
-        sample_interval = f"{train_date_min} ~ {oot_date_max}"
-        if train_date_min == "N/A" and oot_date_max == "N/A":
-            sample_interval = "N/A"
-
-        data_source_str = data_source if data_source else "N/A"
-
-        # 动态构建数据样本描述行
-        desc_rows: List[Dict[str, Any]] = [
-            {"统计项": "样本区间", "统计内容": sample_interval},
-            {"统计项": "模型名称", "统计内容": model_name or "N/A"},
-            {"统计项": "取样逻辑", "统计内容": project_desc or "N/A"},
-            {"统计项": "数据源", "统计内容": data_source_str},
-        ]
-
-        # 建模标签：根据 target/overdue+dpds 推断
-        if dpd_val is not None:
-            if isinstance(self._target_cfg, dict) and "overdue" in self._target_cfg:
-                overdue_name = self._target_cfg["overdue"]
-                if isinstance(overdue_name, list):
-                    overdue_name = overdue_name[0]
-                label_text = f"{overdue_name} EVER DPD{dpd_val}+"
-            else:
-                label_text = f"EVER DPD{dpd_val}+"
-        else:
-            label_text = "N/A"
-        desc_rows.append({"统计项": "建模标签", "统计内容": label_text})
-
-        # 建模样本：根据 dpd 推断
-        if dpd_val is not None:
-            sample_text = f"建模集剔除 EVER DPD (1, {dpd_val}] 的灰样本, OOT不剔除"
-        else:
-            sample_text = "N/A"
-        desc_rows.append({"统计项": "建模样本", "统计内容": sample_text})
-
-        # 各数据集动态生成
-        for ds_key, ds in self._datasets.items():
-            label = ds.label
-            n_samples = len(ds.y)
-            bad_rate = round(ds.y.mean() * 100, 2)
-
-            if label.lower() in ("train", "训练集", "建模集"):
-                this_date_min, this_date_max = train_date_min, train_date_max
-            elif label.lower() in ("oot", "跨时间验证集"):
-                this_date_min, this_date_max = oot_date_min, oot_date_max
-            else:
-                this_date_min, this_date_max = "N/A", "N/A"
-
-            if dpd_val is not None:
-                content = f"放款时间: {this_date_min} ~ {this_date_max} , 样本数: {n_samples}, DPD{dpd_val}%: {bad_rate}%"
-            else:
-                content = f"放款时间: {this_date_min} ~ {this_date_max} , 样本数: {n_samples}, 坏样本率: {bad_rate}%"
-
-            desc_rows.append({"统计项": label, "统计内容": content})
-        desc_df = pd.DataFrame(desc_rows)
-        end_row, _ = dataframe2excel(desc_df, writer, sheet_name=ws, start_row=end_row + 1)
-
-        # 1.3 样本分布情况
+        
+        # 1.4 样本分布情况
         freq_label_map = {"D": "日", "W": "周", "M": "月", "Q": "季度", "Y": "年"}
         if date_col or group_col:
             end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value="4、样本分布情况", style="header_middle", align={"horizontal": "left"})
@@ -1181,9 +1239,9 @@ class QuickModelReport:
         end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value=f"{section_idx}、模型性能验证指标", style="header_middle", align={"horizontal": "left"})
         metrics = self.get_metrics()
         end_row, _ = dataframe2excel(
-            metrics, writer, sheet_name=ws, title="模型性能指标",
+            metrics, writer, sheet_name=ws, # title="模型性能指标",
             start_row=end_row + 1,
-            percent_cols=[c for c in metrics.columns if c != "统计项"],
+            percent_cols=[c for c in metrics.columns if c not in ("统计项", "样本数")],
         )
         section_idx += 1
 
@@ -1204,7 +1262,7 @@ class QuickModelReport:
         if amount_col:
             lift_table = self._get_top_n_lift_table(percentiles=(0.01, 0.03, 0.05, 0.10), amount_col=None)
             lift_amt = self._get_top_n_lift_table(percentiles=(0.01, 0.03, 0.05, 0.10), amount_col=amount_col)
-            table_start = end_row + 1
+            table_start = end_row + 3
             end_row1, end_col1 = dataframe2excel(
                 lift_table, writer, sheet_name=ws,
                 title="订单口径", start_row=table_start, start_col=2,
@@ -1225,7 +1283,7 @@ class QuickModelReport:
                 pass
         else:
             lift_table = self._get_top_n_lift_table()
-            table_start = end_row + 1
+            table_start = end_row + 3
             end_row, _ = dataframe2excel(
                 lift_table, writer, sheet_name=ws, start_row=table_start,
                 percent_cols=pct_keys,
@@ -1261,8 +1319,8 @@ class QuickModelReport:
             max_img_end_row = img_start_row
             for fig in figs:
                 try:
-                    img_end_row, new_col = writer.insert_pic2sheet(ws, fig, (img_start_row, current_col), figsize=(500, 300))
-                    current_col = current_col + 2
+                    img_end_row, current_col = writer.insert_pic2sheet(ws, fig, (img_start_row, current_col), figsize=(500, 300))
+                    # current_col = current_col + 2
                     max_img_end_row = max(max_img_end_row, img_end_row)
                 except Exception:
                     pass
@@ -1283,7 +1341,7 @@ class QuickModelReport:
                     amt_cond = [c for c in self._CONDITION_COLS if c in amount_table.columns]
                     _, _ = dataframe2excel(
                         amount_table, writer, sheet_name=ws,
-                        title=f"{tag} 金额口径", start_row=order_start_row, start_col=order_end_col + 2,
+                        title=f"{tag} 金额口径", start_row=order_start_row, start_col=order_end_col + 1,
                         percent_cols=amt_pct, condition_cols=amt_cond, condition_color="F76E6C",
                     )
                 except Exception:
@@ -1315,6 +1373,7 @@ class QuickModelReport:
             features_summary, writer, sheet_name=ws,
             start_row=end_row + 1,
             index=True,
+            right_cols=[0],
         )
 
         # 3.2 相关性
@@ -1327,6 +1386,7 @@ class QuickModelReport:
             percent_cols=corr_df.columns.tolist(),
             index=True,
             figures=corr_figs,
+            right_cols=[0],
         )
 
         # 3.3 入模变量有效性分析
@@ -1348,8 +1408,8 @@ class QuickModelReport:
             max_img_end_row = img_start_row
             for fig in all_figs:
                 try:
-                    img_end_row, new_col = writer.insert_pic2sheet(ws, fig, (img_start_row, current_col), figsize=(500, 300))
-                    current_col = current_col + 2
+                    img_end_row, current_col = writer.insert_pic2sheet(ws, fig, (img_start_row, current_col), figsize=(500, 300))
+                    # current_col = current_col + 2
                     max_img_end_row = max(max_img_end_row, img_end_row)
                 except Exception:
                     pass
@@ -1376,7 +1436,7 @@ class QuickModelReport:
                             amt_cond = [c for c in self._CONDITION_COLS if c in ft_amt.columns]
                             end_row, _ = dataframe2excel(
                                 ft_amt, writer, sheet_name=ws,
-                                title=f"{ds.label} 金额口径", start_row=table_start, start_col=end_col1 + 2,
+                                title=f"{ds.label} 金额口径", start_row=table_start, start_col=end_col1 + 1,
                                 percent_cols=amt_pct, condition_cols=amt_cond, condition_color="F76E6C",
                             )
                         except Exception:
@@ -1563,7 +1623,8 @@ class QuickModelReport:
         features_df = pd.DataFrame({"序号": range(1, len(self.feature_names) + 1), "变量名": self.feature_names})
         if feature_map:
             features_df["变量含义"] = [feature_map.get(f, "") for f in self.feature_names]
-        end_row, _ = dataframe2excel(features_df, writer, sheet_name=ws, start_row=end_row + 1)
+        end_row, _ = dataframe2excel(features_df, writer, sheet_name=ws, start_row=end_row + 1,
+                                     left_cols=["变量名", "变量含义"])
         param_section += 1
 
         # 5.4+ 评分卡专属内容
@@ -1591,7 +1652,8 @@ class QuickModelReport:
             end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value=f"{param_section}、评分卡刻度配置", style="header_middle", align={"horizontal": "left"})
             try:
                 scale_df = self.model.scorecard_scale()
-                end_row, _ = dataframe2excel(scale_df, writer, sheet_name=ws, start_row=end_row + 1)
+                end_row, _ = dataframe2excel(scale_df, writer, sheet_name=ws, start_row=end_row + 1,
+                                             right_cols=["刻度项"], left_cols=["备注"])
             except Exception:
                 pass
             param_section += 1
@@ -1600,7 +1662,7 @@ class QuickModelReport:
             end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value=f"{param_section}、评分卡分值表", style="header_middle", align={"horizontal": "left"})
             try:
                 sc_points = self.model.scorecard_points(feature_map=feature_map)
-                end_row, _ = dataframe2excel(sc_points, writer, sheet_name=ws, start_row=end_row + 1)
+                end_row, _ = dataframe2excel(sc_points, writer, sheet_name=ws, start_row=end_row + 1, right_cols=["对应分数", "变量名称"])
             except Exception:
                 pass
             param_section += 1

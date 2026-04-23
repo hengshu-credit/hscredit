@@ -10,7 +10,7 @@
 """
 from ..excel import ExcelWriter, dataframe2excel
 from .feature_analyzer import feature_bin_stats, feature_efficiency_analysis, auto_feature_analysis
-from .rule_analysis import ruleset_analysis, multi_label_rule_analysis
+from .rule_analysis import ruleset_analysis, multi_label_rule_analysis, rule_swap_analysis
 from .swap_analysis import (
     ReferenceDataProvider,
     SwapAnalyzer,
@@ -47,6 +47,8 @@ __all__ = [
     "feature_efficiency_analysis",
     "auto_feature_analysis",
     "ruleset_analysis",
+    "multi_label_rule_analysis",
+    "rule_swap_analysis",
     # swap分析
     "ReferenceDataProvider",
     "SwapAnalyzer",
