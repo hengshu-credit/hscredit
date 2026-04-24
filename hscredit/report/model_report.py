@@ -97,12 +97,24 @@ def _merge_multi_label_bin_tables(tables: List[pd.DataFrame], labels: List[str])
     import itertools
 
     base = tables[0].copy()
-    merge_cols = ['指标含义', '指标名称', '指标明细']
+    merge_cols = ['分箱标签', '指标含义', '指标名称', '指标明细']
     available_merge = [c for c in merge_cols if c in base.columns]
     other_cols = [c for c in base.columns if c not in available_merge]
 
     # 重排列：合并列在前，明细列在后
     base = base[available_merge + other_cols]
+
+    # 当没有可合并列时（cross-product 陷阱），改用 index 对齐拼接
+    if not available_merge:
+        result_parts = [base]
+        for table, lbl in zip(tables[1:], labels[1:]):
+            table_copy = table.copy()
+            table_other = [c for c in table_copy.columns if c not in available_merge]
+            table_multi_cols = [('分箱详情', c) for c in available_merge] + [(lbl, c) for c in table_other]
+            table_copy.columns = pd.MultiIndex.from_tuples(table_multi_cols)
+            result_parts.append(table_copy[table_other])
+        result = pd.concat(result_parts, axis=1, keys=[labels[0]] + list(labels[1:]), names=["标签"])
+        return result
 
     # 构建 MultiIndex 列
     multi_cols = []
@@ -885,10 +897,10 @@ class QuickModelReport:
         amount_col: Optional[str] = None,
         labels: Optional[List[str]] = None,
     ) -> pd.DataFrame:
-        """多标签合并模式的 LIFT 表，返回 MultiIndex 列结构。
+        """多标签合并模式的 LIFT 表。
 
-        列层级: (数据集, 标签名) -> metric_type (坏样本率/LIFT值/坏账改善)
-        行: 每个指标类型一行
+        行: TOP 1% / TOP 3% / TOP 5% / TOP 10% / TOTAL
+        列: (数据集, 标签, 指标) 三层 MultiIndex
         """
         if labels is None:
             labels = self._label_names
@@ -898,12 +910,16 @@ class QuickModelReport:
         import itertools
         ds_keys_list = list(self._datasets.keys())
         dataset_labels = [self._datasets[k].label for k in ds_keys_list]
-
-        # 收集每个 (数据集, 标签) 组合的指标数据
         all_pairs = list(itertools.product(dataset_labels, labels))
-        metrics_data: Dict[str, Dict[str, Dict[str, float]]] = {
-            metric: {} for metric in metric_types
-        }
+
+        # 构建 MultiIndex 列: (数据集, 标签, 指标)
+        # 需要展平 all_pairs 为单个元素，而不是嵌套元组
+        col_tuples = [(ds, lbl, metric) for ds, lbl in all_pairs for metric in metric_types]
+        multi_cols = pd.MultiIndex.from_tuples(
+            col_tuples, names=["数据集", "标签", "指标"]
+        )
+
+        rows_dict: Dict[str, Dict[tuple, Any]] = {p: {} for p in pct_keys}
 
         for ds_key, ds_label in zip(ds_keys_list, dataset_labels):
             for lbl in labels:
@@ -933,25 +949,13 @@ class QuickModelReport:
                 lifts["TOTAL"] = 1.0
                 improvements["TOTAL"] = 0.0
 
-                metrics_data["坏样本率"][pair_key] = bad_rates
-                metrics_data["LIFT值"][pair_key] = lifts
-                metrics_data["坏账改善"][pair_key] = improvements
-
-        # 构建 MultiIndex 列: ((ds_label, lbl), metric_type)
-        col_tuples = list(itertools.product(all_pairs, metric_types))
-        multi_cols = pd.MultiIndex.from_tuples(col_tuples, names=["数据集|标签", "指标"])
-
-        # 构建行数据
-        rows_list: List[Dict[tuple, Any]] = []
-        for metric in metric_types:
-            row_dict: Dict[tuple, Any] = {}
-            for pair_key, sub_dict in metrics_data[metric].items():
                 for pct_key in pct_keys:
-                    col_key = (pair_key, metric)
-                    row_dict[col_key] = sub_dict.get(pct_key)
-            rows_list.append(row_dict)
+                    for metric, data in [("坏样本率", bad_rates), ("LIFT值", lifts), ("坏账改善", improvements)]:
+                        rows_dict[pct_key][(pair_key, metric)] = data.get(pct_key)
 
-        result_df = pd.DataFrame(rows_list, columns=multi_cols, index=metric_types)
+        # 构建 DataFrame: 行=pct_key, 列=(pair, metric)
+        rows_list = [rows_dict[p] for p in pct_keys]
+        result_df = pd.DataFrame(rows_list, index=pct_keys, columns=multi_cols)
         result_df.index.name = "统计项"
         return result_df
 
@@ -1420,22 +1424,26 @@ class QuickModelReport:
         # 多标签模式：每个数据集需要展示各标签的逾期率
         is_multi = self._is_multi_label()
         if is_multi:
-            # 多标签：生成多行，每行一个标签
-            for lbl in self._label_names:
-                content_parts = []
-                for ds_key, ds in self._datasets.items():
-                    n_samples = len(ds.y)
+            # 多标签模式：行=数据集，列=逾期标签，值=坏样本率
+            import itertools
+            # 先定义 ds_keys_list 和 dataset_labels
+            ds_keys_list = list(self._datasets.keys())
+            dataset_labels = [ds.label for ds in self._datasets.values() if ds is not None]
+            all_cols = list(itertools.product(dataset_labels, self._label_names))
+            multi_cols = pd.MultiIndex.from_tuples(all_cols, names=["数据集", "标签"])
+            rows_list: List[Dict[tuple, Any]] = []
+            for ds_key, ds_label in zip(ds_keys_list, dataset_labels):
+                row: Dict[tuple, Any] = {}
+                for lbl in self._label_names:
                     y_arr = self._get_y(ds_key, lbl)
-                    bad_rate = round(y_arr.mean() * 100, 2)
-                    d_min, d_max = label_date_map.get(ds.label, (None, None))
-                    if d_min and d_max:
-                        date_prefix = f"放款时间: {d_min} ~ {d_max}  |  "
-                    else:
-                        date_prefix = ""
-                    content_parts.append(f"{date_prefix}{ds.label}: 样本{n_samples}, {lbl}坏率{bad_rate}%")
-                desc_df = pd.DataFrame({"统计项": [f"坏标签-{lbl}"], "统计内容": ["; ".join(content_parts)]})
-                end_row, _ = dataframe2excel(desc_df, writer, sheet_name=ws, start_row=end_row + 1,
-                                             left_cols=["统计项", "统计内容"])
+                    n_samples = len(y_arr)
+                    bad_rate = float(y_arr.mean())
+                    row[(ds_label, lbl)] = bad_rate
+                rows_list.append(row)
+            desc_df = pd.DataFrame(rows_list, index=dataset_labels, columns=multi_cols)
+            desc_df.index.name = "数据集"
+            end_row, _ = dataframe2excel(desc_df, writer, sheet_name=ws, start_row=end_row + 1,
+                                         percent_cols=[c for c in desc_df.columns])
         else:
             ds_rows: List[Dict[str, Any]] = []
             for ds_key, ds in self._datasets.items():
@@ -1443,15 +1451,7 @@ class QuickModelReport:
                     continue
                 n_samples = len(ds.y)
                 bad_rate = round(ds.y.mean() * 100, 2)
-                d_min, d_max = label_date_map.get(ds.label, (None, None))
-
-                # 日期前缀
-                if d_min and d_max:
-                    date_prefix = f"放款时间: {d_min} ~ {d_max}  |  "
-                else:
-                    date_prefix = ""
-
-                content = f"{date_prefix}样本数: {n_samples}, {label_text}: {bad_rate}%"
+                content = f"样本数: {n_samples}, {label_text}: {bad_rate}%"
                 ds_rows.append({"统计项": ds.label, "统计内容": content})
 
             desc_df = pd.DataFrame(fixed_rows + ds_rows)
@@ -1554,8 +1554,38 @@ class QuickModelReport:
             # 分组分布
             if group_col:
                 for ds_key, ds in self._datasets.items():
-                    if group_col in ds.X.columns:
-                        groups = ds.X[group_col]
+                    if group_col not in ds.X.columns:
+                        continue
+                    groups = ds.X[group_col]
+                    if is_multi:
+                        # 多标签：行=分组，列=(数据集, 标签, 指标类型)
+                        import itertools
+                        all_cols = list(itertools.product(dataset_labels, self._label_names,
+                                                          ["样本数", "好样本数", "坏样本数", "坏样本率"]))
+                        multi_cols = pd.MultiIndex.from_tuples(all_cols, names=["数据集", "标签", "指标"])
+                        grouped = pd.DataFrame({"分组": groups.values}).groupby("分组")
+                        unique_groups = sorted(grouped.size().index)
+                        rows_list: List[Dict[tuple, Any]] = []
+                        for g in unique_groups:
+                            row: Dict[tuple, Any] = {}
+                            for lbl in self._label_names:
+                                y_arr = self._get_y(ds_key, lbl)
+                                mask = groups.values == g
+                                y_g = y_arr[mask]
+                                n = len(y_g)
+                                nb = int(y_g.sum())
+                                ng = n - nb
+                                for metric, val in [("样本数", n), ("好样本数", ng), ("坏样本数", nb), ("坏样本率", float(y_g.mean()))]:
+                                    row[(ds.label, lbl, metric)] = val
+                            rows_list.append(row)
+                        group_stats = pd.DataFrame(rows_list, index=unique_groups, columns=multi_cols)
+                        group_stats.index.name = "分组"
+                        end_row, _ = dataframe2excel(
+                            group_stats, writer, sheet_name=ws,
+                            title=f"{ds.label} 分组分布", start_row=end_row + 1,
+                            percent_cols=[c for c in group_stats.columns if c[2] == "坏样本率"],
+                        )
+                    else:
                         group_stats = pd.DataFrame({
                             "分组": groups,
                             "样本数": 1,
@@ -1669,12 +1699,12 @@ class QuickModelReport:
                 end_row1, end_col1 = dataframe2excel(
                     lift_table, writer, sheet_name=ws,
                     title="订单口径", start_row=table_start, start_col=2,
-                    percent_cols=[c for c in pct_keys if c in lift_table.columns],
+                    percent_cols=[c for c in lift_table.columns if c[2] == "坏样本率"],
                 )
                 end_row2, _ = dataframe2excel(
                     lift_amt, writer, sheet_name=ws,
                     title="金额口径", start_row=table_start, start_col=end_col1 + 2,
-                    percent_cols=[c for c in pct_keys if c in lift_amt.columns],
+                    percent_cols=[c for c in lift_amt.columns if c[2] == "坏样本率"],
                 )
                 end_row = max(end_row1, end_row2)
                 try:
@@ -1691,7 +1721,7 @@ class QuickModelReport:
                 table_start = end_row + 1
                 end_row, _ = dataframe2excel(
                     lift_table, writer, sheet_name=ws, start_row=table_start,
-                    percent_cols=[c for c in pct_keys if c in lift_table.columns],
+                    percent_cols=[c for c in lift_table.columns if c[2] == "坏样本率"],
                 )
                 try:
                     from openpyxl.utils import get_column_letter

@@ -587,24 +587,23 @@ def rule_swap_analysis(
     label_names = _get_label_names(_demo_tbl) if _demo_tbl is not None else []
 
     def _build_detail_col(tbl: pd.DataFrame, expr_text: str = '') -> pd.DataFrame:
-        """仅处理 MultiIndex 场景：追加 规则详情 tuple 列到 detail group 内。
-        非 MultiIndex 场景直接返回，由调用方追加数据列。
+        """追加 规则详情 列。
+        MultiIndex 场景：新建 ('分箱详情', '规则详情') 列并拼回原表。
+        非 MultiIndex 场景：追加单层 '规则详情' 列。
         """
-        tbl = tbl.copy()
         if isinstance(tbl.columns, pd.MultiIndex):
             detail_group = _get_detail_group_name(tbl)
-            new_cols = []
-            for col in tbl.columns:
-                if col[0] == detail_group and col[1] == '规则分类':
-                    new_cols.append(col)
-                    new_cols.append((detail_group, '规则详情'))
-                else:
-                    new_cols.append(col)
-            tbl.columns = pd.MultiIndex.from_tuples(new_cols)
-            # 填充规则详情数据列（所有行相同）
-            if (detail_group, '规则详情') in tbl.columns:
-                tbl[(detail_group, '规则详情')] = expr_text
-        return tbl
+            # 创建新的规则详情列（1行，与 tbl 等长）
+            detail_series = pd.DataFrame({(detail_group, '规则详情'): [expr_text] * len(tbl)},
+                                          index=tbl.index)
+            # concat 方式合并（避免混合单层/多层列）
+            return pd.concat([tbl.reset_index(drop=True),
+                              detail_series.reset_index(drop=True)], axis=1)
+        else:
+            tbl = tbl.copy()
+            if '规则详情' not in tbl.columns:
+                tbl['规则详情'] = expr_text
+            return tbl
 
     def _filter_hit_rows(tbl: pd.DataFrame) -> pd.DataFrame:
         """只保留 命中 行（移除 未命中 和 合计 行）。"""
@@ -634,10 +633,16 @@ def rule_swap_analysis(
         if len(df_subset) == 0:
             return None, prev_rate
 
-        # 调用 rule.report() 获取多标签表（只取命中行）
+        # 直接从预测计算命中数（避免 rule.report() 金额口径导致样本数口径错乱）
+        hit_mask = rule_obj.predict(df_subset)
+        n_hit = int(hit_mask.sum())
+        if n_hit == 0:
+            return None, prev_rate
+
+        # 调用 rule.report() 获取坏样本率等指标（不用 amount，避免样本数/金额口径混乱）
         raw_tbl = rule_obj.report(
             df_subset, target=target, overdue=overdue, dpds=dpds,
-            margins=False, amount=amount,
+            margins=False,
         )
         raw_tbl = raw_tbl.reset_index(drop=True)
 
@@ -646,23 +651,22 @@ def rule_swap_analysis(
         if len(tbl) == 0:
             return None, prev_rate
 
-        # 添加 规则详情 列（MultiIndex 和单层列都在 _build_detail_col 中处理）
+        # 扁平化 MultiIndex → 单层列（必须在任何标量列赋值之前完成）
         expr_text = rule_obj.expr
-        tbl = _build_detail_col(tbl, expr_text=expr_text)
-
-        # 标准化列名（MultiIndex → 单层，兼容单标签）
         if isinstance(tbl.columns, pd.MultiIndex):
             detail_group = _get_detail_group_name(tbl)
-            new_cols = {}
+            # 显式构建单层字符串列名列表，避免 list(tbl.columns) 返回 tuple 导致 MultiIndex 保留
+            new_col_names = []
             for col in tbl.columns:
                 name = col[1]
                 if col[0] == detail_group:
                     if name == '规则分类':
                         name = '规则分类_out'
-                    new_cols[col] = name
+                    new_col_names.append(name)
                 else:
-                    new_cols[col] = f'{name}({col[0]})'
-            tbl = tbl.rename(columns=new_cols)
+                    new_col_names.append(f'{name}({col[0]})')
+            tbl.columns = new_col_names
+            tbl['规则详情'] = expr_text
         else:
             if '规则分类' in tbl.columns:
                 tbl = tbl.rename(columns={'规则分类': '规则分类_out'})
@@ -671,8 +675,7 @@ def rule_swap_analysis(
             if '指标名称' not in tbl.columns:
                 tbl['指标名称'] = ''
 
-        # 计算样本数（实际值，不乘 scale）
-        n_hit = len(tbl)
+        # 样本数使用直接计算的命中数（不从 rule.report() 取，避免金额口径覆盖）
         sample_ratio = n_hit / N_total_actual if N_total_actual > 0 else 0.0
         sample_ratio_rel = n_hit / parent_n if parent_n > 0 else 0.0
 
@@ -688,34 +691,35 @@ def rule_swap_analysis(
         tbl['样本占比(相对)'] = sample_ratio_rel
         tbl['通过率(绝对值)'] = abs_pass
         tbl['通过率(相对值)'] = rel_pass
-        # 通过率（绝对）列：用于后续计算通过率变化
         tbl['通过率'] = abs_pass
         tbl['调整方向'] = adj_dir
 
-        # out_in 特殊处理：应用 uplift 系数到坏样本率
-        if is_out_in and '坏样本率' in tbl.columns:
-            tbl['坏样本率'] = tbl['坏样本率'].apply(lambda x: min(float(x) * out_in_uplift, 1.0))
+        # out_in 特殊处理：基于 OverduePredictor 预测应用 uplift
+        if is_out_in:
+            # hit_mask 与 _pred_df 索引不同，使用 positional index 避免对齐问题
+            # 先获取 df_subset 在 df 中的位置索引
+            df_subset_idx = df_subset.index
+            pred_subset = _pred_df.loc[df_subset_idx]  # reindex _pred_df to df_subset's index
+            if '坏样本率' in tbl.columns:
+                pred_bad = float(pred_subset[hit_mask].mean()) if hit_mask.sum() > 0 else _overall_pred_bad
+                uplifted_bad = min(pred_bad * out_in_uplift, 1.0)
+                tbl['坏样本率'] = uplifted_bad
             if 'LIFT值' in tbl.columns:
                 base_bad = _overall_pred_bad if _overall_pred_bad > 0 else 0.01
-                tbl['LIFT值'] = tbl['坏样本率'] / base_bad
+                tbl['LIFT值'] = uplifted_bad / base_bad
 
-        # 金额口径支持
+        # 金额口径支持（独立于 rule.report() 结果）
         if amount is not None and amount in df_subset.columns:
-            amt_hit = float(df_subset[amount].sum())
+            amt_hit = float(df_subset.loc[hit_mask, amount].sum())
             if amt_hit == 0.0 and is_out_in:
-                n_oi = len(df_subset)
+                n_oi = hit_mask.sum()
                 if out_in_amount_col and out_in_amount_col in df_subset.columns:
-                    amt_hit = float(df_subset[out_in_amount_col].sum())
+                    amt_hit = float(df_subset.loc[hit_mask, out_in_amount_col].sum())
                 elif out_in_amount_fill is not None:
                     amt_hit = float(out_in_amount_fill * n_oi)
-            if '金额总数' not in tbl.columns:
-                tbl['金额总数'] = amt_hit
-            else:
-                tbl['金额总数'] = amt_hit
-            bad_rate_col = '坏样本率' if '坏样本率' in tbl.columns else None
-            if bad_rate_col and '预估坏金额' not in tbl.columns:
-                br = float(tbl[bad_rate_col].iloc[0]) if len(tbl) > 0 else 0.0
-                tbl['预估坏金额'] = float(amt_hit * br)
+            tbl['金额总数'] = amt_hit
+            bad_rate_val = float(tbl['坏样本率'].iloc[0]) if len(tbl) > 0 and '坏样本率' in tbl.columns else 0.0
+            tbl['预估坏金额'] = float(amt_hit * bad_rate_val)
 
         # 计算通过率变化
         cur_rate = abs_pass
@@ -769,6 +773,8 @@ def rule_swap_analysis(
             row['坏样本占比'] = sub_bad_rate
         else:
             row = {
+                '分析流程': step_label,
+                '规则集': '合计',
                 '规则分类_out': step_label,
                 '规则详情': '',
                 '指标名称': '合计',
@@ -788,8 +794,21 @@ def rule_swap_analysis(
                 '通过率变化': change,
                 '调整方向': adj_dir,
             }
+            # 金额口径支持
+            if amount is not None and amount in df.columns:
+                quad_name_map = {
+                    'OUT-OUT 拒绝样本': 'out_out',
+                    'IN-OUT 置出样本': 'in_out',
+                    'OUT-IN 置入样本': 'out_in',
+                    'IN-IN 通过样本': 'in_in',
+                }
+                q_key = quad_name_map.get(step_label, step_label)
+                quad_amt = float(df.loc[df['_swap_quadrant'] == q_key, amount].sum())
+                row['金额总数'] = quad_amt
+                row['预估坏金额'] = quad_amt * sub_bad_rate
             return pd.DataFrame([row]), cur_rate
 
+        # 多标签分支
         row.update({
             '分析流程': step_label,
             '规则集': '合计',
@@ -802,6 +821,18 @@ def rule_swap_analysis(
             '通过率变化': change,
             '调整方向': adj_dir,
         })
+        # 金额口径支持
+        if amount is not None and amount in df.columns:
+            quad_name_map = {
+                'OUT-OUT 拒绝样本': 'out_out',
+                'IN-OUT 置出样本': 'in_out',
+                'OUT-IN 置入样本': 'out_in',
+                'IN-IN 通过样本': 'in_in',
+            }
+            q_key = quad_name_map.get(step_label, step_label)
+            quad_amt = float(df.loc[df['_swap_quadrant'] == q_key, amount].sum())
+            row['金额总数'] = quad_amt
+            row['预估坏金额'] = quad_amt * sub_bad_rate
         return pd.DataFrame([row]), cur_rate
 
     def _build_remaining_row(step_label, rem_n, parent_n, cum_remain, prev_rate):
@@ -841,6 +872,19 @@ def rule_swap_analysis(
             '通过率变化': change,
             '调整方向': '-',
         }
+        # 金额口径支持：各剩余阶段累计金额
+        if amount is not None and amount in df.columns:
+            if 'OUT-OUT' in step_label:
+                rem_quads = ['in_out', 'in_in', 'out_in']
+            elif 'IN-OUT' in step_label and '后' in step_label:
+                rem_quads = ['in_in', 'out_in']
+            elif 'IN-IN' in step_label and '后' in step_label:
+                rem_quads = ['out_in']
+            else:
+                rem_quads = ['in_in', 'out_in']
+            amt_total = float(df.loc[df['_swap_quadrant'].isin(rem_quads), amount].sum())
+            row['金额总数'] = amt_total
+            row['预估坏金额'] = amt_total * rem_bad_rate
         return pd.DataFrame([row]), cur_rate
 
     def _build_total_row(step_label, parent_n, prev_rate):
@@ -875,6 +919,10 @@ def rule_swap_analysis(
             '通过率变化': change,
             '调整方向': '-',
         }
+        # 金额口径支持
+        if amount is not None and amount in df.columns:
+            row['金额总数'] = float(df[amount].sum())
+            row['预估坏金额'] = row['金额总数'] * total_bad
         return pd.DataFrame([row]), cur_rate
 
     def _build_all_in_row(cum_remain, prev_rate):
@@ -911,6 +959,11 @@ def rule_swap_analysis(
             '通过率变化': change,
             '调整方向': '-',
         }
+        # 金额口径支持
+        if amount is not None and amount in df.columns:
+            all_in_amt = float(df.loc[df['_swap_quadrant'].isin(['in_in', 'out_in']), amount].sum())
+            row['金额总数'] = all_in_amt
+            row['预估坏金额'] = all_in_amt * all_in_bad
         return pd.DataFrame([row]), cur_rate
 
     # 统计各象限内每条规则的命中数（用于决定规则展示顺序）
@@ -1131,7 +1184,7 @@ def rule_swap_analysis(
             '分析流程', '规则集', '规则详情',
             '样本总数', '样本占比', '样本占比(相对)',
             '好样本数', '好样本占比', '坏样本数', '坏样本占比',
-            '坏样本率', 'LIFT值', '坏帐改善', '风险拒绝比',
+            '坏样本率', 'LIFT值', '坏账改善', '风险拒绝比',
             '准确率', '精确率', '召回率', 'F1分数',
             '通过率', '通过率(绝对值)', '通过率(相对值)', '通过率变化', '调整方向',
             # rule.report MultiIndex 列兼容
