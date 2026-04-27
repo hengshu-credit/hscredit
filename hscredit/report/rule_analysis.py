@@ -1436,9 +1436,11 @@ def rule_swap_analysis_v2(
     # ── 第三步：权重归一化 ───────────────────────────────────────────────
     score_weights = _normalize_score_weights(score_weights, score_map)
 
+    n_total = len(data)
     # ── 第四步：构建OUT-OUT拒绝报告 ────────────────────────────────────────
     base_report, full_bad_probs = _build_base_report(
         data=data,
+        n_total=n_total,
         rules_base=rules_base,
         bin_table_result=bin_table_result,
         score_map=score_map,
@@ -1467,17 +1469,11 @@ def rule_swap_analysis_v2(
         in_remaining_data = data.copy().reset_index(drop=True)
 
     # ── 第五步：构建IN-OUT置出报告 ────────────────────────────────────────
-    # 计算全量样本的扩展坏样本数（用于IN-OUT分析）
-    n_total = len(data)
-    n_total_full_v2 = int(n_total / sample_survival_rate)
-    n_bad_full_v2 = float(base_report[base_report['规则分类'] == '全量样本'].iloc[0]['坏样本数']) \
-        if not base_report.empty else 0.0
-    # 全量坏样本数（预测值，非整数化）需要从full_bad_probs获取
-    full_bad_rate_v2 = float(base_report[base_report['规则分类'] == '全量样本'].iloc[0]['坏样本率']) \
-        if not base_report.empty else 0.0
-
-    # 全量坏样本数（扩展到全量）
-    inout_n_bad_full = full_bad_rate_v2 * n_total_full_v2 if n_total_full_v2 > 0 else 0.0
+    # n_total_full 从 data 样本数直接计算，不再从 base_report 的 baseline 行推导
+    n_total_full = int(n_total / sample_survival_rate)
+    full_bad_rate_v2 = float(base_report[base_report['规则分类'] == '全量样本'].iloc[0]['坏样本率'])
+    # 全量坏样本数（扩展到全量）：用坏样本率 × 全量样本数
+    inout_n_bad_full = full_bad_rate_v2 * n_total_full if n_total_full > 0 else 0.0
 
     inout_report = pd.DataFrame()  # 空DataFrame，rules_out为空时返回空
     if rules_out and len(in_remaining_data) > 0:
@@ -1488,7 +1484,7 @@ def rule_swap_analysis_v2(
             score_map=score_map,
             score_weights=score_weights,
             rule_analysis_mode=rule_analysis_mode,
-            n_total_full=n_total_full_v2,
+            n_total_full=n_total_full,
             n_bad_full=inout_n_bad_full,
             full_bad_rate=full_bad_rate_v2,
             sample_survival_rate=final_pass_rate,
@@ -2086,6 +2082,7 @@ def _compute_predicted_bad_prob(
 
 def _build_base_report(
     data: pd.DataFrame,
+    n_total: int,
     rules_base: List[Rule],
     bin_table_result: Dict[str, pd.DataFrame],
     score_map: Dict[str, str],
@@ -2121,7 +2118,6 @@ def _build_base_report(
     :param sample_survival_rate: 基准通过率（生产策略通过率，默认1.0）
     :return: 4-part 报告 DataFrame
     """
-    n_total = len(data)
     rows = []
 
     # ── 预处理：计算每个样本在每个评分下的坏概率 ────────────────────────────
@@ -2173,7 +2169,7 @@ def _build_base_report(
     full_bad_rate = full_total_bad / n_total if n_total > 0 else 0.0
 
     rows.append(_make_report_row(
-        '全量样本', 'OUT-OUT基准', full_total_bad, n_total,
+        '全量样本', 'OUT-OUT基准', full_total_bad, 0,
         n_total_full=n_total_full, n_bad_full=n_bad_full, full_bad_rate=full_bad_rate,
         sample_survival_rate=sample_survival_rate,
     ))
@@ -2205,7 +2201,8 @@ def _build_base_report(
                     'OUT-OUT规则', rule.name, n_bad, n_hit,
                     rule_detail=rule.expr,
                     n_total_full=n_total_full, n_bad_full=n_bad_full, full_bad_rate=full_bad_rate,
-                    sample_survival_rate=current_pass_rate,
+                    sample_survival_rate=sample_survival_rate,
+                    pre_rule_pass_rate=current_pass_rate,
                 ))
 
                 # 更新存活样本：排除被当前规则拒绝的样本
@@ -2214,7 +2211,8 @@ def _build_base_report(
                 # 当前通过样本数 = n_total_full × current_pass_rate（来自上一步的通过样本，以全量计）
                 # 拒绝样本数 = n_hit（被当前规则拒绝的样本数）
                 base_pass_n = n_total_full * current_pass_rate
-                current_pass_rate = max(0.0, (base_pass_n - n_hit) / n_total_full)
+                if n_total_full > 0:
+                    current_pass_rate = max(0.0, min(1.0, (base_pass_n - n_hit) / n_total_full))
 
             # OUT-OUT合计（sequential 模式下等于所有被拒绝样本的累计）
             combined_mask = ~current_remaining
@@ -2226,7 +2224,8 @@ def _build_base_report(
             rows.append(_make_report_row(
                 'OUT-OUT合计', 'OUT-OUT合计', n_bad_comb, n_combined_hit,
                 n_total_full=n_total_full, n_bad_full=n_bad_full, full_bad_rate=full_bad_rate,
-                sample_survival_rate=current_pass_rate,
+                sample_survival_rate=sample_survival_rate,
+                pre_rule_pass_rate=current_pass_rate,
             ))
 
         else:
@@ -2257,6 +2256,7 @@ def _build_base_report(
                 'OUT-OUT合计', 'OUT-OUT合计', n_bad_comb, n_combined_hit,
                 n_total_full=n_total_full, n_bad_full=n_bad_full, full_bad_rate=full_bad_rate,
                 sample_survival_rate=sample_survival_rate,
+                pre_rule_pass_rate=current_pass_rate,
             ))
 
     # ── 剩余样本：未被任何规则命中的样本 ───────────────────────────────────
@@ -2276,7 +2276,8 @@ def _build_base_report(
     rows.append(_make_report_row(
         '剩余样本', '剩余样本', n_bad_rem, n_remain,
         n_total_full=n_total_full, n_bad_full=n_bad_full, full_bad_rate=full_bad_rate,
-        sample_survival_rate=remain_pass_rate,
+        sample_survival_rate=sample_survival_rate,
+        pre_rule_pass_rate=remain_pass_rate,
     ))
 
     return pd.DataFrame(rows), full_bad_probs
@@ -2315,6 +2316,12 @@ def _build_inout_report(
     :return: IN-OUT分析报告 DataFrame
     """
     n_total = len(in_remaining_data)
+
+    # IN-OUT 阶段全量样本数：IN-IN剩余样本扩展到全量后的数量
+    # n_total = IN-IN剩余样本数（生产口径），sample_survival_rate = OUT-OUT最终通过率
+    # 全量 = n_total / sample_survival_rate = n_total_full（传入的函数参数）
+    n_in_remaining_full = n_total_full
+
     rows = []
 
     # ── 计算in_remaining样本的坏概率 ──────────────────────────────────────
@@ -2356,17 +2363,21 @@ def _build_inout_report(
     in_total_bad = round(in_total_bad, 6)
     in_total_bad = max(0.0, min(in_total_bad, n_total))
 
-    # IN-IN通过行（基准）
+    # IN-IN通过行（基准）：IN-IN阶段的基准通过率 = 100%（IN-IN剩余样本为全量）
+    # n_total=0 使公式 (base_pass_n - 0) / n_total_full = base_pass_rate = 1.0
     rows.append(_make_report_row(
-        'IN-IN通过', 'IN-IN通过', in_total_bad, n_total,
-        n_total_full=n_total_full, n_bad_full=n_bad_full, full_bad_rate=full_bad_rate,
-        sample_survival_rate=sample_survival_rate,
+        'IN-IN通过', 'IN-IN通过', in_total_bad, 0,
+        n_total_full=n_in_remaining_full, n_bad_full=n_bad_full, full_bad_rate=full_bad_rate,
+        sample_survival_rate=1.0,
+        pre_rule_pass_rate=1.0,
     ))
 
     if not rules_out:
         return pd.DataFrame(rows)
 
     # ── 单规则命中统计 ───────────────────────────────────────────────────
+    # IN-OUT 基准通过率 = sample_survival_rate（来自OUT-OUT最终通过率）
+    # sequential 模式下从 OUT-OUT 最终通过率开始链式递减，independent 模式下保持固定
     current_pass_rate = sample_survival_rate
     if rule_analysis_mode == 'sequential':
         current_remaining = pd.Series(True, index=in_remaining_data.index)
@@ -2382,13 +2393,15 @@ def _build_inout_report(
             rows.append(_make_report_row(
                 'IN-OUT置出', rule.name, n_bad, n_hit,
                 rule_detail=rule.expr,
-                n_total_full=n_total_full, n_bad_full=n_bad_full, full_bad_rate=full_bad_rate,
-                sample_survival_rate=current_pass_rate,
+                n_total_full=n_in_remaining_full, n_bad_full=n_bad_full, full_bad_rate=full_bad_rate,
+                sample_survival_rate=sample_survival_rate,
+                pre_rule_pass_rate=current_pass_rate,
             ))
 
             current_remaining = current_remaining & ~rule_hit
-            base_pass_n = n_total_full * current_pass_rate
-            current_pass_rate = max(0.0, (base_pass_n - n_hit) / n_total_full)
+            if n_in_remaining_full > 0:
+                base_pass_n = n_in_remaining_full * current_pass_rate
+                current_pass_rate = max(0.0, min(1.0, (base_pass_n - n_hit) / n_in_remaining_full))
 
         combined_mask = ~current_remaining
         n_combined_hit = int(combined_mask.sum())
@@ -2398,8 +2411,9 @@ def _build_inout_report(
         n_bad_comb = round(n_bad_comb, 1)
         rows.append(_make_report_row(
             'IN-OUT置出', 'IN-OUT置出合计', n_bad_comb, n_combined_hit,
-            n_total_full=n_total_full, n_bad_full=n_bad_full, full_bad_rate=full_bad_rate,
-            sample_survival_rate=current_pass_rate,
+            n_total_full=n_in_remaining_full, n_bad_full=n_bad_full, full_bad_rate=full_bad_rate,
+            sample_survival_rate=sample_survival_rate,
+            pre_rule_pass_rate=current_pass_rate,
         ))
     else:
         for rule in rules_out:
@@ -2412,8 +2426,9 @@ def _build_inout_report(
             rows.append(_make_report_row(
                 'IN-OUT置出', rule.name, n_bad, n_hit,
                 rule_detail=rule.expr,
-                n_total_full=n_total_full, n_bad_full=n_bad_full, full_bad_rate=full_bad_rate,
+                n_total_full=n_in_remaining_full, n_bad_full=n_bad_full, full_bad_rate=full_bad_rate,
                 sample_survival_rate=sample_survival_rate,
+                pre_rule_pass_rate=current_pass_rate,
             ))
 
         combined_rule = reduce(lambda r1, r2: r1 | r2, rules_out)
@@ -2425,8 +2440,9 @@ def _build_inout_report(
         n_bad_comb = round(n_bad_comb, 1)
         rows.append(_make_report_row(
             'IN-OUT置出', 'IN-OUT置出合计', n_bad_comb, n_combined_hit,
-            n_total_full=n_total_full, n_bad_full=n_bad_full, full_bad_rate=full_bad_rate,
+            n_total_full=n_in_remaining_full, n_bad_full=n_bad_full, full_bad_rate=full_bad_rate,
             sample_survival_rate=sample_survival_rate,
+            pre_rule_pass_rate=current_pass_rate,
         ))
 
     # ── IN-IN通过（最终）：未被任何置出规则拒绝的样本 ──────────────────────
@@ -2441,12 +2457,14 @@ def _build_inout_report(
         full_bad_probs_inout, remain_mask, n_total, n_remain
     )
     n_bad_rem = round(n_bad_rem, 1)
-    # IN-IN通过基准：sequential模式用最终累计通过率，independent模式用原始基准
+    # IN-IN通过（最终）：sequential模式用最终累计通过率，independent模式用 sample_survival_rate
+    # n_total=0 使公式 (base_pass_n - 0) / n_total_full = in_pass_rate（最终通过率）
     in_pass_rate = current_pass_rate if rule_analysis_mode == 'sequential' else sample_survival_rate
     rows.append(_make_report_row(
-        'IN-IN通过', 'IN-IN通过', n_bad_rem, n_remain,
-        n_total_full=n_total_full, n_bad_full=n_bad_full, full_bad_rate=full_bad_rate,
-        sample_survival_rate=in_pass_rate,
+        'IN-IN通过', 'IN-IN通过', n_bad_rem, 0,
+        n_total_full=n_in_remaining_full, n_bad_full=n_bad_full, full_bad_rate=full_bad_rate,
+        sample_survival_rate=sample_survival_rate,
+        pre_rule_pass_rate=in_pass_rate,
     ))
 
     return pd.DataFrame(rows)
@@ -2488,6 +2506,7 @@ def _make_report_row(
     n_bad_full: Optional[float] = None,
     full_bad_rate: Optional[float] = None,
     sample_survival_rate: float = 1.0,
+    pre_rule_pass_rate: Optional[float] = None,
 ) -> dict:
     """构建基础报告的一行。
 
@@ -2502,6 +2521,8 @@ def _make_report_row(
     :param n_bad_full: 全量样本预测坏样本总数（用于计算LIFT、坏账改善、风险拒绝比）
     :param full_bad_rate: 全量样本坏样本率（用于计算LIFT、坏账改善）
     :param sample_survival_rate: 基准通过率（生产策略通过率，默认1.0）
+    :param pre_rule_pass_rate: 规则执行前的通过率（用于IN-OUT/OUT-IN sequential模式）
+        若为 None 则沿用 sample_survival_rate 作为基准。
     :return: 指标字典
     """
     # 好样本数 = 总样本数 - 预测坏样本数
@@ -2574,9 +2595,14 @@ def _make_report_row(
 
     # ── 通过率分析 ───────────────────────────────────────────────────────
     # 通过率 = (基准通过样本数 - 当前行拒绝样本数) / 全量样本数
-    # 基准通过样本数 = 全量样本数 × sample_survival_rate（生产策略通过率）
+    # 基准通过样本数 = 全量样本数 × base_pass_rate（生产策略通过率）
     # 当前行拒绝样本数 = 当前行样本数（当前行 = 被拒绝的样本）
-    base_pass_n = n_total_full_val * sample_survival_rate
+    # IN-OUT/OUT-IN sequential 模式：pre_rule_pass_rate 控制每条规则的起始通过率
+    base_pass_rate = pre_rule_pass_rate if pre_rule_pass_rate is not None else sample_survival_rate
+    base_pass_n = n_total_full_val * base_pass_rate
+    # 通过率 = (基准通过样本数 - 当前行拒绝样本数) / 全量样本数
+    # IN-IN基准行：n_total=0 → (base_pass_n - 0) / n_total_full = base_pass_rate = 1.0
+    # IN-OUT规则行：n_total=拒绝样本数 → (base_pass_n - n_total) / n_total_full
     current_pass_rate = (base_pass_n - n_total_f) / n_total_full_val if n_total_full_val > 0 else 0.0
     current_pass_rate = max(0.0, min(current_pass_rate, 1.0))
 
@@ -2584,14 +2610,13 @@ def _make_report_row(
     pass_rate_abs = current_pass_rate * 100
 
     # 通过率%(相对值) = (当前通过率 - 基准通过率) / 基准通过率 × 100
-    base_pass_rate = sample_survival_rate
     pass_rate_rel = 0.0
     if base_pass_rate > 0:
         pass_rate_rel = (current_pass_rate - base_pass_rate) / base_pass_rate * 100
 
     # 调整方向：仅规则行有值，全量样本/剩余样本/合计为空
     direction = ''
-    if rule_class == 'OUT-OUT规则':
+    if rule_class in ('OUT-OUT规则', 'IN-OUT置出', 'OUT-IN置入'):
         if current_pass_rate < base_pass_rate - 1e-10:
             direction = '收紧'
         elif current_pass_rate > base_pass_rate + 1e-10:
