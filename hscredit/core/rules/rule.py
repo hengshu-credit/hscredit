@@ -404,7 +404,11 @@ class Rule:
                     bad_ratio = bin_bad_amount / total_bad_amount if total_bad_amount > 0 else 0
                     bad_rate = bin_bad_amount / bin_amount if bin_amount > 0 else 0
                     lift = bad_rate / overall_bad_rate if overall_bad_rate > 0 else 0
-                    bad_decrease = lift * sample_ratio - sample_ratio
+                    # 拒绝后剩余样本坏样本率 = (全量坏金额 - 当前箱坏金额) / (全量金额 - 当前箱金额)
+                    other_bad = total_bad_amount - bin_bad_amount
+                    other_total = total_amount - bin_amount
+                    remaining_bad_rate = other_bad / other_total if other_total > 0 else 0
+                    bad_decrease = (overall_bad_rate - remaining_bad_rate) / overall_bad_rate if overall_bad_rate > 0 else 0
                     
                     row = {
                         '指标名称': rule_expr,
@@ -458,7 +462,11 @@ class Rule:
                     bad_ratio = bin_bad / total_bad if total_bad > 0 else 0
                     bad_rate = bin_bad / bin_total if bin_total > 0 else 0
                     lift = bad_rate / overall_bad_rate if overall_bad_rate > 0 else 0
-                    bad_decrease = lift * sample_ratio - sample_ratio
+                    # 拒绝后剩余样本坏样本率 = (全量坏样本数 - 当前箱坏样本数) / (全量样本数 - 当前箱样本数)
+                    other_bad = total_bad - bin_bad
+                    other_total = total - bin_total
+                    remaining_bad_rate = other_bad / other_total if other_total > 0 else 0
+                    bad_decrease = (overall_bad_rate - remaining_bad_rate) / overall_bad_rate if overall_bad_rate > 0 else 0
                     
                     row = {
                         '指标名称': rule_expr,
@@ -497,7 +505,7 @@ class Rule:
                     '坏账改善': 0.0,
                 }
             
-            # 添加风险拒绝比
+            # 添加风险拒绝比 = 坏账改善 / 样本占比
             table["风险拒绝比"] = np.divide(
                 table["坏账改善"],
                 table["样本占比"],

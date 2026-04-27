@@ -15,6 +15,7 @@ from ..core.binning import OptimalBinning
 from ..core.metrics._binning import compute_bin_stats
 from .mining.multi_label import MultiLabelRuleMiner
 from .overdue_predictor import OverduePredictor
+from .feature_analyzer import feature_bin_stats
 
 
 def _get_detail_group_name(table: pd.DataFrame) -> str:
@@ -1288,4 +1289,1337 @@ def rule_swap_analysis(
         'swap_summary': swap_summary,
         'swap_pipeline': swap_pipeline,
         'swap_result': swap_result,
+    }
+
+
+def rule_swap_analysis_v2(
+    data: pd.DataFrame,
+    score: Union[str, Dict[str, str]],
+    rules_in: List[Rule],
+    rules_out: Optional[List[Rule]] = None,
+    rules_base: Optional[List[Rule]] = None,
+    reference_data: Optional[pd.DataFrame] = None,
+    bin_table: Optional[Union[pd.DataFrame, Dict[str, pd.DataFrame]]] = None,
+    target: Optional[str] = None,
+    overdue: Optional[Union[str, List[str]]] = None,
+    dpds: Optional[Union[int, List[int]]] = None,
+    score_weights: Optional[Dict[str, float]] = None,
+    out_in_uplift: float = 2.0,
+    amount: Optional[str] = None,
+    sample_survival_rate: float = 1.0,
+    reverse_order: bool = False,
+    out_in_amount_fill: Optional[float] = None,
+    out_in_amount_col: Optional[str] = None,
+    bin_method: str = 'quantile',
+    max_n_bins: int = 10,
+    min_bin_size: float = 0.05,
+    missing_separate: bool = True,
+    bin_params: Optional[dict] = None,
+    rule_analysis_mode: str = 'independent',
+) -> Dict[str, pd.DataFrame]:
+    """规则置入置出（Swap）分析 v2.
+
+    API 参数与 ``rule_swap_analysis`` 基本一致，新增/变更说明：
+
+    - 新增 ``reference_data`` 参数：历史有表现样本集，用于计算评分的风险表现分箱表
+    - ``bin_table`` 参数支持 dict 格式：``{评分名: 分箱表}``，多评分时各评分独立计算
+    - ``reference_data`` 与 ``bin_table`` 二选一；优先使用 ``bin_table``
+    - 分箱表结果通过 ``self.bin_table_`` 属性存储（标准化后的单/多层列 DataFrame）
+
+    :param data: 全量样本集（包含 score 列 + rules_in/rules_out/rules_base 用到的所有特征列）
+    :param score: 评分字段名（str）或多评分映射（Dict）
+    :param rules_in: 置入规则集（List[Rule]）
+    :param rules_out: 置出规则集（可选）
+    :param rules_base: 基准拒绝规则集（可选）
+    :param reference_data: 历史有表现参考数据集（包含 target 或 overdue+dpds）
+    :param bin_table: 现成分箱表，支持：
+        - pd.DataFrame：单评分分箱表
+        - Dict[str, pd.DataFrame]：多评分分箱表 ``{评分名: 分箱表}``
+        - None：自动从 reference_data 计算
+    :param target: 目标变量名（与 bin_table 二选一）
+    :param overdue: 逾期天数字段（多标签场景）
+    :param dpds: 逾期天数阈值
+    :param score_weights: 多模型权重（可选）
+    :param out_in_uplift: 置入风险上浮系数，默认 2.0
+    :param amount: 金额字段（可选）
+    :param sample_survival_rate: 样本集幸存比例，默认 1.0
+    :param reverse_order: 是否逆序展示（True: 从置入效果开始展示）
+    :param out_in_amount_fill: out_in 置入样本额度填充定值（可选）
+    :param out_in_amount_col: out_in 置入样本额度填充字段名（可选）
+    :param bin_method: 分箱方法，默认 'quantile'（仅 reference_data 模式生效）
+    :param max_n_bins: 最大分箱数，默认 10（仅 reference_data 模式生效）
+    :param min_bin_size: 每箱最小样本占比，默认 0.05（仅 reference_data 模式生效）
+    :param missing_separate: 是否将缺失值单独分箱，默认 True
+    :param bin_params: 额外分箱参数 dict，会透传给 ``feature_bin_stats``
+        常用键：rules（自定义切分点）、monotonic（单调性约束）等
+    :param rule_analysis_mode: 规则分析模式，默认 'independent'。
+        - 'independent'：每条规则独立应用到全量 data，分别统计命中好坏分布。
+          OUT-OUT合计 = 所有规则合并（reduce |）后的联合命中。
+        - 'sequential'：漏斗模式，每条规则在前一条拒绝后的剩余样本上分析，
+          规则命中（拒绝）时样本量减少，未命中（通过）时保持剩余样本。
+          适合分析多规则叠加的拒绝效果。
+    :return: 包含三张表的字典
+
+        - ``swap_summary``：四象限样本汇总
+        - ``swap_pipeline``：分步骤通过率与逾期率变化（可逆序）
+        - ``swap_result``：置换前后对比与业务增益
+
+    **参考样例**
+
+    >>> from hscredit.core.rules import Rule
+    >>> from hscredit.report.rule_analysis import rule_swap_analysis_v2
+    >>>
+    >>> # 方式一：传入历史参考数据，自动计算分箱表
+    >>> result = rule_swap_analysis_v2(
+    ...     data=data,
+    ...     score='score_a',
+    ...     rules_in=[rule_in],
+    ...     rules_base=[rule_base],
+    ...     reference_data=hist_data,   # 有表现样本，包含 target 列
+    ...     target='target',
+    ... )
+    >>>
+    >>> # 方式二：直接传入现成分箱表
+    >>> result = rule_swap_analysis_v2(
+    ...     data=data,
+    ...     score='score_a',
+    ...     rules_in=[rule_in],
+    ...     rules_base=[rule_base],
+    ...     bin_table=score_bin_table,   # pd.DataFrame 或 Dict[str, pd.DataFrame]
+    ... )
+    >>>
+    >>> # 方式三：多标签场景（overdue+dpds）
+    >>> result = rule_swap_analysis_v2(
+    ...     data=data,
+    ...     score='score_a',
+    ...     rules_in=[rule_in],
+    ...     reference_data=hist_data,
+    ...     overdue='MOB1',
+    ...     dpds=[0, 7, 30],
+    ... )
+    >>>
+    >>> print(result['swap_summary'])
+    >>> print(result['swap_pipeline'])
+    >>> print(result['swap_result'])
+    """
+    # ── 第一步：解析与计算分箱表 ─────────────────────────────────────────
+    bin_table_result = _resolve_bin_table(
+        reference_data=reference_data,
+        bin_table=bin_table,
+        score=score,
+        target=target,
+        overdue=overdue,
+        dpds=dpds,
+        bin_method=bin_method,
+        max_n_bins=max_n_bins,
+        min_bin_size=min_bin_size,
+        missing_separate=missing_separate,
+        bin_params=bin_params,
+        amount=amount,
+        data=data,
+    )
+
+    # ── 第二步：规则集预处理 ─────────────────────────────────────────────
+    # 统一 score 为 Dict[str, str] 格式（供后续使用）
+    if isinstance(score, str):
+        score_map = {'_default': score}
+    else:
+        score_map = score
+
+    rules_in, rules_out, rules_base = _validate_rules(
+        data=data,
+        rules_in=rules_in,
+        rules_out=rules_out,
+        rules_base=rules_base,
+    )
+
+    # ── 第三步：权重归一化 ───────────────────────────────────────────────
+    score_weights = _normalize_score_weights(score_weights, score_map)
+
+    # ── 第四步：构建OUT-OUT拒绝报告 ────────────────────────────────────────
+    base_report, full_bad_probs = _build_base_report(
+        data=data,
+        rules_base=rules_base,
+        bin_table_result=bin_table_result,
+        score_map=score_map,
+        score_weights=score_weights,
+        amount=amount,
+        rule_analysis_mode=rule_analysis_mode,
+        sample_survival_rate=sample_survival_rate,
+    )
+
+    # 从 base_report 提取最终通过样本（剩余样本）及其通过率
+    if rules_base:
+        # 剩余样本是 base_report 最后一行
+        final_remain_row = base_report[base_report['规则分类'] == '剩余样本']
+        if not final_remain_row.empty:
+            # 获取最终通过率（从调整方向列或通过率列）
+            final_pass_rate = float(final_remain_row.iloc[0]['通过率'])
+        else:
+            final_pass_rate = sample_survival_rate
+        # 获取剩余样本的掩码
+        combined_base = reduce(lambda r1, r2: r1 | r2, rules_base)
+        in_remaining_mask = ~combined_base.predict(data)
+        in_remaining_data = data[in_remaining_mask].reset_index(drop=True)
+    else:
+        # 无rules_base时，全部数据进入IN-OUT
+        final_pass_rate = sample_survival_rate
+        in_remaining_data = data.copy().reset_index(drop=True)
+
+    # ── 第五步：构建IN-OUT置出报告 ────────────────────────────────────────
+    # 计算全量样本的扩展坏样本数（用于IN-OUT分析）
+    n_total = len(data)
+    n_total_full_v2 = int(n_total / sample_survival_rate)
+    n_bad_full_v2 = float(base_report[base_report['规则分类'] == '全量样本'].iloc[0]['坏样本数']) \
+        if not base_report.empty else 0.0
+    # 全量坏样本数（预测值，非整数化）需要从full_bad_probs获取
+    full_bad_rate_v2 = float(base_report[base_report['规则分类'] == '全量样本'].iloc[0]['坏样本率']) \
+        if not base_report.empty else 0.0
+
+    # 全量坏样本数（扩展到全量）
+    inout_n_bad_full = full_bad_rate_v2 * n_total_full_v2 if n_total_full_v2 > 0 else 0.0
+
+    inout_report = pd.DataFrame()  # 空DataFrame，rules_out为空时返回空
+    if rules_out and len(in_remaining_data) > 0:
+        inout_report = _build_inout_report(
+            in_remaining_data=in_remaining_data,
+            rules_out=rules_out,
+            bin_table_result=bin_table_result,
+            score_map=score_map,
+            score_weights=score_weights,
+            rule_analysis_mode=rule_analysis_mode,
+            n_total_full=n_total_full_v2,
+            n_bad_full=inout_n_bad_full,
+            full_bad_rate=full_bad_rate_v2,
+            sample_survival_rate=final_pass_rate,
+        )
+
+    # ── 返回结果 ────────────────────────────────────────────────────────────
+    # swap_summary: 合并 base_report 和 inout_report
+    # swap_pipeline / swap_result: 暂时返回空，后续逐步完善
+    swap_summary_rows = []
+    swap_summary_rows.extend(base_report.to_dict('records'))
+    swap_summary_rows.extend(inout_report.to_dict('records'))
+
+    swap_summary = pd.DataFrame(swap_summary_rows) if swap_summary_rows else pd.DataFrame()
+
+    return {
+        'swap_summary': swap_summary,
+        'swap_pipeline': pd.DataFrame(),
+        'swap_result': pd.DataFrame(),
+    }
+
+
+def _resolve_bin_table(
+    reference_data: Optional[pd.DataFrame],
+    bin_table: Optional[Union[pd.DataFrame, Dict[str, pd.DataFrame]]],
+    score: Union[str, Dict[str, str]],
+    target: Optional[str],
+    overdue: Optional[Union[str, List[str]]],
+    dpds: Optional[Union[int, List[int]]],
+    bin_method: str,
+    max_n_bins: int,
+    min_bin_size: float,
+    missing_separate: bool,
+    bin_params: Optional[dict],
+    amount: Optional[str],
+    data: Optional[pd.DataFrame] = None,
+) -> Dict[str, pd.DataFrame]:
+    """解析或计算分箱表，统一转换为 {评分名: 分箱表} 结构。
+
+    优先级：bin_table > reference_data > data 自动生成
+    - bin_table 为 DataFrame：视为单评分，key 为 '_default'
+    - bin_table 为 Dict：直接使用
+    - bin_table 为 None：尝试从 reference_data 计算
+    - reference_data 也为 None：尝试从 data 自动生成（需 data 有 target 或 overdue+dpds）
+
+    分箱表标准化：
+    - 单标签：单层列 DataFrame
+    - 多标签：MultiIndex 列 DataFrame，顶层为标签名（如 'MOB1_0+'）
+
+    金额口径支持：
+    - 当 reference_data 中包含 amount 字段时，自动同时计算订单口径和金额口径
+    - 金额口径的坏样本率列添加后缀 '(金额)' 以示区分
+    - bin_table 传入时直接标准化，不额外处理金额口径（由用户自行确保传入完整）
+    """
+    # 统一 score 为 Dict[str, str] 格式
+    if isinstance(score, str):
+        score_map = {'_default': score}
+    else:
+        score_map = score
+
+    # 1. bin_table 优先（直接标准化，不处理金额口径）
+    if bin_table is not None:
+        if isinstance(bin_table, pd.DataFrame):
+            # 单 DataFrame：根据 score_map 决定返回结构
+            if len(score_map) == 1:
+                name = list(score_map.keys())[0]
+                return {name: _normalize_bin_table(bin_table, label=name)}
+            else:
+                # 多评分 + 单分箱表：同一张表复制给所有评分
+                return {name: _normalize_bin_table(bin_table, label=name) for name in score_map}
+        elif isinstance(bin_table, dict):
+            result = {}
+            for name, tbl in bin_table.items():
+                if isinstance(tbl, pd.DataFrame):
+                    result[name] = _normalize_bin_table(tbl, label=name)
+            return result
+        else:
+            raise TypeError(
+                f"bin_table 参数类型错误，期望 pd.DataFrame 或 Dict[str, pd.DataFrame]，"
+                f"实际为 {type(bin_table).__name__}"
+            )
+
+    # 2. 从 reference_data 计算
+    if reference_data is None:
+        # 尝试从 data 自动生成（data 需包含 target 或 overdue+dpds）
+        if data is not None:
+            if target is None and (overdue is None or dpds is None):
+                raise ValueError(
+                    "从 data 自动生成 bin_table 时，必须传入 target 或 (overdue + dpds) 参数"
+                )
+            reference_data = data.copy()
+            # 剔除标签缺失的行（target 为 NaN 或 overdue 字段缺失）
+            ref_col = target if target else overdue[0] if isinstance(overdue, list) else overdue
+            if ref_col and ref_col in reference_data.columns:
+                reference_data = reference_data.dropna(subset=[ref_col])
+        else:
+            raise ValueError(
+                "必须传入 bin_table 或 reference_data 参数之一，"
+                "也可传入 data（附带 target 或 overdue+dpds）自动生成。"
+            )
+
+    if target is None and (overdue is None or dpds is None):
+        raise ValueError(
+            "从 reference_data 计算分箱表时，必须传入 target 或 (overdue + dpds) 参数"
+        )
+
+    # 判断是否需要计算金额口径（amount 字段存在于 reference_data）
+    has_amount = (
+        amount is not None
+        and amount in reference_data.columns
+        and not reference_data[amount].isna().all()
+    )
+
+    # 合并 bin_params（显式参数优先级高于 bin_params 中的同名键）
+    extra_params = dict(bin_params) if bin_params else {}
+    explicit_params = {
+        'method': bin_method,
+        'max_n_bins': max_n_bins,
+        'min_bin_size': min_bin_size,
+        'missing_separate': missing_separate,
+    }
+    merged_params = {**extra_params, **explicit_params}
+
+    result = {}
+    for name, col in score_map.items():
+        if col not in reference_data.columns:
+            raise ValueError(
+                f"reference_data 中缺少评分列 '{col}'（映射名：'{name}'）"
+            )
+
+        # ① 订单口径（必须）
+        tbl_count = feature_bin_stats(
+            reference_data,
+            feature=col,
+            target=target,
+            overdue=overdue,
+            dpds=dpds,
+            amount=None,
+            margins=True,
+            **merged_params,
+        )
+
+        # ② 金额口径（可选，仅当 amount 字段存在时）
+        if has_amount:
+            tbl_amount = feature_bin_stats(
+                reference_data,
+                feature=col,
+                target=target,
+                overdue=overdue,
+                dpds=dpds,
+                amount=amount,
+                margins=True,  # 金额口径同样需要合计行
+                **merged_params,
+            )
+            tbl_merged = _merge_amount_bad_rate(tbl_count, tbl_amount)
+        else:
+            tbl_merged = tbl_count
+
+        result[name] = _normalize_bin_table(tbl_merged, label=name)
+
+    return result
+
+
+def _store_splits_from_labels(tbl: pd.DataFrame) -> None:
+    """从分箱标签解析切分点，存入 ``tbl._splits`` 属性。
+
+    解析规则（基于 ``feature_bin_stats`` 的标签生成逻辑）：
+    - ``[-inf, x)`` → 切分点 x
+    - ``[-inf, +inf)`` → 跳过（+inf 不是有效切分）
+    - ``缺失`` / ``特殊`` → 跳过
+    - ``箱{i}`` → 跳过（无切分点）
+
+    解析顺序：从左到右收集各分箱的右边界作为切分点。
+
+    :param tbl: 标准化后的分箱表（inplace 修改，添加 _splits 属性）
+    """
+    import re
+
+    # 找出分箱标签：列中找 → MultiIndex列中找 → MultiIndex行索引中找
+    if '分箱标签' in tbl.columns:
+        labels = tbl['分箱标签'].tolist()
+    elif isinstance(tbl.columns, pd.MultiIndex):
+        detail_group = _get_detail_group_name(tbl)
+        bin_label_col = next(
+            (c for c in tbl.columns
+             if isinstance(c, tuple) and c[0] == detail_group and c[1] == '分箱标签'),
+            None
+        )
+        labels = tbl[bin_label_col].tolist() if bin_label_col else []
+    elif isinstance(tbl.index, pd.MultiIndex):
+        # MultiIndex 行（金额口径场景）：分箱标签在 level=1
+        labels = tbl.index.get_level_values(1).tolist()
+    else:
+        labels = []
+
+    splits = []
+    for lbl in labels:
+        if lbl in ('缺失', '特殊', '合计'):
+            continue
+        # 格式: [x, y) 或 [x, +inf)
+        m = re.search(r', *(.+?)\)', str(lbl))
+        if m:
+            val_str = m.group(1).strip()
+            if val_str.lower() == '+inf' or val_str == '∞':
+                continue  # +inf 不是有效切分点
+            try:
+                val = float(val_str)
+                if not np.isnan(val) and not np.isinf(val):
+                    splits.append(val)
+            except (ValueError, TypeError):
+                continue
+
+    splits = sorted(set(splits))
+    tbl._splits = np.array(splits) if splits else np.array([])
+
+
+def _normalize_bin_table(
+    tbl: pd.DataFrame,
+    label: str = '_default',
+) -> pd.DataFrame:
+    """标准化分箱表，确保列结构统一，并提取切分点存储到属性中。
+
+    标准化规则：
+    - 单层列：检查是否有 '分箱标签' 列，有则保留，无则添加
+    - 多层列（MultiIndex）：确保顶层分组名为 '分箱详情'，子层列名统一
+    - 统一添加 '分箱' 别名列（兼容旧代码）
+    - 从分箱标签解析切分点，存入 ``tbl._splits`` 属性（供坏样本预测使用）
+
+    :param tbl: 原始分箱表
+    :param label: 标签名（用于单层表头的默认分组）
+    :return: 标准化后的分箱表
+    """
+    tbl = tbl.copy()
+
+    # ── 提取切分点 ──────────────────────────────────────────────────────────
+    _store_splits_from_labels(tbl)
+
+    if isinstance(tbl.columns, pd.MultiIndex):
+        # MultiIndex 列：确保顶层分组名为 '分箱详情'
+        detail_group = _get_detail_group_name(tbl)
+
+        # 确保有分箱标签列（可能在 '分箱详情' 下）
+        bin_label_col = None
+        for col in tbl.columns:
+            col_name = col[-1] if isinstance(col, tuple) else col
+            if col_name in ('分箱标签', 'bin', '分箱'):
+                bin_label_col = col
+                break
+
+        # 提取各标签下的坏样本率列，构建统一结构
+        # 保留 '分箱详情' 公共列 + 各标签的坏样本率
+        available_merge = [c for c in tbl.columns
+                          if isinstance(c, tuple) and c[0] == detail_group
+                          and c[1] in ['指标名称', '指标含义', '分箱标签', '样本总数', '样本占比']]
+        non_merge = [c for c in tbl.columns if c not in available_merge]
+
+        # 构建新的列结构
+        new_cols = available_merge.copy()
+        for col in non_merge:
+            if isinstance(col, tuple) and col[0] != detail_group:
+                new_cols.append(col)
+
+        return tbl[new_cols] if new_cols else tbl
+
+    else:
+        # 单层列：检查必要列
+        if '分箱标签' not in tbl.columns and '分箱' not in tbl.columns:
+            # 生成分箱标签
+            tbl['分箱标签'] = [f'箱{i + 1}' for i in range(len(tbl))]
+
+        # 添加分箱别名（兼容旧代码）
+        if '分箱标签' in tbl.columns and '分箱' not in tbl.columns:
+            tbl['分箱'] = tbl['分箱标签']
+
+        return tbl
+
+
+def _merge_amount_bad_rate(
+    tbl_count: pd.DataFrame,
+    tbl_amount: pd.DataFrame,
+) -> pd.DataFrame:
+    """合并订单口径和金额口径的分箱表，通过行 index 进行区分。
+
+    合并后的结构：
+    - 行索引为 MultiIndex：level0='口径'(订单口径/金额口径)，level1='分箱标签'
+    - 列保持原有结构（单层或 MultiIndex），不添加额外层级
+
+    该结构可自然适配多标签场景（多标签时列本身为 MultiIndex，行索引附加口径维度）。
+
+    :param tbl_count: 订单口径分箱表（样本数加权，margins=True）
+    :param tbl_amount: 金额口径分箱表（金额加权，margins=True）
+    :return: 合并后的分箱表，index 为 MultiIndex (口径 × 分箱标签)
+    """
+    if tbl_count.empty or tbl_amount.empty:
+        return tbl_count.copy()
+
+    if '分箱标签' not in tbl_count.columns or '分箱标签' not in tbl_amount.columns:
+        return tbl_count.copy()
+
+    # 以分箱标签为索引，垂直拼接
+    tbl_c_idx = tbl_count.set_index('分箱标签')
+    tbl_a_idx = tbl_amount.set_index('分箱标签')
+
+    result = pd.concat(
+        [tbl_c_idx, tbl_a_idx],
+        keys=['订单口径', '金额口径'],
+        names=['口径', '分箱标签'],
+    )
+    return result
+
+
+def _normalize_rules_input(
+    rules: Union[Rule, List[Rule], None],
+) -> List[Rule]:
+    """将规则参数统一规范化为 List[Rule]。
+
+    支持传入单条 Rule、List[Rule] 或 None。
+
+    :param rules: 规则集输入
+    :return: 规范化的 List[Rule]（空列表当输入为 None 时）
+    """
+    if rules is None:
+        return []
+    if isinstance(rules, Rule):
+        return [rules]
+    if isinstance(rules, list):
+        return rules
+    raise TypeError(
+        f"规则参数类型错误，期望 Rule 或 List[Rule]，实际为 {type(rules).__name__}"
+    )
+
+
+def _validate_rules(
+    data: pd.DataFrame,
+    rules_in: Union[Rule, List[Rule]],
+    rules_out: Optional[Union[Rule, List[Rule]]],
+    rules_base: Optional[Union[Rule, List[Rule]]],
+) -> tuple:
+    """校验并规范化三个规则集。
+
+    处理逻辑：
+    1. 将三个规则集统一规范化为 List[Rule]
+    2. 要求至少有一个规则集非空
+    3. 从所有规则中提取所需特征列
+    4. 校验 data 中是否包含全部所需特征列
+
+    :param data: 样本数据集
+    :param rules_in: 置入规则集
+    :param rules_out: 置出规则集（可选）
+    :param rules_base: 基准拒绝规则集（可选）
+    :return: (rules_in, rules_out, rules_base) 均为 List[Rule]
+    :raises ValueError: 三个规则集均为空时
+    :raises FeatureNotFoundError: data 缺少规则所需列时
+    """
+    from hscredit.core.rules import get_columns_from_query
+    from hscredit.exceptions import FeatureNotFoundError
+
+    # 统一规范化
+    rules_in = _normalize_rules_input(rules_in)
+    rules_out = _normalize_rules_input(rules_out) if rules_out is not None else []
+    rules_base = _normalize_rules_input(rules_base) if rules_base is not None else []
+
+    # 要求至少有一个规则集非空
+    if not rules_in and not rules_out and not rules_base:
+        raise ValueError(
+            "rules_in、rules_out、rules_base 三个规则集至少需要传入一个"
+        )
+
+    # 收集所有规则所需特征列
+    all_rules = rules_in + rules_out + rules_base
+    required_cols: set = set()
+    for rule in all_rules:
+        required_cols.update(get_columns_from_query(rule.expr))
+
+    # 校验 data 包含全部所需列
+    missing = required_cols - set(data.columns)
+    if missing:
+        raise FeatureNotFoundError(
+            f"data 中缺少规则所需的列：{sorted(missing)}，"
+            f"请检查规则表达式是否引用了不存在的字段"
+        )
+
+    return rules_in, rules_out, rules_base
+
+
+def _normalize_score_weights(
+    score_weights: Optional[Union[float, Dict[str, float], List[float]]],
+    score_map: Dict[str, str],
+) -> Optional[Dict[str, float]]:
+    """将 score_weights 统一规范化为 {评分名: 权重} 字典，并归一化到 [0, 1] 区间。
+
+    支持三种输入形式：
+    - 单个 float：对所有评分使用相同权重
+    - Dict[str, float]：键为评分名（与 score_map 的 key 对应），覆盖对应评分权重
+    - List[float]：与 score_map 的 key 按顺序一一对应
+
+    归一化方法：将权重之和缩放，使 max(weight) = 1.0，
+    即 w_normalized = w / sum(all_weights)。
+
+    :param score_weights: 原始权重（支持单值、字典、列表）
+    :param score_map: 评分映射字典 {评分名: 实际列名}
+    :return: 归一化后的权重字典 {评分名: 归一化权重}，或 None（当 score_weights 为 None 时）
+    :raises ValueError: 字典键不在 score_map 中，或列表长度与 score_map 不匹配时
+    """
+    if score_weights is None:
+        return None
+
+    score_names = list(score_map.keys())
+
+    if isinstance(score_weights, (int, float)):
+        raw_weights = {name: float(score_weights) for name in score_names}
+    elif isinstance(score_weights, dict):
+        # 校验键
+        unknown = set(score_weights.keys()) - set(score_names)
+        if unknown:
+            raise ValueError(
+                f"score_weights 字典中包含不在 score_map 中的评分名：{sorted(unknown)}，"
+                f"有效评分名：{score_names}"
+            )
+        raw_weights = {name: float(score_weights.get(name, 0.0)) for name in score_names}
+    elif isinstance(score_weights, (list, tuple)):
+        if len(score_weights) != len(score_names):
+            raise ValueError(
+                f"score_weights 列表长度 ({len(score_weights)}) "
+                f"与 score_map 中的评分数量 ({len(score_names)}) 不匹配"
+            )
+        raw_weights = {name: float(w) for name, w in zip(score_names, score_weights)}
+    else:
+        raise TypeError(
+            f"score_weights 参数类型错误，期望 float / Dict / List，"
+            f"实际为 {type(score_weights).__name__}"
+        )
+
+    # 归一化：w_normalized = w / sum(all_weights)，使 sum = 1
+    total = sum(raw_weights.values())
+    if total <= 0:
+        raise ValueError("score_weights 所有权重之和必须大于 0")
+
+    return {name: w / total for name, w in raw_weights.items()}
+
+
+def _extract_bad_rate_col(
+    df_bin: pd.DataFrame,
+) -> Tuple[Optional[str], List[str]]:
+    """从分箱表中提取坏样本率列名。
+
+    处理多种列结构：
+    - 单层列：直接查找 '坏样本率' 或带金额后缀的 '坏样本率(金额)'
+    - MultiIndex 列：查找各标签下的坏样本率列
+
+    :param df_bin: 单个评分的分箱表（标准化后）
+    :return: (单一坏样本率列名或None, 所有坏样本率列名列表)
+    """
+    if df_bin.empty:
+        return None, []
+
+    # 方案A：单层列
+    if not isinstance(df_bin.columns, pd.MultiIndex):
+        # 优先找 '坏样本率'，其次 '坏样本率(金额)'
+        for col in ['坏样本率', '坏样本率(金额)']:
+            if col in df_bin.columns:
+                return col, [col]
+        return None, []
+
+    # 方案B：MultiIndex 列（多标签场景）
+    # 顶层分组：标签名 + '分箱详情'
+    level0 = df_bin.columns.get_level_values(0)
+    label_names = [l for l in level0 if l != '分箱详情']
+    bad_rate_cols = []
+    for label in label_names:
+        for col in df_bin.columns:
+            if isinstance(col, tuple) and col[0] == label and '坏样本率' in col[1]:
+                bad_rate_cols.append(col)
+                break
+
+    if len(bad_rate_cols) == 1:
+        return bad_rate_cols[0], bad_rate_cols
+    return None, bad_rate_cols
+
+
+def _get_bin_bad_rate_map(
+    df_bin: pd.DataFrame,
+    single_bad_col: Optional[str],
+) -> pd.Series:
+    """从分箱表构建 bin_index → bad_rate 映射，忽略合计行。
+
+    处理 index 类型：
+    - 整数索引（分箱索引）：直接用位置映射
+    - MultiIndex (口径, 分箱标签)：提取分箱标签行后用位置映射
+
+    :param df_bin: 分箱表
+    :param single_bad_col: 单一坏样本率列名（单标签或 amount 场景）
+    :return: bin_position → bad_rate Series，索引为分箱位置
+    """
+    df = df_bin.copy()
+
+    # 过滤合计行
+    if '分箱标签' in df.columns:
+        df = df[df['分箱标签'] != '合计']
+    elif isinstance(df.index, pd.MultiIndex):
+        # MultiIndex 行：口径 × 分箱标签，合计行 index[1] == '合计'
+        df = df[df.index.get_level_values(1) != '合计']
+    elif isinstance(df.index, pd.RangeIndex) or not isinstance(df.index, pd.Index):
+        pass  # 整数索引保持不变
+
+    if single_bad_col and single_bad_col in df.columns:
+        return df[single_bad_col].reset_index(drop=True)
+    elif single_bad_col is None:
+        # 多标签：返回所有坏样本率列的子集（取第一列作为代理）
+        # caller 应根据 multi_label_cols 处理
+        return df.iloc[:, 0].reset_index(drop=True)
+    return pd.Series(dtype=float)
+
+
+def _compute_predicted_bad_prob(
+    data: pd.DataFrame,
+    score_col: str,
+    df_bin: pd.DataFrame,
+    single_bad_col: Optional[str],
+) -> pd.Series:
+    """根据分箱表计算每个样本的预测坏概率。
+
+    :param data: 数据集
+    :param score_col: 评分列名
+    :param df_bin: 该评分的分箱表（已标准化，合计行已移除）
+    :param single_bad_col: 单一坏样本率列名
+    :return: 每行样本的预测坏概率（0~1）
+    """
+    if df_bin.empty:
+        return pd.Series(0.0, index=data.index)
+
+    # 提取切分点（由 _store_splits_from_labels 解析 bin 标签得到）
+    splits_arr: np.ndarray = getattr(df_bin, '_splits', np.array([]))
+    if splits_arr is None or len(splits_arr) == 0:
+        # 回退：从分箱标签解析（兜底）
+        import re as _re
+        labels = None
+        if '分箱标签' in df_bin.columns:
+            labels = df_bin['分箱标签'].tolist()
+        elif isinstance(df_bin.index, pd.MultiIndex):
+            # MultiIndex 行 (amount case): 分箱标签在 level=1
+            labels = df_bin.index.get_level_values(1).tolist()
+        labels = labels or []
+
+        _splits_list = []
+        for lbl in labels:
+            if lbl in ('缺失', '特殊', '合计'):
+                continue
+            m = _re.search(r', *(.+?)\)', str(lbl))
+            if m:
+                val_str = m.group(1).strip()
+                if val_str.lower() not in ('+inf', '∞'):
+                    try:
+                        v = float(val_str)
+                        if not np.isnan(v) and not np.isinf(v):
+                            _splits_list.append(v)
+                    except (ValueError, TypeError):
+                        pass
+        splits_arr = np.array(sorted(set(_splits_list))) if _splits_list else np.array([])
+
+    if len(splits_arr) == 0:
+        return pd.Series(0.0, index=data.index)
+
+    scores = data[score_col].values.copy()
+    missing_mask = pd.isna(scores)
+    bins = np.digitize(scores, splits_arr, right=False)
+    bins = bins.astype(float)
+    bins[missing_mask] = -1
+
+    # 构建 bin → bad_rate 映射（按行位置）
+    df_valid = df_bin.copy()
+
+    # 过滤合计行（分箱标签可能在列中，也可能在 MultiIndex 行中）
+    try:
+        if '分箱标签' in df_valid.columns:
+            df_valid = df_valid[df_valid['分箱标签'] != '合计']
+        elif isinstance(df_valid.index, pd.MultiIndex):
+            df_valid = df_valid[df_valid.index.get_level_values(1) != '合计']
+    except KeyError:
+        # '分箱标签' 不在列中（可能被 MultiIndex 列或其他结构占用），跳过过滤
+        pass
+
+    n_bins = len(df_valid)
+    if single_bad_col and single_bad_col in df_valid.columns:
+        bad_rates = df_valid[single_bad_col].values
+    else:
+        bad_rates = df_valid.iloc[:, 0].values
+
+    # bins 取值范围 [0, n_bins-1]，超出范围的 clamp
+    bins_clipped = np.clip(bins.astype(int), 0, n_bins - 1)
+
+    prob = pd.Series(bad_rates[bins_clipped], index=data.index)
+    prob.iloc[missing_mask] = np.nan
+    return prob
+
+
+def _build_base_report(
+    data: pd.DataFrame,
+    rules_base: List[Rule],
+    bin_table_result: Dict[str, pd.DataFrame],
+    score_map: Dict[str, str],
+    score_weights: Optional[Dict[str, float]] = None,
+    amount: Optional[str] = None,
+    rule_analysis_mode: str = 'independent',
+    sample_survival_rate: float = 1.0,
+) -> pd.DataFrame:
+    """基于分箱表预测的好坏样本，构建基础报告（四段式结构）。
+
+    报告结构（全量样本 > OUT-OUT规则 > OUT-OUT合计 > 剩余样本）：
+    - 全量样本：全部 data 的好坏分布，坏样本率从 data 本身计算
+    - OUT-OUT规则：每条规则命中的好坏分布
+    - OUT-OUT合计：所有规则合并（reduce |）后的命中好坏分布
+    - 剩余样本：未被任何规则命中的样本好坏分布
+
+    预测逻辑：
+    1. 对每个样本，根据其评分值在 bin_table 中查找对应分箱的坏样本率
+    2. 坏样本数 = sum(bad_rate × count_in_bin)，好样本数 = 总样本 - 坏样本
+    3. 多评分时按 score_weights 加权坏概率后求和
+    4. 忽略 bin_table 的合计行（数据分布变化后已失效）
+
+    :param data: 全部样本集
+    :param rules_base: 基准拒绝规则集
+    :param bin_table_result: {评分名: 分箱表}，由 _resolve_bin_table 返回
+    :param score_map: {评分名: 实际列名}
+    :param score_weights: 多评分权重（可选）
+    :param amount: 金额字段（可选，用于口径判断）
+    :param rule_analysis_mode: 规则分析模式。
+        - 'independent'（默认）：每条规则独立应用到全量 data
+        - 'sequential'：漏斗模式，每条规则在前一条的剩余样本上分析，
+          根据规则命中（拒绝）减少样本量，未命中（通过）保持样本量。
+    :param sample_survival_rate: 基准通过率（生产策略通过率，默认1.0）
+    :return: 4-part 报告 DataFrame
+    """
+    n_total = len(data)
+    rows = []
+
+    # ── 预处理：计算每个样本在每个评分下的坏概率 ────────────────────────────
+    score_bad_probs = {}  # score_name → prob Series
+    for name, df_bin in bin_table_result.items():
+        score_col = score_map[name]
+        single_bad_col, _ = _extract_bad_rate_col(df_bin)
+        score_bad_probs[name] = _compute_predicted_bad_prob(
+            data, score_col, df_bin, single_bad_col
+        )
+
+    # ── 计算全量样本坏概率（从 data 本身，非 bin_table 合计）─────────────────
+    if len(score_bad_probs) == 1:
+        only_name = list(score_bad_probs.keys())[0]
+        full_bad_probs = score_bad_probs[only_name]
+    else:
+        if score_weights:
+            w_names = set(score_weights.keys())
+            p_names = set(score_bad_probs.keys())
+            if w_names != p_names:
+                missing_w = p_names - w_names
+                missing_p = w_names - p_names
+                raise ValueError(
+                    f"score_weights 与 bin_table_result 的评分名不匹配。"
+                    f"weights 缺少：{missing_w}，bin_table 缺少：{missing_p}"
+                )
+            weights = {name: score_weights[name] for name in score_bad_probs}
+        else:
+            n_scores = len(score_bad_probs)
+            weights = {name: 1.0 / n_scores for name in score_bad_probs}
+
+        prob_sum = None
+        for name, prob in score_bad_probs.items():
+            w = weights[name]
+            prob_sum = prob * w if prob_sum is None else prob_sum + prob * w
+
+        full_bad_probs = prob_sum
+
+    # 全量样本坏样本数（从 data 本身计算）
+    full_total_bad = float(full_bad_probs.sum())
+    full_total_bad = round(full_total_bad, 6)  # 消除浮点精度误差
+    full_total_bad = max(0.0, min(full_total_bad, n_total))
+
+    # 全量样本数 = data样本数 / sample_survival_rate
+    # data是生产策略通过后的样本，sample_survival_rate是生产策略的通过率
+    n_total_full = int(n_total / sample_survival_rate)
+    # 全量坏样本数也需要按比例扩展到全量
+    n_bad_full = full_total_bad * (n_total_full / n_total) if n_total > 0 else 0.0
+    full_bad_rate = full_total_bad / n_total if n_total > 0 else 0.0
+
+    rows.append(_make_report_row(
+        '全量样本', 'OUT-OUT基准', full_total_bad, n_total,
+        n_total_full=n_total_full, n_bad_full=n_bad_full, full_bad_rate=full_bad_rate,
+        sample_survival_rate=sample_survival_rate,
+    ))
+
+    # ── 单规则命中统计 ───────────────────────────────────────────────────
+    # 基准通过率，sequential 模式下会随规则链式递减
+    current_pass_rate = sample_survival_rate
+    if rules_base:
+        if rule_analysis_mode == 'sequential':
+            # 漏斗模式：每条规则在前一条拒绝后的剩余样本上分析
+            # 当前存活样本 = 尚未被任何规则拒绝的样本
+            current_remaining = pd.Series(True, index=data.index)
+            # 基准通过率 = sample_survival_rate（生产策略通过率）
+            current_pass_rate = sample_survival_rate
+
+            for rule in rules_base:
+                # 当前规则在当前存活样本范围内进行预测
+                # 命中的样本 = 规则拒绝（predict=True）且当前存活
+                # 未命中的样本 = 规则通过（predict=False）且当前存活
+                rule_hit = rule.predict(data)
+                current_rule_hit = rule_hit & current_remaining  # 仅限当前存活样本中命中
+
+                n_hit = int(current_rule_hit.sum())
+                n_good, n_bad = _calc_good_bad_from_prob(
+                    full_bad_probs, current_rule_hit, n_total, n_hit
+                )
+                n_bad = round(n_bad, 1)
+                rows.append(_make_report_row(
+                    'OUT-OUT规则', rule.name, n_bad, n_hit,
+                    rule_detail=rule.expr,
+                    n_total_full=n_total_full, n_bad_full=n_bad_full, full_bad_rate=full_bad_rate,
+                    sample_survival_rate=current_pass_rate,
+                ))
+
+                # 更新存活样本：排除被当前规则拒绝的样本
+                current_remaining = current_remaining & ~rule_hit
+                # 更新基准通过率：当前通过率 = (当前通过样本数 - 拒绝样本数) / 全量样本数
+                # 当前通过样本数 = n_total_full × current_pass_rate（来自上一步的通过样本，以全量计）
+                # 拒绝样本数 = n_hit（被当前规则拒绝的样本数）
+                base_pass_n = n_total_full * current_pass_rate
+                current_pass_rate = max(0.0, (base_pass_n - n_hit) / n_total_full)
+
+            # OUT-OUT合计（sequential 模式下等于所有被拒绝样本的累计）
+            combined_mask = ~current_remaining
+            n_combined_hit = int(combined_mask.sum())
+            n_good_comb, n_bad_comb = _calc_good_bad_from_prob(
+                full_bad_probs, combined_mask, n_total, n_combined_hit
+            )
+            n_bad_comb = round(n_bad_comb, 1)
+            rows.append(_make_report_row(
+                'OUT-OUT合计', 'OUT-OUT合计', n_bad_comb, n_combined_hit,
+                n_total_full=n_total_full, n_bad_full=n_bad_full, full_bad_rate=full_bad_rate,
+                sample_survival_rate=current_pass_rate,
+            ))
+
+        else:
+            # independent 模式（默认）：每条规则独立应用到全量 data
+            for rule in rules_base:
+                mask = rule.predict(data)
+                n_hit = int(mask.sum())
+                n_good, n_bad = _calc_good_bad_from_prob(
+                    full_bad_probs, mask, n_total, n_hit
+                )
+                n_bad = round(n_bad, 1)
+                rows.append(_make_report_row(
+                    'OUT-OUT规则', rule.name, n_bad, n_hit,
+                    rule_detail=rule.expr,
+                    n_total_full=n_total_full, n_bad_full=n_bad_full, full_bad_rate=full_bad_rate,
+                    sample_survival_rate=sample_survival_rate,
+                ))
+
+            # OUT-OUT 合计：合并所有规则
+            combined_rule = reduce(lambda r1, r2: r1 | r2, rules_base)
+            combined_mask = combined_rule.predict(data)
+            n_combined_hit = int(combined_mask.sum())
+            n_good_comb, n_bad_comb = _calc_good_bad_from_prob(
+                full_bad_probs, combined_mask, n_total, n_combined_hit
+            )
+            n_bad_comb = round(n_bad_comb, 1)
+            rows.append(_make_report_row(
+                'OUT-OUT合计', 'OUT-OUT合计', n_bad_comb, n_combined_hit,
+                n_total_full=n_total_full, n_bad_full=n_bad_full, full_bad_rate=full_bad_rate,
+                sample_survival_rate=sample_survival_rate,
+            ))
+
+    # ── 剩余样本：未被任何规则命中的样本 ───────────────────────────────────
+    if rules_base:
+        combined_rule = reduce(lambda r1, r2: r1 | r2, rules_base)
+        hit_mask = combined_rule.predict(data)
+    else:
+        hit_mask = pd.Series(False, index=data.index)
+    remain_mask = ~hit_mask
+    n_remain = int(remain_mask.sum())
+    n_good_rem, n_bad_rem = _calc_good_bad_from_prob(
+        full_bad_probs, remain_mask, n_total, n_remain
+    )
+    n_bad_rem = round(n_bad_rem, 1)
+    # 剩余样本的通过率基准：在 sequential 模式下用最终累计通过率，independent 模式下用原始基准
+    remain_pass_rate = current_pass_rate if rule_analysis_mode == 'sequential' else sample_survival_rate
+    rows.append(_make_report_row(
+        '剩余样本', '剩余样本', n_bad_rem, n_remain,
+        n_total_full=n_total_full, n_bad_full=n_bad_full, full_bad_rate=full_bad_rate,
+        sample_survival_rate=remain_pass_rate,
+    ))
+
+    return pd.DataFrame(rows), full_bad_probs
+
+
+def _build_inout_report(
+    in_remaining_data: pd.DataFrame,
+    rules_out: List[Rule],
+    bin_table_result: Dict[str, pd.DataFrame],
+    score_map: Dict[str, str],
+    score_weights: Optional[Dict[str, float]] = None,
+    rule_analysis_mode: str = 'independent',
+    n_total_full: int = 0,
+    n_bad_full: float = 0.0,
+    full_bad_rate: float = 0.0,
+    sample_survival_rate: float = 1.0,
+) -> pd.DataFrame:
+    """构建IN-OUT置出分析报告。
+
+    报告结构（IN-IN通过 > IN-OUT置出规则 > IN-OUT置出合计 > IN-IN通过）：
+    - IN-IN通过样本：作为基准的全量（rules_out为空时即全部通过，否则为剩余通过样本）
+    - IN-OUT置出规则：每条置出规则的拒绝效果
+    - IN-OUT置出合计：所有置出规则合并后的总拒绝
+    - IN-IN通过（最终）：经过所有置出规则后的剩余通过样本
+
+    :param in_remaining_data: 经过OUT-OUT拒绝后的剩余样本（进入IN-OUT的样本）
+    :param rules_out: 置出规则集
+    :param bin_table_result: {评分名: 分箱表}
+    :param score_map: {评分名: 实际列名}
+    :param score_weights: 多评分权重（可选）
+    :param rule_analysis_mode: 规则分析模式（independent/sequential）
+    :param n_total_full: 全量样本总数（来自Step2，用于通过率计算）
+    :param n_bad_full: 全量坏样本数（来自Step2）
+    :param full_bad_rate: 全量坏样本率
+    :param sample_survival_rate: 基准通过率（Step2结束后的累计通过率）
+    :return: IN-OUT分析报告 DataFrame
+    """
+    n_total = len(in_remaining_data)
+    rows = []
+
+    # ── 计算in_remaining样本的坏概率 ──────────────────────────────────────
+    score_bad_probs = {}
+    for name, df_bin in bin_table_result.items():
+        score_col = score_map[name]
+        single_bad_col, _ = _extract_bad_rate_col(df_bin)
+        score_bad_probs[name] = _compute_predicted_bad_prob(
+            in_remaining_data, score_col, df_bin, single_bad_col
+        )
+
+    if len(score_bad_probs) == 1:
+        only_name = list(score_bad_probs.keys())[0]
+        full_bad_probs_inout = score_bad_probs[only_name]
+    else:
+        if score_weights:
+            w_names = set(score_weights.keys())
+            p_names = set(score_bad_probs.keys())
+            if w_names != p_names:
+                missing_w = p_names - w_names
+                missing_p = w_names - p_names
+                raise ValueError(
+                    f"score_weights 与 bin_table_result 的评分名不匹配。"
+                    f"weights 缺少：{missing_w}，bin_table 缺少：{missing_p}"
+                )
+            weights = {name: score_weights[name] for name in score_bad_probs}
+        else:
+            n_scores = len(score_bad_probs)
+            weights = {name: 1.0 / n_scores for name in score_bad_probs}
+
+        prob_sum = None
+        for name, prob in score_bad_probs.items():
+            w = weights[name]
+            prob_sum = prob * w if prob_sum is None else prob_sum + prob * w
+        full_bad_probs_inout = prob_sum
+
+    # IN-IN通过样本数（来自Step2的剩余样本）
+    in_total_bad = float(full_bad_probs_inout.sum())
+    in_total_bad = round(in_total_bad, 6)
+    in_total_bad = max(0.0, min(in_total_bad, n_total))
+
+    # IN-IN通过行（基准）
+    rows.append(_make_report_row(
+        'IN-IN通过', 'IN-IN通过', in_total_bad, n_total,
+        n_total_full=n_total_full, n_bad_full=n_bad_full, full_bad_rate=full_bad_rate,
+        sample_survival_rate=sample_survival_rate,
+    ))
+
+    if not rules_out:
+        return pd.DataFrame(rows)
+
+    # ── 单规则命中统计 ───────────────────────────────────────────────────
+    current_pass_rate = sample_survival_rate
+    if rule_analysis_mode == 'sequential':
+        current_remaining = pd.Series(True, index=in_remaining_data.index)
+        for rule in rules_out:
+            rule_hit = rule.predict(in_remaining_data)
+            current_rule_hit = rule_hit & current_remaining
+
+            n_hit = int(current_rule_hit.sum())
+            n_good, n_bad = _calc_good_bad_from_prob(
+                full_bad_probs_inout, current_rule_hit, n_total, n_hit
+            )
+            n_bad = round(n_bad, 1)
+            rows.append(_make_report_row(
+                'IN-OUT置出', rule.name, n_bad, n_hit,
+                rule_detail=rule.expr,
+                n_total_full=n_total_full, n_bad_full=n_bad_full, full_bad_rate=full_bad_rate,
+                sample_survival_rate=current_pass_rate,
+            ))
+
+            current_remaining = current_remaining & ~rule_hit
+            base_pass_n = n_total_full * current_pass_rate
+            current_pass_rate = max(0.0, (base_pass_n - n_hit) / n_total_full)
+
+        combined_mask = ~current_remaining
+        n_combined_hit = int(combined_mask.sum())
+        n_good_comb, n_bad_comb = _calc_good_bad_from_prob(
+            full_bad_probs_inout, combined_mask, n_total, n_combined_hit
+        )
+        n_bad_comb = round(n_bad_comb, 1)
+        rows.append(_make_report_row(
+            'IN-OUT置出', 'IN-OUT置出合计', n_bad_comb, n_combined_hit,
+            n_total_full=n_total_full, n_bad_full=n_bad_full, full_bad_rate=full_bad_rate,
+            sample_survival_rate=current_pass_rate,
+        ))
+    else:
+        for rule in rules_out:
+            mask = rule.predict(in_remaining_data)
+            n_hit = int(mask.sum())
+            n_good, n_bad = _calc_good_bad_from_prob(
+                full_bad_probs_inout, mask, n_total, n_hit
+            )
+            n_bad = round(n_bad, 1)
+            rows.append(_make_report_row(
+                'IN-OUT置出', rule.name, n_bad, n_hit,
+                rule_detail=rule.expr,
+                n_total_full=n_total_full, n_bad_full=n_bad_full, full_bad_rate=full_bad_rate,
+                sample_survival_rate=sample_survival_rate,
+            ))
+
+        combined_rule = reduce(lambda r1, r2: r1 | r2, rules_out)
+        combined_mask = combined_rule.predict(in_remaining_data)
+        n_combined_hit = int(combined_mask.sum())
+        n_good_comb, n_bad_comb = _calc_good_bad_from_prob(
+            full_bad_probs_inout, combined_mask, n_total, n_combined_hit
+        )
+        n_bad_comb = round(n_bad_comb, 1)
+        rows.append(_make_report_row(
+            'IN-OUT置出', 'IN-OUT置出合计', n_bad_comb, n_combined_hit,
+            n_total_full=n_total_full, n_bad_full=n_bad_full, full_bad_rate=full_bad_rate,
+            sample_survival_rate=sample_survival_rate,
+        ))
+
+    # ── IN-IN通过（最终）：未被任何置出规则拒绝的样本 ──────────────────────
+    if rules_out:
+        combined_rule = reduce(lambda r1, r2: r1 | r2, rules_out)
+        hit_mask = combined_rule.predict(in_remaining_data)
+    else:
+        hit_mask = pd.Series(False, index=in_remaining_data.index)
+    remain_mask = ~hit_mask
+    n_remain = int(remain_mask.sum())
+    n_good_rem, n_bad_rem = _calc_good_bad_from_prob(
+        full_bad_probs_inout, remain_mask, n_total, n_remain
+    )
+    n_bad_rem = round(n_bad_rem, 1)
+    # IN-IN通过基准：sequential模式用最终累计通过率，independent模式用原始基准
+    in_pass_rate = current_pass_rate if rule_analysis_mode == 'sequential' else sample_survival_rate
+    rows.append(_make_report_row(
+        'IN-IN通过', 'IN-IN通过', n_bad_rem, n_remain,
+        n_total_full=n_total_full, n_bad_full=n_bad_full, full_bad_rate=full_bad_rate,
+        sample_survival_rate=in_pass_rate,
+    ))
+
+    return pd.DataFrame(rows)
+
+
+def _calc_good_bad_from_prob(
+    full_bad_probs: pd.Series,
+    mask: pd.Series,
+    n_total: int,
+    n_hit: int,
+) -> Tuple[float, float]:
+    """根据坏概率和命中掩码计算好/坏样本数。
+
+    对于命中的样本：累加其坏概率得到预测坏样本数
+    好样本数 = 命中数 - 坏样本数
+
+    :param full_bad_probs: 全量样本的预测坏概率（与 data 行对齐）
+    :param mask: 命中掩码（True = 命中）
+    :param n_total: 全量样本总数
+    :param n_hit: 命中样本数
+    :return: (好样本数, 坏样本数)
+    """
+    if n_hit == 0:
+        return 0.0, 0.0
+    hit_probs = full_bad_probs[mask.values]
+    n_bad = float(hit_probs.sum())
+    n_bad = max(0.0, min(n_bad, float(n_hit)))
+    n_good = float(n_hit) - n_bad
+    return float(n_good), float(n_bad)
+
+
+def _make_report_row(
+    rule_class: str,
+    rule_name: str,
+    n_bad: float,
+    n_total: int,
+    rule_detail: Optional[str] = None,
+    n_total_full: Optional[int] = None,
+    n_bad_full: Optional[float] = None,
+    full_bad_rate: Optional[float] = None,
+    sample_survival_rate: float = 1.0,
+) -> dict:
+    """构建基础报告的一行。
+
+    所有指标基于预测的坏样本数和好样本数计算。
+
+    :param rule_class: 规则分类（如 '全量样本'、'OUT-OUT规则'、'OUT-OUT合计'、'剩余样本'）
+    :param rule_name: 规则名称
+    :param n_bad: 预测坏样本数（已round到1位小数）
+    :param n_total: 当前行总样本数
+    :param rule_detail: 规则表达式（rule.expr），全量样本和剩余样本传 None
+    :param n_total_full: 全量样本总数（用于计算样本占比）
+    :param n_bad_full: 全量样本预测坏样本总数（用于计算LIFT、坏账改善、风险拒绝比）
+    :param full_bad_rate: 全量样本坏样本率（用于计算LIFT、坏账改善）
+    :param sample_survival_rate: 基准通过率（生产策略通过率，默认1.0）
+    :return: 指标字典
+    """
+    # 好样本数 = 总样本数 - 预测坏样本数
+    # n_bad_rounded 与 n_good 使用同一基准，保证 n_good + n_bad_rounded = n_total
+    n_bad_rounded = round(n_bad)
+    n_good = n_total - n_bad_rounded
+
+    n_total_f = float(n_total)
+    n_total_full_val = n_total_full if n_total_full is not None else n_total
+
+    # 坏样本率 = 预测坏样本数(整化) / 当前行总样本数
+    bad_rate = n_bad_rounded / n_total_f if n_total_f > 0 else 0.0
+
+    # 基础占比（相对于全量样本）
+    p_total = n_total_f / n_total_full_val if n_total_full_val > 0 else 0.0
+    p_good = n_good / n_total_f if n_total_f > 0 else 0.0
+    p_bad = bad_rate
+
+    # LIFT = 当前行坏账率 / 全量样本坏账率（反映该规则群体的风险相对水平）
+    lift = 0.0
+    if full_bad_rate is not None and full_bad_rate > 0:
+        lift = bad_rate / full_bad_rate
+
+    # 坏账改善 = (全量坏样本率 - 拒绝后剩余样本坏样本率) / 全量坏样本率
+    # 拒绝后剩余样本坏样本率 = (全量坏样本数 - 当前行坏样本数) / (全量样本数 - 当前行样本数)
+    bad_improve = 0.0
+    if full_bad_rate is not None and full_bad_rate > 0:
+        n_remaining = n_total_full_val - n_total
+        n_bad_remaining = (n_bad_full if n_bad_full is not None else 0.0) - n_bad_rounded
+        remaining_bad_rate = n_bad_remaining / n_remaining if n_remaining > 0 else 0.0
+        bad_improve = (full_bad_rate - remaining_bad_rate) / full_bad_rate
+
+    # 风险拒绝比 = 坏账改善 / 当前箱样本占比
+    # 反映"每拒绝1%样本能带来多少坏账改善"
+    risk_reject = 0.0
+    if p_total > 0 and full_bad_rate is not None and full_bad_rate > 0:
+        risk_reject = bad_improve / p_total
+
+    # 准确率、精确率、召回率、F1
+    # 基于预测值（TP=预测坏, TN=预测好），不使用真实标签
+    # TP = n_bad_rounded（命中的预测坏样本）
+    # FP = n_good（命中的预测好样本）
+    # FN = 全量预测坏 - 当前行预测坏 = n_bad_full - n_bad_rounded
+    # TN = 全量预测好 - 当前行预测好 = (n_total_full - n_bad_full) - n_good
+    tp = n_bad_rounded
+    fp = n_good
+    fn = 0.0
+    tn = 0.0
+    if n_bad_full is not None:
+        fn = max(0.0, n_bad_full - n_bad_rounded)
+    if n_total_full is not None and n_bad_full is not None:
+        total_good_full = n_total_full - n_bad_full
+        tn = max(0.0, total_good_full - n_good)
+
+    accuracy = 0.0
+    precision_val = 0.0
+    recall_val = 0.0
+    total_pos = tp + fp
+    total_actual = tp + fn
+    if (tp + fp + fn + tn) > 0:
+        accuracy = (tp + tn) / (tp + fp + fn + tn)
+    if total_pos > 0:
+        precision_val = tp / total_pos
+    if total_actual > 0:
+        recall_val = tp / total_actual
+
+    f1 = 0.0
+    if (precision_val + recall_val) > 0:
+        f1 = 2 * precision_val * recall_val / (precision_val + recall_val)
+
+    # ── 通过率分析 ───────────────────────────────────────────────────────
+    # 通过率 = (基准通过样本数 - 当前行拒绝样本数) / 全量样本数
+    # 基准通过样本数 = 全量样本数 × sample_survival_rate（生产策略通过率）
+    # 当前行拒绝样本数 = 当前行样本数（当前行 = 被拒绝的样本）
+    base_pass_n = n_total_full_val * sample_survival_rate
+    current_pass_rate = (base_pass_n - n_total_f) / n_total_full_val if n_total_full_val > 0 else 0.0
+    current_pass_rate = max(0.0, min(current_pass_rate, 1.0))
+
+    # 通过率%(绝对值) = 通过率 × 100
+    pass_rate_abs = current_pass_rate * 100
+
+    # 通过率%(相对值) = (当前通过率 - 基准通过率) / 基准通过率 × 100
+    base_pass_rate = sample_survival_rate
+    pass_rate_rel = 0.0
+    if base_pass_rate > 0:
+        pass_rate_rel = (current_pass_rate - base_pass_rate) / base_pass_rate * 100
+
+    # 调整方向：仅规则行有值，全量样本/剩余样本/合计为空
+    direction = ''
+    if rule_class == 'OUT-OUT规则':
+        if current_pass_rate < base_pass_rate - 1e-10:
+            direction = '收紧'
+        elif current_pass_rate > base_pass_rate + 1e-10:
+            direction = '放松'
+        else:
+            direction = '不变'
+
+    return {
+        '规则分类': rule_class,
+        '指标名称': rule_name,
+        '规则详情': rule_detail if rule_detail else '',
+        '分箱': '',
+        '样本总数': int(n_total),
+        '样本占比': p_total,
+        '好样本数': int(n_good),
+        '好样本占比': p_good,
+        '坏样本数': int(n_bad_rounded),
+        '坏样本占比': p_bad,
+        '坏样本率': bad_rate,
+        'LIFT值': lift,
+        '坏账改善': bad_improve,
+        '风险拒绝比': risk_reject,
+        '准确率': accuracy,
+        '精确率': precision_val,
+        '召回率': recall_val,
+        'F1分数': f1,
+        '通过率': current_pass_rate,
+        '通过率%(绝对值)': pass_rate_abs,
+        '通过率%(相对值)': pass_rate_rel,
+        '调整方向': direction,
     }

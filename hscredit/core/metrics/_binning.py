@@ -402,14 +402,24 @@ def _compute_bin_stats_binary(
     overall_bad_rate = total_bad / total if total > 0 else 0.0
 
     # 计算LIFT值
-    lift = np.where(bad_rate > 0, bad_rate / (overall_bad_rate + epsilon), 0.0)
+    lift = np.where(bad_rate > 0, bad_rate / overall_bad_rate, 0.0)
 
-    # 计算坏账改善
+    # 坏账改善 = (全量坏样本率 - 拒绝后剩余样本坏样本率) / 全量坏样本率
+    # 拒绝后剩余样本坏样本率 = (total_bad - bin_bad) / (total - bin_total)
+    # 展开后与 (overall_bad_rate - bad_rate) / overall_bad_rate 等价
     other_bad = total_bad - bad_counts
     other_total = total - counts
     bad_improve = np.where(
-        other_total > 0,
-        (overall_bad_rate - other_bad / other_total) / (overall_bad_rate + epsilon),
+        overall_bad_rate > 0,
+        (overall_bad_rate - np.where(other_total > 0, other_bad / other_total, 0.0)) / overall_bad_rate,
+        0.0
+    )
+
+    # 风险拒绝比 = 坏账改善 / 当前箱样本占比
+    # 反映"每拒绝1%样本能带来多少坏账改善"
+    risk_reject = np.where(
+        count_distr > epsilon,
+        bad_improve / count_distr,
         0.0
     )
 
@@ -418,19 +428,26 @@ def _compute_bin_stats_binary(
     cum_bad = np.cumsum(bad_counts)
     cum_total = cum_good + cum_bad
 
-    cum_lift = np.where(cum_total > 0, (cum_bad / cum_total) / (overall_bad_rate + epsilon), 0.0)
+    cum_lift = np.where(cum_total > 0, (cum_bad / cum_total) / overall_bad_rate, 0.0)
+    # 累计坏账改善 = (全量坏样本率 - 累计拒绝后剩余样本坏样本率) / 全量坏样本率
     other_cum_bad = total_bad - cum_bad
     other_cum_total = total - cum_total
     cum_bad_improve = np.where(
-        other_cum_total > 0,
-        (overall_bad_rate - other_cum_bad / other_cum_total) / (overall_bad_rate + epsilon),
+        overall_bad_rate > 0,
+        (overall_bad_rate - np.where(other_cum_total > 0, other_cum_bad / other_cum_total, 0.0)) / overall_bad_rate,
+        0.0
+    )
+    # 累计风险拒绝比 = 累计坏账改善 / 累计样本占比
+    cum_risk_reject = np.where(
+        cum_total > epsilon,
+        cum_bad_improve / (cum_total / total),
         0.0
     )
 
-    # 计算KS值
+    # 计算KS值（使用cum_bad计算累积坏样本数）
     cum_good_rate = cum_good / (total_good + epsilon)
-    cum_bad_rate = cum_bad / (total_bad + epsilon)
-    ks_values = np.abs(cum_bad_rate - cum_good_rate)
+    cum_bad_rate_ks = cum_bad / (total_bad + epsilon)
+    ks_values = np.abs(cum_bad_rate_ks - cum_good_rate)
 
     # 构建DataFrame
     data = {'分箱': unique_bins}
@@ -451,8 +468,10 @@ def _compute_bin_stats_binary(
         '指标IV值': total_iv,
         'LIFT值': lift,
         '坏账改善': bad_improve,
+        '风险拒绝比': risk_reject,
         '累积LIFT值': cum_lift,
         '累积坏账改善': cum_bad_improve,
+        '累计风险拒绝比': cum_risk_reject,
         '累积好样本数': cum_good.astype(int),
         '累积坏样本数': cum_bad.astype(int),
         '分档KS值': ks_values,
@@ -465,7 +484,8 @@ def _compute_bin_stats_binary(
         float_columns = {
             '样本占比': 6, '好样本占比': 6, '坏样本占比': 6,
             '坏样本率': 6, '分档WOE值': 6, '分档IV值': 6, '指标IV值': 6,
-            'LIFT值': 4, '坏账改善': 4, '累积LIFT值': 4, '累积坏账改善': 4,
+            'LIFT值': 4, '坏账改善': 4, '风险拒绝比': 4,
+            '累积LIFT值': 4, '累积坏账改善': 4, '累计风险拒绝比': 4,
             '分档KS值': 6,
         }
         for col, digits in float_columns.items():
@@ -713,30 +733,36 @@ def _compute_bin_stats_amount_weighted(
     
     # 计算LIFT值（金额口径）
     overall_bad_rate = total_bad_amount / total_amount if total_amount > 0 else 0.0
-    lift = np.where(bad_rate > 0, bad_rate / (overall_bad_rate + epsilon), 0.0)
-    
-    # 计算坏账改善
+    lift = np.where(bad_rate > 0, bad_rate / overall_bad_rate, 0.0)
+
+    # 坏账改善 = (全量坏样本率 - 拒绝后坏样本率) / 全量坏样本率
+    # 拒绝后坏样本率 = other_bad / other_total
     other_bad = total_bad_amount - bad_amounts
     other_total = total_amount - amount_totals
     bad_improve = np.where(
         other_total > 0,
-        (overall_bad_rate - other_bad / other_total) / (overall_bad_rate + epsilon),
+        (overall_bad_rate - other_bad / other_total) / overall_bad_rate,
         0.0
     )
-    
+    # 风险拒绝比 = 样本占比 = 该箱金额 / 全量金额
+    risk_reject = amount_ratios
+
     # 按分箱顺序计算累积指标
     cum_good = np.cumsum(good_amounts)
     cum_bad = np.cumsum(bad_amounts)
     cum_total = cum_good + cum_bad
-    
-    cum_lift = np.where(cum_total > 0, (cum_bad / cum_total) / (overall_bad_rate + epsilon), 0.0)
+
+    cum_lift = np.where(cum_total > 0, (cum_bad / cum_total) / overall_bad_rate, 0.0)
     other_cum_bad = total_bad_amount - cum_bad
     other_cum_total = total_amount - cum_total
+    # 累计坏账改善 = (全量坏样本率 - 累计拒绝后坏样本率) / 全量坏样本率
     cum_bad_improve = np.where(
         other_cum_total > 0,
-        (overall_bad_rate - other_cum_bad / other_cum_total) / (overall_bad_rate + epsilon),
+        (overall_bad_rate - other_cum_bad / other_cum_total) / overall_bad_rate,
         0.0
     )
+    # 累计风险拒绝比 = 累计样本占比
+    cum_risk_reject = np.where(total_amount > 0, cum_total / total_amount, 0.0)
     
     # 计算KS值（基于金额累积占比）
     cum_good_rate = cum_good / (total_good_amount + epsilon)
@@ -763,8 +789,10 @@ def _compute_bin_stats_amount_weighted(
         '指标IV值': np.round(total_iv, 6),
         'LIFT值': np.round(lift, 4),
         '坏账改善': np.round(bad_improve, 4),
+        '风险拒绝比': np.round(risk_reject, 4),
         '累积LIFT值': np.round(cum_lift, 4),
         '累积坏账改善': np.round(cum_bad_improve, 4),
+        '累计风险拒绝比': np.round(cum_risk_reject, 4),
         '累积好样本数': np.round(cum_good, 2),
         '累积坏样本数': np.round(cum_bad, 2),
         '分档KS值': np.round(ks_values, 6),
