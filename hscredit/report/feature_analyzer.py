@@ -150,6 +150,7 @@ def feature_bin_stats(
     margins: bool = False,
     amount: Optional[str] = None,
     verbose: int = 0,
+    monotonic: Optional[Union[str, bool]] = None,
     **kwargs
 ) -> Union[pd.DataFrame, Tuple[pd.DataFrame, Dict]]:
     """特征分箱统计表，汇总统计特征每个分箱的各项指标信息.
@@ -200,7 +201,16 @@ def feature_bin_stats(
         - True: 在最后一行显示合计，缺失值和特殊值放在正常分箱之后、合计之前
     :param amount: 金额字段名称，用于金额口径分析。传入后会增加金额总数、金额占比等指标
     :param verbose: 是否输出详细信息，默认 0
-    :param kwargs: 其他分箱器参数，如 monotonic='peak' 等
+    :param monotonic: 单调性约束，控制分箱后坏样本率的单调方向，透传给 OptimalBinning。可选值：
+        - None: 不强制单调性约束
+        - 'auto_asc': 自动判断并强制单调递增
+        - 'auto_desc': 自动判断并强制单调递减
+        - 'auto_asc_desc': 自动选择最优方向（递增/递减），默认选项
+        - 'peak': 先升后降，适用于评分类特征
+        - 'valley': 先降后升
+        - bool: True=强制升序，False=强制降序
+        注意：需配合 method 参数使用，部分 method 默认已包含单调约束（如 'monotonic' 方法）
+    :param kwargs: 其他分箱器参数（如 lift_refine、prebinning 等）
     
     :return: 
         - pd.DataFrame: 特征分箱统计表
@@ -221,6 +231,12 @@ def feature_bin_stats(
     >>> table = feature_bin_stats(data, 'score', rules=[300, 500, 700])
     >>> 
     >>> # 使用单调性分箱
+    >>> table = feature_bin_stats(data, 'score', method='mdlp', monotonic='peak')
+    >>>
+    >>> # 使用单调性约束 + 强制升序
+    >>> table = feature_bin_stats(data, 'score', method='mdlp', monotonic='auto_asc')
+    >>>
+    >>> # 直接使用 monotonic 方法
     >>> table = feature_bin_stats(data, 'score', method='monotonic', monotonic='peak')
     >>> 
     >>> # 金额口径分析
@@ -294,7 +310,11 @@ def feature_bin_stats(
         default_binner_params.setdefault('monotonic_bonus_weight', 0.4)
         default_binner_params.setdefault('lift_refine_max_bins', max_n_bins)
 
-    # 添加额外参数（如monotonic='auto_asc_desc'）
+    # 透传 monotonic 参数（优先级高于 kwargs）
+    if monotonic is not None:
+        default_binner_params['monotonic'] = monotonic
+
+    # 添加其他额外参数
     default_binner_params.update(kwargs)
 
     # 显式关闭预分箱
