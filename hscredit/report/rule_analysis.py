@@ -1490,19 +1490,89 @@ def rule_swap_analysis_v2(
             sample_survival_rate=final_pass_rate,
         )
 
+    # ── 第六步：构建OUT-IN置入报告 ────────────────────────────────────────
+    # 从 inout_report 提取 IN-IN 通过样本及其坏概率
+    inin_row = inout_report[inout_report['规则分类'] == 'IN-IN通过']
+    if not inin_row.empty:
+        # IN-IN 通过样本数（来自 inout_report）
+        n_inin = int(inin_row.iloc[0]['通过率'] * n_total_full) if n_total_full > 0 else len(in_remaining_data)
+        n_inin = min(n_inin, len(in_remaining_data))
+    else:
+        n_inin = len(in_remaining_data)
+
+    # IN-IN 样本的坏概率（从 in_remaining_data 的全量坏概率中取前 n_inin 个，
+    # 因为 in_remaining_data 的顺序与原始 data 一致）
+    in_remaining_bad_probs = full_bad_probs[in_remaining_mask.values].reset_index(drop=True)
+
+    outin_report = pd.DataFrame()
+    outin_bad_probs = pd.Series(dtype=float)
+    n_outin_total = 0
+    n_outin_bad = 0.0
+    all_in_pass_rate = final_pass_rate
+
+    if rules_in and len(in_remaining_data) > 0:
+        outin_report, outin_bad_probs, n_outin_total, n_outin_bad, all_in_pass_rate = _build_outin_report(
+            full_data=data,
+            in_remaining_data=in_remaining_data,
+            in_remaining_bad_probs=in_remaining_bad_probs,
+            rules_base=rules_base,
+            rules_in=rules_in,
+            bin_table_result=bin_table_result,
+            score_map=score_map,
+            score_weights=score_weights,
+            n_total_full=n_total_full,
+            n_bad_full=inout_n_bad_full,
+            full_bad_rate=full_bad_rate_v2,
+            sample_survival_rate=final_pass_rate,
+            rule_analysis_mode=rule_analysis_mode,
+            out_in_uplift=out_in_uplift,
+            amount=amount,
+            out_in_amount_fill=out_in_amount_fill,
+            out_in_amount_col=out_in_amount_col,
+        )
+
+    # ── 构建 swap_pipeline ───────────────────────────────────────────────
+    swap_pipeline = _build_swap_pipeline(
+        base_report=base_report,
+        inout_report=inout_report,
+        outin_report=outin_report,
+        n_total_full=n_total_full,
+        n_bad_full=inout_n_bad_full,
+        full_bad_rate=full_bad_rate_v2,
+        sample_survival_rate=sample_survival_rate,
+        rules_base=rules_base,
+        rules_out=rules_out,
+        rules_in=rules_in,
+        reverse_order=reverse_order,
+    )
+
+    # ── 构建 swap_result ──────────────────────────────────────────────────
+    swap_result = _build_swap_result(
+        base_report=base_report,
+        inout_report=inout_report,
+        outin_report=outin_report,
+        n_total_full=n_total_full,
+        n_bad_full=inout_n_bad_full,
+        full_bad_rate=full_bad_rate_v2,
+        sample_survival_rate=sample_survival_rate,
+        rules_base=rules_base,
+        rules_out=rules_out,
+        rules_in=rules_in,
+        out_in_uplift=out_in_uplift,
+    )
+
     # ── 返回结果 ────────────────────────────────────────────────────────────
-    # swap_summary: 合并 base_report 和 inout_report
-    # swap_pipeline / swap_result: 暂时返回空，后续逐步完善
     swap_summary_rows = []
     swap_summary_rows.extend(base_report.to_dict('records'))
     swap_summary_rows.extend(inout_report.to_dict('records'))
+    swap_summary_rows.extend(outin_report.to_dict('records'))
 
     swap_summary = pd.DataFrame(swap_summary_rows) if swap_summary_rows else pd.DataFrame()
 
     return {
         'swap_summary': swap_summary,
-        'swap_pipeline': pd.DataFrame(),
-        'swap_result': pd.DataFrame(),
+        'swap_pipeline': swap_pipeline,
+        'swap_result': swap_result,
     }
 
 
@@ -2225,7 +2295,7 @@ def _build_base_report(
                 'OUT-OUT合计', 'OUT-OUT合计', n_bad_comb, n_combined_hit,
                 n_total_full=n_total_full, n_bad_full=n_bad_full, full_bad_rate=full_bad_rate,
                 sample_survival_rate=sample_survival_rate,
-                pre_rule_pass_rate=current_pass_rate,
+                pre_rule_pass_rate=sample_survival_rate,
             ))
 
         else:
@@ -2271,7 +2341,9 @@ def _build_base_report(
         full_bad_probs, remain_mask, n_total, n_remain
     )
     n_bad_rem = round(n_bad_rem, 1)
-    # 剩余样本的通过率基准：在 sequential 模式下用最终累计通过率，independent 模式下用原始基准
+    # 剩余样本的通过率基准：
+    # - sequential 模式：current_pass_rate 已经是剩余通过率（在循环结束后等于 n_remain/n_total_full）
+    # - independent 模式：SSR（原始基准不变）
     remain_pass_rate = current_pass_rate if rule_analysis_mode == 'sequential' else sample_survival_rate
     rows.append(_make_report_row(
         '剩余样本', '剩余样本', n_bad_rem, n_remain,
@@ -2373,28 +2445,40 @@ def _build_inout_report(
     ))
 
     if not rules_out:
+        # rules_out 为空：IN-IN 通过基准行即为最终行（通过率不变）
+        # n_total=0 使公式 (base_pass_n - 0) / n_total_full = base_pass_rate = 1.0
+        rows.append(_make_report_row(
+            'IN-IN通过', 'IN-IN通过', in_total_bad, 0,
+            n_total_full=n_in_remaining_full, n_bad_full=n_bad_full, full_bad_rate=full_bad_rate,
+            sample_survival_rate=1.0,
+            pre_rule_pass_rate=1.0,
+        ))
         return pd.DataFrame(rows)
 
     # ── 单规则命中统计 ───────────────────────────────────────────────────
     # IN-OUT 基准通过率 = sample_survival_rate（来自OUT-OUT最终通过率）
-    # sequential 模式下从 OUT-OUT 最终通过率开始链式递减，independent 模式下保持固定
-    current_pass_rate = sample_survival_rate
+    # sequential 模式下从 IN-IN 基准（1.0）开始递减，independent 模式下保持固定
+    current_pass_rate = 1.0
     if rule_analysis_mode == 'sequential':
         current_remaining = pd.Series(True, index=in_remaining_data.index)
         for rule in rules_out:
             rule_hit = rule.predict(in_remaining_data)
+            # 规则命中的样本数：当前规则在当前剩余样本中的命中
+            # 用于统计和后续的 remaining 更新
             current_rule_hit = rule_hit & current_remaining
-
             n_hit = int(current_rule_hit.sum())
+            # 各规则独立命中的样本数（不过滤前序规则）
+            n_full_hit = int(rule_hit.sum())
+
             n_good, n_bad = _calc_good_bad_from_prob(
-                full_bad_probs_inout, current_rule_hit, n_total, n_hit
+                full_bad_probs_inout, rule_hit, n_total, n_full_hit
             )
             n_bad = round(n_bad, 1)
             rows.append(_make_report_row(
-                'IN-OUT置出', rule.name, n_bad, n_hit,
+                'IN-OUT置出', rule.name, n_bad, n_full_hit,
                 rule_detail=rule.expr,
                 n_total_full=n_in_remaining_full, n_bad_full=n_bad_full, full_bad_rate=full_bad_rate,
-                sample_survival_rate=sample_survival_rate,
+                sample_survival_rate=1.0,
                 pre_rule_pass_rate=current_pass_rate,
             ))
 
@@ -2412,10 +2496,12 @@ def _build_inout_report(
         rows.append(_make_report_row(
             'IN-OUT置出', 'IN-OUT置出合计', n_bad_comb, n_combined_hit,
             n_total_full=n_in_remaining_full, n_bad_full=n_bad_full, full_bad_rate=full_bad_rate,
-            sample_survival_rate=sample_survival_rate,
+            sample_survival_rate=1.0,
             pre_rule_pass_rate=current_pass_rate,
         ))
     else:
+        # independent 模式：每条规则独立评估，同时跟踪累计通过率用于combined行
+        current_pass_rate = 1.0
         for rule in rules_out:
             mask = rule.predict(in_remaining_data)
             n_hit = int(mask.sum())
@@ -2427,10 +2513,16 @@ def _build_inout_report(
                 'IN-OUT置出', rule.name, n_bad, n_hit,
                 rule_detail=rule.expr,
                 n_total_full=n_in_remaining_full, n_bad_full=n_bad_full, full_bad_rate=full_bad_rate,
-                sample_survival_rate=sample_survival_rate,
+                sample_survival_rate=1.0,
                 pre_rule_pass_rate=current_pass_rate,
             ))
+            # 更新累计通过率（sequential风格，用于combined行和后续individual行的相对值）
+            if n_in_remaining_full > 0:
+                base_pass_n = n_in_remaining_full * current_pass_rate
+                current_pass_rate = max(0.0, min(1.0, (base_pass_n - n_hit) / n_in_remaining_full))
 
+        # independent 模式 combined 行：以 IN-IN 基线（1.0）为基准
+        # current_pass_rate 仅用于 individual 行和 final 行，不用于 combined OR 行
         combined_rule = reduce(lambda r1, r2: r1 | r2, rules_out)
         combined_mask = combined_rule.predict(in_remaining_data)
         n_combined_hit = int(combined_mask.sum())
@@ -2441,8 +2533,8 @@ def _build_inout_report(
         rows.append(_make_report_row(
             'IN-OUT置出', 'IN-OUT置出合计', n_bad_comb, n_combined_hit,
             n_total_full=n_in_remaining_full, n_bad_full=n_bad_full, full_bad_rate=full_bad_rate,
-            sample_survival_rate=sample_survival_rate,
-            pre_rule_pass_rate=current_pass_rate,
+            sample_survival_rate=1.0,
+            pre_rule_pass_rate=1.0,
         ))
 
     # ── IN-IN通过（最终）：未被任何置出规则拒绝的样本 ──────────────────────
@@ -2457,17 +2549,252 @@ def _build_inout_report(
         full_bad_probs_inout, remain_mask, n_total, n_remain
     )
     n_bad_rem = round(n_bad_rem, 1)
-    # IN-IN通过（最终）：sequential模式用最终累计通过率，independent模式用 sample_survival_rate
+    # IN-IN通过（最终）：sequential模式用最终累计通过率，independent模式用最终current_pass_rate
     # n_total=0 使公式 (base_pass_n - 0) / n_total_full = in_pass_rate（最终通过率）
-    in_pass_rate = current_pass_rate if rule_analysis_mode == 'sequential' else sample_survival_rate
+    in_pass_rate = current_pass_rate
     rows.append(_make_report_row(
         'IN-IN通过', 'IN-IN通过', n_bad_rem, 0,
         n_total_full=n_in_remaining_full, n_bad_full=n_bad_full, full_bad_rate=full_bad_rate,
-        sample_survival_rate=sample_survival_rate,
+        sample_survival_rate=1.0,
         pre_rule_pass_rate=in_pass_rate,
     ))
 
     return pd.DataFrame(rows)
+
+
+def _build_outin_report(
+    full_data: pd.DataFrame,
+    in_remaining_data: pd.DataFrame,
+    in_remaining_bad_probs: pd.Series,
+    rules_base: List[Rule],
+    rules_in: List[Rule],
+    bin_table_result: Dict[str, pd.DataFrame],
+    score_map: Dict[str, str],
+    score_weights: Optional[Dict[str, float]] = None,
+    n_total_full: int = 0,
+    n_bad_full: float = 0.0,
+    full_bad_rate: float = 0.0,
+    sample_survival_rate: float = 1.0,
+    rule_analysis_mode: str = 'independent',
+    out_in_uplift: float = 2.0,
+    amount: Optional[str] = None,
+    out_in_amount_fill: Optional[float] = None,
+    out_in_amount_col: Optional[str] = None,
+) -> Tuple[pd.DataFrame, pd.Series, float, float, float]:
+    """构建OUT-IN置入分析报告。
+
+    四象限中的 OUT-IN：FAIL rules_base AND PASS rules_in
+    即被 rules_base（OUT规则）拒绝，但在 IN 规则下通过的样本。
+    这部分样本从 OUT 侧被 IN 规则捞回，通过率上涨，风险可能上升。
+
+    报告结构（IN-IN通过 > OUT-IN置入规则 > OUT-IN置入合计 > ALL-IN置换）：
+    - IN-IN通过（基准）：IN-IN 通过样本作为基准
+    - OUT-IN置入规则：每条 rules_in 规则的 OUT-IN 捞回效果
+    - OUT-IN置入合计：所有 rules_in 合并后的总 OUT-IN
+    - ALL-IN置换：IN-IN + OUT-IN 的并集 = 全部应该通过的客户
+
+    :param full_data: 全量样本集（原始 data）
+    :param in_remaining_data: 经过 OUT-OUT + IN-OUT 后的剩余样本（IN-IN通过样本）
+    :param in_remaining_bad_probs: IN-IN 样本的预测坏概率
+    :param rules_base: OUT 规则集（用于识别 FAIL rules_base 的样本）
+    :param rules_in: IN 规则集（用于从 OUT 侧捞回样本）
+    :param bin_table_result: {评分名: 分箱表}
+    :param score_map: {评分名: 实际列名}
+    :param score_weights: 多评分权重（可选）
+    :param n_total_full: 全量样本总数
+    :param n_bad_full: 全量预测坏样本总数
+    :param full_bad_rate: 全量样本坏样本率
+    :param sample_survival_rate: 基准通过率（IN-IN 通过率，来自 inout_report）
+    :param rule_analysis_mode: 规则分析模式（independent/sequential）
+    :param out_in_uplift: OUT-IN 风险上浮系数（默认 2.0）
+    :param amount: 金额字段（可选，用于金额口径）
+    :param out_in_amount_fill: OUT-IN 样本额度填充定值（可选）
+    :param out_in_amount_col: OUT-IN 样本额度填充字段（可选）
+    :return: (OUT-IN报告DataFrame, OUT-IN样本坏概率, OUT-IN总样本数, OUT-IN总坏样本数, ALL-IN通过率)
+    """
+    rows = []
+    n_in_remain = len(in_remaining_data)
+    n_in_remain_full = n_total_full
+
+    # ── 计算全量样本的坏概率 ─────────────────────────────────────────────
+    score_bad_probs_full = {}
+    for name, df_bin in bin_table_result.items():
+        score_col = score_map[name]
+        single_bad_col, _ = _extract_bad_rate_col(df_bin)
+        score_bad_probs_full[name] = _compute_predicted_bad_prob(
+            full_data, score_col, df_bin, single_bad_col
+        )
+
+    if len(score_bad_probs_full) == 1:
+        only_name = list(score_bad_probs_full.keys())[0]
+        full_bad_probs_outin = score_bad_probs_full[only_name]
+    else:
+        if score_weights:
+            weights = {name: score_weights[name] for name in score_bad_probs_full}
+        else:
+            n_scores = len(score_bad_probs_full)
+            weights = {name: 1.0 / n_scores for name in score_bad_probs_full}
+        prob_sum = None
+        for name, prob in score_bad_probs_full.items():
+            w = weights[name]
+            prob_sum = prob * w if prob_sum is None else prob_sum + prob * w
+        full_bad_probs_outin = prob_sum
+
+    # ── 识别 OUT-IN 样本：FAIL rules_base AND PASS rules_in ───────────────
+    if rules_base:
+        combined_base = reduce(lambda r1, r2: r1 | r2, rules_base)
+        out_mask = combined_base.predict(full_data)  # True = FAIL rules_base
+    else:
+        out_mask = pd.Series(False, index=full_data.index)
+
+    # OUT-IN 样本索引：FAIL rules_base
+    out_indices = full_data.index[out_mask]
+
+    # 计算 OUT-IN 样本的坏概率（应用上浮系数）
+    outin_bad_probs_base = full_bad_probs_outin[out_mask.values].copy()
+    outin_bad_probs = outin_bad_probs_base * out_in_uplift
+
+    # ── IN-IN 通过基准行 ────────────────────────────────────────────────
+    in_total_bad = float(in_remaining_bad_probs.sum())
+    in_total_bad = max(0.0, min(in_total_bad, n_in_remain))
+    rows.append(_make_report_row(
+        'IN-IN通过', 'IN-IN通过', in_total_bad, 0,
+        n_total_full=n_in_remain_full, n_bad_full=n_bad_full, full_bad_rate=full_bad_rate,
+        sample_survival_rate=sample_survival_rate,
+        pre_rule_pass_rate=sample_survival_rate,
+    ))
+
+    if not rules_in:
+        return pd.DataFrame(rows), pd.Series(dtype=float), 0, 0.0, sample_survival_rate
+
+    # ── OUT-IN 分析 ─────────────────────────────────────────────────────
+    # pre_rule_pass_rate 基准 = IN-IN 通过率（当前累计通过率）
+    # 每条 OUT-IN 规则增加 (n_added / n_total_full) 的通过率
+    current_pass_rate = sample_survival_rate
+
+    # 用于 sequential 模式：跟踪还剩多少 OUT-IN 样本可被后续规则捞回
+    outin_remaining = outin_bad_probs.copy()
+    outin_remaining_indices = out_indices.copy()
+
+    if rule_analysis_mode == 'sequential':
+        for rule in rules_in:
+            # 当前规则可捞回的 OUT-IN 样本：FAIL rules_base AND PASS this rule
+            rule_in_hit = rule.predict(full_data)  # PASS this IN rule
+            current_outin_mask = out_mask & rule_in_hit  # FAIL base AND PASS this rule
+
+            n_added = int(current_outin_mask.sum())
+            added_probs = full_bad_probs_outin[current_outin_mask.values] * out_in_uplift
+            n_bad_added = float(added_probs.sum())
+            n_bad_added = round(n_bad_added, 1)
+            n_bad_added = max(0.0, min(n_bad_added, float(n_added)))
+
+            rows.append(_make_report_row(
+                'OUT-IN置入', rule.name, n_bad_added, n_added,
+                rule_detail=rule.expr,
+                n_total_full=n_in_remain_full, n_bad_full=n_bad_full, full_bad_rate=full_bad_rate,
+                sample_survival_rate=sample_survival_rate,
+                pre_rule_pass_rate=current_pass_rate,
+            ))
+
+            # 从 remaining 中移除已被当前规则捞回的样本（避免重复计数）
+            newly_approved_idx = full_data.index[current_outin_mask]
+            outin_remaining_indices = outin_remaining_indices.difference(newly_approved_idx)
+            if len(outin_remaining_indices) > 0:
+                outin_remaining = full_bad_probs_outin.loc[outin_remaining_indices] * out_in_uplift
+            else:
+                outin_remaining = pd.Series(dtype=float)
+
+            # 更新累计通过率
+            if n_in_remain_full > 0:
+                base_pass_n = n_in_remain_full * current_pass_rate
+                current_pass_rate = max(0.0, min(1.0, (base_pass_n + n_added) / n_in_remain_full))
+
+        # OUT-IN 合计（sequential = 所有规则捞回的总和）
+        n_outin_total = int((out_mask & reduce(
+            lambda r1, r2: r1 | r2, [r.predict(full_data) for r in rules_in]
+        )).sum())
+        n_outin_bad = float(
+            full_bad_probs_outin[out_mask & reduce(
+                lambda r1, r2: r1 | r2, [r.predict(full_data) for r in rules_in]
+            )].sum() * out_in_uplift
+        )
+        n_outin_bad = round(n_outin_bad, 1)
+        n_outin_bad = max(0.0, min(n_outin_bad, float(n_outin_total)))
+
+        rows.append(_make_report_row(
+            'OUT-IN置入', 'OUT-IN置入合计', n_outin_bad, n_outin_total,
+            n_total_full=n_in_remain_full, n_bad_full=n_bad_full, full_bad_rate=full_bad_rate,
+            sample_survival_rate=sample_survival_rate,
+            pre_rule_pass_rate=current_pass_rate,
+        ))
+
+    else:
+        # independent 模式：每条规则独立应用
+        # OUT-IN 样本 = FAIL rules_base ∩ PASS this rule
+        # 注意：可能存在重叠（同一 OUT 样本被多条 IN 规则同时捞回）
+        outin_individual = []  # [(n_added, n_bad_added, ...), ...]
+        combined_in_mask = reduce(
+            lambda r1, r2: r1 | r2, [r.predict(full_data) for r in rules_in]
+        )
+        total_unique_outin_mask = out_mask & combined_in_mask
+
+        for rule in rules_in:
+            rule_in_hit = rule.predict(full_data)
+            current_outin_mask = out_mask & rule_in_hit
+
+            n_added = int(current_outin_mask.sum())
+            added_probs = full_bad_probs_outin[current_outin_mask.values] * out_in_uplift
+            n_bad_added = float(added_probs.sum())
+            n_bad_added = round(n_bad_added, 1)
+            n_bad_added = max(0.0, min(n_bad_added, float(n_added)))
+
+            rows.append(_make_report_row(
+                'OUT-IN置入', rule.name, n_bad_added, n_added,
+                rule_detail=rule.expr,
+                n_total_full=n_in_remain_full, n_bad_full=n_bad_full, full_bad_rate=full_bad_rate,
+                sample_survival_rate=sample_survival_rate,
+                pre_rule_pass_rate=current_pass_rate,
+            ))
+            outin_individual.append((n_added, n_bad_added))
+
+        # OUT-IN 合计（unique: 所有 OUT-IN 样本，不重叠）
+        n_outin_total = int(total_unique_outin_mask.sum())
+        n_outin_bad = float(
+            full_bad_probs_outin[total_unique_outin_mask.values].sum() * out_in_uplift
+        )
+        n_outin_bad = round(n_outin_bad, 1)
+        n_outin_bad = max(0.0, min(n_outin_bad, float(n_outin_total)))
+
+        rows.append(_make_report_row(
+            'OUT-IN置入', 'OUT-IN置入合计', n_outin_bad, n_outin_total,
+            n_total_full=n_in_remain_full, n_bad_full=n_bad_full, full_bad_rate=full_bad_rate,
+            sample_survival_rate=sample_survival_rate,
+            pre_rule_pass_rate=current_pass_rate,
+        ))
+
+    # ── ALL-IN 置换行：IN-IN + OUT-IN 并集 ──────────────────────────────
+    # ALL-IN 通过率 = (IN-IN 样本数 + OUT-IN 样本数) / n_total_full
+    # 但坏样本率计算：IN-IN + OUT-IN 的合并坏样本率
+    all_in_n = n_in_remain + n_outin_total
+    all_in_bad = in_total_bad + n_outin_bad
+    all_in_bad = max(0.0, min(all_in_bad, float(all_in_n)))
+
+    # ALL-IN 通过率 = (n_in_remain + n_outin_total) / n_in_remain_full
+    all_in_pass_rate = (n_in_remain + n_outin_total) / n_in_remain_full if n_in_remain_full > 0 else 0.0
+
+    rows.append(_make_report_row(
+        'ALL-IN置换', 'ALL-IN置换', all_in_bad, 0,
+        n_total_full=n_in_remain_full, n_bad_full=n_bad_full, full_bad_rate=full_bad_rate,
+        sample_survival_rate=sample_survival_rate,
+        pre_rule_pass_rate=all_in_pass_rate,
+    ))
+
+    df_outin = pd.DataFrame(rows)
+
+    # OUT-IN 样本的坏概率 Series（用于后续金额口径计算）
+    outin_bad_series = outin_bad_probs.copy()
+
+    return df_outin, outin_bad_series, n_outin_total, n_outin_bad, all_in_pass_rate
 
 
 def _calc_good_bad_from_prob(
@@ -2494,6 +2821,299 @@ def _calc_good_bad_from_prob(
     n_bad = max(0.0, min(n_bad, float(n_hit)))
     n_good = float(n_hit) - n_bad
     return float(n_good), float(n_bad)
+
+
+def _build_swap_pipeline(
+    base_report: pd.DataFrame,
+    inout_report: pd.DataFrame,
+    outin_report: pd.DataFrame,
+    n_total_full: int,
+    n_bad_full: float,
+    full_bad_rate: float,
+    sample_survival_rate: float,
+    rules_base: List[Rule],
+    rules_out: Optional[List[Rule]],
+    rules_in: Optional[List[Rule]],
+    reverse_order: bool = False,
+) -> pd.DataFrame:
+    """从三步报告构建 swap_pipeline 表格（17列格式）。
+
+    列：是否存在, 分析流程, 规则集, 样本数, 样本占比, 好样本数, 好样本占比,
+         坏样本数, 坏样本占比, 坏样本率, LIFT, 坏账改善, 风险拒绝比,
+         通过率, 通过率%(绝对值), 通过率%(相对值), 调整方向
+
+    顺序（normal）：
+        全量样本 → OUT-OUT拒绝 → 剩余样本 → IN-OUT置出 → IN-IN通过 → OUT-IN置入 → ALL-IN置换
+    顺序（reverse_order=True）：
+        ALL-IN置换 → OUT-IN置入 → IN-IN通过 → 剩余样本 → IN-OUT置出 → OUT-OUT拒绝 → 全量样本
+
+    :param base_report: Step2 OUT-OUT 报告
+    :param inout_report: Step3 IN-OUT 报告
+    :param outin_report: Step4 OUT-IN 报告
+    :param n_total_full: 全量样本总数
+    :param n_bad_full: 全量预测坏样本总数
+    :param full_bad_rate: 全量样本坏样本率
+    :param sample_survival_rate: 原始通过率
+    :param rules_base: OUT 规则集
+    :param rules_out: IN-OUT 规则集
+    :param rules_in: OUT-IN 规则集
+    :param reverse_order: 是否逆序展示
+    :return: swap_pipeline DataFrame
+    """
+    if n_total_full == 0:
+        return pd.DataFrame()
+
+    # helper：从 report 中提取指定分类的行，映射到 pipeline 格式
+    def _extract_rows(report_df, target_class):
+        return [r for r in report_df.to_dict('records') if r.get('规则分类') == target_class]
+
+    # ── 正常顺序的行序列 ───────────────────────────────────────────────────
+    sections = []
+
+    # ① 全量样本
+    full_rows = [r for r in base_report.to_dict('records') if r.get('规则分类') == '全量样本']
+    sections.append(('是', full_rows))
+
+    # ② OUT-OUT拒绝样本（rules_base 存在时）
+    if rules_base:
+        out_rows = [r for r in base_report.to_dict('records') if r.get('规则分类') == 'OUT-OUT规则']
+        sum_rows = [r for r in base_report.to_dict('records') if r.get('规则分类') == 'OUT-OUT合计']
+        sections.append(('是', out_rows))
+        sections.append(('是', sum_rows))
+
+    # ③ 剩余样本
+    remain_rows = [r for r in base_report.to_dict('records') if r.get('规则分类') == '剩余样本']
+    sections.append(('是', remain_rows))
+
+    # ④ IN-OUT置出样本（rules_out 存在时）
+    if rules_out:
+        inout_rule_rows = [r for r in inout_report.to_dict('records') if r.get('规则分类') == 'IN-OUT置出']
+        # 合计行需要过滤掉 IN-IN通过 行
+        inout_sum_rows = [
+            r for r in inout_report.to_dict('records')
+            if r.get('规则分类') == 'IN-OUT置出' and r.get('指标名称') == 'IN-OUT置出合计'
+        ]
+        sections.append(('是', inout_rule_rows))
+        sections.append(('是', inout_sum_rows))
+
+    # ⑤ IN-IN通过样本
+    inin_rows = [r for r in inout_report.to_dict('records') if r.get('规则分类') == 'IN-IN通过']
+    sections.append(('是', inin_rows))
+
+    # ⑥ OUT-IN置入样本（rules_in 存在时）
+    if rules_in:
+        outin_rule_rows = [r for r in outin_report.to_dict('records') if r.get('规则分类') == 'OUT-IN置入']
+        outin_sum_rows = [
+            r for r in outin_report.to_dict('records')
+            if r.get('规则分类') == 'OUT-IN置入' and r.get('指标名称') == 'OUT-IN置入合计'
+        ]
+        sections.append(('是', outin_rule_rows))
+        sections.append(('是', outin_sum_rows))
+
+    # ⑦ ALL-IN置换样本（rules_in 存在时）
+    if rules_in:
+        allin_rows = [r for r in outin_report.to_dict('records') if r.get('规则分类') == 'ALL-IN置换']
+        sections.append(('是', allin_rows))
+
+    # ── 映射分析流程名 ──────────────────────────────────────────────────────
+    # 分析流程名 = 规则分类（但 IN-IN通过 → 'IN-IN通过样本', ALL-IN置换 → 'ALL-IN置换样本'）
+    flow_map = {
+        '全量样本': '全量样本',
+        'OUT-OUT规则': 'OUT-OUT拒绝样本',
+        'OUT-OUT合计': 'OUT-OUT拒绝样本',
+        '剩余样本': '剩余样本',
+        'IN-OUT置出': 'IN-OUT置出样本',
+        'IN-IN通过': 'IN-IN通过样本',
+        'OUT-IN置入': 'OUT-IN置入样本',
+        'ALL-IN置换': 'ALL-IN置换样本',
+    }
+
+    # ── 收集所有行 ──────────────────────────────────────────────────────────
+    all_rows = []
+    for section_exists, section_rows in sections:
+        for row in section_rows:
+            row_copy = dict(row)
+            flow_key = row_copy.get('规则分类', '')
+            row_copy['是否存在'] = section_exists
+            row_copy['分析流程'] = flow_map.get(flow_key, flow_key)
+            all_rows.append(row_copy)
+
+    if not all_rows:
+        return pd.DataFrame()
+
+    # ── 统一列顺序 ──────────────────────────────────────────────────────────
+    pipeline_cols = [
+        '是否存在', '分析流程', '规则集', '样本数', '样本占比', '好样本数', '好样本占比',
+        '坏样本数', '坏样本占比', '坏样本率', 'LIFT值', '坏账改善', '风险拒绝比',
+        '通过率', '通过率%(绝对值)', '通过率%(相对值)', '调整方向',
+    ]
+
+    # 规则集列：来自 '规则详情' 列
+    for row in all_rows:
+        row['规则集'] = row.pop('规则详情', '')
+
+    # 确保每行都有所有列
+    df = pd.DataFrame(all_rows)
+    for col in pipeline_cols:
+        if col not in df.columns:
+            df[col] = ''
+
+    # 调整列顺序
+    df = df[pipeline_cols]
+
+    # ── 逆序处理 ────────────────────────────────────────────────────────────
+    if reverse_order:
+        # 交换 OUT-OUT 和 OUT-IN（对称逆序）
+        out_block_end = 0
+        # 找到 OUT-OUT 合计后的位置（剩余样本开始）
+        out_block_end = 2 if not rules_base else (
+            2 + 1 + len([r for r in base_report.to_dict('records') if r.get('规则分类') == 'OUT-OUT规则'])
+        )
+        # 找到 IN-IN 通过样本的位置
+        inin_pos = len(df)
+        for i, row in enumerate(all_rows):
+            if row.get('分析流程') == 'IN-IN通过样本':
+                inin_pos = i
+                break
+
+        # 逆序：翻转 OUT-IN 部分和 OUT-OUT 部分的相对顺序
+        # 简化：直接翻转整个 df
+        df = df.iloc[::-1].reset_index(drop=True)
+
+    return df
+
+
+def _build_swap_result(
+    base_report: pd.DataFrame,
+    inout_report: pd.DataFrame,
+    outin_report: pd.DataFrame,
+    n_total_full: int,
+    n_bad_full: float,
+    full_bad_rate: float,
+    sample_survival_rate: float,
+    rules_base: List[Rule],
+    rules_out: Optional[List[Rule]],
+    rules_in: Optional[List[Rule]],
+    out_in_uplift: float = 2.0,
+) -> pd.DataFrame:
+    """构建置换结果对比表（置换前后对比 + 业务增益）。
+
+    置换前 = swap前生产策略通过率（sample_survival_rate）时的风险水平
+    置换后 = ALL-IN 置换通过率时的风险水平（OUT-IN 样本应用 uplift 系数）
+
+    :return: swap_result DataFrame（两节：置换前后对比 + 业务增益）
+    """
+    rows = []
+
+    # ── 提取关键指标 ──────────────────────────────────────────────────────
+    # 置换前通过率 = sample_survival_rate（生产策略原始通过率）
+    pre_pass_rate = sample_survival_rate
+
+    # 置换后通过率 = ALL-IN 通过率（从 outin_report 的 ALL-IN 行）
+    post_pass_rate = pre_pass_rate
+    post_bad_rate = full_bad_rate
+    post_n_bad = n_bad_full
+    post_n_good = n_total_full - n_bad_full
+
+    if rules_in and not outin_report.empty:
+        allin_rows = [r for r in outin_report.to_dict('records') if r.get('规则分类') == 'ALL-IN置换']
+        if allin_rows:
+            row = allin_rows[0]
+            post_pass_rate = float(row.get('通过率', pre_pass_rate))
+            post_bad_rate = float(row.get('坏样本率', full_bad_rate))
+            post_n_bad = float(row.get('坏样本数', n_bad_full))
+            post_n_good = n_total_full - post_n_bad
+
+    # IN-OUT 置出效果（如果有）
+    inout_effect_n_bad = 0.0
+    inout_effect_n_good = 0
+    if rules_out and not inout_report.empty:
+        inout_sum = [r for r in inout_report.to_dict('records')
+                     if r.get('规则分类') == 'IN-OUT置出' and r.get('指标名称') == 'IN-OUT置出合计']
+        if inout_sum:
+            inout_effect_n_bad = float(inout_sum[0].get('坏样本数', 0))
+            inout_effect_n_good = int(inout_sum[0].get('好样本数', 0))
+
+    # OUT-IN 置入效果（如果有）
+    outin_effect_n_bad = 0.0
+    outin_effect_n_good = 0
+    if rules_in and not outin_report.empty:
+        outin_sum = [r for r in outin_report.to_dict('records')
+                     if r.get('规则分类') == 'OUT-IN置入' and r.get('指标名称') == 'OUT-IN置入合计']
+        if outin_sum:
+            outin_effect_n_bad = float(outin_sum[0].get('坏样本数', 0))
+            outin_effect_n_good = int(outin_sum[0].get('好样本数', 0))
+
+    # ── 第一节：置换前后对比 ──────────────────────────────────────────────
+    pre_n_pass = int(pre_pass_rate * n_total_full)
+    post_n_pass = int(post_pass_rate * n_total_full)
+
+    # 置换前坏样本率（调整前 baseline）
+    pre_bad_rate = full_bad_rate
+
+    # 置换后坏样本率（OUT-IN 应用 uplift）
+    # post_bad_rate 已从 ALL-IN 行获取
+
+    # 风险上浮系数
+    risk_uplift = out_in_uplift if rules_in else 1.0
+
+    # 置换前/后通过率变化
+    pass_rate_change_abs = (post_pass_rate - pre_pass_rate) * 100  # 百分点
+    pass_rate_change_rel = 0.0
+    if pre_pass_rate > 0:
+        pass_rate_change_rel = (post_pass_rate - pre_pass_rate) / pre_pass_rate * 100  # 相对%
+
+    # 置换前/后逾期率变化
+    bad_rate_change_abs = (post_bad_rate - pre_bad_rate) * 100  # 百分点
+    bad_rate_change_rel = 0.0
+    if pre_bad_rate > 0:
+        bad_rate_change_rel = (post_bad_rate - pre_bad_rate) / pre_bad_rate * 100  # 相对%
+
+    contrast_rows = [
+        {'指标': '置换前通过率', '绝对值': f'{pre_pass_rate * 100:.2f}%', '相对值': '-', '说明': '生产策略原始通过率'},
+        {'指标': '置换后通过率', '绝对值': f'{post_pass_rate * 100:.2f}%', '相对值': '-', '说明': 'ALL-IN置换后通过率'},
+        {'指标': '通过率变化', '绝对值': f'{pass_rate_change_abs:+.2f}%', '相对值': f'{pass_rate_change_rel:+.2f}%', '说明': '置换前后通过率变化'},
+        {'指标': '置换前坏样本率', '绝对值': f'{pre_bad_rate * 100:.2f}%', '相对值': '-', '说明': '置换前预测坏账率'},
+        {'指标': '置换后坏样本率', '绝对值': f'{post_bad_rate * 100:.2f}%', '相对值': '-', '说明': '置换后预测坏账率(含OUT-IN上浮)'},
+        {'指标': '坏样本率变化', '绝对值': f'{bad_rate_change_abs:+.2f}%', '相对值': f'{bad_rate_change_rel:+.2f}%', '说明': '置换前后逾期率变化'},
+        {'指标': '风险预估上浮系数', '绝对值': f'{risk_uplift:.1f}x', '相对值': '-', '说明': 'OUT-IN样本风险上浮系数'},
+        {'指标': 'IN-OUT置出坏样本数', '绝对值': f'{inout_effect_n_bad:.0f}', '相对值': '-', '说明': 'IN-OUT置出拒绝的坏样本数'},
+        {'指标': 'IN-OUT置出好样本数', '绝对值': f'{inout_effect_n_good}', '相对值': '-', '说明': 'IN-OUT置出拒绝的好样本数'},
+        {'指标': 'OUT-IN置入坏样本数', '绝对值': f'{outin_effect_n_bad:.0f}', '相对值': '-', '说明': 'OUT-IN置入捞回的坏样本数(已上浮)'},
+        {'指标': 'OUT-IN置入好样本数', '绝对值': f'{outin_effect_n_good}', '相对值': '-', '说明': 'OUT-IN置入捞回的好样本数'},
+    ]
+    rows.extend(contrast_rows)
+
+    # ── 第二节：业务增益 ─────────────────────────────────────────────────
+    # 放款增量 = (置换后通过样本数 - 置换前通过样本数)
+    loan_increase = post_n_pass - pre_n_pass  # 绝对值（样本数）
+    loan_increase_pct = 0.0
+    if pre_n_pass > 0:
+        loan_increase_pct = (post_n_pass - pre_n_pass) / pre_n_pass * 100  # 相对%
+
+    # 风险优化情况
+    # 风险优化 = IN-OUT 拒绝的坏样本 - OUT-IN 捞回的坏样本
+    risk_optim = inout_effect_n_bad - outin_effect_n_bad  # 绝对值
+    risk_optim_pct = 0.0
+    if inout_effect_n_bad > 0:
+        risk_optim_pct = (inout_effect_n_bad - outin_effect_n_bad) / inout_effect_n_bad * 100
+
+    # 综合增益：净增加好样本 = IN-OUT拒绝的好样本 + OUT-IN捞回的好样本
+    net_good_increase = inout_effect_n_good + outin_effect_n_good  # 绝对值
+    net_good_increase_pct = 0.0
+    if n_total_full > 0:
+        net_good_increase_pct = net_good_increase / n_total_full * 100
+
+    gain_rows = [
+        {'指标': '放款增量(样本数)', '绝对值': f'{loan_increase:+d}', '相对值': f'{loan_increase_pct:+.2f}%', '说明': '置换后增加的好客户数'},
+        {'指标': '风险优化量(坏账减少)', '绝对值': f'{risk_optim:+.0f}', '相对值': f'{risk_optim_pct:+.2f}%', '说明': 'IN-OUT拒绝- OUT-IN捞回坏样本数'},
+        {'指标': '净增好样本(绝对值)', '绝对值': f'{net_good_increase:+d}', '相对值': f'{net_good_increase_pct:+.2f}%', '说明': '拒绝好样本+捞回好样本的净增益'},
+        {'指标': '置换后总通过样本数', '绝对值': f'{post_n_pass}', '相对值': f'{post_pass_rate * 100:.2f}%', '说明': 'ALL-IN置换后通过总样本数'},
+        {'指标': '置换后预测坏样本数', '绝对值': f'{post_n_bad:.0f}', '相对值': f'{post_bad_rate * 100:.2f}%', '说明': 'ALL-IN置换后预测坏样本数(含上浮)'},
+    ]
+    rows.extend(gain_rows)
+
+    return pd.DataFrame(rows)
 
 
 def _make_report_row(
