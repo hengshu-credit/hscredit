@@ -438,7 +438,7 @@ class OverduePredictor(BaseEstimator, TransformerMixin):
 
         支持的标签格式:
         - '(-inf, 300]', '(300, 500]', '(500, +inf)'
-        - '缺失', '特殊'
+        - 'missing', 'special'
 
         :param labels: 分箱标签列表
         :return: 切分点数组
@@ -448,7 +448,7 @@ class OverduePredictor(BaseEstimator, TransformerMixin):
         splits = []
         for label in labels:
             label = str(label).strip()
-            if label in ('缺失', '特殊', '合计', ''):
+            if label in ('missing', 'special', '合计', ''):
                 continue
 
             # 匹配区间格式: (left, right] 或 [left, right)
@@ -564,17 +564,17 @@ class OverduePredictor(BaseEstimator, TransformerMixin):
         for val in values:
             if pd.isna(val):
                 # 缺失值处理
-                if '缺失' in rates:
-                    bin_labels.append('缺失')
-                    base_rates.append(rates['缺失'])
+                if 'missing' in rates:
+                    bin_labels.append('missing')
+                    base_rates.append(rates['missing'])
                 else:
-                    bin_labels.append('缺失')
+                    bin_labels.append('missing')
                     base_rates.append(0.0)
                 continue
 
             assigned = False
             for label, (left, right, left_inc, right_inc) in bin_intervals.items():
-                if label in ('缺失', '特殊', '合计'):
+                if label in ('missing', 'special', '合计'):
                     continue
 
                 # 检查是否在区间内
@@ -598,9 +598,9 @@ class OverduePredictor(BaseEstimator, TransformerMixin):
 
             if not assigned:
                 # 尝试特殊值匹配
-                if '特殊' in rates:
-                    bin_labels.append('特殊')
-                    base_rates.append(rates['特殊'])
+                if 'special' in rates:
+                    bin_labels.append('special')
+                    base_rates.append(rates['special'])
                 else:
                     # 使用最近的分箱逾期率
                     bin_labels.append('未知')
@@ -619,7 +619,7 @@ class OverduePredictor(BaseEstimator, TransformerMixin):
         intervals = {}
         for label in rates:
             label_str = str(label).strip()
-            if label_str in ('缺失', '特殊', '合计', '未知'):
+            if label_str in ('missing', 'special', '合计', '未知'):
                 intervals[label_str] = (None, None, False, False)
                 continue
 
@@ -699,7 +699,7 @@ class OverduePredictor(BaseEstimator, TransformerMixin):
         if '合计' in rates:
             return rates['合计']
         # 简单平均
-        valid_rates = [r for l, r in rates.items() if l not in ('合计', '缺失', '特殊')]
+        valid_rates = [r for l, r in rates.items() if l not in ('合计', 'missing', 'special')]
         return np.mean(valid_rates) if valid_rates else 0.0
 
     def _apply_coefficients(

@@ -63,27 +63,33 @@ def _get_bin_labels(splits: Optional[np.ndarray], bins: np.ndarray) -> List[str]
         for current_bin in unique_bins:
             bin_value = int(current_bin)
             if bin_value == -1:
-                labels.append('缺失')
+                labels.append('missing')
             elif bin_value == -2:
-                labels.append('特殊')
+                labels.append('special')
             else:
                 labels.append('[-inf, +inf)')
         return labels
 
     n_splits = len(splits)
+    # 过滤掉 NaN split points，用真实切分点生成分箱标签
+    real_splits = splits[~np.isnan(splits)]
+    n_real_splits = len(real_splits)
     labels = []
     for current_bin in unique_bins:
         bin_value = int(current_bin)
         if bin_value == -1:
-            labels.append('缺失')
+            labels.append('missing')
         elif bin_value == -2:
-            labels.append('特殊')
+            labels.append('special')
         elif bin_value == 0:
-            labels.append(f'[-inf, {splits[0]})')
-        elif bin_value >= n_splits:
-            labels.append(f'[{splits[-1]}, +inf)')
+            labels.append(f'[-inf, {real_splits[0]})')
+        elif bin_value >= n_real_splits:
+            if n_real_splits == 0:
+                labels.append('[-inf, +inf)')
+            else:
+                labels.append(f'[{real_splits[-1]}, +inf)')
         else:
-            labels.append(f'[{splits[bin_value - 1]}, {splits[bin_value]})')
+            labels.append(f'[{real_splits[bin_value - 1]}, {real_splits[bin_value]})')
 
     return labels
 
@@ -441,12 +447,13 @@ def feature_bin_stats(
             
             # 分箱转换
             X_feat = analysis_data[[feat]]
-            # 使用 digitize 进行分箱转换，与分箱器内部逻辑一致
             splits = current_binner.splits_.get(feat, np.array([]))
             x_values = X_feat[feat].values
             # 处理缺失值
             missing_mask = pd.isna(x_values)
-            bins = np.digitize(x_values, splits, right=True)
+            # np.digitize 在 splits 包含 NaN 时行为异常，需要先过滤
+            real_splits = splits[~np.isnan(splits)] if len(splits) > 0 else splits
+            bins = np.digitize(x_values, real_splits, right=True)
             bins = bins.astype(float)
             bins[missing_mask] = -1  # 缺失值标记为 -1
             

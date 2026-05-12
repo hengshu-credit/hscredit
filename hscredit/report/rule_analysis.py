@@ -1793,7 +1793,7 @@ def _store_splits_from_labels(tbl: pd.DataFrame) -> None:
 
     splits = []
     for lbl in labels:
-        if lbl in ('缺失', '特殊', '合计'):
+        if lbl in ('missing', 'special', '合计'):
             continue
         # 格式: [x, y) 或 [x, +inf)
         m = re.search(r', *(.+?)\)', str(lbl))
@@ -2137,7 +2137,7 @@ def _compute_predicted_bad_prob(
 
         _splits_list = []
         for lbl in labels:
-            if lbl in ('缺失', '特殊', '合计'):
+            if lbl in ('missing', 'special', '合计'):
                 continue
             m = _re.search(r', *(.+?)\)', str(lbl))
             if m:

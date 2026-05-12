@@ -217,7 +217,7 @@ class ExcelWriter:
 
     def _get_column_cells_data(self, worksheet: Worksheet, col_letter: str) -> List[Tuple[int, Any, str, Any]]:
         """获取指定列的所有单元格数据。
-        
+
         :param worksheet: 工作表对象
         :param col_letter: 列字母
         :return: 列表，每项为 (row_idx, value, style_name, fill)
@@ -236,7 +236,7 @@ class ExcelWriter:
 
     def _reapply_styles_to_column(self, worksheet: Worksheet, col_letter: str, cells_data: List[Tuple[int, Any, str, Any]]) -> None:
         """重新应用样式到指定列的单元格。
-        
+
         :param worksheet: 工作表对象
         :param col_letter: 列字母
         :param cells_data: 单元格数据列表
