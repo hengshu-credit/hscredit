@@ -833,9 +833,9 @@ def add_margins(table: pd.DataFrame) -> pd.DataFrame:
     
     for idx, row in table.iterrows():
         label = row[bin_label_col]
-        if label == '缺失':
+        if label == 'missing':
             missing_bin = row
-        elif label == '特殊':
+        elif label == 'special':
             special_bin = row
         else:
             normal_bins.append(row)

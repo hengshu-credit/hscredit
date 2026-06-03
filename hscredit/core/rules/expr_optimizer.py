@@ -200,12 +200,18 @@ def _ast_unparse(node: ast.AST) -> str:
         return node.id
     elif isinstance(node, ast.Constant):
         return repr(node.value)
-    elif isinstance(node, ast.Num):  # Python 3.8 fallback
-        return repr(node.n)
-    elif isinstance(node, ast.Str):  # Python 3.8 fallback
-        return repr(node.s)
-    elif isinstance(node, ast.NameConstant):  # Python 3.8 fallback
-        return repr(node.value)
+    elif isinstance(node, ast.Call):
+        # 处理函数调用，如 purpose.isin(["education", "business"])
+        func = _ast_unparse(node.func)
+        args = ", ".join(_ast_unparse(arg) for arg in node.args)
+        if node.keywords:
+            kwargs = ", ".join(f"{kw.arg}={_ast_unparse(kw.value)}" for kw in node.keywords)
+            args = f"{args}, {kwargs}" if args else kwargs
+        return f"{func}({args})"
+    elif isinstance(node, ast.Attribute):
+        # 处理属性访问，如 purpose.isin
+        value = _ast_unparse(node.value)
+        return f"{value}.{node.attr}"
     else:
         return ""
 

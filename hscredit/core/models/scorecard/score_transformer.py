@@ -24,6 +24,10 @@
 - 基准分数(base_score): 对应基准好坏比的分数，如600分
 - PDO(Point of Double Odds): odds翻倍时分数变化量，如20分
 
+direction 参数通过改变 B 的符号来控制分数方向:
+- **descending**（信用分，B 为正）: odds越大 → ln(odds)越大 → Score越小 → 低逾期率得高分
+- **ascending**（欺诈分，B 为负）: odds越大 → ln(odds)越大 → Score越大 → 高逾期率得高分
+
 **2. 线性映射方法**
 
 将概率线性映射到评分区间:
@@ -234,11 +238,25 @@ class StandardScoreTransformer(BaseScoreTransformer):
     基于log-odds的标准信用评分转换方法。
     公式: Score = A - B × ln(odds), 其中 odds = P / (1 - P)
 
+    **direction 的实现**
+
+    direction 通过改变 B 参数的符号来控制分数方向，而非 post-hoc 翻转:
+
+    - **descending**（信用分，B 为正）:
+      odds↑ → ln(odds)↑ → Score↓ → 低逾期率得高分 ← 经典评分卡
+    - **ascending**（欺诈分，B 为负）:
+      odds↑ → ln(odds)↑ → Score↑ → 高逾期率得高分
+
+    因此设置 lower/upper 边界时，分数范围始终是有意义的（无需额外翻转）。
+
     **参数**
 
-    :param lower: 评分下界，默认None
-    :param upper: 评分上界，默认None
+    :param lower: 评分下界，默认None(不限制)
+    :param upper: 评分上界，默认None(不限制)
     :param direction: 评分方向，默认'descending'(信用分模式)
+        - 'descending': 概率越高分数越低（信用评分，如300-1000）
+        - 'ascending': 概率越高分数越高（欺诈评分，如0-100）
+        - 'auto': 根据lower/upper自动判断
     :param base_odds: 基准好坏比，默认0.05(5%坏样本率)
         - 表示在base_score对应的坏样本率
     :param base_score: 基准分数，默认600
@@ -296,17 +314,26 @@ class StandardScoreTransformer(BaseScoreTransformer):
     def _compute_parameters(self) -> Tuple[float, float]:
         """计算评分公式中的参数A和B.
 
+        direction 通过改变 B 的符号来控制分数方向：
+        - descending（信用分，B 为正）:
+          Score = A - B*ln(odds), B = pdo/ln(rate) > 0
+          odds↑ → ln(odds)↑ → Score↓ → 低逾期率得高分
+        - ascending（欺诈分，B 为负）:
+          Score = A + |B|*ln(odds), B = -pdo/ln(rate) < 0
+          odds↑ → ln(odds)↑ → Score↑ → 高逾期率得高分
+
         根据以下两个方程求解:
         1. base_score = A - B × ln(base_odds)
         2. base_score + pdo = A - B × ln(rate × base_odds)
 
         解得:
-        B = pdo / ln(rate)
+        B = sign × pdo / ln(rate)   (sign 决定方向)
         A = base_score + B × ln(base_odds)
 
         :return: (A, B)
         """
-        B = self.pdo / np.log(self.rate)
+        sign = 1 if self.direction_ == 'descending' else -1
+        B = sign * self.pdo / np.log(self.rate)
         A = self.base_score + B * np.log(self.base_odds)
         return A, B
 
@@ -325,11 +352,11 @@ class StandardScoreTransformer(BaseScoreTransformer):
         # 保存训练概率用于参考
         self.train_proba_ = np.asarray(proba)
 
-        # 计算参数
-        self.A_, self.B_ = self._compute_parameters()
-
-        # 确定方向
+        # 确定方向（必须在计算参数之前，因为 sign 依赖 direction_）
         self.direction_ = self._determine_direction()
+
+        # 计算参数（A 和 B 依赖 direction_ 的符号）
+        self.A_, self.B_ = self._compute_parameters()
 
         # 验证参数合理性
         self._validate_parameters()
@@ -339,27 +366,34 @@ class StandardScoreTransformer(BaseScoreTransformer):
         return self
 
     def _validate_parameters(self):
-        """验证参数合理性."""
+        """验证参数合理性.
+
+        验证：P=0.001(极低) 和 P=0.999(极高) 对应的分数方向是否符合 direction。
+        对于 descending（信用分），极低P应得高分，极高P应得低分；
+        对于 ascending（欺诈分），极高P应得高分，极低P应得低分。
+        """
         # 计算极端概率对应的分数
-        test_probs = [0.001, 0.01, 0.1, 0.5, 0.9, 0.99, 0.999]
-        scores = [self._transform_single(p) for p in test_probs]
+        low_prob = 0.001   # 极低逾率 = 好客户
+        high_prob = 0.999  # 极高逾率 = 坏客户
+        low_score = self._transform_single(low_prob)
+        high_score = self._transform_single(high_prob)
 
         # 检查方向是否与预期一致
         if self.direction_ == 'descending':
             # 递减：低概率应该对应高分
-            if scores[0] < scores[-1]:
+            if low_score <= high_score:
                 warnings.warn(
-                    f"评分方向可能与预期不符。低概率对应{scores[0]:.1f}分，"
-                    f"高概率对应{scores[-1]:.1f}分。对于信用分(descending)，"
-                    f"低概率(好客户)应该高分。"
+                    f"评分方向验证失败。好客户(P={low_prob})得{low_score:.1f}分，"
+                    f"坏客户(P={high_prob})得{high_score:.1f}分。"
+                    f"对于信用分(descending)，好客户应得更高分数。"
                 )
         else:
             # 递增：高概率应该对应高分(欺诈分)
-            if scores[0] > scores[-1]:
+            if high_score <= low_score:
                 warnings.warn(
-                    f"评分方向可能与预期不符。低概率对应{scores[0]:.1f}分，"
-                    f"高概率对应{scores[-1]:.1f}分。对于欺诈分(ascending)，"
-                    f"高概率(坏客户)应该高分。"
+                    f"评分方向验证失败。好客户(P={low_prob})得{low_score:.1f}分，"
+                    f"坏客户(P={high_prob})得{high_score:.1f}分。"
+                    f"对于欺诈分(ascending)，坏客户应得更高分数。"
                 )
 
     def _transform_single(self, proba: float) -> float:
@@ -369,6 +403,7 @@ class StandardScoreTransformer(BaseScoreTransformer):
         :return: 评分
         """
         odds = proba / (1 - proba)
+        # direction 已在 A/B 计算中体现，此处直接用 descending 公式（符号不影响排序比较）
         score = self.A_ - self.B_ * np.log(odds)
         return score
 
@@ -381,17 +416,11 @@ class StandardScoreTransformer(BaseScoreTransformer):
         check_is_fitted(self)
         proba = np.asarray(proba)
 
-        # 计算odds
+        # 计算 odds
         odds = proba / (1 - proba)
 
-        # 标准评分卡公式
+        # direction 已通过 sign 体现在 A/B 计算中，无需额外翻转
         scores = self.A_ - self.B_ * np.log(odds)
-
-        # 如果方向是ascending(欺诈分)，反转分数
-        if self.direction_ == 'ascending':
-            lower = self.lower if self.lower is not None else scores.min()
-            upper = self.upper if self.upper is not None else scores.max()
-            scores = upper - (scores - lower)
 
         return scores
 
@@ -404,19 +433,15 @@ class StandardScoreTransformer(BaseScoreTransformer):
         => odds = exp((A - Score) / B)
         => P = odds / (1 + odds)
 
+        direction 已通过 sign 体现在 A/B 计算中，此处直接逆算，无需额外翻转。
+
         :param scores: 评分
         :return: 概率
         """
         check_is_fitted(self)
         scores = np.asarray(scores)
 
-        # 如果方向是ascending(欺诈分)，先反转分数
-        if self.direction_ == 'ascending':
-            lower = self.lower if self.lower is not None else scores.min()
-            upper = self.upper if self.upper is not None else scores.max()
-            scores = upper - (scores - lower)
-
-        # 反向计算
+        # 逆算 odds（direction 已体现在 B 的符号中）
         odds = np.exp((self.A_ - scores) / self.B_)
         proba = odds / (1 + odds)
 
@@ -428,9 +453,10 @@ class StandardScoreTransformer(BaseScoreTransformer):
 
         基于当前评分参数生成评分与odds、逾期率的对应关系表。
         可通过 step 参数控制步长，或在初始化时设置 self.step。
-        根据 direction 参数调整表的排列和含义：
-        - descending: 分数越高，逾期率越低（信用分，默认）
-        - ascending: 分数越高，逾期率越高（欺诈分）
+
+        direction 不影响此参照表：参照表展示的是"给定评分对应的理论逾期率"，
+        与方向无关。表按评分从高到低排列（无论 descending 还是 ascending），
+        便于理解分数的含义。
 
         :return: DataFrame包含评分、odds、好坏客户比例、逾期率等列
         """
@@ -439,9 +465,6 @@ class StandardScoreTransformer(BaseScoreTransformer):
         min_score = max(0, int(self.base_score - 5 * self.pdo))
         max_score = int(self.base_score + 5 * self.pdo)
         scores = np.arange(min_score, max_score + 1, step)
-
-        # 获取当前方向
-        direction = getattr(self, 'direction_', self.direction)
 
         results = []
         for score in scores:
@@ -459,11 +482,8 @@ class StandardScoreTransformer(BaseScoreTransformer):
             else:
                 ratio_display = f"1:{1/good_bad_ratio:.1f}"
 
-            # ascending 模式下翻转显示分数，与 predict 的翻转逻辑一致
-            display_score = (2 * self.base_score - score) if direction == 'ascending' else score
-
             results.append({
-                '评分': display_score,
+                '评分': score,
                 '理论Odds(坏好比)': round(odds_lr, 4),
                 '好客户:坏客户': ratio_display,
                 '理论逾期率': round(prob, 6),
@@ -473,13 +493,8 @@ class StandardScoreTransformer(BaseScoreTransformer):
 
         df = pd.DataFrame(results)
 
-        # 根据方向排序：
-        # descending（信用分）: 分数从高到低，逾期率从低到高 → 分越高越好
-        # ascending（欺诈分）: 分数从低到高，逾期率从低到高 → 分越高越差
-        if direction == 'descending':
-            df = df.sort_values('评分', ascending=False).reset_index(drop=True)
-        else:
-            df = df.sort_values('评分', ascending=True).reset_index(drop=True)
+        # 按评分从高到低排列（分数越高，逾期率越低 → 越安全）
+        df = df.sort_values('评分', ascending=False).reset_index(drop=True)
 
         return df
 
@@ -1183,17 +1198,16 @@ def transform_probability_to_score(
         base_odds = kwargs.get('base_odds', 0.05)
         base_score = kwargs.get('base_score', 600)
         pdo = kwargs.get('pdo', 20)
+        rate = kwargs.get('rate', 2)
 
-        B = pdo / np.log(2)
+        # sign 决定方向：descending -> P↑时Score↓（经典信用分），ascending -> P↑时Score↑（欺诈分）
+        sign = 1 if direction == 'descending' else -1
+
+        B = sign * pdo / np.log(rate)
         A = base_score + B * np.log(base_odds)
 
         odds = proba / (1 - proba)
         scores = A - B * np.log(odds)
-
-        if direction == 'ascending':
-            lower_val = lower if lower is not None else scores.min()
-            upper_val = upper if upper is not None else scores.max()
-            scores = upper_val - (scores - lower_val)
 
     elif method == 'linear':
         # 线性映射
