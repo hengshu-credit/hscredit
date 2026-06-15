@@ -390,9 +390,37 @@ def _build_swap_pipeline_v2(
 
     pipeline_df = pd.DataFrame(all_rows)
 
-    # 计算通过率变化
-    pipeline_df['通过率(绝对值)'] = pipeline_df['样本总数'] / n_total_full
-    pipeline_df['通过率变化'] = pipeline_df['通过率(绝对值)'].diff()
+    # 判断是否为金额口径模式：检查是否有金额总数列（由 _make_swap_row 在金额口径下写入）
+    has_amount = (
+        '金额总数' in pipeline_df.columns
+        and pipeline_df['金额总数'].notna().any()
+        and len(pipeline_df) > 0
+    )
+
+    # 先计算通过率(绝对值)和通过率，金额口径用金额，订单口径用样本数
+    if has_amount:
+        # 金额口径：各行金额 / 全量金额 = 通过率(绝对值)，直接是 0~100 的百分比数值
+        amount_total_full = float(pipeline_df['金额总数'].iloc[0])
+        pipeline_df['通过率(绝对值)'] = (
+            pipeline_df['金额总数'] / amount_total_full * 100.0 if amount_total_full > 0
+            else 0.0
+        )
+        pipeline_df['通过率'] = pipeline_df['通过率(绝对值)']
+        # 金额口径下"样本占比"的语义改为金额占比
+        pipeline_df['样本占比'] = pipeline_df['通过率(绝对值)'] / 100.0
+        # 通过率(相对值)：金额口径下父行金额未知，用 1.0 填充
+        pipeline_df['通过率(相对值)'] = 1.0
+        # 好/坏样本数在金额口径下已是金额数，无需重算
+    else:
+        # 订单口径：各行样本数 / 全量样本数 = 通过率(绝对值)
+        pipeline_df['通过率(绝对值)'] = pipeline_df['样本总数'] / n_total_full * 100.0
+        pipeline_df['通过率'] = pipeline_df['通过率(绝对值)']
+        pipeline_df['样本占比'] = pipeline_df['样本总数'] / n_total
+        pipeline_df['通过率(相对值)'] = pipeline_df['样本占比'] / (n_total / n_total_full)
+
+    # 计算通过率变化（基于原始比例 diff，再乘以 100 转换为百分点）
+    rate_abs_ratio = pipeline_df['通过率(绝对值)'] / 100.0
+    pipeline_df['通过率变化'] = rate_abs_ratio.diff() * 100.0
     pipeline_df.loc[pipeline_df.index[0], '通过率变化'] = pipeline_df.loc[pipeline_df.index[0], '通过率(绝对值)']
 
     # 计算LIFT值
@@ -400,15 +428,13 @@ def _build_swap_pipeline_v2(
         lambda r: r['坏样本率'] / full_bad_rate if full_bad_rate > 0 else 0.0, axis=1
     )
 
-    # 填充其他指标
-    pipeline_df['好样本数'] = pipeline_df['样本总数'] - pipeline_df['坏样本数']
-    pipeline_df['好样本占比'] = 1 - pipeline_df['坏样本率']
-    pipeline_df['坏样本占比'] = pipeline_df['坏样本率']
-    pipeline_df['样本占比'] = pipeline_df['样本总数'] / n_total
-    pipeline_df['通过率'] = pipeline_df['通过率(绝对值)']
-    pipeline_df['通过率(相对值)'] = pipeline_df['样本占比'] / (n_total / n_total_full)
+    # 填充其他指标（仅在订单口径下基于样本数计算）
+    if not has_amount:
+        pipeline_df['好样本数'] = pipeline_df['样本总数'] - pipeline_df['坏样本数']
+        pipeline_df['好样本占比'] = 1 - pipeline_df['坏样本率']
+        pipeline_df['坏样本占比'] = pipeline_df['坏样本率']
 
-    # 计算坏账改善和风险拒绝比（参考 rule.report 的指标顺序）
+    # 计算坏账改善和风险拒绝比
     pipeline_df['坏账改善'] = pipeline_df.apply(
         lambda r: (full_bad_rate - r['坏样本率']) / full_bad_rate if full_bad_rate > 0 else 0.0, axis=1
     )
@@ -421,14 +447,15 @@ def _build_swap_pipeline_v2(
         pipeline_df = pipeline_df.iloc[::-1].reset_index(drop=True)
 
     # 按照 rule.report 的指标顺序调整列顺序
-    # 参考: 指标名称, 分箱, 样本总数, 样本占比, 好样本数, 好样本占比, 坏样本数, 坏样本占比, 坏样本率, LIFT值, 坏账改善
+    # 参考: 指标名称, 规则详情, 分箱, 样本总数, 样本占比, 好样本数, 好样本占比, 坏样本数, 坏样本占比, 坏样本率, LIFT值, 坏账改善
+    # 通过率相关列在最后，顺序为: 通过率 → 通过率(绝对值) → 通过率(相对值) → 通过率变化
     col_order = [
-        '规则分类', '指标名称',
+        '规则分类', '指标名称', '规则详情',
         '样本总数', '样本占比',
         '好样本数', '好样本占比',
         '坏样本数', '坏样本占比', '坏样本率',
         'LIFT值', '坏账改善', '风险拒绝比',
-        '通过率(绝对值)', '通过率变化', '通过率', '通过率(相对值)',
+        '通过率', '通过率(绝对值)', '通过率(相对值)', '通过率变化',
     ]
     # 只保留存在的列
     existing_cols = [c for c in col_order if c in pipeline_df.columns]
@@ -1705,14 +1732,14 @@ def rule_swap_analysis(
 
         # 确保关键列存在
         standard_cols = [
-            '分析流程', '规则集', '规则详情',
+            '分析流程', '规则集', '指标名称', '规则详情',
             '样本总数', '样本占比', '样本占比(相对)',
             '好样本数', '好样本占比', '坏样本数', '坏样本占比',
             '坏样本率', 'LIFT值', '坏账改善', '风险拒绝比',
             '准确率', '精确率', '召回率', 'F1分数',
             '通过率', '通过率(绝对值)', '通过率(相对值)', '通过率变化', '调整方向',
             # rule.report MultiIndex 列兼容
-            '规则分类_out', '指标名称', '分箱',
+            '规则分类_out', '分箱',
         ]
         for col in standard_cols:
             if col not in swap_pipeline.columns:
@@ -1725,7 +1752,7 @@ def rule_swap_analysis(
         swap_pipeline = swap_pipeline[final_cols + extra_cols]
     else:
         swap_pipeline = pd.DataFrame(columns=[
-            '分析流程', '规则集', '规则详情',
+            '分析流程', '规则集', '指标名称', '规则详情',
             '样本总数', '样本占比', '样本占比(相对)',
             '好样本数', '好样本占比', '坏样本数', '坏样本占比',
             '坏样本率', 'LIFT值', '通过率', '通过率(绝对值)', '通过率(相对值)',
