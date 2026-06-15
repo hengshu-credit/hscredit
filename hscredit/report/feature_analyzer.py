@@ -148,7 +148,7 @@ def feature_bin_stats(
     max_n_bins: int = 5,
     min_bin_size: float = 0.05,
     missing_separate: bool = True,
-    prebinning: Optional[Union[str, BaseBinning, Dict]] = 'quantile',
+    prebinning: Optional[Union[str, BaseBinning, Dict]] = None,  # 默认禁用预分箱，保证分位数分箱准确性
     prebinning_params: Optional[Dict[str, Any]] = None,
     return_cols: Optional[List[str]] = None,
     return_rules: bool = False,
@@ -295,9 +295,6 @@ def feature_bin_stats(
     
     # 构建默认分箱器参数（在循环外，避免重复计算）
     method_for_binner = 'mdlp' if method == 'optimal' else method
-    effective_prebinning_params = {'max_n_bins': 100}
-    if prebinning_params:
-        effective_prebinning_params.update(prebinning_params)
 
     default_binner_params = {
         'method': method_for_binner,
@@ -305,7 +302,6 @@ def feature_bin_stats(
         'min_bin_size': min_bin_size,
         'missing_separate': missing_separate,
         'prebinning': prebinning,
-        'prebinning_params': effective_prebinning_params,
     }
 
     # MDLP默认开启后处理微调，用户可通过 kwargs 覆盖
@@ -316,17 +312,17 @@ def feature_bin_stats(
         default_binner_params.setdefault('monotonic_bonus_weight', 0.4)
         default_binner_params.setdefault('lift_refine_max_bins', max_n_bins)
 
+    # quantile 方法需禁用所有后处理，保证分位数切分点精确
+    if method == 'quantile':
+        default_binner_params.setdefault('lift_refine', False)
+        default_binner_params.setdefault('min_bin_size', 0)
+
     # 透传 monotonic 参数（优先级高于 kwargs）
     if monotonic is not None:
         default_binner_params['monotonic'] = monotonic
 
     # 添加其他额外参数
     default_binner_params.update(kwargs)
-
-    # 显式关闭预分箱
-    if prebinning is None:
-        default_binner_params.pop('prebinning', None)
-        default_binner_params.pop('prebinning_params', None)
 
     for feat in features:
         # === 确定当前特征的分箱器 ===
@@ -614,7 +610,10 @@ def _normalize_efficiency_rules(
     feature: str,
     manual_rules: Union[List, Tuple, np.ndarray, Dict[str, List]],
 ) -> Tuple[List, Dict[str, List]]:
-    """标准化手工分箱规则，兼容 list 和 dict 两种输入方式。"""
+    """标准化手工分箱规则，兼容 list 和 dict 两种输入方式。
+
+    注意：已废弃，请使用 _generate_quantile_rules 生成固定分位数规则。
+    """
     if manual_rules is None:
         raise ValueError("manual_rules 不能为空，请传入手工分箱边界列表或 {特征名: 边界列表} 字典")
 
@@ -633,6 +632,49 @@ def _normalize_efficiency_rules(
         raise ValueError("manual_rules 不能为空列表")
 
     return normalized_rules, {feature: normalized_rules}
+
+
+# 固定分位数列表，用于自动生成手工分箱边界
+FIXED_QUANTILES = [0.01, 0.03, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.97, 0.99]
+
+
+def _generate_quantile_rules(
+    data: pd.DataFrame,
+    feature: str,
+    quantiles: Optional[List[float]] = None,
+    decimals: int = 4,
+) -> List[float]:
+    """根据分位数列表自动生成分箱边界。
+
+    :param data: 数据集
+    :param feature: 特征名
+    :param quantiles: 分位数列表，默认使用 FIXED_QUANTILES
+    :param decimals: 保留小数位数，默认 4
+    :return: 分箱边界列表（已去重并保留指定小数位）
+    """
+    if quantiles is None:
+        quantiles = FIXED_QUANTILES
+
+    x = pd.to_numeric(data[feature], errors='coerce')
+    valid_mask = ~x.isna()
+    x_valid = x[valid_mask]
+
+    if len(x_valid) == 0:
+        return []
+
+    # 计算分位数对应的值
+    boundaries = []
+    for q in quantiles:
+        value = x_valid.quantile(q)
+        if pd.notna(value):
+            # 转换为普通 Python float，避免 numpy 类型
+            float_value = round(float(value), decimals)
+            boundaries.append(float_value)
+
+    # 去重并保持排序
+    boundaries = sorted(set(boundaries))
+
+    return boundaries
 
 
 def _prepare_efficiency_dataset(
@@ -687,7 +729,7 @@ def _prepare_efficiency_dataset(
 def feature_efficiency_analysis(
     data: pd.DataFrame,
     feature: str,
-    manual_rules: Union[List, Tuple, np.ndarray, Dict[str, List]],
+    manual_rules: Optional[Union[List, Tuple, np.ndarray, Dict[str, List]]] = None,
     target: str = "target",
     overdue: Optional[Union[str, List[str]]] = None,
     dpd: int = 0,
@@ -711,17 +753,20 @@ def feature_efficiency_analysis(
     trend_kwargs: Optional[Dict[str, Any]] = None,
     output_dir: Optional[str] = None,
     suffix: str = "",
+    quantiles: Optional[List[float]] = None,
+    rule_decimals: int = 4,
 ) -> Dict[str, Any]:
     """特征效率分析：对比手工分箱与自动分箱效果，并输出趋势图。
 
     适用于单个数值型指标或评分变量的快速效果评估。函数会：
-    1. 生成手工分箱与自动分箱两张分箱表
-    2. 输出一行四列的组合图：手工分箱图、自动分箱图、KS 曲线、ROC 曲线
-    3. 当传入日期字段或分组字段时，额外输出手工分箱与自动分箱两张 bin_trend_plot 趋势图
+    1. 自动生成分位数分箱规则（默认使用 [0.01, 0.03, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.97, 0.99]）
+    2. 生成手工分箱与自动分箱两张分箱表
+    3. 输出一行四列的组合图：手工分箱图、自动分箱图、KS 曲线、ROC 曲线
+    4. 当传入日期字段或分组字段时，额外输出手工分箱与自动分箱两张 bin_trend_plot 趋势图
 
     :param data: 输入数据集
     :param feature: 需要分析的特征名，建议为数值型指标/评分
-    :param manual_rules: 手工分箱边界，支持 list 或 {feature: list}
+    :param manual_rules: 手工分箱边界，支持 list 或 {feature: list}。默认 None，表示自动使用 quantiles 生成分箱边界
     :param target: 目标变量列名，默认 target
     :param overdue: 逾期列名。传入后会基于 overdue > dpd 自动构造二分类目标
     :param dpd: 逾期阈值，仅在 overdue 模式下使用，默认 0
@@ -745,20 +790,31 @@ def feature_efficiency_analysis(
     :param trend_kwargs: 额外传给 bin_trend_plot 的参数
     :param output_dir: 图片保存目录，默认 None（不落盘）
     :param suffix: 保存文件名后缀，默认空字符串
+    :param quantiles: 分位数列表，用于自动生成分箱边界。默认 [0.01, 0.03, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.97, 0.99]
+    :param rule_decimals: 分箱边界保留的小数位数，默认 4
     :return: dict，包含分箱表、分箱规则、组合图与趋势图
 
     Example::
 
+        >>> # 自动使用分位数生成手工分箱规则
         >>> result = feature_efficiency_analysis(
         ...     data=df,
         ...     feature='score',
-        ...     manual_rules=[450, 520, 600, 680],
         ...     target='target',
         ...     auto_method='mdlp',
         ...     date_col='apply_date'
         ... )
         >>> result['manual_table']
         >>> result['comparison_figure']
+
+        >>> # 手动指定分箱规则
+        >>> result = feature_efficiency_analysis(
+        ...     data=df,
+        ...     feature='score',
+        ...     manual_rules=[450, 520, 600, 680],
+        ...     target='target',
+        ...     auto_method='mdlp'
+        ... )
     """
     feature_desc = desc or feature
     auto_kwargs = auto_kwargs.copy() if auto_kwargs else {}
@@ -766,7 +822,13 @@ def feature_efficiency_analysis(
     for reserved_key in ["data", "feature", "target", "dimension_cols", "date_col", "date_freq", "figsize", "title", "rules", "method"]:
         trend_kwargs.pop(reserved_key, None)
 
-    manual_rules_list, manual_rules_dict = _normalize_efficiency_rules(feature, manual_rules)
+    # 如果未提供 manual_rules，自动根据分位数生成分箱边界
+    if manual_rules is None:
+        manual_rules_list = _generate_quantile_rules(data, feature, quantiles, rule_decimals)
+        manual_rules_dict = {feature: manual_rules_list}
+    else:
+        manual_rules_list, manual_rules_dict = _normalize_efficiency_rules(feature, manual_rules)
+
     working_data, plot_data, actual_target = _prepare_efficiency_dataset(
         data=data,
         feature=feature,

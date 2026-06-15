@@ -25,6 +25,7 @@ from .best_ks_binning import BestKSBinning
 from .best_iv_binning import BestIVBinning
 from .mdlp_binning import MDLPBinning
 from .or_binning import ORBinning, ORTOOLS_AVAILABLE
+from .cp_sat_binning import CPSATBinning
 from .cart_binning import CartBinning
 from .kmeans_binning import KMeansBinning
 from .genetic_binning import GeneticBinning
@@ -131,7 +132,7 @@ class OptimalBinning(BaseBinning):
     # 所有支持的分箱方法
     VALID_METHODS = [
         'uniform', 'quantile', 'tree', 'chi',
-        'best_ks', 'best_iv', 'mdlp', 'or_tools',
+        'best_ks', 'best_iv', 'mdlp', 'or_tools', 'cp_sat',
         'cart', 'kmeans', 'monotonic', 'genetic',
         'smooth', 'kernel_density', 'best_lift', 'target_bad_rate'
     ]
@@ -240,8 +241,8 @@ class OptimalBinning(BaseBinning):
         # 如果指定了 user_splits，优先使用
         if self.user_splits is not None:
             self._fit_with_user_splits(X, y)
-            # strict_user_splits=True 时，跳过所有后处理，完全保留用户指定的切分点
-            if not self.strict_user_splits:
+            # strict_user_splits=True 或 quantile 方法时，跳过所有后处理
+            if not self.strict_user_splits and self.method != 'quantile':
                 # 统一后处理：围绕头尾Lift与样本稳定性微调切分点
                 # 默认开启，可通过 lift_refine=False 关闭
                 if self.kwargs.get('lift_refine', True) and self.method != 'uniform':
@@ -249,6 +250,8 @@ class OptimalBinning(BaseBinning):
 
                 # 统一收口约束：确保不同方法都遵守单调性/最小箱/最大箱限制
                 self._apply_post_fit_constraints(X, y, enforce_monotonic=self.method != 'monotonic')
+            self._is_fitted = True
+            return self
         elif self.prebinning is not None:
             # 使用预分箱
             self._fit_with_prebinning(X, y)
@@ -258,11 +261,21 @@ class OptimalBinning(BaseBinning):
             if self.kwargs.get('lift_refine', True) and self.method != 'uniform':
                 self._refine_splits_for_lift_stability(X, y)
 
+            # quantile 方法需保持分位数切分点精确，跳过所有后处理
+            if self.method == 'quantile':
+                self._is_fitted = True
+                return self
+
             # 统一收口约束：确保不同方法都遵守单调性/最小箱/最大箱限制
             self._apply_post_fit_constraints(X, y, enforce_monotonic=self.method != 'monotonic')
         else:
             # 使用指定方法
             self._fit_with_method(X, y)
+
+            # quantile 方法需保持分位数切分点精确，跳过所有后处理
+            if self.method == 'quantile':
+                self._is_fitted = True
+                return self
 
             # 统一后处理：围绕头尾Lift与样本稳定性微调切分点
             # 默认开启，可通过 lift_refine=False 关闭
@@ -1150,6 +1163,17 @@ class OptimalBinning(BaseBinning):
             or_params['objective'] = self.kwargs.get('or_objective', 'iv')
             or_params['time_limit'] = self.kwargs.get('or_time_limit', 30)
             self._binner = ORBinning(**or_params)
+        elif self.method == 'cp_sat':
+            if not ORTOOLS_AVAILABLE:
+                raise ImportError(
+                    "OR-Tools 未安装，无法使用 cp_sat 方法。"
+                    "请使用 pip install ortools 安装。"
+                )
+            cp_sat_params = full_params.copy()
+            cp_sat_params['objective'] = self.kwargs.get('cp_sat_objective', 'iv')
+            cp_sat_params['time_limit'] = self.kwargs.get('cp_sat_time_limit', 30)
+            cp_sat_params['n_prebins'] = self.kwargs.get('cp_sat_n_prebins', 50)
+            self._binner = CPSATBinning(**cp_sat_params)
         elif self.method == 'cart':
             self._binner = CartBinning(**full_params)
         elif self.method == 'kmeans':

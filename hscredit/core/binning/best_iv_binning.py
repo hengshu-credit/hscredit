@@ -184,9 +184,6 @@ class BestIVBinning(BaseBinning):
             # 使用样本分位点（按频次加权），而非唯一值分位点
             quantiles = np.linspace(0, 1, max_candidates + 1)
             candidates = np.quantile(x_vals, quantiles[1:-1])
-            x_min, x_max = np.min(x_vals), np.max(x_vals)
-            candidates = np.unique(candidates)
-            candidates = candidates[(candidates > x_min) & (candidates < x_max)]
             # 去重并确保在开区间内
             x_min, x_max = np.min(x_vals), np.max(x_vals)
             candidates = np.unique(candidates)

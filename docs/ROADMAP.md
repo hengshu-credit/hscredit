@@ -148,15 +148,15 @@ utils/             → 通用工具（seed_everything / 数据集 / describe / p
 
 | 优先级 | 缺口 | 竞品参考 | 价值说明 |
 |--------|------|---------|---------|
-| 🔴 P0 | **特征工程模块薄弱**（仅 NumExprDerive） | 竞品同样薄弱 | 三大竞品均无完整特征工程，**差异化机会最大** |
-| 🔴 P0 | **拒绝推断（Reject Inference）** | **三大竞品均无** | 信贷建模刚需，**独家差异化** |
-| 🟠 P1 | 分箱质量评分 & 批量导出 | optbinning `BinningTable.analysis()` | 提升分箱模块专业度 |
-| 🟠 P1 | 规则运营工具（覆盖率仿真/跨期追踪/冲突检测） | — | 策略人员刚需 |
-| 🟡 P2 | 二维交互分箱 | optbinning `OptimalBinning2D` | 交互效应分析 |
-| 🟡 P2 | 模型报告 SHAP 集成 / ScoreCard 分析增强 | — | 报告完整度 |
-| 🟡 P2 | 反事实解释 | optbinning `CounterfactualExplanation` | 监管合规 |
-| 🔵 P3 | LiftSelector ratio | — | 小幅改进 |
-| 🔵 P3 | README / info() 修正 / 测试补全 / CI·CD / API 文档 | — | 工程质量 |
+| P2 | **特征工程模块薄弱**（仅 NumExprDerive） | 竞品同样薄弱 | 三大竞品均无完整特征工程，**差异化机会最大** |
+| P2 | **拒绝推断（Reject Inference）** | **三大竞品均无** | 信贷建模刚需，**独家差异化** |
+| P1 | 分箱质量评分 & 批量导出 | optbinning `BinningTable.analysis()` | 提升分箱模块专业度 |
+| P1 | 规则运营工具（覆盖率仿真/跨期追踪/冲突检测） | — | 策略人员刚需 |
+| P0 | 二维交互分箱 | optbinning `OptimalBinning2D` | 交互效应分析 |
+| P2 | 模型报告 SHAP 集成 / ScoreCard 分析增强 | — | 报告完整度 |
+| P2 | 反事实解释 | optbinning `CounterfactualExplanation` | 监管合规 |
+| P1 | LiftSelector ratio | — | 小幅改进 |
+| P1 | README / info() 修正 / 测试补全 / CI·CD / API 文档 | — | 工程质量 |
 
 ---
 

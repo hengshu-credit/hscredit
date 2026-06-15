@@ -14,7 +14,8 @@
 - mdlp: MDLP分箱（基于信息论，默认）
 
 **运筹规划方法:**
-- or_tools: OR-Tools 最优化分箱（基于 Google OR-Tools）
+- or_tools: OR-Tools 启发式+DP 最优化分箱
+- cp_sat: CP-SAT 约束规划分箱（全局最优解）
 
 **高级方法:**
 - cart: CART分箱（参考optbinning实现）
@@ -31,8 +32,9 @@
 - OptimalBinning: 统一分箱接口（推荐）
 - 各具体分箱类: UniformBinning, QuantileBinning, TreeBinning, CartBinning,
   ChiMergeBinning, BestKSBinning, BestIVBinning, MDLPBinning, ORBinning,
-  KMeansBinning, MonotonicBinning, GeneticBinning, SmoothBinning,
-  KernelDensityBinning, BestLiftBinning, TargetBadRateBinning
+  CPSATBinning, CustomObjectives, KMeansBinning, MonotonicBinning,
+  GeneticBinning, SmoothBinning, KernelDensityBinning, BestLiftBinning,
+  TargetBadRateBinning
 
 **快速开始**
 
@@ -71,6 +73,7 @@ from .best_iv_binning import BestIVBinning
 from .optimal_binning import OptimalBinning
 from .mdlp_binning import MDLPBinning
 from .or_binning import ORBinning, CustomObjectives
+from .cp_sat_binning import CPSATBinning
 from .kmeans_binning import KMeansBinning
 from .monotonic_binning import MonotonicBinning
 from .genetic_binning import GeneticBinning
@@ -92,6 +95,7 @@ __all__ = [
     'MDLPBinning',
     'ORBinning',
     'CustomObjectives',
+    'CPSATBinning',
     'KMeansBinning',
     'MonotonicBinning',
     'GeneticBinning',

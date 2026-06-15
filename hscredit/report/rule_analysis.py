@@ -31,6 +31,529 @@ def _get_detail_group_name(table: pd.DataFrame) -> str:
     raise KeyError("未找到多层表头中的详情分组列")
 
 
+# ============================================================================
+# 简化版 Swap 分析辅助函数（整合自 scorecardpipeline 的 swapin_report 和 ruleset_analysis）
+# ============================================================================
+
+
+def _resolve_bin_table_v2(
+    reference_data: Optional[pd.DataFrame],
+    bin_table: Optional[Union[pd.DataFrame, Dict[str, pd.DataFrame]]],
+    score: Union[str, Dict[str, str]],
+    target: Optional[str],
+    overdue: Optional[Union[str, List[str]]],
+    dpds: Optional[Union[int, List[int]]],
+    bin_method: str,
+    max_n_bins: int,
+    min_bin_size: float,
+    missing_separate: bool,
+    bin_params: Optional[dict],
+    data: Optional[pd.DataFrame] = None,
+) -> Dict[str, pd.DataFrame]:
+    """解析或计算分箱表，统一转换为 {评分名: 分箱表} 结构（简化版）。
+
+    优先级：bin_table > reference_data > data 自动生成
+    """
+    if isinstance(score, str):
+        score_map = {'_default': score}
+    else:
+        score_map = score
+
+    # 1. bin_table 优先
+    if bin_table is not None:
+        if isinstance(bin_table, pd.DataFrame):
+            if len(score_map) == 1:
+                name = list(score_map.keys())[0]
+                return {name: _normalize_bin_table(bin_table, label=name)}
+            else:
+                return {name: _normalize_bin_table(bin_table, label=name) for name in score_map}
+        elif isinstance(bin_table, dict):
+            result = {}
+            for name, tbl in bin_table.items():
+                if isinstance(tbl, pd.DataFrame):
+                    result[name] = _normalize_bin_table(tbl, label=name)
+            return result
+
+    # 2. 从 reference_data 计算
+    if reference_data is None:
+        if data is not None:
+            if target is None and (overdue is None or dpds is None):
+                raise ValueError("从 data 自动生成 bin_table 时，必须传入 target 或 (overdue + dpds) 参数")
+            reference_data = data.copy()
+            ref_col = target if target else overdue[0] if isinstance(overdue, list) else overdue
+            if ref_col and ref_col in reference_data.columns:
+                reference_data = reference_data.dropna(subset=[ref_col])
+        else:
+            raise ValueError("必须传入 bin_table 或 reference_data 参数之一")
+
+    if target is None and (overdue is None or dpds is None):
+        raise ValueError("从 reference_data 计算分箱表时，必须传入 target 或 (overdue + dpds) 参数")
+
+    extra_params = dict(bin_params) if bin_params else {}
+    merged_params = {**extra_params, 'method': bin_method, 'max_n_bins': max_n_bins,
+                      'min_bin_size': min_bin_size, 'missing_separate': missing_separate}
+
+    result = {}
+    for name, col in score_map.items():
+        if col not in reference_data.columns:
+            raise ValueError(f"reference_data 中缺少评分列 '{col}'")
+
+        # 订单口径
+        tbl_count = feature_bin_stats(
+            reference_data, feature=col, target=target, overdue=overdue, dpds=dpds,
+            amount=None, margins=True, **merged_params,
+        )
+        result[name] = _normalize_bin_table(tbl_count, label=name)
+
+    return result
+
+
+def _build_swap_pipeline_v2(
+    data: pd.DataFrame,
+    score_map: Dict[str, str],
+    score_weights: Optional[Dict[str, float]],
+    bin_table_result: Dict[str, pd.DataFrame],
+    rules_base: List[Rule],
+    rules_out: Optional[List[Rule]],
+    rules_in: Optional[List[Rule]],
+    target: Optional[str],
+    overdue: Optional[Union[str, List[str]]],
+    dpds: Optional[Union[int, List[int]]],
+    amount: Optional[str],
+    out_in_uplift: float,
+    sample_survival_rate: float,
+    reverse_order: bool,
+    rule_analysis_mode: str,
+    out_in_amount_fill: Optional[float],
+    out_in_amount_col: Optional[str],
+    y: Optional[Union[np.ndarray, pd.Series]] = None,
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """构建简化的 swap_pipeline 和 swap_result（整合自 scorecardpipeline）。
+
+    核心逻辑：
+    1. ruleset_analysis（swapout）：评估 rules_out 置出效果
+    2. swapin_report（swapin）：评估 rules_in 置入效果，基于 base 分箱预测
+
+    :return: (swap_pipeline, swap_result)
+    """
+    n_total = len(data)
+
+    # ── 计算每个样本的预测坏概率 ──────────────────────────────────────────────
+    score_bad_probs = {}
+    for name, df_bin in bin_table_result.items():
+        score_col = score_map[name]
+        single_bad_col, _ = _extract_bad_rate_col(df_bin)
+        score_bad_probs[name] = _compute_predicted_bad_prob(data, score_col, df_bin, single_bad_col)
+
+    if len(score_bad_probs) == 1:
+        full_bad_probs = list(score_bad_probs.values())[0]
+    else:
+        if score_weights:
+            weights = {name: score_weights[name] for name in score_bad_probs}
+        else:
+            weights = {name: 1.0 / len(score_bad_probs) for name in score_bad_probs}
+        prob_sum = None
+        for name, prob in score_bad_probs.items():
+            prob_sum = prob * weights[name] if prob_sum is None else prob_sum + prob * weights[name]
+        full_bad_probs = prob_sum
+
+    # 全量坏样本率
+    full_bad_rate = float(full_bad_probs.mean()) if len(full_bad_probs) > 0 else 0.0
+    n_total_full = int(n_total / sample_survival_rate) if sample_survival_rate > 0 else n_total
+    n_bad_full = full_bad_rate * n_total_full
+
+    # ── SWAPOUT 分析（基于 ruleset_analysis）───────────────────────────────
+    # 样本分为：OUT-OUT拒绝、剩余样本
+    all_rows = []
+
+    # 判断哪些区域需要显示
+    has_rules_out = rules_out is not None and len(rules_out) > 0
+    has_rules_in = rules_in is not None and len(rules_in) > 0
+    has_rules_base = rules_base is not None and len(rules_base) > 0
+
+    # 辅助函数：根据全量数据掩码过滤 y（y 可能是 numpy 数组或 pandas Series）
+    def _filter_y(mask):
+        """根据掩码过滤 y，返回过滤后的 y。
+
+        mask: 可能是 numpy 数组或 pandas Series (布尔索引)
+        """
+        if y is None:
+            return None
+        if isinstance(y, np.ndarray):
+            # numpy 数组：需要用布尔数组
+            # mask 可能是 numpy 数组或 pandas Series
+            if isinstance(mask, np.ndarray):
+                return y[mask]
+            else:
+                return y[mask.values]
+        else:
+            # pandas Series：直接用布尔 Series 索引
+            return y[mask]
+
+    # 1. 全量样本（始终显示）
+    full_n = n_total
+    full_n_bad = float(full_bad_probs.sum())
+    full_n_bad = max(0.0, min(full_n_bad, float(full_n)))
+    all_rows.append(_make_swap_row(
+        '全量样本', '', full_n, full_n_bad,
+        n_total_full=n_total_full, n_bad_full=n_bad_full, full_bad_rate=full_bad_rate,
+        amount=amount, amount_col=amount, data=data, y=y,
+    ))
+
+    # 2. OUT-OUT拒绝样本（rules_base）
+    if has_rules_base:
+        combined_base = reduce(lambda r1, r2: r1 | r2, rules_base)
+        base_hit = combined_base.predict(data)
+        base_n = int(base_hit.sum())
+        base_n_bad = float(full_bad_probs.loc[base_hit].sum())
+        base_n_bad = max(0.0, min(base_n_bad, float(base_n)))
+
+        for rule in rules_base:
+            mask = rule.predict(data)
+            n_hit = int(mask.sum())
+            n_bad = float(full_bad_probs.loc[mask].sum())
+            n_bad = max(0.0, min(n_bad, float(n_hit)))
+            # 金额口径：传入过滤后的数据和 y
+            filtered_data = data[mask].copy()
+            filtered_y = _filter_y(mask)
+            all_rows.append(_make_swap_row(
+                'OUT-OUT拒绝', rule.name, n_hit, n_bad,
+                n_total_full=n_total_full, n_bad_full=n_bad_full, full_bad_rate=full_bad_rate,
+                rule_detail=rule.expr, amount=amount, amount_col=amount, data=filtered_data, y=filtered_y,
+            ))
+
+        # OUT-OUT合计
+        filtered_data = data[base_hit].copy()
+        filtered_y = _filter_y(base_hit)
+        all_rows.append(_make_swap_row(
+            'OUT-OUT拒绝', '合计', base_n, base_n_bad,
+            n_total_full=n_total_full, n_bad_full=n_bad_full, full_bad_rate=full_bad_rate,
+            amount=amount, amount_col=amount, data=filtered_data, y=filtered_y,
+        ))
+
+    # 计算剩余样本掩码
+    if has_rules_base:
+        remain_mask = ~base_hit
+    else:
+        remain_mask = pd.Series(True, index=data.index)
+
+    # 将 remain_mask 转换为 DataFrame 用于 rules_out 预测
+    remain_data = data[remain_mask].copy()
+
+    # 3. 剩余样本
+    # 条件：有 rules_base 时显示剩余样本（场景2, 3, 6）
+    # 场景分析：
+    # - 场景2 (rules_base): 全量 → OUT-OUT拒绝 → 剩余样本
+    # - 场景3 (rules_base + rules_in): 全量 → OUT-OUT拒绝 → 剩余样本 → OUT-IN置入 → ALL-IN
+    # - 场景6 (全部): 全量 → OUT-OUT拒绝 → 剩余样本 → IN-OUT置出 → IN-IN通过 → OUT-IN置入 → ALL-IN
+    if has_rules_base:
+        remain_n = int(remain_mask.sum())
+        remain_n_bad = float(full_bad_probs.loc[remain_mask].sum())
+        remain_n_bad = max(0.0, min(remain_n_bad, float(remain_n)))
+        # 金额口径：传入过滤后的数据和 y
+        filtered_data = data[remain_mask].copy()
+        filtered_y = _filter_y(remain_mask)
+        all_rows.append(_make_swap_row(
+            '剩余样本', '', remain_n, remain_n_bad,
+            n_total_full=n_total_full, n_bad_full=n_bad_full, full_bad_rate=full_bad_rate,
+            amount=amount, amount_col=amount, data=filtered_data, y=filtered_y,
+        ))
+
+    # 4. IN-OUT置出样本（rules_out）
+    # 注意：IN-OUT 在 remain_data 范围内计算
+    if has_rules_out:
+        combined_out = reduce(lambda r1, r2: r1 | r2, rules_out)
+        out_hit = combined_out.predict(remain_data)
+
+        for rule in rules_out:
+            mask = rule.predict(remain_data)
+            # 构建全量数据上的掩码：remain_mask AND mask
+            full_mask_indices = remain_data.index[mask.values]
+            full_mask = data.index.isin(full_mask_indices)
+            n_hit = int(mask.sum())
+            n_bad = float(full_bad_probs.loc[full_mask].sum())
+            n_bad = max(0.0, min(n_bad, float(n_hit)))
+            # 金额口径：传入过滤后的数据和 y
+            filtered_data = remain_data[mask].copy()
+            filtered_y = _filter_y(full_mask)
+            all_rows.append(_make_swap_row(
+                'IN-OUT置出', rule.name, n_hit, n_bad,
+                n_total_full=n_total_full, n_bad_full=n_bad_full, full_bad_rate=full_bad_rate,
+                rule_detail=rule.expr, amount=amount, amount_col=amount, data=filtered_data, y=filtered_y,
+            ))
+
+        # IN-OUT合计
+        out_n = int(out_hit.sum())
+        out_hit_indices = remain_data.index[out_hit.values]
+        out_hit_full_mask = data.index.isin(out_hit_indices)
+        out_n_bad = float(full_bad_probs.loc[out_hit_full_mask].sum())
+        out_n_bad = max(0.0, min(out_n_bad, float(out_n)))
+        # 金额口径：传入过滤后的数据和 y
+        filtered_data = remain_data[out_hit].copy()
+        filtered_y = _filter_y(out_hit_full_mask)
+        all_rows.append(_make_swap_row(
+            'IN-OUT置出', '合计', out_n, out_n_bad,
+            n_total_full=n_total_full, n_bad_full=n_bad_full, full_bad_rate=full_bad_rate,
+            amount=amount, amount_col=amount, data=filtered_data, y=filtered_y,
+        ))
+
+        # 计算 IN-IN 通过样本掩码：剩余样本中未被 IN-OUT 拒绝的样本
+        # 注意：out_hit 有 remain_data 的索引，需要映射回 data 的索引
+        outin_not_hit_indices = remain_data.index[~out_hit.values]
+        inin_mask = pd.Series(data.index.isin(outin_not_hit_indices), index=data.index)
+    elif has_rules_base:
+        # 无 rules_out 但有 rules_base 时，IN-IN = 剩余样本
+        inin_mask = remain_mask
+    else:
+        # 无 rules_out 且无 rules_base 时，IN-IN = 全量
+        inin_mask = pd.Series(True, index=data.index)
+
+    # 5. IN-IN通过样本
+    # 条件：只有有 rules_out 时才显示 IN-IN（场景4, 5, 6）
+    if has_rules_out:
+        inin_n = int(inin_mask.sum())
+        inin_n_bad = float(full_bad_probs.loc[inin_mask].sum())
+        inin_n_bad = max(0.0, min(inin_n_bad, float(inin_n)))
+        # 金额口径：传入过滤后的数据和 y
+        filtered_data = data[inin_mask].copy()
+        filtered_y = _filter_y(inin_mask)
+        all_rows.append(_make_swap_row(
+            'IN-IN通过', '', inin_n, inin_n_bad,
+            n_total_full=n_total_full, n_bad_full=n_bad_full, full_bad_rate=full_bad_rate,
+            amount=amount, amount_col=amount, data=filtered_data, y=filtered_y,
+        ))
+    else:
+        # 只有 rules_in 或只有 rules_base：计算 IN-IN 用于 ALL-IN
+        inin_n = int(inin_mask.sum())
+        inin_n_bad = float(full_bad_probs.loc[inin_mask].sum())
+        inin_n_bad = max(0.0, min(inin_n_bad, float(inin_n)))
+
+    # 6. OUT-IN置入样本（rules_in）
+    # OUT-IN：在 rules_base 拒绝范围外的样本（即 remain_mask）中，满足 rules_in 的样本
+    # 注意：OUT-IN 行显示预测坏样本数（无 uplift），只在 ALL-IN 阶段应用一次 uplift
+    if has_rules_in:
+        combined_in = reduce(lambda r1, r2: r1 | r2, rules_in)
+        # OUT-IN = remain_mask AND rules_in
+        outin_mask = remain_mask & combined_in.predict(data)
+
+        for rule in rules_in:
+            mask = rule.predict(data)
+            # 单条规则的 OUT-IN：remain_mask AND mask
+            single_outin_mask = remain_mask & mask
+            n_hit = int(single_outin_mask.sum())
+            # OUT-IN 显示预测坏样本数（无 uplift）
+            n_bad = float(full_bad_probs.loc[single_outin_mask].sum())
+            n_bad = max(0.0, min(n_bad, float(n_hit)))
+            # 金额口径：传入过滤后的数据和 y
+            filtered_data = data[single_outin_mask].copy()
+            filtered_y = _filter_y(single_outin_mask)
+            all_rows.append(_make_swap_row(
+                'OUT-IN置入', rule.name, n_hit, n_bad,
+                n_total_full=n_total_full, n_bad_full=n_bad_full, full_bad_rate=full_bad_rate,
+                rule_detail=rule.expr, amount=amount, amount_col=amount, data=filtered_data, y=filtered_y,
+            ))
+
+        # OUT-IN合计
+        outin_total_n = int(outin_mask.sum())
+        # OUT-IN 预测坏样本总数（无 uplift）
+        outin_total_n_bad = float(full_bad_probs.loc[outin_mask].sum())
+        outin_total_n_bad = max(0.0, min(outin_total_n_bad, float(outin_total_n)))
+        # 金额口径：传入过滤后的数据和 y
+        filtered_data = data[outin_mask].copy()
+        filtered_y = _filter_y(outin_mask)
+        all_rows.append(_make_swap_row(
+            'OUT-IN置入', '合计', outin_total_n, outin_total_n_bad,
+            n_total_full=n_total_full, n_bad_full=n_bad_full, full_bad_rate=full_bad_rate,
+            amount=amount, amount_col=amount, data=filtered_data, y=filtered_y,
+        ))
+
+        # 7. ALL-IN置换样本
+        # 当有 rules_in 时显示 ALL-IN
+        # ALL-IN = IN-IN（不包含被OUT-OUT拒绝的样本）+ OUT-IN（应用一次 uplift）
+        all_in_n = inin_n + outin_total_n
+        # 只在 ALL-IN 阶段应用一次 uplift
+        all_in_n_bad = inin_n_bad + outin_total_n_bad * out_in_uplift
+        all_in_n_bad = max(0.0, min(all_in_n_bad, float(all_in_n)))
+        # 金额口径：IN-IN + OUT-IN（无 uplift，因为 uplift 只影响预测，不影响实际金额）
+        all_in_mask = inin_mask | outin_mask
+        filtered_data = data[all_in_mask].copy()
+        filtered_y = _filter_y(all_in_mask)
+        all_rows.append(_make_swap_row(
+            'ALL-IN置换', '', all_in_n, all_in_n_bad,
+            n_total_full=n_total_full, n_bad_full=n_bad_full, full_bad_rate=full_bad_rate,
+            amount=amount, amount_col=amount, data=filtered_data, y=filtered_y,
+        ))
+
+    # ── 构建 swap_pipeline ──────────────────────────────────────────────────
+    if not all_rows:
+        return pd.DataFrame(), pd.DataFrame()
+
+    pipeline_df = pd.DataFrame(all_rows)
+
+    # 计算通过率变化
+    pipeline_df['通过率(绝对值)'] = pipeline_df['样本总数'] / n_total_full
+    pipeline_df['通过率变化'] = pipeline_df['通过率(绝对值)'].diff()
+    pipeline_df.loc[pipeline_df.index[0], '通过率变化'] = pipeline_df.loc[pipeline_df.index[0], '通过率(绝对值)']
+
+    # 计算LIFT值
+    pipeline_df['LIFT值'] = pipeline_df.apply(
+        lambda r: r['坏样本率'] / full_bad_rate if full_bad_rate > 0 else 0.0, axis=1
+    )
+
+    # 填充其他指标
+    pipeline_df['好样本数'] = pipeline_df['样本总数'] - pipeline_df['坏样本数']
+    pipeline_df['好样本占比'] = 1 - pipeline_df['坏样本率']
+    pipeline_df['坏样本占比'] = pipeline_df['坏样本率']
+    pipeline_df['样本占比'] = pipeline_df['样本总数'] / n_total
+    pipeline_df['通过率'] = pipeline_df['通过率(绝对值)']
+    pipeline_df['通过率(相对值)'] = pipeline_df['样本占比'] / (n_total / n_total_full)
+
+    # 计算坏账改善和风险拒绝比（参考 rule.report 的指标顺序）
+    pipeline_df['坏账改善'] = pipeline_df.apply(
+        lambda r: (full_bad_rate - r['坏样本率']) / full_bad_rate if full_bad_rate > 0 else 0.0, axis=1
+    )
+    pipeline_df['风险拒绝比'] = pipeline_df.apply(
+        lambda r: r['坏账改善'] / r['样本占比'] if r['样本占比'] > 0 else 0.0, axis=1
+    )
+
+    # 逆序处理
+    if reverse_order:
+        pipeline_df = pipeline_df.iloc[::-1].reset_index(drop=True)
+
+    # 按照 rule.report 的指标顺序调整列顺序
+    # 参考: 指标名称, 分箱, 样本总数, 样本占比, 好样本数, 好样本占比, 坏样本数, 坏样本占比, 坏样本率, LIFT值, 坏账改善
+    col_order = [
+        '规则分类', '指标名称',
+        '样本总数', '样本占比',
+        '好样本数', '好样本占比',
+        '坏样本数', '坏样本占比', '坏样本率',
+        'LIFT值', '坏账改善', '风险拒绝比',
+        '通过率(绝对值)', '通过率变化', '通过率', '通过率(相对值)',
+    ]
+    # 只保留存在的列
+    existing_cols = [c for c in col_order if c in pipeline_df.columns]
+    other_cols = [c for c in pipeline_df.columns if c not in col_order]
+    pipeline_df = pipeline_df[existing_cols + other_cols]
+
+    # ── 构建 swap_result ──────────────────────────────────────────────────
+    # 提取关键指标
+    inin_row = pipeline_df[pipeline_df['规则分类'] == 'IN-IN通过']
+    outin_sum_row = pipeline_df[pipeline_df['规则分类'] == 'OUT-IN置入']
+
+    if not inin_row.empty:
+        pass_rate_before = float(inin_row.iloc[0]['通过率(绝对值)'])
+        bad_rate_before = float(inin_row.iloc[0]['坏样本率'])
+    else:
+        pass_rate_before = 1.0
+        bad_rate_before = full_bad_rate
+
+    if not outin_sum_row.empty:
+        n_outin = int(outin_sum_row.iloc[0]['样本总数'])
+        bad_rate_outin = float(outin_sum_row.iloc[0]['坏样本率'])
+        pass_rate_after = pass_rate_before + float(outin_sum_row.iloc[0]['通过率变化'])
+        bad_rate_after = (inin_n * bad_rate_before + n_outin * bad_rate_outin) / (inin_n + n_outin) if (inin_n + n_outin) > 0 else bad_rate_before
+    else:
+        pass_rate_after = pass_rate_before
+        bad_rate_after = bad_rate_before
+
+    swap_result_rows = [
+        {'指标': '通过率', '变化前': pass_rate_before, '变化后': pass_rate_after,
+         '绝对变化': pass_rate_after - pass_rate_before,
+         '相对变化': (pass_rate_after - pass_rate_before) / max(pass_rate_before, 1e-9)},
+        {'指标': '逾期率', '变化前': bad_rate_before, '变化后': bad_rate_after,
+         '绝对变化': bad_rate_after - bad_rate_before,
+         '相对变化': (bad_rate_after - bad_rate_before) / max(bad_rate_before, 1e-9)},
+        {'指标': '风险上浮系数', '变化前': 1.0, '变化后': out_in_uplift,
+         '绝对变化': out_in_uplift - 1.0, '相对变化': out_in_uplift - 1.0},
+        {'指标': '样本集幸存比例', '变化前': sample_survival_rate, '变化后': sample_survival_rate,
+         '绝对变化': 0.0, '相对变化': 0.0},
+    ]
+    swap_result = pd.DataFrame(swap_result_rows)
+
+    return pipeline_df, swap_result
+
+
+def _make_swap_row(
+    rule_class: str,
+    rule_name: str,
+    n_samples: int,
+    n_bad: float,
+    n_total_full: int,
+    n_bad_full: float,
+    full_bad_rate: float,
+    rule_detail: str = '',
+    amount: Optional[str] = None,
+    amount_col: Optional[str] = None,
+    data: Optional[pd.DataFrame] = None,
+    y: Optional[Union[np.ndarray, pd.Series]] = None,
+    n_good: Optional[int] = None,
+) -> dict:
+    """构建单行 swap pipeline 数据。
+
+    当传入金额字段时，使用金额口径计算所有指标，列名与订单口径保持一致。
+
+    :param rule_class: 规则分类（如 '全量样本', 'OUT-OUT拒绝' 等）
+    :param rule_name: 规则名称
+    :param n_samples: 样本数（订单口径）
+    :param n_bad: 坏样本数（订单口径）
+    :param n_total_full: 全量样本数
+    :param n_bad_full: 全量坏样本数
+    :param full_bad_rate: 全量坏样本率
+    :param rule_detail: 规则详情（表达式）
+    :param amount: 金额字段名
+    :param amount_col: 金额字段名（别名）
+    :param data: 数据集
+    :param y: 目标变量（0/1），用于计算金额口径指标
+    :param n_good: 好样本数（订单口径），自动计算或显式传入
+    :return: 单行字典
+    """
+    n_samples = max(0, n_samples)
+    n_bad = max(0.0, min(n_bad, float(n_samples)))
+
+    # 金额口径：使用金额计算所有指标
+    # - 样本总数 = 金额总数
+    # - 好样本数 = 好样本金额
+    # - 坏样本数 = 坏样本金额
+    # - 坏样本率 = 坏样本金额 / 金额总数
+    if amount and data is not None and amount in data.columns and y is not None:
+        amt_values = data[amount].values
+        amt_total = float(amt_values.sum())
+        # 好样本金额 = 金额 * (1 - target)
+        good_amt = float((amt_values * (1 - y)).sum())
+        # 坏样本金额 = 金额 * target
+        bad_amt = float((amt_values * y).sum())
+        # 坏样本率(金额口径) = 坏样本金额 / 金额总数
+        bad_rate = bad_amt / amt_total if amt_total > 0 else 0.0
+
+        row = {
+            '规则分类': rule_class,
+            '指标名称': rule_name,
+            '规则详情': rule_detail,
+            '样本总数': int(round(amt_total)),
+            '好样本数': int(round(good_amt)),
+            '坏样本数': int(round(bad_amt)),
+            '坏样本率': bad_rate,
+        }
+    else:
+        # 订单口径
+        bad_rate = n_bad / n_samples if n_samples > 0 else 0.0
+        # 自动计算好样本数（如果未传入）
+        if n_good is None:
+            n_good = max(0, n_samples - int(round(n_bad)))
+
+        row = {
+            '规则分类': rule_class,
+            '指标名称': rule_name,
+            '规则详情': rule_detail,
+            '样本总数': n_samples,
+            '好样本数': n_good,
+            '坏样本数': int(round(n_bad)),
+            '坏样本率': bad_rate,
+        }
+
+    return row
+
+
 def ruleset_analysis(
     datasets: pd.DataFrame,
     rules: List[Rule],
@@ -1317,20 +1840,27 @@ def rule_swap_analysis_v2(
     bin_params: Optional[dict] = None,
     rule_analysis_mode: str = 'independent',
 ) -> Dict[str, pd.DataFrame]:
-    """规则置入置出（Swap）分析 v2.
+    """规则置入置出（Swap）分析 v2 — 简化版。
 
-    API 参数与 ``rule_swap_analysis`` 基本一致，新增/变更说明：
+    整合自 scorecardpipeline 的 ``swapin_report`` 和 ``ruleset_analysis``（即 swapout_report），
+    只输出 ``swap_pipeline`` 和 ``swap_result``，支持金额和订单口径。
 
-    - 新增 ``reference_data`` 参数：历史有表现样本集，用于计算评分的风险表现分箱表
-    - ``bin_table`` 参数支持 dict 格式：``{评分名: 分箱表}``，多评分时各评分独立计算
-    - ``reference_data`` 与 ``bin_table`` 二选一；优先使用 ``bin_table``
-    - 分箱表结果通过 ``self.bin_table_`` 属性存储（标准化后的单/多层列 DataFrame）
+    **四象限定义**
+
+    ==========  ==========  ====================================
+    象限        含义        风险说明
+    ==========  ==========  ====================================
+    in_in      模型通过 & 规则通过   基准客群，最终放款
+    in_out     模型通过 & 规则拒绝   置出样本，误拒损失
+    out_in     模型拒绝 & 规则通过   置入样本，核心风险敞口
+    out_out    模型拒绝 & 规则拒绝   仍拒绝，无影响
+    ==========  ==========  ====================================
 
     :param data: 全量样本集（包含 score 列 + rules_in/rules_out/rules_base 用到的所有特征列）
     :param score: 评分字段名（str）或多评分映射（Dict）
-    :param rules_in: 置入规则集（List[Rule]）
-    :param rules_out: 置出规则集（可选）
-    :param rules_base: 基准拒绝规则集（可选）
+    :param rules_in: 置入规则集（List[Rule]），对应 out_in 象限
+    :param rules_out: 置出规则集（可选），对应 in_out 象限
+    :param rules_base: 基准拒绝规则集（可选），对应 out_out 象限
     :param reference_data: 历史有表现参考数据集（包含 target 或 overdue+dpds）
     :param bin_table: 现成分箱表，支持：
         - pd.DataFrame：单评分分箱表
@@ -1341,7 +1871,7 @@ def rule_swap_analysis_v2(
     :param dpds: 逾期天数阈值
     :param score_weights: 多模型权重（可选）
     :param out_in_uplift: 置入风险上浮系数，默认 2.0
-    :param amount: 金额字段（可选）
+    :param amount: 金额字段（可选），传入后同时输出金额口径报告
     :param sample_survival_rate: 样本集幸存比例，默认 1.0
     :param reverse_order: 是否逆序展示（True: 从置入效果开始展示）
     :param out_in_amount_fill: out_in 置入样本额度填充定值（可选）
@@ -1351,17 +1881,12 @@ def rule_swap_analysis_v2(
     :param min_bin_size: 每箱最小样本占比，默认 0.05（仅 reference_data 模式生效）
     :param missing_separate: 是否将缺失值单独分箱，默认 True
     :param bin_params: 额外分箱参数 dict，会透传给 ``feature_bin_stats``
-        常用键：rules（自定义切分点）、monotonic（单调性约束）等
     :param rule_analysis_mode: 规则分析模式，默认 'independent'。
         - 'independent'：每条规则独立应用到全量 data，分别统计命中好坏分布。
-          OUT-OUT合计 = 所有规则合并（reduce |）后的联合命中。
-        - 'sequential'：漏斗模式，每条规则在前一条拒绝后的剩余样本上分析，
-          规则命中（拒绝）时样本量减少，未命中（通过）时保持剩余样本。
-          适合分析多规则叠加的拒绝效果。
-    :return: 包含三张表的字典
+        - 'sequential'：漏斗模式，每条规则在前一条拒绝后的剩余样本上分析。
+    :return: 包含两张表的字典
 
-        - ``swap_summary``：四象限样本汇总
-        - ``swap_pipeline``：分步骤通过率与逾期率变化（可逆序）
+        - ``swap_pipeline``：分步骤通过率与逾期率变化（可逆序），支持订单/金额双口径
         - ``swap_result``：置换前后对比与业务增益
 
     **参考样例**
@@ -1369,41 +1894,33 @@ def rule_swap_analysis_v2(
     >>> from hscredit.core.rules import Rule
     >>> from hscredit.report.rule_analysis import rule_swap_analysis_v2
     >>>
-    >>> # 方式一：传入历史参考数据，自动计算分箱表
+    >>> # 置入规则分析（传入历史参考数据，自动计算分箱表）
     >>> result = rule_swap_analysis_v2(
-    ...     data=data,
+    ...     data=swap_data,
     ...     score='score_a',
     ...     rules_in=[rule_in],
     ...     rules_base=[rule_base],
-    ...     reference_data=hist_data,   # 有表现样本，包含 target 列
+    ...     reference_data=hist_data,
     ...     target='target',
+    ...     amount='放款金额',
     ... )
     >>>
-    >>> # 方式二：直接传入现成分箱表
+    >>> print(result['swap_pipeline'])   # 分步骤报告
+    >>> print(result['swap_result'])      # 置换前后对比
+
+    >>> # 多逾期标签分析
     >>> result = rule_swap_analysis_v2(
-    ...     data=data,
-    ...     score='score_a',
-    ...     rules_in=[rule_in],
-    ...     rules_base=[rule_base],
-    ...     bin_table=score_bin_table,   # pd.DataFrame 或 Dict[str, pd.DataFrame]
-    ... )
-    >>>
-    >>> # 方式三：多标签场景（overdue+dpds）
-    >>> result = rule_swap_analysis_v2(
-    ...     data=data,
+    ...     data=swap_data,
     ...     score='score_a',
     ...     rules_in=[rule_in],
     ...     reference_data=hist_data,
     ...     overdue='MOB1',
     ...     dpds=[0, 7, 30],
+    ...     amount='放款金额',
     ... )
-    >>>
-    >>> print(result['swap_summary'])
-    >>> print(result['swap_pipeline'])
-    >>> print(result['swap_result'])
     """
     # ── 第一步：解析与计算分箱表 ─────────────────────────────────────────
-    bin_table_result = _resolve_bin_table(
+    bin_table_result = _resolve_bin_table_v2(
         reference_data=reference_data,
         bin_table=bin_table,
         score=score,
@@ -1415,12 +1932,10 @@ def rule_swap_analysis_v2(
         min_bin_size=min_bin_size,
         missing_separate=missing_separate,
         bin_params=bin_params,
-        amount=amount,
         data=data,
     )
 
     # ── 第二步：规则集预处理 ─────────────────────────────────────────────
-    # 统一 score 为 Dict[str, str] 格式（供后续使用）
     if isinstance(score, str):
         score_map = {'_default': score}
     else:
@@ -1436,184 +1951,51 @@ def rule_swap_analysis_v2(
     # ── 第三步：权重归一化 ───────────────────────────────────────────────
     score_weights = _normalize_score_weights(score_weights, score_map)
 
-    n_total = len(data)
-    # ── 第四步：构建OUT-OUT拒绝报告 ────────────────────────────────────────
-    base_report, full_bad_probs = _build_base_report(
+    # ── 第三步半：计算目标变量 y（用于金额口径计算）──────────────────────────
+    y = None
+    if amount is not None and amount in data.columns:
+        # 计算 y：目标变量（0/1）
+        if target is not None and target in data.columns:
+            y = data[target].values
+        elif overdue is not None and dpds is not None:
+            # 多逾期标签场景：只支持单逾期单DPD
+            if isinstance(overdue, list):
+                overdue_col = overdue[0] if len(overdue) > 0 else None
+            else:
+                overdue_col = overdue
+            if isinstance(dpds, list):
+                dpd_val = dpds[0] if len(dpds) > 0 else 0
+            else:
+                dpd_val = dpds
+            if overdue_col is not None and overdue_col in data.columns:
+                y = (data[overdue_col] > dpd_val).astype(int).values
+
+    # ── 第四步：构建 swap_pipeline（核心逻辑）────────────────────────────
+    # 整合 ruleset_analysis（swapout）和 swapin_report（swapin）逻辑
+    swap_pipeline, swap_result = _build_swap_pipeline_v2(
         data=data,
-        n_total=n_total,
-        rules_base=rules_base,
-        bin_table_result=bin_table_result,
         score_map=score_map,
         score_weights=score_weights,
+        bin_table_result=bin_table_result,
+        rules_base=rules_base,
+        rules_out=rules_out,
+        rules_in=rules_in,
+        target=target,
+        overdue=overdue,
+        dpds=dpds,
         amount=amount,
-        rule_analysis_mode=rule_analysis_mode,
-        sample_survival_rate=sample_survival_rate,
-    )
-
-    # 从 base_report 提取最终通过样本（剩余样本）及其通过率
-    if rules_base:
-        # 剩余样本是 base_report 最后一行
-        final_remain_row = base_report[base_report['规则分类'] == '剩余样本']
-        if not final_remain_row.empty:
-            # 获取最终通过率（从调整方向列或通过率列）
-            final_pass_rate = float(final_remain_row.iloc[0]['通过率'])
-        else:
-            final_pass_rate = sample_survival_rate
-        # 获取剩余样本的掩码
-        combined_base = reduce(lambda r1, r2: r1 | r2, rules_base)
-        in_remaining_mask = ~combined_base.predict(data)
-        in_remaining_data = data[in_remaining_mask].reset_index(drop=True)
-    else:
-        # 无rules_base时，全部数据进入IN-OUT
-        final_pass_rate = sample_survival_rate
-        in_remaining_data = data.copy().reset_index(drop=True)
-        in_remaining_mask = pd.Series(True, index=data.index)
-
-    # ── 第五步：构建IN-OUT置出报告 ────────────────────────────────────────
-    # n_total_full 从 data 样本数直接计算，不再从 base_report 的 baseline 行推导
-    n_total_full = int(n_total / sample_survival_rate)
-    full_bad_rate_v2 = float(base_report[base_report['规则分类'] == '全量样本'].iloc[0]['坏样本率'])
-    # 全量坏样本数（扩展到全量）：用坏样本率 × 全量样本数
-    inout_n_bad_full = full_bad_rate_v2 * n_total_full if n_total_full > 0 else 0.0
-
-    inout_report = pd.DataFrame()  # 空DataFrame，rules_out为空时返回空
-    if rules_out and len(in_remaining_data) > 0:
-        inout_report = _build_inout_report(
-            in_remaining_data=in_remaining_data,
-            rules_out=rules_out,
-            bin_table_result=bin_table_result,
-            score_map=score_map,
-            score_weights=score_weights,
-            rule_analysis_mode=rule_analysis_mode,
-            n_total_full=n_total_full,
-            n_bad_full=inout_n_bad_full,
-            full_bad_rate=full_bad_rate_v2,
-            sample_survival_rate=final_pass_rate,
-            amount=amount,
-        )
-
-    # ── 第六步：构建OUT-IN置入报告 ────────────────────────────────────────
-    # 从 inout_report 提取 IN-IN 通过样本及其坏概率
-    inin_row = inout_report[inout_report['规则分类'] == 'IN-IN通过'] if not inout_report.empty else pd.DataFrame()
-    if not inin_row.empty:
-        # IN-IN 通过样本数（来自 inout_report）
-        n_inin = int(inin_row.iloc[0]['通过率'] * n_total_full) if n_total_full > 0 else len(in_remaining_data)
-        n_inin = min(n_inin, len(in_remaining_data))
-    else:
-        n_inin = len(in_remaining_data)
-
-    # IN-IN 样本的坏概率（从 in_remaining_data 的全量坏概率中取前 n_inin 个，
-    # 因为 in_remaining_data 的顺序与原始 data 一致）
-    in_remaining_bad_probs = full_bad_probs[in_remaining_mask.values].reset_index(drop=True)
-
-    outin_report = pd.DataFrame()
-    outin_bad_probs = pd.Series(dtype=float)
-    n_outin_total = 0
-    n_outin_bad = 0.0
-    all_in_pass_rate = final_pass_rate
-
-    if rules_in and len(in_remaining_data) > 0:
-        outin_report, outin_bad_probs, n_outin_total, n_outin_bad, all_in_pass_rate = _build_outin_report(
-            full_data=data,
-            in_remaining_data=in_remaining_data,
-            in_remaining_bad_probs=in_remaining_bad_probs,
-            rules_base=rules_base,
-            rules_in=rules_in,
-            bin_table_result=bin_table_result,
-            score_map=score_map,
-            score_weights=score_weights,
-            n_total_full=n_total_full,
-            n_bad_full=inout_n_bad_full,
-            full_bad_rate=full_bad_rate_v2,
-            sample_survival_rate=final_pass_rate,
-            rule_analysis_mode=rule_analysis_mode,
-            out_in_uplift=out_in_uplift,
-            amount=amount,
-            out_in_amount_fill=out_in_amount_fill,
-            out_in_amount_col=out_in_amount_col,
-        )
-
-    # ── 构建 swap_pipeline（双口径）────────────────────────────────────────
-    # 订单口径
-    swap_pipeline_order = _build_swap_pipeline(
-        base_report=base_report,
-        inout_report=inout_report,
-        outin_report=outin_report,
-        n_total_full=n_total_full,
-        n_bad_full=inout_n_bad_full,
-        full_bad_rate=full_bad_rate_v2,
-        sample_survival_rate=sample_survival_rate,
-        rules_base=rules_base,
-        rules_out=rules_out,
-        rules_in=rules_in,
-        reverse_order=reverse_order,
-        amount_col=None,
-    )
-    # 金额口径（仅当 amount 参数传入时构建）
-    swap_pipeline_amount = None
-    if amount is not None:
-        swap_pipeline_amount = _build_swap_pipeline(
-            base_report=base_report,
-            inout_report=inout_report,
-            outin_report=outin_report,
-            n_total_full=n_total_full,
-            n_bad_full=inout_n_bad_full,
-            full_bad_rate=full_bad_rate_v2,
-            sample_survival_rate=sample_survival_rate,
-            rules_base=rules_base,
-            rules_out=rules_out,
-            rules_in=rules_in,
-            reverse_order=reverse_order,
-            amount_col=amount,
-        )
-
-    # ── 构建 swap_result ──────────────────────────────────────────────────
-    swap_result = _build_swap_result(
-        base_report=base_report,
-        inout_report=inout_report,
-        outin_report=outin_report,
-        n_total_full=n_total_full,
-        n_bad_full=inout_n_bad_full,
-        full_bad_rate=full_bad_rate_v2,
-        sample_survival_rate=sample_survival_rate,
-        rules_base=rules_base,
-        rules_out=rules_out,
-        rules_in=rules_in,
         out_in_uplift=out_in_uplift,
+        sample_survival_rate=sample_survival_rate,
+        reverse_order=reverse_order,
+        rule_analysis_mode=rule_analysis_mode,
+        out_in_amount_fill=out_in_amount_fill,
+        out_in_amount_col=out_in_amount_col,
+        y=y,
     )
 
     # ── 返回结果 ────────────────────────────────────────────────────────────
-    # swap_summary = 三个 report 的 union，去重逻辑与 pipeline 完全一致
-    # ① 收集所有行（字典形式，保留全部原始列）
-    raw_rows = []
-    raw_rows.extend(base_report.to_dict('records'))
-    raw_rows.extend(inout_report.to_dict('records'))
-    raw_rows.extend(outin_report.to_dict('records'))
-
-    # ② 用与 _build_swap_pipeline 相同的去重逻辑过滤
-    # 逻辑：对于同 (规则分类, 指标名称) 的重复行，保留最后一个（与 pipeline 去重策略对齐）
-    # 顺序：base_report -> inout_report -> outin_report，
-    # 所以 IN-IN 的最终行（inout_report 最后添加）会覆盖基准行
-    seen = set()
-    result_rows = []
-    for r in reversed(raw_rows):
-        key = (r.get('规则分类'), r.get('指标名称'))
-        if key in seen:
-            continue  # 已保留过，跳过（保留的是后面的/最终的）
-        seen.add(key)
-        if r.get('_is_baseline') is True:
-            continue  # 基准行，pipeline 中已过滤
-        result_rows.append(r)
-    result_rows.reverse()  # 恢复原始顺序
-    swap_summary = pd.DataFrame(result_rows) if result_rows else pd.DataFrame()
-    # 去掉金额口径辅助列和内部标记列
-    helper_cols = ['样本总额', '坏样本总额', '坏样本率(金额)', '金额占比', '_is_baseline']
-    swap_summary = swap_summary.drop(columns=[c for c in helper_cols if c in swap_summary.columns])
-
     return {
-        'swap_summary': swap_summary,
-        'swap_pipeline_order': swap_pipeline_order,
-        'swap_pipeline_amount': swap_pipeline_amount,
+        'swap_pipeline': swap_pipeline,
         'swap_result': swap_result,
     }
 
