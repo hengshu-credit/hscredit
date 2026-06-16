@@ -223,7 +223,6 @@ catboost_info/*
 nul
 .claude
 .claude/*
-CLAUDE.md
 AGENTS.md
 .idea
 .vscode

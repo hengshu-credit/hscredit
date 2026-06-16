@@ -81,6 +81,7 @@ from .smooth_binning import SmoothBinning
 from .kernel_density_binning import KernelDensityBinning
 from .best_lift_binning import BestLiftBinning
 from .target_bad_rate_binning import TargetBadRateBinning
+from .optimal_binning_2d import OptimalBinning2D
 
 __all__ = [
     'BaseBinning',
@@ -103,4 +104,5 @@ __all__ = [
     'KernelDensityBinning',
     'BestLiftBinning',
     'TargetBadRateBinning',
+    'OptimalBinning2D',
 ]
