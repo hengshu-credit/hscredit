@@ -419,8 +419,8 @@ def _wrap_condition_text(text: str, max_width: float, fontsize: float) -> List[s
     return lines if lines else [text]
 
 
-def _compute_fill_color
-    """根据预计算的色阶，对给定坏账率返回对应颜色。
+def _compute_fill_color(bad_rate, stops):
+    """根据预计算的色阶，对给定坏账率返回对应颜色.
 
     :param bad_rate: 坏账率（0~1）
     :param stops: 由 _build_gradient_stops 生成的色阶列表
