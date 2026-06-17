@@ -6,7 +6,7 @@
 **核心特点（AntV G6 风格）**：
 - **卡片节点**：圆角矩形卡片，内含节点标题、分裂条件、统计指标
 - **层级布局**：从上到下自动排版，父节点居中，子节点均匀分布
-- **平滑连线**：曲线连接父子节点，分支标签（≤ / >）清晰标注
+- **平滑连线**：曲线连接父子节点，分支标签（<= / >）清晰标注
 - **颜色语义**：蓝/绿=低坏账，红/橙=高坏账（hscredit 风控主题色）
 - **双 API 支持**：支持 ManualTreeExtractor 和 sklearn DecisionTreeClassifier
 
@@ -32,6 +32,7 @@
 >>> chart.render('tree.pdf')
 """
 
+import html
 import math
 import os
 import sys
@@ -41,16 +42,18 @@ import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 
-# 配置中文字体（按优先级尝试系统可用字体）
-_FONT_NAMES = ["SimHei", "Arial Unicode MS", "Microsoft YaHei",
-                "WenQuanYi Micro Hei", "Noto Sans CJK SC", "DejaVu Sans"]
-for fname in _FONT_NAMES:
-    try:
-        matplotlib.rcParams["font.sans-serif"] = [fname]
-        matplotlib.rcParams["axes.unicode_minus"] = False
-        break
-    except Exception:
-        continue
+
+def _tex_label(text: str) -> str:
+    """将 ASCII 比较符号转换为 TeX math text，用于 matplotlib 渲染.
+
+    使用 matplotlib 原生 math text 语法（无需 usetex），
+    如 "x <= 600" → "x $\leq$ 600"，">" → "$>$"。
+
+    :param text: 原始文本
+    :return: TeX math text 格式
+    """
+    # 使用 matplotlib 原生 math text（无需安装 LaTeX，兼容 Agg 后端）
+    return text.replace("<=", r" $\leq$ ")
 
 
 __all__ = [
@@ -229,7 +232,7 @@ def _build_tree_data(
         else:
             feat_name = feat_names[feat_idx] if feat_idx < len(feat_names) else f"x[{feat_idx}]"
             th = threshold[node_id] if node_id < len(threshold) else 0.0
-            cond_text = f"{feat_name} ≤ {th:.4g}"
+            cond_text = f"{feat_name} <= {th:.4g}"
             split_feat = feat_name
             th_text = f"{th:.4g}"
 
@@ -266,7 +269,7 @@ def _build_tree_data(
             edges.append({
                 "source": node_id,
                 "target": left_child,
-                "label": "≤",
+                "label": "<=",
                 "label_pos": 0.5,
             })
         if right_child != -1:
@@ -343,8 +346,9 @@ def _build_gradient_stops(min_br: float, max_br: float) -> List[Tuple[float, Tup
     return stops
 
 
-def _measure_text_width(text: str, fontsize: float, fontweight: str = "normal") -> float:
-    """测量单行文本在数据坐标系下的宽度（inch）。
+def _measure_text_width(text: str, fontsize: float, fontweight: str = "normal",
+                        use_tex: bool = False) -> float:
+    """测量文本在数据坐标系下的宽度（inch）。
 
     基于 matplotlib text 渲染器测量，使用当前 figure 的 dpi，
     假设 ax.set_aspect('equal') 后 x 轴 1 unit = 1 inch。
@@ -352,12 +356,18 @@ def _measure_text_width(text: str, fontsize: float, fontweight: str = "normal") 
     :param text: 文本内容
     :param fontsize: 字号（points）
     :param fontweight: 粗细
+    :param use_tex: 是否将 text 先通过 _tex_label 转换再测量（用于渲染时的精确布局）
     :return: 文本宽度（inch）
     """
+    if use_tex:
+        text = _tex_label(text)
     fig_tmp = plt.figure(figsize=(1, 1))
     ax_tmp = fig_tmp.add_axes([0, 0, 1, 1])
+    # 不指定 fontfamily，使用当前 rcParams 默认字体（与实际渲染时一致），
+    # 否则测量字体（如不含中文字形的 sans-serif）与渲染字体不一致会导致宽度严重低估，
+    # 是节点文字溢出/与徽章重叠的根本原因
     t = ax_tmp.text(0, 0, text, fontsize=fontsize, fontweight=fontweight,
-                    ha='left', va='center', fontfamily='sans-serif')
+                    ha='left', va='center')
     renderer = fig_tmp.canvas.get_renderer()
     bb = t.get_window_extent(renderer)
     fig_tmp.clf()
@@ -371,26 +381,26 @@ def _wrap_condition_text(text: str, max_width: float, fontsize: float) -> List[s
 
     换行策略：
     1. 尝试整行
-    2. 尝试在 " ≤ " 处拆分（特征名一行，阈值一行）
+    2. 尝试在 "<=" 处拆分（特征名一行，阈值一行）
     3. 强制在空格处拆分（多行）
 
-    :param text: 条件文本（如 "衡枢鉴真分老客版 ≤ 600"）
+    :param text: 条件文本（如 "衡枢鉴真分老客版 <= 600"）
     :param max_width: 最大可用宽度（inch）
     :param fontsize: 字号（points）
     :return: 换行后的文本行列表
     """
-    # 测量整行宽度
-    if _measure_text_width(text, fontsize) <= max_width:
+    # 测量整行宽度（TeX 渲染后宽度，用于准确布局）
+    if _measure_text_width(text, fontsize, use_tex=True) <= max_width:
         return [text]
 
-    # 策略1：在 " ≤ " 处拆分
-    if " ≤ " in text:
-        feat_part, th_part = text.split(" ≤ ", 1)
-        feat_w = _measure_text_width(feat_part, fontsize)
-        th_w = _measure_text_width(th_part, fontsize)
+    # 策略1：在 "<=" 处拆分
+    if "<=" in text:
+        feat_part, th_part = text.split("<=", 1)
+        feat_w = _measure_text_width(feat_part, fontsize, use_tex=True)
+        th_w = _measure_text_width(th_part, fontsize, use_tex=True)
         # 如果两部分各自能放下，分两行
         if feat_w <= max_width and th_w <= max_width:
-            return [feat_part, f"≤ {th_part}"]
+            return [feat_part.strip(), f"<= {th_part.strip()}"]
 
     # 策略2：强制按空格拆分（单词换行）
     words = text.split(" ")
@@ -398,16 +408,16 @@ def _wrap_condition_text(text: str, max_width: float, fontsize: float) -> List[s
     current = ""
     for word in words:
         test = (current + " " + word).strip()
-        if _measure_text_width(test, fontsize) <= max_width:
+        if _measure_text_width(test, fontsize, use_tex=True) <= max_width:
             current = test
         else:
             if current:
                 lines.append(current)
             # 如果单词本身就超宽，直接截断（单字符单词不会太宽）
-            if _measure_text_width(word, fontsize) > max_width:
+            if _measure_text_width(word, fontsize, use_tex=True) > max_width:
                 # 在单词内部找能放下的前缀
                 for i in range(1, len(word) + 1):
-                    if _measure_text_width(word[:i] + "-", fontsize) > max_width:
+                    if _measure_text_width(word[:i] + "-", fontsize, use_tex=True) > max_width:
                         break
                 # 放能放下的部分，剩余的继续
                 prefix = word[:max(1, i - 1)]
@@ -487,7 +497,6 @@ def _reingold_tilford_layout(
     nodes: List[Dict[str, Any]],
     edges: List[Dict[str, Any]],
     node_width_override: Optional[float] = None,
-    node_widths_map: Optional[Dict[int, float]] = None,
 ) -> Dict[int, Tuple[float, float]]:
     """Reingold-Tilford 树布局算法，计算每个节点的 (x, y) 坐标。
 
@@ -496,8 +505,7 @@ def _reingold_tilford_layout(
 
     :param nodes: 节点数据列表
     :param edges: 边数据列表
-    :param node_width_override: 全局节点宽度覆盖值（可选，用于所有节点统一宽度）
-    :param node_widths_map: 节点ID到宽度的映射字典（可选，用于不同节点不同宽度）
+    :param node_width_override: 全局节点宽度覆盖值（可选，所有节点统一宽度，缺省使用默认宽度）
     :return: 节点ID到坐标的映射 {node_id: (x, y)}
     """
     n_nodes = len(nodes)
@@ -538,10 +546,8 @@ def _reingold_tilford_layout(
     for nid, d in depth_map.items():
         nodes_by_depth.setdefault(d, []).append(nid)
 
-    # 确定节点宽度：优先使用 node_widths_map，次之 node_width_override，最后默认值
+    # 确定节点宽度：优先使用 node_width_override（全树统一），否则使用默认值
     def get_node_width(nid: int) -> float:
-        if node_widths_map and nid in node_widths_map:
-            return node_widths_map[nid]
         if node_width_override is not None:
             return node_width_override
         return _NODE_W_INCH
@@ -600,9 +606,11 @@ def plot_tree_matplotlib(
     **参数**
 
     :param tree_obj: ManualTreeExtractor 或 sklearn DecisionTreeClassifier
-    :param figsize: 画布大小（宽, 高），单位英寸
+    :param figsize: 初始画布大小（宽, 高），单位英寸；实际画布会按节点统一宽度/树形结构
+        自动重新计算并覆盖该值，以保证 1 个数据坐标单位严格等于 1 inch（否则节点框
+        与文字字号的相对比例会被意外缩放，导致文字溢出节点）
     :param dpi: 图像分辨率
-    :param save: 保存路径（如 'tree.png'），None 则不保存
+    :param save: 保存路径（如 'tree.png'），如传入路径中有文件夹不存在，会自动创建，默认 None
     :param title: 图表标题
     :param show_stats: 是否显示节点统计信息（样本数、坏账率等）
     :param show_gini: 是否显示 Gini 不纯度
@@ -643,7 +651,7 @@ def plot_tree_matplotlib(
         node_fill_colors[n["node_id"]] = _compute_fill_color(n["bad_rate"], gradient_stops)
 
     # ============================================================
-    # 动态节点宽度 + 标题行换行 + padding 计算
+    # 全树统一节点宽度 + 标题行换行 + padding 计算
     # ============================================================
     # 固定参数
     FONT_TITLE = 10
@@ -655,73 +663,45 @@ def plot_tree_matplotlib(
     BADGE_R = 0.16
     BADGE_DIAM = BADGE_R * 2  # = 0.32
 
-    # 标题行左右 padding = 圆徽章直径，保证条件文本不与徽章重叠
-    TITLE_PAD_LEFT = BADGE_DIAM + 0.06  # 圆徽章直径 + 圆与文字间距
-    TITLE_PAD_RIGHT = 0.12
+    # 标题行左右 padding 均等于圆徽章直径：
+    # 左侧 padding 刚好容纳节点编号圆徽章，避免与条件文本重叠；
+    # 右侧采用相同宽度的 padding，使条件文本在节点内整体居中（视觉对称）
+    TITLE_PAD_LEFT = BADGE_DIAM
+    TITLE_PAD_RIGHT = BADGE_DIAM
 
-    # 标题行可用宽度 = 节点宽度 - 左右 padding
-    NODE_W_DEFAULT = _NODE_W_INCH  # 默认宽度 2.8 inch
-    NODE_W_MIN = 2.0  # 最小宽度（inch）
-    NODE_W_MAX = 5.0  # 最大宽度（inch）
+    NODE_W_MIN = 2.0  # 节点宽度下限（inch）
+    NODE_W_MAX = 5.0  # 节点宽度上限（inch），防止单个超长特征名把节点撑得过宽
 
-    # 预计算所有分裂节点的条件文本宽度（含换行后宽度）
+    # 第一步：测量全树每个节点标题内容（分裂条件 / "叶子节点"）的单行宽度，
+    # 取全树最大值作为统一节点宽度的依据（含上限），保证所有节点等宽、整齐排列
     title_font_size = FONT_TITLE
-    cond_texts: List[Optional[str]] = []  # 每个节点的条件文本
-    cond_lines: List[List[str]] = []      # 每个节点换行后的行列表
     node_id_to_idx: Dict[int, int] = {}   # 节点ID到nodes列表索引的映射
+    max_content_w = 0.0
 
     for idx, node in enumerate(nodes):
         node_id_to_idx[node["node_id"]] = idx
         if node["is_leaf"]:
-            cond_texts.append(None)
+            content_w = _measure_text_width("叶子节点", title_font_size, "bold")
+        else:
+            content_w = _measure_text_width(node["condition"], title_font_size, "bold", use_tex=True)
+        max_content_w = max(max_content_w, content_w)
+
+    # 第二步：全树统一节点宽度 = 最大内容宽度 + 左右 padding，并裁剪到 [下限, 上限]
+    uniform_node_w = min(max(max_content_w + TITLE_PAD_LEFT + TITLE_PAD_RIGHT, NODE_W_MIN), NODE_W_MAX)
+
+    # 第三步：基于统一宽度对应的可用文本区域，对每个分裂节点的条件文本换行
+    # （仅当条件文本宽度超过上限对应的可用宽度时才会真正换行为多行）
+    available_w = uniform_node_w - TITLE_PAD_LEFT - TITLE_PAD_RIGHT
+    cond_lines: List[List[str]] = []      # 每个节点换行后的行列表
+    for idx, node in enumerate(nodes):
+        if node["is_leaf"]:
             cond_lines.append([])
         else:
-            cond_texts.append(node["condition"])
-            # 初始换行：基于默认宽度
-            available_w = NODE_W_DEFAULT - TITLE_PAD_LEFT - TITLE_PAD_RIGHT
             wrapped = _wrap_condition_text(node["condition"], available_w, title_font_size)
             cond_lines.append(wrapped)
 
-    # 根据换行后的文本，计算每个节点的最优宽度
-    node_widths_map: Dict[int, float] = {}
-    max_node_width = NODE_W_DEFAULT
-    
-    for idx, node in enumerate(nodes):
-        nid = node["node_id"]
-        
-        if node["is_leaf"]:
-            # 叶子节点显示"叶子节点"
-            leaf_text_w = _measure_text_width("叶子节点", title_font_size, "bold")
-            w = max(NODE_W_MIN, leaf_text_w + TITLE_PAD_LEFT + TITLE_PAD_RIGHT)
-            node_widths_map[nid] = min(w, NODE_W_MAX)
-        else:
-            # 获取当前的换行文本
-            lines = cond_lines[idx]
-            if not lines:
-                node_widths_map[nid] = NODE_W_DEFAULT
-            else:
-                # 计算所有行的最大宽度
-                max_line_w = max(
-                    (_measure_text_width(line, title_font_size, "bold") for line in lines),
-                    default=0
-                )
-                w = max_line_w + TITLE_PAD_LEFT + TITLE_PAD_RIGHT
-                w = max(w, NODE_W_MIN)
-                node_widths_map[nid] = min(w, NODE_W_MAX)
-        
-        max_node_width = max(max_node_width, node_widths_map[nid])
-
-    # 现在重新换行：基于最终的节点宽度，确保文本真的能放下
-    for idx, node in enumerate(nodes):
-        nid = node["node_id"]
-        if not node["is_leaf"]:
-            node_w = node_widths_map[nid]
-            available_w = node_w - TITLE_PAD_LEFT - TITLE_PAD_RIGHT
-            wrapped = _wrap_condition_text(node["condition"], available_w, title_font_size)
-            cond_lines[idx] = wrapped
-
-    # Reingold-Tilford 布局（传入节点宽度映射）
-    coords = _reingold_tilford_layout(nodes, edges, node_widths_map=node_widths_map)
+    # Reingold-Tilford 布局（全树统一节点宽度）
+    coords = _reingold_tilford_layout(nodes, edges, node_width_override=uniform_node_w)
     if not coords:
         fig, ax = plt.subplots(figsize=(6, 4))
         ax.text(0.5, 0.5, "布局计算失败", ha="center", va="center", fontsize=14)
@@ -759,7 +739,7 @@ def plot_tree_matplotlib(
         tgt_total_node_h = CONTENT_START_Y_OFFSET + CONTENT_LINES * 0.28 + tgt_extra_title_h
 
         label_text = edge["label"]
-        edge_color = "#165DFF" if label_text == "≤" else "#F53F3B"
+        edge_color = "#165DFF" if label_text == "<=" else "#F53F3B"
 
         # 直线连接：从父节点底边中点 → 子节点顶边中点
         ax.plot(
@@ -770,44 +750,34 @@ def plot_tree_matplotlib(
             zorder=1,
         )
 
-        # 根节点边：标签放在线段中点
-        if src_id == ROOT_ID:
-            mid_x = (x1 + x2) / 2
-            mid_y = (y1 + y2) / 2
-            label_bg = "#E8F0FF" if label_text == "≤" else "#FFF1F0"
-            bbox_props = dict(
-                boxstyle="round,pad=0.25",
-                facecolor=label_bg,
-                edgecolor=edge_color,
-                linewidth=1.5,
-            )
-            ax.text(
-                mid_x, mid_y,
-                f" {label_text} ",
-                ha="center", va="center",
-                fontsize=10, fontweight="bold", color=edge_color,
-                bbox=bbox_props, zorder=3,
-            )
+        # 边标签：放在线段中点，非根节点边字号更小
+        mid_x = (x1 + x2) / 2
+        mid_y = (y1 + y2) / 2
+        label_bg = "#E8F0FF" if label_text == "<=" else "#FFF1F0"
+        is_root_edge = src_id == ROOT_ID
+        label_fontsize = 9 if is_root_edge else 8
+        label_pad = 0.2 if is_root_edge else 0.12
+        bbox_props = dict(
+            boxstyle=f"round,pad={label_pad}",
+            facecolor=label_bg,
+            edgecolor=edge_color,
+            linewidth=1.2,
+        )
+        ax.text(
+            mid_x, mid_y,
+            f" {_tex_label(label_text)} ",
+            ha="center", va="center",
+            fontsize=label_fontsize, fontweight="bold", color=edge_color,
+            bbox=bbox_props, zorder=3,
+        )
 
     # ============================================================
     # 绘制节点
     # ============================================================
-    # 内容区起始 y（从标题行底部往上，减去额外标题行高度）
-    # 额外标题行高度 = (n_lines - 1) * TITLE_H
-    CONTENT_START_Y_OFFSET = TITLE_H + 0.08  # 标题行底部 + padding
-    FONT_BODY = 9
-    CONTENT_LINES = 5  # 内容行数（gini/samples/pct/bad_rate/lift）
-    TITLE_H = 0.38  # 单行标题高度（inch）
-
-    # 圆徽章参数（单位：inch）
-    BADGE_R = 0.16
-    BADGE_DIAM = BADGE_R * 2  # = 0.32
-
-    # 标题行左右 padding = 圆徽章直径，保证条件文本不与徽章重叠
-
+    node_id_to_total_h: Dict[int, float] = {}  # 记录每个节点的实际高度，供后续画布尺寸计算复用
     for idx, node in enumerate(nodes):
         nid = node["node_id"]
-        node_w = node_widths_map[nid]
+        node_w = uniform_node_w
         x, y = coords[nid]
         is_leaf = node["is_leaf"]
         is_manual = node["is_manual"]
@@ -829,6 +799,7 @@ def plot_tree_matplotlib(
 
         # 节点高度 = 内容区 + 总标题高度
         total_node_h = CONTENT_START_Y_OFFSET + CONTENT_LINES * 0.28 + extra_title_h
+        node_id_to_total_h[nid] = total_node_h
 
         # 画节点矩形（动态宽高）
         rect = plt.Rectangle(
@@ -858,9 +829,10 @@ def plot_tree_matplotlib(
         ax.add_patch(title_bar)
 
         # ========== 圆形徽章（节点编号）==========
-        # 徽章在标题行左侧
+        # 徽章居中放置在左侧 padding 区域内（宽度恰为 BADGE_DIAM），
+        # 徽章右边缘正好与条件文本区域左边缘对齐，不会重叠
         badge_y_center = (title_bar_y_top + title_bar_y_bottom) / 2
-        badge_x = x - node_w / 2 + BADGE_DIAM / 2 + 0.04
+        badge_x = x - node_w / 2 + BADGE_R
         badge_bg = "#FFFFFF" if not is_manual else "#FFD700"
         circle = plt.Circle((badge_x, badge_y_center), BADGE_R, color=badge_bg, zorder=4)
         ax.add_patch(circle)
@@ -887,7 +859,7 @@ def plot_tree_matplotlib(
             # 单行：居中
             ax.text(
                 cond_text_center_x, badge_y_center,
-                title_lines[0],
+                _tex_label(title_lines[0]),
                 ha="center", va="center",
                 fontsize=FONT_TITLE, fontweight="bold", color="#FFFFFF",
                 zorder=5,
@@ -900,7 +872,7 @@ def plot_tree_matplotlib(
                 line_y = top_y - li * line_h
                 ax.text(
                     cond_text_center_x, line_y,
-                    line_text,
+                    _tex_label(line_text),
                     ha="center", va="center",
                     fontsize=FONT_TITLE, fontweight="bold", color="#FFFFFF",
                     zorder=5,
@@ -927,24 +899,50 @@ def plot_tree_matplotlib(
                 zorder=4,
             )
 
-    # 更新坐标范围
-    xs = [c[0] for c in coords.values()]
-    ys = [c[1] for c in coords.values()]
-    x_pad = max_node_width * 1.5
+    # ============================================================
+    # 按内容真实尺寸设置画布大小（而非沿用传入的 figsize）
+    # ============================================================
+    # 整个布局都是按照「1 个数据坐标单位 = 1 inch」计算节点宽高/padding/徽章半径的。
+    # 如果直接用传入的 figsize 配合 ax.set_aspect("equal")，
+    # 一旦树的实际数据宽高比与 figsize 的宽高比不一致，matplotlib 会整体缩放
+    # 数据坐标系以适配画布（即 1 单位 != 1 inch 了）；但文字字号是物理绝对大小，
+    # 不会跟着缩放，于是节点框（随之缩小）就可能比文字还窄，导致文字溢出/与徽章重叠。
+    # 因此这里改为：以内容的真实数据范围反推画布尺寸，强制保证 1 单位 = 1 inch。
+    x_pad = uniform_node_w * 1.5
     y_pad = 2.0
-    ax.set_xlim(min(xs) - x_pad, max(xs) + x_pad)
-    ax.set_ylim(min(ys) - y_pad, max(ys) + y_pad)
+    x_min = min(coords[nid][0] - uniform_node_w / 2 for nid in coords) - x_pad
+    x_max = max(coords[nid][0] + uniform_node_w / 2 for nid in coords) + x_pad
+    y_min = min(coords[nid][1] - node_id_to_total_h[nid] / 2 for nid in coords) - y_pad
+    y_max = max(coords[nid][1] + node_id_to_total_h[nid] / 2 for nid in coords) + y_pad
 
-    # 标题
-    if title:
-        ax.set_title(title, fontsize=18, fontweight="bold", color=_COLOR_TEXT_DARK, pad=15, y=1.02)
+    data_w = x_max - x_min
+    data_h = y_max - y_min
+
+    # 标题预留高度（图形坐标，不占用数据区域，因此不影响 1 单位 = 1 inch 的换算）
+    title_margin = 0.7 if title else 0.0
+    fig.set_size_inches(data_w, data_h + title_margin)
+
+    # 主坐标区铺满整张画布的数据区域部分（顶部留给标题），从而让坐标轴的物理尺寸
+    # 与 (data_w, data_h) 精确一致，set_aspect("equal") 不再需要做任何缩放
+    axes_h_frac = data_h / (data_h + title_margin)
+    ax.set_position([0.0, 0.0, 1.0, axes_h_frac])
+    ax.set_xlim(x_min, x_max)
+    ax.set_ylim(y_min, y_max)
     ax.axis("off")
     ax.set_aspect("equal")
-    ax.autoscale_view()
 
-    plt.tight_layout()
+    # 标题：用 figure 级别坐标绘制，与数据坐标轴的缩放彼此独立
+    if title:
+        fig.text(
+            0.5, axes_h_frac + (1 - axes_h_frac) * 0.45,
+            title, ha="center", va="center",
+            fontsize=18, fontweight="bold", color=_COLOR_TEXT_DARK,
+        )
 
     if save:
+        save_dir = os.path.dirname(save)
+        if save_dir and not os.path.exists(save_dir):
+            os.makedirs(save_dir, exist_ok=True)
         fig.savefig(save, dpi=dpi, bbox_inches="tight", facecolor=fig.get_facecolor())
 
     return fig
@@ -977,7 +975,7 @@ def plot_tree_pyecharts(
     :param title: 图表标题
     :param width: 画布宽度（CSS 格式，如 '1400px'）
     :param height: 画布高度
-    :param save: 保存路径（如 'tree.html'），None 则不保存
+    :param save: 保存路径（如 'tree.html'），如传入路径中有文件夹不存在，会自动创建，默认 None
     :param page_title: HTML 页面标题
     :return: pyecharts Graph 对象
 
@@ -1016,7 +1014,8 @@ def plot_tree_pyecharts(
         bar.set_global_opts(title_opts=opts.TitleOpts(title="树为空或未拟合"))
         return bar
 
-    # Reingold-Tilford 布局
+    # Reingold-Tilford 布局（根节点 y=0，子节点 y<0）
+    # pyecharts y轴向上，negate y 使根节点位于顶部
     coords = _reingold_tilford_layout(nodes, edges)
 
     # 构建 pyecharts 节点
@@ -1024,6 +1023,8 @@ def plot_tree_pyecharts(
     for node in nodes:
         nid = node["node_id"]
         x, y = coords.get(nid, (0, 0))
+        # negate y：根节点(0) → 顶部，子节点(负) → 底部
+        x_float, y_float = float(x), float(-y)
 
         is_leaf = node["is_leaf"]
         is_manual = node["is_manual"]
@@ -1075,8 +1076,8 @@ def plot_tree_pyecharts(
         graph_nodes.append(
             opts.GraphNode(
                 name=str(nid),
-                x=float(x),
-                y=float(y),
+                x=x_float,
+                y=y_float,
                 symbol_size=node_size,
                 itemstyle_opts=opts.ItemStyleOpts(
                     color=fill,
@@ -1107,12 +1108,12 @@ def plot_tree_pyecharts(
             )
         )
 
-    # 构建 pyecharts 边（贝塞尔曲线 + 主题色 + 仅根节点显示分支标签）
+    # 构建 pyecharts 边（贝塞尔曲线 + 主题色 + 所有边显示分支标签）
     graph_edges = []
     ROOT_ID = "0"
     for edge in edges:
         label_text = edge["label"]
-        edge_color = "#165DFF" if label_text == "≤" else "#F53F3B"
+        edge_color = "#165DFF" if label_text == "<=" else "#F53F3B"
         is_root_edge = str(edge["source"]) == ROOT_ID
 
         graph_edges.append(
@@ -1123,20 +1124,20 @@ def plot_tree_pyecharts(
                     color=edge_color,
                     width=2.5,
                     opacity=0.85,
-                    curve=0.4,  # 贝塞尔曲线
+                    curve=0.0,  # 直线连接
                 ),
                 label_opts=opts.LabelOpts(
-                    formatter=edge["label"] if is_root_edge else "",
-                    font_size=11,
+                    formatter=edge["label"],
+                    font_size=9 if is_root_edge else 8,
                     font_weight="bold",
                     color=edge_color,
-                    background_color=("#E8F0FF" if label_text == "≤" else "#FFF1F0"),
+                    background_color=("#E8F0FF" if label_text == "<=" else "#FFF1F0"),
                     border_color=edge_color,
-                    border_width=1.2,
-                    border_radius=4,
-                    padding=3,
+                    border_width=1.0,
+                    border_radius=3,
+                    padding=2,
                     position="middle",
-                    is_show=is_root_edge,
+                    is_show=True,
                 ),
             )
         )
@@ -1223,6 +1224,9 @@ def plot_tree_pyecharts(
     chart = graph
 
     if save:
+        save_dir = os.path.dirname(save)
+        if save_dir and not os.path.exists(save_dir):
+            os.makedirs(save_dir, exist_ok=True)
         chart.render(save)
 
     return chart
@@ -1250,7 +1254,7 @@ def plot_tree_graphviz(
     **参数**
 
     :param tree_obj: ManualTreeExtractor 或 sklearn DecisionTreeClassifier
-    :param save: 保存路径（不含后缀，如 '/tmp/tree' 会生成 tree.png）
+    :param save: 保存路径（如 '/tmp/tree.png'），如传入路径中有文件夹不存在，会自动创建，默认 None
     :param format: 渲染格式，默认 'png'。可选 'pdf', 'svg', 'dot' 等
     :param title: 图表标题
     :param feature_names: 特征名列表（sklearn clf 推荐传入）
@@ -1305,6 +1309,9 @@ def plot_tree_graphviz(
         # 行1: node #0
         # 行2: 切分条件
         # 行3~7: 指标（Gini / 样本 / 占比 / 坏账率 / LIFT）
+        # 切分条件含 "<=" 等比较符号，label=<...> 是 graphviz 的 HTML-like 标签语法，
+        # "<" 会被当成标签起始符解析，必须转义动态内容，否则会产生 DOT 语法错误
+        condition_html = html.escape(node["condition"])
         label_html = (
             f'<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" CELLPADDING="2" WIDTH="140" HEIGHT="120">'
             # 行1: 节点编号
@@ -1313,7 +1320,7 @@ def plot_tree_graphviz(
             f'</TD></TR>'
             # 行2: 切分条件
             f'<TR><TD ALIGN="CENTER" VALIGN="MIDDLE" HEIGHT="18">'
-            f'<FONT POINT-SIZE="8" FACE="SimHei,Microsoft YaHei,Arial" COLOR="#1D2129">{node["condition"]}</FONT>'
+            f'<FONT POINT-SIZE="8" FACE="SimHei,Microsoft YaHei,Arial" COLOR="#1D2129">{condition_html}</FONT>'
             f'</TD></TR>'
             # 分隔线
             f'<TR><TD ALIGN="CENTER" VALIGN="MIDDLE" HEIGHT="4">'
@@ -1348,23 +1355,19 @@ def plot_tree_graphviz(
             f'penwidth=1.5, tooltip="{node["title"]} | {node["condition"]}"] ;'
         )
 
-    # 添加边（直线 + 无箭头 + 仅根节点显示分支标签）
+    # 添加边（直线 + 无箭头 + 所有边显示分支标签）
     ROOT_ID = 0
     for edge in edges:
         label_text = edge["label"]
         is_root_edge = edge["source"] == ROOT_ID
+        edge_color = "#165DFF" if label_text == "<=" else "#F53F3B"
+        font_size = "10" if is_root_edge else "8"
 
-        if is_root_edge:
-            dot_lines.append(
-                f'    {edge["source"]} -> {edge["target"]} '
-                f'[label="  {label_text}  ", fontcolor="#165DFF", '
-                f'color="#165DFF", penwidth=1.5, style=solid] ;'
-            )
-        else:
-            dot_lines.append(
-                f'    {edge["source"]} -> {edge["target"]} '
-                f'[color="#165DFF", penwidth=1.5, style=solid] ;'
-            )
+        dot_lines.append(
+            f'    {edge["source"]} -> {edge["target"]} '
+            f'[label="  {label_text}  ", fontcolor="{edge_color}", '
+            f'color="{edge_color}", penwidth=1.5, style=solid, fontsize={font_size}] ;'
+        )
 
     dot_lines.append("}")
 
@@ -1372,6 +1375,9 @@ def plot_tree_graphviz(
     src = graphviz.Source(dot_src, engine="dot")
 
     if save:
+        save_dir = os.path.dirname(save)
+        if save_dir and not os.path.exists(save_dir):
+            os.makedirs(save_dir, exist_ok=True)
         src.render(save, format=format, cleanup=True)
 
     return src
