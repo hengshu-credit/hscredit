@@ -1378,7 +1378,14 @@ def plot_tree_graphviz(
         save_dir = os.path.dirname(save)
         if save_dir and not os.path.exists(save_dir):
             os.makedirs(save_dir, exist_ok=True)
-        src.render(save, format=format, cleanup=True)
+        # graphviz 的 render() 会自动在文件名后追加 ".{format}"；
+        # 若 save 已经带有该后缀（如 'tree.png'，与文档约定一致），需先去掉，
+        # 否则会生成 "tree.png.png" 这种重复后缀的文件
+        save_base = save
+        suffix = f".{format}"
+        if save_base.lower().endswith(suffix.lower()):
+            save_base = save_base[: -len(suffix)]
+        src.render(save_base, format=format, cleanup=True)
 
     return src
 
