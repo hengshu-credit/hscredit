@@ -1739,21 +1739,24 @@ class ManualTreeExtractor:
                 pass  # matplotlib 不可用时降级
 
             # 2. 降级：graphviz DOT 图
-        if not drawn:
-            try:
-                import graphviz
+            if not drawn:
+                try:
+                    import graphviz
 
-                dot_data = self.export_tree_graph()
-                dot = graphviz.Source(dot_data)
-                ipy_display(dot)
-            except Exception:
-                pass  # graphviz 也不可用时跳过图
+                    dot_data = self.export_tree_graph()
+                    dot = graphviz.Source(dot_data)
+                    ipy_display(dot)
+                except Exception:
+                    pass  # graphviz 也不可用时跳过图
 
-        # 3. 渲染美化后的规则表
-        rule_table = self.get_rule_table()
-        if rule_table is not None and len(rule_table) > 0:
-            styler = style_rule_table(rule_table, overall_badrate=self._overall_badrate)
-            ipy_display(styler)
+            # 3. 渲染美化后的规则表
+            rule_table = self.get_rule_table()
+            if rule_table is not None and len(rule_table) > 0:
+                styler = style_rule_table(rule_table, overall_badrate=self._overall_badrate)
+                ipy_display(styler)
+
+        except Exception:
+            pass  # 非 Jupyter 环境下静默跳过
 
         return self
 
