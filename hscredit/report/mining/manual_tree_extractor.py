@@ -1500,6 +1500,211 @@ class ManualTreeExtractor:
         self._check_fitted()
         return self._rule_table.copy() if self._rule_table is not None else pd.DataFrame()
 
+    def plot_tree(
+        self,
+        figsize: Tuple[int, int] = (22, 10),
+        fontsize: float = 9.0,
+        filled: bool = True,
+        rounded: bool = True,
+        impurity: bool = True,
+        node_ids: bool = True,
+        proportion: bool = True,
+        precision: int = 3,
+        save_path: Optional[str] = None,
+    ) -> "ManualTreeExtractor":
+        """使用 matplotlib 绘制当前决策树（忠实反映人工分裂后的树结构）。
+
+        内部绘制，不依赖 sklearn plot_tree，可用于任何已拟合的树。
+
+        **参数**
+
+        :param figsize: 图大小，默认 (22, 10)
+        :param fontsize: 节点标签字体大小，默认 9.0
+        :param filled: 是否填充颜色（二分类：蓝色=低坏账，红色=高坏账）
+        :param rounded: 是否使用圆角矩形
+        :param impurity: 是否显示 gini  impurity
+        :param node_ids: 是否显示节点 ID
+        :param proportion: 是否显示样本比例
+        :param precision: 数值精度
+        :param save_path: 保存路径（可选，如 '/tmp/tree.png'）
+        :return: self（支持链式调用）
+
+        **参考样例**
+
+        >>> ext = ManualTreeExtractor(target='IS_BAD')
+        >>> ext.fit(df, feature_list=['age', 'income'])
+        >>> ext.manual_split(df, 'income', 5000, node=1)
+        >>> ext.plot_tree(save_path='/tmp/tree.png')
+        >>> # 或在 Jupyter 中直接 display
+        >>> from IPython.display import display
+        >>> display(ext.plot_tree())
+        """
+        self._check_fitted()
+
+        try:
+            import matplotlib.pyplot as plt
+            import matplotlib.patches as mpatches
+            import matplotlib.patheffects as pe
+        except ImportError:
+            raise ImportError("需要安装 matplotlib: pip install matplotlib")
+
+        children_left = self._tree_info.children_left
+        children_right = self._tree_info.children_right
+        feature = self._tree_info.feature
+        threshold = self._tree_info.threshold
+        n_samples = self._tree_info.n_node_samples
+        values = self._tree_info.value
+        imp = self._tree_info.impurity
+        feat_names = self._tree_info.feature_names or self._feature_list or []
+        total_samples = sum(n_samples) if n_samples else 1
+        n_classes = self._tree_info.n_classes or 2
+
+        # 计算节点位置（层次布局）
+        n_nodes = len(feature)
+        depth_map: Dict[int, List[int]] = {}
+        node_depth_map: Dict[int, int] = {}
+
+        def assign_depth(node: int, depth: int) -> None:
+            depth_map.setdefault(depth, []).append(node)
+            node_depth_map[node] = depth
+            if children_left[node] != -1:
+                assign_depth(children_left[node], depth + 1)
+                assign_depth(children_right[node], depth + 1)
+
+        assign_depth(0, 0)
+        max_depth = max(depth_map.keys()) if depth_map else 0
+        nodes_per_depth = [len(depth_map[d]) for d in range(max_depth + 1)]
+
+        fig_h = max(8, max_depth * 2.8 + 3)
+        fig, ax = plt.subplots(1, 1, figsize=(figsize[0], fig_h))
+        ax.set_xlim(-1.5, max(nodes_per_depth) + 1.0)
+        ax.set_ylim(-0.5, max_depth + 0.8)
+        ax.axis("off")
+
+        # 计算每层节点 x 坐标（同层均分）
+        depth_positions: Dict[int, Dict[int, Tuple[float, float]]] = {}
+        for d, nodes_at_d in depth_map.items():
+            n_at_d = len(nodes_at_d)
+            spacing = 1.0
+            start = -(n_at_d - 1) * spacing / 2
+            for i, node in enumerate(sorted(nodes_at_d)):
+                x = start + i * spacing
+                depth_positions.setdefault(d, {})[node] = (x, float(max_depth - d))
+
+        # 绘制节点和连线
+        node_boxes: Dict[int, Tuple[float, float]] = {}
+        box_w = 1.3
+        box_h = 0.8
+
+        for node in range(n_nodes):
+            x, y = depth_positions.get(node_depth_map.get(node, 0), {}).get(node, (0, 0))
+            node_boxes[node] = (x, y)
+
+            # 填充色
+            if filled and n_classes == 2 and values:
+                vals = values[node] if node < len(values) else [[0.5, 0.5]]
+                class_ratio = vals[0][0]
+                rgb = self._compute_node_color(class_ratio)
+                fill_color = f"#{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}"
+                text_color = "white" if (rgb[0] + rgb[1] * 1.4 + rgb[2] * 0.6) < 380 else "black"
+            else:
+                fill_color = "#f0f0f0"
+                text_color = "black"
+
+            # 节点标签
+            feat_idx = feature[node]
+            n = n_samples[node] if node < len(n_samples) else 0
+            sample_pct = n / total_samples if total_samples > 0 else 0
+            imp_val = imp[node] if node < len(imp) else 0.0
+
+            if n_classes == 2 and values:
+                val0 = values[node][0][0] if node < len(values) else 0.5
+                val1 = values[node][0][1] if node < len(values) else 0.5
+                class_label = "好" if val0 >= val1 else "坏"
+                value_str = f"[{val0:.{precision}f}, {val1:.{precision}f}]"
+            else:
+                class_label = ""
+                value_str = ""
+
+            lines = []
+            if node_ids:
+                lines.append(f"#{node}")
+            if feat_idx == -2:
+                pass  # 叶子节点不显示分裂条件
+            else:
+                feat_name = feat_names[feat_idx] if feat_idx < len(feat_names) else f"x[{feat_idx}]"
+                th = threshold[node] if node < len(threshold) else 0.0
+                lines.append(f"{feat_name} <= {th:.{precision}f}")
+            if impurity:
+                lines.append(f"gini = {imp_val:.{precision}f}")
+            if proportion:
+                lines.append(f"samples = {sample_pct * 100:.{precision}f}%")
+            if value_str:
+                lines.append(f"value = {value_str}")
+            if class_label:
+                lines.append(f"class = {class_label}")
+
+            label = "\n".join(lines)
+
+            # 绘制连接线
+            if children_left[node] != -1:
+                lx, ly = depth_positions.get(node_depth_map.get(node, 0) + 1, {}).get(
+                    children_left[node], (x, y - 1)
+                )
+                ax.plot([x, lx], [y - box_h / 2, ly + box_h / 2], color="gray", lw=1.2, zorder=0)
+                rx, ry = depth_positions.get(node_depth_map.get(node, 0) + 1, {}).get(
+                    children_right[node], (x, y - 1)
+                )
+                ax.plot([x, rx], [y - box_h / 2, ry + box_h / 2], color="gray", lw=1.2, zorder=0)
+
+            # 绘制节点矩形
+            if rounded:
+                box_style = mpatches.FancyBboxPatch(
+                    (x - box_w / 2, y - box_h / 2),
+                    box_w,
+                    box_h,
+                    boxstyle="round,pad=0.05",
+                    facecolor=fill_color,
+                    edgecolor="black",
+                    linewidth=1.2,
+                    zorder=1,
+                )
+            else:
+                box_style = mpatches.FancyBboxPatch(
+                    (x - box_w / 2, y - box_h / 2),
+                    box_w,
+                    box_h,
+                    boxstyle="square,pad=0.0",
+                    facecolor=fill_color,
+                    edgecolor="black",
+                    linewidth=1.2,
+                    zorder=1,
+                )
+
+            ax.add_patch(box_style)
+            ax.text(
+                x,
+                y,
+                label,
+                ha="center",
+                va="center",
+                fontsize=fontsize,
+                color=text_color,
+                zorder=2,
+            )
+
+        ax.set_title(
+            "人工决策树（蓝→绿=低坏账，红→橙=高坏账）",
+            color="#2639E9",
+            fontsize=13,
+            fontweight="bold",
+        )
+        plt.tight_layout()
+
+        if save_path:
+            fig.savefig(save_path, dpi=150, bbox_inches="tight")
+        return self
+
     def display(self) -> "ManualTreeExtractor":
         """在 Jupyter Notebook 中展示当前决策树图和规则表。
 
@@ -1517,88 +1722,23 @@ class ManualTreeExtractor:
         """
         try:
             from IPython.display import display as ipy_display
-        except ImportError:
-            return self  # 非 Jupyter 环境下静默返回
 
-        self._check_fitted()
+            self._check_fitted()
 
-        drawn = False
+            drawn = False
 
-        # 1. 优先 matplotlib plot_tree — 用 sklearn 树对象直接承载 _tree_info 数据
-        try:
-            import matplotlib.pyplot as plt
-            from sklearn.tree import plot_tree, DecisionTreeClassifier
+            # 1. 优先使用自定义 matplotlib 绘制（忠实反映人工分裂后的树结构）
+            try:
+                import matplotlib.pyplot as plt
 
-            # 创建一棵最小化决策树（仅用于承载 _tree_info 数据）
-            dummy_clf = DecisionTreeClassifier(max_depth=1)
-            X_dummy = [[0]] * 2
-            y_dummy = [0, 1]
-            dummy_clf.fit(X_dummy, y_dummy)
+                self.plot_tree(figsize=(22, 10))
+                ipy_display(plt.gcf())
+                plt.close()
+                drawn = True
+            except Exception:
+                pass  # matplotlib 不可用时降级
 
-            self._sync_from_sklearn()
-            tree = dummy_clf.tree_
-            n_nodes = len(self._tree_info.children_left)
-            import numpy as np
-
-            tree.__setstate__({
-                "max_depth": self._compute_max_depth(),
-                "node_count": n_nodes,
-                "nodes": np.array(
-                    list(
-                        zip(
-                            self._tree_info.children_left,
-                            self._tree_info.children_right,
-                            self._tree_info.feature,
-                            self._tree_info.threshold,
-                            self._tree_info.impurity,
-                            self._tree_info.n_node_samples,
-                            self._tree_info.n_node_samples,
-                            [0] * n_nodes,  # missing_go_to_left
-                        )
-                    ),
-                    dtype=[
-                        ("left_child", "<i8"),
-                        ("right_child", "<i8"),
-                        ("feature", "<i8"),
-                        ("threshold", "<f8"),
-                        ("impurity", "<f8"),
-                        ("n_node_samples", "<i8"),
-                        ("weighted_n_node_samples", "<f8"),
-                        ("missing_go_to_left", "u1"),
-                    ],
-                ),
-                "values": np.array(
-                    self._tree_info.value, dtype=np.float64
-                ).reshape(n_nodes, 1, 2),
-            })
-
-            fig, ax = plt.subplots(1, 1, figsize=(22, 10))
-            plot_tree(
-                dummy_clf,
-                feature_names=self._feature_list,
-                class_names=["好", "坏"],
-                filled=True,
-                rounded=True,
-                fontsize=9,
-                ax=ax,
-                impurity=True,
-                node_ids=True,
-                proportion=True,
-                precision=3,
-            )
-            ax.set_title(
-                "人工决策树（蓝→绿=低坏账，红→橙=高坏账）",
-                color="#2639E9",
-                fontsize=13,
-                fontweight="bold",
-            )
-            plt.tight_layout()
-            ipy_display(fig)
-            drawn = True
-        except Exception:
-            pass  # matplotlib 不可用时降级
-
-        # 2. 降级：graphviz DOT 图（忠实反映 _tree_info，不依赖 matplotlib）
+            # 2. 降级：graphviz DOT 图
         if not drawn:
             try:
                 import graphviz
