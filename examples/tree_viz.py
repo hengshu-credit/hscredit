@@ -191,6 +191,7 @@ def _build_tree_data(
     _node_stops = _build_gradient_stops(
         min(all_node_br) if all_node_br else 0.0,
         max(all_node_br) if all_node_br else 1.0,
+        center_br=overall_bad_rate,
     )
 
     for node_id in range(n_nodes):
@@ -280,7 +281,12 @@ def _build_tree_data(
                 "label_pos": 0.5,
             })
 
-    return {"nodes": nodes, "edges": edges, "total_samples": total_sample_count}
+    return {
+        "nodes": nodes,
+        "edges": edges,
+        "total_samples": total_sample_count,
+        "overall_bad_rate": overall_bad_rate,
+    }
 
 
 def _compute_node_depths(n_nodes: int, children_left: List[int], children_right: List[int]) -> Dict[int, int]:
@@ -304,15 +310,22 @@ def _compute_node_depths(n_nodes: int, children_left: List[int], children_right:
     return depths
 
 
-def _build_gradient_stops(min_br: float, max_br: float) -> List[Tuple[float, Tuple[int, int, int]]]:
+def _build_gradient_stops(
+    min_br: float, max_br: float, center_br: Optional[float] = None
+) -> List[Tuple[float, Tuple[int, int, int]]]:
     """根据实际坏账率区间生成色阶。
 
-    白 → 淡蓝（整体坏账率附近） → 淡红
+    浅蓝（低风险） → 浅蓝白（整体坏账率附近） → 浅粉红（高风险）
+
+    :param min_br: 观察到的最小坏账率
+    :param max_br: 观察到的最大坏账率
+    :param center_br: 色阶中点对应的坏账率（通常为整体坏账率），默认取
+        min_br、max_br 的中点
     """
     # 柔和色阶
-    C_WHITE = (255, 255, 255)  # 白色
-    C_LIGHT_BLUE  = (180, 210, 255)  # 淡蓝 #B4D2FF
-    C_LIGHT_RED   = (255, 200, 200)  # 淡红 #FFC8C8
+    C_LIGHT_BLUE = (173, 209, 255)  # 浅蓝 #ADD1FF（低风险）
+    C_LIGHT_BLUE_WHITE = (224, 236, 255)  # 浅蓝白 #E0ECFF（整体坏账率附近）
+    C_LIGHT_PINK = (255, 200, 200)  # 浅粉红 #FFD6E0（高风险）
 
     # 确保有区分度
     if max_br <= min_br:
@@ -321,18 +334,23 @@ def _build_gradient_stops(min_br: float, max_br: float) -> List[Tuple[float, Tup
     if max_br - min_br < 0.01:
         max_br = min_br + 0.5
 
+    if center_br is None:
+        center_br = (min_br + max_br) / 2
+    # 中点必须落在 (min_br, max_br) 内部，否则退化为简单两段插值
+    center_br = max(min_br + 1e-9, min(max_br - 1e-9, center_br))
+    center_t = (center_br - min_br) / (max_br - min_br)
+
     def blend_color(t: float) -> Tuple[int, int, int]:
-        """t=0→白, t=0.5→淡蓝, t=1→淡红"""
-        if t <= 0.5:
-            s = t / 0.5
-            r = int(round(C_WHITE[0] + s * (C_LIGHT_BLUE[0] - C_WHITE[0])))
-            g = int(round(C_WHITE[1] + s * (C_LIGHT_BLUE[1] - C_WHITE[1])))
-            b = int(round(C_WHITE[2] + s * (C_LIGHT_BLUE[2] - C_WHITE[2])))
+        """t=0→浅蓝, t=center_t→浅蓝白, t=1→浅粉红"""
+        if t <= center_t:
+            s = t / center_t if center_t > 0 else 0.0
+            c0, c1 = C_LIGHT_BLUE, C_LIGHT_BLUE_WHITE
         else:
-            s = (t - 0.5) / 0.5
-            r = int(round(C_LIGHT_BLUE[0] + s * (C_LIGHT_RED[0] - C_LIGHT_BLUE[0])))
-            g = int(round(C_LIGHT_BLUE[1] + s * (C_LIGHT_RED[1] - C_LIGHT_BLUE[1])))
-            b = int(round(C_LIGHT_BLUE[2] + s * (C_LIGHT_RED[2] - C_LIGHT_BLUE[2])))
+            s = (t - center_t) / (1 - center_t) if center_t < 1 else 1.0
+            c0, c1 = C_LIGHT_BLUE_WHITE, C_LIGHT_PINK
+        r = int(round(c0[0] + s * (c1[0] - c0[0])))
+        g = int(round(c0[1] + s * (c1[1] - c0[1])))
+        b = int(round(c0[2] + s * (c1[2] - c0[2])))
         return (max(0, min(255, r)), max(0, min(255, g)), max(0, min(255, b)))
 
     # 生成 11 个采样点
@@ -498,10 +516,12 @@ def _reingold_tilford_layout(
     edges: List[Dict[str, Any]],
     node_width_override: Optional[float] = None,
 ) -> Dict[int, Tuple[float, float]]:
-    """Reingold-Tilford 树布局算法，计算每个节点的 (x, y) 坐标。
+    """简化版 Reingold-Tilford 树布局算法，计算每个节点的 (x, y) 坐标。
 
     AntV G6 风格的垂直布局：根节点在顶部，子节点向下延伸。
-    同层节点水平居中对齐，子树均匀分布。
+    自底向上计算每个节点子树所需的水平宽度，再自顶向下分配坐标，
+    保证每个父节点都精确位于其所有子节点水平范围的正中间（递归地对每一层都成立），
+    且兄弟子树之间不会重叠。
 
     :param nodes: 节点数据列表
     :param edges: 边数据列表
@@ -512,7 +532,7 @@ def _reingold_tilford_layout(
     if n_nodes == 0:
         return {}
 
-    # 构建父子关系
+    # 构建父子关系（children 按边的原始顺序排列，即 "<=" 分支在前，">" 分支在后）
     children: Dict[int, List[int]] = {n["node_id"]: [] for n in nodes}
     parent: Dict[int, int] = {}
     for edge in edges:
@@ -529,54 +549,48 @@ def _reingold_tilford_layout(
             root = nid
             break
 
-    # BFS 计算每个节点的深度
-    depth_map: Dict[int, int] = {root: 0}
-    queue = [root]
-    while queue:
-        curr = queue.pop(0)
-        for child in children.get(curr, []):
-            if child not in depth_map:
-                depth_map[child] = depth_map[curr] + 1
-                queue.append(child)
-
-    max_depth = max(depth_map.values()) if depth_map else 0
-
-    # 每层的节点列表
-    nodes_by_depth: Dict[int, List[int]] = {}
-    for nid, d in depth_map.items():
-        nodes_by_depth.setdefault(d, []).append(nid)
-
     # 确定节点宽度：优先使用 node_width_override（全树统一），否则使用默认值
     def get_node_width(nid: int) -> float:
         if node_width_override is not None:
             return node_width_override
         return _NODE_W_INCH
 
-    # 节点宽度（考虑间距）
     height_step = _NODE_H_INCH + _NODE_GAP_Y
 
-    # 为每层节点分配 x 坐标
+    # 第一步：自底向上递归计算每个节点子树所需的水平宽度
+    # （子树宽度 = 自身宽度 与 「所有子节点子树宽度之和 + 子节点间间距」 取较大值）
+    subtree_width: Dict[int, float] = {}
+
+    def compute_subtree_width(nid: int) -> float:
+        kids = children.get(nid, [])
+        own_w = get_node_width(nid)
+        if not kids:
+            w = own_w
+        else:
+            kids_w = sum(compute_subtree_width(c) for c in kids) + _NODE_GAP_X * (len(kids) - 1)
+            w = max(own_w, kids_w)
+        subtree_width[nid] = w
+        return w
+
+    compute_subtree_width(root)
+
+    # 第二步：自顶向下分配坐标——每个节点的子节点在其分配到的子树宽度范围内
+    # 居中排列，从而保证父节点始终位于子节点水平范围的正中间
     coords: Dict[int, Tuple[float, float]] = {}
 
-    for depth in range(max_depth + 1):
-        level_nodes = nodes_by_depth.get(depth, [])
-        n_at_level = len(level_nodes)
-        if n_at_level == 0:
-            continue
+    def assign(nid: int, x_center: float, depth: int) -> None:
+        coords[nid] = (x_center, -depth * height_step)
+        kids = children.get(nid, [])
+        if not kids:
+            return
+        total_w = sum(subtree_width[c] for c in kids) + _NODE_GAP_X * (len(kids) - 1)
+        x_offset = x_center - total_w / 2
+        for c in kids:
+            cw = subtree_width[c]
+            assign(c, x_offset + cw / 2, depth + 1)
+            x_offset += cw + _NODE_GAP_X
 
-        # 计算此层所有节点的总宽度（包含间距）
-        total_level_width = sum(get_node_width(nid) + _NODE_GAP_X for nid in level_nodes) - _NODE_GAP_X
-        start_x = -total_level_width / 2
-
-        # 为此层的每个节点分配 x 坐标
-        x_offset = start_x
-        for nid in sorted(level_nodes):
-            node_w = get_node_width(nid)
-            x = x_offset + node_w / 2  # 节点中心
-            y = -depth * height_step   # y 向下为负
-            coords[nid] = (x, y)
-            x_offset += node_w + _NODE_GAP_X
-
+    assign(root, 0.0, 0)
     return coords
 
 
@@ -639,11 +653,11 @@ def plot_tree_matplotlib(
     ax.set_facecolor("#FAFBFF")
     fig.patch.set_facecolor("#FAFBFF")
 
-    # 动态色阶：从实际节点坏账率区间生成（低→主色蓝透明，高→副色红透明）
+    # 动态色阶：低风险→浅蓝，整体坏账率附近→浅蓝白，高风险→浅粉红
     all_br = [n["bad_rate"] for n in nodes]
     min_br = min(all_br)
     max_br = max(all_br)
-    gradient_stops = _build_gradient_stops(min_br, max_br)
+    gradient_stops = _build_gradient_stops(min_br, max_br, center_br=tree_data["overall_bad_rate"])
 
     # 为每个节点计算填充色
     node_fill_colors: Dict[int, str] = {}
@@ -657,17 +671,20 @@ def plot_tree_matplotlib(
     FONT_TITLE = 10
     FONT_BODY = 9
     CONTENT_LINES = 5  # 内容行数（gini/samples/pct/bad_rate/lift）
-    TITLE_H = 0.38  # 单行标题高度（inch）
 
     # 圆徽章参数（单位：inch）
     BADGE_R = 0.16
     BADGE_DIAM = BADGE_R * 2  # = 0.32
+    BADGE_MARGIN = 0.05  # 徽章与标题栏边框之间的留白，避免徽章与边框刚好相切
 
-    # 标题行左右 padding 均等于圆徽章直径：
-    # 左侧 padding 刚好容纳节点编号圆徽章，避免与条件文本重叠；
-    # 右侧采用相同宽度的 padding，使条件文本在节点内整体居中（视觉对称）
-    TITLE_PAD_LEFT = BADGE_DIAM
-    TITLE_PAD_RIGHT = BADGE_DIAM
+    # 单行标题高度 = 徽章直径 + 上下留白，保证徽章上下与标题栏边缘之间留有间隙
+    TITLE_H = BADGE_DIAM + 2 * BADGE_MARGIN
+
+    # 标题行左右 padding：
+    # 左侧 = 边框留白 + 圆徽章直径 + 徽章与文字间距，徽章不贴边、条件文本不与徽章重叠；
+    # 右侧采用相同宽度，使条件文本在节点内整体居中（视觉对称）
+    TITLE_PAD_LEFT = BADGE_MARGIN + BADGE_DIAM + BADGE_MARGIN
+    TITLE_PAD_RIGHT = TITLE_PAD_LEFT
 
     NODE_W_MIN = 2.0  # 节点宽度下限（inch）
     NODE_W_MAX = 5.0  # 节点宽度上限（inch），防止单个超长特征名把节点撑得过宽
@@ -715,8 +732,22 @@ def plot_tree_matplotlib(
     # 额外标题行高度 = (n_lines - 1) * TITLE_H
     CONTENT_START_Y_OFFSET = TITLE_H + 0.08  # 标题行底部 + padding
 
+    # 节点ID到节点数据、子节点到父节点的映射，用于判断某节点是否位于
+    # 人工修改节点（is_manual）及其后续子树范围内
+    node_by_id: Dict[int, Dict[str, Any]] = {n["node_id"]: n for n in nodes}
+    parent_of: Dict[int, int] = {e["target"]: e["source"] for e in edges}
+
+    def _is_in_manual_branch(nid: int) -> bool:
+        cur = nid
+        while True:
+            if node_by_id.get(cur, {}).get("is_manual"):
+                return True
+            if cur not in parent_of:
+                return False
+            cur = parent_of[cur]
+
     # ============================================================
-    # 绘制边（直线连接 + 主题色 + 仅根节点边标注）
+    # 绘制边（直线连接 + 主题色，人工修改节点及其后续子树统一换为副主题色）
     # ============================================================
     ROOT_ID = 0
     for edge in edges:
@@ -739,7 +770,9 @@ def plot_tree_matplotlib(
         tgt_total_node_h = CONTENT_START_Y_OFFSET + CONTENT_LINES * 0.28 + tgt_extra_title_h
 
         label_text = edge["label"]
-        edge_color = "#165DFF" if label_text == "<=" else "#F53F3B"
+        # 连接线颜色统一为主题色；若该边位于人工修改节点（is_manual）及其
+        # 后续子树范围内，则从该节点开始的所有连接线统一换为副主题色
+        edge_color = _COLOR_SECONDARY if _is_in_manual_branch(src_id) else _COLOR_PRIMARY
 
         # 直线连接：从父节点底边中点 → 子节点顶边中点
         ax.plot(
@@ -753,7 +786,7 @@ def plot_tree_matplotlib(
         # 边标签：放在线段中点，非根节点边字号更小
         mid_x = (x1 + x2) / 2
         mid_y = (y1 + y2) / 2
-        label_bg = "#E8F0FF" if label_text == "<=" else "#FFF1F0"
+        label_bg = "#FFF1F0" if _is_in_manual_branch(src_id) else "#E8F0FF"
         is_root_edge = src_id == ROOT_ID
         label_fontsize = 9 if is_root_edge else 8
         label_pad = 0.2 if is_root_edge else 0.12
@@ -829,10 +862,10 @@ def plot_tree_matplotlib(
         ax.add_patch(title_bar)
 
         # ========== 圆形徽章（节点编号）==========
-        # 徽章居中放置在左侧 padding 区域内（宽度恰为 BADGE_DIAM），
-        # 徽章右边缘正好与条件文本区域左边缘对齐，不会重叠
+        # 徽章放置在左侧 padding 区域内，与节点左边框、标题栏上下边缘均留有
+        # BADGE_MARGIN 的间隙（不与边框相切），右侧与条件文本区域之间也留有同样间隙
         badge_y_center = (title_bar_y_top + title_bar_y_bottom) / 2
-        badge_x = x - node_w / 2 + BADGE_R
+        badge_x = x - node_w / 2 + BADGE_MARGIN + BADGE_R
         badge_bg = "#FFFFFF" if not is_manual else "#FFD700"
         circle = plt.Circle((badge_x, badge_y_center), BADGE_R, color=badge_bg, zorder=4)
         ax.add_patch(circle)
@@ -1003,7 +1036,7 @@ def plot_tree_pyecharts(
     all_br = [n["bad_rate"] for n in nodes]
     min_br = min(all_br)
     max_br = max(all_br)
-    gradient_stops = _build_gradient_stops(min_br, max_br)
+    gradient_stops = _build_gradient_stops(min_br, max_br, center_br=tree_data["overall_bad_rate"])
     node_fill_colors: Dict[int, str] = {
         n["node_id"]: _compute_fill_color(n["bad_rate"], gradient_stops) for n in nodes
     }
@@ -1284,7 +1317,7 @@ def plot_tree_graphviz(
     all_br = [n["bad_rate"] for n in nodes]
     min_br = min(all_br)
     max_br = max(all_br)
-    gradient_stops = _build_gradient_stops(min_br, max_br)
+    gradient_stops = _build_gradient_stops(min_br, max_br, center_br=tree_data["overall_bad_rate"])
     node_fill_colors: Dict[int, str] = {
         n["node_id"]: _compute_fill_color(n["bad_rate"], gradient_stops) for n in nodes
     }
