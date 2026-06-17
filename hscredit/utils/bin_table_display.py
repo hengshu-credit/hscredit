@@ -542,9 +542,9 @@ def style_rule_table(
         '样本数': 0,
         '好样本数': 0,
         '坏样本数': 0,
-        '样本占比': 4,
-        '坏账率': 4,
-        'LIFT值': 4,
+        '样本占比': 2,
+        '坏账率': 2,
+        'LIFT值': 2,
     }
     if precision:
         default_precision.update(precision)
@@ -553,10 +553,12 @@ def style_rule_table(
     format_dict = {}
     for col, prec in default_precision.items():
         if col in df_d.columns:
-            if prec == 0:
+            if col in ('样本占比', '坏账率'):
+                # 百分数格式显示
+                pct_prec = max(prec, 2)
+                format_dict[col] = f'{{:.{pct_prec}%}}'
+            elif prec == 0:
                 format_dict[col] = '{:.0f}'
-            elif col in ('样本占比', '坏账率'):
-                format_dict[col] = f'{{:.{prec}f}}'  # 显示为小数
             else:
                 format_dict[col] = f'{{:.{prec}f}}'
     if format_dict:

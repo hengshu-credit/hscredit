@@ -630,6 +630,29 @@ class AutoTreeFitter:
         self._df_rules: Optional[pd.DataFrame] = None
         self._is_fitted: bool = False
         self._dot_data: Optional[str] = None
+        self.__tree_info_cache: Optional[_TreeInfo] = None
+        self._manual_split_nodes: set = set()  # 兼容 tree_viz._extract_tree_from_mte()
+
+    @property
+    def _tree_info(self) -> _TreeInfo:
+        """提供 _TreeInfo 接口代理，兼容 tree_viz 等工具的 _tree_info 访问模式。
+
+        注意：AutoTreeFitter 底层是 sklearn 树，不支持 manual_split 干预。
+        """
+        if self.__tree_info_cache is None:
+            self.__tree_info_cache = _TreeInfo(
+                self.feature_list,
+                int(self.clf.tree_.n_classes_[0]) if hasattr(self.clf.tree_, "n_classes_") else 2,
+            )
+            tree = self.clf.tree_
+            self.__tree_info_cache.children_left = list(tree.children_left)
+            self.__tree_info_cache.children_right = list(tree.children_right)
+            self.__tree_info_cache.feature = list(tree.feature)
+            self.__tree_info_cache.threshold = list(tree.threshold)
+            self.__tree_info_cache.n_node_samples = list(tree.n_node_samples)
+            self.__tree_info_cache.value = [list(v) for v in tree.value]
+            self.__tree_info_cache.impurity = list(tree.impurity)
+        return self.__tree_info_cache
 
     # -------------------------------------------------------------------------
     # 训练
@@ -1143,6 +1166,50 @@ class ManualTreeExtractor:
         # 追踪经 manual_split 人工修改过的节点 ID
         self._manual_split_nodes: set = set()
 
+    @classmethod
+    def from_sklearn(
+        cls,
+        clf: DecisionTreeClassifier,
+        feature_names: Optional[List[str]] = None,
+        target: str = "target",
+    ) -> "ManualTreeExtractor":
+        """从已训练的 sklearn DecisionTreeClassifier 创建 ManualTreeExtractor。
+
+        适用于想先训练好树结构，再进行人工干预分裂的场景。
+
+        **参数**
+
+        :param clf: 已训练的 sklearn DecisionTreeClassifier
+        :param feature_names: 特征名列表（默认从 clf.feature_names_in_ 推断）
+        :param target: 目标变量名（仅用于存储，不参与训练），默认 'target'
+        :return: ManualTreeExtractor 实例（已 fitted 状态）
+
+        **参考样例**
+
+        >>> from sklearn.tree import DecisionTreeClassifier
+        >>> from hscredit.report.mining import ManualTreeExtractor
+        >>> clf = DecisionTreeClassifier(max_depth=3, random_state=42)
+        >>> clf.fit(X, y)
+        >>> mte = ManualTreeExtractor.from_sklearn(clf, feature_names=feature_names)
+        >>> mte.manual_split(df, feature_name='age', threshold=35, node=1)
+        """
+        if feature_names is None:
+            feature_names = list(getattr(clf, "feature_names_in_", []))
+
+        n_classes = clf.tree_.n_classes_[0] if hasattr(clf.tree_, "n_classes_") else 2
+        instance = cls(target=target, max_depth=clf.max_depth, random_state=getattr(clf, "random_state", 0))
+        instance._feature_list = list(feature_names)
+        instance._n_total_samples = int(clf.tree_.n_node_samples[0]) if clf.tree_.n_node_samples.size > 0 else 0
+        instance._data = None
+        instance._overall_badrate = 0.0
+        instance._tree_info = _TreeInfo(feature_names, n_classes)
+        instance._manual_split_nodes = set()
+        instance._is_fitted = True
+        instance._sklearn_clf = clf
+        instance._sync_from_sklearn()
+        instance._generate_rules()
+        return instance
+
     # -------------------------------------------------------------------------
     # fit / 自动建树
     # -------------------------------------------------------------------------
@@ -1503,7 +1570,7 @@ class ManualTreeExtractor:
     def plot_tree(
         self,
         figsize: Tuple[int, int] = (22, 10),
-        fontsize: float = 9.0,
+        fontsize: float = 10.0,
         filled: bool = True,
         rounded: bool = True,
         impurity: bool = True,
@@ -1511,30 +1578,30 @@ class ManualTreeExtractor:
         proportion: bool = True,
         precision: int = 3,
         save_path: Optional[str] = None,
-    ) -> "ManualTreeExtractor":
-        """使用 matplotlib 绘制当前决策树（忠实反映人工分裂后的树结构）。
+    ) -> Any:
+        """绘制当前决策树图（忠实反映人工分裂后的树结构）。
 
-        内部绘制，不依赖 sklearn plot_tree，可用于任何已拟合的树。
+        使用 graphviz 渲染决策树。节点颜色基于坏账率（蓝=低坏账，红=高坏账），
+        手工修改过的节点额外加紫色（#9C27B0）粗边框标记。
 
         **参数**
 
-        :param figsize: 图大小，默认 (22, 10)
-        :param fontsize: 节点标签字体大小，默认 9.0
-        :param filled: 是否填充颜色（二分类：蓝色=低坏账，红色=高坏账）
+        :param figsize: 图大小，默认 (22, 10)（仅供渲染后保存参考）
+        :param fontsize: 节点标签字体大小，默认 10.0
+        :param filled: 是否填充颜色（hscredit 主题色：蓝/绿=低坏账，红/橙=高坏账）
         :param rounded: 是否使用圆角矩形
-        :param impurity: 是否显示 gini  impurity
+        :param impurity: 是否显示 gini impurity
         :param node_ids: 是否显示节点 ID
         :param proportion: 是否显示样本比例
         :param precision: 数值精度
-        :param save_path: 保存路径（可选，如 '/tmp/tree.png'）
-        :return: self（支持链式调用）
+        :param save_path: 保存路径（不含后缀，如 '/tmp/tree' 会生成 tree.png）
+        :return: graphviz.Source 对象（直接 display() 或 return 即可在 Jupyter 渲染）
 
         **参考样例**
 
         >>> ext = ManualTreeExtractor(target='IS_BAD')
         >>> ext.fit(df, feature_list=['age', 'income'])
-        >>> ext.manual_split(df, 'income', 5000, node=1)
-        >>> ext.plot_tree(save_path='/tmp/tree.png')
+        >>> ext.plot_tree(save_path='/tmp/tree')
         >>> # 或在 Jupyter 中直接 display
         >>> from IPython.display import display
         >>> display(ext.plot_tree())
@@ -1542,11 +1609,9 @@ class ManualTreeExtractor:
         self._check_fitted()
 
         try:
-            import matplotlib.pyplot as plt
-            import matplotlib.patches as mpatches
-            import matplotlib.patheffects as pe
+            import graphviz
         except ImportError:
-            raise ImportError("需要安装 matplotlib: pip install matplotlib")
+            raise ImportError("需要安装 graphviz: pip install graphviz")
 
         children_left = self._tree_info.children_left
         children_right = self._tree_info.children_right
@@ -1558,207 +1623,189 @@ class ManualTreeExtractor:
         feat_names = self._tree_info.feature_names or self._feature_list or []
         total_samples = sum(n_samples) if n_samples else 1
         n_classes = self._tree_info.n_classes or 2
-
-        # 计算节点位置（层次布局）
+        manual_nodes = self._manual_split_nodes
         n_nodes = len(feature)
-        depth_map: Dict[int, List[int]] = {}
-        node_depth_map: Dict[int, int] = {}
 
-        def assign_depth(node: int, depth: int) -> None:
-            depth_map.setdefault(depth, []).append(node)
-            node_depth_map[node] = depth
-            if children_left[node] != -1:
-                assign_depth(children_left[node], depth + 1)
-                assign_depth(children_right[node], depth + 1)
+        if n_nodes == 0:
+            return self
 
-        assign_depth(0, 0)
-        max_depth = max(depth_map.keys()) if depth_map else 0
-        nodes_per_depth = [len(depth_map[d]) for d in range(max_depth + 1)]
+        # 收集所有节点数据
+        nodes_data: List[Dict[str, Any]] = []
+        for node_id in range(n_nodes):
+            vals = values[node_id] if node_id < len(values) else [[0.5, 0.5]]
+            is_manual = node_id in manual_nodes
 
-        fig_h = max(8, max_depth * 2.8 + 3)
-        fig, ax = plt.subplots(1, 1, figsize=(figsize[0], fig_h))
-        ax.set_xlim(-1.5, max(nodes_per_depth) + 1.0)
-        ax.set_ylim(-0.5, max_depth + 0.8)
-        ax.axis("off")
-
-        # 计算每层节点 x 坐标（同层均分）
-        depth_positions: Dict[int, Dict[int, Tuple[float, float]]] = {}
-        for d, nodes_at_d in depth_map.items():
-            n_at_d = len(nodes_at_d)
-            spacing = 1.0
-            start = -(n_at_d - 1) * spacing / 2
-            for i, node in enumerate(sorted(nodes_at_d)):
-                x = start + i * spacing
-                depth_positions.setdefault(d, {})[node] = (x, float(max_depth - d))
-
-        # 绘制节点和连线
-        node_boxes: Dict[int, Tuple[float, float]] = {}
-        box_w = 1.3
-        box_h = 0.8
-
-        for node in range(n_nodes):
-            x, y = depth_positions.get(node_depth_map.get(node, 0), {}).get(node, (0, 0))
-            node_boxes[node] = (x, y)
-
-            # 填充色
-            if filled and n_classes == 2 and values:
-                vals = values[node] if node < len(values) else [[0.5, 0.5]]
+            # 填充色（hscredit 风控主题色）
+            if filled and n_classes == 2 and vals:
                 class_ratio = vals[0][0]
                 rgb = self._compute_node_color(class_ratio)
-                fill_color = f"#{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}"
-                text_color = "white" if (rgb[0] + rgb[1] * 1.4 + rgb[2] * 0.6) < 380 else "black"
+                fill = "#{0:02X}{1:02X}{2:02X}".format(*rgb)
             else:
-                fill_color = "#f0f0f0"
-                text_color = "black"
+                fill = "#EEEEEE"
 
-            # 节点标签
-            feat_idx = feature[node]
-            n = n_samples[node] if node < len(n_samples) else 0
+            # 边框：手工节点用紫色
+            penwidth = "3.0" if is_manual else "1.0"
+            edge_color = "#9C27B0" if is_manual else "#333333"
+            style = "filled, rounded, bold" if is_manual else "filled, rounded"
+
+            n = n_samples[node_id] if node_id < len(n_samples) else 0
             sample_pct = n / total_samples if total_samples > 0 else 0
-            imp_val = imp[node] if node < len(imp) else 0.0
+            imp_val = imp[node_id] if node_id < len(imp) else 0.0
 
-            if n_classes == 2 and values:
-                val0 = values[node][0][0] if node < len(values) else 0.5
-                val1 = values[node][0][1] if node < len(values) else 0.5
+            # 类别标签
+            if n_classes == 2 and vals:
+                val0 = vals[0][0]
+                val1 = vals[0][1]
                 class_label = "好" if val0 >= val1 else "坏"
                 value_str = f"[{val0:.{precision}f}, {val1:.{precision}f}]"
             else:
                 class_label = ""
                 value_str = ""
 
-            lines = []
+            # 构建 HTML 标签（支持中文换行）
+            lines_html: List[str] = []
             if node_ids:
-                lines.append(f"#{node}")
-            if feat_idx == -2:
-                pass  # 叶子节点不显示分裂条件
-            else:
+                lines_html.append(f"<B>#{node_id}</B>")
+            feat_idx = feature[node_id]
+            if feat_idx != -2:
                 feat_name = feat_names[feat_idx] if feat_idx < len(feat_names) else f"x[{feat_idx}]"
-                th = threshold[node] if node < len(threshold) else 0.0
-                lines.append(f"{feat_name} <= {th:.{precision}f}")
+                th = threshold[node_id] if node_id < len(threshold) else 0.0
+                lines_html.append(f"{feat_name} &le; {th:.{precision}f}")
             if impurity:
-                lines.append(f"gini = {imp_val:.{precision}f}")
+                lines_html.append(f"gini = {imp_val:.{precision}f}")
             if proportion:
-                lines.append(f"samples = {sample_pct * 100:.{precision}f}%")
+                lines_html.append(f"samples = {sample_pct * 100:.{precision}f}%")
             if value_str:
-                lines.append(f"value = {value_str}")
+                lines_html.append(f"value = {value_str}")
             if class_label:
-                lines.append(f"class = {class_label}")
+                lines_html.append(f"<B>class = {class_label}</B>")
 
-            label = "\n".join(lines)
+            label_html = "<FONT POINT-SIZE='9'>" + "<BR/>".join(lines_html) + "</FONT>"
 
-            # 绘制连接线
-            if children_left[node] != -1:
-                lx, ly = depth_positions.get(node_depth_map.get(node, 0) + 1, {}).get(
-                    children_left[node], (x, y - 1)
-                )
-                ax.plot([x, lx], [y - box_h / 2, ly + box_h / 2], color="gray", lw=1.2, zorder=0)
-                rx, ry = depth_positions.get(node_depth_map.get(node, 0) + 1, {}).get(
-                    children_right[node], (x, y - 1)
-                )
-                ax.plot([x, rx], [y - box_h / 2, ry + box_h / 2], color="gray", lw=1.2, zorder=0)
+            nodes_data.append({
+                "node_id": node_id,
+                "label": label_html,
+                "fill": fill,
+                "edge_color": edge_color,
+                "penwidth": penwidth,
+                "style": style,
+            })
 
-            # 绘制节点矩形
-            if rounded:
-                box_style = mpatches.FancyBboxPatch(
-                    (x - box_w / 2, y - box_h / 2),
-                    box_w,
-                    box_h,
-                    boxstyle="round,pad=0.05",
-                    facecolor=fill_color,
-                    edgecolor="black",
-                    linewidth=1.2,
-                    zorder=1,
-                )
-            else:
-                box_style = mpatches.FancyBboxPatch(
-                    (x - box_w / 2, y - box_h / 2),
-                    box_w,
-                    box_h,
-                    boxstyle="square,pad=0.0",
-                    facecolor=fill_color,
-                    edgecolor="black",
-                    linewidth=1.2,
-                    zorder=1,
-                )
+        # 构建 graphviz DOT
+        dot_lines: List[str] = []
+        dot_lines.append("digraph Tree {")
+        dot_lines.append("    graph [ranksep=0.4, nodesep=0.3, splines=polyline, bgcolor=\"#F8F9FA\", pad=0.5];")
+        dot_lines.append("    node [shape=box, fontname=helvetica, margin=\"0.15,0.1\", width=0, height=0];")
+        dot_lines.append("    edge [fontname=helvetica, arrowsize=0.8];")
 
-            ax.add_patch(box_style)
-            ax.text(
-                x,
-                y,
-                label,
-                ha="center",
-                va="center",
-                fontsize=fontsize,
-                color=text_color,
-                zorder=2,
+        for nd in nodes_data:
+            dot_lines.append(
+                f'    {nd["node_id"]} [label=<{nd["label"]}>, '
+                f'fillcolor="{nd["fill"]}", color="{nd["edge_color"]}", '
+                f'penwidth={nd["penwidth"]}, style="{nd["style"]}"] ;'
             )
 
-        ax.set_title(
-            "人工决策树（蓝→绿=低坏账，红→橙=高坏账）",
-            color="#2639E9",
-            fontsize=13,
-            fontweight="bold",
-        )
-        plt.tight_layout()
+        # 添加边（仅根节点的两条边显示 True/False，其他边不显示）
+        for node_id in range(n_nodes):
+            left = children_left[node_id] if node_id < len(children_left) else -1
+            right = children_right[node_id] if node_id < len(children_right) else -1
+            if left != -1:
+                if node_id == 0:
+                    dot_lines.append(
+                        f'    {node_id} -> {left} '
+                        f'[label="True", fontcolor="#2639E9", fontsize=11] ;'
+                    )
+                else:
+                    dot_lines.append(f'    {node_id} -> {left} ;')
+            if right != -1:
+                if node_id == 0:
+                    dot_lines.append(
+                        f'    {node_id} -> {right} '
+                        f'[label="False", fontcolor="#F76E6C", fontsize=11] ;'
+                    )
+                else:
+                    dot_lines.append(f'    {node_id} -> {right} ;')
+
+        dot_lines.append("}")
+
+        dot_src = "\n".join(dot_lines)
+        src = graphviz.Source(dot_src)
 
         if save_path:
-            fig.savefig(save_path, dpi=150, bbox_inches="tight")
-        return self
+            src.render(save_path, format="png", cleanup=True)
+
+        # 保存 DOT 内容到实例属性（供 display() 使用）
+        self._current_dot_source = src
+        return src
 
     def display(self) -> "ManualTreeExtractor":
-        """在 Jupyter Notebook 中展示当前决策树图和规则表。
+        """在 Jupyter Notebook 中展示决策树图和规则表。
 
-        优先使用 matplotlib ``plot_tree`` 渲染决策树（忠实反映人工分裂后的
-        当前树结构）；若 matplotlib 不可用则降级为 graphviz DOT 图。
+        与原始 ManualCLF（Dtree.py）的 display() 行为完全一致，
+        每次调用都会根据当前树结构重新生成，确保 manual_split / delete_node 后显示最新状态。
+
+        树图配色（hscredit 风控主题色）：
+        - 低坏账→主色蓝（#2639E9），高坏账→副色红（#F76E6C）
+        - 紫边框=手工修改节点（#9C27B0）
+        - 背景浅灰色（#F8F9FA）
 
         **参考样例**
 
         >>> ext = ManualTreeExtractor(target='IS_BAD')
         >>> ext.fit(df, feature_list=['age', 'income'])
-        >>> ext.display()   # 在 Jupyter 中自动展示树图和规则表
-        >>> # 或链式调用
-        >>> ext.fit(df, feature_list=['age', 'income']).display()
+        >>> ext.display()   # 在 Jupyter 中展示树图和规则表
         >>> ext.manual_split(df, 'income', 5000, node=1).display()
         """
         try:
-            from IPython.display import display as ipy_display
+            from IPython.display import display as ipy_display, Image as ipy_Image
 
             self._check_fitted()
 
-            drawn = False
+            # 重新生成 graphviz 图，确保反映最新的树结构
+            src = self.plot_tree()
 
-            # 1. 优先使用自定义 matplotlib 绘制（忠实反映人工分裂后的树结构）
-            try:
-                import matplotlib.pyplot as plt
+            # 渲染 PNG 字节流，用 ipy_Image 包装后显式 display
+            png_bytes = src.pipe("png")
+            img = ipy_Image(png_bytes, format="png", width=1200)
+            ipy_display(img)
 
-                self.plot_tree(figsize=(22, 10))
-                ipy_display(plt.gcf())
-                plt.close()
-                drawn = True
-            except Exception:
-                pass  # matplotlib 不可用时降级
-
-            # 2. 降级：graphviz DOT 图
-            if not drawn:
-                try:
-                    import graphviz
-
-                    dot_data = self.export_tree_graph()
-                    dot = graphviz.Source(dot_data)
-                    ipy_display(dot)
-                except Exception:
-                    pass  # graphviz 也不可用时跳过图
-
-            # 3. 渲染美化后的规则表
+            # 渲染美化后的规则表
             rule_table = self.get_rule_table()
             if rule_table is not None and len(rule_table) > 0:
                 styler = style_rule_table(rule_table, overall_badrate=self._overall_badrate)
                 ipy_display(styler)
 
+        except ImportError:
+            # graphviz 未安装
+            pass
         except Exception:
-            pass  # 非 Jupyter 环境下静默跳过
+            # 非 Jupyter 环境或其他错误：静默跳过
+            pass
 
         return self
+
+    def to_graphviz(self, format: str = "png", save_path: Optional[str] = None) -> Any:
+        """生成并返回 graphviz.Source 对象，或直接渲染为文件/字节。
+
+        **参数**
+
+        :param format: 渲染格式，默认 'png'。可选 'pdf', 'svg', 'dot' 等。
+        :param save_path: 保存路径（不含后缀，如 '/tmp/tree' 会生成 tree.png）
+        :return: graphviz.Source 对象；save_path 非 None 时返回渲染后的字节数据
+
+        **参考样例**
+
+        >>> src = ext.to_graphviz()                        # 获取 Source 对象
+        >>> src.render('/tmp/tree', cleanup=True)           # 保存为 PDF
+        >>> png_bytes = ext.to_graphviz(format='png')       # 获取 PNG 字节
+        """
+        self._check_fitted()
+        if not hasattr(self, "_current_dot_source") or self._current_dot_source is None:
+            self.plot_tree()
+        src = self._current_dot_source
+        if save_path:
+            return src.render(save_path, format=format, cleanup=True)
+        return src
 
     def evaluate_on_new_data(
         self,
@@ -1877,6 +1924,9 @@ class ManualTreeExtractor:
         用于渲染经过 manual_split / delete_node 人工调整后的树结构。
         与 export_graphviz 输出格式兼容，支持 graphviz 直接渲染。
 
+        节点颜色：蓝→绿=低坏账，红→橙=高坏账（hscredit 风控主题色）。
+        手工修改节点：额外加紫色（#9C27B0）边框标记。
+
         :param out_file: 输出 .dot 文件路径（可选）
         :return: DOT 格式字符串
         """
@@ -1891,6 +1941,7 @@ class ManualTreeExtractor:
         values = self._tree_info.value
         impurity = self._tree_info.impurity
         feat_names = self._tree_info.feature_names
+        manual_nodes = self._manual_split_nodes
 
         total_samples = sum(n_samples) if n_samples else 1
         n_classes = self._tree_info.n_classes or 2
@@ -1902,14 +1953,15 @@ class ManualTreeExtractor:
         lines.append("edge [fontname=helvetica] ;")
 
         for node_id in range(len(feature)):
-            # 计算填充色（蓝→白→红，与 sklearn 一致）
+            # 填充色（hscredit 风控主题色）
             vals = values[node_id] if node_id < len(values) else [[0.5, 0.5]]
+            is_manual = node_id in manual_nodes
             if n_classes == 2 and vals:
-                class_ratio = vals[0][0]  # 好样本比例
+                class_ratio = vals[0][0]
                 rgb = self._compute_node_color(class_ratio)
-                fill = f"#{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}"
+                fill = "#{0:02X}{1:02X}{2:02X}".format(*rgb)
             else:
-                fill = "#eeeeee"
+                fill = "#EEEEEE"
 
             n = n_samples[node_id] if node_id < len(n_samples) else 0
             sample_pct = n / total_samples if total_samples > 0 else 0
@@ -1925,9 +1977,9 @@ class ManualTreeExtractor:
                 class_label = ""
                 value_str = ""
 
-            # 构建节点标签（与 sklearn export_graphviz 一致：分行列出，用 | 分隔）
+            # 构建节点标签
             feat_idx = feature[node_id]
-            if feat_idx == -2:  # 叶子节点
+            if feat_idx == -2:
                 node_label = (
                     f"node #{node_id}|"
                     f"gini = {imp:.3f}|"
@@ -1947,11 +1999,15 @@ class ManualTreeExtractor:
                     f"class = {class_label}"
                 )
 
+            # 边框颜色：手工节点用紫色标记
+            penwidth = "3.0" if is_manual else "1.0"
+            edge_color = "#9C27B0" if is_manual else "#333333"
+
             # 使用 label 属性的引号形式（与 sklearn 一致），避免 HTML 标签解析问题
             label_attr = f'"{node_label}"'
             lines.append(
                 f'{node_id} [label={label_attr}, fillcolor="{fill}", shape=box, '
-                f'style="filled, rounded", color=black] ;'
+                f'style="filled, rounded", color="{edge_color}", penwidth={penwidth}] ;'
             )
 
             # 添加边（含 True/False 分支标识）
@@ -1978,23 +2034,20 @@ class ManualTreeExtractor:
         return dot_content
 
     @staticmethod
+    @staticmethod
     def _compute_node_color(class_ratio: float) -> Tuple[int, int, int]:
-        """根据类别比例计算节点填充色（蓝→白→红，与 sklearn 配色一致）。
+        """根据好样本比例计算节点填充色（hscredit 风控主题色）。
 
-        class_ratio = 好样本比例 (0=全坏→红, 0.5=平衡→白, 1=全好→蓝)
+        颜色按坏账率映射：
+        - 低坏账（好样本比例高 class_ratio→1）→主色蓝 #2639E9
+        - 高坏账（好样本比例低 class_ratio→0）→副色红 #F76E6C
         """
-        if class_ratio >= 0.5:
-            # 蓝 → 白（好样本多）
-            t = (class_ratio - 0.5) * 2
-            r = int(203 + (255 - 203) * (1 - t))
-            g = int(233 + (255 - 233) * (1 - t))
-            b = int(167 + (255 - 167) * (1 - t))
-        else:
-            # 白 → 红（坏样本多）
-            t = (0.5 - class_ratio) * 2
-            r = int(224 + (255 - 224) * t)
-            g = int(224 + (24 - 224) * t)
-            b = int(181 + (138 - 181) * t)
+        bad_ratio = 1.0 - class_ratio
+        # bad_ratio=0 → r=38,g=57,b=233 (主色蓝)
+        # bad_ratio=1 → r=247,g=110,b=108 (副色红)
+        r = int(38 + (247 - 38) * bad_ratio)
+        g = int(57 + (110 - 57) * bad_ratio)
+        b = int(233 + (108 - 233) * bad_ratio)
         return (max(0, min(255, r)), max(0, min(255, g)), max(0, min(255, b)))
 
     def export_tree_graph(self, out_file: str = None) -> str:
