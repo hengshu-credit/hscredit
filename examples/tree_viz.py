@@ -486,6 +486,8 @@ class _AntVNodeStyle:
 def _reingold_tilford_layout(
     nodes: List[Dict[str, Any]],
     edges: List[Dict[str, Any]],
+    node_width_override: Optional[float] = None,
+    node_widths_map: Optional[Dict[int, float]] = None,
 ) -> Dict[int, Tuple[float, float]]:
     """Reingold-Tilford 树布局算法，计算每个节点的 (x, y) 坐标。
 
@@ -494,6 +496,8 @@ def _reingold_tilford_layout(
 
     :param nodes: 节点数据列表
     :param edges: 边数据列表
+    :param node_width_override: 全局节点宽度覆盖值（可选，用于所有节点统一宽度）
+    :param node_widths_map: 节点ID到宽度的映射字典（可选，用于不同节点不同宽度）
     :return: 节点ID到坐标的映射 {node_id: (x, y)}
     """
     n_nodes = len(nodes)
@@ -534,8 +538,15 @@ def _reingold_tilford_layout(
     for nid, d in depth_map.items():
         nodes_by_depth.setdefault(d, []).append(nid)
 
+    # 确定节点宽度：优先使用 node_widths_map，次之 node_width_override，最后默认值
+    def get_node_width(nid: int) -> float:
+        if node_widths_map and nid in node_widths_map:
+            return node_widths_map[nid]
+        if node_width_override is not None:
+            return node_width_override
+        return _NODE_W_INCH
+
     # 节点宽度（考虑间距）
-    total_width = _NODE_W_INCH + _NODE_GAP_X
     height_step = _NODE_H_INCH + _NODE_GAP_Y
 
     # 为每层节点分配 x 坐标
@@ -547,14 +558,18 @@ def _reingold_tilford_layout(
         if n_at_level == 0:
             continue
 
-        # 居中对齐
-        total_level_width = n_at_level * total_width
-        start_x = -total_level_width / 2 + _NODE_W_INCH / 2
+        # 计算此层所有节点的总宽度（包含间距）
+        total_level_width = sum(get_node_width(nid) + _NODE_GAP_X for nid in level_nodes) - _NODE_GAP_X
+        start_x = -total_level_width / 2
 
-        for i, nid in enumerate(sorted(level_nodes)):
-            x = start_x + i * total_width
-            y = -depth * height_step  # y 向下为负
+        # 为此层的每个节点分配 x 坐标
+        x_offset = start_x
+        for nid in sorted(level_nodes):
+            node_w = get_node_width(nid)
+            x = x_offset + node_w / 2  # 节点中心
+            y = -depth * height_step   # y 向下为负
             coords[nid] = (x, y)
+            x_offset += node_w + _NODE_GAP_X
 
     return coords
 
@@ -611,15 +626,7 @@ def plot_tree_matplotlib(
         ax.axis("off")
         return fig
 
-    # Reingold-Tilford 布局
-    coords = _reingold_tilford_layout(nodes, edges)
-    if not coords:
-        fig, ax = plt.subplots(figsize=(6, 4))
-        ax.text(0.5, 0.5, "布局计算失败", ha="center", va="center", fontsize=14)
-        ax.axis("off")
-        return fig
-
-    # 创建图形
+    # 创建图形（后续会根据布局更新坐标范围）
     fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
     ax.set_facecolor("#FAFBFF")
     fig.patch.set_facecolor("#FAFBFF")
@@ -634,64 +641,6 @@ def plot_tree_matplotlib(
     node_fill_colors: Dict[int, str] = {}
     for n in nodes:
         node_fill_colors[n["node_id"]] = _compute_fill_color(n["bad_rate"], gradient_stops)
-
-    # 计算边界
-    xs = [c[0] for c in coords.values()]
-    ys = [c[1] for c in coords.values()]
-    x_range = max(xs) - min(xs) if xs else 10
-    y_range = max(ys) - min(ys) if ys else 10
-
-    # 缩放和平移，使树居中
-    x_pad = _NODE_W_INCH * 1.5
-    y_pad = _NODE_H_INCH * 1.5
-    ax.set_xlim(min(xs) - x_pad, max(xs) + x_pad)
-    ax.set_ylim(min(ys) - y_pad, max(ys) + y_pad)
-
-    # 绘制边（直线连接 + 主题色 + 仅根节点边标注在线段中点）
-    ROOT_ID = 0
-
-    for edge in edges:
-        src_id = edge["source"]
-        tgt_id = edge["target"]
-        x1, y1 = coords[src_id]
-        x2, y2 = coords[tgt_id]
-
-        # 主题色：≤ 左分支=蓝色，> 右分支=红色
-        label_text = edge["label"]
-        edge_color = "#165DFF" if label_text == "≤" else "#F53F3B"
-
-        # 直线连接：从父节点底边中点 → 子节点顶边中点
-        ax.plot(
-            [x1, x2],
-            [y1 - _NODE_H_INCH / 2, y2 + _NODE_H_INCH / 2],
-            color=edge_color,
-            linewidth=2.0,
-            zorder=1,
-        )
-
-        # 根节点边：标签放在线段中点
-        if src_id == ROOT_ID:
-            mid_x = (x1 + x2) / 2
-            mid_y = (y1 + y2) / 2
-            label_bg = "#E8F0FF" if label_text == "≤" else "#FFF1F0"
-            bbox_props = dict(
-                boxstyle="round,pad=0.25",
-                facecolor=label_bg,
-                edgecolor=edge_color,
-                linewidth=1.5,
-            )
-            ax.text(
-                mid_x,
-                mid_y,
-                f" {label_text} ",
-                ha="center",
-                va="center",
-                fontsize=10,
-                fontweight="bold",
-                color=edge_color,
-                bbox=bbox_props,
-                zorder=3,
-            )
 
     # ============================================================
     # 动态节点宽度 + 标题行换行 + padding 计算
@@ -712,48 +661,79 @@ def plot_tree_matplotlib(
 
     # 标题行可用宽度 = 节点宽度 - 左右 padding
     NODE_W_DEFAULT = _NODE_W_INCH  # 默认宽度 2.8 inch
+    NODE_W_MIN = 2.0  # 最小宽度（inch）
+    NODE_W_MAX = 5.0  # 最大宽度（inch）
 
     # 预计算所有分裂节点的条件文本宽度（含换行后宽度）
     title_font_size = FONT_TITLE
     cond_texts: List[Optional[str]] = []  # 每个节点的条件文本
     cond_lines: List[List[str]] = []      # 每个节点换行后的行列表
+    node_id_to_idx: Dict[int, int] = {}   # 节点ID到nodes列表索引的映射
 
-    for node in nodes:
+    for idx, node in enumerate(nodes):
+        node_id_to_idx[node["node_id"]] = idx
         if node["is_leaf"]:
             cond_texts.append(None)
             cond_lines.append([])
         else:
             cond_texts.append(node["condition"])
-            wrapped = _wrap_condition_text(
-                node["condition"],
-                max_width=NODE_W_DEFAULT - TITLE_PAD_LEFT - TITLE_PAD_RIGHT,
-                fontsize=title_font_size,
-            )
+            # 初始换行：基于默认宽度
+            available_w = NODE_W_DEFAULT - TITLE_PAD_LEFT - TITLE_PAD_RIGHT
+            wrapped = _wrap_condition_text(node["condition"], available_w, title_font_size)
             cond_lines.append(wrapped)
 
-    # 测量每行宽度，取节点最大行宽，加上 padding
-    node_widths: List[float] = []
-    for node, lines in zip(nodes, cond_lines):
+    # 根据换行后的文本，计算每个节点的最优宽度
+    node_widths_map: Dict[int, float] = {}
+    max_node_width = NODE_W_DEFAULT
+    
+    for idx, node in enumerate(nodes):
+        nid = node["node_id"]
+        
         if node["is_leaf"]:
-            # 叶子节点显示"叶子节点"，比较宽度
-            leaf_w = _measure_text_width("叶子节点", title_font_size, "bold")
-            node_widths.append(max(NODE_W_DEFAULT, leaf_w + TITLE_PAD_LEFT + TITLE_PAD_RIGHT))
+            # 叶子节点显示"叶子节点"
+            leaf_text_w = _measure_text_width("叶子节点", title_font_size, "bold")
+            w = max(NODE_W_MIN, leaf_text_w + TITLE_PAD_LEFT + TITLE_PAD_RIGHT)
+            node_widths_map[nid] = min(w, NODE_W_MAX)
         else:
-            max_line_w = max((_measure_text_width(l, title_font_size, "bold") for l in lines),
-                              default=0)
-            w = max(max_line_w + TITLE_PAD_LEFT + TITLE_PAD_RIGHT, NODE_W_DEFAULT)
-            # 上限 5.0 inch，防止超长变量名导致节点过宽
-            node_widths.append(min(w, 5.0))
+            # 获取当前的换行文本
+            lines = cond_lines[idx]
+            if not lines:
+                node_widths_map[nid] = NODE_W_DEFAULT
+            else:
+                # 计算所有行的最大宽度
+                max_line_w = max(
+                    (_measure_text_width(line, title_font_size, "bold") for line in lines),
+                    default=0
+                )
+                w = max_line_w + TITLE_PAD_LEFT + TITLE_PAD_RIGHT
+                w = max(w, NODE_W_MIN)
+                node_widths_map[nid] = min(w, NODE_W_MAX)
+        
+        max_node_width = max(max_node_width, node_widths_map[nid])
 
-    max_node_width = max(node_widths) if node_widths else NODE_W_DEFAULT
+    # 现在重新换行：基于最终的节点宽度，确保文本真的能放下
+    for idx, node in enumerate(nodes):
+        nid = node["node_id"]
+        if not node["is_leaf"]:
+            node_w = node_widths_map[nid]
+            available_w = node_w - TITLE_PAD_LEFT - TITLE_PAD_RIGHT
+            wrapped = _wrap_condition_text(node["condition"], available_w, title_font_size)
+            cond_lines[idx] = wrapped
 
-    # 重新计算布局坐标（用最大宽度）
-    coords = _reingold_tilford_layout(nodes, edges, node_width_override=max_node_width)
+    # Reingold-Tilford 布局（传入节点宽度映射）
+    coords = _reingold_tilford_layout(nodes, edges, node_widths_map=node_widths_map)
     if not coords:
         fig, ax = plt.subplots(figsize=(6, 4))
         ax.text(0.5, 0.5, "布局计算失败", ha="center", va="center", fontsize=14)
         ax.axis("off")
         return fig
+
+    # ============================================================
+    # 绘制边和节点的参数预计算
+    # ============================================================
+    # 内容区起始 y（从标题行底部往上，减去额外标题行高度）
+    # 额外标题行高度 = (n_lines - 1) * TITLE_H
+    CONTENT_START_Y_OFFSET = TITLE_H + 0.08  # 标题行底部 + padding
 
     # ============================================================
     # 绘制边（直线连接 + 主题色 + 仅根节点边标注）
@@ -765,13 +745,26 @@ def plot_tree_matplotlib(
         x1, y1 = coords[src_id]
         x2, y2 = coords[tgt_id]
 
+        # 获取节点的高度（需要计算标题行数）
+        src_idx = node_id_to_idx[src_id]
+        src_n_title_lines = len(cond_lines[src_idx])
+        src_extra_title_h = max(0, (src_n_title_lines - 1)) * TITLE_H
+        src_total_title_h = TITLE_H + src_extra_title_h
+        src_total_node_h = CONTENT_START_Y_OFFSET + CONTENT_LINES * 0.28 + src_extra_title_h
+
+        tgt_idx = node_id_to_idx[tgt_id]
+        tgt_n_title_lines = len(cond_lines[tgt_idx])
+        tgt_extra_title_h = max(0, (tgt_n_title_lines - 1)) * TITLE_H
+        tgt_total_title_h = TITLE_H + tgt_extra_title_h
+        tgt_total_node_h = CONTENT_START_Y_OFFSET + CONTENT_LINES * 0.28 + tgt_extra_title_h
+
         label_text = edge["label"]
         edge_color = "#165DFF" if label_text == "≤" else "#F53F3B"
 
+        # 直线连接：从父节点底边中点 → 子节点顶边中点
         ax.plot(
             [x1, x2],
-            [y1 - TITLE_H / 2 - (max_node_width - _NODE_W_INCH) * 0,  # 暂时保持简单
-             y2 + TITLE_H / 2],
+            [y1 - src_total_node_h / 2, y2 + tgt_total_node_h / 2],
             color=edge_color,
             linewidth=2.0,
             zorder=1,
@@ -802,10 +795,19 @@ def plot_tree_matplotlib(
     # 内容区起始 y（从标题行底部往上，减去额外标题行高度）
     # 额外标题行高度 = (n_lines - 1) * TITLE_H
     CONTENT_START_Y_OFFSET = TITLE_H + 0.08  # 标题行底部 + padding
+    FONT_BODY = 9
+    CONTENT_LINES = 5  # 内容行数（gini/samples/pct/bad_rate/lift）
+    TITLE_H = 0.38  # 单行标题高度（inch）
+
+    # 圆徽章参数（单位：inch）
+    BADGE_R = 0.16
+    BADGE_DIAM = BADGE_R * 2  # = 0.32
+
+    # 标题行左右 padding = 圆徽章直径，保证条件文本不与徽章重叠
 
     for idx, node in enumerate(nodes):
         nid = node["node_id"]
-        node_w = node_widths[idx]
+        node_w = node_widths_map[nid]
         x, y = coords[nid]
         is_leaf = node["is_leaf"]
         is_manual = node["is_manual"]
@@ -870,7 +872,12 @@ def plot_tree_matplotlib(
             zorder=5,
         )
 
-        # ========== 标题行文字（条件文本，居中，含多行） ==========
+        # ========== 标题行文字（条件文本，含多行）==========
+        # 条件文本区域：从徽章右边到节点右边
+        cond_text_left = x - node_w / 2 + TITLE_PAD_LEFT
+        cond_text_right = x + node_w / 2 - TITLE_PAD_RIGHT
+        cond_text_center_x = (cond_text_left + cond_text_right) / 2
+        
         if is_leaf:
             title_lines = ["叶子节点"]
         else:
@@ -879,7 +886,7 @@ def plot_tree_matplotlib(
         if len(title_lines) == 1:
             # 单行：居中
             ax.text(
-                x, badge_y_center,
+                cond_text_center_x, badge_y_center,
                 title_lines[0],
                 ha="center", va="center",
                 fontsize=FONT_TITLE, fontweight="bold", color="#FFFFFF",
@@ -888,12 +895,11 @@ def plot_tree_matplotlib(
         else:
             # 多行：从上到下排列
             line_h = TITLE_H
-            total_h = len(title_lines) * line_h
             top_y = title_bar_y_top - line_h / 2
             for li, line_text in enumerate(title_lines):
                 line_y = top_y - li * line_h
                 ax.text(
-                    x, line_y,
+                    cond_text_center_x, line_y,
                     line_text,
                     ha="center", va="center",
                     fontsize=FONT_TITLE, fontweight="bold", color="#FFFFFF",
