@@ -6,6 +6,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 HSCredit（衡枢真信）是一个面向金融信贷场景的 Python 3.8+ 信用风险建模工具包，提供**评分卡建模全流程**覆盖：分箱、编码、特征筛选、建模、评估、可视化、规则挖掘与报告生成。所有输出（列名、报告、错误信息）均为**中文**。
 
+## 验证数据集约定
+
+修改代码后，使用 `examples/hscredit_yyp.xlsx`（真实放款数据）验证功能是否正常：
+
+| 场景 | 验证参数 |
+|------|----------|
+| 常规评分卡建模 | `x` = 衡枢鉴真分老客版 字段，`y` = FPD 列 |
+| 多特征输入 | `x` = [衡枢鉴真分老客版, 近六个月非银多头机构数, 青云24] |
+| 多标签规则/逾期分析 | `overdue=['MOB1']`，`dpds=[7, 3, 0]` |
+| 金额相关计算 | `amount='放款金额'` |
+| 日期/账龄分析 | `date_col='放款时间'` |
+| 类别特征分析 | 使用 `商品类别` 列 |
+
 ## 常用命令
 
 ```bash
@@ -27,15 +40,15 @@ pytest tests/ -m "not slow and not integration"
 # 测试覆盖率
 pytest tests/ --cov=hscredit --cov-report=html --cov-report=term
 
-# 格式化、lint、类型检查、测试（通过 Makefile）
+# 格式化、lint、类型检查（Makefile）
 make check
 
-# 或单独运行：
+# 单独运行
 black hscredit tests
 flake8 hscredit tests
 mypy hscredit --ignore-missing-imports
 
-# 通过 Makefile
+# Makefile 常用目标
 make format    # black
 make lint      # flake8
 make type-check  # mypy
@@ -44,27 +57,30 @@ make clean     # 清理 __pycache__ 等
 make docs      # 构建 sphinx 文档
 make jupyter   # 启动 Jupyter Notebook
 make quickstart  # 安装 + 验证环境
+
+# 直接运行 Jupyter
+cd examples && jupyter notebook
+# 或指定端口
+jupyter notebook --port=8888
 ```
 
 ## 架构设计
 
 ### 统一基类继承体系（sklearn 兼容）
 
-所有核心组件均继承自 sklearn `BaseEstimator` + `TransformerMixin`/`ClassifierMixin` + `ABC`：
+所有核心组件均继承自 sklearn `BaseEstimator` + `TransformerMixin`/`ClassifierMixin` + `ABC`，兼容 sklearn Pipeline：
 
-- `BaseBinning` → [hscredit/core/binning/](hscredit/core/binning/) 中 17 种分箱算法 + InteractionBinning 二维交互分箱
+- `BaseBinning` → [hscredit/core/binning/](hscredit/core/binning/) 中 17 种分箱算法 + `OptimalBinning2D` 二维交互分箱
 - `BaseEncoder` → [hscredit/core/encoders/](hscredit/core/encoders/) 中 9 种编码器
-- `BaseFeatureSelector` → [hscredit/core/selectors/](hscredit/core/selectors/) 中 22+ 种筛选器
+- `BaseFeatureSelector` → [hscredit/core/selectors/](hscredit/core/selectors/) 中 22 种筛选器
 - `BaseRiskModel` → [hscredit/core/models/](hscredit/core/models/) 中 boosting 和经典模型
-
-所有组件均兼容 sklearn Pipeline，实现 `fit(X, y)` / `transform(X)` 接口。
 
 ### 双 API 调用风格
 
 所有有监督组件支持两种调用方式：
 
 ```python
-# sklearn 风格 — X (DataFrame/array) 和 y (array) 分别传入
+# sklearn 风格 — X 和 y 分别传入
 binner.fit(X_train, y_train)
 
 # scorecardpipeline 风格 — 通过 target 参数指定目标列名
@@ -77,10 +93,9 @@ binner.fit(df, y=ext_y)
 
 ### 工厂模式：OptimalBinning
 
-`OptimalBinning` 是所有 17 种分箱方法的统一入口，根据 `method` 参数委托给具体分箱类：
+`OptimalBinning` 是所有 17 种分箱方法的统一入口：
 
 ```python
-# 自动选择最优方法
 best_method = OptimalBinning.auto_select_method(X, y, 'feature_name')
 binner = OptimalBinning(method=best_method)
 ```
@@ -92,9 +107,9 @@ hscredit/
 ├── core/
 │   ├── binning/       # 17 种分箱算法 + BaseBinning + OptimalBinning 工厂
 │   ├── encoders/      # 9 种编码器（WOE/Target/Count/OneHot/...）
-│   ├── selectors/     # 22+ 种特征筛选器 + CompositeFeatureSelector
+│   ├── selectors/     # 22 种特征筛选器
 │   ├── models/
-│   │   ├── boosting/      # XGBoost / LightGBM / CatBoost / NGBoost 包装器
+│   │   ├── boosting/      # XGBoost / LightGBM / CatBoost / NGBoost
 │   │   ├── classical/     # LogisticRegression / RandomForest 等
 │   │   ├── scorecard/     # ScoreCard / ScoreTransformer / ScoreDrift
 │   │   ├── losses/        # 14 种自定义损失函数 + 框架适配器
@@ -102,14 +117,15 @@ hscredit/
 │   │   ├── rules/         # RuleSet / RulesClassifier
 │   │   └── tuning/        # Optuna 超参数调优
 │   ├── metrics/       # 分类 / 稳定性 / 特征 / 金融指标
-│   ├── viz/          # 50+ 种可视化图表
-│   ├── eda/          # 数据探索（相关性/特征/账龄/群体稳定性/策略分析）
-│   ├── rules/        # 规则引擎（Rule 表达式解析/优化）
-│   ├── financial/    # 金融计算（FV/PV/PMT/NPER/IRR/NPV）
+│   ├── viz/           # 50+ 种可视化图表
+│   ├── eda/           # 数据探索（相关性/特征/账龄/群体稳定性/策略分析）
+│   ├── rules/          # 规则引擎（Rule 表达式解析/优化）
+│   ├── financial/      # 金融计算（FV/PV/PMT/NPER/IRR/NPV）
 │   └── feature_engineering/  # NumExprDerive 表达式衍生
-├── report/           # 报告生成器（特征分析/规则挖掘/置换分析/逾期预测）
-├── excel/            # ExcelWriter 上下文管理器
-└── utils/            # Pandas 扩展 / IO / 日志 / 随机种子
+├── report/             # 报告生成器
+│   └── mining/         # 规则挖掘器（SingleFeature/MultiFeature/MultiLabel/Tree）
+├── excel/              # ExcelWriter 上下文管理器
+└── utils/              # Pandas 扩展 / IO / 日志 / 随机种子
 ```
 
 ### 关键设计模式
@@ -154,12 +170,12 @@ XGBoost、LightGBM、CatBoost、PyTorch/TabNet、PMML、Optuna、SHAP 均为可�
 
 ```bash
 pip install hscredit[xgboost]      # XGBoost
-pip install hscredit[lightgbm]      # LightGBM
+pip install hscredit[lightgbm]     # LightGBM
 pip install hscredit[catboost]     # CatBoost
 pip install hscredit[deep-learning] # PyTorch, TabNet
 pip install hscredit[tune]          # Optuna 超参调优
-pip install hscredit[explain]       # SHAP
-pip install hscredit[all]           # 所有可选依赖
+pip install hscredit[explain]      # SHAP
+pip install hscredit[all]          # 所有可选依赖
 ```
 
 ## 代码开发规范
@@ -167,7 +183,7 @@ pip install hscredit[all]           # 所有可选依赖
 ### 开发前必读
 
 1. **修改前**：完整研究项目结构和相关功能的实现方式，所有改动必须与现有实现风格保持一致且逻辑连贯
-2. **修改后**：校验所有模块功能点（模块导入、方法使用、输出内容、输出格式）不受本次改动影响
+2. **修改后**：使用 `examples/hscredit_yyp.xlsx` 验证所有模块功能点（模块导入、方法使用、输出内容、输出格式）不受本次改动影响
 3. **分箱**：所有分箱使用 `hscredit.core.binning` 中的分箱器，所有分箱指标计算使用 `compute_bin_stats`
 4. **规则**：所有规则使用 `hscredit.core.rules.rule` 中的 `Rule` 类实现，报告指标计算使用 `Rule.report`
 
@@ -199,37 +215,6 @@ pip install hscredit[all]           # 所有可选依赖
 
 ## 代码风格
 
-- 代码格式化：Black（行长度不限制）
-- Python 版本：目标 Python 3.8+ 兼容，支持最新 Python 3.14
+- 代码格式化：Black（行长度 120，无限制）
+- Python 版本：目标 Python 3.8+ 兼容
 - 所有用户-facing 输出使用**中文**
-
-## 未来规划（参考 docs/ROADMAP.md）
-
-| 优先级 | 计划功能 | 状态 |
-|--------|----------|------|
-| 🔴 P0 | **特征工程模块扩充**（TimeFeatureGenerator / CrossFeatureGenerator / MissingValueImputer） | 待开发 |
-| 🔴 P0 | **拒绝推断（Reject Inference）**（三大竞品均无，独家差异化） | 待开发 |
-| 🟠 P1 | 分箱质量评分 + batch_to_excel + BestPSIBinning | 待开发 |
-| 🟠 P1 | 规则运营工具（覆盖率仿真/跨期追踪/冲突检测） | 待开发 |
-| 🟡 P2 | **二维交互分箱（OptimalBinning2D）** | ✅ 已实现 |
-| 🟡 P2 | SHAP 报告集成 + 反事实解释（CounterfactualExplainer） | 待开发 |
-
-## 已知待修复问题
-
-根据最近提交和 git 状态，以下文件存在待处理内容：
-
-- `examples/01_binning.ipynb` — 修改待提交
-- `examples/08_rules.ipynb` — 修改待提交
-- `examples/11_report.ipynb` — 修改待提交
-- `examples/21_rule_swap_analysis_v2.ipynb` — 新文件待处理
-
-最近修复的问题（参考提交）：
-- `_get_bin_labels` 相关修复
-- 分箱约束回归测试
-- 用户自定义切分点（strict_user_splits）相关功能
-- **规则置换分析（rule_swap_analysis_v2）**：修复了多个问题：
-  - **场景流程显示**：各场景正确显示流程（全量→拒绝/置出→剩余→通过→置入→置换）
-  - **OUT-IN double uplift bug**：修复了 uplift 被重复应用的问题。OUT-IN 行只显示预测坏样本数（无 uplift），只在 ALL-IN 阶段应用一次 uplift
-  - **剩余样本行**：只要有 rules_base 就显示剩余样本行
-  - **IN-IN 通过行**：只有有 rules_out 时才显示 IN-IN 通过行
-  - **Pandas index 对齐**：使用 .loc[] 而非 .values 确保索引正确对齐

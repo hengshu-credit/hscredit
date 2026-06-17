@@ -10,29 +10,37 @@
 代码风格参考hscredit的binning模块和Rule模块，fit方法兼容scorecardpipeline风格。
 
 示例:
-    >>> from hscredit.core.rules.mining import SingleFeatureRuleMiner
+    >>> from hscredit.report.mining import SingleFeatureRuleMiner
     >>> miner = SingleFeatureRuleMiner(target='ISBAD')
     >>> miner.fit(df)
     >>> rules = miner.get_top_rules(top_n=10)
-    
-    >>> from hscredit.core.rules.mining import TreeRuleExtractor
+
+    >>> from hscredit.report.mining import TreeRuleExtractor
     >>> extractor = TreeRuleExtractor(algorithm='rf', max_depth=5)
     >>> extractor.fit(X, y)
     >>> rules = extractor.extract_rules()
+
+    >>> from hscredit.report.mining import AutoTreeFitter
+    >>> fitter = AutoTreeFitter(target_col='IS_BAD', feature_list=['age', 'income'])
+    >>> fitter.fit(df_train)
+    >>> print(fitter.evaluate([('测试', df_test)], metric_type='ks'))
 """
 
 from .single_feature import SingleFeatureRuleMiner
 from .multi_feature import MultiFeatureRuleMiner
 from .multi_label import MultiLabelRuleMiner
 from .tree_extractor import TreeRuleExtractor
+from .manual_tree_extractor import AutoTreeFitter, ManualTreeExtractor
 from .metrics import RuleMetrics, calculate_rule_metrics
 from .visualization import TreeVisualizer, plot_decision_tree
 
 __all__ = [
     'SingleFeatureRuleMiner',
-    'MultiFeatureRuleMiner', 
+    'MultiFeatureRuleMiner',
     'MultiLabelRuleMiner',
     'TreeRuleExtractor',
+    'AutoTreeFitter',
+    'ManualTreeExtractor',
     'RuleMetrics',
     'calculate_rule_metrics',
     'TreeVisualizer',
