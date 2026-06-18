@@ -30,6 +30,7 @@ import pandas as pd
 from sklearn.tree import DecisionTreeClassifier, export_graphviz
 
 from ...core.rules.rule import Rule
+from ...exceptions import InputValidationError
 from ...utils.pandas_extensions import style_rule_table
 
 # ============================================================================
@@ -985,51 +986,57 @@ class DecisionTreeAnalyzer:
             rules.append(rule)
         return rules
 
-    def get_rule_table(self) -> pd.DataFrame:
-        """获取决策树所有节点（分裂节点+叶子节点）的统计表。
+    def get_rule_table(
+        self,
+        datasets: Optional[pd.DataFrame] = None,
+        target: Optional[str] = None,
+        overdue: Optional[Union[str, List[str]]] = None,
+        dpds: Optional[Union[int, List[int]]] = None,
+        del_grey: bool = False,
+        leaf_only: bool = False,
+        **kwargs: Any,
+    ) -> pd.DataFrame:
+        """获取决策树所有节点（分裂节点+叶子节点）的规则效果表。
 
-        :return: 规则效果表
+        从每个节点提取规则路径，解析为 :class:`Rule` 对象后调用 :meth:`Rule.report`
+        在数据集上计算命中效果，取其中"命中"分箱对应的结果行汇总。各节点统计口径
+        与 :meth:`report` 完全一致（均基于规则在数据集上的真实命中情况计算，而非
+        读取决策树内部存储的节点样本统计），便于与人工分裂结果横向对比。
+
+        **参数**
+
+        :param datasets: 用于计算规则效果的数据集，默认 None（使用 fit 时的训练数据）
+        :param target: 目标变量列名，默认 None（使用拟合时的 ``self.target``）
+        :param overdue: 逾期天数字段名，参考 :meth:`Rule.report`
+        :param dpds: 逾期定义方式，参考 :meth:`Rule.report`
+        :param del_grey: 是否删除灰度样本，默认 False
+        :param leaf_only: 是否仅返回叶子节点，默认 False
+        :param kwargs: 其余传递给 :meth:`Rule.report` 的参数（如 ``amount``、``margins``）
+        :return: 规则效果表，列结构与 :meth:`report` 一致（节点编号、是否叶子、
+            规则分类、指标名称、指标含义、分箱、样本总数、样本占比、好样本数、
+            坏样本数、坏样本率、LIFT值、坏账改善、风险拒绝比等）
 
         **参考样例**
 
-        >>> table = fitter.get_rule_table()
-        >>> print(table)
+        >>> table = fitter.get_rule_table()            # 在训练数据上评估
+        >>> table = fitter.get_rule_table(df_test)     # 在新数据上评估
         """
         self._check_fitted()
-        total = len(self._data)
-        overall_badrate = self._data[self.target].mean()
-
-        rows: List[Dict[str, Any]] = []
-        for _, row in self._df_rules.iterrows():
-            n_samples = int(row["node_samples"])
-            node_value = row["node_value"]
-            is_leaf = bool(row["if_leaf"])
-
-            if n_samples > 0 and sum(node_value) > 0:
-                bad_count = int(node_value[1])
-                bad_rate = bad_count / n_samples
-                lift = bad_rate / overall_badrate if overall_badrate > 0 else 0.0
-            else:
-                bad_count = 0
-                bad_rate = 0.0
-                lift = 0.0
-
-            rule = self._format_rule(row["rule_list"])
-            rule_str = rule.description if rule is not None else "空规则"
-
-            rows.append({
-                "节点编号": int(row["node"]),
-                "是否叶子": "是" if is_leaf else "否",
-                "规则表达式": rule_str,
-                "样本数": n_samples,
-                "样本占比": n_samples / total if total > 0 else 0.0,
-                "好样本数": int(node_value[0]) if n_samples > 0 else 0,
-                "坏样本数": bad_count,
-                "坏账率": bad_rate,
-                "LIFT值": lift,
-            })
-
-        return pd.DataFrame(rows).sort_values("节点编号").reset_index(drop=True)
+        data = datasets if datasets is not None else self._data
+        if data is None:
+            raise InputValidationError(
+                "get_rule_table 需要数据集计算规则效果：请传入 datasets 参数，"
+                "或先通过 fit() 提供训练数据"
+            )
+        return self.report(
+            data,
+            target=target,
+            overdue=overdue,
+            dpds=dpds,
+            del_grey=del_grey,
+            leaf_only=leaf_only,
+            **kwargs,
+        )
 
     @staticmethod
     def _rule_list_to_text(rule_list: List) -> str:
@@ -1247,7 +1254,6 @@ class ManualTreeExtractor:
         self._overall_badrate: float = 0.0
         self._tree_info: Optional[_TreeInfo] = None
         self._df_rules: Optional[pd.DataFrame] = None
-        self._rule_table: Optional[pd.DataFrame] = None
         self._is_fitted: bool = False
         self._sklearn_clf: Optional[DecisionTreeClassifier] = None
         # 追踪经 manual_split 人工修改过的节点 ID
@@ -1577,75 +1583,6 @@ class ManualTreeExtractor:
         )
         # sim.tree_ == sim 自身，_rule_generator 内部访问 clf.tree_ → sim
         self._df_rules = _rule_generator(sim, self._feature_list)
-        self._rule_table = self._build_rule_table()
-
-    def _build_rule_table(self) -> pd.DataFrame:
-        """构建规则效果表。
-
-        计算每个节点的样本数、坏账率、LIFT值等统计指标。
-
-        :return: 规则效果 DataFrame
-        """
-        if self._df_rules is None or len(self._df_rules) == 0:
-            return pd.DataFrame()
-
-        # 全量样本/坏样本数（训练集口径），用于"坏账改善""风险拒绝比"计算
-        total = self._n_total_samples
-        overall_bad_rate = self._overall_badrate
-        total_bad = overall_bad_rate * total  # = 坏样本总数
-
-        rows: List[Dict[str, Any]] = []
-        for _, row in self._df_rules.iterrows():
-            rule_list = row["rule_list"]
-            n_samples = int(row["node_samples"]) if row["node_samples"] > 0 else 0
-            node_value = row["node_value"]
-            is_leaf = bool(row["if_leaf"])
-            # 将规则路径解析为 Rule 对象，展示其可读描述（根节点空规则显示"空规则"）
-            rule = self._format_rule(rule_list)
-            rule_str = rule.description if rule is not None else "空规则"
-
-            if n_samples > 0 and sum(node_value) > 0:
-                good_count = int(node_value[0])
-                bad_count = int(node_value[1])
-                bad_rate = bad_count / n_samples
-                lift = bad_rate / overall_bad_rate if overall_bad_rate > 0 else 0.0
-            else:
-                bad_count = 0
-                good_count = 0
-                bad_rate = 0.0
-                lift = 0.0
-
-            sample_pct = n_samples / total if total > 0 else 0.0
-            # 坏账改善 / 风险拒绝比：参考 Rule.report 的计算口径——
-            # 将命中当前节点的样本视为"拒绝"客群，衡量拒绝后剩余（通过）客群的坏账率改善。
-            #   拒绝后剩余坏账率 = (坏样本总数 - 节点坏样本数) / (样本总数 - 节点样本数)
-            #   坏账改善 = (整体坏账率 - 拒绝后剩余坏账率) / 整体坏账率
-            #   风险拒绝比 = 坏账改善 / 样本占比
-            remaining_total = total - n_samples
-            remaining_bad = total_bad - bad_count
-            remaining_bad_rate = remaining_bad / remaining_total if remaining_total > 0 else 0.0
-            bad_decrease = (
-                (overall_bad_rate - remaining_bad_rate) / overall_bad_rate
-                if overall_bad_rate > 0
-                else 0.0
-            )
-            risk_reject_ratio = bad_decrease / sample_pct if sample_pct > 0 else 0.0
-
-            rows.append({
-                "节点编号": int(row["node"]),
-                "是否叶子": "是" if is_leaf else "否",
-                "规则表达式": rule_str,
-                "样本数": n_samples,
-                "样本占比": sample_pct,
-                "好样本数": good_count,
-                "坏样本数": bad_count,
-                "坏账率": bad_rate,
-                "LIFT值": lift,
-                "坏账改善": bad_decrease,
-                "风险拒绝比": risk_reject_ratio,
-            })
-
-        return pd.DataFrame(rows).sort_values("节点编号").reset_index(drop=True)
 
     @staticmethod
     def _rule_list_to_text(rule_list: List) -> str:
@@ -1681,14 +1618,36 @@ class ManualTreeExtractor:
     # 评估与报告
     # -------------------------------------------------------------------------
 
-    def get_rule_table(self) -> pd.DataFrame:
-        """获取当前树的规则效果表。
+    def get_rule_table(
+        self,
+        datasets: Optional[pd.DataFrame] = None,
+        target: Optional[str] = None,
+        overdue: Optional[Union[str, List[str]]] = None,
+        dpds: Optional[Union[int, List[int]]] = None,
+        del_grey: bool = False,
+        leaf_only: bool = False,
+        **kwargs: Any,
+    ) -> pd.DataFrame:
+        """获取当前树各节点规则在数据集上的效果表。
 
-        :return: 规则效果 DataFrame，列包括：
-            节点编号、是否叶子、规则表达式、样本数、样本占比、
-            好样本数、坏样本数、坏账率、LIFT值、坏账改善、风险拒绝比
+        从树的每个节点提取规则路径，解析为 :class:`Rule` 对象后调用 :meth:`Rule.report`
+        在数据集上计算命中效果，取其中"命中"分箱对应的结果行汇总。这样人工分裂节点与
+        自动分裂节点的统计口径完全一致（均基于规则在数据集上的真实命中情况计算，而非
+        读取决策树内部存储的节点样本统计），与 :meth:`report` 输出格式保持一致。
 
-            其中（参考 :meth:`Rule.report` 的口径，将命中节点的样本视为"拒绝"客群）：
+        **参数**
+
+        :param datasets: 用于计算规则效果的数据集，默认 None（使用 fit 时的训练数据）
+        :param target: 目标变量列名，默认 None（使用拟合时的 ``self.target``）
+        :param overdue: 逾期天数字段名，参考 :meth:`Rule.report`
+        :param dpds: 逾期定义方式，参考 :meth:`Rule.report`
+        :param del_grey: 是否删除灰度样本，默认 False
+        :param leaf_only: 是否仅返回叶子节点，默认 False
+        :param kwargs: 其余传递给 :meth:`Rule.report` 的参数（如 ``amount``、``margins``）
+        :return: 规则效果表，列结构与 :meth:`report` 一致（节点编号、是否叶子、
+            规则分类、指标名称、指标含义、分箱、样本总数、样本占比、好样本数、
+            坏样本数、坏样本率、LIFT值、坏账改善、风险拒绝比等）。其中（参考
+            :meth:`Rule.report` 的口径，将命中节点的样本视为"拒绝"客群）：
 
             - **坏账改善** = (整体坏账率 - 拒绝后剩余客群坏账率) / 整体坏账率
             - **风险拒绝比** = 坏账改善 / 样本占比
@@ -1696,10 +1655,25 @@ class ManualTreeExtractor:
         **参考样例**
 
         >>> ext.manual_split(df, feature_name='age', threshold=35)
-        >>> print(ext.get_rule_table())
+        >>> print(ext.get_rule_table())          # 在训练数据上评估
+        >>> print(ext.get_rule_table(df_test))   # 在新数据上评估
         """
         self._check_fitted()
-        return self._rule_table.copy() if self._rule_table is not None else pd.DataFrame()
+        data = datasets if datasets is not None else self._data
+        if data is None:
+            raise InputValidationError(
+                "get_rule_table 需要数据集计算规则效果：请传入 datasets 参数，"
+                "或先通过 fit() 提供训练数据"
+            )
+        return self.report(
+            data,
+            target=target,
+            overdue=overdue,
+            dpds=dpds,
+            del_grey=del_grey,
+            leaf_only=leaf_only,
+            **kwargs,
+        )
 
     def display(self) -> "ManualTreeExtractor":
         """在 Jupyter Notebook 中展示决策树图和规则表。

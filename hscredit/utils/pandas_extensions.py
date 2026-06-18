@@ -957,9 +957,12 @@ def style_rule_table(
     使用 pandas Styler 对规则表进行格式化、高亮和颜色标注，
     使其在 Jupyter 中更易读。
 
-    :param df: 规则表 DataFrame，列包括：
-        节点编号、是否叶子、规则表达式、样本数、样本占比、
-        好样本数、坏样本数、坏账率、LIFT值
+    :param df: 规则表 DataFrame，兼容两种来源：
+
+        - :meth:`ManualTreeExtractor.get_rule_table` / :meth:`report` 的报告格式
+          （节点编号、是否叶子、指标含义、样本总数、样本占比、坏样本率、LIFT值、…）
+        - 旧版精简格式（节点编号、是否叶子、规则表达式、样本数、坏账率、LIFT值、…）
+
     :param overall_badrate: 全局坏样本率（用于计算颜色梯度），默认从数据推断
     :param precision: 自定义小数位数，格式为 {'列名': 位数}
     :return: 格式化后的 Styler 对象
@@ -974,41 +977,50 @@ def style_rule_table(
     """
     df_d = df.copy()
 
-    # 推断全局坏样本率
+    # MultiIndex（多标签 overdue/dpds）暂不做精细美化，返回基础 Styler 防止报错
+    if isinstance(df_d.columns, pd.MultiIndex):
+        return df_d.style
+
+    # 兼容报告格式与旧版精简格式的列名
+    badrate_col = '坏样本率' if '坏样本率' in df_d.columns else '坏账率'
+    count_col = '样本总数' if '样本总数' in df_d.columns else '样本数'
+    rule_col = '指标含义' if '指标含义' in df_d.columns else '规则表达式'
+
+    # 报告格式中恒为常量的噪声列，展示时隐藏（指标名称为原始表达式，与指标含义重复）
+    hide_cols = [c for c in ('规则分类', '指标名称', '分箱') if c in df_d.columns]
+
+    # 推断全局坏样本率（颜色梯度用）
     if overall_badrate is None:
-        total_samples = df_d['样本数'].sum()
-        total_bad = df_d['坏样本数'].sum()
-        overall_badrate = total_bad / total_samples if total_samples > 0 else 0.0
+        if count_col in df_d.columns and '坏样本数' in df_d.columns:
+            total_samples = df_d[count_col].sum()
+            total_bad = df_d['坏样本数'].sum()
+            overall_badrate = total_bad / total_samples if total_samples > 0 else 0.0
+        else:
+            overall_badrate = 0.0
 
     # 创建 Styler
     styler = df_d.style
+    if hide_cols:
+        styler = styler.hide(subset=hide_cols, axis='columns')
 
-    # 默认精度
-    default_precision = {
-        '节点编号': 0,
-        '样本数': 0,
-        '好样本数': 0,
-        '坏样本数': 0,
-        '样本占比': 2,
-        '坏账率': 2,
-        'LIFT值': 2,
-        '坏账改善': 2,
-        '风险拒绝比': 2,
-    }
+    # 默认精度：整数列、百分数列、普通小数列
+    _int_cols = ('节点编号', count_col, '好样本数', '坏样本数')
+    _pct_cols = (
+        '样本占比', badrate_col, '好样本占比', '坏样本占比',
+        '坏账改善', '风险拒绝比', '准确率', '精确率', '召回率', 'F1分数',
+    )
+    default_precision = {c: 0 for c in _int_cols}
+    default_precision.update({c: 2 for c in _pct_cols})
+    default_precision['LIFT值'] = 2  # LIFT 为倍数，按普通小数显示
     if precision:
         default_precision.update(precision)
-
-    # 以百分数格式显示的列
-    _pct_cols = ('样本占比', '坏账率', '坏账改善', 'LIFT值', '风险拒绝比')
 
     # 格式化为百分比和数字
     format_dict = {}
     for col, prec in default_precision.items():
         if col in df_d.columns:
             if col in _pct_cols:
-                # 百分数格式显示
-                pct_prec = max(prec, 2)
-                format_dict[col] = f'{{:.{pct_prec}%}}'
+                format_dict[col] = f'{{:.{max(prec, 2)}%}}'
             elif prec == 0:
                 format_dict[col] = '{:.0f}'
             else:
@@ -1016,12 +1028,12 @@ def style_rule_table(
     if format_dict:
         styler = styler.format(format_dict, na_rep='-')
 
-    # --- 坏账率颜色梯度：低=绿，高=红 ---
-    if '坏账率' in df_d.columns:
-        bad_vals = df_d['坏账率'].fillna(0)
+    # --- 坏样本率颜色梯度：低=绿，高=红 ---
+    if badrate_col in df_d.columns:
+        bad_vals = df_d[badrate_col].fillna(0)
         vmin, vmax = 0.0, max(bad_vals.max() * 1.2, max(overall_badrate * 1.5, 0.3), 0.01)
         styler = styler.background_gradient(
-            subset=['坏账率'],
+            subset=[badrate_col],
             cmap='RdYlGn_r',
             vmin=vmin,
             vmax=vmax,
@@ -1066,6 +1078,17 @@ def style_rule_table(
         'font-family': 'Arial, sans-serif',
     })
 
+    # --- 规则文本列左对齐 + 等宽字体（按列名定位，避免依赖列顺序）---
+    if rule_col in df_d.columns:
+        styler = styler.set_properties(
+            subset=[rule_col],
+            **{
+                'text-align': 'left',
+                'font-family': 'monospace',
+                'font-size': '11px',
+            },
+        )
+
     # --- 表头样式 ---
     styler = styler.set_table_styles([
         {'selector': 'thead th', 'props': [
@@ -1089,12 +1112,6 @@ def style_rule_table(
         ]},
         {'selector': 'tbody tr:hover', 'props': [
             ('background-color', '#e8eaff'),
-        ]},
-        # 规则表达式列左对齐
-        {'selector': 'td:nth-child(3)', 'props': [
-            ('text-align', 'left'),
-            ('font-family', 'monospace'),
-            ('font-size', '11px'),
         ]},
         # 进度条样式
         {'selector': '.pd-bar', 'props': [
