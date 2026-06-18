@@ -102,6 +102,15 @@ from .strategy_plots import (
     segment_scorecard_comparison,
 )
 
+# 新增：决策树可视化（AntV G6 风格，支持 matplotlib / pyecharts / graphviz）
+from .tree_plots import (
+    DecisionTreeViz,
+    plot_tree,
+    plot_tree_matplotlib,
+    plot_tree_pyecharts,
+    plot_tree_graphviz,
+)
+
 # 统一样式系统
 from .style import (
     set_style,
@@ -177,6 +186,12 @@ __all__ = [
     "feature_cross_heatmap",
     "population_drift_monitor",
     "segment_scorecard_comparison",
+    # 决策树可视化
+    "DecisionTreeViz",
+    "plot_tree",
+    "plot_tree_matplotlib",
+    "plot_tree_pyecharts",
+    "plot_tree_graphviz",
     # 工具函数
     "setup_axis_style",
     "save_figure",

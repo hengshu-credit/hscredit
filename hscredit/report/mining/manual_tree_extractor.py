@@ -8,14 +8,14 @@
 
 >>> # AutoTreeFitter：训练决策树并评估
 >>> from hscredit.report.mining import AutoTreeFitter
->>> fitter = AutoTreeFitter(target_col='IS_BAD', feature_list=['age', 'income'])
+>>> fitter = AutoTreeFitter(target='target', feature_list=['age', 'income'])
 >>> fitter.fit(df_train)
 >>> metrics = fitter.evaluate(df_test_list=[('测试', df_test)], metric_type='ks')
 >>> print(metrics)
 
 >>> # ManualTreeExtractor：人工分裂
 >>> from hscredit.report.mining import ManualTreeExtractor
->>> ext = ManualTreeExtractor(target='IS_BAD')
+>>> ext = ManualTreeExtractor(target='target')
 >>> ext.fit(df, feature_list=['age', 'income'])
 >>> ext.manual_split(df, feature_name='age', threshold=35)
 >>> print(ext.get_rule_table())
@@ -479,6 +479,75 @@ def _find_subtree_node_ids(tree_info, root_node: int) -> List[int]:
     return result
 
 
+def _node_hit_report(
+    df_rules: pd.DataFrame,
+    format_rule,
+    data: pd.DataFrame,
+    target: str,
+    overdue: Optional[Union[str, List[str]]],
+    dpds: Optional[Union[int, List[int]]],
+    del_grey: bool,
+    leaf_only: bool,
+    **kwargs: Any,
+) -> pd.DataFrame:
+    """对单个数据集，汇总每个节点规则 :meth:`Rule.report` 中"命中"分箱的结果行。
+
+    供 :class:`AutoTreeFitter` 和 :class:`ManualTreeExtractor` 的 ``report()`` 方法共用。
+
+    :param df_rules: 规则 DataFrame（含 node / if_leaf / rule_list 列）
+    :param format_rule: 将 rule_list 解析为 :class:`Rule` 对象的函数（空规则返回 None）
+    :param data: 待评估数据集
+    :param target: 目标变量列名
+    :param overdue: 逾期天数字段名，参考 :meth:`Rule.report`
+    :param dpds: 逾期定义方式，参考 :meth:`Rule.report`
+    :param del_grey: 是否删除灰度样本
+    :param leaf_only: 是否仅评估叶子节点
+    :return: 各节点效果评估 DataFrame
+    """
+    rules_df = df_rules[df_rules["if_leaf"]] if leaf_only else df_rules
+
+    hit_frames: List[pd.DataFrame] = []
+    for _, row in rules_df.iterrows():
+        node_id = int(row["node"])
+        is_leaf = bool(row["if_leaf"])
+        rule_list = row["rule_list"]
+
+        rule = format_rule(rule_list)
+        if rule is None:
+            rule = Rule(expr="True", name="空规则", description="空规则")
+
+        table = rule.report(
+            data,
+            target=target,
+            overdue=overdue,
+            dpds=dpds,
+            del_grey=del_grey,
+            desc=rule.description,
+            **kwargs,
+        )
+
+        is_multi = isinstance(table.columns, pd.MultiIndex)
+        group = "分箱详情" if is_multi else None
+        bin_col = (group, "分箱") if is_multi else "分箱"
+        node_col = (group, "节点编号") if is_multi else "节点编号"
+        leaf_col = (group, "是否叶子") if is_multi else "是否叶子"
+
+        hit = table[table[bin_col] == "命中"].copy()
+        hit[node_col] = node_id
+        hit[leaf_col] = "是" if is_leaf else "否"
+
+        front_cols = [node_col, leaf_col]
+        other_cols = [c for c in hit.columns if c not in front_cols]
+        hit_frames.append(hit[front_cols + other_cols])
+
+    if not hit_frames:
+        return pd.DataFrame()
+
+    result = pd.concat(hit_frames, ignore_index=True)
+    sort_col = ("分箱详情", "节点编号") if isinstance(result.columns, pd.MultiIndex) else "节点编号"
+    return result.sort_values(sort_col).reset_index(drop=True)
+
+
 # ============================================================================
 # 树信息内部类（封装 sklearn 树结构的原始数组）
 # ============================================================================
@@ -546,7 +615,7 @@ class AutoTreeFitter:
 
     **参数**
 
-    :param target_col: 目标变量列名（0=好样本，1=坏样本）
+    :param target: 目标变量列名（0=好样本，1=坏样本）
     :param feature_list: 特征名列表（默认自动从数据中推断数值列）
     :param tree_params: 决策树参数字典，默认值如下：
 
@@ -564,7 +633,7 @@ class AutoTreeFitter:
     **参考样例**
 
     >>> from hscredit.report.mining import AutoTreeFitter
-    >>> fitter = AutoTreeFitter(target_col='IS_BAD', feature_list=['age', 'income'])
+    >>> fitter = AutoTreeFitter(target='target', feature_list=['age', 'income'])
     >>> fitter.fit(df_train)
     >>> # 在测试集上评估
     >>> metrics = fitter.evaluate([('测试集', df_test)], metric_type='ks')
@@ -578,14 +647,14 @@ class AutoTreeFitter:
 
     def __init__(
         self,
-        target_col: str = "target",
+        target: str = "target",
         feature_list: Optional[List[str]] = None,
         tree_params: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ):
         """初始化决策树训练器。
 
-        :param target_col: 目标变量列名（0=好样本，1=坏样本）
+        :param target: 目标变量列名（0=好样本，1=坏样本）
         :param feature_list: 特征名列表（默认自动从数据中推断数值列）
         :param tree_params: 决策树参数字典，默认值如下：
 
@@ -603,7 +672,7 @@ class AutoTreeFitter:
         :param kwargs: sklearn DecisionTreeClassifier 的其他参数，直接透传给底层分类器。
             例如：`ccp_alpha=0.01`、`class_weight='balanced'`、`min_weight_fraction_leaf=0.1` 等。
         """
-        self.target_col = target_col
+        self.target = target
         self.feature_list = feature_list or []
         self.tree_params = tree_params or {}
         self._sklearn_kwargs: Dict[str, Any] = kwargs
@@ -676,10 +745,10 @@ class AutoTreeFitter:
 
         **参考样例**
 
-        >>> fitter = AutoTreeFitter(target_col='IS_BAD')
+        >>> fitter = AutoTreeFitter(target='target')
         >>> fitter.fit(df_train, feature_list=['age', 'income', 'loan'])
         >>> # 使用 ccp_alpha 后剪枝
-        >>> fitter2 = AutoTreeFitter(target_col='IS_BAD')
+        >>> fitter2 = AutoTreeFitter(target='target')
         >>> fitter2.fit(df_train, ccp_alpha=0.01)
         """
         # 特征列表
@@ -689,11 +758,11 @@ class AutoTreeFitter:
             self.feature_list = [
                 c
                 for c in df.columns
-                if c != self.target_col and pd.api.types.is_numeric_dtype(df[c])
+                if c != self.target and pd.api.types.is_numeric_dtype(df[c])
             ]
 
         # 过滤缺失数据
-        self._data = df.loc[df[self.target_col].notna(), self.feature_list + [self.target_col]].copy()
+        self._data = df.loc[df[self.target].notna(), self.feature_list + [self.target]].copy()
 
         # 合并参数：默认参数 → 构造参数 → 调用参数 → kwargs（优先级最高）
         params = {**self._default_params, **self.tree_params}
@@ -704,7 +773,7 @@ class AutoTreeFitter:
         # 训练
         self.clf = DecisionTreeClassifier(**params)
         X = self._data[self.feature_list].values
-        y = self._data[self.target_col].values
+        y = self._data[self.target].values
         self.clf.fit(X, y)
 
         self._is_fitted = True
@@ -793,16 +862,16 @@ class AutoTreeFitter:
 
         # 训练集评估
         train_prob = self.predict_proba()[:, 1]
-        train_y = self._data[self.target_col].values
+        train_y = self._data[self.target].values
         train_metric = self._calc_metric(train_prob, train_y, metric_type, top_rate)
         results.append(("训练集", train_metric))
 
         # 各测试集评估
         for name, test_df in test_data_list:
-            if self.target_col not in test_df.columns:
-                raise ValueError(f"测试集 '{name}' 缺少目标列: {self.target_col}")
+            if self.target not in test_df.columns:
+                raise ValueError(f"测试集 '{name}' 缺少目标列: {self.target}")
             test_prob = self.predict_proba(test_df)[:, 1]
-            test_y = test_df[self.target_col].values
+            test_y = test_df[self.target].values
             test_metric = self._calc_metric(test_prob, test_y, metric_type, top_rate)
             results.append((name, test_metric))
 
@@ -823,64 +892,67 @@ class AutoTreeFitter:
         elif metric_type in ("lift", "top"):
             return _lift_local(y_true, y_prob, n_bins=int(top_rate * 100))
 
-    def evaluate_by_node(
+    def report(
         self,
-        df: pd.DataFrame,
-        node_id_list: Optional[List[int]] = None,
-    ) -> pd.DataFrame:
-        """按决策树节点评估数据。
+        datasets: Union[pd.DataFrame, List[pd.DataFrame], Dict[Any, pd.DataFrame]],
+        target: Optional[str] = None,
+        overdue: Optional[Union[str, List[str]]] = None,
+        dpds: Optional[Union[int, List[int]]] = None,
+        del_grey: bool = False,
+        leaf_only: bool = False,
+        **kwargs: Any,
+    ) -> Union[pd.DataFrame, List[pd.DataFrame], Dict[Any, pd.DataFrame]]:
+        """在新数据集上评估决策树各节点规则的效果。
 
-        返回每个指定节点的命中样本统计（节点可为任意节点，不限于叶子）。
+        对每个节点（含分裂节点和叶子节点），将其规则路径解析为 :class:`Rule` 对象，
+        直接调用 :meth:`Rule.report` 计算统计指标，取其中"命中"分箱对应的结果行汇总，
+        得到各节点在新数据上的效果报告。
 
-        :param df: 待评估数据集
-        :param node_id_list: 要评估的节点 ID 列表（None=所有叶子节点）
-        :return: 节点评估结果 DataFrame
+        **参数**
+
+        :param datasets: 待评估数据集，支持单个 DataFrame、DataFrame 列表、
+            或 ``{名称: DataFrame}`` 字典；返回结果类型与输入保持一致
+        :param target: 目标变量列名，默认为None（使用拟合时的 ``self.target``）
+        :param overdue: 逾期天数字段名（可选，传入时以逾期天数>DPD定义坏样本，
+            支持多标签多DPD联合分析），参考 :meth:`Rule.report`
+        :param dpds: 逾期定义方式，逾期天数 > DPD 为坏样本，默认为0；
+            传入列表时支持多DPD联合分析，参考 :meth:`Rule.report`
+        :param del_grey: 是否删除逾期天数在(0, DPD]区间内的灰度样本，默认为False
+        :param leaf_only: 是否仅评估叶子节点，默认 False（评估所有节点）
+        :param kwargs: 其余传递给 :meth:`Rule.report` 的参数（如 ``amount``、``margins``）
+        :return: 各节点效果评估表（DataFrame），结构与输入一致：
+            单个 DataFrame 输入返回单个 DataFrame，列表输入返回 DataFrame 列表，
+            字典输入返回 ``{名称: DataFrame}`` 字典
 
         **参考样例**
 
-        >>> node_result = fitter.evaluate_by_node(df_test, node_id_list=[3, 5, 7])
-        >>> print(node_result)
+        >>> result = fitter.report(df_test, target='target')
+        >>> results = fitter.report([df_test1, df_test2], target='target')
+        >>> results = fitter.report({'测试集1': df_test1, '测试集2': df_test2}, target='target')
+        >>> # 多标签（逾期天数）联合分析
+        >>> result = fitter.report(df_test, overdue=['MOB1'], dpds=[7, 3, 0])
         """
         self._check_fitted()
-        total_samples = len(df)
-        total_bad = float(df[self.target_col].sum())
-        overall_badrate = total_bad / total_samples if total_samples > 0 else 0.0
 
-        if node_id_list is None:
-            node_id_list = self.get_leaf_node_ids()
+        def _report_one(data: pd.DataFrame) -> pd.DataFrame:
+            return _node_hit_report(
+                self._df_rules,
+                self._format_rule,
+                data,
+                target=target or self.target,
+                overdue=overdue,
+                dpds=dpds,
+                del_grey=del_grey,
+                leaf_only=leaf_only,
+                **kwargs,
+            )
 
-        results: List[Dict[str, Any]] = []
-        leaf_ids = self.apply(df)
-
-        for node_id in node_id_list:
-            mask = leaf_ids == node_id
-            n_samples = int(mask.sum())
-            if n_samples == 0:
-                bad_count = 0
-                bad_rate = 0.0
-                lift = 0.0
-            else:
-                bad_count = int(df.loc[mask, self.target_col].sum())
-                bad_rate = bad_count / n_samples
-                lift = bad_rate / overall_badrate if overall_badrate > 0 else 0.0
-
-            rule_row = self._df_rules[self._df_rules["node"] == node_id]
-            if len(rule_row) > 0:
-                rule_str = self._format_rule(rule_row.iloc[0]["rule_list"])
-            else:
-                rule_str = ""
-
-            results.append({
-                "节点编号": node_id,
-                "规则表达式": rule_str,
-                "命中样本数": n_samples,
-                "样本占比": n_samples / total_samples if total_samples > 0 else 0.0,
-                "坏样本数": bad_count,
-                "坏账率": bad_rate,
-                "LIFT值": lift,
-            })
-
-        return pd.DataFrame(results).sort_values("节点编号").reset_index(drop=True)
+        if isinstance(datasets, dict):
+            return {name: _report_one(data) for name, data in datasets.items()}
+        elif isinstance(datasets, list):
+            return [_report_one(data) for data in datasets]
+        else:
+            return _report_one(datasets)
 
     def get_leaf_node_ids(self) -> List[int]:
         """获取所有叶子节点的 ID 列表。"""
@@ -900,22 +972,18 @@ class AutoTreeFitter:
 
         >>> rules = fitter.get_rules()
         >>> for rule in rules:
-        ...     report = rule.report(df_test, target='IS_BAD')
+        ...     report = rule.report(df_test, target='target')
         """
         self._check_fitted()
         rules: List[Rule] = []
         leaf_rules = self._df_rules[self._df_rules["if_leaf"]]
         for _, row in leaf_rules.iterrows():
-            rule_list = row["rule_list"]
-            expr = self._rule_to_expr(rule_list)
-            rule_str = self._format_rule(rule_list)
-            rules.append(
-                Rule(
-                    expr=expr,
-                    name=f"AutoTree_N{int(row['node'])}",
-                    description=rule_str,
-                )
-            )
+            rule = self._format_rule(row["rule_list"])
+            if rule is None:
+                # 叶子节点必然带有规则路径，空规则（根节点）理论上不会出现，稳妥跳过
+                continue
+            rule.name = f"AutoTree_N{int(row['node'])}"
+            rules.append(rule)
         return rules
 
     def get_rule_table(self) -> pd.DataFrame:
@@ -930,7 +998,7 @@ class AutoTreeFitter:
         """
         self._check_fitted()
         total = len(self._data)
-        overall_badrate = self._data[self.target_col].mean()
+        overall_badrate = self._data[self.target].mean()
 
         rows: List[Dict[str, Any]] = []
         for _, row in self._df_rules.iterrows():
@@ -947,10 +1015,13 @@ class AutoTreeFitter:
                 bad_rate = 0.0
                 lift = 0.0
 
+            rule = self._format_rule(row["rule_list"])
+            rule_str = rule.description if rule is not None else "空规则"
+
             rows.append({
                 "节点编号": int(row["node"]),
                 "是否叶子": "是" if is_leaf else "否",
-                "规则表达式": self._format_rule(row["rule_list"]),
+                "规则表达式": rule_str,
                 "样本数": n_samples,
                 "样本占比": n_samples / total if total > 0 else 0.0,
                 "好样本数": int(node_value[0]) if n_samples > 0 else 0,
@@ -961,10 +1032,11 @@ class AutoTreeFitter:
 
         return pd.DataFrame(rows).sort_values("节点编号").reset_index(drop=True)
 
-    def _format_rule(self, rule_list: List) -> str:
-        """将规则列表格式化为可读字符串。"""
+    @staticmethod
+    def _rule_list_to_text(rule_list: List) -> str:
+        """将规则列表格式化为可读的中文规则串（如 "age <= 35.0000 且 income > 5000"）。"""
         if not rule_list:
-            return ""
+            return "空规则"
         parts = []
         for item in rule_list:
             feat = item[0]
@@ -972,6 +1044,23 @@ class AutoTreeFitter:
             thres = f"{item[2]:.4f}" if isinstance(item[2], float) else str(item[2])
             parts.append(f"{feat} {op} {thres}")
         return " 且 ".join(parts)
+
+    def _format_rule(self, rule_list: List) -> Optional[Rule]:
+        """将规则列表解析为 :class:`Rule` 对象。
+
+        - ``expr``：pandas eval 表达式（用于 predict / report 等规则评估）
+        - ``name`` / ``description``：可读的中文规则串（用于表格展示）
+
+        根节点对应的空规则返回 None。
+
+        :param rule_list: 规则列表，元素为 ``[特征名, 操作符, 阈值]``
+        :return: 解析得到的 Rule 对象；空规则返回 None
+        """
+        if not rule_list:
+            return None
+        text = self._rule_list_to_text(rule_list)
+        expr = self._rule_to_expr(rule_list)
+        return Rule(expr=expr, name=text, description=text)
 
     def _rule_to_expr(self, rule_list: List) -> str:
         """将规则列表转换为 pandas eval 表达式。"""
@@ -1035,7 +1124,7 @@ class AutoTreeFitter:
         payload = {
             "clf": self.clf,
             "feature_list": self.feature_list,
-            "target_col": self.target_col,
+            "target": self.target,
             "tree_params": self.tree_params,
         }
         if include_data and self._data is not None:
@@ -1057,7 +1146,7 @@ class AutoTreeFitter:
         with open(file_path, "rb") as f:
             payload = pickle.load(f)
         instance = cls(
-            target_col=payload["target_col"],
+            target=payload["target"],
             feature_list=payload["feature_list"],
             tree_params=payload["tree_params"],
         )
@@ -1081,7 +1170,7 @@ class AutoTreeFitter:
         if self._is_fitted:
             n_leaves = int(self._df_rules["if_leaf"].sum()) if self._df_rules is not None else 0
             return (
-                f"AutoTreeFitter(target_col='{self.target_col}', "
+                f"AutoTreeFitter(target='{self.target}', "
                 f"features={self.feature_list}, "
                 f"leaves={n_leaves})"
             )
@@ -1115,14 +1204,14 @@ class ManualTreeExtractor:
     **参考样例**
 
     >>> from hscredit.report.mining import ManualTreeExtractor
-    >>> ext = ManualTreeExtractor(target='IS_BAD', max_depth=2)
+    >>> ext = ManualTreeExtractor(target='target', max_depth=2)
     >>> ext.fit(df, feature_list=['age', 'income'])
     >>> # 人工分裂：指定在某节点用某特征+阈值分裂
     >>> ext.manual_split(df_sub, feature_name='age', threshold=35, node=1)
     >>> # 获取规则表
     >>> print(ext.get_rule_table())
     >>> # 在新数据上评估
-    >>> print(ext.evaluate_on_new_data(df_test))
+    >>> print(ext.report(df_test))
     >>> # 获取 Rule 对象
     >>> rules = ext.get_rules()
     """
@@ -1241,10 +1330,10 @@ class ManualTreeExtractor:
 
         **参考样例**
 
-        >>> ext = ManualTreeExtractor(target='IS_BAD')
+        >>> ext = ManualTreeExtractor(target='target')
         >>> ext.fit(df, feature_list=['age', 'income', 'loan_amount'])
         >>> # 使用熵作为分裂准则 + ccp_alpha 后剪枝
-        >>> ext2 = ManualTreeExtractor(target='IS_BAD')
+        >>> ext2 = ManualTreeExtractor(target='target')
         >>> ext2.fit(df, feature_list=['age', 'income'], criterion='entropy', ccp_alpha=0.01)
         """
         if feature_list is None:
@@ -1502,42 +1591,67 @@ class ManualTreeExtractor:
         if self._df_rules is None or len(self._df_rules) == 0:
             return pd.DataFrame()
 
+        # 全量样本/坏样本数（训练集口径），用于"坏账改善""风险拒绝比"计算
+        total = self._n_total_samples
+        overall_bad_rate = self._overall_badrate
+        total_bad = overall_bad_rate * total  # = 坏样本总数
+
         rows: List[Dict[str, Any]] = []
         for _, row in self._df_rules.iterrows():
             rule_list = row["rule_list"]
             n_samples = int(row["node_samples"]) if row["node_samples"] > 0 else 0
             node_value = row["node_value"]
             is_leaf = bool(row["if_leaf"])
-            rule_str = self._format_rule(rule_list)
+            # 将规则路径解析为 Rule 对象，展示其可读描述（根节点空规则显示"空规则"）
+            rule = self._format_rule(rule_list)
+            rule_str = rule.description if rule is not None else "空规则"
 
             if n_samples > 0 and sum(node_value) > 0:
                 good_count = int(node_value[0])
                 bad_count = int(node_value[1])
                 bad_rate = bad_count / n_samples
-                lift = bad_rate / self._overall_badrate if self._overall_badrate > 0 else 0.0
+                lift = bad_rate / overall_bad_rate if overall_bad_rate > 0 else 0.0
             else:
                 bad_count = 0
                 good_count = 0
                 bad_rate = 0.0
                 lift = 0.0
 
+            sample_pct = n_samples / total if total > 0 else 0.0
+            # 坏账改善 / 风险拒绝比：参考 Rule.report 的计算口径——
+            # 将命中当前节点的样本视为"拒绝"客群，衡量拒绝后剩余（通过）客群的坏账率改善。
+            #   拒绝后剩余坏账率 = (坏样本总数 - 节点坏样本数) / (样本总数 - 节点样本数)
+            #   坏账改善 = (整体坏账率 - 拒绝后剩余坏账率) / 整体坏账率
+            #   风险拒绝比 = 坏账改善 / 样本占比
+            remaining_total = total - n_samples
+            remaining_bad = total_bad - bad_count
+            remaining_bad_rate = remaining_bad / remaining_total if remaining_total > 0 else 0.0
+            bad_decrease = (
+                (overall_bad_rate - remaining_bad_rate) / overall_bad_rate
+                if overall_bad_rate > 0
+                else 0.0
+            )
+            risk_reject_ratio = bad_decrease / sample_pct if sample_pct > 0 else 0.0
+
             rows.append({
                 "节点编号": int(row["node"]),
                 "是否叶子": "是" if is_leaf else "否",
                 "规则表达式": rule_str,
                 "样本数": n_samples,
-                "样本占比": n_samples / self._n_total_samples if self._n_total_samples > 0 else 0,
+                "样本占比": sample_pct,
                 "好样本数": good_count,
                 "坏样本数": bad_count,
                 "坏账率": bad_rate,
                 "LIFT值": lift,
+                "坏账改善": bad_decrease,
+                "风险拒绝比": risk_reject_ratio,
             })
 
         return pd.DataFrame(rows).sort_values("节点编号").reset_index(drop=True)
 
     @staticmethod
-    def _format_rule(rule_list: List) -> str:
-        """将规则列表格式化为可读字符串。"""
+    def _rule_list_to_text(rule_list: List) -> str:
+        """将规则列表格式化为可读的中文规则串（如 "age <= 35.0000 且 income > 5000"）。"""
         if not rule_list:
             return "空规则"
         parts = []
@@ -1548,6 +1662,23 @@ class ManualTreeExtractor:
             parts.append(f"{feat} {op} {thres}")
         return " 且 ".join(parts)
 
+    def _format_rule(self, rule_list: List) -> Optional[Rule]:
+        """将规则列表解析为 :class:`Rule` 对象。
+
+        - ``expr``：pandas eval 表达式（用于 predict / report 等规则评估）
+        - ``name`` / ``description``：可读的中文规则串（用于表格展示）
+
+        根节点对应的空规则返回 None。
+
+        :param rule_list: 规则列表，元素为 ``[特征名, 操作符, 阈值]``
+        :return: 解析得到的 Rule 对象；空规则返回 None
+        """
+        if not rule_list:
+            return None
+        text = self._rule_list_to_text(rule_list)
+        expr = self._rule_to_expr(rule_list)
+        return Rule(expr=expr, name=text, description=text)
+
     # -------------------------------------------------------------------------
     # 评估与报告
     # -------------------------------------------------------------------------
@@ -1557,7 +1688,12 @@ class ManualTreeExtractor:
 
         :return: 规则效果 DataFrame，列包括：
             节点编号、是否叶子、规则表达式、样本数、样本占比、
-            好样本数、坏样本数、坏账率、LIFT值
+            好样本数、坏样本数、坏账率、LIFT值、坏账改善、风险拒绝比
+
+            其中（参考 :meth:`Rule.report` 的口径，将命中节点的样本视为"拒绝"客群）：
+
+            - **坏账改善** = (整体坏账率 - 拒绝后剩余客群坏账率) / 整体坏账率
+            - **风险拒绝比** = 坏账改善 / 样本占比
 
         **参考样例**
 
@@ -1567,207 +1703,35 @@ class ManualTreeExtractor:
         self._check_fitted()
         return self._rule_table.copy() if self._rule_table is not None else pd.DataFrame()
 
-    def plot_tree(
-        self,
-        figsize: Tuple[int, int] = (22, 10),
-        fontsize: float = 10.0,
-        filled: bool = True,
-        rounded: bool = True,
-        impurity: bool = True,
-        node_ids: bool = True,
-        proportion: bool = True,
-        precision: int = 3,
-        save_path: Optional[str] = None,
-    ) -> Any:
-        """绘制当前决策树图（忠实反映人工分裂后的树结构）。
-
-        使用 graphviz 渲染决策树。节点颜色基于坏账率（蓝=低坏账，红=高坏账），
-        手工修改过的节点额外加紫色（#9C27B0）粗边框标记。
-
-        **参数**
-
-        :param figsize: 图大小，默认 (22, 10)（仅供渲染后保存参考）
-        :param fontsize: 节点标签字体大小，默认 10.0
-        :param filled: 是否填充颜色（hscredit 主题色：蓝/绿=低坏账，红/橙=高坏账）
-        :param rounded: 是否使用圆角矩形
-        :param impurity: 是否显示 gini impurity
-        :param node_ids: 是否显示节点 ID
-        :param proportion: 是否显示样本比例
-        :param precision: 数值精度
-        :param save_path: 保存路径（不含后缀，如 '/tmp/tree' 会生成 tree.png）
-        :return: graphviz.Source 对象（直接 display() 或 return 即可在 Jupyter 渲染）
-
-        **参考样例**
-
-        >>> ext = ManualTreeExtractor(target='IS_BAD')
-        >>> ext.fit(df, feature_list=['age', 'income'])
-        >>> ext.plot_tree(save_path='/tmp/tree')
-        >>> # 或在 Jupyter 中直接 display
-        >>> from IPython.display import display
-        >>> display(ext.plot_tree())
-        """
-        self._check_fitted()
-
-        try:
-            import graphviz
-        except ImportError:
-            raise ImportError("需要安装 graphviz: pip install graphviz")
-
-        children_left = self._tree_info.children_left
-        children_right = self._tree_info.children_right
-        feature = self._tree_info.feature
-        threshold = self._tree_info.threshold
-        n_samples = self._tree_info.n_node_samples
-        values = self._tree_info.value
-        imp = self._tree_info.impurity
-        feat_names = self._tree_info.feature_names or self._feature_list or []
-        total_samples = sum(n_samples) if n_samples else 1
-        n_classes = self._tree_info.n_classes or 2
-        manual_nodes = self._manual_split_nodes
-        n_nodes = len(feature)
-
-        if n_nodes == 0:
-            return self
-
-        # 收集所有节点数据
-        nodes_data: List[Dict[str, Any]] = []
-        for node_id in range(n_nodes):
-            vals = values[node_id] if node_id < len(values) else [[0.5, 0.5]]
-            is_manual = node_id in manual_nodes
-
-            # 填充色（hscredit 风控主题色）
-            if filled and n_classes == 2 and vals:
-                class_ratio = vals[0][0]
-                rgb = self._compute_node_color(class_ratio)
-                fill = "#{0:02X}{1:02X}{2:02X}".format(*rgb)
-            else:
-                fill = "#EEEEEE"
-
-            # 边框：手工节点用紫色
-            penwidth = "3.0" if is_manual else "1.0"
-            edge_color = "#9C27B0" if is_manual else "#333333"
-            style = "filled, rounded, bold" if is_manual else "filled, rounded"
-
-            n = n_samples[node_id] if node_id < len(n_samples) else 0
-            sample_pct = n / total_samples if total_samples > 0 else 0
-            imp_val = imp[node_id] if node_id < len(imp) else 0.0
-
-            # 类别标签
-            if n_classes == 2 and vals:
-                val0 = vals[0][0]
-                val1 = vals[0][1]
-                class_label = "好" if val0 >= val1 else "坏"
-                value_str = f"[{val0:.{precision}f}, {val1:.{precision}f}]"
-            else:
-                class_label = ""
-                value_str = ""
-
-            # 构建 HTML 标签（支持中文换行）
-            lines_html: List[str] = []
-            if node_ids:
-                lines_html.append(f"<B>#{node_id}</B>")
-            feat_idx = feature[node_id]
-            if feat_idx != -2:
-                feat_name = feat_names[feat_idx] if feat_idx < len(feat_names) else f"x[{feat_idx}]"
-                th = threshold[node_id] if node_id < len(threshold) else 0.0
-                lines_html.append(f"{feat_name} &le; {th:.{precision}f}")
-            if impurity:
-                lines_html.append(f"gini = {imp_val:.{precision}f}")
-            if proportion:
-                lines_html.append(f"samples = {sample_pct * 100:.{precision}f}%")
-            if value_str:
-                lines_html.append(f"value = {value_str}")
-            if class_label:
-                lines_html.append(f"<B>class = {class_label}</B>")
-
-            label_html = "<FONT POINT-SIZE='9'>" + "<BR/>".join(lines_html) + "</FONT>"
-
-            nodes_data.append({
-                "node_id": node_id,
-                "label": label_html,
-                "fill": fill,
-                "edge_color": edge_color,
-                "penwidth": penwidth,
-                "style": style,
-            })
-
-        # 构建 graphviz DOT
-        dot_lines: List[str] = []
-        dot_lines.append("digraph Tree {")
-        dot_lines.append("    graph [ranksep=0.4, nodesep=0.3, splines=polyline, bgcolor=\"#F8F9FA\", pad=0.5];")
-        dot_lines.append("    node [shape=box, fontname=helvetica, margin=\"0.15,0.1\", width=0, height=0];")
-        dot_lines.append("    edge [fontname=helvetica, arrowsize=0.8];")
-
-        for nd in nodes_data:
-            dot_lines.append(
-                f'    {nd["node_id"]} [label=<{nd["label"]}>, '
-                f'fillcolor="{nd["fill"]}", color="{nd["edge_color"]}", '
-                f'penwidth={nd["penwidth"]}, style="{nd["style"]}"] ;'
-            )
-
-        # 添加边（仅根节点的两条边显示 True/False，其他边不显示）
-        for node_id in range(n_nodes):
-            left = children_left[node_id] if node_id < len(children_left) else -1
-            right = children_right[node_id] if node_id < len(children_right) else -1
-            if left != -1:
-                if node_id == 0:
-                    dot_lines.append(
-                        f'    {node_id} -> {left} '
-                        f'[label="True", fontcolor="#2639E9", fontsize=11] ;'
-                    )
-                else:
-                    dot_lines.append(f'    {node_id} -> {left} ;')
-            if right != -1:
-                if node_id == 0:
-                    dot_lines.append(
-                        f'    {node_id} -> {right} '
-                        f'[label="False", fontcolor="#F76E6C", fontsize=11] ;'
-                    )
-                else:
-                    dot_lines.append(f'    {node_id} -> {right} ;')
-
-        dot_lines.append("}")
-
-        dot_src = "\n".join(dot_lines)
-        src = graphviz.Source(dot_src)
-
-        if save_path:
-            src.render(save_path, format="png", cleanup=True)
-
-        # 保存 DOT 内容到实例属性（供 display() 使用）
-        self._current_dot_source = src
-        return src
-
     def display(self) -> "ManualTreeExtractor":
         """在 Jupyter Notebook 中展示决策树图和规则表。
 
-        与原始 ManualCLF（Dtree.py）的 display() 行为完全一致，
         每次调用都会根据当前树结构重新生成，确保 manual_split / delete_node 后显示最新状态。
 
-        树图配色（hscredit 风控主题色）：
-        - 低坏账→主色蓝（#2639E9），高坏账→副色红（#F76E6C）
-        - 紫边框=手工修改节点（#9C27B0）
-        - 背景浅灰色（#F8F9FA）
+        决策树图使用 :func:`hscredit.core.viz.plot_tree_matplotlib`（AntV G6 卡片式风格）
+        绘制：卡片节点 + 主题色标题栏 + 节点指标，按坏账率从浅蓝（低风险）到浅红（高风险）
+        着色，人工修改节点（manual_split）使用副主题色边框标记。规则表使用
+        :func:`style_rule_table` 美化展示。
 
         **参考样例**
 
-        >>> ext = ManualTreeExtractor(target='IS_BAD')
+        >>> ext = ManualTreeExtractor(target='target')
         >>> ext.fit(df, feature_list=['age', 'income'])
         >>> ext.display()   # 在 Jupyter 中展示树图和规则表
         >>> ext.manual_split(df, 'income', 5000, node=1).display()
         """
         try:
-            from IPython.display import display as ipy_display, Image as ipy_Image
+            from IPython.display import display as ipy_display
+            import matplotlib.pyplot as plt
+
+            from ...core.viz.tree_plots import plot_tree_matplotlib
 
             self._check_fitted()
 
-            # 重新生成 graphviz 图，确保反映最新的树结构
-            src = self.plot_tree()
-
-            # 渲染 PNG 字节流，用 ipy_Image 包装后显式 display
-            png_bytes = src.pipe("png")
-            img = ipy_Image(png_bytes, format="png", width=1200)
-            ipy_display(img)
+            # 用 plot_tree_matplotlib 绘制当前树结构（反映最新的人工分裂结果）
+            fig = plot_tree_matplotlib(self)
+            ipy_display(fig)
+            plt.close(fig)
 
             # 渲染美化后的规则表
             rule_table = self.get_rule_table()
@@ -1776,7 +1740,7 @@ class ManualTreeExtractor:
                 ipy_display(styler)
 
         except ImportError:
-            # graphviz 未安装
+            # IPython / matplotlib 未安装
             pass
         except Exception:
             # 非 Jupyter 环境或其他错误：静默跳过
@@ -1784,103 +1748,67 @@ class ManualTreeExtractor:
 
         return self
 
-    def to_graphviz(self, format: str = "png", save_path: Optional[str] = None) -> Any:
-        """生成并返回 graphviz.Source 对象，或直接渲染为文件/字节。
-
-        **参数**
-
-        :param format: 渲染格式，默认 'png'。可选 'pdf', 'svg', 'dot' 等。
-        :param save_path: 保存路径（不含后缀，如 '/tmp/tree' 会生成 tree.png）
-        :return: graphviz.Source 对象；save_path 非 None 时返回渲染后的字节数据
-
-        **参考样例**
-
-        >>> src = ext.to_graphviz()                        # 获取 Source 对象
-        >>> src.render('/tmp/tree', cleanup=True)           # 保存为 PDF
-        >>> png_bytes = ext.to_graphviz(format='png')       # 获取 PNG 字节
-        """
-        self._check_fitted()
-        if not hasattr(self, "_current_dot_source") or self._current_dot_source is None:
-            self.plot_tree()
-        src = self._current_dot_source
-        if save_path:
-            return src.render(save_path, format=format, cleanup=True)
-        return src
-
-    def evaluate_on_new_data(
+    def report(
         self,
-        df: pd.DataFrame,
+        datasets: Union[pd.DataFrame, List[pd.DataFrame], Dict[Any, pd.DataFrame]],
+        target: Optional[str] = None,
+        overdue: Optional[Union[str, List[str]]] = None,
+        dpds: Optional[Union[int, List[int]]] = None,
+        del_grey: bool = False,
         leaf_only: bool = False,
-    ) -> pd.DataFrame:
-        """在新的数据集上评估当前树的规则效果。
+        **kwargs,
+    ) -> Union[pd.DataFrame, List[pd.DataFrame], Dict[Any, pd.DataFrame]]:
+        """在新数据集上评估当前树各节点规则的效果。
 
-        遍历树中每个节点（含分裂节点和叶子节点），
-        计算命中样本的统计指标。
+        对每个节点（含分裂节点和叶子节点），将其规则路径解析为 :class:`Rule` 对象，
+        直接调用 :meth:`Rule.report` 计算统计指标，取其中"命中"分箱对应的结果行汇总，
+        得到各节点在新数据上的效果报告。
 
         **参数**
 
-        :param df: 待评估数据集（需包含树训练时的全部特征）
+        :param datasets: 待评估数据集，支持单个 DataFrame、DataFrame 列表、
+            或 ``{名称: DataFrame}`` 字典；返回结果类型与输入保持一致
+        :param target: 目标变量列名，默认为None（使用拟合时的 ``self.target``）
+        :param overdue: 逾期天数字段名（可选，传入时以逾期天数>DPD定义坏样本，
+            支持多标签多DPD联合分析），参考 :meth:`Rule.report`
+        :param dpds: 逾期定义方式，逾期天数 > DPD 为坏样本，默认为0；
+            传入列表时支持多DPD联合分析，参考 :meth:`Rule.report`
+        :param del_grey: 是否删除逾期天数在(0, DPD]区间内的灰度样本，默认为False
         :param leaf_only: 是否仅评估叶子节点，默认 False（评估所有节点）
-        :return: 评估结果 DataFrame
+        :param kwargs: 其余传递给 :meth:`Rule.report` 的参数（如 ``amount``、``margins``）
+        :return: 各节点效果评估表（DataFrame），结构与输入一致：
+            单个 DataFrame 输入返回单个 DataFrame，列表输入返回 DataFrame 列表，
+            字典输入返回 ``{名称: DataFrame}`` 字典
 
         **参考样例**
 
-        >>> result = ext.evaluate_on_new_data(df_test)
-        >>> print(result)
+        >>> result = ext.report(df_test, target='target')
+        >>> results = ext.report([df_test1, df_test2], target='target')
+        >>> results = ext.report({'测试集1': df_test1, '测试集2': df_test2}, target='target')
+        >>> # 多标签（逾期天数）联合分析
+        >>> result = ext.report(df_test, overdue=['MOB1'], dpds=[7, 3, 0])
         """
         self._check_fitted()
 
-        data = df.dropna(subset=[self.target]).copy()
-        total_samples = len(data)
-        total_bad = float(data[self.target].sum())
-        overall_badrate = total_bad / total_samples if total_samples > 0 else 0.0
+        def _report_one(data: pd.DataFrame) -> pd.DataFrame:
+            return _node_hit_report(
+                self._df_rules,
+                self._format_rule,
+                data,
+                target=target or self.target,
+                overdue=overdue,
+                dpds=dpds,
+                del_grey=del_grey,
+                leaf_only=leaf_only,
+                **kwargs,
+            )
 
-        results: List[Dict[str, Any]] = []
-        for _, row in self._df_rules.iterrows():
-            node_id = int(row["node"])
-            is_leaf = bool(row["if_leaf"])
-
-            if leaf_only and not is_leaf:
-                continue
-
-            rule_list = row["rule_list"]
-            mask = self._apply_rule_list(rule_list, data)
-
-            n_samples = int(mask.sum())
-            if n_samples == 0:
-                bad_count = 0
-                bad_rate = 0.0
-                lift = 0.0
-            else:
-                bad_count = float(data.loc[mask, self.target].sum())
-                bad_rate = bad_count / n_samples
-                lift = bad_rate / overall_badrate if overall_badrate > 0 else 0.0
-
-            results.append({
-                "节点编号": node_id,
-                "是否叶子": "是" if is_leaf else "否",
-                "规则表达式": self._format_rule(rule_list),
-                "命中样本数": n_samples,
-                "样本占比": n_samples / total_samples if total_samples > 0 else 0.0,
-                "坏样本数": int(bad_count),
-                "坏账率": bad_rate,
-                "LIFT值": lift,
-            })
-
-        return pd.DataFrame(results).sort_values("节点编号").reset_index(drop=True)
-
-    def _apply_rule_list(self, rule_list: List, data: pd.DataFrame) -> pd.Series:
-        """应用规则列表到数据，返回命中掩码。"""
-        mask = pd.Series(True, index=data.index)
-        for feat, op, thres in rule_list:
-            feat_str = str(feat)
-            if feat_str not in data.columns:
-                continue
-            if op == ">":
-                mask &= data[feat_str] > float(thres)
-            elif op == "<=":
-                mask &= data[feat_str] <= float(thres)
-        return mask
+        if isinstance(datasets, dict):
+            return {name: _report_one(data) for name, data in datasets.items()}
+        elif isinstance(datasets, list):
+            return [_report_one(data) for data in datasets]
+        else:
+            return _report_one(datasets)
 
     def get_rules(self) -> List[Rule]:
         """将当前树的叶子节点规则转换为 Rule 对象列表。
@@ -1891,21 +1819,17 @@ class ManualTreeExtractor:
 
         >>> rules = ext.get_rules()
         >>> for r in rules:
-        ...     report = r.report(df, target='IS_BAD')
+        ...     report = r.report(df, target='target')
         """
         self._check_fitted()
         rules: List[Rule] = []
         for _, row in self._df_rules[self._df_rules["if_leaf"]].iterrows():
-            rule_list = row["rule_list"]
-            expr = self._rule_to_expr(rule_list)
-            rule_str = self._format_rule(rule_list)
-            rules.append(
-                Rule(
-                    expr=expr,
-                    name=f"TreeNode_{int(row['node'])}",
-                    description=rule_str,
-                )
-            )
+            rule = self._format_rule(row["rule_list"])
+            if rule is None:
+                # 叶子节点必然带有规则路径，空规则（根节点）理论上不会出现，稳妥跳过
+                continue
+            rule.name = f"TreeNode_{int(row['node'])}"
+            rules.append(rule)
         return rules
 
     def _rule_to_expr(self, rule_list: List) -> str:
@@ -1918,156 +1842,6 @@ class ManualTreeExtractor:
             parts.append(f"({feat_esc} {op} {repr(float(thres))})")
         return " & ".join(parts)
 
-    def _build_dot_from_tree_info(self, out_file: str = None) -> str:
-        """从内部 _tree_info 生成 DOT 格式字符串。
-
-        用于渲染经过 manual_split / delete_node 人工调整后的树结构。
-        与 export_graphviz 输出格式兼容，支持 graphviz 直接渲染。
-
-        节点颜色：蓝→绿=低坏账，红→橙=高坏账（hscredit 风控主题色）。
-        手工修改节点：额外加紫色（#9C27B0）边框标记。
-
-        :param out_file: 输出 .dot 文件路径（可选）
-        :return: DOT 格式字符串
-        """
-        if self._tree_info is None:
-            return ""
-
-        children_left = self._tree_info.children_left
-        children_right = self._tree_info.children_right
-        feature = self._tree_info.feature
-        threshold = self._tree_info.threshold
-        n_samples = self._tree_info.n_node_samples
-        values = self._tree_info.value
-        impurity = self._tree_info.impurity
-        feat_names = self._tree_info.feature_names
-        manual_nodes = self._manual_split_nodes
-
-        total_samples = sum(n_samples) if n_samples else 1
-        n_classes = self._tree_info.n_classes or 2
-
-        lines: List[str] = []
-        lines.append("digraph Tree {")
-        lines.append('node [shape=box, style="filled, rounded", color="black", fontname=helvetica] ;')
-        lines.append("graph [ranksep=equally, splines=polyline] ;")
-        lines.append("edge [fontname=helvetica] ;")
-
-        for node_id in range(len(feature)):
-            # 填充色（hscredit 风控主题色）
-            vals = values[node_id] if node_id < len(values) else [[0.5, 0.5]]
-            is_manual = node_id in manual_nodes
-            if n_classes == 2 and vals:
-                class_ratio = vals[0][0]
-                rgb = self._compute_node_color(class_ratio)
-                fill = "#{0:02X}{1:02X}{2:02X}".format(*rgb)
-            else:
-                fill = "#EEEEEE"
-
-            n = n_samples[node_id] if node_id < len(n_samples) else 0
-            sample_pct = n / total_samples if total_samples > 0 else 0
-            imp = impurity[node_id] if node_id < len(impurity) else 0.0
-
-            # 类别标签
-            if n_classes == 2 and vals:
-                val0 = vals[0][0]
-                val1 = vals[0][1]
-                class_label = "好" if val0 >= val1 else "坏"
-                value_str = f"[{val0:.2f}, {val1:.2f}]"
-            else:
-                class_label = ""
-                value_str = ""
-
-            # 构建节点标签
-            feat_idx = feature[node_id]
-            if feat_idx == -2:
-                node_label = (
-                    f"node #{node_id}|"
-                    f"gini = {imp:.3f}|"
-                    f"samples = {sample_pct * 100:.1f}%|"
-                    f"value = {value_str}|"
-                    f"class = {class_label}"
-                )
-            else:
-                feat_name = feat_names[feat_idx] if feat_idx < len(feat_names) else f"feat_{feat_idx}"
-                th = threshold[node_id] if node_id < len(threshold) else 0.0
-                node_label = (
-                    f"node #{node_id}|"
-                    f"{feat_name} <= {th:.4f}|"
-                    f"gini = {imp:.3f}|"
-                    f"samples = {sample_pct * 100:.1f}%|"
-                    f"value = {value_str}|"
-                    f"class = {class_label}"
-                )
-
-            # 边框颜色：手工节点用紫色标记
-            penwidth = "3.0" if is_manual else "1.0"
-            edge_color = "#9C27B0" if is_manual else "#333333"
-
-            # 使用 label 属性的引号形式（与 sklearn 一致），避免 HTML 标签解析问题
-            label_attr = f'"{node_label}"'
-            lines.append(
-                f'{node_id} [label={label_attr}, fillcolor="{fill}", shape=box, '
-                f'style="filled, rounded", color="{edge_color}", penwidth={penwidth}] ;'
-            )
-
-            # 添加边（含 True/False 分支标识）
-            left_child = children_left[node_id] if node_id < len(children_left) else -1
-            right_child = children_right[node_id] if node_id < len(children_right) else -1
-
-            if left_child != -1:
-                lines.append(
-                    f"{node_id} -> {left_child} "
-                    f'[label=<<FONT POINT-SIZE="12">True</FONT>>, fontcolor="#2639E9", fontsize=12] ;'
-                )
-            if right_child != -1:
-                lines.append(
-                    f"{node_id} -> {right_child} "
-                    f'[label=<<FONT POINT-SIZE="12">False</FONT>>, fontcolor="#F76E6C", fontsize=12] ;'
-                )
-
-        lines.append("}")
-
-        dot_content = "\n".join(lines)
-        if out_file:
-            with open(out_file, "w", encoding="utf-8") as f:
-                f.write(dot_content)
-        return dot_content
-
-    @staticmethod
-    @staticmethod
-    def _compute_node_color(class_ratio: float) -> Tuple[int, int, int]:
-        """根据好样本比例计算节点填充色（hscredit 风控主题色）。
-
-        颜色按坏账率映射：
-        - 低坏账（好样本比例高 class_ratio→1）→主色蓝 #2639E9
-        - 高坏账（好样本比例低 class_ratio→0）→副色红 #F76E6C
-        """
-        bad_ratio = 1.0 - class_ratio
-        # bad_ratio=0 → r=38,g=57,b=233 (主色蓝)
-        # bad_ratio=1 → r=247,g=110,b=108 (副色红)
-        r = int(38 + (247 - 38) * bad_ratio)
-        g = int(57 + (110 - 57) * bad_ratio)
-        b = int(233 + (108 - 233) * bad_ratio)
-        return (max(0, min(255, r)), max(0, min(255, g)), max(0, min(255, b)))
-
-    def export_tree_graph(self, out_file: str = None) -> str:
-        """导出决策树 DOT 图数据。
-
-        如果树结构经过了 manual_split / delete_node 人工调整，
-        导出的是调整后的树结构。
-
-        :param out_file: 输出 .dot 文件路径（可选）
-        :return: DOT 格式字符串
-
-        **参考样例**
-
-        >>> dot = ext.export_tree_graph()
-        >>> with open("tree.dot", "w") as f:
-        ...     f.write(dot)
-        """
-        self._check_fitted()
-        return self._build_dot_from_tree_info(out_file=out_file)
-
     # -------------------------------------------------------------------------
     # 辅助方法
     # -------------------------------------------------------------------------
@@ -2076,21 +1850,6 @@ class ManualTreeExtractor:
         """检查是否已拟合。"""
         if not self._is_fitted:
             raise RuntimeError("请先调用 fit() 方法训练决策树")
-
-    def _compute_max_depth(self) -> int:
-        """计算树的最大深度（用于 plot_tree）。"""
-        if self._tree_info is None or not self._tree_info.children_left:
-            return 0
-
-        def _node_depth(node: int, depth: int) -> int:
-            children_l = self._tree_info.children_left
-            if children_l[node] == -1:
-                return depth
-            left_depth = _node_depth(children_l[node], depth + 1)
-            right_depth = _node_depth(self._tree_info.children_right[node], depth + 1)
-            return max(left_depth, right_depth)
-
-        return _node_depth(0, 0)
 
     def __repr__(self) -> str:
         if self._is_fitted:

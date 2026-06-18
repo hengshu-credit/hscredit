@@ -545,15 +545,20 @@ def style_rule_table(
         '样本占比': 2,
         '坏账率': 2,
         'LIFT值': 2,
+        '坏账改善': 2,
+        '风险拒绝比': 2,
     }
     if precision:
         default_precision.update(precision)
+
+    # 以百分数格式显示的列
+    _pct_cols = ('样本占比', '坏账率', '坏账改善', 'LIFT值', '风险拒绝比')
 
     # 格式化为百分比和数字
     format_dict = {}
     for col, prec in default_precision.items():
         if col in df_d.columns:
-            if col in ('样本占比', '坏账率'):
+            if col in _pct_cols:
                 # 百分数格式显示
                 pct_prec = max(prec, 2)
                 format_dict[col] = f'{{:.{pct_prec}%}}'

@@ -11,7 +11,7 @@
 
 示例:
     >>> from hscredit.report.mining import SingleFeatureRuleMiner
-    >>> miner = SingleFeatureRuleMiner(target='ISBAD')
+    >>> miner = SingleFeatureRuleMiner(target='target')
     >>> miner.fit(df)
     >>> rules = miner.get_top_rules(top_n=10)
 
@@ -21,7 +21,7 @@
     >>> rules = extractor.extract_rules()
 
     >>> from hscredit.report.mining import AutoTreeFitter
-    >>> fitter = AutoTreeFitter(target_col='IS_BAD', feature_list=['age', 'income'])
+    >>> fitter = AutoTreeFitter(target='target', feature_list=['age', 'income'])
     >>> fitter.fit(df_train)
     >>> print(fitter.evaluate([('测试', df_test)], metric_type='ks'))
 """

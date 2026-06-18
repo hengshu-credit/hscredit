@@ -17,7 +17,7 @@
 
 **参考样例**
 
->>> from tree_viz import DecisionTreeViz, plot_tree_matplotlib
+>>> from hscredit.core.viz import DecisionTreeViz, plot_tree_matplotlib
 >>> # matplotlib 快速绘图
 >>> plot_tree_matplotlib(ext, save='tree.png')
 
@@ -33,12 +33,9 @@
 """
 
 import html
-import math
 import os
-import sys
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple
 
-import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -62,8 +59,6 @@ __all__ = [
     "plot_tree_pyecharts",
     "plot_tree_graphviz",
     "plot_tree",
-    "_AntVNodeStyle",
-    "_AntVEdgeStyle",
 ]
 
 # ============================================================================
