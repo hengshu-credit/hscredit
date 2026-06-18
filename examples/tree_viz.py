@@ -934,7 +934,7 @@ def plot_tree_matplotlib(
         row_step = (content_top - content_bottom) / CONTENT_LINES
 
         rows = [
-            ("GINI", f"{node['gini']:.4f}"),
+            ("GINI指数", f"{node['gini']:.4f}"),
             ("样本总数", f"{node['n_samples']}"),
             ("样本占比", f"{node['sample_pct']:.2%}"),
             ("坏样本率", f"{node['bad_rate']:.2%}"),
@@ -1431,7 +1431,7 @@ def plot_tree_graphviz(
         # 无表头两列指标表格：第一列（指标名）右对齐，第二列（指标值）左对齐，
         # 内容、顺序与 plot_tree_matplotlib 完全一致
         metric_rows = [
-            ("GINI", f'{node["gini"]:.4f}'),
+            ("GINI指数", f'{node["gini"]:.4f}'),
             ("样本总数", f'{node["n_samples"]:,}'),
             ("样本占比", f'{node["sample_pct"]:.2%}'),
             ("坏样本率", f'{node["bad_rate"]:.2%}'),
