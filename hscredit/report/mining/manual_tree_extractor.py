@@ -30,7 +30,7 @@ import pandas as pd
 from sklearn.tree import DecisionTreeClassifier, export_graphviz
 
 from ...core.rules.rule import Rule
-from ...utils.bin_table_display import style_rule_table
+from ...utils.pandas_extensions import style_rule_table
 
 # ============================================================================
 # 指标计算 — 优先使用 hscredit.core.metrics 中的统一实现

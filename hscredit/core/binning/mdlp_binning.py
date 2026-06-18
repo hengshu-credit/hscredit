@@ -15,6 +15,7 @@ import numpy as np
 import pandas as pd
 from scipy import special
 
+from ...exceptions import NotFittedError
 from .base import BaseBinning
 
 
@@ -603,7 +604,7 @@ class MDLPBinning(BaseBinning):
         >>> X_woe = binner.transform(X_test, metric='woe')
         """
         if not self._is_fitted:
-            raise ValueError("分箱器尚未拟合")
+            raise NotFittedError("分箱器尚未拟合")
 
         if not isinstance(X, pd.DataFrame):
             X = pd.DataFrame(X)

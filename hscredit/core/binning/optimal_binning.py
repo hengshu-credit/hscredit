@@ -16,6 +16,7 @@ import pandas as pd
 import warnings
 from scipy import stats
 
+from ...exceptions import NotFittedError
 from .base import BaseBinning
 from .uniform_binning import UniformBinning
 from .quantile_binning import QuantileBinning
@@ -1458,7 +1459,7 @@ class OptimalBinning(BaseBinning):
         >>> X_woe = binner.transform(X_test, metric='woe')
         """
         if not self._is_fitted:
-            raise ValueError("分箱器尚未拟合，请先调用fit方法")
+            raise NotFittedError("分箱器尚未拟合，请先调用fit方法")
 
         if self._binner is not None:
             result = self._binner.transform(X, metric=metric, **kwargs)
@@ -1542,7 +1543,7 @@ class OptimalBinning(BaseBinning):
         ...     print(f"{feat}: IV={s.get('iv', 'N/A')}")
         """
         if not self._is_fitted:
-            raise ValueError("分箱器尚未拟合，请先调用fit方法")
+            raise NotFittedError("分箱器尚未拟合，请先调用fit方法")
 
         if feature is not None:
             if feature not in self.bin_tables_:

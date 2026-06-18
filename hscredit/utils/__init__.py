@@ -10,12 +10,10 @@ from .datasets import germancredit
 from .misc import round_float
 from .init import init_setting
 from .logger import init_logger, get_logger
-from .bin_table_display import (
-    style_bin_table,
-    BinTableDisplay,
-)
 from .pandas_extensions import (
-    BinTableDisplay as PandasBinTableDisplay,
+    style_bin_table,
+    style_rule_table,
+    BinTableDisplay,
     register_extensions,
 )
 from .input_utils import (
@@ -46,6 +44,7 @@ __all__ = [
     'get_logger',
     # 分箱表展示
     'style_bin_table',
+    'style_rule_table',
     'BinTableDisplay',
     'register_extensions',
     # 输入处理工具

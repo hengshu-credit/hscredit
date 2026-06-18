@@ -229,3 +229,5 @@ AGENTS.md
 .kilo
 catboost_info
 model_report
+examples/tree_viz_output
+

@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 import warnings
 
+from ...exceptions import NotFittedError
 from .base import BaseBinning
 
 
@@ -621,7 +622,7 @@ class TargetBadRateBinning(BaseBinning):
     ) -> Union[pd.DataFrame, np.ndarray]:
         """应用分箱转换."""
         if not self._is_fitted:
-            raise ValueError("分箱器尚未拟合，请先调用fit方法")
+            raise NotFittedError("分箱器尚未拟合，请先调用fit方法")
 
         if not isinstance(X, pd.DataFrame):
             X = pd.DataFrame(X)

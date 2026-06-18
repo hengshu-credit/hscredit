@@ -32,6 +32,7 @@ except ImportError:
         ImportWarning
     )
 
+from ...exceptions import NotFittedError
 from .base import BaseBinning
 from hscredit.core.metrics import composite_binning_quality
 from hscredit.core.metrics._binning import _composite_binning_quality_components
@@ -2342,7 +2343,7 @@ class ORBinning(BaseBinning):
         >>> X_woe = binner.transform(X_test, metric='woe')
         """
         if not self._is_fitted:
-            raise ValueError("分箱器尚未拟合，请先调用fit方法")
+            raise NotFittedError("分箱器尚未拟合，请先调用fit方法")
 
         if not isinstance(X, pd.DataFrame):
             if isinstance(X, np.ndarray):

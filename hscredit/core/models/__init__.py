@@ -77,6 +77,8 @@
 ...     print(f"{name}: AUC={metrics['AUC']:.4f}")
 """
 
+import importlib
+
 # 导入损失函数
 from .losses import (
     # 基类
@@ -120,26 +122,8 @@ except ImportError:
 # 导入模型基类
 from .base import BaseRiskModel
 
-# 导入提升树模型 (boosting/, 可选依赖)
-try:
-    from .boosting import XGBoostRiskModel
-except (ImportError, Exception):
-    XGBoostRiskModel = None
-
-try:
-    from .boosting import LightGBMRiskModel
-except (ImportError, Exception):
-    LightGBMRiskModel = None
-
-try:
-    from .boosting import CatBoostRiskModel
-except (ImportError, Exception):
-    CatBoostRiskModel = None
-
-try:
-    from .boosting import NGBoostRiskModel
-except (ImportError, Exception):
-    NGBoostRiskModel = None
+# 导入提升树模型 (boosting/, 可选重依赖 xgboost/lightgbm/catboost/ngboost，懒加载)
+_LAZY_BOOSTING_MODELS = ("XGBoostRiskModel", "LightGBMRiskModel", "CatBoostRiskModel", "NGBoostRiskModel")
 
 # 导入经典模型 (classical/)
 from .classical import (
@@ -167,15 +151,21 @@ from .rules import (
 # 导入评估报告 (evaluation/)
 from .evaluation import ModelReport
 
-# 导入超参数调优 (tuning/, 可选依赖)
-try:
-    from .tuning import ModelTuner, AutoTuner, TuningObjective
-    TUNING_AVAILABLE = True
-except ImportError:
-    TUNING_AVAILABLE = False
-    ModelTuner = None
-    AutoTuner = None
-    TuningObjective = None
+# 导入超参数调优 (tuning/, 可选重依赖 optuna，懒加载)
+_LAZY_TUNING_MODELS = ("ModelTuner", "AutoTuner", "TuningObjective")
+
+
+def __getattr__(name):
+    """懒加载 boosting/tuning 子包，避免 import hscredit 时即时加载重依赖."""
+    if name in _LAZY_BOOSTING_MODELS:
+        value = getattr(importlib.import_module(".boosting", __name__), name, None)
+    elif name in _LAZY_TUNING_MODELS:
+        value = getattr(importlib.import_module(".tuning", __name__), name, None)
+    else:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    globals()[name] = value
+    return value
+
 
 __all__ = [
     # 损失函数基类
@@ -204,11 +194,8 @@ __all__ = [
     "TabNetLossAdapter",
     # 模型基类
     "BaseRiskModel",
-    # 各模型类
-    "XGBoostRiskModel",
-    "LightGBMRiskModel",
-    "CatBoostRiskModel",
-    "NGBoostRiskModel",
+    # 各模型类（boosting 系列为懒加载，不放入 __all__ 以避免 `import *` 触发重依赖加载，
+    # 可通过 from hscredit.core.models import XGBoostRiskModel 等方式显式访问）
     "RandomForestRiskModel",
     "ExtraTreesRiskModel",
     "GradientBoostingRiskModel",
@@ -226,8 +213,5 @@ __all__ = [
     "combine_rules",
     # 评估报告
     "ModelReport",
+    # 超参数调优为懒加载，不放入 __all__（可通过 from hscredit.core.models import AutoTuner 等方式显式访问）
 ]
-
-# 如果optuna可用，添加调优类
-if TUNING_AVAILABLE:
-    __all__.extend(["ModelTuner", "AutoTuner", "TuningObjective"])

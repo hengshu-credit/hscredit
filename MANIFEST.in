@@ -7,7 +7,7 @@ include pytest.ini
 include Makefile
 include AGENTS.md
 
-recursive-include hscredit *.py *.xlsx *.csv *.ttf
+recursive-include hscredit *.py *.xlsx *.csv *.ttf py.typed
 recursive-include docs *.md
 recursive-include examples *.ipynb *.py
 

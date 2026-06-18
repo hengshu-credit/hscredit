@@ -22,13 +22,6 @@ import warnings
 
 from .base import BaseEncoder
 
-# 从 hscredit.core.models 统一导入模型
-from ..models import (
-    XGBoostRiskModel,
-    LightGBMRiskModel,
-    CatBoostRiskModel,
-)
-
 
 class GBMEncoder(BaseEncoder):
     """梯度提升树编码器.
@@ -360,6 +353,9 @@ class GBMEncoder(BaseEncoder):
         :param y: 目标变量
         :raises ImportError: 当xgboost未安装时抛出
         """
+        # 懒加载，避免 import hscredit 时即时加载 xgboost 重依赖
+        from ..models import XGBoostRiskModel
+
         # 基础参数
         params = {
             'n_estimators': self.n_estimators,
@@ -399,6 +395,9 @@ class GBMEncoder(BaseEncoder):
         :param y: 目标变量
         :raises ImportError: 当lightgbm未安装时抛出
         """
+        # 懒加载，避免 import hscredit 时即时加载 lightgbm 重依赖
+        from ..models import LightGBMRiskModel
+
         # 基础参数
         params = {
             'n_estimators': self.n_estimators,
@@ -437,6 +436,9 @@ class GBMEncoder(BaseEncoder):
         :param y: 目标变量
         :raises ImportError: 当catboost未安装时抛出
         """
+        # 懒加载，避免 import hscredit 时即时加载 catboost 重依赖
+        from ..models import CatBoostRiskModel
+
         # 复制数据，避免修改原始数据
         X_cb = X.copy()
 

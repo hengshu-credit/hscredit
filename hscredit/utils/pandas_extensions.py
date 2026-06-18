@@ -897,6 +897,214 @@ def _find_columns(df: pd.DataFrame, pattern: str) -> List:
         return [col for col in df.columns if pattern in str(col)]
 
 
+def style_bin_table(
+    df: pd.DataFrame,
+    max_rows: Optional[int] = None,
+    highlight_iv: bool = True,
+    highlight_bad_rate: bool = True,
+    highlight_lift: bool = True,
+    highlight_ks: bool = True,
+    compact: bool = False,
+    precision: Optional[Dict[str, int]] = None,
+    index_as_bin: bool = False,
+    percent_format: bool = True,
+    high_tech_style: bool = False,
+) -> Any:
+    """美化分箱表展示.
+
+    使用 pandas Styler 对分箱表进行格式化和高亮，使其在 Jupyter 中更易读。
+
+    :param df: 分箱统计表 DataFrame
+    :param max_rows: 最大显示行数，None 表示显示全部
+    :param highlight_iv: 是否高亮 IV 值
+    :param highlight_bad_rate: 是否高亮坏样本率（进度条）
+    :param highlight_lift: 是否高亮 LIFT 值（进度条）
+    :param highlight_ks: 是否高亮 KS 值（进度条）
+    :param compact: 是否使用紧凑模式（隐藏部分列）
+    :param precision: 自定义小数位数，格式为 {'列名': 位数}
+    :param index_as_bin: 是否将分箱作为索引显示
+    :param percent_format: 是否将百分比相关列显示为百分比格式（默认True）
+    :param high_tech_style: 是否使用高科技/AI风格样式
+    :return: 格式化后的 Styler 对象
+
+    **参考样例**
+
+    >>> table = feature_bin_stats(data, 'score', target='target')
+    >>> style_bin_table(table).show()
+    """
+    return _style_bin_table(
+        df,
+        max_rows=max_rows,
+        highlight_iv=highlight_iv,
+        highlight_bad_rate=highlight_bad_rate,
+        highlight_lift=highlight_lift,
+        highlight_ks=highlight_ks,
+        compact=compact,
+        precision=precision,
+        index_as_bin=index_as_bin,
+        percent_format=percent_format,
+        high_tech_style=high_tech_style,
+    )
+
+
+def style_rule_table(
+    df: pd.DataFrame,
+    overall_badrate: Optional[float] = None,
+    precision: Optional[dict] = None,
+) -> Any:
+    """美化决策树规则表展示。
+
+    使用 pandas Styler 对规则表进行格式化、高亮和颜色标注，
+    使其在 Jupyter 中更易读。
+
+    :param df: 规则表 DataFrame，列包括：
+        节点编号、是否叶子、规则表达式、样本数、样本占比、
+        好样本数、坏样本数、坏账率、LIFT值
+    :param overall_badrate: 全局坏样本率（用于计算颜色梯度），默认从数据推断
+    :param precision: 自定义小数位数，格式为 {'列名': 位数}
+    :return: 格式化后的 Styler 对象
+
+    **参考样例**
+
+    >>> from hscredit.report.mining import ManualTreeExtractor
+    >>> ext = ManualTreeExtractor(target='IS_BAD')
+    >>> ext.fit(df, feature_list=['age', 'income'])
+    >>> styled = style_rule_table(ext.get_rule_table())
+    >>> styled.show()
+    """
+    df_d = df.copy()
+
+    # 推断全局坏样本率
+    if overall_badrate is None:
+        total_samples = df_d['样本数'].sum()
+        total_bad = df_d['坏样本数'].sum()
+        overall_badrate = total_bad / total_samples if total_samples > 0 else 0.0
+
+    # 创建 Styler
+    styler = df_d.style
+
+    # 默认精度
+    default_precision = {
+        '节点编号': 0,
+        '样本数': 0,
+        '好样本数': 0,
+        '坏样本数': 0,
+        '样本占比': 2,
+        '坏账率': 2,
+        'LIFT值': 2,
+        '坏账改善': 2,
+        '风险拒绝比': 2,
+    }
+    if precision:
+        default_precision.update(precision)
+
+    # 以百分数格式显示的列
+    _pct_cols = ('样本占比', '坏账率', '坏账改善', 'LIFT值', '风险拒绝比')
+
+    # 格式化为百分比和数字
+    format_dict = {}
+    for col, prec in default_precision.items():
+        if col in df_d.columns:
+            if col in _pct_cols:
+                # 百分数格式显示
+                pct_prec = max(prec, 2)
+                format_dict[col] = f'{{:.{pct_prec}%}}'
+            elif prec == 0:
+                format_dict[col] = '{:.0f}'
+            else:
+                format_dict[col] = f'{{:.{prec}f}}'
+    if format_dict:
+        styler = styler.format(format_dict, na_rep='-')
+
+    # --- 坏账率颜色梯度：低=绿，高=红 ---
+    if '坏账率' in df_d.columns:
+        bad_vals = df_d['坏账率'].fillna(0)
+        vmin, vmax = 0.0, max(bad_vals.max() * 1.2, max(overall_badrate * 1.5, 0.3), 0.01)
+        styler = styler.background_gradient(
+            subset=['坏账率'],
+            cmap='RdYlGn_r',
+            vmin=vmin,
+            vmax=vmax,
+        )
+
+    # --- LIFT值颜色梯度：高=深色，低=浅色 ---
+    if 'LIFT值' in df_d.columns:
+        lift_vals = df_d['LIFT值'].fillna(1)
+        vmin_l, vmax_l = max(0, lift_vals.min() * 0.8), lift_vals.max() * 1.2
+        styler = styler.background_gradient(
+            subset=['LIFT值'],
+            cmap='RdYlGn',
+            vmin=vmin_l,
+            vmax=vmax_l,
+        )
+
+    # --- 样本占比进度条 ---
+    if '样本占比' in df_d.columns:
+        styler = styler.bar(
+            subset=['样本占比'],
+            color='#5B8FF9',
+            vmin=0,
+            vmax=1,
+            align='left',
+        )
+
+    # --- 是否叶子列高亮 ---
+    if '是否叶子' in df_d.columns:
+        def _leaf_color(val):
+            if val == '是':
+                return 'background-color: #e8f5e9; color: #2e7d32; font-weight: bold'
+            elif val == '否':
+                return 'background-color: #fff8e1; color: #f57f17; font-weight: bold'
+            return ''
+        styler = styler.applymap(_leaf_color, subset=['是否叶子'])
+
+    # --- 基础样式 ---
+    styler = styler.set_properties(**{
+        'white-space': 'nowrap',
+        'text-align': 'center',
+        'font-size': '12px',
+        'font-family': 'Arial, sans-serif',
+    })
+
+    # --- 表头样式 ---
+    styler = styler.set_table_styles([
+        {'selector': 'thead th', 'props': [
+            ('background-color', '#2639E9'),
+            ('color', '#ffffff'),
+            ('font-weight', 'bold'),
+            ('text-align', 'center'),
+            ('font-size', '12px'),
+            ('padding', '8px 10px'),
+            ('border', '1px solid rgba(255,255,255,0.3)'),
+        ]},
+        {'selector': 'tbody td', 'props': [
+            ('padding', '6px 10px'),
+            ('border', '1px solid #e0e0e0'),
+        ]},
+        {'selector': 'tbody tr:nth-child(odd)', 'props': [
+            ('background-color', '#ffffff'),
+        ]},
+        {'selector': 'tbody tr:nth-child(even)', 'props': [
+            ('background-color', '#f8f9ff'),
+        ]},
+        {'selector': 'tbody tr:hover', 'props': [
+            ('background-color', '#e8eaff'),
+        ]},
+        # 规则表达式列左对齐
+        {'selector': 'td:nth-child(3)', 'props': [
+            ('text-align', 'left'),
+            ('font-family', 'monospace'),
+            ('font-size', '11px'),
+        ]},
+        # 进度条样式
+        {'selector': '.pd-bar', 'props': [
+            ('opacity', '0.75'),
+        ]},
+    ])
+
+    return styler
+
+
 def _show_method(self, **kwargs):
     """展示美化的分箱表.
     

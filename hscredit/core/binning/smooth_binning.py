@@ -14,6 +14,7 @@ from typing import Union, List, Dict, Optional, Any, Tuple
 import numpy as np
 import pandas as pd
 from scipy import stats
+from ...exceptions import NotFittedError
 from .base import BaseBinning
 
 
@@ -751,7 +752,7 @@ class SmoothBinning(BaseBinning):
     ) -> Union[pd.DataFrame, np.ndarray]:
         """应用分箱转换."""
         if not self._is_fitted:
-            raise ValueError("分箱器尚未拟合")
+            raise NotFittedError("分箱器尚未拟合")
 
         if not isinstance(X, pd.DataFrame):
             X = pd.DataFrame(X)

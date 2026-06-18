@@ -51,7 +51,7 @@ import seaborn as sns
 from matplotlib.ticker import PercentFormatter
 
 from .optimal_binning import OptimalBinning
-from ...exceptions import HSCreditError
+from ...exceptions import HSCreditError, NotFittedError
 
 
 class OptimalBinning2D:
@@ -353,7 +353,7 @@ class OptimalBinning2D:
         >>> X_woe = binner.transform(X_test, metric='woe')
         """
         if not self._is_fitted:
-            raise HSCreditError("分箱器尚未拟合，请先调用 fit 方法")
+            raise NotFittedError("分箱器尚未拟合，请先调用 fit 方法")
 
         if isinstance(X, np.ndarray):
             X = pd.DataFrame(X, columns=[f'feature_{i}' for i in range(X.shape[1])])
@@ -405,48 +405,48 @@ class OptimalBinning2D:
             - LIFT值: 提升度
         """
         if not self._is_fitted:
-            raise HSCreditError("分箱器尚未拟合，请先调用 fit 方法")
+            raise NotFittedError("分箱器尚未拟合，请先调用 fit 方法")
         return self.cross_table_.copy()
 
     def get_bad_rate_matrix(self) -> pd.DataFrame:
         """获取坏样本率矩阵（用于热力图）."""
         if not self._is_fitted:
-            raise HSCreditError("分箱器尚未拟合，请先调用 fit 方法")
+            raise NotFittedError("分箱器尚未拟合，请先调用 fit 方法")
         return self.cross_table_.pivot_table(
             index='分箱1标签', columns='分箱2标签', values='坏样本率', aggfunc='first')
 
     def get_count_matrix(self) -> pd.DataFrame:
         """获取样本数矩阵（用于热力图标注）."""
         if not self._is_fitted:
-            raise HSCreditError("分箱器尚未拟合，请先调用 fit 方法")
+            raise NotFittedError("分箱器尚未拟合，请先调用 fit 方法")
         return self.cross_table_.pivot_table(
             index='分箱1标签', columns='分箱2标签', values='样本总数', aggfunc='sum')
 
     def get_woe_matrix(self) -> pd.DataFrame:
         """获取 WOE 值矩阵."""
         if not self._is_fitted:
-            raise HSCreditError("分箱器尚未拟合，请先调用 fit 方法")
+            raise NotFittedError("分箱器尚未拟合，请先调用 fit 方法")
         return self.cross_table_.pivot_table(
             index='分箱1标签', columns='分箱2标签', values='分档WOE值', aggfunc='first')
 
     def get_iv_matrix(self) -> pd.DataFrame:
         """获取 IV 值矩阵."""
         if not self._is_fitted:
-            raise HSCreditError("分箱器尚未拟合，请先调用 fit 方法")
+            raise NotFittedError("分箱器尚未拟合，请先调用 fit 方法")
         return self.cross_table_.pivot_table(
             index='分箱1标签', columns='分箱2标签', values='分档IV值', aggfunc='sum')
 
     def get_lift_matrix(self) -> pd.DataFrame:
         """获取 LIFT 值矩阵."""
         if not self._is_fitted:
-            raise HSCreditError("分箱器尚未拟合，请先调用 fit 方法")
+            raise NotFittedError("分箱器尚未拟合，请先调用 fit 方法")
         return self.cross_table_.pivot_table(
             index='分箱1标签', columns='分箱2标签', values='LIFT值', aggfunc='first')
 
     def get_marginal_stats(self) -> Dict[str, pd.DataFrame]:
         """获取边缘分箱统计（各特征独立分箱的统计）."""
         if not self._is_fitted:
-            raise HSCreditError("分箱器尚未拟合，请先调用 fit 方法")
+            raise NotFittedError("分箱器尚未拟合，请先调用 fit 方法")
         return {
             self.feature_x_: self.binner_x_.get_bin_table(self.feature_x_),
             self.feature_y_: self.binner_y_.get_bin_table(self.feature_y_)
@@ -474,7 +474,7 @@ class OptimalBinning2D:
         >>> table_x = binner.get_bin_table(binner.feature_x_)
         """
         if not self._is_fitted:
-            raise HSCreditError("分箱器尚未拟合，请先调用 fit 方法")
+            raise NotFittedError("分箱器尚未拟合，请先调用 fit 方法")
 
         if feature is None:
             return self.cross_table_.copy()
@@ -512,7 +512,7 @@ class OptimalBinning2D:
         >>> s = binner.get_stats(binner.feature_x_)
         """
         if not self._is_fitted:
-            raise HSCreditError("分箱器尚未拟合，请先调用 fit 方法")
+            raise NotFittedError("分箱器尚未拟合，请先调用 fit 方法")
 
         def _stats_for(binner_inst: OptimalBinning, feat: str) -> Dict[str, Any]:
             stats = binner_inst.get_stats(feat)
@@ -558,7 +558,7 @@ class OptimalBinning2D:
         >>> splits_x = binner.get_splits(binner.feature_x_)
         """
         if not self._is_fitted:
-            raise HSCreditError("分箱器尚未拟合，请先调用 fit 方法")
+            raise NotFittedError("分箱器尚未拟合，请先调用 fit 方法")
 
         if feature is not None:
             if feature not in (self.feature_x_, self.feature_y_):
@@ -586,7 +586,7 @@ class OptimalBinning2D:
         >>> print(rules['income'])   # [5000, 10000, 20000, np.nan]
         """
         if not self._is_fitted:
-            raise HSCreditError("分箱器尚未拟合，请先调用 fit 方法")
+            raise NotFittedError("分箱器尚未拟合，请先调用 fit 方法")
 
         def _export_one(splits: np.ndarray) -> List:
             arr = splits.tolist() if isinstance(splits, np.ndarray) else list(splits)
@@ -615,7 +615,7 @@ class OptimalBinning2D:
         >>> binner.import_rules(rules)
         """
         if not self._is_fitted:
-            raise HSCreditError("分箱器尚未拟合，请先调用 fit 方法")
+            raise NotFittedError("分箱器尚未拟合，请先调用 fit 方法")
 
         if self.feature_x_ in rules:
             vals = rules[self.feature_x_]
@@ -655,7 +655,7 @@ class OptimalBinning2D:
         :return: matplotlib Figure 或 Axes
         """
         if not self._is_fitted:
-            raise HSCreditError("分箱器尚未拟合，请先调用 fit 方法")
+            raise NotFittedError("分箱器尚未拟合，请先调用 fit 方法")
 
         if metric == 'bad_rate':
             matrix = self.get_bad_rate_matrix()
@@ -735,7 +735,7 @@ class OptimalBinning2D:
     ) -> Any:
         """绘制三维表面图展示交互效应."""
         if not self._is_fitted:
-            raise HSCreditError("分箱器尚未拟合，请先调用 fit 方法")
+            raise NotFittedError("分箱器尚未拟合，请先调用 fit 方法")
 
         if metric == 'bad_rate':
             matrix = self.get_bad_rate_matrix()

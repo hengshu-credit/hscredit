@@ -15,6 +15,7 @@ import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, ClassifierMixin
 
+from ....exceptions import NotFittedError
 from ...rules.rule import Rule
 
 
@@ -517,8 +518,9 @@ class RulesClassifier(BaseEstimator, ClassifierMixin):
             - 'weighted': 考虑规则权重的加权频率
         :return: 特征重要性Series
         """
-        check_is_fitted(self)
-        
+        if not hasattr(self, '_is_fitted') or not self._is_fitted:
+            raise NotFittedError("规则分类器尚未拟合，请先调用fit方法")
+
         if not hasattr(self, 'feature_names_in_') or self.feature_names_in_ is None:
             raise ValueError("未获取特征名称")
         

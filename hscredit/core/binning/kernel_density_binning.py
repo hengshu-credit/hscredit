@@ -15,6 +15,7 @@ import pandas as pd
 from scipy import stats
 from scipy.signal import find_peaks, argrelextrema
 from scipy.ndimage import gaussian_filter1d, median_filter
+from ...exceptions import NotFittedError
 from .base import BaseBinning
 
 
@@ -793,7 +794,7 @@ class KernelDensityBinning(BaseBinning):
     ) -> Union[pd.DataFrame, np.ndarray]:
         """应用分箱转换."""
         if not self._is_fitted:
-            raise ValueError("分箱器尚未拟合")
+            raise NotFittedError("分箱器尚未拟合")
 
         if not isinstance(X, pd.DataFrame):
             X = pd.DataFrame(X)

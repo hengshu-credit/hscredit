@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概述
 
-HSCredit（衡枢真信）是一个面向金融信贷场景的 Python 3.8+ 信用风险建模工具包，提供**评分卡建模全流程**覆盖：分箱、编码、特征筛选、建模、评估、可视化、规则挖掘与报告生成。所有输出（列名、报告、错误信息）均为**中文**。
+HSCredit（衡枢真信）是一个面向金融信贷场景的 Python 3.9+ 信用风险建模工具包，提供**评分卡建模全流程**覆盖：分箱、编码、特征筛选、建模、评估、可视化、规则挖掘与报告生成。所有输出（列名、报告、错误信息）均为**中文**。
 
 ## 验证数据集约定
 
@@ -216,5 +216,5 @@ pip install hscredit[all]          # 所有可选依赖
 ## 代码风格
 
 - 代码格式化：Black（行长度 120，无限制）
-- Python 版本：目标 Python 3.8+ 兼容
+- Python 版本：目标 Python 3.9+ 兼容
 - 所有用户-facing 输出使用**中文**

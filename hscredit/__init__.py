@@ -55,7 +55,6 @@ from .core.selectors import *
 from .core.models import *
 from .core.metrics import *
 from .core.viz import *
-# EDA 放在 metrics 之后导入，顶层 feature_summary 默认指向更常用的 EDA API。
 from .core.eda import *
 from .core.rules import *
 from .core.financial import *
@@ -76,6 +75,29 @@ def _collect_public_exports(*modules):
             exports.append(name)
             seen.add(name)
     return exports
+
+
+# boosting/tuning 模型为懒加载（core.models 不将其放入 __all__，避免本文件顶部的
+# `from .core.models import *` 在 import hscredit 时即时触发 xgboost/lightgbm/
+# catboost/ngboost/optuna 的加载）。这里通过 __getattr__ 保留 hscredit.XGBoostRiskModel
+# 等顶层直接访问方式，首次访问时才委托给 core.models 完成真正的导入。
+_LAZY_MODEL_NAMES = (
+    "XGBoostRiskModel",
+    "LightGBMRiskModel",
+    "CatBoostRiskModel",
+    "NGBoostRiskModel",
+    "ModelTuner",
+    "AutoTuner",
+    "TuningObjective",
+)
+
+
+def __getattr__(name):
+    if name in _LAZY_MODEL_NAMES:
+        value = getattr(_models, name)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def get_version():

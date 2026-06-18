@@ -5,30 +5,32 @@
 - LightGBMRiskModel
 - CatBoostRiskModel
 - NGBoostRiskModel
+
+各模型均为懒加载：仅在首次访问对应类名时才真正导入
+xgboost/lightgbm/catboost/ngboost，避免 `import hscredit` 时
+背负全部重依赖的加载耗时。
 """
 
-__all__ = []
+import importlib
 
-try:
-    from .xgboost_model import XGBoostRiskModel
-    __all__.append("XGBoostRiskModel")
-except Exception:
-    pass
+__all__ = ["XGBoostRiskModel", "LightGBMRiskModel", "CatBoostRiskModel", "NGBoostRiskModel"]
 
-try:
-    from .lightgbm_model import LightGBMRiskModel
-    __all__.append("LightGBMRiskModel")
-except Exception:
-    pass
+_LAZY_SUBMODULES = {
+    "XGBoostRiskModel": ".xgboost_model",
+    "LightGBMRiskModel": ".lightgbm_model",
+    "CatBoostRiskModel": ".catboost_model",
+    "NGBoostRiskModel": ".ngboost_model",
+}
 
-try:
-    from .catboost_model import CatBoostRiskModel
-    __all__.append("CatBoostRiskModel")
-except Exception:
-    pass
 
-try:
-    from .ngboost_model import NGBoostRiskModel
-    __all__.append("NGBoostRiskModel")
-except Exception:
-    pass
+def __getattr__(name):
+    module_name = _LAZY_SUBMODULES.get(name)
+    if module_name is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    try:
+        module = importlib.import_module(module_name, __name__)
+        value = getattr(module, name)
+    except Exception:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}") from None
+    globals()[name] = value
+    return value

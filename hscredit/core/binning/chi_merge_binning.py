@@ -8,6 +8,7 @@ from typing import Union, List, Dict, Optional, Any, Tuple
 import numpy as np
 import pandas as pd
 from scipy.stats import chi2
+from ...exceptions import NotFittedError
 from .base import BaseBinning
 
 
@@ -680,7 +681,7 @@ class ChiMergeBinning(BaseBinning):
         >>> X_woe = binner.transform(X_test, metric='woe')
         """
         if not self._is_fitted:
-            raise ValueError("分箱器尚未拟合，请先调用fit方法")
+            raise NotFittedError("分箱器尚未拟合，请先调用fit方法")
 
         if not isinstance(X, pd.DataFrame):
             if isinstance(X, np.ndarray):

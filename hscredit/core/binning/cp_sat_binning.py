@@ -33,6 +33,7 @@ except ImportError:
         ImportWarning
     )
 
+from ...exceptions import NotFittedError
 from .base import BaseBinning
 
 
@@ -785,7 +786,7 @@ class CPSATBinning(BaseBinning):
     ) -> Union[pd.DataFrame, np.ndarray]:
         """应用分箱转换."""
         if not self._is_fitted:
-            raise ValueError("分箱器尚未拟合，请先调用fit方法")
+            raise NotFittedError("分箱器尚未拟合，请先调用fit方法")
 
         if not isinstance(X, pd.DataFrame):
             if isinstance(X, np.ndarray):

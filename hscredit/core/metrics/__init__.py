@@ -40,7 +40,6 @@ from .feature import (
     iv, iv_table,
     chi2_test, cramers_v,
     feature_importance,
-    feature_summary,
 )
 
 # 稳定性
@@ -77,8 +76,7 @@ __all__ = [
     'iv', 'iv_table',
     'chi2_test', 'cramers_v',
     'feature_importance',
-    'feature_summary',
-    
+
     # 稳定性
     'psi', 'psi_table', 'psi_rating',
     'csi', 'csi_table',
