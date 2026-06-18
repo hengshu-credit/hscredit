@@ -474,6 +474,33 @@ def _compute_fill_color(bad_rate, stops):
     return f"#{stops[-1][1][0]:02X}{stops[-1][1][1]:02X}{stops[-1][1][2]:02X}"
 
 
+def _compute_manual_branch_flags(
+    nodes: List[Dict[str, Any]], edges: List[Dict[str, Any]]
+) -> Dict[int, bool]:
+    """计算每个节点是否位于人工修改节点（is_manual）及其后续子树范围内。
+
+    用于决定连接线/边框颜色：从某个人工修改节点开始，其自身及所有后续
+    子节点都应使用副主题色，其余节点使用主题色。
+
+    :param nodes: 节点数据列表
+    :param edges: 边数据列表
+    :return: 节点ID到「是否位于人工修改子树内」的映射
+    """
+    node_by_id = {n["node_id"]: n for n in nodes}
+    parent_of = {e["target"]: e["source"] for e in edges}
+
+    def _is_in_manual_branch(nid: int) -> bool:
+        cur = nid
+        while True:
+            if node_by_id.get(cur, {}).get("is_manual"):
+                return True
+            if cur not in parent_of:
+                return False
+            cur = parent_of[cur]
+
+    return {n["node_id"]: _is_in_manual_branch(n["node_id"]) for n in nodes}
+
+
 # ============================================================================
 # AntV 节点样式定义
 # ============================================================================
@@ -732,19 +759,9 @@ def plot_tree_matplotlib(
     # 额外标题行高度 = (n_lines - 1) * TITLE_H
     CONTENT_START_Y_OFFSET = TITLE_H + 0.08  # 标题行底部 + padding
 
-    # 节点ID到节点数据、子节点到父节点的映射，用于判断某节点是否位于
-    # 人工修改节点（is_manual）及其后续子树范围内
-    node_by_id: Dict[int, Dict[str, Any]] = {n["node_id"]: n for n in nodes}
-    parent_of: Dict[int, int] = {e["target"]: e["source"] for e in edges}
-
-    def _is_in_manual_branch(nid: int) -> bool:
-        cur = nid
-        while True:
-            if node_by_id.get(cur, {}).get("is_manual"):
-                return True
-            if cur not in parent_of:
-                return False
-            cur = parent_of[cur]
+    # 每个节点是否位于人工修改节点（is_manual）及其后续子树范围内，
+    # 用于决定连接线颜色
+    manual_branch = _compute_manual_branch_flags(nodes, edges)
 
     # ============================================================
     # 绘制边（直线连接 + 主题色，人工修改节点及其后续子树统一换为副主题色）
@@ -772,7 +789,7 @@ def plot_tree_matplotlib(
         label_text = edge["label"]
         # 连接线颜色统一为主题色；若该边位于人工修改节点（is_manual）及其
         # 后续子树范围内，则从该节点开始的所有连接线统一换为副主题色
-        edge_color = _COLOR_SECONDARY if _is_in_manual_branch(src_id) else _COLOR_PRIMARY
+        edge_color = _COLOR_SECONDARY if manual_branch.get(src_id) else _COLOR_PRIMARY
 
         # 直线连接：从父节点底边中点 → 子节点顶边中点
         ax.plot(
@@ -786,7 +803,7 @@ def plot_tree_matplotlib(
         # 边标签：放在线段中点，非根节点边字号更小
         mid_x = (x1 + x2) / 2
         mid_y = (y1 + y2) / 2
-        label_bg = "#FFF1F0" if _is_in_manual_branch(src_id) else "#E8F0FF"
+        label_bg = "#FFF1F0" if manual_branch.get(src_id) else "#E8F0FF"
         is_root_edge = src_id == ROOT_ID
         label_fontsize = 9 if is_root_edge else 8
         label_pad = 0.2 if is_root_edge else 0.12
@@ -911,23 +928,34 @@ def plot_tree_matplotlib(
                     zorder=5,
                 )
 
-        # ========== 内容行（居中对齐） ==========
+        # ========== 内容行（无表头两列表格：第一列右对齐，第二列左对齐） ==========
         content_top = title_bar_y_bottom
         content_bottom = y - total_node_h / 2 + 0.08
         row_step = (content_top - content_bottom) / CONTENT_LINES
 
         rows = [
-            (x, content_top - row_step * 0.5, f"GINI: {node['gini']:.4f}"),
-            (x, content_top - row_step * 1.5, f"样本总数: {node['n_samples']}"),
-            (x, content_top - row_step * 2.5, f"样本占比: {node['sample_pct']:.2%}"),
-            (x, content_top - row_step * 3.5, f"坏样本率: {node['bad_rate']:.2%}"),
-            (x, content_top - row_step * 4.5, f"LIFT指标: {node['lift']:.2f}"),
+            ("GINI", f"{node['gini']:.4f}"),
+            ("样本总数", f"{node['n_samples']}"),
+            ("样本占比", f"{node['sample_pct']:.2%}"),
+            ("坏样本率", f"{node['bad_rate']:.2%}"),
+            ("LIFT指标", f"{node['lift']:.2f}"),
         ]
 
-        for rx, ry, text in rows:
+        COL_GAP = 0.08  # 两列之间的间距（inch）
+        label_col_x = x - COL_GAP / 2  # 第一列（指标名）右边界
+        value_col_x = x + COL_GAP / 2  # 第二列（指标值）左边界
+
+        for i, (label, value) in enumerate(rows):
+            ry = content_top - row_step * (i + 0.5)
             ax.text(
-                rx, ry, text,
-                ha="center", va="center",
+                label_col_x, ry, label,
+                ha="right", va="center",
+                fontsize=FONT_BODY, color="#1D2129",
+                zorder=4,
+            )
+            ax.text(
+                value_col_x, ry, value,
+                ha="left", va="center",
                 fontsize=FONT_BODY, color="#1D2129",
                 zorder=4,
             )
@@ -1279,6 +1307,11 @@ def plot_tree_graphviz(
 ) -> Any:
     """使用 graphviz 绘制 AntV G6 风格的高质量决策树。
 
+    样式与实现参考 :func:`plot_tree_matplotlib`：节点徽章 + 主题色标题栏 +
+    无表头两列指标表格，全树统一节点宽度（含上限，超长切分条件自动换行），
+    人工修改节点（is_manual）使用副主题色边框/标题/徽章，自其向下的连接线
+    也统一换为副主题色。
+
     **特点**：
     - 高质量矢量图（SVG/PDF/PNG）
     - 支持中文
@@ -1321,85 +1354,141 @@ def plot_tree_graphviz(
     node_fill_colors: Dict[int, str] = {
         n["node_id"]: _compute_fill_color(n["bad_rate"], gradient_stops) for n in nodes
     }
+    # 每个节点是否位于人工修改节点（is_manual）及其后续子树范围内，用于连接线配色
+    manual_branch = _compute_manual_branch_flags(nodes, edges)
 
-    # graphviz 使用自动树布局
-    _reingold_tilford_layout(nodes, edges)
+    # ============================================================
+    # 全树统一节点宽度（含上限）+ 标题文本换行：与 plot_tree_matplotlib 一致，
+    # 复用同一套文本测量/换行逻辑，保证两种渲染后端的排版规则一致
+    # ============================================================
+    TITLE_FONT_PT = 10
+    BODY_FONT_PT = 9
+    BADGE_DIAM_IN = 0.32  # 徽章直径（inch），与 plot_tree_matplotlib 的 BADGE_DIAM 一致
+    BADGE_MARGIN_IN = 0.05
+    TITLE_PAD_IN = BADGE_MARGIN_IN + BADGE_DIAM_IN + BADGE_MARGIN_IN  # 标题左右 padding
+    NODE_W_MIN_IN = 2.0
+    NODE_W_MAX_IN = 5.0
+    PT_PER_INCH = 72
+
+    # 与 _wrap_condition_text 内部测量方式保持一致（均按 use_tex=True 测量），
+    # 否则两处测量口径不一致会导致即使是"全树最长"的那个条件，也会被
+    # _wrap_condition_text 判定为超宽而换行
+    max_content_w_in = 0.0
+    for node in nodes:
+        text = "叶子节点" if node["is_leaf"] else node["condition"]
+        max_content_w_in = max(max_content_w_in, _measure_text_width(text, TITLE_FONT_PT, "bold", use_tex=True))
+
+    uniform_w_in = min(max(max_content_w_in + 2 * TITLE_PAD_IN, NODE_W_MIN_IN), NODE_W_MAX_IN)
+    uniform_w_pt = round(uniform_w_in * PT_PER_INCH)
+    available_w_in = uniform_w_in - 2 * TITLE_PAD_IN
+    badge_w_pt = round(BADGE_DIAM_IN * PT_PER_INCH)
+
+    # 切分条件按统一宽度换行（超出上限对应可用宽度的条件会换为多行），
+    # 叶子节点固定显示"叶子节点"
+    title_html_by_id: Dict[int, str] = {}
+    for node in nodes:
+        if node["is_leaf"]:
+            title_html_by_id[node["node_id"]] = "叶子节点"
+        else:
+            wrapped = _wrap_condition_text(node["condition"], available_w_in, TITLE_FONT_PT)
+            title_html_by_id[node["node_id"]] = "<BR/>".join(html.escape(line) for line in wrapped)
 
     # 构建 DOT 图
     dot_lines: List[str] = []
     dot_lines.append('digraph Tree {')
     dot_lines.append(f'    // {title}')
     dot_lines.append('    graph [ranksep=0.6, nodesep=0.35, splines=line, bgcolor="#FAFBFF", pad=0.5, dpi=150, concentrate=false];')
-    dot_lines.append('    node [shape=box, fontname=helvetica, margin="0.15,0.1", style="filled,rounded", width=0, height=0];')
+    # shape=plaintext：完全由 HTML-like label 自行定义节点外观，避免节点自身的
+    # 形状尺寸算法与 label 内嵌套表格的尺寸算法相互干扰（二者叠加会把徽章单元格
+    # 异常拉宽），卡片边框改为在 label 的最外层 <TABLE> 上通过 BORDER/COLOR 绘制
+    dot_lines.append('    node [shape=plaintext, fontname=helvetica, margin=0];')
     dot_lines.append('    edge [fontname=helvetica, arrowsize=0, penwidth=1.5, arrowhead=none];')
 
     for node in nodes:
         nid = node["node_id"]
+        is_leaf = node["is_leaf"]
+        is_manual = node["is_manual"]
         fill_color = node_fill_colors[nid]
-        border_color = "#165DFF" if not node["is_leaf"] else _get_border_for_leaf(node["bad_rate"])
 
-        # AntV 卡片风格节点内容：统一字体大小，全部居中
-        # 行1: node #0
-        # 行2: 切分条件
-        # 行3~7: 指标（Gini / 样本 / 占比 / 坏账率 / LIFT）
-        # 切分条件含 "<=" 等比较符号，label=<...> 是 graphviz 的 HTML-like 标签语法，
-        # "<" 会被当成标签起始符解析，必须转义动态内容，否则会产生 DOT 语法错误
-        condition_html = html.escape(node["condition"])
+        # 标题栏/徽章/边框配色：与 plot_tree_matplotlib 的 title_bg_color、
+        # badge_bg、edge_color 逻辑保持一致
+        if is_manual:
+            theme_color = _COLOR_SECONDARY
+            badge_bg = "#FFD700"
+            border_color = _COLOR_SECONDARY
+            border_w = 2
+        elif is_leaf:
+            theme_color = "#4B5563"
+            badge_bg = "#FFFFFF"
+            border_color = _COLOR_BORDER
+            border_w = 1
+        else:
+            theme_color = _COLOR_PRIMARY
+            badge_bg = "#FFFFFF"
+            border_color = _COLOR_PRIMARY
+            border_w = 1
+
+        # 无表头两列指标表格：第一列（指标名）右对齐，第二列（指标值）左对齐，
+        # 内容、顺序与 plot_tree_matplotlib 完全一致
+        metric_rows = [
+            ("GINI", f'{node["gini"]:.4f}'),
+            ("样本总数", f'{node["n_samples"]:,}'),
+            ("样本占比", f'{node["sample_pct"]:.2%}'),
+            ("坏样本率", f'{node["bad_rate"]:.2%}'),
+            ("LIFT指标", f'{node["lift"]:.2f}'),
+        ]
+        rows_html = "".join(
+            f'<TR>'
+            f'<TD ALIGN="RIGHT"><FONT POINT-SIZE="{BODY_FONT_PT}" FACE="SimHei,Microsoft YaHei,Arial" COLOR="#1D2129">{label}</FONT></TD>'
+            f'<TD ALIGN="LEFT"><FONT POINT-SIZE="{BODY_FONT_PT}" FACE="Arial" COLOR="#1D2129">{value}</FONT></TD>'
+            f'</TR>'
+            for label, value in metric_rows
+        )
+
         label_html = (
-            f'<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" CELLPADDING="2" WIDTH="140" HEIGHT="120">'
-            # 行1: 节点编号
-            f'<TR><TD ALIGN="CENTER" VALIGN="MIDDLE" HEIGHT="18">'
-            f'<FONT POINT-SIZE="9" FACE="SimHei,Microsoft YaHei,Arial" COLOR="#165DFF"><B>NODE #{nid}</B></FONT>'
+            f'<TABLE BORDER="{border_w}" CELLBORDER="0" CELLSPACING="0" CELLPADDING="0" '
+            f'WIDTH="{uniform_w_pt}" STYLE="ROUNDED" COLOR="{border_color}">'
+            # 标题栏：徽章（节点编号）+ 切分条件，同一行，主题色背景
+            f'<TR><TD BGCOLOR="{theme_color}" CELLPADDING="6">'
+            f'<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" CELLPADDING="0">'
+            f'<TR>'
+            f'<TD WIDTH="{badge_w_pt}" ALIGN="CENTER" VALIGN="MIDDLE" BGCOLOR="{badge_bg}" STYLE="ROUNDED">'
+            f'<FONT POINT-SIZE="{TITLE_FONT_PT - 1}" FACE="Arial" COLOR="{theme_color}"><B>{nid}</B></FONT>'
+            f'</TD>'
+            f'<TD WIDTH="6" BGCOLOR="{theme_color}"><FONT POINT-SIZE="1"> </FONT></TD>'
+            f'<TD ALIGN="LEFT" VALIGN="MIDDLE" BGCOLOR="{theme_color}">'
+            f'<FONT POINT-SIZE="{TITLE_FONT_PT}" FACE="SimHei,Microsoft YaHei,Arial" COLOR="#FFFFFF"><B>{title_html_by_id[nid]}</B></FONT>'
+            f'</TD>'
+            f'</TR>'
+            f'</TABLE>'
             f'</TD></TR>'
-            # 行2: 切分条件
-            f'<TR><TD ALIGN="CENTER" VALIGN="MIDDLE" HEIGHT="18">'
-            f'<FONT POINT-SIZE="8" FACE="SimHei,Microsoft YaHei,Arial" COLOR="#1D2129">{condition_html}</FONT>'
-            f'</TD></TR>'
-            # 分隔线
-            f'<TR><TD ALIGN="CENTER" VALIGN="MIDDLE" HEIGHT="4">'
-            f'<FONT POINT-SIZE="4"><BR/></FONT>'
-            f'</TD></TR>'
-            # 行3: Gini
-            f'<TR><TD ALIGN="CENTER" VALIGN="MIDDLE" HEIGHT="14">'
-            f'<FONT POINT-SIZE="8" FACE="Arial" COLOR="#4B5563">GINI: {node["gini"]:.4f}</FONT>'
-            f'</TD></TR>'
-            # 行4: 样本数
-            f'<TR><TD ALIGN="CENTER" VALIGN="MIDDLE" HEIGHT="14">'
-            f'<FONT POINT-SIZE="8" FACE="Arial" COLOR="#4B5563">样本总数: {node["n_samples"]:,}</FONT>'
-            f'</TD></TR>'
-            # 行5: 占比
-            f'<TR><TD ALIGN="CENTER" VALIGN="MIDDLE" HEIGHT="14">'
-            f'<FONT POINT-SIZE="8" FACE="Arial" COLOR="#4B5563">样本占比: {node["sample_pct"]:.2%}</FONT>'
-            f'</TD></TR>'
-            # 行6: 坏账率
-            f'<TR><TD ALIGN="CENTER" VALIGN="MIDDLE" HEIGHT="14">'
-            f'<FONT POINT-SIZE="8" FACE="Arial" COLOR="#4B5563">坏样本率: {node["bad_rate"]:.2%}</FONT>'
-            f'</TD></TR>'
-            # 行7: LIFT
-            f'<TR><TD ALIGN="CENTER" VALIGN="MIDDLE" HEIGHT="14">'
-            f'<FONT POINT-SIZE="8" FACE="Arial" COLOR="#4B5563">LIFT指标: {node["lift"]:.2f}</FONT>'
+            # 内容区：渐变色背景 + 无表头两列指标表格
+            f'<TR><TD BGCOLOR="{fill_color}">'
+            f'<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" CELLPADDING="4">'
+            f'{rows_html}'
+            f'</TABLE>'
             f'</TD></TR>'
             f'</TABLE>'
         )
 
         dot_lines.append(
             f'    {nid} [label=<{label_html}>, '
-            f'fillcolor="{fill_color}", color="{border_color}", '
-            f'penwidth=1.5, tooltip="{node["title"]} | {node["condition"]}"] ;'
+            f'tooltip="{node["title"]} | {node["condition"]}"] ;'
         )
 
-    # 添加边（直线 + 无箭头 + 所有边显示分支标签）
+    # 添加边（直线 + 无箭头 + 所有边显示分支标签；连接线统一为主题色，
+    # 人工修改节点及其后续子树范围内的连接线统一换为副主题色）
     ROOT_ID = 0
     for edge in edges:
         label_text = edge["label"]
         is_root_edge = edge["source"] == ROOT_ID
-        edge_color = "#165DFF" if label_text == "<=" else "#F53F3B"
+        edge_color = _COLOR_SECONDARY if manual_branch.get(edge["source"]) else _COLOR_PRIMARY
         font_size = "10" if is_root_edge else "8"
 
         dot_lines.append(
             f'    {edge["source"]} -> {edge["target"]} '
             f'[label="  {label_text}  ", fontcolor="{edge_color}", '
-            f'color="{edge_color}", penwidth=1.5, style=solid, fontsize={font_size}] ;'
+            f'color="{edge_color}", style=solid, fontsize={font_size}] ;'
         )
 
     dot_lines.append("}")
@@ -1421,16 +1510,6 @@ def plot_tree_graphviz(
         src.render(save_base, format=format, cleanup=True)
 
     return src
-
-
-def _get_border_for_leaf(bad_rate: float) -> str:
-    """根据叶子节点坏账率返回边框颜色。"""
-    if bad_rate < 0.1:
-        return "#52C41A"
-    elif bad_rate < 0.3:
-        return "#FE7715"
-    else:
-        return "#FF4D4F"
 
 
 # ============================================================================
