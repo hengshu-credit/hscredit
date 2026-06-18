@@ -31,8 +31,6 @@ from .mining import (
     TreeRuleExtractor,
     RuleMetrics,
     calculate_rule_metrics,
-    TreeVisualizer,
-    plot_decision_tree,
 )
 
 try:
@@ -68,8 +66,6 @@ __all__ = [
     "TreeRuleExtractor",
     "RuleMetrics",
     "calculate_rule_metrics",
-    "TreeVisualizer",
-    "plot_decision_tree",
     # 模型报告
     "QuickModelReport",
     "auto_model_report",

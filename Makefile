@@ -1,7 +1,7 @@
 # hscredit Makefile
 # 简化常用操作
 
-.PHONY: help install dev test validate clean jupyter
+.PHONY: help install dev test validate clean jupyter build build-check check-manifest publish-test publish
 
 # 默认目标
 .DEFAULT_GOAL := help
@@ -82,8 +82,19 @@ docs: ## 构建文档
 
 # 构建发布包
 build: ## 构建发布包
+	python -m pip install --upgrade build twine
+	rm -rf dist/ build/
 	python -m build
 	@echo "✅ 发布包已生成: dist/"
+
+build-check: build ## 构建并校验发布包元数据
+	python -m twine check dist/*
+	@echo "✅ 发布包元数据校验通过"
+
+check-manifest: ## 校验源码包文件清单
+	python -m pip install --upgrade check-manifest
+	check-manifest
+	@echo "✅ MANIFEST 校验通过"
 
 # 发布到PyPI（测试）
 publish-test: ## 发布到TestPyPI

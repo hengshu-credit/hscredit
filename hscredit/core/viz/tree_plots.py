@@ -1695,12 +1695,12 @@ class DecisionTreeViz:
 
 
 def _extract_tree_data(tree_obj: Any, feature_names: Optional[List[str]] = None) -> Dict[str, Any]:
-    """统一提取接口：支持 ManualTreeExtractor / sklearn clf / AutoTreeFitter。
+    """统一提取接口：支持 ManualTreeExtractor / sklearn clf / DecisionTreeAnalyzer。
 
     :param tree_obj: 树对象
     :param feature_names: 特征名列表（sklearn clf 推荐传入，避免 x[0] 占位符）
     """
-    # ManualTreeExtractor 或 AutoTreeFitter（两者都有 _tree_info）
+    # ManualTreeExtractor 或 DecisionTreeAnalyzer（两者都有 _tree_info）
     if hasattr(tree_obj, "_tree_info"):
         return _extract_tree_from_mte(tree_obj)
     # sklearn DecisionTreeClassifier
@@ -1711,7 +1711,7 @@ def _extract_tree_data(tree_obj: Any, feature_names: Optional[List[str]] = None)
     else:
         raise TypeError(
             f"不支持的树对象类型: {type(tree_obj).__name__}\n"
-            "请传入 ManualTreeExtractor / sklearn DecisionTreeClassifier / AutoTreeFitter"
+            "请传入 ManualTreeExtractor / sklearn DecisionTreeClassifier / DecisionTreeAnalyzer"
         )
 
 

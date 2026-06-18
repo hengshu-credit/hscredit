@@ -1,51 +1,56 @@
-# hscredit - 金融风控建模工具包
-# Python 3.8+ 兼容
+# hscredit 本地开发全量环境
+#
+# 打包元数据和最小运行依赖以 pyproject.toml 为准。
+# 推荐安装方式：
+#   pip install -e ".[dev]"
+#   pip install -e ".[all]"    # 全功能开发环境
 
-# ========== 核心依赖（必需） ==========
+# 核心运行依赖
 numpy>=1.19.0
 pandas>=1.2.0
 scipy>=1.5.0
 scikit-learn>=0.24.0
+statsmodels>=0.12.0
 joblib>=1.0.0
-
-# Excel处理
 openpyxl>=3.0.0
-
-# 可视化
 matplotlib>=3.3.0
 seaborn>=0.11.0
+tqdm>=4.50.0
+IPython>=7.0.0
+Cython>=0.29.0
 
-# 进度条和交互
-tqdm>=4.60.0
-ipython>=7.0.0
-
-# 统计模型（用于Stepwise回归、VIF计算等）
-statsmodels>=0.12.0
-
-# ========== 机器学习框架（推荐） ==========
+# Boosting / 风控建模增强
 xgboost>=1.4.0
 lightgbm>=3.2.0
 catboost>=1.0.0
+ngboost>=0.3.0
 
-# ========== 扩展序列化（可选） ==========
-# dill>=0.3.0          # 用于复杂对象序列化（lambda、嵌套函数等）
-# cloudpickle>=2.0.0   # 用于分布式计算场景
+# 调参与解释
+shap>=0.40.0
+optuna>=3.0.0
+optuna-dashboard
+optunahub
+cmaes
+plotly
 
-# ========== 深度学习（可选，用于TabNet等） ==========
-# torch>=1.8.0
-# pytorch-tabnet>=3.1
+# PMML / 部署导出
+sklearn-pandas>=2.2.0
+sklearn2pmml>=0.82.0
+pypmml>=1.5.8
+JPype1<1.7; python_version < '3.10' and platform_system == 'Windows'
 
-# ========== 模型部署（可选） ==========
-# sklearn2pmml>=0.82.0
-# onnx>=1.10.0
-# skl2onnx>=1.10.0
-
-# ========== 测试和开发 ==========
+# 开发、测试与打包
 pytest>=6.0.0
 pytest-cov>=2.0.0
 black>=21.0
 flake8>=3.9.0
+mypy>=0.900
+build>=1.0.0
+twine>=4.0.0
+check-manifest>=0.49
 
-# ========== 文档（可选） ==========
-# sphinx>=4.0.0
-# sphinx-rtd-theme>=0.5.0
+# 文档
+sphinx>=4.0.0
+sphinx-rtd-theme>=0.5.0
+nbsphinx>=0.8.0
+myst-parser>=2.0.0

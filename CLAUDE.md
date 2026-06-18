@@ -172,7 +172,7 @@ XGBoost、LightGBM、CatBoost、PyTorch/TabNet、PMML、Optuna、SHAP 均为可�
 pip install hscredit[xgboost]      # XGBoost
 pip install hscredit[lightgbm]     # LightGBM
 pip install hscredit[catboost]     # CatBoost
-pip install hscredit[deep-learning] # PyTorch, TabNet
+pip install hscredit[net]           # PyTorch, TabNet
 pip install hscredit[tune]          # Optuna 超参调优
 pip install hscredit[explain]      # SHAP
 pip install hscredit[all]          # 所有可选依赖

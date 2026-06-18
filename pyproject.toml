@@ -1,13 +1,13 @@
 [build-system]
-requires = ["setuptools>=45", "wheel", "setuptools-scm[toml]>=6.2"]
+requires = ["setuptools>=68", "wheel", "build"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "hscredit"
 version = "0.1.0"
-description = "金融风控建模工具包 - 完整的评分卡建模解决方案"
+description = "hscredit 面向金融信贷风控策略分析与评分模型研发场景，提供符合 sklearn Pipeline 范式的量化建模工具箱，覆盖数据探索、特征筛选、分箱编码、有效性评估、模型训练、参数调优与报告生成，支持从策略验证到模型落地的端到端风险决策流程。鉴真伪，斟信用，衡风险，枢定策 —— 衡枢真信，智能风控，一站掌控。"
 readme = "README.md"
-license = {text = "MIT"}
+license = "MIT"
 authors = [
     {name = "hscredit team", email = "hscredit@hengshucredit.com"}
 ]
@@ -18,17 +18,18 @@ keywords = [
     "credit",
     "risk",
     "scorecard",
-    "modeling",
+    "model",
     "finance",
     "machine-learning",
+    "deep-learning",
     "woe",
-    "binning"
+    "binning",
+    "excel",
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "Intended Audience :: Financial and Insurance Industry",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.8",
@@ -36,6 +37,8 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Scientific/Engineering",
     "Topic :: Office/Business :: Financial",
 ]
@@ -46,6 +49,7 @@ dependencies = [
     "scipy>=1.5.0",
     "scikit-learn>=0.24.0",
     "statsmodels>=0.12.0",
+    "joblib>=1.0.0",
     "openpyxl>=3.0.0",
     "matplotlib>=3.3.0",
     "seaborn>=0.11.0",
@@ -68,6 +72,8 @@ net = [
 pmml = [
     "sklearn-pandas>=2.2.0",
     "sklearn2pmml>=0.82.0",
+    "pypmml>=1.5.8",
+    "JPype1<1.7; python_version < '3.10' and platform_system == 'Windows'",
 ]
 tune = [
     "optuna>=3.0.0",
@@ -82,11 +88,16 @@ dev = [
     "pytest-cov>=2.0.0",
     "black>=21.0",
     "flake8>=3.9.0",
+    "mypy>=0.900",
+    "build>=1.0.0",
+    "twine>=4.0.0",
+    "check-manifest>=0.49",
 ]
 docs = [
     "sphinx>=4.0.0",
     "sphinx-rtd-theme>=0.5.0",
     "nbsphinx>=0.8.0",
+    "myst-parser>=2.0.0",
 ]
 all = [
     "hscredit[boost,net,pmml,tune,explain,dev,docs]"
@@ -101,12 +112,16 @@ Issues = "https://github.com/hscredit/hscredit/issues"
 [tool.setuptools.packages.find]
 exclude = ["tests", "tests.*", "docs", "docs.*", "examples", "examples.*"]
 
+[tool.setuptools]
+include-package-data = true
+zip-safe = false
+
 [tool.setuptools.package-data]
-hscredit = ["report/excel/template.xlsx"]
+hscredit = ["py.typed", "report/excel/*.xlsx", "**/*.json", "**/*.yaml", "**/*.yml"]
 
 [tool.black]
 line-length = 120
-target-version = ['py38', 'py39', 'py310', 'py311', 'py312']
+target-version = ['py38', 'py39', 'py310', 'py311', 'py312', 'py313', 'py314']
 include = '\.pyi?$'
 extend-exclude = '''
 /(

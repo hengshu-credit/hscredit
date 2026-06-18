@@ -1,706 +1,405 @@
-# hscredit 优化方案与迭代计划
+# hscredit Roadmap
 
-> 版本：2026-04-12 v3
-> 定位：面向金融信贷场景的完整风控建模工具包，覆盖策略分析人员与模型开发人员的全链路需求。
-> 方法：基于 hscredit 代码风格审计 + toad / optbinning / scorecardpipeline 竞品对标分析编写。
+> 版本：2026-06-18
+> 定位：面向金融信贷风控策略分析与评分模型研发的 Python 量化建模工具箱。
+> 方法：基于当前代码结构、公开 API、业务场景和 toad / optbinning / scorecardpipeline / scorecardpy 等同类库对标整理。
 
----
+## 一、产品定位
 
-## 一、代码风格与设计约定（供开发参考）
+`hscredit` 的核心目标不是单点复刻某个开源库，而是围绕信贷风控团队的日常工作流，形成一套可计算、可解释、可交付的建模工具链。
 
-以下约定从现有代码中提炼，**所有新增代码必须遵循**。
+信贷风控建模的真实链路通常包含：
 
-### 1.1 命名与文档
+1. 数据质量检查和客群画像。
+2. 目标变量、逾期标签、Vintage 和 Roll Rate 分析。
+3. 单变量有效性、分箱、WOE、IV、KS、Lift、PSI 分析。
+4. 多维特征筛选和稳定性筛选。
+5. 评分卡、机器学习模型和策略规则模型训练。
+6. 模型评估、调参、概率校准、分数转换和漂移监控。
+7. 策略规则挖掘、规则集效果评估和新旧策略 Swap 分析。
+8. Excel 报告、图表和上线交付材料生成。
 
-| 维度 | 约定 | 示例 |
-|------|------|------|
-| 类名 | PascalCase | `OptimalBinning`, `WOEEncoder`, `XGBoostRiskModel` |
-| 函数/方法 | snake_case | `fit_transform`, `get_bin_table`, `bad_rate_trend` |
-| 常量 | UPPER_SNAKE_CASE | `VALID_METHODS`, `XGBOOST_AVAILABLE` |
-| 模块 docstring | 中文，描述模块职责 | `"""统一分箱接口 - 整合所有分箱方法."""` |
-| 类 docstring 结构 | `**参数**` → `**属性**` → `**参考样例**` 三段式 | 见 `BaseBinning` / `OptimalBinning` |
-| 参数文档 | reST 风格 `:param name:` + 中文说明 | `:param max_n_bins: 最大分箱数，默认为5` |
-| 实践经验注释 | `- 内部经验: ...` 嵌在参数说明中 | 见 `XGBoostRiskModel` 各参数 |
-| 输出 DataFrame 列名 | **中文** | `分箱`, `样本总数`, `坏样本率`, `分档WOE值`, `指标IV值` |
+`hscredit` 当前已经覆盖上述链路中的大部分常见任务，但仍处于早期版本。下一阶段重点是增强工程可信度、文档可用性、测试覆盖、特征工程、拒绝推断、规则运营和可解释性能力。
 
-### 1.2 API 设计模式
+## 二、当前代码结构与已实现能力
 
-```
-双 API 风格（所有有监督组件统一支持）:
+### 2.1 模块总览
 
-sklearn 风格:              binner.fit(X, y)         # X 为特征矩阵, y 为目标
-scorecardpipeline 风格:    binner.fit(df)           # df 包含 target 列, 通过 target='target' 指定
-混合风格:                  binner.fit(df, y=ext_y)  # y 参数优先于 df 中的 target 列
-```
-
-| 约定 | 说明 |
-|------|------|
-| 基类继承 | `BaseEstimator, TransformerMixin`（sklearn Pipeline 兼容） |
-| `target` 参数 | 所有有监督组件构造函数第一参数，默认 `'target'` |
-| 可选依赖 | `try/except ImportError` + `_AVAILABLE` 布尔标志 + 中文安装提示 |
-| 异常体系 | `HSCreditError` → `ValidationError` / `NotFittedError` / `FeatureNotFoundError` / `DependencyError` |
-| 错误消息语言 | 中文 |
-| 类型注解 | 构造函数所有参数必须标注（`from typing import ...`） |
-| 属性命名 | fit 后产生的属性以 `_` 结尾：`splits_`, `n_bins_`, `bin_tables_`, `iv_` |
-
-### 1.3 模块组织原则
-
-```
-core/xxx/          → 核心算法（纯计算逻辑，不涉及 IO/报告）
-report/            → 报告生成（Excel/HTML，可引用 core）
-excel/             → Excel 底层工具（ExcelWriter / dataframe2excel）
-utils/             → 通用工具（seed_everything / 数据集 / describe / pandas 扩展 / logger）
+```text
+hscredit/
+├── core/
+│   ├── binning/              # 分箱算法
+│   ├── encoders/             # 特征编码
+│   ├── selectors/            # 特征筛选
+│   ├── models/               # 风控模型、评分卡、损失函数、调参、评估
+│   ├── metrics/              # 指标体系
+│   ├── eda/                  # 数据探索、策略、Vintage、稳定性分析
+│   ├── rules/                # 规则表达式
+│   ├── financial/            # 金融计算
+│   ├── feature_engineering/  # 表达式特征衍生
+│   └── viz/                  # 可视化
+├── report/                   # 规则挖掘、模型报告、Swap、逾期预测、漂移报告
+├── excel/                    # Excel 输出
+└── utils/                    # pandas 扩展、数据集、IO、日志、随机种子
 ```
 
----
+### 2.2 已实现能力清单
 
-## 二、竞品对标分析
+| 领域 | 模块 | 已实现能力 |
+|:---|:---|:---|
+| 数据探索 | `core.eda` | 数据概览、缺失分析、目标分布、坏率趋势、特征分布、相关性、IV/WOE、PSI/CSI、客群迁移、策略仿真、Vintage、Roll Rate |
+| 分箱 | `core.binning` | 等宽、等频、树、CART、卡方、Best IV、Best KS、Best Lift、MDLP、OR-Tools、CP-SAT、KMeans、单调、遗传算法、平滑、核密度、目标坏率、二维分箱 |
+| 编码 | `core.encoders` | WOE、Target、Count、OneHot、Ordinal、Quantile、CatBoost、Cardinality、GBM 编码 |
+| 筛选 | `core.selectors` | 缺失率、众数率、基数、方差、相关性、VIF、IV、Lift、PSI、模型重要性、零重要性、RFE、序列选择、逐步回归、Boruta、互信息、卡方、F 检验、稳定性感知、组合筛选 |
+| 模型 | `core.models` | LogisticRegression、RandomForest、ExtraTrees、GradientBoosting、XGBoost、LightGBM、CatBoost、NGBoost、ScoreCard、RuleSet、RulesClassifier |
+| 损失函数 | `core.models.losses` | Focal、非对称 Focal、加权 BCE、成本敏感、坏账、审批率、利润最大化、排序、KS 聚焦、Top-K 捕获、金额加权、期望收益等 |
+| 调参与评估 | `core.models.tuning` / `evaluation` | Optuna 调参、模型报告、概率校准、解释性分析 |
+| 指标 | `core.metrics` | KS、AUC、Gini、Lift、坏率、IV、PSI、CSI、分类/回归指标、分箱统计 |
+| 规则 | `core.rules` / `report.mining` | Rule 表达式、规则优化、单特征规则、多特征规则、多标签规则、树规则提取、手工树分析、规则指标 |
+| 策略分析 | `report.swap_analysis` / `report.rule_analysis` | 策略置换、规则集分析、多标签规则分析、规则 Swap 分析 |
+| 逾期预测 | `report.overdue_predictor` | MOB 逾期预测、逾期预测报告 |
+| 报告 | `report.model_report` / `excel` | 快速模型报告、模型对比、ExcelWriter、dataframe2excel、pandas 扩展输出 |
+| 金融计算 | `core.financial` | FV、PV、PMT、NPER、IPMT、PPMT、RATE、NPV、IRR、MIRR |
 
-### 2.1 toad（amphibian-dev/toad）— 实用主义标杆
+### 2.3 设计约定
 
-**核心流程**：`detect()` → `quality()` → `select()` → `Combiner` → `WOETransformer` → `ScoreCard` → `metrics`
+| 维度 | 约定 |
+|:---|:---|
+| API 风格 | 核心建模组件尽量兼容 `fit` / `transform` / `predict` / `predict_proba` |
+| Pipeline | 主要分箱、编码、筛选和模型组件遵循 sklearn 风格，便于 Pipeline 与调参集成 |
+| 目标列 | 支持 `X, y` 风格，也支持 DataFrame 内通过 `target` 参数指定目标列 |
+| 输出语言 | 用户可见的列名、错误消息、报告内容尽量使用中文 |
+| 可选依赖 | Boosting、深度学习、调参、解释、PMML 按 optional extras 安装 |
+| 报告交付 | 重要分析结果优先支持 DataFrame 和 Excel 输出 |
 
-| toad 功能 | hscredit 对应 | 状态 |
-|-----------|-------------|------|
-| `toad.detect()` 一行数据画像 | `eda.data_info()` + `eda.feature_summary()` | ✅ 已有（更丰富） |
-| `toad.quality()` 一行 IV 筛查 | `eda.batch_iv_analysis()` | ✅ 已有 |
-| `toad.selection.select()` 多条件筛选 | `CompositeFeatureSelector` (23 种) | ✅ 远超 |
-| `toad.selection.stepwise()` 逐步回归 | `StepwiseSelector` | ✅ 已有 |
-| `Combiner` 分箱（chi/dt/quantile/step/kmeans 5种） | `OptimalBinning` (17 种方法) | ✅ 远超 |
-| `Combiner.export() / set_rules()` 规则导入导出 | `export() / load()` | ✅ 已有 |
-| `WOETransformer` | `WOEEncoder` + `transform(metric='woe')` | ✅ 已有 |
-| `toad.ScoreCard` PDO/Odds 转换 | `ScoreCard`（含 SQL/Python/Java 部署代码导出） | ✅ 更强 |
-| `KS_bucket()` 分桶 KS 分析 | `ks_bucket()` | ✅ 已有 |
-| `toad.plot` 基础图表 | `core.viz` 50+ 图表 | ✅ 远超 |
-| `toad.nn` 深度学习 | — | ❌ 未有（低优先） |
-| 拒绝推断 | — | ❌ **toad 也无** |
+## 三、业务场景映射
 
-**结论：hscredit 在功能广度上已全面超越 toad。toad 的优势在于 API 极简（一行 `quality()`），hscredit 应保持专业深度的同时提供同等简洁的快捷入口。**
+### 3.1 贷前评分卡建模
 
-### 2.2 optbinning（guillermo-navas-palencia）— 学术严谨标杆
+| 业务任务 | 推荐能力 |
+|:---|:---|
+| 数据质量检查 | `eda.data_info`、`eda.missing_analysis`、`eda.data_quality_report` |
+| 变量有效性分析 | `eda.batch_iv_analysis`、`eda.woe_analysis`、`metrics.iv`、`metrics.lift` |
+| 分箱 | `OptimalBinning`、`BestIVBinning`、`BestKSBinning`、`MonotonicBinning`、`GeneticBinning` |
+| WOE 编码 | `WOEEncoder`、`OptimalBinning.transform(metric='woe')` |
+| 特征筛选 | `IVSelector`、`VIFSelector`、`CorrSelector`、`PSISelector`、`CompositeFeatureSelector` |
+| 建模 | `LogisticRegression`、`ScoreCard` |
+| 评估 | `ks`、`auc`、`gini`、`lift_table`、`ks_bucket` |
+| 交付 | `auto_model_report`、`ExcelWriter`、`dataframe2excel` |
 
-**核心特色**：MIP/CP 数学最优化求解，`BinningProcess` 批量处理，`BinningTable` 分析报告
+### 3.2 机器学习风控模型
 
-| optbinning 功能 | hscredit 对应 | 状态 |
-|----------------|-------------|------|
-| MIP/CP 数学最优分箱 | `ORBinning`（基于 OR-Tools） | ✅ 已有 |
-| 8 种单调性约束（ascending/descending/peak/valley/convex/concave/auto/auto_heuristic） | `BaseBinning.monotonic` (10 种) | ✅ 更多 |
-| `BinningProcess` 批量分箱 + `.summary()` | `OptimalBinning` 支持 DataFrame | ✅ 已有 |
-| `BinningTable.build()` 分箱表（Count/WoE/IV/JS） | `get_bin_table()` 中文分箱表（含 LIFT/坏账改善/累积指标） | ✅ 已有（列更丰富） |
-| `BinningTable.analysis()` 复合质量评分（IV+Gini+HHI+单调性） | — | ❌ **应引入** |
-| `BinningTable.plot()` 可视化 | `bin_plot()` + 多种图表 | ✅ 已有 |
-| `Scorecard` (PDO/Odds 标准转换) | `ScoreCard` | ✅ 已有 |
-| `OptimalBinning2D` 二维交互分箱 | — | ❌ **独特功能** |
-| `ContinuousOptimalBinning` 连续目标分箱 | — | ❌ 可考虑 |
-| `MulticlassOptimalBinning` 多分类分箱 | — | ❌ 可考虑 |
-| `OptimalPWBinning` 分段多项式分箱 | — | ❌ 低优先 |
-| `CounterfactualExplanation` 反事实解释 | — | ❌ **高价值 XAI** |
-| solver 状态报告 (`OPTIMAL/FEASIBLE/INFEASIBLE`) | — | ⚠️ 可增强 |
-| `max_pvalue` 相邻箱统计显著性约束 | — | ⚠️ 可增强 |
-| `prebinning_method` 预分箱 | `prebinning` 参数 | ✅ 已有 |
-| `special_codes` 特殊值分箱 | `special_codes` 参数 | ✅ 已有 |
+| 业务任务 | 推荐能力 |
+|:---|:---|
+| 树模型训练 | `RandomForestRiskModel`、`GradientBoostingRiskModel`、`XGBoostRiskModel`、`LightGBMRiskModel`、`CatBoostRiskModel` |
+| 不平衡样本处理 | `FocalLoss`、`BalancedFocalLoss`、`WeightedBCELoss` |
+| 业务目标优化 | `BadDebtLoss`、`ApprovalRateLoss`、`ProfitMaxLoss`、`TopKBadCaptureLoss`、`AmountWeightedLoss` |
+| 模型调参 | `ModelTuner`、`AutoTuner`、`TuningObjective` |
+| 概率校准 | `PlattCalibrator`、`IsotonicCalibrator`、`ProbabilityCalibrator`、`CalibratedModel` |
+| 解释性 | `ModelExplainer`、`plot_feature_importance`、SHAP 可选依赖 |
 
-**结论：optbinning 在 2D 分箱、连续/多分类目标支持、复合质量评分、反事实解释上有独到优势。hscredit 应选择性引入高价值功能。**
+### 3.3 策略规则挖掘与运营
 
-### 2.3 scorecardpipeline（itlubber）— 集成完整性标杆
+| 业务任务 | 推荐能力 |
+|:---|:---|
+| 单变量规则发现 | `SingleFeatureRuleMiner` |
+| 交叉规则发现 | `MultiFeatureRuleMiner` |
+| 多标签规则分析 | `MultiLabelRuleMiner`、`multi_label_rule_analysis` |
+| 树模型规则提取 | `TreeRuleExtractor`、`DecisionTreeAnalyzer`、`ManualTreeExtractor` |
+| 规则指标 | `RuleMetrics`、`calculate_rule_metrics`、`rule_lift` |
+| 规则分类器 | `RuleSet`、`RulesClassifier` |
+| 策略置换 | `SwapAnalyzer`、`swap_analysis`、`rule_swap_analysis` |
 
-**核心特色**：包装 toad + optbinning + scorecardpy 三引擎，全 Pipeline 兼容，`target` 随 DataFrame 传递
+### 3.4 贷后监控与稳定性
 
-| scorecardpipeline 功能 | hscredit 对应 | 状态 |
-|-----------------------|-------------|------|
-| 全 sklearn Pipeline 兼容 | 所有组件继承 `BaseEstimator` | ✅ 已有 |
-| `target` 在 DataFrame 中传递 | 双 API 风格 | ✅ 已有 |
-| 多引擎分箱（toad+optbinning 8种方法） | 17 种原生方法（不依赖外部库） | ✅ 更强 |
-| 17 种特征筛选器 + `dropped` 审计轨迹 | 23 种 + `SelectionReportCollector` | ✅ 更多 |
-| `ITLubberLogisticRegression` 统计摘要（coef/p-value/VIF） | `LogisticRegression(calculate_stats=True)` | ✅ 已有 |
-| `Rule` 规则代数 (`&`/`|`/`~`) + `report()` | `Rule` / `RuleSet` / `RulesClassifier` | ✅ 已有 |
-| `DecisionTreeRuleExtractor` | `TreeRuleExtractor` | ✅ 已有 |
-| `ExcelWriter` + `dataframe2excel()` 专业报告 | `ExcelWriter` + `dataframe2excel` | ✅ 已有 |
-| `feature_bin_stats()` 多标签分析 | `feature_bin_stats()` | ✅ 已有 |
-| `auto_data_testing_report()` 全自动化报告 | `auto_feature_analysis()` + `auto_model_report()` | ✅ 已有 |
-| `NumExprDerive` 表达式衍生 | `NumExprDerive` | ✅ 已有 |
-| 金融计算 (NPV/IRR/PMT) | `core.financial` | ✅ 已有 |
-| `scorecard2pmml()` PMML 导出 | `pyproject.toml` 已配 pmml 依赖 | ⚠️ 集成可增强 |
-| `BoxCoxScoreTransformer` 分数变换 | `StandardScoreTransformer` | ⚠️ 可增加变体 |
-| `auto_eda_sweetviz()` 自动 EDA | `eda.eda_summary()` + `eda.generate_report()` | ✅ 原生实现 |
-| `class_steps()` Pipeline 组件提取 | `ScoreCard(pipeline=...)` 自动提取 | ✅ 已有 |
+| 业务任务 | 推荐能力 |
+|:---|:---|
+| 客群漂移 | `population_shift_analysis`、`population_monitoring_report`、`population_drift_monitor` |
+| 变量漂移 | `psi_analysis`、`batch_psi_analysis`、`feature_drift_report` |
+| 分数漂移 | `score_drift_report`、`ScoreDriftCalibrator`、`QuantileAligner` |
+| Vintage / MOB | `vintage_analysis`、`vintage_summary`、`OverduePredictor` |
+| Roll Rate | `roll_rate_matrix`、`roll_rate_analysis` |
+| 策略阈值仿真 | `approval_badrate_tradeoff`、`score_strategy_simulation`、`threshold_analysis_plot` |
 
-**结论：hscredit 已覆盖 scorecardpipeline 的绝大多数功能，且核心算法为原生实现而非第三方包装。**
+## 四、竞品对标
 
-### 2.4 hscredit 独有优势（竞品均不具备）
+### 4.1 toad
 
-| 独有功能 | 说明 |
-|---------|------|
-| **9 种风控专用损失函数** | Focal / AsymmetricFocal / WeightedBCE / CostSensitive / BadDebt / ApprovalRate / ProfitMax / OrdinalRank / LiftFocused |
-| **EDA 客群分析** | `population_profile` / `population_shift_analysis` / `population_monitoring_report` / `segment_drift_analysis` / `feature_cross_segment_effectiveness` |
-| **EDA 策略分析** | `approval_badrate_tradeoff` / `score_strategy_simulation` / `roll_rate_matrix` / `label_leakage_check` / `multi_label_correlation` |
-| **EDA 偏移分析** | `feature_drift_report` / `score_drift_report` / `batch_psi_analysis` / `psi_cross_analysis` |
-| **SwapAnalyzer** | 规则置换四象限分析（通过/拒绝 × 好/坏），982 行完整实现 |
-| **OverduePredictor** | MOB 逾期率预测与报告 |
-| **ModelTuner / AutoTuner** | 风控专用调参目标（ks / lift_head / head_ks / ks_lift_combined） |
-| **CalibratedModel** | 模型概率校准 |
-| **ScoreCard 部署代码导出** | `export_deployment_code(language='sql'/'python'/'java')` |
-| **50+ 可视化** | binning_plots / risk_plots / score_plots / strategy_plots / variable_plots 五大类 |
+`toad` 是评分卡建模领域常用的实用型工具，典型流程包括 `detect`、`quality`、`select`、`Combiner`、`WOETransformer`、`ScoreCard` 和基础指标。
 
----
+| 维度 | toad | hscredit 当前状态 |
+|:---|:---|:---|
+| 易用性 | API 极简，快速上手 | 需要提供更多快捷入口，降低学习成本 |
+| 分箱 | 常用分箱方法成熟 | 已实现更多分箱方法，但需要持续验证边界条件和性能 |
+| 特征筛选 | 支持常见筛选 | 已实现更丰富的筛选器和组合筛选报告 |
+| 评分卡 | 成熟易用 | 已实现 ScoreCard，并支持评分转换和组件提取 |
+| 报告 | 相对基础 | hscredit 更强调中文 Excel 报告和业务交付 |
+| 策略分析 | 非核心能力 | hscredit 已实现更多规则、Swap、Vintage、客群分析能力 |
 
-## 三、真实缺口与优先级
+建议：学习 `toad` 的简洁入口，补充 `quality`、`detect`、`select` 等快捷 API 风格的高层封装。
 
-| 优先级 | 缺口 | 竞品参考 | 价值说明 |
-|--------|------|---------|---------|
-| P2 | **特征工程模块薄弱**（仅 NumExprDerive） | 竞品同样薄弱 | 三大竞品均无完整特征工程，**差异化机会最大** |
-| P2 | **拒绝推断（Reject Inference）** | **三大竞品均无** | 信贷建模刚需，**独家差异化** |
-| P1 | 分箱质量评分 & 批量导出 | optbinning `BinningTable.analysis()` | 提升分箱模块专业度 |
-| P1 | 规则运营工具（覆盖率仿真/跨期追踪/冲突检测） | — | 策略人员刚需 |
-| P0 | 二维交互分箱 | optbinning `OptimalBinning2D` | 交互效应分析 |
-| P2 | 模型报告 SHAP 集成 / ScoreCard 分析增强 | — | 报告完整度 |
-| P2 | 反事实解释 | optbinning `CounterfactualExplanation` | 监管合规 |
-| P1 | LiftSelector ratio | — | 小幅改进 |
-| P1 | README / info() 修正 / 测试补全 / CI·CD / API 文档 | — | 工程质量 |
+### 4.2 optbinning
 
----
+`optbinning` 是最优分箱方向的专业库，优势在数学规划分箱、分箱质量分析、二维分箱、连续/多分类目标和反事实解释。
 
-## 四、迭代规划（按价值主题）
+| 维度 | optbinning | hscredit 当前状态 |
+|:---|:---|:---|
+| 数学最优分箱 | MIP/CP 体系成熟 | 已有 OR-Tools、CP-SAT 等实现，但质量报告和求解状态说明可增强 |
+| 分箱质量分析 | `BinningTable.analysis()` 专业 | 需要补充分箱质量评分和统计显著性分析 |
+| 二维分箱 | 支持 `OptimalBinning2D` | 已有 `OptimalBinning2D` 文件与导出，需要补充文档、示例和测试 |
+| 多目标类型 | 连续、多分类等支持完善 | 当前重点仍是二分类信贷风控场景 |
+| XAI | 提供反事实解释 | hscredit 尚需规划反事实解释和合规解释报告 |
 
-### Theme 1：特征工程模块扩充 🔴 P0
+建议：优先补充分箱质量分析、求解状态报告、二维分箱示例和反事实解释能力。
 
-**目标**：将 `core/feature_engineering/` 从单一的 `NumExprDerive` 扩展为完整的 sklearn Pipeline 兼容 Transformer 体系。**三大竞品在此领域均薄弱，是 hscredit 建立差异化优势的最佳切入点。**
+### 4.3 scorecardpipeline
 
-#### 1-1 新增 `core/feature_engineering/time_features.py`
+`scorecardpipeline` 将 `toad`、`scorecardpy`、`optbinning` 等能力封装为 sklearn Pipeline 风格，强调端到端评分卡建模、Excel 报告、规则分析和 PMML 交付。
 
-```python
-class TimeFeatureGenerator(BaseEstimator, TransformerMixin):
-    """时序特征生成器（sklearn Pipeline 兼容）.
+| 维度 | scorecardpipeline | hscredit 当前状态 |
+|:---|:---|:---|
+| Pipeline 风格 | 集成度高 | hscredit 继承该方向，核心组件尽量兼容 sklearn 风格 |
+| target 传递 | DataFrame + target 体验好 | hscredit 多数监督组件支持 `target` 参数 |
+| 报告 | Excel 报告成熟 | hscredit 已有 Excel 与模型报告，需继续补齐模板和示例 |
+| 规则分析 | 较完整 | hscredit 已有 Rule、RuleSet、规则挖掘、树规则和 Swap 分析 |
+| 依赖 | 底层依赖较多 | hscredit 更强调原生实现和低依赖基础安装 |
+| 维护方向 | 与 hscredit 存在传承关系 | hscredit 应承接其成熟经验并减少多库拼装成本 |
 
-    从日期列衍生多维时间特征，信贷场景高频使用。
+建议：保留 scorecardpipeline 的 Pipeline、报告、PMML 和规则分析经验，同时强化 hscredit 的原生实现、文档和测试。
 
-    **参数**
+### 4.4 scorecardpy
 
-    :param date_col: 日期列名
-    :param features: 生成的时序特征列表，支持：
-        'year' / 'month' / 'day' / 'weekday' / 'quarter' /
-        'is_weekend' / 'is_month_end' / 'is_month_start' /
-        'days_since_epoch' / 'days_to_year_end'
-    :param ref_cols: 参考日期列名列表，自动生成 'days_since_{ref_col}' 天数差特征
-    :param drop_original: 是否删除原始日期列，默认 True
+`scorecardpy` 提供评分卡基础流程，适合快速完成分箱、WOE、评分卡建模。
 
-    **参考样例**
+| 维度 | scorecardpy | hscredit 当前状态 |
+|:---|:---|:---|
+| 评分卡主流程 | 简单直接 | hscredit 覆盖评分卡主流程，并扩展模型、策略、报告和稳定性分析 |
+| 工程化 | 相对基础 | hscredit 更贴近 sklearn 和 Python 工程体系 |
+| 中文报告 | 非重点 | hscredit 输出更贴近中文风控交付 |
 
-    >>> gen = TimeFeatureGenerator(
-    ...     date_col='apply_date',
-    ...     features=['month', 'weekday', 'is_weekend', 'quarter'],
-    ...     ref_cols=['id_issue_date']
-    ... )
-    >>> X_new = gen.fit_transform(X)
-    """
+## 五、竞争策略
+
+### 5.1 不建议的外部表述
+
+| 不建议写法 | 原因 | 建议写法 |
+|:---|:---|:---|
+| 全面超越 toad / optbinning / scorecardpipeline | 缺少统一基准，容易夸大 | 在信贷风控全流程集成和中文化交付上形成互补优势 |
+| hscredit 全搞定，告别所有库 | 高级分箱、XAI、PMML、CI 等仍需增强 | 减少多库拼装成本，覆盖常见评分卡建模与策略分析流程 |
+| 分箱能力超过 optbinning | optbinning 在数学规划和质量分析上仍很强 | 提供多种分箱方法，并持续增强质量分析和二维分箱能力 |
+| 生产级全面成熟 | 当前早期版本，测试和文档仍需补强 | 面向生产实践设计，持续完善工程化能力 |
+| 支持所有 Python 新版本和所有可选依赖 | 可选依赖对新版本支持不一定一致 | 支持 Python 3.8+，可选依赖兼容性以实际环境为准 |
+
+### 5.2 推荐定位
+
+`hscredit` 的竞争策略应围绕以下方向展开：
+
+| 方向 | 说明 |
+|:---|:---|
+| 一体化 | 将 EDA、分箱、编码、筛选、建模、评估、策略和报告放在统一 API 下 |
+| 中文化 | 面向国内风控团队的字段、报表、错误提示和业务解释 |
+| 低依赖 | 基础安装轻量，增强能力通过 extras 按需安装 |
+| Pipeline | 保持 sklearn 风格，便于与现有建模流水线集成 |
+| 场景化 | 聚焦信贷评分卡、策略规则、逾期预测、稳定性监控和 Excel 交付 |
+| 差异化 | 特征工程、拒绝推断、规则运营、反事实解释和模型上线交付 |
+
+## 六、能力缺口与优先级
+
+| 优先级 | 能力缺口 | 价值 | 参考 |
+|:---|:---|:---|:---|
+| P0 | 文档、测试、CI、示例和 README 真实性修正 | 建立项目可信度 | 所有成熟开源库 |
+| P0 | 特征工程模块扩展 | 三方竞品普遍薄弱，适合形成差异化 | 内部业务实践 |
+| P0 | 拒绝推断 | 处理审批样本选择偏差，是信贷建模强场景能力 | 信贷建模实践 |
+| P1 | 分箱质量分析和批量导出 | 提升分箱专业度和交付效率 | optbinning |
+| P1 | 规则运营工具 | 支持策略人员做规则覆盖、冲突、跨期追踪 | 策略运营实践 |
+| P1 | 报告模板体系 | 提升模型报告、特征报告、策略报告可交付性 | scorecardpipeline |
+| P2 | 二维分箱文档、示例和测试 | 捕捉变量交互效应 | optbinning |
+| P2 | SHAP 与反事实解释 | 支持监管、可解释性和拒绝原因说明 | optbinning / XAI 实践 |
+| P2 | PMML / SQL / Python / Java 导出完善 | 支持模型上线交付闭环 | scorecardpipeline |
+| P3 | 快捷入口 API | 降低新用户学习成本 | toad |
+
+## 七、版本规划
+
+### v0.1.x：可信度建设
+
+目标：修正文档、补充测试、统一口径，让现有能力能被稳定理解和复现。
+
+任务：
+
+1. 重写 README，突出真实代码能力和业务场景。
+2. 更新 ROADMAP，形成清晰竞品策略和版本规划。
+3. 修正 `hscredit.info()` 中过期描述。
+4. 补充核心模块示例：EDA、分箱、WOE、筛选、ScoreCard、规则挖掘、Swap、模型报告。
+5. 建立 CI：Python 3.8 到当前主流版本的测试矩阵。
+6. 补充 `core.metrics`、`core.eda`、`report.mining`、`ScoreCard`、`OptimalBinning2D` 的基础测试。
+7. 完善打包校验：`python -m build`、`twine check`、`check-manifest`。
+
+验收标准：
+
+1. README 中示例可运行或标注依赖前提。
+2. `make check` 在主开发环境通过。
+3. 核心公开 API 有最小测试覆盖。
+4. 文档不再包含明显夸大或已过期内容。
+
+### v0.2.0：特征工程与拒绝推断
+
+目标：补齐信贷建模前置处理和样本选择偏差处理能力，形成差异化。
+
+计划新增模块：
+
+```text
+hscredit/core/feature_engineering/
+├── time_features.py
+├── cross_features.py
+├── preprocessing.py
+└── aggregations.py
+
+hscredit/core/reject_inference/
+├── __init__.py
+└── reject_inference.py
 ```
 
-#### 1-2 新增 `core/feature_engineering/cross_features.py`
+建议能力：
+
+| 类/函数 | 说明 |
+|:---|:---|
+| `TimeFeatureGenerator` | 从日期字段生成月份、星期、季度、月末、账龄、距参考日期天数等变量 |
+| `CrossFeatureGenerator` | 生成比值、差值、乘积、log ratio 等交叉变量 |
+| `MissingValueImputer` | 数值/类别缺失填充，保留 DataFrame 列名 |
+| `OutlierClipper` | 分位数、IQR、固定边界异常值截断 |
+| `FeatureScaler` | 标准化、归一化、RobustScaler 封装 |
+| `GroupAggregationTransformer` | 按客户、设备、手机号、商户等实体聚合行为变量 |
+| `RejectInference` | hard cutoff、fuzzy augmentation、parceling、twin 方法 |
+
+验收标准：
+
+1. 所有 Transformer 兼容 sklearn Pipeline。
+2. 支持 DataFrame 输入输出并保留列名。
+3. 拒绝推断提供模拟数据验证和业务说明。
+4. 文档说明每种方法适用前提和风险。
+
+### v0.3.0：分箱与规则运营增强
+
+目标：提升策略和模型团队最常用的分箱、规则分析、Excel 交付效率。
+
+计划能力：
 
-```python
-class CrossFeatureGenerator(BaseEstimator, TransformerMixin):
-    """交叉特征生成器.
-
-    对指定特征对进行交叉运算，生成衍生变量。
-    信贷场景典型用法：收入/负债比、年龄×额度等。
-
-    **参数**
-
-    :param pairs: 特征对列表，如 [('income', 'debt'), ('age', 'credit_limit')]
-    :param operations: 运算列表，支持 'ratio' / 'diff' / 'product' / 'log_ratio' / 'square_diff'
-    :param auto_pairs: 若为 True 且未指定 pairs，自动枚举所有数值列组合
-        - 内部经验: 特征数>30时不建议开启，组合数爆炸
-    :param naming: 命名规则，'auto' 自动命名 (如 'income_div_debt')，或自定义 callable
-
-    **参考样例**
-
-    >>> gen = CrossFeatureGenerator(
-    ...     pairs=[('income', 'debt'), ('age', 'credit_limit')],
-    ...     operations=['ratio', 'diff']
-    ... )
-    >>> X_new = gen.fit_transform(X)  # 新增 income_div_debt, income_sub_debt, ...
-    """
-```
-
-#### 1-3 新增 `core/feature_engineering/preprocessing.py`
-
-```python
-class MissingValueImputer(BaseEstimator, TransformerMixin):
-    """缺失值填充器（保留 DataFrame 格式和列名）.
-
-    **参数**
-
-    :param strategy: 填充策略，默认 'median'
-        - 'mean' / 'median' / 'mode' / 'constant' / 'model'
-        - 'model': 使用 LightGBM 预测填充（需安装 lightgbm）
-    :param fill_value: strategy='constant' 时的填充值，默认 -999
-    :param infer_per_column: 是否按列数据类型自动选择策略，默认 True
-        - True: 数值列用 median，类别列用 mode
-    """
-
-class OutlierClipper(BaseEstimator, TransformerMixin):
-    """异常值截断器.
-
-    fit 阶段记录截断边界，transform 阶段应用。
-
-    **参数**
-
-    :param method: 截断方法，默认 'quantile'
-        - 'quantile': 按分位数截断
-        - 'iqr': IQR 方法 (Q1 - 1.5*IQR, Q3 + 1.5*IQR)
-        - 'fixed': 固定边界
-    :param lower_quantile: 下截断分位数，默认 0.01
-    :param upper_quantile: 上截断分位数，默认 0.99
-    :param clip_value: method='fixed' 时的 (min, max) 边界元组
-    """
-
-class FeatureScaler(BaseEstimator, TransformerMixin):
-    """特征标准化/归一化（封装 sklearn，保留 DataFrame 列名和格式）.
-
-    **参数**
-
-    :param method: 标准化方法，默认 'standard'
-        - 'standard' / 'minmax' / 'robust' / 'maxabs'
-    :param features: 需要缩放的特征列表，None 时处理所有数值列
-    """
-```
-
-#### 1-4 更新 `__init__.py` 导出
-
-**预计工期**：3-5 天
-**测试要求**：`tests/test_feature_engineering/` 目录，每个类独立测试文件
-
----
-
-### Theme 2：拒绝推断模块 🔴 P0
-
-**目标**：新增 `core/reject_inference/` 模块。**三大竞品（toad / optbinning / scorecardpipeline）均未提供此功能，是 hscredit 最大的独家差异化机会。**
-
-#### 2-1 新增 `core/reject_inference/reject_inference.py`
-
-```python
-class RejectInference(BaseEstimator, TransformerMixin):
-    """拒绝推断 - 处理审批偏差问题.
-
-    信贷建模中，训练数据仅包含被批准的申请人，
-    被拒绝的申请人没有表现标签。拒绝推断通过不同方法
-    为被拒绝样本推断标签，减少样本选择偏差。
-
-    **参数**
-
-    :param method: 推断方法，默认 'hard_cutoff'
-        - 'hard_cutoff': 硬截断法 — 用现有模型对拒绝样本打分，
-          高于阈值标记为好，低于阈值标记为坏
-        - 'fuzzy': 模糊增强法 — 用模型预测概率作为样本权重，
-          加权加入训练集
-        - 'parceling': 分组法 — 按评分段分组，假设拒绝样本的
-          坏率是批准样本��率的 k 倍
-        - 'twin': 孪生法 — 仅使用审批前可获得的特征建模
-    :param cutoff: hard_cutoff 方法的分数阈值，默认 None（自动取批准样本中位数）
-    :param reject_bad_rate_multiplier: parceling 方法中拒绝样本坏率倍数，默认 2.0
-        - 内部经验: 通常取 1.5-3.0，需结合业务判断
-    :param model: 用于打分的预训练模型，默认 None（自动训练 LR）
-    :param random_state: 随机种子，默认 None
-
-    **参考样例**
-
-    基本使用::
-
-        >>> from hscredit.core.reject_inference import RejectInference
-        >>> ri = RejectInference(method='fuzzy')
-        >>> # X_approved: 已审批样本特征, y_approved: 已审批样本标签
-        >>> # X_rejected: 被拒绝样本特征
-        >>> X_aug, y_aug = ri.fit_transform(X_approved, y_approved, X_rejected=X_rejected)
-
-    在建模流程中使用::
-
-        >>> ri = RejectInference(method='parceling', reject_bad_rate_multiplier=2.0)
-        >>> X_combined, y_combined = ri.augment(X_approved, y_approved, X_rejected)
-    """
-```
-
-**预计工期**：3-4 天
-**测试要求**：每种推断方法独立测试 + 与模拟数据的效果验证
-
----
-
-### Theme 3：分箱模块增强 🟠 P1
-
-**参考 optbinning 的专业特性进行补强。**
-
-#### 3-1 分箱质量评分（参考 optbinning `BinningTable.analysis()`）
-
-在 `BaseBinning` 新增 `get_quality_report()` 方法：
-
-```python
-def get_quality_report(self, feature: str) -> pd.DataFrame:
-    """分箱质量综合评估.
-
-    参考 optbinning BinningTable.analysis()，输出复合质量指标。
-
-    输出指标:
-    - IV值 / IV 解读（无预测力/弱/中/强/可疑）
-    - KS值
-    - Gini系数
-    - HHI 集中度指数（衡量各箱样本是否均匀）
-    - 单调性方向
-    - 综合质量评分（0-1，加权组合以上指标）
-
-    :param feature: 特征名
-    :return: 质量报告 DataFrame
-    """
-```
-
-#### 3-2 `OptimalBinning.batch_to_excel()`
-
-```python
-def batch_to_excel(
-    self,
-    output_path: str,
-    feature_map: Dict[str, str] = None,
-    include_plots: bool = True,
-    include_quality: bool = True,
-) -> str:
-    """批量分箱结果输出到 Excel.
-
-    首个 Sheet 为汇总页（特征名/IV/KS/Gini/分箱数/单调性/质量评分），
-    后续每个特征一个 Sheet，含分箱统计表 + 分箱图（可选）。
-
-    :param output_path: 输出 Excel 路径
-    :param feature_map: 特征英文名→中文名映射
-    :param include_plots: 是否嵌入分箱图，默认 True
-    :param include_quality: 是否包含质量评分列，默认 True
-    :return: 输出文件路径
-    """
-```
-
-#### 3-3 新增 `BestPSIBinning`（`core/binning/best_psi_binning.py`）
-
-```python
-class BestPSIBinning(BaseBinning):
-    """PSI 最优分箱：在约束条件下寻找使训练集/验证集 PSI 最小的切分点.
-
-    适用场景：特征分布在训练集和测试集有偏移时，选择
-    使两个数据集分布差异最小的分箱方案。
-
-    **参数**
-
-    :param target: 目标变量列名，默认 'target'
-    :param max_n_bins: 最大分箱数，默认 5
-    :param min_bin_size: 每箱最小样本占比，默认 0.05
-    :param psi_target: PSI 约束上限，默认 0.1
-        - 内部经验: PSI < 0.1 为稳定，0.1-0.25 需关注，> 0.25 显著偏移
-
-    **参考样例**
-
-    >>> binner = BestPSIBinning(max_n_bins=5)
-    >>> binner.fit(X_train, y_train, X_val=X_val)
-    >>> X_binned = binner.transform(X_test)
-    """
-```
-
-#### 3-4 `auto_select_bins()` 工具函数
-
-```python
-def auto_select_bins(
-    X: pd.Series,
-    y: pd.Series = None,
-    min_bins: int = 3,
-    max_bins: int = 10,
-    criterion: str = 'iv',
-) -> int:
-    """基于样本量和数据特征自动推断最优分箱数.
-
-    规则:
-    - n < 5000: 推荐 3-5 箱
-    - 5000 ≤ n < 50000: 推荐 min(8, 唯一值数/3) 箱
-    - n ≥ 50000: 推荐最多 10 箱
-    - 有监督模式(传入y)下: 交叉验证选择使 criterion 最大的箱数
-
-    :param X: 特征序列
-    :param y: 目标变量序列，可选
-    :param min_bins: 最小箱数，默认 3
-    :param max_bins: 最大箱数，默认 10
-    :param criterion: 评估准则 'iv' / 'ks' / 'entropy'，默认 'iv'
-    :return: 推荐分箱数
-    """
-```
-
-**预计工期**：3-4 天
-
----
-
-### Theme 4：规则运营工具链 🟠 P1
-
-**补齐 `rule_analysis.py`（当前仅 155 行）的规则运营能力。**
-
-#### 4-1 规则集覆盖率仿真
-
-
-ruleset_analysis 增加规则间覆盖重叠矩阵分析
-
-#### 4-2 单条规则跨期追踪
-
-```python
-def rule_effectiveness_tracking(
-    df_list: List[pd.DataFrame],
-    labels: List[str],
-    rule_expr: str,
-    target: str,
-) -> pd.DataFrame:
-    """单条规则跨期有效性追踪.
-
-    :param df_list: 各期数据集列表
-    :param labels: 各期标签（如 ['2025-01', '2025-02', ...]）
-    :param rule_expr: pandas query 表达式
-    :param target: 目标变量列名
-    :return: 各期覆盖率/坏率/LIFT 趋势表
-    """
-```
-
-#### 4-3 规则冲突检测
-
-```python
-def detect_rule_conflicts(
-    rules: List[Rule],
-    df: pd.DataFrame = None,
-) -> pd.DataFrame:
-    """检测规则集中逻辑矛盾或高度重叠的规则对.
-
-    基于数据的覆盖重叠率计算，标注高重叠（>80%）、
-    完全包含关系、逻辑矛盾。
-
-    :param rules: Rule 对象列表
-    :param df: 数据集，用于计算覆盖重叠率。None 时仅做表达式分析
-    :return: 规则对分析 DataFrame（规则A/规则B/重叠率/关系类型）
-    """
-```
-
-**预计工期**：2-3 天
-
----
-
-### Theme 5：模型报告增强 🟡 P2
-
-#### 5-1 SHAP 报告集成
-
-在 `QuickModelReport.to_excel()` 增加 `include_shap` 参数，自动追加 Sheet：
-
-```
-Sheet N - SHAP 解释性（可选）
-  - SHAP 均值汇总表（特征名/平均|SHAP|/排名）
-  - SHAP Summary Plot（蜂群图）嵌入图片
-  - SHAP Bar Plot（特征重要性）嵌入图片
-  - Top 5 特征 SHAP 依赖图
-```
-
-联动已有的 `ModelExplainer`，新增 `ModelExplainer.to_excel()` 方法。
-
-#### 5-2 `ScoreCard.score_segment_analysis()`
-
-```python
-def score_segment_analysis(
-    self,
-    df: pd.DataFrame,
-    target: str,
-    n_bins: int = 10,
-    features: List[str] = None,
-) -> pd.DataFrame:
-    """各评分段的客群特征分布对比分析.
-
-    :param df: 含评分和特征的数据集
-    :param target: 目标变量列名
-    :param n_bins: 评分分箱数，默认 10
-    :param features: 分析的特征列表，None 时自动选取 Top 10
-    :return: 评分段分析 DataFrame（评分段/样本量/坏率/各特征均值）
-    """
-```
-
-#### 5-3 `compare_models()` 增强
-
-为已有函数增加可视化（雷达图 / KS·LIFT 曲线叠加 / 评分分布对比），输出统一使用 `ExcelWriter`。
-
-**预计工期**：3-4 天
-
----
-
-### Theme 6：二维交互分箱 🟡 P2
-
-**参考 optbinning `OptimalBinning2D`，提供交互效应分析能力。**
-
-```python
-class InteractionBinning(BaseBinning):
-    """二维交互分箱.
-
-    对两个特征进行联合分箱，捕获交互效应。
-
-    **参数**
-
-    :param target: 目标变量列名，默认 'target'
-    :param method: 分箱方法，默认 'tree'
-        - 'tree': 二维决策树分箱
-        - 'grid': 网格搜索（各维度独立分箱后组合）
-    :param max_n_bins_x: X 轴最大分箱数，默认 5
-    :param max_n_bins_y: Y 轴最大分箱数，默认 5
-    :param min_bin_size: 每格最小样本占比，默认 0.02
-
-    **参考样例**
-
-    >>> binner = InteractionBinning(max_n_bins_x=4, max_n_bins_y=4)
-    >>> binner.fit(df[['income', 'age']], y)
-    >>> table = binner.get_interaction_table()  # 二维坏率表
-    >>> binner.plot_interaction()               # 交互热力图
-    """
-```
-
-**预计工期**：3-4 天
-
----
-
-### Theme 7：反事实解释 🟡 P2
-
-**参考 optbinning `CounterfactualExplanation`，提供监管合规 XAI 能力。**
-
-```python
-class CounterfactualExplainer:
-    """反事实解释器.
-
-    回答"最小改变哪些特征值，可以翻转模型决策？"
-    监管合规场景下用于向申请人解释拒绝原因和改善建议。
-
-    **参数**
-
-    :param model: 已训练模型（需支持 predict_proba）
-    :param feature_names: 特征名列表
-    :param feature_ranges: 各特征可变范围 Dict[str, Tuple[min, max]]
-    :param immutable_features: 不可变特征列表（如 'age', 'gender'）
-    :param method: 搜索方法，默认 'greedy'
-        - 'greedy': 贪心搜索（快速）
-        - 'genetic': 遗传算法（全局优化）
-
-    **参考样例**
-
-    >>> explainer = CounterfactualExplainer(model, feature_names=X.columns.tolist())
-    >>> explainer.fit(X_train)
-    >>> cf = explainer.explain(X_test.iloc[0], target_class=0)
-    >>> print(cf)  # 输出最小特征变化方案
-    """
-```
-
-**预计工期**：2-3 天
-
----
-
-### Theme 8：筛选器补强 🔵 P3
-
-#### 8-1 `LiftSelector` 增加 `ratio` 参数
-
-```python
-class LiftSelector(BaseFeatureSelector):
-    def __init__(
-        self,
-        threshold: float = 1.5,
-        ratio: float = 0.10,    # 新增：LIFT@比例，默认 10%
-        ascending: bool = False,
-        target: str = 'target',
-        n_jobs: int = 1,
-    ):
-        """LIFT 筛选器，支持 lift@1%/5%/10% 等自定义比例.
-
-        :param threshold: LIFT 阈值，低于此值的特征被剔除
-        :param ratio: LIFT 计算的覆盖率，默认 0.10（即 LIFT@10%）
-            - 内部经验: 风控场景常用 lift@5% 或 lift@10%
-        """
-```
-
-
-**预计工期**：1-2 天
-
----
-
-### Theme 9：工程质量与基础设施 🔵 P3
-
-#### 9-1 README.md / `info()` 修正
-
-- "7种损失函数" → "9种损失函数"
-- 补充 EDA 客群/策略分析、拒绝推断等新能力
-- `info()` 删除"待实现模块: core.metrics"
-
-#### 9-2 测试补全
-
-| 测试文件 | 覆盖模块 |
-|----------|----------|
-| `tests/test_eda/test_population.py` | population.py |
-| `tests/test_eda/test_strategy.py` | strategy.py |
-| `tests/test_feature_engineering/test_*.py` | 特征工程新类 |
-| `tests/test_reject_inference/test_*.py` | 拒绝推断 |
-| `tests/test_binning/test_best_psi_binning.py` | BestPSIBinning |
-| `tests/test_rules/test_rule_operations.py` | 规则运营工具 |
-| `tests/test_models/test_losses_ranking.py` | OrdinalRankLoss / LiftFocusedLoss |
-
-
-## 五、版本规划
-
-| 版本 | 主要内容 | Theme | 状态 |
-|------|----------|-------|------|
-| `v0.1.0` | 核心功能完整版 | — | ✅ 当前 |
-| `v0.1.1` | README/info() 修正 + 已有模块测试补全 | 9-1/9-2 | 🔜 立即 |
-| `v0.2.0` | **特征工程** + **拒绝推断**（独家差异化） | Theme 1 + 2 | 待开发 |
-| `v0.3.0` | 分箱增强（质量评分/BestPSI/batch_to_excel） + 规则运营 | Theme 3 + 4 | 待开发 |
-| `v0.4.0` | 报告增强 + 二维分箱 + 反事实解释 | Theme 5 + 6 + 7 | 待开发 |
-
----
-
-## 六、实施路线图
-
-```
-v0.1.1 紧急修正（1-2 天）
-  ├── README.md / info() 数据修正
-  └── population/strategy/stability/ranking_loss 测试补全
-
-         ↓
-
-v0.2.0 核心扩充（6-9 天）  ← 最大价值
-  ├── [特征工程] TimeFeatureGenerator / CrossFeatureGenerator
-  ├── [特征工程] MissingValueImputer / OutlierClipper / FeatureScaler
-  ├── [拒绝推断] RejectInference（hard_cutoff/fuzzy/parceling/twin）  ← 独家
-  └── 对应测试 + examples notebook
-
-         ↓
-
-v0.3.0 专业增强（5-7 天，可并行）
-  ├── [分箱] get_quality_report + batch_to_excel + BestPSIBinning + auto_select_bins
-  ├── [规则] rule_effectiveness_tracking + detect_rule_conflicts
-  └── 对应测试
-
-         ↓
-
-v0.4.0 分析增强（5-8 天，可并行）
-  ├── [报告] SHAP Sheet 集成 + score_segment_analysis + compare_models 增强
-  ├── [分箱] InteractionBinning 二维交互分箱
-  ├── [XAI] CounterfactualExplainer 反事实解释
-  └── 对应测试
-
-         ↓
-
-v0.5.0 筛选 + 工程化（3-5 天）
-  ├── LiftSelector ratio
-```
-
-**总计预估**：22-30 个工作日（各 Theme 间可并行开发）
-
----
-
-## 七、竞争定位总结
-
-```
-                    分箱算法  特征筛选  损失函数  EDA分析  规则引擎  报告生成  特征工程  拒绝推断  XAI解释
-toad                ★★★☆     ★★☆☆     ☆☆☆☆    ★☆☆☆     ☆☆☆☆    ☆☆☆☆     ☆☆☆☆    ☆☆☆☆    ☆☆☆☆
-optbinning          ★★★★     ★★☆☆     ☆☆☆☆    ☆☆☆☆     ☆☆☆☆    ★★★☆     ☆☆☆☆    ☆☆☆☆    ★★★☆
-scorecardpipeline   ★★★☆     ★★★☆     ☆☆☆☆    ★☆☆☆     ★★★☆    ★★★★     ★☆☆☆    ☆☆☆☆    ☆☆☆☆
-hscredit (当前)     ★★★★     ★★★★     ★★★★    ★★★★     ★★★☆    ★★★★     ★☆☆☆    ☆☆☆☆    ☆☆☆☆
-hscredit (v0.5目标) ★★★★     ★★★★     ★★★★    ★★★★     ★★★★    ★★★★     ★★★★    ★★★★    ★★★☆
-```
-
-**hscredit 的战略定位**：在 toad 的实用性、optbinning 的专业性、scorecardpipeline 的完整性基础上做到全面超越，同时通过「拒绝推断」「完整特征工程」「反事实解释」建立**独家竞争壁垒**。
-
+| 能力 | 说明 |
+|:---|:---|
+| `get_quality_report()` | 输出 IV、KS、Gini、HHI、单调性、样本占比、综合评分 |
+| `batch_to_excel()` | 批量分箱汇总、单变量分箱表、图表和质量报告输出 |
+| `BestPSIBinning` | 在训练/验证集稳定性约束下选择分箱 |
+| `auto_select_bins()` | 根据样本量、唯一值数和监督指标推荐箱数 |
+| `ruleset_overlap_matrix()` | 规则覆盖重叠矩阵 |
+| `rule_effectiveness_tracking()` | 单条规则跨期覆盖率、坏率、Lift 追踪 |
+| `detect_rule_conflicts()` | 规则冲突、包含关系、高重叠检测 |
+| `rule_strategy_simulation()` | 规则集审批率、坏率、通过人群变化仿真 |
+
+验收标准：
+
+1. 批量分箱 Excel 能直接用于业务评审。
+2. 规则分析支持单期和跨期报告。
+3. 每个新增函数有至少一个真实风控语义示例。
+
+### v0.4.0：报告、解释与上线交付
+
+目标：将建模结果转换为更完整的解释报告和上线材料。
+
+计划能力：
+
+| 能力 | 说明 |
+|:---|:---|
+| SHAP 报告 Sheet | 模型解释汇总、Top 特征贡献、依赖图导出 |
+| `ScoreCard.score_segment_analysis()` | 分数段客群特征分布和坏率对比 |
+| `compare_models()` 增强 | 多模型 KS、AUC、Lift、分数分布、校准曲线对比 |
+| `CounterfactualExplainer` | 输出最小特征变化方案和拒绝原因解释 |
+| `scorecard2sql()` | 评分卡 SQL 部署代码导出 |
+| `scorecard2python()` | Python 评分函数导出 |
+| `scorecard2pmml()` | PMML 导出能力完善 |
+
+验收标准：
+
+1. 模型报告可覆盖评分卡和树模型两类主流模型。
+2. 导出代码有单元测试验证预测一致性。
+3. 解释性输出明确标注假设、限制和不可变特征。
+
+### v0.5.0：易用性和生态完善
+
+目标：降低新用户学习成本，形成稳定 API 和教程体系。
+
+计划能力：
+
+| 能力 | 说明 |
+|:---|:---|
+| `hscredit.detect()` | 快速数据画像入口 |
+| `hscredit.quality()` | 快速变量质量评估入口 |
+| `hscredit.select()` | 多条件特征筛选入口 |
+| `hscredit.scorecard_pipeline()` | 标准评分卡 Pipeline 快速构建 |
+| 示例项目 | 贷前评分卡、贷后 Vintage、策略规则、模型监控完整示例 |
+| API 文档 | Sphinx 自动文档和 Notebook 教程 |
+
+## 八、工程质量计划
+
+### 8.1 测试优先级
+
+| 测试目录 | 重点 |
+|:---|:---|
+| `tests/test_binning/` | 各分箱器 fit/transform、边界值、特殊值、单调性、DataFrame 输入 |
+| `tests/test_encoders/` | WOE、Target、Count、类别编码器输出一致性 |
+| `tests/test_selectors/` | 每个筛选器选择结果、报告字段、Pipeline 兼容性 |
+| `tests/test_models/` | LR、ScoreCard、Boosting 可选依赖、损失函数、校准 |
+| `tests/test_metrics/` | KS、AUC、Lift、IV、PSI、CSI 的数值正确性 |
+| `tests/test_eda/` | 数据概览、策略分析、Vintage、稳定性报告 |
+| `tests/test_report/` | 模型报告、规则报告、Swap、Excel 输出 |
+| `tests/test_utils/` | pandas 扩展、IO、随机种子、输入校验 |
+
+### 8.2 CI 与兼容性
+
+建议 CI 矩阵：
+
+| 环境 | 说明 |
+|:---|:---|
+| Python 3.8 | 最低支持版本 |
+| Python 3.9 / 3.10 / 3.11 / 3.12 | 主流生产环境 |
+| Python 3.13 / 3.14 | 跟进验证，特别注意可选依赖支持情况 |
+
+CI 阶段：
+
+1. `pip install -e ".[dev]"`
+2. `make lint`
+3. `make type-check`
+4. `pytest tests/ -m "not slow and not integration"`
+5. `python -m build`
+6. `python -m twine check dist/*`
+
+### 8.3 文档质量要求
+
+1. README 只描述已经实现或明确标注“规划中”的能力。
+2. 示例代码必须与当前公开 API 保持一致。
+3. 每个核心模块至少提供一个最小可运行示例。
+4. 竞品对比避免“全面超越”等绝对化表述。
+5. 涉及监管、拒绝原因、反事实解释等内容必须说明假设和限制。
+
+## 九、当前短期任务清单
+
+| 优先级 | 任务 | 产出 |
+|:---|:---|:---|
+| P0 | 修正 `hscredit.info()` 过期内容 | 顶层信息与当前模块一致 |
+| P0 | 校验 README 示例 | 可运行示例或明确依赖条件 |
+| P0 | 补充 `OptimalBinning2D` 文档 | 示例、参数说明、测试 |
+| P0 | 增加核心 API smoke tests | 导入、fit/transform、报告生成 |
+| P1 | 建立 GitHub Actions | lint、type-check、test、build |
+| P1 | 完善模型报告示例 | 评分卡、树模型各一个端到端示例 |
+| P1 | 增加规则挖掘 notebook | 单特征、多特征、树规则、手工树 |
+| P1 | 分箱质量报告设计 | 指标定义、输出格式、Excel 模板 |
+| P2 | 拒绝推断设计文档 | 方法说明、适用前提、风险提示 |
+| P2 | 特征工程模块接口设计 | Transformer API 和命名规范 |
+
+## 十、长期方向
+
+`hscredit` 的长期方向是成为面向信贷风控团队的场景化建模基础设施，而不是只提供若干算法函数。后续建设重点应落在：
+
+1. 稳定、可测试、可持续发布的工程体系。
+2. 从变量到模型到策略到报告的统一数据结构和审计轨迹。
+3. 贴近业务术语的中文报告和可解释输出。
+4. 面向审批偏差、客群迁移、规则衰减、收益约束的风控专用算法。
+5. 支持模型上线、策略迭代和贷后监控的交付闭环。

@@ -1,16 +1,16 @@
 """人工决策树提取器.
 
 提供决策树规则挖掘的核心工具集，支持：
-- **AutoTreeFitter**：标准 sklearn 决策树训练与评估（AUC/KS/LIFT 等指标）
+- **DecisionTreeAnalyzer**：标准 sklearn 决策树训练、结构导出、规则提取与指标评估
 - **ManualTreeExtractor**：人工干预决策树节点分裂（业务经验注入模型）
 
 **参考样例**
 
->>> # AutoTreeFitter：训练决策树并评估
->>> from hscredit.report.mining import AutoTreeFitter
->>> fitter = AutoTreeFitter(target='target', feature_list=['age', 'income'])
->>> fitter.fit(df_train)
->>> metrics = fitter.evaluate(df_test_list=[('测试', df_test)], metric_type='ks')
+>>> # DecisionTreeAnalyzer：训练决策树并评估
+>>> from hscredit.report.mining import DecisionTreeAnalyzer
+>>> analyzer = DecisionTreeAnalyzer(target='target', feature_list=['age', 'income'])
+>>> analyzer.fit(df_train)
+>>> metrics = analyzer.evaluate(df_test_list=[('测试', df_test)], metric_type='ks')
 >>> print(metrics)
 
 >>> # ManualTreeExtractor：人工分裂
@@ -492,7 +492,7 @@ def _node_hit_report(
 ) -> pd.DataFrame:
     """对单个数据集，汇总每个节点规则 :meth:`Rule.report` 中"命中"分箱的结果行。
 
-    供 :class:`AutoTreeFitter` 和 :class:`ManualTreeExtractor` 的 ``report()`` 方法共用。
+    供 :class:`DecisionTreeAnalyzer` 和 :class:`ManualTreeExtractor` 的 ``report()`` 方法共用。
 
     :param df_rules: 规则 DataFrame（含 node / if_leaf / rule_list 列）
     :param format_rule: 将 rule_list 解析为 :class:`Rule` 对象的函数（空规则返回 None）
@@ -602,16 +602,15 @@ class _SimTree:
 
 
 # ============================================================================
-# AutoTreeFitter：标准 sklearn 决策树训练与评估
+# DecisionTreeAnalyzer：标准 sklearn 决策树分析器
 # ============================================================================
 
 
-class AutoTreeFitter:
-    """sklearn 决策树训练器与评估器。
+class DecisionTreeAnalyzer:
+    """sklearn 决策树分析器。
 
-    提供标准的 sklearn DecisionTreeClassifier 包装，
-    支持 AUC / KS / LIFT 等模型评估指标计算，
-    以及规则提取与树可视化。
+    在标准 sklearn DecisionTreeClassifier 基础上，提供决策树训练、
+    结构导出、规则提取、节点规则评估和 AUC / KS / LIFT 等模型指标计算。
 
     **参数**
 
@@ -632,17 +631,17 @@ class AutoTreeFitter:
 
     **参考样例**
 
-    >>> from hscredit.report.mining import AutoTreeFitter
-    >>> fitter = AutoTreeFitter(target='target', feature_list=['age', 'income'])
-    >>> fitter.fit(df_train)
+    >>> from hscredit.report.mining import DecisionTreeAnalyzer
+    >>> analyzer = DecisionTreeAnalyzer(target='target', feature_list=['age', 'income'])
+    >>> analyzer.fit(df_train)
     >>> # 在测试集上评估
-    >>> metrics = fitter.evaluate([('测试集', df_test)], metric_type='ks')
+    >>> metrics = analyzer.evaluate([('测试集', df_test)], metric_type='ks')
     >>> print(metrics)
     >>> # 获取规则表
-    >>> rules = fitter.get_rules()
+    >>> rules = analyzer.get_rules()
     >>> print(rules)
     >>> # 导出树图
-    >>> fitter.export_tree('tree.dot')
+    >>> analyzer.export_tree('tree.dot')
     """
 
     def __init__(
@@ -706,7 +705,7 @@ class AutoTreeFitter:
     def _tree_info(self) -> _TreeInfo:
         """提供 _TreeInfo 接口代理，兼容 tree_viz 等工具的 _tree_info 访问模式。
 
-        注意：AutoTreeFitter 底层是 sklearn 树，不支持 manual_split 干预。
+        注意：DecisionTreeAnalyzer 底层是 sklearn 树，不支持 manual_split 干预。
         """
         if self.__tree_info_cache is None:
             self.__tree_info_cache = _TreeInfo(
@@ -733,7 +732,7 @@ class AutoTreeFitter:
         feature_list: Optional[List[str]] = None,
         tree_params: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
-    ) -> "AutoTreeFitter":
+    ) -> "DecisionTreeAnalyzer":
         """训练决策树。
 
         :param df: 包含特征和目标变量的 DataFrame
@@ -745,11 +744,11 @@ class AutoTreeFitter:
 
         **参考样例**
 
-        >>> fitter = AutoTreeFitter(target='target')
-        >>> fitter.fit(df_train, feature_list=['age', 'income', 'loan'])
+        >>> analyzer = DecisionTreeAnalyzer(target='target')
+        >>> analyzer.fit(df_train, feature_list=['age', 'income', 'loan'])
         >>> # 使用 ccp_alpha 后剪枝
-        >>> fitter2 = AutoTreeFitter(target='target')
-        >>> fitter2.fit(df_train, ccp_alpha=0.01)
+        >>> analyzer2 = DecisionTreeAnalyzer(target='target')
+        >>> analyzer2.fit(df_train, ccp_alpha=0.01)
         """
         # 特征列表
         if feature_list is not None:
@@ -982,7 +981,7 @@ class AutoTreeFitter:
             if rule is None:
                 # 叶子节点必然带有规则路径，空规则（根节点）理论上不会出现，稳妥跳过
                 continue
-            rule.name = f"AutoTree_N{int(row['node'])}"
+            rule.name = f"DecisionTree_N{int(row['node'])}"
             rules.append(rule)
         return rules
 
@@ -1133,15 +1132,15 @@ class AutoTreeFitter:
             pickle.dump(payload, f)
 
     @classmethod
-    def load(cls, file_path: str) -> "AutoTreeFitter":
+    def load(cls, file_path: str) -> "DecisionTreeAnalyzer":
         """从 pickle 文件加载决策树。
 
         :param file_path: 模型文件路径
-        :return: 加载后的 AutoTreeFitter 实例
+        :return: 加载后的 DecisionTreeAnalyzer 实例
 
         **参考样例**
 
-        >>> fitter2 = AutoTreeFitter.load('dt_model.pkl')
+        >>> analyzer2 = DecisionTreeAnalyzer.load('dt_model.pkl')
         """
         with open(file_path, "rb") as f:
             payload = pickle.load(f)
@@ -1170,12 +1169,11 @@ class AutoTreeFitter:
         if self._is_fitted:
             n_leaves = int(self._df_rules["if_leaf"].sum()) if self._df_rules is not None else 0
             return (
-                f"AutoTreeFitter(target='{self.target}', "
+                f"DecisionTreeAnalyzer(target='{self.target}', "
                 f"features={self.feature_list}, "
                 f"leaves={n_leaves})"
             )
-        return "AutoTreeFitter(not fitted)"
-
+        return "DecisionTreeAnalyzer(not fitted)"
 
 # ============================================================================
 # ManualTreeExtractor：人工干预决策树节点分裂
