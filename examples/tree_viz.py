@@ -108,7 +108,8 @@ def _extract_tree_from_mte(mte) -> Dict[str, Any]:
     impurity = ti.impurity
     feat_names = ti.feature_names or []
     n_classes = ti.n_classes or 2
-    total_samples = sum(n_samples) if n_samples else 1
+    # 全部样本总数 = 根节点(node 0)样本数；样本占比 = 节点样本数 / 根节点样本数。
+    total_samples = n_samples[0] if n_samples and n_samples[0] > 0 else 1
     manual_nodes = mte._manual_split_nodes
 
     return _build_tree_data(
@@ -133,7 +134,8 @@ def _extract_tree_from_sklearn(clf, feature_names: Optional[List[str]] = None) -
     if not feat_names:
         feat_names = [f"特征[{i}]" for i in range(n_features_in_)]
     n_classes = tree.n_classes_[0] if hasattr(tree, "n_classes_") else 2
-    total_samples = sum(n_samples) if n_samples else 1
+    # 全部样本总数 = 根节点(node 0)样本数；样本占比 = 节点样本数 / 根节点样本数。
+    total_samples = n_samples[0] if n_samples and n_samples[0] > 0 else 1
     manual_nodes = set()
 
     return _build_tree_data(
@@ -165,16 +167,14 @@ def _build_tree_data(
     edges = []
 
     # 计算整体坏账率（用于 LIFT 计算）
-    total_bad = 0.0
-    total_sample_count = 0
-    for node_id in range(n_nodes):
-        n_s = n_samples[node_id] if node_id < len(n_samples) else 0
-        vals_n = values[node_id] if node_id < len(values) else [[0.5] * n_classes]
-        if n_classes == 2 and n_s > 0:
-            val1 = vals_n[0][1] if vals_n else 0.5
-            total_bad += val1 * n_s
-            total_sample_count += n_s
-    overall_bad_rate = total_bad / total_sample_count if total_sample_count > 0 else 0.0
+    # 整体坏账率 = 根节点(node 0)坏账率（全量样本坏账率），不能对所有节点求和。
+    root_total = n_samples[0] if n_samples else 0
+    root_vals = values[0] if values else None
+    if n_classes == 2 and root_vals and root_total > 0:
+        root_bad = int(round((root_vals[0][1] if root_vals else 0.0) * root_total))
+        overall_bad_rate = root_bad / root_total
+    else:
+        overall_bad_rate = 0.0
 
     # 计算每个节点的层级深度
     depths = _compute_node_depths(n_nodes, children_left, children_right)
@@ -252,7 +252,7 @@ def _build_tree_data(
             "is_leaf": is_leaf,
             "is_manual": is_manual,
             "n_samples": node_total,
-            "sample_pct": node_total / total_sample_count if total_sample_count > 0 else 0,
+            "sample_pct": node_total / total_samples if total_samples > 0 else 0,
             "good_count": good_count,
             "bad_count": bad_count,
             "bad_rate": bad_rate,
@@ -285,7 +285,7 @@ def _build_tree_data(
     return {
         "nodes": nodes,
         "edges": edges,
-        "total_samples": total_sample_count,
+        "total_samples": total_samples,
         "overall_bad_rate": overall_bad_rate,
     }
 

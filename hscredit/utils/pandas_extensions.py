@@ -971,7 +971,7 @@ def style_rule_table(
 
     >>> from hscredit.report.mining import ManualTreeExtractor
     >>> ext = ManualTreeExtractor(target='IS_BAD')
-    >>> ext.fit(df, feature_list=['age', 'income'])
+    >>> ext.fit(df, features=['age', 'income'])
     >>> styled = style_rule_table(ext.get_rule_table())
     >>> styled.show()
     """

@@ -20,7 +20,7 @@
     >>> rules = extractor.extract_rules()
 
     >>> from hscredit.report.mining import DecisionTreeAnalyzer
-    >>> analyzer = DecisionTreeAnalyzer(target='target', feature_list=['age', 'income'])
+    >>> analyzer = DecisionTreeAnalyzer(target='target', features=['age', 'income'])
     >>> analyzer.fit(df_train)
     >>> print(analyzer.evaluate([('测试', df_test)], metric_type='ks'))
 """

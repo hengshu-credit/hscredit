@@ -8,7 +8,7 @@
 
 >>> # DecisionTreeAnalyzer：训练决策树并评估
 >>> from hscredit.report.mining import DecisionTreeAnalyzer
->>> analyzer = DecisionTreeAnalyzer(target='target', feature_list=['age', 'income'])
+>>> analyzer = DecisionTreeAnalyzer(target='target', features=['age', 'income'])
 >>> analyzer.fit(df_train)
 >>> metrics = analyzer.evaluate(df_test_list=[('测试', df_test)], metric_type='ks')
 >>> print(metrics)
@@ -16,8 +16,8 @@
 >>> # ManualTreeExtractor：人工分裂
 >>> from hscredit.report.mining import ManualTreeExtractor
 >>> ext = ManualTreeExtractor(target='target')
->>> ext.fit(df, feature_list=['age', 'income'])
->>> ext.manual_split(df, feature_name='age', threshold=35)
+>>> ext.fit(df, features=['age', 'income'])
+>>> ext.manual_split(df, feature='age', threshold=35)
 >>> print(ext.get_rule_table())
 """
 
@@ -27,11 +27,30 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
+import sklearn
 from sklearn.tree import DecisionTreeClassifier, export_graphviz
 
 from ...core.rules.rule import Rule
 from ...exceptions import InputValidationError
 from ...utils.pandas_extensions import style_rule_table
+
+
+def _sklearn_supports_native_missing() -> bool:
+    """判断当前 sklearn 版本是否支持决策树原生缺失值（>= 1.3）。
+
+    sklearn 1.3 起 DecisionTree 支持训练/预测含缺失值的数据，并在 ``tree_`` 上
+    暴露 ``missing_go_to_left`` 记录缺失样本的路由方向；旧版本不支持，含缺失数据
+    需先填充（通过 ``missing`` 参数指定等价填充数值）。
+    """
+    try:
+        major, minor = (int(p) for p in sklearn.__version__.split(".")[:2])
+    except Exception:
+        return False
+    return (major, minor) >= (1, 3)
+
+
+# 当前 sklearn 是否支持决策树原生缺失值（模块加载时计算一次）
+_SKLEARN_NATIVE_MISSING = _sklearn_supports_native_missing()
 
 # ============================================================================
 # 指标计算 — 优先使用 hscredit.core.metrics 中的统一实现
@@ -92,15 +111,133 @@ def _lift_table_local(y_true, y_score, n_bins=10):
 # 决策树工具函数
 # ============================================================================
 
-def _rule_generator(clf, feature_name_list: List[str]) -> pd.DataFrame:
+def _impute_features(data: pd.DataFrame, feature_list: List[str], missing: Optional[float]) -> pd.DataFrame:
+    """按 missing 填充特征缺失值；missing 为 None 时原样返回。
+
+    用于训练/预测前将缺失等价为指定数值，使其与规则的缺失处理口径一致，
+    同时让不支持原生缺失的旧版 sklearn 也能正常训练。
+
+    :param data: 输入数据
+    :param feature_list: 需要填充的特征列
+    :param missing: 缺失填充数值，None 表示不填充
+    :return: 仅特征列被填充后的 DataFrame（其余列保持不变）
+    """
+    if missing is None:
+        return data
+    filled = data.copy()
+    filled[feature_list] = filled[feature_list].fillna(missing)
+    return filled
+
+
+def _prepare_training_features(
+    data: pd.DataFrame, feature_list: List[str], missing: Optional[float], owner: str
+) -> np.ndarray:
+    """根据 sklearn 版本与 missing 参数准备训练特征矩阵。
+
+    - 指定 ``missing``：将缺失等价为该数值后训练（任意 sklearn 版本均可）；
+    - 未指定且 sklearn 支持原生缺失（>=1.3）：保留缺失，交由决策树原生处理；
+    - 未指定且旧版 sklearn 且数据含缺失：抛出明确提示，引导设置 ``missing``。
+
+    :param data: 训练数据（已过滤目标缺失）
+    :param feature_list: 特征列
+    :param missing: 缺失等价填充数值，None 表示按 sklearn 版本自动处理
+    :param owner: 调用方名称（用于错误信息）
+    :return: 训练特征矩阵 ndarray
+    :raises InputValidationError: 旧版 sklearn 且含缺失但未指定 missing 时
+    """
+    feat = data[feature_list]
+    if missing is not None:
+        return feat.fillna(missing).values
+    if bool(feat.isna().any().any()) and not _SKLEARN_NATIVE_MISSING:
+        raise InputValidationError(
+            f"{owner}：训练数据包含缺失值，当前 sklearn 版本（{sklearn.__version__} < 1.3）"
+            "不支持决策树原生缺失值；请在初始化时传入 missing 指定缺失值的等价填充数值"
+            "（例如 missing=-999）"
+        )
+    return feat.values
+
+
+def _resolve_fit_data(
+    X: Union[pd.DataFrame, np.ndarray],
+    y: Optional[Union[pd.Series, np.ndarray, List]] = None,
+    features: Optional[List[str]] = None,
+    target: str = "target",
+) -> Tuple[pd.DataFrame, List[str]]:
+    """统一解析 sklearn 风格 (X, y) 与 scorecardpipeline 风格 (df) 两种调用方式。
+
+    - ``y`` 不为 None：sklearn 风格，``X`` 为特征矩阵（DataFrame 或 ndarray），
+      ``y`` 为目标变量，目标列由 ``y`` 提供；
+    - ``y`` 为 None：scorecardpipeline 风格，``X`` 为含目标列的 DataFrame，从中提取目标。
+
+    :param X: 特征矩阵或含目标列的 DataFrame
+    :param y: 目标变量（可选）；传入时优先按 sklearn 风格解析
+    :param features: 特征名列表（可选）。未指定时：scorecardpipeline 风格取除目标外的
+        数值列；sklearn 风格的 DataFrame 取全部列，ndarray 取 ``feature_0`` 等默认名
+    :param target: 目标列名
+    :return: ``(含目标列的 DataFrame, 特征名列表)``
+    :raises InputValidationError: 入参不满足任一风格时
+    """
+    if y is not None:
+        # sklearn 风格：X=特征，y=标签
+        if isinstance(X, pd.DataFrame):
+            data = X.copy()
+            inferred = [c for c in data.columns if c != target]
+        else:
+            arr = np.asarray(X)
+            if arr.ndim == 1:
+                arr = arr.reshape(-1, 1)
+            inferred = list(features) if features is not None else [f"feature_{i}" for i in range(arr.shape[1])]
+            data = pd.DataFrame(arr, columns=inferred)
+        y_arr = np.asarray(y.values if isinstance(y, pd.Series) else y).ravel()
+        if len(y_arr) != len(data):
+            raise InputValidationError(f"特征与标签数量不匹配：{len(data)} != {len(y_arr)}")
+        data = data.copy()
+        data[target] = y_arr
+        feats = list(features) if features is not None else inferred
+    else:
+        # scorecardpipeline 风格：X=含目标列的 DataFrame
+        if not isinstance(X, pd.DataFrame):
+            raise InputValidationError(
+                "未传入 y 时按 scorecardpipeline 风格解析：X 需为包含目标列的 DataFrame；"
+                "若按 sklearn 风格请同时传入 y"
+            )
+        if target not in X.columns:
+            raise InputValidationError(
+                f"目标列 '{target}' 未在数据中找到；请传入 y（sklearn 风格）"
+                f"或在 DataFrame 中包含 '{target}' 列（scorecardpipeline 风格）"
+            )
+        data = X
+        if features is not None:
+            feats = list(features)
+        else:
+            feats = [c for c in X.columns if c != target and pd.api.types.is_numeric_dtype(X[c])]
+    return data, feats
+
+
+def _rule_generator(
+    clf, feature_name_list: List[str], missing: Optional[float] = None
+) -> pd.DataFrame:
     """从训练好的决策树（或模拟树对象）提取规则 DataFrame。
 
     遍历每个非根节点，根据其父节点路径构建分裂条件。
 
     :param clf: 已训练的 sklearn 决策树分类器，或包含 tree_ 属性的模拟对象
     :param feature_name_list: 特征名列表
+    :param missing: 缺失值的等价填充数值（可选），按 sklearn 版本自动适配：
+
+        - ``None``（默认）：新版 sklearn（>=1.3）读取 ``tree_.missing_go_to_left``
+          按决策树学到的方向路由缺失；旧版 sklearn 无原生缺失支持，按"缺失走右"
+          （与 pandas eval 中 ``NaN`` 比较恒为 False、人工分裂缺失归右一致）。
+        - 数值：将缺失等价为该数值参与比较（如训练前已将缺失填充为 -999，则传入
+          ``missing=-999``），按该数值是否满足各分裂条件决定缺失样本流向，
+          适用于不支持原生缺失的旧版 sklearn。
     :return: 规则 DataFrame，含列：
         node / if_leaf / rule_list / node_path / node_samples / node_value / impurity
+
+    .. note::
+        当某节点缺失样本被路由到当前路径方向时，对应条件追加 ``| (特征 != 特征)``
+        （``NaN != NaN`` 为 True，用于在 pandas eval 中识别缺失），确保规则在数据集
+        上的命中样本数与决策树节点样本数完全一致。
     """
     children_left = list(clf.tree_.children_left)
     children_right = list(clf.tree_.children_right)
@@ -109,6 +246,25 @@ def _rule_generator(clf, feature_name_list: List[str]) -> pd.DataFrame:
     node_samples = list(clf.tree_.n_node_samples)
     node_values = list(clf.tree_.value)
     node_impurity = list(clf.tree_.impurity)
+    # 缺失值路由方向：1=缺失走左子节点(<=)，0=缺失走右子节点(>)。
+    # 仅当未指定 missing 且 sklearn 支持原生缺失（>=1.3）时读取决策树学到的方向，
+    # 否则按 0 处理（缺失走右，与 pandas eval、人工分裂缺失归右一致）。
+    if missing is None and _SKLEARN_NATIVE_MISSING:
+        missing_go_to_left = list(getattr(clf.tree_, "missing_go_to_left", []))
+    else:
+        missing_go_to_left = []
+    if len(missing_go_to_left) < len(feature):
+        missing_go_to_left = missing_go_to_left + [0] * (len(feature) - len(missing_go_to_left))
+
+    def _edge_includes_nan(node: int, operator: str) -> bool:
+        """判断该分裂边方向上缺失样本是否随之流动。
+
+        指定 missing 时按"缺失等价为该数值"判断（数值是否满足该边条件）；
+        否则按决策树的缺失值路由方向（missing_go_to_left）判断。
+        """
+        if missing is not None:
+            return (missing <= threshold[node]) if operator == "<=" else (missing > threshold[node])
+        return (missing_go_to_left[node] == 1) if operator == "<=" else (missing_go_to_left[node] == 0)
 
     def _find_father_path(node: int, father_path: List[str] = None) -> List[str]:
         """递归查找从根节点到目标节点的路径描述。"""
@@ -132,28 +288,36 @@ def _rule_generator(clf, feature_name_list: List[str]) -> pd.DataFrame:
     def _father_path_to_rule(father_path: List[str]) -> Tuple[List[str], List]:
         """将路径描述转换为特征分裂规则列表。
 
-        对同一特征的多个条件取交集（合并 max/min 阈值）。
-        返回 (路径ID列表, 规则列表[(特征名, 操作符, 阈值), ...])
+        对同一特征的多个条件取交集（合并 max/min 阈值），并按缺失值路由方向
+        标记是否需要纳入缺失样本（特征级别取交集：仅当该特征所有相关分裂节点的
+        缺失值都沿当前路径方向流动时，缺失样本才会到达当前节点）。
+        返回 (路径ID列表, 规则列表[[特征名, 操作符, 阈值, 是否含缺失], ...])
         """
-        rule_list = []
+        edges = []
+        # 特征级"缺失是否随路径流动"标记：对该特征的所有边取逻辑与
+        nan_follows_feat: Dict[str, bool] = {}
         for node_tmp in father_path:
             node = int(node_tmp.split(",")[0])
             operator = node_tmp.split(",")[1]
-            rule_list.append([feature_name_list[feature[node]], operator, threshold[node]])
+            feat = feature_name_list[feature[node]]
+            edges.append([feat, operator, threshold[node]])
+            # 该边方向上缺失样本是否随之流动（按 missing 或 missing_go_to_left 判定）
+            nan_follows_feat[feat] = nan_follows_feat.get(feat, True) and _edge_includes_nan(node, operator)
 
         # 按特征聚合：同一特征的多个条件取交集
-        rule_df = pd.DataFrame(rule_list, columns=["feature_name", "operator", "threshold"])
+        rule_df = pd.DataFrame(edges, columns=["feature_name", "operator", "threshold"])
         grouped = rule_df.groupby(["feature_name", "operator"], observed=True).agg(
             {"threshold": ["max", "min"]}
         )
         final_rule = []
         for idx in grouped.index:
+            feat = idx[0]
             thres = (
                 grouped.loc[idx, ("threshold", "min")]
                 if idx[1] == "<="
                 else grouped.loc[idx, ("threshold", "max")]
             )
-            final_rule.append(list(idx) + [thres])
+            final_rule.append([feat, idx[1], thres, nan_follows_feat.get(feat, False)])
         return father_path, final_rule
 
     result = {
@@ -256,7 +420,9 @@ def _add_nodes_to_tree(
     node_samples_new: List[int],
     node_values_new: List,
     node_impurity_new: List[float],
-) -> Tuple[List, List, List, List, List, List, List]:
+    missing_go_to_left: Optional[List[int]] = None,
+    missing_go_to_left_new: Optional[List[int]] = None,
+) -> Tuple[List, List, List, List, List, List, List, List]:
     """向现有树结构的指定节点插入一棵子树。
 
     用于在决策树中指定节点处插入新的分裂分支。
@@ -277,6 +443,8 @@ def _add_nodes_to_tree(
     :param node_samples_new: 新子树节点样本数列表
     :param node_values_new: 新子树节点值列表
     :param node_impurity_new: 新子树节点不纯度列表
+    :param missing_go_to_left: 原树缺失值路由方向列表
+    :param missing_go_to_left_new: 新子树缺失值路由方向列表
     :return: 更新后的树结构元组
     """
     split_list_left_new = list(split_list_left_new)
@@ -286,6 +454,11 @@ def _add_nodes_to_tree(
     node_samples_new = list(node_samples_new)
     node_values_new = list(node_values_new)
     node_impurity_new = list(node_impurity_new)
+    if missing_go_to_left is None:
+        missing_go_to_left = [0] * len(feature)
+    if missing_go_to_left_new is None:
+        missing_go_to_left_new = [0] * len(feature_new)
+    missing_go_to_left_new = list(missing_go_to_left_new)
 
     if node == 0:
         return (
@@ -296,6 +469,7 @@ def _add_nodes_to_tree(
             node_samples_new,
             node_values_new,
             node_impurity_new,
+            missing_go_to_left_new,
         )
 
     # 为避免节点 ID 冲突，将新子树节点 ID 偏移
@@ -311,6 +485,7 @@ def _add_nodes_to_tree(
     node_samples[node] = node_samples_new[0]
     node_values[node] = node_values_new[0]
     node_impurity[node] = node_impurity_new[0]
+    missing_go_to_left[node] = missing_go_to_left_new[0]
 
     # 追加新子树剩余节点
     split_list_left += split_list_left_new[1:]
@@ -320,6 +495,7 @@ def _add_nodes_to_tree(
     node_samples += node_samples_new[1:]
     node_values += node_values_new[1:]
     node_impurity += node_impurity_new[1:]
+    missing_go_to_left += missing_go_to_left_new[1:]
 
     return (
         split_list_left,
@@ -329,6 +505,7 @@ def _add_nodes_to_tree(
         node_samples,
         node_values,
         node_impurity,
+        missing_go_to_left,
     )
 
 
@@ -341,7 +518,8 @@ def _delete_nodes(
     node_samples: List[int],
     node_values: List,
     node_impurity: List[float],
-) -> Tuple[List, List, List, List, List, List, List]:
+    missing_go_to_left: Optional[List[int]] = None,
+) -> Tuple[List, List, List, List, List, List, List, List]:
     """删除树中指定节点及其所有子节点，将该节点变为叶子节点。
 
     :param node: 待删除节点 ID
@@ -352,9 +530,12 @@ def _delete_nodes(
     :param node_samples: 节点样本数列表
     :param node_values: 节点值列表
     :param node_impurity: 节点不纯度列表
+    :param missing_go_to_left: 缺失值路由方向列表
     :return: 更新后的树结构元组
     """
     snd = node
+    if missing_go_to_left is None:
+        missing_go_to_left = [0] * len(feature)
 
     def _del_children_iter(
         start_node: int, left_list: List[int], right_list: List[int]
@@ -417,8 +598,9 @@ def _delete_nodes(
     n_samples_new: List[int] = []
     val_new: List = []
     impur_new: List[float] = []
+    mgl_new: List[int] = []
 
-    for a, b, c, d, f, g, h, m in zip(
+    for a, b, c, d, f, g, h, k, m in zip(
         split_list_left,
         split_list_right,
         feature,
@@ -426,6 +608,7 @@ def _delete_nodes(
         node_samples,
         node_values,
         node_impurity,
+        missing_go_to_left,
         list(range(len(split_list_left))),
     ):
         if a == 0 and b == 0:
@@ -443,6 +626,7 @@ def _delete_nodes(
         n_samples_new.append(f)
         val_new.append(g)
         impur_new.append(h)
+        mgl_new.append(k)
 
     return (
         split_left_new,
@@ -452,6 +636,7 @@ def _delete_nodes(
         n_samples_new,
         val_new,
         impur_new,
+        mgl_new,
     )
 
 
@@ -571,6 +756,8 @@ class _TreeInfo:
         self.n_node_samples: List[int] = []
         self.value: List = []
         self.impurity: List[float] = []
+        # 缺失值路由方向：每节点 1=缺失走左(<=)，0=缺失走右(>)
+        self.missing_go_to_left: List[int] = []
         self.n_outputs = 1
         self.n_classes = n_classes
 
@@ -590,6 +777,7 @@ class _SimTree:
         n_node_samples: List[int],
         value: List,
         impurity: List[float],
+        missing_go_to_left: Optional[List[int]] = None,
     ):
         # 将自身作为 .tree_ 属性暴露，兼容 _rule_generator(clf.tree_) 的访问方式
         self.tree_ = self
@@ -600,6 +788,10 @@ class _SimTree:
         self.n_node_samples = n_node_samples
         self.value = value
         self.impurity = impurity
+        # 缺失值路由方向，缺省按 0（缺失走右，与 pandas eval 行为一致）
+        self.missing_go_to_left = (
+            list(missing_go_to_left) if missing_go_to_left is not None else [0] * len(feature)
+        )
 
 
 # ============================================================================
@@ -616,7 +808,7 @@ class DecisionTreeAnalyzer:
     **参数**
 
     :param target: 目标变量列名（0=好样本，1=坏样本）
-    :param feature_list: 特征名列表（默认自动从数据中推断数值列）
+    :param features: 特征名列表（默认自动从数据中推断数值列）
     :param tree_params: 决策树参数字典，默认值如下：
 
         ============ ================================
@@ -633,7 +825,7 @@ class DecisionTreeAnalyzer:
     **参考样例**
 
     >>> from hscredit.report.mining import DecisionTreeAnalyzer
-    >>> analyzer = DecisionTreeAnalyzer(target='target', feature_list=['age', 'income'])
+    >>> analyzer = DecisionTreeAnalyzer(target='target', features=['age', 'income'])
     >>> analyzer.fit(df_train)
     >>> # 在测试集上评估
     >>> metrics = analyzer.evaluate([('测试集', df_test)], metric_type='ks')
@@ -648,14 +840,15 @@ class DecisionTreeAnalyzer:
     def __init__(
         self,
         target: str = "target",
-        feature_list: Optional[List[str]] = None,
+        features: Optional[List[str]] = None,
         tree_params: Optional[Dict[str, Any]] = None,
+        missing: Optional[float] = None,
         **kwargs: Any,
     ):
         """初始化决策树训练器。
 
         :param target: 目标变量列名（0=好样本，1=坏样本）
-        :param feature_list: 特征名列表（默认自动从数据中推断数值列）
+        :param features: 特征名列表（默认自动从数据中推断数值列）
         :param tree_params: 决策树参数字典，默认值如下：
 
             ============ ================================
@@ -669,12 +862,19 @@ class DecisionTreeAnalyzer:
             random_state  0
             ============ ================================
 
+        :param missing: 缺失值的等价填充数值（可选），按 sklearn 版本自动适配缺失处理。
+            ``None``（默认）时：新版 sklearn（>=1.3）按决策树学到的缺失值路由方向处理；
+            旧版 sklearn 无原生缺失支持，含缺失数据需传入本参数。传入数值时，训练/预测/
+            规则评估均将缺失等价为该数值，使规则命中样本数与决策树节点样本数完全一致，
+            并兼容不支持原生缺失的旧版 sklearn（例如训练前已将缺失填充为 -999，则传入
+            ``missing=-999``）。
         :param kwargs: sklearn DecisionTreeClassifier 的其他参数，直接透传给底层分类器。
             例如：`ccp_alpha=0.01`、`class_weight='balanced'`、`min_weight_fraction_leaf=0.1` 等。
         """
         self.target = target
-        self.feature_list = feature_list or []
+        self.features = features or []
         self.tree_params = tree_params or {}
+        self.missing = missing
         self._sklearn_kwargs: Dict[str, Any] = kwargs
 
         # 默认树参数
@@ -710,7 +910,7 @@ class DecisionTreeAnalyzer:
         """
         if self.__tree_info_cache is None:
             self.__tree_info_cache = _TreeInfo(
-                self.feature_list,
+                self.features,
                 int(self.clf.tree_.n_classes_[0]) if hasattr(self.clf.tree_, "n_classes_") else 2,
             )
             tree = self.clf.tree_
@@ -721,6 +921,9 @@ class DecisionTreeAnalyzer:
             self.__tree_info_cache.n_node_samples = list(tree.n_node_samples)
             self.__tree_info_cache.value = [list(v) for v in tree.value]
             self.__tree_info_cache.impurity = list(tree.impurity)
+            self.__tree_info_cache.missing_go_to_left = list(
+                getattr(tree, "missing_go_to_left", [0] * len(tree.feature))
+            )
         return self.__tree_info_cache
 
     # -------------------------------------------------------------------------
@@ -729,15 +932,24 @@ class DecisionTreeAnalyzer:
 
     def fit(
         self,
-        df: pd.DataFrame,
-        feature_list: Optional[List[str]] = None,
+        X: Union[pd.DataFrame, np.ndarray],
+        y: Optional[Union[pd.Series, np.ndarray]] = None,
+        features: Optional[List[str]] = None,
         tree_params: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> "DecisionTreeAnalyzer":
         """训练决策树。
 
-        :param df: 包含特征和目标变量的 DataFrame
-        :param feature_list: 特征名列表（默认使用除 target 外的所有数值列）
+        支持两种 API 风格：
+
+        - **sklearn 风格**：``fit(X, y)``，``X`` 为特征矩阵（DataFrame/ndarray），``y`` 为标签；
+        - **scorecardpipeline 风格**：``fit(df, features=[...])``，``df`` 含目标列，
+          目标列名由初始化 ``target`` 指定。
+
+        :param X: 特征矩阵（sklearn 风格）或含目标列的 DataFrame（scorecardpipeline 风格）
+        :param y: 目标变量（可选）；传入时按 sklearn 风格解析，优先于 ``X`` 中的目标列
+        :param features: 特征名列表（默认：scorecardpipeline 风格取除 target 外的数值列，
+            未指定时回退到构造参数 ``features``）
         :param tree_params: 决策树参数字典（与构造参数合并，覆盖默认参数）
         :param kwargs: sklearn DecisionTreeClassifier 的其他参数，直接透传给底层分类器。
             优先级最高，会覆盖默认参数、tree_params 和构造参数中的同名值。
@@ -745,24 +957,20 @@ class DecisionTreeAnalyzer:
 
         **参考样例**
 
+        >>> # scorecardpipeline 风格
         >>> analyzer = DecisionTreeAnalyzer(target='target')
-        >>> analyzer.fit(df_train, feature_list=['age', 'income', 'loan'])
+        >>> analyzer.fit(df_train, features=['age', 'income', 'loan'])
+        >>> # sklearn 风格
+        >>> DecisionTreeAnalyzer(target='target').fit(X_train, y_train)
         >>> # 使用 ccp_alpha 后剪枝
-        >>> analyzer2 = DecisionTreeAnalyzer(target='target')
-        >>> analyzer2.fit(df_train, ccp_alpha=0.01)
+        >>> DecisionTreeAnalyzer(target='target').fit(df_train, ccp_alpha=0.01)
         """
-        # 特征列表
-        if feature_list is not None:
-            self.feature_list = list(feature_list)
-        elif not self.feature_list:
-            self.feature_list = [
-                c
-                for c in df.columns
-                if c != self.target and pd.api.types.is_numeric_dtype(df[c])
-            ]
+        # 解析双 API：sklearn 风格 (X, y) 或 scorecardpipeline 风格 (df)
+        resolved_features = features if features is not None else (self.features or None)
+        df, self.features = _resolve_fit_data(X, y, resolved_features, self.target)
 
         # 过滤缺失数据
-        self._data = df.loc[df[self.target].notna(), self.feature_list + [self.target]].copy()
+        self._data = df.loc[df[self.target].notna(), self.features + [self.target]].copy()
 
         # 合并参数：默认参数 → 构造参数 → 调用参数 → kwargs（优先级最高）
         params = {**self._default_params, **self.tree_params}
@@ -770,14 +978,15 @@ class DecisionTreeAnalyzer:
             params = {**params, **tree_params}
         params = {**params, **self._sklearn_kwargs, **kwargs}
 
-        # 训练
+        # 训练（按 sklearn 版本与 missing 自动处理缺失：指定 missing 则等价填充，
+        # 新版 sklearn 原生支持缺失，旧版含缺失且未指定 missing 时给出明确提示）
         self.clf = DecisionTreeClassifier(**params)
-        X = self._data[self.feature_list].values
+        X = _prepare_training_features(self._data, self.features, self.missing, "DecisionTreeAnalyzer")
         y = self._data[self.target].values
         self.clf.fit(X, y)
 
         self._is_fitted = True
-        self._df_rules = _rule_generator(self.clf, self.feature_list)
+        self._df_rules = _rule_generator(self.clf, self.features, missing=self.missing)
         return self
 
     # -------------------------------------------------------------------------
@@ -792,7 +1001,8 @@ class DecisionTreeAnalyzer:
         """
         self._check_fitted()
         data = df if df is not None else self._data
-        return self.clf.predict(data[self.feature_list].values)
+        data = _impute_features(data, self.features, self.missing)
+        return self.clf.predict(data[self.features].values)
 
     def predict_proba(self, df: Optional[pd.DataFrame] = None) -> np.ndarray:
         """预测类别概率。
@@ -802,7 +1012,8 @@ class DecisionTreeAnalyzer:
         """
         self._check_fitted()
         data = df if df is not None else self._data
-        return self.clf.predict_proba(data[self.feature_list].values)
+        data = _impute_features(data, self.features, self.missing)
+        return self.clf.predict_proba(data[self.features].values)
 
     def apply(self, df: Optional[pd.DataFrame] = None) -> np.ndarray:
         """返回每个样本所属叶子节点的编号。
@@ -817,7 +1028,8 @@ class DecisionTreeAnalyzer:
         """
         self._check_fitted()
         data = df if df is not None else self._data
-        return self.clf.apply(data[self.feature_list].values)
+        data = _impute_features(data, self.features, self.missing)
+        return self.clf.apply(data[self.features].values)
 
     # -------------------------------------------------------------------------
     # 评估
@@ -1048,7 +1260,10 @@ class DecisionTreeAnalyzer:
             feat = item[0]
             op = item[1]
             thres = f"{item[2]:.4f}" if isinstance(item[2], float) else str(item[2])
-            parts.append(f"{feat} {op} {thres}")
+            # 第 4 个元素为是否纳入缺失样本，True 时追加"(含缺失)"标记
+            include_nan = bool(item[3]) if len(item) > 3 else False
+            text = f"{feat} {op} {thres}"
+            parts.append(f"{text}(含缺失)" if include_nan else text)
         return " 且 ".join(parts)
 
     def _format_rule(self, rule_list: List) -> Optional[Rule]:
@@ -1059,7 +1274,8 @@ class DecisionTreeAnalyzer:
 
         根节点对应的空规则返回 None。
 
-        :param rule_list: 规则列表，元素为 ``[特征名, 操作符, 阈值]``
+        :param rule_list: 规则列表，元素为 ``[特征名, 操作符, 阈值, 是否含缺失]``
+            （第 4 个元素标记该条件是否需纳入缺失样本，由决策树缺失值路由方向决定）
         :return: 解析得到的 Rule 对象；空规则返回 None
         """
         if not rule_list:
@@ -1069,13 +1285,23 @@ class DecisionTreeAnalyzer:
         return Rule(expr=expr, name=text, description=text)
 
     def _rule_to_expr(self, rule_list: List) -> str:
-        """将规则列表转换为 pandas eval 表达式。"""
+        """将规则列表转换为 pandas eval 表达式。
+
+        当规则需纳入缺失样本时（决策树将缺失值路由到当前路径方向），对应条件追加
+        ``| (特征 != 特征)``（NaN != NaN 为 True，用于在 pandas eval 中识别缺失），
+        确保命中样本数与决策树节点样本数完全一致。
+        """
         if not rule_list:
             return "True"
         parts = []
-        for feat, op, thres in rule_list:
+        for item in rule_list:
+            feat, op, thres = item[0], item[1], item[2]
+            include_nan = bool(item[3]) if len(item) > 3 else False
             feat_esc = f"`{feat}`" if not str(feat).isidentifier() else str(feat)
-            parts.append(f"({feat_esc} {op} {repr(float(thres))})")
+            cond = f"({feat_esc} {op} {repr(float(thres))})"
+            if include_nan:
+                cond = f"({cond} | ({feat_esc} != {feat_esc}))"
+            parts.append(cond)
         return " & ".join(parts)
 
     # -------------------------------------------------------------------------
@@ -1106,7 +1332,7 @@ class DecisionTreeAnalyzer:
             class_names = ["好", "坏"]
         return _export_dot_data(
             self.clf,
-            self.feature_list,
+            self.features,
             class_names=class_names,
             out_file=out_file,
             max_depth=max_depth,
@@ -1129,9 +1355,10 @@ class DecisionTreeAnalyzer:
         self._check_fitted()
         payload = {
             "clf": self.clf,
-            "feature_list": self.feature_list,
+            "features": self.features,
             "target": self.target,
             "tree_params": self.tree_params,
+            "missing": self.missing,
         }
         if include_data and self._data is not None:
             payload["_data"] = self._data
@@ -1153,14 +1380,17 @@ class DecisionTreeAnalyzer:
             payload = pickle.load(f)
         instance = cls(
             target=payload["target"],
-            feature_list=payload["feature_list"],
+            features=payload.get("features", payload.get("feature_list")),
             tree_params=payload["tree_params"],
+            missing=payload.get("missing"),
         )
         instance.clf = payload["clf"]
         instance._is_fitted = True
         if "_data" in payload:
             instance._data = payload["_data"]
-        instance._df_rules = _rule_generator(instance.clf, instance.feature_list)
+        instance._df_rules = _rule_generator(
+            instance.clf, instance.features, missing=instance.missing
+        )
         return instance
 
     # -------------------------------------------------------------------------
@@ -1177,7 +1407,7 @@ class DecisionTreeAnalyzer:
             n_leaves = int(self._df_rules["if_leaf"].sum()) if self._df_rules is not None else 0
             return (
                 f"DecisionTreeAnalyzer(target='{self.target}', "
-                f"features={self.feature_list}, "
+                f"features={self.features}, "
                 f"leaves={n_leaves})"
             )
         return "DecisionTreeAnalyzer(not fitted)"
@@ -1205,14 +1435,15 @@ class ManualTreeExtractor:
     :param min_samples_split: 分裂节点最小样本数，默认 10
     :param min_samples_leaf: 叶子节点最小样本数，默认 5
     :param random_state: 随机种子，默认 0
+    :param missing: 缺失值的等价填充数值（可选），参考 :class:`DecisionTreeAnalyzer`
 
     **参考样例**
 
     >>> from hscredit.report.mining import ManualTreeExtractor
     >>> ext = ManualTreeExtractor(target='target', max_depth=2)
-    >>> ext.fit(df, feature_list=['age', 'income'])
+    >>> ext.fit(df, features=['age', 'income'])
     >>> # 人工分裂：指定在某节点用某特征+阈值分裂
-    >>> ext.manual_split(df_sub, feature_name='age', threshold=35, node=1)
+    >>> ext.manual_split(df_sub, feature='age', threshold=35, node=1)
     >>> # 获取规则表
     >>> print(ext.get_rule_table())
     >>> # 在新数据上评估
@@ -1228,6 +1459,7 @@ class ManualTreeExtractor:
         min_samples_split: int = 10,
         min_samples_leaf: int = 5,
         random_state: int = 0,
+        missing: Optional[float] = None,
         **kwargs: Any,
     ):
         """初始化人工决策树提取器。
@@ -1237,6 +1469,11 @@ class ManualTreeExtractor:
         :param min_samples_split: 分裂节点最小样本数，默认 10
         :param min_samples_leaf: 叶子节点最小样本数，默认 5
         :param random_state: 随机种子，默认 0
+        :param missing: 缺失值的等价填充数值（可选），按 sklearn 版本自动适配缺失处理。
+            ``None``（默认）时：新版 sklearn（>=1.3）按决策树学到的缺失值路由方向处理；
+            旧版 sklearn 无原生缺失支持，含缺失数据需传入本参数。传入数值时，训练/分裂/
+            规则评估均将缺失等价为该数值，使规则命中样本数与决策树节点样本数完全一致，
+            并兼容不支持原生缺失的旧版 sklearn。
         :param kwargs: sklearn DecisionTreeClassifier 的其他参数，直接透传给底层分类器。
             例如：`ccp_alpha=0.01`、`class_weight='balanced'`、`criterion='entropy'` 等。
         """
@@ -1245,6 +1482,7 @@ class ManualTreeExtractor:
         self.min_samples_split = min_samples_split
         self.min_samples_leaf = min_samples_leaf
         self.random_state = random_state
+        self.missing = missing
         self._sklearn_kwargs: Dict[str, Any] = kwargs
 
         # 内部状态
@@ -1265,6 +1503,7 @@ class ManualTreeExtractor:
         clf: DecisionTreeClassifier,
         feature_names: Optional[List[str]] = None,
         target: str = "target",
+        missing: Optional[float] = None,
     ) -> "ManualTreeExtractor":
         """从已训练的 sklearn DecisionTreeClassifier 创建 ManualTreeExtractor。
 
@@ -1275,6 +1514,7 @@ class ManualTreeExtractor:
         :param clf: 已训练的 sklearn DecisionTreeClassifier
         :param feature_names: 特征名列表（默认从 clf.feature_names_in_ 推断）
         :param target: 目标变量名（仅用于存储，不参与训练），默认 'target'
+        :param missing: 缺失值的等价填充数值（可选），参考 :class:`DecisionTreeAnalyzer`
         :return: ManualTreeExtractor 实例（已 fitted 状态）
 
         **参考样例**
@@ -1284,13 +1524,18 @@ class ManualTreeExtractor:
         >>> clf = DecisionTreeClassifier(max_depth=3, random_state=42)
         >>> clf.fit(X, y)
         >>> mte = ManualTreeExtractor.from_sklearn(clf, feature_names=feature_names)
-        >>> mte.manual_split(df, feature_name='age', threshold=35, node=1)
+        >>> mte.manual_split(df, feature='age', threshold=35, node=1)
         """
         if feature_names is None:
             feature_names = list(getattr(clf, "feature_names_in_", []))
 
         n_classes = clf.tree_.n_classes_[0] if hasattr(clf.tree_, "n_classes_") else 2
-        instance = cls(target=target, max_depth=clf.max_depth, random_state=getattr(clf, "random_state", 0))
+        instance = cls(
+            target=target,
+            max_depth=clf.max_depth,
+            random_state=getattr(clf, "random_state", 0),
+            missing=missing,
+        )
         instance._feature_list = list(feature_names)
         instance._n_total_samples = int(clf.tree_.n_node_samples[0]) if clf.tree_.n_node_samples.size > 0 else 0
         instance._data = None
@@ -1309,8 +1554,9 @@ class ManualTreeExtractor:
 
     def fit(
         self,
-        df: pd.DataFrame,
-        feature_list: Optional[List[str]] = None,
+        X: Union[pd.DataFrame, np.ndarray],
+        y: Optional[Union[pd.Series, np.ndarray]] = None,
+        features: Optional[List[str]] = None,
         max_depth: Optional[int] = None,
         min_samples_split: Optional[int] = None,
         min_samples_leaf: Optional[int] = None,
@@ -1319,12 +1565,17 @@ class ManualTreeExtractor:
         """训练基础决策树。
 
         使用数据训练一棵标准 sklearn 决策树。后续可通过 manual_split
-        在指定节点人工干预分裂。
+        在指定节点人工干预分裂。支持两种 API 风格：
+
+        - **sklearn 风格**：``fit(X, y)``，``X`` 为特征矩阵（DataFrame/ndarray），``y`` 为标签；
+        - **scorecardpipeline 风格**：``fit(df, features=[...])``，``df`` 含目标列，
+          目标列名由初始化 ``target`` 指定。
 
         **参数**
 
-        :param df: 包含特征和目标变量的 DataFrame
-        :param feature_list: 特征名列表（默认使用除 target 外的所有数值列）
+        :param X: 特征矩阵（sklearn 风格）或含目标列的 DataFrame（scorecardpipeline 风格）
+        :param y: 目标变量（可选）；传入时按 sklearn 风格解析，优先于 ``X`` 中的目标列
+        :param features: 特征名列表（默认使用除 target 外的所有数值列）
         :param max_depth: 树最大深度（覆盖构造参数）
         :param min_samples_split: 分裂最小样本数（覆盖构造参数）
         :param min_samples_leaf: 叶子最小样本数（覆盖构造参数）
@@ -1334,20 +1585,16 @@ class ManualTreeExtractor:
 
         **参考样例**
 
+        >>> # scorecardpipeline 风格
         >>> ext = ManualTreeExtractor(target='target')
-        >>> ext.fit(df, feature_list=['age', 'income', 'loan_amount'])
+        >>> ext.fit(df, features=['age', 'income', 'loan_amount'])
+        >>> # sklearn 风格
+        >>> ManualTreeExtractor(target='target').fit(X_train, y_train)
         >>> # 使用熵作为分裂准则 + ccp_alpha 后剪枝
-        >>> ext2 = ManualTreeExtractor(target='target')
-        >>> ext2.fit(df, feature_list=['age', 'income'], criterion='entropy', ccp_alpha=0.01)
+        >>> ManualTreeExtractor(target='target').fit(df, features=['age', 'income'], criterion='entropy')
         """
-        if feature_list is None:
-            feature_list = [
-                c
-                for c in df.columns
-                if c != self.target and pd.api.types.is_numeric_dtype(df[c])
-            ]
-
-        self._feature_list = list(feature_list)
+        # 解析双 API：sklearn 风格 (X, y) 或 scorecardpipeline 风格 (df)
+        df, self._feature_list = _resolve_fit_data(X, y, features, self.target)
 
         # 过滤缺失数据
         self._data = df.loc[df[self.target].notna(), self._feature_list + [self.target]].copy()
@@ -1379,7 +1626,9 @@ class ManualTreeExtractor:
         # 合并 kwargs（构造参数 > 调用参数）
         tree_params = {**tree_params, **self._sklearn_kwargs, **kwargs}
         self._sklearn_clf = DecisionTreeClassifier(**tree_params)
-        X = self._data[self._feature_list].values
+        # 按 sklearn 版本与 missing 自动处理缺失（指定 missing 则等价填充，新版原生支持，
+        # 旧版含缺失且未指定 missing 时给出明确提示）
+        X = _prepare_training_features(self._data, self._feature_list, self.missing, "ManualTreeExtractor")
         y = self._data[self.target].values
         self._sklearn_clf.fit(X, y)
 
@@ -1402,6 +1651,9 @@ class ManualTreeExtractor:
         self._tree_info.n_node_samples = list(tree.n_node_samples)
         self._tree_info.value = [list(v) for v in tree.value]
         self._tree_info.impurity = list(tree.impurity)
+        self._tree_info.missing_go_to_left = list(
+            getattr(tree, "missing_go_to_left", [0] * len(tree.feature))
+        )
 
     # -------------------------------------------------------------------------
     # 树操作：人工分裂 / 删除节点
@@ -1409,21 +1661,21 @@ class ManualTreeExtractor:
 
     def manual_split(
         self,
-        df: pd.DataFrame,
-        feature_name: str,
+        data: pd.DataFrame,
+        feature: str,
         threshold: Optional[float] = None,
         node: int = 0,
     ) -> "ManualTreeExtractor":
         """在指定节点人工分裂。
 
-        在 node 位置按 feature_name 和 threshold 进行分裂。
+        在 node 位置按 feature 和 threshold 进行分裂。
         若 threshold 为 None，则用决策树自动计算最优分裂点。
         支持链式调用。
 
         **参数**
 
-        :param df: 用于计算分裂阈值的数据子集
-        :param feature_name: 分裂特征名
+        :param data: 用于计算分裂阈值的数据子集（需包含分裂特征与目标列）
+        :param feature: 分裂特征名
         :param threshold: 分裂阈值（None=自动计算最优阈值）
         :param node: 分裂的节点 ID，默认 0（根节点）
         :return: self
@@ -1431,20 +1683,24 @@ class ManualTreeExtractor:
         **参考样例**
 
         >>> # 人工指定阈值
-        >>> ext.manual_split(df_sub, feature_name='age', threshold=35, node=1)
+        >>> ext.manual_split(df_sub, feature='age', threshold=35, node=1)
         >>> # 自动找最优阈值
-        >>> ext.manual_split(df_sub, feature_name='income', threshold=None, node=2)
+        >>> ext.manual_split(df_sub, feature='income', threshold=None, node=2)
         >>> # 链式调用
         >>> ext.manual_split(df1, 'f1', 30).manual_split(df2, 'f2', 20)
         """
         self._check_fitted()
-        if feature_name not in self._feature_list:
-            raise ValueError(f"特征 '{feature_name}' 不在特征列表中")
+        if feature not in self._feature_list:
+            raise ValueError(f"特征 '{feature}' 不在特征列表中")
 
         # 先删除该节点的旧子树
         self.delete_node(node)
 
-        df_work = df.copy()
+        data_work = data.copy()
+        # 指定 missing 时，将该特征缺失等价为该数值后再寻找阈值/统计样本，
+        # 使节点样本数与规则（按 missing 路由缺失）口径一致，并兼容旧版 sklearn
+        if self.missing is not None:
+            data_work[feature] = data_work[feature].fillna(self.missing)
 
         # 若未指定阈值，用单变量决策树找最优切分点
         if threshold is None:
@@ -1455,43 +1711,46 @@ class ManualTreeExtractor:
                 "random_state": self.random_state,
             }
             clf_tmp = DecisionTreeClassifier(**tmp_params)
-            X_tmp = df_work[[feature_name]].values
-            y_tmp = df_work[self.target].values
+            X_tmp = data_work[[feature]].values
+            y_tmp = data_work[self.target].values
             clf_tmp.fit(X_tmp, y_tmp)
             threshold = float(clf_tmp.tree_.threshold[0])
             node_values = [list(v) for v in clf_tmp.tree_.value]
         else:
             # 手动阈值：按指定阈值计算实际样本统计
-            left_mask = df_work[feature_name] <= threshold
+            left_mask = data_work[feature] <= threshold
             right_mask = ~left_mask
-            parent_total = len(df_work)
+            parent_total = len(data_work)
             left_n = int(left_mask.sum())
             right_n = parent_total - left_n
-            parent_good = float((df_work[self.target] == 0).sum())
-            parent_bad = float((df_work[self.target] == 1).sum())
-            left_good = float(((df_work[self.target] == 0) & left_mask).sum())
-            left_bad = float(((df_work[self.target] == 1) & left_mask).sum())
-            right_good = float(((df_work[self.target] == 0) & right_mask).sum())
-            right_bad = float(((df_work[self.target] == 1) & right_mask).sum())
+            parent_good = float((data_work[self.target] == 0).sum())
+            parent_bad = float((data_work[self.target] == 1).sum())
+            left_good = float(((data_work[self.target] == 0) & left_mask).sum())
+            left_bad = float(((data_work[self.target] == 1) & left_mask).sum())
+            right_good = float(((data_work[self.target] == 0) & right_mask).sum())
+            right_bad = float(((data_work[self.target] == 1) & right_mask).sum())
             node_values = [
                 [[parent_good / parent_total, parent_bad / parent_total]],
                 [[left_good / left_n if left_n > 0 else 0, left_bad / left_n if left_n > 0 else 0]],
                 [[right_good / right_n if right_n > 0 else 0, right_bad / right_n if right_n > 0 else 0]],
             ]
 
-        feat_idx = self._feature_list.index(feature_name)
+        feat_idx = self._feature_list.index(feature)
         if threshold is None:
             raise RuntimeError("threshold 未能自动计算")
-        left_n = int((df_work[feature_name] <= threshold).sum())
-        right_n = len(df_work) - left_n
+        left_n = int((data_work[feature] <= threshold).sum())
+        right_n = len(data_work) - left_n
 
         # 新子树结构：[parent, left_leaf, right_leaf]
         children_left_new = [1, -1, -1]
         children_right_new = [2, -1, -1]
         feature_new = [feat_idx, -2, -2]
         threshold_new = np.array([threshold, -2.0, -2.0])
-        n_node_samples_new = [len(df_work), left_n, right_n]
+        n_node_samples_new = [len(data_work), left_n, right_n]
         node_impurity_new = [1.0, 1.0, 1.0]
+        # 人工分裂按 `F <= threshold` 划分，缺失样本（NaN <= t 为 False）落入右子节点，
+        # 故新分裂节点缺失值路由方向为 0（走右），与 manual_split 的样本统计口径一致。
+        missing_go_to_left_new = [0, 0, 0]
 
         # 插入到指定节点
         (
@@ -1502,6 +1761,7 @@ class ManualTreeExtractor:
             self._tree_info.n_node_samples,
             self._tree_info.value,
             self._tree_info.impurity,
+            self._tree_info.missing_go_to_left,
         ) = _add_nodes_to_tree(
             node=node,
             split_list_left=self._tree_info.children_left,
@@ -1518,6 +1778,8 @@ class ManualTreeExtractor:
             node_samples_new=n_node_samples_new,
             node_values_new=node_values,
             node_impurity_new=node_impurity_new,
+            missing_go_to_left=self._tree_info.missing_go_to_left,
+            missing_go_to_left_new=missing_go_to_left_new,
         )
 
         # 记录人工修改过的节点（分裂节点 + 它的两个新子节点）
@@ -1549,6 +1811,7 @@ class ManualTreeExtractor:
             self._tree_info.n_node_samples,
             self._tree_info.value,
             self._tree_info.impurity,
+            self._tree_info.missing_go_to_left,
         ) = _delete_nodes(
             node=node,
             split_list_left=self._tree_info.children_left,
@@ -1558,6 +1821,7 @@ class ManualTreeExtractor:
             node_samples=self._tree_info.n_node_samples,
             node_values=self._tree_info.value,
             node_impurity=self._tree_info.impurity,
+            missing_go_to_left=self._tree_info.missing_go_to_left,
         )
 
         self._generate_rules()
@@ -1568,7 +1832,7 @@ class ManualTreeExtractor:
     # -------------------------------------------------------------------------
 
     def _generate_rules(self) -> None:
-        """从当前树结构生成规则 DataFrame。"""
+        """从当前树结构生成规则 DataFrame，并用训练数据重算各节点样本统计。"""
         if self._tree_info is None:
             return
 
@@ -1580,9 +1844,57 @@ class ManualTreeExtractor:
             n_node_samples=self._tree_info.n_node_samples,
             value=self._tree_info.value,
             impurity=self._tree_info.impurity,
+            missing_go_to_left=self._tree_info.missing_go_to_left,
         )
         # sim.tree_ == sim 自身，_rule_generator 内部访问 clf.tree_ → sim
-        self._df_rules = _rule_generator(sim, self._feature_list)
+        self._df_rules = _rule_generator(sim, self._feature_list, missing=self.missing)
+        # 用训练数据按规则命中重算节点样本统计，确保人工分裂（在子集上定义阈值）后
+        # 树节点信息、规则表（rule.report）、可视化三者样本数/好坏样本数完全一致
+        self._recompute_node_stats_from_data()
+
+    def _recompute_node_stats_from_data(self) -> None:
+        """用训练数据按各节点规则命中重算 n_node_samples / value（好坏样本数）。
+
+        人工分裂在用户传入的子集上确定阈值，但节点统计应按全量训练数据沿该路径的
+        命中情况计算，从而与 :meth:`get_rule_table`（基于 :meth:`Rule.report`）及
+        决策树可视化保持完全一致。无训练数据（如 :meth:`from_sklearn`）时跳过。
+        """
+        if self._data is None or self._tree_info is None or self._df_rules is None:
+            return
+        y = self._data[self.target]
+        n_nodes = len(self._tree_info.feature)
+        new_samples = list(self._tree_info.n_node_samples)
+        new_values = [list(v) for v in self._tree_info.value]
+
+        def _assign(node: int, n: int, bad: int) -> None:
+            if 0 <= node < n_nodes:
+                good = n - bad
+                new_samples[node] = int(n)
+                new_values[node] = [[(good / n) if n else 0.0, (bad / n) if n else 0.0]]
+
+        # 根节点 = 全量训练样本
+        total = len(self._data)
+        _assign(0, total, int(y.sum()))
+
+        df_samples: Dict[int, int] = {}
+        df_values: Dict[int, List[int]] = {}
+        for _, row in self._df_rules.iterrows():
+            node = int(row["node"])
+            rule = self._format_rule(row["rule_list"])
+            if rule is None:
+                mask = pd.Series(True, index=self._data.index)
+            else:
+                mask = rule.predict(self._data).astype(bool)
+            n = int(mask.sum())
+            bad = int(y[mask].sum()) if n else 0
+            _assign(node, n, bad)
+            df_samples[node] = n
+            df_values[node] = [n - bad, bad]
+
+        self._tree_info.n_node_samples = new_samples
+        self._tree_info.value = new_values
+        self._df_rules["node_samples"] = self._df_rules["node"].map(df_samples).astype(int)
+        self._df_rules["node_value"] = self._df_rules["node"].map(df_values)
 
     @staticmethod
     def _rule_list_to_text(rule_list: List) -> str:
@@ -1594,7 +1906,10 @@ class ManualTreeExtractor:
             feat = item[0]
             op = item[1]
             thres = f"{item[2]:.4f}" if isinstance(item[2], float) else str(item[2])
-            parts.append(f"{feat} {op} {thres}")
+            # 第 4 个元素为是否纳入缺失样本，True 时追加"(含缺失)"标记
+            include_nan = bool(item[3]) if len(item) > 3 else False
+            text = f"{feat} {op} {thres}"
+            parts.append(f"{text}(含缺失)" if include_nan else text)
         return " 且 ".join(parts)
 
     def _format_rule(self, rule_list: List) -> Optional[Rule]:
@@ -1605,7 +1920,8 @@ class ManualTreeExtractor:
 
         根节点对应的空规则返回 None。
 
-        :param rule_list: 规则列表，元素为 ``[特征名, 操作符, 阈值]``
+        :param rule_list: 规则列表，元素为 ``[特征名, 操作符, 阈值, 是否含缺失]``
+            （第 4 个元素标记该条件是否需纳入缺失样本，由决策树缺失值路由方向决定）
         :return: 解析得到的 Rule 对象；空规则返回 None
         """
         if not rule_list:
@@ -1654,7 +1970,7 @@ class ManualTreeExtractor:
 
         **参考样例**
 
-        >>> ext.manual_split(df, feature_name='age', threshold=35)
+        >>> ext.manual_split(df, feature='age', threshold=35)
         >>> print(ext.get_rule_table())          # 在训练数据上评估
         >>> print(ext.get_rule_table(df_test))   # 在新数据上评估
         """
@@ -1688,7 +2004,7 @@ class ManualTreeExtractor:
         **参考样例**
 
         >>> ext = ManualTreeExtractor(target='target')
-        >>> ext.fit(df, feature_list=['age', 'income'])
+        >>> ext.fit(df, features=['age', 'income'])
         >>> ext.display()   # 在 Jupyter 中展示树图和规则表
         >>> ext.manual_split(df, 'income', 5000, node=1).display()
         """
@@ -1805,13 +2121,23 @@ class ManualTreeExtractor:
         return rules
 
     def _rule_to_expr(self, rule_list: List) -> str:
-        """将规则列表转换为 pandas eval 表达式。"""
+        """将规则列表转换为 pandas eval 表达式。
+
+        当规则需纳入缺失样本时（决策树将缺失值路由到当前路径方向），对应条件追加
+        ``| (特征 != 特征)``（NaN != NaN 为 True，用于在 pandas eval 中识别缺失），
+        确保命中样本数与决策树节点样本数完全一致。
+        """
         if not rule_list:
             return "True"
         parts = []
-        for feat, op, thres in rule_list:
+        for item in rule_list:
+            feat, op, thres = item[0], item[1], item[2]
+            include_nan = bool(item[3]) if len(item) > 3 else False
             feat_esc = f"`{feat}`" if not str(feat).isidentifier() else str(feat)
-            parts.append(f"({feat_esc} {op} {repr(float(thres))})")
+            cond = f"({feat_esc} {op} {repr(float(thres))})"
+            if include_nan:
+                cond = f"({cond} | ({feat_esc} != {feat_esc}))"
+            parts.append(cond)
         return " & ".join(parts)
 
     # -------------------------------------------------------------------------
