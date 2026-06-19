@@ -396,10 +396,12 @@ class TreeRuleExtractor(BaseRuleMiner):
             if tree.feature[node_id] == -2:  # 叶子节点
                 # 计算叶子节点的实际坏账率
                 badrate = self._calculate_leaf_badrate(conditions)
-                
-                value = tree.value[node_id][0]
-                total = value.sum()
-                
+
+                # 使用 n_node_samples 获取节点样本数（版本无关）。
+                # sklearn>=1.3 起 tree_.value 存储的是归一化比例（每节点求和为 1），
+                # 不能再用 value.sum() 还原样本数，否则恒为 1。
+                total = tree.n_node_samples[node_id]
+
                 if total == 0:
                     return
                 

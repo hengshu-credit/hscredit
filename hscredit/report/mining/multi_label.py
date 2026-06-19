@@ -99,18 +99,27 @@ class MultiLabelRuleMiner(BaseRuleMiner):
         label_rules = {}  # {label: {rule_expr: metrics_dict}}
         all_rule_exprs = set()
 
+        # 候选规则放宽 LIFT/样本量约束，最终是否有效由各标签下的 min_lift 单独判定
+        candidate_min_samples = max(1, int(self.min_support * len(df)))
+
         for label in self.labels:
             miner = SingleFeatureRuleMiner(
                 target=label,
-                n_bins=self.n_bins,
+                max_n_bins=self.n_bins,
+                min_lift=1.0,
+                min_samples=candidate_min_samples,
                 exclude_cols=[lb for lb in self.labels if lb != label] + self.exclude_cols,
             )
             miner.fit(df[features + [label]])
-            rules = miner.get_rules() if hasattr(miner, 'get_rules') else miner.get_top_rules(top_n=self.max_rules * len(features))
+            rules = miner.get_rules(min_lift=1.0, min_samples=candidate_min_samples)
 
             label_rules[label] = {}
             for rule in rules:
-                expr = rule.get('规则', rule.get('rule', rule.get('expression', '')))
+                # SingleFeatureRuleMiner.get_rules 返回 Rule 对象，规则表达式为 rule.expr
+                if isinstance(rule, dict):
+                    expr = rule.get('规则', rule.get('rule', rule.get('expression', '')))
+                else:
+                    expr = getattr(rule, 'expr', '')
                 if expr:
                     label_rules[label][expr] = rule
                     all_rule_exprs.add(expr)

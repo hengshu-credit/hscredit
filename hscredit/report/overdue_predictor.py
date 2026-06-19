@@ -945,7 +945,7 @@ def overdue_prediction_report(
                     report, writer, worksheet,
                     sheet_name=sheet if isinstance(excel_writer, str) else None,
                     percent_cols=['坏样本率', '样本占比', '好样本占比', '坏样本占比',
-                                  '调整后逾期率', '预估逾期率'],
+                                  '调整后逾期率', '预测逾期率'],
                     condition_cols=['坏样本率', '调整后逾期率'],
                     start_row=2,
                 )

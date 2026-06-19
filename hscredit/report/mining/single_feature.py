@@ -14,7 +14,7 @@ import warnings
 
 from .base import BaseRuleMiner, calculate_lift
 from ...core.rules.rule import Rule
-from ...core.binning import OptimalBinning, ChiMergeBinning, QuantileBinning
+from ...core.binning import OptimalBinning, QuantileBinning
 
 
 class SingleFeatureRuleMiner(BaseRuleMiner):
@@ -695,7 +695,7 @@ self, feature_values: pd.Series) -> List[float]:
         except ImportError:
             raise ImportError("需要安装matplotlib: pip install matplotlib")
         
-        from ...viz.utils import DEFAULT_COLORS, setup_axis_style
+        from ...core.viz.utils import DEFAULT_COLORS, setup_axis_style
         
         self._check_fitted()
         

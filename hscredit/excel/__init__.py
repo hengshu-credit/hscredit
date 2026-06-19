@@ -27,7 +27,7 @@
     >>> writer.save("report.xlsx")
 """
 
-from .writer import ExcelWriter, dataframe2excel
+from .writer import ExcelWriter, dataframe2excel, resolve_condition_color
 
 # 注意：pandas扩展方法（df.save(), df.show(), df.summary()等）
 # 现在在 utils.pandas_extensions 模块中统一注册
@@ -36,4 +36,5 @@ from .writer import ExcelWriter, dataframe2excel
 __all__ = [
     "ExcelWriter",
     "dataframe2excel",
+    "resolve_condition_color",
 ]

@@ -273,7 +273,7 @@ class MinedRule:
     
     def to_rule_object(self):
         """转换为hscredit Rule对象."""
-        from ..rule import Rule
+        from ...core.rules.rule import Rule
         expr = self.to_expression()
         return Rule(
             expr=expr,

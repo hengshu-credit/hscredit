@@ -153,7 +153,7 @@ def _dataframe_save(
     title: Optional[str] = None,
     header: bool = True,
     theme_color: str = "2639E9",
-    condition_color: Optional[str] = None,
+    condition_color: Optional[Union[str, Dict[Any, str]]] = None,
     fill: bool = True,
     percent_cols: Optional[List] = None,
     condition_cols: Optional[List] = None,
@@ -182,7 +182,7 @@ def _dataframe_save(
     :param title: 标题，默认为None
     :param header: 是否保存列名，默认为True
     :param theme_color: 主题颜色，默认为"2639E9"
-    :param condition_color: 条件格式颜色，默认为None
+    :param condition_color: 条件格式颜色，默认为None。支持str（统一颜色）或dict（以列名/行索引为key分别指定颜色，匹配方式类似 ``condition_cols``，未匹配回退主题色）
     :param fill: 是否使用颜色填充，默认为True
     :param percent_cols: 需要显示为百分数的列，默认为None
     :param condition_cols: 需要显示数据条的列，默认为None
@@ -219,7 +219,7 @@ def _dataframe_save(
     >>> df.save(writer, worksheet=worksheet)
     >>> writer.save("report.xlsx")
     """
-    from ..excel import ExcelWriter, dataframe2excel
+    from ..excel import ExcelWriter, dataframe2excel, resolve_condition_color
     from openpyxl.worksheet.worksheet import Worksheet
     from openpyxl.utils import get_column_letter
     
@@ -297,9 +297,9 @@ def _dataframe_save(
                     worksheet,
                     f'{conditional_column}{end_row - len(self)}',
                     f'{conditional_column}{end_row - 1}',
-                    condition_color=condition_color or theme_color
+                    condition_color=resolve_condition_color(condition_color, c, theme_color)
                 )
-        
+
         return writer
     
     # 使用dataframe2excel函数（传入文件路径或ExcelWriter但没有worksheet）
@@ -340,7 +340,7 @@ def _series_save(
     title: Optional[str] = None,
     header: bool = True,
     theme_color: str = "2639E9",
-    condition_color: Optional[str] = None,
+    condition_color: Optional[Union[str, Dict[Any, str]]] = None,
     fill: bool = True,
     percent_cols: Optional[List] = None,
     condition_cols: Optional[List] = None,
@@ -370,7 +370,7 @@ def _series_save(
     :param title: 标题，默认为None
     :param header: 是否保存列名，默认为True
     :param theme_color: 主题颜色，默认为"2639E9"
-    :param condition_color: 条件格式颜色，默认为None
+    :param condition_color: 条件格式颜色，默认为None。支持str（统一颜色）或dict（以列名/行索引为key分别指定颜色，匹配方式类似 ``condition_cols``，未匹配回退主题色）
     :param fill: 是否使用颜色填充，默认为True
     :param percent_cols: 需要显示为百分数的列，默认为None
     :param condition_cols: 需要显示数据条的列，默认为None

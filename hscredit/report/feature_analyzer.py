@@ -755,6 +755,7 @@ def feature_efficiency_analysis(
     suffix: str = "",
     quantiles: Optional[List[float]] = None,
     rule_decimals: int = 4,
+    save: Optional[str] = None,
 ) -> Dict[str, Any]:
     """特征效率分析：对比手工分箱与自动分箱效果，并输出趋势图。
 
@@ -792,6 +793,7 @@ def feature_efficiency_analysis(
     :param suffix: 保存文件名后缀，默认空字符串
     :param quantiles: 分位数列表，用于自动生成分箱边界。默认 [0.01, 0.03, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.97, 0.99]
     :param rule_decimals: 分箱边界保留的小数位数，默认 4
+    :param save: 比较图片保存路径，如果提供则将生成的比较图保存至指定路径，默认为 None
     :return: dict，包含分箱表、分箱规则、组合图与趋势图
 
     Example::
@@ -892,7 +894,7 @@ def feature_efficiency_analysis(
     comparison_axes[3].set_title("ROC 曲线")
     comparison_fig.suptitle(f"{feature_desc} 分箱效率分析", fontsize=14, fontweight="bold")
     comparison_fig.tight_layout(rect=(0, 0, 1, 0.94))
-
+    
     trend_figures: Dict[str, plt.Figure] = {}
     if date_col is not None or group_cols is not None:
         common_trend_params = dict(
@@ -923,17 +925,35 @@ def feature_efficiency_analysis(
             auto_trend_params.update(auto_kwargs)
         trend_figures["auto"] = bin_trend_plot(**auto_trend_params)
 
+    # Save comparison figure if save path is provided
+    _save_fig = None  # Will be set when needed
     saved_paths: Dict[str, str] = {}
+    
+    if save is not None and save != "":
+        # Import save_figure utility for consistency
+        from ..core.viz.utils import save_figure
+        _save_fig = save_figure
+        _save_fig(comparison_fig, save)
+        saved_paths["comparison"] = save
+    
     if output_dir is not None:
         os.makedirs(output_dir, exist_ok=True)
-
+        
         comparison_path = os.path.join(output_dir, f"feature_efficiency_comparison_{feature}{suffix}.png")
-        comparison_fig.savefig(comparison_path, dpi=150, bbox_inches="tight")
-        saved_paths["comparison"] = comparison_path
-
+        # Only save comparison figure via output_dir if save parameter wasn't provided
+        if save is None or save == "":
+            if _save_fig is None:
+                from ..core.viz.utils import save_figure
+                _save_fig = save_figure
+            _save_fig(comparison_fig, comparison_path)
+            saved_paths["comparison"] = comparison_path
+        
         for trend_name, trend_fig in trend_figures.items():
             trend_path = os.path.join(output_dir, f"feature_efficiency_trend_{trend_name}_{feature}{suffix}.png")
-            trend_fig.savefig(trend_path, dpi=150, bbox_inches="tight")
+            if _save_fig is None:
+                from ..core.viz.utils import save_figure
+                _save_fig = save_figure
+            _save_fig(trend_fig, trend_path)
             saved_paths[f"trend_{trend_name}"] = trend_path
 
     return {
