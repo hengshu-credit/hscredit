@@ -361,10 +361,8 @@ class ModelExplainer:
             if self.feature_names is None:
                 raise ValueError("需要提供feature_names才能使用特征名称")
             feature_idx = self.feature_names.index(feature)
-            feature_name = feature
         else:
             feature_idx = feature
-            feature_name = self.feature_names[feature_idx] if self.feature_names else f'feature_{feature}'
 
         # 处理交互特征
         interaction_index = interaction_feature

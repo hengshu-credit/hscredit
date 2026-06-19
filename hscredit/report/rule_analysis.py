@@ -743,12 +743,6 @@ def _merge_label_tables(tables: List[pd.DataFrame], label_names: List[str]) -> p
     detail_group = "分箱详情"
     base_table = tables[0].copy()
 
-    # 找出可合并的列（merge columns）
-    available_merge = [c for c in base_table.columns
-                      if isinstance(c, tuple) and c[0] == detail_group and c[1] in ["规则分类", "指标名称", "分箱", "样本总数", "样本占比"]
-                      or isinstance(c, str) and c in ["规则分类", "指标名称", "分箱", "样本总数", "样本占比"]]
-    non_merge = [c for c in base_table.columns if c not in available_merge]
-
     # 重建列结构：第一层为标签名，第二层为列名
     multi_cols = []
     for col in base_table.columns:
@@ -1043,14 +1037,6 @@ def _normalize_bin_table(
     if isinstance(tbl.columns, pd.MultiIndex):
         # MultiIndex 列：确保顶层分组名为 '分箱详情'
         detail_group = _get_detail_group_name(tbl)
-
-        # 确保有分箱标签列（可能在 '分箱详情' 下）
-        bin_label_col = None
-        for col in tbl.columns:
-            col_name = col[-1] if isinstance(col, tuple) else col
-            if col_name in ('分箱标签', 'bin', '分箱'):
-                bin_label_col = col
-                break
 
         # 提取各标签下的坏样本率列，构建统一结构
         # 保留 '分箱详情' 公共列 + 各标签的坏样本率

@@ -57,6 +57,7 @@ class NumExprDerive(BaseEstimator, TransformerMixin):
             name 是新特征的名称，expr 是 pandas eval 表达式。
         """
         self.derivings = derivings
+        self._check_keywords()
 
     def __sklearn_tags__(self):
         from sklearn.utils._tags import Tags, TargetTags, TransformerTags
@@ -82,7 +83,8 @@ class NumExprDerive(BaseEstimator, TransformerMixin):
         并通过 Python eval + 列数组来执行。
         """
         import re
-        pattern = re.compile(r'where\s*\(')
+
+        pattern = re.compile(r'(?<![\w.])where\s*\(')
         result = expr
         while True:
             m = pattern.search(result)
@@ -142,6 +144,8 @@ class NumExprDerive(BaseEstimator, TransformerMixin):
             raise ValueError("Deriving rules should not be empty!")
         if not isinstance(derivings, list):
             raise ValueError("Deriving rules should be a list!")
+        if not derivings:
+            raise ValueError("Deriving rules should not be empty!")
         for i, entry in enumerate(derivings):
             if not isinstance(entry, tuple):
                 raise ValueError(f"The {i}-th deriving rule should be a tuple!")
@@ -173,6 +177,10 @@ class NumExprDerive(BaseEstimator, TransformerMixin):
             'mean', 'sum', 'std', 'var', 'median', 'nan', 'inf',
             'True', 'False', 'None', 'and', 'or', 'not', 'is', 'in',
         }
+        numpy_functions = {
+            name: getattr(np, name)
+            for name in ('sin', 'cos', 'tan', 'abs', 'exp', 'log', 'sqrt', 'power', 'floor', 'ceil')
+        }
 
         for name, expr in self.derivings:
             converted = self._convert_where_to_np(expr)
@@ -185,11 +193,11 @@ class NumExprDerive(BaseEstimator, TransformerMixin):
             if all_numeric:
                 # 数值型：numpy eval（最快）
                 context = {col: X[col].values for col in involved}
-                context['np'] = np
             else:
                 # 混合类型：pandas Series eval（支持字符串/布尔）
                 context = {col: X[col] for col in X.columns}
-                context['np'] = np
+            context.update(numpy_functions)
+            context['np'] = np
 
             result[name] = eval(converted, context)
 

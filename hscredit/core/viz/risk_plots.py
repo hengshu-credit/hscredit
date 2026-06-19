@@ -149,7 +149,6 @@ def pr_plot(
     
     # 计算PR曲线
     precision, recall, _ = precision_recall_curve(y_true, y_score)
-    ap = np.mean(precision)  # 简化的AP计算
     
     # 计算基线（正样本比例）
     if show_baseline:
@@ -314,7 +313,6 @@ def gain_plot(
     depths = [0]
     
     for i in range(n_bins):
-        start = i * bin_size
         end = (i + 1) * bin_size if i < n_bins - 1 else len(y_true)
         
         captured_bads = np.sum(y_true_sorted[:end])

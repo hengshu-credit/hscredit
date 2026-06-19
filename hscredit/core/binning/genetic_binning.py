@@ -4,11 +4,14 @@
 适用于需要全局优化且约束复杂的场景。
 """
 
+import logging
 from typing import Union, List, Dict, Optional, Any, Tuple
 import numpy as np
 import pandas as pd
 from ...exceptions import NotFittedError
 from .base import BaseBinning
+
+logger = logging.getLogger(__name__)
 
 
 class GeneticBinning(BaseBinning):
@@ -98,7 +101,7 @@ class GeneticBinning(BaseBinning):
 
         def _fit_one(feature):
             if self.verbose:
-                print(f"处理特征: {feature}")
+                logger.info(f"处理特征: {feature}")
 
             feature_type = self._detect_feature_type(X[feature])
             self.feature_types_[feature] = feature_type
@@ -200,12 +203,12 @@ class GeneticBinning(BaseBinning):
                 no_improvement_count += 1
 
             if self.verbose and generation % 10 == 0:
-                print(f"  Generation {generation}: Best fitness = {best_fitness:.4f}")
+                logger.info(f"  Generation {generation}: Best fitness = {best_fitness:.4f}")
 
             # 提前停止
             if no_improvement_count >= max_no_improvement:
                 if self.verbose:
-                    print(f"  Early stopping at generation {generation}")
+                    logger.info(f"  Early stopping at generation {generation}")
                 break
 
             # 选择
@@ -276,7 +279,7 @@ class GeneticBinning(BaseBinning):
                 return self._calculate_ks(bins, y)
             elif self.objective == 'gini':
                 return self._calculate_gini(bins, y)
-        except:
+        except Exception:
             return -np.inf
 
     def _check_constraints(

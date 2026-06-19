@@ -15,6 +15,7 @@ from hscredit.report.mining import (
     calculate_rule_metrics,
 )
 from hscredit.core.rules import Rule
+from hscredit.core.binning import OptimalBinning
 
 
 @pytest.fixture
@@ -60,6 +61,17 @@ class TestSingleFeatureRuleMiner:
         
         with pytest.raises(ValueError):
             SingleFeatureRuleMiner(method='invalid')
+
+    def test_methods_use_optimal_binning_as_single_source(self):
+        """规则挖掘器必须直接使用 OptimalBinning 的方法集合."""
+        assert SingleFeatureRuleMiner.VALID_METHODS is OptimalBinning.VALID_METHODS
+        for method in OptimalBinning.VALID_METHODS:
+            assert SingleFeatureRuleMiner(method=method).method == method
+
+    @pytest.mark.parametrize("alias", ["optimal_iv", "optimal_ks", "chi2"])
+    def test_method_aliases_are_rejected(self, alias):
+        with pytest.raises(ValueError, match="不支持的method"):
+            SingleFeatureRuleMiner(method=alias)
     
     def test_fit(self, sample_data):
         """测试拟合."""
@@ -154,11 +166,11 @@ class TestSingleFeatureRuleMiner:
             assert 'max_lift' in summary.columns
             assert 'feature' in summary.columns
     
-    def test_chi2_algorithm(self, sample_data):
+    def test_chi_algorithm(self, sample_data):
         """测试卡方算法."""
         df, _ = sample_data
         
-        miner = SingleFeatureRuleMiner(target='target', method='chi2')
+        miner = SingleFeatureRuleMiner(target='target', method='chi')
         miner.fit(df)
         
         assert miner._is_fitted
@@ -185,6 +197,10 @@ class TestMultiFeatureRuleMiner:
         assert miner.target == 'target'
         assert miner.method == 'quantile'
         assert miner.max_n_bins == 5
+
+        assert MultiFeatureRuleMiner.VALID_METHODS is OptimalBinning.VALID_METHODS
+        for method in OptimalBinning.VALID_METHODS:
+            assert MultiFeatureRuleMiner(method=method).method == method
     
     def test_fit(self, sample_data):
         """测试拟合."""
@@ -461,5 +477,3 @@ def test_calculate_rule_metrics_function(sample_data):
     
     assert isinstance(result, dict)
     assert '训练_命中LIFT值' in result
-
-

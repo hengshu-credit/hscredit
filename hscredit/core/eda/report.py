@@ -4,6 +4,7 @@
 整合所有模块的分析结果.
 """
 
+import logging
 import numpy as np
 import pandas as pd
 from typing import List, Dict, Optional, Union
@@ -16,6 +17,8 @@ from .relationship import batch_iv_analysis
 from .correlation import high_correlation_pairs
 
 from ...excel import ExcelWriter, dataframe2excel
+
+logger = logging.getLogger(__name__)
 
 
 def eda_summary(df: pd.DataFrame,
@@ -66,7 +69,7 @@ def eda_summary(df: pd.DataFrame,
         if date_col and date_col in df.columns:
             try:
                 summary['逾期率趋势'] = bad_rate_trend(df, target, date_col)
-            except:
+            except Exception:
                 pass
     
     return summary
@@ -100,7 +103,6 @@ def generate_report(df: pd.DataFrame,
         config = {}
     
     iv_threshold = config.get('iv_threshold', 0.02)
-    psi_threshold = config.get('psi_threshold', 0.1)
     corr_threshold = config.get('corr_threshold', 0.8)
     
     report = {}
@@ -119,14 +121,14 @@ def generate_report(df: pd.DataFrame,
         if date_col and date_col in df.columns:
             try:
                 report['7.逾期率趋势'] = bad_rate_trend(df, target, date_col)
-            except:
+            except Exception:
                 pass
         
         # 3. IV分析
         try:
             iv_result = batch_iv_analysis(df, features, target)
             report['8.IV分析'] = iv_result[iv_result['IV值'] >= iv_threshold]
-        except:
+        except Exception:
             pass
     
     # 4. 相关性分析
@@ -134,7 +136,7 @@ def generate_report(df: pd.DataFrame,
         corr_pairs = high_correlation_pairs(df, features, threshold=corr_threshold)
         if '信息' not in corr_pairs.columns:
             report['9.高相关性特征对'] = corr_pairs
-    except:
+    except Exception:
         pass
     
     return report
@@ -200,7 +202,7 @@ def export_report_to_excel(report: Dict[str, pd.DataFrame],
         # 保存文件
         writer.save(filepath)
     
-    print(f"报告已导出至: {filepath}")
+    logger.info("报告已导出至: %s", filepath)
 
 
 def generate_html_report(report: Dict[str, pd.DataFrame],
@@ -258,4 +260,4 @@ def generate_html_report(report: Dict[str, pd.DataFrame],
     with open(filepath, 'w', encoding='utf-8') as f:
         f.write('\n'.join(html_parts))
     
-    print(f"HTML报告已导出至: {filepath}")
+    logger.info("HTML报告已导出至: %s", filepath)

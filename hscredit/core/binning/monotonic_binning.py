@@ -12,11 +12,14 @@
 适用于金融风控评分卡场景，满足监管和业务对单调性的各种要求。
 """
 
+import logging
 from typing import Union, List, Dict, Optional, Any, Tuple
 import numpy as np
 import pandas as pd
 from ...exceptions import NotFittedError
 from .base import BaseBinning
+
+logger = logging.getLogger(__name__)
 
 
 class MonotonicBinning(BaseBinning):
@@ -152,7 +155,7 @@ class MonotonicBinning(BaseBinning):
         # 对每个特征进行分箱
         def _fit_one(feature):
             if self.verbose:
-                print(f"处理特征: {feature}")
+                logger.info(f"处理特征: {feature}")
 
             # 检测特征类型
             feature_type = self._detect_feature_type(X[feature])
@@ -215,7 +218,7 @@ class MonotonicBinning(BaseBinning):
         self.monotonic_trend_[x.name] = monotonic_mode
 
         if self.verbose:
-            print(f"  检测到的单调性模式: {monotonic_mode}")
+            logger.info(f"  检测到的单调性模式: {monotonic_mode}")
 
         # 步骤3: 根据单调性模式进行分箱优化
         if monotonic_mode in ['peak', 'valley']:
@@ -331,12 +334,6 @@ class MonotonicBinning(BaseBinning):
         pos_max = np.argmax(bad_rates)
 
         # 4. 极值点统计
-        n1 = n_prebins - 1
-        p_bins_min_left = pos_min / n1 if n1 > 0 else 0
-        p_bins_min_right = (n_prebins - pos_min - 1) / n1 if n1 > 0 else 0
-        p_bins_max_left = pos_max / n1 if n1 > 0 else 0
-        p_bins_max_right = (n_prebins - pos_max - 1) / n1 if n1 > 0 else 0
-
         total_records = bin_stats['count'].sum()
         p_records_min_left = bin_stats['count'].iloc[:pos_min].sum() / total_records if pos_min > 0 else 0
         p_records_min_right = bin_stats['count'].iloc[pos_min+1:].sum() / total_records if pos_min < n_prebins - 1 else 0

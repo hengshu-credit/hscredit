@@ -197,19 +197,25 @@ class MultiLabelRuleMiner(BaseRuleMiner):
         if not self._is_fitted:
             raise ValueError("请先调用 fit()")
 
-        min_lift = min_lift_per_label or self.min_lift
+        min_lift = self.min_lift if min_lift_per_label is None else min_lift_per_label
         rules = self._rules.copy()
 
+        lift_columns = [
+            f'{self.label_names[i]}_LIFT' if i < len(self.label_names) else f'{label}_LIFT'
+            for i, label in enumerate(self.labels)
+        ]
+
+        def effective(rule):
+            return [rule.get(column, 0) >= min_lift for column in lift_columns]
+
         if effectiveness == 'both':
-            rules = [r for r in rules if r.get('规则类型', '').startswith('强规则')]
+            rules = [rule for rule in rules if all(effective(rule))]
         elif effectiveness == 'any':
-            rules = [r for r in rules if r.get('规则类型', '') != '无效规则']
+            rules = [rule for rule in rules if any(effective(rule))]
         elif effectiveness == 'short_only':
-            first_eff_col = f'{self.label_names[0]}_有效' if self.label_names else f'{self.labels[0]}_有效'
-            rules = [r for r in rules if r.get(first_eff_col, False)]
+            rules = [rule for rule in rules if effective(rule)[0]]
         elif effectiveness == 'long_only':
-            last_eff_col = f'{self.label_names[-1]}_有效' if self.label_names else f'{self.labels[-1]}_有效'
-            rules = [r for r in rules if r.get(last_eff_col, False)]
+            rules = [rule for rule in rules if effective(rule)[-1]]
 
         if top_n:
             rules = rules[:top_n]

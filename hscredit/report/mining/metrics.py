@@ -3,6 +3,7 @@
 提供丰富的规则评估指标，所有指标计算统一收口到hscredit.core.metrics。
 """
 
+import logging
 import numpy as np
 import pandas as pd
 from typing import Union, List, Dict, Optional, Tuple, Any
@@ -21,6 +22,8 @@ from ...core.metrics import (
     rule_lift,
     badrate
 )
+
+logger = logging.getLogger(__name__)
 
 
 class RuleMetrics:
@@ -210,8 +213,8 @@ class RuleMetrics:
                 metrics['规则编号'] = i
                 metrics['规则'] = str(rule)
                 results.append(metrics)
-            except Exception as e:
-                print(f"评估规则 {i} 时出错: {str(e)}")
+            except Exception as exc:
+                logger.warning("评估规则 %s 时出错: %s", i, exc)
         
         return pd.DataFrame(results)
     

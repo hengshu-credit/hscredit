@@ -160,11 +160,11 @@ for name, model in models.items():
 ```python
 from hscredit.report.mining import SingleFeatureRuleMiner, MultiFeatureRuleMiner, TreeRuleExtractor
 
-single_miner = SingleFeatureRuleMiner(target="fpd30", method="optimal_iv", max_n_bins=5)
+single_miner = SingleFeatureRuleMiner(target="fpd30", method="best_iv", max_n_bins=5)
 single_miner.fit(train_df)
 single_rules = single_miner.get_top_rules(top_n=10, metric="lift")
 
-cross_miner = MultiFeatureRuleMiner(target="fpd30", method="chi2", max_n_bins=4)
+cross_miner = MultiFeatureRuleMiner(target="fpd30", method="chi", max_n_bins=4)
 cross_miner.fit(train_df)
 cross_rules = cross_miner.get_cross_rules("age", "income", top_n=10)
 

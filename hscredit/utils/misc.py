@@ -75,7 +75,7 @@ def force_reload_module(module_name):
                 import os
                 if os.path.exists(pyc_file):
                     os.remove(pyc_file)
-        except:
+        except Exception:
             pass
     
     # 重新导入

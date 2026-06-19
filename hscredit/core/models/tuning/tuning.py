@@ -72,6 +72,7 @@ pip install optuna
     >>> results = tuner.evaluate_trials(df, trial_points=trial_points)
 """
 
+import logging
 import warnings
 from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union, Sequence
 import numpy as np
@@ -80,6 +81,8 @@ from sklearn.model_selection import cross_val_score, StratifiedKFold
 from sklearn.metrics import get_scorer, roc_auc_score, roc_curve
 
 from sklearn.utils.validation import check_is_fitted
+
+logger = logging.getLogger(__name__)
 
 try:
     import optuna
@@ -741,14 +744,14 @@ class ModelTuner:
 
         if self.verbose:
             if self._is_multi_objective:
-                print(f"\n找到 {len(self.study_.best_trials)} 个帕累托最优解")
+                logger.info(f"\n找到 {len(self.study_.best_trials)} 个帕累托最优解")
                 for i, trial in enumerate(self.study_.best_trials[:3]):  # 显示前3个
                     scores = ', '.join([f"{name}={val:.4f}" 
                                        for name, val in zip(self.metric_names, trial.values)])
-                    print(f"  解 {i+1}: {scores}")
+                    logger.info(f"  解 {i+1}: {scores}")
             else:
-                print(f"\n最佳得分: {self.best_score_:.4f}")
-            print(f"最佳参数: {self.best_params_}")
+                logger.info(f"\n最佳得分: {self.best_score_:.4f}")
+            logger.info(f"最佳参数: {self.best_params_}")
 
         return self.best_params_
     
@@ -869,7 +872,7 @@ class ModelTuner:
         
         for i, params in enumerate(trial_points):
             if self.verbose:
-                print(f"评估 trial point {i+1}/{len(trial_points)}: {params}")
+                logger.info(f"评估 trial point {i+1}/{len(trial_points)}: {params}")
             
             # 合并固定参数
             full_params = self.fixed_params.copy()

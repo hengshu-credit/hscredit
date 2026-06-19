@@ -19,10 +19,13 @@ pip install xgboost
 >>> report = model.generate_report(X_train, y_train, X_test, y_test)  # 生成评估报告
 """
 
+import logging
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 import numpy as np
 import pandas as pd
 from sklearn.utils.validation import check_is_fitted
+
+logger = logging.getLogger(__name__)
 
 try:
     import xgboost as xgb
@@ -264,7 +267,7 @@ class XGBoostRiskModel(BaseRiskModel):
                 # 内部经验: 0.05 * n_samples / n_positive
                 self.scale_pos_weight = 0.05 * len(y) / np.sum(y == 1)
                 if self.verbose:
-                    print(f"自动计算scale_pos_weight: {self.scale_pos_weight:.2f} (bad_rate={pos_ratio:.4f})")
+                    logger.info(f"自动计算scale_pos_weight: {self.scale_pos_weight:.2f} (bad_rate={pos_ratio:.4f})")
             else:
                 self.scale_pos_weight = 1.0
         else:
@@ -332,18 +335,18 @@ class XGBoostRiskModel(BaseRiskModel):
                     )]
                     params['callbacks'] = callbacks
                     if self.verbose:
-                        print(f"使用早停: rounds={self.early_stopping_rounds}, "
+                        logger.info(f"使用早停: rounds={self.early_stopping_rounds}, "
                               f"metric='{self.early_stopping_metric}'")
                 except ImportError:
                     # 回退到旧方式
                     params['early_stopping_rounds'] = self.early_stopping_rounds
                     if self.verbose:
-                        print(f"使用早停: rounds={self.early_stopping_rounds} (默认指标)")
+                        logger.info(f"使用早停: rounds={self.early_stopping_rounds} (默认指标)")
             else:
                 # 未指定早停指标，使用默认方式（第一个eval_metric）
                 params['early_stopping_rounds'] = self.early_stopping_rounds
                 if self.verbose:
-                    print(f"使用早停: rounds={self.early_stopping_rounds} (默认使用第一个指标)")
+                    logger.info(f"使用早停: rounds={self.early_stopping_rounds} (默认使用第一个指标)")
 
         # 更新kwargs参数
         params.update(self.kwargs)

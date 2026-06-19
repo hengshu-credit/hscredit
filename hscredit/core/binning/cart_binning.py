@@ -4,6 +4,7 @@
 支持分类和回归目标变量，提供更灵活的约束控制。
 """
 
+import logging
 from typing import Union, List, Dict, Optional, Any, Tuple
 import numpy as np
 import pandas as pd
@@ -13,6 +14,8 @@ from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor, _tree
 
 from ...exceptions import NotFittedError
 from .base import BaseBinning
+
+logger = logging.getLogger(__name__)
 
 
 class CartBinning(BaseBinning):
@@ -131,7 +134,7 @@ class CartBinning(BaseBinning):
         # 对每个特征进行分箱
         def _fit_one(feature):
             if self.verbose:
-                print(f"处理特征: {feature}")
+                logger.info(f"处理特征: {feature}")
 
             # 检测特征类型
             feature_type = self._detect_feature_type(X[feature])

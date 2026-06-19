@@ -4,12 +4,15 @@
 通过迭代合并卡方值最小的相邻箱，直到满足停止条件。
 """
 
+import logging
 from typing import Union, List, Dict, Optional, Any, Tuple
 import numpy as np
 import pandas as pd
 from scipy.stats import chi2
 from ...exceptions import NotFittedError
 from .base import BaseBinning
+
+logger = logging.getLogger(__name__)
 
 
 class ChiMergeBinning(BaseBinning):
@@ -112,7 +115,7 @@ class ChiMergeBinning(BaseBinning):
         # 对每个特征进行分箱
         def _fit_one(feature):
             if self.verbose:
-                print(f"处理特征: {feature}")
+                logger.info(f"处理特征: {feature}")
 
             # 检测特征类型
             feature_type = self._detect_feature_type(X[feature])
@@ -254,22 +257,22 @@ class ChiMergeBinning(BaseBinning):
             # 检查停止条件
             if min_chi2_val > self.min_chi2_threshold:
                 if self.verbose:
-                    print(f"  迭代 {iteration}: 最小卡方值 {min_chi2_val:.4f} > 阈值 {self.min_chi2_threshold:.4f}，停止合并")
+                    logger.info(f"  迭代 {iteration}: 最小卡方值 {min_chi2_val:.4f} > 阈值 {self.min_chi2_threshold:.4f}，停止合并")
                 break
 
             if len(splits) + 1 <= self.max_n_bins:
                 if self.verbose:
-                    print(f"  迭代 {iteration}: 分箱数 {len(splits) + 1} 达到上限 {self.max_n_bins}，停止合并")
+                    logger.info(f"  迭代 {iteration}: 分箱数 {len(splits) + 1} 达到上限 {self.max_n_bins}，停止合并")
                 break
 
             if len(splits) <= self.min_n_bins - 1:
                 if self.verbose:
-                    print(f"  迭代 {iteration}: 分箱数达到最小值 {self.min_n_bins}，停止合并")
+                    logger.info(f"  迭代 {iteration}: 分箱数达到最小值 {self.min_n_bins}，停止合并")
                 break
 
             # 合并卡方值最小的相邻箱
             if self.verbose:
-                print(f"  迭代 {iteration}: 合并箱 {min_chi2_idx} 和 {min_chi2_idx + 1}，卡方值={min_chi2_val:.4f}")
+                logger.info(f"  迭代 {iteration}: 合并箱 {min_chi2_idx} 和 {min_chi2_idx + 1}，卡方值={min_chi2_val:.4f}")
 
             # 更新分箱统计：合并相邻两个箱
             bin_stats[min_chi2_idx] += bin_stats[min_chi2_idx + 1]

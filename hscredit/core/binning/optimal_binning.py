@@ -10,6 +10,7 @@
 使用 core.metrics 中的指标计算方法。
 """
 
+import logging
 from typing import Union, List, Dict, Optional, Any, Callable
 import numpy as np
 import pandas as pd
@@ -44,6 +45,8 @@ from ..metrics._binning import (
     compare_splits_iv,
     compare_splits_ks,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class OptimalBinning(BaseBinning):
@@ -481,7 +484,7 @@ class OptimalBinning(BaseBinning):
         
         # 2. 执行预分箱
         if self.verbose:
-            print(f"执行预分箱: {self._prebinner.method}")
+            logger.info(f"执行预分箱: {self._prebinner.method}")
         self._prebinner.fit(X, y)
         
         # 3. 获取预分箱的切分点作为初始切分点
@@ -555,9 +558,6 @@ class OptimalBinning(BaseBinning):
             # 使用预分箱切分点生成初始分箱
             x_clean = X[feature].dropna()
             y_clean = y[x_clean.index]
-            
-            # 基于预分箱切分点计算每个箱的统计信息
-            bins = np.digitize(x_clean, initial_splits)
             
             # 根据主方法进行优化
             if self.method == 'best_iv':

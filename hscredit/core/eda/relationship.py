@@ -98,7 +98,7 @@ def batch_iv_analysis(df: pd.DataFrame,
             if return_details:
                 detail_results[feature] = result['分箱明细']
                 
-        except Exception as e:
+        except Exception:
             results.append({
                 '特征名': feature,
                 'IV值': np.nan,
@@ -353,7 +353,7 @@ def feature_importance_ranking(df: pd.DataFrame,
                 iv_result = iv_analysis(df, feature, target)
                 result['IV值'] = iv_result['IV值']
                 result['预测能力'] = iv_result['预测能力']
-            except:
+            except Exception:
                 result['IV值'] = np.nan
         
         # AUC值
@@ -361,7 +361,7 @@ def feature_importance_ranking(df: pd.DataFrame,
             try:
                 auc_result = univariate_auc(df, feature, target)
                 result['AUC值'] = auc_result['AUC值']
-            except:
+            except Exception:
                 result['AUC值'] = np.nan
         
         results.append(result)

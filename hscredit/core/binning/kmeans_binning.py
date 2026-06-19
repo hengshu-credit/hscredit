@@ -4,6 +4,7 @@
 这是一种无监督分箱方法，适用于发现数据中的自然分组。
 """
 
+import logging
 import warnings
 from typing import Union, List, Dict, Optional, Any, Tuple
 import numpy as np
@@ -11,6 +12,8 @@ import pandas as pd
 from scipy.cluster.vq import kmeans2
 from ...exceptions import NotFittedError
 from .base import BaseBinning
+
+logger = logging.getLogger(__name__)
 
 
 class KMeansBinning(BaseBinning):
@@ -108,7 +111,7 @@ class KMeansBinning(BaseBinning):
         # 对每个特征进行分箱
         def _fit_one(feature):
             if self.verbose:
-                print(f"处理特征: {feature}")
+                logger.info(f"处理特征: {feature}")
 
             # 检测特征类型
             if self.force_numerical:
@@ -221,7 +224,6 @@ class KMeansBinning(BaseBinning):
 
         # 执行多次聚类取最佳结果
         best_centers = None
-        best_labels = None
         best_inertia = np.inf
 
         for _ in range(self.n_init):
@@ -244,7 +246,6 @@ class KMeansBinning(BaseBinning):
                 if inertia < best_inertia:
                     best_inertia = inertia
                     best_centers = centers
-                    best_labels = labels
             except Exception:
                 continue
 

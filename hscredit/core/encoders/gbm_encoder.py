@@ -15,12 +15,15 @@
 - CatBoost: pip install catboost
 """
 
+import logging
 from typing import Optional, List, Dict, Union, Any, Literal
 import numpy as np
 import pandas as pd
 import warnings
 
 from .base import BaseEncoder
+
+logger = logging.getLogger(__name__)
 
 
 class GBMEncoder(BaseEncoder):
@@ -285,7 +288,7 @@ class GBMEncoder(BaseEncoder):
 
         if self.missing_stats_:
             total_features_with_missing = len(self.missing_stats_)
-            print(f"警告: {total_features_with_missing} 个特征存在缺失值，GBM将自动处理")
+            logger.warning("%s 个特征存在缺失值，GBM将自动处理", total_features_with_missing)
 
     def _preprocess_categorical(
         self, X: pd.DataFrame, fit: bool = True

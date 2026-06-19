@@ -102,12 +102,13 @@ class RFESelector(BaseFeatureSelector):
         self._get_feature_names(X)
 
         # 使用sklearn的RFE
-        # 使用 feature_importances_ 获取重要性（支持 hscredit RiskModels, XGBoost, LightGBM, CatBoost 等）
+        # importance_getter='auto'：sklearn 自动按 feature_importances_/coef_ 取重要性，
+        # 兼容树模型（hscredit RiskModels, XGBoost, LightGBM, CatBoost 等）与线性模型（LogisticRegression 等）
         rfe = SklearnRFE(
             estimator=self.estimator,
             n_features_to_select=self.n_features_to_select,
             step=self.step,
-            importance_getter='feature_importances_'
+            importance_getter='auto'
         )
         rfe.fit(X, y)
 

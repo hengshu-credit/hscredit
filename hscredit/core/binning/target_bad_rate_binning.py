@@ -245,9 +245,6 @@ class TargetBadRateBinning(BaseBinning):
 
             best_pos = valid_start + np.argmin(valid_diff)
 
-            # 检查这个位置的实际坏样本率是否足够接近目标
-            actual_rate = cum_rate[best_pos]
-
             # 确定切割点
             split_val = (x_sorted[best_pos] + x_sorted[best_pos + 1]) / 2
 
@@ -453,8 +450,6 @@ class TargetBadRateBinning(BaseBinning):
     ) -> List[float]:
         """类别型变量按目标坏样本率边界划分."""
         splits = []
-        cum_count = 0
-        cum_bad = 0
 
         for target in self.target_bad_rates:
             best_idx = None

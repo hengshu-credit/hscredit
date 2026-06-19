@@ -13,6 +13,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import warnings
 from dataclasses import dataclass
 from datetime import date
@@ -21,6 +23,8 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -50,8 +54,24 @@ def _proba_pos(model, X) -> np.ndarray:
     """获取正类概率."""
     proba = np.asarray(model.predict_proba(X), dtype=float)
     if proba.ndim == 2 and proba.shape[1] >= 2:
+        classes = getattr(model, "classes_", None)
+        if classes is not None:
+            positive = np.flatnonzero(np.asarray(classes) == 1)
+            if len(positive) == 1:
+                return proba[:, positive[0]]
         return proba[:, 1]
     return proba.reshape(-1)
+
+
+def _safe_binary_metric(metric, y_true, y_score) -> float:
+    """计算二分类指标，单类别样本返回 NaN。"""
+    y_arr = np.asarray(y_true)
+    if len(y_arr) == 0 or len(np.unique(y_arr[~pd.isna(y_arr)])) < 2:
+        return np.nan
+    try:
+        return float(metric(y_arr, y_score))
+    except (TypeError, ValueError):
+        return np.nan
 
 
 def _score_from_model(model, X) -> np.ndarray:
@@ -93,8 +113,6 @@ def _merge_multi_label_bin_tables(tables: List[pd.DataFrame], labels: List[str])
         return pd.DataFrame()
     if len(tables) == 1:
         return tables[0]
-
-    import itertools
 
     base = tables[0].copy()
     merge_cols = ['分箱标签', '指标含义', '指标名称', '指标明细']
@@ -269,7 +287,9 @@ class QuickModelReport:
             self._init_from_xy(X_train, y_train, X_test, y_test)
 
         # 从第一个数据集获取特征名，再过滤为模型实际入模特征
-        if not hasattr(self, 'feature_names') or not self.feature_names:
+        if self._feature_names:
+            self.feature_names = list(self._feature_names)
+        elif not hasattr(self, 'feature_names') or not self.feature_names:
             if self._datasets:
                 first_ds = next(iter(self._datasets.values()))
                 self.feature_names = list(first_ds.X.columns)
@@ -486,8 +506,14 @@ class QuickModelReport:
 
     # ---------- 数据集管理 ----------
 
-    def _add_dataset(self, key: str, label: str, X: pd.DataFrame, y: pd.Series,
-                       y_dict: Optional[Dict[str, np.ndarray]] = None):
+    def _add_dataset(
+        self,
+        key: str,
+        label: str,
+        X: pd.DataFrame,
+        y: pd.Series,
+        y_dict: Optional[Dict[str, np.ndarray]] = None,
+    ):
         # 获取模型实际需要的特征列表，过滤掉额外列，避免预测时报错
         # 优先级：ScoreCard.feature_names_ > sklearn.feature_names_in_ > None
         required_features: Optional[List[str]] = None
@@ -503,8 +529,16 @@ class QuickModelReport:
             if missing:
                 raise ValueError(f"数据集缺少以下模型特征: {missing}")
             X_for_pred = X[required_features]
+        elif self._feature_names:
+            missing = set(self._feature_names) - set(X.columns)
+            if missing:
+                raise ValueError(f"数据集缺少以下模型特征: {missing}")
+            X_for_pred = X[self._feature_names]
         else:
             X_for_pred = X
+
+        if len(X) != len(y):
+            raise ValueError(f"特征与标签样本数不一致: X={len(X)}, y={len(y)}")
         self._datasets[key] = ReportDataset(
             name=key,
             label=label,
@@ -559,22 +593,59 @@ class QuickModelReport:
         """
         from ..core.metrics import ks, auc, psi
 
-        ds_keys = [k for k in ["train", "test"] + [k for k in self._datasets if k not in ("train", "test")] if k in self._datasets]
+        ordered_keys = ["train", "test"] + [k for k in self._datasets if k not in ("train", "test")]
+        ds_keys = [k for k in ordered_keys if k in self._datasets]
         labels_map = {k: self._datasets[k].label for k in ds_keys}
 
         if self._is_multi_label() and label:
             # 多标签模式：每列对应一个数据集，多行对应 KS/AUC/样本数/坏样本率
             rows = []
-            rows.append({"统计项": "KS", **{labels_map[k]: ks(self._get_y(k, label), self._datasets[k].y_proba) for k in ds_keys}})
-            rows.append({"统计项": "AUC", **{labels_map[k]: auc(self._get_y(k, label), self._datasets[k].y_proba) for k in ds_keys}})
+            rows.append(
+                {
+                    "统计项": "KS",
+                    **{
+                        labels_map[k]: _safe_binary_metric(
+                            ks, self._get_y(k, label), self._datasets[k].y_proba
+                        )
+                        for k in ds_keys
+                    },
+                }
+            )
+            rows.append(
+                {
+                    "统计项": "AUC",
+                    **{
+                        labels_map[k]: _safe_binary_metric(
+                            auc, self._get_y(k, label), self._datasets[k].y_proba
+                        )
+                        for k in ds_keys
+                    },
+                }
+            )
             rows.append({"统计项": "样本数", **{labels_map[k]: len(self._get_y(k, label)) for k in ds_keys}})
             rows.append({"统计项": "坏样本率", **{labels_map[k]: float(self._get_y(k, label).mean()) for k in ds_keys}})
             return pd.DataFrame(rows)
 
         # 单标签模式或 combined y
         rows = []
-        rows.append({"统计项": "KS", **{labels_map[k]: ks(self._datasets[k].y, self._datasets[k].y_proba) for k in ds_keys}})
-        rows.append({"统计项": "AUC", **{labels_map[k]: auc(self._datasets[k].y, self._datasets[k].y_proba) for k in ds_keys}})
+        rows.append(
+            {
+                "统计项": "KS",
+                **{
+                    labels_map[k]: _safe_binary_metric(ks, self._datasets[k].y, self._datasets[k].y_proba)
+                    for k in ds_keys
+                },
+            }
+        )
+        rows.append(
+            {
+                "统计项": "AUC",
+                **{
+                    labels_map[k]: _safe_binary_metric(auc, self._datasets[k].y, self._datasets[k].y_proba)
+                    for k in ds_keys
+                },
+            }
+        )
         rows.append({"统计项": "样本数", **{labels_map[k]: len(self._datasets[k].y) for k in ds_keys}})
         rows.append({"统计项": "坏样本率", **{labels_map[k]: float(self._datasets[k].y.mean()) for k in ds_keys}})
         if len(ds_keys) >= 2:
@@ -633,7 +704,10 @@ class QuickModelReport:
             max_n_bins=max_n_bins,
             missing_separate=True,
             margins=margins,
-            return_cols=['样本总数', '好样本数', '坏样本数', '样本占比', '好样本占比', '坏样本占比', '坏样本率', 'LIFT值', '累积LIFT值', '坏账改善', '累积坏账改善', '分档KS值'],
+            return_cols=[
+                '样本总数', '好样本数', '坏样本数', '样本占比', '好样本占比', '坏样本占比',
+                '坏样本率', 'LIFT值', '累积LIFT值', '坏账改善', '累积坏账改善', '分档KS值',
+            ],
         )
         if amount_col and amount_col in df.columns:
             kw["amount"] = amount_col
@@ -656,17 +730,24 @@ class QuickModelReport:
                 except Exception:
                     pass
             if importances is None and hasattr(self.model, "feature_importances_"):
-                importances = pd.Series(
-                    self.model.feature_importances_,
-                    index=self.feature_names,
-                )
+                values = np.asarray(self.model.feature_importances_).reshape(-1)
+                if len(values) == len(self.feature_names):
+                    importances = pd.Series(values, index=self.feature_names)
+
+            if importances is not None and not isinstance(importances, pd.Series):
+                values = np.asarray(importances).reshape(-1)
+                if len(values) == len(self.feature_names):
+                    importances = pd.Series(values, index=self.feature_names)
+                else:
+                    importances = None
 
             if importances is None:
                 self._importance_cache = pd.DataFrame(columns=["特征重要性", "IV", "KS", "PSI"])
             else:
+                importances = importances.reindex([f for f in importances.index if f in self.feature_names])
+                total = importances.abs().sum()
                 importance_df = pd.DataFrame(index=importances.index)
-                total = importances.sum()
-                importance_df["特征重要性"] = importances.values / total if total else importances.values
+                importance_df["特征重要性"] = importances.abs().values / total if total else importances.values
 
                 train_ds = self._datasets["train"]
                 y_arr = train_ds.y.to_numpy()
@@ -854,9 +935,9 @@ class QuickModelReport:
             rows.append({"数据集": tag, "统计项": "LIFT值", **lifts})
             rows.append({"数据集": tag, "统计项": "坏账改善", **improvements})
 
-            # 金额口径
+            # 金额口径替代订单口径；调用方会将两个结果并排展示。
             if amount_col and amount_col in ds.X.columns:
-                amounts = ds.X[amount_col].values
+                amounts = pd.to_numeric(ds.X[amount_col], errors="coerce").fillna(0).clip(lower=0).to_numpy(dtype=float)
                 amounts_sorted = amounts[sorted_idx]
                 overall_bad_amount = float(
                     (sorted_y * amounts_sorted).sum()
@@ -885,9 +966,11 @@ class QuickModelReport:
                 amt_lifts["TOTAL"] = 1.0
                 amt_improvements["TOTAL"] = 0.0
 
-                rows.append({"数据集": tag, "统计项": "坏样本率", **amt_bad_rates})
-                rows.append({"数据集": tag, "统计项": "LIFT值", **amt_lifts})
-                rows.append({"数据集": tag, "统计项": "坏账改善", **amt_improvements})
+                rows[-3:] = [
+                    {"数据集": tag, "统计项": "坏样本率", **amt_bad_rates},
+                    {"数据集": tag, "统计项": "LIFT值", **amt_lifts},
+                    {"数据集": tag, "统计项": "坏账改善", **amt_improvements},
+                ]
 
         return pd.DataFrame(rows)
 
@@ -923,13 +1006,22 @@ class QuickModelReport:
 
         for ds_key, ds_label in zip(ds_keys_list, dataset_labels):
             for lbl in labels:
-                pair_key = (ds_label, lbl)
                 y_arr = self._get_y(ds_key, lbl)
                 n = len(y_arr)
-                overall_bad_rate = float(y_arr.mean())
+                weights = None
+                if amount_col and amount_col in self._datasets[ds_key].X.columns:
+                    weights = pd.to_numeric(
+                        self._datasets[ds_key].X[amount_col], errors="coerce"
+                    ).fillna(0).clip(lower=0).to_numpy(dtype=float)
+                overall_bad_rate = (
+                    float(np.average(y_arr, weights=weights))
+                    if weights is not None and weights.sum() > 0
+                    else float(y_arr.mean())
+                )
 
                 sorted_idx = np.argsort(-self._datasets[ds_key].y_proba)
                 sorted_y = y_arr[sorted_idx]
+                sorted_weights = weights[sorted_idx] if weights is not None else None
 
                 bad_rates: Dict[str, float] = {}
                 lifts: Dict[str, float] = {}
@@ -937,7 +1029,12 @@ class QuickModelReport:
 
                 for pct in percentiles:
                     top_n = max(1, int(n * pct))
-                    top_bad_rate = float(sorted_y[:top_n].mean())
+                    top_weights = sorted_weights[:top_n] if sorted_weights is not None else None
+                    top_bad_rate = (
+                        float(np.average(sorted_y[:top_n], weights=top_weights))
+                        if top_weights is not None and top_weights.sum() > 0
+                        else float(sorted_y[:top_n].mean())
+                    )
                     lift = top_bad_rate / overall_bad_rate if overall_bad_rate > 0 else 0.0
                     improvement = (top_bad_rate - overall_bad_rate) / overall_bad_rate if overall_bad_rate > 0 else 0.0
                     key = f"TOP {int(pct * 100)}%"
@@ -951,7 +1048,7 @@ class QuickModelReport:
 
                 for pct_key in pct_keys:
                     for metric, data in [("坏样本率", bad_rates), ("LIFT值", lifts), ("坏账改善", improvements)]:
-                        rows_dict[pct_key][(pair_key, metric)] = data.get(pct_key)
+                        rows_dict[pct_key][(ds_label, lbl, metric)] = data.get(pct_key)
 
         # 构建 DataFrame: 行=pct_key, 列=(pair, metric)
         rows_list = [rows_dict[p] for p in pct_keys]
@@ -1156,11 +1253,16 @@ class QuickModelReport:
                 try:
                     train_vals = self._datasets[ds_keys[0]].X[feat].dropna()
                     test_vals = self._datasets[ds_keys[1]].X[feat].dropna()
-                    y_train = self._datasets[ds_keys[0]].y.loc[train_vals.index]
-                    y_test = self._datasets[ds_keys[1]].y.loc[test_vals.index]
-                    y_combined = pd.concat([y_train, y_test], ignore_index=True)
                     p = str(output_dir / f"psi_{feat}.png")
-                    psi_result = psi_plot(train_vals, test_vals, y=y_combined, desc=feat, save=p, result=True, plot=True, figsize=(15, 8))
+                    psi_result = psi_plot(
+                        train_vals,
+                        test_vals,
+                        desc=feat,
+                        save=p,
+                        result=True,
+                        plot=True,
+                        figsize=(15, 8),
+                    )
                     _safe_close_figs()
                     paths[f"feat_psi_{feat}"] = [p]
                     if isinstance(psi_result, pd.DataFrame):
@@ -1181,14 +1283,12 @@ class QuickModelReport:
 
             if len(ds_keys) >= 2:
                 try:
-                    score_train = self._datasets[ds_keys[0]].score.dropna()
-                    score_test = self._datasets[ds_keys[1]].score.dropna()
-                    y_train = self._datasets[ds_keys[0]].y.loc[score_train.index]
-                    y_test = self._datasets[ds_keys[1]].y.loc[score_test.index]
-                    y_combined = pd.concat([y_train, y_test], ignore_index=True)
+                    score_train = pd.Series(self._datasets[ds_keys[0]].score).dropna()
+                    score_test = pd.Series(self._datasets[ds_keys[1]].score).dropna()
                     p = str(output_dir / "score_psi.png")
                     score_psi_df = psi_plot(
-                        score_train, score_test, y=y_combined,
+                        score_train,
+                        score_test,
                         desc="模型评分", save=p, result=True, plot=True,
                         figsize=(15, 8),
                     )
@@ -1301,7 +1401,8 @@ class QuickModelReport:
             {"序号": 2, "内容": "2-模型性能", "备注": "模型效果、区分度、稳定性等内容"},
             {"序号": 3, "内容": "3-入模变量分析", "备注": "模型变量有效性及不同数据集分箱情况"},
             {"序号": 4, "内容": "4-稳定性分析", "备注": "评分分布、PSI、CSI等稳定性分析"},
-            {"序号": 5, "内容": "5-模型部署需求", "备注": "入模变量信息及测试用例"},
+            {"序号": 5, "内容": "5-模型参数", "备注": "模型选型、参数及评分卡配置"},
+            {"序号": 6, "内容": "6-模型部署需求", "备注": "入模变量信息及测试用例"},
         ])
 
         ws = writer.get_sheet_by_name("目录")
@@ -1424,6 +1525,13 @@ class QuickModelReport:
         # 多标签模式：每个数据集需要展示各标签的逾期率
         is_multi = self._is_multi_label()
         if is_multi:
+            end_row, _ = dataframe2excel(
+                pd.DataFrame(fixed_rows),
+                writer,
+                sheet_name=ws,
+                start_row=end_row + 1,
+                left_cols=["统计项", "统计内容"],
+            )
             # 多标签模式：行=数据集，列=逾期标签，值=坏样本率
             import itertools
             # 先定义 ds_keys_list 和 dataset_labels
@@ -1442,8 +1550,14 @@ class QuickModelReport:
                 rows_list.append(row)
             desc_df = pd.DataFrame(rows_list, index=dataset_labels, columns=multi_cols)
             desc_df.index.name = "数据集"
-            end_row, _ = dataframe2excel(desc_df, writer, sheet_name=ws, start_row=end_row + 1,
-                                         percent_cols=[c for c in desc_df.columns])
+            end_row, _ = dataframe2excel(
+                desc_df,
+                writer,
+                sheet_name=ws,
+                title="各数据集标签坏样本率",
+                start_row=end_row + 1,
+                percent_cols=[c for c in desc_df.columns],
+            )
         else:
             ds_rows: List[Dict[str, Any]] = []
             for ds_key, ds in self._datasets.items():
@@ -1630,9 +1744,13 @@ class QuickModelReport:
                         else:
                             from ..core.metrics import ks, auc
                             if metric == "KS":
-                                val = ks(self._get_y(ds_key, lbl), self._datasets[ds_key].y_proba)
+                                val = _safe_binary_metric(
+                                    ks, self._get_y(ds_key, lbl), self._datasets[ds_key].y_proba
+                                )
                             else:
-                                val = auc(self._get_y(ds_key, lbl), self._datasets[ds_key].y_proba)
+                                val = _safe_binary_metric(
+                                    auc, self._get_y(ds_key, lbl), self._datasets[ds_key].y_proba
+                                )
                         row[(ds_label, lbl)] = val
                 rows_list.append(row)
             metrics_df = pd.DataFrame(rows_list, index=metric_items, columns=multi_cols)
@@ -1645,18 +1763,16 @@ class QuickModelReport:
                 from ..core.metrics import psi as _psi_metric
                 psi_row_data: Dict[str, Any] = {"统计项": "PSI"}
                 for ds_key, ds_label in zip(ds_keys_list, dataset_labels):
-                    for lbl in self._label_names:
-                        if lbl == self._label_names[0]:
-                            psi_row_data[ds_label] = "\\"
-                        else:
-                            try:
-                                psi_row_data[ds_label] = _psi_metric(
-                                    self._datasets[ds_keys_list[0]].score,
-                                    self._datasets[ds_key].score,
-                                )
-                            except Exception:
-                                psi_row_data[ds_label] = np.nan
-                        break  # PSI only needs one value per dataset
+                    if ds_key == ds_keys_list[0]:
+                        psi_row_data[ds_label] = "\\"
+                    else:
+                        try:
+                            psi_row_data[ds_label] = _psi_metric(
+                                self._datasets[ds_keys_list[0]].score,
+                                self._datasets[ds_key].score,
+                            )
+                        except (TypeError, ValueError):
+                            psi_row_data[ds_label] = np.nan
                 psi_df = pd.DataFrame([psi_row_data])
                 end_row, _ = dataframe2excel(psi_df, writer, sheet_name=ws, start_row=end_row + 1)
         else:
@@ -1709,7 +1825,6 @@ class QuickModelReport:
                 end_row = max(end_row1, end_row2)
                 try:
                     from openpyxl.utils import get_column_letter
-                    n_cols = len(lift_table.columns)
                     writer.add_auto_filter(ws, f"B{table_start + 2}:{get_column_letter(end_col1 + 1)}{end_row - 1}")
                 except Exception:
                     pass
@@ -2497,7 +2612,7 @@ def auto_model_report(
             loc_cols=loc_cols,
         )
         if verbose:
-            print(f"\nExcel 报告已保存: {excel_path}")
+            logger.info(f"\nExcel 报告已保存: {excel_path}")
 
     return report
 

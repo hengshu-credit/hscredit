@@ -17,6 +17,7 @@
 ['a', 'c']
 """
 
+import logging
 from typing import Union, List, Optional
 import numpy as np
 import pandas as pd
@@ -24,6 +25,8 @@ from sklearn.linear_model import LinearRegression
 from joblib import Parallel, delayed
 
 from .base import BaseFeatureSelector
+
+logger = logging.getLogger(__name__)
 
 
 def _compute_vif_single(x: np.ndarray, idx: int) -> float:
@@ -214,12 +217,12 @@ class VIFSelector(BaseFeatureSelector):
             max_feature = vif_series.idxmax()
             
             if self.verbose:
-                print(f"迭代 {iteration + 1}: 最大VIF = {max_vif:.4f} (特征: {max_feature})")
+                logger.info(f"迭代 {iteration + 1}: 最大VIF = {max_vif:.4f} (特征: {max_feature})")
             
             # 如果最大VIF <= threshold，停止
             if max_vif <= self.threshold:
                 if self.verbose:
-                    print(f"所有特征VIF <= {self.threshold}，停止迭代")
+                    logger.info(f"所有特征VIF <= {self.threshold}，停止迭代")
                 break
             
             # 剔除VIF最大的特征
@@ -228,7 +231,7 @@ class VIFSelector(BaseFeatureSelector):
             dropped_reasons.append(f'VIF={max_vif:.4f} (第{iteration + 1}轮剔除)')
             
             if self.verbose:
-                print(f"  剔除特征: {max_feature}")
+                logger.info(f"  剔除特征: {max_feature}")
         
         # 保存结果
         self.selected_features_ = remaining_features
@@ -269,9 +272,9 @@ class VIFSelector(BaseFeatureSelector):
         self._drop_reason = f'VIF值 > {self.threshold}'
         
         if self.verbose:
-            print(f"\nVIF筛选完成:")
-            print(f"  迭代次数: {self.n_iterations_}")
-            print(f"  保留特征: {len(self.selected_features_)}")
-            print(f"  剔除特征: {len(self.removed_features_)}")
+            logger.info(f"\nVIF筛选完成:")
+            logger.info(f"  迭代次数: {self.n_iterations_}")
+            logger.info(f"  保留特征: {len(self.selected_features_)}")
+            logger.info(f"  剔除特征: {len(self.removed_features_)}")
             if len(self.selected_features_) > 0:
-                print(f"  最终最大VIF: {self.scores_.max():.4f}")
+                logger.info(f"  最终最大VIF: {self.scores_.max():.4f}")

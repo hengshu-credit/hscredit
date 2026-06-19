@@ -909,7 +909,7 @@ def score_stats(score: Union[np.ndarray, pd.Series],
                 from .classification import ks, auc
                 result['KS'] = ks(y_true[valid_mask], score[valid_mask])
                 result['AUC'] = auc(y_true[valid_mask], score[valid_mask])
-            except:
+            except Exception:
                 pass
 
     return result

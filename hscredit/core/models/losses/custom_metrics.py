@@ -60,10 +60,8 @@ class KSMetric(BaseMetric):
         # 按预测分数排序
         sorted_indices = np.argsort(y_pred)
         sorted_y_true = y_true[sorted_indices]
-        sorted_y_pred = y_pred[sorted_indices]
 
         # 计算累积分布
-        n_samples = len(y_true)
         n_good = np.sum(y_true == 0)
         n_bad = np.sum(y_true == 1)
 

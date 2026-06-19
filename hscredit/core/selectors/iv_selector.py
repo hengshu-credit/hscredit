@@ -39,7 +39,7 @@ def _compute_iv_single(x: np.ndarray, y: np.ndarray, regularization: float = 1.0
         # 如果是numpy数组，尝试转换为Series以使用isnull
         try:
             has_missing = pd.Series(x).isnull().values
-        except:
+        except Exception:
             # 如果转换失败，使用pd.isnull直接判断
             has_missing = pd.isnull(x)
     

@@ -385,13 +385,13 @@ def feature_summary(
                         bin_table = binner.bin_tables_.get(feat, pd.DataFrame())
                         if not bin_table.empty and '分档IV值' in bin_table.columns:
                             iv_values[feat] = round(bin_table['分档IV值'].sum(), 4)
-                except Exception as e:
+                except Exception:
                     # 分箱失败，使用简单方法计算IV
                     for feat in numeric_features:
                         try:
                             iv_value = iv_metric(y_series, df[feat])
                             iv_values[feat] = round(iv_value, 4)
-                        except:
+                        except Exception:
                             iv_values[feat] = np.nan
                 
                 # 计算KS
@@ -399,7 +399,7 @@ def feature_summary(
                     try:
                         ks_value = ks_metric(y_series, df[feat])
                         ks_values[feat] = round(ks_value, 4)
-                    except:
+                    except Exception:
                         ks_values[feat] = np.nan
                 
                 # 检测单调性趋势
@@ -409,13 +409,13 @@ def feature_summary(
                         trend_binner.fit(df[[feat]], y_series)
                         trend = trend_binner.monotonic_trend_.get(feat, 'unknown')
                         trend_values[feat] = trend
-                    except:
+                    except Exception:
                         trend_values[feat] = 'unknown'
             
             results_df['IV'] = pd.Series(iv_values)
             results_df['KS'] = pd.Series(ks_values)
             results_df['趋势'] = pd.Series(trend_values)
-        except Exception as e:
+        except Exception:
             # 如果批量计算失败，记录错误但不中断
             pass
     
@@ -431,7 +431,7 @@ def feature_summary(
             try:
                 psi_df = psi_table(df[feat], val_df[feat], max_n_bins=max_n_bins)
                 psi_values[feat] = round(psi_df['PSI贡献'].sum(), 4)
-            except:
+            except Exception:
                 psi_values[feat] = np.nan
     elif psi_method == 'random_split' and len(df) >= 100:
         # 随机拆分两份数据计算PSI
@@ -446,9 +446,9 @@ def feature_summary(
                     try:
                         psi_df = psi_table(df1[feat], df2[feat], max_n_bins=max_n_bins)
                         psi_values[feat] = round(psi_df['PSI贡献'].sum(), 4)
-                    except:
+                    except Exception:
                         psi_values[feat] = np.nan
-        except:
+        except Exception:
             for feat in features:
                 psi_values[feat] = np.nan
     elif psi_method == 'group_col' and psi_group_col is not None and psi_group_col in df.columns:
@@ -469,7 +469,7 @@ def feature_summary(
                             try:
                                 psi_df = psi_table(data1, data2, max_n_bins=max_n_bins)
                                 psi_list.append(psi_df['PSI贡献'].sum())
-                            except:
+                            except Exception:
                                 pass
                 
                 if len(psi_list) > 0:
@@ -510,7 +510,7 @@ def feature_summary(
                                 try:
                                     psi_df = psi_table(data1, data2, max_n_bins=max_n_bins)
                                     psi_list.append(psi_df['PSI贡献'].sum())
-                                except:
+                                except Exception:
                                     pass
                     
                     if len(psi_list) > 0:
@@ -520,7 +520,7 @@ def feature_summary(
             else:
                 for feat in features:
                     psi_values[feat] = np.nan
-        except:
+        except Exception:
             for feat in features:
                 psi_values[feat] = np.nan
     
@@ -815,7 +815,7 @@ def data_quality_report(df: pd.DataFrame,
                     '问题值': 'object',
                     '建议处理': '转换为数值类型',
                 })
-            except:
+            except Exception:
                 pass
     
     if not issues:
@@ -1397,7 +1397,7 @@ def feature_group_analysis(
             for stat_name, stat_func in stat_funcs.items():
                 try:
                     value = stat_func(series)
-                except:
+                except Exception:
                     value = np.nan
                 
                 result = {
@@ -1415,7 +1415,7 @@ def feature_group_analysis(
             for stat_name, stat_func in y_stat_funcs.items():
                 try:
                     value = stat_func(series, y_series)
-                except:
+                except Exception:
                     value = np.nan
                 
                 result = {
@@ -1446,7 +1446,7 @@ def feature_group_analysis(
                 for stat_name, stat_func in stat_funcs.items():
                     try:
                         value = stat_func(series)
-                    except:
+                    except Exception:
                         value = np.nan
                     
                     result = {
@@ -1464,7 +1464,7 @@ def feature_group_analysis(
                 for stat_name, stat_func in y_stat_funcs.items():
                     try:
                         value = stat_func(series, y_group)
-                    except:
+                    except Exception:
                         value = np.nan
                     
                     result = {

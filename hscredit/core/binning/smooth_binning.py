@@ -10,12 +10,15 @@
 - 新增保守合并模式，避免过度合并
 """
 
+import logging
 from typing import Union, List, Dict, Optional, Any, Tuple
 import numpy as np
 import pandas as pd
 from scipy import stats
 from ...exceptions import NotFittedError
 from .base import BaseBinning
+
+logger = logging.getLogger(__name__)
 
 
 class SmoothBinning(BaseBinning):
@@ -125,7 +128,7 @@ class SmoothBinning(BaseBinning):
 
         def _fit_one(feature):
             if self.verbose:
-                print(f"处理特征: {feature}")
+                logger.info(f"处理特征: {feature}")
 
             feature_type = self._detect_feature_type(X[feature])
             self.feature_types_[feature] = feature_type
@@ -238,7 +241,6 @@ class SmoothBinning(BaseBinning):
         x_sorted = x[sorted_idx]
         y_sorted = y[sorted_idx]
         
-        splits = []
         n_candidates = min(max_splits * 3, n // 10)
         
         # 在类别变化处寻找候选切分点

@@ -1,8 +1,10 @@
 """Tests for model_report module."""
 
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
-import pytest
+from openpyxl import load_workbook
 
 from hscredit.report.model_report import QuickModelReport
 
@@ -30,6 +32,16 @@ class MockModel:
     @property
     def feature_importances_(self):
         return np.array([0.5] * len(self._feature_names))
+
+
+class ReversedClassModel(MockModel):
+    """Mock model whose probability columns use classes_=[1, 0]."""
+
+    classes_ = np.array([1, 0])
+
+    def predict_proba(self, X):
+        proba = super().predict_proba(X)
+        return proba[:, ::-1]
 
 
 class TestQuickModelReportTarget:
@@ -287,3 +299,97 @@ class TestQuickModelReportOverdueDpdsSeparate:
         )
 
         assert r1._datasets['train'].y.tolist() == r2._datasets['train'].y.tolist()
+
+
+class TestQuickModelReportRegression:
+    """Regression tests for report sections that previously exported blank."""
+
+    @staticmethod
+    def _multi_label_data():
+        return pd.DataFrame({
+            'f0': np.arange(20),
+            'MOB1': [0, 1, 3, 7, 8] * 4,
+            '放款金额': np.arange(100, 120),
+        })
+
+    def test_positive_probability_respects_model_classes(self):
+        X = pd.DataFrame({'f0': [1, 2, 3, 4]})
+        y = pd.Series([0, 0, 1, 1])
+        model = ReversedClassModel(feature_names=['f0'])
+
+        report = QuickModelReport(model, X_train=X, y_train=y, feature_names=['f0'])
+
+        expected = model.predict_proba(X)[:, 0]
+        np.testing.assert_allclose(report._datasets['train'].y_proba, expected)
+
+    def test_multi_label_lift_contains_values_and_amount_metrics(self):
+        X = self._multi_label_data()
+        report = QuickModelReport(
+            MockModel(['f0']),
+            datasets={'train': X, 'test': X.copy()},
+            overdue=['MOB1'],
+            dpds=[7, 3, 0],
+            feature_names=['f0'],
+        )
+
+        order_table = report._get_top_n_lift_table(labels=report._label_names)
+        amount_table = report._get_top_n_lift_table(
+            labels=report._label_names,
+            amount_col='放款金额',
+        )
+
+        assert report.feature_names == ['f0']
+        assert not order_table.isna().any().any()
+        assert not amount_table.isna().any().any()
+        assert not order_table.equals(amount_table)
+
+    def test_excel_contains_all_sections_and_multi_label_description(self, tmp_path):
+        X = self._multi_label_data()
+        report = QuickModelReport(
+            MockModel(['f0']),
+            datasets={'train': X, 'test': X.copy()},
+            overdue=['MOB1'],
+            dpds=[7, 3, 0],
+            feature_names=['f0'],
+        )
+        output = tmp_path / 'model_report.xlsx'
+
+        report.to_excel(
+            str(output),
+            with_plots=False,
+            amount_col='放款金额',
+            project_desc='测试项目描述',
+            data_source='测试数据源',
+        )
+
+        workbook = load_workbook(output, read_only=True)
+        assert workbook.sheetnames == [
+            '目录', '1-基本信息', '2-模型性能', '3-入模变量分析',
+            '4-稳定性分析', '5-模型参数', '6-模型部署需求',
+        ]
+        contents = [cell.value for row in workbook['目录'].iter_rows() for cell in row]
+        basic_info = [cell.value for row in workbook['1-基本信息'].iter_rows() for cell in row]
+        performance = [cell.value for row in workbook['2-模型性能'].iter_rows() for cell in row]
+
+        assert '5-模型参数' in contents
+        assert '6-模型部署需求' in contents
+        assert '测试项目描述' in basic_info
+        assert '测试数据源' in basic_info
+        assert any(isinstance(value, float) and not np.isnan(value) for value in performance)
+
+    def test_export_plots_contains_feature_psi(self, tmp_path):
+        X = self._multi_label_data()
+        report = QuickModelReport(
+            MockModel(['f0']),
+            datasets={'train': X, 'test': X.copy()},
+            overdue='MOB1',
+            dpds=3,
+            feature_names=['f0'],
+        )
+
+        paths, tables = report._export_plots(tmp_path)
+
+        assert 'feat_psi_f0' in paths
+        assert Path(paths['feat_psi_f0'][0]).exists()
+        assert 'feat_psi_f0' in tables
+        assert not tables['feat_psi_f0'].empty

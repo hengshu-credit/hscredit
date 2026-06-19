@@ -62,6 +62,7 @@
 >>> drift_report = calibrator.detect_drift(X_reference, X_production)
 """
 
+import logging
 import warnings
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, Tuple, Union, Literal
@@ -72,6 +73,8 @@ from scipy import stats
 from scipy.interpolate import interp1d
 from sklearn.base import BaseEstimator
 from sklearn.utils.validation import check_is_fitted
+
+logger = logging.getLogger(__name__)
 
 try:
     from ...metrics.stability import psi
@@ -412,9 +415,9 @@ class LinearDriftCalibrator(BaseDriftCalibrator):
         self._is_fitted = True
 
         if self.clip_bounds:
-            print(f"线性校准参数: scale={self.scale_:.4f}, offset={self.offset_:.4f}")
-            print(f"参考分布: mean={self.ref_mean_:.4f}, std={self.ref_std_:.4f}")
-            print(f"当前分布: mean={self.cur_mean_:.4f}, std={self.cur_std_:.4f}")
+            logger.info("线性校准参数: scale=%.4f, offset=%.4f", self.scale_, self.offset_)
+            logger.info("参考分布: mean=%.4f, std=%.4f", self.ref_mean_, self.ref_std_)
+            logger.info("当前分布: mean=%.4f, std=%.4f", self.cur_mean_, self.cur_std_)
 
         return self
 
@@ -705,10 +708,9 @@ class BinningRecalibrator(BaseDriftCalibrator):
 
         self._is_fitted = True
 
-        # 打印对比
-        print(f"分箱重校准拟合完成，实际分箱数: {self.n_bins_actual_}")
-        print(f"参考坏样本率: {self.ref_bad_rates_}")
-        print(f"当前坏样本率: {self.cur_bad_rates_}")
+        logger.info("分箱重校准拟合完成，实际分箱数: %s", self.n_bins_actual_)
+        logger.info("参考坏样本率: %s", self.ref_bad_rates_)
+        logger.info("当前坏样本率: %s", self.cur_bad_rates_)
 
         return self
 
@@ -733,17 +735,7 @@ class BinningRecalibrator(BaseDriftCalibrator):
         for i in range(self.n_bins_actual_):
             mask = bin_indices == i
             if mask.any():
-                # 在当前箱内，根据相对位置进行映射
                 bin_scores = scores[mask]
-                bin_min = self.bin_edges_[i]
-                bin_max = self.bin_edges_[i + 1]
-
-                if bin_max > bin_min:
-                    # 在箱内的相对位置
-                    relative_pos = (bin_scores - bin_min) / (bin_max - bin_min)
-                else:
-                    relative_pos = 0.5
-
                 # 映射到参考评分空间
                 ref_score = self.ref_scores_[i]
                 cur_score = self.cur_scores_[i]

@@ -22,6 +22,7 @@
           B = pdo / ln(rate)
 """
 
+import logging
 import os
 import re
 import warnings
@@ -35,6 +36,8 @@ import inspect
 from ....exceptions import DependencyError, NotFittedError, ValidationError
 from ..classical.logistic_regression import LogisticRegression
 from .score_transformer import StandardScoreTransformer
+
+logger = logging.getLogger(__name__)
 
 
 class ScoreCard(StandardScoreTransformer):
@@ -236,10 +239,10 @@ class ScoreCard(StandardScoreTransformer):
                 self._initialize_from_pretrained()
         
         if verbose:
-            print(f"ScoreCard 初始化: pdo={pdo}, rate={rate}, base_odds={base_odds}, base_score={base_score}")
-            print(f"  - A_ (offset)={self.A_:.4f}, B_ (factor)={self.B_:.4f}")
+            logger.info(f"ScoreCard 初始化: pdo={pdo}, rate={rate}, base_odds={base_odds}, base_score={base_score}")
+            logger.info(f"  - A_ (offset)={self.A_:.4f}, B_ (factor)={self.B_:.4f}")
             if self.binner is not None:
-                print(f"  - binner: {self.binner.__class__.__name__}, 支持WOE转换: {self._binner_is_woe_transformer}")
+                logger.info(f"  - binner: {self.binner.__class__.__name__}, 支持WOE转换: {self._binner_is_woe_transformer}")
 
     def _compute_parameters(self) -> Tuple[float, float]:
         """计算评分公式中的参数A和B.
@@ -408,6 +411,9 @@ class ScoreCard(StandardScoreTransformer):
     @property
     def coef_(self) -> np.ndarray:
         """获取逻辑回归系数."""
+        if getattr(self, '_loaded_coef', None) is not None:
+            return self._loaded_coef
+
         # 如果传入了预训练模型但未调用fit，直接返回预训练模型的系数
         # 支持从 lr_model 或 lr_model_ (从pipeline提取) 获取
         if self._skip_fit_check:
@@ -550,28 +556,28 @@ class ScoreCard(StandardScoreTransformer):
             raise ValueError("pipeline 不能为空或需要 .steps 属性")
 
         if self.verbose:
-            print(f"从 pipeline 提取组件，共 {len(steps)} 个步骤:")
+            logger.info(f"从 pipeline 提取组件，共 {len(steps)} 个步骤:")
 
         for name, obj in steps:
             # 识别 LR 模型
             if self._is_lr_model(obj) and self.lr_model_ is None:
                 self.lr_model_ = obj
                 if self.verbose:
-                    print(f"  - 识别到 LR 模型: {name} ({obj.__class__.__name__})")
+                    logger.info(f"  - 识别到 LR 模型: {name} ({obj.__class__.__name__})")
                 continue
 
             # 识别 binner（如果尚未传入）
             if self.binner is None and self._is_binner(obj):
                 self.binner = obj
                 if self.verbose:
-                    print(f"  - 识别到分箱器: {name} ({obj.__class__.__name__})")
+                    logger.info(f"  - 识别到分箱器: {name} ({obj.__class__.__name__})")
                 continue
 
             # 识别 encoder
             if self.encoder is None and self._is_woe_encoder(obj):
                 self.encoder = obj
                 if self.verbose:
-                    print(f"  - 识别到 WOE 转换器: {name} ({obj.__class__.__name__})")
+                    logger.info(f"  - 识别到 WOE 转换器: {name} ({obj.__class__.__name__})")
                 continue
 
         # 再次检查 binner 是否可以直接作为 WOE 转换器
@@ -672,7 +678,7 @@ class ScoreCard(StandardScoreTransformer):
         if hasattr(self.binner, 'bin_tables_'):
             self._binner_is_woe_transformer = True
             if self.verbose:
-                print("  - 分箱器支持直接 WOE 转换（hscredit 风格）")
+                logger.info("  - 分箱器支持直接 WOE 转换（hscredit 风格）")
             return
 
         # 方法2：检查 transform 是否支持 metric='woe' 参数
@@ -683,7 +689,7 @@ class ScoreCard(StandardScoreTransformer):
                 if 'metric' in params:
                     self._binner_is_woe_transformer = True
                     if self.verbose:
-                        print("  - 分箱器支持 metric='woe' 参数")
+                        logger.info("  - 分箱器支持 metric='woe' 参数")
                     return
             except (ValueError, TypeError):
                 pass
@@ -692,7 +698,7 @@ class ScoreCard(StandardScoreTransformer):
         if hasattr(self.binner, 'transform_woe') or hasattr(self.binner, 'woe_transform'):
             self._binner_is_woe_transformer = True
             if self.verbose:
-                print("  - 分箱器有专门的 WOE 转换方法")
+                logger.info("  - 分箱器有专门的 WOE 转换方法")
             return
 
         self._binner_is_woe_transformer = False
@@ -793,20 +799,20 @@ class ScoreCard(StandardScoreTransformer):
                 if isinstance(X_woe, pd.DataFrame):
                     X_woe.attrs['hscredit_encoding'] = 'woe'
                 if self.verbose:
-                    print(f"使用 binner.transform(X, metric='woe') 进行 WOE 转换")
+                    logger.info(f"使用 binner.transform(X, metric='woe') 进行 WOE 转换")
                 return X_woe
             except Exception as e:
                 if self.verbose:
-                    print(f"binner.transform(X, metric='woe') 失败: {e}")
+                    logger.info(f"binner.transform(X, metric='woe') 失败: {e}")
                 # 尝试其他方法
                 try:
                     X_woe = self.binner.transform_woe(X)
                     if isinstance(X_woe, pd.DataFrame):
                         X_woe.attrs['hscredit_encoding'] = 'woe'
                     if self.verbose:
-                        print(f"使用 binner.transform_woe(X) 进行 WOE 转换")
+                        logger.info(f"使用 binner.transform_woe(X) 进行 WOE 转换")
                     return X_woe
-                except:
+                except Exception:
                     pass
 
         # 情况2：既有 binner 又有 encoder（toad/scp 风格）
@@ -816,7 +822,7 @@ class ScoreCard(StandardScoreTransformer):
             if isinstance(X_woe, pd.DataFrame):
                 X_woe.attrs['hscredit_encoding'] = 'woe'
             if self.verbose:
-                print(f"使用 binner + encoder 进行 WOE 转换")
+                logger.info(f"使用 binner + encoder 进行 WOE 转换")
             return X_woe
 
         # 情况3：仅有 encoder
@@ -825,12 +831,12 @@ class ScoreCard(StandardScoreTransformer):
             if isinstance(X_woe, pd.DataFrame):
                 X_woe.attrs['hscredit_encoding'] = 'woe'
             if self.verbose:
-                print(f"使用 encoder 进行 WOE 转换")
+                logger.info(f"使用 encoder 进行 WOE 转换")
             return X_woe
 
         # 情况4：无转换器，假设输入已是 WOE 数据
         if self.verbose:
-            print(f"无转换器配置，假设输入已是 WOE 数据")
+            logger.info(f"无转换器配置，假设输入已是 WOE 数据")
         return X
 
     def _setup_rule_based_binner(self) -> None:
@@ -922,7 +928,7 @@ class ScoreCard(StandardScoreTransformer):
         if self.binner is not None and not hasattr(self, '_rule_binner'):
             try:
                 return self.binner.transform(X, metric='bins')
-            except Exception as exc:
+            except Exception:
                 # 如果外部 binner 不支持，尝试基于规则的转换
                 pass
 
@@ -977,9 +983,9 @@ class ScoreCard(StandardScoreTransformer):
         :return: self
         """
         if self.verbose:
-            print("=" * 60)
-            print("ScoreCard.fit() 开始训练")
-            print(f"输入数据类型: {type(X).__name__}, input_type={input_type}")
+            logger.info("=" * 60)
+            logger.info("ScoreCard.fit() 开始训练")
+            logger.info(f"输入数据类型: {type(X).__name__}, input_type={input_type}")
 
         if input_type not in ['woe', 'raw']:
             raise ValueError(f"input_type 必须是 'woe' 或 'raw'，当前为: {input_type}")
@@ -1004,7 +1010,7 @@ class ScoreCard(StandardScoreTransformer):
                 y = X[self.target]
                 X = X.drop(columns=[self.target])
                 if self.verbose:
-                    print(f"从X中提取target列 '{self.target}' 作为y")
+                    logger.info(f"从X中提取target列 '{self.target}' 作为y")
             else:
                 raise ValueError(f"指定的target列 '{self.target}' 不存在于X中")
 
@@ -1021,15 +1027,15 @@ class ScoreCard(StandardScoreTransformer):
         if input_type == 'raw':
             # 需要将原始数据转换为 WOE 数据
             if self.verbose:
-                print("将原始数据转换为 WOE 数据...")
+                logger.info("将原始数据转换为 WOE 数据...")
             X = self._transform_to_woe(X)
         # else: input_type == 'woe', 直接使用输入数据
 
         # 3. 记录特征名
         self._feature_names = X.columns.tolist()
         if self.verbose:
-            print(f"特征数量: {len(self._feature_names)}")
-            print(f"特征列表: {self._feature_names}")
+            logger.info(f"特征数量: {len(self._feature_names)}")
+            logger.info(f"特征列表: {self._feature_names}")
 
         # 4. 构建并训练/获取 LR 模型
         self.lr_model_ = self._build_lr_model()
@@ -1037,11 +1043,11 @@ class ScoreCard(StandardScoreTransformer):
         # 如果 LR 模型未训练，则训练
         if not hasattr(self.lr_model_, 'coef_'):
             if self.verbose:
-                print("训练 LR 模型...")
+                logger.info("训练 LR 模型...")
             self.lr_model_.fit(X, y, sample_weight=sample_weight)
         else:
             if self.verbose:
-                print("使用预训练的 LR 模型")
+                logger.info("使用预训练的 LR 模型")
 
         if hasattr(self.lr_model_, 'ensure_positive_woe_coefficients'):
             self.lr_model_.ensure_positive_woe_coefficients(X)
@@ -1059,9 +1065,9 @@ class ScoreCard(StandardScoreTransformer):
         self._is_fitted = True
 
         if self.verbose:
-            print(f"评分卡训练完成，总分 = 截距分数 + 各特征分数之和")
-            print(f"截距分数: {self.A_ - self.B_ * self.intercept_:.2f}")
-            print("=" * 60)
+            logger.info(f"评分卡训练完成，总分 = 截距分数 + 各特征分数之和")
+            logger.info(f"截距分数: {self.A_ - self.B_ * self.intercept_:.2f}")
+            logger.info("=" * 60)
 
         return self
 
@@ -1345,13 +1351,14 @@ class ScoreCard(StandardScoreTransformer):
         elif not hasattr(self, '_is_fitted') or not self._is_fitted:
             # 传入了预训练模型但未调用fit，使用预训练模型进行预测
             if self.verbose:
-                print("使用预训练模型进行预测（未调用fit）")
+                logger.info("使用预训练模型进行预测（未调用fit）")
 
         if not isinstance(X, pd.DataFrame):
             X = pd.DataFrame(X)
 
         uses_loaded_rule_scoring = (
             getattr(self, '_loaded_intercept', None) is not None
+            and getattr(self, '_loaded_coef', None) is None
             and self.lr_model_ is None
             and self.lr_model is None
         )
@@ -1372,11 +1379,11 @@ class ScoreCard(StandardScoreTransformer):
                 # 自动检测
                 if is_woe_data:
                     if self.verbose:
-                        print("检测到输入为 WOE 数据，直接使用")
+                        logger.info("检测到输入为 WOE 数据，直接使用")
                     X_woe = X
                 else:
                     if self.verbose:
-                        print("检测到输入为原始数据，进行 WOE 转换")
+                        logger.info("检测到输入为原始数据，进行 WOE 转换")
                     X_woe = self._transform_to_woe(X)
             elif input_type == 'raw':
                 # 强制作为原始数据处理
@@ -1653,6 +1660,11 @@ class ScoreCard(StandardScoreTransformer):
                 'upper': self.upper,
                 'A': float(self.A_),
                 'B': float(self.B_),
+                'feature_names': list(self.feature_names_),
+                'coef': [
+                    float(coef * self._get_feature_woe_sign(i))
+                    for i, coef in enumerate(self.coef_)
+                ],
             }
 
         # 保存到 JSON 文件
@@ -1744,7 +1756,7 @@ class ScoreCard(StandardScoreTransformer):
             compression_level=compression_level
         )
 
-        print(f"模型已保存至: {file}")
+        logger.info("模型已保存至: %s", file)
         return file
 
     @classmethod
@@ -1928,7 +1940,7 @@ class ScoreCard(StandardScoreTransformer):
                 "continuing with the exported artifact.",
                 RuntimeWarning,
             )
-        print(f"PMML 文件已导出至: {pmml_file}")
+        logger.info("PMML 文件已导出至: %s", pmml_file)
 
         if debug:
             return pipeline
@@ -2850,6 +2862,11 @@ class ScoreCard(StandardScoreTransformer):
                 'upper': self.upper,
                 'A': float(self.A_),
                 'B': float(self.B_),
+                'feature_names': list(self.feature_names_),
+                'coef': [
+                    float(coef * self._get_feature_woe_sign(i))
+                    for i, coef in enumerate(self.coef_)
+                ],
             }
 
         # 保存到 JSON 文件
@@ -2897,6 +2914,14 @@ class ScoreCard(StandardScoreTransformer):
         intercept_score = meta.get('intercept_score')
         if intercept_score is not None:
             self._loaded_intercept = (self.A_ - float(intercept_score)) / self.B_
+
+        coef = meta.get('coef')
+        if coef is not None:
+            self._loaded_coef = np.asarray(coef, dtype=float)
+
+        feature_names = meta.get('feature_names')
+        if feature_names is not None:
+            self._feature_names = list(feature_names)
 
     def load(
         self,
@@ -2966,6 +2991,7 @@ class ScoreCard(StandardScoreTransformer):
             self._feature_names = []
             self.base_effect_ = None
             self._loaded_intercept = None
+            self._loaded_coef = None
 
         if meta:
             self._apply_export_metadata(meta)
@@ -3298,6 +3324,7 @@ class RoundScoreCard(ScoreCard):
 
         uses_loaded_rule_scoring = (
             getattr(self, '_loaded_intercept', None) is not None
+            and getattr(self, '_loaded_coef', None) is None
             and self.lr_model_ is None
             and self.lr_model is None
         )
@@ -3496,7 +3523,7 @@ class RoundScoreCard(ScoreCard):
             check_is_fitted(self)
         elif not hasattr(self, '_is_fitted') or not self._is_fitted:
             if self.verbose:
-                print("使用预训练模型进行预测（未调用fit）")
+                logger.info("使用预训练模型进行预测（未调用fit）")
 
         resolved = self._resolve_round_scoring_inputs(X, input_type=input_type)
         total_score = self._get_rounded_base_score() + resolved['sub_scores'].sum(axis=1)
@@ -3711,4 +3738,3 @@ class RoundScoreCard(ScoreCard):
             return pd.DataFrame(rows)
 
         return card
-

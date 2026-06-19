@@ -21,6 +21,7 @@
 >>> print(selector.selected_features_)
 """
 
+import logging
 from typing import Union, List, Optional, Dict, Any, Tuple
 import numpy as np
 import pandas as pd
@@ -31,6 +32,8 @@ from sklearn.linear_model import LogisticRegression, LinearRegression
 import warnings
 
 from .base import BaseFeatureSelector
+
+logger = logging.getLogger(__name__)
 
 
 class StepwiseSelector(BaseFeatureSelector):
@@ -199,7 +202,7 @@ class StepwiseSelector(BaseFeatureSelector):
             # 检查是否达到最大特征数
             if max_features is not None and len(selected) >= max_features:
                 if self.verbose:
-                    print(f"已达到最大特征数 {max_features}，停止迭代")
+                    logger.info(f"已达到最大特征数 {max_features}，停止迭代")
                 break
 
             if self.direction == 'backward':
@@ -216,7 +219,7 @@ class StepwiseSelector(BaseFeatureSelector):
 
                 if not improved:
                     if self.verbose:
-                        print("前向选择无改善，停止迭代")
+                        logger.info("前向选择无改善，停止迭代")
                     break
 
                 # 双向选择：后向检验
@@ -313,7 +316,7 @@ class StepwiseSelector(BaseFeatureSelector):
 
         except Exception as e:
             if self.verbose:
-                print(f"模型拟合失败: {e}")
+                logger.info(f"模型拟合失败: {e}")
             return {
                 'criterion': self._get_initial_score(y),
                 'result': None,
@@ -366,7 +369,7 @@ class StepwiseSelector(BaseFeatureSelector):
 
         except Exception as e:
             if self.verbose:
-                print(f"自定义评估器拟合失败: {e}")
+                logger.info(f"自定义评估器拟合失败: {e}")
             return {
                 'criterion': self._get_initial_score(y),
                 'result': None,
@@ -463,7 +466,7 @@ class StepwiseSelector(BaseFeatureSelector):
         from sklearn.metrics import roc_auc_score
         try:
             return roc_auc_score(y_true, y_pred)
-        except:
+        except Exception:
             return 0.5
 
     def _forward_step(
@@ -528,7 +531,7 @@ class StepwiseSelector(BaseFeatureSelector):
         remaining = [f for f in remaining if f != best_feature]
 
         if self.verbose:
-            print(f"步骤 {len(self.history_) + 1}: 添加特征 '{best_feature}', "
+            logger.info(f"步骤 {len(self.history_) + 1}: 添加特征 '{best_feature}', "
                   f"{self.criterion} = {best_criterion:.4f}, "
                   f"当前特征数: {len(selected)}")
 
@@ -604,7 +607,7 @@ class StepwiseSelector(BaseFeatureSelector):
         remaining = remaining + [worst_feature]
 
         if self.verbose:
-            print(f"步骤 {len(self.history_) + 1}: 剔除特征 '{worst_feature}', "
+            logger.info(f"步骤 {len(self.history_) + 1}: 剔除特征 '{worst_feature}', "
                   f"{self.criterion} = {worst_criterion:.4f}, "
                   f"当前特征数: {len(selected)}")
 
@@ -666,7 +669,7 @@ class StepwiseSelector(BaseFeatureSelector):
             remaining = remaining + [feature]
 
             if self.verbose:
-                print(f"  双向选择: 剔除特征 '{feature}' (p-value = {pval:.4f})")
+                logger.info(f"  双向选择: 剔除特征 '{feature}' (p-value = {pval:.4f})")
 
             self.history_.append({
                 'step': len(self.history_) + 1,

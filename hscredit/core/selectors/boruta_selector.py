@@ -121,8 +121,6 @@ class BorutaSelector(BaseFeatureSelector):
         X_shadow = np.random.permutation(X_array)
         X_with_shadow = np.hstack([X_array, X_shadow])
         
-        all_features = feature_names + [f'shadow_{i}' for i in range(n_features)]
-        
         # 迭代
         selected = set(range(n_features))
         history = []

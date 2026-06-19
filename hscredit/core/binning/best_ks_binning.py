@@ -283,10 +283,6 @@ class BestKSBinning(BaseBinning):
             if start >= end:
                 continue
 
-            # 使用累积统计计算该箱的好/坏样本数
-            good_in_bin = cum_good[end - 1] - (cum_good[start - 1] if start > 0 else 0)
-            bad_in_bin = cum_bad[end - 1] - (cum_bad[start - 1] if start > 0 else 0)
-
             cum_good_rate = cum_good[end - 1] / total_good
             cum_bad_rate = cum_bad[end - 1] / total_bad
 

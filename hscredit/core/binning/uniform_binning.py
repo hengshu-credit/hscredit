@@ -140,7 +140,6 @@ class UniformBinning(BaseBinning):
         # 获取有效数据（非缺失、非特殊值）
         valid_mask = ~(missing_mask | special_mask)
         X_valid = X[valid_mask]
-        y_valid = y[valid_mask]
 
         if feature_type == 'categorical':
             # 类别型变量：每个类别作为一个箱

@@ -4,11 +4,14 @@
 适用于数据分布不均匀或存在异常值的场景。
 """
 
+import logging
 from typing import Union, List, Dict, Optional, Any, Tuple
 import numpy as np
 import pandas as pd
 from ...exceptions import NotFittedError
 from .base import BaseBinning
+
+logger = logging.getLogger(__name__)
 
 
 class QuantileBinning(BaseBinning):
@@ -118,7 +121,7 @@ class QuantileBinning(BaseBinning):
         # 对每个特征进行分箱
         def _fit_one(feature):
             if self.verbose:
-                print(f"处理特征: {feature}")
+                logger.info(f"处理特征: {feature}")
 
             # 检测特征类型
             if self.force_numerical:

@@ -696,11 +696,6 @@ def _compute_bin_stats_amount_weighted(
     bad_amounts = np.bincount(bin_indices, weights=y.astype(float) * amount, minlength=n_bins)
     amount_totals = good_amounts + bad_amounts
     
-    # 同时计算样本数（用于参考）
-    good_counts = np.bincount(bin_indices, weights=(y == 0).astype(int), minlength=n_bins)
-    bad_counts = np.bincount(bin_indices, weights=y.astype(int), minlength=n_bins)
-    counts = good_counts + bad_counts
-    
     # 计算占比（基于金额）
     total_amount = amount_totals.sum()
     total_good_amount = good_amounts.sum()

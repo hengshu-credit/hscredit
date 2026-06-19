@@ -107,9 +107,6 @@ class FocalLoss(BaseLoss):
         # 确保概率在合理范围内
         y_pred = np.clip(y_pred, 1e-7, 1 - 1e-7)
 
-        # 计算p_t
-        p_t = np.where(y_true == 1, y_pred, 1 - y_pred)
-
         # 计算alpha_t
         alpha_t = np.where(y_true == 1, self.alpha, 1 - self.alpha)
 

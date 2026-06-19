@@ -776,13 +776,11 @@ def plot_tree_matplotlib(
         src_idx = node_id_to_idx[src_id]
         src_n_title_lines = len(cond_lines[src_idx])
         src_extra_title_h = max(0, (src_n_title_lines - 1)) * TITLE_H
-        src_total_title_h = TITLE_H + src_extra_title_h
         src_total_node_h = CONTENT_START_Y_OFFSET + CONTENT_LINES * 0.28 + src_extra_title_h
 
         tgt_idx = node_id_to_idx[tgt_id]
         tgt_n_title_lines = len(cond_lines[tgt_idx])
         tgt_extra_title_h = max(0, (tgt_n_title_lines - 1)) * TITLE_H
-        tgt_total_title_h = TITLE_H + tgt_extra_title_h
         tgt_total_node_h = CONTENT_START_Y_OFFSET + CONTENT_LINES * 0.28 + tgt_extra_title_h
 
         label_text = edge["label"]

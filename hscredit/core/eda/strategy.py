@@ -70,8 +70,6 @@ def approval_badrate_tradeoff(
     _check_binary_target(y, 'y_true')
 
     total = len(y)
-    total_bad = int(y.sum())
-    total_good = total - total_bad
 
     thresholds = np.percentile(s, np.linspace(0, 100, n_points + 2)[1:-1])
     thresholds = np.unique(thresholds)

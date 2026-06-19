@@ -147,7 +147,7 @@ def infer_feature_types(df: pd.DataFrame,
                 pd.to_datetime(series.dropna().iloc[:100])
                 feature_types[col] = 'datetime'
                 continue
-            except:
+            except Exception:
                 pass
 
         # 数值类型判断

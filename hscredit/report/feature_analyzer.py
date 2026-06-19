@@ -4,6 +4,7 @@
 多逾期天数组合分析以及 Excel 报告生成。
 """
 
+import logging
 import os
 import traceback
 from copy import deepcopy
@@ -21,6 +22,8 @@ from ..core.viz import bin_plot, bin_trend_plot, corr_plot, distribution_plot, h
 from ..core.metrics._binning import compute_bin_stats, add_margins
 from ..excel import ExcelWriter, dataframe2excel
 from ..utils import init_setting
+
+logger = logging.getLogger(__name__)
 
 
 def _create_bin_table(
@@ -70,7 +73,6 @@ def _get_bin_labels(splits: Optional[np.ndarray], bins: np.ndarray) -> List[str]
                 labels.append('[-inf, +inf)')
         return labels
 
-    n_splits = len(splits)
     # 过滤掉 NaN split points，用真实切分点生成分箱标签
     real_splits = splits[~np.isnan(splits)]
     n_real_splits = len(real_splits)
@@ -480,7 +482,7 @@ def feature_bin_stats(
                 n_samples = len(analysis_data)
                 n_bad = y.sum()
                 bad_rate = y.mean()
-                print(f"特征 {feat} - 目标 {target_name}: 样本数 {n_samples}, 坏样本数 {n_bad}, 坏样本率 {bad_rate:.4f}, 分箱数 {len(bin_table)}")
+                logger.info(f"特征 {feat} - 目标 {target_name}: 样本数 {n_samples}, 坏样本数 {n_bad}, 坏样本率 {bad_rate:.4f}, 分箱数 {len(bin_table)}")
         
         # 合并多目标表
         if len(feat_tables) > 1:
@@ -1373,7 +1375,7 @@ def auto_feature_analysis(
                     )
 
         except Exception:
-            print(f"数据字段 {col} 分析时发生异常，请排查数据中是否存在异常:\n{traceback.format_exc()}")
+            logger.warning("数据字段 %s 分析时发生异常，请排查数据中是否存在异常:\n%s", col, traceback.format_exc())
 
     if not isinstance(excel_writer, ExcelWriter) and not isinstance(sheet, Worksheet):
         writer.save(excel_writer)

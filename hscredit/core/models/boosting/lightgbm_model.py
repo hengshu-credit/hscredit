@@ -17,10 +17,13 @@ pip install lightgbm
 >>> proba = model.predict_proba(X_test)
 """
 
+import logging
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 import numpy as np
 import pandas as pd
 from sklearn.utils.validation import check_is_fitted
+
+logger = logging.getLogger(__name__)
 
 try:
     import lightgbm as lgb
@@ -341,7 +344,7 @@ class LightGBMRiskModel(BaseRiskModel):
             if 'verbose' in error_msg:
                 # 某些版本的LightGBM不接受verbose参数
                 if self.verbose:
-                    print(f"当前LightGBM版本不接受verbose参数，移除后重试")
+                    logger.info(f"当前LightGBM版本不接受verbose参数，移除后重试")
                 if 'verbose' in fit_kwargs:
                     del fit_kwargs['verbose']
                 # 再次尝试训练
@@ -352,7 +355,7 @@ class LightGBMRiskModel(BaseRiskModel):
                     if 'callbacks' in error_msg2 and use_callbacks:
                         # callbacks参数不被支持，回退到旧API
                         if self.verbose:
-                            print(f"callbacks参数不被支持，回退到旧版early_stopping_rounds API")
+                            logger.info(f"callbacks参数不被支持，回退到旧版early_stopping_rounds API")
                         del fit_kwargs['callbacks']
                         fit_kwargs['early_stopping_rounds'] = self.early_stopping_rounds
                         self._model.fit(X_train, y_train, **fit_kwargs)
@@ -372,7 +375,7 @@ class LightGBMRiskModel(BaseRiskModel):
             elif 'callbacks' in error_msg and use_callbacks:
                 # callbacks参数不被支持，回退到旧API
                 if self.verbose:
-                    print(f"callbacks参数不被支持，回退到旧版early_stopping_rounds API")
+                    logger.info(f"callbacks参数不被支持，回退到旧版early_stopping_rounds API")
                 del fit_kwargs['callbacks']
                 fit_kwargs['early_stopping_rounds'] = self.early_stopping_rounds
                 if 'verbose' not in fit_kwargs:
@@ -438,7 +441,7 @@ class LightGBMRiskModel(BaseRiskModel):
         except Exception as e:
             # 其他异常，降级到旧API
             if self.verbose:
-                print(f"无法创建早停回调: {e}，降级到旧API")
+                logger.info(f"无法创建早停回调: {e}，降级到旧API")
             return None
 
     def predict(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:

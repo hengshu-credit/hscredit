@@ -25,22 +25,7 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
     
     :param target: 目标变量列名，默认为'target'
     :param exclude_cols: 需要排除的列名列表
-    :param method: 分箱方法，支持hscredit中所有分箱方法:
-        - 'quantile': 等频分箱 (默认)
-        - 'chi2': 卡方分箱
-        - 'uniform': 等宽分箱
-        - 'tree': 决策树分箱
-        - 'cart': CART分箱
-        - 'optimal_iv': 最优IV分箱
-        - 'optimal_ks': 最优KS分箱
-        - 'mdlp': MDLP分箱
-        - 'kmeans': KMeans分箱
-        - 'best_lift': Best Lift分箱
-        - 'monotonic': 单调性约束分箱
-        - 'genetic': 遗传算法分箱
-        - 'smooth': 平滑分箱
-        - 'kernel_density': 核密度分箱
-        - 'target_bad_rate': 目标坏样本率分箱
+    :param method: 分箱方法，取值与 `OptimalBinning.VALID_METHODS` 完全一致，不支持别名。
         默认为'quantile'
     :param max_n_bins: 最大分箱数，默认5。超过此值的数值型特征将分箱
     :param min_n_bins: 最小分箱数，默认2
@@ -61,30 +46,11 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
     >>> miner.fit(df)
     >>> cross_matrix = miner.generate_cross_matrix('age', 'income')  # 生成年龄×收入的交叉分箱矩阵
     >>> rules = miner.get_cross_rules('age', 'income', top_n=10)  # 获取TOP10交叉规则，按LIFT排序
-    >>> miner = MultiFeatureRuleMiner(target='ISBAD', method='chi2', max_n_bins=4)  # 卡方分箱：自动合并坏率相近的交叉箱
+    >>> miner = MultiFeatureRuleMiner(target='ISBAD', method='chi', max_n_bins=4)  # 卡方分箱：自动合并坏率相近的交叉箱
     >>> miner.fit(df)
     """
     
-    # 支持的分箱方法映射
-    METHOD_MAPPING = {
-        'quantile': 'quantile',
-        'chi2': 'chi',
-        'chi': 'chi',
-        'uniform': 'uniform',
-        'tree': 'tree',
-        'cart': 'cart',
-        'best_iv': 'best_iv',
-        'best_ks': 'best_ks',
-        'mdlp': 'mdlp',
-        'kmeans': 'kmeans',
-        'best_lift': 'best_lift',
-        'monotonic': 'monotonic',
-        'genetic': 'genetic',
-        'smooth': 'smooth',
-        'kernel_density': 'kernel_density',
-        'target_bad_rate': 'target_bad_rate',
-        'or_tools': 'or_tools',
-    }
+    VALID_METHODS = OptimalBinning.VALID_METHODS
     
     def __init__(
         self,
@@ -106,8 +72,8 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
     ):
         super().__init__(target=target, exclude_cols=exclude_cols)
         
-        if method not in self.METHOD_MAPPING:
-            raise ValueError(f"不支持的method: {method}，可选: {list(self.METHOD_MAPPING.keys())}")
+        if method not in self.VALID_METHODS:
+            raise ValueError(f"不支持的method: {method}，可选: {self.VALID_METHODS}")
         
         self.method = method
         self.max_n_bins = max_n_bins
@@ -146,6 +112,9 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
         for key, value in kwargs.items():
             if hasattr(self, key):
                 setattr(self, key, value)
+
+        if self.method not in self.VALID_METHODS:
+            raise ValueError(f"不支持的method: {self.method}，可选: {self.VALID_METHODS}")
         
         X, y = self._check_input_data(X, y)
         
@@ -171,12 +140,10 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
         :param override_params: 覆盖参数
         :return: hscredit分箱器实例
         """
-        internal_method = self.METHOD_MAPPING[self.method]
-        
         # 构建分箱器参数
         binning_params = {
             'target': self.target,
-            'method': internal_method,
+            'method': self.method,
             'max_n_bins': self.max_n_bins,
             'min_n_bins': self.min_n_bins,
             'min_bin_size': self.min_bin_size,

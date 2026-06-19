@@ -309,7 +309,6 @@ class SelectionReportCollector:
 
         # 构建追踪表
         trace_data = []
-        current_features = set(self.reports[0].get('选中特征', [])) if self.reports else set()
 
         for i, r in enumerate(self.reports):
             stage = r.get('stage_name', f'阶段{i+1}')
@@ -1621,7 +1620,6 @@ class CompositeFeatureSelector(BaseFeatureSelector):
                 
                 input_count = len(current_features)
                 selected = set(selector.selected_features_) if hasattr(selector, 'selected_features_') else set()
-                dropped_in_stage = current_features - selected
                 
                 # 获取该筛选器的详细报告
                 selector_report = selector.get_selection_report() if hasattr(selector, 'get_selection_report') else {}

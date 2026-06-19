@@ -373,7 +373,7 @@ class ExprParser:
             try:
                 comp_expr = _ast_unparse(node)
                 return VariableNode(comp_expr)
-            except:
+            except Exception:
                 return VariableNode(self.expr)
 
     def _extract_variables(self, expr: str) -> List[str]:

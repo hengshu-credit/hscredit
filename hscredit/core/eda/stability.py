@@ -96,7 +96,7 @@ def batch_psi_analysis(df: pd.DataFrame,
                     'PSI值': psi_result['PSI值'],
                     '稳定性': psi_result['稳定性'],
                 })
-            except Exception as e:
+            except Exception:
                 results.append({
                     '特征名': feature,
                     '基准期': base_period,
@@ -213,7 +213,7 @@ def time_psi_tracking(df: pd.DataFrame,
                     'PSI值': psi_result['PSI值'],
                     '稳定性': psi_result['稳定性'],
                 })
-            except:
+            except Exception:
                 pass
     
     return pd.DataFrame(results)
@@ -389,7 +389,7 @@ def psi_cross_analysis(
                             psi_df = psi_table(data1, data2, max_n_bins=n_bins)
                             psi_value = psi_df['PSI贡献'].sum()
                             stability = psi_rating(psi_value)
-                        except Exception as e:
+                        except Exception:
                             psi_value = np.nan
                             stability = '计算失败'
                     

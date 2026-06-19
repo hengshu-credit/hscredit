@@ -153,8 +153,6 @@ class CardinalityEncoder(BaseEncoder):
         :param y: 目标变量（可选），本编码器不需要
         :return: 编码后的数据
         """
-        special_set = set(self.special_values)
-
         for col in self.cols_:
             if col not in self.mapping_:
                 continue

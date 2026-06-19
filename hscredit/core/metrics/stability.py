@@ -106,9 +106,6 @@ def psi_table(expected: Union[np.ndarray, pd.Series],
     expected_clean = expected[~pd.isna(expected)]
     actual_clean = actual[~pd.isna(actual)]
 
-    # 合并数据确定分箱边界
-    combined = np.concatenate([expected_clean, actual_clean])
-
     # 使用OptimalBinning进行分箱
     from ..binning import OptimalBinning
 

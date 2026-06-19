@@ -10,6 +10,7 @@
 - 针对平滑分布数据优化
 """
 
+import logging
 from typing import Union, List, Dict, Optional, Any
 import numpy as np
 import pandas as pd
@@ -17,6 +18,8 @@ from scipy import special
 
 from ...exceptions import NotFittedError
 from .base import BaseBinning
+
+logger = logging.getLogger(__name__)
 
 
 class MDLPBinning(BaseBinning):
@@ -107,7 +110,7 @@ class MDLPBinning(BaseBinning):
 
         def _fit_one(feature):
             if self.verbose:
-                print(f"处理特征: {feature}")
+                logger.info(f"处理特征: {feature}")
 
             # 检测特征类型
             feature_type = self._detect_feature_type(X[feature])
@@ -385,9 +388,6 @@ class MDLPBinning(BaseBinning):
         :param y_right: 右子区间的目标变量
         :return: 是否应该终止分割
         """
-        n_left = len(y_left)
-        n_right = len(y_right)
-
         # 计算信息增益
         gain = self._entropy_gain(y, y_left, y_right)
 

@@ -178,7 +178,7 @@ def vif_analysis(df: pd.DataFrame,
                 '共线性评级': vif_rating(vif_value),
                 '建议': '剔除' if vif_value > threshold else '保留',
             })
-        except Exception as e:
+        except Exception:
             results.append({
                 '特征名': feature,
                 'VIF值': np.nan,

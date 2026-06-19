@@ -7,6 +7,7 @@
 注：分箱统计计算已统一收口到hscredit.core.metrics.compute_bin_stats
 """
 
+import logging
 import re
 import warnings
 import os
@@ -25,6 +26,8 @@ from .utils import (
     DEFAULT_COLORS, setup_axis_style, save_figure, 
     get_or_create_ax, format_bin_label
 )
+
+logger = logging.getLogger(__name__)
 
 # 从统一metrics模块导入分箱统计计算
 from ..metrics import compute_bin_stats, psi_table
@@ -437,7 +440,7 @@ def bin_plot(
                     if left in ('-inf', '-∞'):
                         return float('-inf')
                     return float(left)
-            except:
+            except Exception:
                 pass
             return float('inf')
 
@@ -684,7 +687,7 @@ def ks_plot(score, target, title="", fontsize=14, figsize=(16, 8), save=None,
     else:
         # 非 0/1 标签（如 -1/1, 'good'/'bad', True/False），映射为 0/1
         # 第一个唯一值映射为 0，第二个映射为 1
-        label_0, label_1 = unique_labels[0], unique_labels[1]
+        label_0 = unique_labels[0]
         target_arr = np.where(target_arr == label_0, 0.0, 1.0)
 
     auc_value = roc_auc_score(target_arr, score_arr)
@@ -1449,14 +1452,14 @@ def _compute_feature_bin_stats(
         try:
             from ..metrics import iv as iv_metric
             iv_val = iv_metric(X_valid, y_valid)
-        except:
+        except Exception:
             iv_val = 0
 
         # 计算 KS
         try:
             from ..metrics import ks as ks_metric
             ks_val = ks_metric(X_valid, y_valid)
-        except:
+        except Exception:
             ks_val = 0
 
         # 添加统计列
@@ -1799,7 +1802,7 @@ def batch_bin_trend_plot(
                 ks_val = stats['ks_bin'].max()
                 score = iv_val if sort_by == 'iv' else ks_val
                 feature_scores.append({'feature': feat, 'score': score, 'iv': iv_val, 'ks': ks_val})
-        except:
+        except Exception:
             pass
 
     if feature_scores:
@@ -1810,7 +1813,7 @@ def batch_bin_trend_plot(
 
     # 批量绘制
     for i, feat in enumerate(sorted_features):
-        print(f"[{i+1}/{len(sorted_features)}] Plotting {feat}...")
+        logger.info("[%s/%s] 正在绘制 %s", i + 1, len(sorted_features), feat)
 
         try:
             fig = bin_trend_plot(
@@ -2198,7 +2201,7 @@ def bin_overdues_plot(
                     ax.text(0.98, 0.98, stats_text, transform=ax.transAxes,
                            ha='right', va='top', fontsize=8,
                            bbox=dict(boxstyle='round', facecolor='white', alpha=0.7))
-                except:
+                except Exception:
                     pass
 
         except Exception as e:

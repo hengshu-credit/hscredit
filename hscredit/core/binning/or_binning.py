@@ -515,7 +515,6 @@ class ORBinning(BaseBinning):
         # 候选点位置
         positions = [int(np.searchsorted(x_sorted, c, side='right')) for c in candidates]
         positions = [0] + positions + [n_samples]
-        n_segments = n_candidates + 1
 
         # ====== 构建 CP-SAT 模型 ======
         model = cp_model.CpModel()
@@ -1476,9 +1475,6 @@ class ORBinning(BaseBinning):
         :param total_bad: 总坏样本数
         :return: 目标函数变量
         """
-        n_bins = len(bin_stats)
-        eps = 1e-10
-        
         # 预处理箱统计，计算衍生指标
         processed_stats = self._compute_derived_stats(bin_stats, total_good, total_bad)
         
@@ -1788,7 +1784,6 @@ class ORBinning(BaseBinning):
 
         positions = [int(np.searchsorted(x_sorted, value, side='right')) for value in candidate_pool]
         prefix_bad = np.concatenate([[0], np.cumsum(y_sorted == 1)])
-        prefix_good = np.concatenate([[0], np.cumsum(y_sorted == 0)])
         overall_bad_rate = total_bad / max(n_samples, 1)
         eps = 1e-12
 
@@ -1797,7 +1792,6 @@ class ORBinning(BaseBinning):
             if count <= 0:
                 return 0.0, 0.0, 0.0
             bad = float(prefix_bad[end] - prefix_bad[start])
-            good = float(prefix_good[end] - prefix_good[start])
             bad_rate = bad / count if count > 0 else 0.0
             lift = bad_rate / max(overall_bad_rate, eps) if bad_rate > 0 else 0.0
             share = count / n_samples
@@ -1975,7 +1969,6 @@ class ORBinning(BaseBinning):
 
         当 OR-Tools 求解失败时使用。
         """
-        n_samples = len(x_sorted)
         total_good = np.sum(y_sorted == 0)
         total_bad = np.sum(y_sorted == 1)
         
@@ -2432,7 +2425,6 @@ class CustomObjectives:
         通过最大化最大LIFT，鼓励产生至少一个强区分能力的分箱.
         """
         def objective(bin_stats: List[Dict], total_good: int, total_bad: int) -> float:
-            eps = 1e-10
             total_iv = 0.0
             lift_values = []
             
@@ -2473,7 +2465,6 @@ class CustomObjectives:
         通过最大化最小LIFT，鼓励产生均匀分布的区分能力，避免某些分箱过于弱势.
         """
         def objective(bin_stats: List[Dict], total_good: int, total_bad: int) -> float:
-            eps = 1e-10
             total_iv = 0.0
             lift_values = []
             
@@ -2514,7 +2505,6 @@ class CustomObjectives:
         同时考虑最强和最弱分箱的LIFT值，确保分箱既有强区分箱，整体区分度也较好.
         """
         def objective(bin_stats: List[Dict], total_good: int, total_bad: int) -> float:
-            eps = 1e-10
             total_iv = 0.0
             lift_values = []
             
@@ -2560,7 +2550,6 @@ class CustomObjectives:
         鼓励产生至少一个与基准（LIFT=1）有明显偏离的强区分分箱.
         """
         def objective(bin_stats: List[Dict], total_good: int, total_bad: int) -> float:
-            eps = 1e-10
             total_iv = 0.0
             lift_values = []
             
@@ -2604,7 +2593,6 @@ class CustomObjectives:
         鼓励最弱分箱也有较好的区分能力，避免某些分箱过于接近基准线.
         """
         def objective(bin_stats: List[Dict], total_good: int, total_bad: int) -> float:
-            eps = 1e-10
             total_iv = 0.0
             lift_values = []
             
@@ -2648,7 +2636,6 @@ class CustomObjectives:
         同时考虑最强和最弱分箱与基准线的偏离程度，平衡极端区分能力.
         """
         def objective(bin_stats: List[Dict], total_good: int, total_bad: int) -> float:
-            eps = 1e-10
             total_iv = 0.0
             lift_values = []
             
@@ -2689,9 +2676,6 @@ class CustomObjectives:
         :return: 目标函数
         """
         def objective(bin_stats: List[Dict], total_good: int, total_bad: int) -> float:
-            eps = 1e-10
-            total_samples = total_good + total_bad
-            
             if total_good == 0 or total_bad == 0:
                 return 0.0
             

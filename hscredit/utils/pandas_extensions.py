@@ -25,7 +25,10 @@ from __future__ import annotations
     >>> table.show(compact=True)
 """
 
+import logging
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 import numpy as np
 from typing import Optional, List, Dict, Any, Literal, Union, Tuple, TYPE_CHECKING
 
@@ -568,7 +571,7 @@ class BinTableDisplay:
             </body>
             </html>
             ''')
-        print(f"已导出到: {filename}")
+        logger.info("已导出到: %s", filename)
         return self
     
     def to_excel(self, filename: str, sheet_name: str = '分箱统计') -> 'BinTableDisplay':
@@ -582,7 +585,7 @@ class BinTableDisplay:
             self._styler = _style_bin_table(self._df)
         
         self._styler.to_excel(filename, sheet_name=sheet_name, engine='openpyxl')
-        print(f"已导出到: {filename}")
+        logger.info("已导出到: %s", filename)
         return self
 
 

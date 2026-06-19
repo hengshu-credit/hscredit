@@ -8,6 +8,7 @@
 代码风格参考binning模块，遵循sklearn API规范。
 """
 
+import logging
 from typing import Union, List, Dict, Optional, Any, Tuple
 from enum import Enum
 from dataclasses import dataclass, field
@@ -17,6 +18,8 @@ from sklearn.base import BaseEstimator, ClassifierMixin
 
 from ....exceptions import NotFittedError
 from ...rules.rule import Rule
+
+logger = logging.getLogger(__name__)
 
 
 def _check_input_data(
@@ -430,14 +433,14 @@ class RulesClassifier(BaseEstimator, ClassifierMixin):
         self._is_fitted = True
         
         if self.verbose:
-            print(f"RulesClassifier 已拟合")
-            print(f"  - 特征数量: {self.n_features_in_}")
-            print(f"  - 顶层规则数量: {len(self.rules)}")
-            print(f"  - 最外层逻辑: {self.logic.value}")
-            print(f"  - 输出模式: {self.output_mode}")
+            logger.info(f"RulesClassifier 已拟合")
+            logger.info(f"  - 特征数量: {self.n_features_in_}")
+            logger.info(f"  - 顶层规则数量: {len(self.rules)}")
+            logger.info(f"  - 最外层逻辑: {self.logic.value}")
+            logger.info(f"  - 输出模式: {self.output_mode}")
             # 统计总规则数（包括嵌套）
             total_rules = self._count_total_rules()
-            print(f"  - 总规则数（含嵌套）: {total_rules}")
+            logger.info(f"  - 总规则数（含嵌套）: {total_rules}")
         
         return self
     

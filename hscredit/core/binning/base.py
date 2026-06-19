@@ -1294,7 +1294,6 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
                 break
 
             current = np.unique(np.sort(np.append(current, best_candidate)))
-            base_score = best_score
 
         return current
 
@@ -1854,9 +1853,18 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
         1. 各分箱的样本数分布
         2. 各分箱的坏样本率
         3. 各分箱的WOE值
+
+        :return: matplotlib Figure 对象
         """
-        # TODO: 实现可视化功能
-        raise NotImplementedError("可视化功能将在后续版本实现")
+        if not self._is_fitted:
+            raise NotFittedError("分箱器尚未拟合，请先调用 fit 方法")
+        if feature not in self.bin_tables_:
+            raise FeatureNotFoundError(f"特征 '{feature}' 不存在，可选特征: {list(self.bin_tables_)}")
+
+        from ..viz import bin_plot
+
+        kwargs.setdefault('title', f'{feature}分箱图')
+        return bin_plot(self.bin_tables_[feature], save=save, **kwargs)
 
     def export(self, to_json: Optional[str] = None) -> Dict[str, Union[List, List[List]]]:
         """导出分箱规则，兼容 toad/scorecardpipeline 格式.

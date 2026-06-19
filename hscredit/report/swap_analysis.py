@@ -676,9 +676,6 @@ class SwapAnalysisResult:
         if combined is None:
             raise ValueError(f"未提供{metric}口径的数据")
         
-        # 获取目标别名
-        target_alias = self.config.target_aliases.get(target, target) if self.config.target_aliases else target
-        
         rows = []
         key_order = ['original_pass', 'swap_out', 'original_keep', 'swap_in', 'new_pass']
         

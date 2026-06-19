@@ -285,7 +285,7 @@ class LogisticRegression(SklearnLogisticRegression):
             self.names_ = ["const"] + [f"x{i}" for i in range(X.shape[1])]
 
         # 调用父类fit方法
-        lr = super().fit(X, y, sample_weight=sample_weight, **kwargs)
+        super().fit(X, y, sample_weight=sample_weight, **kwargs)
 
         if apply_positive_woe_coef:
             self.ensure_positive_woe_coefficients()

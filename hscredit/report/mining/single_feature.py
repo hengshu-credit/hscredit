@@ -14,7 +14,7 @@ import warnings
 
 from .base import BaseRuleMiner, calculate_lift
 from ...core.rules.rule import Rule
-from ...core.binning import OptimalBinning, QuantileBinning
+from ...core.binning import OptimalBinning
 
 
 class SingleFeatureRuleMiner(BaseRuleMiner):
@@ -27,23 +27,8 @@ class SingleFeatureRuleMiner(BaseRuleMiner):
     
     :param target: 目标变量列名，默认为'target'
     :param exclude_cols: 需要排除的列名列表
-    :param method: 分箱方法，支持hscredit中所有分箱方法:
-        - 'quantile': 等频分箱 (默认)
-        - 'chi2': 卡方分箱 (ChiMergeBinning)
-        - 'uniform': 等宽分箱
-        - 'tree': 决策树分箱
-        - 'cart': CART分箱
-        - 'optimal_iv': 最优IV分箱
-        - 'optimal_ks': 最优KS分箱
-        - 'mdlp': MDLP分箱
-        - 'kmeans': KMeans分箱
-        - 'best_lift': Best Lift分箱
-        - 'monotonic': 单调性约束分箱
-        - 'genetic': 遗传算法分箱
-        - 'smooth': 平滑分箱
-        - 'kernel_density': 核密度分箱
-        - 'target_bad_rate': 目标坏样本率分箱
-        默认为'quantile'
+    :param method: 分箱方法，取值与 `OptimalBinning.VALID_METHODS` 完全一致，不支持别名。
+        默认为'mdlp'
     :param max_n_bins: 最大分箱数，默认20。同binning模块的max_n_bins
     :param min_n_bins: 最小分箱数，默认2。同binning模块的min_n_bins
     :param min_bin_size: 每箱最小样本数或占比，默认0.05
@@ -72,33 +57,14 @@ class SingleFeatureRuleMiner(BaseRuleMiner):
     >>> miner = SingleFeatureRuleMiner(target='ISBAD', method='quantile', max_n_bins=20)  # 等频分箱：每箱样本数大致相等
     >>> miner.fit(df)
     >>> rules = miner.get_top_rules(top_n=10, metric='lift')  # 获取TOP10规则，按LIFT降序
-    >>> miner = SingleFeatureRuleMiner(target='ISBAD', method='chi2', max_n_bins=10, chi2_threshold=3.841)  # 卡方分箱：相近坏率的箱自动合并
+    >>> miner = SingleFeatureRuleMiner(target='ISBAD', method='chi', max_n_bins=10, chi2_threshold=3.841)  # 卡方分箱：相近坏率的箱自动合并
     >>> miner.fit(df)
-    >>> miner = SingleFeatureRuleMiner(target='ISBAD', method='optimal_iv', max_n_bins=5, monotonic=True)  # 最优IV分箱：自动选择IV最大且坏率单调的分箱方案
+    >>> miner = SingleFeatureRuleMiner(target='ISBAD', method='best_iv', max_n_bins=5, monotonic=True)  # 最优IV分箱：自动选择IV最大且坏率单调的分箱方案
     >>> miner.fit(df)
     >>> feature_rules = miner.analyze_feature('age', max_n_bins=10)  # 分析单个特征的规则分布
     """
     
-    # 支持的分箱方法映射
-    METHOD_MAPPING = {
-        'quantile': 'quantile',
-        'chi2': 'chi',
-        'chi': 'chi',
-        'uniform': 'uniform',
-        'tree': 'tree',
-        'cart': 'cart',
-        'best_iv': 'best_iv',
-        'best_ks': 'best_ks',
-        'mdlp': 'mdlp',
-        'kmeans': 'kmeans',
-        'best_lift': 'best_lift',
-        'monotonic': 'monotonic',
-        'genetic': 'genetic',
-        'smooth': 'smooth',
-        'kernel_density': 'kernel_density',
-        'target_bad_rate': 'target_bad_rate',
-        'or_tools': 'or_tools',
-    }
+    VALID_METHODS = OptimalBinning.VALID_METHODS
     
     def __init__(
         self,
@@ -122,8 +88,8 @@ class SingleFeatureRuleMiner(BaseRuleMiner):
     ):
         super().__init__(target=target, exclude_cols=exclude_cols)
         
-        if method not in self.METHOD_MAPPING:
-            raise ValueError(f"不支持的method: {method}，可选: {list(self.METHOD_MAPPING.keys())}")
+        if method not in self.VALID_METHODS:
+            raise ValueError(f"不支持的method: {method}，可选: {self.VALID_METHODS}")
         
         self.method = method
         self.max_n_bins = max_n_bins
@@ -165,6 +131,9 @@ class SingleFeatureRuleMiner(BaseRuleMiner):
         for key, value in kwargs.items():
             if hasattr(self, key):
                 setattr(self, key, value)
+
+        if self.method not in self.VALID_METHODS:
+            raise ValueError(f"不支持的method: {self.method}，可选: {self.VALID_METHODS}")
         
         X, y = self._check_input_data(X, y)
         
@@ -215,8 +184,6 @@ class SingleFeatureRuleMiner(BaseRuleMiner):
         
         :return: hscredit分箱器实例
         """
-        internal_method = self.METHOD_MAPPING[self.method]
-        
         # 构建分箱器参数
         binning_params = {
             'target': self.target,
@@ -233,23 +200,11 @@ class SingleFeatureRuleMiner(BaseRuleMiner):
         }
         
         # 卡方分箱特殊参数
-        if self.method == 'chi2':
+        if self.method == 'chi':
             binning_params['min_chi2_threshold'] = self.chi2_threshold
             binning_params['significance_level'] = self.significance_level
-        
-        # 使用OptimalBinning作为统一接口
-        if internal_method in OptimalBinning.VALID_METHODS:
-            return OptimalBinning(method=internal_method, **binning_params)
-        
-        # 特殊处理quantile分箱
-        if self.method == 'quantile':
-            return QuantileBinning(
-                target=self.target,
-                n_bins=self.max_n_bins,
-                random_state=self.random_state
-            )
-        
-        raise ValueError(f"无法创建分箱器: {self.method}")
+
+        return OptimalBinning(method=self.method, **binning_params)
     
     def _analyze_numerical_feature(self, feature: str) -> Tuple[pd.DataFrame, Any]:
         """分析数值型特征.

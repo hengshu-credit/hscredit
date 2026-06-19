@@ -148,7 +148,7 @@ bin_table.show()                # 格式化表格输出
 ```python
 from hscredit.report import SingleFeatureRuleMiner, MultiFeatureRuleMiner, TreeRuleExtractor
 
-miner = SingleFeatureRuleMiner(target='ISBAD', method='optimal_iv', max_n_bins=5)
+miner = SingleFeatureRuleMiner(target='ISBAD', method='best_iv', max_n_bins=5)
 rules = miner.get_top_rules(top_n=10, metric='lift')
 ```
 

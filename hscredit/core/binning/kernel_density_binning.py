@@ -9,6 +9,7 @@
 - 增加平滑分布检测和自动切换机制
 """
 
+import logging
 from typing import Union, List, Dict, Optional, Any, Tuple
 import numpy as np
 import pandas as pd
@@ -17,6 +18,8 @@ from scipy.signal import find_peaks, argrelextrema
 from scipy.ndimage import gaussian_filter1d, median_filter
 from ...exceptions import NotFittedError
 from .base import BaseBinning
+
+logger = logging.getLogger(__name__)
 
 
 class KernelDensityBinning(BaseBinning):
@@ -104,7 +107,7 @@ class KernelDensityBinning(BaseBinning):
 
         def _fit_one(feature):
             if self.verbose:
-                print(f"处理特征: {feature}")
+                logger.info(f"处理特征: {feature}")
 
             feature_type = self._detect_feature_type(X[feature])
             self.feature_types_[feature] = feature_type
@@ -158,7 +161,7 @@ class KernelDensityBinning(BaseBinning):
         if is_smooth_single_peak and self.fallback_to_iv and y_valid is not None:
             # 对于平滑单峰分布，使用基于IV的切分策略
             if self.verbose:
-                print(f"  检测到平滑单峰分布，切换到IV策略")
+                logger.info(f"  检测到平滑单峰分布，切换到IV策略")
             splits = self._get_iv_based_splits(x_valid, y_valid)
         else:
             # 选择作为切分点的谷值
@@ -262,8 +265,6 @@ class KernelDensityBinning(BaseBinning):
         x: np.ndarray
     ) -> Tuple[np.ndarray, np.ndarray]:
         """优化的峰谷检测 - V3版本."""
-        x_range = x.max() - x.min()
-        
         min_dist = int(len(kde_x) * self.min_peak_distance)
         min_dist = max(min_dist, 5)
 
@@ -460,7 +461,7 @@ class KernelDensityBinning(BaseBinning):
         if len(valley_positions) < self.min_n_bins - 1:
             if self.use_target and y is not None:
                 if self.verbose:
-                    print(f"  有效谷不足({len(valley_positions)}个)，切换到IV策略")
+                    logger.info(f"  有效谷不足({len(valley_positions)}个)，切换到IV策略")
                 return self._get_iv_based_splits(x, y)
             else:
                 n_splits = min(self.max_n_bins - 1, self.min_n_bins - 1)
@@ -480,7 +481,7 @@ class KernelDensityBinning(BaseBinning):
         # 再次检查分箱数
         if len(valley_positions) < self.min_n_bins - 1 and self.use_target and y is not None:
             if self.verbose:
-                print(f"  验证后谷不足，使用IV策略补充")
+                logger.info(f"  验证后谷不足，使用IV策略补充")
             return self._get_iv_based_splits(x, y)
 
         return np.sort(valley_positions)

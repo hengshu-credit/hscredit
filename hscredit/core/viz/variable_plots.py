@@ -148,7 +148,6 @@ def variable_woe_trend_plot(
     label_col = next((c for c in ['分箱标签', 'bin_label', 'Bin'] if c in bin_table.columns), None)
     woe_col = next((c for c in ['分档WOE值', 'WOE', 'woe'] if c in bin_table.columns), None)
     br_col = next((c for c in ['坏样本率', 'bad_rate', 'BadRate'] if c in bin_table.columns), None)
-    cnt_col = next((c for c in ['样本总数', 'count', 'Count'] if c in bin_table.columns), None)
 
     if woe_col is None or br_col is None:
         raise ValueError("bin_table 必须含 WOE 和坏样本率列")
@@ -168,8 +167,8 @@ def variable_woe_trend_plot(
 
     # 柱状图：坏样本率
     bar_width = 0.6
-    bars = ax1.bar(x, br_vals, width=bar_width, color=DEFAULT_COLORS[0],
-                   alpha=0.35, label='坏样本率', zorder=2)
+    ax1.bar(x, br_vals, width=bar_width, color=DEFAULT_COLORS[0],
+            alpha=0.35, label='坏样本率', zorder=2)
     ax1.set_ylabel('坏样本率', color=DEFAULT_COLORS[0], fontsize=10)
     ax1.tick_params(axis='y', labelcolor=DEFAULT_COLORS[0])
     ax1.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f'{v:.1%}'))
@@ -386,8 +385,6 @@ def variable_missing_badrate_plot(
 
     # 颜色：缺失坏率与总体差异大的用红色标记
     diff = np.abs(miss_brs - overall_br)
-    max_diff = diff.max() if diff.max() > 0 else 1.0
-    colors = plt.cm.RdYlGn_r(diff / max_diff)
 
     fig, ax = get_or_create_ax(figsize=figsize, ax=ax)
     sc = ax.scatter(miss_rates, miss_brs, c=diff, cmap='RdYlGn_r',
