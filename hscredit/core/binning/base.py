@@ -562,6 +562,25 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
 
         return X, y
 
+    def _fit_features(self, features, fit_one) -> None:
+        """按特征循环拟合，支持 n_jobs 并行。
+
+        各特征的拟合相互独立，且只写入以特征名为键的独立字典项（splits_/bin_tables_/
+        feature_types_/n_bins_），因此使用线程后端并行是安全的（distinct key，无竞争），
+        同时分箱计算以 numpy 为主、可释放 GIL，多特征场景能获得实际加速。
+
+        :param features: 特征名可迭代对象
+        :param fit_one: 单特征拟合回调 ``fit_one(feature)``，内部完成该特征的全部拟合
+        """
+        features = list(features)
+        n_jobs = getattr(self, 'n_jobs', 1) or 1
+        if n_jobs == 1 or len(features) <= 1:
+            for feature in features:
+                fit_one(feature)
+            return
+        from joblib import Parallel, delayed
+        Parallel(n_jobs=n_jobs, prefer='threads')(delayed(fit_one)(feature) for feature in features)
+
     def _get_min_samples(self, n_samples: int) -> int:
         """计算最小样本数.
 
@@ -781,19 +800,95 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
             bins = self._get_feature_bins(feature, x, current)
             self.bin_tables_[feature] = self._compute_bin_stats(feature, x, y, bins)
 
+    def _enforce_bad_rate_constraints(
+        self,
+        X: pd.DataFrame,
+        y: pd.Series
+    ) -> None:
+        """合并退化分箱与坏样本率不达标的分箱。
+
+        - **退化分箱**：坏样本数为 0 或好样本数为 0（坏样本率为 0 或 1）。这类分箱的
+          WOE 会趋于 ±∞（受平滑参数影响表现为极端值，如 ±23），既使 IV 虚高、又让
+          评分卡分数异常，始终予以合并。
+        - **坏样本率不达标分箱**：坏样本率低于 ``min_bad_rate`` 的分箱（仅当
+          ``min_bad_rate > 0`` 时生效）。
+
+        合并策略：将违规分箱与相邻坏样本率最接近的分箱合并（删除对应切分点），
+        在不低于 ``min_n_bins`` 的前提下迭代进行。数值型特征生效。
+        """
+        min_bad_rate = float(getattr(self, 'min_bad_rate', 0.0) or 0.0)
+
+        for feature in list(self.splits_.keys()):
+            if self.feature_types_.get(feature) != 'numerical':
+                continue
+            splits = self.splits_.get(feature)
+            if splits is None or len(splits) == 0:
+                continue
+
+            current = np.unique(np.sort(np.asarray(splits, dtype=float)))
+            x = X[feature]
+            changed = False
+
+            for _ in range(200):
+                if len(current) == 0:
+                    break
+                bins = self._get_feature_bins(feature, x, current)
+                bin_table = self._compute_bin_stats(feature, x, y, bins)
+                valid = bin_table[bin_table['分箱'] >= 0].reset_index(drop=True)
+                n_bins = len(valid)
+                if n_bins <= max(1, self.min_n_bins):
+                    break
+
+                counts = valid['样本总数'].to_numpy(dtype=float)
+                bad_counts = valid['坏样本数'].to_numpy(dtype=float)
+                good_counts = counts - bad_counts
+                bad_rates = valid['坏样本率'].to_numpy(dtype=float)
+
+                # 退化箱（无坏/无好）始终合并；坏样本率低于阈值的箱按需合并
+                degenerate = (bad_counts <= 0) | (good_counts <= 0)
+                below = (bad_rates < min_bad_rate) if min_bad_rate > 0 else np.zeros(n_bins, dtype=bool)
+                violating = np.where(degenerate | below)[0]
+                if len(violating) == 0:
+                    break
+
+                split_idx = self._choose_merge_split_index(
+                    counts.astype(int), bad_counts, int(violating[0])
+                )
+                if split_idx is None or split_idx < 0 or split_idx >= len(current):
+                    break
+                current = np.delete(current, split_idx)
+                changed = True
+
+            if not changed:
+                continue
+
+            self.splits_[feature] = self._round_splits(current)
+            self.n_bins_[feature] = len(current) + 1
+            bins = self._get_feature_bins(feature, x, self.splits_[feature])
+            self.bin_tables_[feature] = self._compute_bin_stats(feature, x, y, bins)
+
     def _apply_post_fit_constraints(
         self,
         X: pd.DataFrame,
         y: pd.Series,
-        enforce_monotonic: bool = True
+        enforce_monotonic: bool = True,
+        enforce_bad_rate: bool = True
     ) -> None:
-        """拟合后统一收口约束。"""
+        """拟合后统一收口约束。
+
+        :param enforce_bad_rate: 是否合并退化分箱/坏样本率不达标分箱，默认 True。
+            等宽(uniform)/等频(quantile)等机械分箱以"精确切分结构"为契约，应传 False。
+        """
         self._enforce_bin_size_constraints(X, y)
 
         monotonic_adjuster = getattr(self, '_apply_monotonic_adjustment', None)
         if enforce_monotonic and self.monotonic and callable(monotonic_adjuster):
             monotonic_adjuster(X, y)
             self._enforce_bin_size_constraints(X, y)
+
+        # 合并退化分箱（坏样本率 0/1）及坏样本率低于 min_bad_rate 的分箱
+        if enforce_bad_rate:
+            self._enforce_bad_rate_constraints(X, y)
 
         # 最终硬性限制：确保不超过 max_n_bins
         self._enforce_max_n_bins_hard_cap(X, y)

@@ -107,8 +107,7 @@ class UniformBinning(BaseBinning):
         X, y = self._check_input(X, y)
 
         # 对每个特征进行分箱
-        for feature in X.columns:
-            self._fit_feature(feature, X[feature], y)
+        self._fit_features(X.columns, lambda f: self._fit_feature(f, X[f], y))
 
         self._is_fitted = True
         return self

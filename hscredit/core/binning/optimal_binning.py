@@ -72,6 +72,10 @@ class OptimalBinning(BaseBinning):
     :param max_n_bins: 最大分箱数，默认为5
     :param min_n_bins: 最小分箱数，默认为2
     :param min_bin_size: 每箱最小样本数或占比，默认为0.01
+    :param max_bin_size: 每箱最大样本数或占比，默认为None（不限制）
+    :param min_bad_rate: 每箱最小坏样本率，默认为0.0。坏样本率低于该值的分箱将与相邻
+        分箱合并；无论该参数取值，坏样本率为 0/1 的退化分箱都会被合并以避免 WOE 异常
+        （等宽 uniform / 等频 quantile 为保持切分结构精确，不参与该约束）
     :param monotonic: 坏样本率单调性约束，默认为False
         - False: 不要求单调性
         - True 或 'auto': 自动检测最佳趋势（允许单增、单减、正U、倒U）
@@ -146,6 +150,7 @@ class OptimalBinning(BaseBinning):
         min_n_bins: int = 2,
         min_bin_size: Union[float, int] = 0.01,
         max_bin_size: Optional[Union[float, int]] = None,
+        min_bad_rate: float = 0.0,
         monotonic: Union[bool, str] = False,
         missing_separate: bool = True,
         user_splits: Optional[Union[Dict[str, List], Callable]] = None,
@@ -177,6 +182,7 @@ class OptimalBinning(BaseBinning):
             min_n_bins=min_n_bins,
             min_bin_size=min_bin_size,
             max_bin_size=max_bin_size,
+            min_bad_rate=min_bad_rate,
             monotonic=monotonic,
             special_codes=special_codes,
             cat_cutoff=cat_cutoff,
@@ -250,7 +256,11 @@ class OptimalBinning(BaseBinning):
                     self._refine_splits_for_lift_stability(X, y)
 
                 # 统一收口约束：确保不同方法都遵守单调性/最小箱/最大箱限制
-                self._apply_post_fit_constraints(X, y, enforce_monotonic=self.method != 'monotonic')
+                self._apply_post_fit_constraints(
+                    X, y,
+                    enforce_monotonic=self.method != 'monotonic',
+                    enforce_bad_rate=self.method not in ('uniform', 'quantile'),
+                )
             self._is_fitted = True
             return self
         elif self.prebinning is not None:
@@ -268,7 +278,11 @@ class OptimalBinning(BaseBinning):
                 return self
 
             # 统一收口约束：确保不同方法都遵守单调性/最小箱/最大箱限制
-            self._apply_post_fit_constraints(X, y, enforce_monotonic=self.method != 'monotonic')
+            self._apply_post_fit_constraints(
+                X, y,
+                enforce_monotonic=self.method != 'monotonic',
+                enforce_bad_rate=self.method not in ('uniform', 'quantile'),
+            )
         else:
             # 使用指定方法
             self._fit_with_method(X, y)
@@ -284,7 +298,11 @@ class OptimalBinning(BaseBinning):
                 self._refine_splits_for_lift_stability(X, y)
 
             # 统一收口约束：确保不同方法都遵守单调性/最小箱/最大箱限制
-            self._apply_post_fit_constraints(X, y, enforce_monotonic=self.method != 'monotonic')
+            self._apply_post_fit_constraints(
+                X, y,
+                enforce_monotonic=self.method != 'monotonic',
+                enforce_bad_rate=self.method not in ('uniform', 'quantile'),
+            )
 
         self._is_fitted = True
         return self
@@ -1103,6 +1121,7 @@ class OptimalBinning(BaseBinning):
             'min_n_bins': self.min_n_bins,
             'min_bin_size': self.min_bin_size,
             'max_bin_size': self.max_bin_size,
+            'min_bad_rate': self.min_bad_rate,
             'monotonic': self.monotonic,
             'special_codes': self.special_codes,
             'random_state': self.random_state,
@@ -1128,6 +1147,7 @@ class OptimalBinning(BaseBinning):
             'min_n_bins': self.min_n_bins,
             'min_bin_size': self.min_bin_size,
             'max_bin_size': self.max_bin_size,
+            'min_bad_rate': self.min_bad_rate,
             'special_codes': self.special_codes,
             'cat_cutoff': self.cat_cutoff,
             'random_state': self.random_state,
@@ -1245,6 +1265,122 @@ class OptimalBinning(BaseBinning):
         if hasattr(self._binner, 'monotonic_trend_'):
             self.monotonic_trend_ = self._binner.monotonic_trend_
 
+        # 类别型特征统一在 wrapper 层按坏样本率分组合并至 max_n_bins（各底层方法的
+        # 类别处理不一致：部分不合并、部分输出数值编码标签），确保口径一致且受约束。
+        self._regroup_categorical_features(X, y)
+
+    def _regroup_categorical_features(
+        self,
+        X: pd.DataFrame,
+        y: pd.Series
+    ) -> None:
+        """对所有类别型特征重新按坏样本率分组（List[List]），统一受 max_n_bins/min_bin_size 约束。
+
+        各底层分箱方法对类别型特征的处理并不一致（如 best_iv/best_ks 退化为数值编码标签、
+        mdlp 不合并类别），此处在 OptimalBinning 层统一重算，保证：
+        每个类别归入某一组、组数不超过 ``max_n_bins``、小样本/退化类别并入相邻组、
+        缺失值按 ``missing_separate`` 单独成箱。
+        """
+        for feature in list(self.feature_types_.keys()):
+            if self.feature_types_.get(feature) != 'categorical':
+                continue
+            if feature not in X.columns:
+                continue
+            groups = self._group_categories_by_badrate(X[feature], y)
+            if not groups:
+                continue
+            self._cat_bins_[feature] = groups
+            self.splits_[feature] = groups
+            self.n_bins_[feature] = len(groups)
+            bins = self._apply_bins(X[feature], groups, 'categorical', feature)
+            self.bin_tables_[feature] = self._compute_bin_stats(feature, X[feature], y, bins)
+
+    def _group_categories_by_badrate(
+        self,
+        x: pd.Series,
+        y: pd.Series
+    ) -> List[List]:
+        """将类别按坏样本率排序后合并为不超过 max_n_bins 组（List[List]）。
+
+        - 按各类别坏样本率升序排列，相邻（坏样本率最接近）类别优先合并；
+        - 样本量低于 min_bin_size 的类别、以及退化组（坏样本率 0/1）并入相邻组；
+        - 在不低于 min_n_bins 的前提下迭代合并，直至满足 max_n_bins 与样本量约束；
+        - 缺失值/特殊值不参与分组（由 missing_separate / special_codes 单独成箱）。
+
+        :return: List[List]，每个子列表为一组类别名（字符串），按组坏样本率升序排列
+        """
+        mask = x.notna()
+        if self.special_codes:
+            for code in self.special_codes:
+                mask = mask & (x != code)
+        xv = x[mask]
+        yv = y[mask]
+        if len(xv) == 0:
+            return []
+
+        cat_df = pd.DataFrame({'c': xv.astype(str).values, 'y': np.asarray(yv, dtype=float)})
+        grp = cat_df.groupby('c')['y'].agg(['sum', 'count'])
+        cats = list(grp.index)
+        order = sorted(
+            range(len(cats)),
+            key=lambda i: (grp['sum'].iloc[i] / grp['count'].iloc[i]) if grp['count'].iloc[i] > 0 else 0.0
+        )
+        groups = [[cats[i]] for i in order]
+        gcount = [float(grp['count'].iloc[i]) for i in order]
+        gbad = [float(grp['sum'].iloc[i]) for i in order]
+
+        min_samples = self._get_min_samples(len(xv))
+        max_bins = max(1, self.max_n_bins)
+        min_bins = max(1, self.min_n_bins)
+
+        def brate(i: int) -> float:
+            return gbad[i] / gcount[i] if gcount[i] > 0 else 0.0
+
+        def merge(lo: int, hi: int) -> None:
+            groups[lo] = groups[lo] + groups[hi]
+            gcount[lo] += gcount[hi]
+            gbad[lo] += gbad[hi]
+            del groups[hi], gcount[hi], gbad[hi]
+
+        for _ in range(1000):
+            n = len(groups)
+            if n <= min_bins:
+                break
+            small = [i for i in range(n) if gcount[i] < min_samples]
+            degenerate = [i for i in range(n) if gbad[i] <= 0 or gbad[i] >= gcount[i]]
+            if not (small or degenerate or n > max_bins):
+                break
+
+            if small:
+                target = min(small, key=lambda k: gcount[k])
+            elif degenerate:
+                target = degenerate[0]
+            else:
+                # 仅需满足 max_n_bins：合并坏样本率差异最小的相邻组
+                diffs = [abs(brate(k + 1) - brate(k)) for k in range(n - 1)]
+                k = int(np.argmin(diffs))
+                merge(k, k + 1)
+                continue
+
+            if target == 0:
+                neighbor = 1
+            elif target == n - 1:
+                neighbor = n - 2
+            else:
+                neighbor = (
+                    target - 1
+                    if abs(brate(target) - brate(target - 1)) <= abs(brate(target) - brate(target + 1))
+                    else target + 1
+                )
+            merge(min(target, neighbor), max(target, neighbor))
+            # 合并后重新按坏样本率排序，保持相邻性语义
+            idx = sorted(range(len(groups)), key=brate)
+            groups = [groups[i] for i in idx]
+            gcount = [gcount[i] for i in idx]
+            gbad = [gbad[i] for i in idx]
+
+        return groups
+
     def _get_default_splits(
         self,
         x: pd.Series,
@@ -1283,17 +1419,23 @@ class OptimalBinning(BaseBinning):
             # 检查是否为List[List]格式（类别型变量的新格式）
             if len(splits) > 0 and isinstance(splits[0], list):
                 # List[List]格式: [['A', 'B'], ['C'], [np.nan]]
+                has_nan_group = False
                 for i, group in enumerate(splits):
                     if isinstance(group, list):
                         for value in group:
                             # 处理np.nan
                             if isinstance(value, float) and np.isnan(value):
                                 bins[x.isna()] = i
+                                has_nan_group = True
                             else:
                                 bins[x_str == str(value)] = i
                     else:
                         # 单个值（向后兼容）
                         bins[x_str == str(group)] = i
+                # 未显式分组缺失值时，按 missing_separate 单独成箱（-1），
+                # 保证 fit 与 transform 对缺失值的处理一致
+                if not has_nan_group and self.missing_separate:
+                    bins[x.isna()] = -1
             else:
                 # 字符串列表格式: ['A,B', 'C'] (向后兼容)
                 for i, cat in enumerate(splits):
@@ -1461,7 +1603,14 @@ class OptimalBinning(BaseBinning):
         if not self._is_fitted:
             raise NotFittedError("分箱器尚未拟合，请先调用fit方法")
 
-        if self._binner is not None:
+        # 含已在 wrapper 层重算分组的类别型特征时，使用 wrapper 自身的分箱逻辑
+        # （_cat_bins_/bin_tables_），否则底层方法的类别状态与 wrapper 不一致；
+        # 纯数值场景仍委托底层分箱器，保持原有行为。
+        has_regrouped_cat = isinstance(X, pd.DataFrame) and any(
+            self.feature_types_.get(f) == 'categorical' and f in self._cat_bins_
+            for f in X.columns
+        )
+        if self._binner is not None and not has_regrouped_cat:
             result = self._binner.transform(X, metric=metric, **kwargs)
             if metric == 'woe' and isinstance(result, pd.DataFrame):
                 result.attrs['hscredit_encoding'] = 'woe'
@@ -1618,20 +1767,20 @@ class OptimalBinning(BaseBinning):
                 binner = OptimalBinning(method=method, verbose=False)
                 binner.fit(X[[feature]], y)
 
-                if criterion == 'iv' and hasattr(binner, 'iv_stats_'):
-                    score = binner.iv_stats_.get(feature, 0)
-                elif criterion == 'ks' and hasattr(binner, 'ks_stats_'):
-                    score = binner.ks_stats_.get(feature, 0)
-                else:
-                    bin_table = binner.bin_tables_.get(feature)
-                    if bin_table is not None:
-                        # 使用中文列名
-                        if '分档IV值' in bin_table.columns:
-                            score = bin_table['分档IV值'].sum()
-                        else:
-                            score = 0
+                bin_table = binner.bin_tables_.get(feature)
+                if bin_table is None or len(bin_table) == 0:
+                    continue
+
+                # 按选择标准从分箱表计算得分（KS 取分箱最大 KS，IV 取整体 IV）
+                if criterion == 'ks':
+                    score = float(bin_table['分档KS值'].max()) if '分档KS值' in bin_table.columns else 0.0
+                else:  # 'iv'
+                    if '指标IV值' in bin_table.columns:
+                        score = float(bin_table['指标IV值'].iloc[0])
+                    elif '分档IV值' in bin_table.columns:
+                        score = float(bin_table['分档IV值'].sum())
                     else:
-                        score = 0
+                        score = 0.0
 
                 if score > best_score:
                     best_score = score
@@ -1675,7 +1824,7 @@ if __name__ == '__main__':
             
             table = binner.get_bin_table('feature1')
             print(f"  分箱数: {len(table)}")
-            print(f"  前3行:\n{table[['bin', 'count', 'bad_rate']].head(3)}")
+            print(f"  前3行:\n{table[['分箱', '样本总数', '坏样本率']].head(3)}")
         except Exception as e:
             print(f"  错误: {e}")
     

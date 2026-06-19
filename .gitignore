@@ -230,4 +230,5 @@ AGENTS.md
 catboost_info
 model_report
 examples/tree_viz_output
-
+.virtual_documents
+anaconda_projects

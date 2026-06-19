@@ -106,7 +106,7 @@ class KMeansBinning(BaseBinning):
         X, y = self._check_input(X, y)
 
         # 对每个特征进行分箱
-        for feature in X.columns:
+        def _fit_one(feature):
             if self.verbose:
                 print(f"处理特征: {feature}")
 
@@ -147,6 +147,8 @@ class KMeansBinning(BaseBinning):
             self.bin_tables_[feature] = self._compute_bin_stats(
                 feature, X[feature], y, bins
             )
+
+        self._fit_features(X.columns, _fit_one)
 
         self._is_fitted = True
         return self

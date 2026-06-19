@@ -103,6 +103,9 @@ class MonotonicBinning(BaseBinning):
         verbose: Union[bool, int] = False,
         decimal: int = 4,
     ):
+        # monotonic=True 等价于 'auto'（与 BaseBinning 约定一致，自动检测最佳趋势）
+        if monotonic is True:
+            monotonic = 'auto'
         super().__init__(
             target=target,
             min_n_bins=min_n_bins,
@@ -147,7 +150,7 @@ class MonotonicBinning(BaseBinning):
         X, y = self._check_input(X, y)
 
         # 对每个特征进行分箱
-        for feature in X.columns:
+        def _fit_one(feature):
             if self.verbose:
                 print(f"处理特征: {feature}")
 
@@ -170,6 +173,8 @@ class MonotonicBinning(BaseBinning):
             self.bin_tables_[feature] = self._compute_bin_stats(
                 feature, X[feature], y, bins
             )
+
+        self._fit_features(X.columns, _fit_one)
 
         self._is_fitted = True
         return self

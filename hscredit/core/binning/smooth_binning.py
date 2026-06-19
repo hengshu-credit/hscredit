@@ -123,7 +123,7 @@ class SmoothBinning(BaseBinning):
         else:
             self.adaptive_alpha_ = self.smoothing_param
 
-        for feature in X.columns:
+        def _fit_one(feature):
             if self.verbose:
                 print(f"处理特征: {feature}")
 
@@ -142,6 +142,8 @@ class SmoothBinning(BaseBinning):
             self.bin_tables_[feature] = self._compute_bin_stats(
                 feature, X[feature], y, bins
             )
+
+        self._fit_features(X.columns, _fit_one)
 
         self._apply_post_fit_constraints(X, y, enforce_monotonic=True)
         self._is_fitted = True

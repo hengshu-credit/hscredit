@@ -166,8 +166,7 @@ class CPSATBinning(BaseBinning):
         """
         X, y = self._check_input(X, y)
 
-        for feature in X.columns:
-            self._fit_feature(feature, X[feature], y)
+        self._fit_features(X.columns, lambda f: self._fit_feature(f, X[f], y))
 
         self._apply_post_fit_constraints(X, y, enforce_monotonic=True)
         self._is_fitted = True
