@@ -54,6 +54,12 @@ GRADIENT_PALETTES = {
     "risk": ["#4CAF50", "#FFC107", "#FF9800", "#F44336"],  # 绿→黄→橙→红
     "blue": ["#E3F2FD", "#90CAF9", "#42A5F5", "#1565C0"],
     "diverging": ["#2639E9", "#FFFFFF", "#F76E6C"],
+    # 蓝→紫→粉→红 平滑连续色阶：色相单调 + 明度归一(浅→深，L* 72→45)，蓝端冷化避免偏紫，一眼连贯，
+    # 适合热力图/条件格式色阶；作为 Excel 条件格式 condition_color 锚点时自动取首/中/尾构成三色异色阶
+    "blue_purple_red": [
+        "#72B5FF", "#82AAFF", "#969EFF", "#A293FF", "#B085FF", "#B77CF3", "#BA6DFF",
+        "#CD5FDE", "#D643ED", "#D45499", "#DF3B8E", "#E42E52", "#CA445D", "#C34248", "#CF212D",
+    ],
 }
 
 _PALETTES = {

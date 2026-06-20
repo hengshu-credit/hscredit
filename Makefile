@@ -1,7 +1,7 @@
 # hscredit Makefile
 # 简化常用操作
 
-.PHONY: help install dev test validate clean jupyter build build-check check-manifest publish-test publish
+.PHONY: help install dev test validate clean jupyter build build-check check-manifest publish-test publish docs push-docs clone-docs
 
 # 默认目标
 .DEFAULT_GOAL := help
@@ -73,15 +73,17 @@ clean: ## 清理临时文件
 	find . -type f -name "*.pyc" -delete
 	rm -rf htmlcov/ .coverage coverage.xml
 	rm -rf outputs/*.xlsx
+	rm -rf docs/_build/
 	@echo "✅ 清理完成"
 
 # 构建文档
 docs: ## 构建文档
-	cd docs && make html
+	cd docs && make clean && make html
+	echo "hscredit.hengshucredit.com" > docs/_build/html/CNAME
 	@echo "✅ 文档已生成: docs/_build/html/index.html"
 
-# 构建发布包
-build: ## 构建发布包
+# 构建发布包（包含文档构建）
+build: docs ## 构建发布包（同时构建文档）
 	python -m pip install --upgrade build twine
 	rm -rf dist/ build/
 	python -m build
@@ -125,3 +127,21 @@ quickstart: dev validate ## 快速开始（安装+验证）
 	@echo "  2. 打开 examples/00_project_overview.ipynb"
 	@echo "  3. 执行notebook进行验证"
 	@echo ""
+
+# 克隆文档仓库
+DOCS_REPO ?= https://github.com/hscredit/hscredit-docs.git
+DOCS_DIR ?= _deploy_docs
+clone-docs: ## 克隆 hscredit-docs 仓库
+	rm -rf $(DOCS_DIR)
+	git clone $(DOCS_REPO) $(DOCS_DIR)
+
+# 推送文档到 hscredit-docs 仓库
+push-docs: clone-docs ## 推送文档到 hscredit-docs 仓库
+	rm -rf $(DOCS_DIR)/*
+	cp -r docs/_build/html/* $(DOCS_DIR)/
+	cd $(DOCS_DIR) && \
+	git add -A && \
+	git commit -m "docs: update $(shell date +%Y-%m-%d)" && \
+	git push origin main || git push origin master
+	rm -rf $(DOCS_DIR)
+	@echo "✅ 文档已推送到 hscredit-docs 仓库"

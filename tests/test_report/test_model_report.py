@@ -477,7 +477,7 @@ class TestQuickModelReportRegression:
             '统计指标', '训练集', '测试集', '训练集', '测试集', '训练集'
         ]
         assert performance['B19'].value == '统计指标'
-        assert performance.auto_filter.ref == 'B20:AI26'
+        assert performance.auto_filter.ref == 'B20:AJ26'
         stat_header = next(
             cell for row in basic.iter_rows() for cell in row if cell.value == '样本总数'
         )

@@ -1,0 +1,730 @@
+/* ===========================================================================
+   hscredit · 衡枢真信 文档主题
+   品牌取自 hengshucredit 动态 Logo 的霓虹三色（蓝 → 紫 → 粉），同步驱动整站配色。
+   设计取向：导航侧栏承载品牌（深靛蓝 + 霓虹发光 Logo），正文保持安静可读，
+   仅以同一条「霓虹渐变线」串联（顶部细线 / 标题下划 / 当前条目 / 链接），
+   把张力集中在一处，其余克制。
+   =========================================================================== */
+
+:root {
+    /* —— 品牌三原色（直接取自 Logo 渐变停靠点）—— */
+    --hs-cyan: #00f5ff;
+    --hs-violet: #7b2fff;
+    --hs-magenta: #ff00c8;
+    /* —— 结构色 —— */
+    --hs-blue: #3a4dff;          /* 正文链接：在白底上可读 */
+    --hs-violet-deep: #6d28d9;   /* 行内代码 / 强调 */
+    --hs-ink: #140e35;           /* 侧栏深靛蓝（顶）*/
+    --hs-ink-2: #241349;         /* 侧栏深靛蓝（底）*/
+    --hs-lav: #c7bdf2;           /* 侧栏链接文字 */
+    --hs-lav-dim: #8d83bf;       /* 侧栏次要文字 */
+    --hs-text: #2b2540;          /* 正文文字 */
+    --hs-page: #f6f5fc;          /* 页面底色（极淡紫）*/
+    /* —— 签名渐变：整站唯一的「霓虹线」—— */
+    --hs-grad: linear-gradient(120deg, #00f5ff 0%, #7b2fff 52%, #ff00c8 100%);
+    --hs-grad-soft: linear-gradient(120deg, rgba(0, 245, 255, 0.12) 0%, rgba(123, 47, 255, 0.12) 52%, rgba(255, 0, 200, 0.12) 100%);
+}
+
+/* —— 衡枢官方字体：唯一源为 hscredit/resources/fonts/font.ttf —— */
+@font-face {
+    font-family: "HSCredit Alimama";
+    src: url("fonts/font.ttf") format("truetype");
+    font-style: normal;
+    font-weight: 100 900;
+    font-display: swap;
+}
+
+html,
+body,
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+legend,
+button,
+input,
+select,
+textarea,
+pre,
+code,
+kbd,
+samp,
+.btn,
+.rst-content .sidebar .sidebar-title,
+.rst-versions {
+    font-family: "HSCredit Alimama", sans-serif !important;
+}
+
+/* ===========================================================================
+   1) 侧栏 —— 品牌主场
+   =========================================================================== */
+.wy-nav-side {
+    background: linear-gradient(185deg, var(--hs-ink) 0%, var(--hs-ink-2) 55%, #2c1657 100%);
+}
+
+/* Logo / 搜索区：固定在侧栏左上角，目录在其下方独立滚动。 */
+.wy-side-nav-search {
+    position: sticky;
+    top: 0;
+    z-index: 300;
+    width: 300px;
+    box-sizing: border-box;
+    background: linear-gradient(180deg, #140e35 0%, #1c1040 100%) !important;
+    padding: 1.4rem 1rem 1.1rem;
+    margin-bottom: 0.4rem;
+    border-bottom: 1px solid rgba(199, 189, 242, 0.16);
+    box-shadow: 0 12px 24px rgba(9, 5, 28, 0.24);
+}
+/* 品牌锁定区：动态 Logo 本身已含「HS · CREDIT」标识，故隐藏主题自带的重复
+   「hscredit」文字与 home 图标，只让霓虹品牌图发光，并在其下补中文品牌哲学。 */
+.wy-side-nav-search > a.icon-home {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin: 0;
+    padding: 0;
+    font-size: 0;            /* 折叠与 Logo 重复的「hscredit」文字 */
+}
+.wy-side-nav-search > a.icon-home::before { content: none !important; }   /* 去掉 home 图标 */
+.wy-side-nav-search > a.icon-home img.logo {
+    width: 126px;
+    max-width: 72%;
+    margin: 0 auto;
+    background: transparent;
+    filter: none;
+}
+.wy-side-nav-search > a.icon-home::after {     /* Logo 下方中文品牌副标语 */
+    content: "鉴真伪 · 斟信用 · 衡风险 · 枢定策";
+    display: block;
+    margin-top: 0.7rem;
+    max-width: 15rem;
+    font-size: 0.64rem;
+    font-weight: 500;
+    letter-spacing: 0.13em;
+    line-height: 1.55;
+    color: var(--hs-lav);
+}
+
+/* 搜索框 */
+.wy-side-nav-search input[type="text"] {
+    position: relative;
+    z-index: 1;
+    border: 1px solid rgba(199, 189, 242, 0.28);
+    border-radius: 8px;
+    background: rgba(20, 14, 53, 0.55);
+    color: #efe9ff;
+    box-shadow: none;
+}
+.wy-side-nav-search input[type="text"]::placeholder { color: var(--hs-lav-dim); }
+.wy-side-nav-search input[type="text"]:focus {
+    border-color: var(--hs-violet);
+    box-shadow: 0 0 0 3px rgba(123, 47, 255, 0.35);
+    outline: none;
+}
+
+/* 全站外部入口：贴近品牌锁定区，在每个文档页面保持可见。 */
+.hs-brand-actions {
+    position: relative;
+    z-index: 1;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.55rem;
+    margin: 0.85rem 0 0.35rem;
+}
+.hs-brand-action {
+    display: inline-flex;
+    min-height: 2.5rem;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    padding: 0.55rem 0.65rem;
+    border: 1px solid rgba(199, 189, 242, 0.38);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.07);
+    color: #ffffff !important;
+    font-size: 0.78rem;
+    font-weight: 700;
+    line-height: 1;
+    text-decoration: none;
+    box-shadow: none;
+    transition: transform 0.16s ease, border-color 0.16s ease, background-color 0.16s ease;
+}
+.hs-brand-action:hover {
+    border-color: var(--hs-cyan);
+    background: rgba(0, 245, 255, 0.12);
+    transform: translateY(-1px);
+}
+.hs-brand-action--primary {
+    border-color: transparent;
+    background: linear-gradient(120deg, #2639e9, #7b2fff);
+    box-shadow: 0 5px 16px rgba(38, 57, 233, 0.3);
+}
+.hs-brand-action--primary:hover {
+    border-color: transparent;
+    background: linear-gradient(120deg, #3549ff, #8a42ff);
+}
+.hs-brand-action__mark {
+    display: inline-grid;
+    width: 1.18rem;
+    height: 1.18rem;
+    place-items: center;
+    border-radius: 50%;
+    background: #ffffff;
+    color: #2639e9;
+    font-size: 0.68rem;
+}
+.hs-brand-action__icon {
+    width: 1.08rem;
+    height: 1.08rem;
+    fill: currentColor;
+}
+
+/* 侧栏分节标题（入门 / API 参考 / 项目）*/
+.wy-menu-vertical p.caption {
+    color: var(--hs-cyan);
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    margin-top: 1.1rem;
+    padding-left: 1.2rem;
+}
+.wy-menu-vertical p.caption .caption-text { color: inherit; }
+
+/* 导航链接 */
+.wy-menu-vertical a {
+    color: var(--hs-lav);
+    transition: color 0.15s ease, background-color 0.15s ease;
+}
+.wy-menu-vertical a:hover {
+    background-color: rgba(123, 47, 255, 0.16);
+    color: #ffffff;
+}
+.wy-menu-vertical li.toctree-l1 > a { font-weight: 600; }
+
+/* 当前条目：左侧霓虹竖线 + 高亮。
+   RTD 会给 current 分支内的每个链接设置浅灰背景；API 页面展开成员较多时，
+   浅灰底会覆盖深色侧栏并与浅色文字失去对比，因此在这里统一重置展开分支。 */
+.wy-menu-vertical li.current,
+.wy-menu-vertical li.current > ul,
+.wy-menu-vertical li.current > ul li {
+    background: transparent;
+}
+.wy-menu-vertical li.current > ul a {
+    background: rgba(20, 14, 53, 0.18) !important;
+    color: var(--hs-lav);
+}
+.wy-menu-vertical li.current > a,
+.wy-menu-vertical li.toctree-l1.current > a {
+    background: rgba(0, 0, 0, 0.16);
+    color: #ffffff;
+    border-right: none;
+    border-left: 3px solid transparent;
+    border-image: var(--hs-grad) 1;
+    box-shadow: inset 12px 0 22px -18px rgba(0, 245, 255, 0.6);
+}
+.wy-menu-vertical li.current a { border-right: none; }
+.wy-menu-vertical li.current a:hover { background: rgba(123, 47, 255, 0.22) !important; color: #fff; }
+.wy-menu-vertical li.toctree-l2.current > a,
+.wy-menu-vertical li.toctree-l3.current > a {
+    background: rgba(0, 0, 0, 0.28) !important;
+    color: #ffffff;
+}
+
+/* 侧栏滚动条（webkit）*/
+.wy-nav-side::-webkit-scrollbar { width: 8px; }
+.wy-nav-side::-webkit-scrollbar-track { background: transparent; }
+.wy-nav-side::-webkit-scrollbar-thumb {
+    background: rgba(123, 47, 255, 0.5);
+    border-radius: 8px;
+}
+
+/* 侧栏底部「衡枢风控」署名分隔 */
+.wy-nav-side > div.wy-menu { padding-bottom: 1rem; }
+
+/* ===========================================================================
+   2) 内容区 —— 安静、可读，仅以霓虹线点睛
+   =========================================================================== */
+.wy-nav-content-wrap { background: var(--hs-page); }
+.wy-nav-content {
+    background: #ffffff;
+    max-width: 76rem;
+    box-shadow: 0 1px 40px rgba(36, 19, 73, 0.06);
+    position: relative;
+}
+/* 顶部 3px 霓虹线：把品牌引入正文 */
+.wy-nav-content::before {
+    content: "";
+    position: sticky;
+    top: 0;
+    display: block;
+    height: 3px;
+    margin: -1.618em -3.236em 1.2em;   /* 抵消内容内边距，贯通整宽 */
+    background: var(--hs-grad);
+    z-index: 5;
+}
+.rst-content p,
+.rst-content li { line-height: 1.75; color: var(--hs-text); }
+
+/* 标题 */
+.rst-content h1,
+.rst-content h2,
+.rst-content h3,
+.rst-content h4 {
+    font-family: inherit;
+    color: #1c1640;
+    font-weight: 700;
+}
+.rst-content h1 {
+    padding-bottom: 0.4em;
+    border-bottom: 2px solid transparent;
+    border-image: var(--hs-grad) 1;
+    letter-spacing: 0.01em;
+}
+.rst-content h2 {
+    margin-top: 1.8em;
+    padding-left: 0.6em;
+    border-left: 4px solid transparent;
+    border-image: var(--hs-grad) 1;
+}
+.rst-content h3 { color: var(--hs-violet-deep); }
+
+/* 正文链接 */
+.rst-content a,
+.wy-nav-content a {
+    color: var(--hs-blue);
+    text-decoration: none;
+    border-bottom: 1px solid rgba(58, 77, 255, 0.28);
+    transition: color 0.15s ease, border-color 0.15s ease;
+}
+.rst-content a:hover,
+.wy-nav-content a:hover {
+    color: var(--hs-violet);
+    border-bottom-color: var(--hs-magenta);
+}
+.rst-content a.headerlink { border-bottom: none; color: var(--hs-magenta); }
+
+/* 行内代码 */
+.rst-content code.literal,
+.rst-content tt.literal {
+    color: var(--hs-violet-deep);
+    background: #f2ecff;
+    border: 1px solid #e3d8ff;
+    border-radius: 5px;
+    padding: 0.1em 0.4em;
+    font-size: 0.95em;
+}
+
+/* 代码块 */
+.rst-content div[class^="highlight"] {
+    border: 1px solid #e7e0fb;
+    border-left: 3px solid transparent;
+    border-image: var(--hs-grad) 1;
+    border-radius: 6px;
+    background: #fbfaff;
+}
+.rst-content div[class^="highlight"] pre {
+    background: transparent;
+    font-size: 0.92rem;
+    line-height: 1.65;
+}
+
+/* 代码复制按钮：不占用代码排版空间，键盘与触屏均可操作。 */
+.rst-content div.highlight {
+    position: relative;
+}
+.hs-copy-code {
+    position: absolute;
+    top: 0.42rem;
+    right: 0.5rem;
+    z-index: 2;
+    min-width: 3.25rem;
+    padding: 0.2rem 0.48rem;
+    border: 1px solid #ded8eb;
+    border-radius: 4px;
+    background: rgba(247, 245, 252, 0.94);
+    color: #645a82;
+    font: inherit;
+    font-size: 0.68rem;
+    font-weight: 600;
+    line-height: 1.35;
+    cursor: pointer;
+    box-shadow: none;
+    transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.hs-copy-code:hover {
+    border-color: #a99bcf;
+    background: #eee9fa;
+    color: var(--hs-violet-deep);
+}
+.hs-copy-code:focus-visible {
+    outline: 2px solid var(--hs-blue);
+    outline-offset: 2px;
+}
+.hs-copy-code.is-copied {
+    border-color: #168568;
+    background: #eaf8f3;
+    color: #116d56;
+}
+.hs-copy-code.is-error {
+    border-color: #c2415d;
+    background: #fff0f3;
+    color: #a52d48;
+}
+
+/* ===========================================================================
+   3) API 签名块 —— 类/函数定义
+   =========================================================================== */
+.rst-content dl.py > dt,
+.rst-content dl.class > dt,
+.rst-content dl.function > dt,
+.rst-content dl.method > dt {
+    background: var(--hs-grad-soft);
+    border-top: 2px solid transparent;
+    border-image: var(--hs-grad) 1;
+    border-radius: 0 0 4px 4px;
+    color: #2a1f55;
+}
+.rst-content dl.field-list > dt { font-weight: 600; color: var(--hs-violet-deep); }
+.rst-content .sig-name,
+.rst-content .py .property { color: var(--hs-violet-deep); }
+
+/* ===========================================================================
+   4) 提示框 admonition
+   =========================================================================== */
+.rst-content .admonition,
+.rst-content .note,
+.rst-content .tip,
+.rst-content .warning,
+.rst-content .important {
+    border-radius: 8px;
+    box-shadow: 0 1px 10px rgba(36, 19, 73, 0.05);
+}
+.rst-content .note {
+    border-left: 4px solid var(--hs-violet);
+    background: #f3efff;
+}
+.rst-content .note .admonition-title {
+    background: linear-gradient(90deg, #5267ff 0%, #9a20ff 50%, #f000c8 100%);
+}
+.rst-content .seealso { border-left: 4px solid var(--hs-cyan); }
+.rst-content .seealso .admonition-title { background: #0891b2; }
+.rst-content .tip,
+.rst-content .hint { border-left: 4px solid var(--hs-violet); }
+.rst-content .tip .admonition-title,
+.rst-content .hint .admonition-title { background: var(--hs-violet); }
+.rst-content .warning,
+.rst-content .caution { border-left: 4px solid var(--hs-magenta); }
+.rst-content .warning .admonition-title,
+.rst-content .caution .admonition-title { background: #db2777; }
+
+/* ===========================================================================
+   5) 表格 —— 风控台账
+   =========================================================================== */
+.rst-content table.docutils td,
+.rst-content table.docutils th {
+    white-space: normal !important;
+    vertical-align: top;
+}
+.rst-content table.docutils:not(.field-list) {
+    width: 100%;
+    overflow: hidden;
+    border: 1px solid #ded8ef;
+    border-top: 3px solid var(--hs-violet);
+    border-collapse: separate;
+    border-spacing: 0;
+    border-radius: 9px;
+    background: #ffffff;
+    box-shadow: 0 8px 24px rgba(36, 19, 73, 0.07);
+}
+.rst-content table.docutils thead th {
+    padding: 0.78rem 0.9rem;
+    border: 0;
+    border-right: 1px solid rgba(199, 189, 242, 0.18);
+    background: #211642;
+    color: #f7f4ff;
+    font-size: 0.84rem;
+    font-weight: 700;
+    letter-spacing: 0.045em;
+    line-height: 1.4;
+    text-align: left;
+}
+.rst-content table.docutils thead th:first-child {
+    padding-left: 1.05rem;
+    box-shadow: inset 4px 0 0 var(--hs-cyan);
+}
+.rst-content table.docutils thead th:last-child { border-right: 0; }
+.rst-content table.docutils thead th p {
+    margin: 0;
+    color: inherit;
+    line-height: inherit;
+}
+.rst-content table.docutils thead th a,
+.rst-content table.docutils thead th a:hover {
+    color: #ffffff;
+    border-bottom-color: rgba(0, 245, 255, 0.65);
+}
+.rst-content table.docutils:not(.field-list) tbody td {
+    padding: 0.68rem 0.9rem;
+    border: 0;
+    border-right: 1px solid #eeeaf7;
+    border-bottom: 1px solid #e8e3f3;
+    background: #ffffff;
+    transition: background-color 0.14s ease;
+}
+.rst-content table.docutils:not(.field-list) tbody td:last-child { border-right: 0; }
+.rst-content table.docutils:not(.field-list) tbody tr:last-child td { border-bottom: 0; }
+.rst-content table.docutils:not(.field-list) tbody tr:nth-child(even) td { background: #faf9fd; }
+.rst-content table.docutils:not(.field-list) tbody tr:hover td { background: #f2effb; }
+
+/* 首页能力一览表更通透 */
+.rst-content .list-table td p { margin-bottom: 0.4em; }
+
+/* 首页主视觉：以风控决策轨道串起衡枢的五段工作流。 */
+.hs-home-hero {
+    position: relative;
+    margin: 0.6rem 0 2rem;
+    padding: 2rem 2.1rem 1.35rem;
+    overflow: hidden;
+    border: 1px solid #ddd5f5;
+    border-radius: 14px;
+    background:
+        radial-gradient(circle at 88% 8%, rgba(0, 245, 255, 0.16), transparent 30%),
+        linear-gradient(145deg, #161038 0%, #241349 62%, #32165d 100%);
+    color: #ffffff;
+    box-shadow: 0 18px 44px rgba(36, 19, 73, 0.2);
+}
+.hs-home-hero::after {
+    content: "HS";
+    position: absolute;
+    top: -2.8rem;
+    right: -0.7rem;
+    color: rgba(255, 255, 255, 0.035);
+    font-size: 11rem;
+    font-weight: 800;
+    line-height: 1;
+    pointer-events: none;
+}
+.hs-home-hero__eyebrow {
+    position: relative;
+    z-index: 1;
+    margin: 0 0 1.25rem !important;
+    color: var(--hs-cyan) !important;
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.16em;
+}
+.hs-home-hero__lockup {
+    position: relative;
+    z-index: 1;
+    display: grid;
+    grid-template-columns: 4.8rem 1fr;
+    gap: 1.15rem;
+    align-items: center;
+}
+.hs-home-hero__seal {
+    display: grid;
+    width: 4.8rem;
+    height: 4.8rem;
+    place-items: center;
+    border: 1px solid rgba(255, 255, 255, 0.72);
+    border-radius: 50%;
+    background: var(--hs-grad);
+    color: #ffffff;
+    font-size: 2.4rem;
+    font-weight: 800;
+    box-shadow: 0 0 0 6px rgba(123, 47, 255, 0.18), 0 0 28px rgba(0, 245, 255, 0.28);
+}
+.hs-home-hero__motto {
+    margin: 0 0 0.25rem !important;
+    color: #cfc7f4 !important;
+    font-size: 0.78rem;
+    letter-spacing: 0.13em;
+}
+.hs-home-hero__title {
+    margin: 0 !important;
+    color: #ffffff !important;
+    font-size: clamp(1.65rem, 3.4vw, 2.65rem);
+    font-weight: 750;
+    letter-spacing: 0.015em;
+    line-height: 1.18 !important;
+}
+.hs-home-hero__lead {
+    max-width: 42rem;
+    margin: 0.75rem 0 0 !important;
+    color: #d8d2f1 !important;
+    font-size: 0.92rem;
+    line-height: 1.7 !important;
+}
+.hs-home-hero__actions {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    margin: 1.55rem 0 1.45rem;
+}
+.rst-content .hs-home-hero__action {
+    display: inline-flex;
+    min-height: 2.75rem;
+    align-items: center;
+    justify-content: center;
+    gap: 0.55rem;
+    padding: 0.65rem 1.05rem;
+    border: 1px solid rgba(255, 255, 255, 0.36);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.08);
+    color: #ffffff;
+    font-weight: 700;
+    text-decoration: none;
+    transition: transform 0.16s ease, background-color 0.16s ease, box-shadow 0.16s ease;
+}
+.rst-content .hs-home-hero__action:hover {
+    border-color: var(--hs-cyan);
+    background: rgba(0, 245, 255, 0.12);
+    color: #ffffff;
+    transform: translateY(-2px);
+}
+.rst-content .hs-home-hero__action--primary {
+    border-color: transparent;
+    background: var(--hs-grad);
+    box-shadow: 0 8px 22px rgba(123, 47, 255, 0.42);
+}
+.hs-home-hero__track {
+    position: relative;
+    z-index: 1;
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    border-top: 1px solid rgba(199, 189, 242, 0.3);
+    color: #bbb2e9;
+    font-size: 0.68rem;
+    letter-spacing: 0.05em;
+}
+.hs-home-hero__track span {
+    position: relative;
+    padding-top: 0.85rem;
+    text-align: center;
+}
+.hs-home-hero__track span::before {
+    content: "";
+    position: absolute;
+    top: -0.22rem;
+    left: 50%;
+    width: 0.42rem;
+    height: 0.42rem;
+    border: 1px solid var(--hs-cyan);
+    border-radius: 50%;
+    background: var(--hs-ink);
+    transform: translateX(-50%);
+}
+
+/* ===========================================================================
+   6) 顶部移动栏 / 按钮 / 页脚
+   =========================================================================== */
+.wy-nav-top {
+    background: var(--hs-grad) !important;   /* 覆盖主题 style_nav_header_background 内联色 */
+    line-height: normal;
+}
+.wy-nav-top a { color: #fff; font-weight: 800; letter-spacing: 0.04em; }
+.wy-nav-top i { color: #fff; }
+.hs-mobile-actions { display: none; }
+
+.btn-neutral,
+.btn {
+    border-radius: 8px !important;
+    box-shadow: none !important;
+}
+.rst-content .btn-neutral {
+    background: #f2ecff !important;
+    color: var(--hs-violet-deep) !important;
+    border: 1px solid #e3d8ff;
+}
+.rst-content .btn-neutral:hover {
+    background: #e9e0ff !important;
+    color: var(--hs-magenta) !important;
+}
+
+footer .rst-footer-buttons { margin-top: 1.2em; }
+.rst-content .highlighted { background: #ffe6fa; box-shadow: 0 0 0 2px #ffb3ec; }
+
+/* 首页副标题（rubric）做成品牌标语 */
+.rst-content p.rubric {
+    border: none;
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: var(--hs-violet-deep);
+    letter-spacing: 0.02em;
+}
+
+/* ===========================================================================
+   7) 可访问性 —— 选区、焦点、降低动态
+   =========================================================================== */
+::selection { background: rgba(123, 47, 255, 0.22); }
+
+a:focus-visible,
+input:focus-visible,
+.wy-menu-vertical a:focus-visible {
+    outline: 2px solid var(--hs-cyan);
+    outline-offset: 2px;
+    border-radius: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    * { animation-duration: 0.001ms !important; transition: none !important; }
+}
+
+@media screen and (max-width: 768px) {
+    html,
+    body,
+    .wy-nav-content-wrap { max-width: 100%; overflow-x: hidden; }
+    .wy-nav-top {
+        display: flex;
+        width: 100vw;
+        min-height: 3.25rem;
+        align-items: center;
+        gap: 0.7rem;
+        padding: 0 0.8rem;
+        box-sizing: border-box;
+        overflow: hidden;
+    }
+    .wy-nav-top i { flex: 0 0 auto; float: none; padding: 0; }
+    .wy-nav-top > a { min-width: 0; flex: 0 1 auto; margin-right: auto; text-align: left; }
+    .hs-mobile-actions {
+        display: flex;
+        flex: 0 0 auto;
+        gap: 0.4rem;
+        position: absolute;
+        top: 50%;
+        right: 0.8rem;
+        transform: translateY(-50%);
+    }
+    .hs-mobile-actions a {
+        padding: 0.38rem 0.55rem;
+        border: 1px solid rgba(255, 255, 255, 0.65);
+        border-radius: 6px;
+        color: #ffffff;
+        font-size: 0.7rem;
+        line-height: 1;
+        text-decoration: none;
+    }
+    .wy-nav-content { width: 100%; max-width: 100%; box-sizing: border-box; }
+    .hs-home-hero { width: 100%; max-width: 100%; padding: 1.5rem 1.2rem 1.1rem; box-sizing: border-box; }
+    .hs-home-hero * { min-width: 0; }
+    .hs-home-hero__eyebrow { overflow-wrap: anywhere; }
+    .hs-home-hero__lockup { grid-template-columns: 3.7rem 1fr; gap: 0.9rem; }
+    .hs-home-hero__seal { width: 3.7rem; height: 3.7rem; font-size: 1.8rem; }
+    .hs-home-hero__title { font-size: 1.55rem; }
+    .hs-home-hero__track { grid-template-columns: repeat(3, 1fr); row-gap: 0.8rem; }
+    .hs-home-hero__track span:nth-child(n + 4) { display: none; }
+}
+
+@media screen and (max-width: 480px) {
+    .hs-home-hero__lockup { grid-template-columns: 1fr; }
+    .hs-home-hero__seal { width: 3.25rem; height: 3.25rem; font-size: 1.55rem; }
+    .hs-home-hero__actions { display: grid; }
+    .rst-content .hs-home-hero__action { width: 100%; }
+}

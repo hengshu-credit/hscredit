@@ -1881,8 +1881,10 @@ class QuickModelReport:
                 )
                 try:
                     from openpyxl.utils import get_column_letter
+                    # 金额口径表起始列为 end_col1 + 1，占据 索引层级 + 数据列 共 nlevels+ncols
+                    # 列，故其最后一列为 (end_col1 + 1) + nlevels + ncols - 1。
                     filter_end_col = (
-                        end_col1 + 2 + lift_amt.index.nlevels + len(lift_amt.columns) - 1
+                        end_col1 + 1 + lift_amt.index.nlevels + len(lift_amt.columns) - 1
                     )
                     header_row = table_start + lift_table.columns.nlevels + 1
                     writer.add_auto_filter(

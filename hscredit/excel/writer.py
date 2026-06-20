@@ -1453,16 +1453,18 @@ class ExcelWriter:
 
 
 def resolve_condition_color(
-    condition_color: Optional[Union[str, Dict[Any, str]]],
+    condition_color: Optional[Union[str, List[str], Dict[Any, Union[str, List[str]]]]],
     column: Any,
     default_color: str,
 ) -> str:
-    """解析某一列（或行）对应的条件格式颜色。
+    """解析某一列（或行）对应的条件格式单色（数据条等单色场景使用）。
 
-    :param condition_color: 条件格式颜色配置，支持两种类型：
+    :param condition_color: 条件格式颜色配置，支持以下类型：
 
         - str：所有列/行统一使用该颜色
-        - dict：以列名（或行索引值）为key分别指定颜色，匹配方式类似 ``condition_cols``：
+        - list/tuple：由 2 或 3 个颜色组成的色阶锚点（仅 ``color_cols``/``color_rows`` 颜色渐变完整生效；
+          数据条等单色场景取末位颜色）
+        - dict：以列名（或行索引值）为key分别指定颜色，值可为 str 或上述 list/tuple，匹配方式类似 ``condition_cols``：
 
           - 单层列名：key直接为列名
           - 多层级列名：key可以是完整的列名tuple，也可以是其中任意一层级的名称（优先匹配完整tuple，其次按由内到外的层级匹配）
@@ -1470,7 +1472,7 @@ def resolve_condition_color(
 
     :param column: 当前列名或行索引值，多层级时为tuple
     :param default_color: ``condition_color`` 为None，或为dict且未匹配到时使用的颜色
-    :return: 最终使用的颜色
+    :return: 最终使用的单个颜色（list/tuple 锚点取末位），去除 ``#`` 前缀并大写
 
     **参考样例**
 
@@ -1484,9 +1486,31 @@ def resolve_condition_color(
     'F76E6C'
     >>> resolve_condition_color({'iv': 'F76E6C'}, ('分组1', 'iv'), '2639E9')
     'F76E6C'
+    >>> resolve_condition_color(['#3B82F6', '#E879F9', '#EF4444'], 'iv', '2639E9')
+    'EF4444'
+    """
+    value = _resolve_condition_value(condition_color, column, default_color)
+    if isinstance(value, (list, tuple)):
+        value = value[-1] if len(value) else default_color
+    return _clean_hex(value)
+
+
+def _clean_hex(color: str) -> str:
+    """规范化颜色为openpyxl可用的十六进制：去除 ``#`` 前缀并大写。"""
+    return str(color).lstrip("#").upper()
+
+
+def _resolve_condition_value(
+    condition_color: Optional[Union[str, List[str], Dict[Any, Union[str, List[str]]]]],
+    column: Any,
+    default_color: str,
+) -> Union[str, List[str]]:
+    """解析某一列（或行）配置的原始颜色值（单色 str 或多色锚点 list/tuple），未匹配回退 ``default_color``。
+
+    与 :func:`resolve_condition_color` 共用匹配规则，但不折叠为单色，供颜色渐变构建多色阶使用。
     """
     if not isinstance(condition_color, dict):
-        return condition_color or default_color
+        return condition_color if condition_color else default_color
 
     if column in condition_color:
         return condition_color[column]
@@ -1499,6 +1523,53 @@ def resolve_condition_color(
     return default_color
 
 
+def _coerce_color_anchors(color_value: Union[str, List[str]]) -> List[str]:
+    """将颜色配置规范化为色阶锚点列表（1~3 个，去 ``#``、大写）。
+
+    多色锚点超过 3 个时自动取首/中/尾 3 个（``ColorScaleRule`` 最多支持 3 个色标）。
+    """
+    if isinstance(color_value, (list, tuple)):
+        anchors = [_clean_hex(c) for c in color_value if c]
+    else:
+        anchors = [_clean_hex(color_value)] if color_value else []
+    if len(anchors) > 3:
+        anchors = [anchors[0], anchors[len(anchors) // 2], anchors[-1]]
+    return anchors
+
+
+def _build_color_scale_rule(values: pd.Series, color_value: Union[str, List[str]]) -> ColorScaleRule:
+    """根据锚点颜色构建颜色渐变规则 ``ColorScaleRule``，支持单/双/三色阶。
+
+    :param values: 当前列（或行）数据，用于确定最小/最大值
+    :param color_value: 颜色配置，单色 str 或由 2/3 个颜色组成的异色锚点 list/tuple
+
+        - 单色：沿用「两端同色 + 白心（0 为基准）」的发散写法，保持向后兼容
+        - 双色 ``[低值色, 高值色]``：最小值 → 最大值 双色阶
+        - 三色 ``[低值色, 中值色, 高值色]``（异色）：最小值 → 中位数 → 最大值 三色阶
+    :return: 颜色渐变规则
+    """
+    anchors = _coerce_color_anchors(color_value)
+    vmin, vmax = values.min(), values.max()
+
+    if len(anchors) >= 3:
+        return ColorScaleRule(
+            start_type='num', start_value=vmin, start_color=anchors[0],
+            mid_type='percentile', mid_value=50, mid_color=anchors[1],
+            end_type='num', end_value=vmax, end_color=anchors[2],
+        )
+    if len(anchors) == 2:
+        return ColorScaleRule(
+            start_type='num', start_value=vmin, start_color=anchors[0],
+            end_type='num', end_value=vmax, end_color=anchors[1],
+        )
+    _color = anchors[0]
+    return ColorScaleRule(
+        start_type='num', start_value=vmin, start_color=_color,
+        mid_type='num', mid_value=0., mid_color='FFFFFF',
+        end_type='num', end_value=vmax, end_color=_color,
+    )
+
+
 def dataframe2excel(
     data: pd.DataFrame,
     excel_writer: Union[str, ExcelWriter],
@@ -1506,7 +1577,7 @@ def dataframe2excel(
     title: Optional[str] = None,
     header: bool = True,
     theme_color: str = "2639E9",
-    condition_color: Optional[Union[str, Dict[Any, str]]] = None,
+    condition_color: Optional[Union[str, List[str], Dict[Any, Union[str, List[str]]]]] = None,
     fill: bool = True,
     percent_cols: Optional[List] = None,
     condition_cols: Optional[List] = None,
@@ -1539,10 +1610,13 @@ def dataframe2excel(
     :param title: 标题，默认为None
     :param header: 是否保存列名，默认为True
     :param theme_color: 主题颜色，默认为"2639E9"
-    :param condition_color: 条件格式（数据条/颜色渐变）颜色，默认为None（使用主题色）。支持两种类型：
+    :param condition_color: 条件格式（数据条/颜色渐变）颜色，默认为None（使用主题色）。支持三种类型：
 
         - str：所有 condition_cols/color_cols/condition_rows/color_rows 统一使用该颜色
-        - dict：以列名（或行索引值）为key分别指定颜色，匹配方式类似 ``condition_cols`` —— 单层为列名，多层级可为完整列名tuple或其中任意层级名称；未匹配到的回退使用主题色
+        - list/tuple：2 或 3 个颜色组成的异色色阶锚点，仅对 color_cols/color_rows 颜色渐变生效（2 色为
+          ``[低值色, 高值色]`` 双色阶，3 色为 ``[低值色, 中值色, 高值色]`` 三色阶；超过 3 个自动取首/中/尾；
+          数据条等单色场景取末位颜色）
+        - dict：以列名（或行索引值）为key分别指定颜色，值可为 str 或上述 list/tuple，匹配方式类似 ``condition_cols`` —— 单层为列名，多层级可为完整列名tuple或其中任意层级名称；未匹配到的回退使用主题色
     :param fill: 是否使用颜色填充，默认为True
     :param percent_cols: 需要显示为百分数的列，默认为None
     :param condition_cols: 需要显示数据条的列，默认为None
@@ -1683,12 +1757,7 @@ def dataframe2excel(
             color_cols = [c for c in data.columns if (isinstance(c, tuple) and c[-1] in color_cols) or (not isinstance(c, tuple) and c in color_cols)]
         for c in [c for c in color_cols if c in data.columns]:
             try:
-                _color = resolve_condition_color(condition_color, c, theme_color)
-                rule = ColorScaleRule(
-                    start_type='num', start_value=data[c].min(), start_color=_color,
-                    mid_type='num', mid_value=0., mid_color='FFFFFF',
-                    end_type='num', end_value=data[c].max(), end_color=_color
-                )
+                rule = _build_color_scale_rule(data[c], _resolve_condition_value(condition_color, c, theme_color))
                 conditional_column = get_column_letter(
                     start_col + data.columns.get_loc(c) + data.index.nlevels if kwargs.get("index", False) else start_col + data.columns.get_loc(c)
                 )
@@ -1739,12 +1808,7 @@ def dataframe2excel(
         for c in [c for c in color_rows if c in data.index]:
             try:
                 insert_row = data.index.get_loc(c).start if data.index.nlevels > 1 and not isinstance(data.index.get_loc(c), (int, float)) else data.index.get_loc(c)
-                _color = resolve_condition_color(condition_color, c, theme_color)
-                rule = ColorScaleRule(
-                    start_type='num', start_value=data.loc[c].min(), start_color=_color,
-                    mid_type='num', mid_value=0., mid_color='FFFFFF',
-                    end_type='num', end_value=data.loc[c].max(), end_color=_color
-                )
+                rule = _build_color_scale_rule(data.loc[c], _resolve_condition_value(condition_color, c, theme_color))
                 index_row = start_row + insert_row + data.columns.nlevels if kwargs.get("header", True) else start_row + insert_row
                 index_col = start_col + data.index.nlevels if kwargs.get("index", False) else start_col
                 worksheet.conditional_formatting.add(f"{get_column_letter(index_col)}{index_row}:{get_column_letter(index_col + len(data.columns))}{index_row}", rule)
