@@ -176,7 +176,7 @@ def rule_report_table(
 
 def rule_target_analysis(
     report: pd.DataFrame,
-    current_pass_rate: float,
+    current_pass_rate: Optional[float] = 1.0,
     rule_name: Optional[str] = None,
     target_names: Optional[Mapping[str, str]] = None,
     target_name: str = "target",
