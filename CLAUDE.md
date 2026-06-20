@@ -169,9 +169,7 @@ report = predictor.fit(train_df).get_report()
 XGBoost、LightGBM、CatBoost、PyTorch/TabNet、PMML、Optuna、SHAP 均为可选依赖：
 
 ```bash
-pip install hscredit[xgboost]      # XGBoost
-pip install hscredit[lightgbm]     # LightGBM
-pip install hscredit[catboost]     # CatBoost
+pip install hscredit[boost]
 pip install hscredit[net]           # PyTorch, TabNet
 pip install hscredit[tune]          # Optuna 超参调优
 pip install hscredit[explain]      # SHAP

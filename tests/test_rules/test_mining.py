@@ -244,6 +244,22 @@ class TestMultiFeatureRuleMiner:
         rules = miner.get_all_cross_rules(top_n=5)
         
         assert isinstance(rules, pd.DataFrame)
+
+    def test_get_all_cross_rules_with_mixed_feature_types(self):
+        """候选特征超过10个时应兼容日期和类别字段."""
+        rng = np.random.RandomState(42)
+        size = 100
+        data = pd.DataFrame({f"feature_{i}": rng.normal(size=size) for i in range(9)})
+        data["category"] = np.where(rng.rand(size) > 0.5, "A", "B")
+        data["date"] = pd.date_range("2024-01-01", periods=size)
+        data["target"] = rng.randint(0, 2, size=size)
+
+        miner = MultiFeatureRuleMiner(target="target", max_n_bins=3)
+        miner.fit(data)
+
+        rules = miner.get_all_cross_rules(top_n=1, max_feature_pairs=1)
+
+        assert isinstance(rules, pd.DataFrame)
     
     def test_plot_cross_heatmap(self, sample_data):
         """测试绘制热力图."""

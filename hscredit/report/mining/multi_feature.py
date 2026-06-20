@@ -490,9 +490,23 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
         
         # 选择信息价值最高的特征对
         if len(all_features) > 10:
-            # 简单启发式：选择方差最大的特征
-            feature_variance = self.X_[all_features].var().sort_values(ascending=False)
-            selected_features = feature_variance.head(10).index.tolist()
+            # 数值特征按方差排序；日期、类别等非数值字段不能直接计算方差。
+            numeric_variance = (
+                self.X_[self.numerical_features_]
+                .var(numeric_only=True)
+                .sort_values(ascending=False)
+            )
+            selected_features = numeric_variance.head(10).index.tolist()
+
+            # 数值特征不足 10 个时，按类别基数补足候选特征。
+            remaining = 10 - len(selected_features)
+            if remaining > 0:
+                categorical_cardinality = (
+                    self.X_[self.categorical_features_]
+                    .nunique(dropna=False)
+                    .sort_values(ascending=False)
+                )
+                selected_features.extend(categorical_cardinality.head(remaining).index.tolist())
         else:
             selected_features = all_features
         

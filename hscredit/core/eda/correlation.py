@@ -51,11 +51,15 @@ def high_correlation_pairs(df: pd.DataFrame,
     :param features: 指定分析的特征
     :param threshold: 高相关阈值
     :param method: 相关计算方法
-    :return: 高相关特征对DataFrame
-    
+    :return: 高相关特征对DataFrame，列为['特征1', '特征2', '相关系数', '绝对相关系数', '相关评级']；
+        若没有特征对达到threshold，则返回仅含'信息'列的提示性DataFrame
+
     Example:
         >>> pairs = high_correlation_pairs(df, threshold=0.8)
-        >>> print(pairs[['特征1', '特征2', '相关系数', '相关评级']])
+        >>> if '特征1' in pairs.columns:
+        ...     print(pairs[['特征1', '特征2', '相关系数', '相关评级']])
+        ... else:
+        ...     print(pairs['信息'].iloc[0])  # 未发现高相关特征对时的提示信息
     """
     corr_matrix = correlation_matrix(df, features, method)
     

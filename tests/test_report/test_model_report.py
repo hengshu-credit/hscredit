@@ -362,7 +362,7 @@ class TestQuickModelReportRegression:
             data_source='测试数据源',
         )
 
-        workbook = load_workbook(output, read_only=True)
+        workbook = load_workbook(output)
         assert workbook.sheetnames == [
             '目录', '1-基本信息', '2-模型性能', '3-入模变量分析',
             '4-稳定性分析', '5-模型参数', '6-模型部署需求',
@@ -370,12 +370,61 @@ class TestQuickModelReportRegression:
         contents = [cell.value for row in workbook['目录'].iter_rows() for cell in row]
         basic_info = [cell.value for row in workbook['1-基本信息'].iter_rows() for cell in row]
         performance = [cell.value for row in workbook['2-模型性能'].iter_rows() for cell in row]
+        feature_sheet = workbook['3-入模变量分析']
+        summary_feature_cell = next(
+            cell
+            for row in feature_sheet.iter_rows()
+            for cell in row
+            if cell.value == 'f0' and cell.hyperlink is not None
+        )
+        feature_title_cell = next(
+            cell
+            for row in feature_sheet.iter_rows()
+            for cell in row
+            if cell.value == '3.1、f0 有效性分析'
+        )
 
         assert '5-模型参数' in contents
         assert '6-模型部署需求' in contents
         assert '测试项目描述' in basic_info
         assert '测试数据源' in basic_info
+        assert any(isinstance(value, str) and 'MOB1@7:' in value for value in basic_info)
+        assert '各数据集标签坏样本率' not in basic_info
         assert any(isinstance(value, float) and not np.isnan(value) for value in performance)
+        feature_values = [cell.value for row in feature_sheet.iter_rows() for cell in row]
+        assert feature_values.count('训练集 订单口径') == 1
+        assert feature_values.count('测试集 订单口径') == 1
+        assert summary_feature_cell.hyperlink.location == f"#'3-入模变量分析'!{feature_title_cell.coordinate}"
+        assert feature_title_cell.hyperlink.location == f"#'3-入模变量分析'!{summary_feature_cell.coordinate}"
+
+    def test_excel_skips_hyperlink_when_feature_missing_from_summary(self, tmp_path, monkeypatch):
+        """特征不在重要性汇总表中时（summary_row为None），应跳过超链接而不是抛异常."""
+        X = self._multi_label_data()
+        report = QuickModelReport(
+            MockModel(['f0']),
+            datasets={'train': X, 'test': X.copy()},
+            overdue=['MOB1'],
+            dpds=[7, 3, 0],
+            feature_names=['f0'],
+        )
+
+        original_summary = report._get_features_summary
+        monkeypatch.setattr(
+            report, '_get_features_summary',
+            lambda: original_summary().iloc[0:0],
+        )
+
+        output = tmp_path / 'model_report_missing_feature.xlsx'
+        report.to_excel(str(output), with_plots=False, amount_col='放款金额')
+
+        feature_sheet = load_workbook(output)['3-入模变量分析']
+        feature_title_cell = next(
+            cell
+            for row in feature_sheet.iter_rows()
+            for cell in row
+            if cell.value == '3.1、f0 有效性分析'
+        )
+        assert feature_title_cell.hyperlink is None
 
     def test_export_plots_contains_feature_psi(self, tmp_path):
         X = self._multi_label_data()
@@ -393,3 +442,43 @@ class TestQuickModelReportRegression:
         assert Path(paths['feat_psi_f0'][0]).exists()
         assert 'feat_psi_f0' in tables
         assert not tables['feat_psi_f0'].empty
+        assert tables['feat_psi_f0']['预期坏样本率'].gt(0).any()
+        assert tables['feat_psi_f0']['实际坏样本率'].gt(0).any()
+
+    def test_multi_label_tables_use_expected_layout(self, tmp_path):
+        X = self._multi_label_data()
+        report = QuickModelReport(
+            MockModel(['f0']),
+            datasets={'train': X, 'test': X.copy()},
+            overdue='MOB1',
+            dpds=[7, 3, 0],
+            feature_names=['f0'],
+        )
+
+        bin_table = report.get_bin_table(labels=report._label_names)
+        feature_table = report.get_feature_bin_table('f0', labels=report._label_names)
+        for table in (bin_table, feature_table):
+            assert isinstance(table.columns, pd.MultiIndex)
+            assert {'MOB1>7', 'MOB1>3', 'MOB1>0'} <= set(table.columns.get_level_values(0))
+            assert '指标名称' not in table.columns.get_level_values(-1)
+            assert '指标含义' not in table.columns.get_level_values(-1)
+
+        output = tmp_path / 'multi_layout.xlsx'
+        report.to_excel(str(output), with_plots=False, amount_col='放款金额')
+        workbook = load_workbook(output)
+        performance = workbook['2-模型性能']
+        basic = workbook['1-基本信息']
+
+        assert performance['B7'].value == '统计项'
+        assert [performance.cell(7, col).value for col in (3, 5, 7)] == [
+            'MOB1>7', 'MOB1>3', 'MOB1>0'
+        ]
+        assert [performance.cell(8, col).value for col in range(2, 8)] == [
+            '统计指标', '训练集', '测试集', '训练集', '测试集', '训练集'
+        ]
+        assert performance['B19'].value == '统计指标'
+        assert performance.auto_filter.ref == 'B20:AI26'
+        stat_header = next(
+            cell for row in basic.iter_rows() for cell in row if cell.value == '样本总数'
+        )
+        assert basic.cell(stat_header.row, 2).value == '统计详情'

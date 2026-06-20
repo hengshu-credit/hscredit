@@ -978,9 +978,16 @@ def vintage_plot(
         mob_cols = [c for c in vintage_pivot.columns if c <= max_mob]
         vintage_pivot = vintage_pivot[mob_cols]
     
-    # 创建图表
-    if show_heatmap:
-        fig, (ax_line, ax_heat) = plt.subplots(1, 2, figsize=figsize, 
+    # 创建图表：传入ax时复用该ax绘制曲线，热力图作为附加面板挂载在同一figure上，
+    # 而不是整体重新plt.subplots()丢弃调用方传入的ax
+    if ax is not None:
+        ax_line = ax
+        fig = ax_line.get_figure()
+        if show_heatmap:
+            from mpl_toolkits.axes_grid1 import make_axes_locatable
+            ax_heat = make_axes_locatable(ax_line).append_axes("right", size="40%", pad=0.8)
+    elif show_heatmap:
+        fig, (ax_line, ax_heat) = plt.subplots(1, 2, figsize=figsize,
                                                gridspec_kw={'width_ratios': [2, 1]})
     else:
         fig, ax_line = get_or_create_ax(figsize=figsize, ax=ax)
@@ -1243,8 +1250,17 @@ def bad_rate_trend_plot(
         >>> fig = bad_rate_trend_plot(df, 'apply_date', 'target')
         >>> fig = bad_rate_trend_plot(df, 'apply_date', 'target', dimension_col='customer_grade')
     """
-    if show_sample_count:
-        fig, (ax_line, ax_bar) = plt.subplots(2, 1, figsize=figsize, 
+    # 传入ax时复用该ax绘制主曲线，样本数柱状图作为附加面板挂载在同一figure上，
+    # 而不是整体重新plt.subplots()丢弃调用方传入的ax
+    if ax is not None:
+        ax_line = ax
+        fig = ax_line.get_figure()
+        if show_sample_count:
+            from mpl_toolkits.axes_grid1 import make_axes_locatable
+            ax_bar = make_axes_locatable(ax_line).append_axes(
+                "bottom", size="33%", pad=0.1, sharex=ax_line)
+    elif show_sample_count:
+        fig, (ax_line, ax_bar) = plt.subplots(2, 1, figsize=figsize,
                                               sharex=True,
                                               gridspec_kw={'height_ratios': [3, 1],
                                                           'hspace': 0.1})

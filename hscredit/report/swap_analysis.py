@@ -1010,7 +1010,14 @@ def swap_analysis(
     :return: SwapAnalysisResult分析结果对象
     
     **参考样例**
-    
+
+    >>> # swap_df 需先通过 create_swap_dataset（或 create_swap_dataset_from_rules）
+    >>> # 构造出 swap_type 列，再传入 swap_analysis
+    >>> swap_df = create_swap_dataset(
+    ...     raw_df, original_rule_col='old_reject', new_rule_col='new_reject',
+    ...     score_col='score',
+    ... )
+    >>>
     >>> # 单标签分析
     >>> result = swap_analysis(
     ...     swap_df, reference_df,

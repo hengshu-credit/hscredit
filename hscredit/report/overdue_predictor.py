@@ -81,7 +81,7 @@ class OverduePredictor(BaseEstimator, TransformerMixin):
 
     >>> import numpy as np
     >>> import pandas as pd
-    >>> from hscredit.report.overdue_estimator import OverduePredictor
+    >>> from hscredit.report.overdue_predictor import OverduePredictor
     >>>
     >>> # 准备有标签的训练数据
     >>> train_df = pd.DataFrame({
@@ -878,7 +878,7 @@ def overdue_prediction_report(
 
     **参考样例**
 
-    >>> from hscredit.report.overdue_estimator import overdue_estimation_report
+    >>> from hscredit.report.overdue_predictor import overdue_prediction_report
     >>>
     >>> # 方式一：从原始数据生成报告（自动拟合+预估）
     >>> report = overdue_prediction_report(

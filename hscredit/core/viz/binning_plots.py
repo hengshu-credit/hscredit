@@ -11,7 +11,6 @@ import logging
 import re
 import warnings
 import os
-import six
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -30,7 +29,7 @@ from .utils import (
 logger = logging.getLogger(__name__)
 
 # 从统一metrics模块导入分箱统计计算
-from ..metrics import compute_bin_stats, psi_table
+from ..metrics import compute_bin_stats
 
 
 def _is_feature_table(data):
@@ -993,49 +992,78 @@ def psi_plot(expected, actual, y=None, labels=None, desc="", save=None, colors=N
         df_psi["总体PSI值"] = df_psi["分档PSI值"].sum()
         df_psi["指标名称"] = desc
     else:
-        # 路径B：传入原始分数 → 用 psi_table 计算一次（返回含期望/实际两套值的合并表）
-        # 列: 分箱, 期望样本数, 实际样本数, 期望占比, 实际占比, PSI贡献
+        # 路径B：传入原始分数，使用同一个分箱器计算 PSI 与坏样本率。
 
-        # 创建 binner 用于计算坏样本率（与 psi_table 内部使用相同的分箱）
+        # 创建统一 binner，避免 PSI 分布与坏样本率使用不同的分箱。
         from ..binning import OptimalBinning
-        combined = pd.concat([exp_series.rename('value'), act_series.rename('value')], ignore_index=True)
+        exp_values = exp_series.rename('value').reset_index(drop=True)
+        act_values = act_series.rename('value').reset_index(drop=True)
+        combined = pd.concat([exp_values, act_values], ignore_index=True)
         dummy_y = np.random.randint(0, 2, size=len(combined))
-        binner = OptimalBinning(method='quantile', max_n_bins=10, min_bin_size=0.01, verbose=False)
+        binning_kwargs = dict(kwargs)
+        method = binning_kwargs.pop('method', 'quantile')
+        max_n_bins = binning_kwargs.pop('max_n_bins', 10)
+        min_bin_size = binning_kwargs.pop('min_bin_size', 0.01)
+        binner = OptimalBinning(
+            method=method,
+            max_n_bins=max_n_bins,
+            min_bin_size=min_bin_size,
+            verbose=False,
+            **binning_kwargs,
+        )
         binner.fit(combined.to_frame(), dummy_y)
+
+        exp_frame = exp_values.to_frame()
+        act_frame = act_values.to_frame()
+        exp_bins = binner.transform(exp_frame, metric='indices').values.flatten()
+        act_bins = binner.transform(act_frame, metric='indices').values.flatten()
 
         # 如果传入了 y，计算各分箱的坏样本率
         if y is not None:
-            y_combined = pd.concat([pd.Series(y, name='y').reset_index(drop=True)], ignore_index=True)
-            exp_bins = binner.transform(exp_series.to_frame())['value'].values
-            act_bins = binner.transform(act_series.to_frame())['value'].values
-            # 用原始索引对应回 y（取前 len(exp_series) 个期望对应部分）
-            exp_y = y_combined.iloc[:len(exp_series)].values
-            act_y = y_combined.iloc[len(exp_series):len(exp_series) + len(act_series)].values
-
-            bad_exp = pd.Series(exp_bins).groupby(exp_bins).apply(
-                lambda idx: np.mean(exp_y[idx]) if len(idx) > 0 else 0.0
-            )
-            bad_act = pd.Series(act_bins).groupby(act_bins).apply(
-                lambda idx: np.mean(act_y[idx]) if len(idx) > 0 else 0.0
-            )
-            _bad_exp_map = bad_exp.to_dict()
-            _bad_act_map = bad_act.to_dict()
+            y_combined = pd.Series(np.asarray(y).reshape(-1), name='y').reset_index(drop=True)
+            expected_length = len(exp_values) + len(act_values)
+            if len(y_combined) != expected_length:
+                raise ValueError(
+                    f"y 长度应等于 expected 与 actual 长度之和: "
+                    f"{len(y_combined)} != {expected_length}"
+                )
+            exp_y = y_combined.iloc[:len(exp_values)].to_numpy()
+            act_y = y_combined.iloc[len(exp_values):].to_numpy()
+            _bad_exp_map = pd.DataFrame({'bin': exp_bins, 'y': exp_y}).groupby('bin')['y'].mean().to_dict()
+            _bad_act_map = pd.DataFrame({'bin': act_bins, 'y': act_y}).groupby('bin')['y'].mean().to_dict()
         else:
             _bad_exp_map = {}
             _bad_act_map = {}
 
-        df_psi = psi_table(exp_series, act_series, method='quantile', **kwargs)
-        df_psi = df_psi.rename(columns={
-            "期望样本数": f"{labels[0]}样本数",
-            "实际样本数": f"{labels[1]}样本数",
-            "期望占比": f"{labels[0]}样本占比",
-            "实际占比": f"{labels[1]}样本占比",
-        })
-        df_psi["分档PSI值"] = df_psi["PSI贡献"].fillna(0).replace([np.inf, -np.inf], 0)
+        unique_bins = sorted(set(exp_bins) | set(act_bins))
+        bin_table = binner.bin_tables_.get('value')
+
+        def _bin_label(bin_idx):
+            if bin_table is not None and 0 <= int(bin_idx) < len(bin_table) and '分箱标签' in bin_table.columns:
+                return bin_table.iloc[int(bin_idx)]['分箱标签']
+            return f"Bin_{bin_idx}"
+
+        rows = []
+        epsilon = 1e-10
+        for bin_idx in unique_bins:
+            exp_count = int(np.sum(exp_bins == bin_idx))
+            act_count = int(np.sum(act_bins == bin_idx))
+            exp_prop = max(exp_count / len(exp_bins), epsilon) if len(exp_bins) else epsilon
+            act_prop = max(act_count / len(act_bins), epsilon) if len(act_bins) else epsilon
+            rows.append({
+                '分箱': _bin_label(bin_idx),
+                f"{labels[0]}样本数": exp_count,
+                f"{labels[1]}样本数": act_count,
+                f"{labels[0]}样本占比": exp_prop,
+                f"{labels[1]}样本占比": act_prop,
+                '分档PSI值': (act_prop - exp_prop) * np.log(act_prop / exp_prop),
+                '_bin_idx': bin_idx,
+            })
+        df_psi = pd.DataFrame(rows)
         # 坏样本率：优先使用 y 计算的值，否则设为 0
         for lbl, bad_map in [(labels[0], _bad_exp_map), (labels[1], _bad_act_map)]:
             if bad_map:
-                df_psi[f"{lbl}坏样本率"] = df_psi['分箱'].apply(
+                df_psi[f"{lbl}坏样本率"] = df_psi['_bin_idx'].apply(
                     lambda b: bad_map.get(b, 0.0)
                 )
             else:
@@ -1047,6 +1075,7 @@ def psi_plot(expected, actual, y=None, labels=None, desc="", save=None, colors=N
         )
         df_psi["总体PSI值"] = df_psi["分档PSI值"].sum()
         df_psi["指标名称"] = desc
+        df_psi = df_psi.drop(columns=['_bin_idx'])
 
     if plot:
         x = df_psi['分箱'].apply(
@@ -1143,6 +1172,8 @@ def dataframe_plot(df, row_height=0.4, font_size=14, header_color='#2639E9',
         size = (sum(cols_width), (len(data) + 1) * row_height)
         fig, ax = plt.subplots(figsize=size)
         ax.axis('off')
+    else:
+        fig = ax.get_figure()
 
     mpl_table = ax.table(
         cellText=data.values, colWidths=cols_width, bbox=bbox, 
@@ -1152,7 +1183,7 @@ def dataframe_plot(df, row_height=0.4, font_size=14, header_color='#2639E9',
     mpl_table.auto_set_font_size(False)
     mpl_table.set_fontsize(font_size)
 
-    for k, cell in six.iteritems(mpl_table._cells):
+    for k, cell in mpl_table._cells.items():
         cell.set_edgecolor(edge_color)
         if k[0] == 0 or k[1] < header_columns:
             cell.set_text_props(weight='bold', color='w')
