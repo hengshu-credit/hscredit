@@ -33,6 +33,15 @@
   <img src="docs/assets/celue.png" alt="hscredit 风控策略分析链路" width="100%">
 </p>
 
+
+## 交流
+
+|  微信 |  微信公众号 |
+| :---: | :----: |
+| <img src="https://itlubber.art/upload/itlubber.png" alt="itlubber.png" width="50%" border=0/> | <img src="https://itlubber.art/upload/hengshucredit-com.png" alt="hengshucredit-com.png" width="50%" border=0/> |
+|  itlubber  | hengshucredit-com |
+
+
 ## 为什么选择 hscredit？
 
 信贷风控工作通常不是单一建模问题，而是策略、数据、变量、模型、规则、监控和报告共同构成的决策流程。`hscredit` 希望把这些工作沉淀到一个工具箱中，减少在多个建模库、分析脚本和 Excel 模板之间反复切换的成本。
