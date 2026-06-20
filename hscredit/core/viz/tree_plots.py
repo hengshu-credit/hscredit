@@ -38,6 +38,9 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
+
+from .utils import DEFAULT_COLORS, save_figure, setup_axis_style
 
 
 def _tex_label(text: str) -> str:
@@ -59,6 +62,7 @@ __all__ = [
     "plot_tree_pyecharts",
     "plot_tree_graphviz",
     "plot_tree",
+    "tree_leaf_comparison_plot",
 ]
 
 # ============================================================================
@@ -1745,3 +1749,58 @@ def plot_tree(
     """
     viz = DecisionTreeViz(backend=backend, **kwargs)
     return viz.plot(tree_obj, save=save)
+
+
+def tree_leaf_comparison_plot(
+    evaluations: Dict[str, pd.DataFrame],
+    overall_bad_rate: float,
+    figsize: Optional[Tuple[float, float]] = None,
+    title: str = '叶节点效果对比',
+    save: Optional[str] = None,
+    **kwargs,
+):
+    """对比多棵决策树的叶节点坏样本率与 LIFT.
+
+    :param evaluations: ``{树名称: 叶节点评估表}``，表中需包含节点编号、坏样本率和LIFT值
+    :param overall_bad_rate: 总体坏样本率
+    :param figsize: 图像尺寸
+    :param title: 总标题
+    :param save: 保存路径
+    :return: matplotlib Figure
+    """
+    if not evaluations:
+        raise ValueError("evaluations 不能为空")
+    required = {'节点编号', '坏样本率', 'LIFT值'}
+    for name, table in evaluations.items():
+        missing = sorted(required.difference(table.columns))
+        if missing:
+            raise ValueError(f"{name} 评估表缺少必要列: {missing}")
+
+    n_plots = len(evaluations)
+    if figsize is None:
+        figsize = (7 * n_plots, 5)
+    fig, axes = plt.subplots(1, n_plots, figsize=figsize, squeeze=False)
+
+    for ax, (name, table) in zip(axes[0], evaluations.items()):
+        plot_data = table.sort_values('坏样本率', ascending=False).reset_index(drop=True)
+        positions = np.arange(len(plot_data))
+        bad_rates = pd.to_numeric(plot_data['坏样本率'], errors='coerce').fillna(0).to_numpy()
+        colors = plt.cm.RdYlGn_r(np.linspace(0.15, 0.85, max(len(plot_data), 1)))
+        bars = ax.bar(positions, bad_rates, color=colors[:len(plot_data)], alpha=0.85)
+        ax.axhline(overall_bad_rate, color=DEFAULT_COLORS[0], linestyle='--', label=f'总体坏样本率 {overall_bad_rate:.2%}')
+        ax.set_xticks(positions)
+        ax.set_xticklabels([f'N{int(node)}' for node in plot_data['节点编号']], rotation=45)
+        ax.set_xlabel('节点编号')
+        ax.set_ylabel('坏样本率')
+        ax.set_title(name)
+        ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda value, _: f'{value:.0%}'))
+        ax.legend(fontsize=8)
+        for bar, lift in zip(bars, plot_data['LIFT值']):
+            ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.005, f'LIFT:{lift:.2f}', ha='center', va='bottom', fontsize=8)
+        setup_axis_style(ax, hide_top_right=True)
+        ax.grid(True, alpha=0.3, axis='y')
+
+    fig.suptitle(title, fontsize=14, fontweight='bold')
+    fig.tight_layout()
+    save_figure(fig, save)
+    return fig

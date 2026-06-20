@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 
 # 从统一metrics模块导入分箱统计计算
 from ..metrics import compute_bin_stats
+from ...exceptions import NotFittedError
 
 
 def _is_feature_table(data):
@@ -658,8 +659,8 @@ def corr_plot(data, figure_size=None, fontsize=16, mask=False, save=None,
         return ax
 
 
-def ks_plot(score, target, title="", fontsize=14, figsize=(16, 8), save=None, 
-            colors=None, anchor=0.945, axes=None, ax=None):
+def ks_plot(score, target, title="", fontsize=14, figsize=(16, 8), save=None,
+            colors=None, anchor=0.945, axes=None, ax=None, curve='both'):
     """
     KS曲线和ROC曲线.
 
@@ -672,10 +673,15 @@ def ks_plot(score, target, title="", fontsize=14, figsize=(16, 8), save=None,
     :param colors: 配色方案
     :param anchor: 图例位置
     :param axes: 可选的 matplotlib Axes 对象数组 [ax1, ax2]
-    :return: matplotlib Figure 或 Axes 数组
+    :param ax: 可选的单个 Axes（配合 curve='ks'/'roc' 仅绘制单条曲线时使用）
+    :param curve: 绘制内容，'both'(默认 KS+ROC) / 'ks'(仅KS曲线) / 'roc'(仅ROC曲线)。
+        取 'ks' 或 'roc' 时仅需一个 Axes，便于嵌入到组合图中
+    :return: matplotlib Figure 或 Axes（嵌入模式下返回所用 Axes）
     """
     if colors is None:
         colors = DEFAULT_COLORS
+    if curve not in ('both', 'ks', 'roc'):
+        raise ValueError("curve 仅支持 'both'/'ks'/'roc'")
 
     # 兼容 axes 和 ax 参数
     axes = axes or (ax if isinstance(ax, (list, tuple, np.ndarray)) else None)
@@ -729,79 +735,112 @@ def ks_plot(score, target, title="", fontsize=14, figsize=(16, 8), save=None,
             cumbad=lambda x: np.cumsum(x.bad) / sum(x.bad)
         ).assign(ks=lambda x: abs(x.cumbad - x.cumgood))
 
+    need_ks = curve in ('both', 'ks')
+    need_roc = curve in ('both', 'roc')
+
+    def _is_single_ax(obj):
+        return obj is not None and hasattr(obj, 'plot') and not hasattr(obj, '__len__')
+
     # 获取或创建 Axes
-    if axes is not None:
-        # 检查是否为单个 Axes（使用 matplotlib 的 Axes 类型判断）
-        if hasattr(axes, 'plot') and not hasattr(axes, '__len__'):
-            # 传入的是单个 Axes，只用第一个子图
+    if curve == 'both':
+        if _is_single_ax(axes):
+            # 传入的是单个 Axes，只用第一个子图，另建一个用于 ROC 曲线
             fig = axes.figure
             ax1 = axes
-            # 创建第二个 axes 用于 ROC 曲线
             ax2 = fig.add_subplot(122)
             return_axes = True
-        elif hasattr(axes, '__len__') and len(axes) >= 2:
-            # 传入的是 Axes 列表/数组
+        elif axes is not None and hasattr(axes, '__len__') and len(axes) >= 2:
             ax1, ax2 = axes[0], axes[1]
             fig = ax1.figure
             return_axes = True
         else:
-            # 其他情况，创建新图
-            fig, ax = plt.subplots(1, 2, figsize=figsize)
-            ax1, ax2 = ax[0], ax[1]
+            fig, _ax = plt.subplots(1, 2, figsize=figsize)
+            ax1, ax2 = _ax[0], _ax[1]
             return_axes = False
     else:
-        fig, ax = plt.subplots(1, 2, figsize=figsize)
-        ax1, ax2 = ax[0], ax[1]
-        return_axes = False
+        # 单曲线模式：仅需一个 Axes
+        single = axes if _is_single_ax(axes) else (ax if _is_single_ax(ax) else None)
+        if single is None and axes is not None and hasattr(axes, '__len__') and len(axes) >= 1:
+            single = axes[0]
+        if single is not None:
+            target_ax = single
+            fig = target_ax.figure
+            return_axes = True
+        else:
+            fig, target_ax = plt.subplots(figsize=figsize)
+            return_axes = False
+        ax1 = target_ax if curve == 'ks' else None
+        ax2 = target_ax if curve == 'roc' else None
+
+    handles1, labels1, handles2, labels2 = [], [], [], []
 
     # KS曲线
-    dfks = df_ks.loc[lambda x: x.ks == max(x.ks)].sort_values('group').iloc[0]
+    if need_ks:
+        dfks = df_ks.loc[lambda x: x.ks == max(x.ks)].sort_values('group').iloc[0]
 
-    ax1.plot(df_ks.group, df_ks.ks, color=colors[0], label="KS曲线")
-    ax1.plot(df_ks.group, df_ks.cumgood, color=colors[1], label="累积好客户占比")
-    ax1.plot(df_ks.group, df_ks.cumbad, color=colors[2], label="累积坏客户占比")
-    ax1.fill_between(df_ks.group, df_ks.cumbad, df_ks.cumgood, color=colors[0], alpha=0.25)
+        ax1.plot(df_ks.group, df_ks.ks, color=colors[0], label="KS曲线")
+        ax1.plot(df_ks.group, df_ks.cumgood, color=colors[1], label="累积好客户占比")
+        ax1.plot(df_ks.group, df_ks.cumbad, color=colors[2], label="累积坏客户占比")
+        ax1.fill_between(df_ks.group, df_ks.cumbad, df_ks.cumgood, color=colors[0], alpha=0.25)
 
-    ax1.plot([dfks['group'], dfks['group']], [0, dfks['ks']], 'r--')
-    ax1.text(dfks['group'], dfks['ks'], f"KS: {round(dfks['ks'], 4)} at: {dfks.group:.2%}", 
-             horizontalalignment='center', fontsize=fontsize)
+        ax1.plot([dfks['group'], dfks['group']], [0, dfks['ks']], 'r--')
+        ax1.text(dfks['group'], dfks['ks'], f"KS: {round(dfks['ks'], 4)} at: {dfks.group:.2%}",
+                 horizontalalignment='center', fontsize=fontsize)
 
-    ax1.set_xlabel('% of Population', fontsize=fontsize)
-    ax1.set_ylabel('% of Total Bad / Good', fontsize=fontsize)
-    ax1.set_xlim((0, 1))
-    ax1.set_ylim((0, 1))
-    handles1, labels1 = ax1.get_legend_handles_labels()
+        ax1.set_xlabel('% of Population', fontsize=fontsize)
+        ax1.set_ylabel('% of Total Bad / Good', fontsize=fontsize)
+        ax1.set_xlim((0, 1))
+        ax1.set_ylim((0, 1))
+        handles1, labels1 = ax1.get_legend_handles_labels()
 
     # ROC曲线
-    fpr, tpr, thresholds = roc_curve(target_arr, score_arr)
+    if need_roc:
+        fpr, tpr, thresholds = roc_curve(target_arr, score_arr)
 
-    ax2.plot(fpr, tpr, color=colors[0], label="ROC Curve")
-    ax2.stackplot(fpr, tpr, color=colors[0], alpha=0.25)
-    ax2.plot([0, 1], [0, 1], color=colors[1], lw=2, linestyle=':')
-    ax2.text(0.5, 0.5, f"AUC: {auc_value:.4f}", fontsize=fontsize, 
-             horizontalalignment="center", transform=ax2.transAxes)
+        ax2.plot(fpr, tpr, color=colors[0], label="ROC Curve")
+        ax2.stackplot(fpr, tpr, color=colors[0], alpha=0.25)
+        ax2.plot([0, 1], [0, 1], color=colors[1], lw=2, linestyle=':')
+        ax2.text(0.5, 0.5, f"AUC: {auc_value:.4f}", fontsize=fontsize,
+                 horizontalalignment="center", transform=ax2.transAxes)
 
-    ax2.set_xlabel("False Positive Rate", fontsize=fontsize)
-    ax2.set_ylabel('True Positive Rate', fontsize=fontsize)
-    ax2.set_xlim((0, 1))
-    ax2.set_ylim((0, 1))
-    ax2.yaxis.tick_right()
-    ax2.yaxis.set_label_position("right")
-    handles2, labels2 = ax2.get_legend_handles_labels()
+        ax2.set_xlabel("False Positive Rate", fontsize=fontsize)
+        ax2.set_ylabel('True Positive Rate', fontsize=fontsize)
+        ax2.set_xlim((0, 1))
+        ax2.set_ylim((0, 1))
+        if curve == 'both':
+            ax2.yaxis.tick_right()
+            ax2.yaxis.set_label_position("right")
+        handles2, labels2 = ax2.get_legend_handles_labels()
 
     if not return_axes:
-        if title:
-            title += " "
-        fig.suptitle(f"{title}K-S & ROC CURVE\n", fontsize=fontsize, fontweight="bold")
-
-        fig.legend(handles1 + handles2, labels1 + labels2, loc='upper center', 
-                   ncol=len(labels1 + labels2), bbox_to_anchor=(0.5, anchor), frameon=False)
-
+        if curve == 'both':
+            if title:
+                title += " "
+            fig.suptitle(f"{title}K-S & ROC CURVE\n", fontsize=fontsize, fontweight="bold")
+            fig.legend(handles1 + handles2, labels1 + labels2, loc='upper center',
+                       ncol=len(labels1 + labels2), bbox_to_anchor=(0.5, anchor), frameon=False)
+        else:
+            single_ax = ax1 if curve == 'ks' else ax2
+            if title:
+                single_ax.set_title(f"{title}", fontsize=fontsize)
+            handles, labels = handles1 + handles2, labels1 + labels2
+            if labels:
+                single_ax.legend(handles, labels, loc='best', frameon=False,
+                                 fontsize=max(fontsize - 4, 8))
         plt.tight_layout()
         save_figure(fig, save)
         return fig
     else:
-        return axes
+        if curve == 'both':
+            return axes
+        single_ax = ax1 if curve == 'ks' else ax2
+        if title:
+            single_ax.set_title(f"{title}", fontsize=fontsize)
+        handles, labels = handles1 + handles2, labels1 + labels2
+        if labels:
+            single_ax.legend(handles, labels, loc='best', frameon=False,
+                             fontsize=max(fontsize - 4, 7))
+        return single_ax
 
 
 def hist_plot(score, y_true=None, figsize=(15, 10), bins=30, save=None,
@@ -2274,4 +2313,377 @@ def bin_overdues_plot(
     if save:
         save_figure(fig, save)
 
+    return fig
+
+
+def _cross_heatmap_cell(
+    ax,
+    M: np.ndarray,
+    base_color: str,
+    *,
+    fmt: str = '.1%',
+    annot: bool = True,
+    diverging: bool = False,
+    fontsize: int = 10,
+    axis_color: str = '#2639E9',
+):
+    """在指定 Axes 上绘制二维分箱交叉指标热力图（类似相关性图）.
+
+    使用 imshow 将单元格中心对齐到整数坐标 (列=特征2 bin j -> x=j, 行=特征1 bin i -> y=nx-1-i)，
+    从而与 ``bin_plot`` 的整数柱位置共用坐标系。所有数值以百分数标注。
+
+    :param ax: 目标 Axes
+    :param M: 指标矩阵，形状 (nx, ny)，M[i, j] 对应 特征1 bin i × 特征2 bin j
+    :param base_color: 顺序型配色的基准色（diverging=False 时生效）
+    :param fmt: 数值标注格式（百分数），如 '.1%'、'.2%'
+    :param annot: 是否标注数值
+    :param diverging: 是否使用以 0 为中心的发散配色（用于可正可负的指标，如坏账改善）
+    :param fontsize: 标注字体大小
+    :param axis_color: 坐标轴边框颜色
+    :return: imshow 返回的 AxesImage
+    """
+    import copy as _copy
+    import matplotlib.colors as mcolors
+
+    nx, ny = M.shape
+    # 行翻转：使图像第 r 行对应 y=r，即 特征1 bin (nx-1-r)，与 barh 分箱图保持一致
+    A = np.flipud(M)
+    finite = np.isfinite(M)
+
+    if diverging:
+        vabs = float(np.nanmax(np.abs(M))) if finite.any() else 1.0
+        vabs = vabs if vabs > 0 else 1.0
+        norm = mcolors.TwoSlopeNorm(vmin=-vabs, vcenter=0.0, vmax=vabs)
+        cmap = sns.diverging_palette(240, 12, s=80, l=50, as_cmap=True)
+    else:
+        vmin = float(np.nanmin(M)) if finite.any() else 0.0
+        vmax = float(np.nanmax(M)) if finite.any() else 1.0
+        if vmin == vmax:
+            vmax = vmin + 1e-9
+        norm = mcolors.Normalize(vmin=vmin, vmax=vmax)
+        cmap = sns.light_palette(base_color, as_cmap=True)
+
+    cmap = _copy.copy(cmap)
+    cmap.set_bad('#f0f0f0')
+
+    im = ax.imshow(
+        np.ma.masked_invalid(A), aspect='auto', cmap=cmap, norm=norm, origin='lower',
+        extent=(-0.5, ny - 0.5, -0.5, nx - 0.5), interpolation='nearest',
+    )
+
+    if annot:
+        for r in range(nx):
+            for c in range(ny):
+                v = A[r, c]
+                if not np.isfinite(v):
+                    continue
+                rgba = cmap(norm(v))
+                lum = 0.299 * rgba[0] + 0.587 * rgba[1] + 0.114 * rgba[2]
+                text_color = 'white' if lum < 0.55 else '#222222'
+                ax.text(c, r, format(float(v), fmt), ha='center', va='center',
+                        fontsize=fontsize, color=text_color)
+
+    # 白色网格线（参照相关性图风格）
+    ax.set_xticks(np.arange(-0.5, ny, 1), minor=True)
+    ax.set_yticks(np.arange(-0.5, nx, 1), minor=True)
+    ax.grid(which='minor', color='white', linewidth=1.4)
+    ax.tick_params(which='minor', length=0)
+    ax.set_xlim(-0.5, ny - 0.5)
+    ax.set_ylim(-0.5, nx - 0.5)
+    setup_axis_style(ax, [axis_color])
+    ax.tick_params(axis='both', colors=axis_color)
+    return im
+
+
+def _set_cross_heat_ticklabels(
+    ax,
+    nx: int,
+    ny: int,
+    *,
+    xlabels: Optional[List] = None,
+    ylabels: Optional[List] = None,
+    x_top: bool = False,
+    y_right: bool = False,
+    axis_color: str = '#2639E9',
+    rotation: int = 35,
+    fontsize: int = 9,
+    max_len: int = 14,
+):
+    """设置交叉热力图的分箱刻度标签.
+
+    :param xlabels: 特征2 分箱标签（按 bin 索引 0..ny-1 顺序），None 表示不显示
+    :param ylabels: 特征1 分箱标签（按 bin 索引 0..nx-1 顺序），None 表示不显示
+    :param x_top: 是否将 x 轴标签放到顶部
+    :param y_right: 是否将 y 轴标签放到右侧
+    """
+    if xlabels is not None:
+        ax.set_xticks(np.arange(ny))
+        ax.set_xticklabels([format_bin_label(str(lbl), max_len) for lbl in xlabels],
+                           rotation=rotation, ha='left' if x_top else 'right',
+                           fontsize=fontsize, color=axis_color)
+        if x_top:
+            ax.xaxis.set_ticks_position('top')
+            ax.xaxis.set_label_position('top')
+    else:
+        ax.set_xticks([])
+
+    if ylabels is not None:
+        ax.set_yticks(np.arange(nx))
+        # 刻度位置 p 对应 特征1 bin (nx-1-p)
+        labels = [format_bin_label(str(ylabels[nx - 1 - p]), max_len) for p in range(nx)]
+        ax.set_yticklabels(labels, fontsize=fontsize, color=axis_color)
+        if y_right:
+            ax.yaxis.set_ticks_position('right')
+            ax.yaxis.set_label_position('right')
+    else:
+        ax.set_yticks([])
+
+
+def bin_2d_plot(
+    data,
+    features: Optional[List[str]] = None,
+    target: Optional[Union[str, pd.Series, np.ndarray]] = None,
+    *,
+    binner=None,
+    method: str = 'quantile',
+    max_n_bins: int = 5,
+    min_bin_size: Union[float, int] = 0.02,
+    figsize: Optional[tuple] = None,
+    colors: Optional[List[str]] = None,
+    title: Optional[str] = None,
+    annot: bool = True,
+    fontsize: int = 10,
+    save: Optional[str] = None,
+    binner_kwargs: Optional[Dict] = None,
+):
+    """两个变量交叉分箱联合分析图（3×3 布局）.
+
+    布局（特征1 为行维度，特征2 为列维度）::
+
+        ┌──────────────┬──────────────┬──────────────┐
+        │ 特征2分箱图   │   KS 曲线     │   风险拒绝比  │
+        ├──────────────┼──────────────┼──────────────┤
+        │   样本占比    │   坏样本率    │    KS 曲线    │
+        ├──────────────┼──────────────┼──────────────┤
+        │     LIFT      │   坏账改善    │ 特征1分箱图   │
+        └──────────────┴──────────────┴──────────────┘
+
+    - 对角两角为单变量分箱图（复用 :func:`bin_plot`，与交叉热力图共用坐标系：
+      特征2分箱图纵向，bin 落在 x 轴，与各热力图列对齐；特征1分箱图横向，bin 落在
+      y 轴，与各热力图行对齐）
+    - 两个 KS 曲线复用 :func:`ks_plot`（``curve='ks'``，仅 KS 曲线，去掉 ROC）
+    - 其余 5 格为两变量分箱交叉指标热力图（类似相关性图，均以百分数标注）：
+      样本占比、坏样本率、LIFT、风险拒绝比、坏账改善
+
+    支持两种输入方式：
+
+    **方式1：原始数据**
+
+    >>> bin_2d_plot(df, features=['特征1', '特征2'], target='target')
+
+    **方式2：已拟合的 OptimalBinning2D**
+
+    >>> from hscredit.core.binning import OptimalBinning2D
+    >>> b = OptimalBinning2D(max_n_bins=5).fit(df, y=df['target'], features=['f1', 'f2'])
+    >>> bin_2d_plot(b)
+
+    :param data: DataFrame（方式1）或已拟合的 OptimalBinning2D（方式2）
+    :param features: [特征1, 特征2]，特征1 为行维度，特征2 为列维度（方式1 需要）
+    :param target: 目标列名或数组（方式1 需要）
+    :param binner: 已拟合的 OptimalBinning2D（可选，优先级高于由 data 构造）
+    :param method: 分箱方法（方式1 构造 OptimalBinning2D 时使用）
+    :param max_n_bins: 最大分箱数（方式1）
+    :param min_bin_size: 每箱最小样本占比（方式1）
+    :param figsize: 图像尺寸，None 时根据分箱数自动计算
+    :param colors: 配色方案
+    :param title: 图表总标题
+    :param annot: 热力图是否标注数值
+    :param fontsize: 单元格字体大小
+    :param save: 保存路径
+    :param binner_kwargs: 透传给 OptimalBinning2D 的其他参数（方式1）
+    :return: matplotlib Figure
+    """
+    from ..binning import OptimalBinning2D
+
+    if colors is None:
+        colors = DEFAULT_COLORS
+    axis_color = colors[0]
+    eps = 1e-10
+
+    # ---------- 解析输入，获取已拟合的 OptimalBinning2D ----------
+    if isinstance(data, OptimalBinning2D):
+        b2d = data
+    elif binner is not None and isinstance(binner, OptimalBinning2D):
+        b2d = binner
+    else:
+        if not isinstance(data, pd.DataFrame):
+            raise ValueError("方式1的 data 必须为 DataFrame，或直接传入已拟合的 OptimalBinning2D")
+        if features is None or len(features) != 2:
+            raise ValueError("方式1需提供两个特征名: features=['特征1', '特征2']")
+        if target is None:
+            raise ValueError("方式1需提供 target（目标列名或数组）")
+        _kw = dict(binner_kwargs or {})
+        b2d = OptimalBinning2D(
+            method=_kw.pop('method', method),
+            max_n_bins=_kw.pop('max_n_bins', max_n_bins),
+            min_bin_size=_kw.pop('min_bin_size', min_bin_size),
+            **_kw,
+        )
+        if isinstance(target, str):
+            y_series = data[target]
+        else:
+            y_series = pd.Series(np.asarray(target).reshape(-1), index=data.index, name='target')
+        b2d.fit(data, y=y_series, features=list(features))
+
+    if not getattr(b2d, '_is_fitted', False):
+        raise NotFittedError("OptimalBinning2D 尚未拟合，请先调用 fit 方法")
+
+    feat_x = b2d.feature_x_   # 特征1（行维度）
+    feat_y = b2d.feature_y_   # 特征2（列维度）
+    nx = b2d.n_bins_x_
+    ny = b2d.n_bins_y_
+    cross = b2d.cross_table_.copy()
+    X = b2d._X
+    y_arr = np.asarray(b2d._y, dtype=float)
+
+    # ---------- 计算交叉指标矩阵 M[i, j]（行=特征1 bin i, 列=特征2 bin j） ----------
+    total = float(cross['样本总数'].sum())
+    total_bad = float(cross['坏样本数'].sum())
+    total_good = total - total_bad
+    overall_bad_rate = total_bad / total if total > 0 else 0.0
+
+    work = cross.copy()
+    # 坏账改善 = (全量坏样本率 - 拒绝该格后剩余样本坏样本率) / 全量坏样本率
+    other_bad = total_bad - work['坏样本数']
+    other_total = total - work['样本总数']
+    other_bad_rate = np.where(other_total > 0, other_bad / other_total, 0.0)
+    work['坏账改善'] = np.where(
+        overall_bad_rate > 0, (overall_bad_rate - other_bad_rate) / overall_bad_rate, 0.0)
+    # 风险拒绝比 = 坏账改善 / 当前格样本占比
+    work['风险拒绝比'] = np.where(
+        work['样本占比'] > eps, work['坏账改善'] / work['样本占比'], 0.0)
+
+    def _matrix(col):
+        M = np.full((nx, ny), np.nan)
+        for _, r in work.iterrows():
+            M[int(r['分箱1']), int(r['分箱2'])] = r[col]
+        return M
+
+    M_prop = _matrix('样本占比')
+    M_bad = _matrix('坏样本率')
+    M_lift = _matrix('LIFT值')
+    M_reject = _matrix('风险拒绝比')
+    M_improve = _matrix('坏账改善')
+
+    # ---------- 由交叉表聚合出单变量边缘分箱表（保证与热力图行/列严格对齐） ----------
+    def _marginal(bin_col, label_col):
+        grp = work.groupby(bin_col, sort=True).agg(
+            样本总数=('样本总数', 'sum'),
+            好样本数=('好样本数', 'sum'),
+            坏样本数=('坏样本数', 'sum'),
+        )
+        grp['分箱标签'] = work.groupby(bin_col, sort=True)[label_col].first()
+        grp = grp.reset_index().rename(columns={bin_col: '分箱'}).sort_values('分箱')
+        grp['坏样本率'] = np.where(grp['样本总数'] > 0, grp['坏样本数'] / grp['样本总数'], 0.0)
+        grp['样本占比'] = grp['样本总数'] / total if total > 0 else 0.0
+        good_distr = grp['好样本数'] / total_good if total_good > 0 else 0.0
+        bad_distr = grp['坏样本数'] / total_bad if total_bad > 0 else 0.0
+        woe = np.log((bad_distr + eps) / (good_distr + eps))
+        grp['分档WOE值'] = woe
+        grp['分档IV值'] = (bad_distr - good_distr) * woe
+        grp['指标IV值'] = grp['分档IV值'].sum()
+        grp['LIFT值'] = np.where(grp['坏样本率'] > 0, grp['坏样本率'] / overall_bad_rate, 0.0)
+        return grp
+
+    marg_x = _marginal('分箱1', '分箱1标签')   # 特征1
+    marg_y = _marginal('分箱2', '分箱2标签')   # 特征2
+    xlabels = marg_y['分箱标签'].tolist()      # 特征2 (列, x), bin 索引 0..ny-1
+    ylabels = marg_x['分箱标签'].tolist()      # 特征1 (行, y), bin 索引 0..nx-1
+
+    # ---------- 构建画布 ----------
+    if figsize is None:
+        figsize = (max(15.0, 9.0 + 0.9 * ny), max(13.0, 8.0 + 0.8 * nx))
+    fig = plt.figure(figsize=figsize)
+    gs = fig.add_gridspec(3, 3, left=0.085, right=0.965, top=0.910, bottom=0.085,
+                          hspace=0.40, wspace=0.30)
+
+    ax_marg_y = fig.add_subplot(gs[0, 0])   # 特征2分箱图（纵向）
+    ax_ks_y = fig.add_subplot(gs[0, 1])     # 特征2 KS
+    ax_reject = fig.add_subplot(gs[0, 2])   # 风险拒绝比
+    ax_prop = fig.add_subplot(gs[1, 0])     # 样本占比
+    ax_bad = fig.add_subplot(gs[1, 1])      # 坏样本率
+    ax_ks_x = fig.add_subplot(gs[1, 2])     # 特征1 KS
+    ax_lift = fig.add_subplot(gs[2, 0])     # LIFT
+    ax_improve = fig.add_subplot(gs[2, 1])  # 坏账改善
+    ax_marg_x = fig.add_subplot(gs[2, 2])   # 特征1分箱图（横向）
+
+    def _cell_title(ax, text):
+        ax.set_title(text, fontsize=fontsize + 2, color=axis_color, fontweight='semibold', pad=6)
+
+    # ---------- 5 个交叉指标热力图 ----------
+    _cross_heatmap_cell(ax_prop, M_prop, '#2639E9', fmt='.1%', annot=annot,
+                        fontsize=fontsize, axis_color=axis_color)
+    _cell_title(ax_prop, '样本占比')
+    _cross_heatmap_cell(ax_bad, M_bad, '#E85D4A', fmt='.2%', annot=annot,
+                        fontsize=fontsize, axis_color=axis_color)
+    _cell_title(ax_bad, '坏样本率')
+    _cross_heatmap_cell(ax_lift, M_lift, '#FE7715', fmt='.1%', annot=annot,
+                        fontsize=fontsize, axis_color=axis_color)
+    _cell_title(ax_lift, 'LIFT')
+    _cross_heatmap_cell(ax_reject, M_reject, '#2639E9', fmt='.1%', annot=annot,
+                        fontsize=fontsize, axis_color=axis_color)
+    _cell_title(ax_reject, '风险拒绝比')
+    _cross_heatmap_cell(ax_improve, M_improve, '#2639E9', fmt='.1%', annot=annot,
+                        diverging=True, fontsize=fontsize, axis_color=axis_color)
+    _cell_title(ax_improve, '坏账改善')
+
+    # 热力图刻度标签：左列显示 特征1(y)，底行显示 特征2(x)，右上角单元放到顶/右侧
+    _set_cross_heat_ticklabels(ax_prop, nx, ny, ylabels=ylabels, axis_color=axis_color)
+    _set_cross_heat_ticklabels(ax_bad, nx, ny, axis_color=axis_color)
+    _set_cross_heat_ticklabels(ax_lift, nx, ny, xlabels=xlabels, ylabels=ylabels, axis_color=axis_color)
+    _set_cross_heat_ticklabels(ax_improve, nx, ny, xlabels=xlabels, axis_color=axis_color)
+    _set_cross_heat_ticklabels(ax_reject, nx, ny, xlabels=xlabels, ylabels=ylabels,
+                               x_top=True, y_right=True, axis_color=axis_color)
+
+    # ---------- 对角两个单变量分箱图（复用 bin_plot，共用坐标系） ----------
+    bin_plot(marg_y, ax=ax_marg_y, orientation='vertical', colors=colors,
+             title=f'{feat_y} 分箱图')
+    ax_marg_y.set_xlim(-0.5, ny - 0.5)
+    ax_marg_y.tick_params(axis='x', labelbottom=False)   # 特征2 分箱标签共用底行
+
+    bin_plot(marg_x, ax=ax_marg_x, orientation='horizontal', colors=colors,
+             title=f'{feat_x} 分箱图')
+    ax_marg_x.set_ylim(-0.5, nx - 0.5)
+    ax_marg_x.tick_params(axis='y', labelleft=False)     # 特征1 分箱标签共用左列
+
+    # ---------- 两个 KS 曲线（仅 KS 曲线，去掉 ROC） ----------
+    def _draw_feature_ks(ax, binner_1d, feat, label):
+        try:
+            woe = binner_1d.transform(X[[feat]], metric='woe')[feat].to_numpy(dtype=float)
+            mask = np.isfinite(woe) & np.isfinite(y_arr)
+            if mask.sum() > 0 and len(np.unique(y_arr[mask])) == 2:
+                ks_plot(woe[mask], y_arr[mask], curve='ks', ax=ax,
+                        fontsize=max(fontsize - 1, 9), title=label, colors=colors)
+            else:
+                ax.text(0.5, 0.5, 'KS 不可用', ha='center', va='center', transform=ax.transAxes)
+                ax.set_title(label, fontsize=fontsize + 2, color=axis_color)
+        except Exception as exc:  # pragma: no cover - 防御性兜底
+            ax.text(0.5, 0.5, f'KS 异常: {exc}', ha='center', va='center',
+                    transform=ax.transAxes, fontsize=8)
+        setup_axis_style(ax, [axis_color])
+        ax.tick_params(axis='both', colors=axis_color)
+
+    _draw_feature_ks(ax_ks_y, b2d.binner_y_, feat_y, f'{feat_y} KS')
+    _draw_feature_ks(ax_ks_x, b2d.binner_x_, feat_x, f'{feat_x} KS')
+
+    # ---------- 总标题与全局轴标签 ----------
+    if title is None:
+        title = f'{feat_x} × {feat_y} 二维交叉分箱分析'
+    fig.suptitle(title, fontsize=fontsize + 6, fontweight='bold', y=0.965)
+    fig.text(0.525, 0.025, f'特征2：{feat_y}', ha='center', va='center',
+             fontsize=fontsize + 3, color=axis_color, fontweight='semibold')
+    fig.text(0.022, 0.5, f'特征1：{feat_x}', ha='center', va='center', rotation=90,
+             fontsize=fontsize + 3, color=axis_color, fontweight='semibold')
+
+    save_figure(fig, save)
     return fig

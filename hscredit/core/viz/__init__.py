@@ -40,6 +40,7 @@
 
 from .binning_plots import (
     bin_plot,
+    bin_2d_plot,
     corr_plot,
     ks_plot,
     hist_plot,
@@ -76,6 +77,7 @@ from .risk_plots import (
 
 # 新增：变量分析图表
 from .variable_plots import (
+    metric_comparison_plot,
     variable_iv_plot,
     variable_woe_trend_plot,
     variable_psi_heatmap,
@@ -94,6 +96,8 @@ from .score_plots import (
 
 # 新增：策略分析图表
 from .strategy_plots import (
+    rule_swap_plot,
+    strategy_simulation_plot,
     feature_trend_by_time,
     feature_drift_comparison,
     feature_effectiveness_by_segment,
@@ -109,6 +113,7 @@ from .tree_plots import (
     plot_tree_matplotlib,
     plot_tree_pyecharts,
     plot_tree_graphviz,
+    tree_leaf_comparison_plot,
 )
 
 # 统一样式系统
@@ -138,6 +143,7 @@ from .utils import (
 __all__ = [
     # 特征分箱相关
     "bin_plot",
+    "bin_2d_plot",
     "corr_plot",
     "ks_plot",
     "hist_plot",
@@ -168,6 +174,7 @@ __all__ = [
     "approval_rate_trend_plot",
     "bad_rate_trend_plot",
     # 新增：变量分析图表
+    "metric_comparison_plot",
     "variable_iv_plot",
     "variable_woe_trend_plot",
     "variable_psi_heatmap",
@@ -180,6 +187,8 @@ __all__ = [
     "score_lift_plot",
     "score_approval_badrate_curve",
     # 新增：策略分析图表
+    "rule_swap_plot",
+    "strategy_simulation_plot",
     "feature_trend_by_time",
     "feature_drift_comparison",
     "feature_effectiveness_by_segment",
@@ -192,6 +201,7 @@ __all__ = [
     "plot_tree_matplotlib",
     "plot_tree_pyecharts",
     "plot_tree_graphviz",
+    "tree_leaf_comparison_plot",
     # 工具函数
     "setup_axis_style",
     "save_figure",

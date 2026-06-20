@@ -234,6 +234,7 @@ __all__ = [
 
     # 可视化
     'bin_plot',
+    'bin_2d_plot',
     'corr_plot',
     'ks_plot',
     'hist_plot',

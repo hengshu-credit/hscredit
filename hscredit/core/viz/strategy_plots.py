@@ -43,6 +43,142 @@ def _quick_psi(base: np.ndarray, target: np.ndarray, n_bins: int = 10) -> float:
     return float(psi)
 
 
+def rule_swap_plot(
+    pipeline: pd.DataFrame,
+    rule_categories: Optional[List[str]] = None,
+    figsize: Tuple[float, float] = (15, 5),
+    title: str = '规则置换分析',
+    save: Optional[str] = None,
+    **kwargs,
+) -> Figure:
+    """绘制规则置换分析三联图.
+
+    三个面板依次展示规则命中样本数、LIFT 值和策略通过率变化。
+
+    :param pipeline: 规则置换流程明细表
+    :param rule_categories: 参与规则对比的规则分类
+    :param figsize: 图像尺寸
+    :param title: 总标题
+    :param save: 保存路径
+    :return: matplotlib Figure
+    """
+    required = {'规则分类', '样本总数', '坏样本率', 'LIFT值', '通过率(绝对值)'}
+    missing = sorted(required.difference(pipeline.columns))
+    if missing:
+        raise ValueError(f"pipeline 缺少必要列: {missing}")
+    if rule_categories is None:
+        rule_categories = ['OUT-OUT拒绝', 'IN-OUT置出', 'OUT-IN置入']
+
+    rule_rows = pipeline[pipeline['规则分类'].isin(rule_categories)].copy()
+    fig, axes = plt.subplots(1, 3, figsize=figsize)
+
+    if rule_rows.empty:
+        axes[0].text(0.5, 0.5, '无规则命中数据', ha='center', va='center', transform=axes[0].transAxes)
+        axes[1].text(0.5, 0.5, '无LIFT数据', ha='center', va='center', transform=axes[1].transAxes)
+    else:
+        positions = np.arange(len(rule_rows))
+        label_col = '规则集' if '规则集' in rule_rows.columns else '指标名称' if '指标名称' in rule_rows.columns else None
+        if label_col is None:
+            labels = rule_rows['规则分类'].astype(str).tolist()
+        else:
+            labels = [
+                str(label) if pd.notna(label) and str(label).strip() else str(category)
+                for label, category in zip(rule_rows[label_col], rule_rows['规则分类'])
+            ]
+        bars = axes[0].bar(positions, rule_rows['样本总数'], color=DEFAULT_COLORS[0], alpha=0.8)
+        axes[0].set_xticks(positions)
+        axes[0].set_xticklabels(labels, rotation=30, ha='right', fontsize=8)
+        axes[0].set_ylabel('样本总数')
+        axes[0].set_title('各规则命中样本数')
+        for bar, rate in zip(bars, rule_rows['坏样本率']):
+            axes[0].text(bar.get_x() + bar.get_width() / 2, bar.get_height(), f'{rate:.2%}', ha='center', va='bottom', fontsize=8)
+
+        lift_values = pd.to_numeric(rule_rows['LIFT值'], errors='coerce').fillna(0).to_numpy()
+        lift_colors = ['#4CAF50' if value < 1 else DEFAULT_COLORS[1] for value in lift_values]
+        axes[1].bar(positions, lift_values, color=lift_colors, alpha=0.8)
+        axes[1].axhline(1, color='#666666', linestyle='--', linewidth=1, label='LIFT=1')
+        axes[1].set_xticks(positions)
+        axes[1].set_xticklabels(labels, rotation=30, ha='right', fontsize=8)
+        axes[1].set_ylabel('LIFT值')
+        axes[1].set_title('各规则 LIFT 值')
+        axes[1].legend(fontsize=8)
+
+    positions = np.arange(len(pipeline))
+    pass_rates = pd.to_numeric(pipeline['通过率(绝对值)'], errors='coerce').fillna(0)
+    axes[2].plot(positions, pass_rates, marker='o', color=DEFAULT_COLORS[0], linewidth=2)
+    axes[2].set_xticks(positions)
+    axes[2].set_xticklabels(pipeline['规则分类'].astype(str).tolist(), rotation=45, ha='right', fontsize=8)
+    axes[2].set_ylabel('通过率 (%)')
+    axes[2].set_title('策略调整后通过率变化')
+
+    for ax in axes:
+        setup_axis_style(ax, hide_top_right=True)
+        ax.grid(True, alpha=0.3, axis='y')
+    fig.suptitle(title, fontsize=14, fontweight='bold')
+    fig.tight_layout()
+    save_figure(fig, save)
+    return fig
+
+
+def strategy_simulation_plot(
+    simulation: pd.DataFrame,
+    threshold_col: str = '评分阈值',
+    approval_col: str = '通过率(%)',
+    bad_rate_col: str = '通过人群坏率(%)',
+    ax=None,
+    figsize: Tuple[float, float] = (10, 5),
+    title: str = '评分阈值策略仿真',
+    save: Optional[str] = None,
+    **kwargs,
+) -> Figure:
+    """绘制候选评分阈值的通过率与坏率双轴图.
+
+    :param simulation: 策略仿真结果表
+    :param threshold_col: 评分阈值列名
+    :param approval_col: 通过率列名，数值单位为百分数
+    :param bad_rate_col: 通过人群坏率列名，数值单位为百分数
+    :param ax: matplotlib Axes
+    :param figsize: 图像尺寸
+    :param title: 图标题
+    :param save: 保存路径
+    :return: matplotlib Figure
+    """
+    required = [threshold_col, approval_col, bad_rate_col]
+    missing = [col for col in required if col not in simulation.columns]
+    if missing:
+        raise ValueError(f"simulation 缺少必要列: {missing}")
+    if simulation.empty:
+        raise ValueError("simulation 不能为空")
+
+    fig, ax1 = get_or_create_ax(figsize=figsize, ax=ax)
+    ax2 = ax1.twinx()
+    positions = np.arange(len(simulation))
+    approvals = pd.to_numeric(simulation[approval_col], errors='coerce').fillna(0)
+    bad_rates = pd.to_numeric(simulation[bad_rate_col], errors='coerce').fillna(0)
+
+    ax1.bar(positions, approvals, color=DEFAULT_COLORS[0], alpha=0.55, label='通过率')
+    ax2.plot(positions, bad_rates, color=DEFAULT_COLORS[1], marker='o', linewidth=2, label='通过人群坏率')
+    ax1.set_xticks(positions)
+    ax1.set_xticklabels(simulation[threshold_col].astype(str).tolist())
+    ax1.set_xlabel('评分阈值')
+    ax1.set_ylabel('通过率 (%)', color=DEFAULT_COLORS[0])
+    ax2.set_ylabel('通过人群坏率 (%)', color=DEFAULT_COLORS[1])
+    ax1.tick_params(axis='y', labelcolor=DEFAULT_COLORS[0])
+    ax2.tick_params(axis='y', labelcolor=DEFAULT_COLORS[1])
+    ax1.set_title(title, fontsize=13, fontweight='bold')
+
+    handles1, labels1 = ax1.get_legend_handles_labels()
+    handles2, labels2 = ax2.get_legend_handles_labels()
+    ax1.legend(handles1 + handles2, labels1 + labels2, fontsize=9, loc='best')
+    setup_axis_style(ax1, hide_top_right=False)
+    setup_axis_style(ax2, hide_top_right=False)
+    ax1.grid(True, alpha=0.3, axis='y')
+    ax2.grid(False)
+    fig.tight_layout()
+    save_figure(fig, save)
+    return fig
+
+
 def feature_trend_by_time(
     df: pd.DataFrame,
     feature: str,
@@ -511,6 +647,8 @@ def segment_scorecard_comparison(
 
 
 __all__ = [
+    'rule_swap_plot',
+    'strategy_simulation_plot',
     'feature_trend_by_time',
     'feature_drift_comparison',
     'feature_effectiveness_by_segment',

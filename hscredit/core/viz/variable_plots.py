@@ -34,6 +34,118 @@ _IV_THRESHOLDS = [
 _PSI_THRESHOLDS = [(0.1, '稳定', '#4CAF50'), (0.25, '略变', '#FF9800'), (float('inf'), '不稳定', '#F44336')]
 
 
+def metric_comparison_plot(
+    data: pd.DataFrame,
+    label_col: str,
+    value_col: str,
+    horizontal: bool = True,
+    sort_values: bool = False,
+    ascending: bool = True,
+    color_scheme: Optional[str] = None,
+    reference_lines: Optional[List[Tuple[float, str, str]]] = None,
+    value_format: str = '{:.3f}',
+    ax: Optional[plt.Axes] = None,
+    figsize: Tuple[float, float] = (10, 6),
+    title: Optional[str] = None,
+    xlabel: Optional[str] = None,
+    ylabel: Optional[str] = None,
+    save: Optional[str] = None,
+    **kwargs,
+) -> Figure:
+    """绘制指标对比柱状图.
+
+    适用于已经完成统计的 IV、PSI、特征重要性、模型评分等结果表。
+
+    :param data: 指标结果表
+    :param label_col: 分类标签列名
+    :param value_col: 指标数值列名
+    :param horizontal: 是否绘制横向柱状图
+    :param sort_values: 是否按指标值排序
+    :param ascending: 排序方向
+    :param color_scheme: 语义配色，可选 ``'iv'`` 或 ``'psi'``
+    :param reference_lines: 参考线列表，每项为 ``(数值, 标签, 颜色)``
+    :param value_format: 数值标签格式
+    :param ax: matplotlib Axes
+    :param figsize: 图像尺寸
+    :param title: 图标题
+    :param xlabel: 横轴标题
+    :param ylabel: 纵轴标题
+    :param save: 保存路径
+    :return: matplotlib Figure
+
+    **参考样例**
+
+    >>> fig = metric_comparison_plot(iv_table, '特征', 'IV', color_scheme='iv')
+    """
+    missing_cols = [col for col in (label_col, value_col) if col not in data.columns]
+    if missing_cols:
+        raise ValueError(f"data 缺少必要列: {missing_cols}")
+
+    plot_data = data[[label_col, value_col]].copy()
+    plot_data[value_col] = pd.to_numeric(plot_data[value_col], errors='coerce')
+    plot_data = plot_data.dropna(subset=[value_col])
+    if plot_data.empty:
+        raise ValueError("没有可绘制的指标数据")
+    if sort_values:
+        plot_data = plot_data.sort_values(value_col, ascending=ascending)
+
+    values = plot_data[value_col].to_numpy(dtype=float)
+    labels = plot_data[label_col].astype(str).tolist()
+    if color_scheme == 'iv':
+        colors = [
+            '#BDBDBD' if value < 0.02 else '#FDD835' if value < 0.10 else '#66BB6A' if value < 0.30 else '#1B5E20'
+            for value in values
+        ]
+        if reference_lines is None:
+            reference_lines = [(0.02, 'IV=0.02', '#BDBDBD'), (0.10, 'IV=0.10', '#FDD835'), (0.30, 'IV=0.30', '#66BB6A')]
+    elif color_scheme == 'psi':
+        colors = ['#4CAF50' if value < 0.10 else '#FF9800' if value < 0.25 else '#F44336' for value in values]
+        if reference_lines is None:
+            reference_lines = [(0.10, '轻微偏移 0.10', '#FF9800'), (0.25, '显著偏移 0.25', '#F44336')]
+    else:
+        colors = [DEFAULT_COLORS[i % len(DEFAULT_COLORS)] for i in range(len(values))]
+
+    fig, ax = get_or_create_ax(figsize=figsize, ax=ax)
+    positions = np.arange(len(labels))
+    if horizontal:
+        bars = ax.barh(positions, values, color=colors, alpha=0.85, edgecolor='white')
+        ax.set_yticks(positions)
+        ax.set_yticklabels(labels)
+        ax.set_xlabel(xlabel or value_col)
+        if ylabel:
+            ax.set_ylabel(ylabel)
+    else:
+        bars = ax.bar(positions, values, color=colors, alpha=0.85, edgecolor='white')
+        ax.set_xticks(positions)
+        ax.set_xticklabels(labels, rotation=30, ha='right')
+        ax.set_ylabel(ylabel or value_col)
+        if xlabel:
+            ax.set_xlabel(xlabel)
+
+    max_abs = max(float(np.nanmax(np.abs(values))), 1e-12)
+    for bar, value in zip(bars, values):
+        text = value_format.format(value)
+        if horizontal:
+            ax.text(value + max_abs * 0.01, bar.get_y() + bar.get_height() / 2, text, va='center', fontsize=9)
+        else:
+            ax.text(bar.get_x() + bar.get_width() / 2, value + max_abs * 0.01, text, ha='center', va='bottom', fontsize=9)
+
+    for value, label, color in reference_lines or []:
+        if horizontal:
+            ax.axvline(value, color=color, linestyle='--', linewidth=1, alpha=0.8, label=label)
+        else:
+            ax.axhline(value, color=color, linestyle='--', linewidth=1, alpha=0.8, label=label)
+    if reference_lines:
+        ax.legend(fontsize=9)
+
+    ax.set_title(title or f'{value_col}对比', fontsize=13, fontweight='bold')
+    setup_axis_style(ax, hide_top_right=True)
+    ax.grid(True, alpha=0.3, axis='x' if horizontal else 'y')
+    fig.tight_layout()
+    save_figure(fig, save)
+    return fig
+
+
 def variable_iv_plot(
     df: pd.DataFrame,
     features: List[str],
@@ -415,6 +527,7 @@ def variable_missing_badrate_plot(
 
 
 __all__ = [
+    'metric_comparison_plot',
     'variable_iv_plot',
     'variable_woe_trend_plot',
     'variable_psi_heatmap',
