@@ -26,7 +26,11 @@
 这些能力覆盖模型研发与策略分析两条核心业务链路：
 
 <p align="center">
-  <img src="docs/assets/risk-workflows.svg" alt="hscredit 风控建模与策略分析链路" width="100%">
+  <img src="docs/assets/models.png" alt="hscredit 风控建模链路" width="100%">
+</p>
+
+<p align="center">
+  <img src="docs/assets/celue.png" alt="hscredit 风控策略分析链路" width="100%">
 </p>
 
 ## 为什么选择 hscredit？
