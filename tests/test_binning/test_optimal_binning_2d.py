@@ -4,7 +4,6 @@
 import pytest
 import numpy as np
 import pandas as pd
-import warnings
 
 from hscredit.core.binning import OptimalBinning2D
 
@@ -46,9 +45,9 @@ class TestOptimalBinning2DBasic:
         # 测试transform
         result = binner.transform(sample_df[['age', 'income']], metric='indices')
 
-        assert 'age' in result.columns
-        assert 'income' in result.columns
+        assert list(result.columns) == ['age×income']
         assert len(result) == len(sample_df)
+        assert result['age×income'].between(0, binner.n_bins_2d_ - 1).all()
 
     def test_transform_bins(self, sample_df):
         """测试 metric='bins' 返回标签."""
@@ -57,11 +56,10 @@ class TestOptimalBinning2DBasic:
 
         result = binner.transform(sample_df[['age', 'income']], metric='bins')
 
-        assert 'age' in result.columns
-        assert 'income' in result.columns
+        assert list(result.columns) == ['age×income']
         assert len(result) == len(sample_df)
         # 标签应该是字符串
-        assert all(isinstance(v, str) for v in result['age'].values)
+        assert all(isinstance(v, str) for v in result['age×income'].values)
 
     def test_sklearn_style_fit(self, sample_df):
         """测试 sklearn 风格 fit（不传 features，取前两列）."""
@@ -243,8 +241,6 @@ class TestOptimalBinning2DCustom:
         )
         binner.fit(sample_df, y=sample_df['target'], features=['age', 'income'])
 
-        cross_table = binner.get_cross_table()
-
         # 检查分箱数
         assert binner.n_bins_x_ == 4  # 3个切分点 -> 4个分箱
         assert binner.n_bins_y_ == 4
@@ -361,9 +357,9 @@ class TestOptimalBinning2DStats:
         # IV应该是正数
         assert binner.iv_interaction_ >= 0
 
-        # IV应该等于分档IV之和
-        cross_table = binner.get_cross_table()
-        iv_sum = cross_table['分档IV值'].sum()
+        # IV应该等于合并后二维分箱的分档IV之和
+        binning_table = binner.get_bin_table()
+        iv_sum = binning_table.loc[binning_table['分箱'] >= 0, '分档IV值'].sum()
         assert abs(binner.iv_interaction_ - iv_sum) < 1e-6
 
     def test_bad_rate_range(self, sample_df):
@@ -438,7 +434,6 @@ class TestOptimalBinning2DExport:
         binner = OptimalBinning2D(max_n_bins=4)
         binner.fit(sample_df, y=sample_df['target'], features=['age', 'income'])
 
-        import numpy as np
         rules = {'age': [25, 35], 'income': [5000, 10000]}
         binner.import_rules(rules)
 
@@ -446,13 +441,86 @@ class TestOptimalBinning2DExport:
         assert binner.user_splits_y == [5000, 10000]
 
     def test_get_bin_table_cross(self, sample_df):
-        """测试 get_bin_table() 默认返回交叉分箱表."""
+        """测试 get_bin_table() 默认返回合并后二维分箱表."""
         binner = OptimalBinning2D(max_n_bins=4)
         binner.fit(sample_df, y=sample_df['target'], features=['age', 'income'])
 
         table = binner.get_bin_table()
         cross = binner.get_cross_table()
-        assert table.equals(cross)
+        assert len(table[table['分箱'] >= 0]) == binner.n_bins_2d_
+        assert '二维分箱标签' in table.columns
+        assert '二维分箱' in cross.columns
+
+
+class TestOptimalBinning2DMerge:
+    """最终二维合并分箱测试."""
+
+    def test_merge_limit_and_connected_regions(self, sample_df):
+        binner = OptimalBinning2D(max_n_bins=5, max_n_bins_2d=4)
+        binner.fit(sample_df, y=sample_df['target'], features=['age', 'income'])
+
+        assert 1 <= binner.n_bins_2d_ <= 4
+        for bin_id in range(binner.n_bins_2d_):
+            cells = set(map(tuple, np.argwhere(binner.solution_ == bin_id)))
+            visited = {next(iter(cells))}
+            pending = list(visited)
+            while pending:
+                i, j = pending.pop()
+                for neighbour in ((i - 1, j), (i + 1, j), (i, j - 1), (i, j + 1)):
+                    if neighbour in cells and neighbour not in visited:
+                        visited.add(neighbour)
+                        pending.append(neighbour)
+            assert visited == cells
+
+    def test_transform_uses_merged_solution(self, sample_df):
+        binner = OptimalBinning2D(max_n_bins=4, max_n_bins_2d=3)
+        binner.fit(sample_df, y=sample_df['target'], features=['age', 'income'])
+
+        x_bins = binner.binner_x_.transform(sample_df[['age']], metric='indices')['age'].to_numpy()
+        y_bins = binner.binner_y_.transform(sample_df[['income']], metric='indices')['income'].to_numpy()
+        expected = binner.solution_[x_bins, y_bins]
+        actual = binner.transform(sample_df[['age', 'income']], metric='indices')['age×income'].to_numpy()
+        np.testing.assert_array_equal(actual, expected)
+
+        woe = binner.transform(sample_df[['age', 'income']], metric='woe')['age×income'].to_numpy()
+        np.testing.assert_allclose(woe, binner._woe_2d_[expected])
+
+    def test_binning_table_uses_hscredit_metrics(self, sample_df):
+        binner = OptimalBinning2D(max_n_bins=4, max_n_bins_2d=4)
+        binner.fit(sample_df, y=sample_df['target'], features=['age', 'income'])
+        table = binner.get_bin_table()
+
+        expected_columns = [
+            '分箱', '二维分箱标签', '样本总数', '样本占比', '好样本数', '坏样本数',
+            '坏样本率', '分档WOE值', '分档IV值', '指标IV值', 'LIFT值', '坏账改善',
+            '风险拒绝比', '累积LIFT值', '分档KS值',
+        ]
+        assert set(expected_columns).issubset(table.columns)
+        assert table['样本总数'].sum() == len(sample_df)
+
+    def test_axis_monotonic_constraint(self):
+        rng = np.random.RandomState(7)
+        n = 2500
+        age = rng.uniform(18, 70, n)
+        income = rng.uniform(2000, 50000, n)
+        probability = 1 / (1 + np.exp(-(-5 + age / 18 + income / 25000)))
+        target = rng.binomial(1, probability)
+        df = pd.DataFrame({'age': age, 'income': income, 'target': target})
+
+        binner = OptimalBinning2D(
+            max_n_bins=5,
+            max_n_bins_2d=6,
+            monotonic_x='ascending',
+            monotonic_y='ascending',
+        )
+        binner.fit(df, y=df['target'], features=['age', 'income'])
+        normal = binner.get_bin_table().query('分箱 >= 0')
+        counts = {
+            int(row['分箱']): (float(row['坏样本数']), float(row['好样本数']))
+            for _, row in normal.iterrows()
+        }
+        assert not binner._monotonic_violations(
+            binner.solution_, counts, 'ascending', 'ascending')
 
     def test_get_bin_table_feature(self, sample_df):
         """测试 get_bin_table(feature) 返回独立分箱表."""

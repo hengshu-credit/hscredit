@@ -48,9 +48,9 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
-from matplotlib.ticker import PercentFormatter
 
 from .optimal_binning import OptimalBinning
+from ..metrics._binning import compute_bin_stats
 from ...exceptions import HSCreditError, NotFittedError
 
 
@@ -70,6 +70,7 @@ class OptimalBinning2D:
         :param min_bin_size: 两个特征的每箱最小样本占比，默认 0.02
         :param method: 分箱方法，默认 'quantile'（等频）
         :param monotonic: 单调性约束，默认 False
+        :param max_n_bins_2d: 相邻格子合并后的最大二维分箱数，默认使用 max_n_bins
 
     特征1 专用参数（以 _x 后缀区分）
         :param max_n_bins_x: 特征1的最大分箱数
@@ -108,6 +109,9 @@ class OptimalBinning2D:
     - splits_y_: 特征2的切分点
     - n_bins_x_: 特征1的分箱数
     - n_bins_y_: 特征2的分箱数
+    - solution_: 预分箱网格到最终二维分箱索引的映射矩阵
+    - n_bins_2d_: 合并后的最终二维分箱数
+    - binning_table_: 合并后的二维分箱统计表
     - cross_table_: 二维交叉分箱统计表
     - iv_interaction_: 交互IV值
 
@@ -140,6 +144,8 @@ class OptimalBinning2D:
         min_bin_size: Union[float, int] = 0.02,
         method: str = 'quantile',
         monotonic: Union[bool, str] = False,
+        # 二维合并分箱参数
+        max_n_bins_2d: Optional[int] = None,
         # 特征1专用参数
         max_n_bins_x: Optional[int] = None,
         min_bin_size_x: Optional[Union[float, int]] = None,
@@ -174,6 +180,8 @@ class OptimalBinning2D:
         self.min_bin_size = min_bin_size
         self.method = method
         self.monotonic = monotonic
+        # 二维合并分箱参数
+        self.max_n_bins_2d = max_n_bins_2d
 
         # 特征1专用参数
         self.max_n_bins_x = max_n_bins_x
@@ -213,11 +221,24 @@ class OptimalBinning2D:
         self.n_bins_y_: int = 0
         self.feature_x_: str = ''
         self.feature_y_: str = ''
+        self.feature_name_: str = ''
         self._is_fitted: bool = False
         self._X: Optional[pd.DataFrame] = None
         self._y: Optional[pd.Series] = None
         self.cross_table_: Optional[pd.DataFrame] = None
         self.iv_interaction_: float = 0.0
+
+        # 二维合并分箱结果
+        self.solution_: Optional[np.ndarray] = None      # (n_bins_x_, n_bins_y_) 网格格子 -> 二维分箱编号
+        self.n_bins_2d_: int = 0                          # 合并后的二维分箱数
+        self.binning_table_: Optional[pd.DataFrame] = None  # 合并后的二维分箱表
+        self.iv_2d_: float = 0.0                          # 合并后二维分箱总IV
+        self._grid_event_: Optional[np.ndarray] = None    # 网格坏样本数矩阵
+        self._grid_nonevent_: Optional[np.ndarray] = None  # 网格好样本数矩阵
+        self._woe_2d_: Optional[np.ndarray] = None        # 每个二维分箱的WOE（transform查表用）
+        self._event_rate_2d_: Optional[np.ndarray] = None  # 每个二维分箱的坏样本率
+        self._bin_labels_2d_: Optional[List[str]] = None  # 每个二维分箱的标签
+        self._bin_cells_2d_: Optional[List[List[Tuple[int, int]]]] = None
 
     # -------------------------------------------------------------------------
     # 公共接口
@@ -263,8 +284,8 @@ class OptimalBinning2D:
                     f"sklearn 风格需要 X 为二维数组且恰好有2列，"
                     f"但得到 shape={X.shape}，请使用 features=['col1','col2'] 指定列名"
                 )
-            col_x = f'feature_0'
-            col_y = f'feature_1'
+            col_x = 'feature_0'
+            col_y = 'feature_1'
             X_df = pd.DataFrame(X, columns=[col_x, col_y])
             self.feature_x_ = col_x
             self.feature_y_ = col_y
@@ -299,6 +320,7 @@ class OptimalBinning2D:
 
         self._X = X
         self._y = y
+        self.feature_name_ = f'{self.feature_x_}×{self.feature_y_}'
 
         # 创建并拟合特征1的分箱器
         self.binner_x_ = self._create_binner(is_x=True)
@@ -318,8 +340,15 @@ class OptimalBinning2D:
         self.splits_y_ = self.binner_y_.splits_.get(self.feature_y_, np.array([]))
         self.n_bins_y_ = self.binner_y_.n_bins_.get(self.feature_y_, 0)
 
-        # 计算交叉分箱统计
+        # 计算交叉分箱统计（保留完整网格，供热力图/边缘视图使用）
         self._compute_cross_table()
+
+        # 对二维网格相邻格子进行合并分箱，得到最终二维分箱
+        self.solution_ = self._merge_2d_bins(self._grid_event_, self._grid_nonevent_)
+        self.n_bins_2d_ = int(self.solution_.max()) + 1 if self.solution_.size else 0
+
+        # 基于合并结果生成二维分箱表（复用 compute_bin_stats 计算指标）
+        self._compute_binning_table()
 
         self._is_fitted = True
         return self
@@ -327,15 +356,16 @@ class OptimalBinning2D:
     def transform(
         self,
         X: Union[pd.DataFrame, np.ndarray],
-        metric: Literal['indices', 'bins', 'woe'] = 'indices'
-    ) -> Union[pd.DataFrame, np.ndarray, Tuple[np.ndarray, np.ndarray]]:
+        metric: Literal['indices', 'bins', 'woe', 'event_rate'] = 'indices'
+    ) -> pd.DataFrame:
         """将新数据映射到二维分箱.
 
         :param X: 待转换的数据
         :param metric: 转换类型，可选值:
-            - 'indices': 返回分箱索引 (0, 1, 2, ...)，默认
-            - 'bins': 返回分箱标签字符串
-            - 'woe': 返回交叉分箱对应的 WOE 值
+            - 'indices': 返回合并后的二维分箱索引 (0, 1, 2, ...)，默认
+            - 'bins': 返回合并后的二维分箱标签
+            - 'woe': 返回合并后的 WOE 值
+            - 'event_rate': 返回合并后的坏样本率
         :return: 转换后的数据
 
         **参考样例**
@@ -356,7 +386,9 @@ class OptimalBinning2D:
             raise NotFittedError("分箱器尚未拟合，请先调用 fit 方法")
 
         if isinstance(X, np.ndarray):
-            X = pd.DataFrame(X, columns=[f'feature_{i}' for i in range(X.shape[1])])
+            if X.ndim != 2 or X.shape[1] != 2:
+                raise ValueError(f"X 必须是恰好包含 2 列的二维数组，当前 shape={X.shape}")
+            X = pd.DataFrame(X, columns=[self.feature_x_, self.feature_y_])
         if not isinstance(X, pd.DataFrame):
             X = pd.DataFrame(X)
 
@@ -365,31 +397,26 @@ class OptimalBinning2D:
         bins_y = self.binner_y_.transform(
             X[[self.feature_y_]], metric='indices')[self.feature_y_].values
 
+        merged = self._map_grid_to_2d_bins(bins_x, bins_y)
         if metric == 'indices':
-            return pd.DataFrame({
-                self.feature_x_: bins_x,
-                self.feature_y_: bins_y
-            }, index=X.index)
+            values = merged
         elif metric == 'bins':
-            labels_x = [self._get_bin_label(self.feature_x_, int(b), self.binner_x_) for b in bins_x]
-            labels_y = [self._get_bin_label(self.feature_y_, int(b), self.binner_y_) for b in bins_y]
-            return pd.DataFrame({
-                self.feature_x_: labels_x,
-                self.feature_y_: labels_y
-            }, index=X.index)
+            values = np.array([
+                self._bin_labels_2d_[b] if b >= 0 else ('特殊值' if b == -2 else '缺失值')
+                for b in merged
+            ], dtype=object)
         elif metric == 'woe':
-            # 通过查表获取每个样本的交叉分箱WOE值
-            woe_flat = self.woe_flat_
-            woe_vals = np.array([
-                woe_flat[i * self.n_bins_y_ + j] if i >= 0 and j >= 0 else np.nan
-                for i, j in zip(bins_x, bins_y)
-            ])
-            return pd.DataFrame({
-                self.feature_x_: woe_vals,
-                self.feature_y_: woe_vals
-            }, index=X.index)
+            values = np.array([self._woe_2d_[b] if b >= 0 else np.nan for b in merged], dtype=float)
+        elif metric == 'event_rate':
+            values = np.array([self._event_rate_2d_[b] if b >= 0 else np.nan for b in merged], dtype=float)
         else:
-            raise ValueError(f"不支持的 metric: {metric}，可选 'indices'/'bins'/'woe'")
+            raise ValueError(f"不支持的 metric: {metric}，可选 'indices'/'bins'/'woe'/'event_rate'")
+
+        result = pd.DataFrame({self.feature_name_: values}, index=X.index)
+        if metric == 'woe':
+            result.attrs['hscredit_encoding'] = 'woe'
+            result.attrs['hscredit_source'] = 'OptimalBinning2D'
+        return result
 
     def get_cross_table(self) -> pd.DataFrame:
         """获取二维交叉分箱统计表.
@@ -412,36 +439,37 @@ class OptimalBinning2D:
         """获取坏样本率矩阵（用于热力图）."""
         if not self._is_fitted:
             raise NotFittedError("分箱器尚未拟合，请先调用 fit 方法")
-        return self.cross_table_.pivot_table(
-            index='分箱1标签', columns='分箱2标签', values='坏样本率', aggfunc='first')
+        return self._merged_metric_matrix('坏样本率')
 
     def get_count_matrix(self) -> pd.DataFrame:
         """获取样本数矩阵（用于热力图标注）."""
         if not self._is_fitted:
             raise NotFittedError("分箱器尚未拟合，请先调用 fit 方法")
-        return self.cross_table_.pivot_table(
-            index='分箱1标签', columns='分箱2标签', values='样本总数', aggfunc='sum')
+        row_labels = [self._get_bin_label(self.feature_x_, i, self.binner_x_) for i in range(self.n_bins_x_)]
+        col_labels = [self._get_bin_label(self.feature_y_, j, self.binner_y_) for j in range(self.n_bins_y_)]
+        return pd.DataFrame(
+            self._grid_event_ + self._grid_nonevent_,
+            index=row_labels,
+            columns=col_labels,
+        ).astype(int)
 
     def get_woe_matrix(self) -> pd.DataFrame:
         """获取 WOE 值矩阵."""
         if not self._is_fitted:
             raise NotFittedError("分箱器尚未拟合，请先调用 fit 方法")
-        return self.cross_table_.pivot_table(
-            index='分箱1标签', columns='分箱2标签', values='分档WOE值', aggfunc='first')
+        return self._merged_metric_matrix('分档WOE值')
 
     def get_iv_matrix(self) -> pd.DataFrame:
         """获取 IV 值矩阵."""
         if not self._is_fitted:
             raise NotFittedError("分箱器尚未拟合，请先调用 fit 方法")
-        return self.cross_table_.pivot_table(
-            index='分箱1标签', columns='分箱2标签', values='分档IV值', aggfunc='sum')
+        return self._merged_metric_matrix('分档IV值')
 
     def get_lift_matrix(self) -> pd.DataFrame:
         """获取 LIFT 值矩阵."""
         if not self._is_fitted:
             raise NotFittedError("分箱器尚未拟合，请先调用 fit 方法")
-        return self.cross_table_.pivot_table(
-            index='分箱1标签', columns='分箱2标签', values='LIFT值', aggfunc='first')
+        return self._merged_metric_matrix('LIFT值')
 
     def get_marginal_stats(self) -> Dict[str, pd.DataFrame]:
         """获取边缘分箱统计（各特征独立分箱的统计）."""
@@ -457,7 +485,7 @@ class OptimalBinning2D:
 
         与 OptimalBinning 的 get_bin_table 保持一致。
         - 若指定特征名，返回该特征的独立分箱表（等同于 OptimalBinning.get_bin_table）
-        - 若不指定（默认 None），返回二维交叉分箱表（等同于 get_cross_table）
+        - 若不指定（默认 None），返回合并后的二维分箱表
 
         :param feature: 特征名，None 时返回交叉分箱表
         :return: 分箱统计表
@@ -477,7 +505,7 @@ class OptimalBinning2D:
             raise NotFittedError("分箱器尚未拟合，请先调用 fit 方法")
 
         if feature is None:
-            return self.cross_table_.copy()
+            return self.binning_table_.copy()
 
         if feature == self.feature_x_:
             return self.binner_x_.get_bin_table(feature)
@@ -526,8 +554,20 @@ class OptimalBinning2D:
             return stats
 
         if feature is not None:
+            if feature == self.feature_name_:
+                normal = self.binning_table_[self.binning_table_['分箱'] >= 0]
+                return {
+                    'n_bins': self.n_bins_2d_,
+                    'bin_table': self.binning_table_.copy(),
+                    'iv': self.iv_2d_,
+                    'ks': float(normal['分档KS值'].max()) if len(normal) else 0.0,
+                    'solution': self.solution_.copy(),
+                }
             if feature not in (self.feature_x_, self.feature_y_):
-                raise HSCreditError(f"特征 '{feature}' 未找到，可用: ['{self.feature_x_}', '{self.feature_y_}']")
+                raise HSCreditError(
+                    f"特征 '{feature}' 未找到，可用: "
+                    f"['{self.feature_x_}', '{self.feature_y_}', '{self.feature_name_}']"
+                )
             binner_inst = self.binner_x_ if feature == self.feature_x_ else self.binner_y_
             return _stats_for(binner_inst, feature)
         else:
@@ -563,7 +603,9 @@ class OptimalBinning2D:
         if feature is not None:
             if feature not in (self.feature_x_, self.feature_y_):
                 raise HSCreditError(f"特征 '{feature}' 未找到，可用: ['{self.feature_x_}', '{self.feature_y_}']")
-            return self.binner_x_.get_splits(feature) if feature == self.feature_x_ else self.binner_y_.get_splits(feature)
+            if feature == self.feature_x_:
+                return self.binner_x_.get_splits(feature)
+            return self.binner_y_.get_splits(feature)
         else:
             return {
                 self.feature_x_: self.binner_x_.get_splits(self.feature_x_),
@@ -699,6 +741,23 @@ class OptimalBinning2D:
             cbar_kws={'label': self._get_metric_label(metric)},
             **kwargs)
 
+        # 用粗线标出最终二维分箱边界，同一边界内的格子属于同一个箱。
+        for i in range(self.n_bins_x_):
+            for j in range(self.n_bins_y_ - 1):
+                if self.solution_[i, j] != self.solution_[i, j + 1]:
+                    ax.plot([j + 1, j + 1], [i, i + 1], color='black', linewidth=2.0)
+        for i in range(self.n_bins_x_ - 1):
+            for j in range(self.n_bins_y_):
+                if self.solution_[i, j] != self.solution_[i + 1, j]:
+                    ax.plot([j, j + 1], [i + 1, i + 1], color='black', linewidth=2.0)
+        for bin_id, cells in enumerate(self._bin_cells_2d_):
+            center = np.asarray(cells, dtype=float).mean(axis=0)
+            ax.text(
+                center[1] + 0.5, center[0] + 0.18, f'#{bin_id}',
+                ha='center', va='center', fontsize=9, fontweight='bold', color='black',
+                bbox=dict(boxstyle='round,pad=0.15', facecolor='white', alpha=0.75, edgecolor='none'),
+            )
+
         ax.set_xlabel(xlabel or self.feature_y_, fontsize=12)
         ax.set_ylabel(ylabel or self.feature_x_, fontsize=12)
 
@@ -712,11 +771,12 @@ class OptimalBinning2D:
         stats_text = (
             f'总样本: {total_samples:,} | '
             f'坏样本: {total_bad:,} ({overall_bad_rate:.1%}) | '
+            f'二维分箱: {self.n_bins_2d_} | '
             f'交互IV: {self.iv_interaction_:.4f}'
         )
         ax.text(0.5, -0.15, stats_text, transform=ax.transAxes,
-               ha='center', va='top', fontsize=10,
-               bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+                ha='center', va='top', fontsize=10,
+                bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
 
         plt.tight_layout()
 
@@ -885,6 +945,10 @@ class OptimalBinning2D:
         total_good = total_samples - total_bad
         overall_bad_rate = total_bad / total_samples if total_samples > 0 else 0.0
 
+        # 网格坏/好样本数矩阵（供二维合并分箱使用）
+        grid_event = np.zeros((self.n_bins_x_, self.n_bins_y_), dtype=float)
+        grid_nonevent = np.zeros((self.n_bins_x_, self.n_bins_y_), dtype=float)
+
         rows = []
         for i in range(self.n_bins_x_):
             for j in range(self.n_bins_y_):
@@ -893,6 +957,8 @@ class OptimalBinning2D:
                 bad = int(y_valid[mask].sum())
                 good = count - bad
                 bad_rate = bad / count if count > 0 else 0.0
+                grid_event[i, j] = bad
+                grid_nonevent[i, j] = good
 
                 good_ratio = good / total_good if total_good > 0 else 0
                 bad_ratio = bad / total_bad if total_bad > 0 else 0
@@ -922,9 +988,254 @@ class OptimalBinning2D:
                 })
 
         self.cross_table_ = pd.DataFrame(rows)
-        self.iv_interaction_ = self.cross_table_['分档IV值'].sum()
+        self.iv_grid_ = float(self.cross_table_['分档IV值'].sum())
+        self.iv_interaction_ = self.iv_grid_
         # 保存展平的WOE数组供transform查表使用
         self.woe_flat_ = self.cross_table_['分档WOE值'].to_numpy()
+        # 保存网格样本数矩阵供二维合并分箱使用
+        self._grid_event_ = grid_event
+        self._grid_nonevent_ = grid_nonevent
+
+    def _merge_2d_bins(self, event: np.ndarray, nonevent: np.ndarray) -> np.ndarray:
+        """贪心合并相邻网格，在满足样本量和单调性约束的同时尽量减少 IV 损失."""
+        if event.shape != nonevent.shape or event.ndim != 2:
+            raise ValueError("二维好坏样本矩阵形状不一致")
+
+        n_cells = event.size
+        if n_cells == 0:
+            return np.empty(event.shape, dtype=int)
+
+        max_bins = self.max_n_bins_2d if self.max_n_bins_2d is not None else self.max_n_bins
+        if isinstance(max_bins, (bool, np.bool_)) or not isinstance(max_bins, (int, np.integer)) or max_bins < 1:
+            raise ValueError("max_n_bins_2d 必须是正整数")
+        max_bins = min(int(max_bins), n_cells)
+
+        total = float((event + nonevent).sum())
+        if self.min_bin_size is None:
+            min_count = 1
+        elif self.min_bin_size < 1:
+            min_count = max(1, int(np.ceil(total * float(self.min_bin_size))))
+        else:
+            min_count = max(1, int(self.min_bin_size))
+
+        solution = np.arange(n_cells, dtype=int).reshape(event.shape)
+        trend_x = self._resolve_2d_trend(self.monotonic_x, self.monotonic, event, nonevent, axis=0)
+        trend_y = self._resolve_2d_trend(self.monotonic_y, self.monotonic, event, nonevent, axis=1)
+
+        def region_counts(matrix: np.ndarray) -> Dict[int, Tuple[float, float]]:
+            counts = {}
+            for bin_id in np.unique(matrix):
+                mask = matrix == bin_id
+                counts[int(bin_id)] = (float(event[mask].sum()), float(nonevent[mask].sum()))
+            return counts
+
+        def adjacent_pairs(matrix: np.ndarray) -> List[Tuple[int, int]]:
+            pairs = set()
+            for a, b in zip(matrix[:-1, :].ravel(), matrix[1:, :].ravel()):
+                if a != b:
+                    pairs.add(tuple(sorted((int(a), int(b)))))
+            for a, b in zip(matrix[:, :-1].ravel(), matrix[:, 1:].ravel()):
+                if a != b:
+                    pairs.add(tuple(sorted((int(a), int(b)))))
+            return sorted(pairs)
+
+        while True:
+            counts = region_counts(solution)
+            small = {k for k, (ev, nev) in counts.items() if ev + nev < min_count}
+            violations = self._monotonic_violations(solution, counts, trend_x, trend_y)
+            must_reduce = len(counts) > max_bins
+            if not must_reduce and not small and not violations:
+                break
+
+            candidates = adjacent_pairs(solution)
+            if not candidates or len(counts) == 1:
+                break
+
+            total_event = max(float(event.sum()), 1.0)
+            total_nonevent = max(float(nonevent.sum()), 1.0)
+
+            def iv_part(ev: float, nev: float) -> float:
+                p_event = max(ev / total_event, 1e-10)
+                p_nonevent = max(nev / total_nonevent, 1e-10)
+                return (p_event - p_nonevent) * np.log(p_event / p_nonevent)
+
+            ranked = []
+            for left, right in candidates:
+                ev_l, nev_l = counts[left]
+                ev_r, nev_r = counts[right]
+                trial = solution.copy()
+                trial[trial == right] = left
+                trial_counts = region_counts(trial)
+                trial_violations = self._monotonic_violations(
+                    trial, trial_counts, trend_x, trend_y)
+                trial_small = sum(ev + nev < min_count for ev, nev in trial_counts.values())
+                iv_loss = (
+                    iv_part(ev_l, nev_l) + iv_part(ev_r, nev_r)
+                    - iv_part(ev_l + ev_r, nev_l + nev_r)
+                )
+                involves_small = left in small or right in small
+                fixes_violation = (left, right) in violations
+                ranked.append((
+                    0 if (not small or involves_small) else 1,
+                    0 if (not violations or fixes_violation) else 1,
+                    len(trial_violations),
+                    trial_small,
+                    iv_loss,
+                    left,
+                    right,
+                ))
+
+            _, _, _, _, _, keep, remove = min(ranked)
+            solution[solution == remove] = keep
+
+        ordered_ids = sorted(
+            np.unique(solution),
+            key=lambda bin_id: tuple(np.argwhere(solution == bin_id).min(axis=0)),
+        )
+        remap = {int(old): new for new, old in enumerate(ordered_ids)}
+        return np.vectorize(remap.get, otypes=[int])(solution)
+
+    def _resolve_2d_trend(
+        self,
+        explicit: Optional[Union[bool, str]],
+        fallback: Union[bool, str],
+        event: np.ndarray,
+        nonevent: np.ndarray,
+        axis: int,
+    ) -> Optional[str]:
+        """将 hscredit 单调性参数转换为二维轴向单增或单减约束."""
+        value = fallback if explicit is None else explicit
+        if value in (False, None, '', 'none'):
+            return None
+        if isinstance(value, str):
+            value = value.lower()
+        if value in ('ascending', 'descending'):
+            return value
+        if value in (True, 'auto', 'auto_asc_desc', 'auto_heuristic'):
+            totals = (event + nonevent).sum(axis=1 - axis)
+            events = event.sum(axis=1 - axis)
+            rates = np.divide(events, totals, out=np.zeros_like(events), where=totals > 0)
+            valid = rates[totals > 0]
+            return 'ascending' if len(valid) < 2 or valid[-1] >= valid[0] else 'descending'
+        return None
+
+    @staticmethod
+    def _monotonic_violations(
+        solution: np.ndarray,
+        counts: Dict[int, Tuple[float, float]],
+        trend_x: Optional[str],
+        trend_y: Optional[str],
+    ) -> set:
+        """返回轴向坏样本率违反单调性的相邻分箱对."""
+        rates = {
+            bin_id: ev / (ev + nev) if ev + nev > 0 else 0.0
+            for bin_id, (ev, nev) in counts.items()
+        }
+        violations = set()
+
+        def check(a: int, b: int, trend: Optional[str]) -> None:
+            if trend is None or a == b:
+                return
+            invalid = rates[a] > rates[b] + 1e-12 if trend == 'ascending' else rates[a] < rates[b] - 1e-12
+            if invalid:
+                violations.add(tuple(sorted((int(a), int(b)))))
+
+        for a, b in zip(solution[:-1, :].ravel(), solution[1:, :].ravel()):
+            check(int(a), int(b), trend_x)
+        for a, b in zip(solution[:, :-1].ravel(), solution[:, 1:].ravel()):
+            check(int(a), int(b), trend_y)
+        return violations
+
+    def _map_grid_to_2d_bins(self, bins_x: np.ndarray, bins_y: np.ndarray) -> np.ndarray:
+        """将两个一维分箱索引映射到最终二维分箱."""
+        bins_x = np.asarray(bins_x, dtype=int)
+        bins_y = np.asarray(bins_y, dtype=int)
+        result = np.full(len(bins_x), -1, dtype=int)
+        special = (bins_x == -2) | (bins_y == -2)
+        valid = (
+            (bins_x >= 0) & (bins_x < self.n_bins_x_)
+            & (bins_y >= 0) & (bins_y < self.n_bins_y_)
+        )
+        result[special] = -2
+        result[valid] = self.solution_[bins_x[valid], bins_y[valid]]
+        return result
+
+    def _compute_binning_table(self) -> None:
+        """根据合并后的二维索引生成 hscredit 标准中文分箱表."""
+        bins_x = self.binner_x_.transform(
+            self._X[[self.feature_x_]], metric='indices')[self.feature_x_].to_numpy()
+        bins_y = self.binner_y_.transform(
+            self._X[[self.feature_y_]], metric='indices')[self.feature_y_].to_numpy()
+        merged = self._map_grid_to_2d_bins(bins_x, bins_y)
+
+        cells_by_bin = []
+        labels = []
+        for bin_id in range(self.n_bins_2d_):
+            cells = [tuple(cell) for cell in np.argwhere(self.solution_ == bin_id)]
+            cells_by_bin.append(cells)
+            cell_labels = [
+                f"({self._get_bin_label(self.feature_x_, i, self.binner_x_)}) ∩ "
+                f"({self._get_bin_label(self.feature_y_, j, self.binner_y_)})"
+                for i, j in cells
+            ]
+            labels.append(' ∪ '.join(cell_labels))
+        self._bin_cells_2d_ = cells_by_bin
+        self._bin_labels_2d_ = labels
+
+        unique_bins = np.unique(merged)
+        label_by_id = {i: labels[i] for i in range(self.n_bins_2d_)}
+        label_by_id.update({-1: '缺失值', -2: '特殊值'})
+        bin_labels = [label_by_id[int(bin_id)] for bin_id in unique_bins]
+        table = compute_bin_stats(
+            merged,
+            self._y.to_numpy(),
+            bin_labels=bin_labels,
+            round_digits=True,
+            woe_clip=self.woe_clip,
+        ).rename(columns={'分箱标签': '二维分箱标签'})
+
+        table.insert(1, '特征1', self.feature_x_)
+        table.insert(2, '特征2', self.feature_y_)
+        table.insert(3, '特征1分箱', table['分箱'].map(
+            lambda b: ' ∪ '.join(dict.fromkeys(
+                self._get_bin_label(self.feature_x_, i, self.binner_x_)
+                for i, _ in cells_by_bin[int(b)]
+            )) if b >= 0 else label_by_id[int(b)]
+        ))
+        table.insert(4, '特征2分箱', table['分箱'].map(
+            lambda b: ' ∪ '.join(dict.fromkeys(
+                self._get_bin_label(self.feature_y_, j, self.binner_y_)
+                for _, j in cells_by_bin[int(b)]
+            )) if b >= 0 else label_by_id[int(b)]
+        ))
+        self.binning_table_ = table
+
+        normal = table[table['分箱'] >= 0].set_index('分箱')
+        self._woe_2d_ = normal['分档WOE值'].reindex(range(self.n_bins_2d_)).to_numpy(dtype=float)
+        self._event_rate_2d_ = normal['坏样本率'].reindex(range(self.n_bins_2d_)).to_numpy(dtype=float)
+        self.iv_2d_ = float(normal['分档IV值'].sum())
+        self.iv_interaction_ = self.iv_2d_
+
+        lookup = normal[['二维分箱标签', '坏样本率', '分档WOE值', '分档IV值', 'LIFT值']]
+        self.cross_table_['二维分箱'] = [
+            int(self.solution_[i, j]) for i, j in zip(self.cross_table_['分箱1'], self.cross_table_['分箱2'])
+        ]
+        self.cross_table_['二维分箱标签'] = self.cross_table_['二维分箱'].map(lookup['二维分箱标签'])
+        for source, target in [
+            ('坏样本率', '合并后坏样本率'),
+            ('分档WOE值', '合并后WOE值'),
+            ('分档IV值', '合并后IV值'),
+            ('LIFT值', '合并后LIFT值'),
+        ]:
+            self.cross_table_[target] = self.cross_table_['二维分箱'].map(lookup[source])
+
+    def _merged_metric_matrix(self, metric: str) -> pd.DataFrame:
+        """将最终二维分箱指标回填到预分箱网格."""
+        values = self.binning_table_[self.binning_table_['分箱'] >= 0].set_index('分箱')[metric]
+        matrix = np.vectorize(lambda bin_id: values.loc[int(bin_id)], otypes=[float])(self.solution_)
+        row_labels = [self._get_bin_label(self.feature_x_, i, self.binner_x_) for i in range(self.n_bins_x_)]
+        col_labels = [self._get_bin_label(self.feature_y_, j, self.binner_y_) for j in range(self.n_bins_y_)]
+        return pd.DataFrame(matrix, index=row_labels, columns=col_labels)
 
     def _get_bin_label(self, feature: str, bin_idx: int, binner: OptimalBinning) -> str:
         """获取指定特征和分箱索引的标签."""
@@ -953,7 +1264,8 @@ class OptimalBinning2D:
                 f"OptimalBinning2D("
                 f"fitted=True, "
                 f"features=['{self.feature_x_}', '{self.feature_y_}'], "
-                f"n_bins=[{self.n_bins_x_}, {self.n_bins_y_}], "
+                f"prebins=[{self.n_bins_x_}, {self.n_bins_y_}], "
+                f"n_bins_2d={self.n_bins_2d_}, "
                 f"iv={self.iv_interaction_:.4f})"
             )
         else:
