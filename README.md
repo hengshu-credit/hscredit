@@ -44,68 +44,9 @@
 
 这些能力覆盖模型研发与策略分析两条核心业务链路：
 
-**风控建模链路**
-
-```mermaid
-flowchart LR
-    START(("原始数据"))
-    M1(["01 数据探索<br/>质量 · 分布 · 标签"])
-    M2(["02 特征分析<br/>区分度 · 相关性 · 解释性"])
-    M3(["03 数据预处理<br/>清洗 · 转换 · 编码"])
-    M4(["04 特征筛选<br/>有效性 · 稳定性 · 共线性"])
-    M5(["05 模型训练<br/>评分卡 · 机器学习"])
-    M6(["06 模型调参<br/>搜索 · 验证 · 优化"])
-    M7(["07 效果评估<br/>KS · AUC · Lift · 稳定性"])
-    M8(["08 报告交付<br/>图表 · Excel · 模型报告"])
-    END(("模型资产"))
-
-    START ==> M1 ==> M2 ==> M3 ==> M4 ==> M5 ==> M6 ==> M7 ==> M8 ==> END
-
-    classDef terminal fill:#111827,stroke:#111827,color:#FFFFFF,stroke-width:3px;
-    classDef insight fill:#E8F1FF,stroke:#2563EB,color:#153E75,stroke-width:2px;
-    classDef feature fill:#E8FBF5,stroke:#0F9D76,color:#065F46,stroke-width:2px;
-    classDef model fill:#FFF3E8,stroke:#F97316,color:#9A3412,stroke-width:2px;
-    classDef delivery fill:#F5EDFF,stroke:#8B5CF6,color:#5B21B6,stroke-width:2px;
-
-    class START,END terminal;
-    class M1,M2 insight;
-    class M3,M4 feature;
-    class M5,M6 model;
-    class M7,M8 delivery;
-    linkStyle default stroke:#64748B,stroke-width:2.5px;
-```
-
-**策略分析链路**
-
-```mermaid
-flowchart LR
-    START(("业务数据"))
-    S1(["01 数据探索<br/>客群 · 标签 · 风险分布"])
-    S2(["02 特征筛选<br/>质量 · 价值 · 可用性"])
-    S3(["03 特征分箱<br/>趋势 · 单调性 · WOE"])
-    S4(["04 有效性分析<br/>IV · KS · Lift"])
-    S5(["05 稳定性评估<br/>PSI · CSI · 跨期表现"])
-    S6(["06 三方数据报告<br/>覆盖 · 增益 · 性价比"])
-    S7(["07 规则分析<br/>挖掘 · 组合 · Swap"])
-    S8(["08 效果监控<br/>通过率 · 坏率 · 漂移"])
-    S9(["09 策略报告<br/>结论 · 建议 · 交付"])
-    END(("策略资产"))
-
-    START ==> S1 ==> S2 ==> S3 ==> S4 ==> S5 ==> S6 ==> S7 ==> S8 ==> S9 ==> END
-
-    classDef terminal fill:#172554,stroke:#172554,color:#FFFFFF,stroke-width:3px;
-    classDef discovery fill:#E0F2FE,stroke:#0284C7,color:#0C4A6E,stroke-width:2px;
-    classDef processing fill:#ECFDF5,stroke:#10B981,color:#065F46,stroke-width:2px;
-    classDef validation fill:#FFF7ED,stroke:#F59E0B,color:#92400E,stroke-width:2px;
-    classDef decision fill:#FDF2F8,stroke:#DB2777,color:#831843,stroke-width:2px;
-
-    class START,END terminal;
-    class S1,S2 discovery;
-    class S3,S4 processing;
-    class S5,S6 validation;
-    class S7,S8,S9 decision;
-    linkStyle default stroke:#64748B,stroke-width:2.5px;
-```
+<p align="center">
+  <img src="docs/assets/risk-workflows.svg" alt="hscredit 风控建模与策略分析链路" width="100%">
+</p>
 
 ## 适用场景
 
