@@ -1652,7 +1652,7 @@ class QuickModelReport:
                 percent_cols=[c for c in multi_cols if c[0] == "坏样本率"],
             )
             writer.insert_value2sheet(
-                ws, (stat_start_row, 2), value="统计详情", style="header_middle"
+                ws, (stat_start_row, 2), value="统计详情", style="header_left"
             )
         else:
             sample_rows: List[Dict[str, Any]] = []
@@ -1741,7 +1741,7 @@ class QuickModelReport:
                 )
                 if is_multi:
                     writer.insert_value2sheet(
-                        ws, (dist_start_row + 2, 2), value="统计详情", style="header_middle"
+                        ws, (dist_start_row + 2, 2), value="统计详情", style="header_left"
                     )
                 return result
 
@@ -1866,18 +1866,18 @@ class QuickModelReport:
                 )
                 end_row2, _ = dataframe2excel(
                     lift_amt, writer, sheet_name=ws,
-                    title="金额口径", start_row=table_start, start_col=end_col1 + 2,
+                    title="金额口径", start_row=table_start, start_col=end_col1 + 1,
                     percent_cols=list(lift_amt.columns), index=True,
                 )
                 end_row = max(end_row1, end_row2)
                 writer.insert_value2sheet(
-                    ws, (table_start + 2, 2), value="统计指标", style="header_middle"
+                    ws, (table_start + 2, 2), value="统计指标", style="header_left"
                 )
                 writer.insert_value2sheet(
                     ws,
-                    (table_start + 2, end_col1 + 2),
+                    (table_start + 2, end_col1 + 1),
                     value="统计指标",
-                    style="header_middle",
+                    style="header_left",
                 )
                 try:
                     from openpyxl.utils import get_column_letter

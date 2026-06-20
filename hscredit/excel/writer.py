@@ -911,7 +911,7 @@ class ExcelWriter:
                 end_col=end_col_idx - 1
             )
 
-        return end_row, column_index_from_string(start_col) + len(data.columns)
+        return end_row, end_col_idx
 
     def insert_rows(
         self,

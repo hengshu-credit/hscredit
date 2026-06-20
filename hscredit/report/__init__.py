@@ -70,6 +70,5 @@ __all__ = [
     "QuickModelReport",
     "auto_model_report",
     "compare_models",
-    "multi_label_rule_analysis",
     "population_drift",
 ]

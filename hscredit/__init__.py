@@ -4,7 +4,7 @@
 """
 
 __version__ = "0.1.0"
-__author__ = "hscredit team"
+__author__ = "hscredit"
 __email__ = "hscredit@hengshucredit.com"
 
 from .exceptions import (
@@ -62,6 +62,8 @@ from .core.feature_engineering import *
 from .excel import *
 from .report import *
 from .utils import *
+
+init_setting()
 
 
 def _collect_public_exports(*modules):

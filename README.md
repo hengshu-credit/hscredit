@@ -4,15 +4,25 @@
   <img src="https://hengshucredit.com/images/hengshucredit_animated.svg" alt="衡枢真信" width="180">
 </p>
 
-<p align="center">
-  <a href="https://pypi.org/project/hscredit/"><img src="https://img.shields.io/pypi/v/hscredit?style=flat-square" alt="PyPI"></a>
-  <img src="https://img.shields.io/badge/Python-3.9%2B-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python">
-  <img src="https://img.shields.io/badge/License-MIT-green?style=flat-square" alt="License">
-</p>
+<div align="center">
+
+![Python](https://img.shields.io/badge/Python-3.9%2B-3776AB?style=flat-square&logo=python&logoColor=white)
+![Version](https://img.shields.io/badge/Version-0.1.0-orange?style=flat-square)
+<a href="https://pypi.org/project/hscredit/"><img src="https://img.shields.io/pypi/v/hscredit?style=flat-square" alt="PyPI"></a>
+![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)
+
+</div>
+
+<h3 align="center">
+
+🔍 鉴真伪 · 📊 斟信用 · ⚖️ 衡风险 · 🎯 枢定策
+
+</h3>
+
+<br>
 
 `hscredit` 是面向金融信贷行业风控策略分析人员与模型人员的量化分析工具箱，覆盖数据探索、变量评估、分箱编码、特征筛选、评分卡建模、机器学习风控模型、策略规则分析、模型监控与报告交付等信贷风控核心工作。
 
-鉴真伪，斟信用，衡风险，枢定策。
 
 ## 为什么选择 hscredit？
 
@@ -21,13 +31,13 @@
 | 风控工作 | 能力规模 | hscredit 能做什么 | 对策略和模型人员的价值 |
 |:---|:---:|:---|:---|
 | 数据分析 | **57 种 EDA** | 数据质量、目标分布、坏率趋势、客群画像、客群迁移、Vintage、Roll Rate、策略仿真 | 快速判断样本是否可建模、标签是否合理、客群是否稳定 |
-| 变量分箱 | **19 种分箱器** | 等频、等宽、卡方、树分箱、CART、Best IV、Best KS、Best Lift、MDLP、单调分箱、遗传算法、二维分箱等 | 支持评分卡建模中的变量离散化、坏率趋势分析和单调性控制 |
+| 变量分箱 | **18 种分箱器** | 等频、等宽、卡方、树分箱、CART、Best IV、Best KS、Best Lift、MDLP、单调分箱、遗传算法、二维分箱等 | 支持评分卡建模中的变量离散化、坏率趋势分析和单调性控制 |
 | 特征编码 | **9 种编码器** | WOE、目标编码、频数编码、独热编码、序数编码、分位数编码、CatBoost/GBM 编码 | 同时服务评分卡、树模型和高基数类别变量处理 |
 | 特征筛选 | **23 种筛选器** | 缺失率、众数率、基数、方差、相关性、VIF、IV、Lift、PSI、模型重要性、逐步回归、Boruta、组合筛选 | 从区分度、稳定性、共线性、模型贡献和业务解释多个角度筛选变量 |
-| 风控指标 | **44 种指标** | KS、AUC、Gini、Lift、坏率、IV、PSI、CSI、分箱统计、分类和回归指标 | 建模评估、变量评估、策略评估和模型监控使用同一套指标口径 |
+| 风控指标 | **43 种指标** | KS、AUC、Gini、Lift、坏率、IV、PSI、CSI、分箱统计、分类和回归指标 | 建模评估、变量评估、策略评估和模型监控使用同一套指标口径 |
 | 模型训练 | **36 个建模组件** | 逻辑回归、评分卡、随机森林、GBDT、XGBoost、LightGBM、CatBoost、NGBoost、规则模型、风控损失函数、调参器 | 覆盖传统评分卡、机器学习风控模型和业务目标导向建模 |
 | 可视化分析 | **46 种图表** | 分箱趋势、KS/ROC/PR/Lift/Gain、评分分布、策略阈值、Vintage、变量稳定性、客群漂移、树图 | 把分析结论转换为模型评审、策略沟通和业务复盘材料 |
-| 报告交付 | **29 种报告工具** | 特征分析、规则分析、Swap 分析、逾期预测、模型报告、模型对比、Excel 输出 | 减少手工整理报表，将建模和策略结果沉淀为中文交付物 |
+| 报告交付 | **28 种报告工具** | 特征分析、规则分析、Swap 分析、逾期预测、模型报告、模型对比、Excel 输出 | 减少手工整理报表，将建模和策略结果沉淀为中文交付物 |
 | Excel 报表 | **10+ 种 Excel 操作** | 写入数据表、插入图片、插入超链接、设置条件格式、单元格样式、数字格式、冻结窗格、列宽调整、Sheet 复制、模板化输出 | 直接生成可用于评审、汇报和归档的风控分析报告 |
 | 规则挖掘 | **8 种挖掘工具** | 单变量规则、多变量交叉规则、多标签规则、树规则提取、手工树分析、规则指标、树可视化 | 从数据和模型中发现可解释的风险模式，辅助策略规则设计 |
 | Rule 规则体系 | **8 类规则能力** | Rule 表达式、任意层级嵌套、与/或/非逻辑运算、规则变量解析、规则美化、规则命中评估、规则分析报表、规则集分析、SWAP 置换分析 | 将零散策略条件沉淀为可组合、可评估、可追踪、可复用的规则资产 |
@@ -214,6 +224,7 @@ bin_table.show()
 | 分箱方法 | 等宽、等频、树分箱、CART、卡方、Best IV、Best KS、Best Lift、MDLP、OR-Tools、CP-SAT、KMeans、单调约束、遗传算法、平滑、核密度、目标坏率、二维最优分箱 |
 | 编码方法 | WOE、Target、Count、OneHot、Ordinal、Quantile、CatBoost、Cardinality、GBM 编码 |
 | 特征筛选 | 缺失率、众数率、方差、相关性、VIF、IV、Lift、PSI、基数、类型、正则、模型重要性、零重要性、RFE、序列选择、逐步回归、Boruta、互信息、卡方、F 检验、稳定性感知、评分卡组合筛选 |
+| 特征衍生 | NumExprDerive 表达式引擎（基于 numexpr），支持 where/sin/cos/abs 等函数与条件逻辑的批量特征衍生 |
 
 ### 建模、评估与监控
 
@@ -224,6 +235,7 @@ bin_table.show()
 | 风控损失函数 | Focal、非对称 Focal、加权 BCE、成本敏感、坏账、审批率、利润最大化、排序、KS 聚焦、Top-K 坏样本捕获、金额加权等 |
 | 调参与解释 | Optuna 调参、模型评估、概率校准、解释性分析、SHAP 可选支持 |
 | 风控指标 | KS、AUC、Gini、Lift、坏率、IV、PSI、CSI、回归指标、分箱统计 |
+| 金融计算 | FV/PV/PMT/NPER/IPMT/PPMT/RATE 现值终值年金计算，NPV/IRR/MIRR 净现值与收益率计算 |
 
 ### 规则、报告与交付
 

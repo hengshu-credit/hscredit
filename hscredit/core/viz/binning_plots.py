@@ -193,6 +193,22 @@ def _is_special_bin_label(label: Any) -> bool:
     return text in {'special', '特殊', '特殊值'}
 
 
+def _is_total_bin_label(label: Any) -> bool:
+    """判断是否为分箱表合计标签。"""
+    if pd.isna(label):
+        return False
+    return str(label).strip() == '合计'
+
+
+def _exclude_total_bin_rows(feature_table: pd.DataFrame) -> pd.DataFrame:
+    """排除分箱表中的合计行。"""
+    total_mask = pd.Series(False, index=feature_table.index)
+    for label_col in ('分箱', '分箱标签'):
+        if label_col in feature_table.columns:
+            total_mask |= feature_table[label_col].apply(_is_total_bin_label)
+    return feature_table.loc[~total_mask].copy()
+
+
 def _is_interval_like_label(label: Any) -> bool:
     """判断分箱标签是否像数值区间。"""
     if pd.isna(label):
@@ -398,6 +414,11 @@ def bin_plot(
             method=method,
             rules=rules,
         )
+
+    # margins=True 生成的合计行不属于实际分箱，不参与绘图及指标计算
+    feature_table = _exclude_total_bin_rows(feature_table)
+    if feature_table.empty:
+        raise ValueError("分箱表排除合计行后没有可绘制的分箱数据")
 
     # 处理分箱标签：优先显示具体分箱标签，而不是分箱索引
     plot_labels = None
