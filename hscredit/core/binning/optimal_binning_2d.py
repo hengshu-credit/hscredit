@@ -42,6 +42,7 @@
 
 from __future__ import annotations
 
+import re
 import warnings
 from typing import Union, List, Dict, Optional, Any, Tuple, Literal
 import numpy as np
@@ -69,7 +70,9 @@ class OptimalBinning2D:
         :param max_n_bins: 两个特征的最大分箱数，默认 5
         :param min_bin_size: 两个特征的每箱最小样本占比，默认 0.02
         :param method: 分箱方法，默认 'quantile'（等频）
-        :param monotonic: 单调性约束，默认 False
+        :param monotonic: 单调性约束，默认 False。设为 'ascending'/'descending'/True 时，
+            作为**硬约束**作用于二维合并：最终各轴向相邻分箱的坏样本率保证满足单调趋势
+            （通过持续合并违例相邻分箱实现，可能使二维分箱数低于 max_n_bins_2d）
         :param max_n_bins_2d: 相邻格子合并后的最大二维分箱数，默认使用 max_n_bins
 
     特征1 专用参数（以 _x 后缀区分）
@@ -109,7 +112,7 @@ class OptimalBinning2D:
     - splits_y_: 特征2的切分点
     - n_bins_x_: 特征1的分箱数
     - n_bins_y_: 特征2的分箱数
-    - solution_: 预分箱网格到最终二维分箱索引的映射矩阵
+    - solution_: 预分箱网格到最终二维分箱索引的映射矩阵；存在缺失值时追加缺失行/列
     - n_bins_2d_: 合并后的最终二维分箱数
     - binning_table_: 合并后的二维分箱统计表
     - cross_table_: 二维交叉分箱统计表
@@ -237,6 +240,8 @@ class OptimalBinning2D:
         self._grid_nonevent_: Optional[np.ndarray] = None  # 网格好样本数矩阵
         self._woe_2d_: Optional[np.ndarray] = None        # 每个二维分箱的WOE（transform查表用）
         self._event_rate_2d_: Optional[np.ndarray] = None  # 每个二维分箱的坏样本率
+        self._woe_map_2d_: Optional[Dict[int, float]] = None  # 含缺失箱/特殊箱的WOE映射
+        self._event_rate_map_2d_: Optional[Dict[int, float]] = None  # 含缺失箱/特殊箱的坏样本率映射
         self._bin_labels_2d_: Optional[List[str]] = None  # 每个二维分箱的标签
         self._bin_cells_2d_: Optional[List[List[Tuple[int, int]]]] = None
 
@@ -320,7 +325,7 @@ class OptimalBinning2D:
 
         self._X = X
         self._y = y
-        self.feature_name_ = f'{self.feature_x_}×{self.feature_y_}'
+        self.feature_name_ = f'{self.feature_x_}X{self.feature_y_}'
 
         # 创建并拟合特征1的分箱器
         self.binner_x_ = self._create_binner(is_x=True)
@@ -406,9 +411,9 @@ class OptimalBinning2D:
                 for b in merged
             ], dtype=object)
         elif metric == 'woe':
-            values = np.array([self._woe_2d_[b] if b >= 0 else np.nan for b in merged], dtype=float)
+            values = np.array([self._woe_map_2d_.get(int(b), np.nan) for b in merged], dtype=float)
         elif metric == 'event_rate':
-            values = np.array([self._event_rate_2d_[b] if b >= 0 else np.nan for b in merged], dtype=float)
+            values = np.array([self._event_rate_map_2d_.get(int(b), np.nan) for b in merged], dtype=float)
         else:
             raise ValueError(f"不支持的 metric: {metric}，可选 'indices'/'bins'/'woe'/'event_rate'")
 
@@ -422,9 +427,10 @@ class OptimalBinning2D:
         """获取二维交叉分箱统计表.
 
         :return: 交叉分箱统计表，包含以下列：
-            - 特征1, 特征2: 特征名
-            - 分箱1, 分箱2: 分箱索引
-            - 分箱1标签, 分箱2标签: 分箱区间标签
+            - 分箱, 分箱标签: 最终二维分箱索引和标签
+            - 特征1名称, 特征2名称: 特征名
+            - 特征1分箱, 特征2分箱: 单特征分箱索引
+            - 特征1标签, 特征2标签: 单特征分箱标签
             - 样本总数, 好样本数, 坏样本数: 样本统计
             - 坏样本率: 坏样本占比
             - 样本占比: 交叉区间样本占全量样本的比例
@@ -448,7 +454,7 @@ class OptimalBinning2D:
         row_labels = [self._get_bin_label(self.feature_x_, i, self.binner_x_) for i in range(self.n_bins_x_)]
         col_labels = [self._get_bin_label(self.feature_y_, j, self.binner_y_) for j in range(self.n_bins_y_)]
         return pd.DataFrame(
-            self._grid_event_ + self._grid_nonevent_,
+            (self._grid_event_ + self._grid_nonevent_)[:self.n_bins_x_, :self.n_bins_y_],
             index=row_labels,
             columns=col_labels,
         ).astype(int)
@@ -751,7 +757,13 @@ class OptimalBinning2D:
                 if self.solution_[i, j] != self.solution_[i + 1, j]:
                     ax.plot([j, j + 1], [i + 1, i + 1], color='black', linewidth=2.0)
         for bin_id, cells in enumerate(self._bin_cells_2d_):
-            center = np.asarray(cells, dtype=float).mean(axis=0)
+            visible_cells = [
+                cell for cell in cells
+                if cell[0] < self.n_bins_x_ and cell[1] < self.n_bins_y_
+            ]
+            if not visible_cells:
+                continue
+            center = np.asarray(visible_cells, dtype=float).mean(axis=0)
             ax.text(
                 center[1] + 0.5, center[0] + 0.18, f'#{bin_id}',
                 ha='center', va='center', fontsize=9, fontweight='bold', color='black',
@@ -934,60 +946,91 @@ class OptimalBinning2D:
         bins_y = self.binner_y_.transform(
             X[[self.feature_y_]], metric='indices')[self.feature_y_].values
 
-        # 只保留两个特征均有效的样本
-        valid_mask = (bins_x >= 0) & (bins_y >= 0)
-        bins_x_valid = bins_x[valid_mask]
-        bins_y_valid = bins_y[valid_mask]
-        y_valid = y.values[valid_mask]
+        # 缺失箱扩展为独立行/列，与另一特征的所有普通箱组成笛卡尔积。
+        self._has_missing_x_ = bool(self.missing_separate and np.any(bins_x == -1))
+        self._has_missing_y_ = bool(self.missing_separate and np.any(bins_y == -1))
+        grid_n_x = self.n_bins_x_ + int(self._has_missing_x_)
+        grid_n_y = self.n_bins_y_ + int(self._has_missing_y_)
 
-        total_samples = len(y_valid)
-        total_bad = int(y_valid.sum())
-        total_good = total_samples - total_bad
-        overall_bad_rate = total_bad / total_samples if total_samples > 0 else 0.0
+        grid_x = bins_x.copy()
+        grid_y = bins_y.copy()
+        if self._has_missing_x_:
+            grid_x[grid_x == -1] = self.n_bins_x_
+        if self._has_missing_y_:
+            grid_y[grid_y == -1] = self.n_bins_y_
+
+        # 特殊值仍沿用二维特殊箱；笛卡尔积统计包含普通值和缺失值组合。
+        valid_mask = (
+            (grid_x >= 0) & (grid_x < grid_n_x)
+            & (grid_y >= 0) & (grid_y < grid_n_y)
+        )
+        bins_x_valid = grid_x[valid_mask]
+        bins_y_valid = grid_y[valid_mask]
+        y_valid = y.to_numpy()[valid_mask]
 
         # 网格坏/好样本数矩阵（供二维合并分箱使用）
-        grid_event = np.zeros((self.n_bins_x_, self.n_bins_y_), dtype=float)
-        grid_nonevent = np.zeros((self.n_bins_x_, self.n_bins_y_), dtype=float)
+        grid_event = np.zeros((grid_n_x, grid_n_y), dtype=float)
+        grid_nonevent = np.zeros((grid_n_x, grid_n_y), dtype=float)
 
-        rows = []
-        for i in range(self.n_bins_x_):
-            for j in range(self.n_bins_y_):
-                mask = (bins_x_valid == i) & (bins_y_valid == j)
-                count = int(mask.sum())
-                bad = int(y_valid[mask].sum())
-                good = count - bad
-                bad_rate = bad / count if count > 0 else 0.0
-                grid_event[i, j] = bad
-                grid_nonevent[i, j] = good
+        # 临时分箱索引严格采用最终展示顺序，确保累计指标与表格行顺序一致。
+        cells = [
+            (i, j) for i in range(self.n_bins_x_) for j in range(self.n_bins_y_)
+        ]
+        if self._has_missing_y_:
+            cells.extend((i, self.n_bins_y_) for i in range(self.n_bins_x_))
+        if self._has_missing_x_:
+            cells.extend((self.n_bins_x_, j) for j in range(self.n_bins_y_))
+        if self._has_missing_x_ and self._has_missing_y_:
+            cells.append((self.n_bins_x_, self.n_bins_y_))
 
-                good_ratio = good / total_good if total_good > 0 else 0
-                bad_ratio = bad / total_bad if total_bad > 0 else 0
-                woe = np.log(bad_ratio / good_ratio) if (bad_ratio > 0 and good_ratio > 0) else 0.0
-                woe = np.clip(woe, -self.woe_clip, self.woe_clip) if self.woe_clip else woe
-                iv = (bad_ratio - good_ratio) * woe if (bad_ratio > 0 and good_ratio > 0) else 0.0
-                lift = bad_rate / overall_bad_rate if overall_bad_rate > 0 else 0.0
+        cell_id_grid = np.full((grid_n_x, grid_n_y), -1, dtype=int)
+        for cell_id, (i, j) in enumerate(cells):
+            cell_id_grid[i, j] = cell_id
 
-                label_x = self._get_bin_label(self.feature_x_, i, self.binner_x_)
-                label_y = self._get_bin_label(self.feature_y_, j, self.binner_y_)
+        cell_indices = cell_id_grid[bins_x_valid, bins_y_valid]
+        stats = self._compute_bin_stats(
+            cell_indices,
+            y_valid,
+        ).drop(columns='分箱标签', errors='ignore')
+        stats = stats.set_index('分箱').reindex(range(len(cells)))
 
-                rows.append({
-                    '特征1': self.feature_x_,
-                    '特征2': self.feature_y_,
-                    '分箱1': i,
-                    '分箱2': j,
-                    '分箱1标签': label_x,
-                    '分箱2标签': label_y,
-                    '样本总数': count,
-                    '好样本数': good,
-                    '坏样本数': bad,
-                    '坏样本率': bad_rate,
-                    '样本占比': count / total_samples if total_samples > 0 else 0.0,
-                    '分档WOE值': woe,
-                    '分档IV值': iv,
-                    'LIFT值': lift,
-                })
+        # compute_bin_stats 不生成无样本箱；笛卡尔积要求保留这些组合。
+        cumulative_columns = [
+            '累积LIFT值', '累积坏账改善', '累计风险拒绝比',
+            '累积好样本数', '累积坏样本数', '分档KS值',
+        ]
+        total_iv = float(stats['指标IV值'].dropna().iloc[0]) if stats['指标IV值'].notna().any() else 0.0
+        for column in stats.columns:
+            if column == '指标IV值':
+                stats[column] = stats[column].fillna(total_iv)
+            elif column in cumulative_columns:
+                stats[column] = stats[column].ffill().fillna(0)
+            else:
+                stats[column] = stats[column].fillna(0)
+        for column in ['样本总数', '好样本数', '坏样本数', '累积好样本数', '累积坏样本数']:
+            stats[column] = stats[column].astype(int)
+        stats = stats.reset_index()
 
-        self.cross_table_ = pd.DataFrame(rows)
+        descriptions = []
+        for i, j in cells:
+            mask = (bins_x_valid == i) & (bins_y_valid == j)
+            bad = int(y_valid[mask].sum())
+            count = int(mask.sum())
+            grid_event[i, j] = bad
+            grid_nonevent[i, j] = count - bad
+            descriptions.append({
+                '特征1名称': self.feature_x_,
+                '特征1分箱': -1 if i == self.n_bins_x_ else i,
+                '特征1标签': self._get_grid_bin_label(i, is_x=True),
+                '特征2名称': self.feature_y_,
+                '特征2分箱': -1 if j == self.n_bins_y_ else j,
+                '特征2标签': self._get_grid_bin_label(j, is_x=False),
+            })
+
+        self.cross_table_ = pd.concat(
+            [pd.DataFrame(descriptions), stats.drop(columns='分箱')],
+            axis=1,
+        )
         self.iv_grid_ = float(self.cross_table_['分档IV值'].sum())
         self.iv_interaction_ = self.iv_grid_
         # 保存展平的WOE数组供transform查表使用
@@ -997,7 +1040,15 @@ class OptimalBinning2D:
         self._grid_nonevent_ = grid_nonevent
 
     def _merge_2d_bins(self, event: np.ndarray, nonevent: np.ndarray) -> np.ndarray:
-        """贪心合并相邻网格，在满足样本量和单调性约束的同时尽量减少 IV 损失."""
+        """贪心合并相邻网格生成二维分箱（两阶段）.
+
+        阶段一（样本量 + 分箱数）：在满足 ``min_bin_size``、``max_n_bins_2d`` 约束下，
+        优先合并过小分箱并尽量减少 IV 损失（单调违例数仅作轻量 tiebreak）。
+
+        阶段二（单调性硬约束）：当设置了单调趋势时，持续合并违反趋势的相邻分箱，
+        直到任意轴向相邻分箱坏样本率均满足单调性。合并只会增大分箱，不会破坏
+        样本量与分箱数约束，因此最终结果同时满足三者，且**保证零单调违例**。
+        """
         if event.shape != nonevent.shape or event.ndim != 2:
             raise ValueError("二维好坏样本矩阵形状不一致")
 
@@ -1008,9 +1059,10 @@ class OptimalBinning2D:
         max_bins = self.max_n_bins_2d if self.max_n_bins_2d is not None else self.max_n_bins
         if isinstance(max_bins, (bool, np.bool_)) or not isinstance(max_bins, (int, np.integer)) or max_bins < 1:
             raise ValueError("max_n_bins_2d 必须是正整数")
-        max_bins = min(int(max_bins), n_cells)
+        normal_cells = self.n_bins_x_ * self.n_bins_y_
+        max_bins = min(int(max_bins), normal_cells)
 
-        total = float((event + nonevent).sum())
+        total = float((event + nonevent)[:self.n_bins_x_, :self.n_bins_y_].sum())
         if self.min_bin_size is None:
             min_count = 1
         elif self.min_bin_size < 1:
@@ -1022,6 +1074,9 @@ class OptimalBinning2D:
         trend_x = self._resolve_2d_trend(self.monotonic_x, self.monotonic, event, nonevent, axis=0)
         trend_y = self._resolve_2d_trend(self.monotonic_y, self.monotonic, event, nonevent, axis=1)
 
+        total_event = max(float(event.sum()), 1.0)
+        total_nonevent = max(float(nonevent.sum()), 1.0)
+
         def region_counts(matrix: np.ndarray) -> Dict[int, Tuple[float, float]]:
             counts = {}
             for bin_id in np.unique(matrix):
@@ -1029,35 +1084,59 @@ class OptimalBinning2D:
                 counts[int(bin_id)] = (float(event[mask].sum()), float(nonevent[mask].sum()))
             return counts
 
-        def adjacent_pairs(matrix: np.ndarray) -> List[Tuple[int, int]]:
+        def cell_group(i: int, j: int) -> int:
+            if i < self.n_bins_x_ and j < self.n_bins_y_:
+                return 0
+            if i < self.n_bins_x_:
+                return 1  # 特征1正常，特征2缺失
+            if j < self.n_bins_y_:
+                return 2  # 特征1缺失，特征2正常
+            return 3
+
+        def adjacent_pairs(matrix: np.ndarray, normal_only: bool = False) -> List[Tuple[int, int]]:
             pairs = set()
-            for a, b in zip(matrix[:-1, :].ravel(), matrix[1:, :].ravel()):
-                if a != b:
-                    pairs.add(tuple(sorted((int(a), int(b)))))
-            for a, b in zip(matrix[:, :-1].ravel(), matrix[:, 1:].ravel()):
-                if a != b:
-                    pairs.add(tuple(sorted((int(a), int(b)))))
+            for i in range(matrix.shape[0] - 1):
+                for j in range(matrix.shape[1]):
+                    if cell_group(i, j) != cell_group(i + 1, j):
+                        continue
+                    if normal_only and cell_group(i, j) != 0:
+                        continue
+                    a, b = matrix[i, j], matrix[i + 1, j]
+                    if a != b:
+                        pairs.add(tuple(sorted((int(a), int(b)))))
+            for i in range(matrix.shape[0]):
+                for j in range(matrix.shape[1] - 1):
+                    if cell_group(i, j) != cell_group(i, j + 1):
+                        continue
+                    if normal_only and cell_group(i, j) != 0:
+                        continue
+                    a, b = matrix[i, j], matrix[i, j + 1]
+                    if a != b:
+                        pairs.add(tuple(sorted((int(a), int(b)))))
             return sorted(pairs)
 
+        def normal_ids(matrix: np.ndarray) -> set:
+            return set(np.unique(matrix[:self.n_bins_x_, :self.n_bins_y_]).astype(int))
+
+        def iv_part(ev: float, nev: float) -> float:
+            p_event = max(ev / total_event, 1e-10)
+            p_nonevent = max(nev / total_nonevent, 1e-10)
+            return (p_event - p_nonevent) * np.log(p_event / p_nonevent)
+
+        # ---------------- 阶段一：样本量与分箱数约束 ----------------
         while True:
             counts = region_counts(solution)
-            small = {k for k, (ev, nev) in counts.items() if ev + nev < min_count}
-            violations = self._monotonic_violations(solution, counts, trend_x, trend_y)
-            must_reduce = len(counts) > max_bins
-            if not must_reduce and not small and not violations:
+            current_normal_ids = normal_ids(solution)
+            small = {
+                k for k in current_normal_ids
+                if sum(counts[k]) < min_count
+            }
+            must_reduce = len(current_normal_ids) > max_bins
+            if not must_reduce and not small:
                 break
-
-            candidates = adjacent_pairs(solution)
-            if not candidates or len(counts) == 1:
+            candidates = adjacent_pairs(solution, normal_only=True)
+            if not candidates or len(current_normal_ids) == 1:
                 break
-
-            total_event = max(float(event.sum()), 1.0)
-            total_nonevent = max(float(nonevent.sum()), 1.0)
-
-            def iv_part(ev: float, nev: float) -> float:
-                p_event = max(ev / total_event, 1e-10)
-                p_nonevent = max(nev / total_nonevent, 1e-10)
-                return (p_event - p_nonevent) * np.log(p_event / p_nonevent)
 
             ranked = []
             for left, right in candidates:
@@ -1066,32 +1145,71 @@ class OptimalBinning2D:
                 trial = solution.copy()
                 trial[trial == right] = left
                 trial_counts = region_counts(trial)
-                trial_violations = self._monotonic_violations(
-                    trial, trial_counts, trend_x, trend_y)
-                trial_small = sum(ev + nev < min_count for ev, nev in trial_counts.values())
+                trial_small = sum(
+                    sum(trial_counts[k]) < min_count for k in normal_ids(trial)
+                )
+                trial_violations = len(self._monotonic_violations(trial, trial_counts, trend_x, trend_y))
                 iv_loss = (
                     iv_part(ev_l, nev_l) + iv_part(ev_r, nev_r)
                     - iv_part(ev_l + ev_r, nev_l + nev_r)
                 )
                 involves_small = left in small or right in small
-                fixes_violation = (left, right) in violations
                 ranked.append((
                     0 if (not small or involves_small) else 1,
-                    0 if (not violations or fixes_violation) else 1,
-                    len(trial_violations),
                     trial_small,
+                    trial_violations,
                     iv_loss,
                     left,
                     right,
                 ))
-
-            _, _, _, _, _, keep, remove = min(ranked)
+            _, _, _, _, keep, remove = min(ranked)
             solution[solution == remove] = keep
 
-        ordered_ids = sorted(
-            np.unique(solution),
-            key=lambda bin_id: tuple(np.argwhere(solution == bin_id).min(axis=0)),
-        )
+        # ---------------- 阶段二：单调性硬约束（合并违例相邻分箱至零违例） ----------------
+        if trend_x is not None or trend_y is not None:
+            while True:
+                counts = region_counts(solution)
+                violations = self._monotonic_violations(solution, counts, trend_x, trend_y)
+                if not violations or len(counts) == 1:
+                    break
+                candidates = adjacent_pairs(solution)
+                if not candidates:
+                    break
+
+                ranked = []
+                for left, right in candidates:
+                    ev_l, nev_l = counts[left]
+                    ev_r, nev_r = counts[right]
+                    trial = solution.copy()
+                    trial[trial == right] = left
+                    trial_counts = region_counts(trial)
+                    trial_violations = len(self._monotonic_violations(trial, trial_counts, trend_x, trend_y))
+                    iv_loss = (
+                        iv_part(ev_l, nev_l) + iv_part(ev_r, nev_r)
+                        - iv_part(ev_l + ev_r, nev_l + nev_r)
+                    )
+                    ranked.append((
+                        trial_violations,
+                        0 if (left, right) in violations else 1,
+                        iv_loss,
+                        left,
+                        right,
+                    ))
+                _, _, _, keep, remove = min(ranked)
+                solution[solution == remove] = keep
+
+            if self.verbose and len(np.unique(solution)) <= 1:
+                warnings.warn(
+                    "单调性硬约束将二维分箱合并为单一分箱，"
+                    "请考虑放宽单调性约束（monotonic_x/monotonic_y）或调整预分箱粒度"
+                )
+
+        def order_key(bin_id: int) -> Tuple[int, int, int]:
+            cells = np.argwhere(solution == bin_id)
+            i, j = cells.min(axis=0)
+            return cell_group(int(i), int(j)), int(i), int(j)
+
+        ordered_ids = sorted(np.unique(solution), key=order_key)
         remap = {int(old): new for new, old in enumerate(ordered_ids)}
         return np.vectorize(remap.get, otypes=[int])(solution)
 
@@ -1112,15 +1230,17 @@ class OptimalBinning2D:
         if value in ('ascending', 'descending'):
             return value
         if value in (True, 'auto', 'auto_asc_desc', 'auto_heuristic'):
-            totals = (event + nonevent).sum(axis=1 - axis)
-            events = event.sum(axis=1 - axis)
+            normal_event = event[:self.n_bins_x_, :self.n_bins_y_]
+            normal_nonevent = nonevent[:self.n_bins_x_, :self.n_bins_y_]
+            totals = (normal_event + normal_nonevent).sum(axis=1 - axis)
+            events = normal_event.sum(axis=1 - axis)
             rates = np.divide(events, totals, out=np.zeros_like(events), where=totals > 0)
             valid = rates[totals > 0]
             return 'ascending' if len(valid) < 2 or valid[-1] >= valid[0] else 'descending'
         return None
 
-    @staticmethod
     def _monotonic_violations(
+        self,
         solution: np.ndarray,
         counts: Dict[int, Tuple[float, float]],
         trend_x: Optional[str],
@@ -1140,10 +1260,17 @@ class OptimalBinning2D:
             if invalid:
                 violations.add(tuple(sorted((int(a), int(b)))))
 
-        for a, b in zip(solution[:-1, :].ravel(), solution[1:, :].ravel()):
-            check(int(a), int(b), trend_x)
-        for a, b in zip(solution[:, :-1].ravel(), solution[:, 1:].ravel()):
-            check(int(a), int(b), trend_y)
+        # 缺失行/列只沿另一个非缺失特征的轴向受单调性约束。
+        for i in range(solution.shape[0] - 1):
+            if i + 1 >= getattr(self, 'n_bins_x_', solution.shape[0]):
+                continue
+            for j in range(solution.shape[1]):
+                check(int(solution[i, j]), int(solution[i + 1, j]), trend_x)
+        for j in range(solution.shape[1] - 1):
+            if j + 1 >= getattr(self, 'n_bins_y_', solution.shape[1]):
+                continue
+            for i in range(solution.shape[0]):
+                check(int(solution[i, j]), int(solution[i, j + 1]), trend_y)
         return violations
 
     def _map_grid_to_2d_bins(self, bins_x: np.ndarray, bins_y: np.ndarray) -> np.ndarray:
@@ -1152,12 +1279,18 @@ class OptimalBinning2D:
         bins_y = np.asarray(bins_y, dtype=int)
         result = np.full(len(bins_x), -1, dtype=int)
         special = (bins_x == -2) | (bins_y == -2)
+        grid_x = bins_x.copy()
+        grid_y = bins_y.copy()
+        if getattr(self, '_has_missing_x_', False):
+            grid_x[grid_x == -1] = self.n_bins_x_
+        if getattr(self, '_has_missing_y_', False):
+            grid_y[grid_y == -1] = self.n_bins_y_
         valid = (
-            (bins_x >= 0) & (bins_x < self.n_bins_x_)
-            & (bins_y >= 0) & (bins_y < self.n_bins_y_)
+            (grid_x >= 0) & (grid_x < self.solution_.shape[0])
+            & (grid_y >= 0) & (grid_y < self.solution_.shape[1])
         )
         result[special] = -2
-        result[valid] = self.solution_[bins_x[valid], bins_y[valid]]
+        result[valid] = self.solution_[grid_x[valid], grid_y[valid]]
         return result
 
     def _compute_binning_table(self) -> None:
@@ -1169,73 +1302,151 @@ class OptimalBinning2D:
         merged = self._map_grid_to_2d_bins(bins_x, bins_y)
 
         cells_by_bin = []
-        labels = []
+        x_proj, y_proj, labels = [], [], []
         for bin_id in range(self.n_bins_2d_):
             cells = [tuple(cell) for cell in np.argwhere(self.solution_ == bin_id)]
             cells_by_bin.append(cells)
-            cell_labels = [
-                f"({self._get_bin_label(self.feature_x_, i, self.binner_x_)}) ∩ "
-                f"({self._get_bin_label(self.feature_y_, j, self.binner_y_)})"
-                for i, j in cells
-            ]
-            labels.append(' ∪ '.join(cell_labels))
+            # 将连通区域在各特征轴上投影为紧凑区间，作为可读分箱标签（参考 optbinning 的 Bin x / Bin y）
+            xp = self._axis_projection_label({i for i, _ in cells}, is_x=True)
+            yp = self._axis_projection_label({j for _, j in cells}, is_x=False)
+            x_proj.append(xp)
+            y_proj.append(yp)
+            labels.append(f'{xp} × {yp}')
         self._bin_cells_2d_ = cells_by_bin
         self._bin_labels_2d_ = labels
 
         unique_bins = np.unique(merged)
-        label_by_id = {i: labels[i] for i in range(self.n_bins_2d_)}
-        label_by_id.update({-1: '缺失值', -2: '特殊值'})
+        special = {-1: '缺失值', -2: '特殊值'}
+        label_by_id = {**{i: labels[i] for i in range(self.n_bins_2d_)}, **special}
+
         bin_labels = [label_by_id[int(bin_id)] for bin_id in unique_bins]
-        table = compute_bin_stats(
+        table = self._compute_bin_stats(
             merged,
             self._y.to_numpy(),
             bin_labels=bin_labels,
-            round_digits=True,
-            woe_clip=self.woe_clip,
-        ).rename(columns={'分箱标签': '二维分箱标签'})
+        )
 
-        table.insert(1, '特征1', self.feature_x_)
-        table.insert(2, '特征2', self.feature_y_)
-        table.insert(3, '特征1分箱', table['分箱'].map(
-            lambda b: ' ∪ '.join(dict.fromkeys(
-                self._get_bin_label(self.feature_x_, i, self.binner_x_)
-                for i, _ in cells_by_bin[int(b)]
-            )) if b >= 0 else label_by_id[int(b)]
-        ))
-        table.insert(4, '特征2分箱', table['分箱'].map(
-            lambda b: ' ∪ '.join(dict.fromkeys(
-                self._get_bin_label(self.feature_y_, j, self.binner_y_)
-                for _, j in cells_by_bin[int(b)]
-            )) if b >= 0 else label_by_id[int(b)]
-        ))
+        table.insert(0, '指标名称', self.feature_name_)
+        table.insert(1, '指标含义', None)
+        table = table[[
+            '指标名称', '指标含义', '分箱', '分箱标签', '样本总数', '样本占比',
+            *[
+                column for column in table.columns
+                if column not in {'指标名称', '指标含义', '分箱', '分箱标签', '样本总数', '样本占比'}
+            ],
+        ]]
         self.binning_table_ = table
 
         normal = table[table['分箱'] >= 0].set_index('分箱')
         self._woe_2d_ = normal['分档WOE值'].reindex(range(self.n_bins_2d_)).to_numpy(dtype=float)
         self._event_rate_2d_ = normal['坏样本率'].reindex(range(self.n_bins_2d_)).to_numpy(dtype=float)
+        indexed = table.set_index('分箱')
+        self._woe_map_2d_ = indexed['分档WOE值'].astype(float).to_dict()
+        self._event_rate_map_2d_ = indexed['坏样本率'].astype(float).to_dict()
         self.iv_2d_ = float(normal['分档IV值'].sum())
         self.iv_interaction_ = self.iv_2d_
 
-        lookup = normal[['二维分箱标签', '坏样本率', '分档WOE值', '分档IV值', 'LIFT值']]
-        self.cross_table_['二维分箱'] = [
-            int(self.solution_[i, j]) for i, j in zip(self.cross_table_['分箱1'], self.cross_table_['分箱2'])
+        lookup = normal['分箱标签']
+
+        def grid_index(value: int, is_x: bool) -> int:
+            normal_count = self.n_bins_x_ if is_x else self.n_bins_y_
+            return normal_count if value == -1 else value
+
+        self.cross_table_['分箱'] = [
+            int(self.solution_[grid_index(i, True), grid_index(j, False)])
+            for i, j in zip(self.cross_table_['特征1分箱'], self.cross_table_['特征2分箱'])
         ]
-        self.cross_table_['二维分箱标签'] = self.cross_table_['二维分箱'].map(lookup['二维分箱标签'])
-        for source, target in [
-            ('坏样本率', '合并后坏样本率'),
-            ('分档WOE值', '合并后WOE值'),
-            ('分档IV值', '合并后IV值'),
-            ('LIFT值', '合并后LIFT值'),
-        ]:
-            self.cross_table_[target] = self.cross_table_['二维分箱'].map(lookup[source])
+        self.cross_table_['分箱标签'] = self.cross_table_['分箱'].map(lookup)
+        leading = [
+            '分箱', '分箱标签',
+            '特征1名称', '特征1分箱', '特征1标签',
+            '特征2名称', '特征2分箱', '特征2标签',
+            '样本总数', '样本占比',
+        ]
+        self.cross_table_ = self.cross_table_[
+            leading + [column for column in self.cross_table_.columns if column not in leading]
+        ]
+        category = (
+            (self.cross_table_['特征1分箱'] == -1).astype(int) * 2
+            + (self.cross_table_['特征2分箱'] == -1).astype(int)
+        )
+        self.cross_table_ = (
+            self.cross_table_.assign(_组合顺序=category)
+            .sort_values(['_组合顺序', '特征1分箱', '特征2分箱'], kind='stable')
+            .drop(columns='_组合顺序')
+            .reset_index(drop=True)
+        )
+
+    def _compute_bin_stats(
+        self,
+        bins: np.ndarray,
+        y: np.ndarray,
+        bin_labels: Optional[List[str]] = None,
+    ) -> pd.DataFrame:
+        """统一计算二维汇总箱和笛卡尔明细箱的完整指标."""
+        return compute_bin_stats(
+            bins,
+            y,
+            bin_labels=bin_labels,
+            round_digits=True,
+            woe_clip=self.woe_clip,
+        )
 
     def _merged_metric_matrix(self, metric: str) -> pd.DataFrame:
         """将最终二维分箱指标回填到预分箱网格."""
         values = self.binning_table_[self.binning_table_['分箱'] >= 0].set_index('分箱')[metric]
-        matrix = np.vectorize(lambda bin_id: values.loc[int(bin_id)], otypes=[float])(self.solution_)
+        normal_solution = self.solution_[:self.n_bins_x_, :self.n_bins_y_]
+        matrix = np.vectorize(lambda bin_id: values.loc[int(bin_id)], otypes=[float])(normal_solution)
         row_labels = [self._get_bin_label(self.feature_x_, i, self.binner_x_) for i in range(self.n_bins_x_)]
         col_labels = [self._get_bin_label(self.feature_y_, j, self.binner_y_) for j in range(self.n_bins_y_)]
         return pd.DataFrame(matrix, index=row_labels, columns=col_labels)
+
+    def _axis_projection_label(self, prebin_indices, is_x: bool) -> str:
+        """将二维分箱在单个特征轴上覆盖的预分箱投影为紧凑区间标签.
+
+        数值型分箱合并连续区间（如 {0,1,2} -> '[-inf, s2)'），非区间型标签去重后用 ∪ 连接。
+        注意：对于非矩形的连通区域，该投影是各轴覆盖范围的并集（边界外延），
+        精确归属以 solution_ 矩阵与分箱图为准。
+        """
+        feat = self.feature_x_ if is_x else self.feature_y_
+        binner = self.binner_x_ if is_x else self.binner_y_
+        normal_count = self.n_bins_x_ if is_x else self.n_bins_y_
+        idxs = sorted({int(i) for i in prebin_indices})
+        if not idxs:
+            return ''
+        if idxs == [normal_count]:
+            return '缺失值'
+        label_of = [self._get_bin_label(feat, i, binner) for i in idxs]
+        interval_like = all(re.match(r'^[\[(].*,.*[\])]$', str(lab)) for lab in label_of)
+        if not interval_like:
+            return ' ∪ '.join(dict.fromkeys(label_of))
+        # 合并连续预分箱区间
+        groups: List[List[int]] = []
+        for i in idxs:
+            if groups and i == groups[-1][-1] + 1:
+                groups[-1].append(i)
+            else:
+                groups.append([i])
+        parts = []
+        for g in groups:
+            first = self._get_bin_label(feat, g[0], binner)
+            if g[0] == g[-1]:
+                parts.append(first)
+            else:
+                last = self._get_bin_label(feat, g[-1], binner)
+                left = first.split(',')[0].strip()
+                right = last.split(',')[-1].strip()
+                parts.append(f'{left}, {right}')
+        return ' ∪ '.join(parts)
+
+    def _get_grid_bin_label(self, bin_idx: int, is_x: bool) -> str:
+        """获取扩展网格标签，缺失行/列使用统一中文标签."""
+        normal_count = self.n_bins_x_ if is_x else self.n_bins_y_
+        if bin_idx == normal_count:
+            return '缺失值'
+        feature = self.feature_x_ if is_x else self.feature_y_
+        binner = self.binner_x_ if is_x else self.binner_y_
+        return self._get_bin_label(feature, bin_idx, binner)
 
     def _get_bin_label(self, feature: str, bin_idx: int, binner: OptimalBinning) -> str:
         """获取指定特征和分箱索引的标签."""

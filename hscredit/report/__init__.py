@@ -11,6 +11,7 @@
 from ..excel import ExcelWriter, dataframe2excel
 from .feature_analyzer import feature_bin_stats, feature_efficiency_analysis, auto_feature_analysis
 from .rule_analysis import ruleset_analysis, multi_label_rule_analysis, rule_swap_analysis
+from .rule_strategy import rule_group_hit_table, rule_report_table, rule_target_analysis, rule_target_table
 from .swap_analysis import (
     ReferenceDataProvider,
     SwapAnalyzer,
@@ -47,6 +48,10 @@ __all__ = [
     "ruleset_analysis",
     "multi_label_rule_analysis",
     "rule_swap_analysis",
+    "rule_report_table",
+    "rule_target_analysis",
+    "rule_target_table",
+    "rule_group_hit_table",
     # swap分析
     "ReferenceDataProvider",
     "SwapAnalyzer",

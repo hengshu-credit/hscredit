@@ -273,8 +273,12 @@ def _detect_bad_rate_trend(feature_table: pd.DataFrame) -> str:
     return '波动'
 
 
-def _build_bin_metric_summary(feature_table: pd.DataFrame) -> str:
-    """构建分箱图角标摘要（紧凑两列表达）。"""
+def _build_bin_metric_summary(feature_table: pd.DataFrame, per_row: int = 2) -> str:
+    """构建分箱图角标摘要。
+
+    :param feature_table: 分箱统计表
+    :param per_row: 每行展示的指标个数，默认 2（紧凑两列）；小图可用 1 使角标更窄
+    """
     items = []
 
     if '指标IV值' in feature_table.columns:
@@ -299,11 +303,50 @@ def _build_bin_metric_summary(feature_table: pd.DataFrame) -> str:
     if not items:
         return ''
 
+    per_row = max(1, int(per_row))
     rows = []
-    for i in range(0, len(items), 2):
-        rows.append('    '.join(items[i:i + 2]))
+    for i in range(0, len(items), per_row):
+        rows.append('    '.join(items[i:i + per_row]))
 
     return '\n'.join(rows)
+
+
+def _xtick_rotation_for_length(max_len: int, threshold: int = 5):
+    """根据刻度文本最大长度决定横向分箱图 x 轴刻度的旋转角度与对齐方式.
+
+    未超过 ``threshold`` 时保持垂直（90°）；超过后改为倾斜，且文本越长角度越小
+    （越接近水平），下限 30°，避免过长文本纵向占用过多。
+
+    :param max_len: 刻度文本的最大字符长度
+    :param threshold: 触发倾斜的长度阈值
+    :return: (rotation, horizontalalignment)
+    """
+    if max_len <= threshold:
+        return 90, 'center'
+    return max(30, 90 - (max_len - threshold) * 10), 'right'
+
+
+def _auto_rotate_horizontal_xticks(fig, ax, threshold: int = 35) -> None:
+    """横向分箱图 x 轴（样本数）刻度方向自适应.
+
+    默认垂直展示，避免相邻数值刻度相互重叠；当刻度文本最大长度超过 ``threshold``
+    时改为倾斜展示（角度由 :func:`_xtick_rotation_for_length` 动态决定）。
+
+    :param fig: 刻度所在 Figure（需先绘制以读取自动生成的刻度文本）
+    :param ax: 横向模式下承载样本数的 x 轴 Axes
+    :param threshold: 触发倾斜的刻度文本长度阈值，未超过则保持垂直
+    """
+    fig.canvas.draw()
+    lengths = [len(t.get_text()) for t in ax.get_xticklabels() if t.get_text()]
+    if not lengths:
+        return
+
+    rotation, ha = _xtick_rotation_for_length(max(lengths), threshold)
+    ax.tick_params(axis='x', labelrotation=rotation)
+    for label in ax.get_xticklabels():
+        label.set_horizontalalignment(ha)
+        if ha == 'right':
+            label.set_rotation_mode('anchor')
 
 
 def bin_plot(
@@ -325,6 +368,8 @@ def bin_plot(
     rules: Optional[List] = None,
     show_data_points: bool = True,
     show_overall_bad_rate: bool = True,
+    show_metric_summary: bool = True,
+    show_rate_axis: bool = True,
     iv: bool = True,
     return_frame: bool = False,
     ax: Optional[Any] = None,
@@ -374,6 +419,8 @@ def bin_plot(
     :param rules: 自定义分箱边界（仅用于方式1）
     :param show_data_points: 是否显示数据点标记
     :param show_overall_bad_rate: 是否显示整体坏样本率参考线
+    :param show_metric_summary: 是否显示左上角的指标角标（IV/KS/LIFT/趋势摘要），默认显示
+    :param show_rate_axis: 是否显示坏样本率坐标轴刻度与标签（趋势线本身始终保留），默认显示
     :param iv: 是否显示 IV 值（暂不支持）
     :param return_frame: 是否返回分箱统计表
     :param ax: 可选的 matplotlib Axes 对象，用于在已有画布上绘图
@@ -538,7 +585,14 @@ def bin_plot(
                 label='坏样本', hatch="\\" if hatch else None, edgecolor='white' if hatch else None, alpha=0.92)
         ax1.set_ylabel('样本数', color=axis_theme)
         ax1.set_xticks(x_pos)
-        ax1.set_xticklabels(feature_table['_plot_bin_label'], rotation=45, ha='right')
+        # 分箱标签默认垂直展示，仅当标签非常长（阈值 18）时才按长度动态倾斜
+        bin_labels = feature_table['_plot_bin_label'].tolist()
+        label_rotation, label_ha = _xtick_rotation_for_length(
+            max((len(str(l)) for l in bin_labels), default=0), threshold=18)
+        ax1.set_xticklabels(bin_labels, rotation=label_rotation, ha=label_ha)
+        if label_rotation != 90:
+            for lbl in ax1.get_xticklabels():
+                lbl.set_rotation_mode('anchor')
 
         ax2 = ax1.twinx()
         ax2.plot(x_pos, feature_table['坏样本率'], color=line_color, label='坏样本率', linestyle=(0, (4, 3)), linewidth=2.1,
@@ -566,8 +620,32 @@ def bin_plot(
     ax1.grid(False)
     ax2.grid(False)
 
-    metric_summary = _build_bin_metric_summary(feature_table.drop(columns=['_plot_bin_label'], errors='ignore'))
+    if not show_rate_axis:
+        # 隐藏坏样本率坐标轴刻度与标签（趋势线保留）：横向在顶部 x 轴，纵向在右侧 y 轴
+        if is_horizontal:
+            ax2.tick_params(axis='x', top=False, labeltop=False)
+            ax2.set_xlabel('')
+        else:
+            ax2.tick_params(axis='y', right=False, labelright=False)
+            ax2.set_ylabel('')
+
+    # 横向模式：样本数 x 轴刻度默认垂直，文本过长时按最大长度动态倾斜
+    if is_horizontal:
+        _auto_rotate_horizontal_xticks(fig, ax1)
+
+    _summary_source = feature_table.drop(columns=['_plot_bin_label'], errors='ignore')
+    metric_summary = _build_bin_metric_summary(_summary_source) if show_metric_summary else ''
     if not return_ax:
+        # 角标与图例字号随图尺寸自适应：默认 (12, 7) 不缩放，小图等比缩小以避免相互遮盖
+        fig_w, fig_h = fig.get_size_inches()
+        raw_scale = min(fig_w / 12.0, fig_h / 7.0)
+        size_scale = float(np.clip(raw_scale, 0.5, 1.0))
+        # 图较小时角标改为单列竖排，更窄以便挤入图例左侧而不遮盖
+        if metric_summary and raw_scale < 0.65:
+            metric_summary = _build_bin_metric_summary(_summary_source, per_row=1)
+        summary_fontsize = float(np.clip(10.0 * size_scale, 6.0, 10.0))
+        legend_fontsize = float(np.clip(10.0 * size_scale, 7.0, 10.0))
+
         if title is not None:
             fig.suptitle(f'{title}\n\n')
         else:
@@ -575,17 +653,33 @@ def bin_plot(
 
         handles1, labels1 = ax1.get_legend_handles_labels()
         handles2, labels2 = ax2.get_legend_handles_labels()
-        legend = fig.legend(handles1 + handles2, labels1 + labels2, loc='upper center', 
-                            ncol=len(labels1 + labels2), bbox_to_anchor=(0.5, anchor), frameon=False)
+        legend_labels = labels1 + labels2
+        n_items = len(legend_labels)
+        # 小图且需展示角标时，图例换行以缩小横向占用，为左上角角标让出空间
+        if metric_summary and size_scale < 0.75 and n_items > 2:
+            legend_ncol = int(np.ceil(n_items / 2))
+        else:
+            legend_ncol = n_items
+        legend = fig.legend(handles1 + handles2, legend_labels, loc='upper center',
+                            ncol=legend_ncol, bbox_to_anchor=(0.5, anchor),
+                            frameon=False, fontsize=legend_fontsize)
 
         plt.tight_layout()
         if metric_summary:
             fig.canvas.draw()
+            renderer = fig.canvas.get_renderer()
             ax_pos = ax1.get_position()
-            legend_bbox = legend.get_window_extent(fig.canvas.get_renderer()).transformed(fig.transFigure.inverted())
-            fig.text(ax_pos.x0, legend_bbox.y0, metric_summary, ha='left', va='bottom',
-                     fontsize=10, color=axis_theme,
-                     bbox=dict(boxstyle='round,pad=0.28', facecolor='white', edgecolor=axis_theme, alpha=0.9, linewidth=0.8))
+            legend_bbox = legend.get_window_extent(renderer).transformed(fig.transFigure.inverted())
+            summary_text = fig.text(ax_pos.x0, legend_bbox.y0, metric_summary, ha='left', va='bottom',
+                                    fontsize=summary_fontsize, color=axis_theme,
+                                    bbox=dict(boxstyle='round,pad=0.28', facecolor='white',
+                                              edgecolor=axis_theme, alpha=0.9, linewidth=0.8))
+            # 角标右边界不越过居中图例左边界，必要时进一步缩小字号以免遮盖
+            fig.canvas.draw()
+            summary_bbox = summary_text.get_window_extent(renderer).transformed(fig.transFigure.inverted())
+            available = legend_bbox.x0 - ax_pos.x0 - 0.015
+            if available > 0.02 and summary_bbox.width > available:
+                summary_text.set_fontsize(max(5.0, summary_fontsize * available / summary_bbox.width))
         save_figure(fig, save)
 
         if return_frame:
@@ -593,8 +687,16 @@ def bin_plot(
         return fig
     else:
         if metric_summary:
+            # 嵌入到已有画布时按子图实际尺寸自适应字号，避免在小子图上遮盖内容
+            ax_pos = ax1.get_position()
+            fig_w, fig_h = fig.get_size_inches()
+            ax_w_in, ax_h_in = ax_pos.width * fig_w, ax_pos.height * fig_h
+            ax_scale = min(ax_w_in / 7.5, ax_h_in / 4.5)
+            summary_fontsize = float(np.clip(10.0 * ax_scale, 6.0, 10.0))
+            if ax_scale < 0.65:
+                metric_summary = _build_bin_metric_summary(_summary_source, per_row=1)
             ax2.text(0.0, 1.02, metric_summary, transform=ax2.transAxes, ha='left', va='bottom',
-                     fontsize=10, color=axis_theme,
+                     fontsize=summary_fontsize, color=axis_theme,
                      bbox=dict(boxstyle='round,pad=0.28', facecolor='white', edgecolor=axis_theme, alpha=0.9, linewidth=0.8),
                      clip_on=False)
         if title is not None:
@@ -2460,18 +2562,19 @@ def bin_2d_plot(
 
     布局（特征1 为行维度，特征2 为列维度）::
 
-        ┌──────────────┬──────────────┬──────────────┐
-        │ 特征2分箱图   │   KS 曲线     │   风险拒绝比  │
-        ├──────────────┼──────────────┼──────────────┤
-        │   样本占比    │   坏样本率    │    KS 曲线    │
-        ├──────────────┼──────────────┼──────────────┤
-        │     LIFT      │   坏账改善    │ 特征1分箱图   │
-        └──────────────┴──────────────┴──────────────┘
+    ┌──────────────┬──────────────┬──────────────┐
+    │ KS 曲线   │    特征2分箱图    │   风险拒绝比  │
+    ├──────────────┼──────────────┼──────────────┤
+    │   样本占比    │   坏样本率    │   特征1分箱图     │
+    ├──────────────┼──────────────┼──────────────┤
+    │     LIFT      │   坏账改善    │ KS 曲线   │
+    └──────────────┴──────────────┴──────────────┘
 
-    - 对角两角为单变量分箱图（复用 :func:`bin_plot`，与交叉热力图共用坐标系：
-      特征2分箱图纵向，bin 落在 x 轴，与各热力图列对齐；特征1分箱图横向，bin 落在
-      y 轴，与各热力图行对齐）
-    - 两个 KS 曲线复用 :func:`ks_plot`（``curve='ks'``，仅 KS 曲线，去掉 ROC）
+    - 两个单变量分箱图（复用 :func:`bin_plot`，与交叉热力图共用坐标系）：特征2分箱图
+      （纵向，bin 落在 x 轴）置于第1行中列，与同列热力图（坏样本率/坏账改善）按列对齐；
+      特征1分箱图（横向，bin 落在 y 轴）置于第2行右列，与同行热力图（样本占比/坏样本率）
+      按行对齐
+    - 两个 KS 曲线复用 :func:`ks_plot`（``curve='ks'``，仅 KS 曲线，去掉 ROC），分置左上、右下角
     - 其余 5 格为两变量分箱交叉指标热力图（类似相关性图，均以百分数标注）：
       样本占比、坏样本率、LIFT、风险拒绝比、坏账改善
 
@@ -2543,6 +2646,7 @@ def bin_2d_plot(
     nx = b2d.n_bins_x_
     ny = b2d.n_bins_y_
     cross = b2d.cross_table_.copy()
+    cross = cross[(cross['特征1分箱'] >= 0) & (cross['特征2分箱'] >= 0)].copy()
     X = b2d._X
     y_arr = np.asarray(b2d._y, dtype=float)
 
@@ -2566,7 +2670,7 @@ def bin_2d_plot(
     def _matrix(col):
         M = np.full((nx, ny), np.nan)
         for _, r in work.iterrows():
-            M[int(r['分箱1']), int(r['分箱2'])] = r[col]
+            M[int(r['特征1分箱']), int(r['特征2分箱'])] = r[col]
         return M
 
     M_prop = _matrix('样本占比')
@@ -2595,8 +2699,8 @@ def bin_2d_plot(
         grp['LIFT值'] = np.where(grp['坏样本率'] > 0, grp['坏样本率'] / overall_bad_rate, 0.0)
         return grp
 
-    marg_x = _marginal('分箱1', '分箱1标签')   # 特征1
-    marg_y = _marginal('分箱2', '分箱2标签')   # 特征2
+    marg_x = _marginal('特征1分箱', '特征1标签')   # 特征1
+    marg_y = _marginal('特征2分箱', '特征2标签')   # 特征2
     xlabels = marg_y['分箱标签'].tolist()      # 特征2 (列, x), bin 索引 0..ny-1
     ylabels = marg_x['分箱标签'].tolist()      # 特征1 (行, y), bin 索引 0..nx-1
 
@@ -2604,18 +2708,18 @@ def bin_2d_plot(
     if figsize is None:
         figsize = (max(15.0, 9.0 + 0.9 * ny), max(13.0, 8.0 + 0.8 * nx))
     fig = plt.figure(figsize=figsize)
-    gs = fig.add_gridspec(3, 3, left=0.085, right=0.965, top=0.910, bottom=0.085,
-                          hspace=0.40, wspace=0.30)
+    gs = fig.add_gridspec(3, 3, left=0.105, right=0.975, top=0.910, bottom=0.180,
+                          hspace=0.18, wspace=0.03)
 
-    ax_marg_y = fig.add_subplot(gs[0, 0])   # 特征2分箱图（纵向）
-    ax_ks_y = fig.add_subplot(gs[0, 1])     # 特征2 KS
+    ax_ks_y = fig.add_subplot(gs[0, 0])     # 特征2 KS 曲线
+    ax_marg_y = fig.add_subplot(gs[0, 1])   # 特征2分箱图（纵向）
     ax_reject = fig.add_subplot(gs[0, 2])   # 风险拒绝比
     ax_prop = fig.add_subplot(gs[1, 0])     # 样本占比
     ax_bad = fig.add_subplot(gs[1, 1])      # 坏样本率
-    ax_ks_x = fig.add_subplot(gs[1, 2])     # 特征1 KS
+    ax_marg_x = fig.add_subplot(gs[1, 2])   # 特征1分箱图（横向）
     ax_lift = fig.add_subplot(gs[2, 0])     # LIFT
     ax_improve = fig.add_subplot(gs[2, 1])  # 坏账改善
-    ax_marg_x = fig.add_subplot(gs[2, 2])   # 特征1分箱图（横向）
+    ax_ks_x = fig.add_subplot(gs[2, 2])     # 特征1 KS 曲线
 
     def _cell_title(ax, text):
         ax.set_title(text, fontsize=fontsize + 2, color=axis_color, fontweight='semibold', pad=6)
@@ -2637,53 +2741,81 @@ def bin_2d_plot(
                         diverging=True, fontsize=fontsize, axis_color=axis_color)
     _cell_title(ax_improve, '坏账改善')
 
-    # 热力图刻度标签：左列显示 特征1(y)，底行显示 特征2(x)，右上角单元放到顶/右侧
+    # 热力图刻度标签：左列(样本占比/LIFT)显示 特征1(y)，底行(LIFT/坏账改善)显示 特征2(x)；
+    # 坏样本率、风险拒绝比不显示刻度标签
     _set_cross_heat_ticklabels(ax_prop, nx, ny, ylabels=ylabels, axis_color=axis_color)
     _set_cross_heat_ticklabels(ax_bad, nx, ny, axis_color=axis_color)
-    _set_cross_heat_ticklabels(ax_lift, nx, ny, xlabels=xlabels, ylabels=ylabels, axis_color=axis_color)
-    _set_cross_heat_ticklabels(ax_improve, nx, ny, xlabels=xlabels, axis_color=axis_color)
-    _set_cross_heat_ticklabels(ax_reject, nx, ny, xlabels=xlabels, ylabels=ylabels,
-                               x_top=True, y_right=True, axis_color=axis_color)
+    _set_cross_heat_ticklabels(ax_lift, nx, ny, xlabels=xlabels, ylabels=ylabels,
+                               rotation=90, axis_color=axis_color)
+    _set_cross_heat_ticklabels(ax_improve, nx, ny, xlabels=xlabels,
+                               rotation=90, axis_color=axis_color)
+    _set_cross_heat_ticklabels(ax_reject, nx, ny, axis_color=axis_color)
 
-    # ---------- 对角两个单变量分箱图（复用 bin_plot，共用坐标系） ----------
+    # ---------- 两个单变量分箱图（复用 bin_plot，与热力图共用坐标系） ----------
+    # 去坏样本率坐标轴刻度；紧凑布局下样本数刻度也隐藏
+    # （分布形态由柱高、坏样本率由数值标注体现）
     bin_plot(marg_y, ax=ax_marg_y, orientation='vertical', colors=colors,
-             title=f'{feat_y} 分箱图')
+             show_metric_summary=False, show_rate_axis=False, title='分箱图')
+    ax_marg_y_rate = fig.axes[-1]
     ax_marg_y.set_xlim(-0.5, ny - 0.5)
-    ax_marg_y.tick_params(axis='x', labelbottom=False)   # 特征2 分箱标签共用底行
+    # bin_2d_plot 内单独覆盖标题样式，不改变 bin_plot 的默认标题颜色
+    _cell_title(ax_marg_y, '分箱图')
+    # 特征2分箱标签统一由底行热力图垂直展示，边缘图关闭重复标签
+    for marginal_ax in (ax_marg_y, ax_marg_y_rate):
+        marginal_ax.tick_params(axis='x', bottom=False, labelbottom=False)
+    ax_marg_y.tick_params(axis='y', left=False, labelleft=False)
+    ax_marg_y.set_ylabel('')
 
     bin_plot(marg_x, ax=ax_marg_x, orientation='horizontal', colors=colors,
-             title=f'{feat_x} 分箱图')
+             show_metric_summary=False, show_rate_axis=False, title='分箱图')
+    ax_marg_x_rate = fig.axes[-1]
     ax_marg_x.set_ylim(-0.5, nx - 0.5)
-    ax_marg_x.tick_params(axis='y', labelleft=False)     # 特征1 分箱标签共用左列
+    _cell_title(ax_marg_x, '分箱图')
+    for marginal_ax in (ax_marg_x, ax_marg_x_rate):
+        marginal_ax.tick_params(axis='y', left=False, labelleft=False)
+    ax_marg_x.tick_params(axis='x', bottom=False, labelbottom=False)
+    ax_marg_x.set_xlabel('')
 
-    # ---------- 两个 KS 曲线（仅 KS 曲线，去掉 ROC） ----------
-    def _draw_feature_ks(ax, binner_1d, feat, label):
+    # ---------- 两个 KS 曲线（仅 KS 曲线，去掉 ROC；按特征方向保留单侧坐标） ----------
+    def _draw_feature_ks(ax, binner_1d, feat, show_x=False, show_y=False):
         try:
             woe = binner_1d.transform(X[[feat]], metric='woe')[feat].to_numpy(dtype=float)
             mask = np.isfinite(woe) & np.isfinite(y_arr)
             if mask.sum() > 0 and len(np.unique(y_arr[mask])) == 2:
                 ks_plot(woe[mask], y_arr[mask], curve='ks', ax=ax,
-                        fontsize=max(fontsize - 1, 9), title=label, colors=colors)
+                        fontsize=max(fontsize - 1, 9), title='', colors=colors)
             else:
                 ax.text(0.5, 0.5, 'KS 不可用', ha='center', va='center', transform=ax.transAxes)
-                ax.set_title(label, fontsize=fontsize + 2, color=axis_color)
         except Exception as exc:  # pragma: no cover - 防御性兜底
             ax.text(0.5, 0.5, f'KS 异常: {exc}', ha='center', va='center',
                     transform=ax.transAxes, fontsize=8)
+        # 去图例；特征2保留纵坐标，特征1保留横坐标
+        legend = ax.get_legend()
+        if legend is not None:
+            legend.remove()
+        # 组合图只保留要求方向的数值刻度，去掉英文轴名以避免挤压相邻子图
+        ax.set_xlabel('')
+        ax.set_ylabel('')
+        if not show_x:
+            ax.set_xticks([])
+        if not show_y:
+            ax.set_yticks([])
         setup_axis_style(ax, [axis_color])
-        ax.tick_params(axis='both', colors=axis_color)
+        ax.tick_params(axis='both', colors=axis_color, labelsize=max(fontsize - 2, 7))
+        _cell_title(ax, f'{feat} KS曲线')
 
-    _draw_feature_ks(ax_ks_y, b2d.binner_y_, feat_y, f'{feat_y} KS')
-    _draw_feature_ks(ax_ks_x, b2d.binner_x_, feat_x, f'{feat_x} KS')
+    _draw_feature_ks(ax_ks_y, b2d.binner_y_, feat_y, show_y=True)
+    _draw_feature_ks(ax_ks_x, b2d.binner_x_, feat_x, show_x=True)
 
     # ---------- 总标题与全局轴标签 ----------
     if title is None:
         title = f'{feat_x} × {feat_y} 二维交叉分箱分析'
     fig.suptitle(title, fontsize=fontsize + 6, fontweight='bold', y=0.965)
-    fig.text(0.525, 0.025, f'特征2：{feat_y}', ha='center', va='center',
-             fontsize=fontsize + 3, color=axis_color, fontweight='semibold')
-    fig.text(0.022, 0.5, f'特征1：{feat_x}', ha='center', va='center', rotation=90,
-             fontsize=fontsize + 3, color=axis_color, fontweight='semibold')
+    ax_improve.set_xlabel(f'特征2：{feat_y}', fontsize=fontsize + 3, color=axis_color,
+                          fontweight='semibold', labelpad=12)
+    # 使用轴标签的自动布局能力，将特征名称放到刻度标签外侧，避免固定位置造成重叠
+    ax_prop.set_ylabel(f'特征1：{feat_x}', fontsize=fontsize + 3, color=axis_color,
+                       fontweight='semibold', labelpad=12)
 
     save_figure(fig, save)
     return fig

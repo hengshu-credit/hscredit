@@ -45,9 +45,9 @@ class TestOptimalBinning2DBasic:
         # 测试transform
         result = binner.transform(sample_df[['age', 'income']], metric='indices')
 
-        assert list(result.columns) == ['age×income']
+        assert list(result.columns) == ['ageXincome']
         assert len(result) == len(sample_df)
-        assert result['age×income'].between(0, binner.n_bins_2d_ - 1).all()
+        assert result['ageXincome'].between(0, binner.n_bins_2d_ - 1).all()
 
     def test_transform_bins(self, sample_df):
         """测试 metric='bins' 返回标签."""
@@ -56,10 +56,10 @@ class TestOptimalBinning2DBasic:
 
         result = binner.transform(sample_df[['age', 'income']], metric='bins')
 
-        assert list(result.columns) == ['age×income']
+        assert list(result.columns) == ['ageXincome']
         assert len(result) == len(sample_df)
         # 标签应该是字符串
-        assert all(isinstance(v, str) for v in result['age×income'].values)
+        assert all(isinstance(v, str) for v in result['ageXincome'].values)
 
     def test_sklearn_style_fit(self, sample_df):
         """测试 sklearn 风格 fit（不传 features，取前两列）."""
@@ -96,17 +96,36 @@ class TestOptimalBinning2DBasic:
 
         # 检查列
         expected_cols = [
-            '特征1', '特征2', '分箱1', '分箱2',
-            '分箱1标签', '分箱2标签',
+            '分箱', '分箱标签',
+            '特征1名称', '特征1分箱', '特征1标签',
+            '特征2名称', '特征2分箱', '特征2标签',
             '样本总数', '好样本数', '坏样本数',
             '坏样本率', '样本占比', '分档WOE值', '分档IV值', 'LIFT值'
         ]
         for col in expected_cols:
             assert col in cross_table.columns, f"缺少列: {col}"
 
+        bin_table = binner.get_bin_table()
+        assert list(cross_table.columns[8:]) == list(bin_table.columns[4:])
+
         # 检查行数（应该是 n_bins1 * n_bins2）
         expected_rows = binner.n_bins_x_ * binner.n_bins_y_
         assert len(cross_table) == expected_rows
+
+    def test_both_tables_use_shared_compute_bin_stats(self, sample_df):
+        binner = OptimalBinning2D(max_n_bins=4)
+        original = binner._compute_bin_stats
+        calls = []
+
+        def spy(*args, **kwargs):
+            calls.append(np.asarray(args[0]).copy())
+            return original(*args, **kwargs)
+
+        binner._compute_bin_stats = spy
+        binner.fit(sample_df, y=sample_df['target'], features=['age', 'income'])
+
+        assert len(calls) == 2
+        assert list(binner.get_cross_table().columns[8:]) == list(binner.get_bin_table().columns[4:])
 
     def test_scorecardpipeline_style(self, sample_df_with_target):
         """测试scorecardpipeline风格（target在DataFrame中）."""
@@ -448,8 +467,12 @@ class TestOptimalBinning2DExport:
         table = binner.get_bin_table()
         cross = binner.get_cross_table()
         assert len(table[table['分箱'] >= 0]) == binner.n_bins_2d_
-        assert '二维分箱标签' in table.columns
-        assert '二维分箱' in cross.columns
+        assert list(table.columns[:6]) == [
+            '指标名称', '指标含义', '分箱', '分箱标签', '样本总数', '样本占比'
+        ]
+        assert table['指标名称'].eq('ageXincome').all()
+        assert table['指标含义'].isna().all()
+        assert {'分箱', '分箱标签'}.issubset(cross.columns)
 
 
 class TestOptimalBinning2DMerge:
@@ -479,11 +502,35 @@ class TestOptimalBinning2DMerge:
         x_bins = binner.binner_x_.transform(sample_df[['age']], metric='indices')['age'].to_numpy()
         y_bins = binner.binner_y_.transform(sample_df[['income']], metric='indices')['income'].to_numpy()
         expected = binner.solution_[x_bins, y_bins]
-        actual = binner.transform(sample_df[['age', 'income']], metric='indices')['age×income'].to_numpy()
+        actual = binner.transform(sample_df[['age', 'income']], metric='indices')['ageXincome'].to_numpy()
         np.testing.assert_array_equal(actual, expected)
 
-        woe = binner.transform(sample_df[['age', 'income']], metric='woe')['age×income'].to_numpy()
+        woe = binner.transform(sample_df[['age', 'income']], metric='woe')['ageXincome'].to_numpy()
         np.testing.assert_allclose(woe, binner._woe_2d_[expected])
+
+    def test_transform_maps_observed_missing_bin_metrics(self, sample_df):
+        """训练中出现的缺失箱应返回其统计值，而不是 NaN."""
+        df = sample_df.copy()
+        df.loc[df.index[:20], 'age'] = np.nan
+        binner = OptimalBinning2D(max_n_bins=4, missing_separate=True)
+        binner.fit(df, y=df['target'], features=['age', 'income'])
+
+        transformed = {
+            metric: binner.transform(df[['age', 'income']], metric=metric)['ageXincome']
+            for metric in ('indices', 'bins', 'woe', 'event_rate')
+        }
+        missing = df['age'].isna()
+
+        assert (transformed['indices'][missing] >= 0).all()
+        assert (transformed['indices'][~missing] >= 0).all()
+        assert transformed['bins'][missing].str.startswith('缺失值 × ').all()
+        assert transformed['woe'][missing].notna().all()
+        assert transformed['event_rate'][missing].notna().all()
+        table = binner.get_bin_table().set_index('分箱')
+        expected_woe = transformed['indices'][missing].map(table['分档WOE值'])
+        expected_rate = transformed['indices'][missing].map(table['坏样本率'])
+        np.testing.assert_allclose(transformed['woe'][missing], expected_woe)
+        np.testing.assert_allclose(transformed['event_rate'][missing], expected_rate)
 
     def test_binning_table_uses_hscredit_metrics(self, sample_df):
         binner = OptimalBinning2D(max_n_bins=4, max_n_bins_2d=4)
@@ -491,12 +538,63 @@ class TestOptimalBinning2DMerge:
         table = binner.get_bin_table()
 
         expected_columns = [
-            '分箱', '二维分箱标签', '样本总数', '样本占比', '好样本数', '坏样本数',
+            '指标名称', '指标含义', '分箱', '分箱标签', '样本总数', '样本占比', '好样本数', '坏样本数',
             '坏样本率', '分档WOE值', '分档IV值', '指标IV值', 'LIFT值', '坏账改善',
             '风险拒绝比', '累积LIFT值', '分档KS值',
         ]
         assert set(expected_columns).issubset(table.columns)
         assert table['样本总数'].sum() == len(sample_df)
+
+    def test_missing_bins_form_cartesian_product_in_required_order(self, sample_df):
+        df = sample_df.copy()
+        df.loc[df.index[:40], 'age'] = np.nan
+        df.loc[df.index[40:80], 'income'] = np.nan
+        df.loc[df.index[80:100], ['age', 'income']] = np.nan
+
+        binner = OptimalBinning2D(max_n_bins=4, max_n_bins_2d=5, missing_separate=True)
+        binner.fit(df, y=df['target'], features=['age', 'income'])
+        cross = binner.get_cross_table()
+
+        assert len(cross) == (binner.n_bins_x_ + 1) * (binner.n_bins_y_ + 1)
+        assert cross['样本总数'].sum() == len(df)
+        assert binner.get_bin_table()['样本总数'].sum() == len(df)
+
+        groups = np.select(
+            [
+                (cross['特征1分箱'] >= 0) & (cross['特征2分箱'] >= 0),
+                (cross['特征1分箱'] >= 0) & (cross['特征2分箱'] == -1),
+                (cross['特征1分箱'] == -1) & (cross['特征2分箱'] >= 0),
+            ],
+            [0, 1, 2],
+            default=3,
+        )
+        assert groups.tolist() == sorted(groups.tolist())
+        assert cross.loc[cross['特征1分箱'] == -1, '特征1标签'].eq('缺失值').all()
+        assert cross.loc[cross['特征2分箱'] == -1, '特征2标签'].eq('缺失值').all()
+        assert cross['分箱'].ge(0).all()
+        assert cross['分箱标签'].notna().all()
+        assert list(cross.columns[8:]) == list(binner.get_bin_table().columns[4:])
+
+    def test_missing_row_and_column_follow_non_missing_axis_monotonicity(self, sample_df):
+        df = sample_df.copy()
+        df.loc[df.index[:120], 'age'] = np.nan
+        df.loc[df.index[120:240], 'income'] = np.nan
+        binner = OptimalBinning2D(
+            max_n_bins=4,
+            max_n_bins_2d=6,
+            monotonic_x='ascending',
+            monotonic_y='descending',
+            missing_separate=True,
+        )
+        binner.fit(df, y=df['target'], features=['age', 'income'])
+        table = binner.get_bin_table().set_index('分箱')
+        counts = {
+            int(bin_id): (float(row['坏样本数']), float(row['好样本数']))
+            for bin_id, row in table.iterrows()
+        }
+        assert not binner._monotonic_violations(
+            binner.solution_, counts, 'ascending', 'descending'
+        )
 
     def test_axis_monotonic_constraint(self):
         rng = np.random.RandomState(7)
@@ -521,6 +619,46 @@ class TestOptimalBinning2DMerge:
         }
         assert not binner._monotonic_violations(
             binner.solution_, counts, 'ascending', 'ascending')
+
+    def test_monotonic_hard_constraint_on_noisy_data(self):
+        """硬约束：即便目标完全随机（非单调），合并结果也必须零单调违例."""
+        rng = np.random.RandomState(123)
+        n = 1500
+        df = pd.DataFrame({
+            'a': rng.rand(n),
+            'c': rng.rand(n),
+            'target': rng.randint(0, 2, n),  # 与特征无关，天然非单调
+        })
+
+        for trend_x, trend_y in [('ascending', 'ascending'),
+                                 ('descending', 'descending'),
+                                 ('ascending', 'descending')]:
+            binner = OptimalBinning2D(
+                max_n_bins=5, max_n_bins_2d=8,
+                monotonic_x=trend_x, monotonic_y=trend_y,
+            )
+            binner.fit(df, y=df['target'], features=['a', 'c'])
+            normal = binner.get_bin_table().query('分箱 >= 0')
+            counts = {
+                int(row['分箱']): (float(row['坏样本数']), float(row['好样本数']))
+                for _, row in normal.iterrows()
+            }
+            # 硬约束：合并后必须零违例（软约束在随机数据上通常无法保证）
+            assert not binner._monotonic_violations(
+                binner.solution_, counts, trend_x, trend_y), \
+                f"单调硬约束未满足: trend_x={trend_x}, trend_y={trend_y}"
+            # 仍保持连通区域
+            for bin_id in range(binner.n_bins_2d_):
+                cells = set(map(tuple, np.argwhere(binner.solution_ == bin_id)))
+                visited = {next(iter(cells))}
+                pending = list(visited)
+                while pending:
+                    i, j = pending.pop()
+                    for nb in ((i - 1, j), (i + 1, j), (i, j - 1), (i, j + 1)):
+                        if nb in cells and nb not in visited:
+                            visited.add(nb)
+                            pending.append(nb)
+                assert visited == cells
 
     def test_get_bin_table_feature(self, sample_df):
         """测试 get_bin_table(feature) 返回独立分箱表."""
