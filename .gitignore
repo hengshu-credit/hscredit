@@ -233,3 +233,4 @@ examples/tree_viz_output
 .virtual_documents
 anaconda_projects
 _repro
+.VSCodeCounter

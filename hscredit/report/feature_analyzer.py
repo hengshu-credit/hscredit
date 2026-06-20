@@ -26,6 +26,208 @@ from ..utils import init_setting
 logger = logging.getLogger(__name__)
 
 
+_BINNING_SUMMARY_METRICS = ('分档KS值', 'LIFT值', '指标IV值', '坏样本数', '坏样本率')
+
+
+def _normalize_binning_summary_methods(methods: Union[str, List[str]]) -> List[str]:
+    """标准化分箱方法并保持传入顺序。"""
+    normalized = [methods] if isinstance(methods, str) else list(methods)
+    if not normalized:
+        raise ValueError("methods 不能为空")
+
+    invalid = [method for method in normalized if method not in OptimalBinning.VALID_METHODS]
+    if invalid:
+        raise ValueError(f"不支持的methods: {invalid}，可选: {OptimalBinning.VALID_METHODS}")
+    if len(normalized) != len(set(normalized)):
+        raise ValueError("methods 不能包含重复的分箱方法")
+    return normalized
+
+
+def _normalize_binning_summary_params(
+    methods: List[str],
+    bin_params: Optional[Dict[str, Any]],
+) -> Dict[str, Dict[str, Any]]:
+    """将全局或按方法配置的分箱参数展开为方法参数字典。"""
+    if bin_params is None:
+        return {method: {} for method in methods}
+    if not isinstance(bin_params, dict):
+        raise TypeError("bin_params 必须是字典")
+
+    method_keys = set(bin_params).intersection(OptimalBinning.VALID_METHODS)
+    if method_keys:
+        unknown = set(bin_params).difference(OptimalBinning.VALID_METHODS)
+        if unknown or any(not isinstance(value, dict) for value in bin_params.values()):
+            raise ValueError("多层 bin_params 必须使用 method 作为 key、字典作为 value")
+        return {method: dict(bin_params.get(method, {})) for method in methods}
+
+    return {method: dict(bin_params) for method in methods}
+
+
+def _summary_target_columns(table: pd.DataFrame) -> List[Tuple[str, str]]:
+    """返回分箱表中的目标名称及其摘要展示名称。"""
+    if not isinstance(table.columns, pd.MultiIndex):
+        return [('', '')]
+
+    targets = []
+    for target_name in table.columns.get_level_values(0):
+        if target_name == '分箱详情' or target_name in [item[0] for item in targets]:
+            continue
+        display_name = target_name
+        if isinstance(target_name, str) and target_name.endswith('+') and '_' in target_name:
+            overdue_name, dpd = target_name[:-1].rsplit('_', 1)
+            display_name = f'{overdue_name}@{dpd}'
+        targets.append((target_name, display_name))
+    return targets
+
+
+def _summarize_binning_table(
+    table: pd.DataFrame,
+    single_target_name: str = '',
+) -> Dict[Tuple[str, str], float]:
+    """按目标汇总一个特征、一个方法的分箱结果。"""
+    multi_columns = isinstance(table.columns, pd.MultiIndex)
+    label_column = ('分箱详情', '分箱标签') if multi_columns else '分箱标签'
+    valid = table.loc[table[label_column].astype(str) != '合计']
+    result = {}
+
+    target_columns = _summary_target_columns(table)
+    if not multi_columns:
+        target_columns = [('', single_target_name)]
+
+    for target_name, display_name in target_columns:
+        def column(metric: str):
+            return (target_name, metric) if multi_columns else metric
+
+        bad_count = pd.to_numeric(valid[column('坏样本数')], errors='coerce').sum()
+        sample_count_column = (
+            ('分箱详情', '样本总数')
+            if multi_columns and ('分箱详情', '样本总数') in valid.columns
+            else column('样本总数')
+        )
+        sample_count = pd.to_numeric(valid[sample_count_column], errors='coerce').sum()
+        result[('分档KS值', display_name)] = pd.to_numeric(valid[column('分档KS值')], errors='coerce').max()
+        result[('LIFT值', display_name)] = pd.to_numeric(valid[column('LIFT值')], errors='coerce').max()
+        result[('指标IV值', display_name)] = pd.to_numeric(valid[column('指标IV值')], errors='coerce').max()
+        result[('坏样本数', display_name)] = bad_count
+        result[('坏样本率', display_name)] = bad_count / sample_count if sample_count else np.nan
+    return result
+
+
+def feature_binning_summary(
+    data: pd.DataFrame,
+    feature: Union[str, List[str]],
+    methods: Union[str, List[str]] = 'mdlp',
+    bin_params: Optional[Dict[str, Any]] = None,
+    target: Optional[str] = None,
+    overdue: Optional[Union[str, List[str]]] = None,
+    dpds: Optional[Union[int, List[int]]] = None,
+    desc: Optional[Union[str, Dict[str, str]]] = None,
+    max_n_bins: int = 5,
+    min_n_bins: int = 2,
+    min_bin_size: float = 0.05,
+    max_bin_size: Optional[Union[float, int]] = None,
+    min_bad_rate: float = 0.0,
+    missing_separate: bool = True,
+    prebinning: Optional[Union[str, BaseBinning, Dict]] = None,
+    prebinning_params: Optional[Dict[str, Any]] = None,
+    special_codes: Optional[List] = None,
+    cat_cutoff: Optional[Union[float, int]] = None,
+    random_state: Optional[int] = None,
+    decimal: int = 4,
+    woe_clip: Optional[float] = None,
+    del_grey: bool = False,
+    margins: bool = False,
+    amount: Optional[str] = None,
+    verbose: int = 0,
+    monotonic: Optional[Union[str, bool]] = None,
+    **kwargs,
+) -> Tuple[Dict[str, Dict[str, pd.DataFrame]], pd.DataFrame]:
+    """对一个或多个字段执行多种分箱，并生成跨方法摘要。
+
+    ``bin_params`` 支持两种格式：单层参数应用于所有方法；以 method 为 key、
+    参数字典为 value 的多层参数仅应用于对应方法。参数优先级为
+    ``bin_params > 显式公共参数/kwargs``。
+
+    :return: ``(binning_tables, binning_summary)``。分箱表结构为
+        ``{feature: {method: binning_table}}``，摘要使用两级列索引。
+
+    **参考样例**
+
+    >>> tables, summary = feature_binning_summary(
+    ...     data, ['score', 'age'], methods=['quantile', 'mdlp'],
+    ...     overdue='MOB1', dpds=[3, 1, 0], max_n_bins=5,
+    ...     bin_params={'mdlp': {'min_bin_size': 0.1}},
+    ... )
+    """
+    features = [feature] if isinstance(feature, str) else list(feature)
+    if not features:
+        raise ValueError("feature 不能为空")
+    missing_features = [name for name in features if name not in data.columns]
+    if missing_features:
+        raise KeyError(f"数据中不存在字段: {missing_features}")
+
+    normalized_methods = _normalize_binning_summary_methods(methods)
+    per_method_params = _normalize_binning_summary_params(normalized_methods, bin_params)
+    common_params = {
+        'target': target,
+        'overdue': overdue,
+        'dpds': dpds,
+        'desc': desc,
+        'max_n_bins': max_n_bins,
+        'min_n_bins': min_n_bins,
+        'min_bin_size': min_bin_size,
+        'max_bin_size': max_bin_size,
+        'min_bad_rate': min_bad_rate,
+        'missing_separate': missing_separate,
+        'prebinning': prebinning,
+        'prebinning_params': prebinning_params,
+        'special_codes': special_codes,
+        'cat_cutoff': cat_cutoff,
+        'random_state': random_state,
+        'decimal': decimal,
+        'woe_clip': woe_clip,
+        'del_grey': del_grey,
+        'margins': margins,
+        'amount': amount,
+        'verbose': verbose,
+        'monotonic': monotonic,
+        **kwargs,
+    }
+
+    binning_tables = {name: {} for name in features}
+    summary_rows = []
+    single_target_name = target or ''
+    if overdue is not None:
+        overdue_values = [overdue] if isinstance(overdue, str) else list(overdue)
+        dpd_values = [dpds] if isinstance(dpds, int) else list(dpds or [])
+        target_labels = [f'{overdue_name}@{dpd}' for overdue_name in overdue_values for dpd in dpd_values]
+        if len(target_labels) == 1:
+            single_target_name = target_labels[0]
+
+    for method in normalized_methods:
+        method_params = {**common_params, **per_method_params[method]}
+        for reserved in ('data', 'feature', 'method', 'return_rules'):
+            method_params.pop(reserved, None)
+
+        for name in features:
+            table = feature_bin_stats(data=data, feature=name, method=method, **method_params)
+            binning_tables[name][method] = table
+            row = {('分箱详情', '分箱方法'): method, ('分箱详情', '指标名称'): name}
+            row.update(_summarize_binning_table(table, single_target_name=single_target_name))
+            summary_rows.append(row)
+
+    binning_summary = pd.DataFrame(summary_rows)
+    ordered_columns = [('分箱详情', '分箱方法'), ('分箱详情', '指标名称')]
+    target_names = []
+    for row in summary_rows:
+        for metric, target_name in row:
+            if metric in _BINNING_SUMMARY_METRICS and target_name not in target_names:
+                target_names.append(target_name)
+    ordered_columns.extend((metric, target_name) for metric in _BINNING_SUMMARY_METRICS for target_name in target_names)
+    binning_summary = binning_summary.reindex(columns=pd.MultiIndex.from_tuples(ordered_columns))
+    return binning_tables, binning_summary
+
+
 def _create_bin_table(
     bins: np.ndarray,
     y: np.ndarray,
@@ -304,6 +506,7 @@ def feature_bin_stats(
         'min_bin_size': min_bin_size,
         'missing_separate': missing_separate,
         'prebinning': prebinning,
+        'prebinning_params': prebinning_params,
     }
 
     # MDLP默认开启后处理微调，用户可通过 kwargs 覆盖
