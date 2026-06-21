@@ -92,6 +92,10 @@ class TypeSelector(BaseFeatureSelector):
         else:
             selected_cols = X.columns.tolist()
 
-        self.scores_ = X.dtypes
+        self.dtypes_ = X.dtypes
+        self.scores_ = pd.Series(
+            [1 if c in selected_cols else 0 for c in X.columns],
+            index=X.columns,
+        )
         self.selected_features_ = selected_cols
         self._drop_reason = '数据类型不匹配'

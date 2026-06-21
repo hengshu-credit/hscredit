@@ -249,7 +249,7 @@ class VIFSelector(BaseFeatureSelector):
         
         # 记录剔除历史
         self.vif_history_ = vif_history
-        self.n_iterations_ = iteration + 1
+        self.n_iterations_ = len(vif_history)
         
         # 构建dropped_ DataFrame（提取VIF数值）
         if len(dropped_features) > 0:

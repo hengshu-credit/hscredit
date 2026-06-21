@@ -34,7 +34,7 @@ except ImportError:
     XGBOOST_AVAILABLE = False
     xgb = None
 
-from ..base import BaseRiskModel
+from ..base import BaseRiskModel, resolve_custom_objective
 
 
 class XGBoostRiskModel(BaseRiskModel):
@@ -354,6 +354,9 @@ class XGBoostRiskModel(BaseRiskModel):
         # 最后更新原生params（优先级最高）
         params.update(self._native_params)
 
+        # 解析自定义损失（BaseLoss 实例 -> sklearn 包装器可用的目标函数）
+        params['objective'] = resolve_custom_objective(params.get('objective'))
+
         # 创建模型
         self._model = xgb.XGBClassifier(**params)
 
@@ -399,19 +402,32 @@ class XGBoostRiskModel(BaseRiskModel):
         """预测类别标签.
 
         支持传入包含target列的数据框（scorecardpipeline风格）。
+        基于 predict_proba 取阈值，确保自定义损失（原始分数输出）下也能返回正确类别。
         """
         check_is_fitted(self, '_is_fitted')
-        X, _, _ = self._prepare_data(X, extract_target=True)
-        return self._model.predict(X)
+        proba = self.predict_proba(X)
+        indices = np.argmax(proba, axis=1)
+        return np.asarray(self.classes_)[indices]
 
     def predict_proba(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
         """预测概率.
 
         支持传入包含target列的数据框（scorecardpipeline风格）。
+
+        当使用自定义损失函数（objective 为可调用对象）时，XGBoost 返回的是
+        未经过链接函数转换的原始分数（raw margin，一维数组），此处自动应用
+        sigmoid 转换为概率并补齐为二维 (n_samples, 2) 输出，与内置目标保持一致。
         """
         check_is_fitted(self, '_is_fitted')
         X, _, _ = self._prepare_data(X, extract_target=True)
-        return self._model.predict_proba(X)
+        proba = np.asarray(self._model.predict_proba(X))
+
+        # 自定义损失返回一维原始分数，应用 sigmoid 并补齐为两列概率
+        if proba.ndim == 1:
+            p1 = 1.0 / (1.0 + np.exp(-proba))
+            proba = np.column_stack([1.0 - p1, p1])
+
+        return proba
 
     def get_feature_importances(self, importance_type: str = 'gain') -> pd.Series:
         """获取特征重要性.
@@ -522,15 +538,15 @@ class XGBoostRiskModel(BaseRiskModel):
         return [metric_map.get(m.lower(), m) for m in metrics]
 
     def save_model(self, path: str):
-        """保存模型.
+        """保存底层XGBoost模型（原生格式）.
 
-        :param path: 保存路径
+        :param path: 保存路径（.json/.ubj/.bin 格式）
         """
         check_is_fitted(self, '_is_fitted')
         self._model.save_model(path)
 
     def load_model(self, path: str) -> 'XGBoostRiskModel':
-        """加载模型.
+        """加载底层XGBoost模型（原生格式）.
 
         :param path: 模型路径
         :return: self
@@ -538,4 +554,9 @@ class XGBoostRiskModel(BaseRiskModel):
         self._model = xgb.XGBClassifier()
         self._model.load_model(path)
         self._is_fitted = True
+        self.classes_ = getattr(self, 'classes_', np.array([0, 1]))
+        if not hasattr(self, 'feature_names_in_'):
+            n_feat = self._model.n_features_in_ if hasattr(self._model, 'n_features_in_') else 0
+            self.feature_names_in_ = [f'feature_{i}' for i in range(n_feat)]
+            self.n_features_in_ = n_feat
         return self

@@ -765,6 +765,168 @@ class LogisticRegression(SklearnLogisticRegression):
 
         return summary[mask][["Coef.", "VIF"]].sort_values("VIF", ascending=False)
 
+    # ==================== 统一API（与 BaseRiskModel 对齐） ====================
+
+    def evaluate(
+        self,
+        X: Union[pd.DataFrame, np.ndarray],
+        y: Union[pd.Series, np.ndarray],
+        sample_weight: Optional[np.ndarray] = None,
+        metrics: Optional[List[str]] = None,
+    ) -> dict:
+        """评估模型性能（与 BaseRiskModel.evaluate 接口一致）.
+
+        :param X: 特征矩阵
+        :param y: 真实标签
+        :param sample_weight: 样本权重
+        :param metrics: 评估指标列表
+        :return: 评估结果字典
+        """
+        from ..base import BaseRiskModel, _lift_score
+        from ...metrics.classification import ks, auc, gini
+        from ...metrics.finance import lift_monotonicity_check
+
+        check_is_fitted(self)
+
+        y_pred = self.predict(X)
+        y_proba = self.predict_proba(X)[:, 1]
+
+        if metrics is None:
+            metrics = BaseRiskModel.DEFAULT_METRICS
+
+        results = {}
+        for metric in metrics:
+            metric_lower = metric.lower()
+            try:
+                if metric_lower == 'auc':
+                    results['AUC'] = auc(y, y_proba)
+                elif metric_lower == 'ks':
+                    results['KS'] = ks(y, y_proba)
+                elif metric_lower == 'gini':
+                    results['Gini'] = gini(y, y_proba)
+                elif metric_lower in ('lift@1%', 'lift_1'):
+                    results['LIFT@1%'] = _lift_score(y, y_proba, top_ratio=0.01)
+                elif metric_lower in ('lift@3%', 'lift_3'):
+                    results['LIFT@3%'] = _lift_score(y, y_proba, top_ratio=0.03)
+                elif metric_lower in ('lift@5%', 'lift_5'):
+                    results['LIFT@5%'] = _lift_score(y, y_proba, top_ratio=0.05)
+                elif metric_lower in ('lift@10%', 'lift_10', 'lift'):
+                    results['LIFT@10%'] = _lift_score(y, y_proba, top_ratio=0.10)
+                elif metric_lower == 'logloss':
+                    from sklearn.metrics import log_loss
+                    results['LogLoss'] = log_loss(y, y_proba, sample_weight=sample_weight)
+            except Exception:
+                continue
+
+        try:
+            mono = lift_monotonicity_check(y, y_proba, n_bins=10, direction='both')
+            results['头部LIFT单调'] = mono['head_monotonic']
+            results['头部违反单调比例'] = mono['head_violation_ratio']
+            results['尾部LIFT单调'] = mono['tail_monotonic']
+        except Exception:
+            pass
+
+        return results
+
+    def predict_score(self, X: Union[pd.DataFrame, np.ndarray]) -> np.ndarray:
+        """预测风险评分（与 BaseRiskModel.predict_score 接口一致）.
+
+        :param X: 特征矩阵
+        :return: 风险评分 (0-1000)
+        """
+        proba = self.predict_proba(X)
+        return (1 - proba[:, 1]) * 1000
+
+    def report(
+        self,
+        datasets=None,
+        X_train=None,
+        y_train=None,
+        X_test=None,
+        y_test=None,
+        overdue=None,
+        dpds=None,
+        excel_path=None,
+        verbose=True,
+        **kwargs
+    ):
+        """生成风控建模报告（与 BaseRiskModel.report 接口一致）.
+
+        :return: QuickModelReport 实例
+        """
+        check_is_fitted(self)
+        from ....report import auto_model_report
+
+        return auto_model_report(
+            model=self,
+            datasets=datasets,
+            X_train=X_train,
+            y_train=y_train,
+            X_test=X_test,
+            y_test=y_test,
+            overdue=overdue,
+            dpds=dpds,
+            excel_path=excel_path,
+            verbose=verbose,
+            **kwargs
+        )
+
+    def save(self, path: str, engine: str = 'auto', **kwargs) -> str:
+        """保存模型到文件（与 BaseRiskModel.save 接口一致）.
+
+        :param path: 保存路径
+        :param engine: 序列化引擎
+        :return: 保存路径
+        """
+        check_is_fitted(self)
+        from ....utils import save_pickle
+        path_str = str(path)
+        eng = engine
+        if eng == 'auto':
+            path_lower = path_str.lower()
+            if path_lower.endswith('.dill') or path_lower.endswith('.dill.gz'):
+                eng = 'dill'
+            elif path_lower.endswith('.cloudpickle'):
+                eng = 'cloudpickle'
+            else:
+                eng = 'joblib'
+        save_pickle(self, path_str, engine=eng, **kwargs)
+        return path_str
+
+    @classmethod
+    def load(cls, path: str, engine: str = 'auto', **kwargs) -> 'LogisticRegression':
+        """从文件加载模型（与 BaseRiskModel.load 接口一致）.
+
+        :param path: 模型文件路径
+        :param engine: 序列化引擎
+        :return: 加载的模型实例
+        """
+        from ....utils import load_pickle
+        model = load_pickle(path, engine=engine, **kwargs)
+        if not isinstance(model, LogisticRegression):
+            raise TypeError(f"加载的对象类型为 {type(model).__name__}，不是 LogisticRegression")
+        return model
+
+    def get_model_info(self) -> dict:
+        """获取模型信息（与 BaseRiskModel.get_model_info 接口一致）."""
+        check_is_fitted(self)
+        info = {
+            'model_type': self.__class__.__name__,
+            'objective': 'binary:logistic',
+            'eval_metric': None,
+            'n_features': self.n_features_in_ if hasattr(self, 'n_features_in_') else self.coef_.shape[1],
+            'n_classes': len(self.classes_),
+            'best_iteration': None,
+            'best_score': None,
+            'params': self.get_params(),
+        }
+        return info
+
+    def get_native_model(self):
+        """获取底层模型（返回自身，因为 LR 不包装底层模型）."""
+        check_is_fitted(self)
+        return self
+
     def __getstate__(self):
         """支持 pickle 序列化.
 

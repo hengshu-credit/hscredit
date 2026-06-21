@@ -203,6 +203,7 @@ __all__ = [
     "LogisticRegression",
     # 评分卡
     "ScoreCard",
+    "RoundScoreCard",
     # 规则集分类
     "RuleSet",
     "RulesClassifier",

@@ -1,11 +1,12 @@
 """风控模型基类.
 
 提供统一的风控模型接口，支持:
-- 统一fit/predict接口
-- 特征重要性获取
-- 模型评估报告
+- 统一fit/predict接口（sklearn + scorecardpipeline 双API）
+- 统一特征重要性获取
+- 统一模型导出/导入（pickle/joblib/json 多格式）
+- 模型评估报告（支持多数据集/overdue/dpds）
 - 自定义loss和评估目标
-- Optuna超参数调优
+- Optuna超参数调优集成
 
 设计原则:
 1. 所有风控模型继承BaseRiskModel
@@ -16,6 +17,7 @@
 
 import warnings
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 import numpy as np
 import pandas as pd
@@ -44,8 +46,44 @@ def _lift_score(y_true, y_proba, top_ratio=0.1):
     
     if overall_bad_rate == 0:
         return 1.0
-    
+
     return top_bad_rate / overall_bad_rate
+
+
+def resolve_custom_objective(objective):
+    """将自定义损失对象解析为各 boosting 框架 sklearn 包装器可用的目标函数.
+
+    统一自定义 LOSS 入口：当用户直接传入 :class:`~hscredit.core.models.losses.BaseLoss`
+    实例作为 ``objective``（或 CatBoost 的 ``loss_function``）时，自动转换为
+    XGBoost/LightGBM sklearn 包装器所需的 ``(y_true, y_pred) -> (grad, hess)``
+    可调用对象，并在内部完成 sigmoid 链接函数转换（``BaseLoss.gradient`` 的梯度
+    定义在概率 p 上，而 boosting 框架回调传入的是原始分数 raw margin）。
+
+    非 ``BaseLoss`` 对象（如内置字符串 'binary'、用户自行编写的可调用对象）原样返回。
+
+    :param objective: 目标函数，可为字符串、可调用对象或 BaseLoss 实例
+    :return: 解析后的目标函数（字符串/可调用对象）
+    """
+    try:
+        from .losses.base import BaseLoss
+    except Exception:
+        return objective
+
+    if not isinstance(objective, BaseLoss):
+        return objective
+
+    loss = objective
+
+    def _sklearn_obj(y_true: np.ndarray, y_pred: np.ndarray):
+        # boosting 框架回调传入原始分数，先 sigmoid 转概率再求梯度
+        prob = 1.0 / (1.0 + np.exp(-np.asarray(y_pred, dtype=float)))
+        grad = loss.gradient(y_true, prob)
+        hess = loss.hessian(y_true, prob)
+        if hess is None:
+            hess = np.ones_like(grad) * 0.5
+        return grad, hess
+
+    return _sklearn_obj
 
 
 class BaseRiskModel(BaseEstimator, ClassifierMixin, ABC):
@@ -327,6 +365,281 @@ class BaseRiskModel(BaseEstimator, ClassifierMixin, ABC):
             y_test=y_test,
             feature_names=feature_names
         )
+
+    def report(
+        self,
+        datasets: Optional[Union[List, Dict]] = None,
+        X_train=None,
+        y_train=None,
+        X_test=None,
+        y_test=None,
+        feature_names: Optional[List[str]] = None,
+        target: Optional[Union[str, Dict]] = None,
+        overdue: Optional[Union[str, List[str]]] = None,
+        dpds: Optional[Union[int, float, List[Union[int, float]]]] = None,
+        excel_path: Optional[str] = None,
+        verbose: bool = True,
+        n_bins: int = 10,
+        amount_col: Optional[str] = None,
+        date_col: Optional[str] = None,
+        group_col: Optional[str] = None,
+        **kwargs
+    ) -> 'QuickModelReport':
+        """生成风控建模报告（支持多数据集/overdue/dpds）.
+
+        委托给 hscredit.report.auto_model_report，生成包含多 Sheet 的 Excel / 控制台报告。
+
+        支持三种调用方式:
+
+        1. datasets API（推荐）::
+
+            model.report(datasets={'训练集': train_df, '测试集': test_df})
+            model.report(datasets=[train_df, test_df])
+
+        2. sklearn 风格::
+
+            model.report(X_train=X, y_train=y, X_test=X_val, y_test=y_val)
+
+        3. overdue/dpds 自动构建标签::
+
+            model.report(datasets={'训练集': df}, overdue='dpds', dpds=[15, 7, 0])
+
+        :param datasets: 数据集字典/列表
+        :param X_train: 训练集特征（兼容旧API）
+        :param y_train: 训练集标签（兼容旧API）
+        :param X_test: 测试集特征（兼容旧API）
+        :param y_test: 测试集标签（兼容旧API）
+        :param feature_names: 特征名称列表
+        :param target: 目标列配置
+        :param overdue: 逾期列名
+        :param dpds: 逾期天数阈值
+        :param excel_path: Excel 报告输出路径
+        :param verbose: 是否打印控制台报告
+        :param n_bins: 分箱数
+        :param amount_col: 金额字段
+        :param date_col: 日期字段
+        :param group_col: 分组字段
+        :param kwargs: 传递给 auto_model_report 的其他参数
+        :return: QuickModelReport 实例
+        """
+        check_is_fitted(self, '_is_fitted')
+        from ...report import auto_model_report
+
+        return auto_model_report(
+            model=self,
+            datasets=datasets,
+            X_train=X_train,
+            y_train=y_train,
+            X_test=X_test,
+            y_test=y_test,
+            feature_names=feature_names,
+            target=target,
+            overdue=overdue,
+            dpds=dpds,
+            excel_path=excel_path,
+            verbose=verbose,
+            n_bins=n_bins,
+            amount_col=amount_col,
+            date_col=date_col,
+            group_col=group_col,
+            **kwargs
+        )
+
+    # ==================== 模型导出/导入 ====================
+
+    def save(self, path: str, engine: str = 'auto', **kwargs) -> str:
+        """保存模型到文件.
+
+        支持多种格式:
+        - pickle/joblib: 保存完整模型对象（默认）
+        - json: 保存模型参数和元数据（仅限支持的框架）
+
+        :param path: 保存路径，支持 .pkl, .joblib, .pkl.gz, .json 等后缀
+        :param engine: 序列化引擎，可选 'auto', 'joblib', 'pickle', 'dill', 'cloudpickle'
+        :param kwargs: 传递给 save_pickle 的其他参数（如 compression, compression_level）
+        :return: 保存路径
+
+        **参考样例**
+
+        >>> model.save('model.pkl')
+        >>> model.save('model.joblib')
+        >>> model.save('model.pkl.gz')
+        >>> model.save('model.pkl', engine='dill')
+        """
+        check_is_fitted(self, '_is_fitted')
+        from ...utils import save_pickle
+
+        path_str = str(path)
+        if path_str.endswith('.json'):
+            self._save_json(path_str)
+        else:
+            eng = engine
+            if eng == 'auto':
+                path_lower = path_str.lower()
+                if path_lower.endswith('.dill') or path_lower.endswith('.dill.gz'):
+                    eng = 'dill'
+                elif path_lower.endswith('.cloudpickle'):
+                    eng = 'cloudpickle'
+                else:
+                    eng = 'joblib'
+            save_pickle(self, path_str, engine=eng, **kwargs)
+
+        return path_str
+
+    @classmethod
+    def load(cls, path: str, engine: str = 'auto', **kwargs) -> 'BaseRiskModel':
+        """从文件加载模型.
+
+        :param path: 模型文件路径
+        :param engine: 序列化引擎，可选 'auto', 'joblib', 'pickle', 'dill', 'cloudpickle'
+        :param kwargs: 传递给 load_pickle 的其他参数
+        :return: 加载的模型实例
+
+        **参考样例**
+
+        >>> model = XGBoostRiskModel.load('model.pkl')
+        >>> model = LightGBMRiskModel.load('model.joblib')
+        >>> model = BaseRiskModel.load('model.pkl')  # 自动推断模型类型
+        """
+        from ...utils import load_pickle
+
+        path_str = str(path)
+        if path_str.endswith('.json'):
+            return cls._load_json(path_str)
+
+        model = load_pickle(path_str, engine=engine, **kwargs)
+        if not isinstance(model, BaseRiskModel):
+            raise TypeError(f"加载的对象类型为 {type(model).__name__}，不是 BaseRiskModel 子类")
+        return model
+
+    def _save_json(self, path: str):
+        """保存模型参数和元数据为JSON."""
+        import json
+
+        meta = {
+            'model_class': f'{self.__class__.__module__}.{self.__class__.__name__}',
+            'model_type': self.__class__.__name__,
+            'params': {},
+            'n_features_in_': getattr(self, 'n_features_in_', None),
+            'feature_names_in_': getattr(self, 'feature_names_in_', None),
+            'classes_': getattr(self, 'classes_', np.array([])).tolist(),
+        }
+
+        params = self.get_params(deep=False)
+        for k, v in params.items():
+            if isinstance(v, (int, float, str, bool, type(None))):
+                meta['params'][k] = v
+            elif isinstance(v, np.integer):
+                meta['params'][k] = int(v)
+            elif isinstance(v, np.floating):
+                meta['params'][k] = float(v)
+            elif isinstance(v, (list, tuple)):
+                meta['params'][k] = list(v)
+
+        # 保存底层模型到同级目录
+        native_path = str(Path(path).with_suffix('.native'))
+        if hasattr(self, '_model') and self._model is not None:
+            if hasattr(self._model, 'save_model'):
+                self._model.save_model(native_path)
+                meta['native_model_path'] = str(Path(native_path).name)
+
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(meta, f, ensure_ascii=False, indent=2)
+
+    @classmethod
+    def _load_json(cls, path: str) -> 'BaseRiskModel':
+        """从JSON加载模型参数（需配合native模型文件）."""
+        import json
+        import importlib
+
+        with open(path, 'r', encoding='utf-8') as f:
+            meta = json.load(f)
+
+        module_path, class_name = meta['model_class'].rsplit('.', 1)
+        module = importlib.import_module(module_path)
+        model_cls = getattr(module, class_name)
+
+        model = model_cls(**meta.get('params', {}))
+
+        if 'native_model_path' in meta:
+            native_path = str(Path(path).parent / meta['native_model_path'])
+            if hasattr(model, 'load_model'):
+                model.load_model(native_path)
+
+        model.n_features_in_ = meta.get('n_features_in_')
+        model.feature_names_in_ = meta.get('feature_names_in_')
+        model.classes_ = np.array(meta.get('classes_', [0, 1]))
+
+        return model
+
+    # ==================== 超参数调优集成 ====================
+
+    def tune(
+        self,
+        X: Union[np.ndarray, pd.DataFrame],
+        y: Optional[Union[np.ndarray, pd.Series]] = None,
+        search_space: Optional[Dict[str, Dict[str, Any]]] = None,
+        fixed_params: Optional[Dict[str, Any]] = None,
+        metric: Union[str, Callable, List] = 'ks',
+        direction: Union[str, List[str]] = 'maximize',
+        n_trials: int = 100,
+        cv: int = 5,
+        timeout: Optional[int] = None,
+        verbose: Optional[bool] = None,
+        **kwargs
+    ) -> 'BaseRiskModel':
+        """超参数调优并返回最佳模型.
+
+        集成 ModelTuner，一键完成超参数搜索、最佳模型训练。
+
+        :param X: 特征矩阵或包含target的DataFrame
+        :param y: 目标变量，可选
+        :param search_space: 参数搜索空间，默认使用自适应空间
+        :param fixed_params: 固定参数
+        :param metric: 优化指标
+        :param direction: 优化方向
+        :param n_trials: 搜索次数
+        :param cv: 交叉验证折数
+        :param timeout: 超时时间(秒)
+        :param verbose: 是否输出详细信息
+        :param kwargs: 其他传递给 ModelTuner 的参数
+        :return: 使用最佳参数训练好的模型实例
+
+        **参考样例**
+
+        >>> model = XGBoostRiskModel()
+        >>> best_model = model.tune(X_train, y_train, n_trials=50)
+        >>> proba = best_model.predict_proba(X_test)
+
+        >>> # scorecardpipeline风格
+        >>> model = LightGBMRiskModel(target='target')
+        >>> best_model = model.tune(df, n_trials=50)
+        """
+        from .tuning import ModelTuner
+
+        if verbose is None:
+            verbose = self.verbose
+
+        tuner = ModelTuner(
+            model_class=self.__class__,
+            search_space=search_space,
+            fixed_params=fixed_params,
+            metric=metric,
+            direction=direction,
+            target=self.target or 'target',
+            cv=cv,
+            random_state=self.random_state,
+            verbose=verbose,
+            **kwargs
+        )
+
+        best_params = tuner.fit(X, y, n_trials=n_trials, timeout=timeout)
+        best_model = self.__class__(**best_params)
+        best_model.fit(X, y)
+
+        best_model._tuner = tuner
+
+        return best_model
 
     def _prepare_data(
         self,

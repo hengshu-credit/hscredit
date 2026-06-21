@@ -103,67 +103,61 @@ class BorutaSelector(BaseFeatureSelector):
         :param X: 输入特征DataFrame
         :param y: 目标变量
         """
-        if y is None:
-            if self.target not in X.columns:
-                raise ValueError(f"需要传入y或X中包含{self.target}列")
-            y = X[self.target].values
-            X = X.drop(columns=self.target)
-
         self._get_feature_names(X)
-        
+
         n_samples, n_features = X.shape
-        
+        rng = np.random.RandomState(self.random_state)
+
         # 准备数据
         X_array = X.values
         feature_names = X.columns.tolist()
-        
-        # 创建影子特征
-        X_shadow = np.random.permutation(X_array)
-        X_with_shadow = np.hstack([X_array, X_shadow])
-        
+
         # 迭代
         selected = set(range(n_features))
         history = []
-        
+        real_importances = np.zeros(n_features)
+
         for iteration in range(self.max_iter):
+            # 每轮重新生成影子特征
+            X_shadow = rng.permutation(X_array)
+            X_with_shadow = np.hstack([X_array, X_shadow])
+
             # 训练模型
             model = clone(self.estimator)
             model.fit(X_with_shadow, y)
-            
+
             # 获取特征重要性（兼容所有模型类型）
             importances = get_feature_importances(model)
-            
+
             # 分离真实和影子特征重要性
             real_importances = importances[:n_features]
             shadow_importances = importances[n_features:]
-            
-            # 计算阈值（影子特征最大值的均值）
-            shadow_max = np.mean(shadow_importances)
-            
+
+            # 阈值：影子特征的最大重要性
+            shadow_max = np.max(shadow_importances) if len(shadow_importances) > 0 else 0.0
+
             # 记录历史
             history.append({
                 'iteration': iteration,
                 'selected': len(selected),
                 'shadow_max': shadow_max
             })
-            
+
             # 更新选中特征：简化版，只保留重要性高于影子特征最大值的特征
-            # （与标准Boruta不同，这里不追踪hits数，直接按阈值过滤）
             new_selected = set()
             for i in range(n_features):
                 if i in selected:
                     if real_importances[i] > shadow_max:
                         new_selected.add(i)
-                    # else: 重要性未超过影子特征阈值，移除
 
             selected = new_selected
-            
+
             if len(selected) == 0:
                 break
-        
+
         # 选中特征
-        self.selected_features_ = [feature_names[i] for i in selected]
-        
+        self.selected_features_ = [feature_names[i] for i in sorted(selected)]
+
         # 计算得分
         self.scores_ = pd.Series(real_importances, index=feature_names)
         self._drop_reason = '重要性低于影子特征'

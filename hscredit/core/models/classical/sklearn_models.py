@@ -140,6 +140,32 @@ class SklearnRiskModel(BaseRiskModel):
         # 直接从内部模型获取，避免缓存逻辑在clone后出错
         return self._model.feature_importances_
 
+    def save_model(self, path: str):
+        """保存底层sklearn模型（pickle格式）.
+
+        :param path: 保存路径
+        """
+        from ....utils import save_pickle
+        check_is_fitted(self, '_is_fitted')
+        save_pickle(self._model, path)
+
+    def load_model(self, path: str) -> 'SklearnRiskModel':
+        """加载底层sklearn模型（pickle格式）.
+
+        :param path: 模型路径
+        :return: self
+        """
+        from ....utils import load_pickle
+        self._model = load_pickle(path)
+        self._is_fitted = True
+        self.classes_ = getattr(self._model, 'classes_', np.array([0, 1]))
+        if hasattr(self._model, 'n_features_in_'):
+            self.n_features_in_ = self._model.n_features_in_
+        if not hasattr(self, 'feature_names_in_'):
+            n_feat = getattr(self, 'n_features_in_', 0)
+            self.feature_names_in_ = [f'feature_{i}' for i in range(n_feat)]
+        return self
+
 
 class RandomForestRiskModel(SklearnRiskModel):
     """随机森林风控模型.

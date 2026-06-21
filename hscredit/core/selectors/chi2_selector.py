@@ -38,6 +38,8 @@ class Chi2Selector(BaseFeatureSelector):
 
     :param threshold: 得分阈值，默认为0.0
     :param k: 保留的特征数，默认为'all'
+    :param missing: 缺失值处理方式。数值则直接填充；字符串 ``'mean'``/``'min'``/``'max'`` 按列统计量填充；
+        ``None`` 或 ``False`` 则删除含缺失值的行。默认为 ``-99.0``
     :param target: 目标变量列名，默认为'target'
 
     **参考样例**
@@ -59,6 +61,7 @@ class Chi2Selector(BaseFeatureSelector):
         self,
         threshold: float = 0.0,
         k: Union[int, str] = 'all',
+        missing: Union[float, int, str, None, bool] = -99.0,
         target: str = 'target',
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
@@ -70,6 +73,7 @@ class Chi2Selector(BaseFeatureSelector):
             exclude=exclude, force_drop=force_drop, n_jobs=n_jobs,
         )
         self.k = k
+        self.missing = missing
         self.method_name = '卡方检验筛选'
 
     def _fit_impl(
@@ -82,22 +86,29 @@ class Chi2Selector(BaseFeatureSelector):
         :param X: 输入特征DataFrame（需要非负值）
         :param y: 目标变量
         """
-        if y is None:
-            if self.target not in X.columns:
-                raise ValueError(f"需要传入y或X中包含{self.target}列")
-            y = X[self.target].values
-            X = X.drop(columns=self.target)
-
         self._get_feature_names(X)
 
-        # 确保非负
+        # 处理类别变量
         X_pos = X.copy()
         for col in X_pos.columns:
             if X_pos[col].dtype == 'object':
                 X_pos[col] = pd.factorize(X_pos[col])[0]
-        
-        X_array = X_pos.values
-        X_array = np.maximum(X_array, 0)
+
+        # 处理缺失值
+        if self.missing is None or self.missing is False:
+            mask = X_pos.notna().all(axis=1)
+            X_pos = X_pos.loc[mask]
+            y = np.asarray(y)[mask.values] if not isinstance(mask, np.ndarray) else np.asarray(y)[mask]
+        elif isinstance(self.missing, str):
+            fill_funcs = {'mean': X_pos.mean, 'min': X_pos.min, 'max': X_pos.max}
+            if self.missing not in fill_funcs:
+                raise ValueError(f"missing 仅支持 'mean'/'min'/'max'，收到: '{self.missing}'")
+            X_pos = X_pos.fillna(fill_funcs[self.missing]())
+        else:
+            X_pos = X_pos.fillna(float(self.missing))
+
+        # 确保非负
+        X_array = np.maximum(X_pos.values, 0)
 
         # 计算卡方得分
         chi2_scores, p_values = chi2(X_array, y)

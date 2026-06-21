@@ -234,3 +234,4 @@ examples/tree_viz_output
 anaconda_projects
 _repro
 .VSCodeCounter
+.codegraph

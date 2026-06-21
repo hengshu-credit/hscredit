@@ -313,20 +313,20 @@ class SelectionReportCollector:
         for i, r in enumerate(self.reports):
             stage = r.get('stage_name', f'阶段{i+1}')
             selected = set(r.get('选中特征', []))
-            dropped = set(r.get('剔除特征', []))
+            dropped_list = r.get('剔除特征', [])
+            dropped_set = set(dropped_list)
             scores = r.get('特征得分', {})
             dropped_reasons = r.get('剔除原因', [])
 
             for feat in all_features:
-                status = '选中' if feat in selected else ('剔除' if feat in dropped else '未处理')
-                
+                status = '选中' if feat in selected else ('剔除' if feat in dropped_set else '未处理')
+
                 # 获取得分或剔除原因
                 if status == '选中':
                     score_value = scores.get(feat, 'N/A')
                 elif status == '剔除':
-                    # 找到该特征在剔除列表中的索引
                     try:
-                        idx = list(dropped).index(feat)
+                        idx = dropped_list.index(feat)
                         score_value = dropped_reasons[idx] if idx < len(dropped_reasons) else 'N/A'
                     except (ValueError, IndexError):
                         score_value = 'N/A'
@@ -549,10 +549,16 @@ class SelectionReportCollector:
         print()
         print("筛选详情:")
         print("-" * 60)
-        print(f"{'阶段':<10} {'筛选器':<20} {'输入':>6} {'输出':>6} {'剔除':>6}")
+
+        def _cjk_ljust(s: str, width: int) -> str:
+            import unicodedata
+            display_w = sum(2 if unicodedata.east_asian_width(c) in ('F', 'W') else 1 for c in s)
+            return s + ' ' * max(0, width - display_w)
+
+        print(f"{_cjk_ljust('阶段', 10)} {_cjk_ljust('筛选器', 20)} {'输入':>6} {'输出':>6} {'剔除':>6}")
         print("-" * 60)
         for item in summary['筛选器列表']:
-            print(f"{item['阶段']:<10} {item['筛选器']:<20} {item['输入']:>6} {item['输出']:>6} {item['剔除']:>6}")
+            print(f"{_cjk_ljust(str(item['阶段']), 10)} {_cjk_ljust(str(item['筛选器']), 20)} {item['输入']:>6} {item['输出']:>6} {item['剔除']:>6}")
         print("=" * 60)
 
     def __len__(self) -> int:
@@ -1199,9 +1205,18 @@ class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
 
         # 添加scores信息
         if hasattr(self, 'scores_') and self.scores_ is not None:
-            # 转换numpy类型为Python原生类型
+            scores_raw = self.scores_
+            if isinstance(scores_raw, pd.Series):
+                raw_dict = scores_raw.to_dict()
+            elif isinstance(scores_raw, np.ndarray):
+                feature_names = getattr(self, 'feature_names_', None) or [f'f{i}' for i in range(len(scores_raw))]
+                raw_dict = dict(zip(feature_names, scores_raw))
+            elif isinstance(scores_raw, dict):
+                raw_dict = scores_raw
+            else:
+                raw_dict = {}
             scores_dict = {}
-            for k, v in self.scores_.to_dict().items():
+            for k, v in raw_dict.items():
                 if isinstance(v, (np.integer, np.floating)):
                     scores_dict[k] = float(v)
                 else:

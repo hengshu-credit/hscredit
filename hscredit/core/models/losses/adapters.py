@@ -201,29 +201,42 @@ class CatBoostLossAdapter:
             def calc_ders_range(self, approxes, targets, weights):
                 """计算梯度和二阶导.
 
-                :param approxes: 预测值列表（每个元素对应一个类别）
-                :param targets: 真实标签列表
-                :param weights: 样本权重
-                :return: 每个元素为(梯度, 二阶导)的列表
+                CatBoost 对一批样本调用本方法，``approxes``/``targets``/``weights``
+                均为与样本一一对应的原始分数/标签/权重数组（二分类单目标）。
+
+                注意符号约定：CatBoost 执行梯度上升以最小化损失，要求返回
+                ``der1 = -dL/dapprox``、``der2 = -d²L/dapprox²``，因此对 ``BaseLoss``
+                给出的（定义在概率上的）梯度/二阶导取负。
+
+                :param approxes: 预测原始分数数组（每个样本一个值）
+                :param targets: 真实标签数组
+                :param weights: 样本权重数组，可为 None
+                :return: 每个元素为 (一阶导, 二阶导) 的列表
                 """
-                # CatBoost的approxes是列表，对于二分类只有一个元素
-                approx = np.array(approxes[0])
-                targets = np.array(targets)
+                approx = np.asarray(approxes, dtype=float)
+                target = np.asarray(targets, dtype=float)
 
                 # 将原始分数转换为概率
                 probs = 1.0 / (1.0 + np.exp(-approx))
 
-                # 计算梯度和二阶导
-                grad = loss_obj.gradient(targets, probs)
-                hess = loss_obj.hessian(targets, probs)
-
+                # 计算梯度和二阶导（定义在概率 p 上）
+                grad = np.asarray(loss_obj.gradient(target, probs), dtype=float)
+                hess = loss_obj.hessian(target, probs)
                 if hess is None:
                     hess = np.ones_like(grad) * 0.5
+                hess = np.asarray(hess, dtype=float)
 
-                # CatBoost返回元组列表
-                result = list(zip(grad, hess))
+                # CatBoost 约定：梯度上升最小化损失，取负
+                der1 = -grad
+                der2 = -hess
 
-                return result
+                # 应用样本权重
+                if weights is not None:
+                    w = np.asarray(weights, dtype=float)
+                    der1 = der1 * w
+                    der2 = der2 * w
+
+                return list(zip(der1.tolist(), der2.tolist()))
 
         return CatBoostLoss()
 

@@ -128,12 +128,6 @@ class PSISelector(BaseFeatureSelector):
         :param X: 输入特征DataFrame
         :param y: 目标变量
         """
-        if y is None:
-            if self.target not in X.columns:
-                raise ValueError(f"需要传入y或X中包含{self.target}列")
-            y = X[self.target].values
-            X = X.drop(columns=self.target)
-
         self._get_feature_names(X)
 
         y = np.asarray(y)

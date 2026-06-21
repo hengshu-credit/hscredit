@@ -413,25 +413,24 @@ class NGBoostRiskModel(BaseRiskModel):
         return fig
 
     def save_model(self, path: str):
-        """保存模型.
+        """保存底层NGBoost模型（pickle格式）.
 
         :param path: 保存路径（.pkl格式）
         """
-        import pickle
+        from ....utils import save_pickle
         check_is_fitted(self, '_is_fitted')
-        with open(path, 'wb') as f:
-            pickle.dump(self._model, f)
+        save_pickle(self._model, path)
 
     def load_model(self, path: str) -> 'NGBoostRiskModel':
-        """加载模型.
+        """加载底层NGBoost模型（pickle格式）.
 
         :param path: 模型路径（.pkl格式）
         :return: self
         """
-        import pickle
-        with open(path, 'rb') as f:
-            self._model = pickle.load(f)
+        from ....utils import load_pickle
+        self._model = load_pickle(path)
         self._is_fitted = True
+        self.classes_ = getattr(self, 'classes_', np.array([0, 1]))
         return self
 
     def _convert_metrics(self, metrics: Union[str, List[str]]) -> Union[str, List[str]]:

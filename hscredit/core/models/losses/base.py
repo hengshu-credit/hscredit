@@ -73,8 +73,10 @@ class BaseLoss(ABC):
         """
         def xgb_loss(preds: np.ndarray, dtrain) -> Tuple[np.ndarray, np.ndarray]:
             labels = dtrain.get_label()
-            grad = self.gradient(labels, preds)
-            hess = self.hessian(labels, preds)
+            # 原生 xgb.train 回调传入原始分数，先 sigmoid 转概率再求梯度
+            probs = 1.0 / (1.0 + np.exp(-np.asarray(preds, dtype=float)))
+            grad = self.gradient(labels, probs)
+            hess = self.hessian(labels, probs)
             if hess is None:
                 # 如果没有二阶导，使用近似值
                 hess = np.ones_like(grad) * 0.5
@@ -88,19 +90,31 @@ class BaseLoss(ABC):
         :return: LightGBM可用的损失函数
         """
         def lgb_loss(y_true: np.ndarray, y_pred: np.ndarray):
-            grad = self.gradient(y_true, y_pred)
-            hess = self.hessian(y_true, y_pred)
+            # LightGBM 回调传入原始分数，先 sigmoid 转概率再求梯度
+            probs = 1.0 / (1.0 + np.exp(-np.asarray(y_pred, dtype=float)))
+            grad = self.gradient(y_true, probs)
+            hess = self.hessian(y_true, probs)
             if hess is None:
                 hess = np.ones_like(grad) * 0.5
             return grad, hess
 
         return lgb_loss
 
-    def to_catboost(self) -> Callable:
-        """转换为CatBoost格式的损失函数。
+    def to_catboost(self):
+        """转换为CatBoost格式的损失函数对象。
 
-        :return: CatBoost可用的损失函数
+        CatBoost 自定义损失需要一个实现 ``calc_ders_range`` 接口的对象（而非普通
+        函数），可直接传给 ``CatBoostClassifier(loss_function=...)``。本方法委托给
+        :class:`~hscredit.core.models.losses.adapters.CatBoostLossAdapter`，内部已
+        完成 sigmoid 链接函数转换与 CatBoost 的符号约定处理。
+
+        :return: CatBoost 可用的损失对象（含 calc_ders_range 方法）
         """
+        from .adapters import CatBoostLossAdapter
+        return CatBoostLossAdapter(self).objective()
+
+    def _legacy_catboost_loss(self) -> Callable:
+        """旧版 CatBoost 损失闭包（保留备查，不推荐使用）。"""
         def catboost_loss(approxes, target, weight):
             # CatBoost使用不同的接口
             approx = approxes[0]

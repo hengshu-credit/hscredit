@@ -341,30 +341,33 @@ class StepwiseSelector(BaseFeatureSelector):
             }
 
         X_model = X[features].values
+
+        from sklearn.base import clone as sklearn_clone
+        model = sklearn_clone(self.estimator)
+
         if self.intercept:
-            # 对于 sklearn 评估器，使用 fit_intercept 参数
-            if hasattr(self.estimator, 'fit_intercept'):
-                self.estimator.fit_intercept = self.intercept
+            if hasattr(model, 'fit_intercept'):
+                model.fit_intercept = self.intercept
             else:
                 X_model = sm.add_constant(X_model)
 
         try:
-            self.estimator.fit(X_model, y)
+            model.fit(X_model, y)
 
             # 计算预测值
-            if hasattr(self.estimator, 'predict_proba'):
-                y_pred = self.estimator.predict_proba(X_model)[:, 1]
+            if hasattr(model, 'predict_proba'):
+                y_pred = model.predict_proba(X_model)[:, 1]
             else:
-                y_pred = self.estimator.predict(X_model)
+                y_pred = model.predict(X_model)
 
             # 计算准则值
             criterion_value = self._calculate_criterion_from_predictions(y, y_pred, len(features))
 
             return {
                 'criterion': criterion_value,
-                'result': self.estimator,
-                'p_values': None,  # sklearn 评估器通常不提供p值
-                'params': getattr(self.estimator, 'coef_', None),
+                'result': model,
+                'p_values': None,
+                'params': getattr(model, 'coef_', None),
             }
 
         except Exception as e:

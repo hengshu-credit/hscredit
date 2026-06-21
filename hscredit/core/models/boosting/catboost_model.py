@@ -261,6 +261,14 @@ class CatBoostRiskModel(BaseRiskModel):
         # 最后更新原生params（优先级最高）
         params.update(self._native_params)
 
+        # 解析自定义损失（BaseLoss 实例 -> CatBoost 可用的损失对象）
+        resolved_loss = self._resolve_catboost_loss(params.get('loss_function'))
+        params['loss_function'] = resolved_loss
+
+        # CatBoost 自定义损失（非内置字符串）不支持 scale_pos_weight，需移除以避免报错
+        if not isinstance(resolved_loss, str) and 'scale_pos_weight' in params:
+            params.pop('scale_pos_weight', None)
+
         # 创建模型
         self._model = cb.CatBoostClassifier(**params)
 
@@ -284,17 +292,51 @@ class CatBoostRiskModel(BaseRiskModel):
 
         return self
 
+    @staticmethod
+    def _resolve_catboost_loss(loss_function):
+        """将自定义损失对象解析为 CatBoost 可用的损失对象.
+
+        当传入 :class:`~hscredit.core.models.losses.BaseLoss` 实例时，通过
+        :class:`~hscredit.core.models.losses.CatBoostLossAdapter` 转换为带有
+        ``calc_ders_range`` 接口的 CatBoost 自定义损失对象；其他对象原样返回。
+        """
+        try:
+            from ..losses.base import BaseLoss
+            from ..losses.adapters import CatBoostLossAdapter
+        except Exception:
+            return loss_function
+
+        if isinstance(loss_function, BaseLoss):
+            return CatBoostLossAdapter(loss_function).objective()
+        return loss_function
+
     def predict(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
-        """预测类别标签."""
+        """预测类别标签.
+
+        基于 predict_proba 取阈值，确保自定义损失（原始分数输出）下也能返回正确类别。
+        """
         check_is_fitted(self, '_is_fitted')
-        X = self._prepare_data(X)[0]
-        return self._model.predict(X).flatten()
+        proba = self.predict_proba(X)
+        indices = np.argmax(proba, axis=1)
+        return np.asarray(self.classes_)[indices]
 
     def predict_proba(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
-        """预测概率."""
+        """预测概率.
+
+        当使用自定义损失函数（loss_function 为可调用对象）时，CatBoost 返回的是
+        未经过链接函数转换的原始分数（raw margin，一维数组），此处自动应用
+        sigmoid 转换为概率并补齐为二维 (n_samples, 2) 输出，与内置目标保持一致。
+        """
         check_is_fitted(self, '_is_fitted')
         X = self._prepare_data(X)[0]
-        return self._model.predict_proba(X)
+        proba = np.asarray(self._model.predict_proba(X))
+
+        # 自定义损失返回一维原始分数，应用 sigmoid 并补齐为两列概率
+        if proba.ndim == 1:
+            p1 = 1.0 / (1.0 + np.exp(-proba))
+            proba = np.column_stack([1.0 - p1, p1])
+
+        return proba
 
     def get_feature_importances(self, importance_type: str = 'PredictionValuesChange') -> pd.Series:
         """获取特征重要性.
@@ -360,15 +402,15 @@ class CatBoostRiskModel(BaseRiskModel):
         return self._model.calc_leaf_indexes(X)
 
     def save_model(self, path: str):
-        """保存模型.
+        """保存底层CatBoost模型（原生格式）.
 
-        :param path: 保存路径
+        :param path: 保存路径（.cbm/.json 格式）
         """
         check_is_fitted(self, '_is_fitted')
         self._model.save_model(path)
 
     def load_model(self, path: str) -> 'CatBoostRiskModel':
-        """加载模型.
+        """加载底层CatBoost模型（原生格式）.
 
         :param path: 模型路径
         :return: self
@@ -376,6 +418,11 @@ class CatBoostRiskModel(BaseRiskModel):
         self._model = cb.CatBoostClassifier()
         self._model.load_model(path)
         self._is_fitted = True
+        self.classes_ = getattr(self, 'classes_', np.array([0, 1]))
+        if not hasattr(self, 'feature_names_in_'):
+            n_feat = self._model.feature_count_ if hasattr(self._model, 'feature_count_') else 0
+            self.feature_names_in_ = [f'feature_{i}' for i in range(n_feat)]
+            self.n_features_in_ = n_feat
         return self
 
     def _convert_metrics(self, metrics: Union[str, List[str]]) -> Union[str, List[str]]:

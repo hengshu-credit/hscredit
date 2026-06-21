@@ -31,7 +31,8 @@ class RegexSelector(BaseFeatureSelector):
     **参数**
 
     :param pattern: 正则表达式模式
-    :param exclude: 是否排除匹配的特征，默认为False
+    :param invert: 是否反转匹配（True 表示排除匹配的特征，保留不匹配的），默认为 False
+    :param flags: 正则表达式标志，默认为 0
 
     **参考样例**
 
@@ -52,6 +53,7 @@ class RegexSelector(BaseFeatureSelector):
     def __init__(
         self,
         pattern: str,
+        invert: bool = False,
         flags: int = 0,
         target: str = 'target',
         include: Optional[List[str]] = None,
@@ -64,6 +66,7 @@ class RegexSelector(BaseFeatureSelector):
             force_drop=force_drop, n_jobs=n_jobs,
         )
         self.pattern = pattern
+        self.invert = invert
         self.flags = flags
         self.method_name = '正则筛选'
 
@@ -81,8 +84,8 @@ class RegexSelector(BaseFeatureSelector):
 
         # 正则匹配
         matches = X.columns.str.contains(self.pattern, regex=True, flags=self.flags)
-        
-        if self.exclude:
+
+        if self.invert:
             selected_cols = X.columns[~matches].tolist()
             self.scores_ = (~matches).astype(int)
         else:
