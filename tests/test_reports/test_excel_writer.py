@@ -605,5 +605,180 @@ class TestMultiLevelIndex:
         assert ws["B3"].value == 'X' or str(ws["B3"]).startswith("<MergedCell")
 
 
+class TestMoveSheet:
+    """测试 move_sheet 绝对位置移动（修复前 index 偏移计算错误）"""
+
+    def _make_writer(self):
+        writer = ExcelWriter()
+        for n in ["A", "B", "C", "D"]:
+            writer.get_sheet_by_name(n)
+        return writer
+
+    def test_move_to_index_middle(self):
+        writer = self._make_writer()
+        # 模板 '初始化' 仍在首位：['初始化','A','B','C','D']
+        writer.move_sheet("A", index=2)
+        assert writer.workbook.sheetnames.index("A") == 2
+
+    def test_move_to_first(self):
+        writer = self._make_writer()
+        writer.move_sheet("C", index=0)
+        assert writer.workbook.sheetnames.index("C") == 0
+
+    def test_move_to_last(self):
+        writer = self._make_writer()
+        total = len(writer.workbook.sheetnames)
+        writer.move_sheet("A", index=total - 1)
+        assert writer.workbook.sheetnames.index("A") == total - 1
+
+    def test_move_negative_index(self):
+        writer = self._make_writer()
+        total = len(writer.workbook.sheetnames)
+        writer.move_sheet("A", index=-1)
+        assert writer.workbook.sheetnames.index("A") == total - 1
+
+
+class TestPivotTable:
+    """测试数据透视表 / 数据透视图功能"""
+
+    def setup_method(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.test_file = os.path.join(self.temp_dir, "pivot.xlsx")
+        self.df = pd.DataFrame({
+            "商品类别": ["数码", "服饰", "数码", "服饰", "数码", "食品"],
+            "区域": ["华东", "华东", "华南", "华南", "华北", "华东"],
+            "放款金额": [100, 200, 300, 400, 500, 600],
+            "笔数": [1, 2, 3, 4, 5, 6],
+        })
+
+    def teardown_method(self):
+        import shutil
+        if os.path.exists(self.temp_dir):
+            shutil.rmtree(self.temp_dir)
+
+    def _pivot_parts(self, path):
+        import zipfile
+        with zipfile.ZipFile(path) as z:
+            return z.namelist()
+
+    def _read(self, path, part):
+        import zipfile
+        with zipfile.ZipFile(path) as z:
+            return z.read(part).decode("utf-8")
+
+    def _assert_all_xml_wellformed(self, path):
+        import zipfile
+        import xml.dom.minidom as minidom
+        with zipfile.ZipFile(path) as z:
+            for n in z.namelist():
+                if n.endswith(".xml") or n.endswith(".rels"):
+                    minidom.parseString(z.read(n))  # 抛异常即不合法
+
+    def test_records_spec_only(self):
+        """insert_pivot_table2sheet 仅记录配置，不立即落地"""
+        writer = ExcelWriter()
+        ws = writer.get_sheet_by_name("透视表")
+        writer.insert_pivot_table2sheet(
+            ws, self.df, "B2", rows="商品类别", columns="区域", values=[("放款金额", "sum")]
+        )
+        assert len(writer._pivot_specs) == 1
+        assert writer._pivot_specs[0]["name"] == "数据透视表1"
+
+    def test_requires_values(self):
+        writer = ExcelWriter()
+        ws = writer.get_sheet_by_name("透视表")
+        with pytest.raises(ValueError):
+            writer.insert_pivot_table2sheet(ws, self.df, "B2", rows="商品类别")
+
+    def test_pivot_parts_injected(self):
+        """保存后注入 pivotCache/pivotTable 部件，且文件可被 openpyxl 重新打开"""
+        writer = ExcelWriter()
+        ws = writer.get_sheet_by_name("透视表")
+        writer.insert_pivot_table2sheet(
+            ws, self.df, "B2",
+            rows="商品类别", columns="区域", values=[("放款金额", "sum"), ("笔数", "sum")],
+        )
+        writer.save(self.test_file)
+
+        parts = self._pivot_parts(self.test_file)
+        assert "xl/pivotTables/pivotTable1.xml" in parts
+        assert "xl/pivotCache/pivotCacheDefinition1.xml" in parts
+        assert "xl/pivotCache/pivotCacheRecords1.xml" in parts
+
+        # 所有 XML 合法
+        self._assert_all_xml_wellformed(self.test_file)
+
+        # 文件可被 openpyxl 重新打开（未损坏）
+        load_workbook(self.test_file)
+
+    def test_pivot_wiring(self):
+        """工作表 -> pivotTable、workbook -> pivotCache 关系完整"""
+        writer = ExcelWriter()
+        ws = writer.get_sheet_by_name("透视表")
+        writer.insert_pivot_table2sheet(
+            ws, self.df, "B2", rows="商品类别", values=[("放款金额", "sum")]
+        )
+        writer.save(self.test_file)
+
+        # workbook 声明 pivotCaches
+        wb_xml = self._read(self.test_file, "xl/workbook.xml")
+        assert "<pivotCaches>" in wb_xml
+        # [Content_Types] 含三类 Override
+        ct = self._read(self.test_file, "[Content_Types].xml")
+        assert "pivotTable+xml" in ct
+        assert "pivotCacheDefinition+xml" in ct
+        assert "pivotCacheRecords+xml" in ct
+        # 透视表所在 sheet 的 _rels 引用 pivotTable
+        parts = self._pivot_parts(self.test_file)
+        sheet_rels = [p for p in parts if p.startswith("xl/worksheets/_rels/")]
+        assert sheet_rels
+        joined = "".join(self._read(self.test_file, p) for p in sheet_rels)
+        assert "pivotTable1.xml" in joined
+
+    def test_records_count_matches(self):
+        """缓存记录数与源数据行数一致"""
+        writer = ExcelWriter()
+        ws = writer.get_sheet_by_name("透视表")
+        writer.insert_pivot_table2sheet(
+            ws, self.df, "B2", rows="商品类别", values=[("放款金额", "sum")]
+        )
+        writer.save(self.test_file)
+        rec = self._read(self.test_file, "xl/pivotCache/pivotCacheRecords1.xml")
+        assert 'count="{}"'.format(len(self.df)) in rec
+
+    def test_unsupported_agg(self):
+        writer = ExcelWriter()
+        ws = writer.get_sheet_by_name("透视表")
+        with pytest.raises(ValueError):
+            writer.insert_pivot_table2sheet(
+                ws, self.df, "B2", rows="商品类别", values=[("放款金额", "median")]
+            )
+
+    def test_pivot_chart_injects_pivotsource(self):
+        """数据透视图在 chart XML 注入 pivotSource，且文件合法"""
+        writer = ExcelWriter()
+        ws = writer.get_sheet_by_name("透视分析")
+        writer.insert_pivot_table2sheet(
+            ws, self.df, "B2", rows="商品类别", values=[("放款金额", "sum")]
+        )
+        writer.insert_pivot_chart2sheet(ws, "H2", chart_type="bar", title="各类别放款金额")
+        writer.save(self.test_file)
+
+        self._assert_all_xml_wellformed(self.test_file)
+        load_workbook(self.test_file)
+
+        import zipfile
+        with zipfile.ZipFile(self.test_file) as z:
+            charts = [n for n in z.namelist() if n.startswith("xl/charts/chart") and n.endswith(".xml")]
+            assert charts
+            assert any("pivotSource" in z.read(c).decode("utf-8") for c in charts)
+
+    def test_pivot_chart_requires_table(self):
+        writer = ExcelWriter()
+        ws = writer.get_sheet_by_name("透视分析")
+        with pytest.raises(ValueError):
+            writer.insert_pivot_chart2sheet(ws, "H2")
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

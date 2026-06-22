@@ -38,6 +38,8 @@ from openpyxl.formatting.rule import DataBarRule, ColorScaleRule
 from openpyxl.utils import get_column_letter, column_index_from_string
 from openpyxl.styles import NamedStyle, Border, Side, Alignment, PatternFill, Font
 
+from . import _pivot
+
 # hscredit 可视化主题配色（与 core.viz 保持一致）：主题蓝 / 坏样本红 / 提升橙
 HSCREDIT_CHART_COLORS = ["2639E9", "F76E6C", "FE7715"]
 
@@ -144,6 +146,12 @@ class ExcelWriter:
         # 迷你图（sparkline）规格缓存，保存时统一注入 worksheet XML
         # openpyxl 不支持写入 sparkline，故在 save() 后对 xlsx 进行 XML 注入
         self._sparkline_specs: List[Dict[str, Any]] = []
+
+        # 数据透视表规格缓存，保存时注入 pivotCache/pivotTable 部件
+        # openpyxl 不支持创建数据透视表，故在 save() 后对 xlsx 进行 XML 注入
+        self._pivot_specs: List[Dict[str, Any]] = []
+        # 数据透视图规格缓存：记录需在对应 chart XML 中注入 pivotSource 的透视图
+        self._pivot_chart_specs: List[Dict[str, Any]] = []
 
     def __enter__(self) -> 'ExcelWriter':
         """进入上下文管理器。
@@ -447,14 +455,22 @@ class ExcelWriter:
 
         :param worksheet: 工作表对象或名称
         :param offset: 相对移动位置，默认为0
-        :param index: 移动到的位置索引，默认为None
+        :param index: 移动到的目标绝对位置索引（从0开始），默认为None；传入时忽略 ``offset``
         """
         total_sheets = len(self.workbook.sheetnames)
 
         if index is not None:
-            offset = -(total_sheets - 1) + index
-            if offset >= total_sheets:
-                offset = total_sheets - 1
+            # 根据工作表当前位置换算到目标绝对位置所需的相对偏移
+            # （openpyxl 的 move_sheet 采用「先删除再按 当前索引+offset 插入」语义，
+            # 故 offset = 目标索引 - 当前索引 即可精确落位）
+            sheet_name = worksheet.title if isinstance(worksheet, Worksheet) else worksheet
+            current_index = self.workbook.sheetnames.index(sheet_name)
+            # 将目标索引规范化到合法范围
+            if index < 0:
+                index = max(total_sheets + index, 0)
+            else:
+                index = min(index, total_sheets - 1)
+            offset = index - current_index
 
         self.workbook.move_sheet(worksheet, offset=offset)
 
@@ -1894,6 +1910,461 @@ class ExcelWriter:
 
         shutil.move(tmp_path, filename)
 
+    # ------------------------------------------------------------------ #
+    # 数据透视表 / 数据透视图
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _parse_anchor(space: Union[str, Tuple[int, int]]) -> Tuple[int, int]:
+        """将 'B2' 或 (row, col) 统一解析为 (row, col) 整型元组。"""
+        if isinstance(space, str):
+            row = int(re.findall(r"\d+", space)[0])
+            col = column_index_from_string(re.findall(r"\D+", space)[0])
+            return row, col
+        return int(space[0]), int(space[1])
+
+    def insert_pivot_table2sheet(
+        self,
+        worksheet: Union[Worksheet, str],
+        data: pd.DataFrame,
+        pivot_anchor: Union[str, Tuple[int, int]],
+        rows: Optional[Union[str, List[str]]] = None,
+        columns: Optional[Union[str, List[str]]] = None,
+        values: Optional[Any] = None,
+        filters: Optional[Union[str, List[str]]] = None,
+        source_sheet: Optional[Union[Worksheet, str]] = None,
+        source_anchor: Union[str, Tuple[int, int]] = (1, 1),
+        write_source: Optional[bool] = None,
+        name: Optional[str] = None,
+        show_row_totals: bool = True,
+        show_col_totals: bool = True,
+        style: str = "PivotStyleLight16",
+        fill: bool = True,
+    ) -> Tuple[int, int]:
+        """向工作表插入Excel原生数据透视表。
+
+        由于 openpyxl 不支持创建数据透视表，本方法仅记录配置，在 :meth:`save` 时将
+        ``pivotCacheDefinition`` / ``pivotCacheRecords`` / ``pivotTable`` 等部件注入到
+        xlsx 中，生成 Excel 可交互、可刷新的原生数据透视表。透视缓存写入 ``refreshOnLoad="1"``，
+        Excel 打开时会基于源数据自动刷新。
+
+        :param worksheet: 透视表放置的工作表对象或名称
+        :param data: 源数据 DataFrame（透视缓存基于此构建）
+        :param pivot_anchor: 透视表左上角锚点，如'B2'或(2, 2)
+        :param rows: 行字段（列名或列名列表），默认为None
+        :param columns: 列字段（列名或列名列表），默认为None
+        :param values: 值字段，支持多种形式：
+
+            - ``'金额'`` 或 ``['金额', '数量']``：默认聚合（数值列求和，非数值列计数）
+            - ``[('金额', 'sum'), ('数量', 'mean')]``：显式指定聚合
+            - ``{'金额': 'sum'}``：字典形式
+
+            支持的聚合：sum/count/average(mean)/max/min/product/count_nums/std/stdp/var/varp
+        :param filters: 页/筛选字段（列名或列名列表），默认为None
+        :param source_sheet: 源数据所在工作表对象或名称，默认为None（自动新建源数据表写入 ``data``）
+        :param source_anchor: 源数据写入/定位的左上角（含表头），默认为(1, 1)
+        :param write_source: 是否写入源数据，默认为None（``source_sheet`` 为None时自动写入）
+        :param name: 透视表名称，默认为None（自动命名「数据透视表N」）
+        :param show_row_totals: 是否显示行总计，默认为True
+        :param show_col_totals: 是否显示列总计，默认为True
+        :param style: 透视表内置样式名，默认为"PivotStyleLight16"
+        :param fill: 自动写入源数据时是否使用颜色填充，默认为True
+        :return: (透视表区域下一行行号, 下一列列号)
+
+        **参考样例**
+
+        >>> import pandas as pd
+        >>> from hscredit.excel import ExcelWriter
+        >>> df = pd.DataFrame({
+        ...     '商品类别': ['数码', '服饰', '数码', '服饰'],
+        ...     '区域': ['华东', '华东', '华南', '华南'],
+        ...     '放款金额': [100, 200, 300, 400],
+        ... })
+        >>> with ExcelWriter().set_filename('pivot.xlsx') as writer:
+        ...     ws = writer.get_sheet_by_name('透视表')
+        ...     writer.insert_pivot_table2sheet(
+        ...         ws, df, 'B2',
+        ...         rows='商品类别', columns='区域', values=[('放款金额', 'sum')],
+        ...     )
+        """
+        if values is None:
+            raise ValueError("数据透视表至少需要指定一个值字段（values）")
+
+        data = data.copy()
+        rows = [] if rows is None else ([rows] if isinstance(rows, str) else list(rows))
+        columns = [] if columns is None else ([columns] if isinstance(columns, str) else list(columns))
+        filters = [] if filters is None else ([filters] if isinstance(filters, str) else list(filters))
+
+        if not isinstance(worksheet, Worksheet):
+            worksheet = self.get_sheet_by_name(worksheet)
+        pivot_sheet = worksheet.title
+        pivot_anchor = self._parse_anchor(pivot_anchor)
+
+        name = name or "数据透视表{}".format(len(self._pivot_specs) + 1)
+        value_fields = _pivot.normalize_values(values, data)
+
+        # 解析/写入源数据
+        src_row, src_col = self._parse_anchor(source_anchor)
+        if source_sheet is None:
+            source_ws = self.get_sheet_by_name("{}_源数据".format(name))
+            do_write = True if write_source is None else write_source
+        else:
+            source_ws = source_sheet if isinstance(source_sheet, Worksheet) else self.get_sheet_by_name(source_sheet)
+            do_write = bool(write_source)
+        source_sheet_name = source_ws.title
+
+        if do_write:
+            self.insert_df2sheet(source_ws, data, (src_row, src_col), header=True, index=False, fill=fill)
+
+        # 源数据区域引用（worksheetSource 的 sheet 单独存储，ref 不含 sheet 前缀/$）
+        n_cols = len(data.columns)
+        n_rows = len(data)
+        source_ref = "{}{}:{}{}".format(
+            get_column_letter(src_col), src_row,
+            get_column_letter(src_col + n_cols - 1), src_row + n_rows,
+        )
+
+        cache_id = len(self._pivot_specs)
+        spec = _pivot.build_pivot_spec(
+            data=data,
+            source_sheet=source_sheet_name,
+            source_ref=source_ref,
+            pivot_sheet=pivot_sheet,
+            pivot_anchor=pivot_anchor,
+            rows=rows, columns=columns, values=value_fields, filters=filters,
+            name=name, cache_id=cache_id,
+            show_row_totals=show_row_totals, show_col_totals=show_col_totals,
+        )
+        spec["style"] = style
+        self._pivot_specs.append(spec)
+
+        layout = _pivot.compute_pivot_layout(spec)
+        return pivot_anchor[0] + layout["height"], pivot_anchor[1] + layout["width"]
+
+    def insert_pivot_chart2sheet(
+        self,
+        worksheet: Union[Worksheet, str],
+        chart_anchor: Union[str, Tuple[int, int]],
+        pivot_name: Optional[str] = None,
+        chart_type: str = "bar",
+        title: Optional[str] = None,
+        width: float = 15.0,
+        height: float = 7.5,
+        bar_stacked: bool = False,
+    ) -> Tuple[int, int]:
+        """基于已创建的数据透视表插入Excel原生数据透视图。
+
+        本方法先用 openpyxl 在透视表输出区域上构建普通图表（柱状/折线/饼图），
+        并在 :meth:`save` 时向该图表 XML 注入 ``c:pivotSource``，使其成为绑定到透视表的
+        原生数据透视图，可随透视表刷新联动。
+
+        需先调用 :meth:`insert_pivot_table2sheet` 创建透视表。
+
+        :param worksheet: 透视图放置的工作表对象或名称（通常与透视表同表）
+        :param chart_anchor: 图表插入位置，如'H2'或(2, 8)
+        :param pivot_name: 关联的透视表名称，默认为None（取最近创建的透视表）
+        :param chart_type: 图表类型，可选'bar'(柱状)、'line'(折线)、'pie'(饼图)，默认'bar'
+        :param title: 图表标题，默认为None
+        :param width: 图表宽度（厘米），默认为15.0
+        :param height: 图表高度（厘米），默认为7.5
+        :param bar_stacked: 柱状图是否堆叠，默认为False
+        :return: (下一行行号, 下一列列号)
+
+        **参考样例**
+
+        >>> writer.insert_pivot_table2sheet(ws, df, 'B2', rows='商品类别', values=[('放款金额', 'sum')])
+        >>> writer.insert_pivot_chart2sheet(ws, 'H2', chart_type='bar', title='各类别放款金额')
+        """
+        from openpyxl.chart import BarChart, LineChart, PieChart, Reference
+
+        if not self._pivot_specs:
+            raise ValueError("请先调用 insert_pivot_table2sheet 创建数据透视表")
+
+        # 定位关联透视表
+        spec = None
+        if pivot_name is None:
+            spec = self._pivot_specs[-1]
+        else:
+            for s in self._pivot_specs:
+                if s["name"] == pivot_name:
+                    spec = s
+                    break
+            if spec is None:
+                raise ValueError("未找到名为 '{}' 的数据透视表".format(pivot_name))
+
+        if not isinstance(worksheet, Worksheet):
+            worksheet = self.get_sheet_by_name(worksheet)
+
+        layout = _pivot.compute_pivot_layout(spec)
+        anchor_row, anchor_col = spec["pivot_anchor"]
+        # 透视表输出区域：类别在首个行标签列，数值在数据列
+        cat_col = anchor_col
+        header_row = anchor_row + layout["first_data_row"] - 1
+        data_first_row = anchor_row + layout["first_data_row"]
+        data_last_row = data_first_row + max(1, layout["n_row_leaf"]) - 1
+        val_first_col = anchor_col + layout["first_data_col"]
+        val_last_col = val_first_col + layout["n_col_leaf"] - 1
+        pivot_ws = self.get_sheet_by_name(spec["pivot_sheet"])
+
+        type_map = {"bar": BarChart, "line": LineChart, "pie": PieChart}
+        if chart_type not in type_map:
+            raise ValueError("chart_type 仅支持 'bar'、'line' 或 'pie'")
+        chart = type_map[chart_type]()
+        if chart_type == "bar":
+            chart.type = "col"
+            chart.grouping = "stacked" if bar_stacked else "clustered"
+            if bar_stacked:
+                chart.overlap = 100
+
+        data_ref = Reference(
+            pivot_ws, min_col=val_first_col, max_col=val_last_col,
+            min_row=header_row, max_row=data_last_row,
+        )
+        cats_ref = Reference(pivot_ws, min_col=cat_col, min_row=data_first_row, max_row=data_last_row)
+        chart.add_data(data_ref, titles_from_data=True)
+        chart.set_categories(cats_ref)
+
+        if title:
+            chart.title = self._styled_chart_title(title)
+        try:
+            chart.legend.position = "b"
+        except Exception:
+            pass
+
+        # 主题配色
+        try:
+            for i, series in enumerate(chart.series):
+                color = HSCREDIT_CHART_COLORS[i % len(HSCREDIT_CHART_COLORS)]
+                series.graphicalProperties.solidFill = color
+        except Exception:
+            pass
+
+        next_pos = self.insert_chart2sheet(worksheet, chart_anchor, chart, width=width, height=height)
+
+        # 记录待注入 pivotSource 的透视图（按透视表所在 sheet 名匹配 chart 部件）
+        self._pivot_chart_specs.append({
+            "pivot_name": spec["name"],
+            "pivot_sheet": spec["pivot_sheet"],
+            "cache_id": spec["cache_id"],
+        })
+        return next_pos
+
+    def _inject_pivots(self, filename: str) -> None:
+        """在 openpyxl 保存后，将数据透视表相关部件注入到 xlsx（zip）中。
+
+        :param filename: 已保存的 xlsx 文件路径
+        """
+        if not self._pivot_specs:
+            return
+
+        with zipfile.ZipFile(filename, "r") as zin:
+            names = set(zin.namelist())
+            content_types = zin.read("[Content_Types].xml").decode("utf-8")
+            workbook_xml = zin.read("xl/workbook.xml").decode("utf-8")
+            wb_rels = zin.read("xl/_rels/workbook.xml.rels").decode("utf-8")
+
+            # sheet 名 -> r:id -> worksheet 部件路径（复用 sparkline 注入同样的解析方式）
+            name_to_rid = {}
+            for m in re.finditer(r"<sheet\b[^>]*/>", workbook_xml):
+                tag = m.group(0)
+                name_m = re.search(r'name="([^"]*)"', tag)
+                rid_m = re.search(r'r:id="([^"]*)"', tag)
+                if name_m and rid_m:
+                    name_to_rid[name_m.group(1)] = rid_m.group(1)
+            rid_to_target = {}
+            for m in re.finditer(r"<Relationship\b[^>]*/>", wb_rels):
+                tag = m.group(0)
+                if "worksheet" not in tag:
+                    continue
+                id_m = re.search(r'Id="([^"]*)"', tag)
+                tgt_m = re.search(r'Target="([^"]*)"', tag)
+                if id_m and tgt_m:
+                    target = tgt_m.group(1)
+                    part = target.lstrip("/") if target.startswith("/") else "xl/" + target
+                    rid_to_target[id_m.group(1)] = part
+
+            # 现有 rId 最大值，避免冲突
+            existing_rids = [int(m) for m in re.findall(r'Id="rId(\d+)"', wb_rels)]
+            next_rid = max(existing_rids) + 1 if existing_rids else 1
+
+            new_parts: Dict[str, bytes] = {}
+            sheet_pivot_rels: Dict[str, List[Tuple[str, str]]] = {}  # sheet part -> [(rid, pivotTable target)]
+            wb_pivotcache_entries: List[Tuple[int, str]] = []       # (cacheId, rId)
+            wb_new_rels: List[Tuple[str, str, str]] = []            # (rId, type, target)
+            ct_overrides: List[Tuple[str, str]] = []                # (PartName, ContentType)
+
+            for i, spec in enumerate(self._pivot_specs, start=1):
+                cache_def_part = "xl/pivotCache/pivotCacheDefinition{}.xml".format(i)
+                cache_rec_part = "xl/pivotCache/pivotCacheRecords{}.xml".format(i)
+                pivot_part = "xl/pivotTables/pivotTable{}.xml".format(i)
+                cache_def_rels = "xl/pivotCache/_rels/pivotCacheDefinition{}.xml.rels".format(i)
+                pivot_rels = "xl/pivotTables/_rels/pivotTable{}.xml.rels".format(i)
+
+                # cacheDefinition -> records 的关系（部件内固定 rId1）
+                cache_def_xml = _pivot.render_cache_definition_xml(spec, "rId1")
+                cache_rec_xml = _pivot.render_cache_records_xml(spec)
+                pivot_xml = _pivot.render_pivot_table_xml(spec)
+
+                new_parts[cache_def_part] = cache_def_xml.encode("utf-8")
+                new_parts[cache_rec_part] = cache_rec_xml.encode("utf-8")
+                new_parts[pivot_part] = pivot_xml.encode("utf-8")
+                new_parts[cache_def_rels] = (
+                    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n'
+                    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                    '<Relationship Id="rId1" Type="{}" Target="pivotCacheRecords{}.xml"/>'
+                    '</Relationships>'.format(_pivot.REL_CACHE_REC, i)
+                ).encode("utf-8")
+                new_parts[pivot_rels] = (
+                    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n'
+                    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                    '<Relationship Id="rId1" Type="{}" Target="../pivotCache/pivotCacheDefinition{}.xml"/>'
+                    '</Relationships>'.format(_pivot.REL_CACHE_DEF, i)
+                ).encode("utf-8")
+
+                # workbook -> cacheDefinition 关系 + pivotCaches 条目
+                rid = "rId{}".format(next_rid)
+                next_rid += 1
+                wb_new_rels.append((rid, _pivot.REL_CACHE_DEF, "pivotCache/pivotCacheDefinition{}.xml".format(i)))
+                wb_pivotcache_entries.append((spec["cache_id"], rid))
+
+                # sheet -> pivotTable 关系
+                sheet_part = rid_to_target.get(name_to_rid.get(spec["pivot_sheet"]))
+                if sheet_part:
+                    sheet_rels_part = sheet_part.replace("xl/worksheets/", "xl/worksheets/_rels/") + ".rels"
+                    rel_target = "../pivotTables/pivotTable{}.xml".format(i)
+                    sheet_pivot_rels.setdefault(sheet_rels_part, []).append((_pivot.REL_PIVOT_TABLE, rel_target))
+
+                ct_overrides.append(("/" + cache_def_part, _pivot.CT_CACHE_DEF))
+                ct_overrides.append(("/" + cache_rec_part, _pivot.CT_CACHE_REC))
+                ct_overrides.append(("/" + pivot_part, _pivot.CT_PIVOT_TABLE))
+
+            # 1) [Content_Types].xml 追加 Override
+            override_xml = "".join(
+                '<Override PartName="{}" ContentType="{}"/>'.format(pn, ct) for pn, ct in ct_overrides
+            )
+            content_types = content_types.replace("</Types>", override_xml + "</Types>")
+
+            # 2) workbook.xml 追加 <pivotCaches>（位于 extLst / </workbook> 之前）
+            pivotcaches_xml = "<pivotCaches>" + "".join(
+                '<pivotCache cacheId="{}" r:id="{}"/>'.format(cid, rid)
+                for cid, rid in wb_pivotcache_entries
+            ) + "</pivotCaches>"
+            if "<extLst" in workbook_xml:
+                idx = workbook_xml.find("<extLst")
+                workbook_xml = workbook_xml[:idx] + pivotcaches_xml + workbook_xml[idx:]
+            else:
+                workbook_xml = workbook_xml.replace("</workbook>", pivotcaches_xml + "</workbook>")
+            # 确保 r 命名空间存在（openpyxl 默认会写入，稳妥起见兜底）
+            if "xmlns:r=" not in workbook_xml.split(">", 1)[0]:
+                workbook_xml = workbook_xml.replace(
+                    "<workbook ",
+                    '<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" ',
+                    1,
+                )
+
+            # 3) workbook.xml.rels 追加 workbook->cacheDefinition 关系
+            wb_rel_add = "".join(
+                '<Relationship Id="{}" Type="{}" Target="{}"/>'.format(rid, typ, tgt)
+                for rid, typ, tgt in wb_new_rels
+            )
+            wb_rels = wb_rels.replace("</Relationships>", wb_rel_add + "</Relationships>")
+
+            # 4) 各 sheet 的 _rels 追加 sheet->pivotTable 关系（无则新建）
+            #    已存在的 rels 视为「修改」，不存在的视为「新增部件」（二者写入 zip 的方式不同）
+            modified_sheet_rels: Dict[str, bytes] = {}
+            for sheet_rels_part, rels in sheet_pivot_rels.items():
+                if sheet_rels_part in names:
+                    existing = zin.read(sheet_rels_part).decode("utf-8")
+                    existing_ids = [int(m) for m in re.findall(r'Id="rId(\d+)"', existing)]
+                    sid = max(existing_ids) + 1 if existing_ids else 1
+                    add = ""
+                    for typ, tgt in rels:
+                        add += '<Relationship Id="rId{}" Type="{}" Target="{}"/>'.format(sid, typ, tgt)
+                        sid += 1
+                    existing = existing.replace("</Relationships>", add + "</Relationships>")
+                    modified_sheet_rels[sheet_rels_part] = existing.encode("utf-8")
+                else:
+                    sid = 1
+                    add = ""
+                    for typ, tgt in rels:
+                        add += '<Relationship Id="rId{}" Type="{}" Target="{}"/>'.format(sid, typ, tgt)
+                        sid += 1
+                    # 新建的 rels 部件须加入 new_parts，否则不会写入 zip
+                    new_parts[sheet_rels_part] = (
+                        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n'
+                        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                        + add + '</Relationships>'
+                    ).encode("utf-8")
+
+            # 5) 透视图：向对应 chart XML 注入 pivotSource
+            chart_modifications = self._build_pivot_chart_modifications(zin, names)
+
+            # 汇总所有改动
+            modified: Dict[str, bytes] = {
+                "[Content_Types].xml": content_types.encode("utf-8"),
+                "xl/workbook.xml": workbook_xml.encode("utf-8"),
+                "xl/_rels/workbook.xml.rels": wb_rels.encode("utf-8"),
+            }
+            modified.update(modified_sheet_rels)
+            modified.update(chart_modifications)
+
+            # 重写 zip：保留原有部件（含改动），追加新部件
+            tmp_fd, tmp_path = tempfile.mkstemp(suffix=".xlsx")
+            os.close(tmp_fd)
+            with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as zout:
+                for item in zin.infolist():
+                    payload = modified.get(item.filename, zin.read(item.filename))
+                    zout.writestr(item, payload)
+                for part, payload in new_parts.items():
+                    zout.writestr(part, payload)
+
+        shutil.move(tmp_path, filename)
+
+    def _build_pivot_chart_modifications(self, zin: 'zipfile.ZipFile', names: set) -> Dict[str, bytes]:
+        """为数据透视图向对应 chart XML 注入 ``c:pivotSource``。
+
+        按透视表所在 sheet 名匹配 chart 部件（chart 的系列引用透视表输出区域，
+        其 ``<c:f>`` 含该 sheet 名）。
+
+        :param zin: 打开的 xlsx ZipFile（只读）
+        :param names: zip 内部件名集合
+        :return: {chart 部件路径: 修改后的 XML 字节}
+        """
+        result: Dict[str, bytes] = {}
+        if not self._pivot_chart_specs:
+            return result
+
+        chart_parts = sorted(n for n in names if re.match(r"xl/charts/chart\d+\.xml$", n))
+        used = set()
+        for pc in self._pivot_chart_specs:
+            sheet = pc["pivot_sheet"]
+            for part in chart_parts:
+                if part in used:
+                    continue
+                xml = zin.read(part).decode("utf-8")
+                if "pivotSource" in xml:
+                    continue
+                # chart 的系列公式引用透视表所在 sheet（openpyxl 可能以单引号包裹 sheet 名）
+                if ("'{}'!".format(sheet) not in xml) and ("{}!".format(sheet) not in xml):
+                    continue
+                # 兼容前缀命名空间（c:）与默认命名空间（openpyxl 默认无前缀）
+                m = re.search(r"<(c:)?chart(?:>|\s)", xml)
+                if not m:
+                    continue
+                prefix = m.group(1) or ""
+                name_ref = "{}!{}".format(sheet, pc["pivot_name"])
+                pivot_source = (
+                    "<{p}pivotSource><{p}name>{n}</{p}name>"
+                    "<{p}fmtId val=\"0\"/></{p}pivotSource>".format(p=prefix, n=_pivot._esc(name_ref))
+                )
+                # pivotSource 是 chartSpace 的子元素，须位于 chart 元素之前
+                idx = m.start()
+                xml = xml[:idx] + pivot_source + xml[idx:]
+                result[part] = xml.encode("utf-8")
+                used.add(part)
+                break
+        return result
+
     def save(self, filename: str, close: bool = True) -> None:
         """保存Excel文件。
 
@@ -1931,6 +2402,9 @@ class ExcelWriter:
 
         # 注入迷你图（openpyxl 不支持写入 sparkline，需在保存后修改 xlsx XML）
         self._inject_sparklines(filename)
+
+        # 注入数据透视表/透视图（openpyxl 不支持创建透视表，需在保存后修改 xlsx XML）
+        self._inject_pivots(filename)
 
         if close:
             self.workbook.close()
