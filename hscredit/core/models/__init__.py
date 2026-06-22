@@ -134,7 +134,19 @@ from .classical import (
 )
 
 # 导入评分卡 (scorecard/)
-from .scorecard import ScoreCard, RoundScoreCard
+from .scorecard import (
+    ScoreCard,
+    RoundScoreCard,
+    ProbabilityScoreCard,
+    BaseScoreTransformer,
+    StandardScoreTransformer,
+    LinearScoreTransformer,
+    QuantileScoreTransformer,
+    BoxCoxScoreTransformer,
+    ScoreTransformer,
+    transform_probability_to_score,
+    ScoreDriftCalibrator,
+)
 
 
 # 导入规则集分类模型 (rules/)
@@ -152,7 +164,7 @@ from .rules import (
 from .evaluation import ModelReport
 
 # 导入超参数调优 (tuning/, 可选重依赖 optuna，懒加载)
-_LAZY_TUNING_MODELS = ("ModelTuner", "AutoTuner", "TuningObjective")
+_LAZY_TUNING_MODELS = ("ModelTuner", "AutoTuner", "TuningObjective", "TuningSampler")
 
 
 def __getattr__(name):
@@ -204,6 +216,17 @@ __all__ = [
     # 评分卡
     "ScoreCard",
     "RoundScoreCard",
+    "ProbabilityScoreCard",
+    # 概率转评分
+    "BaseScoreTransformer",
+    "StandardScoreTransformer",
+    "LinearScoreTransformer",
+    "QuantileScoreTransformer",
+    "BoxCoxScoreTransformer",
+    "ScoreTransformer",
+    "transform_probability_to_score",
+    # 评分漂移校准
+    "ScoreDriftCalibrator",
     # 规则集分类
     "RuleSet",
     "RulesClassifier",

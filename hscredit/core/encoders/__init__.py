@@ -9,6 +9,7 @@
 - QuantileEncoder: 分位数编码
 - CatBoostEncoder: CatBoost编码
 - GBMEncoder: 梯度提升树编码器（支持XGBoost/LightGBM/CatBoost+LR）
+- CardinalityEncoder: 高基数降维编码器
 
 所有编码器均遵循sklearn Transformer接口规范。
 """

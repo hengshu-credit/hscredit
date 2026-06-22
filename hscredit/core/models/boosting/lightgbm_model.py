@@ -71,6 +71,69 @@ def _check_lightgbm_api_support():
 
 LIGHTGBM_CALLBACKS_AVAILABLE, LIGHTGBM_EARLY_STOPPING_AVAILABLE = _check_lightgbm_api_support()
 
+
+def _ensure_lightgbm_sklearn_compat():
+    """适配 LightGBM 与 scikit-learn 跨版本的 ``force_all_finite`` 参数差异.
+
+    背景：旧版 LightGBM(<4.0) 内部以 ``force_all_finite=...`` 调用 sklearn 的
+    ``check_X_y`` / ``check_array``，而 scikit-learn 1.6 起弃用该参数、1.8 起移除
+    （改名 ``ensure_all_finite``）。两者组合时 ``model.fit`` 会直接抛
+    ``TypeError: ... unexpected keyword argument 'force_all_finite'``。
+
+    本函数按**版本**判断：仅当 LightGBM<4.0 且其引用的 sklearn 校验函数已不接受
+    ``force_all_finite`` 时，包装这些函数把旧参数名转译为 ``ensure_all_finite``，
+    使 ``fit`` 的对外行为（参数名/位置/结果）在新旧 sklearn 下保持一致。
+    对参数名一致的版本组合为无害透传，且幂等（重复调用不重复包装）。
+    """
+    if not LIGHTGBM_AVAILABLE:
+        return
+    import inspect
+    import importlib
+
+    try:
+        from packaging import version as _v
+        # LightGBM>=4.0 内部已改用 ensure_all_finite，无需适配
+        if _v.parse(lgb.__version__) >= _v.parse("4.0.0"):
+            return
+    except Exception:
+        # 无法判定版本时按需检测（下方签名检查仍可保证安全）
+        pass
+
+    def _wrap(func):
+        if getattr(func, "_hscredit_finite_compat", False):
+            return func
+        try:
+            params = inspect.signature(func).parameters
+        except (TypeError, ValueError):
+            return func
+        # 仅当新 sklearn 已移除 force_all_finite、改名 ensure_all_finite 时才包装
+        if "force_all_finite" in params or "ensure_all_finite" not in params:
+            return func
+
+        def wrapper(*args, **kwargs):
+            if "force_all_finite" in kwargs:
+                kwargs.setdefault("ensure_all_finite", kwargs.pop("force_all_finite"))
+            return func(*args, **kwargs)
+
+        wrapper._hscredit_finite_compat = True
+        return wrapper
+
+    # 包装 LightGBM 实际引用校验函数的模块属性（直接改其绑定引用才生效）
+    for modname in ("lightgbm.compat", "lightgbm.basic", "lightgbm.sklearn"):
+        try:
+            mod = importlib.import_module(modname)
+        except Exception:
+            continue
+        for attr in ("check_X_y", "check_array", "_LGBMCheckXY", "_LGBMCheckArray"):
+            func = getattr(mod, attr, None)
+            if callable(func):
+                wrapped = _wrap(func)
+                if wrapped is not func:
+                    setattr(mod, attr, wrapped)
+
+
+_ensure_lightgbm_sklearn_compat()
+
 # 导入回调（如果可用）
 if LIGHTGBM_CALLBACKS_AVAILABLE:
     try:
@@ -335,8 +398,10 @@ class LightGBMRiskModel(BaseRiskModel):
                     UserWarning
                 )
         
-        # 传递verbose参数（如果没有使用早停或者旧版本）
-        if not early_stopping_enabled or not use_callbacks:
+        # 传递verbose参数：仅旧版本 LightGBM(<4.0) 的 fit() 接受 verbose。
+        # LightGBM 4.0+ 已弃用 fit(verbose=...)，日志级别由构造参数 verbose/verbosity
+        # 控制（见上方 params），并通过 log_evaluation 回调输出，故此处不再传入，避免弃用告警。
+        if not LIGHTGBM_CALLBACKS_AVAILABLE and (not early_stopping_enabled or not use_callbacks):
             fit_kwargs['verbose'] = self.verbose
 
         # 尝试训练，如果失败则自动回退

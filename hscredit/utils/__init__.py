@@ -7,7 +7,7 @@ from .random import seed_everything
 from .io import load_pickle, save_pickle
 from .describe import feature_describe, groupby_feature_describe
 from .datasets import germancredit
-from .misc import round_float, force_reload_module
+from .misc import round_float, force_reload_module, trapz
 from .init import init_setting
 from .logger import init_logger, get_logger
 from .pandas_extensions import (
@@ -39,6 +39,7 @@ __all__ = [
     # 杂项工具
     'round_float',
     'force_reload_module',
+    'trapz',
     'init_setting',
     # 日志工具
     'init_logger',

@@ -60,7 +60,7 @@ python -m twine check dist/*
 所有核心组件均继承自 sklearn `BaseEstimator` + `TransformerMixin`/`ClassifierMixin` + `ABC`，兼容 sklearn Pipeline：
 
 - `BaseBinning` → [hscredit/core/binning/base.py](hscredit/core/binning/base.py) — 18 种分箱算法 + `OptimalBinning2D` 二维交互分箱
-- `BaseEncoder` → [hscredit/core/encoders/base.py](hscredit/core/encoders/base.py) — 10 种编码器
+- `BaseEncoder` → [hscredit/core/encoders/base.py](hscredit/core/encoders/base.py) — 9 种编码器
 - `BaseFeatureSelector` → [hscredit/core/selectors/base.py](hscredit/core/selectors/base.py) — 22 种筛选器 + `CompositeFeatureSelector` + `SelectionReportCollector`
 - `BaseRiskModel` → [hscredit/core/models/base.py](hscredit/core/models/base.py) — boosting 和经典模型
 
@@ -99,7 +99,7 @@ Boosting 模型（XGBoost/LightGBM/CatBoost/NGBoost）和调参工具（Optuna�
 hscredit/
 ├── core/
 │   ├── binning/       # 18 种分箱算法 + BaseBinning + OptimalBinning 工厂 + OptimalBinning2D
-│   ├── encoders/      # 10 种编码器（WOE/Target/Count/OneHot/Ordinal/Quantile/CatBoost/GBM/Cardinality）
+│   ├── encoders/      # 9 种编码器（WOE/Target/Count/OneHot/Ordinal/Quantile/CatBoost/GBM/Cardinality）
 │   ├── selectors/     # 22 种筛选器 + CompositeFeatureSelector + SelectionReportCollector
 │   ├── models/
 │   │   ├── boosting/      # XGBoost / LightGBM / CatBoost / NGBoost（懒加载）

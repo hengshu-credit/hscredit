@@ -55,8 +55,8 @@ class BaseEncoder(BaseEstimator, TransformerMixin, ABC):
         cols: Optional[List[str]] = None,
         drop_invariant: bool = False,
         return_df: bool = True,
-        handle_unknown: str = 'value',
-        handle_missing: str = 'value',
+        handle_unknown: str = "value",
+        handle_missing: str = "value",
         target: Optional[str] = None,
     ):
         """初始化编码器基类。
@@ -78,8 +78,9 @@ class BaseEncoder(BaseEstimator, TransformerMixin, ABC):
         self.mapping_: Dict = {}
         self.cols_: Optional[List[str]] = None
         self._dropped_cols: List[str] = []
+        self._is_fitted: bool = False
 
-    def fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None) -> 'BaseEncoder':
+    def fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None) -> "BaseEncoder":
         """拟合编码器。
 
         支持两种API风格:
@@ -112,6 +113,7 @@ class BaseEncoder(BaseEstimator, TransformerMixin, ABC):
             self.cols_ = [c for c in self.cols if c in X.columns]
 
         if len(self.cols_) == 0:
+            self._is_fitted = True
             return self
 
         if self.drop_invariant:
@@ -120,6 +122,7 @@ class BaseEncoder(BaseEstimator, TransformerMixin, ABC):
 
         self._fit(X, y)
 
+        self._is_fitted = True
         return self
 
     def transform(self, X: pd.DataFrame, y: Optional[pd.Series] = None) -> Union[pd.DataFrame, np.ndarray]:
@@ -143,27 +146,32 @@ class BaseEncoder(BaseEstimator, TransformerMixin, ABC):
         """
         X = self._check_input(X)
 
-        if not hasattr(self, 'cols_') or self.cols_ is None:
-            raise ValueError("编码器尚未拟合，请先调用fit()")
+        if not hasattr(self, "cols_") or self.cols_ is None:
+            raise NotFittedError("编码器尚未拟合，请先调用fit()")
+
+        # 统一缺失值策略校验：handle_missing='error' 时，任一编码列含缺失即报错
+        if self.handle_missing == "error":
+            for col in self.cols_:
+                if col in X.columns and X[col].isna().any():
+                    raise ValueError(f"列'{col}'包含缺失值，但 handle_missing='error'")
 
         X_transformed = X.copy()
         X_transformed = self._transform(X_transformed, y)
 
         # scorecardpipeline 风格: 如果输入的 X 中包含 target 列，透传到输出
-        target_col = getattr(self, 'target', None)
+        target_col = getattr(self, "target", None)
         if (
             target_col is not None
             and isinstance(X_transformed, pd.DataFrame)
             and target_col not in X_transformed.columns
             and target_col in X.columns
         ):
-            X_transformed = pd.concat(
-                [X_transformed, X[[target_col]].reset_index(drop=True)], axis=1
-            )
+            # 按位置赋值，避免非默认索引下 concat 对齐错位
+            X_transformed[target_col] = np.asarray(X[target_col])
 
         if not self.return_df:
             # 处理稀疏矩阵的情况
-            if hasattr(X_transformed, 'toarray'):
+            if hasattr(X_transformed, "toarray"):
                 # 已经是稀疏矩阵，直接返回
                 return X_transformed
             return X_transformed.values
@@ -206,16 +214,14 @@ class BaseEncoder(BaseEstimator, TransformerMixin, ABC):
         elif isinstance(X, np.ndarray):
             if X.ndim == 1:
                 # 一维数组转换为单列DataFrame
-                X = pd.DataFrame(X, columns=['feature'])
+                X = pd.DataFrame(X, columns=["feature"])
             else:
                 X = pd.DataFrame(X)
         elif not isinstance(X, pd.DataFrame):
             raise TypeError(f"输入必须是DataFrame、ndarray或Series，got {type(X)}")
         return X
 
-    def _extract_target(
-        self, X: pd.DataFrame, y: Optional[pd.Series]
-    ) -> Tuple[pd.DataFrame, Optional[pd.Series]]:
+    def _extract_target(self, X: pd.DataFrame, y: Optional[pd.Series]) -> Tuple[pd.DataFrame, Optional[pd.Series]]:
         """提取目标变量，支持两种API风格。
 
         优先级: fit时传入的y > 从X中提取target列
@@ -248,7 +254,7 @@ class BaseEncoder(BaseEstimator, TransformerMixin, ABC):
         :param X: 输入数据
         :return: 类别型列名列表
         """
-        return X.select_dtypes(include=['object', 'category']).columns.tolist()
+        return X.select_dtypes(include=["object", "category"]).columns.tolist()
 
     def _find_invariant_cols(self, X: pd.DataFrame) -> List[str]:
         """查找方差为0的列。
@@ -262,22 +268,29 @@ class BaseEncoder(BaseEstimator, TransformerMixin, ABC):
                 invariant_cols.append(col)
         return invariant_cols
 
-    def get_mapping(self) -> Dict[str, Any]:
+    def get_mapping(self, col: Optional[str] = None) -> Dict[str, Any]:
         """获取编码映射。
 
-        :return: 编码映射字典，格式为 {col: {category: encoded_value}}
+        :param col: 列名。如果提供，返回该列的映射 {category: encoded_value}；
+            如果为None，返回所有列的映射 {col: {category: encoded_value}}
+        :return: 编码映射字典
+        :raises FeatureNotFoundError: 当指定的 col 不在编码器中时抛出
         """
-        return self.mapping_
+        if col is None:
+            return self.mapping_
+        if not hasattr(self, "mapping_") or self.mapping_ is None or col not in self.mapping_:
+            raise FeatureNotFoundError(f"特征 '{col}' 未找到")
+        return self.mapping_[col]
 
     def __contains__(self, feature: str) -> bool:
         """检查特征是否在编码器中（支持 `feature in encoder` 语法）."""
-        if not hasattr(self, 'mapping_') or self.mapping_ is None:
+        if not hasattr(self, "mapping_") or self.mapping_ is None:
             return False
         return feature in self.mapping_
 
     def __getitem__(self, feature: str):
         """通过 `encoder['feature']` 获取该特征的编码映射（toad/scorecardpipeline风格）."""
-        if not hasattr(self, 'mapping_') or self.mapping_ is None or len(self.mapping_) == 0:
+        if not hasattr(self, "mapping_") or self.mapping_ is None or len(self.mapping_) == 0:
             raise NotFittedError("编码器尚未拟合，请先调用fit()")
 
         if feature not in self.mapping_:
@@ -299,13 +312,13 @@ class BaseEncoder(BaseEstimator, TransformerMixin, ABC):
         ...     json.dump(mapping, f)
         """
         return {
-            'encoder_type': self.__class__.__name__,
-            'cols': self.cols,
-            'cols_': self.cols_,
-            'mapping_': self._serialize_mapping(self.mapping_),
-            'drop_invariant': self.drop_invariant,
-            'handle_unknown': self.handle_unknown,
-            'handle_missing': self.handle_missing,
+            "encoder_type": self.__class__.__name__,
+            "cols": self.cols,
+            "cols_": self.cols_,
+            "mapping_": self._serialize_mapping(self.mapping_),
+            "drop_invariant": self.drop_invariant,
+            "handle_unknown": self.handle_unknown,
+            "handle_missing": self.handle_missing,
         }
 
     def import_mapping(self, mapping: Dict[str, Any]):
@@ -320,12 +333,12 @@ class BaseEncoder(BaseEstimator, TransformerMixin, ABC):
         ...     mapping = json.load(f)
         >>> encoder.import_mapping(mapping)
         """
-        self.cols = mapping.get('cols')
-        self.cols_ = mapping.get('cols_')
-        self.mapping_ = self._deserialize_mapping(mapping.get('mapping_', {}))
-        self.drop_invariant = mapping.get('drop_invariant', False)
-        self.handle_unknown = mapping.get('handle_unknown', 'value')
-        self.handle_missing = mapping.get('handle_missing', 'value')
+        self.cols = mapping.get("cols")
+        self.cols_ = mapping.get("cols_")
+        self.mapping_ = self._deserialize_mapping(mapping.get("mapping_", {}))
+        self.drop_invariant = mapping.get("drop_invariant", False)
+        self.handle_unknown = mapping.get("handle_unknown", "value")
+        self.handle_missing = mapping.get("handle_missing", "value")
 
     def _serialize_mapping(self, mapping: Dict) -> Dict:
         """序列化映射（处理特殊类型）。

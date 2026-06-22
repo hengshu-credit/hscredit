@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 
 from .base import BaseEncoder
+from ...exceptions import NotFittedError
 
 
 class OrdinalEncoder(BaseEncoder):
@@ -55,8 +56,8 @@ class OrdinalEncoder(BaseEncoder):
         self,
         cols: Optional[List[str]] = None,
         mapping: Optional[Dict[str, Dict[Any, int]]] = None,
-        handle_unknown: str = 'value',
-        handle_missing: str = 'value',
+        handle_unknown: str = "value",
+        handle_missing: str = "value",
         drop_invariant: bool = False,
         return_df: bool = True,
         target: Optional[str] = None,
@@ -96,15 +97,15 @@ class OrdinalEncoder(BaseEncoder):
 
                 mapping = {cat: i for i, cat in enumerate(categories)}
 
-                if self.handle_missing == 'value':
+                if self.handle_missing == "value":
                     mapping[np.nan] = -1
-                elif self.handle_missing == 'return_nan':
+                elif self.handle_missing == "return_nan":
                     mapping[np.nan] = np.nan
 
-                if self.handle_unknown == 'value':
-                    mapping['__UNKNOWN__'] = -1
-                elif self.handle_unknown == 'return_nan':
-                    mapping['__UNKNOWN__'] = np.nan
+                if self.handle_unknown == "value":
+                    mapping["__UNKNOWN__"] = -1
+                elif self.handle_unknown == "return_nan":
+                    mapping["__UNKNOWN__"] = np.nan
 
                 self.mapping_[col] = mapping
 
@@ -123,10 +124,40 @@ class OrdinalEncoder(BaseEncoder):
 
             X[col] = X[col].map(mapping)
 
-            if self.handle_unknown == 'value':
+            if self.handle_unknown == "value":
                 X[col] = X[col].fillna(-1)
-            elif self.handle_unknown == 'error' and X[col].isna().any():
+            elif self.handle_unknown == "error" and X[col].isna().any():
                 raise ValueError(f"列'{col}'包含未知类别")
+
+        return X
+
+    def inverse_transform(self, X: pd.DataFrame) -> pd.DataFrame:
+        """逆编码，将整数编码还原为原始类别值。
+
+        基于拟合时的双射映射逆向还原。未知编码值（如缺失/未知的 -1）
+        无法唯一还原，保持原值不变。
+
+        :param X: 编码后的数据
+        :return: 逆编码后的数据
+        :raises NotFittedError: 当编码器尚未拟合时抛出
+        """
+        if not hasattr(self, "mapping_") or self.mapping_ is None or len(self.mapping_) == 0:
+            raise NotFittedError("OrdinalEncoder 尚未拟合，请先调用 fit 方法")
+
+        X = self._check_input(X).copy()
+
+        for col in self.cols_ or []:
+            if col not in self.mapping_ or col not in X.columns:
+                continue
+
+            # 构建逆映射：仅对真实类别（排除缺失/未知哨兵）有效
+            inverse_mapping = {}
+            for orig, code in self.mapping_[col].items():
+                if orig in ("__UNKNOWN__",) or (isinstance(orig, float) and pd.isna(orig)):
+                    continue
+                inverse_mapping[code] = orig
+
+            X[col] = X[col].map(lambda v: inverse_mapping.get(v, v))
 
         return X
 

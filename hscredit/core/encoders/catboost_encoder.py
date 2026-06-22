@@ -56,8 +56,8 @@ class CatBoostEncoder(BaseEncoder):
         self,
         cols: Optional[List[str]] = None,
         sigma: Optional[float] = None,
-        handle_unknown: str = 'value',
-        handle_missing: str = 'value',
+        handle_unknown: str = "value",
+        handle_missing: str = "value",
         drop_invariant: bool = False,
         return_df: bool = True,
         random_state: Optional[int] = None,
@@ -97,24 +97,24 @@ class CatBoostEncoder(BaseEncoder):
         if y is None:
             raise ValueError("CatBoostEncoder是有监督编码器，必须提供目标变量y")
 
-        y = pd.Series(y, name='target')
+        y = pd.Series(y, name="target")
         self.global_mean_ = y.mean()
 
         for col in self.cols_:
-            df_temp = pd.DataFrame({col: X[col], 'target': y.values})
-            category_stats = df_temp.groupby(col)['target'].agg(['mean', 'count'])
+            df_temp = pd.DataFrame({col: X[col], "target": y.values})
+            category_stats = df_temp.groupby(col)["target"].agg(["mean", "count"])
 
-            mapping = category_stats['mean'].to_dict()
+            mapping = category_stats["mean"].to_dict()
 
-            if self.handle_missing == 'value':
+            if self.handle_missing == "value":
                 mapping[np.nan] = self.global_mean_
-            elif self.handle_missing == 'return_nan':
+            elif self.handle_missing == "return_nan":
                 mapping[np.nan] = np.nan
 
-            if self.handle_unknown == 'value':
-                mapping['__UNKNOWN__'] = self.global_mean_
-            elif self.handle_unknown == 'return_nan':
-                mapping['__UNKNOWN__'] = np.nan
+            if self.handle_unknown == "value":
+                mapping["__UNKNOWN__"] = self.global_mean_
+            elif self.handle_unknown == "return_nan":
+                mapping["__UNKNOWN__"] = np.nan
 
             self.mapping_[col] = mapping
 
@@ -125,8 +125,8 @@ class CatBoostEncoder(BaseEncoder):
         :param y: 目标变量（可选），如果提供则使用有序统计
         :return: 编码后的数据
         """
-        if y is not None and self.random_state is not None:
-            np.random.seed(self.random_state)
+        # 使用局部随机数发生器，避免污染全局 np.random 状态
+        rng = np.random.RandomState(self.random_state) if y is not None else None
 
         for col in self.cols_:
             if col not in self.mapping_:
@@ -135,35 +135,38 @@ class CatBoostEncoder(BaseEncoder):
             mapping = self.mapping_[col]
 
             if y is not None:
-                X[col] = self._transform_ordered(X[col], y, mapping)
+                X[col] = self._transform_ordered(X[col], y, mapping, rng)
             else:
                 X[col] = X[col].map(mapping)
 
-            if self.handle_unknown == 'value':
+            if self.handle_unknown == "value":
                 X[col] = X[col].fillna(self.global_mean_)
-            elif self.handle_unknown == 'error' and X[col].isna().any():
+            elif self.handle_unknown == "error" and X[col].isna().any():
                 raise ValueError(f"列'{col}'包含未知类别")
 
             if self.sigma is not None and y is not None:
-                X[col] = X[col] * (1 + np.random.normal(0, self.sigma, len(X)))
+                X[col] = X[col] * (1 + rng.normal(0, self.sigma, len(X)))
 
         return X
 
     def _transform_ordered(
-        self, x: pd.Series, y: pd.Series, mapping: Dict
+        self, x: pd.Series, y: pd.Series, mapping: Dict, rng: Optional[np.random.RandomState] = None
     ) -> pd.Series:
         """使用有序统计进行转换（防止目标泄漏）。
 
         :param x: 特征列
         :param y: 目标变量
         :param mapping: 编码映射
+        :param rng: 局部随机数发生器，None 时按 random_state 新建
         :return: 编码后的序列
         """
         if not isinstance(y, pd.Series):
             y = pd.Series(y, index=x.index)
 
         n = len(x)
-        random_order = np.random.permutation(n)
+        if rng is None:
+            rng = np.random.RandomState(self.random_state)
+        random_order = rng.permutation(n)
 
         result = pd.Series(index=x.index, dtype=float)
 

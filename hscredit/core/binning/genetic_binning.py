@@ -377,8 +377,9 @@ class GeneticBinning(BaseBinning):
         if total == 0 or total_bad == 0:
             return 0
 
-        # Lorentz曲线面积
-        area = np.trapz(cumsum_count / total, cumsum_bad / total_bad)
+        # Lorentz曲线面积（梯形法则，跨 NumPy 版本兼容）
+        from ...utils.misc import trapz
+        area = trapz(cumsum_count / total, cumsum_bad / total_bad)
         gini = 2 * (0.5 - area)
         return gini
 

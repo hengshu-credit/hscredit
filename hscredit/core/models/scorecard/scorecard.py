@@ -471,19 +471,17 @@ class ScoreCard(StandardScoreTransformer):
             # 使用系数绝对值
             importances = np.abs(self.coef_)
         elif importance_type == 'score_range':
-            # 使用评分卡中的分数范围
+            # 使用评分卡中的分数范围（每个特征各分箱分数的极差 max-min）
             if not hasattr(self, 'rules_') or not self.rules_:
                 raise ValueError("评分卡规则未生成，无法使用score_range类型")
             importances = []
             for feature in feature_names:
-                if feature in self.rules_:
-                    scores = [v['score'] for v in self.rules_[feature].values() if isinstance(v, dict) and 'score' in v]
-                    if scores:
-                        importances.append(max(scores) - min(scores))
-                    else:
-                        importances.append(0)
+                rule = self.rules_.get(feature) if feature in self.rules_ else None
+                scores = np.asarray(rule['scores'], dtype=float) if rule and rule.get('scores') is not None else None
+                if scores is not None and len(scores) > 0:
+                    importances.append(float(np.max(scores) - np.min(scores)))
                 else:
-                    importances.append(0)
+                    importances.append(0.0)
             importances = np.array(importances)
         else:
             raise ValueError(f"不支持的重要性类型: {importance_type}")
@@ -1471,12 +1469,18 @@ class ScoreCard(StandardScoreTransformer):
         return self.lr_model_.predict_proba(X)
 
     def scorecard_scale(self) -> pd.DataFrame:
-        """输出评分卡基础配置."""
+        """输出评分卡基础配置（刻度参数）.
+
+        :return: DataFrame，包含 base_odds/base_score/rate/pdo 及推导出的 A、B 刻度参数
+        """
         check_is_fitted(self)
 
+        base_odds_remark = (
+            "好坏比（好:坏），内部换算实际 odds = 1/base_odds"
+            if self.base_odds >= 1 else "坏样本率 / 坏好比，直接作为实际 odds"
+        )
         return pd.DataFrame([
-            {"刻度项": "base_odds", "刻度值": self.base_odds,
-             "备注": "基础比率 = (1-坏样本率)/坏样本率"},
+            {"刻度项": "base_odds", "刻度值": self.base_odds, "备注": base_odds_remark},
             {"刻度项": "base_score", "刻度值": self.base_score,
              "备注": "基础 odds 对应的分数"},
             {"刻度项": "rate", "刻度值": self.rate,
@@ -1486,8 +1490,44 @@ class ScoreCard(StandardScoreTransformer):
             {"刻度项": "B (pdo/ln(rate))", "刻度值": round(self.B_, 4),
              "备注": f"pdo / ln({self.rate})"},
             {"刻度项": "A (offset)", "刻度值": round(self.A_, 4),
-             "备注": "base_score + B * ln(base_odds)"},
+             "备注": "base_score + B * ln(实际odds)，实际odds 见 base_odds 备注"},
         ])
+
+    def score_formula(self, decimal: int = 4) -> Dict[str, Any]:
+        """输出评分卡的评分转换公式（人类可读 + 可编程使用）.
+
+        返回标准评分卡公式 ``Score = A - B × ln(odds)`` 的各项参数与等价的
+        WOE 线性表达式，便于复核、文档化与离线部署。
+
+        :param decimal: 公式中数值保留的小数位数，默认 4
+        :return: 包含公式字符串与参数的字典，键包括
+            ``公式``/``A``/``B``/``截距分数``/``base_odds``/``base_score``/
+            ``pdo``/``rate``/``direction``/``WOE线性公式``
+        """
+        check_is_fitted(self)
+
+        A = round(float(self.A_), decimal)
+        B = round(float(self.B_), decimal)
+        intercept_score = round(float(self.A_ - self.B_ * self.intercept_), decimal)
+
+        formula = f"Score = {A} - {B} × ln(odds)，其中 odds = P(坏) / P(好)"
+        woe_formula = (
+            f"Score = 截距分数({intercept_score}) "
+            f"+ Σ(-B × coef_i × WOE_i)，B = {B}"
+        )
+
+        return {
+            "公式": formula,
+            "WOE线性公式": woe_formula,
+            "A": A,
+            "B": B,
+            "截距分数": intercept_score,
+            "base_odds": self.base_odds,
+            "base_score": self.base_score,
+            "pdo": self.pdo,
+            "rate": self.rate,
+            "direction": self.direction_,
+        }
 
     def scorecard_points(
         self,
@@ -1535,37 +1575,43 @@ class ScoreCard(StandardScoreTransformer):
                 
             rule = self.rules_[col]
             scores = rule['scores']
-            woe_values = rule.get('woe', [])
-            
+
             # 优先使用 bin_labels（完整的分箱标签）
             bin_labels = rule.get('bin_labels')
             bins = rule.get('bins')
-            woe_values = rule.get('woe', [])
-            
+            # WOE 值可能缺失（如离线规则加载后无 woe），单独处理，
+            # 不能放进 zip 否则空/短的 woe 会把整张分箱表截断为 0 行
+            woe_values = rule.get('woe')
+            woe_list = list(woe_values) if woe_values is not None else []
+
             # 确定要使用的分箱标签
             if bin_labels is not None and len(bin_labels) > 0:
                 labels_to_use = bin_labels
             elif bins is not None and len(bins) > 0:
                 labels_to_use = bins
-            else:
+            elif woe_list:
                 # 无分箱标签，使用 WOE 值格式化为标签
-                labels_to_use = [f'WOE: {w:.4f}' for w in woe_values]
-            
+                labels_to_use = [f'WOE: {w:.4f}' for w in woe_list]
+            else:
+                # 无标签也无 WOE，用箱序号兜底
+                labels_to_use = [f'箱{i}' for i in range(len(scores))]
+
             if len(labels_to_use) != len(scores):
                 # 如果标签和分数数量不匹配，重新生成标签
                 labels_to_use = self._format_bin_labels(bins if bins else labels_to_use, len(scores))
-            
-            # 处理每个分箱
-            for bin_label, score, woe in zip(labels_to_use, scores, woe_values):
+
+            # 处理每个分箱（以 标签/分数 数量为准，WOE 按位置取，缺失则为 None）
+            for idx, (bin_label, score) in enumerate(zip(labels_to_use, scores)):
                 # 格式化特殊标签
                 display_label = self._format_bin_display(bin_label)
-                
+                woe = woe_list[idx] if idx < len(woe_list) else None
+
                 rows.append({
                     '变量名称': col,
                     '变量含义': feature_map.get(col, ''),
                     '变量分箱': display_label,
                     '对应分数': round(float(score), decimal),
-                    'WOE值': round(float(woe), 4) if woe is not None else None
+                    'WOE值': round(float(woe), 4) if woe is not None and not pd.isna(woe) else None
                 })
 
         if not rows:
@@ -1605,93 +1651,6 @@ class ScoreCard(StandardScoreTransformer):
 
                 return '缺失值'
         return str(bin_label)
-
-    def export(
-        self,
-        to_json: Optional[str] = None,
-        to_frame: bool = False,
-        decimal: int = 2,
-        include_meta: bool = False
-    ) -> Union[Dict, pd.DataFrame]:
-        """导出评分卡规则，兼容 toad/scorecardpipeline 格式.
-
-        :param to_json: 可选，JSON 文件保存路径。如果提供，将规则保存到该文件
-        :param to_frame: 是否返回 DataFrame 格式，默认为 False
-        :param decimal: 分数保留小数位数，默认为 2
-        :param include_meta: 是否包含元数据（用于 hscredit 的 load 方法）。
-            - True: 导出完整格式，包含 __meta__ 信息，可被 ScoreCard.load() 完整恢复
-            - False: 导出 toad/scorecardpipeline 兼容的简洁格式
-        :return: 评分卡规则字典或 DataFrame
-            - 字典格式(默认): {'feature': {'bin_label': score, ...}, ...}
-            - 完整格式(include_meta=True): {'__meta__': {...}, 'feature': {...}, ...}
-            - DataFrame格式: columns=['name', 'value', 'score']
-        """
-        import json
-
-        check_is_fitted(self)
-
-        # 使用 scorecard_points 获取完整信息
-        points_df = self.scorecard_points(decimal=decimal)
-
-        # 构建与 toad/scorecardpipeline 兼容的格式
-        card = {}
-        for _, row in points_df.iterrows():
-            feature = row['变量名称']
-            bin_label = row['变量分箱']
-            score = row['对应分数']
-
-            if feature not in card:
-                card[feature] = {}
-            card[feature][bin_label] = round(float(score), decimal)
-
-        # 如果需要包含元数据（用于 hscredit load 方法）
-        if include_meta:
-            # 计算截距分数
-            intercept_score = float(self.A_ - self.B_ * self.intercept_)
-
-            card['__meta__'] = {
-                'intercept_score': intercept_score,
-                'base_score': float(self.base_score),
-                'direction': self.direction_,
-                'pdo': self.pdo,
-                'rate': self.rate,
-                'base_odds': self.base_odds,
-                'lower': self.lower,
-                'upper': self.upper,
-                'A': float(self.A_),
-                'B': float(self.B_),
-                'feature_names': list(self.feature_names_),
-                'coef': [
-                    float(coef * self._get_feature_woe_sign(i))
-                    for i, coef in enumerate(self.coef_)
-                ],
-            }
-
-        # 保存到 JSON 文件
-        if to_json is not None:
-            import os
-            dir_path = os.path.dirname(to_json)
-            if dir_path and not os.path.exists(dir_path):
-                os.makedirs(dir_path, exist_ok=True)
-
-            with open(to_json, 'w', encoding='utf-8') as f:
-                json.dump(card, f, ensure_ascii=False, indent=2)
-
-        # 返回 DataFrame 格式
-        if to_frame:
-            rows = []
-            for name in card:
-                if name == '__meta__':
-                    continue  # 跳过元数据
-                for value, score in card[name].items():
-                    rows.append({
-                        'name': name,
-                        'value': value,
-                        'score': score,
-                    })
-            return pd.DataFrame(rows)
-
-        return card
 
     def score_to_bad_rate_table(
         self,
@@ -2998,6 +2957,9 @@ class ScoreCard(StandardScoreTransformer):
 
         # 解析规则
         for feature, feature_rules in card.items():
+            # 兼容历史导出文件：'基础分'（截距项）不是特征，跳过以免污染特征列表
+            if feature == '基础分':
+                continue
             if self._feature_names is None:
                 self._feature_names = []
             if feature not in self._feature_names:
@@ -3471,27 +3433,32 @@ class RoundScoreCard(ScoreCard):
 
             rule = self.rules_[col]
             rounded_scores = self._get_rounded_rule_scores(rule, decimal=digits)
-            woe_values = rule.get('woe', [])
             bin_labels = rule.get('bin_labels')
             bins = rule.get('bins')
+            # WOE 可能缺失（离线规则加载），单独取值，避免 zip 截断分箱行
+            woe_values = rule.get('woe')
+            woe_list = list(woe_values) if woe_values is not None else []
 
             if bin_labels is not None and len(bin_labels) > 0:
                 labels_to_use = bin_labels
             elif bins is not None and len(bins) > 0:
                 labels_to_use = bins
+            elif woe_list:
+                labels_to_use = [f'WOE: {w:.4f}' for w in woe_list]
             else:
-                labels_to_use = [f'WOE: {w:.4f}' for w in woe_values]
+                labels_to_use = [f'箱{i}' for i in range(len(rounded_scores))]
 
             if len(labels_to_use) != len(rounded_scores):
                 labels_to_use = self._format_bin_labels(bins if bins else labels_to_use, len(rounded_scores))
 
-            for bin_label, score, woe in zip(labels_to_use, rounded_scores, woe_values):
+            for idx, (bin_label, score) in enumerate(zip(labels_to_use, rounded_scores)):
+                woe = woe_list[idx] if idx < len(woe_list) else None
                 rows.append({
                     '变量名称': col,
                     '变量含义': feature_map.get(col, ''),
                     '变量分箱': self._format_bin_display(bin_label),
                     '对应分数': self._round_score_value(score, digits),
-                    'WOE值': round(float(woe), 4) if woe is not None else None,
+                    'WOE值': round(float(woe), 4) if woe is not None and not pd.isna(woe) else None,
                 })
 
         return pd.DataFrame(rows)
@@ -3703,6 +3670,10 @@ class RoundScoreCard(ScoreCard):
         card = {}
         for _, row in points_df.iterrows():
             feature = row['变量名称']
+            # 基础分（截距项）已通过 __meta__ 的 intercept_score 留存，
+            # 不能作为特征写入规则，否则 load() 会将其误当成额外特征
+            if feature == '基础分':
+                continue
             bin_label = row['变量分箱']
             score = self._round_score_value(row['对应分数'], digits)
             card.setdefault(feature, {})[bin_label] = score

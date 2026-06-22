@@ -220,6 +220,19 @@ class BaseRiskModel(BaseEstimator, ClassifierMixin, ABC):
         scores = (1 - proba[:, 1]) * 1000
         return scores
 
+    @property
+    def best_iteration_(self):
+        """最佳迭代次数（早停后），未启用早停时为 None.
+
+        统一暴露给所有子类（XGBoost/LightGBM/CatBoost/NGBoost/sklearn 集成）。
+        """
+        return self._best_iteration
+
+    @property
+    def best_score_(self):
+        """最佳得分（早停验证集上），未启用早停时为 None."""
+        return self._best_score
+
     @abstractmethod
     def get_feature_importances(self, importance_type: str = 'gain') -> pd.Series:
         """获取特征重要性.
@@ -635,6 +648,9 @@ class BaseRiskModel(BaseEstimator, ClassifierMixin, ABC):
 
         best_params = tuner.fit(X, y, n_trials=n_trials, timeout=timeout)
         best_model = self.__class__(**best_params)
+        # 透传 target，确保 scorecardpipeline 风格（y=None，从 X 提取 target）下重训正常
+        if self.target is not None and getattr(best_model, 'target', None) is None:
+            best_model.target = self.target
         best_model.fit(X, y)
 
         best_model._tuner = tuner

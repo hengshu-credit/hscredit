@@ -231,6 +231,59 @@ class BaseScoreTransformer(BaseEstimator, ABC):
         check_is_fitted(self)
         raise NotImplementedError("此方法需要在子类中实现")
 
+    # ==================== 持久化（复用 utils.io） ====================
+
+    def save(self, file: str, engine: str = 'joblib', **kwargs) -> str:
+        """保存评分转换器到文件.
+
+        复用 ``hscredit.utils.io.save_pickle`` 进行持久化，支持多种序列化引擎
+        （joblib/pickle/dill/cloudpickle）和压缩格式（gzip/bz2/xz/lz4/zstd）。
+
+        :param file: 文件路径
+        :param engine: 序列化引擎，默认 'joblib'
+        :param kwargs: 透传给 save_pickle 的参数（如 compression, compression_level）
+        :return: 保存的文件路径
+
+        **参考样例**
+
+        >>> transformer.fit(proba)
+        >>> transformer.save('score_transformer.pkl')
+        """
+        import os
+        from ....utils.io import save_pickle as _save_pickle
+
+        file_dir = os.path.dirname(file)
+        if file_dir and not os.path.exists(file_dir):
+            os.makedirs(file_dir, exist_ok=True)
+
+        _save_pickle(self, file, engine=engine, **kwargs)
+        return file
+
+    @classmethod
+    def load(cls, file: str, engine: str = 'auto', **kwargs) -> 'BaseScoreTransformer':
+        """从文件加载评分转换器（离线模型加载）.
+
+        复用 ``hscredit.utils.io.load_pickle`` 进行读取。
+
+        :param file: 文件路径
+        :param engine: 序列化引擎，默认 'auto'（按扩展名自动推断）
+        :param kwargs: 透传给 load_pickle 的参数（如 compression）
+        :return: 加载的评分转换器实例
+
+        **参考样例**
+
+        >>> transformer = ScoreTransformer.load('score_transformer.pkl')
+        >>> scores = transformer.predict(proba)
+        """
+        from ....utils.io import load_pickle as _load_pickle
+
+        obj = _load_pickle(file, engine=engine, **kwargs)
+        if not isinstance(obj, BaseScoreTransformer):
+            raise TypeError(
+                f"加载的对象类型为 {type(obj).__name__}，不是 BaseScoreTransformer 子类"
+            )
+        return obj
+
 
 class StandardScoreTransformer(BaseScoreTransformer):
     """标准评分卡转换器.
@@ -326,15 +379,21 @@ class StandardScoreTransformer(BaseScoreTransformer):
         1. base_score = A - B × ln(base_odds)
         2. base_score + pdo = A - B × ln(rate × base_odds)
 
-        解得:
-        B = sign × pdo / ln(rate)   (sign 决定方向)
-        A = base_score + B × ln(base_odds)
+        解得（其中 B_abs = pdo / ln(rate) 为非负基数，sign 决定方向）:
+        B = sign × B_abs
+        A = base_score + sign × B_abs × ln(base_odds)
+          = base_score + B × ln(base_odds)
+
+        在 odds = base_odds 处恒有 Score = A - B×ln(base_odds) = base_score，
+        无论 descending 还是 ascending，锚点分数都保持为 base_score。
 
         :return: (A, B)
         """
         sign = 1 if self.direction_ == 'descending' else -1
-        B = sign * self.pdo / np.log(self.rate)
-        A = self.base_score + B * np.log(self.base_odds)
+        B_abs = self.pdo / np.log(self.rate)
+        B = sign * B_abs
+        # A 的计算逻辑：base_score + sign × B_abs × ln(base_odds)（等价于 base_score + B×ln(base_odds)）
+        A = self.base_score + sign * B_abs * np.log(self.base_odds)
         return A, B
 
     def fit(
@@ -524,6 +583,26 @@ class StandardScoreTransformer(BaseScoreTransformer):
             })
 
         return pd.DataFrame(results)
+
+    def score_formula(self, decimal: int = 4) -> dict:
+        """输出标准评分卡的概率→评分转换公式.
+
+        :param decimal: 公式数值保留小数位数，默认 4
+        :return: 含公式字符串与 A/B 参数的字典
+        """
+        check_is_fitted(self)
+        A = round(float(self.A_), decimal)
+        B = round(float(self.B_), decimal)
+        return {
+            "公式": f"Score = {A} - {B} × ln(P / (1 - P))",
+            "A": A,
+            "B": B,
+            "base_odds": self.base_odds,
+            "base_score": self.base_score,
+            "pdo": self.pdo,
+            "rate": self.rate,
+            "direction": self.direction_,
+        }
 
 
 class LinearScoreTransformer(BaseScoreTransformer):
@@ -1155,6 +1234,21 @@ class ScoreTransformer(BaseScoreTransformer):
         """
         check_is_fitted(self)
         return self.transformer_.inverse_transform(scores)
+
+    def score_formula(self, decimal: int = 4) -> dict:
+        """输出当前方法的概率→评分转换公式（仅 standard 方法给出解析式）.
+
+        :param decimal: 公式数值保留小数位数，默认 4
+        :return: 公式字典；非解析方法（linear/quantile/boxcox）返回方法说明
+        """
+        check_is_fitted(self)
+        if hasattr(self.transformer_, 'score_formula'):
+            return self.transformer_.score_formula(decimal=decimal)
+        return {
+            "method": self.method,
+            "说明": f"'{self.method}' 方法为数据驱动映射，无固定解析公式，请使用 transform/predict 进行转换",
+            "direction": self.direction_,
+        }
 
 
 def transform_probability_to_score(

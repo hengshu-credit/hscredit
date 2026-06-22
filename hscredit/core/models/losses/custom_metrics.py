@@ -153,8 +153,9 @@ class GiniMetric(BaseMetric):
         tpr = np.concatenate([[0], tpr])
         fpr = np.concatenate([[0], fpr])
 
-        # 计算AUC（梯形法则）
-        auc = np.trapz(tpr, fpr)
+        # 计算AUC（梯形法则，跨 NumPy 版本兼容）
+        from ....utils.misc import trapz
+        auc = trapz(tpr, fpr)
 
         return float(auc)
 

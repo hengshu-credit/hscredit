@@ -317,6 +317,48 @@ class BaseDriftCalibrator(BaseEstimator, ABC):
 
         return float(psi)
 
+    # ==================== 持久化（复用 utils.io） ====================
+
+    def save(self, file: str, engine: str = 'joblib', **kwargs) -> str:
+        """保存漂移校准器到文件.
+
+        复用 ``hscredit.utils.io.save_pickle`` 进行持久化。
+
+        :param file: 文件路径
+        :param engine: 序列化引擎，默认 'joblib'
+        :param kwargs: 透传给 save_pickle 的参数（如 compression）
+        :return: 保存的文件路径
+        """
+        import os
+        from ....utils.io import save_pickle as _save_pickle
+
+        file_dir = os.path.dirname(file)
+        if file_dir and not os.path.exists(file_dir):
+            os.makedirs(file_dir, exist_ok=True)
+
+        _save_pickle(self, file, engine=engine, **kwargs)
+        return file
+
+    @classmethod
+    def load(cls, file: str, engine: str = 'auto', **kwargs) -> 'BaseDriftCalibrator':
+        """从文件加载漂移校准器（离线模型加载）.
+
+        复用 ``hscredit.utils.io.load_pickle`` 进行读取。
+
+        :param file: 文件路径
+        :param engine: 序列化引擎，默认 'auto'
+        :param kwargs: 透传给 load_pickle 的参数
+        :return: 加载的漂移校准器实例
+        """
+        from ....utils.io import load_pickle as _load_pickle
+
+        obj = _load_pickle(file, engine=engine, **kwargs)
+        if not isinstance(obj, BaseDriftCalibrator):
+            raise TypeError(
+                f"加载的对象类型为 {type(obj).__name__}，不是 BaseDriftCalibrator 子类"
+            )
+        return obj
+
 
 class LinearDriftCalibrator(BaseDriftCalibrator):
     """线性漂移校准器.

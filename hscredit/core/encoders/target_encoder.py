@@ -63,8 +63,8 @@ class TargetEncoder(BaseEncoder):
         smoothing: float = 1.0,
         min_samples_leaf: int = 1,
         noise: Optional[float] = None,
-        handle_unknown: str = 'value',
-        handle_missing: str = 'value',
+        handle_unknown: str = "value",
+        handle_missing: str = "value",
         drop_invariant: bool = False,
         return_df: bool = True,
         random_state: Optional[int] = None,
@@ -108,33 +108,33 @@ class TargetEncoder(BaseEncoder):
         if y is None:
             raise ValueError("TargetEncoder是有监督编码器，必须提供目标变量y")
 
-        y = pd.Series(y, name='target')
+        y = pd.Series(y, name="target")
         self.global_mean_ = y.mean()
 
         for col in self.cols_:
             mapping = {}
 
-            df_temp = pd.DataFrame({col: X[col], 'target': y.values})
-            stats = df_temp.groupby(col)['target'].agg(['mean', 'count'])
+            df_temp = pd.DataFrame({col: X[col], "target": y.values})
+            stats = df_temp.groupby(col)["target"].agg(["mean", "count"])
 
-            smoothed_means = (
-                stats['count'] * stats['mean'] + self.smoothing * self.global_mean_
-            ) / (stats['count'] + self.smoothing)
+            smoothed_means = (stats["count"] * stats["mean"] + self.smoothing * self.global_mean_) / (
+                stats["count"] + self.smoothing
+            )
 
-            small_sample_mask = stats['count'] < self.min_samples_leaf
+            small_sample_mask = stats["count"] < self.min_samples_leaf
             smoothed_means[small_sample_mask] = self.global_mean_
 
             mapping = smoothed_means.to_dict()
 
-            if self.handle_missing == 'value':
+            if self.handle_missing == "value":
                 mapping[np.nan] = self.global_mean_
-            elif self.handle_missing == 'return_nan':
+            elif self.handle_missing == "return_nan":
                 mapping[np.nan] = np.nan
 
-            if self.handle_unknown == 'value':
-                mapping['__UNKNOWN__'] = self.global_mean_
-            elif self.handle_unknown == 'return_nan':
-                mapping['__UNKNOWN__'] = np.nan
+            if self.handle_unknown == "value":
+                mapping["__UNKNOWN__"] = self.global_mean_
+            elif self.handle_unknown == "return_nan":
+                mapping["__UNKNOWN__"] = np.nan
 
             self.mapping_[col] = mapping
 
@@ -155,14 +155,14 @@ class TargetEncoder(BaseEncoder):
 
             X[col] = original_values.map(mapping)
 
-            if self.handle_unknown == 'value':
+            if self.handle_unknown == "value":
                 X[col] = X[col].fillna(self.global_mean_)
-            elif self.handle_unknown == 'error' and X[col].isna().any():
+            elif self.handle_unknown == "error" and X[col].isna().any():
                 raise ValueError(f"列'{col}'包含未知类别")
 
             if self.noise is not None and y is not None:
-                if self.random_state is not None:
-                    np.random.seed(self.random_state)
-                X[col] = X[col] * (1 + np.random.normal(0, self.noise, len(X)))
+                # 使用局部随机数发生器，避免污染全局 np.random 状态
+                rng = np.random.RandomState(self.random_state)
+                X[col] = X[col] * (1 + rng.normal(0, self.noise, len(X)))
 
         return X

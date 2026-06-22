@@ -96,6 +96,147 @@ except ImportError:
     StudyDirection = None
 
 
+class TuningSampler:
+    """采样器码表 - 统一管理 optuna 内置及 optunahub 提供的搜索器.
+
+    通过字符串名称即可在 ``ModelTuner(sampler=...)`` 中选用不同搜索器，
+    无需直接 import 对应的采样器类。
+
+    **optuna 内置采样器** (``BUILTIN_SAMPLERS``)：
+
+    - ``'tpe'``        : TPESampler，树结构 Parzen 估计（默认）
+    - ``'random'``     : RandomSampler，随机搜索
+    - ``'cmaes'``      : CmaEsSampler，CMA-ES 进化策略（依赖 cmaes）
+    - ``'grid'``       : GridSampler，网格搜索（需 sampler_kwargs 传入 search_space）
+    - ``'nsgaii'``     : NSGAIISampler，多目标遗传算法
+    - ``'nsgaiii'``    : NSGAIIISampler，多目标遗传算法（多目标场景）
+    - ``'qmc'``        : QMCSampler，准蒙特卡洛
+    - ``'gp'``         : GPSampler，高斯过程贝叶斯优化
+    - ``'bruteforce'`` : BruteForceSampler，穷举搜索
+
+    **optunahub 采样器** (``OPTUNAHUB_SAMPLERS``，依赖 optunahub，按需联网下载)：
+
+    - ``'auto'``       : AutoSampler，自动选择最优采样器
+    - ``'hebo'``       : HEBOSampler，异方差贝叶斯优化
+    - ``'smac'``       : SMACSampler，基于 SMAC3 的贝叶斯优化
+    - ``'neldermead'`` : NelderMeadSampler，单纯形法
+
+    **参考样例**
+
+    >>> from hscredit.core.models import TuningSampler
+    >>> TuningSampler.list_samplers()
+    >>> sampler = TuningSampler.create('cmaes', seed=42)
+    >>> sampler = TuningSampler.create('auto')   # optunahub
+    """
+
+    # optuna 内置采样器：name -> optuna.samplers 中的类名
+    BUILTIN_SAMPLERS = {
+        'tpe': 'TPESampler',
+        'random': 'RandomSampler',
+        'cmaes': 'CmaEsSampler',
+        'grid': 'GridSampler',
+        'nsgaii': 'NSGAIISampler',
+        'nsgaiii': 'NSGAIIISampler',
+        'qmc': 'QMCSampler',
+        'gp': 'GPSampler',
+        'bruteforce': 'BruteForceSampler',
+    }
+
+    # optunahub 采样器：name -> (package 路径, 类名)
+    OPTUNAHUB_SAMPLERS = {
+        'auto': ('samplers/auto_sampler', 'AutoSampler'),
+        'hebo': ('samplers/hebo', 'HEBOSampler'),
+        'smac': ('samplers/smac_sampler', 'SMACSampler'),
+        'neldermead': ('samplers/nelder_mead', 'NelderMeadSampler'),
+    }
+
+    @classmethod
+    def list_samplers(cls) -> Dict[str, List[str]]:
+        """列出所有支持的采样器名称.
+
+        :return: {'内置': [...], 'optunahub': [...]}
+        """
+        return {
+            '内置': list(cls.BUILTIN_SAMPLERS.keys()),
+            'optunahub': list(cls.OPTUNAHUB_SAMPLERS.keys()),
+        }
+
+    @staticmethod
+    def _instantiate(sampler_cls: Type, kwargs: Dict[str, Any]) -> Any:
+        """按构造函数签名过滤 kwargs 后实例化采样器（如 seed 不被支持则丢弃）."""
+        import inspect
+
+        try:
+            sig = inspect.signature(sampler_cls.__init__)
+            accepted = set(sig.parameters)
+            accepts_var_kw = any(
+                p.kind == inspect.Parameter.VAR_KEYWORD
+                for p in sig.parameters.values()
+            )
+        except (TypeError, ValueError):
+            accepted, accepts_var_kw = set(), True
+
+        if not accepts_var_kw:
+            kwargs = {k: v for k, v in kwargs.items() if k in accepted}
+        return sampler_cls(**kwargs)
+
+    @classmethod
+    def create(
+        cls,
+        sampler: Union[str, Any, None] = 'tpe',
+        seed: Optional[int] = None,
+        **kwargs,
+    ) -> Any:
+        """按名称创建采样器实例.
+
+        :param sampler: 采样器名称（见 BUILTIN_SAMPLERS / OPTUNAHUB_SAMPLERS），
+            或已实例化的采样器对象（直接返回），或 None（默认 TPE）
+        :param seed: 随机种子，若采样器支持则注入
+        :param kwargs: 透传给采样器构造函数的额外参数
+        :return: optuna 采样器实例
+        """
+        if not OPTUNA_AVAILABLE:
+            raise ImportError("Optuna未安装，请使用 pip install optuna 安装")
+
+        # 已是采样器实例，直接返回
+        if sampler is None:
+            sampler = 'tpe'
+        if not isinstance(sampler, str):
+            return sampler
+
+        key = sampler.lower()
+        if seed is not None and 'seed' not in kwargs:
+            kwargs['seed'] = seed
+
+        if key in cls.BUILTIN_SAMPLERS:
+            sampler_cls = getattr(optuna.samplers, cls.BUILTIN_SAMPLERS[key])
+            return cls._instantiate(sampler_cls, kwargs)
+
+        if key in cls.OPTUNAHUB_SAMPLERS:
+            try:
+                import optunahub
+            except ImportError:
+                raise ImportError(
+                    f"使用 '{sampler}' 采样器需要 optunahub，请使用 "
+                    f"pip install optunahub 安装（或 pip install hscredit[tune]）"
+                )
+            package, class_name = cls.OPTUNAHUB_SAMPLERS[key]
+            module = optunahub.load_module(package)
+            sampler_cls = getattr(module, class_name, None)
+            if sampler_cls is None:
+                # 类名兜底：查找模块中以 Sampler 结尾的类
+                sampler_cls = next(
+                    (getattr(module, n) for n in dir(module) if n.endswith('Sampler')),
+                    None,
+                )
+            if sampler_cls is None:
+                raise ValueError(f"无法从 optunahub 包 '{package}' 中找到采样器类")
+            return cls._instantiate(sampler_cls, kwargs)
+
+        all_names = list(cls.BUILTIN_SAMPLERS) + list(cls.OPTUNAHUB_SAMPLERS)
+        raise ValueError(f"未知采样器 '{sampler}'，可选: {all_names}")
+
+
 def _calc_ks(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     """计算KS值（内部辅助函数）.
     
@@ -491,19 +632,26 @@ class ModelTuner:
     **内部建模经验**
 
     1. XGBoost参数经验:
-       - max_depth: 风控场景通常2-5，防止过拟合
-       - min_child_weight: 样本>10000时10-2000，否则10-300
-       - subsample/colsample_bytree: 0.6-0.9
-       - reg_alpha/reg_lambda: 1e-8到100的对数尺度
-       - learning_rate: 0.005-0.1，较小学习率更稳定
+       - max_depth: 风控场景通常2-4，防止过拟合
+       - min_child_weight: 8-256（step 4），越大越保守
+       - subsample: 0.35-0.85，colsample_bytree: 0.4-0.9
+       - gamma: 0.0-32.0，reg_lambda: 32.0-128.0（强 L2 正则）
+       - scale_pos_weight: 16.0-32.0（适配低坏率不平衡）
+       - learning_rate: 0.0001-0.01，较小学习率更稳定
+       - n_estimators: 32-256（step 16）
 
-    2. LightGBM参数经验:
-       - num_leaves: 与max_depth相关，通常20-64（2^5=32附近）
-       - max_depth: 风控场景通常2-5，防止过拟合
-       - learning_rate: 0.005-0.1，较小学习率更稳定
-       - min_child_samples: 5-100
+    2. LightGBM参数经验（与 XGBoost 对齐）:
+       - num_leaves: 与max_depth相关，受 2**max_depth 上界约束
+       - max_depth: 风控场景通常2-4，防止过拟合
+       - learning_rate: 0.0001-0.01，较小学习率更稳定
+       - min_child_samples: 8-256（step 4）
 
-    3. 评估指标:
+    3. LogisticRegression参数经验:
+       - C: 0.01-32 离散网格，越小正则越强
+       - penalty: 'l2'，class_weight: None/'balanced'/自定义权重字典
+       - solver: liblinear/sag/lbfgs/newton-cg，max_iter: 16-256
+
+    4. 评估指标:
        - 主要用KS评估模型区分能力
        - 同时考虑训练/测试KS差异防止过拟合
     """
@@ -519,6 +667,12 @@ class ModelTuner:
         objective: Union[str, Callable, None] = None,
         objective_kwargs: Optional[Dict[str, Any]] = None,
         eval_ratios: List[float] = None,
+        trial_points: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
+        sampler: Union[str, Any, None] = 'tpe',
+        sampler_kwargs: Optional[Dict[str, Any]] = None,
+        storage: Optional[str] = None,
+        study_name: Optional[str] = None,
+        load_if_exists: bool = False,
         target: str = 'target',
         cv: int = 5,
         n_jobs: int = -1,
@@ -537,6 +691,22 @@ class ModelTuner:
             如 {'ratio': 0.05, 'penalty': 0.3}
         :param eval_ratios: 调参过程中额外追踪的 LIFT 覆盖率列表，
             如 [0.01, 0.03, 0.05, 0.10]，结果记录在 optimization_history_ 中
+        :param trial_points: 预指定的超参数搜索点，``dict`` 或 ``list[dict]``。
+            在 fit 创建 study 后通过 ``study.enqueue_trial`` 优先评估这些点
+            （例如已知的经验最优配置或上一轮调优结果），随后再进行常规采样。
+            每个 dict 的键应为搜索空间中的参数名，可只指定部分参数（其余由采样器补全）。
+            也可在实例化后通过 :meth:`enqueue_trials` 追加。
+        :param sampler: 搜索器，支持:
+            - 字符串名称：见 :class:`TuningSampler`，如 'tpe'（默认）/'cmaes'/'random'/
+              'gp'/'nsgaii' 等内置采样器，或 'auto'/'hebo'/'smac' 等 optunahub 采样器
+            - 已实例化的 optuna 采样器对象（直接使用）
+            - None：等价于 'tpe'
+        :param sampler_kwargs: 透传给采样器构造函数的额外参数，如 {'n_startup_trials': 10}
+        :param storage: optuna 存储 URL，如 ``'sqlite:///hscredit_tuning.db'``。
+            指定后可配合 ``optuna-dashboard sqlite:///hscredit_tuning.db`` 实时查看
+            调优进度；不指定则使用内存存储（进程结束即丢失）。
+        :param study_name: study 名称，配合 storage 持久化时用于标识/复用同一 study。
+        :param load_if_exists: storage 中已存在同名 study 时是否加载续跑，默认False。
         """
         if not OPTUNA_AVAILABLE:
             raise ImportError(
@@ -549,6 +719,12 @@ class ModelTuner:
         self.objective = objective
         self.objective_kwargs = objective_kwargs or {}
         self.eval_ratios = eval_ratios or [0.01, 0.03, 0.05, 0.10]
+        self.trial_points = self._normalize_trial_points(trial_points)
+        self.sampler = sampler
+        self.sampler_kwargs = sampler_kwargs or {}
+        self.storage = storage
+        self.study_name = study_name
+        self.load_if_exists = load_if_exists
         self.target = target
         self.cv = cv
         self.n_jobs = n_jobs if n_jobs != -1 else None
@@ -697,35 +873,48 @@ class ModelTuner:
         if self.search_space is None:
             self.search_space = self._get_adaptive_search_space()
         
-        # 创建Optuna study
-        sampler = TPESampler(seed=self.random_state)
-        
+        # 创建采样器（支持 optuna 内置及 optunahub 采样器，见 TuningSampler 码表）
+        sampler = TuningSampler.create(
+            self.sampler, seed=self.random_state, **self.sampler_kwargs
+        )
+
+        # 公共 study 参数（storage 指定后可用 optuna-dashboard 实时查看进度）
+        common_kwargs = dict(sampler=sampler)
+        if self.storage is not None:
+            common_kwargs.update(
+                storage=self.storage,
+                study_name=self.study_name,
+                load_if_exists=self.load_if_exists,
+            )
+
         if self._is_multi_objective:
             # 多目标优化
             self.study_ = optuna.create_study(
                 directions=self.directions,
-                sampler=sampler
+                **common_kwargs
             )
         else:
             # 单目标优化
             self.study_ = optuna.create_study(
                 direction=self.directions[0],
-                sampler=sampler
+                **common_kwargs
             )
+
+        # 入队预指定的超参数搜索点（优先评估）
+        self._enqueue_trial_points()
 
         # 定义目标函数
         def objective(trial):
             # 从搜索空间采样参数
             params = self._sample_params(trial)
             params.update(self.fixed_params)
-            
-            # 添加早停参数
-            params['early_stopping_rounds'] = self.early_stopping_rounds
-            params['validation_fraction'] = 0.2
-            
+
+            # 添加早停参数（仅当模型构造函数支持时，逻辑回归等不支持）
+            self._inject_fit_params(params)
+
             # 创建模型
             model = self.model_class(**params)
-            
+
             # 评估模型
             return self._evaluate_model(model, X, y, sample_weight)
 
@@ -877,9 +1066,8 @@ class ModelTuner:
             # 合并固定参数
             full_params = self.fixed_params.copy()
             full_params.update(params)
-            full_params['early_stopping_rounds'] = self.early_stopping_rounds
-            full_params['validation_fraction'] = 0.2
-            
+            self._inject_fit_params(full_params)
+
             # 创建模型并评估
             model = self.model_class(**full_params)
             metric_values = self._evaluate_model(model, X, y, sample_weight)
@@ -898,9 +1086,116 @@ class ModelTuner:
                 }
             
             results.append(result)
-        
+
         return pd.DataFrame(results)
-    
+
+    def evaluate_study_trials(
+        self,
+        trial_indices: Optional[Union[int, Sequence[int]]] = None,
+        X: Optional[Union[np.ndarray, pd.DataFrame]] = None,
+        y: Optional[Union[np.ndarray, pd.Series]] = None,
+        sample_weight: Optional[np.ndarray] = None
+    ) -> pd.DataFrame:
+        """评估已完成 study 中指定 trial 的模型效果.
+
+        从 ``self.study_.trials[i]`` 取出对应超参数重新评估，便于复核某次
+        采样的稳定性、或在新数据集上对比若干历史 trial 的效果。
+
+        与 :meth:`evaluate_trials` 的区别：本方法的超参数来自已学习完成的
+        study（按 trial 索引取），而非外部传入的参数点；结果额外包含每个 trial
+        的索引、状态及 study 记录的原始得分（``study记录值`` 列），便于与重新
+        评估的得分对照。
+
+        :param trial_indices: 要评估的 trial 索引，可选:
+            - None: 评估全部已完成（COMPLETE）的 trial
+            - int: 评估单个 trial，如 ``0`` 或 ``tuner.study_.best_trial.number``
+            - 序列: 评估多个 trial，如 ``[0, 5, 10]``
+        :param X: 特征矩阵，或包含目标列的DataFrame；默认复用 fit 时的训练数据
+        :param y: 目标变量，可选；默认复用 fit 时的标签
+        :param sample_weight: 样本权重，可选；默认复用 fit 时的样本权重
+        :return: 包含评估结果的DataFrame，含 ``trial索引``/``trial状态``/超参数/
+            重新评估指标/``study记录值`` 列
+
+        Example:
+            >>> tuner.fit(X_train, y_train, n_trials=100)
+            >>> # 评估最优 trial 与前两个 trial
+            >>> tuner.evaluate_study_trials([tuner.study_.best_trial.number, 0, 1])
+            >>> # 在新数据集上复核全部 trial
+            >>> tuner.evaluate_study_trials(X=X_oot, y=y_oot)
+        """
+        if self.study_ is None:
+            raise ValueError("请先调用fit()进行调优，再评估study中的trial")
+
+        all_trials = self.study_.trials
+        n_trials = len(all_trials)
+
+        # 归一化 trial_indices
+        if trial_indices is None:
+            indices = [
+                t.number for t in all_trials
+                if t.state == optuna.trial.TrialState.COMPLETE
+            ]
+            if not indices:
+                raise ValueError("study中没有已完成（COMPLETE）的trial可供评估")
+        elif isinstance(trial_indices, int):
+            indices = [trial_indices]
+        else:
+            indices = list(trial_indices)
+
+        # 校验索引合法性
+        for idx in indices:
+            if not isinstance(idx, (int, np.integer)):
+                raise ValueError(f"trial索引必须为整数，收到: {idx!r}")
+            if idx < 0 or idx >= n_trials:
+                raise ValueError(
+                    f"trial索引 {idx} 超出范围，study共有 {n_trials} 个trial（有效索引 0~{n_trials - 1}）"
+                )
+
+        # 默认复用 fit 时的数据
+        if X is None:
+            if getattr(self, '_X', None) is None:
+                raise ValueError("未提供X且fit时未缓存训练数据，请显式传入X/y")
+            X, y = self._X, self._y
+            if sample_weight is None:
+                sample_weight = getattr(self, '_sample_weight', None)
+        else:
+            X, y = self._check_input(X, y)
+
+        results = []
+
+        for idx in indices:
+            trial = all_trials[idx]
+            params = dict(trial.params)
+
+            if self.verbose:
+                logger.info(f"评估 study trial #{idx} (state={trial.state.name}): {params}")
+
+            # 合并固定参数并按模型签名注入早停参数
+            full_params = self.fixed_params.copy()
+            full_params.update(params)
+            self._inject_fit_params(full_params)
+
+            # 创建模型并评估
+            model = self.model_class(**full_params)
+            metric_values = self._evaluate_model(model, X, y, sample_weight)
+
+            # study 记录的原始得分（用于与重新评估结果对照）
+            recorded = list(trial.values) if trial.values is not None else None
+
+            result = {'trial索引': idx, 'trial状态': trial.state.name, **params}
+            if self._is_multi_objective:
+                result.update({name: val for name, val in zip(self.metric_names, metric_values)})
+                if recorded is not None:
+                    result['study记录值'] = recorded
+            else:
+                result[self.metric_names[0]] = metric_values
+                if recorded is not None:
+                    result['study记录值'] = recorded[0]
+
+            results.append(result)
+
+        return pd.DataFrame(results)
+
     def _get_params_from_trial(self, trial) -> Dict[str, Any]:
         """从trial中获取参数."""
         params = {}
@@ -922,76 +1217,108 @@ class ModelTuner:
             return self._get_lightgbm_search_space()
         elif 'catboost' in model_name or 'cat' in model_name:
             return self._get_catboost_search_space()
-        elif 'randomforest' in model_name or 'rf' in model_name:
+        elif 'randomforest' in model_name or 'extratrees' in model_name or 'rf' in model_name:
+            # ExtraTrees 与 RandomForest 参数一致，共用搜索空间
             return self._get_randomforest_search_space()
         elif 'gradientboosting' in model_name or 'gbdt' in model_name:
             return self._get_gradientboosting_search_space()
+        elif 'ngboost' in model_name or 'ngb' in model_name:
+            return self._get_ngboost_search_space()
+        elif 'logistic' in model_name or model_name in ('lr',):
+            return self._get_logisticregression_search_space()
         else:
             # 默认使用XGBoost搜索空间
             return self._get_xgboost_search_space()
     
     def _get_xgboost_search_space(self) -> Dict[str, Dict[str, Any]]:
         """XGBoost搜索空间 - 基于内部建模经验.
-        
-        参考内部代码:
-        - max_depth: 风控场景通常2-5，防止过拟合
-        - min_child_weight: 样本>10000时10-2000，否则10-300
-        - subsample/colsample_bytree: 0.6-0.9
-        - reg_alpha/reg_lambda: 1e-8到100
-        - learning_rate: 0.005-0.1，较小学习率更稳定
-        - n_estimators: 样本>10000时50-300，否则20-100
+
+        参考内部代码（强正则、浅树、小学习率以抑制风控样本过拟合）:
+        - max_depth: 风控场景通常2-4，防止过拟合
+        - min_child_weight: 8-256（step 4），叶子最小样本权重，越大越保守
+        - subsample: 0.35-0.85，行采样
+        - colsample_bytree: 0.4-0.9，列采样
+        - gamma: 0.0-32.0，分裂最小损失下降，越大越保守
+        - scale_pos_weight: 16.0-32.0，正样本权重（适配低坏率不平衡场景）
+        - reg_alpha: 0.0-1.0（L1 正则）
+        - reg_lambda: 32.0-128.0（L2 正则，强约束）
+        - learning_rate: 0.0001-0.01，较小学习率更稳定
+        - n_estimators: 32-256（step 16）
+
+        固定项 ``objective='binary:logistic'`` / ``eval_metric='auc'`` /
+        ``booster='gbtree'`` / ``importance_type='cover'`` 已是模型默认值，
+        如需覆盖可通过 ``ModelTuner(fixed_params=...)`` 传入。
         """
-        n_samples = self._n_samples or 10000
-        
-        # 根据样本量调整min_child_weight
-        if n_samples > 10000:
-            min_child_weight_high = 2000
-        else:
-            min_child_weight_high = 300
-        
-        # 根据样本量调整n_estimators
-        if n_samples > 10000:
-            n_estimators_high = 500
-            n_estimators_low = 50
-        else:
-            n_estimators_high = 300
-            n_estimators_low = 30
-        
         return {
-            'max_depth': {'type': 'int', 'low': 2, 'high': 5},
-            'learning_rate': {'type': 'float', 'low': 0.005, 'high': 0.1, 'log': True},
-            'n_estimators': {'type': 'int', 'low': n_estimators_low, 'high': n_estimators_high},
-            'min_child_weight': {'type': 'int', 'low': 10, 'high': min_child_weight_high},
-            'subsample': {'type': 'float', 'low': 0.6, 'high': 1.0},
-            'colsample_bytree': {'type': 'float', 'low': 0.6, 'high': 1.0},
-            'gamma': {'type': 'float', 'low': 1e-8, 'high': 1.0, 'log': True},
-            'reg_alpha': {'type': 'float', 'low': 1e-8, 'high': 100.0, 'log': True},
-            'reg_lambda': {'type': 'float', 'low': 1e-8, 'high': 100.0, 'log': True},
+            'max_depth': {'type': 'int', 'low': 2, 'high': 4},
+            'learning_rate': {'type': 'float', 'low': 0.0001, 'high': 0.01},
+            'n_estimators': {'type': 'int', 'low': 32, 'high': 256, 'step': 16},
+            'min_child_weight': {'type': 'int', 'low': 8, 'high': 256, 'step': 4},
+            'subsample': {'type': 'float', 'low': 0.35, 'high': 0.85},
+            'colsample_bytree': {'type': 'float', 'low': 0.4, 'high': 0.9},
+            'gamma': {'type': 'float', 'low': 0.0, 'high': 32.0},
+            'scale_pos_weight': {'type': 'float', 'low': 16.0, 'high': 32.0},
+            'reg_alpha': {'type': 'float', 'low': 0.0, 'high': 1.0},
+            'reg_lambda': {'type': 'float', 'low': 32.0, 'high': 128.0},
         }
-    
+
     def _get_lightgbm_search_space(self) -> Dict[str, Dict[str, Any]]:
-        """LightGBM搜索空间 - 基于内部建模经验.
-        
-        参考内部代码:
-        - num_leaves: 与max_depth相关，通常20-64（2^5=32附近）
-        - max_depth: 风控场景通常2-5，防止过拟合
-        - learning_rate: 0.005-0.1，较小学习率更稳定
-        - n_estimators: 50-500
-        - min_child_samples: 5-100
-        - subsample/colsample_bytree: 0.6-1.0
-        - reg_alpha/reg_lambda: 1e-8到10
+        """LightGBM搜索空间 - 与XGBoost搜索空间对齐.
+
+        参考内部代码（参数范围与 XGBoost 保持一致的建模经验）:
+        - num_leaves: 与max_depth相关，受 ``2**max_depth`` 上界约束（见 _sample_params）
+        - max_depth: 风控场景通常2-4，防止过拟合
+        - min_child_samples: 8-256（step 4），叶子最小样本数，越大越保守
+        - subsample: 0.35-0.85，行采样
+        - colsample_bytree: 0.4-0.9，列采样
+        - min_split_gain: 0.0-32.0，分裂最小增益（对应 XGBoost 的 gamma）
+        - scale_pos_weight: 16.0-32.0，正样本权重
+        - reg_alpha: 0.0-1.0（L1 正则）
+        - reg_lambda: 32.0-128.0（L2 正则，强约束）
+        - learning_rate: 0.0001-0.01，较小学习率更稳定
+        - n_estimators: 32-256（step 16）
         """
         return {
-            'num_leaves': {'type': 'int', 'low': 20, 'high': 64},
-            'max_depth': {'type': 'int', 'low': 2, 'high': 5},
-            'learning_rate': {'type': 'float', 'low': 0.005, 'high': 0.1, 'log': True},
-            'n_estimators': {'type': 'int', 'low': 50, 'high': 500},
-            'min_child_samples': {'type': 'int', 'low': 5, 'high': 100},
-            'subsample': {'type': 'float', 'low': 0.6, 'high': 1.0},
-            'colsample_bytree': {'type': 'float', 'low': 0.6, 'high': 1.0},
-            'reg_alpha': {'type': 'float', 'low': 1e-8, 'high': 10.0, 'log': True},
-            'reg_lambda': {'type': 'float', 'low': 1e-8, 'high': 10.0, 'log': True},
-            'min_split_gain': {'type': 'float', 'low': 1e-8, 'high': 1.0, 'log': True},
+            'num_leaves': {'type': 'int', 'low': 8, 'high': 64},
+            'max_depth': {'type': 'int', 'low': 2, 'high': 4},
+            'learning_rate': {'type': 'float', 'low': 0.0001, 'high': 0.01},
+            'n_estimators': {'type': 'int', 'low': 32, 'high': 256, 'step': 16},
+            'min_child_samples': {'type': 'int', 'low': 8, 'high': 256, 'step': 4},
+            'subsample': {'type': 'float', 'low': 0.35, 'high': 0.85},
+            'colsample_bytree': {'type': 'float', 'low': 0.4, 'high': 0.9},
+            'min_split_gain': {'type': 'float', 'low': 0.0, 'high': 32.0},
+            'scale_pos_weight': {'type': 'float', 'low': 16.0, 'high': 32.0},
+            'reg_alpha': {'type': 'float', 'low': 0.0, 'high': 1.0},
+            'reg_lambda': {'type': 'float', 'low': 32.0, 'high': 128.0},
+        }
+
+    def _get_logisticregression_search_space(self) -> Dict[str, Dict[str, Any]]:
+        """逻辑回归搜索空间 - 基于内部建模经验.
+
+        参考内部代码:
+        - C: 正则强度倒数，对数区间 0.01-32（越小正则越强）
+        - penalty: 仅 'l2'（评分卡常用，兼容多数 solver）
+        - class_weight: None / 'balanced' / 自定义正负样本权重字典（适配不平衡场景）
+        - max_iter: 16-256（对数区间），迭代上限
+        - solver: liblinear / sag / lbfgs / newton-cg
+
+        .. note::
+            ``class_weight`` 的字典候选会触发 optuna 关于非基础类型 categorical 的
+            提示（内存存储下可正常工作）；若需持久化 study，可改用 None/'balanced'。
+        """
+        return {
+            'C': {'type': 'float', 'low': 0.01, 'high': 32.0, 'log': True},
+            'penalty': {'type': 'categorical', 'choices': ['l2']},
+            'class_weight': {
+                'type': 'categorical',
+                'choices': [None, 'balanced']
+                + [{1: i / 10.0, 0: 1 - i / 10.0} for i in range(1, 10, 2)],
+            },
+            'max_iter': {'type': 'int', 'low': 16, 'high': 256, 'log': True},
+            'solver': {
+                'type': 'categorical',
+                'choices': ['liblinear', 'sag', 'lbfgs', 'newton-cg'],
+            },
         }
     
     def _get_catboost_search_space(self) -> Dict[str, Dict[str, Any]]:
@@ -1037,6 +1364,30 @@ class ModelTuner:
             'max_features': {'type': 'categorical', 'choices': ['sqrt', 'log2', None]},
         }
     
+    def _get_ngboost_search_space(self) -> Dict[str, Dict[str, Any]]:
+        """NGBoost搜索空间 - 基于风控场景优化.
+
+        NGBoost 使用 CART 作为基学习器，参数名与其他 boosting 不同：
+        - n_estimators: 自然梯度提升轮数，较小学习率需更多轮
+        - learning_rate: 0.005-0.1，较小学习率更稳定
+        - base_max_depth: 基学习器（CART）最大深度，风控场景通常2-4
+        - minibatch_frac: 小批量采样比例（行采样）
+        - col_sample: 特征采样比例
+        """
+        n_samples = self._n_samples or 10000
+        if n_samples > 10000:
+            n_estimators_low, n_estimators_high = 200, 800
+        else:
+            n_estimators_low, n_estimators_high = 100, 500
+
+        return {
+            'n_estimators': {'type': 'int', 'low': n_estimators_low, 'high': n_estimators_high},
+            'learning_rate': {'type': 'float', 'low': 0.005, 'high': 0.1, 'log': True},
+            'base_max_depth': {'type': 'int', 'low': 2, 'high': 4},
+            'minibatch_frac': {'type': 'float', 'low': 0.5, 'high': 1.0},
+            'col_sample': {'type': 'float', 'low': 0.5, 'high': 1.0},
+        }
+
     def _get_gradientboosting_search_space(self) -> Dict[str, Dict[str, Any]]:
         """GradientBoosting搜索空间 - 基于风控场景优化.
         
@@ -1053,6 +1404,90 @@ class ModelTuner:
             'subsample': {'type': 'float', 'low': 0.6, 'high': 1.0},
         }
 
+    @staticmethod
+    def _normalize_trial_points(
+        trial_points: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]]
+    ) -> List[Dict[str, Any]]:
+        """将 trial_points 归一化为 list[dict].
+
+        :param trial_points: ``None`` / 单个 dict / list[dict]
+        :return: 参数点列表（可能为空）
+        """
+        if trial_points is None:
+            return []
+        if isinstance(trial_points, dict):
+            return [dict(trial_points)]
+        if isinstance(trial_points, (list, tuple)):
+            for p in trial_points:
+                if not isinstance(p, dict):
+                    raise ValueError(f"trial_points 中每个元素必须为 dict，收到: {type(p).__name__}")
+            return [dict(p) for p in trial_points]
+        raise ValueError(
+            f"trial_points 必须为 dict 或 list[dict]，收到: {type(trial_points).__name__}"
+        )
+
+    def enqueue_trials(
+        self,
+        trial_points: Union[Dict[str, Any], List[Dict[str, Any]]]
+    ) -> 'ModelTuner':
+        """追加预指定的超参数搜索点（dict 或 list[dict]）.
+
+        若 study 已创建（已调用过 fit），则立即通过 ``study.enqueue_trial`` 入队，
+        在后续 ``fit`` 的采样中优先评估；否则缓存到 ``self.trial_points``，
+        在下次 ``fit`` 创建 study 后入队。
+
+        :param trial_points: 超参数点，``dict`` 或 ``list[dict]``，键为搜索空间参数名
+        :return: self，便于链式调用
+        """
+        points = self._normalize_trial_points(trial_points)
+        if self.study_ is not None:
+            for point in points:
+                self.study_.enqueue_trial(point, skip_if_exists=False)
+                if self.verbose:
+                    logger.info(f"已入队 trial point: {point}")
+        else:
+            self.trial_points.extend(points)
+        return self
+
+    def _enqueue_trial_points(self) -> None:
+        """将 self.trial_points 入队到当前 study（fit 内部调用）."""
+        if not self.trial_points:
+            return
+        for point in self.trial_points:
+            self.study_.enqueue_trial(point, skip_if_exists=False)
+            if self.verbose:
+                logger.info(f"已入队预指定 trial point: {point}")
+
+    def _inject_fit_params(self, params: Dict[str, Any]) -> None:
+        """按模型构造函数签名注入早停/验证集参数（原地修改 params）.
+
+        Boosting 模型（XGBoost/LightGBM/CatBoost 等）将 ``early_stopping_rounds``
+        与 ``validation_fraction`` 声明为显式构造参数，注入可启用调参过程中的早停；
+        而逻辑回归、sklearn 集成模型（RandomForest/ExtraTrees）等不支持这些参数，
+        直接注入会触发 TypeError。
+
+        仅当参数是模型构造函数**显式声明**的命名参数时才注入：不依赖 ``**kwargs``，
+        因为 SklearnRiskModel 子类虽有 ``**kwargs`` 但会在内部硬编码
+        ``early_stopping_rounds=None`` 转发，经 ``**kwargs`` 再次传入会导致
+        "multiple values for keyword argument" 冲突。
+
+        :param params: 待注入的参数字典，将被原地更新
+        """
+        import inspect
+
+        try:
+            accepted = set(inspect.signature(self.model_class.__init__).parameters)
+        except (TypeError, ValueError):
+            accepted = set()
+
+        fit_params = {
+            'early_stopping_rounds': self.early_stopping_rounds,
+            'validation_fraction': 0.2,
+        }
+        for name, value in fit_params.items():
+            if name in accepted:
+                params.setdefault(name, value)
+
     def _sample_params(self, trial: 'optuna.Trial') -> Dict[str, Any]:
         """从搜索空间采样参数.
 
@@ -1065,12 +1500,21 @@ class ModelTuner:
             param_type = param_config['type']
 
             if param_type == 'int':
-                params[param_name] = trial.suggest_int(
-                    param_name,
-                    param_config['low'],
-                    param_config['high'],
-                    step=param_config.get('step', 1)
-                )
+                # optuna 要求 log=True 时 step 必须为 1，二者不可同时指定
+                if param_config.get('log', False):
+                    params[param_name] = trial.suggest_int(
+                        param_name,
+                        param_config['low'],
+                        param_config['high'],
+                        log=True
+                    )
+                else:
+                    params[param_name] = trial.suggest_int(
+                        param_name,
+                        param_config['low'],
+                        param_config['high'],
+                        step=param_config.get('step', 1)
+                    )
             elif param_type == 'float':
                 params[param_name] = trial.suggest_float(
                     param_name,
@@ -1351,11 +1795,13 @@ class AutoTuner:
         """创建自动调优器.
 
         :param model_type: 模型类型，可选:
-            - 'xgboost'
-            - 'lightgbm'
-            - 'catboost'
-            - 'randomforest'
-            - 'gradientboosting'
+            - 'xgboost' / 'xgb'
+            - 'lightgbm' / 'lgb'
+            - 'catboost' / 'cat'
+            - 'ngboost' / 'ngb'
+            - 'randomforest' / 'rf'
+            - 'gradientboosting' / 'gbdt'
+            - 'logisticregression' / 'lr'
         :param metric: 优化指标，可以是字符串、函数或列表
         :param direction: 优化方向，单目标时str，多目标时list
         :param metric_names: 指标名称列表（多目标时用于显示）
@@ -1371,8 +1817,11 @@ class AutoTuner:
             XGBoostRiskModel,
             LightGBMRiskModel,
             CatBoostRiskModel,
+            NGBoostRiskModel,
             RandomForestRiskModel,
+            ExtraTreesRiskModel,
             GradientBoostingRiskModel,
+            LogisticRegression,
         )
 
         model_map = {
@@ -1382,10 +1831,16 @@ class AutoTuner:
             'lgb': LightGBMRiskModel,
             'catboost': CatBoostRiskModel,
             'cat': CatBoostRiskModel,
+            'ngboost': NGBoostRiskModel,
+            'ngb': NGBoostRiskModel,
             'randomforest': RandomForestRiskModel,
             'rf': RandomForestRiskModel,
+            'extratrees': ExtraTreesRiskModel,
+            'et': ExtraTreesRiskModel,
             'gradientboosting': GradientBoostingRiskModel,
             'gbdt': GradientBoostingRiskModel,
+            'logisticregression': LogisticRegression,
+            'lr': LogisticRegression,
         }
 
         model_type = model_type.lower()

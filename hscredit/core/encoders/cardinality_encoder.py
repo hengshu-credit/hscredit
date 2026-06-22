@@ -71,10 +71,10 @@ class CardinalityEncoder(BaseEncoder):
         self,
         cols: Optional[List[str]] = None,
         max_categories: int = 10,
-        other_label: Any = 'other',
+        other_label: Any = "other",
         special_values: Optional[List[Any]] = None,
-        handle_unknown: str = 'other',
-        handle_missing: str = 'value',
+        handle_unknown: str = "other",
+        handle_missing: str = "value",
         drop_invariant: bool = False,
         return_df: bool = True,
         target: Optional[str] = None,
@@ -105,6 +105,7 @@ class CardinalityEncoder(BaseEncoder):
 
         self.top_categories_: Dict[str, list] = {}
         self.category_counts_: Dict[str, pd.Series] = {}
+        self.special_counts_: Dict[str, Dict[Any, int]] = {}
 
     def _fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None):
         """拟合高基数降维编码器。
@@ -124,6 +125,9 @@ class CardinalityEncoder(BaseEncoder):
 
             self.category_counts_[col] = counts
 
+            # 记录实际出现的特殊值及其频次
+            self.special_counts_[col] = {sv: int((series == sv).sum()) for sv in special_set if (series == sv).any()}
+
             # 保留前 max_categories - 1 个（给 other 留一个位置）
             keep_n = max(self.max_categories - 1, 0)
             top_cats = counts.head(keep_n).index.tolist()
@@ -139,10 +143,10 @@ class CardinalityEncoder(BaseEncoder):
                 mapping[sv] = sv
 
             # 未知类别处理
-            if self.handle_unknown == 'other':
-                mapping['__UNKNOWN__'] = self.other_label
-            elif self.handle_unknown == 'return_nan':
-                mapping['__UNKNOWN__'] = np.nan
+            if self.handle_unknown == "other":
+                mapping["__UNKNOWN__"] = self.other_label
+            elif self.handle_unknown == "return_nan":
+                mapping["__UNKNOWN__"] = np.nan
 
             self.mapping_[col] = mapping
 
@@ -169,15 +173,15 @@ class CardinalityEncoder(BaseEncoder):
             # 对未命中且非缺失的值，按 handle_unknown 策略处理
             unmapped = mapped.isna() & ~is_na
             if unmapped.any():
-                if self.handle_unknown == 'other':
+                if self.handle_unknown == "other":
                     mapped[unmapped] = self.other_label
-                elif self.handle_unknown == 'error':
+                elif self.handle_unknown == "error":
                     bad = original[unmapped].unique().tolist()
                     raise ValueError(f"列 '{col}' 包含未知类别: {bad}")
                 # 'return_nan' 不需要额外处理，已经是 NaN
 
             # 缺失值保持
-            if self.handle_missing == 'error' and is_na.any():
+            if self.handle_missing == "error" and is_na.any():
                 raise ValueError(f"列 '{col}' 包含缺失值")
 
             X[col] = mapped
@@ -204,7 +208,7 @@ class CardinalityEncoder(BaseEncoder):
             # 构建逆映射：只对保留类别和特殊值有效
             inverse_mapping = {}
             for orig, encoded in mapping.items():
-                if orig == '__UNKNOWN__':
+                if orig == "__UNKNOWN__":
                     continue
                 # 保留类别和特殊值映射回自身；other_label 保持不变
                 if encoded != self.other_label:
@@ -243,14 +247,15 @@ class CardinalityEncoder(BaseEncoder):
         for col in self.cols_:
             counts = self.category_counts_.get(col, pd.Series(dtype=int))
             top_cats = self.top_categories_.get(col, [])
-            special_set = set(self.special_values)
-            n_special = sum(1 for sv in special_set if sv in set(counts.index) | special_set)
-            rows.append({
-                '列名': col,
-                '原始类别数': len(counts),
-                '保留类别数': len(top_cats),
-                '合并为other': max(len(counts) - len(top_cats), 0),
-                '特殊值数': n_special,
-                'other标签': self.other_label,
-            })
+            n_special = len(self.special_counts_.get(col, {}))
+            rows.append(
+                {
+                    "列名": col,
+                    "原始类别数": len(counts),
+                    "保留类别数": len(top_cats),
+                    "合并为other": max(len(counts) - len(top_cats), 0),
+                    "特殊值数": n_special,
+                    "other标签": self.other_label,
+                }
+            )
         return pd.DataFrame(rows)

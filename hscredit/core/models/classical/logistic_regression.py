@@ -871,6 +871,69 @@ class LogisticRegression(SklearnLogisticRegression):
             **kwargs
         )
 
+    def tune(
+        self,
+        X: Union[pd.DataFrame, np.ndarray],
+        y: Optional[Union[pd.Series, np.ndarray]] = None,
+        search_space: Optional[dict] = None,
+        fixed_params: Optional[dict] = None,
+        metric='ks',
+        direction='maximize',
+        n_trials: int = 100,
+        cv: int = 5,
+        timeout: Optional[int] = None,
+        verbose: bool = False,
+        **kwargs
+    ) -> 'LogisticRegression':
+        """超参数调优并返回最佳模型（与 BaseRiskModel.tune 接口一致）.
+
+        集成 ModelTuner（基于 Optuna），默认使用逻辑回归的自适应搜索空间
+        （C / penalty / class_weight / max_iter / solver）。
+
+        :param X: 特征矩阵或包含 target 的 DataFrame
+        :param y: 目标变量，可选
+        :param search_space: 参数搜索空间，默认使用自适应空间
+        :param fixed_params: 固定参数
+        :param metric: 优化指标，默认 'ks'
+        :param direction: 优化方向，默认 'maximize'
+        :param n_trials: 搜索次数，默认 100
+        :param cv: 交叉验证折数，默认 5
+        :param timeout: 超时时间(秒)
+        :param verbose: 是否输出详细信息
+        :param kwargs: 其他传递给 ModelTuner 的参数（如 sampler/storage）
+        :return: 使用最佳参数训练好的模型实例
+
+        **参考样例**
+
+        >>> model = LogisticRegression()
+        >>> best_model = model.tune(X_train, y_train, n_trials=50)
+        >>> proba = best_model.predict_proba(X_test)
+        """
+        from ..tuning import ModelTuner
+
+        tuner = ModelTuner(
+            model_class=self.__class__,
+            search_space=search_space,
+            fixed_params=fixed_params,
+            metric=metric,
+            direction=direction,
+            target=self.target or 'target',
+            cv=cv,
+            random_state=self.random_state,
+            verbose=verbose,
+            **kwargs
+        )
+
+        best_params = tuner.fit(X, y, n_trials=n_trials, timeout=timeout)
+        best_model = self.__class__(**best_params)
+        # 透传 target，确保 scorecardpipeline 风格（y=None，从 X 提取 target）下重训正常
+        if self.target is not None and getattr(best_model, 'target', None) is None:
+            best_model.target = self.target
+        best_model.fit(X, y)
+        best_model._tuner = tuner
+
+        return best_model
+
     def save(self, path: str, engine: str = 'auto', **kwargs) -> str:
         """保存模型到文件（与 BaseRiskModel.save 接口一致）.
 
