@@ -6,7 +6,9 @@ hscredit 文档
    <div class="hs-home-hero">
      <p class="hs-home-hero__eyebrow">HENGSHU CREDIT · OPEN SOURCE RISK ENGINEERING</p>
      <div class="hs-home-hero__lockup">
-       <span class="hs-home-hero__seal" aria-hidden="true">衡</span>
+       <span class="hs-home-hero__seal" aria-hidden="true">
+         <img src="_static/hengshucredit_logo.svg" alt="" />
+       </span>
        <div>
          <p class="hs-home-hero__motto">鉴真伪 · 斟信用 · 衡风险 · 枢定策</p>
          <p class="hs-home-hero__title">让信用风险建模有据可循</p>

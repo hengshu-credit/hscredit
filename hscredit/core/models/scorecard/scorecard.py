@@ -874,6 +874,54 @@ class ScoreCard(StandardScoreTransformer):
                 self.rules_dict = rules_dict
                 self.feature_names = feature_names
 
+            @staticmethod
+            def _match_interval(value, label):
+                label_str = str(label).strip()
+                match = re.match(r'^([\[(])\s*([^,]+)\s*,\s*([^\])]+)\s*([\])])$', label_str)
+                if not match:
+                    return False
+
+                if pd.isna(value):
+                    return False
+
+                left_bracket, lower, upper, right_bracket = match.groups()
+                try:
+                    val = float(value)
+                except (TypeError, ValueError):
+                    return False
+
+                lower = lower.strip().lower()
+                upper = upper.strip().lower()
+
+                if lower not in ('-inf', '-infinity'):
+                    lower_value = float(lower)
+                    if left_bracket == '[':
+                        if val < lower_value:
+                            return False
+                    elif val <= lower_value:
+                        return False
+
+                if upper not in ('+inf', 'inf', 'infinity'):
+                    upper_value = float(upper)
+                    if right_bracket == ']':
+                        if val > upper_value:
+                            return False
+                    elif val >= upper_value:
+                        return False
+
+                return True
+
+            @staticmethod
+            def _match_category(value, label):
+                if pd.isna(value):
+                    return False
+                value_str = str(value).strip()
+                label_str = str(label).strip()
+                if value_str == label_str:
+                    return True
+                candidates = [part.strip() for part in label_str.split(',')]
+                return value_str in candidates
+
             def transform(self, X, metric='bins'):
                 # 复制输入
                 if not isinstance(X, pd.DataFrame):
@@ -891,44 +939,21 @@ class ScoreCard(StandardScoreTransformer):
                     bins = rule.get('bins', [])
                     bin_labels = rule.get('bin_labels', [])
 
-                    if not bins or not bin_labels:
+                    if bins is None or bin_labels is None or len(bins) == 0 or len(bin_labels) == 0:
                         continue
 
                     # 创建分箱函数
                     def get_bin_label(value):
                         if pd.isna(value):
+                            for label in bin_labels:
+                                if ScoreCard._normalize_rule_label(label) == 'missing':
+                                    return label
                             return '缺失值'
 
-                        # 尝试匹配数值区间
-                        try:
-                            val = float(value)
-                            for i, b in enumerate(bins):
-                                if pd.isna(b):
-                                    continue
-                                b = float(b)
-                                if i == 0 and val < b:
-                                    return bin_labels[i]
-                                elif i > 0:
-                                    prev = float(bins[i-1])
-                                    if not pd.isna(prev) and prev <= val < b:
-                                        return bin_labels[i]
-                            # 最后一个区间
-                            if not pd.isna(bins[-1]) and val >= float(bins[-1]):
-                                return bin_labels[-1]
-                        except (TypeError, ValueError):
-                            pass
-
-                        # 尝试匹配类别值
-                        for b in bins:
-                            if isinstance(b, list):
-                                if str(value) in [str(v) for v in b]:
-                                    idx = bins.index(b)
-                                    if idx < len(bin_labels):
-                                        return bin_labels[idx]
-                            elif str(value).strip() == str(b).strip():
-                                idx = bins.index(b)
-                                if idx < len(bin_labels):
-                                    return bin_labels[idx]
+                        # 优先按导出的完整标签匹配，避免只依赖解析出的切分点导致中间箱丢失。
+                        for label in bin_labels:
+                            if self._match_interval(value, label) or self._match_category(value, label):
+                                return label
 
                         return '其他'
 
@@ -940,6 +965,18 @@ class ScoreCard(StandardScoreTransformer):
         self._rule_binner = RuleBasedBinner(self.rules_, self.feature_names_)
         self.binner = self._rule_binner
         self._binner_is_woe_transformer = False
+
+    def _has_real_lr_model(self) -> bool:
+        """判断当前对象是否持有可直接做 WOE 线性评分的 LR 模型."""
+        return self.lr_model_ is not None or self.lr_model is not None
+
+    def _should_use_loaded_rule_scoring(self, input_type: str, is_woe_data: bool) -> bool:
+        """判断是否应走离线规则分箱到分数的评分路径."""
+        if self._has_real_lr_model() or not hasattr(self, '_rule_binner'):
+            return False
+        if input_type == 'woe' or (input_type == 'auto' and is_woe_data):
+            return False
+        return True
 
     def _transform_to_bins(self, X: pd.DataFrame) -> pd.DataFrame:
         """将原始数据转换为分箱标签数据."""
@@ -1378,20 +1415,11 @@ class ScoreCard(StandardScoreTransformer):
         if not isinstance(X, pd.DataFrame):
             X = pd.DataFrame(X)
 
-        uses_loaded_rule_scoring = (
-            getattr(self, '_loaded_intercept', None) is not None
-            and getattr(self, '_loaded_coef', None) is None
-            and self.lr_model_ is None
-            and self.lr_model is None
-        )
-
         # 检测输入数据类型
         is_woe_data = self._detect_input_type(X)
+        uses_loaded_rule_scoring = self._should_use_loaded_rule_scoring(input_type, is_woe_data)
 
         if uses_loaded_rule_scoring:
-            if input_type == 'woe' or (input_type == 'auto' and is_woe_data):
-                raise ValueError("当前评分卡由离线规则加载，请传入原始数据并设置 input_type='raw'")
-
             feature_names = self.feature_names_
             X_bins = self._transform_to_bins(X)
             X_bins = X_bins[feature_names]
@@ -3312,19 +3340,10 @@ class RoundScoreCard(ScoreCard):
         if not isinstance(X, pd.DataFrame):
             X = pd.DataFrame(X)
 
-        uses_loaded_rule_scoring = (
-            getattr(self, '_loaded_intercept', None) is not None
-            and getattr(self, '_loaded_coef', None) is None
-            and self.lr_model_ is None
-            and self.lr_model is None
-        )
-
         is_woe_data = self._detect_input_type(X)
+        uses_loaded_rule_scoring = self._should_use_loaded_rule_scoring(input_type, is_woe_data)
 
         if uses_loaded_rule_scoring:
-            if input_type == 'woe' or (input_type == 'auto' and is_woe_data):
-                raise ValueError("当前 RoundScoreCard 由离线规则加载，请传入原始数据并设置 input_type='raw'")
-
             feature_names = self.feature_names_
             X_bins = self._transform_to_bins(X)[feature_names]
             sub_scores = self._bin_labels_to_rounded_score(X_bins, feature_names)

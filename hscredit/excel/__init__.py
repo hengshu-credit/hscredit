@@ -7,6 +7,7 @@
 - dataframe2excel: 快速将DataFrame写入Excel的便捷函数
 - DataFrame.save(): pandas DataFrame的save方法扩展（在utils.pandas_extensions中统一注册）
 - Series.save(): pandas Series的save方法扩展（在utils.pandas_extensions中统一注册）
+- register_pivot_aggregation: 注册数据透视表聚合方式别名
 
 使用示例:
     >>> import pandas as pd
@@ -27,6 +28,7 @@
     >>> writer.save("report.xlsx")
 """
 
+from ._pivot import register_aggregation as register_pivot_aggregation
 from .writer import ExcelWriter, dataframe2excel, resolve_condition_color
 
 # 注意：pandas扩展方法（df.save(), df.show(), df.summary()等）
@@ -37,4 +39,5 @@ __all__ = [
     "ExcelWriter",
     "dataframe2excel",
     "resolve_condition_color",
+    "register_pivot_aggregation",
 ]

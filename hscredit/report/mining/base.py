@@ -269,7 +269,7 @@ class MinedRule:
         if not self.conditions:
             return "True"
         
-        return " AND ".join([c.to_expression() for c in self.conditions])
+        return " & ".join([c.to_expression() for c in self.conditions])
     
     def to_rule_object(self):
         """转换为hscredit Rule对象."""

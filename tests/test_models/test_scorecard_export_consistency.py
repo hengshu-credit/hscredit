@@ -1,4 +1,6 @@
 import sys
+import re
+import subprocess
 import types
 
 import numpy as np
@@ -6,8 +8,33 @@ import pytest
 from sklearn.model_selection import train_test_split
 
 from hscredit.core.binning import OptimalBinning
-from hscredit.core.models import ScoreCard
+from hscredit.core.models import ScoreCard, RoundScoreCard
 from hscredit.utils.datasets import germancredit
+
+
+def _skip_if_java_too_old_for_sklearn2pmml():
+    try:
+        result = subprocess.run(
+            ['java', '-version'],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError:
+        pytest.skip("PMML 集成测试需要 Java 运行时")
+
+    version_output = result.stderr or result.stdout
+    match = re.search(r'version "([^"]+)"', version_output)
+    if not match:
+        pytest.skip("无法识别 Java 版本，跳过 PMML 集成测试")
+
+    version = match.group(1)
+    if version.startswith("1."):
+        major = int(version.split(".")[1])
+    else:
+        major = int(version.split(".", 1)[0])
+    if major < 11:
+        pytest.skip("当前 sklearn2pmml 运行时需要 Java 11+，本机 Java 版本过低")
 
 
 def _train_scorecard(direction: str = 'descending'):
@@ -64,6 +91,24 @@ def test_scorecard_export_load_with_meta_predict_consistency(tmp_path):
     loaded_scores = loaded_scorecard.predict(sample, input_type='raw')
 
     assert np.max(np.abs(reference - loaded_scores)) < 0.05
+
+
+@pytest.mark.parametrize('cls', [ScoreCard, RoundScoreCard])
+def test_scorecard_export_load_without_binner_predicts_raw_by_rules(cls):
+    """导出带元数据的评分卡应能在无 binner 的离线环境中按规则对原始数据评分."""
+    scorecard, _, X_test = _train_scorecard(direction='descending')
+    if cls is RoundScoreCard:
+        scorecard = RoundScoreCard(scorecard=scorecard, decimal=2)
+
+    sample = X_test.iloc[:50].copy()
+    reference = scorecard.predict(sample, input_type='raw')
+
+    rules = scorecard.export(include_meta=True, decimal=12)
+    loaded_scorecard = cls(pdo=60, rate=2, base_odds=35, base_score=750)
+    loaded_scorecard.load(rules)
+    loaded_scores = loaded_scorecard.predict(sample, input_type='raw')
+
+    np.testing.assert_allclose(reference, loaded_scores, atol=1e-9)
 
 
 def test_scorecard_python_deployment_code_matches_predict():
@@ -272,6 +317,7 @@ def test_scorecard_pmml_export_tolerates_sklearn2pmml_none_len_bug(tmp_path, mon
 def test_scorecard_pmml_preprocessing_matches_reference_feature_scores(tmp_path):
     pytest.importorskip('sklearn_pandas')
     pytest.importorskip('sklearn2pmml')
+    _skip_if_java_too_old_for_sklearn2pmml()
 
     scorecard, binner, X_test = _train_scorecard(direction='descending')
     sample = X_test.copy()
@@ -289,6 +335,7 @@ def test_scorecard_pmml_predict_matches_reference_scores(tmp_path):
     pytest.importorskip('sklearn_pandas')
     pytest.importorskip('sklearn2pmml')
     pytest.importorskip('pypmml')
+    _skip_if_java_too_old_for_sklearn2pmml()
 
     from pypmml import Model
 

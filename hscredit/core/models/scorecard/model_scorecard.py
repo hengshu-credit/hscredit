@@ -188,6 +188,11 @@ class ProbabilityScoreCard(BaseEstimator):
             **params,
         )
 
+    def _check_fitted(self) -> None:
+        """检查评分卡是否已拟合."""
+        if not getattr(self, '_is_fitted', False):
+            raise NotFittedError("ProbabilityScoreCard 尚未拟合，请先调用 fit()")
+
     # ==================== 训练 ====================
 
     def fit(
@@ -282,7 +287,7 @@ class ProbabilityScoreCard(BaseEstimator):
 
     def predict_proba(self, X: Union[pd.DataFrame, np.ndarray]) -> np.ndarray:
         """预测概率（透传底层模型的 predict_proba，返回二维概率矩阵）."""
-        check_is_fitted(self, '_is_fitted')
+        self._check_fitted()
         model = self.model_ if getattr(self, 'model_', None) is not None else self.model
         if model is None or not hasattr(model, 'predict_proba'):
             raise NotFittedError("当前评分卡无底层模型，无法 predict_proba，请使用 predict_score(proba=...)")
@@ -299,7 +304,7 @@ class ProbabilityScoreCard(BaseEstimator):
         :param proba: 直接传入正类概率
         :return: 评分数组（已截断、四舍五入）
         """
-        check_is_fitted(self, '_is_fitted')
+        self._check_fitted()
 
         if proba is None:
             if X is None:
@@ -316,26 +321,26 @@ class ProbabilityScoreCard(BaseEstimator):
 
     def transform(self, proba: Union[np.ndarray, pd.Series]) -> np.ndarray:
         """将概率转换为评分（原始值，不截断/四舍五入）."""
-        check_is_fitted(self, '_is_fitted')
+        self._check_fitted()
         return self.transformer_.transform(self._positive_proba(np.asarray(proba)))
 
     def inverse_transform(self, scores: Union[np.ndarray, pd.Series]) -> np.ndarray:
         """将评分反向转换为概率（近似）."""
-        check_is_fitted(self, '_is_fitted')
+        self._check_fitted()
         return self.transformer_.inverse_transform(scores)
 
     # ==================== 公式 / 参数 / 报告 ====================
 
     def score_formula(self, decimal: int = 4) -> Dict[str, Any]:
         """输出概率→评分的转换公式."""
-        check_is_fitted(self, '_is_fitted')
+        self._check_fitted()
         formula = self.transformer_.score_formula(decimal=decimal)
         formula['模型'] = type(self.model_).__name__ if getattr(self, 'model_', None) is not None else None
         return formula
 
     def get_params_info(self) -> Dict[str, Any]:
         """获取评分卡基础参数信息（用于留存/复核）."""
-        check_is_fitted(self, '_is_fitted')
+        self._check_fitted()
         return {
             '模型类型': type(self.model_).__name__ if getattr(self, 'model_', None) is not None else None,
             '转换方法': self.method,
@@ -368,7 +373,7 @@ class ProbabilityScoreCard(BaseEstimator):
         :param method: 分箱方式，'quantile'（等频）或 'uniform'（等宽）
         :return: 中文列名的评分-坏率对照表
         """
-        check_is_fitted(self, '_is_fitted')
+        self._check_fitted()
 
         if scores is None:
             if X is None:
@@ -445,7 +450,7 @@ class ProbabilityScoreCard(BaseEstimator):
         :return: 底层模型的报告对象
         :raises ValidationError: 底层模型不支持 report
         """
-        check_is_fitted(self, '_is_fitted')
+        self._check_fitted()
         model = getattr(self, 'model_', None)
         try:
             from ..base import BaseRiskModel
@@ -470,7 +475,7 @@ class ProbabilityScoreCard(BaseEstimator):
         import os
         from ....utils.io import save_pickle as _save_pickle
 
-        check_is_fitted(self, '_is_fitted')
+        self._check_fitted()
         file_dir = os.path.dirname(file)
         if file_dir and not os.path.exists(file_dir):
             os.makedirs(file_dir, exist_ok=True)
