@@ -1088,10 +1088,18 @@ class ModelTuner:
             
             # LightGBM特殊处理：num_leaves不超过2^max_depth
             if param_name == 'max_depth' and 'num_leaves' in self.search_space:
-                max_leaves = min(2 ** params['max_depth'], self.search_space['num_leaves']['high'])
+                leaves_low = self.search_space['num_leaves']['low']
+                leaves_high = self.search_space['num_leaves']['high']
+                # max_depth<=0 表示不限制深度，此时不收紧 num_leaves 上界
+                if params['max_depth'] is not None and params['max_depth'] > 0:
+                    max_leaves = min(2 ** params['max_depth'], leaves_high)
+                else:
+                    max_leaves = leaves_high
+                # 防止 2^max_depth 小于下界导致 low>high，必要时下调下界
+                leaves_low = min(leaves_low, max_leaves)
                 params['num_leaves'] = trial.suggest_int(
                     'num_leaves',
-                    self.search_space['num_leaves']['low'],
+                    leaves_low,
                     max_leaves,
                     step=self.search_space['num_leaves'].get('step', 1)
                 )
