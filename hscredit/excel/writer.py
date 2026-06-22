@@ -20,6 +20,9 @@ import re
 import os
 import copy
 import math
+import shutil
+import tempfile
+import zipfile
 from typing import Optional, Union, List, Tuple, Dict, Any
 
 import numpy as np
@@ -34,6 +37,9 @@ from openpyxl.utils.dataframe import dataframe_to_rows
 from openpyxl.formatting.rule import DataBarRule, ColorScaleRule
 from openpyxl.utils import get_column_letter, column_index_from_string
 from openpyxl.styles import NamedStyle, Border, Side, Alignment, PatternFill, Font
+
+# hscredit 可视化主题配色（与 core.viz 保持一致）：主题蓝 / 坏样本红 / 提升橙
+HSCREDIT_CHART_COLORS = ["2639E9", "F76E6C", "FE7715"]
 
 warnings.filterwarnings("ignore")
 
@@ -134,6 +140,10 @@ class ExcelWriter:
 
         # 用于上下文管理器的文件路径
         self._filename: Optional[str] = None
+
+        # 迷你图（sparkline）规格缓存，保存时统一注入 worksheet XML
+        # openpyxl 不支持写入 sparkline，故在 save() 后对 xlsx 进行 XML 注入
+        self._sparkline_specs: List[Dict[str, Any]] = []
 
     def __enter__(self) -> 'ExcelWriter':
         """进入上下文管理器。
@@ -650,6 +660,219 @@ class ExcelWriter:
         occupied_rows = max(1, math.ceil(figsize[1] / row_height))
 
         return start_row + occupied_rows, column_index_from_string(start_col) + 8
+
+    def _styled_chart_title(self, text: str):
+        """构建带 hscredit 字体/主题色样式的图表标题对象。
+
+        :param text: 标题文本
+        :return: openpyxl Title 对象（构建失败时回退为纯文本字符串）
+        """
+        try:
+            from openpyxl.chart.title import Title
+            from openpyxl.chart.text import RichText
+            from openpyxl.drawing.text import (
+                Paragraph, ParagraphProperties, CharacterProperties,
+                Font as DrawingFont, RegularTextRun,
+            )
+
+            char_props = CharacterProperties(
+                latin=DrawingFont(typeface=self.font),
+                sz=1200, b=True, solidFill=self.theme_color,
+            )
+            run = RegularTextRun(rPr=char_props, t=text)
+            paragraph = Paragraph(
+                pPr=ParagraphProperties(defRPr=char_props), r=[run]
+            )
+            return Title(tx=RichText(p=[paragraph]))
+        except Exception:
+            # 不同 openpyxl 版本富文本 API 可能存在差异，降级为纯文本标题
+            return text
+
+    def insert_chart2sheet(
+        self,
+        worksheet: Worksheet,
+        insert_space: Union[str, Tuple[int, int]],
+        chart: Any,
+        width: float = 15.0,
+        height: float = 7.5,
+    ) -> Tuple[int, int]:
+        """向Excel插入原生图表（openpyxl chart 对象）。
+
+        与 :meth:`insert_pic2sheet` 不同，此方法插入的是Excel原生图表（基于单元格数据动态生成），
+        而非静态图片，可在Excel中交互、随数据更新。
+
+        :param worksheet: 工作表对象
+        :param insert_space: 插入位置（图表左上角锚点），如'B2'或(2, 2)
+        :param chart: openpyxl 图表对象（如 BarChart / LineChart）
+        :param width: 图表宽度（厘米），默认为15.0
+        :param height: 图表高度（厘米），默认为7.5
+        :return: (下一行行号, 下一列列号)
+        """
+        # 解析锚点位置
+        if isinstance(insert_space, str):
+            start_row = int(re.findall(r"\d+", insert_space)[0])
+            start_col = re.findall(r'\D+', insert_space)[0]
+        else:
+            start_row, start_col = insert_space
+            start_col = get_column_letter(start_col)
+
+        chart.width = width
+        chart.height = height
+        worksheet.add_chart(chart, f"{start_col}{start_row}")
+
+        # 估算图表占用的行/列数（厘米 → 行高约0.5cm，列宽约1.8cm），用于返回下一可用位置
+        occupied_rows = max(1, math.ceil(height / 0.5))
+        occupied_cols = max(1, math.ceil(width / 1.8))
+
+        return start_row + occupied_rows, column_index_from_string(start_col) + occupied_cols
+
+    def insert_bin_chart2sheet(
+        self,
+        worksheet: Worksheet,
+        data: pd.DataFrame,
+        table_anchor: Union[str, Tuple[int, int]],
+        chart_anchor: Optional[Union[str, Tuple[int, int]]] = None,
+        bar_columns: Tuple[str, ...] = ("好样本数", "坏样本数"),
+        line_columns: Tuple[str, ...] = ("坏样本率",),
+        category_column: Optional[str] = None,
+        title: Optional[str] = None,
+        header: bool = True,
+        index: bool = False,
+        bar_stacked: bool = True,
+        width: float = 18.0,
+        height: float = 9.0,
+    ) -> Tuple[int, int]:
+        """基于已写入Excel的分箱统计表生成分箱图（柱状图 + 坏样本率折线，双坐标轴）。
+
+        本方法复现 ``hscredit.core.viz.bin_plot`` 的样式：左轴堆叠柱状图展示各分箱好/坏样本数，
+        右轴折线展示坏样本率，配色与字体均采用 hscredit 主题风格。图表数据**直接引用**
+        worksheet 中已写入的单元格区域，故图表会随表格数据联动。
+
+        使用前需先将 ``feature_bin_stats`` 输出的分箱表通过 :meth:`insert_df2sheet`
+        （或 :func:`dataframe2excel`）写入到 ``table_anchor`` 位置（含表头）。
+
+        :param worksheet: 工作表对象
+        :param data: 分箱统计表（与写入Excel的DataFrame一致，用于定位列）
+        :param table_anchor: 表格写入的左上角位置（含表头），如'B2'或(2, 2)
+        :param chart_anchor: 图表插入位置，默认为None（自动置于表格右侧一列）
+        :param bar_columns: 柱状图列名（左轴），默认为("好样本数", "坏样本数")
+        :param line_columns: 折线图列名（右轴），默认为("坏样本率",)
+        :param category_column: 分类轴列名（横轴），默认为None（优先取"分箱标签"，其次"分箱"）
+        :param title: 图表标题，默认为None
+        :param header: 表格写入时是否含表头，默认为True
+        :param index: 表格写入时是否含索引，默认为False
+        :param bar_stacked: 柱状图是否堆叠，默认为True
+        :param width: 图表宽度（厘米），默认为18.0
+        :param height: 图表高度（厘米），默认为9.0
+        :return: (下一行行号, 下一列列号)
+
+        **参考样例**
+
+        >>> from hscredit.report import feature_bin_stats
+        >>> from hscredit.excel import ExcelWriter
+        >>> bin_table = feature_bin_stats(df, '某特征', target='target')
+        >>> writer = ExcelWriter()
+        >>> ws = writer.get_sheet_by_name('分箱图')
+        >>> writer.insert_df2sheet(ws, bin_table, 'B2', fill=True)
+        >>> writer.insert_bin_chart2sheet(ws, bin_table, 'B2', title='某特征分箱图')
+        >>> writer.save('bin_chart.xlsx')
+        """
+        from openpyxl.chart import BarChart, LineChart, Reference, Series
+
+        # 解析表格左上角位置
+        if isinstance(table_anchor, str):
+            start_row = int(re.findall(r"\d+", table_anchor)[0])
+            start_col_idx = column_index_from_string(re.findall(r'\D+', table_anchor)[0])
+        else:
+            start_row, start_col_idx = table_anchor[0], table_anchor[1]
+
+        # 列在Excel中的绝对列号
+        idx_levels = data.index.nlevels if index else 0
+        n_header_rows = data.columns.nlevels if header else 0
+
+        def _col_letter_idx(col_name: str) -> Optional[int]:
+            if col_name not in data.columns:
+                return None
+            return start_col_idx + idx_levels + data.columns.get_loc(col_name)
+
+        # 数据行范围
+        data_first_row = start_row + n_header_rows
+        data_last_row = data_first_row + len(data) - 1
+        header_row = data_first_row - 1  # 表头所在行（取值列标题）
+
+        # 分类轴列
+        if category_column is None:
+            category_column = "分箱标签" if "分箱标签" in data.columns else "分箱"
+        cat_col_idx = _col_letter_idx(category_column)
+
+        # 柱状图：堆叠好/坏样本数
+        bar = BarChart()
+        bar.type = "col"
+        bar.grouping = "stacked" if bar_stacked else "clustered"
+        bar.overlap = 100 if bar_stacked else -27
+        bar.gapWidth = 60
+        bar.y_axis.title = "样本数"
+
+        valid_bar_cols = [c for c in bar_columns if _col_letter_idx(c) is not None]
+        for i, col_name in enumerate(valid_bar_cols):
+            col_idx = _col_letter_idx(col_name)
+            ref = Reference(worksheet, min_col=col_idx, min_row=header_row, max_row=data_last_row)
+            series = Series(ref, title_from_data=True)
+            color = HSCREDIT_CHART_COLORS[i % len(HSCREDIT_CHART_COLORS)]
+            try:
+                series.graphicalProperties.solidFill = color
+                series.graphicalProperties.line.solidFill = "FFFFFF"
+            except Exception:
+                pass
+            bar.series.append(series)
+
+        # 折线图：坏样本率（右轴）
+        line = LineChart()
+        line.y_axis.axId = 200
+        line.y_axis.title = "坏样本率"
+        line.y_axis.crosses = "max"
+
+        valid_line_cols = [c for c in line_columns if _col_letter_idx(c) is not None]
+        for j, col_name in enumerate(valid_line_cols):
+            col_idx = _col_letter_idx(col_name)
+            ref = Reference(worksheet, min_col=col_idx, min_row=header_row, max_row=data_last_row)
+            series = Series(ref, title_from_data=True)
+            color = HSCREDIT_CHART_COLORS[1] if j == 0 else HSCREDIT_CHART_COLORS[2 % len(HSCREDIT_CHART_COLORS)]
+            try:
+                series.graphicalProperties.line.solidFill = color
+                series.graphicalProperties.line.width = 20000  # EMU，约2pt
+                series.smooth = False
+                from openpyxl.chart.marker import Marker
+                series.marker = Marker(symbol="circle", size=6)
+                series.marker.graphicalProperties.solidFill = "FFFFFF"
+                series.marker.graphicalProperties.line.solidFill = color
+            except Exception:
+                pass
+            line.series.append(series)
+
+        # 设置分类轴
+        if cat_col_idx is not None:
+            cats = Reference(worksheet, min_col=cat_col_idx, min_row=data_first_row, max_row=data_last_row)
+            bar.set_categories(cats)
+            line.set_categories(cats)
+
+        # 组合双轴图
+        if line.series:
+            bar += line
+
+        # 样式：标题、图例
+        if title:
+            bar.title = self._styled_chart_title(title)
+        bar.legend.position = "b"
+        bar.x_axis.delete = False
+        bar.y_axis.delete = False
+
+        # 图表位置：默认置于表格右侧
+        if chart_anchor is None:
+            table_end_col = start_col_idx + idx_levels + len(data.columns) + 1
+            chart_anchor = (start_row, table_end_col)
+
+        return self.insert_chart2sheet(worksheet, chart_anchor, bar, width=width, height=height)
 
     def insert_df2sheet(
         self,
@@ -1413,6 +1636,264 @@ class ExcelWriter:
             middle_odd_style, middle_even_first_style, middle_odd_last_style, middle_even_style, middle_odd_first_style, middle_even_last_style,
         ])
 
+    @staticmethod
+    def _to_argb(color: str) -> str:
+        """将颜色规范化为 ARGB（8位十六进制，大写）。
+
+        :param color: 颜色值，支持 ``#RRGGBB`` / ``RRGGBB`` / ``AARRGGBB``
+        :return: ``AARRGGBB`` 格式颜色（默认不透明 FF）
+        """
+        hex_color = str(color).lstrip("#").upper()
+        if len(hex_color) == 6:
+            return "FF" + hex_color
+        return hex_color
+
+    @staticmethod
+    def _quote_sheet_title(title: str) -> str:
+        """为公式引用规范化 sheet 名称（含空格或特殊字符时用单引号包裹）。"""
+        if re.match(r'^[A-Za-z一-鿿_][A-Za-z0-9一-鿿_]*$', title):
+            return title
+        return "'{}'".format(title.replace("'", "''"))
+
+    def add_sparkline(
+        self,
+        worksheet: Union[Worksheet, str],
+        location: Union[str, List[str]],
+        data_range: Union[str, List[str]],
+        type: str = "line",
+        series_color: Optional[str] = None,
+        negative_color: Optional[str] = None,
+        markers: bool = False,
+        marker_color: Optional[str] = None,
+        high_point: bool = False,
+        low_point: bool = False,
+        first_point: bool = False,
+        last_point: bool = False,
+        negative_points: bool = False,
+        high_color: Optional[str] = None,
+        low_color: Optional[str] = None,
+        first_color: Optional[str] = None,
+        last_color: Optional[str] = None,
+        display_x_axis: bool = False,
+        show_empty_as: str = "gap",
+        line_weight: Optional[float] = None,
+    ) -> None:
+        """向单元格插入迷你图（Sparkline）。
+
+        在单个单元格内绘制折线图、柱状图或盈亏图，效果类似 xlsxwriter 的 ``add_sparkline``。
+        由于 openpyxl 不支持写入迷你图，本方法仅记录配置，在 :meth:`save` 时将
+        ``x14:sparklineGroups`` 注入到 worksheet XML 中。默认配色采用 hscredit 主题风格。
+
+        .. note::
+            迷你图通过直接修改 xlsx 内部 XML 实现，Excel 可正常显示。但 openpyxl 不识别该扩展，
+            若用 openpyxl 重新打开并保存（含 ``mode='append'`` 追加模式），迷你图会丢失。
+            建议迷你图在最终输出步骤添加。
+
+        :param worksheet: 工作表对象或名称
+        :param location: 迷你图所在单元格，如'H2'；可传列表与 ``data_range`` 一一对应批量生成同组迷你图
+        :param data_range: 数据区域，如'B2:G2'或'Sheet1!B2:G2'（未含sheet名时默认当前sheet）；可传列表
+        :param type: 迷你图类型，可选'line'(折线)、'column'(柱状)、'win_loss'(盈亏)，默认'line'
+        :param series_color: 主体颜色，默认为主题色
+        :param negative_color: 负值颜色（盈亏图/柱状图负值），默认为 hscredit 坏样本红
+        :param markers: 是否显示数据点标记（仅折线图），默认为False
+        :param marker_color: 标记颜色，默认同 ``series_color``
+        :param high_point: 是否高亮最高点，默认为False
+        :param low_point: 是否高亮最低点，默认为False
+        :param first_point: 是否高亮首点，默认为False
+        :param last_point: 是否高亮尾点，默认为False
+        :param negative_points: 是否高亮负值点，默认为False
+        :param high_color: 最高点颜色，默认同 ``series_color``
+        :param low_color: 最低点颜色，默认同 ``negative_color``
+        :param first_color: 首点颜色，默认为提升橙
+        :param last_color: 尾点颜色，默认为提升橙
+        :param display_x_axis: 是否显示横轴（数据含正负时分隔），默认为False
+        :param show_empty_as: 空单元格显示方式，可选'gap'(留空)、'zero'(零)、'span'(连线)，默认'gap'
+        :param line_weight: 折线粗细（磅），默认为None（使用Excel默认）
+
+        **参考样例**
+
+        >>> # 在 H2 单元格按 B2:G2 数据绘制折线迷你图
+        >>> writer.add_sparkline(ws, "H2", "B2:G2", markers=True, high_point=True, low_point=True)
+        >>>
+        >>> # 柱状迷你图
+        >>> writer.add_sparkline(ws, "H3", "B3:G3", type="column")
+        >>>
+        >>> # 盈亏迷你图
+        >>> writer.add_sparkline(ws, "H4", "B4:G4", type="win_loss")
+        """
+        sheet_title = worksheet.title if isinstance(worksheet, Worksheet) else worksheet
+
+        type_map = {"line": "line", "column": "column", "win_loss": "stacked"}
+        if type not in type_map:
+            raise ValueError("type 仅支持 'line'、'column' 或 'win_loss'")
+
+        if show_empty_as not in ("gap", "zero", "span"):
+            raise ValueError("show_empty_as 仅支持 'gap'、'zero' 或 'span'")
+
+        # 规范化为并列列表
+        locations = [location] if isinstance(location, str) else list(location)
+        ranges = [data_range] if isinstance(data_range, str) else list(data_range)
+        if len(locations) != len(ranges):
+            raise ValueError("location 与 data_range 数量必须一致")
+
+        # 为未含sheet名的数据区域补全当前sheet前缀
+        quoted_title = self._quote_sheet_title(sheet_title)
+        norm_ranges = []
+        for rng in ranges:
+            norm_ranges.append(rng if "!" in rng else f"{quoted_title}!{rng}")
+
+        # 颜色（hscredit 默认配色）
+        _series = self._to_argb(series_color or self.theme_color)
+        _negative = self._to_argb(negative_color or HSCREDIT_CHART_COLORS[1])
+        colors = {
+            "colorSeries": _series,
+            "colorNegative": _negative,
+            "colorMarkers": self._to_argb(marker_color or series_color or self.theme_color),
+            "colorFirst": self._to_argb(first_color or HSCREDIT_CHART_COLORS[2]),
+            "colorLast": self._to_argb(last_color or HSCREDIT_CHART_COLORS[2]),
+            "colorHigh": self._to_argb(high_color or series_color or self.theme_color),
+            "colorLow": self._to_argb(low_color or negative_color or HSCREDIT_CHART_COLORS[1]),
+        }
+
+        # group 级属性
+        attrs: Dict[str, str] = {"displayEmptyCellsAs": show_empty_as}
+        if type_map[type] != "line":
+            attrs["type"] = type_map[type]
+        if markers:
+            attrs["markers"] = "1"
+        if high_point:
+            attrs["high"] = "1"
+        if low_point:
+            attrs["low"] = "1"
+        if first_point:
+            attrs["first"] = "1"
+        if last_point:
+            attrs["last"] = "1"
+        if negative_points:
+            attrs["negative"] = "1"
+        if display_x_axis:
+            attrs["displayXAxis"] = "1"
+        if line_weight is not None:
+            attrs["lineWeight"] = str(line_weight)
+
+        self._sparkline_specs.append({
+            "sheet": sheet_title,
+            "attrs": attrs,
+            "colors": colors,
+            "sparklines": list(zip(norm_ranges, locations)),
+        })
+
+    def _build_sparkline_groups_xml(self, specs: List[Dict[str, Any]]) -> str:
+        """根据迷你图规格构建单个 sheet 的 ``x14:sparklineGroups`` 子元素 XML。"""
+        # 颜色元素需按 schema 顺序输出
+        color_order = [
+            "colorSeries", "colorNegative", "colorAxis", "colorMarkers",
+            "colorFirst", "colorLast", "colorHigh", "colorLow",
+        ]
+        groups = []
+        for spec in specs:
+            attr_str = "".join(f' {k}="{v}"' for k, v in spec["attrs"].items())
+            color_str = "".join(
+                f'<x14:{tag} rgb="{spec["colors"][tag]}"/>'
+                for tag in color_order if tag in spec["colors"]
+            )
+            sparkline_str = "".join(
+                f'<x14:sparkline><xm:f>{f_ref}</xm:f><xm:sqref>{sqref}</xm:sqref></x14:sparkline>'
+                for f_ref, sqref in spec["sparklines"]
+            )
+            groups.append(
+                f'<x14:sparklineGroup{attr_str}>{color_str}'
+                f'<x14:sparklines>{sparkline_str}</x14:sparklines></x14:sparklineGroup>'
+            )
+        return "".join(groups)
+
+    def _inject_sparklines(self, filename: str) -> None:
+        """在 openpyxl 保存后，将迷你图 XML 注入到 xlsx 对应的 worksheet 部件中。
+
+        openpyxl 不支持写入 sparkline，故通过直接修改 xlsx（zip）内的 worksheet XML 实现。
+
+        :param filename: 已保存的 xlsx 文件路径
+        """
+        if not self._sparkline_specs:
+            return
+
+        # 按 sheet 名归集规格
+        specs_by_sheet: Dict[str, List[Dict[str, Any]]] = {}
+        for spec in self._sparkline_specs:
+            specs_by_sheet.setdefault(spec["sheet"], []).append(spec)
+
+        with zipfile.ZipFile(filename, "r") as zin:
+            names = zin.namelist()
+            workbook_xml = zin.read("xl/workbook.xml").decode("utf-8")
+            rels_xml = zin.read("xl/_rels/workbook.xml.rels").decode("utf-8")
+
+            # sheet 名 -> r:id
+            name_to_rid = {}
+            for m in re.finditer(r"<sheet\b[^>]*/>", workbook_xml):
+                tag = m.group(0)
+                name_m = re.search(r'name="([^"]*)"', tag)
+                rid_m = re.search(r'r:id="([^"]*)"', tag)
+                if name_m and rid_m:
+                    name_to_rid[name_m.group(1)] = rid_m.group(1)
+
+            # r:id -> worksheet 部件路径
+            rid_to_target = {}
+            for m in re.finditer(r"<Relationship\b[^>]*/>", rels_xml):
+                tag = m.group(0)
+                if "worksheet" not in tag:
+                    continue
+                id_m = re.search(r'Id="([^"]*)"', tag)
+                tgt_m = re.search(r'Target="([^"]*)"', tag)
+                if id_m and tgt_m:
+                    target = tgt_m.group(1)
+                    if target.startswith("/"):
+                        part = target.lstrip("/")
+                    else:
+                        part = "xl/" + target
+                    rid_to_target[id_m.group(1)] = part
+
+            # 修改目标 worksheet XML
+            modified: Dict[str, bytes] = {}
+            for sheet_name, specs in specs_by_sheet.items():
+                rid = name_to_rid.get(sheet_name)
+                part = rid_to_target.get(rid) if rid else None
+                if not part or part not in names:
+                    continue
+
+                sheet_xml = zin.read(part).decode("utf-8")
+                groups_xml = self._build_sparkline_groups_xml(specs)
+                ext_xml = (
+                    '<ext xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main" '
+                    'uri="{05C60535-1F16-4fd2-B633-F4F36F0B64E0}">'
+                    '<x14:sparklineGroups xmlns:xm="http://schemas.microsoft.com/office/excel/2006/main">'
+                    + groups_xml +
+                    '</x14:sparklineGroups></ext>'
+                )
+
+                if "</extLst>" in sheet_xml:
+                    # 已存在 extLst，将 ext 追加到最后一个 extLst 内
+                    idx = sheet_xml.rfind("</extLst>")
+                    sheet_xml = sheet_xml[:idx] + ext_xml + sheet_xml[idx:]
+                else:
+                    # 无 extLst，在 </worksheet> 前新增（extLst 必须为 worksheet 最后一个子元素）
+                    idx = sheet_xml.rfind("</worksheet>")
+                    sheet_xml = sheet_xml[:idx] + "<extLst>" + ext_xml + "</extLst>" + sheet_xml[idx:]
+
+                modified[part] = sheet_xml.encode("utf-8")
+
+            if not modified:
+                return
+
+            # 重写 zip
+            tmp_fd, tmp_path = tempfile.mkstemp(suffix=".xlsx")
+            os.close(tmp_fd)
+            with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as zout:
+                for item in zin.infolist():
+                    data = modified.get(item.filename, zin.read(item.filename))
+                    zout.writestr(item, data)
+
+        shutil.move(tmp_path, filename)
+
     def save(self, filename: str, close: bool = True) -> None:
         """保存Excel文件。
 
@@ -1447,6 +1928,9 @@ class ExcelWriter:
 
         # 保存文件
         self.workbook.save(filename)
+
+        # 注入迷你图（openpyxl 不支持写入 sparkline，需在保存后修改 xlsx XML）
+        self._inject_sparklines(filename)
 
         if close:
             self.workbook.close()
@@ -1774,7 +2258,7 @@ def dataframe2excel(
             insert_row = data.index.get_loc(c).start if data.index.nlevels > 1 and not isinstance(data.index.get_loc(c), (int, float)) else data.index.get_loc(c)
             index_row = start_row + insert_row + data.columns.nlevels if kwargs.get("header", True) else start_row + insert_row
             index_col = start_col + data.index.nlevels if kwargs.get("index", False) else start_col
-            writer.set_number_format(worksheet, f"{get_column_letter(index_col)}{index_row}:{get_column_letter(index_col + len(data.columns))}{index_row}", "0.00%")
+            writer.set_number_format(worksheet, f"{get_column_letter(index_col)}{index_row}:{get_column_letter(index_col + len(data.columns) - 1)}{index_row}", "0.00%")
 
     # 设置自定义格式行
     if custom_rows:
@@ -1784,7 +2268,7 @@ def dataframe2excel(
             insert_row = data.index.get_loc(c).start if data.index.nlevels > 1 and not isinstance(data.index.get_loc(c), (int, float)) else data.index.get_loc(c)
             index_row = start_row + insert_row + data.columns.nlevels if kwargs.get("header", True) else start_row + insert_row
             index_col = start_col + data.index.nlevels if kwargs.get("index", False) else start_col
-            writer.set_number_format(worksheet, f"{get_column_letter(index_col)}{index_row}:{get_column_letter(index_col + len(data.columns))}{index_row}", custom_format)
+            writer.set_number_format(worksheet, f"{get_column_letter(index_col)}{index_row}:{get_column_letter(index_col + len(data.columns) - 1)}{index_row}", custom_format)
 
     # 设置条件格式行
     if condition_rows:
@@ -1797,7 +2281,7 @@ def dataframe2excel(
             writer.add_conditional_formatting(
                 worksheet,
                 f'{get_column_letter(index_col)}{index_row}',
-                f'{get_column_letter(index_col + len(data.columns))}{index_row}',
+                f'{get_column_letter(index_col + len(data.columns) - 1)}{index_row}',
                 condition_color=resolve_condition_color(condition_color, c, theme_color)
             )
 
@@ -1811,7 +2295,7 @@ def dataframe2excel(
                 rule = _build_color_scale_rule(data.loc[c], _resolve_condition_value(condition_color, c, theme_color))
                 index_row = start_row + insert_row + data.columns.nlevels if kwargs.get("header", True) else start_row + insert_row
                 index_col = start_col + data.index.nlevels if kwargs.get("index", False) else start_col
-                worksheet.conditional_formatting.add(f"{get_column_letter(index_col)}{index_row}:{get_column_letter(index_col + len(data.columns))}{index_row}", rule)
+                worksheet.conditional_formatting.add(f"{get_column_letter(index_col)}{index_row}:{get_column_letter(index_col + len(data.columns) - 1)}{index_row}", rule)
             except Exception:
                 import traceback
                 traceback.print_exc()
@@ -1860,10 +2344,7 @@ def dataframe2excel(
                 cell = worksheet[f"{col_letter}{row}"]
                 cell.alignment = Alignment(horizontal=horiz, vertical="center")
 
-    # 保存文件（如果不是传入的ExcelWriter对象）
-    if not isinstance(excel_writer, ExcelWriter) and not isinstance(sheet_name, Worksheet):
-        writer.save(excel_writer)
-
+    # 添加自动筛选（必须在保存之前，否则保存并关闭 workbook 后筛选不会写入文件）
     if auto_filter:
         last_data_row = end_row - 1
         last_data_col = end_col - 1
@@ -1871,5 +2352,9 @@ def dataframe2excel(
             worksheet,
             f"{get_column_letter(start_col)}{start_row}:{get_column_letter(last_data_col)}{last_data_row}"
         )
+
+    # 保存文件（如果不是传入的ExcelWriter对象）
+    if not isinstance(excel_writer, ExcelWriter) and not isinstance(sheet_name, Worksheet):
+        writer.save(excel_writer)
 
     return end_row, end_col

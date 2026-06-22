@@ -225,8 +225,10 @@ class ScoreCard(StandardScoreTransformer):
         # 因为可以直接使用预训练模型进行predict
         self._skip_fit_check = (self.lr_model is not None) or (self.pipeline is not None)
         
-        # 如果传入了预训练模型和binner，尝试生成规则
-        if self.lr_model is not None and self.binner is not None:
+        # 如果传入了预训练模型，尝试生成规则
+        # 即使未提供 binner，也会基于 LR 系数生成回退规则，
+        # 确保 scorecard_points 能展示每个变量（而非仅基础分）
+        if self.lr_model is not None:
             self._initialize_from_pretrained()
         
         # 如果传入了 pipeline，立即提取组件
@@ -275,54 +277,76 @@ class ScoreCard(StandardScoreTransformer):
         return A, B
 
     def _initialize_from_pretrained(self):
-        """从预训练模型初始化规则和特征名."""
+        """从预训练模型初始化规则和特征名.
+
+        特征名解析优先级：
+        1. lr_model.feature_names_in_（最可靠，与系数顺序一致）
+        2. binner 的 bin_tables_ / splits_ / toad combiner（特征数匹配时）
+        3. feature_0, feature_1, ... 兜底
+
+        规则生成：优先从 binner 还原真实分箱（区间 + WOE + 分数）；
+        若无任何分箱信息，则基于 LR 系数生成回退规则，
+        保证 scorecard_points 至少能展示每个变量及其系数贡献。
+        """
         if hasattr(self.lr_model, 'ensure_positive_woe_coefficients'):
             self.lr_model.ensure_positive_woe_coefficients()
 
-        # 从lr_model获取特征数量
-        if hasattr(self.lr_model, 'coef_'):
-            n_features = len(self.lr_model.coef_[0])
-            # 尝试从binner获取特征名
-            if hasattr(self.binner, 'bin_tables_') and self.binner.bin_tables_:
-                # 使用分箱器中的特征名（优先）— hscredit 风格
-                feature_names = list(self.binner.bin_tables_.keys())
-                # 如果特征数量匹配，使用这些特征名
-                if len(feature_names) >= n_features:
-                    # 尝试匹配lr_model的特征名（如果存储了）
-                    if hasattr(self.lr_model, 'feature_names_in_'):
-                        self._feature_names = list(self.lr_model.feature_names_in_)
-                    else:
-                        # 使用前n_features个特征名
-                        self._feature_names = feature_names[:n_features]
-                else:
-                    self._feature_names = [f'feature_{i}' for i in range(n_features)]
-            elif hasattr(self.binner, 'splits_') and self.binner.splits_:
-                # load() 导入规则后，bin_tables_ 可能为空，但 splits_ 有数据
-                # 此时从 splits_ 获取特征名
-                feature_names = list(self.binner.splits_.keys())
-                if len(feature_names) >= n_features:
-                    if hasattr(self.lr_model, 'feature_names_in_'):
-                        self._feature_names = list(self.lr_model.feature_names_in_)
-                    else:
-                        self._feature_names = feature_names[:n_features]
-                else:
-                    self._feature_names = [f'feature_{i}' for i in range(n_features)]
-            elif self._is_toad_like_combiner():
-                # toad/scp 风格：从 combiner.rules 获取特征名
-                feature_names = self._extract_external_binner_feature_names()
-                if len(feature_names) >= n_features:
-                    if hasattr(self.lr_model, 'feature_names_in_'):
-                        self._feature_names = list(self.lr_model.feature_names_in_)
-                    else:
-                        self._feature_names = feature_names[:n_features]
-                else:
-                    self._feature_names = [f'feature_{i}' for i in range(n_features)]
-            else:
-                self._feature_names = [f'feature_{i}' for i in range(n_features)]
-            
-            # 生成规则
-            self._generate_rules_from_binner()
-            self._is_fitted = True
+        if not hasattr(self.lr_model, 'coef_'):
+            return
+
+        n_features = len(self.lr_model.coef_[0])
+
+        # 1. 解析特征名
+        feature_names = None
+        if hasattr(self.lr_model, 'feature_names_in_'):
+            feature_names = list(self.lr_model.feature_names_in_)
+        elif self.binner is not None and hasattr(self.binner, 'bin_tables_') and self.binner.bin_tables_:
+            feature_names = list(self.binner.bin_tables_.keys())
+        elif self.binner is not None and hasattr(self.binner, 'splits_') and self.binner.splits_:
+            feature_names = list(self.binner.splits_.keys())
+        elif self._is_toad_like_combiner():
+            feature_names = self._extract_external_binner_feature_names()
+
+        if not feature_names or len(feature_names) < n_features:
+            feature_names = [f'feature_{i}' for i in range(n_features)]
+
+        self._feature_names = feature_names[:n_features]
+
+        # 2. 生成规则：优先从 binner 还原真实分箱
+        self._generate_rules_from_binner()
+
+        # 3. 无分箱信息时回退到系数级规则，避免 scorecard_points 只剩基础分
+        if not self.rules_:
+            self._generate_fallback_rules_from_lr()
+
+        self._is_fitted = True
+
+    def _generate_fallback_rules_from_lr(self):
+        """无分箱信息时，基于 LR 系数为每个特征生成回退规则.
+
+        缺少分箱器/WOE 分布时，无法还原真实分箱区间，
+        因此每个特征给出一行「每单位 WOE 对应分数」（-B × coef），
+        让 scorecard_points 仍能展示全部变量及其方向与贡献。
+        """
+        self.rules_ = {}
+        for i, col in enumerate(self._feature_names):
+            if i >= len(self.coef_):
+                break
+            coef = float(self.coef_[i]) * self._get_feature_woe_sign(i)
+            label = f'每单位WOE(系数={coef:.4f})'
+            self.rules_[col] = {
+                'bins': None,
+                'bin_labels': np.array([label], dtype=object),
+                'woe': np.array([np.nan]),
+                'scores': np.array([self._woe_to_point(1.0, coef)]),
+                'coef': coef,
+                'values': None,
+            }
+
+        if self.rules_:
+            self.base_effect_ = pd.Series(
+                np.zeros(len(self._feature_names)), index=self._feature_names
+            )
 
     def _get_lr_model(self) -> Optional[Any]:
         """获取当前生效的 LR 模型."""
@@ -1479,6 +1503,8 @@ class ScoreCard(StandardScoreTransformer):
             "好坏比（好:坏），内部换算实际 odds = 1/base_odds"
             if self.base_odds >= 1 else "坏样本率 / 坏好比，直接作为实际 odds"
         )
+        # 评分卡转换公式（与 score_formula() 中的「公式」一致）
+        formula = f"Score = {round(self.A_, 4)} - {round(self.B_, 4)} × ln(odds)"
         return pd.DataFrame([
             {"刻度项": "base_odds", "刻度值": self.base_odds, "备注": base_odds_remark},
             {"刻度项": "base_score", "刻度值": self.base_score,
@@ -1491,6 +1517,8 @@ class ScoreCard(StandardScoreTransformer):
              "备注": f"pdo / ln({self.rate})"},
             {"刻度项": "A (offset)", "刻度值": round(self.A_, 4),
              "备注": "base_score + B * ln(实际odds)，实际odds 见 base_odds 备注"},
+            {"刻度项": "formula", "刻度值": formula,
+             "备注": "评分卡转换公式，odds = P(坏) / P(好)（同 score_formula 的「公式」）"},
         ])
 
     def score_formula(self, decimal: int = 4) -> Dict[str, Any]:

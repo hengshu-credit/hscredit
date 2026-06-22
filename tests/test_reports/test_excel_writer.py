@@ -223,6 +223,151 @@ class TestExcelWriter:
         assert end_col == 10
 
 
+class TestExcelChart:
+    """测试原生图表插入功能"""
+
+    def setup_method(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.test_file = os.path.join(self.temp_dir, "chart.xlsx")
+        self.bin_table = pd.DataFrame({
+            "分箱": [0, 1, 2, 3],
+            "分箱标签": ["(-inf, 580]", "(580, 620]", "(620, 660]", "(660, inf]"],
+            "样本总数": [120, 200, 180, 100],
+            "好样本数": [80, 160, 165, 96],
+            "坏样本数": [40, 40, 15, 4],
+            "坏样本率": [0.333, 0.20, 0.083, 0.04],
+        })
+
+    def teardown_method(self):
+        import shutil
+        if os.path.exists(self.temp_dir):
+            shutil.rmtree(self.temp_dir)
+
+    def test_insert_chart2sheet(self):
+        """测试插入原生 openpyxl 图表"""
+        from openpyxl.chart import BarChart, Reference
+
+        writer = ExcelWriter()
+        ws = writer.get_sheet_by_name("Test")
+        writer.insert_df2sheet(ws, self.bin_table, "B2")
+
+        chart = BarChart()
+        data = Reference(ws, min_col=4, min_row=2, max_row=6)  # 样本总数列
+        chart.add_data(data, titles_from_data=True)
+        end_row, end_col = writer.insert_chart2sheet(ws, "J2", chart)
+
+        assert len(ws._charts) == 1
+        assert end_row > 2 and end_col > column_letter_to_index("J")
+
+    def test_insert_bin_chart2sheet(self):
+        """测试基于分箱表生成分箱图（柱状+折线双轴）"""
+        writer = ExcelWriter()
+        ws = writer.get_sheet_by_name("分箱图")
+        writer.insert_df2sheet(ws, self.bin_table, "B2", fill=True)
+        writer.insert_bin_chart2sheet(ws, self.bin_table, "B2", title="某特征分箱图")
+
+        writer.save(self.test_file)
+
+        loaded_wb = load_workbook(self.test_file)
+        loaded_ws = loaded_wb["分箱图"]
+        assert len(loaded_ws._charts) == 1
+
+    def test_bin_chart_handles_missing_columns(self):
+        """测试缺失部分列时不报错（仅引用存在的列）"""
+        partial = self.bin_table[["分箱标签", "好样本数", "坏样本率"]]
+        writer = ExcelWriter()
+        ws = writer.get_sheet_by_name("Test")
+        writer.insert_df2sheet(ws, partial, "B2")
+        # 坏样本数 缺失，应自动跳过
+        writer.insert_bin_chart2sheet(ws, partial, "B2")
+        assert len(ws._charts) == 1
+
+
+def column_letter_to_index(letter):
+    from openpyxl.utils import column_index_from_string
+    return column_index_from_string(letter)
+
+
+class TestSparkline:
+    """测试迷你图（Sparkline）功能"""
+
+    def setup_method(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.test_file = os.path.join(self.temp_dir, "spark.xlsx")
+        self.df = pd.DataFrame({
+            "指标": ["A", "B", "C"],
+            "m1": [3, 5, 2], "m2": [5, 4, 6], "m3": [2, 7, 3],
+            "m4": [6, 3, 8], "m5": [4, 6, 5],
+        })
+
+    def teardown_method(self):
+        import shutil
+        if os.path.exists(self.temp_dir):
+            shutil.rmtree(self.temp_dir)
+
+    def _read_sheet_xml(self, path):
+        import zipfile
+        with zipfile.ZipFile(path) as z:
+            for n in z.namelist():
+                if n.startswith("xl/worksheets/sheet") and n.endswith(".xml"):
+                    yield z.read(n).decode("utf-8")
+
+    def test_add_sparkline_records_spec(self):
+        """测试 add_sparkline 仅记录配置，不立即写入"""
+        writer = ExcelWriter()
+        ws = writer.get_sheet_by_name("Test")
+        writer.add_sparkline(ws, "H2", "B2:G2")
+        assert len(writer._sparkline_specs) == 1
+        spec = writer._sparkline_specs[0]
+        # 数据区域自动补全当前 sheet 前缀
+        assert spec["sparklines"][0][0] == "Test!B2:G2"
+
+    def test_sparkline_injected_on_save(self):
+        """测试保存后迷你图 XML 被注入且文件可正常打开"""
+        writer = ExcelWriter()
+        ws = writer.get_sheet_by_name("迷你图")
+        writer.insert_df2sheet(ws, self.df, "B2", fill=True)
+        writer.add_sparkline(ws, "H3", "C3:G3", markers=True, high_point=True, low_point=True)
+        writer.add_sparkline(ws, "H4", "C4:G4", type="column")
+        writer.add_sparkline(ws, "H5", "C5:G5", type="win_loss")
+        writer.save(self.test_file)
+
+        # 文件可被 openpyxl 重新打开（未损坏）
+        load_workbook(self.test_file)
+
+        # worksheet XML 含 sparklineGroups
+        xmls = list(self._read_sheet_xml(self.test_file))
+        assert any("sparklineGroups" in x for x in xmls)
+        # win_loss -> stacked, column -> column
+        joined = "".join(xmls)
+        assert 'type="column"' in joined
+        assert 'type="stacked"' in joined
+
+    def test_sparkline_grouped(self):
+        """测试单次调用批量生成同组迷你图"""
+        writer = ExcelWriter()
+        ws = writer.get_sheet_by_name("Test")
+        writer.add_sparkline(
+            ws, ["I3", "I4", "I5"], ["C3:G3", "C4:G4", "C5:G5"], type="line"
+        )
+        assert len(writer._sparkline_specs) == 1
+        assert len(writer._sparkline_specs[0]["sparklines"]) == 3
+
+    def test_sparkline_invalid_type(self):
+        """测试非法类型抛出异常"""
+        writer = ExcelWriter()
+        ws = writer.get_sheet_by_name("Test")
+        with pytest.raises(ValueError):
+            writer.add_sparkline(ws, "H2", "B2:G2", type="pie")
+
+    def test_sparkline_location_range_mismatch(self):
+        """测试 location 与 data_range 数量不一致抛出异常"""
+        writer = ExcelWriter()
+        ws = writer.get_sheet_by_name("Test")
+        with pytest.raises(ValueError):
+            writer.add_sparkline(ws, ["H2", "H3"], ["B2:G2"])
+
+
 class TestDataframe2Excel:
     """测试dataframe2excel便捷函数"""
     
@@ -317,6 +462,29 @@ class TestDataframe2Excel:
         ws = loaded_wb.active
         
         assert ws["B3"].number_format == "#,##0"
+
+    def test_auto_filter_persisted_with_file_path(self):
+        """回归：传入文件路径且 auto_filter=True 时筛选应写入文件（修复保存顺序bug）"""
+        df = pd.DataFrame({'A': [1, 2, 3], 'B': [4, 5, 6]})
+        dataframe2excel(df, self.test_file, sheet_name='S', auto_filter=True)
+
+        loaded_wb = load_workbook(self.test_file)
+        ws = loaded_wb['S']
+        assert ws.auto_filter.ref is not None
+
+    def test_row_format_does_not_overflow_extra_column(self):
+        """回归：按行设置格式不应越界到数据右侧的空白列（修复off-by-one）"""
+        df = pd.DataFrame({'A': [0.1, 0.2], 'B': [0.3, 0.4]}, index=['r1', 'r2'])
+        dataframe2excel(
+            df, self.test_file, sheet_name='S',
+            index=True, percent_rows=['r1'], start_col=2, start_row=2
+        )
+        loaded_wb = load_workbook(self.test_file)
+        ws = loaded_wb['S']
+        # 数据列为 C、D；E 列为空白，不应被设置为百分比格式
+        assert ws['C3'].number_format == '0.00%'
+        assert ws['D3'].number_format == '0.00%'
+        assert ws['E3'].number_format != '0.00%'
 
     def test_write_with_figures_keeps_gap_before_header(self, monkeypatch):
         """测试插图后表头会自动下移，避免被图片覆盖"""

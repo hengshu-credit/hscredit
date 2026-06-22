@@ -10,8 +10,18 @@ import pytest
 from sklearn.model_selection import train_test_split
 
 from hscredit.core.binning import OptimalBinning
-from hscredit.core.models import ScoreCard, RoundScoreCard
+from hscredit.core.models import ScoreCard, RoundScoreCard, LogisticRegression
 from hscredit.utils.datasets import germancredit
+
+
+def _train_lr_on_woe():
+    """获取 WOE 特征上训练好的逻辑回归 + 对应 binner（模拟 04_models.ipynb 流程）.
+
+    复用 _train_scorecard（method='target_bad_rate'，可稳定拟合）得到的
+    底层 LR 与 binner，避免直接对含缺失 WOE 的数据训练 sklearn LR 失败。
+    """
+    scorecard, binner = _train_scorecard()
+    return scorecard.lr_model_, binner
 
 
 def _train_scorecard(cls=ScoreCard, direction: str = 'descending'):
@@ -106,3 +116,53 @@ def test_scorecard_points_with_rules_missing_woe_keeps_all_bins():
     # 分数应与加载的规则一致
     age_scores = points[points['变量名称'] == 'age']['对应分数'].tolist()
     assert age_scores == [10.0, 20.0, 30.0]
+
+
+def test_scorecard_points_lr_model_only_shows_all_features():
+    """回归（04_models.ipynb scorecard_tuned）：仅传 lr_model（无 binner、未 fit）时，
+    scorecard_points 必须展示每个变量，而非仅基础分."""
+    lr, _ = _train_lr_on_woe()
+    n_features = len(lr.coef_[0])
+
+    card = ScoreCard(lr_model=lr, base_score=600, pdo=20)
+    points = card.scorecard_points()
+
+    # 历史 bug：只返回 1 行（基础分）。修复后应为 基础分 + 每个特征一行回退规则
+    assert len(points) == 1 + n_features
+    assert points.iloc[0]['变量名称'] == '基础分'
+    feature_rows = points[points['变量名称'] != '基础分']
+    assert len(feature_rows) == n_features
+    # 无分箱信息时，分箱标签标注为「每单位WOE(系数=...)」
+    assert feature_rows['变量分箱'].str.contains('每单位WOE').all()
+
+
+def test_scorecard_points_lr_model_with_binner_recovers_real_bins():
+    """传入 lr_model + binner 时，scorecard_points 还原真实分箱区间（推荐用法）."""
+    lr, binner = _train_lr_on_woe()
+    n_features = len(lr.coef_[0])
+
+    card = ScoreCard(lr_model=lr, binner=binner, base_score=600, pdo=20)
+    points = card.scorecard_points()
+
+    # 每个特征都应有多个分箱（远多于回退的 1 行/特征）
+    assert len(points) > 1 + n_features
+    feature_rows = points[points['变量名称'] != '基础分']
+    # 出现真实区间标签（含区间括号），而非回退标签
+    assert feature_rows['变量分箱'].str.contains(r'[\[(]').any()
+    assert not feature_rows['变量分箱'].str.contains('每单位WOE').any()
+
+
+def test_scorecard_scale_includes_formula_matching_score_formula():
+    """scorecard_scale 应包含 formula 行，且与 score_formula() 的公式一致."""
+    lr, binner = _train_lr_on_woe()
+    card = ScoreCard(lr_model=lr, binner=binner, base_score=600, pdo=20)
+
+    scale = card.scorecard_scale()
+    assert 'formula' in scale['刻度项'].values
+
+    formula_value = scale.loc[scale['刻度项'] == 'formula', '刻度值'].iloc[0]
+    # 与 score_formula 的 A、B 一致
+    info = card.score_formula()
+    assert str(round(info['A'], 4)) in formula_value
+    assert str(round(info['B'], 4)) in formula_value
+    assert 'ln(odds)' in formula_value
