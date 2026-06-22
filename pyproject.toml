@@ -7,7 +7,7 @@ name = "hscredit"
 version = "0.1.0"
 description = "hscredit 面向金融信贷风控策略分析与评分模型研发场景，提供符合 sklearn Pipeline 范式的量化建模工具箱，覆盖数据探索、特征筛选、分箱编码、有效性评估、模型训练、参数调优与报告生成，支持从策略验证到模型落地的端到端风险决策流程。鉴真伪，斟信用，衡风险，枢定策 —— 衡枢真信，智能风控，一站掌控。"
 readme = "README.md"
-license = "MIT"
+license = {text = "MIT"}
 authors = [
     {name = "hscredit team", email = "hscredit@hengshucredit.com"}
 ]
