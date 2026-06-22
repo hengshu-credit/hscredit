@@ -1931,14 +1931,18 @@ class ExcelWriter:
         rows: Optional[Union[str, List[str]]] = None,
         columns: Optional[Union[str, List[str]]] = None,
         values: Optional[Any] = None,
-        filters: Optional[Union[str, List[str]]] = None,
+        filters: Optional[Union[str, List[str], Dict[Any, Any]]] = None,
+        filter_items: Optional[Dict[Any, Any]] = None,
+        groups: Optional[Dict[Any, Any]] = None,
+        subtotals: bool = False,
         source_sheet: Optional[Union[Worksheet, str]] = None,
         source_anchor: Union[str, Tuple[int, int]] = (1, 1),
         write_source: Optional[bool] = None,
         name: Optional[str] = None,
         show_row_totals: bool = True,
         show_col_totals: bool = True,
-        style: str = "PivotStyleLight16",
+        theme_style: bool = True,
+        style: Optional[str] = None,
         fill: bool = True,
     ) -> Tuple[int, int]:
         """向工作表插入Excel原生数据透视表。
@@ -1957,17 +1961,25 @@ class ExcelWriter:
 
             - ``'金额'`` 或 ``['金额', '数量']``：默认聚合（数值列求和，非数值列计数）
             - ``[('金额', 'sum'), ('数量', 'mean')]``：显式指定聚合
-            - ``{'金额': 'sum'}``：字典形式
+            - ``[('金额', 'sum', '全局占比')]``：聚合 + 占比显示（全局/行/列/组合占比）
+            - ``{'金额': 'sum'}`` 或 ``[{'field': '金额', 'agg': 'sum', 'show_as': '全局占比',
+              'name': '占比', 'number_format': '0.00%'}]``
 
-            支持的聚合：sum/count/average(mean)/max/min/product/count_nums/std/stdp/var/varp
-        :param filters: 页/筛选字段（列名或列名列表），默认为None
+            聚合：sum/count/average(mean)/max/min/product/count_nums/std/stdp/var/varp
+            （可用 ``hscredit.excel._pivot.register_aggregation`` 扩展别名）
+        :param filters: 页/筛选字段。列名/列名列表，或 ``{字段: [允许值]}`` 直接指定筛选项
+        :param filter_items: 筛选项 ``{字段: [允许值]}``，可作用于行/列/筛选任一字段，仅保留所列取值
+        :param groups: 数值字段分组 ``{字段: {'start': 起始值, 'interval': 步长}}``
+            （亦支持 ``{字段: (起始, 步长)}``），对横轴/纵轴数值特征按步长分桶统计
+        :param subtotals: 是否对非最内层行/列字段显示分类汇总，默认为False
         :param source_sheet: 源数据所在工作表对象或名称，默认为None（自动新建源数据表写入 ``data``）
         :param source_anchor: 源数据写入/定位的左上角（含表头），默认为(1, 1)
         :param write_source: 是否写入源数据，默认为None（``source_sheet`` 为None时自动写入）
         :param name: 透视表名称，默认为None（自动命名「数据透视表N」）
         :param show_row_totals: 是否显示行总计，默认为True
         :param show_col_totals: 是否显示列总计，默认为True
-        :param style: 透视表内置样式名，默认为"PivotStyleLight16"
+        :param theme_style: 是否套用适配 ``theme_color`` 的 hscredit 主题样式，默认为True
+        :param style: 透视表样式名，默认为None（``theme_style`` 为True时用主题样式，否则用内置 PivotStyleLight16）
         :param fill: 自动写入源数据时是否使用颜色填充，默认为True
         :return: (透视表区域下一行行号, 下一列列号)
 
@@ -1980,11 +1992,14 @@ class ExcelWriter:
         ...     '区域': ['华东', '华东', '华南', '华南'],
         ...     '放款金额': [100, 200, 300, 400],
         ... })
-        >>> with ExcelWriter().set_filename('pivot.xlsx') as writer:
+        >>> with ExcelWriter(theme_color='2639E9').set_filename('pivot.xlsx') as writer:
         ...     ws = writer.get_sheet_by_name('透视表')
         ...     writer.insert_pivot_table2sheet(
         ...         ws, df, 'B2',
-        ...         rows='商品类别', columns='区域', values=[('放款金额', 'sum')],
+        ...         rows='商品类别', columns='区域',
+        ...         values=[('放款金额', 'sum'), ('放款金额', 'sum', '全局占比')],
+        ...         groups={'放款金额': {'start': 0, 'interval': 100}},
+        ...         subtotals=True,
         ...     )
         """
         if values is None:
@@ -1993,7 +2008,28 @@ class ExcelWriter:
         data = data.copy()
         rows = [] if rows is None else ([rows] if isinstance(rows, str) else list(rows))
         columns = [] if columns is None else ([columns] if isinstance(columns, str) else list(columns))
-        filters = [] if filters is None else ([filters] if isinstance(filters, str) else list(filters))
+
+        # 解析筛选字段与筛选项（filters 可为列表或 {字段:[允许值]}）
+        filter_items_all: Dict[Any, Any] = {}
+        if isinstance(filters, dict):
+            filter_fields = list(filters.keys())
+            filter_items_all.update(filters)
+        elif filters is None:
+            filter_fields = []
+        else:
+            filter_fields = [filters] if isinstance(filters, str) else list(filters)
+        if filter_items:
+            filter_items_all.update(filter_items)
+
+        # 规范化数值分组：{字段: {'start':, 'interval':}}
+        groups_norm: Dict[Any, Dict[str, float]] = {}
+        for f, g in (groups or {}).items():
+            if isinstance(g, dict):
+                groups_norm[f] = {"start": float(g["start"]), "interval": float(g["interval"])}
+            elif isinstance(g, (list, tuple)) and len(g) >= 2:
+                groups_norm[f] = {"start": float(g[0]), "interval": float(g[1])}
+            else:
+                raise ValueError("分组配置须为 {'start':.., 'interval':..} 或 (start, interval)")
 
         if not isinstance(worksheet, Worksheet):
             worksheet = self.get_sheet_by_name(worksheet)
@@ -2031,11 +2067,22 @@ class ExcelWriter:
             source_ref=source_ref,
             pivot_sheet=pivot_sheet,
             pivot_anchor=pivot_anchor,
-            rows=rows, columns=columns, values=value_fields, filters=filters,
+            rows=rows, columns=columns, values=value_fields, filters=filter_fields,
             name=name, cache_id=cache_id,
             show_row_totals=show_row_totals, show_col_totals=show_col_totals,
+            groups=groups_norm, filter_items=filter_items_all, subtotals=subtotals,
         )
-        spec["style"] = style
+        # 样式：默认套用适配主题色的 hscredit 自定义样式
+        if style is not None:
+            spec["style"] = style
+            spec["_theme"] = False
+        elif theme_style:
+            spec["style"] = _pivot.THEME_PIVOT_STYLE_NAME
+            spec["show_row_stripes"] = True
+            spec["_theme"] = True
+        else:
+            spec["style"] = "PivotStyleLight16"
+            spec["_theme"] = False
         self._pivot_specs.append(spec)
 
         layout = _pivot.compute_pivot_layout(spec)
@@ -2162,6 +2209,21 @@ class ExcelWriter:
             content_types = zin.read("[Content_Types].xml").decode("utf-8")
             workbook_xml = zin.read("xl/workbook.xml").decode("utf-8")
             wb_rels = zin.read("xl/_rels/workbook.xml.rels").decode("utf-8")
+            styles_xml = zin.read("xl/styles.xml").decode("utf-8") if "xl/styles.xml" in names else None
+
+            # 收集自定义数字格式并分配 numFmtId（避开内置与现有自定义 id）
+            existing_fmt_ids = [int(x) for x in re.findall(r'numFmtId="(\d+)"', styles_xml or "")]
+            next_fmt_id = max(existing_fmt_ids + [163]) + 1  # 内置 id 上限约 163
+            fmt_id_map: Dict[str, int] = {}
+            custom_numfmts: List[Tuple[int, str]] = []
+            for spec in self._pivot_specs:
+                for v in spec["values"]:
+                    nf = v.get("number_format")
+                    if nf and str(nf).lower() not in _pivot.BUILTIN_NUM_FMTS and nf not in fmt_id_map:
+                        fmt_id_map[nf] = next_fmt_id
+                        custom_numfmts.append((next_fmt_id, nf))
+                        next_fmt_id += 1
+            want_theme = any(spec.get("_theme") for spec in self._pivot_specs)
 
             # sheet 名 -> r:id -> worksheet 部件路径（复用 sparkline 注入同样的解析方式）
             name_to_rid = {}
