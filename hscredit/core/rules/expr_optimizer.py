@@ -24,6 +24,16 @@ import re
 from typing import Set, List, Optional, Union
 
 
+def _canonical(node: "ExprNode") -> str:
+    """返回节点的规范化字符串（统一空白），用于等价比较。
+
+    复用节点的 :meth:`ExprNode.to_string` 输出（已将 ``and``/``or`` 统一为
+    ``&``/``|`` 符号），仅压缩多余空白，做大小写敏感的精确比较，避免误判不同列名/
+    字面量为等价。
+    """
+    return ' '.join(node.to_string().split())
+
+
 class ExprNode:
     """表达式节点基类。"""
 
@@ -110,56 +120,53 @@ class BinaryOpNode(ExprNode):
         # 不同运算符默认需要括号以避免优先级问题
         return True
 
-    def normalize_expr(self, expr: str) -> str:
-        """规范化表达式字符串以便比较。"""
-        # 移除多余空格，统一小写，将 and/or 转换为 &/|
-        result = ' '.join(expr.split()).lower()
-        result = result.replace('and', '&')
-        result = result.replace('or', '|')
-        return result
-
     def simplify(self):
-        """简化二元运算表达式。"""
+        """简化二元运算表达式。
+
+        仅做 **保证等价** 的化简，确保化简前后表达式逻辑完全一致：
+
+        - 幂等律：``A & A = A``、``A | A = A``
+        - 吸收律：``A & (A | B) = A``、``A | (A & B) = A``（含交换形式）
+
+        这些定律只对 ``&``/``|`` 成立，对 ``^``（异或）不成立（``A ^ A = False``），
+        故仅在 ``&``/``|`` 上启用；吸收律仅在内层运算符与外层 *相反* 时成立。
+        """
         # 递归简化子节点
         self.left = self.left.simplify()
         self.right = self.right.simplify()
 
-        # 规范化表达式以便比较
-        left_expr = self.normalize_expr(self.left.to_string())
-        right_expr = self.normalize_expr(self.right.to_string())
+        # 幂等律 / 吸收律仅对与、或运算成立，异或不能套用
+        if self.op in ('&', '|'):
+            left_expr = _canonical(self.left)
+            right_expr = _canonical(self.right)
 
-        # 幂等律: A & A = A, A | A = A
-        if left_expr == right_expr:
-            return self.left
-
-        # 吸收率: A | (A & B) = A
-        # 检查 left 是否包含 right（即 left 中是否有 right 这个子表达式）
-        if self.op == '|':
-            if self._contains_expr(self.left, right_expr):
-                return self.right
-
-        # 吸收率: A & (A | B) = A
-        # 检查 right 是否包含 left
-        if self.op == '&':
-            if self._contains_expr(self.right, left_expr):
+            # 幂等律: A & A = A, A | A = A
+            if left_expr == right_expr:
                 return self.left
 
-        # 分配率展开 (可选): (A | B) & (A | C) = A | (B & C)
-        # 这个比较复杂，暂时不实现
+            # 吸收律: A & (A | B) = A, A | (A & B) = A（及交换形式）。
+            # 仅当内层运算符与外层相反时成立；若内外层运算符相同（如 A & (A & B)），
+            # 不可吸收——否则会错误丢弃操作数导致语义改变。
+            if isinstance(self.right, BinaryOpNode) and self.right.op != self.op:
+                if left_expr in self._flatten_same_op(self.right, self.right.op):
+                    return self.left
+            if isinstance(self.left, BinaryOpNode) and self.left.op != self.op:
+                if right_expr in self._flatten_same_op(self.left, self.left.op):
+                    return self.right
 
         return self
 
-    def _contains_expr(self, node: ExprNode, target: str) -> bool:
-        """检查节点树中是否包含目标表达式。"""
-        if isinstance(node, VariableNode):
-            node_expr = self.normalize_expr(node.to_string())
-            return node_expr == target
-        elif isinstance(node, BinaryOpNode):
-            return (self._contains_expr(node.left, target) or
-                    self._contains_expr(node.right, target))
-        elif isinstance(node, UnaryOpNode):
-            return self._contains_expr(node.operand, target)
-        return False
+    @staticmethod
+    def _flatten_same_op(node: ExprNode, op: str) -> List[str]:
+        """沿同一运算符 ``op`` 展开 node，返回各操作数的规范化字符串列表。
+
+        例如 ``A | B | C`` 沿 ``|`` 展开为 ``[A, B, C]``，用于吸收律中判断某子表达式
+        是否为内层运算的操作数之一。
+        """
+        if isinstance(node, BinaryOpNode) and node.op == op:
+            return (BinaryOpNode._flatten_same_op(node.left, op)
+                    + BinaryOpNode._flatten_same_op(node.right, op))
+        return [_canonical(node)]
 
 
 class UnaryOpNode(ExprNode):
@@ -279,58 +286,61 @@ class ExprParser:
             return VariableNode(self.expr)
 
     def _preprocess(self, expr: str) -> str:
-        """预处理表达式。"""
-        # 将 ~ 转换为 not
-        expr = expr.replace('~', 'not ')
+        """预处理表达式：将 pandas 逻辑运算符统一替换为 Python 布尔运算符。
 
-        # 智能替换 & 和 | 为 and 和 or
-        # 需要跟踪括号深度来正确处理
-        import re
+        pandas eval 中 ``&``/``|``/``~`` 作为逐元素逻辑运算符使用，其相对比较运算符的
+        优先级与 Python 位运算符相反——pandas 中比较运算符优先级更高，``&``/``|`` 的行为
+        类似 ``and``/``or``。为借助 :mod:`ast` 解析出与 pandas 一致的结合关系，必须在
+        **所有括号层级** 将其替换为 ``and``/``or``/``not``。若仅在顶层替换，嵌套括号内的
+        ``&``/``|`` 会被 ast 当作高优先级位运算符，与比较运算符结合成链式比较而错误折叠，
+        丢失括号导致优化前后语义不一致。
 
+        字符串字面量（单/双引号）与反引号列名内部的符号原样保留，避免误转换。
+        """
         result = []
-        paren_depth = 0
-
         i = 0
-        while i < len(expr):
+        n = len(expr)
+        quote = None  # 当前所处的字符串/反引号字面量定界符，None 表示在字面量之外
+
+        while i < n:
             char = expr[i]
 
-            if char == '(':
-                paren_depth += 1
+            # 字面量内部：原样保留，直到遇到配对的定界符
+            if quote is not None:
                 result.append(char)
-            elif char == ')':
-                paren_depth -= 1
-                result.append(char)
-            elif paren_depth == 0 and i + 1 < len(expr):
-                # 只在顶层括号外替换
-                if char == '&' and expr[i+1] == '&':
-                    result.append('and')
-                    i += 1  # skip next &
-                elif char == '|' and expr[i+1] == '|':
-                    result.append('or')
-                    i += 1  # skip next |
-                elif char == '&':
-                    # 检查是否是运算符 (前后有空格或括号或比较运算符)
-                    prev_ok = i == 0 or expr[i-1] in ' ('
-                    next_ok = i + 1 >= len(expr) or expr[i+1] in ' )'
-                    if prev_ok or next_ok:
-                        result.append('and')
-                    else:
-                        result.append(char)
-                elif char == '|':
-                    prev_ok = i == 0 or expr[i-1] in ' ('
-                    next_ok = i + 1 >= len(expr) or expr[i+1] in ' )'
-                    if prev_ok or next_ok:
-                        result.append('or')
-                    else:
-                        result.append(char)
-                else:
-                    result.append(char)
-            else:
-                result.append(char)
+                if char == quote:
+                    quote = None
+                i += 1
+                continue
 
+            if char in ('"', "'", '`'):
+                quote = char
+                result.append(char)
+                i += 1
+                continue
+
+            if char == '~':
+                result.append(' not ')
+                i += 1
+                continue
+
+            if char == '&':
+                result.append(' and ')
+                # 同时兼容 && 写法
+                i += 2 if (i + 1 < n and expr[i + 1] == '&') else 1
+                continue
+
+            if char == '|':
+                result.append(' or ')
+                i += 2 if (i + 1 < n and expr[i + 1] == '|') else 1
+                continue
+
+            result.append(char)
             i += 1
 
-        return ''.join(result)
+        # 去除首尾空白：ast.parse(mode='eval') 不允许表达式以空白开头（会被当作缩进），
+        # 而前导的 ``~`` 被替换为 `` not `` 后会在行首引入空格
+        return ''.join(result).strip()
 
     def _visit(self, node: ast.AST) -> ExprNode:
         """访问 AST 节点。"""

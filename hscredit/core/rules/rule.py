@@ -293,7 +293,7 @@ class Rule:
 
         >>> r = Rule("age > 18") ^ Rule("income > 5000")
         >>> r.expr
-        '((age > 18) & ~(income > 5000)) | (~(age > 18) & (income > 5000))'
+        '(age > 18 & ~(income > 5000)) | (~(age > 18) & income > 5000)'
         """
         if not isinstance(other, Rule):
             raise InputTypeError(f"unsupported operand type(s) for ^: 'Rule' and '{type(other).__name__}'")

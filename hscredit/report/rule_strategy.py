@@ -1,10 +1,12 @@
 """拒绝规则策略文档表格转换工具."""
 
 from collections import OrderedDict
-from typing import Dict, Mapping, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import pandas as pd
+
+from ..core.rules import Rule
 
 
 _DETAIL_GROUPS = ("分箱详情", "规则详情")
@@ -353,10 +355,187 @@ def rule_group_hit_table(
     return pd.DataFrame(rows, columns=pd.MultiIndex.from_tuples(columns))
 
 
+_FREQ_LABELS = OrderedDict((("D", "日"), ("W", "周"), ("M", "月"), ("Q", "季度")))
+_VALID_GROUP_ORDER = ("asc", "desc", "appearance")
+
+# group_order 接受：``None``/``"asc"``（升序，默认）、``"desc"``（降序）、
+# ``"appearance"``（数据出现顺序）、可调用排序键、或显式分组名称序列
+GroupOrder = Union[None, str, Callable[[Any], Any], Sequence[Any]]
+
+
+def _order_groups(present: Sequence[Any], group_order: GroupOrder) -> list:
+    """按 ``group_order`` 规则对已出现的分组标签排序，缺省升序排列."""
+    present = _ordered_unique(list(present))  # 去重并保留出现顺序
+
+    if group_order is None or (isinstance(group_order, str) and group_order == "asc"):
+        try:
+            return sorted(present)
+        except TypeError:
+            return present
+    if isinstance(group_order, str):
+        if group_order == "desc":
+            try:
+                return sorted(present, reverse=True)
+            except TypeError:
+                return list(reversed(present))
+        if group_order == "appearance":
+            return present
+        raise ValueError(f"group_order 字符串仅支持 {_VALID_GROUP_ORDER} 之一")
+    if callable(group_order):
+        return sorted(present, key=group_order)
+    if isinstance(group_order, (list, tuple, pd.Index, np.ndarray)):
+        specified = list(group_order)
+        specified_set = set(specified)
+        ordered = [group for group in specified if group in present]
+        remaining = [group for group in present if group not in specified_set]
+        return ordered + remaining
+    raise ValueError("group_order 必须是 'asc'/'desc'/'appearance'、可调用对象或分组名称序列")
+
+
+def _resolve_group_labels(
+    data: pd.DataFrame,
+    date_col: Optional[str],
+    freq: str,
+    group_col: Optional[str],
+    dropna: bool,
+    group_order: GroupOrder,
+) -> Tuple[pd.Series, list]:
+    """根据日期+频率或分组字段，解析每条样本所属的分组标签与有序分组列表."""
+    if (date_col is None) == (group_col is None):
+        raise ValueError("date_col 与 group_col 必须且只能指定其中一个")
+
+    if group_col is not None:
+        if group_col not in data.columns:
+            raise ValueError(f"数据集缺少分组字段列: {group_col}")
+        labels = data[group_col]
+    else:
+        if date_col not in data.columns:
+            raise ValueError(f"数据集缺少日期列: {date_col}")
+        if freq not in _FREQ_LABELS:
+            raise ValueError("freq必须是'D'/'W'/'M'/'Q'之一")
+        parsed = pd.to_datetime(data[date_col], errors="coerce")
+        labels = parsed.dt.to_period(freq).astype(str)
+        labels = labels.where(parsed.notna(), other=np.nan)
+
+    labels = pd.Series(labels, index=data.index)
+    valid = labels.notna()
+    if not dropna and not valid.all():
+        labels = labels.where(valid, other="缺失")
+        valid = pd.Series(True, index=data.index)
+
+    unique_values = labels[valid].dropna().unique().tolist()
+    return labels, _order_groups(unique_values, group_order)
+
+
+def rule_group_compare(
+    data: pd.DataFrame,
+    rule: Union[str, Rule],
+    date_col: Optional[str] = None,
+    freq: str = "M",
+    group_col: Optional[str] = None,
+    target: str = "target",
+    overdue: Optional[Union[str, List[str]]] = None,
+    dpds: Optional[Union[int, List[int]]] = None,
+    rule_name: Optional[str] = None,
+    target_names: Optional[Mapping[str, str]] = None,
+    metrics: Optional[Mapping[str, str]] = None,
+    prior_rules: Optional[Rule] = None,
+    amount: Optional[str] = None,
+    del_grey: bool = False,
+    dropna: bool = True,
+    group_order: GroupOrder = "asc",
+    **kwargs: Any,
+) -> pd.DataFrame:
+    """直接从原始数据生成分组下的规则命中效果对比表.
+
+    相比 :func:`rule_group_hit_table` 需要在函数外手工切分样本并逐组调用
+    ``Rule.report``，本函数接收原始明细数据，按 ``日期列 + 频率`` 或 ``分组字段``
+    自动切分样本，对每个分组调用同一规则的 ``Rule.report``（支持
+    ``target`` 单标签或 ``overdue + dpds`` 多标签口径），再汇总为分组对比表。
+
+    :param data: 原始明细数据 DataFrame，需包含规则所需字段、目标/逾期字段及分组依据列
+    :param rule: 规则表达式字符串或 :class:`~hscredit.core.rules.Rule` 实例
+    :param date_col: 日期列名，与 ``freq`` 配合按时间周期分组（与 ``group_col`` 二选一）
+    :param freq: 时间频率，``'D'`` 日 / ``'W'`` 周 / ``'M'`` 月 / ``'Q'`` 季度，默认 ``'M'``
+    :param group_col: 分组字段列名，按其取值分组（与 ``date_col`` 二选一）
+    :param target: 目标变量列名，默认 ``"target"``，0=好样本，1=坏样本
+    :param overdue: 逾期天数字段名（可选，传入时以逾期天数>DPD定义坏样本，支持多标签）
+    :param dpds: 逾期定义方式，逾期天数 > DPD 为坏样本，可传入列表支持多DPD联合分析
+    :param rule_name: 展示用规则名称，默认使用规则自身名称或报告中的指标名称
+    :param target_names: 逾期指标名称映射，如 ``{'MOB1 1+': 'fpd1'}``
+    :param metrics: 顶层展示名称到 ``Rule.report`` 字段名的映射，默认 ``_DEFAULT_GROUP_METRICS``
+    :param prior_rules: 先验规则（可选），每个分组内先排除命中先验规则的样本再评估
+    :param amount: 金额字段名（可选），传入时以金额口径而非样本数口径统计
+    :param del_grey: 是否删除逾期天数在(0, DPD]区间内的灰度样本，默认为False
+    :param dropna: 是否丢弃分组依据缺失的样本，默认为True；为False时缺失样本归入“缺失”分组
+    :param group_order: 分组排列方式，默认 ``"asc"`` 升序。支持：
+
+        * ``"asc"`` / ``"desc"`` — 按分组标签升序 / 降序
+        * ``"appearance"`` — 按分组在数据中首次出现的顺序
+        * 可调用对象 — 作为 ``sorted`` 的 ``key`` 排序键
+        * 分组名称序列 — 按给定顺序排列，未列出的分组按出现顺序追加在末尾
+
+    :param kwargs: 透传给 ``Rule.report`` 的其他参数（如 ``desc``、``filter_cols``、``margins`` 等）
+    :return: 两层列头的分组命中对比表，不包含合计行；列头第二层为各分组名称
+    :raises ValueError: ``date_col`` 与 ``group_col`` 未二选一，或所需列缺失时
+
+    **参考样例**
+
+    >>> from hscredit.report import rule_group_compare
+    >>> # 按放款月份对比同一拒绝规则在各月样本上的命中效果（多标签口径）
+    >>> rule_group_compare(
+    ...     data, "score < 600", date_col='放款时间', freq='M',
+    ...     overdue=['MOB1'], dpds=[7, 0], rule_name='低分拒绝',
+    ... )
+    >>> # 按商品类别分组、金额口径，并自定义分组展示顺序
+    >>> rule_group_compare(
+    ...     data, "score < 600", group_col='商品类别', target='FPD',
+    ...     amount='放款金额', group_order=['手机通讯', '电脑数码', '家用电器'],
+    ... )
+    """
+    if not isinstance(data, pd.DataFrame) or data.empty:
+        raise ValueError("data 必须是非空的 DataFrame")
+
+    rule = rule if isinstance(rule, Rule) else Rule(rule)
+    labels, ordered_groups = _resolve_group_labels(data, date_col, freq, group_col, dropna, group_order)
+    if not ordered_groups:
+        raise ValueError("根据 date_col/group_col 未能切分出任何有效分组")
+
+    group_reports: "OrderedDict[str, pd.DataFrame]" = OrderedDict()
+    for group in ordered_groups:
+        subset = data.loc[labels == group]
+        if subset.empty:
+            continue
+        group_reports[str(group)] = rule.report(
+            subset,
+            target=target,
+            overdue=overdue,
+            dpds=dpds,
+            del_grey=del_grey,
+            prior_rules=prior_rules,
+            amount=amount,
+            **kwargs,
+        )
+
+    return rule_group_hit_table(
+        group_reports,
+        rule_name=rule_name or rule.name,
+        target_names=target_names,
+        metrics=metrics,
+        target_name=target,
+    )
+
+
 def _validate_metrics(normalized: pd.DataFrame, metrics: Sequence[str]) -> None:
     missing = [metric for metric in metrics if metric not in normalized.columns]
     if missing:
         raise ValueError(f"rule.report 结果缺少以下指标列: {missing}")
 
 
-__all__ = ["rule_report_table", "rule_target_analysis", "rule_target_table", "rule_group_hit_table"]
+__all__ = [
+    "rule_report_table",
+    "rule_target_analysis",
+    "rule_target_table",
+    "rule_group_hit_table",
+    "rule_group_compare",
+]

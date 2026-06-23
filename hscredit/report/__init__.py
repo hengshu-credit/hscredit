@@ -16,7 +16,13 @@ from .feature_analyzer import (
     feature_efficiency_analysis,
 )
 from .rule_analysis import ruleset_analysis, multi_label_rule_analysis, rule_swap_analysis
-from .rule_strategy import rule_group_hit_table, rule_report_table, rule_target_analysis, rule_target_table
+from .rule_strategy import (
+    rule_group_compare,
+    rule_group_hit_table,
+    rule_report_table,
+    rule_target_analysis,
+    rule_target_table,
+)
 from .swap_analysis import (
     ReferenceDataProvider,
     SwapAnalyzer,
@@ -58,6 +64,7 @@ __all__ = [
     "rule_target_analysis",
     "rule_target_table",
     "rule_group_hit_table",
+    "rule_group_compare",
     # swap分析
     "ReferenceDataProvider",
     "SwapAnalyzer",

@@ -606,12 +606,15 @@ def segment_scorecard_comparison(
 ) -> Figure:
     """按客群分组的评分指标对比柱状图.
 
+    每个指标单独一个子图，对比 **同一指标在不同客群下的差异**（各指标量纲不同，
+    分子图展示可避免 KS/AUC/LIFT 因量纲差异而无法横向比较）。
+
     :param df: 数据集
     :param score_col: 评分列名
     :param target: 目标变量列名
     :param segment_col: 客群列名
     :param metrics: 展示指标，默认 ['KS','AUC','LIFT@10%']
-    :param ax: matplotlib Axes
+    :param ax: matplotlib Axes（仅单指标时生效；多指标时自动创建子图）
     :param figsize: 图像尺寸
     :param title: 图标题
     :param save: 保存路径
@@ -652,24 +655,35 @@ def segment_scorecard_comparison(
 
     n_metrics = len(metrics)
     x = np.arange(len(segments))
-    width = 0.8 / n_metrics
-    colors = get_series_colors(n_metrics)
-    fig, ax = get_or_create_ax(figsize=figsize, ax=ax)
+    # 每个客群一种颜色，便于跨子图识别同一客群
+    colors = get_series_colors(len(segments))
+    seg_labels = [str(s) for s in segments]
+
+    # 多指标 → 一指标一子图；单指标 → 复用传入的 ax
+    if n_metrics == 1 and ax is not None:
+        fig = ax.figure
+        axes = [ax]
+    else:
+        fig, axes = plt.subplots(1, n_metrics, figsize=figsize)
+        axes = np.atleast_1d(axes).ravel()
+
     for mi, m in enumerate(metrics):
-        offset = (mi - n_metrics / 2 + 0.5) * width
+        cur_ax = axes[mi]
         vals = results[m]
         vmax = max(vals) if vals else 1.0
-        bars = ax.bar(x + offset, vals, width=width * 0.9,
-                      color=colors[mi % len(colors)], label=m, alpha=0.85)
+        bars = cur_ax.bar(x, vals, width=0.6,
+                          color=[colors[i % len(colors)] for i in range(len(segments))],
+                          alpha=0.85)
         for bar, v in zip(bars, vals):
-            ax.text(bar.get_x() + bar.get_width() / 2, v + vmax * 0.01,
-                    f'{v:.3f}', ha='center', va='bottom', fontsize=7)
-    ax.set_xticks(x)
-    ax.set_xticklabels([str(s) for s in segments], rotation=30, ha='right', fontsize=9)
-    ax.set_ylabel('指标值', fontsize=11)
-    ax.set_title(title, fontsize=13, fontweight='bold')
-    ax.legend(fontsize=9)
-    setup_axis_style(ax, hide_top_right=True)
+            cur_ax.text(bar.get_x() + bar.get_width() / 2, v + vmax * 0.01,
+                        f'{v:.3f}', ha='center', va='bottom', fontsize=8)
+        cur_ax.set_xticks(x)
+        cur_ax.set_xticklabels(seg_labels, rotation=30, ha='right', fontsize=9)
+        cur_ax.set_ylabel(m, fontsize=11)
+        cur_ax.set_title(m, fontsize=12, fontweight='bold')
+        setup_axis_style(cur_ax, hide_top_right=True)
+
+    fig.suptitle(title, fontsize=13, fontweight='bold')
     fig.tight_layout()
     save_figure(fig, save)
     return fig

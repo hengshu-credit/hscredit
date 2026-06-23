@@ -568,81 +568,89 @@ def score_dist_plot(
     """
     fig, ax = get_or_create_ax(figsize=figsize, ax=ax)
 
-    if colors is None:
-        colors = DEFAULT_COLORS
-
-    if title is None:
-        title = f'{score_col} Distribution'
+    fontsize = kwargs.pop('fontsize', 14)
+    anchor = kwargs.pop('anchor', 1.15)
+    labels = kwargs.pop('labels', ["好样本", "坏样本"])
 
     # 支持两种调用方式：
     # 1. score_dist_plot(df, 'score', 'target')        # 原始：df + 列名
     # 2. score_dist_plot(scores_series, targets_series)  # 简化：直接传 Series
     if isinstance(df, pd.Series):
-        score_series = df
+        score_series = df.dropna() if score_col is None and target_col is None else df
         target_series = score_col if isinstance(score_col, pd.Series) else None
-        score_col = score_series.name or 'score'
+        score_col = df.name or "评分"
     else:
-        score_series = None
-        target_series = None
-    
-    if score_series is not None:
-        # 路径B：直接传 Series（不区分好坏 or 用 target_series）
-        if target_series is not None:
-            good_scores = score_series[target_series == 0].dropna()
-            bad_scores = score_series[target_series == 1].dropna()
-            sns.histplot(good_scores, bins=n_bins, kde=kde, ax=ax,
-                         color=colors[0], alpha=0.6, label=f'Good (n={len(good_scores)})')
-            sns.histplot(bad_scores, bins=n_bins, kde=kde, ax=ax,
-                         color=colors[1], alpha=0.6, label=f'Bad (n={len(bad_scores)})')
-            if show_stats:
-                from ..metrics import ks_2samps as ks_metric
-                ks_val = ks_metric(good_scores, bad_scores)
-                ax.text(0.98, 0.98, f'KS: {ks_val:.3f}', transform=ax.transAxes,
-                       ha='right', va='top', fontsize=10,
-                       bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
-            ax.legend(loc='upper right', frameon=True)
-        else:
-            sns.histplot(score_series.dropna(), bins=n_bins, kde=kde, ax=ax,
-                         color=colors[0], alpha=0.6)
-        _path_b_done = True
-    else:
-        _path_b_done = False
-
-    if not _path_b_done and target_col is not None:
-        # 路径A：原始方式 — df + 列名
-        good_scores = df[df[target_col] == 0][score_col].dropna()
-        bad_scores = df[df[target_col] == 1][score_col].dropna()
-
-        sns.histplot(good_scores, bins=n_bins, kde=kde, ax=ax,
-                     color=colors[0], alpha=0.6, label=f'Good (n={len(good_scores)})')
-        sns.histplot(bad_scores, bins=n_bins, kde=kde, ax=ax,
-                     color=colors[1], alpha=0.6, label=f'Bad (n={len(bad_scores)})')
-
-        if show_stats:
-            from ..metrics import ks_2samps as ks_metric
-            ks_val = ks_metric(good_scores, bad_scores)
-            stats_text = f'KS: {ks_val:.3f}'
-            ax.text(0.98, 0.98, stats_text, transform=ax.transAxes,
-                   ha='right', va='top', fontsize=10,
-                   bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
-    elif not _path_b_done:
-        # 不区分好坏（df 方式）
-        sns.histplot(df[score_col].dropna(), bins=n_bins, kde=kde, ax=ax,
-                     color=colors[0], alpha=0.6)
-    
-    # legend / xlabel / title：路径A/B 共用（路径B已在内部处理过 legend）
-    if not _path_b_done:
-        ax.set_xlabel(score_col, fontsize=12)
-        ax.set_ylabel('Count', fontsize=12)
-        ax.set_title(title, fontsize=14, fontweight='bold')
         if target_col is not None:
-            ax.legend(loc='upper right', frameon=True)
-    
-    setup_axis_style(ax, colors, hide_top_right=True)
-    
+            score_series = df[score_col]
+            target_series = df[target_col]
+        else:
+            score_series = df[score_col]
+            target_series = None
+        score_col = score_col or "评分"
+
+    # 对齐好/坏样本：复用 hist_plot 的 step + probability 风格
+    has_target = target_series is not None
+    if has_target:
+        mask = score_series.notna() & target_series.notna()
+        score_series = score_series[mask]
+        target_series = target_series[mask]
+        target_unique = len(np.unique(target_series))
+        if isinstance(labels, dict):
+            hue = target_series.map(labels)
+            hue_order = list(labels.values())
+        else:
+            hue = target_series.map({i: v for i, v in enumerate(labels)})
+            hue_order = labels
+        hue_order_final = hue_order[::-1]
+        palette = get_series_colors(target_unique)
+        sns.histplot(
+            x=score_series, hue=hue, element="step", stat="probability",
+            bins=n_bins, common_bins=True, common_norm=True, ax=ax,
+            kde=kde, palette=palette, hue_order=hue_order_final, **kwargs,
+        )
+    else:
+        score_series = score_series.dropna()
+        color = colors[0] if colors else DEFAULT_COLORS[0]
+        sns.histplot(
+            x=score_series, element="step", stat="probability",
+            bins=n_bins, ax=ax, kde=kde, color=color, **kwargs,
+        )
+
+    # 坐标轴样式（与 hist_plot 一致）
+    setup_axis_style(ax)
+    ax.set_xlabel(f"{score_col}区间", fontsize=fontsize)
+    ax.set_ylabel("样本占比", fontsize=fontsize)
+    ax.yaxis.set_major_formatter(PercentFormatter(1))
+
+    # 标题
+    if title is None:
+        title = f"{score_col}分布情况"
+    ax.set_title(f"{title}\n\n", fontsize=fontsize)
+
+    # KS 统计信息
+    if has_target and show_stats:
+        from ..metrics import ks_2samps as ks_metric
+        good_scores = score_series[target_series == 0]
+        bad_scores = score_series[target_series == 1]
+        ks_val = ks_metric(good_scores, bad_scores)
+        ax.text(0.98, 0.98, f'KS: {ks_val:.3f}', transform=ax.transAxes,
+                ha='right', va='top', fontsize=fontsize - 2,
+                bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+
+    # 图例（顶部居中，与 hist_plot 一致）
+    if has_target:
+        handles, legend_labels = ax.get_legend_handles_labels()
+        if handles:
+            ax.legend(handles, hue_order_final[:len(handles)],
+                      loc='upper center', ncol=len(handles),
+                      bbox_to_anchor=(0.5, anchor), frameon=False, fontsize=fontsize)
+        else:
+            ax.legend(hue_order, loc='upper center', ncol=target_unique,
+                      bbox_to_anchor=(0.5, anchor), frameon=False, fontsize=fontsize)
+
     if save:
         save_figure(fig, save)
-    
+
     return fig
 
 
