@@ -27,7 +27,7 @@ class UniformBinning(BaseBinning):
     :param special_codes: 特殊值列表，默认为None，如[-999, -98]
     :param left_clip: 左侧截断分位数，默认为None，如0.01表示截断1%分位数以下的值
     :param right_clip: 右侧截断分位数，默认为None，如0.99表示截断99%分位数以上的值
-    :param force_numerical: 是否强制作为数值型处理，默认为True
+    :param force_numerical: 是否强制作为数值型处理，默认为False（自动识别类别型）
         - True: 将所有特征视为数值型进行等距分箱（默认，因为等距分箱适用于数值型）
         - False: 自动检测特征类型（根据dtype判断）
     :param random_state: 随机种子，默认为None
@@ -55,7 +55,7 @@ class UniformBinning(BaseBinning):
     2. 分箱边界由 (max - min) / n_bins 计算得出
     3. 支持通过left_clip/right_clip截断异常值
     4. 支持通过special_codes处理特殊值（如-999表示缺失）
-    5. 默认force_numerical=True，确保进行数值型等距分箱
+    5. 默认force_numerical=False，自动识别类别型；如需强制数值等距分箱可显式设为 True
     6. 计算速度快，实现简单；为无监督方法，不使用标签 ``y`` 决定切分
     7. 对偏态分布或含极端值的特征不友好（可能某些箱样本极少），此时优先用等频分箱
 
@@ -78,7 +78,7 @@ class UniformBinning(BaseBinning):
         special_codes: Optional[List] = None,
         left_clip: Optional[float] = None,
         right_clip: Optional[float] = None,
-        force_numerical: bool = True,
+        force_numerical: bool = False,
         random_state: Optional[int] = None,
         **kwargs
     ):

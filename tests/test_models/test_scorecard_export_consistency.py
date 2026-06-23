@@ -133,10 +133,30 @@ def test_scorecard_python_deployment_code_matches_predict():
     reference = scorecard.predict(sample, input_type='raw')
 
     namespace = {}
-    exec(scorecard.export_deployment_code(language='python', decimal=12), namespace)
+    decimal = 12
+    exec(scorecard.export_deployment_code(language='python', decimal=decimal), namespace)
     deployed_scores = sample.apply(lambda row: namespace['calculate_score'](row.to_dict()), axis=1).to_numpy()
 
     np.testing.assert_allclose(reference, deployed_scores, atol=1e-9)
+    assert namespace['feature_name_in_'] == scorecard.feature_names_
+    assert namespace['feature_names_in_'] == scorecard.feature_names_
+    assert namespace['n_features_in_'] == len(scorecard.feature_names_)
+    assert namespace['pdo'] == scorecard.pdo
+    assert namespace['rate'] == scorecard.rate
+    assert namespace['base_odds'] == scorecard.base_odds
+    assert namespace['base_score'] == scorecard.base_score
+    assert namespace['step'] == scorecard.step
+    assert namespace['lower'] == scorecard.lower
+    assert namespace['upper'] == scorecard.upper
+    assert namespace['direction'] == scorecard.direction_
+    assert namespace['decimal'] == scorecard.decimal
+    assert namespace['A_'] == float(scorecard.A_)
+    assert namespace['B_'] == float(scorecard.B_)
+
+    deployment_base_score, score_sign = scorecard._get_deployment_base_score_and_sign()
+    assert namespace['intercept_score'] == round(float(deployment_base_score), decimal)
+    assert namespace['deployment_base_score'] == round(float(deployment_base_score), decimal)
+    assert namespace['score_sign'] == float(score_sign)
 
 
 def test_scorecard_python_deployment_code_uses_categorical_default_bin_for_unseen_values():

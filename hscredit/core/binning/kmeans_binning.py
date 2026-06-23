@@ -31,7 +31,7 @@ class KMeansBinning(BaseBinning):
     :param special_codes: 特殊值列表，默认为None
     :param missing_separate: 是否将缺失值单独分为一箱，默认为True
     :param random_state: 随机种子，用于K-Means初始化，默认为None
-    :param force_numerical: 是否强制作为数值型处理，默认为True
+    :param force_numerical: 是否强制作为数值型处理，默认为False（自动识别类别型）
         - True: 将所有特征视为数值型进行K-Means聚类分箱
         - False: 自动检测特征类型
     :param n_init: K-Means初始化次数，默认为10
@@ -78,7 +78,7 @@ class KMeansBinning(BaseBinning):
         monotonic: Union[bool, str] = False,
         special_codes: Optional[List] = None,
         missing_separate: bool = True,
-        force_numerical: bool = True,
+        force_numerical: bool = False,
         random_state: Optional[int] = None,
         n_init: int = 10,
         max_iter: int = 300,

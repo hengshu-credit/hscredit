@@ -24,7 +24,7 @@ class QuantileBinning(BaseBinning):
     :param max_n_bins: 最大分箱数，默认为10
     :param quantiles: 自定义分位点列表，如[0, 0.2, 0.5, 0.8, 1.0]，默认为None
         - 如果提供，将直接使用这些分位点进行分箱
-    :param force_numerical: 是否强制作为数值型处理，默认为True
+    :param force_numerical: 是否强制作为数值型处理，默认为False（自动识别类别型）
         - True: 将所有特征视为数值型进行等频分箱
         - False: 自动检测特征类型
     :param min_bin_size: 每箱最小样本数或占比，默认为0.01
@@ -72,7 +72,7 @@ class QuantileBinning(BaseBinning):
         min_n_bins: int = 2,
         max_n_bins: int = 10,
         quantiles: Optional[List[float]] = None,
-        force_numerical: bool = True,
+        force_numerical: bool = False,
         min_bin_size: Union[float, int] = 0.01,
         max_bin_size: Optional[Union[float, int]] = None,
         min_bad_rate: float = 0.0,

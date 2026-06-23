@@ -1875,13 +1875,13 @@ class ScoreCard(StandardScoreTransformer):
     def export_pmml(
         self,
         pmml_file: str = 'scorecard.pmml',
-        decimal: int = 2,
+        decimal: int = 12,
         debug: bool = False
     ):
         """导出 PMML 文件.
 
         :param pmml_file: PMML 文件保存路径，默认 'scorecard.pmml'
-        :param decimal: 特征子分保留小数位数，默认 2
+        :param decimal: 特征子分保留小数位数，默认 12，确保 PMML 与 predict 精度一致
         :param debug: 是否返回中间对象进行调试，默认 False
         :return: debug=True 时返回 PMMLPipeline，否则返回 None
         """
@@ -1999,7 +1999,7 @@ class ScoreCard(StandardScoreTransformer):
         language: str = 'python',
         output_file: Optional[str] = None,
         function_name: str = 'calculate_score',
-        decimal: int = 4,
+        decimal: int = 12,
     ) -> str:
         """导出评分卡部署代码.
 
@@ -2079,12 +2079,32 @@ class ScoreCard(StandardScoreTransformer):
         """生成 Python 评分卡函数代码."""
         special_codes = self._get_deployment_special_codes()
         feature_types = getattr(self.binner, 'feature_types_', {}) if self.binner is not None else {}
+        feature_names = list(self.feature_names_)
+        direction = getattr(self, 'direction_', self.direction)
 
         lines = [
             f'"""评分卡 Python 部署代码（自动生成）"""',
             f'import numpy as np',
             f'import pandas as pd',
             f'',
+            f'# 评分卡元数据，可在 import/exec 部署代码后直接读取',
+            f'feature_name_in_ = {feature_names!r}',
+            f'feature_names_in_ = feature_name_in_',
+            f'n_features_in_ = {len(feature_names)}',
+            f'pdo = {self.pdo!r}',
+            f'rate = {self.rate!r}',
+            f'base_odds = {self.base_odds!r}',
+            f'base_score = {self.base_score!r}',
+            f'step = {self.step!r}',
+            f'lower = {self.lower!r}',
+            f'upper = {self.upper!r}',
+            f'direction = {direction!r}',
+            f'decimal = {self.decimal!r}',
+            f'A_ = {float(self.A_)!r}',
+            f'B_ = {float(self.B_)!r}',
+            f'intercept_score = {base_score!r}',
+            f'deployment_base_score = intercept_score',
+            f'score_sign = {float(score_sign)!r}',
             f'',
             f'def {func_name}(row: dict) -> float:',
             f'    """计算单条样本的评分卡分数.',

@@ -73,3 +73,36 @@ def test_info_does_not_list_implemented_metrics_as_pending():
     assert "待实现模块" not in result.stdout
     assert "core.encoding" not in result.stdout
     assert "core.metrics: 指标计算" not in result.stdout
+
+
+def test_core_aggregates_public_subpackage_apis():
+    code = textwrap.dedent(
+        """
+        import hscredit.core as core
+        from hscredit.core import binning, metrics, selectors
+
+        missing = {}
+        for module_name, module in {
+            'binning': binning,
+            'metrics': metrics,
+            'selectors': selectors,
+        }.items():
+            current = [name for name in module.__all__ if name not in core.__all__]
+            if current:
+                missing[module_name] = current
+
+        assert not missing, missing
+        assert core.CPSATBinning is binning.CPSATBinning
+        assert core.OptimalBinning2D is binning.OptimalBinning2D
+        assert core.StabilityAwareSelector is selectors.StabilityAwareSelector
+        assert core.compute_bin_stats is metrics.compute_bin_stats
+        """
+    )
+
+    result = subprocess.run(
+        [sys.executable, '-c', code],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr

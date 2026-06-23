@@ -908,10 +908,13 @@ class DecisionTreeAnalyzer:
 
         注意：DecisionTreeAnalyzer 底层是 sklearn 树，不支持 manual_split 干预。
         """
+        self._check_fitted()
         if self.__tree_info_cache is None:
+            n_classes = getattr(self.clf, "n_classes_", getattr(self.clf.tree_, "n_classes", 2))
+            n_classes = int(np.asarray(n_classes).ravel()[0])
             self.__tree_info_cache = _TreeInfo(
                 self.features,
-                int(self.clf.tree_.n_classes_[0]) if hasattr(self.clf.tree_, "n_classes_") else 2,
+                n_classes,
             )
             tree = self.clf.tree_
             self.__tree_info_cache.children_left = list(tree.children_left)
@@ -986,6 +989,7 @@ class DecisionTreeAnalyzer:
         self.clf.fit(X, y)
 
         self._is_fitted = True
+        self.__tree_info_cache = None
         self._df_rules = _rule_generator(self.clf, self.features, missing=self.missing)
         return self
 
@@ -1338,6 +1342,33 @@ class DecisionTreeAnalyzer:
             max_depth=max_depth,
         )
 
+    def plot(
+        self,
+        backend: str = "matplotlib",
+        save: Optional[str] = None,
+        title: str = "",
+        **kwargs: Any,
+    ) -> Any:
+        """绘制当前决策树结构。
+
+        :param backend: 渲染后端，可选 ``matplotlib`` / ``pyecharts`` / ``graphviz``
+        :param save: 保存路径（可选）
+        :param title: 图表标题
+        :param kwargs: 其余参数透传给 :func:`hscredit.core.viz.plot_tree`
+        :return: matplotlib Figure / pyecharts Chart / graphviz Source
+
+        **参考样例**
+
+        >>> analyzer = DecisionTreeAnalyzer(target='target').fit(df, features=['age', 'income'])
+        >>> fig = analyzer.plot()
+        >>> analyzer.plot(backend='graphviz', save='tree.pdf')
+        """
+        self._check_fitted()
+        from ...core.viz.tree_plots import plot_tree
+
+        kwargs.setdefault("feature_names", self.features)
+        return plot_tree(self, backend=backend, save=save, title=title, **kwargs)
+
     def save(
         self,
         file_path: str,
@@ -1388,6 +1419,7 @@ class DecisionTreeAnalyzer:
         instance._is_fitted = True
         if "_data" in payload:
             instance._data = payload["_data"]
+        instance.__tree_info_cache = None
         instance._df_rules = _rule_generator(
             instance.clf, instance.features, missing=instance.missing
         )
@@ -1990,6 +2022,33 @@ class ManualTreeExtractor:
             leaf_only=leaf_only,
             **kwargs,
         )
+
+    def plot(
+        self,
+        backend: str = "matplotlib",
+        save: Optional[str] = None,
+        title: str = "",
+        **kwargs: Any,
+    ) -> Any:
+        """绘制当前人工决策树结构。
+
+        :param backend: 渲染后端，可选 ``matplotlib`` / ``pyecharts`` / ``graphviz``
+        :param save: 保存路径（可选）
+        :param title: 图表标题
+        :param kwargs: 其余参数透传给 :func:`hscredit.core.viz.plot_tree`
+        :return: matplotlib Figure / pyecharts Chart / graphviz Source
+
+        **参考样例**
+
+        >>> ext = ManualTreeExtractor(target='target').fit(df, features=['age', 'income'])
+        >>> fig = ext.plot()
+        >>> ext.manual_split(df, 'age', 35).plot(save='tree.png')
+        """
+        self._check_fitted()
+        from ...core.viz.tree_plots import plot_tree
+
+        kwargs.setdefault("feature_names", self._feature_list)
+        return plot_tree(self, backend=backend, save=save, title=title, **kwargs)
 
     def display(self) -> "ManualTreeExtractor":
         """在 Jupyter Notebook 中展示决策树图和规则表。

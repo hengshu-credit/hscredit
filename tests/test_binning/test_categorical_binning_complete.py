@@ -6,7 +6,26 @@ import sys
 import numpy as np
 import pandas as pd
 import pytest
-from hscredit.core.binning import OptimalBinning
+from hscredit.core.binning import (
+    BestIVBinning,
+    BestKSBinning,
+    BestLiftBinning,
+    CPSATBinning,
+    CartBinning,
+    ChiMergeBinning,
+    GeneticBinning,
+    KMeansBinning,
+    KernelDensityBinning,
+    MDLPBinning,
+    MonotonicBinning,
+    ORBinning,
+    OptimalBinning,
+    QuantileBinning,
+    SmoothBinning,
+    TargetBadRateBinning,
+    TreeBinning,
+    UniformBinning,
+)
 from hscredit.report import feature_bin_stats
 import json
 
@@ -52,6 +71,54 @@ class TestCategoricalBinning:
         assert '城市' in binner.feature_types_
         assert '学历' in binner.feature_types_
         assert '年龄' in binner.feature_types_
+
+    @pytest.mark.parametrize("method", OptimalBinning.VALID_METHODS)
+    def test_all_optimal_binning_methods_support_categorical_feature(self, method):
+        """统一分箱入口下所有方法都应能处理字符串类别特征."""
+        binner = OptimalBinning(method=method, max_n_bins=5, min_bin_size=0.05, random_state=42)
+        binner.fit(self.X[['城市']], self.y)
+
+        assert binner.feature_types_['城市'] == 'categorical'
+        assert len(binner.get_bin_table('城市')) > 0
+
+        sample = self.X[['城市']].head(20)
+        assert binner.transform(sample, metric='indices').shape == (20, 1)
+        assert binner.transform(sample, metric='bins').shape == (20, 1)
+        assert binner.transform(sample, metric='woe').shape == (20, 1)
+
+    @pytest.mark.parametrize(
+        "binner_cls",
+        [
+            UniformBinning,
+            QuantileBinning,
+            TreeBinning,
+            CartBinning,
+            ChiMergeBinning,
+            BestKSBinning,
+            BestIVBinning,
+            MDLPBinning,
+            ORBinning,
+            CPSATBinning,
+            KMeansBinning,
+            MonotonicBinning,
+            GeneticBinning,
+            SmoothBinning,
+            KernelDensityBinning,
+            BestLiftBinning,
+            TargetBadRateBinning,
+        ],
+    )
+    def test_direct_binning_classes_support_categorical_feature_by_default(self, binner_cls):
+        """独立分箱器默认应自动识别字符串类别特征."""
+        kwargs = {'max_n_bins': 5, 'min_bin_size': 0.05}
+        if binner_cls in {UniformBinning, KMeansBinning, OptimalBinning}:
+            kwargs['random_state'] = 42
+
+        binner = binner_cls(**kwargs)
+        binner.fit(self.X[['城市']], self.y)
+
+        assert binner.feature_types_['城市'] == 'categorical'
+        assert len(binner.get_bin_table('城市')) > 0
 
     def test_list_format_binning(self):
         """测试List[List]格式分箱."""

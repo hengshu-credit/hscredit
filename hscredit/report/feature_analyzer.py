@@ -235,9 +235,11 @@ def _create_bin_table(
     desc: str = "",
     splits: Optional[np.ndarray] = None,
     amount: Optional[np.ndarray] = None,
+    bin_labels: Optional[List[str]] = None,
 ) -> pd.DataFrame:
     """创建分箱统计表。"""
-    bin_labels = _get_bin_labels(splits, bins)
+    if bin_labels is None:
+        bin_labels = _get_bin_labels(splits, bins)
 
     if amount is not None:
         stats = compute_bin_stats(
@@ -259,6 +261,38 @@ def _create_bin_table(
     return stats
 
 
+def _get_binner_bin_labels(
+    binner: BaseBinning,
+    feature: str,
+    bins: np.ndarray,
+    fallback_splits: Optional[np.ndarray] = None,
+) -> List[str]:
+    """按 ``bins`` 的唯一值顺序生成分箱标签，优先复用分箱器内部标签。"""
+    unique_bins = np.unique(bins)
+    label_map: Dict[int, str] = {}
+
+    table = getattr(binner, 'bin_tables_', {}).get(feature)
+    if table is not None and '分箱' in table.columns and '分箱标签' in table.columns:
+        label_map = dict(zip(table['分箱'].astype(int), table['分箱标签'].astype(str)))
+
+    labels: List[str] = []
+    for bin_value in unique_bins:
+        bin_int = int(bin_value)
+        if bin_int in label_map:
+            labels.append(label_map[bin_int])
+        elif bin_int == -1:
+            labels.append('missing')
+        elif bin_int == -2:
+            labels.append('special')
+        else:
+            labels.append(f'bin_{bin_int}')
+
+    if label_map:
+        return labels
+
+    return _get_bin_labels(fallback_splits, bins)
+
+
 def _get_bin_labels(splits: Optional[np.ndarray], bins: np.ndarray) -> List[str]:
     """根据切分点生成分箱标签。"""
     unique_bins = np.unique(bins)
@@ -273,6 +307,24 @@ def _get_bin_labels(splits: Optional[np.ndarray], bins: np.ndarray) -> List[str]
                 labels.append('special')
             else:
                 labels.append('[-inf, +inf)')
+        return labels
+
+    if isinstance(splits, list):
+        labels = []
+        for current_bin in unique_bins:
+            bin_value = int(current_bin)
+            if bin_value == -1:
+                labels.append('missing')
+            elif bin_value == -2:
+                labels.append('special')
+            elif 0 <= bin_value < len(splits):
+                group = splits[bin_value]
+                if isinstance(group, list):
+                    labels.append(','.join(str(item) for item in group))
+                else:
+                    labels.append(str(group))
+            else:
+                labels.append(f'bin_{bin_value}')
         return labels
 
     # 过滤掉 NaN split points，用真实切分点生成分箱标签
@@ -649,14 +701,17 @@ def feature_bin_stats(
             # 分箱转换
             X_feat = analysis_data[[feat]]
             splits = current_binner.splits_.get(feat, np.array([]))
-            x_values = X_feat[feat].values
-            # 处理缺失值
-            missing_mask = pd.isna(x_values)
-            # np.digitize 在 splits 包含 NaN 时行为异常，需要先过滤
-            real_splits = splits[~np.isnan(splits)] if len(splits) > 0 else splits
-            bins = np.digitize(x_values, real_splits, right=True)
-            bins = bins.astype(float)
-            bins[missing_mask] = -1  # 缺失值标记为 -1
+            try:
+                transformed = current_binner.transform(X_feat, metric='indices')
+                bins = transformed[feat].to_numpy(dtype=float)
+            except Exception:
+                x_values = X_feat[feat].values
+                missing_mask = pd.isna(x_values)
+                real_splits = splits[~np.isnan(splits)] if isinstance(splits, np.ndarray) and len(splits) > 0 else splits
+                bins = np.digitize(x_values, real_splits, right=True)
+                bins = bins.astype(float)
+                bins[missing_mask] = -1
+            bin_labels = _get_binner_bin_labels(current_binner, feat, bins, fallback_splits=splits)
             
             # 准备金额数据（如果有）
             amount_values = analysis_data[amount].values if amount is not None and amount in analysis_data.columns else None
@@ -669,7 +724,8 @@ def feature_bin_stats(
                 feature_name=feat,
                 desc=desc_dict.get(feat, feat),
                 splits=splits,
-                amount=amount_values
+                amount=amount_values,
+                bin_labels=bin_labels,
             )
             
             # 筛选指定列

@@ -1190,9 +1190,13 @@ class OptimalBinning(BaseBinning):
                 full_params[k] = v
 
         if self.method == 'uniform':
-            self._binner = UniformBinning(**target_params)
+            uniform_params = target_params.copy()
+            uniform_params.setdefault('force_numerical', False)
+            self._binner = UniformBinning(**uniform_params)
         elif self.method == 'quantile':
-            self._binner = QuantileBinning(**target_params)
+            quantile_params = target_params.copy()
+            quantile_params.setdefault('force_numerical', False)
+            self._binner = QuantileBinning(**quantile_params)
         elif self.method == 'tree':
             self._binner = TreeBinning(**target_params)
         elif self.method == 'chi':
@@ -1235,7 +1239,7 @@ class OptimalBinning(BaseBinning):
                 'special_codes': self.special_codes,
                 'random_state': self.random_state,
                 'verbose': self.verbose,
-                'force_numerical': True,  # 强制作为数值型处理
+                'force_numerical': False,
             }
             kmeans_params.update(self.kwargs)
             self._binner = KMeansBinning(**kmeans_params)

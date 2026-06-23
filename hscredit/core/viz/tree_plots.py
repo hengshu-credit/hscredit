@@ -103,8 +103,10 @@ _NODE_STROKE_WIDTH = 1.5
 
 
 def _extract_tree_from_mte(mte) -> Dict[str, Any]:
-    """从 ManualTreeExtractor 提取树数据字典。"""
+    """从 ManualTreeExtractor/DecisionTreeAnalyzer 提取树数据字典。"""
     ti = mte._tree_info
+    if ti is None:
+        raise RuntimeError("请先调用 fit() 方法训练决策树")
     children_left = ti.children_left
     children_right = ti.children_right
     feature = ti.feature
@@ -113,7 +115,7 @@ def _extract_tree_from_mte(mte) -> Dict[str, Any]:
     values = ti.value
     impurity = ti.impurity
     feat_names = ti.feature_names or []
-    n_classes = ti.n_classes or 2
+    n_classes = _normalize_n_classes(getattr(ti, "n_classes", 2))
     # 全部样本总数 = 根节点(node 0)样本数；样本占比 = 节点样本数 / 根节点样本数，
     # 故根节点占比为 100%，同层子节点占比之和为 100%。
     total_samples = n_samples[0] if n_samples and n_samples[0] > 0 else 1
@@ -137,10 +139,16 @@ def _extract_tree_from_sklearn(clf, feature_names: Optional[List[str]] = None) -
     values = [list(v) for v in tree.value]
     impurity = list(tree.impurity)
     feat_names = list(feature_names) if feature_names is not None else []
-    n_features_in_ = getattr(tree, "n_features_in_", None) or getattr(tree, "n_features", 0)
+    n_features_in_ = (
+        getattr(clf, "n_features_in_", None)
+        or getattr(tree, "n_features_in_", None)
+        or getattr(tree, "n_features", 0)
+    )
     if not feat_names:
         feat_names = [f"特征[{i}]" for i in range(n_features_in_)]
-    n_classes = tree.n_classes_[0] if hasattr(tree, "n_classes_") else 2
+    n_classes = _normalize_n_classes(
+        getattr(clf, "n_classes_", getattr(tree, "n_classes", 2))
+    )
     # 全部样本总数 = 根节点(node 0)样本数；样本占比 = 节点样本数 / 根节点样本数，
     # 故根节点占比为 100%，同层子节点占比之和为 100%。
     total_samples = n_samples[0] if n_samples and n_samples[0] > 0 else 1
@@ -151,6 +159,48 @@ def _extract_tree_from_sklearn(clf, feature_names: Optional[List[str]] = None) -
         n_samples, values, impurity, feat_names, n_classes,
         total_samples, manual_nodes
     )
+
+
+def _normalize_n_classes(n_classes: Any) -> int:
+    """将 sklearn/内部树的 n_classes 统一为整数。"""
+    arr = np.asarray(n_classes).ravel()
+    if arr.size == 0:
+        return 2
+    try:
+        return int(arr[0])
+    except Exception:
+        return 2
+
+
+def _class_counts(raw_value: Any, n_samples: int, n_classes: int) -> List[float]:
+    """将节点 value 统一为每个类别的样本数。
+
+    sklearn 不同版本及本模块的人工树结构可能使用两类 value 口径：
+    - 类别比例，形如 ``[[0.8, 0.2]]``；
+    - 类别计数，形如 ``[[80, 20]]``。
+    图表需要展示样本数和坏样本率，因此这里按节点样本数统一换算为类别计数。
+    """
+    if raw_value is None:
+        return [0.0] * n_classes
+
+    try:
+        arr = np.asarray(raw_value, dtype=float).squeeze()
+    except Exception:
+        return [0.0] * n_classes
+
+    if arr.ndim == 0:
+        arr = np.array([float(arr)])
+    if arr.ndim > 1:
+        arr = arr.reshape(-1)
+
+    vals = arr[:n_classes].astype(float).tolist()
+    if len(vals) < n_classes:
+        vals.extend([0.0] * (n_classes - len(vals)))
+
+    total = float(np.nansum(vals))
+    if total <= 1.0 + 1e-8 and n_samples > 0:
+        vals = [v * n_samples for v in vals]
+    return vals
 
 
 def _build_tree_data(
@@ -179,8 +229,9 @@ def _build_tree_data(
     # 求和口径会随树深度放大而失真（仅对完全树恰好成立）。
     root_total = n_samples[0] if n_samples else 0
     root_vals = values[0] if values else None
-    if n_classes == 2 and root_vals and root_total > 0:
-        root_bad = int(round((root_vals[0][1] if root_vals else 0.0) * root_total))
+    if n_classes == 2 and root_vals is not None and root_total > 0:
+        root_counts = _class_counts(root_vals, root_total, n_classes)
+        root_bad = root_counts[1] if len(root_counts) > 1 else 0.0
         overall_bad_rate = root_bad / root_total
     else:
         overall_bad_rate = 0.0
@@ -194,7 +245,9 @@ def _build_tree_data(
         n_s = n_samples[nid] if nid < len(n_samples) else 0
         v = values[nid] if nid < len(values) else [[0.5] * n_classes]
         if n_classes == 2 and n_s > 0:
-            br = v[0][1] / (v[0][0] + v[0][1]) if (v[0][0] + v[0][1]) > 0 else 0.0
+            counts = _class_counts(v, n_s, n_classes)
+            denom = counts[0] + counts[1]
+            br = counts[1] / denom if denom > 0 else 0.0
         else:
             br = 0.0
         all_node_br.append(br)
@@ -213,10 +266,9 @@ def _build_tree_data(
         # 好/坏样本数
         if n_classes == 2:
             node_total = n_samples[node_id] if node_id < len(n_samples) else 0
-            val0 = vals[0][0] if vals else 0.5
-            val1 = vals[0][1] if vals else 0.5
-            good_count = int(round(val0 * node_total)) if node_total > 0 else 0
-            bad_count = int(round(val1 * node_total)) if node_total > 0 else 0
+            counts = _class_counts(vals, node_total, n_classes)
+            good_count = int(round(counts[0])) if node_total > 0 else 0
+            bad_count = int(round(counts[1])) if node_total > 0 else 0
             bad_rate = bad_count / node_total if node_total > 0 else 0.0
         else:
             good_count = 0
@@ -1711,6 +1763,8 @@ def _extract_tree_data(tree_obj: Any, feature_names: Optional[List[str]] = None)
     :param tree_obj: 树对象
     :param feature_names: 特征名列表（sklearn clf 推荐传入，避免 x[0] 占位符）
     """
+    if hasattr(tree_obj, "_check_fitted"):
+        tree_obj._check_fitted()
     # ManualTreeExtractor 或 DecisionTreeAnalyzer（两者都有 _tree_info）
     if hasattr(tree_obj, "_tree_info"):
         return _extract_tree_from_mte(tree_obj)

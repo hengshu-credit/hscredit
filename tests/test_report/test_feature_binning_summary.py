@@ -4,7 +4,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from hscredit.report import feature_binning_summary
+from hscredit.core.binning import OptimalBinning
+from hscredit.report import feature_bin_stats, feature_binning_summary
 from hscredit.report import feature_analyzer
 
 
@@ -141,3 +142,29 @@ def test_feature_binning_summary_parameter_priority(monkeypatch, sample_data):
     assert mdlp_params['max_n_bins'] == 3
     assert quantile_params['prebinning_params'] == {'max_n_bins': 50}
     assert mdlp_params['lift_refine'] is False
+
+
+@pytest.mark.parametrize("method", OptimalBinning.VALID_METHODS)
+def test_feature_bin_stats_supports_categorical_feature_for_all_methods(method):
+    rng = np.random.default_rng(42)
+    size = 300
+    data = pd.DataFrame(
+        {
+            '商品类别': rng.choice(['礼包', '珠宝首饰', '家用电器', '智能设备', '电脑数码'], size=size),
+            'FPD': rng.choice([0, 1], p=[0.82, 0.18], size=size),
+        }
+    )
+
+    table = feature_bin_stats(
+        data,
+        feature='商品类别',
+        target='FPD',
+        method=method,
+        max_n_bins=5,
+        min_bin_size=0.05,
+    )
+
+    assert not table.empty
+    assert '分箱标签' in table.columns
+    assert table['样本总数'].sum() == size
+    assert not table['分箱标签'].astype(str).str.startswith('bin_').all()
