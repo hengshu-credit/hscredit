@@ -3,7 +3,7 @@
 一个完整的金融信贷风险建模工具包，支持评分卡建模、策略分析、规则挖掘等功能。
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 __author__ = "hscredit"
 __email__ = "hscredit@hengshucredit.com"
 
