@@ -1,7 +1,8 @@
 import numpy as np
 import pandas as pd
 
-from hscredit.core.rules import Rule
+from hscredit.core.rules import Rule, get_columns_from_query
+from hscredit.report.mining.base import MinedRule, RuleCondition
 
 
 def test_rule_report_uses_good_bad_distribution_denominators():
@@ -64,3 +65,39 @@ def test_rule_report_multiindex_column_names_match_feature_bin_stats_style():
     assert not any(column[1] == "指标含义" for column in report.columns)
     assert "规则详情" not in top_level_names
     assert not any("DPD" in name for name in top_level_names if isinstance(name, str))
+
+
+def test_rule_supports_backtick_column_names():
+    data = pd.DataFrame(
+        {
+            "商品 类别": ["礼包", "手机"],
+            "target": [1, 0],
+        }
+    )
+
+    rule = Rule("`商品 类别` == '礼包'")
+
+    assert rule.feature_names_in_ == ["商品 类别"]
+    assert get_columns_from_query("`商品 类别` == '礼包'") == ["商品 类别"]
+    assert rule.predict(data).tolist() == [True, False]
+
+
+def test_mined_rule_to_rule_object_uses_valid_boolean_expression():
+    data = pd.DataFrame(
+        {
+            "age": [20, 16],
+            "income": [6000, 7000],
+        }
+    )
+    mined_rule = MinedRule(
+        [
+            RuleCondition("age", 18, ">="),
+            RuleCondition("income", 5000, ">="),
+        ]
+    )
+
+    rule = mined_rule.to_rule_object()
+
+    assert rule.expr == "age >= 18 and income >= 5000"
+    assert rule.feature_names_in_ == ["age", "income"]
+    assert rule.predict(data).tolist() == [True, False]

@@ -2265,7 +2265,7 @@ class ExcelWriter:
                 # cacheDefinition -> records 的关系（部件内固定 rId1）
                 cache_def_xml = _pivot.render_cache_definition_xml(spec, "rId1")
                 cache_rec_xml = _pivot.render_cache_records_xml(spec)
-                pivot_xml = _pivot.render_pivot_table_xml(spec)
+                pivot_xml = _pivot.render_pivot_table_xml(spec, fmt_id_map=fmt_id_map)
 
                 new_parts[cache_def_part] = cache_def_xml.encode("utf-8")
                 new_parts[cache_rec_part] = cache_rec_xml.encode("utf-8")
@@ -2305,6 +2305,16 @@ class ExcelWriter:
                 '<Override PartName="{}" ContentType="{}"/>'.format(pn, ct) for pn, ct in ct_overrides
             )
             content_types = content_types.replace("</Types>", override_xml + "</Types>")
+
+            # 1.5) styles.xml 注入 hscredit 主题透视表样式与自定义数字格式
+            if styles_xml is not None:
+                styles_xml = _pivot.apply_pivot_styles(
+                    styles_xml=styles_xml,
+                    want_theme=want_theme,
+                    theme_color=self.theme_color,
+                    stripe_color=self.calculate_rgba_color(self.theme_color, self.opacity, prefix=""),
+                    custom_numfmts=custom_numfmts,
+                )
 
             # 2) workbook.xml 追加 <pivotCaches>（位于 extLst / </workbook> 之前）
             pivotcaches_xml = "<pivotCaches>" + "".join(
@@ -2367,6 +2377,8 @@ class ExcelWriter:
                 "xl/workbook.xml": workbook_xml.encode("utf-8"),
                 "xl/_rels/workbook.xml.rels": wb_rels.encode("utf-8"),
             }
+            if styles_xml is not None:
+                modified["xl/styles.xml"] = styles_xml.encode("utf-8")
             modified.update(modified_sheet_rels)
             modified.update(chart_modifications)
 

@@ -25,6 +25,18 @@ from .expr_optimizer import optimize_expr, beautify_expr
 from ...exceptions import FeatureNotFoundError, InputTypeError, StateError
 
 
+def _replace_backtick_columns(query_str: str) -> tuple[str, dict[str, str]]:
+    """将 pandas 反引号列名替换为 Python AST 可解析的占位符。"""
+    replacements = {}
+
+    def replace(match):
+        placeholder = f"__hscredit_backtick_col_{len(replacements)}"
+        replacements[placeholder] = match.group(1)
+        return placeholder
+
+    return re.sub(r"`([^`]+)`", replace, query_str), replacements
+
+
 def get_columns_from_query(query_str: str) -> List[str]:
     """获取 pandas query 语句使用的列。
 
@@ -45,7 +57,12 @@ def get_columns_from_query(query_str: str) -> List[str]:
     >>> get_columns_from_query("`衡枢鉴真分老客版` < 600 & `逾期(天)` > 7")
     ['衡枢鉴真分老客版', '逾期(天)']
     """
+
+    parsed_query, backtick_columns = _replace_backtick_columns(query_str)
+    tree = ast.parse(parsed_query, mode='eval')
+
     columns = set()
+    reserved_names = {'and', 'or', 'not', 'True', 'False', 'None'}
 
     # 反引号包裹的列名（pandas query/eval 语法，用于含空格/特殊字符/非标识符的列名），
     # ast.parse 无法解析反引号，需先用正则提取并替换为占位标识符
@@ -58,8 +75,8 @@ def get_columns_from_query(query_str: str) -> List[str]:
             visit_node(node.value)
         elif isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load):
             pass
-        elif isinstance(node, ast.Name) and node.id not in {'and', 'or', 'not'}:
-            columns.add(node.id)
+        elif isinstance(node, ast.Name) and node.id not in reserved_names:
+            columns.add(backtick_columns.get(node.id, node.id))
         elif isinstance(node, ast.Call):
             visit_node(node.func)
 

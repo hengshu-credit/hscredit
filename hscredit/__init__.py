@@ -124,10 +124,10 @@ def info():
     print("  - FunctionTransformer: 函数转换器，将函数包装成Transformer")
     print()
     print("核心模块 (core):")
-    print("  - core.binning: 分箱算法 (Uniform/Quantile/Tree/ChiMerge/BestKS/BestIV/MDLP)")
+    print("  - core.binning: 分箱算法 (Uniform/Quantile/Tree/ChiMerge/BestKS/BestIV/MDLP/2D)")
     print("  - core.selectors: 特征筛选 (Variance/Null/IV/Corr/VIF/Lift/PSI...)")
     print("  - core.encoders: 编码器 (WOE/Target/Count/OneHot...)")
-    print("  - core.models: 自定义损失函数和评估指标")
+    print("  - core.models: 风控模型、评分卡、自定义损失函数和评估指标")
     print("  - core.viz: 可视化 (bin_plot/ks_plot/corr_plot...)")
     print("  - core.feature_engineering: 特征工程 (NumExprDerive)")
     print("  - core.rules: 规则引擎 (Rule)")
@@ -140,11 +140,7 @@ def info():
     print("  - report.rule_analysis: 规则集与多标签规则分析")
     print()
     print("工具模块 (utils):")
-    print("  - utils: 工具函数 (随机种子、数据集、pickleIO)")
-    print()
-    print("待实现模块:")
-    print("  - core.encoding: 编码转换")
-    print("  - core.metrics: 指标计算 (KS/AUC/PSI/IV/Gini)")
+    print("  - utils: 工具函数 (随机种子、数据集、pickleIO、输入校验)")
 
 
 _BASE_EXPORTS = [

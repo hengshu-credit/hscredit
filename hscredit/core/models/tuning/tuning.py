@@ -260,6 +260,15 @@ def _calc_ks_with_diff(y_train: np.ndarray, y_train_pred: np.ndarray,
     return ks_val, ks_diff
 
 
+def _safe_index(data: Any, indices: np.ndarray) -> Any:
+    """按行索引切分 pandas / numpy / list 数据."""
+    if data is None:
+        return None
+    if hasattr(data, "iloc"):
+        return data.iloc[indices]
+    return np.asarray(data)[indices]
+
+
 class TuningObjective:
     """内置调参目标函数集合.
 
@@ -787,11 +796,17 @@ class ModelTuner:
         # 处理metric_names
         if metric_names is None:
             metric_names = [None] * len(metrics_list)
+        elif len(metric_names) != len(metrics_list):
+            raise ValueError("metric_names列表长度必须与metric列表长度相同")
         
         # 创建Metric对象列表
         self.metrics = []
         for m, d, name in zip(metrics_list, directions_list, metric_names):
+            if d not in ("maximize", "minimize"):
+                raise ValueError("direction 只能是 'maximize' 或 'minimize'")
             if isinstance(m, Metric):
+                if m.direction not in ("maximize", "minimize"):
+                    raise ValueError("Metric.direction 只能是 'maximize' 或 'minimize'")
                 self.metrics.append(m)
             else:
                 self.metrics.append(Metric(m, name=name, direction=d))
@@ -960,10 +975,14 @@ class ModelTuner:
             fold_results = {i: [] for i in range(len(self.metrics))}
             
             for train_idx, val_idx in kf.split(X, y):
-                X_train_fold, X_val_fold = X.iloc[train_idx], X.iloc[val_idx]
-                y_train_fold, y_val_fold = y.iloc[train_idx], y.iloc[val_idx]
+                X_train_fold, X_val_fold = _safe_index(X, train_idx), _safe_index(X, val_idx)
+                y_train_fold, y_val_fold = _safe_index(y, train_idx), _safe_index(y, val_idx)
+                sample_weight_fold = _safe_index(sample_weight, train_idx)
                 
-                model.fit(X_train_fold, y_train_fold)
+                if sample_weight_fold is None:
+                    model.fit(X_train_fold, y_train_fold)
+                else:
+                    model.fit(X_train_fold, y_train_fold, sample_weight=sample_weight_fold)
                 
                 # 获取预测概率
                 y_train_pred = model.predict_proba(X_train_fold)[:, 1]
@@ -971,10 +990,12 @@ class ModelTuner:
                 
                 # 计算每个指标
                 for i, metric in enumerate(self.metrics):
+                    y_val_arr = y_val_fold.values if hasattr(y_val_fold, 'values') else np.asarray(y_val_fold)
+                    y_train_arr = y_train_fold.values if hasattr(y_train_fold, 'values') else np.asarray(y_train_fold)
                     value = metric(
-                        y_val_fold.values if hasattr(y_val_fold, 'values') else y_val_fold,
+                        y_val_arr,
                         y_val_pred,
-                        y_train=y_train_fold.values if hasattr(y_train_fold, 'values') else y_train_fold,
+                        y_train=y_train_arr,
                         y_train_pred=y_train_pred
                     )
                     fold_results[i].append(value)
@@ -1009,8 +1030,9 @@ class ModelTuner:
             # 多目标优化
             self.pareto_front_ = self.study_.best_trials
             
-            # 默认选择帕累托前沿的第一个解
-            best_trial = self.study_.best_trials[0]
+            # 在帕累托前沿中按指标顺序做确定性选择：优先第一个主指标，
+            # 主指标相同时再按后续指标方向排序。
+            best_trial = self._select_best_pareto_trial(self.study_.best_trials)
             self.best_params_ = self._get_params_from_trial(best_trial)
             self.best_scores_ = list(best_trial.values)
             self.best_score_ = self.best_scores_[0]  # 第一个指标作为主指标
@@ -1021,6 +1043,26 @@ class ModelTuner:
             self.best_scores_ = [self.best_score_]
         
         self.best_params_.update(self.fixed_params)
+
+    def _select_best_pareto_trial(self, trials: Sequence[Any]) -> Any:
+        """从帕累托前沿按主指标优先规则选择一个默认最优 trial."""
+        if not trials:
+            raise ValueError("没有可用的帕累托最优解")
+
+        def sort_key(trial):
+            values = trial.values or []
+            key = []
+            for value, direction in zip(values, self.directions):
+                if value is None:
+                    adjusted = float("-inf") if direction == "maximize" else float("inf")
+                else:
+                    adjusted = value if direction == "maximize" else -value
+                key.append(adjusted)
+            # trial.number 取负值，让完全同分时选择更早完成的 trial。
+            key.append(-trial.number)
+            return tuple(key)
+
+        return max(trials, key=sort_key)
 
     def evaluate_trials(
         self,
@@ -1497,6 +1539,10 @@ class ModelTuner:
         params = {}
 
         for param_name, param_config in self.search_space.items():
+            # LightGBM 的 num_leaves 需要在 max_depth 采样后动态收紧上界。
+            if param_name == 'num_leaves' and 'max_depth' in self.search_space:
+                continue
+
             param_type = param_config['type']
 
             if param_type == 'int':
@@ -1530,23 +1576,22 @@ class ModelTuner:
             else:
                 raise ValueError(f"未知参数类型: {param_type}")
             
-            # LightGBM特殊处理：num_leaves不超过2^max_depth
-            if param_name == 'max_depth' and 'num_leaves' in self.search_space:
-                leaves_low = self.search_space['num_leaves']['low']
-                leaves_high = self.search_space['num_leaves']['high']
-                # max_depth<=0 表示不限制深度，此时不收紧 num_leaves 上界
-                if params['max_depth'] is not None and params['max_depth'] > 0:
-                    max_leaves = min(2 ** params['max_depth'], leaves_high)
-                else:
-                    max_leaves = leaves_high
-                # 防止 2^max_depth 小于下界导致 low>high，必要时下调下界
-                leaves_low = min(leaves_low, max_leaves)
-                params['num_leaves'] = trial.suggest_int(
-                    'num_leaves',
-                    leaves_low,
-                    max_leaves,
-                    step=self.search_space['num_leaves'].get('step', 1)
-                )
+        # LightGBM特殊处理：num_leaves不超过2^max_depth，避免同一 trial 内重复
+        # suggest 同名参数导致 Optuna 分布不一致或约束失效。
+        if 'num_leaves' in self.search_space and 'num_leaves' not in params:
+            leaves_config = self.search_space['num_leaves']
+            leaves_low = leaves_config['low']
+            leaves_high = leaves_config['high']
+            max_depth = params.get('max_depth')
+            if max_depth is not None and max_depth > 0:
+                leaves_high = min(2 ** max_depth, leaves_high)
+            leaves_low = min(leaves_low, leaves_high)
+            params['num_leaves'] = trial.suggest_int(
+                'num_leaves',
+                leaves_low,
+                leaves_high,
+                step=leaves_config.get('step', 1)
+            )
 
         return params
 
@@ -1583,6 +1628,20 @@ class ModelTuner:
         
         return self.study_.best_trials
 
+    def _resolve_multi_objective_target(self, target: Optional[int]) -> Optional[int]:
+        """多目标分析图/重要性默认使用第一个指标，并校验索引范围."""
+        if not self._is_multi_objective:
+            return target
+        if target is None:
+            return 0
+        if not isinstance(target, (int, np.integer)):
+            raise ValueError("target 必须是指标索引整数")
+        if target < 0 or target >= len(self.metric_names):
+            raise ValueError(
+                f"target 超出范围，多目标指标索引有效范围为 0~{len(self.metric_names) - 1}"
+            )
+        return int(target)
+
     def get_param_importance(self, target: Optional[int] = None) -> Optional[pd.Series]:
         """获取参数重要性.
         
@@ -1593,7 +1652,8 @@ class ModelTuner:
             raise ValueError("请先调用fit()进行调优")
 
         try:
-            if self._is_multi_objective and target is not None:
+            target = self._resolve_multi_objective_target(target)
+            if self._is_multi_objective:
                 # 多目标优化时，可以指定特定目标
                 importance = optuna.importance.get_param_importances(
                     self.study_,
@@ -1619,7 +1679,8 @@ class ModelTuner:
         if self.study_ is None:
             raise ValueError("请先调用fit()进行调优")
         
-        if self._is_multi_objective and target is not None:
+        target = self._resolve_multi_objective_target(target)
+        if self._is_multi_objective:
             return optuna.visualization.plot_optimization_history(
                 self.study_, 
                 target=lambda t: t.values[target],
@@ -1639,7 +1700,8 @@ class ModelTuner:
         if self.study_ is None:
             raise ValueError("请先调用fit()进行调优")
         
-        if self._is_multi_objective and target is not None:
+        target = self._resolve_multi_objective_target(target)
+        if self._is_multi_objective:
             return optuna.visualization.plot_param_importances(
                 self.study_,
                 target=lambda t: t.values[target],
@@ -1659,7 +1721,8 @@ class ModelTuner:
         if self.study_ is None:
             raise ValueError("请先调用fit()进行调优")
         
-        if self._is_multi_objective and target is not None:
+        target = self._resolve_multi_objective_target(target)
+        if self._is_multi_objective:
             return optuna.visualization.plot_slice(
                 self.study_,
                 target=lambda t: t.values[target],
@@ -1701,7 +1764,8 @@ class ModelTuner:
         if params is None:
             params = list(self.search_space.keys())[:2]
         
-        if self._is_multi_objective and target is not None:
+        target = self._resolve_multi_objective_target(target)
+        if self._is_multi_objective:
             return optuna.visualization.plot_contour(
                 self.study_,
                 params=params,
@@ -1722,7 +1786,8 @@ class ModelTuner:
         if self.study_ is None:
             raise ValueError("请先调用fit()进行调优")
         
-        if self._is_multi_objective and target is not None:
+        target = self._resolve_multi_objective_target(target)
+        if self._is_multi_objective:
             return optuna.visualization.plot_parallel_coordinate(
                 self.study_,
                 target=lambda t: t.values[target],
@@ -1742,7 +1807,8 @@ class ModelTuner:
         if self.study_ is None:
             raise ValueError("请先调用fit()进行调优")
         
-        if self._is_multi_objective and target is not None:
+        target = self._resolve_multi_objective_target(target)
+        if self._is_multi_objective:
             return optuna.visualization.plot_edf(
                 self.study_,
                 target=lambda t: t.values[target],

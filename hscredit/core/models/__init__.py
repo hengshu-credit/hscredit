@@ -87,6 +87,7 @@ from .losses import (
     # 不平衡数据处理
     FocalLoss,
     AsymmetricFocalLoss,
+    BalancedFocalLoss,
     WeightedBCELoss,
     # 成本敏感
     CostSensitiveLoss,
@@ -94,6 +95,7 @@ from .losses import (
     BadDebtLoss,
     ApprovalRateLoss,
     ProfitMaxLoss,
+    ExpectedProfitLoss,
     OrdinalRankLoss,
     LiftFocusedLoss,
     RankingAUCProxyLoss,
@@ -112,12 +114,6 @@ from .losses import (
     TabNetLossAdapter,
     NGBoostLossAdapter,
 )
-
-# 导入 BalancedFocalLoss
-try:
-    from .losses import BalancedFocalLoss
-except ImportError:
-    BalancedFocalLoss = None
 
 # 导入模型基类
 from .base import BaseRiskModel
@@ -186,6 +182,7 @@ __all__ = [
     # 不平衡数据处理
     "FocalLoss",
     "AsymmetricFocalLoss",
+    "BalancedFocalLoss",
     "WeightedBCELoss",
     # 成本敏感
     "CostSensitiveLoss",
@@ -193,8 +190,18 @@ __all__ = [
     "BadDebtLoss",
     "ApprovalRateLoss",
     "ProfitMaxLoss",
+    "ExpectedProfitLoss",
+    # 排序与 AUC 优化
     "OrdinalRankLoss",
     "LiftFocusedLoss",
+    "RankingAUCProxyLoss",
+    # KS 分布分离
+    "KSFocusedLoss",
+    # 头部捕获优化
+    "TopKBadCaptureLoss",
+    # 金额/敞口加权
+    "AmountWeightedLoss",
+    "ExpectedValueLoss",
     # 自定义评估指标
     "KSMetric",
     "GiniMetric",
@@ -204,6 +211,7 @@ __all__ = [
     "LightGBMLossAdapter",
     "CatBoostLossAdapter",
     "TabNetLossAdapter",
+    "NGBoostLossAdapter",
     # 模型基类
     "BaseRiskModel",
     # 各模型类（boosting 系列为懒加载，不放入 __all__ 以避免 `import *` 触发重依赖加载，

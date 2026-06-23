@@ -7,7 +7,7 @@ import pandas as pd
 import numpy as np
 from openpyxl import load_workbook
 
-from hscredit.excel import ExcelWriter, dataframe2excel
+from hscredit.excel import ExcelWriter, dataframe2excel, register_pivot_aggregation
 import hscredit.excel.writer as writer_module
 
 
@@ -753,6 +753,98 @@ class TestPivotTable:
             writer.insert_pivot_table2sheet(
                 ws, self.df, "B2", rows="商品类别", values=[("放款金额", "median")]
             )
+
+    def test_pivot_theme_style_and_number_formats_injected(self):
+        """数据透视表主题样式应适配 writer.theme_color，自定义数字格式应写入 styles.xml。"""
+        writer = ExcelWriter(theme_color="3F1DBA", opacity=0.80)
+        ws = writer.get_sheet_by_name("透视表")
+        writer.insert_pivot_table2sheet(
+            ws,
+            self.df,
+            "B2",
+            rows="商品类别",
+            values=[
+                {"field": "放款金额", "agg": "sum", "name": "放款金额"},
+                {
+                    "field": "放款金额",
+                    "agg": "sum",
+                    "show_as": "全局占比",
+                    "name": "金额占比",
+                    "number_format": "0.000%",
+                },
+            ],
+        )
+        writer.save(self.test_file)
+
+        styles = self._read(self.test_file, "xl/styles.xml")
+        pivot = self._read(self.test_file, "xl/pivotTables/pivotTable1.xml")
+
+        assert "HSCreditPivotStyle" in styles
+        assert 'rgb="FF3F1DBA"' in styles
+        assert 'formatCode="0.000%"' in styles
+        assert 'name="HSCreditPivotStyle"' in pivot
+        assert 'showDataAs="percentOfTotal"' in pivot
+        assert 'name="金额占比"' in pivot
+        assert 'numFmtId="' in pivot
+
+    def test_pivot_filters_groups_totals_and_percent_modes(self):
+        """透视表支持筛选项、多个轴字段分组、行列汇总开关和占比显示。"""
+        data = self.df.assign(
+            年龄=[21, 28, 35, 42, 49, 56],
+            收入=[3500, 5200, 6800, 8100, 9900, 12000],
+        )
+        writer = ExcelWriter()
+        ws = writer.get_sheet_by_name("透视表")
+        writer.insert_pivot_table2sheet(
+            ws,
+            data,
+            "B2",
+            rows=["商品类别", "年龄"],
+            columns=["收入", "区域"],
+            values=[
+                {"field": "笔数", "agg": "sum", "show_as": "行占比", "name": "行占比"},
+                {"field": "笔数", "agg": "sum", "show_as": "组合占比", "name": "组合占比"},
+            ],
+            filters={"区域": ["华东", "华南"]},
+            filter_items={"商品类别": ["数码", "服饰"]},
+            groups={"年龄": {"start": 20, "interval": 10}, "收入": (3000, 3000)},
+            show_row_totals=False,
+            show_col_totals=False,
+            subtotals=True,
+        )
+        writer.save(self.test_file)
+
+        cache = self._read(self.test_file, "xl/pivotCache/pivotCacheDefinition1.xml")
+        pivot = self._read(self.test_file, "xl/pivotTables/pivotTable1.xml")
+
+        assert 'startNum="20" endNum="60" groupInterval="10"' in cache
+        assert 'startNum="3000" endNum="15000" groupInterval="3000"' in cache
+        assert '<pageFields count="1">' in pivot
+        assert 'multipleItemSelectionAllowed="1"' in pivot
+        assert 'showDataAs="percentOfRow"' in pivot
+        assert 'pivotShowAs="percentOfParentRow"' in pivot
+        assert 'rowGrandTotals="0"' in pivot
+        assert 'colGrandTotals="0"' in pivot
+        assert ' h="1"' in pivot
+
+    def test_register_pivot_aggregation_alias(self):
+        """公开 API 可扩展聚合方式别名。"""
+        register_pivot_aggregation("业务均值", "average", "业务均值项")
+
+        writer = ExcelWriter()
+        ws = writer.get_sheet_by_name("透视表")
+        writer.insert_pivot_table2sheet(
+            ws,
+            self.df,
+            "B2",
+            rows="商品类别",
+            values=[("放款金额", "业务均值")],
+        )
+        writer.save(self.test_file)
+
+        pivot = self._read(self.test_file, "xl/pivotTables/pivotTable1.xml")
+        assert 'subtotal="average"' in pivot
+        assert 'name="业务均值项:放款金额"' in pivot
 
     def test_pivot_chart_injects_pivotsource(self):
         """数据透视图在 chart XML 注入 pivotSource，且文件合法"""

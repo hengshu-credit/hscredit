@@ -26,6 +26,14 @@ def test_star_import_exposes_key_top_level_apis():
             'ks',
             'approval_badrate_tradeoff',
             'population_profile',
+            'BalancedFocalLoss',
+            'ExpectedProfitLoss',
+            'RankingAUCProxyLoss',
+            'KSFocusedLoss',
+            'TopKBadCaptureLoss',
+            'AmountWeightedLoss',
+            'ExpectedValueLoss',
+            'NGBoostLossAdapter',
         ]
 
         missing = [name for name in expected if name not in namespace]
@@ -44,3 +52,24 @@ def test_star_import_exposes_key_top_level_apis():
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_info_does_not_list_implemented_metrics_as_pending():
+    code = textwrap.dedent(
+        """
+        import hscredit
+
+        hscredit.info()
+        """
+    )
+
+    result = subprocess.run(
+        [sys.executable, '-c', code],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "待实现模块" not in result.stdout
+    assert "core.encoding" not in result.stdout
+    assert "core.metrics: 指标计算" not in result.stdout

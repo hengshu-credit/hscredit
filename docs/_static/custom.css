@@ -531,13 +531,19 @@ samp,
     width: 4.8rem;
     height: 4.8rem;
     place-items: center;
-    border: 1px solid rgba(255, 255, 255, 0.72);
+    border: 1px solid rgba(199, 189, 242, 0.34);
     border-radius: 50%;
-    background: var(--hs-grad);
+    background: rgba(20, 14, 53, 0.72);
     color: #ffffff;
     font-size: 2.4rem;
     font-weight: 800;
-    box-shadow: 0 0 0 6px rgba(123, 47, 255, 0.18), 0 0 28px rgba(0, 245, 255, 0.28);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06), 0 10px 24px rgba(9, 5, 28, 0.28);
+}
+.hs-home-hero__seal img {
+    display: block;
+    width: 78%;
+    height: 78%;
+    object-fit: contain;
 }
 .hs-home-hero__motto {
     margin: 0 0 0.25rem !important;
