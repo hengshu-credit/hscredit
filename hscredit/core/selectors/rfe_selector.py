@@ -61,6 +61,13 @@ class RFESelector(BaseFeatureSelector):
         ... )
         >>> selector.fit(X, y)
         >>> print(selector.selected_features_)
+
+    **引用**
+
+    递归特征消除（RFE）出自 Guyon, I. et al. (2002). *Gene Selection for Cancer
+    Classification using Support Vector Machines.* Machine Learning, 46.
+    https://doi.org/10.1023/A:1012487302797 ；实现对齐 sklearn ``RFE``
+    https://scikit-learn.org/stable/modules/generated/sklearn.feature_selection.RFE.html
     """
 
     def __init__(

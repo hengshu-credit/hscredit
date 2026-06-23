@@ -37,6 +37,11 @@ class BadDebtLoss(BaseLoss):
     ...     loss_function=loss.to_catboost(),
     ...     eval_metric='AUC'
     ... )
+
+    **引用**
+
+    在目标通过率约束下最小化坏账率，属信贷审批的业务驱动目标；成本敏感学习背景见
+    Elkan, C. (2001). *The Foundations of Cost-Sensitive Learning.* IJCAI 2001。
     """
 
     def __init__(

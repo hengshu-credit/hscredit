@@ -97,6 +97,12 @@ class PSISelector(BaseFeatureSelector):
         >>> selector = PSISelector(threshold=0.25, n_splits=5)
         >>> selector.fit(X, y)
         >>> print(selector.selected_features_)
+
+    **引用**
+
+    PSI（群体稳定性指标）公式 ``PSI = Σ (实际占比 - 预期占比) × ln(实际占比 / 预期占比)``，
+    经验阈值 <0.1 稳定、0.1~0.25 轻微漂移、>0.25 显著漂移，广泛用于信用评分的稳定性
+    监控，参见 Siddiqi, N. (2006). *Credit Risk Scorecards.* Wiley。
     """
 
     def __init__(

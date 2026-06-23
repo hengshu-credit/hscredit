@@ -131,6 +131,18 @@ class StabilityAwareSelector(BaseFeatureSelector):
     ... )
     >>> selector.fit(X, y)
     >>> print(selector.selected_features_)
+
+    **注意**
+
+    本筛选器是"稳定性感知"的复合筛选（IV 区分力 + PSI 稳定性加权评分），并非 Meinshausen
+    & Bühlmann 的 stability selection（重采样频率法）。IV 与 PSI 的定义与阈值分别见
+    :class:`~hscredit.core.selectors.IVSelector` 与
+    :class:`~hscredit.core.selectors.PSISelector`。
+
+    **引用**
+
+    IV / PSI 用于评分卡变量筛选与稳定性监控见 Siddiqi, N. (2006).
+    *Credit Risk Scorecards.* Wiley。
     """
 
     def __init__(

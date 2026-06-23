@@ -78,6 +78,12 @@ class MonotonicBinning(BaseBinning):
     >>> binner = MonotonicBinning(monotonic='auto', max_n_bins=5)
     >>> binner.fit(X, y)
     >>> print(f"检测到的模式: {binner.monotonic_trend_}")
+
+    **引用**
+
+    单调最优分箱（monotonic_trend：ascending/descending/peak/valley/convex/concave）
+    设计参考 optbinning：Navas-Palencia, G. (2020). *Optimal binning: mathematical
+    programming formulation.* arXiv:2001.08025. https://arxiv.org/abs/2001.08025
     """
 
     # 支持的单调性模式（参考optbinning的monotonic_trend参数）

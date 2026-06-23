@@ -55,6 +55,16 @@ class Chi2Selector(BaseFeatureSelector):
         >>> selector = Chi2Selector(k=3)
         >>> selector.fit(X, y)
         >>> print(selector.selected_features_)
+
+    **注意**
+
+    卡方检验要求特征非负（本类对负值通过 ``missing``/填充策略处理）；``k`` 与
+    ``threshold`` 同时生效——先按得分阈值过滤，再取前 ``k`` 个。
+
+    **引用**
+
+    基于 sklearn ``chi2`` 评分：
+    https://scikit-learn.org/stable/modules/generated/sklearn.feature_selection.chi2.html
     """
 
     def __init__(

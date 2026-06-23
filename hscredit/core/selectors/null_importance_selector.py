@@ -63,6 +63,18 @@ class NullImportanceSelector(BaseFeatureSelector):
         ... )
         >>> selector.fit(X, y)
         >>> print(selector.selected_features_)
+
+    **注意**
+
+    本方法通过多次打乱**目标变量**得到"零假设"下的重要性分布（null importances），
+    再以真实重要性与之的比值判断特征是否显著优于随机，能有效剔除高基数/噪声特征的
+    虚高重要性。计算量为 ``n_runs × cv`` 次模型训练。
+
+    **引用**
+
+    Altmann, A. et al. (2010). *Permutation importance: a corrected feature
+    importance measure.* Bioinformatics, 26(10).
+    https://doi.org/10.1093/bioinformatics/btq134
     """
 
     def __init__(

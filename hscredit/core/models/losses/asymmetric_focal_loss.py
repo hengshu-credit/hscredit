@@ -27,14 +27,21 @@ class AsymmetricFocalLoss(BaseLoss):
     :param clip_value: 对负样本概率进行裁剪，抑制极端易分类负样本影响，默认 0.0
     :param name: 损失函数名称，默认 "asymmetric_focal_loss"
 
-    Example:
-        >>> import numpy as np
-        >>> from hscredit.core.models.losses import AsymmetricFocalLoss
-        >>> loss = AsymmetricFocalLoss(alpha=0.7, gamma_pos=2.5, gamma_neg=1.0)
-        >>> y_true = np.array([0, 0, 1, 1])
-        >>> y_pred = np.array([0.1, 0.4, 0.6, 0.9])
-        >>> round(loss(y_true, y_pred), 6) >= 0
-        True
+    **参考样例**
+
+    >>> import numpy as np
+    >>> from hscredit.core.models.losses import AsymmetricFocalLoss
+    >>> loss = AsymmetricFocalLoss(alpha=0.7, gamma_pos=2.5, gamma_neg=1.0)
+    >>> y_true = np.array([0, 0, 1, 1])
+    >>> y_pred = np.array([0.1, 0.4, 0.6, 0.9])
+    >>> round(loss(y_true, y_pred), 6) >= 0
+    True
+
+    **引用**
+
+    在 Focal Loss（Lin et al., 2017, https://arxiv.org/abs/1708.02002）基础上对正负样本
+    采用不同聚焦参数，思想与非对称损失 Ben-Baruch, E. et al. (2021). *Asymmetric Loss for
+    Multi-Label Classification* 相通（https://arxiv.org/abs/2009.14119）。
     """
 
     def __init__(

@@ -45,6 +45,18 @@ class TargetEncoder(BaseEncoder):
     >>> # 添加噪声防止过拟合
     >>> encoder = TargetEncoder(cols=['category'], noise=0.05)
     >>> X_encoded = encoder.fit_transform(X, y)
+
+    **注意**
+
+    目标编码直接使用了标签信息，存在目标泄漏/过拟合风险，应配合 ``smoothing``、
+    ``min_samples_leaf``、``noise`` 等正则手段，并务必在训练集 fit、在验证/测试集
+    transform；若需更强的防泄漏，改用 :class:`CatBoostEncoder`（有序目标统计）。
+
+    **引用**
+
+    Micci-Barreca, D. (2001). *A preprocessing scheme for high-cardinality
+    categorical attributes in classification and prediction problems.*
+    ACM SIGKDD Explorations, 3(1). https://doi.org/10.1145/507533.507538
     """
 
     def _get_category_cols(self, X: pd.DataFrame) -> List[str]:

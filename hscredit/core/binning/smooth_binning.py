@@ -32,18 +32,30 @@ class SmoothBinning(BaseBinning):
     - 支持IV变化率检测，保留有价值的切分点
     - 自适应平滑强度
 
-    :param method: 平滑方法，默认为'adaptive'，可选'laplace', 'bayesian', 'beta', 'adaptive'
-    :param smoothing_param: 平滑参数，默认为0.5（降低默认值）
+    :param method: 坏样本率平滑方法，默认为 ``'adaptive'``。可取以下枚举值：
+
+        - ``'laplace'``：拉普拉斯（加性）平滑，坏样本率 = (坏数 + k) / (总数 + 2k)
+        - ``'bayesian'``：贝叶斯平滑，以全局/先验坏样本率为先验做收缩
+        - ``'beta'``：Beta 分布共轭先验平滑
+        - ``'adaptive'``：自适应平滑，按各箱样本量动态调整平滑强度（样本越少收缩越强）
+
+    :param smoothing_param: 平滑强度参数（越大越向先验收缩），默认为0.5
     :param max_n_bins: 最大分箱数，默认为5
     :param min_n_bins: 最小分箱数，默认为2
     :param min_bin_size: 每箱最小样本数或占比，默认为0.01
     :param max_bin_size: 每箱最大样本数或占比，默认为None
     :param min_bad_rate: 每箱最小坏样本率，默认为0.0
     :param prior_bad_rate: 先验坏样本率，默认为None（使用全局坏样本率）
-    :param monotonic: 单调性约束，默认为None，可选'ascending', 'descending', 'peak', 'valley'或None
+    :param monotonic: 单调性约束，默认为None，可选 ``'ascending'`` / ``'descending'`` /
+        ``'peak'`` / ``'valley'`` / None，含义见 :class:`BaseBinning`
     :param n_prebins: 预分箱数量，默认为100（提高预分箱数以获得更多候选点）
-    :param merge_criterion: 合并准则，默认为'iv_chi2'，可选'iv', 'chi2', 'iv_chi2'
-    :param chi2_threshold: 卡方检验阈值，默认为3.84（对应p=0.05）
+    :param merge_criterion: 相邻箱合并准则，默认为 ``'iv_chi2'``。可取以下枚举值：
+
+        - ``'iv'``：仅按合并前后 IV 损失最小决定合并
+        - ``'chi2'``：仅按相邻箱卡方值（分布差异显著性）决定合并
+        - ``'iv_chi2'``：综合 IV 损失与卡方显著性（推荐）
+
+    :param chi2_threshold: 卡方检验阈值，默认为3.84（自由度1、p=0.05）
     :param min_iv_improvement: 最小IV改进阈值，默认为0.001
     :param special_codes: 特殊值列表，默认为None
     :param missing_separate: 是否将缺失值单独分为一箱，默认为True
@@ -56,6 +68,16 @@ class SmoothBinning(BaseBinning):
     >>> binner = SmoothBinning(method='adaptive', max_n_bins=5)
     >>> binner.fit(X, y)
     >>> X_binned = binner.transform(X)
+
+    **注意**
+
+    平滑分箱通过对各箱坏样本率做收缩（向先验靠拢）来抑制小样本箱的 WOE/IV 虚高，
+    适合样本量小或噪声大的场景，可显著降低分箱在跨期数据上的不稳定（PSI）。
+
+    **引用**
+
+    加性（拉普拉斯）平滑与贝叶斯收缩：https://en.wikipedia.org/wiki/Additive_smoothing ；
+    经验贝叶斯收缩思想参见 Efron & Morris (1975), James–Stein estimator。
     """
 
     def __init__(
@@ -111,7 +133,17 @@ class SmoothBinning(BaseBinning):
         y: Optional[Union[pd.Series, np.ndarray]] = None,
         **kwargs
     ) -> 'SmoothBinning':
-        """拟合平滑分箱."""
+        """拟合平滑分箱。
+
+        预分箱后按 ``merge_criterion`` 合并相邻箱，并以 ``method`` 指定的平滑方法对各箱
+        坏样本率做收缩。支持 sklearn 与 scorecardpipeline 两种调用风格，详见
+        :meth:`BaseBinning.fit`。
+
+        :param X: 训练数据，shape ``(n_samples, n_features)``，DataFrame 或 ndarray
+        :param y: 二分类目标变量（0=好/1=坏）；scorecardpipeline 风格下可省略
+        :param kwargs: 透传给基类的其他参数
+        :return: 拟合后的分箱器自身（便于链式调用）
+        """
         X, y = self._check_input(X, y)
 
         # 计算先验坏样本率

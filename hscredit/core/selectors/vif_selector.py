@@ -130,6 +130,12 @@ class VIFSelector(BaseFeatureSelector):
     >>> selector.fit(X)
     >>> print(selector.selected_features_)
     ['a', 'c']  # 或 ['b', 'c']，保留其中一个高相关特征
+
+    **引用**
+
+    方差膨胀因子 ``VIF_i = 1 / (1 - R_i²)``（``R_i²`` 为特征 i 对其余特征回归的判定系数），
+    经验上 VIF>5（严格 >10）提示多重共线性。参见 Kutner, M. et al. (2004). *Applied
+    Linear Statistical Models*；https://en.wikipedia.org/wiki/Variance_inflation_factor
     """
 
     def __init__(

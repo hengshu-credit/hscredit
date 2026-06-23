@@ -185,6 +185,12 @@ class LiftSelector(BaseFeatureSelector):
     >>> # 仅评估找好人能力
     >>> selector = LiftSelector(direction='good', threshold=0.5)
     >>> selector.fit(X, y)
+
+    **引用**
+
+    LIFT@k%（头部覆盖率下的提升度）是响应/风险模型的标准评估口径，参见 lift chart
+    https://en.wikipedia.org/wiki/Lift_(data_mining) 及 Siddiqi, N. (2006).
+    *Credit Risk Scorecards.* Wiley。
     """
 
     def __init__(

@@ -24,8 +24,13 @@ class GeneticBinning(BaseBinning):
     :param generations: 迭代代数，默认为100
     :param mutation_rate: 变异率，默认为0.1
     :param crossover_rate: 交叉率，默认为0.8
-    :param elitism_rate: 精英保留率，默认为0.1
-    :param objective: 优化目标，默认为'iv'，可选'iv', 'ks', 'gini'
+    :param elitism_rate: 精英保留率（每代直接保留的最优个体比例），默认为0.1
+    :param objective: 适应度（优化目标）函数，默认为 ``'iv'``。可取以下枚举值：
+
+        - ``'iv'``：最大化 Information Value（信息价值），最常用，衡量整体预测力
+        - ``'ks'``：最大化 KS 统计量，衡量好坏样本累积分布的最大区分度
+        - ``'gini'``：最大化 Gini 系数（≈ 2×AUC−1），衡量排序区分能力
+
     :param max_n_bins: 最大分箱数，默认为5
     :param min_n_bins: 最小分箱数，默认为2
     :param min_bin_size: 每箱最小样本数或占比，默认为0.01
@@ -43,6 +48,16 @@ class GeneticBinning(BaseBinning):
     >>> binner = GeneticBinning(objective='iv', max_n_bins=5, generations=100)
     >>> binner.fit(X, y)
     >>> X_binned = binner.transform(X)
+
+    **注意**
+
+    遗传算法为随机全局优化，结果依赖 ``random_state``；相比贪心方法更可能跳出局部最优，
+    但计算开销随 ``population_size × generations`` 增长，适合约束复杂、对分箱质量要求高的场景。
+
+    **引用**
+
+    遗传算法：Holland, J. H. (1975). *Adaptation in Natural and Artificial Systems.*
+    https://en.wikipedia.org/wiki/Genetic_algorithm
     """
 
     def __init__(
@@ -96,7 +111,17 @@ class GeneticBinning(BaseBinning):
         y: Optional[Union[pd.Series, np.ndarray]] = None,
         **kwargs
     ) -> 'GeneticBinning':
-        """拟合遗传算法分箱."""
+        """拟合遗传算法分箱。
+
+        对每个特征以遗传算法（选择/交叉/变异/精英保留）在候选切分点中搜索使 ``objective``
+        最大化的分箱方案。支持 sklearn 与 scorecardpipeline 两种调用风格，详见
+        :meth:`BaseBinning.fit`。
+
+        :param X: 训练数据，shape ``(n_samples, n_features)``，DataFrame 或 ndarray
+        :param y: 二分类目标变量（0=好/1=坏）；scorecardpipeline 风格下可省略
+        :param kwargs: 透传给基类的其他参数
+        :return: 拟合后的分箱器自身（便于链式调用）
+        """
         X, y = self._check_input(X, y)
 
         def _fit_one(feature):

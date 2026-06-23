@@ -100,6 +100,14 @@ class CPSATBinning(BaseBinning):
     2. 支持复杂的约束条件组合
     3. 计算时间可控，可设置时间限制
     4. 适合对分箱质量要求高的场景
+    5. 依赖可选包 ``ortools``，未安装时实例化会抛出 ImportError
+
+    **引用**
+
+    将最优分箱建模为数学规划问题参考 optbinning：Navas-Palencia, G. (2020).
+    *Optimal binning: mathematical programming formulation.* arXiv:2001.08025.
+    https://arxiv.org/abs/2001.08025 ；求解器为 Google OR-Tools CP-SAT
+    https://developers.google.com/optimization/cp/cp_solver
     """
 
     def __init__(

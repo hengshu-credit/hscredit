@@ -168,11 +168,19 @@ class ORBinning(BaseBinning):
     3. 最大/最小 LIFT 离1的距离求和 + IV::
 
         def lift_distance_iv(bin_stats, total_good, total_bad):
-            total_iv = sum(stat['woe'] * (stat['bad_rate'] - stat['good_rate']) 
+            total_iv = sum(stat['woe'] * (stat['bad_rate'] - stat['good_rate'])
                           for stat in bin_stats)
             max_lift_dist = max(abs(stat['lift'] - 1) for stat in bin_stats)
             min_lift_dist = min(abs(stat['lift'] - 1) for stat in bin_stats)
             return total_iv + (max_lift_dist + min_lift_dist) * 0.1
+
+    **引用**
+
+    最优分箱的数学规划建模参考 optbinning：Navas-Palencia, G. (2020). *Optimal
+    binning: mathematical programming formulation.* arXiv:2001.08025.
+    https://arxiv.org/abs/2001.08025 ；求解器为 Google OR-Tools
+    https://developers.google.com/optimization 。与 :class:`CPSATBinning` 相比，
+    本类额外支持自定义目标函数与启发式+DP 快速模式（``use_cp_sat=False``）。
     """
 
     def __init__(

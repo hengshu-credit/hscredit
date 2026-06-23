@@ -27,10 +27,21 @@ class WOEEncoder(BaseEncoder):
         这会导致评分卡中对应分箱的分数异常。
         设置此参数可将WOE限制在[-woe_clip, woe_clip]范围内。
         设置为None则不进行截断。
-    :param handle_unknown: 处理未知类别的方式，默认为'value'
-    :param handle_missing: 处理缺失值的方式，默认为'value'
+    :param handle_unknown: transform 时遇到 fit 未见过的类别的处理方式，默认为 ``'value'``：
+
+        - ``'value'``：编码为 0.0（中性 WOE）
+        - ``'return_nan'``：编码为 NaN
+        - ``'error'``：抛出异常
+
+    :param handle_missing: 缺失值（NaN）的处理方式，默认为 ``'value'``：
+
+        - ``'value'``：编码为 0.0（中性 WOE）
+        - ``'return_nan'``：编码为 NaN
+        - ``'error'``：fit/transform 遇缺失即抛出异常
+
     :param drop_invariant: 是否删除方差为0的列，默认为False
     :param return_df: 是否返回DataFrame，默认为True
+    :param target: scorecardpipeline 风格的目标列名，提供后 fit 时从 X 中提取该列作为 y
 
     **属性**
 
@@ -48,8 +59,23 @@ class WOEEncoder(BaseEncoder):
     >>> summary = encoder.summary()
     >>> print(summary)
 
-    参考:
-        https://www.listendata.com/2015/03/weight-of-evidence-woe-and-information.html
+    导出/加载（与 toad、scorecardpipeline 规则格式互通）::
+
+        >>> rules = encoder.export(to_json='woe_rules.json')
+        >>> WOEEncoder().load('woe_rules.json')
+
+    **注意**
+
+    与 :class:`~hscredit.core.binning.BaseBinning` 的 ``metric='woe'`` 不同，本编码器
+    直接对原始类别取值计算 WOE、不做数值分箱，适合基数适中的类别特征。``regularization``
+    采用加性平滑以避免某类别好/坏样本数为 0 时 WOE 取 ±∞。
+
+    **引用**
+
+    WOE（证据权重）与 IV（信息价值）出自信息论，系统应用于信用评分见
+    Siddiqi, N. (2006). *Credit Risk Scorecards.* Wiley；
+    公式与直观解释参考
+    https://www.listendata.com/2015/03/weight-of-evidence-woe-and-information.html
     """
 
     def __init__(
@@ -266,9 +292,23 @@ class WOEEncoder(BaseEncoder):
         return self.mapping_[col]
 
     def summary(self) -> pd.DataFrame:
-        """获取WOE编码摘要。
+        """获取 WOE 编码摘要表（按 IV 降序）。
 
-        :return: 包含各特征IV值和预测能力的摘要表
+        对每个已编码特征给出 IV 值及对应的预测能力评级，评级阈值为：
+
+        - IV < 0.02：无预测力
+        - 0.02 ≤ IV < 0.1：弱预测力
+        - 0.1 ≤ IV < 0.3：中等预测力
+        - 0.3 ≤ IV < 0.5：强预测力
+        - IV ≥ 0.5：超强预测力（需检查是否标签泄漏）
+
+        :return: 含 ``特征`` / ``IV值`` / ``预测能力`` 三列的 DataFrame，按 ``IV值`` 降序；
+            未拟合或无特征时返回空 DataFrame
+
+        **参考样例**
+
+        >>> encoder.fit(X, y)
+        >>> encoder.summary()
         """
         if not self.iv_:
             return pd.DataFrame()

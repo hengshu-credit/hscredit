@@ -1,6 +1,22 @@
 """规则表达式优化器。
 
-提供布尔表达式简化、优化和美化功能。
+将规则表达式解析为表达式树（AST），应用布尔代数定律做等价化简，并以
+``&``/``|``/``~`` 符号形式重新输出规范、易读的表达式。供 :class:`~hscredit.core.rules.Rule`
+在 ``&``/``|``/``~``/``^`` 组合时自动调用。
+
+**对外函数**
+
+- :func:`optimize_expr`：化简表达式（幂等律、吸收律、双重否定等）
+- :func:`beautify_expr`：美化表达式（统一运算符符号、去除冗余括号）
+- :func:`get_expr_variables`：提取表达式引用的变量名
+
+模块内的 ``ExprNode`` / ``ExprParser`` / ``ExprOptimizer`` 等为内部实现细节，
+不属于稳定对外接口。
+
+**引用**
+
+- 布尔代数化简定律（幂等律 Idempotent、吸收律 Absorption、双重否定 Double negation）：
+  https://en.wikipedia.org/wiki/Boolean_algebra#Laws
 """
 
 import ast
@@ -418,48 +434,73 @@ _optimizer = ExprOptimizer()
 
 
 def optimize_expr(expr: str) -> str:
-    """简化表达式字符串。
+    """简化规则表达式字符串。
 
-    应用布尔代数定律简化表达式，移除冗余括号，消除双重否定等。
+    解析表达式为表达式树后，应用以下布尔代数定律做等价化简，并去除冗余括号、
+    将 ``and``/``or`` 统一为 ``&``/``|``：
 
-    :param expr: 原始表达式字符串
-    :return: 简化后的表达式字符串
+    - **幂等律（Idempotent）**：``A & A → A``，``A | A → A``
+    - **吸收律（Absorption）**：``A | (A & B) → A``，``A & (A | B) → A``
+    - **双重否定（Double negation）**：``~~A → A``
+
+    .. note::
+        化简基于子表达式字符串的规范化比较，仅识别字面等价的原子条件，不做跨变量的
+        逻辑推理（如 ``age > 18`` 与 ``age >= 19`` 不会被判定为等价）。
+
+    :param expr: 原始规则表达式字符串，支持 ``&``/``|``/``~``/``and``/``or``/``not``
+    :return: 化简后的等价表达式字符串
 
     **参考样例**
 
-    >>> optimize_expr("(age > 18) & (age > 18)")
+    >>> optimize_expr("(age > 18) & (age > 18)")    # 幂等律
     'age > 18'
-    >>> optimize_expr("~~(age > 18)")
+    >>> optimize_expr("~~(age > 18)")               # 双重否定
     'age > 18'
+
+    **引用**
+
+    布尔代数化简定律：https://en.wikipedia.org/wiki/Boolean_algebra#Laws
     """
     return _optimizer.optimize(expr)
 
 
 def beautify_expr(expr: str) -> str:
-    """美化表达式字符串。
+    """美化规则表达式字符串。
 
-    生成格式规范、易读性好的表达式。
+    在不改变逻辑的前提下规范化表达式的书写：将 ``and``/``or``/``not`` 统一为
+    ``&``/``|``/``~`` 符号形式，按运算符结合律去除同级冗余括号，得到格式一致、
+    便于展示与比较的表达式。与 :func:`optimize_expr` 的区别在于不做幂等/吸收等化简。
 
-    :param expr: 原始表达式字符串
-    :return: 美化后的表达式字符串
+    :param expr: 原始规则表达式字符串
+    :return: 美化后的等价表达式字符串
 
     **参考样例**
 
     >>> beautify_expr("(age > 18) & (income > 5000)")
+    'age > 18 & income > 5000'
+    >>> beautify_expr("age > 18 and income > 5000")
     'age > 18 & income > 5000'
     """
     return _optimizer.beautify(expr)
 
 
 def get_expr_variables(expr: str) -> List[str]:
-    """获取表达式中使用的变量名列表。
+    """提取规则表达式中引用的变量（列）名。
 
-    :param expr: 表达式字符串
-    :return: 变量名列表
+    用正则匹配表达式中的标识符，剔除 ``and``/``or``/``not``/``True``/``False``/
+    ``None``/``inf``/``nan`` 等保留字，返回去重后的变量名列表。
+
+    .. note::
+        返回顺序 **不保证稳定**（基于集合去重）。如需有序且能正确处理含空格/中文/
+        反引号的列名，请使用 :func:`hscredit.core.rules.get_columns_from_query`
+        （返回去重并按字母排序的列表）。
+
+    :param expr: 规则表达式字符串
+    :return: 表达式引用的变量名列表（去重，顺序不保证）
 
     **参考样例**
 
-    >>> get_expr_variables("(age > 18) & (income > 5000)")
+    >>> sorted(get_expr_variables("(age > 18) & (income > 5000)"))
     ['age', 'income']
     """
     # 直接使用正则表达式提取变量名

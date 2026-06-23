@@ -54,6 +54,17 @@ class KMeansBinning(BaseBinning):
     >>>
     >>> # 查看分箱统计
     >>> bin_table = binner.get_bin_table('feature_name')
+
+    **注意**
+
+    K-Means 为无监督分箱，依据特征数值的聚类结构切分、不使用标签 ``y`` 决定边界
+    （切分点取相邻聚类中心的中点）；对存在自然分组的特征效果好，对均匀分布的特征则
+    与等距分箱接近。
+
+    **引用**
+
+    K-Means 聚类：MacQueen, J. (1967) 与 Lloyd, S. (1982)；
+    https://en.wikipedia.org/wiki/K-means_clustering
     """
 
     def __init__(
@@ -98,12 +109,17 @@ class KMeansBinning(BaseBinning):
         y: Optional[Union[pd.Series, np.ndarray]] = None,
         **kwargs
     ) -> 'KMeansBinning':
-        """拟合K-Means分箱.
+        """拟合 K-Means 分箱。
 
-        :param X: 训练数据，shape (n_samples, n_features)
-        :param y: 目标变量，二分类 (0/1)
-        :param kwargs: 其他参数
-        :return: 拟合后的分箱器
+        对每个数值特征做一维 K-Means 聚类，以相邻聚类中心的中点作为切分点；类别特征按
+        类别成箱。支持 sklearn 风格 ``fit(X, y)`` 与 scorecardpipeline 风格 ``fit(df)``，
+        详见 :meth:`BaseBinning.fit`。
+
+        :param X: 训练数据，shape ``(n_samples, n_features)``，DataFrame 或 ndarray
+        :param y: 二分类目标变量（0=好/1=坏），仅用于生成分箱统计表；
+            scorecardpipeline 风格下可省略
+        :param kwargs: 透传给基类的其他参数
+        :return: 拟合后的分箱器自身（便于链式调用）
         """
         # 检查输入数据
         X, y = self._check_input(X, y)

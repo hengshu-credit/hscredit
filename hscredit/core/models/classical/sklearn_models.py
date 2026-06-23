@@ -24,9 +24,44 @@ from ..base import BaseRiskModel
 
 
 class SklearnRiskModel(BaseRiskModel):
-    """基于sklearn的模型基类.
+    """基于 sklearn 集成分类器的风控模型基类。
 
-    封装sklearn分类器，提供统一的接口。
+    将任意 sklearn 分类器（通过 ``estimator_class`` 传入）封装为 hscredit 统一接口，
+    继承 :class:`~hscredit.core.models.base.BaseRiskModel`，提供 ``fit`` /
+    ``predict`` / ``predict_proba`` / ``get_feature_importances`` / ``evaluate`` /
+    ``save_model`` / ``load_model`` 及 scorecardpipeline 风格（``fit(df)`` 自动提取
+    ``target`` 列）。具体模型由子类 :class:`RandomForestRiskModel` /
+    :class:`ExtraTreesRiskModel` / :class:`GradientBoostingRiskModel` 指定。
+
+    **参数**
+
+    :param estimator_class: sklearn 分类器类（如 ``RandomForestClassifier``），由子类传入
+    :param objective: 任务类型，默认 ``'binary'``（二分类）
+    :param eval_metric: 评估指标名或列表，默认 ``None``
+    :param validation_fraction: 验证集占比，默认 ``0.2``
+    :param random_state: 随机种子，默认 ``None``
+    :param n_jobs: 并行任务数，默认 ``-1``（用满 CPU；``GradientBoosting`` 不支持，自动忽略）
+    :param verbose: 是否输出训练日志，默认 ``False``
+    :param kwargs: 透传给底层 sklearn 分类器的其他超参数
+
+    **属性**
+
+    - ``feature_importances_``: 特征重要性数组（兼容 sklearn）
+    - ``feature_names_in_`` / ``n_features_in_``: 输入特征名/数量
+    - ``classes_``: 类别标签
+
+    **参考样例**
+
+    >>> from hscredit.core.models import RandomForestRiskModel
+    >>> model = RandomForestRiskModel(n_estimators=200, max_depth=8)
+    >>> model.fit(X_train, y_train)
+    >>> proba = model.predict_proba(X_test)[:, 1]
+    >>> model.get_feature_importances().head()
+
+    **引用**
+
+    底层实现见 sklearn ``ensemble`` 模块：
+    https://scikit-learn.org/stable/modules/ensemble.html
     """
 
     def __init__(
@@ -102,19 +137,35 @@ class SklearnRiskModel(BaseRiskModel):
         return self
 
     def predict(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
-        """预测类别标签."""
+        """预测类别标签。
+
+        :param X: 特征矩阵，DataFrame 或 ndarray
+        :return: 预测类别数组（0/1）
+        :raises NotFittedError: 模型尚未训练时
+        """
         check_is_fitted(self, '_is_fitted')
         X = self._prepare_data(X)[0]
         return self._model.predict(X)
 
     def predict_proba(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
-        """预测概率."""
+        """预测各类别概率。
+
+        :param X: 特征矩阵，DataFrame 或 ndarray
+        :return: 概率数组，shape ``(n_samples, 2)``，第 1 列为正类（坏样本）概率
+        :raises NotFittedError: 模型尚未训练时
+        """
         check_is_fitted(self, '_is_fitted')
         X = self._prepare_data(X)[0]
         return self._model.predict_proba(X)
 
     def get_feature_importances(self, importance_type: str = 'gain') -> pd.Series:
-        """获取特征重要性."""
+        """获取特征重要性（基于底层模型的不纯度下降）。
+
+        :param importance_type: 重要性类型，默认 ``'gain'``（sklearn 树模型仅支持基于
+            不纯度的 ``feature_importances_``，该参数为与 boosting 模型接口对齐而保留）
+        :return: 以特征名为索引、按重要性降序的 Series
+        :raises NotFittedError: 模型尚未训练时
+        """
         check_is_fitted(self, '_is_fitted')
 
         importances = self._model.feature_importances_

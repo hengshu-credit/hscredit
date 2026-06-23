@@ -68,6 +68,14 @@ class BestLiftBinning(BaseBinning):
     2. 支持单调性约束，保证业务可解释性
     3. 自动确定最优单调方向
     4. 高效的动态规划风格实现
+
+    其中 ``Lift（提升度）= 箱内坏样本率 / 总体坏样本率``，Lift>1 表示该箱风险高于均值。
+
+    **引用**
+
+    Lift / 提升度是响应模型与风险分层的标准评估口径，参见 Siddiqi, N. (2006).
+    *Credit Risk Scorecards.* Wiley，以及营销响应模型中的 lift chart 概念
+    https://en.wikipedia.org/wiki/Lift_(data_mining)
     """
 
     def __init__(

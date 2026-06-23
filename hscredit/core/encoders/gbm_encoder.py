@@ -135,11 +135,13 @@ class GBMEncoder(BaseEncoder):
     >>> pipeline.fit(X_train, y_train)
     >>> y_pred = pipeline.predict(X_test)
 
-    参考:
-        - Facebook GBDT + LR: https://dl.acm.org/doi/10.1145/2648584.2648589
-        - XGBoost: https://xgboost.readthedocs.io/
-        - LightGBM: https://lightgbm.readthedocs.io/
-        - CatBoost: https://catboost.ai/
+    **引用**
+
+    GBDT 叶子节点作为特征输入 LR 的范式出自 He, X. et al. (2014). *Practical Lessons
+    from Predicting Clicks on Ads at Facebook.* ADKDD'14.
+    https://dl.acm.org/doi/10.1145/2648584.2648589 。底层树模型文档：
+    XGBoost https://xgboost.readthedocs.io/ 、LightGBM https://lightgbm.readthedocs.io/ 、
+    CatBoost https://catboost.ai/ 。
     """
 
     def __init__(

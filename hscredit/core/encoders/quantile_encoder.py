@@ -41,6 +41,17 @@ class QuantileEncoder(BaseEncoder):
     >>> # 使用第90百分位数
     >>> encoder = QuantileEncoder(cols=['category'], quantile=0.9)
     >>> X_encoded = encoder.fit_transform(X, y)
+
+    **注意**
+
+    以目标分位数（而非均值）编码，对异常值更稳健；通过 ``m`` 先验权重向全局分位数做收缩
+    （类别样本越少越靠近全局值）以抑制过拟合。同属有监督编码，需训练集 fit、测试集 transform。
+
+    **引用**
+
+    Valdez-Valenzuela, A. et al. (2021). *Measuring the quantile encoder.*
+    https://arxiv.org/abs/2105.13783 ；另见 category_encoders ``QuantileEncoder``：
+    https://contrib.scikit-learn.org/category_encoders/quantile.html
     """
 
     def _get_category_cols(self, X: pd.DataFrame) -> List[str]:

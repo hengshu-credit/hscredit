@@ -60,6 +60,12 @@ class TargetBadRateBinning(BaseBinning):
     >>> # 自动寻找最优划分
     >>> binner = TargetBadRateBinning(max_n_bins=5)
     >>> # 结果：5个分箱，每箱间坏样本率差异最大
+
+    **注意**
+
+    本方法以"业务目标坏样本率"为切分依据，属业务驱动的风险分层分箱（risk-based
+    segmentation），无单一学术出处；严格边界模式便于将分箱直接对齐既定的风险定价/
+    准入档位。坏样本率（bad rate）即各箱内坏样本占比。
     """
 
     def __init__(

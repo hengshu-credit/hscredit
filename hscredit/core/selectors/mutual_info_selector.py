@@ -54,6 +54,17 @@ class MutualInfoSelector(BaseFeatureSelector):
         >>> selector = MutualInfoSelector(threshold=0.1)
         >>> selector.fit(X, y)
         >>> print(selector.selected_features_)
+
+    **注意**
+
+    互信息可捕捉线性与非线性依赖，连续特征用 k 近邻法估计（``n_neighbors`` 越大方差越小、
+    偏差略增），故结果依赖 ``random_state``。
+
+    **引用**
+
+    基于 sklearn ``mutual_info_classif``（Kraskov 等的 kNN 估计）：
+    https://scikit-learn.org/stable/modules/generated/sklearn.feature_selection.mutual_info_classif.html ；
+    Kraskov, A. et al. (2004). *Estimating mutual information.* Phys. Rev. E 69.
     """
 
     def __init__(

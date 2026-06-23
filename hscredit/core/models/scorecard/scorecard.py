@@ -135,10 +135,12 @@ class ScoreCard(StandardScoreTransformer):
         >>> # 不需要调用fit，直接predict
         >>> scores = scorecard.predict(X_test, input_type='woe')  # 传入WOE数据
 
-    参考:
-        - toad.ScoreCard
-        - scorecardpipeline.ScoreCard
-        - optbinning.Scorecard
+    **引用**
+
+    标准评分卡刻度公式 ``Score = A - B·ln(odds)``（A=offset、B=factor=pdo/ln(rate)）出自
+    Siddiqi, N. (2006). *Credit Risk Scorecards: Developing and Implementing Intelligent
+    Credit Scoring.* Wiley。API 设计对标 toad.ScoreCard、scorecardpipeline.ScoreCard 与
+    optbinning.Scorecard（https://gnpalencia.org/optbinning/scorecard.html）。
     """
 
     # 标记是否需要fit（根据是否传入lr_model决定）
@@ -1507,7 +1509,19 @@ class ScoreCard(StandardScoreTransformer):
         return False
 
     def predict_proba(self, X: Union[pd.DataFrame, np.ndarray]) -> np.ndarray:
-        """预测概率（使用底层 LR 模型）."""
+        """预测样本属于各类别的概率（使用底层 LR 模型）。
+
+        会自动检测输入是否为 WOE 数据：若为原始数据则先经 binner/encoder 转为 WOE，
+        再交由逻辑回归模型输出概率。与 :meth:`predict`（输出分数）相对，本方法输出概率。
+
+        :param X: 输入数据，原始特征或 WOE 数据（自动识别），DataFrame 或 ndarray
+        :return: 形状 ``(n_samples, 2)`` 的概率数组，第 1 列为坏样本（正类）概率
+        :raises NotFittedError: 评分卡尚未拟合且未传入预训练 LR 模型时
+
+        **参考样例**
+
+        >>> proba_bad = scorecard.predict_proba(X_test)[:, 1]   # 坏样本概率
+        """
         check_is_fitted(self)
         
         # 需要将原始数据转为 WOE 数据后再预测概率
@@ -1715,7 +1729,27 @@ class ScoreCard(StandardScoreTransformer):
         n_bins: int = 10,
         method: str = 'quantile'
     ) -> pd.DataFrame:
-        """输出评分区间对应坏率和 odds 的对照表."""
+        """生成评分分箱对应坏样本率、Odds、KS 的对照表（评分卡校验/划档常用）。
+
+        将分数切成 ``n_bins`` 档，逐档统计样本数、坏样本率、Odds，并累计计算 KS，
+        用于检查"分数越高坏率越低"的单调性与整体区分度。
+
+        :param scores: 模型输出的分数数组（如 :meth:`predict` 的结果）
+        :param y: 对应的真实标签数组（0=好/1=坏），与 ``scores`` 等长
+        :param n_bins: 分数分档数量，默认为 ``10``
+        :param method: 分档方式，默认为 ``'quantile'``。可取以下枚举值：
+
+            - ``'quantile'``：等频分档（每档样本量大致相等），用 ``pd.qcut``
+            - 其他值（如 ``'uniform'``）：等距分档（按分数范围等宽），用 ``pd.cut``
+
+        :return: DataFrame，列含 ``评分区间`` / ``样本数`` / ``坏样本数`` / ``坏样本率`` /
+            ``好样本数`` / ``Odds`` / ``累计好样本占比`` / ``累计坏样本占比`` / ``KS``
+
+        **参考样例**
+
+        >>> s = scorecard.predict(X_test)
+        >>> scorecard.score_to_bad_rate_table(s, y_test, n_bins=10)
+        """
         df = pd.DataFrame({'score': scores, 'y': y})
         
         if method == 'quantile':
@@ -2516,7 +2550,19 @@ class ScoreCard(StandardScoreTransformer):
         return None
 
     def get_feature_importance(self) -> pd.DataFrame:
-        """获取特征重要性."""
+        """获取评分卡的特征重要性表（基于 LR 系数）。
+
+        以逻辑回归系数绝对值衡量重要性。与 :meth:`get_feature_importances`（返回 Series，
+        支持 ``coef`` / ``score_range`` 两种口径）不同，本方法返回明细 DataFrame。
+
+        :return: DataFrame，含 ``feature`` / ``coef`` / ``importance`` 三列，按
+            ``importance`` 降序
+        :raises NotFittedError: 评分卡尚未拟合时
+
+        **参考样例**
+
+        >>> scorecard.get_feature_importance().head()
+        """
         check_is_fitted(self)
 
         return pd.DataFrame({
@@ -2526,7 +2572,20 @@ class ScoreCard(StandardScoreTransformer):
         }).sort_values('importance', ascending=False)
 
     def get_reason(self, X: Union[pd.DataFrame, np.ndarray], keep: int = 3) -> pd.DataFrame:
-        """获取评分的主要原因."""
+        """输出每个样本评分的主要驱动原因（reason codes / 拒绝原因）。
+
+        对每个样本，按"该特征得分相对其基准效应的偏离"排序，取偏离最负（最拉低分数）的
+        前 ``keep`` 个特征作为不利原因，可用于授信拒绝理由说明（adverse action）与可解释性。
+
+        :param X: 输入数据，原始或 WOE 数据（自动识别），DataFrame 或 ndarray
+        :param keep: 每个样本保留的主要原因（特征）个数，默认为 ``3``
+        :return: DataFrame，每行对应一个样本，列为排序后的 Top-``keep`` 不利特征及其影响
+        :raises NotFittedError: 评分卡尚未拟合时
+
+        **参考样例**
+
+        >>> scorecard.get_reason(X_test, keep=3)
+        """
         check_is_fitted(self)
 
         if not isinstance(X, pd.DataFrame):
@@ -2570,7 +2629,30 @@ class ScoreCard(StandardScoreTransformer):
         method: str = 'quantile',
         score_bins: Optional[list] = None
     ) -> pd.DataFrame:
-        """生成评分与逾期率对应表."""
+        """生成评分区间与理论逾期率（坏样本概率）对照表。
+
+        将分数分档后，依据评分卡刻度公式由各档分数中位数反推理论 odds 与坏样本概率
+        （``prob = odds/(1+odds)``，``odds = exp((A - score)/B)``），可叠加真实标签 ``y``
+        对比理论与实际逾期率，用于评分卡校准核验与划档定价。
+
+        :param scores: 分数数组；若为 ``None`` 则用 ``X`` 经 :meth:`predict` 计算
+        :param X: 输入数据，当 ``scores`` 未提供时用于预测分数
+        :param y: 可选真实标签，提供后表中追加各档实际坏样本率以对比理论值
+        :param n_bins: 分数分档数量，默认为 ``10``
+        :param method: 分档方式，默认为 ``'quantile'``。可取以下枚举值：
+
+            - ``'quantile'``：等频分档（``pd.qcut``）
+            - ``'uniform'``：等距分档（``pd.cut``）
+            - ``'custom'``：使用 ``score_bins`` 指定的自定义分档边界
+
+        :param score_bins: 自定义分档边界列表，仅当 ``method='custom'`` 时生效
+        :return: DataFrame，含评分区间及对应理论 odds / 理论坏样本概率（提供 ``y`` 时含实际值）
+        :raises ValueError: ``scores`` 与 ``X`` 均未提供时
+
+        **参考样例**
+
+        >>> scorecard.score_to_probability_table(X=X_test, y=y_test, n_bins=10)
+        """
         check_is_fitted(self)
 
         if scores is None:
@@ -2637,7 +2719,20 @@ class ScoreCard(StandardScoreTransformer):
         sample_idx: Optional[Union[int, list]] = None,
         include_reason: bool = True
     ) -> pd.DataFrame:
-        """获取每个样本的详细评分信息."""
+        """输出样本级评分明细：基础分 + 各特征贡献分 + 总分（可附主要原因）。
+
+        将总分拆解为截距基础分与每个特征的贡献分，便于逐样本审视分数构成、做可解释性展示。
+
+        :param X: 输入数据，原始或 WOE 数据（自动识别），DataFrame 或 ndarray
+        :param sample_idx: 仅输出指定样本的明细，可为单个下标或下标列表；``None`` 表示全部
+        :param include_reason: 是否附带主要驱动原因列（同 :meth:`get_reason`），默认为 ``True``
+        :return: DataFrame，每行一个样本，列含各特征贡献分、基础分与总分
+        :raises NotFittedError: 评分卡尚未拟合时
+
+        **参考样例**
+
+        >>> scorecard.get_detailed_score(X_test, sample_idx=0)
+        """
         check_is_fitted(self)
 
         if not isinstance(X, pd.DataFrame):
@@ -3103,13 +3198,33 @@ class ScoreCard(StandardScoreTransformer):
 class RoundScoreCard(ScoreCard):
     """按分箱分数精度进行一致性计分的评分卡模型.
 
-    与 `ScoreCard` 不同，`RoundScoreCard` 会先将基础分和各特征分箱分数
-    按初始化指定的 `decimal` 精度进行调整，再基于这份调整后的评分卡完成
-    预测、原因分析与部署导出，确保对外结果与 `scorecard_points()` 完全一致。
+    与 :class:`ScoreCard` 不同，``RoundScoreCard`` 会先将基础分和各特征分箱分数
+    按初始化指定的 ``decimal`` 精度进行取整，再基于这份取整后的评分卡完成
+    预测、原因分析与部署导出，确保对外结果与 :meth:`scorecard_points` 完全一致
+    （避免"展示分"与"实际计分"因四舍五入产生偏差，便于落地核对）。
+
+    构造参数与 :class:`ScoreCard` 完全一致，仅评分计分口径不同；下列方法
+    （:meth:`fit` / :meth:`scorecard_points` / :meth:`predict` / :meth:`predict_score` /
+    :meth:`get_reason` / :meth:`get_detailed_score` / :meth:`export`）语义同父类，
+    区别仅在于使用"取整后分数"参与计算与导出。
 
     **参数**
 
-    :param decimal: 评分卡分数保留小数位数默认 2
+    :param decimal: 评分卡分数保留小数位数，默认 2
+    :param scorecard: 可选，已训练的 :class:`ScoreCard` 实例，传入后直接复用其规则转为整数计分卡
+
+    **参考样例**
+
+    >>> from hscredit.core.models import RoundScoreCard
+    >>> sc = RoundScoreCard(decimal=0, binner=binner)   # 整数分评分卡
+    >>> sc.fit(X_train, y_train, input_type='raw')
+    >>> sc.scorecard_points()        # 各分箱整数分
+    >>> sc.predict(X_test)           # 与 scorecard_points 完全一致的计分
+
+    **引用**
+
+    取整一致性计分对应评分卡工程落地实践，刻度公式同 :class:`ScoreCard`
+    （Siddiqi, N. (2006). *Credit Risk Scorecards.* Wiley）。
     """
 
     def __init__(
@@ -3434,7 +3549,14 @@ class RoundScoreCard(ScoreCard):
         sample_weight: Optional[np.ndarray] = None,
         input_type: str = 'woe',
     ) -> 'RoundScoreCard':
-        """训练按评分卡精度一致计分的评分卡模型."""
+        """训练评分卡（计分口径取整一致）。
+
+        流程同 :meth:`ScoreCard.fit`（参数 ``X`` / ``y`` / ``sample_weight`` / ``input_type``
+        含义一致），但额外按 ``decimal`` 精度对各特征分箱分数取整，并据此重算基础效应，
+        确保后续计分与 :meth:`scorecard_points` 完全一致。
+
+        :return: self
+        """
         X_for_base_effect = X.copy() if isinstance(X, pd.DataFrame) else pd.DataFrame(X).copy()
 
         result = super().fit(X, y=y, sample_weight=sample_weight, input_type=input_type)
@@ -3461,7 +3583,16 @@ class RoundScoreCard(ScoreCard):
         feature_map: Optional[Dict[str, str]] = None,
         decimal: Optional[int] = None
     ) -> pd.DataFrame:
-        """输出按初始化精度调整后的评分卡分箱信息及其分数."""
+        """输出取整后的评分卡明细表（变量/分箱/分数/WOE）。
+
+        同 :meth:`ScoreCard.scorecard_points`，但各分箱分数按 ``decimal``（默认取实例的
+        ``self.decimal``）四舍五入，与本类实际计分完全一致，可直接交付落地。
+
+        :param feature_map: 变量名到业务含义的映射，用于填充"变量含义"列，可选
+        :param decimal: 覆盖分数保留小数位数，默认为 ``None``（用实例的 ``self.decimal``）
+        :return: 含 ``变量名称`` / ``变量含义`` / ``变量分箱`` / ``对应分数`` / ``WOE值`` 的 DataFrame，
+            首行为基础分
+        """
         check_is_fitted(self)
 
         digits = self.decimal if decimal is None else decimal
@@ -3516,7 +3647,17 @@ class RoundScoreCard(ScoreCard):
         proba: Optional[Union[np.ndarray, pd.Series]] = None,
         input_type: str = 'auto'
     ) -> np.ndarray:
-        """预测评分，优先基于调整精度后的评分卡规则进行计算."""
+        """预测评分（取整一致）。
+
+        同 :meth:`ScoreCard.predict_score`，但分数按 ``decimal`` 精度取整；传入 ``X`` 时走
+        评分卡规则计分（与 :meth:`predict` 一致），传入 ``proba`` 时由概率经刻度公式换算后取整。
+
+        :param X: 特征数据（原始或 WOE，由 ``input_type`` 控制），与 ``proba`` 二选一
+        :param proba: 坏样本概率数组，与 ``X`` 二选一
+        :param input_type: 输入类型 ``'auto'`` / ``'raw'`` / ``'woe'``，默认为 ``'auto'``
+        :return: 取整后的评分数组
+        :raises ValidationError: ``X`` 与 ``proba`` 均未提供时
+        """
         if X is not None:
             return self.predict(X, input_type=input_type)
 
@@ -3532,7 +3673,15 @@ class RoundScoreCard(ScoreCard):
         X: Union[pd.DataFrame, np.ndarray],
         input_type: str = 'raw'
     ) -> np.ndarray:
-        """基于调整精度后的评分卡规则预测评分."""
+        """预测评分（基于取整后的评分卡规则计分）。
+
+        同 :meth:`ScoreCard.predict`，但以"基础分 + 各特征取整后分箱分"求和得到总分，
+        结果与 :meth:`scorecard_points` 展示的分值逐项一致。
+
+        :param X: 输入数据（原始或 WOE）
+        :param input_type: 输入类型 ``'raw'`` / ``'woe'`` / ``'auto'``，默认为 ``'raw'``
+        :return: 取整后的评分数组
+        """
         if not self._skip_fit_check:
             check_is_fitted(self)
         elif not hasattr(self, '_is_fitted') or not self._is_fitted:
@@ -3545,7 +3694,14 @@ class RoundScoreCard(ScoreCard):
         return self._round_score_array(total_score)
 
     def get_reason(self, X: Union[pd.DataFrame, np.ndarray], keep: int = 3) -> pd.DataFrame:
-        """获取基于调整精度后评分卡的主要评分原因."""
+        """输出主要评分原因（基于取整后评分卡）。
+
+        同 :meth:`ScoreCard.get_reason`，但用取整后的各特征分数计算偏离，原因与实际计分一致。
+
+        :param X: 输入数据（原始或 WOE，自动识别）
+        :param keep: 每个样本保留的主要原因个数，默认为 ``3``
+        :return: 每行一个样本、含 ``reason`` 列的 DataFrame
+        """
         check_is_fitted(self)
         resolved = self._resolve_round_scoring_inputs(X, input_type='auto')
 
@@ -3572,7 +3728,16 @@ class RoundScoreCard(ScoreCard):
         sample_idx: Optional[Union[int, list]] = None,
         include_reason: bool = True
     ) -> pd.DataFrame:
-        """获取按调整后评分卡计算的样本详细评分信息."""
+        """输出样本级评分明细（基于取整后评分卡）。
+
+        同 :meth:`ScoreCard.get_detailed_score`，但各特征贡献分与总分均为取整后值，
+        与 :meth:`scorecard_points` 及 :meth:`predict` 完全一致。
+
+        :param X: 输入数据（原始或 WOE，自动识别）
+        :param sample_idx: 仅输出指定样本（单下标或下标列表）；``None`` 表示全部
+        :param include_reason: 是否附带主要原因列，默认为 ``True``
+        :return: 多层列结构 DataFrame，含各特征原始值/分箱/WOE/分数与样本总分
+        """
         check_is_fitted(self)
 
         if not isinstance(X, pd.DataFrame):
@@ -3707,7 +3872,17 @@ class RoundScoreCard(ScoreCard):
         decimal: Optional[int] = None,
         include_meta: bool = True
     ) -> Union[Dict, pd.DataFrame]:
-        """导出按调整后评分卡计算的规则定义."""
+        """导出取整后评分卡规则（用于落地部署/留档）。
+
+        同 :meth:`ScoreCard.export`，但导出的分值为按 ``decimal`` 取整后的分数，与
+        :meth:`scorecard_points` / :meth:`predict` 完全一致。
+
+        :param to_json: JSON 文件保存路径，提供则同时落盘，默认为 ``None``
+        :param to_frame: 为 ``True`` 时返回扁平 DataFrame，否则返回规则字典，默认为 ``False``
+        :param decimal: 覆盖分数保留小数位，默认为 ``None``（用实例的 ``self.decimal``）
+        :param include_meta: 是否在结果中包含刻度参数等元信息，默认为 ``True``
+        :return: 规则字典或 DataFrame（取决于 ``to_frame``）
+        """
         import json
 
         check_is_fitted(self)

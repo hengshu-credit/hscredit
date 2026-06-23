@@ -53,6 +53,17 @@ class QuantileBinning(BaseBinning):
     >>> # 使用自定义分位点
     >>> binner = QuantileBinning(quantiles=[0, 0.1, 0.3, 0.7, 0.9, 1.0])
     >>> binner.fit(X, y)
+
+    **注意**
+
+    等频分箱为无监督方法，仅依据特征自身分布切分、不使用标签 ``y``（``y`` 仅用于
+    生成分箱统计表），因此对异常值稳健、各箱样本量均衡，常用作有监督分箱的预分箱。
+
+    **引用**
+
+    等频（equal-frequency）离散化综述见 Dougherty, J., Kohavi, R., & Sahami, M.
+    (1995). *Supervised and Unsupervised Discretization of Continuous Features.*
+    ICML-95. https://ai.stanford.edu/~ronnyk/disc.pdf
     """
 
     def __init__(

@@ -16,40 +16,63 @@ logger = logging.getLogger(__name__)
 
 
 class ChiMergeBinning(BaseBinning):
-    """卡方分箱算法 (ChiMerge).
+    """卡方分箱算法 (ChiMerge)。
 
-    基于卡方统计量合并相邻箱的分箱方法。
-    初始将每个唯一值作为一个箱，然后迭代合并卡方值最小的相邻箱，
-    直到满足停止条件（卡方阈值或最大分箱数）。
+    一种自底向上（bottom-up）的有监督分箱方法。其核心假设是：若相邻两箱的好坏样本
+    分布无显著差异（卡方值小），则可以合并。算法流程：
 
-    :param max_n_bins: 最大分箱数，默认为10
-    :param min_n_bins: 最小分箱数，默认为2
-    :param min_chi2_threshold: 卡方阈值，默认为None
-        - 如果为None，使用自由度为1、显著性水平0.05的卡方临界值
-    :param min_chi2: 卡方阈值的简写形式，与min_chi2_threshold等价
-        - 例如：min_chi2=3.841 (等价于 min_chi2_threshold=3.841)
-    :param significance_level: 显著性水平，默认为0.05
-    :param min_bin_size: 每箱最小样本数或占比，默认为0.01
-    :param max_bin_size: 每箱最大样本数或占比，默认为None
-    :param min_bad_rate: 每箱最小坏样本率，默认为0.0
-    :param monotonic: 是否要求坏样本率单调，默认为False
-    :param special_codes: 特殊值列表，默认为None
-    :param missing_separate: 是否将缺失值单独分为一箱，默认为True
-    :param random_state: 随机种子，默认为None
-    :param verbose: 是否输出详细信息，默认为False
+    1. **初始化**：将每个唯一值（或预分位点）各作为一个箱；
+    2. **迭代合并**：对所有相邻箱对计算 2×2 列联表的卡方统计量，合并卡方值最小的一对；
+    3. **停止**：当最小卡方值超过阈值 ``min_chi2_threshold``，或箱数降至 ``max_n_bins``、
+       ``min_n_bins`` 限制时停止。
+
+    卡方值越大表示相邻两箱坏样本率差异越显著、越不应合并。继承 :class:`BaseBinning`，
+    完整的分箱通用参数、属性与转换语义见基类。
+
+    **参数（本算法特有及关键项）**
+
+    :param target: 目标列名（scorecardpipeline 风格），默认为 ``'target'``
+    :param max_n_bins: 最大分箱数，默认为 ``10``
+    :param min_n_bins: 最小分箱数，默认为 ``2``
+    :param min_chi2_threshold: 卡方合并阈值（停止合并的下限），默认为 ``None``。
+        为 ``None`` 时取自由度 1、显著性水平 ``significance_level`` 的卡方临界值
+        （如 0.05 对应约 3.841）。当相邻箱的最小卡方值大于该阈值即停止合并
+    :param min_chi2: **已废弃**，请改用 ``min_chi2_threshold``；传入非 ``None`` 将报错
+    :param significance_level: 显著性水平，用于在 ``min_chi2_threshold`` 为 ``None`` 时
+        换算卡方临界值，默认为 ``0.05``（值越小阈值越大、分箱越粗）
+    :param min_bin_size: 每箱最小样本数（``>=1``）或占比（``<1``），默认为 ``0.01``
+    :param max_bin_size: 每箱最大样本数或占比，默认为 ``None``
+    :param min_bad_rate: 每箱最小坏样本率，默认为 ``0.0``
+    :param monotonic: 坏样本率单调性约束，取值见 :class:`BaseBinning`，默认为 ``False``
+    :param special_codes: 特殊值列表，单独成箱，默认为 ``None``
+    :param missing_separate: 是否将缺失值单独成箱，默认为 ``True``
+    :param random_state: 随机种子，默认为 ``None``
+    :param verbose: 是否输出合并过程日志，默认为 ``False``
+    :param decimal: 数值切分点保留小数位，默认为 ``4``
 
     **属性**
 
-    - splits_: 每个特征的分箱切分点
-    - n_bins_: 每个特征的实际分箱数
-    - bin_tables_: 每个特征的分箱统计表
+    - ``splits_``: 每个特征的分箱切分点
+    - ``n_bins_``: 每个特征的实际分箱数
+    - ``bin_tables_``: 每个特征的分箱统计表（中文列名，见 :class:`BaseBinning`）
 
     **参考样例**
 
     >>> from hscredit.core.binning import ChiMergeBinning
-    >>> binner = ChiMergeBinning(max_n_bins=5)
-    >>> binner.fit(X, y)
-    >>> X_binned = binner.transform(X)
+    >>> binner = ChiMergeBinning(max_n_bins=5, significance_level=0.05)
+    >>> binner.fit(X, y)                       # sklearn 风格
+    >>> X_woe = binner.transform(X, metric='woe')
+    >>> binner.get_bin_table('age')           # 查看某特征分箱明细
+
+    指定卡方阈值并要求坏样本率单调递减::
+
+        >>> binner = ChiMergeBinning(min_chi2_threshold=6.635, monotonic='descending')
+        >>> binner.fit(X, y)
+
+    **引用**
+
+    Kerber, R. (1992). *ChiMerge: Discretization of Numeric Attributes.*
+    Proceedings of AAAI-92. https://www.aaai.org/Papers/AAAI/1992/AAAI92-019.pdf
     """
 
     def __init__(
@@ -95,12 +118,20 @@ class ChiMergeBinning(BaseBinning):
         y: Optional[Union[pd.Series, np.ndarray]] = None,
         **kwargs
     ) -> 'ChiMergeBinning':
-        """拟合卡方分箱.
+        """拟合卡方分箱。
 
-        :param X: 训练数据，shape (n_samples, n_features)
-        :param y: 目标变量，二分类 (0/1)
-        :param kwargs: 其他参数
-        :return: 拟合后的分箱器
+        对每个特征执行 ChiMerge 合并，得到切分点与分箱统计表。支持 sklearn 风格
+        ``fit(X, y)`` 与 scorecardpipeline 风格 ``fit(df)``（目标列由 ``target`` 指定），
+        详见 :meth:`BaseBinning.fit`。
+
+        :param X: 训练数据，shape ``(n_samples, n_features)``；可为 DataFrame 或 ndarray
+        :param y: 目标变量，二分类（0=好/1=坏）；scorecardpipeline 风格下可省略
+        :param kwargs: 透传给基类的其他参数
+        :return: 拟合后的分箱器自身（便于链式调用）
+
+        **参考样例**
+
+        >>> ChiMergeBinning(max_n_bins=5).fit(X, y).transform(X, metric='woe')
         """
         # 检查输入数据
         X, y = self._check_input(X, y)

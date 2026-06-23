@@ -31,9 +31,21 @@
 - scipy
 - sklearn
 
+**引用**
+
+- Platt Scaling：Platt, J. (1999). *Probabilistic Outputs for Support Vector Machines.*
+  Advances in Large Margin Classifiers.
+- Isotonic Regression 校准：Zadrozny, B., & Elkan, C. (2002). *Transforming Classifier
+  Scores into Accurate Multiclass Probability Estimates.* KDD 2002.
+- Beta Calibration：Kull, M., Silva Filho, T., & Flach, P. (2017). *Beta calibration.*
+  AISTATS 2017. https://arxiv.org/abs/1710.08628
+- Brier 分数：Brier, G. W. (1950). *Verification of Forecasts Expressed in Terms of
+  Probability.* Monthly Weather Review.
+- sklearn 校准指南：https://scikit-learn.org/stable/modules/calibration.html
+
 **参考样例**
 >>> from hscredit.core.models import XGBoostRiskModel
->>> from hscredit.core.models.calibration import ProbabilityCalibrator
+>>> from hscredit.core.models.evaluation import ProbabilityCalibrator
 >>>
 >>> # 训练基础模型
 >>> model = XGBoostRiskModel()
@@ -932,7 +944,7 @@ class CalibratedModel:
     **参考样例**
 
     >>> from hscredit.core.models import XGBoostRiskModel
-    >>> from hscredit.core.models.calibration import ProbabilityCalibrator, CalibratedModel
+    >>> from hscredit.core.models.evaluation import ProbabilityCalibrator, CalibratedModel
     >>>
     >>> # 训练基础模型
     >>> model = XGBoostRiskModel()
@@ -959,7 +971,13 @@ class CalibratedModel:
         self,
         X: Union[np.ndarray, pd.DataFrame]
     ) -> np.ndarray:
-        """预测校准后的概率."""
+        """预测校准后的正类（坏样本）概率。
+
+        将基础模型输出的原始概率经已拟合的校准器映射为更准确的概率。
+
+        :param X: 特征矩阵，DataFrame 或 ndarray
+        :return: 校准后的正类概率数组，shape ``(n_samples,)``
+        """
         return self.calibrator.predict_proba(X)
 
     def predict(
@@ -967,11 +985,24 @@ class CalibratedModel:
         X: Union[np.ndarray, pd.DataFrame],
         threshold: float = 0.5
     ) -> np.ndarray:
-        """预测类别标签."""
+        """基于校准后概率预测类别标签。
+
+        :param X: 特征矩阵，DataFrame 或 ndarray
+        :param threshold: 判正阈值，校准概率 ``>= threshold`` 记为 1，默认为 ``0.5``
+        :return: 0/1 类别数组
+        """
         return self.calibrator.predict(X, threshold)
 
     def predict_score(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
-        """预测风险评分 (0-1000)."""
+        """将校准后概率线性映射为 0–1000 的风险评分（概率越低分越高）。
+
+        采用 ``score = (1 - p) * 1000`` 的简易映射；若需标准 log-odds 评分卡刻度，
+        请改用 :class:`~hscredit.core.models.scorecard.ScoreCard` 或
+        :class:`~hscredit.core.models.scorecard.score_transformer.StandardScoreTransformer`。
+
+        :param X: 特征矩阵，DataFrame 或 ndarray
+        :return: 0–1000 区间的风险评分数组
+        """
         proba = self.predict_proba(X)
         return (1 - proba) * 1000
 
@@ -980,11 +1011,16 @@ class CalibratedModel:
         X: Union[np.ndarray, pd.DataFrame],
         y: Union[np.ndarray, pd.Series]
     ) -> Dict[str, float]:
-        """评估模型性能.
+        """评估校准后模型的区分度与校准度。
 
-        :param X: 特征矩阵
-        :param y: 真实标签
-        :return: 性能指标字典
+        :param X: 特征矩阵，DataFrame 或 ndarray
+        :param y: 真实标签（0/1）
+        :return: 含 ``AUC`` / ``KS``（区分度）与 ``Brier``（校准度，越小越好）的指标字典
+
+        **参考样例**
+
+        >>> calibrated.evaluate(X_test, y_test)
+        {'AUC': ..., 'KS': ..., 'Brier': ...}
         """
         from ...metrics.classification import ks, auc
 

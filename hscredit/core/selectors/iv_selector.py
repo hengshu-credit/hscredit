@@ -125,6 +125,25 @@ class IVSelector(BaseFeatureSelector):
         >>> selector.fit(X, y)
         >>> print(selector.selected_features_)
         >>> print(selector.scores_)  # 查看IV值
+
+    **参数**
+
+    除继承自 :class:`~hscredit.core.selectors.base.BaseFeatureSelector` 的通用参数
+    （``target`` / ``include`` / ``exclude`` / ``force_drop`` / ``n_jobs``）外：
+
+    :param threshold: IV 保留阈值，``IV >= threshold`` 的特征被保留，默认为 ``0.02``
+    :param regularization: 计算 WOE/IV 时的加性平滑系数，避免某类别好/坏样本数为 0
+        导致取对数发散，默认为 ``1.0``
+
+    .. note::
+        本筛选器按特征的**唯一取值**直接计算 IV（类别型先 ``factorize``），适合已分箱
+        或基数较低的特征；连续特征建议先用 :class:`~hscredit.core.binning.OptimalBinning`
+        分箱后再筛选，或传入 ``binner`` 参数。
+
+    **引用**
+
+    Information Value 用于变量筛选见 Siddiqi, N. (2006). *Credit Risk Scorecards.*
+    Wiley；阈值经验区间（0.02/0.1/0.3/0.5）为业界通行标准。
     """
 
     def __init__(

@@ -51,6 +51,12 @@ class AmountWeightedLoss(BaseLoss):
     >>> # 动态设置金额（适用于每轮训练数据不同的场景）
     >>> loss2 = AmountWeightedLoss()
     >>> loss2.set_sample_params(amounts=np.array([30000, 80000, 150000, 5000]))
+
+    **引用**
+
+    按风险敞口/金额加权，等价于以"预期损失金额"为代价的样本级成本敏感学习，理论框架见
+    Elkan, C. (2001). *The Foundations of Cost-Sensitive Learning.* IJCAI 2001。属信贷
+    业务驱动设计。
     """
 
     def __init__(

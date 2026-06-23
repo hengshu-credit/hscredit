@@ -386,22 +386,41 @@ class LogisticRegression(SklearnLogisticRegression):
         return scipy.special.softmax(decision, axis=1)
 
     def predict_proba(self, X: Union[pd.DataFrame, np.ndarray]) -> np.ndarray:
-        """预测概率，必要时自动应用 WOE 列方向调整."""
+        """预测各类别概率（评分卡建模常用，输入通常为 WOE 数据）。
+
+        当启用 ``positive_woe_coef`` 时，会按训练阶段确定的 WOE 列方向自动调整输入，
+        保证概率与评分卡分数方向一致。
+
+        :param X: 特征矩阵（一般为 WOE 编码后数据），DataFrame 或 ndarray
+        :return: 概率数组，shape ``(n_samples, 2)``，第 1 列为正类（坏样本）概率
+        """
         X_model = self._prepare_input_for_model(X)
         return self._predict_proba_from_prepared_input(X_model)
 
     def predict_log_proba(self, X: Union[pd.DataFrame, np.ndarray]) -> np.ndarray:
-        """预测对数概率，必要时自动应用 WOE 列方向调整."""
+        """预测各类别的对数概率（``ln(predict_proba)``，数值已做下限裁剪）。
+
+        :param X: 特征矩阵，DataFrame 或 ndarray
+        :return: 对数概率数组，shape ``(n_samples, 2)``
+        """
         probabilities = self.predict_proba(X)
         return np.log(np.clip(probabilities, 1e-15, 1.0))
 
     def decision_function(self, X: Union[pd.DataFrame, np.ndarray]) -> np.ndarray:
-        """计算决策函数，必要时自动应用 WOE 列方向调整."""
+        """计算线性决策值（log-odds），必要时自动应用 WOE 列方向调整。
+
+        :param X: 特征矩阵，DataFrame 或 ndarray
+        :return: 决策函数值数组（``> 0`` 判为正类）
+        """
         X_model = self._prepare_input_for_model(X)
         return super().decision_function(X_model)
 
     def predict(self, X: Union[pd.DataFrame, np.ndarray]) -> np.ndarray:
-        """预测类别，必要时自动应用 WOE 列方向调整."""
+        """预测类别标签（阈值为决策值 0），必要时自动应用 WOE 列方向调整。
+
+        :param X: 特征矩阵，DataFrame 或 ndarray
+        :return: 预测类别数组
+        """
         X_model = self._prepare_input_for_model(X)
         decision = super().decision_function(X_model)
         if np.ndim(decision) == 1:
@@ -850,9 +869,23 @@ class LogisticRegression(SklearnLogisticRegression):
         verbose=True,
         **kwargs
     ):
-        """生成风控建模报告（与 BaseRiskModel.report 接口一致）.
+        """生成风控建模报告（与 :meth:`BaseRiskModel.report` 接口一致）。
 
-        :return: QuickModelReport 实例
+        在训练/测试集上汇总模型表现（KS、AUC、分数分布、逾期率等），可选导出 Excel。
+
+        :param datasets: 数据集字典（如 ``{'train': (X, y), 'test': (X, y)}``），与
+            ``X_train``/``y_train``/``X_test``/``y_test`` 二选一
+        :param X_train: 训练特征，与 ``datasets`` 二选一
+        :param y_train: 训练标签
+        :param X_test: 测试特征，可选
+        :param y_test: 测试标签，可选
+        :param overdue: 逾期天数字段名（多标签分析时使用），可选
+        :param dpds: 逾期定义 DPD（如 ``[7, 3]``），可选
+        :param excel_path: 报告导出的 Excel 路径，提供则落盘，可选
+        :param verbose: 是否打印进度，默认 ``True``
+        :param kwargs: 透传给报告生成器的其他参数
+        :return: ``QuickModelReport`` 实例
+        :raises NotFittedError: 模型尚未训练时
         """
         check_is_fitted(self)
         from ....report import auto_model_report
@@ -971,7 +1004,12 @@ class LogisticRegression(SklearnLogisticRegression):
         return model
 
     def get_model_info(self) -> dict:
-        """获取模型信息（与 BaseRiskModel.get_model_info 接口一致）."""
+        """获取模型摘要信息（与 :meth:`BaseRiskModel.get_model_info` 接口一致）。
+
+        :return: 含 ``model_type`` / ``objective`` / ``n_features`` / ``n_classes`` /
+            ``params`` 等键的字典（LR 无 boosting 迭代，故 ``best_iteration``/``best_score`` 为 None）
+        :raises NotFittedError: 模型尚未训练时
+        """
         check_is_fitted(self)
         info = {
             'model_type': self.__class__.__name__,
@@ -986,7 +1024,14 @@ class LogisticRegression(SklearnLogisticRegression):
         return info
 
     def get_native_model(self):
-        """获取底层模型（返回自身，因为 LR 不包装底层模型）."""
+        """获取底层原生模型（与 :meth:`BaseRiskModel.get_native_model` 接口一致）。
+
+        本类直接继承 sklearn ``LogisticRegression`` 并未包装额外底层模型，故返回自身，
+        便于与 boosting 模型（返回各自原生 booster）的统一调用。
+
+        :return: self
+        :raises NotFittedError: 模型尚未训练时
+        """
         check_is_fitted(self)
         return self
 

@@ -37,6 +37,11 @@ class KSMetric(BaseMetric):
     ...     feval=ks_metric.to_lightgbm(),
     ...     num_boost_round=100
     ... )
+
+    **引用**
+
+    KS（Kolmogorov–Smirnov）统计量：https://en.wikipedia.org/wiki/Kolmogorov–Smirnov_test ；
+    其在信用评分中的应用见 Siddiqi, N. (2006). *Credit Risk Scorecards.* Wiley。
     """
 
     def __init__(self, name: str = "ks"):

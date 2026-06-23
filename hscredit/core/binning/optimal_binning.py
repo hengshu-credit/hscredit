@@ -65,13 +65,32 @@ class OptimalBinning(BaseBinning):
        预分箱+二次分箱的两阶段分箱流程
 
     :param target: 目标变量列名，默认为'target'
-    :param method: 分箱方法，可选:
-        - 基础方法: 'uniform', 'quantile', 'tree', 'chi'
-        - 优化方法: 'best_ks', 'best_iv', 'mdlp'
-        - 运筹规划: 'or_tools'
-        - 高级方法: 'cart', 'kmeans', 'monotonic', 'genetic',
-                   'smooth', 'kernel_density', 'best_lift', 'target_bad_rate'
-        默认为'mdlp'
+    :param method: 分箱方法，默认为 ``'mdlp'``。可取以下枚举值（按类别）：
+
+        *无监督（不使用标签决定切分）*
+
+        - ``'uniform'``：等距分箱，按数值范围等宽切分，快但对偏态敏感
+        - ``'quantile'``：等频分箱，各箱样本量均衡，对异常值稳健，常作预分箱
+        - ``'kmeans'``：K-Means 聚类分箱，按数值聚类结构切分，适合自然分组
+        - ``'kernel_density'``：核密度分箱，以分布谷值为边界，适合多峰分布
+
+        *有监督（结合标签寻优）*
+
+        - ``'tree'``：决策树分箱，取决策树分裂点，贴合目标
+        - ``'cart'``：CART 分箱（对齐 optbinning 预分箱），支持 p-value 检验/回归目标
+        - ``'chi'``：卡方分箱（ChiMerge），合并分布无显著差异的相邻箱
+        - ``'mdlp'``：MDLP 信息论分箱，自动确定分箱数（默认）
+        - ``'best_ks'``：最大化 KS 统计量
+        - ``'best_iv'``：最大化 IV（信息价值），评分卡常用
+        - ``'best_lift'``：最大化头部箱提升度 Lift，偏策略拒绝场景
+        - ``'target_bad_rate'``：按目标坏样本率梯度切分
+        - ``'monotonic'``：单调最优分箱，强约束坏样本率/WOE 单调（含 U/倒U）
+        - ``'genetic'``：遗传算法全局寻优，约束复杂时使用
+
+        *运筹规划（数学规划全局最优）*
+
+        - ``'or_tools'``：基于 Google OR-Tools 的整数规划分箱
+        - ``'cp_sat'``：基于 CP-SAT 求解器的约束规划分箱
     :param max_n_bins: 最大分箱数，默认为5
     :param min_n_bins: 最小分箱数，默认为2
     :param min_bin_size: 每箱最小样本数或占比，默认为0.01
@@ -135,6 +154,16 @@ class OptimalBinning(BaseBinning):
     >>> # 使用quantile预分箱（先将数据分成20等份，再进行MDLP分箱）
     >>> binner = OptimalBinning(method='mdlp', prebinning='quantile', prebinning_params={'max_n_bins': 20})
     >>> binner.fit(X, y)
+    >>> # 自动为某特征选择最优分箱方法
+    >>> best = OptimalBinning.auto_select_method(X, y, 'age')
+    >>> binner = OptimalBinning(method=best).fit(X, y)
+
+    **引用**
+
+    最优分箱（optimal binning）的两阶段（预分箱 + 二次合并）框架与单调/规划求解参考
+    optbinning：Navas-Palencia, G. (2020). *Optimal binning: mathematical programming
+    formulation.* arXiv:2001.08025. https://arxiv.org/abs/2001.08025 ；
+    各子方法的具体出处见对应分箱类文档。
     """
 
     # 所有支持的分箱方法

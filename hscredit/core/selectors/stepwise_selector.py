@@ -106,6 +106,12 @@ class StepwiseSelector(BaseFeatureSelector):
     ... )
     >>> selector.fit(X, y)
     >>> print(selector.selected_features_)
+
+    **引用**
+
+    逐步回归参见 Hocking, R. R. (1976). *The Analysis and Selection of Variables in
+    Linear Regression.* Biometrics；准则出处：AIC = Akaike (1974)、BIC = Schwarz (1978)。
+    实现风格对齐 toad / scorecardpipeline 的 ``stepwise``。
     """
 
     def __init__(

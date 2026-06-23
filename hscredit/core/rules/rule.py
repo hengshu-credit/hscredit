@@ -1,14 +1,23 @@
 """规则引擎.
 
-提供规则定义、评估和规则挖掘功能。
+提供基于 pandas eval/query 语法的规则定义、评估、组合与效果评估能力。核心类
+:class:`Rule` 支持用 ``&``/``|``/``~``/``^`` 组合多条规则，并通过 :meth:`Rule.report`
+输出风控口径的命中率、坏账率、LIFT、风险拒绝比等指标；辅助函数
+:func:`get_columns_from_query` / :func:`get_rule_columns` 从表达式解析所引用的列名。
 
 **参考样例**
 
 >>> from hscredit.core.rules import Rule, get_columns_from_query, get_rule_columns
 >>> rule1 = Rule("age > 18", name="成年规则")
 >>> rule2 = Rule("income > 5000", name="高收入规则")
->>> cols = get_columns_from_query("age > 18 and income < 5000")
->>> print(cols)
+>>> combined = rule1 & rule2          # 复合规则
+>>> get_columns_from_query("age > 18 and income < 5000")
+['age', 'income']
+
+**引用**
+
+- pandas eval/query 表达式语法：
+  https://pandas.pydata.org/docs/user_guide/enhancingperf.html#expression-evaluation-via-eval
 """
 
 import ast
@@ -93,18 +102,37 @@ def get_columns_from_query(query_str: str) -> List[str]:
 
 
 class RuleState(str, Enum):
-    """规则状态枚举."""
+    """规则生命周期状态枚举。
+
+    继承 ``str``，可直接与字符串比较。:class:`Rule` 用它标记是否已执行过 predict，
+    从而约束 :meth:`Rule.result` 等依赖结果的方法。
+
+    **枚举值**
+
+    - ``INITIALIZED`` (``"initialized"``)：规则已创建但尚未调用 :meth:`Rule.predict`，
+      此时无可用结果
+    - ``APPLIED`` (``"applied"``)：规则已对某数据集执行过 :meth:`Rule.predict`，
+      ``result_`` 中存有最近一次命中结果
+    """
     INITIALIZED = "initialized"
     APPLIED = "applied"
 
 
 class RuleStateError(StateError):
-    """规则状态错误."""
+    """规则状态异常基类。
+
+    当在规则不允许的状态下调用方法时抛出，继承自
+    :class:`~hscredit.exceptions.StateError`。
+    """
     pass
 
 
 class RuleUnAppliedError(RuleStateError):
-    """规则未应用错误."""
+    """规则尚未应用异常。
+
+    在未先调用 :meth:`Rule.predict` 的情况下访问 :meth:`Rule.result` 等依赖预测
+    结果的方法时抛出。
+    """
     pass
 
 
@@ -170,7 +198,22 @@ class Rule:
         return f"Rule({repr(self.expr)})"
 
     def __and__(self, other):
-        """规则与操作。"""
+        """规则"与"（AND）组合，对应 Python ``&`` 运算符。
+
+        将两条规则用 ``&`` 拼接为复合规则，命中条件为两者同时成立；表达式会经
+        :func:`beautify_expr` 美化与 :func:`optimize_expr` 化简，名称拼为
+        ``(A)_AND_(B)``，权重取两者较大值。
+
+        :param other: 另一条 :class:`Rule` 规则
+        :return: 组合后的新 :class:`Rule`（不修改原规则）
+        :raises InputTypeError: ``other`` 不是 :class:`Rule` 时
+
+        **参考样例**
+
+        >>> r = Rule("age > 18") & Rule("income > 5000")
+        >>> r.expr
+        'age > 18 & income > 5000'
+        """
         if not isinstance(other, Rule):
             raise InputTypeError(f"unsupported operand type(s) for &: 'Rule' and '{type(other).__name__}'")
         combined_expr = f"({self.expr}) & ({other.expr})"
@@ -185,7 +228,21 @@ class Rule:
         )
 
     def __or__(self, other):
-        """规则或操作。"""
+        """规则"或"（OR）组合，对应 Python ``|`` 运算符。
+
+        将两条规则用 ``|`` 拼接为复合规则，命中条件为两者任一成立；表达式经美化与
+        化简，名称拼为 ``(A)_OR_(B)``，权重取两者较大值。
+
+        :param other: 另一条 :class:`Rule` 规则
+        :return: 组合后的新 :class:`Rule`（不修改原规则）
+        :raises InputTypeError: ``other`` 不是 :class:`Rule` 时
+
+        **参考样例**
+
+        >>> r = Rule("age > 18") | Rule("income > 5000")
+        >>> r.expr
+        'age > 18 | income > 5000'
+        """
         if not isinstance(other, Rule):
             raise InputTypeError(f"unsupported operand type(s) for |: 'Rule' and '{type(other).__name__}'")
         combined_expr = f"({self.expr}) | ({other.expr})"
@@ -200,7 +257,19 @@ class Rule:
         )
 
     def __invert__(self):
-        """规则非操作。"""
+        """规则"非"（NOT）取反，对应 Python ``~`` 运算符。
+
+        对规则整体取反得到新规则，命中条件为原规则不成立；名称拼为 ``NOT_(A)``，
+        权重保持不变。
+
+        :return: 取反后的新 :class:`Rule`（不修改原规则）
+
+        **参考样例**
+
+        >>> r = ~Rule("age > 18")
+        >>> r.expr
+        '~(age > 18)'
+        """
         combined_expr = f"~({self.expr})"
         optimized = optimize_expr(beautify_expr(combined_expr))
         return Rule(
@@ -211,7 +280,21 @@ class Rule:
         )
 
     def __xor__(self, other):
-        """规则异或操作。"""
+        """规则"异或"（XOR）组合，对应 Python ``^`` 运算符。
+
+        命中条件为两条规则恰有一条成立。由于 pandas eval 不支持布尔 ``^``，内部以等价
+        表达式 ``(A & ~B) | (~A & B)`` 实现；名称拼为 ``(A)_XOR_(B)``，权重取较大值。
+
+        :param other: 另一条 :class:`Rule` 规则
+        :return: 组合后的新 :class:`Rule`（不修改原规则）
+        :raises InputTypeError: ``other`` 不是 :class:`Rule` 时
+
+        **参考样例**
+
+        >>> r = Rule("age > 18") ^ Rule("income > 5000")
+        >>> r.expr
+        '((age > 18) & ~(income > 5000)) | (~(age > 18) & (income > 5000))'
+        """
         if not isinstance(other, Rule):
             raise InputTypeError(f"unsupported operand type(s) for ^: 'Rule' and '{type(other).__name__}'")
         # pandas eval 不支持布尔 ^（BitXor），用等价的 (a & ~b) | (~a & b) 表达异或
@@ -229,7 +312,15 @@ class Rule:
         )
 
     def __eq__(self, other):
-        """规则相等比较。"""
+        """规则相等比较，对应 Python ``==`` 运算符。
+
+        两条规则当且仅当 ``expr`` 表达式字符串完全相同时视为相等（与 :meth:`__hash__`
+        保持一致，因此 :class:`Rule` 可放入 set / 作为 dict 键）。
+
+        :param other: 另一条 :class:`Rule` 规则
+        :return: 两者表达式是否相同（bool）
+        :raises InputTypeError: ``other`` 不是 :class:`Rule` 时
+        """
         if not isinstance(other, Rule):
             raise InputTypeError(f"Input should be of type Rule, got {type(other)} instead.")
         return self.expr == other.expr

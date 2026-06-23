@@ -53,6 +53,13 @@ class MDLPBinning(BaseBinning):
     >>> binner = MDLPBinning(max_n_bins=5, min_n_bins=2)
     >>> binner.fit(X_train, y_train)
     >>> X_binned = binner.transform(X_test)
+
+    **引用**
+
+    Fayyad, U. M., & Irani, K. B. (1993). *Multi-interval discretization of
+    continuous-valued attributes for classification learning.* IJCAI-93.
+    https://trs.jpl.nasa.gov/handle/2014/35171 ；
+    MDLP（最小描述长度原理）参见 https://en.wikipedia.org/wiki/Minimum_description_length
     """
 
     def __init__(

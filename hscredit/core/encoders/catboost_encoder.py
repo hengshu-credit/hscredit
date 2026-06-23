@@ -40,6 +40,17 @@ class CatBoostEncoder(BaseEncoder):
     >>> # 添加噪声
     >>> encoder = CatBoostEncoder(cols=['category'], sigma=0.05, random_state=42)
     >>> X_encoded = encoder.fit_transform(X, y)
+
+    **注意**
+
+    与普通目标编码相比，本编码器对样本随机排序后只用"当前样本之前"的目标累积统计来编码
+    （ordered target statistics），从而显著降低目标泄漏；``random_state`` 决定排序，
+    影响结果可复现性。
+
+    **引用**
+
+    Prokhorenkova, L. et al. (2018). *CatBoost: unbiased boosting with categorical
+    features.* NeurIPS 2018. https://arxiv.org/abs/1706.09516
     """
 
     def _get_category_cols(self, X: pd.DataFrame) -> List[str]:

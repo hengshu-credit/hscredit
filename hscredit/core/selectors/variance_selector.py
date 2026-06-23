@@ -44,6 +44,16 @@ class VarianceSelector(BaseFeatureSelector):
         >>> selector.fit(X)
         >>> print(selector.selected_features_)
         ['a', 'c']
+
+    **注意**
+
+    方差筛选为无监督方法，不使用标签 ``y``；方差受量纲影响，不同尺度特征建议先标准化
+    再比较，否则大量纲特征会因方差天然偏大而被保留。
+
+    **引用**
+
+    对齐 sklearn ``VarianceThreshold``：
+    https://scikit-learn.org/stable/modules/generated/sklearn.feature_selection.VarianceThreshold.html
     """
 
     def __init__(

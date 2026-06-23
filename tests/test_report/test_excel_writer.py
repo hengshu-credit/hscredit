@@ -282,6 +282,60 @@ class TestExcelChart:
         writer.insert_bin_chart2sheet(ws, partial, "B2")
         assert len(ws._charts) == 1
 
+    def test_bin_chart_axis_graph_is_consistent(self):
+        """回归：双轴分箱图必须有2个分类轴+2个数值轴且 crossAx 两两一致。
+
+        若折线与柱状共用同一条分类轴，会产生悬空的次数值轴（crossAx 指向不回指的轴），
+        Excel 打开时会判定图形损坏并删除整个 drawing 部件。
+        """
+        import re
+        import zipfile
+
+        writer = ExcelWriter()
+        ws = writer.get_sheet_by_name("分箱图")
+        writer.insert_df2sheet(ws, self.bin_table, "B2", fill=True)
+        writer.insert_bin_chart2sheet(ws, self.bin_table, "B2", title="某特征分箱图")
+        writer.save(self.test_file)
+
+        with zipfile.ZipFile(self.test_file) as z:
+            chart_xml = z.read("xl/charts/chart1.xml").decode("utf-8")
+
+        # 收集每条轴的 (自身id -> crossAx 目标)
+        axes = {}
+        for kind in ("catAx", "valAx"):
+            for m in re.finditer(r"<(\w+:)?%s>(.*?)</(\w+:)?%s>" % (kind, kind), chart_xml, re.S):
+                body = m.group(0)
+                sid = re.search(r'<\w*:?axId val="(\d+)"/>', body)
+                cross = re.search(r'<\w*:?crossAx val="(\d+)"/>', body)
+                assert sid and cross, "轴缺少 axId 或 crossAx"
+                axes[sid.group(1)] = cross.group(1)
+
+        n_cat = len(re.findall(r"<\w*:?catAx>", chart_xml))
+        n_val = len(re.findall(r"<\w*:?valAx>", chart_xml))
+        assert n_cat == 2 and n_val == 2, "双轴图应有2个分类轴+2个数值轴，实际 cat=%d val=%d" % (n_cat, n_val)
+
+        # crossAx 必须两两互指：A.crossAx=B 则 B.crossAx=A
+        for sid, target in axes.items():
+            assert target in axes, "crossAx 目标 %s 不存在" % target
+            assert axes[target] == sid, "crossAx 不一致: %s->%s 但 %s->%s" % (sid, target, target, axes[target])
+
+    def test_bin_chart_without_header(self):
+        """回归：header=False 时系列取数从数据首行起，不引用数据上方空行，文件合法"""
+        writer = ExcelWriter()
+        ws = writer.get_sheet_by_name("分箱图")
+        writer.insert_df2sheet(ws, self.bin_table, "B2", header=False)
+        writer.insert_bin_chart2sheet(ws, self.bin_table, "B2", header=False)
+        writer.save(self.test_file)
+
+        import zipfile
+        import xml.dom.minidom as minidom
+        with zipfile.ZipFile(self.test_file) as z:
+            for n in z.namelist():
+                if n.endswith(".xml") or n.endswith(".rels"):
+                    minidom.parseString(z.read(n))  # XML 合法
+        loaded_wb = load_workbook(self.test_file)
+        assert len(loaded_wb["分箱图"]._charts) == 1
+
 
 def column_letter_to_index(letter):
     from openpyxl.utils import column_index_from_string
@@ -870,6 +924,27 @@ class TestPivotTable:
         ws = writer.get_sheet_by_name("透视分析")
         with pytest.raises(ValueError):
             writer.insert_pivot_chart2sheet(ws, "H2")
+
+    def test_long_pivot_name_source_sheet_within_limit(self):
+        """回归：超长透视表名自动创建的源数据表名应 ≤31字符、保留'源数据'标识且唯一，文件合法"""
+        long_name = "超长透视表名称用于触发工作表名称超过三十一个字符的边界情况测试用例"
+        writer = ExcelWriter()
+        ws = writer.get_sheet_by_name("透视表")
+        writer.insert_pivot_table2sheet(
+            ws, self.df, "B2", rows="商品类别", values=[("放款金额", "sum")], name=long_name
+        )
+        writer.insert_pivot_table2sheet(
+            ws, self.df, "B20", rows="商品类别", values=[("放款金额", "sum")], name=long_name + "X"
+        )
+
+        src_sheets = [s for s in writer.workbook.sheetnames if "源数据" in s]
+        assert len(src_sheets) == 2
+        assert all(len(s) <= 31 for s in src_sheets)
+        assert len(set(src_sheets)) == 2  # 唯一不重名
+
+        writer.save(self.test_file)
+        self._assert_all_xml_wellformed(self.test_file)
+        load_workbook(self.test_file)
 
 
 if __name__ == "__main__":

@@ -40,6 +40,17 @@ class OrdinalEncoder(BaseEncoder):
     >>> mapping = {'education': {'high': 3, 'medium': 2, 'low': 1}}
     >>> encoder = OrdinalEncoder(cols=['education'], mapping=mapping)
     >>> X_encoded = encoder.fit_transform(X)
+
+    **注意**
+
+    默认整数映射不含真实序关系，仅对天然有序的类别（如学历 高/中/低）通过 ``mapping``
+    显式指定顺序才有意义；无序类别用于线性模型时应改用 OneHot 或 WOE 编码，否则会引入
+    虚假的大小关系。
+
+    **引用**
+
+    序数编码参见 sklearn ``OrdinalEncoder``：
+    https://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.OrdinalEncoder.html
     """
 
     def _get_category_cols(self, X: pd.DataFrame) -> List[str]:

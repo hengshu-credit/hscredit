@@ -56,7 +56,14 @@ class UniformBinning(BaseBinning):
     3. 支持通过left_clip/right_clip截断异常值
     4. 支持通过special_codes处理特殊值（如-999表示缺失）
     5. 默认force_numerical=True，确保进行数值型等距分箱
-    6. 计算速度快，实现简单
+    6. 计算速度快，实现简单；为无监督方法，不使用标签 ``y`` 决定切分
+    7. 对偏态分布或含极端值的特征不友好（可能某些箱样本极少），此时优先用等频分箱
+
+    **引用**
+
+    等距（equal-width）离散化综述见 Dougherty, J., Kohavi, R., & Sahami, M. (1995).
+    *Supervised and Unsupervised Discretization of Continuous Features.* ICML-95.
+    https://ai.stanford.edu/~ronnyk/disc.pdf
     """
 
     def __init__(

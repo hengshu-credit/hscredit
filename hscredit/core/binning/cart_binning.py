@@ -73,6 +73,15 @@ class CartBinning(BaseBinning):
     3. 可设置类别权重处理不平衡数据
     4. 支持 p-value 检验确保分箱统计显著性
     5. 支持单调性约束
+
+    与 :class:`TreeBinning` 的区别：CART 额外提供 p-value 显著性检验合并、相邻箱坏样本率
+    最小差异约束（``min_event_rate_diff``）及回归目标支持，预分箱流程对齐 optbinning。
+
+    **引用**
+
+    Breiman, L., Friedman, J., Olshen, R., & Stone, C. (1984). *Classification and
+    Regression Trees.* Wadsworth；预分箱实现参考 optbinning
+    https://gnpalencia.org/optbinning/
     """
 
     def __init__(

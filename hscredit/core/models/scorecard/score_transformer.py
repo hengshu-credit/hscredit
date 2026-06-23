@@ -52,7 +52,7 @@ direction 参数通过改变 B 的符号来控制分数方向:
 
 **使用示例**
 
->>> from hscredit.core.models.probability_to_score import ScoreTransformer
+>>> from hscredit.core.models import ScoreTransformer
 >>>
 >>> # 假设已有概率值(从任何模型获取)
 >>> proba = model.predict_proba(X)[:, 1]  # 或其他方式获取概率
@@ -108,6 +108,29 @@ class BaseScoreTransformer(BaseEstimator, ABC):
         - 'auto': 根据lower/upper自动判断
     :param decimal: 评分精度(小数位数)，默认0(整数)
     :param clip: 是否对超出范围的评分进行截断，默认True
+
+    **子类**
+
+    - :class:`StandardScoreTransformer`：标准 log-odds 评分卡（``Score = A - B·ln(odds)``）
+    - :class:`LinearScoreTransformer`：概率线性映射到分数区间
+    - :class:`QuantileScoreTransformer`：按概率分位数映射，保持排序
+    - :class:`BoxCoxScoreTransformer`：odds 经 Box-Cox 幂变换后线性映射
+    - :class:`ScoreTransformer`：统一入口，按 ``method`` 选择上述实现
+
+    所有子类仅以"概率"为输入（不依赖原始模型），共享 :meth:`predict`（含截断与取整）、
+    :meth:`save` / :meth:`load` 持久化能力。
+
+    **参考样例**
+
+    >>> from hscredit.core.models import ScoreTransformer
+    >>> proba = model.predict_proba(X)[:, 1]
+    >>> t = ScoreTransformer(method='standard', lower=300, upper=1000,
+    ...                      base_odds=0.02, base_score=600, pdo=20)
+    >>> scores = t.fit(proba).predict(proba)
+
+    **引用**
+
+    log-odds 评分卡刻度法见 Siddiqi, N. (2006). *Credit Risk Scorecards.* Wiley。
     """
 
     def __init__(
@@ -342,6 +365,11 @@ class StandardScoreTransformer(BaseScoreTransformer):
     >>> scores = transformer.predict(proba_test)  # 输出评分
     >>> # 查看评分与odds对应关系
     >>> ref = transformer.score_odds_reference
+
+    **引用**
+
+    标准评分卡刻度公式 ``Score = A - B·ln(odds)``、``B = pdo/ln(rate)`` 出自
+    Siddiqi, N. (2006). *Credit Risk Scorecards.* Wiley。
     """
 
     def __init__(
@@ -906,6 +934,12 @@ class BoxCoxScoreTransformer(BaseScoreTransformer):
     ...     lower=0, upper=100, direction='ascending'
     ... )
     >>> fraud_transformer.fit(proba)
+
+    **引用**
+
+    Box, G. E. P., & Cox, D. R. (1964). *An Analysis of Transformations.* Journal of
+    the Royal Statistical Society, Series B, 26(2). λ 的 MLE 估计基于
+    ``scipy.stats.boxcox``：https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.boxcox.html
     """
 
     def __init__(
@@ -1126,7 +1160,7 @@ class ScoreTransformer(BaseScoreTransformer):
     >>> fraud_scores = transformer.predict(proba_test)
 
     **完整示例**
-    >>> from hscredit.core.models.probability_to_score import ScoreTransformer
+    >>> from hscredit.core.models import ScoreTransformer
     >>>
     >>> # 从模型获取概率值(可从任何模型获取)
     >>> proba_train = model.predict_proba(X_train)[:, 1]

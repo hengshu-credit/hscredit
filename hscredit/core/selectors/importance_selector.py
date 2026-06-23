@@ -58,6 +58,18 @@ class FeatureImportanceSelector(BaseFeatureSelector):
         >>> rf = RandomForestClassifier(n_estimators=100, random_state=42)
         >>> selector = FeatureImportanceSelector(rf, threshold=0.1)
         >>> selector.fit(X, y)
+
+    **注意**
+
+    重要性来源依模型而定（树模型为 ``feature_importances_``，线性模型为 ``|coef_|``），
+    见 :func:`~hscredit.core.selectors.base.get_feature_importances`；不同来源不可直接横向
+    比较。基于 impurity 的树重要性对高基数特征有偏，必要时配合
+    :class:`NullImportanceSelector` 校正。
+
+    **引用**
+
+    嵌入式重要性筛选对齐 sklearn ``SelectFromModel``：
+    https://scikit-learn.org/stable/modules/generated/sklearn.feature_selection.SelectFromModel.html
     """
 
     def __init__(

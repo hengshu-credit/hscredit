@@ -75,6 +75,12 @@ class TopKBadCaptureLoss(BaseLoss):
     ...     fobj=loss.to_lightgbm(),
     ...     num_boost_round=200
     ... )
+
+    **引用**
+
+    面向头部召回（Recall@top-k / Precision@k）的优化目标，对应策略名单/催收/反欺诈的
+    资源受限决策场景，属业务驱动设计；与排序度量优化相关，参见 Joachims, T. (2005).
+    *A Support Vector Method for Multivariate Performance Measures.* ICML 2005。
     """
 
     def __init__(

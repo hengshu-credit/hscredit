@@ -33,8 +33,15 @@ class KernelDensityBinning(BaseBinning):
     - 支持检测数据分布的平滑程度
     - 改进的带宽自适应
 
-    :param kernel: 核函数类型，默认为'gaussian'
-    :param bandwidth: 带宽，默认为'isj'，可选'isj', 'scott', 'silverman', 'normal_reference'或具体数值
+    :param kernel: 核密度估计的核函数类型，默认为 ``'gaussian'``（高斯核，最常用且平滑）
+    :param bandwidth: 核密度估计带宽（平滑程度），默认为 ``'isj'``。可取以下枚举值或具体数值：
+
+        - ``'isj'``：Improved Sheather–Jones 法自适应选择（对多峰分布更稳健，推荐）
+        - ``'scott'``：Scott 经验法则 ``n^(-1/5)``，计算快，适合近正态分布
+        - ``'silverman'``：Silverman 经验法则，与 Scott 类似、对长尾略保守
+        - ``'normal_reference'``：正态参考法则
+        - ``float``：直接指定固定带宽（值越大曲线越平滑、峰越少）
+
     :param min_peak_height: 最小峰高（相对于最大密度），默认为0.05
     :param min_peak_distance: 峰之间的最小距离（相对于数据范围），默认为0.05
     :param max_n_bins: 最大分箱数，默认为5
@@ -50,6 +57,26 @@ class KernelDensityBinning(BaseBinning):
     :param missing_separate: 是否将缺失值单独分为一箱，默认为True
     :param random_state: 随机种子，默认为None
     :param verbose: 是否输出详细信息，默认为False
+
+    **参考样例**
+
+    >>> from hscredit.core.binning import KernelDensityBinning
+    >>> binner = KernelDensityBinning(bandwidth='isj', max_n_bins=5)
+    >>> binner.fit(X, y)
+    >>> X_binned = binner.transform(X)
+
+    **注意**
+
+    核密度分箱以数据分布的"谷值"（密度局部极小处）作为切分点，使分箱边界落在自然的
+    低密度间隔上，适合明显多峰的特征；当 ``fallback_to_iv=True`` 且峰谷检测失败时，
+    自动回退到基于 IV 的切分策略。
+
+    **引用**
+
+    核密度估计（KDE）：Rosenblatt (1956), Parzen (1962)，
+    https://en.wikipedia.org/wiki/Kernel_density_estimation ；
+    带宽选择 ISJ 见 Botev, Z. I. et al. (2010). *Kernel density estimation via
+    diffusion.* Annals of Statistics.
     """
 
     def __init__(
@@ -102,7 +129,17 @@ class KernelDensityBinning(BaseBinning):
         y: Optional[Union[pd.Series, np.ndarray]] = None,
         **kwargs
     ) -> 'KernelDensityBinning':
-        """拟合核密度分箱."""
+        """拟合核密度分箱。
+
+        对每个特征做核密度估计，以密度曲线的谷值作为切分点（必要时回退到 IV 策略）。
+        支持 sklearn 与 scorecardpipeline 两种调用风格，详见 :meth:`BaseBinning.fit`。
+
+        :param X: 训练数据，shape ``(n_samples, n_features)``，DataFrame 或 ndarray
+        :param y: 二分类目标变量（0=好/1=坏）；当 ``use_target=True`` 时参与切分点优化，
+            scorecardpipeline 风格下可省略
+        :param kwargs: 透传给基类的其他参数
+        :return: 拟合后的分箱器自身（便于链式调用）
+        """
         X, y = self._check_input(X, y)
 
         def _fit_one(feature):

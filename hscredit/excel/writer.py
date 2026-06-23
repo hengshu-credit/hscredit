@@ -43,8 +43,6 @@ from . import _pivot
 # hscredit 可视化主题配色（与 core.viz 保持一致）：主题蓝 / 坏样本红 / 提升橙
 HSCREDIT_CHART_COLORS = ["2639E9", "F76E6C", "FE7715"]
 
-warnings.filterwarnings("ignore")
-
 
 class ExcelWriter:
     """Excel写入器，提供专业的Excel报告生成功能。
@@ -815,6 +813,8 @@ class ExcelWriter:
         data_first_row = start_row + n_header_rows
         data_last_row = data_first_row + len(data) - 1
         header_row = data_first_row - 1  # 表头所在行（取值列标题）
+        # 系列取数起始行：有表头时从表头行起（标题取自首格），无表头时从数据首行起
+        series_min_row = header_row if header else data_first_row
 
         # 分类轴列
         if category_column is None:
@@ -832,8 +832,8 @@ class ExcelWriter:
         valid_bar_cols = [c for c in bar_columns if _col_letter_idx(c) is not None]
         for i, col_name in enumerate(valid_bar_cols):
             col_idx = _col_letter_idx(col_name)
-            ref = Reference(worksheet, min_col=col_idx, min_row=header_row, max_row=data_last_row)
-            series = Series(ref, title_from_data=True)
+            ref = Reference(worksheet, min_col=col_idx, min_row=series_min_row, max_row=data_last_row)
+            series = Series(ref, title_from_data=True) if header else Series(ref, title=col_name)
             color = HSCREDIT_CHART_COLORS[i % len(HSCREDIT_CHART_COLORS)]
             try:
                 series.graphicalProperties.solidFill = color
@@ -843,16 +843,24 @@ class ExcelWriter:
             bar.series.append(series)
 
         # 折线图：坏样本率（右轴）
+        # 双坐标轴组合图必须为折线分配独立的分类轴（axId=500）与数值轴（axId=200），
+        # 形成「分类轴↔数值轴」两两交叉引用的完整轴图；折线分类轴隐藏（delete），
+        # 否则只有一条分类轴会导致次数值轴 crossAx 指向不一致，Excel 会判定损坏并删除图形。
         line = LineChart()
+        line.x_axis.axId = 500
+        line.x_axis.crossAx = 200       # 次分类轴 ↔ 次数值轴 互相交叉引用
+        line.x_axis.delete = True
+        line.x_axis.crosses = "max"     # 次数值轴显示在右侧
         line.y_axis.axId = 200
+        line.y_axis.crossAx = 500
         line.y_axis.title = "坏样本率"
         line.y_axis.crosses = "max"
 
         valid_line_cols = [c for c in line_columns if _col_letter_idx(c) is not None]
         for j, col_name in enumerate(valid_line_cols):
             col_idx = _col_letter_idx(col_name)
-            ref = Reference(worksheet, min_col=col_idx, min_row=header_row, max_row=data_last_row)
-            series = Series(ref, title_from_data=True)
+            ref = Reference(worksheet, min_col=col_idx, min_row=series_min_row, max_row=data_last_row)
+            series = Series(ref, title_from_data=True) if header else Series(ref, title=col_name)
             color = HSCREDIT_CHART_COLORS[1] if j == 0 else HSCREDIT_CHART_COLORS[2 % len(HSCREDIT_CHART_COLORS)]
             try:
                 series.graphicalProperties.line.solidFill = color
@@ -1659,10 +1667,8 @@ class ExcelWriter:
         :param color: 颜色值，支持 ``#RRGGBB`` / ``RRGGBB`` / ``AARRGGBB``
         :return: ``AARRGGBB`` 格式颜色（默认不透明 FF）
         """
-        hex_color = str(color).lstrip("#").upper()
-        if len(hex_color) == 6:
-            return "FF" + hex_color
-        return hex_color
+        # 复用 _pivot 中的实现，保持单一来源
+        return _pivot._to_argb(color)
 
     @staticmethod
     def _quote_sheet_title(title: str) -> str:
@@ -1923,6 +1929,38 @@ class ExcelWriter:
             return row, col
         return int(space[0]), int(space[1])
 
+    @staticmethod
+    def _sanitize_sheet_title(title: str) -> str:
+        """将字符串规范为合法的Excel工作表名（替换非法字符并截断到31字符）。
+
+        Excel 工作表名不允许包含 ``: \\ / ? * [ ]``，且长度上限为31个字符。
+
+        :param title: 原始名称
+        :return: 合法的工作表名
+        """
+        cleaned = re.sub(r"[:\\/?*\[\]]", "_", str(title)).strip()
+        return (cleaned[:31] or "Sheet").rstrip()
+
+    def _unique_source_sheet_name(self, name: str) -> str:
+        """为自动创建的源数据表生成合法且唯一的工作表名（≤31字符）。
+
+        :param name: 透视表名称
+        :return: 不与现有工作表重名的合法源数据表名
+        """
+        suffix = "_源数据"
+        # 预留后缀长度，仅截断名称主体，保证 ``_源数据`` 标识不被裁掉且总长 ≤31
+        stem = self._sanitize_sheet_title(name)[: 31 - len(suffix)].rstrip()
+        base = stem + suffix
+        if base not in self.workbook.sheetnames:
+            return base
+        i = 2
+        while True:
+            seq = str(i)
+            candidate = (stem[: 31 - len(suffix) - len(seq)].rstrip() + suffix + seq)
+            if candidate not in self.workbook.sheetnames:
+                return candidate
+            i += 1
+
     def insert_pivot_table2sheet(
         self,
         worksheet: Union[Worksheet, str],
@@ -1951,6 +1989,11 @@ class ExcelWriter:
         ``pivotCacheDefinition`` / ``pivotCacheRecords`` / ``pivotTable`` 等部件注入到
         xlsx 中，生成 Excel 可交互、可刷新的原生数据透视表。透视缓存写入 ``refreshOnLoad="1"``，
         Excel 打开时会基于源数据自动刷新。
+
+        .. note::
+            透视表通过在保存后直接注入 xlsx 内部部件实现。openpyxl 追加模式（``mode='append'``）
+            会基于单元格值/样式重建工作簿，不保留原文件中的透视表、原生图、迷你图与图片。
+            因此请勿用追加模式向已含透视表的文件追加内容，否则原透视表会丢失；建议透视表在最终输出步骤生成。
 
         :param worksheet: 透视表放置的工作表对象或名称
         :param data: 源数据 DataFrame（透视缓存基于此构建）
@@ -2042,7 +2085,7 @@ class ExcelWriter:
         # 解析/写入源数据
         src_row, src_col = self._parse_anchor(source_anchor)
         if source_sheet is None:
-            source_ws = self.get_sheet_by_name("{}_源数据".format(name))
+            source_ws = self.get_sheet_by_name(self._unique_source_sheet_name(name))
             do_write = True if write_source is None else write_source
         else:
             source_ws = source_sheet if isinstance(source_sheet, Worksheet) else self.get_sheet_by_name(source_sheet)
@@ -2441,6 +2484,11 @@ class ExcelWriter:
 
     def save(self, filename: str, close: bool = True) -> None:
         """保存Excel文件。
+
+        .. note::
+            迷你图、数据透视表/透视图均在 openpyxl 保存后通过注入 xlsx 内部 XML 实现。
+            追加模式（``mode='append'``）会基于单元格值/样式重建工作簿，不保留原文件中的
+            迷你图、透视表、原生图与图片，请在最终输出步骤再添加这些内容。
 
         :param filename: 保存路径
         :param close: 是否关闭workbook，默认为True

@@ -48,6 +48,27 @@ class BaseEncoder(BaseEstimator, TransformerMixin, ABC):
     - mapping\_: 编码映射字典，格式为 {col: {category: encoded_value}}
     - cols_: 实际进行编码的列名列表（经过自动识别或过滤后）
     - _dropped_cols: 被删除的方差为0的列
+
+    **参考样例**
+
+    所有子类（WOE/Target/Count/OneHot/Ordinal/Quantile/CatBoost/GBM/Cardinality）
+    共享下述两种调用风格::
+
+        >>> from hscredit.core.encoders import WOEEncoder
+        >>> # sklearn 风格：X、y 分开传
+        >>> enc = WOEEncoder(cols=['city'])
+        >>> X_enc = enc.fit_transform(X, y)
+        >>> # scorecardpipeline 风格：目标列在 df 中，初始化指定 target
+        >>> enc = WOEEncoder(target='target', cols=['city'])
+        >>> X_enc = enc.fit_transform(df)
+        >>> enc.get_mapping('city')        # 查看某列的类别→编码映射
+        >>> enc.export_mapping()           # 导出可序列化映射
+
+    **引用**
+
+    接口约定（``cols`` / ``drop_invariant`` / ``handle_unknown`` / ``handle_missing`` /
+    ``return_df``）对齐 category_encoders 库：
+    https://contrib.scikit-learn.org/category_encoders/
     """
 
     def __init__(

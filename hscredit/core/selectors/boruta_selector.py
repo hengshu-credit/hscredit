@@ -60,6 +60,17 @@ class BorutaSelector(BaseFeatureSelector):
         ... )
         >>> selector.fit(X, y)
         >>> print(selector.selected_features_)
+
+    **注意**
+
+    Boruta 是 all-relevant（保留所有相关特征）而非 minimal-optimal 的方法，倾向于多保留
+    特征；计算量为 ``max_iter × n_estimators``，特征数多时较慢。
+
+    **引用**
+
+    Kursa, M. B., & Rudnicki, W. R. (2010). *Feature Selection with the Boruta
+    Package.* Journal of Statistical Software, 36(11).
+    https://doi.org/10.18637/jss.v036.i11
     """
 
     def __init__(

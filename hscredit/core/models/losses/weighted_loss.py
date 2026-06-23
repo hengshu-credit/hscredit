@@ -40,6 +40,12 @@ class WeightedBCELoss(BaseLoss):
     ...     fobj=loss.to_lightgbm(),
     ...     num_boost_round=100
     ... )
+
+    **引用**
+
+    类别加权（class weighting）是处理不平衡数据的经典成本敏感方法，参见 King, G., & Zeng,
+    L. (2001). *Logistic Regression in Rare Events Data.* Political Analysis 9(2)，
+    以及 Elkan, C. (2001). *The Foundations of Cost-Sensitive Learning.* IJCAI 2001。
     """
 
     def __init__(

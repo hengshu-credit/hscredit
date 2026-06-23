@@ -48,6 +48,17 @@ class OneHotEncoder(BaseEncoder):
     >>> # 删除第一列避免多重共线性
     >>> encoder = OneHotEncoder(cols=['color'], drop='first')
     >>> X_encoded = encoder.fit_transform(X)
+
+    **注意**
+
+    独热编码为无监督方法，列数随类别基数线性增长，仅适合低基数特征；用于线性/逻辑回归时
+    建议 ``drop='first'`` 以消除虚拟变量陷阱（多重共线性），用于树模型可保留全部列。
+
+    **引用**
+
+    虚拟变量（dummy variables）/ one-hot 编码是统计建模标准做法，参见 sklearn
+    ``OneHotEncoder``：
+    https://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.OneHotEncoder.html
     """
 
     def __init__(

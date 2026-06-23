@@ -18,12 +18,13 @@ logger = logging.getLogger(__name__)
 class TreeBinning(BaseBinning):
     """决策树分箱算法.
 
-    使用决策树提取最优分割点进行分箱，基于信息增益选择切分点。
-    支持最大深度、叶子节点数限制和单调性约束。
+    以 sklearn :class:`~sklearn.tree.DecisionTreeClassifier` 对单特征拟合一棵决策树，
+    取其内部节点的分裂阈值作为切分点。分裂以基尼系数 / 信息增益最大化为准则，因而切分
+    天然贴合目标变量。支持最大深度、叶子节点数与单调性约束。
 
-    :param max_depth: 决策树最大深度，默认为5
-    :param max_leaf_nodes: 最大叶子节点数，默认为None
-    :param min_samples_leaf: 叶子节点最小样本数，默认为0.05
+    :param max_depth: 决策树最大深度，默认为5（越大切分越细）
+    :param max_leaf_nodes: 最大叶子节点数（约等于最大分箱数上限），默认为None
+    :param min_samples_leaf: 叶子节点最小样本数（``<1`` 为占比，``>=1`` 为绝对数），默认为0.05
     :param min_n_bins: 最小分箱数，默认为2
     :param max_n_bins: 最大分箱数，默认为10
     :param force_numerical: 是否强制作为数值型处理，默认为False
@@ -49,6 +50,12 @@ class TreeBinning(BaseBinning):
     >>> binner = TreeBinning(max_depth=5, monotonic=True)
     >>> binner.fit(X, y)
     >>> X_binned = binner.transform(X)
+
+    **引用**
+
+    决策树分裂准则参见 Breiman, L. et al. (1984). *Classification and Regression
+    Trees.* Wadsworth；实现基于 sklearn
+    https://scikit-learn.org/stable/modules/generated/sklearn.tree.DecisionTreeClassifier.html
     """
 
     def __init__(

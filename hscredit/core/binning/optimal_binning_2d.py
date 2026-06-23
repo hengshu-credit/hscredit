@@ -141,6 +141,14 @@ class OptimalBinning2D:
         >>> stats = binner.get_stats()          # 两特征统计
         >>> splits = binner.get_splits()        # 两特征切分点
         >>> rules = binner.export_rules()       # 分箱规则（末尾 np.nan 表示缺失箱）
+
+    **引用**
+
+    二维交互最优分箱接口与求解思路参考 optbinning 的 ``OptimalBinning2D``：
+    Navas-Palencia, G. (2020). *Optimal binning: mathematical programming
+    formulation.* arXiv:2001.08025. https://arxiv.org/abs/2001.08025 ；
+    交互效应（feature interaction）背景见
+    https://gnpalencia.org/optbinning/binning_2d.html
     """
 
     def __init__(

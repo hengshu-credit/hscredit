@@ -59,10 +59,12 @@ class BalancedFocalLoss(BaseLoss):
     >>> dtrain = xgb.DMatrix(X_train, label=y_train)
     >>> bst = xgb.train({}, dtrain, obj=loss.to_xgboost(), num_boost_round=100)
 
-    **参考**
+    **引用**
 
-    Cui, Y., et al. "Class-Balanced Loss Based on Effective Number of
-    Samples." CVPR 2019.
+    有效样本数加权出自 Cui, Y., Jia, M., Lin, T.-Y., Song, Y., & Belongie, S. (2019).
+    *Class-Balanced Loss Based on Effective Number of Samples.* CVPR 2019.
+    https://arxiv.org/abs/1901.05555 ；聚焦项来自 Focal Loss（Lin et al., 2017,
+    https://arxiv.org/abs/1708.02002）。
     """
 
     def __init__(

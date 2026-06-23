@@ -26,14 +26,22 @@ class OrdinalRankLoss(BaseLoss):
     :param random_state: 随机种子，保证采样对可复现，默认 42
     :param name: 损失函数名称，默认 "ordinal_rank_loss"
 
-    Example:
-        >>> import numpy as np
-        >>> from hscredit.core.models.losses import OrdinalRankLoss
-        >>> loss = OrdinalRankLoss(rank_weight=2.0, bce_weight=1.0)
-        >>> y_true = np.array([0, 0, 1, 1])
-        >>> y_pred = np.array([0.1, 0.3, 0.7, 0.9])
-        >>> round(loss(y_true, y_pred), 6) >= 0
-        True
+    **参考样例**
+
+    >>> import numpy as np
+    >>> from hscredit.core.models.losses import OrdinalRankLoss
+    >>> loss = OrdinalRankLoss(rank_weight=2.0, bce_weight=1.0)
+    >>> y_true = np.array([0, 0, 1, 1])
+    >>> y_pred = np.array([0.1, 0.3, 0.7, 0.9])
+    >>> round(loss(y_true, y_pred), 6) >= 0
+    True
+
+    **引用**
+
+    成对排序（pairwise ranking）优化与 AUC 的等价性见 Burges, C. et al. (2005). *Learning
+    to Rank using Gradient Descent (RankNet).* ICML 2005，
+    https://www.microsoft.com/en-us/research/publication/learning-to-rank-using-gradient-descent/ ；
+    AUC 与 Wilcoxon–Mann–Whitney 统计量的关系见 Hanley & McNeil (1982)。
     """
 
     def __init__(

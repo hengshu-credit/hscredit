@@ -65,6 +65,18 @@ class CardinalityEncoder(BaseEncoder):
     >>>
     >>> # 逆编码
     >>> X_original = encoder.inverse_transform(X_encoded)
+
+    **注意**
+
+    本编码器只做"高基数→低基数"的类别合并（频次 top-N 保留、其余归入 ``other_label``），
+    输出仍为类别值，通常作为 WOE/Target/OneHot 等编码的前置步骤，用于抑制长尾稀有类别带来的
+    过拟合与不稳定。合并依据为训练集频次，故为无监督步骤。
+
+    **引用**
+
+    高基数类别的稀有类别合并（rare-category grouping）是类别特征工程的常用预处理，参见
+    Micci-Barreca, D. (2001). *A preprocessing scheme for high-cardinality categorical
+    attributes.* ACM SIGKDD Explorations. https://doi.org/10.1145/507533.507538
     """
 
     def __init__(

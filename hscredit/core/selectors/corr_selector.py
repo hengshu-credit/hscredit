@@ -86,6 +86,12 @@ class CorrSelector(BaseFeatureSelector):
     >>> # 使用自定义权重（不做分箱）
     >>> selector = CorrSelector(threshold=0.7, weights=iv_series)
     >>> selector.fit(X)
+
+    **引用**
+
+    相关系数计算基于 ``pandas.DataFrame.corr``（Pearson/Spearman/Kendall）：
+    https://pandas.pydata.org/docs/reference/api/pandas.DataFrame.corr.html ；
+    高相关特征对中保留 IV/KS 更高者的策略对齐 toad / scorecardpipeline 的相关性筛选。
     """
 
     def __init__(

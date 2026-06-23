@@ -50,11 +50,20 @@ class BestIVBinning(BaseBinning):
     **注意**
 
     Best IV 分箱的特点:
-    1. 最大化IV值
-    2. IV > 0.02 表示特征有预测能力
-    3. IV > 0.1 表示特征有较强的预测能力
-    4. IV > 0.3 表示特征预测能力过强（可能有问题）
-    5. 使用贪心算法逐步优化
+    1. 以最大化 IV（Information Value，信息价值）为目标，逐步贪心优化切分点
+    2. IV < 0.02：几乎无预测能力
+    3. 0.02 ≤ IV < 0.1：弱预测能力
+    4. 0.1 ≤ IV < 0.3：中等预测能力
+    5. IV ≥ 0.3：强预测能力（过高时需警惕标签泄漏或过拟合）
+
+    其中 ``IV = Σ (好样本占比 - 坏样本占比) × WOE``，
+    ``WOE = ln(箱内好样本占比 / 箱内坏样本占比)``。
+
+    **引用**
+
+    Information Value / WOE 经典出处：Siddiqi, N. (2006). *Credit Risk Scorecards:
+    Developing and Implementing Intelligent Credit Scoring.* Wiley.
+    IV 阈值经验区间参考业界通行标准（见 scorecard / toad / optbinning 文档）。
     """
 
     def __init__(
@@ -91,11 +100,16 @@ class BestIVBinning(BaseBinning):
         y: Optional[Union[pd.Series, np.ndarray]] = None,
         **kwargs
     ) -> 'BestIVBinning':
-        """拟合 Best IV 分箱.
+        """拟合 Best IV 分箱。
 
-        :param X: 训练数据
-        :param y: 目标变量
-        :return: 拟合后的分箱器
+        对每个特征预分割为细箱后，在单调性约束下贪心合并以最大化 IV，得到切分点与分箱
+        统计表。支持 sklearn 风格 ``fit(X, y)`` 与 scorecardpipeline 风格 ``fit(df)``，
+        详见 :meth:`BaseBinning.fit`。
+
+        :param X: 训练数据，shape ``(n_samples, n_features)``，DataFrame 或 ndarray
+        :param y: 二分类目标变量（0=好/1=坏）；scorecardpipeline 风格下可省略
+        :param kwargs: 透传给基类的其他参数
+        :return: 拟合后的分箱器自身（便于链式调用）
         """
         # 检查输入数据
         X, y = self._check_input(X, y)

@@ -1,6 +1,19 @@
 """框架适配器.
 
-为XGBoost、LightGBM、CatBoost、TabNet、NGBoost等框架提供统一的损失函数和评估指标接口。
+为 XGBoost、LightGBM、CatBoost、TabNet、NGBoost 等框架提供统一的自定义损失函数与
+评估指标接口。各适配器统一处理 sigmoid 链接函数（原始分数→概率）及各框架的符号/接口
+约定，使同一个 :class:`~hscredit.core.models.losses.base.BaseLoss` 可在不同框架间复用。
+通常无需直接使用本模块，优先用 ``loss.to_xgboost()`` / ``to_lightgbm()`` /
+``to_catboost()`` / ``to_ngboost()`` 便捷方法。
+
+**引用（各框架自定义目标/评估文档）**
+
+- XGBoost 自定义目标：https://xgboost.readthedocs.io/en/stable/tutorials/custom_metric_obj.html
+- LightGBM 自定义目标（4.0+ 通过 ``params['objective']`` 传入）：
+  https://lightgbm.readthedocs.io/en/latest/Advanced-Topics.html
+- CatBoost 自定义损失（``calc_ders_range``）：
+  https://catboost.ai/docs/concepts/python-usages-examples
+- NGBoost 自定义 Score：https://stanfordmlgroup.github.io/ngboost/
 """
 
 from typing import Callable, Union, Tuple

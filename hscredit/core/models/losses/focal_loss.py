@@ -45,9 +45,10 @@ class FocalLoss(BaseLoss):
     >>> params = {'objective': 'binary:logistic'}
     >>> bst = xgb.train(params, dtrain, obj=loss.to_xgboost(), num_boost_round=100)
 
-    **参考**
+    **引用**
 
-    Lin, T. Y., et al. "Focal loss for dense object detection." ICCV 2017.
+    Lin, T.-Y., Goyal, P., Girshick, R., He, K., & Dollár, P. (2017). *Focal Loss for
+    Dense Object Detection.* ICCV 2017. https://arxiv.org/abs/1708.02002
     """
 
     def __init__(

@@ -67,6 +67,13 @@ class ExpectedProfitLoss(BaseLoss):
     >>> import xgboost as xgb
     >>> dtrain = xgb.DMatrix(X_train, label=y_train)
     >>> bst = xgb.train({}, dtrain, obj=loss.to_xgboost(), num_boost_round=100)
+
+    **引用**
+
+    成本敏感学习与基于期望收益/损失的最优决策阈值见 Elkan, C. (2001). *The Foundations
+    of Cost-Sensitive Learning.* IJCAI 2001.
+    https://cseweb.ucsd.edu/~elkan/rescale.pdf 。本损失以 sigmoid 软通过门将利润目标
+    转为可微形式，属业务驱动设计。
     """
 
     def __init__(

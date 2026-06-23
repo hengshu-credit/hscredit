@@ -73,6 +73,17 @@ class SequentialFeatureSelector(BaseFeatureSelector):
         ... )
         >>> selector.fit(X, y)
         >>> print(selector.selected_features_)
+
+    **注意**
+
+    与 :class:`RFESelector` 不同，本类基于交叉验证评分而非模型权重逐个增删特征，更稳健但
+    更耗时（约 ``n_features × cv`` 次拟合）；与 :class:`StepwiseSelector`（基于 AIC/BIC/KS 等
+    统计准则、面向逻辑回归）适用场景亦不同。
+
+    **引用**
+
+    对齐 sklearn ``SequentialFeatureSelector``：
+    https://scikit-learn.org/stable/modules/generated/sklearn.feature_selection.SequentialFeatureSelector.html
     """
 
     def __init__(

@@ -57,6 +57,13 @@ class RankingAUCProxyLoss(BaseLoss):
     >>> import xgboost as xgb
     >>> dtrain = xgb.DMatrix(X_train, label=y_train)
     >>> bst = xgb.train({}, dtrain, obj=loss.to_xgboost(), num_boost_round=200)
+
+    **引用**
+
+    平方铰链（squared hinge）排序代理与 AUC 优化见 Joachims, T. (2005). *A Support Vector
+    Method for Multivariate Performance Measures.* ICML 2005；硬负例挖掘思想见
+    Shrivastava, A. et al. (2016). *Training Region-based Object Detectors with Online
+    Hard Example Mining (OHEM).* CVPR 2016. https://arxiv.org/abs/1604.03540
     """
 
     def __init__(

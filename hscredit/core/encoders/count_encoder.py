@@ -44,6 +44,17 @@ class CountEncoder(BaseEncoder):
     >>> # 合并低频类别
     >>> encoder = CountEncoder(cols=['category'], min_group_size=10)
     >>> X_encoded = encoder.fit_transform(X)
+
+    **注意**
+
+    计数/频率编码为无监督方法，不使用标签 ``y``，仅以类别出现频次反映其流行度，对高基数
+    类别尤其紧凑；但不同类别若频次相同会被编码为同一值（信息混淆），必要时与其他编码并用。
+
+    **引用**
+
+    频率/计数编码（frequency / count encoding）是类别特征工程的常用基线方法，参见
+    category_encoders ``CountEncoder``：
+    https://contrib.scikit-learn.org/category_encoders/count.html
     """
 
     def _get_category_cols(self, X: pd.DataFrame) -> List[str]:

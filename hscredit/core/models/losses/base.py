@@ -13,11 +13,30 @@ class BaseLoss(ABC):
     """损失函数基类。
 
     所有自定义损失函数都应该继承此类，并实现以下方法:
-    - __call__: 计算损失值
-    - gradient: 计算梯度（一阶导数）
-    - hessian: 计算二阶导数（可选，用于XGBoost等需要二阶导的框架）
+    - ``__call__``: 计算损失值
+    - ``gradient``: 计算梯度（一阶导数 dL/dp，相对**概率** p）
+    - ``hessian``: 计算二阶导数（可选，用于 XGBoost 等需要二阶导的框架）
 
-    :param name: 损失函数名称，默认为"custom_loss"
+    **适配器模式（框架转换）**
+
+    子类只需以"概率 p"为视角实现 ``gradient``/``hessian``，再用以下便捷方法转换为各
+    boosting 框架所需格式——内部统一处理 sigmoid 链接函数（原始分数→概率）与各框架的
+    符号/接口约定：
+
+    - :meth:`to_xgboost`：返回 ``obj(preds, dtrain) -> (grad, hess)`` 闭包
+    - :meth:`to_lightgbm`：返回 ``obj(y_true, y_pred) -> (grad, hess)`` 闭包
+    - :meth:`to_catboost`：返回实现 ``calc_ders_range`` 的损失对象
+    - :meth:`to_ngboost`：返回 NGBoost ``Score`` 子类（仅 Bernoulli 二分类）
+
+    :param name: 损失函数名称，默认为 ``"custom_loss"``
+
+    **参考样例**
+
+    >>> import xgboost as xgb
+    >>> from hscredit.core.models.losses import FocalLoss
+    >>> loss = FocalLoss(gamma=2.0, alpha=0.25)
+    >>> booster = xgb.train({'disable_default_eval_metric': 1}, dtrain,
+    ...                      obj=loss.to_xgboost())     # 自定义目标
     """
     
     def __init__(self, name: str = "custom_loss"):

@@ -61,6 +61,12 @@ class KSFocusedLoss(BaseLoss):
     ...     fobj=loss.to_lightgbm(),
     ...     num_boost_round=200
     ... )
+
+    **引用**
+
+    KS（Kolmogorov–Smirnov）统计量见 https://en.wikipedia.org/wiki/Kolmogorov–Smirnov_test ；
+    其在信用风险中作为核心区分度指标见 Siddiqi, N. (2006). *Credit Risk Scorecards.* Wiley。
+    本损失为面向 KS 的可微代理（分布分离 + 重叠区聚焦），属业务驱动设计。
     """
 
     def __init__(

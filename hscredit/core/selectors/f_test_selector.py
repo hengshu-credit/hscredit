@@ -54,6 +54,16 @@ class FTestSelector(BaseFeatureSelector):
         >>> selector = FTestSelector(k=3)
         >>> selector.fit(X, y)
         >>> print(selector.selected_features_)
+
+    **注意**
+
+    F 检验只能捕捉特征与目标的**线性**相关，非线性关系可能漏检（此时改用
+    :class:`MutualInfoSelector`）。``k``/``percentile``/``threshold`` 可组合限制选中数量。
+
+    **引用**
+
+    基于 sklearn ``f_classif``（ANOVA F 值）：
+    https://scikit-learn.org/stable/modules/generated/sklearn.feature_selection.f_classif.html
     """
 
     def __init__(

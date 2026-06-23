@@ -1,6 +1,13 @@
 """高级金融计算函数.
 
-提供净现值、内部收益率等高级计算。
+提供基于现金流序列的投资评价指标：净现值、内部收益率、修正内部收益率。
+约定与 ``numpy_financial`` 一致：现金流序列 ``values[0]`` 位于第 0 期（当前时点，
+不折现），``values[k]`` 位于第 k 期期末。
+
+**引用**
+
+- numpy-financial 文档：https://numpy.org/numpy-financial/latest/
+- NPV/IRR/MIRR 概念参考：https://en.wikipedia.org/wiki/Net_present_value
 """
 
 import numpy as np
@@ -9,16 +16,29 @@ import numpy as np
 def npv(rate, values):
     """计算净现值 (Net Present Value).
 
-    将未来各期现金流按指定折现率折算为当前时点的总价值。
+    将一段现金流序列按固定折现率折算到第 0 期并求和，用于判断项目是否创造价值
+    （NPV > 0 表示在该折现率下项目可接受）。
 
-    :param rate: 折现率（每期利率）
-    :param values: 现金流序列（第0期为初始投资，通常为负；后续为各期回报）
-    :return: 净现值（正值表示收益，负值表示亏损）
+    .. note::
+        采用 ``numpy_financial`` 约定：``values[0]`` 位于第 0 期、**不折现**，
+        与 Excel ``NPV``（从第 1 期开始折现所有值）相差一个 ``(1+rate)`` 因子。
+
+    :param rate: 每期折现率，小数表示（如 0.05 表示每期 5%）
+    :param values: 现金流序列（类数组），``values[0]`` 通常为初始投资（负值），
+        其后为各期回报
+    :return: 净现值，正值表示在该折现率下项目盈利
 
     **参考样例**
 
-    >>> npv(0.05, [-1000, 300, 400, 400, 300])
-    265.6913368537139
+    初始投入 1000，其后四期回报 300/400/400/300，折现率 5%::
+
+        >>> npv(0.05, [-1000, 300, 400, 400, 300])
+        240.87185894766066
+
+    **引用**
+
+    对应 ``numpy_financial.npv``：
+    https://numpy.org/numpy-financial/latest/functions/npv.html
     """
     values = np.asarray(values)
     rate = np.asarray(rate)
@@ -33,16 +53,30 @@ def npv(rate, values):
 def irr(values):
     """计算内部收益率 (Internal Rate of Return).
 
-    使用二分法求解使净现值为零的折现率，即项目的真实回报率。
+    求解使净现值（NPV）恰好为零的每期折现率，即项目隐含的真实回报率。
+    内部使用二分法（bisection）在 ``[-0.99, +∞)`` 区间搜索，要求现金流同时包含
+    正值与负值（至少一次变号）以保证解存在。
 
-    :param values: 现金流序列（第0期为初始投资必须为负，至少有一个正值和一个负值）
-    :return: 内部收益率
-    :raises ValueError: 现金流不包含正负值混合或迭代无法收敛时
+    .. note::
+        IRR 仅在现金流方向单次变号时唯一；多次变号可能存在多个解，本实现返回
+        二分法在默认区间内找到的第一个根。
+
+    :param values: 现金流序列（类数组），通常 ``values[0]`` 为初始投资（负值），
+        且序列中至少各有一个正值与一个负值
+    :return: 内部收益率（每期，小数表示）
+    :raises ValueError: 现金流未同时包含正负值、无法确定搜索上界或迭代不收敛时抛出
 
     **参考样例**
 
-    >>> irr([-1000, 300, 400, 400, 300])
-    0.14299334826891236
+    初始投入 1000，其后四期回报 300/400/400/300 的内部收益率::
+
+        >>> irr([-1000, 300, 400, 400, 300])
+        0.14895028127237311
+
+    **引用**
+
+    对应 ``numpy_financial.irr``：
+    https://numpy.org/numpy-financial/latest/functions/irr.html
     """
     values = np.asarray(values)
 
@@ -94,18 +128,30 @@ def irr(values):
 def mirr(values, finance_rate, reinvest_rate):
     """计算修正内部收益率 (Modified Internal Rate of Return).
 
-    MIRR 假设正现金流按再投资利率进行再投资，负现金流按融资成本进行融资，
-    相比 IRR 更符合实际资金运作场景。
+    MIRR 修正了 IRR 隐含"按 IRR 自身再投资"的不现实假设：正现金流按再投资收益率
+    复利至末期，负现金流按融资成本折现至初期，再由两者之比反解年化收益。相比 IRR
+    更贴近真实资金成本，且对单变号以外的现金流也唯一。
 
-    :param values: 现金流序列（第0期为初始投资必须为负，至少有一个正值和一个负值）
-    :param finance_rate: 融资成本率（负现金流的折现率）
-    :param reinvest_rate: 再投资收益率（正现金流的再投资回报率）
-    :return: 修正内部收益率
-    :raises ValueError: 现金流中不包含负值或正值时
+    公式：``MIRR = (FV(正现金流) / -PV(负现金流)) ** (1/(n-1)) - 1``，其中 ``n``
+    为现金流期数。
+
+    :param values: 现金流序列（类数组），需同时包含正值与负值
+    :param finance_rate: 融资成本率（每期），用于将负现金流折现到第 0 期
+    :param reinvest_rate: 再投资收益率（每期），用于将正现金流复利到末期
+    :return: 修正内部收益率（每期，小数表示）
+    :raises ValueError: 现金流中不含负值或不含正值时抛出
 
     **参考样例**
 
-    >>> mirr([-1000, 300, 400, 400, 300], 0.05, 0.08)
+    现金流 -1000/300/400/400/300，融资成本 5%、再投资收益 8%::
+
+        >>> mirr([-1000, 300, 400, 400, 300], 0.05, 0.08)
+        0.1205253227096672
+
+    **引用**
+
+    对应 Excel ``MIRR`` 与 ``numpy_financial.mirr``：
+    https://numpy.org/numpy-financial/latest/functions/mirr.html
     """
     values = np.asarray(values)
     n = len(values)

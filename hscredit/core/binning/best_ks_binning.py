@@ -50,10 +50,15 @@ class BestKSBinning(BaseBinning):
     **注意**
 
     Best KS 分箱的特点:
-    1. 最大化KS统计量
-    2. 使用贪心算法逐步优化
-    3. 支持单调性约束
-    4. 计算复杂度较高
+    1. 以最大化 KS（Kolmogorov–Smirnov）统计量为目标选择切分点
+    2. KS = max |累计好样本占比 - 累计坏样本占比|，衡量好坏样本累积分布的最大差异
+    3. 使用贪心算法逐步优化，支持单调性约束
+    4. 相比等频/等距计算复杂度较高，但区分度更优
+
+    **引用**
+
+    Kolmogorov–Smirnov 检验：https://en.wikipedia.org/wiki/Kolmogorov–Smirnov_test ；
+    KS 统计量在信用风险中的应用见 Siddiqi, N. (2006). *Credit Risk Scorecards.* Wiley.
     """
 
     def __init__(
@@ -90,11 +95,16 @@ class BestKSBinning(BaseBinning):
         y: Optional[Union[pd.Series, np.ndarray]] = None,
         **kwargs
     ) -> 'BestKSBinning':
-        """拟合 Best KS 分箱.
+        """拟合 Best KS 分箱。
 
-        :param X: 训练数据
-        :param y: 目标变量
-        :return: 拟合后的分箱器
+        对每个特征预分割为细箱后，在单调性约束下贪心选择切分点以最大化 KS 统计量。
+        支持 sklearn 风格 ``fit(X, y)`` 与 scorecardpipeline 风格 ``fit(df)``，
+        详见 :meth:`BaseBinning.fit`。
+
+        :param X: 训练数据，shape ``(n_samples, n_features)``，DataFrame 或 ndarray
+        :param y: 二分类目标变量（0=好/1=坏）；scorecardpipeline 风格下可省略
+        :param kwargs: 透传给基类的其他参数
+        :return: 拟合后的分箱器自身（便于链式调用）
         """
         # 检查输入数据
         X, y = self._check_input(X, y)
