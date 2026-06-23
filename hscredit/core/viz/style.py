@@ -22,7 +22,6 @@
 
 import platform
 import matplotlib as mpl
-import matplotlib.pyplot as plt
 from typing import Dict, List, Optional
 
 
@@ -30,30 +29,39 @@ from typing import Dict, List, Optional
 # 配色方案
 # ============================================================
 
-# 主色板（3色）
+# 主色板（主题色 + 2 个副主题色）
 PRIMARY_COLORS = ["#2639E9", "#F76E6C", "#FE7715"]
 
-# 扩展色板（6色）
-EXTENDED_COLORS = PRIMARY_COLORS + ["#9C27B0", "#00BCD4", "#795548"]
+# 扩展色板：保留主色板顺序，后续以浅色高饱和粉紫/粉红/橙红为主，减少绿黄棕等分散色相。
+EXTENDED_COLORS = PRIMARY_COLORS + [
+    "#82AAFF", "#A293FF", "#B085FF", "#B77CF3", "#BA6DFF",
+    "#CD5FDE", "#D643ED", "#D45499", "#DF3B8E", "#FF5CA8",
+    "#FF7F86", "#E42E52",
+]
 
 # 语义色
 SEMANTIC_COLORS = {
     "bad_rate": "#E85D4A",
-    "overall_baseline": "#2639E9",
-    "stable": "#4CAF50",       # PSI < 0.1
-    "changing": "#FF9800",     # 0.1 <= PSI < 0.25
-    "unstable": "#F44336",     # PSI >= 0.25
-    "positive": "#4CAF50",
-    "negative": "#F44336",
-    "neutral": "#9E9E9E",
-    "reference": "gray",
+    "overall_baseline": "#4C8DFF",
+    "stable": "#72B5FF",       # PSI < 0.1
+    "changing": "#D643ED",     # 0.1 <= PSI < 0.25
+    "unstable": "#E42E52",     # PSI >= 0.25
+    "positive": "#2639E9",
+    "negative": "#E42E52",
+    "neutral": "#8A8FA3",
+    "reference": "#8A8FA3",
 }
 
 # 渐变色板（适合热力图/连续值）
 GRADIENT_PALETTES = {
-    "risk": ["#4CAF50", "#FFC107", "#FF9800", "#F44336"],  # 绿→黄→橙→红
+    "risk": ["#72B5FF", "#B085FF", "#D643ED", "#E42E52"],  # 低风险→高风险
     "blue": ["#E3F2FD", "#90CAF9", "#42A5F5", "#1565C0"],
-    "diverging": ["#2639E9", "#FFFFFF", "#F76E6C"],
+    "diverging": ["#2639E9", "#F7F8FF", "#F76E6C"],
+    "pink_purple": [
+        "#82AAFF", "#A293FF", "#B085FF", "#B77CF3", "#BA6DFF",
+        "#CD5FDE", "#D643ED", "#D45499", "#DF3B8E", "#FF5CA8",
+        "#FF7F86", "#E42E52",
+    ],
     # 蓝→紫→粉→红 平滑连续色阶：色相单调 + 明度归一(浅→深，L* 72→45)，蓝端冷化避免偏紫，一眼连贯，
     # 适合热力图/条件格式色阶；作为 Excel 条件格式 condition_color 锚点时自动取首/中/尾构成三色异色阶
     "blue_purple_red": [
@@ -66,6 +74,7 @@ _PALETTES = {
     "default": PRIMARY_COLORS,
     "primary": PRIMARY_COLORS,
     "extended": EXTENDED_COLORS,
+    "pink_purple": GRADIENT_PALETTES["pink_purple"],
     "semantic": SEMANTIC_COLORS,
 }
 
@@ -73,7 +82,7 @@ _PALETTES = {
 def get_palette(name: str = "default"):
     """获取配色方案.
 
-    :param name: 方案名称，可选 'default'/'primary'(3色), 'extended'(6色), 'semantic'(语义色字典)
+    :param name: 方案名称，可选 'default'/'primary'(3色), 'extended', 'pink_purple', 'semantic'(语义色字典)
     :return: 颜色列表或字典
     """
     if name in _PALETTES:

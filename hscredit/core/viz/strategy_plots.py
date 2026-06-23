@@ -12,7 +12,7 @@
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Tuple, Union
+from typing import List, Optional, Tuple
 
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
@@ -22,7 +22,9 @@ from matplotlib.figure import Figure
 
 from .utils import (
     DEFAULT_COLORS, get_or_create_ax, save_figure, setup_axis_style,
-    EXTENDED_COLORS, CHANGING_COLOR, UNSTABLE_COLOR, NEUTRAL_COLOR,
+    STABLE_COLOR, CHANGING_COLOR, UNSTABLE_COLOR, NEUTRAL_COLOR,
+    BAD_RATE_COLOR, get_series_colors, get_psi_color,
+    make_colormap, make_risk_cmap,
 )
 
 
@@ -97,7 +99,7 @@ def rule_swap_plot(
             axes[0].text(bar.get_x() + bar.get_width() / 2, bar.get_height(), f'{rate:.2%}', ha='center', va='bottom', fontsize=8)
 
         lift_values = pd.to_numeric(rule_rows['LIFT值'], errors='coerce').fillna(0).to_numpy()
-        lift_colors = ['#4CAF50' if value < 1 else DEFAULT_COLORS[1] for value in lift_values]
+        lift_colors = [STABLE_COLOR if value < 1 else BAD_RATE_COLOR for value in lift_values]
         axes[1].bar(positions, lift_values, color=lift_colors, alpha=0.8)
         axes[1].axhline(1, color=NEUTRAL_COLOR, linestyle='--', linewidth=1, label='LIFT=1')
         axes[1].set_xticks(positions)
@@ -160,14 +162,14 @@ def strategy_simulation_plot(
     bad_rates = pd.to_numeric(simulation[bad_rate_col], errors='coerce').fillna(0)
 
     ax1.bar(positions, approvals, color=DEFAULT_COLORS[0], alpha=0.55, label='通过率')
-    ax2.plot(positions, bad_rates, color=DEFAULT_COLORS[1], marker='o', linewidth=2, label='通过人群坏率')
+    ax2.plot(positions, bad_rates, color=BAD_RATE_COLOR, marker='o', linewidth=2, label='通过人群坏率')
     ax1.set_xticks(positions)
     ax1.set_xticklabels(simulation[threshold_col].astype(str).tolist())
     ax1.set_xlabel('评分阈值')
     ax1.set_ylabel('通过率 (%)', color=DEFAULT_COLORS[0])
-    ax2.set_ylabel('通过人群坏率 (%)', color=DEFAULT_COLORS[1])
+    ax2.set_ylabel('通过人群坏率 (%)', color=BAD_RATE_COLOR)
     ax1.tick_params(axis='y', labelcolor=DEFAULT_COLORS[0])
-    ax2.tick_params(axis='y', labelcolor=DEFAULT_COLORS[1])
+    ax2.tick_params(axis='y', labelcolor=BAD_RATE_COLOR)
     ax1.set_title(title, fontsize=13, fontweight='bold')
 
     handles1, labels1 = ax1.get_legend_handles_labels()
@@ -272,7 +274,7 @@ def feature_drift_comparison(
     save: Optional[str] = None,
     **kwargs,
 ) -> Figure:
-    """多特征偏移瀑布图：颜色标注偏移等级（绿/黄/红）.
+    """多特征偏移瀑布图：颜色标注偏移等级.
 
     :param df_base: 基准数据集（训练集）
     :param df_target: 目标数据集（测试集/OOT）
@@ -307,7 +309,7 @@ def feature_drift_comparison(
     psi_series = pd.Series(psi_vals).sort_values(ascending=False).head(top_n)
     feats = psi_series.index.tolist()
     vals = psi_series.values
-    bar_colors = ['#4CAF50' if v < 0.10 else '#FF9800' if v < 0.25 else '#F44336' for v in vals]
+    bar_colors = [get_psi_color(v) for v in vals]
 
     fig, ax = get_or_create_ax(figsize=figsize, ax=ax)
     y_pos = np.arange(len(feats))
@@ -324,9 +326,9 @@ def feature_drift_comparison(
 
     import matplotlib.patches as mpatches
     patches = [
-        mpatches.Patch(color='#4CAF50', label='稳定（PSI<0.10）'),
-        mpatches.Patch(color='#FF9800', label='略变（0.10-0.25）'),
-        mpatches.Patch(color='#F44336', label='不稳定（>0.25）'),
+        mpatches.Patch(color=STABLE_COLOR, label='稳定（PSI<0.10）'),
+        mpatches.Patch(color=CHANGING_COLOR, label='略变（0.10-0.25）'),
+        mpatches.Patch(color=UNSTABLE_COLOR, label='不稳定（>0.25）'),
     ]
     ax.legend(handles=patches, fontsize=9, loc='lower right')
     ax.set_xlabel('PSI值', fontsize=11)
@@ -437,7 +439,6 @@ def feature_cross_heatmap(
     Example:
         >>> fig = feature_cross_heatmap(df, 'age', 'income', 'fpd30')
     """
-    import matplotlib.colors as mcolors
     df = df[[feature_x, feature_y, target]].dropna().copy()
     overall_br = df[target].mean()
 
@@ -454,14 +455,14 @@ def feature_cross_heatmap(
 
     if stat == 'count':
         matrix = df.groupby(['_bx', '_by'])[target].count().unstack().fillna(0)
-        fmt, cmap, cbar_label = '{:.0f}', 'Blues', '样本数'
+        fmt, cmap, cbar_label = '{:.0f}', make_colormap("hscredit_cross_count", ["#F7F8FF", DEFAULT_COLORS[0]]), '样本数'
     elif stat == 'lift':
         br_mat = df.groupby(['_bx', '_by'])[target].mean().unstack().fillna(overall_br)
         matrix = br_mat / overall_br if overall_br > 0 else br_mat
-        fmt, cmap, cbar_label = '{:.2f}', 'RdYlGn_r', 'LIFT值'
+        fmt, cmap, cbar_label = '{:.2f}', make_risk_cmap("hscredit_cross_lift"), 'LIFT值'
     else:
         matrix = df.groupby(['_bx', '_by'])[target].mean().unstack().fillna(overall_br)
-        fmt, cmap, cbar_label = '{:.2%}', 'RdYlGn_r', '坏率'
+        fmt, cmap, cbar_label = '{:.2%}', make_risk_cmap("hscredit_cross_badrate"), '坏率'
 
     data = matrix.values
     row_labels = matrix.index.tolist()
@@ -515,7 +516,6 @@ def population_drift_monitor(
     Example:
         >>> fig = population_drift_monitor([df1,df2,df3], ['Q1','Q2','Q3'], feats)
     """
-    import matplotlib.colors as mcolors
     base = df_list[0]
     n_periods = len(df_list)
 
@@ -530,8 +530,7 @@ def population_drift_monitor(
 
     fig, (ax_heat, ax_trend) = plt.subplots(2, 1, figsize=figsize,
                                              gridspec_kw={'height_ratios': [1, 1.5]})
-    cmap = mcolors.LinearSegmentedColormap.from_list(
-        'psi', [(0, '#4CAF50'), (0.2, '#FF9800'), (1, '#F44336')], N=256)
+    cmap = make_risk_cmap("hscredit_population_psi")
     data = psi_matrix.values.astype(float)
     im = ax_heat.imshow(data, cmap=cmap, vmin=0, vmax=0.5, aspect='auto')
     fig.colorbar(im, ax=ax_heat, fraction=0.02, pad=0.01, label='PSI')
@@ -546,7 +545,7 @@ def population_drift_monitor(
             ax_heat.text(j, i, f'{v:.2f}', ha='center', va='center', fontsize=7, color=c)
     ax_heat.set_title('PSI热力图', fontsize=12, fontweight='bold')
 
-    colors = list(EXTENDED_COLORS)
+    colors = get_series_colors(len(top_feats))
     x = np.arange(n_periods)
     for ci, feat in enumerate(top_feats):
         means = [float(df_i[feat].mean()) if feat in df_i.columns else np.nan for df_i in df_list]
@@ -627,7 +626,7 @@ def segment_scorecard_comparison(
     n_metrics = len(metrics)
     x = np.arange(len(segments))
     width = 0.8 / n_metrics
-    colors = list(EXTENDED_COLORS[:5])
+    colors = get_series_colors(n_metrics)
     fig, ax = get_or_create_ax(figsize=figsize, ax=ax)
     for mi, m in enumerate(metrics):
         offset = (mi - n_metrics / 2 + 0.5) * width

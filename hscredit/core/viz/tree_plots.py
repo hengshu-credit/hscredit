@@ -7,7 +7,7 @@
 - **卡片节点**：圆角矩形卡片，内含节点标题、分裂条件、统计指标
 - **层级布局**：从上到下自动排版，父节点居中，子节点均匀分布
 - **平滑连线**：曲线连接父子节点，分支标签（<= / >）清晰标注
-- **颜色语义**：蓝/绿=低坏账，红/橙=高坏账（hscredit 风控主题色）
+- **颜色语义**：主题蓝=低坏账，粉紫/粉红=风险升高（hscredit 风控主题色）
 - **双 API 支持**：支持 ManualTreeExtractor 和 sklearn DecisionTreeClassifier
 
 **三种渲染后端**：
@@ -40,7 +40,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from .utils import DEFAULT_COLORS, save_figure, setup_axis_style
+from .utils import (
+    DEFAULT_COLORS, save_figure, setup_axis_style,
+    STABLE_COLOR, CHANGING_COLOR, UNSTABLE_COLOR,
+    make_risk_cmap,
+)
 
 
 def _tex_label(text: str) -> str:
@@ -70,10 +74,12 @@ __all__ = [
 # ============================================================================
 
 # hscredit 风控主题色
-_COLOR_PRIMARY = "#2639E9"  # 主色蓝
-_COLOR_SECONDARY = "#F76E6C"  # 副色红
-_COLOR_ACCENT = "#FE7715"  # 强调色橙
-_COLOR_SUCCESS = "#4CAF50"  # 低风险绿
+_COLOR_PRIMARY = DEFAULT_COLORS[0]  # 主色蓝
+_COLOR_SECONDARY = DEFAULT_COLORS[1]  # 副色红
+_COLOR_ACCENT = DEFAULT_COLORS[2]  # 强调色
+_COLOR_SUCCESS = STABLE_COLOR  # 低风险
+_COLOR_WARNING = CHANGING_COLOR
+_COLOR_DANGER = UNSTABLE_COLOR
 _COLOR_BG = "#FFFFFF"  # 背景白
 _COLOR_CARD_BG = "#FAFBFF"  # 卡片背景
 _COLOR_BORDER = "#E8ECFF"  # 边框浅蓝
@@ -81,6 +87,7 @@ _COLOR_TEXT_DARK = "#1D2129"  # 深色文字
 _COLOR_TEXT_MID = "#4B5563"  # 中等文字
 _COLOR_TEXT_LIGHT = "#86909C"  # 浅色文字
 _COLOR_GRID = "#F2F3F7"  # 网格线
+_COLOR_MANUAL_BADGE = "#FFE8F1"  # 手工节点徽章浅粉底
 
 # 节点宽度/高度（以 inch 为单位，转换为点数需乘 dpi）
 _NODE_W_INCH = 2.8
@@ -885,7 +892,7 @@ def plot_tree_matplotlib(
         # BADGE_MARGIN 的间隙（不与边框相切），右侧与条件文本区域之间也留有同样间隙
         badge_y_center = (title_bar_y_top + title_bar_y_bottom) / 2
         badge_x = x - node_w / 2 + BADGE_MARGIN + BADGE_R
-        badge_bg = "#FFFFFF" if not is_manual else "#FFD700"
+        badge_bg = "#FFFFFF" if not is_manual else _COLOR_MANUAL_BADGE
         circle = plt.Circle((badge_x, badge_y_center), BADGE_R, color=badge_bg, zorder=4)
         ax.add_patch(circle)
         ax.text(
@@ -1055,7 +1062,7 @@ def plot_tree_pyecharts(
     """
     try:
         from pyecharts import options as opts
-        from pyecharts.charts import Graph, Page
+        from pyecharts.charts import Graph
     except ImportError:
         raise ImportError(
             "需要安装 pyecharts: pip install pyecharts\n"
@@ -1115,13 +1122,13 @@ def plot_tree_pyecharts(
             border_color = _COLOR_SECONDARY   # #F76E6C
         elif is_leaf:
             if bad_rate < 0.1:
-                border_color = "#4CAF50"
+                border_color = _COLOR_SUCCESS
             elif bad_rate < 0.3:
-                border_color = "#FE7715"
+                border_color = _COLOR_WARNING
             else:
-                border_color = "#F76E6C"
+                border_color = _COLOR_DANGER
         else:
-            border_color = "#2639E9"
+            border_color = _COLOR_PRIMARY
 
         # 节点标题
         title_text = node["title"]
@@ -1129,21 +1136,19 @@ def plot_tree_pyecharts(
             title_text += f" [{node['class_label']}]"
 
         # tooltip 内容（AntV 风格）
-        _tip_color = "#F76E6C" if bad_rate > 0.3 else ("#FE7715" if bad_rate > 0.1 else "#4CAF50")
+        _tip_color = _COLOR_DANGER if bad_rate > 0.3 else (_COLOR_WARNING if bad_rate > 0.1 else _COLOR_SUCCESS)
         _gini_line = f"<b>Gini:</b> {node['gini']:.4f}<br/>" if not is_leaf else ""
         _manual_line = "<span style='color:#F76E6C'>★ 人工分裂节点</span>" if is_manual else ""
         tooltip = (
-            f"<div style='font-family:Arial,sans-serif;font-size:12px;'>"
-            f"<b style='color:#1D2129'>" + title_text + "</b><br/>"
-            f"<hr style='margin:4px 0'/>"
-            f"<b>条件:</b> " + node["condition"] + "<br/>"
-            f"<b>样本总数:</b> " + f"{n_samples:,}" + " (" + f"{node['sample_pct']:.1%}" + ")<br/>"
-            f"<b>好样本数:</b> " + f"{good:,}" + "<br/>"
-            f"<b>坏样本数:</b> " + f"{bad:,}" + "<br/>"
-            f"<b>坏样本率:</b> <span style='color:" + _tip_color + ";font-weight:bold'>" + f"{bad_rate:.2%}" + "</span><br/>"
-            + _gini_line
-            + _manual_line
-            + "</div>"
+            "<div style='font-family:Arial,sans-serif;font-size:12px;'>"
+            f"<b style='color:#1D2129'>{title_text}</b><br/>"
+            "<hr style='margin:4px 0'/>"
+            f"<b>条件:</b> {node['condition']}<br/>"
+            f"<b>样本总数:</b> {n_samples:,} ({node['sample_pct']:.1%})<br/>"
+            f"<b>好样本数:</b> {good:,}<br/>"
+            f"<b>坏样本数:</b> {bad:,}<br/>"
+            f"<b>坏样本率:</b> <span style='color:{_tip_color};font-weight:bold'>{bad_rate:.2%}</span><br/>"
+            f"{_gini_line}{_manual_line}</div>"
         )
 
         # 节点大小（叶子节点稍大）
@@ -1189,7 +1194,7 @@ def plot_tree_pyecharts(
     ROOT_ID = "0"
     for edge in edges:
         label_text = edge["label"]
-        edge_color = "#2639E9" if label_text == "<=" else "#F76E6C"
+        edge_color = _COLOR_PRIMARY if label_text == "<=" else _COLOR_SECONDARY
         is_root_edge = str(edge["source"]) == ROOT_ID
 
         graph_edges.append(
@@ -1233,7 +1238,7 @@ def plot_tree_pyecharts(
             edge_symbol=["circle", "arrow"],
             edge_symbol_size=6,
         )
-        graph.set_colors(["#2639E9", "#F76E6C", "#FE7715", "#F76E6C"])
+        graph.set_colors([_COLOR_PRIMARY, _COLOR_SECONDARY, _COLOR_ACCENT, _COLOR_WARNING, _COLOR_DANGER])
         graph.set_global_opts(
             title_opts=opts.TitleOpts(
                 title=title,
@@ -1274,7 +1279,7 @@ def plot_tree_pyecharts(
             edge_symbol=["circle", "arrow"],
             edge_symbol_size=6,
         )
-        graph.set_colors(["#2639E9", "#F76E6C", "#FE7715", "#F76E6C"])
+        graph.set_colors([_COLOR_PRIMARY, _COLOR_SECONDARY, _COLOR_ACCENT, _COLOR_WARNING, _COLOR_DANGER])
         graph.set_global_opts(
             tooltip_opts=opts.TooltipOpts(
                 trigger_on="mousemove", background_color="#FFFFFF", border_color="#E8ECFF",
@@ -1438,7 +1443,7 @@ def plot_tree_graphviz(
         # badge_bg、edge_color 逻辑保持一致
         if is_manual:
             theme_color = _COLOR_SECONDARY
-            badge_bg = "#FFD700"
+            badge_bg = _COLOR_MANUAL_BADGE
             border_color = _COLOR_SECONDARY
             border_w = 2
         elif is_leaf:
@@ -1786,7 +1791,7 @@ def tree_leaf_comparison_plot(
         plot_data = table.sort_values('坏样本率', ascending=False).reset_index(drop=True)
         positions = np.arange(len(plot_data))
         bad_rates = pd.to_numeric(plot_data['坏样本率'], errors='coerce').fillna(0).to_numpy()
-        colors = plt.cm.RdYlGn_r(np.linspace(0.15, 0.85, max(len(plot_data), 1)))
+        colors = make_risk_cmap("hscredit_tree_leaf")(np.linspace(0.15, 0.85, max(len(plot_data), 1)))
         bars = ax.bar(positions, bad_rates, color=colors[:len(plot_data)], alpha=0.85)
         ax.axhline(overall_bad_rate, color=DEFAULT_COLORS[0], linestyle='--', label=f'总体坏样本率 {overall_bad_rate:.2%}')
         ax.set_xticks(positions)

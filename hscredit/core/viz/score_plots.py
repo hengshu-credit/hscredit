@@ -13,7 +13,6 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional, Tuple, Union
 
-import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
@@ -21,7 +20,7 @@ from matplotlib.figure import Figure
 
 from .utils import (
     DEFAULT_COLORS, get_or_create_ax, save_figure, setup_axis_style,
-    EXTENDED_COLORS, REFERENCE_COLOR, NEUTRAL_COLOR,
+    REFERENCE_COLOR, NEUTRAL_COLOR, BAD_RATE_COLOR, get_series_colors,
 )
 
 
@@ -56,7 +55,7 @@ def score_ks_plot(
         datasets = {'数据集': (y_true, y_prob)}
 
     fig, ax = get_or_create_ax(figsize=figsize, ax=ax)
-    colors = list(EXTENDED_COLORS)
+    colors = get_series_colors(len(datasets))
 
     for idx, (label, (yt, yp)) in enumerate(datasets.items()):
         yt = np.asarray(yt)
@@ -86,7 +85,8 @@ def score_ks_plot(
             fontsize=9, color=color,
         )
 
-    ax.plot([0, 1], [0, 1], 'k--', linewidth=0.8, alpha=0.4, label='随机')
+    ax.plot([0, 1], [0, 1], color=NEUTRAL_COLOR, linestyle='--',
+            linewidth=0.8, alpha=0.4, label='随机')
     ax.set_xlabel('覆盖率（按概率降序）', fontsize=11)
     ax.set_ylabel('累积比例', fontsize=11)
     ax.set_title(title, fontsize=13, fontweight='bold')
@@ -128,7 +128,7 @@ def score_distribution_comparison_plot(
         _has_scipy = False
 
     fig, ax = get_or_create_ax(figsize=figsize, ax=ax)
-    colors = list(EXTENDED_COLORS[:5])
+    colors = get_series_colors(len(scores))
 
     for idx, (label, arr) in enumerate(scores.items()):
         arr = np.asarray(arr)
@@ -137,7 +137,6 @@ def score_distribution_comparison_plot(
         ax.hist(arr, bins=bins, alpha=0.25, color=color, density=True,
                 label=f'{label}（n={len(arr):,}）')
         if _has_scipy and len(arr) > 2:
-            from scipy.stats import gaussian_kde
             kde = gaussian_kde(arr, bw_method='scott')
             x_range = np.linspace(arr.min(), arr.max(), 300)
             ax.plot(x_range, kde(x_range), color=color, linewidth=2)
@@ -208,12 +207,12 @@ def score_badrate_bin_plot(
     ax1.set_ylabel('样本数', color=DEFAULT_COLORS[0], fontsize=10)
     ax1.tick_params(axis='y', labelcolor=DEFAULT_COLORS[0])
 
-    ax2.plot(x, stat_df['坏样本率'].values, color=DEFAULT_COLORS[1], marker='o',
+    ax2.plot(x, stat_df['坏样本率'].values, color=BAD_RATE_COLOR, marker='o',
              linewidth=2, markersize=6, label='坏样本率', zorder=3)
     ax2.axhline(overall_br, color=REFERENCE_COLOR, linestyle='--', linewidth=1,
                 label=f'整体坏率 {overall_br:.2%}')
-    ax2.set_ylabel('坏样本率', color=DEFAULT_COLORS[1], fontsize=10)
-    ax2.tick_params(axis='y', labelcolor=DEFAULT_COLORS[1])
+    ax2.set_ylabel('坏样本率', color=BAD_RATE_COLOR, fontsize=10)
+    ax2.tick_params(axis='y', labelcolor=BAD_RATE_COLOR)
     ax2.yaxis.set_major_formatter(mticker.PercentFormatter(1.0))
 
     ax1.set_xticks(x)
@@ -263,7 +262,7 @@ def score_lift_plot(
         datasets = {'数据集': (y_true, y_prob)}
 
     fig, ax = get_or_create_ax(figsize=figsize, ax=ax)
-    colors = list(EXTENDED_COLORS)
+    colors = get_series_colors(len(datasets))
     highlight = {0.01, 0.05, 0.10}
 
     for idx, (label, (yt, yp)) in enumerate(datasets.items()):
@@ -351,7 +350,7 @@ def score_approval_badrate_curve(
     fig, ax1 = get_or_create_ax(figsize=figsize, ax=ax)
     ax2 = ax1.twinx()
 
-    ax1.plot(approval_rates, pass_brs, color=DEFAULT_COLORS[1], linewidth=2,
+    ax1.plot(approval_rates, pass_brs, color=BAD_RATE_COLOR, linewidth=2,
              label='通过样本坏率')
     ax1.plot(approval_rates, reject_brs, color=DEFAULT_COLORS[0], linewidth=2,
              linestyle='--', label='拒绝样本坏率')

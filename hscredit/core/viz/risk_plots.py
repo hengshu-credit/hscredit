@@ -32,7 +32,8 @@ from matplotlib.ticker import PercentFormatter
 
 from .utils import (
     DEFAULT_COLORS, setup_axis_style, save_figure,
-    get_or_create_ax
+    get_or_create_ax, BAD_RATE_COLOR, NEUTRAL_COLOR,
+    get_series_colors, make_colormap, make_risk_cmap,
 )
 
 
@@ -85,7 +86,8 @@ def roc_plot(
     
     # 绘制对角线
     if show_diagonal:
-        ax.plot([0, 1], [0, 1], 'k--', lw=1, alpha=0.5, label='Random (AUC = 0.50)')
+        ax.plot([0, 1], [0, 1], color=NEUTRAL_COLOR, linestyle='--',
+                lw=1, alpha=0.5, label='Random (AUC = 0.50)')
     
     # 绘制ROC曲线
     label_str = label if label else 'Model'
@@ -153,7 +155,7 @@ def pr_plot(
     # 计算基线（正样本比例）
     if show_baseline:
         baseline = np.mean(y_true)
-        ax.axhline(y=baseline, color='k', linestyle='--', 
+        ax.axhline(y=baseline, color=NEUTRAL_COLOR, linestyle='--',
                    alpha=0.5, label=f'Baseline ({baseline:.2%})')
     
     # 绘制PR曲线
@@ -242,7 +244,8 @@ def lift_plot(
     
     # 绘制基线
     if show_baseline:
-        ax.axhline(y=1, color='k', linestyle='--', alpha=0.5, label='Baseline (Lift=1)')
+        ax.axhline(y=1, color=NEUTRAL_COLOR, linestyle='--',
+                   alpha=0.5, label='Baseline (Lift=1)')
     
     # 绘制Lift曲线
     ax.plot(depths, lifts, color=colors[0], marker='o', lw=2, markersize=6, **kwargs)
@@ -323,7 +326,8 @@ def gain_plot(
     
     # 绘制基线（随机模型）
     if show_baseline:
-        ax.plot([0, 100], [0, 100], 'k--', alpha=0.5, label='Baseline (Random)')
+        ax.plot([0, 100], [0, 100], color=NEUTRAL_COLOR, linestyle='--',
+                alpha=0.5, label='Baseline (Random)')
     
     # 绘制Gain曲线
     ax.plot(depths, cumulative_gains, color=colors[0], marker='o', 
@@ -353,7 +357,7 @@ def confusion_matrix_plot(
     ax: Optional[plt.Axes] = None,
     figsize: Tuple[float, float] = (8, 6),
     title: str = "Confusion Matrix",
-    cmap: str = "Blues",
+    cmap: Optional[Any] = None,
     normalize: Optional[str] = None,
     show_values: bool = True,
     show_metrics: bool = True,
@@ -380,6 +384,8 @@ def confusion_matrix_plot(
         >>> fig = confusion_matrix_plot(y_test, y_pred, normalize='true')
     """
     fig, ax = get_or_create_ax(figsize=figsize, ax=ax)
+    if cmap is None:
+        cmap = make_colormap("hscredit_confusion", ["#F7F8FF", DEFAULT_COLORS[0]])
     
     # 计算混淆矩阵
     cm = confusion_matrix(y_true, y_pred)
@@ -483,7 +489,8 @@ def calibration_plot(
             bin_counts.append(np.sum(in_bin))
     
     # 绘制完美校准线
-    ax.plot([0, 1], [0, 1], 'k--', label='Perfectly calibrated')
+    ax.plot([0, 1], [0, 1], color=NEUTRAL_COLOR, linestyle='--',
+            label='Perfectly calibrated')
     
     # 绘制校准曲线
     brier = brier_score_loss(y_true, y_score)
@@ -872,13 +879,12 @@ def strategy_compare_plot(
         >>> fig = strategy_compare_plot(strategies)
     """
     fig, ax = get_or_create_ax(figsize=figsize, ax=ax)
-    
-    if colors is None:
-        colors = DEFAULT_COLORS
-    
+
     strategy_names = [s['name'] for s in strategies]
     n_strategies = len(strategy_names)
     n_metrics = len(metrics)
+    if colors is None:
+        colors = get_series_colors(n_strategies)
     
     # 设置柱状图位置
     x = np.arange(n_metrics)
@@ -960,9 +966,6 @@ def vintage_plot(
     Example:
         >>> fig = vintage_plot(df, 'mob', 'ever_dpd30', 'issue_month')
     """
-    if colors is None:
-        colors = DEFAULT_COLORS
-    
     # 创建透视表
     if vintage_col:
         vintage_data = df.groupby([vintage_col, mob_col])[target_col].mean().reset_index()
@@ -972,6 +975,8 @@ def vintage_plot(
         vintage_overall = df.groupby(mob_col)[target_col].mean()
         vintage_pivot = vintage_overall.to_frame().T
         vintage_pivot.index = ['Overall']
+    if colors is None:
+        colors = get_series_colors(len(vintage_pivot))
     
     # 限制最大MOB
     if max_mob:
@@ -1013,7 +1018,8 @@ def vintage_plot(
     
     # 绘制热力图
     if show_heatmap:
-        sns.heatmap(vintage_pivot * 100, annot=True, fmt='.2f', cmap='YlOrRd',
+        sns.heatmap(vintage_pivot * 100, annot=True, fmt='.2f',
+                   cmap=make_risk_cmap("hscredit_vintage"),
                    ax=ax_heat, cbar_kws={'label': 'Bad Rate (%)'})
         ax_heat.set_title('Vintage Heatmap', fontsize=12, fontweight='bold')
         ax_heat.set_xlabel('MOB', fontsize=10)
@@ -1191,9 +1197,9 @@ def approval_rate_trend_plot(
     if show_bad_rate and target_col:
         ax2 = ax.twinx()
         ax2.plot(trend_data['period'], trend_data['bad_rate'] * 100,
-                's-', color=colors[1], lw=2, markersize=4, label='Bad Rate')
-        ax2.set_ylabel('Bad Rate (%)', fontsize=12, color=colors[1])
-        ax2.tick_params(axis='y', labelcolor=colors[1])
+                's-', color=BAD_RATE_COLOR, lw=2, markersize=4, label='Bad Rate')
+        ax2.set_ylabel('Bad Rate (%)', fontsize=12, color=BAD_RATE_COLOR)
+        ax2.tick_params(axis='y', labelcolor=BAD_RATE_COLOR)
         ax2.yaxis.set_major_formatter(PercentFormatter())
     
     if title is None:
@@ -1271,9 +1277,6 @@ def bad_rate_trend_plot(
     else:
         fig, ax_line = get_or_create_ax(figsize=figsize, ax=ax)
     
-    if colors is None:
-        colors = DEFAULT_COLORS
-    
     # 确保日期格式正确
     df[date_col] = pd.to_datetime(df[date_col])
     df['_period'] = df[date_col].dt.to_period(freq)
@@ -1288,12 +1291,16 @@ def bad_rate_trend_plot(
         
         # 绘制各维度曲线
         dimensions = trend_data['dimension'].unique()
+        if colors is None:
+            colors = get_series_colors(len(dimensions))
         for i, dim in enumerate(dimensions):
             dim_data = trend_data[trend_data['dimension'] == dim]
             ax_line.plot(dim_data['period'], dim_data['bad_rate'] * 100,
                         'o-', label=str(dim), color=colors[i % len(colors)],
                         lw=2, markersize=4)
     else:
+        if colors is None:
+            colors = DEFAULT_COLORS
         trend_data = df.groupby('_period').agg({
             target_col: ['count', 'mean']
         }).reset_index()
@@ -1309,7 +1316,7 @@ def bad_rate_trend_plot(
     ax_line.yaxis.set_major_formatter(PercentFormatter())
     
     if title is None:
-        title = f'Bad Rate Trend' + (f' by {dimension_col}' if dimension_col else '')
+        title = 'Bad Rate Trend' + (f' by {dimension_col}' if dimension_col else '')
     ax_line.set_title(title, fontsize=14, fontweight='bold')
     
     ax_line.legend(loc='best', frameon=True)

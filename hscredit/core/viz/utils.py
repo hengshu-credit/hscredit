@@ -6,8 +6,8 @@
 """
 
 import os
-import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
 from typing import Optional, Tuple, Any
 
 # 统一配色：以 style 模块为唯一来源，所有图表均引用这些常量，
@@ -37,6 +37,42 @@ RISK_GRADIENT = list(GRADIENT_PALETTES["risk"])
 BLUE_GRADIENT = list(GRADIENT_PALETTES["blue"])
 # 蓝→紫→粉→红 连续色阶，用于热力图/条件格式
 SEQUENTIAL_GRADIENT = list(GRADIENT_PALETTES["blue_purple_red"])
+# 发散色阶，用于相关性、改善率等可正可负指标
+DIVERGING_GRADIENT = list(GRADIENT_PALETTES["diverging"])
+
+
+def make_colormap(name: str, colors: Optional[list] = None, n: int = 256):
+    """根据统一色板创建 matplotlib colormap.
+
+    :param name: colormap 名称
+    :param colors: 颜色列表，默认使用蓝紫粉红连续色阶
+    :param n: 颜色采样数
+    :return: LinearSegmentedColormap
+    """
+    return mcolors.LinearSegmentedColormap.from_list(
+        name,
+        colors or SEQUENTIAL_GRADIENT,
+        N=n,
+    )
+
+
+def make_risk_cmap(name: str = "hscredit_risk", n: int = 256):
+    """创建风险连续色阶（低风险蓝紫，高风险粉红）."""
+    return make_colormap(name, RISK_GRADIENT, n=n)
+
+
+def make_diverging_cmap(name: str = "hscredit_diverging", n: int = 256):
+    """创建发散色阶（主题蓝→近白→副主题红）."""
+    return make_colormap(name, DIVERGING_GRADIENT, n=n)
+
+
+def get_psi_color(value: float) -> str:
+    """根据 PSI 阈值返回统一语义色."""
+    if value < 0.10:
+        return STABLE_COLOR
+    if value < 0.25:
+        return CHANGING_COLOR
+    return UNSTABLE_COLOR
 
 
 def get_series_colors(n: int) -> list:
@@ -69,6 +105,7 @@ def setup_axis_style(ax, colors: Optional[list] = None, hide_top_right: bool = F
     ax.spines['bottom'].set_color(color)
     ax.spines['right'].set_color(color)
     ax.spines['left'].set_color(color)
+    ax.tick_params(axis='both', colors=color)
     
     if hide_top_right:
         ax.spines['top'].set_visible(False)

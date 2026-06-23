@@ -23,8 +23,9 @@ from typing import Union, Optional, List, Dict, Any
 
 from .utils import (
     DEFAULT_COLORS, setup_axis_style, save_figure,
-    get_or_create_ax, format_bin_label,
+    format_bin_label,
     BAD_RATE_COLOR, REFERENCE_COLOR, EXTENDED_COLORS, get_series_colors,
+    make_colormap, make_diverging_cmap,
 )
 
 logger = logging.getLogger(__name__)
@@ -528,8 +529,8 @@ def bin_plot(
 
     overall_bad_rate = float(feature_table['坏样本率'].mul(feature_table['样本总数']).sum() / feature_table['样本总数'].sum())
     axis_theme = colors[0]
-    line_color = '#E85D4A'
-    reference_color = '#4C8DFF'
+    line_color = BAD_RATE_COLOR
+    reference_color = REFERENCE_COLOR
     rate_fontdict = {
         'color': line_color,
         'fontsize': 10,
@@ -746,7 +747,7 @@ def corr_plot(data, figure_size=None, fontsize=16, mask=False, save=None,
         return_ax = True
 
     map_plot = sns.heatmap(
-        corr, cmap=sns.diverging_palette(267, 267, n=step, s=100, l=40),
+        corr, cmap=make_diverging_cmap("hscredit_corr", n=max(step, 3)),
         vmax=1, vmin=-1, center=0, square=True, linewidths=linewidths,
         annot=annot, fmt=fmt, linecolor=linecolor, robust=True, cbar=True,
         ax=ax, mask=corr_mask if mask else None, **kwargs
@@ -991,7 +992,7 @@ def hist_plot(score, y_true=None, figsize=(15, 10), bins=30, save=None,
         return_ax = False
         fig, ax = plt.subplots(1, 1, figsize=figsize)
 
-    palette = sns.diverging_palette(340, 267, n=target_unique, s=100, l=40)
+    palette = get_series_colors(target_unique)
 
     # 处理 hue_order 参数
     if hue_order is not None:
@@ -1287,17 +1288,18 @@ def psi_plot(expected, actual, y=None, labels=None, desc="", save=None, colors=N
         fig.tight_layout()
 
         if save:
-            os.makedirs(os.path.dirname(save), exist_ok=True)
-            fig.savefig(save, dpi=240, format="png", bbox_inches="tight")
+            save_figure(fig, save)
 
     if result:
         return df_psi[["指标名称", "分箱", f"{labels[0]}样本数", f"{labels[0]}样本占比", 
                       f"{labels[0]}坏样本率", f"{labels[1]}样本数", f"{labels[1]}样本占比", 
                       f"{labels[1]}坏样本率", f"{labels[1]}% - {labels[0]}%", 
                       f"ln({labels[1]}% / {labels[0]}%)", "分档PSI值", "总体PSI值"]]
+    if plot:
+        return fig
 
 
-def dataframe_plot(df, row_height=0.4, font_size=14, header_color='#2639E9', 
+def dataframe_plot(df, row_height=0.4, font_size=14, header_color=None,
                   row_colors=None, edge_color='w', bbox=[0, 0, 1, 1], header_columns=0, 
                   ax=None, save=None, **kwargs):
     """
@@ -1315,8 +1317,10 @@ def dataframe_plot(df, row_height=0.4, font_size=14, header_color='#2639E9',
     :param save: 保存路径
     :return: matplotlib Figure
     """
+    if header_color is None:
+        header_color = DEFAULT_COLORS[0]
     if row_colors is None:
-        row_colors = ['#dae3f3', 'w']
+        row_colors = ['#EEF1FF', 'w']
 
     data = df.copy()
     for col in data.select_dtypes('datetime'):
@@ -1356,9 +1360,7 @@ def dataframe_plot(df, row_height=0.4, font_size=14, header_color='#2639E9',
 
     fig.tight_layout()
 
-    if save:
-        os.makedirs(os.path.dirname(save), exist_ok=True)
-        fig.savefig(save, dpi=240, format="png", bbox_inches="tight")
+    save_figure(fig, save)
 
     return fig
 
@@ -1471,9 +1473,7 @@ def distribution_plot(data, date="date", target="target", save=None, figsize=(10
 
         fig.tight_layout()
 
-        if save:
-            os.makedirs(os.path.dirname(save), exist_ok=True)
-            fig.savefig(save, dpi=240, format="png", bbox_inches="tight")
+        save_figure(fig, save)
 
         if result:
             counts_df = total_counts.reset_index()
@@ -1508,7 +1508,7 @@ def distribution_plot(data, date="date", target="target", save=None, figsize=(10
 
     ax2 = ax1.twinx()
     (temp["坏样本"] / temp.sum(axis=1)).plot(
-        ax=ax2, color=colors[-1], style="--", linewidth=2, label="坏样本率"
+        ax=ax2, color=BAD_RATE_COLOR, style="--", linewidth=2, label="坏样本率"
     )
     ax2.set_ylabel('坏样本率')
     ax2.yaxis.set_major_formatter(PercentFormatter(1))
@@ -1520,9 +1520,7 @@ def distribution_plot(data, date="date", target="target", save=None, figsize=(10
 
     fig.tight_layout()
 
-    if save:
-        os.makedirs(os.path.dirname(save), exist_ok=True)
-        fig.savefig(save, dpi=240, format="png", bbox_inches="tight")
+    save_figure(fig, save)
 
     if result:
         temp = temp.reset_index().rename(
@@ -1898,8 +1896,8 @@ def bin_trend_plot(
     legend_handles = [
         Patch(facecolor=colors[0], edgecolor='white', label='好样本'),
         Patch(facecolor=colors[1], edgecolor='white', label='坏样本'),
-        Line2D([0], [0], color='#E85D4A', linestyle=(0, (4, 3)), linewidth=2.1, marker='o', markersize=5, markerfacecolor='white', label='坏样本率'),
-        Line2D([0], [0], color='#4C8DFF', linestyle=(0, (2, 2)), linewidth=1.8, label='整体坏样本率'),
+        Line2D([0], [0], color=BAD_RATE_COLOR, linestyle=(0, (4, 3)), linewidth=2.1, marker='o', markersize=5, markerfacecolor='white', label='坏样本率'),
+        Line2D([0], [0], color=REFERENCE_COLOR, linestyle=(0, (2, 2)), linewidth=1.8, label='整体坏样本率'),
     ]
 
     summary_cols = ['指标IV值', '分档KS值', 'LIFT值']
@@ -2022,10 +2020,9 @@ def batch_bin_trend_plot(
             results[feat] = fig
 
             if save_dir:
-                import os
                 os.makedirs(save_dir, exist_ok=True)
                 save_path = os.path.join(save_dir, f"{feat}_trend.png")
-                fig.savefig(save_path, dpi=150, bbox_inches='tight')
+                save_figure(fig, save_path, dpi=150)
 
         except Exception as e:
             warnings.warn(f"绘制特征 {feat} 失败: {e}")
@@ -2429,7 +2426,7 @@ def _cross_heatmap_cell(
     annot: bool = True,
     diverging: bool = False,
     fontsize: int = 10,
-    axis_color: str = '#2639E9',
+    axis_color: str = DEFAULT_COLORS[0],
 ):
     """在指定 Axes 上绘制二维分箱交叉指标热力图（类似相关性图）.
 
@@ -2458,14 +2455,14 @@ def _cross_heatmap_cell(
         vabs = float(np.nanmax(np.abs(M))) if finite.any() else 1.0
         vabs = vabs if vabs > 0 else 1.0
         norm = mcolors.TwoSlopeNorm(vmin=-vabs, vcenter=0.0, vmax=vabs)
-        cmap = sns.diverging_palette(240, 12, s=80, l=50, as_cmap=True)
+        cmap = make_diverging_cmap("hscredit_cross_diverging")
     else:
         vmin = float(np.nanmin(M)) if finite.any() else 0.0
         vmax = float(np.nanmax(M)) if finite.any() else 1.0
         if vmin == vmax:
             vmax = vmin + 1e-9
         norm = mcolors.Normalize(vmin=vmin, vmax=vmax)
-        cmap = sns.light_palette(base_color, as_cmap=True)
+        cmap = make_colormap("hscredit_cross", ["#F7F8FF", base_color])
 
     cmap = _copy.copy(cmap)
     cmap.set_bad('#f0f0f0')
@@ -2508,7 +2505,7 @@ def _set_cross_heat_ticklabels(
     ylabels: Optional[List] = None,
     x_top: bool = False,
     y_right: bool = False,
-    axis_color: str = '#2639E9',
+    axis_color: str = DEFAULT_COLORS[0],
     rotation: int = 35,
     fontsize: int = 9,
     max_len: int = 14,
@@ -2733,19 +2730,19 @@ def bin_2d_plot(
         ax.set_title(text, fontsize=fontsize + 2, color=axis_color, fontweight='semibold', pad=6)
 
     # ---------- 5 个交叉指标热力图 ----------
-    _cross_heatmap_cell(ax_prop, M_prop, '#2639E9', fmt='.1%', annot=annot,
+    _cross_heatmap_cell(ax_prop, M_prop, colors[0], fmt='.1%', annot=annot,
                         fontsize=fontsize, axis_color=axis_color)
     _cell_title(ax_prop, '样本占比')
-    _cross_heatmap_cell(ax_bad, M_bad, '#E85D4A', fmt='.2%', annot=annot,
+    _cross_heatmap_cell(ax_bad, M_bad, BAD_RATE_COLOR, fmt='.2%', annot=annot,
                         fontsize=fontsize, axis_color=axis_color)
     _cell_title(ax_bad, '坏样本率')
-    _cross_heatmap_cell(ax_lift, M_lift, '#FE7715', fmt='.1%', annot=annot,
+    _cross_heatmap_cell(ax_lift, M_lift, colors[2], fmt='.1%', annot=annot,
                         fontsize=fontsize, axis_color=axis_color)
     _cell_title(ax_lift, 'LIFT')
-    _cross_heatmap_cell(ax_reject, M_reject, '#2639E9', fmt='.1%', annot=annot,
+    _cross_heatmap_cell(ax_reject, M_reject, colors[0], fmt='.1%', annot=annot,
                         fontsize=fontsize, axis_color=axis_color)
     _cell_title(ax_reject, '风险拒绝比')
-    _cross_heatmap_cell(ax_improve, M_improve, '#2639E9', fmt='.1%', annot=annot,
+    _cross_heatmap_cell(ax_improve, M_improve, colors[0], fmt='.1%', annot=annot,
                         diverging=True, fontsize=fontsize, axis_color=axis_color)
     _cell_title(ax_improve, '坏账改善')
 

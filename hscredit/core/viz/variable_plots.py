@@ -11,8 +11,7 @@
 
 from __future__ import annotations
 
-import warnings
-from typing import Dict, List, Optional, Tuple, Union
+from typing import List, Optional, Tuple
 
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
@@ -23,6 +22,7 @@ from matplotlib.figure import Figure
 from .utils import (
     DEFAULT_COLORS, get_or_create_ax, save_figure, setup_axis_style,
     BLUE_GRADIENT, NEUTRAL_COLOR, STABLE_COLOR, CHANGING_COLOR, UNSTABLE_COLOR,
+    get_series_colors, get_psi_color, make_risk_cmap,
 )
 
 
@@ -106,11 +106,11 @@ def metric_comparison_plot(
         if reference_lines is None:
             reference_lines = [(0.02, 'IV=0.02', _IV_COLORS[1]), (0.10, 'IV=0.10', _IV_COLORS[2]), (0.30, 'IV=0.30', _IV_COLORS[3])]
     elif color_scheme == 'psi':
-        colors = [STABLE_COLOR if value < 0.10 else CHANGING_COLOR if value < 0.25 else UNSTABLE_COLOR for value in values]
+        colors = [get_psi_color(value) for value in values]
         if reference_lines is None:
             reference_lines = [(0.10, '轻微偏移 0.10', CHANGING_COLOR), (0.25, '显著偏移 0.25', UNSTABLE_COLOR)]
     else:
-        colors = [DEFAULT_COLORS[i % len(DEFAULT_COLORS)] for i in range(len(values))]
+        colors = get_series_colors(len(values))
 
     fig, ax = get_or_create_ax(figsize=figsize, ax=ax)
     positions = np.arange(len(labels))
@@ -325,7 +325,7 @@ def variable_psi_heatmap(
 ) -> Figure:
     """特征PSI矩阵热力图.
 
-    颜色反映偏移程度：绿色（PSI<0.1稳定）/ 橙色（0.1-0.25略变）/ 红色（>0.25不稳定）。
+    颜色反映偏移程度：低 PSI 使用主题冷色，高 PSI 使用粉红风险色。
 
     :param psi_matrix: PSI矩阵，行=特征，列=时间周期或数据集，格=PSI值
     :param ax: matplotlib Axes
@@ -345,7 +345,7 @@ def variable_psi_heatmap(
     data = psi_matrix.values.astype(float)
     n_rows, n_cols = data.shape
 
-    # 三段色：稳定→略变→不稳定（hscredit 语义色 绿→橙→红）
+    # 三段色：稳定→略变→不稳定（hscredit 统一蓝紫红风险色阶）
     cmap = mcolors.LinearSegmentedColormap.from_list(
         'psi_cmap',
         [(0.0, STABLE_COLOR), (0.1 / 0.5, CHANGING_COLOR), (1.0, UNSTABLE_COLOR)],
@@ -420,8 +420,8 @@ def variable_importance_grouped_plot(
     if group_col and group_col in df.columns:
         groups = df[group_col].tolist()
         unique_groups = list(dict.fromkeys(groups))
-        palette = plt.cm.get_cmap('tab10', len(unique_groups))
-        group_colors = {g: palette(i) for i, g in enumerate(unique_groups)}
+        palette = get_series_colors(len(unique_groups))
+        group_colors = {g: palette[i] for i, g in enumerate(unique_groups)}
         bar_colors = [group_colors[g] for g in groups]
         legend_patches = [mpatches.Patch(color=group_colors[g], label=g) for g in unique_groups]
     else:
@@ -505,7 +505,7 @@ def variable_missing_badrate_plot(
     diff = np.abs(miss_brs - overall_br)
 
     fig, ax = get_or_create_ax(figsize=figsize, ax=ax)
-    sc = ax.scatter(miss_rates, miss_brs, c=diff, cmap='RdYlGn_r',
+    sc = ax.scatter(miss_rates, miss_brs, c=diff, cmap=make_risk_cmap("hscredit_missing_badrate"),
                     s=80, alpha=0.8, edgecolors='white', linewidths=0.5)
     ax.axhline(overall_br, color=NEUTRAL_COLOR, linestyle='--', linewidth=1,
                label=f'总体坏率 {overall_br:.2%}')
