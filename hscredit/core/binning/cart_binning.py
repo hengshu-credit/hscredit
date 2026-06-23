@@ -718,53 +718,6 @@ class CartBinning(BaseBinning):
 
             return bins
 
-    def _get_bin_labels_for_transform(
-        self,
-        feature: str,
-        bins: np.ndarray
-    ) -> Dict[int, str]:
-        """生成分箱标签映射.
-
-        返回字典，key 是 bin 索引，value 是标签。
-
-        :param feature: 特征名
-        :param bins: 分箱索引数组
-        :return: 标签字典
-        """
-        splits = self.splits_[feature]
-        labels = {}
-
-        # 处理缺失值和特殊值
-        labels[-1] = 'missing'
-        labels[-2] = 'special'
-
-        # 处理正常分箱
-        if isinstance(splits, list):
-            # 类别型特征
-            for i, cat in enumerate(splits):
-                if i == 0:
-                    labels[i] = f'(-inf, {cat}]'
-                elif i == len(splits) - 1:
-                    labels[i] = f'({splits[i-1]}, {cat}]'
-                else:
-                    labels[i] = f'({splits[i-1]}, {cat}]'
-            # 最后一个箱
-            labels[len(splits)] = f'({splits[-1] if splits else "-inf"}, +inf)'
-        else:
-            # 数值型特征
-            n_splits = len(splits) if splits is not None else 0
-            for i in range(n_splits + 1):
-                if n_splits == 0:
-                    labels[i] = '(-inf, +inf)'
-                elif i == 0:
-                    labels[i] = f'(-inf, {splits[i]}]'
-                elif i == n_splits:
-                    labels[i] = f'({splits[i-1]}, +inf)'
-                else:
-                    labels[i] = f'({splits[i-1]}, {splits[i]}]'
-
-        return labels
-
     def transform(
         self,
         X: Union[pd.DataFrame, np.ndarray],
@@ -814,8 +767,7 @@ class CartBinning(BaseBinning):
             if metric == 'indices':
                 result[feature] = bins
             elif metric == 'bins':
-                labels = self._get_bin_labels_for_transform(feature, bins)
-                result[feature] = [labels.get(b, f'bin_{b}') for b in bins]
+                result[feature] = self._assign_bin_labels(feature, bins)
             elif metric == 'woe':
                 # 优先使用_woe_maps_（从export/load导入）
                 if hasattr(self, '_woe_maps_') and feature in self._woe_maps_:

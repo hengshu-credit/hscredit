@@ -710,7 +710,7 @@ class ChiMergeBinning(BaseBinning):
             if metric == 'indices':
                 result[feature] = bins
             elif metric == 'bins':
-                result[feature] = self._get_bin_labels(splits, bins)
+                result[feature] = self._assign_bin_labels(feature, bins)
             elif metric == 'woe':
                 # 优先使用_woe_maps_（从export/load导入）
                 if hasattr(self, '_woe_maps_') and feature in self._woe_maps_:

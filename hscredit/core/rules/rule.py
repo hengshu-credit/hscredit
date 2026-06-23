@@ -42,9 +42,16 @@ def get_columns_from_query(query_str: str) -> List[str]:
     ['age', 'income']
     >>> get_columns_from_query("salary >= 3000 & age.between(20, 60)")
     ['age', 'salary']
+    >>> get_columns_from_query("`衡枢鉴真分老客版` < 600 & `逾期(天)` > 7")
+    ['衡枢鉴真分老客版', '逾期(天)']
     """
-    tree = ast.parse(query_str, mode='eval')
     columns = set()
+
+    # 反引号包裹的列名（pandas query/eval 语法，用于含空格/特殊字符/非标识符的列名），
+    # ast.parse 无法解析反引号，需先用正则提取并替换为占位标识符
+    backtick_names = re.findall(r'`([^`]+)`', query_str)
+    columns.update(name.strip() for name in backtick_names)
+    cleaned = re.sub(r'`[^`]+`', ' _hscredit_bt_ ', query_str)
 
     def visit_node(node):
         if isinstance(node, ast.Attribute):
@@ -56,9 +63,15 @@ def get_columns_from_query(query_str: str) -> List[str]:
         elif isinstance(node, ast.Call):
             visit_node(node.func)
 
-    for node in ast.walk(tree):
-        visit_node(node)
+    try:
+        tree = ast.parse(cleaned, mode='eval')
+        for node in ast.walk(tree):
+            visit_node(node)
+    except SyntaxError:
+        # 极端情况下（如复杂的非标识符表达式）退化为仅返回反引号列名
+        pass
 
+    columns.discard('_hscredit_bt_')
     return sorted(columns)
 
 
@@ -184,7 +197,10 @@ class Rule:
         """规则异或操作。"""
         if not isinstance(other, Rule):
             raise InputTypeError(f"unsupported operand type(s) for ^: 'Rule' and '{type(other).__name__}'")
-        combined_expr = f"({self.expr}) ^ ({other.expr})"
+        # pandas eval 不支持布尔 ^（BitXor），用等价的 (a & ~b) | (~a & b) 表达异或
+        combined_expr = (
+            f"(({self.expr}) & ~({other.expr})) | (~({self.expr}) & ({other.expr}))"
+        )
         optimized = optimize_expr(beautify_expr(combined_expr))
         self_name = getattr(self, 'name', None) or self.expr
         other_name = getattr(other, 'name', None) or other.expr

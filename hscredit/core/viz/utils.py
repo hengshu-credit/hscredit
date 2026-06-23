@@ -10,9 +10,47 @@ import numpy as np
 import matplotlib.pyplot as plt
 from typing import Optional, Tuple, Any
 
+# 统一配色：以 style 模块为唯一来源，所有图表均引用这些常量，
+# 后续扩充色阶时只需在 style.py 中调整一处即可全局生效。
+from .style import (
+    PRIMARY_COLORS,
+    EXTENDED_COLORS,
+    SEMANTIC_COLORS,
+    GRADIENT_PALETTES,
+)
 
-# 默认配色方案
-DEFAULT_COLORS = ["#2639E9", "#F76E6C", "#FE7715"]
+
+# 默认配色方案：主题色 + 2 个副主题色（与 PRIMARY_COLORS 一致）
+DEFAULT_COLORS = list(PRIMARY_COLORS)
+
+# 语义色（与 bin_plot 参考样式一致）：坏样本率折线、整体基线参考线
+BAD_RATE_COLOR = SEMANTIC_COLORS["bad_rate"]            # #E85D4A 坏样本率折线
+REFERENCE_COLOR = SEMANTIC_COLORS["overall_baseline"]  # #4C8DFF 整体基线参考线
+# PSI/稳定性状态语义色
+STABLE_COLOR = SEMANTIC_COLORS["stable"]
+CHANGING_COLOR = SEMANTIC_COLORS["changing"]
+UNSTABLE_COLOR = SEMANTIC_COLORS["unstable"]
+NEUTRAL_COLOR = SEMANTIC_COLORS["neutral"]
+# 风险渐变色阶（绿→黄→橙→红），用于热力图/风险等级连续着色
+RISK_GRADIENT = list(GRADIENT_PALETTES["risk"])
+# 主题蓝色阶（浅→深），用于「数值越大越好/越强」的顺序着色（如 IV 强度）
+BLUE_GRADIENT = list(GRADIENT_PALETTES["blue"])
+# 蓝→紫→粉→红 连续色阶，用于热力图/条件格式
+SEQUENTIAL_GRADIENT = list(GRADIENT_PALETTES["blue_purple_red"])
+
+
+def get_series_colors(n: int) -> list:
+    """获取 n 条数据系列的统一配色（主题色 + 副主题色 + 扩展色循环）.
+
+    :param n: 需要的颜色数量
+    :return: 长度为 n 的颜色列表，优先使用主题色与副主题色，再循环扩展色板
+    """
+    if n <= 0:
+        return []
+    base = list(EXTENDED_COLORS)
+    if n <= len(base):
+        return base[:n]
+    return [base[i % len(base)] for i in range(n)]
 
 
 def setup_axis_style(ax, colors: Optional[list] = None, hide_top_right: bool = False):

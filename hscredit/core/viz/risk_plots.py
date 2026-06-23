@@ -1164,12 +1164,16 @@ def approval_rate_trend_plot(
     # 按时间聚合
     df['_period'] = df[date_col].dt.to_period(freq)
     
-    trend_data = df.groupby('_period').agg({
-        '_approved': ['count', 'sum', 'mean'],
-        target_col: 'mean' if target_col else 'sum'
-    }).reset_index()
-    
-    trend_data.columns = ['period', 'total', 'approved_count', 'approval_rate', 'bad_rate']
+    # 仅当提供 target_col 时才聚合逾期率，避免对 None 列聚合导致 KeyError
+    agg_spec = {'_approved': ['count', 'sum', 'mean']}
+    if target_col:
+        agg_spec[target_col] = 'mean'
+    trend_data = df.groupby('_period').agg(agg_spec).reset_index()
+
+    if target_col:
+        trend_data.columns = ['period', 'total', 'approved_count', 'approval_rate', 'bad_rate']
+    else:
+        trend_data.columns = ['period', 'total', 'approved_count', 'approval_rate']
     trend_data['period'] = trend_data['period'].dt.to_timestamp()
     
     # 绘制审批率

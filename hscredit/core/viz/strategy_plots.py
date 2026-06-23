@@ -20,7 +20,10 @@ import numpy as np
 import pandas as pd
 from matplotlib.figure import Figure
 
-from .utils import DEFAULT_COLORS, get_or_create_ax, save_figure, setup_axis_style
+from .utils import (
+    DEFAULT_COLORS, get_or_create_ax, save_figure, setup_axis_style,
+    EXTENDED_COLORS, CHANGING_COLOR, UNSTABLE_COLOR, NEUTRAL_COLOR,
+)
 
 
 def _quick_psi(base: np.ndarray, target: np.ndarray, n_bins: int = 10) -> float:
@@ -96,7 +99,7 @@ def rule_swap_plot(
         lift_values = pd.to_numeric(rule_rows['LIFT值'], errors='coerce').fillna(0).to_numpy()
         lift_colors = ['#4CAF50' if value < 1 else DEFAULT_COLORS[1] for value in lift_values]
         axes[1].bar(positions, lift_values, color=lift_colors, alpha=0.8)
-        axes[1].axhline(1, color='#666666', linestyle='--', linewidth=1, label='LIFT=1')
+        axes[1].axhline(1, color=NEUTRAL_COLOR, linestyle='--', linewidth=1, label='LIFT=1')
         axes[1].set_xticks(positions)
         axes[1].set_xticklabels(labels, rotation=30, ha='right', fontsize=8)
         axes[1].set_ylabel('LIFT值')
@@ -243,8 +246,8 @@ def feature_trend_by_time(
     if stat == 'badrate':
         ax.yaxis.set_major_formatter(mticker.PercentFormatter(1.0))
     if stat == 'psi':
-        ax.axhline(0.10, color='orange', linestyle='--', lw=0.8, alpha=0.7, label='PSI=0.10')
-        ax.axhline(0.25, color='red', linestyle='--', lw=0.8, alpha=0.7, label='PSI=0.25')
+        ax.axhline(0.10, color=CHANGING_COLOR, linestyle='--', lw=0.8, alpha=0.7, label='PSI=0.10')
+        ax.axhline(0.25, color=UNSTABLE_COLOR, linestyle='--', lw=0.8, alpha=0.7, label='PSI=0.25')
         ax.legend(fontsize=8)
 
     ax.set_xticks(x)
@@ -312,8 +315,8 @@ def feature_drift_comparison(
     ax.set_yticks(y_pos)
     ax.set_yticklabels(feats, fontsize=9)
     ax.invert_yaxis()
-    ax.axvline(0.10, color='orange', linestyle='--', lw=1, alpha=0.7)
-    ax.axvline(0.25, color='red', linestyle='--', lw=1, alpha=0.7)
+    ax.axvline(0.10, color=CHANGING_COLOR, linestyle='--', lw=1, alpha=0.7)
+    ax.axvline(0.25, color=UNSTABLE_COLOR, linestyle='--', lw=1, alpha=0.7)
 
     for bar, v in zip(bars, vals):
         ax.text(v + max(vals) * 0.01, bar.get_y() + bar.get_height() / 2,
@@ -543,7 +546,7 @@ def population_drift_monitor(
             ax_heat.text(j, i, f'{v:.2f}', ha='center', va='center', fontsize=7, color=c)
     ax_heat.set_title('PSI热力图', fontsize=12, fontweight='bold')
 
-    colors = DEFAULT_COLORS + ['#9C27B0', '#00BCD4', '#795548']
+    colors = list(EXTENDED_COLORS)
     x = np.arange(n_periods)
     for ci, feat in enumerate(top_feats):
         means = [float(df_i[feat].mean()) if feat in df_i.columns else np.nan for df_i in df_list]
@@ -551,7 +554,7 @@ def population_drift_monitor(
         norm = [m / base_mean if base_mean else m for m in means]
         ax_trend.plot(x, norm, marker='o', lw=2,
                       color=colors[ci % len(colors)], label=feat, markersize=5)
-    ax_trend.axhline(1.0, color='gray', linestyle='--', lw=0.8, alpha=0.6)
+    ax_trend.axhline(1.0, color=NEUTRAL_COLOR, linestyle='--', lw=0.8, alpha=0.6)
     ax_trend.set_xticks(x)
     ax_trend.set_xticklabels(labels, rotation=30, ha='right', fontsize=9)
     ax_trend.set_ylabel('相对基准期均值', fontsize=10)
@@ -624,7 +627,7 @@ def segment_scorecard_comparison(
     n_metrics = len(metrics)
     x = np.arange(len(segments))
     width = 0.8 / n_metrics
-    colors = DEFAULT_COLORS + ['#9C27B0', '#00BCD4']
+    colors = list(EXTENDED_COLORS[:5])
     fig, ax = get_or_create_ax(figsize=figsize, ax=ax)
     for mi, m in enumerate(metrics):
         offset = (mi - n_metrics / 2 + 0.5) * width

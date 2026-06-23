@@ -515,8 +515,7 @@ class QuantileBinning(BaseBinning):
             if metric == 'indices':
                 result[feature] = bins
             elif metric == 'bins':
-                labels = self._get_bin_labels(splits, bins)
-                result[feature] = [labels[b] if b >= 0 else ('missing' if b == -1 else 'special') for b in bins]
+                result[feature] = self._assign_bin_labels(feature, bins)
             elif metric == 'woe':
                 # 根据WOE映射，优先使用_export的_woe_maps_
                 if hasattr(self, '_woe_maps_') and feature in self._woe_maps_:

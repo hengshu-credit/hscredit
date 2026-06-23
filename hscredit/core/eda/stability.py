@@ -138,10 +138,10 @@ def csi_analysis(df: pd.DataFrame,
     
     base_df = df[df[date_col] == base_period]
     compare_df = df[df[date_col] == compare_period]
-    
-    # 计算CSI
-    csi_value = csi(base_df[feature], compare_df[feature], 
-                   base_df[target], compare_df[target])
+
+    # 计算CSI（CSI 衡量特征在两个时间段的分布漂移，不依赖目标变量；
+    # target 参数保留用于接口一致性与下游报告标注）
+    csi_value = csi(base_df[feature], compare_df[feature])
     
     return {
         '特征名': feature,
@@ -534,6 +534,14 @@ def score_drift_report(
         >>> print(report['PSI'], report['偏移等级'])
         >>> print(report['分布统计'])
     """
+    # 统一转换为 Series（按位置对齐），兼容传入 np.ndarray / list / Series
+    score_base = pd.Series(np.asarray(score_base))
+    score_target = pd.Series(np.asarray(score_target))
+    if y_base is not None:
+        y_base = pd.Series(np.asarray(y_base))
+    if y_target is not None:
+        y_target = pd.Series(np.asarray(y_target))
+
     s_base = pd.to_numeric(score_base, errors='coerce').dropna()
     s_tgt = pd.to_numeric(score_target, errors='coerce').dropna()
 

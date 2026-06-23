@@ -19,7 +19,10 @@ import numpy as np
 import pandas as pd
 from matplotlib.figure import Figure
 
-from .utils import DEFAULT_COLORS, get_or_create_ax, save_figure, setup_axis_style
+from .utils import (
+    DEFAULT_COLORS, get_or_create_ax, save_figure, setup_axis_style,
+    EXTENDED_COLORS, REFERENCE_COLOR, NEUTRAL_COLOR,
+)
 
 
 def score_ks_plot(
@@ -53,7 +56,7 @@ def score_ks_plot(
         datasets = {'数据集': (y_true, y_prob)}
 
     fig, ax = get_or_create_ax(figsize=figsize, ax=ax)
-    colors = DEFAULT_COLORS + ['#9C27B0', '#00BCD4', '#795548']
+    colors = list(EXTENDED_COLORS)
 
     for idx, (label, (yt, yp)) in enumerate(datasets.items()):
         yt = np.asarray(yt)
@@ -125,7 +128,7 @@ def score_distribution_comparison_plot(
         _has_scipy = False
 
     fig, ax = get_or_create_ax(figsize=figsize, ax=ax)
-    colors = DEFAULT_COLORS + ['#9C27B0', '#00BCD4']
+    colors = list(EXTENDED_COLORS[:5])
 
     for idx, (label, arr) in enumerate(scores.items()):
         arr = np.asarray(arr)
@@ -207,7 +210,7 @@ def score_badrate_bin_plot(
 
     ax2.plot(x, stat_df['坏样本率'].values, color=DEFAULT_COLORS[1], marker='o',
              linewidth=2, markersize=6, label='坏样本率', zorder=3)
-    ax2.axhline(overall_br, color='gray', linestyle='--', linewidth=1,
+    ax2.axhline(overall_br, color=REFERENCE_COLOR, linestyle='--', linewidth=1,
                 label=f'整体坏率 {overall_br:.2%}')
     ax2.set_ylabel('坏样本率', color=DEFAULT_COLORS[1], fontsize=10)
     ax2.tick_params(axis='y', labelcolor=DEFAULT_COLORS[1])
@@ -260,7 +263,7 @@ def score_lift_plot(
         datasets = {'数据集': (y_true, y_prob)}
 
     fig, ax = get_or_create_ax(figsize=figsize, ax=ax)
-    colors = DEFAULT_COLORS + ['#9C27B0', '#00BCD4', '#795548']
+    colors = list(EXTENDED_COLORS)
     highlight = {0.01, 0.05, 0.10}
 
     for idx, (label, (yt, yp)) in enumerate(datasets.items()):
@@ -285,7 +288,7 @@ def score_lift_plot(
                             xytext=(r + 0.005, lv + 0.05),
                             fontsize=8, color=color)
 
-    ax.axhline(1.0, color='gray', linestyle='--', linewidth=0.8,
+    ax.axhline(1.0, color=NEUTRAL_COLOR, linestyle='--', linewidth=0.8,
                label='随机（LIFT=1）')
     ax.set_xlabel('覆盖率', fontsize=11)
     ax.set_ylabel('LIFT值', fontsize=11)
@@ -352,7 +355,7 @@ def score_approval_badrate_curve(
              label='通过样本坏率')
     ax1.plot(approval_rates, reject_brs, color=DEFAULT_COLORS[0], linewidth=2,
              linestyle='--', label='拒绝样本坏率')
-    ax1.axhline(overall_br, color='gray', linestyle=':', linewidth=1,
+    ax1.axhline(overall_br, color=REFERENCE_COLOR, linestyle=':', linewidth=1,
                 label=f'整体坏率 {overall_br:.2%}')
     ax1.set_xlabel('通过率', fontsize=11)
     ax1.set_ylabel('坏账率', fontsize=11)

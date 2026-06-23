@@ -108,8 +108,15 @@ class BorutaSelector(BaseFeatureSelector):
         n_samples, n_features = X.shape
         rng = np.random.RandomState(self.random_state)
 
-        # 准备数据
-        X_array = X.values
+        # 准备数据：编码类别变量并填充缺失值（基模型如随机森林不接受 object/NaN），
+        # 保持与 chi2/mutual_info/f_test 等筛选器对原始信贷数据的鲁棒性一致
+        X_prepared = X.copy()
+        for col in X_prepared.columns:
+            if X_prepared[col].dtype == 'object':
+                X_prepared[col] = pd.factorize(X_prepared[col])[0]
+        if X_prepared.isna().any().any():
+            X_prepared = X_prepared.fillna(X_prepared.median(numeric_only=True)).fillna(0)
+        X_array = X_prepared.values
         feature_names = X.columns.tolist()
 
         # 迭代

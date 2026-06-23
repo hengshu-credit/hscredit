@@ -146,10 +146,7 @@ __all__ = [
     'bad_rate_trend',
     'bad_rate_by_bins',
     'sample_distribution',
-    # 辅助函数
-    '_build_overdue_labels',
-    '_create_binary_target',
-    
+
     # 特征分析
     'feature_type_inference',
     'numeric_distribution',

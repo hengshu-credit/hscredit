@@ -39,7 +39,7 @@ EXTENDED_COLORS = PRIMARY_COLORS + ["#9C27B0", "#00BCD4", "#795548"]
 # 语义色
 SEMANTIC_COLORS = {
     "bad_rate": "#E85D4A",
-    "overall_baseline": "#4C8DFF",
+    "overall_baseline": "#2639E9",
     "stable": "#4CAF50",       # PSI < 0.1
     "changing": "#FF9800",     # 0.1 <= PSI < 0.25
     "unstable": "#F44336",     # PSI >= 0.25

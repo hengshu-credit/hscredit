@@ -624,8 +624,7 @@ class MDLPBinning(BaseBinning):
             if metric == 'indices':
                 result[feature] = bins
             elif metric == 'bins':
-                labels = self._get_bin_labels(splits, bins)
-                result[feature] = [labels[b] if b >= 0 else 'missing' for b in bins]
+                result[feature] = self._assign_bin_labels(feature, bins)
             elif metric == 'woe':
                 if hasattr(self, '_woe_maps_') and feature in self._woe_maps_:
                     woe_map = self._woe_maps_[feature]

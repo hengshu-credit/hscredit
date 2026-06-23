@@ -20,18 +20,25 @@ import numpy as np
 import pandas as pd
 from matplotlib.figure import Figure
 
-from .utils import DEFAULT_COLORS, get_or_create_ax, save_figure, setup_axis_style
+from .utils import (
+    DEFAULT_COLORS, get_or_create_ax, save_figure, setup_axis_style,
+    BLUE_GRADIENT, NEUTRAL_COLOR, STABLE_COLOR, CHANGING_COLOR, UNSTABLE_COLOR,
+)
 
+
+# IV 强度配色：采用 hscredit 主题蓝色阶（浅→深，越深表示 IV 越强），保持整体风格统一
+_IV_COLORS = list(BLUE_GRADIENT)   # ['#E3F2FD', '#90CAF9', '#42A5F5', '#1565C0']
 
 # IV评级参考线
 _IV_THRESHOLDS = [
-    (0.02, '弱（< 0.02）', '#E0E0E0'),
-    (0.10, '一般（0.02-0.10）', '#FFF9C4'),
-    (0.30, '较强（0.10-0.30）', '#C8E6C9'),
-    (float('inf'), '强（≥ 0.30）', '#A5D6A7'),
+    (0.02, '弱（< 0.02）', _IV_COLORS[0]),
+    (0.10, '一般（0.02-0.10）', _IV_COLORS[1]),
+    (0.30, '较强（0.10-0.30）', _IV_COLORS[2]),
+    (float('inf'), '强（≥ 0.30）', _IV_COLORS[3]),
 ]
 
-_PSI_THRESHOLDS = [(0.1, '稳定', '#4CAF50'), (0.25, '略变', '#FF9800'), (float('inf'), '不稳定', '#F44336')]
+# PSI 稳定性配色：复用 hscredit 语义色（稳定/略变/不稳定）
+_PSI_THRESHOLDS = [(0.1, '稳定', STABLE_COLOR), (0.25, '略变', CHANGING_COLOR), (float('inf'), '不稳定', UNSTABLE_COLOR)]
 
 
 def metric_comparison_plot(
@@ -93,15 +100,15 @@ def metric_comparison_plot(
     labels = plot_data[label_col].astype(str).tolist()
     if color_scheme == 'iv':
         colors = [
-            '#BDBDBD' if value < 0.02 else '#FDD835' if value < 0.10 else '#66BB6A' if value < 0.30 else '#1B5E20'
+            _IV_COLORS[0] if value < 0.02 else _IV_COLORS[1] if value < 0.10 else _IV_COLORS[2] if value < 0.30 else _IV_COLORS[3]
             for value in values
         ]
         if reference_lines is None:
-            reference_lines = [(0.02, 'IV=0.02', '#BDBDBD'), (0.10, 'IV=0.10', '#FDD835'), (0.30, 'IV=0.30', '#66BB6A')]
+            reference_lines = [(0.02, 'IV=0.02', _IV_COLORS[1]), (0.10, 'IV=0.10', _IV_COLORS[2]), (0.30, 'IV=0.30', _IV_COLORS[3])]
     elif color_scheme == 'psi':
-        colors = ['#4CAF50' if value < 0.10 else '#FF9800' if value < 0.25 else '#F44336' for value in values]
+        colors = [STABLE_COLOR if value < 0.10 else CHANGING_COLOR if value < 0.25 else UNSTABLE_COLOR for value in values]
         if reference_lines is None:
-            reference_lines = [(0.10, '轻微偏移 0.10', '#FF9800'), (0.25, '显著偏移 0.25', '#F44336')]
+            reference_lines = [(0.10, '轻微偏移 0.10', CHANGING_COLOR), (0.25, '显著偏移 0.25', UNSTABLE_COLOR)]
     else:
         colors = [DEFAULT_COLORS[i % len(DEFAULT_COLORS)] for i in range(len(values))]
 
@@ -190,17 +197,17 @@ def variable_iv_plot(
     feat_names = iv_series.index.tolist()
     iv_values = iv_series.values
 
-    # 颜色：按IV强度着色
+    # 颜色：按IV强度着色（hscredit 主题蓝色阶，越深越强）
     bar_colors = []
     for v in iv_values:
         if v < 0.02:
-            bar_colors.append('#BDBDBD')
+            bar_colors.append(_IV_COLORS[0])
         elif v < 0.10:
-            bar_colors.append('#FDD835')
+            bar_colors.append(_IV_COLORS[1])
         elif v < 0.30:
-            bar_colors.append('#66BB6A')
+            bar_colors.append(_IV_COLORS[2])
         else:
-            bar_colors.append('#1B5E20')
+            bar_colors.append(_IV_COLORS[3])
 
     fig, ax = get_or_create_ax(figsize=figsize, ax=ax)
 
@@ -211,10 +218,9 @@ def variable_iv_plot(
     ax.invert_yaxis()
 
     # 参考线
-    for thresh, label, _ in [(0.02, 'IV=0.02', '#BDBDBD'), (0.10, 'IV=0.10', '#FDD835'),
-                              (0.30, 'IV=0.30', '#66BB6A')]:
-        ax.axvline(thresh, color='gray', linestyle='--', linewidth=0.8, alpha=0.6)
-        ax.text(thresh + 0.002, -0.8, label, fontsize=8, color='gray', va='top')
+    for thresh, label in [(0.02, 'IV=0.02'), (0.10, 'IV=0.10'), (0.30, 'IV=0.30')]:
+        ax.axvline(thresh, color=NEUTRAL_COLOR, linestyle='--', linewidth=0.8, alpha=0.6)
+        ax.text(thresh + 0.002, -0.8, label, fontsize=8, color=NEUTRAL_COLOR, va='top')
 
     # 数值标签
     for bar, v in zip(bars, iv_values):
@@ -288,7 +294,7 @@ def variable_woe_trend_plot(
     # 折线图：WOE
     ax2.plot(x, woe_vals, color=DEFAULT_COLORS[1], marker='o',
              linewidth=2, markersize=6, label='WOE', zorder=3)
-    ax2.axhline(0, color='gray', linestyle='--', linewidth=0.8)
+    ax2.axhline(0, color=NEUTRAL_COLOR, linestyle='--', linewidth=0.8)
     ax2.set_ylabel('WOE', color=DEFAULT_COLORS[1], fontsize=10)
     ax2.tick_params(axis='y', labelcolor=DEFAULT_COLORS[1])
 
@@ -339,10 +345,10 @@ def variable_psi_heatmap(
     data = psi_matrix.values.astype(float)
     n_rows, n_cols = data.shape
 
-    # 三段色：绿→橙→红
+    # 三段色：稳定→略变→不稳定（hscredit 语义色 绿→橙→红）
     cmap = mcolors.LinearSegmentedColormap.from_list(
         'psi_cmap',
-        [(0.0, '#4CAF50'), (0.1 / 0.5, '#FF9800'), (1.0, '#F44336')],
+        [(0.0, STABLE_COLOR), (0.1 / 0.5, CHANGING_COLOR), (1.0, UNSTABLE_COLOR)],
         N=256,
     )
     im = ax.imshow(data, cmap=cmap, vmin=0.0, vmax=0.5, aspect='auto')
@@ -501,7 +507,7 @@ def variable_missing_badrate_plot(
     fig, ax = get_or_create_ax(figsize=figsize, ax=ax)
     sc = ax.scatter(miss_rates, miss_brs, c=diff, cmap='RdYlGn_r',
                     s=80, alpha=0.8, edgecolors='white', linewidths=0.5)
-    ax.axhline(overall_br, color='gray', linestyle='--', linewidth=1,
+    ax.axhline(overall_br, color=NEUTRAL_COLOR, linestyle='--', linewidth=1,
                label=f'总体坏率 {overall_br:.2%}')
 
     # 标注差异大的特征

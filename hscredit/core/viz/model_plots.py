@@ -5,15 +5,11 @@
 提供模型相关的可视化功能，包括逻辑回归系数误差图等。
 """
 
-import os
-import warnings
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-
-# 默认配色方案
-DEFAULT_COLORS = ["#2639E9", "#F76E6C", "#FE7715"]
+from .utils import DEFAULT_COLORS, setup_axis_style, save_figure
 
 
 def plot_weights(summary, save=None, figsize=(15, 8), fontsize=14, colors=None, ax=None):
@@ -72,7 +68,7 @@ def plot_weights(summary, save=None, figsize=(15, 8), fontsize=14, colors=None, 
         ...     model,
         ...     figsize=(12, 6),
         ...     fontsize=12,
-        ...     colors=['#1f77b4', '#ff7f0e', '#2ca02c']
+        ...     colors=['#2639E9', '#F76E6C', '#FE7715']
         ... )
 
     **说明**
@@ -94,11 +90,15 @@ def plot_weights(summary, save=None, figsize=(15, 8), fontsize=14, colors=None, 
         colors = DEFAULT_COLORS
     
     # 支持两种输入：DataFrame 或 LogisticRegression 对象
-    if hasattr(summary, 'summary'):
-        # 如果是 LogisticRegression 对象
+    # 注意：必须先判断 DataFrame —— import hscredit 会为 DataFrame 注册 .summary() 扩展方法，
+    # 若先用 hasattr(summary, 'summary') 判断，传入的系数 DataFrame 会被误当作模型对象，
+    # 错误调用 df.summary()（describe 风格）而丢失 'Coef.' 列。
+    if isinstance(summary, pd.DataFrame):
+        summary_df = summary.copy()
+    elif hasattr(summary, 'summary') and callable(getattr(summary, 'summary')):
+        # LogisticRegression 等模型对象
         summary_df = summary.summary()
     else:
-        # 如果已经是 DataFrame
         summary_df = summary.copy()
     
     # 检查必要的列是否存在
@@ -164,35 +164,23 @@ def plot_weights(summary, save=None, figsize=(15, 8), fontsize=14, colors=None, 
     
     # 添加垂直参考线
     ax.axvline(0, color=colors[0], linestyle='--', alpha=0.5)
-    
-    # 设置边框样式
-    ax.spines['top'].set_color(colors[0])
-    ax.spines['bottom'].set_color(colors[0])
-    ax.spines['right'].set_color(colors[0])
-    ax.spines['left'].set_color(colors[0])
-    ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
-    
+
+    # 统一坐标轴样式：主题色边框（隐藏上/右）+ 主题色刻度，与 bin_plot 参考样式一致
+    setup_axis_style(ax, colors, hide_top_right=True)
+    ax.tick_params(axis='both', colors=colors[0])
+
     # 设置标题和标签
     ax.set_title("逻辑回归系数分析 - 权重图\n", fontsize=fontsize, fontweight="bold")
-    ax.set_xlabel("系数估计值", fontsize=fontsize, weight="bold")
-    ax.set_ylabel("特征变量", fontsize=fontsize, weight="bold")
-    
+    ax.set_xlabel("系数估计值", fontsize=fontsize, weight="bold", color=colors[0])
+    ax.set_ylabel("特征变量", fontsize=fontsize, weight="bold", color=colors[0])
+
     # 设置网格
     ax.grid(True, axis='x', alpha=0.3, linestyle='--')
-    
+
     if not return_ax:
         # 自动调整布局
         plt.tight_layout()
-        
-        # 保存图片
-        if save:
-            save_dir = os.path.dirname(save)
-            if save_dir and not os.path.exists(save_dir):
-                os.makedirs(save_dir, exist_ok=True)
-            
-            fig.savefig(save, dpi=240, format="png", bbox_inches="tight")
-        
+        save_figure(fig, save)
         return fig
     else:
         return ax

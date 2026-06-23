@@ -63,8 +63,9 @@ def approval_badrate_tradeoff(
         >>> # 找坏率≤3% 时通过率最高的阈值
         >>> tradeoff[tradeoff['通过人群坏率(%)'] <= 3].head(1)
     """
-    y = pd.to_numeric(y_true, errors='coerce')
-    s = pd.to_numeric(score, errors='coerce')
+    # 统一转换为 Series（按位置对齐），兼容传入 np.ndarray / list / Series
+    y = pd.to_numeric(pd.Series(np.asarray(y_true)), errors='coerce')
+    s = pd.to_numeric(pd.Series(np.asarray(score)), errors='coerce')
     mask = y.notna() & s.notna()
     y, s = y[mask], s[mask]
     _check_binary_target(y, 'y_true')

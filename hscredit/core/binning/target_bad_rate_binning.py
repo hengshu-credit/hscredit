@@ -633,8 +633,7 @@ class TargetBadRateBinning(BaseBinning):
             if metric == 'indices':
                 result[feature] = bins
             elif metric == 'bins':
-                labels = self._get_bin_labels_dict(feature)
-                result[feature] = [labels.get(b, f'bin_{b}') for b in bins]
+                result[feature] = self._assign_bin_labels(feature, bins)
             elif metric == 'woe':
                 # 优先使用_woe_maps_（从export/load导入）
                 if hasattr(self, '_woe_maps_') and feature in self._woe_maps_:
@@ -650,33 +649,6 @@ class TargetBadRateBinning(BaseBinning):
                 raise ValueError(f"不支持的metric: {metric}")
 
         return result
-
-    def _get_bin_labels_dict(self, feature: str) -> Dict[int, str]:
-        """获取分箱标签字典."""
-        if feature in self._cat_bins_ and self._cat_bins_[feature]:
-            labels = {-1: 'missing', -2: 'special'}
-            for i, group in enumerate(self._cat_bins_[feature]):
-                group_str = [str(v) if not (isinstance(v, float) and np.isnan(v)) else 'nan' for v in group]
-                labels[i] = ','.join(group_str)
-            return labels
-
-        splits = self.splits_[feature]
-        n_splits = len(splits) if splits is not None else 0
-        n_normal_bins = n_splits + 1
-
-        labels = {-1: 'missing', -2: 'special'}
-
-        for i in range(n_normal_bins):
-            if n_splits == 0:
-                labels[i] = '(-inf, +inf)'
-            elif i == 0:
-                labels[i] = f'(-inf, {splits[0]}]'
-            elif i == n_normal_bins - 1:
-                labels[i] = f'({splits[-1]}, +inf)'
-            else:
-                labels[i] = f'({splits[i-1]}, {splits[i]}]'
-
-        return labels
 
     def get_bad_rate_summary(self, feature: str) -> pd.DataFrame:
         """获取坏样本率摘要.

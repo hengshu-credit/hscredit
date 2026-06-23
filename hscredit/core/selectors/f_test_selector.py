@@ -99,6 +99,11 @@ class FTestSelector(BaseFeatureSelector):
             if X[col].dtype == 'object':
                 X_encoded[col] = pd.factorize(X[col])[0]
 
+        # 缺失值处理：f_classif 不接受 NaN，使用列中位数填充，整列缺失时回退为 0，
+        # 保持与 chi2/mutual_info 等筛选器对原始信贷数据的鲁棒性一致
+        if X_encoded.isna().any().any():
+            X_encoded = X_encoded.fillna(X_encoded.median(numeric_only=True)).fillna(0)
+
         # 计算F值
         f_scores, p_values = f_classif(X_encoded.values, y)
 

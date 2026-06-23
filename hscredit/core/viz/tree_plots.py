@@ -73,7 +73,7 @@ __all__ = [
 _COLOR_PRIMARY = "#2639E9"  # 主色蓝
 _COLOR_SECONDARY = "#F76E6C"  # 副色红
 _COLOR_ACCENT = "#FE7715"  # 强调色橙
-_COLOR_SUCCESS = "#52C41A"  # 低风险绿
+_COLOR_SUCCESS = "#4CAF50"  # 低风险绿
 _COLOR_BG = "#FFFFFF"  # 背景白
 _COLOR_CARD_BG = "#FAFBFF"  # 卡片背景
 _COLOR_BORDER = "#E8ECFF"  # 边框浅蓝
@@ -325,10 +325,11 @@ def _build_gradient_stops(
     :param center_br: 色阶中点对应的坏账率（通常为整体坏账率），默认取
         min_br、max_br 的中点
     """
-    # 柔和色阶
-    C_LIGHT_BLUE = (173, 209, 255)  # 浅蓝 #ADD1FF（低风险）
-    C_LIGHT_BLUE_WHITE = (224, 236, 255)  # 浅蓝白 #E0ECFF（整体坏账率附近）
-    C_LIGHT_PINK = (255, 200, 200)  # 浅粉红 #FFD6E0（高风险）
+    # 柔和色阶：低风险=主题色 #2639E9 浅色调，高风险=副主题色 #F76E6C 浅色调，
+    # 中点为接近白的浅蓝白过渡，整体源自 hscredit 主题，保证与其它图表风格统一
+    C_LIGHT_BLUE = (190, 196, 248)  # 主题蓝浅色调 #BEC4F8（低风险）
+    C_LIGHT_BLUE_WHITE = (228, 230, 252)  # 浅蓝白 #E4E6FC（整体坏账率附近）
+    C_LIGHT_PINK = (252, 200, 199)  # 副色珊瑚浅色调 #FCC8C7（高风险）
 
     # 确保有区分度
     if max_br <= min_br:
@@ -1114,13 +1115,13 @@ def plot_tree_pyecharts(
             border_color = _COLOR_SECONDARY   # #F76E6C
         elif is_leaf:
             if bad_rate < 0.1:
-                border_color = "#52C41A"
+                border_color = "#4CAF50"
             elif bad_rate < 0.3:
                 border_color = "#FE7715"
             else:
-                border_color = "#FF4D4F"
+                border_color = "#F76E6C"
         else:
-            border_color = "#165DFF"
+            border_color = "#2639E9"
 
         # 节点标题
         title_text = node["title"]
@@ -1128,7 +1129,7 @@ def plot_tree_pyecharts(
             title_text += f" [{node['class_label']}]"
 
         # tooltip 内容（AntV 风格）
-        _tip_color = "#FF4D4F" if bad_rate > 0.3 else ("#FE7715" if bad_rate > 0.1 else "#52C41A")
+        _tip_color = "#F76E6C" if bad_rate > 0.3 else ("#FE7715" if bad_rate > 0.1 else "#4CAF50")
         _gini_line = f"<b>Gini:</b> {node['gini']:.4f}<br/>" if not is_leaf else ""
         _manual_line = "<span style='color:#F76E6C'>★ 人工分裂节点</span>" if is_manual else ""
         tooltip = (
@@ -1188,7 +1189,7 @@ def plot_tree_pyecharts(
     ROOT_ID = "0"
     for edge in edges:
         label_text = edge["label"]
-        edge_color = "#165DFF" if label_text == "<=" else "#F53F3B"
+        edge_color = "#2639E9" if label_text == "<=" else "#F76E6C"
         is_root_edge = str(edge["source"]) == ROOT_ID
 
         graph_edges.append(
@@ -1232,7 +1233,7 @@ def plot_tree_pyecharts(
             edge_symbol=["circle", "arrow"],
             edge_symbol_size=6,
         )
-        graph.set_colors(["#165DFF", "#F53F3B", "#36CBCB", "#F53F3B"])
+        graph.set_colors(["#2639E9", "#F76E6C", "#FE7715", "#F76E6C"])
         graph.set_global_opts(
             title_opts=opts.TitleOpts(
                 title=title,
@@ -1273,7 +1274,7 @@ def plot_tree_pyecharts(
             edge_symbol=["circle", "arrow"],
             edge_symbol_size=6,
         )
-        graph.set_colors(["#165DFF", "#F53F3B", "#36CBCB", "#F53F3B"])
+        graph.set_colors(["#2639E9", "#F76E6C", "#FE7715", "#F76E6C"])
         graph.set_global_opts(
             tooltip_opts=opts.TooltipOpts(
                 trigger_on="mousemove", background_color="#FFFFFF", border_color="#E8ECFF",

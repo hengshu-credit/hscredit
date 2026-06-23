@@ -1520,58 +1520,6 @@ class OptimalBinning(BaseBinning):
 
         return left_desc and right_asc
 
-    def _get_bin_labels_dict(
-        self,
-        splits: Union[np.ndarray, List],
-        feature_type: str,
-        feature: Optional[str] = None
-    ) -> Dict[int, str]:
-        """生成分箱标签字典.
-        
-        对于类别型变量，支持List[List]格式。
-        """
-        labels = {}
-        labels[-1] = 'missing'
-        labels[-2] = 'special'
-        
-        # 对于类别型变量，优先使用_cat_bins_
-        if feature_type == 'categorical' and feature and feature in self._cat_bins_:
-            cat_bins = self._cat_bins_[feature]
-            for i, group in enumerate(cat_bins):
-                if isinstance(group, list):
-                    # List[List]格式
-                    # 将np.nan转换为字符串"nan"或保持为np.nan
-                    group_str = [str(v) if not (isinstance(v, float) and np.isnan(v)) else 'nan' 
-                                for v in group]
-                    labels[i] = ','.join(group_str)
-                else:
-                    labels[i] = str(group)
-        elif isinstance(splits, list) and len(splits) > 0:
-            # 字符串列表格式（向后兼容）
-            if isinstance(splits[0], list):
-                # List[List]格式
-                for i, group in enumerate(splits):
-                    if isinstance(group, list):
-                        group_str = [str(v) if not (isinstance(v, float) and np.isnan(v)) else 'nan' 
-                                    for v in group]
-                        labels[i] = ','.join(group_str)
-                    else:
-                        labels[i] = str(group)
-            else:
-                # 字符串列表格式
-                for i, cat in enumerate(splits):
-                    labels[i] = str(cat)
-        elif isinstance(splits, np.ndarray) and len(splits) > 0:
-            # 数值型切分点（左闭右开 [a, b) 格式）
-            sp_l = [-np.inf] + splits.tolist() + [np.inf]
-            for i in range(len(sp_l) - 1):
-                labels[i] = f'[{sp_l[i]:.2f}, {sp_l[i+1]:.2f})'
-        else:
-            # 只有一个箱
-            labels[0] = 'all'
-        
-        return labels
-
     def transform(
         self,
         X: Union[pd.DataFrame, np.ndarray],
@@ -1640,8 +1588,7 @@ class OptimalBinning(BaseBinning):
             if metric == 'indices':
                 result[feature] = bins
             elif metric == 'bins':
-                labels_dict = self._get_bin_labels_dict(splits, feature_type, feature)
-                result[feature] = [labels_dict.get(b, f'bin_{b}') for b in bins]
+                result[feature] = self._assign_bin_labels(feature, bins)
             elif metric == 'woe':
                 # 优先使用_woe_maps_（从export/load导入）
                 if hasattr(self, '_woe_maps_') and feature in self._woe_maps_:

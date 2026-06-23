@@ -107,10 +107,11 @@ class LightGBMLossAdapter:
     >>> adapter = LightGBMLossAdapter(loss)
     >>>
     >>> train_data = lgb.Dataset(X_train, label=y_train)
+    >>> # objective() 采用 (y_true, y_pred) -> (grad, hess) 约定，
+    >>> # 通过 params['objective'] 传入（LightGBM 4.0 起已移除 fobj 参数）
     >>> bst = lgb.train(
-    ...     params={'objective': 'binary', 'metric': 'auc'},
+    ...     params={'objective': adapter.objective(), 'metric': 'auc'},
     ...     train_set=train_data,
-    ...     fobj=adapter.objective(),
     ...     num_boost_round=100
     ... )
     """

@@ -22,8 +22,9 @@ from sklearn.metrics import roc_curve, roc_auc_score
 from typing import Union, Optional, List, Dict, Any
 
 from .utils import (
-    DEFAULT_COLORS, setup_axis_style, save_figure, 
-    get_or_create_ax, format_bin_label
+    DEFAULT_COLORS, setup_axis_style, save_figure,
+    get_or_create_ax, format_bin_label,
+    BAD_RATE_COLOR, REFERENCE_COLOR, EXTENDED_COLORS, get_series_colors,
 )
 
 logger = logging.getLogger(__name__)
@@ -1433,10 +1434,11 @@ def distribution_plot(data, date="date", target="target", save=None, figsize=(10
         ax2 = ax1.twinx()
         # 定义多条折线的样式
         line_styles = ['--', '-.', ':', '-', (0, (3, 1, 1, 1))]
-        line_colors = colors[1:] if len(colors) > 1 else ['#E85D4A', '#4C8DFF', '#67C23A', '#E6A23C', '#909399']
+        # 多条逾期口径折线统一使用 hscredit 扩展色板（坏样本率/基线语义色打头），保持整体风格一致
+        line_colors = colors[1:] if len(colors) > 1 else ([BAD_RATE_COLOR, REFERENCE_COLOR] + list(EXTENDED_COLORS))
         # 确保颜色足够
-        while len(line_colors) < len(overdue):
-            line_colors = line_colors + line_colors
+        if len(line_colors) < len(overdue):
+            line_colors = get_series_colors(len(overdue))
 
         result_frames = []
         for i, (dpd_col, threshold) in enumerate(zip(overdue, dpds)):

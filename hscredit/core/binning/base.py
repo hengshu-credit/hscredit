@@ -1557,6 +1557,44 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
 
         return labels
 
+    def _assign_bin_labels(self, feature: str, bins: np.ndarray) -> List[str]:
+        """将分箱索引数组映射为每个样本的分箱标签（逐样本，长度与 bins 一致）.
+
+        以 ``bin_tables_`` 的 '分箱' → '分箱标签' 为唯一映射来源，保证 ``transform(metric='bins')``
+        的标签与 ``get_bin_table`` 完全一致（左闭右开 [a, b) 风格），并正确处理缺失值(-1)/
+        特殊值(-2)箱。当某分箱索引未出现在分箱表中时（如测试集落入训练集空箱），
+        数值型回退到由切分点生成的标签，否则回退为 ``bin_{i}``。
+
+        :param feature: 特征名
+        :param bins: 分箱索引数组，shape (n_samples,)
+        :return: 逐样本分箱标签列表，长度为 n_samples
+        """
+        bins = np.asarray(bins)
+        label_map: Dict[int, str] = {}
+        bin_table = self.bin_tables_.get(feature)
+        if bin_table is not None and '分箱' in bin_table.columns and '分箱标签' in bin_table.columns:
+            label_map = dict(zip(bin_table['分箱'].astype(int), bin_table['分箱标签'].astype(str)))
+
+        fallback_list = None
+        if self.feature_types_.get(feature, 'numerical') == 'numerical':
+            splits = self.splits_.get(feature)
+            if splits is not None:
+                fallback_list = self._get_bin_labels(np.asarray(splits, dtype=float))
+
+        def _label(b: int) -> str:
+            b = int(b)
+            if b in label_map:
+                return label_map[b]
+            if b == -1:
+                return 'missing'
+            if b == -2:
+                return 'special'
+            if fallback_list is not None and 0 <= b < len(fallback_list):
+                return fallback_list[b]
+            return f'bin_{b}'
+
+        return [_label(b) for b in bins]
+
     def get_bin_table(self, feature: str) -> pd.DataFrame:
         """获取指定特征的分箱表.
 

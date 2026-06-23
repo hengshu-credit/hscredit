@@ -136,6 +136,15 @@ class CatBoostRiskModel(BaseRiskModel):
         depth = self._native_params.get('depth', depth)
         learning_rate = self._native_params.get('learning_rate', learning_rate)
         iterations = self._native_params.get('iterations', iterations)
+        # n_estimators / num_boost_round / num_trees 是 CatBoost iterations 的常见别名，
+        # 统一映射到 iterations 并从 kwargs/native_params 中移除，避免与 iterations 同时
+        # 传入 CatBoost 触发 "only one of the parameters ... should be initialized" 错误，
+        # 同时保持与其它 boosting 模型（均接受 n_estimators）的接口一致性
+        for _alias in ('n_estimators', 'num_boost_round', 'num_trees'):
+            if _alias in self._native_params:
+                iterations = self._native_params.pop(_alias)
+            if _alias in kwargs:
+                iterations = kwargs.pop(_alias)
         l2_leaf_reg = self._native_params.get('l2_leaf_reg', l2_leaf_reg)
         border_count = self._native_params.get('border_count', border_count)
         random_strength = self._native_params.get('random_strength', random_strength)

@@ -304,10 +304,7 @@ class UniformBinning(BaseBinning):
                 if metric == 'indices':
                     result[feature] = bins
                 elif metric == 'bins':
-                    # 转换为分箱标签
-                    labels = self._get_bin_labels(self.splits_[feature], bins)
-                    result[feature] = [labels[b] if b >= 0 else ('missing' if b == -1 else 'special')
-                                      for b in bins]
+                    result[feature] = self._assign_bin_labels(feature, bins)
                 elif metric == 'woe':
                     # 转换为WOE值，优先使用_woe_maps_（从export/load导入）
                     if hasattr(self, '_woe_maps_') and feature in self._woe_maps_:
