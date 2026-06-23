@@ -14,7 +14,6 @@ import os
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-import seaborn as sns
 from matplotlib.ticker import PercentFormatter
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
@@ -27,6 +26,11 @@ from .utils import (
     BAD_RATE_COLOR, REFERENCE_COLOR, EXTENDED_COLORS, get_series_colors,
     make_colormap, make_diverging_cmap,
 )
+from ..._lazy import LazyModule
+
+# 延迟加载 seaborn：仅在首次实际绘图（访问 sns 属性）时才导入，
+# 避免 import hscredit 时即触发 seaborn（及其 ipywidgets/IPython 依赖）的加载。
+sns = LazyModule("seaborn")
 
 logger = logging.getLogger(__name__)
 

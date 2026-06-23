@@ -26,14 +26,18 @@ from typing import Union, List, Optional, Dict, Any, Tuple
 import numpy as np
 import pandas as pd
 from scipy import stats
-import statsmodels.api as sm
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.linear_model import LogisticRegression, LinearRegression
 import warnings
 
 from .base import BaseFeatureSelector
+from ..._lazy import LazyModule
 
 logger = logging.getLogger(__name__)
+
+# 延迟加载 statsmodels：仅在首次访问 sm 属性（逐步回归拟合）时才导入，
+# 避免 import hscredit 时即触发 statsmodels.api 的加载。
+sm = LazyModule("statsmodels.api")
 
 
 class StepwiseSelector(BaseFeatureSelector):

@@ -22,10 +22,9 @@
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-import seaborn as sns
 from typing import Union, Optional, List, Dict, Tuple, Any
 from sklearn.metrics import (
-    roc_curve, auc, precision_recall_curve, 
+    roc_curve, auc, precision_recall_curve,
     confusion_matrix, brier_score_loss
 )
 from matplotlib.ticker import PercentFormatter
@@ -35,6 +34,11 @@ from .utils import (
     get_or_create_ax, BAD_RATE_COLOR, NEUTRAL_COLOR,
     get_series_colors, make_colormap, make_risk_cmap,
 )
+from ..._lazy import LazyModule
+
+# 延迟加载 seaborn：仅在首次实际绘图（访问 sns 属性）时才导入，
+# 避免 import hscredit 时即触发 seaborn（及其 ipywidgets/IPython 依赖）的加载。
+sns = LazyModule("seaborn")
 
 
 # ==================== 模型评估图表 ====================

@@ -44,7 +44,7 @@ import numpy as np
 
 
 def _tex_label(text: str) -> str:
-    """将 ASCII 比较符号转换为 TeX math text，用于 matplotlib 渲染.
+    r"""将 ASCII 比较符号转换为 TeX math text，用于 matplotlib 渲染.
 
     使用 matplotlib 原生 math text 语法（无需 usetex），
     如 "x <= 600" → "x $\leq$ 600"，">" → "$>$"。

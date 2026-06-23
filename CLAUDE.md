@@ -196,9 +196,5 @@ pip install hscredit[all]         # 所有可选依赖
 
 ## 已知问题
 
-1. `hscredit.info()` 中 "待实现模块" 文本过期：列出了 `core.encoding`（不存在）和 `core.metrics`（已实现）
-2. `core/eda/__init__.py` 的 `__all__` 导出了两个私有函数 `_build_overdue_labels` 和 `_create_binary_target`
-3. `init_setting()` 在 `import hscredit` 时全局调用 `warnings.filterwarnings("ignore")`，会抑制所有警告
-4. EDA 模块中存在大量 `except Exception:` 裸异常捕获，会静默吞掉错误
-5. `BalancedFocalLoss` 导出不一致：在 models `__init__.py` 中用 try/except 包裹但在多处 `__all__` 中列出
-6. 部分损失函数（`RankingAUCProxyLoss`, `KSFocusedLoss`, `TopKBadCaptureLoss`, `AmountWeightedLoss`, `ExpectedValueLoss`）在 `core/__init__.py` 显式导入但不在 `models/__all__` 中
+1. `init_setting()` 在 `import hscredit` 时全局调用 `warnings.filterwarnings("ignore")`，会抑制所有警告
+2. EDA 模块中存在大量 `except Exception:` 裸异常捕获，会静默吞掉错误

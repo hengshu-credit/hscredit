@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+# 同一分支的重复触发只保留最新一次
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # 避免 CI 无显示环境下 matplotlib 选择 Tk 等 GUI 后端导致失败
+  MPLBACKEND: Agg
+
+jobs:
+  # 核心测试：仅安装基础 + dev 依赖，覆盖 pyproject 声明支持的全部 Python 版本（3.9 ~ 最新）。
+  # 目的是保证 hscredit 核心能力在每个受支持的 Python 版本上都可导入、可运行。
+  test:
+    name: 核心测试 (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: 安装依赖（基础 + dev）
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      # lint / type-check 暂为非阻塞：存量告警较多，待逐步清理后再转为强制门禁
+      - name: 代码检查（flake8，非阻塞）
+        continue-on-error: true
+        run: flake8 hscredit tests
+
+      - name: 类型检查（mypy，非阻塞）
+        continue-on-error: true
+        run: mypy hscredit --ignore-missing-imports
+
+      - name: 运行测试（跳过 slow/integration）
+        run: pytest tests/ -m "not slow and not integration" --tb=short
+
+  # 全依赖测试：安装 hscredit 所有可选依赖（boost/net/pmml/tune/explain），
+  # 真实运行依赖 XGBoost/LightGBM/CatBoost/NGBoost/PyTorch-TabNet/Optuna/SHAP/PMML 的测试。
+  # 矩阵限定在可选依赖能稳定提供 wheel 的 Python 版本（3.9 ~ 3.12）；
+  # 待 torch/catboost/ngboost/JPype1 等对 3.13/3.14 提供 wheel 后，可在此追加版本。
+  test-full:
+    name: 全依赖测试 (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: 安装全部依赖（含所有可选能力）
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[all]"
+
+      - name: 运行测试（跳过 slow/integration）
+        run: pytest tests/ -m "not slow and not integration" --tb=short
+
+  build:
+    name: 构建与打包校验
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: 构建发布包
+        run: |
+          python -m pip install --upgrade pip build twine
+          python -m build
+
+      - name: 校验发布包元数据
+        run: python -m twine check dist/*

@@ -48,11 +48,15 @@ from typing import Union, List, Dict, Optional, Any, Tuple, Literal
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-import seaborn as sns
 
 from .optimal_binning import OptimalBinning
 from ..metrics._binning import compute_bin_stats
 from ...exceptions import HSCreditError, NotFittedError
+from ..._lazy import LazyModule
+
+# 延迟加载 seaborn：仅在首次实际绘图（访问 sns 属性）时才导入，
+# 避免 import hscredit 时即触发 seaborn（及其 ipywidgets/IPython 依赖）的加载。
+sns = LazyModule("seaborn")
 
 
 class OptimalBinning2D:
