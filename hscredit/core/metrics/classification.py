@@ -14,6 +14,15 @@
 >>> y_true = np.random.randint(0, 2, 1000)  # 模拟真实标签（0=好，1=坏）
 >>> y_prob = np.random.uniform(0, 1, 1000)  # 模拟模型预测概率
 >>> print(f"KS={ks(y_true, y_prob):.4f}, AUC={auc(y_true, y_prob):.4f}, Gini={gini(y_true, y_prob):.4f}")
+
+**引用**
+
+- 评分卡评估指标（KS / AUC / Gini）的业界用法见
+  Siddiqi, N. (2006). *Credit Risk Scorecards: Developing and Implementing
+  Intelligent Credit Scoring.* Wiley.
+- accuracy / precision / recall / f1 / roc_curve / confusion_matrix 等直接封装自
+  scikit-learn，定义与参数含义同
+  https://scikit-learn.org/stable/modules/model_evaluation.html
 """
 
 import numpy as np
@@ -53,6 +62,13 @@ def ks(y_true: Union[np.ndarray, pd.Series],
     >>> y_prob = [0.1, 0.3, 0.7, 0.6, 0.8, 0.2, 0.9, 0.4]  # 预测概率（高分对应坏样本）
     >>> ks(y_true, y_prob)
     0.75
+
+    **引用**
+
+    Kolmogorov-Smirnov 统计量原为两分布的最大累积差异检验
+    (Kolmogorov, 1933; Smirnov, 1948)，在信用评分中作为模型区分度的
+    标准指标，定义见 Siddiqi, N. (2006). *Credit Risk Scorecards.* Wiley。
+    经验阈值：KS<0.2 区分弱、0.2~0.4 可用、0.4~0.6 强、>0.75 需排查标签泄漏。
     """
     y_true = np.asarray(y_true)
     y_prob = np.asarray(y_prob)
@@ -97,6 +113,12 @@ def ks_2samps(sample1: Union[np.ndarray, pd.Series],
     >>> bad_scores = np.random.normal(0.7, 0.1, 500)
     >>> ks_2samps(good_scores, bad_scores)
     0.69
+
+    **引用**
+
+    封装自 :func:`scipy.stats.ks_2samp`（两样本 Kolmogorov-Smirnov 检验），
+    取其返回的统计量分量。详见
+    https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.ks_2samp.html
     """
     s1 = np.asarray(sample1).ravel()
     s2 = np.asarray(sample2).ravel()
@@ -126,6 +148,12 @@ def auc(y_true: Union[np.ndarray, pd.Series],
     >>> y_prob = [0.1, 0.3, 0.7, 0.6, 0.8, 0.2, 0.9, 0.4]
     >>> auc(y_true, y_prob)
     0.875
+
+    **引用**
+
+    封装自 :func:`sklearn.metrics.roc_auc_score`。AUC 的概率解释（随机抽取一正一负
+    样本，正样本得分更高的概率）见 Fawcett, T. (2006). *An introduction to ROC
+    analysis.* Pattern Recognition Letters, 27(8), 861-874。
     """
     return roc_auc_score(y_true, y_prob)
 
@@ -151,6 +179,12 @@ def gini(y_true: Union[np.ndarray, pd.Series],
     >>> y_prob = [0.1, 0.3, 0.7, 0.6, 0.8, 0.2, 0.9, 0.4]
     >>> gini(y_true, y_prob)
     0.75
+
+    **引用**
+
+    此处的基尼系数（亦称 Accuracy Ratio / Somers' D）由 AUC 线性变换得到，
+    Gini = 2·AUC − 1，是信用风险领域衡量区分度的常用指标，见
+    Siddiqi, N. (2006). *Credit Risk Scorecards.* Wiley。
     """
     return 2 * auc(y_true, y_prob) - 1
 

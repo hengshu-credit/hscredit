@@ -604,6 +604,16 @@ def ruleset_analysis(
     :param filter_cols: 指定返回的字段列表
     :param amount: 金额字段名称，用于金额口径分析
     :return: 规则集效果评估表。单标签时返回单层列结构，多标签时返回多层列结构（MultiIndex）
+
+    **参考样例**
+
+    >>> from hscredit.core.rules import Rule
+    >>> from hscredit.report import ruleset_analysis
+    >>> rules = [Rule("score < 600", name="低分"), Rule("多头 > 5", name="多头高")]
+    >>> # 单标签
+    >>> ruleset_analysis(df, rules, target='FPD')
+    >>> # 多逾期标签 + 金额口径
+    >>> ruleset_analysis(df, rules, overdue=['MOB1', 'MOB3'], dpds=[7, 0], amount='放款金额')
     """
     datasets = datasets.copy()
 
@@ -690,9 +700,19 @@ def multi_label_rule_analysis(
     :param df: 输入数据 DataFrame
     :param features: 参与挖掘的特征列表
     :param labels: 标签映射 {中文名: 列名}
-    :param miner_params: 传递给 MultiLabelRuleMiner 的额外参数
-    :param output_path: 输出 Excel 文件路径
-    :return: 输出文件路径
+    :param miner_params: 传递给 MultiLabelRuleMiner 的额外参数（如 min_support、min_lift）
+    :param output_path: 输出 Excel 文件路径，默认 ``'rule_analysis.xlsx'``
+    :return: 输出文件路径（即 ``output_path``）
+
+    **参考样例**
+
+    >>> from hscredit.report import multi_label_rule_analysis
+    >>> multi_label_rule_analysis(
+    ...     df,
+    ...     features=['score', '近六个月非银多头机构数', '青云24'],
+    ...     labels={'首逾7+': 'fpd7', '首逾0+': 'fpd0'},
+    ...     output_path='多标签规则分析.xlsx',
+    ... )
     """
     label_cols = list(labels.values())
     label_names = list(labels.keys())

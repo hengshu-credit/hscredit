@@ -208,6 +208,12 @@ class LightGBMRiskModel(BaseRiskModel):
     >>> params = {'num_leaves': 31, 'learning_rate': 0.05, 'subsample': 0.8}
     >>> model = LightGBMRiskModel(params=params)
     >>> model.fit(X_train, y_train)
+
+    **引用**
+
+    基于 LightGBM 梯度提升框架（leaf-wise 生长 + 直方图算法），见
+    Ke, G. et al. (2017). *LightGBM: A Highly Efficient Gradient Boosting
+    Decision Tree.* NeurIPS；文档 https://lightgbm.readthedocs.io/ 。
     """
 
     def __init__(

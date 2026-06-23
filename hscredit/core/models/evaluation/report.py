@@ -42,16 +42,35 @@ def _lift_score(y_true, y_proba, top_ratio=0.1):
 class ModelReport:
     """风控模型评估报告.
 
-    生成全面的模型评估报告，包括性能指标、特征分析、稳定性检验等。
+    对一个已训练模型一站式生成评估报告：性能指标（KS/AUC 等）对比、特征重要性、
+    评分分布、PSI 稳定性、混淆矩阵、ROC 与 Lift 曲线。初始化时即完成训练集
+    （及可选测试集）的预测，后续各 ``get_*`` 方法直接返回对应结果表。
 
     **参数**
 
-    :param model: 训练好的模型
-    :param X_train: 训练集特征
-    :param y_train: 训练集标签
-    :param X_test: 测试集特征，可选
-    :param y_test: 测试集标签，可选
-    :param feature_names: 特征名称列表，可选
+    :param model: 已训练好的模型，需实现 ``predict`` / ``predict_proba`` /
+        ``evaluate`` / ``get_feature_importances``（如 :class:`BaseRiskModel` 子类）
+    :param X_train: 训练集特征（``DataFrame`` 或 ndarray）
+    :param y_train: 训练集标签（0/1）
+    :param X_test: 测试集特征，可选；提供后才能计算 PSI 及测试集相关指标
+    :param y_test: 测试集标签，可选，需与 ``X_test`` 同时提供
+    :param feature_names: 特征名称列表，可选；缺省时依次尝试从 ``X_train.columns``、
+        ``model.feature_names_in_`` 推断，否则生成 ``feature_0`` …
+
+    **属性**
+
+    - feature_names: 最终使用的特征名称列表
+    - y_train_proba / y_test_proba: 训练/测试集预测的正类概率
+    - y_train_pred / y_test_pred: 训练/测试集预测类别
+
+    **参考样例**
+
+    >>> from hscredit.core.models.evaluation import ModelReport
+    >>> report = ModelReport(model, X_train, y_train, X_test, y_test)
+    >>> report.get_metrics()              # 训练/测试集指标对比
+    >>> report.get_feature_importance(top_n=10)
+    >>> report.get_psi()                  # 评分 PSI（需测试集）
+    >>> report.print_report()             # 打印完整文本报告
     """
 
     def __init__(
@@ -155,7 +174,8 @@ class ModelReport:
         """获取评分分布.
 
         :param n_bins: 分箱数，默认10
-        :param dataset: 数据集，'train'或'test'
+        :param dataset: 数据集，``'train'``（训练集，默认）或 ``'test'``（测试集，
+            需在初始化时提供 X_test/y_test）
         :return: 评分分布DataFrame
         """
         if dataset == 'train':
@@ -217,7 +237,8 @@ class ModelReport:
         """获取混淆矩阵.
 
         :param threshold: 分类阈值，默认0.5
-        :param dataset: 数据集，'train'或'test'
+        :param dataset: 数据集，``'train'``（训练集，默认）或 ``'test'``（测试集，
+            需在初始化时提供 X_test/y_test）
         :return: 混淆矩阵DataFrame
         """
         if dataset == 'train':
@@ -241,7 +262,8 @@ class ModelReport:
     def get_roc_curve(self, dataset: str = 'train') -> Dict[str, np.ndarray]:
         """获取ROC曲线数据.
 
-        :param dataset: 数据集，'train'或'test'
+        :param dataset: 数据集，``'train'``（训练集，默认）或 ``'test'``（测试集，
+            需在初始化时提供 X_test/y_test）
         :return: 包含fpr, tpr, thresholds的字典
         """
         if dataset == 'train':
@@ -265,7 +287,8 @@ class ModelReport:
     def get_lift_curve(self, dataset: str = 'train', n_bins: int = 10) -> pd.DataFrame:
         """获取Lift曲线数据.
 
-        :param dataset: 数据集，'train'或'test'
+        :param dataset: 数据集，``'train'``（训练集，默认）或 ``'test'``（测试集，
+            需在初始化时提供 X_test/y_test）
         :param n_bins: 分箱数，默认10
         :return: Lift曲线DataFrame
         """

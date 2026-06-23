@@ -71,6 +71,13 @@ class ModelExplainer:
     >>> explainer = ModelExplainer(model)
     >>> shap_values = explainer.compute_shap_values(X_test)
     >>> explainer.plot_shap_summary(X_test)
+
+    **引用**
+
+    基于 SHAP（SHapley Additive exPlanations），将博弈论 Shapley 值用于特征归因，见
+    Lundberg, S. & Lee, S.-I. (2017). *A Unified Approach to Interpreting Model
+    Predictions.* NeurIPS；工具库 https://github.com/shap/shap 。
+    TreeSHAP 见 Lundberg et al. (2020), *Nature Machine Intelligence*。
     """
 
     def __init__(
@@ -655,7 +662,13 @@ def plot_feature_importance(
     :param model: 训练好的模型
     :param X: 特征矩阵（用于SHAP，可选）
     :param top_n: 显示前N个特征，默认20
-    :param importance_type: 重要性类型，默认'gain'
+    :param importance_type: 重要性类型，默认 ``'gain'``（取决于具体模型，树模型常见取值）：
+
+        - ``'gain'``：平均分裂增益（默认）
+        - ``'weight'``：作为分裂特征的次数
+        - ``'cover'``：平均样本覆盖度
+        - ``'total_gain'`` / ``'total_cover'``：总增益 / 总覆盖度
+
     :param figsize: 图表大小，默认(10, 8)
     :param title: 图表标题，可选
     :param color: 条形颜色，默认'#2E86AB'

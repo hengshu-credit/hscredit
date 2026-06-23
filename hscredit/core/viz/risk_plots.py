@@ -71,13 +71,14 @@ def roc_plot(
     :param kwargs: 其他参数传递给plt.plot
     :return: matplotlib Figure对象
     
-    Example:
-        >>> fig = roc_plot(y_test, model.predict_proba(X_test)[:, 1])
-        >>> 
-        >>> # 多模型对比
-        >>> fig, ax = plt.subplots(figsize=(8, 8))
-        >>> roc_plot(y_test, model1.predict_proba(X_test)[:, 1], ax=ax, label='Model A')
-        >>> roc_plot(y_test, model2.predict_proba(X_test)[:, 1], ax=ax, label='Model B')
+    **参考样例**
+
+    >>> fig = roc_plot(y_test, model.predict_proba(X_test)[:, 1])
+    >>> 
+    >>> # 多模型对比
+    >>> fig, ax = plt.subplots(figsize=(8, 8))
+    >>> roc_plot(y_test, model1.predict_proba(X_test)[:, 1], ax=ax, label='Model A')
+    >>> roc_plot(y_test, model2.predict_proba(X_test)[:, 1], ax=ax, label='Model B')
     """
     fig, ax = get_or_create_ax(figsize=figsize, ax=ax)
     
@@ -145,8 +146,9 @@ def pr_plot(
     :param kwargs: 其他参数
     :return: matplotlib Figure对象
     
-    Example:
-        >>> fig = pr_plot(y_test, model.predict_proba(X_test)[:, 1])
+    **参考样例**
+
+    >>> fig = pr_plot(y_test, model.predict_proba(X_test)[:, 1])
     """
     fig, ax = get_or_create_ax(figsize=figsize, ax=ax)
     
@@ -216,8 +218,9 @@ def lift_plot(
     :param kwargs: 其他参数
     :return: matplotlib Figure对象
     
-    Example:
-        >>> fig = lift_plot(y_test, model.predict_proba(X_test)[:, 1], n_bins=10)
+    **参考样例**
+
+    >>> fig = lift_plot(y_test, model.predict_proba(X_test)[:, 1], n_bins=10)
     """
     fig, ax = get_or_create_ax(figsize=figsize, ax=ax)
     
@@ -300,8 +303,9 @@ def gain_plot(
     :param kwargs: 其他参数
     :return: matplotlib Figure对象
     
-    Example:
-        >>> fig = gain_plot(y_test, model.predict_proba(X_test)[:, 1], n_bins=10)
+    **参考样例**
+
+    >>> fig = gain_plot(y_test, model.predict_proba(X_test)[:, 1], n_bins=10)
     """
     fig, ax = get_or_create_ax(figsize=figsize, ax=ax)
     
@@ -383,9 +387,10 @@ def confusion_matrix_plot(
     :param kwargs: 其他参数
     :return: matplotlib Figure对象
     
-    Example:
-        >>> fig = confusion_matrix_plot(y_test, y_pred)
-        >>> fig = confusion_matrix_plot(y_test, y_pred, normalize='true')
+    **参考样例**
+
+    >>> fig = confusion_matrix_plot(y_test, y_pred)
+    >>> fig = confusion_matrix_plot(y_test, y_pred, normalize='true')
     """
     fig, ax = get_or_create_ax(figsize=figsize, ax=ax)
     if cmap is None:
@@ -458,8 +463,9 @@ def calibration_plot(
     :param kwargs: 其他参数
     :return: matplotlib Figure对象
     
-    Example:
-        >>> fig = calibration_plot(y_test, model.predict_proba(X_test)[:, 1])
+    **参考样例**
+
+    >>> fig = calibration_plot(y_test, model.predict_proba(X_test)[:, 1])
     """
     if colors is None:
         colors = DEFAULT_COLORS
@@ -556,8 +562,9 @@ def score_dist_plot(
     :param kwargs: 其他参数
     :return: matplotlib Figure对象
     
-    Example:
-        >>> fig = score_dist_plot(df, 'score', 'target')
+    **参考样例**
+
+    >>> fig = score_dist_plot(df, 'score', 'target')
     """
     fig, ax = get_or_create_ax(figsize=figsize, ax=ax)
 
@@ -671,8 +678,9 @@ def score_bin_plot(
     :param kwargs: 其他参数
     :return: matplotlib Figure对象
 
-    Example:
-        >>> fig = score_bin_plot(df, 'score', 'target', n_bins=10)
+    **参考样例**
+
+    >>> fig = score_bin_plot(df, 'score', 'target', n_bins=10)
     """
     # 导入需要的函数
     from .binning_plots import bin_plot, dataframe_plot
@@ -782,8 +790,9 @@ def threshold_analysis_plot(
     :param kwargs: 其他参数
     :return: matplotlib Figure对象
     
-    Example:
-        >>> fig = threshold_analysis_plot(y_test, y_score)
+    **参考样例**
+
+    >>> fig = threshold_analysis_plot(y_test, y_score)
     """
     fig, ax = get_or_create_ax(figsize=figsize, ax=ax)
     
@@ -875,12 +884,13 @@ def strategy_compare_plot(
     :param kwargs: 其他参数
     :return: matplotlib Figure对象
     
-    Example:
-        >>> strategies = [
-        ...     {'name': 'Current', 'approval_rate': 0.75, 'bad_rate': 0.08, 'ks': 0.40},
-        ...     {'name': 'New', 'approval_rate': 0.80, 'bad_rate': 0.06, 'ks': 0.50}
-        ... ]
-        >>> fig = strategy_compare_plot(strategies)
+    **参考样例**
+
+    >>> strategies = [
+    ...     {'name': 'Current', 'approval_rate': 0.75, 'bad_rate': 0.08, 'ks': 0.40},
+    ...     {'name': 'New', 'approval_rate': 0.80, 'bad_rate': 0.06, 'ks': 0.50}
+    ... ]
+    >>> fig = strategy_compare_plot(strategies)
     """
     fig, ax = get_or_create_ax(figsize=figsize, ax=ax)
 
@@ -967,8 +977,9 @@ def vintage_plot(
     :param kwargs: 其他参数
     :return: matplotlib Figure对象
     
-    Example:
-        >>> fig = vintage_plot(df, 'mob', 'ever_dpd30', 'issue_month')
+    **参考样例**
+
+    >>> fig = vintage_plot(df, 'mob', 'ever_dpd30', 'issue_month')
     """
     # 创建透视表
     if vintage_col:
@@ -1063,10 +1074,11 @@ def feature_importance_plot(
     :param kwargs: 其他参数
     :return: matplotlib Figure对象
     
-    Example:
-        >>> features = ['age', 'income', 'score', ...]
-        >>> importance = model.feature_importances_
-        >>> fig = feature_importance_plot(features, importance, top_n=15)
+    **参考样例**
+
+    >>> features = ['age', 'income', 'score', ...]
+    >>> importance = model.feature_importances_
+    >>> fig = feature_importance_plot(features, importance, top_n=15)
     """
     fig, ax = get_or_create_ax(figsize=figsize, ax=ax)
     
@@ -1151,9 +1163,10 @@ def approval_rate_trend_plot(
     :param kwargs: 其他参数
     :return: matplotlib Figure对象
     
-    Example:
-        >>> fig = approval_rate_trend_plot(df, 'apply_date', decision_col='is_approved')
-        >>> fig = approval_rate_trend_plot(df, 'apply_date', score_col='score', threshold=500)
+    **参考样例**
+
+    >>> fig = approval_rate_trend_plot(df, 'apply_date', decision_col='is_approved')
+    >>> fig = approval_rate_trend_plot(df, 'apply_date', score_col='score', threshold=500)
     """
     fig, ax = get_or_create_ax(figsize=figsize, ax=ax)
     
@@ -1260,9 +1273,10 @@ def bad_rate_trend_plot(
     :param kwargs: 其他参数
     :return: matplotlib Figure对象
     
-    Example:
-        >>> fig = bad_rate_trend_plot(df, 'apply_date', 'target')
-        >>> fig = bad_rate_trend_plot(df, 'apply_date', 'target', dimension_col='customer_grade')
+    **参考样例**
+
+    >>> fig = bad_rate_trend_plot(df, 'apply_date', 'target')
+    >>> fig = bad_rate_trend_plot(df, 'apply_date', 'target', dimension_col='customer_grade')
     """
     # 传入ax时复用该ax绘制主曲线，样本数柱状图作为附加面板挂载在同一figure上，
     # 而不是整体重新plt.subplots()丢弃调用方传入的ax

@@ -58,10 +58,11 @@ def approval_badrate_tradeoff(
     :param score_low_risk: 'high' 表示高分为低风险（通过），'low' 表示低分为低风险
     :return: 权衡表 DataFrame
 
-    Example:
-        >>> tradeoff = approval_badrate_tradeoff(df['fpd15'], df['score'])
-        >>> # 找坏率≤3% 时通过率最高的阈值
-        >>> tradeoff[tradeoff['通过人群坏率(%)'] <= 3].head(1)
+    **参考样例**
+
+    >>> tradeoff = approval_badrate_tradeoff(df['fpd15'], df['score'])
+    >>> # 找坏率≤3% 时通过率最高的阈值
+    >>> tradeoff[tradeoff['通过人群坏率(%)'] <= 3].head(1)
     """
     # 统一转换为 Series（按位置对齐），兼容传入 np.ndarray / list / Series
     y = pd.to_numeric(pd.Series(np.asarray(y_true)), errors='coerce')
@@ -134,9 +135,10 @@ def score_strategy_simulation(
     :param score_low_risk: 'high' 表示高分为低风险，'low' 表示低分为低风险
     :return: 各阈值下的策略仿真结果 DataFrame
 
-    Example:
-        >>> result = score_strategy_simulation(df, score_col='score', target='fpd15',
-        ...     thresholds=[500, 520, 540, 560], amount_col='loan_amount')
+    **参考样例**
+
+    >>> result = score_strategy_simulation(df, score_col='score', target='fpd15',
+    ...     thresholds=[500, 520, 540, 560], amount_col='loan_amount')
     """
     validate_dataframe(df, required_cols=[score_col, target])
     df = df.copy()
@@ -214,9 +216,10 @@ def vintage_performance_summary(
     :param amount_col: 金额列名（可选），提供时输出金额加权坏率
     :return: Vintage 绩效汇总宽表，行=vintage，列=MOB_X_坏率
 
-    Example:
-        >>> summary = vintage_performance_summary(df, vintage_col='loan_month',
-        ...     mob_col='mob', target_col='fpd15', mob_points=[3,6,9,12])
+    **参考样例**
+
+    >>> summary = vintage_performance_summary(df, vintage_col='loan_month',
+    ...     mob_col='mob', target_col='fpd15', mob_points=[3,6,9,12])
     """
     validate_dataframe(df, required_cols=[vintage_col, mob_col, target_col])
     df = df.copy()
@@ -352,16 +355,17 @@ def roll_rate_matrix(
         - ``'金额矩阵'``: 当 ``amount_col`` 提供时，金额口径的迁移宽表，含汇总列
         - ``'金额比例矩阵'``: 当 ``amount_col`` 提供时，基于金额行归一化的迁移比例（原始小数）
 
-    Example:
-        >>> result = roll_rate_matrix(
-        ...     df, dpd_t0='dpd_mob12', dpd_t1='dpd_mob18',
-        ...     mob_t0=12, mob_t1=18, amount_col='loan_amount'
-        ... )
-        >>> display(result['元信息'])
-        >>> display(result['计数矩阵'])
-        >>> display(result['订单比例矩阵'])
-        >>> display(result['金额矩阵'])
-        >>> display(result['金额比例矩阵'])
+    **参考样例**
+
+    >>> result = roll_rate_matrix(
+    ...     df, dpd_t0='dpd_mob12', dpd_t1='dpd_mob18',
+    ...     mob_t0=12, mob_t1=18, amount_col='loan_amount'
+    ... )
+    >>> display(result['元信息'])
+    >>> display(result['计数矩阵'])
+    >>> display(result['订单比例矩阵'])
+    >>> display(result['金额矩阵'])
+    >>> display(result['金额比例矩阵'])
     """
     validate_dataframe(df, required_cols=[dpd_t0, dpd_t1])
 
@@ -552,10 +556,11 @@ def label_leakage_check(
     :param n_bins: IV 计算分箱数
     :return: 标签泄露检测结果 DataFrame
 
-    Example:
-        >>> result = label_leakage_check(df, features=df.columns[:-1].tolist(), target='fpd15')
-        >>> suspected = result[result['疑似泄露'] == True]
-        >>> print(suspected[['特征名', 'IV', 'AUC', '泄露原因']])
+    **参考样例**
+
+    >>> result = label_leakage_check(df, features=df.columns[:-1].tolist(), target='fpd15')
+    >>> suspected = result[result['疑似泄露'] == True]
+    >>> print(suspected[['特征名', 'IV', 'AUC', '泄露原因']])
     """
     validate_dataframe(df, required_cols=[target] + features)
 
@@ -636,9 +641,10 @@ def multi_label_correlation(
     :param threshold: 高相关告警阈值（绝对值），默认 0.7
     :return: 相关性矩阵 DataFrame，附带高相关标签对描述
 
-    Example:
-        >>> corr_df = multi_label_correlation(df, labels=['fpd7', 'fpd15', 'fpd30'])
-        >>> print(corr_df)
+    **参考样例**
+
+    >>> corr_df = multi_label_correlation(df, labels=['fpd7', 'fpd15', 'fpd30'])
+    >>> print(corr_df)
     """
     validate_dataframe(df, required_cols=labels)
     assert method in ('pearson', 'spearman'), "method 须为 'pearson' 或 'spearman'"

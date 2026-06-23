@@ -178,8 +178,9 @@ def variable_iv_plot(
     :param save: 保存路径，None时不保存
     :return: matplotlib Figure
 
-    Example:
-        >>> fig = variable_iv_plot(df, features=df.columns.tolist(), target='fpd30')
+    **参考样例**
+
+    >>> fig = variable_iv_plot(df, features=df.columns.tolist(), target='fpd30')
     """
     from ..metrics.feature import iv
 
@@ -257,10 +258,11 @@ def variable_woe_trend_plot(
     :param save: 保存路径
     :return: Figure
 
-    Example:
-        >>> binner = OptimalBinning().fit(df[['age']], df['fpd30'])
-        >>> tbl = binner.get_bin_table()['age']
-        >>> fig = variable_woe_trend_plot(tbl, feature='age')
+    **参考样例**
+
+    >>> binner = OptimalBinning().fit(df[['age']], df['fpd30'])
+    >>> tbl = binner.get_bin_table()['age']
+    >>> fig = variable_woe_trend_plot(tbl, feature='age')
     """
     # 兼容列名
     label_col = next((c for c in ['分箱标签', 'bin_label', 'Bin'] if c in bin_table.columns), None)
@@ -334,9 +336,10 @@ def variable_psi_heatmap(
     :param save: 保存路径
     :return: Figure
 
-    Example:
-        >>> psi_mat = batch_psi_analysis(df_train, df_test, features)
-        >>> fig = variable_psi_heatmap(psi_mat)
+    **参考样例**
+
+    >>> psi_mat = batch_psi_analysis(df_train, df_test, features)
+    >>> fig = variable_psi_heatmap(psi_mat)
     """
     import matplotlib.colors as mcolors
 
@@ -404,9 +407,10 @@ def variable_importance_grouped_plot(
     :param save: 保存路径
     :return: Figure
 
-    Example:
-        >>> imp_df = pd.DataFrame({'feature': feats, 'importance': imps, 'category': cats})
-        >>> fig = variable_importance_grouped_plot(imp_df)
+    **参考样例**
+
+    >>> imp_df = pd.DataFrame({'feature': feats, 'importance': imps, 'category': cats})
+    >>> fig = variable_importance_grouped_plot(imp_df)
     """
     df = importance_df.copy()
     if value_col not in df.columns or feature_col not in df.columns:
@@ -474,8 +478,9 @@ def variable_missing_badrate_plot(
     :param save: 保存路径
     :return: Figure
 
-    Example:
-        >>> fig = variable_missing_badrate_plot(df, features=feats, target='fpd30')
+    **参考样例**
+
+    >>> fig = variable_missing_badrate_plot(df, features=feats, target='fpd30')
     """
     y = df[target].values
     overall_br = y.mean()

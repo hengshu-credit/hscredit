@@ -17,19 +17,29 @@ def feature_describe(
     missing=None,
     cardinality: Optional[int] = None
 ) -> pd.Series:
-    """特征描述统计。
+    """特征描述统计（数值型与类别型自动区分）。
 
-    :param data: 数据DataFrame或Series
-    :param feature: 特征名称，如果data是DataFrame则需要指定
-    :param percentiles: 分位数列表，默认使用常用分位数
-    :param missing: 缺失值标记，会将其替换为np.nan
-    :param cardinality: 基数阈值，小于等于此值按类别型处理
-    :return: 描述统计结果Series
+    对数值型特征输出 样本数/非空数/查得率/最小值/平均值/各分位数/最大值；
+    对类别型特征（或唯一值数 ≤ ``cardinality``）输出 样本数/非空数/查得率
+    及各取值占比。
+
+    :param data: 输入数据，``DataFrame``（需配合 ``feature`` 指定列）或单列 ``Series``
+    :param feature: 特征列名，仅当 ``data`` 为 DataFrame 时需要；
+        为 None 时把 ``data`` 整体当作 Series 处理
+    :param percentiles: 分位数列表（0~1 之间），默认
+        ``[0.01, 0.02, 0.03, 0.05, 0.1, 0.2, ..., 0.95, 0.97, 0.98, 0.99]``
+    :param missing: 缺失值标记（标量或列表），统计前会被替换为 ``np.nan``；默认 None 不替换
+    :param cardinality: 基数阈值（正整数），唯一值数 ≤ 该值时强制按类别型统计；
+        默认 None 表示仅按 dtype 判断
+    :return: 描述统计结果 ``Series``（``name`` 为特征名）
+    :raises ValueError: ``feature`` 不在 ``data`` 列中，或 ``cardinality`` < 1 时
 
     **参考样例**
 
-    >>> feature_describe(df, feature='age')
-    >>> feature_describe(df['age'])
+    >>> feature_describe(df, feature='age')          # 指定列
+    >>> feature_describe(df['age'])                  # 直接传 Series
+    >>> feature_describe(df, feature='city', cardinality=20)   # 强制按类别统计
+    >>> feature_describe(df, feature='income', missing=-999)   # -999 视为缺失
     """
     if feature and feature not in data.columns:
         raise ValueError(f"feature {feature} must in columns.")

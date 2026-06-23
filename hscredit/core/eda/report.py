@@ -35,11 +35,12 @@ def eda_summary(df: pd.DataFrame,
     :param date_col: 日期列名（可选）
     :return: EDA摘要字典
     
-    Example:
-        >>> summary = eda_summary(df, target='fpd15', date_col='apply_date')
-        >>> for key, value in summary.items():
-        ...     print(f"\n=== {key} ===")
-        ...     print(value)
+    **参考样例**
+
+    >>> summary = eda_summary(df, target='fpd15', date_col='apply_date')
+    >>> for key, value in summary.items():
+    ...     print(f"\n=== {key} ===")
+    ...     print(value)
     """
     validate_dataframe(df)
     
@@ -89,10 +90,11 @@ def generate_report(df: pd.DataFrame,
     :param config: 配置参数
     :return: 完整报告字典
     
-    Example:
-        >>> report = generate_report(df, target='fpd15', date_col='apply_date',
-        ...                          config={'iv_threshold': 0.02})
-        >>> export_report_to_excel(report, 'eda_report.xlsx')
+    **参考样例**
+
+    >>> report = generate_report(df, target='fpd15', date_col='apply_date',
+    ...                          config={'iv_threshold': 0.02})
+    >>> export_report_to_excel(report, 'eda_report.xlsx')
     """
     validate_dataframe(df)
     
@@ -157,9 +159,10 @@ def export_report_to_excel(report: Dict[str, pd.DataFrame],
     :param theme_color: 主题颜色，默认 '2639E9'（蓝色）
     :param auto_width: 是否自动调整列宽，默认 True
     
-    Example:
-        >>> export_report_to_excel(report, 'eda_report.xlsx')
-        >>> export_report_to_excel(report, 'eda_report.xlsx', theme_color='00A651')
+    **参考样例**
+
+    >>> export_report_to_excel(report, 'eda_report.xlsx')
+    >>> export_report_to_excel(report, 'eda_report.xlsx', theme_color='00A651')
     """
     # 处理sheet名称（Excel限制：最多31个字符，不能包含特殊字符）
     def clean_sheet_name(name: str) -> str:
@@ -214,8 +217,9 @@ def generate_html_report(report: Dict[str, pd.DataFrame],
     :param filepath: 导出文件路径
     :param title: 报告标题
     
-    Example:
-        >>> generate_html_report(report, 'eda_report.html', title='信贷数据EDA报告')
+    **参考样例**
+
+    >>> generate_html_report(report, 'eda_report.html', title='信贷数据EDA报告')
     """
     html_parts = []
     

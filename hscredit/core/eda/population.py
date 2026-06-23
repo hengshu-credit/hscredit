@@ -82,9 +82,10 @@ def population_profile(
     :param percentiles: 分位数列表，默认 [0.25, 0.5, 0.75]
     :return: 客群画像 DataFrame
 
-    Example:
-        >>> profile = population_profile(df, features=['age', 'income'], target='fpd15')
-        >>> profile_by_seg = population_profile(df, features=['age'], segment_col='channel', target='fpd15')
+    **参考样例**
+
+    >>> profile = population_profile(df, features=['age', 'income'], target='fpd15')
+    >>> profile_by_seg = population_profile(df, features=['age'], segment_col='channel', target='fpd15')
     """
     validate_dataframe(df, required_cols=features)
     df = df.copy()
@@ -174,9 +175,10 @@ def population_shift_analysis(
     :param psi_threshold_alert: PSI 告警阈值，默认 0.25（红色）
     :return: 偏移摘要 DataFrame，含 特征名/PSI/均值变化/偏移等级/建议
 
-    Example:
-        >>> result = population_shift_analysis(train_df, prod_df, features=['age', 'income'])
-        >>> print(result[['特征名', 'PSI', '偏移等级', '建议']])
+    **参考样例**
+
+    >>> result = population_shift_analysis(train_df, prod_df, features=['age', 'income'])
+    >>> print(result[['特征名', 'PSI', '偏移等级', '建议']])
     """
     validate_dataframe(df_base, required_cols=features)
     validate_dataframe(df_target, required_cols=features)
@@ -277,15 +279,16 @@ def population_monitoring_report(
     :param output_path: 输出 Excel 路径
     :return: 输出文件路径
 
-    Example:
-        >>> path = population_monitoring_report(
-        ...     df_base=train_df,
-        ...     df_compare_list=[prod_2024q1, prod_2024q2],
-        ...     compare_labels=['2024Q1', '2024Q2'],
-        ...     features=['age', 'income', 'credit_score'],
-        ...     target='fpd15',
-        ...     output_path='monitor.xlsx',
-        ... )
+    **参考样例**
+
+    >>> path = population_monitoring_report(
+    ...     df_base=train_df,
+    ...     df_compare_list=[prod_2024q1, prod_2024q2],
+    ...     compare_labels=['2024Q1', '2024Q2'],
+    ...     features=['age', 'income', 'credit_score'],
+    ...     target='fpd15',
+    ...     output_path='monitor.xlsx',
+    ... )
     """
     from ...excel import ExcelWriter, dataframe2excel
 
@@ -422,10 +425,11 @@ def segment_drift_analysis(
     :param psi_n_bins: PSI 计算分箱数
     :return: 长格式 DataFrame，含 特征名/客群/时间/PSI/偏移等级
 
-    Example:
-        >>> result = segment_drift_analysis(df, date_col='apply_month',
-        ...     segment_col='channel', features=['age', 'income'], base_period='2024-01')
-        >>> print(result.pivot_table(index=['客群', '时间'], columns='特征名', values='PSI'))
+    **参考样例**
+
+    >>> result = segment_drift_analysis(df, date_col='apply_month',
+    ...     segment_col='channel', features=['age', 'income'], base_period='2024-01')
+    >>> print(result.pivot_table(index=['客群', '时间'], columns='特征名', values='PSI'))
     """
     validate_dataframe(df, required_cols=[date_col, segment_col] + features)
 
@@ -510,14 +514,15 @@ def feature_cross_segment_effectiveness(
     :param min_segment_size: 最小客群样本量，低于此值跳过
     :return: 宽格式有效性矩阵 DataFrame
 
-    Example:
-        >>> matrix = feature_cross_segment_effectiveness(
-        ...     df, features=['age', 'income'], target='fpd15',
-        ...     segment_col='channel', metric='iv')
-        >>> print(matrix)
-        #        channel_A  channel_B  全量
-        # age     0.15       0.08      0.12
-        # income  0.22       0.19      0.20
+    **参考样例**
+
+    >>> matrix = feature_cross_segment_effectiveness(
+    ...     df, features=['age', 'income'], target='fpd15',
+    ...     segment_col='channel', metric='iv')
+    >>> print(matrix)
+    #        channel_A  channel_B  全量
+    # age     0.15       0.08      0.12
+    # income  0.22       0.19      0.20
     """
     validate_dataframe(df, required_cols=[target, segment_col] + features)
     metric = metric.lower()

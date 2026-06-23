@@ -433,6 +433,21 @@ def bin_plot(
     :param orientation: 图表方向，'horizontal'/'h'(横向，默认) 或 'vertical'/'v'(纵向)
     :param kwargs: 其他参数（兼容性）
     :return: matplotlib Figure 或 (Figure, DataFrame)，如果传入 ax 则返回 ax
+
+    **参考样例**
+
+    >>> from hscredit.core.viz import bin_plot
+    >>> # 方式1：原始数据（自动分箱）
+    >>> bin_plot(df, feature='score', target='target', n_bins=10, method='quantile')
+    >>> # Series + 目标数组
+    >>> bin_plot(df['score'], target=df['target'])
+    >>> # 方式2：传入已算好的分箱统计表
+    >>> from hscredit.report import feature_bin_stats
+    >>> table = feature_bin_stats(df, 'score', target='target')
+    >>> bin_plot(table, desc='衡枢鉴真分')
+    >>> # 纵向 + 返回统计表
+    >>> fig, stat = bin_plot(df, feature='score', target='target',
+    ...                      orientation='vertical', return_frame=True)
     """
     if colors is None:
         colors = DEFAULT_COLORS
@@ -730,7 +745,13 @@ def corr_plot(data, figure_size=None, fontsize=16, mask=False, save=None,
     :param linewidths: 边框宽度
     :param linecolor: 边框颜色
     :param ax: 可选的 matplotlib Axes 对象
-    :return: matplotlib Figure 或 Axes
+    :return: matplotlib Figure 或 Axes（传入 ax 时返回 ax）
+
+    **参考样例**
+
+    >>> from hscredit.core.viz import corr_plot
+    >>> corr_plot(df[['score', 'age', 'income']])
+    >>> corr_plot(df[num_cols], mask=True, annot=False)   # 只显示下三角、不标注数值
     """
     if max_len is None:
         corr = data.corr()
@@ -782,9 +803,19 @@ def ks_plot(score, target, title="", fontsize=14, figsize=(16, 8), save=None,
     :param anchor: 图例位置
     :param axes: 可选的 matplotlib Axes 对象数组 [ax1, ax2]
     :param ax: 可选的单个 Axes（配合 curve='ks'/'roc' 仅绘制单条曲线时使用）
-    :param curve: 绘制内容，'both'(默认 KS+ROC) / 'ks'(仅KS曲线) / 'roc'(仅ROC曲线)。
-        取 'ks' 或 'roc' 时仅需一个 Axes，便于嵌入到组合图中
+    :param curve: 绘制内容，默认 ``'both'``：
+
+        - ``'both'``：同时绘制 KS 曲线与 ROC 曲线（需两个 Axes）
+        - ``'ks'``：仅绘制 KS 曲线（单个 Axes，便于嵌入组合图）
+        - ``'roc'``：仅绘制 ROC 曲线（单个 Axes）
+
     :return: matplotlib Figure 或 Axes（嵌入模式下返回所用 Axes）
+
+    **参考样例**
+
+    >>> from hscredit.core.viz import ks_plot
+    >>> ks_plot(df['score'], df['target'], title='衡枢鉴真分')
+    >>> ks_plot(y_prob, y_true, curve='ks')   # 仅 KS 曲线
     """
     if colors is None:
         colors = DEFAULT_COLORS
@@ -970,7 +1001,13 @@ def hist_plot(score, y_true=None, figsize=(15, 10), bins=30, save=None,
     :param title: 完整标题（优先级高于 desc）
     :param ax: 可选的 matplotlib Axes 对象
     :param kwargs: 其他参数
-    :return: matplotlib Figure 或 Axes
+    :return: matplotlib Figure 或 Axes（传入 ax 时返回 ax）
+
+    **参考样例**
+
+    >>> from hscredit.core.viz import hist_plot
+    >>> hist_plot(df['score'])                              # 整体分布
+    >>> hist_plot(df['score'], y_true=df['target'], kde=True)  # 好/坏分组叠加 + 核密度
     """
     if labels is None:
         labels = ["好样本", "坏样本"]
@@ -1080,7 +1117,15 @@ def psi_plot(expected, actual, y=None, labels=None, desc="", save=None, colors=N
     :param max_len: 标签最大长度
     :param hatch: 是否显示斜线
     :param title: 完整标题（优先级高于 desc）
-    :return: pd.DataFrame when result=True
+    :return: 当 ``result=True`` 时返回 PSI 分箱统计表（``pd.DataFrame``），否则返回图对象
+
+    **参考样例**
+
+    >>> from hscredit.core.viz import psi_plot
+    >>> # 原始分数：自动分箱并计算 PSI
+    >>> psi_plot(train_df['score'], test_df['score'], desc='评分')
+    >>> # 叠加坏样本率折线，并返回统计表
+    >>> tbl = psi_plot(train_df['score'], test_df['score'], y=train_df['target'], result=True)
     """
     if labels is None:
         labels = ["预期", "实际"]
@@ -1320,6 +1365,12 @@ def dataframe_plot(df, row_height=0.4, font_size=14, header_color=None,
     :param ax: 坐标系
     :param save: 保存路径
     :return: matplotlib Figure
+
+    **参考样例**
+
+    >>> from hscredit.core.viz import dataframe_plot
+    >>> # 将统计表渲染为图片，便于嵌入报告或拼接子图
+    >>> dataframe_plot(summary_df, save='摘要表.png')
     """
     if header_color is None:
         header_color = DEFAULT_COLORS[0]
@@ -1394,15 +1445,16 @@ def distribution_plot(data, date="date", target="target", save=None, figsize=(10
     :param title: 图表标题
     :return: matplotlib Figure or pd.DataFrame
 
-    Example:
-        >>> # 单目标模式
-        >>> distribution_plot(df, date='apply_date', target='target')
+    **参考样例**
 
-        >>> # 多逾期口径模式
-        >>> distribution_plot(
-        ...     df, date='apply_date',
-        ...     overdue=['dpd7', 'dpd15', 'dpd30'], dpds=[1, 1, 1]
-        ... )
+    >>> # 单目标模式
+    >>> distribution_plot(df, date='apply_date', target='target')
+
+    >>> # 多逾期口径模式
+    >>> distribution_plot(
+    ...     df, date='apply_date',
+    ...     overdue=['dpd7', 'dpd15', 'dpd30'], dpds=[1, 1, 1]
+    ... )
     """
     if colors is None:
         colors = DEFAULT_COLORS
@@ -1734,34 +1786,35 @@ def bin_trend_plot(
     :param kwargs: 其他参数
     :return: matplotlib Figure
 
-    Example:
-        >>> # 按月份查看特征趋势
-        >>> fig = bin_trend_plot(
-        ...     df, feature='age', target='bad', date_col='apply_date'
-        ... )
+    **参考样例**
 
-        >>> # 按客群维度查看
-        >>> fig = bin_trend_plot(
-        ...     df, feature='score', target='bad', dimension_cols='customer_type'
-        ... )
+    >>> # 按月份查看特征趋势
+    >>> fig = bin_trend_plot(
+    ...     df, feature='age', target='bad', date_col='apply_date'
+    ... )
 
-        >>> # 多维度交叉
-        >>> fig = bin_trend_plot(
-        ...     df, feature='income', target='bad',
-        ...     dimension_cols=['region', 'channel']
-        ... )
+    >>> # 按客群维度查看
+    >>> fig = bin_trend_plot(
+    ...     df, feature='score', target='bad', dimension_cols='customer_type'
+    ... )
 
-        >>> # 自定义分箱规则
-        >>> fig = bin_trend_plot(
-        ...     df, feature='score', target='bad',
-        ...     rules={'score': [300, 500, 600, 700, 800]}
-        ... )
+    >>> # 多维度交叉
+    >>> fig = bin_trend_plot(
+    ...     df, feature='income', target='bad',
+    ...     dimension_cols=['region', 'channel']
+    ... )
 
-        >>> # 各分组使用第一个分组的切分点
-        >>> fig = bin_trend_plot(
-        ...     df, feature='score', target='bad', date_col='apply_date',
-        ...     shared_bins='first'
-        ... )
+    >>> # 自定义分箱规则
+    >>> fig = bin_trend_plot(
+    ...     df, feature='score', target='bad',
+    ...     rules={'score': [300, 500, 600, 700, 800]}
+    ... )
+
+    >>> # 各分组使用第一个分组的切分点
+    >>> fig = bin_trend_plot(
+    ...     df, feature='score', target='bad', date_col='apply_date',
+    ...     shared_bins='first'
+    ... )
     """
     if colors is None:
         colors = DEFAULT_COLORS
@@ -1979,13 +2032,22 @@ def batch_bin_trend_plot(
     :param target: 目标变量列名
     :param dimension_cols: 维度列名
     :param date_col: 日期列名
-    :param date_freq: 日期聚合频率
-    :param sort_by: 排序指标，'iv'/'ks'/'auc'
-    :param max_features: 最大绘制特征数
+    :param date_freq: 日期聚合频率，``'D'`` 日 / ``'W'`` 周 / ``'M'`` 月 / ``'Q'`` 季度，默认 ``'M'``
+    :param sort_by: 特征排序指标，``'iv'``（默认）/ ``'ks'`` / ``'auc'``，决定绘图先后顺序
+    :param max_features: 最大绘制特征数，默认 10
     :param figsize_per_feature: 每个特征的图尺寸
-    :param save_dir: 保存目录
+    :param save_dir: 保存目录，提供时各特征图按特征名保存为图片
     :param kwargs: 其他参数传递给 bin_trend_plot
-    :return: 特征名到 Figure 的字典
+    :return: 特征名到 ``Figure`` 的字典
+
+    **参考样例**
+
+    >>> from hscredit.core.viz import batch_bin_trend_plot
+    >>> figs = batch_bin_trend_plot(
+    ...     df, features=['score', 'age', 'income'], target='target',
+    ...     date_col='放款时间', date_freq='M', sort_by='iv', max_features=5,
+    ... )
+    >>> figs['score']   # 取单个特征的图
     """
     results = {}
 
@@ -2155,25 +2217,26 @@ def bin_overdues_plot(
     :param kwargs: 其他参数
     :return: matplotlib Figure
 
-    Example:
-        >>> # 方式1：使用原始数据
-        >>> fig = bin_overdues_plot(
-        ...     df,
-        ...     feature='score',
-        ...     overdue=['dpd7', 'dpd15', 'dpd30'],
-        ...     dpds=[1, 1, 1],
-        ...     max_n_bins=5
-        ... )
+    **参考样例**
 
-        >>> # 方式2：使用 feature_bin_stats 生成的分箱表
-        >>> from hscredit.report.feature_analyzer import feature_bin_stats
-        >>> bin_table = feature_bin_stats(
-        ...     df, 
-        ...     feature='score', 
-        ...     overdue=['MOB1', 'MOB3'], 
-        ...     dpds=[0, 7]
-        ... )
-        >>> fig = bin_overdues_plot(bin_table=bin_table)
+    >>> # 方式1：使用原始数据
+    >>> fig = bin_overdues_plot(
+    ...     df,
+    ...     feature='score',
+    ...     overdue=['dpd7', 'dpd15', 'dpd30'],
+    ...     dpds=[1, 1, 1],
+    ...     max_n_bins=5
+    ... )
+
+    >>> # 方式2：使用 feature_bin_stats 生成的分箱表
+    >>> from hscredit.report.feature_analyzer import feature_bin_stats
+    >>> bin_table = feature_bin_stats(
+    ...     df, 
+    ...     feature='score', 
+    ...     overdue=['MOB1', 'MOB3'], 
+    ...     dpds=[0, 7]
+    ... )
+    >>> fig = bin_overdues_plot(bin_table=bin_table)
     """
     if colors is None:
         colors = DEFAULT_COLORS
@@ -2614,6 +2677,16 @@ def bin_2d_plot(
     :param save: 保存路径
     :param binner_kwargs: 透传给 OptimalBinning2D 的其他参数（方式1）
     :return: matplotlib Figure
+
+    **参考样例**
+
+    >>> from hscredit.core.viz import bin_2d_plot
+    >>> # 方式1：原始数据，内部自动二维分箱
+    >>> bin_2d_plot(df, features=['score', '多头数'], target='target', max_n_bins=5)
+    >>> # 方式2：已拟合的 OptimalBinning2D
+    >>> from hscredit.core.binning import OptimalBinning2D
+    >>> b = OptimalBinning2D(max_n_bins=5).fit(df, y=df['target'], features=['f1', 'f2'])
+    >>> bin_2d_plot(b)
     """
     from ..binning import OptimalBinning2D
 

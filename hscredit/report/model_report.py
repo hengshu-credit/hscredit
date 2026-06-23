@@ -209,7 +209,37 @@ class ReportDataset:
 class QuickModelReport:
     """面向报表输出的快速模型报告封装.
 
-    参考风控建模标准报告模板，生成多 Sheet 结构的 Excel / HTML 报告。
+    参考风控建模标准报告模板，对已训练模型一站式生成多 Sheet 结构的
+    Excel / HTML 报告，并提供各分项结果的获取方法（指标、分箱表、特征重要性、
+    描述统计、相关性等）。支持任意多个数据集（训练/测试/OOT…）的横向对比，
+    以及 ``overdue`` + ``dpds`` 的多逾期标签构建。
+
+    **参数**
+
+    （完整说明见 :meth:`__init__`）
+
+    :param model: 已训练好的模型，需实现 ``predict`` / ``predict_proba``
+    :param datasets: 数据集字典或列表（推荐），如 ``{'train': df, 'test': df}``；
+        DataFrame 需含目标列或配合 ``overdue``/``dpds`` 构建标签
+    :param X_train/y_train/X_test/y_test: 兼容 sklearn 风格的数据传入方式
+    :param target: 目标列名（sklearn/scorecardpipeline 风格）
+    :param overdue: 逾期天数列名或列表，配合 ``dpds`` 自动构建 0/1 标签
+    :param dpds: 逾期定义天数或列表（逾期天数 > dpds 记为坏样本）
+    :param feature_names: 特征名称列表，可选
+
+    **属性**
+
+    - model: 传入的已训练模型
+    - feature_names: 最终使用的特征名称列表
+    - _datasets: 解析后的各数据集（key -> :class:`ReportDataset`）
+
+    **参考样例**
+
+    >>> from hscredit.report import QuickModelReport
+    >>> report = QuickModelReport(model, datasets={'train': train_df, 'test': test_df})
+    >>> report.get_metrics()            # 各数据集指标对比
+    >>> report.get_feature_importance(top_n=20)
+    >>> report.to_excel('模型报告.xlsx')  # 导出多 Sheet 报告
     """
 
     _PERCENT_COLS = [
@@ -2675,6 +2705,29 @@ def compare_models(
     y_test=None,
     excel_path: Optional[str] = None,
 ) -> pd.DataFrame:
+    """横向对比多个模型的评估指标.
+
+    对每个模型分别构建 :class:`QuickModelReport` 并取其 :meth:`~QuickModelReport.summary`，
+    纵向拼接为一张对比表；单个模型构建失败时以 ``错误`` 列记录原因，不影响其余模型。
+
+    :param models: 模型名称到模型对象的映射，如 ``{'XGB': xgb_model, 'LR': lr_model}``
+    :param X_train: 训练集特征
+    :param y_train: 训练集标签（0/1）
+    :param X_test: 测试集特征，可选
+    :param y_test: 测试集标签，可选
+    :param excel_path: 可选，若提供则将对比表导出到该 Excel 路径
+    :return: 含 ``模型名称`` 列的指标对比 ``DataFrame``
+
+    **参考样例**
+
+    >>> from hscredit.report import compare_models
+    >>> result = compare_models(
+    ...     {'XGBoost': xgb_model, '逻辑回归': lr_model},
+    ...     X_train, y_train, X_test, y_test,
+    ...     excel_path='模型对比.xlsx',
+    ... )
+    >>> print(result)
+    """
     rows: List[pd.DataFrame] = []
     for name, model in models.items():
         try:

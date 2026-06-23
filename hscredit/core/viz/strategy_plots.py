@@ -60,12 +60,22 @@ def rule_swap_plot(
 
     三个面板依次展示规则命中样本数、LIFT 值和策略通过率变化。
 
-    :param pipeline: 规则置换流程明细表
-    :param rule_categories: 参与规则对比的规则分类
+    :param pipeline: 规则置换流程明细表，通常来自
+        :func:`~hscredit.report.rule_swap_analysis` 的 ``swap_pipeline``，
+        需含 ``规则分类`` / ``样本总数`` / ``坏样本率`` / ``LIFT值`` / ``通过率(绝对值)`` 列
+    :param rule_categories: 参与对比的规则分类，默认
+        ``['OUT-OUT拒绝', 'IN-OUT置出', 'OUT-IN置入']``
     :param figsize: 图像尺寸
     :param title: 总标题
     :param save: 保存路径
     :return: matplotlib Figure
+
+    **参考样例**
+
+    >>> from hscredit.report import rule_swap_analysis
+    >>> from hscredit.core.viz import rule_swap_plot
+    >>> res = rule_swap_analysis(data, score='score', rules_in=[r], reference_data=hist, target='FPD')
+    >>> rule_swap_plot(res['swap_pipeline'], title='策略置换分析')
     """
     required = {'规则分类', '样本总数', '坏样本率', 'LIFT值', '通过率(绝对值)'}
     missing = sorted(required.difference(pipeline.columns))
@@ -147,6 +157,17 @@ def strategy_simulation_plot(
     :param title: 图标题
     :param save: 保存路径
     :return: matplotlib Figure
+
+    **参考样例**
+
+    >>> import pandas as pd
+    >>> from hscredit.core.viz import strategy_simulation_plot
+    >>> sim = pd.DataFrame({
+    ...     '评分阈值': [500, 550, 600, 650],
+    ...     '通过率(%)': [90, 75, 55, 35],
+    ...     '通过人群坏率(%)': [6.0, 4.5, 3.0, 2.0],
+    ... })
+    >>> strategy_simulation_plot(sim)
     """
     required = [threshold_col, approval_col, bad_rate_col]
     missing = [col for col in required if col not in simulation.columns]
@@ -211,8 +232,9 @@ def feature_trend_by_time(
     :param save: 保存路径
     :return: Figure
 
-    Example:
-        >>> fig = feature_trend_by_time(df, 'age', 'apply_date', stat='mean')
+    **参考样例**
+
+    >>> fig = feature_trend_by_time(df, 'age', 'apply_date', stat='mean')
     """
     df = df.copy()
     df[date_col] = pd.to_datetime(df[date_col])
@@ -286,8 +308,9 @@ def feature_drift_comparison(
     :param save: 保存路径
     :return: Figure
 
-    Example:
-        >>> fig = feature_drift_comparison(df_train, df_oot, model_features)
+    **参考样例**
+
+    >>> fig = feature_drift_comparison(df_train, df_oot, model_features)
     """
     psi_vals = {}
     for feat in features:
@@ -364,8 +387,9 @@ def feature_effectiveness_by_segment(
     :param save: 保存路径
     :return: Figure
 
-    Example:
-        >>> fig = feature_effectiveness_by_segment(df, 'age', 'fpd30', 'channel')
+    **参考样例**
+
+    >>> fig = feature_effectiveness_by_segment(df, 'age', 'fpd30', 'channel')
     """
     segments = sorted(df[segment_col].dropna().unique())
     values = []
@@ -436,8 +460,9 @@ def feature_cross_heatmap(
     :param save: 保存路径
     :return: Figure
 
-    Example:
-        >>> fig = feature_cross_heatmap(df, 'age', 'income', 'fpd30')
+    **参考样例**
+
+    >>> fig = feature_cross_heatmap(df, 'age', 'income', 'fpd30')
     """
     df = df[[feature_x, feature_y, target]].dropna().copy()
     overall_br = df[target].mean()
@@ -513,8 +538,9 @@ def population_drift_monitor(
     :param save: 保存路径
     :return: Figure
 
-    Example:
-        >>> fig = population_drift_monitor([df1,df2,df3], ['Q1','Q2','Q3'], feats)
+    **参考样例**
+
+    >>> fig = population_drift_monitor([df1,df2,df3], ['Q1','Q2','Q3'], feats)
     """
     base = df_list[0]
     n_periods = len(df_list)
@@ -591,8 +617,9 @@ def segment_scorecard_comparison(
     :param save: 保存路径
     :return: Figure
 
-    Example:
-        >>> fig = segment_scorecard_comparison(df, 'score', 'fpd30', 'channel')
+    **参考样例**
+
+    >>> fig = segment_scorecard_comparison(df, 'score', 'fpd30', 'channel')
     """
     if metrics is None:
         metrics = ['KS', 'AUC', 'LIFT@10%']

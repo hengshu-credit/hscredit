@@ -37,11 +37,12 @@ def feature_type_inference(df: pd.DataFrame,
     :param force_numeric: 强制视为数值变量的列名列表
     :return: 特征类型DataFrame
 
-    Example:
-        >>> types = feature_type_inference(df)
-        >>> print(types[['特征名', '特征类型', '唯一值数', '建议处理方式']])
-        >>> # 将特定数值列视为分类
-        >>> types = feature_type_inference(df, numeric_as_categorical=['education_level'])
+    **参考样例**
+
+    >>> types = feature_type_inference(df)
+    >>> print(types[['特征名', '特征类型', '唯一值数', '建议处理方式']])
+    >>> # 将特定数值列视为分类
+    >>> types = feature_type_inference(df, numeric_as_categorical=['education_level'])
     """
     validate_dataframe(df)
 
@@ -87,9 +88,10 @@ def numeric_distribution(df: pd.DataFrame,
     :param n_bins: 分箱数
     :return: 分布统计DataFrame
     
-    Example:
-        >>> dist = numeric_distribution(df, 'age', n_bins=10)
-        >>> print(dist[['分箱区间', '频数', '频率(%)', '累计频率(%)']])
+    **参考样例**
+
+    >>> dist = numeric_distribution(df, 'age', n_bins=10)
+    >>> print(dist[['分箱区间', '频数', '频率(%)', '累计频率(%)']])
     """
     validate_dataframe(df, required_cols=[feature])
     
@@ -131,9 +133,10 @@ def categorical_distribution(df: pd.DataFrame,
     :param top_n: 仅显示前N个类别
     :return: 分布统计DataFrame
     
-    Example:
-        >>> dist = categorical_distribution(df, 'education', top_n=5)
-        >>> print(dist[['类别值', '频数', '频率(%)']])
+    **参考样例**
+
+    >>> dist = categorical_distribution(df, 'education', top_n=5)
+    >>> print(dist[['类别值', '频数', '频率(%)']])
     """
     validate_dataframe(df, required_cols=[feature])
     
@@ -189,9 +192,10 @@ def outlier_detection(df: pd.DataFrame,
     :param threshold: 阈值
     :return: 异常值统计DataFrame
     
-    Example:
-        >>> outliers = outlier_detection(df, method='iqr')
-        >>> print(outliers[['特征名', '异常值数', '异常值率(%)', '正常范围']])
+    **参考样例**
+
+    >>> outliers = outlier_detection(df, method='iqr')
+    >>> print(outliers[['特征名', '异常值数', '异常值率(%)', '正常范围']])
     """
     validate_dataframe(df)
     
@@ -256,9 +260,10 @@ def rare_category_detection(df: pd.DataFrame,
     :param threshold: 稀有阈值（频率低于此值视为稀有）
     :return: 稀有类别统计DataFrame
     
-    Example:
-        >>> rare = rare_category_detection(df, threshold=0.01)
-        >>> print(rare[['特征名', '稀有类别', '频数', '频率(%)', '建议']])
+    **参考样例**
+
+    >>> rare = rare_category_detection(df, threshold=0.01)
+    >>> print(rare[['特征名', '稀有类别', '频数', '频率(%)', '建议']])
     """
     validate_dataframe(df)
     
@@ -301,9 +306,10 @@ def concentration_analysis(df: pd.DataFrame,
     :param features: 指定分析的特征，None则分析全部数值型
     :return: 集中度分析DataFrame
     
-    Example:
-        >>> concentration = concentration_analysis(df)
-        >>> print(concentration[['特征名', 'Gini系数', '集中度评级']])
+    **参考样例**
+
+    >>> concentration = concentration_analysis(df)
+    >>> print(concentration[['特征名', 'Gini系数', '集中度评级']])
     """
     validate_dataframe(df)
     
@@ -354,12 +360,13 @@ def feature_stability_over_time(df: pd.DataFrame,
     :param df: 输入数据
     :param features: 指定分析的特征列表
     :param date_col: 日期列名
-    :param freq: 时间频率
+    :param freq: 时间聚合频率，``'D'`` 日 / ``'W'`` 周 / ``'M'`` 月 / ``'Q'`` 季度，默认 ``'M'``
     :return: 时序稳定性DataFrame
     
-    Example:
-        >>> stability = feature_stability_over_time(df, ['age', 'income'], 'apply_date')
-        >>> print(stability[['特征名', '均值标准差', '变异系数', '稳定性评级']])
+    **参考样例**
+
+    >>> stability = feature_stability_over_time(df, ['age', 'income'], 'apply_date')
+    >>> print(stability[['特征名', '均值标准差', '变异系数', '稳定性评级']])
     """
     validate_dataframe(df, required_cols=[date_col])
     

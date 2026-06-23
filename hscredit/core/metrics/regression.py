@@ -10,6 +10,11 @@
 >>> y_true = np.random.randn(100) * 10 + 50
 >>> y_pred = y_true + np.random.randn(100) * 2
 >>> print(f"MSE={mse(y_true, y_pred):.2f}, MAE={mae(y_true, y_pred):.2f}, RMSE={rmse(y_true, y_pred):.2f}, R2={r2(y_true, y_pred):.4f}")
+
+**引用**
+
+MSE / MAE / R² 直接封装自 scikit-learn，RMSE 为 MSE 的平方根；定义见
+https://scikit-learn.org/stable/modules/model_evaluation.html#regression-metrics
 """
 
 import numpy as np

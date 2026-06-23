@@ -11,6 +11,13 @@
 >>> y_prob = np.random.uniform(0, 1, 1000)  # 模拟模型预测概率
 >>> print(f"Lift@0.5={lift(y_true, y_prob, 0.5):.4f}")  # threshold=0.5时命中的LIFT值
 >>> print(f"Badrate={badrate(y_true):.4f}")  # 整体坏账率
+
+**引用**
+
+- Lift / Gain（提升度与增益）作为风控与营销响应模型的标准评估手段，见
+  Siddiqi, N. (2006). *Credit Risk Scorecards.* Wiley，以及
+  Berry, M. & Linoff, G. (2004). *Data Mining Techniques.* Wiley（Lift/Gains 图）。
+- Lift@k% = 头部 k% 客群坏账率 / 总体坏账率，衡量评分在指定通过率下的集中度。
 """
 
 import numpy as np

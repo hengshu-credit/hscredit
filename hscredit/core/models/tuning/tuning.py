@@ -663,6 +663,36 @@ class ModelTuner:
     4. 评估指标:
        - 主要用KS评估模型区分能力
        - 同时考虑训练/测试KS差异防止过拟合
+
+    **参考样例**
+
+    >>> from hscredit.core.models import XGBoostRiskModel, ModelTuner
+    >>> # 单目标：最大化 KS
+    >>> tuner = ModelTuner(XGBoostRiskModel, metric='ks', direction='maximize', cv=5)
+    >>> tuner.fit(X_train, y_train, n_trials=50)   # 返回最佳参数 best_params_
+    >>> best_model = tuner.get_best_model().fit(X_train, y_train)
+    >>>
+    >>> # 多目标：同时优化 KS 与训练/测试 KS 差异（帕累托最优）
+    >>> tuner = ModelTuner(
+    ...     XGBoostRiskModel,
+    ...     metric=['ks', 'ks_diff'],
+    ...     direction=['maximize', 'minimize'],
+    ...     sampler='nsgaii',
+    ... )
+    >>> tuner.fit(X_train, y_train, n_trials=100)
+    >>>
+    >>> # 自定义搜索空间
+    >>> space = {'max_depth': {'type': 'int', 'low': 2, 'high': 4},
+    ...          'learning_rate': {'type': 'float', 'low': 1e-3, 'high': 0.1, 'log': True}}
+    >>> tuner = ModelTuner(XGBoostRiskModel, search_space=space, metric='auc')
+
+    **引用**
+
+    基于 Optuna 超参数优化框架（默认 TPE 采样器），见
+    Akiba, T. et al. (2019). *Optuna: A Next-generation Hyperparameter
+    Optimization Framework.* KDD；TPE 见 Bergstra, J. et al. (2011),
+    *Algorithms for Hyper-Parameter Optimization*, NeurIPS。
+    文档：https://optuna.readthedocs.io/
     """
 
     def __init__(

@@ -23,35 +23,34 @@ def check_xy_inputs(
     target: str = 'target',
     accept_numpy: bool = True
 ) -> Tuple[pd.DataFrame, pd.Series, List[str]]:
-    """统一检查并处理X和y输入.
-    
-    支持两种API风格:
-    1. sklearn风格: fit(X, y) 
-    2. scorecardpipeline风格: fit(df) - target列在df中
-    
-    优先级: fit传入的y > 从X中提取target列
-    
-    Args:
-        X: 输入数据 (DataFrame或numpy数组)
-        y: 目标变量 (可选，优先使用)
-        target: 目标列名，当y为None时从X中提取
-        accept_numpy: 是否接受numpy数组输入
-        
-    Returns:
-        X_df: 处理后的DataFrame
-        y_series: 目标变量的Series
-        feature_names: 特征名称列表
-        
-    Raises:
-        ValueError: 当输入格式不正确时
-        TypeError: 当输入类型不支持时
-        
-    Examples:
-        >>> # sklearn风格
-        >>> X_df, y_series, features = check_xy_inputs(X_train, y_train)
-        >>> 
-        >>> # scorecardpipeline风格
-        >>> X_df, y_series, features = check_xy_inputs(df, target='target')
+    """统一检查并处理 X 和 y 输入（适配双 API 调用风格）。
+
+    支持两种 API 风格，并按 ``传入的 y > 从 X 提取 target 列`` 的优先级确定目标变量：
+
+    - sklearn 风格：``fit(X, y)``，X、y 分别传入
+    - scorecardpipeline 风格：``fit(df)``，目标列包含在 df 中、由 ``target`` 指定
+
+    :param X: 输入数据，``DataFrame`` 或 numpy 数组（自动转为 DataFrame）
+    :param y: 目标变量（可选），提供时优先于从 X 提取 target 列
+    :param target: 目标列名，当 ``y`` 为 None 时从 X 中提取，默认 ``'target'``
+    :param accept_numpy: 是否接受 numpy 数组输入，默认 True
+    :return: 三元组 ``(X_df, y_series, feature_names)``：
+
+        - ``X_df`` (DataFrame)：处理后的特征数据
+        - ``y_series`` (Series)：目标变量
+        - ``feature_names`` (list)：特征名称列表
+
+    :raises InputValidationError: X 与 y 长度不匹配，或数据为空时
+    :raises FeatureNotFoundError: y 为 None 且 X 中无 ``target`` 列时
+    :raises InputTypeError: 输入类型不受支持时
+
+    **参考样例**
+
+    >>> # sklearn 风格
+    >>> X_df, y_series, features = check_xy_inputs(X_train, y_train)
+    >>>
+    >>> # scorecardpipeline 风格
+    >>> X_df, y_series, features = check_xy_inputs(df, target='target')
     """
     # 1. 转换X为DataFrame
     X_df = convert_to_dataframe(X)
@@ -88,24 +87,22 @@ def convert_to_dataframe(
     X: ArrayLike,
     columns: Optional[List[str]] = None
 ) -> pd.DataFrame:
-    """将输入转换为DataFrame.
-    
-    支持DataFrame, numpy数组, list等输入.
-    
-    Args:
-        X: 输入数据
-        columns: 列名列表，当X不是DataFrame时使用
-        
-    Returns:
-        转换后的DataFrame
-        
-    Raises:
-        TypeError: 当输入类型不支持时
-        ValueError: 当列名数量不匹配时
-        
-    Examples:
-        >>> df = convert_to_dataframe(np.array([[1, 2], [3, 4]]), columns=['a', 'b'])
-        >>> df = convert_to_dataframe([[1, 2], [3, 4]])
+    """将输入转换为 DataFrame。
+
+    支持 ``DataFrame`` / numpy 数组（1 维或 2 维）/ ``Series`` / ``list`` / ``tuple``。
+    1 维输入转为单列 DataFrame；DataFrame 与 Series 会复制后返回。
+
+    :param X: 输入数据，不能为 None
+    :param columns: 列名列表，仅当 X 不是 DataFrame 时使用；为 None 时自动生成
+        ``feature_0``、``feature_1`` …
+    :return: 转换后的 ``DataFrame``
+    :raises InputValidationError: X 为 None、维度 >2，或列名数量与列数不匹配时
+    :raises InputTypeError: 输入类型不受支持时
+
+    **参考样例**
+
+    >>> df = convert_to_dataframe(np.array([[1, 2], [3, 4]]), columns=['a', 'b'])
+    >>> df = convert_to_dataframe([[1, 2], [3, 4]])
     """
     if X is None:
         raise InputValidationError("输入数据X不能为None")
@@ -152,24 +149,19 @@ def extract_target_from_df(
     target: str = 'target',
     drop: bool = True
 ) -> Tuple[pd.DataFrame, pd.Series]:
-    """从DataFrame中提取目标变量.
-    
-    Args:
-        df: 输入DataFrame
-        target: 目标列名
-        drop: 是否从df中删除target列
-        
-    Returns:
-        X: 特征DataFrame
-        y: 目标Series
-        
-    Raises:
-        ValueError: 当target列不存在时
-        TypeError: 当输入不是DataFrame时
-        
-    Examples:
-        >>> X, y = extract_target_from_df(df, target='target')
-        >>> X, y = extract_target_from_df(df, target='label', drop=False)
+    """从 DataFrame 中提取目标变量。
+
+    :param df: 输入 ``DataFrame``
+    :param target: 目标列名，默认 ``'target'``
+    :param drop: 是否从返回的特征表中删除 ``target`` 列，默认 True
+    :return: 二元组 ``(X, y)``，``X`` 为特征 DataFrame，``y`` 为目标 Series
+    :raises InputTypeError: 输入不是 DataFrame 时
+    :raises FeatureNotFoundError: ``target`` 列不存在时
+
+    **参考样例**
+
+    >>> X, y = extract_target_from_df(df, target='target')
+    >>> X, y = extract_target_from_df(df, target='label', drop=False)
     """
     if not isinstance(df, pd.DataFrame):
         raise InputTypeError(f"输入必须是DataFrame，而不是{type(df).__name__}")
@@ -276,18 +268,18 @@ def check_array_1d(
     arr: ArrayLike,
     name: str = 'array'
 ) -> pd.Series:
-    """检查并转换为一维数组.
-    
-    Args:
-        arr: 输入数组
-        name: 数组名称，用于错误信息
-        
-    Returns:
-        一维Series
-        
-    Raises:
-        ValueError: 当数组为空或多维时
-        TypeError: 当类型不支持时
+    """检查并转换为一维 ``Series``。
+
+    :param arr: 输入数组，``ndarray`` / ``Series`` / ``list`` / ``tuple``；
+        二维数组会被展平为一维
+    :param name: 数组名称，用于生成错误信息与 Series 名称，默认 ``'array'``
+    :return: 一维 ``Series``
+    :raises InputValidationError: 数组为空时
+    :raises InputTypeError: 类型不受支持时
+
+    **参考样例**
+
+    >>> s = check_array_1d([0, 1, 1, 0], name='y')
     """
     series = _convert_to_series(arr, name=name)
     
@@ -300,18 +292,20 @@ def check_array_1d(
 def get_feature_dtypes(
     X: pd.DataFrame
 ) -> dict:
-    """获取特征的数据类型分类.
-    
-    Args:
-        X: 特征DataFrame
-        
-    Returns:
-        包含数值型和类别型特征名称的字典
-        
-    Examples:
-        >>> dtypes = get_feature_dtypes(df)
-        >>> numeric_features = dtypes['numeric']
-        >>> categorical_features = dtypes['categorical']
+    """获取特征的数据类型分类（数值型 / 类别型）。
+
+    :param X: 特征 ``DataFrame``
+    :return: 字典，含三个键：
+
+        - ``'numeric'``：数值型特征名列表（int/uint/float 各精度）
+        - ``'categorical'``：非数值型特征名列表（object、category、bool 等）
+        - ``'all'``：全部特征名列表
+
+    **参考样例**
+
+    >>> dtypes = get_feature_dtypes(df)
+    >>> numeric_features = dtypes['numeric']
+    >>> categorical_features = dtypes['categorical']
     """
     numeric_dtypes = ['int8', 'int16', 'int32', 'int64',
                       'uint8', 'uint16', 'uint32', 'uint64',
@@ -338,18 +332,21 @@ def check_missing_values(
     y: Optional[pd.Series] = None,
     raise_error: bool = False
 ) -> dict:
-    """检查缺失值情况.
-    
-    Args:
-        X: 特征DataFrame
-        y: 目标Series（可选）
-        raise_error: 当存在缺失值时是否抛出异常
-        
-    Returns:
-        缺失值统计字典
-        
-    Raises:
-        ValueError: 当raise_error=True且存在缺失值时
+    """检查缺失值情况。
+
+    :param X: 特征 ``DataFrame``
+    :param y: 目标 ``Series``（可选），提供时一并统计其缺失情况
+    :param raise_error: 存在缺失值时是否抛出异常，默认 False（仅统计不报错）
+    :return: 缺失值统计字典，含键 ``X_missing``（总缺失数）、
+        ``X_missing_by_col``（各列缺失数）、``X_missing_ratio``（整体缺失率）；
+        当 ``y`` 非 None 时另含 ``y_missing``、``y_missing_ratio``
+    :raises InputValidationError: ``raise_error=True`` 且 X 或 y 存在缺失值时
+
+    **参考样例**
+
+    >>> stats = check_missing_values(X, y)
+    >>> print(stats['X_missing_ratio'])
+    >>> check_missing_values(X, raise_error=True)   # 有缺失则报错
     """
     result = {
         'X_missing': X.isna().sum().sum(),

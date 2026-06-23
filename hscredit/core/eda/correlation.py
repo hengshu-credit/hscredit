@@ -1,6 +1,12 @@
 """相关性分析模块.
 
 提供相关性矩阵、高相关筛选、VIF分析等功能.
+
+**引用**
+
+VIF（方差膨胀因子，VIF = 1/(1−R²)）用于多重共线性诊断，经验阈值 VIF>10 视为
+强共线性，见 Kutner, M. et al. (2004). *Applied Linear Statistical Models.* McGraw-Hill；
+Pearson / Spearman 相关系数封装自 pandas ``DataFrame.corr``。
 """
 
 import numpy as np
@@ -17,12 +23,17 @@ def correlation_matrix(df: pd.DataFrame,
     
     :param df: 输入数据
     :param features: 指定分析的特征，None则分析全部数值型
-    :param method: 相关计算方法
+    :param method: 相关计算方法，默认 ``'pearson'``：
+
+        - ``'pearson'``：皮尔逊线性相关系数
+        - ``'spearman'``：斯皮尔曼秩相关（单调关系，抗非线性/异常值）
+        - ``'kendall'``：肯德尔 τ 秩相关（小样本/有序类别更稳健）
     :return: 相关性矩阵DataFrame
     
-    Example:
-        >>> corr = correlation_matrix(df, ['age', 'income', 'score'])
-        >>> print(corr)
+    **参考样例**
+
+    >>> corr = correlation_matrix(df, ['age', 'income', 'score'])
+    >>> print(corr)
     """
     validate_dataframe(df)
     
@@ -50,16 +61,21 @@ def high_correlation_pairs(df: pd.DataFrame,
     :param df: 输入数据
     :param features: 指定分析的特征
     :param threshold: 高相关阈值
-    :param method: 相关计算方法
+    :param method: 相关计算方法，默认 ``'pearson'``：
+
+        - ``'pearson'``：皮尔逊线性相关系数
+        - ``'spearman'``：斯皮尔曼秩相关（单调关系，抗非线性/异常值）
+        - ``'kendall'``：肯德尔 τ 秩相关（小样本/有序类别更稳健）
     :return: 高相关特征对DataFrame，列为['特征1', '特征2', '相关系数', '绝对相关系数', '相关评级']；
         若没有特征对达到threshold，则返回仅含'信息'列的提示性DataFrame
 
-    Example:
-        >>> pairs = high_correlation_pairs(df, threshold=0.8)
-        >>> if '特征1' in pairs.columns:
-        ...     print(pairs[['特征1', '特征2', '相关系数', '相关评级']])
-        ... else:
-        ...     print(pairs['信息'].iloc[0])  # 未发现高相关特征对时的提示信息
+    **参考样例**
+
+    >>> pairs = high_correlation_pairs(df, threshold=0.8)
+    >>> if '特征1' in pairs.columns:
+    ...     print(pairs[['特征1', '特征2', '相关系数', '相关评级']])
+    ... else:
+    ...     print(pairs['信息'].iloc[0])  # 未发现高相关特征对时的提示信息
     """
     corr_matrix = correlation_matrix(df, features, method)
     
@@ -101,12 +117,17 @@ def correlation_filter(df: pd.DataFrame,
     :param features: 特征列表
     :param target: 目标变量
     :param threshold: 高相关阈值
-    :param method: 相关计算方法
+    :param method: 相关计算方法，默认 ``'pearson'``：
+
+        - ``'pearson'``：皮尔逊线性相关系数
+        - ``'spearman'``：斯皮尔曼秩相关（单调关系，抗非线性/异常值）
+        - ``'kendall'``：肯德尔 τ 秩相关（小样本/有序类别更稳健）
     :return: 筛选后的特征列表
     
-    Example:
-        >>> selected = correlation_filter(df, feature_list, 'fpd15', threshold=0.8)
-        >>> print(f"从{len(feature_list)}个特征中筛选出{len(selected)}个")
+    **参考样例**
+
+    >>> selected = correlation_filter(df, feature_list, 'fpd15', threshold=0.8)
+    >>> print(f"从{len(feature_list)}个特征中筛选出{len(selected)}个")
     """
     validate_dataframe(df, required_cols=[target])
     
@@ -150,9 +171,10 @@ def vif_analysis(df: pd.DataFrame,
     :param threshold: VIF阈值
     :return: VIF分析DataFrame
     
-    Example:
-        >>> vif_df = vif_analysis(df, threshold=10)
-        >>> print(vif_df[['特征名', 'VIF值', '共线性评级']])
+    **参考样例**
+
+    >>> vif_df = vif_analysis(df, threshold=10)
+    >>> print(vif_df[['特征名', 'VIF值', '共线性评级']])
     """
     validate_dataframe(df)
     

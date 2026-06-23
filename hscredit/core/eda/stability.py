@@ -2,6 +2,11 @@
 
 提供PSI、CSI、时间稳定性等分析功能.
 主要复用 hscredit.core.metrics 的PSI/CSI功能.
+
+**引用**
+
+PSI（群体稳定性指标）/ CSI（特征稳定性指标）的定义与分级阈值（<0.1 稳定、
+0.1~0.25 关注、>0.25 显著漂移）见 Siddiqi, N. (2006). *Credit Risk Scorecards.* Wiley。
 """
 
 import numpy as np
@@ -25,9 +30,10 @@ def psi_analysis(base_df: pd.DataFrame,
     :param n_bins: 分箱数
     :return: PSI分析结果字典
     
-    Example:
-        >>> result = psi_analysis(train_df, test_df, 'age')
-        >>> print(f"PSI: {result['PSI值']}, 稳定性: {result['稳定性']}")
+    **参考样例**
+
+    >>> result = psi_analysis(train_df, test_df, 'age')
+    >>> print(f"PSI: {result['PSI值']}, 稳定性: {result['稳定性']}")
     """
     from ..metrics import psi_table
     
@@ -61,10 +67,11 @@ def batch_psi_analysis(df: pd.DataFrame,
     :param n_bins: 分箱数
     :return: 批量PSI结果DataFrame
     
-    Example:
-        >>> psi_result = batch_psi_analysis(df, ['age', 'income'], 'apply_month', 
-        ...                                 '2023-01', ['2023-02', '2023-03'])
-        >>> print(psi_result[['特征名', '对比期', 'PSI值', '稳定性']])
+    **参考样例**
+
+    >>> psi_result = batch_psi_analysis(df, ['age', 'income'], 'apply_month', 
+    ...                                 '2023-01', ['2023-02', '2023-03'])
+    >>> print(psi_result[['特征名', '对比期', 'PSI值', '稳定性']])
     """
     validate_dataframe(df, required_cols=[date_col])
     
@@ -126,9 +133,10 @@ def csi_analysis(df: pd.DataFrame,
     :param compare_period: 对比期
     :return: CSI分析结果
     
-    Example:
-        >>> result = csi_analysis(df, 'score', 'fpd15', 'apply_month', '2023-01', '2023-02')
-        >>> print(f"CSI: {result['CSI值']}")
+    **参考样例**
+
+    >>> result = csi_analysis(df, 'score', 'fpd15', 'apply_month', '2023-01', '2023-02')
+    >>> print(f"CSI: {result['CSI值']}")
     """
     from ..metrics import csi
     
@@ -163,13 +171,14 @@ def time_psi_tracking(df: pd.DataFrame,
     :param df: 输入数据
     :param features: 特征列表
     :param date_col: 日期列名
-    :param freq: 时间频率
+    :param freq: 时间聚合频率，``'D'`` 日 / ``'W'`` 周 / ``'M'`` 月 / ``'Q'`` 季度，默认 ``'M'``
     :param n_bins: 分箱数
     :return: PSI时序追踪DataFrame
     
-    Example:
-        >>> tracking = time_psi_tracking(df, ['age', 'income'], 'apply_date')
-        >>> print(tracking.pivot(index='时间周期', columns='特征名', values='PSI值'))
+    **参考样例**
+
+    >>> tracking = time_psi_tracking(df, ['age', 'income'], 'apply_date')
+    >>> print(tracking.pivot(index='时间周期', columns='特征名', values='PSI值'))
     """
     validate_dataframe(df, required_cols=[date_col])
     
@@ -235,9 +244,10 @@ def stability_report(df: pd.DataFrame,
     :param psi_threshold: PSI阈值
     :return: 综合稳定性报告DataFrame
     
-    Example:
-        >>> report = stability_report(df, feature_list, 'apply_date')
-        >>> print(report[['特征名', '平均PSI', '最大PSI', '不稳定期数']])
+    **参考样例**
+
+    >>> report = stability_report(df, feature_list, 'apply_date')
+    >>> print(report[['特征名', '平均PSI', '最大PSI', '不稳定期数']])
     """
     validate_dataframe(df, required_cols=[date_col])
     
@@ -301,18 +311,19 @@ def psi_cross_analysis(
         - return_matrix=True: 返回 {特征名: PSI矩阵DataFrame} 字典
         - return_matrix=False: 返回长格式DataFrame [特征名, 组1, 组2, PSI值, 稳定性]
     
-    Example:
-        >>> # 自动按月份分组
-        >>> result = psi_cross_analysis(df, ['age', 'income'], 
-        ...                             date_col='apply_date', freq='M')
-        >>> print(result['age'])  # 查看age特征的PSI矩阵
-        
-        >>> # 手工分组
-        >>> result = psi_cross_analysis(df, ['score'], group_col='channel')
-        
-        >>> # 返回长格式
-        >>> result = psi_cross_analysis(df, ['age'], date_col='apply_date', 
-        ...                             freq='M', return_matrix=False)
+    **参考样例**
+
+    >>> # 自动按月份分组
+    >>> result = psi_cross_analysis(df, ['age', 'income'], 
+    ...                             date_col='apply_date', freq='M')
+    >>> print(result['age'])  # 查看age特征的PSI矩阵
+
+    >>> # 手工分组
+    >>> result = psi_cross_analysis(df, ['score'], group_col='channel')
+
+    >>> # 返回长格式
+    >>> result = psi_cross_analysis(df, ['age'], date_col='apply_date', 
+    ...                             freq='M', return_matrix=False)
     """
     from ..metrics import psi_table
     
@@ -445,10 +456,11 @@ def feature_drift_report(
     :param psi_bins: PSI 计算分箱数，默认 10
     :return: 特征偏移报告 DataFrame，含 特征名/PSI/均值变化/缺失率变化/偏移等级
 
-    Example:
-        >>> report = feature_drift_report(train_df, prod_df)
-        >>> drifted = report[report['偏移等级'] == '显著偏移']
-        >>> print(drifted[['特征名', 'PSI', '偏移等级']])
+    **参考样例**
+
+    >>> report = feature_drift_report(train_df, prod_df)
+    >>> drifted = report[report['偏移等级'] == '显著偏移']
+    >>> print(drifted[['特征名', 'PSI', '偏移等级']])
     """
     validate_dataframe(df_base)
     validate_dataframe(df_target)
@@ -529,10 +541,11 @@ def score_drift_report(
     :param n_bins: PSI 分箱数，默认 10
     :return: 偏移报告字典，含 PSI / 分布统计 / 模型性能变化
 
-    Example:
-        >>> report = score_drift_report(train_score, prod_score, y_base=train_y, y_target=prod_y)
-        >>> print(report['PSI'], report['偏移等级'])
-        >>> print(report['分布统计'])
+    **参考样例**
+
+    >>> report = score_drift_report(train_score, prod_score, y_base=train_y, y_target=prod_y)
+    >>> print(report['PSI'], report['偏移等级'])
+    >>> print(report['分布统计'])
     """
     # 统一转换为 Series（按位置对齐），兼容传入 np.ndarray / list / Series
     score_base = pd.Series(np.asarray(score_base))

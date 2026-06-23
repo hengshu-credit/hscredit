@@ -24,16 +24,16 @@ from .style import (
 DEFAULT_COLORS = list(PRIMARY_COLORS)
 
 # 语义色（与 bin_plot 参考样式一致）：坏样本率折线、整体基线参考线
-BAD_RATE_COLOR = SEMANTIC_COLORS["bad_rate"]            # #E85D4A 坏样本率折线
-REFERENCE_COLOR = SEMANTIC_COLORS["overall_baseline"]  # #4C8DFF 整体基线参考线
+BAD_RATE_COLOR = SEMANTIC_COLORS["bad_rate"]            # #F0556F 坏样本率折线（副主题红融粉）
+REFERENCE_COLOR = SEMANTIC_COLORS["overall_baseline"]  # #2639E9 整体基线参考线（主题蓝）
 # PSI/稳定性状态语义色
 STABLE_COLOR = SEMANTIC_COLORS["stable"]
 CHANGING_COLOR = SEMANTIC_COLORS["changing"]
 UNSTABLE_COLOR = SEMANTIC_COLORS["unstable"]
 NEUTRAL_COLOR = SEMANTIC_COLORS["neutral"]
-# 风险渐变色阶（绿→黄→橙→红），用于热力图/风险等级连续着色
+# 风险渐变色阶（浅蓝→玫紫→粉→深红），用于热力图/风险等级连续着色
 RISK_GRADIENT = list(GRADIENT_PALETTES["risk"])
-# 主题蓝色阶（浅→深），用于「数值越大越好/越强」的顺序着色（如 IV 强度）
+# 主题蓝色阶（浅→深，主题色叠白），用于「数值越大越好/越强」的顺序着色（如 IV 强度）
 BLUE_GRADIENT = list(GRADIENT_PALETTES["blue"])
 # 蓝→紫→粉→红 连续色阶，用于热力图/条件格式
 SEQUENTIAL_GRADIENT = list(GRADIENT_PALETTES["blue_purple_red"])
@@ -57,17 +57,35 @@ def make_colormap(name: str, colors: Optional[list] = None, n: int = 256):
 
 
 def make_risk_cmap(name: str = "hscredit_risk", n: int = 256):
-    """创建风险连续色阶（低风险蓝紫，高风险粉红）."""
+    """创建风险连续色阶（低风险蓝紫 → 高风险粉红）。
+
+    :param name: colormap 名称，默认 ``"hscredit_risk"``
+    :param n: 颜色采样数，默认 256
+    :return: ``LinearSegmentedColormap``，可直接传给热力图的 ``cmap`` 参数
+    """
     return make_colormap(name, RISK_GRADIENT, n=n)
 
 
 def make_diverging_cmap(name: str = "hscredit_diverging", n: int = 256):
-    """创建发散色阶（主题蓝→近白→副主题红）."""
+    """创建发散色阶（主题蓝 → 近白 → 副主题红），适合带正负/中心值的热力图。
+
+    :param name: colormap 名称，默认 ``"hscredit_diverging"``
+    :param n: 颜色采样数，默认 256
+    :return: ``LinearSegmentedColormap``
+    """
     return make_colormap(name, DIVERGING_GRADIENT, n=n)
 
 
 def get_psi_color(value: float) -> str:
-    """根据 PSI 阈值返回统一语义色."""
+    """根据 PSI 取值返回统一语义色（用于稳定性图表着色）。
+
+    :param value: PSI 值
+    :return: 颜色十六进制字符串：
+
+        - ``value < 0.10``：稳定色（STABLE_COLOR）
+        - ``0.10 <= value < 0.25``：变化色（CHANGING_COLOR）
+        - ``value >= 0.25``：不稳定色（UNSTABLE_COLOR）
+    """
     if value < 0.10:
         return STABLE_COLOR
     if value < 0.25:
@@ -116,8 +134,13 @@ def save_figure(fig, save_path: Optional[str] = None, dpi: int = 240):
     """保存图表.
     
     :param fig: matplotlib Figure 对象
-    :param save_path: 保存路径
-    :param dpi: 分辨率
+    :param save_path: 保存路径（为 None 时不保存，直接返回）；目录不存在时自动创建
+    :param dpi: 分辨率，默认 240
+
+    **参考样例**
+
+    >>> from hscredit.core.viz import save_figure
+    >>> save_figure(fig, 'output/分箱图.png', dpi=300)
     """
     if save_path:
         save_dir = os.path.dirname(save_path)

@@ -142,6 +142,12 @@ class XGBoostRiskModel(BaseRiskModel):
     ...     early_stopping_metric='auc'
     ... )
     >>> model.fit(X_train, y_train)
+
+    **引用**
+
+    基于 XGBoost 梯度提升框架，见 Chen, T. & Guestrin, C. (2016).
+    *XGBoost: A Scalable Tree Boosting System.* KDD；
+    文档 https://xgboost.readthedocs.io/ 。
     """
 
     def __init__(

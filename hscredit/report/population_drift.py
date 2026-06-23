@@ -55,7 +55,22 @@ def population_drift(
     :param n_bins: 分箱数
     :param output: 输出文件路径
     :param target: target_col 的别名
-    :return: 输出文件路径
+    :return: 输出文件路径（即 ``output``）
+
+    **参考样例**
+
+    >>> from hscredit.report import population_drift
+    >>> # 基础：仅特征分布 PSI 对比
+    >>> population_drift(train_df, prod_df, features=['score', 'age', 'income'])
+    >>>
+    >>> # 含逾期率与评分分布对比
+    >>> population_drift(
+    ...     train_df, prod_df,
+    ...     features=['score', 'age'],
+    ...     target_col='FPD',
+    ...     score_col='model_score',
+    ...     output='客群偏移监控报告.xlsx',
+    ... )
     """
     target_col = target or target_col
 

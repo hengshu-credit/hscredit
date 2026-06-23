@@ -99,6 +99,12 @@ class CatBoostRiskModel(BaseRiskModel):
     >>> params = {'depth': 6, 'learning_rate': 0.05, 'l2_leaf_reg': 3.0}
     >>> model = CatBoostRiskModel(params=params)
     >>> model.fit(X_train, y_train)
+
+    **引用**
+
+    基于 CatBoost 梯度提升框架（有序提升 + 类别特征原生处理），见
+    Prokhorenkova, L. et al. (2018). *CatBoost: unbiased boosting with
+    categorical features.* NeurIPS；文档 https://catboost.ai/docs/ 。
     """
 
     def __init__(

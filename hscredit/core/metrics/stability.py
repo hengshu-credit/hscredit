@@ -12,6 +12,15 @@
 >>> print(f"PSI={psi(train, test):.4f}")  # PSI>0.25表示分布变化显著
 >>> print(psi_rating(psi(train, test)))  # 稳定性评级
 >>> print(psi_table(train, test).head())
+
+**引用**
+
+- PSI（群体稳定性指标）/ CSI（特征稳定性指标）的定义与分级阈值见
+  Siddiqi, N. (2006). *Credit Risk Scorecards.* Wiley；
+  另见 Yurdakul, B. (2018). *Statistical Properties of Population Stability
+  Index (PSI).* PhD Dissertation, Western Michigan University。
+- PSI 本质为期望分布与实际分布之间的对称 KL 散度（Jensen 散度）之和，
+  公式：PSI = Σ (实际占比 − 期望占比) · ln(实际占比 / 期望占比)。
 """
 
 import numpy as np

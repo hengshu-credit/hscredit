@@ -1,6 +1,12 @@
 """Vintage分析模块.
 
 提供账龄(Vintage)分析、滚动率分析等金融风控特有功能.
+
+**引用**
+
+Vintage（账龄/世代）分析与 Roll Rate（滚动率）矩阵是消费信贷资产质量监控的
+标准工具，见 Siddiqi, N. (2006). *Credit Risk Scorecards.* Wiley，及
+Thomas, L. C. (2009). *Consumer Credit Models.* Oxford University Press。
 """
 
 import numpy as np
@@ -26,9 +32,10 @@ def vintage_analysis(df: pd.DataFrame,
     :param max_mob: 最大账龄
     :return: Vintage分析DataFrame
     
-    Example:
-        >>> vintage = vintage_analysis(df, 'issue_month', 'mob', 'ever_dpd30', max_mob=12)
-        >>> print(vintage.pivot(index='MOB', columns='Vintage批次', values='累积坏账率(%)'))
+    **参考样例**
+
+    >>> vintage = vintage_analysis(df, 'issue_month', 'mob', 'ever_dpd30', max_mob=12)
+    >>> print(vintage.pivot(index='MOB', columns='Vintage批次', values='累积坏账率(%)'))
     """
     validate_dataframe(df, required_cols=[vintage_col, mob_col, target_col])
     validate_binary_target(df[target_col])
@@ -83,9 +90,10 @@ def vintage_summary(df: pd.DataFrame,
     :param max_mob: 最大账龄
     :return: Vintage汇总DataFrame
     
-    Example:
-        >>> summary = vintage_summary(df, 'issue_month', 'mob', 'ever_dpd30')
-        >>> print(summary[['Vintage批次', '总开户数', f'MOB{max_mob}坏账率']])
+    **参考样例**
+
+    >>> summary = vintage_summary(df, 'issue_month', 'mob', 'ever_dpd30')
+    >>> print(summary[['Vintage批次', '总开户数', f'MOB{max_mob}坏账率']])
     """
     vintage_df = vintage_analysis(df, vintage_col, mob_col, target_col, max_mob)
     
@@ -130,9 +138,10 @@ def roll_rate_analysis(df: pd.DataFrame,
     :param labels: 状态标签（如['M0', 'M1', 'M2+']）
     :return: 滚动率分析DataFrame
     
-    Example:
-        >>> roll = roll_rate_analysis(df, ['mob1', 'mob2', 'mob3'], ['M0', 'M1', 'M2+'])
-        >>> print(roll)
+    **参考样例**
+
+    >>> roll = roll_rate_analysis(df, ['mob1', 'mob2', 'mob3'], ['M0', 'M1', 'M2+'])
+    >>> print(roll)
     """
     validate_dataframe(df, required_cols=overdue_cols)
     

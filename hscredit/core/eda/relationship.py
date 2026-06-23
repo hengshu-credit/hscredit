@@ -2,6 +2,12 @@
 
 提供IV分析、WOE分箱、单调性检验等特征与目标变量关系分析功能.
 主要复用 hscredit.core.metrics 的功能.
+
+**引用**
+
+IV（信息价值）/ WOE（证据权重）的定义与分级阈值见
+Siddiqi, N. (2006). *Credit Risk Scorecards.* Wiley；单变量 AUC 见
+Fawcett, T. (2006). *An introduction to ROC analysis.* Pattern Recognition Letters。
 """
 
 import numpy as np
@@ -24,13 +30,16 @@ def iv_analysis(df: pd.DataFrame,
     :param feature: 特征名
     :param target: 目标变量名
     :param n_bins: 分箱数
-    :param method: 分箱方法
+    :param method: 分箱方法，取值同 :class:`~hscredit.core.binning.OptimalBinning`
+        （如 ``'quantile'`` 等频、``'tree'`` 决策树、``'chi'`` 卡方、``'mdlp'`` 信息论、
+        ``'best_iv'`` 最优IV 等），默认 ``'quantile'``
     :return: IV分析结果字典，包含[特征名, IV值, 预测能力, 分箱明细]
     
-    Example:
-        >>> result = iv_analysis(df, 'age', 'fpd15')
-        >>> print(f"IV值: {result['IV值']}, 预测能力: {result['预测能力']}")
-        >>> print(result['分箱明细'])
+    **参考样例**
+
+    >>> result = iv_analysis(df, 'age', 'fpd15')
+    >>> print(f"IV值: {result['IV值']}, 预测能力: {result['预测能力']}")
+    >>> print(result['分箱明细'])
     """
     validate_dataframe(df, required_cols=[feature, target])
     validate_binary_target(df[target])
@@ -67,13 +76,16 @@ def batch_iv_analysis(df: pd.DataFrame,
     :param features: 特征列表
     :param target: 目标变量名
     :param n_bins: 分箱数
-    :param method: 分箱方法
+    :param method: 分箱方法，取值同 :class:`~hscredit.core.binning.OptimalBinning`
+        （如 ``'quantile'`` 等频、``'tree'`` 决策树、``'chi'`` 卡方、``'mdlp'`` 信息论、
+        ``'best_iv'`` 最优IV 等），默认 ``'quantile'``
     :param return_details: 是否返回详细分箱结果
     :return: IV分析结果DataFrame，列包括[特征名, IV值, 预测能力, 分箱数]
     
-    Example:
-        >>> iv_result = batch_iv_analysis(df, ['age', 'income', 'score'], 'fpd15')
-        >>> print(iv_result[['特征名', 'IV值', '预测能力']].sort_values('IV值', ascending=False))
+    **参考样例**
+
+    >>> iv_result = batch_iv_analysis(df, ['age', 'income', 'score'], 'fpd15')
+    >>> print(iv_result[['特征名', 'IV值', '预测能力']].sort_values('IV值', ascending=False))
     """
     validate_dataframe(df, required_cols=[target])
     validate_binary_target(df[target])
@@ -127,12 +139,15 @@ def woe_analysis(df: pd.DataFrame,
     :param feature: 特征名
     :param target: 目标变量名
     :param n_bins: 分箱数
-    :param method: 分箱方法
+    :param method: 分箱方法，取值同 :class:`~hscredit.core.binning.OptimalBinning`
+        （如 ``'quantile'`` 等频、``'tree'`` 决策树、``'chi'`` 卡方、``'mdlp'`` 信息论、
+        ``'best_iv'`` 最优IV 等），默认 ``'quantile'``
     :return: WOE分析DataFrame
     
-    Example:
-        >>> woe_df = woe_analysis(df, 'age', 'fpd15')
-        >>> print(woe_df[['分箱', '分箱标签', 'WOE值', 'IV值']])
+    **参考样例**
+
+    >>> woe_df = woe_analysis(df, 'age', 'fpd15')
+    >>> print(woe_df[['分箱', '分箱标签', 'WOE值', 'IV值']])
     """
     validate_dataframe(df, required_cols=[feature, target])
     validate_binary_target(df[target])
@@ -169,12 +184,15 @@ def binning_bad_rate(df: pd.DataFrame,
     :param feature: 特征名
     :param target: 目标变量名
     :param n_bins: 分箱数
-    :param method: 分箱方法
+    :param method: 分箱方法，取值同 :class:`~hscredit.core.binning.OptimalBinning`
+        （如 ``'quantile'`` 等频、``'tree'`` 决策树、``'chi'`` 卡方、``'mdlp'`` 信息论、
+        ``'best_iv'`` 最优IV 等），默认 ``'quantile'``
     :return: 分箱逾期率DataFrame
     
-    Example:
-        >>> bin_df = binning_bad_rate(df, 'score', 'fpd15', n_bins=10)
-        >>> print(bin_df[['分箱', '样本数', '逾期率', 'LIFT值']])
+    **参考样例**
+
+    >>> bin_df = binning_bad_rate(df, 'score', 'fpd15', n_bins=10)
+    >>> print(bin_df[['分箱', '样本数', '逾期率', 'LIFT值']])
     """
     validate_dataframe(df, required_cols=[feature, target])
     validate_binary_target(df[target])
@@ -222,9 +240,10 @@ def monotonicity_check(df: pd.DataFrame,
     :param n_bins: 分箱数
     :return: 单调性检验结果
     
-    Example:
-        >>> result = monotonicity_check(df, 'score', 'fpd15')
-        >>> print(f"单调性: {result['单调性']}, 相关系数: {result['Spearman相关系数']}")
+    **参考样例**
+
+    >>> result = monotonicity_check(df, 'score', 'fpd15')
+    >>> print(f"单调性: {result['单调性']}, 相关系数: {result['Spearman相关系数']}")
     """
     validate_dataframe(df, required_cols=[feature, target])
     validate_binary_target(df[target])
@@ -280,9 +299,10 @@ def univariate_auc(df: pd.DataFrame,
     :param target: 目标变量名
     :return: AUC分析结果
     
-    Example:
-        >>> result = univariate_auc(df, 'score', 'fpd15')
-        >>> print(f"AUC: {result['AUC值']}, 区分能力: {result['区分能力']}")
+    **参考样例**
+
+    >>> result = univariate_auc(df, 'score', 'fpd15')
+    >>> print(f"AUC: {result['AUC值']}, 区分能力: {result['区分能力']}")
     """
     validate_dataframe(df, required_cols=[feature, target])
     validate_binary_target(df[target])
@@ -333,9 +353,10 @@ def feature_importance_ranking(df: pd.DataFrame,
     :param metrics: 评估指标列表
     :return: 特征重要性DataFrame
     
-    Example:
-        >>> ranking = feature_importance_ranking(df, feature_list, 'fpd15')
-        >>> print(ranking[['特征名', 'IV值', 'AUC值', '综合得分', '排名']])
+    **参考样例**
+
+    >>> ranking = feature_importance_ranking(df, feature_list, 'fpd15')
+    >>> print(ranking[['特征名', 'IV值', 'AUC值', '综合得分', '排名']])
     """
     validate_dataframe(df, required_cols=[target])
     

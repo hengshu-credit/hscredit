@@ -17,12 +17,27 @@ def init_setting(font_path=None, seed=None, freeze_torch=False, logger=False, **
 
     去除警告信息、修改 pandas 默认配置、固定随机种子。
 
-    :param font_path: 画图时图像使用的字体，支持系统字体名称、本地字体文件路径
-    :param seed: 随机种子，默认为 None
-    :param freeze_torch: 是否固定 pytorch 环境
-    :param logger: 是否需要初始化日志器，默认为 False
-    :param kwargs: 日志初始化传入的相关参数
-    :return: 当 logger 为 True 时返回 logging.Logger
+    :param font_path: 画图时图像使用的字体，支持系统已注册字体名称或本地 ``.ttf``
+        字体文件路径；为 None 时使用包内置中文字体 ``resources/fonts/font.ttf``
+    :param seed: 随机种子，默认为 None（不固定）。非 None 时调用
+        :func:`~hscredit.utils.seed_everything`
+    :param freeze_torch: 是否同时固定 PyTorch 随机种子，默认 False（仅 seed 非 None 时生效）
+    :param logger: 是否返回一个日志器，默认为 False
+    :param kwargs: 当 logger 为 True 时传给 ``logging.getLogger`` 的参数
+    :return: 当 logger 为 True 时返回 ``logging.Logger``，否则返回 None
+
+    **注意**
+
+    本函数在 ``import hscredit`` 时被自动调用，会全局执行
+    ``warnings.filterwarnings("ignore")`` 屏蔽所有警告，并修改 pandas/matplotlib 全局配置。
+
+    **参考样例**
+
+    >>> from hscredit.utils import init_setting
+    >>> init_setting()                       # 默认配置（内置中文字体）
+    >>> init_setting(seed=42)                # 同时固定随机种子
+    >>> init_setting(font_path='SimHei')     # 指定系统字体
+    >>> logger = init_setting(logger=True)   # 返回日志器
     """
     warnings.filterwarnings("ignore")
 

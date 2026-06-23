@@ -23,7 +23,7 @@
 import ast
 import re
 from enum import Enum
-from typing import List, Union, Optional
+from typing import List, Union, Optional, Tuple, Dict
 import numpy as np
 import pandas as pd
 from pandas import DataFrame
@@ -34,7 +34,7 @@ from .expr_optimizer import optimize_expr, beautify_expr
 from ...exceptions import FeatureNotFoundError, InputTypeError, StateError
 
 
-def _replace_backtick_columns(query_str: str) -> tuple[str, dict[str, str]]:
+def _replace_backtick_columns(query_str: str) -> Tuple[str, Dict[str, str]]:
     """将 pandas 反引号列名替换为 Python AST 可解析的占位符。"""
     replacements = {}
 

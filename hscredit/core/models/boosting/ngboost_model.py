@@ -106,6 +106,12 @@ class NGBoostRiskModel(BaseRiskModel):
     >>> # 获取概率分布（不确定性估计）
     >>> dist = model.pred_dist(X_test)
     >>> print(dist.params)
+
+    **引用**
+
+    基于 NGBoost（自然梯度提升，输出概率分布以量化预测不确定性），见
+    Duan, T. et al. (2020). *NGBoost: Natural Gradient Boosting for
+    Probabilistic Prediction.* ICML；文档 https://stanfordmlgroup.github.io/projects/ngboost/ 。
     """
 
     def __init__(

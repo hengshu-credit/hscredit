@@ -70,12 +70,13 @@ def target_distribution(df: pd.DataFrame,
     :param target_col: 目标变量列名
     :return: 目标分布DataFrame，列包括[类别, 样本数, 占比, 累计占比]
     
-    Example:
-        >>> dist = target_distribution(df, 'fpd15')
-        >>> print(dist)
-           类别   样本数   占比(%)  累计占比(%)
-        0   0    8500   85.00      85.00
-        1   1    1500   15.00     100.00
+    **参考样例**
+
+    >>> dist = target_distribution(df, 'fpd15')
+    >>> print(dist)
+       类别   样本数   占比(%)  累计占比(%)
+    0   0    8500   85.00      85.00
+    1   1    1500   15.00     100.00
     """
     validate_dataframe(df, required_cols=[target_col])
     
@@ -117,18 +118,19 @@ def bad_rate_overall(df: pd.DataFrame,
     :param del_grey: 是否删除逾期天数在 (0, dpd] 区间的灰样本
     :return: 单标签返回字典，多标签返回DataFrame
     
-    Example:
-        >>> # 单标签分析
-        >>> result = bad_rate_overall(df, target_col='fpd15')
-        >>> print(result)
-        {'样本总数': 10000, '好样本数': 8500, '坏样本数': 1500, '逾期率(%)': 15.0}
-        
-        >>> # 多标签分析
-        >>> result = bad_rate_overall(df, overdue=['MOB1', 'MOB3'], dpds=[7, 30])
-        >>> print(result)
-             标签      样本总数  好样本数  坏样本数  逾期率(%)
-        0  MOB1>7     9800    8820     980    10.00
-        1  MOB1>30    9800    9400     400     4.08
+    **参考样例**
+
+    >>> # 单标签分析
+    >>> result = bad_rate_overall(df, target_col='fpd15')
+    >>> print(result)
+    {'样本总数': 10000, '好样本数': 8500, '坏样本数': 1500, '逾期率(%)': 15.0}
+
+    >>> # 多标签分析
+    >>> result = bad_rate_overall(df, overdue=['MOB1', 'MOB3'], dpds=[7, 30])
+    >>> print(result)
+         标签      样本总数  好样本数  坏样本数  逾期率(%)
+    0  MOB1>7     9800    8820     980    10.00
+    1  MOB1>30    9800    9400     400     4.08
     """
     target_col = target or target_col
     validate_dataframe(df)
@@ -208,13 +210,14 @@ def bad_rate_by_dimension(df: pd.DataFrame,
     :param sort_by: 排序方式，'bad_rate'或'count'
     :return: 单标签返回DataFrame，多标签返回{标签名: DataFrame}字典
     
-    Example:
-        >>> # 单标签
-        >>> result = bad_rate_by_dimension(df, 'channel', target_col='fpd15')
-        
-        >>> # 多标签
-        >>> result = bad_rate_by_dimension(df, 'channel', overdue='MOB1', dpds=[7, 30])
-        >>> print(result['MOB1>7'])
+    **参考样例**
+
+    >>> # 单标签
+    >>> result = bad_rate_by_dimension(df, 'channel', target_col='fpd15')
+
+    >>> # 多标签
+    >>> result = bad_rate_by_dimension(df, 'channel', overdue='MOB1', dpds=[7, 30])
+    >>> print(result['MOB1>7'])
     """
     target_col = target or target_col
     dim_col = segment_col or dim_col
@@ -308,13 +311,14 @@ def bad_rate_trend(df: pd.DataFrame,
     :param dimensions: 分维度分析列表
     :return: 单标签返回DataFrame，多标签返回{标签名: DataFrame}字典
     
-    Example:
-        >>> # 单标签
-        >>> trend = bad_rate_trend(df, 'apply_date', target_col='fpd15', freq='M')
-        
-        >>> # 多标签
-        >>> trend = bad_rate_trend(df, 'apply_date', overdue=['MOB1', 'MOB3'], dpds=30, freq='M')
-        >>> print(trend['MOB1>30'])
+    **参考样例**
+
+    >>> # 单标签
+    >>> trend = bad_rate_trend(df, 'apply_date', target_col='fpd15', freq='M')
+
+    >>> # 多标签
+    >>> trend = bad_rate_trend(df, 'apply_date', overdue=['MOB1', 'MOB3'], dpds=30, freq='M')
+    >>> print(trend['MOB1>30'])
     """
     target_col = target or target_col
     validate_dataframe(df, required_cols=[date_col])
@@ -417,13 +421,14 @@ def bad_rate_by_bins(df: pd.DataFrame,
     :param method: 分箱方法，'quantile'等频/'uniform'等距
     :return: 单标签返回DataFrame，多标签返回{标签名: DataFrame}字典
     
-    Example:
-        >>> # 单标签
-        >>> bins = bad_rate_by_bins(df, 'score', target_col='fpd15', n_bins=10)
-        
-        >>> # 多标签
-        >>> bins = bad_rate_by_bins(df, 'score', overdue=['MOB1', 'MOB3'], dpds=30, n_bins=10)
-        >>> print(bins['MOB1>30'])
+    **参考样例**
+
+    >>> # 单标签
+    >>> bins = bad_rate_by_bins(df, 'score', target_col='fpd15', n_bins=10)
+
+    >>> # 多标签
+    >>> bins = bad_rate_by_bins(df, 'score', overdue=['MOB1', 'MOB3'], dpds=30, n_bins=10)
+    >>> print(bins['MOB1>30'])
     """
     validate_dataframe(df, required_cols=[score_col])
     
@@ -506,13 +511,14 @@ def sample_distribution(df: pd.DataFrame,
     
     :param df: 输入数据
     :param date_col: 日期列名
-    :param freq: 时间频率
+    :param freq: 时间聚合频率，``'D'`` 日 / ``'W'`` 周 / ``'M'`` 月 / ``'Q'`` 季度，默认 ``'M'``
     :param target_col: 目标变量列名（如有）
     :return: 样本分布DataFrame
     
-    Example:
-        >>> dist = sample_distribution(df, 'apply_date', target_col='fpd15')
-        >>> print(dist[['时间周期', '样本数', '坏样本数', '逾期率(%)']])
+    **参考样例**
+
+    >>> dist = sample_distribution(df, 'apply_date', target_col='fpd15')
+    >>> print(dist[['时间周期', '样本数', '坏样本数', '逾期率(%)']])
     """
     target_col = target or target_col
     validate_dataframe(df, required_cols=[date_col])

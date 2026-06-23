@@ -12,6 +12,15 @@
 >>> print(f"IV={iv(y_true, feature):.4f}")  # IV>0.02表示有预测能力
 >>> chi2, p = chi2_test(feature, y_true)  # 卡方检验评估独立性
 >>> print(f"chi2={chi2:.4f}, p={p:.4f}")
+
+**引用**
+
+- IV（信息价值）与 WOE 的定义、分级阈值见
+  Siddiqi, N. (2006). *Credit Risk Scorecards.* Wiley。
+- 卡方独立性检验封装自 :func:`scipy.stats.chi2_contingency`
+  (Pearson, 1900)。
+- Cramér's V 为卡方统计量的归一化效应量，见
+  Cramér, H. (1946). *Mathematical Methods of Statistics.* Princeton University Press。
 """
 
 import numpy as np
@@ -65,6 +74,12 @@ def iv(y_true: Union[np.ndarray, pd.Series],
     >>> x = np.random.randn(1000) + y * 0.5   # 与目标有一定关联的特征
     >>> iv(y, x)
     0.15
+
+    **引用**
+
+    IV = Σ (坏样本占比 − 好样本占比) · WOE，按分箱求和。定义与经验阈值见
+    Siddiqi, N. (2006). *Credit Risk Scorecards.* Wiley。IV 在数学上等价于
+    好/坏两个条件分布之间的对称 KL 散度（与 PSI 同源）。
     """
     table = iv_table(y_true, feature, method, max_n_bins, min_bin_size, **kwargs)
     return table['分档IV值'].sum()

@@ -18,17 +18,18 @@ def data_info(df: pd.DataFrame) -> pd.DataFrame:
     :param df: 输入数据
     :return: 数据集信息DataFrame，列包括[信息项, 值]
     
-    Example:
-        >>> info = data_info(df)
-        >>> print(info)
-                    信息项         值
-        0      样本数（行）     10000
-        1     特征数（列）        50
-        2      数值型特征        30
-        3      分类型特征        15
-        4      日期型特征         5
-        5      缺失值列数        10
-        6    内存使用(MB)      15.5
+    **参考样例**
+
+    >>> info = data_info(df)
+    >>> print(info)
+                信息项         值
+    0      样本数（行）     10000
+    1     特征数（列）        50
+    2      数值型特征        30
+    3      分类型特征        15
+    4      日期型特征         5
+    5      缺失值列数        10
+    6    内存使用(MB)      15.5
     """
     validate_dataframe(df, check_empty=False)
     
@@ -86,12 +87,13 @@ def missing_analysis(df: pd.DataFrame,
     :param features: 指定分析的特征列表，None则分析全部
     :return: 缺失值分析DataFrame，列包括[特征名, 缺失数, 缺失率, 非空数, 查得率]
     
-    Example:
-        >>> missing = missing_analysis(df, threshold=0.05)
-        >>> print(missing)
-              特征名  缺失数   缺失率(%)  非空数  查得率(%)
-        0     age      0      0.00  10000    100.0
-        1  income    500      5.00   9500     95.0
+    **参考样例**
+
+    >>> missing = missing_analysis(df, threshold=0.05)
+    >>> print(missing)
+          特征名  缺失数   缺失率(%)  非空数  查得率(%)
+    0     age      0      0.00  10000    100.0
+    1  income    500      5.00   9500     95.0
     """
     validate_dataframe(df)
     
@@ -189,28 +191,29 @@ def feature_summary(
         - categorical: 类别型特征
         - unknown: 无法确定趋势
 
-    Example:
-        >>> # 基础统计（无目标变量）
-        >>> summary = feature_summary(df)
+    **参考样例**
 
-        >>> # 包含IV、KS、趋势（传入目标变量）
-        >>> summary = feature_summary(df, y='target')
+    >>> # 基础统计（无目标变量）
+    >>> summary = feature_summary(df)
 
-        >>> # 包含PSI（随机拆分）
-        >>> summary = feature_summary(df, y='target', psi_method='random_split')
+    >>> # 包含IV、KS、趋势（传入目标变量）
+    >>> summary = feature_summary(df, y='target')
 
-        >>> # 按日期分组计算PSI
-        >>> summary = feature_summary(df, y='target', psi_method='date_col', psi_date_col='apply_date')
+    >>> # 包含PSI（随机拆分）
+    >>> summary = feature_summary(df, y='target', psi_method='random_split')
 
-        >>> # 传入已训练模型获取特征重要性
-        >>> models = {'XGB': xgb_model, 'LGB': lgb_model}
-        >>> summary = feature_summary(df, y='target', models=models)
+    >>> # 按日期分组计算PSI
+    >>> summary = feature_summary(df, y='target', psi_method='date_col', psi_date_col='apply_date')
 
-        >>> # 自动训练模型获取特征重要性
-        >>> summary = feature_summary(df, y='target', model_type='xgboost')
+    >>> # 传入已训练模型获取特征重要性
+    >>> models = {'XGB': xgb_model, 'LGB': lgb_model}
+    >>> summary = feature_summary(df, y='target', models=models)
 
-        >>> # 指定数值列视为分类变量（如年龄分段编码）
-        >>> summary = feature_summary(df, y='target', numeric_as_categorical=['age_group'])
+    >>> # 自动训练模型获取特征重要性
+    >>> summary = feature_summary(df, y='target', model_type='xgboost')
+
+    >>> # 指定数值列视为分类变量（如年龄分段编码）
+    >>> summary = feature_summary(df, y='target', numeric_as_categorical=['age_group'])
     """
     from ..metrics import iv as iv_metric, ks as ks_metric, psi_table
     
@@ -642,9 +645,10 @@ def numeric_summary(df: pd.DataFrame,
     :param percentiles: 额外分位数，默认[0.01, 0.05, 0.95, 0.99]
     :return: 数值特征统计DataFrame
     
-    Example:
-        >>> num_stats = numeric_summary(df)
-        >>> print(num_stats[['特征名', '均值', '标准差', '偏度', '峰度']])
+    **参考样例**
+
+    >>> num_stats = numeric_summary(df)
+    >>> print(num_stats[['特征名', '均值', '标准差', '偏度', '峰度']])
     """
     validate_dataframe(df)
     
@@ -703,9 +707,10 @@ def category_summary(df: pd.DataFrame,
     :param max_categories: 显示最常见的N个类别
     :return: 类别特征统计DataFrame
     
-    Example:
-        >>> cat_stats = category_summary(df)
-        >>> print(cat_stats[['特征名', '类别数', '最常见类别', '最常见占比(%)']])
+    **参考样例**
+
+    >>> cat_stats = category_summary(df)
+    >>> print(cat_stats[['特征名', '类别数', '最常见类别', '最常见占比(%)']])
     """
     validate_dataframe(df)
     
@@ -759,12 +764,13 @@ def data_quality_report(df: pd.DataFrame,
     :param constant_threshold: 常数比例阈值，超过视为准常数特征
     :return: 数据质量报告DataFrame，列包括[特征名, 问题类型, 严重程度, 建议处理]
     
-    Example:
-        >>> quality = data_quality_report(df)
-        >>> print(quality)
-              特征名      问题类型  严重程度         建议处理
-        0    phone      高缺失率      高    考虑删除或填充
-        1   status    准常数特征      中  检查业务意义
+    **参考样例**
+
+    >>> quality = data_quality_report(df)
+    >>> print(quality)
+          特征名      问题类型  严重程度         建议处理
+    0    phone      高缺失率      高    考虑删除或填充
+    1   status    准常数特征      中  检查业务意义
     """
     validate_dataframe(df)
     
@@ -882,54 +888,55 @@ def population_stability_monitor(
         - Index: 分层标签（单级或多级索引）
         - Columns: (维度, 指标) 多级列，维度包含expected和各actual维度
     
-    Example:
-        >>> # 1. 基础用法：监控生产客群相对训练集的变化
-        >>> result = population_stability_monitor(
-        ...     expected=train_df,              # 训练集作为基准
-        ...     actual=prod_df,                 # 生产数据
-        ...     segment_cols='income'           # 收入分层监控
-        ... )
-        >>> 
-        >>> # 2. 时间维度：监控各月客群变化趋势
-        >>> result = population_stability_monitor(
-        ...     expected=historical_df,
-        ...     actual=prod_df,
-        ...     segment_cols='risk_score',
-        ...     date_col='apply_date',
-        ...     date_freq='M'
-        ... )
-        >>> 
-        >>> # 3. 多维度交叉：收入+信用等级
-        >>> result = population_stability_monitor(
-        ...     expected=baseline_df,
-        ...     actual=current_df,
-        ...     segment_cols=['income_level', 'credit_grade']
-        ... )
-        >>> 
-        >>> # 4. 自定义分箱边界（expected可传可不传）
-        >>> bin_edges = {'age': [0, 25, 35, 45, 55, 100]}
-        >>> result = population_stability_monitor(
-        ...     expected=None,                  # 传入bin_edges后可不传
-        ...     actual=prod_df,
-        ...     segment_cols='age',
-        ...     bin_edges=bin_edges
-        ... )
-        >>> 
-        >>> # 5. 多指标显示
-        >>> result = population_stability_monitor(
-        ...     expected=train_df,
-        ...     actual=prod_df,
-        ...     segment_cols='score',
-        ...     metrics=['占比', '样本数', '绝对变化率', '相对变化率']
-        ... )
-        >>> 
-        >>> # 6. 渠道维度对比
-        >>> result = population_stability_monitor(
-        ...     expected=train_df,
-        ...     actual=current_df,
-        ...     segment_cols='customer_type',
-        ...     group_col='channel'
-        ... )
+    **参考样例**
+
+    >>> # 1. 基础用法：监控生产客群相对训练集的变化
+    >>> result = population_stability_monitor(
+    ...     expected=train_df,              # 训练集作为基准
+    ...     actual=prod_df,                 # 生产数据
+    ...     segment_cols='income'           # 收入分层监控
+    ... )
+    >>> 
+    >>> # 2. 时间维度：监控各月客群变化趋势
+    >>> result = population_stability_monitor(
+    ...     expected=historical_df,
+    ...     actual=prod_df,
+    ...     segment_cols='risk_score',
+    ...     date_col='apply_date',
+    ...     date_freq='M'
+    ... )
+    >>> 
+    >>> # 3. 多维度交叉：收入+信用等级
+    >>> result = population_stability_monitor(
+    ...     expected=baseline_df,
+    ...     actual=current_df,
+    ...     segment_cols=['income_level', 'credit_grade']
+    ... )
+    >>> 
+    >>> # 4. 自定义分箱边界（expected可传可不传）
+    >>> bin_edges = {'age': [0, 25, 35, 45, 55, 100]}
+    >>> result = population_stability_monitor(
+    ...     expected=None,                  # 传入bin_edges后可不传
+    ...     actual=prod_df,
+    ...     segment_cols='age',
+    ...     bin_edges=bin_edges
+    ... )
+    >>> 
+    >>> # 5. 多指标显示
+    >>> result = population_stability_monitor(
+    ...     expected=train_df,
+    ...     actual=prod_df,
+    ...     segment_cols='score',
+    ...     metrics=['占比', '样本数', '绝对变化率', '相对变化率']
+    ... )
+    >>> 
+    >>> # 6. 渠道维度对比
+    >>> result = population_stability_monitor(
+    ...     expected=train_df,
+    ...     actual=current_df,
+    ...     segment_cols='customer_type',
+    ...     group_col='channel'
+    ... )
     """
     from ..binning import QuantileBinning, UniformBinning, TreeBinning
     
@@ -1229,58 +1236,59 @@ def feature_group_analysis(
         - pivot=True时：多级索引(特征名, 统计项)，列为分组
         - pivot=False时：长格式，包含[特征名, 统计项, 分组, 值]等列
     
-    Example:
-        >>> # 单维度客群分组分析
-        >>> result = feature_group_analysis(
-        ...     df, 
-        ...     features=['age', 'income'],
-        ...     group_cols='customer_segment',
-        ...     stats=['均值', '中位数', '缺失率']
-        ... )
-        >>> 
-        >>> # 时间维度分析（按月）
-        >>> result = feature_group_analysis(
-        ...     df,
-        ...     features=['age', 'income'],
-        ...     date_col='apply_date',
-        ...     date_freq='M',
-        ...     stats='default'
-        ... )
-        >>> 
-        >>> # 客群+时间交叉分析（多级列）
-        >>> result = feature_group_analysis(
-        ...     df,
-        ...     features=['age', 'income'],
-        ...     group_cols='segment',
-        ...     date_col='apply_date',
-        ...     date_freq='M'
-        ... )
-        >>> 
-        >>> # 自定义统计指标
-        >>> custom_stats = {
-        ...     '变异系数': lambda x: x.std() / x.mean() if x.mean() != 0 else np.nan,
-        ...     '10%分位数': lambda x: x.quantile(0.1),
-        ...     '90%分位数': lambda x: x.quantile(0.9),
-        ... }
-        >>> result = feature_group_analysis(df, features=['age'], stats=custom_stats)
-        >>> 
-        >>> # 包含目标变量分析（如逾期率）
-        >>> result = feature_group_analysis(
-        ...     df,
-        ...     features=['age', 'income'],
-        ...     group_cols='segment',
-        ...     y='fpd15',
-        ...     y_stats=['逾期率', '样本数']
-        ... )
-        >>> 
-        >>> # 排序展示
-        >>> result = feature_group_analysis(
-        ...     df,
-        ...     features=['age', 'income'],
-        ...     group_cols='segment',
-        ...     sort_by=('age', '均值'),
-        ...     sort_order='desc'
-        ... )
+    **参考样例**
+
+    >>> # 单维度客群分组分析
+    >>> result = feature_group_analysis(
+    ...     df, 
+    ...     features=['age', 'income'],
+    ...     group_cols='customer_segment',
+    ...     stats=['均值', '中位数', '缺失率']
+    ... )
+    >>> 
+    >>> # 时间维度分析（按月）
+    >>> result = feature_group_analysis(
+    ...     df,
+    ...     features=['age', 'income'],
+    ...     date_col='apply_date',
+    ...     date_freq='M',
+    ...     stats='default'
+    ... )
+    >>> 
+    >>> # 客群+时间交叉分析（多级列）
+    >>> result = feature_group_analysis(
+    ...     df,
+    ...     features=['age', 'income'],
+    ...     group_cols='segment',
+    ...     date_col='apply_date',
+    ...     date_freq='M'
+    ... )
+    >>> 
+    >>> # 自定义统计指标
+    >>> custom_stats = {
+    ...     '变异系数': lambda x: x.std() / x.mean() if x.mean() != 0 else np.nan,
+    ...     '10%分位数': lambda x: x.quantile(0.1),
+    ...     '90%分位数': lambda x: x.quantile(0.9),
+    ... }
+    >>> result = feature_group_analysis(df, features=['age'], stats=custom_stats)
+    >>> 
+    >>> # 包含目标变量分析（如逾期率）
+    >>> result = feature_group_analysis(
+    ...     df,
+    ...     features=['age', 'income'],
+    ...     group_cols='segment',
+    ...     y='fpd15',
+    ...     y_stats=['逾期率', '样本数']
+    ... )
+    >>> 
+    >>> # 排序展示
+    >>> result = feature_group_analysis(
+    ...     df,
+    ...     features=['age', 'income'],
+    ...     group_cols='segment',
+    ...     sort_by=('age', '均值'),
+    ...     sort_order='desc'
+    ... )
     """
     from ..metrics import iv as iv_metric, ks as ks_metric
     

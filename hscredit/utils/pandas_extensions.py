@@ -1159,14 +1159,18 @@ def register_extensions():
     - df.show(): 美化展示分箱表
     - df.save(): 保存到Excel
     - s.save(): Series保存到Excel
-    
-    Example:
-        >>> import pandas as pd
-        >>> import hscredit  # 自动注册扩展
-        >>> 
-        >>> df = pd.DataFrame({...})
-        >>> summary = df.summary()
-        >>> df.save("report.xlsx")
+
+    幂等：重复调用不会重复注册（已存在同名属性时跳过）。导入 hscredit 时已自动执行，
+    通常无需手动调用。
+
+    **参考样例**
+
+    >>> import pandas as pd
+    >>> import hscredit  # 导入即自动注册扩展
+    >>>
+    >>> df = pd.DataFrame({'age': [25, 40], 'target': [0, 1]})
+    >>> summary = df.summary(y='target')
+    >>> df.save("report.xlsx")
     """
     global _EXTENSIONS_REGISTERED
     

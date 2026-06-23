@@ -152,9 +152,16 @@ def rule_report_table(
     :param report: ``Rule.report`` 返回的 DataFrame
     :param rule_name: 展示用规则名称，默认使用报告中的指标名称
     :param target_names: 逾期指标名称映射，如 ``{'MOB1 1+': 'fpd1'}``
-    :param metrics: 每个逾期指标需要展示的字段
-    :param target_name: 单标签报告的逾期指标名称
+    :param metrics: 每个逾期指标需要展示的字段，默认使用内置 ``_DEFAULT_METRICS``
+    :param target_name: 单标签报告的逾期指标名称，默认 ``"target"``
     :return: 两层列头的规则详情表
+
+    **参考样例**
+
+    >>> from hscredit.core.rules import Rule
+    >>> from hscredit.report import rule_report_table
+    >>> rep = Rule("score < 600").report(data, target='FPD')
+    >>> rule_report_table(rep, rule_name='低分拒绝')
     """
     normalized, resolved_rule_name = _normalize_report(report, rule_name, target_names, target_name)
     metrics = list(metrics or _DEFAULT_METRICS)
@@ -191,8 +198,16 @@ def rule_target_analysis(
     :param current_pass_rate: 规则执行前的当前通过率，取值范围为[0, 1]
     :param rule_name: 展示用规则名称
     :param target_names: 逾期指标名称映射
-    :param target_name: 单标签报告的逾期指标名称
+    :param target_name: 单标签报告的逾期指标名称，默认 ``"target"``
     :return: 两层列头的目标分析表
+
+    **参考样例**
+
+    >>> from hscredit.core.rules import Rule
+    >>> from hscredit.report import rule_target_analysis
+    >>> rep = Rule("score < 600").report(data, target='FPD')
+    >>> # 当前通过率 0.8 时，评估该拒绝规则带来的逾期改善与通过率变化
+    >>> rule_target_analysis(rep, current_pass_rate=0.8, rule_name='低分拒绝')
     """
     if not isinstance(current_pass_rate, (int, float, np.integer, np.floating)) or not 0 <= current_pass_rate <= 1:
         raise ValueError("current_pass_rate 必须是[0, 1]范围内的数值")
@@ -254,7 +269,25 @@ def rule_target_table(
     metrics: Optional[Sequence[str]] = None,
     target_name: str = "target",
 ) -> pd.DataFrame:
-    """生成规则、逾期指标和命中情况组成的纵向明细表."""
+    """生成规则、逾期指标和命中情况组成的纵向明细表.
+
+    与 :func:`rule_report_table` 的横向展开不同，本函数按
+    ``规则 × 逾期指标 × 命中情况`` 逐行纵向罗列各项指标，便于直接落库或透视。
+
+    :param report: ``Rule.report`` 返回的 DataFrame
+    :param rule_name: 展示用规则名称，默认使用报告中的指标名称
+    :param target_names: 逾期指标名称映射，如 ``{'MOB1 1+': 'fpd1'}``
+    :param metrics: 需要展示的字段列表，默认使用内置 ``_DEFAULT_TARGET_METRICS``
+    :param target_name: 单标签报告的逾期指标名称，默认 ``"target"``
+    :return: 含 ``规则详情`` / ``逾期指标`` / ``命中情况`` 及各指标列的纵向明细表
+
+    **参考样例**
+
+    >>> from hscredit.core.rules import Rule
+    >>> from hscredit.report import rule_target_table
+    >>> rep = Rule("score < 600").report(data, target='FPD')
+    >>> rule_target_table(rep, rule_name='低分拒绝')
+    """
     normalized, _ = _normalize_report(report, rule_name, target_names, target_name)
     metrics = list(metrics or _DEFAULT_TARGET_METRICS)
     _validate_metrics(normalized, metrics)
@@ -274,8 +307,21 @@ def rule_group_hit_table(
     :param rule_name: 展示用规则名称
     :param target_names: 逾期指标名称映射
     :param metrics: 顶层展示名称到 ``Rule.report`` 字段名的映射
-    :param target_name: 单标签报告的逾期指标名称
+    :param target_name: 单标签报告的逾期指标名称，默认 ``"target"``
     :return: 两层列头的分组命中对比表，不包含合计行
+
+    **参考样例**
+
+    >>> from hscredit.core.rules import Rule
+    >>> from hscredit.report import rule_group_hit_table
+    >>> r = Rule("score < 600")
+    >>> # 对比训练集 / 测试集 / OOT 三个分组下同一规则的命中效果
+    >>> reports = {
+    ...     '训练集': r.report(train, target='FPD'),
+    ...     '测试集': r.report(test, target='FPD'),
+    ...     'OOT': r.report(oot, target='FPD'),
+    ... }
+    >>> rule_group_hit_table(reports, rule_name='低分拒绝')
     """
     if not isinstance(group_reports, Mapping) or not group_reports:
         raise ValueError("group_reports 必须是非空的分组名称到 DataFrame 的映射")

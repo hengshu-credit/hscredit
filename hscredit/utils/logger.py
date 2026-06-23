@@ -24,6 +24,14 @@ def init_logger(
     :param format: 日志格式，默认为 "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     :param console: 是否输出到控制台，默认为 True
     :return: 配置好的 logger 对象
+
+    **参考样例**
+
+    >>> from hscredit.utils import init_logger
+    >>> logger = init_logger()                       # 控制台 INFO 日志
+    >>> logger = init_logger(level=10)               # DEBUG 级别
+    >>> logger = init_logger(log_file='logs/run.log')  # 同时写入文件
+    >>> logger.info("模型训练开始")
     """
     logger = logging.getLogger(name)
     
@@ -60,9 +68,16 @@ def init_logger(
 
 
 def get_logger(name: str = "hscredit") -> logging.Logger:
-    """获取已存在的 logger。
+    """获取已存在的 logger（``logging.getLogger`` 的轻封装）。
 
-    :param name: logger 名称
-    :return: logger 对象
+    :param name: logger 名称，默认 ``"hscredit"``。应与 :func:`init_logger`
+        创建时使用的名称一致，以复用其 handler 配置
+    :return: 对应名称的 ``logging.Logger`` 对象
+
+    **参考样例**
+
+    >>> from hscredit.utils import init_logger, get_logger
+    >>> init_logger(name='hscredit')
+    >>> logger = get_logger('hscredit')   # 在其他模块复用同一 logger
     """
     return logging.getLogger(name)

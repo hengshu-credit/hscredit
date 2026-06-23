@@ -45,9 +45,10 @@ def score_ks_plot(
     :param save: 保存路径
     :return: Figure
 
-    Example:
-        >>> fig = score_ks_plot(y_test, proba)
-        >>> fig = score_ks_plot(datasets={'训练集': (y_tr, p_tr), '测试集': (y_te, p_te)})
+    **参考样例**
+
+    >>> fig = score_ks_plot(y_test, proba)
+    >>> fig = score_ks_plot(datasets={'训练集': (y_tr, p_tr), '测试集': (y_te, p_te)})
     """
     if datasets is None:
         if y_true is None or y_prob is None:
@@ -118,8 +119,9 @@ def score_distribution_comparison_plot(
     :param save: 保存路径
     :return: Figure
 
-    Example:
-        >>> fig = score_distribution_comparison_plot({'训练集': s_tr, '测试集': s_te})
+    **参考样例**
+
+    >>> fig = score_distribution_comparison_plot({'训练集': s_tr, '测试集': s_te})
     """
     try:
         from scipy.stats import gaussian_kde
@@ -172,8 +174,9 @@ def score_badrate_bin_plot(
     :param save: 保存路径
     :return: Figure
 
-    Example:
-        >>> fig = score_badrate_bin_plot(y_test, model.predict_score(X_test))
+    **参考样例**
+
+    >>> fig = score_badrate_bin_plot(y_test, model.predict_score(X_test))
     """
     y = np.asarray(y_true)
     s = np.asarray(score)
@@ -251,8 +254,9 @@ def score_lift_plot(
     :param save: 保存路径
     :return: Figure
 
-    Example:
-        >>> fig = score_lift_plot(y_test, proba)
+    **参考样例**
+
+    >>> fig = score_lift_plot(y_test, proba)
     """
     if ratios is None:
         ratios = [0.01, 0.03, 0.05, 0.10, 0.20, 0.30, 0.50]
@@ -323,8 +327,9 @@ def score_approval_badrate_curve(
     :param save: 保存路径
     :return: Figure
 
-    Example:
-        >>> fig = score_approval_badrate_curve(y_test, model.predict_score(X_test))
+    **参考样例**
+
+    >>> fig = score_approval_badrate_curve(y_test, model.predict_score(X_test))
     """
     y = np.asarray(y_true)
     s = np.asarray(score)
