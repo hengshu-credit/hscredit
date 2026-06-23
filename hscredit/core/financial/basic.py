@@ -72,6 +72,10 @@ def fv(rate, nper, pmt, pv, when='end'):
     return result
 
 
+# 函数别名：供 ipmt 等内部调用，避免被 ``fv`` 形参遮蔽
+_fv = fv
+
+
 def pv(rate, nper, pmt, fv=0, when='end'):
     """计算现值 (Present Value).
 
@@ -226,23 +230,23 @@ def ipmt(rate, per, nper, pv, fv=0, when='end'):
     >>> ipmt(0.05/12, 1, 12*10, 10000)
 """
     when = _convert_when(when)
+    rate_a = np.asarray(rate, dtype=float)
+    per_a = np.asarray(per)
+    when_a = np.asarray(when)
+
+    # 每期等额付款额
     total_pmt = pmt(rate, nper, pv, fv, when)
+    # 第 per 期期初的剩余本金 = 现值经过 (per-1) 期后的未来值
+    remaining_balance = _fv(rate, per_a - 1, total_pmt, pv, when)
+    # 利息 = 剩余本金 × 利率（与 pmt 同号，表示支出为负）
+    result = remaining_balance * rate_a
+    # 期初付款（when='begin'）修正：首期无利息，其余期需折现一期
+    result = np.where(when_a == 1, result / (1 + rate_a), result)
+    result = np.where((when_a == 1) & (per_a == 1), 0.0, result)
 
-    # 使用摊销公式计算利息
-    if rate == 0:
-        return 0
-
-    # 计算截至 per-1 期的余额
-    balance = fv if when == 1 else 0
-    for i in range(1, int(per)):
-        interest = rate * (balance if when == 1 else (balance + pv))
-        principal = total_pmt - interest
-        balance = balance + principal
-
-    if when == 1:
-        return rate * balance
-    else:
-        return rate * (balance + pv)
+    if result.ndim == 0:
+        return float(result)
+    return result
 
 
 def ppmt(rate, per, nper, pv, fv=0, when='end'):

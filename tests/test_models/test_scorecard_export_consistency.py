@@ -12,6 +12,22 @@ from hscredit.core.models import ScoreCard, RoundScoreCard
 from hscredit.utils.datasets import germancredit
 
 
+def _skip_unless_importable(modname: str):
+    """导入失败即跳过。
+
+    ``pytest.importorskip`` 默认仅在 ``ModuleNotFoundError`` 时跳过；当依赖已安装
+    但因与当前 sklearn 版本不兼容而在导入时抛出 ``ImportError``（如旧版
+    ``sklearn_pandas`` 引用已移除的 ``sklearn.utils.tosequence``）时，会被当成测试
+    失败。这里统一捕获 ``ImportError`` 并跳过。
+    """
+    import importlib
+
+    try:
+        return importlib.import_module(modname)
+    except ImportError as exc:
+        pytest.skip(f"{modname} 不可用：{exc}")
+
+
 def _skip_if_java_too_old_for_sklearn2pmml():
     try:
         result = subprocess.run(
@@ -315,7 +331,7 @@ def test_scorecard_pmml_export_tolerates_sklearn2pmml_none_len_bug(tmp_path, mon
 
 
 def test_scorecard_pmml_preprocessing_matches_reference_feature_scores(tmp_path):
-    pytest.importorskip('sklearn_pandas')
+    _skip_unless_importable('sklearn_pandas')
     pytest.importorskip('sklearn2pmml')
     _skip_if_java_too_old_for_sklearn2pmml()
 
@@ -332,7 +348,7 @@ def test_scorecard_pmml_preprocessing_matches_reference_feature_scores(tmp_path)
 
 
 def test_scorecard_pmml_predict_matches_reference_scores(tmp_path):
-    pytest.importorskip('sklearn_pandas')
+    _skip_unless_importable('sklearn_pandas')
     pytest.importorskip('sklearn2pmml')
     pytest.importorskip('pypmml')
     _skip_if_java_too_old_for_sklearn2pmml()
