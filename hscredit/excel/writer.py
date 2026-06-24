@@ -23,7 +23,7 @@ import math
 import shutil
 import tempfile
 import zipfile
-from typing import Optional, Union, List, Tuple, Dict, Any
+from typing import Optional, Union, List, Tuple, Dict, Any, Sequence
 
 import numpy as np
 import pandas as pd
@@ -907,7 +907,8 @@ class ExcelWriter:
         auto_width: bool = False,
         fill: bool = False,
         merge: bool = False,
-        merge_index: bool = True
+        merge_index: bool = True,
+        merge_header: Union[bool, str, int, Sequence[int]] = True
     ) -> Tuple[int, int]:
         """向Excel插入DataFrame。
 
@@ -921,6 +922,8 @@ class ExcelWriter:
         :param fill: 是否使用颜色填充而非边框，默认为False
         :param merge: 是否合并单元格，默认为False
         :param merge_index: 当存储index时，是否合并连续相同的index值，默认为True
+        :param merge_header: 多层列名是否横向合并相邻相同标题，默认True合并全部层级；
+            可传False/``"none"``不合并，或传层级序号/序号列表仅合并指定层级
         :return: (下一行行号, 下一列列号)
 
         **参考样例**
@@ -1019,6 +1022,37 @@ class ExcelWriter:
             merge_cols = None
             merge_rows = None
 
+        def _resolve_merge_header_levels(value, nlevels: int) -> set:
+            if nlevels <= 1:
+                return set()
+
+            def _normalize_level(level: int) -> int:
+                level = int(level)
+                if level < 0:
+                    level += nlevels
+                if level < 0 or level >= nlevels:
+                    raise ValueError(f"merge_header 层级超出范围: {level}")
+                return level
+
+            if isinstance(value, bool):
+                return set(range(nlevels)) if value else set()
+            if value is None:
+                return set(range(nlevels))
+            if isinstance(value, str):
+                option = value.strip().lower()
+                if option in {"all", "true", "yes", "全部", "合并"}:
+                    return set(range(nlevels))
+                if option in {"none", "false", "no", "不合并"}:
+                    return set()
+                return {_normalize_level(int(option))}
+            if isinstance(value, (int, np.integer)):
+                return {_normalize_level(value)}
+            if isinstance(value, (list, tuple, set, np.ndarray)):
+                return {_normalize_level(level) for level in value}
+            raise TypeError("merge_header 仅支持 bool、'all'/'none'、层级序号或层级序号列表")
+
+        merge_header_levels = _resolve_merge_header_levels(merge_header, df.columns.nlevels)
+
         # 迭代行数据
         def _iter_rows(df, header=True, index=True):
             columns = df.columns.tolist()
@@ -1064,7 +1098,7 @@ class ExcelWriter:
                         worksheet, row, start_row + i, start_col,
                         style="header",
                         auto_width=auto_width,
-                        multi_levels=True if df.columns.nlevels > 1 else False
+                        multi_levels=df.columns.nlevels > 1 and i in merge_header_levels
                     )
                 elif i == 0:
                     self.insert_rows(
@@ -1098,7 +1132,7 @@ class ExcelWriter:
                         worksheet, row, start_row + i, start_col,
                         style="header",
                         auto_width=auto_width,
-                        multi_levels=True if df.columns.nlevels > 1 else False
+                        multi_levels=df.columns.nlevels > 1 and i in merge_header_levels
                     )
                 elif i == 0:
                     self.insert_rows(

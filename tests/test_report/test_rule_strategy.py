@@ -4,6 +4,7 @@ import xml.etree.ElementTree as ET
 import numpy as np
 import pandas as pd
 import pytest
+from openpyxl import load_workbook
 
 from hscredit.core.rules import Rule
 from hscredit.report import (
@@ -270,6 +271,43 @@ def test_swap_out_report_auto_width_preserves_template_column_fill(tmp_path):
                 if col.attrib.get("style") != "1"
             ]
             assert bad_columns == []
+
+    wb = load_workbook(output)
+    ws = wb["策略迭代"]
+
+    values = [cell.value for row in ws.iter_rows() for cell in row]
+    assert "迭代规则详情" in values
+    assert "低分拒绝： score < 520" in values
+    assert "多头拒绝： multi > 30" in values
+
+    for col_idx in range(1, ws.max_column + 1):
+        assert ws.column_dimensions[ws.cell(row=1, column=col_idx).column_letter].width == pytest.approx(11)
+
+    title_cell = next(cell for row in ws.iter_rows() for cell in row if cell.value == "业务影响情况分析")
+    subtitle_cell = next(cell for row in ws.iter_rows() for cell in row if cell.value == "业务影响情况：订单口径")
+    assert title_cell.fill.fgColor.rgb != subtitle_cell.fill.fgColor.rgb
+    assert ws.cell(row=title_cell.row + 1, column=title_cell.column).value is None
+    assert ws.cell(row=subtitle_cell.row + 1, column=subtitle_cell.column).value is None
+
+    reject_merged = [
+        rng for rng in ws.merged_cells.ranges
+        if ws.cell(row=rng.min_row, column=rng.min_col).value == "拒绝"
+    ]
+    assert reject_merged == []
+
+    lift_formats = []
+    for col_idx in range(1, ws.max_column + 1):
+        has_lift_header = any(
+            ws.cell(row=row_idx, column=col_idx).value in {"LIFT值", "拒绝LIFT", "LIFT指标"}
+            for row_idx in range(1, ws.max_row + 1)
+        )
+        if not has_lift_header:
+            continue
+        for row_idx in range(1, ws.max_row + 1):
+            cell = ws.cell(row=row_idx, column=col_idx)
+            if isinstance(cell.value, (int, float)):
+                lift_formats.append(cell.number_format)
+    assert "0.00%" in lift_formats
 
 
 @pytest.mark.parametrize("current_pass_rate", [-0.1, 1.1, "0.9"])

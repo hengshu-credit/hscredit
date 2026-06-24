@@ -140,6 +140,49 @@ class TestExcelWriter:
         assert ws["B4"].value == 'Y'
         assert ws["B5"].value == 'Z'
 
+    def test_insert_dataframe_multi_header_merge_levels(self):
+        """测试多层表头可选择仅合并指定层级。"""
+        writer = ExcelWriter()
+        ws = writer.get_sheet_by_name("Test")
+
+        df = pd.DataFrame(
+            [[0.1, 0.2, 0.3]],
+            columns=pd.MultiIndex.from_tuples([
+                ("坏样本率", "拒绝"),
+                ("坏样本率", "拒绝"),
+                ("LIFT值", "拒绝"),
+            ]),
+        )
+
+        writer.insert_df2sheet(ws, df, "B2", merge_header=[0])
+
+        merged_ranges = {str(rng) for rng in ws.merged_cells.ranges}
+        assert "B2:C2" in merged_ranges
+        assert "B3:C3" not in merged_ranges
+        assert ws["B3"].value == "拒绝"
+        assert ws["C3"].value == "拒绝"
+
+    def test_insert_dataframe_multi_header_merge_can_be_disabled(self):
+        """测试多层表头可完全关闭横向合并。"""
+        writer = ExcelWriter()
+        ws = writer.get_sheet_by_name("Test")
+
+        df = pd.DataFrame(
+            [[0.1, 0.2]],
+            columns=pd.MultiIndex.from_tuples([
+                ("坏样本率", "拒绝"),
+                ("坏样本率", "拒绝"),
+            ]),
+        )
+
+        writer.insert_df2sheet(ws, df, "B2", merge_header=False)
+
+        assert list(ws.merged_cells.ranges) == []
+        assert ws["B2"].value == "坏样本率"
+        assert ws["C2"].value == "坏样本率"
+        assert ws["B3"].value == "拒绝"
+        assert ws["C3"].value == "拒绝"
+
     def test_insert_dataframe_with_merge(self):
         """测试插入DataFrame并合并相同值"""
         writer = ExcelWriter()

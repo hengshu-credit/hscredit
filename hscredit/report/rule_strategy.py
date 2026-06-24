@@ -5,7 +5,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
-from openpyxl.styles import Alignment, Font
+from openpyxl.styles import Alignment, Font, PatternFill
 
 from ..core.rules import Rule
 
@@ -545,7 +545,7 @@ _SWAP_EFFECT_METRICS = (
 # Excel 中按百分比格式展示的列（按多层列名的最末层匹配）
 _SWAP_PERCENT_NAMES = [
     "样本占比", "好样本占比", "坏样本占比", "坏样本率", "金额占比",
-    "通过率", "逾期改善", "坏账改善",
+    "通过率", "逾期改善", "坏账改善", "LIFT值", "拒绝LIFT", "LIFT指标",
 ]
 # Excel 中按千分位整数格式展示的列
 _SWAP_COUNT_NAMES = ["样本总数", "好样本数", "坏样本数", "金额总数", "累积好样本数", "累积坏样本数"]
@@ -553,11 +553,11 @@ _SWAP_COUNT_NAMES = ["样本总数", "好样本数", "坏样本数", "金额总�
 # 各表条件格式：仅对关键列着色（数据条/色阶），保持与模板一致的克制风格，避免满屏色块。
 # 业务/规则口径同时列出样本与金额两种列名，便于订单/金额口径表各自匹配到对应列。
 _CF_IMPACT_BAR = ["样本占比", "金额占比", "拒绝LIFT", "风险拒绝比"]   # 业务影响：占比/拒绝LIFT/风险拒绝比 → 数据条
-_CF_EFFECT_BAR = ["样本占比", "金额占比", "坏样本率"]                  # 规则效果：占比/坏样本率 → 数据条
-_CF_STABILITY_BAR = ["坏样本率", "样本占比"]                          # 稳定性：坏样本率/样本占比 → 数据条
+_CF_EFFECT_BAR = ["样本占比", "金额占比", "坏样本率", "LIFT值"]        # 规则效果：占比/坏样本率/LIFT → 数据条
+_CF_STABILITY_BAR = ["坏样本率", "样本占比", "LIFT指标"]               # 稳定性：坏样本率/样本占比/LIFT → 数据条
 _CF_BIN_BAR = ["LIFT值"]                                            # 分箱详情：LIFT → 数据条
 _CF_BIN_SCALE = ["分档KS值"]                                        # 分箱详情：KS → 色阶
-_CF_VARBIN_BAR = ["坏样本率", "LIFT值", "分档KS值"]                  # 变量分箱明细：坏样本率/LIFT/KS → 数据条
+_CF_VARBIN_BAR = ["坏样本率", "LIFT值"]                              # 变量分箱明细：坏样本率/LIFT → 数据条
 _CF_OVERVIEW_SCALE = ["坏样本率"]                                    # 样本情况：坏样本率 → 色阶
 
 # 数据条按指标着色：同一张表内并排的各指标使用不同色相，便于区分，避免满屏同色
@@ -566,14 +566,18 @@ _CF_BAR_COLORS = {
     "金额占比": "4BACC6",    # 青 —— 金额规模
     "坏样本率": "F4796B",    # 红 —— 风险
     "坏账改善": "8E7CC3",    # 紫 —— 坏账改善
-    "LIFT值": "F0A030",      # 橙 —— 区分度
-    "拒绝LIFT": "F0A030",    # 橙 —— 拒绝区分度
+    "LIFT值": "F76E6C",      # 红 —— 区分度
+    "拒绝LIFT": "F76E6C",    # 红 —— 拒绝区分度
+    "LIFT指标": "F76E6C",    # 红 —— 稳定性区分度
     "分档KS值": "5B9BD5",    # 蓝 —— 分档 KS
     "风险拒绝比": "6E8FC7",   # 靛 —— 拒绝效率
 }
 _CF_BAR_DEFAULT_COLOR = "638EC6"
 # 色阶：绿-黄-红三色（min→percentile50→max）
 _CF_SCALE_COLORS = ("63BE7B", "FFEB84", "F8696B")
+_CF_SCALE_COLORS_BY_NAME = {"分档KS值": ("FFFFFF", "63BE7B")}
+_SWAP_TITLE_COLOR = "1F2937"
+_SWAP_FIXED_COLUMN_WIDTH = 11
 
 # 业务影响目标分析表的命中标签 → 模板展示口径
 _SWAP_HIT_LABELS = {"合计": "原始", "未命中": "通过", "命中": "拒绝"}
@@ -751,13 +755,17 @@ def _write_banner(writer, worksheet, row: int, text: str, start_col: int, width:
     """
     end_col = start_col + max(width, 1) - 1
     for col in range(start_col, end_col + 1):
-        worksheet.cell(row=row, column=col).style = style
+        cell = worksheet.cell(row=row, column=col)
+        cell.style = "header" if style == "swap_title" else style
+        if style == "swap_title":
+            cell.fill = PatternFill(fill_type="solid", start_color=_SWAP_TITLE_COLOR, end_color=_SWAP_TITLE_COLOR)
+            cell.font = Font(name=writer.font, size=writer.fontsize, color="FFFFFF", bold=True)
     if end_col > start_col:
         worksheet.merge_cells(start_row=row, start_column=start_col, end_row=row, end_column=end_col)
     cell = worksheet.cell(row=row, column=start_col)
     cell.value = writer.astype_insertvalue(text)
     cell.alignment = Alignment(horizontal="left", vertical="center", wrap_text=False)
-    return row + 1
+    return row + 2
 
 
 def _autosize_columns(writer, worksheet, start_col: int = 1) -> None:
@@ -776,14 +784,23 @@ def _autosize_columns(writer, worksheet, start_col: int = 1) -> None:
         writer.set_column_width(worksheet, get_column_letter(col), min(max_width, 50.0))
 
 
+def _set_uniform_columns_width(writer, worksheet, start_col: int = 1, width: float = _SWAP_FIXED_COLUMN_WIDTH) -> None:
+    """将已使用区域的列宽统一设为固定值，保留模板列维度样式。"""
+    from openpyxl.utils import get_column_letter
+
+    for col in range(start_col, worksheet.max_column + 1):
+        writer.set_column_width(worksheet, get_column_letter(col), width)
+
+
 def _write_swap_text(
     writer, worksheet, row: int, texts: Optional[Union[str, Sequence[str]]], start_col: int,
+    numbered: Optional[bool] = None,
 ) -> int:
     """写入纯文本叙述段落：列表自动加「序号、内容」，每行一条，左对齐、无填充无边框（与模板一致）."""
     items = _as_text_list(texts)
     if not items:
         return row
-    numbered = isinstance(texts, (list, tuple)) and len(items) > 1
+    numbered = isinstance(texts, (list, tuple)) and len(items) > 1 if numbered is None else numbered
     text_font = Font(name=writer.font, size=writer.fontsize, color="000000")
     for idx, content in enumerate(items, 1):
         line = f"{idx}、{content}" if numbered else content
@@ -847,8 +864,26 @@ def _cf_condition_color(bar_names: Optional[Sequence[str]], scale_names: Optiona
     for name in bar_names or []:
         color_map[name] = _CF_BAR_COLORS.get(name, _CF_BAR_DEFAULT_COLOR)
     for name in scale_names or []:
-        color_map[name] = list(_CF_SCALE_COLORS)
+        color_map[name] = list(_CF_SCALE_COLORS_BY_NAME.get(name, _CF_SCALE_COLORS))
     return color_map
+
+
+def _rule_detail_lines(rules: Sequence["Rule"]) -> List[str]:
+    """构建迭代规则详情文本：规则名与表达式相同时仅展示规则名。"""
+    lines = []
+    for rule in rules:
+        name = str(getattr(rule, "name", "") or getattr(rule, "expr", ""))
+        expr = str(getattr(rule, "expr", ""))
+        lines.append(name if name == expr else f"{name}： {expr}")
+    return lines
+
+
+def _align_index_column(worksheet, table: pd.DataFrame, start_row: int, start_col: int, horizontal: str = "right") -> None:
+    """对写入 DataFrame 时输出的索引列数据区设置对齐。"""
+    data_start = start_row + table.columns.nlevels
+    data_end = data_start + len(table) - 1
+    for row in range(data_start, data_end + 1):
+        worksheet.cell(row=row, column=start_col).alignment = Alignment(horizontal=horizontal, vertical="center")
 
 
 def _write_swap_table(
@@ -864,10 +899,11 @@ def _write_swap_table(
 
     if title is not None:
         _write_subtitle(writer, worksheet, row, title, start_col)
-        row += 1
+        row += 2
     percent_cols, count_cols = _format_columns(table)
     params = dict(custom_format="#,##0")
     params.update(kwargs)
+    params.setdefault("fill", False)
     params.setdefault("percent_cols", percent_cols or None)
     params.setdefault("custom_cols", count_cols or None)
     bar_cols = _cf_columns(table, bar_names)
@@ -959,7 +995,7 @@ def _write_binning_detail_sheet(
     worksheet = writer.get_sheet_by_name(sheet_name)
     start_col = 2
     title_row = 2                    # 子标题（分箱方法名）所在行
-    header_row = title_row + 1       # 表头行
+    header_row = title_row + 2       # 表头行（子标题与表格之间空 1 行）
     first_data_row = header_row + 1  # 数据首行
     first_block_ref: Optional[str] = None  # 首个区块的「表头行→末行」筛选区域
     for method in methods:
@@ -973,15 +1009,15 @@ def _write_binning_detail_sheet(
         merge_cols = [col for col in ("指标名称", "指标含义") if col in block.columns]
         end_row, _ = _write_swap_table(
             writer, worksheet, block, title_row, start_col, _method_display(method),
-            fill=True, merge_column=merge_cols or None, merge=bool(merge_cols),
-            bar_names=_CF_VARBIN_BAR,
+            merge_column=merge_cols or None, merge=bool(merge_cols),
+            bar_names=_CF_VARBIN_BAR, scale_names=_CF_BIN_SCALE,
         )
         block_width = _table_display_width(block)
         if first_block_ref is None:
             last_letter = get_column_letter(start_col + block_width - 1)
             first_block_ref = f"{get_column_letter(start_col)}{header_row}:{last_letter}{end_row - 1}"
         start_col += block_width + 1
-    _autosize_columns(writer, worksheet)
+    _set_uniform_columns_width(writer, worksheet)
     # 冻结表头行（向下滚动时方法名 + 表头始终可见），并在首个分箱区块上加自动筛选
     if first_block_ref is not None:
         writer.set_freeze_panes(worksheet, (first_data_row, 1))
@@ -1139,18 +1175,23 @@ def swap_out_report(
 
     # —— 1. 迭代背景 ——
     if background is not None:
-        row = _write_banner(writer, worksheet, row, "迭代背景", start_col, body_width, "header")
+        row = _write_banner(writer, worksheet, row, "迭代背景", start_col, body_width, "swap_title")
         row = _write_swap_text(writer, worksheet, row, background, start_col)
         row += _GAP_MODULE
 
     # —— 2. 策略迭代总结 ——
     if summary is not None:
-        row = _write_banner(writer, worksheet, row, "策略迭代总结", start_col, body_width, "header")
+        row = _write_banner(writer, worksheet, row, "策略迭代总结", start_col, body_width, "swap_title")
         row = _write_swap_text(writer, worksheet, row, summary, start_col)
         row += _GAP_MODULE
 
-    # —— 3. 样本描述（样本情况 + 相关系数）——
-    row = _write_banner(writer, worksheet, row, "样本描述", start_col, describe_width, "header")
+    # —— 3. 迭代规则详情 ——
+    row = _write_banner(writer, worksheet, row, "迭代规则详情", start_col, body_width, "swap_title")
+    row = _write_swap_text(writer, worksheet, row, _rule_detail_lines(rule_objs), start_col, numbered=False)
+    row += _GAP_MODULE
+
+    # —— 4. 样本描述（样本情况 + 相关系数）——
+    row = _write_banner(writer, worksheet, row, "样本描述", start_col, describe_width, "swap_title")
     if describe is not None:
         row = _write_swap_text(writer, worksheet, row, describe, start_col)
         row += _GAP_INNER
@@ -1160,12 +1201,14 @@ def swap_out_report(
     )
     if corr is not None:
         row += _GAP_INNER
+        corr_start_row = row
         row, _ = _write_swap_table(writer, worksheet, corr, row, start_col, None, index=True)
+        _align_index_column(worksheet, corr, corr_start_row, start_col, horizontal="right")
     row += _GAP_MODULE
 
-    # —— 4. 规则变量效果（分箱详情，源自 feature_binning_summary）——
+    # —— 5. 规则变量效果（分箱详情，源自 feature_binning_summary）——
     if not binning_summary.empty:
-        row = _write_banner(writer, worksheet, row, "规则变量效果", start_col, summary_width, "header")
+        row = _write_banner(writer, worksheet, row, "规则变量效果", start_col, summary_width, "swap_title")
         if rule_summary is not None:
             row = _write_swap_text(writer, worksheet, row, rule_summary, start_col)
             row += _GAP_INNER
@@ -1177,8 +1220,8 @@ def swap_out_report(
         )
         row += _GAP_MODULE
 
-    # —— 5. 业务影响情况分析（订单 / 金额口径目标分析，并排；命中口径展示为 原始/通过/拒绝）——
-    row = _write_banner(writer, worksheet, row, "业务影响情况分析", start_col, impact_width, "header")
+    # —— 6. 业务影响情况分析（订单 / 金额口径目标分析，并排；命中口径展示为 原始/通过/拒绝）——
+    row = _write_banner(writer, worksheet, row, "业务影响情况分析", start_col, impact_width, "swap_title")
     if impact is not None:
         row = _write_swap_text(writer, worksheet, row, impact, start_col)
         row += _GAP_INNER
@@ -1197,12 +1240,13 @@ def swap_out_report(
                 target_names=target_names, target_name=target,
             )))
         row = _write_caliber_pair(
-            writer, worksheet, row, start_col, prefix, order_tbl, amount_tbl, bar_names=_CF_IMPACT_BAR,
+            writer, worksheet, row, start_col, prefix, order_tbl, amount_tbl,
+            bar_names=_CF_IMPACT_BAR, merge_header=[0],
         )
     row += _GAP_MODULE - _GAP_INNER
 
-    # —— 6. 规则效果分析（仅命中/未命中明细，不含合计；订单 / 金额口径并排）——
-    row = _write_banner(writer, worksheet, row, "规则效果分析", start_col, effect_width, "header")
+    # —— 7. 规则效果分析（仅命中/未命中明细，不含合计；订单 / 金额口径并排）——
+    row = _write_banner(writer, worksheet, row, "规则效果分析", start_col, effect_width, "swap_title")
     effect_merge = ["规则详情", "逾期指标"]
     for label, rule in section_rules:
         prefix = "规则整体效果" if label == "整体" else f"{label}效果"
@@ -1219,12 +1263,12 @@ def swap_out_report(
                 metrics=_SWAP_EFFECT_METRICS, target_name=target,
             )))
         row = _write_caliber_pair(
-            writer, worksheet, row + 1, start_col, prefix, order_tbl, amount_tbl,
+            writer, worksheet, row, start_col, prefix, order_tbl, amount_tbl,
             merge_column=effect_merge, merge=True, bar_names=_CF_EFFECT_BAR,
         )
     row += _GAP_MODULE - _GAP_INNER
 
-    # —— 7. 规则稳定性分析（按时间或分组对比）——
+    # —— 8. 规则稳定性分析（按时间或分组对比）——
     if date_col is not None or group_col is not None:
         # 先逐规则计算稳定性表，按最大宽度铺横幅；全部失败时不写空模块
         stability_blocks: List[Tuple[str, pd.DataFrame]] = []
@@ -1243,17 +1287,17 @@ def swap_out_report(
             stability_blocks.append((prefix, stability))
         if stability_blocks:
             stability_width = max(_table_display_width(tbl) for _, tbl in stability_blocks)
-            row = _write_banner(writer, worksheet, row, "规则稳定性分析", start_col, stability_width, "header")
+            row = _write_banner(writer, worksheet, row, "规则稳定性分析", start_col, stability_width, "swap_title")
             for prefix, stability in stability_blocks:
                 end_r, _ = _write_swap_table(
-                    writer, worksheet, stability, row + 1, start_col, prefix,
+                    writer, worksheet, stability, row, start_col, prefix,
                     merge_column=[("规则详情", "规则名称"), ("规则详情", "逾期指标")], merge=True,
                 )
                 # 坏样本率 / 样本占比 各按「指标分组」整体加一条数据条（跨各时间周期共享标尺）
                 _add_group_databars(writer, worksheet, stability, end_r, start_col, _CF_STABILITY_BAR)
                 row = end_r + _GAP_INNER
 
-    _autosize_columns(writer, worksheet)
+    _set_uniform_columns_width(writer, worksheet)
 
     # —— 第二个 sheet：变量分箱明细（数据源自 feature_binning_summary 的 binning_tables）——
     if binning_tables and features:
