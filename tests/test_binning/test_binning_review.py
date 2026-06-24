@@ -18,18 +18,18 @@ import warnings
 warnings.filterwarnings('ignore')
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
-_DEMO_XLSX = _PROJECT_ROOT / "examples" / "hscredit.xlsx"
+_DEMO_XLSX = _PROJECT_ROOT / "examples" / "hscredit_yyp.xlsx"
 
 # 加载测试数据
 print("=" * 80)
 print("加载测试数据")
 print("=" * 80)
 df = pd.read_excel(_DEMO_XLSX)
-df['target'] = ((df['MOB1'] > 15) | (df['MOB2'] > 15)).astype(int)
+df['target'] = df['FPD'].astype(int)
 
 # 选择几个特征进行测试
-numerical_features = ['青云24', '同盾分', '百融分']
-categorical_features = ['学历', '婚姻状况'] if '学历' in df.columns else []
+numerical_features = ['青云24', '近六个月非银多头机构数', '衡枢鉴真分老客版']
+categorical_features = ['商品类别']
 
 print(f"数据形状: {df.shape}")
 print(f"目标变量分布:\n{df['target'].value_counts()}")

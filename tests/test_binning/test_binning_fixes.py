@@ -19,8 +19,8 @@ from hscredit.core.binning import (
 )
 
 # 加载测试数据
-df = pd.read_excel(_PROJECT_ROOT / "examples" / "hscredit.xlsx")
-df['target'] = ((df['MOB1'] > 15) | (df['MOB2'] > 15)).astype(int)
+df = pd.read_excel(_PROJECT_ROOT / "examples" / "hscredit_yyp.xlsx")
+df['target'] = df['FPD'].astype(int)
 
 X = df[['青云24']].copy()
 y = df['target'].copy()

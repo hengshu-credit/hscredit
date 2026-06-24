@@ -15,14 +15,14 @@ import pytest
 from hscredit.core.binning import UniformBinning
 
 _ROOT = Path(__file__).resolve().parents[2]
-_DEMO_XLSX = _ROOT / "examples" / "hscredit.xlsx"
+_DEMO_XLSX = _ROOT / "examples" / "hscredit_yyp.xlsx"
 
 
 def _load_qingyun_frame():
     if not _DEMO_XLSX.exists():
-        pytest.skip("缺少 examples/hscredit.xlsx")
+        pytest.skip("缺少 examples/hscredit_yyp.xlsx")
     df = pd.read_excel(_DEMO_XLSX)
-    df["target"] = ((df["MOB1"] > 15) | (df["MOB2"] > 15)).astype(int)
+    df["target"] = df["FPD"].astype(int)
     return df[["青云24"]].copy(), df["target"].copy()
 
 

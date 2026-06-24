@@ -393,6 +393,15 @@ class RuleFlow:
     def _rate(numerator: int, denominator: int) -> float:
         return numerator / denominator if denominator else 0.0
 
+    @staticmethod
+    def _group_key_names(date_col: Optional[str], group_cols: Optional[Union[str, Sequence[str]]]) -> List[str]:
+        group_names = []
+        if date_col is not None:
+            group_names.append("统计周期")
+        if group_cols is not None:
+            group_names.extend([group_cols] if isinstance(group_cols, str) else list(group_cols))
+        return group_names
+
     def _report_one(self, data: DataFrame) -> pd.DataFrame:
         prediction = self.predict(data)
         total = len(data)
@@ -410,20 +419,46 @@ class RuleFlow:
             pass_count = current_total - hit_count
             rows.append(
                 {
+                    "统计类型": "明细",
                     "规则序号": i,
                     "规则名称": rule.name,
                     "规则表达式": rule.expr,
-                    "样本总数": current_total,
+                    "统计范围样本数": total,
+                    "当前规则样本数": current_total,
                     "规则命中": hit_count,
-                    "命中率(绝对值)": self._rate(hit_count, total),
-                    "命中率(相对值)": self._rate(hit_count, current_total),
+                    "命中率(统计范围)": self._rate(hit_count, total),
+                    "命中率(当前规则)": self._rate(hit_count, current_total),
                     "规则通过": pass_count,
-                    "通过率(绝对值)": self._rate(pass_count, total),
-                    "通过率(相对值)": self._rate(pass_count, current_total),
+                    "通过率(统计范围)": self._rate(pass_count, total),
+                    "通过率(当前规则)": self._rate(pass_count, current_total),
                 }
             )
 
         return pd.DataFrame(rows)
+
+    def _report_total_row(self, data: DataFrame, row_type: str) -> pd.DataFrame:
+        summary = self._summary_one(data, row_type=row_type)
+        total = int(summary["样本总数"])
+        hit_count = int(summary["命中样本"])
+        pass_count = int(summary["通过样本"])
+        return pd.DataFrame(
+            [
+                {
+                    "统计类型": row_type,
+                    "规则序号": pd.NA,
+                    "规则名称": row_type,
+                    "规则表达式": "",
+                    "统计范围样本数": total,
+                    "当前规则样本数": total,
+                    "规则命中": hit_count,
+                    "命中率(统计范围)": summary["命中率"],
+                    "命中率(当前规则)": summary["命中率"],
+                    "规则通过": pass_count,
+                    "通过率(统计范围)": summary["通过率"],
+                    "通过率(当前规则)": summary["通过率"],
+                }
+            ]
+        )
 
     def report(
         self,
@@ -444,28 +479,39 @@ class RuleFlow:
         """
         self._validate_data(data)
         rows = []
+        group_names = self._group_key_names(date_col, group_cols)
         for prefix, index in self._group_slices(data, date_col, freq, group_cols, dropna):
             table = self._report_one(data.loc[index])
+            if prefix:
+                table = pd.concat([table, self._report_total_row(data.loc[index], "分组合计")], ignore_index=True)
             for key, value in reversed(prefix.items()):
                 table.insert(0, key, value)
             rows.append(table)
+
+        overall = self._report_total_row(data, "整体合计")
+        for key in reversed(group_names):
+            overall.insert(0, key, "全部")
+        rows.append(overall)
 
         if not rows:
             return pd.DataFrame()
         return pd.concat(rows, ignore_index=True)
 
-    def _summary_one(self, data: DataFrame) -> Dict[str, Union[int, float]]:
+    def _summary_one(self, data: DataFrame, row_type: Optional[str] = None) -> Dict[str, Union[int, float, str]]:
         prediction = self.predict(data)
         total = len(data)
         hit_count = int(prediction["是否命中"].sum())
         pass_count = int(prediction["是否通过"].sum())
-        return {
+        row = {
             "样本总数": total,
             "通过样本": pass_count,
             "命中样本": hit_count,
             "通过率": self._rate(pass_count, total),
             "命中率": self._rate(hit_count, total),
         }
+        if row_type is not None:
+            row = {"统计类型": row_type, **row}
+        return row
 
     def summary(
         self,
@@ -481,9 +527,13 @@ class RuleFlow:
         """
         self._validate_data(data)
         rows = []
+        group_names = self._group_key_names(date_col, group_cols)
         for prefix, index in self._group_slices(data, date_col, freq, group_cols, dropna):
-            row = {**prefix, **self._summary_one(data.loc[index])}
+            row_type = "分组合计" if prefix else "整体合计"
+            row = {**prefix, **self._summary_one(data.loc[index], row_type=row_type)}
             rows.append(row)
+        if group_names:
+            rows.append({**{key: "全部" for key in group_names}, **self._summary_one(data, row_type="整体合计")})
         return pd.DataFrame(rows)
 
     def __repr__(self) -> str:

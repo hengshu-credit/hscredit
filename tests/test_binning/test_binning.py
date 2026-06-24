@@ -81,6 +81,9 @@ class TestUniformBinning(unittest.TestCase):
         self.binner.fit(self.X, self.y)
         self.assertTrue(self.binner._is_fitted)
         self.assertIn('feature_1', self.binner.splits_)
+        self.assertEqual(self.binner.n_features_in_, self.X.shape[1])
+        np.testing.assert_array_equal(self.binner.feature_names_in_, self.X.columns.to_numpy(dtype=object))
+        self.assertEqual(self.binner.feature_names_, list(self.X.columns))
 
     def test_transform(self):
         """测试转换."""

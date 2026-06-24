@@ -4,7 +4,7 @@ from pathlib import Path
 
 # tests/conftest.py -> 仓库根目录
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-HSCREDIT_DEMO_XLSX = PROJECT_ROOT / "examples" / "hscredit.xlsx"
+HSCREDIT_DEMO_XLSX = PROJECT_ROOT / "examples" / "hscredit_yyp.xlsx"
 
 # import 时会执行脚本式逻辑或依赖本地 xlsx，不宜随 pytest 收集；可手动 python 路径运行
 collect_ignore = [

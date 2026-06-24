@@ -229,14 +229,38 @@ class ExcelWriter:
         :param width: 列宽
         """
         col_letter = column if isinstance(column, str) else get_column_letter(column)
-        worksheet.column_dimensions[col_letter].width = width
+        ExcelWriter._set_column_width_preserving_style(worksheet, col_letter, width)
 
-    def _get_column_cells_data(self, worksheet: Worksheet, col_letter: str) -> List[Tuple[int, Any, str, Any]]:
-        """获取指定列的所有单元格数据。
+    @staticmethod
+    def _get_column_dimension_style(worksheet: Worksheet, col_letter: str) -> Any:
+        """获取指定列在模板列维度中继承的样式。"""
+        exact_dimension = worksheet.column_dimensions.get(col_letter)
+        if exact_dimension is not None and exact_dimension.has_style:
+            return copy.copy(exact_dimension._style)
+
+        col_idx = column_index_from_string(col_letter)
+        for dimension in worksheet.column_dimensions.values():
+            start_idx = dimension.min or column_index_from_string(dimension.index)
+            end_idx = dimension.max or start_idx
+            if start_idx <= col_idx <= end_idx and dimension.has_style:
+                return copy.copy(dimension._style)
+        return None
+
+    @staticmethod
+    def _set_column_width_preserving_style(worksheet: Worksheet, col_letter: str, width: float) -> None:
+        """设置列宽时保留模板列维度样式。"""
+        style_snapshot = ExcelWriter._get_column_dimension_style(worksheet, col_letter)
+        column_dimension = worksheet.column_dimensions[col_letter]
+        if style_snapshot is not None:
+            column_dimension._style = copy.copy(style_snapshot)
+        column_dimension.width = width
+
+    def _get_column_cells_data(self, worksheet: Worksheet, col_letter: str) -> List[Tuple[int, Any, Any]]:
+        """获取指定列的单元格样式快照。
 
         :param worksheet: 工作表对象
         :param col_letter: 列字母
-        :return: 列表，每项为 (row_idx, value, style_name, fill)
+        :return: 列表，每项为 (row_idx, value, style_snapshot)
         """
         col_idx = column_index_from_string(col_letter)
         cells_data = []
@@ -244,41 +268,27 @@ class ExcelWriter:
         max_row = max(worksheet.max_row, self.style_sheet.max_row)
         for row_idx in range(1, max_row + 1):
             cell = worksheet.cell(row=row_idx, column=col_idx)
-            style_name = cell.style if cell.style else None
-            # 保存填充样式，用于后续恢复
-            fill_copy = copy.copy(cell.fill) if cell.fill else None
-            cells_data.append((row_idx, cell.value, style_name, fill_copy))
+            style_snapshot = copy.copy(cell._style) if cell.has_style else None
+            cells_data.append((row_idx, cell.value, style_snapshot))
         return cells_data
 
-    def _reapply_styles_to_column(self, worksheet: Worksheet, col_letter: str, cells_data: List[Tuple[int, Any, str, Any]]) -> None:
+    def _reapply_styles_to_column(self, worksheet: Worksheet, col_letter: str, cells_data: List[Tuple[int, Any, Any]]) -> None:
         """重新应用样式到指定列的单元格。
 
         :param worksheet: 工作表对象
         :param col_letter: 列字母
         :param cells_data: 单元格数据列表
         """
-        from openpyxl.styles import PatternFill
-        
         col_idx = column_index_from_string(col_letter)
-        white_fill = PatternFill(fill_type='solid', start_color='FFFFFF')
-        
-        for row_idx, value, style_name, original_fill in cells_data:
+
+        for row_idx, value, style_snapshot in cells_data:
             cell = worksheet.cell(row=row_idx, column=col_idx)
             # 检查是否需要保留文本格式（用于消除绿色感叹号）
             need_text_format = isinstance(value, str) and self.is_numeric_like_string(value)
-            
-            # 重新应用样式
-            if style_name and style_name in self.workbook.named_styles:
-                cell.style = style_name
-            
-            # 恢复原始填充样式（空白单元格的背景色）
-            if original_fill and original_fill.fill_type:
-                # 如果原始有填充，恢复原始填充
-                cell.fill = original_fill
-            elif not value and (not style_name or style_name == '常规'):
-                # 如果原始无填充且是空白单元格（style为None或'常规'），设置白色填充以保持一致性
-                cell.fill = white_fill
-            
+
+            # 仅恢复调用前已经存在的样式；空白模板区域依赖列维度样式提供白底。
+            cell._style = copy.copy(style_snapshot) if style_snapshot is not None else None
+
             # 如果值是类似数字的字符串，强制设置为文本格式以消除绿色感叹号
             # 这必须在应用样式之后执行，因为命名样式可能包含数字格式
             if need_text_format:
@@ -294,9 +304,9 @@ class ExcelWriter:
         min_width: float = 8,
         extra_padding: float = 2.0
     ) -> None:
-        """批量调整多列宽度，确保边框样式不丢失。
+        """批量调整多列宽度，确保已有单元格和模板列样式不丢失。
 
-        通过重新应用命名样式的方式来确保样式不丢失。
+        通过恢复调用前的单元格样式快照，并保留模板列维度样式，避免列宽调整影响空白区域白底。
 
         :param worksheet: 工作表对象
         :param columns: 需要调整宽度的列，可以是列字母或列索引列表，默认为None（自动检测所有有数据的列）
@@ -352,23 +362,11 @@ class ExcelWriter:
 
             # 应用列宽限制
             final_width = min(max_content_width, max_width)
-            worksheet.column_dimensions[col_letter].width = final_width
+            self._set_column_width_preserving_style(worksheet, col_letter, final_width)
 
         # 重新应用样式到所有列
         for col_letter, cells_data in columns_data.items():
             self._reapply_styles_to_column(worksheet, col_letter, cells_data)
-        
-        # 为数据区域的空白单元格添加白色填充（确保视觉效果一致）
-        # 只填充到实际数据行 + 缓冲行数，不填充整个Excel（100万+行）
-        white_fill = PatternFill(fill_type='solid', start_color='FFFFFF')
-        max_row_to_fill = min(worksheet.max_row + 10, 1000)  # 最多填充到数据行+10行或1000行
-        for col_letter in col_letters:
-            col_idx = column_index_from_string(col_letter)
-            for row_idx in range(1, max_row_to_fill + 1):
-                cell = worksheet.cell(row=row_idx, column=col_idx)
-                # 如果没有值且没有填充，设置为白色填充
-                if not cell.value and (not cell.fill or not cell.fill.fill_type):
-                    cell.fill = white_fill
 
     @staticmethod
     def set_number_format(
@@ -630,7 +628,7 @@ class ExcelWriter:
             )
             
             # 设置列宽
-            worksheet.column_dimensions[start_col].width = calculated_width
+            self._set_column_width_preserving_style(worksheet, start_col, calculated_width)
             
             # 重新应用样式
             self._reapply_styles_to_column(worksheet, start_col, cells_data)

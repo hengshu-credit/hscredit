@@ -2,6 +2,8 @@
 
 import os
 import tempfile
+import zipfile
+import xml.etree.ElementTree as ET
 import pytest
 import pandas as pd
 import numpy as np
@@ -54,6 +56,33 @@ class TestExcelWriter:
         assert ws["B2"].value == "测试内容"
         assert end_row == 3
         assert end_col == 3
+
+    def test_auto_width_preserves_template_column_fill(self):
+        """测试自动列宽保留模板列白色填充样式。"""
+        writer = ExcelWriter()
+        ws = writer.get_sheet_by_name("Test")
+
+        # G列在模板中继承 C:XFD 的列维度样式，调整列宽后仍应保留该样式。
+        writer.insert_value2sheet(ws, "G2", value="自动列宽测试", auto_width=True)
+        assert ws.column_dimensions["G"].style == 1
+
+        writer.save(self.test_file)
+        with zipfile.ZipFile(self.test_file) as zf:
+            worksheet_xmls = [
+                zf.read(name).decode("utf-8")
+                for name in zf.namelist()
+                if name.startswith("xl/worksheets/sheet") and name.endswith(".xml")
+            ]
+
+        target_xml = next(xml for xml in worksheet_xmls if 'r="G2"' in xml)
+        root = ET.fromstring(target_xml)
+        ns = {"x": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+        adjusted_col = next(
+            col for col in root.findall("x:cols/x:col", ns)
+            if col.attrib.get("min") == "7" and col.attrib.get("max") == "7"
+        )
+        assert adjusted_col.attrib.get("style") == "1"
+        assert 'r="G3"' not in target_xml
     
     def test_insert_value_with_merge(self):
         """测试合并单元格插入"""

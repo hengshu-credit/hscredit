@@ -231,6 +231,13 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
         self._cat_bins_ = {}  # 类别型变量的分组信息，格式: {'feature': [['A', 'B'], ['C'], [np.nan]]}
         self._is_fitted = False
 
+    def _set_input_feature_attributes(self, X: pd.DataFrame) -> None:
+        """记录 sklearn 兼容的输入特征元数据。"""
+        feature_names = list(X.columns)
+        self.n_features_in_ = len(feature_names)
+        self.feature_names_in_ = np.asarray(feature_names, dtype=object)
+        self.feature_names_ = feature_names
+
     @abstractmethod
     def fit(
         self,
@@ -560,6 +567,7 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
                 f"目标变量必须是 0/1 或 False/True，但发现 {unique_values}"
             )
 
+        self._set_input_feature_attributes(X)
         return X, y
 
     def _fit_features(self, features, fit_one) -> None:

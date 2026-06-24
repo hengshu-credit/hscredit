@@ -105,6 +105,12 @@ class BaseEncoder(BaseEstimator, TransformerMixin, ABC):
         self._dropped_cols: List[str] = []
         self._is_fitted: bool = False
 
+    def _set_input_feature_attributes(self, X: pd.DataFrame) -> None:
+        """记录 sklearn 兼容的输入特征元数据。"""
+        feature_names = list(X.columns)
+        self.n_features_in_ = len(feature_names)
+        self.feature_names_in_ = np.asarray(feature_names, dtype=object)
+
     def fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None) -> "BaseEncoder":
         """拟合编码器。
 
@@ -131,6 +137,7 @@ class BaseEncoder(BaseEstimator, TransformerMixin, ABC):
 
         # 处理两种API风格：如果y为None且提供了target参数，从X中提取目标列
         X, y = self._extract_target(X, y)
+        self._set_input_feature_attributes(X)
 
         if self.cols is None:
             self.cols_ = self._get_category_cols(X)

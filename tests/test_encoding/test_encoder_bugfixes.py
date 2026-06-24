@@ -70,6 +70,16 @@ def test_woe_unknown_still_handled_after_load():
     assert out == [0.0]
 
 
+def test_encoder_sets_sklearn_input_feature_attributes():
+    """编码器 fit 后应提供 sklearn 兼容的输入特征元数据。"""
+    X = pd.DataFrame({"city": ["A", "B", "A", "C"], "channel": ["app", "web", "app", "api"]})
+    y = pd.Series([0, 1, 0, 1])
+    enc = WOEEncoder(cols=["city"]).fit(X, y)
+
+    assert enc.n_features_in_ == X.shape[1]
+    np.testing.assert_array_equal(enc.feature_names_in_, X.columns.to_numpy(dtype=object))
+
+
 # --------------------------------------------------------------------------- #
 # BUG-3 混合类型排序不崩溃
 # --------------------------------------------------------------------------- #

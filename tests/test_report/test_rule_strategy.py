@@ -1,3 +1,6 @@
+import zipfile
+import xml.etree.ElementTree as ET
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -7,6 +10,7 @@ from hscredit.report import (
     rule_group_compare,
     rule_group_hit_table,
     rule_report_table,
+    swap_out_report,
     rule_target_analysis,
     rule_target_table,
 )
@@ -217,6 +221,55 @@ def test_rule_strategy_supports_single_target_report():
 
     assert list(result["逾期指标"].unique()) == ["fpd1"]
     assert result.loc[result["命中情况"] == "合计", "样本总数"].iloc[0] == 4
+
+
+def test_swap_out_report_auto_width_preserves_template_column_fill(tmp_path):
+    data = pd.DataFrame(
+        {
+            "score": [400, 450, 500, 550, 600, 650, 700, 720],
+            "multi": [40, 35, 20, 10, 8, 5, 3, 1],
+            "target": [1, 1, 1, 0, 0, 0, 0, 0],
+            "amount": [100, 120, 130, 150, 180, 200, 220, 240],
+        }
+    )
+    output = tmp_path / "swap_out_report.xlsx"
+
+    swap_out_report(
+        data,
+        rules=[Rule("score < 520", name="低分拒绝"), Rule("multi > 30", name="多头拒绝")],
+        background="自动列宽验证",
+        summary="自动列宽验证",
+        describe="自动列宽验证",
+        rule_summary="自动列宽验证",
+        impact="自动列宽验证",
+        target="target",
+        amount="amount",
+        methods="quantile",
+        features=["score", "multi"],
+        current_pass_rate=0.8,
+        save=str(output),
+    )
+
+    with zipfile.ZipFile(output) as zf:
+        worksheet_names = [
+            name for name in zf.namelist()
+            if name.startswith("xl/worksheets/sheet") and name.endswith(".xml")
+        ]
+        assert len(worksheet_names) == 2
+        for worksheet_name in worksheet_names:
+            root = ET.fromstring(zf.read(worksheet_name))
+            ns = {"x": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+            adjusted_columns = [
+                col for col in root.findall("x:cols/x:col", ns)
+                if col.attrib.get("min") == col.attrib.get("max") and int(col.attrib["min"]) >= 3
+            ]
+            assert adjusted_columns
+            bad_columns = [
+                (col.attrib.get("min"), col.attrib.get("style"))
+                for col in adjusted_columns
+                if col.attrib.get("style") != "1"
+            ]
+            assert bad_columns == []
 
 
 @pytest.mark.parametrize("current_pass_rate", [-0.1, 1.1, "0.9"])

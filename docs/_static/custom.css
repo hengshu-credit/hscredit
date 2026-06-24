@@ -69,6 +69,8 @@ samp,
     position: sticky;
     top: 0;
     z-index: 300;
+    display: flex;
+    flex-direction: column;
     width: 300px;
     box-sizing: border-box;
     background: linear-gradient(180deg, #140e35 0%, #1c1040 100%) !important;
@@ -89,6 +91,7 @@ samp,
     padding: 0;
     font-size: 0;            /* 折叠与 Logo 重复的「hscredit」文字 */
 }
+.wy-side-nav-search > a.icon-home { order: 1; }
 .wy-side-nav-search > a.icon-home::before { content: none !important; }   /* 去掉 home 图标 */
 .wy-side-nav-search > a.icon-home img.logo {
     width: 126px;
@@ -108,11 +111,16 @@ samp,
     line-height: 1.55;
     color: var(--hs-lav);
 }
+.wy-side-nav-search [role="search"] {
+    order: 3;
+    margin-top: 0.1rem;
+}
 
 /* 搜索框 */
 .wy-side-nav-search input[type="text"] {
     position: relative;
     z-index: 1;
+    margin: 0;
     border: 1px solid rgba(199, 189, 242, 0.28);
     border-radius: 8px;
     background: rgba(20, 14, 53, 0.55);
@@ -130,10 +138,11 @@ samp,
 .hs-brand-actions {
     position: relative;
     z-index: 1;
+    order: 2;
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 0.55rem;
-    margin: 0.85rem 0 0.35rem;
+    margin: 0.85rem 0 0.65rem;
 }
 .hs-brand-action {
     display: inline-flex;

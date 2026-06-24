@@ -115,8 +115,8 @@ except Exception as e:
 # 测试7: 使用真实数据 - 青云24
 print("\n7. 真实数据 - 青云24")
 print("-" * 60)
-df = pd.read_excel(_PROJECT_ROOT / "examples" / "hscredit.xlsx")
-df['target'] = ((df['MOB1'] > 15) | (df['MOB2'] > 15)).astype(int)
+df = pd.read_excel(_PROJECT_ROOT / "examples" / "hscredit_yyp.xlsx")
+df['target'] = df['FPD'].astype(int)
 X7 = df[['青云24']].copy()
 y7 = df['target'].copy()
 
