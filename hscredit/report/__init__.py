@@ -22,6 +22,7 @@ from .rule_strategy import (
     rule_report_table,
     rule_target_analysis,
     rule_target_table,
+    swap_out_report,
 )
 from .swap_analysis import (
     ReferenceDataProvider,
@@ -65,6 +66,7 @@ __all__ = [
     "rule_target_table",
     "rule_group_hit_table",
     "rule_group_compare",
+    "swap_out_report",
     # swap分析
     "ReferenceDataProvider",
     "SwapAnalyzer",
