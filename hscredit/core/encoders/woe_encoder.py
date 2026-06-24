@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 
 from .base import BaseEncoder
+from ...exceptions import NotFittedError, FeatureNotFoundError
 
 
 class WOEEncoder(BaseEncoder):
@@ -77,6 +78,9 @@ class WOEEncoder(BaseEncoder):
     公式与直观解释参考
     https://www.listendata.com/2015/03/weight-of-evidence-woe-and-information.html
     """
+
+    # iv_ 为各特征信息价值，随映射一并序列化以便 import_mapping 后仍可查
+    _EXTRA_STATE_ATTRS = ["iv_"]
 
     def __init__(
         self,
@@ -257,7 +261,23 @@ class WOEEncoder(BaseEncoder):
                 continue
 
             woe_map = self.mapping_[col]
-            X[col] = X[col].map(woe_map)
+            mapped = X[col].map(woe_map)
+
+            # 类型鲁棒回退：对“未命中且非缺失”的原始值，用字符串键再映射一次。
+            # 覆盖两类键/输入类型不一致的场景，保证 export→load 往返一致：
+            #   1) load() 后 woe_map 为字符串键，而 transform 输入为数值（如 int 100）；
+            #   2) fit() 后 woe_map 为数值键，而 transform 输入为数字型字符串 '100'。
+            unmapped = mapped.isna() & X[col].notna()
+            if unmapped.any():
+                str_map = {
+                    str(k): v
+                    for k, v in woe_map.items()
+                    if k != '__UNKNOWN__' and not (isinstance(k, float) and pd.isna(k))
+                }
+                if str_map:
+                    mapped.loc[unmapped] = X.loc[unmapped, col].astype(str).map(str_map)
+
+            X[col] = mapped
 
             if self.handle_unknown == 'value':
                 X[col] = X[col].fillna(0.0)
@@ -282,13 +302,15 @@ class WOEEncoder(BaseEncoder):
             如果为None，返回所有列的映射
         :return: WOE映射字典。当 col 指定时返回 {category: woe_value}，
             col 为 None 时返回 {col: {category: woe_value}}
+        :raises NotFittedError: 当编码器尚未拟合时抛出
+        :raises FeatureNotFoundError: 当指定的 col 不在编码器中时抛出
         """
         if not hasattr(self, 'mapping_') or not self.mapping_:
-            raise ValueError("WOEEncoder 尚未拟合，请先调用 fit 方法")
+            raise NotFittedError("WOEEncoder 尚未拟合，请先调用 fit 方法")
         if col is None:
             return self.mapping_
         if col not in self.mapping_:
-            raise KeyError(f"列 '{col}' 不在编码器中，请检查列名是否正确")
+            raise FeatureNotFoundError(f"列 '{col}' 不在编码器中，请检查列名是否正确")
         return self.mapping_[col]
 
     def summary(self) -> pd.DataFrame:
@@ -449,35 +471,36 @@ class WOEEncoder(BaseEncoder):
         if not update:
             self.mapping_ = {}
             self.cols_ = []
-        
+        # 规范化容器：update=True 时若在未 fit 的新实例上调用，
+        # cols_/mapping_ 仍为基类初始的 None，下方成员判断会崩溃，这里统一兜底为空容器
+        if self.cols_ is None:
+            self.cols_ = []
+        if self.mapping_ is None:
+            self.mapping_ = {}
+
         # 加载规则
         for col, col_rules in rules.items():
             if col not in self.mapping_:
                 self.mapping_[col] = {}
             if col not in self.cols_:
                 self.cols_.append(col)
-            
+
             for value, woe in col_rules.items():
-                # 处理 toad 的特殊值
+                # toad/scorecardpipeline 用字符串 'nan' 表示缺失键
                 if value == 'nan':
                     self.mapping_[col][np.nan] = woe
                 else:
-                    # 尝试转换为原始类型
-                    try:
-                        # 尝试作为数字解析
-                        if '.' in str(value):
-                            key = float(value)
-                        else:
-                            key = int(value)
-                    except (ValueError, TypeError):
-                        key = value
-                    self.mapping_[col][key] = woe
-            
+                    # 保持原始（字符串）键，不做 int/float 强转：
+                    # 否则数字型字符串类别（如城市码/商品码 '100'）会被转成 int，
+                    # 与 transform 时的字符串输入不匹配，导致 WOE 全部落到未知值（静默错误）。
+                    # 数值型输入的兼容由 _transform 的字符串回退映射保证。
+                    self.mapping_[col][value] = woe
+
             # 添加未知值处理
             if self.handle_unknown == 'value':
                 self.mapping_[col]['__UNKNOWN__'] = 0.0
             elif self.handle_unknown == 'return_nan':
                 self.mapping_[col]['__UNKNOWN__'] = np.nan
-        
+
         self._is_fitted = True
         return self

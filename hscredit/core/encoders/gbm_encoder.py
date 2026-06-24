@@ -644,10 +644,14 @@ class GBMEncoder(BaseEncoder):
         使用每棵树的输出作为embedding的一个维度。
 
         :param X: 输入数据
-        :return: embedding DataFrame
+        :return: embedding DataFrame，列名为 ``gbm_emb_*``，与 ``feature_names_`` 保持一致
         """
         # 统一使用叶子索引作为embedding（跨模型通用方法）
-        return self._transform_to_leaves(X)
+        leaf_df = self._transform_to_leaves(X)
+        # 重命名为 gbm_emb_*，与 _generate_feature_names 声明的 feature_names_ 对齐，
+        # 避免下游按 feature_names_ 取列时因列名（gbm_tree_*）不匹配而 KeyError
+        leaf_df.columns = [f"gbm_emb_{i}" for i in range(leaf_df.shape[1])]
+        return leaf_df
 
     def _generate_feature_names(self):
         """生成编码后的特征名列表。"""

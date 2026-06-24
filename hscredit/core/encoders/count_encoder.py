@@ -57,6 +57,9 @@ class CountEncoder(BaseEncoder):
     https://contrib.scikit-learn.org/category_encoders/count.html
     """
 
+    # total_count_ 为训练样本总数，随映射一并序列化
+    _EXTRA_STATE_ATTRS = ["total_count_"]
+
     def _get_category_cols(self, X: pd.DataFrame) -> List[str]:
         """自动识别需要编码的列。
 

@@ -104,7 +104,7 @@ class OrdinalEncoder(BaseEncoder):
                 self.mapping_[col] = self.mapping[col].copy()
             else:
                 categories = X[col].dropna().unique()
-                categories = sorted([c for c in categories if c is not np.nan])
+                categories = self._sort_categories([c for c in categories if c is not np.nan])
 
                 mapping = {cat: i for i, cat in enumerate(categories)}
 
@@ -171,13 +171,3 @@ class OrdinalEncoder(BaseEncoder):
             X[col] = X[col].map(lambda v: inverse_mapping.get(v, v))
 
         return X
-
-    def get_mapping(self, col: Optional[str] = None) -> Dict:
-        """获取序数映射。
-
-        :param col: 列名，如果为None则返回所有映射
-        :return: 序数映射字典
-        """
-        if col is not None:
-            return self.mapping_.get(col, {})
-        return self.mapping_

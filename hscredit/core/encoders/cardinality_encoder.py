@@ -79,6 +79,9 @@ class CardinalityEncoder(BaseEncoder):
     attributes.* ACM SIGKDD Explorations. https://doi.org/10.1145/507533.507538
     """
 
+    # top_categories_ 供 get_top_categories/get_summary 使用，随映射一并序列化
+    _EXTRA_STATE_ATTRS = ["top_categories_"]
+
     def __init__(
         self,
         cols: Optional[List[str]] = None,
@@ -229,16 +232,6 @@ class CardinalityEncoder(BaseEncoder):
             X[col] = X[col].map(lambda v: inverse_mapping.get(v, v))
 
         return X
-
-    def get_mapping(self, col: Optional[str] = None) -> Dict:
-        """获取类别映射关系。
-
-        :param col: 列名，如果为None则返回所有映射
-        :return: 映射字典
-        """
-        if col is not None:
-            return self.mapping_.get(col, {})
-        return self.mapping_
 
     def get_top_categories(self, col: Optional[str] = None) -> Union[list, Dict[str, list]]:
         """获取各列保留的高频类别。

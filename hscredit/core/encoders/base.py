@@ -71,6 +71,10 @@ class BaseEncoder(BaseEstimator, TransformerMixin, ABC):
     https://contrib.scikit-learn.org/category_encoders/
     """
 
+    #: 子类声明的“额外拟合状态”属性名。这些状态是 transform 正确性所必需，
+    #: 但不在 mapping_ 中（如均值/类别清单），需随 export_mapping/import_mapping 一并往返。
+    _EXTRA_STATE_ATTRS: List[str] = []
+
     def __init__(
         self,
         cols: Optional[List[str]] = None,
@@ -140,6 +144,13 @@ class BaseEncoder(BaseEstimator, TransformerMixin, ABC):
         if self.drop_invariant:
             self._dropped_cols = self._find_invariant_cols(X)
             self.cols_ = [c for c in self.cols_ if c not in self._dropped_cols]
+
+        # 统一缺失值策略校验：handle_missing='error' 时，fit 阶段任一编码列含缺失即报错
+        # （与 transform 阶段保持一致）
+        if self.handle_missing == "error":
+            for col in self.cols_:
+                if col in X.columns and X[col].isna().any():
+                    raise ValueError(f"列'{col}'包含缺失值，但 handle_missing='error'")
 
         self._fit(X, y)
 
@@ -277,6 +288,22 @@ class BaseEncoder(BaseEstimator, TransformerMixin, ABC):
         """
         return X.select_dtypes(include=["object", "category"]).columns.tolist()
 
+    @staticmethod
+    def _sort_categories(categories: List[Any]) -> List[Any]:
+        """对类别取值做类型安全的稳定排序。
+
+        优先按原生类型排序（同质数值/字符串保持自然顺序）；当类别为混合类型
+        （如同时含 int 与 str）导致原生比较抛 ``TypeError`` 时，回退到按字符串排序，
+        避免崩溃并保证结果确定。
+
+        :param categories: 待排序的类别列表
+        :return: 排序后的类别列表
+        """
+        try:
+            return sorted(categories)
+        except TypeError:
+            return sorted(categories, key=str)
+
     def _find_invariant_cols(self, X: pd.DataFrame) -> List[str]:
         """查找方差为0的列。
 
@@ -295,13 +322,30 @@ class BaseEncoder(BaseEstimator, TransformerMixin, ABC):
         :param col: 列名。如果提供，返回该列的映射 {category: encoded_value}；
             如果为None，返回所有列的映射 {col: {category: encoded_value}}
         :return: 编码映射字典
+        :raises NotFittedError: 当编码器尚未拟合时抛出
         :raises FeatureNotFoundError: 当指定的 col 不在编码器中时抛出
         """
+        fitted = getattr(self, "_is_fitted", False) or bool(getattr(self, "mapping_", None))
+        if not fitted:
+            raise NotFittedError("编码器尚未拟合，请先调用fit()")
         if col is None:
             return self.mapping_
-        if not hasattr(self, "mapping_") or self.mapping_ is None or col not in self.mapping_:
+        if col not in self.mapping_:
             raise FeatureNotFoundError(f"特征 '{col}' 未找到")
         return self.mapping_[col]
+
+    def inverse_transform(self, X: pd.DataFrame) -> pd.DataFrame:
+        """逆编码（将编码值还原为原始类别）。
+
+        编码器基类的默认实现：多数有监督/有损编码器（WOE/Target/Count/Quantile/CatBoost/GBM）
+        无法唯一还原原始类别，调用时抛出 :class:`NotImplementedError`。
+        支持逆编码的子类（OneHot/Ordinal/Cardinality）会覆盖本方法。
+
+        :param X: 编码后的数据
+        :return: 逆编码后的数据
+        :raises NotImplementedError: 当该编码器不支持逆编码时抛出
+        """
+        raise NotImplementedError(f"{self.__class__.__name__} 不支持逆编码（inverse_transform）")
 
     def __contains__(self, feature: str) -> bool:
         """检查特征是否在编码器中（支持 `feature in encoder` 语法）."""
@@ -340,6 +384,9 @@ class BaseEncoder(BaseEstimator, TransformerMixin, ABC):
             "drop_invariant": self.drop_invariant,
             "handle_unknown": self.handle_unknown,
             "handle_missing": self.handle_missing,
+            # 子类声明的额外拟合状态（如 global_mean_、categories_），
+            # 否则 import_mapping 后这些 transform 必需的状态丢失，导致编码结果错误
+            "extra_state": self._export_extra_state(),
         }
 
     def import_mapping(self, mapping: Dict[str, Any]):
@@ -360,6 +407,32 @@ class BaseEncoder(BaseEstimator, TransformerMixin, ABC):
         self.drop_invariant = mapping.get("drop_invariant", False)
         self.handle_unknown = mapping.get("handle_unknown", "value")
         self.handle_missing = mapping.get("handle_missing", "value")
+        self._import_extra_state(mapping.get("extra_state", {}))
+        self._is_fitted = True
+        return self
+
+    def _export_extra_state(self) -> Dict[str, Any]:
+        """导出子类声明的额外拟合状态。
+
+        遍历 :attr:`_EXTRA_STATE_ATTRS`，将 ``pd.Series`` 转为 ``dict``（便于序列化），
+        其余按原样导出。
+
+        :return: 额外状态字典 {属性名: 值}
+        """
+        state: Dict[str, Any] = {}
+        for attr in self._EXTRA_STATE_ATTRS:
+            value = getattr(self, attr, None)
+            state[attr] = value.to_dict() if isinstance(value, pd.Series) else value
+        return state
+
+    def _import_extra_state(self, state: Dict[str, Any]) -> None:
+        """还原子类声明的额外拟合状态。
+
+        :param state: 由 :meth:`_export_extra_state` 导出的状态字典
+        """
+        for attr in self._EXTRA_STATE_ATTRS:
+            if attr in state:
+                setattr(self, attr, state[attr])
 
     def _serialize_mapping(self, mapping: Dict) -> Dict:
         """序列化映射（处理特殊类型）。
@@ -380,13 +453,17 @@ class BaseEncoder(BaseEstimator, TransformerMixin, ABC):
     def _deserialize_mapping(self, mapping: Dict) -> Dict:
         """反序列化映射。
 
+        ``mapping_`` 的内层值约定为 ``dict`` （``{类别: 编码值}``），所有编码器子类均如此存储。
+        因此反序列化时保持内层 ``dict`` 不变，避免被误转为 ``pd.Series`` 而破坏
+        ``get_mapping`` / ``__getitem__`` 的 dict 返回契约。
+
         :param mapping: 序列化后的字典
         :return: 反序列化后的字典
         """
         deserialized = {}
         for key, value in mapping.items():
             if isinstance(value, dict):
-                deserialized[key] = pd.Series(value)
+                deserialized[key] = dict(value)
             else:
                 deserialized[key] = value
         return deserialized

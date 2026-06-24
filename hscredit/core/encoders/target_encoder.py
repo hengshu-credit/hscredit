@@ -59,6 +59,9 @@ class TargetEncoder(BaseEncoder):
     ACM SIGKDD Explorations, 3(1). https://doi.org/10.1145/507533.507538
     """
 
+    # global_mean_ 是 transform 时未知/缺失类别的填充值，须随映射一并序列化
+    _EXTRA_STATE_ATTRS = ["global_mean_"]
+
     def _get_category_cols(self, X: pd.DataFrame) -> List[str]:
         """自动识别需要编码的列。
 
@@ -157,6 +160,10 @@ class TargetEncoder(BaseEncoder):
         :param y: 目标变量（可选），如果提供则添加噪声
         :return: 编码后的数据
         """
+        # 使用局部随机数发生器，避免污染全局 np.random 状态；
+        # 在按列循环外创建一次，使各列的噪声相互独立（而非每列重置为相同序列）
+        rng = np.random.RandomState(self.random_state) if (self.noise is not None and y is not None) else None
+
         for col in self.cols_:
             if col not in self.mapping_:
                 continue
@@ -172,9 +179,7 @@ class TargetEncoder(BaseEncoder):
             elif self.handle_unknown == "error" and X[col].isna().any():
                 raise ValueError(f"列'{col}'包含未知类别")
 
-            if self.noise is not None and y is not None:
-                # 使用局部随机数发生器，避免污染全局 np.random 状态
-                rng = np.random.RandomState(self.random_state)
+            if rng is not None:
                 X[col] = X[col] * (1 + rng.normal(0, self.noise, len(X)))
 
         return X

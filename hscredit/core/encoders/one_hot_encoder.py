@@ -61,6 +61,10 @@ class OneHotEncoder(BaseEncoder):
     https://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.OneHotEncoder.html
     """
 
+    # categories_ 是 transform 生成独热列所必需的状态（_transform 依赖它而非 mapping_）；
+    # feature_names_ / _other_cols_ 供 get_feature_names(_out) 使用，三者须一并序列化
+    _EXTRA_STATE_ATTRS = ["categories_", "feature_names_", "_other_cols_"]
+
     def __init__(
         self,
         cols: Optional[List[str]] = None,
@@ -124,7 +128,7 @@ class OneHotEncoder(BaseEncoder):
 
             # 分离缺失值和正常值
             has_missing = any(pd.isna(c) for c in categories)
-            normal_categories = sorted([c for c in categories if not pd.isna(c)])
+            normal_categories = self._sort_categories([c for c in categories if not pd.isna(c)])
 
             # 处理drop参数
             if self.drop == "first" and len(normal_categories) > 0:

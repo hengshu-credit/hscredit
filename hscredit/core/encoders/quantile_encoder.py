@@ -54,6 +54,9 @@ class QuantileEncoder(BaseEncoder):
     https://contrib.scikit-learn.org/category_encoders/quantile.html
     """
 
+    # global_quantile_ 是 transform 时未知/缺失类别的填充值，须随映射一并序列化
+    _EXTRA_STATE_ATTRS = ["global_quantile_"]
+
     def _get_category_cols(self, X: pd.DataFrame) -> List[str]:
         """自动识别需要编码的列。
 
