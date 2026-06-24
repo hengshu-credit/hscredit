@@ -385,7 +385,16 @@ class ProbabilityScoreCard(BaseEstimator):
         if y is not None:
             df['y'] = np.asarray(y)
 
-        if method == 'quantile':
+        if len(df) == 0:
+            columns = ['评分区间', '样本数']
+            if y is not None:
+                columns.extend(['坏样本数', '好样本数', '坏样本率', 'Odds(好:坏)', 'KS'])
+            return pd.DataFrame(columns=columns)
+
+        if pd.Series(scores).nunique(dropna=True) <= 1:
+            score_value = float(pd.Series(scores).dropna().iloc[0]) if pd.Series(scores).notna().any() else np.nan
+            df['score_bin'] = f"[{score_value:.2f}, {score_value:.2f}]"
+        elif method == 'quantile':
             df['score_bin'] = pd.qcut(df['score'], q=n_bins, duplicates='drop', precision=2)
         else:
             df['score_bin'] = pd.cut(df['score'], bins=n_bins, precision=2)

@@ -611,3 +611,125 @@ def score_drift_report(
         }
 
     return report
+
+
+def _predict_monitor_score(
+    model,
+    X: pd.DataFrame,
+    score_method: str = 'auto',
+    predict_kwargs: Optional[dict] = None,
+) -> tuple:
+    """按监控口径从模型生成一维评分序列."""
+    predict_kwargs = predict_kwargs or {}
+    score_method = score_method.lower()
+    if score_method not in {'auto', 'score', 'proba'}:
+        raise ValueError("score_method 必须是 'auto'/'score'/'proba' 之一")
+
+    if score_method in {'auto', 'score'} and hasattr(model, 'predict_score'):
+        try:
+            return np.asarray(model.predict_score(X, **predict_kwargs)).ravel(), '评分'
+        except TypeError:
+            return np.asarray(model.predict_score(X)).ravel(), '评分'
+        except Exception:
+            if score_method == 'score':
+                raise
+
+    if not hasattr(model, 'predict_proba'):
+        raise ValueError("模型需提供 predict_score 或 predict_proba 才能计算漂移监控评分")
+
+    try:
+        proba = model.predict_proba(X, **predict_kwargs)
+    except TypeError:
+        proba = model.predict_proba(X)
+    proba = np.asarray(proba)
+    if proba.ndim == 2:
+        if proba.shape[1] < 2:
+            raise ValueError("predict_proba 返回二维数组时至少需要包含正类概率列")
+        proba = proba[:, 1]
+    return proba.ravel(), '坏账概率'
+
+
+def model_drift_report(
+    model,
+    X_base: pd.DataFrame,
+    X_target: pd.DataFrame,
+    y_base=None,
+    y_target=None,
+    features: Optional[List[str]] = None,
+    score_method: str = 'auto',
+    psi_bins: int = 10,
+    predict_kwargs: Optional[dict] = None,
+) -> Dict[str, Union[pd.DataFrame, dict]]:
+    """模型漂移监控报告.
+
+    从已训练模型生成基准集/目标集评分，统一输出评分漂移、特征漂移和摘要信息。
+
+    :param model: 已训练模型，需提供 ``predict_score`` 或 ``predict_proba``
+    :param X_base: 基准特征数据，如训练集或上线基准窗口
+    :param X_target: 目标特征数据，如生产监控窗口
+    :param y_base: 基准真实标签，可选
+    :param y_target: 目标真实标签，可选
+    :param features: 参与特征漂移监控的字段，默认取两个数据集公共数值列
+    :param score_method: 评分口径，``'auto'`` / ``'score'`` / ``'proba'``
+    :param psi_bins: PSI 分箱数，默认 10
+    :param predict_kwargs: 透传给模型预测方法的参数
+    :return: 字典，包含 ``评分漂移`` / ``特征漂移`` / ``漂移摘要``
+
+    **参考样例**
+
+    >>> report = model_drift_report(model, train_x, oot_x, y_base=train_y, y_target=oot_y)
+    >>> print(report['漂移摘要'])
+    """
+    validate_dataframe(X_base)
+    validate_dataframe(X_target)
+
+    score_base, score_name = _predict_monitor_score(model, X_base, score_method, predict_kwargs)
+    score_target, _ = _predict_monitor_score(model, X_target, score_method, predict_kwargs)
+
+    score_report = score_drift_report(
+        pd.Series(score_base, name=score_name),
+        pd.Series(score_target, name=score_name),
+        y_base=y_base,
+        y_target=y_target,
+        n_bins=psi_bins,
+    )
+    feature_report = feature_drift_report(
+        X_base,
+        X_target,
+        features=features,
+        psi_bins=psi_bins,
+    )
+
+    drifted_count = 0
+    monitored_count = 0
+    max_feature_psi = np.nan
+    if not feature_report.empty and 'PSI' in feature_report.columns:
+        psi_values = pd.to_numeric(feature_report['PSI'], errors='coerce')
+        monitored_count = int(psi_values.notna().sum())
+        drifted_count = int((psi_values > 0.1).sum())
+        max_feature_psi = float(psi_values.max()) if monitored_count > 0 else np.nan
+
+    summary_rows = [
+        {'指标': '评分口径', '数值': score_name, '等级': ''},
+        {'指标': '评分PSI', '数值': score_report['PSI'], '等级': score_report['偏移等级']},
+        {'指标': '监控特征数', '数值': monitored_count, '等级': ''},
+        {'指标': '偏移特征数', '数值': drifted_count, '等级': ''},
+        {
+            '指标': '最大特征PSI',
+            '数值': round(max_feature_psi, 4) if not np.isnan(max_feature_psi) else np.nan,
+            '等级': psi_rating(max_feature_psi) if not np.isnan(max_feature_psi) else '未知',
+        },
+    ]
+
+    if '模型性能' in score_report:
+        perf = score_report['模型性能']
+        summary_rows.extend([
+            {'指标': 'KS变化', '数值': perf.get('KS变化'), '等级': ''},
+            {'指标': 'AUC变化', '数值': perf.get('AUC变化'), '等级': ''},
+        ])
+
+    return {
+        '评分漂移': score_report,
+        '特征漂移': feature_report,
+        '漂移摘要': pd.DataFrame(summary_rows),
+    }

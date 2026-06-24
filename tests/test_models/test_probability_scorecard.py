@@ -38,3 +38,16 @@ def test_probability_scorecard_proba_only_scoring_report_and_roundtrip(tmp_path)
     card.save(str(path))
     loaded = ProbabilityScoreCard.load(str(path))
     np.testing.assert_allclose(loaded.predict_score(proba=proba), scores)
+
+
+def test_probability_scorecard_report_keeps_single_bin_for_constant_scores():
+    card = ProbabilityScoreCard(model=None, decimal=2)
+    card.fit(proba=[0.1, 0.1, 0.1])
+
+    report = card.report(scores=np.array([600.0, 600.0, 600.0]), y=np.array([0, 1, 0]), n_bins=5)
+
+    assert len(report) == 1
+    assert report.loc[0, '评分区间'] == '[600.00, 600.00]'
+    assert report.loc[0, '样本数'] == 3
+    assert report.loc[0, '坏样本率'] == '33.33%'
+    assert report.loc[0, 'KS'] == 0.0

@@ -114,6 +114,11 @@ def psi_table(expected: Union[np.ndarray, pd.Series],
     # 移除缺失值
     expected_clean = expected[~pd.isna(expected)]
     actual_clean = actual[~pd.isna(actual)]
+    total_expected = len(expected_clean)
+    total_actual = len(actual_clean)
+
+    if total_expected == 0 and total_actual == 0:
+        return pd.DataFrame(columns=['分箱', '期望样本数', '实际样本数', '期望占比', '实际占比', 'PSI贡献'])
 
     # 使用OptimalBinning进行分箱
     from ..binning import OptimalBinning
@@ -123,9 +128,6 @@ def psi_table(expected: Union[np.ndarray, pd.Series],
     df_actual = pd.DataFrame({'value': actual_clean, 'is_expected': 0})
     df_combined = pd.concat([df_expected, df_actual], ignore_index=True)
 
-    # 创建临时目标用于分箱
-    dummy_target = np.random.randint(0, 2, size=len(df_combined))
-
     binner = OptimalBinning(
         method=method,
         max_n_bins=max_n_bins,
@@ -133,7 +135,9 @@ def psi_table(expected: Union[np.ndarray, pd.Series],
         verbose=False,
         **kwargs
     )
-    binner.fit(df_combined[['value']], dummy_target)
+    # PSI 的分箱边界必须可复现。对于有监督分箱方法，用“基准/实际”作为确定性目标，
+    # 避免随机 dummy target 让同一输入多次调用得到不同分箱和 PSI。
+    binner.fit(df_combined[['value']], df_combined['is_expected'])
 
     # 分别转换expected和actual
     bins_expected = binner.transform(df_expected[['value']], metric='indices').values.flatten()
@@ -144,9 +148,6 @@ def psi_table(expected: Union[np.ndarray, pd.Series],
 
     results = []
     epsilon = 1e-10
-
-    total_expected = len(expected_clean)
-    total_actual = len(actual_clean)
 
     for bin_idx in unique_bins:
         expected_count = np.sum(bins_expected == bin_idx)

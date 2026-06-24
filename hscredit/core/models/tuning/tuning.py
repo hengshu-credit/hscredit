@@ -283,6 +283,8 @@ class TuningObjective:
     - ``'lift_head_monotonic'`` : KS × (1 - 违反单调比例 × penalty)
     - ``'ks_with_lift_constraint'`` : 满足头部 LIFT 约束下的 KS
     - ``'head_ks'``       : 仅头部 ratio 比例样本的 KS
+    - ``'approval_bad_rate'`` : 固定通过率下优化低风险通过客群坏率
+    - ``'expected_profit'`` : 固定通过率下优化通过客群期望利润
 
     Example:
         >>> from hscredit.core.models import ModelTuner, XGBoostRiskModel
@@ -299,6 +301,7 @@ class TuningObjective:
         'ks', 'auc', 'lift_head', 'lift_tail',
         'lift_head_monotonic', 'ks_with_lift_constraint', 'head_ks',
         'ks_lift_combined', 'tail_purity_ks',
+        'approval_bad_rate', 'expected_profit',
     ]
 
     @staticmethod
@@ -484,6 +487,58 @@ class TuningObjective:
         norm_purity = min(purity, 1.0)
         return float(0.5 * ks_val + 0.5 * norm_purity)
 
+    @staticmethod
+    def approval_bad_rate(
+        y_true: np.ndarray,
+        y_prob: np.ndarray,
+        approval_rate: float = 0.30,
+        bad_rate_weight: float = 1.0,
+        **kwargs,
+    ) -> float:
+        """通过率坏率目标：固定通过率下最大化通过收益、惩罚通过坏率.
+
+        默认把预测概率最低的 ``approval_rate`` 样本视为通过客群。
+        score = approval_rate × (1 - 通过坏率 × bad_rate_weight)
+
+        :param approval_rate: 通过率，默认 0.30
+        :param bad_rate_weight: 坏率惩罚权重，默认 1.0
+        """
+        if not 0 < approval_rate <= 1:
+            raise ValueError("approval_rate 必须在 (0, 1] 范围内")
+        total = len(y_true)
+        n_approved = max(1, int(total * approval_rate))
+        approved_idx = np.argsort(y_prob)[:n_approved]
+        approved_br = np.asarray(y_true)[approved_idx].mean()
+        return float(approval_rate * (1.0 - approved_br * bad_rate_weight))
+
+    @staticmethod
+    def expected_profit(
+        y_true: np.ndarray,
+        y_prob: np.ndarray,
+        approval_rate: float = 0.30,
+        good_profit: float = 1.0,
+        bad_loss: float = 5.0,
+        **kwargs,
+    ) -> float:
+        """期望利润目标：固定通过率下最大化通过客群单位样本收益.
+
+        默认预测概率最低的样本为通过客群，好客户收益为 ``good_profit``，
+        坏客户损失为 ``bad_loss``，拒绝样本收益记为 0。
+
+        :param approval_rate: 通过率，默认 0.30
+        :param good_profit: 通过好客户收益，默认 1.0
+        :param bad_loss: 通过坏客户损失，默认 5.0
+        """
+        if not 0 < approval_rate <= 1:
+            raise ValueError("approval_rate 必须在 (0, 1] 范围内")
+        y_true = np.asarray(y_true)
+        total = len(y_true)
+        n_approved = max(1, int(total * approval_rate))
+        approved_idx = np.argsort(y_prob)[:n_approved]
+        approved_y = y_true[approved_idx]
+        profit = np.where(approved_y == 1, -bad_loss, good_profit).sum()
+        return float(profit / total)
+
     @classmethod
     def get(
         cls,
@@ -532,6 +587,15 @@ class Metric:
         'logloss': {'scorer': 'neg_log_loss', 'direction': 'maximize'},
         'ks': {'scorer': None, 'direction': 'maximize'},  # 使用自定义计算
         'ks_diff': {'scorer': None, 'direction': 'minimize'},  # KS差异，需要特殊处理
+        'lift_head': {'scorer': None, 'direction': 'maximize'},
+        'lift_tail': {'scorer': None, 'direction': 'maximize'},
+        'lift_head_monotonic': {'scorer': None, 'direction': 'maximize'},
+        'ks_with_lift_constraint': {'scorer': None, 'direction': 'maximize'},
+        'head_ks': {'scorer': None, 'direction': 'maximize'},
+        'ks_lift_combined': {'scorer': None, 'direction': 'maximize'},
+        'tail_purity_ks': {'scorer': None, 'direction': 'maximize'},
+        'approval_bad_rate': {'scorer': None, 'direction': 'maximize'},
+        'expected_profit': {'scorer': None, 'direction': 'maximize'},
     }
     
     def __init__(
@@ -583,6 +647,8 @@ class Metric:
                 raise ValueError("计算ks_diff需要提供训练集预测结果")
             _, ks_diff = _calc_ks_with_diff(y_train, y_train_pred, y_true, y_pred)
             return ks_diff
+        elif self._is_builtin and self.metric.lower() in TuningObjective.BUILTIN_OBJECTIVES:
+            return TuningObjective.get(self.metric.lower())(y_true, y_pred)
         elif self._is_builtin:
             # 其他内置指标使用sklearn scorer
             if self.scorer is None:
@@ -774,11 +840,12 @@ class ModelTuner:
         # 若指定了 objective（TuningObjective 风格），将其转换为 metric callable
         if objective is not None:
             if isinstance(objective, str):
-                if objective in TuningObjective.BUILTIN_OBJECTIVES:
-                    _obj_func = TuningObjective.get(objective, **self.objective_kwargs)
+                objective_key = objective.lower()
+                if objective_key in TuningObjective.BUILTIN_OBJECTIVES:
+                    _obj_func = TuningObjective.get(objective_key, **self.objective_kwargs)
                     metric = _obj_func
                     direction = 'maximize'
-                    metric_names = metric_names or [objective]
+                    metric_names = metric_names or [objective_key]
                 else:
                     # 可能是旧式 metric 字符串，直接透传
                     metric = objective

@@ -4,11 +4,13 @@
 - ModelReport: 模型评估报告
 - ProbabilityCalibrator / CalibratedModel: 概率校准
 - ModelExplainer: SHAP模型解释（懒加载，首次访问时才导入 shap）
+- model_explain_report: 不依赖 SHAP 的基础模型解释报告
 """
 
 import importlib
 
 from .report import ModelReport
+from .interpretability import model_explain_report
 from .calibration import (
     ProbabilityCalibrator,
     CalibratedModel,
@@ -27,6 +29,7 @@ __all__ = [
     "BetaCalibrator",
     "HistogramCalibrator",
     "ModelExplainer",
+    "model_explain_report",
 ]
 
 

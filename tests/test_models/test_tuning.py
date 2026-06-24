@@ -3,7 +3,7 @@ import pandas as pd
 import pytest
 from sklearn.datasets import make_classification
 
-from hscredit.core.models import AutoTuner
+from hscredit.core.models import AutoTuner, TuningObjective
 
 
 optuna = pytest.importorskip("optuna")
@@ -83,3 +83,26 @@ def test_metric_names_length_must_match_metric_list():
             direction=["maximize", "minimize"],
             metric_names=["KS"],
         )
+
+
+def test_business_tuning_objectives_are_available_as_metric_names():
+    X, y = _small_binary_data(as_frame=True)
+    tuner = AutoTuner.create("lr", metric="lift_head", cv=3, random_state=42)
+
+    tuner.fit(X, y, n_trials=2, show_progress_bar=False)
+
+    assert tuner.metric_names == ["LIFT_HEAD"]
+    assert np.isfinite(tuner.best_score_)
+    assert all(np.isfinite(trial.value) for trial in tuner.study_.trials)
+
+
+def test_strategy_tuning_objectives_return_finite_values():
+    y_true = np.array([0, 1, 0, 0, 1, 0])
+    y_prob = np.array([0.05, 0.9, 0.2, 0.1, 0.8, 0.3])
+
+    approval_score = TuningObjective.approval_bad_rate(y_true, y_prob, approval_rate=0.5)
+    profit_score = TuningObjective.expected_profit(y_true, y_prob, approval_rate=0.5)
+
+    assert np.isfinite(approval_score)
+    assert np.isfinite(profit_score)
+    assert TuningObjective.get("EXPECTED_PROFIT")(y_true, y_prob) == TuningObjective.expected_profit(y_true, y_prob)

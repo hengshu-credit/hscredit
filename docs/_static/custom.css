@@ -234,6 +234,17 @@ samp,
     background: rgba(0, 0, 0, 0.28) !important;
     color: #ffffff;
 }
+.wy-menu-vertical li.hs-scrollspy-current > a,
+.wy-menu-vertical li.current > ul li.hs-scrollspy-current > a {
+    background: linear-gradient(90deg, rgba(82, 103, 255, 0.36), rgba(154, 32, 255, 0.2)) !important;
+    color: #ffffff !important;
+    border-left: 3px solid transparent;
+    border-image: linear-gradient(180deg, #5267ff 0%, #9a20ff 55%, #f000c8 100%) 1;
+    box-shadow: inset 11px 0 18px -17px rgba(0, 245, 255, 0.9);
+}
+.wy-menu-vertical li.hs-scrollspy-current > a code {
+    color: #ffffff !important;
+}
 
 /* 侧栏滚动条（webkit）*/
 .wy-nav-side::-webkit-scrollbar { width: 8px; }

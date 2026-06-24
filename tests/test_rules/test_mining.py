@@ -11,6 +11,7 @@ from hscredit.report.mining import (
     SingleFeatureRuleMiner,
     MultiFeatureRuleMiner,
     TreeRuleExtractor,
+    ManualTreeExtractor,
     RuleMetrics,
     calculate_rule_metrics,
 )
@@ -393,6 +394,22 @@ class TestTreeRuleExtractor:
         assert isinstance(rules_df, pd.DataFrame)
         if not rules_df.empty:
             assert '规则表达式' in rules_df.columns
+            assert '风险拒绝比' in rules_df.columns
+
+    def test_manual_tree_split_filters_raw_data_by_node(self, sample_data):
+        """manual_split 传原始数据时应按 node 路径自动定位节点样本."""
+        df, feature_names = sample_data
+
+        extractor = ManualTreeExtractor(target='target', max_depth=1, min_samples_leaf=1)
+        extractor.fit(df, features=feature_names[:2])
+        extractor.manual_split(df, feature='feature_0', threshold=0, node=0)
+        extractor.manual_split(df, feature='feature_1', threshold=0, node=1)
+
+        table = extractor.get_rule_table(leaf_only=True)
+        left_child_rows = table[table['节点编号'].isin([3, 4])]
+        expected_left_count = int((df['feature_0'] <= 0).sum())
+
+        assert int(left_child_rows['样本总数'].sum()) == expected_left_count
     
     def test_kwargs_support(self, sample_data):
         """测试**kwargs参数支持."""

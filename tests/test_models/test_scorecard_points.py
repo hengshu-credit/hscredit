@@ -11,6 +11,7 @@ from sklearn.model_selection import train_test_split
 
 from hscredit.core.binning import OptimalBinning
 from hscredit.core.models import ScoreCard, RoundScoreCard, LogisticRegression
+from hscredit.exceptions import NotFittedError
 from hscredit.utils.datasets import germancredit
 
 
@@ -59,6 +60,62 @@ def test_fitted_scorecard_points_has_base_plus_all_bins():
     assert len(points) == 1 + _expected_bin_rows(scorecard)
     # 拟合得到的评分卡应当带有 WOE 值
     assert points['WOE值'].notna().any()
+
+
+@pytest.mark.parametrize('cls', [ScoreCard, RoundScoreCard])
+@pytest.mark.parametrize(
+    'method_call',
+    [
+        lambda card: card.predict(pd.DataFrame({'x': [1.0]})),
+        lambda card: card.predict_score(proba=[0.1, 0.2]),
+        lambda card: card.transform([0.1, 0.2]),
+        lambda card: card.scorecard_points(),
+        lambda card: card.get_feature_importances(),
+    ],
+)
+def test_unfitted_scorecard_methods_raise_not_fitted(cls, method_call):
+    """ScoreCard 构造期有 A_/B_，不能让 sklearn 默认检查误判为已拟合."""
+    card = cls()
+
+    with pytest.raises(NotFittedError, match='尚未拟合'):
+        method_call(card)
+
+
+def test_round_scorecard_rejects_unfitted_source_scorecard():
+    with pytest.raises(NotFittedError, match='尚未拟合'):
+        RoundScoreCard(scorecard=ScoreCard())
+
+
+def test_scorecard_reports_keep_single_bin_for_constant_scores():
+    card = ScoreCard(pdo=60, rate=2, base_odds=35, base_score=750)
+    card.load({
+        '__meta__': {
+            'intercept_score': 600.0,
+            'base_score': 750,
+            'direction': 'descending',
+            'pdo': 60,
+            'rate': 2,
+            'base_odds': 35,
+            'feature_names': ['x'],
+            'coef': [1.0],
+        },
+        'x': {'[-inf, +inf)': 0.0},
+    })
+
+    scores = np.array([600.0, 600.0, 600.0])
+    y = np.array([0, 1, 0])
+
+    bad_rate = card.score_to_bad_rate_table(scores, y, n_bins=5)
+    assert len(bad_rate) == 1
+    assert bad_rate.loc[0, '评分区间'] == '[600.0000, 600.0000]'
+    assert bad_rate.loc[0, '样本数'] == 3
+    assert bad_rate.loc[0, '坏样本率'] == '33.33%'
+
+    probability = card.score_to_probability_table(scores=scores, y=y, n_bins=5)
+    assert len(probability) == 1
+    assert probability.loc[0, '评分区间'] == '[600.00, 600.00]'
+    assert probability.loc[0, '样本数'] == 3
+    assert probability.loc[0, '实际逾期率'] == '33.33%'
 
 
 @pytest.mark.parametrize('cls', [ScoreCard, RoundScoreCard])

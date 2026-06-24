@@ -90,6 +90,7 @@ from .stability import (
     psi_cross_analysis,
     feature_drift_report,
     score_drift_report,
+    model_drift_report,
 )
 
 # 客群分析与偏移监控
@@ -177,6 +178,7 @@ __all__ = [
     'psi_cross_analysis',
     'feature_drift_report',
     'score_drift_report',
+    'model_drift_report',
 
     # 客群分析与偏移监控
     'population_profile',

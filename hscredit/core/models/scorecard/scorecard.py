@@ -30,7 +30,6 @@ import numpy as np
 import pandas as pd
 from typing import Optional, Dict, Union, Any, List, Tuple
 from sklearn.base import BaseEstimator, TransformerMixin
-from sklearn.utils.validation import check_is_fitted
 import inspect
 
 from ....exceptions import DependencyError, NotFittedError, ValidationError
@@ -278,6 +277,22 @@ class ScoreCard(StandardScoreTransformer):
         A = self.base_score + B * np.log(actual_odds)
         return A, B
 
+    def _check_fitted(self) -> None:
+        """检查评分卡是否已具备可用的拟合/加载状态."""
+        if getattr(self, '_is_fitted', False):
+            return
+
+        # 兼容 fit 内部已训练 LR、传入已训练 LR 或已训练 pipeline 后直接使用的路径。
+        lr_model = self._get_lr_model()
+        if (
+            lr_model is not None
+            and hasattr(lr_model, 'coef_')
+            and hasattr(lr_model, 'intercept_')
+        ):
+            return
+
+        raise NotFittedError("ScoreCard 尚未拟合，请先调用 fit()、load() 或传入已训练的 lr_model")
+
     def _initialize_from_pretrained(self):
         """从预训练模型初始化规则和特征名.
 
@@ -447,7 +462,7 @@ class ScoreCard(StandardScoreTransformer):
                 return self.lr_model.coef_[0]
             if self.lr_model_ is not None:
                 return self.lr_model_.coef_[0]
-        check_is_fitted(self)
+        self._check_fitted()
         if self.lr_model_ is None:
             raise ValueError("lr_model_ 为 None，请先调用fit方法或传入预训练lr_model")
         return self.lr_model_.coef_[0]
@@ -465,7 +480,7 @@ class ScoreCard(StandardScoreTransformer):
                 return self.lr_model.intercept_[0]
             if self.lr_model_ is not None:
                 return self.lr_model_.intercept_[0]
-        check_is_fitted(self)
+        self._check_fitted()
         if self.lr_model_ is None:
             raise ValueError("lr_model_ 为 None，请先调用fit方法或传入预训练lr_model")
         return self.lr_model_.intercept_[0]
@@ -485,7 +500,7 @@ class ScoreCard(StandardScoreTransformer):
             - 'score_range': 评分范围（最大-最小分）
         :return: 特征重要性Series
         """
-        check_is_fitted(self)
+        self._check_fitted()
 
         # 获取特征名称
         feature_names = self.feature_names_
@@ -526,7 +541,7 @@ class ScoreCard(StandardScoreTransformer):
     @property
     def feature_importances_(self) -> np.ndarray:
         """特征重要性属性 (兼容sklearn风格)."""
-        check_is_fitted(self)
+        self._check_fitted()
         if not hasattr(self, '_feature_importances'):
             self._feature_importances = self.get_feature_importances()
         return self._feature_importances.values
@@ -804,8 +819,8 @@ class ScoreCard(StandardScoreTransformer):
         """将原始数据转换为 WOE 数据.
 
         转换优先级：
-        1. 如果 binner 支持直接 WOE 转换（hscredit 风格），使用 binner.transform(X, metric='woe')
-        2. 如果配置了 binner + encoder（toad 风格），先分箱再转 WOE
+        1. 如果配置了 binner + encoder，先分箱再转 WOE，保持训练/预测编码口径一致
+        2. 如果 binner 支持直接 WOE 转换（hscredit 风格），使用 binner.transform(X, metric='woe')
         3. 如果只有 encoder，直接使用 encoder
         4. 如果没有转换器，假设输入已是 WOE 数据
 
@@ -815,7 +830,20 @@ class ScoreCard(StandardScoreTransformer):
         if not isinstance(X, pd.DataFrame):
             X = pd.DataFrame(X)
 
-        # 情况1：binner 支持直接 WOE 转换（hscredit 风格）
+        # 情况1：既有 binner 又有 encoder，优先使用显式 encoder 的训练口径
+        if self.binner is not None and self.encoder is not None:
+            try:
+                X_binned = self.binner.transform(X, metric='bins')
+            except TypeError:
+                X_binned = self.binner.transform(X)
+            X_woe = self.encoder.transform(X_binned)
+            if isinstance(X_woe, pd.DataFrame):
+                X_woe.attrs['hscredit_encoding'] = 'woe'
+            if self.verbose:
+                logger.info(f"使用 binner + encoder 进行 WOE 转换")
+            return X_woe
+
+        # 情况2：binner 支持直接 WOE 转换（hscredit 风格）
         if self._binner_is_woe_transformer and self.binner is not None:
             try:
                 # 尝试使用 metric='woe' 参数
@@ -838,16 +866,6 @@ class ScoreCard(StandardScoreTransformer):
                     return X_woe
                 except Exception:
                     pass
-
-        # 情况2：既有 binner 又有 encoder（toad/scp 风格）
-        if self.binner is not None and self.encoder is not None:
-            X_binned = self.binner.transform(X)
-            X_woe = self.encoder.transform(X_binned)
-            if isinstance(X_woe, pd.DataFrame):
-                X_woe.attrs['hscredit_encoding'] = 'woe'
-            if self.verbose:
-                logger.info(f"使用 binner + encoder 进行 WOE 转换")
-            return X_woe
 
         # 情况3：仅有 encoder
         if self.encoder is not None:
@@ -1279,6 +1297,16 @@ class ScoreCard(StandardScoreTransformer):
         
         return scores
 
+    def transform(self, proba: Union[np.ndarray, pd.Series]) -> np.ndarray:
+        """将概率转换为评分，要求评分卡已拟合或已加载."""
+        self._check_fitted()
+        return super().transform(proba)
+
+    def inverse_transform(self, scores: Union[np.ndarray, pd.Series]) -> np.ndarray:
+        """将评分反向转换为概率，要求评分卡已拟合或已加载."""
+        self._check_fitted()
+        return super().inverse_transform(scores)
+
     @staticmethod
     def _normalize_rule_label(label: Any) -> str:
         """标准化规则标签，便于离线规则映射."""
@@ -1338,7 +1366,8 @@ class ScoreCard(StandardScoreTransformer):
     def predict_score(
         self,
         X: Optional[Union[pd.DataFrame, np.ndarray]] = None,
-        proba: Optional[Union[np.ndarray, pd.Series]] = None
+        proba: Optional[Union[np.ndarray, pd.Series]] = None,
+        input_type: str = 'auto',
     ) -> np.ndarray:
         """预测评分（通过LR模型概率）。
 
@@ -1347,8 +1376,9 @@ class ScoreCard(StandardScoreTransformer):
 
         可通过传入X或proba之一来获取评分。
 
-        :param X: 特征矩阵（WOE数据），用于预测概率
+        :param X: 特征矩阵，用于预测概率
         :param proba: 直接传入预测概率（正类概率）
+        :param input_type: X 的输入类型，可选 ``'auto'`` / ``'raw'`` / ``'woe'``，默认 ``'auto'``
         :return: 评分数组
 
         **参考样例**
@@ -1361,16 +1391,12 @@ class ScoreCard(StandardScoreTransformer):
         >>> scores = scorecard.predict_score(proba=proba)
         """
         if not self._skip_fit_check:
-            check_is_fitted(self)
+            self._check_fitted()
 
         if proba is None:
             if X is None:
                 raise ValidationError("必须提供X或proba参数之一")
-            # 使用内部LR模型预测概率
-            lr_model = self.lr_model_ if hasattr(self, 'lr_model_') and self.lr_model_ is not None else self.lr_model
-            if lr_model is None:
-                raise NotFittedError("未找到LR模型，请先调用fit()或传入预训练lr_model")
-            proba = lr_model.predict_proba(X)[:, 1]
+            proba = self.predict_proba(X, input_type=input_type)[:, 1]
 
         # 调用父类的transform方法将概率转换为评分
         return self.transform(proba)
@@ -1408,7 +1434,7 @@ class ScoreCard(StandardScoreTransformer):
         # 检查是否需要fit
         # 如果未传入预训练模型且未调用fit，则报错
         if not self._skip_fit_check:
-            check_is_fitted(self)
+            self._check_fitted()
         elif not hasattr(self, '_is_fitted') or not self._is_fitted:
             # 传入了预训练模型但未调用fit，使用预训练模型进行预测
             if self.verbose:
@@ -1508,13 +1534,42 @@ class ScoreCard(StandardScoreTransformer):
         # 默认假设为原始数据（更安全）
         return False
 
-    def predict_proba(self, X: Union[pd.DataFrame, np.ndarray]) -> np.ndarray:
+    def _prepare_lr_input(
+        self,
+        X: Union[pd.DataFrame, np.ndarray],
+        input_type: str = 'auto',
+    ) -> pd.DataFrame:
+        """按显式输入类型准备底层 LR 模型所需的 WOE 特征."""
+        if input_type not in ['auto', 'raw', 'woe']:
+            raise ValueError(f"input_type 必须是 'auto'/'raw'/'woe' 之一，当前为: {input_type}")
+
+        if not isinstance(X, pd.DataFrame):
+            X = pd.DataFrame(X)
+
+        if input_type == 'raw':
+            X_woe = self._transform_to_woe(X)
+        elif input_type == 'woe':
+            X_woe = X
+        else:
+            X_woe = X if self._detect_input_type(X) else self._transform_to_woe(X)
+
+        if not (self._skip_fit_check and not getattr(self, '_is_fitted', False)):
+            feature_names = self.feature_names_
+            X_woe = X_woe[feature_names]
+        return X_woe
+
+    def predict_proba(
+        self,
+        X: Union[pd.DataFrame, np.ndarray],
+        input_type: str = 'auto',
+    ) -> np.ndarray:
         """预测样本属于各类别的概率（使用底层 LR 模型）。
 
-        会自动检测输入是否为 WOE 数据：若为原始数据则先经 binner/encoder 转为 WOE，
+        支持显式指定输入类型。若为原始数据则先经 binner/encoder 转为 WOE，
         再交由逻辑回归模型输出概率。与 :meth:`predict`（输出分数）相对，本方法输出概率。
 
-        :param X: 输入数据，原始特征或 WOE 数据（自动识别），DataFrame 或 ndarray
+        :param X: 输入数据，原始特征或 WOE 数据，DataFrame 或 ndarray
+        :param input_type: 输入类型 ``'auto'`` / ``'raw'`` / ``'woe'``，默认 ``'auto'``
         :return: 形状 ``(n_samples, 2)`` 的概率数组，第 1 列为坏样本（正类）概率
         :raises NotFittedError: 评分卡尚未拟合且未传入预训练 LR 模型时
 
@@ -1522,24 +1577,20 @@ class ScoreCard(StandardScoreTransformer):
 
         >>> proba_bad = scorecard.predict_proba(X_test)[:, 1]   # 坏样本概率
         """
-        check_is_fitted(self)
-        
-        # 需要将原始数据转为 WOE 数据后再预测概率
-        if not isinstance(X, pd.DataFrame):
-            X = pd.DataFrame(X)
-        
-        is_woe = self._detect_input_type(X)
-        if not is_woe:
-            X = self._transform_to_woe(X)
-        
-        return self.lr_model_.predict_proba(X)
+        self._check_fitted()
+        lr_model = self.lr_model_ if hasattr(self, 'lr_model_') and self.lr_model_ is not None else self.lr_model
+        if lr_model is None:
+            raise NotFittedError("未找到LR模型，当前评分卡无法 predict_proba")
+
+        X_woe = self._prepare_lr_input(X, input_type=input_type)
+        return lr_model.predict_proba(X_woe)
 
     def scorecard_scale(self) -> pd.DataFrame:
         """输出评分卡基础配置（刻度参数）.
 
         :return: DataFrame，包含 base_odds/base_score/rate/pdo 及推导出的 A、B 刻度参数
         """
-        check_is_fitted(self)
+        self._check_fitted()
 
         base_odds_remark = (
             "好坏比（好:坏），内部换算实际 odds = 1/base_odds"
@@ -1574,7 +1625,7 @@ class ScoreCard(StandardScoreTransformer):
             ``公式``/``A``/``B``/``截距分数``/``base_odds``/``base_score``/
             ``pdo``/``rate``/``direction``/``WOE线性公式``
         """
-        check_is_fitted(self)
+        self._check_fitted()
 
         A = round(float(self.A_), decimal)
         B = round(float(self.B_), decimal)
@@ -1618,7 +1669,7 @@ class ScoreCard(StandardScoreTransformer):
         :param feature_map: 特征名到中文含义的映射字典
         :param decimal: 分数保留小数位数，默认 2
         """
-        check_is_fitted(self)
+        self._check_fitted()
 
         if feature_map is None:
             feature_map = {}
@@ -1751,8 +1802,17 @@ class ScoreCard(StandardScoreTransformer):
         >>> scorecard.score_to_bad_rate_table(s, y_test, n_bins=10)
         """
         df = pd.DataFrame({'score': scores, 'y': y})
-        
-        if method == 'quantile':
+
+        if len(df) == 0:
+            return pd.DataFrame(columns=[
+                '评分区间', '样本数', '坏样本数', '坏样本率',
+                '好样本数', 'Odds', '累计好样本占比', '累计坏样本占比', 'KS'
+            ])
+
+        if df['score'].nunique(dropna=True) <= 1:
+            score_value = float(df['score'].dropna().iloc[0]) if df['score'].notna().any() else np.nan
+            df['score_bin'] = f"[{score_value:.4f}, {score_value:.4f}]"
+        elif method == 'quantile':
             df['score_bin'] = pd.qcut(df['score'], q=n_bins, duplicates='drop', precision=4)
         else:
             df['score_bin'] = pd.cut(df['score'], bins=n_bins, precision=4)
@@ -1898,7 +1958,7 @@ class ScoreCard(StandardScoreTransformer):
             )
             return
 
-        check_is_fitted(self)
+        self._check_fitted()
 
         base_score, score_sign = self._get_deployment_base_score_and_sign()
         special_codes = self._get_deployment_special_codes()
@@ -2020,7 +2080,7 @@ class ScoreCard(StandardScoreTransformer):
         >>> # 生成 Python
         >>> py = sc.export_deployment_code(language='python', output_file='scorecard.py')
         """
-        check_is_fitted(self)
+        self._check_fitted()
 
         card = self._get_deployment_rules(decimal=decimal)
         base_score, score_sign = self._get_deployment_base_score_and_sign()
@@ -2583,7 +2643,7 @@ class ScoreCard(StandardScoreTransformer):
 
         >>> scorecard.get_feature_importance().head()
         """
-        check_is_fitted(self)
+        self._check_fitted()
 
         return pd.DataFrame({
             'feature': self.feature_names_,
@@ -2606,7 +2666,7 @@ class ScoreCard(StandardScoreTransformer):
 
         >>> scorecard.get_reason(X_test, keep=3)
         """
-        check_is_fitted(self)
+        self._check_fitted()
 
         if not isinstance(X, pd.DataFrame):
             X = pd.DataFrame(X)
@@ -2673,7 +2733,7 @@ class ScoreCard(StandardScoreTransformer):
 
         >>> scorecard.score_to_probability_table(X=X_test, y=y_test, n_bins=10)
         """
-        check_is_fitted(self)
+        self._check_fitted()
 
         if scores is None:
             if X is None:
@@ -2681,15 +2741,22 @@ class ScoreCard(StandardScoreTransformer):
             scores = self.predict(X)
 
         scores = np.asarray(scores)
+        score_series = pd.Series(scores)
 
+        if len(scores) == 0:
+            return pd.DataFrame(columns=[
+                '评分区间', '评分中位数', '理论逾期率', '理论Odds', '样本数'
+            ])
         if method == 'custom' and score_bins is not None:
             bins = pd.IntervalIndex.from_breaks(score_bins)
-            score_series = pd.Series(scores)
             score_bin = pd.cut(score_series, bins=bins, include_lowest=True)
+        elif score_series.nunique(dropna=True) <= 1:
+            score_value = float(score_series.dropna().iloc[0]) if score_series.notna().any() else np.nan
+            score_bin = pd.Series([f"[{score_value:.2f}, {score_value:.2f}]"] * len(score_series))
         elif method == 'uniform':
-            score_bin = pd.cut(scores, bins=n_bins, include_lowest=True)
+            score_bin = pd.cut(score_series, bins=n_bins, include_lowest=True)
         else:
-            score_bin = pd.qcut(scores, q=n_bins, duplicates='drop')
+            score_bin = pd.qcut(score_series, q=n_bins, duplicates='drop')
 
         result = []
         categories = score_bin.cat.categories if hasattr(score_bin, 'cat') else pd.Series(score_bin).unique()
@@ -2704,9 +2771,14 @@ class ScoreCard(StandardScoreTransformer):
             score_median = np.median(bin_scores)
             odds_theoretical = np.exp((self.A_ - score_median) / self.B_)
             prob_theoretical = odds_theoretical / (1 + odds_theoretical)
+            interval_label = (
+                f"[{interval.left:.0f}, {interval.right:.0f})"
+                if hasattr(interval, 'left') and hasattr(interval, 'right')
+                else str(interval)
+            )
 
             row = {
-                '评分区间': f"[{interval.left:.0f}, {interval.right:.0f})",
+                '评分区间': interval_label,
                 '评分中位数': round(score_median, 2),
                 '理论逾期率': f"{prob_theoretical:.2%}",
                 '理论Odds': f"{odds_theoretical:.2f}",
@@ -2753,7 +2825,7 @@ class ScoreCard(StandardScoreTransformer):
 
         >>> scorecard.get_detailed_score(X_test, sample_idx=0)
         """
-        check_is_fitted(self)
+        self._check_fitted()
 
         if not isinstance(X, pd.DataFrame):
             X = pd.DataFrame(X)
@@ -2934,7 +3006,7 @@ class ScoreCard(StandardScoreTransformer):
         """
         import json
         
-        check_is_fitted(self)
+        self._check_fitted()
 
         # 构建与 toad 兼容的格式
         card = {}
@@ -3317,6 +3389,8 @@ class RoundScoreCard(ScoreCard):
         - _uses_woe_input: 使用 WOE 输入
         - _binner_is_woe_transformer: 基于 binner 类型
         """
+        scorecard._check_fitted()
+
         # 复制基础属性
         self.rules_ = scorecard.rules_
         self._feature_names = scorecard._feature_names  # 使用内部属性
@@ -3613,7 +3687,7 @@ class RoundScoreCard(ScoreCard):
         :return: 含 ``变量名称`` / ``变量含义`` / ``变量分箱`` / ``对应分数`` / ``WOE值`` 的 DataFrame，
             首行为基础分
         """
-        check_is_fitted(self)
+        self._check_fitted()
 
         digits = self.decimal if decimal is None else decimal
         feature_map = feature_map or {}
@@ -3703,7 +3777,7 @@ class RoundScoreCard(ScoreCard):
         :return: 取整后的评分数组
         """
         if not self._skip_fit_check:
-            check_is_fitted(self)
+            self._check_fitted()
         elif not hasattr(self, '_is_fitted') or not self._is_fitted:
             if self.verbose:
                 logger.info("使用预训练模型进行预测（未调用fit）")
@@ -3722,7 +3796,7 @@ class RoundScoreCard(ScoreCard):
         :param keep: 每个样本保留的主要原因个数，默认为 ``3``
         :return: 每行一个样本、含 ``reason`` 列的 DataFrame
         """
-        check_is_fitted(self)
+        self._check_fitted()
         resolved = self._resolve_round_scoring_inputs(X, input_type='auto')
 
         sub_scores = resolved['sub_scores']
@@ -3758,7 +3832,7 @@ class RoundScoreCard(ScoreCard):
         :param include_reason: 是否附带主要原因列，默认为 ``True``
         :return: 多层列结构 DataFrame，含各特征原始值/分箱/WOE/分数与样本总分
         """
-        check_is_fitted(self)
+        self._check_fitted()
 
         if not isinstance(X, pd.DataFrame):
             X = pd.DataFrame(X)
@@ -3905,7 +3979,7 @@ class RoundScoreCard(ScoreCard):
         """
         import json
 
-        check_is_fitted(self)
+        self._check_fitted()
         digits = self.decimal if decimal is None else decimal
         points_df = self.scorecard_points(decimal=digits)
 

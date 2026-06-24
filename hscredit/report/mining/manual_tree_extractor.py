@@ -1706,7 +1706,8 @@ class ManualTreeExtractor:
 
         **参数**
 
-        :param data: 用于计算分裂阈值的数据子集（需包含分裂特征与目标列）
+        :param data: 用于计算分裂阈值的数据集（需包含分裂特征与目标列）。可直接传入
+            原始训练数据，方法会根据 node 的当前路径自动筛选该节点命中的样本
         :param feature: 分裂特征名
         :param threshold: 分裂阈值（None=自动计算最优阈值）
         :param node: 分裂的节点 ID，默认 0（根节点）
@@ -1715,20 +1716,25 @@ class ManualTreeExtractor:
         **参考样例**
 
         >>> # 人工指定阈值
-        >>> ext.manual_split(df_sub, feature='age', threshold=35, node=1)
+        >>> ext.manual_split(df, feature='age', threshold=35, node=1)
         >>> # 自动找最优阈值
-        >>> ext.manual_split(df_sub, feature='income', threshold=None, node=2)
+        >>> ext.manual_split(df, feature='income', threshold=None, node=2)
         >>> # 链式调用
-        >>> ext.manual_split(df1, 'f1', 30).manual_split(df2, 'f2', 20)
+        >>> ext.manual_split(df, 'f1', 30).manual_split(df, 'f2', 20)
         """
         self._check_fitted()
         if feature not in self._feature_list:
             raise ValueError(f"特征 '{feature}' 不在特征列表中")
 
+        # manual_split 的调用方可以始终传入原始训练数据；这里先按当前 node 的
+        # 路径规则定位该节点样本，再用节点样本寻找阈值和统计左右子节点。
+        data_work = self._filter_data_for_node(data, node)
+        if data_work.empty:
+            raise ValueError(f"节点 {node} 在传入数据中无命中样本，无法进行人工分裂")
+
         # 先删除该节点的旧子树
         self.delete_node(node)
 
-        data_work = data.copy()
         # 指定 missing 时，将该特征缺失等价为该数值后再寻找阈值/统计样本，
         # 使节点样本数与规则（按 missing 路由缺失）口径一致，并兼容旧版 sklearn
         if self.missing is not None:
@@ -1821,6 +1827,26 @@ class ManualTreeExtractor:
         self._generate_rules()
         return self
 
+    def _filter_data_for_node(self, data: pd.DataFrame, node: int) -> pd.DataFrame:
+        """按当前树结构中 node 的路径规则筛选节点样本。
+
+        根节点直接返回原始数据；非根节点使用当前 ``_df_rules`` 中对应节点的
+        ``rule_list`` 转成 :class:`Rule` 后预测命中样本。这样 ``manual_split`` 可以
+        每次传入原始训练数据，节点样本口径仍与 ``get_rule_table`` / ``report`` 一致。
+        """
+        if node == 0:
+            return data.copy()
+        if self._df_rules is None:
+            raise ValueError("树规则尚未生成，无法定位节点样本")
+        matched = self._df_rules[self._df_rules["node"] == node]
+        if matched.empty:
+            raise ValueError(f"节点 {node} 不存在，无法进行人工分裂")
+        rule = self._format_rule(matched.iloc[0]["rule_list"])
+        if rule is None:
+            return data.copy()
+        mask = rule.predict(data).astype(bool)
+        return data.loc[mask].copy()
+
     def delete_node(self, node: int) -> "ManualTreeExtractor":
         """删除指定节点及其所有子节点，将该节点变为叶子。
 
@@ -1880,14 +1906,14 @@ class ManualTreeExtractor:
         )
         # sim.tree_ == sim 自身，_rule_generator 内部访问 clf.tree_ → sim
         self._df_rules = _rule_generator(sim, self._feature_list, missing=self.missing)
-        # 用训练数据按规则命中重算节点样本统计，确保人工分裂（在子集上定义阈值）后
+        # 用训练数据按规则命中重算节点样本统计，确保人工分裂（按节点路径定位样本）后
         # 树节点信息、规则表（rule.report）、可视化三者样本数/好坏样本数完全一致
         self._recompute_node_stats_from_data()
 
     def _recompute_node_stats_from_data(self) -> None:
         """用训练数据按各节点规则命中重算 n_node_samples / value（好坏样本数）。
 
-        人工分裂在用户传入的子集上确定阈值，但节点统计应按全量训练数据沿该路径的
+        人工分裂会按目标节点路径筛选样本并确定阈值，但节点统计应按全量训练数据沿该路径的
         命中情况计算，从而与 :meth:`get_rule_table`（基于 :meth:`Rule.report`）及
         决策树可视化保持完全一致。无训练数据（如 :meth:`from_sklearn`）时跳过。
         """

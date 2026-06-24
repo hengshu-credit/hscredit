@@ -156,8 +156,8 @@ from .rules import (
     combine_rules,
 )
 
-# 导入评估报告 (evaluation/)
-from .evaluation import ModelReport
+# 导入评估报告与解释工具 (evaluation/)
+from .evaluation import ModelReport, model_explain_report
 
 # 导入超参数调优 (tuning/, 可选重依赖 optuna，懒加载)
 _LAZY_TUNING_MODELS = ("ModelTuner", "AutoTuner", "TuningObjective", "TuningSampler")
@@ -245,5 +245,6 @@ __all__ = [
     "combine_rules",
     # 评估报告
     "ModelReport",
+    "model_explain_report",
     # 超参数调优为懒加载，不放入 __all__（可通过 from hscredit.core.models import AutoTuner 等方式显式访问）
 ]

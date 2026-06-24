@@ -745,6 +745,7 @@ class TreeRuleExtractor(BaseRuleMiner):
                             '命中坏样本率': hit.get('坏样本率'),
                             '命中LIFT值': hit.get('LIFT值'),
                             '坏账改善': hit.get('坏账改善'),
+                            '风险拒绝比': hit.get('风险拒绝比'),
                         })
                 except Exception:
                     pass
@@ -803,6 +804,7 @@ class TreeRuleExtractor(BaseRuleMiner):
                 '命中坏样本率': md.get('命中坏样本率'),
                 '命中LIFT值': md.get('命中LIFT值'),
                 '坏账改善': md.get('坏账改善'),
+                '风险拒绝比': md.get('风险拒绝比'),
             })
         return pd.DataFrame(data)
     

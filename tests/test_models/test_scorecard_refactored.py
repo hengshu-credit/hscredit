@@ -151,6 +151,49 @@ class TestScoreCardRefactored(unittest.TestCase):
         
         self.assertEqual(proba.shape, (len(self.X), 2))
         self.assertTrue(np.all((proba >= 0) & (proba <= 1)))
+
+    def test_predict_proba_and_score_accept_input_type(self):
+        """预测概率和概率评分支持与 predict 一致的 input_type 参数."""
+        scorecard = ScoreCard(
+            binner=self.binner,
+            pdo=60,
+            rate=2,
+            base_odds=35,
+            base_score=750,
+        )
+        scorecard.fit(self.X_woe, self.y, input_type='woe')
+
+        proba_raw = scorecard.predict_proba(self.X, input_type='raw')
+        proba_woe = scorecard.predict_proba(self.X_woe, input_type='woe')
+        np.testing.assert_allclose(proba_raw, proba_woe, atol=1e-12)
+
+        score_raw = scorecard.predict_score(self.X, input_type='raw')
+        score_woe = scorecard.predict_score(self.X_woe, input_type='woe')
+        np.testing.assert_allclose(score_raw, score_woe, atol=1e-10)
+
+    def test_predict_proba_prefers_configured_encoder_for_raw_input(self):
+        """配置 binner + encoder 时 raw 预测应复用 encoder 训练口径."""
+        X_bins = self.binner.transform(self.X, metric='bins')
+        encoder = WOEEncoder()
+        X_woe = encoder.fit_transform(X_bins, self.y)
+
+        scorecard = ScoreCard(
+            binner=self.binner,
+            encoder=encoder,
+            pdo=60,
+            rate=2,
+            base_odds=35,
+            base_score=750,
+        )
+        scorecard.fit(X_woe, self.y, input_type='woe')
+
+        proba_raw = scorecard.predict_proba(self.X, input_type='raw')
+        proba_woe = scorecard.predict_proba(X_woe, input_type='woe')
+        np.testing.assert_allclose(proba_raw, proba_woe, atol=1e-12)
+
+        score_raw = scorecard.predict_score(self.X, input_type='raw')
+        score_woe = scorecard.predict_score(X_woe, input_type='woe')
+        np.testing.assert_allclose(score_raw, score_woe, atol=1e-10)
     
     def test_get_reason(self):
         """测试获取评分原因."""
