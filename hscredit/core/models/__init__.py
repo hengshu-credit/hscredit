@@ -144,7 +144,6 @@ from .scorecard import (
     ScoreDriftCalibrator,
 )
 
-
 # 导入规则集分类模型 (rules/)
 from .rules import (
     RuleSet,
@@ -156,19 +155,22 @@ from .rules import (
     combine_rules,
 )
 
-# 导入评估报告与解释工具 (evaluation/)
-from .evaluation import ModelReport, model_explain_report
+# 导入解释工具 (evaluation/)；ModelReport 已统一为 hscredit.report.ModelReport，
+# 通过 __getattr__ 懒加载兼容别名，避免 import hscredit 期间触发 hscredit.report 循环导入。
+from .evaluation import model_explain_report
 
 # 导入超参数调优 (tuning/, 可选重依赖 optuna，懒加载)
 _LAZY_TUNING_MODELS = ("ModelTuner", "AutoTuner", "TuningObjective", "TuningSampler")
 
 
 def __getattr__(name):
-    """懒加载 boosting/tuning 子包，避免 import hscredit 时即时加载重依赖."""
+    """懒加载 boosting/tuning 子包及 ModelReport 兼容别名，避免 import hscredit 时即时加载重依赖."""
     if name in _LAZY_BOOSTING_MODELS:
         value = getattr(importlib.import_module(".boosting", __name__), name, None)
     elif name in _LAZY_TUNING_MODELS:
         value = getattr(importlib.import_module(".tuning", __name__), name, None)
+    elif name == "ModelReport":
+        value = getattr(importlib.import_module(".evaluation", __name__), "ModelReport")
     else:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
     globals()[name] = value

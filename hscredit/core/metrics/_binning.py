@@ -944,8 +944,16 @@ def add_margins(table: pd.DataFrame) -> pd.DataFrame:
             bad_rate_col = col
             break
     
-    if bad_rate_col and sample_total_col is not None and total_row[sample_total_col] > 0:
-        total_row[bad_rate_col] = total_row[bad_sample_col] / total_row[sample_total_col]
+    if bad_rate_col is not None:
+        if (
+            bad_sample_col is not None
+            and sample_total_col is not None
+            and total_row[sample_total_col] > 0
+        ):
+            total_row[bad_rate_col] = total_row[bad_sample_col] / total_row[sample_total_col]
+        else:
+            # 缺少坏样本数/样本总数时无法重算总体坏样本率，置空避免沿用首行的错误值
+            total_row[bad_rate_col] = np.nan
     
     # 计算LIFT和坏账改善（合计行LIFT=1，坏账改善=1）
     lift_cols = []

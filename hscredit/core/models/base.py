@@ -35,15 +35,15 @@ def _lift_score(y_true, y_proba, top_ratio=0.1):
     """计算Lift值（内部辅助函数）."""
     n = len(y_true)
     n_top = int(n * top_ratio)
-    
+
     # 按概率降序排序
     sorted_indices = np.argsort(-y_proba)
     y_sorted = y_true[sorted_indices]
-    
+
     # 计算整体坏样本率和top_ratio的坏样本率
     overall_bad_rate = y_true.mean()
     top_bad_rate = y_sorted[:n_top].mean()
-    
+
     if overall_bad_rate == 0:
         return 1.0
 
@@ -130,16 +130,26 @@ class BaseRiskModel(BaseEstimator, ClassifierMixin, ABC):
 
     # 支持的评估指标
     SUPPORTED_METRICS = [
-        'auc', 'ks', 'gini', 'lift',
-        'lift@1%', 'lift@3%', 'lift@5%', 'lift@10%',
-        'logloss', 'accuracy', 'precision', 'recall', 'f1',
+        "auc",
+        "ks",
+        "gini",
+        "lift",
+        "lift@1%",
+        "lift@3%",
+        "lift@5%",
+        "lift@10%",
+        "logloss",
+        "accuracy",
+        "precision",
+        "recall",
+        "f1",
     ]
     # 默认评估指标（evaluate() 不传 metrics 时使用）
-    DEFAULT_METRICS = ['auc', 'ks', 'gini', 'lift@1%', 'lift@3%', 'lift@5%', 'lift@10%']
+    DEFAULT_METRICS = ["auc", "ks", "gini", "lift@1%", "lift@3%", "lift@5%", "lift@10%"]
 
     def __init__(
         self,
-        objective: Union[str, Callable] = 'binary',
+        objective: Union[str, Callable] = "binary",
         eval_metric: Union[str, List[str], Callable, None] = None,
         target: Optional[str] = None,
         early_stopping_rounds: Optional[int] = None,
@@ -147,7 +157,7 @@ class BaseRiskModel(BaseEstimator, ClassifierMixin, ABC):
         random_state: Optional[int] = None,
         n_jobs: int = -1,
         verbose: bool = False,
-        **kwargs
+        **kwargs,
     ):
         self.objective = objective
         self.eval_metric = eval_metric
@@ -174,8 +184,8 @@ class BaseRiskModel(BaseEstimator, ClassifierMixin, ABC):
         y: Optional[Union[np.ndarray, pd.Series]] = None,
         sample_weight: Optional[np.ndarray] = None,
         eval_set: Optional[List[Tuple]] = None,
-        **fit_params
-    ) -> 'BaseRiskModel':
+        **fit_params,
+    ) -> "BaseRiskModel":
         """训练模型.
 
         支持两种调用方式:
@@ -234,7 +244,7 @@ class BaseRiskModel(BaseEstimator, ClassifierMixin, ABC):
         return self._best_score
 
     @abstractmethod
-    def get_feature_importances(self, importance_type: str = 'gain') -> pd.Series:
+    def get_feature_importances(self, importance_type: str = "gain") -> pd.Series:
         """获取特征重要性.
 
         :param importance_type: 重要性类型，可选:
@@ -251,27 +261,27 @@ class BaseRiskModel(BaseEstimator, ClassifierMixin, ABC):
 
         :return: 包含模型信息的字典
         """
-        check_is_fitted(self, '_is_fitted')
+        check_is_fitted(self, "_is_fitted")
 
         info = {
-            'model_type': self.__class__.__name__,
-            'objective': self.objective,
-            'eval_metric': self.eval_metric,
-            'n_features': self.n_features_in_,
-            'n_classes': len(self.classes_),
-            'best_iteration': self._best_iteration,
-            'best_score': self._best_score,
-            'params': self.get_params(),
+            "model_type": self.__class__.__name__,
+            "objective": self.objective,
+            "eval_metric": self.eval_metric,
+            "n_features": self.n_features_in_,
+            "n_classes": len(self.classes_),
+            "best_iteration": self._best_iteration,
+            "best_score": self._best_score,
+            "params": self.get_params(),
         }
 
         # 添加特征重要性统计
         if self._feature_importances is not None:
             importances = self._feature_importances
-            info['feature_importance_stats'] = {
-                'top_feature': importances.index[0] if len(importances) > 0 else None,
-                'top_importance': importances.iloc[0] if len(importances) > 0 else None,
-                'mean_importance': importances.mean(),
-                'std_importance': importances.std(),
+            info["feature_importance_stats"] = {
+                "top_feature": importances.index[0] if len(importances) > 0 else None,
+                "top_importance": importances.iloc[0] if len(importances) > 0 else None,
+                "mean_importance": importances.mean(),
+                "std_importance": importances.std(),
             }
 
         return info
@@ -281,7 +291,7 @@ class BaseRiskModel(BaseEstimator, ClassifierMixin, ABC):
         X: Union[np.ndarray, pd.DataFrame],
         y: Union[np.ndarray, pd.Series],
         sample_weight: Optional[np.ndarray] = None,
-        metrics: Optional[List[str]] = None
+        metrics: Optional[List[str]] = None,
     ) -> Dict[str, float]:
         """评估模型性能.
 
@@ -291,7 +301,7 @@ class BaseRiskModel(BaseEstimator, ClassifierMixin, ABC):
         :param metrics: 评估指标列表，默认全部
         :return: 评估结果字典
         """
-        check_is_fitted(self, '_is_fitted')
+        check_is_fitted(self, "_is_fitted")
 
         y_pred = self.predict(X)
         y_proba = self.predict_proba(X)[:, 1]
@@ -304,37 +314,42 @@ class BaseRiskModel(BaseEstimator, ClassifierMixin, ABC):
         for metric in metrics:
             metric_lower = metric.lower()
             try:
-                if metric_lower == 'auc':
-                    results['AUC'] = auc(y, y_proba)
-                elif metric_lower == 'ks':
-                    results['KS'] = ks(y, y_proba)
-                elif metric_lower == 'gini':
-                    results['Gini'] = gini(y, y_proba)
-                elif metric_lower == 'lift':
-                    results['Lift@10%'] = _lift_score(y, y_proba, top_ratio=0.1)
-                elif metric_lower in ('lift@1%', 'lift_1'):
-                    results['LIFT@1%'] = _lift_score(y, y_proba, top_ratio=0.01)
-                elif metric_lower in ('lift@3%', 'lift_3'):
-                    results['LIFT@3%'] = _lift_score(y, y_proba, top_ratio=0.03)
-                elif metric_lower in ('lift@5%', 'lift_5'):
-                    results['LIFT@5%'] = _lift_score(y, y_proba, top_ratio=0.05)
-                elif metric_lower in ('lift@10%', 'lift_10'):
-                    results['LIFT@10%'] = _lift_score(y, y_proba, top_ratio=0.10)
-                elif metric_lower == 'logloss':
+                if metric_lower == "auc":
+                    results["AUC"] = auc(y, y_proba)
+                elif metric_lower == "ks":
+                    results["KS"] = ks(y, y_proba)
+                elif metric_lower == "gini":
+                    results["Gini"] = gini(y, y_proba)
+                elif metric_lower == "lift":
+                    results["Lift@10%"] = _lift_score(y, y_proba, top_ratio=0.1)
+                elif metric_lower in ("lift@1%", "lift_1"):
+                    results["LIFT@1%"] = _lift_score(y, y_proba, top_ratio=0.01)
+                elif metric_lower in ("lift@3%", "lift_3"):
+                    results["LIFT@3%"] = _lift_score(y, y_proba, top_ratio=0.03)
+                elif metric_lower in ("lift@5%", "lift_5"):
+                    results["LIFT@5%"] = _lift_score(y, y_proba, top_ratio=0.05)
+                elif metric_lower in ("lift@10%", "lift_10"):
+                    results["LIFT@10%"] = _lift_score(y, y_proba, top_ratio=0.10)
+                elif metric_lower == "logloss":
                     from sklearn.metrics import log_loss
-                    results['LogLoss'] = log_loss(y, y_proba, sample_weight=sample_weight)
-                elif metric_lower == 'accuracy':
+
+                    results["LogLoss"] = log_loss(y, y_proba, sample_weight=sample_weight)
+                elif metric_lower == "accuracy":
                     from sklearn.metrics import accuracy_score
-                    results['Accuracy'] = accuracy_score(y, y_pred, sample_weight=sample_weight)
-                elif metric_lower == 'precision':
+
+                    results["Accuracy"] = accuracy_score(y, y_pred, sample_weight=sample_weight)
+                elif metric_lower == "precision":
                     from sklearn.metrics import precision_score
-                    results['Precision'] = precision_score(y, y_pred, sample_weight=sample_weight)
-                elif metric_lower == 'recall':
+
+                    results["Precision"] = precision_score(y, y_pred, sample_weight=sample_weight)
+                elif metric_lower == "recall":
                     from sklearn.metrics import recall_score
-                    results['Recall'] = recall_score(y, y_pred, sample_weight=sample_weight)
-                elif metric_lower == 'f1':
+
+                    results["Recall"] = recall_score(y, y_pred, sample_weight=sample_weight)
+                elif metric_lower == "f1":
                     from sklearn.metrics import f1_score
-                    results['F1'] = f1_score(y, y_pred, sample_weight=sample_weight)
+
+                    results["F1"] = f1_score(y, y_pred, sample_weight=sample_weight)
             except Exception as e:
                 if self.verbose:
                     warnings.warn(f"计算指标 {metric} 时出错: {e}")
@@ -342,10 +357,10 @@ class BaseRiskModel(BaseEstimator, ClassifierMixin, ABC):
 
         # 头部单调性检验（始终计算，不依赖 metrics 参数）
         try:
-            mono = lift_monotonicity_check(y, y_proba, n_bins=10, direction='both')
-            results['头部LIFT单调'] = mono['head_monotonic']
-            results['头部违反单调比例'] = mono['head_violation_ratio']
-            results['尾部LIFT单调'] = mono['tail_monotonic']
+            mono = lift_monotonicity_check(y, y_proba, n_bins=10, direction="both")
+            results["头部LIFT单调"] = mono["head_monotonic"]
+            results["头部违反单调比例"] = mono["head_violation_ratio"]
+            results["尾部LIFT单调"] = mono["tail_monotonic"]
         except Exception:
             pass
 
@@ -357,26 +372,25 @@ class BaseRiskModel(BaseEstimator, ClassifierMixin, ABC):
         y_train: Union[np.ndarray, pd.Series],
         X_test: Optional[Union[np.ndarray, pd.DataFrame]] = None,
         y_test: Optional[Union[np.ndarray, pd.Series]] = None,
-        feature_names: Optional[List[str]] = None
-    ) -> 'ModelReport':
+        feature_names: Optional[List[str]] = None,
+    ) -> "ModelReport":
         """生成模型评估报告.
+
+        模型报告已统一由 :class:`hscredit.report.ModelReport` 生成，本方法为其
+        兼容入口，等价于直接构造 ``ModelReport``；如需多 Sheet Excel / 多标签等
+        完整能力，推荐使用 :meth:`report`。
 
         :param X_train: 训练集特征
         :param y_train: 训练集标签
         :param X_test: 测试集特征，可选
         :param y_test: 测试集标签，可选
         :param feature_names: 特征名称列表，可选
-        :return: ModelReport对象
+        :return: ModelReport 对象
         """
-        from .evaluation.report import ModelReport
+        from ...report import ModelReport
 
         return ModelReport(
-            model=self,
-            X_train=X_train,
-            y_train=y_train,
-            X_test=X_test,
-            y_test=y_test,
-            feature_names=feature_names
+            model=self, X_train=X_train, y_train=y_train, X_test=X_test, y_test=y_test, feature_names=feature_names
         )
 
     def report(
@@ -396,8 +410,8 @@ class BaseRiskModel(BaseEstimator, ClassifierMixin, ABC):
         amount_col: Optional[str] = None,
         date_col: Optional[str] = None,
         group_col: Optional[str] = None,
-        **kwargs
-    ) -> 'QuickModelReport':
+        **kwargs,
+    ) -> "ModelReport":
         """生成风控建模报告（支持多数据集/overdue/dpds）.
 
         委托给 hscredit.report.auto_model_report，生成包含多 Sheet 的 Excel / 控制台报告。
@@ -433,9 +447,9 @@ class BaseRiskModel(BaseEstimator, ClassifierMixin, ABC):
         :param date_col: 日期字段
         :param group_col: 分组字段
         :param kwargs: 传递给 auto_model_report 的其他参数
-        :return: QuickModelReport 实例
+        :return: ModelReport 实例
         """
-        check_is_fitted(self, '_is_fitted')
+        check_is_fitted(self, "_is_fitted")
         from ...report import auto_model_report
 
         return auto_model_report(
@@ -455,12 +469,12 @@ class BaseRiskModel(BaseEstimator, ClassifierMixin, ABC):
             amount_col=amount_col,
             date_col=date_col,
             group_col=group_col,
-            **kwargs
+            **kwargs,
         )
 
     # ==================== 模型导出/导入 ====================
 
-    def save(self, path: str, engine: str = 'auto', **kwargs) -> str:
+    def save(self, path: str, engine: str = "auto", **kwargs) -> str:
         """保存模型到文件.
 
         支持多种格式:
@@ -479,28 +493,28 @@ class BaseRiskModel(BaseEstimator, ClassifierMixin, ABC):
         >>> model.save('model.pkl.gz')
         >>> model.save('model.pkl', engine='dill')
         """
-        check_is_fitted(self, '_is_fitted')
+        check_is_fitted(self, "_is_fitted")
         from ...utils import save_pickle
 
         path_str = str(path)
-        if path_str.endswith('.json'):
+        if path_str.endswith(".json"):
             self._save_json(path_str)
         else:
             eng = engine
-            if eng == 'auto':
+            if eng == "auto":
                 path_lower = path_str.lower()
-                if path_lower.endswith('.dill') or path_lower.endswith('.dill.gz'):
-                    eng = 'dill'
-                elif path_lower.endswith('.cloudpickle'):
-                    eng = 'cloudpickle'
+                if path_lower.endswith(".dill") or path_lower.endswith(".dill.gz"):
+                    eng = "dill"
+                elif path_lower.endswith(".cloudpickle"):
+                    eng = "cloudpickle"
                 else:
-                    eng = 'joblib'
+                    eng = "joblib"
             save_pickle(self, path_str, engine=eng, **kwargs)
 
         return path_str
 
     @classmethod
-    def load(cls, path: str, engine: str = 'auto', **kwargs) -> 'BaseRiskModel':
+    def load(cls, path: str, engine: str = "auto", **kwargs) -> "BaseRiskModel":
         """从文件加载模型.
 
         :param path: 模型文件路径
@@ -517,7 +531,7 @@ class BaseRiskModel(BaseEstimator, ClassifierMixin, ABC):
         from ...utils import load_pickle
 
         path_str = str(path)
-        if path_str.endswith('.json'):
+        if path_str.endswith(".json"):
             return cls._load_json(path_str)
 
         model = load_pickle(path_str, engine=engine, **kwargs)
@@ -530,58 +544,58 @@ class BaseRiskModel(BaseEstimator, ClassifierMixin, ABC):
         import json
 
         meta = {
-            'model_class': f'{self.__class__.__module__}.{self.__class__.__name__}',
-            'model_type': self.__class__.__name__,
-            'params': {},
-            'n_features_in_': getattr(self, 'n_features_in_', None),
-            'feature_names_in_': getattr(self, 'feature_names_in_', None),
-            'classes_': getattr(self, 'classes_', np.array([])).tolist(),
+            "model_class": f"{self.__class__.__module__}.{self.__class__.__name__}",
+            "model_type": self.__class__.__name__,
+            "params": {},
+            "n_features_in_": getattr(self, "n_features_in_", None),
+            "feature_names_in_": getattr(self, "feature_names_in_", None),
+            "classes_": getattr(self, "classes_", np.array([])).tolist(),
         }
 
         params = self.get_params(deep=False)
         for k, v in params.items():
             if isinstance(v, (int, float, str, bool, type(None))):
-                meta['params'][k] = v
+                meta["params"][k] = v
             elif isinstance(v, np.integer):
-                meta['params'][k] = int(v)
+                meta["params"][k] = int(v)
             elif isinstance(v, np.floating):
-                meta['params'][k] = float(v)
+                meta["params"][k] = float(v)
             elif isinstance(v, (list, tuple)):
-                meta['params'][k] = list(v)
+                meta["params"][k] = list(v)
 
         # 保存底层模型到同级目录
-        native_path = str(Path(path).with_suffix('.native'))
-        if hasattr(self, '_model') and self._model is not None:
-            if hasattr(self._model, 'save_model'):
+        native_path = str(Path(path).with_suffix(".native"))
+        if hasattr(self, "_model") and self._model is not None:
+            if hasattr(self._model, "save_model"):
                 self._model.save_model(native_path)
-                meta['native_model_path'] = str(Path(native_path).name)
+                meta["native_model_path"] = str(Path(native_path).name)
 
-        with open(path, 'w', encoding='utf-8') as f:
+        with open(path, "w", encoding="utf-8") as f:
             json.dump(meta, f, ensure_ascii=False, indent=2)
 
     @classmethod
-    def _load_json(cls, path: str) -> 'BaseRiskModel':
+    def _load_json(cls, path: str) -> "BaseRiskModel":
         """从JSON加载模型参数（需配合native模型文件）."""
         import json
         import importlib
 
-        with open(path, 'r', encoding='utf-8') as f:
+        with open(path, "r", encoding="utf-8") as f:
             meta = json.load(f)
 
-        module_path, class_name = meta['model_class'].rsplit('.', 1)
+        module_path, class_name = meta["model_class"].rsplit(".", 1)
         module = importlib.import_module(module_path)
         model_cls = getattr(module, class_name)
 
-        model = model_cls(**meta.get('params', {}))
+        model = model_cls(**meta.get("params", {}))
 
-        if 'native_model_path' in meta:
-            native_path = str(Path(path).parent / meta['native_model_path'])
-            if hasattr(model, 'load_model'):
+        if "native_model_path" in meta:
+            native_path = str(Path(path).parent / meta["native_model_path"])
+            if hasattr(model, "load_model"):
                 model.load_model(native_path)
 
-        model.n_features_in_ = meta.get('n_features_in_')
-        model.feature_names_in_ = meta.get('feature_names_in_')
-        model.classes_ = np.array(meta.get('classes_', [0, 1]))
+        model.n_features_in_ = meta.get("n_features_in_")
+        model.feature_names_in_ = meta.get("feature_names_in_")
+        model.classes_ = np.array(meta.get("classes_", [0, 1]))
 
         return model
 
@@ -593,14 +607,14 @@ class BaseRiskModel(BaseEstimator, ClassifierMixin, ABC):
         y: Optional[Union[np.ndarray, pd.Series]] = None,
         search_space: Optional[Dict[str, Dict[str, Any]]] = None,
         fixed_params: Optional[Dict[str, Any]] = None,
-        metric: Union[str, Callable, List] = 'ks',
-        direction: Union[str, List[str]] = 'maximize',
+        metric: Union[str, Callable, List] = "ks",
+        direction: Union[str, List[str]] = "maximize",
         n_trials: int = 100,
         cv: int = 5,
         timeout: Optional[int] = None,
         verbose: Optional[bool] = None,
-        **kwargs
-    ) -> 'BaseRiskModel':
+        **kwargs,
+    ) -> "BaseRiskModel":
         """超参数调优并返回最佳模型.
 
         集成 ModelTuner，一键完成超参数搜索、最佳模型训练。
@@ -639,17 +653,17 @@ class BaseRiskModel(BaseEstimator, ClassifierMixin, ABC):
             fixed_params=fixed_params,
             metric=metric,
             direction=direction,
-            target=self.target or 'target',
+            target=self.target or "target",
             cv=cv,
             random_state=self.random_state,
             verbose=verbose,
-            **kwargs
+            **kwargs,
         )
 
         best_params = tuner.fit(X, y, n_trials=n_trials, timeout=timeout)
         best_model = self.__class__(**best_params)
         # 透传 target，确保 scorecardpipeline 风格（y=None，从 X 提取 target）下重训正常
-        if self.target is not None and getattr(best_model, 'target', None) is None:
+        if self.target is not None and getattr(best_model, "target", None) is None:
             best_model.target = self.target
         best_model.fit(X, y)
 
@@ -662,7 +676,7 @@ class BaseRiskModel(BaseEstimator, ClassifierMixin, ABC):
         X: Union[np.ndarray, pd.DataFrame],
         y: Optional[Union[np.ndarray, pd.Series]] = None,
         sample_weight: Optional[np.ndarray] = None,
-        extract_target: bool = False
+        extract_target: bool = False,
     ) -> Tuple[np.ndarray, Optional[np.ndarray], Optional[np.ndarray]]:
         """准备数据.
 
@@ -676,7 +690,7 @@ class BaseRiskModel(BaseEstimator, ClassifierMixin, ABC):
         """
         # 处理DataFrame
         if isinstance(X, pd.DataFrame):
-            if not hasattr(self, 'feature_names_in_'):
+            if not hasattr(self, "feature_names_in_"):
                 self.feature_names_in_ = X.columns.tolist()
 
             # scorecardpipeline风格：从X中提取target列
@@ -688,8 +702,8 @@ class BaseRiskModel(BaseEstimator, ClassifierMixin, ABC):
 
             X = X.values
         else:
-            if not hasattr(self, 'feature_names_in_'):
-                self.feature_names_in_ = [f'feature_{i}' for i in range(X.shape[1])]
+            if not hasattr(self, "feature_names_in_"):
+                self.feature_names_in_ = [f"feature_{i}" for i in range(X.shape[1])]
 
         # 处理y
         if y is not None:
@@ -704,10 +718,7 @@ class BaseRiskModel(BaseEstimator, ClassifierMixin, ABC):
         return X, y, sample_weight
 
     def _create_eval_set(
-        self,
-        X: np.ndarray,
-        y: np.ndarray,
-        sample_weight: Optional[np.ndarray] = None
+        self, X: np.ndarray, y: np.ndarray, sample_weight: Optional[np.ndarray] = None
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, Optional[np.ndarray], Optional[np.ndarray]]:
         """创建验证集.
 
@@ -719,18 +730,12 @@ class BaseRiskModel(BaseEstimator, ClassifierMixin, ABC):
         if self.validation_fraction > 0 and self.validation_fraction < 1:
             if sample_weight is not None:
                 X_train, X_val, y_train, y_val, sw_train, sw_val = train_test_split(
-                    X, y, sample_weight,
-                    test_size=self.validation_fraction,
-                    random_state=self.random_state,
-                    stratify=y
+                    X, y, sample_weight, test_size=self.validation_fraction, random_state=self.random_state, stratify=y
                 )
                 return X_train, X_val, y_train, y_val, sw_train, sw_val
             else:
                 X_train, X_val, y_train, y_val = train_test_split(
-                    X, y,
-                    test_size=self.validation_fraction,
-                    random_state=self.random_state,
-                    stratify=y
+                    X, y, test_size=self.validation_fraction, random_state=self.random_state, stratify=y
                 )
                 return X_train, X_val, y_train, y_val, None, None
         else:
@@ -753,7 +758,7 @@ class BaseRiskModel(BaseEstimator, ClassifierMixin, ABC):
         >>> native_model = model.get_native_model()
         >>> leaf_indices = native_model.apply(X)
         """
-        check_is_fitted(self, '_is_fitted')
+        check_is_fitted(self, "_is_fitted")
         return self._model
 
     def _get_metric_func(self, metric: str) -> Callable:
@@ -763,28 +768,28 @@ class BaseRiskModel(BaseEstimator, ClassifierMixin, ABC):
         :return: 评估函数
         """
         metric_map = {
-            'auc': lambda y, p: auc(y, p),
-            'ks': lambda y, p: ks(y, p),
-            'gini': lambda y, p: gini(y, p),
+            "auc": lambda y, p: auc(y, p),
+            "ks": lambda y, p: ks(y, p),
+            "gini": lambda y, p: gini(y, p),
         }
         return metric_map.get(metric.lower())
 
     def __sklearn_is_fitted__(self):
         """用于sklearn的check_is_fitted检查."""
-        return hasattr(self, '_is_fitted') and self._is_fitted
+        return hasattr(self, "_is_fitted") and self._is_fitted
 
     def plot_feature_importance(
         self,
         X: Optional[Union[np.ndarray, pd.DataFrame]] = None,
         y: Optional[Union[np.ndarray, pd.Series]] = None,
         top_n: int = 20,
-        importance_type: str = 'gain',
-        method: str = 'traditional',
+        importance_type: str = "gain",
+        method: str = "traditional",
         figsize: Tuple[int, int] = (10, 8),
         title: Optional[str] = None,
         show: bool = True,
-        **kwargs
-    ) -> 'matplotlib.figure.Figure':
+        **kwargs,
+    ) -> "matplotlib.figure.Figure":
         """绘制特征重要性图.
 
         支持传统特征重要性和SHAP值两种方法。
@@ -818,37 +823,34 @@ class BaseRiskModel(BaseEstimator, ClassifierMixin, ABC):
         from .evaluation.interpretability import (
             plot_feature_importance,
             plot_shap_importance,
-            plot_importance_comparison
+            plot_importance_comparison,
         )
 
-        if method == 'traditional':
+        if method == "traditional":
             return plot_feature_importance(
-                self, X=X, top_n=top_n,
+                self,
+                X=X,
+                top_n=top_n,
                 importance_type=importance_type,
-                figsize=figsize, title=title,
-                show=show, **kwargs
+                figsize=figsize,
+                title=title,
+                show=show,
+                **kwargs,
             )
-        elif method == 'shap':
+        elif method == "shap":
             if X is None:
                 raise ValueError("SHAP方法需要提供X参数")
-            return plot_shap_importance(
-                self, X, top_n=top_n,
-                figsize=figsize, title=title,
-                show=show
-            )
-        elif method == 'combined':
+            return plot_shap_importance(self, X, top_n=top_n, figsize=figsize, title=title, show=show)
+        elif method == "combined":
             if X is None:
                 raise ValueError("组合方法需要提供X参数")
             return plot_importance_comparison(
-                self, X, top_n=top_n,
-                importance_type=importance_type,
-                figsize=figsize, title=title,
-                show=show
+                self, X, top_n=top_n, importance_type=importance_type, figsize=figsize, title=title, show=show
             )
         else:
             raise ValueError(f"不支持的method: {method}，可选: 'traditional', 'shap', 'combined'")
 
-    def get_shap_explainer(self, **kwargs) -> 'ModelExplainer':
+    def get_shap_explainer(self, **kwargs) -> "ModelExplainer":
         """获取SHAP解释器.
 
         :param kwargs: ModelExplainer的初始化参数
@@ -861,4 +863,5 @@ class BaseRiskModel(BaseEstimator, ClassifierMixin, ABC):
         >>> explainer.plot_shap_summary(X_test)
         """
         from .evaluation.interpretability import ModelExplainer
+
         return ModelExplainer(self, **kwargs)

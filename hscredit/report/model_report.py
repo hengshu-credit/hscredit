@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 # 内部工具
 # ---------------------------------------------------------------------------
 
+
 def _ensure_dataframe(X, feature_names: Optional[List[str]] = None) -> pd.DataFrame:
     if isinstance(X, pd.DataFrame):
         return X.copy()
@@ -99,6 +100,7 @@ def _safe_close_figs():
     """安全关闭 matplotlib 图形以释放内存."""
     try:
         import matplotlib.pyplot as plt
+
         plt.close("all")
     except Exception:
         pass
@@ -115,7 +117,7 @@ def _merge_multi_label_bin_tables(tables: List[pd.DataFrame], labels: List[str])
         return tables[0]
 
     base = tables[0].copy()
-    merge_cols = ['分箱标签', '指标含义', '指标名称', '指标明细']
+    merge_cols = ["分箱标签", "指标含义", "指标名称", "指标明细"]
     available_merge = [c for c in merge_cols if c in base.columns]
     other_cols = [c for c in base.columns if c not in available_merge]
 
@@ -128,7 +130,7 @@ def _merge_multi_label_bin_tables(tables: List[pd.DataFrame], labels: List[str])
         for table, lbl in zip(tables[1:], labels[1:]):
             table_copy = table.copy()
             table_other = [c for c in table_copy.columns if c not in available_merge]
-            table_multi_cols = [('分箱详情', c) for c in available_merge] + [(lbl, c) for c in table_other]
+            table_multi_cols = [("分箱详情", c) for c in available_merge] + [(lbl, c) for c in table_other]
             table_copy.columns = pd.MultiIndex.from_tuples(table_multi_cols)
             result_parts.append(table_copy[table_other])
         result = pd.concat(result_parts, axis=1, keys=[labels[0]] + list(labels[1:]), names=["标签"])
@@ -138,7 +140,7 @@ def _merge_multi_label_bin_tables(tables: List[pd.DataFrame], labels: List[str])
     multi_cols = []
     for col in base.columns:
         if col in available_merge:
-            multi_cols.append(('分箱详情', col))
+            multi_cols.append(("分箱详情", col))
         else:
             multi_cols.append((labels[0], col))
     base.columns = pd.MultiIndex.from_tuples(multi_cols)
@@ -148,11 +150,11 @@ def _merge_multi_label_bin_tables(tables: List[pd.DataFrame], labels: List[str])
         table_multi_cols = []
         for col in table_copy.columns:
             if col in available_merge:
-                table_multi_cols.append(('分箱详情', col))
+                table_multi_cols.append(("分箱详情", col))
             else:
                 table_multi_cols.append((lbl, col))
         table_copy.columns = pd.MultiIndex.from_tuples(table_multi_cols)
-        merge_on = [('分箱详情', c) for c in available_merge]
+        merge_on = [("分箱详情", c) for c in available_merge]
         base = base.merge(table_copy, on=merge_on)
 
     return base
@@ -191,6 +193,7 @@ def _next_image_col(ws, start_col: int, width_px: int, default_width: float = 13
 # 数据容器
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class ReportDataset:
     name: str
@@ -203,10 +206,11 @@ class ReportDataset:
 
 
 # ---------------------------------------------------------------------------
-# QuickModelReport
+# ModelReport
 # ---------------------------------------------------------------------------
 
-class QuickModelReport:
+
+class ModelReport:
     """面向报表输出的快速模型报告封装.
 
     参考风控建模标准报告模板，对已训练模型一站式生成多 Sheet 结构的
@@ -235,16 +239,23 @@ class QuickModelReport:
 
     **参考样例**
 
-    >>> from hscredit.report import QuickModelReport
-    >>> report = QuickModelReport(model, datasets={'train': train_df, 'test': test_df})
+    >>> from hscredit.report import ModelReport
+    >>> report = ModelReport(model, datasets={'train': train_df, 'test': test_df})
     >>> report.get_metrics()            # 各数据集指标对比
     >>> report.get_feature_importance(top_n=20)
     >>> report.to_excel('模型报告.xlsx')  # 导出多 Sheet 报告
     """
 
     _PERCENT_COLS = [
-        "样本占比", "好样本占比", "坏样本占比", "坏样本率",
-        "LIFT值", "坏账改善", "累积LIFT值", "累积坏账改善", "分档KS值",
+        "样本占比",
+        "好样本占比",
+        "坏样本占比",
+        "坏样本率",
+        "LIFT值",
+        "坏账改善",
+        "累积LIFT值",
+        "累积坏账改善",
+        "分档KS值",
     ]
     _CONDITION_COLS = ["坏样本率", "LIFT值", "累积LIFT值"]
 
@@ -280,13 +291,13 @@ class QuickModelReport:
         示例::
 
             # 方式1: datasets dict（DataFrame 直接传入，X 中含目标列）
-            report = QuickModelReport(model, datasets={'train': train_df, 'test': test_df})
+            report = ModelReport(model, datasets={'train': train_df, 'test': test_df})
 
             # 方式1: datasets list（自动命名为训练集、测试集）
-            report = QuickModelReport(model, datasets=[train_df, test_df])
+            report = ModelReport(model, datasets=[train_df, test_df])
 
             # 方式1: overdue/dpds 自动构建标签（X 中不含目标列）
-            report = QuickModelReport(
+            report = ModelReport(
                 model,
                 datasets={'train': df},
                 overdue='dpds',     # 逾期天数列名
@@ -294,10 +305,10 @@ class QuickModelReport:
             )
 
             # 方式2: 兼容 sklearn API
-            report = QuickModelReport(model, X_train=X, y_train=y, X_test=X_val, y_test=y_val)
+            report = ModelReport(model, X_train=X, y_train=y, X_test=X_val, y_test=y_val)
 
             # 方式2: overdue/dpds 作为独立参数
-            report = QuickModelReport(
+            report = ModelReport(
                 model,
                 X_train=df,
                 overdue='dpds',    # 逾期列名
@@ -348,7 +359,7 @@ class QuickModelReport:
         # 从第一个数据集获取特征名，再过滤为模型实际入模特征
         if self._feature_names:
             self.feature_names = list(self._feature_names)
-        elif not hasattr(self, 'feature_names') or not self.feature_names:
+        elif not hasattr(self, "feature_names") or not self.feature_names:
             if self._datasets:
                 first_ds = next(iter(self._datasets.values()))
                 self.feature_names = list(first_ds.X.columns)
@@ -359,9 +370,9 @@ class QuickModelReport:
 
         # 统一为模型实际入模特征（排除数据集传入的非入模字段如 MOB1、放款金额 等）
         model_required: Optional[List[str]] = None
-        if hasattr(self.model, 'feature_names_') and self.model.feature_names_ is not None:
+        if hasattr(self.model, "feature_names_") and self.model.feature_names_ is not None:
             model_required = list(self.model.feature_names_)
-        elif hasattr(self.model, 'feature_names_in_') and self.model.feature_names_in_ is not None:
+        elif hasattr(self.model, "feature_names_in_") and self.model.feature_names_in_ is not None:
             model_required = list(self.model.feature_names_in_)
 
         if model_required:
@@ -480,8 +491,10 @@ class QuickModelReport:
         """
         if isinstance(datasets, dict):
             default_labels = {
-                "train": "训练集", "test": "测试集",
-                "oot": "OOT集", "val": "验证集",
+                "train": "训练集",
+                "test": "测试集",
+                "oot": "OOT集",
+                "val": "验证集",
             }
             for key, value in datasets.items():
                 # 区分 (X, y) 元组 和 直接传入 DataFrame 两种格式
@@ -576,10 +589,10 @@ class QuickModelReport:
         # 获取模型实际需要的特征列表，过滤掉额外列，避免预测时报错
         # 优先级：ScoreCard.feature_names_ > sklearn.feature_names_in_ > None
         required_features: Optional[List[str]] = None
-        if hasattr(self.model, 'feature_names_') and self.model.feature_names_ is not None:
+        if hasattr(self.model, "feature_names_") and self.model.feature_names_ is not None:
             # ScoreCard 等模型：使用 fit 后确定的入模特征名
             required_features = list(self.model.feature_names_)
-        elif hasattr(self.model, 'feature_names_in_') and self.model.feature_names_in_ is not None:
+        elif hasattr(self.model, "feature_names_in_") and self.model.feature_names_in_ is not None:
             # sklearn 模型
             required_features = list(self.model.feature_names_in_)
 
@@ -687,7 +700,7 @@ class QuickModelReport:
         )
         return renamed
 
-# ---------- 1. 模型性能指标 ----------
+    # ---------- 1. 模型性能指标 ----------
 
     def get_metrics(self, label: Optional[str] = None) -> pd.DataFrame:
         """KS / AUC / PSI 等核心指标.
@@ -707,9 +720,7 @@ class QuickModelReport:
                 {
                     "统计项": "KS",
                     **{
-                        labels_map[k]: _safe_binary_metric(
-                            ks, self._get_y(k, label), self._datasets[k].y_proba
-                        )
+                        labels_map[k]: _safe_binary_metric(ks, self._get_y(k, label), self._datasets[k].y_proba)
                         for k in ds_keys
                     },
                 }
@@ -718,9 +729,7 @@ class QuickModelReport:
                 {
                     "统计项": "AUC",
                     **{
-                        labels_map[k]: _safe_binary_metric(
-                            auc, self._get_y(k, label), self._datasets[k].y_proba
-                        )
+                        labels_map[k]: _safe_binary_metric(auc, self._get_y(k, label), self._datasets[k].y_proba)
                         for k in ds_keys
                     },
                 }
@@ -787,8 +796,18 @@ class QuickModelReport:
         df[score_col] = ds.score
 
         score_return_cols = [
-            '样本总数', '好样本数', '坏样本数', '样本占比', '好样本占比', '坏样本占比',
-            '坏样本率', 'LIFT值', '累积LIFT值', '坏账改善', '累积坏账改善', '分档KS值',
+            "样本总数",
+            "好样本数",
+            "坏样本数",
+            "样本占比",
+            "好样本占比",
+            "坏样本占比",
+            "坏样本率",
+            "LIFT值",
+            "累积LIFT值",
+            "坏账改善",
+            "累积坏账改善",
+            "分档KS值",
         ]
 
         # 多标签合并模式：直接通过 feature_bin_stats 的 overdue + dpds 计算多目标合并分箱表，
@@ -818,8 +837,12 @@ class QuickModelReport:
             tables: List[pd.DataFrame] = []
             for lbl in labels:
                 t = self.get_bin_table(
-                    dataset=dataset, method=method, max_n_bins=max_n_bins,
-                    amount_col=amount_col, margins=margins, label=lbl,
+                    dataset=dataset,
+                    method=method,
+                    max_n_bins=max_n_bins,
+                    amount_col=amount_col,
+                    margins=margins,
+                    label=lbl,
                 )
                 tables.append(t)
             return _drop_bin_meta_cols(_merge_multi_label_bin_tables(tables, labels))
@@ -925,17 +948,40 @@ class QuickModelReport:
         features = importance.index.tolist()
         train_X = self._datasets["train"].X[features] if features else self._datasets["train"].X[self.feature_names]
         desc_stats = train_X.describe(percentiles=[0.01, 0.1, 0.5, 0.75, 0.9, 0.99]).T
-        desc_stats = desc_stats.rename(columns={
-            "count": "样本数", "mean": "平均值", "std": "标准差",
-            "min": "最小值", "max": "最大值",
-            "1%": "1%", "10%": "10%", "50%": "50%",
-            "75%": "75%", "90%": "90%", "99%": "99%",
-        })
+        desc_stats = desc_stats.rename(
+            columns={
+                "count": "样本数",
+                "mean": "平均值",
+                "std": "标准差",
+                "min": "最小值",
+                "max": "最大值",
+                "1%": "1%",
+                "10%": "10%",
+                "50%": "50%",
+                "75%": "75%",
+                "90%": "90%",
+                "99%": "99%",
+            }
+        )
         desc_stats["缺失率"] = train_X.isnull().mean()
         desc_stats["字段类型"] = train_X.dtypes.astype(str)
         desc_stats["枚举数"] = train_X.nunique()
 
-        keep_cols = ["字段类型", "缺失率", "枚举数", "平均值", "标准差", "最小值", "1%", "10%", "50%", "75%", "90%", "99%", "最大值"]
+        keep_cols = [
+            "字段类型",
+            "缺失率",
+            "枚举数",
+            "平均值",
+            "标准差",
+            "最小值",
+            "1%",
+            "10%",
+            "50%",
+            "75%",
+            "90%",
+            "99%",
+            "最大值",
+        ]
         keep_cols = [c for c in keep_cols if c in desc_stats.columns]
         result = importance.join(desc_stats[keep_cols], how="left")
         result = result.drop(columns=["样本数"], errors="ignore")
@@ -1002,8 +1048,13 @@ class QuickModelReport:
             tables: List[pd.DataFrame] = []
             for lbl in labels:
                 t = self.get_feature_bin_table(
-                    feature=feature, dataset=dataset, max_n_bins=max_n_bins,
-                    method=method, margins=margins, amount_col=amount_col, label=lbl,
+                    feature=feature,
+                    dataset=dataset,
+                    max_n_bins=max_n_bins,
+                    method=method,
+                    margins=margins,
+                    amount_col=amount_col,
+                    label=lbl,
                 )
                 tables.append(t)
             return _drop_bin_meta_cols(_merge_multi_label_bin_tables(tables, labels))
@@ -1090,10 +1141,11 @@ class QuickModelReport:
             if amount_col and amount_col in ds.X.columns:
                 amounts = pd.to_numeric(ds.X[amount_col], errors="coerce").fillna(0).clip(lower=0).to_numpy(dtype=float)
                 amounts_sorted = amounts[sorted_idx]
-                overall_bad_amount = float(
-                    (sorted_y * amounts_sorted).sum()
-                    / amounts_sorted.sum()
-                ) if amounts_sorted.sum() > 0 else overall_bad_rate
+                overall_bad_amount = (
+                    float((sorted_y * amounts_sorted).sum() / amounts_sorted.sum())
+                    if amounts_sorted.sum() > 0
+                    else overall_bad_rate
+                )
 
                 amt_bad_rates: Dict[str, float] = {}
                 amt_lifts: Dict[str, float] = {}
@@ -1103,9 +1155,7 @@ class QuickModelReport:
                     top_n = max(1, int(n * pct))
                     top_amt = amounts_sorted[:top_n]
                     top_y_sorted = sorted_y[:top_n]
-                    top_bad_amt = float(
-                        (top_y_sorted * top_amt).sum() / top_amt.sum()
-                    ) if top_amt.sum() > 0 else 0.0
+                    top_bad_amt = float((top_y_sorted * top_amt).sum() / top_amt.sum()) if top_amt.sum() > 0 else 0.0
                     lift_amt = top_bad_amt / overall_bad_amount if overall_bad_amount > 0 else 0.0
                     imp_amt = (top_bad_amt - overall_bad_amount) / overall_bad_amount if overall_bad_amount > 0 else 0.0
                     key = f"TOP {int(pct * 100)}%"
@@ -1144,14 +1194,14 @@ class QuickModelReport:
         per_label: Dict[str, pd.DataFrame] = {}
         for lbl in labels:
             sub = self._get_top_n_lift_table(
-                percentiles=percentiles, amount_col=amount_col, label=lbl,
+                percentiles=percentiles,
+                amount_col=amount_col,
+                label=lbl,
             )
             per_label[lbl] = sub.set_index(["数据集", "统计项"])
 
         result_df = pd.concat(per_label, axis=1)
-        result_df.columns = pd.MultiIndex.from_tuples(
-            list(result_df.columns), names=["标签", "统计指标"]
-        )
+        result_df.columns = pd.MultiIndex.from_tuples(list(result_df.columns), names=["标签", "统计指标"])
         result_df.index = result_df.index.set_names(["数据集", "统计项"])
         return result_df
 
@@ -1318,7 +1368,7 @@ class QuickModelReport:
 
         # --- 逐特征图表（分箱图、分布图、PSI图） ---
         ds_keys = list(self._datasets.keys())
-        for feat in (top_features or self.feature_names):
+        for feat in top_features or self.feature_names:
             # 分箱图：按 train/test 顺序分组
             bin_figs: List[str] = []
             for ds_key, ds in self._datasets.items():
@@ -1342,8 +1392,8 @@ class QuickModelReport:
                     col_raw = ds.X[feat]
                     col = col_raw.dropna()
                     # 检查是否为类别特征或低基数的数值特征
-                    is_categorical = col.dtype == 'object' or (
-                        col.dtype in ['int64', 'float64'] and col.nunique() <= 10
+                    is_categorical = col.dtype == "object" or (
+                        col.dtype in ["int64", "float64"] and col.nunique() <= 10
                     )
                     if is_categorical:
                         # 类别特征跳过KS图
@@ -1370,10 +1420,12 @@ class QuickModelReport:
                     test_mask = test_ds.X[feat].notna()
                     train_vals = train_ds.X[feat][train_mask]
                     test_vals = test_ds.X[feat][test_mask]
-                    psi_y = np.concatenate([
-                        train_ds.y.to_numpy()[train_mask.to_numpy()],
-                        test_ds.y.to_numpy()[test_mask.to_numpy()],
-                    ])
+                    psi_y = np.concatenate(
+                        [
+                            train_ds.y.to_numpy()[train_mask.to_numpy()],
+                            test_ds.y.to_numpy()[test_mask.to_numpy()],
+                        ]
+                    )
                     p = str(output_dir / f"psi_{feat}.png")
                     psi_result = psi_plot(
                         train_vals,
@@ -1396,6 +1448,7 @@ class QuickModelReport:
         if hasattr(self.model, "lr_model"):
             try:
                 from ..core.viz import plot_weights as _pw
+
                 p = str(output_dir / "plot_weights.png")
                 _pw(self.model.lr_model, save=p)
                 _safe_close_figs()
@@ -1413,16 +1466,21 @@ class QuickModelReport:
                     test_mask = score_test.notna()
                     score_train = score_train[train_mask]
                     score_test = score_test[test_mask]
-                    score_y = np.concatenate([
-                        train_ds.y.to_numpy()[train_mask.to_numpy()],
-                        test_ds.y.to_numpy()[test_mask.to_numpy()],
-                    ])
+                    score_y = np.concatenate(
+                        [
+                            train_ds.y.to_numpy()[train_mask.to_numpy()],
+                            test_ds.y.to_numpy()[test_mask.to_numpy()],
+                        ]
+                    )
                     p = str(output_dir / "score_psi.png")
                     score_psi_df = psi_plot(
                         score_train,
                         score_test,
                         y=score_y,
-                        desc="模型评分", save=p, result=True, plot=True,
+                        desc="模型评分",
+                        save=p,
+                        result=True,
+                        plot=True,
                         figsize=(15, 8),
                     )
                     _safe_close_figs()
@@ -1436,38 +1494,73 @@ class QuickModelReport:
 
     # ---------- 9. 模型摘要 ----------
 
+    # 模型摘要默认展示的指标（每个指标横向展开到各数据集）
+    _SUMMARY_METRICS = ["KS", "AUC", "样本数", "坏样本率"]
+
     def summary(self) -> pd.DataFrame:
+        """模型核心指标摘要表（多层列：统计指标 × 数据集；行：逾期指标）.
+
+        参考 :mod:`hscredit.report.rule_strategy` 中拒绝规则策略表的展示方式：
+        列为「统计指标 × 数据集」两层表头，便于同一指标在各数据集上横向对比；
+        行为不同逾期指标。``overdue`` + ``dpds`` 多标签模式下每个逾期标签独占一行，
+        单标签模式下仅一行（行名为目标列名）。
+
+        :return: 行索引为 ``逾期指标``、列为 ``(统计指标, 数据集)`` 两层表头的 DataFrame
+
+        **参考样例**
+
+        >>> report = ModelReport(model, datasets={'train': tr, 'test': te},
+        ...                           overdue=['MOB1'], dpds=[7, 3, 0])
+        >>> report.summary()  # 行: MOB1@7 / MOB1@3 / MOB1@0；列: (KS, 训练集) ...
+        """
         from ..core.metrics import ks, auc
 
-        rows: Dict[str, Any] = {"模型": self.model.__class__.__name__}
-        for ds in self._datasets.values():
-            prefix = ds.label
-            try:
-                rows[f"{prefix}_KS"] = ks(ds.y, ds.y_proba)
-            except Exception:
-                pass
-            try:
-                rows[f"{prefix}_AUC"] = auc(ds.y, ds.y_proba)
-            except Exception:
-                pass
-            rows[f"{prefix}_样本数"] = len(ds.y)
-            rows[f"{prefix}_坏样本率"] = float(ds.y.mean())
+        ordered_keys = ["train", "test"] + [k for k in self._datasets if k not in ("train", "test")]
+        ds_keys = [k for k in ordered_keys if k in self._datasets]
+        ds_labels = [self._datasets[k].label for k in ds_keys]
 
-        fi = self.get_feature_importance(top_n=5)
-        if not fi.empty:
-            rows["Top1特征"] = fi.index[0]
-            rows["Top1重要性"] = fi.iloc[0]["特征重要性"]
+        if self._is_multi_label():
+            targets = list(self._label_names)
+            display_map = self._overdue_label_map(separator="@") if self._is_overdue_cfg() else {}
+            index_labels = [display_map.get(t, t) for t in targets]
+        else:
+            targets = [None]
+            index_labels = [self._target_name or "target"]
 
-        return pd.DataFrame([rows])
+        rows: List[Dict[tuple, Any]] = []
+        for tgt in targets:
+            row: Dict[tuple, Any] = {}
+            for ds_key, ds_label in zip(ds_keys, ds_labels):
+                y_arr = self._get_y(ds_key, tgt)
+                proba = self._datasets[ds_key].y_proba
+                row[("KS", ds_label)] = _safe_binary_metric(ks, y_arr, proba)
+                row[("AUC", ds_label)] = _safe_binary_metric(auc, y_arr, proba)
+                row[("样本数", ds_label)] = len(y_arr)
+                row[("坏样本率", ds_label)] = float(y_arr.mean()) if len(y_arr) else np.nan
+            rows.append(row)
+
+        columns = pd.MultiIndex.from_tuples(
+            [(metric, ds_label) for metric in self._SUMMARY_METRICS for ds_label in ds_labels],
+            names=["统计指标", "数据集"],
+        )
+        index = pd.Index(index_labels, name="逾期指标")
+        return pd.DataFrame(rows, index=index, columns=columns)
 
     # ---------- 10. 控制台输出 ----------
 
     def print_report(self, n_bins: int = 10, **kwargs) -> None:
+        is_multi = self._is_multi_label()
+        labels_arg = self._label_names if is_multi else None
+
         print("=" * 72)
         print("模型评估快速报告")
         print("=" * 72)
         print("\n【模型性能指标】")
-        print(self.get_metrics().to_string(index=False))
+        if is_multi:
+            # 多标签模式：逐逾期标签展示「统计指标 × 数据集」摘要表
+            print(self.summary().to_string())
+        else:
+            print(self.get_metrics().to_string(index=False))
 
         importance = self.get_feature_importance(top_n=10)
         if not importance.empty:
@@ -1476,7 +1569,7 @@ class QuickModelReport:
 
         for ds_key, ds in self._datasets.items():
             print(f"\n【{ds.label}评分分箱效果】")
-            print(self.get_bin_table(ds_key, max_n_bins=n_bins).to_string(index=False))
+            print(self.get_bin_table(ds_key, max_n_bins=n_bins, labels=labels_arg).to_string(index=False))
         print("\n" + "=" * 72)
 
     # ---------- 11. to_excel ----------
@@ -1521,7 +1614,10 @@ class QuickModelReport:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 plot_paths, psi_tables = self._export_plots(
-                    plot_dir, n_bins=n_bins, bin_method=bin_method, amount_col=amount_col,
+                    plot_dir,
+                    n_bins=n_bins,
+                    bin_method=bin_method,
+                    amount_col=amount_col,
                 )
 
         writer = ExcelWriter()
@@ -1529,52 +1625,77 @@ class QuickModelReport:
         # ============================================================
         # 目录 Sheet
         # ============================================================
-        contents = pd.DataFrame([
-            {"序号": 1, "内容": "1-基本信息", "备注": "项目目标、样本选取、样本坏率分布"},
-            {"序号": 2, "内容": "2-模型性能", "备注": "模型效果、区分度、稳定性等内容"},
-            {"序号": 3, "内容": "3-入模变量分析", "备注": "模型变量有效性及不同数据集分箱情况"},
-            {"序号": 4, "内容": "4-稳定性分析", "备注": "评分分布、PSI、CSI等稳定性分析"},
-            {"序号": 5, "内容": "5-模型参数", "备注": "模型选型、参数及评分卡配置"},
-            {"序号": 6, "内容": "6-模型部署需求", "备注": "入模变量信息及测试用例"},
-        ])
+        contents = pd.DataFrame(
+            [
+                {"序号": 1, "内容": "1-基本信息", "备注": "项目目标、样本选取、样本坏率分布"},
+                {"序号": 2, "内容": "2-模型性能", "备注": "模型效果、区分度、稳定性等内容"},
+                {"序号": 3, "内容": "3-入模变量分析", "备注": "模型变量有效性及不同数据集分箱情况"},
+                {"序号": 4, "内容": "4-稳定性分析", "备注": "评分分布、PSI、CSI等稳定性分析"},
+                {"序号": 5, "内容": "5-模型参数", "备注": "模型选型、参数及评分卡配置"},
+                {"序号": 6, "内容": "6-模型部署需求", "备注": "入模变量信息及测试用例"},
+            ]
+        )
 
         ws = writer.get_sheet_by_name("目录")
-        end_row, _ = writer.insert_value2sheet(ws, (2, 2), value="模型评估报告", style="header_middle", end_space=(2, max_col))
-        end_row, _ = dataframe2excel(contents, writer, sheet_name=ws, start_row=end_row + 1,
-                                       left_cols=["内容", "备注"])
+        end_row, _ = writer.insert_value2sheet(
+            ws, (2, 2), value="模型评估报告", style="header_middle", end_space=(2, max_col)
+        )
+        end_row, _ = dataframe2excel(contents, writer, sheet_name=ws, start_row=end_row + 1, left_cols=["内容", "备注"])
 
         for i, row in contents.iterrows():
             try:
                 target_cell = writer.get_cell_space((2, 2))
-                writer.insert_hyperlink2sheet(ws, (end_row - len(contents) + i, 3), hyperlink=f"#'{row['内容']}'!{target_cell}")
+                writer.insert_hyperlink2sheet(
+                    ws, (end_row - len(contents) + i, 3), hyperlink=f"#'{row['内容']}'!{target_cell}"
+                )
             except Exception:
                 pass
 
-        _, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value="版本号:", style="middle", end_space=(end_row + 1, 2))
-        end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 3), value="V1.0", style="middle", end_space=(end_row + 1, 4))
+        _, _ = writer.insert_value2sheet(
+            ws, (end_row + 1, 2), value="版本号:", style="middle", end_space=(end_row + 1, 2)
+        )
+        end_row, _ = writer.insert_value2sheet(
+            ws, (end_row + 1, 3), value="V1.0", style="middle", end_space=(end_row + 1, 4)
+        )
         _, _ = writer.insert_value2sheet(ws, (end_row, 2), value="创建日期:", style="middle", end_space=(end_row, 2))
-        end_row, _ = writer.insert_value2sheet(ws, (end_row, 3), value=date.today().strftime("%Y-%m-%d"), style="middle", end_space=(end_row, 4))
+        end_row, _ = writer.insert_value2sheet(
+            ws, (end_row, 3), value=date.today().strftime("%Y-%m-%d"), style="middle", end_space=(end_row, 4)
+        )
         _, _ = writer.insert_value2sheet(ws, (end_row, 2), value="模型名称:", style="middle", end_space=(end_row, 2))
-        end_row, _ = writer.insert_value2sheet(ws, (end_row, 3), value=model_name, style="middle", end_space=(end_row, 4))
+        end_row, _ = writer.insert_value2sheet(
+            ws, (end_row, 3), value=model_name, style="middle", end_space=(end_row, 4)
+        )
 
         # ============================================================
         # 1-基本信息 Sheet
         # ============================================================
         ws = writer.get_sheet_by_name("1-基本信息")
-        end_row, _ = writer.insert_value2sheet(ws, (2, 2), value="一、基本信息", style="header_middle", end_space=(2, max_col))
+        end_row, _ = writer.insert_value2sheet(
+            ws, (2, 2), value="一、基本信息", style="header_middle", end_space=(2, max_col)
+        )
         try:
             writer.insert_hyperlink2sheet(ws, (2, 2), hyperlink="#'目录'!B2")
         except Exception:
             pass
 
         # 1.1 项目目标
-        end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value="1、项目目标", style="header_middle", align={"horizontal": "left"})
+        end_row, _ = writer.insert_value2sheet(
+            ws, (end_row + 2, 2), value="1、项目目标", style="header_middle", align={"horizontal": "left"}
+        )
         desc_text = project_desc or f"使用 {model_name} 模型进行信用风险评估"
-        end_row, _ = writer.insert_value2sheet(ws, (end_row, 2), value=desc_text, style="middle", end_space=(end_row, max_col), align={"horizontal": "left"})
-
+        end_row, _ = writer.insert_value2sheet(
+            ws,
+            (end_row, 2),
+            value=desc_text,
+            style="middle",
+            end_space=(end_row, max_col),
+            align={"horizontal": "left"},
+        )
 
         # 1.2 数据样本描述
-        end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value="2、数据样本描述", style="header_middle", align={"horizontal": "left"})
+        end_row, _ = writer.insert_value2sheet(
+            ws, (end_row + 2, 2), value="2、数据样本描述", style="header_middle", align={"horizontal": "left"}
+        )
 
         label_text = self._target_name or "TARGET"
 
@@ -1612,10 +1733,7 @@ class QuickModelReport:
             else:
                 overall_bad = int(sum(int(self._datasets[k].y.sum()) for k in ds_keys_list))
                 overall_bad_rate = overall_bad / overall_n * 100
-                overall_desc = (
-                    f"样本数: {overall_n}, "
-                    f"{label_text}: {round(overall_bad_rate, 2)}%"
-                )
+                overall_desc = f"样本数: {overall_n}, " f"{label_text}: {round(overall_bad_rate, 2)}%"
         else:
             overall_desc = "N/A"
 
@@ -1646,11 +1764,14 @@ class QuickModelReport:
             ds_rows.append({"统计项": ds_label, "统计内容": content})
 
         desc_df = pd.DataFrame(fixed_rows + ds_rows)
-        end_row, _ = dataframe2excel(desc_df, writer, sheet_name=ws, start_row=end_row + 1,
-                                     left_cols=["统计项", "统计内容"])
+        end_row, _ = dataframe2excel(
+            desc_df, writer, sheet_name=ws, start_row=end_row + 1, left_cols=["统计项", "统计内容"]
+        )
 
         # 1.3 数据样本统计
-        end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value="3、数据样本统计", style="header_middle", align={"horizontal": "left"})
+        end_row, _ = writer.insert_value2sheet(
+            ws, (end_row + 2, 2), value="3、数据样本统计", style="header_middle", align={"horizontal": "left"}
+        )
         ds_keys_list = list(self._datasets.keys())
         dataset_labels = [self._datasets[k].label for k in ds_keys_list]
 
@@ -1678,29 +1799,37 @@ class QuickModelReport:
             stat_df.index.name = "数据集"
             stat_start_row = end_row + 1
             end_row, _ = dataframe2excel(
-                stat_df, writer, sheet_name=ws, start_row=stat_start_row, index=True,
+                stat_df,
+                writer,
+                sheet_name=ws,
+                start_row=stat_start_row,
+                index=True,
                 percent_cols=[c for c in multi_cols if c[0] == "坏样本率"],
             )
-            writer.insert_value2sheet(
-                ws, (stat_start_row, 2), value="统计详情", style="header_left"
-            )
+            writer.insert_value2sheet(ws, (stat_start_row, 2), value="统计详情", style="header_left")
         else:
             sample_rows: List[Dict[str, Any]] = []
             for ds_key, ds in self._datasets.items():
-                sample_rows.append({
-                    "数据集": ds.label,
-                    "样本数": len(ds.y),
-                    "好样本数": int((1 - ds.y).sum()),
-                    "坏样本数": int(ds.y.sum()),
-                    "坏样本率": float(ds.y.mean()),
-                })
+                sample_rows.append(
+                    {
+                        "数据集": ds.label,
+                        "样本数": len(ds.y),
+                        "好样本数": int((1 - ds.y).sum()),
+                        "坏样本数": int(ds.y.sum()),
+                        "坏样本率": float(ds.y.mean()),
+                    }
+                )
             sample_df = pd.DataFrame(sample_rows)
-            end_row, _ = dataframe2excel(sample_df, writer, sheet_name=ws, start_row=end_row + 1, percent_cols=["坏样本率"])
-        
+            end_row, _ = dataframe2excel(
+                sample_df, writer, sheet_name=ws, start_row=end_row + 1, percent_cols=["坏样本率"]
+            )
+
         # 1.4 样本分布情况
         freq_label_map = {"D": "日", "W": "周", "M": "月", "Q": "季度", "Y": "年"}
         if date_col or group_col:
-            end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value="4、样本分布情况", style="header_middle", align={"horizontal": "left"})
+            end_row, _ = writer.insert_value2sheet(
+                ws, (end_row + 2, 2), value="4、样本分布情况", style="header_middle", align={"horizontal": "left"}
+            )
 
             def _sorted_unique(values) -> List:
                 uniq = pd.unique(pd.Series(values))
@@ -1741,7 +1870,9 @@ class QuickModelReport:
                             n = len(y_g)
                             nb = int(y_g.sum())
                             row = {
-                                "样本总数": n, "好样本数": n - nb, "坏样本数": nb,
+                                "样本总数": n,
+                                "好样本数": n - nb,
+                                "坏样本数": nb,
                                 "坏样本率": float(y_g.mean()) if n else 0.0,
                             }
                         rows.append(row)
@@ -1766,13 +1897,16 @@ class QuickModelReport:
                     pct = ["坏样本率"]
                 dist_start_row = end_row + 1
                 result = dataframe2excel(
-                    dist_df, writer, sheet_name=ws, title=title, start_row=end_row + 1,
-                    index=True, percent_cols=pct,
+                    dist_df,
+                    writer,
+                    sheet_name=ws,
+                    title=title,
+                    start_row=end_row + 1,
+                    index=True,
+                    percent_cols=pct,
                 )
                 if is_multi:
-                    writer.insert_value2sheet(
-                        ws, (dist_start_row + 2, 2), value="统计详情", style="header_left"
-                    )
+                    writer.insert_value2sheet(ws, (dist_start_row + 2, 2), value="统计详情", style="header_left")
                 return result
 
             # 时间分布
@@ -1795,6 +1929,7 @@ class QuickModelReport:
 
             # 分组分布
             if group_col:
+
                 def _group_of(ds_key, ds):
                     if group_col not in ds.X.columns:
                         return None
@@ -1808,7 +1943,9 @@ class QuickModelReport:
         # 2-模型性能 Sheet
         # ============================================================
         ws = writer.get_sheet_by_name("2-模型性能")
-        end_row, _ = writer.insert_value2sheet(ws, (2, 2), value="二、模型性能评估", style="header_middle", end_space=(2, max_col))
+        end_row, _ = writer.insert_value2sheet(
+            ws, (2, 2), value="二、模型性能评估", style="header_middle", end_space=(2, max_col)
+        )
         try:
             writer.insert_hyperlink2sheet(ws, (2, 2), hyperlink="#'目录'!B2")
         except Exception:
@@ -1817,11 +1954,18 @@ class QuickModelReport:
         section_idx = 1
 
         # 2.1 性能指标
-        end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value=f"{section_idx}、模型性能验证指标", style="header_middle", align={"horizontal": "left"})
+        end_row, _ = writer.insert_value2sheet(
+            ws,
+            (end_row + 2, 2),
+            value=f"{section_idx}、模型性能验证指标",
+            style="header_middle",
+            align={"horizontal": "left"},
+        )
         if is_multi:
             # 多标签模式：列为「标签 × 数据集」二级表头，行为 KS/AUC/样本数/坏样本率。
             import itertools
             from ..core.metrics import ks, auc
+
             metric_items = ["KS", "AUC", "样本数", "坏样本率"]
             col_tuples = list(itertools.product(self._label_names, dataset_labels))
             multi_cols = pd.MultiIndex.from_tuples(col_tuples, names=["统计项", "统计指标"])
@@ -1846,18 +1990,27 @@ class QuickModelReport:
             metrics_df.index.name = "统计指标"
             metrics_start_row = end_row + 1
             end_row, _ = dataframe2excel(
-                metrics_df, writer, sheet_name=ws, start_row=metrics_start_row, index=True,
-                percent_rows=["坏样本率"], custom_rows=["样本数"], custom_format="#,##0",
+                metrics_df,
+                writer,
+                sheet_name=ws,
+                start_row=metrics_start_row,
+                index=True,
+                percent_rows=["坏样本率"],
+                custom_rows=["样本数"],
+                custom_format="#,##0",
             )
-            writer.insert_value2sheet(
-                ws, (metrics_start_row, 2), value="统计项", style="header_middle"
-            )
+            writer.insert_value2sheet(ws, (metrics_start_row, 2), value="统计项", style="header_middle")
         else:
             metrics = self.get_metrics().set_index("统计项")
             end_row, _ = dataframe2excel(
-                metrics, writer, sheet_name=ws,
-                start_row=end_row + 1, index=True,
-                percent_rows=["坏样本率"], custom_rows=["样本数"], custom_format="#,##0",
+                metrics,
+                writer,
+                sheet_name=ws,
+                start_row=end_row + 1,
+                index=True,
+                percent_rows=["坏样本率"],
+                custom_rows=["样本数"],
+                custom_format="#,##0",
             )
         section_idx += 1
 
@@ -1865,15 +2018,30 @@ class QuickModelReport:
         if date_col:
             monthly_metrics = self._get_monthly_metrics(date_col)
             if not monthly_metrics.empty:
-                end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value=f"{section_idx}、分月模型效果", style="header_middle", align={"horizontal": "left"})
+                end_row, _ = writer.insert_value2sheet(
+                    ws,
+                    (end_row + 2, 2),
+                    value=f"{section_idx}、分月模型效果",
+                    style="header_middle",
+                    align={"horizontal": "left"},
+                )
                 end_row, _ = dataframe2excel(
-                    monthly_metrics, writer, sheet_name=ws, start_row=end_row + 1,
+                    monthly_metrics,
+                    writer,
+                    sheet_name=ws,
+                    start_row=end_row + 1,
                     percent_cols=["坏样本率", "KS", "AUC"],
                 )
                 section_idx += 1
 
         # 2.3 模型尾部区分能力
-        end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value=f"{section_idx}、模型尾部区分能力（TOP n%）", style="header_middle", align={"horizontal": "left"})
+        end_row, _ = writer.insert_value2sheet(
+            ws,
+            (end_row + 2, 2),
+            value=f"{section_idx}、模型尾部区分能力（TOP n%）",
+            style="header_middle",
+            align={"horizontal": "left"},
+        )
         pct_keys = ["TOP 1%", "TOP 3%", "TOP 5%", "TOP 10%", "TOTAL"]
         if is_multi:
             # 多标签合并模式：一次性生成 MultiIndex 列的 LIFT 表
@@ -1890,19 +2058,27 @@ class QuickModelReport:
                 )
                 table_start = end_row + 1
                 end_row1, end_col1 = dataframe2excel(
-                    lift_table, writer, sheet_name=ws,
-                    title="订单口径", start_row=table_start, start_col=2,
-                    percent_cols=list(lift_table.columns), index=True,
+                    lift_table,
+                    writer,
+                    sheet_name=ws,
+                    title="订单口径",
+                    start_row=table_start,
+                    start_col=2,
+                    percent_cols=list(lift_table.columns),
+                    index=True,
                 )
                 end_row2, _ = dataframe2excel(
-                    lift_amt, writer, sheet_name=ws,
-                    title="金额口径", start_row=table_start, start_col=end_col1 + 1,
-                    percent_cols=list(lift_amt.columns), index=True,
+                    lift_amt,
+                    writer,
+                    sheet_name=ws,
+                    title="金额口径",
+                    start_row=table_start,
+                    start_col=end_col1 + 1,
+                    percent_cols=list(lift_amt.columns),
+                    index=True,
                 )
                 end_row = max(end_row1, end_row2)
-                writer.insert_value2sheet(
-                    ws, (table_start + 2, 2), value="统计指标", style="header_left"
-                )
+                writer.insert_value2sheet(ws, (table_start + 2, 2), value="统计指标", style="header_left")
                 writer.insert_value2sheet(
                     ws,
                     (table_start + 2, end_col1 + 1),
@@ -1911,11 +2087,10 @@ class QuickModelReport:
                 )
                 try:
                     from openpyxl.utils import get_column_letter
+
                     # 金额口径表起始列为 end_col1 + 1，占据 索引层级 + 数据列 共 nlevels+ncols
                     # 列，故其最后一列为 (end_col1 + 1) + nlevels + ncols - 1。
-                    filter_end_col = (
-                        end_col1 + 1 + lift_amt.index.nlevels + len(lift_amt.columns) - 1
-                    )
+                    filter_end_col = end_col1 + 1 + lift_amt.index.nlevels + len(lift_amt.columns) - 1
                     header_row = table_start + lift_table.columns.nlevels + 1
                     writer.add_auto_filter(
                         ws,
@@ -1930,14 +2105,17 @@ class QuickModelReport:
                 )
                 table_start = end_row + 1
                 end_row, _ = dataframe2excel(
-                    lift_table, writer, sheet_name=ws, start_row=table_start,
-                    percent_cols=list(lift_table.columns), index=True,
+                    lift_table,
+                    writer,
+                    sheet_name=ws,
+                    start_row=table_start,
+                    percent_cols=list(lift_table.columns),
+                    index=True,
                 )
-                writer.insert_value2sheet(
-                    ws, (table_start, 2), value="统计指标", style="header_middle"
-                )
+                writer.insert_value2sheet(ws, (table_start, 2), value="统计指标", style="header_middle")
                 try:
                     from openpyxl.utils import get_column_letter
+
                     filter_end_col = 2 + lift_table.index.nlevels + len(lift_table.columns) - 1
                     writer.add_auto_filter(
                         ws,
@@ -1952,13 +2130,21 @@ class QuickModelReport:
             lift_amt = self._get_top_n_lift_table(percentiles=(0.01, 0.03, 0.05, 0.10), amount_col=amount_col)
             table_start = end_row + 1
             end_row1, end_col1 = dataframe2excel(
-                lift_table, writer, sheet_name=ws,
-                title="订单口径", start_row=table_start, start_col=2,
+                lift_table,
+                writer,
+                sheet_name=ws,
+                title="订单口径",
+                start_row=table_start,
+                start_col=2,
                 percent_cols=pct_keys,
             )
             end_row2, _ = dataframe2excel(
-                lift_amt, writer, sheet_name=ws,
-                title="金额口径", start_row=table_start, start_col=end_col1 + 2,
+                lift_amt,
+                writer,
+                sheet_name=ws,
+                title="金额口径",
+                start_row=table_start,
+                start_col=end_col1 + 2,
                 percent_cols=pct_keys,
             )
             end_row = max(end_row1, end_row2)
@@ -1966,6 +2152,7 @@ class QuickModelReport:
                 n_lift_cols = len(lift_table.columns)
                 filter_end_col = end_col1 + 2 + n_lift_cols - 1
                 from openpyxl.utils import get_column_letter
+
                 writer.add_auto_filter(ws, f"B{table_start + 2}:{get_column_letter(filter_end_col)}{end_row - 1}")
             except Exception:
                 pass
@@ -1973,12 +2160,18 @@ class QuickModelReport:
             lift_table = self._get_top_n_lift_table()
             table_start = end_row + 3
             end_row, _ = dataframe2excel(
-                lift_table, writer, sheet_name=ws, start_row=table_start,
+                lift_table,
+                writer,
+                sheet_name=ws,
+                start_row=table_start,
                 percent_cols=pct_keys,
             )
             try:
                 from openpyxl.utils import get_column_letter
-                writer.add_auto_filter(ws, f"B{table_start}:{get_column_letter(len(lift_table.columns) + 1)}{end_row - 1}")
+
+                writer.add_auto_filter(
+                    ws, f"B{table_start}:{get_column_letter(len(lift_table.columns) + 1)}{end_row - 1}"
+                )
             except Exception:
                 pass
         if not is_multi:
@@ -1988,14 +2181,26 @@ class QuickModelReport:
         if date_col:
             psi_matrix = self._get_monthly_psi_matrix(date_col)
             if not psi_matrix.empty:
-                end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value=f"{section_idx}、分月对比PSI", style="header_middle", align={"horizontal": "left"})
+                end_row, _ = writer.insert_value2sheet(
+                    ws,
+                    (end_row + 2, 2),
+                    value=f"{section_idx}、分月对比PSI",
+                    style="header_middle",
+                    align={"horizontal": "left"},
+                )
                 end_row, _ = dataframe2excel(psi_matrix, writer, sheet_name=ws, start_row=end_row + 1, index=True)
                 section_idx += 1
 
         # 2.5 各数据集评分排序性
         for ds_key, ds in self._datasets.items():
             tag = ds.label
-            end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value=f"{section_idx}、{tag}评分排序性", style="header_middle", align={"horizontal": "left"})
+            end_row, _ = writer.insert_value2sheet(
+                ws,
+                (end_row + 2, 2),
+                value=f"{section_idx}、{tag}评分排序性",
+                style="header_middle",
+                align={"horizontal": "left"},
+            )
 
             figs = plot_paths.get(f"model_{ds_key}", [])
 
@@ -2005,9 +2210,7 @@ class QuickModelReport:
             max_img_end_row = img_start_row
             for fig in figs:
                 try:
-                    img_end_row, _ = writer.insert_pic2sheet(
-                        ws, fig, (img_start_row, current_col), figsize=(500, 300)
-                    )
+                    img_end_row, _ = writer.insert_pic2sheet(ws, fig, (img_start_row, current_col), figsize=(500, 300))
                     current_col = _next_image_col(ws, current_col, 500)
                     max_img_end_row = max(max_img_end_row, img_end_row)
                 except Exception:
@@ -2019,47 +2222,80 @@ class QuickModelReport:
                 # 多标签合并模式：所有标签合并为一个 MultiIndex 列的分箱表
                 if amount_col:
                     order_table = self.get_bin_table(
-                        ds_key, method=bin_method, max_n_bins=n_bins,
-                        margins=True, labels=self._label_names,
+                        ds_key,
+                        method=bin_method,
+                        max_n_bins=n_bins,
+                        margins=True,
+                        labels=self._label_names,
                     )
                     amount_table = self.get_bin_table(
-                        ds_key, method=bin_method, max_n_bins=n_bins,
-                        amount_col=amount_col, margins=True, labels=self._label_names,
+                        ds_key,
+                        method=bin_method,
+                        max_n_bins=n_bins,
+                        amount_col=amount_col,
+                        margins=True,
+                        labels=self._label_names,
                     )
                     # 从 MultiIndex 列中提取百分位列
-                    pct_cols = [c for c in order_table.columns
-                                if (c[1] if isinstance(c, tuple) else c) in self._PERCENT_COLS]
-                    cond_cols = [c for c in order_table.columns
-                                 if (c[1] if isinstance(c, tuple) else c) in self._CONDITION_COLS]
-                    amt_pct = [c for c in amount_table.columns
-                               if (c[1] if isinstance(c, tuple) else c) in self._PERCENT_COLS]
-                    amt_cond = [c for c in amount_table.columns
-                                if (c[1] if isinstance(c, tuple) else c) in self._CONDITION_COLS]
+                    pct_cols = [
+                        c for c in order_table.columns if (c[1] if isinstance(c, tuple) else c) in self._PERCENT_COLS
+                    ]
+                    cond_cols = [
+                        c for c in order_table.columns if (c[1] if isinstance(c, tuple) else c) in self._CONDITION_COLS
+                    ]
+                    amt_pct = [
+                        c for c in amount_table.columns if (c[1] if isinstance(c, tuple) else c) in self._PERCENT_COLS
+                    ]
+                    amt_cond = [
+                        c for c in amount_table.columns if (c[1] if isinstance(c, tuple) else c) in self._CONDITION_COLS
+                    ]
                     order_start_row = end_row + 1
                     order_end_row, order_end_col = dataframe2excel(
-                        order_table, writer, sheet_name=ws,
-                        title=f"{tag} 订单口径", start_row=order_start_row, start_col=2,
-                        percent_cols=pct_cols, condition_cols=cond_cols, condition_color="F76E6C",
+                        order_table,
+                        writer,
+                        sheet_name=ws,
+                        title=f"{tag} 订单口径",
+                        start_row=order_start_row,
+                        start_col=2,
+                        percent_cols=pct_cols,
+                        condition_cols=cond_cols,
+                        condition_color="F76E6C",
                     )
                     amount_end_row, _ = dataframe2excel(
-                        amount_table, writer, sheet_name=ws,
-                        title=f"{tag} 金额口径", start_row=order_start_row, start_col=order_end_col + 1,
-                        percent_cols=amt_pct, condition_cols=amt_cond, condition_color="F76E6C",
+                        amount_table,
+                        writer,
+                        sheet_name=ws,
+                        title=f"{tag} 金额口径",
+                        start_row=order_start_row,
+                        start_col=order_end_col + 1,
+                        percent_cols=amt_pct,
+                        condition_cols=amt_cond,
+                        condition_color="F76E6C",
                     )
                     end_row = max(order_end_row, amount_end_row)
                 else:
                     order_table = self.get_bin_table(
-                        ds_key, method=bin_method, max_n_bins=n_bins,
-                        margins=True, labels=self._label_names,
+                        ds_key,
+                        method=bin_method,
+                        max_n_bins=n_bins,
+                        margins=True,
+                        labels=self._label_names,
                     )
-                    pct_cols = [c for c in order_table.columns
-                                if (c[1] if isinstance(c, tuple) else c) in self._PERCENT_COLS]
-                    cond_cols = [c for c in order_table.columns
-                                 if (c[1] if isinstance(c, tuple) else c) in self._CONDITION_COLS]
+                    pct_cols = [
+                        c for c in order_table.columns if (c[1] if isinstance(c, tuple) else c) in self._PERCENT_COLS
+                    ]
+                    cond_cols = [
+                        c for c in order_table.columns if (c[1] if isinstance(c, tuple) else c) in self._CONDITION_COLS
+                    ]
                     end_row, _ = dataframe2excel(
-                        order_table, writer, sheet_name=ws,
-                        title=f"{tag} 评分有效性", start_row=end_row + 1,
-                        percent_cols=pct_cols, condition_cols=cond_cols, condition_color="F76E6C",
+                        order_table,
+                        writer,
+                        sheet_name=ws,
+                        title=f"{tag} 评分有效性",
+                        start_row=end_row + 1,
+                        percent_cols=pct_cols,
+                        condition_cols=cond_cols,
+                        condition_color="F76E6C",
                     )
             elif amount_col:
                 # 订单口径和金额口径左右并排（参考3-入模变量分析的分箱表布局）
@@ -2068,18 +2304,32 @@ class QuickModelReport:
                 pct_cols = [c for c in self._PERCENT_COLS if c in order_table.columns]
                 cond_cols = [c for c in self._CONDITION_COLS if c in order_table.columns]
                 order_end_row, order_end_col = dataframe2excel(
-                    order_table, writer, sheet_name=ws,
-                    title=f"{tag} 订单口径", start_row=order_start_row, start_col=2,
-                    percent_cols=pct_cols, condition_cols=cond_cols, condition_color="F76E6C",
+                    order_table,
+                    writer,
+                    sheet_name=ws,
+                    title=f"{tag} 订单口径",
+                    start_row=order_start_row,
+                    start_col=2,
+                    percent_cols=pct_cols,
+                    condition_cols=cond_cols,
+                    condition_color="F76E6C",
                 )
                 try:
-                    amount_table = self.get_bin_table(ds_key, method=bin_method, max_n_bins=n_bins, amount_col=amount_col, margins=True)
+                    amount_table = self.get_bin_table(
+                        ds_key, method=bin_method, max_n_bins=n_bins, amount_col=amount_col, margins=True
+                    )
                     amt_pct = [c for c in self._PERCENT_COLS if c in amount_table.columns]
                     amt_cond = [c for c in self._CONDITION_COLS if c in amount_table.columns]
                     amount_end_row, _ = dataframe2excel(
-                        amount_table, writer, sheet_name=ws,
-                        title=f"{tag} 金额口径", start_row=order_start_row, start_col=order_end_col + 1,
-                        percent_cols=amt_pct, condition_cols=amt_cond, condition_color="F76E6C",
+                        amount_table,
+                        writer,
+                        sheet_name=ws,
+                        title=f"{tag} 金额口径",
+                        start_row=order_start_row,
+                        start_col=order_end_col + 1,
+                        percent_cols=amt_pct,
+                        condition_cols=amt_cond,
+                        condition_color="F76E6C",
                     )
                     end_row = max(order_end_row, amount_end_row)
                 except Exception:
@@ -2089,9 +2339,14 @@ class QuickModelReport:
                 pct_cols = [c for c in self._PERCENT_COLS if c in order_table.columns]
                 cond_cols = [c for c in self._CONDITION_COLS if c in order_table.columns]
                 end_row, _ = dataframe2excel(
-                    order_table, writer, sheet_name=ws,
-                    title=f"{tag} 评分有效性", start_row=end_row + 1,
-                    percent_cols=pct_cols, condition_cols=cond_cols, condition_color="F76E6C",
+                    order_table,
+                    writer,
+                    sheet_name=ws,
+                    title=f"{tag} 评分有效性",
+                    start_row=end_row + 1,
+                    percent_cols=pct_cols,
+                    condition_cols=cond_cols,
+                    condition_color="F76E6C",
                 )
             section_idx += 1
 
@@ -2100,21 +2355,31 @@ class QuickModelReport:
         # 3-入模变量分析 Sheet
         # ============================================================
         ws = writer.get_sheet_by_name("3-入模变量分析")
-        end_row, _ = writer.insert_value2sheet(ws, (2, 2), value="三、入模变量分析", style="header_middle", end_space=(2, max_col))
+        end_row, _ = writer.insert_value2sheet(
+            ws, (2, 2), value="三、入模变量分析", style="header_middle", end_space=(2, max_col)
+        )
         try:
             writer.insert_hyperlink2sheet(ws, (2, 2), hyperlink="#'目录'!B2")
         except Exception:
             pass
 
         # 3.1 入模变量重要性及分布情况
-        end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value="1、入模变量重要性及分布情况", style="header_middle", align={"horizontal": "left"})
+        end_row, _ = writer.insert_value2sheet(
+            ws,
+            (end_row + 2, 2),
+            value="1、入模变量重要性及分布情况",
+            style="header_middle",
+            align={"horizontal": "left"},
+        )
         features_summary = self._get_features_summary()
         if "特征名" not in features_summary.columns:
             index_name = features_summary.index.name or "index"
             features_summary = features_summary.reset_index().rename(columns={index_name: "特征名"})
         features_summary_start_row = end_row + 1
         end_row, _ = dataframe2excel(
-            features_summary, writer, sheet_name=ws,
+            features_summary,
+            writer,
+            sheet_name=ws,
             start_row=features_summary_start_row,
             right_cols=[0],
         )
@@ -2125,11 +2390,15 @@ class QuickModelReport:
         }
 
         # 3.2 相关性
-        end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value="2、入模变量相关性", style="header_middle", align={"horizontal": "left"})
+        end_row, _ = writer.insert_value2sheet(
+            ws, (end_row + 2, 2), value="2、入模变量相关性", style="header_middle", align={"horizontal": "left"}
+        )
         corr_df = self.get_features_corr()
         corr_figs = plot_paths.get("feature_corr", [])
         end_row, _ = dataframe2excel(
-            corr_df, writer, sheet_name=ws,
+            corr_df,
+            writer,
+            sheet_name=ws,
             start_row=end_row + 1,
             percent_cols=corr_df.columns.tolist(),
             index=True,
@@ -2138,7 +2407,9 @@ class QuickModelReport:
         )
 
         # 3.3 入模变量有效性分析
-        end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value="3、入模变量有效性分析", style="header_middle", align={"horizontal": "left"})
+        end_row, _ = writer.insert_value2sheet(
+            ws, (end_row + 2, 2), value="3、入模变量有效性分析", style="header_middle", align={"horizontal": "left"}
+        )
 
         importance = self.get_feature_importance()
         feature_list = importance.index.tolist() if not importance.empty else self.feature_names
@@ -2179,9 +2450,7 @@ class QuickModelReport:
             max_img_end_row = img_start_row
             for fig in all_figs:
                 try:
-                    img_end_row, _ = writer.insert_pic2sheet(
-                        ws, fig, (img_start_row, current_col), figsize=(500, 300)
-                    )
+                    img_end_row, _ = writer.insert_pic2sheet(ws, fig, (img_start_row, current_col), figsize=(500, 300))
                     current_col = _next_image_col(ws, current_col, 500)
                     max_img_end_row = max(max_img_end_row, img_end_row)
                 except Exception:
@@ -2194,45 +2463,78 @@ class QuickModelReport:
                 try:
                     labels_arg = self._label_names if is_multi else None
                     ft = self.get_feature_bin_table(
-                        feat, ds_key, max_n_bins=n_bins, method=bin_method,
-                        margins=True, labels=labels_arg,
+                        feat,
+                        ds_key,
+                        max_n_bins=n_bins,
+                        method=bin_method,
+                        margins=True,
+                        labels=labels_arg,
                     )
-                    ft_pct = [c for c in ft.columns if c[-1] in self._PERCENT_COLS] if isinstance(
-                        ft.columns, pd.MultiIndex
-                    ) else [c for c in self._PERCENT_COLS if c in ft.columns]
-                    ft_cond = [c for c in ft.columns if c[-1] in self._CONDITION_COLS] if isinstance(
-                        ft.columns, pd.MultiIndex
-                    ) else [c for c in self._CONDITION_COLS if c in ft.columns]
+                    ft_pct = (
+                        [c for c in ft.columns if c[-1] in self._PERCENT_COLS]
+                        if isinstance(ft.columns, pd.MultiIndex)
+                        else [c for c in self._PERCENT_COLS if c in ft.columns]
+                    )
+                    ft_cond = (
+                        [c for c in ft.columns if c[-1] in self._CONDITION_COLS]
+                        if isinstance(ft.columns, pd.MultiIndex)
+                        else [c for c in self._CONDITION_COLS if c in ft.columns]
+                    )
 
                     if amount_col:
                         table_start = end_row + 1
                         order_end_row, order_end_col = dataframe2excel(
-                            ft, writer, sheet_name=ws,
-                            title=f"{ds.label} 订单口径", start_row=table_start, start_col=2,
-                            percent_cols=ft_pct, condition_cols=ft_cond, condition_color="F76E6C",
+                            ft,
+                            writer,
+                            sheet_name=ws,
+                            title=f"{ds.label} 订单口径",
+                            start_row=table_start,
+                            start_col=2,
+                            percent_cols=ft_pct,
+                            condition_cols=ft_cond,
+                            condition_color="F76E6C",
                         )
                         ft_amt = self.get_feature_bin_table(
-                            feat, ds_key, max_n_bins=n_bins, method=bin_method,
-                            margins=True, amount_col=amount_col, labels=labels_arg,
+                            feat,
+                            ds_key,
+                            max_n_bins=n_bins,
+                            method=bin_method,
+                            margins=True,
+                            amount_col=amount_col,
+                            labels=labels_arg,
                         )
-                        amt_pct = [c for c in ft_amt.columns if c[-1] in self._PERCENT_COLS] if isinstance(
-                            ft_amt.columns, pd.MultiIndex
-                        ) else [c for c in self._PERCENT_COLS if c in ft_amt.columns]
-                        amt_cond = [c for c in ft_amt.columns if c[-1] in self._CONDITION_COLS] if isinstance(
-                            ft_amt.columns, pd.MultiIndex
-                        ) else [c for c in self._CONDITION_COLS if c in ft_amt.columns]
+                        amt_pct = (
+                            [c for c in ft_amt.columns if c[-1] in self._PERCENT_COLS]
+                            if isinstance(ft_amt.columns, pd.MultiIndex)
+                            else [c for c in self._PERCENT_COLS if c in ft_amt.columns]
+                        )
+                        amt_cond = (
+                            [c for c in ft_amt.columns if c[-1] in self._CONDITION_COLS]
+                            if isinstance(ft_amt.columns, pd.MultiIndex)
+                            else [c for c in self._CONDITION_COLS if c in ft_amt.columns]
+                        )
                         amount_end_row, _ = dataframe2excel(
-                            ft_amt, writer, sheet_name=ws,
-                            title=f"{ds.label} 金额口径", start_row=table_start,
-                            start_col=order_end_col + 1, percent_cols=amt_pct,
-                            condition_cols=amt_cond, condition_color="F76E6C",
+                            ft_amt,
+                            writer,
+                            sheet_name=ws,
+                            title=f"{ds.label} 金额口径",
+                            start_row=table_start,
+                            start_col=order_end_col + 1,
+                            percent_cols=amt_pct,
+                            condition_cols=amt_cond,
+                            condition_color="F76E6C",
                         )
                         end_row = max(order_end_row, amount_end_row)
                     else:
                         end_row, _ = dataframe2excel(
-                            ft, writer, sheet_name=ws,
-                            title=ds.label, start_row=end_row + 1,
-                            percent_cols=ft_pct, condition_cols=ft_cond, condition_color="F76E6C",
+                            ft,
+                            writer,
+                            sheet_name=ws,
+                            title=ds.label,
+                            start_row=end_row + 1,
+                            percent_cols=ft_pct,
+                            condition_cols=ft_cond,
+                            condition_color="F76E6C",
                         )
                 except Exception as exc:
                     logger.warning("生成特征 %s 的 %s 分箱表失败: %s", feat, ds.label, exc)
@@ -2248,8 +2550,11 @@ class QuickModelReport:
                         pass
             if isinstance(psi_df, pd.DataFrame) and not psi_df.empty:
                 end_row, _ = dataframe2excel(
-                    psi_df, writer, sheet_name=ws,
-                    title="PSI稳定性分析", start_row=end_row + 1,
+                    psi_df,
+                    writer,
+                    sheet_name=ws,
+                    title="PSI稳定性分析",
+                    start_row=end_row + 1,
                 )
 
         try:
@@ -2261,7 +2566,9 @@ class QuickModelReport:
         # 4-稳定性分析 Sheet
         # ============================================================
         ws = writer.get_sheet_by_name("4-稳定性分析")
-        end_row, _ = writer.insert_value2sheet(ws, (2, 2), value="四、模型稳定性分析", style="header_middle", end_space=(2, max_col))
+        end_row, _ = writer.insert_value2sheet(
+            ws, (2, 2), value="四、模型稳定性分析", style="header_middle", end_space=(2, max_col)
+        )
         try:
             writer.insert_hyperlink2sheet(ws, (2, 2), hyperlink="#'目录'!B2")
         except Exception:
@@ -2270,7 +2577,13 @@ class QuickModelReport:
         stab_section = 1
 
         # 4.1 评分分布统计
-        end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value=f"{stab_section}、评分分布统计", style="header_middle", align={"horizontal": "left"})
+        end_row, _ = writer.insert_value2sheet(
+            ws,
+            (end_row + 2, 2),
+            value=f"{stab_section}、评分分布统计",
+            style="header_middle",
+            align={"horizontal": "left"},
+        )
         score_dist_rows: List[Dict[str, Any]] = []
         for ds_key, ds in self._datasets.items():
             sc = ds.score
@@ -2286,7 +2599,10 @@ class QuickModelReport:
             score_dist_rows.append(row)
         score_dist_df = pd.DataFrame(score_dist_rows)
         end_row, _ = dataframe2excel(
-            score_dist_df, writer, sheet_name=ws, start_row=end_row + 1,
+            score_dist_df,
+            writer,
+            sheet_name=ws,
+            start_row=end_row + 1,
         )
         stab_section += 1
 
@@ -2294,7 +2610,13 @@ class QuickModelReport:
         if len(self._datasets) >= 2:
             from ..core.metrics import psi as _psi
 
-            end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value=f"{stab_section}、评分PSI对比矩阵", style="header_middle", align={"horizontal": "left"})
+            end_row, _ = writer.insert_value2sheet(
+                ws,
+                (end_row + 2, 2),
+                value=f"{stab_section}、评分PSI对比矩阵",
+                style="header_middle",
+                align={"horizontal": "left"},
+            )
             ds_keys_list = list(self._datasets.keys())
             labels = [self._datasets[k].label for k in ds_keys_list]
             psi_matrix = pd.DataFrame(np.nan, index=labels, columns=labels)
@@ -2310,12 +2632,24 @@ class QuickModelReport:
             end_row, _ = dataframe2excel(psi_matrix, writer, sheet_name=ws, start_row=end_row + 1, index=True)
 
             # 评分PSI参考阈值说明
-            end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value="PSI参考标准：<0.1 稳定 | 0.1~0.25 略变 | >0.25 不稳定", style="middle", align={"horizontal": "left"})
+            end_row, _ = writer.insert_value2sheet(
+                ws,
+                (end_row + 1, 2),
+                value="PSI参考标准：<0.1 稳定 | 0.1~0.25 略变 | >0.25 不稳定",
+                style="middle",
+                align={"horizontal": "left"},
+            )
             stab_section += 1
 
         # 4.3 评分漂移分析（以训练集为基准）
         if "train" in self._datasets and len(self._datasets) >= 2:
-            end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value=f"{stab_section}、评分漂移分析（vs 训练集）", style="header_middle", align={"horizontal": "left"})
+            end_row, _ = writer.insert_value2sheet(
+                ws,
+                (end_row + 2, 2),
+                value=f"{stab_section}、评分漂移分析（vs 训练集）",
+                style="header_middle",
+                align={"horizontal": "left"},
+            )
             drift_rows: List[Dict[str, Any]] = []
             base_scores = self._datasets["train"].score
             for ds_key, ds in self._datasets.items():
@@ -2336,7 +2670,10 @@ class QuickModelReport:
                 drift_df = pd.DataFrame(drift_rows)
                 pct_cols = [c for c in drift_df.columns if "%" in c or "占比" in c]
                 end_row, _ = dataframe2excel(
-                    drift_df, writer, sheet_name=ws, start_row=end_row + 1,
+                    drift_df,
+                    writer,
+                    sheet_name=ws,
+                    start_row=end_row + 1,
                     percent_cols=pct_cols,
                 )
             stab_section += 1
@@ -2345,7 +2682,13 @@ class QuickModelReport:
         if len(self._datasets) >= 2:
             from ..core.metrics import psi as _psi_feat
 
-            end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value=f"{stab_section}、入模特征PSI稳定性", style="header_middle", align={"horizontal": "left"})
+            end_row, _ = writer.insert_value2sheet(
+                ws,
+                (end_row + 2, 2),
+                value=f"{stab_section}、入模特征PSI稳定性",
+                style="header_middle",
+                align={"horizontal": "left"},
+            )
             importance = self.get_feature_importance()
             feat_list = importance.index.tolist() if not importance.empty else self.feature_names
             psi_rows: List[Dict[str, Any]] = []
@@ -2370,7 +2713,10 @@ class QuickModelReport:
             if psi_rows:
                 psi_feat_df = pd.DataFrame(psi_rows)
                 end_row, _ = dataframe2excel(
-                    psi_feat_df, writer, sheet_name=ws, start_row=end_row + 1,
+                    psi_feat_df,
+                    writer,
+                    sheet_name=ws,
+                    start_row=end_row + 1,
                 )
             stab_section += 1
 
@@ -2378,7 +2724,9 @@ class QuickModelReport:
         # 5-模型参数 Sheet
         # ============================================================
         ws = writer.get_sheet_by_name("5-模型参数")
-        end_row, _ = writer.insert_value2sheet(ws, (2, 2), value="五、模型选型及参数", style="header_middle", end_space=(2, max_col))
+        end_row, _ = writer.insert_value2sheet(
+            ws, (2, 2), value="五、模型选型及参数", style="header_middle", end_space=(2, max_col)
+        )
         try:
             writer.insert_hyperlink2sheet(ws, (2, 2), hyperlink="#'目录'!B2")
         except Exception:
@@ -2387,12 +2735,26 @@ class QuickModelReport:
         param_section = 1
 
         # 5.1 模型选型
-        end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value=f"{param_section}、模型选型", style="header_middle", align={"horizontal": "left"})
-        end_row, _ = writer.insert_value2sheet(ws, (end_row, 2), value=model_name, style="middle", align={"horizontal": "left"})
+        end_row, _ = writer.insert_value2sheet(
+            ws,
+            (end_row + 2, 2),
+            value=f"{param_section}、模型选型",
+            style="header_middle",
+            align={"horizontal": "left"},
+        )
+        end_row, _ = writer.insert_value2sheet(
+            ws, (end_row, 2), value=model_name, style="middle", align={"horizontal": "left"}
+        )
         param_section += 1
 
         # 5.2 模型参数
-        end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value=f"{param_section}、模型参数", style="header_middle", align={"horizontal": "left"})
+        end_row, _ = writer.insert_value2sheet(
+            ws,
+            (end_row + 2, 2),
+            value=f"{param_section}、模型参数",
+            style="header_middle",
+            align={"horizontal": "left"},
+        )
         params_str = ""
         if hasattr(self.model, "get_params"):
             try:
@@ -2400,18 +2762,28 @@ class QuickModelReport:
             except Exception:
                 pass
         if not params_str and hasattr(self.model, "__dict__"):
-            params_str = str({k: v for k, v in self.model.__dict__.items() if not k.startswith("_") and not callable(v)})
-        end_row, _ = writer.insert_value2sheet(ws, (end_row, 2), value=params_str or "N/A", style="middle", align={"horizontal": "left"})
+            params_str = str(
+                {k: v for k, v in self.model.__dict__.items() if not k.startswith("_") and not callable(v)}
+            )
+        end_row, _ = writer.insert_value2sheet(
+            ws, (end_row, 2), value=params_str or "N/A", style="middle", align={"horizontal": "left"}
+        )
         param_section += 1
 
-
         # 5.3 入模特征列表
-        end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value=f"{param_section}、入模特征列表", style="header_middle", align={"horizontal": "left"})
+        end_row, _ = writer.insert_value2sheet(
+            ws,
+            (end_row + 2, 2),
+            value=f"{param_section}、入模特征列表",
+            style="header_middle",
+            align={"horizontal": "left"},
+        )
         features_df = pd.DataFrame({"序号": range(1, len(self.feature_names) + 1), "变量名": self.feature_names})
         if feature_map:
             features_df["变量含义"] = [feature_map.get(f, "") for f in self.feature_names]
-        end_row, _ = dataframe2excel(features_df, writer, sheet_name=ws, start_row=end_row + 1,
-                                     left_cols=["变量名", "变量含义"])
+        end_row, _ = dataframe2excel(
+            features_df, writer, sheet_name=ws, start_row=end_row + 1, left_cols=["变量名", "变量含义"]
+        )
         param_section += 1
 
         # 5.4+ 评分卡专属内容
@@ -2420,7 +2792,13 @@ class QuickModelReport:
 
         if is_scorecard:
             # plot_weights + LR 拟合结果
-            end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value=f"{param_section}、逻辑回归拟合结果", style="header_middle", align={"horizontal": "left"})
+            end_row, _ = writer.insert_value2sheet(
+                ws,
+                (end_row + 2, 2),
+                value=f"{param_section}、逻辑回归拟合结果",
+                style="header_middle",
+                align={"horizontal": "left"},
+            )
             weights_figs = plot_paths.get("model_weights", [])
             if weights_figs:
                 for fig_path in weights_figs:
@@ -2430,32 +2808,59 @@ class QuickModelReport:
                         pass
             try:
                 lr_summary = self.model.lr_model.summary()
-                end_row, _ = dataframe2excel(lr_summary, writer, sheet_name=ws, start_row=end_row + 1, title="逻辑回归系数")
+                end_row, _ = dataframe2excel(
+                    lr_summary, writer, sheet_name=ws, start_row=end_row + 1, title="逻辑回归系数"
+                )
             except Exception:
                 pass
             param_section += 1
 
             # 评分卡刻度配置
-            end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value=f"{param_section}、评分卡刻度配置", style="header_middle", align={"horizontal": "left"})
+            end_row, _ = writer.insert_value2sheet(
+                ws,
+                (end_row + 2, 2),
+                value=f"{param_section}、评分卡刻度配置",
+                style="header_middle",
+                align={"horizontal": "left"},
+            )
             try:
                 scale_df = self.model.scorecard_scale()
-                end_row, _ = dataframe2excel(scale_df, writer, sheet_name=ws, start_row=end_row + 1,
-                                             right_cols=["刻度项"], left_cols=["备注"])
+                end_row, _ = dataframe2excel(
+                    scale_df, writer, sheet_name=ws, start_row=end_row + 1, right_cols=["刻度项"], left_cols=["备注"]
+                )
             except Exception:
                 pass
             param_section += 1
 
             # 评分卡
-            end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value=f"{param_section}、评分卡分值表", style="header_middle", align={"horizontal": "left"})
+            end_row, _ = writer.insert_value2sheet(
+                ws,
+                (end_row + 2, 2),
+                value=f"{param_section}、评分卡分值表",
+                style="header_middle",
+                align={"horizontal": "left"},
+            )
             try:
                 sc_points = self.model.scorecard_points(feature_map=feature_map)
-                end_row, _ = dataframe2excel(sc_points, writer, sheet_name=ws, start_row=end_row + 1, right_cols=["对应分数", "变量分箱", "变量名称"])
+                end_row, _ = dataframe2excel(
+                    sc_points,
+                    writer,
+                    sheet_name=ws,
+                    start_row=end_row + 1,
+                    right_cols=["对应分数", "变量分箱", "变量名称"],
+                )
             except Exception:
                 pass
             param_section += 1
 
             # 评分与 Odds 对照
-            end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value=f"{param_section}、评分与Odds对照表", style="header_middle", align={"horizontal": "left"})
+            end_row, _ = writer.insert_value2sheet(
+                ws,
+                (end_row + 2, 2),
+                value=f"{param_section}、评分与Odds对照表",
+                style="header_middle",
+                align={"horizontal": "left"},
+            )
             try:
                 odds_ref = self.model.score_odds_reference
                 end_row, _ = dataframe2excel(odds_ref, writer, sheet_name=ws, start_row=end_row + 1)
@@ -2465,7 +2870,13 @@ class QuickModelReport:
 
             # 评分漂移分析
             if len(self._datasets) >= 2:
-                end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value=f"{param_section}、稳定性分析", style="header_middle", align={"horizontal": "left"})
+                end_row, _ = writer.insert_value2sheet(
+                    ws,
+                    (end_row + 2, 2),
+                    value=f"{param_section}、稳定性分析",
+                    style="header_middle",
+                    align={"horizontal": "left"},
+                )
                 score_psi_figs = plot_paths.get("score_psi", [])
                 if score_psi_figs:
                     for fig_path in score_psi_figs:
@@ -2475,36 +2886,46 @@ class QuickModelReport:
                             pass
                 score_psi_df = psi_tables.get("score_psi")
                 if isinstance(score_psi_df, pd.DataFrame) and not score_psi_df.empty:
-                    end_row, _ = dataframe2excel(score_psi_df, writer, sheet_name=ws, start_row=end_row + 1, title="评分PSI")
+                    end_row, _ = dataframe2excel(
+                        score_psi_df, writer, sheet_name=ws, start_row=end_row + 1, title="评分PSI"
+                    )
 
         # ============================================================
         # 6-模型部署需求 Sheet
         # ============================================================
         ws = writer.get_sheet_by_name("6-模型部署需求")
-        end_row, _ = writer.insert_value2sheet(ws, (2, 2), value="六、模型部署需求", style="header_middle", end_space=(2, max_col))
+        end_row, _ = writer.insert_value2sheet(
+            ws, (2, 2), value="六、模型部署需求", style="header_middle", end_space=(2, max_col)
+        )
         try:
             writer.insert_hyperlink2sheet(ws, (2, 2), hyperlink="#'目录'!B2")
         except Exception:
             pass
 
         # 6.1 入模变量信息
-        end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value="1、入模变量信息", style="header_middle", align={"horizontal": "left"})
+        end_row, _ = writer.insert_value2sheet(
+            ws, (end_row + 2, 2), value="1、入模变量信息", style="header_middle", align={"horizontal": "left"}
+        )
         if feature_info is not None and isinstance(feature_info, pd.DataFrame) and not feature_info.empty:
             end_row, _ = dataframe2excel(feature_info, writer, sheet_name=ws, start_row=end_row + 1)
         else:
             fi_rows: List[Dict[str, Any]] = []
             for idx, feat in enumerate(self.feature_names):
-                fi_rows.append({
-                    "序号": idx + 1,
-                    "特征名称": feat,
-                    "特征含义": (feature_map or {}).get(feat, ""),
-                    "字段类型": str(self._datasets["train"].X[feat].dtype),
-                    "缺失值处理": "默认处理",
-                })
+                fi_rows.append(
+                    {
+                        "序号": idx + 1,
+                        "特征名称": feat,
+                        "特征含义": (feature_map or {}).get(feat, ""),
+                        "字段类型": str(self._datasets["train"].X[feat].dtype),
+                        "缺失值处理": "默认处理",
+                    }
+                )
             end_row, _ = dataframe2excel(pd.DataFrame(fi_rows), writer, sheet_name=ws, start_row=end_row + 1)
 
         # 6.2 生产订单测试用例
-        end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value="2、生产订单测试用例", style="header_middle", align={"horizontal": "left"})
+        end_row, _ = writer.insert_value2sheet(
+            ws, (end_row + 2, 2), value="2、生产订单测试用例", style="header_middle", align={"horizontal": "left"}
+        )
         try:
             train_ds = self._datasets["train"]
             sample_n = min(5, len(train_ds.X))
@@ -2536,18 +2957,21 @@ class QuickModelReport:
     # ---------- 12. to_dict ----------
 
     def to_dict(self) -> Dict[str, Any]:
+        labels_arg = self._label_names if self._is_multi_label() else None
         result: Dict[str, Any] = {
+            "summary": self.summary().reset_index().to_dict(orient="records"),
             "metrics": self.get_metrics().to_dict(orient="records"),
             "feature_importance": self.get_feature_importance().reset_index().to_dict(orient="records"),
         }
         for ds_key in self._datasets:
-            result[f"bin_table_{ds_key}"] = self.get_bin_table(ds_key).to_dict(orient="records")
+            result[f"bin_table_{ds_key}"] = self.get_bin_table(ds_key, labels=labels_arg).to_dict(orient="records")
         return result
 
 
 # ---------------------------------------------------------------------------
 # 快捷函数
 # ---------------------------------------------------------------------------
+
 
 def auto_model_report(
     model,
@@ -2577,7 +3001,7 @@ def auto_model_report(
     show_importance: bool = True,
     data_source: Optional[str] = None,
     loc_cols: Optional[Union[str, List[str]]] = None,
-) -> QuickModelReport:
+) -> ModelReport:
     """一键生成模型报告.
 
     支持三种调用方式：
@@ -2656,9 +3080,9 @@ def auto_model_report(
     :param show_importance: 是否在报告中显示特征重要性
     :param data_source: 数据源描述
     :param loc_cols: 定位字段（订单号等），支持 str 或 List[str]，用于生产测试用例列
-    :return: QuickModelReport 实例
+    :return: ModelReport 实例
     """
-    report = QuickModelReport(
+    report = ModelReport(
         model=model,
         datasets=datasets,
         X_train=X_train,
@@ -2707,7 +3131,7 @@ def compare_models(
 ) -> pd.DataFrame:
     """横向对比多个模型的评估指标.
 
-    对每个模型分别构建 :class:`QuickModelReport` 并取其 :meth:`~QuickModelReport.summary`，
+    对每个模型分别构建 :class:`ModelReport` 并取其 :meth:`~ModelReport.summary`，
     纵向拼接为一张对比表；单个模型构建失败时以 ``错误`` 列记录原因，不影响其余模型。
 
     :param models: 模型名称到模型对象的映射，如 ``{'XGB': xgb_model, 'LR': lr_model}``
@@ -2728,28 +3152,29 @@ def compare_models(
     ... )
     >>> print(result)
     """
-    rows: List[pd.DataFrame] = []
+    parts: Dict[str, pd.DataFrame] = {}
     for name, model in models.items():
         try:
-            report = QuickModelReport(
+            report = ModelReport(
                 model=model,
                 X_train=X_train,
                 y_train=y_train,
                 X_test=X_test,
                 y_test=y_test,
             )
-            summary = report.summary()
-            summary.insert(0, "模型名称", name)
-            rows.append(summary)
+            parts[name] = report.summary()
         except Exception as e:
-            rows.append(pd.DataFrame([{"模型名称": name, "错误": str(e)}]))
+            # 失败的模型以「错误」列记录原因，不影响其余模型对比
+            parts[name] = pd.DataFrame({"错误": [str(e)]}, index=pd.Index(["target"], name="逾期指标"))
 
-    result = pd.concat(rows, ignore_index=True) if rows else pd.DataFrame()
+    # 以「模型名称」作为最外层行索引纵向拼接，保留 summary 的「统计指标 × 数据集」多层列
+    result = pd.concat(parts, names=["模型名称"]) if parts else pd.DataFrame()
     if excel_path and not result.empty:
-        result.to_excel(excel_path, index=False)
+        result.to_excel(excel_path)
     return result
 
 
-ModelReport = QuickModelReport
+# 向后兼容别名：旧名称 QuickModelReport 等价于 ModelReport
+QuickModelReport = ModelReport
 
 __all__ = ["ModelReport", "QuickModelReport", "auto_model_report", "compare_models"]

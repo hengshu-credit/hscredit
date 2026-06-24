@@ -35,7 +35,7 @@ from .swap_analysis import (
 )
 
 from .overdue_predictor import OverduePredictor, overdue_prediction_report
-from .model_report import QuickModelReport, auto_model_report, compare_models
+from .model_report import ModelReport, QuickModelReport, auto_model_report, compare_models
 from .mining import (
     SingleFeatureRuleMiner,
     MultiFeatureRuleMiner,
@@ -85,6 +85,7 @@ __all__ = [
     "RuleMetrics",
     "calculate_rule_metrics",
     # 模型报告
+    "ModelReport",
     "QuickModelReport",
     "auto_model_report",
     "compare_models",

@@ -884,7 +884,7 @@ class LogisticRegression(SklearnLogisticRegression):
         :param excel_path: 报告导出的 Excel 路径，提供则落盘，可选
         :param verbose: 是否打印进度，默认 ``True``
         :param kwargs: 透传给报告生成器的其他参数
-        :return: ``QuickModelReport`` 实例
+        :return: ``ModelReport`` 实例
         :raises NotFittedError: 模型尚未训练时
         """
         check_is_fitted(self)

@@ -24,6 +24,8 @@ class QuantileBinning(BaseBinning):
     :param max_n_bins: 最大分箱数，默认为10
     :param quantiles: 自定义分位点列表，如[0, 0.2, 0.5, 0.8, 1.0]，默认为None
         - 如果提供，将直接使用这些分位点进行分箱
+        - 首尾的 0 与 1 支持自动补齐：可传入完整的 [0, ..., 1]，
+          也可只传中间分位点（如 [0.2, 0.5, 0.8]），缺失的 0 / 1 会自动补齐
     :param force_numerical: 是否强制作为数值型处理，默认为False（自动识别类别型）
         - True: 将所有特征视为数值型进行等频分箱
         - False: 自动检测特征类型
@@ -97,21 +99,44 @@ class QuantileBinning(BaseBinning):
             verbose=verbose,
             decimal=decimal,
         )
-        self.quantiles = quantiles
         self.force_numerical = force_numerical
-        
-        # 验证quantiles参数
-        if quantiles is not None:
-            if not isinstance(quantiles, (list, tuple, np.ndarray)):
-                raise ValueError("quantiles必须是列表或数组")
-            if len(quantiles) < 2:
-                raise ValueError("quantiles至少需要2个元素")
-            if quantiles[0] != 0 or quantiles[-1] != 1:
-                raise ValueError("quantiles第一个元素必须是0，最后一个必须是1")
-            if not all(0 <= q <= 1 for q in quantiles):
-                raise ValueError("quantiles所有元素必须在[0, 1]范围内")
-            if not all(quantiles[i] <= quantiles[i+1] for i in range(len(quantiles)-1)):
-                raise ValueError("quantiles必须是非递减的")
+
+        # 验证并标准化 quantiles 参数（首尾的 0 / 1 支持自动补齐，也支持显式传入）
+        self.quantiles = self._normalize_quantiles(quantiles)
+
+    @staticmethod
+    def _normalize_quantiles(quantiles: Optional[List[float]]) -> Optional[List[float]]:
+        """校验并标准化自定义分位点。
+
+        首尾的 0 与 1 支持自动补齐：既可显式传入完整的 ``[0, ..., 1]``，
+        也可只传入中间分位点（如 ``[0.01, 0.5, 0.99]``），缺失的 0 / 1 会自动补齐。
+
+        :param quantiles: 自定义分位点，None 表示不使用
+        :return: 标准化后的分位点列表（已补齐首尾 0 / 1），None 时原样返回
+        """
+        if quantiles is None:
+            return None
+
+        if not isinstance(quantiles, (list, tuple, np.ndarray)):
+            raise ValueError("quantiles必须是列表或数组")
+
+        quantiles = [float(q) for q in quantiles]
+        if len(quantiles) == 0:
+            raise ValueError("quantiles不能为空")
+        if not all(0 <= q <= 1 for q in quantiles):
+            raise ValueError("quantiles所有元素必须在[0, 1]范围内")
+        if not all(quantiles[i] <= quantiles[i + 1] for i in range(len(quantiles) - 1)):
+            raise ValueError("quantiles必须是非递减的")
+
+        # 自动补齐首尾的 0 / 1
+        if quantiles[0] != 0:
+            quantiles = [0.0] + quantiles
+        if quantiles[-1] != 1:
+            quantiles = quantiles + [1.0]
+
+        if len(quantiles) < 2:
+            raise ValueError("quantiles至少需要2个元素")
+        return quantiles
 
     def fit(
         self,
@@ -149,6 +174,9 @@ class QuantileBinning(BaseBinning):
                 # 数值型特征：等频分箱
                 splits = self._fit_numerical(X[feature], y)
                 splits = self._round_splits(splits)
+                if self.quantiles is not None and len(splits) > 0:
+                    # 四舍五入后可能产生相同切分点，去重以避免空箱
+                    splits = np.unique(splits)
                 if self.monotonic not in [False, None, 'none'] and len(splits) > 0:
                     from .monotonic_binning import MonotonicBinning
                     mono = MonotonicBinning(
@@ -204,19 +232,13 @@ class QuantileBinning(BaseBinning):
 
         # 使用自定义分位点或基于max_n_bins计算
         if self.quantiles is not None:
-            # 使用自定义分位点
-            quantiles_to_use = self.quantiles
-            target_n_bins = len(self.quantiles) - 1
+            # 使用自定义分位点：直接按用户指定的分位点切分，
+            # 不受 min_n_bins / max_n_bins / min_bin_size 的二次约束（见类文档）
+            quantiles_to_use = np.asarray(self.quantiles, dtype=float)
+            target_n_bins = len(quantiles_to_use) - 1
         else:
-            # 基于max_n_bins计算分位点
-            target_n_bins = self.max_n_bins
-            quantiles_to_use = np.linspace(0, 1, target_n_bins + 1)
-
-        # 确保目标分箱数在约束范围内
-        target_n_bins = max(self.min_n_bins, min(target_n_bins, self.max_n_bins))
-        
-        # 重新计算分位点（如果需要调整分箱数）
-        if self.quantiles is None:
+            # 基于max_n_bins计算分位点，并约束在 [min_n_bins, max_n_bins] 范围内
+            target_n_bins = max(self.min_n_bins, min(self.max_n_bins, self.max_n_bins))
             quantiles_to_use = np.linspace(0, 1, target_n_bins + 1)
 
         # 获取唯一值
@@ -230,14 +252,18 @@ class QuantileBinning(BaseBinning):
         split_quantiles = quantiles_to_use[1:-1]
         if len(split_quantiles) == 0:
             return np.array([])
-            
+
         splits = np.percentile(x_valid, np.array(split_quantiles) * 100)
 
-        # 处理重复值边界问题
-        splits = self._handle_duplicate_boundaries(splits, x_valid)
-
-        # 根据约束调整分箱数
-        splits = self._adjust_bins(x_valid, y_valid, splits)
+        if self.quantiles is not None:
+            # 自定义分位点：仅去除离散重复值导致的相同切分点以保证分箱有效，
+            # 不进行 max_n_bins / min_bin_size 的合并裁剪，确保严格按指定分位点切分
+            splits = np.unique(splits)
+        else:
+            # 处理重复值边界问题
+            splits = self._handle_duplicate_boundaries(splits, x_valid)
+            # 根据约束调整分箱数
+            splits = self._adjust_bins(x_valid, y_valid, splits)
 
         return splits
 

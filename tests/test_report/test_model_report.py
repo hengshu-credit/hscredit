@@ -6,11 +6,11 @@ import numpy as np
 import pandas as pd
 from openpyxl import load_workbook
 
-from hscredit.report.model_report import QuickModelReport
+from hscredit.report.model_report import ModelReport
 
 
 class MockModel:
-    """Minimal mock model for testing QuickModelReport."""
+    """Minimal mock model for testing ModelReport."""
 
     def __init__(self, feature_names=None):
         self._feature_names = feature_names or ['f0']
@@ -44,7 +44,7 @@ class ReversedClassModel(MockModel):
         return proba[:, ::-1]
 
 
-class TestQuickModelReportTarget:
+class TestModelReportTarget:
     """Test target parameter handling."""
 
     def test_target_str(self):
@@ -54,7 +54,7 @@ class TestQuickModelReportTarget:
             'label': [0, 0, 1, 1],
         })
         model = MockModel(feature_names=['f0'])
-        report = QuickModelReport(
+        report = ModelReport(
             model=model, X_train=X, y_train=None,
             target='label', feature_names=['f0']
         )
@@ -68,7 +68,7 @@ class TestQuickModelReportTarget:
             'dpds': [0, 2, 3, 5, 6, 10],
         })
         model = MockModel(feature_names=['f0'])
-        report = QuickModelReport(
+        report = ModelReport(
             model=model, X_train=X, y_train=None,
             target={'overdue': 'overdue', 'dpds': 'dpds', 'threshold': 3},
             feature_names=['f0']
@@ -82,7 +82,7 @@ class TestQuickModelReportTarget:
             'overdue': [0, 0, 1, 1],
         })
         model = MockModel(feature_names=['f0'])
-        report = QuickModelReport(
+        report = ModelReport(
             model=model, X_train=X, y_train=None,
             target={'overdue': 'overdue'},
             feature_names=['f0']
@@ -97,7 +97,7 @@ class TestQuickModelReportTarget:
             'target': [0, 0, 1, 1],
         })
         model = MockModel(feature_names=['f0'])
-        report = QuickModelReport(
+        report = ModelReport(
             model=model, datasets={'train': (X, None)},
             target='target', feature_names=['f0']
         )
@@ -116,7 +116,7 @@ class TestQuickModelReportTarget:
             'dpds': [4, 8],
         })
         model = MockModel(feature_names=['f0'])
-        report = QuickModelReport(
+        report = ModelReport(
             model=model,
             datasets={'train': (X_train, None), 'test': (X_test, None)},
             target={'overdue': 'overdue', 'dpds': 'dpds', 'threshold': 3},
@@ -129,7 +129,7 @@ class TestQuickModelReportTarget:
         """Model produces y_proba after init."""
         X = pd.DataFrame({'f0': [1, 2, 3, 4], 'label': [0, 0, 1, 1]})
         model = MockModel(feature_names=['f0'])
-        report = QuickModelReport(
+        report = ModelReport(
             model=model, X_train=X, y_train=None,
             target='label', feature_names=['f0']
         )
@@ -142,7 +142,7 @@ class TestQuickModelReportTarget:
         """get_metrics returns DataFrame with expected columns."""
         X = pd.DataFrame({'f0': [1, 2, 3, 4], 'label': [0, 0, 1, 1]})
         model = MockModel(feature_names=['f0'])
-        report = QuickModelReport(
+        report = ModelReport(
             model=model, X_train=X, y_train=None,
             target='label', feature_names=['f0']
         )
@@ -160,7 +160,7 @@ class TestQuickModelReportTarget:
             'flag': [0, 0, 1, 1],
         })
         model = MockModel(feature_names=['f0'])
-        report = QuickModelReport(
+        report = ModelReport(
             model=model, X_train=X, y_train=None,
             target=None, feature_names=['f0']
         )
@@ -168,7 +168,7 @@ class TestQuickModelReportTarget:
         assert report._datasets['train'].y.tolist() == [0, 0, 1, 1]
 
 
-class TestQuickModelReportOverdueDpdsSeparate:
+class TestModelReportOverdueDpdsSeparate:
     """Test overdue/dpds as separate __init__ parameters (not inside target dict)."""
 
     def test_overdue_dpds_single_col_single_threshold(self):
@@ -178,7 +178,7 @@ class TestQuickModelReportOverdueDpdsSeparate:
             'dpds': [0, 1, 5, 10],
         })
         model = MockModel(feature_names=['f0'])
-        report = QuickModelReport(
+        report = ModelReport(
             model=model, X_train=X, y_train=None,
             overdue='dpds', dpds=3, feature_names=['f0']
         )
@@ -192,7 +192,7 @@ class TestQuickModelReportOverdueDpdsSeparate:
             'dpds': [0, 3, 7, 15, 20, 30],
         })
         model = MockModel(feature_names=['f0'])
-        report = QuickModelReport(
+        report = ModelReport(
             model=model, X_train=X, y_train=None,
             overdue='dpds', dpds=[15, 7, 0], feature_names=['f0']
         )
@@ -211,7 +211,7 @@ class TestQuickModelReportOverdueDpdsSeparate:
             'dpds_m3': [0, 0, 0, 0, 1, 1],
         })
         model = MockModel(feature_names=['f0'])
-        report = QuickModelReport(
+        report = ModelReport(
             model=model, X_train=X, y_train=None,
             overdue=['dpds_m1', 'dpds_m3'], dpds=[3, 0],
             feature_names=['f0']
@@ -229,7 +229,7 @@ class TestQuickModelReportOverdueDpdsSeparate:
             'dpds': [0, 0, 5, 10],
         })
         model = MockModel(feature_names=['f0'])
-        report = QuickModelReport(
+        report = ModelReport(
             model=model, X_train=X, y_train=None,
             target='label',  # ignored because overdue/dpds provided
             overdue='dpds', dpds=3, feature_names=['f0']
@@ -248,7 +248,7 @@ class TestQuickModelReportOverdueDpdsSeparate:
             'dpds': [3, 15],
         })
         model = MockModel(feature_names=['f0'])
-        report = QuickModelReport(
+        report = ModelReport(
             model=model,
             datasets={'train': (X_train, None), 'test': (X_test, None)},
             overdue='dpds', dpds=3, feature_names=['f0']
@@ -285,14 +285,14 @@ class TestQuickModelReportOverdueDpdsSeparate:
         model = MockModel(feature_names=['f0'])
 
         # via dict target
-        r1 = QuickModelReport(
+        r1 = ModelReport(
             model=model, X_train=X, y_train=None,
             target={'overdue': 'dpds', 'dpds': [10, 5, 0]},
             feature_names=['f0']
         )
 
         # via separate params
-        r2 = QuickModelReport(
+        r2 = ModelReport(
             model=model, X_train=X, y_train=None,
             overdue='dpds', dpds=[10, 5, 0],
             feature_names=['f0']
@@ -301,7 +301,7 @@ class TestQuickModelReportOverdueDpdsSeparate:
         assert r1._datasets['train'].y.tolist() == r2._datasets['train'].y.tolist()
 
 
-class TestQuickModelReportRegression:
+class TestModelReportRegression:
     """Regression tests for report sections that previously exported blank."""
 
     @staticmethod
@@ -317,14 +317,14 @@ class TestQuickModelReportRegression:
         y = pd.Series([0, 0, 1, 1])
         model = ReversedClassModel(feature_names=['f0'])
 
-        report = QuickModelReport(model, X_train=X, y_train=y, feature_names=['f0'])
+        report = ModelReport(model, X_train=X, y_train=y, feature_names=['f0'])
 
         expected = model.predict_proba(X)[:, 0]
         np.testing.assert_allclose(report._datasets['train'].y_proba, expected)
 
     def test_multi_label_lift_contains_values_and_amount_metrics(self):
         X = self._multi_label_data()
-        report = QuickModelReport(
+        report = ModelReport(
             MockModel(['f0']),
             datasets={'train': X, 'test': X.copy()},
             overdue=['MOB1'],
@@ -345,7 +345,7 @@ class TestQuickModelReportRegression:
 
     def test_excel_contains_all_sections_and_multi_label_description(self, tmp_path):
         X = self._multi_label_data()
-        report = QuickModelReport(
+        report = ModelReport(
             MockModel(['f0']),
             datasets={'train': X, 'test': X.copy()},
             overdue=['MOB1'],
@@ -400,7 +400,7 @@ class TestQuickModelReportRegression:
     def test_excel_skips_hyperlink_when_feature_missing_from_summary(self, tmp_path, monkeypatch):
         """特征不在重要性汇总表中时（summary_row为None），应跳过超链接而不是抛异常."""
         X = self._multi_label_data()
-        report = QuickModelReport(
+        report = ModelReport(
             MockModel(['f0']),
             datasets={'train': X, 'test': X.copy()},
             overdue=['MOB1'],
@@ -428,7 +428,7 @@ class TestQuickModelReportRegression:
 
     def test_export_plots_contains_feature_psi(self, tmp_path):
         X = self._multi_label_data()
-        report = QuickModelReport(
+        report = ModelReport(
             MockModel(['f0']),
             datasets={'train': X, 'test': X.copy()},
             overdue='MOB1',
@@ -447,7 +447,7 @@ class TestQuickModelReportRegression:
 
     def test_multi_label_tables_use_expected_layout(self, tmp_path):
         X = self._multi_label_data()
-        report = QuickModelReport(
+        report = ModelReport(
             MockModel(['f0']),
             datasets={'train': X, 'test': X.copy()},
             overdue='MOB1',

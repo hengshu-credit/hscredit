@@ -29,6 +29,81 @@ logger = logging.getLogger(__name__)
 _BINNING_SUMMARY_METRICS = ('分档KS值', 'LIFT值', '指标IV值', '坏样本数', '坏样本率')
 
 
+# feature_binning_summary 支持的摘要指标及其跨分箱聚合方式（取自 feature_bin_stats 的输出列）。
+# 聚合方式说明：
+#   'sum'      —— 对各分箱（不含合计行）求和
+#   'max'      —— 取各分箱的最大值
+#   'max_abs'  —— 取各分箱绝对值的最大值
+#   'bad_rate' —— 按 sum(坏样本数) / sum(样本总数) 重新计算总体坏样本率
+_BINNING_SUMMARY_AGG = {
+    '样本总数': 'sum',
+    '好样本数': 'sum',
+    '坏样本数': 'sum',
+    '样本占比': 'sum',
+    '好样本占比': 'sum',
+    '坏样本占比': 'sum',
+    '坏样本率': 'bad_rate',
+    '分档WOE值': 'max_abs',
+    '分档IV值': 'sum',
+    '指标IV值': 'max',
+    'LIFT值': 'max',
+    '坏账改善': 'max',
+    '风险拒绝比': 'max',
+    '累积LIFT值': 'max',
+    '累积坏账改善': 'max',
+    '累计风险拒绝比': 'max',
+    '累积好样本数': 'max',
+    '累积坏样本数': 'max',
+    '分档KS值': 'max',
+}
+
+
+def _normalize_binning_summary_metrics(metrics: Union[str, List[str]]) -> List[str]:
+    """标准化摘要指标并保持传入顺序（去重、校验是否受支持）。"""
+    normalized = [metrics] if isinstance(metrics, str) else list(metrics)
+    if not normalized:
+        raise ValueError("metrics 不能为空")
+
+    invalid = [metric for metric in normalized if metric not in _BINNING_SUMMARY_AGG]
+    if invalid:
+        raise ValueError(f"不支持的metrics: {invalid}，可选: {list(_BINNING_SUMMARY_AGG)}")
+
+    seen = set()
+    deduped = []
+    for metric in normalized:
+        if metric not in seen:
+            seen.add(metric)
+            deduped.append(metric)
+    return deduped
+
+
+# 长格式（逾期标签按行堆叠）分箱表的标准列顺序
+_LONG_FORMAT_COLUMNS = (
+    '指标名称', '指标含义', '逾期标签', '分箱标签',
+    '样本总数', '样本占比', '好样本数', '坏样本数',
+    '好样本占比', '坏样本占比', '坏样本率',
+    '分档WOE值', '分档IV值', '指标IV值',
+    'LIFT值', '坏账改善', '风险拒绝比',
+    '累积LIFT值', '累积坏账改善', '累计风险拒绝比',
+    '累积好样本数', '累积坏样本数', '分档KS值',
+)
+
+
+def _summary_display_name(target_name: Any) -> Any:
+    """将目标名称转换为摘要展示名称（``MOB1_3+`` → ``MOB1@3``）。"""
+    if isinstance(target_name, str) and target_name.endswith('+') and '_' in target_name:
+        overdue_name, dpd = target_name[:-1].rsplit('_', 1)
+        return f'{overdue_name}@{dpd}'
+    return target_name
+
+
+def _reorder_long_format_columns(table: pd.DataFrame) -> pd.DataFrame:
+    """按 :data:`_LONG_FORMAT_COLUMNS` 重排长格式分箱表列顺序，保留未列出的额外列。"""
+    ordered = [col for col in _LONG_FORMAT_COLUMNS if col in table.columns]
+    extras = [col for col in table.columns if col not in _LONG_FORMAT_COLUMNS]
+    return table[ordered + extras]
+
+
 def _normalize_binning_summary_methods(methods: Union[str, List[str]]) -> List[str]:
     """标准化分箱方法并保持传入顺序。"""
     normalized = [methods] if isinstance(methods, str) else list(methods)
@@ -72,44 +147,74 @@ def _summary_target_columns(table: pd.DataFrame) -> List[Tuple[str, str]]:
     for target_name in table.columns.get_level_values(0):
         if target_name == '分箱详情' or target_name in [item[0] for item in targets]:
             continue
-        display_name = target_name
-        if isinstance(target_name, str) and target_name.endswith('+') and '_' in target_name:
-            overdue_name, dpd = target_name[:-1].rsplit('_', 1)
-            display_name = f'{overdue_name}@{dpd}'
-        targets.append((target_name, display_name))
+        targets.append((target_name, _summary_display_name(target_name)))
     return targets
+
+
+def _aggregate_summary_metrics(valid: pd.DataFrame, resolve, metrics: List[str]) -> Dict[str, float]:
+    """按 :data:`_BINNING_SUMMARY_AGG` 定义的聚合方式汇总单个目标的指标。
+
+    :param valid: 已剔除合计行的分箱明细
+    :param resolve: 指标名 → 实际列键 的映射函数（兼容单层/多级表头）
+    :param metrics: 需要汇总的指标列表
+    """
+    aggregated: Dict[str, float] = {}
+    for metric in metrics:
+        kind = _BINNING_SUMMARY_AGG[metric]
+        if kind == 'bad_rate':
+            bad_count = pd.to_numeric(valid[resolve('坏样本数')], errors='coerce').sum()
+            sample_count = pd.to_numeric(valid[resolve('样本总数')], errors='coerce').sum()
+            aggregated[metric] = bad_count / sample_count if sample_count else np.nan
+            continue
+        series = pd.to_numeric(valid[resolve(metric)], errors='coerce')
+        if kind == 'sum':
+            aggregated[metric] = series.sum()
+        elif kind == 'max_abs':
+            aggregated[metric] = series.abs().max()
+        else:  # 'max'
+            aggregated[metric] = series.max()
+    return aggregated
 
 
 def _summarize_binning_table(
     table: pd.DataFrame,
     single_target_name: str = '',
+    metrics: Union[str, List[str]] = _BINNING_SUMMARY_METRICS,
 ) -> Dict[Tuple[str, str], float]:
     """按目标汇总一个特征、一个方法的分箱结果。"""
+    metrics = _normalize_binning_summary_metrics(metrics)
     multi_columns = isinstance(table.columns, pd.MultiIndex)
+    result: Dict[Tuple[str, str], float] = {}
+
+    # 长格式：逾期标签按行堆叠，按 ``逾期标签`` 分组逐目标汇总
+    if not multi_columns and '逾期标签' in table.columns:
+        for target_name, group in table.groupby('逾期标签', sort=False):
+            valid = group.loc[group['分箱标签'].astype(str) != '合计']
+            display_name = _summary_display_name(target_name)
+            for metric, value in _aggregate_summary_metrics(valid, lambda m: m, metrics).items():
+                result[(metric, display_name)] = value
+        return result
+
     label_column = ('分箱详情', '分箱标签') if multi_columns else '分箱标签'
     valid = table.loc[table[label_column].astype(str) != '合计']
-    result = {}
 
     target_columns = _summary_target_columns(table)
     if not multi_columns:
         target_columns = [('', single_target_name)]
 
     for target_name, display_name in target_columns:
-        def column(metric: str):
-            return (target_name, metric) if multi_columns else metric
+        def resolve(metric: str, _target=target_name):
+            # 单层表头直接取列名；多级表头优先取目标层，样本数等公共列回落到"分箱详情"
+            if not multi_columns:
+                return metric
+            if (_target, metric) in valid.columns:
+                return (_target, metric)
+            if ('分箱详情', metric) in valid.columns:
+                return ('分箱详情', metric)
+            return (_target, metric)
 
-        bad_count = pd.to_numeric(valid[column('坏样本数')], errors='coerce').sum()
-        sample_count_column = (
-            ('分箱详情', '样本总数')
-            if multi_columns and ('分箱详情', '样本总数') in valid.columns
-            else column('样本总数')
-        )
-        sample_count = pd.to_numeric(valid[sample_count_column], errors='coerce').sum()
-        result[('分档KS值', display_name)] = pd.to_numeric(valid[column('分档KS值')], errors='coerce').max()
-        result[('LIFT值', display_name)] = pd.to_numeric(valid[column('LIFT值')], errors='coerce').max()
-        result[('指标IV值', display_name)] = pd.to_numeric(valid[column('指标IV值')], errors='coerce').max()
-        result[('坏样本数', display_name)] = bad_count
-        result[('坏样本率', display_name)] = bad_count / sample_count if sample_count else np.nan
+        for metric, value in _aggregate_summary_metrics(valid, resolve, metrics).items():
+            result[(metric, display_name)] = value
     return result
 
 
@@ -140,6 +245,8 @@ def feature_binning_summary(
     amount: Optional[str] = None,
     verbose: int = 0,
     monotonic: Optional[Union[str, bool]] = None,
+    long_format: bool = False,
+    metrics: Union[str, List[str]] = _BINNING_SUMMARY_METRICS,
     **kwargs,
 ) -> Tuple[Dict[str, Dict[str, pd.DataFrame]], pd.DataFrame]:
     """对一个或多个字段执行多种分箱，并生成跨方法摘要。
@@ -147,6 +254,25 @@ def feature_binning_summary(
     ``bin_params`` 支持两种格式：单层参数应用于所有方法；以 method 为 key、
     参数字典为 value 的多层参数仅应用于对应方法。参数优先级为
     ``bin_params > 显式公共参数/kwargs``。
+
+    ``long_format`` 控制 ``binning_tables`` 中每张分箱表的输出格式：默认 ``False``
+    沿用原多级表头样式（多目标时按列展开）；设为 ``True`` 时每张表按 ``逾期标签``
+    列将各目标纵向堆叠输出（透传给 :func:`feature_bin_stats`）。摘要 ``binning_summary``
+    的结构不受影响。
+
+    ``metrics`` 指定 ``binning_summary`` 中按目标汇总的指标及其展示顺序，默认
+    ``['分档KS值', 'LIFT值', '指标IV值', '坏样本数', '坏样本率']``。可选值为
+    :func:`feature_bin_stats` 输出的指标列，各指标的跨分箱聚合方式如下（合计行不参与）：
+
+    - **求和（sum）**：``样本总数`` / ``好样本数`` / ``坏样本数`` / ``分档IV值`` /
+      ``样本占比`` / ``好样本占比`` / ``坏样本占比``
+    - **取最大值（max）**：``指标IV值`` / ``LIFT值`` / ``坏账改善`` / ``风险拒绝比`` /
+      ``累积LIFT值`` / ``累积坏账改善`` / ``累计风险拒绝比`` / ``累积好样本数`` /
+      ``累积坏样本数`` / ``分档KS值``
+    - **取绝对值最大值（max_abs）**：``分档WOE值``
+    - **总体坏样本率（bad_rate）**：``坏样本率`` 按 ``sum(坏样本数) / sum(样本总数)`` 重新计算
+
+    传入不受支持的指标将抛出 ``ValueError``。
 
     :return: ``(binning_tables, binning_summary)``。分箱表结构为
         ``{feature: {method: binning_table}}``，摘要使用两级列索引。
@@ -167,6 +293,7 @@ def feature_binning_summary(
         raise KeyError(f"数据中不存在字段: {missing_features}")
 
     normalized_methods = _normalize_binning_summary_methods(methods)
+    normalized_metrics = _normalize_binning_summary_metrics(metrics)
     per_method_params = _normalize_binning_summary_params(normalized_methods, bin_params)
     common_params = {
         'target': target,
@@ -191,6 +318,7 @@ def feature_binning_summary(
         'amount': amount,
         'verbose': verbose,
         'monotonic': monotonic,
+        'long_format': long_format,
         **kwargs,
     }
 
@@ -213,7 +341,7 @@ def feature_binning_summary(
             table = feature_bin_stats(data=data, feature=name, method=method, **method_params)
             binning_tables[name][method] = table
             row = {('分箱详情', '分箱方法'): method, ('分箱详情', '指标名称'): name}
-            row.update(_summarize_binning_table(table, single_target_name=single_target_name))
+            row.update(_summarize_binning_table(table, single_target_name=single_target_name, metrics=normalized_metrics))
             summary_rows.append(row)
 
     binning_summary = pd.DataFrame(summary_rows)
@@ -221,9 +349,9 @@ def feature_binning_summary(
     target_names = []
     for row in summary_rows:
         for metric, target_name in row:
-            if metric in _BINNING_SUMMARY_METRICS and target_name not in target_names:
+            if metric in normalized_metrics and target_name not in target_names:
                 target_names.append(target_name)
-    ordered_columns.extend((metric, target_name) for metric in _BINNING_SUMMARY_METRICS for target_name in target_names)
+    ordered_columns.extend((metric, target_name) for metric in normalized_metrics for target_name in target_names)
     binning_summary = binning_summary.reindex(columns=pd.MultiIndex.from_tuples(ordered_columns))
     return binning_tables, binning_summary
 
@@ -413,6 +541,7 @@ def feature_bin_stats(
     amount: Optional[str] = None,
     verbose: int = 0,
     monotonic: Optional[Union[str, bool]] = None,
+    long_format: bool = False,
     **kwargs
 ) -> Union[pd.DataFrame, Tuple[pd.DataFrame, Dict]]:
     """特征分箱统计表，汇总统计特征每个分箱的各项指标信息.
@@ -472,6 +601,11 @@ def feature_bin_stats(
         - 'valley': 先降后升
         - bool: True=强制升序，False=强制降序
         注意：需配合 method 参数使用，部分 method 默认已包含单调约束（如 'monotonic' 方法）
+    :param long_format: 分箱表输出格式，默认 False
+        - False: 沿用原样式。多目标时使用多级表头（``分箱详情`` + 各逾期标签）按列展开
+        - True: 长格式输出。各逾期标签纵向堆叠，新增 ``逾期标签`` 列标识目标，
+          列顺序为 指标名称/指标含义/逾期标签/分箱标签/样本总数/样本占比/好样本数/坏样本数/...
+          单目标时同样会输出 ``逾期标签`` 列。``margins=True`` 时按各逾期标签分组分别追加合计行
     :param kwargs: 其他分箱器参数（如 lift_refine、prebinning 等）
     
     :return: 
@@ -503,6 +637,9 @@ def feature_bin_stats(
     >>> 
     >>> # 金额口径分析
     >>> table = feature_bin_stats(data, 'score', target='target', amount='loan_amount')
+    >>>
+    >>> # 长格式输出：多逾期标签纵向堆叠，新增"逾期标签"列
+    >>> table = feature_bin_stats(data, 'score', overdue='MOB1', dpds=[15, 0], long_format=True)
     """
     # 统一处理 feature 参数
     if isinstance(feature, str):
@@ -728,13 +865,19 @@ def feature_bin_stats(
                 bin_labels=bin_labels,
             )
             
+            # 长格式：插入"逾期标签"列标识当前目标
+            if long_format:
+                bin_table.insert(2, '逾期标签', target_name)
+
             # 筛选指定列
             if return_cols is not None:
                 # 确保基础列存在
                 base_cols = ['指标名称', '指标含义', '分箱标签']
+                if long_format:
+                    base_cols.insert(2, '逾期标签')
                 available_cols = [c for c in base_cols + return_cols if c in bin_table.columns]
                 bin_table = bin_table[available_cols]
-            
+
             feat_tables.append(bin_table)
             
             if verbose > 0:
@@ -744,11 +887,16 @@ def feature_bin_stats(
                 logger.info(f"特征 {feat} - 目标 {target_name}: 样本数 {n_samples}, 坏样本数 {n_bad}, 坏样本率 {bad_rate:.4f}, 分箱数 {len(bin_table)}")
         
         # 合并多目标表
-        if len(feat_tables) > 1:
+        if long_format:
+            # 长格式：各逾期标签纵向堆叠；margins 时按目标分别追加合计行
+            if margins:
+                feat_tables = [add_margins(table) for table in feat_tables]
+            merged_table = pd.concat(feat_tables, axis=0, ignore_index=True)
+        elif len(feat_tables) > 1:
             merged_table = _merge_multi_target_tables(feat_tables, target_names, merge_cols)
         else:
             merged_table = feat_tables[0]
-        
+
         all_feature_tables.append(merged_table)
         
         # 保存分箱规则
@@ -760,11 +908,14 @@ def feature_bin_stats(
         final_table = all_feature_tables[0]
     else:
         final_table = pd.concat(all_feature_tables, axis=0, ignore_index=True)
-    
-    # 添加合计行
-    if margins:
+
+    if long_format:
+        # 长格式合计行已按目标分组追加，此处仅规范列顺序
+        final_table = _reorder_long_format_columns(final_table)
+    elif margins:
+        # 添加合计行
         final_table = add_margins(final_table)
-    
+
     if return_rules:
         return final_table, all_feature_rules
     return final_table
