@@ -426,7 +426,9 @@ def _compute_bin_stats_binary(
         else:
             sort_keys.append((0, b))  # 正常分箱在前
 
-    sort_order = np.argsort([sk[0] * 10000 + sk[1] for sk in sort_keys])
+    # 使用 Python int 计算排序键，避免 numpy 2.x（NEP 50）下窄整型（如分类编码 int8）
+    # 与大整数运算溢出抛出 OverflowError
+    sort_order = np.argsort([int(sk[0]) * 10000 + int(sk[1]) for sk in sort_keys])
     old_to_new = {int(old_pos): new_pos for new_pos, old_pos in enumerate(sort_order)}
     unique_bins_sorted = unique_bins[sort_order]
     bin_indices_sorted = np.array([old_to_new[int(idx)] for idx in bin_indices])
@@ -582,7 +584,9 @@ def _compute_bin_stats_continuous(
         else:
             sort_keys.append((0, b))  # 正常分箱在前
 
-    sort_order = np.argsort([sk[0] * 10000 + sk[1] for sk in sort_keys])
+    # 使用 Python int 计算排序键，避免 numpy 2.x（NEP 50）下窄整型（如分类编码 int8）
+    # 与大整数运算溢出抛出 OverflowError
+    sort_order = np.argsort([int(sk[0]) * 10000 + int(sk[1]) for sk in sort_keys])
     old_to_new = {int(old_pos): new_pos for new_pos, old_pos in enumerate(sort_order)}
     unique_bins_sorted = unique_bins[sort_order]
     bin_indices_sorted = np.array([old_to_new[int(idx)] for idx in bin_indices])
@@ -736,7 +740,9 @@ def _compute_bin_stats_amount_weighted(
         else:
             sort_keys.append((0, b))  # 正常分箱在前
     
-    sort_order = np.argsort([sk[0] * 10000 + sk[1] for sk in sort_keys])
+    # 使用 Python int 计算排序键，避免 numpy 2.x（NEP 50）下窄整型（如分类编码 int8）
+    # 与大整数运算溢出抛出 OverflowError
+    sort_order = np.argsort([int(sk[0]) * 10000 + int(sk[1]) for sk in sort_keys])
     old_to_new = {int(old_pos): new_pos for new_pos, old_pos in enumerate(sort_order)}
     unique_bins_sorted = unique_bins[sort_order]
     bin_indices_sorted = np.array([old_to_new[int(idx)] for idx in bin_indices])
