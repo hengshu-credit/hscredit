@@ -576,7 +576,7 @@ _CF_BAR_DEFAULT_COLOR = "638EC6"
 # 色阶：绿-黄-红三色（min→percentile50→max）
 _CF_SCALE_COLORS = ("63BE7B", "FFEB84", "F8696B")
 _CF_SCALE_COLORS_BY_NAME = {"分档KS值": ("FFFFFF", "63BE7B")}
-_SWAP_TITLE_COLOR = "1F2937"
+_SWAP_TITLE_COLOR = "ff6b8e"
 _SWAP_FIXED_COLUMN_WIDTH = 11
 
 # 业务影响目标分析表的命中标签 → 模板展示口径
@@ -759,7 +759,7 @@ def _write_banner(writer, worksheet, row: int, text: str, start_col: int, width:
         cell.style = "header" if style == "swap_title" else style
         if style == "swap_title":
             cell.fill = PatternFill(fill_type="solid", start_color=_SWAP_TITLE_COLOR, end_color=_SWAP_TITLE_COLOR)
-            cell.font = Font(name=writer.font, size=writer.fontsize, color="FFFFFF", bold=True)
+            cell.font = Font(name=writer.font, size=writer.fontsize, color="ffffff", bold=True)
     if end_col > start_col:
         worksheet.merge_cells(start_row=row, start_column=start_col, end_row=row, end_column=end_col)
     cell = worksheet.cell(row=row, column=start_col)
