@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Optional, Tuple
 
 
-FONT_NAME = "阿里妈妈方圆体 VF"
+FONT_NAME = "阿里妈妈方圆体 VF Medium"
 FONT_FILENAME = "hscredit-font.ttf"
 
 
