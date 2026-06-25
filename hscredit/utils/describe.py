@@ -42,10 +42,10 @@ def feature_describe(
     >>> feature_describe(df, feature='income', missing=-999)   # -999 视为缺失
     """
     if feature and feature not in data.columns:
-        raise ValueError(f"feature {feature} must in columns.")
+        raise ValueError(f"特征 {feature} 不在数据列中")
 
     if cardinality and cardinality < 1:
-        raise ValueError(f"cardinality must greater than 1")
+        raise ValueError("cardinality 必须大于 1")
 
     if percentiles is None:
         percentiles = [0.01, 0.02, 0.03, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5,

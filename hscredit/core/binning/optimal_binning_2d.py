@@ -48,18 +48,20 @@ from typing import Union, List, Dict, Optional, Any, Tuple, Literal
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from sklearn.base import BaseEstimator, TransformerMixin
 
 from .optimal_binning import OptimalBinning
 from ..metrics._binning import compute_bin_stats
 from ...exceptions import HSCreditError, NotFittedError
 from ..._lazy import LazyModule
+from ...utils.serialization import ArtifactSerializableMixin
 
 # 延迟加载 seaborn：仅在首次实际绘图（访问 sns 属性）时才导入，
 # 避免 import hscredit 时即触发 seaborn（及其 ipywidgets/IPython 依赖）的加载。
 sns = LazyModule("seaborn")
 
 
-class OptimalBinning2D:
+class OptimalBinning2D(ArtifactSerializableMixin, BaseEstimator, TransformerMixin):
     """二维分箱器.
 
     对两个特征进行交叉分箱分析，生成二维分箱矩阵，用于揭示特征间的交互效应。
@@ -151,6 +153,8 @@ class OptimalBinning2D:
     https://gnpalencia.org/optbinning/binning_2d.html
     """
 
+    artifact_kind = "分箱器"
+
     def __init__(
         self,
         target: str = 'target',
@@ -217,8 +221,8 @@ class OptimalBinning2D:
         self.dtype_y = dtype_y
 
         # 扩展参数
-        self.x_params = x_params or {}
-        self.y_params = y_params or {}
+        self.x_params = x_params
+        self.y_params = y_params
 
         # 其他参数
         self.missing_separate = missing_separate
@@ -367,6 +371,11 @@ class OptimalBinning2D:
         # 基于合并结果生成二维分箱表（复用 compute_bin_stats 计算指标）
         self._compute_binning_table()
 
+        self.n_features_in_ = 2
+        self.feature_names_in_ = np.asarray(
+            [self.feature_x_, self.feature_y_],
+            dtype=object,
+        )
         self._is_fitted = True
         return self
 
@@ -434,6 +443,19 @@ class OptimalBinning2D:
             result.attrs['hscredit_encoding'] = 'woe'
             result.attrs['hscredit_source'] = 'OptimalBinning2D'
         return result
+
+    def get_feature_names_out(self, input_features=None) -> np.ndarray:
+        """返回二维交叉分箱转换后的特征名."""
+        if not self._is_fitted:
+            raise NotFittedError("分箱器尚未拟合，请先调用 fit 方法")
+        if input_features is not None:
+            input_features = np.asarray(input_features, dtype=object)
+            if not np.array_equal(input_features, self.feature_names_in_):
+                raise ValueError(
+                    f"input_features 必须与拟合时特征一致，期望 "
+                    f"{self.feature_names_in_.tolist()}，实际 {input_features.tolist()}"
+                )
+        return np.asarray([self.feature_name_], dtype=object)
 
     def get_cross_table(self) -> pd.DataFrame:
         """获取二维交叉分箱统计表.
@@ -881,14 +903,14 @@ class OptimalBinning2D:
             method = self.method_x if self.method_x is not None else self.method
             monotonic = self.monotonic_x if self.monotonic_x is not None else self.monotonic
             special_codes = self.special_codes_x
-            extra_params = self.x_params
+            extra_params = self.x_params or {}
         else:
             max_n_bins = self.max_n_bins_y if self.max_n_bins_y is not None else self.max_n_bins
             min_bin_size = self.min_bin_size_y if self.min_bin_size_y is not None else self.min_bin_size
             method = self.method_y if self.method_y is not None else self.method
             monotonic = self.monotonic_y if self.monotonic_y is not None else self.monotonic
             special_codes = self.special_codes_y
-            extra_params = self.y_params
+            extra_params = self.y_params or {}
 
         binner = OptimalBinning(
             target=self.target,

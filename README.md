@@ -7,7 +7,7 @@
 <div align="center">
 
 ![Python](https://img.shields.io/badge/Python-3.9%2B-3776AB?style=flat-square&logo=python&logoColor=white)
-![Version](https://img.shields.io/badge/Version-0.1.0-orange?style=flat-square)
+![Version](https://img.shields.io/badge/Version-0.1.1-orange?style=flat-square)
 <a href="https://pypi.org/project/hscredit/"><img src="https://img.shields.io/pypi/v/hscredit?style=flat-square" alt="PyPI"></a>
 ![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)
 
@@ -188,7 +188,7 @@ cross_rules = cross_miner.get_cross_rules("age", "income", top_n=10)
 
 extractor = TreeRuleExtractor(algorithm="rf", max_depth=5)
 extractor.fit(X_train, y_train)
-tree_rules = extractor.extract_rules(top_n=20, metric="confidence")
+tree_rules = extractor.extract_rules()
 ```
 
 ### 6. 模型报告和 Excel 交付
@@ -196,11 +196,13 @@ tree_rules = extractor.extract_rules(top_n=20, metric="confidence")
 ```python
 from hscredit.report import auto_model_report
 
-report_path = auto_model_report(
+report = auto_model_report(
     model,
-    X_test,
-    y_test,
-    save_path="模型评估报告.xlsx",
+    X_train=X_train,
+    y_train=y_train,
+    X_test=X_test,
+    y_test=y_test,
+    excel_path="模型评估报告.xlsx",
 )
 ```
 
@@ -277,7 +279,7 @@ bin_table.show()
 ## 文档与规划
 
 - 迭代规划：`docs/ROADMAP.md`
-- 打包说明：`docs/PACKAGING.md`
+- 可执行快速开始：`examples/00_quickstart.py`
 - 示例数据和 Notebook：`examples/`
 
 ## 维护与开发

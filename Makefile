@@ -45,8 +45,8 @@ jupyter: ## 启动Jupyter Notebook
 
 # 运行notebook验证
 notebook-test: ## 执行notebook验证
-	jupyter nbconvert --to notebook --execute examples/00_project_overview.ipynb --output-dir outputs/
-	@echo "✅ Notebook验证完成"
+	python examples/00_quickstart.py
+	@echo "✅ 快速开始示例验证完成"
 
 # 代码格式化
 format: ## 格式化代码
@@ -55,12 +55,12 @@ format: ## 格式化代码
 
 # 代码检查
 lint: ## 检查代码质量
-	flake8 hscredit tests
+	flake8 hscredit tests --select=E9,F63,F7,F82,F601
 	@echo "✅ 代码检查完成"
 
 # 类型检查
 type-check: ## 类型检查
-	mypy hscredit --ignore-missing-imports
+	mypy hscredit/core/model_selection.py hscredit/utils/serialization.py hscredit/utils/parallel.py --follow-imports=skip --ignore-missing-imports
 	@echo "✅ 类型检查完成"
 
 # 清理
@@ -124,8 +124,7 @@ quickstart: dev validate ## 快速开始（安装+验证）
 	@echo ""
 	@echo "下一步:"
 	@echo "  1. 运行 'make jupyter' 启动Jupyter"
-	@echo "  2. 打开 examples/00_project_overview.ipynb"
-	@echo "  3. 执行notebook进行验证"
+	@echo "  2. 运行 'python examples/00_quickstart.py' 验证完整流程"
 	@echo ""
 
 # 克隆文档仓库

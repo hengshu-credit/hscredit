@@ -43,6 +43,6 @@ def __getattr__(name):
         module = importlib.import_module("hscredit.report.model_report")
         value = module.ModelReport
     else:
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+        raise AttributeError(f"模块 {__name__!r} 不存在属性 {name!r}")
     globals()[name] = value
     return value

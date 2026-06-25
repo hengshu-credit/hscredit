@@ -5,6 +5,12 @@
 
 from .random import seed_everything
 from .io import load_pickle, save_pickle
+from .serialization import (
+    ArtifactSerializableMixin,
+    ARTIFACT_FORMAT,
+    ARTIFACT_VERSION,
+)
+from .parallel import resolve_n_jobs
 from .describe import feature_describe, groupby_feature_describe
 from .datasets import germancredit
 from .misc import round_float, force_reload_module, trapz
@@ -31,6 +37,10 @@ __all__ = [
     # 数据IO
     'load_pickle',
     'save_pickle',
+    'ArtifactSerializableMixin',
+    'ARTIFACT_FORMAT',
+    'ARTIFACT_VERSION',
+    'resolve_n_jobs',
     # 特征描述
     'feature_describe',
     'groupby_feature_describe',

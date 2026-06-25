@@ -162,5 +162,5 @@ pytest tests/test_binning/test_binning.py::test_binning_basic -v
 ## 相关文档
 
 - [项目主文档](../README.md)
-- [目录结构说明](../DIRECTORY_STRUCTURE.md)
+- [功能总览](../docs/overview.md)
 - [示例代码](../examples/)

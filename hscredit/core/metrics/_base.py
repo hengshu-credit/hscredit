@@ -11,13 +11,13 @@ from typing import Union, Tuple, Optional, List
 def _validate_binary_target(y: np.ndarray, name: str = "y") -> None:
     """验证目标变量是否为二分类."""
     if not np.all(np.isin(y, [0, 1])):
-        raise ValueError(f"{name} must contain only 0 and 1")
+        raise ValueError(f"{name} 只能包含 0 和 1")
 
 
 def _validate_same_length(a: np.ndarray, b: np.ndarray, names: Tuple[str, str] = ("a", "b")) -> None:
     """验证两个数组长度相同."""
     if len(a) != len(b):
-        raise ValueError(f"{names[0]} and {names[1]} must have same length")
+        raise ValueError(f"{names[0]} 和 {names[1]} 的长度必须一致")
 
 
 def _handle_missing_values(*arrays: np.ndarray) -> Tuple[np.ndarray, ...]:

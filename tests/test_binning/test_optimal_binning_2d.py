@@ -2,6 +2,7 @@
 """OptimalBinning2D 二维交互分箱测试."""
 
 import pytest
+from sklearn.base import BaseEstimator, TransformerMixin, clone
 import numpy as np
 import pandas as pd
 
@@ -715,3 +716,23 @@ class TestOptimalBinning2DMerge:
 
 if __name__ == '__main__':
     pytest.main([__file__, '-v', '--tb=short'])
+def test_inherits_sklearn_estimator_and_transformer():
+    binner = OptimalBinning2D(x_params={"method": "quantile"})
+    assert isinstance(binner, BaseEstimator)
+    assert isinstance(binner, TransformerMixin)
+    cloned = clone(binner)
+    assert cloned.get_params(deep=False) == binner.get_params(deep=False)
+
+
+def test_sklearn_feature_metadata_and_artifact(tmp_path):
+    X = pd.DataFrame({"x": [1, 2, 3, 4, 5, 6], "y": [6, 5, 4, 3, 2, 1]})
+    target = pd.Series([0, 0, 0, 1, 1, 1])
+    binner = OptimalBinning2D(max_n_bins=2).fit(X, target)
+
+    assert binner.n_features_in_ == 2
+    assert binner.feature_names_in_.tolist() == ["x", "y"]
+    assert binner.get_feature_names_out().tolist() == ["xXy"]
+
+    path = binner.save_artifact(tmp_path / "binning_2d.joblib")
+    restored = OptimalBinning2D.load_artifact(path)
+    pd.testing.assert_frame_equal(restored.transform(X), binner.transform(X))

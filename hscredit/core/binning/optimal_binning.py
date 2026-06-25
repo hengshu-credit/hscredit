@@ -15,7 +15,6 @@ from typing import Union, List, Dict, Optional, Any, Callable
 import numpy as np
 import pandas as pd
 import warnings
-from scipy import stats
 
 from ...exceptions import NotFittedError
 from .base import BaseBinning
@@ -1778,9 +1777,6 @@ if __name__ == '__main__':
     print("=" * 70)
     print("OptimalBinning - 统一分箱接口测试")
     print("=" * 70)
-    
-    import numpy as np
-    import pandas as pd
     
     # 生成测试数据
     np.random.seed(42)

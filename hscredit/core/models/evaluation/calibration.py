@@ -52,10 +52,10 @@
 >>> model.fit(X_train, y_train)
 >>>
 >>> # 创建校准器
->>> calibrator = ProbabilityCalibrator(method='isotonic')
+>>> calibrator = ProbabilityCalibrator(method='isotonic', model=model, calib_ratio=None)
 >>>
 >>> # 拟合校准器
->>> calibrator.fit(model, X_calib, y_calib)
+>>> calibrator.fit(X_calib, y_calib)
 >>>
 >>> # 预测校准后的概率
 >>> proba_calibrated = calibrator.predict_proba(X_test)
@@ -66,7 +66,7 @@
 
 import warnings
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -77,9 +77,13 @@ from sklearn.isotonic import IsotonicRegression
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
 from sklearn.utils.validation import check_is_fitted, check_X_y
+from ....utils.serialization import ArtifactSerializableMixin
+
+if TYPE_CHECKING:
+    import matplotlib
 
 
-class BaseCalibrator(BaseEstimator, ABC):
+class BaseCalibrator(ArtifactSerializableMixin, BaseEstimator, ABC):
     """概率校准器基类.
 
     所有概率校准器的抽象基类，定义统一接口。
@@ -92,6 +96,8 @@ class BaseCalibrator(BaseEstimator, ABC):
         - 'quantile': 等频分箱
     """
 
+    artifact_kind = "概率校准器"
+
     def __init__(self, n_bins: int = 10, strategy: str = 'uniform'):
         self.n_bins = n_bins
         self.strategy = strategy
@@ -99,13 +105,13 @@ class BaseCalibrator(BaseEstimator, ABC):
     @abstractmethod
     def fit(
         self,
+        y_prob: Union[np.ndarray, pd.Series],
         y_true: Union[np.ndarray, pd.Series],
-        y_prob: Union[np.ndarray, pd.Series]
     ) -> 'BaseCalibrator':
         """拟合校准器.
 
-        :param y_true: 真实标签
         :param y_prob: 原始预测概率（正类概率）
+        :param y_true: 真实标签
         :return: self
         """
         pass
@@ -121,6 +127,15 @@ class BaseCalibrator(BaseEstimator, ABC):
         :return: 校准后的概率
         """
         pass
+
+    def transform(self, y_prob: Union[np.ndarray, pd.Series]) -> np.ndarray:
+        """按 sklearn Transformer 约定校准正类概率."""
+        return self.calibrate(y_prob)
+
+    def predict_proba(self, y_prob: Union[np.ndarray, pd.Series]) -> np.ndarray:
+        """返回两列格式的校准概率 ``[P(0), P(1)]``."""
+        positive = np.clip(self.calibrate(y_prob), 0.0, 1.0)
+        return np.column_stack([1.0 - positive, positive])
 
     def _prepare_data(
         self,
@@ -384,7 +399,7 @@ class PlattCalibrator(BaseCalibrator):
     **参考样例**
 
     >>> calibrator = PlattCalibrator()
-    >>> calibrator.fit(y_true, y_prob)
+    >>> calibrator.fit(y_prob, y_true)
     >>> proba_calib = calibrator.calibrate(y_prob_test)
     """
 
@@ -394,8 +409,8 @@ class PlattCalibrator(BaseCalibrator):
 
     def fit(
         self,
+        y_prob: Union[np.ndarray, pd.Series],
         y_true: Union[np.ndarray, pd.Series],
-        y_prob: Union[np.ndarray, pd.Series]
     ) -> 'PlattCalibrator':
         """拟合Platt Scaling参数.
 
@@ -449,7 +464,7 @@ class IsotonicCalibrator(BaseCalibrator):
     **参考样例**
 
     >>> calibrator = IsotonicCalibrator()
-    >>> calibrator.fit(y_true, y_prob)
+    >>> calibrator.fit(y_prob, y_true)
     >>> proba_calib = calibrator.calibrate(y_prob_test)
     """
 
@@ -464,8 +479,8 @@ class IsotonicCalibrator(BaseCalibrator):
 
     def fit(
         self,
+        y_prob: Union[np.ndarray, pd.Series],
         y_true: Union[np.ndarray, pd.Series],
-        y_prob: Union[np.ndarray, pd.Series]
     ) -> 'IsotonicCalibrator':
         """拟合保序回归.
 
@@ -515,14 +530,14 @@ class BetaCalibrator(BaseCalibrator):
     **参考样例**
 
     >>> calibrator = BetaCalibrator()
-    >>> calibrator.fit(y_true, y_prob)
+    >>> calibrator.fit(y_prob, y_true)
     >>> proba_calib = calibrator.calibrate(y_prob_test)
     """
 
     def fit(
         self,
+        y_prob: Union[np.ndarray, pd.Series],
         y_true: Union[np.ndarray, pd.Series],
-        y_prob: Union[np.ndarray, pd.Series]
     ) -> 'BetaCalibrator':
         """拟合Beta分布参数.
 
@@ -591,7 +606,7 @@ class HistogramCalibrator(BaseCalibrator):
     **参考样例**
 
     >>> calibrator = HistogramCalibrator(n_bins=10)
-    >>> calibrator.fit(y_true, y_prob)
+    >>> calibrator.fit(y_prob, y_true)
     >>> proba_calib = calibrator.calibrate(y_prob_test)
     """
 
@@ -600,8 +615,8 @@ class HistogramCalibrator(BaseCalibrator):
 
     def fit(
         self,
+        y_prob: Union[np.ndarray, pd.Series],
         y_true: Union[np.ndarray, pd.Series],
-        y_prob: Union[np.ndarray, pd.Series]
     ) -> 'HistogramCalibrator':
         """拟合直方图校准器.
 
@@ -658,7 +673,7 @@ class HistogramCalibrator(BaseCalibrator):
         return self.bin_freqs_[np.clip(bin_indices, 0, self.n_bins - 1)]
 
 
-class ProbabilityCalibrator:
+class ProbabilityCalibrator(ArtifactSerializableMixin, BaseEstimator, ClassifierMixin):
     """概率校准器 - 统一入口.
 
     提供统一的概率校准接口，支持多种校准方法。
@@ -688,18 +703,18 @@ class ProbabilityCalibrator:
     **参考样例**
 
     >>> # 方式1：使用独立校准集
-    >>> calibrator = ProbabilityCalibrator(method='isotonic')
-    >>> calibrator.fit(model, X_calib, y_calib)
+    >>> calibrator = ProbabilityCalibrator(method='isotonic', model=model, calib_ratio=None)
+    >>> calibrator.fit(X_calib, y_calib)
     >>> proba_calib = calibrator.predict_proba(X_test)
 
     >>> # 方式2：自动划分校准集
-    >>> calibrator = ProbabilityCalibrator(method='platt', calib_ratio=0.2)
-    >>> calibrator.fit(model, X_train, y_train)  # 自动划分20%用于校准
+    >>> calibrator = ProbabilityCalibrator(method='platt', model=model, calib_ratio=0.2)
+    >>> calibrator.fit(X_train, y_train)  # 自动划分20%用于校准
     >>> proba_calib = calibrator.predict_proba(X_test)
 
     >>> # 方式3：scorecardpipeline风格
-    >>> calibrator = ProbabilityCalibrator(method='platt')
-    >>> calibrator.fit(model, df_calib)  # df_calib包含target列
+    >>> calibrator = ProbabilityCalibrator(method='platt', model=model, calib_ratio=None)
+    >>> calibrator.fit(df_calib)  # df_calib包含target列
     >>> proba_calib = calibrator.predict_proba(df_test)
 
     >>> # 评估校准效果
@@ -714,6 +729,7 @@ class ProbabilityCalibrator:
         'beta': BetaCalibrator,
         'histogram': HistogramCalibrator,
     }
+    artifact_kind = "概率校准模型"
 
     def __init__(
         self,
@@ -722,6 +738,8 @@ class ProbabilityCalibrator:
         n_bins: int = 10,
         random_state: Optional[int] = None,
         target: str = 'target',
+        model: Optional[Any] = None,
+        calibrator_params: Optional[Dict[str, Any]] = None,
         **kwargs
     ):
         if method not in self.CALIB_METHODS:
@@ -732,11 +750,13 @@ class ProbabilityCalibrator:
         self.n_bins = n_bins
         self.random_state = random_state
         self.target = target
-        self.kwargs = kwargs
+        self.model = model
+        self.calibrator_params = calibrator_params
+        self.kwargs = {**(calibrator_params or {}), **kwargs}
 
         # 创建校准器
         calib_class = self.CALIB_METHODS[method]
-        self.calibrator_ = calib_class(n_bins=n_bins, **kwargs)
+        self.calibrator_ = calib_class(n_bins=n_bins, **self.kwargs)
 
         # 属性
         self.model_ = None
@@ -746,9 +766,9 @@ class ProbabilityCalibrator:
 
     def fit(
         self,
-        model,
         X: Union[np.ndarray, pd.DataFrame],
         y: Optional[Union[np.ndarray, pd.Series]] = None,
+        model=None,
         target: Optional[str] = None,
         **fit_params
     ) -> 'ProbabilityCalibrator':
@@ -758,11 +778,13 @@ class ProbabilityCalibrator:
 
         **sklearn风格**::
 
-            calibrator.fit(model, X_calib, y_calib)
+            calibrator = ProbabilityCalibrator(model=model, calib_ratio=None)
+            calibrator.fit(X_calib, y_calib)
 
         **scorecardpipeline风格**::
 
-            calibrator.fit(model, df_calib)  # df_calib包含target列
+            calibrator = ProbabilityCalibrator(model=model, calib_ratio=None)
+            calibrator.fit(df_calib)  # df_calib包含target列
 
         :param model: 已训练的基础模型
         :param X: 特征矩阵或包含target的DataFrame
@@ -771,6 +793,17 @@ class ProbabilityCalibrator:
         :param fit_params: 其他参数
         :return: self
         """
+        # 兼容旧调用 ``fit(model, X, y)``。在该调用中，参数会映射为
+        # X=模型、y=特征、model=标签。
+        if hasattr(X, "predict_proba"):
+            legacy_model = X
+            legacy_X = y
+            legacy_y = model
+            X, y, model = legacy_X, legacy_y, legacy_model
+
+        model = model if model is not None else self.model
+        if model is None or not hasattr(model, "predict_proba"):
+            raise ValueError("必须提供实现 predict_proba 方法的基础模型")
         self.model_ = model
 
         # 使用初始化时设置的target
@@ -796,7 +829,7 @@ class ProbabilityCalibrator:
         y_prob = self._get_model_proba(X)
 
         # 拟合校准器
-        self.calibrator_.fit(y, y_prob)
+        self.calibrator_.fit(y_prob, y)
 
         # 计算校准前后的指标
         self.calib_metrics_['original'] = self.calibrator_.compute_calibration_metrics(y, y_prob)
@@ -804,6 +837,13 @@ class ProbabilityCalibrator:
         self.calib_metrics_['calibrated'] = self.calibrator_.compute_calibration_metrics(y, y_prob_calib)
 
         self.is_fitted_ = True
+        self.classes_ = np.asarray(getattr(self.model_, "classes_", [0, 1]))
+        if len(self.classes_) != 2:
+            raise ValueError("概率校准目前仅支持二分类模型")
+        if hasattr(X, "shape") and len(X.shape) == 2:
+            self.n_features_in_ = X.shape[1]
+        if isinstance(X, pd.DataFrame):
+            self.feature_names_in_ = np.asarray(X.columns, dtype=object)
 
         return self
 
@@ -814,19 +854,16 @@ class ProbabilityCalibrator:
         """预测校准后的概率.
 
         :param X: 特征矩阵
-        :return: 校准后的概率数组
+        :return: 两列概率数组，shape ``(n_samples, 2)``
         """
-        check_is_fitted(self, 'is_fitted_')
-
-        # 处理DataFrame
-        if isinstance(X, pd.DataFrame):
-            X = X.values
+        check_is_fitted(self, "classes_")
 
         # 获取原始概率
         y_prob = self._get_model_proba(X)
 
         # 校准
-        return self.calibrator_.calibrate(y_prob)
+        positive = np.clip(self.calibrator_.calibrate(y_prob), 0.0, 1.0)
+        return np.column_stack([1.0 - positive, positive])
 
     def predict(
         self,
@@ -839,18 +876,20 @@ class ProbabilityCalibrator:
         :param threshold: 分类阈值，默认0.5
         :return: 预测类别
         """
-        proba = self.predict_proba(X)
+        proba = self.predict_proba(X)[:, 1]
         return (proba >= threshold).astype(int)
 
     def _get_model_proba(
         self,
-        X: np.ndarray
+        X: Union[np.ndarray, pd.DataFrame]
     ) -> np.ndarray:
         """获取模型预测概率."""
         if hasattr(self.model_, 'predict_proba'):
-            proba = self.model_.predict_proba(X)
+            proba = np.asarray(self.model_.predict_proba(X))
             if proba.ndim == 2 and proba.shape[1] == 2:
-                return proba[:, 1]
+                classes = np.asarray(getattr(self.model_, "classes_", [0, 1]))
+                positive_index = int(np.flatnonzero(classes == 1)[0]) if 1 in classes else 1
+                return proba[:, positive_index]
             return proba
         else:
             raise ValueError("模型必须实现predict_proba方法")
@@ -860,20 +899,19 @@ class ProbabilityCalibrator:
         X: Union[np.ndarray, pd.DataFrame],
         y: Optional[Union[np.ndarray, pd.Series]],
         target: str
-    ) -> Tuple[np.ndarray, np.ndarray]:
+    ):
         """准备数据，支持两种传参风格."""
         # scorecardpipeline风格：从X中提取target
         if y is None:
             if isinstance(X, pd.DataFrame) and target in X.columns:
-                y = X[target].values
-                X = X.drop(columns=[target]).values
+                y = X[target].to_numpy()
+                X = X.drop(columns=[target])
             else:
                 raise ValueError(f"y为None时，X必须是包含'{target}'列的DataFrame")
+        if isinstance(y, pd.Series):
+            y = y.to_numpy()
         else:
-            if isinstance(X, pd.DataFrame):
-                X = X.values
-            if isinstance(y, pd.Series):
-                y = y.values
+            y = np.asarray(y)
 
         return X, y
 
@@ -882,8 +920,53 @@ class ProbabilityCalibrator:
 
         :return: 包含校准前后指标的字典
         """
-        check_is_fitted(self, 'is_fitted_')
+        check_is_fitted(self, "classes_")
         return self.calib_metrics_
+
+    def calibration_report(
+        self,
+        X: Union[np.ndarray, pd.DataFrame],
+        y: Optional[Union[np.ndarray, pd.Series]] = None,
+        target: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """生成校准前后指标对比报告.
+
+        :return: 包含指标、校准前、校准后、改善值和改善率的中文 DataFrame
+        """
+        check_is_fitted(self, "classes_")
+        X, y = self._prepare_data(X, y, target or self.target_)
+        original = self.calibrator_.compute_calibration_metrics(
+            y,
+            self._get_model_proba(X),
+        )
+        calibrated = self.calibrator_.compute_calibration_metrics(
+            y,
+            self.predict_proba(X)[:, 1],
+        )
+        labels = {
+            "brier_score": "Brier分数",
+            "expected_calibration_error": "期望校准误差(ECE)",
+            "max_calibration_error": "最大校准误差(MCE)",
+        }
+        rows = []
+        for key, label in labels.items():
+            before = float(original[key])
+            after = float(calibrated[key])
+            improvement = before - after
+            rows.append(
+                {
+                    "指标": label,
+                    "校准前": before,
+                    "校准后": after,
+                    "改善值": improvement,
+                    "改善率": improvement / before if before != 0 else np.nan,
+                }
+            )
+        return pd.DataFrame(rows)
+
+    def report(self, X, y=None, target: Optional[str] = None) -> pd.DataFrame:
+        """``calibration_report`` 的统一报告入口."""
+        return self.calibration_report(X, y=y, target=target)
 
     def plot_reliability_diagram(
         self,
@@ -904,14 +987,14 @@ class ProbabilityCalibrator:
         :param show: 是否显示图表，默认True
         :return: matplotlib Figure对象
         """
-        check_is_fitted(self, 'is_fitted_')
+        check_is_fitted(self, "classes_")
 
         # 处理两种传参风格
         X, y = self._prepare_data(X, y, target)
 
         # 获取原始和校准后的概率
         y_prob_orig = self._get_model_proba(X)
-        y_prob_calib = self.predict_proba(X)
+        y_prob_calib = self.predict_proba(X)[:, 1]
 
         return self.calibrator_.plot_reliability_diagram(
             y, y_prob_orig, y_prob_calib,
@@ -927,11 +1010,11 @@ class ProbabilityCalibrator:
         :param y_prob: 原始概率
         :return: 校准后的概率
         """
-        check_is_fitted(self, 'is_fitted_')
+        check_is_fitted(self, "classes_")
         return self.calibrator_.calibrate(y_prob)
 
 
-class CalibratedModel:
+class CalibratedModel(ArtifactSerializableMixin, BaseEstimator, ClassifierMixin):
     """已校准模型包装器.
 
     将基础模型和校准器组合在一起，提供统一的预测接口。
@@ -951,13 +1034,15 @@ class CalibratedModel:
     >>> model.fit(X_train, y_train)
     >>>
     >>> # 创建校准器并拟合
-    >>> calibrator = ProbabilityCalibrator(method='platt')
-    >>> calibrator.fit(model, X_calib, y_calib)
+    >>> calibrator = ProbabilityCalibrator(method='platt', model=model, calib_ratio=None)
+    >>> calibrator.fit(X_calib, y_calib)
     >>>
     >>> # 包装为已校准模型
     >>> calibrated_model = CalibratedModel(model, calibrator)
     >>> proba = calibrated_model.predict_proba(X_test)
     """
+
+    artifact_kind = "概率校准模型"
 
     def __init__(
         self,
@@ -966,6 +1051,7 @@ class CalibratedModel:
     ):
         self.base_model = base_model
         self.calibrator = calibrator
+        self.classes_ = np.asarray(getattr(base_model, "classes_", [0, 1]))
 
     def predict_proba(
         self,
@@ -976,7 +1062,7 @@ class CalibratedModel:
         将基础模型输出的原始概率经已拟合的校准器映射为更准确的概率。
 
         :param X: 特征矩阵，DataFrame 或 ndarray
-        :return: 校准后的正类概率数组，shape ``(n_samples,)``
+        :return: 两列校准概率数组，shape ``(n_samples, 2)``
         """
         return self.calibrator.predict_proba(X)
 
@@ -1003,7 +1089,7 @@ class CalibratedModel:
         :param X: 特征矩阵，DataFrame 或 ndarray
         :return: 0–1000 区间的风险评分数组
         """
-        proba = self.predict_proba(X)
+        proba = self.predict_proba(X)[:, 1]
         return (1 - proba) * 1000
 
     def evaluate(
@@ -1024,7 +1110,7 @@ class CalibratedModel:
         """
         from ...metrics.classification import ks, auc
 
-        y_proba = self.predict_proba(X)
+        y_proba = self.predict_proba(X)[:, 1]
 
         return {
             'AUC': auc(y, y_proba),
@@ -1154,6 +1240,7 @@ def calibrate_model(
     >>> calibrator = calibrate_model(model, X_calib, y_calib, method='isotonic')
     >>> proba_calib = calibrator.predict_proba(X_test)
     """
-    calibrator = ProbabilityCalibrator(method=method, **kwargs)
-    calibrator.fit(model, X_calib, y_calib, target=target)
+    kwargs.setdefault("calib_ratio", None)
+    calibrator = ProbabilityCalibrator(method=method, model=model, **kwargs)
+    calibrator.fit(X_calib, y_calib, target=target)
     return calibrator

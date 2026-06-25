@@ -47,12 +47,14 @@ from sklearn.base import BaseEstimator
 from sklearn.utils.validation import check_is_fitted
 
 from ....exceptions import NotFittedError, ValidationError
+from ....utils.serialization import ArtifactSerializableMixin
 from .score_transformer import ScoreTransformer
 
 logger = logging.getLogger(__name__)
 
 
-class ProbabilityScoreCard(BaseEstimator):
+class ProbabilityScoreCard(ArtifactSerializableMixin, BaseEstimator):
+    artifact_kind = "评分卡"
     """通用模型评分卡（概率 → 评分）.
 
     将任意含 ``predict_proba`` 的模型输出的概率，通过 :class:`ScoreTransformer`
