@@ -236,3 +236,41 @@ def test_bin_2d_plot_axis_bins_follow_numeric_interval_order():
     assert x_labels[-1].endswith("+inf)")
     assert y_labels[0].startswith("[-inf,")
     assert y_labels[-1].endswith("+inf)")
+
+
+def test_bin_2d_plot_includes_missing_bins_in_heatmaps():
+    """缺失箱应作为最后一行/列显示，并纳入二维热力图统计."""
+    rng = np.random.RandomState(31)
+    size = 600
+    frame = pd.DataFrame({
+        "x": rng.uniform(-20, 20, size),
+        "y": rng.uniform(0, 100, size),
+    })
+    frame.loc[:39, "x"] = np.nan
+    frame.loc[40:79, "y"] = np.nan
+    frame.loc[80:99, ["x", "y"]] = np.nan
+    target = pd.Series(rng.randint(0, 2, size), name="目标")
+    binner = OptimalBinning2D(
+        max_n_bins=4,
+        max_n_bins_2d=6,
+        missing_separate=True,
+    ).fit(frame, target, features=["x", "y"])
+
+    fig = bin_2d_plot(binner, figsize=(15, 13))
+    axes = fig.axes[:9]
+    expected_shape = (binner.n_bins_x_ + 1, binner.n_bins_y_ + 1)
+
+    for axis_index in (2, 3, 4, 6, 7):
+        assert axes[axis_index].images[0].get_array().shape == expected_shape
+
+    x_labels = [
+        label.get_text()
+        for label in reversed(axes[3].get_yticklabels())
+        if label.get_visible()
+    ]
+    y_labels = [label.get_text() for label in axes[7].get_xticklabels() if label.get_visible()]
+    assert x_labels[-1] == "缺失值"
+    assert y_labels[-1] == "缺失值"
+
+    sample_share = np.asarray(axes[3].images[0].get_array(), dtype=float)
+    assert np.isclose(np.nansum(sample_share), 1.0)
