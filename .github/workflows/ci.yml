@@ -15,8 +15,47 @@ concurrency:
 env:
   # 避免 CI 无显示环境下 matplotlib 选择 Tk 等 GUI 后端导致失败
   MPLBACKEND: Agg
+  PYTHONUTF8: "1"
 
 jobs:
+  quality:
+    name: 强制质量门禁
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: 安装开发与文档依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,docs]"
+
+      - name: 关键静态错误检查
+        run: flake8 hscredit tests --select=E9,F63,F7,F82,F601
+
+      - name: 新增基础设施类型检查
+        run: >
+          mypy
+          hscredit/core/model_selection.py
+          hscredit/utils/serialization.py
+          hscredit/utils/parallel.py
+          --follow-imports=skip
+          --ignore-missing-imports
+
+      - name: 环境与公开示例验证
+        run: |
+          python scripts/validate_environment.py
+          python examples/00_quickstart.py
+          pytest tests/test_utils/test_documentation_examples.py -q
+
+      - name: 构建文档
+        run: python -m sphinx -b html docs docs/_build/html
+
   # 核心测试：仅安装基础 + dev 依赖，覆盖 pyproject 声明支持的全部 Python 版本（3.9 ~ 最新）。
   # 目的是保证 hscredit 核心能力在每个受支持的 Python 版本上都可导入、可运行。
   test:
@@ -39,15 +78,6 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
-
-      # lint / type-check 暂为非阻塞：存量告警较多，待逐步清理后再转为强制门禁
-      - name: 代码检查（flake8，非阻塞）
-        continue-on-error: true
-        run: flake8 hscredit tests
-
-      - name: 类型检查（mypy，非阻塞）
-        continue-on-error: true
-        run: mypy hscredit --ignore-missing-imports
 
       - name: 运行测试（跳过 slow/integration）
         run: pytest tests/ -m "not slow and not integration" --tb=short

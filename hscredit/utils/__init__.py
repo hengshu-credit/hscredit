@@ -5,10 +5,17 @@
 
 from .random import seed_everything
 from .io import load_pickle, save_pickle
+from .serialization import (
+    ArtifactSerializableMixin,
+    ARTIFACT_FORMAT,
+    ARTIFACT_VERSION,
+)
+from .parallel import resolve_n_jobs
 from .describe import feature_describe, groupby_feature_describe
 from .datasets import germancredit
 from .misc import round_float, force_reload_module, trapz
 from .init import init_setting
+from .fonts import FONT_NAME, get_bundled_font_path, install_bundled_font
 from .logger import init_logger, get_logger
 from .pandas_extensions import (
     style_bin_table,
@@ -31,6 +38,10 @@ __all__ = [
     # 数据IO
     'load_pickle',
     'save_pickle',
+    'ArtifactSerializableMixin',
+    'ARTIFACT_FORMAT',
+    'ARTIFACT_VERSION',
+    'resolve_n_jobs',
     # 特征描述
     'feature_describe',
     'groupby_feature_describe',
@@ -41,6 +52,9 @@ __all__ = [
     'force_reload_module',
     'trapz',
     'init_setting',
+    'FONT_NAME',
+    'get_bundled_font_path',
+    'install_bundled_font',
     # 日志工具
     'init_logger',
     'get_logger',

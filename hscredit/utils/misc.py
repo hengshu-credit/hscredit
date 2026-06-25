@@ -97,7 +97,6 @@ def force_reload_module(module_name):
         try:
             if hasattr(old_module, '__file__') and old_module.__file__:
                 pyc_file = old_module.__file__ + 'c'
-                import os
                 if os.path.exists(pyc_file):
                     os.remove(pyc_file)
         except Exception:

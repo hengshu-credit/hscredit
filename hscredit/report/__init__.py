@@ -12,6 +12,7 @@ from ..excel import ExcelWriter, dataframe2excel
 from .feature_analyzer import (
     auto_feature_analysis,
     feature_binning_summary,
+    feature_group_binning_summary,
     feature_bin_stats,
     feature_efficiency_analysis,
 )
@@ -56,6 +57,7 @@ __all__ = [
     "dataframe2excel",
     "feature_bin_stats",
     "feature_binning_summary",
+    "feature_group_binning_summary",
     "feature_efficiency_analysis",
     "auto_feature_analysis",
     "ruleset_analysis",

@@ -300,7 +300,7 @@ def feature_importance(X: Union[pd.DataFrame, np.ndarray],
             random_state=42
         )
     else:
-        raise ValueError(f"Unknown method: {method}")
+        raise ValueError(f"未知的计算方法: {method}")
 
     model.fit(X, y)
     return pd.Series(model.feature_importances_, index=feature_names)

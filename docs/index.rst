@@ -86,9 +86,14 @@ hscredit 文档
 
 .. code-block:: python
 
-   import hscredit
+   from hscredit.utils.datasets import germancredit
    from hscredit.core.binning import OptimalBinning
    from hscredit.core.models import ScoreCard
+
+   df = germancredit()
+   X_train = df[["duration_in_month", "credit_amount", "age_in_years"]]
+   y_train = df["class"]
+   X_test = X_train.iloc[:20]
 
    binner = OptimalBinning(method="best_iv", max_n_bins=5)
    binner.fit(X_train, y_train)

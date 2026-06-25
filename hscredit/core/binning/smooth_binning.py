@@ -14,7 +14,6 @@ import logging
 from typing import Union, List, Dict, Optional, Any, Tuple
 import numpy as np
 import pandas as pd
-from scipy import stats
 from ...exceptions import NotFittedError
 from .base import BaseBinning
 

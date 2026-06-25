@@ -18,7 +18,7 @@
 import warnings
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple, Union
 import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, ClassifierMixin
@@ -29,6 +29,13 @@ from sklearn.model_selection import train_test_split
 from ..metrics.classification import ks, auc, gini
 from ..metrics.stability import psi
 from ..metrics.finance import lift_at, lift_monotonicity_check
+from ...utils.serialization import ArtifactSerializableMixin
+from ...utils.parallel import resolve_n_jobs
+
+if TYPE_CHECKING:
+    import matplotlib
+    from ...report import ModelReport
+    from .evaluation.interpretability import ModelExplainer
 
 
 def _lift_score(y_true, y_proba, top_ratio=0.1):
@@ -86,7 +93,7 @@ def resolve_custom_objective(objective):
     return _sklearn_obj
 
 
-class BaseRiskModel(BaseEstimator, ClassifierMixin, ABC):
+class BaseRiskModel(ArtifactSerializableMixin, BaseEstimator, ClassifierMixin, ABC):
     """风控模型基类.
 
     所有风控模型的抽象基类，定义统一接口。
@@ -128,6 +135,8 @@ class BaseRiskModel(BaseEstimator, ClassifierMixin, ABC):
     :ivar best_score_: 最佳得分
     """
 
+    artifact_kind = "风险模型"
+
     # 支持的评估指标
     SUPPORTED_METRICS = [
         "auc",
@@ -165,7 +174,7 @@ class BaseRiskModel(BaseEstimator, ClassifierMixin, ABC):
         self.early_stopping_rounds = early_stopping_rounds
         self.validation_fraction = validation_fraction
         self.random_state = random_state
-        self.n_jobs = n_jobs if n_jobs != -1 else None
+        self.n_jobs = resolve_n_jobs(n_jobs)
         self.verbose = verbose
         self.kwargs = kwargs
 

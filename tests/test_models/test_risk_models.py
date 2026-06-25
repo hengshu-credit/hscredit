@@ -3,6 +3,8 @@
 测试统一模型接口和各种模型实现。
 """
 
+import importlib.util
+
 import pytest
 import numpy as np
 import pandas as pd
@@ -17,6 +19,10 @@ from hscredit.core.models import (
     GradientBoostingRiskModel,
     ModelReport,
 )
+
+# 可选依赖是否真实可用（懒加载类的 __module__ 始终在 hscredit 下，无法据此判断）
+HAS_XGBOOST = importlib.util.find_spec("xgboost") is not None
+HAS_LIGHTGBM = importlib.util.find_spec("lightgbm") is not None
 
 
 @pytest.fixture
@@ -79,7 +85,7 @@ class TestBaseRiskModel:
 class TestXGBoostRiskModel:
     """测试XGBoost模型."""
 
-    @pytest.mark.skipif(not XGBoostRiskModel.__module__.startswith("hscredit"), reason="XGBoost not available")
+    @pytest.mark.skipif(not HAS_XGBOOST, reason="XGBoost 未安装")
     def test_fit_predict(self, sample_data):
         """测试训练和预测."""
         X_train, X_test, y_train, y_test = sample_data
@@ -94,7 +100,7 @@ class TestXGBoostRiskModel:
         assert proba.shape == (len(X_test), 2)
         assert np.allclose(proba.sum(axis=1), 1.0)
 
-    @pytest.mark.skipif(not XGBoostRiskModel.__module__.startswith("hscredit"), reason="XGBoost not available")
+    @pytest.mark.skipif(not HAS_XGBOOST, reason="XGBoost 未安装")
     def test_feature_importance(self, sample_data):
         """测试特征重要性."""
         X_train, X_test, y_train, y_test = sample_data
@@ -112,7 +118,7 @@ class TestXGBoostRiskModel:
 class TestLightGBMRiskModel:
     """测试LightGBM模型."""
 
-    @pytest.mark.skipif(not LightGBMRiskModel.__module__.startswith("hscredit"), reason="LightGBM not available")
+    @pytest.mark.skipif(not HAS_LIGHTGBM, reason="LightGBM 未安装")
     def test_fit_predict(self, sample_data):
         """测试训练和预测."""
         X_train, X_test, y_train, y_test = sample_data
@@ -126,7 +132,7 @@ class TestLightGBMRiskModel:
         assert len(predictions) == len(X_test)
         assert proba.shape == (len(X_test), 2)
 
-    @pytest.mark.skipif(not LightGBMRiskModel.__module__.startswith("hscredit"), reason="LightGBM not available")
+    @pytest.mark.skipif(not HAS_LIGHTGBM, reason="LightGBM 未安装")
     def test_early_stopping(self, sample_data):
         """测试早停功能."""
         X_train, X_test, y_train, y_test = sample_data

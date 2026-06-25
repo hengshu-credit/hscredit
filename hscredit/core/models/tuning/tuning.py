@@ -77,6 +77,7 @@ import warnings
 from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union, Sequence
 import numpy as np
 import pandas as pd
+from ....utils.parallel import resolve_n_jobs
 from sklearn.model_selection import cross_val_score, StratifiedKFold
 from sklearn.metrics import get_scorer, roc_auc_score, roc_curve
 
@@ -832,7 +833,7 @@ class ModelTuner:
         self.load_if_exists = load_if_exists
         self.target = target
         self.cv = cv
-        self.n_jobs = n_jobs if n_jobs != -1 else None
+        self.n_jobs = resolve_n_jobs(n_jobs)
         self.random_state = random_state
         self.verbose = verbose
         self.early_stopping_rounds = early_stopping_rounds
@@ -1065,7 +1066,6 @@ class ModelTuner:
     ) -> Union[float, Tuple[float, ...]]:
         """评估模型，返回一个或多个指标值."""
         try:
-            from sklearn.model_selection import StratifiedKFold
             kf = StratifiedKFold(n_splits=self.cv, shuffle=True, random_state=self.random_state)
             
             # 存储每折的结果

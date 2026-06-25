@@ -39,6 +39,7 @@ class TestGBMEncoderMissing:
     
     def test_xgboost_with_missing(self):
         """测试XGBoost处理缺失值."""
+        pytest.importorskip("xgboost", reason="XGBoost 未安装")
         X, y = generate_data_with_missing(n_samples=500, missing_ratio=0.15)
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
         
@@ -131,6 +132,7 @@ class TestGBMEncoderMissing:
     
     def test_missing_stats(self):
         """测试缺失值统计功能."""
+        pytest.importorskip("xgboost", reason="XGBoost 未安装")
         X, y = generate_data_with_missing(n_samples=500, missing_ratio=0.1)
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
         
@@ -158,6 +160,7 @@ class TestGBMEncoderMissing:
     
     def test_no_missing(self):
         """测试无缺失值时正常工作."""
+        pytest.importorskip("xgboost", reason="XGBoost 未安装")
         X, y = generate_data_with_missing(n_samples=500, missing_ratio=0.0)
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
         
@@ -184,6 +187,7 @@ class TestGBMEncoderMissing:
     
     def test_high_missing_ratio(self):
         """测试高缺失率情况."""
+        pytest.importorskip("xgboost", reason="XGBoost 未安装")
         X, y = generate_data_with_missing(n_samples=500, missing_ratio=0.3)
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
         

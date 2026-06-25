@@ -377,8 +377,10 @@ class TestExcelChart:
         for kind in ("catAx", "valAx"):
             for m in re.finditer(r"<(\w+:)?%s>(.*?)</(\w+:)?%s>" % (kind, kind), chart_xml, re.S):
                 body = m.group(0)
-                sid = re.search(r'<\w*:?axId val="(\d+)"/>', body)
-                cross = re.search(r'<\w*:?crossAx val="(\d+)"/>', body)
+                # 兼容 lxml（<axId val="10"/>）与 ElementTree（<axId val="10" />，含空格）
+                # 两种序列化后端，避免 CI 无 lxml 时回退导致正则失配
+                sid = re.search(r'<\w*:?axId val="(\d+)"\s*/?>', body)
+                cross = re.search(r'<\w*:?crossAx val="(\d+)"\s*/?>', body)
                 assert sid and cross, "轴缺少 axId 或 crossAx"
                 axes[sid.group(1)] = cross.group(1)
 
