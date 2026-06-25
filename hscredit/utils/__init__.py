@@ -15,6 +15,7 @@ from .describe import feature_describe, groupby_feature_describe
 from .datasets import germancredit
 from .misc import round_float, force_reload_module, trapz
 from .init import init_setting
+from .fonts import FONT_NAME, get_bundled_font_path, install_bundled_font
 from .logger import init_logger, get_logger
 from .pandas_extensions import (
     style_bin_table,
@@ -51,6 +52,9 @@ __all__ = [
     'force_reload_module',
     'trapz',
     'init_setting',
+    'FONT_NAME',
+    'get_bundled_font_path',
+    'install_bundled_font',
     # 日志工具
     'init_logger',
     'get_logger',

@@ -198,3 +198,41 @@ def test_bin_2d_feature_2_labels_stay_inside_canvas(bin_2d_figure):
     boxes = [axis.xaxis.label.get_window_extent(renderer)]
     boxes.extend(label.get_window_extent(renderer) for label in axis.get_xticklabels() if label.get_visible())
     assert min(box.y0 for box in boxes) >= 0
+
+
+def test_bin_2d_plot_axis_bins_follow_numeric_interval_order():
+    """组合图横纵坐标应按分箱索引对应的数值区间升序排列."""
+    rng = np.random.RandomState(24)
+    size = 500
+    frame = pd.DataFrame({
+        "x": rng.uniform(-20, 20, size),
+        "y": rng.uniform(0, 100, size),
+    })
+    target = pd.Series(rng.randint(0, 2, size), name="目标")
+    binner = OptimalBinning2D(
+        user_splits_x=[-10, 0, 10],
+        user_splits_y=[20, 40, 60, 80],
+        max_n_bins_2d=8,
+    ).fit(frame, target, features=["x", "y"])
+
+    # 模拟一维分箱表被报表层重排，绘图仍必须按“分箱”列而不是表行序取标签。
+    binner.binner_x_.bin_tables_["x"] = (
+        binner.binner_x_.bin_tables_["x"].sample(frac=1, random_state=3).reset_index(drop=True)
+    )
+    binner.binner_y_.bin_tables_["y"] = (
+        binner.binner_y_.bin_tables_["y"].sample(frac=1, random_state=4).reset_index(drop=True)
+    )
+    fig = bin_2d_plot(binner, figsize=(15, 13))
+    axes = fig.axes[:9]
+
+    # Matplotlib 返回 y 刻度时按坐标值从底到顶；组合图视觉顺序需反转为从上到下。
+    x_labels = [
+        label.get_text()
+        for label in reversed(axes[3].get_yticklabels())
+        if label.get_visible()
+    ]
+    y_labels = [label.get_text() for label in axes[7].get_xticklabels() if label.get_visible()]
+    assert x_labels[0].startswith("[-inf,")
+    assert x_labels[-1].endswith("+inf)")
+    assert y_labels[0].startswith("[-inf,")
+    assert y_labels[-1].endswith("+inf)")
