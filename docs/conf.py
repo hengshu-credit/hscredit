@@ -14,20 +14,19 @@ import os
 import shutil
 import sys
 from datetime import datetime
+from importlib.metadata import version as package_version
 from pathlib import Path
 
 # -- 路径设置 ---------------------------------------------------------------
 # 将项目根目录加入 sys.path，使 autodoc 能够 import hscredit。
 sys.path.insert(0, os.path.abspath(".."))
 
-import hscredit  # noqa: E402  (置于 sys.path 设置之后)
-
 # -- 项目信息 ---------------------------------------------------------------
 project = "hscredit"
 author = "hscredit team"
 copyright = f"{datetime.now():%Y}, {author}"
-version = hscredit.__version__
-release = hscredit.__version__
+version = package_version("hscredit")
+release = version
 
 # -- 通用配置 ---------------------------------------------------------------
 extensions = [
@@ -112,6 +111,8 @@ html_theme_options = {
     "prev_next_buttons_location": "bottom",
 }
 html_static_path = ["_static"]
+# 原样复制到 HTML 根目录，供 GitHub Pages 识别自定义域名并关闭 Jekyll 处理。
+html_extra_path = ["CNAME", ".nojekyll"]
 html_title = f"hscredit {release} 文档"
 html_short_title = "hscredit"
 # 品牌 Logo（hengshucredit 动态霓虹 SVG，蓝紫粉同步渐变）与同款 favicon

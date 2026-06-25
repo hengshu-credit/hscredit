@@ -79,7 +79,6 @@ clean: ## 清理临时文件
 # 构建文档
 docs: ## 构建文档
 	cd docs && make clean && make html
-	echo "hscredit.hengshucredit.com" > docs/_build/html/CNAME
 	@echo "✅ 文档已生成: docs/_build/html/index.html"
 
 # 构建发布包（包含文档构建）
