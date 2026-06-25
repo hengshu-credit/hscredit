@@ -21,11 +21,11 @@ __all__ = [
 
 def __getattr__(name):
     if name not in __all__:
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+        raise AttributeError(f"模块 {__name__!r} 不存在属性 {name!r}")
     try:
         module = importlib.import_module(".tuning", __name__)
         value = getattr(module, name)
     except Exception:
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}") from None
+        raise AttributeError(f"模块 {__name__!r} 不存在属性 {name!r}") from None
     globals()[name] = value
     return value

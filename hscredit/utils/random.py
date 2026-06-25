@@ -31,4 +31,4 @@ def seed_everything(seed: int, freeze_torch: bool = False):
             torch.backends.cudnn.deterministic = True
             torch.backends.cudnn.benchmark = True
         except ImportError:
-            raise ImportError("PyTorch is not installed. Install it with: pip install torch")
+            raise ImportError("未安装 PyTorch，请执行命令安装: pip install torch")

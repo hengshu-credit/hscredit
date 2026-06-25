@@ -108,7 +108,7 @@ class NumExprDerive(BaseEstimator, TransformerMixin):
         self._check_keywords()
         if isinstance(X, pd.DataFrame):
             if X.ndim != 2:
-                raise ValueError("X must be 2-dimensional")
+                raise ValueError("X 必须是二维数据")
         return self
 
     def _convert_where_to_np(self, expr):
@@ -176,19 +176,19 @@ class NumExprDerive(BaseEstimator, TransformerMixin):
         """检查参数有效性。"""
         derivings = self.derivings
         if derivings is None:
-            raise ValueError("Deriving rules should not be empty!")
+            raise ValueError("特征衍生规则不能为空")
         if not isinstance(derivings, list):
-            raise ValueError("Deriving rules should be a list!")
+            raise ValueError("特征衍生规则必须是列表")
         if not derivings:
-            raise ValueError("Deriving rules should not be empty!")
+            raise ValueError("特征衍生规则不能为空")
         for i, entry in enumerate(derivings):
             if not isinstance(entry, tuple):
-                raise ValueError(f"The {i}-th deriving rule should be a tuple!")
+                raise ValueError(f"第 {i} 条特征衍生规则必须是元组")
             if len(entry) != 2:
-                raise ValueError(f"The {i}-th deriving rule is not a two-element (name, expr) tuple!")
+                raise ValueError(f"第 {i} 条特征衍生规则必须是二元组 (名称, 表达式)")
             name, expr = entry
             if not isinstance(name, str) or not isinstance(expr, str):
-                raise ValueError(f"The {i}-th deriving rule is not a two-string tuple!")
+                raise ValueError(f"第 {i} 条特征衍生规则的名称和表达式都必须是字符串")
 
     def _transform_frame(self, X):
         """转换 DataFrame，支持任意类型数据。
@@ -245,7 +245,7 @@ class NumExprDerive(BaseEstimator, TransformerMixin):
         try:
             import numexpr as ne
         except ImportError:
-            raise ImportError("numexpr is not installed. Install it with: pip install numexpr")
+            raise ImportError("未安装 numexpr，请执行命令安装: pip install numexpr")
 
         context = {"f%d" % i: X[:, i] for i in range(X.shape[1])}
         n_derived = len(self.derivings)

@@ -167,6 +167,11 @@ from .financial import (
 
 # 特征工程模块
 from .feature_engineering import NumExprDerive
+from .model_selection import (
+    time_train_test_split,
+    oot_split,
+    group_train_test_split,
+)
 
 # 规则引擎模块
 from .rules import (
@@ -380,6 +385,9 @@ __all__ = [
     "mirr",
     # 特征工程
     "NumExprDerive",
+    "time_train_test_split",
+    "oot_split",
+    "group_train_test_split",
     # 规则引擎
     "Rule",
     "RuleFlow",

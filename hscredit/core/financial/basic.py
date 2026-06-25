@@ -459,11 +459,11 @@ def rate(nper, pmt, pv, fv=0, when='end', guess=0.1, tol=1e-6, max_iter=100):
 
         fprime_val = _fprime(r)
         if abs(fprime_val) < 1e-12:
-            raise ValueError("Derivative too small, cannot continue")
+            raise ValueError("导数过小，无法继续迭代")
 
         r_new = r - f_val / fprime_val
         if abs(r_new - r) < tol:
             return r_new
         r = r_new
 
-    raise ValueError(f"Failed to converge after {max_iter} iterations")
+    raise ValueError(f"迭代 {max_iter} 次后仍未收敛")

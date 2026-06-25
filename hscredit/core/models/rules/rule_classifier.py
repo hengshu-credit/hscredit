@@ -17,6 +17,7 @@ import pandas as pd
 from sklearn.base import BaseEstimator, ClassifierMixin
 
 from ....exceptions import NotFittedError
+from ....utils.serialization import ArtifactSerializableMixin
 from ...rules.rule import Rule
 
 logger = logging.getLogger(__name__)
@@ -286,7 +287,8 @@ class RuleSet:
         )
 
 
-class RulesClassifier(BaseEstimator, ClassifierMixin):
+class RulesClassifier(ArtifactSerializableMixin, BaseEstimator, ClassifierMixin):
+    artifact_kind = "风险模型"
     """规则分类器 - 统一入口.
     
     支持传入单规则或规则集（支持嵌套）进行分类预测。

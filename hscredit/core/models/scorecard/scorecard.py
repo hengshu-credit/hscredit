@@ -3059,7 +3059,6 @@ class ScoreCard(StandardScoreTransformer):
                 'pdo': self.pdo,
                 'rate': self.rate,
                 'base_odds': self.base_odds,
-                'base_score': self.base_score,
                 'lower': self.lower,
                 'upper': self.upper,
                 'A': float(self.A_),

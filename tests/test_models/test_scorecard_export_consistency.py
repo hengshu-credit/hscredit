@@ -2,6 +2,8 @@ import sys
 import re
 import subprocess
 import types
+import ast
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -10,6 +12,31 @@ from sklearn.model_selection import train_test_split
 from hscredit.core.binning import OptimalBinning
 from hscredit.core.models import ScoreCard, RoundScoreCard
 from hscredit.utils.datasets import germancredit
+
+
+def test_scorecard_source_has_no_duplicate_dictionary_keys():
+    source_path = (
+        Path(__file__).resolve().parents[2]
+        / "hscredit"
+        / "core"
+        / "models"
+        / "scorecard"
+        / "scorecard.py"
+    )
+    tree = ast.parse(source_path.read_text(encoding="utf-8"))
+    duplicates = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Dict):
+            continue
+        keys = [
+            key.value
+            for key in node.keys
+            if isinstance(key, ast.Constant) and isinstance(key.value, str)
+        ]
+        repeated = sorted({key for key in keys if keys.count(key) > 1})
+        if repeated:
+            duplicates.append((node.lineno, repeated))
+    assert duplicates == []
 
 
 def _skip_unless_importable(modname: str):

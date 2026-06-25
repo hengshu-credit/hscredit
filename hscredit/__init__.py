@@ -45,6 +45,7 @@ from .core import eda as _eda
 from .core import rules as _rules
 from .core import financial as _financial
 from .core import feature_engineering as _feature_engineering
+from .core import model_selection as _model_selection
 from . import excel as _excel
 from . import report as _report
 from . import utils as _utils
@@ -59,6 +60,7 @@ from .core.eda import *
 from .core.rules import *
 from .core.financial import *
 from .core.feature_engineering import *
+from .core.model_selection import *
 from .excel import *
 from .report import *
 from .utils import *
@@ -100,7 +102,7 @@ def __getattr__(name):
         value = getattr(_models, name)
         globals()[name] = value
         return value
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    raise AttributeError(f"模块 {__name__!r} 不存在属性 {name!r}")
 
 
 def get_version():
@@ -178,6 +180,7 @@ _MODULE_EXPORTS = _collect_public_exports(
     _rules,
     _financial,
     _feature_engineering,
+    _model_selection,
     _excel,
     _report,
     _utils,
