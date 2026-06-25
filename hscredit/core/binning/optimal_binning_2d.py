@@ -86,7 +86,7 @@ class OptimalBinning2D(ArtifactSerializableMixin, BaseEstimator, TransformerMixi
         :param min_bin_size_x: 特征1的每箱最小样本占比
         :param method_x: 特征1的分箱方法
         :param monotonic_x: 特征1的单调性约束
-        :param user_splits_x: 特征1的自定义切分点
+        :param user_splits_x: 特征1的自定义切分点，包含 np.nan/None 时显式预留缺失箱
         :param special_codes_x: 特征1的特殊值列表
         :param dtype_x: 特征1的数据类型
 
@@ -95,7 +95,7 @@ class OptimalBinning2D(ArtifactSerializableMixin, BaseEstimator, TransformerMixi
         :param min_bin_size_y: 特征2的每箱最小样本占比
         :param method_y: 特征2的分箱方法
         :param monotonic_y: 特征2的单调性约束
-        :param user_splits_y: 特征2的自定义切分点
+        :param user_splits_y: 特征2的自定义切分点，包含 np.nan/None 时显式预留缺失箱
         :param special_codes_y: 特征2的特殊值列表
         :param dtype_y: 特征2的数据类型
 
@@ -105,6 +105,8 @@ class OptimalBinning2D(ArtifactSerializableMixin, BaseEstimator, TransformerMixi
 
     其他参数
         :param missing_separate: 是否将缺失值单独分箱，默认 True
+        :param missing_separate_x: 是否将特征1缺失值单独分箱，None 时继承 missing_separate
+        :param missing_separate_y: 是否将特征2缺失值单独分箱，None 时继承 missing_separate
         :param random_state: 随机种子
         :param decimal: 数值精度
         :param woe_clip: WOE截断阈值
@@ -186,6 +188,8 @@ class OptimalBinning2D(ArtifactSerializableMixin, BaseEstimator, TransformerMixi
         y_params: Optional[Dict] = None,
         # 其他参数
         missing_separate: bool = True,
+        missing_separate_x: Optional[bool] = None,
+        missing_separate_y: Optional[bool] = None,
         random_state: Optional[int] = None,
         decimal: int = 4,
         woe_clip: Optional[float] = None,
@@ -226,6 +230,8 @@ class OptimalBinning2D(ArtifactSerializableMixin, BaseEstimator, TransformerMixi
 
         # 其他参数
         self.missing_separate = missing_separate
+        self.missing_separate_x = missing_separate_x
+        self.missing_separate_y = missing_separate_y
         self.random_state = random_state
         self.decimal = decimal
         self.woe_clip = woe_clip
@@ -655,7 +661,8 @@ class OptimalBinning2D(ArtifactSerializableMixin, BaseEstimator, TransformerMixi
     def export_rules(self) -> Dict[str, List]:
         """导出分箱规则.
 
-        与 OptimalBinning.export_rules 保持一致。数值型特征末尾追加 np.nan 表示缺失值单独一箱。
+        与 OptimalBinning.export_rules 保持一致。启用缺失值独立分箱的数值型特征，
+        末尾追加 np.nan 表示缺失值单独一箱。
 
         :return: 分箱规则字典，格式同 OptimalBinning.export_rules
 
@@ -670,15 +677,15 @@ class OptimalBinning2D(ArtifactSerializableMixin, BaseEstimator, TransformerMixi
         if not self._is_fitted:
             raise NotFittedError("分箱器尚未拟合，请先调用 fit 方法")
 
-        def _export_one(splits: np.ndarray) -> List:
+        def _export_one(splits: np.ndarray, missing_separate: bool) -> List:
             arr = splits.tolist() if isinstance(splits, np.ndarray) else list(splits)
-            if self.missing_separate:
+            if missing_separate:
                 arr.append(np.nan)
             return arr
 
         return {
-            self.feature_x_: _export_one(self.splits_x_),
-            self.feature_y_: _export_one(self.splits_y_),
+            self.feature_x_: _export_one(self.splits_x_, bool(self.binner_x_.missing_separate)),
+            self.feature_y_: _export_one(self.splits_y_, bool(self.binner_y_.missing_separate)),
         }
 
     def import_rules(self, rules: Dict[str, List]) -> 'OptimalBinning2D':
@@ -809,7 +816,8 @@ class OptimalBinning2D(ArtifactSerializableMixin, BaseEstimator, TransformerMixi
 
         if title is None:
             title = f'{self.feature_x_} × {self.feature_y_} 二维分箱分析'
-        ax.set_title(title, fontsize=14, fontweight='bold', pad=15)
+        # 标题上移，为其下方的摘要框预留空间，避免摘要遮挡横坐标刻度和轴标题。
+        ax.set_title(title, fontsize=14, fontweight='bold', pad=42)
 
         total_samples = self.cross_table_['样本总数'].sum()
         total_bad = self.cross_table_['坏样本数'].sum()
@@ -820,8 +828,8 @@ class OptimalBinning2D(ArtifactSerializableMixin, BaseEstimator, TransformerMixi
             f'二维分箱: {self.n_bins_2d_} | '
             f'交互IV: {self.iv_interaction_:.4f}'
         )
-        ax.text(0.5, -0.15, stats_text, transform=ax.transAxes,
-                ha='center', va='top', fontsize=10,
+        ax.text(0.5, 1.015, stats_text, transform=ax.transAxes,
+                ha='center', va='bottom', fontsize=10,
                 bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
 
         plt.tight_layout()
@@ -887,9 +895,50 @@ class OptimalBinning2D(ArtifactSerializableMixin, BaseEstimator, TransformerMixi
 
         return fig
 
+    def plot2d(
+        self,
+        figsize: Optional[tuple] = None,
+        colors: Optional[List[str]] = None,
+        title: Optional[str] = None,
+        annot: bool = True,
+        fontsize: int = 10,
+        save: Optional[str] = None,
+    ) -> Any:
+        """快捷绘制二维分箱联合分析图.
+
+        该方法等价于 ``hscredit.core.viz.bin_2d_plot(self, ...)``。
+
+        :param figsize: 图像尺寸
+        :param colors: 配色方案
+        :param title: 图表总标题
+        :param annot: 热力图是否标注数值
+        :param fontsize: 单元格字体大小
+        :param save: 保存路径
+        :return: matplotlib Figure
+        """
+        if not self._is_fitted:
+            raise NotFittedError("分箱器尚未拟合，请先调用 fit 方法")
+
+        from ..viz import bin_2d_plot
+
+        return bin_2d_plot(
+            self,
+            figsize=figsize,
+            colors=colors,
+            title=title,
+            annot=annot,
+            fontsize=fontsize,
+            save=save,
+        )
+
     # -------------------------------------------------------------------------
     # 私有方法
     # -------------------------------------------------------------------------
+
+    def _get_missing_separate(self, is_x: bool) -> bool:
+        """获取指定特征轴最终生效的缺失值分箱配置."""
+        axis_value = self.missing_separate_x if is_x else self.missing_separate_y
+        return bool(self.missing_separate if axis_value is None else axis_value)
 
     def _create_binner(self, is_x: bool) -> OptimalBinning:
         """创建内部 OptimalBinning 实例.
@@ -919,7 +968,7 @@ class OptimalBinning2D(ArtifactSerializableMixin, BaseEstimator, TransformerMixi
             method=method,
             monotonic=monotonic,
             special_codes=special_codes,
-            missing_separate=self.missing_separate,
+            missing_separate=self._get_missing_separate(is_x),
             random_state=self.random_state,
             decimal=self.decimal,
             woe_clip=self.woe_clip,
@@ -971,6 +1020,34 @@ class OptimalBinning2D(ArtifactSerializableMixin, BaseEstimator, TransformerMixi
 
         return X, y
 
+    def _user_splits_include_missing(self, is_x: bool) -> bool:
+        """判断用户分箱规则是否显式声明缺失箱."""
+        splits = self.user_splits_x if is_x else self.user_splits_y
+        if splits is None:
+            return False
+
+        for value in splits:
+            if isinstance(value, (list, tuple, set, np.ndarray, pd.Series)):
+                values = value
+            else:
+                values = [value]
+            for item in values:
+                if item is None or (np.isscalar(item) and pd.isna(item)):
+                    return True
+        return False
+
+    def _normalize_missing_bins(self, bins: np.ndarray, is_x: bool) -> np.ndarray:
+        """按轴级配置统一缺失值索引.
+
+        部分底层分箱器即使 ``missing_separate=False`` 仍会为缺失值返回 -1。
+        二维分箱中不单独处理缺失值时，将其归入首个普通箱，避免样本被网格过滤。
+        """
+        result = np.asarray(bins, dtype=int).copy()
+        binner = self.binner_x_ if is_x else self.binner_y_
+        if not bool(binner.missing_separate):
+            result[result == -1] = 0
+        return result
+
     def _compute_cross_table(self) -> None:
         """计算二维交叉分箱统计表."""
         X, y = self._X, self._y
@@ -979,10 +1056,22 @@ class OptimalBinning2D(ArtifactSerializableMixin, BaseEstimator, TransformerMixi
             X[[self.feature_x_]], metric='indices')[self.feature_x_].values
         bins_y = self.binner_y_.transform(
             X[[self.feature_y_]], metric='indices')[self.feature_y_].values
+        bins_x = self._normalize_missing_bins(bins_x, is_x=True)
+        bins_y = self._normalize_missing_bins(bins_y, is_x=False)
 
         # 缺失箱扩展为独立行/列，与另一特征的所有普通箱组成笛卡尔积。
-        self._has_missing_x_ = bool(self.missing_separate and np.any(bins_x == -1))
-        self._has_missing_y_ = bool(self.missing_separate and np.any(bins_y == -1))
+        # 用户规则中的 np.nan/None 表示显式预留缺失箱，即使训练集暂时没有缺失值也要展示，
+        # 并保证后续 transform 遇到缺失值时能映射到该二维箱。
+        missing_separate_x = bool(self.binner_x_.missing_separate)
+        missing_separate_y = bool(self.binner_y_.missing_separate)
+        self._has_missing_x_ = bool(
+            missing_separate_x
+            and (np.any(bins_x == -1) or self._user_splits_include_missing(is_x=True))
+        )
+        self._has_missing_y_ = bool(
+            missing_separate_y
+            and (np.any(bins_y == -1) or self._user_splits_include_missing(is_x=False))
+        )
         grid_n_x = self.n_bins_x_ + int(self._has_missing_x_)
         grid_n_y = self.n_bins_y_ + int(self._has_missing_y_)
 
@@ -1309,8 +1398,8 @@ class OptimalBinning2D(ArtifactSerializableMixin, BaseEstimator, TransformerMixi
 
     def _map_grid_to_2d_bins(self, bins_x: np.ndarray, bins_y: np.ndarray) -> np.ndarray:
         """将两个一维分箱索引映射到最终二维分箱."""
-        bins_x = np.asarray(bins_x, dtype=int)
-        bins_y = np.asarray(bins_y, dtype=int)
+        bins_x = self._normalize_missing_bins(bins_x, is_x=True)
+        bins_y = self._normalize_missing_bins(bins_y, is_x=False)
         result = np.full(len(bins_x), -1, dtype=int)
         special = (bins_x == -2) | (bins_y == -2)
         grid_x = bins_x.copy()
@@ -1359,6 +1448,38 @@ class OptimalBinning2D(ArtifactSerializableMixin, BaseEstimator, TransformerMixi
             self._y.to_numpy(),
             bin_labels=bin_labels,
         )
+
+        # 显式预留的缺失箱可能在训练集中没有样本。统计函数默认只返回已观测箱，
+        # 此处补齐 solution_ 中的全部二维箱，确保汇总表和指标映射保留空缺失箱。
+        observed_special_bins = sorted(int(bin_id) for bin_id in unique_bins if bin_id < 0)
+        expected_bins = list(range(self.n_bins_2d_)) + observed_special_bins
+        if len(table) != len(expected_bins):
+            table = table.set_index('分箱').reindex(expected_bins)
+            table.index.name = '分箱'
+            table['分箱标签'] = [label_by_id[bin_id] for bin_id in expected_bins]
+
+            cumulative_columns = [
+                '累积LIFT值', '累积坏账改善', '累计风险拒绝比',
+                '累积好样本数', '累积坏样本数', '分档KS值',
+            ]
+            total_iv = (
+                float(table['指标IV值'].dropna().iloc[0])
+                if table['指标IV值'].notna().any()
+                else 0.0
+            )
+            for column in table.columns:
+                if column == '分箱标签':
+                    continue
+                if column == '指标IV值':
+                    table[column] = table[column].fillna(total_iv)
+                elif column in cumulative_columns:
+                    table[column] = table[column].ffill().fillna(0)
+                else:
+                    table[column] = table[column].fillna(0)
+            for column in ['样本总数', '好样本数', '坏样本数', '累积好样本数', '累积坏样本数']:
+                if column in table.columns:
+                    table[column] = table[column].astype(int)
+            table = table.reset_index()
 
         table.insert(0, '指标名称', self.feature_name_)
         table.insert(1, '指标含义', None)
@@ -1486,8 +1607,18 @@ class OptimalBinning2D(ArtifactSerializableMixin, BaseEstimator, TransformerMixi
         """获取指定特征和分箱索引的标签."""
         if feature in binner.bin_tables_:
             bin_table = binner.bin_tables_[feature]
-            if '分箱标签' in bin_table.columns and bin_idx < len(bin_table):
-                label = bin_table['分箱标签'].iloc[bin_idx]
+            if '分箱标签' in bin_table.columns:
+                # 分箱表可能因报表或指标后处理而调整行序，不能假设 iloc 与分箱索引一致。
+                # 优先按“分箱”列精确查找，保证 -inf 到 +inf 始终按 bin 0..n-1 排列。
+                if '分箱' in bin_table.columns:
+                    bin_ids = pd.to_numeric(bin_table['分箱'], errors='coerce')
+                    matched = bin_table.loc[bin_ids == bin_idx, '分箱标签']
+                    if not matched.empty and pd.notna(matched.iloc[0]):
+                        return str(matched.iloc[0])
+                if 0 <= bin_idx < len(bin_table):
+                    label = bin_table['分箱标签'].iloc[bin_idx]
+                else:
+                    label = None
                 if pd.notna(label):
                     return str(label)
         return f'Bin_{bin_idx}'

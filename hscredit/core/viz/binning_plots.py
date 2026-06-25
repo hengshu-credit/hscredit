@@ -2769,7 +2769,19 @@ def bin_2d_plot(
             坏样本数=('坏样本数', 'sum'),
         )
         grp['分箱标签'] = work.groupby(bin_col, sort=True)[label_col].first()
-        grp = grp.reset_index().rename(columns={bin_col: '分箱'}).sort_values('分箱')
+        expected_count = nx if bin_col == '特征1分箱' else ny
+        grp = grp.reindex(range(expected_count), fill_value=0)
+        grp.index.name = '分箱'
+        grp = grp.reset_index()
+        is_x_axis = bin_col == '特征1分箱'
+        grp['分箱标签'] = [
+            b2d._get_bin_label(
+                feat_x if is_x_axis else feat_y,
+                bin_idx,
+                b2d.binner_x_ if is_x_axis else b2d.binner_y_,
+            )
+            for bin_idx in range(expected_count)
+        ]
         grp['坏样本率'] = np.where(grp['样本总数'] > 0, grp['坏样本数'] / grp['样本总数'], 0.0)
         grp['样本占比'] = grp['样本总数'] / total if total > 0 else 0.0
         good_distr = grp['好样本数'] / total_good if total_good > 0 else 0.0
