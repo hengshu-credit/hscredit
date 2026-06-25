@@ -5,7 +5,7 @@ import pandas as pd
 import pytest
 
 from hscredit.core.binning import OptimalBinning
-from hscredit.report import feature_bin_stats, feature_binning_summary
+from hscredit.report import feature_bin_stats, feature_binning_summary, feature_group_binning_summary
 from hscredit.report import feature_analyzer
 
 
@@ -142,6 +142,102 @@ def test_feature_binning_summary_parameter_priority(monkeypatch, sample_data):
     assert mdlp_params['max_n_bins'] == 3
     assert quantile_params['prebinning_params'] == {'max_n_bins': 50}
     assert mdlp_params['lift_refine'] is False
+
+
+def test_feature_group_binning_summary_by_month_reuses_rules(sample_data):
+    sample_data = sample_data.copy()
+    sample_data['申请日期'] = pd.date_range('2025-01-01', periods=len(sample_data), freq='D')
+
+    tables, summary = feature_group_binning_summary(
+        sample_data,
+        feature='特征1',
+        methods='quantile',
+        date_col='申请日期',
+        freq='M',
+        overdue='MOB1',
+        dpds=3,
+        max_n_bins=4,
+        margins=True,
+    )
+
+    month_tables = tables['特征1']['quantile']
+    assert list(month_tables) == sorted(month_tables)
+    assert list(summary[('分箱详情', '分组')]) == list(month_tables)
+    assert summary[('分箱详情', '分组字段')].eq('申请日期@M').all()
+    assert all(table.iloc[-1]['分箱标签'] == '合计' for table in month_tables.values())
+
+    first_group = next(iter(month_tables))
+    table = month_tables[first_group]
+    valid = table[table['分箱标签'] != '合计']
+    row = summary[summary[('分箱详情', '分组')] == first_group].iloc[0]
+    assert row[('坏样本数', 'MOB1@3')] == valid['坏样本数'].sum()
+    assert row[('坏样本率', 'MOB1@3')] == pytest.approx(
+        valid['坏样本数'].sum() / valid['样本总数'].sum()
+    )
+
+
+def test_feature_group_binning_summary_by_category_supports_categorical_feature():
+    data = pd.DataFrame(
+        {
+            '职业': ['工薪', '个体', '学生', '工薪', '个体', '学生'] * 30,
+            '渠道': ['线上'] * 90 + ['线下'] * 90,
+            'FPD': ([0, 1, 0, 0, 1, 1] * 15) + ([1, 0, 1, 0, 0, 1] * 15),
+        }
+    )
+
+    tables, summary = feature_group_binning_summary(
+        data,
+        feature='职业',
+        methods='quantile',
+        group_col='渠道',
+        target='FPD',
+        group_order=['线下', '线上'],
+    )
+
+    assert list(tables['职业']['quantile']) == ['线下', '线上']
+    assert list(summary[('分箱详情', '分组')]) == ['线下', '线上']
+    assert ('坏样本率', 'FPD') in summary.columns
+    assert all(
+        not table['分箱标签'].astype(str).str.startswith('bin_').all()
+        for table in tables['职业']['quantile'].values()
+    )
+
+
+def test_feature_group_binning_summary_keeps_missing_group(sample_data):
+    sample_data = sample_data.copy()
+    sample_data['渠道'] = np.where(np.arange(len(sample_data)) % 2 == 0, 'A', 'B')
+    sample_data.loc[:9, '渠道'] = np.nan
+
+    tables, summary = feature_group_binning_summary(
+        sample_data,
+        feature='特征1',
+        group_col='渠道',
+        overdue='MOB1',
+        dpds=3,
+        dropna=False,
+        group_order='appearance',
+    )
+
+    assert '缺失' in tables['特征1']['mdlp']
+    assert '缺失' in summary[('分箱详情', '分组')].tolist()
+
+
+def test_feature_group_binning_summary_requires_one_grouping_mode(sample_data):
+    sample_data = sample_data.copy()
+    sample_data['申请日期'] = pd.Timestamp('2025-01-01')
+    sample_data['渠道'] = '线上'
+
+    with pytest.raises(ValueError, match='必须且只能指定其中一个'):
+        feature_group_binning_summary(sample_data, '特征1', target='MOB1')
+
+    with pytest.raises(ValueError, match='必须且只能指定其中一个'):
+        feature_group_binning_summary(
+            sample_data,
+            '特征1',
+            target='MOB1',
+            date_col='申请日期',
+            group_col='渠道',
+        )
 
 
 @pytest.mark.parametrize("method", OptimalBinning.VALID_METHODS)

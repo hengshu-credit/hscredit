@@ -23,7 +23,7 @@
 import ast
 import re
 from enum import Enum
-from typing import List, Union, Optional, Tuple, Dict
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Union
 import numpy as np
 import pandas as pd
 from pandas import DataFrame
@@ -32,6 +32,9 @@ from sklearn.metrics import f1_score, recall_score, accuracy_score, precision_sc
 from ..binning import OptimalBinning
 from .expr_optimizer import optimize_expr, beautify_expr
 from ...exceptions import FeatureNotFoundError, InputTypeError, StateError
+
+if TYPE_CHECKING:
+    from ...excel import ExcelWriter
 
 
 def _replace_backtick_columns(query_str: str) -> Tuple[str, Dict[str, str]]:
@@ -215,7 +218,7 @@ class Rule:
         'age > 18 & income > 5000'
         """
         if not isinstance(other, Rule):
-            raise InputTypeError(f"unsupported operand type(s) for &: 'Rule' and '{type(other).__name__}'")
+            raise InputTypeError(f"& 运算两侧必须是 Rule，实际右侧类型为 {type(other).__name__}")
         combined_expr = f"({self.expr}) & ({other.expr})"
         optimized = optimize_expr(beautify_expr(combined_expr))
         self_name = getattr(self, 'name', None) or self.expr
@@ -244,7 +247,7 @@ class Rule:
         'age > 18 | income > 5000'
         """
         if not isinstance(other, Rule):
-            raise InputTypeError(f"unsupported operand type(s) for |: 'Rule' and '{type(other).__name__}'")
+            raise InputTypeError(f"| 运算两侧必须是 Rule，实际右侧类型为 {type(other).__name__}")
         combined_expr = f"({self.expr}) | ({other.expr})"
         optimized = optimize_expr(beautify_expr(combined_expr))
         self_name = getattr(self, 'name', None) or self.expr
@@ -296,7 +299,7 @@ class Rule:
         '(age > 18 & ~(income > 5000)) | (~(age > 18) & income > 5000)'
         """
         if not isinstance(other, Rule):
-            raise InputTypeError(f"unsupported operand type(s) for ^: 'Rule' and '{type(other).__name__}'")
+            raise InputTypeError(f"^ 运算两侧必须是 Rule，实际右侧类型为 {type(other).__name__}")
         # pandas eval 不支持布尔 ^（BitXor），用等价的 (a & ~b) | (~a & b) 表达异或
         combined_expr = (
             f"(({self.expr}) & ~({other.expr})) | (~({self.expr}) & ({other.expr}))"
@@ -322,7 +325,7 @@ class Rule:
         :raises InputTypeError: ``other`` 不是 :class:`Rule` 时
         """
         if not isinstance(other, Rule):
-            raise InputTypeError(f"Input should be of type Rule, got {type(other)} instead.")
+            raise InputTypeError(f"输入必须是 Rule 类型，实际类型为 {type(other).__name__}")
         return self.expr == other.expr
 
     def predict(self, X: DataFrame) -> pd.Series:
@@ -346,12 +349,12 @@ class Rule:
         >>> rule.predict(df)
         """
         if not isinstance(X, DataFrame):
-            raise InputTypeError("Rule can only predict on DataFrame.")
+            raise InputTypeError("Rule 只能对 DataFrame 执行预测")
 
         # 检查必需的列是否存在（规则集基于pandas eval实现，支持各种数据类型）
         missing_cols = set(self.feature_names_in_) - set(X.columns)
         if missing_cols:
-            raise FeatureNotFoundError(f"Missing columns: {missing_cols}")
+            raise FeatureNotFoundError(f"输入数据缺少列: {missing_cols}")
 
         result = X.eval(self.expr)
         self.result_ = result

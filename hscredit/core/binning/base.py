@@ -18,6 +18,7 @@ from sklearn.base import BaseEstimator, TransformerMixin
 
 from ...exceptions import FeatureNotFoundError, NotFittedError
 from ...utils.misc import round_float
+from ...utils.serialization import ArtifactSerializableMixin
 
 # 从 metrics 导入指标计算方法
 from ..metrics._binning import (
@@ -30,7 +31,7 @@ from ..metrics._binning import (
 )
 
 
-class BaseBinning(BaseEstimator, TransformerMixin, ABC):
+class BaseBinning(ArtifactSerializableMixin, BaseEstimator, TransformerMixin, ABC):
     """分箱算法基类.
 
     所有分箱算法都继承此类，实现统一的fit/transform接口。
@@ -182,6 +183,8 @@ class BaseBinning(BaseEstimator, TransformerMixin, ABC):
        - 支持多种输出格式: 'indices'(分箱索引), 'labels'(分箱标签),
          'woe'(WOE值), 'bin_code'(分箱编码)
     """
+
+    artifact_kind = "分箱器"
 
     def __init__(
         self,

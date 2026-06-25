@@ -2725,10 +2725,16 @@ def bin_2d_plot(
 
     feat_x = b2d.feature_x_   # 特征1（行维度）
     feat_y = b2d.feature_y_   # 特征2（列维度）
-    nx = b2d.n_bins_x_
-    ny = b2d.n_bins_y_
+    normal_nx = b2d.n_bins_x_
+    normal_ny = b2d.n_bins_y_
+    has_missing_x = bool(getattr(b2d, '_has_missing_x_', False))
+    has_missing_y = bool(getattr(b2d, '_has_missing_y_', False))
+    nx = normal_nx + int(has_missing_x)
+    ny = normal_ny + int(has_missing_y)
     cross = b2d.cross_table_.copy()
-    cross = cross[(cross['特征1分箱'] >= 0) & (cross['特征2分箱'] >= 0)].copy()
+    # cross_table_ 中 -1 表示缺失箱。二维联合图保留缺失行/列，
+    # 并将其映射到普通箱之后，形成完整的笛卡尔积热力图。
+    cross = cross[(cross['特征1分箱'] >= -1) & (cross['特征2分箱'] >= -1)].copy()
     X = b2d._X
     y_arr = np.asarray(b2d._y, dtype=float)
 
@@ -2739,6 +2745,12 @@ def bin_2d_plot(
     overall_bad_rate = total_bad / total if total > 0 else 0.0
 
     work = cross.copy()
+    work['_特征1绘图分箱'] = work['特征1分箱'].replace(
+        {-1: normal_nx} if has_missing_x else {}
+    ).astype(int)
+    work['_特征2绘图分箱'] = work['特征2分箱'].replace(
+        {-1: normal_ny} if has_missing_y else {}
+    ).astype(int)
     # 坏账改善 = (全量坏样本率 - 拒绝该格后剩余样本坏样本率) / 全量坏样本率
     other_bad = total_bad - work['坏样本数']
     other_total = total - work['样本总数']
@@ -2752,7 +2764,7 @@ def bin_2d_plot(
     def _matrix(col):
         M = np.full((nx, ny), np.nan)
         for _, r in work.iterrows():
-            M[int(r['特征1分箱']), int(r['特征2分箱'])] = r[col]
+            M[int(r['_特征1绘图分箱']), int(r['_特征2绘图分箱'])] = r[col]
         return M
 
     M_prop = _matrix('样本占比')
@@ -2762,14 +2774,20 @@ def bin_2d_plot(
     M_improve = _matrix('坏账改善')
 
     # ---------- 由交叉表聚合出单变量边缘分箱表（保证与热力图行/列严格对齐） ----------
-    def _marginal(bin_col, label_col):
+    def _marginal(bin_col, is_x_axis):
         grp = work.groupby(bin_col, sort=True).agg(
             样本总数=('样本总数', 'sum'),
             好样本数=('好样本数', 'sum'),
             坏样本数=('坏样本数', 'sum'),
         )
-        grp['分箱标签'] = work.groupby(bin_col, sort=True)[label_col].first()
-        grp = grp.reset_index().rename(columns={bin_col: '分箱'}).sort_values('分箱')
+        expected_count = nx if is_x_axis else ny
+        grp = grp.reindex(range(expected_count), fill_value=0)
+        grp.index.name = '分箱'
+        grp = grp.reset_index()
+        grp['分箱标签'] = [
+            b2d._get_grid_bin_label(bin_idx, is_x=is_x_axis)
+            for bin_idx in range(expected_count)
+        ]
         grp['坏样本率'] = np.where(grp['样本总数'] > 0, grp['坏样本数'] / grp['样本总数'], 0.0)
         grp['样本占比'] = grp['样本总数'] / total if total > 0 else 0.0
         good_distr = grp['好样本数'] / total_good if total_good > 0 else 0.0
@@ -2781,8 +2799,8 @@ def bin_2d_plot(
         grp['LIFT值'] = np.where(grp['坏样本率'] > 0, grp['坏样本率'] / overall_bad_rate, 0.0)
         return grp
 
-    marg_x = _marginal('特征1分箱', '特征1标签')   # 特征1
-    marg_y = _marginal('特征2分箱', '特征2标签')   # 特征2
+    marg_x = _marginal('_特征1绘图分箱', is_x_axis=True)   # 特征1
+    marg_y = _marginal('_特征2绘图分箱', is_x_axis=False)  # 特征2
     xlabels = marg_y['分箱标签'].tolist()      # 特征2 (列, x), bin 索引 0..ny-1
     ylabels = marg_x['分箱标签'].tolist()      # 特征1 (行, y), bin 索引 0..nx-1
 

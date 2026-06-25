@@ -184,8 +184,8 @@ pip install hscredit[all]         # 所有可选依赖
 
 - 测试标记：`@pytest.mark.slow`, `@pytest.mark.integration`, `@pytest.mark.unit`
 - 部分测试文件在 [tests/conftest.py](tests/conftest.py) 的 `collect_ignore` 中被排除（依赖本地 xlsx 或包含脚本风格逻辑）
-- 测试目录存在重复命名：`test_models/` vs `test_modeling/`, `test_report/` vs `test_reports/`
-- 测试子目录均缺少 `__init__.py`（不影响 pytest 收集，但结构不统一）
+- 测试现状：`pytest -m "not slow and not integration"` 当前 **682 通过 / 12 失败 / 2 跳过**，失败均源于下方「已知问题」第 1 条的 numpy 2.x 分箱统计 bug
+- 测试目录按主题划分（`test_binning/` `test_encoding/` `test_feature_selection/` `test_models/` `test_report/` `test_rules/` `test_utils/` `test_visualization/` `test_feature_engineering/`），各子目录均含 `__init__.py`
 - 覆盖率不足的模块：EDA, financial, 大部分 encoders, viz 函数, overdue_predictor, swap_analysis
 
 ## 代码风格
@@ -196,5 +196,11 @@ pip install hscredit[all]         # 所有可选依赖
 
 ## 已知问题
 
-1. `init_setting()` 在 `import hscredit` 时全局调用 `warnings.filterwarnings("ignore")`，会抑制所有警告
-2. EDA 模块中存在大量 `except Exception:` 裸异常捕获，会静默吞掉错误
+> 完整成因、影响面与修复排期见 [docs/ROADMAP.md](docs/ROADMAP.md) 的「阶段 0：稳定化」。
+
+1. **numpy 2.x 分箱统计 bug（核心功能，12 个测试失败）**：[hscredit/core/metrics/_binning.py:429](hscredit/core/metrics/_binning.py) 的 `sk[0] * 10000 + sk[1]` 对 `np.int8` 标量运算，在 numpy 2.x（NEP 50）下抛 `OverflowError: 10000 out of bounds for int8`，使 uniform/best_ks/best_iv/or_tools/cp_sat/best_lift 处理类别特征时失败。修复方向：构造排序键时将 bin 索引 `int(b)` 转 Python int。
+2. **格式化工具链失效**：`pyproject.toml` 的 black `target-version` 含 py312/313/314，但 `black>=21.0` 约束过松，旧版 black（如 22.6）无法解析这些目标即报错；black 实际从未成功运行，存量 **W293 空行空白 2557、W291 行尾空白 197、E501 超长行 3553** 未清理，`make check` 当前不可用。
+3. **错误静默**：全库 190 处 `except Exception`（其中 84 处直接 `pass`），集中于 `report/model_report.py`(50)、`core/eda/overview.py`(18)、`core/viz/binning_plots.py`(13)，会吞掉真实错误。
+4. `init_setting()` 在 `import hscredit` 时全局 `warnings.filterwarnings("ignore")`，抑制所有警告。
+5. 版本号不一致：`hscredit/__init__.py` 为 `0.1.1`，README 徽章为 `0.1.0`。
+6. 根目录存在被 git 跟踪的临时文件 `_tmpl_dump.txt`（74KB Excel 调试 dump），应清理并加入 `.gitignore`。

@@ -172,7 +172,7 @@ def __getattr__(name):
     elif name == "ModelReport":
         value = getattr(importlib.import_module(".evaluation", __name__), "ModelReport")
     else:
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+        raise AttributeError(f"模块 {__name__!r} 不存在属性 {name!r}")
     globals()[name] = value
     return value
 

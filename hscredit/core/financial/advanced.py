@@ -86,7 +86,7 @@ def irr(values):
     # 检查现金流符号变化
     signs = np.sign(values)
     if not ((signs > 0).any() and (signs < 0).any()):
-        raise ValueError("Cash flows must have at least one positive and one negative value")
+        raise ValueError("现金流必须至少包含一个正值和一个负值")
 
     # 定义 NPV 函数
     def _npv(rate):
@@ -106,7 +106,7 @@ def irr(values):
             break
         high *= 2
         if high > 1e10:
-            raise ValueError("Cannot find suitable upper bound")
+            raise ValueError("无法找到合适的利率搜索上界")
 
     # 二分搜索
     tol = 1e-8
@@ -122,7 +122,7 @@ def irr(values):
         else:
             low = mid
 
-    raise ValueError(f"Failed to converge after {max_iter} iterations")
+    raise ValueError(f"迭代 {max_iter} 次后仍未收敛")
 
 
 def mirr(values, finance_rate, reinvest_rate):
@@ -168,8 +168,8 @@ def mirr(values, finance_rate, reinvest_rate):
 
     # MIRR 公式
     if pv_negative == 0:
-        raise ValueError("No negative cash flows")
+        raise ValueError("现金流中不存在负值")
     if fv_positive == 0:
-        raise ValueError("No positive cash flows")
+        raise ValueError("现金流中不存在正值")
 
     return (fv_positive / -pv_negative) ** (1 / (n - 1)) - 1

@@ -76,12 +76,6 @@ from sklearn.utils.validation import check_is_fitted
 
 logger = logging.getLogger(__name__)
 
-try:
-    from ...metrics.stability import psi
-    PSI_AVAILABLE = True
-except ImportError:
-    PSI_AVAILABLE = False
-
 
 class BaseDriftCalibrator(BaseEstimator, ABC):
     """评分漂移校准器基类.

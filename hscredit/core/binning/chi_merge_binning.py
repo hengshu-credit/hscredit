@@ -349,19 +349,47 @@ class ChiMergeBinning(BaseBinning):
         row1_total = bin1_good + bin1_bad
         row2_total = bin2_good + bin2_bad
 
-        e1_good = row1_total * total_good / total
-        e1_bad = row1_total * total_bad / total
-        e2_good = row2_total * total_good / total
-        e2_bad = row2_total * total_bad / total
+        e1_good = np.divide(
+            row1_total * total_good,
+            total,
+            out=np.zeros_like(total, dtype=float),
+            where=valid_mask,
+        )
+        e1_bad = np.divide(
+            row1_total * total_bad,
+            total,
+            out=np.zeros_like(total, dtype=float),
+            where=valid_mask,
+        )
+        e2_good = np.divide(
+            row2_total * total_good,
+            total,
+            out=np.zeros_like(total, dtype=float),
+            where=valid_mask,
+        )
+        e2_bad = np.divide(
+            row2_total * total_bad,
+            total,
+            out=np.zeros_like(total, dtype=float),
+            where=valid_mask,
+        )
 
         # 计算卡方值 (向量化)
         eps = 1e-10
         chi2_vals = np.zeros(n_bins - 1)
 
-        chi2_vals += np.where(e1_good > eps, (bin1_good - e1_good) ** 2 / e1_good, 0)
-        chi2_vals += np.where(e1_bad > eps, (bin1_bad - e1_bad) ** 2 / e1_bad, 0)
-        chi2_vals += np.where(e2_good > eps, (bin2_good - e2_good) ** 2 / e2_good, 0)
-        chi2_vals += np.where(e2_bad > eps, (bin2_bad - e2_bad) ** 2 / e2_bad, 0)
+        for observed, expected in (
+            (bin1_good, e1_good),
+            (bin1_bad, e1_bad),
+            (bin2_good, e2_good),
+            (bin2_bad, e2_bad),
+        ):
+            chi2_vals += np.divide(
+                (observed - expected) ** 2,
+                expected,
+                out=np.zeros_like(expected, dtype=float),
+                where=expected > eps,
+            )
 
         # 无效样本设为无穷大
         chi2_vals[~valid_mask] = np.inf

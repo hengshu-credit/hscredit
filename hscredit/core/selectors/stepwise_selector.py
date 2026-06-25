@@ -519,10 +519,13 @@ class StepwiseSelector(BaseFeatureSelector):
 
             if result['result'] is not None:
                 criterion = result['criterion']
+                p_values = result['p_values']
                 test_results.append({
                     'feature': feature,
                     'criterion': criterion,
-                    'p_value': result['p_values'][-1] if result['p_values'] is not None else 1.0,
+                    # statsmodels 在 y 为 Series 时可能返回带字符串索引的 Series。
+                    # 转为 ndarray 后再按位置取值，兼容 pandas 3.x 的严格标签索引。
+                    'p_value': np.asarray(p_values)[-1] if p_values is not None else 1.0,
                 })
 
                 # 判断是否改善
@@ -758,7 +761,8 @@ class StepwiseSelector(BaseFeatureSelector):
             return
 
         # 使用p值作为得分（p值越小越好，得分越高）
-        p_values = result['p_values']
+        # 显式转换为 ndarray，避免 pandas 3.x 将整数解释为标签而非位置。
+        p_values = np.asarray(result['p_values'])
 
         # 创建特征到p值的映射（跳过截距）
         scores = {}

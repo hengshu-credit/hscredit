@@ -22,6 +22,7 @@ from ..core.viz import bin_plot, bin_trend_plot, corr_plot, distribution_plot, h
 from ..core.metrics._binning import compute_bin_stats, add_margins
 from ..excel import ExcelWriter, dataframe2excel
 from ..utils import init_setting
+from .rule_strategy import GroupOrder, _resolve_group_labels
 
 logger = logging.getLogger(__name__)
 
@@ -346,6 +347,242 @@ def feature_binning_summary(
 
     binning_summary = pd.DataFrame(summary_rows)
     ordered_columns = [('分箱详情', '分箱方法'), ('分箱详情', '指标名称')]
+    target_names = []
+    for row in summary_rows:
+        for metric, target_name in row:
+            if metric in normalized_metrics and target_name not in target_names:
+                target_names.append(target_name)
+    ordered_columns.extend((metric, target_name) for metric in normalized_metrics for target_name in target_names)
+    binning_summary = binning_summary.reindex(columns=pd.MultiIndex.from_tuples(ordered_columns))
+    return binning_tables, binning_summary
+
+
+def _fit_group_summary_binner(
+    data: pd.DataFrame,
+    feature: str,
+    method: str,
+    params: Dict[str, Any],
+) -> BaseBinning:
+    """在全量数据上拟合分组分析使用的统一分箱器。"""
+    overdue = params.get('overdue')
+    dpds = params.get('dpds')
+    target = params.get('target')
+    del_grey = bool(params.get('del_grey', False))
+
+    if overdue is not None:
+        if dpds is None:
+            raise ValueError("传入 overdue 参数时必须同时传入 dpds")
+        overdue_col = overdue if isinstance(overdue, str) else list(overdue)[0]
+        dpd = dpds if isinstance(dpds, int) else list(dpds)[0]
+        train_data = data[[feature, overdue_col]].copy()
+        y_train = (train_data[overdue_col] > dpd).astype(int)
+        if del_grey:
+            mask = (train_data[overdue_col] > dpd) | (train_data[overdue_col] == 0)
+            train_data = train_data.loc[mask]
+            y_train = y_train.loc[mask]
+    elif target is not None:
+        train_data = data[[feature, target]].copy()
+        y_train = train_data[target]
+    else:
+        raise ValueError("必须传入 target 或 overdue+dpds 参数")
+
+    binner_param_names = {
+        'max_n_bins', 'min_n_bins', 'min_bin_size', 'max_bin_size', 'min_bad_rate',
+        'missing_separate', 'prebinning', 'prebinning_params', 'special_codes',
+        'cat_cutoff', 'random_state', 'decimal', 'woe_clip', 'verbose', 'monotonic',
+    }
+    binner_params = {name: params[name] for name in binner_param_names if name in params}
+    stats_only_params = {
+        'target', 'overdue', 'dpds', 'desc', 'del_grey', 'margins', 'amount',
+        'long_format', 'return_cols', 'return_rules', 'binner', 'rules',
+    }
+    binner_params.update(
+        {
+            name: value
+            for name, value in params.items()
+            if name not in binner_param_names and name not in stats_only_params
+        }
+    )
+
+    if method == 'mdlp':
+        binner_params.setdefault('lift_refine', True)
+        binner_params.setdefault('lift_focus_weight', 3.0)
+        binner_params.setdefault('sample_stability_weight', 0.2)
+        binner_params.setdefault('monotonic_bonus_weight', 0.4)
+        binner_params.setdefault('lift_refine_max_bins', binner_params.get('max_n_bins', 5))
+    elif method == 'quantile':
+        binner_params.setdefault('lift_refine', False)
+        binner_params.setdefault('min_bin_size', 0)
+
+    binner = OptimalBinning(method=method, **binner_params)
+    binner.fit(train_data[[feature]], y_train)
+    return binner
+
+
+def feature_group_binning_summary(
+    data: pd.DataFrame,
+    feature: Union[str, List[str]],
+    methods: Union[str, List[str]] = 'mdlp',
+    date_col: Optional[str] = None,
+    freq: str = 'M',
+    group_col: Optional[str] = None,
+    group_order: GroupOrder = 'asc',
+    dropna: bool = True,
+    bin_params: Optional[Dict[str, Any]] = None,
+    target: Optional[str] = None,
+    overdue: Optional[Union[str, List[str]]] = None,
+    dpds: Optional[Union[int, List[int]]] = None,
+    desc: Optional[Union[str, Dict[str, str]]] = None,
+    max_n_bins: int = 5,
+    min_n_bins: int = 2,
+    min_bin_size: float = 0.05,
+    max_bin_size: Optional[Union[float, int]] = None,
+    min_bad_rate: float = 0.0,
+    missing_separate: bool = True,
+    prebinning: Optional[Union[str, BaseBinning, Dict]] = None,
+    prebinning_params: Optional[Dict[str, Any]] = None,
+    special_codes: Optional[List] = None,
+    cat_cutoff: Optional[Union[float, int]] = None,
+    random_state: Optional[int] = None,
+    decimal: int = 4,
+    woe_clip: Optional[float] = None,
+    del_grey: bool = False,
+    margins: bool = False,
+    amount: Optional[str] = None,
+    verbose: int = 0,
+    monotonic: Optional[Union[str, bool]] = None,
+    long_format: bool = False,
+    metrics: Union[str, List[str]] = _BINNING_SUMMARY_METRICS,
+    **kwargs,
+) -> Tuple[Dict[str, Dict[str, Dict[str, pd.DataFrame]]], pd.DataFrame]:
+    """统计日期周期或类别分组下的特征分箱效果。
+
+    分箱器在全量数据上拟合一次，各分组复用同一套分箱规则，因此不同日期周期或
+    类别分组下的坏样本率、LIFT、KS、IV 等指标可以直接横向比较。
+
+    :param data: 原始明细数据
+    :param feature: 待分析特征名或特征名列表
+    :param methods: 分箱方法或方法列表
+    :param date_col: 日期字段，与 ``freq`` 配合生成时间分组；与 ``group_col`` 二选一
+    :param freq: 日期频率，支持 ``D`` / ``W`` / ``M`` / ``Q``，默认按月
+    :param group_col: 类别分组字段；与 ``date_col`` 二选一
+    :param group_order: 分组顺序，支持升序、降序、出现顺序、排序函数或显式列表
+    :param dropna: 是否删除分组字段缺失样本；为 False 时归入“缺失”组
+    :param bin_params: 全局或按分箱方法配置的参数，规则与
+        :func:`feature_binning_summary` 一致
+    :param metrics: summary 汇总指标，规则与 :func:`feature_binning_summary` 一致
+    :return: ``(binning_tables, binning_summary)``。分箱表结构为
+        ``{feature: {method: {group: binning_table}}}``；summary 使用两级列索引。
+
+    **参考样例**
+
+    >>> tables, summary = feature_group_binning_summary(
+    ...     data, feature='score', methods=['quantile', 'mdlp'],
+    ...     date_col='申请日期', freq='M', overdue='MOB1', dpds=[3, 0],
+    ... )
+    >>> category_tables, category_summary = feature_group_binning_summary(
+    ...     data, feature='score', group_col='商品类别', target='FPD',
+    ... )
+    """
+    if not isinstance(data, pd.DataFrame) or data.empty:
+        raise ValueError("data 必须是非空的 DataFrame")
+
+    features = [feature] if isinstance(feature, str) else list(feature)
+    if not features:
+        raise ValueError("feature 不能为空")
+    missing_features = [name for name in features if name not in data.columns]
+    if missing_features:
+        raise KeyError(f"数据中不存在字段: {missing_features}")
+
+    labels, ordered_groups = _resolve_group_labels(data, date_col, freq, group_col, dropna, group_order)
+    if not ordered_groups:
+        raise ValueError("根据 date_col/group_col 未能切分出任何有效分组")
+
+    normalized_methods = _normalize_binning_summary_methods(methods)
+    normalized_metrics = _normalize_binning_summary_metrics(metrics)
+    per_method_params = _normalize_binning_summary_params(normalized_methods, bin_params)
+    common_params = {
+        'target': target,
+        'overdue': overdue,
+        'dpds': dpds,
+        'desc': desc,
+        'max_n_bins': max_n_bins,
+        'min_n_bins': min_n_bins,
+        'min_bin_size': min_bin_size,
+        'max_bin_size': max_bin_size,
+        'min_bad_rate': min_bad_rate,
+        'missing_separate': missing_separate,
+        'prebinning': prebinning,
+        'prebinning_params': prebinning_params,
+        'special_codes': special_codes,
+        'cat_cutoff': cat_cutoff,
+        'random_state': random_state,
+        'decimal': decimal,
+        'woe_clip': woe_clip,
+        'del_grey': del_grey,
+        'margins': margins,
+        'amount': amount,
+        'verbose': verbose,
+        'monotonic': monotonic,
+        'long_format': long_format,
+        **kwargs,
+    }
+
+    group_field = group_col or f'{date_col}@{freq}'
+    binning_tables: Dict[str, Dict[str, Dict[str, pd.DataFrame]]] = {
+        name: {method: {} for method in normalized_methods} for name in features
+    }
+    summary_rows = []
+    single_target_name = target or ''
+    if overdue is not None:
+        overdue_values = [overdue] if isinstance(overdue, str) else list(overdue)
+        dpd_values = [dpds] if isinstance(dpds, int) else list(dpds or [])
+        target_labels = [f'{overdue_name}@{dpd}' for overdue_name in overdue_values for dpd in dpd_values]
+        if len(target_labels) == 1:
+            single_target_name = target_labels[0]
+
+    for method in normalized_methods:
+        method_params = {**common_params, **per_method_params[method]}
+        for reserved in ('data', 'feature', 'method', 'return_rules', 'binner'):
+            method_params.pop(reserved, None)
+
+        for name in features:
+            fitted_binner = _fit_group_summary_binner(data, name, method, method_params)
+            for group in ordered_groups:
+                subset = data.loc[labels == group]
+                if subset.empty:
+                    continue
+                group_name = str(group)
+                table = feature_bin_stats(
+                    data=subset,
+                    feature=name,
+                    method=method,
+                    binner=fitted_binner,
+                    **method_params,
+                )
+                binning_tables[name][method][group_name] = table
+                row = {
+                    ('分箱详情', '分箱方法'): method,
+                    ('分箱详情', '指标名称'): name,
+                    ('分箱详情', '分组字段'): group_field,
+                    ('分箱详情', '分组'): group_name,
+                }
+                row.update(
+                    _summarize_binning_table(
+                        table,
+                        single_target_name=single_target_name,
+                        metrics=normalized_metrics,
+                    )
+                )
+                summary_rows.append(row)
+
+    binning_summary = pd.DataFrame(summary_rows)
+    ordered_columns = [
+        ('分箱详情', '分箱方法'),
+        ('分箱详情', '指标名称'),
+        ('分箱详情', '分组字段'),
+        ('分箱详情', '分组'),
+    ]
     target_names = []
     for row in summary_rows:
         for metric, target_name in row:

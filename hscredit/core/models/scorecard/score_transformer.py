@@ -91,9 +91,10 @@ import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator
 from sklearn.utils.validation import check_is_fitted
+from ....utils.serialization import ArtifactSerializableMixin
 
 
-class BaseScoreTransformer(BaseEstimator, ABC):
+class BaseScoreTransformer(ArtifactSerializableMixin, BaseEstimator, ABC):
     """评分转换器基类.
 
     所有评分转换器的抽象基类，定义统一接口。
@@ -132,6 +133,8 @@ class BaseScoreTransformer(BaseEstimator, ABC):
 
     log-odds 评分卡刻度法见 Siddiqi, N. (2006). *Credit Risk Scorecards.* Wiley。
     """
+
+    artifact_kind = "评分卡"
 
     def __init__(
         self,

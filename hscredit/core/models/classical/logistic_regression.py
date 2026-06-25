@@ -31,12 +31,14 @@ import inspect
 from typing import Union, Optional, List
 from sklearn.linear_model import LogisticRegression as SklearnLogisticRegression
 from sklearn.utils.validation import check_is_fitted
+from ....utils.serialization import ArtifactSerializableMixin
 
 
 _SKLEARN_LOGISTIC_PARAMS = set(inspect.signature(SklearnLogisticRegression.__init__).parameters)
 
 
-class LogisticRegression(SklearnLogisticRegression):
+class LogisticRegression(ArtifactSerializableMixin, SklearnLogisticRegression):
+    artifact_kind = "风险模型"
     """扩展逻辑回归模型.
 
     继承 sklearn.linear_model.LogisticRegression，增加统计信息计算功能。

@@ -1,137 +1,147 @@
 # 快速开始
 
-下面给出从数据初筛到报告交付的典型工作流。所有组件都兼容 sklearn `Pipeline`，
-所有输出列名与报告均为中文。
+仓库提供了可直接运行的完整示例：
 
-## 1. 数据和变量初筛
+```bash
+python examples/00_quickstart.py
+```
+
+下面的 Python 代码块按顺序执行即可完成同一条基础流程。示例只使用基础依赖。
+
+## 1. 准备数据并按时间切分
 
 ```python
+import numpy as np
+import pandas as pd
+from sklearn.datasets import make_classification
+
 import hscredit
+from hscredit.core.model_selection import time_train_test_split
+
+X_array, y_array = make_classification(
+    n_samples=400,
+    n_features=4,
+    n_informative=3,
+    n_redundant=0,
+    weights=[0.72, 0.28],
+    random_state=42,
+)
+df = pd.DataFrame(X_array, columns=["age", "income", "debt_ratio", "apply_count"])
+df["apply_date"] = pd.date_range("2024-01-01", periods=len(df), freq="D")
+df["customer_id"] = [f"C{i // 2:04d}" for i in range(len(df))]
+df["target"] = y_array
+
+train_df, test_df = time_train_test_split(df, "apply_date", test_size=0.25)
+features = ["age", "income", "debt_ratio", "apply_count"]
+X_train, y_train = train_df[features], train_df["target"]
+X_test, y_test = test_df[features], test_df["target"]
+```
+
+## 2. 数据探索
+
+```python
 import hscredit.core.eda as eda
 
-# 数据质量、缺失、字段类型、样本分布
-summary = eda.data_info(df)
-
-# 批量评估变量 IV 和坏率趋势
-iv_result = eda.batch_iv_analysis(df, features=["age", "income"], target="fpd30")
-trend = eda.bad_rate_trend(df, target_col="fpd30", date_col="apply_month")
-
-# pandas 扩展方法，适合快速查看数据摘要
-df.summary(y="fpd30")
+summary = eda.data_info(train_df)
+iv_result = eda.batch_iv_analysis(train_df, features=features, target="target")
+trend = eda.bad_rate_trend(train_df, target_col="target", date_col="apply_date")
 ```
 
-## 2. 分箱、编码和变量筛选
+## 3. 分箱与变量筛选
 
 ```python
 from hscredit.core.binning import OptimalBinning
-from hscredit.core.encoders import WOEEncoder
 from hscredit.core.selectors import IVSelector, VIFSelector, CompositeFeatureSelector
-
-binner = OptimalBinning(method="best_iv", max_n_bins=5, target="fpd30")
-binner.fit(train_df)
-train_bins = binner.transform(train_df)
-
-encoder = WOEEncoder(target="fpd30")
-encoder.fit(train_bins)
-train_woe = encoder.transform(train_bins)
-
-selector = CompositeFeatureSelector([
-    ("iv", IVSelector(threshold=0.02)),
-    ("vif", VIFSelector(threshold=10.0)),
-])
-selector.fit(X_train, y_train)
-X_selected = selector.transform(X_train)
-```
-
-`OptimalBinning` 是 17 种分箱方法的统一入口，可自动选择最优方法：
-
-```python
-best_method = OptimalBinning.auto_select_method(X, y, "feature_name")
-binner = OptimalBinning(method=best_method)
-```
-
-## 3. 评分卡建模
-
-```python
-from hscredit.core.binning import OptimalBinning
-from hscredit.core.models import ScoreCard
 
 binner = OptimalBinning(method="best_iv", max_n_bins=5)
 binner.fit(X_train, y_train)
 X_train_woe = binner.transform(X_train, metric="woe")
 
-scorecard = ScoreCard(pdo=60, rate=2, base_odds=35, base_score=750, binner=binner)
+selector = CompositeFeatureSelector([
+    ("iv", IVSelector(threshold=0.0)),
+    ("vif", VIFSelector(threshold=20.0)),
+])
+X_selected = selector.fit_transform(X_train_woe, y_train)
+```
+
+## 4. 评分卡建模
+
+```python
+from hscredit.core.models import ScoreCard
+
+scorecard = ScoreCard(
+    pdo=60,
+    rate=2,
+    base_odds=35,
+    base_score=750,
+    binner=binner,
+)
 scorecard.fit(X_train_woe, y_train)
 scores = scorecard.predict(X_test)
 ```
 
-## 4. 机器学习风控模型
+## 5. 机器学习模型与概率校准
 
 ```python
-from hscredit.core.models import XGBoostRiskModel, LightGBMRiskModel, CatBoostRiskModel
+from hscredit.core.models import RandomForestRiskModel
+from hscredit.core.models.evaluation import ProbabilityCalibrator
 
-models = {
-    "xgboost": XGBoostRiskModel(max_depth=4, n_estimators=200),
-    "lightgbm": LightGBMRiskModel(num_leaves=31, n_estimators=200),
-    "catboost": CatBoostRiskModel(depth=5, iterations=200),
-}
+model = RandomForestRiskModel(n_estimators=30, random_state=42)
+model.fit(X_train, y_train)
+metrics = model.evaluate(X_test, y_test)
 
-for name, model in models.items():
-    model.fit(X_train, y_train)
-    print(name, model.evaluate(X_test, y_test))
+calibrator = ProbabilityCalibrator(
+    model=model,
+    method="platt",
+    calib_ratio=None,
+).fit(X_test, y_test)
+calibrated_proba = calibrator.predict_proba(X_test)
+calibration_report = calibrator.report(X_test, y_test)
 ```
 
-## 5. 策略规则挖掘
+## 6. 策略规则挖掘
 
 ```python
-from hscredit.report.mining import (
-    SingleFeatureRuleMiner,
-    MultiFeatureRuleMiner,
-    TreeRuleExtractor,
-)
+from hscredit.report.mining import SingleFeatureRuleMiner, TreeRuleExtractor
 
-single_miner = SingleFeatureRuleMiner(target="fpd30", method="best_iv", max_n_bins=5)
-single_miner.fit(train_df)
-single_rules = single_miner.get_top_rules(top_n=10, metric="lift")
+single_miner = SingleFeatureRuleMiner(
+    target="target",
+    method="best_iv",
+    max_n_bins=4,
+    min_samples=5,
+).fit(train_df[features + ["target"]])
+single_rules = single_miner.get_top_rules(top_n=5, metric="lift")
 
-cross_miner = MultiFeatureRuleMiner(target="fpd30", method="chi", max_n_bins=4)
-cross_miner.fit(train_df)
-cross_rules = cross_miner.get_cross_rules("age", "income", top_n=10)
-
-extractor = TreeRuleExtractor(algorithm="rf", max_depth=5)
+extractor = TreeRuleExtractor(max_depth=3, min_samples_leaf=10)
 extractor.fit(X_train, y_train)
-tree_rules = extractor.extract_rules(top_n=20, metric="confidence")
+tree_rules = extractor.extract_rules()
 ```
 
-## 6. 模型报告和 Excel 交付
+## 7. 模型报告和制品保存
 
 ```python
 from hscredit.report import auto_model_report
 
-report_path = auto_model_report(
+report = auto_model_report(
     model,
-    X_test,
-    y_test,
-    save_path="模型评估报告.xlsx",
+    X_train=X_train,
+    y_train=y_train,
+    X_test=X_test,
+    y_test=y_test,
+    excel_path="模型评估报告.xlsx",
+    verbose=False,
+    with_plots=False,
 )
+
+model.save_artifact("risk_model.joblib")
+restored_model = RandomForestRiskModel.load_artifact("risk_model.joblib")
 ```
 
-借助 pandas 扩展方法可一键导出与展示：
-
-```python
-import hscredit  # 注册 df.summary() / df.save() / bin_table.show()
-
-bin_table.save("分箱结果.xlsx", title="年龄分箱")
-bin_table.show()
-```
-
-## 规则表达式
-
-所有规则统一用 `Rule` 类表达，支持任意层级嵌套与与/或/非逻辑：
+## 8. 规则表达式
 
 ```python
 from hscredit.core.rules import Rule
 
-rule = Rule("age >= 30") & Rule("income < 5000")
-report = rule.report(df, target="fpd30")   # 命中率、坏率、Lift 等指标
+rule = Rule("age >= 0") & Rule("income < 1")
+rule_report = rule.report(test_df, target="target")
 ```

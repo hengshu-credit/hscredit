@@ -2,6 +2,7 @@
 """OptimalBinning2D 二维交互分箱测试."""
 
 import pytest
+from sklearn.base import BaseEstimator, TransformerMixin, clone
 import numpy as np
 import pandas as pd
 
@@ -248,6 +249,100 @@ class TestOptimalBinning2DPlot:
         fig = binner.plot(metric='bad_rate', title='自定义标题')
         assert fig is not None
 
+    def test_plot_summary_is_below_title_and_above_heatmap(self, sample_df):
+        """摘要框应位于标题下方、热力图上方，不占用横坐标区域."""
+        binner = OptimalBinning2D(max_n_bins=4)
+        binner.fit(sample_df, y=sample_df['target'], features=['age', 'income'])
+
+        import matplotlib
+        matplotlib.use('Agg')
+
+        fig = binner.plot(metric='bad_rate')
+        ax = fig.axes[0]
+        fig.canvas.draw()
+        renderer = fig.canvas.get_renderer()
+
+        summary = next(text for text in ax.texts if text.get_text().startswith('总样本:'))
+        summary_box = summary.get_window_extent(renderer)
+        title_box = ax.title.get_window_extent(renderer)
+        axes_box = ax.get_window_extent(renderer)
+        xlabel_box = ax.xaxis.label.get_window_extent(renderer)
+
+        assert summary_box.y0 >= axes_box.y1
+        assert title_box.y0 >= summary_box.y1
+        assert summary_box.y0 > xlabel_box.y1
+
+    def test_plot_axis_labels_follow_bin_indices_when_bin_table_is_shuffled(self, sample_df):
+        """分箱表行序变化时，plot 坐标仍应按 -inf 到 +inf 排列."""
+        binner = OptimalBinning2D(
+            user_splits_x=[25, 35, 45],
+            user_splits_y=[10000, 20000, 30000],
+            max_n_bins_2d=8,
+        )
+        binner.fit(sample_df, y=sample_df['target'], features=['age', 'income'])
+        expected_x = [
+            binner.binner_x_.bin_tables_['age'].set_index('分箱').loc[i, '分箱标签']
+            for i in range(binner.n_bins_x_)
+        ]
+        expected_y = [
+            binner.binner_y_.bin_tables_['income'].set_index('分箱').loc[i, '分箱标签']
+            for i in range(binner.n_bins_y_)
+        ]
+        binner.binner_x_.bin_tables_['age'] = (
+            binner.binner_x_.bin_tables_['age'].sample(frac=1, random_state=1).reset_index(drop=True)
+        )
+        binner.binner_y_.bin_tables_['income'] = (
+            binner.binner_y_.bin_tables_['income'].sample(frac=1, random_state=2).reset_index(drop=True)
+        )
+
+        fig = binner.plot(metric='bad_rate')
+        ax = fig.axes[0]
+
+        assert [label.get_text() for label in ax.get_yticklabels()] == expected_x
+        assert [label.get_text() for label in ax.get_xticklabels()] == expected_y
+        assert expected_x[0].startswith('[-inf,')
+        assert expected_x[-1].endswith('+inf)')
+        assert expected_y[0].startswith('[-inf,')
+        assert expected_y[-1].endswith('+inf)')
+
+    def test_plot2d_delegates_to_bin_2d_plot(self, sample_df, monkeypatch):
+        """plot2d 应快捷调用 bin_2d_plot，并透传绘图参数."""
+        binner = OptimalBinning2D(max_n_bins=4)
+        binner.fit(sample_df, y=sample_df['target'], features=['age', 'income'])
+        expected = object()
+        called = {}
+
+        def fake_bin_2d_plot(data, **kwargs):
+            called['data'] = data
+            called['kwargs'] = kwargs
+            return expected
+
+        monkeypatch.setattr('hscredit.core.viz.bin_2d_plot', fake_bin_2d_plot)
+        actual = binner.plot2d(
+            figsize=(10, 8),
+            colors=['#123456'],
+            title='二维分箱',
+            annot=False,
+            fontsize=8,
+            save='plot.png',
+        )
+
+        assert actual is expected
+        assert called['data'] is binner
+        assert called['kwargs'] == {
+            'figsize': (10, 8),
+            'colors': ['#123456'],
+            'title': '二维分箱',
+            'annot': False,
+            'fontsize': 8,
+            'save': 'plot.png',
+        }
+
+    def test_plot2d_not_fitted(self):
+        """未拟合时 plot2d 应报错."""
+        with pytest.raises(Exception):
+            OptimalBinning2D().plot2d()
+
 
 class TestOptimalBinning2DCustom:
     """自定义参数测试."""
@@ -263,6 +358,77 @@ class TestOptimalBinning2DCustom:
         # 检查分箱数
         assert binner.n_bins_x_ == 4  # 3个切分点 -> 4个分箱
         assert binner.n_bins_y_ == 4
+
+    def test_user_splits_nan_reserves_missing_bin(self, sample_df):
+        """用户规则中的 np.nan 应预留缺失箱，即使训练集没有缺失值."""
+        binner = OptimalBinning2D(
+            user_splits_x=[25, 35, 45],
+            user_splits_y=[5000, 10000, 20000, np.nan],
+            max_n_bins_2d=20,
+        )
+        binner.fit(sample_df, y=sample_df['target'], features=['age', 'income'])
+
+        cross = binner.get_cross_table()
+        missing_y = cross['特征2分箱'] == -1
+        assert missing_y.any()
+        assert cross.loc[missing_y, '特征2标签'].eq('缺失值').all()
+        assert cross.loc[missing_y, '样本总数'].eq(0).all()
+        assert binner.solution_.shape == (binner.n_bins_x_, binner.n_bins_y_ + 1)
+
+        table = binner.get_bin_table()
+        missing_bins = table['分箱标签'].str.endswith(' × 缺失值')
+        assert missing_bins.any()
+        assert table.loc[missing_bins, '样本总数'].eq(0).all()
+
+        future = sample_df[['age', 'income']].iloc[[0]].copy()
+        future['income'] = np.nan
+        indices = binner.transform(future, metric='indices').iloc[0, 0]
+        woe = binner.transform(future, metric='woe').iloc[0, 0]
+        assert indices >= 0
+        assert not np.isnan(woe)
+
+    @pytest.mark.parametrize(
+        'global_value, x_value, y_value, expected_x, expected_y',
+        [
+            (True, False, None, False, True),
+            (False, True, None, True, False),
+            (True, None, False, True, False),
+        ],
+    )
+    def test_axis_missing_separate_overrides_global(
+        self,
+        sample_df,
+        global_value,
+        x_value,
+        y_value,
+        expected_x,
+        expected_y,
+    ):
+        """x/y 缺失值配置应覆盖全局配置，并分别控制缺失行列."""
+        df = sample_df.copy()
+        df.loc[df.index[:20], 'age'] = np.nan
+        df.loc[df.index[20:40], 'income'] = np.nan
+        binner = OptimalBinning2D(
+            max_n_bins=4,
+            missing_separate=global_value,
+            missing_separate_x=x_value,
+            missing_separate_y=y_value,
+        )
+        binner.fit(df, y=df['target'], features=['age', 'income'])
+
+        cross = binner.get_cross_table()
+        assert binner.binner_x_.missing_separate is expected_x
+        assert binner.binner_y_.missing_separate is expected_y
+        assert bool((cross['特征1分箱'] == -1).any()) is expected_x
+        assert bool((cross['特征2分箱'] == -1).any()) is expected_y
+        assert cross['样本总数'].sum() == len(df)
+
+        transformed = binner.transform(df[['age', 'income']], metric='indices')
+        assert transformed.iloc[:, 0].ge(0).all()
+
+        rules = binner.export_rules()
+        assert any(pd.isna(value) for value in rules['age']) is expected_x
+        assert any(pd.isna(value) for value in rules['income']) is expected_y
 
     def test_method_parameter(self, sample_df):
         """测试不同分箱方法."""
@@ -715,3 +881,25 @@ class TestOptimalBinning2DMerge:
 
 if __name__ == '__main__':
     pytest.main([__file__, '-v', '--tb=short'])
+
+
+def test_inherits_sklearn_estimator_and_transformer():
+    binner = OptimalBinning2D(x_params={"method": "quantile"})
+    assert isinstance(binner, BaseEstimator)
+    assert isinstance(binner, TransformerMixin)
+    cloned = clone(binner)
+    assert cloned.get_params(deep=False) == binner.get_params(deep=False)
+
+
+def test_sklearn_feature_metadata_and_artifact(tmp_path):
+    X = pd.DataFrame({"x": [1, 2, 3, 4, 5, 6], "y": [6, 5, 4, 3, 2, 1]})
+    target = pd.Series([0, 0, 0, 1, 1, 1])
+    binner = OptimalBinning2D(max_n_bins=2).fit(X, target)
+
+    assert binner.n_features_in_ == 2
+    assert binner.feature_names_in_.tolist() == ["x", "y"]
+    assert binner.get_feature_names_out().tolist() == ["xXy"]
+
+    path = binner.save_artifact(tmp_path / "binning_2d.joblib")
+    restored = OptimalBinning2D.load_artifact(path)
+    pd.testing.assert_frame_equal(restored.transform(X), binner.transform(X))

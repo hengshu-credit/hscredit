@@ -20,9 +20,10 @@ import pandas as pd
 from sklearn.base import BaseEstimator, TransformerMixin
 
 from ...exceptions import FeatureNotFoundError, NotFittedError
+from ...utils.serialization import ArtifactSerializableMixin
 
 
-class BaseEncoder(BaseEstimator, TransformerMixin, ABC):
+class BaseEncoder(ArtifactSerializableMixin, BaseEstimator, TransformerMixin, ABC):
     """编码器基类.
 
     所有编码器的抽象基类，提供统一的接口和通用功能。
@@ -70,6 +71,8 @@ class BaseEncoder(BaseEstimator, TransformerMixin, ABC):
     ``return_df``）对齐 category_encoders 库：
     https://contrib.scikit-learn.org/category_encoders/
     """
+
+    artifact_kind = "编码器"
 
     #: 子类声明的“额外拟合状态”属性名。这些状态是 transform 正确性所必需，
     #: 但不在 mapping_ 中（如均值/类别清单），需随 export_mapping/import_mapping 一并往返。

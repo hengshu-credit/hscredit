@@ -12,6 +12,22 @@ from scipy import stats
 from ._base import _woe_iv_vectorized
 
 
+def _safe_divide(numerator, denominator, default: float = 0.0) -> np.ndarray:
+    """执行支持广播的安全除法，分母为零时返回默认值。"""
+    numerator_array, denominator_array = np.broadcast_arrays(
+        np.asarray(numerator, dtype=float),
+        np.asarray(denominator, dtype=float),
+    )
+    result = np.full(numerator_array.shape, default, dtype=float)
+    np.divide(
+        numerator_array,
+        denominator_array,
+        out=result,
+        where=denominator_array != 0,
+    )
+    return result
+
+
 def _normalize_curve_metric(metric: str) -> str:
     metric_norm = str(metric).strip().lower()
     aliases = {
@@ -426,7 +442,9 @@ def _compute_bin_stats_binary(
         else:
             sort_keys.append((0, b))  # 正常分箱在前
 
-    sort_order = np.argsort([sk[0] * 10000 + sk[1] for sk in sort_keys])
+    # 使用 Python int 计算排序键，避免 numpy 2.x（NEP 50）下窄整型（如分类编码 int8）
+    # 与大整数运算溢出抛出 OverflowError
+    sort_order = np.argsort([int(sk[0]) * 10000 + int(sk[1]) for sk in sort_keys])
     old_to_new = {int(old_pos): new_pos for new_pos, old_pos in enumerate(sort_order)}
     unique_bins_sorted = unique_bins[sort_order]
     bin_indices_sorted = np.array([old_to_new[int(idx)] for idx in bin_indices])
@@ -442,7 +460,7 @@ def _compute_bin_stats_binary(
     bad_counts = np.bincount(bin_indices, weights=y, minlength=n_bins)
     counts = good_counts + bad_counts
 
-    bad_rate = np.where(counts > 0, bad_counts / counts, 0.0)
+    bad_rate = _safe_divide(bad_counts, counts)
 
     # 计算WOE和IV
     woe, bin_iv, total_iv = _woe_iv_vectorized(good_counts, bad_counts, epsilon, woe_clip)
@@ -460,47 +478,34 @@ def _compute_bin_stats_binary(
     overall_bad_rate = total_bad / total if total > 0 else 0.0
 
     # 计算LIFT值
-    lift = np.where(bad_rate > 0, bad_rate / overall_bad_rate, 0.0)
+    lift = _safe_divide(bad_rate, overall_bad_rate)
 
     # 坏账改善 = (全量坏样本率 - 拒绝后剩余样本坏样本率) / 全量坏样本率
     # 拒绝后剩余样本坏样本率 = (total_bad - bin_bad) / (total - bin_total)
     # 展开后与 (overall_bad_rate - bad_rate) / overall_bad_rate 等价
     other_bad = total_bad - bad_counts
     other_total = total - counts
-    bad_improve = np.where(
-        overall_bad_rate > 0,
-        (overall_bad_rate - np.where(other_total > 0, other_bad / other_total, 0.0)) / overall_bad_rate,
-        0.0
-    )
+    other_bad_rate = _safe_divide(other_bad, other_total)
+    bad_improve = _safe_divide(overall_bad_rate - other_bad_rate, overall_bad_rate)
 
     # 风险拒绝比 = 坏账改善 / 当前箱样本占比
     # 反映"每拒绝1%样本能带来多少坏账改善"
-    risk_reject = np.where(
-        count_distr > epsilon,
-        bad_improve / count_distr,
-        0.0
-    )
+    risk_reject = _safe_divide(bad_improve, count_distr)
 
     # 按分箱顺序计算累积指标
     cum_good = np.cumsum(good_counts)
     cum_bad = np.cumsum(bad_counts)
     cum_total = cum_good + cum_bad
 
-    cum_lift = np.where(cum_total > 0, (cum_bad / cum_total) / overall_bad_rate, 0.0)
+    cum_bad_rate = _safe_divide(cum_bad, cum_total)
+    cum_lift = _safe_divide(cum_bad_rate, overall_bad_rate)
     # 累计坏账改善 = (全量坏样本率 - 累计拒绝后剩余样本坏样本率) / 全量坏样本率
     other_cum_bad = total_bad - cum_bad
     other_cum_total = total - cum_total
-    cum_bad_improve = np.where(
-        overall_bad_rate > 0,
-        (overall_bad_rate - np.where(other_cum_total > 0, other_cum_bad / other_cum_total, 0.0)) / overall_bad_rate,
-        0.0
-    )
+    other_cum_bad_rate = _safe_divide(other_cum_bad, other_cum_total)
+    cum_bad_improve = _safe_divide(overall_bad_rate - other_cum_bad_rate, overall_bad_rate)
     # 累计风险拒绝比 = 累计坏账改善 / 累计样本占比
-    cum_risk_reject = np.where(
-        cum_total > epsilon,
-        cum_bad_improve / (cum_total / total),
-        0.0
-    )
+    cum_risk_reject = _safe_divide(cum_bad_improve, _safe_divide(cum_total, total))
 
     # 计算KS值（使用cum_bad计算累积坏样本数）
     cum_good_rate = cum_good / (total_good + epsilon)
@@ -582,7 +587,9 @@ def _compute_bin_stats_continuous(
         else:
             sort_keys.append((0, b))  # 正常分箱在前
 
-    sort_order = np.argsort([sk[0] * 10000 + sk[1] for sk in sort_keys])
+    # 使用 Python int 计算排序键，避免 numpy 2.x（NEP 50）下窄整型（如分类编码 int8）
+    # 与大整数运算溢出抛出 OverflowError
+    sort_order = np.argsort([int(sk[0]) * 10000 + int(sk[1]) for sk in sort_keys])
     old_to_new = {int(old_pos): new_pos for new_pos, old_pos in enumerate(sort_order)}
     unique_bins_sorted = unique_bins[sort_order]
     bin_indices_sorted = np.array([old_to_new[int(idx)] for idx in bin_indices])
@@ -600,11 +607,11 @@ def _compute_bin_stats_continuous(
     
     # 计算每箱的目标值统计
     y_sum = np.bincount(bin_indices, weights=y, minlength=n_bins)
-    y_mean = np.where(counts > 0, y_sum / counts, 0.0)
+    y_mean = _safe_divide(y_sum, counts)
     
     # 计算每箱的方差和标准差
     y_squared_sum = np.bincount(bin_indices, weights=y**2, minlength=n_bins)
-    y_var = np.where(counts > 0, y_squared_sum / counts - y_mean**2, 0.0)
+    y_var = _safe_divide(y_squared_sum, counts) - y_mean**2
     y_std = np.sqrt(np.maximum(y_var, 0))
     
     # 计算每箱的最小值和最大值
@@ -736,7 +743,9 @@ def _compute_bin_stats_amount_weighted(
         else:
             sort_keys.append((0, b))  # 正常分箱在前
     
-    sort_order = np.argsort([sk[0] * 10000 + sk[1] for sk in sort_keys])
+    # 使用 Python int 计算排序键，避免 numpy 2.x（NEP 50）下窄整型（如分类编码 int8）
+    # 与大整数运算溢出抛出 OverflowError
+    sort_order = np.argsort([int(sk[0]) * 10000 + int(sk[1]) for sk in sort_keys])
     old_to_new = {int(old_pos): new_pos for new_pos, old_pos in enumerate(sort_order)}
     unique_bins_sorted = unique_bins[sort_order]
     bin_indices_sorted = np.array([old_to_new[int(idx)] for idx in bin_indices])
@@ -764,7 +773,7 @@ def _compute_bin_stats_amount_weighted(
     bad_amount_ratios = bad_amounts / total_bad_amount if total_bad_amount > 0 else np.zeros(n_bins)
     
     # 金额口径坏账率 = 坏金额 / 总金额
-    bad_rate = np.where(amount_totals > 0, bad_amounts / amount_totals, 0.0)
+    bad_rate = _safe_divide(bad_amounts, amount_totals)
     
     # 计算WOE和IV（基于金额占比）
     good_amounts_smooth = np.where(good_amounts == 0, epsilon, good_amounts)
@@ -786,17 +795,14 @@ def _compute_bin_stats_amount_weighted(
     
     # 计算LIFT值（金额口径）
     overall_bad_rate = total_bad_amount / total_amount if total_amount > 0 else 0.0
-    lift = np.where(bad_rate > 0, bad_rate / overall_bad_rate, 0.0)
+    lift = _safe_divide(bad_rate, overall_bad_rate)
 
     # 坏账改善 = (全量坏样本率 - 拒绝后坏样本率) / 全量坏样本率
     # 拒绝后坏样本率 = other_bad / other_total
     other_bad = total_bad_amount - bad_amounts
     other_total = total_amount - amount_totals
-    bad_improve = np.where(
-        other_total > 0,
-        (overall_bad_rate - other_bad / other_total) / overall_bad_rate,
-        0.0
-    )
+    other_bad_rate = _safe_divide(other_bad, other_total)
+    bad_improve = _safe_divide(overall_bad_rate - other_bad_rate, overall_bad_rate)
     # 风险拒绝比 = 样本占比 = 该箱金额 / 全量金额
     risk_reject = amount_ratios
 
@@ -805,17 +811,15 @@ def _compute_bin_stats_amount_weighted(
     cum_bad = np.cumsum(bad_amounts)
     cum_total = cum_good + cum_bad
 
-    cum_lift = np.where(cum_total > 0, (cum_bad / cum_total) / overall_bad_rate, 0.0)
+    cum_bad_rate = _safe_divide(cum_bad, cum_total)
+    cum_lift = _safe_divide(cum_bad_rate, overall_bad_rate)
     other_cum_bad = total_bad_amount - cum_bad
     other_cum_total = total_amount - cum_total
     # 累计坏账改善 = (全量坏样本率 - 累计拒绝后坏样本率) / 全量坏样本率
-    cum_bad_improve = np.where(
-        other_cum_total > 0,
-        (overall_bad_rate - other_cum_bad / other_cum_total) / overall_bad_rate,
-        0.0
-    )
+    other_cum_bad_rate = _safe_divide(other_cum_bad, other_cum_total)
+    cum_bad_improve = _safe_divide(overall_bad_rate - other_cum_bad_rate, overall_bad_rate)
     # 累计风险拒绝比 = 累计样本占比
-    cum_risk_reject = np.where(total_amount > 0, cum_total / total_amount, 0.0)
+    cum_risk_reject = _safe_divide(cum_total, total_amount)
     
     # 计算KS值（基于金额累积占比）
     cum_good_rate = cum_good / (total_good_amount + epsilon)
@@ -1072,7 +1076,7 @@ def _chi2_by_bin(bins: np.ndarray, y: np.ndarray) -> Tuple[float, float, np.ndar
         return 0.0, 1.0, np.zeros(contingency.shape[0])
 
     chi2_stat, p_value, dof, expected = stats.chi2_contingency(contingency)
-    chi2_contrib = ((contingency - expected) ** 2 / expected).sum(axis=1)
+    chi2_contrib = _safe_divide((contingency - expected) ** 2, expected).sum(axis=1)
 
     return chi2_stat, p_value, chi2_contrib
 
