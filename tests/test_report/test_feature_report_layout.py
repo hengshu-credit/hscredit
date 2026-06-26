@@ -105,3 +105,137 @@ def test_feature_title_end_space_with_return_cols(monkeypatch):
             break
 
     assert actual_span == expected_span
+
+
+def test_auto_feature_analysis_keeps_overdue_binning_mode(monkeypatch):
+    calls = []
+
+    def fake_feature_bin_stats(data, feature, **kwargs):
+        calls.append({"columns": list(data.columns), **kwargs})
+        return pd.DataFrame({
+            "指标名称": [feature],
+            "指标含义": [feature],
+            "分箱标签": ["(0, 1]"],
+            "样本总数": [len(data)],
+            "样本占比": [1.0],
+            "坏样本率": [0.5],
+        })
+
+    monkeypatch.setattr(feature_analyzer_module, "feature_bin_stats", fake_feature_bin_stats)
+
+    data = pd.DataFrame({
+        "x": [1, 2, 3, 4],
+        "mob": [0, 1, 4, 6],
+    })
+    writer = ExcelWriter(system="windows")
+
+    auto_feature_analysis(
+        data,
+        features=["x"],
+        overdue="mob",
+        dpds=3,
+        excel_writer=writer,
+        sheet="overdue_mode",
+        pictures=[],
+        output_dir="model_report",
+    )
+
+    assert calls
+    assert calls[0]["overdue"] == ["mob"]
+    assert calls[0]["dpds"] == [3]
+    assert calls[0]["target"] == "mob 3+"
+    assert calls[0]["columns"] == ["x", "mob 3+", "mob"]
+
+
+def test_auto_feature_analysis_missing_rate_and_summary_links(monkeypatch):
+    monkeypatch.setattr(feature_analyzer_module, "bin_plot", lambda *args, **kwargs: None)
+
+    data = pd.DataFrame({
+        "x": [1.0, 2.0, None, 4.0],
+        "target": [0, 0, 1, 1],
+    })
+    writer = ExcelWriter(system="windows")
+    writer.insert_pic2sheet = types.MethodType(_mock_insert_pic2sheet, writer)
+
+    auto_feature_analysis(
+        data,
+        features=["x"],
+        target="target",
+        excel_writer=writer,
+        sheet="missing_and_links",
+        pictures=["bin"],
+        output_dir="model_report",
+    )
+
+    ws = writer.get_sheet_by_name("missing_and_links")
+    feature_title_row, _ = _get_feature_title_and_table_header_rows(ws)
+    assert feature_title_row is not None
+
+    feature_title_cell = ws.cell(row=feature_title_row, column=2)
+    assert "缺失率: 25.0%" in feature_title_cell.value
+
+    summary_feature_cell = next(
+        cell
+        for row in ws.iter_rows()
+        for cell in row
+        if cell.value == "x" and cell.hyperlink is not None
+    )
+    assert summary_feature_cell.hyperlink.location == f"#'{ws.title}'!{feature_title_cell.coordinate}"
+    assert feature_title_cell.hyperlink.location == f"#'{ws.title}'!{summary_feature_cell.coordinate}"
+
+
+def test_auto_feature_analysis_sample_distribution_uses_model_report_layout(monkeypatch):
+    monkeypatch.setattr(feature_analyzer_module, "bin_plot", lambda *args, **kwargs: None)
+    monkeypatch.setattr(feature_analyzer_module, "distribution_plot", lambda *args, **kwargs: pd.DataFrame())
+
+    def fake_feature_bin_stats(data, feature, **kwargs):
+        return pd.DataFrame({
+            "指标名称": [feature],
+            "指标含义": [feature],
+            "分箱标签": ["(0, 1]"],
+            "样本总数": [len(data)],
+            "样本占比": [1.0],
+            "坏样本率": [0.5],
+        })
+
+    monkeypatch.setattr(feature_analyzer_module, "feature_bin_stats", fake_feature_bin_stats)
+
+    data = pd.DataFrame({
+        "x": [1, 2, 3, 4],
+        "mob": [0, 2, 5, 9],
+        "apply_date": pd.to_datetime(["2024-01-01", "2024-01-15", "2024-02-01", "2024-02-15"]),
+    })
+    writer = ExcelWriter(system="windows")
+    writer.insert_pic2sheet = types.MethodType(_mock_insert_pic2sheet, writer)
+
+    auto_feature_analysis(
+        data,
+        features=["x"],
+        overdue="mob",
+        dpds=[3, 7],
+        date="apply_date",
+        excel_writer=writer,
+        sheet="sample_layout",
+        pictures=[],
+        output_dir="model_report",
+    )
+
+    ws = writer.get_sheet_by_name("sample_layout")
+    values = [cell.value for row in ws.iter_rows() for cell in row]
+
+    assert "样本总体分布情况" in values
+    assert "样本时间分布情况" in values
+    assert values.count("整体样本") >= 2
+    assert "mob@3" in values
+    assert "mob@7" in values
+
+    sample_total_header = next(cell for row in ws.iter_rows() for cell in row if cell.value == "样本总数")
+    assert ws.cell(sample_total_header.row - 1, sample_total_header.column - 1).value == "统计详情"
+
+    bad_rate_header = next(
+        cell
+        for row in ws.iter_rows()
+        for cell in row
+        if cell.value == "mob@3" and ws.cell(cell.row - 1, cell.column).value == "坏样本率"
+    )
+    assert ws.cell(bad_rate_header.row + 1, bad_rate_header.column).number_format == "0.00%"

@@ -426,6 +426,29 @@ class TestModelReportRegression:
         )
         assert feature_title_cell.hyperlink is None
 
+    def test_single_label_performance_metric_formats(self, tmp_path):
+        X = pd.DataFrame({'f0': [1, 2, 3, 4, 5, 6], 'target': [0, 0, 0, 1, 1, 1]})
+        report = ModelReport(
+            MockModel(['f0']),
+            X_train=X,
+            y_train=None,
+            target='target',
+            feature_names=['f0'],
+        )
+
+        output = tmp_path / 'single_label_report.xlsx'
+        report.to_excel(str(output), with_plots=False)
+
+        performance = load_workbook(output)['2-模型性能']
+        ks_cell = next(cell for row in performance.iter_rows() for cell in row if cell.value == 'KS')
+        auc_cell = next(cell for row in performance.iter_rows() for cell in row if cell.value == 'AUC')
+        sample_cell = next(cell for row in performance.iter_rows() for cell in row if cell.value == '样本总数')
+
+        assert performance.cell(ks_cell.row, ks_cell.column + 1).number_format == '0.00%'
+        assert performance.cell(auc_cell.row, auc_cell.column + 1).number_format == '0.00%'
+        assert performance.cell(sample_cell.row, sample_cell.column + 1).number_format == '#,##0'
+        assert isinstance(performance.cell(sample_cell.row, sample_cell.column + 1).value, int)
+
     def test_export_plots_contains_feature_psi(self, tmp_path):
         X = self._multi_label_data()
         report = ModelReport(
@@ -476,9 +499,13 @@ class TestModelReportRegression:
         assert [performance.cell(8, col).value for col in range(2, 8)] == [
             '统计指标', '训练集', '测试集', '训练集', '测试集', '训练集'
         ]
+        assert performance['B11'].value == '样本总数'
+        assert performance['C9'].number_format == '0.00%'
+        assert performance['C10'].number_format == '0.00%'
+        assert performance['C11'].number_format == '#,##0'
+        assert isinstance(performance['C11'].value, int)
         assert performance['B19'].value == '统计指标'
         assert performance.auto_filter.ref == 'B20:AJ26'
-        stat_header = next(
-            cell for row in basic.iter_rows() for cell in row if cell.value == '样本总数'
-        )
-        assert basic.cell(stat_header.row, 2).value == '统计详情'
+        sample_total_header = next(cell for row in basic.iter_rows() for cell in row if cell.value == '样本总数')
+        assert basic.cell(sample_total_header.row - 1, 2).value == '统计详情'
+        assert basic.cell(sample_total_header.row, 2).value == '数据集'

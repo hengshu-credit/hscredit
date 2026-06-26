@@ -22,12 +22,46 @@ from ..core.viz import bin_plot, bin_trend_plot, corr_plot, distribution_plot, h
 from ..core.metrics._binning import compute_bin_stats, add_margins
 from ..excel import ExcelWriter, dataframe2excel
 from ..utils import init_setting
+from ._sample_stats import build_group_distribution_table, build_sample_stats_table
 from .rule_strategy import GroupOrder, _resolve_group_labels
 
 logger = logging.getLogger(__name__)
 
 
 _BINNING_SUMMARY_METRICS = ('分档KS值', 'LIFT值', '指标IV值', '坏样本数', '坏样本率')
+
+
+def _feature_missing_rate(data: pd.DataFrame, feature: str, dropna: Union[bool, float, int, str] = False) -> float:
+    """计算变量缺失率，和 auto_feature_analysis 的剔除口径保持一致."""
+    missing_mask = data[feature].isna()
+    if isinstance(dropna, (float, int, str)):
+        missing_mask = missing_mask | data[feature].eq(dropna)
+    return float(missing_mask.mean()) if len(data) > 0 else 0.0
+
+
+def _auto_feature_target_maps(
+    data: pd.DataFrame,
+    target: str,
+    overdue: Optional[List[str]] = None,
+    dpds: Optional[List[int]] = None,
+) -> Tuple[str, List[str], Dict[str, str], Dict[str, np.ndarray]]:
+    """生成自动特征分析使用的目标列、展示标签和标签数组."""
+    if overdue:
+        if dpds is None:
+            raise ValueError("传入 overdue 参数时必须同时传入 dpds")
+        primary_target = f"{overdue[0]} {dpds[0]}+"
+        label_names: List[str] = []
+        display_labels: Dict[str, str] = {}
+        y_map: Dict[str, np.ndarray] = {}
+        for mob_col in overdue:
+            for dpd in dpds:
+                label = f"{mob_col}>{dpd}"
+                label_names.append(label)
+                display_labels[label] = f"{mob_col}@{dpd}"
+                y_map[label] = (data[mob_col] > dpd).astype(int).to_numpy()
+        return primary_target, label_names, display_labels, y_map
+
+    return target, [target], {target: target}, {target: data[target].astype(int).to_numpy()}
 
 
 # feature_binning_summary 支持的摘要指标及其跨分箱聚合方式（取自 feature_bin_stats 的输出列）。
@@ -1696,15 +1730,21 @@ def auto_feature_analysis(
     if not isinstance(features, (list, tuple)):
         features = [features]
 
-    if overdue and not isinstance(overdue, list):
+    if overdue and not isinstance(overdue, (list, tuple, np.ndarray)):
         overdue = [overdue]
+    elif overdue is not None:
+        overdue = list(overdue)
 
-    if dpds and not isinstance(dpds, list):
+    if dpds is not None and not isinstance(dpds, (list, tuple, np.ndarray)):
         dpds = [dpds]
+    elif dpds is not None:
+        dpds = list(dpds)
 
+    target, target_label_names, target_display_labels, target_y_map = _auto_feature_target_maps(
+        data, target=target, overdue=overdue, dpds=dpds
+    )
     if overdue:
-        target = f"{overdue[0]} {dpds[0]}+"
-        data[target] = (data[overdue[0]] > dpds[0]).astype(int)
+        data[target] = target_y_map[target_label_names[0]]
 
     if date is not None and date in data.columns and not pd.api.types.is_datetime64_any_dtype(data[date]):
         converted_date = pd.to_datetime(data[date], errors='coerce')
@@ -1747,52 +1787,111 @@ def auto_feature_analysis(
         style="header_middle", end_space=(start_row, start_col + max_columns_len - 1)
     )
 
-    if date is not None and date in data.columns:
-        if data[date].dtype.name in ["str", "object"]:
-            start_date = pd.to_datetime(data[date]).min().strftime("%Y-%m-%d")
-            end_date = pd.to_datetime(data[date]).max().strftime("%Y-%m-%d")
-        else:
-            start_date = data[date].min().strftime("%Y-%m-%d")
-            end_date = data[date].max().strftime("%Y-%m-%d")
-
-        dataset_summary = pd.DataFrame(
-            [[start_date, end_date, len(data), data[target].sum(),
-              data[target].sum() / len(data), data_summary_comment]],
-            columns=["开始时间", "结束时间", "样本总数", "坏客户数", "坏客户占比", "备注"],
-        )
+    dataset_labels = ["整体样本"]
+    sample_stats, sample_percent_cols = build_sample_stats_table(
+        dataset_labels,
+        [target_y_map],
+        target_label_names,
+        display_labels=target_display_labels,
+    )
+    sample_start_row = end_row + 2
+    if isinstance(sample_stats.columns, pd.MultiIndex):
         end_row, end_col = dataframe2excel(
-            dataset_summary, writer, worksheet, percent_cols=["坏客户占比"],
-            start_row=end_row + 2, title="样本总体分布情况"
+            sample_stats,
+            writer,
+            worksheet,
+            percent_cols=sample_percent_cols,
+            start_row=sample_start_row,
+            title="样本总体分布情况",
+            index=True,
         )
+        writer.insert_value2sheet(
+            worksheet,
+            (sample_start_row + 2, start_col),
+            value="统计详情",
+            style="header_left",
+            end_space=(sample_start_row + 2, start_col + 1),
+        )
+    else:
+        end_row, end_col = dataframe2excel(
+            sample_stats,
+            writer,
+            worksheet,
+            percent_cols=sample_percent_cols,
+            start_row=sample_start_row,
+            title="样本总体分布情况",
+        )
+    end_row += 2
 
-        distribution = distribution_plot(
+    if date is not None and date in data.columns:
+        distribution_plot(
             data, date=date, freq=freq, target=target,
             save=os.path.join(output_dir, f"sample_time_distribution{suffix}.png"), result=True
         )
+        time_title_columns_len = (
+            len(sample_stats.columns) + sample_stats.index.nlevels
+            if isinstance(sample_stats.columns, pd.MultiIndex)
+            else len(sample_stats.columns)
+        )
         end_row, end_col = writer.insert_value2sheet(
-            worksheet, (end_row + 2, start_col), value="样本时间分布情况", style="header",
-            end_space=(end_row + 2, start_col + len(distribution.columns) - 1)
+            worksheet, (end_row, start_col), value="样本时间分布情况", style="header",
+            end_space=(end_row, start_col + time_title_columns_len - 1)
         )
         end_row, end_col = writer.insert_pic2sheet(
             worksheet, os.path.join(output_dir, f"sample_time_distribution{suffix}.png"),
             (end_row + 1, start_col), figsize=(720, 370)
         )
+        dates = pd.to_datetime(data[date], errors="coerce")
+        try:
+            period_values = dates.dt.to_period(freq).astype(str).values
+        except Exception:
+            period_values = dates.dt.to_period("M").astype(str).values
+        time_distribution, time_percent_cols = build_group_distribution_table(
+            dataset_labels,
+            [target_y_map],
+            [period_values],
+            target_label_names,
+            display_labels=target_display_labels,
+        )
+        table_start_row = end_row
         end_row, end_col = dataframe2excel(
-            distribution, writer, worksheet,
-            percent_cols=["样本占比", "好样本占比", "坏样本占比", "坏样本率"],
-            condition_cols=["坏样本率"], start_row=end_row
+            time_distribution,
+            writer,
+            worksheet,
+            percent_cols=time_percent_cols,
+            condition_cols=time_percent_cols,
+            start_row=table_start_row,
+            index=True,
         )
+        if isinstance(time_distribution.columns, pd.MultiIndex):
+            writer.insert_value2sheet(
+                worksheet,
+                (table_start_row, start_col),
+                value="统计详情",
+                style="header_left",
+                end_space=(table_start_row, start_col + 1),
+            )
         end_row += 2
-    else:
-        dataset_summary = pd.DataFrame(
-            [[len(data), data[target].sum(), data[target].sum() / len(data), data_summary_comment]],
-            columns=["样本总数", "坏客户数", "坏客户占比", "备注"],
-        )
-        end_row, end_col = dataframe2excel(
-            dataset_summary, writer, worksheet, percent_cols=["坏客户占比"],
-            start_row=end_row + 2, title="样本总体分布情况"
-        )
-        end_row += 2
+
+    feature_summary = data[features].summary(y=data[target])
+    if "特征名" not in feature_summary.columns:
+        index_name = feature_summary.index.name or "index"
+        feature_summary = feature_summary.reset_index().rename(columns={index_name: "特征名"})
+    feature_summary_start_row = end_row
+    end_row, end_col = dataframe2excel(
+        feature_summary,
+        writer,
+        worksheet,
+        start_row=feature_summary_start_row,
+        title="变量综合统计",
+        right_cols=[0],
+    )
+    feature_name_col = start_col + feature_summary.columns.get_loc("特征名")
+    feature_summary_rows = {
+        str(feat): feature_summary_start_row + 2 + feature_summary.columns.nlevels + position
+        for position, feat in enumerate(feature_summary["特征名"])
+    }
+    end_row += 2
 
     if corr:
         temp = data[features].select_dtypes(include="number")
@@ -1824,10 +1923,11 @@ def auto_feature_analysis(
             if overdue is None:
                 cols_needed = [col, target]
             else:
-                cols_needed = list(set([col, target] + overdue))
+                cols_needed = list(dict.fromkeys([col, target] + overdue))
             if use_amount:
-                cols_needed = list(set(cols_needed + [amount]))
+                cols_needed = list(dict.fromkeys(cols_needed + [amount]))
             temp = data[cols_needed]
+            missing_rate = _feature_missing_rate(data, col, dropna)
 
             if isinstance(dropna, bool) and dropna is True:
                 temp = temp.dropna(subset=col).reset_index(drop=True)
@@ -1931,19 +2031,28 @@ def auto_feature_analysis(
             else:
                 title_span = sample_title_columns_len
 
-            if (len(temp) < len(data)) and (isinstance(dropna, bool) and dropna is True) or \
-               isinstance(dropna, (float, int, str)):
-                end_row, end_col = writer.insert_value2sheet(
-                    worksheet, (end_row + 2, start_col),
-                    value=f"数据字段: {feature_map.get(col, col)} (缺失率: {round((1 - len(temp) / len(data)) * 100, 2)}%)",
-                    style="header", end_space=(end_row + 2, start_col + title_span - 1)
-                )
-            else:
-                end_row, end_col = writer.insert_value2sheet(
-                    worksheet, (end_row + 2, start_col),
-                    value=f"数据字段: {feature_map.get(col, col)}",
-                    style="header", end_space=(end_row + 2, start_col + title_span - 1)
-                )
+            feature_title_row = end_row + 2
+            end_row, end_col = writer.insert_value2sheet(
+                worksheet, (feature_title_row, start_col),
+                value=f"数据字段: {feature_map.get(col, col)} (缺失率: {round(missing_rate * 100, 2)}%)",
+                style="header", end_space=(feature_title_row, start_col + title_span - 1)
+            )
+
+            summary_row = feature_summary_rows.get(str(col))
+            if summary_row is not None:
+                try:
+                    writer.insert_hyperlink2sheet(
+                        worksheet,
+                        (summary_row, feature_name_col),
+                        hyperlink=f"#'{worksheet.title}'!{writer.get_cell_space((feature_title_row, start_col))}",
+                    )
+                    writer.insert_hyperlink2sheet(
+                        worksheet,
+                        (feature_title_row, start_col),
+                        hyperlink=f"#'{worksheet.title}'!{writer.get_cell_space((summary_row, feature_name_col))}",
+                    )
+                except Exception:
+                    pass
 
             if pictures and len(pictures) > 0:
                 chart_row = end_row + 1

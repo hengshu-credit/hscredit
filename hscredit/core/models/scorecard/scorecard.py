@@ -896,37 +896,31 @@ class ScoreCard(StandardScoreTransformer):
 
             @staticmethod
             def _match_interval(value, label):
-                label_str = str(label).strip()
-                match = re.match(r'^([\[(])\s*([^,]+)\s*,\s*([^\])]+)\s*([\])])$', label_str)
-                if not match:
+                parsed = ScoreCard._parse_interval_label(label)
+                if parsed is None:
                     return False
 
                 if pd.isna(value):
                     return False
 
-                left_bracket, lower, upper, right_bracket = match.groups()
+                left_bracket, lower, upper, right_bracket = parsed
                 try:
                     val = float(value)
                 except (TypeError, ValueError):
                     return False
 
-                lower = lower.strip().lower()
-                upper = upper.strip().lower()
-
-                if lower not in ('-inf', '-infinity'):
-                    lower_value = float(lower)
+                if lower != -np.inf:
                     if left_bracket == '[':
-                        if val < lower_value:
+                        if val < lower:
                             return False
-                    elif val <= lower_value:
+                    elif val <= lower:
                         return False
 
-                if upper not in ('+inf', 'inf', 'infinity'):
-                    upper_value = float(upper)
+                if upper != np.inf:
                     if right_bracket == ']':
-                        if val > upper_value:
+                        if val > upper:
                             return False
-                    elif val >= upper_value:
+                    elif val >= upper:
                         return False
 
                 return True
@@ -934,6 +928,8 @@ class ScoreCard(StandardScoreTransformer):
             @staticmethod
             def _match_category(value, label):
                 if pd.isna(value):
+                    return False
+                if ScoreCard._normalize_rule_label(label) in ('missing', 'else'):
                     return False
                 value_str = str(value).strip()
                 label_str = str(label).strip()
@@ -973,6 +969,10 @@ class ScoreCard(StandardScoreTransformer):
                         # 优先按导出的完整标签匹配，避免只依赖解析出的切分点导致中间箱丢失。
                         for label in bin_labels:
                             if self._match_interval(value, label) or self._match_category(value, label):
+                                return label
+
+                        for label in bin_labels:
+                            if ScoreCard._normalize_rule_label(label) == 'else':
                                 return label
 
                         return '其他'
@@ -1252,12 +1252,8 @@ class ScoreCard(StandardScoreTransformer):
                 parsed_labels.append('special')
                 continue
             
-            # 匹配数值区间: (a, b] 或 (a, +inf)
-            match = re.match(
-                r'\((-inf|[-\d.]+),\s*(\+?inf|[-\d.]+)[)\]]',
-                label_str
-            )
-            if match:
+            # 匹配数值区间: (a, b]、[a ~ b) 或 [负无穷 , 正无穷)
+            if self._parse_interval_label(label_str) is not None:
                 parsed_labels.append(label_str)
             else:
                 # 类别值
@@ -1308,6 +1304,38 @@ class ScoreCard(StandardScoreTransformer):
         return super().inverse_transform(scores)
 
     @staticmethod
+    def _normalize_interval_bound(bound: Any) -> float:
+        """将外部评分卡区间边界统一为浮点数，支持 toad/scp 的中英文无穷符号."""
+        text = str(bound).strip().lower()
+        text = text.replace('−', '-').replace('∞', 'inf')
+        if text in ('-inf', '-infinity', '-np.inf', '负无穷', '负无穷大'):
+            return -np.inf
+        if text in ('+inf', 'inf', 'infinity', '+infinity', 'np.inf', '+np.inf', '正无穷', '正无穷大'):
+            return np.inf
+        return float(text)
+
+    @staticmethod
+    def _parse_interval_label(label: Any) -> Optional[Tuple[str, float, float, str]]:
+        """解析常见评分卡区间标签.
+
+        支持 hscredit ``[a, b)``、toad ``[a ~ b)``、scorecardpipeline
+        ``[负无穷 , b)`` 等格式；非区间标签返回 ``None``。
+        """
+        label_str = str(label).strip()
+        match = re.match(r'^([\[(])\s*(.*?)\s*(?:,|~)\s*(.*?)\s*([\])])$', label_str)
+        if not match:
+            return None
+
+        left_bracket, lower_raw, upper_raw, right_bracket = match.groups()
+        try:
+            lower = ScoreCard._normalize_interval_bound(lower_raw)
+            upper = ScoreCard._normalize_interval_bound(upper_raw)
+        except (TypeError, ValueError):
+            return None
+
+        return left_bracket, lower, upper, right_bracket
+
+    @staticmethod
     def _normalize_rule_label(label: Any) -> str:
         """标准化规则标签，便于离线规则映射."""
         label_str = str(label).strip()
@@ -1319,16 +1347,16 @@ class ScoreCard(StandardScoreTransformer):
         if label_lower in ('special', '特殊值', '特殊'):
             return 'special'
 
+        if label_lower in ('else', 'other', 'others', '其他'):
+            return 'else'
+
         if label_str.startswith(('(', '[')):
-            interval_match = re.match(r'^[\[(]\s*([^,]+)\s*,\s*([^\])]+)\s*[\])]$', label_str)
-            if interval_match:
-                lower = interval_match.group(1).strip().lower()
-                upper = interval_match.group(2).strip().lower()
-
-                lower = '-inf' if lower in ('-infinity', '-inf') else lower
-                upper = '+inf' if upper in ('infinity', 'inf', '+inf') else upper
-
-                return f'interval:{lower}:{upper}'
+            interval = ScoreCard._parse_interval_label(label_str)
+            if interval is not None:
+                _, lower, upper, _ = interval
+                lower_text = '-inf' if lower == -np.inf else f'{lower:g}'
+                upper_text = '+inf' if upper == np.inf else f'{upper:g}'
+                return f'interval:{lower_text}:{upper_text}'
 
             return re.sub(r',\s*', ', ', label_str)
 
@@ -1596,8 +1624,8 @@ class ScoreCard(StandardScoreTransformer):
             "好坏比（好:坏），内部换算实际 odds = 1/base_odds"
             if self.base_odds >= 1 else "坏样本率 / 坏好比，直接作为实际 odds"
         )
-        # 评分卡转换公式（与 score_formula() 中的「公式」一致）
-        formula = f"Score = {round(self.A_, 4)} - {round(self.B_, 4)} × ln(odds)"
+        formula_info = self.score_formula()
+        score_direction = "越大越好" if self.direction_ == "descending" else "越小越好"
         return pd.DataFrame([
             {"刻度项": "base_odds", "刻度值": self.base_odds, "备注": base_odds_remark},
             {"刻度项": "base_score", "刻度值": self.base_score,
@@ -1606,11 +1634,13 @@ class ScoreCard(StandardScoreTransformer):
              "备注": "odds 增加的倍率"},
             {"刻度项": "pdo", "刻度值": self.pdo,
              "备注": f"odds 增加 {self.rate} 倍时分数变化量"},
-            {"刻度项": "B (pdo/ln(rate))", "刻度值": round(self.B_, 4),
+            {"刻度项": "B", "刻度值": self.B_,
              "备注": f"pdo / ln({self.rate})"},
-            {"刻度项": "A (offset)", "刻度值": round(self.A_, 4),
+            {"刻度项": "A", "刻度值": self.A_,
              "备注": "base_score + B * ln(实际odds)，实际odds 见 base_odds 备注"},
-            {"刻度项": "formula", "刻度值": formula,
+            {"刻度项": "direction", "刻度值": score_direction,
+             "备注": f"direction={self.direction_}"},
+            {"刻度项": "formula", "刻度值": formula_info["公式"],
              "备注": "评分卡转换公式，odds = P(坏) / P(好)（同 score_formula 的「公式」）"},
         ])
 
@@ -1773,12 +1803,25 @@ class ScoreCard(StandardScoreTransformer):
                 return '缺失值'
         return str(bin_label)
 
+    @staticmethod
+    def _format_score_interval(interval: Any, decimal: int = 4, closed: Optional[str] = None) -> str:
+        """格式化评分区间，避免 pandas Interval 暴露浮点尾差."""
+        if hasattr(interval, 'left') and hasattr(interval, 'right'):
+            left_bracket = '[' if getattr(interval, 'closed_left', False) else '('
+            right_bracket = ']' if getattr(interval, 'closed_right', False) else ')'
+            if closed == 'both':
+                left_bracket, right_bracket = '[', ']'
+            return f"{left_bracket}{float(interval.left):.{decimal}f}, {float(interval.right):.{decimal}f}{right_bracket}"
+
+        return str(interval)
+
     def score_to_bad_rate_table(
         self,
         scores: np.ndarray,
         y: np.ndarray,
         n_bins: int = 10,
-        method: str = 'quantile'
+        method: str = 'quantile',
+        score_decimal: int = 4,
     ) -> pd.DataFrame:
         """生成评分分箱对应坏样本率、Odds、KS 的对照表（评分卡校验/划档常用）。
 
@@ -1793,6 +1836,7 @@ class ScoreCard(StandardScoreTransformer):
             - ``'quantile'``：等频分档（每档样本量大致相等），用 ``pd.qcut``
             - 其他值（如 ``'uniform'``）：等距分档（按分数范围等宽），用 ``pd.cut``
 
+        :param score_decimal: 评分区间边界保留小数位数，默认 ``4``，用于消除浮点显示尾差
         :return: DataFrame，列含 ``评分区间`` / ``样本数`` / ``坏样本数`` / ``坏样本率`` /
             ``好样本数`` / ``Odds`` / ``累计好样本占比`` / ``累计坏样本占比`` / ``KS``
 
@@ -1811,17 +1855,20 @@ class ScoreCard(StandardScoreTransformer):
 
         if df['score'].nunique(dropna=True) <= 1:
             score_value = float(df['score'].dropna().iloc[0]) if df['score'].notna().any() else np.nan
-            df['score_bin'] = f"[{score_value:.4f}, {score_value:.4f}]"
+            df['score_bin'] = f"[{score_value:.{score_decimal}f}, {score_value:.{score_decimal}f}]"
         elif method == 'quantile':
-            df['score_bin'] = pd.qcut(df['score'], q=n_bins, duplicates='drop', precision=4)
+            df['score_bin'] = pd.qcut(df['score'], q=n_bins, duplicates='drop')
         else:
-            df['score_bin'] = pd.cut(df['score'], bins=n_bins, precision=4)
+            df['score_bin'] = pd.cut(df['score'], bins=n_bins)
         
         stats = df.groupby('score_bin').agg({
             'y': ['count', 'sum', 'mean']
         }).reset_index()
         
         stats.columns = ['评分区间', '样本数', '坏样本数', '坏样本率']
+        stats['评分区间'] = stats['评分区间'].apply(
+            lambda interval: self._format_score_interval(interval, decimal=score_decimal)
+        )
         stats['好样本数'] = stats['样本数'] - stats['坏样本数']
         stats['Odds'] = stats['好样本数'] / stats['坏样本数'].replace(0, np.nan)
         stats['累计好样本占比'] = stats['好样本数'].cumsum() / stats['好样本数'].sum()
@@ -3124,6 +3171,88 @@ class ScoreCard(StandardScoreTransformer):
         if feature_names is not None:
             self._feature_names = list(feature_names)
 
+    @staticmethod
+    def _coerce_scorecard_rules(data: Any) -> Dict[str, Any]:
+        """将外部导出的评分卡数据统一为 feature -> {bin: score} 字典."""
+        if isinstance(data, pd.DataFrame):
+            return ScoreCard._scorecard_records_to_dict(data.to_dict('records'))
+
+        if isinstance(data, list):
+            return ScoreCard._scorecard_records_to_dict(data)
+
+        if isinstance(data, dict):
+            if {'name', 'value', 'score'}.issubset(data.keys()) or {'变量名称', '变量分箱', '对应分数'}.issubset(data.keys()):
+                return ScoreCard._scorecard_records_to_dict(pd.DataFrame(data).to_dict('records'))
+            if {'columns', 'data'}.issubset(data.keys()):
+                try:
+                    records = pd.DataFrame(data['data'], columns=data['columns']).to_dict('records')
+                    return ScoreCard._scorecard_records_to_dict(records)
+                except Exception:
+                    pass
+            return dict(data)
+
+        raise ValueError("评分卡规则必须是字典、DataFrame 或包含 name/value/score 的记录列表")
+
+    @staticmethod
+    def _scorecard_records_to_dict(records: List[Dict[str, Any]]) -> Dict[str, Dict[str, float]]:
+        """将 export(to_frame=True) 或 DataFrame JSON records 转为规则字典."""
+        card: Dict[str, Dict[str, float]] = {}
+        for record in records:
+            if not isinstance(record, dict):
+                raise ValueError("评分卡记录列表中的每一项都必须是字典")
+
+            feature = record.get('name', record.get('变量名称', record.get('变量名')))
+            value = record.get('value', record.get('变量分箱', record.get('分箱')))
+            score = record.get('score', record.get('对应分数', record.get('分数')))
+
+            if feature is None or value is None or score is None:
+                raise ValueError("评分卡记录必须包含 name/value/score 或 变量名称/变量分箱/对应分数")
+
+            if str(feature) == '基础分':
+                continue
+
+            card.setdefault(str(feature), {})[str(value)] = float(score)
+
+        return card
+
+    @staticmethod
+    def _coerce_feature_rules(feature: str, feature_rules: Any) -> Dict[str, float]:
+        """兼容 feature -> list[record] 形式的单特征规则."""
+        if isinstance(feature_rules, dict):
+            return feature_rules
+
+        if isinstance(feature_rules, list):
+            converted: Dict[str, float] = {}
+            for item in feature_rules:
+                if not isinstance(item, dict):
+                    raise ValueError(f"特征 {feature} 的规则列表必须由字典组成")
+                value = item.get('value', item.get('变量分箱', item.get('分箱')))
+                score = item.get('score', item.get('对应分数', item.get('分数')))
+                if value is None or score is None:
+                    raise ValueError(f"特征 {feature} 的规则记录必须包含 value/score")
+                converted[str(value)] = float(score)
+            return converted
+
+        raise ValueError(f"特征 {feature} 的评分卡规则必须是字典")
+
+    @staticmethod
+    def _parse_loaded_bin_descriptor(bin_label: Any) -> Tuple[bool, Any]:
+        """解析 load 输入的分箱标签，返回 (是否区间, 规则描述)."""
+        interval = ScoreCard._parse_interval_label(bin_label)
+        if interval is not None:
+            _, _, upper, _ = interval
+            return True, None if upper == np.inf else upper
+
+        normalized = ScoreCard._normalize_rule_label(bin_label)
+        if normalized in ('missing', 'special', 'else'):
+            return False, normalized
+
+        label_str = str(bin_label)
+        if ',' in label_str:
+            return False, [v.strip() for v in label_str.split(',') if v.strip()]
+
+        return False, [label_str]
+
     def load(
         self,
         from_json: Union[str, Dict],
@@ -3173,15 +3302,14 @@ class ScoreCard(StandardScoreTransformer):
         >>> card.load(rules)
         """
         import json
-        import re
 
         if isinstance(from_json, str):
             # 从文件加载
             with open(from_json, 'r', encoding='utf-8') as f:
-                card = json.load(f)
+                card = self._coerce_scorecard_rules(json.load(f))
         else:
-            # 直接使用字典
-            card = dict(from_json)
+            # 直接使用字典、DataFrame 或 records
+            card = self._coerce_scorecard_rules(from_json)
 
         meta = None
         if isinstance(card, dict):
@@ -3202,12 +3330,15 @@ class ScoreCard(StandardScoreTransformer):
             # 兼容历史导出文件：'基础分'（截距项）不是特征，跳过以免污染特征列表
             if feature == '基础分':
                 continue
+            feature_rules = self._coerce_feature_rules(str(feature), feature_rules)
             if self._feature_names is None:
                 self._feature_names = []
             if feature not in self._feature_names:
                 self._feature_names.append(feature)
 
             bins = []
+            numeric_splits = []
+            has_interval_rule = False
             scores = []
             bin_labels = []
 
@@ -3215,59 +3346,30 @@ class ScoreCard(StandardScoreTransformer):
                 bin_labels.append(str(bin_label))
                 scores.append(float(score))
 
-                # 尝试解析区间标签
-                # 格式如: [-inf, 25), [25, 35), [35, +inf)
-                # 或类别: 'A, B', 'C, D'
-                if ',' in bin_label and ('[' in bin_label or '(' in bin_label):
-                    # 数值区间
-                    try:
-                        # 提取数字
-                        nums = re.findall(r'[-+]?(?:\d*\.?\d+|inf)', bin_label)
-                        if len(nums) == 2:
-                            lower, upper = nums
-                            # 只保留上界作为切分点（除了第一个区间）
-                            if upper == '+inf':
-                                pass  # 最后一个区间，不添加切分点
-                            elif lower == '-inf':
-                                bins.append(float(upper) if upper != 'inf' else np.inf)
-                    except (ValueError, TypeError):
-                        # 解析失败，作为类别处理
-                        bins.append([bin_label])
+                is_interval, descriptor = self._parse_loaded_bin_descriptor(bin_label)
+                if is_interval:
+                    has_interval_rule = True
+                    if descriptor is not None:
+                        numeric_splits.append(float(descriptor))
                 else:
-                    # 类别值
-                    if isinstance(bin_label, str) and ',' in bin_label:
-                        # 多个类别值
-                        vals = [v.strip() for v in bin_label.split(',')]
-                        bins.append(vals)
-                    else:
-                        bins.append([bin_label])
+                    bins.append(descriptor)
 
-            # 区分数值型和类别型
-            is_numeric = False
-            if bins and len(bins) > 0:
-                if isinstance(bins[0], (int, float, np.number)):
-                    is_numeric = True
-                elif isinstance(bins[0], list) and len(bins[0]) > 0:
-                    # 检查是否是数值
-                    try:
-                        float(bins[0][0])
-                        is_numeric = True
-                    except (ValueError, TypeError):
-                        is_numeric = False
-
-            if is_numeric and bins:
-                # 数值型：转换为切分点列表
-                numeric_bins = [b for b in bins if isinstance(b, (int, float, np.number))]
-                splits = sorted(list(set(numeric_bins)))
+            if has_interval_rule:
+                # 数值型：保留切分点；全量箱无切分点时保留标签，避免离线分箱被跳过。
+                splits = sorted(list(set(numeric_splits))) if numeric_splits else list(bin_labels)
             else:
                 # 类别型：保持列表格式
-                splits = bins
+                splits = bins if bins else list(bin_labels)
 
             self.rules_[feature] = {
                 'bins': splits,
                 'bin_labels': np.array(bin_labels, dtype=object),
                 'scores': np.array(scores),
             }
+
+        if meta is None and getattr(self, '_loaded_intercept', None) is None and self.rules_:
+            # toad/scorecardpipeline export 的分箱分数已经包含截距分摊，导入后直接累加各分箱分。
+            self._loaded_intercept = self.A_ / self.B_
 
         # 计算基础效应
         if not hasattr(self, 'base_effect_') or self.base_effect_ is None:
