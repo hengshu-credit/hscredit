@@ -118,6 +118,29 @@ def test_scorecard_reports_keep_single_bin_for_constant_scores():
     assert probability.loc[0, '实际逾期率'] == '33.33%'
 
 
+def test_score_to_bad_rate_table_formats_score_intervals_without_float_tail():
+    card = ScoreCard(pdo=60, rate=2, base_odds=35, base_score=750)
+
+    scores = np.array([
+        316.73240000000004,
+        439.7471,
+        443.4899,
+        445.7066,
+        531.0714,
+        1850.462,
+    ])
+    y = np.array([1, 0, 1, 0, 0, 1])
+
+    bad_rate = card.score_to_bad_rate_table(scores, y, n_bins=3)
+
+    assert bad_rate['评分区间'].str.contains('000000').sum() == 0
+    assert bad_rate['评分区间'].str.contains(r'\d+\.\d{5,}', regex=True).sum() == 0
+    assert bad_rate.loc[0, '评分区间'].startswith('(')
+
+    bad_rate_2 = card.score_to_bad_rate_table(scores, y, n_bins=3, score_decimal=2)
+    assert bad_rate_2['评分区间'].str.contains(r'\d+\.\d{3,}', regex=True).sum() == 0
+
+
 @pytest.mark.parametrize('cls', [ScoreCard, RoundScoreCard])
 def test_scorecard_points_preserved_after_export_load(cls, tmp_path):
     """回归：导出 + 加载后 scorecard_points 不丢失分箱行."""
@@ -216,10 +239,25 @@ def test_scorecard_scale_includes_formula_matching_score_formula():
 
     scale = card.scorecard_scale()
     assert 'formula' in scale['刻度项'].values
+    assert 'direction' in scale['刻度项'].values
 
     formula_value = scale.loc[scale['刻度项'] == 'formula', '刻度值'].iloc[0]
-    # 与 score_formula 的 A、B 一致
     info = card.score_formula()
-    assert str(round(info['A'], 4)) in formula_value
-    assert str(round(info['B'], 4)) in formula_value
+    assert formula_value == info['公式']
     assert 'ln(odds)' in formula_value
+
+    scale_map = scale.set_index('刻度项')['刻度值']
+    assert scale_map['B'] == card.B_
+    assert scale_map['A'] == card.A_
+    assert scale_map['direction'] == '越大越好'
+
+    ascending_card = ScoreCard(
+        lr_model=lr,
+        binner=binner,
+        base_score=600,
+        pdo=20,
+        direction='ascending',
+    )
+    ascending_scale = ascending_card.scorecard_scale()
+    ascending_scale_map = ascending_scale.set_index('刻度项')['刻度值']
+    assert ascending_scale_map['direction'] == '越小越好'

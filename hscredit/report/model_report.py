@@ -24,6 +24,8 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import numpy as np
 import pandas as pd
 
+from ._sample_stats import build_group_distribution_table, build_sample_stats_table
+
 logger = logging.getLogger(__name__)
 
 
@@ -1775,28 +1777,19 @@ class ModelReport:
         ds_keys_list = list(self._datasets.keys())
         dataset_labels = [self._datasets[k].label for k in ds_keys_list]
 
+        y_maps = [
+            {label: self._get_y(ds_key, label) for label in self._label_names}
+            if is_multi else {label_text: self._get_y(ds_key)}
+            for ds_key in ds_keys_list
+        ]
+        stat_df, stat_pct_cols = build_sample_stats_table(
+            dataset_labels,
+            y_maps,
+            self._label_names if is_multi else [label_text],
+            display_labels=self._overdue_label_map(separator="@") if is_multi else None,
+            flat_total_col="样本数",
+        )
         if is_multi:
-            # 多标签模式：数据集为行，列为「样本总数(公共) + 好/坏/坏率 × 各标签」多层级表头
-            metric_groups = ["好样本数", "坏样本数", "坏样本率"]
-            display_labels = self._overdue_label_map(separator="@")
-            col_tuples = [("样本总数", "")] + [
-                (m, display_labels.get(lbl, lbl)) for m in metric_groups for lbl in self._label_names
-            ]
-            multi_cols = pd.MultiIndex.from_tuples(col_tuples, names=["统计详情", ""])
-            rows_list: List[Dict[tuple, Any]] = []
-            for ds_key in ds_keys_list:
-                row: Dict[tuple, Any] = {("样本总数", ""): len(self._datasets[ds_key].y)}
-                for lbl in self._label_names:
-                    y_arr = self._get_y(ds_key, lbl)
-                    n = len(y_arr)
-                    nb = int(y_arr.sum())
-                    display_lbl = display_labels.get(lbl, lbl)
-                    row[("好样本数", display_lbl)] = n - nb
-                    row[("坏样本数", display_lbl)] = nb
-                    row[("坏样本率", display_lbl)] = float(y_arr.mean())
-                rows_list.append(row)
-            stat_df = pd.DataFrame(rows_list, index=dataset_labels, columns=multi_cols)
-            stat_df.index.name = "数据集"
             stat_start_row = end_row + 1
             end_row, _ = dataframe2excel(
                 stat_df,
@@ -1804,24 +1797,18 @@ class ModelReport:
                 sheet_name=ws,
                 start_row=stat_start_row,
                 index=True,
-                percent_cols=[c for c in multi_cols if c[0] == "坏样本率"],
+                percent_cols=stat_pct_cols,
             )
-            writer.insert_value2sheet(ws, (stat_start_row, 2), value="统计详情", style="header_left")
+            writer.insert_value2sheet(
+                ws,
+                (stat_start_row, 2),
+                value="统计详情",
+                style="header_left",
+                end_space=(stat_start_row, 3),
+            )
         else:
-            sample_rows: List[Dict[str, Any]] = []
-            for ds_key, ds in self._datasets.items():
-                sample_rows.append(
-                    {
-                        "数据集": ds.label,
-                        "样本数": len(ds.y),
-                        "好样本数": int((1 - ds.y).sum()),
-                        "坏样本数": int(ds.y.sum()),
-                        "坏样本率": float(ds.y.mean()),
-                    }
-                )
-            sample_df = pd.DataFrame(sample_rows)
             end_row, _ = dataframe2excel(
-                sample_df, writer, sheet_name=ws, start_row=end_row + 1, percent_cols=["坏样本率"]
+                stat_df, writer, sheet_name=ws, start_row=end_row + 1, percent_cols=stat_pct_cols
             )
 
         # 1.4 样本分布情况
@@ -1831,70 +1818,34 @@ class ModelReport:
                 ws, (end_row + 2, 2), value="4、样本分布情况", style="header_middle", align={"horizontal": "left"}
             )
 
-            def _sorted_unique(values) -> List:
-                uniq = pd.unique(pd.Series(values))
-                try:
-                    return sorted(uniq)
-                except TypeError:
-                    return list(uniq)
-
             def _write_distribution(group_of_ds, title: str):
                 """构建并写入一张「数据集 × 数据分组」的分布表（数据集逐段堆叠）。
 
                 :param group_of_ds: 函数 (ds_key, ds) -> 分组值序列(与 ds.y 等长) 或 None
                 """
-                index_tuples: List[tuple] = []
-                rows: List[Dict[Any, Any]] = []
+                distribution_dataset_labels: List[str] = []
+                distribution_y_maps: List[Dict[str, Any]] = []
+                group_values: List[Any] = []
                 for ds_key, ds_label in zip(ds_keys_list, dataset_labels):
                     ds = self._datasets[ds_key]
                     gvals = group_of_ds(ds_key, ds)
                     if gvals is None:
                         continue
-                    gvals = pd.Series(gvals).fillna("缺失").astype(str).to_numpy()
-                    for g in _sorted_unique(gvals):
-                        mask = gvals == g
-                        index_tuples.append((ds_label, str(g)))
-                        if is_multi:
-                            row: Dict[Any, Any] = {("样本总数", ""): int(mask.sum())}
-                            display_labels = self._overdue_label_map(separator="@")
-                            for lbl in self._label_names:
-                                y_g = self._get_y(ds_key, lbl)[mask]
-                                n = len(y_g)
-                                nb = int(y_g.sum())
-                                display_lbl = display_labels.get(lbl, lbl)
-                                row[("好样本数", display_lbl)] = n - nb
-                                row[("坏样本数", display_lbl)] = nb
-                                row[("坏样本率", display_lbl)] = float(y_g.mean()) if n else 0.0
-                        else:
-                            y_g = self._get_y(ds_key)[mask]
-                            n = len(y_g)
-                            nb = int(y_g.sum())
-                            row = {
-                                "样本总数": n,
-                                "好样本数": n - nb,
-                                "坏样本数": nb,
-                                "坏样本率": float(y_g.mean()) if n else 0.0,
-                            }
-                        rows.append(row)
-                if not rows:
-                    return
-                index = pd.MultiIndex.from_tuples(index_tuples, names=["数据集", "数据分组"])
-                if is_multi:
-                    display_labels = self._overdue_label_map(separator="@")
-                    cols = [("样本总数", "")] + [
-                        (m, display_labels.get(lbl, lbl))
-                        for m in ["好样本数", "坏样本数", "坏样本率"]
-                        for lbl in self._label_names
-                    ]
-                    dist_df = pd.DataFrame(
-                        rows,
-                        index=index,
-                        columns=pd.MultiIndex.from_tuples(cols, names=["统计详情", ""]),
+                    distribution_dataset_labels.append(ds_label)
+                    group_values.append(gvals)
+                    distribution_y_maps.append(
+                        {label: self._get_y(ds_key, label) for label in self._label_names}
+                        if is_multi else {label_text: self._get_y(ds_key)}
                     )
-                    pct = [c for c in dist_df.columns if c[0] == "坏样本率"]
-                else:
-                    dist_df = pd.DataFrame(rows, index=index, columns=["样本总数", "好样本数", "坏样本数", "坏样本率"])
-                    pct = ["坏样本率"]
+                if not distribution_y_maps:
+                    return
+                dist_df, pct = build_group_distribution_table(
+                    distribution_dataset_labels,
+                    distribution_y_maps,
+                    group_values,
+                    self._label_names if is_multi else [label_text],
+                    display_labels=self._overdue_label_map(separator="@") if is_multi else None,
+                )
                 dist_start_row = end_row + 1
                 result = dataframe2excel(
                     dist_df,
@@ -1906,7 +1857,13 @@ class ModelReport:
                     percent_cols=pct,
                 )
                 if is_multi:
-                    writer.insert_value2sheet(ws, (dist_start_row + 2, 2), value="统计详情", style="header_left")
+                    writer.insert_value2sheet(
+                        ws,
+                        (dist_start_row + 2, 2),
+                        value="统计详情",
+                        style="header_left",
+                        end_space=(dist_start_row + 2, 3),
+                    )
                 return result
 
             # 时间分布
@@ -1966,7 +1923,7 @@ class ModelReport:
             import itertools
             from ..core.metrics import ks, auc
 
-            metric_items = ["KS", "AUC", "样本数", "坏样本率"]
+            metric_items = ["KS", "AUC", "样本总数", "坏样本率"]
             col_tuples = list(itertools.product(self._label_names, dataset_labels))
             multi_cols = pd.MultiIndex.from_tuples(col_tuples, names=["统计项", "统计指标"])
             rows_list: List[Dict[tuple, Any]] = []
@@ -1976,7 +1933,7 @@ class ModelReport:
                     for ds_key, ds_label in zip(ds_keys_list, dataset_labels):
                         y_arr = self._get_y(ds_key, lbl)
                         proba = self._datasets[ds_key].y_proba
-                        if metric == "样本数":
+                        if metric == "样本总数":
                             val = len(y_arr)
                         elif metric == "坏样本率":
                             val = float(y_arr.mean())
@@ -1995,21 +1952,21 @@ class ModelReport:
                 sheet_name=ws,
                 start_row=metrics_start_row,
                 index=True,
-                percent_rows=["坏样本率"],
-                custom_rows=["样本数"],
+                percent_rows=["KS", "AUC", "坏样本率"],
+                custom_rows=["样本总数"],
                 custom_format="#,##0",
             )
             writer.insert_value2sheet(ws, (metrics_start_row, 2), value="统计项", style="header_middle")
         else:
-            metrics = self.get_metrics().set_index("统计项")
+            metrics = self.get_metrics().replace({"统计项": {"样本数": "样本总数"}}).set_index("统计项")
             end_row, _ = dataframe2excel(
                 metrics,
                 writer,
                 sheet_name=ws,
                 start_row=end_row + 1,
                 index=True,
-                percent_rows=["坏样本率"],
-                custom_rows=["样本数"],
+                percent_rows=["KS", "AUC", "坏样本率"],
+                custom_rows=["样本总数"],
                 custom_format="#,##0",
             )
         section_idx += 1

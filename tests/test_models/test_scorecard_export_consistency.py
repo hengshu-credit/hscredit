@@ -6,6 +6,7 @@ import ast
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import pytest
 from sklearn.model_selection import train_test_split
 
@@ -152,6 +153,83 @@ def test_scorecard_export_load_without_binner_predicts_raw_by_rules(cls):
     loaded_scores = loaded_scorecard.predict(sample, input_type='raw')
 
     np.testing.assert_allclose(reference, loaded_scores, atol=1e-9)
+
+
+def test_scorecard_loads_toad_export_json_as_offline_model(tmp_path):
+    """toad.ScoreCard.export(to_json=...) 产物可直接作为离线评分卡导入."""
+    toad = pytest.importorskip('toad')
+
+    X = pd.DataFrame({
+        'age': [18, 22, 25, 30, 35, 42, 48, 55, 60, 63] * 20,
+        'city': ['A', 'A', 'B', 'C', 'A', 'B', 'D', 'D', 'C', 'E'] * 20,
+    })
+    y = ((X['age'] > 40) | X['city'].isin(['D', 'E'])).astype(int).to_numpy()
+
+    combiner = toad.transform.Combiner()
+    combiner.fit(X, y, method='dt', min_samples=0.05)
+    X_bins = combiner.transform(X)
+    transer = toad.transform.WOETransformer()
+    transer.fit(X_bins, y)
+    X_woe = transer.transform(X_bins)
+
+    toad_card = toad.ScoreCard(
+        combiner=combiner,
+        transer=transer,
+        pdo=60,
+        rate=2,
+        base_odds=35,
+        base_score=750,
+    )
+    toad_card.fit(X_woe, y)
+    json_path = tmp_path / 'toad_scorecard.json'
+    exported_rules = toad_card.export(to_json=str(json_path))
+
+    loaded_from_path = ScoreCard(pdo=60, rate=2, base_odds=35, base_score=750).load(str(json_path))
+    loaded_from_dict = ScoreCard(pdo=60, rate=2, base_odds=35, base_score=750).load(exported_rules)
+
+    sample = X.iloc[:20].copy()
+    reference = toad_card.predict(sample)
+
+    np.testing.assert_allclose(loaded_from_path.predict(sample, input_type='raw'), reference, atol=0.02)
+    np.testing.assert_allclose(loaded_from_dict.predict(sample, input_type='raw'), reference, atol=0.02)
+
+
+def test_scorecard_loads_scorecardpipeline_export_labels():
+    """兼容 scorecardpipeline 的中文区间、缺失值和 else 类别兜底标签."""
+    rules = {
+        'age': {
+            '[负无穷 , 25)': 10,
+            '[25 , 40)': 20,
+            '[40 , 正无穷)': 30,
+            '缺失值': -5,
+        },
+        'city': {
+            'A,B': 3,
+            'C': 7,
+            'else': -2,
+        },
+    }
+    sample = pd.DataFrame({
+        'age': [18, 25, 45, np.nan],
+        'city': ['A', 'C', 'Z', 'B'],
+    })
+
+    card = ScoreCard().load(rules)
+    scores = card.predict(sample, input_type='raw')
+
+    np.testing.assert_allclose(scores, np.array([13, 27, 28, -2], dtype=float))
+
+
+def test_scorecard_loads_export_frame_records():
+    """支持读取 export(to_frame=True) 或 DataFrame JSON records 风格的规则."""
+    records = [
+        {'name': 'age', 'value': '[负无穷 , 25)', 'score': 10},
+        {'name': 'age', 'value': '[25 , 正无穷)', 'score': 20},
+    ]
+    sample = pd.DataFrame({'age': [18, 30]})
+
+    card = ScoreCard().load(records)
+    np.testing.assert_allclose(card.predict(sample, input_type='raw'), np.array([10, 20], dtype=float))
 
 
 def test_scorecard_python_deployment_code_matches_predict():
