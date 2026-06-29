@@ -1,6 +1,7 @@
 """Excel写入模块测试."""
 
 import os
+import re
 import tempfile
 import zipfile
 import xml.etree.ElementTree as ET
@@ -161,6 +162,35 @@ class TestExcelWriter:
         assert "B3:C3" not in merged_ranges
         assert ws["B3"].value == "拒绝"
         assert ws["C3"].value == "拒绝"
+
+    def test_multi_header_does_not_write_single_cell_merge_refs(self):
+        """多层表头不应在 xlsx XML 中写入单格 mergeCell 记录。"""
+        writer = ExcelWriter()
+        ws = writer.get_sheet_by_name("Test")
+
+        df = pd.DataFrame(
+            [[10, 8, 2, 0.2]],
+            index=pd.Index(["训练集"], name="数据集"),
+            columns=pd.MultiIndex.from_tuples([
+                ("统计详情", "样本总数"),
+                ("好样本数", "MOB1@7"),
+                ("坏样本数", "MOB1@7"),
+                ("坏样本率", "MOB1@7"),
+            ]),
+        )
+
+        writer.insert_df2sheet(ws, df, "B2", index=True)
+        writer.save(self.test_file)
+
+        with zipfile.ZipFile(self.test_file) as workbook_zip:
+            merge_refs = []
+            for name in workbook_zip.namelist():
+                if name.startswith("xl/worksheets/") and name.endswith(".xml"):
+                    xml = workbook_zip.read(name).decode("utf-8")
+                    merge_refs.extend(re.findall(r'<mergeCell ref="([^"]+)"', xml))
+
+        assert merge_refs
+        assert all(":" in ref for ref in merge_refs)
 
     def test_insert_dataframe_multi_header_merge_can_be_disabled(self):
         """测试多层表头可完全关闭横向合并。"""

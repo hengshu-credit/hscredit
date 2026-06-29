@@ -310,6 +310,7 @@ class TestModelReportRegression:
             'f0': np.arange(20),
             'MOB1': [0, 1, 3, 7, 8] * 4,
             '放款金额': np.arange(100, 120),
+            '放款时间': pd.date_range('2024-01-01', periods=20, freq='D'),
         })
 
     def test_positive_probability_respects_model_classes(self):
@@ -391,11 +392,42 @@ class TestModelReportRegression:
         assert any(isinstance(value, str) and 'MOB1@7:' in value for value in basic_info)
         assert '各数据集标签坏样本率' not in basic_info
         assert any(isinstance(value, float) and not np.isnan(value) for value in performance)
+
+        basic_info_sheet = workbook['1-基本信息']
+        sample_total_header = next(
+            cell
+            for row in basic_info_sheet.iter_rows()
+            for cell in row
+            if cell.value == '样本总数'
+        )
+        assert basic_info_sheet.cell(sample_total_header.row - 1, sample_total_header.column).value == '统计详情'
+        assert basic_info_sheet.cell(sample_total_header.row - 1, sample_total_header.column - 1).value is None
+
         feature_values = [cell.value for row in feature_sheet.iter_rows() for cell in row]
         assert feature_values.count('训练集 订单口径') == 1
         assert feature_values.count('测试集 订单口径') == 1
         assert summary_feature_cell.hyperlink.location == f"#'3-入模变量分析'!{feature_title_cell.coordinate}"
         assert feature_title_cell.hyperlink.location == f"#'3-入模变量分析'!{summary_feature_cell.coordinate}"
+
+    def test_excel_contents_sheet_adjusts_column_width(self, tmp_path):
+        X = pd.DataFrame({
+            'f0': np.arange(20),
+            'target': [0, 1] * 10,
+        })
+        report = ModelReport(
+            MockModel(['f0']),
+            datasets={'train': X},
+            target='target',
+            feature_names=['f0'],
+        )
+        output = tmp_path / 'model_report_contents_width.xlsx'
+
+        report.to_excel(str(output), with_plots=False, model_name='VeryLongModelNameForColumnWidthCheck')
+
+        contents_sheet = load_workbook(output)['目录']
+        assert contents_sheet.column_dimensions['B'].width > 8
+        assert contents_sheet.column_dimensions['C'].width > 20
+        assert contents_sheet.column_dimensions['D'].width > 30
 
     def test_excel_skips_hyperlink_when_feature_missing_from_summary(self, tmp_path, monkeypatch):
         """特征不在重要性汇总表中时（summary_row为None），应跳过超链接而不是抛异常."""
@@ -426,6 +458,42 @@ class TestModelReportRegression:
         )
         assert feature_title_cell.hyperlink is None
 
+    def test_time_distribution_header_groups_detail_columns(self, tmp_path):
+        X = self._multi_label_data()
+        report = ModelReport(
+            MockModel(['f0']),
+            datasets={'train': X, 'test': X.copy()},
+            overdue=['MOB1'],
+            dpds=[7, 3, 0],
+            feature_names=['f0'],
+        )
+
+        output = tmp_path / 'model_report_time_distribution.xlsx'
+        report.to_excel(str(output), with_plots=False, date_col='放款时间')
+
+        basic = load_workbook(output)['1-基本信息']
+        data_group_header = next(cell for row in basic.iter_rows() for cell in row if cell.value == '数据分组')
+        header_row = data_group_header.row
+        data_set_header = next(
+            basic.cell(header_row, col)
+            for col in range(1, basic.max_column + 1)
+            if basic.cell(header_row, col).value == '数据集'
+        )
+        sample_total_header = next(
+            basic.cell(header_row, col)
+            for col in range(1, basic.max_column + 1)
+            if basic.cell(header_row, col).value == '样本总数'
+        )
+
+        assert basic.cell(header_row - 1, data_set_header.column).value == '统计详情'
+        assert any(
+            cell_range.min_row == header_row - 1
+            and cell_range.min_col == data_set_header.column
+            and cell_range.max_row == header_row - 1
+            and cell_range.max_col == sample_total_header.column
+            for cell_range in basic.merged_cells.ranges
+        )
+
     def test_single_label_performance_metric_formats(self, tmp_path):
         X = pd.DataFrame({'f0': [1, 2, 3, 4, 5, 6], 'target': [0, 0, 0, 1, 1, 1]})
         report = ModelReport(
@@ -443,11 +511,47 @@ class TestModelReportRegression:
         ks_cell = next(cell for row in performance.iter_rows() for cell in row if cell.value == 'KS')
         auc_cell = next(cell for row in performance.iter_rows() for cell in row if cell.value == 'AUC')
         sample_cell = next(cell for row in performance.iter_rows() for cell in row if cell.value == '样本总数')
+        bad_rate_cell = next(cell for row in performance.iter_rows() for cell in row if cell.value == '坏样本率')
 
         assert performance.cell(ks_cell.row, ks_cell.column + 1).number_format == '0.00%'
         assert performance.cell(auc_cell.row, auc_cell.column + 1).number_format == '0.00%'
+        assert performance.cell(bad_rate_cell.row, bad_rate_cell.column + 1).number_format == '0.00%'
         assert performance.cell(sample_cell.row, sample_cell.column + 1).number_format == '#,##0'
         assert isinstance(performance.cell(sample_cell.row, sample_cell.column + 1).value, int)
+
+    def test_compare_models_summary_excel_keeps_ratio_values(self, tmp_path):
+        from hscredit.report.model_report import compare_models
+
+        X = pd.DataFrame({'f0': [1, 2, 3, 4, 5, 6]})
+        y = pd.Series([0, 0, 0, 1, 1, 1])
+        output = tmp_path / 'compare_models.xlsx'
+
+        result = compare_models(
+            {'LR': MockModel(['f0'])},
+            X,
+            y,
+            X_test=X,
+            y_test=y,
+            excel_path=str(output),
+        )
+
+        assert result.loc[('LR', 'target'), ('坏样本率', '训练集')] == 0.5
+
+        sheet = load_workbook(output)['Sheet1']
+        bad_rate_header = next(
+            cell
+            for row in sheet.iter_rows()
+            for cell in row
+            if cell.value == '坏样本率'
+        )
+        train_header = next(
+            sheet.cell(bad_rate_header.row + 1, col)
+            for col in range(bad_rate_header.column, sheet.max_column + 1)
+            if sheet.cell(bad_rate_header.row + 1, col).value == '训练集'
+        )
+        data_cell = sheet.cell(train_header.row + 1, train_header.column)
+        assert data_cell.value == 0.5
+        assert data_cell.number_format == '0.00%'
 
     def test_export_plots_contains_feature_psi(self, tmp_path):
         X = self._multi_label_data()
@@ -507,5 +611,6 @@ class TestModelReportRegression:
         assert performance['B19'].value == '统计指标'
         assert performance.auto_filter.ref == 'B20:AJ26'
         sample_total_header = next(cell for row in basic.iter_rows() for cell in row if cell.value == '样本总数')
-        assert basic.cell(sample_total_header.row - 1, 2).value == '统计详情'
-        assert basic.cell(sample_total_header.row, 2).value == '数据集'
+        assert basic.cell(sample_total_header.row - 1, sample_total_header.column).value == '统计详情'
+        assert basic.cell(sample_total_header.row - 1, sample_total_header.column - 1).value is None
+        assert basic.cell(sample_total_header.row, sample_total_header.column - 1).value == '数据集'
