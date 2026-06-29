@@ -201,7 +201,7 @@ class RuleFlow:
                 hit_values = aligned["命中规则"]
             elif matched_cols:
                 for col, label in matched_cols.items():
-                    matrix[label] = aligned[col].fillna(False).astype(bool).values
+                    matrix[label] = self._normalize_bool_series(aligned[col]).values
                 return matrix
             elif len(candidate_cols) == 1:
                 hit_values = aligned[candidate_cols[0]]
@@ -213,6 +213,31 @@ class RuleFlow:
             for label in labels:
                 matrix.at[index, label] = True
         return matrix
+
+    @staticmethod
+    def _normalize_bool_series(values: pd.Series) -> pd.Series:
+        """将线上命中矩阵的常见取值规范化为 bool."""
+        truthy = {"1", "true", "t", "yes", "y", "命中", "拒绝"}
+        falsy = {"0", "false", "f", "no", "n", "未命中", "通过", ""}
+
+        def normalize(value) -> bool:
+            if isinstance(value, (list, tuple, set, np.ndarray, pd.Series)):
+                return len(value) > 0
+            if pd.isna(value):
+                return False
+            if isinstance(value, (bool, np.bool_)):
+                return bool(value)
+            if isinstance(value, (int, float, np.integer, np.floating)) and not isinstance(value, bool):
+                return bool(value)
+
+            normalized = str(value).strip().lower()
+            if normalized in truthy:
+                return True
+            if normalized in falsy:
+                return False
+            return bool(value)
+
+        return values.map(normalize).astype(bool)
 
     def compare(
         self,
