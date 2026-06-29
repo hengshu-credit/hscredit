@@ -28,6 +28,8 @@ from typing import Union, List, Dict, Optional, Tuple, Any
 from dataclasses import dataclass, field
 from enum import Enum
 
+from ..core.rules import Rule
+
 
 class SwapType(Enum):
     """Swap四象限类型."""
@@ -662,7 +664,7 @@ class SwapAnalysisResult:
         self.risk_rejection_metrics = risk_rejection_metrics
         self.risk_rejection_metrics_dict = risk_rejection_metrics_dict
         self.total_samples = total_samples
-    
+
     def get_summary_report(self, metric: str = 'count', target: str = None) -> pd.DataFrame:
         """生成汇总报告.
         
@@ -720,7 +722,7 @@ class SwapAnalysisResult:
                     row['坏账率变化(相对)'] = "-"
                 
                 rows.append(row)
-        
+
         # 添加扩展流程
         if 'original_reject' in combined:
             rows.append({})
@@ -976,6 +978,78 @@ def create_swap_dataset_from_rules(
     )
 
 
+def _normalize_rule_set(
+    rules: Optional[Union[Rule, List[Rule]]],
+    param_name: str
+) -> List[Rule]:
+    """Normalize Rule or List[Rule] inputs to a list."""
+    if rules is None:
+        return []
+    if isinstance(rules, Rule):
+        return [rules]
+    if isinstance(rules, list):
+        invalid = [type(rule).__name__ for rule in rules if not isinstance(rule, Rule)]
+        if invalid:
+            raise TypeError(f"{param_name} 仅支持 Rule 或 List[Rule]，发现非法类型：{invalid}")
+        return rules
+    raise TypeError(f"{param_name} 仅支持 Rule 或 List[Rule]，实际为 {type(rules).__name__}")
+
+
+def _predict_rule_set(
+    df: pd.DataFrame,
+    rules: List[Rule],
+    available_mask: pd.Series,
+    execution_mode: str = "parallel",
+) -> pd.Series:
+    """Return a non-duplicated hit mask for a rule set."""
+    module_mask = pd.Series(False, index=df.index)
+    for rule in rules:
+        rule_mask = rule.predict(df)
+        rule_mask = pd.Series(rule_mask, index=df.index).fillna(False).astype(bool)
+        if execution_mode == "serial":
+            rule_mask = rule_mask & available_mask & ~module_mask
+        module_mask = module_mask | rule_mask
+    return module_mask & available_mask
+
+
+def _apply_swap_type_rule_sets(
+    df: pd.DataFrame,
+    swap_type_col: str,
+    rules_out_out: Optional[Union[Rule, List[Rule]]] = None,
+    rules_in_out: Optional[Union[Rule, List[Rule]]] = None,
+    rules_in_in: Optional[Union[Rule, List[Rule]]] = None,
+    rules_out_in: Optional[Union[Rule, List[Rule]]] = None,
+    rule_execution_mode: str = "parallel",
+) -> pd.DataFrame:
+    """Apply optional quadrant rule sets to populate swap_type."""
+    if rule_execution_mode not in {"parallel", "serial"}:
+        raise ValueError("rule_execution_mode 仅支持 'parallel' 或 'serial'")
+
+    rule_sets = {
+        SwapType.OUT_OUT: _normalize_rule_set(rules_out_out, "rules_out_out"),
+        SwapType.IN_OUT: _normalize_rule_set(rules_in_out, "rules_in_out"),
+        SwapType.IN_IN: _normalize_rule_set(rules_in_in, "rules_in_in"),
+        SwapType.OUT_IN: _normalize_rule_set(rules_out_in, "rules_out_in"),
+    }
+    if not any(rule_sets.values()):
+        return df
+
+    result = df.copy()
+    if swap_type_col not in result.columns:
+        result[swap_type_col] = "unknown"
+
+    available_mask = pd.Series(True, index=result.index)
+    module_order = [SwapType.OUT_OUT, SwapType.IN_OUT, SwapType.IN_IN, SwapType.OUT_IN]
+    for swap_type in module_order:
+        rules = rule_sets[swap_type]
+        if not rules:
+            continue
+        mask = _predict_rule_set(result, rules, available_mask, rule_execution_mode)
+        result.loc[mask, swap_type_col] = swap_type.value
+        available_mask = available_mask & ~mask
+    return result
+
+
 def swap_analysis(
     swap_df: pd.DataFrame,
     reference_df: pd.DataFrame,
@@ -988,6 +1062,11 @@ def swap_analysis(
     out_in_uplift: float = 2.0,
     original_pass_rate: Optional[float] = None,
     target_aliases: Optional[Dict[str, str]] = None,
+    rules_out_out: Optional[Union[Rule, List[Rule]]] = None,
+    rules_in_out: Optional[Union[Rule, List[Rule]]] = None,
+    rules_in_in: Optional[Union[Rule, List[Rule]]] = None,
+    rules_out_in: Optional[Union[Rule, List[Rule]]] = None,
+    rule_execution_mode: str = "parallel",
     **kwargs
 ) -> SwapAnalysisResult:
     """统一的Swap分析入口函数.
@@ -1006,6 +1085,11 @@ def swap_analysis(
     :param out_in_uplift: out-in风险上浮因子，默认2.0
     :param original_pass_rate: 原策略通过率（可选），用于无out-out数据场景
     :param target_aliases: 目标变量别名（可选），如{'target_dpd15': 'DPD15+'}
+    :param rules_out_out: out-out象限规则集，支持Rule或List[Rule]（可选）
+    :param rules_in_out: in-out象限规则集，支持Rule或List[Rule]（可选）
+    :param rules_in_in: in-in象限规则集，支持Rule或List[Rule]（可选）
+    :param rules_out_in: out-in象限规则集，支持Rule或List[Rule]（可选）
+    :param rule_execution_mode: 模块内规则执行方式，'parallel'表示命中任意规则，'serial'表示按规则顺序命中第一个
     :param kwargs: 其他配置参数，如bin_method, max_n_bins, custom_bins等
     :return: SwapAnalysisResult分析结果对象
     
@@ -1040,6 +1124,20 @@ def swap_analysis(
     >>> result.pass_rate_report
     >>> result.risk_rejection_report
     """
+    swap_df = _apply_swap_type_rule_sets(
+        swap_df,
+        swap_type_col=swap_type_col,
+        rules_out_out=rules_out_out,
+        rules_in_out=rules_in_out,
+        rules_in_in=rules_in_in,
+        rules_out_in=rules_out_in,
+        rule_execution_mode=rule_execution_mode,
+    )
+    if swap_type_col not in swap_df.columns:
+        raise ValueError(f"swap_df 必须包含 {swap_type_col!r} 列，或传入至少一个 swap 象限规则集")
+
+    reference_df = reference_df.copy()
+
     # 构建目标变量列表
     target_cols = []
     if overdue is not None and dpds is not None:
