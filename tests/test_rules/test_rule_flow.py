@@ -230,3 +230,26 @@ def test_rule_flow_compare_accepts_hit_matrix_and_order_id_alignment():
     assert detail.iloc[0]["线下命中规则"] == "多头拒绝"
     assert detail.iloc[0]["线上命中规则"] == ""
     assert detail.iloc[0]["差异规则"] == "多头拒绝"
+
+
+def test_rule_flow_compare_parses_string_hit_matrix_values():
+    data = _flow_data()
+    flow = RuleFlow(
+        [
+            Rule("score < 500", name="低分拒绝"),
+            Rule("multi > 6", name="多头拒绝"),
+        ],
+        mode="parallel",
+    )
+    production_hits = pd.DataFrame(
+        {
+            "低分拒绝": ["1", "0", "false", "False", "true"],
+            "多头拒绝": ["0", "1", "true", "False", ""],
+        },
+        index=data.index,
+    )
+
+    report, detail = flow.compare(data, production_hits)
+
+    assert report["差异样本"].tolist() == [0, 0]
+    assert detail.empty
