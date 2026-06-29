@@ -1805,13 +1805,6 @@ def auto_feature_analysis(
             title="样本总体分布情况",
             index=True,
         )
-        writer.insert_value2sheet(
-            worksheet,
-            (sample_start_row + 2, start_col),
-            value="统计详情",
-            style="header_left",
-            end_space=(sample_start_row + 2, start_col + 1),
-        )
     else:
         end_row, end_col = dataframe2excel(
             sample_stats,
@@ -1861,16 +1854,8 @@ def auto_feature_analysis(
             percent_cols=time_percent_cols,
             condition_cols=time_percent_cols,
             start_row=table_start_row,
-            index=True,
+            index=not isinstance(time_distribution.columns, pd.MultiIndex),
         )
-        if isinstance(time_distribution.columns, pd.MultiIndex):
-            writer.insert_value2sheet(
-                worksheet,
-                (table_start_row, start_col),
-                value="统计详情",
-                style="header_left",
-                end_space=(table_start_row, start_col + 1),
-            )
         end_row += 2
 
     feature_summary = data[features].summary(y=data[target])

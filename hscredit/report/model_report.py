@@ -28,6 +28,8 @@ from ._sample_stats import build_group_distribution_table, build_sample_stats_ta
 
 logger = logging.getLogger(__name__)
 
+_SUMMARY_PERCENT_METRICS = {"KS", "AUC", "坏样本率"}
+
 
 # ---------------------------------------------------------------------------
 # 内部工具
@@ -75,6 +77,16 @@ def _safe_binary_metric(metric, y_true, y_score) -> float:
         return float(metric(y_arr, y_score))
     except (TypeError, ValueError):
         return np.nan
+
+
+def _summary_percent_cols(columns) -> List[Any]:
+    """识别 summary 表中需要按百分比显示的列."""
+    percent_cols: List[Any] = []
+    for col in columns:
+        metric = col[0] if isinstance(col, tuple) and col else col
+        if metric in _SUMMARY_PERCENT_METRICS:
+            percent_cols.append(col)
+    return percent_cols
 
 
 def _score_from_model(model, X) -> np.ndarray:
@@ -1667,6 +1679,7 @@ class ModelReport:
         end_row, _ = writer.insert_value2sheet(
             ws, (end_row, 3), value=model_name, style="middle", end_space=(end_row, 4)
         )
+        writer.adjust_columns_width(ws, start_col=2, end_col=4)
 
         # ============================================================
         # 1-基本信息 Sheet
@@ -1799,13 +1812,6 @@ class ModelReport:
                 index=True,
                 percent_cols=stat_pct_cols,
             )
-            writer.insert_value2sheet(
-                ws,
-                (stat_start_row, 2),
-                value="统计详情",
-                style="header_left",
-                end_space=(stat_start_row, 3),
-            )
         else:
             end_row, _ = dataframe2excel(
                 stat_df, writer, sheet_name=ws, start_row=end_row + 1, percent_cols=stat_pct_cols
@@ -1853,17 +1859,9 @@ class ModelReport:
                     sheet_name=ws,
                     title=title,
                     start_row=end_row + 1,
-                    index=True,
+                    index=not isinstance(dist_df.columns, pd.MultiIndex),
                     percent_cols=pct,
                 )
-                if is_multi:
-                    writer.insert_value2sheet(
-                        ws,
-                        (dist_start_row + 2, 2),
-                        value="统计详情",
-                        style="header_left",
-                        end_space=(dist_start_row + 2, 3),
-                    )
                 return result
 
             # 时间分布
@@ -3127,7 +3125,14 @@ def compare_models(
     # 以「模型名称」作为最外层行索引纵向拼接，保留 summary 的「统计指标 × 数据集」多层列
     result = pd.concat(parts, names=["模型名称"]) if parts else pd.DataFrame()
     if excel_path and not result.empty:
-        result.to_excel(excel_path)
+        from ..excel import dataframe2excel
+
+        dataframe2excel(
+            result,
+            excel_path,
+            index=True,
+            percent_cols=_summary_percent_cols(result.columns),
+        )
     return result
 
 

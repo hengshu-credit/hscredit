@@ -79,7 +79,10 @@ def build_group_distribution_table(
             mask = gvals == group
             index_tuples.append((dataset_label, str(group)))
             if is_multi:
-                row: Dict[Any, Any] = {}
+                row: Dict[Any, Any] = {
+                    ("统计详情", "数据集"): dataset_label,
+                    ("统计详情", group_name): str(group),
+                }
                 first_y = _as_array(y_map[label_names[0]])[mask]
                 row[("统计详情", "样本总数")] = int(len(first_y))
                 for label in label_names:
@@ -107,13 +110,13 @@ def build_group_distribution_table(
 
     index = pd.MultiIndex.from_tuples(index_tuples, names=["数据集", group_name])
     if is_multi:
-        columns = [("统计详情", "样本总数")] + [
+        columns = [("统计详情", "数据集"), ("统计详情", group_name), ("统计详情", "样本总数")] + [
             (metric, display_labels.get(label, label))
             for metric in ["好样本数", "坏样本数", "坏样本率"]
             for label in label_names
         ]
         multi_cols = pd.MultiIndex.from_tuples(columns, names=["统计详情", ""])
-        result = pd.DataFrame(rows, index=index, columns=multi_cols)
+        result = pd.DataFrame(rows, columns=multi_cols)
         return result, [c for c in multi_cols if c[0] == "坏样本率"]
 
     return pd.DataFrame(rows, index=index, columns=["样本总数", "好样本数", "坏样本数", "坏样本率"]), ["坏样本率"]

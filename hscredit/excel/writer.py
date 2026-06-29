@@ -598,7 +598,8 @@ class ExcelWriter:
                 end_col = get_column_letter(end_space[1])
                 end_row = end_space[0]
 
-            worksheet.merge_cells(f"{start_col}{start_row}:{end_col}{end_row}")
+            if start_col != end_col or start_row != end_row:
+                worksheet.merge_cells(f"{start_col}{start_row}:{end_col}{end_row}")
 
         # 格式化值
         formatted_value = self.astype_insertvalue(value)
@@ -1376,7 +1377,8 @@ class ExcelWriter:
         # 合并单元格
         start_cell = f"{get_column_letter(start_col)}{start_row}"
         end_cell = f"{get_column_letter(end_col)}{end_row}"
-        worksheet.merge_cells(f"{start_cell}:{end_cell}")
+        if start_cell != end_cell:
+            worksheet.merge_cells(f"{start_cell}:{end_cell}")
 
     @staticmethod
     def check_contain_chinese(check_str: str) -> Tuple[List[bool], int, int]:

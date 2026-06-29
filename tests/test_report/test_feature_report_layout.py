@@ -32,6 +32,16 @@ def _get_feature_title_and_table_header_rows(ws):
     return feature_title_row, table_header_row
 
 
+def _has_merged_range(ws, min_row, min_col, max_row, max_col):
+    return any(
+        cell_range.min_row == min_row
+        and cell_range.min_col == min_col
+        and cell_range.max_row == max_row
+        and cell_range.max_col == max_col
+        for cell_range in ws.merged_cells.ranges
+    )
+
+
 def test_auto_feature_analysis_system_gap(monkeypatch):
     # 屏蔽绘图函数，避免真实生成图片
     monkeypatch.setattr(feature_analyzer_module, "bin_plot", lambda *args, **kwargs: None)
@@ -230,7 +240,29 @@ def test_auto_feature_analysis_sample_distribution_uses_model_report_layout(monk
     assert "mob@7" in values
 
     sample_total_header = next(cell for row in ws.iter_rows() for cell in row if cell.value == "样本总数")
-    assert ws.cell(sample_total_header.row - 1, sample_total_header.column - 1).value == "统计详情"
+    assert ws.cell(sample_total_header.row - 1, sample_total_header.column).value == "统计详情"
+    assert ws.cell(sample_total_header.row - 1, sample_total_header.column - 1).value is None
+
+    data_group_header = next(cell for row in ws.iter_rows() for cell in row if cell.value == "数据分组")
+    time_header_row = data_group_header.row
+    data_set_header = next(
+        ws.cell(time_header_row, col)
+        for col in range(1, ws.max_column + 1)
+        if ws.cell(time_header_row, col).value == "数据集"
+    )
+    time_total_header = next(
+        ws.cell(time_header_row, col)
+        for col in range(1, ws.max_column + 1)
+        if ws.cell(time_header_row, col).value == "样本总数"
+    )
+    assert ws.cell(time_header_row - 1, data_set_header.column).value == "统计详情"
+    assert _has_merged_range(
+        ws,
+        time_header_row - 1,
+        data_set_header.column,
+        time_header_row - 1,
+        time_total_header.column,
+    )
 
     bad_rate_header = next(
         cell
