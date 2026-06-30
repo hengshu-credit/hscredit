@@ -192,6 +192,21 @@ class TestExcelWriter:
         assert merge_refs
         assert all(":" in ref for ref in merge_refs)
 
+    def test_multi_header_nan_placeholder_does_not_write_reverse_merge_refs(self):
+        """Multi-level header blank placeholders must not produce reverse merge ranges."""
+        writer = ExcelWriter()
+        ws = writer.get_sheet_by_name("Test")
+
+        item, start, length = ExcelWriter.calc_continuous_cnt([np.nan, "指标"], 0)
+        assert pd.isna(item)
+        assert start == 0
+        assert length == 1
+
+        writer.insert_rows(ws, [np.nan, "指标"], 2, 2, style="header", multi_levels=True)
+
+        assert ws["B2"].value is None or pd.isna(ws["B2"].value)
+        assert [str(rng) for rng in ws.merged_cells.ranges] == []
+
     def test_insert_dataframe_multi_header_merge_can_be_disabled(self):
         """测试多层表头可完全关闭横向合并。"""
         writer = ExcelWriter()
