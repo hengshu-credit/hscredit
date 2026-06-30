@@ -1464,6 +1464,29 @@ class ExcelWriter:
         return False
 
     @staticmethod
+    def _is_missing_merge_value(value: Any) -> bool:
+        """Return True for scalar missing values used as blank merge placeholders."""
+        try:
+            missing = pd.isna(value)
+        except (TypeError, ValueError):
+            return False
+        if isinstance(missing, (bool, np.bool_)):
+            return bool(missing)
+        return False
+
+    @staticmethod
+    def _merge_values_equal(left: Any, right: Any) -> bool:
+        if ExcelWriter._is_missing_merge_value(left) and ExcelWriter._is_missing_merge_value(right):
+            return True
+        try:
+            equal = left == right
+        except (TypeError, ValueError):
+            return False
+        if isinstance(equal, (bool, np.bool_)):
+            return bool(equal)
+        return False
+
+    @staticmethod
     def calc_continuous_cnt(list_: List, index_: int = 0) -> Tuple[Any, Optional[int], Optional[int]]:
         """计算列表中从某个索引开始连续出现某个元素的个数。
 
@@ -1485,7 +1508,7 @@ class ExcelWriter:
 
         cnt, str_ = 0, list_[index_]
         for i in range(index_, len(list_), 1):
-            if list_[i] == str_:
+            if ExcelWriter._merge_values_equal(list_[i], str_):
                 cnt = cnt + 1
             else:
                 break

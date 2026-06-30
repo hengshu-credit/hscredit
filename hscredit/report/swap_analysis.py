@@ -725,7 +725,7 @@ class SwapAnalysisResult:
 
         # 添加扩展流程
         if 'original_reject' in combined:
-            rows.append({})
+            rows.append({'阶段': None})
             extended_order = ['original_reject', 'swap_in', 'original_keep', 'swap_out', 'new_reject', 'new_pass', 'all']
             for key in extended_order:
                 if key in combined:
