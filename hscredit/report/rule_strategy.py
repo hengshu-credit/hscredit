@@ -576,7 +576,7 @@ _CF_BAR_DEFAULT_COLOR = "638EC6"
 # 色阶：绿-黄-红三色（min→percentile50→max）
 _CF_SCALE_COLORS = ("63BE7B", "FFEB84", "F8696B")
 _CF_SCALE_COLORS_BY_NAME = {"分档KS值": ("FFFFFF", "63BE7B")}
-_SWAP_TITLE_COLOR = "ff6b8e"
+_SWAP_TITLE_COLOR = "FE7715"
 _SWAP_FIXED_COLUMN_WIDTH = 11
 
 # 业务影响目标分析表的命中标签 → 模板展示口径

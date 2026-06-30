@@ -1764,6 +1764,86 @@ def auto_feature_analysis(
     if image_table_gap_rows is None:
         image_table_gap_rows = 2 if getattr(writer, "system", "windows") == "windows" else 1
 
+    section_title_values = {
+        "样本总体分布情况",
+        "样本时间分布情况",
+        "变量综合统计",
+        "数值类变量相关性",
+        "数值类特征 OR 评分效果评估",
+    }
+
+    def _title_level(row_idx: int, value: Any) -> Optional[int]:
+        if not isinstance(value, str) or not value:
+            return None
+        if row_idx == start_row and value == "数据有效性分析报告":
+            return 0
+        if value in section_title_values:
+            return 1
+        if value.startswith("数据字段:"):
+            return 2
+        return None
+
+    def _content_max_col(start_content_row: int, end_content_row: int) -> int:
+        if end_content_row < start_content_row:
+            return start_col
+        max_content_col = start_col
+        for row in worksheet.iter_rows(
+            min_row=start_content_row,
+            max_row=end_content_row,
+            min_col=start_col,
+            max_col=worksheet.max_column,
+        ):
+            for cell in row:
+                if cell.value is not None:
+                    max_content_col = max(max_content_col, cell.column)
+        for cell_range in worksheet.merged_cells.ranges:
+            if (
+                cell_range.max_row >= start_content_row
+                and cell_range.min_row <= end_content_row
+                and cell_range.max_col >= start_col
+            ):
+                max_content_col = max(max_content_col, cell_range.max_col)
+        return max_content_col
+
+    def _merge_title_row(row_idx: int, end_col: int) -> None:
+        for cell_range in list(worksheet.merged_cells.ranges):
+            if (
+                cell_range.min_row == row_idx
+                and cell_range.max_row == row_idx
+                and cell_range.min_col == start_col
+            ):
+                worksheet.unmerge_cells(str(cell_range))
+        if end_col > start_col:
+            worksheet.merge_cells(
+                start_row=row_idx,
+                start_column=start_col,
+                end_row=row_idx,
+                end_column=end_col,
+            )
+
+    def _adjust_title_merges() -> None:
+        title_rows = [
+            (row_cell.row, level)
+            for row_cells in worksheet.iter_rows(min_col=start_col, max_col=start_col)
+            for row_cell in row_cells
+            for level in [_title_level(row_cell.row, row_cell.value)]
+            if level is not None
+        ]
+        for idx, (title_row, level) in enumerate(title_rows):
+            if level == 0:
+                content_end_row = worksheet.max_row
+            else:
+                next_boundary = next(
+                    (
+                        next_row
+                        for next_row, next_level in title_rows[idx + 1:]
+                        if next_level <= level
+                    ),
+                    None,
+                )
+                content_end_row = next_boundary - 1 if next_boundary is not None else worksheet.max_row
+            _merge_title_row(title_row, _content_max_col(title_row + 1, content_end_row))
+
     if bin_params and "del_grey" in bin_params and bin_params.get("del_grey"):
         merge_columns = ["指标名称", "指标含义", "分箱标签"]
     else:
@@ -1779,12 +1859,9 @@ def auto_feature_analysis(
         else:
             return_cols = []
 
-    max_columns_len = len(merge_columns) + len(return_cols) * len(overdue) * len(dpds) \
-        if overdue and len(overdue) > 0 else len(merge_columns) + len(return_cols)
-
     end_row, end_col = writer.insert_value2sheet(
         worksheet, (start_row, start_col), value="数据有效性分析报告",
-        style="header_middle", end_space=(start_row, start_col + max_columns_len - 1)
+        style="header_middle"
     )
 
     dataset_labels = ["整体样本"]
@@ -1896,7 +1973,7 @@ def auto_feature_analysis(
 
     end_row, end_col = writer.insert_value2sheet(
         worksheet, (end_row, start_col), value="数值类特征 OR 评分效果评估",
-        style="header_middle", end_space=(end_row, start_col + max_columns_len - 1)
+        style="header_middle"
     )
 
     use_amount = amount is not None and amount in data.columns
@@ -2117,6 +2194,8 @@ def auto_feature_analysis(
 
         except Exception:
             logger.warning("数据字段 %s 分析时发生异常，请排查数据中是否存在异常:\n%s", col, traceback.format_exc())
+
+    _adjust_title_merges()
 
     if not isinstance(excel_writer, ExcelWriter) and not isinstance(sheet, Worksheet):
         writer.save(excel_writer)

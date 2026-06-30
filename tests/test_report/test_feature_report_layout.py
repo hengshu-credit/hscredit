@@ -42,6 +42,20 @@ def _has_merged_range(ws, min_row, min_col, max_row, max_col):
     )
 
 
+def _merged_range_for_row(ws, row, start_col=2):
+    for cell_range in ws.merged_cells.ranges:
+        if cell_range.min_row == row and cell_range.max_row == row and cell_range.min_col == start_col:
+            return cell_range
+    return None
+
+
+def _row_for_value(ws, value, col=2):
+    for row in range(1, ws.max_row + 1):
+        if ws.cell(row, col).value == value:
+            return row
+    raise AssertionError(f"未找到单元格值: {value}")
+
+
 def test_auto_feature_analysis_system_gap(monkeypatch):
     # 屏蔽绘图函数，避免真实生成图片
     monkeypatch.setattr(feature_analyzer_module, "bin_plot", lambda *args, **kwargs: None)
@@ -115,6 +129,58 @@ def test_feature_title_end_space_with_return_cols(monkeypatch):
             break
 
     assert actual_span == expected_span
+
+
+def test_auto_feature_analysis_title_merges_follow_actual_content_width(monkeypatch):
+    def fake_feature_bin_stats(data, feature, **kwargs):
+        return pd.DataFrame({
+            "指标名称": [feature],
+            "指标含义": [feature],
+            "分箱标签": ["(0, 1]"],
+            "样本总数": [len(data)],
+            "样本占比": [1.0],
+            "坏样本率": [0.5],
+            "LIFT值": [1.0],
+            "分档KS值": [0.25],
+        })
+
+    monkeypatch.setattr(feature_analyzer_module, "feature_bin_stats", fake_feature_bin_stats)
+
+    data = pd.DataFrame({
+        "x": [1, 2, 3, 4],
+        "y": [4, 3, 2, 1],
+        "target": [0, 1, 0, 1],
+        "amount": [10, 20, 30, 40],
+    })
+    writer = ExcelWriter(system="windows")
+
+    auto_feature_analysis(
+        data,
+        features=["x", "y"],
+        target="target",
+        amount="amount",
+        excel_writer=writer,
+        sheet="dynamic_titles",
+        pictures=[],
+        output_dir="model_report",
+    )
+
+    ws = writer.get_sheet_by_name("dynamic_titles")
+    main_title = _merged_range_for_row(ws, 2)
+    feature_section_row = _row_for_value(ws, "数值类特征 OR 评分效果评估")
+    first_feature_row = _row_for_value(ws, "数据字段: x (缺失率: 0.0%)")
+    second_feature_row = _row_for_value(ws, "数据字段: y (缺失率: 0.0%)")
+    sample_title_row = _row_for_value(ws, "样本总体分布情况")
+    feature_module_max_col = max(
+        _merged_range_for_row(ws, first_feature_row).max_col,
+        _merged_range_for_row(ws, second_feature_row).max_col,
+    )
+
+    assert main_title.max_col == ws.max_column
+    assert main_title.max_col != 35
+    assert _merged_range_for_row(ws, feature_section_row).max_col == feature_module_max_col
+    assert _merged_range_for_row(ws, first_feature_row).max_col == feature_module_max_col
+    assert _merged_range_for_row(ws, sample_title_row).max_col < ws.max_column
 
 
 def test_auto_feature_analysis_keeps_overdue_binning_mode(monkeypatch):

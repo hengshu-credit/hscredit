@@ -9,6 +9,20 @@ from openpyxl import load_workbook
 from hscredit.report.model_report import ModelReport
 
 
+def _merged_range_for_row(ws, row, start_col=2):
+    for cell_range in ws.merged_cells.ranges:
+        if cell_range.min_row == row and cell_range.max_row == row and cell_range.min_col == start_col:
+            return cell_range
+    return None
+
+
+def _row_for_value(ws, value, col=2):
+    for row in range(1, ws.max_row + 1):
+        if ws.cell(row, col).value == value:
+            return row
+    raise AssertionError(f"未找到单元格值: {value}")
+
+
 class MockModel:
     """Minimal mock model for testing ModelReport."""
 
@@ -428,6 +442,44 @@ class TestModelReportRegression:
         assert contents_sheet.column_dimensions['B'].width > 8
         assert contents_sheet.column_dimensions['C'].width > 20
         assert contents_sheet.column_dimensions['D'].width > 30
+
+    def test_excel_title_merges_follow_actual_content_width(self, tmp_path):
+        X = self._multi_label_data()
+        report = ModelReport(
+            MockModel(['f0']),
+            datasets={'train': X, 'test': X.copy()},
+            overdue=['MOB1'],
+            dpds=[7, 3, 0],
+            feature_names=['f0'],
+        )
+        output = tmp_path / 'model_report_dynamic_title_merges.xlsx'
+
+        report.to_excel(
+            str(output),
+            with_plots=False,
+            amount_col='放款金额',
+            date_col='放款时间',
+        )
+
+        workbook = load_workbook(output)
+        contents = workbook['目录']
+        basic = workbook['1-基本信息']
+        performance = workbook['2-模型性能']
+        feature_sheet = workbook['3-入模变量分析']
+
+        assert _merged_range_for_row(contents, 2).max_col == 4
+        assert _merged_range_for_row(basic, 2).max_col == basic.max_column
+        assert _merged_range_for_row(performance, 2).max_col == performance.max_column
+        assert _merged_range_for_row(feature_sheet, 2).max_col == feature_sheet.max_column
+        assert _merged_range_for_row(basic, 2).max_col != 35
+
+        desc_row = _row_for_value(basic, '2、数据样本描述')
+        assert _merged_range_for_row(basic, desc_row).max_col == 3
+
+        parent_row = _row_for_value(feature_sheet, '3、入模变量有效性分析')
+        child_row = _row_for_value(feature_sheet, '3.1、f0 有效性分析')
+        assert _merged_range_for_row(feature_sheet, parent_row).max_col == feature_sheet.max_column
+        assert _merged_range_for_row(feature_sheet, child_row).max_col == feature_sheet.max_column
 
     def test_excel_skips_hyperlink_when_feature_missing_from_summary(self, tmp_path, monkeypatch):
         """特征不在重要性汇总表中时（summary_row为None），应跳过超链接而不是抛异常."""
