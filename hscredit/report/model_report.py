@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import logging
+import re
 
 import warnings
 from dataclasses import dataclass
@@ -1619,7 +1620,6 @@ class ModelReport:
         from ..excel import ExcelWriter, dataframe2excel
 
         model_name = model_name or self.model.__class__.__name__
-        max_col = 35
 
         plot_paths: Dict[str, List[str]] = {}
         psi_tables: Dict[str, pd.DataFrame] = {}
@@ -1635,6 +1635,81 @@ class ModelReport:
                 )
 
         writer = ExcelWriter()
+        title_pattern = re.compile(r"^(?:[一二三四五六七八九十]+|\d+(?:\.\d+)*)、")
+
+        def _report_title_level(row_idx: int, value: Any) -> Optional[int]:
+            if not isinstance(value, str) or not value:
+                return None
+            if row_idx == 2:
+                return 0
+            if not title_pattern.match(value):
+                return None
+            prefix = value.split("、", 1)[0]
+            if re.match(r"^\d+(?:\.\d+)*$", prefix):
+                return prefix.count(".") + 1
+            return 1
+
+        def _content_max_col(worksheet, start_row: int, end_row: int, start_col: int = 2) -> int:
+            if end_row < start_row:
+                return start_col
+            max_content_col = start_col
+            for row in worksheet.iter_rows(
+                min_row=start_row,
+                max_row=end_row,
+                min_col=start_col,
+                max_col=worksheet.max_column,
+            ):
+                for cell in row:
+                    if cell.value is not None:
+                        max_content_col = max(max_content_col, cell.column)
+            for cell_range in worksheet.merged_cells.ranges:
+                if (
+                    cell_range.max_row >= start_row
+                    and cell_range.min_row <= end_row
+                    and cell_range.max_col >= start_col
+                ):
+                    max_content_col = max(max_content_col, cell_range.max_col)
+            return max_content_col
+
+        def _merge_report_title(worksheet, row_idx: int, end_col: int, start_col: int = 2) -> None:
+            for cell_range in list(worksheet.merged_cells.ranges):
+                if (
+                    cell_range.min_row == row_idx
+                    and cell_range.max_row == row_idx
+                    and cell_range.min_col == start_col
+                ):
+                    worksheet.unmerge_cells(str(cell_range))
+            if end_col > start_col:
+                worksheet.merge_cells(
+                    start_row=row_idx,
+                    start_column=start_col,
+                    end_row=row_idx,
+                    end_column=end_col,
+                )
+
+        def _adjust_report_title_merges(worksheet) -> None:
+            title_rows = [
+                (row_cell.row, level)
+                for row_cells in worksheet.iter_rows(min_col=2, max_col=2)
+                for row_cell in row_cells
+                for level in [_report_title_level(row_cell.row, row_cell.value)]
+                if level is not None
+            ]
+            for idx, (row_idx, level) in enumerate(title_rows):
+                if level == 0:
+                    end_row_for_title = worksheet.max_row
+                else:
+                    next_boundary = next(
+                        (
+                            next_row
+                            for next_row, next_level in title_rows[idx + 1:]
+                            if next_level <= level
+                        ),
+                        None,
+                    )
+                    end_row_for_title = next_boundary - 1 if next_boundary is not None else worksheet.max_row
+                max_content_col = _content_max_col(worksheet, row_idx + 1, end_row_for_title)
+                _merge_report_title(worksheet, row_idx, max_content_col)
 
         # ============================================================
         # 目录 Sheet
@@ -1652,7 +1727,7 @@ class ModelReport:
 
         ws = writer.get_sheet_by_name("目录")
         end_row, _ = writer.insert_value2sheet(
-            ws, (2, 2), value="模型评估报告", style="header_middle", end_space=(2, max_col)
+            ws, (2, 2), value="模型评估报告", style="header_middle"
         )
         end_row, _ = dataframe2excel(contents, writer, sheet_name=ws, start_row=end_row + 1, left_cols=["内容", "备注"])
 
@@ -1686,7 +1761,7 @@ class ModelReport:
         # ============================================================
         ws = writer.get_sheet_by_name("1-基本信息")
         end_row, _ = writer.insert_value2sheet(
-            ws, (2, 2), value="一、基本信息", style="header_middle", end_space=(2, max_col)
+            ws, (2, 2), value="一、基本信息", style="header_middle"
         )
         try:
             writer.insert_hyperlink2sheet(ws, (2, 2), hyperlink="#'目录'!B2")
@@ -1703,7 +1778,6 @@ class ModelReport:
             (end_row, 2),
             value=desc_text,
             style="middle",
-            end_space=(end_row, max_col),
             align={"horizontal": "left"},
         )
 
@@ -1899,7 +1973,7 @@ class ModelReport:
         # ============================================================
         ws = writer.get_sheet_by_name("2-模型性能")
         end_row, _ = writer.insert_value2sheet(
-            ws, (2, 2), value="二、模型性能评估", style="header_middle", end_space=(2, max_col)
+            ws, (2, 2), value="二、模型性能评估", style="header_middle"
         )
         try:
             writer.insert_hyperlink2sheet(ws, (2, 2), hyperlink="#'目录'!B2")
@@ -2311,7 +2385,7 @@ class ModelReport:
         # ============================================================
         ws = writer.get_sheet_by_name("3-入模变量分析")
         end_row, _ = writer.insert_value2sheet(
-            ws, (2, 2), value="三、入模变量分析", style="header_middle", end_space=(2, max_col)
+            ws, (2, 2), value="三、入模变量分析", style="header_middle"
         )
         try:
             writer.insert_hyperlink2sheet(ws, (2, 2), hyperlink="#'目录'!B2")
@@ -2522,7 +2596,7 @@ class ModelReport:
         # ============================================================
         ws = writer.get_sheet_by_name("4-稳定性分析")
         end_row, _ = writer.insert_value2sheet(
-            ws, (2, 2), value="四、模型稳定性分析", style="header_middle", end_space=(2, max_col)
+            ws, (2, 2), value="四、模型稳定性分析", style="header_middle"
         )
         try:
             writer.insert_hyperlink2sheet(ws, (2, 2), hyperlink="#'目录'!B2")
@@ -2680,7 +2754,7 @@ class ModelReport:
         # ============================================================
         ws = writer.get_sheet_by_name("5-模型参数")
         end_row, _ = writer.insert_value2sheet(
-            ws, (2, 2), value="五、模型选型及参数", style="header_middle", end_space=(2, max_col)
+            ws, (2, 2), value="五、模型选型及参数", style="header_middle"
         )
         try:
             writer.insert_hyperlink2sheet(ws, (2, 2), hyperlink="#'目录'!B2")
@@ -2850,7 +2924,7 @@ class ModelReport:
         # ============================================================
         ws = writer.get_sheet_by_name("6-模型部署需求")
         end_row, _ = writer.insert_value2sheet(
-            ws, (2, 2), value="六、模型部署需求", style="header_middle", end_space=(2, max_col)
+            ws, (2, 2), value="六、模型部署需求", style="header_middle"
         )
         try:
             writer.insert_hyperlink2sheet(ws, (2, 2), hyperlink="#'目录'!B2")
@@ -2906,6 +2980,17 @@ class ModelReport:
         # ============================================================
         # 保存
         # ============================================================
+        for sheet_name in [
+            "目录",
+            "1-基本信息",
+            "2-模型性能",
+            "3-入模变量分析",
+            "4-稳定性分析",
+            "5-模型参数",
+            "6-模型部署需求",
+        ]:
+            if sheet_name in writer.workbook.sheetnames:
+                _adjust_report_title_merges(writer.workbook[sheet_name])
         writer.save(filepath)
         return filepath
 
