@@ -919,19 +919,29 @@ class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
                     self.selected_features_.append(col)
                     added = True
 
-            # 如果有添加特征且dropped_不存在,则创建空的dropped_
-            if added and (not hasattr(self, 'dropped_') or self.dropped_ is None):
+            if added:
                 dropped_cols = [c for c in X.columns if c not in self.selected_features_]
-                if len(dropped_cols) > 0:
-                    reason = getattr(self, '_drop_reason', '不满足筛选条件')
-                    self.dropped_ = pd.DataFrame({
-                        '特征': dropped_cols,
-                        '剔除原因': [reason] * len(dropped_cols)
-                    })
-                    self.removed_features_ = dropped_cols
+                if hasattr(self, 'dropped_') and self.dropped_ is not None:
+                    if len(self.dropped_) > 0 and '特征' in self.dropped_.columns:
+                        self.dropped_ = self.dropped_.loc[~self.dropped_['特征'].isin(self.selected_features_)].copy()
+                    if len(self.dropped_) == 0 and len(dropped_cols) == 0:
+                        self.dropped_ = pd.DataFrame(columns=self.dropped_.columns)
+                    self.removed_features_ = (
+                        self.dropped_['特征'].tolist()
+                        if len(self.dropped_) > 0 and '特征' in self.dropped_.columns
+                        else []
+                    )
                 else:
-                    self.dropped_ = pd.DataFrame(columns=['特征', '剔除原因'])
-                    self.removed_features_ = []
+                    if len(dropped_cols) > 0:
+                        reason = getattr(self, '_drop_reason', '不满足筛选条件')
+                        self.dropped_ = pd.DataFrame({
+                            '特征': dropped_cols,
+                            '剔除原因': [reason] * len(dropped_cols)
+                        })
+                        self.removed_features_ = dropped_cols
+                    else:
+                        self.dropped_ = pd.DataFrame(columns=['特征', '剔除原因'])
+                        self.removed_features_ = []
 
     @abstractmethod
     def _fit_impl(
