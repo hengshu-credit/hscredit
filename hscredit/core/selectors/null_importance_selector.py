@@ -1,6 +1,6 @@
-"""零重要性筛选器（Permutation Importance）.
+"""零重要性筛选器（Null Importance）.
 
-使用置换重要性识别真正有价值的特征。
+使用实际重要性与随机目标下的 null 重要性差值识别真正有价值的特征。
 
 **参考样例**
 
@@ -13,7 +13,7 @@
 >>> y = np.random.randint(0, 2, 200)  # 目标变量
 >>> selector = NullImportanceSelector(
 ...     RandomForestClassifier(n_estimators=50, random_state=42),  # 传入基模型
-...     threshold=1.0,  # 真实重要性/随机重要性>1.0才保留
+...     threshold=0.0,  # 实际重要性-null重要性>0才保留
 ...     cv=3, n_runs=3  # 交叉验证次数
 ... )
 >>> selector.fit(X, y)
@@ -33,14 +33,15 @@ from .base import BaseFeatureSelector, get_feature_importances
 class NullImportanceSelector(BaseFeatureSelector):
     """零重要性筛选器.
 
-    使用置换重要性（Permutation Importance）识别真正有价值的特征。
-    通过多次shuffle目标变量，计算特征真实重要性与随机情况下的比值。
+    使用 null importance 识别真正有价值的特征。
+    通过多次 shuffle 目标变量得到随机情况下的 null 重要性，
+    再用实际重要性减去 null 重要性作为特征得分。
 
     **参数**
 
     :param estimator: 评估器
-    :param threshold: 阈值，默认为1.0
-        - >1: 保留真实重要性/shuffle重要性比值 > threshold的特征
+    :param threshold: 阈值，默认为0.0
+        - 保留 ``实际重要性 - null重要性 > threshold`` 的特征
     :param cv: 交叉验证折数，默认为5
     :param n_runs: 置换次数，默认为5
     :param random_state: 随机种子
@@ -59,7 +60,7 @@ class NullImportanceSelector(BaseFeatureSelector):
         >>> y = np.random.randint(0, 2, 200)
         >>> selector = NullImportanceSelector(
         ...     RandomForestClassifier(n_estimators=50, random_state=42),
-        ...     threshold=1.0, cv=3, n_runs=3
+        ...     threshold=0.0, cv=3, n_runs=3
         ... )
         >>> selector.fit(X, y)
         >>> print(selector.selected_features_)
@@ -67,7 +68,7 @@ class NullImportanceSelector(BaseFeatureSelector):
     **注意**
 
     本方法通过多次打乱**目标变量**得到"零假设"下的重要性分布（null importances），
-    再以真实重要性与之的比值判断特征是否显著优于随机，能有效剔除高基数/噪声特征的
+    再以 ``实际重要性 - null重要性`` 判断特征是否显著优于随机，能有效剔除高基数/噪声特征的
     虚高重要性。计算量为 ``n_runs × cv`` 次模型训练。
 
     **引用**
@@ -80,7 +81,7 @@ class NullImportanceSelector(BaseFeatureSelector):
     def __init__(
         self,
         estimator,
-        threshold: float = 1.0,
+        threshold: float = 0.0,
         cv: int = 5,
         n_runs: int = 5,
         random_state: Optional[int] = 42,
@@ -119,6 +120,8 @@ class NullImportanceSelector(BaseFeatureSelector):
         # 确保 y 是 numpy 数组（base.fit 传入的可能是 Series，索引不连续会导致 y[idx] KeyError）
         if isinstance(y, pd.Series):
             y = y.values
+        else:
+            y = np.asarray(y)
 
         # 重置 DataFrame 索引以确保 iloc 与 positional index 一致
         X = X.reset_index(drop=True)
@@ -131,49 +134,66 @@ class NullImportanceSelector(BaseFeatureSelector):
         n_samples, n_features = X.shape
         n_splits = cv.get_n_splits()
         
-        # 计算shuffle后的特征重要性
-        null_importances = np.zeros((n_features, n_splits * self.n_runs))
-        
-        for run in range(self.n_runs):
-            # Shuffle目标变量
-            idx = np.arange(n_samples)
-            rng.shuffle(idx)
-            y_shuffled = y[idx]
-            
-            for fold_idx, (train_idx, _) in enumerate(cv.split(y_shuffled, y_shuffled)):
-                model = clone(self.estimator)
-                model.fit(X.iloc[train_idx], y_shuffled[train_idx])
-                null_importance = get_feature_importances(model)
-                null_importances[:, n_splits * run + fold_idx] = null_importance
-        
-        # 计算真实的特征重要性
+        # 计算实际标签下的重要性和 shuffle 目标后的 null 重要性。
         actual_importances = np.zeros((n_features, n_splits * self.n_runs))
-        
-        for run in range(self.n_runs):
-            idx = np.arange(n_samples)
-            rng.shuffle(idx)
-            X_shuffled = X.iloc[idx]
-            y_shuffled = y[idx]
-            
-            for fold_idx, (train_idx, _) in enumerate(cv.split(y_shuffled, y_shuffled)):
-                model = clone(self.estimator)
-                model.fit(X_shuffled.iloc[train_idx], y_shuffled[train_idx])
-                actual_importance = get_feature_importances(model)
-                actual_importances[:, n_splits * run + fold_idx] = actual_importance
-        
-        # 计算得分: 真实重要性/shuffle后重要性的均值
-        scores = np.zeros(n_features)
-        for i in range(n_features):
-            actual_mean = np.mean(actual_importances[i, :])
-            null_mean = np.mean(null_importances[i, :])
-            if null_mean > 0:
-                scores[i] = actual_mean / null_mean
-            else:
-                scores[i] = actual_mean if actual_mean > 0 else 0
+        null_importances = np.zeros((n_features, n_splits * self.n_runs))
 
+        for run in range(self.n_runs):
+            order = rng.permutation(n_samples)
+            X_ordered = X.iloc[order].reset_index(drop=True)
+            y_ordered = y[order]
+
+            for fold_idx, (train_idx, _) in enumerate(cv.split(X_ordered, y_ordered)):
+                model = clone(self.estimator)
+                model.fit(X_ordered.iloc[train_idx], y_ordered[train_idx])
+                actual_importances[:, n_splits * run + fold_idx] = get_feature_importances(model)
+
+            y_null = rng.permutation(y_ordered)
+            for fold_idx, (train_idx, _) in enumerate(cv.split(X_ordered, y_null)):
+                model = clone(self.estimator)
+                model.fit(X_ordered.iloc[train_idx], y_null[train_idx])
+                null_importances[:, n_splits * run + fold_idx] = get_feature_importances(model)
+
+        actual_mean = actual_importances.mean(axis=1)
+        null_mean = null_importances.mean(axis=1)
+        scores = actual_mean - null_mean
+
+        self.actual_importances_ = pd.Series(actual_mean, index=X.columns)
+        self.null_importances_ = pd.Series(null_mean, index=X.columns)
         self.scores_ = pd.Series(scores, index=X.columns)
+        self.actual_importance_runs_ = pd.DataFrame(actual_importances.T, columns=X.columns)
+        self.null_importance_runs_ = pd.DataFrame(null_importances.T, columns=X.columns)
+        self.importance_details_ = pd.DataFrame({
+            '特征': X.columns,
+            '实际重要性': actual_mean,
+            'Null重要性': null_mean,
+            '特征得分': scores,
+        })
 
         # 筛选
         selected_mask = scores > self.threshold
         self.selected_features_ = X.columns[selected_mask].tolist()
-        self._drop_reason = f'零重要性得分 <= {self.threshold}'
+        self._drop_reason = f'实际重要性-Null重要性 <= {self.threshold}'
+
+        dropped_cols = X.columns[~selected_mask].tolist()
+        if len(dropped_cols) > 0:
+            details = self.importance_details_.set_index('特征')
+            self.dropped_ = pd.DataFrame({
+                '特征': dropped_cols,
+                '剔除原因': [self._drop_reason] * len(dropped_cols),
+                '实际重要性': [details.loc[col, '实际重要性'] for col in dropped_cols],
+                'Null重要性': [details.loc[col, 'Null重要性'] for col in dropped_cols],
+                '特征得分': [details.loc[col, '特征得分'] for col in dropped_cols],
+                '阈值': [self.threshold] * len(dropped_cols),
+            })
+        else:
+            self.dropped_ = pd.DataFrame(columns=['特征', '剔除原因', '实际重要性', 'Null重要性', '特征得分', '阈值'])
+
+    def get_importance_details(self) -> pd.DataFrame:
+        """获取实际重要性、Null重要性和差值得分明细。
+
+        :returns: 包含 ``特征``、``实际重要性``、``Null重要性``、``特征得分`` 的 DataFrame
+        """
+        if not hasattr(self, 'importance_details_'):
+            return pd.DataFrame(columns=['特征', '实际重要性', 'Null重要性', '特征得分'])
+        return self.importance_details_.copy()
