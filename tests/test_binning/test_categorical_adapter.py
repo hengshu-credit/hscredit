@@ -355,6 +355,25 @@ def test_category_min_bin_size_repositions_boundary_at_min_n_bins():
     assert ordinary["样本总数"].tolist() == [50, 50]
 
 
+def test_category_min_bin_size_can_reuse_boundary_in_another_bin():
+    """固定箱数下，合并小箱释放的边界可用于拆分另一个大箱。"""
+    categories = ["A"] * 40 + ["B"] * 20 + ["C"] * 30 + ["D"] * 30
+    targets = [0] * 40 + [1] + [0] * 19 + [1] * 15 + [0] * 15 + [1] * 24 + [0] * 6
+    X = pd.DataFrame({"category": categories})
+    y = pd.Series(targets, name="target")
+
+    binner = UniformBinning(
+        min_n_bins=3,
+        max_n_bins=3,
+        min_bin_size=0.20,
+        category_order={"category": ["A", "B", "C", "D"]},
+    ).fit(X, y)
+    ordinary = binner.get_bin_table("category").query("分箱 >= 0")
+
+    assert ordinary["样本总数"].min() >= 24
+    assert len(ordinary) == 3
+
+
 def test_category_max_bin_size_splits_empty_initial_rule_when_feasible():
     """原生算法返回单箱时，仍应为可行的 max_bin_size 约束补充分界。"""
     X = pd.DataFrame({"category": ["A"] * 50 + ["B"] * 50})
