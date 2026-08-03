@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """OptimalBinning2D 二维交互分箱测试."""
 
+from types import SimpleNamespace
+
 import pytest
 from sklearn.base import BaseEstimator, TransformerMixin, clone
 import numpy as np
@@ -490,6 +492,60 @@ class TestOptimalBinning2DCustom:
         cross_table = binner.get_cross_table()
         assert len(cross_table) == 3 * 2
 
+    def test_explicit_axis_params_override_params_and_global(self):
+        """显式轴向参数应覆盖轴向 params 和全局参数."""
+        binner = OptimalBinning2D(
+            max_n_bins=8,
+            method="quantile",
+            monotonic="descending",
+            max_n_bins_x=3,
+            method_x="uniform",
+            monotonic_x="ascending",
+            x_params={
+                "max_n_bins": 4,
+                "method": "mdlp",
+                "monotonic": "descending",
+                "min_n_bins": 1,
+            },
+        )
+
+        axis_binner = binner._create_binner(is_x=True)
+
+        assert axis_binner.max_n_bins == 3
+        assert axis_binner.method == "uniform"
+        assert axis_binner.monotonic == "ascending"
+        assert axis_binner.min_n_bins == 1
+
+    def test_axis_params_override_global_when_explicit_axis_params_are_absent(self):
+        """未传显式轴向参数时，轴向 params 应覆盖全局参数."""
+        binner = OptimalBinning2D(
+            max_n_bins=8,
+            method="quantile",
+            monotonic=False,
+            y_params={
+                "max_n_bins": 4,
+                "method": "uniform",
+                "monotonic": "descending",
+            },
+        )
+
+        axis_binner = binner._create_binner(is_x=False)
+
+        assert axis_binner.max_n_bins == 4
+        assert axis_binner.method == "uniform"
+        assert axis_binner.monotonic == "descending"
+
+    def test_explicit_axis_param_replaces_invalid_params_value_before_validation(self):
+        """被显式轴向值覆盖的非法 params 值不应参与最终配置校验."""
+        binner = OptimalBinning2D(
+            max_n_bins_x=3,
+            x_params={"max_n_bins": 0},
+        )
+
+        axis_binner = binner._create_binner(is_x=True)
+
+        assert axis_binner.max_n_bins == 3
+
 
 class TestOptimalBinning2DEdgeCases:
     """边界情况测试."""
@@ -643,6 +699,43 @@ class TestOptimalBinning2DExport:
 
 class TestOptimalBinning2DMerge:
     """最终二维合并分箱测试."""
+
+    def test_auto_monotonic_direction_reuses_fitted_axis_trend(self):
+        """自动方向应复用一维分箱器的实际识别结果."""
+        binner = OptimalBinning2D(monotonic="auto_asc_desc")
+        binner.feature_x_ = "x"
+        binner.binner_x_ = SimpleNamespace(
+            monotonic="auto_asc_desc",
+            monotonic_trend_={"x": "descending"},
+            bin_tables_={},
+        )
+
+        assert binner._resolve_axis_monotonic_trend(is_x=True) == "descending"
+
+    def test_non_directional_axis_trend_is_not_reinterpreted(self):
+        """峰谷趋势不得由二维逻辑重新解释为单增或单减."""
+        binner = OptimalBinning2D(monotonic="auto")
+        binner.feature_y_ = "y"
+        binner.binner_y_ = SimpleNamespace(
+            monotonic="auto",
+            monotonic_trend_={"y": "peak"},
+            bin_tables_={},
+        )
+
+        assert binner._resolve_axis_monotonic_trend(is_x=False) is None
+
+    def test_direction_names_follow_base_binning_bad_rate_contract(self):
+        """ascending/descending 应沿用坏样本率随分箱索引变化的定义."""
+        solution = np.array([[0], [1]])
+        ascending_counts = {0: (1.0, 9.0), 1: (8.0, 2.0)}
+        descending_counts = {0: (8.0, 2.0), 1: (1.0, 9.0)}
+        binner = OptimalBinning2D()
+        binner.n_bins_x_ = 2
+        binner.n_bins_y_ = 1
+
+        assert not binner._monotonic_violations(solution, ascending_counts, "ascending", None)
+        assert not binner._monotonic_violations(solution, descending_counts, "descending", None)
+        assert binner._monotonic_violations(solution, ascending_counts, "descending", None)
 
     def test_merge_limit_and_connected_regions(self, sample_df):
         binner = OptimalBinning2D(max_n_bins=5, max_n_bins_2d=4)

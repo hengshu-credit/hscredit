@@ -26,13 +26,15 @@ def _normalize_binning_config(
     if binning_params is not None and not isinstance(binning_params, dict):
         raise ValueError("binning_params 分箱参数必须是字典")
 
-    effective = {
-        "method": binning_method,
-        "max_n_bins": max_n_bins,
-        "random_state": random_state,
-    }
-    # 用户要求内层 binning_params 优先，重复键直接覆盖外层便捷参数。
-    effective.update(dict(binning_params or {}))
+    effective = dict(binning_params or {})
+    # 外层便捷参数表达调用者在当前入口的最终选择，优先于 params 中的同名透传值。
+    effective.update(
+        {
+            "method": binning_method,
+            "max_n_bins": max_n_bins,
+            "random_state": random_state,
+        }
+    )
 
     from ..binning import BaseBinning, OptimalBinning
 
@@ -889,7 +891,7 @@ def build_feature_summary_fields(
     """按字段批次并行计算全部字段级摘要指标。"""
     # 在任何全表 PSI 预处理前校验，避免非法参数触发无意义的大表扫描。
     _resolve_n_jobs(n_jobs, len(features))
-    # 默认等频 10 箱；binning_params 中的重复键已在此覆盖外层便捷参数。
+    # 默认等频 10 箱；外层便捷参数在此覆盖 binning_params 中的同名透传值。
     effective_binning_config = _normalize_binning_config(
         binning_method,
         max_n_bins,

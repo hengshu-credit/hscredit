@@ -181,8 +181,8 @@ def feature_summary(
     :param n_jobs: 并行工作数。-1根据数据规模保守推断，1为串行，正整数为明确指定
     :param show_progress: 是否显示已处理字段数、总字段数和当前处理字段
     :param binning_method: IV、趋势和PSI共用的分箱方法，默认'quantile'（等频分箱）
-    :param binning_params: 传给OptimalBinning的完整参数。其优先级高于binning_method、
-        max_n_bins和random_state，重复键直接覆盖；user_splits字典按原字段名配置
+    :param binning_params: 传给OptimalBinning的扩展参数。外层 binning_method、max_n_bins、
+        random_state 的优先级高于其中的同名键；user_splits 字典按原字段名配置
     :return: 综合特征描述DataFrame，包含以下列：
         - 基础统计: 特征名、字段类型、样本数、缺失数/率、唯一值数、众数等
         - 分布统计: 最小值、最大值、平均值、标准差、各分位数
@@ -226,14 +226,14 @@ def feature_summary(
     >>> # 指定数值列视为分类变量（如年龄分段编码）
     >>> summary = feature_summary(df, y='target', numeric_as_categorical=['age_group'])
 
-    >>> # 三项指标共用显式分箱；内层参数覆盖外层同名参数
+    >>> # 三项指标共用显式分箱；外层参数覆盖 binning_params 中的同名参数
     >>> summary = feature_summary(
     ...     df,
     ...     y='target',
+    ...     binning_method='quantile',
     ...     max_n_bins=10,
     ...     binning_params={
-    ...         'method': 'uniform',
-    ...         'max_n_bins': 5,
+    ...         'min_bin_size': 0.05,
     ...         'user_splits': {'age': [25, 35, 45]},
     ...         'strict_user_splits': True,
     ...     },

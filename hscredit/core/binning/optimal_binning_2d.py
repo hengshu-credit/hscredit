@@ -79,6 +79,8 @@ class OptimalBinning2D(ArtifactSerializableMixin, BaseEstimator, TransformerMixi
         :param monotonic: 单调性约束，默认 False。设为 'ascending'/'descending'/True 时，
             作为**硬约束**作用于二维合并：最终各轴向相邻分箱的坏样本率保证满足单调趋势
             （通过持续合并违例相邻分箱实现，可能使二维分箱数低于 max_n_bins_2d）
+            ``ascending`` 表示特征值越大坏样本率越高（越大越差），``descending`` 表示
+            特征值越大坏样本率越低（越大越好）；自动模式复用内部一维分箱器识别的方向。
         :param max_n_bins_2d: 相邻格子合并后的最大二维分箱数，默认使用 max_n_bins
 
     特征1 专用参数（以 _x 后缀区分）
@@ -102,6 +104,8 @@ class OptimalBinning2D(ArtifactSerializableMixin, BaseEstimator, TransformerMixi
     扩展参数
         :param x_params: 额外参数仅传递给特征1的内部 OptimalBinning
         :param y_params: 额外参数仅传递给特征2的内部 OptimalBinning
+            参数优先级统一为：显式 ``_x``/``_y`` 参数 > ``x_params``/``y_params`` > 全局参数。
+            所有参数会在构造内部 ``OptimalBinning`` 前完成合并和校验。
 
     其他参数
         :param missing_separate: 是否将缺失值单独分箱，默认 True
@@ -351,18 +355,12 @@ class OptimalBinning2D(ArtifactSerializableMixin, BaseEstimator, TransformerMixi
 
         # 创建并拟合特征1的分箱器
         self.binner_x_ = self._create_binner(is_x=True)
-        user_splits_x = {self.feature_x_: self.user_splits_x} if self.user_splits_x is not None else None
-        if user_splits_x:
-            self.binner_x_.user_splits = user_splits_x
         self.binner_x_.fit(X[[self.feature_x_]], y)
         self.splits_x_ = self.binner_x_.splits_.get(self.feature_x_, np.array([]))
         self.n_bins_x_ = self.binner_x_.n_bins_.get(self.feature_x_, 0)
 
         # 创建并拟合特征2的分箱器
         self.binner_y_ = self._create_binner(is_x=False)
-        user_splits_y = {self.feature_y_: self.user_splits_y} if self.user_splits_y is not None else None
-        if user_splits_y:
-            self.binner_y_.user_splits = user_splits_y
         self.binner_y_.fit(X[[self.feature_y_]], y)
         self.splits_y_ = self.binner_y_.splits_.get(self.feature_y_, np.array([]))
         self.n_bins_y_ = self.binner_y_.n_bins_.get(self.feature_y_, 0)
@@ -940,51 +938,52 @@ class OptimalBinning2D(ArtifactSerializableMixin, BaseEstimator, TransformerMixi
         axis_value = self.missing_separate_x if is_x else self.missing_separate_y
         return bool(self.missing_separate if axis_value is None else axis_value)
 
+    def _resolve_axis_params(self, is_x: bool) -> Dict[str, Any]:
+        """按显式轴向参数、轴向 params、全局参数的顺序解析有效配置."""
+        params = {
+            'target': self.target,
+            'max_n_bins': self.max_n_bins,
+            'min_bin_size': self.min_bin_size,
+            'method': self.method,
+            'monotonic': self.monotonic,
+            'missing_separate': self.missing_separate,
+            'random_state': self.random_state,
+            'decimal': self.decimal,
+            'woe_clip': self.woe_clip,
+            'verbose': self.verbose,
+        }
+        extra_params = self.x_params if is_x else self.y_params
+        valid_names = set(OptimalBinning().get_params(deep=False))
+        for key, value in dict(extra_params or {}).items():
+            if key not in valid_names:
+                warnings.warn(f"OptimalBinning 无此参数 '{key}'，将忽略")
+            else:
+                params[key] = value
+
+        axis_missing_separate = self.missing_separate_x if is_x else self.missing_separate_y
+        explicit_params = {
+            'max_n_bins': self.max_n_bins_x if is_x else self.max_n_bins_y,
+            'min_bin_size': self.min_bin_size_x if is_x else self.min_bin_size_y,
+            'method': self.method_x if is_x else self.method_y,
+            'monotonic': self.monotonic_x if is_x else self.monotonic_y,
+            'missing_separate': axis_missing_separate,
+            'special_codes': self.special_codes_x if is_x else self.special_codes_y,
+        }
+        params.update({key: value for key, value in explicit_params.items() if value is not None})
+
+        user_splits = self.user_splits_x if is_x else self.user_splits_y
+        if user_splits is not None:
+            feature = self.feature_x_ if is_x else self.feature_y_
+            params['user_splits'] = {feature: user_splits}
+        return params
+
     def _create_binner(self, is_x: bool) -> OptimalBinning:
         """创建内部 OptimalBinning 实例.
 
         :param is_x: True 表示创建特征1的分箱器，False 表示特征2
         :return: 配置好的 OptimalBinning 实例
         """
-        if is_x:
-            max_n_bins = self.max_n_bins_x if self.max_n_bins_x is not None else self.max_n_bins
-            min_bin_size = self.min_bin_size_x if self.min_bin_size_x is not None else self.min_bin_size
-            method = self.method_x if self.method_x is not None else self.method
-            monotonic = self.monotonic_x if self.monotonic_x is not None else self.monotonic
-            special_codes = self.special_codes_x
-            extra_params = self.x_params or {}
-        else:
-            max_n_bins = self.max_n_bins_y if self.max_n_bins_y is not None else self.max_n_bins
-            min_bin_size = self.min_bin_size_y if self.min_bin_size_y is not None else self.min_bin_size
-            method = self.method_y if self.method_y is not None else self.method
-            monotonic = self.monotonic_y if self.monotonic_y is not None else self.monotonic
-            special_codes = self.special_codes_y
-            extra_params = self.y_params or {}
-
-        binner = OptimalBinning(
-            target=self.target,
-            max_n_bins=max_n_bins,
-            min_bin_size=min_bin_size,
-            method=method,
-            monotonic=monotonic,
-            special_codes=special_codes,
-            missing_separate=self._get_missing_separate(is_x),
-            random_state=self.random_state,
-            decimal=self.decimal,
-            woe_clip=self.woe_clip,
-            verbose=self.verbose,
-        )
-
-        # 合并扩展参数（extra_params 优先级高于构造函数参数，
-        # 但构造函数参数已设置好，extra_params 仅用于传递额外参数）
-        if extra_params:
-            for key, value in extra_params.items():
-                if not hasattr(binner, key):
-                    warnings.warn(f"OptimalBinning 无此参数 '{key}'，将忽略")
-                else:
-                    setattr(binner, key, value)
-
-        return binner
+        return OptimalBinning(**self._resolve_axis_params(is_x))
 
     def _check_input(
         self,
@@ -1194,8 +1193,8 @@ class OptimalBinning2D(ArtifactSerializableMixin, BaseEstimator, TransformerMixi
             min_count = max(1, int(self.min_bin_size))
 
         solution = np.arange(n_cells, dtype=int).reshape(event.shape)
-        trend_x = self._resolve_2d_trend(self.monotonic_x, self.monotonic, event, nonevent, axis=0)
-        trend_y = self._resolve_2d_trend(self.monotonic_y, self.monotonic, event, nonevent, axis=1)
+        trend_x = self._resolve_axis_monotonic_trend(is_x=True)
+        trend_y = self._resolve_axis_monotonic_trend(is_x=False)
 
         total_event = max(float(event.sum()), 1.0)
         total_nonevent = max(float(nonevent.sum()), 1.0)
@@ -1336,31 +1335,39 @@ class OptimalBinning2D(ArtifactSerializableMixin, BaseEstimator, TransformerMixi
         remap = {int(old): new for new, old in enumerate(ordered_ids)}
         return np.vectorize(remap.get, otypes=[int])(solution)
 
-    def _resolve_2d_trend(
-        self,
-        explicit: Optional[Union[bool, str]],
-        fallback: Union[bool, str],
-        event: np.ndarray,
-        nonevent: np.ndarray,
-        axis: int,
-    ) -> Optional[str]:
-        """将 hscredit 单调性参数转换为二维轴向单增或单减约束."""
-        value = fallback if explicit is None else explicit
+    def _resolve_axis_monotonic_trend(self, is_x: bool) -> Optional[str]:
+        """复用内部一维分箱器的单调方向，转换为二维单向硬约束."""
+        binner = self.binner_x_ if is_x else self.binner_y_
+        feature = self.feature_x_ if is_x else self.feature_y_
+        if binner is None:
+            return None
+
+        value = binner.monotonic
         if value in (False, None, '', 'none'):
             return None
         if isinstance(value, str):
             value = value.lower()
         if value in ('ascending', 'descending'):
             return value
-        if value in (True, 'auto', 'auto_asc_desc', 'auto_heuristic'):
-            normal_event = event[:self.n_bins_x_, :self.n_bins_y_]
-            normal_nonevent = nonevent[:self.n_bins_x_, :self.n_bins_y_]
-            totals = (normal_event + normal_nonevent).sum(axis=1 - axis)
-            events = normal_event.sum(axis=1 - axis)
-            rates = np.divide(events, totals, out=np.zeros_like(events), where=totals > 0)
-            valid = rates[totals > 0]
-            return 'ascending' if len(valid) < 2 or valid[-1] >= valid[0] else 'descending'
-        return None
+
+        fitted_trend = getattr(binner, 'monotonic_trend_', {}).get(feature)
+        if fitted_trend in ('ascending', 'descending'):
+            return fitted_trend
+        if fitted_trend is not None:
+            return None
+
+        table = getattr(binner, 'bin_tables_', {}).get(feature, pd.DataFrame())
+        if table.empty or '坏样本率' not in table.columns:
+            return None
+        ordinary = table
+        if '分箱' in ordinary.columns:
+            ordinary = ordinary.loc[pd.to_numeric(ordinary['分箱'], errors='coerce') >= 0]
+        bad_rates = pd.to_numeric(ordinary['坏样本率'], errors='coerce').dropna().to_numpy(dtype=float)
+        if len(bad_rates) < 2:
+            return None
+
+        resolved = binner._resolve_monotonic_target_mode(bad_rates, value)
+        return resolved if resolved in ('ascending', 'descending') else None
 
     def _monotonic_violations(
         self,

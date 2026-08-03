@@ -186,9 +186,14 @@ def test_series_summary_forwards_binning_configuration():
     assert _row(result, "score")["趋势"] == "ascending"
 
 
-def test_binning_params_override_outer_defaults_without_mutation():
-    """内层分箱参数优先级最高，同时不得修改调用者字典。"""
-    params = {"method": "uniform", "max_n_bins": 3, "random_state": 99}
+def test_outer_binning_args_override_binning_params_without_mutation():
+    """外层分箱参数优先级最高，同时不得修改调用者字典。"""
+    params = {
+        "method": "uniform",
+        "max_n_bins": 3,
+        "random_state": 99,
+        "min_bin_size": 0.05,
+    }
     snapshot = params.copy()
 
     result = feature_summary_impl._normalize_binning_config(
@@ -198,9 +203,10 @@ def test_binning_params_override_outer_defaults_without_mutation():
         binning_params=params,
     )
 
-    assert result["method"] == "uniform"
-    assert result["max_n_bins"] == 3
-    assert result["random_state"] == 99
+    assert result["method"] == "quantile"
+    assert result["max_n_bins"] == 10
+    assert result["random_state"] == 42
+    assert result["min_bin_size"] == 0.05
     assert params == snapshot
 
 
@@ -229,9 +235,6 @@ def test_batch_binning_config_only_keeps_current_user_splits():
 @pytest.mark.parametrize(
     "binning_params",
     [
-        {"method": "missing_method"},
-        {"max_n_bins": 0},
-        {"max_n_bins": -1},
         {"n_bins": 3},
         {"prebinning": "missing_method"},
         {"prebinning": {"method": "missing_method"}},
@@ -248,6 +251,27 @@ def test_invalid_binning_config_is_rejected_before_feature_work(binning_params):
             y=[0, 0, 1, 1],
             binning_params=binning_params,
             n_jobs=1,
+        )
+
+
+@pytest.mark.parametrize(
+    "outer_params",
+    [
+        {"binning_method": "missing_method"},
+        {"max_n_bins": 0},
+        {"max_n_bins": -1},
+    ],
+)
+def test_invalid_outer_binning_config_is_rejected_before_feature_work(outer_params):
+    """最终生效的非法外层分箱参数应在进入字段任务前给出中文错误。"""
+    df = pd.DataFrame({"x": [1.0, 2.0, 3.0, 4.0]})
+
+    with pytest.raises(ValueError, match="分箱"):
+        feature_summary(
+            df,
+            y=[0, 0, 1, 1],
+            n_jobs=1,
+            **outer_params,
         )
 
 
@@ -581,8 +605,8 @@ def test_predictive_metrics_keep_full_precision():
     assert row["KS"] == expected_ks
 
 
-def test_custom_binning_params_control_iv_and_override_outer_args():
-    """IV 应使用内层覆盖后的分箱方法、箱数和其他参数。"""
+def test_outer_binning_args_control_iv_and_keep_extension_params():
+    """IV 应使用外层方法、箱数和随机种子，同时保留 params 扩展参数。"""
     from hscredit.core.binning import OptimalBinning
 
     x = np.concatenate([np.linspace(0, 1, 80), np.linspace(2, 10, 20)])
@@ -594,7 +618,12 @@ def test_custom_binning_params_control_iv_and_override_outer_args():
         "min_bin_size": 0.05,
         "random_state": 99,
     }
-    expected_binner = OptimalBinning(**params).fit(df[["x"]], y)
+    expected_binner = OptimalBinning(
+        method="quantile",
+        max_n_bins=10,
+        min_bin_size=params["min_bin_size"],
+        random_state=42,
+    ).fit(df[["x"]], y)
     expected_iv = expected_binner.bin_tables_["x"]["分档IV值"].sum()
 
     result = feature_summary(
