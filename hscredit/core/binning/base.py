@@ -881,11 +881,10 @@ class BaseBinning(ArtifactSerializableMixin, BaseEstimator, TransformerMixin, AB
         counts: np.ndarray,
         bad_counts: np.ndarray,
         bin_idx: int,
-        allow_at_min_n_bins: bool = False,
     ) -> Optional[int]:
         """为样本量不足的分箱选择要删除的切分点索引。"""
         n_bins = len(counts)
-        if not allow_at_min_n_bins and n_bins <= max(1, self.min_n_bins):
+        if n_bins <= max(1, self.min_n_bins):
             return None
         if bin_idx <= 0:
             return 0
@@ -918,6 +917,67 @@ class BaseBinning(ArtifactSerializableMixin, BaseEstimator, TransformerMixin, AB
             return float((left_value + right_value) / 2.0)
         return None
 
+    @staticmethod
+    def _bin_size_constraint_score(
+        counts: np.ndarray,
+        min_samples: int,
+        max_samples: Optional[int],
+    ) -> Tuple[int, int]:
+        """按违例箱数和违例样本量评价分箱样本量约束。"""
+        deficits = np.maximum(min_samples - counts, 0)
+        excesses = np.zeros_like(counts) if max_samples is None else np.maximum(counts - max_samples, 0)
+        return (
+            int(np.count_nonzero(deficits) + np.count_nonzero(excesses)),
+            int(deficits.sum() + excesses.sum()),
+        )
+
+    def _find_relocated_split_for_bin_size_constraints(
+        self,
+        x: pd.Series,
+        current: np.ndarray,
+        min_samples: int,
+        max_samples: Optional[int],
+    ) -> Optional[np.ndarray]:
+        """在保持箱数不变时，全局搜索一次删边界和补边界操作。"""
+        if len(current) == 0:
+            return None
+
+        current_bins = np.digitize(x, current)
+        current_counts = np.bincount(current_bins, minlength=len(current) + 1).astype(int)
+        current_score = self._bin_size_constraint_score(current_counts, min_samples, max_samples)
+        best_key = None
+        best_candidate = None
+
+        for removed_index, removed_split in enumerate(current):
+            reduced = np.delete(current, removed_index)
+            reduced_bins = np.digitize(x, reduced) if len(reduced) > 0 else np.zeros(len(x), dtype=int)
+            for bin_index in range(len(reduced) + 1):
+                replacement = self._choose_split_point_within_bin(x, reduced_bins, bin_index, min_samples)
+                if replacement is None or not np.isfinite(replacement):
+                    continue
+
+                candidate = np.unique(np.sort(np.append(reduced, replacement)))
+                if len(candidate) != len(current) or np.array_equal(candidate, current):
+                    continue
+
+                candidate_bins = np.digitize(x, candidate)
+                candidate_counts = np.bincount(candidate_bins, minlength=len(candidate) + 1).astype(int)
+                candidate_score = self._bin_size_constraint_score(candidate_counts, min_samples, max_samples)
+                if candidate_score >= current_score:
+                    continue
+
+                candidate_key = (
+                    candidate_score,
+                    abs(float(replacement) - float(removed_split)),
+                    removed_index,
+                    bin_index,
+                )
+                if best_key is None or candidate_key < best_key:
+                    best_key = candidate_key
+                    best_candidate = candidate
+
+        return best_candidate
+
     def _adjust_splits_for_bin_size_constraints(
         self,
         x: pd.Series,
@@ -948,7 +1008,6 @@ class BaseBinning(ArtifactSerializableMixin, BaseEstimator, TransformerMixin, AB
             return current
 
         max_splits_allowed = max(0, self.max_n_bins - 1)
-        min_splits_allowed = max(0, self.min_n_bins - 1)
 
         for _ in range(200):
             bins = np.digitize(x_valid, current) if len(current) > 0 else np.zeros(len(x_valid), dtype=int)
@@ -962,34 +1021,10 @@ class BaseBinning(ArtifactSerializableMixin, BaseEstimator, TransformerMixin, AB
 
             if len(small_bins) > 0:
                 merge_bin = int(small_bins[np.argmin(counts[small_bins])])
-                relocate_boundary = allow_boundary_relocation and len(current) <= min_splits_allowed
-                split_idx = self._choose_merge_split_index(
-                    counts,
-                    bad_counts,
-                    merge_bin,
-                    allow_at_min_n_bins=relocate_boundary,
-                )
+                split_idx = self._choose_merge_split_index(counts, bad_counts, merge_bin)
                 if split_idx is not None and 0 <= split_idx < len(current):
-                    merged = np.delete(current, split_idx)
-                    if relocate_boundary:
-                        merged_bins = (
-                            np.digitize(x_valid, merged) if len(merged) > 0 else np.zeros(len(x_valid), dtype=int)
-                        )
-                        merged_bin = merge_bin - 1 if split_idx < merge_bin else merge_bin
-                        replacement = self._choose_split_point_within_bin(
-                            x_valid,
-                            merged_bins,
-                            merged_bin,
-                            min_samples,
-                        )
-                        if replacement is not None and np.isfinite(replacement):
-                            candidate = np.unique(np.sort(np.append(merged, replacement)))
-                            if len(candidate) == len(current) and not np.array_equal(candidate, current):
-                                current = candidate
-                                changed = True
-                    else:
-                        current = merged
-                        changed = True
+                    current = np.delete(current, split_idx)
+                    changed = True
 
             if changed:
                 continue
@@ -999,6 +1034,17 @@ class BaseBinning(ArtifactSerializableMixin, BaseEstimator, TransformerMixin, AB
                 new_split = self._choose_split_point_within_bin(x_valid, bins, split_bin, min_samples)
                 if new_split is not None and np.isfinite(new_split):
                     current = np.unique(np.sort(np.append(current, new_split)))
+                    changed = True
+
+            if not changed and allow_boundary_relocation and (len(small_bins) > 0 or len(large_bins) > 0):
+                relocated = self._find_relocated_split_for_bin_size_constraints(
+                    x_valid,
+                    current,
+                    min_samples,
+                    max_samples,
+                )
+                if relocated is not None:
+                    current = relocated
                     changed = True
 
             if not changed:
