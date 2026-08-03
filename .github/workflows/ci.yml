@@ -110,6 +110,62 @@ jobs:
       - name: 运行测试（跳过 slow/integration）
         run: pytest tests/ -m "not slow and not integration" --tb=short
 
+  build-compat:
+    name: 构建兼容 (Python ${{ matrix.python-version }}, setuptools ${{ matrix.setuptools-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - python-version: "3.9"
+            setuptools-version: "77.0.3"
+            pkg_resources: "present"
+          - python-version: "3.9"
+            setuptools-version: "82.0.1"
+            pkg_resources: "absent"
+          - python-version: "3.14"
+            setuptools-version: "latest"
+            pkg_resources: "absent"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: 安装指定构建后端
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip build
+          if [ "${{ matrix.setuptools-version }}" = "latest" ]; then
+            python -m pip install --upgrade setuptools
+          else
+            python -m pip install "setuptools==${{ matrix.setuptools-version }}"
+          fi
+
+      - name: 验证 pkg_resources 状态
+        env:
+          EXPECTED_PKG_RESOURCES: ${{ matrix.pkg_resources }}
+        run: |
+          python - <<'PY'
+          import importlib.util
+          import os
+          import setuptools
+
+          found = importlib.util.find_spec("pkg_resources") is not None
+          expected = os.environ["EXPECTED_PKG_RESOURCES"] == "present"
+          print(f"setuptools={setuptools.__version__}, pkg_resources={found}")
+          if found != expected:
+              raise SystemExit("pkg_resources 状态与测试矩阵不一致")
+          PY
+
+      - name: 验证无隔离和 PEP 517 构建
+        run: |
+          python -m build --wheel --no-isolation --outdir dist-build-compat
+          python -m pip wheel --no-deps --use-pep517 --wheel-dir dist-pep517 .
+
   build:
     name: 构建与打包校验
     runs-on: ubuntu-latest

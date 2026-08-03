@@ -42,6 +42,17 @@ pip install -e ".[dev]"
 pytest tests/ -v
 ```
 
+## 安装工具兼容
+
+hscredit 支持 setuptools 77 至当前最新版，标准安装通过 PEP 517 隔离构建完成。setuptools 82
+及以上已经移除 `pkg_resources`，但 hscredit 的源码、构建入口和运行时均不依赖该模块，因此无需
+额外安装或恢复它。
+
+若安装过程中出现 `ModuleNotFoundError: No module named 'pkg_resources'`，请根据完整堆栈确认
+实际失败的第三方源码包，并优先选择支持当前 Python 的 wheel 或新版依赖。不要为此在 hscredit
+环境中全局设置 `setuptools<82`；这会掩盖第三方包的构建兼容问题，也会阻止验证最新版
+setuptools。
+
 ## 验证安装
 
 ```python
