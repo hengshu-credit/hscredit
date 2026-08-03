@@ -79,6 +79,8 @@ class OptimalBinning2D(ArtifactSerializableMixin, BaseEstimator, TransformerMixi
         :param monotonic: 单调性约束，默认 False。设为 'ascending'/'descending'/True 时，
             作为**硬约束**作用于二维合并：最终各轴向相邻分箱的坏样本率保证满足单调趋势
             （通过持续合并违例相邻分箱实现，可能使二维分箱数低于 max_n_bins_2d）
+            ``ascending`` 表示特征值越大坏样本率越高（越大越差），``descending`` 表示
+            特征值越大坏样本率越低（越大越好）；自动模式复用内部一维分箱器识别的方向。
         :param max_n_bins_2d: 相邻格子合并后的最大二维分箱数，默认使用 max_n_bins
 
     特征1 专用参数（以 _x 后缀区分）
@@ -1191,8 +1193,8 @@ class OptimalBinning2D(ArtifactSerializableMixin, BaseEstimator, TransformerMixi
             min_count = max(1, int(self.min_bin_size))
 
         solution = np.arange(n_cells, dtype=int).reshape(event.shape)
-        trend_x = self._resolve_2d_trend(self.monotonic_x, self.monotonic, event, nonevent, axis=0)
-        trend_y = self._resolve_2d_trend(self.monotonic_y, self.monotonic, event, nonevent, axis=1)
+        trend_x = self._resolve_axis_monotonic_trend(is_x=True)
+        trend_y = self._resolve_axis_monotonic_trend(is_x=False)
 
         total_event = max(float(event.sum()), 1.0)
         total_nonevent = max(float(nonevent.sum()), 1.0)
@@ -1333,31 +1335,39 @@ class OptimalBinning2D(ArtifactSerializableMixin, BaseEstimator, TransformerMixi
         remap = {int(old): new for new, old in enumerate(ordered_ids)}
         return np.vectorize(remap.get, otypes=[int])(solution)
 
-    def _resolve_2d_trend(
-        self,
-        explicit: Optional[Union[bool, str]],
-        fallback: Union[bool, str],
-        event: np.ndarray,
-        nonevent: np.ndarray,
-        axis: int,
-    ) -> Optional[str]:
-        """将 hscredit 单调性参数转换为二维轴向单增或单减约束."""
-        value = fallback if explicit is None else explicit
+    def _resolve_axis_monotonic_trend(self, is_x: bool) -> Optional[str]:
+        """复用内部一维分箱器的单调方向，转换为二维单向硬约束."""
+        binner = self.binner_x_ if is_x else self.binner_y_
+        feature = self.feature_x_ if is_x else self.feature_y_
+        if binner is None:
+            return None
+
+        value = binner.monotonic
         if value in (False, None, '', 'none'):
             return None
         if isinstance(value, str):
             value = value.lower()
         if value in ('ascending', 'descending'):
             return value
-        if value in (True, 'auto', 'auto_asc_desc', 'auto_heuristic'):
-            normal_event = event[:self.n_bins_x_, :self.n_bins_y_]
-            normal_nonevent = nonevent[:self.n_bins_x_, :self.n_bins_y_]
-            totals = (normal_event + normal_nonevent).sum(axis=1 - axis)
-            events = normal_event.sum(axis=1 - axis)
-            rates = np.divide(events, totals, out=np.zeros_like(events), where=totals > 0)
-            valid = rates[totals > 0]
-            return 'ascending' if len(valid) < 2 or valid[-1] >= valid[0] else 'descending'
-        return None
+
+        fitted_trend = getattr(binner, 'monotonic_trend_', {}).get(feature)
+        if fitted_trend in ('ascending', 'descending'):
+            return fitted_trend
+        if fitted_trend is not None:
+            return None
+
+        table = getattr(binner, 'bin_tables_', {}).get(feature, pd.DataFrame())
+        if table.empty or '坏样本率' not in table.columns:
+            return None
+        ordinary = table
+        if '分箱' in ordinary.columns:
+            ordinary = ordinary.loc[pd.to_numeric(ordinary['分箱'], errors='coerce') >= 0]
+        bad_rates = pd.to_numeric(ordinary['坏样本率'], errors='coerce').dropna().to_numpy(dtype=float)
+        if len(bad_rates) < 2:
+            return None
+
+        resolved = binner._resolve_monotonic_target_mode(bad_rates, value)
+        return resolved if resolved in ('ascending', 'descending') else None
 
     def _monotonic_violations(
         self,
