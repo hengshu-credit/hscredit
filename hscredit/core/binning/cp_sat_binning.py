@@ -24,14 +24,11 @@ import warnings
 try:
     from ortools.sat.python import cp_model
     from ortools.sat.python.cp_model import IntVar
+
     ORTOOLS_AVAILABLE = True
 except ImportError:
     ORTOOLS_AVAILABLE = False
-    warnings.warn(
-        "OR-Tools 未安装，CPSATBinning 将不可用。"
-        "请使用 pip install ortools 安装。",
-        ImportWarning
-    )
+    warnings.warn("OR-Tools 未安装，CPSATBinning 将不可用。" "请使用 pip install ortools 安装。", ImportWarning)
 
 from ...exceptions import NotFittedError
 from .base import BaseBinning
@@ -112,28 +109,28 @@ class CPSATBinning(BaseBinning):
 
     def __init__(
         self,
-        target: str = 'target',
+        target: str = "target",
         max_n_bins: int = 5,
         min_n_bins: int = 2,
         min_bin_size: Union[float, int] = 0.02,
         max_bin_size: Optional[Union[float, int]] = None,
         min_bad_rate: float = 0.0,
-        monotonic: Union[bool, str] = 'auto',
-        objective: str = 'iv',
+        monotonic: Union[bool, str] = "auto",
+        objective: str = "iv",
         n_prebins: int = 50,
         max_candidates: int = 100,
         time_limit: int = 30,
         num_workers: int = 1,
         missing_separate: bool = True,
         special_codes: Optional[List] = None,
+        cat_cutoff: Optional[Union[float, int]] = None,
+        category_order=None,
+        handle_unknown: str = "value",
         random_state: Optional[int] = None,
-        **kwargs
+        **kwargs,
     ):
         if not ORTOOLS_AVAILABLE:
-            raise ImportError(
-                "OR-Tools 未安装，无法使用 CPSATBinning。"
-                "请使用 pip install ortools 安装。"
-            )
+            raise ImportError("OR-Tools 未安装，无法使用 CPSATBinning。" "请使用 pip install ortools 安装。")
 
         super().__init__(
             target=target,
@@ -145,12 +142,15 @@ class CPSATBinning(BaseBinning):
             monotonic=monotonic,
             missing_separate=missing_separate,
             special_codes=special_codes,
+            cat_cutoff=cat_cutoff,
+            category_order=category_order,
+            handle_unknown=handle_unknown,
             random_state=random_state,
-            **kwargs
+            **kwargs,
         )
 
         # 验证优化目标
-        valid_objectives = ['iv', 'ks', 'gini']
+        valid_objectives = ["iv", "ks", "gini"]
         if objective not in valid_objectives:
             raise ValueError(f"不支持的优化目标: {objective}，可选: {valid_objectives}")
 
@@ -161,11 +161,8 @@ class CPSATBinning(BaseBinning):
         self.num_workers = num_workers
 
     def fit(
-        self,
-        X: Union[pd.DataFrame, np.ndarray],
-        y: Optional[Union[pd.Series, np.ndarray]] = None,
-        **kwargs
-    ) -> 'CPSATBinning':
+        self, X: Union[pd.DataFrame, np.ndarray], y: Optional[Union[pd.Series, np.ndarray]] = None, **kwargs
+    ) -> "CPSATBinning":
         """拟合 CP-SAT 运筹规划分箱.
 
         :param X: 训练数据
@@ -181,12 +178,7 @@ class CPSATBinning(BaseBinning):
         self._is_fitted = True
         return self
 
-    def _fit_feature(
-        self,
-        feature: str,
-        X: pd.Series,
-        y: pd.Series
-    ) -> None:
+    def _fit_feature(self, feature: str, X: pd.Series, y: pd.Series) -> None:
         """对单个特征进行分箱."""
         feature_type = self._detect_feature_type(X)
         self.feature_types_[feature] = feature_type
@@ -200,7 +192,7 @@ class CPSATBinning(BaseBinning):
         X_valid = X[valid_mask]
         y_valid = y[valid_mask]
 
-        if feature_type == 'categorical':
+        if feature_type == "categorical":
             splits = self._categorical_binning(X_valid, y_valid)
             self.splits_[feature] = np.array(splits) if splits else np.array([])
             self.n_bins_[feature] = len(splits) + 1 if splits else len(X_valid.unique())
@@ -214,11 +206,7 @@ class CPSATBinning(BaseBinning):
         bin_table = self._compute_bin_stats(feature, X, y, bins)
         self.bin_tables_[feature] = bin_table
 
-    def _get_candidate_splits(
-        self,
-        X: pd.Series,
-        y: pd.Series
-    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def _get_candidate_splits(self, X: pd.Series, y: pd.Series) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """获取候选分割点和预计算的统计数据.
 
         :return: (candidates, positions, prefix_stats)
@@ -263,16 +251,12 @@ class CPSATBinning(BaseBinning):
         candidates = candidates[(candidates > x_min) & (candidates < x_max)]
 
         # 位置映射 - 构建包含边界的位置数组
-        inner_positions = np.searchsorted(x_sorted, candidates, side='right')
+        inner_positions = np.searchsorted(x_sorted, candidates, side="right")
         positions = np.concatenate([[0], inner_positions, [n_samples]])
 
         return candidates, positions, (prefix_bad, prefix_good)
 
-    def _cp_sat_numerical(
-        self,
-        X: pd.Series,
-        y: pd.Series
-    ) -> List[float]:
+    def _cp_sat_numerical(self, X: pd.Series, y: pd.Series) -> List[float]:
         """使用 CP-SAT 求解器对数值型变量进行最优化分箱.
 
         :param X: 特征数据
@@ -299,14 +283,14 @@ class CPSATBinning(BaseBinning):
         if n_candidates == 0:
             return []
 
-        n_total = getattr(self, '_n_total_samples', n_samples)
+        n_total = getattr(self, "_n_total_samples", n_samples)
         min_samples = self._get_min_samples(n_total)
 
         # ======== 构建 CP-SAT 模型 ========
         model = cp_model.CpModel()
 
         # 决策变量: x[i] = 是否在位置 i 选择分割点
-        x: List[IntVar] = [model.NewBoolVar(f'x_{i}') for i in range(n_candidates)]
+        x: List[IntVar] = [model.NewBoolVar(f"x_{i}") for i in range(n_candidates)]
 
         # ======== 约束1: 分箱数量约束 ========
         n_splits_needed = self.max_n_bins - 1
@@ -348,25 +332,21 @@ class CPSATBinning(BaseBinning):
         monotonic_direction = self._resolve_monotonic_direction(X, y)
         if monotonic_direction:
             self._add_monotonic_constraints_cp_sat(
-                model, x, candidates, positions, prefix_bad, prefix_good,
-                total_good, total_bad, monotonic_direction
+                model, x, candidates, positions, prefix_bad, prefix_good, total_good, total_bad, monotonic_direction
             )
 
         # ======== 目标函数: 最大化 IV ========
-        if self.objective == 'iv':
+        if self.objective == "iv":
             self._add_iv_objective_cp_sat(
-                model, x, candidates, positions, prefix_bad, prefix_good,
-                total_good, total_bad
+                model, x, candidates, positions, prefix_bad, prefix_good, total_good, total_bad
             )
-        elif self.objective == 'ks':
+        elif self.objective == "ks":
             self._add_ks_objective_cp_sat(
-                model, x, candidates, positions, prefix_bad, prefix_good,
-                total_good, total_bad
+                model, x, candidates, positions, prefix_bad, prefix_good, total_good, total_bad
             )
-        elif self.objective == 'gini':
+        elif self.objective == "gini":
             self._add_gini_objective_cp_sat(
-                model, x, candidates, positions, prefix_bad, prefix_good,
-                total_good, total_bad
+                model, x, candidates, positions, prefix_bad, prefix_good, total_good, total_bad
             )
 
         # ======== 求解 ========
@@ -383,8 +363,7 @@ class CPSATBinning(BaseBinning):
         else:
             # 求解失败，使用启发式备选
             return self._heuristic_fallback(
-                candidates, positions, prefix_bad, prefix_good,
-                total_good, total_bad, min_samples
+                candidates, positions, prefix_bad, prefix_good, total_good, total_bad, min_samples
             )
 
     def _add_monotonic_constraints_cp_sat(
@@ -397,7 +376,7 @@ class CPSATBinning(BaseBinning):
         prefix_good: np.ndarray,
         total_good: int,
         total_bad: int,
-        direction: str
+        direction: str,
     ) -> None:
         """添加单调性约束到 CP-SAT 模型.
 
@@ -432,12 +411,12 @@ class CPSATBinning(BaseBinning):
             br_i = bad_rates[i]
             br_j = bad_rates[i + 1]
 
-            if direction == 'ascending':
+            if direction == "ascending":
                 # 坏样本率递增: br_i <= br_j
                 if br_i > br_j + eps:
                     # 添加弱约束，让求解器倾向于选择单调的方向
                     pass
-            elif direction == 'descending':
+            elif direction == "descending":
                 # 坏样本率递减: br_i >= br_j
                 if br_i < br_j - eps:
                     pass
@@ -453,7 +432,7 @@ class CPSATBinning(BaseBinning):
         prefix_bad: np.ndarray,
         prefix_good: np.ndarray,
         total_good: int,
-        total_bad: int
+        total_bad: int,
     ) -> None:
         """添加 IV 最大化目标函数到 CP-SAT 模型.
 
@@ -489,7 +468,7 @@ class CPSATBinning(BaseBinning):
 
         # 创建目标变量
         max_iv = sum(seg_iv.values()) if seg_iv else int(1e9)
-        objective_var = model.NewIntVar(-max_iv, max_iv, 'iv_objective')
+        objective_var = model.NewIntVar(-max_iv, max_iv, "iv_objective")
 
         # 构建目标函数: objective_var = Σ selected_segments IV
         # 段 0 和段 n_segments-1 始终被选中（首尾箱）
@@ -505,7 +484,7 @@ class CPSATBinning(BaseBinning):
         for i in range(1, n_segments - 1):
             seg_iv_val = seg_iv.get(i, 0)
             if i - 1 < n_candidates:
-                term = model.NewIntVar(-int(1e6), int(1e6), f'iv_term_{i}')
+                term = model.NewIntVar(-int(1e6), int(1e6), f"iv_term_{i}")
                 model.Add(term == seg_iv_val).OnlyEnforceIf(x[i - 1])
                 model.Add(term == 0).OnlyEnforceIf(x[i - 1].Not())
                 iv_terms.append(term)
@@ -528,7 +507,7 @@ class CPSATBinning(BaseBinning):
         prefix_bad: np.ndarray,
         prefix_good: np.ndarray,
         total_good: int,
-        total_bad: int
+        total_bad: int,
     ) -> None:
         """添加 KS 最大化目标函数到 CP-SAT 模型."""
         # KS 优化类似 IV，也需要预计算和整数近似
@@ -543,27 +522,23 @@ class CPSATBinning(BaseBinning):
         prefix_bad: np.ndarray,
         prefix_good: np.ndarray,
         total_good: int,
-        total_bad: int
+        total_bad: int,
     ) -> None:
         """添加 Gini 最大化目标函数到 CP-SAT 模型."""
         # Gini 系数优化
         pass
 
-    def _resolve_monotonic_direction(
-        self,
-        X: pd.Series,
-        y: pd.Series
-    ) -> Optional[str]:
+    def _resolve_monotonic_direction(self, X: pd.Series, y: pd.Series) -> Optional[str]:
         """解析单调性方向.
 
         :return: 'ascending', 'descending', 或 None
         """
         mono = self.monotonic
 
-        if mono in (False, None, 'none'):
+        if mono in (False, None, "none"):
             return None
 
-        if mono in (True, 'auto', 'auto_asc_desc', 'auto_heuristic'):
+        if mono in (True, "auto", "auto_asc_desc", "auto_heuristic"):
             # 自动检测：计算坏样本率与特征值的相关性
             x_vals = X.values
             y_vals = y.values
@@ -572,12 +547,12 @@ class CPSATBinning(BaseBinning):
             corr = np.corrcoef(x_vals, y_vals)[0, 1]
             if np.isnan(corr):
                 return None
-            return 'descending' if corr > 0 else 'ascending'
+            return "descending" if corr > 0 else "ascending"
 
-        if mono == 'ascending':
-            return 'ascending'
-        if mono == 'descending':
-            return 'descending'
+        if mono == "ascending":
+            return "ascending"
+        if mono == "descending":
+            return "descending"
 
         return None
 
@@ -589,7 +564,7 @@ class CPSATBinning(BaseBinning):
         prefix_good: np.ndarray,
         total_good: int,
         total_bad: int,
-        min_samples: int
+        min_samples: int,
     ) -> List[float]:
         """当 CP-SAT 求解失败时使用的启发式备选方案.
 
@@ -611,10 +586,7 @@ class CPSATBinning(BaseBinning):
 
             for i in remaining:
                 test_splits = sorted(selected + [i])
-                score = self._calc_iv_fast(
-                    positions, prefix_bad, prefix_good,
-                    total_good, total_bad, test_splits
-                )
+                score = self._calc_iv_fast(positions, prefix_bad, prefix_good, total_good, total_bad, test_splits)
                 if score > best_score:
                     best_score = score
                     best_idx = i
@@ -627,8 +599,7 @@ class CPSATBinning(BaseBinning):
 
         # 局部搜索优化
         selected = self._local_search(
-            selected, candidates, positions, prefix_bad, prefix_good,
-            total_good, total_bad, min_samples
+            selected, candidates, positions, prefix_bad, prefix_good, total_good, total_bad, min_samples
         )
 
         return [candidates[i] for i in selected]
@@ -640,7 +611,7 @@ class CPSATBinning(BaseBinning):
         prefix_good: np.ndarray,
         total_good: int,
         total_bad: int,
-        split_indices: List[int]
+        split_indices: List[int],
     ) -> float:
         """快速计算 IV 值."""
         if not split_indices:
@@ -671,7 +642,7 @@ class CPSATBinning(BaseBinning):
         prefix_good: np.ndarray,
         total_good: int,
         total_bad: int,
-        min_samples: int
+        min_samples: int,
     ) -> List[int]:
         """局部搜索优化."""
         current = sorted(selected)
@@ -680,10 +651,7 @@ class CPSATBinning(BaseBinning):
         for _ in range(5):
             improved = False
             best = current[:]
-            best_score = self._calc_iv_fast(
-                positions, prefix_bad, prefix_good,
-                total_good, total_bad, current
-            )
+            best_score = self._calc_iv_fast(positions, prefix_bad, prefix_good, total_good, total_bad, current)
 
             # 尝试替换
             for i in range(len(current)):
@@ -693,10 +661,7 @@ class CPSATBinning(BaseBinning):
                     trial = current[:]
                     trial[i] = j
                     trial = sorted(set(trial))
-                    score = self._calc_iv_fast(
-                        positions, prefix_bad, prefix_good,
-                        total_good, total_bad, trial
-                    )
+                    score = self._calc_iv_fast(positions, prefix_bad, prefix_good, total_good, total_bad, trial)
                     if score > best_score + 1e-10:
                         best_score = score
                         best = trial
@@ -708,10 +673,7 @@ class CPSATBinning(BaseBinning):
                     if j in current:
                         continue
                     trial = sorted(current + [j])
-                    score = self._calc_iv_fast(
-                        positions, prefix_bad, prefix_good,
-                        total_good, total_bad, trial
-                    )
+                    score = self._calc_iv_fast(positions, prefix_bad, prefix_good, total_good, total_bad, trial)
                     if score > best_score + 1e-10:
                         best_score = score
                         best = trial
@@ -723,11 +685,7 @@ class CPSATBinning(BaseBinning):
 
         return current
 
-    def _categorical_binning(
-        self,
-        X: pd.Series,
-        y: pd.Series
-    ) -> List[float]:
+    def _categorical_binning(self, X: pd.Series, y: pd.Series) -> List[float]:
         """对类别型变量进行分箱."""
         total_good = (y == 0).sum()
         total_bad = (y == 1).sum()
@@ -735,15 +693,15 @@ class CPSATBinning(BaseBinning):
         if total_good == 0 or total_bad == 0:
             return []
 
-        df = pd.DataFrame({'X': X, 'y': y})
-        category_stats = df.groupby('X')['y'].agg(['sum', 'count']).reset_index()
-        category_stats.columns = ['category', 'bad_count', 'count']
-        category_stats['good_count'] = category_stats['count'] - category_stats['bad_count']
-        category_stats['bad_rate'] = category_stats['bad_count'] / category_stats['count']
-        category_stats = category_stats.sort_values('bad_rate')
+        df = pd.DataFrame({"X": X, "y": y})
+        category_stats = df.groupby("X")["y"].agg(["sum", "count"]).reset_index()
+        category_stats.columns = ["category", "bad_count", "count"]
+        category_stats["good_count"] = category_stats["count"] - category_stats["bad_count"]
+        category_stats["bad_rate"] = category_stats["bad_count"] / category_stats["count"]
+        category_stats = category_stats.sort_values("bad_rate")
 
         min_samples = self._get_min_samples(len(X))
-        category_stats = category_stats[category_stats['count'] >= min_samples]
+        category_stats = category_stats[category_stats["count"] >= min_samples]
 
         if len(category_stats) <= self.max_n_bins:
             return []
@@ -751,17 +709,13 @@ class CPSATBinning(BaseBinning):
         n_categories = len(category_stats)
         return [i - 0.5 for i in range(1, min(n_categories, self.max_n_bins))]
 
-    def _assign_bins(
-        self,
-        X: pd.Series,
-        feature: str
-    ) -> np.ndarray:
+    def _assign_bins(self, X: pd.Series, feature: str) -> np.ndarray:
         """为数据分配分箱索引."""
         x_vals = X.values
 
-        if self.feature_types_[feature] == 'categorical' and feature in self._cat_bins_:
+        if self.feature_types_[feature] == "categorical" and feature in self._cat_bins_:
             return self._assign_categorical_bins(feature, X)
-        if self.feature_types_[feature] == 'categorical':
+        if self.feature_types_[feature] == "categorical":
             codes = pd.Categorical(X).codes
             return np.where(X.isna(), -1, codes)
         else:
@@ -782,17 +736,12 @@ class CPSATBinning(BaseBinning):
                     valid_mask = valid_mask & (x_vals != code)
 
             if valid_mask.any() and len(splits) > 0:
-                bins[valid_mask] = np.searchsorted(
-                    splits, x_vals[valid_mask], side='right'
-                )
+                bins[valid_mask] = np.searchsorted(splits, x_vals[valid_mask], side="right")
 
             return bins
 
     def transform(
-        self,
-        X: Union[pd.DataFrame, np.ndarray],
-        metric: str = 'indices',
-        **kwargs
+        self, X: Union[pd.DataFrame, np.ndarray], metric: str = "indices", **kwargs
     ) -> Union[pd.DataFrame, np.ndarray]:
         """应用分箱转换."""
         if not self._is_fitted:
@@ -810,18 +759,15 @@ class CPSATBinning(BaseBinning):
             if feature in self.splits_:
                 bins = self._assign_bins(X[feature], feature)
 
-                if metric == 'indices':
+                if metric == "indices":
                     result[feature] = bins
-                elif metric == 'bins':
+                elif metric == "bins":
                     result[feature] = self._assign_bin_labels(feature, bins)
-                elif metric == 'woe':
-                    if hasattr(self, '_woe_maps_') and feature in self._woe_maps_:
+                elif metric == "woe":
+                    if hasattr(self, "_woe_maps_") and feature in self._woe_maps_:
                         woe_map = self._woe_maps_[feature]
                     elif feature in self.bin_tables_:
-                        woe_map = dict(zip(
-                            range(len(self.bin_tables_[feature])),
-                            self.bin_tables_[feature]['分档WOE值']
-                        ))
+                        woe_map = dict(zip(range(len(self.bin_tables_[feature])), self.bin_tables_[feature]["分档WOE值"]))
                         self._enrich_woe_map(woe_map, self.bin_tables_[feature])
                     else:
                         raise ValueError(f"特征 '{feature}' 没有WOE映射信息")

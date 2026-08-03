@@ -63,7 +63,7 @@ class BestKSBinning(BaseBinning):
 
     def __init__(
         self,
-        target: str = 'target',
+        target: str = "target",
         max_n_bins: int = 5,
         min_n_bins: int = 2,
         min_bin_size: Union[float, int] = 0.01,
@@ -72,8 +72,11 @@ class BestKSBinning(BaseBinning):
         monotonic: Union[bool, str] = False,
         missing_separate: bool = True,
         special_codes: Optional[List] = None,
+        cat_cutoff: Optional[Union[float, int]] = None,
+        category_order=None,
+        handle_unknown: str = "value",
         random_state: Optional[int] = None,
-        **kwargs
+        **kwargs,
     ):
         super().__init__(
             target=target,
@@ -85,16 +88,16 @@ class BestKSBinning(BaseBinning):
             monotonic=monotonic,
             missing_separate=missing_separate,
             special_codes=special_codes,
+            cat_cutoff=cat_cutoff,
+            category_order=category_order,
+            handle_unknown=handle_unknown,
             random_state=random_state,
-            **kwargs
+            **kwargs,
         )
 
     def fit(
-        self,
-        X: Union[pd.DataFrame, np.ndarray],
-        y: Optional[Union[pd.Series, np.ndarray]] = None,
-        **kwargs
-    ) -> 'BestKSBinning':
+        self, X: Union[pd.DataFrame, np.ndarray], y: Optional[Union[pd.Series, np.ndarray]] = None, **kwargs
+    ) -> "BestKSBinning":
         """拟合 Best KS 分箱。
 
         对每个特征预分割为细箱后，在单调性约束下贪心选择切分点以最大化 KS 统计量。
@@ -117,12 +120,7 @@ class BestKSBinning(BaseBinning):
         self._is_fitted = True
         return self
 
-    def _fit_feature(
-        self,
-        feature: str,
-        X: pd.Series,
-        y: pd.Series
-    ) -> None:
+    def _fit_feature(self, feature: str, X: pd.Series, y: pd.Series) -> None:
         """对单个特征进行分箱.
 
         :param feature: 特征名
@@ -144,7 +142,7 @@ class BestKSBinning(BaseBinning):
         X_valid = X[valid_mask]
         y_valid = y[valid_mask]
 
-        if feature_type == 'categorical':
+        if feature_type == "categorical":
             # 类别型变量：按KS排序后分箱
             splits = self._best_ks_categorical(X_valid, y_valid)
             self.splits_[feature] = np.array(splits)
@@ -162,11 +160,7 @@ class BestKSBinning(BaseBinning):
         bin_table = self._compute_bin_stats(feature, X, y, bins)
         self.bin_tables_[feature] = bin_table
 
-    def _best_ks_numerical(
-        self,
-        X: pd.Series,
-        y: pd.Series
-    ) -> List[float]:
+    def _best_ks_numerical(self, X: pd.Series, y: pd.Series) -> List[float]:
         """对数值型变量进行Best KS分箱 (优化版本).
 
         使用排序后数据的累积统计信息快速计算KS值。
@@ -226,21 +220,20 @@ class BestKSBinning(BaseBinning):
 
             for i, candidate in enumerate(candidates):
                 # 找到候选点在排序数据中的位置
-                split_pos = np.searchsorted(x_sorted, candidate, side='right')
+                split_pos = np.searchsorted(x_sorted, candidate, side="right")
 
                 if split_pos == 0 or split_pos >= len(x_sorted):
                     continue
 
                 # 计算该分割点与已选分割点组合的 KS
                 test_splits = sorted(selected_splits + [candidate])
-                split_positions = [np.searchsorted(x_sorted, s, side='right') for s in test_splits]
+                split_positions = [np.searchsorted(x_sorted, s, side="right") for s in test_splits]
                 split_positions = [0] + split_positions + [len(x_sorted)]
-                if any((split_positions[j + 1] - split_positions[j]) < min_samples for j in range(len(split_positions) - 1)):
+                if any(
+                    (split_positions[j + 1] - split_positions[j]) < min_samples for j in range(len(split_positions) - 1)
+                ):
                     continue
-                ks = self._calc_ks_fast(
-                    x_sorted, y_sorted, cum_good, cum_bad,
-                    total_good, total_bad, test_splits
-                )
+                ks = self._calc_ks_fast(x_sorted, y_sorted, cum_good, cum_bad, total_good, total_bad, test_splits)
 
                 if ks > best_ks:
                     best_ks = ks
@@ -263,7 +256,7 @@ class BestKSBinning(BaseBinning):
         cum_bad: np.ndarray,
         total_good: int,
         total_bad: int,
-        splits: List[float]
+        splits: List[float],
     ) -> float:
         """快速计算KS统计量.
 
@@ -282,7 +275,7 @@ class BestKSBinning(BaseBinning):
             return 0.0
 
         # 找到所有分割点的位置
-        split_positions = [np.searchsorted(x_sorted, s, side='right') for s in sorted(splits)]
+        split_positions = [np.searchsorted(x_sorted, s, side="right") for s in sorted(splits)]
         split_positions = [0] + split_positions + [len(x_sorted)]
 
         max_ks = 0
@@ -302,11 +295,7 @@ class BestKSBinning(BaseBinning):
 
         return max_ks
 
-    def _best_ks_categorical(
-        self,
-        X: pd.Series,
-        y: pd.Series
-    ) -> List[float]:
+    def _best_ks_categorical(self, X: pd.Series, y: pd.Series) -> List[float]:
         """对类别型变量进行Best KS分箱 (优化版本).
 
         :param X: 特征数据
@@ -314,30 +303,25 @@ class BestKSBinning(BaseBinning):
         :return: 分割点列表
         """
         # 使用向量化操作计算类别统计
-        df = pd.DataFrame({'X': X, 'y': y})
-        category_stats = df.groupby('X')['y'].agg(['mean', 'count']).reset_index()
-        category_stats.columns = ['category', 'bad_rate', 'count']
+        df = pd.DataFrame({"X": X, "y": y})
+        category_stats = df.groupby("X")["y"].agg(["mean", "count"]).reset_index()
+        category_stats.columns = ["category", "bad_rate", "count"]
 
         # 过滤掉样本数过少的类别
         min_samples = self._get_min_samples(len(X))
-        category_stats = category_stats[category_stats['count'] >= min_samples]
+        category_stats = category_stats[category_stats["count"] >= min_samples]
 
         if len(category_stats) <= self.max_n_bins:
             return []
 
         # 按坏样本率排序
-        category_stats = category_stats.sort_values('bad_rate')
+        category_stats = category_stats.sort_values("bad_rate")
 
         # 返回编码边界
         n_categories = len(category_stats)
         return [i - 0.5 for i in range(1, min(n_categories, self.max_n_bins))]
 
-    def _calc_ks(
-        self,
-        X: pd.Series,
-        y: pd.Series,
-        splits: List[float]
-    ) -> float:
+    def _calc_ks(self, X: pd.Series, y: pd.Series, splits: List[float]) -> float:
         """计算KS统计量 (兼容旧代码).
 
         :param X: 特征数据
@@ -349,7 +333,7 @@ class BestKSBinning(BaseBinning):
         y_vals = y.values if isinstance(y, pd.Series) else y
 
         # 根据分割点分箱
-        bins = np.searchsorted(splits, x_vals, side='right')
+        bins = np.searchsorted(splits, x_vals, side="right")
 
         # 计算每个箱的统计
         total_good = np.sum(y_vals == 0)
@@ -374,11 +358,7 @@ class BestKSBinning(BaseBinning):
 
         return np.max(ks_values)
 
-    def _assign_bins(
-        self,
-        X: pd.Series,
-        feature: str
-    ) -> np.ndarray:
+    def _assign_bins(self, X: pd.Series, feature: str) -> np.ndarray:
         """为数据分配分箱索引 (优化版本).
 
         :param X: 特征数据
@@ -387,9 +367,9 @@ class BestKSBinning(BaseBinning):
         """
         x_vals = X.values
 
-        if self.feature_types_[feature] == 'categorical' and feature in self._cat_bins_:
+        if self.feature_types_[feature] == "categorical" and feature in self._cat_bins_:
             return self._assign_categorical_bins(feature, X)
-        if self.feature_types_[feature] == 'categorical':
+        if self.feature_types_[feature] == "categorical":
             # 使用 pd.Categorical 的 codes
             codes = pd.Categorical(X).codes
             return np.where(X.isna(), -1, codes)
@@ -414,22 +394,17 @@ class BestKSBinning(BaseBinning):
                     valid_mask = valid_mask & (x_vals != code)
 
             if valid_mask.any() and len(splits) > 0:
-                bins[valid_mask] = np.searchsorted(
-                    splits, x_vals[valid_mask], side='right'
-                )
+                bins[valid_mask] = np.searchsorted(splits, x_vals[valid_mask], side="right")
 
             return bins
 
     def transform(
-        self,
-        X: Union[pd.DataFrame, np.ndarray],
-        metric: str = 'indices',
-        **kwargs
+        self, X: Union[pd.DataFrame, np.ndarray], metric: str = "indices", **kwargs
     ) -> Union[pd.DataFrame, np.ndarray]:
         """应用分箱转换.
-        
+
         将原始特征值转换为分箱索引、分箱标签或WOE值。
-        
+
         :param X: 待转换数据, DataFrame或数组格式
         :param metric: 转换类型, 可选值:
             - 'indices': 返回分箱索引 (0, 1, 2, ...), 用于后续处理
@@ -437,14 +412,14 @@ class BestKSBinning(BaseBinning):
             - 'woe': 返回WOE值, 用于逻辑回归建模
         :param kwargs: 其他参数
         :return: 转换后的数据, 格式与输入X相同
-        
+
         :example:
         >>> binner = BestKSBinning()
         >>> binner.fit(X_train, y_train)
-        >>> 
+        >>>
         >>> # 获取分箱索引
         >>> X_binned = binner.transform(X_test, metric='indices')
-        >>> 
+        >>>
         >>> # 获取WOE编码 (用于建模)
         >>> X_woe = binner.transform(X_test, metric='woe')
         """
@@ -463,19 +438,16 @@ class BestKSBinning(BaseBinning):
             if feature in self.splits_:
                 bins = self._assign_bins(X[feature], feature)
 
-                if metric == 'indices':
+                if metric == "indices":
                     result[feature] = bins
-                elif metric == 'bins':
+                elif metric == "bins":
                     result[feature] = self._assign_bin_labels(feature, bins)
-                elif metric == 'woe':
+                elif metric == "woe":
                     # 优先使用_woe_maps_（从export/load导入）
-                    if hasattr(self, '_woe_maps_') and feature in self._woe_maps_:
+                    if hasattr(self, "_woe_maps_") and feature in self._woe_maps_:
                         woe_map = self._woe_maps_[feature]
                     elif feature in self.bin_tables_:
-                        woe_map = dict(zip(
-                            range(len(self.bin_tables_[feature])),
-                            self.bin_tables_[feature]['分档WOE值']
-                        ))
+                        woe_map = dict(zip(range(len(self.bin_tables_[feature])), self.bin_tables_[feature]["分档WOE值"]))
                         self._enrich_woe_map(woe_map, self.bin_tables_[feature])
                     else:
                         raise ValueError(f"特征 '{feature}' 没有WOE映射信息")

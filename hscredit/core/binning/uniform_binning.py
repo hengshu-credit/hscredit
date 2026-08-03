@@ -39,7 +39,7 @@ class UniformBinning(BaseBinning):
     >>> binner = UniformBinning(max_n_bins=5)
     >>> binner.fit(X_train, y_train)
     >>> X_binned = binner.transform(X_test)
-    >>> 
+    >>>
     >>> # 使用截断处理异常值
     >>> binner = UniformBinning(max_n_bins=5, left_clip=0.01, right_clip=0.99)
     >>> binner.fit(X_train, y_train)
@@ -76,11 +76,14 @@ class UniformBinning(BaseBinning):
         monotonic: Union[bool, str] = False,
         missing_separate: bool = True,
         special_codes: Optional[List] = None,
+        cat_cutoff: Optional[Union[float, int]] = None,
+        category_order=None,
+        handle_unknown: str = "value",
         left_clip: Optional[float] = None,
         right_clip: Optional[float] = None,
         force_numerical: bool = False,
         random_state: Optional[int] = None,
-        **kwargs
+        **kwargs,
     ):
         super().__init__(
             max_n_bins=max_n_bins,
@@ -91,19 +94,19 @@ class UniformBinning(BaseBinning):
             monotonic=monotonic,
             missing_separate=missing_separate,
             special_codes=special_codes,
+            cat_cutoff=cat_cutoff,
+            category_order=category_order,
+            handle_unknown=handle_unknown,
             random_state=random_state,
-            **kwargs
+            **kwargs,
         )
         self.left_clip = left_clip
         self.right_clip = right_clip
         self.force_numerical = force_numerical
 
     def fit(
-        self,
-        X: Union[pd.DataFrame, np.ndarray],
-        y: Optional[Union[pd.Series, np.ndarray]] = None,
-        **kwargs
-    ) -> 'UniformBinning':
+        self, X: Union[pd.DataFrame, np.ndarray], y: Optional[Union[pd.Series, np.ndarray]] = None, **kwargs
+    ) -> "UniformBinning":
         """拟合等距分箱.
 
         :param X: 训练数据
@@ -120,12 +123,7 @@ class UniformBinning(BaseBinning):
         self._is_fitted = True
         return self
 
-    def _fit_feature(
-        self,
-        feature: str,
-        X: pd.Series,
-        y: pd.Series
-    ) -> None:
+    def _fit_feature(self, feature: str, X: pd.Series, y: pd.Series) -> None:
         """对单个特征进行分箱.
 
         :param feature: 特征名
@@ -134,7 +132,7 @@ class UniformBinning(BaseBinning):
         """
         # 检测特征类型
         if self.force_numerical:
-            feature_type = 'numerical'
+            feature_type = "numerical"
         else:
             feature_type = self._detect_feature_type(X)
         self.feature_types_[feature] = feature_type
@@ -149,7 +147,7 @@ class UniformBinning(BaseBinning):
         valid_mask = ~(missing_mask | special_mask)
         X_valid = X[valid_mask]
 
-        if feature_type == 'categorical':
+        if feature_type == "categorical":
             # 类别型变量：每个类别作为一个箱
             unique_values = X_valid.unique()
             self.splits_[feature] = np.array([])  # 类别型没有数值切分点
@@ -157,9 +155,9 @@ class UniformBinning(BaseBinning):
         else:
             # 数值型变量：等距分箱
             # 转换为数值型，确保正确处理
-            X_numeric = pd.to_numeric(X_valid, errors='coerce')
+            X_numeric = pd.to_numeric(X_valid, errors="coerce")
             X_numeric = X_numeric.dropna()
-            
+
             if len(X_numeric) == 0:
                 # 没有有效数值数据
                 self.splits_[feature] = np.array([])
@@ -168,26 +166,26 @@ class UniformBinning(BaseBinning):
                 # 应用截断（如果指定）
                 min_val = X_numeric.min()
                 max_val = X_numeric.max()
-                
+
                 # 保存原始边界用于后续处理
                 clip_lower = None
                 clip_upper = None
-                
+
                 if self.left_clip is not None and 0 <= self.left_clip < 1:
                     clip_lower = X_numeric.quantile(self.left_clip)
                     min_val = clip_lower
-                
+
                 if self.right_clip is not None and 0 < self.right_clip <= 1:
                     clip_upper = X_numeric.quantile(self.right_clip)
                     max_val = clip_upper
-                
+
                 # 保存截断边界
-                self.clip_bounds_ = getattr(self, 'clip_bounds_', {})
+                self.clip_bounds_ = getattr(self, "clip_bounds_", {})
                 self.clip_bounds_[feature] = (clip_lower, clip_upper)
-                
+
                 # 计算切分点
                 n_bins = max(self.min_n_bins, min(self.max_n_bins, 10))
-                
+
                 # 处理边界相同的情况（所有值相等）
                 if max_val == min_val:
                     self.splits_[feature] = np.array([])
@@ -211,29 +209,25 @@ class UniformBinning(BaseBinning):
         bin_table = self._compute_bin_stats(feature, X, y, bins)
         self.bin_tables_[feature] = bin_table
 
-    def _assign_bins(
-        self,
-        X: pd.Series,
-        feature: str
-    ) -> np.ndarray:
+    def _assign_bins(self, X: pd.Series, feature: str) -> np.ndarray:
         """为数据分配分箱索引.
 
         :param X: 特征数据
         :param feature: 特征名
         :return: 分箱索引数组
         """
-        if self.feature_types_[feature] == 'categorical' and feature in self._cat_bins_:
+        if self.feature_types_[feature] == "categorical" and feature in self._cat_bins_:
             return self._assign_categorical_bins(feature, X)
-        if self.feature_types_[feature] == 'categorical':
+        if self.feature_types_[feature] == "categorical":
             # 类别型：使用类别编码
             return pd.Categorical(X).codes
         else:
             # 数值型：使用切分点
             splits = self.splits_[feature]
-            
+
             # 获取截断边界
             clip_lower, clip_upper = None, None
-            if hasattr(self, 'clip_bounds_') and feature in self.clip_bounds_:
+            if hasattr(self, "clip_bounds_") and feature in self.clip_bounds_:
                 clip_lower, clip_upper = self.clip_bounds_[feature]
 
             # 处理缺失值和特殊值
@@ -251,32 +245,29 @@ class UniformBinning(BaseBinning):
                     except (ValueError, TypeError):
                         # 无法转换为数值，使用哈希分配
                         val_numeric = hash(val) % (2**31)
-                    
+
                     # 应用截断
                     if clip_lower is not None and val_numeric < clip_lower:
                         val_numeric = clip_lower
                     if clip_upper is not None and val_numeric > clip_upper:
                         val_numeric = clip_upper
-                    
+
                     # 找到对应的分箱
                     if len(splits) == 0:
                         bin_idx = 0
                     else:
-                        bin_idx = np.searchsorted(splits, val_numeric, side='right')
+                        bin_idx = np.searchsorted(splits, val_numeric, side="right")
                     bins[i] = bin_idx
 
             return bins
 
     def transform(
-        self,
-        X: Union[pd.DataFrame, np.ndarray],
-        metric: str = 'indices',
-        **kwargs
+        self, X: Union[pd.DataFrame, np.ndarray], metric: str = "indices", **kwargs
     ) -> Union[pd.DataFrame, np.ndarray]:
         """应用分箱转换.
-        
+
         将原始特征值转换为分箱索引、分箱标签或WOE值。
-        
+
         :param X: 待转换数据, DataFrame或数组格式
         :param metric: 转换类型, 可选值:
             - 'indices': 返回分箱索引 (0, 1, 2, ...), 用于后续处理
@@ -284,14 +275,14 @@ class UniformBinning(BaseBinning):
             - 'woe': 返回WOE值, 用于逻辑回归建模
         :param kwargs: 其他参数
         :return: 转换后的数据, 格式与输入X相同
-        
+
         :example:
         >>> binner = UniformBinning()
         >>> binner.fit(X_train, y_train)
-        >>> 
+        >>>
         >>> # 获取分箱索引
         >>> X_binned = binner.transform(X_test, metric='indices')
-        >>> 
+        >>>
         >>> # 获取WOE编码 (用于建模)
         >>> X_woe = binner.transform(X_test, metric='woe')
         """
@@ -311,20 +302,20 @@ class UniformBinning(BaseBinning):
             if feature in self.splits_:
                 bins = self._assign_bins(X[feature], feature)
 
-                if metric == 'indices':
+                if metric == "indices":
                     result[feature] = bins
-                elif metric == 'bins':
+                elif metric == "bins":
                     result[feature] = self._assign_bin_labels(feature, bins)
-                elif metric == 'woe':
+                elif metric == "woe":
                     # 转换为WOE值，优先使用_woe_maps_（从export/load导入）
-                    if hasattr(self, '_woe_maps_') and feature in self._woe_maps_:
+                    if hasattr(self, "_woe_maps_") and feature in self._woe_maps_:
                         woe_map = self._woe_maps_[feature]
                     elif feature in self.bin_tables_:
                         bin_table = self.bin_tables_[feature]
                         woe_map = {}
                         for idx, row in bin_table.iterrows():
                             bin_idx = idx
-                            woe_map[bin_idx] = row['分档WOE值']
+                            woe_map[bin_idx] = row["分档WOE值"]
                         self._enrich_woe_map(woe_map, bin_table)
                     else:
                         raise ValueError(f"特征 '{feature}' 没有WOE映射信息")

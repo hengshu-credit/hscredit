@@ -77,7 +77,7 @@ class ChiMergeBinning(BaseBinning):
 
     def __init__(
         self,
-        target: str = 'target',
+        target: str = "target",
         max_n_bins: int = 10,
         min_n_bins: int = 2,
         min_chi2_threshold: Optional[float] = None,
@@ -89,8 +89,9 @@ class ChiMergeBinning(BaseBinning):
         monotonic: Union[bool, str] = False,
         special_codes: Optional[List] = None,
         missing_separate: bool = True,
+        cat_cutoff: Optional[Union[float, int]] = None,
         category_order=None,
-        handle_unknown: str = 'value',
+        handle_unknown: str = "value",
         random_state: Optional[int] = None,
         verbose: Union[bool, int] = False,
         decimal: int = 4,
@@ -105,23 +106,22 @@ class ChiMergeBinning(BaseBinning):
             monotonic=monotonic,
             special_codes=special_codes,
             missing_separate=missing_separate,
+            cat_cutoff=cat_cutoff,
             category_order=category_order,
             handle_unknown=handle_unknown,
             random_state=random_state,
             verbose=verbose,
             decimal=decimal,
         )
+        self.min_chi2 = min_chi2
         if min_chi2 is not None:
             raise ValueError("min_chi2 参数已移除，请使用 min_chi2_threshold")
         self.min_chi2_threshold = min_chi2_threshold
         self.significance_level = significance_level
 
     def fit(
-        self,
-        X: Union[pd.DataFrame, np.ndarray],
-        y: Optional[Union[pd.Series, np.ndarray]] = None,
-        **kwargs
-    ) -> 'ChiMergeBinning':
+        self, X: Union[pd.DataFrame, np.ndarray], y: Optional[Union[pd.Series, np.ndarray]] = None, **kwargs
+    ) -> "ChiMergeBinning":
         """拟合卡方分箱。
 
         对每个特征执行 ChiMerge 合并，得到切分点与分箱统计表。支持 sklearn 风格
@@ -143,9 +143,7 @@ class ChiMergeBinning(BaseBinning):
         # 确定卡方阈值
         if self.min_chi2_threshold is None:
             # 自由度为1，显著性水平为significance_level的卡方临界值
-            self.min_chi2_threshold = chi2.ppf(
-                1 - self.significance_level, df=1
-            )
+            self.min_chi2_threshold = chi2.ppf(1 - self.significance_level, df=1)
 
         # 对每个特征进行分箱
         def _fit_one(feature):
@@ -156,7 +154,7 @@ class ChiMergeBinning(BaseBinning):
             feature_type = self._detect_feature_type(X[feature])
             self.feature_types_[feature] = feature_type
 
-            if feature_type == 'categorical':
+            if feature_type == "categorical":
                 # 类别型特征
                 splits = self._fit_categorical(X[feature], y)
                 self.splits_[feature] = splits
@@ -168,9 +166,7 @@ class ChiMergeBinning(BaseBinning):
 
             # 计算分箱统计信息
             bins = self._apply_bins(X[feature], splits)
-            self.bin_tables_[feature] = self._compute_bin_stats(
-                feature, X[feature], y, bins
-            )
+            self.bin_tables_[feature] = self._compute_bin_stats(feature, X[feature], y, bins)
 
         self._fit_features(X.columns, _fit_one)
 
@@ -179,11 +175,7 @@ class ChiMergeBinning(BaseBinning):
         self._is_fitted = True
         return self
 
-    def _fit_numerical(
-        self,
-        x: pd.Series,
-        y: pd.Series
-    ) -> np.ndarray:
+    def _fit_numerical(self, x: pd.Series, y: pd.Series) -> np.ndarray:
         """对数值型特征进行卡方分箱 (优化版本).
 
         :param x: 特征数据
@@ -235,12 +227,7 @@ class ChiMergeBinning(BaseBinning):
 
         return splits
 
-    def _chi_merge(
-        self,
-        x: pd.Series,
-        y: pd.Series,
-        splits: np.ndarray
-    ) -> np.ndarray:
+    def _chi_merge(self, x: pd.Series, y: pd.Series, splits: np.ndarray) -> np.ndarray:
         """执行卡方合并算法 (优化版本).
 
         使用向量化操作和增量更新提高性能。
@@ -261,7 +248,7 @@ class ChiMergeBinning(BaseBinning):
         y_vals = y.values
 
         # 预计算每个样本的分箱索引
-        bins = np.searchsorted(splits, x_vals, side='right')
+        bins = np.searchsorted(splits, x_vals, side="right")
 
         # 构建分箱统计信息 (good_count, bad_count)
         n_bins = len(splits) + 1
@@ -323,10 +310,7 @@ class ChiMergeBinning(BaseBinning):
 
         return splits
 
-    def _compute_chi2_vectorized(
-        self,
-        bin_stats: np.ndarray
-    ) -> np.ndarray:
+    def _compute_chi2_vectorized(self, bin_stats: np.ndarray) -> np.ndarray:
         """向量化计算所有相邻箱的卡方值.
 
         :param bin_stats: 分箱统计数组，shape (n_bins, 2)，列分别为 good_count, bad_count
@@ -401,11 +385,7 @@ class ChiMergeBinning(BaseBinning):
 
         return chi2_vals
 
-    def _compute_chi2(
-        self,
-        y1: pd.Series,
-        y2: pd.Series
-    ) -> float:
+    def _compute_chi2(self, y1: pd.Series, y2: pd.Series) -> float:
         """计算两个箱之间的卡方值 (兼容旧代码).
 
         :param y1: 第一个箱的目标变量
@@ -442,12 +422,7 @@ class ChiMergeBinning(BaseBinning):
 
         return chi2_val
 
-    def _apply_monotonic_constraint(
-        self,
-        x: pd.Series,
-        y: pd.Series,
-        splits: np.ndarray
-    ) -> np.ndarray:
+    def _apply_monotonic_constraint(self, x: pd.Series, y: pd.Series, splits: np.ndarray) -> np.ndarray:
         """应用单调性约束.
 
         :param x: 特征数据
@@ -460,37 +435,22 @@ class ChiMergeBinning(BaseBinning):
 
         bins = pd.cut(x, bins=[-np.inf] + splits.tolist() + [np.inf], labels=False)
 
-        bin_stats = pd.DataFrame({
-            'bin': bins,
-            'target': y
-        }).groupby('bin')['target'].mean()
-        
+        bin_stats = pd.DataFrame({"bin": bins, "target": y}).groupby("bin")["target"].mean()
+
         # 确保所有分箱都在bin_stats中
         bin_stats = self._ensure_all_bins_in_series(bin_stats, len(splits) + 1)
 
-        is_monotonic_increasing = all(
-            bin_stats.iloc[i] <= bin_stats.iloc[i + 1]
-            for i in range(len(bin_stats) - 1)
-        )
-        is_monotonic_decreasing = all(
-            bin_stats.iloc[i] >= bin_stats.iloc[i + 1]
-            for i in range(len(bin_stats) - 1)
-        )
+        is_monotonic_increasing = all(bin_stats.iloc[i] <= bin_stats.iloc[i + 1] for i in range(len(bin_stats) - 1))
+        is_monotonic_decreasing = all(bin_stats.iloc[i] >= bin_stats.iloc[i + 1] for i in range(len(bin_stats) - 1))
 
-        if self.monotonic == 'ascending' and not is_monotonic_increasing:
+        if self.monotonic == "ascending" and not is_monotonic_increasing:
             splits = self._merge_for_monotonicity(x, y, splits, increasing=True)
-        elif self.monotonic == 'descending' and not is_monotonic_decreasing:
+        elif self.monotonic == "descending" and not is_monotonic_decreasing:
             splits = self._merge_for_monotonicity(x, y, splits, increasing=False)
-        elif self.monotonic is True or self.monotonic == 'auto':
+        elif self.monotonic is True or self.monotonic == "auto":
             if not is_monotonic_increasing and not is_monotonic_decreasing:
-                inc_violations = sum(
-                    1 for i in range(len(bin_stats) - 1)
-                    if bin_stats.iloc[i] > bin_stats.iloc[i + 1]
-                )
-                dec_violations = sum(
-                    1 for i in range(len(bin_stats) - 1)
-                    if bin_stats.iloc[i] < bin_stats.iloc[i + 1]
-                )
+                inc_violations = sum(1 for i in range(len(bin_stats) - 1) if bin_stats.iloc[i] > bin_stats.iloc[i + 1])
+                dec_violations = sum(1 for i in range(len(bin_stats) - 1) if bin_stats.iloc[i] < bin_stats.iloc[i + 1])
 
                 if inc_violations <= dec_violations:
                     splits = self._merge_for_monotonicity(x, y, splits, increasing=True)
@@ -499,13 +459,7 @@ class ChiMergeBinning(BaseBinning):
 
         return splits
 
-    def _merge_for_monotonicity(
-        self,
-        x: pd.Series,
-        y: pd.Series,
-        splits: np.ndarray,
-        increasing: bool
-    ) -> np.ndarray:
+    def _merge_for_monotonicity(self, x: pd.Series, y: pd.Series, splits: np.ndarray, increasing: bool) -> np.ndarray:
         """合并箱以满足单调性约束.
 
         :param x: 特征数据
@@ -521,11 +475,8 @@ class ChiMergeBinning(BaseBinning):
         for _ in range(max_iter):
             bins = pd.cut(x, bins=[-np.inf] + splits.tolist() + [np.inf], labels=False)
 
-            bin_stats = pd.DataFrame({
-                'bin': bins,
-                'target': y
-            }).groupby('bin')['target'].mean()
-            
+            bin_stats = pd.DataFrame({"bin": bins, "target": y}).groupby("bin")["target"].mean()
+
             # 确保所有分箱都在bin_stats中
             bin_stats = self._ensure_all_bins_in_series(bin_stats, len(splits) + 1)
 
@@ -551,11 +502,7 @@ class ChiMergeBinning(BaseBinning):
 
         return splits
 
-    def _fit_categorical(
-        self,
-        x: pd.Series,
-        y: pd.Series
-    ) -> np.ndarray:
+    def _fit_categorical(self, x: pd.Series, y: pd.Series) -> np.ndarray:
         """对类别型特征进行分箱.
 
         :param x: 特征数据
@@ -573,26 +520,20 @@ class ChiMergeBinning(BaseBinning):
         y_valid = y[mask]
 
         # 计算每个类别的坏样本率
-        cat_stats = pd.DataFrame({
-            'category': x_valid,
-            'target': y_valid
-        }).groupby('category')['target'].agg(['mean', 'count'])
+        cat_stats = (
+            pd.DataFrame({"category": x_valid, "target": y_valid}).groupby("category")["target"].agg(["mean", "count"])
+        )
 
         # 过滤掉样本数过少的类别
         min_samples = self._get_min_samples(len(x_valid))
-        cat_stats = cat_stats[cat_stats['count'] >= min_samples]
+        cat_stats = cat_stats[cat_stats["count"] >= min_samples]
 
         # 按坏样本率排序
-        cat_stats = cat_stats.sort_values('mean')
+        cat_stats = cat_stats.sort_values("mean")
 
         return cat_stats.index.tolist()
 
-    def _adjust_bins(
-        self,
-        x: pd.Series,
-        y: pd.Series,
-        splits: np.ndarray
-    ) -> np.ndarray:
+    def _adjust_bins(self, x: pd.Series, y: pd.Series, splits: np.ndarray) -> np.ndarray:
         """根据约束条件调整分箱 (优化版本).
 
         :param x: 特征数据
@@ -609,7 +550,7 @@ class ChiMergeBinning(BaseBinning):
         max_iter = 20
         for _ in range(max_iter):
             # 使用 numpy 的 searchsorted 替代 pd.cut
-            bins = np.searchsorted(splits, x_vals, side='right')
+            bins = np.searchsorted(splits, x_vals, side="right")
 
             # 使用 numpy 的 bincount 计算每箱样本数
             n_bins = len(splits) + 1
@@ -654,13 +595,9 @@ class ChiMergeBinning(BaseBinning):
 
         return splits
 
-    def _ensure_all_bins_in_series(
-        self,
-        bin_stats: pd.Series,
-        n_bins: int
-    ) -> pd.Series:
+    def _ensure_all_bins_in_series(self, bin_stats: pd.Series, n_bins: int) -> pd.Series:
         """确保bin_stats包含所有分箱（即使某些分箱为空）.
-        
+
         :param bin_stats: 分箱统计Series (索引为bin标签)
         :param n_bins: 分箱数量
         :return: 补全后的分箱统计Series
@@ -669,7 +606,7 @@ class ChiMergeBinning(BaseBinning):
         for bin_idx in expected_bins:
             if bin_idx not in bin_stats.index:
                 bin_stats[bin_idx] = 0.0
-        
+
         return bin_stats.sort_index()
 
     def _get_min_samples(self, n_total: int) -> int:
@@ -682,11 +619,7 @@ class ChiMergeBinning(BaseBinning):
             return int(n_total * self.min_bin_size)
         return int(self.min_bin_size)
 
-    def _apply_bins(
-        self,
-        x: pd.Series,
-        splits: Union[np.ndarray, List]
-    ) -> np.ndarray:
+    def _apply_bins(self, x: pd.Series, splits: Union[np.ndarray, List]) -> np.ndarray:
         """应用分箱.
 
         :param x: 特征数据
@@ -694,7 +627,7 @@ class ChiMergeBinning(BaseBinning):
         :return: 分箱索引
         """
         feature = x.name
-        if feature in self._cat_bins_ and self.feature_types_.get(feature) == 'categorical':
+        if feature in self._cat_bins_ and self.feature_types_.get(feature) == "categorical":
             return self._assign_categorical_bins(feature, x)
         if isinstance(splits, list):
             bins = np.zeros(len(x), dtype=int)
@@ -725,15 +658,12 @@ class ChiMergeBinning(BaseBinning):
             return bins
 
     def transform(
-        self,
-        X: Union[pd.DataFrame, np.ndarray],
-        metric: str = 'indices',
-        **kwargs
+        self, X: Union[pd.DataFrame, np.ndarray], metric: str = "indices", **kwargs
     ) -> Union[pd.DataFrame, np.ndarray]:
         """应用分箱转换.
-        
+
         将原始特征值转换为分箱索引、分箱标签或WOE值。
-        
+
         :param X: 待转换数据, DataFrame或数组格式
         :param metric: 转换类型, 可选值:
             - 'indices': 返回分箱索引 (0, 1, 2, ...), 用于后续处理
@@ -741,14 +671,14 @@ class ChiMergeBinning(BaseBinning):
             - 'woe': 返回WOE值, 用于逻辑回归建模
         :param kwargs: 其他参数
         :return: 转换后的数据, 格式与输入X相同
-        
+
         :example:
         >>> binner = ChiMergeBinning()
         >>> binner.fit(X_train, y_train)
-        >>> 
+        >>>
         >>> # 获取分箱索引
         >>> X_binned = binner.transform(X_test, metric='indices')
-        >>> 
+        >>>
         >>> # 获取WOE编码 (用于建模)
         >>> X_woe = binner.transform(X_test, metric='woe')
         """
@@ -758,7 +688,7 @@ class ChiMergeBinning(BaseBinning):
         if not isinstance(X, pd.DataFrame):
             if isinstance(X, np.ndarray):
                 if X.ndim == 1:
-                    X = pd.DataFrame(X, columns=['feature'])
+                    X = pd.DataFrame(X, columns=["feature"])
                 else:
                     X = pd.DataFrame(X)
             else:
@@ -774,17 +704,17 @@ class ChiMergeBinning(BaseBinning):
             splits = self.splits_[feature]
             bins = self._apply_bins(X[feature], splits)
 
-            if metric == 'indices':
+            if metric == "indices":
                 result[feature] = bins
-            elif metric == 'bins':
+            elif metric == "bins":
                 result[feature] = self._assign_bin_labels(feature, bins)
-            elif metric == 'woe':
+            elif metric == "woe":
                 # 优先使用_woe_maps_（从export/load导入）
-                if hasattr(self, '_woe_maps_') and feature in self._woe_maps_:
+                if hasattr(self, "_woe_maps_") and feature in self._woe_maps_:
                     woe_map = self._woe_maps_[feature]
                 elif feature in self.bin_tables_:
                     bin_table = self.bin_tables_[feature]
-                    woe_map = dict(zip(range(len(bin_table)), bin_table['分档WOE值'].values))
+                    woe_map = dict(zip(range(len(bin_table)), bin_table["分档WOE值"].values))
                     self._enrich_woe_map(woe_map, bin_table)
                 else:
                     raise ValueError(f"特征 '{feature}' 没有WOE映射信息")
@@ -795,7 +725,7 @@ class ChiMergeBinning(BaseBinning):
         return result
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     # 测试代码
     np.random.seed(42)
     n_samples = 1000
@@ -806,43 +736,35 @@ if __name__ == '__main__':
     y_prob = 1 / (1 + np.exp(-(x1 * 0.5 + x2 * 0.02 - 2)))
     y = pd.Series(np.random.binomial(1, y_prob, n_samples))
 
-    X = pd.DataFrame({
-        'feature1': x1,
-        'feature2': x2,
-        'feature3': np.random.choice(['A', 'B', 'C', 'D'], n_samples)
-    })
+    X = pd.DataFrame({"feature1": x1, "feature2": x2, "feature3": np.random.choice(["A", "B", "C", "D"], n_samples)})
 
     # 添加一些缺失值
-    X.loc[np.random.choice(n_samples, 50, replace=False), 'feature1'] = np.nan
+    X.loc[np.random.choice(n_samples, 50, replace=False), "feature1"] = np.nan
 
     print("=" * 50)
     print("卡方分箱测试 (ChiMerge)")
     print("=" * 50)
 
     # 测试卡方分箱
-    binner = ChiMergeBinning(
-        max_n_bins=5,
-        significance_level=0.05,
-        verbose=True
-    )
+    binner = ChiMergeBinning(max_n_bins=5, significance_level=0.05, verbose=True)
     binner.fit(X, y)
 
     print("\n分箱统计表 (feature1):")
-    print(binner.get_bin_table('feature1'))
+    print(binner.get_bin_table("feature1"))
 
     print("\n分箱统计表 (feature2):")
-    print(binner.get_bin_table('feature2'))
+    print(binner.get_bin_table("feature2"))
 
     print("\n分箱统计表 (feature3):")
-    print(binner.get_bin_table('feature3'))
+    print(binner.get_bin_table("feature3"))
 
     # 转换测试
     print("\n转换测试:")
-    X_binned = binner.transform(X, metric='indices')
+    X_binned = binner.transform(X, metric="indices")
     print("\n分箱索引:")
     print(X_binned.head())
 
-    X_woe = binner.transform(X, metric='woe')
+    X_woe = binner.transform(X, metric="woe")
     print("\nWOE值:")
     print(X_woe.head())
 

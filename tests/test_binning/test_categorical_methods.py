@@ -212,3 +212,56 @@ def test_optimal_binning_forwards_explicit_order_to_every_method(method):
     flattened = [category for group in binner.export_rules()["category"] for category in group]
 
     assert flattened == order
+
+
+@pytest.mark.parametrize("method", METHOD_NAMES)
+def test_optimal_binning_forwards_category_detection_and_missing_policy(method):
+    """防止统一入口只对部分 method 传递 cat_cutoff 或 missing_separate。"""
+    X, y = _make_category_data()
+    encoded_order = [0, 1, 2, 3, 4, 5]
+    encoded = X.assign(category=X["category"].map(dict(zip(["A", "B", "C", "D", "E", "F"], encoded_order))))
+    kwargs = {
+        "method": method,
+        "max_n_bins": 3,
+        "min_n_bins": 2,
+        "min_bin_size": 0.01,
+        "random_state": 7,
+        "cat_cutoff": 10,
+        "missing_separate": False,
+        "category_order": {"category": encoded_order},
+        "lift_refine": False,
+    }
+    if method == "genetic":
+        kwargs.update(population_size=12, generations=4)
+    elif method == "or_tools":
+        kwargs.update(or_time_limit=2, n_prebins=8, max_candidates=20)
+    elif method == "cp_sat":
+        kwargs.update(cp_sat_time_limit=2, cp_sat_n_prebins=8, max_candidates=20)
+    elif method == "kernel_density":
+        kwargs.update(n_grid_points=128)
+    elif method == "smooth":
+        kwargs.update(n_prebins=12)
+    elif method == "best_lift":
+        kwargs.update(n_prebins=12, max_bin_size=None)
+
+    binner = OptimalBinning(**kwargs).fit(encoded, y)
+
+    assert binner.feature_types_["category"] == "categorical"
+    assert binner._binner.cat_cutoff == 10
+    assert binner._binner.missing_separate is False
+
+
+@pytest.mark.parametrize("binner_cls", DIRECT_BINNER_CLASSES, ids=lambda cls: cls.__name__)
+def test_direct_binner_exposes_all_common_category_parameters(binner_cls):
+    """所有直接分箱器都应通过 sklearn get_params 暴露公共类别参数。"""
+    params = binner_cls().get_params(deep=False)
+
+    assert {
+        "cat_cutoff",
+        "category_order",
+        "handle_unknown",
+        "missing_separate",
+        "max_bin_size",
+        "min_bad_rate",
+        "monotonic",
+    }.issubset(params)

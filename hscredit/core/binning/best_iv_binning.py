@@ -68,7 +68,7 @@ class BestIVBinning(BaseBinning):
 
     def __init__(
         self,
-        target: str = 'target',
+        target: str = "target",
         max_n_bins: int = 5,
         min_n_bins: int = 2,
         min_bin_size: Union[float, int] = 0.01,
@@ -77,8 +77,11 @@ class BestIVBinning(BaseBinning):
         monotonic: Union[bool, str] = False,
         missing_separate: bool = True,
         special_codes: Optional[List] = None,
+        cat_cutoff: Optional[Union[float, int]] = None,
+        category_order=None,
+        handle_unknown: str = "value",
         random_state: Optional[int] = None,
-        **kwargs
+        **kwargs,
     ):
         super().__init__(
             target=target,
@@ -90,16 +93,16 @@ class BestIVBinning(BaseBinning):
             monotonic=monotonic,
             missing_separate=missing_separate,
             special_codes=special_codes,
+            cat_cutoff=cat_cutoff,
+            category_order=category_order,
+            handle_unknown=handle_unknown,
             random_state=random_state,
-            **kwargs
+            **kwargs,
         )
 
     def fit(
-        self,
-        X: Union[pd.DataFrame, np.ndarray],
-        y: Optional[Union[pd.Series, np.ndarray]] = None,
-        **kwargs
-    ) -> 'BestIVBinning':
+        self, X: Union[pd.DataFrame, np.ndarray], y: Optional[Union[pd.Series, np.ndarray]] = None, **kwargs
+    ) -> "BestIVBinning":
         """拟合 Best IV 分箱。
 
         对每个特征预分割为细箱后，在单调性约束下贪心合并以最大化 IV，得到切分点与分箱
@@ -122,12 +125,7 @@ class BestIVBinning(BaseBinning):
         self._is_fitted = True
         return self
 
-    def _fit_feature(
-        self,
-        feature: str,
-        X: pd.Series,
-        y: pd.Series
-    ) -> None:
+    def _fit_feature(self, feature: str, X: pd.Series, y: pd.Series) -> None:
         """对单个特征进行分箱.
 
         :param feature: 特征名
@@ -149,7 +147,7 @@ class BestIVBinning(BaseBinning):
         X_valid = X[valid_mask]
         y_valid = y[valid_mask]
 
-        if feature_type == 'categorical':
+        if feature_type == "categorical":
             # 类别型变量：按IV排序后分箱
             splits = self._best_iv_categorical(X_valid, y_valid)
             self.splits_[feature] = np.array(splits)
@@ -169,11 +167,7 @@ class BestIVBinning(BaseBinning):
         bin_table = self._compute_bin_stats(feature, X, y, bins)
         self.bin_tables_[feature] = bin_table
 
-    def _best_iv_numerical(
-        self,
-        X: pd.Series,
-        y: pd.Series
-    ) -> List[float]:
+    def _best_iv_numerical(self, X: pd.Series, y: pd.Series) -> List[float]:
         """对数值型变量进行Best IV分箱 (优化版本).
 
         使用排序后数据的累积统计信息快速计算IV值。
@@ -214,7 +208,7 @@ class BestIVBinning(BaseBinning):
         # 计算总体统计
         total_good = np.sum(y_vals == 0)
         total_bad = np.sum(y_vals == 1)
-        n_total_samples = int(getattr(self, '_n_total_samples', len(x_vals)))
+        n_total_samples = int(getattr(self, "_n_total_samples", len(x_vals)))
 
         if total_good == 0 or total_bad == 0:
             return []
@@ -226,9 +220,16 @@ class BestIVBinning(BaseBinning):
         # 使用贪心算法选择最优分割点
         selected_splits = []
         enforce_monotonic = self.monotonic in [
-            True, 'auto', 'auto_asc_desc', 'auto_heuristic',
-            'ascending', 'descending', 'peak', 'valley',
-            'peak_heuristic', 'valley_heuristic'
+            True,
+            "auto",
+            "auto_asc_desc",
+            "auto_heuristic",
+            "ascending",
+            "descending",
+            "peak",
+            "valley",
+            "peak_heuristic",
+            "valley_heuristic",
         ]
 
         while len(selected_splits) < self.max_n_bins - 1 and len(candidates) > 0:
@@ -240,9 +241,14 @@ class BestIVBinning(BaseBinning):
             for i, candidate in enumerate(candidates):
                 test_splits = sorted(selected_splits + [candidate])
                 iv = self._calc_iv_fast(
-                    x_sorted, y_sorted, cum_good, cum_bad,
-                    total_good, total_bad, test_splits,
-                    n_total_samples=n_total_samples
+                    x_sorted,
+                    y_sorted,
+                    cum_good,
+                    cum_bad,
+                    total_good,
+                    total_bad,
+                    test_splits,
+                    n_total_samples=n_total_samples,
                 )
 
                 if iv < 0:
@@ -250,20 +256,12 @@ class BestIVBinning(BaseBinning):
 
                 violation = 0
                 if enforce_monotonic and len(test_splits) > 0:
-                    bad_rates = self._calc_bad_rates_fast(
-                        x_sorted, cum_good, cum_bad, test_splits
-                    )
-                    target_mode = self._resolve_monotonic_target_mode(
-                        bad_rates, self.monotonic
-                    )
-                    violation = self._count_monotonic_violations(
-                        bad_rates, target_mode
-                    )
+                    bad_rates = self._calc_bad_rates_fast(x_sorted, cum_good, cum_bad, test_splits)
+                    target_mode = self._resolve_monotonic_target_mode(bad_rates, self.monotonic)
+                    violation = self._count_monotonic_violations(bad_rates, target_mode)
 
                 # 优先减少单调违例，其次最大化 IV
-                if (violation < best_violation) or (
-                    violation == best_violation and iv > best_iv + 1e-12
-                ):
+                if (violation < best_violation) or (violation == best_violation and iv > best_iv + 1e-12):
                     best_iv = iv
                     best_violation = violation
                     best_split_idx = i
@@ -271,7 +269,12 @@ class BestIVBinning(BaseBinning):
 
             # 若新增分割点会引入单调违例，且已满足最小分箱数，则停止扩展
             min_splits_required = max(1, self.min_n_bins - 1)
-            if enforce_monotonic and best_split is not None and best_violation > 0 and len(selected_splits) >= min_splits_required:
+            if (
+                enforce_monotonic
+                and best_split is not None
+                and best_violation > 0
+                and len(selected_splits) >= min_splits_required
+            ):
                 break
 
             if best_split is not None:
@@ -291,7 +294,7 @@ class BestIVBinning(BaseBinning):
         total_good: int,
         total_bad: int,
         splits: List[float],
-        n_total_samples: Optional[int] = None
+        n_total_samples: Optional[int] = None,
     ) -> float:
         """快速计算IV值.
 
@@ -310,7 +313,7 @@ class BestIVBinning(BaseBinning):
             return 0.0
 
         # 找到所有分割点的位置
-        split_positions = [np.searchsorted(x_sorted, s, side='right') for s in sorted(splits)]
+        split_positions = [np.searchsorted(x_sorted, s, side="right") for s in sorted(splits)]
         split_positions = [0] + split_positions + [len(x_sorted)]
 
         iv = 0.0
@@ -343,17 +346,13 @@ class BestIVBinning(BaseBinning):
         return iv
 
     def _calc_bad_rates_fast(
-        self,
-        x_sorted: np.ndarray,
-        cum_good: np.ndarray,
-        cum_bad: np.ndarray,
-        splits: List[float]
+        self, x_sorted: np.ndarray, cum_good: np.ndarray, cum_bad: np.ndarray, splits: List[float]
     ) -> np.ndarray:
         """基于累积统计快速计算各箱坏样本率。"""
         if not splits:
             return np.array([], dtype=float)
 
-        split_positions = [np.searchsorted(x_sorted, s, side='right') for s in sorted(splits)]
+        split_positions = [np.searchsorted(x_sorted, s, side="right") for s in sorted(splits)]
         split_positions = [0] + split_positions + [len(x_sorted)]
 
         bad_rates: List[float] = []
@@ -369,11 +368,7 @@ class BestIVBinning(BaseBinning):
 
         return np.asarray(bad_rates, dtype=float)
 
-    def _best_iv_categorical(
-        self,
-        X: pd.Series,
-        y: pd.Series
-    ) -> List[float]:
+    def _best_iv_categorical(self, X: pd.Series, y: pd.Series) -> List[float]:
         """对类别型变量进行Best IV分箱 (优化版本).
 
         :param X: 特征数据
@@ -388,39 +383,32 @@ class BestIVBinning(BaseBinning):
             return []
 
         # 使用向量化操作计算类别统计
-        df = pd.DataFrame({'X': X, 'y': y})
-        category_stats = df.groupby('X')['y'].agg(['sum', 'count']).reset_index()
-        category_stats.columns = ['category', 'bad_count', 'count']
-        category_stats['good_count'] = category_stats['count'] - category_stats['bad_count']
+        df = pd.DataFrame({"X": X, "y": y})
+        category_stats = df.groupby("X")["y"].agg(["sum", "count"]).reset_index()
+        category_stats.columns = ["category", "bad_count", "count"]
+        category_stats["good_count"] = category_stats["count"] - category_stats["bad_count"]
 
         # 计算WOE
         eps = 1e-10
-        category_stats['good_dist'] = category_stats['good_count'] / total_good
-        category_stats['bad_dist'] = category_stats['bad_count'] / total_bad
-        category_stats['woe'] = np.log(
-            (category_stats['bad_dist'] + eps) / (category_stats['good_dist'] + eps)
-        )
+        category_stats["good_dist"] = category_stats["good_count"] / total_good
+        category_stats["bad_dist"] = category_stats["bad_count"] / total_bad
+        category_stats["woe"] = np.log((category_stats["bad_dist"] + eps) / (category_stats["good_dist"] + eps))
 
         # 过滤掉样本数过少的类别
         min_samples = self._get_min_samples(len(X))
-        category_stats = category_stats[category_stats['count'] >= min_samples]
+        category_stats = category_stats[category_stats["count"] >= min_samples]
 
         if len(category_stats) <= self.max_n_bins:
             return []
 
         # 按WOE排序
-        category_stats = category_stats.sort_values('woe')
+        category_stats = category_stats.sort_values("woe")
 
         # 返回编码边界
         n_categories = len(category_stats)
         return [i - 0.5 for i in range(1, min(n_categories, self.max_n_bins))]
 
-    def _calc_iv(
-        self,
-        X: pd.Series,
-        y: pd.Series,
-        splits: List[float]
-    ) -> float:
+    def _calc_iv(self, X: pd.Series, y: pd.Series, splits: List[float]) -> float:
         """计算IV值 (兼容旧代码).
 
         :param X: 特征数据
@@ -432,7 +420,7 @@ class BestIVBinning(BaseBinning):
         y_vals = y.values if isinstance(y, pd.Series) else y
 
         # 根据分割点分箱
-        bins = np.searchsorted(splits, x_vals, side='right')
+        bins = np.searchsorted(splits, x_vals, side="right")
 
         # 计算总体统计
         total_good = np.sum(y_vals == 0)
@@ -451,11 +439,11 @@ class BestIVBinning(BaseBinning):
         # 平滑处理：将0替换为eps
         bin_good_smooth = np.where(bin_good == 0, eps, bin_good)
         bin_bad_smooth = np.where(bin_bad == 0, eps, bin_bad)
-        
+
         # 重新计算平滑后的总数
         total_good_smooth = bin_good_smooth.sum()
         total_bad_smooth = bin_bad_smooth.sum()
-        
+
         # 计算分布（保持归一化）
         good_dist = bin_good_smooth / total_good_smooth
         bad_dist = bin_bad_smooth / total_bad_smooth
@@ -465,11 +453,7 @@ class BestIVBinning(BaseBinning):
 
         return iv
 
-    def _assign_bins(
-        self,
-        X: pd.Series,
-        feature: str
-    ) -> np.ndarray:
+    def _assign_bins(self, X: pd.Series, feature: str) -> np.ndarray:
         """为数据分配分箱索引 (优化版本).
 
         :param X: 特征数据
@@ -478,9 +462,9 @@ class BestIVBinning(BaseBinning):
         """
         x_vals = X.values
 
-        if self.feature_types_[feature] == 'categorical' and feature in self._cat_bins_:
+        if self.feature_types_[feature] == "categorical" and feature in self._cat_bins_:
             return self._assign_categorical_bins(feature, X)
-        if self.feature_types_[feature] == 'categorical':
+        if self.feature_types_[feature] == "categorical":
             codes = pd.Categorical(X).codes
             return np.where(X.isna(), -1, codes)
         else:
@@ -504,22 +488,17 @@ class BestIVBinning(BaseBinning):
                     valid_mask = valid_mask & (x_vals != code)
 
             if valid_mask.any() and len(splits) > 0:
-                bins[valid_mask] = np.searchsorted(
-                    splits, x_vals[valid_mask], side='right'
-                )
+                bins[valid_mask] = np.searchsorted(splits, x_vals[valid_mask], side="right")
 
             return bins
 
     def transform(
-        self,
-        X: Union[pd.DataFrame, np.ndarray],
-        metric: str = 'indices',
-        **kwargs
+        self, X: Union[pd.DataFrame, np.ndarray], metric: str = "indices", **kwargs
     ) -> Union[pd.DataFrame, np.ndarray]:
         """应用分箱转换.
-        
+
         将原始特征值转换为分箱索引、分箱标签或WOE值。
-        
+
         :param X: 待转换数据, DataFrame或数组格式
         :param metric: 转换类型, 可选值:
             - 'indices': 返回分箱索引 (0, 1, 2, ...), 用于后续处理
@@ -527,14 +506,14 @@ class BestIVBinning(BaseBinning):
             - 'woe': 返回WOE值, 用于逻辑回归建模
         :param kwargs: 其他参数
         :return: 转换后的数据, 格式与输入X相同
-        
+
         :example:
         >>> binner = BestIVBinning()
         >>> binner.fit(X_train, y_train)
-        >>> 
+        >>>
         >>> # 获取分箱索引
         >>> X_binned = binner.transform(X_test, metric='indices')
-        >>> 
+        >>>
         >>> # 获取WOE编码 (用于建模)
         >>> X_woe = binner.transform(X_test, metric='woe')
         """
@@ -553,19 +532,16 @@ class BestIVBinning(BaseBinning):
             if feature in self.splits_:
                 bins = self._assign_bins(X[feature], feature)
 
-                if metric == 'indices':
+                if metric == "indices":
                     result[feature] = bins
-                elif metric == 'bins':
+                elif metric == "bins":
                     result[feature] = self._assign_bin_labels(feature, bins)
-                elif metric == 'woe':
+                elif metric == "woe":
                     # 优先使用_woe_maps_（从export/load导入）
-                    if hasattr(self, '_woe_maps_') and feature in self._woe_maps_:
+                    if hasattr(self, "_woe_maps_") and feature in self._woe_maps_:
                         woe_map = self._woe_maps_[feature]
                     elif feature in self.bin_tables_:
-                        woe_map = dict(zip(
-                            range(len(self.bin_tables_[feature])),
-                            self.bin_tables_[feature]['分档WOE值']
-                        ))
+                        woe_map = dict(zip(range(len(self.bin_tables_[feature])), self.bin_tables_[feature]["分档WOE值"]))
                         self._enrich_woe_map(woe_map, self.bin_tables_[feature])
                     else:
                         raise ValueError(f"特征 '{feature}' 没有WOE映射信息")

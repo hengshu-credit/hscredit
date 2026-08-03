@@ -86,11 +86,12 @@ class CartBinning(BaseBinning):
 
     def __init__(
         self,
-        target: str = 'target',
+        target: str = "target",
         max_n_bins: int = 10,
         min_n_bins: int = 2,
         min_bin_size: Union[float, int] = 0.01,
         max_bin_size: Optional[Union[float, int]] = None,
+        min_bad_rate: float = 0.0,
         min_event_rate_diff: float = 0.0,
         max_pvalue: Optional[float] = None,
         max_pvalue_policy: str = "consecutive",
@@ -98,9 +99,12 @@ class CartBinning(BaseBinning):
         class_weight: Optional[Union[str, Dict]] = None,
         special_codes: Optional[List] = None,
         missing_separate: bool = True,
+        cat_cutoff: Optional[Union[float, int]] = None,
+        category_order=None,
+        handle_unknown: str = "value",
         random_state: Optional[int] = None,
         verbose: bool = False,
-        **kwargs
+        **kwargs,
     ):
         super().__init__(
             target=target,
@@ -108,12 +112,16 @@ class CartBinning(BaseBinning):
             min_n_bins=min_n_bins,
             min_bin_size=min_bin_size,
             max_bin_size=max_bin_size,
+            min_bad_rate=min_bad_rate,
             monotonic=monotonic,
             special_codes=special_codes,
             missing_separate=missing_separate,
+            cat_cutoff=cat_cutoff,
+            category_order=category_order,
+            handle_unknown=handle_unknown,
             random_state=random_state,
             verbose=verbose,
-            **kwargs
+            **kwargs,
         )
         self.min_event_rate_diff = min_event_rate_diff
         self.max_pvalue = max_pvalue
@@ -122,11 +130,8 @@ class CartBinning(BaseBinning):
         self.tree_models_ = {}
 
     def fit(
-        self,
-        X: Union[pd.DataFrame, np.ndarray],
-        y: Optional[Union[pd.Series, np.ndarray]] = None,
-        **kwargs
-    ) -> 'CartBinning':
+        self, X: Union[pd.DataFrame, np.ndarray], y: Optional[Union[pd.Series, np.ndarray]] = None, **kwargs
+    ) -> "CartBinning":
         """拟合 CART 分箱.
 
         :param X: 训练数据，shape (n_samples, n_features)
@@ -149,7 +154,7 @@ class CartBinning(BaseBinning):
             feature_type = self._detect_feature_type(X[feature])
             self.feature_types_[feature] = feature_type
 
-            if feature_type == 'categorical':
+            if feature_type == "categorical":
                 # 类别型特征
                 splits = self._fit_categorical(X[feature], y)
                 self.splits_[feature] = splits
@@ -161,9 +166,7 @@ class CartBinning(BaseBinning):
 
             # 计算分箱统计信息
             bins = self._assign_bins(X[feature], feature)
-            self.bin_tables_[feature] = self._compute_bin_stats(
-                feature, X[feature], y, bins
-            )
+            self.bin_tables_[feature] = self._compute_bin_stats(feature, X[feature], y, bins)
 
         self._fit_features(X.columns, _fit_one)
 
@@ -182,19 +185,15 @@ class CartBinning(BaseBinning):
 
         if unique_values == 2:
             return "binary"
-        elif y.dtype in ['int64', 'int32'] and unique_values <= 10:
+        elif y.dtype in ["int64", "int32"] and unique_values <= 10:
             return "multiclass"
-        elif y.dtype in ['float64', 'float32'] and unique_values > 10:
+        elif y.dtype in ["float64", "float32"] and unique_values > 10:
             return "regression"
         else:
             # 默认二分类
             return "binary"
 
-    def _fit_numerical(
-        self,
-        x: pd.Series,
-        y: pd.Series
-    ) -> np.ndarray:
+    def _fit_numerical(self, x: pd.Series, y: pd.Series) -> np.ndarray:
         """对数值型特征进行 CART 分箱.
 
         :param x: 特征数据
@@ -226,22 +225,20 @@ class CartBinning(BaseBinning):
         tree_leaf_nodes = max(self.max_n_bins * 4, 20)
         if self.problem_type_ == "regression":
             tree = DecisionTreeRegressor(
-                max_leaf_nodes=tree_leaf_nodes,
-                min_samples_leaf=min_samples_leaf,
-                random_state=self.random_state
+                max_leaf_nodes=tree_leaf_nodes, min_samples_leaf=min_samples_leaf, random_state=self.random_state
             )
         else:
             tree = DecisionTreeClassifier(
                 max_leaf_nodes=tree_leaf_nodes,
                 min_samples_leaf=min_samples_leaf,
                 class_weight=self.class_weight,
-                random_state=self.random_state
+                random_state=self.random_state,
             )
 
         tree.fit(x_valid, y_valid)
 
         # 保存模型
-        feature_name = x.name if hasattr(x, 'name') else 'feature'
+        feature_name = x.name if hasattr(x, "name") else "feature"
         self.tree_models_[feature_name] = tree
 
         # 提取切分点
@@ -251,33 +248,22 @@ class CartBinning(BaseBinning):
         if len(splits) > 0:
             # 单调性约束
             if self.monotonic:
-                splits = self._apply_monotonic_constraint(
-                    x_valid.flatten(), y_valid, splits
-                )
+                splits = self._apply_monotonic_constraint(x_valid.flatten(), y_valid, splits)
 
             # 最小事件率差异约束
             if self.min_event_rate_diff > 0:
-                splits = self._apply_event_rate_constraint(
-                    x_valid.flatten(), y_valid, splits
-                )
+                splits = self._apply_event_rate_constraint(x_valid.flatten(), y_valid, splits)
 
             # p-value 约束
             if self.max_pvalue is not None:
-                splits = self._apply_pvalue_constraint(
-                    x_valid.flatten(), y_valid, splits
-                )
+                splits = self._apply_pvalue_constraint(x_valid.flatten(), y_valid, splits)
 
             # 样本数约束
-            splits = self._apply_bin_size_constraint(
-                x_valid.flatten(), y_valid, splits
-            )
+            splits = self._apply_bin_size_constraint(x_valid.flatten(), y_valid, splits)
 
         return splits
 
-    def _extract_splits_from_tree(
-        self,
-        tree: Union[DecisionTreeClassifier, DecisionTreeRegressor]
-    ) -> np.ndarray:
+    def _extract_splits_from_tree(self, tree: Union[DecisionTreeClassifier, DecisionTreeRegressor]) -> np.ndarray:
         """从决策树中提取切分点.
 
         参考 optbinning 的实现，提取所有内部节点的 threshold。
@@ -306,11 +292,7 @@ class CartBinning(BaseBinning):
 
         return splits
 
-    def _fit_categorical(
-        self,
-        x: pd.Series,
-        y: pd.Series
-    ) -> List:
+    def _fit_categorical(self, x: pd.Series, y: pd.Series) -> List:
         """对类别型特征进行 CART 分箱.
 
         按坏样本率排序，然后进行分组。
@@ -330,12 +312,12 @@ class CartBinning(BaseBinning):
         y_valid = y[mask]
 
         # 计算每个类别的目标均值（坏样本率或回归目标均值）
-        df = pd.DataFrame({'category': x_valid, 'target': y_valid})
+        df = pd.DataFrame({"category": x_valid, "target": y_valid})
 
         if self.problem_type_ == "regression":
-            cat_stats = df.groupby('category')['target'].agg(['mean', 'count'])
+            cat_stats = df.groupby("category")["target"].agg(["mean", "count"])
         else:
-            cat_stats = df.groupby('category')['target'].agg(['mean', 'count'])
+            cat_stats = df.groupby("category")["target"].agg(["mean", "count"])
 
         # 过滤掉样本数过少的类别
         n_samples = len(x_valid)
@@ -344,36 +326,26 @@ class CartBinning(BaseBinning):
         else:
             min_samples = int(self.min_bin_size)
 
-        cat_stats = cat_stats[cat_stats['count'] >= min_samples]
+        cat_stats = cat_stats[cat_stats["count"] >= min_samples]
 
         if len(cat_stats) <= self.min_n_bins:
             return cat_stats.index.tolist()
 
         # 按目标均值排序
-        cat_stats = cat_stats.sort_values('mean')
+        cat_stats = cat_stats.sort_values("mean")
 
         # 如果类别数超过最大分箱数，需要合并
         if len(cat_stats) > self.max_n_bins:
             # 按目标均值进行分组
             n_groups = self.max_n_bins
-            cat_stats['group'] = pd.qcut(
-                cat_stats['mean'], 
-                q=n_groups, 
-                labels=False, 
-                duplicates='drop'
-            )
+            cat_stats["group"] = pd.qcut(cat_stats["mean"], q=n_groups, labels=False, duplicates="drop")
 
             # 返回排序后的类别列表
             return cat_stats.index.tolist()
 
         return cat_stats.index.tolist()
 
-    def _apply_monotonic_constraint(
-        self,
-        x: np.ndarray,
-        y: np.ndarray,
-        splits: np.ndarray
-    ) -> np.ndarray:
+    def _apply_monotonic_constraint(self, x: np.ndarray, y: np.ndarray, splits: np.ndarray) -> np.ndarray:
         """应用单调性约束.
 
         :param x: 特征数据
@@ -392,31 +364,25 @@ class CartBinning(BaseBinning):
                 break
 
             # 计算每箱的均值
-            bins = np.searchsorted(splits, x, side='right')
+            bins = np.searchsorted(splits, x, side="right")
 
-            df = pd.DataFrame({'bin': bins, 'target': y})
-            bin_means = df.groupby('bin')['target'].mean().values
+            df = pd.DataFrame({"bin": bins, "target": y})
+            bin_means = df.groupby("bin")["target"].mean().values
 
             if len(bin_means) < 2:
                 break
 
             # 检查单调性
-            is_ascending = all(
-                bin_means[i] <= bin_means[i + 1]
-                for i in range(len(bin_means) - 1)
-            )
-            is_descending = all(
-                bin_means[i] >= bin_means[i + 1]
-                for i in range(len(bin_means) - 1)
-            )
+            is_ascending = all(bin_means[i] <= bin_means[i + 1] for i in range(len(bin_means) - 1))
+            is_descending = all(bin_means[i] >= bin_means[i + 1] for i in range(len(bin_means) - 1))
 
             # 确定期望的单调方向
-            if self.monotonic == 'ascending':
+            if self.monotonic == "ascending":
                 target_ascending = True
-            elif self.monotonic == 'descending':
+            elif self.monotonic == "descending":
                 target_ascending = False
-            elif self.monotonic == 'auto_asc_desc':
-                corr = pd.Series(x).corr(pd.Series(y), method='spearman')
+            elif self.monotonic == "auto_asc_desc":
+                corr = pd.Series(x).corr(pd.Series(y), method="spearman")
                 if pd.notna(corr) and abs(corr) >= 0.02:
                     target_ascending = bool(corr > 0)
                 else:
@@ -452,12 +418,7 @@ class CartBinning(BaseBinning):
 
         return np.array(splits)
 
-    def _apply_event_rate_constraint(
-        self,
-        x: np.ndarray,
-        y: np.ndarray,
-        splits: np.ndarray
-    ) -> np.ndarray:
+    def _apply_event_rate_constraint(self, x: np.ndarray, y: np.ndarray, splits: np.ndarray) -> np.ndarray:
         """应用最小事件率差异约束.
 
         :param x: 特征数据
@@ -476,19 +437,19 @@ class CartBinning(BaseBinning):
                 break
 
             # 计算每箱的事件率
-            bins = np.searchsorted(splits, x, side='right')
+            bins = np.searchsorted(splits, x, side="right")
 
-            df = pd.DataFrame({'bin': bins, 'target': y})
-            bin_stats = df.groupby('bin')['target'].agg(['mean', 'count'])
+            df = pd.DataFrame({"bin": bins, "target": y})
+            bin_stats = df.groupby("bin")["target"].agg(["mean", "count"])
 
             if len(bin_stats) < 2:
                 break
 
             # 检查相邻箱的事件率差异
-            rates = bin_stats['mean'].values
-            counts = bin_stats['count'].values
+            rates = bin_stats["mean"].values
+            counts = bin_stats["count"].values
 
-            min_diff = float('inf')
+            min_diff = float("inf")
             merge_idx = -1
 
             for i in range(len(rates) - 1):
@@ -512,12 +473,7 @@ class CartBinning(BaseBinning):
 
         return np.array(splits)
 
-    def _apply_pvalue_constraint(
-        self,
-        x: np.ndarray,
-        y: np.ndarray,
-        splits: np.ndarray
-    ) -> np.ndarray:
+    def _apply_pvalue_constraint(self, x: np.ndarray, y: np.ndarray, splits: np.ndarray) -> np.ndarray:
         """应用 p-value 约束.
 
         使用统计检验确保分箱之间的差异是显著的。
@@ -538,16 +494,16 @@ class CartBinning(BaseBinning):
                 break
 
             # 计算每箱的统计信息
-            bins = np.searchsorted(splits, x, side='right')
+            bins = np.searchsorted(splits, x, side="right")
 
-            df = pd.DataFrame({'bin': bins, 'target': y})
+            df = pd.DataFrame({"bin": bins, "target": y})
 
             if self.problem_type_ == "regression":
                 # 回归问题使用 t 检验
-                bin_groups = df.groupby('bin')['target'].apply(list).values
+                bin_groups = df.groupby("bin")["target"].apply(list).values
             else:
                 # 分类问题使用卡方检验
-                bin_crosstab = pd.crosstab(df['bin'], df['target'])
+                bin_crosstab = pd.crosstab(df["bin"], df["target"])
 
             # 检查相邻箱的显著性
             n_bins = len(np.unique(bins))
@@ -565,9 +521,7 @@ class CartBinning(BaseBinning):
             for i, j in check_pairs:
                 if self.problem_type_ == "regression":
                     if i < len(bin_groups) and j < len(bin_groups):
-                        _, p_value = stats.ttest_ind(
-                            bin_groups[i], bin_groups[j], equal_var=False
-                        )
+                        _, p_value = stats.ttest_ind(bin_groups[i], bin_groups[j], equal_var=False)
                 else:
                     if i < len(bin_crosstab) and j < len(bin_crosstab):
                         # 构造 2x2 列联表
@@ -592,12 +546,7 @@ class CartBinning(BaseBinning):
 
         return np.array(splits)
 
-    def _apply_bin_size_constraint(
-        self,
-        x: np.ndarray,
-        y: np.ndarray,
-        splits: np.ndarray
-    ) -> np.ndarray:
+    def _apply_bin_size_constraint(self, x: np.ndarray, y: np.ndarray, splits: np.ndarray) -> np.ndarray:
         """应用样本数约束.
 
         :param x: 特征数据
@@ -631,7 +580,7 @@ class CartBinning(BaseBinning):
                 break
 
             # 计算每箱的样本数
-            bins = np.searchsorted(splits, x, side='right')
+            bins = np.searchsorted(splits, x, side="right")
             bin_counts = np.bincount(bins, minlength=len(splits) + 1)
 
             # 检查是否有违反约束的箱
@@ -668,11 +617,7 @@ class CartBinning(BaseBinning):
 
         return np.array(splits)
 
-    def _assign_bins(
-        self,
-        X: pd.Series,
-        feature: str
-    ) -> np.ndarray:
+    def _assign_bins(self, X: pd.Series, feature: str) -> np.ndarray:
         """为数据分配分箱索引.
 
         :param X: 特征数据
@@ -681,9 +626,9 @@ class CartBinning(BaseBinning):
         """
         x_vals = X.values
 
-        if self.feature_types_[feature] == 'categorical' and feature in self._cat_bins_:
+        if self.feature_types_[feature] == "categorical" and feature in self._cat_bins_:
             return self._assign_categorical_bins(feature, X)
-        if self.feature_types_[feature] == 'categorical':
+        if self.feature_types_[feature] == "categorical":
             # 类别型特征
             splits = self.splits_[feature]
             if isinstance(splits, list):
@@ -724,22 +669,17 @@ class CartBinning(BaseBinning):
 
             if valid_mask.any() and len(splits) > 0:
                 valid_indices = np.where(valid_mask)[0]
-                bins[valid_indices] = np.searchsorted(
-                    splits, x_vals[valid_indices], side='right'
-                )
+                bins[valid_indices] = np.searchsorted(splits, x_vals[valid_indices], side="right")
 
             return bins
 
     def transform(
-        self,
-        X: Union[pd.DataFrame, np.ndarray],
-        metric: str = 'indices',
-        **kwargs
+        self, X: Union[pd.DataFrame, np.ndarray], metric: str = "indices", **kwargs
     ) -> Union[pd.DataFrame, np.ndarray]:
         """应用分箱转换.
-        
+
         将原始特征值转换为分箱索引、分箱标签或WOE值。
-        
+
         :param X: 待转换数据, DataFrame或数组格式
         :param metric: 转换类型, 可选值:
             - 'indices': 返回分箱索引 (0, 1, 2, ...), 用于后续处理
@@ -747,14 +687,14 @@ class CartBinning(BaseBinning):
             - 'woe': 返回WOE值, 用于逻辑回归建模
         :param kwargs: 其他参数
         :return: 转换后的数据, 格式与输入X相同
-        
+
         :example:
         >>> binner = CARTBinning()
         >>> binner.fit(X_train, y_train)
-        >>> 
+        >>>
         >>> # 获取分箱索引
         >>> X_binned = binner.transform(X_test, metric='indices')
-        >>> 
+        >>>
         >>> # 获取WOE编码 (用于建模)
         >>> X_woe = binner.transform(X_test, metric='woe')
         """
@@ -776,17 +716,17 @@ class CartBinning(BaseBinning):
 
             bins = self._assign_bins(X[feature], feature)
 
-            if metric == 'indices':
+            if metric == "indices":
                 result[feature] = bins
-            elif metric == 'bins':
+            elif metric == "bins":
                 result[feature] = self._assign_bin_labels(feature, bins)
-            elif metric == 'woe':
+            elif metric == "woe":
                 # 优先使用_woe_maps_（从export/load导入）
-                if hasattr(self, '_woe_maps_') and feature in self._woe_maps_:
+                if hasattr(self, "_woe_maps_") and feature in self._woe_maps_:
                     woe_map = self._woe_maps_[feature]
                 elif feature in self.bin_tables_:
                     bin_table = self.bin_tables_[feature]
-                    woe_map = dict(zip(range(len(bin_table)), bin_table['分档WOE值'].values))
+                    woe_map = dict(zip(range(len(bin_table)), bin_table["分档WOE值"].values))
                     self._enrich_woe_map(woe_map, bin_table)
                 else:
                     raise ValueError(f"特征 '{feature}' 没有WOE映射信息")
@@ -797,7 +737,7 @@ class CartBinning(BaseBinning):
         return result
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     # 测试代码
     np.random.seed(42)
     n_samples = 5000
@@ -807,7 +747,7 @@ if __name__ == '__main__':
     bad_rate = 0.05 + 0.004 * x1  # 从5%递增到45%
     y_binary = np.random.binomial(1, bad_rate)
 
-    X = pd.DataFrame({'feature': x1})
+    X = pd.DataFrame({"feature": x1})
     y = pd.Series(y_binary)
 
     print("=" * 60)
@@ -815,19 +755,14 @@ if __name__ == '__main__':
     print("=" * 60)
 
     # 测试 CART 分箱
-    binner = CartBinning(
-        max_n_bins=5,
-        min_bin_size=0.05,
-        monotonic=True,
-        verbose=True
-    )
+    binner = CartBinning(max_n_bins=5, min_bin_size=0.05, monotonic=True, verbose=True)
     binner.fit(X, y)
 
     print("\n分箱统计表:")
-    print(binner.get_bin_table('feature'))
+    print(binner.get_bin_table("feature"))
 
-    print("\n切分点:", binner.splits_['feature'])
-    print("分箱数:", binner.n_bins_['feature'])
+    print("\n切分点:", binner.splits_["feature"])
+    print("分箱数:", binner.n_bins_["feature"])
 
     # 测试 p-value 约束
     print("\n" + "=" * 60)
@@ -835,21 +770,17 @@ if __name__ == '__main__':
     print("=" * 60)
 
     binner2 = CartBinning(
-        max_n_bins=10,
-        min_bin_size=0.01,
-        max_pvalue=0.05,
-        max_pvalue_policy="consecutive",
-        monotonic=True
+        max_n_bins=10, min_bin_size=0.01, max_pvalue=0.05, max_pvalue_policy="consecutive", monotonic=True
     )
     binner2.fit(X, y)
 
     print("\n分箱统计表:")
-    print(binner2.get_bin_table('feature'))
-    print("\n切分点:", binner2.splits_['feature'])
-    print("分箱数:", binner2.n_bins_['feature'])
+    print(binner2.get_bin_table("feature"))
+    print("\n切分点:", binner2.splits_["feature"])
+    print("分箱数:", binner2.n_bins_["feature"])
 
     # 转换测试
     print("\n转换测试:")
-    X_test = pd.DataFrame({'feature': [10, 30, 50, 70, 90, np.nan]})
-    X_binned = binner.transform(X_test, metric='bins')
+    X_test = pd.DataFrame({"feature": [10, 30, 50, 70, 90, np.nan]})
+    X_binned = binner.transform(X_test, metric="bins")
     print(X_binned)

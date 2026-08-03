@@ -70,7 +70,7 @@ class QuantileBinning(BaseBinning):
 
     def __init__(
         self,
-        target: str = 'target',
+        target: str = "target",
         min_n_bins: int = 2,
         max_n_bins: int = 10,
         quantiles: Optional[List[float]] = None,
@@ -81,8 +81,9 @@ class QuantileBinning(BaseBinning):
         monotonic: Union[bool, str] = False,
         special_codes: Optional[List] = None,
         missing_separate: bool = True,
+        cat_cutoff: Optional[Union[float, int]] = None,
         category_order=None,
-        handle_unknown: str = 'value',
+        handle_unknown: str = "value",
         random_state: Optional[int] = None,
         verbose: Union[bool, int] = False,
         decimal: int = 4,
@@ -97,6 +98,7 @@ class QuantileBinning(BaseBinning):
             monotonic=monotonic,
             special_codes=special_codes,
             missing_separate=missing_separate,
+            cat_cutoff=cat_cutoff,
             category_order=category_order,
             handle_unknown=handle_unknown,
             random_state=random_state,
@@ -143,11 +145,8 @@ class QuantileBinning(BaseBinning):
         return quantiles
 
     def fit(
-        self,
-        X: Union[pd.DataFrame, np.ndarray],
-        y: Optional[Union[pd.Series, np.ndarray]] = None,
-        **kwargs
-    ) -> 'QuantileBinning':
+        self, X: Union[pd.DataFrame, np.ndarray], y: Optional[Union[pd.Series, np.ndarray]] = None, **kwargs
+    ) -> "QuantileBinning":
         """拟合等频分箱.
 
         :param X: 训练数据，shape (n_samples, n_features)
@@ -165,12 +164,12 @@ class QuantileBinning(BaseBinning):
 
             # 检测特征类型
             if self.force_numerical:
-                feature_type = 'numerical'
+                feature_type = "numerical"
             else:
                 feature_type = self._detect_feature_type(X[feature])
             self.feature_types_[feature] = feature_type
 
-            if feature_type == 'categorical':
+            if feature_type == "categorical":
                 # 类别型特征：每个类别作为一个箱
                 splits = self._fit_categorical(X[feature], y)
                 self.splits_[feature] = splits
@@ -181,8 +180,9 @@ class QuantileBinning(BaseBinning):
                 if self.quantiles is not None and len(splits) > 0:
                     # 四舍五入后可能产生相同切分点，去重以避免空箱
                     splits = np.unique(splits)
-                if self.monotonic not in [False, None, 'none'] and len(splits) > 0:
+                if self.monotonic not in [False, None, "none"] and len(splits) > 0:
                     from .monotonic_binning import MonotonicBinning
+
                     mono = MonotonicBinning(
                         monotonic=self.monotonic,
                         max_n_bins=self.max_n_bins,
@@ -193,16 +193,19 @@ class QuantileBinning(BaseBinning):
                         random_state=self.random_state,
                         verbose=False,
                     )
-                    splits = mono._ensure_monotonic(X[feature].dropna(), y.loc[X[feature].dropna().index], splits, mono._detect_monotonic_mode(X[feature].dropna(), y.loc[X[feature].dropna().index], splits))
+                    splits = mono._ensure_monotonic(
+                        X[feature].dropna(),
+                        y.loc[X[feature].dropna().index],
+                        splits,
+                        mono._detect_monotonic_mode(X[feature].dropna(), y.loc[X[feature].dropna().index], splits),
+                    )
                     splits = self._round_splits(splits)
                 self.splits_[feature] = splits
             self.n_bins_[feature] = len(splits) + 1
 
             # 计算分箱统计信息
             bins = self._apply_bins(X[feature], self.splits_[feature])
-            self.bin_tables_[feature] = self._compute_bin_stats(
-                feature, X[feature], y, bins
-            )
+            self.bin_tables_[feature] = self._compute_bin_stats(feature, X[feature], y, bins)
 
         self._fit_features(X.columns, _fit_one)
 
@@ -210,11 +213,7 @@ class QuantileBinning(BaseBinning):
         self._is_fitted = True
         return self
 
-    def _fit_numerical(
-        self,
-        x: pd.Series,
-        y: pd.Series
-    ) -> np.ndarray:
+    def _fit_numerical(self, x: pd.Series, y: pd.Series) -> np.ndarray:
         """对数值型特征进行等频分箱.
 
         :param x: 特征数据
@@ -272,11 +271,7 @@ class QuantileBinning(BaseBinning):
 
         return splits
 
-    def _handle_duplicate_boundaries(
-        self,
-        splits: np.ndarray,
-        x: pd.Series
-    ) -> np.ndarray:
+    def _handle_duplicate_boundaries(self, splits: np.ndarray, x: pd.Series) -> np.ndarray:
         """处理重复值边界问题.
 
         当分位数切分点与数据中的重复值重合时，调整切分点以避免空箱。
@@ -287,7 +282,7 @@ class QuantileBinning(BaseBinning):
         """
         if len(splits) == 0:
             return splits
-            
+
         x_values = x.values
         unique_splits = []
         min_samples = self._get_min_samples(len(x))
@@ -319,11 +314,7 @@ class QuantileBinning(BaseBinning):
 
         return np.array(unique_splits)
 
-    def _fit_categorical(
-        self,
-        x: pd.Series,
-        y: pd.Series
-    ) -> np.ndarray:
+    def _fit_categorical(self, x: pd.Series, y: pd.Series) -> np.ndarray:
         """对类别型特征进行分箱.
 
         :param x: 特征数据
@@ -342,27 +333,21 @@ class QuantileBinning(BaseBinning):
         y_valid = y[mask]
 
         # 计算每个类别的坏样本率
-        cat_stats = pd.DataFrame({
-            'category': x_valid,
-            'target': y_valid
-        }).groupby('category')['target'].agg(['mean', 'count'])
+        cat_stats = (
+            pd.DataFrame({"category": x_valid, "target": y_valid}).groupby("category")["target"].agg(["mean", "count"])
+        )
 
         # 过滤掉样本数过少的类别
         min_samples = self._get_min_samples(len(x_valid))
-        cat_stats = cat_stats[cat_stats['count'] >= min_samples]
+        cat_stats = cat_stats[cat_stats["count"] >= min_samples]
 
         # 按坏样本率排序
-        cat_stats = cat_stats.sort_values('mean')
+        cat_stats = cat_stats.sort_values("mean")
 
         # 返回排序后的类别列表
         return cat_stats.index.tolist()
 
-    def _adjust_bins(
-        self,
-        x: pd.Series,
-        y: pd.Series,
-        splits: np.ndarray
-    ) -> np.ndarray:
+    def _adjust_bins(self, x: pd.Series, y: pd.Series, splits: np.ndarray) -> np.ndarray:
         """根据约束条件调整分箱.
 
         :param x: 特征数据
@@ -372,7 +357,7 @@ class QuantileBinning(BaseBinning):
         """
         if len(splits) == 0:
             return splits
-            
+
         min_samples = self._get_min_samples(len(x))
 
         # 迭代调整直到满足约束
@@ -408,7 +393,7 @@ class QuantileBinning(BaseBinning):
                 break
 
             splits = new_splits
-            
+
             # 检查分箱数约束
             n_bins = len(splits) + 1
             if n_bins < self.min_n_bins:
@@ -421,7 +406,7 @@ class QuantileBinning(BaseBinning):
 
         # 最终检查分箱数约束
         n_bins = len(splits) + 1
-        
+
         # 如果分箱数超过最大值，减少分箱数
         if n_bins > self.max_n_bins:
             # 自定义分位点模式下，减少分箱数需要重新计算
@@ -436,7 +421,7 @@ class QuantileBinning(BaseBinning):
                 quantiles = np.linspace(0, 1, self.max_n_bins + 1)
                 splits = np.percentile(x, quantiles[1:-1] * 100)
                 splits = self._handle_duplicate_boundaries(splits, x)
-        
+
         # 如果分箱数少于最小值，增加分箱数
         elif n_bins < self.min_n_bins:
             if self.quantiles is None:
@@ -456,11 +441,7 @@ class QuantileBinning(BaseBinning):
             return int(n_total * self.min_bin_size)
         return int(self.min_bin_size)
 
-    def _apply_bins(
-        self,
-        x: pd.Series,
-        splits: Union[np.ndarray, List]
-    ) -> np.ndarray:
+    def _apply_bins(self, x: pd.Series, splits: Union[np.ndarray, List]) -> np.ndarray:
         """应用分箱.
 
         :param x: 特征数据
@@ -468,7 +449,7 @@ class QuantileBinning(BaseBinning):
         :return: 分箱索引
         """
         feature = x.name
-        if feature in self._cat_bins_ and self.feature_types_.get(feature) == 'categorical':
+        if feature in self._cat_bins_ and self.feature_types_.get(feature) == "categorical":
             return self._assign_categorical_bins(feature, x)
         if isinstance(splits, list):
             # 类别型特征
@@ -507,15 +488,12 @@ class QuantileBinning(BaseBinning):
             return bins
 
     def transform(
-        self,
-        X: Union[pd.DataFrame, np.ndarray],
-        metric: str = 'indices',
-        **kwargs
+        self, X: Union[pd.DataFrame, np.ndarray], metric: str = "indices", **kwargs
     ) -> Union[pd.DataFrame, np.ndarray]:
         """应用分箱转换.
-        
+
         将原始特征值转换为分箱索引、分箱标签或WOE值。
-        
+
         :param X: 待转换数据, DataFrame或数组格式
         :param metric: 转换类型, 可选值:
             - 'indices': 返回分箱索引 (0, 1, 2, ...), 用于后续处理
@@ -523,14 +501,14 @@ class QuantileBinning(BaseBinning):
             - 'woe': 返回WOE值, 用于逻辑回归建模
         :param kwargs: 其他参数
         :return: 转换后的数据, 格式与输入X相同
-        
+
         :example:
         >>> binner = QuantileBinning()
         >>> binner.fit(X_train, y_train)
-        >>> 
+        >>>
         >>> # 获取分箱索引
         >>> X_binned = binner.transform(X_test, metric='indices')
-        >>> 
+        >>>
         >>> # 获取WOE编码 (用于建模)
         >>> X_woe = binner.transform(X_test, metric='woe')
         """
@@ -541,7 +519,7 @@ class QuantileBinning(BaseBinning):
         if not isinstance(X, pd.DataFrame):
             if isinstance(X, np.ndarray):
                 if X.ndim == 1:
-                    X = pd.DataFrame(X, columns=['feature'])
+                    X = pd.DataFrame(X, columns=["feature"])
                 else:
                     X = pd.DataFrame(X)
             else:
@@ -557,17 +535,17 @@ class QuantileBinning(BaseBinning):
             splits = self.splits_[feature]
             bins = self._apply_bins(X[feature], splits)
 
-            if metric == 'indices':
+            if metric == "indices":
                 result[feature] = bins
-            elif metric == 'bins':
+            elif metric == "bins":
                 result[feature] = self._assign_bin_labels(feature, bins)
-            elif metric == 'woe':
+            elif metric == "woe":
                 # 根据WOE映射，优先使用_export的_woe_maps_
-                if hasattr(self, '_woe_maps_') and feature in self._woe_maps_:
+                if hasattr(self, "_woe_maps_") and feature in self._woe_maps_:
                     woe_map = self._woe_maps_[feature]
                 elif feature in self.bin_tables_:
                     bin_table = self.bin_tables_[feature]
-                    woe_map = dict(zip(range(len(bin_table)), bin_table['分档WOE值'].values))
+                    woe_map = dict(zip(range(len(bin_table)), bin_table["分档WOE值"].values))
                     self._enrich_woe_map(woe_map, bin_table)
                 else:
                     raise ValueError(f"特征 '{feature}' 没有WOE映射信息，请先fit或加载包含WOE信息的规则")
@@ -578,23 +556,25 @@ class QuantileBinning(BaseBinning):
         return result
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     # 测试代码
     np.random.seed(42)
     n_samples = 1000
 
     # 生成测试数据（偏态分布）
-    X = pd.DataFrame({
-        'feature1': np.random.exponential(2, n_samples),  # 指数分布
-        'feature2': np.random.beta(2, 5, n_samples) * 100,  # Beta分布
-        'feature3': np.random.choice(['A', 'B', 'C', 'D'], n_samples)
-    })
+    X = pd.DataFrame(
+        {
+            "feature1": np.random.exponential(2, n_samples),  # 指数分布
+            "feature2": np.random.beta(2, 5, n_samples) * 100,  # Beta分布
+            "feature3": np.random.choice(["A", "B", "C", "D"], n_samples),
+        }
+    )
     y = pd.Series(np.random.binomial(1, 0.3, n_samples))
 
     # 添加一些缺失值和重复值
-    X.loc[np.random.choice(n_samples, 50, replace=False), 'feature1'] = np.nan
+    X.loc[np.random.choice(n_samples, 50, replace=False), "feature1"] = np.nan
     # 添加大量重复值测试边界处理
-    X.loc[np.random.choice(n_samples, 200, replace=False), 'feature2'] = 50
+    X.loc[np.random.choice(n_samples, 200, replace=False), "feature2"] = 50
 
     print("=" * 50)
     print("等频分箱测试")
@@ -607,23 +587,23 @@ if __name__ == '__main__':
     binner.fit(X, y)
 
     # 转换
-    X_binned = binner.transform(X, metric='indices')
+    X_binned = binner.transform(X, metric="indices")
     print("\n分箱索引:")
     print(X_binned.head())
 
-    X_woe = binner.transform(X, metric='woe')
+    X_woe = binner.transform(X, metric="woe")
     print("\nWOE值:")
     print(X_woe.head())
 
     # 查看分箱统计
     print("\n分箱统计表 (feature1):")
-    print(binner.get_bin_table('feature1'))
+    print(binner.get_bin_table("feature1"))
 
     print("\n分箱统计表 (feature2):")
-    print(binner.get_bin_table('feature2'))
+    print(binner.get_bin_table("feature2"))
 
     print("\n分箱统计表 (feature3):")
-    print(binner.get_bin_table('feature3'))
+    print(binner.get_bin_table("feature3"))
 
     print("\n切分点:")
     for feature, splits in binner.splits_.items():
@@ -631,4 +611,4 @@ if __name__ == '__main__':
 
     # 验证等频特性
     print("\n各箱样本数统计 (feature2):")
-    print(X_binned['feature2'].value_counts().sort_index())
+    print(X_binned["feature2"].value_counts().sort_index())
