@@ -6,6 +6,7 @@ import pytest
 
 from hscredit.core.binning import (
     GeneticBinning,
+    MDLPBinning,
     OptimalBinning,
     TargetBadRateBinning,
     TreeBinning,
@@ -337,3 +338,33 @@ def test_min_bin_size_one_means_one_sample():
     ordinary = binner.get_bin_table("category").query("分箱 >= 0")
 
     assert ordinary["样本总数"].min() == 1
+
+
+def test_category_min_bin_size_repositions_boundary_at_min_n_bins():
+    """箱数已等于 min_n_bins 时，应移动可行边界而不是直接判定约束冲突。"""
+    X = pd.DataFrame({"category": ["A"] + ["B"] * 49 + ["C"] * 50})
+    y = pd.Series([0] * 50 + [1] * 50, name="target")
+
+    binner = UniformBinning(
+        min_n_bins=2,
+        max_n_bins=2,
+        min_bin_size=0.40,
+    ).fit(X, y)
+    ordinary = binner.get_bin_table("category").query("分箱 >= 0")
+
+    assert ordinary["样本总数"].tolist() == [50, 50]
+
+
+def test_category_max_bin_size_splits_empty_initial_rule_when_feasible():
+    """原生算法返回单箱时，仍应为可行的 max_bin_size 约束补充分界。"""
+    X = pd.DataFrame({"category": ["A"] * 50 + ["B"] * 50})
+    y = pd.Series(([0, 1] * 25) + ([0, 1] * 25), name="target")
+
+    binner = MDLPBinning(
+        min_n_bins=1,
+        max_n_bins=2,
+        max_bin_size=0.60,
+    ).fit(X, y)
+    ordinary = binner.get_bin_table("category").query("分箱 >= 0")
+
+    assert ordinary["样本总数"].tolist() == [50, 50]

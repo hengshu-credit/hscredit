@@ -874,10 +874,16 @@ class BaseBinning(ArtifactSerializableMixin, BaseEstimator, TransformerMixin, AB
             return max(1, int(np.ceil(n_samples * self.max_bin_size)))
         return max(1, int(self.max_bin_size))
 
-    def _choose_merge_split_index(self, counts: np.ndarray, bad_counts: np.ndarray, bin_idx: int) -> Optional[int]:
+    def _choose_merge_split_index(
+        self,
+        counts: np.ndarray,
+        bad_counts: np.ndarray,
+        bin_idx: int,
+        allow_at_min_n_bins: bool = False,
+    ) -> Optional[int]:
         """为样本量不足的分箱选择要删除的切分点索引。"""
         n_bins = len(counts)
-        if n_bins <= max(1, self.min_n_bins):
+        if not allow_at_min_n_bins and n_bins <= max(1, self.min_n_bins):
             return None
         if bin_idx <= 0:
             return 0
@@ -914,10 +920,9 @@ class BaseBinning(ArtifactSerializableMixin, BaseEstimator, TransformerMixin, AB
         self, x: pd.Series, y: pd.Series, splits: Union[np.ndarray, list], min_samples: int, max_samples: Optional[int]
     ) -> np.ndarray:
         """调整切分点以满足最小/最大样本量约束。"""
-        if splits is None or len(splits) == 0:
-            return np.array([])
-
-        current = np.unique(np.sort(np.asarray(splits, dtype=float)))
+        current = (
+            np.array([], dtype=float) if splits is None else np.unique(np.sort(np.asarray(splits, dtype=float)))
+        )
         x_numeric = pd.to_numeric(x, errors="coerce")
         valid_mask = x_numeric.notna()
         if self.special_codes:
@@ -942,12 +947,36 @@ class BaseBinning(ArtifactSerializableMixin, BaseEstimator, TransformerMixin, AB
 
             changed = False
 
-            if len(small_bins) > 0 and len(current) > min_splits_allowed:
+            if len(small_bins) > 0:
                 merge_bin = int(small_bins[np.argmin(counts[small_bins])])
-                split_idx = self._choose_merge_split_index(counts, bad_counts, merge_bin)
+                relocate_boundary = len(current) <= min_splits_allowed
+                split_idx = self._choose_merge_split_index(
+                    counts,
+                    bad_counts,
+                    merge_bin,
+                    allow_at_min_n_bins=relocate_boundary,
+                )
                 if split_idx is not None and 0 <= split_idx < len(current):
-                    current = np.delete(current, split_idx)
-                    changed = True
+                    merged = np.delete(current, split_idx)
+                    if relocate_boundary:
+                        merged_bins = (
+                            np.digitize(x_valid, merged) if len(merged) > 0 else np.zeros(len(x_valid), dtype=int)
+                        )
+                        merged_bin = merge_bin - 1 if split_idx < merge_bin else merge_bin
+                        replacement = self._choose_split_point_within_bin(
+                            x_valid,
+                            merged_bins,
+                            merged_bin,
+                            min_samples,
+                        )
+                        if replacement is not None and np.isfinite(replacement):
+                            candidate = np.unique(np.sort(np.append(merged, replacement)))
+                            if len(candidate) == len(current) and not np.array_equal(candidate, current):
+                                current = candidate
+                                changed = True
+                    else:
+                        current = merged
+                        changed = True
 
             if changed:
                 continue
