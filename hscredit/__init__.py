@@ -7,6 +7,10 @@ __version__ = "0.1.1"
 __author__ = "hscredit"
 __email__ = "hscredit@hengshucredit.com"
 
+from ._compat import prepare_runtime_compatibility
+
+prepare_runtime_compatibility()
+
 from .exceptions import (
     HSCreditError,
     ValidationError,
