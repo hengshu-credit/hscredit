@@ -7,7 +7,6 @@
 import numpy as np
 import pandas as pd
 from typing import List, Dict, Optional, Union, Literal, Any, Callable, Tuple
-from sklearn.model_selection import train_test_split
 
 from .utils import infer_feature_types, validate_dataframe
 
@@ -129,12 +128,12 @@ def missing_analysis(df: pd.DataFrame,
 def feature_summary(
     df: pd.DataFrame,
     features: List[str] = None,
-    y: Optional[Union[str, pd.Series]] = None,
+    y: Optional[Union[str, pd.Series, np.ndarray, List, Tuple]] = None,
     val_df: Optional[pd.DataFrame] = None,
     models: Optional[Dict[str, Any]] = None,
     model_type: Optional[Literal['xgboost', 'lightgbm', 'catboost', 'randomforest']] = None,
     model_params: Optional[Dict] = None,
-    max_n_bins: int = 5,
+    max_n_bins: int = 10,
     psi_method: Literal['random_split', 'group_col', 'date_col'] = 'random_split',
     psi_group_col: Optional[str] = None,
     psi_date_col: Optional[str] = None,
@@ -144,6 +143,10 @@ def feature_summary(
     random_state: int = 42,
     numeric_as_categorical: Optional[List[str]] = None,
     force_numeric: Optional[List[str]] = None,
+    n_jobs: int = -1,
+    show_progress: bool = False,
+    binning_method: str = 'quantile',
+    binning_params: Optional[Dict[str, Any]] = None,
 ) -> pd.DataFrame:
     """综合特征描述统计.
 
@@ -156,13 +159,13 @@ def feature_summary(
 
     :param df: 训练/基准数据集
     :param features: 特征列表，None则分析全部
-    :param y: 目标变量，支持列名(str)或Series，不传则不计算IV/KS/特征重要性
+    :param y: 目标变量，支持列名、数组、列表、元组或Series，不传则不计算IV/KS/特征重要性
     :param val_df: 验证集，用于计算PSI，不传则使用psi_method指定的方式
     :param models: 已训练好的模型字典，格式{'模型名': model}，用于获取特征重要性
         - model需要支持feature_importances_属性或get_feature_importance()方法
     :param model_type: 模型类型，用于自动训练模型提取特征重要性，可选'xgboost'/'lightgbm'/'catboost'/'randomforest'
     :param model_params: 模型参数，配合model_type使用
-    :param max_n_bins: IV计算分箱数，默认5
+    :param max_n_bins: IV、趋势和PSI共用的最大分箱数，默认10
     :param psi_method: PSI计算方式
         - 'random_split': 随机拆分两份数据计算PSI（默认）
         - 'group_col': 按psi_group_col指定的分组列计算PSI
@@ -175,6 +178,11 @@ def feature_summary(
     :param random_state: 随机种子
     :param numeric_as_categorical: 强制视为分类变量的数值列名列表（仅当指定时才生效）
     :param force_numeric: 强制视为数值变量的列名列表（仅当指定时才生效）
+    :param n_jobs: 并行工作数。-1根据数据规模保守推断，1为串行，正整数为明确指定
+    :param show_progress: 是否显示已处理字段数、总字段数和当前处理字段
+    :param binning_method: IV、趋势和PSI共用的分箱方法，默认'quantile'（等频分箱）
+    :param binning_params: 传给OptimalBinning的完整参数。其优先级高于binning_method、
+        max_n_bins和random_state，重复键直接覆盖；user_splits字典按原字段名配置
     :return: 综合特征描述DataFrame，包含以下列：
         - 基础统计: 特征名、字段类型、样本数、缺失数/率、唯一值数、众数等
         - 分布统计: 最小值、最大值、平均值、标准差、各分位数
@@ -182,6 +190,9 @@ def feature_summary(
         - 预测指标（传入y时）: IV、KS、趋势
         - 稳定性指标: PSI
         - 重要性指标（传入models时）: 各模型特征重要性
+
+    所有比例字段返回0~1原始小数，所有数值指标均保留底层计算完整精度；展示格式由
+    pandas Styler或ExcelWriter的percent_cols等外部配置负责。
 
     趋势列说明:
         - ascending: 坏样本率单调递增
@@ -214,9 +225,20 @@ def feature_summary(
 
     >>> # 指定数值列视为分类变量（如年龄分段编码）
     >>> summary = feature_summary(df, y='target', numeric_as_categorical=['age_group'])
+
+    >>> # 三项指标共用显式分箱；内层参数覆盖外层同名参数
+    >>> summary = feature_summary(
+    ...     df,
+    ...     y='target',
+    ...     max_n_bins=10,
+    ...     binning_params={
+    ...         'method': 'uniform',
+    ...         'max_n_bins': 5,
+    ...         'user_splits': {'age': [25, 35, 45]},
+    ...         'strict_user_splits': True,
+    ...     },
+    ... )
     """
-    from ..metrics import iv as iv_metric, ks as ks_metric, psi_table
-    
     validate_dataframe(df)
     
     if percentiles is None:
@@ -230,305 +252,36 @@ def feature_summary(
         if len(features) == 0:
             features = df.columns.tolist()
     
-    # 获取目标变量
-    y_series = None
-    if y is not None:
-        if isinstance(y, str):
-            if y in df.columns:
-                y_series = df[y]
-                if y in features:
-                    features = [f for f in features if f != y]
-            else:
-                raise ValueError(f"目标列 '{y}' 不存在")
-        else:
-            y_series = pd.Series(y)
-            if len(y_series) != len(df):
-                raise ValueError("目标变量长度与数据不匹配")
+    # 获取目标变量。外部数组型目标按位置匹配，不受双方索引标签影响。
+    from ._feature_summary import _normalize_target
+
+    y_series = _normalize_target(df, y)
+    if isinstance(y, str) and y in features:
+        features = [f for f in features if f != y]
     
-    # 推断特征类型
-    feature_types = infer_feature_types(df, numeric_as_categorical=numeric_as_categorical, force_numeric=force_numeric)
-    
-    total = len(df)
-    results = []
-    
-    for feat in features:
-        if feat not in df.columns:
-            continue
-        
-        series = df[feat]
-        non_null = series.notna().sum()
-        missing_rate = (total - non_null) / total
-        
-        # 基础统计
-        result = {
-            '特征名': feat,
-            '字段类型': feature_types.get(feat, 'unknown'),
-            '样本数': total,
-            '缺失数': total - non_null,
-            '缺失率': round(missing_rate * 100, 2),
-            '唯一值数': series.nunique(),
-        }
-        
-        # 众数
-        if non_null > 0:
-            mode_value = series.mode()
-            result['众数'] = mode_value[0] if len(mode_value) > 0 else None
-            result['众数频数'] = (series == result['众数']).sum() if result['众数'] is not None else 0
-            result['众数占比'] = round(result['众数频数'] / non_null * 100, 2) if non_null > 0 else 0
-        else:
-            result['众数'] = None
-            result['众数频数'] = 0
-            result['众数占比'] = 0
-        
-        # 零值率、负值率、重复率
-        if pd.api.types.is_numeric_dtype(series):
-            non_null_series = series.dropna()
-            result['零值数'] = (non_null_series == 0).sum()
-            result['零值率'] = round(result['零值数'] / non_null * 100, 2) if non_null > 0 else 0
-            result['负值数'] = (non_null_series < 0).sum()
-            result['负值率'] = round(result['负值数'] / non_null * 100, 2) if non_null > 0 else 0
-        else:
-            result['零值数'] = 0
-            result['零值率'] = 0
-            result['负值数'] = 0
-            result['负值率'] = 0
-        
-        # 重复率（非空值中重复的比例）
-        if non_null > 0:
-            unique_count = series.nunique()
-            result['重复数'] = non_null - unique_count
-            result['重复率'] = round(result['重复数'] / non_null * 100, 2)
-        else:
-            result['重复数'] = 0
-            result['重复率'] = 0
-        
-        # 分位数统计
-        if pd.api.types.is_numeric_dtype(series):
-            # 数值型特征
-            desc = series.describe()
-            result['最小值'] = round(desc.get('min', np.nan), 4) if not pd.isna(desc.get('min')) else None
-            result['最大值'] = round(desc.get('max', np.nan), 4) if not pd.isna(desc.get('max')) else None
-            result['平均值'] = round(desc.get('mean', np.nan), 4) if not pd.isna(desc.get('mean')) else None
-            result['标准差'] = round(desc.get('std', np.nan), 4) if not pd.isna(desc.get('std')) else None
-            
-            # 分位数
-            for p in percentiles:
-                col_name = f'{int(p*100)}%'
-                result[col_name] = round(series.quantile(p), 4)
-        else:
-            # 类别型特征
-            result['最小值'] = None
-            result['最大值'] = None
-            result['平均值'] = None
-            result['标准差'] = None
-            
-            # 按类别样本数逆序排列，取对应分位点的类别
-            value_counts = series.value_counts()
-            if len(value_counts) > 0:
-                sorted_categories = value_counts.index.tolist()  # 已经是降序排列
-                total_count = len(series.dropna())
-                cumulative_count = 0
-                percentile_categories = {}
-                
-                for p in percentiles:
-                    target_count = int(total_count * p)
-                    cumulative_count = 0
-                    selected_cat = None
-                    
-                    for cat in sorted_categories:
-                        cat_count = value_counts[cat]
-                        cumulative_count += cat_count
-                        if cumulative_count >= target_count:
-                            selected_cat = cat
-                            break
-                    
-                    # 如果没找到（比如在很后面），取最后一个
-                    if selected_cat is None:
-                        selected_cat = sorted_categories[-1] if sorted_categories else None
-                    
-                    percentile_categories[p] = selected_cat
-                
-                for p in percentiles:
-                    col_name = f'{int(p*100)}%'
-                    result[col_name] = percentile_categories.get(p)
-            else:
-                for p in percentiles:
-                    col_name = f'{int(p*100)}%'
-                    result[col_name] = None
-        
-        results.append(result)
-    
-    # 创建DataFrame
-    results_df = pd.DataFrame(results)
-    results_df.set_index('特征名', inplace=True)
-    
-    # 计算IV、KS和单调性趋势（需要目标变量）
-    if y_series is not None:
-        try:
-            # 使用OptimalBinning批量分箱计算IV
-            from ..binning import OptimalBinning, MonotonicBinning
-            
-            # 筛选有效的数值型特征（分箱只支持数值型）
-            numeric_features = [f for f in features if f in df.columns and pd.api.types.is_numeric_dtype(df[f])]
-            
-            # 初始化结果字典（包含所有特征，非数值型标记为NaN或categorical）
-            iv_values = {f: np.nan for f in features}
-            ks_values = {f: np.nan for f in features}
-            trend_values = {f: 'categorical' if not pd.api.types.is_numeric_dtype(df[f]) else 'unknown' for f in features}
-            
-            # 只对数值型特征进行计算
-            if len(numeric_features) > 0:
-                try:
-                    # 批量分箱
-                    binner = OptimalBinning(method='quantile', max_n_bins=max_n_bins)
-                    binner.fit(df[numeric_features], y_series)
-                    
-                    # 从分箱表中提取IV
-                    for feat in numeric_features:
-                        bin_table = binner.bin_tables_.get(feat, pd.DataFrame())
-                        if not bin_table.empty and '分档IV值' in bin_table.columns:
-                            iv_values[feat] = round(bin_table['分档IV值'].sum(), 4)
-                except Exception:
-                    # 分箱失败，使用简单方法计算IV
-                    for feat in numeric_features:
-                        try:
-                            iv_value = iv_metric(y_series, df[feat])
-                            iv_values[feat] = round(iv_value, 4)
-                        except Exception:
-                            iv_values[feat] = np.nan
-                
-                # 计算KS
-                for feat in numeric_features:
-                    try:
-                        ks_value = ks_metric(y_series, df[feat])
-                        ks_values[feat] = round(ks_value, 4)
-                    except Exception:
-                        ks_values[feat] = np.nan
-                
-                # 检测单调性趋势
-                for feat in numeric_features:
-                    try:
-                        trend_binner = MonotonicBinning(monotonic='auto', max_n_bins=max_n_bins)
-                        trend_binner.fit(df[[feat]], y_series)
-                        trend = trend_binner.monotonic_trend_.get(feat, 'unknown')
-                        trend_values[feat] = trend
-                    except Exception:
-                        trend_values[feat] = 'unknown'
-            
-            results_df['IV'] = pd.Series(iv_values)
-            results_df['KS'] = pd.Series(ks_values)
-            results_df['趋势'] = pd.Series(trend_values)
-        except Exception:
-            # 如果批量计算失败，记录错误但不中断
-            pass
-    
-    # 计算PSI
-    psi_values = {}
-    
-    if val_df is not None:
-        # 使用验证集计算PSI
-        for feat in features:
-            if feat not in df.columns or feat not in val_df.columns:
-                psi_values[feat] = np.nan
-                continue
-            try:
-                psi_df = psi_table(df[feat], val_df[feat], max_n_bins=max_n_bins)
-                psi_values[feat] = round(psi_df['PSI贡献'].sum(), 4)
-            except Exception:
-                psi_values[feat] = np.nan
-    elif psi_method == 'random_split' and len(df) >= 100:
-        # 随机拆分两份数据计算PSI
-        try:
-            df_copy = df.dropna(subset=features, how='all').copy()
-            if len(df_copy) >= 100:
-                df1, df2 = train_test_split(df_copy, test_size=psi_test_size, random_state=random_state)
-                for feat in features:
-                    if feat not in df.columns:
-                        psi_values[feat] = np.nan
-                        continue
-                    try:
-                        psi_df = psi_table(df1[feat], df2[feat], max_n_bins=max_n_bins)
-                        psi_values[feat] = round(psi_df['PSI贡献'].sum(), 4)
-                    except Exception:
-                        psi_values[feat] = np.nan
-        except Exception:
-            for feat in features:
-                psi_values[feat] = np.nan
-    elif psi_method == 'group_col' and psi_group_col is not None and psi_group_col in df.columns:
-        # 按分组列计算所有组间PSI的平均值
-        groups = df[psi_group_col].dropna().unique()
-        if len(groups) >= 2:
-            for feat in features:
-                if feat not in df.columns:
-                    psi_values[feat] = np.nan
-                    continue
-                
-                psi_list = []
-                for i, g1 in enumerate(groups):
-                    for g2 in groups[i+1:]:
-                        data1 = df[df[psi_group_col] == g1][feat].dropna()
-                        data2 = df[df[psi_group_col] == g2][feat].dropna()
-                        if len(data1) > 10 and len(data2) > 10:
-                            try:
-                                psi_df = psi_table(data1, data2, max_n_bins=max_n_bins)
-                                psi_list.append(psi_df['PSI贡献'].sum())
-                            except Exception:
-                                pass
-                
-                if len(psi_list) > 0:
-                    psi_values[feat] = round(np.mean(psi_list), 4)
-                else:
-                    psi_values[feat] = np.nan
-        else:
-            for feat in features:
-                psi_values[feat] = np.nan
-    elif psi_method == 'date_col' and psi_date_col is not None and psi_date_col in df.columns:
-        # 按时间分组计算所有期间PSI的平均值
-        try:
-            df_copy = df.copy()
-            df_copy[psi_date_col] = pd.to_datetime(df_copy[psi_date_col])
-            
-            if psi_freq == 'M':
-                df_copy['_period'] = df_copy[psi_date_col].dt.to_period('M').astype(str)
-            elif psi_freq == 'W':
-                df_copy['_period'] = df_copy[psi_date_col].dt.to_period('W').astype(str)
-            elif psi_freq == 'Q':
-                df_copy['_period'] = df_copy[psi_date_col].dt.to_period('Q').astype(str)
-            else:
-                df_copy['_period'] = df_copy[psi_date_col].dt.date.astype(str)
-            
-            periods = sorted(df_copy['_period'].dropna().unique())
-            if len(periods) >= 2:
-                for feat in features:
-                    if feat not in df.columns:
-                        psi_values[feat] = np.nan
-                        continue
-                    
-                    psi_list = []
-                    for i, p1 in enumerate(periods):
-                        for p2 in periods[i+1:]:
-                            data1 = df_copy[df_copy['_period'] == p1][feat].dropna()
-                            data2 = df_copy[df_copy['_period'] == p2][feat].dropna()
-                            if len(data1) > 10 and len(data2) > 10:
-                                try:
-                                    psi_df = psi_table(data1, data2, max_n_bins=max_n_bins)
-                                    psi_list.append(psi_df['PSI贡献'].sum())
-                                except Exception:
-                                    pass
-                    
-                    if len(psi_list) > 0:
-                        psi_values[feat] = round(np.mean(psi_list), 4)
-                    else:
-                        psi_values[feat] = np.nan
-            else:
-                for feat in features:
-                    psi_values[feat] = np.nan
-        except Exception:
-            for feat in features:
-                psi_values[feat] = np.nan
-    
-    if psi_values:
-        results_df['PSI'] = pd.Series(psi_values)
+    valid_features = [feature for feature in features if feature in df.columns]
+    from ._feature_summary import build_feature_summary_fields
+
+    results_df = build_feature_summary_fields(
+        df=df,
+        features=valid_features,
+        percentiles=percentiles,
+        numeric_as_categorical=numeric_as_categorical,
+        force_numeric=force_numeric,
+        y_series=y_series,
+        val_df=val_df,
+        max_n_bins=max_n_bins,
+        psi_method=psi_method,
+        psi_group_col=psi_group_col,
+        psi_date_col=psi_date_col,
+        psi_freq=psi_freq,
+        psi_test_size=psi_test_size,
+        random_state=random_state,
+        n_jobs=n_jobs,
+        show_progress=show_progress,
+        binning_method=binning_method,
+        binning_params=binning_params,
+    )
     
     # 特征重要性（传入已训练模型）
     if models is not None:
@@ -539,7 +292,7 @@ def feature_summary(
                     importances = model.get_feature_importances()
                     if isinstance(importances, pd.Series):
                         # Series索引为特征名，值为重要性
-                        results_df[f'{model_name}重要性'] = importances.reindex(features).round(6)
+                        results_df[f'{model_name}重要性'] = importances.reindex(features)
                 except Exception:
                     pass
     
@@ -606,7 +359,7 @@ def feature_summary(
             model.fit(X_train, y_series)
             importances = model.get_feature_importances()
             if isinstance(importances, pd.Series):
-                results_df[f'{model_type}重要性'] = importances.reindex(numeric_features).round(6)
+                results_df[f'{model_type}重要性'] = importances.reindex(numeric_features)
         except Exception:
             # 训练失败不中断
             pass
