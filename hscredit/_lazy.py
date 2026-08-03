@@ -13,6 +13,8 @@ import importlib
 from types import ModuleType
 from typing import Optional
 
+from ._compat import prepare_dependency
+
 
 class LazyModule(ModuleType):
     """延迟导入的模块代理.
@@ -38,7 +40,9 @@ class LazyModule(ModuleType):
     def _load(self) -> ModuleType:
         module = self.__dict__["_lazy_module"]
         if module is None:
-            module = importlib.import_module(self.__dict__["_lazy_import_name"])
+            import_name = self.__dict__["_lazy_import_name"]
+            prepare_dependency(import_name)
+            module = importlib.import_module(import_name)
             self.__dict__["_lazy_module"] = module
         return module
 

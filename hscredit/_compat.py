@@ -84,6 +84,23 @@ def install_lightgbm_sklearn_compat(lightgbm_module, lightgbm_version, sklearn_v
             setattr(module, attribute, _wrap_lightgbm_validation_keyword(checker))
 
 
+def normalize_seaborn_inf(values):
+    """为旧 Seaborn/Pandas 组合恢复“无穷值视为缺失”的行为。"""
+    seaborn_version = installed_version("seaborn")
+    pandas_version = installed_version("pandas")
+    if not needs_seaborn_pandas_compat(seaborn_version, pandas_version):
+        return values
+
+    import numpy as np
+    import pandas as pd
+
+    if isinstance(values, pd.Series):
+        return values.replace([np.inf, -np.inf], np.nan)
+
+    array = np.asarray(values)
+    return np.where(np.isinf(array), np.nan, array)
+
+
 def _install_pandas_string_methods_alias() -> None:
     """为仍引用旧路径的 Dask 恢复 Pandas 字符串访问器别名。"""
     import pandas as pd

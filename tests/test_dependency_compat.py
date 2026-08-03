@@ -190,3 +190,53 @@ def test_lightgbm_sklearn_adapter_is_noop_outside_version_matrix():
 
     assert lightgbm_module.compat._LGBMCheckXY is check_xy
     assert lightgbm_module.sklearn._LGBMCheckArray is check_xy
+
+
+def test_lazy_module_prepares_dependency_before_import(monkeypatch):
+    """延迟加载重依赖前必须先按版本准备兼容环境。"""
+    import hscredit._lazy as lazy
+
+    events = []
+    loaded = SimpleNamespace(name="seaborn")
+    monkeypatch.setattr(lazy, "prepare_dependency", lambda name: events.append(("prepare", name)))
+    monkeypatch.setattr(
+        lazy.importlib,
+        "import_module",
+        lambda name: events.append(("import", name)) or loaded,
+    )
+
+    proxy = lazy.LazyModule("seaborn")
+
+    assert proxy._load() is loaded
+    assert events == [("prepare", "seaborn"), ("import", "seaborn")]
+
+
+def test_normalize_seaborn_inf_preserves_series_index_and_order(monkeypatch):
+    """旧 Seaborn 组合只替换无穷值，不重排或重置索引。"""
+    import numpy as np
+    import pandas as pd
+    import hscredit._compat as compat
+
+    versions = {"seaborn": Version("0.11.2"), "pandas": Version("2.3.3")}
+    monkeypatch.setattr(compat, "installed_version", lambda name, distribution_name=None: versions.get(name))
+    score = pd.Series([0.1, np.inf, 0.4, -np.inf, 0.8], index=[5, 4, 3, 2, 1])
+    original = score.copy(deep=True)
+
+    normalized = compat.normalize_seaborn_inf(score)
+
+    pd.testing.assert_series_equal(score, original)
+    assert normalized.index.tolist() == [5, 4, 3, 2, 1]
+    assert normalized.iloc[[0, 2, 4]].tolist() == [0.1, 0.4, 0.8]
+    assert normalized.iloc[[1, 3]].isna().all()
+
+
+def test_normalize_seaborn_inf_is_noop_outside_version_matrix(monkeypatch):
+    """新 Seaborn 版本由上游原生处理，兼容层不复制数据。"""
+    import pandas as pd
+    import hscredit._compat as compat
+
+    versions = {"seaborn": Version("0.12.2"), "pandas": Version("2.3.3")}
+    monkeypatch.setattr(compat, "installed_version", lambda name, distribution_name=None: versions.get(name))
+    score = pd.Series([1.0, 2.0], index=[2, 1])
+
+    assert compat.normalize_seaborn_inf(score) is score

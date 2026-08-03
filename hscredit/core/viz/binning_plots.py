@@ -27,6 +27,7 @@ from .utils import (
     make_colormap, make_diverging_cmap,
 )
 from ..._lazy import LazyModule
+from ..._compat import normalize_seaborn_inf
 
 # 延迟加载 seaborn：仅在首次实际绘图（访问 sns 属性）时才导入，
 # 避免 import hscredit 时即触发 seaborn（及其 ipywidgets/IPython 依赖）的加载。
@@ -1011,6 +1012,8 @@ def hist_plot(score, y_true=None, figsize=(15, 10), bins=30, save=None,
     """
     if labels is None:
         labels = ["好样本", "坏样本"]
+
+    score = normalize_seaborn_inf(score)
 
     target_unique = 1 if y_true is None else len(np.unique(y_true))
 
