@@ -624,6 +624,8 @@ class BestLiftBinning(BaseBinning):
         """
         x_vals = X.values
 
+        if self.feature_types_[feature] == 'categorical' and feature in self._cat_bins_:
+            return self._assign_categorical_bins(feature, X)
         if self.feature_types_[feature] == 'categorical':
             codes = pd.Categorical(X).codes
             return np.where(X.isna(), -1, codes)

@@ -1306,10 +1306,6 @@ class OptimalBinning(BaseBinning):
         if hasattr(self._binner, 'monotonic_trend_'):
             self.monotonic_trend_ = self._binner.monotonic_trend_
 
-        # 类别型特征统一在 wrapper 层按坏样本率分组合并至 max_n_bins（各底层方法的
-        # 类别处理不一致：部分不合并、部分输出数值编码标签），确保口径一致且受约束。
-        self._regroup_categorical_features(X, y)
-
     def _regroup_categorical_features(
         self,
         X: pd.DataFrame,
@@ -1452,6 +1448,8 @@ class OptimalBinning(BaseBinning):
         1. List[List]格式: [['A', 'B'], ['C'], [np.nan]]
         2. 字符串列表格式: ['A,B', 'C'] (向后兼容)
         """
+        if feature_type == 'categorical' and feature in self._cat_bins_:
+            return self._assign_categorical_bins(feature, x)
         if isinstance(splits, list):
             bins = np.zeros(len(x), dtype=int)
             # 类别型比较时，将 Series 转为字符串以避免类型不匹配导致的静默失败

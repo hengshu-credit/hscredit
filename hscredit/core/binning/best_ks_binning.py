@@ -387,6 +387,8 @@ class BestKSBinning(BaseBinning):
         """
         x_vals = X.values
 
+        if self.feature_types_[feature] == 'categorical' and feature in self._cat_bins_:
+            return self._assign_categorical_bins(feature, X)
         if self.feature_types_[feature] == 'categorical':
             # 使用 pd.Categorical 的 codes
             codes = pd.Categorical(X).codes

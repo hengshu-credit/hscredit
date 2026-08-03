@@ -681,6 +681,8 @@ class CartBinning(BaseBinning):
         """
         x_vals = X.values
 
+        if self.feature_types_[feature] == 'categorical' and feature in self._cat_bins_:
+            return self._assign_categorical_bins(feature, X)
         if self.feature_types_[feature] == 'categorical':
             # 类别型特征
             splits = self.splits_[feature]

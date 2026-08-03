@@ -422,6 +422,9 @@ class KMeansBinning(BaseBinning):
         :param splits: 切分点
         :return: 分箱索引
         """
+        feature = x.name
+        if feature in self._cat_bins_ and self.feature_types_.get(feature) == 'categorical':
+            return self._assign_categorical_bins(feature, x)
         if isinstance(splits, list):
             # 类别型特征
             bins = np.zeros(len(x), dtype=int)

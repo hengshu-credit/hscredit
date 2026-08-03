@@ -565,6 +565,9 @@ class MDLPBinning(BaseBinning):
         :param feature_type: 特征类型
         :return: 分箱标签
         """
+        feature = x.name
+        if feature in self._cat_bins_ and self.feature_types_.get(feature) == 'categorical':
+            return self._assign_categorical_bins(feature, x)
         if feature_type == 'categorical':
             # 基于 splits 列表中的顺序映射类别到分箱索引
             x_str = x.astype(str).where(x.notna(), other=np.nan)
