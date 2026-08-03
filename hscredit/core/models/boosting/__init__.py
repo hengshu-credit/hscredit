@@ -27,10 +27,7 @@ def __getattr__(name):
     module_name = _LAZY_SUBMODULES.get(name)
     if module_name is None:
         raise AttributeError(f"模块 {__name__!r} 不存在属性 {name!r}")
-    try:
-        module = importlib.import_module(module_name, __name__)
-        value = getattr(module, name)
-    except Exception:
-        raise AttributeError(f"模块 {__name__!r} 不存在属性 {name!r}") from None
+    module = importlib.import_module(module_name, __name__)
+    value = getattr(module, name)
     globals()[name] = value
     return value

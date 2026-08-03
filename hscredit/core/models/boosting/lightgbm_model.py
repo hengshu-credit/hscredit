@@ -17,133 +17,42 @@ pip install lightgbm
 >>> proba = model.predict_proba(X_test)
 """
 
-import logging
+from importlib import util
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+
 import numpy as np
 import pandas as pd
+from packaging.version import Version
 from sklearn.utils.validation import check_is_fitted
 
-logger = logging.getLogger(__name__)
+from ...._compat import (
+    install_lightgbm_sklearn_compat,
+    installed_version,
+    prepare_dependency,
+)
 
-try:
+prepare_dependency("lightgbm")
+LIGHTGBM_VERSION = installed_version("lightgbm")
+
+if util.find_spec("lightgbm") is not None:
     import lightgbm as lgb
+
     LIGHTGBM_AVAILABLE = True
-except ImportError:
+    install_lightgbm_sklearn_compat(
+        lgb,
+        LIGHTGBM_VERSION,
+        installed_version("sklearn", "scikit-learn"),
+    )
+else:
     LIGHTGBM_AVAILABLE = False
     lgb = None
 
-# 检测LightGBM版本和API支持情况
-def _check_lightgbm_api_support():
-    """检测LightGBM API支持情况.
-    
-    返回: (支持callbacks, 支持_early_stopping_rounds)
-    """
-    if not LIGHTGBM_AVAILABLE:
-        return False, False
 
-    supports_callbacks = False
-    supports_early_stopping = False
-
-    # 方法1: 检查LGBMClassifier.fit签名
-    try:
-        import inspect
-        fit_signature = inspect.signature(lgb.LGBMClassifier.fit)
-        params = list(fit_signature.parameters.keys())
-        supports_callbacks = 'callbacks' in params
-        supports_early_stopping = 'early_stopping_rounds' in params
-    except Exception:
-        pass
-
-    # 方法2: 通过版本号检测（如果方法1失败）
-    if not supports_callbacks and not supports_early_stopping:
-        try:
-            from packaging import version
-            lgb_version = lgb.__version__
-            ver = version.parse(lgb_version)
-            if ver >= version.parse("4.0.0"):
-                supports_callbacks = True
-            elif ver >= version.parse("2.0.0"):
-                supports_early_stopping = True
-        except Exception:
-            pass
-
-    return supports_callbacks, supports_early_stopping
-
-LIGHTGBM_CALLBACKS_AVAILABLE, LIGHTGBM_EARLY_STOPPING_AVAILABLE = _check_lightgbm_api_support()
-
-
-def _ensure_lightgbm_sklearn_compat():
-    """适配 LightGBM 与 scikit-learn 跨版本的 ``force_all_finite`` 参数差异.
-
-    背景：旧版 LightGBM(<4.0) 内部以 ``force_all_finite=...`` 调用 sklearn 的
-    ``check_X_y`` / ``check_array``，而 scikit-learn 1.6 起弃用该参数、1.8 起移除
-    （改名 ``ensure_all_finite``）。两者组合时 ``model.fit`` 会直接抛
-    ``TypeError: ... unexpected keyword argument 'force_all_finite'``。
-
-    本函数按**版本**判断：仅当 LightGBM<4.0 且其引用的 sklearn 校验函数已不接受
-    ``force_all_finite`` 时，包装这些函数把旧参数名转译为 ``ensure_all_finite``，
-    使 ``fit`` 的对外行为（参数名/位置/结果）在新旧 sklearn 下保持一致。
-    对参数名一致的版本组合为无害透传，且幂等（重复调用不重复包装）。
-    """
-    if not LIGHTGBM_AVAILABLE:
-        return
-    import inspect
-    import importlib
-
-    try:
-        from packaging import version as _v
-        # LightGBM>=4.0 内部已改用 ensure_all_finite，无需适配
-        if _v.parse(lgb.__version__) >= _v.parse("4.0.0"):
-            return
-    except Exception:
-        # 无法判定版本时按需检测（下方签名检查仍可保证安全）
-        pass
-
-    def _wrap(func):
-        if getattr(func, "_hscredit_finite_compat", False):
-            return func
-        try:
-            params = inspect.signature(func).parameters
-        except (TypeError, ValueError):
-            return func
-        # 仅当新 sklearn 已移除 force_all_finite、改名 ensure_all_finite 时才包装
-        if "force_all_finite" in params or "ensure_all_finite" not in params:
-            return func
-
-        def wrapper(*args, **kwargs):
-            if "force_all_finite" in kwargs:
-                kwargs.setdefault("ensure_all_finite", kwargs.pop("force_all_finite"))
-            return func(*args, **kwargs)
-
-        wrapper._hscredit_finite_compat = True
-        return wrapper
-
-    # 包装 LightGBM 实际引用校验函数的模块属性（直接改其绑定引用才生效）
-    for modname in ("lightgbm.compat", "lightgbm.basic", "lightgbm.sklearn"):
-        try:
-            mod = importlib.import_module(modname)
-        except Exception:
-            continue
-        for attr in ("check_X_y", "check_array", "_LGBMCheckXY", "_LGBMCheckArray"):
-            func = getattr(mod, attr, None)
-            if callable(func):
-                wrapped = _wrap(func)
-                if wrapped is not func:
-                    setattr(mod, attr, wrapped)
-
-
-_ensure_lightgbm_sklearn_compat()
-
-# 导入回调（如果可用）
-if LIGHTGBM_CALLBACKS_AVAILABLE:
-    try:
-        from lightgbm import early_stopping, log_evaluation
-    except ImportError:
-        early_stopping = None
-        log_evaluation = None
-else:
-    early_stopping = None
-    log_evaluation = None
+def _lightgbm_fit_api(version: Optional[Version]) -> str:
+    """按 LightGBM 版本返回稳定的 sklearn fit 调用策略。"""
+    if version is None:
+        raise ImportError("LightGBM未安装，请使用 pip install lightgbm 安装")
+    return "legacy" if version < Version("4.0.0") else "callbacks"
 
 from ..base import BaseRiskModel, resolve_custom_objective
 
@@ -380,96 +289,15 @@ class LightGBMRiskModel(BaseRiskModel):
         if sample_weight is not None:
             fit_kwargs['sample_weight'] = sample_weight
 
-        # 处理早停 - 适配新旧版本LightGBM
-        use_callbacks = False
-        early_stopping_enabled = False
-        if self.early_stopping_rounds is not None and eval_set:
-            callbacks = self._build_early_stopping_callbacks()
-            if callbacks is not None:
-                # LightGBM 4.0+ 使用 callbacks
-                fit_kwargs['callbacks'] = callbacks
-                use_callbacks = True
-                early_stopping_enabled = True
-            elif LIGHTGBM_EARLY_STOPPING_AVAILABLE:
-                # 旧版本API (< 4.0, >= 2.0)
-                fit_kwargs['early_stopping_rounds'] = self.early_stopping_rounds
-                fit_kwargs['verbose'] = self.verbose
-                early_stopping_enabled = True
-            else:
-                # 非常旧的版本(< 2.0)不支持早停，给出警告
-                import warnings
-                warnings.warn(
-                    f"当前LightGBM版本({lgb.__version__})不支持early_stopping_rounds参数，"
-                    f"将忽略早停设置。建议升级LightGBM: pip install -U lightgbm",
-                    UserWarning
-                )
-        
-        # 传递verbose参数：仅旧版本 LightGBM(<4.0) 的 fit() 接受 verbose。
-        # LightGBM 4.0+ 已弃用 fit(verbose=...)，日志级别由构造参数 verbose/verbosity
-        # 控制（见上方 params），并通过 log_evaluation 回调输出，故此处不再传入，避免弃用告警。
-        if not LIGHTGBM_CALLBACKS_AVAILABLE and (not early_stopping_enabled or not use_callbacks):
-            fit_kwargs['verbose'] = self.verbose
+        fit_api = _lightgbm_fit_api(LIGHTGBM_VERSION)
+        if fit_api == "legacy":
+            fit_kwargs["verbose"] = self.verbose
+            if self.early_stopping_rounds is not None and eval_set:
+                fit_kwargs["early_stopping_rounds"] = self.early_stopping_rounds
+        elif self.early_stopping_rounds is not None and eval_set:
+            fit_kwargs["callbacks"] = self._build_early_stopping_callbacks()
 
-        # 尝试训练，如果失败则自动回退
-        try:
-            self._model.fit(X_train, y_train, **fit_kwargs)
-        except TypeError as e:
-            error_msg = str(e).lower()
-            if 'verbose' in error_msg:
-                # 某些版本的LightGBM不接受verbose参数
-                if self.verbose:
-                    logger.info(f"当前LightGBM版本不接受verbose参数，移除后重试")
-                if 'verbose' in fit_kwargs:
-                    del fit_kwargs['verbose']
-                # 再次尝试训练
-                try:
-                    self._model.fit(X_train, y_train, **fit_kwargs)
-                except TypeError as e2:
-                    error_msg2 = str(e2).lower()
-                    if 'callbacks' in error_msg2 and use_callbacks:
-                        # callbacks参数不被支持，回退到旧API
-                        if self.verbose:
-                            logger.info(f"callbacks参数不被支持，回退到旧版early_stopping_rounds API")
-                        del fit_kwargs['callbacks']
-                        fit_kwargs['early_stopping_rounds'] = self.early_stopping_rounds
-                        self._model.fit(X_train, y_train, **fit_kwargs)
-                    elif 'early_stopping_rounds' in error_msg2:
-                        # 旧版本不支持early_stopping_rounds，忽略早停
-                        import warnings
-                        warnings.warn(
-                            f"当前LightGBM版本不支持early_stopping_rounds参数，"
-                            f"将忽略早停设置。建议升级LightGBM: pip install -U lightgbm",
-                            UserWarning
-                        )
-                        if 'early_stopping_rounds' in fit_kwargs:
-                            del fit_kwargs['early_stopping_rounds']
-                        self._model.fit(X_train, y_train, **fit_kwargs)
-                    else:
-                        raise
-            elif 'callbacks' in error_msg and use_callbacks:
-                # callbacks参数不被支持，回退到旧API
-                if self.verbose:
-                    logger.info(f"callbacks参数不被支持，回退到旧版early_stopping_rounds API")
-                del fit_kwargs['callbacks']
-                fit_kwargs['early_stopping_rounds'] = self.early_stopping_rounds
-                if 'verbose' not in fit_kwargs:
-                    fit_kwargs['verbose'] = self.verbose
-                self._model.fit(X_train, y_train, **fit_kwargs)
-            elif 'early_stopping_rounds' in error_msg:
-                # 旧版本不支持early_stopping_rounds，忽略早停
-                import warnings
-                warnings.warn(
-                    f"当前LightGBM版本不支持early_stopping_rounds参数，"
-                    f"将忽略早停设置。建议升级LightGBM: pip install -U lightgbm",
-                    UserWarning
-                )
-                if 'early_stopping_rounds' in fit_kwargs:
-                    del fit_kwargs['early_stopping_rounds']
-                if 'verbose' not in fit_kwargs:
-                    fit_kwargs['verbose'] = self.verbose
-                self._model.fit(X_train, y_train, **fit_kwargs)
-            else:
-                raise
+        self._model.fit(X_train, y_train, **fit_kwargs)
 
         # 保存结果
         self._best_iteration = getattr(self._model, 'best_iteration_', None)
@@ -479,44 +307,21 @@ class LightGBMRiskModel(BaseRiskModel):
 
         return self
 
-    def _build_early_stopping_callbacks(self) -> Optional[List[Any]]:
+    def _build_early_stopping_callbacks(self) -> List[Any]:
         """构建早停回调函数列表。
 
-        适配LightGBM 4.0+版本的callbacks机制，同时兼容旧版本。
+        此方法只在 LightGBM 4.0 及以上版本分支调用。
 
-        :return: 回调函数列表，如果无法使用新机制则返回None（使用旧API）
+        :return: 早停与日志回调函数列表
         """
-        if not LIGHTGBM_CALLBACKS_AVAILABLE:
-            # LightGBM < 4.0，返回None使用旧API
-            return None
-
-        try:
-            callbacks = []
-
-            # 构建早停回调参数
-            es_kwargs = {
-                'stopping_rounds': self.early_stopping_rounds,
-                'first_metric_only': self.first_metric_only,
-                'verbose': self.verbose,
-            }
-
-            # 创建早停回调
-            callbacks.append(early_stopping(**es_kwargs))
-
-            # 添加日志监控回调（如果需要verbose）
-            if self.verbose and log_evaluation is not None:
-                try:
-                    callbacks.append(log_evaluation(period=1))
-                except (TypeError, ValueError):
-                    pass
-
-            return callbacks
-
-        except Exception as e:
-            # 其他异常，降级到旧API
-            if self.verbose:
-                logger.info(f"无法创建早停回调: {e}，降级到旧API")
-            return None
+        return [
+            lgb.early_stopping(
+                stopping_rounds=self.early_stopping_rounds,
+                first_metric_only=self.first_metric_only,
+                verbose=self.verbose,
+            ),
+            lgb.log_evaluation(period=1 if self.verbose else 0),
+        ]
 
     def predict(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
         """预测类别标签.

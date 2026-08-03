@@ -1,5 +1,9 @@
 """第三方依赖显式版本兼容测试。"""
 
+import importlib
+from types import SimpleNamespace
+
+import pytest
 from packaging.version import Version
 
 from hscredit._compat import (
@@ -114,3 +118,75 @@ def test_prepare_runtime_compatibility_prepares_supported_dependencies(monkeypat
     prepare_runtime_compatibility()
 
     assert prepared == ["lightgbm", "seaborn"]
+
+
+@pytest.mark.parametrize(
+    "module_name, attribute",
+    [
+        ("hscredit.core.models.boosting", "LightGBMRiskModel"),
+        ("hscredit.core.models.tuning", "ModelTuner"),
+    ],
+)
+def test_lazy_loader_preserves_real_import_error(monkeypatch, module_name, attribute):
+    """依赖内部错误不能被伪装成公开属性不存在。"""
+    module = importlib.import_module(module_name)
+    monkeypatch.delattr(module, attribute, raising=False)
+    marker = RuntimeError("真实依赖错误")
+
+    def fail_import(*args, **kwargs):
+        raise marker
+
+    monkeypatch.setattr(importlib, "import_module", fail_import)
+
+    with pytest.raises(RuntimeError, match="真实依赖错误"):
+        module.__getattr__(attribute)
+
+    assert attribute not in module.__dict__
+
+
+def test_lightgbm_fit_strategy_is_version_based():
+    """LightGBM 4.0 是旧参数与 callbacks API 的唯一分界。"""
+    from hscredit.core.models.boosting.lightgbm_model import _lightgbm_fit_api
+
+    assert _lightgbm_fit_api(Version("3.3.5")) == "legacy"
+    assert _lightgbm_fit_api(Version("3.99.0")) == "legacy"
+    assert _lightgbm_fit_api(Version("4.0.0")) == "callbacks"
+    assert _lightgbm_fit_api(Version("4.6.0")) == "callbacks"
+
+
+def test_lightgbm_sklearn_adapter_renames_keyword_in_version_matrix():
+    """命中矩阵时将旧参数名转为 sklearn 1.8 的新参数名。"""
+    from hscredit._compat import install_lightgbm_sklearn_compat
+
+    received = []
+
+    def check_xy(*args, **kwargs):
+        received.append(kwargs)
+        return args
+
+    compat_module = SimpleNamespace(_LGBMCheckXY=check_xy, _LGBMCheckArray=check_xy)
+    sklearn_module = SimpleNamespace(_LGBMCheckXY=check_xy, _LGBMCheckArray=check_xy)
+    lightgbm_module = SimpleNamespace(compat=compat_module, sklearn=sklearn_module)
+
+    install_lightgbm_sklearn_compat(lightgbm_module, Version("4.5.0"), Version("1.8.0"))
+    install_lightgbm_sklearn_compat(lightgbm_module, Version("4.5.0"), Version("1.8.0"))
+    lightgbm_module.compat._LGBMCheckXY("X", force_all_finite=False)
+
+    assert received == [{"ensure_all_finite": False}]
+
+
+def test_lightgbm_sklearn_adapter_is_noop_outside_version_matrix():
+    """越界版本保持 LightGBM 原绑定不变。"""
+    from hscredit._compat import install_lightgbm_sklearn_compat
+
+    def check_xy(*args, **kwargs):
+        return args, kwargs
+
+    compat_module = SimpleNamespace(_LGBMCheckXY=check_xy, _LGBMCheckArray=check_xy)
+    sklearn_module = SimpleNamespace(_LGBMCheckXY=check_xy, _LGBMCheckArray=check_xy)
+    lightgbm_module = SimpleNamespace(compat=compat_module, sklearn=sklearn_module)
+
+    install_lightgbm_sklearn_compat(lightgbm_module, Version("4.6.0"), Version("1.8.0"))
+
+    assert lightgbm_module.compat._LGBMCheckXY is check_xy
+    assert lightgbm_module.sklearn._LGBMCheckArray is check_xy

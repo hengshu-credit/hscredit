@@ -166,9 +166,9 @@ _LAZY_TUNING_MODELS = ("ModelTuner", "AutoTuner", "TuningObjective", "TuningSamp
 def __getattr__(name):
     """懒加载 boosting/tuning 子包及 ModelReport 兼容别名，避免 import hscredit 时即时加载重依赖."""
     if name in _LAZY_BOOSTING_MODELS:
-        value = getattr(importlib.import_module(".boosting", __name__), name, None)
+        value = getattr(importlib.import_module(".boosting", __name__), name)
     elif name in _LAZY_TUNING_MODELS:
-        value = getattr(importlib.import_module(".tuning", __name__), name, None)
+        value = getattr(importlib.import_module(".tuning", __name__), name)
     elif name == "ModelReport":
         value = getattr(importlib.import_module(".evaluation", __name__), "ModelReport")
     else:
