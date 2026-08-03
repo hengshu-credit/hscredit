@@ -4,11 +4,16 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+import sys
 from time import perf_counter
 from typing import Dict, Iterable, List
 
 import numpy as np
 import pandas as pd
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from hscredit.core.binning import OptimalBinning
 from hscredit.core.binning.or_binning import ORTOOLS_AVAILABLE
