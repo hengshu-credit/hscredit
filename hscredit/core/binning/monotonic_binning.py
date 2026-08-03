@@ -108,6 +108,8 @@ class MonotonicBinning(BaseBinning):
         min_bad_rate: float = 0.0,
         special_codes: Optional[List] = None,
         missing_separate: bool = True,
+        category_order=None,
+        handle_unknown: str = 'value',
         random_state: Optional[int] = None,
         verbose: Union[bool, int] = False,
         decimal: int = 4,
@@ -125,6 +127,8 @@ class MonotonicBinning(BaseBinning):
             monotonic=monotonic,
             special_codes=special_codes,
             missing_separate=missing_separate,
+            category_order=category_order,
+            handle_unknown=handle_unknown,
             random_state=random_state,
             verbose=verbose,
             decimal=decimal,
@@ -185,6 +189,7 @@ class MonotonicBinning(BaseBinning):
 
         self._fit_features(X.columns, _fit_one)
 
+        self._finalize_categorical_fit()
         self._is_fitted = True
         return self
 

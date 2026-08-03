@@ -116,6 +116,7 @@ class UniformBinning(BaseBinning):
         # 对每个特征进行分箱
         self._fit_features(X.columns, lambda f: self._fit_feature(f, X[f], y))
 
+        self._finalize_categorical_fit()
         self._is_fitted = True
         return self
 

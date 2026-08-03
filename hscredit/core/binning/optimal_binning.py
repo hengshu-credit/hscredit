@@ -243,6 +243,7 @@ class OptimalBinning(BaseBinning):
         
         # 清理kwargs，移除不应该传递给底层分箱器的参数
         self.kwargs = self._clean_kwargs(kwargs)
+        self._defer_categorical_adapter = True
         self._binner = None
         self._prebinner = None
         self.monotonic_trend_ = {}

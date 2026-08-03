@@ -19,7 +19,13 @@ from sklearn.base import BaseEstimator, TransformerMixin
 from ...exceptions import FeatureNotFoundError, NotFittedError
 from ...utils.misc import round_float
 from ...utils.serialization import ArtifactSerializableMixin
-from ._categorical import CategoryOrder, resolve_category_order
+from ._categorical import (
+    CategoryOrder,
+    assign_category_groups,
+    encode_ordered_categories,
+    resolve_category_order,
+    restore_category_groups,
+)
 
 # 从 metrics 导入指标计算方法
 from ..metrics._binning import (
@@ -241,6 +247,8 @@ class BaseBinning(ArtifactSerializableMixin, BaseEstimator, TransformerMixin, AB
         self._category_orders_ = {}
         self._category_code_maps_ = {}
         self._categorical_numeric_splits_ = {}
+        self._categorical_fit_context_ = {}
+        self._categorical_encoded_features_ = set()
         self._is_fitted = False
 
     def _validate_common_parameters(self) -> None:
@@ -320,6 +328,63 @@ class BaseBinning(ArtifactSerializableMixin, BaseEstimator, TransformerMixin, AB
                 category_order=self.category_order,
                 special_codes=self.special_codes,
             )
+
+    def _prepare_categorical_fit(self, X: pd.DataFrame, y: pd.Series) -> pd.DataFrame:
+        """将类别列转换为有序数值编码，供具体分箱器复用数值算法。"""
+        if getattr(self, '_defer_categorical_adapter', False) or getattr(self, 'force_numerical', False):
+            return X
+
+        X_fit = X.copy()
+        self._categorical_fit_context_ = {}
+        self._categorical_encoded_features_ = set()
+        for feature in X.columns:
+            if self._detect_feature_type(X[feature]) != 'categorical':
+                continue
+            order = resolve_category_order(
+                feature,
+                X[feature],
+                y,
+                category_order=self.category_order,
+                special_codes=self.special_codes,
+            )
+            encoded = encode_ordered_categories(X[feature], order, self.special_codes)
+            self._category_orders_[feature] = order
+            self._category_code_maps_[feature] = [(category, code) for code, category in enumerate(order)]
+            self._categorical_fit_context_[feature] = X[feature].copy()
+            self._categorical_encoded_features_.add(feature)
+            X_fit[feature] = encoded
+        if self._categorical_fit_context_:
+            self._categorical_fit_y_ = y.copy()
+        return X_fit
+
+    def _assign_categorical_bins(self, feature: str, x: pd.Series) -> np.ndarray:
+        """使用拟合后的类别组进行类型安全分箱。"""
+        return assign_category_groups(
+            feature,
+            x,
+            self._cat_bins_.get(feature, []),
+            special_codes=self.special_codes,
+            missing_separate=self.missing_separate,
+            handle_unknown=self.handle_unknown,
+        )
+
+    def _finalize_categorical_fit(self) -> None:
+        """把具体方法产生的数值切分点还原为类别规则和统计表。"""
+        if not self._categorical_fit_context_:
+            return
+        y = self._categorical_fit_y_
+        for feature, original in self._categorical_fit_context_.items():
+            numeric_splits = np.asarray(self.splits_.get(feature, np.array([])), dtype=float)
+            self._categorical_numeric_splits_[feature] = numeric_splits.copy()
+            groups = restore_category_groups(self._category_orders_[feature], numeric_splits)
+            self._cat_bins_[feature] = groups
+            self.splits_[feature] = groups
+            self.n_bins_[feature] = len(groups)
+            self.feature_types_[feature] = 'categorical'
+            bins = self._assign_categorical_bins(feature, original)
+            self.bin_tables_[feature] = self._compute_bin_stats(feature, original, y, bins)
+        self._categorical_fit_context_ = {}
+        self._categorical_encoded_features_ = set()
 
     def _set_input_feature_attributes(self, X: pd.DataFrame) -> None:
         """记录 sklearn 兼容的输入特征元数据。"""
@@ -658,7 +723,7 @@ class BaseBinning(ArtifactSerializableMixin, BaseEstimator, TransformerMixin, AB
             )
 
         self._set_input_feature_attributes(X)
-        return X, y
+        return self._prepare_categorical_fit(X, y), y
 
     def _fit_features(self, features, fit_one) -> None:
         """按特征循环拟合，支持 n_jobs 并行。
@@ -1431,6 +1496,10 @@ class BaseBinning(ArtifactSerializableMixin, BaseEstimator, TransformerMixin, AB
         4. 数值型特征只有在明确设置 cat_cutoff 且满足条件时，才视为类别型
         5. 否则认为是数值型
         """
+        # 有序编码是类别变量的内部数值表示，必须强制走具体方法的数值算法。
+        if isinstance(data, pd.Series) and data.name in self._categorical_encoded_features_:
+            return 'numerical'
+
         # 统一转换为 pd.Series 处理
         if isinstance(data, np.ndarray):
             series = pd.Series(data)
