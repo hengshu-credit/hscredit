@@ -270,6 +270,7 @@ class ORBinning(BaseBinning):
         self._fit_features(X.columns, lambda f: self._fit_feature(f, X[f], y))
 
         self._apply_post_fit_constraints(X, y, enforce_monotonic=True)
+        self._finalize_categorical_fit()
         self._is_fitted = True
         return self
 

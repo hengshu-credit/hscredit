@@ -122,3 +122,66 @@ def resolve_category_order(
     ranked.sort(key=lambda item: (item[0], item[1]))
     return [item[2] for item in ranked]
 
+
+def encode_ordered_categories(
+    x: pd.Series,
+    ordered_categories: Sequence[Any],
+    special_codes: Optional[Sequence[Any]] = None,
+) -> pd.Series:
+    """将普通类别映射为连续浮点编码，缺失值和特殊值保留为 NaN。"""
+    encoded = pd.Series(np.nan, index=x.index, dtype=float, name=x.name)
+    for code, category in enumerate(ordered_categories):
+        encoded.loc[_typed_mask(x, category)] = float(code)
+    if special_codes:
+        for special in special_codes:
+            encoded.loc[_typed_mask(x, special)] = np.nan
+    return encoded
+
+
+def restore_category_groups(ordered_categories: Sequence[Any], numeric_splits: Sequence[float]) -> List[List[Any]]:
+    """将数值切分点还原为按数值箱顺序排列的类别组。"""
+    categories = list(ordered_categories)
+    if not categories:
+        return []
+    splits = np.asarray(list(numeric_splits), dtype=float)
+    splits = splits[np.isfinite(splits)]
+    splits = np.unique(np.sort(splits))
+    bin_indices = np.digitize(np.arange(len(categories), dtype=float), splits)
+    return [
+        [category for category, actual_bin in zip(categories, bin_indices) if actual_bin == expected_bin]
+        for expected_bin in sorted(set(bin_indices.tolist()))
+    ]
+
+
+def assign_category_groups(
+    feature: str,
+    x: pd.Series,
+    groups: Sequence[Sequence[Any]],
+    special_codes: Optional[Sequence[Any]] = None,
+    missing_separate: bool = True,
+    handle_unknown: str = "value",
+) -> np.ndarray:
+    """按类型安全规则应用类别组。"""
+    bins = np.full(len(x), -3, dtype=int)
+    missing_mask = x.map(is_missing_marker).to_numpy(dtype=bool)
+    for bin_index, group in enumerate(groups):
+        for category in group:
+            if is_missing_marker(category):
+                bins[missing_mask] = bin_index
+            else:
+                bins[_typed_mask(x, category).to_numpy(dtype=bool)] = bin_index
+
+    if missing_separate:
+        has_explicit_missing = any(any(is_missing_marker(value) for value in group) for group in groups)
+        if not has_explicit_missing:
+            bins[missing_mask] = -1
+
+    if special_codes:
+        for special in special_codes:
+            bins[_typed_mask(x, special).to_numpy(dtype=bool)] = -2
+
+    unknown_mask = (bins == -3) & ~missing_mask
+    if handle_unknown == "error" and unknown_mask.any():
+        unknown_values = unique_non_missing_typed(x.iloc[np.flatnonzero(unknown_mask)])
+        raise ValueError(f"特征 '{feature}' 包含未知类别: {unknown_values}")
+    return bins

@@ -168,6 +168,7 @@ class CartBinning(BaseBinning):
         self._fit_features(X.columns, _fit_one)
 
         self._apply_post_fit_constraints(X, y, enforce_monotonic=True)
+        self._finalize_categorical_fit()
         self._is_fitted = True
         return self
 
