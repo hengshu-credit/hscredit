@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """OptimalBinning2D 二维交互分箱测试."""
 
+from types import SimpleNamespace
+
 import pytest
 from sklearn.base import BaseEstimator, TransformerMixin, clone
 import numpy as np
@@ -697,6 +699,43 @@ class TestOptimalBinning2DExport:
 
 class TestOptimalBinning2DMerge:
     """最终二维合并分箱测试."""
+
+    def test_auto_monotonic_direction_reuses_fitted_axis_trend(self):
+        """自动方向应复用一维分箱器的实际识别结果."""
+        binner = OptimalBinning2D(monotonic="auto_asc_desc")
+        binner.feature_x_ = "x"
+        binner.binner_x_ = SimpleNamespace(
+            monotonic="auto_asc_desc",
+            monotonic_trend_={"x": "descending"},
+            bin_tables_={},
+        )
+
+        assert binner._resolve_axis_monotonic_trend(is_x=True) == "descending"
+
+    def test_non_directional_axis_trend_is_not_reinterpreted(self):
+        """峰谷趋势不得由二维逻辑重新解释为单增或单减."""
+        binner = OptimalBinning2D(monotonic="auto")
+        binner.feature_y_ = "y"
+        binner.binner_y_ = SimpleNamespace(
+            monotonic="auto",
+            monotonic_trend_={"y": "peak"},
+            bin_tables_={},
+        )
+
+        assert binner._resolve_axis_monotonic_trend(is_x=False) is None
+
+    def test_direction_names_follow_base_binning_bad_rate_contract(self):
+        """ascending/descending 应沿用坏样本率随分箱索引变化的定义."""
+        solution = np.array([[0], [1]])
+        ascending_counts = {0: (1.0, 9.0), 1: (8.0, 2.0)}
+        descending_counts = {0: (8.0, 2.0), 1: (1.0, 9.0)}
+        binner = OptimalBinning2D()
+        binner.n_bins_x_ = 2
+        binner.n_bins_y_ = 1
+
+        assert not binner._monotonic_violations(solution, ascending_counts, "ascending", None)
+        assert not binner._monotonic_violations(solution, descending_counts, "descending", None)
+        assert binner._monotonic_violations(solution, ascending_counts, "descending", None)
 
     def test_merge_limit_and_connected_regions(self, sample_df):
         binner = OptimalBinning2D(max_n_bins=5, max_n_bins_2d=4)
