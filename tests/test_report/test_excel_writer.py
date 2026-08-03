@@ -589,6 +589,72 @@ class TestDataframe2Excel:
         """非法 decimal 不得静默写出精度不明确的文件。"""
         with pytest.raises(ValueError, match='decimal 必须是大于等于 0 的整数或 None'):
             dataframe2excel(pd.DataFrame({'值': [1.2345]}), self.test_file, decimal=decimal)
+
+    def test_fast_mode_preserves_values_order_styles_and_coordinates(self):
+        """快速模式不得改变值、行列顺序、样式或返回坐标。"""
+        df = pd.DataFrame(
+            {'编号': ['001', '002'], '数值': [1.23456, 2.34567]},
+            index=pd.Index(['甲', '乙'], name='样本'),
+        )
+        normal_file = os.path.join(self.temp_dir, 'normal.xlsx')
+        fast_file = os.path.join(self.temp_dir, 'fast.xlsx')
+
+        normal_end = dataframe2excel(df, normal_file, sheet_name='S', index=True, fill=True)
+        fast_end = dataframe2excel(df, fast_file, sheet_name='S', index=True, fill=True, fast=True)
+
+        normal_ws = load_workbook(normal_file, data_only=False)['S']
+        fast_ws = load_workbook(fast_file, data_only=False)['S']
+        assert fast_end == normal_end
+        for row in range(2, normal_end[0]):
+            for col in range(2, normal_end[1]):
+                normal_cell = normal_ws.cell(row=row, column=col)
+                fast_cell = fast_ws.cell(row=row, column=col)
+                assert fast_cell.value == normal_cell.value
+                assert fast_cell._style == normal_cell._style
+        assert fast_ws['C3'].value == '001'
+        assert fast_ws['C3'].number_format == '@'
+
+    def test_fast_mode_preserves_multiindex_headers_and_merges(self):
+        """快速模式必须保留多层列名、索引顺序和合并范围。"""
+        columns = pd.MultiIndex.from_tuples([('统计', '金额'), ('统计', '数量'), ('标签', '等级')])
+        index = pd.MultiIndex.from_tuples(
+            [('甲组', 1), ('甲组', 2), ('乙组', 1)],
+            names=['客群', '序号'],
+        )
+        df = pd.DataFrame([[10.5, 2, 'A'], [20.5, 3, 'B'], [30.5, 4, 'C']], columns=columns, index=index)
+        normal_file = os.path.join(self.temp_dir, 'multi-normal.xlsx')
+        fast_file = os.path.join(self.temp_dir, 'multi-fast.xlsx')
+
+        normal_end = dataframe2excel(df, normal_file, sheet_name='S', index=True, fill=True)
+        fast_end = dataframe2excel(df, fast_file, sheet_name='S', index=True, fill=True, fast=True)
+
+        normal_ws = load_workbook(normal_file, data_only=False)['S']
+        fast_ws = load_workbook(fast_file, data_only=False)['S']
+        assert fast_end == normal_end
+        assert sorted(map(str, fast_ws.merged_cells.ranges)) == sorted(map(str, normal_ws.merged_cells.ranges))
+        for row in range(2, normal_end[0]):
+            for col in range(2, normal_end[1]):
+                normal_cell = normal_ws.cell(row=row, column=col)
+                fast_cell = fast_ws.cell(row=row, column=col)
+                assert fast_cell.value == normal_cell.value
+                assert fast_cell._style == normal_cell._style
+
+    @pytest.mark.parametrize('fill', [False, True])
+    def test_fast_mode_preserves_fill_style_variants(self, fill):
+        """快速路径不能弱化边框模式或填充模式。"""
+        df = pd.DataFrame({'A': [1, 2, 3], 'B': ['x', 'y', 'z']})
+        normal_file = os.path.join(self.temp_dir, f'fill-{fill}-normal.xlsx')
+        fast_file = os.path.join(self.temp_dir, f'fill-{fill}-fast.xlsx')
+
+        normal_end = dataframe2excel(df, normal_file, fill=fill)
+        fast_end = dataframe2excel(df, fast_file, fill=fill, fast=True)
+
+        normal_ws = load_workbook(normal_file).active
+        fast_ws = load_workbook(fast_file).active
+        assert fast_end == normal_end
+        for row in range(2, normal_end[0]):
+            for col in range(2, normal_end[1]):
+                assert fast_ws.cell(row, col)._style == normal_ws.cell(row, col)._style
     
     def test_write_with_title(self):
         """测试带标题写入"""
