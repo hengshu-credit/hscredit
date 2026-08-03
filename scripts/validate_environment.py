@@ -12,6 +12,7 @@ if str(PROJECT_ROOT) not in sys.path:
 REQUIRED_MODULES = [
     "numpy",
     "pandas",
+    "packaging",
     "scipy",
     "sklearn",
     "statsmodels",

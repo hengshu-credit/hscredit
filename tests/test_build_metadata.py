@@ -1,5 +1,6 @@
 """构建和安装元数据契约测试。"""
 
+import runpy
 import sys
 from pathlib import Path
 
@@ -44,3 +45,17 @@ def test_build_tools_are_not_runtime_dependencies():
     names = {Requirement(item).name.lower() for item in _pyproject()["project"]["dependencies"]}
 
     assert names.isdisjoint({"setuptools", "wheel", "build", "pkg-resources"})
+
+
+def test_environment_validator_checks_packaging():
+    namespace = runpy.run_path(str(PROJECT_ROOT / "scripts" / "validate_environment.py"))
+
+    assert "packaging" in namespace["REQUIRED_MODULES"]
+
+
+def test_ci_covers_setuptools_with_and_without_pkg_resources():
+    workflow = (PROJECT_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+
+    assert 'setuptools-version: "77.0.3"' in workflow
+    assert 'setuptools-version: "82.0.1"' in workflow
+    assert 'setuptools-version: "latest"' in workflow
