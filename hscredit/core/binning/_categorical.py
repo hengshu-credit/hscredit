@@ -185,3 +185,51 @@ def assign_category_groups(
         unknown_values = unique_non_missing_typed(x.iloc[np.flatnonzero(unknown_mask)])
         raise ValueError(f"特征 '{feature}' 包含未知类别: {unknown_values}")
     return bins
+
+
+def normalize_user_groups(
+    feature: str,
+    groups: Sequence[Sequence[Any]],
+    observed: pd.Series,
+    special_codes: Optional[Sequence[Any]] = None,
+    missing_separate: bool = True,
+) -> List[List[Any]]:
+    """校验并规范化用户提供的类别分箱规则。"""
+    if isinstance(groups, (str, bytes)) or not isinstance(groups, Sequence) or len(groups) == 0:
+        raise ValueError(f"特征 '{feature}' 的自定义类别分箱必须是非空 List[List]")
+
+    normalized: List[List[Any]] = []
+    ordinary_values: List[Any] = []
+    missing_seen = False
+    for group_index, group in enumerate(groups):
+        if isinstance(group, (str, bytes)) or not isinstance(group, Sequence) or len(group) == 0:
+            raise ValueError(f"特征 '{feature}' 的第 {group_index} 个自定义箱不能为空，且必须是列表")
+        normalized_group: List[Any] = []
+        for value in list(group):
+            if is_missing_marker(value):
+                if missing_seen:
+                    raise ValueError(f"特征 '{feature}' 的缺失值标记只能出现一次")
+                missing_seen = True
+                normalized_group.append(np.nan)
+                continue
+            value = _normalize_scalar(value)
+            if _contains_typed(ordinary_values, value):
+                raise ValueError(f"特征 '{feature}' 的类别 {value!r} 出现在多个自定义箱中")
+            ordinary_values.append(value)
+            normalized_group.append(value)
+        normalized.append(normalized_group)
+
+    observed_values = unique_non_missing_typed(observed, special_codes)
+    uncovered = [value for value in observed_values if not _contains_typed(ordinary_values, value)]
+    unknown = [value for value in ordinary_values if not _contains_typed(observed_values, value)]
+    if uncovered or unknown:
+        raise ValueError(
+            f"特征 '{feature}' 的自定义分箱必须完整覆盖训练类别；"
+            f"未覆盖类别: {uncovered}，规则外类别: {unknown}"
+        )
+    if observed.map(is_missing_marker).any() and not missing_separate and not missing_seen:
+        raise ValueError(
+            f"特征 '{feature}' 存在缺失值且 missing_separate=False，"
+            "自定义分箱必须显式指定缺失值所属箱"
+        )
+    return normalized

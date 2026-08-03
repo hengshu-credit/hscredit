@@ -316,9 +316,17 @@ class BaseBinning(ArtifactSerializableMixin, BaseEstimator, TransformerMixin, AB
         if self.category_order is not None and not isinstance(self.category_order, dict) and not callable(self.category_order):
             raise ValueError("category_order 必须是特征顺序字典、排序函数或 None")
 
-    def _record_category_orders(self, X: pd.DataFrame, y: pd.Series) -> None:
+    def _record_category_orders(
+        self,
+        X: pd.DataFrame,
+        y: pd.Series,
+        excluded_features: Optional[set] = None,
+    ) -> None:
         """记录训练类别顺序，供有序编码和规则导出使用。"""
+        excluded_features = excluded_features or set()
         for feature in X.columns:
+            if feature in excluded_features:
+                continue
             if self._detect_feature_type(X[feature]) != 'categorical':
                 continue
             self._category_orders_[feature] = resolve_category_order(

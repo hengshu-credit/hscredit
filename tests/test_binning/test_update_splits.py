@@ -81,7 +81,13 @@ def test_update_categorical_splits():
     # 使用 user_splits 初始化分箱器（支持类别型特征）
     initial_splits = {
         'age_in_years': [25, 35, 45, 55],
-        'purpose': [['car'], ['furniture'], ['radio/tv'], ['domestic appliances']],
+        'purpose': [
+            ['car (new)', 'car (used)'],
+            ['furniture/equipment', 'radio/television', 'domestic appliances'],
+            ['education', 'retraining'],
+            ['business'],
+            ['repairs', 'others'],
+        ],
     }
     binner = OptimalBinning(user_splits=initial_splits)
     binner.fit(X, y)
@@ -89,7 +95,12 @@ def test_update_categorical_splits():
     print(f"原始类别型切分点: {binner.splits_['purpose']}")
 
     # 更新类别型切分点
-    new_cat_splits = [['car', 'furniture'], ['radio/tv'], ['domestic appliances', 'repairs']]
+    new_cat_splits = [
+        ['car (new)', 'car (used)', 'business'],
+        ['furniture/equipment', 'radio/television', 'domestic appliances'],
+        ['education', 'retraining'],
+        ['repairs', 'others'],
+    ]
     binner.update({'purpose': new_cat_splits}, X=X, y=y)
 
     # 验证切分点已更新
@@ -110,7 +121,13 @@ def test_update_multiple_features():
     initial_splits = {
         'age_in_years': [25, 35, 45, 55],
         'credit_amount': [1000, 5000, 10000],
-        'purpose': [['car'], ['furniture'], ['radio/tv']],
+        'purpose': [
+            ['car (new)', 'car (used)'],
+            ['furniture/equipment', 'radio/television', 'domestic appliances'],
+            ['education', 'retraining'],
+            ['business'],
+            ['repairs', 'others'],
+        ],
     }
     binner = OptimalBinning(user_splits=initial_splits)
     binner.fit(X, y)
@@ -119,7 +136,12 @@ def test_update_multiple_features():
     updates = {
         'age_in_years': [20, 30, 40, 50],
         'credit_amount': [2000, 6000, 12000],
-        'purpose': [['car', 'furniture'], ['radio/tv'], ['others']],
+        'purpose': [
+            ['car (new)', 'car (used)', 'business'],
+            ['furniture/equipment', 'radio/television', 'domestic appliances'],
+            ['education', 'retraining'],
+            ['repairs', 'others'],
+        ],
     }
     binner.update(updates, X=X, y=y)
 
@@ -132,7 +154,7 @@ def test_update_multiple_features():
         binner.splits_['credit_amount'],
         np.array([2000, 6000, 12000], dtype=float)
     )
-    assert binner.splits_['purpose'] == [['car', 'furniture'], ['radio/tv'], ['others']]
+    assert binner.splits_['purpose'] == updates['purpose']
     print("[OK] 多个特征同时更新成功")
 
 

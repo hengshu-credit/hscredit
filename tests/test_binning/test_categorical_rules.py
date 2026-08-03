@@ -13,6 +13,7 @@ if str(project_root) not in sys.path:
 
 import numpy as np
 import pandas as pd
+import pytest
 from hscredit.core.binning import OptimalBinning
 
 
@@ -137,6 +138,110 @@ def test_mixed_type_rules():
     df_binned = binner2.transform(df[['age', 'city']], metric='bins')
     print(f"\n应用分箱后的结果:")
     print(df_binned.head(10))
+
+
+def _make_explicit_rule_data():
+    X = pd.DataFrame({"category": ["c1", "c2", "c3", "c4", np.nan] * 4})
+    y = pd.Series([0, 0, 1, 1, 1, 0, 1, 0, 1, 0] * 2, name="target")
+    return X, y
+
+
+@pytest.mark.parametrize(
+    ("groups", "expected_missing_bin", "expected_c4_bin"),
+    [
+        ([["c1", "c2"], ["c3", "c4"], [np.nan]], 2, 1),
+        ([["c1", "c2"], ["c3"], ["c4", np.nan]], 2, 2),
+    ],
+)
+def test_strict_custom_groups_support_missing_alone_or_merged(groups, expected_missing_bin, expected_c4_bin):
+    """防止显式缺失组在拟合、转换或导出时被移出用户指定箱。"""
+    X, y = _make_explicit_rule_data()
+    binner = OptimalBinning(user_splits={"category": groups}, strict_user_splits=True).fit(X, y)
+
+    transformed = binner.transform(pd.DataFrame({"category": [np.nan, "c4"]}), metric="indices")["category"]
+    exported = binner.export_rules()["category"]
+
+    assert transformed.tolist() == [expected_missing_bin, expected_c4_bin]
+    assert len(exported) == len(groups)
+    assert any(pd.isna(value) for value in exported[expected_missing_bin])
+
+
+@pytest.mark.parametrize(
+    "groups",
+    [
+        [["c1"], [], ["c2", "c3", "c4", np.nan]],
+        [["c1", "c2"], ["c2", "c3"], ["c4", np.nan]],
+        [["c1", "c2"], ["c3", np.nan]],
+        [["c1", "c2", np.nan], ["c3", "c4", None]],
+    ],
+    ids=["empty-group", "duplicate-category", "uncovered-category", "duplicate-missing"],
+)
+def test_invalid_strict_custom_groups_raise_value_error(groups):
+    """防止非法自定义类别规则静默生成未知训练箱或相互覆盖。"""
+    X, y = _make_explicit_rule_data()
+
+    with pytest.raises(ValueError, match="category"):
+        OptimalBinning(user_splits={"category": groups}, strict_user_splits=True).fit(X, y)
+
+
+def test_custom_groups_require_explicit_missing_when_not_separate():
+    """防止 missing_separate=False 时缺失训练值静默成为未知类别。"""
+    X, y = _make_explicit_rule_data()
+    groups = [["c1", "c2"], ["c3", "c4"]]
+
+    with pytest.raises(ValueError, match="category.*缺失"):
+        OptimalBinning(
+            user_splits={"category": groups},
+            strict_user_splits=True,
+            missing_separate=False,
+        ).fit(X, y)
+
+
+def test_user_splits_take_priority_over_category_order():
+    """防止显式分箱因无关的 category_order 校验而无法拟合。"""
+    X, y = _make_explicit_rule_data()
+    groups = [["c1", "c2"], ["c3"], ["c4", np.nan]]
+
+    binner = OptimalBinning(
+        user_splits={"category": groups},
+        strict_user_splits=True,
+        category_order={"category": ["not-used"]},
+    ).fit(X, y)
+
+    assert binner.n_bins_["category"] == 3
+
+
+def test_non_strict_custom_groups_are_merged_as_atomic_units_by_method():
+    """防止非严格模式忽略 max_n_bins，或拆散用户已经定义的类别组。"""
+    X = pd.DataFrame({"category": ["a", "b", "c", "d", "e", "f", "g", "h"] * 10})
+    y = pd.Series(([0, 0, 0, 1, 0, 1, 1, 1] * 10), name="target")
+    groups = [["a", "b"], ["c", "d"], ["e", "f"], ["g", "h"]]
+
+    binner = OptimalBinning(
+        method="uniform",
+        min_n_bins=2,
+        max_n_bins=2,
+        user_splits={"category": groups},
+        strict_user_splits=False,
+    ).fit(X, y)
+
+    assert binner.export_rules()["category"] == [["a", "b", "c", "d"], ["e", "f", "g", "h"]]
+
+
+def test_optimal_binning_forwards_reverse_category_order_to_native_method():
+    """防止 wrapper 只保存用户排序但底层方法仍按默认坏样本率顺序拟合。"""
+    X = pd.DataFrame({"category": ["A", "B", "C", "D"] * 20})
+    y = pd.Series(([0, 0, 1, 1] * 20), name="target")
+    order = ["D", "C", "B", "A"]
+
+    binner = OptimalBinning(
+        method="uniform",
+        min_n_bins=2,
+        max_n_bins=2,
+        category_order={"category": order},
+    ).fit(X, y)
+
+    assert binner.export_rules()["category"] == [["D", "C"], ["B", "A"]]
 
 
 if __name__ == '__main__':
