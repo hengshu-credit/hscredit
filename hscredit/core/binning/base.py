@@ -389,6 +389,8 @@ class BaseBinning(ArtifactSerializableMixin, BaseEstimator, TransformerMixin, AB
         y = self._categorical_fit_y_
         for feature, original in self._categorical_fit_context_.items():
             numeric_splits = np.asarray(self.splits_.get(feature, np.array([])), dtype=float)
+            numeric_splits = self._ensure_categorical_minimum_bins(feature, original, y, numeric_splits)
+            self.splits_[feature] = numeric_splits
             self._categorical_numeric_splits_[feature] = numeric_splits.copy()
             groups = restore_category_groups(self._category_orders_[feature], numeric_splits)
             self._cat_bins_[feature] = groups
@@ -401,6 +403,53 @@ class BaseBinning(ArtifactSerializableMixin, BaseEstimator, TransformerMixin, AB
         self._categorical_fit_context_ = {}
         self._categorical_encoded_features_ = set()
 
+    def _ensure_categorical_minimum_bins(
+        self,
+        feature: str,
+        original: pd.Series,
+        y: pd.Series,
+        numeric_splits: np.ndarray,
+    ) -> np.ndarray:
+        """在原生方法结果不足时补足可行的最小类别箱数。"""
+        order = self._category_orders_.get(feature, [])
+        required = min(self.min_n_bins, self.max_n_bins, len(order))
+        if required <= 1:
+            return np.asarray(numeric_splits, dtype=float)
+
+        splits = np.asarray(numeric_splits, dtype=float)
+        splits = np.unique(np.sort(splits[np.isfinite(splits)]))
+        codes = np.arange(len(order), dtype=float)
+        assignments = np.digitize(codes, splits)
+        # 类别只关心相邻编码是否跨箱，把任意浮点边界规范为无空箱的半整数边界。
+        splits = np.asarray(
+            [index + 0.5 for index in range(len(order) - 1) if assignments[index] != assignments[index + 1]],
+            dtype=float,
+        )
+
+        encoded = encode_ordered_categories(original, order, self.special_codes)
+        rates = []
+        counts = []
+        for code in range(len(order)):
+            mask = encoded == float(code)
+            counts.append(int(mask.sum()))
+            rates.append(float(y.loc[mask].mean()) if mask.any() else 0.0)
+
+        while len(splits) + 1 < required:
+            assignments = np.digitize(codes, splits)
+            candidates = [index for index in range(len(order) - 1) if assignments[index] == assignments[index + 1]]
+            if not candidates:
+                break
+            best = max(
+                candidates,
+                key=lambda index: (
+                    abs(rates[index + 1] - rates[index]),
+                    counts[index] + counts[index + 1],
+                    -index,
+                ),
+            )
+            splits = np.unique(np.sort(np.append(splits, best + 0.5)))
+        return splits
+
     def _validate_categorical_constraints(self, feature: str, y: pd.Series) -> None:
         """验证类别还原后的最终分箱是否满足公共硬约束。"""
         table = self.bin_tables_.get(feature)
@@ -411,20 +460,25 @@ class BaseBinning(ArtifactSerializableMixin, BaseEstimator, TransformerMixin, AB
             return
 
         n_bins = len(ordinary)
-        if n_bins < self.min_n_bins:
-            raise ValueError(f"特征 '{feature}' 的类别分箱无法满足 min_n_bins={self.min_n_bins}；" f"最终普通箱数为 {n_bins}")
+        available_categories = len(self._category_orders_.get(feature, []))
+        required_min_bins = min(self.min_n_bins, available_categories) if available_categories else 1
+        if n_bins < required_min_bins:
+            raise ValueError(
+                f"特征 '{feature}' 的类别分箱无法满足 min_n_bins={self.min_n_bins}；"
+                f"最终普通箱数为 {n_bins}，可用类别数为 {available_categories}"
+            )
         if n_bins > self.max_n_bins:
             raise ValueError(f"特征 '{feature}' 的类别分箱无法满足 max_n_bins={self.max_n_bins}；" f"最终普通箱数为 {n_bins}")
 
         counts = ordinary["样本总数"].to_numpy(dtype=int)
-        min_samples = self._get_min_samples(len(y))
+        min_samples = BaseBinning._get_min_samples(self, len(y))
         if np.any(counts < min_samples):
             observed = int(counts.min())
             raise ValueError(
                 f"特征 '{feature}' 的类别分箱无法满足 min_bin_size={self.min_bin_size}；" f"最小箱样本数为 {observed}，要求至少 {min_samples}"
             )
 
-        max_samples = self._get_max_samples(len(y))
+        max_samples = BaseBinning._get_max_samples(self, len(y))
         if max_samples is not None and np.any(counts > max_samples):
             observed = int(counts.max())
             raise ValueError(

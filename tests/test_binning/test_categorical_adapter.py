@@ -4,7 +4,13 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from hscredit.core.binning import OptimalBinning, TreeBinning, UniformBinning
+from hscredit.core.binning import (
+    GeneticBinning,
+    OptimalBinning,
+    TargetBadRateBinning,
+    TreeBinning,
+    UniformBinning,
+)
 
 
 def test_default_category_order_uses_bad_rate_and_first_seen_ties():
@@ -251,3 +257,36 @@ def test_tree_binning_sparse_category_never_uses_zero_min_samples_leaf():
     binner = TreeBinning(min_n_bins=1, max_n_bins=2, min_samples_leaf=0.05).fit(X, y)
 
     assert binner.export_rules()["category"] == [["A"]]
+
+
+def test_genetic_binning_accepts_single_candidate_category_feature():
+    """防止遗传分箱对长度为 1 的染色体执行非法单点交叉。"""
+    X = pd.DataFrame({"category": ["A", "B", np.nan, np.nan]})
+    y = pd.Series([0, 1, 0, 1], name="target")
+
+    binner = GeneticBinning(
+        min_n_bins=1,
+        max_n_bins=2,
+        population_size=4,
+        generations=2,
+        crossover_rate=1.0,
+        random_state=7,
+    ).fit(X, y)
+
+    assert set(value for group in binner.export_rules()["category"] for value in group) == {"A", "B"}
+
+
+def test_category_min_n_bins_is_completed_at_largest_adjacent_bad_rate_gap():
+    """原生方法只返回一箱时，应按类别顺序补足可行的 min_n_bins。"""
+    specifications = [("A", 199, 42), ("B", 159, 46), ("C", 231, 71), ("D", 111, 51)]
+    values = []
+    targets = []
+    for category, count, bad_count in specifications:
+        values.extend([category] * count)
+        targets.extend([1] * bad_count + [0] * (count - bad_count))
+    X = pd.DataFrame({"category": values})
+    y = pd.Series(targets, name="target")
+
+    binner = TargetBadRateBinning(min_n_bins=2, max_n_bins=5).fit(X, y)
+
+    assert binner.n_bins_["category"] >= 2

@@ -929,6 +929,13 @@ class ScoreCard(StandardScoreTransformer):
             def _match_category(value, label):
                 if pd.isna(value):
                     return False
+                if isinstance(label, (list, tuple, np.ndarray)):
+                    return any(
+                        not pd.isna(category)
+                        and type(value) is type(category)
+                        and value == category
+                        for category in label
+                    )
                 if ScoreCard._normalize_rule_label(label) in ('missing', 'else'):
                     return False
                 value_str = str(value).strip()
@@ -967,8 +974,12 @@ class ScoreCard(StandardScoreTransformer):
                             return '缺失值'
 
                         # 优先按导出的完整标签匹配，避免只依赖解析出的切分点导致中间箱丢失。
-                        for label in bin_labels:
-                            if self._match_interval(value, label) or self._match_category(value, label):
+                        has_structured_categories = len(bins) == len(bin_labels) and any(
+                            isinstance(descriptor, (list, tuple, np.ndarray)) for descriptor in bins
+                        )
+                        for index, label in enumerate(bin_labels):
+                            category_descriptor = bins[index] if has_structured_categories else label
+                            if self._match_interval(value, label) or self._match_category(value, category_descriptor):
                                 return label
 
                         for label in bin_labels:
@@ -3115,6 +3126,7 @@ class ScoreCard(StandardScoreTransformer):
                     float(coef * self._get_feature_woe_sign(i))
                     for i, coef in enumerate(self.coef_)
                 ],
+                'categorical_bins': self._get_export_categorical_bins(),
             }
 
         # 保存到 JSON 文件
@@ -3170,6 +3182,19 @@ class ScoreCard(StandardScoreTransformer):
         feature_names = meta.get('feature_names')
         if feature_names is not None:
             self._feature_names = list(feature_names)
+
+    def _get_export_categorical_bins(self) -> Dict[str, List[List[Any]]]:
+        """获取可 JSON 序列化且不丢失逗号类别的结构化类别规则。"""
+        cat_bins = getattr(self.binner, '_cat_bins_', {}) if self.binner is not None else {}
+        result = {}
+        for feature, groups in cat_bins.items():
+            if feature not in self.feature_names_:
+                continue
+            result[feature] = [
+                [value.item() if isinstance(value, np.generic) else value for value in group]
+                for group in groups
+            ]
+        return result
 
     @staticmethod
     def _coerce_scorecard_rules(data: Any) -> Dict[str, Any]:
@@ -3322,6 +3347,7 @@ class ScoreCard(StandardScoreTransformer):
             self._loaded_intercept = None
             self._loaded_coef = None
 
+        categorical_bins = meta.get('categorical_bins', {}) if meta else {}
         if meta:
             self._apply_export_metadata(meta)
 
@@ -3359,7 +3385,12 @@ class ScoreCard(StandardScoreTransformer):
                 splits = sorted(list(set(numeric_splits))) if numeric_splits else list(bin_labels)
             else:
                 # 类别型：保持列表格式
-                splits = bins if bins else list(bin_labels)
+                structured = categorical_bins.get(feature)
+                splits = (
+                    structured
+                    if structured is not None and len(structured) == len(scores)
+                    else bins if bins else list(bin_labels)
+                )
 
             self.rules_[feature] = {
                 'bins': splits,
@@ -4107,6 +4138,7 @@ class RoundScoreCard(ScoreCard):
                 'decimal': digits,
                 'rounded_scorecard': True,
                 'intercept_score': self._get_rounded_base_score(digits),
+                'categorical_bins': self._get_export_categorical_bins(),
             }
 
         if to_json is not None:
