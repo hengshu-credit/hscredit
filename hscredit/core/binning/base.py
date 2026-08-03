@@ -19,6 +19,7 @@ from sklearn.base import BaseEstimator, TransformerMixin
 from ...exceptions import FeatureNotFoundError, NotFittedError
 from ...utils.misc import round_float
 from ...utils.serialization import ArtifactSerializableMixin
+from ._categorical import CategoryOrder, resolve_category_order
 
 # 从 metrics 导入指标计算方法
 from ..metrics._binning import (
@@ -200,6 +201,8 @@ class BaseBinning(ArtifactSerializableMixin, BaseEstimator, TransformerMixin, AB
         split_points: Optional[Dict[str, List]] = None,
         cat_cutoff: Optional[Union[float, int]] = None,
         user_splits: Optional[Dict[str, List]] = None,
+        category_order: CategoryOrder = None,
+        handle_unknown: str = 'value',
         random_state: Optional[int] = None,
         n_jobs: int = 1,
         verbose: Union[bool, int] = False,
@@ -218,6 +221,8 @@ class BaseBinning(ArtifactSerializableMixin, BaseEstimator, TransformerMixin, AB
         self.split_points = split_points
         self.cat_cutoff = cat_cutoff
         self.user_splits = user_splits
+        self.category_order = category_order
+        self.handle_unknown = handle_unknown
         self.random_state = random_state
         self.n_jobs = n_jobs
         self.verbose = verbose
@@ -225,6 +230,7 @@ class BaseBinning(ArtifactSerializableMixin, BaseEstimator, TransformerMixin, AB
             raise ValueError("decimal 必须是大于等于 0 的整数")
         self.decimal = int(decimal)
         self.woe_clip = woe_clip
+        self._validate_common_parameters()
 
         # 拟合后的属性
         self.splits_ = {}
@@ -232,7 +238,88 @@ class BaseBinning(ArtifactSerializableMixin, BaseEstimator, TransformerMixin, AB
         self.bin_tables_ = {}
         self.feature_types_ = {}
         self._cat_bins_ = {}  # 类别型变量的分组信息，格式: {'feature': [['A', 'B'], ['C'], [np.nan]]}
+        self._category_orders_ = {}
+        self._category_code_maps_ = {}
+        self._categorical_numeric_splits_ = {}
         self._is_fitted = False
+
+    def _validate_common_parameters(self) -> None:
+        """统一校验所有分箱器共享的公共参数。"""
+        for name, value in (("min_n_bins", self.min_n_bins), ("max_n_bins", self.max_n_bins)):
+            if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer)) or int(value) < 1:
+                raise ValueError(f"{name} 必须是大于等于 1 的整数")
+        if self.min_n_bins > self.max_n_bins:
+            raise ValueError("min_n_bins 不能大于 max_n_bins")
+
+        for name, value in (("min_bin_size", self.min_bin_size), ("max_bin_size", self.max_bin_size)):
+            if value is None:
+                continue
+            if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, float, np.integer, np.floating)):
+                raise ValueError(f"{name} 必须是正数")
+            if not np.isfinite(value) or float(value) <= 0:
+                raise ValueError(f"{name} 必须是正数")
+
+        if (
+            isinstance(self.min_bad_rate, (bool, np.bool_))
+            or not isinstance(self.min_bad_rate, (int, float, np.integer, np.floating))
+            or not np.isfinite(self.min_bad_rate)
+            or not 0 <= float(self.min_bad_rate) <= 1
+        ):
+            raise ValueError("min_bad_rate 必须位于 [0, 1] 范围内")
+
+        if self.cat_cutoff is not None:
+            if (
+                isinstance(self.cat_cutoff, (bool, np.bool_))
+                or not isinstance(self.cat_cutoff, (int, float, np.integer, np.floating))
+                or not np.isfinite(self.cat_cutoff)
+                or float(self.cat_cutoff) <= 0
+            ):
+                raise ValueError("cat_cutoff 必须是正数")
+
+        if self.woe_clip is not None:
+            if (
+                isinstance(self.woe_clip, (bool, np.bool_))
+                or not isinstance(self.woe_clip, (int, float, np.integer, np.floating))
+                or not np.isfinite(self.woe_clip)
+                or float(self.woe_clip) <= 0
+            ):
+                raise ValueError("woe_clip 必须是正数")
+
+        valid_monotonic = {
+            None,
+            False,
+            True,
+            'auto',
+            'auto_asc_desc',
+            'auto_heuristic',
+            'ascending',
+            'descending',
+            'peak',
+            'valley',
+            'peak_heuristic',
+            'valley_heuristic',
+            'convex',
+            'concave',
+        }
+        if self.monotonic not in valid_monotonic:
+            raise ValueError(f"monotonic 不支持: {self.monotonic}")
+        if self.handle_unknown not in {'value', 'error'}:
+            raise ValueError("handle_unknown 只能是 'value' 或 'error'")
+        if self.category_order is not None and not isinstance(self.category_order, dict) and not callable(self.category_order):
+            raise ValueError("category_order 必须是特征顺序字典、排序函数或 None")
+
+    def _record_category_orders(self, X: pd.DataFrame, y: pd.Series) -> None:
+        """记录训练类别顺序，供有序编码和规则导出使用。"""
+        for feature in X.columns:
+            if self._detect_feature_type(X[feature]) != 'categorical':
+                continue
+            self._category_orders_[feature] = resolve_category_order(
+                feature,
+                X[feature],
+                y,
+                category_order=self.category_order,
+                special_codes=self.special_codes,
+            )
 
     def _set_input_feature_attributes(self, X: pd.DataFrame) -> None:
         """记录 sklearn 兼容的输入特征元数据。"""
@@ -1364,7 +1451,7 @@ class BaseBinning(ArtifactSerializableMixin, BaseEstimator, TransformerMixin, AB
             return 'categorical'
 
         # 布尔型视为类别型
-        if dtype_str == 'bool':
+        if pd.api.types.is_bool_dtype(series.dtype):
             return 'categorical'
 
         # 如果是数值型
