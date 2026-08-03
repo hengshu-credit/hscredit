@@ -490,6 +490,60 @@ class TestOptimalBinning2DCustom:
         cross_table = binner.get_cross_table()
         assert len(cross_table) == 3 * 2
 
+    def test_explicit_axis_params_override_params_and_global(self):
+        """显式轴向参数应覆盖轴向 params 和全局参数."""
+        binner = OptimalBinning2D(
+            max_n_bins=8,
+            method="quantile",
+            monotonic="descending",
+            max_n_bins_x=3,
+            method_x="uniform",
+            monotonic_x="ascending",
+            x_params={
+                "max_n_bins": 4,
+                "method": "mdlp",
+                "monotonic": "descending",
+                "min_n_bins": 1,
+            },
+        )
+
+        axis_binner = binner._create_binner(is_x=True)
+
+        assert axis_binner.max_n_bins == 3
+        assert axis_binner.method == "uniform"
+        assert axis_binner.monotonic == "ascending"
+        assert axis_binner.min_n_bins == 1
+
+    def test_axis_params_override_global_when_explicit_axis_params_are_absent(self):
+        """未传显式轴向参数时，轴向 params 应覆盖全局参数."""
+        binner = OptimalBinning2D(
+            max_n_bins=8,
+            method="quantile",
+            monotonic=False,
+            y_params={
+                "max_n_bins": 4,
+                "method": "uniform",
+                "monotonic": "descending",
+            },
+        )
+
+        axis_binner = binner._create_binner(is_x=False)
+
+        assert axis_binner.max_n_bins == 4
+        assert axis_binner.method == "uniform"
+        assert axis_binner.monotonic == "descending"
+
+    def test_explicit_axis_param_replaces_invalid_params_value_before_validation(self):
+        """被显式轴向值覆盖的非法 params 值不应参与最终配置校验."""
+        binner = OptimalBinning2D(
+            max_n_bins_x=3,
+            x_params={"max_n_bins": 0},
+        )
+
+        axis_binner = binner._create_binner(is_x=True)
+
+        assert axis_binner.max_n_bins == 3
+
 
 class TestOptimalBinning2DEdgeCases:
     """边界情况测试."""
