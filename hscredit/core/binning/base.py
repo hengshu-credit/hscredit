@@ -1969,6 +1969,7 @@ class BaseBinning(ArtifactSerializableMixin, BaseEstimator, TransformerMixin, AB
                 self.n_bins_[feature] = len(self.splits_[feature]) + 1
 
         self._is_fitted = True
+        return self
 
     def update(
         self,
