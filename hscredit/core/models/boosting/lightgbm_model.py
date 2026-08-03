@@ -18,7 +18,7 @@ pip install lightgbm
 """
 
 from importlib import util
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -30,6 +30,7 @@ from ...._compat import (
     installed_version,
     prepare_dependency,
 )
+from ..base import BaseRiskModel, resolve_custom_objective
 
 prepare_dependency("lightgbm")
 LIGHTGBM_VERSION = installed_version("lightgbm")
@@ -53,8 +54,6 @@ def _lightgbm_fit_api(version: Optional[Version]) -> str:
     if version is None:
         raise ImportError("LightGBM未安装，请使用 pip install lightgbm 安装")
     return "legacy" if version < Version("4.0.0") else "callbacks"
-
-from ..base import BaseRiskModel, resolve_custom_objective
 
 
 class LightGBMRiskModel(BaseRiskModel):

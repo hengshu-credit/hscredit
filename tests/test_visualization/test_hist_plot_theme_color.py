@@ -30,7 +30,13 @@ def test_hist_plot_handles_infinite_values_without_mutating_order():
 
     pd.testing.assert_series_equal(score, original)
     assert fig.axes[0].collections
-    vertices = np.concatenate([path.vertices for collection in fig.axes[0].collections for path in collection.get_paths()])
+    vertices = np.concatenate(
+        [
+            path.vertices
+            for collection in fig.axes[0].collections
+            for path in collection.get_paths()
+        ]
+    )
     assert not np.isinf(vertices).any()
 
     plt.close(fig)
