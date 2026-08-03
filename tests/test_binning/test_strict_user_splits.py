@@ -131,7 +131,13 @@ def test_strict_user_splits_categorical():
 
     # 定义类别型分箱
     user_splits = {
-        'purpose': [['car', 'furniture'], ['radio/tv'], ['domestic appliances'], ['repairs']],
+        'purpose': [
+            ['car (new)', 'car (used)'],
+            ['furniture/equipment', 'radio/television', 'domestic appliances'],
+            ['education', 'retraining'],
+            ['business'],
+            ['repairs', 'others'],
+        ],
     }
 
     # strict_user_splits=True

@@ -78,6 +78,8 @@ class MDLPBinning(BaseBinning):
         monotonic: Union[bool, str] = False,
         special_codes: Optional[List] = None,
         missing_separate: bool = True,
+        category_order=None,
+        handle_unknown: str = 'value',
         random_state: Optional[int] = None,
         verbose: Union[bool, int] = False,
         **kwargs
@@ -91,6 +93,8 @@ class MDLPBinning(BaseBinning):
             monotonic=monotonic,
             special_codes=special_codes,
             missing_separate=missing_separate,
+            category_order=category_order,
+            handle_unknown=handle_unknown,
             random_state=random_state,
             verbose=verbose,
         )

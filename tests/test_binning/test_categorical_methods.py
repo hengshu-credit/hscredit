@@ -17,6 +17,7 @@ from hscredit.core.binning import (
     MDLPBinning,
     MonotonicBinning,
     ORBinning,
+    OptimalBinning,
     QuantileBinning,
     SmoothBinning,
     TargetBadRateBinning,
@@ -43,6 +44,26 @@ DIRECT_BINNER_CLASSES = [
     KernelDensityBinning,
     BestLiftBinning,
     TargetBadRateBinning,
+]
+
+METHOD_NAMES = [
+    "uniform",
+    "quantile",
+    "tree",
+    "chi",
+    "best_ks",
+    "best_iv",
+    "mdlp",
+    "or_tools",
+    "cp_sat",
+    "cart",
+    "kmeans",
+    "monotonic",
+    "genetic",
+    "smooth",
+    "kernel_density",
+    "best_lift",
+    "target_bad_rate",
 ]
 
 
@@ -95,6 +116,31 @@ def _groups_from_numeric_transform(binner, ordered_categories):
         for expected_index in sorted(set(indices.tolist()))
         if expected_index >= 0
     ]
+
+
+def _make_optimal_binner(method, order):
+    kwargs = {
+        "method": method,
+        "max_n_bins": 3,
+        "min_n_bins": 2,
+        "min_bin_size": 0.01,
+        "random_state": 7,
+        "category_order": {"category": order},
+        "lift_refine": False,
+    }
+    if method == "genetic":
+        kwargs.update(population_size=12, generations=4)
+    elif method == "or_tools":
+        kwargs.update(or_time_limit=2, n_prebins=8, max_candidates=20)
+    elif method == "cp_sat":
+        kwargs.update(cp_sat_time_limit=2, cp_sat_n_prebins=8, max_candidates=20)
+    elif method == "kernel_density":
+        kwargs.update(n_grid_points=128)
+    elif method == "smooth":
+        kwargs.update(n_prebins=12)
+    elif method == "best_lift":
+        kwargs.update(n_prebins=12, max_bin_size=None)
+    return OptimalBinning(**kwargs)
 
 
 @pytest.mark.parametrize("binner_cls", DIRECT_BINNER_CLASSES, ids=lambda cls: cls.__name__)
@@ -154,3 +200,15 @@ def test_direct_binner_transform_reserves_unknown_category_index(binner_cls):
     transformed = binner.transform(pd.DataFrame({"category": ["UNSEEN"]}), metric="indices")
 
     assert transformed.iloc[0, 0] == -3
+
+
+@pytest.mark.parametrize("method", METHOD_NAMES)
+def test_optimal_binning_forwards_explicit_order_to_every_method(method):
+    """防止统一入口只对部分 method 传递 category_order。"""
+    X, y = _make_category_data()
+    order = ["F", "E", "D", "C", "B", "A"]
+
+    binner = _make_optimal_binner(method, order).fit(X, y)
+    flattened = [category for group in binner.export_rules()["category"] for category in group]
+
+    assert flattened == order

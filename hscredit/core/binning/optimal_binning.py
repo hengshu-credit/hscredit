@@ -18,7 +18,12 @@ import warnings
 
 from ...exceptions import NotFittedError
 from .base import BaseBinning
-from ._categorical import CategoryOrder
+from ._categorical import (
+    CategoryOrder,
+    assign_category_groups,
+    normalize_user_groups,
+    restore_category_groups,
+)
 from .uniform_binning import UniformBinning
 from .quantile_binning import QuantileBinning
 from .tree_binning import TreeBinning
@@ -276,7 +281,14 @@ class OptimalBinning(BaseBinning):
         :return: 拟合后的分箱器
         """
         X, y = self._check_input(X, y)
-        self._record_category_orders(X, y)
+        excluded_features = (
+            set(self.user_splits)
+            if isinstance(self.user_splits, dict)
+            else set(X.columns)
+            if callable(self.user_splits)
+            else set()
+        )
+        self._record_category_orders(X, y, excluded_features=excluded_features)
 
         # 如果已经拟合过（例如通过import_rules），只计算统计信息
         if self._is_fitted:
@@ -421,6 +433,17 @@ class OptimalBinning(BaseBinning):
                 # 类别型特征
                 splits = list(splits)
 
+                if len(splits) > 0 and isinstance(splits[0], list):
+                    splits = normalize_user_groups(
+                        feature,
+                        splits,
+                        X[feature],
+                        special_codes=self.special_codes,
+                        missing_separate=self.missing_separate,
+                    )
+                    if not self.strict_user_splits:
+                        splits = self._merge_user_category_groups_with_method(feature, X[feature], y, splits)
+
                 if self.strict_user_splits:
                     # 强制模式：完全保留用户指定的分箱，不做任何修改
                     # 检查是否为List[List]格式
@@ -453,6 +476,50 @@ class OptimalBinning(BaseBinning):
                 feature, X[feature], y, bins
             )
 
+    def _merge_user_category_groups_with_method(
+        self,
+        feature: str,
+        x: pd.Series,
+        y: pd.Series,
+        groups: List[List],
+    ) -> List[List]:
+        """把用户类别箱作为原子单位，使用当前方法决定整箱合并边界。"""
+        group_codes = assign_category_groups(
+            feature,
+            x,
+            groups,
+            special_codes=self.special_codes,
+            missing_separate=self.missing_separate,
+            handle_unknown='error',
+        )
+        encoded = pd.Series(group_codes, index=x.index, name=feature, dtype=float)
+        encoded.loc[encoded < 0] = np.nan
+        method_binner = OptimalBinning(
+            target=self.target,
+            method=self.method,
+            max_n_bins=min(self.max_n_bins, len(groups)),
+            min_n_bins=min(self.min_n_bins, len(groups)),
+            min_bin_size=self.min_bin_size,
+            max_bin_size=self.max_bin_size,
+            min_bad_rate=self.min_bad_rate,
+            monotonic=self.monotonic,
+            missing_separate=False,
+            special_codes=None,
+            cat_cutoff=None,
+            random_state=self.random_state,
+            verbose=False,
+            decimal=self.decimal,
+            woe_clip=self.woe_clip,
+            handle_unknown=self.handle_unknown,
+            **self.kwargs,
+        ).fit(encoded.to_frame(), y)
+        numeric_splits = method_binner.splits_.get(feature, np.array([]))
+        atomic_groups = restore_category_groups(list(range(len(groups))), numeric_splits)
+        return [
+            [value for group_index in atomic_group for value in groups[group_index]]
+            for atomic_group in atomic_groups
+        ]
+
     def _get_prebinning_params(self, override_dict: Optional[Dict] = None) -> Dict:
         """获取预分箱参数.
         
@@ -470,6 +537,8 @@ class OptimalBinning(BaseBinning):
             'random_state': self.random_state,
             'verbose': False,  # 预分箱默认不输出详细信息
             'decimal': self.decimal,
+            'category_order': self.category_order,
+            'handle_unknown': self.handle_unknown,
         }
         
         # 应用 prebinning_params 中的参数
@@ -1162,6 +1231,8 @@ class OptimalBinning(BaseBinning):
             'random_state': self.random_state,
             'verbose': self.verbose,
             'decimal': self.decimal,
+            'category_order': self.category_order,
+            'handle_unknown': self.handle_unknown,
         }
         
         # 安全地更新参数，过滤无效参数
@@ -1188,6 +1259,8 @@ class OptimalBinning(BaseBinning):
             'random_state': self.random_state,
             'verbose': self.verbose,
             'decimal': self.decimal,
+            'category_order': self.category_order,
+            'handle_unknown': self.handle_unknown,
         }
         
         # 安全地更新参数
@@ -1222,6 +1295,8 @@ class OptimalBinning(BaseBinning):
                     "请使用 pip install ortools 安装。"
                 )
             or_params = full_params.copy()
+            or_params.pop('or_objective', None)
+            or_params.pop('or_time_limit', None)
             or_params['objective'] = self.kwargs.get('or_objective', 'iv')
             or_params['time_limit'] = self.kwargs.get('or_time_limit', 30)
             self._binner = ORBinning(**or_params)
@@ -1232,6 +1307,9 @@ class OptimalBinning(BaseBinning):
                     "请使用 pip install ortools 安装。"
                 )
             cp_sat_params = full_params.copy()
+            cp_sat_params.pop('cp_sat_objective', None)
+            cp_sat_params.pop('cp_sat_time_limit', None)
+            cp_sat_params.pop('cp_sat_n_prebins', None)
             cp_sat_params['objective'] = self.kwargs.get('cp_sat_objective', 'iv')
             cp_sat_params['time_limit'] = self.kwargs.get('cp_sat_time_limit', 30)
             cp_sat_params['n_prebins'] = self.kwargs.get('cp_sat_n_prebins', 50)
@@ -1248,6 +1326,8 @@ class OptimalBinning(BaseBinning):
                 'random_state': self.random_state,
                 'verbose': self.verbose,
                 'force_numerical': False,
+                'category_order': self.category_order,
+                'handle_unknown': self.handle_unknown,
             }
             kmeans_params.update(self.kwargs)
             self._binner = KMeansBinning(**kmeans_params)
@@ -1260,6 +1340,8 @@ class OptimalBinning(BaseBinning):
                 'special_codes': self.special_codes,
                 'random_state': self.random_state,
                 'verbose': self.verbose,
+                'category_order': self.category_order,
+                'handle_unknown': self.handle_unknown,
             }
             mono_params.update(self.kwargs)
             self._binner = MonotonicBinning(**mono_params)
@@ -1279,6 +1361,8 @@ class OptimalBinning(BaseBinning):
                 'random_state': self.random_state,
                 'verbose': self.verbose,
                 'decimal': self.decimal,
+                'category_order': self.category_order,
+                'handle_unknown': self.handle_unknown,
             }
             for k, v in self.kwargs.items():
                 if k not in ['prebinning', 'prebinning_params', 'prebinning_method', 'user_splits', 'strict_user_splits', 'max_bin_size', 'cat_cutoff']:
@@ -1298,6 +1382,12 @@ class OptimalBinning(BaseBinning):
         self.feature_types_ = self._binner.feature_types_
         if hasattr(self._binner, '_cat_bins_'):
             self._cat_bins_ = self._binner._cat_bins_
+        if hasattr(self._binner, '_category_orders_'):
+            self._category_orders_ = self._binner._category_orders_
+        if hasattr(self._binner, '_category_code_maps_'):
+            self._category_code_maps_ = self._binner._category_code_maps_
+        if hasattr(self._binner, '_categorical_numeric_splits_'):
+            self._categorical_numeric_splits_ = self._binner._categorical_numeric_splits_
 
         if hasattr(self._binner, 'ks_stats_'):
             self.ks_stats_ = self._binner.ks_stats_
