@@ -138,6 +138,12 @@ class ExcelWriter:
             if style.name not in self.workbook.style_names:
                 self.workbook.add_named_style(style)
 
+        # 快速写入路径直接复用工作簿中已注册的样式数组，避免逐单元格按名称查找。
+        self._style_cache = {
+            style.name: copy.copy(style.as_tuple())
+            for style in self.workbook._named_styles
+        }
+
         # 用于上下文管理器的文件路径
         self._filename: Optional[str] = None
 
@@ -912,6 +918,7 @@ class ExcelWriter:
         merge_index: bool = True,
         merge_header: Union[bool, str, int, Sequence[int]] = True,
         decimal: Optional[int] = 4,
+        fast: bool = False,
     ) -> Tuple[int, int]:
         """向Excel插入DataFrame。
 
@@ -927,6 +934,8 @@ class ExcelWriter:
         :param merge_index: 当存储index时，是否合并连续相同的index值，默认为True
         :param merge_header: 多层列名是否横向合并相邻相同标题，默认True合并全部层级；
             可传False/``"none"``不合并，或传层级序号/序号列表仅合并指定层级
+        :param decimal: 浮点值保留小数位数，默认4；None表示不主动舍入
+        :param fast: 是否启用保样式快速写入，默认False
         :return: (下一行行号, 下一列列号)
 
         **参考样例**
@@ -947,7 +956,7 @@ class ExcelWriter:
         >>> writer.insert_df2sheet(worksheet, df, "B30", merge_column='A', merge=True)
         """
         self._validate_decimal(decimal)
-        df = data.copy()
+        df = data if fast else data.copy()
 
         # 解析起始位置
         if isinstance(insert_space, str):
@@ -1056,6 +1065,7 @@ class ExcelWriter:
             raise TypeError("merge_header 仅支持 bool、'all'/'none'、层级序号或层级序号列表")
 
         merge_header_levels = _resolve_merge_header_levels(merge_header, df.columns.nlevels)
+        insert_row = self._insert_rows_fast if fast else self.insert_rows
 
         # 迭代行数据
         def _iter_rows(df, header=True, index=True):
@@ -1098,7 +1108,7 @@ class ExcelWriter:
         for i, row in enumerate(_iter_rows(df, header=header, index=index)):
             if fill:
                 if header and i < df.columns.nlevels:
-                    self.insert_rows(
+                    insert_row(
                         worksheet, row, start_row + i, start_col,
                         style="header",
                         auto_width=auto_width,
@@ -1106,7 +1116,7 @@ class ExcelWriter:
                         decimal=decimal,
                     )
                 elif i == 0:
-                    self.insert_rows(
+                    insert_row(
                         worksheet, row, start_row + i, start_col,
                         style="middle_even_first",
                         auto_width=auto_width,
@@ -1126,7 +1136,7 @@ class ExcelWriter:
                         else:
                             style = "middle_odd_last" if (header and i == len(df) + df.columns.nlevels - 1) or (not header and i + 1 == len(df)) else "middle_odd"
 
-                    self.insert_rows(
+                    insert_row(
                         worksheet, row, start_row + i, start_col,
                         style=style,
                         auto_width=auto_width,
@@ -1135,7 +1145,7 @@ class ExcelWriter:
                     )
             else:
                 if header and i < df.columns.nlevels:
-                    self.insert_rows(
+                    insert_row(
                         worksheet, row, start_row + i, start_col,
                         style="header",
                         auto_width=auto_width,
@@ -1143,14 +1153,14 @@ class ExcelWriter:
                         decimal=decimal,
                     )
                 elif i == 0:
-                    self.insert_rows(
+                    insert_row(
                         worksheet, row, start_row + i, start_col,
                         style="first",
                         auto_width=auto_width,
                         decimal=decimal,
                     )
                 elif (header and i == len(df) + df.columns.nlevels - 1) or (not header and i + 1 == len(df)):
-                    self.insert_rows(
+                    insert_row(
                         worksheet, row, start_row + i, start_col,
                         style="last",
                         auto_width=auto_width,
@@ -1158,14 +1168,14 @@ class ExcelWriter:
                     )
                 else:
                     if merge_rows and len(merge_rows) > 0:
-                        self.insert_rows(
+                        insert_row(
                             worksheet, row, start_row + i, start_col,
                             auto_width=auto_width,
                             merge_rows=sorted(set(_row for _rows in merge_rows.values() for _row in _rows)),
                             decimal=decimal,
                         )
                     else:
-                        self.insert_rows(
+                        insert_row(
                             worksheet, row, start_row + i, start_col,
                             auto_width=auto_width,
                             decimal=decimal,
@@ -1203,6 +1213,98 @@ class ExcelWriter:
             )
 
         return end_row, end_col_idx
+
+    def _insert_value_fast(
+        self,
+        worksheet: Worksheet,
+        row_index: int,
+        col_index: int,
+        value: Any,
+        style: str,
+        decimal: Optional[int],
+        end_col: Optional[int] = None,
+    ) -> None:
+        """使用整数坐标和缓存样式写入单元格。"""
+        cell = worksheet.cell(row=row_index, column=col_index)
+        style_array = self._style_cache.get(style)
+        if style_array is None:
+            cell.style = style
+        else:
+            cell._style = copy.copy(style_array)
+
+        if end_col is not None and end_col != col_index:
+            worksheet.merge_cells(
+                start_row=row_index,
+                start_column=col_index,
+                end_row=row_index,
+                end_column=end_col,
+            )
+
+        cell.value = self.astype_insertvalue(value, decimal=decimal)
+        if self.is_numeric_like_string(value):
+            cell.number_format = '@'
+
+    def _insert_rows_fast(
+        self,
+        worksheet: Worksheet,
+        row: List,
+        row_index: int,
+        col_index: Union[str, int],
+        merge_rows: Optional[List[int]] = None,
+        style: str = "",
+        auto_width: bool = False,
+        style_only: bool = False,
+        multi_levels: bool = False,
+        decimal: Optional[int] = 4,
+    ) -> None:
+        """按现有样式规则快速写入一行，不执行逐单元格列宽调整。"""
+        curr_col = column_index_from_string(col_index) if isinstance(col_index, str) else col_index
+
+        if multi_levels and style == "header":
+            row = pd.Series(row).ffill().to_list()
+            item, start, length = self.calc_continuous_cnt(row)
+            while start is not None:
+                if start + length < len(row):
+                    cell_style = f"{style}_left" if start == 0 else f"{style}_middle"
+                else:
+                    cell_style = f"{style}_right"
+                self._insert_value_fast(
+                    worksheet,
+                    row_index,
+                    curr_col + start,
+                    item,
+                    cell_style,
+                    decimal,
+                    end_col=curr_col + start + length - 1,
+                )
+                item, start, length = self.calc_continuous_cnt(row, start + length)
+            return
+
+        for j, value in enumerate(row):
+            if merge_rows is not None and row_index + 1 not in merge_rows:
+                if j == 0:
+                    cell_style = "merge_left"
+                elif j == len(row) - 1:
+                    cell_style = "merge_right"
+                else:
+                    cell_style = "merge_middle"
+            elif style_only or len(row) <= 1:
+                cell_style = style or "middle"
+            elif j == 0:
+                cell_style = f"{style}_left" if style else "left"
+            elif j == len(row) - 1:
+                cell_style = f"{style}_right" if style else "right"
+            else:
+                cell_style = f"{style}_middle" if style else "middle"
+
+            self._insert_value_fast(
+                worksheet,
+                row_index,
+                curr_col + j,
+                value,
+                cell_style,
+                decimal,
+            )
 
     def insert_rows(
         self,
@@ -2768,6 +2870,7 @@ def dataframe2excel(
     writer_params: Optional[Dict] = None,
     auto_filter: bool = False,
     decimal: Optional[int] = 4,
+    fast: bool = False,
     **kwargs
 ) -> Tuple[int, int]:
     """快速将DataFrame写入Excel。
@@ -2807,6 +2910,7 @@ def dataframe2excel(
     :param image_bottom_padding_rows: 图片区与下方表格之间的额外空行数，默认为1
     :param writer_params: ExcelWriter参数，默认为None
     :param decimal: 浮点值保留小数位数，默认4；None表示不主动舍入
+    :param fast: 是否启用保样式快速写入，默认False
     :param kwargs: 其他参数，传递给insert_df2sheet
     :return: (下一行行号, 下一列列号)
 
@@ -2885,7 +2989,7 @@ def dataframe2excel(
     # 插入DataFrame
     end_row, end_col = writer.insert_df2sheet(
         worksheet, data, (start_row, start_col),
-        fill=fill, header=header, decimal=decimal, **kwargs
+        fill=fill, header=header, decimal=decimal, fast=fast, **kwargs
     )
 
     # 设置百分比格式列
