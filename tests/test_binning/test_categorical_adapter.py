@@ -290,3 +290,50 @@ def test_category_min_n_bins_is_completed_at_largest_adjacent_bad_rate_gap():
     binner = TargetBadRateBinning(min_n_bins=2, max_n_bins=5).fit(X, y)
 
     assert binner.n_bins_["category"] >= 2
+
+
+def _make_sparse_category_data():
+    categories = []
+    targets = []
+    for category, count, bad_count in [
+        ("A", 4, 0),
+        ("B", 2, 0),
+        ("C", 20, 2),
+        ("D", 141, 17),
+        ("E", 803, 143),
+    ]:
+        categories.extend([category] * count)
+        targets.extend([1] * bad_count + [0] * (count - bad_count))
+    return pd.DataFrame({"category": categories}), pd.Series(targets, name="target")
+
+
+@pytest.mark.parametrize("binner_cls", [UniformBinning, GeneticBinning])
+def test_category_min_bin_size_merges_feasible_sparse_bins(binner_cls):
+    """可合并的稀有类别应先满足最小箱样本量，再执行最终校验。"""
+    X, y = _make_sparse_category_data()
+
+    binner = binner_cls(
+        min_n_bins=2,
+        max_n_bins=5,
+        min_bin_size=0.01,
+        random_state=42,
+    ).fit(X, y)
+    ordinary = binner.get_bin_table("category").query("分箱 >= 0")
+
+    assert ordinary["样本总数"].min() >= 9
+    assert {value for group in binner.export_rules()["category"] for value in group} == set(X["category"])
+
+
+def test_min_bin_size_one_means_one_sample():
+    """min_bin_size=1 应按绝对样本数解释，不能被误改为 100% 比例。"""
+    X = pd.DataFrame({"category": ["A", "B", "C", "D"]})
+    y = pd.Series([0, 0, 1, 1], name="target")
+
+    binner = UniformBinning(
+        min_n_bins=2,
+        max_n_bins=4,
+        min_bin_size=1,
+    ).fit(X, y)
+    ordinary = binner.get_bin_table("category").query("分箱 >= 0")
+
+    assert ordinary["样本总数"].min() == 1
