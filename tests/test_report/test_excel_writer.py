@@ -568,18 +568,20 @@ class TestDataframe2Excel:
         assert end_row > 0
         assert end_col > 0
 
-    def test_decimal_none_preserves_float_precision(self):
+    @pytest.mark.parametrize('fast', [False, True])
+    def test_decimal_none_preserves_float_precision(self, fast):
         """decimal=None 时不得主动截断 DataFrame 浮点值。"""
         value = 1.234567890123
 
-        dataframe2excel(pd.DataFrame({'值': [value]}), self.test_file, decimal=None)
+        dataframe2excel(pd.DataFrame({'值': [value]}), self.test_file, decimal=None, fast=fast)
 
         loaded_wb = load_workbook(self.test_file, data_only=False)
         assert loaded_wb.active['B3'].value == value
 
-    def test_decimal_controls_float_precision(self):
+    @pytest.mark.parametrize('fast', [False, True])
+    def test_decimal_controls_float_precision(self, fast):
         """decimal 应与 ScoreCard 一样表示保留的小数位数。"""
-        dataframe2excel(pd.DataFrame({'值': [1.2356]}), self.test_file, decimal=2)
+        dataframe2excel(pd.DataFrame({'值': [1.2356]}), self.test_file, decimal=2, fast=fast)
 
         loaded_wb = load_workbook(self.test_file, data_only=False)
         assert loaded_wb.active['B3'].value == 1.24
@@ -655,6 +657,105 @@ class TestDataframe2Excel:
         for row in range(2, normal_end[0]):
             for col in range(2, normal_end[1]):
                 assert fast_ws.cell(row, col)._style == normal_ws.cell(row, col)._style
+
+    def test_dataframe_auto_width_does_not_snapshot_each_cell(self, monkeypatch):
+        """DataFrame 自动列宽只能按列处理一次，不能在每个单元格重复快照。"""
+        calls = []
+        original = ExcelWriter._get_column_cells_data
+
+        def counted(writer, worksheet, col_letter):
+            calls.append(col_letter)
+            return original(writer, worksheet, col_letter)
+
+        monkeypatch.setattr(ExcelWriter, '_get_column_cells_data', counted)
+        writer = ExcelWriter()
+        ws = writer.get_sheet_by_name('S')
+
+        dataframe2excel(
+            pd.DataFrame({'A': range(20), 'B': range(20)}),
+            writer,
+            sheet_name=ws,
+            auto_width=True,
+        )
+
+        assert calls == ['B', 'C']
+
+    def test_fast_auto_width_avoids_column_style_snapshots(self, monkeypatch):
+        """快速模式应在写入时累计宽度，不能再次扫描和复制整列样式。"""
+        calls = []
+        original = ExcelWriter._get_column_cells_data
+
+        def counted(writer, worksheet, col_letter):
+            calls.append(col_letter)
+            return original(writer, worksheet, col_letter)
+
+        monkeypatch.setattr(ExcelWriter, '_get_column_cells_data', counted)
+        writer = ExcelWriter()
+        ws = writer.get_sheet_by_name('S')
+
+        dataframe2excel(
+            pd.DataFrame({'中文列': ['短', '较长内容'], 'number': [1.2, 345.6]}),
+            writer,
+            sheet_name=ws,
+            auto_width=True,
+            fast=True,
+        )
+
+        assert calls == []
+        assert ws.column_dimensions['B'].width >= 8
+        assert ws.column_dimensions['C'].width >= 8
+
+    def test_fast_mode_preserves_formats_alignment_filter_and_width(self):
+        """快速模式必须保留外层格式、对齐、筛选和自动列宽。"""
+        df = pd.DataFrame({
+            '特征': ['短名', '较长的中文特征名'],
+            '占比': [0.12345, 0.54321],
+            '金额': [1234.5, 6789.0],
+            '指标': [-0.2, 0.8],
+        })
+        normal_file = os.path.join(self.temp_dir, 'formats-normal.xlsx')
+        fast_file = os.path.join(self.temp_dir, 'formats-fast.xlsx')
+        params = dict(
+            sheet_name='S',
+            percent_cols=['占比'],
+            custom_cols=['金额'],
+            custom_format='#,##0.00',
+            condition_cols=['指标'],
+            color_cols=['占比'],
+            left_cols=['特征'],
+            right_cols=['金额'],
+            auto_filter=True,
+            auto_width=True,
+        )
+
+        normal_end = dataframe2excel(df, normal_file, **params)
+        fast_end = dataframe2excel(df, fast_file, fast=True, **params)
+
+        normal_ws = load_workbook(normal_file, data_only=False)['S']
+        fast_ws = load_workbook(fast_file, data_only=False)['S']
+        assert fast_end == normal_end
+        assert fast_ws.auto_filter.ref == normal_ws.auto_filter.ref
+        for col in range(2, normal_end[1]):
+            letter = normal_ws.cell(row=2, column=col).column_letter
+            assert fast_ws.column_dimensions[letter].width == pytest.approx(
+                normal_ws.column_dimensions[letter].width
+            )
+        for row in range(2, normal_end[0]):
+            for col in range(2, normal_end[1]):
+                normal_cell = normal_ws.cell(row=row, column=col)
+                fast_cell = fast_ws.cell(row=row, column=col)
+                assert fast_cell.value == normal_cell.value
+                assert fast_cell._style == normal_cell._style
+
+        normal_rules = [
+            (str(key.sqref), [rule.type for rule in rules])
+            for key, rules in normal_ws.conditional_formatting._cf_rules.items()
+        ]
+        fast_rules = [
+            (str(key.sqref), [rule.type for rule in rules])
+            for key, rules in fast_ws.conditional_formatting._cf_rules.items()
+        ]
+        assert fast_rules == normal_rules
     
     def test_write_with_title(self):
         """测试带标题写入"""
