@@ -11,25 +11,37 @@
 ```python
 def dataframe2excel(
     ...,
-    fast: bool = False,
+    speed: str = "auto",
     decimal: Optional[int] = 4,
     **kwargs,
 ) -> Tuple[int, int]:
     ...
 ```
 
-- `fast=False`：继续使用现有写入路径，保持完全向后兼容。
-- `fast=True`：启用保样式快速写入路径。
+- `speed="auto"`：默认，根据 DataFrame 行数、有效列数和单元格数自动选择写入路径。
+- `speed="normal"`：明确使用现有兼容写入路径。
+- `speed="fast"`：明确使用保样式快速写入路径。
+- `speed` 会去除首尾空格并按小写解释；其他值抛出列出合法选项的中文 `ValueError`。
 - `decimal=4`：与当前行为一致，浮点值写入前保留四位小数。
 - `decimal=None`：不主动舍入浮点值。
 - `decimal` 的命名与 `ScoreCard`、`RoundScoreCard` 的精度参数保持一致。
 - `decimal` 仅接受 `None` 或大于等于 0 的整数；布尔值和负数抛出中文 `ValueError`。
 
-`ExcelWriter.insert_df2sheet` 同步增加内部可用的 `fast` 和 `decimal` 参数，便于 `dataframe2excel` 将选择显式传入底层写入器。
+`ExcelWriter.insert_df2sheet` 同步使用 `speed="auto"` 和 `decimal` 参数，使直接调用底层写入器时获得相同选择规则。删除公开的 `fast` 参数，避免两个速度参数并存。
+
+## 自动选择规则
+
+`speed="auto"` 在以下任一条件成立时选择快速路径，否则选择兼容路径：
+
+- DataFrame 行数大于等于 500；
+- 有效列数大于等于 50；
+- 行数乘以有效列数大于等于 10,000。
+
+有效列数等于 DataFrame 数据列数；当 `index=True` 时，再加上索引层级数。表头行不计入阈值。固定复合阈值能够同时覆盖大数据集与高维特征集，并保证相同输入在不同机器上选择同一路径。
 
 ## 样式与功能边界
 
-快速模式必须保留 hscredit Excel 的现有样式和功能，不提供无样式、流式或弱化样式模式。下列能力在 `fast=True` 下必须与默认模式一致：
+快速模式必须保留 hscredit Excel 的现有样式和功能，不提供无样式、流式或弱化样式模式。下列能力在 `speed="fast"` 以及自动选择的快速路径下必须与 `speed="normal"` 一致：
 
 - 标题、单层和多层表头样式；
 - 内容行填充、边框、首行、末行及奇偶行样式；
@@ -50,7 +62,7 @@ def dataframe2excel(
 4. DataFrame 只读遍历，不再无条件执行完整 `data.copy()`。
 5. 合并区间仍使用现有计算规则，确保合并边界和显示顺序不变。
 
-默认模式不复用这些内部优化，以便保留清晰的兼容回退路径。
+兼容模式不复用这些内部优化，以便保留清晰的显式回退路径。
 
 ## 自动列宽
 
@@ -72,13 +84,14 @@ def dataframe2excel(
 
 自动化测试覆盖：
 
-1. `fast=True` 与默认模式的单层表头、样式、值和返回坐标一致。
+1. `speed="fast"` 与 `speed="normal"` 的单层表头、样式、值和返回坐标一致。
 2. `fill=True`、`fill=False`、MultiIndex、索引合并、列合并和表头合并一致。
 3. 百分比、自定义格式、条件格式、颜色渐变和左右对齐一致。
 4. 中文、空值、日期、布尔值、前导零字符串和浮点数内容正确。
 5. `decimal=4` 保持历史行为，`decimal=None` 保留输入精度，非法值返回中文错误。
 6. `auto_width=True` 不再逐单元格调用列宽调整，并保持最终列宽和样式。
 7. 至少使用 1000 行、100 列的数据集做快速模式与默认模式基准；性能测试报告耗时比值，但不设置容易受 CI 波动影响的硬性秒数门槛。
+8. 自动模式在 500 行、50 有效列和 10,000 单元格三个边界的前后均选择正确路径，显式 `normal` / `fast` 始终覆盖自动判断。
 
 ## 非目标
 
