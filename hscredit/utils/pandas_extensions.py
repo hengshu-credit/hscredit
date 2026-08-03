@@ -4,6 +4,7 @@ from __future__ import annotations
 
 为 pandas DataFrame 和 Series 提供额外的方法，包括：
 - df.summary(): 综合特征描述统计
+- s.summary(): 单字段综合特征描述统计
 - df.eda_info(): EDA基础信息
 - df.missing_analysis(): 缺失值分析
 - df.show(): 美化展示分箱表
@@ -17,6 +18,7 @@ from __future__ import annotations
     >>> 
     >>> # 数据摘要
     >>> summary = df.summary()
+    >>> series_summary = df['age'].summary(y=df['target'])
     >>> 
     >>> # 保存到Excel
     >>> df.save("report.xlsx", sheet_name="数据", title="统计表")
@@ -43,12 +45,12 @@ if TYPE_CHECKING:
 def _summary_method(
     self,
     features: List[str] = None,
-    y: Optional[Union[str, pd.Series]] = None,
+    y: Optional[Union[str, pd.Series, np.ndarray, List, Tuple]] = None,
     val_df: Optional[pd.DataFrame] = None,
     models: Optional[Dict[str, Any]] = None,
     model_type: Optional[Literal['xgboost', 'lightgbm', 'catboost', 'randomforest']] = None,
     model_params: Optional[Dict] = None,
-    max_n_bins: int = 5,
+    max_n_bins: int = 10,
     psi_method: Literal['random_split', 'group_col', 'date_col'] = 'random_split',
     psi_group_col: Optional[str] = None,
     psi_date_col: Optional[str] = None,
@@ -56,19 +58,25 @@ def _summary_method(
     psi_test_size: float = 0.3,
     percentiles: List[float] = None,
     random_state: int = 42,
-    return_type: Literal['dataframe', 'dict'] = 'dataframe'
-) -> Union[pd.DataFrame, Dict]:
+    return_type: Literal['dataframe', 'dict'] = 'dataframe',
+    numeric_as_categorical: Optional[List[str]] = None,
+    force_numeric: Optional[List[str]] = None,
+    n_jobs: int = -1,
+    show_progress: bool = False,
+    binning_method: str = 'quantile',
+    binning_params: Optional[Dict[str, Any]] = None,
+) -> Union[pd.DataFrame, List[Dict[str, Any]]]:
     """DataFrame 数据分布摘要统计.
     
     快速获取数据集特征详情，包括基础统计、IV、KS、趋势、PSI和特征重要性。
     
     :param features: 特征列表，None则分析全部
-    :param y: 目标变量，支持列名(str)或Series，不传则不计算IV/KS/趋势/特征重要性
+    :param y: 目标变量，支持列名、数组、列表、元组或Series，不传则不计算IV/KS/趋势/特征重要性
     :param val_df: 验证集，用于计算PSI
     :param models: 已训练好的模型字典，用于获取特征重要性
     :param model_type: 模型类型，用于自动训练模型提取特征重要性
     :param model_params: 模型参数
-    :param max_n_bins: IV计算分箱数，默认5
+    :param max_n_bins: IV、趋势和PSI共用的最大分箱数，默认10
     :param psi_method: PSI计算方式
     :param psi_group_col: 分组列名（当psi_method='group_col'时使用）
     :param psi_date_col: 日期列名（当psi_method='date_col'时使用）
@@ -77,6 +85,13 @@ def _summary_method(
     :param percentiles: 分位数点，默认[0.01, 0.05, 0.25, 0.5, 0.75, 0.95, 0.99]
     :param random_state: 随机种子
     :param return_type: 返回类型，'dataframe' 或 'dict'
+    :param numeric_as_categorical: 强制视为分类变量的数值列
+    :param force_numeric: 强制标记为数值变量的列
+    :param n_jobs: 并行工作数，-1为保守自动推断
+    :param show_progress: 是否显示字段级处理进度
+    :param binning_method: IV、趋势和PSI共用的分箱方法，默认'quantile'（等频分箱）
+    :param binning_params: 传给OptimalBinning的完整参数；内层method覆盖外层binning_method，
+        max_n_bins、random_state等重复键也直接覆盖外层参数。user_splits字典按原DataFrame字段名配置
     :return: 综合特征描述DataFrame或字典
     
     Example:
@@ -106,12 +121,79 @@ def _summary_method(
         psi_freq=psi_freq,
         psi_test_size=psi_test_size,
         percentiles=percentiles,
-        random_state=random_state
+        random_state=random_state,
+        numeric_as_categorical=numeric_as_categorical,
+        force_numeric=force_numeric,
+        n_jobs=n_jobs,
+        show_progress=show_progress,
+        binning_method=binning_method,
+        binning_params=binning_params,
     )
     
     if return_type == 'dict':
         return result.to_dict(orient='records')
     return result
+
+
+def _series_summary_method(
+    self,
+    y: Optional[Union[pd.Series, np.ndarray, List, Tuple]] = None,
+    val_df: Optional[Union[pd.DataFrame, pd.Series]] = None,
+    models: Optional[Dict[str, Any]] = None,
+    model_type: Optional[Literal['xgboost', 'lightgbm', 'catboost', 'randomforest']] = None,
+    model_params: Optional[Dict] = None,
+    max_n_bins: int = 10,
+    psi_method: Literal['random_split', 'group_col', 'date_col'] = 'random_split',
+    psi_group_col: Optional[str] = None,
+    psi_date_col: Optional[str] = None,
+    psi_freq: str = 'M',
+    psi_test_size: float = 0.3,
+    percentiles: List[float] = None,
+    random_state: int = 42,
+    numeric_as_categorical: Optional[List[str]] = None,
+    force_numeric: Optional[List[str]] = None,
+    n_jobs: int = -1,
+    show_progress: bool = False,
+    return_type: Literal['dataframe', 'dict'] = 'dataframe',
+    binning_method: str = 'quantile',
+    binning_params: Optional[Dict[str, Any]] = None,
+) -> Union[pd.DataFrame, List[Dict[str, Any]]]:
+    """Series 单字段综合摘要统计。
+
+    y 支持数组、列表、元组或 Series。IV、趋势和 PSI 默认共用 quantile 等频
+    10 分箱；binning_params 中的重复键会直接覆盖 binning_method、max_n_bins
+    和 random_state，user_splits 字典使用当前 Series 名称作为字段键。
+    """
+    if isinstance(y, str):
+        raise ValueError("Series.summary 的 y 不支持列名，请直接传入数组、列表或 Series")
+
+    frame = self.to_frame()
+    if isinstance(val_df, pd.Series):
+        val_df = val_df.to_frame(name=frame.columns[0])
+
+    return _summary_method(
+        frame,
+        y=y,
+        val_df=val_df,
+        models=models,
+        model_type=model_type,
+        model_params=model_params,
+        max_n_bins=max_n_bins,
+        psi_method=psi_method,
+        psi_group_col=psi_group_col,
+        psi_date_col=psi_date_col,
+        psi_freq=psi_freq,
+        psi_test_size=psi_test_size,
+        percentiles=percentiles,
+        random_state=random_state,
+        numeric_as_categorical=numeric_as_categorical,
+        force_numeric=force_numeric,
+        n_jobs=n_jobs,
+        show_progress=show_progress,
+        return_type=return_type,
+        binning_method=binning_method,
+        binning_params=binning_params,
+    )
 
 
 def _eda_info_method(self) -> Dict[str, Any]:
@@ -1158,6 +1240,7 @@ def register_extensions():
     - df.missing_analysis(): 缺失值分析
     - df.show(): 美化展示分箱表
     - df.save(): 保存到Excel
+    - s.summary(): 单字段综合特征描述统计
     - s.save(): Series保存到Excel
 
     幂等：重复调用不会重复注册（已存在同名属性时跳过）。导入 hscredit 时已自动执行，
@@ -1193,6 +1276,9 @@ def register_extensions():
     
     if not hasattr(pd.Series, 'save'):
         pd.Series.save = _series_save
+
+    if not hasattr(pd.Series, 'summary'):
+        pd.Series.summary = _series_summary_method
     
     # 分箱表展示方法
     if not hasattr(pd.DataFrame, 'show'):
