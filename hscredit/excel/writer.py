@@ -546,7 +546,8 @@ class ExcelWriter:
         auto_width: bool = False,
         end_space: Optional[Union[str, Tuple[int, int]]] = None,
         align: Optional[Dict[str, str]] = None,
-        max_col_width: int = 50
+        max_col_width: int = 50,
+        decimal: Optional[int] = 4,
     ) -> Tuple[int, int]:
         """向单元格插入内容。
 
@@ -602,7 +603,7 @@ class ExcelWriter:
                 worksheet.merge_cells(f"{start_col}{start_row}:{end_col}{end_row}")
 
         # 格式化值
-        formatted_value = self.astype_insertvalue(value)
+        formatted_value = self.astype_insertvalue(value, decimal=decimal)
 
         # 设置值
         worksheet[f"{start_col}{start_row}"] = formatted_value
@@ -909,7 +910,8 @@ class ExcelWriter:
         fill: bool = False,
         merge: bool = False,
         merge_index: bool = True,
-        merge_header: Union[bool, str, int, Sequence[int]] = True
+        merge_header: Union[bool, str, int, Sequence[int]] = True,
+        decimal: Optional[int] = 4,
     ) -> Tuple[int, int]:
         """向Excel插入DataFrame。
 
@@ -944,6 +946,7 @@ class ExcelWriter:
         >>> # 分组显示
         >>> writer.insert_df2sheet(worksheet, df, "B30", merge_column='A', merge=True)
         """
+        self._validate_decimal(decimal)
         df = data.copy()
 
         # 解析起始位置
@@ -1099,14 +1102,16 @@ class ExcelWriter:
                         worksheet, row, start_row + i, start_col,
                         style="header",
                         auto_width=auto_width,
-                        multi_levels=df.columns.nlevels > 1 and i in merge_header_levels
+                        multi_levels=df.columns.nlevels > 1 and i in merge_header_levels,
+                        decimal=decimal,
                     )
                 elif i == 0:
                     self.insert_rows(
                         worksheet, row, start_row + i, start_col,
                         style="middle_even_first",
                         auto_width=auto_width,
-                        style_only=True
+                        style_only=True,
+                        decimal=decimal,
                     )
                 else:
                     # 根据行数奇偶选择样式
@@ -1125,7 +1130,8 @@ class ExcelWriter:
                         worksheet, row, start_row + i, start_col,
                         style=style,
                         auto_width=auto_width,
-                        style_only=True
+                        style_only=True,
+                        decimal=decimal,
                     )
             else:
                 if header and i < df.columns.nlevels:
@@ -1133,31 +1139,36 @@ class ExcelWriter:
                         worksheet, row, start_row + i, start_col,
                         style="header",
                         auto_width=auto_width,
-                        multi_levels=df.columns.nlevels > 1 and i in merge_header_levels
+                        multi_levels=df.columns.nlevels > 1 and i in merge_header_levels,
+                        decimal=decimal,
                     )
                 elif i == 0:
                     self.insert_rows(
                         worksheet, row, start_row + i, start_col,
                         style="first",
-                        auto_width=auto_width
+                        auto_width=auto_width,
+                        decimal=decimal,
                     )
                 elif (header and i == len(df) + df.columns.nlevels - 1) or (not header and i + 1 == len(df)):
                     self.insert_rows(
                         worksheet, row, start_row + i, start_col,
                         style="last",
-                        auto_width=auto_width
+                        auto_width=auto_width,
+                        decimal=decimal,
                     )
                 else:
                     if merge_rows and len(merge_rows) > 0:
                         self.insert_rows(
                             worksheet, row, start_row + i, start_col,
                             auto_width=auto_width,
-                            merge_rows=sorted(set(_row for _rows in merge_rows.values() for _row in _rows))
+                            merge_rows=sorted(set(_row for _rows in merge_rows.values() for _row in _rows)),
+                            decimal=decimal,
                         )
                     else:
                         self.insert_rows(
                             worksheet, row, start_row + i, start_col,
-                            auto_width=auto_width
+                            auto_width=auto_width,
+                            decimal=decimal,
                         )
 
         # 合并索引单元格
@@ -1203,7 +1214,8 @@ class ExcelWriter:
         style: str = "",
         auto_width: bool = False,
         style_only: bool = False,
-        multi_levels: bool = False
+        multi_levels: bool = False,
+        decimal: Optional[int] = 4,
     ) -> None:
         """向Excel插入一行数据。
 
@@ -1232,7 +1244,8 @@ class ExcelWriter:
                             item,
                             style=f"{style}_left" if style else "left",
                             auto_width=auto_width,
-                            end_space=f'{get_column_letter(curr_col + start + length - 1)}{row_index}'
+                            end_space=f'{get_column_letter(curr_col + start + length - 1)}{row_index}',
+                            decimal=decimal,
                         )
                     else:
                         self.insert_value2sheet(
@@ -1241,7 +1254,8 @@ class ExcelWriter:
                             item,
                             style=f"{style}_middle" if style else "middle",
                             auto_width=auto_width,
-                            end_space=f'{get_column_letter(curr_col + start + length - 1)}{row_index}'
+                            end_space=f'{get_column_letter(curr_col + start + length - 1)}{row_index}',
+                            decimal=decimal,
                         )
                 else:
                     self.insert_value2sheet(
@@ -1250,7 +1264,8 @@ class ExcelWriter:
                         item,
                         style=f"{style}_right" if style else "right",
                         auto_width=auto_width,
-                        end_space=f'{get_column_letter(curr_col + start + length - 1)}{row_index}'
+                        end_space=f'{get_column_letter(curr_col + start + length - 1)}{row_index}',
+                        decimal=decimal,
                     )
 
                 item, start, length = self.calc_continuous_cnt(row, start + length)
@@ -1263,7 +1278,8 @@ class ExcelWriter:
                             f'{get_column_letter(curr_col + j)}{row_index}',
                             v,
                             style="merge_left",
-                            auto_width=auto_width
+                            auto_width=auto_width,
+                            decimal=decimal,
                         )
                     elif j == len(row) - 1:
                         self.insert_value2sheet(
@@ -1271,7 +1287,8 @@ class ExcelWriter:
                             f'{get_column_letter(curr_col + j)}{row_index}',
                             v,
                             style="merge_right",
-                            auto_width=auto_width
+                            auto_width=auto_width,
+                            decimal=decimal,
                         )
                     else:
                         self.insert_value2sheet(
@@ -1279,7 +1296,8 @@ class ExcelWriter:
                             f'{get_column_letter(curr_col + j)}{row_index}',
                             v,
                             style="merge_middle",
-                            auto_width=auto_width
+                            auto_width=auto_width,
+                            decimal=decimal,
                         )
                 elif style_only or len(row) <= 1:
                     self.insert_value2sheet(
@@ -1287,7 +1305,8 @@ class ExcelWriter:
                         f'{get_column_letter(curr_col + j)}{row_index}',
                         v,
                         style=style or "middle",
-                        auto_width=auto_width
+                        auto_width=auto_width,
+                        decimal=decimal,
                     )
                 else:
                     if j == 0:
@@ -1296,7 +1315,8 @@ class ExcelWriter:
                             f'{get_column_letter(curr_col + j)}{row_index}',
                             v,
                             style=f"{style}_left" if style else "left",
-                            auto_width=auto_width
+                            auto_width=auto_width,
+                            decimal=decimal,
                         )
                     elif j == len(row) - 1:
                         self.insert_value2sheet(
@@ -1304,7 +1324,8 @@ class ExcelWriter:
                             f'{get_column_letter(curr_col + j)}{row_index}',
                             v,
                             style=f"{style}_right" if style else "right",
-                            auto_width=auto_width
+                            auto_width=auto_width,
+                            decimal=decimal,
                         )
                     else:
                         self.insert_value2sheet(
@@ -1312,7 +1333,8 @@ class ExcelWriter:
                             f'{get_column_letter(curr_col + j)}{row_index}',
                             v,
                             style=f"{style}_middle" if style else "middle",
-                            auto_width=auto_width
+                            auto_width=auto_width,
+                            decimal=decimal,
                         )
 
     def merge_cells(
@@ -1396,17 +1418,27 @@ class ExcelWriter:
         return out, len(out) - sum(out), sum(out)
 
     @staticmethod
-    def astype_insertvalue(value: Any, decimal_point: int = 4) -> Any:
+    def _validate_decimal(decimal: Optional[int]) -> None:
+        """校验写入 Excel 时的浮点数精度。"""
+        if decimal is not None and (
+            isinstance(decimal, (bool, np.bool_))
+            or not isinstance(decimal, (int, np.integer))
+            or int(decimal) < 0
+        ):
+            raise ValueError("decimal 必须是大于等于 0 的整数或 None")
+
+    @staticmethod
+    def astype_insertvalue(value: Any, decimal: Optional[int] = 4) -> Any:
         """格式化需要存储Excel的内容。
 
         :param value: 需要插入Excel的内容
-        :param decimal_point: 如果是浮点型，需要保留的小数位数，默认为4
+        :param decimal: 如果是浮点型，需要保留的小数位数，默认为4；None 表示不主动舍入
         :return: 格式化后的内容
         """
         if re.search('tuple|list|set|numpy.ndarray|Categorical|numpy.dtype|Interval', str(type(value))):
             return str(value)
         elif re.search('float', str(type(value))):
-            return round(float(value), decimal_point)
+            return float(value) if decimal is None else round(float(value), int(decimal))
         else:
             return value
 
@@ -2735,6 +2767,7 @@ def dataframe2excel(
     image_bottom_padding_rows: int = 1,
     writer_params: Optional[Dict] = None,
     auto_filter: bool = False,
+    decimal: Optional[int] = 4,
     **kwargs
 ) -> Tuple[int, int]:
     """快速将DataFrame写入Excel。
@@ -2773,6 +2806,7 @@ def dataframe2excel(
     :param figsize: 图片大小，默认为(600, 350)
     :param image_bottom_padding_rows: 图片区与下方表格之间的额外空行数，默认为1
     :param writer_params: ExcelWriter参数，默认为None
+    :param decimal: 浮点值保留小数位数，默认4；None表示不主动舍入
     :param kwargs: 其他参数，传递给insert_df2sheet
     :return: (下一行行号, 下一列列号)
 
@@ -2801,6 +2835,7 @@ def dataframe2excel(
     ... )
     """
     writer_params = writer_params or {}
+    ExcelWriter._validate_decimal(decimal)
 
     if isinstance(excel_writer, ExcelWriter):
         writer = excel_writer
@@ -2850,7 +2885,7 @@ def dataframe2excel(
     # 插入DataFrame
     end_row, end_col = writer.insert_df2sheet(
         worksheet, data, (start_row, start_col),
-        fill=fill, header=header, **kwargs
+        fill=fill, header=header, decimal=decimal, **kwargs
     )
 
     # 设置百分比格式列

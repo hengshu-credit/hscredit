@@ -567,6 +567,28 @@ class TestDataframe2Excel:
         assert os.path.exists(self.test_file)
         assert end_row > 0
         assert end_col > 0
+
+    def test_decimal_none_preserves_float_precision(self):
+        """decimal=None 时不得主动截断 DataFrame 浮点值。"""
+        value = 1.234567890123
+
+        dataframe2excel(pd.DataFrame({'值': [value]}), self.test_file, decimal=None)
+
+        loaded_wb = load_workbook(self.test_file, data_only=False)
+        assert loaded_wb.active['B3'].value == value
+
+    def test_decimal_controls_float_precision(self):
+        """decimal 应与 ScoreCard 一样表示保留的小数位数。"""
+        dataframe2excel(pd.DataFrame({'值': [1.2356]}), self.test_file, decimal=2)
+
+        loaded_wb = load_workbook(self.test_file, data_only=False)
+        assert loaded_wb.active['B3'].value == 1.24
+
+    @pytest.mark.parametrize('decimal', [-1, True, 1.5, '2'])
+    def test_invalid_decimal_raises_chinese_value_error(self, decimal):
+        """非法 decimal 不得静默写出精度不明确的文件。"""
+        with pytest.raises(ValueError, match='decimal 必须是大于等于 0 的整数或 None'):
+            dataframe2excel(pd.DataFrame({'值': [1.2345]}), self.test_file, decimal=decimal)
     
     def test_write_with_title(self):
         """测试带标题写入"""
