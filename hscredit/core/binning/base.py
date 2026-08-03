@@ -526,13 +526,14 @@ class BaseBinning(ArtifactSerializableMixin, BaseEstimator, TransformerMixin, AB
     def _enrich_woe_map(woe_map: dict, bin_table) -> None:
         """为 woe_map 补充缺失值/特殊值箱的 WOE 映射.
 
-        ``_apply_splits`` 对缺失值返回 -1、特殊值返回 -2，而 ``woe_map``
+        ``_apply_splits`` 对缺失值返回 -1、特殊值返回 -2、未知类别返回 -3，而 ``woe_map``
         默认只包含 0..n-1 的映射。本方法从 bin_table 的 missing/special
         行中提取真实 WOE 值写入 woe_map[-1] / woe_map[-2]。
         """
         if '分箱标签' not in bin_table.columns:
             woe_map.setdefault(-1, 0.0)
             woe_map.setdefault(-2, 0.0)
+            woe_map.setdefault(-3, 0.0)
             return
         for idx in range(len(bin_table)):
             lbl = str(bin_table.iloc[idx].get('分箱标签', '')).lower()
@@ -542,6 +543,7 @@ class BaseBinning(ArtifactSerializableMixin, BaseEstimator, TransformerMixin, AB
                 woe_map[-2] = float(bin_table.iloc[idx]['分档WOE值'])
         woe_map.setdefault(-1, 0.0)
         woe_map.setdefault(-2, 0.0)
+        woe_map.setdefault(-3, 0.0)
 
     def fit_transform(
         self,
@@ -1577,6 +1579,8 @@ class BaseBinning(ArtifactSerializableMixin, BaseEstimator, TransformerMixin, AB
                         bin_labels.append('missing')
                     elif bin_idx == -2:
                         bin_labels.append('special')
+                    elif bin_idx == -3:
+                        bin_labels.append('unknown')
                     elif 0 <= bin_idx < len(splits):
                         group = splits[bin_idx]
                         if isinstance(group, list):
@@ -1597,6 +1601,8 @@ class BaseBinning(ArtifactSerializableMixin, BaseEstimator, TransformerMixin, AB
                         bin_labels.append('missing')
                     elif bin_idx == -2:
                         bin_labels.append('special')
+                    elif bin_idx == -3:
+                        bin_labels.append('unknown')
                     elif 0 <= bin_idx < len(splits):
                         bin_labels.append(str(splits[bin_idx]))
                     else:
@@ -1611,7 +1617,7 @@ class BaseBinning(ArtifactSerializableMixin, BaseEstimator, TransformerMixin, AB
         # 如果没有分箱标签，生成默认标签
         if '分箱标签' not in bin_stats.columns:
             bin_stats['分箱标签'] = bin_stats['分箱'].apply(
-                lambda x: f'bin_{x}' if x >= 0 else ('缺失' if x == -1 else 'special')
+                lambda x: f'bin_{x}' if x >= 0 else ('缺失' if x == -1 else ('special' if x == -2 else 'unknown'))
             )
 
         # 调整列顺序（将分箱标签放在分箱后面）
@@ -1756,6 +1762,8 @@ class BaseBinning(ArtifactSerializableMixin, BaseEstimator, TransformerMixin, AB
                 return 'missing'
             if b == -2:
                 return 'special'
+            if b == -3:
+                return 'unknown'
             if fallback_list is not None and 0 <= b < len(fallback_list):
                 return fallback_list[b]
             return f'bin_{b}'

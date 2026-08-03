@@ -130,3 +130,27 @@ def test_different_methods_keep_different_category_boundaries():
 
     normalized = {repr(rule) for rule in rules}
     assert len(normalized) >= 3
+
+
+@pytest.mark.parametrize("binner_cls", DIRECT_BINNER_CLASSES, ids=lambda cls: cls.__name__)
+def test_direct_binner_transform_uses_fitted_category_groups(binner_cls):
+    """防止直接分箱器在 transform 时重新按局部 Categorical codes 编码。"""
+    X, y = _make_category_data()
+    order = ["A", "B", "C", "D", "E", "F"]
+    binner = _make_binner(binner_cls, category_order=order).fit(X, y)
+
+    for expected_index, group in enumerate(binner.export_rules()["category"]):
+        transformed = binner.transform(pd.DataFrame({"category": group}), metric="indices")["category"]
+        assert transformed.tolist() == [expected_index] * len(group)
+
+
+@pytest.mark.parametrize("binner_cls", DIRECT_BINNER_CLASSES, ids=lambda cls: cls.__name__)
+def test_direct_binner_transform_reserves_unknown_category_index(binner_cls):
+    """防止任一直接分箱器把预测期未知类别映射为普通箱。"""
+    X, y = _make_category_data()
+    order = ["A", "B", "C", "D", "E", "F"]
+    binner = _make_binner(binner_cls, category_order=order).fit(X, y)
+
+    transformed = binner.transform(pd.DataFrame({"category": ["UNSEEN"]}), metric="indices")
+
+    assert transformed.iloc[0, 0] == -3

@@ -222,6 +222,8 @@ class UniformBinning(BaseBinning):
         :param feature: 特征名
         :return: 分箱索引数组
         """
+        if self.feature_types_[feature] == 'categorical' and feature in self._cat_bins_:
+            return self._assign_categorical_bins(feature, X)
         if self.feature_types_[feature] == 'categorical':
             # 类别型：使用类别编码
             return pd.Categorical(X).codes
