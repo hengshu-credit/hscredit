@@ -374,6 +374,40 @@ class ExcelWriter:
         for col_letter, cells_data in columns_data.items():
             self._reapply_styles_to_column(worksheet, col_letter, cells_data)
 
+    def _calculate_content_width(
+        self,
+        value: Any,
+        min_width: float = 8,
+        max_width: float = 50,
+        extra_padding: float = 2.0,
+    ) -> float:
+        """按现有中英文字符权重计算单个值需要的列宽。"""
+        if value is None:
+            return min_width
+        _, eng_cnt, chi_cnt = self.check_contain_chinese(str(value))
+        width = (eng_cnt * self.english_width + chi_cnt * self.chinese_width) * self.fontsize + extra_padding
+        return min(max(width, min_width), max_width)
+
+    def _initial_fast_widths(
+        self,
+        worksheet: Worksheet,
+        start_col: int,
+        end_col: int,
+    ) -> Dict[int, float]:
+        """读取写入前已有内容的列宽基线，不复制或修改单元格样式。"""
+        widths = {col_idx: 8.0 for col_idx in range(start_col, end_col + 1)}
+        for col_idx in widths:
+            for row_idx in range(1, worksheet.max_row + 1):
+                value = worksheet.cell(row=row_idx, column=col_idx).value
+                if value is not None:
+                    widths[col_idx] = max(widths[col_idx], self._calculate_content_width(value))
+        return widths
+
+    def _apply_fast_widths(self, worksheet: Worksheet, widths: Dict[int, float]) -> None:
+        """只更新列维度宽度，保留工作表和单元格已有样式。"""
+        for col_idx, width in widths.items():
+            self._set_column_width_preserving_style(worksheet, get_column_letter(col_idx), width)
+
     @staticmethod
     def set_number_format(
         worksheet: Worksheet,
@@ -968,6 +1002,14 @@ class ExcelWriter:
             start_col_idx = start_col
             start_col = get_column_letter(start_col)
 
+        table_end_col_idx = start_col_idx + len(data.columns) + (data.index.nlevels if index else 0)
+        fast_widths = (
+            self._initial_fast_widths(worksheet, start_col_idx, table_end_col_idx - 1)
+            if fast and auto_width
+            else None
+        )
+        fast_row_kwargs = {'widths': fast_widths} if fast else {}
+
         # 计算合并行
         def get_merge_rows(values, start_row):
             _rows = []
@@ -1111,17 +1153,19 @@ class ExcelWriter:
                     insert_row(
                         worksheet, row, start_row + i, start_col,
                         style="header",
-                        auto_width=auto_width,
+                        auto_width=False,
                         multi_levels=df.columns.nlevels > 1 and i in merge_header_levels,
                         decimal=decimal,
+                        **fast_row_kwargs,
                     )
                 elif i == 0:
                     insert_row(
                         worksheet, row, start_row + i, start_col,
                         style="middle_even_first",
-                        auto_width=auto_width,
+                        auto_width=False,
                         style_only=True,
                         decimal=decimal,
+                        **fast_row_kwargs,
                     )
                 else:
                     # 根据行数奇偶选择样式
@@ -1139,46 +1183,52 @@ class ExcelWriter:
                     insert_row(
                         worksheet, row, start_row + i, start_col,
                         style=style,
-                        auto_width=auto_width,
+                        auto_width=False,
                         style_only=True,
                         decimal=decimal,
+                        **fast_row_kwargs,
                     )
             else:
                 if header and i < df.columns.nlevels:
                     insert_row(
                         worksheet, row, start_row + i, start_col,
                         style="header",
-                        auto_width=auto_width,
+                        auto_width=False,
                         multi_levels=df.columns.nlevels > 1 and i in merge_header_levels,
                         decimal=decimal,
+                        **fast_row_kwargs,
                     )
                 elif i == 0:
                     insert_row(
                         worksheet, row, start_row + i, start_col,
                         style="first",
-                        auto_width=auto_width,
+                        auto_width=False,
                         decimal=decimal,
+                        **fast_row_kwargs,
                     )
                 elif (header and i == len(df) + df.columns.nlevels - 1) or (not header and i + 1 == len(df)):
                     insert_row(
                         worksheet, row, start_row + i, start_col,
                         style="last",
-                        auto_width=auto_width,
+                        auto_width=False,
                         decimal=decimal,
+                        **fast_row_kwargs,
                     )
                 else:
                     if merge_rows and len(merge_rows) > 0:
                         insert_row(
                             worksheet, row, start_row + i, start_col,
-                            auto_width=auto_width,
+                            auto_width=False,
                             merge_rows=sorted(set(_row for _rows in merge_rows.values() for _row in _rows)),
                             decimal=decimal,
+                            **fast_row_kwargs,
                         )
                     else:
                         insert_row(
                             worksheet, row, start_row + i, start_col,
-                            auto_width=auto_width,
+                            auto_width=False,
                             decimal=decimal,
+                            **fast_row_kwargs,
                         )
 
         # 合并索引单元格
@@ -1202,15 +1252,18 @@ class ExcelWriter:
                         self.merge_cells(worksheet, f"{merge_col}{s}", f"{merge_col}{e - 1}")
 
         end_row = start_row + len(data) + df.columns.nlevels if header else start_row + len(data)
-        end_col_idx = column_index_from_string(start_col) + len(data.columns) + (df.index.nlevels if index else 0)
+        end_col_idx = table_end_col_idx
 
         # 批量调整列宽（在所有数据写入完成后统一调整，避免边框样式丢失）
         if auto_width:
-            self.adjust_columns_width(
-                worksheet,
-                start_col=start_col_idx,
-                end_col=end_col_idx - 1
-            )
+            if fast:
+                self._apply_fast_widths(worksheet, fast_widths or {})
+            else:
+                self.adjust_columns_width(
+                    worksheet,
+                    start_col=start_col_idx,
+                    end_col=end_col_idx - 1
+                )
 
         return end_row, end_col_idx
 
@@ -1223,6 +1276,7 @@ class ExcelWriter:
         style: str,
         decimal: Optional[int],
         end_col: Optional[int] = None,
+        widths: Optional[Dict[int, float]] = None,
     ) -> None:
         """使用整数坐标和缓存样式写入单元格。"""
         cell = worksheet.cell(row=row_index, column=col_index)
@@ -1240,9 +1294,15 @@ class ExcelWriter:
                 end_column=end_col,
             )
 
-        cell.value = self.astype_insertvalue(value, decimal=decimal)
+        formatted_value = self.astype_insertvalue(value, decimal=decimal)
+        cell.value = formatted_value
         if self.is_numeric_like_string(value):
             cell.number_format = '@'
+        if widths is not None:
+            widths[col_index] = max(
+                widths.get(col_index, 8.0),
+                self._calculate_content_width(formatted_value),
+            )
 
     def _insert_rows_fast(
         self,
@@ -1256,6 +1316,7 @@ class ExcelWriter:
         style_only: bool = False,
         multi_levels: bool = False,
         decimal: Optional[int] = 4,
+        widths: Optional[Dict[int, float]] = None,
     ) -> None:
         """按现有样式规则快速写入一行，不执行逐单元格列宽调整。"""
         curr_col = column_index_from_string(col_index) if isinstance(col_index, str) else col_index
@@ -1276,6 +1337,7 @@ class ExcelWriter:
                     cell_style,
                     decimal,
                     end_col=curr_col + start + length - 1,
+                    widths=widths,
                 )
                 item, start, length = self.calc_continuous_cnt(row, start + length)
             return
@@ -1304,6 +1366,7 @@ class ExcelWriter:
                 value,
                 cell_style,
                 decimal,
+                widths=widths,
             )
 
     def insert_rows(
@@ -3095,7 +3158,6 @@ def dataframe2excel(
     # 应用自定义列对齐（仅数据行，非表头）
     if left_cols or right_cols:
         from openpyxl.styles import Alignment
-        from openpyxl.utils import get_column_letter as _gcl
 
         # 计算表头行数（1行或 MultiIndex 层数）
         n_header_rows = data.columns.nlevels if header else 0
@@ -3127,14 +3189,16 @@ def dataframe2excel(
 
         left_idx_set = _resolve_col_items(left_cols, data.columns)
         right_idx_set = _resolve_col_items(right_cols, data.columns)
+        alignments = {
+            "left": Alignment(horizontal="left", vertical="center"),
+            "right": Alignment(horizontal="right", vertical="center"),
+        }
 
         for col_idx in (left_idx_set | right_idx_set):
             horiz = "left" if col_idx in left_idx_set else "right"
             excel_col = start_col + col_idx + idx_levels
-            col_letter = _gcl(excel_col)
             for row in range(data_start_row, data_end_row + 1):
-                cell = worksheet[f"{col_letter}{row}"]
-                cell.alignment = Alignment(horizontal=horiz, vertical="center")
+                worksheet.cell(row=row, column=excel_col).alignment = alignments[horiz]
 
     # 添加自动筛选（必须在保存之前，否则保存并关闭 workbook 后筛选不会写入文件）
     if auto_filter:
