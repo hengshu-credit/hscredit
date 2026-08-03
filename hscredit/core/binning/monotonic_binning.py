@@ -88,18 +88,26 @@ class MonotonicBinning(BaseBinning):
 
     # 支持的单调性模式（参考optbinning的monotonic_trend参数）
     VALID_MONOTONIC_MODES = [
-        'auto', 'auto_asc_desc', 'auto_heuristic',
-        'ascending', 'descending',
-        'peak', 'valley', 'convex', 'concave',
-        'peak_heuristic', 'valley_heuristic',
-        None, False
+        "auto",
+        "auto_asc_desc",
+        "auto_heuristic",
+        "ascending",
+        "descending",
+        "peak",
+        "valley",
+        "convex",
+        "concave",
+        "peak_heuristic",
+        "valley_heuristic",
+        None,
+        False,
     ]
 
     def __init__(
         self,
-        target: str = 'target',
-        monotonic: Union[bool, str, None] = 'auto',
-        init_method: str = 'quantile',
+        target: str = "target",
+        monotonic: Union[bool, str, None] = "auto",
+        init_method: str = "quantile",
         init_n_bins: int = 20,
         max_n_bins: int = 5,
         min_n_bins: int = 2,
@@ -108,15 +116,16 @@ class MonotonicBinning(BaseBinning):
         min_bad_rate: float = 0.0,
         special_codes: Optional[List] = None,
         missing_separate: bool = True,
+        cat_cutoff: Optional[Union[float, int]] = None,
         category_order=None,
-        handle_unknown: str = 'value',
+        handle_unknown: str = "value",
         random_state: Optional[int] = None,
         verbose: Union[bool, int] = False,
         decimal: int = 4,
     ):
         # monotonic=True 等价于 'auto'（与 BaseBinning 约定一致，自动检测最佳趋势）
         if monotonic is True:
-            monotonic = 'auto'
+            monotonic = "auto"
         super().__init__(
             target=target,
             min_n_bins=min_n_bins,
@@ -127,6 +136,7 @@ class MonotonicBinning(BaseBinning):
             monotonic=monotonic,
             special_codes=special_codes,
             missing_separate=missing_separate,
+            cat_cutoff=cat_cutoff,
             category_order=category_order,
             handle_unknown=handle_unknown,
             random_state=random_state,
@@ -138,20 +148,15 @@ class MonotonicBinning(BaseBinning):
         self.monotonic_trend_ = {}
 
         # 验证参数
-        if init_method not in ['quantile', 'uniform']:
+        if init_method not in ["quantile", "uniform"]:
             raise ValueError("init_method必须是'quantile'或'uniform'")
 
         if monotonic not in self.VALID_MONOTONIC_MODES:
-            raise ValueError(
-                f"monotonic必须是以下之一: {self.VALID_MONOTONIC_MODES}"
-            )
+            raise ValueError(f"monotonic必须是以下之一: {self.VALID_MONOTONIC_MODES}")
 
     def fit(
-        self,
-        X: Union[pd.DataFrame, np.ndarray],
-        y: Optional[Union[pd.Series, np.ndarray]] = None,
-        **kwargs
-    ) -> 'MonotonicBinning':
+        self, X: Union[pd.DataFrame, np.ndarray], y: Optional[Union[pd.Series, np.ndarray]] = None, **kwargs
+    ) -> "MonotonicBinning":
         """拟合单调性约束分箱.
 
         :param X: 训练数据，shape (n_samples, n_features)
@@ -171,7 +176,7 @@ class MonotonicBinning(BaseBinning):
             feature_type = self._detect_feature_type(X[feature])
             self.feature_types_[feature] = feature_type
 
-            if feature_type == 'categorical':
+            if feature_type == "categorical":
                 # 类别型特征：按坏样本率排序后处理
                 splits = self._fit_categorical(X[feature], y)
                 self.splits_[feature] = splits
@@ -183,9 +188,7 @@ class MonotonicBinning(BaseBinning):
 
             # 计算分箱统计信息
             bins = self._apply_bins(X[feature], splits)
-            self.bin_tables_[feature] = self._compute_bin_stats(
-                feature, X[feature], y, bins
-            )
+            self.bin_tables_[feature] = self._compute_bin_stats(feature, X[feature], y, bins)
 
         self._fit_features(X.columns, _fit_one)
 
@@ -193,11 +196,7 @@ class MonotonicBinning(BaseBinning):
         self._is_fitted = True
         return self
 
-    def _fit_numerical(
-        self,
-        x: pd.Series,
-        y: pd.Series
-    ) -> np.ndarray:
+    def _fit_numerical(self, x: pd.Series, y: pd.Series) -> np.ndarray:
         """对数值型特征进行单调性约束分箱.
 
         :param x: 特征数据
@@ -232,26 +231,16 @@ class MonotonicBinning(BaseBinning):
             logger.info(f"  检测到的单调性模式: {monotonic_mode}")
 
         # 步骤3: 根据单调性模式进行分箱优化
-        if monotonic_mode in ['peak', 'valley']:
-            final_splits = self._ensure_peak_valley(
-                x_valid, y_valid, init_splits, monotonic_mode
-            )
-        elif monotonic_mode in ['convex', 'concave']:
-            final_splits = self._ensure_convex_concave(
-                x_valid, y_valid, init_splits, monotonic_mode
-            )
+        if monotonic_mode in ["peak", "valley"]:
+            final_splits = self._ensure_peak_valley(x_valid, y_valid, init_splits, monotonic_mode)
+        elif monotonic_mode in ["convex", "concave"]:
+            final_splits = self._ensure_convex_concave(x_valid, y_valid, init_splits, monotonic_mode)
         else:
-            final_splits = self._ensure_monotonic(
-                x_valid, y_valid, init_splits, monotonic_mode
-            )
+            final_splits = self._ensure_monotonic(x_valid, y_valid, init_splits, monotonic_mode)
 
         return final_splits
 
-    def _get_initial_splits(
-        self,
-        x: pd.Series,
-        y: pd.Series
-    ) -> np.ndarray:
+    def _get_initial_splits(self, x: pd.Series, y: pd.Series) -> np.ndarray:
         """获取初始分箱切分点.
 
         :param x: 特征数据
@@ -259,7 +248,7 @@ class MonotonicBinning(BaseBinning):
         :return: 初始切分点数组
         """
         # 使用等频或等距分箱作为初始分箱
-        if self.init_method == 'quantile':
+        if self.init_method == "quantile":
             # 等频分箱
             n_splits = min(self.init_n_bins - 1, len(x) // 10)
             n_splits = max(n_splits, self.min_n_bins - 1)
@@ -284,12 +273,7 @@ class MonotonicBinning(BaseBinning):
         splits = np.unique(splits)
         return splits
 
-    def _detect_monotonic_mode(
-        self,
-        x: pd.Series,
-        y: pd.Series,
-        splits: np.ndarray
-    ) -> str:
+    def _detect_monotonic_mode(self, x: pd.Series, y: pd.Series, splits: np.ndarray) -> str:
         """检测单调性模式（参考optbinning实现）.
 
         支持auto和auto_asc_desc两种自动检测模式：
@@ -302,33 +286,43 @@ class MonotonicBinning(BaseBinning):
         :return: 检测到的单调性模式
         """
         # 如果用户指定了具体模式，直接使用
-        if self.monotonic in ['ascending', 'descending', 'peak', 'valley', 'convex', 'concave',
-                             'peak_heuristic', 'valley_heuristic']:
+        if self.monotonic in [
+            "ascending",
+            "descending",
+            "peak",
+            "valley",
+            "convex",
+            "concave",
+            "peak_heuristic",
+            "valley_heuristic",
+        ]:
             return self.monotonic
         elif self.monotonic is False or self.monotonic is None:
-            return 'none'
+            return "none"
 
         # 自动检测模式：auto, auto_asc_desc, auto_heuristic
         if len(splits) == 0:
-            return 'ascending'
+            return "ascending"
 
         # 计算初始分箱的坏样本率
         bins = pd.cut(x, bins=[-np.inf] + splits.tolist() + [np.inf], labels=False)
-        temp_df = pd.DataFrame({'bin': bins, 'target': y})
-        bin_stats = temp_df.groupby('bin')['target'].agg(['mean', 'count'])
+        temp_df = pd.DataFrame({"bin": bins, "target": y})
+        bin_stats = temp_df.groupby("bin")["target"].agg(["mean", "count"])
 
         min_samples = self._get_min_samples(len(x))
-        bin_stats = bin_stats[bin_stats['count'] >= min_samples]
+        bin_stats = bin_stats[bin_stats["count"] >= min_samples]
 
         if len(bin_stats) < 3:
             # 分箱数太少，无法判断复杂模式，使用简单单调性
-            asc_score = sum(1 for i in range(len(bin_stats)-1)
-                          if bin_stats['mean'].iloc[i] <= bin_stats['mean'].iloc[i+1])
-            desc_score = sum(1 for i in range(len(bin_stats)-1)
-                           if bin_stats['mean'].iloc[i] >= bin_stats['mean'].iloc[i+1])
-            return 'ascending' if asc_score >= desc_score else 'descending'
+            asc_score = sum(
+                1 for i in range(len(bin_stats) - 1) if bin_stats["mean"].iloc[i] <= bin_stats["mean"].iloc[i + 1]
+            )
+            desc_score = sum(
+                1 for i in range(len(bin_stats) - 1) if bin_stats["mean"].iloc[i] >= bin_stats["mean"].iloc[i + 1]
+            )
+            return "ascending" if asc_score >= desc_score else "descending"
 
-        bad_rates = bin_stats['mean'].values
+        bad_rates = bin_stats["mean"].values
         n_prebins = len(bad_rates)
 
         # 计算统计特征（参考optbinning的auto_monotonic_data）
@@ -345,34 +339,38 @@ class MonotonicBinning(BaseBinning):
         pos_max = np.argmax(bad_rates)
 
         # 4. 极值点统计
-        total_records = bin_stats['count'].sum()
-        p_records_min_left = bin_stats['count'].iloc[:pos_min].sum() / total_records if pos_min > 0 else 0
-        p_records_min_right = bin_stats['count'].iloc[pos_min+1:].sum() / total_records if pos_min < n_prebins - 1 else 0
-        p_records_max_left = bin_stats['count'].iloc[:pos_max].sum() / total_records if pos_max > 0 else 0
-        p_records_max_right = bin_stats['count'].iloc[pos_max+1:].sum() / total_records if pos_max < n_prebins - 1 else 0
+        total_records = bin_stats["count"].sum()
+        p_records_min_left = bin_stats["count"].iloc[:pos_min].sum() / total_records if pos_min > 0 else 0
+        p_records_min_right = (
+            bin_stats["count"].iloc[pos_min + 1 :].sum() / total_records if pos_min < n_prebins - 1 else 0
+        )
+        p_records_max_left = bin_stats["count"].iloc[:pos_max].sum() / total_records if pos_max > 0 else 0
+        p_records_max_right = (
+            bin_stats["count"].iloc[pos_max + 1 :].sum() / total_records if pos_max < n_prebins - 1 else 0
+        )
 
         # 5. 极值点三角形面积比例
         p_area = self._extreme_points_area(bad_rates)
 
         # 根据模式选择决策逻辑
-        if self.monotonic == 'auto_asc_desc':
+        if self.monotonic == "auto_asc_desc":
             # auto_asc_desc模式：只允许单增或单减，优先使用整体相关方向，避免误判塌缩成2箱
-            corr = pd.Series(x).corr(pd.Series(y), method='spearman')
+            corr = pd.Series(x).corr(pd.Series(y), method="spearman")
             if pd.notna(corr) and abs(corr) >= 0.02:
-                return 'ascending' if corr > 0 else 'descending'
+                return "ascending" if corr > 0 else "descending"
             return self._auto_asc_desc_decision(
-                p_trend_changes, lr_sense,
-                p_records_min_left, p_records_min_right,
-                p_records_max_left, p_records_max_right,
-                p_area
+                p_trend_changes,
+                lr_sense,
+                p_records_min_left,
+                p_records_min_right,
+                p_records_max_left,
+                p_records_max_right,
+                p_area,
             )
         else:
             # auto/auto_heuristic模式：允许单增、单减、peak、valley
             return self._auto_decision(
-                lr_sense,
-                p_records_min_left, p_records_min_right,
-                p_records_max_left, p_records_max_right,
-                p_area
+                lr_sense, p_records_min_left, p_records_min_right, p_records_max_left, p_records_max_right, p_area
             )
 
     def _n_peaks_valleys(self, x: np.ndarray) -> int:
@@ -419,10 +417,15 @@ class MonotonicBinning(BaseBinning):
         p_area = sum_area / ((ymax - ymin) * n) if (ymax - ymin) > 0 else 0
         return p_area
 
-    def _auto_decision(self, lr_sense: int,
-                       p_records_min_left: float, p_records_min_right: float,
-                       p_records_max_left: float, p_records_max_right: float,
-                       p_area: float) -> str:
+    def _auto_decision(
+        self,
+        lr_sense: int,
+        p_records_min_left: float,
+        p_records_min_right: float,
+        p_records_max_left: float,
+        p_records_max_right: float,
+        p_area: float,
+    ) -> str:
         """auto模式决策逻辑（允许单增、单减、peak、valley）.
 
         简化版决策树，参考optbinning的auto_monotonic_decision。
@@ -441,34 +444,40 @@ class MonotonicBinning(BaseBinning):
             if lr_sense == 0:
                 # 整体下降趋势
                 if p_records_min_right <= 0.05:
-                    return 'descending'
+                    return "descending"
                 else:
-                    return 'valley'
+                    return "valley"
             else:
-                return 'ascending'
+                return "ascending"
         else:
             # 高面积比例，有明显极值点
             if p_records_min_right <= 0.1:
                 if lr_sense == 0:
-                    return 'descending'
+                    return "descending"
                 else:
-                    return 'ascending'
+                    return "ascending"
             else:
                 # 检查peak或valley
                 if p_records_max_left > 0.1 and p_records_max_right > 0.1:
                     # 峰值在中间
-                    return 'peak'
+                    return "peak"
                 elif p_records_min_left > 0.1 and p_records_min_right > 0.1:
                     # 谷值在中间
-                    return 'valley'
+                    return "valley"
                 else:
                     # 默认根据线性趋势
-                    return 'ascending' if lr_sense == 1 else 'descending'
+                    return "ascending" if lr_sense == 1 else "descending"
 
-    def _auto_asc_desc_decision(self, p_trend_changes: float, lr_sense: int,
-                                p_records_min_left: float, p_records_min_right: float,
-                                p_records_max_left: float, p_records_max_right: float,
-                                p_area: float) -> str:
+    def _auto_asc_desc_decision(
+        self,
+        p_trend_changes: float,
+        lr_sense: int,
+        p_records_min_left: float,
+        p_records_min_right: float,
+        p_records_max_left: float,
+        p_records_max_right: float,
+        p_area: float,
+    ) -> str:
         """auto_asc_desc模式决策逻辑（只允许单增或单减）.
 
         参考optbinning的auto_monotonic_asc_desc_decision。
@@ -486,26 +495,26 @@ class MonotonicBinning(BaseBinning):
             # 整体下降趋势
             if p_area <= 0.5:
                 if p_records_max_right <= 0.05:
-                    return 'descending'
+                    return "descending"
                 else:
-                    return 'ascending'
+                    return "ascending"
             else:
-                return 'descending'
+                return "descending"
         else:
             # 整体上升趋势
             if p_records_max_left <= 0.05:
-                return 'ascending'
+                return "ascending"
             else:
                 if p_records_min_left <= 0.8:
                     if p_area <= 0.5:
-                        return 'descending'
+                        return "descending"
                     else:
-                        return 'ascending'
+                        return "ascending"
                 else:
                     if p_trend_changes <= 0.5:
-                        return 'descending'
+                        return "descending"
                     else:
-                        return 'ascending'
+                        return "ascending"
 
     def _is_peak_pattern(self, x: np.ndarray) -> bool:
         """检查是否为峰值模式（倒U型）.
@@ -523,8 +532,8 @@ class MonotonicBinning(BaseBinning):
             return False
 
         # 检查前半部分递增，后半部分递减
-        left_asc = np.all(x[1:t+1] - x[:t] >= -1e-10)
-        right_desc = np.all(x[t+1:] - x[t:-1] <= 1e-10)
+        left_asc = np.all(x[1 : t + 1] - x[:t] >= -1e-10)
+        right_desc = np.all(x[t + 1 :] - x[t:-1] <= 1e-10)
 
         return left_asc and right_desc
 
@@ -544,8 +553,8 @@ class MonotonicBinning(BaseBinning):
             return False
 
         # 检查前半部分递减，后半部分递增
-        left_desc = np.all(x[1:t+1] - x[:t] <= 1e-10)
-        right_asc = np.all(x[t+1:] - x[t:-1] >= -1e-10)
+        left_desc = np.all(x[1 : t + 1] - x[:t] <= 1e-10)
+        right_asc = np.all(x[t + 1 :] - x[t:-1] >= -1e-10)
 
         return left_desc and right_asc
 
@@ -560,7 +569,7 @@ class MonotonicBinning(BaseBinning):
             return False
 
         for i in range(1, n - 1):
-            if x[i+1] - 2 * x[i] + x[i-1] < -1e-10:
+            if x[i + 1] - 2 * x[i] + x[i - 1] < -1e-10:
                 return False
         return True
 
@@ -575,17 +584,11 @@ class MonotonicBinning(BaseBinning):
             return False
 
         for i in range(1, n - 1):
-            if -x[i+1] + 2 * x[i] - x[i-1] < -1e-10:
+            if -x[i + 1] + 2 * x[i] - x[i - 1] < -1e-10:
                 return False
         return True
 
-    def _ensure_peak_valley(
-        self,
-        x: pd.Series,
-        y: pd.Series,
-        splits: np.ndarray,
-        mode: str
-    ) -> np.ndarray:
+    def _ensure_peak_valley(self, x: pd.Series, y: pd.Series, splits: np.ndarray, mode: str) -> np.ndarray:
         """确保分箱满足峰值或谷值模式.
 
         策略：
@@ -612,19 +615,17 @@ class MonotonicBinning(BaseBinning):
 
             # 计算当前分箱的坏样本率
             bins = pd.cut(x, bins=[-np.inf] + splits + [np.inf], labels=False)
-            temp_df = pd.DataFrame({'bin': bins, 'target': y})
-            bin_stats = temp_df.groupby('bin').agg({
-                'target': ['mean', 'count', 'sum']
-            }).reset_index()
-            bin_stats.columns = ['bin', 'bad_rate', 'count', 'bad']
-            
+            temp_df = pd.DataFrame({"bin": bins, "target": y})
+            bin_stats = temp_df.groupby("bin").agg({"target": ["mean", "count", "sum"]}).reset_index()
+            bin_stats.columns = ["bin", "bad_rate", "count", "bad"]
+
             # 确保所有分箱都在bin_stats中
             bin_stats = self._ensure_all_bins_in_stats(bin_stats, len(splits) + 1)
 
-            bad_rates = bin_stats['bad_rate'].values
+            bad_rates = bin_stats["bad_rate"].values
 
             # 找到峰值/谷值位置
-            if mode == 'peak':
+            if mode == "peak":
                 peak_idx = np.argmax(bad_rates)
             else:  # valley
                 peak_idx = np.argmin(bad_rates)
@@ -640,7 +641,7 @@ class MonotonicBinning(BaseBinning):
                 break
 
             # 合并切分点
-            merged_count = bin_stats.iloc[violation_idx]['count'] + bin_stats.iloc[violation_idx + 1]['count']
+            merged_count = bin_stats.iloc[violation_idx]["count"] + bin_stats.iloc[violation_idx + 1]["count"]
 
             if merged_count >= min_samples:
                 splits.pop(violation_idx)
@@ -648,7 +649,7 @@ class MonotonicBinning(BaseBinning):
                 # 尝试其他位置
                 merged = False
                 for i in range(len(splits)):
-                    test_count = bin_stats.iloc[i]['count'] + bin_stats.iloc[i + 1]['count']
+                    test_count = bin_stats.iloc[i]["count"] + bin_stats.iloc[i + 1]["count"]
                     if test_count >= min_samples:
                         splits.pop(i)
                         merged = True
@@ -666,12 +667,7 @@ class MonotonicBinning(BaseBinning):
 
         return np.array(splits)
 
-    def _check_peak_valley(
-        self,
-        bad_rates: np.ndarray,
-        mode: str,
-        peak_idx: int
-    ) -> bool:
+    def _check_peak_valley(self, bad_rates: np.ndarray, mode: str, peak_idx: int) -> bool:
         """检查是否满足峰值/谷值模式.
 
         :param bad_rates: 坏样本率数组
@@ -679,27 +675,18 @@ class MonotonicBinning(BaseBinning):
         :param peak_idx: 峰值/谷值索引
         :return: 是否满足模式
         """
-        if mode == 'peak':
+        if mode == "peak":
             # 峰值前递增，峰值后递减
-            left_ok = all(bad_rates[i] <= bad_rates[i+1] + 1e-10
-                         for i in range(peak_idx))
-            right_ok = all(bad_rates[i] >= bad_rates[i+1] - 1e-10
-                          for i in range(peak_idx, len(bad_rates)-1))
+            left_ok = all(bad_rates[i] <= bad_rates[i + 1] + 1e-10 for i in range(peak_idx))
+            right_ok = all(bad_rates[i] >= bad_rates[i + 1] - 1e-10 for i in range(peak_idx, len(bad_rates) - 1))
             return left_ok and right_ok
         else:  # valley
             # 谷值前递减，谷值后递增
-            left_ok = all(bad_rates[i] >= bad_rates[i+1] - 1e-10
-                         for i in range(peak_idx))
-            right_ok = all(bad_rates[i] <= bad_rates[i+1] + 1e-10
-                          for i in range(peak_idx, len(bad_rates)-1))
+            left_ok = all(bad_rates[i] >= bad_rates[i + 1] - 1e-10 for i in range(peak_idx))
+            right_ok = all(bad_rates[i] <= bad_rates[i + 1] + 1e-10 for i in range(peak_idx, len(bad_rates) - 1))
             return left_ok and right_ok
 
-    def _find_peak_valley_violation(
-        self,
-        bad_rates: np.ndarray,
-        mode: str,
-        peak_idx: int
-    ) -> Optional[int]:
+    def _find_peak_valley_violation(self, bad_rates: np.ndarray, mode: str, peak_idx: int) -> Optional[int]:
         """找到违反峰值/谷值模式的位置.
 
         :param bad_rates: 坏样本率数组
@@ -707,33 +694,27 @@ class MonotonicBinning(BaseBinning):
         :param peak_idx: 峰值/谷值索引
         :return: 违反位置的索引，如果没有违反返回None
         """
-        if mode == 'peak':
+        if mode == "peak":
             # 检查峰值前是否递增
             for i in range(peak_idx):
-                if bad_rates[i] > bad_rates[i+1] + 1e-10:
+                if bad_rates[i] > bad_rates[i + 1] + 1e-10:
                     return i
             # 检查峰值后是否递减
             for i in range(peak_idx, len(bad_rates) - 1):
-                if bad_rates[i] < bad_rates[i+1] - 1e-10:
+                if bad_rates[i] < bad_rates[i + 1] - 1e-10:
                     return i
         else:  # valley
             # 检查谷值前是否递减
             for i in range(peak_idx):
-                if bad_rates[i] < bad_rates[i+1] - 1e-10:
+                if bad_rates[i] < bad_rates[i + 1] - 1e-10:
                     return i
             # 检查谷值后是否递增
             for i in range(peak_idx, len(bad_rates) - 1):
-                if bad_rates[i] > bad_rates[i+1] + 1e-10:
+                if bad_rates[i] > bad_rates[i + 1] + 1e-10:
                     return i
         return None
 
-    def _reduce_bins_peak_valley(
-        self,
-        x: pd.Series,
-        y: pd.Series,
-        splits: List,
-        mode: str
-    ) -> List:
+    def _reduce_bins_peak_valley(self, x: pd.Series, y: pd.Series, splits: List, mode: str) -> List:
         """减少分箱数同时尽量保持峰值/谷值模式.
 
         :param x: 特征数据
@@ -746,21 +727,19 @@ class MonotonicBinning(BaseBinning):
 
         while len(splits) + 1 > self.max_n_bins and len(splits) > 0:
             bins = pd.cut(x, bins=[-np.inf] + splits + [np.inf], labels=False)
-            temp_df = pd.DataFrame({'bin': bins, 'target': y})
-            bin_stats = temp_df.groupby('bin').agg({
-                'target': ['mean', 'count', 'sum']
-            }).reset_index()
-            bin_stats.columns = ['bin', 'bad_rate', 'count', 'bad']
-            
+            temp_df = pd.DataFrame({"bin": bins, "target": y})
+            bin_stats = temp_df.groupby("bin").agg({"target": ["mean", "count", "sum"]}).reset_index()
+            bin_stats.columns = ["bin", "bad_rate", "count", "bad"]
+
             # 确保所有分箱都在bin_stats中
             bin_stats = self._ensure_all_bins_in_stats(bin_stats, len(splits) + 1)
 
             # 选择对模式影响最小的合并
             iv_losses = []
             for i in range(len(splits)):
-                merged_count = bin_stats.iloc[i]['count'] + bin_stats.iloc[i+1]['count']
+                merged_count = bin_stats.iloc[i]["count"] + bin_stats.iloc[i + 1]["count"]
                 if merged_count >= min_samples:
-                    iv_loss = abs(bin_stats.iloc[i]['bad_rate'] - bin_stats.iloc[i+1]['bad_rate'])
+                    iv_loss = abs(bin_stats.iloc[i]["bad_rate"] - bin_stats.iloc[i + 1]["bad_rate"])
                     iv_losses.append((i, iv_loss))
 
             if not iv_losses:
@@ -772,13 +751,7 @@ class MonotonicBinning(BaseBinning):
 
         return splits
 
-    def _ensure_convex_concave(
-        self,
-        x: pd.Series,
-        y: pd.Series,
-        splits: np.ndarray,
-        mode: str
-    ) -> np.ndarray:
+    def _ensure_convex_concave(self, x: pd.Series, y: pd.Series, splits: np.ndarray, mode: str) -> np.ndarray:
         """确保分箱满足凸函数或凹函数模式.
 
         简化处理：对于凸/凹函数，使用峰值/谷值近似
@@ -789,20 +762,14 @@ class MonotonicBinning(BaseBinning):
         :param mode: 'convex' 或 'concave'
         :return: 调整后的切分点
         """
-        if mode == 'convex':
+        if mode == "convex":
             # 凸函数近似为U型（valley）
-            return self._ensure_peak_valley(x, y, splits, 'valley')
+            return self._ensure_peak_valley(x, y, splits, "valley")
         else:  # concave
             # 凹函数近似为倒U型（peak）
-            return self._ensure_peak_valley(x, y, splits, 'peak')
+            return self._ensure_peak_valley(x, y, splits, "peak")
 
-    def _ensure_monotonic(
-        self,
-        x: pd.Series,
-        y: pd.Series,
-        splits: np.ndarray,
-        direction: str
-    ) -> np.ndarray:
+    def _ensure_monotonic(self, x: pd.Series, y: pd.Series, splits: np.ndarray, direction: str) -> np.ndarray:
         """确保分箱满足单调性约束.
 
         核心算法：合并相邻箱直到满足单调性约束。
@@ -813,7 +780,7 @@ class MonotonicBinning(BaseBinning):
         :param direction: 单调性方向 'ascending', 'descending' 或 'none'
         :return: 调整后的切分点
         """
-        if direction == 'none' or len(splits) == 0:
+        if direction == "none" or len(splits) == 0:
             return splits
 
         splits = list(splits)
@@ -825,16 +792,14 @@ class MonotonicBinning(BaseBinning):
                 break
 
             bins = pd.cut(x, bins=[-np.inf] + splits + [np.inf], labels=False)
-            temp_df = pd.DataFrame({'bin': bins, 'target': y})
-            bin_stats = temp_df.groupby('bin').agg({
-                'target': ['mean', 'count', 'sum']
-            }).reset_index()
-            bin_stats.columns = ['bin', 'bad_rate', 'count', 'bad']
-            
+            temp_df = pd.DataFrame({"bin": bins, "target": y})
+            bin_stats = temp_df.groupby("bin").agg({"target": ["mean", "count", "sum"]}).reset_index()
+            bin_stats.columns = ["bin", "bad_rate", "count", "bad"]
+
             # 确保所有分箱都在bin_stats中
             bin_stats = self._ensure_all_bins_in_stats(bin_stats, len(splits) + 1)
 
-            bad_rates = bin_stats['bad_rate'].values
+            bad_rates = bin_stats["bad_rate"].values
 
             if self._check_monotonic_simple(bad_rates, direction):
                 break
@@ -844,14 +809,14 @@ class MonotonicBinning(BaseBinning):
             if violation_idx is None or violation_idx >= len(splits):
                 break
 
-            merged_count = bin_stats.iloc[violation_idx]['count'] + bin_stats.iloc[violation_idx + 1]['count']
+            merged_count = bin_stats.iloc[violation_idx]["count"] + bin_stats.iloc[violation_idx + 1]["count"]
 
             if merged_count >= min_samples:
                 splits.pop(violation_idx)
             else:
                 merged = False
                 for i in range(len(splits)):
-                    test_count = bin_stats.iloc[i]['count'] + bin_stats.iloc[i + 1]['count']
+                    test_count = bin_stats.iloc[i]["count"] + bin_stats.iloc[i + 1]["count"]
                     if test_count >= min_samples:
                         splits.pop(i)
                         merged = True
@@ -868,53 +833,37 @@ class MonotonicBinning(BaseBinning):
 
         return np.array(splits)
 
-    def _check_monotonic_simple(
-        self,
-        bad_rates: np.ndarray,
-        direction: str
-    ) -> bool:
+    def _check_monotonic_simple(self, bad_rates: np.ndarray, direction: str) -> bool:
         """简单单调性检查.
 
         :param bad_rates: 坏样本率数组
         :param direction: 单调性方向
         :return: 是否满足单调性
         """
-        if direction == 'ascending':
-            return all(bad_rates[i] <= bad_rates[i+1] + 1e-10
-                      for i in range(len(bad_rates)-1))
-        elif direction == 'descending':
-            return all(bad_rates[i] >= bad_rates[i+1] - 1e-10
-                      for i in range(len(bad_rates)-1))
+        if direction == "ascending":
+            return all(bad_rates[i] <= bad_rates[i + 1] + 1e-10 for i in range(len(bad_rates) - 1))
+        elif direction == "descending":
+            return all(bad_rates[i] >= bad_rates[i + 1] - 1e-10 for i in range(len(bad_rates) - 1))
         return True
 
-    def _find_violation_simple(
-        self,
-        bad_rates: np.ndarray,
-        direction: str
-    ) -> Optional[int]:
+    def _find_violation_simple(self, bad_rates: np.ndarray, direction: str) -> Optional[int]:
         """找到违反单调性的位置.
 
         :param bad_rates: 坏样本率数组
         :param direction: 单调性方向
         :return: 违反位置的索引，如果没有违反返回None
         """
-        if direction == 'ascending':
+        if direction == "ascending":
             for i in range(len(bad_rates) - 1):
-                if bad_rates[i] > bad_rates[i+1] + 1e-10:
+                if bad_rates[i] > bad_rates[i + 1] + 1e-10:
                     return i
-        elif direction == 'descending':
+        elif direction == "descending":
             for i in range(len(bad_rates) - 1):
-                if bad_rates[i] < bad_rates[i+1] - 1e-10:
+                if bad_rates[i] < bad_rates[i + 1] - 1e-10:
                     return i
         return None
 
-    def _reduce_bins_simple(
-        self,
-        x: pd.Series,
-        y: pd.Series,
-        splits: List,
-        direction: str
-    ) -> List:
+    def _reduce_bins_simple(self, x: pd.Series, y: pd.Series, splits: List, direction: str) -> List:
         """简单减少分箱数.
 
         :param x: 特征数据
@@ -927,20 +876,18 @@ class MonotonicBinning(BaseBinning):
 
         while len(splits) + 1 > self.max_n_bins and len(splits) > 0:
             bins = pd.cut(x, bins=[-np.inf] + splits + [np.inf], labels=False)
-            temp_df = pd.DataFrame({'bin': bins, 'target': y})
-            bin_stats = temp_df.groupby('bin').agg({
-                'target': ['mean', 'count', 'sum']
-            }).reset_index()
-            bin_stats.columns = ['bin', 'bad_rate', 'count', 'bad']
-            
+            temp_df = pd.DataFrame({"bin": bins, "target": y})
+            bin_stats = temp_df.groupby("bin").agg({"target": ["mean", "count", "sum"]}).reset_index()
+            bin_stats.columns = ["bin", "bad_rate", "count", "bad"]
+
             # 确保所有分箱都在bin_stats中
             bin_stats = self._ensure_all_bins_in_stats(bin_stats, len(splits) + 1)
 
             iv_losses = []
             for i in range(len(splits)):
-                merged_count = bin_stats.iloc[i]['count'] + bin_stats.iloc[i+1]['count']
+                merged_count = bin_stats.iloc[i]["count"] + bin_stats.iloc[i + 1]["count"]
                 if merged_count >= min_samples:
-                    iv_loss = abs(bin_stats.iloc[i]['bad_rate'] - bin_stats.iloc[i+1]['bad_rate'])
+                    iv_loss = abs(bin_stats.iloc[i]["bad_rate"] - bin_stats.iloc[i + 1]["bad_rate"])
                     iv_losses.append((i, iv_loss))
 
             if not iv_losses:
@@ -952,11 +899,7 @@ class MonotonicBinning(BaseBinning):
 
         return splits
 
-    def _fit_categorical(
-        self,
-        x: pd.Series,
-        y: pd.Series
-    ) -> List:
+    def _fit_categorical(self, x: pd.Series, y: pd.Series) -> List:
         """对类别型特征进行单调性约束分箱.
 
         :param x: 特征数据
@@ -973,32 +916,31 @@ class MonotonicBinning(BaseBinning):
         x_valid = x_clean[mask]
         y_valid = y[mask]
 
-        cat_stats = pd.DataFrame({
-            'category': x_valid,
-            'target': y_valid
-        }).groupby('category')['target'].agg(['mean', 'count'])
+        cat_stats = (
+            pd.DataFrame({"category": x_valid, "target": y_valid}).groupby("category")["target"].agg(["mean", "count"])
+        )
 
         min_samples = self._get_min_samples(len(x_valid))
-        cat_stats = cat_stats[cat_stats['count'] >= min_samples]
+        cat_stats = cat_stats[cat_stats["count"] >= min_samples]
 
         if len(cat_stats) <= self.min_n_bins:
-            return cat_stats.sort_values('mean').index.tolist()
+            return cat_stats.sort_values("mean").index.tolist()
 
-        cat_stats = cat_stats.sort_values('mean')
+        cat_stats = cat_stats.sort_values("mean")
         categories = cat_stats.index.tolist()
 
         # 类别型特征主要支持简单单调性
-        direction = self._detect_monotonic_direction_cat(cat_stats['mean'].values)
+        direction = self._detect_monotonic_direction_cat(cat_stats["mean"].values)
 
-        if self.monotonic in ['ascending', 'descending']:
+        if self.monotonic in ["ascending", "descending"]:
             direction = self.monotonic
-        elif self.monotonic in ['peak', 'valley', 'convex', 'concave']:
+        elif self.monotonic in ["peak", "valley", "convex", "concave"]:
             # 复杂模式退化为简单单调性
-            direction = 'ascending'
+            direction = "ascending"
         elif self.monotonic is False or self.monotonic is None:
             return categories
 
-        if direction == 'descending':
+        if direction == "descending":
             categories = categories[::-1]
 
         if len(categories) > self.max_n_bins:
@@ -1006,44 +948,37 @@ class MonotonicBinning(BaseBinning):
 
         return categories
 
-    def _detect_monotonic_direction_cat(
-        self,
-        bad_rates: np.ndarray
-    ) -> str:
+    def _detect_monotonic_direction_cat(self, bad_rates: np.ndarray) -> str:
         """检测类别型特征的单调性方向.
 
         :param bad_rates: 坏样本率数组
         :return: 单调性方向
         """
-        if self.monotonic in ['ascending', 'descending']:
+        if self.monotonic in ["ascending", "descending"]:
             return self.monotonic
         elif self.monotonic is False or self.monotonic is None:
-            return 'none'
+            return "none"
 
         # 类别型特征默认使用排序后的顺序（递增）
-        return 'ascending'
+        return "ascending"
 
-    def _merge_categories(
-        self,
-        cat_stats: pd.DataFrame,
-        direction: str
-    ) -> List:
+    def _merge_categories(self, cat_stats: pd.DataFrame, direction: str) -> List:
         """合并类别以满足分箱数限制.
 
         :param cat_stats: 类别统计
         :param direction: 单调性方向
         :return: 合并后的类别列表
         """
-        cat_stats = cat_stats.sort_values('mean')
+        cat_stats = cat_stats.sort_values("mean")
         categories = cat_stats.index.tolist()
 
         while len(categories) > self.max_n_bins:
-            min_diff = float('inf')
+            min_diff = float("inf")
             merge_idx = 0
 
-            bad_rates = cat_stats['mean'].values
+            bad_rates = cat_stats["mean"].values
             for i in range(len(bad_rates) - 1):
-                diff = abs(bad_rates[i] - bad_rates[i+1])
+                diff = abs(bad_rates[i] - bad_rates[i + 1])
                 if diff < min_diff:
                     min_diff = diff
                     merge_idx = i
@@ -1052,45 +987,41 @@ class MonotonicBinning(BaseBinning):
             cat2 = categories[merge_idx + 1]
             merged_cat = f"{cat1},{cat2}"
 
-            merged_count = cat_stats.iloc[merge_idx]['count'] + cat_stats.iloc[merge_idx + 1]['count']
-            merged_bad = cat_stats.iloc[merge_idx]['mean'] * cat_stats.iloc[merge_idx]['count'] + \
-                        cat_stats.iloc[merge_idx + 1]['mean'] * cat_stats.iloc[merge_idx + 1]['count']
+            merged_count = cat_stats.iloc[merge_idx]["count"] + cat_stats.iloc[merge_idx + 1]["count"]
+            merged_bad = (
+                cat_stats.iloc[merge_idx]["mean"] * cat_stats.iloc[merge_idx]["count"]
+                + cat_stats.iloc[merge_idx + 1]["mean"] * cat_stats.iloc[merge_idx + 1]["count"]
+            )
             merged_rate = merged_bad / merged_count
 
             categories.pop(merge_idx + 1)
             categories[merge_idx] = merged_cat
 
             cat_stats = cat_stats.drop([cat1, cat2])
-            cat_stats.loc[merged_cat] = {'mean': merged_rate, 'count': merged_count}
-            cat_stats = cat_stats.sort_values('mean')
+            cat_stats.loc[merged_cat] = {"mean": merged_rate, "count": merged_count}
+            cat_stats = cat_stats.sort_values("mean")
 
-        if direction == 'descending':
+        if direction == "descending":
             categories = categories[::-1]
 
         return categories
 
-    def _ensure_all_bins_in_stats(
-        self,
-        bin_stats: pd.DataFrame,
-        n_bins: int
-    ) -> pd.DataFrame:
+    def _ensure_all_bins_in_stats(self, bin_stats: pd.DataFrame, n_bins: int) -> pd.DataFrame:
         """确保bin_stats包含所有分箱（即使某些分箱为空）.
-        
+
         :param bin_stats: 分箱统计表
         :param n_bins: 分箱数量
         :return: 补全后的分箱统计表
         """
         expected_bins = list(range(n_bins))
         for bin_idx in expected_bins:
-            if bin_idx not in bin_stats['bin'].values:
-                bin_stats = pd.concat([bin_stats, pd.DataFrame({
-                    'bin': [bin_idx],
-                    'bad_rate': [0.0],
-                    'count': [0],
-                    'bad': [0]
-                })], ignore_index=True)
-        
-        return bin_stats.sort_values('bin').reset_index(drop=True)
+            if bin_idx not in bin_stats["bin"].values:
+                bin_stats = pd.concat(
+                    [bin_stats, pd.DataFrame({"bin": [bin_idx], "bad_rate": [0.0], "count": [0], "bad": [0]})],
+                    ignore_index=True,
+                )
+
+        return bin_stats.sort_values("bin").reset_index(drop=True)
 
     def _get_min_samples(self, n_total: int) -> int:
         """获取最小样本数.
@@ -1102,11 +1033,7 @@ class MonotonicBinning(BaseBinning):
             return int(n_total * self.min_bin_size)
         return int(self.min_bin_size)
 
-    def _apply_bins(
-        self,
-        x: pd.Series,
-        splits: Union[np.ndarray, List]
-    ) -> np.ndarray:
+    def _apply_bins(self, x: pd.Series, splits: Union[np.ndarray, List]) -> np.ndarray:
         """应用分箱.
 
         :param x: 特征数据
@@ -1114,13 +1041,13 @@ class MonotonicBinning(BaseBinning):
         :return: 分箱索引
         """
         feature = x.name
-        if feature in self._cat_bins_ and self.feature_types_.get(feature) == 'categorical':
+        if feature in self._cat_bins_ and self.feature_types_.get(feature) == "categorical":
             return self._assign_categorical_bins(feature, x)
         if isinstance(splits, list):
             bins = np.zeros(len(x), dtype=int)
             for i, cat in enumerate(splits):
-                if ',' in str(cat):
-                    cats = str(cat).split(',')
+                if "," in str(cat):
+                    cats = str(cat).split(",")
                     for c in cats:
                         bins[x == c] = i
                 else:
@@ -1153,15 +1080,12 @@ class MonotonicBinning(BaseBinning):
             return bins
 
     def transform(
-        self,
-        X: Union[pd.DataFrame, np.ndarray],
-        metric: str = 'indices',
-        **kwargs
+        self, X: Union[pd.DataFrame, np.ndarray], metric: str = "indices", **kwargs
     ) -> Union[pd.DataFrame, np.ndarray]:
         """应用分箱转换.
-        
+
         将原始特征值转换为分箱索引、分箱标签或WOE值。
-        
+
         :param X: 待转换数据, DataFrame或数组格式
         :param metric: 转换类型, 可选值:
             - 'indices': 返回分箱索引 (0, 1, 2, ...), 用于后续处理
@@ -1169,14 +1093,14 @@ class MonotonicBinning(BaseBinning):
             - 'woe': 返回WOE值, 用于逻辑回归建模
         :param kwargs: 其他参数
         :return: 转换后的数据, 格式与输入X相同
-        
+
         :example:
         >>> binner = MonotonicBinning()
         >>> binner.fit(X_train, y_train)
-        >>> 
+        >>>
         >>> # 获取分箱索引
         >>> X_binned = binner.transform(X_test, metric='indices')
-        >>> 
+        >>>
         >>> # 获取WOE编码 (用于建模)
         >>> X_woe = binner.transform(X_test, metric='woe')
         """
@@ -1186,7 +1110,7 @@ class MonotonicBinning(BaseBinning):
         if not isinstance(X, pd.DataFrame):
             if isinstance(X, np.ndarray):
                 if X.ndim == 1:
-                    X = pd.DataFrame(X, columns=['feature'])
+                    X = pd.DataFrame(X, columns=["feature"])
                 else:
                     X = pd.DataFrame(X)
             else:
@@ -1202,17 +1126,17 @@ class MonotonicBinning(BaseBinning):
             splits = self.splits_[feature]
             bins = self._apply_bins(X[feature], splits)
 
-            if metric == 'indices':
+            if metric == "indices":
                 result[feature] = bins
-            elif metric == 'bins':
+            elif metric == "bins":
                 result[feature] = self._assign_bin_labels(feature, bins)
-            elif metric == 'woe':
+            elif metric == "woe":
                 # 优先使用_woe_maps_（从export/load导入）
-                if hasattr(self, '_woe_maps_') and feature in self._woe_maps_:
+                if hasattr(self, "_woe_maps_") and feature in self._woe_maps_:
                     woe_map = self._woe_maps_[feature]
                 elif feature in self.bin_tables_:
                     bin_table = self.bin_tables_[feature]
-                    woe_map = dict(zip(range(len(bin_table)), bin_table['分档WOE值'].values))
+                    woe_map = dict(zip(range(len(bin_table)), bin_table["分档WOE值"].values))
                     self._enrich_woe_map(woe_map, bin_table)
                 else:
                     raise ValueError(f"特征 '{feature}' 没有WOE映射信息")
@@ -1225,9 +1149,9 @@ class MonotonicBinning(BaseBinning):
     def plot_binning(
         self,
         feature: str,
-        metric: str = 'bad_rate',
+        metric: str = "bad_rate",
         figsize: Tuple[int, int] = (10, 6),
-        save_path: Optional[str] = None
+        save_path: Optional[str] = None,
     ):
         """绘制分箱结果可视化.
 
@@ -1246,7 +1170,7 @@ class MonotonicBinning(BaseBinning):
             raise KeyError(f"特征 '{feature}' 未找到")
 
         table = self.bin_tables_[feature]
-        table = table[table['分箱标签'].isin(['缺失', 'special']) == False]
+        table = table[table["分箱标签"].isin(["缺失", "special"]) == False]
 
         fig, ax = plt.subplots(figsize=figsize)
 
@@ -1254,34 +1178,34 @@ class MonotonicBinning(BaseBinning):
         values = table[metric].values
 
         # 根据单调性模式设置颜色
-        trend = self.monotonic_trend_.get(feature, 'unknown')
-        if trend in ['peak', 'concave']:
-            colors = ['lightcoral' if i == np.argmax(values) else 'steelblue' for i in range(len(table))]
-        elif trend in ['valley', 'convex']:
-            colors = ['lightgreen' if i == np.argmin(values) else 'steelblue' for i in range(len(table))]
+        trend = self.monotonic_trend_.get(feature, "unknown")
+        if trend in ["peak", "concave"]:
+            colors = ["lightcoral" if i == np.argmax(values) else "steelblue" for i in range(len(table))]
+        elif trend in ["valley", "convex"]:
+            colors = ["lightgreen" if i == np.argmin(values) else "steelblue" for i in range(len(table))]
         else:
-            colors = ['steelblue'] * len(table)
+            colors = ["steelblue"] * len(table)
 
-        ax.bar(x_pos, values, color=colors, edgecolor='black', alpha=0.7)
-        ax.set_xlabel('Bin', fontsize=12)
+        ax.bar(x_pos, values, color=colors, edgecolor="black", alpha=0.7)
+        ax.set_xlabel("Bin", fontsize=12)
         ax.set_ylabel(metric.upper(), fontsize=12)
-        ax.set_title(f'Feature: {feature} | Trend: {trend}', fontsize=14)
+        ax.set_title(f"Feature: {feature} | Trend: {trend}", fontsize=14)
         ax.set_xticks(x_pos)
-        ax.set_xticklabels([f'Bin {i}' for i in range(len(table))], rotation=45)
+        ax.set_xticklabels([f"Bin {i}" for i in range(len(table))], rotation=45)
 
         # 添加数值标签
         for i, v in enumerate(values):
-            ax.text(i, v, f'{v:.3f}', ha='center', va='bottom', fontsize=9)
+            ax.text(i, v, f"{v:.3f}", ha="center", va="bottom", fontsize=9)
 
         plt.tight_layout()
 
         if save_path:
-            plt.savefig(save_path, dpi=300, bbox_inches='tight')
+            plt.savefig(save_path, dpi=300, bbox_inches="tight")
 
         return fig, ax
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     # 测试代码
     print("=" * 70)
     print("MonotonicBinning - 支持U型和倒U型的单调性分箱测试")
@@ -1306,15 +1230,15 @@ if __name__ == '__main__':
     print("\n1. 峰值模式测试 (monotonic='peak'):")
     print("-" * 50)
 
-    X_peak = pd.DataFrame({'peak_feature': x_peak})
-    binner_peak = MonotonicBinning(monotonic='peak', max_n_bins=5, verbose=True)
+    X_peak = pd.DataFrame({"peak_feature": x_peak})
+    binner_peak = MonotonicBinning(monotonic="peak", max_n_bins=5, verbose=True)
     binner_peak.fit(X_peak, y_peak)
 
-    table = binner_peak.get_bin_table('peak_feature')
+    table = binner_peak.get_bin_table("peak_feature")
     print("\n分箱统计表:")
-    print(table[['bin', 'count', 'bad', 'bad_rate', 'woe']])
+    print(table[["bin", "count", "bad", "bad_rate", "woe"]])
 
-    bad_rates = table[table['bin'] != 'missing']['bad_rate'].values
+    bad_rates = table[table["bin"] != "missing"]["bad_rate"].values
     print(f"\n坏样本率分布: {bad_rates}")
     print(f"是否为峰值模式: {binner_peak._is_peak_pattern(bad_rates)}")
 
@@ -1322,15 +1246,15 @@ if __name__ == '__main__':
     print("\n2. 谷值模式测试 (monotonic='valley'):")
     print("-" * 50)
 
-    X_valley = pd.DataFrame({'valley_feature': x_valley})
-    binner_valley = MonotonicBinning(monotonic='valley', max_n_bins=5, verbose=True)
+    X_valley = pd.DataFrame({"valley_feature": x_valley})
+    binner_valley = MonotonicBinning(monotonic="valley", max_n_bins=5, verbose=True)
     binner_valley.fit(X_valley, y_valley)
 
-    table2 = binner_valley.get_bin_table('valley_feature')
+    table2 = binner_valley.get_bin_table("valley_feature")
     print("\n分箱统计表:")
-    print(table2[['bin', 'count', 'bad', 'bad_rate', 'woe']])
+    print(table2[["bin", "count", "bad", "bad_rate", "woe"]])
 
-    bad_rates2 = table2[table2['bin'] != 'missing']['bad_rate'].values
+    bad_rates2 = table2[table2["bin"] != "missing"]["bad_rate"].values
     print(f"\n坏样本率分布: {bad_rates2}")
     print(f"是否为谷值模式: {binner_valley._is_valley_pattern(bad_rates2)}")
 
@@ -1342,15 +1266,15 @@ if __name__ == '__main__':
     y_asc_prob = 0.05 + 0.4 * (x_asc / 100)
     y_asc = (np.random.random(n) < y_asc_prob).astype(int)
 
-    X_asc = pd.DataFrame({'asc_feature': x_asc})
-    binner_asc = MonotonicBinning(monotonic='ascending', max_n_bins=5)
+    X_asc = pd.DataFrame({"asc_feature": x_asc})
+    binner_asc = MonotonicBinning(monotonic="ascending", max_n_bins=5)
     binner_asc.fit(X_asc, y_asc)
 
-    table3 = binner_asc.get_bin_table('asc_feature')
-    print(table3[['bin', 'count', 'bad', 'bad_rate']])
+    table3 = binner_asc.get_bin_table("asc_feature")
+    print(table3[["bin", "count", "bad", "bad_rate"]])
 
-    bad_rates3 = table3[table3['bin'] != 'missing']['bad_rate'].values
-    is_asc = all(bad_rates3[i] <= bad_rates3[i+1] for i in range(len(bad_rates3)-1))
+    bad_rates3 = table3[table3["bin"] != "missing"]["bad_rate"].values
+    is_asc = all(bad_rates3[i] <= bad_rates3[i + 1] for i in range(len(bad_rates3) - 1))
     print(f"\n是否递增: {is_asc}")
 
     print("\n" + "=" * 70)

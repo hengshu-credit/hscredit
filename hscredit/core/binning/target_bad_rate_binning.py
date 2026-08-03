@@ -70,20 +70,24 @@ class TargetBadRateBinning(BaseBinning):
 
     def __init__(
         self,
-        target: str = 'target',
+        target: str = "target",
         target_bad_rates: Optional[List[float]] = None,
         max_n_bins: int = 5,
         min_n_bins: int = 2,
         min_bin_size: Union[float, int] = 0.01,
         max_bin_size: Optional[Union[float, int]] = None,
+        min_bad_rate: float = 0.0,
         strict_mode: bool = True,
         merge_empty_bins: bool = True,
         monotonic: bool = True,
         missing_separate: bool = True,
         special_codes: Optional[List] = None,
+        cat_cutoff: Optional[Union[float, int]] = None,
+        category_order=None,
+        handle_unknown: str = "value",
         random_state: Optional[int] = None,
         decimal: int = 4,
-        **kwargs
+        **kwargs,
     ):
         super().__init__(
             target=target,
@@ -91,12 +95,16 @@ class TargetBadRateBinning(BaseBinning):
             min_n_bins=min_n_bins,
             min_bin_size=min_bin_size,
             max_bin_size=max_bin_size,
+            min_bad_rate=min_bad_rate,
             monotonic=monotonic,
             missing_separate=missing_separate,
             special_codes=special_codes,
+            cat_cutoff=cat_cutoff,
+            category_order=category_order,
+            handle_unknown=handle_unknown,
             random_state=random_state,
             decimal=decimal,
-            **kwargs
+            **kwargs,
         )
         self.target_bad_rates = sorted(target_bad_rates) if target_bad_rates else None
         self.strict_mode = strict_mode
@@ -104,11 +112,8 @@ class TargetBadRateBinning(BaseBinning):
         self._actual_rates: Dict[str, List[float]] = {}
 
     def fit(
-        self,
-        X: Union[pd.DataFrame, np.ndarray],
-        y: Optional[Union[pd.Series, np.ndarray]] = None,
-        **kwargs
-    ) -> 'TargetBadRateBinning':
+        self, X: Union[pd.DataFrame, np.ndarray], y: Optional[Union[pd.Series, np.ndarray]] = None, **kwargs
+    ) -> "TargetBadRateBinning":
         """拟合目标坏样本率分箱.
 
         :param X: 训练数据
@@ -124,12 +129,7 @@ class TargetBadRateBinning(BaseBinning):
         self._is_fitted = True
         return self
 
-    def _fit_feature(
-        self,
-        feature: str,
-        X: pd.Series,
-        y: pd.Series
-    ) -> None:
+    def _fit_feature(self, feature: str, X: pd.Series, y: pd.Series) -> None:
         """对单个特征进行分箱."""
         feature_type = self._detect_feature_type(X)
         self.feature_types_[feature] = feature_type
@@ -144,7 +144,7 @@ class TargetBadRateBinning(BaseBinning):
         X_valid = X[valid_mask]
         y_valid = y[valid_mask]
 
-        if feature_type == 'categorical':
+        if feature_type == "categorical":
             splits, cat_bins = self._fit_categorical(X_valid, y_valid)
             if cat_bins:
                 self._cat_bins_[feature] = cat_bins
@@ -163,7 +163,7 @@ class TargetBadRateBinning(BaseBinning):
         self.bin_tables_[feature] = bin_table
 
         # 记录实际坏样本率
-        if feature_type == 'categorical':
+        if feature_type == "categorical":
             valid_bins = self._assign_bins(X_valid, feature)
             actual_rates = []
             for bin_idx in sorted(idx for idx in np.unique(valid_bins) if idx >= 0):
@@ -299,7 +299,7 @@ class TargetBadRateBinning(BaseBinning):
             left_count = i
             right_count = n_samples - i
             if left_count >= min_samples and right_count >= min_samples:
-                split_val = (x_sorted[i-1] + x_sorted[i]) / 2
+                split_val = (x_sorted[i - 1] + x_sorted[i]) / 2
                 candidates.append((i, split_val, diff, left_rate, right_rate))
 
         if not candidates:
@@ -336,11 +336,7 @@ class TargetBadRateBinning(BaseBinning):
         return sorted(splits)
 
     def _validate_and_adjust_splits(
-        self,
-        x_sorted: np.ndarray,
-        y_sorted: np.ndarray,
-        splits: List[float],
-        min_samples: int
+        self, x_sorted: np.ndarray, y_sorted: np.ndarray, splits: List[float], min_samples: int
     ) -> List[float]:
         """验证并调整分箱，确保满足约束."""
         if not splits:
@@ -349,7 +345,7 @@ class TargetBadRateBinning(BaseBinning):
         n_samples = len(x_sorted)
         positions = []
         for split in splits:
-            pos = np.searchsorted(x_sorted, split, side='right')
+            pos = np.searchsorted(x_sorted, split, side="right")
             positions.append(pos)
 
         positions = sorted(positions)
@@ -367,33 +363,29 @@ class TargetBadRateBinning(BaseBinning):
         valid_splits = []
         for pos in valid_positions:
             if pos < n_samples:
-                split_val = (x_sorted[pos-1] + x_sorted[pos]) / 2
+                split_val = (x_sorted[pos - 1] + x_sorted[pos]) / 2
                 valid_splits.append(split_val)
 
         return valid_splits
 
     def _merge_small_bins(
-        self,
-        x_sorted: np.ndarray,
-        y_sorted: np.ndarray,
-        splits: List[float],
-        min_samples: int
+        self, x_sorted: np.ndarray, y_sorted: np.ndarray, splits: List[float], min_samples: int
     ) -> List[float]:
         """合并样本数过少的相邻箱."""
         if not splits:
             return splits
 
         n_samples = len(x_sorted)
-        positions = [np.searchsorted(x_sorted, s, side='right') for s in sorted(splits)]
+        positions = [np.searchsorted(x_sorted, s, side="right") for s in sorted(splits)]
 
         # 计算每个箱的样本数
         boundaries = [0] + positions + [n_samples]
-        bin_counts = [boundaries[i+1] - boundaries[i] for i in range(len(boundaries) - 1)]
+        bin_counts = [boundaries[i + 1] - boundaries[i] for i in range(len(boundaries) - 1)]
 
         # 找出需要合并的箱
         valid_splits = []
         for i, (pos, count) in enumerate(zip(positions, bin_counts[:-1])):
-            if count >= min_samples and bin_counts[i+1] >= min_samples:
+            if count >= min_samples and bin_counts[i + 1] >= min_samples:
                 valid_splits.append(sorted(splits)[i])
 
         return valid_splits
@@ -401,22 +393,22 @@ class TargetBadRateBinning(BaseBinning):
     def _fit_categorical(self, X: pd.Series, y: pd.Series) -> Tuple[List[float], List[List[Any]]]:
         """对类别型变量进行分箱."""
         # 计算每个类别的坏样本率
-        df = pd.DataFrame({'X': X, 'y': y})
-        category_stats = df.groupby('X')['y'].agg(['mean', 'count']).reset_index()
-        category_stats.columns = ['category', 'bad_rate', 'count']
+        df = pd.DataFrame({"X": X, "y": y})
+        category_stats = df.groupby("X")["y"].agg(["mean", "count"]).reset_index()
+        category_stats.columns = ["category", "bad_rate", "count"]
 
         n_total = len(X)
         min_samples = self._get_min_samples(n_total)
 
         # 过滤样本数过少的类别
-        category_stats = category_stats[category_stats['count'] >= min_samples]
+        category_stats = category_stats[category_stats["count"] >= min_samples]
 
         if len(category_stats) <= 1:
-            categories = category_stats['category'].tolist()
+            categories = category_stats["category"].tolist()
             return [], [[category] for category in categories]
 
         # 按坏样本率排序
-        category_stats = category_stats.sort_values('bad_rate').reset_index(drop=True)
+        category_stats = category_stats.sort_values("bad_rate").reset_index(drop=True)
 
         if self.target_bad_rates is not None:
             # 严格边界模式
@@ -425,7 +417,7 @@ class TargetBadRateBinning(BaseBinning):
             # 自动模式
             splits = self._fit_categorical_auto(category_stats, n_total, min_samples)
 
-        categories = category_stats['category'].tolist()
+        categories = category_stats["category"].tolist()
         cat_bins = self._build_categorical_bins(categories, splits)
         return splits, cat_bins
 
@@ -450,22 +442,18 @@ class TargetBadRateBinning(BaseBinning):
         return cat_bins
 
     def _fit_categorical_with_target_rates(
-        self,
-        category_stats: pd.DataFrame,
-        n_total: int,
-        min_samples: int
+        self, category_stats: pd.DataFrame, n_total: int, min_samples: int
     ) -> List[float]:
         """类别型变量按目标坏样本率边界划分."""
         splits = []
 
         for target in self.target_bad_rates:
             best_idx = None
-            best_diff = float('inf')
+            best_diff = float("inf")
 
             for idx in range(len(category_stats)):
-                temp_count = category_stats.iloc[:idx+1]['count'].sum()
-                temp_bad = (category_stats.iloc[:idx+1]['bad_rate'] *
-                           category_stats.iloc[:idx+1]['count']).sum()
+                temp_count = category_stats.iloc[: idx + 1]["count"].sum()
+                temp_bad = (category_stats.iloc[: idx + 1]["bad_rate"] * category_stats.iloc[: idx + 1]["count"]).sum()
 
                 if temp_count < min_samples:
                     continue
@@ -486,19 +474,14 @@ class TargetBadRateBinning(BaseBinning):
 
         return sorted(splits)
 
-    def _fit_categorical_auto(
-        self,
-        category_stats: pd.DataFrame,
-        n_total: int,
-        min_samples: int
-    ) -> List[float]:
+    def _fit_categorical_auto(self, category_stats: pd.DataFrame, n_total: int, min_samples: int) -> List[float]:
         """类别型变量自动模式：最大化箱间差异."""
         n_cats = len(category_stats)
         splits = []
 
         # 计算累积统计
-        cum_count = category_stats['count'].cumsum().values
-        cum_bad = (category_stats['bad_rate'] * category_stats['count']).cumsum().values
+        cum_count = category_stats["count"].cumsum().values
+        cum_bad = (category_stats["bad_rate"] * category_stats["count"]).cumsum().values
 
         candidates = []
 
@@ -525,12 +508,7 @@ class TargetBadRateBinning(BaseBinning):
 
         return sorted(splits)
 
-    def _compute_actual_rates(
-        self,
-        X: pd.Series,
-        y: pd.Series,
-        splits: List[float]
-    ) -> List[float]:
+    def _compute_actual_rates(self, X: pd.Series, y: pd.Series, splits: List[float]) -> List[float]:
         """计算各箱的实际坏样本率."""
         if len(X) == 0:
             return []
@@ -549,7 +527,7 @@ class TargetBadRateBinning(BaseBinning):
         else:
             x_vals = pd.Categorical(X).codes
 
-        bins = np.searchsorted(sorted_splits, x_vals, side='right')
+        bins = np.searchsorted(sorted_splits, x_vals, side="right")
 
         rates = []
         for i in range(len(sorted_splits) + 1):
@@ -565,9 +543,9 @@ class TargetBadRateBinning(BaseBinning):
         """为数据分配分箱索引."""
         x_vals = X.values
 
-        if self.feature_types_[feature] == 'categorical' and feature in self._cat_bins_:
+        if self.feature_types_[feature] == "categorical" and feature in self._cat_bins_:
             return self._assign_categorical_bins(feature, X)
-        if self.feature_types_[feature] == 'categorical':
+        if self.feature_types_[feature] == "categorical":
             if feature in self._cat_bins_ and self._cat_bins_[feature]:
                 bins = np.zeros(len(X), dtype=int)
                 x_str = X.astype(str).where(X.notna(), other=np.nan)
@@ -611,17 +589,12 @@ class TargetBadRateBinning(BaseBinning):
 
             if valid_mask.any() and len(splits) > 0:
                 valid_indices = np.where(valid_mask)[0]
-                bins[valid_indices] = np.searchsorted(
-                    splits, x_vals[valid_indices], side='right'
-                )
+                bins[valid_indices] = np.searchsorted(splits, x_vals[valid_indices], side="right")
 
             return bins
 
     def transform(
-        self,
-        X: Union[pd.DataFrame, np.ndarray],
-        metric: str = 'indices',
-        **kwargs
+        self, X: Union[pd.DataFrame, np.ndarray], metric: str = "indices", **kwargs
     ) -> Union[pd.DataFrame, np.ndarray]:
         """应用分箱转换."""
         if not self._is_fitted:
@@ -639,17 +612,17 @@ class TargetBadRateBinning(BaseBinning):
 
             bins = self._assign_bins(X[feature], feature)
 
-            if metric == 'indices':
+            if metric == "indices":
                 result[feature] = bins
-            elif metric == 'bins':
+            elif metric == "bins":
                 result[feature] = self._assign_bin_labels(feature, bins)
-            elif metric == 'woe':
+            elif metric == "woe":
                 # 优先使用_woe_maps_（从export/load导入）
-                if hasattr(self, '_woe_maps_') and feature in self._woe_maps_:
+                if hasattr(self, "_woe_maps_") and feature in self._woe_maps_:
                     woe_map = self._woe_maps_[feature]
                 elif feature in self.bin_tables_:
                     bin_table = self.bin_tables_[feature]
-                    woe_map = dict(zip(range(len(bin_table)), bin_table['分档WOE值'].values))
+                    woe_map = dict(zip(range(len(bin_table)), bin_table["分档WOE值"].values))
                     self._enrich_woe_map(woe_map, bin_table)
                 else:
                     raise ValueError(f"特征 '{feature}' 没有WOE映射信息")
@@ -671,16 +644,18 @@ class TargetBadRateBinning(BaseBinning):
         bin_table = self.bin_tables_[feature]
 
         # 排除缺失和特殊值箱
-        valid_mask = ~bin_table['分箱标签'].isin(['缺失', 'special'])
+        valid_mask = ~bin_table["分箱标签"].isin(["缺失", "special"])
         valid_table = bin_table[valid_mask].copy()
 
-        summary = pd.DataFrame({
-            '分箱': valid_table['分箱'].values,
-            '分箱标签': valid_table['分箱标签'].values,
-            '样本总数': valid_table['样本总数'].values,
-            '样本占比': valid_table['样本占比'].values,
-            '坏样本率': valid_table['坏样本率'].values
-        })
+        summary = pd.DataFrame(
+            {
+                "分箱": valid_table["分箱"].values,
+                "分箱标签": valid_table["分箱标签"].values,
+                "样本总数": valid_table["样本总数"].values,
+                "样本占比": valid_table["样本占比"].values,
+                "坏样本率": valid_table["坏样本率"].values,
+            }
+        )
 
         if self.target_bad_rates:
             # 添加目标坏样本率
@@ -693,15 +668,16 @@ class TargetBadRateBinning(BaseBinning):
                     targets.append(None)  # 最后一箱没有上界
                 else:
                     targets.append(None)
-            summary['目标坏样本率'] = targets
+            summary["目标坏样本率"] = targets
 
         return summary
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     import sys
     import os
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..', '..'))
+
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
 
     # 测试代码
     np.random.seed(42)
@@ -712,7 +688,7 @@ if __name__ == '__main__':
     bad_rate = 0.05 + 0.004 * x  # 从5%递增到45%
     y = np.random.binomial(1, bad_rate)
 
-    X = pd.DataFrame({'feature': x})
+    X = pd.DataFrame({"feature": x})
     y = pd.Series(y)
 
     print("=" * 60)
@@ -720,32 +696,25 @@ if __name__ == '__main__':
     print("=" * 60)
 
     # 测试严格边界模式
-    binner1 = TargetBadRateBinning(
-        target_bad_rates=[0.10, 0.20, 0.30],
-        strict_mode=True,
-        min_bin_size=0.01
-    )
+    binner1 = TargetBadRateBinning(target_bad_rates=[0.10, 0.20, 0.30], strict_mode=True, min_bin_size=0.01)
     binner1.fit(X, y)
 
     print("\n分箱统计表:")
-    print(binner1.get_bin_table('feature'))
+    print(binner1.get_bin_table("feature"))
 
     print("\n坏样本率摘要:")
-    print(binner1.get_bad_rate_summary('feature'))
+    print(binner1.get_bad_rate_summary("feature"))
 
     print("\n" + "=" * 60)
     print("目标坏样本率分箱测试 - 自动模式")
     print("=" * 60)
 
     # 测试自动模式
-    binner2 = TargetBadRateBinning(
-        max_n_bins=5,
-        min_bin_size=0.05
-    )
+    binner2 = TargetBadRateBinning(max_n_bins=5, min_bin_size=0.05)
     binner2.fit(X, y)
 
     print("\n分箱统计表:")
-    print(binner2.get_bin_table('feature'))
+    print(binner2.get_bin_table("feature"))
 
     print("\n坏样本率摘要:")
-    print(binner2.get_bad_rate_summary('feature'))
+    print(binner2.get_bad_rate_summary("feature"))

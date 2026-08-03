@@ -75,21 +75,14 @@ def _validate_supplied_order(feature: str, supplied: Sequence[Any], observed: Se
     if any(is_missing_marker(value) for value in ordered):
         raise ValueError(f"特征 '{feature}' 的 category_order 不能包含缺失值")
 
-    duplicates = [
-        value
-        for index, value in enumerate(ordered)
-        if _contains_typed(ordered[:index], value)
-    ]
+    duplicates = [value for index, value in enumerate(ordered) if _contains_typed(ordered[:index], value)]
     if duplicates:
         raise ValueError(f"特征 '{feature}' 的 category_order 包含重复类别: {duplicates}")
 
     missing = [value for value in observed if not _contains_typed(ordered, value)]
     unknown = [value for value in ordered if not _contains_typed(observed, value)]
     if missing or unknown:
-        raise ValueError(
-            f"特征 '{feature}' 的 category_order 必须完整覆盖训练类别；"
-            f"缺少类别: {missing}，未知类别: {unknown}"
-        )
+        raise ValueError(f"特征 '{feature}' 的 category_order 必须完整覆盖训练类别；" f"缺少类别: {missing}，未知类别: {unknown}")
     return ordered
 
 
@@ -190,7 +183,7 @@ def assign_category_groups(
 def normalize_user_groups(
     feature: str,
     groups: Sequence[Sequence[Any]],
-    observed: pd.Series,
+    observed: Optional[pd.Series] = None,
     special_codes: Optional[Sequence[Any]] = None,
     missing_separate: bool = True,
 ) -> List[List[Any]]:
@@ -219,17 +212,12 @@ def normalize_user_groups(
             normalized_group.append(value)
         normalized.append(normalized_group)
 
-    observed_values = unique_non_missing_typed(observed, special_codes)
-    uncovered = [value for value in observed_values if not _contains_typed(ordinary_values, value)]
-    unknown = [value for value in ordinary_values if not _contains_typed(observed_values, value)]
-    if uncovered or unknown:
-        raise ValueError(
-            f"特征 '{feature}' 的自定义分箱必须完整覆盖训练类别；"
-            f"未覆盖类别: {uncovered}，规则外类别: {unknown}"
-        )
-    if observed.map(is_missing_marker).any() and not missing_separate and not missing_seen:
-        raise ValueError(
-            f"特征 '{feature}' 存在缺失值且 missing_separate=False，"
-            "自定义分箱必须显式指定缺失值所属箱"
-        )
+    if observed is not None:
+        observed_values = unique_non_missing_typed(observed, special_codes)
+        uncovered = [value for value in observed_values if not _contains_typed(ordinary_values, value)]
+        unknown = [value for value in ordinary_values if not _contains_typed(observed_values, value)]
+        if uncovered or unknown:
+            raise ValueError(f"特征 '{feature}' 的自定义分箱必须完整覆盖训练类别；" f"未覆盖类别: {uncovered}，规则外类别: {unknown}")
+        if observed.map(is_missing_marker).any() and not missing_separate and not missing_seen:
+            raise ValueError(f"特征 '{feature}' 存在缺失值且 missing_separate=False，" "自定义分箱必须显式指定缺失值所属箱")
     return normalized

@@ -81,14 +81,16 @@ class KernelDensityBinning(BaseBinning):
 
     def __init__(
         self,
-        target: str = 'target',
-        kernel: str = 'gaussian',
-        bandwidth: Union[str, float] = 'isj',
+        target: str = "target",
+        kernel: str = "gaussian",
+        bandwidth: Union[str, float] = "isj",
         min_peak_height: float = 0.05,
         min_peak_distance: float = 0.05,
         max_n_bins: int = 5,
         min_n_bins: int = 2,
         min_bin_size: Union[float, int] = 0.01,
+        max_bin_size: Optional[Union[float, int]] = None,
+        min_bad_rate: float = 0.0,
         monotonic: Optional[str] = None,
         use_target: bool = True,
         n_grid_points: int = 1000,
@@ -97,8 +99,9 @@ class KernelDensityBinning(BaseBinning):
         fallback_to_iv: bool = True,
         special_codes: Optional[List] = None,
         missing_separate: bool = True,
+        cat_cutoff: Optional[Union[float, int]] = None,
         category_order=None,
-        handle_unknown: str = 'value',
+        handle_unknown: str = "value",
         random_state: Optional[int] = None,
         verbose: Union[bool, int] = False,
         decimal: int = 4,
@@ -108,9 +111,12 @@ class KernelDensityBinning(BaseBinning):
             max_n_bins=max_n_bins,
             min_n_bins=min_n_bins,
             min_bin_size=min_bin_size,
+            max_bin_size=max_bin_size,
+            min_bad_rate=min_bad_rate,
             monotonic=monotonic,
             special_codes=special_codes,
             missing_separate=missing_separate,
+            cat_cutoff=cat_cutoff,
             category_order=category_order,
             handle_unknown=handle_unknown,
             random_state=random_state,
@@ -128,11 +134,8 @@ class KernelDensityBinning(BaseBinning):
         self.fallback_to_iv = fallback_to_iv
 
     def fit(
-        self,
-        X: Union[pd.DataFrame, np.ndarray],
-        y: Optional[Union[pd.Series, np.ndarray]] = None,
-        **kwargs
-    ) -> 'KernelDensityBinning':
+        self, X: Union[pd.DataFrame, np.ndarray], y: Optional[Union[pd.Series, np.ndarray]] = None, **kwargs
+    ) -> "KernelDensityBinning":
         """拟合核密度分箱。
 
         对每个特征做核密度估计，以密度曲线的谷值作为切分点（必要时回退到 IV 策略）。
@@ -153,7 +156,7 @@ class KernelDensityBinning(BaseBinning):
             feature_type = self._detect_feature_type(X[feature])
             self.feature_types_[feature] = feature_type
 
-            if feature_type == 'categorical':
+            if feature_type == "categorical":
                 splits = self._fit_categorical(X[feature], y)
                 self.splits_[feature] = splits
             else:
@@ -162,9 +165,7 @@ class KernelDensityBinning(BaseBinning):
             self.n_bins_[feature] = len(splits) + 1 if isinstance(splits, np.ndarray) else len(splits)
 
             bins = self._apply_bins(X[feature], splits, feature_type)
-            self.bin_tables_[feature] = self._compute_bin_stats(
-                feature, X[feature], y, bins
-            )
+            self.bin_tables_[feature] = self._compute_bin_stats(feature, X[feature], y, bins)
 
         self._fit_features(X.columns, _fit_one)
 
@@ -172,11 +173,7 @@ class KernelDensityBinning(BaseBinning):
         self._is_fitted = True
         return self
 
-    def _fit_numerical(
-        self,
-        x: pd.Series,
-        y: pd.Series
-    ) -> np.ndarray:
+    def _fit_numerical(self, x: pd.Series, y: pd.Series) -> np.ndarray:
         """对数值型特征进行核密度分箱."""
         x_clean = x.copy()
         mask = x_clean.notna()
@@ -214,10 +211,10 @@ class KernelDensityBinning(BaseBinning):
     def _compute_kde_v3(self, x: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         """优化的核密度估计 - V3版本."""
         x_min, x_max = x.min(), x.max()
-        
+
         if x_max == x_min:
             return np.array([x_min]), np.array([1.0])
-        
+
         # 扩展范围
         pad = (x_max - x_min) * 0.15
         kde_x = np.linspace(x_min - pad, x_max + pad, self.n_grid_points)
@@ -226,7 +223,7 @@ class KernelDensityBinning(BaseBinning):
         bw = self._select_bandwidth_v3(x)
 
         # 使用scipy.stats.gaussian_kde
-        if self.kernel == 'gaussian':
+        if self.kernel == "gaussian":
             try:
                 kde = stats.gaussian_kde(x, bw_method=bw if isinstance(bw, str) else bw / x.std())
                 density = kde(kde_x)
@@ -250,61 +247,58 @@ class KernelDensityBinning(BaseBinning):
         n = len(x)
         std = np.std(x)
         iqr = np.percentile(x, 75) - np.percentile(x, 25)
-        
+
         dispersion = min(std, iqr / 1.34) if iqr > 0 else std
         if dispersion == 0:
             dispersion = 1.0
 
-        if self.bandwidth == 'scott':
-            return 1.06 * dispersion * n ** (-1/5)
-        elif self.bandwidth == 'silverman':
-            return 0.9 * dispersion * n ** (-1/5)
-        elif self.bandwidth == 'isj':
+        if self.bandwidth == "scott":
+            return 1.06 * dispersion * n ** (-1 / 5)
+        elif self.bandwidth == "silverman":
+            return 0.9 * dispersion * n ** (-1 / 5)
+        elif self.bandwidth == "isj":
             return self._isj_bandwidth_v3(x, dispersion)
-        elif self.bandwidth == 'normal_reference':
-            return 1.059 * dispersion * n ** (-1/5)
+        elif self.bandwidth == "normal_reference":
+            return 1.059 * dispersion * n ** (-1 / 5)
         else:
             return float(self.bandwidth)
 
     def _isj_bandwidth_v3(self, x: np.ndarray, dispersion: float) -> float:
         """Improved Sheather-Jones带宽选择."""
         n = len(x)
-        h0 = 1.06 * dispersion * n ** (-1/5)
-        
+        h0 = 1.06 * dispersion * n ** (-1 / 5)
+
         # 基于数据偏度调整
         skewness = stats.skew(x)
         kurtosis = stats.kurtosis(x)
-        
+
         adjustment = 1 + 0.1 * abs(skewness) + 0.05 * max(0, kurtosis)
-        
+
         return h0 * adjustment
 
     def _manual_kde(self, x: np.ndarray, kde_x: np.ndarray, bw: float) -> np.ndarray:
         """手动实现核密度估计."""
         n = len(x)
-        
-        if self.kernel == 'epanechnikov':
+
+        if self.kernel == "epanechnikov":
             u = (kde_x[:, None] - x[None, :]) / bw
             mask = np.abs(u) <= 1
-            kernels = np.where(mask, 0.75 * (1 - u ** 2), 0)
+            kernels = np.where(mask, 0.75 * (1 - u**2), 0)
             density = kernels.sum(axis=1) / (n * bw)
-        elif self.kernel == 'tophat':
+        elif self.kernel == "tophat":
             u = (kde_x[:, None] - x[None, :]) / bw
             mask = np.abs(u) <= 1
             kernels = np.where(mask, 0.5, 0)
             density = kernels.sum(axis=1) / (n * bw)
         else:
             u = (kde_x[:, None] - x[None, :]) / bw
-            kernels = np.exp(-0.5 * u ** 2)
+            kernels = np.exp(-0.5 * u**2)
             density = kernels.sum(axis=1) / (n * bw * np.sqrt(2 * np.pi))
-        
+
         return density
 
     def _find_peaks_and_valleys_v3(
-        self,
-        kde_x: np.ndarray,
-        density: np.ndarray,
-        x: np.ndarray
+        self, kde_x: np.ndarray, density: np.ndarray, x: np.ndarray
     ) -> Tuple[np.ndarray, np.ndarray]:
         """优化的峰谷检测 - V3版本."""
         min_dist = int(len(kde_x) * self.min_peak_distance)
@@ -312,11 +306,7 @@ class KernelDensityBinning(BaseBinning):
 
         # 寻找峰
         peaks, _ = find_peaks(
-            density,
-            height=self.min_peak_height,
-            distance=min_dist,
-            prominence=0.01,  # 降低显著度要求
-            width=1
+            density, height=self.min_peak_height, distance=min_dist, prominence=0.01, width=1  # 降低显著度要求
         )
 
         # 寻找谷
@@ -324,36 +314,27 @@ class KernelDensityBinning(BaseBinning):
 
         return peaks, valleys
 
-    def _find_valleys_comprehensive_v3(
-        self,
-        density: np.ndarray,
-        peaks: np.ndarray,
-        min_dist: int
-    ) -> np.ndarray:
+    def _find_valleys_comprehensive_v3(self, density: np.ndarray, peaks: np.ndarray, min_dist: int) -> np.ndarray:
         """综合方法寻找谷值 - V3版本."""
         valleys = []
-        
+
         # 方法1：峰之间找最小值
         if len(peaks) > 1:
             for i in range(len(peaks) - 1):
                 start_idx = peaks[i]
                 end_idx = peaks[i + 1]
-                
-                valley_region = density[start_idx:end_idx + 1]
+
+                valley_region = density[start_idx : end_idx + 1]
                 if len(valley_region) > 0:
                     valley_local_idx = np.argmin(valley_region)
                     valley_idx = start_idx + valley_local_idx
-                    
+
                     if 0 < valley_idx < len(density) - 1:
                         valleys.append(valley_idx)
 
         # 方法2：使用find_peaks的逆
         inverted_density = -density
-        valleys_from_inverted, _ = find_peaks(
-            inverted_density,
-            distance=min_dist,
-            prominence=0.005  # 降低要求
-        )
+        valleys_from_inverted, _ = find_peaks(inverted_density, distance=min_dist, prominence=0.005)  # 降低要求
         valleys.extend(valleys_from_inverted)
 
         # 方法3：局部极小值
@@ -370,7 +351,7 @@ class KernelDensityBinning(BaseBinning):
         n = len(x)
         # 修复：目标是max_n_bins个分箱，需要max_n_bins-1个切分点
         n_splits = self.max_n_bins - 1
-        
+
         if n_splits <= 0:
             return np.array([])
 
@@ -389,84 +370,78 @@ class KernelDensityBinning(BaseBinning):
         # 首先在所有可能位置找到top候选点
         min_samples = self._get_min_samples(n)
         all_candidates = []
-        
+
         # 在数据范围内等间距采样候选点
         n_candidates_search = min(200, n // 20)  # 增加搜索点
         candidate_positions = np.linspace(min_samples, n - min_samples, n_candidates_search, dtype=int)
-        
+
         for idx in candidate_positions:
             left_y = y_sorted[:idx]
             right_y = y_sorted[idx:]
-            
+
             if len(left_y) < min_samples or len(right_y) < min_samples:
                 continue
-                
+
             iv = self._calculate_iv_gain(left_y, right_y, total_bad, total_good)
-            split = (x_sorted[idx-1] + x_sorted[idx]) / 2
+            split = (x_sorted[idx - 1] + x_sorted[idx]) / 2
             all_candidates.append((split, idx, iv))
-        
+
         # 按IV排序，选择top候选
         all_candidates.sort(key=lambda x: x[2], reverse=True)
-        top_candidates = all_candidates[:min(50, len(all_candidates))]
-        
+        top_candidates = all_candidates[: min(50, len(all_candidates))]
+
         if len(top_candidates) == 0:
             return np.array([])
-        
+
         # 贪心选择：每次选择能最大化总IV的切分点
         selected = []
-        
+
         for _ in range(n_splits):
             best_total_iv = -np.inf
             best_split = None
-            
+
             for split, idx, single_iv in top_candidates:
                 if split in selected:
                     continue
-                    
+
                 # 测试添加这个切分点后的总IV
                 test_splits = sorted(selected + [split])
                 bins = np.digitize(x_sorted, test_splits)
                 total_iv = self._calculate_total_iv(bins, y_sorted, total_bad, total_good)
-                
+
                 if total_iv > best_total_iv:
                     best_total_iv = total_iv
                     best_split = split
-            
+
             if best_split is not None:
                 selected.append(best_split)
             else:
                 break
-        
+
         return np.array(sorted(selected))
 
-    def _calculate_iv_gain(self, y_left: np.ndarray, y_right: np.ndarray,
-                          total_bad: int, total_good: int) -> float:
+    def _calculate_iv_gain(self, y_left: np.ndarray, y_right: np.ndarray, total_bad: int, total_good: int) -> float:
         """计算IV增益."""
         epsilon = 1e-10
-        
+
         left_bad, left_n = y_left.sum(), len(y_left)
         right_bad, right_n = y_right.sum(), len(y_right)
         left_good = left_n - left_bad
         right_good = right_n - right_bad
-        
+
         if left_bad == 0 or left_good == 0 or right_bad == 0 or right_good == 0:
             return 0.0
-        
-        left_woe = np.log((left_good/total_good + epsilon) / (left_bad/total_bad + epsilon))
-        right_woe = np.log((right_good/total_good + epsilon) / (right_bad/total_bad + epsilon))
-        
-        left_iv = (left_good/total_good - left_bad/total_bad) * left_woe
-        right_iv = (right_good/total_good - right_bad/total_bad) * right_woe
-        
+
+        left_woe = np.log((left_good / total_good + epsilon) / (left_bad / total_bad + epsilon))
+        right_woe = np.log((right_good / total_good + epsilon) / (right_bad / total_bad + epsilon))
+
+        left_iv = (left_good / total_good - left_bad / total_bad) * left_woe
+        right_iv = (right_good / total_good - right_bad / total_bad) * right_woe
+
         return left_iv + right_iv
 
     def _select_valleys_as_splits_v3(
-        self,
-        kde_x: np.ndarray,
-        kde_density: np.ndarray,
-        valleys: np.ndarray,
-        x: np.ndarray,
-        y: Optional[np.ndarray]
+        self, kde_x: np.ndarray, kde_density: np.ndarray, valleys: np.ndarray, x: np.ndarray, y: Optional[np.ndarray]
     ) -> np.ndarray:
         """优化的谷值选择作为切分点 - V3改进版."""
         min_samples = self._get_min_samples(len(x))
@@ -491,11 +466,11 @@ class KernelDensityBinning(BaseBinning):
         # 3. 不能太靠近边界（避免产生太小的边箱）
         data_range = x_max - x_min
         valid_valley_mask = (
-            (valley_positions > x_min + 0.1 * data_range) &  # 不能太靠近左边界
-            (valley_positions < x_max - 0.1 * data_range) &  # 不能太靠近右边界
-            (valley_densities < kde_density.max() * 0.3)      # 密度要足够低
+            (valley_positions > x_min + 0.1 * data_range)
+            & (valley_positions < x_max - 0.1 * data_range)  # 不能太靠近左边界
+            & (valley_densities < kde_density.max() * 0.3)  # 不能太靠近右边界  # 密度要足够低
         )
-        
+
         valley_positions = valley_positions[valid_valley_mask]
         valleys = valleys[valid_valley_mask]
 
@@ -515,7 +490,7 @@ class KernelDensityBinning(BaseBinning):
                 valley_positions = self._select_best_valleys_by_iv_v3(valley_positions, x, y)
             else:
                 valley_densities = kde_density[valleys]
-                sorted_indices = np.argsort(valley_densities)[:self.max_n_bins - 1]
+                sorted_indices = np.argsort(valley_densities)[: self.max_n_bins - 1]
                 valley_positions = valley_positions[sorted_indices]
 
         valley_positions = self._validate_and_adjust_splits_v3(valley_positions, x, y, min_samples)
@@ -528,12 +503,7 @@ class KernelDensityBinning(BaseBinning):
 
         return np.sort(valley_positions)
 
-    def _select_best_valleys_by_iv_v3(
-        self,
-        valley_positions: np.ndarray,
-        x: np.ndarray,
-        y: np.ndarray
-    ) -> np.ndarray:
+    def _select_best_valleys_by_iv_v3(self, valley_positions: np.ndarray, x: np.ndarray, y: np.ndarray) -> np.ndarray:
         """根据IV值选择最优的谷值组合 - V3版本."""
         n_select = min(self.max_n_bins - 1, len(valley_positions))
 
@@ -568,11 +538,7 @@ class KernelDensityBinning(BaseBinning):
         return valley_positions[sorted(selected)]
 
     def _calculate_total_iv(
-        self,
-        bins: np.ndarray,
-        y: np.ndarray,
-        total_bad: Optional[int] = None,
-        total_good: Optional[int] = None
+        self, bins: np.ndarray, y: np.ndarray, total_bad: Optional[int] = None, total_good: Optional[int] = None
     ) -> float:
         """计算总IV值."""
         if total_bad is None:
@@ -605,11 +571,7 @@ class KernelDensityBinning(BaseBinning):
         return max(iv, 0.0)
 
     def _validate_and_adjust_splits_v3(
-        self,
-        splits: np.ndarray,
-        x: np.ndarray,
-        y: Optional[np.ndarray],
-        min_samples: int
+        self, splits: np.ndarray, x: np.ndarray, y: Optional[np.ndarray], min_samples: int
     ) -> np.ndarray:
         """验证并调整切分点 - V3版本."""
         if len(splits) == 0:
@@ -636,12 +598,7 @@ class KernelDensityBinning(BaseBinning):
 
         return np.array(valid_splits)
 
-    def _adjust_for_monotonicity_v3(
-        self,
-        splits: np.ndarray,
-        x: np.ndarray,
-        y: np.ndarray
-    ) -> np.ndarray:
+    def _adjust_for_monotonicity_v3(self, splits: np.ndarray, x: np.ndarray, y: np.ndarray) -> np.ndarray:
         """调整切分点以满足单调性 - V3版本."""
         splits = list(splits)
 
@@ -664,10 +621,10 @@ class KernelDensityBinning(BaseBinning):
 
             remove_idx = None
             for i in range(len(bad_rates) - 1):
-                if self.monotonic == 'ascending' and bad_rates[i] > bad_rates[i + 1] + 0.001:
+                if self.monotonic == "ascending" and bad_rates[i] > bad_rates[i + 1] + 0.001:
                     remove_idx = i
                     break
-                elif self.monotonic == 'descending' and bad_rates[i] < bad_rates[i + 1] - 0.001:
+                elif self.monotonic == "descending" and bad_rates[i] < bad_rates[i + 1] - 0.001:
                     remove_idx = i
                     break
 
@@ -683,16 +640,16 @@ class KernelDensityBinning(BaseBinning):
         if len(rates) < 2:
             return True
 
-        if self.monotonic == 'ascending':
+        if self.monotonic == "ascending":
             return all(rates[i] <= rates[i + 1] + 1e-6 for i in range(len(rates) - 1))
-        elif self.monotonic == 'descending':
+        elif self.monotonic == "descending":
             return all(rates[i] >= rates[i + 1] - 1e-6 for i in range(len(rates) - 1))
-        elif self.monotonic == 'peak':
+        elif self.monotonic == "peak":
             peak_idx = np.argmax(rates)
             left_mono = all(rates[i] <= rates[i + 1] + 1e-6 for i in range(peak_idx))
             right_mono = all(rates[i] >= rates[i + 1] - 1e-6 for i in range(peak_idx, len(rates) - 1))
             return left_mono and right_mono
-        elif self.monotonic == 'valley':
+        elif self.monotonic == "valley":
             valley_idx = np.argmin(rates)
             left_mono = all(rates[i] >= rates[i + 1] - 1e-6 for i in range(valley_idx))
             right_mono = all(rates[i] <= rates[i + 1] + 1e-6 for i in range(valley_idx, len(rates) - 1))
@@ -701,10 +658,7 @@ class KernelDensityBinning(BaseBinning):
         return True
 
     def _get_additional_splits_v3(
-        self,
-        x: np.ndarray,
-        existing_splits: np.ndarray,
-        y: Optional[np.ndarray]
+        self, x: np.ndarray, existing_splits: np.ndarray, y: Optional[np.ndarray]
     ) -> np.ndarray:
         """获取额外的切分点 - V3版本."""
         n_needed = self.min_n_bins - 1 - len(existing_splits)
@@ -720,12 +674,12 @@ class KernelDensityBinning(BaseBinning):
         for i in sorted_intervals:
             if len(additional) >= n_needed:
                 break
-            
+
             mid = (boundaries[i] + boundaries[i + 1]) / 2
-            
+
             left_count = ((x > boundaries[i]) & (x <= mid)).sum() if i > 0 else (x <= mid).sum()
             right_count = (x > mid).sum() if i == len(boundaries) - 2 else ((x > mid) & (x <= boundaries[i + 1])).sum()
-            
+
             min_samples = self._get_min_samples(len(x))
             if left_count >= min_samples and right_count >= min_samples:
                 additional.append(mid)
@@ -738,20 +692,13 @@ class KernelDensityBinning(BaseBinning):
             return int(n_total * self.min_bin_size)
         return int(self.min_bin_size)
 
-    def _fit_categorical(
-        self,
-        x: pd.Series,
-        y: pd.Series
-    ) -> List:
+    def _fit_categorical(self, x: pd.Series, y: pd.Series) -> List:
         """对类别型特征进行分箱."""
-        cat_stats = pd.DataFrame({
-            'category': x,
-            'target': y
-        }).groupby('category')['target'].agg(['mean', 'count'])
+        cat_stats = pd.DataFrame({"category": x, "target": y}).groupby("category")["target"].agg(["mean", "count"])
 
         min_samples = self._get_min_samples(len(x))
-        cat_stats = cat_stats[cat_stats['count'] >= min_samples]
-        cat_stats = cat_stats.sort_values('mean')
+        cat_stats = cat_stats[cat_stats["count"] >= min_samples]
+        cat_stats = cat_stats.sort_values("mean")
 
         if len(cat_stats) > self.max_n_bins:
             categories = self._merge_categories(cat_stats)
@@ -765,8 +712,8 @@ class KernelDensityBinning(BaseBinning):
         categories = cat_stats.index.tolist()
 
         while len(categories) > self.max_n_bins:
-            bad_rates = cat_stats['mean'].values
-            min_diff = float('inf')
+            bad_rates = cat_stats["mean"].values
+            min_diff = float("inf")
             merge_idx = 0
 
             for i in range(len(bad_rates) - 1):
@@ -782,32 +729,29 @@ class KernelDensityBinning(BaseBinning):
             categories.pop(merge_idx + 1)
             categories[merge_idx] = merged_cat
 
-            merged_count = cat_stats.iloc[merge_idx]['count'] + cat_stats.iloc[merge_idx + 1]['count']
-            merged_bad = (cat_stats.iloc[merge_idx]['mean'] * cat_stats.iloc[merge_idx]['count'] +
-                         cat_stats.iloc[merge_idx + 1]['mean'] * cat_stats.iloc[merge_idx + 1]['count'])
+            merged_count = cat_stats.iloc[merge_idx]["count"] + cat_stats.iloc[merge_idx + 1]["count"]
+            merged_bad = (
+                cat_stats.iloc[merge_idx]["mean"] * cat_stats.iloc[merge_idx]["count"]
+                + cat_stats.iloc[merge_idx + 1]["mean"] * cat_stats.iloc[merge_idx + 1]["count"]
+            )
             merged_rate = merged_bad / merged_count
 
             cat_stats = cat_stats.drop([cat1, cat2])
-            cat_stats.loc[merged_cat] = {'mean': merged_rate, 'count': merged_count}
-            cat_stats = cat_stats.sort_values('mean')
+            cat_stats.loc[merged_cat] = {"mean": merged_rate, "count": merged_count}
+            cat_stats = cat_stats.sort_values("mean")
 
         return categories
 
-    def _apply_bins(
-        self,
-        x: pd.Series,
-        splits: Union[np.ndarray, List],
-        feature_type: str
-    ) -> np.ndarray:
+    def _apply_bins(self, x: pd.Series, splits: Union[np.ndarray, List], feature_type: str) -> np.ndarray:
         """应用分箱."""
         feature = x.name
-        if feature in self._cat_bins_ and self.feature_types_.get(feature) == 'categorical':
+        if feature in self._cat_bins_ and self.feature_types_.get(feature) == "categorical":
             return self._assign_categorical_bins(feature, x)
-        if feature_type == 'categorical':
+        if feature_type == "categorical":
             bins = np.zeros(len(x), dtype=int)
             for i, cat in enumerate(splits):
-                if ',' in str(cat):
-                    cats = str(cat).split(',')
+                if "," in str(cat):
+                    cats = str(cat).split(",")
                     for c in cats:
                         bins[x == c] = i
                 else:
@@ -835,10 +779,7 @@ class KernelDensityBinning(BaseBinning):
             return bins
 
     def transform(
-        self,
-        X: Union[pd.DataFrame, np.ndarray],
-        metric: str = 'indices',
-        **kwargs
+        self, X: Union[pd.DataFrame, np.ndarray], metric: str = "indices", **kwargs
     ) -> Union[pd.DataFrame, np.ndarray]:
         """应用分箱转换."""
         if not self._is_fitted:
@@ -857,16 +798,16 @@ class KernelDensityBinning(BaseBinning):
             feature_type = self.feature_types_[feature]
             bins = self._apply_bins(X[feature], splits, feature_type)
 
-            if metric == 'indices':
+            if metric == "indices":
                 result[feature] = bins
-            elif metric == 'bins':
+            elif metric == "bins":
                 result[feature] = self._assign_bin_labels(feature, bins)
-            elif metric == 'woe':
-                if hasattr(self, '_woe_maps_') and feature in self._woe_maps_:
+            elif metric == "woe":
+                if hasattr(self, "_woe_maps_") and feature in self._woe_maps_:
                     woe_map = self._woe_maps_[feature]
                 elif feature in self.bin_tables_:
                     bin_table = self.bin_tables_[feature]
-                    woe_map = dict(zip(range(len(bin_table)), bin_table['分档WOE值'].values))
+                    woe_map = dict(zip(range(len(bin_table)), bin_table["分档WOE值"].values))
                     self._enrich_woe_map(woe_map, bin_table)
                 else:
                     raise ValueError(f"特征 '{feature}' 没有WOE映射信息")

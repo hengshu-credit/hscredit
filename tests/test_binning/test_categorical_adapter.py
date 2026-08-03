@@ -163,3 +163,81 @@ def test_missing_and_special_codes_keep_reserved_indices(factory):
     indices = binner.transform(pd.DataFrame({"city": [np.nan, "SPECIAL"]}), metric="indices")["city"]
 
     assert indices.tolist() == [-1, -2]
+
+
+def _make_category_constraint_data():
+    categories = []
+    targets = []
+    for category, count, bad_count in [
+        ("A", 10, 1),
+        ("B", 15, 3),
+        ("C", 20, 8),
+        ("D", 25, 15),
+        ("E", 30, 24),
+    ]:
+        categories.extend([category] * count)
+        targets.extend([1] * bad_count + [0] * (count - bad_count))
+    return pd.DataFrame({"category": categories}), pd.Series(targets, name="target")
+
+
+def test_feasible_category_max_bin_size_is_enforced():
+    """防止类别恢复后丢失数值算法已经执行的 max_bin_size 约束。"""
+    X, y = _make_category_constraint_data()
+
+    binner = OptimalBinning(
+        method="best_iv",
+        min_n_bins=2,
+        max_n_bins=4,
+        max_bin_size=0.30,
+    ).fit(X, y)
+    ordinary = binner.get_bin_table("category").query("分箱 >= 0")
+
+    assert ordinary["样本占比"].max() <= 0.30 + 1e-12
+
+
+def test_infeasible_single_category_max_size_raises_clear_error():
+    """单个原子类别已超限时必须明确报错，不能伪装成约束已生效。"""
+    X = pd.DataFrame({"category": ["A"] * 40 + ["B"] * 20 + ["C"] * 20 + ["D"] * 20})
+    y = pd.Series(([0, 1] * 20) + ([0, 1] * 30), name="target")
+
+    with pytest.raises(ValueError, match="category.*max_bin_size"):
+        OptimalBinning(
+            method="uniform",
+            min_n_bins=2,
+            max_n_bins=4,
+            max_bin_size=0.30,
+        ).fit(X, y)
+
+
+def test_explicit_descending_category_order_keeps_descending_bad_rates():
+    """防止恢复类别规则后又被旧的升序合并逻辑改写。"""
+    X, y = _make_category_constraint_data()
+    order = ["E", "D", "C", "B", "A"]
+
+    binner = OptimalBinning(
+        method="tree",
+        min_n_bins=2,
+        max_n_bins=4,
+        monotonic="descending",
+        category_order={"category": order},
+    ).fit(X, y)
+    ordinary = binner.get_bin_table("category").query("分箱 >= 0")
+
+    assert np.all(np.diff(ordinary["坏样本率"].to_numpy(dtype=float)) <= 1e-12)
+
+
+def test_category_min_bin_size_and_min_bad_rate_are_enforced():
+    """防止类别还原后丢失最小箱样本量和最小坏样本率约束。"""
+    X, y = _make_category_constraint_data()
+
+    binner = OptimalBinning(
+        method="best_iv",
+        min_n_bins=2,
+        max_n_bins=4,
+        min_bin_size=0.15,
+        min_bad_rate=0.15,
+    ).fit(X, y)
+    ordinary = binner.get_bin_table("category").query("分箱 >= 0")
+
+    assert ordinary["样本总数"].min() >= 15
+    assert ordinary["坏样本率"].min() >= 0.15 - 1e-12

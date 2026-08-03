@@ -64,7 +64,7 @@ class MDLPBinning(BaseBinning):
 
     def __init__(
         self,
-        target: str = 'target',
+        target: str = "target",
         max_n_bins: int = 10,
         min_n_bins: int = 2,
         min_samples_split: int = 2,
@@ -75,14 +75,16 @@ class MDLPBinning(BaseBinning):
         mdlp_weight: float = 0.7,
         min_bin_size: Union[float, int] = 0.01,
         max_bin_size: Optional[Union[float, int]] = None,
+        min_bad_rate: float = 0.0,
         monotonic: Union[bool, str] = False,
         special_codes: Optional[List] = None,
         missing_separate: bool = True,
+        cat_cutoff: Optional[Union[float, int]] = None,
         category_order=None,
-        handle_unknown: str = 'value',
+        handle_unknown: str = "value",
         random_state: Optional[int] = None,
         verbose: Union[bool, int] = False,
-        **kwargs
+        **kwargs,
     ):
         super().__init__(
             target=target,
@@ -90,9 +92,11 @@ class MDLPBinning(BaseBinning):
             min_n_bins=min_n_bins,
             min_bin_size=min_bin_size,
             max_bin_size=max_bin_size,
+            min_bad_rate=min_bad_rate,
             monotonic=monotonic,
             special_codes=special_codes,
             missing_separate=missing_separate,
+            cat_cutoff=cat_cutoff,
             category_order=category_order,
             handle_unknown=handle_unknown,
             random_state=random_state,
@@ -106,11 +110,8 @@ class MDLPBinning(BaseBinning):
         self.mdlp_weight = mdlp_weight
 
     def fit(
-        self,
-        X: Union[pd.DataFrame, np.ndarray],
-        y: Optional[Union[pd.Series, np.ndarray]] = None,
-        **kwargs
-    ) -> 'MDLPBinning':
+        self, X: Union[pd.DataFrame, np.ndarray], y: Optional[Union[pd.Series, np.ndarray]] = None, **kwargs
+    ) -> "MDLPBinning":
         """拟合 MDLP 分箱.
 
         :param X: 特征数据
@@ -127,15 +128,15 @@ class MDLPBinning(BaseBinning):
             feature_type = self._detect_feature_type(X[feature])
             self.feature_types_[feature] = feature_type
 
-            if feature_type == 'categorical':
+            if feature_type == "categorical":
                 # 类别型特征：按坏样本率排序分组
                 splits = self._fit_categorical(X[feature], y)
                 self.splits_[feature] = splits
                 self.n_bins_[feature] = len(splits) + 1
-                bins = self._apply_splits(X[feature], splits, 'categorical')
+                bins = self._apply_splits(X[feature], splits, "categorical")
             else:
                 # 数值型特征：使用 MDLP 算法
-                x_numeric = pd.to_numeric(X[feature], errors='coerce')
+                x_numeric = pd.to_numeric(X[feature], errors="coerce")
                 x_clean = x_numeric.dropna()
                 y_clean = y[x_numeric.notna()]
 
@@ -146,12 +147,10 @@ class MDLPBinning(BaseBinning):
                 else:
                     self.splits_[feature] = np.array([])
                     self.n_bins_[feature] = 1
-                bins = self._apply_splits(X[feature], self.splits_[feature], 'numerical')
+                bins = self._apply_splits(X[feature], self.splits_[feature], "numerical")
 
             # 计算分箱统计
-            self.bin_tables_[feature] = self._compute_bin_stats(
-                feature, X[feature], y, bins
-            )
+            self.bin_tables_[feature] = self._compute_bin_stats(feature, X[feature], y, bins)
 
         self._fit_features(X.columns, _fit_one)
 
@@ -160,11 +159,7 @@ class MDLPBinning(BaseBinning):
         self._is_fitted = True
         return self
 
-    def _fit_categorical(
-        self,
-        x: pd.Series,
-        y: pd.Series
-    ) -> list:
+    def _fit_categorical(self, x: pd.Series, y: pd.Series) -> list:
         """对类别型特征进行分箱（按坏样本率排序）.
 
         MDLP 算法仅适用于数值型特征，对于类别型特征回退到按坏样本率排序的方式。
@@ -187,12 +182,11 @@ class MDLPBinning(BaseBinning):
             return []
 
         # 计算每个类别的坏样本率并按其排序
-        cat_stats = pd.DataFrame({
-            'category': x_valid,
-            'target': y_valid
-        }).groupby('category')['target'].agg(['mean', 'count'])
+        cat_stats = (
+            pd.DataFrame({"category": x_valid, "target": y_valid}).groupby("category")["target"].agg(["mean", "count"])
+        )
 
-        cat_stats = cat_stats.sort_values('mean')
+        cat_stats = cat_stats.sort_values("mean")
 
         return cat_stats.index.tolist()
 
@@ -209,29 +203,29 @@ class MDLPBinning(BaseBinning):
         y_sorted = y[idx]
 
         splits = []
-        
+
         # 首先尝试找到所有候选分割点
         all_candidates = self._find_all_candidates_v3(x_sorted, y_sorted)
-        
+
         # 使用递归分割
         self._recurse_v3(x_sorted, y_sorted, splits, all_candidates, 0)
-        
+
         # 如果分箱数不足且force_min_bins为True，只补足到 min_n_bins
         if self.force_min_bins and len(splits) < self.min_n_bins - 1:
             splits = self._force_additional_splits_v3(x_sorted, y_sorted, splits, all_candidates)
-        
+
         return sorted(list(set(splits)))
 
     def _find_all_candidates_v3(self, x: np.ndarray, y: np.ndarray) -> List[int]:
         """找到所有可能的候选切分点位置 - V3版本."""
         n = len(x)
         candidates = []
-        
+
         # 找到所有类别变化的位置
         for i in range(1, n):
-            if y[i] != y[i-1]:
+            if y[i] != y[i - 1]:
                 candidates.append(i)
-        
+
         # 如果没有足够的类别变化点，使用动态策略
         if len(candidates) < self.min_n_bins * 2:
             if n <= 100:
@@ -240,10 +234,10 @@ class MDLPBinning(BaseBinning):
                 step = max(1, n // 100)
             else:
                 step = max(1, n // 200)
-            
+
             additional = list(range(self.min_samples_leaf, n - self.min_samples_leaf, step))
             candidates = sorted(list(set(candidates + additional)))
-        
+
         return candidates
 
     def _recurse_v3(
@@ -253,7 +247,7 @@ class MDLPBinning(BaseBinning):
         splits: List[float],
         all_candidates: List[int],
         depth: int = 0,
-        start_idx: int = 0
+        start_idx: int = 0,
     ) -> None:
         """递归分割 - V3版本.
 
@@ -278,11 +272,14 @@ class MDLPBinning(BaseBinning):
             return
 
         # 在当前区间内筛选候选切分点
-        local_candidates = [i - start_idx for i in all_candidates 
-                           if start_idx + self.min_samples_leaf <= i < start_idx + len(x) - self.min_samples_leaf]
-        
+        local_candidates = [
+            i - start_idx
+            for i in all_candidates
+            if start_idx + self.min_samples_leaf <= i < start_idx + len(x) - self.min_samples_leaf
+        ]
+
         local_candidates = sorted(list(set(local_candidates)))
-        
+
         # 限制候选切分点数量
         if len(local_candidates) > self.max_candidates:
             indices = np.linspace(0, len(local_candidates) - 1, self.max_candidates, dtype=int)
@@ -308,12 +305,7 @@ class MDLPBinning(BaseBinning):
                 if len(x_right) >= self.min_samples_split:
                     self._recurse_v3(x_right, y_right, splits, all_candidates, depth + 1, start_idx + split_idx)
 
-    def _find_best_split_v3(
-        self, 
-        x: np.ndarray, 
-        y: np.ndarray, 
-        candidates: List[int]
-    ) -> tuple:
+    def _find_best_split_v3(self, x: np.ndarray, y: np.ndarray, candidates: List[int]) -> tuple:
         """找到最优切分点 - V3版本.
 
         结合IV增益和MDLP准则。
@@ -347,7 +339,7 @@ class MDLPBinning(BaseBinning):
 
             # 计算IV增益
             iv_gain = self._calculate_iv_gain_v3(y_left, y_right, total_bad, total_good)
-            
+
             # 如果IV增益太小，跳过
             if iv_gain < self.min_iv_gain:
                 continue
@@ -359,39 +351,27 @@ class MDLPBinning(BaseBinning):
 
         return best_split, best_idx
 
-    def _calculate_iv_gain_v3(
-        self,
-        y_left: np.ndarray,
-        y_right: np.ndarray,
-        total_bad: int,
-        total_good: int
-    ) -> float:
+    def _calculate_iv_gain_v3(self, y_left: np.ndarray, y_right: np.ndarray, total_bad: int, total_good: int) -> float:
         """计算IV增益 - V3版本."""
         epsilon = 1e-10
-        
+
         left_bad, left_n = y_left.sum(), len(y_left)
         right_bad, right_n = y_right.sum(), len(y_right)
         left_good = left_n - left_bad
         right_good = right_n - right_bad
-        
+
         if left_bad == 0 or left_good == 0 or right_bad == 0 or right_good == 0:
             return 0.0
-        
-        left_woe = np.log((left_good/total_good + epsilon) / (left_bad/total_bad + epsilon))
-        right_woe = np.log((right_good/total_good + epsilon) / (right_bad/total_bad + epsilon))
-        
-        left_iv = (left_good/total_good - left_bad/total_bad) * left_woe
-        right_iv = (right_good/total_good - right_bad/total_bad) * right_woe
-        
+
+        left_woe = np.log((left_good / total_good + epsilon) / (left_bad / total_bad + epsilon))
+        right_woe = np.log((right_good / total_good + epsilon) / (right_bad / total_bad + epsilon))
+
+        left_iv = (left_good / total_good - left_bad / total_bad) * left_woe
+        right_iv = (right_good / total_good - right_bad / total_bad) * right_woe
+
         return left_iv + right_iv
 
-    def _terminate_v3(
-        self,
-        n: int,
-        y: np.ndarray,
-        y_left: np.ndarray,
-        y_right: np.ndarray
-    ) -> bool:
+    def _terminate_v3(self, n: int, y: np.ndarray, y_left: np.ndarray, y_right: np.ndarray) -> bool:
         """MDLP 终止条件 - V3版本（放宽条件）.
 
         :param n: 当前节点样本数
@@ -423,57 +403,53 @@ class MDLPBinning(BaseBinning):
         return gain <= adjusted_threshold
 
     def _force_additional_splits_v3(
-        self,
-        x: np.ndarray,
-        y: np.ndarray,
-        existing_splits: List[float],
-        all_candidates: List[int]
+        self, x: np.ndarray, y: np.ndarray, existing_splits: List[float], all_candidates: List[int]
     ) -> List[float]:
         """强制添加额外的切分点以满足分箱数要求 - V3改进版（目标是max_n_bins）."""
         splits = list(existing_splits)
         n = len(x)
-        
+
         total_bad = y.sum()
         total_good = n - total_bad
         min_samples = self._get_min_samples(n)
-        
+
         # 目标是达到max_n_bins个分箱（而不仅仅是min_n_bins）
         target_n_bins = self.max_n_bins - 1
-        
+
         # 首先找到所有可能的候选切分点及其IV
         candidates_with_iv = []
         for idx in all_candidates:
             if idx < min_samples or n - idx < min_samples:
                 continue
-            
+
             y_left = y[:idx]
             y_right = y[idx:]
-            
+
             if len(np.unique(y_left)) < 1 or len(np.unique(y_right)) < 1:
                 continue
-            
+
             iv = self._calculate_iv_gain_v3(y_left, y_right, total_bad, total_good)
-            split = (x[idx-1] + x[idx]) / 2
+            split = (x[idx - 1] + x[idx]) / 2
             candidates_with_iv.append((split, idx, iv))
-        
+
         # 按IV排序
         candidates_with_iv.sort(key=lambda x: x[2], reverse=True)
-        
+
         # 贪心选择：每次选择能最大化总IV的切分点
         while len(splits) < target_n_bins:
             best_total_iv = -np.inf
             best_split = None
-            
+
             for split, idx, single_iv in candidates_with_iv:
                 if split in splits:
                     continue
-                
+
                 # 测试添加这个切分点后的总IV
                 test_splits = sorted(splits + [split])
                 bins = np.digitize(x, test_splits)
                 total_iv = 0
                 epsilon = 1e-10
-                
+
                 for b in range(len(test_splits) + 1):
                     mask = bins == b
                     if mask.sum() == 0:
@@ -485,11 +461,11 @@ class MDLPBinning(BaseBinning):
                         good_rate = good / total_good
                         woe = np.log((good_rate + epsilon) / (bad_rate + epsilon))
                         total_iv += (good_rate - bad_rate) * woe
-                
+
                 if total_iv > best_total_iv:
                     best_total_iv = total_iv
                     best_split = split
-            
+
             if best_split is not None:
                 splits.append(best_split)
             else:
@@ -503,7 +479,7 @@ class MDLPBinning(BaseBinning):
                             if len(splits) >= target_n_bins:
                                 break
                 break
-        
+
         return sorted(list(set(splits)))
 
     def _entropy(self, y: np.ndarray) -> float:
@@ -525,12 +501,7 @@ class MDLPBinning(BaseBinning):
         p = np.array([n_neg, n_pos]) / n
         return -np.sum(special.xlogy(p, p))
 
-    def _entropy_gain(
-        self,
-        y: np.ndarray,
-        y_left: np.ndarray,
-        y_right: np.ndarray
-    ) -> float:
+    def _entropy_gain(self, y: np.ndarray, y_left: np.ndarray, y_right: np.ndarray) -> float:
         """计算信息增益.
 
         :param y: 分割前的目标变量
@@ -556,12 +527,7 @@ class MDLPBinning(BaseBinning):
         # 使用 min_samples_leaf 或根据数据量计算
         return max(self.min_samples_leaf, int(n_total * 0.01))
 
-    def _apply_splits(
-        self,
-        x: pd.Series,
-        splits,
-        feature_type: str
-    ) -> np.ndarray:
+    def _apply_splits(self, x: pd.Series, splits, feature_type: str) -> np.ndarray:
         """应用切分点.
 
         :param x: 特征数据
@@ -570,9 +536,9 @@ class MDLPBinning(BaseBinning):
         :return: 分箱标签
         """
         feature = x.name
-        if feature in self._cat_bins_ and self.feature_types_.get(feature) == 'categorical':
+        if feature in self._cat_bins_ and self.feature_types_.get(feature) == "categorical":
             return self._assign_categorical_bins(feature, x)
-        if feature_type == 'categorical':
+        if feature_type == "categorical":
             # 基于 splits 列表中的顺序映射类别到分箱索引
             x_str = x.astype(str).where(x.notna(), other=np.nan)
             cat_to_bin = {str(cat): i for i, cat in enumerate(splits)}
@@ -593,15 +559,12 @@ class MDLPBinning(BaseBinning):
         return bins
 
     def transform(
-        self,
-        X: Union[pd.DataFrame, np.ndarray],
-        metric: str = 'indices',
-        **kwargs
+        self, X: Union[pd.DataFrame, np.ndarray], metric: str = "indices", **kwargs
     ) -> Union[pd.DataFrame, np.ndarray]:
         """应用分箱转换.
-        
+
         将原始特征值转换为分箱索引、分箱标签或WOE值。
-        
+
         :param X: 待转换数据, DataFrame或数组格式
         :param metric: 转换类型, 可选值:
             - 'indices': 返回分箱索引 (0, 1, 2, ...), 用于后续处理
@@ -609,14 +572,14 @@ class MDLPBinning(BaseBinning):
             - 'woe': 返回WOE值, 用于逻辑回归建模
         :param kwargs: 其他参数
         :return: 转换后的数据, 格式与输入X相同
-        
+
         :example:
         >>> binner = MDLPBinning()
         >>> binner.fit(X_train, y_train)
-        >>> 
+        >>>
         >>> # 获取分箱索引
         >>> X_binned = binner.transform(X_test, metric='indices')
-        >>> 
+        >>>
         >>> # 获取WOE编码 (用于建模)
         >>> X_woe = binner.transform(X_test, metric='woe')
         """
@@ -636,16 +599,16 @@ class MDLPBinning(BaseBinning):
             feature_type = self.feature_types_[feature]
             bins = self._apply_splits(X[feature], splits, feature_type)
 
-            if metric == 'indices':
+            if metric == "indices":
                 result[feature] = bins
-            elif metric == 'bins':
+            elif metric == "bins":
                 result[feature] = self._assign_bin_labels(feature, bins)
-            elif metric == 'woe':
-                if hasattr(self, '_woe_maps_') and feature in self._woe_maps_:
+            elif metric == "woe":
+                if hasattr(self, "_woe_maps_") and feature in self._woe_maps_:
                     woe_map = self._woe_maps_[feature]
                 elif feature in self.bin_tables_:
                     bin_table = self.bin_tables_[feature]
-                    woe_map = {i: bin_table.iloc[i]['分档WOE值'] for i in range(len(bin_table))}
+                    woe_map = {i: bin_table.iloc[i]["分档WOE值"] for i in range(len(bin_table))}
                     self._enrich_woe_map(woe_map, bin_table)
                 else:
                     raise ValueError(f"特征 '{feature}' 没有WOE映射信息")

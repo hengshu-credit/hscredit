@@ -22,7 +22,7 @@ class BestLiftBinning(BaseBinning):
 
     基于最大化 Lift 差异的分箱方法，特别关注头部或尾部的极端值。
     Lift = 箱内坏样本率 / 总体坏样本率。
-    
+
     业务场景：
     - 高风险识别：寻找头部 Lift > 2 或尾部 Lift < 0.5 的分箱
     - 风险分层：最大化不同分箱间的风险差异
@@ -80,19 +80,23 @@ class BestLiftBinning(BaseBinning):
 
     def __init__(
         self,
-        target: str = 'target',
+        target: str = "target",
         max_n_bins: int = 5,
         min_n_bins: int = 2,
         min_bin_size: Union[float, int] = 0.01,
         max_bin_size: Optional[Union[float, int]] = 0.5,
+        min_bad_rate: float = 0.0,
         min_lift: float = 0.0,
         monotonic: Union[bool, str] = True,
         n_prebins: int = 50,
-        optimization: str = 'extreme',
+        optimization: str = "extreme",
         missing_separate: bool = True,
         special_codes: Optional[List] = None,
+        cat_cutoff: Optional[Union[float, int]] = None,
+        category_order=None,
+        handle_unknown: str = "value",
         random_state: Optional[int] = None,
-        **kwargs
+        **kwargs,
     ):
         super().__init__(
             target=target,
@@ -100,22 +104,23 @@ class BestLiftBinning(BaseBinning):
             min_n_bins=min_n_bins,
             min_bin_size=min_bin_size,
             max_bin_size=max_bin_size,
+            min_bad_rate=min_bad_rate,
             monotonic=monotonic,
             missing_separate=missing_separate,
             special_codes=special_codes,
+            cat_cutoff=cat_cutoff,
+            category_order=category_order,
+            handle_unknown=handle_unknown,
             random_state=random_state,
-            **kwargs
+            **kwargs,
         )
         self.min_lift = min_lift
         self.n_prebins = n_prebins
         self.optimization = optimization
 
     def fit(
-        self,
-        X: Union[pd.DataFrame, np.ndarray],
-        y: Optional[Union[pd.Series, np.ndarray]] = None,
-        **kwargs
-    ) -> 'BestLiftBinning':
+        self, X: Union[pd.DataFrame, np.ndarray], y: Optional[Union[pd.Series, np.ndarray]] = None, **kwargs
+    ) -> "BestLiftBinning":
         """拟合 Best Lift 分箱.
 
         :param X: 训练数据
@@ -133,12 +138,7 @@ class BestLiftBinning(BaseBinning):
         self._is_fitted = True
         return self
 
-    def _fit_feature(
-        self,
-        feature: str,
-        X: pd.Series,
-        y: pd.Series
-    ) -> None:
+    def _fit_feature(self, feature: str, X: pd.Series, y: pd.Series) -> None:
         """对单个特征进行分箱.
 
         :param feature: 特征名
@@ -160,7 +160,7 @@ class BestLiftBinning(BaseBinning):
         X_valid = X[valid_mask]
         y_valid = y[valid_mask]
 
-        if feature_type == 'categorical':
+        if feature_type == "categorical":
             # 类别型变量：按坏样本率排序后编码
             splits = self._best_lift_categorical(X_valid, y_valid)
             self.splits_[feature] = np.array(splits) if splits else np.array([])
@@ -178,11 +178,7 @@ class BestLiftBinning(BaseBinning):
         bin_table = self._compute_bin_stats(feature, X, y, bins)
         self.bin_tables_[feature] = bin_table
 
-    def _best_lift_numerical(
-        self,
-        X: pd.Series,
-        y: pd.Series
-    ) -> List[float]:
+    def _best_lift_numerical(self, X: pd.Series, y: pd.Series) -> List[float]:
         """对数值型变量进行 Best Lift 分箱.
 
         算法流程：
@@ -216,31 +212,21 @@ class BestLiftBinning(BaseBinning):
 
         # 阶段1：等频预分割
         prebins = self._create_prebins(x_sorted, y_sorted, min_samples)
-        
+
         if len(prebins) <= self.max_n_bins:
             # 预分箱数已经满足要求
             splits = self._prebins_to_splits(prebins, x_sorted)
         else:
             # 阶段2：贪心合并分箱
-            splits = self._greedy_merge(
-                prebins, x_sorted, y_sorted,
-                min_samples, max_samples, total_bad_rate
-            )
+            splits = self._greedy_merge(prebins, x_sorted, y_sorted, min_samples, max_samples, total_bad_rate)
 
         # 阶段3：单调性调整
         if self.monotonic and len(splits) > 0:
-            splits = self._enforce_monotonic(
-                splits, x_sorted, y_sorted, min_samples, total_bad_rate
-            )
+            splits = self._enforce_monotonic(splits, x_sorted, y_sorted, min_samples, total_bad_rate)
 
         return sorted(splits)
 
-    def _create_prebins(
-        self,
-        x_sorted: np.ndarray,
-        y_sorted: np.ndarray,
-        min_samples: int
-    ) -> List[Dict]:
+    def _create_prebins(self, x_sorted: np.ndarray, y_sorted: np.ndarray, min_samples: int) -> List[Dict]:
         """创建预分箱.
 
         使用等频分割，确保每个预分箱至少有 min_samples 个样本。
@@ -251,35 +237,37 @@ class BestLiftBinning(BaseBinning):
         :return: 预分箱列表，每个元素包含 {start_idx, end_idx, bad_count, total_count, bad_rate}
         """
         n_samples = len(x_sorted)
-        
+
         # 计算实际可用的预分箱数
         n_prebins = min(self.n_prebins, n_samples // min_samples)
         n_prebins = max(n_prebins, self.max_n_bins)
-        
+
         # 等频分割点
         quantile_points = np.linspace(0, n_samples, n_prebins + 1, dtype=int)
-        
+
         prebins = []
         for i in range(n_prebins):
             start_idx = quantile_points[i]
             end_idx = quantile_points[i + 1]
-            
+
             if end_idx <= start_idx:
                 continue
-            
+
             bin_y = y_sorted[start_idx:end_idx]
             bad_count = np.sum(bin_y)
             total_count = len(bin_y)
             bad_rate = bad_count / total_count if total_count > 0 else 0
-            
-            prebins.append({
-                'start_idx': start_idx,
-                'end_idx': end_idx,
-                'bad_count': bad_count,
-                'total_count': total_count,
-                'bad_rate': bad_rate
-            })
-        
+
+            prebins.append(
+                {
+                    "start_idx": start_idx,
+                    "end_idx": end_idx,
+                    "bad_count": bad_count,
+                    "total_count": total_count,
+                    "bad_rate": bad_rate,
+                }
+            )
+
         return prebins
 
     def _greedy_merge(
@@ -289,7 +277,7 @@ class BestLiftBinning(BaseBinning):
         y_sorted: np.ndarray,
         min_samples: int,
         max_samples: int,
-        total_bad_rate: float
+        total_bad_rate: float,
     ) -> List[float]:
         """贪心合并预分箱.
 
@@ -307,135 +295,130 @@ class BestLiftBinning(BaseBinning):
         # 复制预分箱列表
         bins = [b.copy() for b in prebins]
         n_bins = len(bins)
-        
+
         # 如果已经满足分箱数要求，直接返回
         if n_bins <= self.max_n_bins:
             return self._bins_to_splits(bins, x_sorted)
-        
+
         # 计算相邻分箱的合并损失
         def calc_merge_loss(bins: List[Dict], merge_idx: int) -> float:
             """计算合并相邻两个分箱的损失."""
             if merge_idx >= len(bins) - 1:
-                return float('inf')
-            
+                return float("inf")
+
             left = bins[merge_idx]
             right = bins[merge_idx + 1]
-            
+
             # 合并后的统计
-            merged_bad = left['bad_count'] + right['bad_count']
-            merged_total = left['total_count'] + right['total_count']
+            merged_bad = left["bad_count"] + right["bad_count"]
+            merged_total = left["total_count"] + right["total_count"]
             merged_rate = merged_bad / merged_total if merged_total > 0 else 0
-            
+
             # 检查样本数约束
             if merged_total > max_samples:
-                return float('inf')
-            
+                return float("inf")
+
             # 计算合并前后的目标函数差异
-            if self.optimization == 'extreme':
+            if self.optimization == "extreme":
                 # 极端值优化：最大化头部或尾部的 Lift
                 # 合并损失 = 合并前后 Lift 极值的变化
-                left_lift = left['bad_rate'] / total_bad_rate if total_bad_rate > 0 else 1
-                right_lift = right['bad_rate'] / total_bad_rate if total_bad_rate > 0 else 1
+                left_lift = left["bad_rate"] / total_bad_rate if total_bad_rate > 0 else 1
+                right_lift = right["bad_rate"] / total_bad_rate if total_bad_rate > 0 else 1
                 merged_lift = merged_rate / total_bad_rate if total_bad_rate > 0 else 1
-                
+
                 # 损失 = 合并导致的极端 Lift 损失
                 pre_extreme = max(abs(left_lift - 1), abs(right_lift - 1))
                 post_extreme = abs(merged_lift - 1)
                 loss = pre_extreme - post_extreme
-                
-            elif self.optimization == 'spread':
+
+            elif self.optimization == "spread":
                 # 分布范围优化：最大化 Lift 的分布范围
-                all_rates = [b['bad_rate'] for b in bins]
+                all_rates = [b["bad_rate"] for b in bins]
                 current_spread = max(all_rates) - min(all_rates)
-                
+
                 # 模拟合并后的 spread
-                temp_rates = [b['bad_rate'] for b in bins]
+                temp_rates = [b["bad_rate"] for b in bins]
                 temp_rates[merge_idx] = merged_rate
                 temp_rates.pop(merge_idx + 1)
                 new_spread = max(temp_rates) - min(temp_rates)
-                
+
                 loss = current_spread - new_spread
-                
+
             else:  # optimization == 'iv'
                 # IV 优化：最大化信息值
                 # 简化计算，使用坏样本率差异
-                rate_diff = abs(left['bad_rate'] - right['bad_rate'])
-                loss = rate_diff * (left['total_count'] + right['total_count']) / len(y_sorted)
-            
+                rate_diff = abs(left["bad_rate"] - right["bad_rate"])
+                loss = rate_diff * (left["total_count"] + right["total_count"]) / len(y_sorted)
+
             return loss
-        
+
         # 贪心合并
         while len(bins) > self.max_n_bins:
             # 找到合并损失最小的相邻分箱对
-            min_loss = float('inf')
+            min_loss = float("inf")
             best_merge_idx = -1
-            
+
             for i in range(len(bins) - 1):
                 loss = calc_merge_loss(bins, i)
                 if loss < min_loss:
                     min_loss = loss
                     best_merge_idx = i
-            
+
             if best_merge_idx == -1:
                 break
-            
+
             # 执行合并
             left = bins[best_merge_idx]
             right = bins[best_merge_idx + 1]
-            
+
             merged_bin = {
-                'start_idx': left['start_idx'],
-                'end_idx': right['end_idx'],
-                'bad_count': left['bad_count'] + right['bad_count'],
-                'total_count': left['total_count'] + right['total_count'],
-                'bad_rate': (left['bad_count'] + right['bad_count']) / 
-                           (left['total_count'] + right['total_count'])
+                "start_idx": left["start_idx"],
+                "end_idx": right["end_idx"],
+                "bad_count": left["bad_count"] + right["bad_count"],
+                "total_count": left["total_count"] + right["total_count"],
+                "bad_rate": (left["bad_count"] + right["bad_count"]) / (left["total_count"] + right["total_count"]),
             }
-            
+
             bins[best_merge_idx] = merged_bin
             bins.pop(best_merge_idx + 1)
-        
+
         # 确保满足最小分箱数
         while len(bins) < self.min_n_bins and len(bins) > 1:
             # 找到样本数最多的分箱进行拆分
-            max_idx = np.argmax([b['total_count'] for b in bins])
+            max_idx = np.argmax([b["total_count"] for b in bins])
             target_bin = bins[max_idx]
-            
-            if target_bin['total_count'] < min_samples * 2:
+
+            if target_bin["total_count"] < min_samples * 2:
                 break
-            
+
             # 从中间拆分
-            mid_idx = (target_bin['start_idx'] + target_bin['end_idx']) // 2
-            
-            left_y = y_sorted[target_bin['start_idx']:mid_idx]
-            right_y = y_sorted[mid_idx:target_bin['end_idx']]
-            
+            mid_idx = (target_bin["start_idx"] + target_bin["end_idx"]) // 2
+
+            left_y = y_sorted[target_bin["start_idx"] : mid_idx]
+            right_y = y_sorted[mid_idx : target_bin["end_idx"]]
+
             left_bin = {
-                'start_idx': target_bin['start_idx'],
-                'end_idx': mid_idx,
-                'bad_count': np.sum(left_y),
-                'total_count': len(left_y),
-                'bad_rate': np.mean(left_y)
+                "start_idx": target_bin["start_idx"],
+                "end_idx": mid_idx,
+                "bad_count": np.sum(left_y),
+                "total_count": len(left_y),
+                "bad_rate": np.mean(left_y),
             }
-            
+
             right_bin = {
-                'start_idx': mid_idx,
-                'end_idx': target_bin['end_idx'],
-                'bad_count': np.sum(right_y),
-                'total_count': len(right_y),
-                'bad_rate': np.mean(right_y)
+                "start_idx": mid_idx,
+                "end_idx": target_bin["end_idx"],
+                "bad_count": np.sum(right_y),
+                "total_count": len(right_y),
+                "bad_rate": np.mean(right_y),
             }
-            
+
             bins[max_idx] = left_bin
             bins.insert(max_idx + 1, right_bin)
-        
+
         return self._bins_to_splits(bins, x_sorted)
 
-    def _bins_to_splits(
-        self,
-        bins: List[Dict],
-        x_sorted: np.ndarray
-    ) -> List[float]:
+    def _bins_to_splits(self, bins: List[Dict], x_sorted: np.ndarray) -> List[float]:
         """将分箱转换为分割点.
 
         :param bins: 分箱列表
@@ -445,17 +428,13 @@ class BestLiftBinning(BaseBinning):
         splits = []
         for i in range(len(bins) - 1):
             # 分割点是相邻分箱边界的中点
-            end_idx = bins[i]['end_idx']
+            end_idx = bins[i]["end_idx"]
             if end_idx < len(x_sorted):
                 split_val = (x_sorted[end_idx - 1] + x_sorted[end_idx]) / 2
                 splits.append(split_val)
         return splits
 
-    def _prebins_to_splits(
-        self,
-        prebins: List[Dict],
-        x_sorted: np.ndarray
-    ) -> List[float]:
+    def _prebins_to_splits(self, prebins: List[Dict], x_sorted: np.ndarray) -> List[float]:
         """将预分箱直接转换为分割点.
 
         :param prebins: 预分箱列表
@@ -465,12 +444,7 @@ class BestLiftBinning(BaseBinning):
         return self._bins_to_splits(prebins, x_sorted)
 
     def _enforce_monotonic(
-        self,
-        splits: List[float],
-        x_sorted: np.ndarray,
-        y_sorted: np.ndarray,
-        min_samples: int,
-        total_bad_rate: float
+        self, splits: List[float], x_sorted: np.ndarray, y_sorted: np.ndarray, min_samples: int, total_bad_rate: float
     ) -> List[float]:
         """强制单调性约束.
 
@@ -485,10 +459,10 @@ class BestLiftBinning(BaseBinning):
             return splits
 
         splits = list(splits)
-        
+
         # 计算每个箱的坏样本率
         def get_bad_rates(splits_list: List[float]) -> List[float]:
-            bins = np.searchsorted(splits_list, x_sorted, side='right')
+            bins = np.searchsorted(splits_list, x_sorted, side="right")
             n_bins = len(splits_list) + 1
             rates = []
             for i in range(n_bins):
@@ -500,59 +474,53 @@ class BestLiftBinning(BaseBinning):
             return rates
 
         bad_rates = get_bad_rates(splits)
-        
+
         # 确定单调方向
-        if self.monotonic == 'ascending':
-            direction = 'ascending'
-        elif self.monotonic == 'descending':
-            direction = 'descending'
+        if self.monotonic == "ascending":
+            direction = "ascending"
+        elif self.monotonic == "descending":
+            direction = "descending"
         else:  # auto 或 True
             # 计算违反单调性的次数
-            asc_violations = sum(1 for i in range(len(bad_rates)-1) 
-                                if bad_rates[i] > bad_rates[i+1])
-            desc_violations = sum(1 for i in range(len(bad_rates)-1) 
-                                 if bad_rates[i] < bad_rates[i+1])
-            direction = 'ascending' if asc_violations <= desc_violations else 'descending'
-        
+            asc_violations = sum(1 for i in range(len(bad_rates) - 1) if bad_rates[i] > bad_rates[i + 1])
+            desc_violations = sum(1 for i in range(len(bad_rates) - 1) if bad_rates[i] < bad_rates[i + 1])
+            direction = "ascending" if asc_violations <= desc_violations else "descending"
+
         # 合并违反单调性的相邻箱
         max_iter = len(splits)
         for _ in range(max_iter):
             if len(splits) <= 1:
                 break
-            
+
             bad_rates = get_bad_rates(splits)
-            
+
             # 找到第一个违反单调性的位置
             merge_idx = -1
             for i in range(len(bad_rates) - 1):
-                if direction == 'ascending' and bad_rates[i] > bad_rates[i + 1]:
+                if direction == "ascending" and bad_rates[i] > bad_rates[i + 1]:
                     merge_idx = i
                     break
-                elif direction == 'descending' and bad_rates[i] < bad_rates[i + 1]:
+                elif direction == "descending" and bad_rates[i] < bad_rates[i + 1]:
                     merge_idx = i
                     break
-            
+
             if merge_idx == -1:
                 break
-            
+
             # 删除分割点（合并相邻箱）
             splits.pop(merge_idx)
-        
+
         # 检查是否满足最小分箱数
         if len(splits) + 1 < self.min_n_bins:
             # 尝试重新分割（简单策略：等频分割）
             n_new_splits = self.min_n_bins - 1
             n_samples = len(x_sorted)
             quantiles = np.linspace(0, n_samples, n_new_splits + 2, dtype=int)[1:-1]
-            splits = [(x_sorted[q-1] + x_sorted[q]) / 2 for q in quantiles if q < n_samples]
-        
+            splits = [(x_sorted[q - 1] + x_sorted[q]) / 2 for q in quantiles if q < n_samples]
+
         return sorted(splits)
 
-    def _best_lift_categorical(
-        self,
-        X: pd.Series,
-        y: pd.Series
-    ) -> List[float]:
+    def _best_lift_categorical(self, X: pd.Series, y: pd.Series) -> List[float]:
         """对类别型变量进行 Best Lift 分箱.
 
         :param X: 特征数据
@@ -565,28 +533,28 @@ class BestLiftBinning(BaseBinning):
             return []
 
         # 使用向量化操作计算类别统计
-        df = pd.DataFrame({'X': X, 'y': y})
-        category_stats = df.groupby('X')['y'].agg(['mean', 'count']).reset_index()
-        category_stats.columns = ['category', 'bad_rate', 'count']
+        df = pd.DataFrame({"X": X, "y": y})
+        category_stats = df.groupby("X")["y"].agg(["mean", "count"]).reset_index()
+        category_stats.columns = ["category", "bad_rate", "count"]
 
         # 计算 Lift
-        category_stats['lift'] = category_stats['bad_rate'] / total_bad_rate
+        category_stats["lift"] = category_stats["bad_rate"] / total_bad_rate
 
         # 过滤掉样本数过少的类别
         min_samples = self._get_min_samples(len(X))
-        category_stats = category_stats[category_stats['count'] >= min_samples]
+        category_stats = category_stats[category_stats["count"] >= min_samples]
 
         if len(category_stats) <= 1:
             return []
 
         # 按坏样本率排序
-        category_stats = category_stats.sort_values('bad_rate')
+        category_stats = category_stats.sort_values("bad_rate")
 
         # 返回编码边界
         n_categories = len(category_stats)
         if n_categories <= self.max_n_bins:
             return []
-        
+
         return [i - 0.5 for i in range(1, min(n_categories, self.max_n_bins))]
 
     def _get_min_samples(self, n_total: int) -> int:
@@ -611,11 +579,7 @@ class BestLiftBinning(BaseBinning):
             return int(n_total * self.max_bin_size)
         return int(self.max_bin_size)
 
-    def _assign_bins(
-        self,
-        X: pd.Series,
-        feature: str
-    ) -> np.ndarray:
+    def _assign_bins(self, X: pd.Series, feature: str) -> np.ndarray:
         """为数据分配分箱索引.
 
         :param X: 特征数据
@@ -624,9 +588,9 @@ class BestLiftBinning(BaseBinning):
         """
         x_vals = X.values
 
-        if self.feature_types_[feature] == 'categorical' and feature in self._cat_bins_:
+        if self.feature_types_[feature] == "categorical" and feature in self._cat_bins_:
             return self._assign_categorical_bins(feature, X)
-        if self.feature_types_[feature] == 'categorical':
+        if self.feature_types_[feature] == "categorical":
             codes = pd.Categorical(X).codes
             return np.where(X.isna(), -1, codes)
         else:
@@ -650,22 +614,17 @@ class BestLiftBinning(BaseBinning):
                     valid_mask = valid_mask & (x_vals != code)
 
             if valid_mask.any() and len(splits) > 0:
-                bins[valid_mask] = np.searchsorted(
-                    splits, x_vals[valid_mask], side='right'
-                )
+                bins[valid_mask] = np.searchsorted(splits, x_vals[valid_mask], side="right")
 
             return bins
 
     def transform(
-        self,
-        X: Union[pd.DataFrame, np.ndarray],
-        metric: str = 'indices',
-        **kwargs
+        self, X: Union[pd.DataFrame, np.ndarray], metric: str = "indices", **kwargs
     ) -> Union[pd.DataFrame, np.ndarray]:
         """应用分箱转换.
-        
+
         将原始特征值转换为分箱索引、分箱标签、WOE值或LIFT值。
-        
+
         :param X: 待转换数据, DataFrame或数组格式
         :param metric: 转换类型, 可选值:
             - 'indices': 返回分箱索引 (0, 1, 2, ...), 用于后续处理
@@ -674,17 +633,17 @@ class BestLiftBinning(BaseBinning):
             - 'lift': 返回LIFT值, 用于评估分箱效果
         :param kwargs: 其他参数
         :return: 转换后的数据, 格式与输入X相同
-        
+
         :example:
         >>> binner = BestLiftBinning()
         >>> binner.fit(X_train, y_train)
-        >>> 
+        >>>
         >>> # 获取分箱索引
         >>> X_binned = binner.transform(X_test, metric='indices')
-        >>> 
+        >>>
         >>> # 获取WOE编码 (用于建模)
         >>> X_woe = binner.transform(X_test, metric='woe')
-        >>> 
+        >>>
         >>> # 获取LIFT值
         >>> X_lift = binner.transform(X_test, metric='lift')
         """
@@ -706,30 +665,30 @@ class BestLiftBinning(BaseBinning):
 
             bins = self._assign_bins(X[feature], feature)
 
-            if metric == 'indices':
+            if metric == "indices":
                 result[feature] = bins
-            elif metric == 'bins':
+            elif metric == "bins":
                 result[feature] = self._assign_bin_labels(feature, bins)
-            elif metric == 'woe':
+            elif metric == "woe":
                 # 优先使用_woe_maps_（从export/load导入）
-                if hasattr(self, '_woe_maps_') and feature in self._woe_maps_:
+                if hasattr(self, "_woe_maps_") and feature in self._woe_maps_:
                     woe_map = self._woe_maps_[feature]
                 elif feature in self.bin_tables_:
                     bin_table = self.bin_tables_[feature]
-                    woe_map = dict(zip(range(len(bin_table)), bin_table['分档WOE值'].values))
+                    woe_map = dict(zip(range(len(bin_table)), bin_table["分档WOE值"].values))
                     self._enrich_woe_map(woe_map, bin_table)
                 else:
                     raise ValueError(f"特征 '{feature}' 没有WOE映射信息")
                 result[feature] = [woe_map.get(b, 0) for b in bins]
-            elif metric == 'lift':
+            elif metric == "lift":
                 # 返回 Lift 值
                 bin_table = self.get_bin_table(feature)
                 lift_map = {}
                 for i, row in bin_table.iterrows():
-                    if row['分箱标签'] in ['缺失', 'special']:
-                        lift_map[-1 if row['分箱标签'] == '缺失' else -2] = np.nan
+                    if row["分箱标签"] in ["缺失", "special"]:
+                        lift_map[-1 if row["分箱标签"] == "缺失" else -2] = np.nan
                     else:
-                        lift_map[i] = row['LIFT值']
+                        lift_map[i] = row["LIFT值"]
                 result[feature] = [lift_map.get(b, np.nan) for b in bins]
             else:
                 raise ValueError(f"不支持的metric: {metric}")
@@ -749,54 +708,49 @@ class BestLiftBinning(BaseBinning):
 
         # 添加 Lift 列
         # 排除缺失和特殊值箱计算总体坏样本率
-        valid_mask = ~bin_table['分箱标签'].isin(['缺失', 'special'])
+        valid_mask = ~bin_table["分箱标签"].isin(["缺失", "special"])
         if valid_mask.any():
-            valid_bad_rates = bin_table.loc[valid_mask, '坏样本率']
-            valid_counts = bin_table.loc[valid_mask, '样本总数']
+            valid_bad_rates = bin_table.loc[valid_mask, "坏样本率"]
+            valid_counts = bin_table.loc[valid_mask, "样本总数"]
             total_bad = (valid_bad_rates * valid_counts).sum()
             total_count = valid_counts.sum()
             total_bad_rate = total_bad / total_count if total_count > 0 else 0
         else:
-            total_bad_rate = bin_table['坏样本率'].mean()
+            total_bad_rate = bin_table["坏样本率"].mean()
 
         # 计算每箱的 lift
         lifts = []
         for _, row in bin_table.iterrows():
-            if row['分箱标签'] in ['缺失', 'special']:
+            if row["分箱标签"] in ["缺失", "special"]:
                 lifts.append(np.nan)
             else:
-                lift = row['坏样本率'] / total_bad_rate if total_bad_rate > 0 else 1.0
+                lift = row["坏样本率"] / total_bad_rate if total_bad_rate > 0 else 1.0
                 lifts.append(lift)
 
-        bin_table['LIFT值'] = lifts
+        bin_table["LIFT值"] = lifts
 
         return bin_table
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     import sys
     import os
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..', '..'))
-    
+
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
+
     # 测试代码
     np.random.seed(42)
     n_samples = 5000
 
     # 生成测试数据
-    x = np.concatenate([
-        np.random.normal(0, 1, n_samples // 2),
-        np.random.normal(3, 1, n_samples // 2)
-    ])
+    x = np.concatenate([np.random.normal(0, 1, n_samples // 2), np.random.normal(3, 1, n_samples // 2)])
     # 构造有区分度的目标变量
-    y = np.array([
-        np.random.binomial(1, 0.2, n_samples // 2),
-        np.random.binomial(1, 0.6, n_samples // 2)
-    ]).flatten()
+    y = np.array([np.random.binomial(1, 0.2, n_samples // 2), np.random.binomial(1, 0.6, n_samples // 2)]).flatten()
 
     # 添加一些缺失值
     x[np.random.choice(n_samples, 100, replace=False)] = np.nan
 
-    X = pd.DataFrame({'feature': x})
+    X = pd.DataFrame({"feature": x})
     y = pd.Series(y)
 
     print("=" * 60)
@@ -805,23 +759,18 @@ if __name__ == '__main__':
 
     # 测试 Best Lift 分箱
     binner = BestLiftBinning(
-        max_n_bins=5,
-        min_lift=0.0,
-        monotonic=True,
-        optimization='extreme',
-        n_prebins=50,
-        verbose=True
+        max_n_bins=5, min_lift=0.0, monotonic=True, optimization="extreme", n_prebins=50, verbose=True
     )
     binner.fit(X, y)
 
     print("\n分箱统计表:")
-    print(binner.get_bin_table('feature'))
+    print(binner.get_bin_table("feature"))
 
     # 转换测试
     print("\n转换测试:")
-    X_lift = binner.transform(X, metric='lift')
+    X_lift = binner.transform(X, metric="lift")
     print("\nLift值 (前10行):")
     print(X_lift.head(10))
 
-    print("\n切分点:", binner.splits_['feature'])
-    print("分箱数:", binner.n_bins_['feature'])
+    print("\n切分点:", binner.splits_["feature"])
+    print("分箱数:", binner.n_bins_["feature"])

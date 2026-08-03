@@ -62,13 +62,13 @@ class GeneticBinning(BaseBinning):
 
     def __init__(
         self,
-        target: str = 'target',
+        target: str = "target",
         population_size: int = 50,
         generations: int = 100,
         mutation_rate: float = 0.1,
         crossover_rate: float = 0.8,
         elitism_rate: float = 0.1,
-        objective: str = 'iv',
+        objective: str = "iv",
         max_n_bins: int = 5,
         min_n_bins: int = 2,
         min_bin_size: Union[float, int] = 0.01,
@@ -77,8 +77,9 @@ class GeneticBinning(BaseBinning):
         monotonic: Union[bool, str] = False,
         special_codes: Optional[List] = None,
         missing_separate: bool = True,
+        cat_cutoff: Optional[Union[float, int]] = None,
         category_order=None,
-        handle_unknown: str = 'value',
+        handle_unknown: str = "value",
         random_state: Optional[int] = None,
         verbose: Union[bool, int] = False,
         decimal: int = 4,
@@ -93,6 +94,7 @@ class GeneticBinning(BaseBinning):
             monotonic=monotonic,
             special_codes=special_codes,
             missing_separate=missing_separate,
+            cat_cutoff=cat_cutoff,
             category_order=category_order,
             handle_unknown=handle_unknown,
             random_state=random_state,
@@ -106,15 +108,12 @@ class GeneticBinning(BaseBinning):
         self.elitism_rate = elitism_rate
         self.objective = objective
 
-        if objective not in ['iv', 'ks', 'gini']:
+        if objective not in ["iv", "ks", "gini"]:
             raise ValueError("objective必须是'iv', 'ks'或'gini'")
 
     def fit(
-        self,
-        X: Union[pd.DataFrame, np.ndarray],
-        y: Optional[Union[pd.Series, np.ndarray]] = None,
-        **kwargs
-    ) -> 'GeneticBinning':
+        self, X: Union[pd.DataFrame, np.ndarray], y: Optional[Union[pd.Series, np.ndarray]] = None, **kwargs
+    ) -> "GeneticBinning":
         """拟合遗传算法分箱。
 
         对每个特征以遗传算法（选择/交叉/变异/精英保留）在候选切分点中搜索使 ``objective``
@@ -135,7 +134,7 @@ class GeneticBinning(BaseBinning):
             feature_type = self._detect_feature_type(X[feature])
             self.feature_types_[feature] = feature_type
 
-            if feature_type == 'categorical':
+            if feature_type == "categorical":
                 splits = self._fit_categorical(X[feature], y)
                 self.splits_[feature] = splits
             else:
@@ -144,9 +143,7 @@ class GeneticBinning(BaseBinning):
             self.n_bins_[feature] = len(splits) + 1
 
             bins = self._apply_bins(X[feature], splits)
-            self.bin_tables_[feature] = self._compute_bin_stats(
-                feature, X[feature], y, bins
-            )
+            self.bin_tables_[feature] = self._compute_bin_stats(feature, X[feature], y, bins)
 
         self._fit_features(X.columns, _fit_one)
 
@@ -154,11 +151,7 @@ class GeneticBinning(BaseBinning):
         self._is_fitted = True
         return self
 
-    def _fit_numerical(
-        self,
-        x: pd.Series,
-        y: pd.Series
-    ) -> np.ndarray:
+    def _fit_numerical(self, x: pd.Series, y: pd.Series) -> np.ndarray:
         """对数值型特征进行遗传算法分箱."""
         x_clean = x.copy()
         mask = x_clean.notna()
@@ -175,21 +168,16 @@ class GeneticBinning(BaseBinning):
 
         # 生成候选切分点（分位数）
         candidate_splits = self._generate_candidates(x_valid)
-        
+
         if len(candidate_splits) < self.min_n_bins - 1:
             return np.array([])
 
         # 运行遗传算法
-        best_splits = self._genetic_algorithm(
-            x_valid, y_valid, candidate_splits
-        )
+        best_splits = self._genetic_algorithm(x_valid, y_valid, candidate_splits)
 
         return best_splits
 
-    def _generate_candidates(
-        self,
-        x: pd.Series
-    ) -> np.ndarray:
+    def _generate_candidates(self, x: pd.Series) -> np.ndarray:
         """生成候选切分点."""
         n_candidates = min(50, len(x) // 10)
         if n_candidates < self.max_n_bins - 1:
@@ -199,18 +187,13 @@ class GeneticBinning(BaseBinning):
         candidates = np.percentile(x, quantiles * 100)
         return np.unique(candidates)
 
-    def _genetic_algorithm(
-        self,
-        x: pd.Series,
-        y: pd.Series,
-        candidates: np.ndarray
-    ) -> np.ndarray:
+    def _genetic_algorithm(self, x: pd.Series, y: pd.Series, candidates: np.ndarray) -> np.ndarray:
         """运行遗传算法搜索最优分箱."""
         rng = np.random.RandomState(self.random_state)
-        
+
         # 初始化种群
         population = self._initialize_population(candidates, rng)
-        
+
         best_fitness = -np.inf
         best_individual = None
         no_improvement_count = 0
@@ -218,10 +201,7 @@ class GeneticBinning(BaseBinning):
 
         for generation in range(self.generations):
             # 评估适应度
-            fitness_scores = [
-                self._evaluate_fitness(individual, x, y, candidates)
-                for individual in population
-            ]
+            fitness_scores = [self._evaluate_fitness(individual, x, y, candidates) for individual in population]
 
             # 更新最优解
             max_fitness_idx = np.argmax(fitness_scores)
@@ -243,13 +223,13 @@ class GeneticBinning(BaseBinning):
 
             # 选择
             selected = self._selection(population, fitness_scores, rng)
-            
+
             # 交叉
             offspring = self._crossover(selected, rng)
-            
+
             # 变异
             offspring = self._mutation(offspring, candidates, rng)
-            
+
             # 精英保留
             population = self._elitism(offspring, best_individual, fitness_scores)
 
@@ -260,15 +240,11 @@ class GeneticBinning(BaseBinning):
         selected_indices = np.where(best_individual)[0]
         return candidates[selected_indices]
 
-    def _initialize_population(
-        self,
-        candidates: np.ndarray,
-        rng: np.random.RandomState
-    ) -> List[np.ndarray]:
+    def _initialize_population(self, candidates: np.ndarray, rng: np.random.RandomState) -> List[np.ndarray]:
         """初始化种群."""
         population = []
         n_candidates = len(candidates)
-        
+
         for _ in range(self.population_size):
             # 随机选择切分点数量
             n_splits = rng.randint(self.min_n_bins - 1, min(self.max_n_bins, n_candidates) + 1)
@@ -277,53 +253,42 @@ class GeneticBinning(BaseBinning):
             selected = rng.choice(n_candidates, n_splits, replace=False)
             individual[selected] = True
             population.append(individual)
-        
+
         return population
 
-    def _evaluate_fitness(
-        self,
-        individual: np.ndarray,
-        x: pd.Series,
-        y: pd.Series,
-        candidates: np.ndarray
-    ) -> float:
+    def _evaluate_fitness(self, individual: np.ndarray, x: pd.Series, y: pd.Series, candidates: np.ndarray) -> float:
         """评估适应度."""
         selected_indices = np.where(individual)[0]
-        
+
         if len(selected_indices) < self.min_n_bins - 1 or len(selected_indices) > self.max_n_bins - 1:
             return -np.inf
 
         splits = candidates[selected_indices]
-        
+
         # 检查约束
         if not self._check_constraints(x, y, splits):
             return -np.inf
 
         # 计算目标函数
         bins = pd.cut(x, bins=[-np.inf] + splits.tolist() + [np.inf], labels=False)
-        
+
         try:
-            if self.objective == 'iv':
+            if self.objective == "iv":
                 return self._calculate_iv(bins, y)
-            elif self.objective == 'ks':
+            elif self.objective == "ks":
                 return self._calculate_ks(bins, y)
-            elif self.objective == 'gini':
+            elif self.objective == "gini":
                 return self._calculate_gini(bins, y)
         except Exception:
             return -np.inf
 
-    def _check_constraints(
-        self,
-        x: pd.Series,
-        y: pd.Series,
-        splits: np.ndarray
-    ) -> bool:
+    def _check_constraints(self, x: pd.Series, y: pd.Series, splits: np.ndarray) -> bool:
         """检查约束条件."""
         if len(splits) == 0:
             return False
 
         bins = pd.cut(x, bins=[-np.inf] + splits.tolist() + [np.inf], labels=False)
-        
+
         # 检查最小样本数
         min_samples = self._get_min_samples(len(x))
         bin_counts = pd.Series(bins).value_counts()
@@ -332,113 +297,106 @@ class GeneticBinning(BaseBinning):
 
         # 检查单调性
         if self.monotonic:
-            bin_stats = pd.DataFrame({'bin': bins, 'target': y}).groupby('bin')['target'].mean()
+            bin_stats = pd.DataFrame({"bin": bins, "target": y}).groupby("bin")["target"].mean()
             bad_rates = bin_stats.values
-            if self.monotonic == 'ascending':
-                if not all(bad_rates[i] <= bad_rates[i+1] + 1e-10 for i in range(len(bad_rates)-1)):
+            if self.monotonic == "ascending":
+                if not all(bad_rates[i] <= bad_rates[i + 1] + 1e-10 for i in range(len(bad_rates) - 1)):
                     return False
-            elif self.monotonic == 'descending':
-                if not all(bad_rates[i] >= bad_rates[i+1] - 1e-10 for i in range(len(bad_rates)-1)):
+            elif self.monotonic == "descending":
+                if not all(bad_rates[i] >= bad_rates[i + 1] - 1e-10 for i in range(len(bad_rates) - 1)):
                     return False
 
         return True
 
     def _calculate_iv(self, bins: pd.Series, y: pd.Series) -> float:
         """计算IV值."""
-        temp_df = pd.DataFrame({'bin': bins, 'target': y})
-        bin_stats = temp_df.groupby('bin')['target'].agg(['sum', 'count'])
-        bin_stats.columns = ['bad', 'total']
-        bin_stats['good'] = bin_stats['total'] - bin_stats['bad']
+        temp_df = pd.DataFrame({"bin": bins, "target": y})
+        bin_stats = temp_df.groupby("bin")["target"].agg(["sum", "count"])
+        bin_stats.columns = ["bad", "total"]
+        bin_stats["good"] = bin_stats["total"] - bin_stats["bad"]
 
-        total_bad = bin_stats['bad'].sum()
-        total_good = bin_stats['good'].sum()
+        total_bad = bin_stats["bad"].sum()
+        total_good = bin_stats["good"].sum()
 
         if total_bad == 0 or total_good == 0:
             return 0
 
         # 计算分布
-        bin_stats['bad_rate'] = bin_stats['bad'] / total_bad
-        bin_stats['good_rate'] = bin_stats['good'] / total_good
+        bin_stats["bad_rate"] = bin_stats["bad"] / total_bad
+        bin_stats["good_rate"] = bin_stats["good"] / total_good
 
         # 平滑处理：将0替换为epsilon，避免log(0)和除零错误
         epsilon = 1e-10
-        bad_rate_smooth = bin_stats['bad_rate'].replace(0, epsilon)
-        good_rate_smooth = bin_stats['good_rate'].replace(0, epsilon)
-        
+        bad_rate_smooth = bin_stats["bad_rate"].replace(0, epsilon)
+        good_rate_smooth = bin_stats["good_rate"].replace(0, epsilon)
+
         # IV公式：(bad_rate - good_rate) * log(bad_rate / good_rate)
         # 该公式理论上总是非负的
-        iv = ((bad_rate_smooth - good_rate_smooth) * 
-              np.log(bad_rate_smooth / good_rate_smooth)).sum()
-        
+        iv = ((bad_rate_smooth - good_rate_smooth) * np.log(bad_rate_smooth / good_rate_smooth)).sum()
+
         return iv
 
     def _calculate_ks(self, bins: pd.Series, y: pd.Series) -> float:
         """计算KS值."""
-        temp_df = pd.DataFrame({'bin': bins, 'target': y}).sort_values('bin')
-        cumsum_bad = temp_df[temp_df['target'] == 1].groupby('bin').size().cumsum()
-        cumsum_good = temp_df[temp_df['target'] == 0].groupby('bin').size().cumsum()
-        
+        temp_df = pd.DataFrame({"bin": bins, "target": y}).sort_values("bin")
+        cumsum_bad = temp_df[temp_df["target"] == 1].groupby("bin").size().cumsum()
+        cumsum_good = temp_df[temp_df["target"] == 0].groupby("bin").size().cumsum()
+
         total_bad = (y == 1).sum()
         total_good = (y == 0).sum()
-        
+
         if total_bad == 0 or total_good == 0:
             return 0
 
         cumsum_bad_rate = cumsum_bad / total_bad
         cumsum_good_rate = cumsum_good / total_good
-        
+
         ks = abs(cumsum_bad_rate - cumsum_good_rate).max()
         return ks
 
     def _calculate_gini(self, bins: pd.Series, y: pd.Series) -> float:
         """计算Gini系数."""
-        temp_df = pd.DataFrame({'bin': bins, 'target': y})
-        bin_bad_rate = temp_df.groupby('bin')['target'].mean()
-        bin_count = temp_df.groupby('bin').size()
-        
+        temp_df = pd.DataFrame({"bin": bins, "target": y})
+        bin_bad_rate = temp_df.groupby("bin")["target"].mean()
+        bin_count = temp_df.groupby("bin").size()
+
         # 按坏样本率排序
         sorted_indices = bin_bad_rate.argsort()
         cumsum_count = bin_count.iloc[sorted_indices].cumsum()
         cumsum_bad = (bin_bad_rate * bin_count).iloc[sorted_indices].cumsum()
-        
+
         total = len(y)
         total_bad = y.sum()
-        
+
         if total == 0 or total_bad == 0:
             return 0
 
         # Lorentz曲线面积（梯形法则，跨 NumPy 版本兼容）
         from ...utils.misc import trapz
+
         area = trapz(cumsum_count / total, cumsum_bad / total_bad)
         gini = 2 * (0.5 - area)
         return gini
 
     def _selection(
-        self,
-        population: List[np.ndarray],
-        fitness_scores: List[float],
-        rng: np.random.RandomState
+        self, population: List[np.ndarray], fitness_scores: List[float], rng: np.random.RandomState
     ) -> List[np.ndarray]:
         """选择操作（锦标赛选择）."""
         selected = []
         tournament_size = 3
-        
+
         for _ in range(len(population)):
             tournament_indices = rng.choice(len(population), tournament_size, replace=False)
             tournament_fitness = [fitness_scores[i] for i in tournament_indices]
             winner_idx = tournament_indices[np.argmax(tournament_fitness)]
             selected.append(population[winner_idx].copy())
-        
+
         return selected
 
-    def _crossover(
-        self,
-        population: List[np.ndarray],
-        rng: np.random.RandomState
-    ) -> List[np.ndarray]:
+    def _crossover(self, population: List[np.ndarray], rng: np.random.RandomState) -> List[np.ndarray]:
         """交叉操作."""
         offspring = []
-        
+
         for i in range(0, len(population), 2):
             parent1 = population[i]
             if i + 1 < len(population):
@@ -456,17 +414,14 @@ class GeneticBinning(BaseBinning):
             else:
                 offspring.extend([parent1.copy(), parent2.copy()])
 
-        return offspring[:len(population)]
+        return offspring[: len(population)]
 
     def _mutation(
-        self,
-        population: List[np.ndarray],
-        candidates: np.ndarray,
-        rng: np.random.RandomState
+        self, population: List[np.ndarray], candidates: np.ndarray, rng: np.random.RandomState
     ) -> List[np.ndarray]:
         """变异操作."""
         mutated = []
-        
+
         for individual in population:
             if rng.random() < self.mutation_rate:
                 # 翻转一个随机位
@@ -478,38 +433,28 @@ class GeneticBinning(BaseBinning):
         return mutated
 
     def _elitism(
-        self,
-        population: List[np.ndarray],
-        best_individual: np.ndarray,
-        fitness_scores: List[float]
+        self, population: List[np.ndarray], best_individual: np.ndarray, fitness_scores: List[float]
     ) -> List[np.ndarray]:
         """精英保留."""
         n_elites = int(self.elitism_rate * self.population_size)
-        
+
         # 选择最优个体
         elite_indices = np.argsort(fitness_scores)[-n_elites:]
         elites = [population[i].copy() for i in elite_indices]
-        
+
         # 替换最差个体
         new_population = population[:-n_elites] if n_elites > 0 else population
-        new_population = elites + new_population[len(elites):]
-        
+        new_population = elites + new_population[len(elites) :]
+
         return new_population
 
-    def _fit_categorical(
-        self,
-        x: pd.Series,
-        y: pd.Series
-    ) -> List:
+    def _fit_categorical(self, x: pd.Series, y: pd.Series) -> List:
         """对类别型特征进行分箱."""
-        cat_stats = pd.DataFrame({
-            'category': x,
-            'target': y
-        }).groupby('category')['target'].agg(['mean', 'count'])
+        cat_stats = pd.DataFrame({"category": x, "target": y}).groupby("category")["target"].agg(["mean", "count"])
 
         min_samples = self._get_min_samples(len(x))
-        cat_stats = cat_stats[cat_stats['count'] >= min_samples]
-        cat_stats = cat_stats.sort_values('mean')
+        cat_stats = cat_stats[cat_stats["count"] >= min_samples]
+        cat_stats = cat_stats.sort_values("mean")
 
         # 限制分箱数
         if len(cat_stats) > self.max_n_bins:
@@ -520,41 +465,40 @@ class GeneticBinning(BaseBinning):
 
         return categories
 
-    def _merge_categories(
-        self,
-        cat_stats: pd.DataFrame
-    ) -> List:
+    def _merge_categories(self, cat_stats: pd.DataFrame) -> List:
         """合并类别以满足分箱数限制."""
         categories = cat_stats.index.tolist()
-        
+
         while len(categories) > self.max_n_bins:
-            bad_rates = cat_stats['mean'].values
-            min_diff = float('inf')
+            bad_rates = cat_stats["mean"].values
+            min_diff = float("inf")
             merge_idx = 0
-            
+
             for i in range(len(bad_rates) - 1):
-                diff = abs(bad_rates[i] - bad_rates[i+1])
+                diff = abs(bad_rates[i] - bad_rates[i + 1])
                 if diff < min_diff:
                     min_diff = diff
                     merge_idx = i
-            
+
             # 合并
             cat1 = categories[merge_idx]
             cat2 = categories[merge_idx + 1]
             merged_cat = f"{cat1},{cat2}"
-            
+
             categories.pop(merge_idx + 1)
             categories[merge_idx] = merged_cat
-            
+
             # 更新统计
-            merged_count = cat_stats.iloc[merge_idx]['count'] + cat_stats.iloc[merge_idx + 1]['count']
-            merged_bad = (cat_stats.iloc[merge_idx]['mean'] * cat_stats.iloc[merge_idx]['count'] +
-                         cat_stats.iloc[merge_idx + 1]['mean'] * cat_stats.iloc[merge_idx + 1]['count'])
+            merged_count = cat_stats.iloc[merge_idx]["count"] + cat_stats.iloc[merge_idx + 1]["count"]
+            merged_bad = (
+                cat_stats.iloc[merge_idx]["mean"] * cat_stats.iloc[merge_idx]["count"]
+                + cat_stats.iloc[merge_idx + 1]["mean"] * cat_stats.iloc[merge_idx + 1]["count"]
+            )
             merged_rate = merged_bad / merged_count
-            
+
             cat_stats = cat_stats.drop([cat1, cat2])
-            cat_stats.loc[merged_cat] = {'mean': merged_rate, 'count': merged_count}
-            cat_stats = cat_stats.sort_values('mean')
+            cat_stats.loc[merged_cat] = {"mean": merged_rate, "count": merged_count}
+            cat_stats = cat_stats.sort_values("mean")
 
         return categories
 
@@ -564,20 +508,16 @@ class GeneticBinning(BaseBinning):
             return int(n_total * self.min_bin_size)
         return int(self.min_bin_size)
 
-    def _apply_bins(
-        self,
-        x: pd.Series,
-        splits: Union[np.ndarray, List]
-    ) -> np.ndarray:
+    def _apply_bins(self, x: pd.Series, splits: Union[np.ndarray, List]) -> np.ndarray:
         """应用分箱."""
         feature = x.name
-        if feature in self._cat_bins_ and self.feature_types_.get(feature) == 'categorical':
+        if feature in self._cat_bins_ and self.feature_types_.get(feature) == "categorical":
             return self._assign_categorical_bins(feature, x)
         if isinstance(splits, list):
             bins = np.zeros(len(x), dtype=int)
             for i, cat in enumerate(splits):
-                if ',' in str(cat):
-                    cats = str(cat).split(',')
+                if "," in str(cat):
+                    cats = str(cat).split(",")
                     for c in cats:
                         bins[x == c] = i
                 else:
@@ -605,15 +545,12 @@ class GeneticBinning(BaseBinning):
             return bins
 
     def transform(
-        self,
-        X: Union[pd.DataFrame, np.ndarray],
-        metric: str = 'indices',
-        **kwargs
+        self, X: Union[pd.DataFrame, np.ndarray], metric: str = "indices", **kwargs
     ) -> Union[pd.DataFrame, np.ndarray]:
         """应用分箱转换.
-        
+
         将原始特征值转换为分箱索引、分箱标签或WOE值。
-        
+
         :param X: 待转换数据, DataFrame或数组格式
         :param metric: 转换类型, 可选值:
             - 'indices': 返回分箱索引 (0, 1, 2, ...), 用于后续处理
@@ -621,14 +558,14 @@ class GeneticBinning(BaseBinning):
             - 'woe': 返回WOE值, 用于逻辑回归建模
         :param kwargs: 其他参数
         :return: 转换后的数据, 格式与输入X相同
-        
+
         :example:
         >>> binner = GeneticBinning()
         >>> binner.fit(X_train, y_train)
-        >>> 
+        >>>
         >>> # 获取分箱索引
         >>> X_binned = binner.transform(X_test, metric='indices')
-        >>> 
+        >>>
         >>> # 获取WOE编码 (用于建模)
         >>> X_woe = binner.transform(X_test, metric='woe')
         """
@@ -648,17 +585,17 @@ class GeneticBinning(BaseBinning):
             splits = self.splits_[feature]
             bins = self._apply_bins(X[feature], splits)
 
-            if metric == 'indices':
+            if metric == "indices":
                 result[feature] = bins
-            elif metric == 'bins':
+            elif metric == "bins":
                 result[feature] = self._assign_bin_labels(feature, bins)
-            elif metric == 'woe':
+            elif metric == "woe":
                 # 优先使用_woe_maps_（从export/load导入）
-                if hasattr(self, '_woe_maps_') and feature in self._woe_maps_:
+                if hasattr(self, "_woe_maps_") and feature in self._woe_maps_:
                     woe_map = self._woe_maps_[feature]
                 elif feature in self.bin_tables_:
                     bin_table = self.bin_tables_[feature]
-                    woe_map = dict(zip(range(len(bin_table)), bin_table['分档WOE值'].values))
+                    woe_map = dict(zip(range(len(bin_table)), bin_table["分档WOE值"].values))
                     self._enrich_woe_map(woe_map, bin_table)
                 else:
                     raise ValueError(f"特征 '{feature}' 没有WOE映射信息")

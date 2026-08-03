@@ -60,7 +60,7 @@ class TreeBinning(BaseBinning):
 
     def __init__(
         self,
-        target: str = 'target',
+        target: str = "target",
         max_depth: int = 5,
         max_leaf_nodes: Optional[int] = None,
         min_samples_leaf: Union[float, int] = 0.05,
@@ -73,8 +73,9 @@ class TreeBinning(BaseBinning):
         monotonic: Union[bool, str] = False,
         special_codes: Optional[List] = None,
         missing_separate: bool = True,
+        cat_cutoff: Optional[Union[float, int]] = None,
         category_order=None,
-        handle_unknown: str = 'value',
+        handle_unknown: str = "value",
         random_state: Optional[int] = None,
         verbose: Union[bool, int] = False,
         decimal: int = 4,
@@ -89,6 +90,7 @@ class TreeBinning(BaseBinning):
             monotonic=monotonic,
             special_codes=special_codes,
             missing_separate=missing_separate,
+            cat_cutoff=cat_cutoff,
             category_order=category_order,
             handle_unknown=handle_unknown,
             random_state=random_state,
@@ -102,11 +104,8 @@ class TreeBinning(BaseBinning):
         self.tree_models_ = {}
 
     def fit(
-        self,
-        X: Union[pd.DataFrame, np.ndarray],
-        y: Optional[Union[pd.Series, np.ndarray]] = None,
-        **kwargs
-    ) -> 'TreeBinning':
+        self, X: Union[pd.DataFrame, np.ndarray], y: Optional[Union[pd.Series, np.ndarray]] = None, **kwargs
+    ) -> "TreeBinning":
         """拟合决策树分箱.
 
         :param X: 训练数据，shape (n_samples, n_features)
@@ -124,12 +123,12 @@ class TreeBinning(BaseBinning):
 
             # 检测特征类型
             if self.force_numerical:
-                feature_type = 'numerical'
+                feature_type = "numerical"
             else:
                 feature_type = self._detect_feature_type(X[feature])
             self.feature_types_[feature] = feature_type
 
-            if feature_type == 'categorical':
+            if feature_type == "categorical":
                 # 类别型特征：按坏样本率排序
                 splits = self._fit_categorical(X[feature], y)
                 self.splits_[feature] = splits
@@ -141,9 +140,7 @@ class TreeBinning(BaseBinning):
 
             # 计算分箱统计信息
             bins = self._apply_bins(X[feature], splits)
-            self.bin_tables_[feature] = self._compute_bin_stats(
-                feature, X[feature], y, bins
-            )
+            self.bin_tables_[feature] = self._compute_bin_stats(feature, X[feature], y, bins)
 
         self._fit_features(X.columns, _fit_one)
 
@@ -152,11 +149,7 @@ class TreeBinning(BaseBinning):
         self._is_fitted = True
         return self
 
-    def _fit_numerical(
-        self,
-        x: pd.Series,
-        y: pd.Series
-    ) -> np.ndarray:
+    def _fit_numerical(self, x: pd.Series, y: pd.Series) -> np.ndarray:
         """对数值型特征进行决策树分箱.
 
         :param x: 特征数据
@@ -195,12 +188,12 @@ class TreeBinning(BaseBinning):
             max_depth=self.max_depth,
             max_leaf_nodes=max_leaf_nodes,
             min_samples_leaf=min_samples_leaf,
-            random_state=self.random_state
+            random_state=self.random_state,
         )
         tree.fit(X_reshaped, y_valid)
 
         # 保存模型
-        self.tree_models_[x.name if hasattr(x, 'name') else 'feature'] = tree
+        self.tree_models_[x.name if hasattr(x, "name") else "feature"] = tree
 
         # 提取切分点
         splits = self._extract_splits_from_tree(tree, x_valid)
@@ -214,11 +207,7 @@ class TreeBinning(BaseBinning):
 
         return splits
 
-    def _extract_splits_from_tree(
-        self,
-        tree: DecisionTreeClassifier,
-        x: pd.Series
-    ) -> np.ndarray:
+    def _extract_splits_from_tree(self, tree: DecisionTreeClassifier, x: pd.Series) -> np.ndarray:
         """从决策树中提取切分点.
 
         :param tree: 决策树模型
@@ -233,6 +222,7 @@ class TreeBinning(BaseBinning):
         def traverse(node_id=0):
             # 使用 _tree.TREE_UNDEFINED 常量
             from sklearn.tree._tree import TREE_UNDEFINED
+
             if tree_.feature[node_id] != TREE_UNDEFINED:
                 # 内部节点
                 threshold = tree_.threshold[node_id]
@@ -248,12 +238,7 @@ class TreeBinning(BaseBinning):
 
         return splits
 
-    def _apply_monotonic_constraint(
-        self,
-        x: pd.Series,
-        y: pd.Series,
-        splits: np.ndarray
-    ) -> np.ndarray:
+    def _apply_monotonic_constraint(self, x: pd.Series, y: pd.Series, splits: np.ndarray) -> np.ndarray:
         """应用单调性约束.
 
         :param x: 特征数据
@@ -267,65 +252,36 @@ class TreeBinning(BaseBinning):
         # 计算每个箱的坏样本率
         bins = pd.cut(x, bins=[-np.inf] + splits.tolist() + [np.inf], labels=False)
 
-        bin_stats = pd.DataFrame({
-            'bin': bins,
-            'target': y
-        }).groupby('bin')['target'].mean()
-        
+        bin_stats = pd.DataFrame({"bin": bins, "target": y}).groupby("bin")["target"].mean()
+
         # 确保所有分箱都在bin_stats中
         bin_stats = self._ensure_all_bins_in_series(bin_stats, len(splits) + 1)
 
         # 检查单调性
-        is_monotonic_increasing = all(
-            bin_stats.iloc[i] <= bin_stats.iloc[i + 1]
-            for i in range(len(bin_stats) - 1)
-        )
-        is_monotonic_decreasing = all(
-            bin_stats.iloc[i] >= bin_stats.iloc[i + 1]
-            for i in range(len(bin_stats) - 1)
-        )
+        is_monotonic_increasing = all(bin_stats.iloc[i] <= bin_stats.iloc[i + 1] for i in range(len(bin_stats) - 1))
+        is_monotonic_decreasing = all(bin_stats.iloc[i] >= bin_stats.iloc[i + 1] for i in range(len(bin_stats) - 1))
 
-        if self.monotonic == 'ascending' and not is_monotonic_increasing:
+        if self.monotonic == "ascending" and not is_monotonic_increasing:
             # 强制递增：合并违反单调性的相邻箱
-            splits = self._merge_for_monotonicity(
-                x, y, splits, increasing=True
-            )
-        elif self.monotonic == 'descending' and not is_monotonic_decreasing:
+            splits = self._merge_for_monotonicity(x, y, splits, increasing=True)
+        elif self.monotonic == "descending" and not is_monotonic_decreasing:
             # 强制递减：合并违反单调性的相邻箱
-            splits = self._merge_for_monotonicity(
-                x, y, splits, increasing=False
-            )
-        elif self.monotonic is True or self.monotonic == 'auto':
+            splits = self._merge_for_monotonicity(x, y, splits, increasing=False)
+        elif self.monotonic is True or self.monotonic == "auto":
             # 自动判断方向
             if not is_monotonic_increasing and not is_monotonic_decreasing:
                 # 既不递增也不递减，选择更接近的方向
-                inc_violations = sum(
-                    1 for i in range(len(bin_stats) - 1)
-                    if bin_stats.iloc[i] > bin_stats.iloc[i + 1]
-                )
-                dec_violations = sum(
-                    1 for i in range(len(bin_stats) - 1)
-                    if bin_stats.iloc[i] < bin_stats.iloc[i + 1]
-                )
+                inc_violations = sum(1 for i in range(len(bin_stats) - 1) if bin_stats.iloc[i] > bin_stats.iloc[i + 1])
+                dec_violations = sum(1 for i in range(len(bin_stats) - 1) if bin_stats.iloc[i] < bin_stats.iloc[i + 1])
 
                 if inc_violations <= dec_violations:
-                    splits = self._merge_for_monotonicity(
-                        x, y, splits, increasing=True
-                    )
+                    splits = self._merge_for_monotonicity(x, y, splits, increasing=True)
                 else:
-                    splits = self._merge_for_monotonicity(
-                        x, y, splits, increasing=False
-                    )
+                    splits = self._merge_for_monotonicity(x, y, splits, increasing=False)
 
         return splits
 
-    def _merge_for_monotonicity(
-        self,
-        x: pd.Series,
-        y: pd.Series,
-        splits: np.ndarray,
-        increasing: bool
-    ) -> np.ndarray:
+    def _merge_for_monotonicity(self, x: pd.Series, y: pd.Series, splits: np.ndarray, increasing: bool) -> np.ndarray:
         """合并箱以满足单调性约束.
 
         :param x: 特征数据
@@ -341,11 +297,8 @@ class TreeBinning(BaseBinning):
         for _ in range(max_iter):
             bins = pd.cut(x, bins=[-np.inf] + splits.tolist() + [np.inf], labels=False)
 
-            bin_stats = pd.DataFrame({
-                'bin': bins,
-                'target': y
-            }).groupby('bin')['target'].mean()
-            
+            bin_stats = pd.DataFrame({"bin": bins, "target": y}).groupby("bin")["target"].mean()
+
             # 确保所有分箱都在bin_stats中
             bin_stats = self._ensure_all_bins_in_series(bin_stats, len(splits) + 1)
 
@@ -373,11 +326,7 @@ class TreeBinning(BaseBinning):
 
         return splits
 
-    def _fit_categorical(
-        self,
-        x: pd.Series,
-        y: pd.Series
-    ) -> np.ndarray:
+    def _fit_categorical(self, x: pd.Series, y: pd.Series) -> np.ndarray:
         """对类别型特征进行分箱.
 
         :param x: 特征数据
@@ -396,27 +345,21 @@ class TreeBinning(BaseBinning):
         y_valid = y[mask]
 
         # 计算每个类别的坏样本率
-        cat_stats = pd.DataFrame({
-            'category': x_valid,
-            'target': y_valid
-        }).groupby('category')['target'].agg(['mean', 'count'])
+        cat_stats = (
+            pd.DataFrame({"category": x_valid, "target": y_valid}).groupby("category")["target"].agg(["mean", "count"])
+        )
 
         # 过滤掉样本数过少的类别
         min_samples = self._get_min_samples(len(x_valid))
-        cat_stats = cat_stats[cat_stats['count'] >= min_samples]
+        cat_stats = cat_stats[cat_stats["count"] >= min_samples]
 
         # 按坏样本率排序
-        cat_stats = cat_stats.sort_values('mean')
+        cat_stats = cat_stats.sort_values("mean")
 
         # 如果要求单调性，类别型特征已经按坏样本率排序
         return cat_stats.index.tolist()
 
-    def _adjust_bins(
-        self,
-        x: pd.Series,
-        y: pd.Series,
-        splits: np.ndarray
-    ) -> np.ndarray:
+    def _adjust_bins(self, x: pd.Series, y: pd.Series, splits: np.ndarray) -> np.ndarray:
         """根据约束条件调整分箱.
 
         :param x: 特征数据
@@ -474,13 +417,9 @@ class TreeBinning(BaseBinning):
 
         return splits
 
-    def _ensure_all_bins_in_series(
-        self,
-        bin_stats: pd.Series,
-        n_bins: int
-    ) -> pd.Series:
+    def _ensure_all_bins_in_series(self, bin_stats: pd.Series, n_bins: int) -> pd.Series:
         """确保bin_stats包含所有分箱（即使某些分箱为空）.
-        
+
         :param bin_stats: 分箱统计Series (索引为bin标签)
         :param n_bins: 分箱数量
         :return: 补全后的分箱统计Series
@@ -489,7 +428,7 @@ class TreeBinning(BaseBinning):
         for bin_idx in expected_bins:
             if bin_idx not in bin_stats.index:
                 bin_stats[bin_idx] = 0.0
-        
+
         return bin_stats.sort_index()
 
     def _get_min_samples(self, n_total: int) -> int:
@@ -502,11 +441,7 @@ class TreeBinning(BaseBinning):
             return int(n_total * self.min_bin_size)
         return int(self.min_bin_size)
 
-    def _apply_bins(
-        self,
-        x: pd.Series,
-        splits: Union[np.ndarray, List]
-    ) -> np.ndarray:
+    def _apply_bins(self, x: pd.Series, splits: Union[np.ndarray, List]) -> np.ndarray:
         """应用分箱.
 
         :param x: 特征数据
@@ -514,7 +449,7 @@ class TreeBinning(BaseBinning):
         :return: 分箱索引
         """
         feature = x.name
-        if feature in self._cat_bins_ and self.feature_types_.get(feature) == 'categorical':
+        if feature in self._cat_bins_ and self.feature_types_.get(feature) == "categorical":
             return self._assign_categorical_bins(feature, x)
         if isinstance(splits, list):
             # 类别型特征
@@ -547,15 +482,12 @@ class TreeBinning(BaseBinning):
             return bins
 
     def transform(
-        self,
-        X: Union[pd.DataFrame, np.ndarray],
-        metric: str = 'indices',
-        **kwargs
+        self, X: Union[pd.DataFrame, np.ndarray], metric: str = "indices", **kwargs
     ) -> Union[pd.DataFrame, np.ndarray]:
         """应用分箱转换.
-        
+
         将原始特征值转换为分箱索引、分箱标签或WOE值。
-        
+
         :param X: 待转换数据, DataFrame或数组格式
         :param metric: 转换类型, 可选值:
             - 'indices': 返回分箱索引 (0, 1, 2, ...), 用于后续处理
@@ -563,14 +495,14 @@ class TreeBinning(BaseBinning):
             - 'woe': 返回WOE值, 用于逻辑回归建模
         :param kwargs: 其他参数
         :return: 转换后的数据, 格式与输入X相同
-        
+
         :example:
         >>> binner = TreeBinning()
         >>> binner.fit(X_train, y_train)
-        >>> 
+        >>>
         >>> # 获取分箱索引
         >>> X_binned = binner.transform(X_test, metric='indices')
-        >>> 
+        >>>
         >>> # 获取WOE编码 (用于建模)
         >>> X_woe = binner.transform(X_test, metric='woe')
         """
@@ -580,7 +512,7 @@ class TreeBinning(BaseBinning):
         if not isinstance(X, pd.DataFrame):
             if isinstance(X, np.ndarray):
                 if X.ndim == 1:
-                    X = pd.DataFrame(X, columns=['feature'])
+                    X = pd.DataFrame(X, columns=["feature"])
                 else:
                     X = pd.DataFrame(X)
             else:
@@ -595,17 +527,17 @@ class TreeBinning(BaseBinning):
             splits = self.splits_[feature]
             bins = self._apply_bins(X[feature], splits)
 
-            if metric == 'indices':
+            if metric == "indices":
                 result[feature] = bins
-            elif metric == 'bins':
+            elif metric == "bins":
                 result[feature] = self._assign_bin_labels(feature, bins)
-            elif metric == 'woe':
+            elif metric == "woe":
                 # 优先使用_woe_maps_（从export/load导入）
-                if hasattr(self, '_woe_maps_') and feature in self._woe_maps_:
+                if hasattr(self, "_woe_maps_") and feature in self._woe_maps_:
                     woe_map = self._woe_maps_[feature]
                 elif feature in self.bin_tables_:
                     bin_table = self.bin_tables_[feature]
-                    woe_map = dict(zip(range(len(bin_table)), bin_table['分档WOE值'].values))
+                    woe_map = dict(zip(range(len(bin_table)), bin_table["分档WOE值"].values))
                     self._enrich_woe_map(woe_map, bin_table)
                 else:
                     raise ValueError(f"特征 '{feature}' 没有WOE映射信息")
@@ -616,7 +548,7 @@ class TreeBinning(BaseBinning):
         return result
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     # 测试代码
     np.random.seed(42)
     n_samples = 1000
@@ -628,14 +560,10 @@ if __name__ == '__main__':
     y_prob = 1 / (1 + np.exp(-(x1 * 0.5 + x2 * 0.02 - 2)))
     y = pd.Series(np.random.binomial(1, y_prob, n_samples))
 
-    X = pd.DataFrame({
-        'feature1': x1,
-        'feature2': x2,
-        'feature3': np.random.choice(['A', 'B', 'C', 'D'], n_samples)
-    })
+    X = pd.DataFrame({"feature1": x1, "feature2": x2, "feature3": np.random.choice(["A", "B", "C", "D"], n_samples)})
 
     # 添加一些缺失值
-    X.loc[np.random.choice(n_samples, 50, replace=False), 'feature1'] = np.nan
+    X.loc[np.random.choice(n_samples, 50, replace=False), "feature1"] = np.nan
 
     print("=" * 50)
     print("决策树分箱测试")
@@ -646,29 +574,29 @@ if __name__ == '__main__':
     binner1 = TreeBinning(max_depth=5, verbose=True)
     binner1.fit(X, y)
     print("\n分箱统计表 (feature1):")
-    print(binner1.get_bin_table('feature1'))
+    print(binner1.get_bin_table("feature1"))
 
     # 测试单调递增
     print("\n2. 单调递增约束:")
-    binner2 = TreeBinning(max_depth=5, monotonic='ascending', verbose=True)
+    binner2 = TreeBinning(max_depth=5, monotonic="ascending", verbose=True)
     binner2.fit(X, y)
     print("\n分箱统计表 (feature1):")
-    print(binner2.get_bin_table('feature1'))
+    print(binner2.get_bin_table("feature1"))
 
     # 测试单调递减
     print("\n3. 单调递减约束:")
-    binner3 = TreeBinning(max_depth=5, monotonic='descending', verbose=True)
+    binner3 = TreeBinning(max_depth=5, monotonic="descending", verbose=True)
     binner3.fit(X, y)
     print("\n分箱统计表 (feature1):")
-    print(binner3.get_bin_table('feature1'))
+    print(binner3.get_bin_table("feature1"))
 
     # 转换测试
     print("\n4. 转换测试:")
-    X_binned = binner2.transform(X, metric='indices')
+    X_binned = binner2.transform(X, metric="indices")
     print("\n分箱索引:")
     print(X_binned.head())
 
-    X_woe = binner2.transform(X, metric='woe')
+    X_woe = binner2.transform(X, metric="woe")
     print("\nWOE值:")
     print(X_woe.head())
 
