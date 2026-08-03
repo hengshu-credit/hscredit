@@ -15,8 +15,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from hscredit.core.binning import OptimalBinning
-from hscredit.core.binning.or_binning import ORTOOLS_AVAILABLE
+from hscredit.core.binning import OptimalBinning  # noqa: E402
+from hscredit.core.binning.or_binning import ORTOOLS_AVAILABLE  # noqa: E402
 
 
 METHODS = [
@@ -174,6 +174,13 @@ def main() -> int:
         default=Path("examples/hscredit_hsk.xlsx"),
         help="待验证的工作簿路径",
     )
+    parser.add_argument(
+        "--methods",
+        nargs="+",
+        choices=METHODS,
+        default=METHODS,
+        help="仅运行指定方法，默认运行全部方法",
+    )
     args = parser.parse_args()
 
     df = pd.read_excel(args.workbook)
@@ -190,7 +197,7 @@ def main() -> int:
 
     passed = 0
     skipped = 0
-    for method in METHODS:
+    for method in args.methods:
         if method in {"or_tools", "cp_sat"} and not ORTOOLS_AVAILABLE:
             skipped += 1
             print(f"{method:16s} 跳过：未安装 OR-Tools")

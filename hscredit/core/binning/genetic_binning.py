@@ -169,6 +169,8 @@ class GeneticBinning(BaseBinning):
         # 生成候选切分点（分位数）
         candidate_splits = self._generate_candidates(x_valid)
 
+        if len(candidate_splits) == 0:
+            return np.array([])
         if len(candidate_splits) < self.min_n_bins - 1:
             return np.array([])
 
@@ -405,7 +407,7 @@ class GeneticBinning(BaseBinning):
                 offspring.append(parent1.copy())
                 continue
 
-            if rng.random() < self.crossover_rate:
+            if len(parent1) > 1 and len(parent1) == len(parent2) and rng.random() < self.crossover_rate:
                 # 单点交叉
                 crossover_point = rng.randint(1, len(parent1))
                 child1 = np.concatenate([parent1[:crossover_point], parent2[crossover_point:]])
