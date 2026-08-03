@@ -21,6 +21,7 @@
 """
 
 import ast
+import os
 import re
 from enum import Enum
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Union
@@ -768,17 +769,21 @@ class Rule:
         return table
 
     @staticmethod
-    def save(report: pd.DataFrame, excel_writer: Union[str, "ExcelWriter"], sheet_name: str = None,
-             excel_params: dict = None) -> "ExcelWriter":
+    def save(
+        report: pd.DataFrame,
+        excel_writer: Union[str, os.PathLike, "ExcelWriter"],
+        sheet_name: Optional[str] = None,
+        excel_params: Optional[Dict] = None,
+    ) -> "ExcelWriter":
         """保存规则报告到 Excel。
 
         **参数**
 
         :param report: 规则报告 DataFrame（由 report() 方法生成）
-        :param excel_writer: Excel 文件路径（字符串）或 ExcelWriter 对象；
+        :param excel_writer: Excel 文件路径（字符串或 PathLike）或 ExcelWriter 对象；
             传入路径时会自动创建并写入后关闭，传入对象时追加写入不关闭
         :param sheet_name: 工作表名称，默认为None（使用默认名称Sheet1）
-        :param excel_params: 额外的 pandas to_excel 写入参数（可选）
+        :param excel_params: 额外的 dataframe2excel 写入参数（可选）
         :return: ExcelWriter 对象
         :raises TypeError: excel_writer 类型不正确时
 
@@ -791,19 +796,29 @@ class Rule:
         >>> report = rule.report(df)
         >>> writer = Rule.save(report, "rule_report.xlsx", sheet_name="规则报告")
         """
-        from ..report import ExcelWriter
+        from ...excel import ExcelWriter, dataframe2excel
 
-        if isinstance(excel_writer, str):
-            writer = ExcelWriter(excel_writer)
-        elif isinstance(excel_writer, ExcelWriter):
+        params = dict(excel_params or {})
+        params.pop("data", None)
+        params.pop("excel_writer", None)
+        params.pop("sheet_name", None)
+        writer_params = dict(params.pop("writer_params", {}) or {})
+
+        if isinstance(excel_writer, ExcelWriter):
             writer = excel_writer
+            output_path = None
+        elif isinstance(excel_writer, (str, os.PathLike)):
+            writer_params.setdefault("theme_color", params.get("theme_color", "2639E9"))
+            writer_params.setdefault("mode", params.get("mode", "replace"))
+            writer = ExcelWriter(**writer_params)
+            output_path = os.fspath(excel_writer)
         else:
-            raise TypeError(f"excel_writer 必须是 str 或 ExcelWriter 对象")
+            raise TypeError("excel_writer 必须是路径或 ExcelWriter 对象")
 
-        writer.add_dataframe(report, sheet_name=sheet_name)
+        dataframe2excel(report, writer, sheet_name=sheet_name, **params)
 
-        if isinstance(excel_writer, str):
-            writer.close()
+        if output_path is not None:
+            writer.save(output_path)
 
         return writer
 
