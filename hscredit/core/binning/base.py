@@ -398,6 +398,8 @@ class BaseBinning(ArtifactSerializableMixin, BaseEstimator, TransformerMixin, AB
                 numeric_splits,
                 BaseBinning._get_min_samples(self, len(y)),
                 BaseBinning._get_max_samples(self, len(y)),
+                allow_empty_splits=True,
+                allow_boundary_relocation=True,
             )
             numeric_splits = self._round_splits(numeric_splits)
             self.splits_[feature] = numeric_splits
@@ -917,9 +919,20 @@ class BaseBinning(ArtifactSerializableMixin, BaseEstimator, TransformerMixin, AB
         return None
 
     def _adjust_splits_for_bin_size_constraints(
-        self, x: pd.Series, y: pd.Series, splits: Union[np.ndarray, list], min_samples: int, max_samples: Optional[int]
+        self,
+        x: pd.Series,
+        y: pd.Series,
+        splits: Union[np.ndarray, list],
+        min_samples: int,
+        max_samples: Optional[int],
+        *,
+        allow_empty_splits: bool = False,
+        allow_boundary_relocation: bool = False,
     ) -> np.ndarray:
         """调整切分点以满足最小/最大样本量约束。"""
+        if (splits is None or len(splits) == 0) and not allow_empty_splits:
+            return np.array([])
+
         current = (
             np.array([], dtype=float) if splits is None else np.unique(np.sort(np.asarray(splits, dtype=float)))
         )
@@ -949,7 +962,7 @@ class BaseBinning(ArtifactSerializableMixin, BaseEstimator, TransformerMixin, AB
 
             if len(small_bins) > 0:
                 merge_bin = int(small_bins[np.argmin(counts[small_bins])])
-                relocate_boundary = len(current) <= min_splits_allowed
+                relocate_boundary = allow_boundary_relocation and len(current) <= min_splits_allowed
                 split_idx = self._choose_merge_split_index(
                     counts,
                     bad_counts,

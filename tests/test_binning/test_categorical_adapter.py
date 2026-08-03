@@ -368,3 +368,37 @@ def test_category_max_bin_size_splits_empty_initial_rule_when_feasible():
     ordinary = binner.get_bin_table("category").query("分箱 >= 0")
 
     assert ordinary["样本总数"].tolist() == [50, 50]
+
+
+def test_categorical_repair_does_not_expand_empty_numeric_splits():
+    """类别约束修复不能改变数值算法保留单箱的既有行为。"""
+    X = pd.DataFrame({"value": [0.0] * 50 + [1.0] * 50})
+    y = pd.Series(([0, 1] * 25) + ([0, 1] * 25), name="target")
+
+    binner = OptimalBinning(
+        method="mdlp",
+        min_n_bins=1,
+        max_n_bins=2,
+        max_bin_size=0.60,
+        lift_refine=False,
+    ).fit(X, y)
+    ordinary = binner.get_bin_table("value").query("分箱 >= 0")
+
+    assert ordinary["样本总数"].tolist() == [100]
+
+
+def test_categorical_repair_does_not_relocate_numeric_boundary():
+    """类别边界重定位不能改写数值算法在 min_n_bins 下的既有边界。"""
+    X = pd.DataFrame({"value": [0.0] + [1.0] * 49 + [2.0] * 50})
+    y = pd.Series([0] * 50 + [1] * 50, name="target")
+
+    binner = OptimalBinning(
+        method="uniform",
+        min_n_bins=2,
+        max_n_bins=2,
+        min_bin_size=0.40,
+        lift_refine=False,
+    ).fit(X, y)
+    ordinary = binner.get_bin_table("value").query("分箱 >= 0")
+
+    assert ordinary["样本总数"].tolist() == [1, 99]
