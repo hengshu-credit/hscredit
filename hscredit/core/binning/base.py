@@ -390,9 +390,19 @@ class BaseBinning(ArtifactSerializableMixin, BaseEstimator, TransformerMixin, AB
         for feature, original in self._categorical_fit_context_.items():
             numeric_splits = np.asarray(self.splits_.get(feature, np.array([])), dtype=float)
             numeric_splits = self._ensure_categorical_minimum_bins(feature, original, y, numeric_splits)
+            order = self._category_orders_.get(feature, [])
+            encoded = encode_ordered_categories(original, order, self.special_codes)
+            numeric_splits = self._adjust_splits_for_bin_size_constraints(
+                encoded,
+                y,
+                numeric_splits,
+                BaseBinning._get_min_samples(self, len(y)),
+                BaseBinning._get_max_samples(self, len(y)),
+            )
+            numeric_splits = self._round_splits(numeric_splits)
             self.splits_[feature] = numeric_splits
             self._categorical_numeric_splits_[feature] = numeric_splits.copy()
-            groups = restore_category_groups(self._category_orders_[feature], numeric_splits)
+            groups = restore_category_groups(order, numeric_splits)
             self._cat_bins_[feature] = groups
             self.splits_[feature] = groups
             self.n_bins_[feature] = len(groups)
