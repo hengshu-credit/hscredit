@@ -18,6 +18,7 @@ import warnings
 
 from ...exceptions import NotFittedError
 from .base import BaseBinning
+from ._categorical import CategoryOrder
 from .uniform_binning import UniformBinning
 from .quantile_binning import QuantileBinning
 from .tree_binning import TreeBinning
@@ -190,6 +191,8 @@ class OptimalBinning(BaseBinning):
         prebinning_params: Optional[Dict] = None,
         special_codes: Optional[List] = None,
         cat_cutoff: Optional[Union[float, int]] = None,
+        category_order: CategoryOrder = None,
+        handle_unknown: str = 'value',
         random_state: Optional[int] = None,
         verbose: Union[bool, int] = False,
         decimal: int = 4,
@@ -217,6 +220,8 @@ class OptimalBinning(BaseBinning):
             monotonic=monotonic,
             special_codes=special_codes,
             cat_cutoff=cat_cutoff,
+            category_order=category_order,
+            handle_unknown=handle_unknown,
             random_state=random_state,
             verbose=verbose,
             decimal=decimal,
@@ -270,6 +275,7 @@ class OptimalBinning(BaseBinning):
         :return: 拟合后的分箱器
         """
         X, y = self._check_input(X, y)
+        self._record_category_orders(X, y)
 
         # 如果已经拟合过（例如通过import_rules），只计算统计信息
         if self._is_fitted:
@@ -1191,6 +1197,8 @@ class OptimalBinning(BaseBinning):
         if self.method == 'uniform':
             uniform_params = target_params.copy()
             uniform_params.setdefault('force_numerical', False)
+            uniform_params['category_order'] = self.category_order
+            uniform_params['handle_unknown'] = self.handle_unknown
             self._binner = UniformBinning(**uniform_params)
         elif self.method == 'quantile':
             quantile_params = target_params.copy()
