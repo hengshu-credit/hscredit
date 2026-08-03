@@ -5,6 +5,7 @@
 """
 
 from importlib import metadata, util
+from functools import wraps
 from typing import Optional
 
 from packaging.version import Version
@@ -55,6 +56,32 @@ def needs_seaborn_pandas_compat(
         and pandas_version is not None
         and pandas_version >= Version("2.0.0")
     )
+
+
+def _wrap_lightgbm_validation_keyword(func):
+    """把旧 LightGBM 校验参数名转换为 scikit-learn 1.8 的新名称。"""
+    if getattr(func, "_hscredit_finite_compat", False):
+        return func
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        if "force_all_finite" in kwargs:
+            kwargs.setdefault("ensure_all_finite", kwargs.pop("force_all_finite"))
+        return func(*args, **kwargs)
+
+    wrapper._hscredit_finite_compat = True
+    return wrapper
+
+
+def install_lightgbm_sklearn_compat(lightgbm_module, lightgbm_version, sklearn_version) -> None:
+    """按明确版本矩阵适配 LightGBM 内部 scikit-learn 校验调用。"""
+    if not needs_lightgbm_sklearn_compat(lightgbm_version, sklearn_version):
+        return
+
+    for module in (lightgbm_module.compat, lightgbm_module.sklearn):
+        for attribute in ("_LGBMCheckXY", "_LGBMCheckArray"):
+            checker = getattr(module, attribute)
+            setattr(module, attribute, _wrap_lightgbm_validation_keyword(checker))
 
 
 def _install_pandas_string_methods_alias() -> None:
