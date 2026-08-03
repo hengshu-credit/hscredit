@@ -374,6 +374,32 @@ def test_category_min_bin_size_can_reuse_boundary_in_another_bin():
     assert len(ordinary) == 3
 
 
+def test_category_min_bin_size_finds_feasible_multi_boundary_relocation():
+    """可行解需要连续移动多个边界时，也应找到满足约束的有序分区。"""
+    category_counts = [2, 8, 2, 11, 13, 9, 3, 7, 19]
+    category_order = [f"C{index}" for index in range(len(category_counts))]
+    categories = [
+        category
+        for category, count in zip(category_order, category_counts)
+        for _ in range(count)
+    ]
+    X = pd.DataFrame({"category": categories})
+    y = pd.Series(([0, 1] * 37), name="target")
+
+    binner = UniformBinning(
+        min_n_bins=4,
+        max_n_bins=4,
+        min_bin_size=12,
+        max_bin_size=26,
+        category_order={"category": category_order},
+    ).fit(X, y)
+    ordinary = binner.get_bin_table("category").query("分箱 >= 0")
+
+    assert ordinary["样本总数"].min() >= 12
+    assert ordinary["样本总数"].max() <= 26
+    assert len(ordinary) == 4
+
+
 def test_category_max_bin_size_splits_empty_initial_rule_when_feasible():
     """原生算法返回单箱时，仍应为可行的 max_bin_size 约束补充分界。"""
     X = pd.DataFrame({"category": ["A"] * 50 + ["B"] * 50})

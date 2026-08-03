@@ -11,6 +11,7 @@
 """
 
 from abc import ABC, abstractmethod
+from collections import deque
 from typing import Union, List, Dict, Optional, Any, Tuple
 import numpy as np
 import pandas as pd
@@ -917,66 +918,125 @@ class BaseBinning(ArtifactSerializableMixin, BaseEstimator, TransformerMixin, AB
             return float((left_value + right_value) / 2.0)
         return None
 
-    @staticmethod
-    def _bin_size_constraint_score(
-        counts: np.ndarray,
-        min_samples: int,
-        max_samples: Optional[int],
-    ) -> Tuple[int, int]:
-        """按违例箱数和违例样本量评价分箱样本量约束。"""
-        deficits = np.maximum(min_samples - counts, 0)
-        excesses = np.zeros_like(counts) if max_samples is None else np.maximum(counts - max_samples, 0)
-        return (
-            int(np.count_nonzero(deficits) + np.count_nonzero(excesses)),
-            int(deficits.sum() + excesses.sum()),
-        )
-
-    def _find_relocated_split_for_bin_size_constraints(
+    def _find_feasible_categorical_size_splits(
         self,
         x: pd.Series,
         current: np.ndarray,
         min_samples: int,
         max_samples: Optional[int],
     ) -> Optional[np.ndarray]:
-        """在保持箱数不变时，全局搜索一次删边界和补边界操作。"""
-        if len(current) == 0:
+        """为有序类别原子组搜索满足样本量约束的连续分区。"""
+        values, atomic_counts = np.unique(x.to_numpy(dtype=float), return_counts=True)
+        n_categories = len(values)
+        if n_categories == 0:
+            return current
+
+        min_bins = min(max(1, self.min_n_bins), n_categories)
+        max_bins = min(max(1, self.max_n_bins), n_categories)
+        if min_bins > max_bins:
             return None
 
-        current_bins = np.digitize(x, current)
+        current_bins = np.digitize(x, current) if len(current) > 0 else np.zeros(len(x), dtype=int)
         current_counts = np.bincount(current_bins, minlength=len(current) + 1).astype(int)
-        current_score = self._bin_size_constraint_score(current_counts, min_samples, max_samples)
+        current_is_feasible = (
+            min_bins <= len(current_counts) <= max_bins
+            and np.all(current_counts >= min_samples)
+            and (max_samples is None or np.all(current_counts <= max_samples))
+        )
+        if current_is_feasible:
+            return current
+
+        prefix_counts = np.concatenate(([0], np.cumsum(atomic_counts, dtype=int)))
+        total_samples = int(prefix_counts[-1])
+        current_positions = tuple(
+            sorted(
+                {
+                    int(np.searchsorted(values, split, side="right"))
+                    for split in current
+                    if values[0] < split < values[-1]
+                }
+            )
+        )
+        current_position_set = set(current_positions)
+        preferred_bins = len(current_positions) + 1
+        movement_costs = {
+            index: (
+                float(min(abs(index - position) for position in current_positions))
+                if current_positions
+                else 0.0
+            )
+            for index in range(1, n_categories)
+        }
         best_key = None
-        best_candidate = None
+        best_cuts = None
 
-        for removed_index, removed_split in enumerate(current):
-            reduced = np.delete(current, removed_index)
-            reduced_bins = np.digitize(x, reduced) if len(reduced) > 0 else np.zeros(len(x), dtype=int)
-            for bin_index in range(len(reduced) + 1):
-                replacement = self._choose_split_point_within_bin(x, reduced_bins, bin_index, min_samples)
-                if replacement is None or not np.isfinite(replacement):
-                    continue
+        states = {0: ((0, 0.0), tuple())}
+        for n_bins in range(1, max_bins + 1):
+            next_states = {}
+            window = deque()
+            next_start = 0
 
-                candidate = np.unique(np.sort(np.append(reduced, replacement)))
-                if len(candidate) != len(current) or np.array_equal(candidate, current):
-                    continue
-
-                candidate_bins = np.digitize(x, candidate)
-                candidate_counts = np.bincount(candidate_bins, minlength=len(candidate) + 1).astype(int)
-                candidate_score = self._bin_size_constraint_score(candidate_counts, min_samples, max_samples)
-                if candidate_score >= current_score:
-                    continue
-
-                candidate_key = (
-                    candidate_score,
-                    abs(float(replacement) - float(removed_split)),
-                    removed_index,
-                    bin_index,
+            for end in range(1, n_categories + 1):
+                max_prefix = int(prefix_counts[end] - min_samples)
+                last_start = min(
+                    end - 1,
+                    int(np.searchsorted(prefix_counts, max_prefix, side="right")) - 1,
                 )
-                if best_key is None or candidate_key < best_key:
-                    best_key = candidate_key
-                    best_candidate = candidate
+                while next_start <= last_start:
+                    previous = states.get(next_start)
+                    if previous is not None:
+                        while window and previous < window[-1][0]:
+                            window.pop()
+                        window.append((previous, next_start))
+                    next_start += 1
 
-        return best_candidate
+                first_start = 0
+                if max_samples is not None:
+                    min_prefix = int(prefix_counts[end] - max_samples)
+                    first_start = int(np.searchsorted(prefix_counts, min_prefix, side="left"))
+                while window and window[0][1] < first_start:
+                    window.popleft()
+                if not window:
+                    continue
+
+                cost, cuts = window[0][0]
+                if end < n_categories:
+                    is_new_boundary = int(end not in current_position_set)
+                    cost = (cost[0] + is_new_boundary, cost[1] + movement_costs[end])
+                    cuts = cuts + (end,)
+                next_states[end] = (cost, cuts)
+
+            states = next_states
+            if not states:
+                break
+            if n_bins < min_bins:
+                continue
+
+            solution = states.get(n_categories)
+            if solution is None:
+                continue
+
+            cost, cuts = solution
+            shared_boundaries = (n_bins - 1) - cost[0]
+            boundary_changes = len(current_positions) + (n_bins - 1) - 2 * shared_boundaries
+            balance = sum(
+                abs(float(prefix_counts[index]) - total_samples * position / n_bins)
+                for position, index in enumerate(cuts, start=1)
+            )
+            candidate_key = (
+                abs(n_bins - preferred_bins),
+                boundary_changes,
+                cost[1],
+                balance,
+                cuts,
+            )
+            if best_key is None or candidate_key < best_key:
+                best_key = candidate_key
+                best_cuts = cuts
+
+        if best_cuts is None:
+            return None
+        return np.asarray([(values[index - 1] + values[index]) / 2.0 for index in best_cuts], dtype=float)
 
     def _adjust_splits_for_bin_size_constraints(
         self,
@@ -1007,6 +1067,15 @@ class BaseBinning(ArtifactSerializableMixin, BaseEstimator, TransformerMixin, AB
         if len(x_valid) == 0:
             return current
 
+        if allow_boundary_relocation:
+            feasible = self._find_feasible_categorical_size_splits(
+                x_valid,
+                current,
+                min_samples,
+                max_samples,
+            )
+            return current if feasible is None else feasible
+
         max_splits_allowed = max(0, self.max_n_bins - 1)
 
         for _ in range(200):
@@ -1034,17 +1103,6 @@ class BaseBinning(ArtifactSerializableMixin, BaseEstimator, TransformerMixin, AB
                 new_split = self._choose_split_point_within_bin(x_valid, bins, split_bin, min_samples)
                 if new_split is not None and np.isfinite(new_split):
                     current = np.unique(np.sort(np.append(current, new_split)))
-                    changed = True
-
-            if not changed and allow_boundary_relocation and (len(small_bins) > 0 or len(large_bins) > 0):
-                relocated = self._find_relocated_split_for_bin_size_constraints(
-                    x_valid,
-                    current,
-                    min_samples,
-                    max_samples,
-                )
-                if relocated is not None:
-                    current = relocated
                     changed = True
 
             if not changed:
