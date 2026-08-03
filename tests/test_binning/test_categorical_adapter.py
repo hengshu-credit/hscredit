@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from hscredit.core.binning import OptimalBinning, UniformBinning
+from hscredit.core.binning import OptimalBinning, TreeBinning, UniformBinning
 
 
 def test_default_category_order_uses_bad_rate_and_first_seen_ties():
@@ -241,3 +241,13 @@ def test_category_min_bin_size_and_min_bad_rate_are_enforced():
 
     assert ordinary["样本总数"].min() >= 15
     assert ordinary["坏样本率"].min() >= 0.15 - 1e-12
+
+
+def test_tree_binning_sparse_category_never_uses_zero_min_samples_leaf():
+    """防止极稀疏类别把比例型 min_samples_leaf 向下取整为 0。"""
+    X = pd.DataFrame({"category": ["A", np.nan, np.nan, np.nan]})
+    y = pd.Series([1, 0, 1, 0], name="target")
+
+    binner = TreeBinning(min_n_bins=1, max_n_bins=2, min_samples_leaf=0.05).fit(X, y)
+
+    assert binner.export_rules()["category"] == [["A"]]

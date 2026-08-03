@@ -172,7 +172,7 @@ class TreeBinning(BaseBinning):
 
         # 计算最小样本数
         if self.min_samples_leaf < 1:
-            min_samples_leaf = int(len(x_valid) * self.min_samples_leaf)
+            min_samples_leaf = max(1, int(len(x_valid) * self.min_samples_leaf))
         else:
             min_samples_leaf = int(self.min_samples_leaf)
 
