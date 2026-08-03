@@ -1,5 +1,6 @@
 """Excel写入模块测试."""
 
+import inspect
 import os
 import re
 import tempfile
@@ -568,20 +569,20 @@ class TestDataframe2Excel:
         assert end_row > 0
         assert end_col > 0
 
-    @pytest.mark.parametrize('fast', [False, True])
-    def test_decimal_none_preserves_float_precision(self, fast):
+    @pytest.mark.parametrize('speed', ['normal', 'fast'])
+    def test_decimal_none_preserves_float_precision(self, speed):
         """decimal=None 时不得主动截断 DataFrame 浮点值。"""
         value = 1.234567890123
 
-        dataframe2excel(pd.DataFrame({'值': [value]}), self.test_file, decimal=None, fast=fast)
+        dataframe2excel(pd.DataFrame({'值': [value]}), self.test_file, decimal=None, speed=speed)
 
         loaded_wb = load_workbook(self.test_file, data_only=False)
         assert loaded_wb.active['B3'].value == value
 
-    @pytest.mark.parametrize('fast', [False, True])
-    def test_decimal_controls_float_precision(self, fast):
+    @pytest.mark.parametrize('speed', ['normal', 'fast'])
+    def test_decimal_controls_float_precision(self, speed):
         """decimal 应与 ScoreCard 一样表示保留的小数位数。"""
-        dataframe2excel(pd.DataFrame({'值': [1.2356]}), self.test_file, decimal=2, fast=fast)
+        dataframe2excel(pd.DataFrame({'值': [1.2356]}), self.test_file, decimal=2, speed=speed)
 
         loaded_wb = load_workbook(self.test_file, data_only=False)
         assert loaded_wb.active['B3'].value == 1.24
@@ -592,6 +593,61 @@ class TestDataframe2Excel:
         with pytest.raises(ValueError, match='decimal 必须是大于等于 0 的整数或 None'):
             dataframe2excel(pd.DataFrame({'值': [1.2345]}), self.test_file, decimal=decimal)
 
+    def test_dataframe2excel_speed_defaults_to_auto_and_replaces_fast(self):
+        """公开 API 应只保留默认 auto 的 speed 参数。"""
+        function_params = inspect.signature(dataframe2excel).parameters
+        method_params = inspect.signature(ExcelWriter.insert_df2sheet).parameters
+
+        assert function_params['speed'].default == 'auto'
+        assert method_params['speed'].default == 'auto'
+        assert 'fast' not in function_params
+        assert 'fast' not in method_params
+
+    @pytest.mark.parametrize(
+        'rows, cols, index, expected',
+        [
+            (499, 1, False, 'normal'),
+            (500, 1, False, 'fast'),
+            (1, 49, False, 'normal'),
+            (1, 50, False, 'fast'),
+            (399, 25, False, 'normal'),
+            (400, 25, False, 'fast'),
+            (1, 49, True, 'fast'),
+        ],
+    )
+    def test_auto_speed_uses_rows_effective_columns_and_cells(self, rows, cols, index, expected):
+        """auto 应在三个公开边界上选择确定的写入路径。"""
+        data = pd.DataFrame(np.zeros((rows, cols)))
+
+        assert ExcelWriter._resolve_write_speed(data, 'auto', index=index) == expected
+
+    def test_explicit_speed_overrides_auto_and_normalizes_text(self):
+        """显式 normal/fast 必须覆盖大小判断，并兼容空格和大小写。"""
+        small = pd.DataFrame([[1]])
+        large = pd.DataFrame(np.zeros((500, 50)))
+
+        assert ExcelWriter._resolve_write_speed(small, ' FAST ') == 'fast'
+        assert ExcelWriter._resolve_write_speed(large, 'NORMAL') == 'normal'
+
+    @pytest.mark.parametrize('speed', [None, True, 1, 'turbo'])
+    def test_invalid_speed_raises_chinese_value_error(self, speed):
+        """未知速度不能静默回退到任意路径。"""
+        with pytest.raises(ValueError, match="speed 必须是 'auto'、'normal' 或 'fast'"):
+            dataframe2excel(pd.DataFrame({'值': [1]}), self.test_file, speed=speed)
+
+    def test_default_auto_speed_writes_small_and_large_tables(self):
+        """默认 auto 选择的普通和快速路径都应写出正确内容。"""
+        small_file = os.path.join(self.temp_dir, 'auto-small.xlsx')
+        large_file = os.path.join(self.temp_dir, 'auto-large.xlsx')
+        small = pd.DataFrame(np.zeros((10, 10)))
+        large = pd.DataFrame(np.zeros((500, 2)))
+
+        dataframe2excel(small, small_file)
+        dataframe2excel(large, large_file)
+
+        assert load_workbook(small_file).active['B3'].value == 0
+        assert load_workbook(large_file).active['B3'].value == 0
+
     def test_fast_mode_preserves_values_order_styles_and_coordinates(self):
         """快速模式不得改变值、行列顺序、样式或返回坐标。"""
         df = pd.DataFrame(
@@ -601,8 +657,8 @@ class TestDataframe2Excel:
         normal_file = os.path.join(self.temp_dir, 'normal.xlsx')
         fast_file = os.path.join(self.temp_dir, 'fast.xlsx')
 
-        normal_end = dataframe2excel(df, normal_file, sheet_name='S', index=True, fill=True)
-        fast_end = dataframe2excel(df, fast_file, sheet_name='S', index=True, fill=True, fast=True)
+        normal_end = dataframe2excel(df, normal_file, sheet_name='S', index=True, fill=True, speed='normal')
+        fast_end = dataframe2excel(df, fast_file, sheet_name='S', index=True, fill=True, speed='fast')
 
         normal_ws = load_workbook(normal_file, data_only=False)['S']
         fast_ws = load_workbook(fast_file, data_only=False)['S']
@@ -627,8 +683,8 @@ class TestDataframe2Excel:
         normal_file = os.path.join(self.temp_dir, 'multi-normal.xlsx')
         fast_file = os.path.join(self.temp_dir, 'multi-fast.xlsx')
 
-        normal_end = dataframe2excel(df, normal_file, sheet_name='S', index=True, fill=True)
-        fast_end = dataframe2excel(df, fast_file, sheet_name='S', index=True, fill=True, fast=True)
+        normal_end = dataframe2excel(df, normal_file, sheet_name='S', index=True, fill=True, speed='normal')
+        fast_end = dataframe2excel(df, fast_file, sheet_name='S', index=True, fill=True, speed='fast')
 
         normal_ws = load_workbook(normal_file, data_only=False)['S']
         fast_ws = load_workbook(fast_file, data_only=False)['S']
@@ -648,8 +704,8 @@ class TestDataframe2Excel:
         normal_file = os.path.join(self.temp_dir, f'fill-{fill}-normal.xlsx')
         fast_file = os.path.join(self.temp_dir, f'fill-{fill}-fast.xlsx')
 
-        normal_end = dataframe2excel(df, normal_file, fill=fill)
-        fast_end = dataframe2excel(df, fast_file, fill=fill, fast=True)
+        normal_end = dataframe2excel(df, normal_file, fill=fill, speed='normal')
+        fast_end = dataframe2excel(df, fast_file, fill=fill, speed='fast')
 
         normal_ws = load_workbook(normal_file).active
         fast_ws = load_workbook(fast_file).active
@@ -698,7 +754,7 @@ class TestDataframe2Excel:
             writer,
             sheet_name=ws,
             auto_width=True,
-            fast=True,
+            speed='fast',
         )
 
         assert calls == []
@@ -728,8 +784,8 @@ class TestDataframe2Excel:
             auto_width=True,
         )
 
-        normal_end = dataframe2excel(df, normal_file, **params)
-        fast_end = dataframe2excel(df, fast_file, fast=True, **params)
+        normal_end = dataframe2excel(df, normal_file, speed='normal', **params)
+        fast_end = dataframe2excel(df, fast_file, speed='fast', **params)
 
         normal_ws = load_workbook(normal_file, data_only=False)['S']
         fast_ws = load_workbook(fast_file, data_only=False)['S']

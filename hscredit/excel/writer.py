@@ -83,6 +83,10 @@ class ExcelWriter:
     >>> writer.save("report.xlsx")
     """
 
+    AUTO_FAST_MIN_ROWS = 500
+    AUTO_FAST_MIN_COLUMNS = 50
+    AUTO_FAST_MIN_CELLS = 10_000
+
     def __init__(
         self,
         style_excel: Optional[str] = None,
@@ -952,7 +956,7 @@ class ExcelWriter:
         merge_index: bool = True,
         merge_header: Union[bool, str, int, Sequence[int]] = True,
         decimal: Optional[int] = 4,
-        fast: bool = False,
+        speed: str = "auto",
     ) -> Tuple[int, int]:
         """向Excel插入DataFrame。
 
@@ -969,7 +973,8 @@ class ExcelWriter:
         :param merge_header: 多层列名是否横向合并相邻相同标题，默认True合并全部层级；
             可传False/``"none"``不合并，或传层级序号/序号列表仅合并指定层级
         :param decimal: 浮点值保留小数位数，默认4；None表示不主动舍入
-        :param fast: 是否启用保样式快速写入，默认False
+        :param speed: 写入速度，可选``"auto"``、``"normal"``或``"fast"``，默认``"auto"``；
+            自动模式根据数据行数、有效列数和单元格数选择保样式写入路径
         :return: (下一行行号, 下一列列号)
 
         **参考样例**
@@ -990,6 +995,8 @@ class ExcelWriter:
         >>> writer.insert_df2sheet(worksheet, df, "B30", merge_column='A', merge=True)
         """
         self._validate_decimal(decimal)
+        resolved_speed = self._resolve_write_speed(data, speed, index=index)
+        fast = resolved_speed == "fast"
         df = data if fast else data.copy()
 
         # 解析起始位置
@@ -1591,6 +1598,28 @@ class ExcelWriter:
             or int(decimal) < 0
         ):
             raise ValueError("decimal 必须是大于等于 0 的整数或 None")
+
+    @classmethod
+    def _resolve_write_speed(cls, data: pd.DataFrame, speed: str, index: bool = False) -> str:
+        """解析 DataFrame 的 Excel 写入速度。"""
+        if not isinstance(speed, str):
+            raise ValueError("speed 必须是 'auto'、'normal' 或 'fast'")
+
+        normalized = speed.strip().lower()
+        if normalized not in {"auto", "normal", "fast"}:
+            raise ValueError("speed 必须是 'auto'、'normal' 或 'fast'")
+        if normalized != "auto":
+            return normalized
+
+        rows = len(data)
+        columns = len(data.columns) + (data.index.nlevels if index else 0)
+        if (
+            rows >= cls.AUTO_FAST_MIN_ROWS
+            or columns >= cls.AUTO_FAST_MIN_COLUMNS
+            or rows * columns >= cls.AUTO_FAST_MIN_CELLS
+        ):
+            return "fast"
+        return "normal"
 
     @staticmethod
     def astype_insertvalue(value: Any, decimal: Optional[int] = 4) -> Any:
@@ -2933,7 +2962,7 @@ def dataframe2excel(
     writer_params: Optional[Dict] = None,
     auto_filter: bool = False,
     decimal: Optional[int] = 4,
-    fast: bool = False,
+    speed: str = "auto",
     **kwargs
 ) -> Tuple[int, int]:
     """快速将DataFrame写入Excel。
@@ -2973,7 +3002,8 @@ def dataframe2excel(
     :param image_bottom_padding_rows: 图片区与下方表格之间的额外空行数，默认为1
     :param writer_params: ExcelWriter参数，默认为None
     :param decimal: 浮点值保留小数位数，默认4；None表示不主动舍入
-    :param fast: 是否启用保样式快速写入，默认False
+    :param speed: 写入速度，可选``"auto"``、``"normal"``或``"fast"``，默认``"auto"``；
+        自动模式在行数不少于500、有效列数不少于50或有效单元格数不少于10000时使用快速路径
     :param kwargs: 其他参数，传递给insert_df2sheet
     :return: (下一行行号, 下一列列号)
 
@@ -3052,7 +3082,7 @@ def dataframe2excel(
     # 插入DataFrame
     end_row, end_col = writer.insert_df2sheet(
         worksheet, data, (start_row, start_col),
-        fill=fill, header=header, decimal=decimal, fast=fast, **kwargs
+        fill=fill, header=header, decimal=decimal, speed=speed, **kwargs
     )
 
     # 设置百分比格式列
