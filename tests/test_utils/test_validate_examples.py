@@ -47,6 +47,38 @@ def test_execute_notebook_succeeds_in_its_own_directory_without_rewriting_source
     assert path.read_text(encoding="utf-8") == source_before
 
 
+def test_main_executes_nested_notebook_from_examples_root(tmp_path: Path) -> None:
+    """嵌套 notebook 在自身子目录而非 examples 根目录执行时应失败。"""
+    examples_dir = tmp_path / "examples"
+    notebook_dir = examples_dir / "nested"
+    notebook_dir.mkdir(parents=True)
+    path = notebook_dir / "run.ipynb"
+    _write_notebook(path, "from pathlib import Path\nPath('root-marker.txt').write_text('ok')")
+
+    exit_code = main(
+        ["--examples-dir", str(examples_dir), "--pattern", "nested/*.ipynb", "--timeout", "10"]
+    )
+
+    assert exit_code == 0
+    assert (examples_dir / "root-marker.txt").read_text(encoding="utf-8") == "ok"
+    assert not (notebook_dir / "root-marker.txt").exists()
+
+
+def test_execute_notebook_derives_examples_root_from_nested_path(tmp_path: Path) -> None:
+    """直接调用嵌套 notebook 时未推导 examples 根目录应失败。"""
+    examples_dir = tmp_path / "examples"
+    notebook_dir = examples_dir / "nested"
+    notebook_dir.mkdir(parents=True)
+    path = notebook_dir / "run.ipynb"
+    _write_notebook(path, "from pathlib import Path\nPath('derived-root-marker.txt').write_text('ok')")
+
+    result = execute_notebook(path, timeout=10)
+
+    assert result.success is True
+    assert (examples_dir / "derived-root-marker.txt").read_text(encoding="utf-8") == "ok"
+    assert not (notebook_dir / "derived-root-marker.txt").exists()
+
+
 def test_execute_notebook_reports_failing_cell_number_and_original_exception(tmp_path: Path) -> None:
     """吞掉 notebook 原始异常或错误定位到错误单元格时应失败。"""
     path = tmp_path / "failure.ipynb"
@@ -86,6 +118,20 @@ def test_execute_python_returns_output_and_uses_script_directory(tmp_path: Path)
     assert result.error is None
     assert result.output == "中文输出\n"
     assert (tmp_path / "created.txt").read_text(encoding="utf-8") == "ok"
+
+
+def test_main_executes_python_from_relative_examples_directory(tmp_path: Path, monkeypatch) -> None:
+    """相对 examples 目录使脚本路径重复拼接时应失败。"""
+    examples_dir = tmp_path / "examples"
+    examples_dir.mkdir()
+    script = examples_dir / "run.py"
+    script.write_text("from pathlib import Path\nPath('marker.txt').write_text('ok')", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    exit_code = main(["--examples-dir", "examples", "--pattern", "*.py", "--timeout", "10"])
+
+    assert exit_code == 0
+    assert (examples_dir / "marker.txt").read_text(encoding="utf-8") == "ok"
 
 
 def test_execute_python_reports_failure_and_timeout(tmp_path: Path) -> None:

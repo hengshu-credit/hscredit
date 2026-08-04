@@ -62,16 +62,25 @@ def _notebook_error(notebook: nbformat.NotebookNode, exception: Exception) -> st
     return "notebook 执行失败: {}".format(exception)
 
 
-def execute_notebook(path: Path, timeout: int) -> ExampleResult:
-    """在 notebook 所在目录隔离执行 notebook，且不写回源文件。"""
+def _derive_examples_dir(path: Path) -> Path:
+    """从嵌套示例路径推导其 examples 根目录。"""
+    for parent in path.parents:
+        if parent.name == "examples":
+            return parent
+    return path.parent
+
+
+def execute_notebook(path: Path, timeout: int, examples_dir: Optional[Path] = None) -> ExampleResult:
+    """在 examples 根目录隔离执行 notebook，且不写回源文件。"""
     started_at = time.monotonic()
     notebook: Optional[nbformat.NotebookNode] = None
+    working_dir = examples_dir if examples_dir is not None else _derive_examples_dir(path)
     try:
         notebook = nbformat.read(path, as_version=4)
         client = NotebookClient(
             notebook,
             timeout=timeout,
-            resources={"metadata": {"path": str(path.parent)}},
+            resources={"metadata": {"path": str(working_dir)}},
         )
         client.execute()
     except CellTimeoutError as exception:
@@ -118,10 +127,11 @@ def _text_output(value: object) -> str:
 def execute_python(path: Path, timeout: int) -> ExampleResult:
     """在脚本所在目录隔离执行 Python 示例。"""
     started_at = time.monotonic()
+    script_path = path.resolve()
     try:
         completed = subprocess.run(
-            [sys.executable, str(path)],
-            cwd=path.parent,
+            [sys.executable, str(script_path)],
+            cwd=script_path.parent,
             capture_output=True,
             text=True,
             errors="replace",
@@ -193,7 +203,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     for path in paths:
         print("执行: {}".format(path.relative_to(examples_dir)))
         if path.suffix.lower() == ".ipynb":
-            result = execute_notebook(path, arguments.timeout)
+            result = execute_notebook(path, arguments.timeout, examples_dir)
         else:
             result = execute_python(path, arguments.timeout)
         results.append(result)
