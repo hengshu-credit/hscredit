@@ -10,7 +10,15 @@ from .serialization import (
     ARTIFACT_FORMAT,
     ARTIFACT_VERSION,
 )
-from .parallel import get_physical_cpu_count, resolve_n_jobs, validate_parallel_config
+from .parallel import (
+    ParallelBudget,
+    ParallelizableMixin,
+    get_physical_cpu_count,
+    parallel_execute,
+    resolve_n_jobs,
+    split_parallel_budget,
+    validate_parallel_config,
+)
 from .describe import feature_describe, groupby_feature_describe
 from .datasets import germancredit
 from .misc import round_float, force_reload_module, trapz
@@ -41,8 +49,12 @@ __all__ = [
     'ArtifactSerializableMixin',
     'ARTIFACT_FORMAT',
     'ARTIFACT_VERSION',
+    'ParallelBudget',
+    'ParallelizableMixin',
+    'parallel_execute',
     'resolve_n_jobs',
     'get_physical_cpu_count',
+    'split_parallel_budget',
     'validate_parallel_config',
     # 特征描述
     'feature_describe',
