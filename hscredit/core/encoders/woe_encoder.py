@@ -3,7 +3,7 @@
 提供直接计算WOE的编码功能，不依赖分箱模块。
 """
 
-from typing import Optional, List, Dict, Union
+from typing import Optional, List, Dict, Union, Any
 import numpy as np
 import pandas as pd
 
@@ -92,6 +92,9 @@ class WOEEncoder(BaseEncoder):
         drop_invariant: bool = False,
         return_df: bool = True,
         target: Optional[str] = None,
+        n_jobs: Optional[Union[int, float]] = -1,
+        parallel_backend: Optional[str] = None,
+        parallel_config: Optional[Dict[str, Any]] = None,
     ):
         """初始化WOE编码器。
 
@@ -115,6 +118,9 @@ class WOEEncoder(BaseEncoder):
             handle_unknown=handle_unknown,
             handle_missing=handle_missing,
             target=target,
+            n_jobs=n_jobs,
+            parallel_backend=parallel_backend,
+            parallel_config=parallel_config,
         )
         self.regularization = regularization
         self.woe_clip = woe_clip
@@ -149,13 +155,13 @@ class WOEEncoder(BaseEncoder):
         if not set(unique).issubset({0, 1}):
             raise ValueError("目标变量必须是0和1")
 
+        self._fit_columns(X, y, state_attrs=("mapping_", "iv_"))
+
+    def _fit_column(self, column, values, y=None):
         total_good = (y == 0).sum()
         total_bad = (y == 1).sum()
-
-        for col in self.cols_:
-            woe_map, iv = self._fit_categorical(X[col], y, total_good, total_bad)
-            self.mapping_[col] = woe_map
-            self.iv_[col] = iv
+        woe_map, iv = self._fit_categorical(values, y, total_good, total_bad)
+        return {"mapping_": woe_map, "iv_": iv}
 
     def _fit_categorical(
         self, x: pd.Series, y: pd.Series, total_good: int, total_bad: int
@@ -256,37 +262,34 @@ class WOEEncoder(BaseEncoder):
         :param y: 目标变量（可选）
         :return: 编码后的数据
         """
-        for col in self.cols_:
-            if col not in self.mapping_:
-                continue
+        output = self._transform_columns(X, y)
+        output.attrs['hscredit_encoding'] = 'woe'
+        output.attrs['hscredit_source'] = 'WOEEncoder'
+        return output
 
-            woe_map = self.mapping_[col]
-            mapped = X[col].map(woe_map)
+    def _transform_column(self, column, values, y=None, context=None):
+        woe_map = self.mapping_[column]
+        mapped = values.map(woe_map)
 
-            # 类型鲁棒回退：对“未命中且非缺失”的原始值，用字符串键再映射一次。
-            # 覆盖两类键/输入类型不一致的场景，保证 export→load 往返一致：
-            #   1) load() 后 woe_map 为字符串键，而 transform 输入为数值（如 int 100）；
-            #   2) fit() 后 woe_map 为数值键，而 transform 输入为数字型字符串 '100'。
-            unmapped = mapped.isna() & X[col].notna()
-            if unmapped.any():
-                str_map = {
-                    str(k): v
-                    for k, v in woe_map.items()
-                    if k != '__UNKNOWN__' and not (isinstance(k, float) and pd.isna(k))
-                }
-                if str_map:
-                    mapped.loc[unmapped] = X.loc[unmapped, col].astype(str).map(str_map)
+        # 类型鲁棒回退：对“未命中且非缺失”的原始值，用字符串键再映射一次。
+        # 覆盖两类键/输入类型不一致的场景，保证 export→load 往返一致：
+        #   1) load() 后 woe_map 为字符串键，而 transform 输入为数值（如 int 100）；
+        #   2) fit() 后 woe_map 为数值键，而 transform 输入为数字型字符串 '100'。
+        unmapped = mapped.isna() & values.notna()
+        if unmapped.any():
+            str_map = {
+                str(k): v
+                for k, v in woe_map.items()
+                if k != '__UNKNOWN__' and not (isinstance(k, float) and pd.isna(k))
+            }
+            if str_map:
+                mapped.loc[unmapped] = values.loc[unmapped].astype(str).map(str_map)
 
-            X[col] = mapped
-
-            if self.handle_unknown == 'value':
-                X[col] = X[col].fillna(0.0)
-            elif self.handle_unknown == 'error' and X[col].isna().any():
-                raise ValueError(f"列'{col}'包含未知类别")
-
-        X.attrs['hscredit_encoding'] = 'woe'
-        X.attrs['hscredit_source'] = 'WOEEncoder'
-        return X
+        if self.handle_unknown == 'value':
+            mapped = mapped.fillna(0.0)
+        elif self.handle_unknown == 'error' and mapped.isna().any():
+            raise ValueError(f"列'{column}'包含未知类别")
+        return mapped
 
     def get_iv(self) -> Dict[str, float]:
         """获取各特征的IV值。

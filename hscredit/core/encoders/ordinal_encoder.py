@@ -3,7 +3,7 @@
 将类别特征转换为整数编码。
 """
 
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union
 import numpy as np
 import pandas as pd
 
@@ -72,6 +72,9 @@ class OrdinalEncoder(BaseEncoder):
         drop_invariant: bool = False,
         return_df: bool = True,
         target: Optional[str] = None,
+        n_jobs: Optional[Union[int, float]] = -1,
+        parallel_backend: Optional[str] = None,
+        parallel_config: Optional[Dict[str, Any]] = None,
     ):
         """初始化序数编码器。
 
@@ -90,8 +93,11 @@ class OrdinalEncoder(BaseEncoder):
             handle_unknown=handle_unknown,
             handle_missing=handle_missing,
             target=target,
+            n_jobs=n_jobs,
+            parallel_backend=parallel_backend,
+            parallel_config=parallel_config,
         )
-        self.mapping = mapping or {}
+        self.mapping = mapping
 
     def _fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None):
         """拟合序数编码器。
@@ -99,26 +105,29 @@ class OrdinalEncoder(BaseEncoder):
         :param X: 输入数据，shape (n_samples, n_features)
         :param y: 目标变量（可选），序数编码器不需要
         """
-        for col in self.cols_:
-            if col in self.mapping:
-                self.mapping_[col] = self.mapping[col].copy()
-            else:
-                categories = X[col].dropna().unique()
-                categories = self._sort_categories([c for c in categories if c is not np.nan])
+        self._fit_columns(X, y)
 
-                mapping = {cat: i for i, cat in enumerate(categories)}
+    def _fit_column(self, column, values, y=None):
+        configured_mapping = self.mapping or {}
+        if column in configured_mapping:
+            mapping = configured_mapping[column].copy()
+        else:
+            categories = values.dropna().unique()
+            categories = self._sort_categories([c for c in categories if c is not np.nan])
 
-                if self.handle_missing == "value":
-                    mapping[np.nan] = -1
-                elif self.handle_missing == "return_nan":
-                    mapping[np.nan] = np.nan
+            mapping = {cat: i for i, cat in enumerate(categories)}
 
-                if self.handle_unknown == "value":
-                    mapping["__UNKNOWN__"] = -1
-                elif self.handle_unknown == "return_nan":
-                    mapping["__UNKNOWN__"] = np.nan
+            if self.handle_missing == "value":
+                mapping[np.nan] = -1
+            elif self.handle_missing == "return_nan":
+                mapping[np.nan] = np.nan
 
-                self.mapping_[col] = mapping
+            if self.handle_unknown == "value":
+                mapping["__UNKNOWN__"] = -1
+            elif self.handle_unknown == "return_nan":
+                mapping["__UNKNOWN__"] = np.nan
+
+        return {"mapping_": mapping}
 
     def _transform(self, X: pd.DataFrame, y: Optional[pd.Series] = None) -> pd.DataFrame:
         """转换数据。
@@ -127,20 +136,18 @@ class OrdinalEncoder(BaseEncoder):
         :param y: 目标变量（可选），序数编码器不需要
         :return: 编码后的数据
         """
-        for col in self.cols_:
-            if col not in self.mapping_:
-                continue
+        return self._transform_columns(X, y)
 
-            mapping = self.mapping_[col]
+    def _transform_column(self, column, values, y=None, context=None):
+        mapping = self.mapping_[column]
+        result = values.map(mapping)
 
-            X[col] = X[col].map(mapping)
+        if self.handle_unknown == "value":
+            result = result.fillna(-1)
+        elif self.handle_unknown == "error" and result.isna().any():
+            raise ValueError(f"列'{column}'包含未知类别")
 
-            if self.handle_unknown == "value":
-                X[col] = X[col].fillna(-1)
-            elif self.handle_unknown == "error" and X[col].isna().any():
-                raise ValueError(f"列'{col}'包含未知类别")
-
-        return X
+        return result
 
     def inverse_transform(self, X: pd.DataFrame) -> pd.DataFrame:
         """逆编码，将整数编码还原为原始类别值。

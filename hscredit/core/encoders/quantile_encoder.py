@@ -3,7 +3,7 @@
 基于目标变量分位数对类别特征进行编码。
 """
 
-from typing import Optional, List, Dict, Union
+from typing import Optional, List, Dict, Union, Any
 import numpy as np
 import pandas as pd
 
@@ -78,6 +78,9 @@ class QuantileEncoder(BaseEncoder):
         drop_invariant: bool = False,
         return_df: bool = True,
         target: Optional[str] = None,
+        n_jobs: Optional[Union[int, float]] = -1,
+        parallel_backend: Optional[str] = None,
+        parallel_config: Optional[Dict[str, Any]] = None,
     ):
         """初始化分位数编码器。
 
@@ -98,6 +101,9 @@ class QuantileEncoder(BaseEncoder):
             handle_unknown=handle_unknown,
             handle_missing=handle_missing,
             target=target,
+            n_jobs=n_jobs,
+            parallel_backend=parallel_backend,
+            parallel_config=parallel_config,
         )
         self.quantile = quantile
         self.smoothing = smoothing
@@ -116,35 +122,37 @@ class QuantileEncoder(BaseEncoder):
             raise ValueError("QuantileEncoder是有监督编码器，必须提供目标变量y")
 
         y = pd.Series(y)
-        self.global_quantile_ = y.quantile(self.quantile)
+        global_quantile = y.quantile(self.quantile)
+        self._fit_columns(X, y, shared_state={"global_quantile_": global_quantile})
+        self.global_quantile_ = global_quantile
 
-        for col in self.cols_:
-            mapping = {}
+    def _fit_column(self, column, values, y=None):
+        mapping = {}
 
-            for category in X[col].dropna().unique():
-                mask = X[col] == category
-                category_y = y[mask]
+        for category in values.dropna().unique():
+            mask = values == category
+            category_y = y[mask]
 
-                category_quantile = category_y.quantile(self.quantile)
-                n = len(category_y)
+            category_quantile = category_y.quantile(self.quantile)
+            n = len(category_y)
 
-                smoothed_quantile = (
-                    n * category_quantile + self.m * self.global_quantile_
-                ) / (n + self.m)
+            smoothed_quantile = (
+                n * category_quantile + self.m * self.global_quantile_
+            ) / (n + self.m)
 
-                mapping[category] = smoothed_quantile
+            mapping[category] = smoothed_quantile
 
-            if self.handle_missing == 'value':
-                mapping[np.nan] = self.global_quantile_
-            elif self.handle_missing == 'return_nan':
-                mapping[np.nan] = np.nan
+        if self.handle_missing == 'value':
+            mapping[np.nan] = self.global_quantile_
+        elif self.handle_missing == 'return_nan':
+            mapping[np.nan] = np.nan
 
-            if self.handle_unknown == 'value':
-                mapping['__UNKNOWN__'] = self.global_quantile_
-            elif self.handle_unknown == 'return_nan':
-                mapping['__UNKNOWN__'] = np.nan
+        if self.handle_unknown == 'value':
+            mapping['__UNKNOWN__'] = self.global_quantile_
+        elif self.handle_unknown == 'return_nan':
+            mapping['__UNKNOWN__'] = np.nan
 
-            self.mapping_[col] = mapping
+        return {"mapping_": mapping}
 
     def _transform(self, X: pd.DataFrame, y: Optional[pd.Series] = None) -> pd.DataFrame:
         """转换数据。
@@ -153,16 +161,15 @@ class QuantileEncoder(BaseEncoder):
         :param y: 目标变量（可选）
         :return: 编码后的数据
         """
-        for col in self.cols_:
-            if col not in self.mapping_:
-                continue
+        return self._transform_columns(X, y)
 
-            mapping = self.mapping_[col]
-            X[col] = X[col].map(mapping)
+    def _transform_column(self, column, values, y=None, context=None):
+        mapping = self.mapping_[column]
+        result = values.map(mapping)
 
-            if self.handle_unknown == 'value':
-                X[col] = X[col].fillna(self.global_quantile_)
-            elif self.handle_unknown == 'error' and X[col].isna().any():
-                raise ValueError(f"列'{col}'包含未知类别")
+        if self.handle_unknown == 'value':
+            result = result.fillna(self.global_quantile_)
+        elif self.handle_unknown == 'error' and result.isna().any():
+            raise ValueError(f"列'{column}'包含未知类别")
 
-        return X
+        return result

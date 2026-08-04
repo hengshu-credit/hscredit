@@ -6,7 +6,6 @@
 from typing import Optional, List, Dict, Any, Union
 import numpy as np
 import pandas as pd
-from scipy.sparse import csr_matrix
 
 from .base import BaseEncoder
 from ...exceptions import NotFittedError
@@ -74,6 +73,9 @@ class OneHotEncoder(BaseEncoder):
         use_cat_names: bool = True,
         return_df: bool = True,
         target: Optional[str] = None,
+        n_jobs: Optional[Union[int, float]] = -1,
+        parallel_backend: Optional[str] = None,
+        parallel_config: Optional[Dict[str, Any]] = None,
     ):
         """初始化独热编码器。
 
@@ -92,6 +94,9 @@ class OneHotEncoder(BaseEncoder):
             handle_unknown=handle_unknown,
             handle_missing=handle_missing,
             target=target,
+            n_jobs=n_jobs,
+            parallel_backend=parallel_backend,
+            parallel_config=parallel_config,
         )
         self.drop = drop
         self.use_cat_names = use_cat_names
@@ -118,46 +123,47 @@ class OneHotEncoder(BaseEncoder):
         :param X: 输入数据
         :param y: 目标变量（可选）
         """
-        self.feature_names_ = []
         # 保留未编码列，与 _transform 输出顺序保持一致（未编码列在前）
         self._other_cols_ = [c for c in X.columns if c not in self.cols_]
+        self._fit_columns(X, y, state_attrs=("mapping_", "categories_"))
+        self.feature_names_ = [
+            self.mapping_[column][category]
+            for column in self.cols_
+            for category in self.categories_[column]
+        ]
 
-        for col in self.cols_:
-            # 获取唯一值（包括缺失值）
-            categories = X[col].unique()
+    def _fit_column(self, column, values, y=None):
+        # 获取唯一值（包括缺失值）
+        categories = values.unique()
 
-            # 分离缺失值和正常值
-            has_missing = any(pd.isna(c) for c in categories)
-            normal_categories = self._sort_categories([c for c in categories if not pd.isna(c)])
+        # 分离缺失值和正常值
+        has_missing = any(pd.isna(c) for c in categories)
+        normal_categories = self._sort_categories([c for c in categories if not pd.isna(c)])
 
-            # 处理drop参数
-            if self.drop == "first" and len(normal_categories) > 0:
-                categories_to_use = normal_categories[1:]
-            elif self.drop == "if_binary" and len(normal_categories) == 2:
-                categories_to_use = normal_categories[:1]
+        # 处理drop参数
+        if self.drop == "first" and len(normal_categories) > 0:
+            categories_to_use = normal_categories[1:]
+        elif self.drop == "if_binary" and len(normal_categories) == 2:
+            categories_to_use = normal_categories[:1]
+        else:
+            categories_to_use = normal_categories[:]
+
+        # 如果有缺失值且handle_missing='value'，添加missing
+        if has_missing and self.handle_missing == "value":
+            categories_to_use = categories_to_use + ["missing"]
+
+        # 构建mapping_（与其他编码器保持一致）
+        col_mapping = {}
+        for cat in categories_to_use:
+            if cat == "missing":
+                col_name = f"{column}_missing"
+            elif self.use_cat_names:
+                safe_cat = str(cat).replace(" ", "_").replace("-", "_")
+                col_name = f"{column}_{safe_cat}"
             else:
-                categories_to_use = normal_categories[:]
-
-            # 如果有缺失值且handle_missing='value'，添加missing
-            if has_missing and self.handle_missing == "value":
-                categories_to_use = categories_to_use + ["missing"]
-
-            self.categories_[col] = categories_to_use
-
-            # 构建mapping_（与其他编码器保持一致）
-            col_mapping = {}
-            for cat in categories_to_use:
-                if cat == "missing":
-                    col_name = f"{col}_missing"
-                elif self.use_cat_names:
-                    safe_cat = str(cat).replace(" ", "_").replace("-", "_")
-                    col_name = f"{col}_{safe_cat}"
-                else:
-                    col_name = f"{col}_{cat}"
-                col_mapping[cat] = col_name
-                self.feature_names_.append(col_name)
-
-            self.mapping_[col] = col_mapping
+                col_name = f"{column}_{cat}"
+            col_mapping[cat] = col_name
+        return {"mapping_": col_mapping, "categories_": categories_to_use}
 
     def _transform(self, X: pd.DataFrame, y: Optional[pd.Series] = None) -> pd.DataFrame:
         """转换数据。
@@ -166,51 +172,38 @@ class OneHotEncoder(BaseEncoder):
         :param y: 目标变量（可选）
         :return: 编码后的数据
         """
-        result_dfs = []
+        return self._transform_columns(X, y, passthrough=True)
 
-        # 保留未编码的列
-        other_cols = [c for c in X.columns if c not in self.cols_]
-        if other_cols:
-            result_dfs.append(X[other_cols].copy())
+    def _transform_column(self, column, values, y=None, context=None):
+        categories = self.categories_[column]
 
-        # 对每个需要编码的列进行one-hot编码
-        for col in self.cols_:
-            if col not in self.categories_:
-                continue
+        # 检查未知类别
+        if self.handle_unknown == "error":
+            unique_vals = set(values.dropna().unique())
+            known_vals = set(categories) - {"missing"}
+            unknown = unique_vals - known_vals
+            if unknown:
+                raise ValueError(f"列'{column}'包含未知类别: {unknown}")
 
-            categories = self.categories_[col]
+        # 处理缺失值
+        col_data = values.copy()
+        if self.handle_missing == "value":
+            col_data = col_data.fillna("missing")
 
-            # 检查未知类别
-            if self.handle_unknown == "error":
-                unique_vals = set(X[col].dropna().unique())
-                known_vals = set(categories) - {"missing"}
-                unknown = unique_vals - known_vals
-                if unknown:
-                    raise ValueError(f"列'{col}'包含未知类别: {unknown}")
-
-            # 处理缺失值
-            col_data = X[col].copy()
-            if self.handle_missing == "value":
-                col_data = col_data.fillna("missing")
-
-            # 创建one-hot列
-            for cat in categories:
-                if cat == "missing":
-                    col_name = f"{col}_missing"
-                    result_dfs.append(pd.DataFrame({col_name: (X[col].isna()).astype(int)}))
+        # 创建one-hot列
+        data = {}
+        for cat in categories:
+            if cat == "missing":
+                col_name = f"{column}_missing"
+                data[col_name] = values.isna().astype(int)
+            else:
+                if self.use_cat_names:
+                    safe_cat = str(cat).replace(" ", "_").replace("-", "_")
+                    col_name = f"{column}_{safe_cat}"
                 else:
-                    if self.use_cat_names:
-                        safe_cat = str(cat).replace(" ", "_").replace("-", "_")
-                        col_name = f"{col}_{safe_cat}"
-                    else:
-                        col_name = f"{col}_{cat}"
-                    result_dfs.append(pd.DataFrame({col_name: (col_data == cat).astype(int)}))
-
-        # 合并所有列
-        if result_dfs:
-            return pd.concat(result_dfs, axis=1)
-        else:
-            return X.copy()
+                    col_name = f"{column}_{cat}"
+                data[col_name] = (col_data == cat).astype(int)
+        return pd.DataFrame(data, index=values.index)
 
     def inverse_transform(self, X: pd.DataFrame) -> pd.DataFrame:
         """逆编码，将独热编码列还原为原始类别列。
