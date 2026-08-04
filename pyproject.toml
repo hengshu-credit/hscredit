@@ -94,6 +94,8 @@ explain = ["shap>=0.40.0"]
 dev = [
     "pytest>=6.0.0",
     "pytest-cov>=2.0.0",
+    "nbclient>=0.5",
+    "nbformat>=5",
     "black>=21.0",
     "flake8>=3.9.0",
     "mypy>=1.8",

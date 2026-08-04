@@ -45,8 +45,7 @@ jupyter: ## 启动Jupyter Notebook
 
 # 运行notebook验证
 notebook-test: ## 执行notebook验证
-	python examples/00_quickstart.py
-	@echo "✅ 快速开始示例验证完成"
+	python scripts/validate_examples.py
 
 # 代码格式化
 format: ## 格式化代码
