@@ -750,6 +750,35 @@ class BaseFeatureSelector(ParallelizableMixin, BaseEstimator, TransformerMixin, 
         X: Union[pd.DataFrame, np.ndarray],
         y: Optional[Union[pd.Series, np.ndarray]] = None,
     ) -> 'BaseFeatureSelector':
+        """事务式拟合筛选器，失败时恢复进入本次拟合前的完整状态。"""
+        previous_state = dict(self.__dict__)
+        self._clear_fitted_state()
+        try:
+            return self._fit_once(X, y)
+        except Exception:
+            self.__dict__.clear()
+            self.__dict__.update(previous_state)
+            raise
+
+    def _clear_fitted_state(self) -> None:
+        """清理上一次拟合产物，避免重复拟合沿用陈旧报告或得分。"""
+        special_names = {
+            '_feature_names',
+            '_is_fitted',
+            '_binner_instance',
+            '_drop_reason',
+            'dropped',
+            'select_columns',
+        }
+        for name in list(self.__dict__):
+            if name.endswith('_') or name in special_names:
+                del self.__dict__[name]
+
+    def _fit_once(
+        self,
+        X: Union[pd.DataFrame, np.ndarray],
+        y: Optional[Union[pd.Series, np.ndarray]] = None,
+    ) -> 'BaseFeatureSelector':
         """拟合筛选器，学习特征重要性。
 
         支持两种 API 风格：sklearn 风格 ``fit(X, y)`` 和 scorecardpipeline 风格 ``fit(df)``。
@@ -1513,6 +1542,9 @@ class CompositeFeatureSelector(BaseFeatureSelector):
         exclude: Optional[List[str]] = None,
         binner: Optional[Any] = None,
         binning_params: Optional[Dict[str, Any]] = None,
+        n_jobs: Optional[Union[int, float]] = -1,
+        parallel_backend: Optional[str] = None,
+        parallel_config: Optional[Dict[str, Any]] = None,
     ):
         """初始化组合特征筛选器。
 
@@ -1532,6 +1564,9 @@ class CompositeFeatureSelector(BaseFeatureSelector):
             exclude=exclude,
             binner=binner,
             binning_params=binning_params,
+            n_jobs=n_jobs,
+            parallel_backend=parallel_backend,
+            parallel_config=parallel_config,
         )
         self.selectors = selectors
         self.strategy = strategy
@@ -1575,7 +1610,8 @@ class CompositeFeatureSelector(BaseFeatureSelector):
                 selector_name = item.__class__.__name__
                 selector = item
 
-            # 使用当前特征进行筛选
+            # 使用当前特征进行筛选；阶段串行执行，每阶段获得完整预算。
+            self._configure_child_selector(selector)
             selector.fit(current_X, y)
 
             # 获取选中特征
@@ -1630,6 +1666,7 @@ class CompositeFeatureSelector(BaseFeatureSelector):
                 selector_name = item.__class__.__name__
                 selector = item
 
+            self._configure_child_selector(selector)
             selector.fit(X, y)
             selected_sets.append(set(selector.selected_features_))
 
@@ -1640,8 +1677,9 @@ class CompositeFeatureSelector(BaseFeatureSelector):
                 dropped['筛选器类型'] = selector.__class__.__name__
                 all_dropped.append(dropped)
 
-        # 取交集
-        self.selected_features_ = list(set.intersection(*selected_sets))
+        # 取交集，并严格保持原始输入列顺序。
+        intersection = set.intersection(*selected_sets) if selected_sets else set()
+        self.selected_features_ = [column for column in X.columns if column in intersection]
         self.scores_ = None
         self.forced_dropped_ = []  # 初始化forced_dropped_
 
@@ -1681,6 +1719,12 @@ class CompositeFeatureSelector(BaseFeatureSelector):
             self.detailed_dropped_ = pd.concat(all_dropped, ignore_index=True)
         else:
             self.detailed_dropped_ = pd.DataFrame()
+
+    def _configure_child_selector(self, selector: BaseFeatureSelector) -> None:
+        """将组合器的完整并行配置传递给顺序执行的子筛选器。"""
+        selector.n_jobs = self.n_jobs
+        selector.parallel_backend = self.parallel_backend
+        selector.parallel_config = self.parallel_config
 
     def get_selection_report_df(self) -> pd.DataFrame:
         """获取详细的 DataFrame 格式报告，穿透底层筛选器。

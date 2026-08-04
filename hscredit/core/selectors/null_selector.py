@@ -25,6 +25,12 @@ import pandas as pd
 from .base import BaseFeatureSelector
 
 
+def _compute_null_feature(task):
+    """计算单列缺失率。"""
+    feature, series = task
+    return feature, series.isnull().mean()
+
+
 class NullSelector(BaseFeatureSelector):
     """缺失率筛选器.
 
@@ -62,14 +68,17 @@ class NullSelector(BaseFeatureSelector):
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
         force_drop: Optional[List[str]] = None,
-        n_jobs: int = 1,
+        n_jobs: Optional[Union[int, float]] = -1,
         binner: Optional[Any] = None,
         binning_params: Optional[Dict[str, Any]] = None,
+        parallel_backend: Optional[str] = None,
+        parallel_config: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(
             target=target, threshold=threshold, include=include,
             exclude=exclude, force_drop=force_drop, n_jobs=n_jobs,
             binner=binner, binning_params=binning_params,
+            parallel_backend=parallel_backend, parallel_config=parallel_config,
         )
         self.method_name = '缺失率筛选'
 
@@ -85,9 +94,12 @@ class NullSelector(BaseFeatureSelector):
         """
         self._get_feature_names(X)
 
-        # 计算缺失率
-        null_counts = X.isnull().sum()
-        null_rates = null_counts / len(X)
+        results = self._parallel_execute(
+            _compute_null_feature,
+            [(col, X[col]) for col in X.columns],
+            task_labels=X.columns,
+        )
+        null_rates = pd.Series(dict(results)).reindex(X.columns)
         self.scores_ = null_rates
 
         # 选择缺失率低于阈值的特征

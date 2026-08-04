@@ -247,6 +247,9 @@ def test_selector_clone_preserves_independent_binning_configuration():
     selector = IVSelector(
         threshold=0.01,
         binning_params={"method": "uniform", "max_n_bins": 3},
+        n_jobs=0.5,
+        parallel_backend="threading",
+        parallel_config={"batch_size": 1},
     )
 
     cloned = clone(selector)
@@ -254,3 +257,7 @@ def test_selector_clone_preserves_independent_binning_configuration():
     assert cloned.binner is None
     assert cloned.binning_params == {"method": "uniform", "max_n_bins": 3}
     assert cloned.binning_params is not selector.binning_params
+    assert cloned.n_jobs == 0.5
+    assert cloned.parallel_backend == "threading"
+    assert cloned.parallel_config == {"batch_size": 1}
+    assert cloned.parallel_config is not selector.parallel_config

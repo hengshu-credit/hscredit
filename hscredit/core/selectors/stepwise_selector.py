@@ -131,9 +131,11 @@ class StepwiseSelector(BaseFeatureSelector):
         exclude: Optional[List[str]] = None,
         force_drop: Optional[List[str]] = None,
         threshold: Union[float, int, str] = 0.0,
-        n_jobs: int = 1,
+        n_jobs: Optional[Union[int, float]] = -1,
         binner: Optional[Any] = None,
         binning_params: Optional[Dict[str, Any]] = None,
+        parallel_backend: Optional[str] = None,
+        parallel_config: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(
             target=target,
@@ -144,6 +146,8 @@ class StepwiseSelector(BaseFeatureSelector):
             n_jobs=n_jobs,
             binner=binner,
             binning_params=binning_params,
+            parallel_backend=parallel_backend,
+            parallel_config=parallel_config,
         )
         self.estimator = estimator
         self.direction = direction
@@ -516,28 +520,20 @@ class StepwiseSelector(BaseFeatureSelector):
         best_criterion = best_score
         test_results = []
 
-        # 尝试每个候选特征
-        for feature in remaining:
-            test_features = selected + [feature]
-            result = self._fit_model(X, y, test_features)
-
-            if result['result'] is not None:
-                criterion = result['criterion']
-                p_values = result['p_values']
-                test_results.append({
-                    'feature': feature,
-                    'criterion': criterion,
-                    # statsmodels 在 y 为 Series 时可能返回带字符串索引的 Series。
-                    # 转为 ndarray 后再按位置取值，兼容 pandas 3.x 的严格标签索引。
-                    'p_value': np.asarray(p_values)[-1] if p_values is not None else 1.0,
-                })
-
-                # 判断是否改善
-                improved = self._is_improvement(criterion, best_criterion)
-
-                if improved:
-                    best_criterion = criterion
-                    best_feature = feature
+        tasks = [(feature, X, y, list(selected)) for feature in remaining]
+        candidate_results = self._parallel_execute(
+            self._evaluate_forward_candidate,
+            tasks,
+            task_labels=remaining,
+        )
+        for candidate in candidate_results:
+            if candidate is None:
+                continue
+            test_results.append(candidate)
+            criterion = candidate['criterion']
+            if self._is_improvement(criterion, best_criterion):
+                best_criterion = criterion
+                best_feature = candidate['feature']
 
         if best_feature is None:
             return False, selected, remaining, best_score
@@ -564,6 +560,19 @@ class StepwiseSelector(BaseFeatureSelector):
         })
 
         return True, selected, remaining, best_criterion
+
+    def _evaluate_forward_candidate(self, task) -> Optional[Dict[str, Any]]:
+        """评估前向步骤当前轮的一个候选特征。"""
+        feature, X, y, selected = task
+        result = self._fit_model(X, y, selected + [feature])
+        if result['result'] is None:
+            return None
+        p_values = result['p_values']
+        return {
+            'feature': feature,
+            'criterion': result['criterion'],
+            'p_value': np.asarray(p_values)[-1] if p_values is not None else 1.0,
+        }
 
     def _backward_step(
         self,
@@ -596,24 +605,20 @@ class StepwiseSelector(BaseFeatureSelector):
         worst_feature = None
         worst_criterion = current_criterion
 
-        # 尝试剔除每个特征（排除强制包含的）
-        for feature in selected:
-            if feature in forced_include:
+        candidates = [feature for feature in selected if feature not in forced_include]
+        tasks = [(feature, X, y, list(selected)) for feature in candidates if len(selected) > 1]
+        candidate_results = self._parallel_execute(
+            self._evaluate_backward_candidate,
+            tasks,
+            task_labels=[task[0] for task in tasks],
+        )
+        for candidate in candidate_results:
+            if candidate is None:
                 continue
-
-            test_features = [f for f in selected if f != feature]
-            if not test_features:
-                continue
-
-            result = self._fit_model(X, y, test_features)
-
-            if result['result'] is not None:
-                criterion = result['criterion']
-
-                # 判断是否改善（剔除后准则值更优）
-                if self._is_improvement(criterion, worst_criterion):
-                    worst_criterion = criterion
-                    worst_feature = feature
+            criterion = candidate['criterion']
+            if self._is_improvement(criterion, worst_criterion):
+                worst_criterion = criterion
+                worst_feature = candidate['feature']
 
         if worst_feature is None:
             return False, selected, remaining, best_score
@@ -640,6 +645,17 @@ class StepwiseSelector(BaseFeatureSelector):
         })
 
         return True, selected, remaining, worst_criterion
+
+    def _evaluate_backward_candidate(self, task) -> Optional[Dict[str, Any]]:
+        """评估后向步骤当前轮的一个候选特征。"""
+        feature, X, y, selected = task
+        test_features = [item for item in selected if item != feature]
+        if not test_features:
+            return None
+        result = self._fit_model(X, y, test_features)
+        if result['result'] is None:
+            return None
+        return {'feature': feature, 'criterion': result['criterion']}
 
     def _backward_check(
         self,

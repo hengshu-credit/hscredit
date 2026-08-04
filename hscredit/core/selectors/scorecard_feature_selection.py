@@ -118,9 +118,11 @@ class ScorecardFeatureSelection(BaseFeatureSelector):
         exclude: Optional[List[str]] = None,
         force_drop: Optional[List[str]] = None,
         target_rm: bool = False,
-        n_jobs: int = 1,
+        n_jobs: Optional[Union[int, float]] = -1,
         binner: Optional[Any] = None,
         binning_params: Optional[Dict[str, Any]] = None,
+        parallel_backend: Optional[str] = None,
+        parallel_config: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(
             target=target,
@@ -131,6 +133,8 @@ class ScorecardFeatureSelection(BaseFeatureSelector):
             n_jobs=n_jobs,
             binner=binner,
             binning_params=binning_params,
+            parallel_backend=parallel_backend,
+            parallel_config=parallel_config,
         )
         self.null_threshold = null_threshold
         self.iv_threshold = iv_threshold
@@ -191,6 +195,8 @@ class ScorecardFeatureSelection(BaseFeatureSelector):
                     threshold=self.null_threshold,
                     target=self.target,
                     n_jobs=self.n_jobs,
+                    parallel_backend=self.parallel_backend,
+                    parallel_config=self.parallel_config,
                 ),
                 current_X=current_X,
                 y=y,
@@ -204,6 +210,8 @@ class ScorecardFeatureSelection(BaseFeatureSelector):
                 target=self.target,
                 regularization=self.iv_regularization,
                 n_jobs=self.n_jobs,
+                parallel_backend=self.parallel_backend,
+                parallel_config=self.parallel_config,
             )
             current_X = self._run_stage(
                 stage_key='iv',
@@ -233,6 +241,8 @@ class ScorecardFeatureSelection(BaseFeatureSelector):
                 weights=corr_weights,
                 target=self.target,
                 n_jobs=self.n_jobs,
+                parallel_backend=self.parallel_backend,
+                parallel_config=self.parallel_config,
                 **corr_binning_kwargs,
             )
             current_X = self._run_stage(
@@ -253,6 +263,8 @@ class ScorecardFeatureSelection(BaseFeatureSelector):
                     dropna=self.mode_dropna,
                     target=self.target,
                     n_jobs=self.n_jobs,
+                    parallel_backend=self.parallel_backend,
+                    parallel_config=self.parallel_config,
                 ),
                 current_X=current_X,
                 y=y,
@@ -333,6 +345,8 @@ class ScorecardFeatureSelection(BaseFeatureSelector):
                 target=self.target,
                 regularization=self.iv_regularization,
                 n_jobs=self.n_jobs,
+                parallel_backend=self.parallel_backend,
+                parallel_config=self.parallel_config,
             )
             iv_selector.fit(X, y)
             self.corr_iv_scores_ = iv_selector.scores_.reindex(X.columns).fillna(0.0)

@@ -18,7 +18,6 @@
 from typing import Union, List, Optional, Dict, Any
 import numpy as np
 import pandas as pd
-from joblib import Parallel, delayed
 
 from .base import BaseFeatureSelector
 
@@ -84,6 +83,16 @@ def _compute_iv_single(x: np.ndarray, y: np.ndarray, regularization: float = 1.0
     ivs[bad_pos] = 0.0
     
     return np.sum(ivs).item()
+
+
+def _compute_iv_feature(task):
+    """编码并计算单个特征 IV。"""
+    feature, series, y, regularization = task
+    if series.dtype.name in ['object', 'category']:
+        values = pd.factorize(series)[0]
+    else:
+        values = series.values
+    return feature, _compute_iv_single(values, y, regularization)
 
 
 class IVSelector(BaseFeatureSelector):
@@ -177,14 +186,17 @@ class IVSelector(BaseFeatureSelector):
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
         force_drop: Optional[List[str]] = None,
-        n_jobs: int = 1,
+        n_jobs: Optional[Union[int, float]] = -1,
         binner: Optional[Any] = None,
         binning_params: Optional[Dict[str, Any]] = None,
+        parallel_backend: Optional[str] = None,
+        parallel_config: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(
             target=target, threshold=threshold, include=include,
             exclude=exclude, force_drop=force_drop, n_jobs=n_jobs,
             binner=binner, binning_params=binning_params,
+            parallel_backend=parallel_backend, parallel_config=parallel_config,
         )
         self.regularization = regularization
         self.method_name = 'IV值筛选'
@@ -201,28 +213,14 @@ class IVSelector(BaseFeatureSelector):
         """
         self._get_feature_names(X)
 
-        # 编码类别变量 - 支持 object 和 category 类型
-        X_encoded = X.copy()
-        for col in X.columns:
-            # 检查是否为类别型变量（object 或 category 类型）
-            if X[col].dtype.name in ['object', 'category']:
-                X_encoded[col] = pd.factorize(X[col])[0]
-
         y = np.asarray(y)
 
-        # 计算IV值
-        if self.n_jobs == 1:
-            iv_values = np.array([
-                _compute_iv_single(X_encoded[col].values, y, self.regularization)
-                for col in X_encoded.columns
-            ])
-        else:
-            iv_values = np.array(
-                Parallel(n_jobs=self.n_jobs)(
-                    delayed(_compute_iv_single)(X_encoded[col].values, y, self.regularization)
-                    for col in X_encoded.columns
-                )
-            )
+        results = self._parallel_execute(
+            _compute_iv_feature,
+            [(col, X[col], y, self.regularization) for col in X.columns],
+            task_labels=X.columns,
+        )
+        iv_values = np.array([score for _, score in results])
 
         self.scores_ = pd.Series(iv_values, index=X.columns)
 

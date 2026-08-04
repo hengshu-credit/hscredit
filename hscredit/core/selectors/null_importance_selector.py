@@ -28,6 +28,51 @@ from sklearn.base import clone
 from sklearn.utils import check_random_state
 
 from .base import BaseFeatureSelector, get_feature_importances
+from ...utils.parallel import _current_parallel_budget
+
+
+def _fit_importance_model(estimator, X, y):
+    """克隆并拟合单个重要性模型，遵守当前子预算。"""
+    model = clone(estimator)
+    params = model.get_params(deep=False) if hasattr(model, 'get_params') else {}
+    model_n_jobs = params.get('n_jobs')
+    if isinstance(model_n_jobs, (int, np.integer)) and model_n_jobs != 1:
+        budget = _current_parallel_budget().available
+        requested = budget if model_n_jobs == -1 else min(int(model_n_jobs), budget)
+        model.set_params(n_jobs=max(1, requested))
+    model.fit(X, y)
+    return get_feature_importances(model)
+
+
+def _run_null_importance_experiment(task):
+    """执行一个独立的实际/null 重要性实验。"""
+    ordinal, seed, estimator, X, y, cv_spec = task
+    rng = check_random_state(seed)
+    order = rng.permutation(len(X))
+    X_ordered = X.iloc[order].reset_index(drop=True)
+    y_ordered = y[order]
+    cv = check_cv(cv_spec, y_ordered, classifier=True)
+    n_splits = cv.get_n_splits()
+    actual = np.zeros((X.shape[1], n_splits))
+    null = np.zeros((X.shape[1], n_splits))
+
+    for fold_idx, (train_idx, _) in enumerate(cv.split(X_ordered, y_ordered)):
+        actual[:, fold_idx] = _fit_importance_model(
+            estimator,
+            X_ordered.iloc[train_idx],
+            y_ordered[train_idx],
+        )
+
+    y_null = rng.permutation(y_ordered)
+    cv_null = check_cv(cv_spec, y_null, classifier=True)
+    for fold_idx, (train_idx, _) in enumerate(cv_null.split(X_ordered, y_null)):
+        null[:, fold_idx] = _fit_importance_model(
+            estimator,
+            X_ordered.iloc[train_idx],
+            y_null[train_idx],
+        )
+
+    return ordinal, actual, null
 
 
 class NullImportanceSelector(BaseFeatureSelector):
@@ -89,14 +134,17 @@ class NullImportanceSelector(BaseFeatureSelector):
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
         force_drop: Optional[List[str]] = None,
-        n_jobs: int = 1,
+        n_jobs: Optional[Union[int, float]] = -1,
         binner: Optional[Any] = None,
         binning_params: Optional[Dict[str, Any]] = None,
+        parallel_backend: Optional[str] = None,
+        parallel_config: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(
             target=target, threshold=threshold, include=include,
             exclude=exclude, force_drop=force_drop, n_jobs=n_jobs,
             binner=binner, binning_params=binning_params,
+            parallel_backend=parallel_backend, parallel_config=parallel_config,
         )
         self.estimator = estimator
         self.cv = cv
@@ -131,7 +179,6 @@ class NullImportanceSelector(BaseFeatureSelector):
 
         self._get_feature_names(X)
         
-        rng = check_random_state(self.random_state)
         cv = check_cv(self.cv, y, classifier=True)
         
         n_samples, n_features = X.shape
@@ -141,21 +188,33 @@ class NullImportanceSelector(BaseFeatureSelector):
         actual_importances = np.zeros((n_features, n_splits * self.n_runs))
         null_importances = np.zeros((n_features, n_splits * self.n_runs))
 
-        for run in range(self.n_runs):
-            order = rng.permutation(n_samples)
-            X_ordered = X.iloc[order].reset_index(drop=True)
-            y_ordered = y[order]
-
-            for fold_idx, (train_idx, _) in enumerate(cv.split(X_ordered, y_ordered)):
-                model = clone(self.estimator)
-                model.fit(X_ordered.iloc[train_idx], y_ordered[train_idx])
-                actual_importances[:, n_splits * run + fold_idx] = get_feature_importances(model)
-
-            y_null = rng.permutation(y_ordered)
-            for fold_idx, (train_idx, _) in enumerate(cv.split(X_ordered, y_null)):
-                model = clone(self.estimator)
-                model.fit(X_ordered.iloc[train_idx], y_null[train_idx])
-                null_importances[:, n_splits * run + fold_idx] = get_feature_importances(model)
+        if self.random_state is None:
+            base_seed = int(check_random_state(None).randint(0, np.iinfo(np.int32).max))
+        else:
+            base_seed = int(self.random_state)
+        max_seed = np.iinfo(np.int32).max
+        tasks = [
+            (run, (base_seed + run) % max_seed, self.estimator, X, y, self.cv)
+            for run in range(self.n_runs)
+        ]
+        estimator_params = (
+            self.estimator.get_params(deep=False)
+            if hasattr(self.estimator, 'get_params')
+            else {}
+        )
+        inner_n_jobs = estimator_params.get('n_jobs')
+        has_parallel_children = isinstance(inner_n_jobs, (int, np.integer)) and inner_n_jobs not in (0, 1)
+        results = self._parallel_execute(
+            _run_null_importance_experiment,
+            tasks,
+            task_labels=[f'实验{run + 1}' for run in range(self.n_runs)],
+            has_parallel_children=has_parallel_children,
+        )
+        for run, actual, null in results:
+            start = n_splits * run
+            stop = start + n_splits
+            actual_importances[:, start:stop] = actual
+            null_importances[:, start:stop] = null
 
         actual_mean = actual_importances.mean(axis=1)
         null_mean = null_importances.mean(axis=1)

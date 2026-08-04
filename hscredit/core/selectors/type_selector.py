@@ -23,6 +23,18 @@ import pandas as pd
 from .base import BaseFeatureSelector
 
 
+def _matches_dtype_feature(task):
+    """判断单列是否满足类型包含/排除条件。"""
+    feature, series, dtype_include, dtype_exclude = task
+    if dtype_include is None and dtype_exclude is None:
+        return feature, True
+    selected = series.to_frame().select_dtypes(
+        include=dtype_include,
+        exclude=dtype_exclude,
+    )
+    return feature, feature in selected.columns
+
+
 class TypeSelector(BaseFeatureSelector):
     """类型筛选器.
 
@@ -61,14 +73,17 @@ class TypeSelector(BaseFeatureSelector):
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
         force_drop: Optional[List[str]] = None,
-        n_jobs: int = 1,
+        n_jobs: Optional[Union[int, float]] = -1,
         binner: Optional[Any] = None,
         binning_params: Optional[Dict[str, Any]] = None,
+        parallel_backend: Optional[str] = None,
+        parallel_config: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(
             target=target, include=include, exclude=exclude,
             force_drop=force_drop, n_jobs=n_jobs,
             binner=binner, binning_params=binning_params,
+            parallel_backend=parallel_backend, parallel_config=parallel_config,
         )
         self.dtype_include = dtype_include
         self.dtype_exclude = dtype_exclude
@@ -86,14 +101,12 @@ class TypeSelector(BaseFeatureSelector):
         """
         self._get_feature_names(X)
 
-        # 选择符合类型的列
-        if self.dtype_include is not None or self.dtype_exclude is not None:
-            selected_cols = X.select_dtypes(
-                include=self.dtype_include,
-                exclude=self.dtype_exclude
-            ).columns.tolist()
-        else:
-            selected_cols = X.columns.tolist()
+        results = self._parallel_execute(
+            _matches_dtype_feature,
+            [(col, X[col], self.dtype_include, self.dtype_exclude) for col in X.columns],
+            task_labels=X.columns,
+        )
+        selected_cols = [feature for feature, selected in results if selected]
 
         self.dtypes_ = X.dtypes
         self.scores_ = pd.Series(

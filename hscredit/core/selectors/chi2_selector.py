@@ -25,6 +25,13 @@ from sklearn.feature_selection import chi2, SelectKBest
 from .base import BaseFeatureSelector
 
 
+def _compute_chi2_feature(task):
+    """计算单个非负特征的卡方得分和 p 值。"""
+    feature, values, y = task
+    scores, p_values = chi2(values.reshape(-1, 1), y)
+    return feature, scores[0], p_values[0]
+
+
 class Chi2Selector(BaseFeatureSelector):
     """卡方筛选器.
 
@@ -76,14 +83,17 @@ class Chi2Selector(BaseFeatureSelector):
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
         force_drop: Optional[List[str]] = None,
-        n_jobs: int = 1,
+        n_jobs: Optional[Union[int, float]] = -1,
         binner: Optional[Any] = None,
         binning_params: Optional[Dict[str, Any]] = None,
+        parallel_backend: Optional[str] = None,
+        parallel_config: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(
             target=target, threshold=threshold, include=include,
             exclude=exclude, force_drop=force_drop, n_jobs=n_jobs,
             binner=binner, binning_params=binning_params,
+            parallel_backend=parallel_backend, parallel_config=parallel_config,
         )
         self.k = k
         self.missing = missing
@@ -123,8 +133,13 @@ class Chi2Selector(BaseFeatureSelector):
         # 确保非负
         X_array = np.maximum(X_pos.values, 0)
 
-        # 计算卡方得分
-        chi2_scores, p_values = chi2(X_array, y)
+        results = self._parallel_execute(
+            _compute_chi2_feature,
+            [(col, X_array[:, i], np.asarray(y)) for i, col in enumerate(X.columns)],
+            task_labels=X.columns,
+        )
+        chi2_scores = np.array([score for _, score, _ in results])
+        p_values = np.array([p_value for _, _, p_value in results])
 
         self.scores_ = pd.Series(chi2_scores, index=X.columns)
 

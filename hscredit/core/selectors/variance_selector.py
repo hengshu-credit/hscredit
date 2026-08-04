@@ -21,6 +21,12 @@ from sklearn.feature_selection import VarianceThreshold as SklearnVarianceThresh
 from .base import BaseFeatureSelector
 
 
+def _compute_variance_feature(task):
+    """计算单列总体方差与峰值差。"""
+    feature, series = task
+    return feature, series.var(ddof=0), series.max() - series.min()
+
+
 class VarianceSelector(BaseFeatureSelector):
     """方差筛选器.
 
@@ -63,14 +69,17 @@ class VarianceSelector(BaseFeatureSelector):
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
         force_drop: Optional[List[str]] = None,
-        n_jobs: int = 1,
+        n_jobs: Optional[Union[int, float]] = -1,
         binner: Optional[Any] = None,
         binning_params: Optional[Dict[str, Any]] = None,
+        parallel_backend: Optional[str] = None,
+        parallel_config: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(
             target=target, threshold=threshold, include=include,
             exclude=exclude, force_drop=force_drop, n_jobs=n_jobs,
             binner=binner, binning_params=binning_params,
+            parallel_backend=parallel_backend, parallel_config=parallel_config,
         )
         self.method_name = '方差筛选'
 
@@ -86,28 +95,20 @@ class VarianceSelector(BaseFeatureSelector):
         """
         self._get_feature_names(X)
 
-        # 计算方差
-        if hasattr(X, 'toarray'):
-            # 稀疏矩阵
-            from sklearn.utils.sparsefuncs import mean_variance_axis
-            _, var = mean_variance_axis(X, axis=0)
-            self.scores_ = pd.Series(var, index=X.columns)
-        else:
-            self.scores_ = pd.Series(X.var(ddof=0).values, index=X.columns)
+        results = self._parallel_execute(
+            _compute_variance_feature,
+            [(col, X[col]) for col in X.columns],
+            task_labels=X.columns,
+        )
+        variances = {feature: variance for feature, variance, _ in results}
+        peak_to_peak = {feature: spread for feature, _, spread in results}
+        self.scores_ = pd.Series(variances).reindex(X.columns)
 
         # 根据阈值筛选
         if self.threshold == 0:
-            # 使用峰值差避免数值精度问题
-            if hasattr(X, 'toarray'):
-                from sklearn.utils.sparsefuncs import min_max_axis
-                _, mins, maxs = min_max_axis(X, axis=0)
-                peak_to_peak = maxs - mins
-            else:
-                peak_to_peak = X.max() - X.min()
-
             scores = np.minimum(
                 self.scores_.fillna(0).values,
-                peak_to_peak.fillna(0).values
+                pd.Series(peak_to_peak).reindex(X.columns).fillna(0).values
             )
             self.scores_ = pd.Series(scores, index=X.columns)
 

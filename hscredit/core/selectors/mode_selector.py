@@ -20,7 +20,6 @@
 from typing import Union, List, Optional, Dict, Any
 import numpy as np
 import pandas as pd
-from joblib import Parallel, delayed
 
 from .base import BaseFeatureSelector
 
@@ -40,6 +39,12 @@ def _compute_mode_ratio(series: pd.Series, dropna: bool = True) -> float:
         return 1.0
     
     return summary.iloc[0] / len(series)
+
+
+def _compute_mode_feature(task):
+    """计算单列众数占比并携带特征名返回。"""
+    feature, series, dropna = task
+    return feature, _compute_mode_ratio(series, dropna)
 
 
 class ModeSelector(BaseFeatureSelector):
@@ -81,14 +86,17 @@ class ModeSelector(BaseFeatureSelector):
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
         force_drop: Optional[List[str]] = None,
-        n_jobs: int = 1,
+        n_jobs: Optional[Union[int, float]] = -1,
         binner: Optional[Any] = None,
         binning_params: Optional[Dict[str, Any]] = None,
+        parallel_backend: Optional[str] = None,
+        parallel_config: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(
             target=target, threshold=threshold, include=include,
             exclude=exclude, force_drop=force_drop, n_jobs=n_jobs,
             binner=binner, binning_params=binning_params,
+            parallel_backend=parallel_backend, parallel_config=parallel_config,
         )
         self.dropna = dropna
         self.method_name = '单一值筛选'
@@ -105,19 +113,12 @@ class ModeSelector(BaseFeatureSelector):
         """
         self._get_feature_names(X)
 
-        # 计算各特征的众数占比
-        if self.n_jobs == 1:
-            mode_ratios = X.apply(
-                lambda col: _compute_mode_ratio(col, self.dropna)
-            )
-        else:
-            mode_ratios = pd.Series(
-                Parallel(n_jobs=self.n_jobs)(
-                    delayed(_compute_mode_ratio)(X[col], self.dropna)
-                    for col in X.columns
-                ),
-                index=X.columns
-            )
+        results = self._parallel_execute(
+            _compute_mode_feature,
+            [(col, X[col], self.dropna) for col in X.columns],
+            task_labels=X.columns,
+        )
+        mode_ratios = pd.Series(dict(results)).reindex(X.columns)
 
         self.scores_ = mode_ratios
 

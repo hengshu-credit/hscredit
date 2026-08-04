@@ -25,6 +25,13 @@ from sklearn.feature_selection import f_classif, SelectKBest, SelectPercentile
 from .base import BaseFeatureSelector
 
 
+def _compute_f_test_feature(task):
+    """计算单个特征的 ANOVA F 得分和 p 值。"""
+    feature, values, y = task
+    scores, p_values = f_classif(values.reshape(-1, 1), y)
+    return feature, scores[0], p_values[0]
+
+
 class FTestSelector(BaseFeatureSelector):
     """F检验筛选器.
 
@@ -75,14 +82,17 @@ class FTestSelector(BaseFeatureSelector):
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
         force_drop: Optional[List[str]] = None,
-        n_jobs: int = 1,
+        n_jobs: Optional[Union[int, float]] = -1,
         binner: Optional[Any] = None,
         binning_params: Optional[Dict[str, Any]] = None,
+        parallel_backend: Optional[str] = None,
+        parallel_config: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(
             target=target, threshold=threshold, include=include,
             exclude=exclude, force_drop=force_drop, n_jobs=n_jobs,
             binner=binner, binning_params=binning_params,
+            parallel_backend=parallel_backend, parallel_config=parallel_config,
         )
         self.k = k
         self.percentile = percentile
@@ -117,8 +127,13 @@ class FTestSelector(BaseFeatureSelector):
         if X_encoded.isna().any().any():
             X_encoded = X_encoded.fillna(X_encoded.median(numeric_only=True)).fillna(0)
 
-        # 计算F值
-        f_scores, p_values = f_classif(X_encoded.values, y)
+        results = self._parallel_execute(
+            _compute_f_test_feature,
+            [(col, X_encoded[col].values, np.asarray(y)) for col in X.columns],
+            task_labels=X.columns,
+        )
+        f_scores = np.array([score for _, score, _ in results])
+        p_values = np.array([p_value for _, _, p_value in results])
 
         # 处理NaN
         f_scores = np.nan_to_num(f_scores, nan=0.0)

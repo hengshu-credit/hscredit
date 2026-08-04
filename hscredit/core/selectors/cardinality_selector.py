@@ -21,6 +21,12 @@ import pandas as pd
 from .base import BaseFeatureSelector
 
 
+def _compute_cardinality_feature(task):
+    """计算单列唯一值数量。"""
+    feature, series, dropna = task
+    return feature, series.nunique(dropna=dropna)
+
+
 class CardinalitySelector(BaseFeatureSelector):
     """基数筛选器.
 
@@ -55,14 +61,17 @@ class CardinalitySelector(BaseFeatureSelector):
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
         force_drop: Optional[List[str]] = None,
-        n_jobs: int = 1,
+        n_jobs: Optional[Union[int, float]] = -1,
         binner: Optional[Any] = None,
         binning_params: Optional[Dict[str, Any]] = None,
+        parallel_backend: Optional[str] = None,
+        parallel_config: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(
             target=target, threshold=threshold, include=include,
             exclude=exclude, force_drop=force_drop, n_jobs=n_jobs,
             binner=binner, binning_params=binning_params,
+            parallel_backend=parallel_backend, parallel_config=parallel_config,
         )
         self.dropna = dropna
         self.method_name = '基数筛选'
@@ -79,8 +88,12 @@ class CardinalitySelector(BaseFeatureSelector):
         """
         self._get_feature_names(X)
 
-        # 计算各特征的基数
-        cardinalities = X.nunique(dropna=self.dropna)
+        results = self._parallel_execute(
+            _compute_cardinality_feature,
+            [(col, X[col], self.dropna) for col in X.columns],
+            task_labels=X.columns,
+        )
+        cardinalities = pd.Series(dict(results)).reindex(X.columns)
         self.scores_ = cardinalities
 
         # 选择基数低于阈值的特征
