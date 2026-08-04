@@ -20,10 +20,11 @@ import pandas as pd
 from sklearn.base import BaseEstimator, TransformerMixin
 
 from ...exceptions import FeatureNotFoundError, NotFittedError
+from ...utils.parallel import ParallelizableMixin
 from ...utils.serialization import ArtifactSerializableMixin
 
 
-class BaseEncoder(ArtifactSerializableMixin, BaseEstimator, TransformerMixin, ABC):
+class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator, TransformerMixin, ABC):
     """编码器基类.
 
     所有编码器的抽象基类，提供统一的接口和通用功能。
@@ -43,6 +44,9 @@ class BaseEncoder(ArtifactSerializableMixin, BaseEstimator, TransformerMixin, AB
         - 'error': 抛出错误
         - 'return_nan': 返回NaN
     :param target: scorecardpipeline风格的目标列名。如果提供，fit时从X中提取该列作为y
+    :param n_jobs: 并行工作数，默认为-1；None沿用旧串行行为
+    :param parallel_backend: joblib并行后端，默认为None
+    :param parallel_config: joblib扩展配置，默认为None
 
     **属性**
 
@@ -86,6 +90,9 @@ class BaseEncoder(ArtifactSerializableMixin, BaseEstimator, TransformerMixin, AB
         handle_unknown: str = "value",
         handle_missing: str = "value",
         target: Optional[str] = None,
+        n_jobs: Optional[Union[int, float]] = -1,
+        parallel_backend: Optional[str] = None,
+        parallel_config: Optional[Dict[str, Any]] = None,
     ):
         """初始化编码器基类。
 
@@ -95,6 +102,9 @@ class BaseEncoder(ArtifactSerializableMixin, BaseEstimator, TransformerMixin, AB
         :param handle_unknown: 处理未知类别的方式，默认为'value'
         :param handle_missing: 处理缺失值的方式，默认为'value'
         :param target: scorecardpipeline风格的目标列名。如果提供，fit时从X中提取该列作为y
+        :param n_jobs: 并行工作数，默认为-1；None沿用旧串行行为
+        :param parallel_backend: joblib并行后端，默认为None
+        :param parallel_config: joblib扩展配置，默认为None
         """
         self.cols = cols
         self.drop_invariant = drop_invariant
@@ -102,6 +112,9 @@ class BaseEncoder(ArtifactSerializableMixin, BaseEstimator, TransformerMixin, AB
         self.handle_unknown = handle_unknown
         self.handle_missing = handle_missing
         self.target = target
+        self.n_jobs = n_jobs
+        self.parallel_backend = parallel_backend
+        self.parallel_config = parallel_config
 
         self.mapping_: Dict = {}
         self.cols_: Optional[List[str]] = None

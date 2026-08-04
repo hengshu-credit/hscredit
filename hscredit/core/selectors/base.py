@@ -34,6 +34,7 @@ from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.utils.validation import check_is_fitted
 
 from ...exceptions import NotFittedError, ValidationError
+from ...utils.parallel import ParallelizableMixin
 
 
 def get_feature_importances(estimator) -> np.ndarray:
@@ -579,7 +580,7 @@ class SelectionReportCollector:
         return f"SelectionReportCollector(name='{self.name}', stages={len(self.reports)})"
 
 
-class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
+class BaseFeatureSelector(ParallelizableMixin, BaseEstimator, TransformerMixin, ABC):
     """特征筛选器基类.
 
     所有特征筛选器都继承此类，实现统一的 fit/transform 接口。
@@ -595,8 +596,10 @@ class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
     :param binning_params: 可选的 ``OptimalBinning`` 构造参数字典。未传入 ``binner`` 时，
         基类使用该字典创建分箱器；同时传入时 ``binner`` 优先
     :param threshold: 筛选阈值，不同筛选器含义不同
-    :param n_jobs: 并行计算的任务数，默认为 1
+    :param n_jobs: 并行工作数，默认为 -1；None 沿用旧串行行为
     :param force_drop: 强制剔除的特征列表，效果与 exclude 合并
+    :param parallel_backend: joblib 并行后端，默认为 None
+    :param parallel_config: joblib 扩展配置，默认为 None
 
     **属性**
 
@@ -656,8 +659,10 @@ class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
         binner: Optional[Any] = None,
         binning_params: Optional[Dict[str, Any]] = None,
         threshold: Union[float, int, str] = 0.0,
-        n_jobs: int = 1,
+        n_jobs: Optional[Union[int, float]] = -1,
         force_drop: Optional[List[str]] = None,
+        parallel_backend: Optional[str] = None,
+        parallel_config: Optional[Dict[str, Any]] = None,
     ):
         """初始化特征筛选器。
 
@@ -669,8 +674,10 @@ class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
         :param binner: 可选的已配置分箱器实例，支持已训练或未训练状态，不接受分箱器类
         :param binning_params: 可选的 ``OptimalBinning`` 构造参数字典；``binner`` 优先
         :param threshold: 筛选阈值，不同筛选器含义不同
-        :param n_jobs: 并行计算的任务数，默认为 1
+        :param n_jobs: 并行工作数，默认为 -1；None 沿用旧串行行为
         :param force_drop: 强制剔除的特征列表，效果与 exclude 合并
+        :param parallel_backend: joblib 并行后端，默认为 None
+        :param parallel_config: joblib 扩展配置，默认为 None
         """
         self.target = target
         self.include = include
@@ -680,6 +687,8 @@ class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
         self.threshold = threshold
         self.n_jobs = n_jobs
         self.force_drop = force_drop
+        self.parallel_backend = parallel_backend
+        self.parallel_config = parallel_config
 
     def _check_input(
         self,

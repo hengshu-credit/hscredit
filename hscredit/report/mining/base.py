@@ -6,8 +6,10 @@ from abc import ABC, abstractmethod
 from typing import Union, List, Dict, Optional, Tuple, Any
 from sklearn.base import BaseEstimator
 
+from ...utils.parallel import ParallelizableMixin
 
-class BaseRuleMiner(BaseEstimator, ABC):
+
+class BaseRuleMiner(ParallelizableMixin, BaseEstimator, ABC):
     """规则挖掘器基类.
     
     所有规则挖掘器的基类，遵循sklearn API规范，
@@ -15,15 +17,24 @@ class BaseRuleMiner(BaseEstimator, ABC):
     
     :param target: 目标变量列名，默认为'target'
     :param exclude_cols: 需要排除的列名列表
+    :param n_jobs: 并行工作数，默认为-1；None沿用旧串行行为
+    :param parallel_backend: joblib并行后端，默认为None
+    :param parallel_config: joblib扩展配置，默认为None
     """
     
     def __init__(
         self,
         target: str = 'target',
-        exclude_cols: Optional[List[str]] = None
+        exclude_cols: Optional[List[str]] = None,
+        n_jobs: Optional[Union[int, float]] = -1,
+        parallel_backend: Optional[str] = None,
+        parallel_config: Optional[Dict[str, Any]] = None,
     ):
         self.target = target
         self.exclude_cols = exclude_cols or []
+        self.n_jobs = n_jobs
+        self.parallel_backend = parallel_backend
+        self.parallel_config = parallel_config
         self._is_fitted = False
     
     def _check_input_data(

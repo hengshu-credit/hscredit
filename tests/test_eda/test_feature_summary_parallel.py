@@ -276,23 +276,35 @@ def test_invalid_outer_binning_config_is_rejected_before_feature_work(outer_para
 
 
 def test_auto_n_jobs_reserves_cpu(monkeypatch):
-    """自动模式最多使用约四分之三物理核心，并受任务数约束。"""
+    """自动模式使用统一的保守物理核预算，并受任务数约束。"""
     monkeypatch.setattr(
-        "hscredit.core.eda._feature_summary._physical_cpu_count",
+        "hscredit.utils.parallel.get_physical_cpu_count",
         lambda: 16,
-        raising=False,
     )
 
-    assert feature_summary_impl._resolve_n_jobs(-1, task_count=100) == 12
+    assert feature_summary_impl._resolve_n_jobs(-1, task_count=100) == 13
     assert feature_summary_impl._resolve_n_jobs(-1, task_count=2) == 2
     assert feature_summary_impl._resolve_n_jobs(-1, task_count=0) == 1
 
 
-@pytest.mark.parametrize("n_jobs", [0, -2])
+@pytest.mark.parametrize("n_jobs", [True, 0, -2, 1.5, "2", object()])
 def test_invalid_n_jobs_is_rejected(n_jobs):
-    """仅 -1 和正整数是有效并行配置。"""
-    with pytest.raises(ValueError, match="n_jobs"):
+    """非法工作数必须抛出共享的中文校验异常。"""
+    from hscredit.exceptions import ValidationError
+
+    with pytest.raises(ValidationError, match="n_jobs"):
         feature_summary_impl._resolve_n_jobs(n_jobs, task_count=10)
+
+
+@pytest.mark.parametrize(
+    ("n_jobs", "expected"),
+    [(None, None), (1, 1), (1.0, 1), (0.25, 4)],
+)
+def test_eda_n_jobs_uses_shared_legacy_and_ratio_semantics(monkeypatch, n_jobs, expected):
+    """EDA 必须接受共享解析器规定的旧串行值、浮点一核和比例值。"""
+    monkeypatch.setattr("hscredit.utils.parallel.get_physical_cpu_count", lambda: 16)
+
+    assert feature_summary_impl._resolve_n_jobs(n_jobs, task_count=100) == expected
 
 
 def test_progress_displays_an_active_feature_and_exact_completion(capsys):
@@ -751,7 +763,7 @@ def test_model_importance_keeps_full_precision():
 
 def test_parallel_strategy_adapts_to_workload(monkeypatch):
     """自动模式应跳过小任务开销，并只为重任务启用保守进程数。"""
-    monkeypatch.setattr("hscredit.core.eda._feature_summary._physical_cpu_count", lambda: 16)
+    monkeypatch.setattr("hscredit.utils.parallel.get_physical_cpu_count", lambda: 16)
 
     assert feature_summary_impl._select_parallel_strategy(
         n_jobs=-1,
