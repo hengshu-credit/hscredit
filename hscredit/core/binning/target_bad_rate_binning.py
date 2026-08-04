@@ -128,7 +128,7 @@ class TargetBadRateBinning(BaseBinning):
         """
         X, y = self._check_input(X, y)
 
-        self._fit_features(X.columns, lambda f: self._fit_feature(f, X[f], y))
+        self._fit_features(X, y, "_fit_feature")
 
         self._apply_post_fit_constraints(X, y, enforce_monotonic=True)
         self._finalize_categorical_fit()
@@ -609,34 +609,12 @@ class TargetBadRateBinning(BaseBinning):
         if not isinstance(X, pd.DataFrame):
             X = pd.DataFrame(X)
 
-        result = pd.DataFrame(index=X.index)
-
-        for feature in X.columns:
-            if feature not in self.splits_:
-                result[feature] = X[feature]
-                continue
-
-            bins = self._assign_bins(X[feature], feature)
-
-            if metric == "indices":
-                result[feature] = bins
-            elif metric == "bins":
-                result[feature] = self._assign_bin_labels(feature, bins)
-            elif metric == "woe":
-                # 优先使用_woe_maps_（从export/load导入）
-                if hasattr(self, "_woe_maps_") and feature in self._woe_maps_:
-                    woe_map = self._woe_maps_[feature]
-                elif feature in self.bin_tables_:
-                    bin_table = self.bin_tables_[feature]
-                    woe_map = dict(zip(range(len(bin_table)), bin_table["分档WOE值"].values))
-                    self._enrich_woe_map(woe_map, bin_table)
-                else:
-                    raise ValueError(f"特征 '{feature}' 没有WOE映射信息")
-                result[feature] = [woe_map.get(b, 0) for b in bins]
-            else:
-                raise ValueError(f"不支持的metric: {metric}")
-
-        return result
+        return self._transform_binning_features(
+            X,
+            metric,
+            lambda feature: self._assign_bins(X[feature], feature),
+            woe_default=0.0,
+        )
 
     def get_bad_rate_summary(self, feature: str) -> pd.DataFrame:
         """获取坏样本率摘要.

@@ -12,12 +12,13 @@
 
 from abc import ABC, abstractmethod
 from collections import deque
+from copy import copy
 from typing import Union, List, Dict, Optional, Any, Tuple
 import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, TransformerMixin
 
-from ...exceptions import FeatureNotFoundError, NotFittedError
+from ...exceptions import FeatureNotFoundError, NotFittedError, ParallelExecutionError
 from ...utils.misc import round_float
 from ...utils.parallel import ParallelizableMixin
 from ...utils.serialization import ArtifactSerializableMixin
@@ -195,6 +196,24 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
     """
 
     artifact_kind = "分箱器"
+
+    _FEATURE_DICT_STATE = (
+        "splits_",
+        "n_bins_",
+        "bin_tables_",
+        "feature_types_",
+        "_cat_bins_",
+        "_category_orders_",
+        "_category_code_maps_",
+        "_categorical_numeric_splits_",
+        "_categorical_fit_context_",
+        # 具体算法的按特征状态；浅拷贝 worker 必须与主对象隔离。
+        "tree_models_",
+        "monotonic_trend_",
+        "_actual_rates",
+        "clip_bounds_",
+    )
+    _FEATURE_SET_STATE = ("_categorical_encoded_features_",)
 
     def __init__(
         self,
@@ -838,23 +857,158 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         self._set_input_feature_attributes(X)
         return self._prepare_categorical_fit(X, y), y
 
-    def _fit_features(self, features, fit_one) -> None:
-        """按特征循环拟合，支持 n_jobs 并行。
+    def _fit_feature_transaction(self, task):
+        """在隔离的估计器浅拷贝上完成一个特征的拟合并返回状态快照。"""
+        feature, x, y, method_name = task
+        encoded_categorical = feature in getattr(self, "_categorical_encoded_features_", set())
+        worker = copy(self)
+        for state_name in self._FEATURE_DICT_STATE:
+            setattr(worker, state_name, {})
+        for state_name in self._FEATURE_SET_STATE:
+            setattr(worker, state_name, set())
+        if encoded_categorical:
+            # 这是 worker 的输入元数据，用于让内部数值编码继续走数值算法；
+            # 容器仍与主对象隔离，并会作为该特征状态随快照返回。
+            worker._categorical_encoded_features_.add(feature)
 
-        各特征的拟合相互独立，且只写入以特征名为键的独立字典项（splits_/bin_tables_/
-        feature_types_/n_bins_），因此使用线程后端并行是安全的（distinct key，无竞争），
-        同时分箱计算以 numpy 为主、可释放 GIL，多特征场景能获得实际加速。
+        fit_one = getattr(worker, method_name)
+        fit_one(feature, x, y)
 
-        :param features: 特征名可迭代对象
-        :param fit_one: 单特征拟合回调 ``fit_one(feature)``，内部完成该特征的全部拟合
-        """
-        features = list(features)
-        self._parallel_execute(
-            fit_one,
-            features,
+        state = {}
+        for state_name in self._FEATURE_DICT_STATE:
+            values = getattr(worker, state_name, {})
+            if not isinstance(values, dict):
+                raise TypeError(f"特征状态 {state_name} 必须为字典")
+            state[state_name] = {feature: values[feature]} if feature in values else {}
+        for state_name in self._FEATURE_SET_STATE:
+            values = getattr(worker, state_name, set())
+            if not isinstance(values, set):
+                raise TypeError(f"特征状态 {state_name} 必须为集合")
+            state[state_name] = {feature} if feature in values else set()
+        return feature, state
+
+    def _fit_features(self, X: pd.DataFrame, y: pd.Series, method_name: str) -> None:
+        """事务式拟合所有特征，并按输入列顺序一次性提交状态。"""
+        features = list(X.columns)
+        tasks = [(feature, X[feature], y, method_name) for feature in features]
+        results = self._parallel_execute(
+            self._fit_feature_transaction,
+            tasks,
             default_backend="threading",
             task_labels=features,
         )
+
+        snapshots = {}
+        for expected_feature, result in zip(features, results):
+            if not isinstance(result, tuple) or len(result) != 2:
+                raise TypeError(f"特征 '{expected_feature}' 的拟合结果格式无效")
+            feature, state = result
+            if feature != expected_feature or not isinstance(state, dict):
+                raise TypeError(f"特征 '{expected_feature}' 的拟合结果无效")
+            snapshots[feature] = state
+
+        # 只有全部 worker 成功且结果通过校验后，才在主线程一次性替换本轮特征状态。
+        for state_name in self._FEATURE_DICT_STATE:
+            current = getattr(self, state_name, {})
+            merged = {}
+            for feature in features:
+                feature_state = snapshots[feature].get(state_name, {})
+                if feature in feature_state:
+                    merged[feature] = feature_state[feature]
+                elif feature in current:
+                    merged[feature] = current[feature]
+            if hasattr(self, state_name) or merged:
+                setattr(self, state_name, merged)
+
+        for state_name in self._FEATURE_SET_STATE:
+            current = getattr(self, state_name, set())
+            merged = set()
+            for feature in features:
+                if feature in snapshots[feature].get(state_name, set()) or feature in current:
+                    merged.add(feature)
+            setattr(self, state_name, merged)
+
+    def _transform_features(self, X: pd.DataFrame, transform_one) -> pd.DataFrame:
+        """并行只读转换各特征，并按输入列顺序拼接结果。"""
+        features = list(X.columns)
+
+        def _transform(feature):
+            return feature, transform_one(feature)
+
+        try:
+            results = self._parallel_execute(
+                _transform,
+                features,
+                default_backend="threading",
+                task_labels=features,
+            )
+        except ParallelExecutionError as exc:
+            # transform 历史上直接抛出未知类别等原始校验错误，保持该公共语义。
+            if exc.__cause__ is not None:
+                raise exc.__cause__
+            raise
+
+        blocks = []
+        for expected_feature, result in zip(features, results):
+            if not isinstance(result, tuple) or len(result) != 2 or result[0] != expected_feature:
+                raise TypeError(f"特征 '{expected_feature}' 的转换结果无效")
+            values = result[1]
+            if isinstance(values, pd.DataFrame):
+                block = values.copy()
+                block.index = X.index
+            elif isinstance(values, pd.Series):
+                block = values.copy()
+                block.index = X.index
+                block.name = expected_feature
+            else:
+                block = pd.Series(values, index=X.index, name=expected_feature)
+            blocks.append(block)
+        if not blocks:
+            return pd.DataFrame(index=X.index)
+        return pd.concat(blocks, axis=1)
+
+    def _transform_binning_features(
+        self,
+        X: pd.DataFrame,
+        metric: str,
+        assign_bins,
+        *,
+        missing_feature: str = "passthrough",
+        woe_default: Optional[float] = None,
+        extra_metric=None,
+    ) -> pd.DataFrame:
+        """统一生成单列分箱结果，并交由有序只读转换 helper 执行。"""
+
+        def _transform_one(feature):
+            if feature not in self.splits_:
+                if missing_feature == "error":
+                    raise KeyError(f"特征 '{feature}' 未在训练数据中找到")
+                return X[feature].copy()
+
+            bins = assign_bins(feature)
+            if metric == "indices":
+                return bins
+            if metric == "bins":
+                return self._assign_bin_labels(feature, bins)
+            if metric == "woe":
+                if hasattr(self, "_woe_maps_") and feature in self._woe_maps_:
+                    woe_map = self._woe_maps_[feature]
+                elif feature in self.bin_tables_:
+                    bin_table = self.bin_tables_[feature]
+                    woe_map = dict(zip(range(len(bin_table)), bin_table["分档WOE值"].values))
+                    self._enrich_woe_map(woe_map, bin_table)
+                else:
+                    raise ValueError(f"特征 '{feature}' 没有WOE映射信息")
+                if woe_default is None:
+                    return pd.Series(bins, index=X.index).map(woe_map).to_numpy()
+                return np.asarray([woe_map.get(value, woe_default) for value in bins])
+            if extra_metric is not None:
+                values = extra_metric(feature, bins, metric)
+                if values is not None:
+                    return values
+            raise ValueError(f"不支持的metric: {metric}")
+
+        return self._transform_features(X, _transform_one)
 
     def _get_min_samples(self, n_samples: int) -> int:
         """计算最小样本数.

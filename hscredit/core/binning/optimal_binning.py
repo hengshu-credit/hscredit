@@ -1668,39 +1668,18 @@ class OptimalBinning(BaseBinning):
         if not isinstance(X, pd.DataFrame):
             X = pd.DataFrame(X)
 
-        result = pd.DataFrame(index=X.index)
-
-        for feature in X.columns:
-            if feature not in self.splits_:
-                result[feature] = X[feature]
-                continue
-
-            splits = self.splits_[feature]
-            feature_type = self.feature_types_[feature]
-
-            # 对于类别型变量，优先使用_cat_bins_
-            if feature_type == "categorical" and feature in self._cat_bins_:
-                bins = self._apply_bins(X[feature], self._cat_bins_[feature], feature_type, feature)
-            else:
-                bins = self._apply_bins(X[feature], splits, feature_type, feature)
-
-            if metric == "indices":
-                result[feature] = bins
-            elif metric == "bins":
-                result[feature] = self._assign_bin_labels(feature, bins)
-            elif metric == "woe":
-                # 优先使用_woe_maps_（从export/load导入）
-                if hasattr(self, "_woe_maps_") and feature in self._woe_maps_:
-                    woe_map = self._woe_maps_[feature]
-                elif feature in self.bin_tables_:
-                    bin_table = self.bin_tables_[feature]
-                    woe_map = dict(zip(range(len(bin_table)), bin_table["分档WOE值"].values))
-                    self._enrich_woe_map(woe_map, bin_table)
-                else:
-                    raise ValueError(f"特征 '{feature}' 没有WOE映射信息")
-                result[feature] = pd.Series(bins).map(woe_map).values
-            else:
-                raise ValueError(f"不支持的metric: {metric}")
+        result = self._transform_binning_features(
+            X,
+            metric,
+            lambda feature: self._apply_bins(
+                X[feature],
+                self._cat_bins_[feature]
+                if self.feature_types_[feature] == "categorical" and feature in self._cat_bins_
+                else self.splits_[feature],
+                self.feature_types_[feature],
+                feature,
+            ),
+        )
 
         if metric == "woe":
             result.attrs["hscredit_encoding"] = "woe"
