@@ -8,6 +8,7 @@ import pandas as pd
 import pytest
 from sklearn.base import BaseEstimator, ClassifierMixin, clone
 from sklearn.linear_model import LogisticRegression
+from sklearn.pipeline import Pipeline
 
 from hscredit.core import selectors
 from hscredit.core.selectors import (
@@ -86,6 +87,25 @@ class TransactionalBinner(BaseEstimator):
         return X.copy()
 
 
+class PrefittedThresholdBinner(BaseEstimator):
+    """拟合阈值属于 learned state，用于验证预拟合外部 binner 被完整复用。"""
+
+    def __init__(self, threshold=101):
+        self.threshold = threshold
+        self.fit_calls = 0
+        self.metrics = []
+
+    def fit(self, X, y=None):
+        self.fit_calls += 1
+        self.threshold_ = float(np.asarray(X).min())
+        self.fitted_ = True
+        return self
+
+    def transform(self, X, metric="indices"):
+        self.metrics.append(metric)
+        return (X >= self.threshold_).astype(int)
+
+
 class TransactionalFailureSelector(BaseFeatureSelector):
     """在原地修改嵌套学习状态后可控失败的真实筛选器。"""
 
@@ -101,6 +121,41 @@ class TransactionalFailureSelector(BaseFeatureSelector):
         self.scores_ = pd.Series(1.0, index=X.columns)
         if self.fail:
             raise RuntimeError("事务测试失败")
+
+
+class FaultInjectedAdoptSelector(TransactionalFailureSelector):
+    """只在原 target 提交阶段注入故障，candidate clone 不继承该开关。"""
+
+    def _adopt_fitted_candidate(self, candidate):
+        if getattr(self, "_fail_adopt", False):
+            raise RuntimeError("第二子筛选器提交失败")
+        return super()._adopt_fitted_candidate(candidate)
+
+    def _apply_candidate_state(self, state):
+        if getattr(self, "_fail_adopt", False):
+            raise RuntimeError("第二子筛选器提交失败")
+        return super()._apply_candidate_state(state)
+
+
+class FinalizeFailureScorecard(ScorecardFeatureSelection):
+    """在 finalize 修改候选子状态后注入异常。"""
+
+    def __init__(self, fail_finalize=False, binner=None):
+        super().__init__(
+            null_threshold=1.0,
+            iv_threshold=None,
+            corr_threshold=None,
+            mode_threshold=None,
+            binner=binner,
+        )
+        self.fail_finalize = fail_finalize
+
+    def _finalize_selection_result(self):
+        super()._finalize_selection_result()
+        if self.fail_finalize:
+            child = next(iter(self.stage_selectors_.values()))
+            child.selected_features_.append("finalize污染")
+            raise RuntimeError("finalize失败")
 
 
 class BudgetAwareClassifier(BaseEstimator, ClassifierMixin):
@@ -449,6 +504,66 @@ def test_stepwise_candidate_estimator_receives_child_budget_and_preserves_tie_or
     assert estimator.n_jobs == 99
 
 
+@pytest.mark.parametrize("backend", ["threading", "loky"])
+@pytest.mark.parametrize("selector_kind", ["sequential", "stepwise"])
+def test_nested_estimator_receives_child_budget_without_mutating_original(
+    selector_xy, monkeypatch, backend, selector_kind
+):
+    """Pipeline 内层 n_jobs 必须收到当前轮子预算，且不回写外部模型。"""
+    monkeypatch.setattr(parallel_utils, "get_physical_cpu_count", lambda: 5)
+    X, y = selector_xy
+    estimator = Pipeline(
+        [("model", BudgetAwareClassifier(n_jobs=99, worker_budget=2, root_budget=4))]
+    )
+
+    if selector_kind == "sequential":
+        selector = SequentialFeatureSelector(
+            estimator,
+            n_features_to_select=1,
+            direction="forward",
+            cv=2,
+            n_jobs=-1,
+            parallel_backend=backend,
+        )
+    else:
+        selector = StepwiseSelector(
+            estimator=estimator,
+            direction="forward",
+            criterion="auc",
+            max_features=1,
+            p_enter=0.0,
+            max_iter=2,
+            n_jobs=-1,
+            parallel_backend=backend,
+        )
+
+    selector.fit(X, y)
+
+    assert selector.selected_features_ == ["特征甲"]
+    assert estimator.named_steps["model"].n_jobs == 99
+
+
+def test_nested_estimator_single_candidate_receives_full_budget(monkeypatch):
+    """单候选串行退化时，Pipeline 内层模型获得完整预算。"""
+    monkeypatch.setattr(parallel_utils, "get_physical_cpu_count", lambda: 5)
+    X = pd.DataFrame({"唯一特征": [0.0, 1.0, 0.0, 1.0]})
+    y = pd.Series([0, 1, 0, 1])
+    estimator = Pipeline(
+        [("model", BudgetAwareClassifier(n_jobs=99, worker_budget=4, root_budget=4))]
+    )
+
+    selector = SequentialFeatureSelector(
+        estimator,
+        n_features_to_select=1,
+        cv=2,
+        n_jobs=-1,
+        parallel_backend="threading",
+    ).fit(X, y)
+
+    assert selector.selected_features_ == ["唯一特征"]
+    assert estimator.named_steps["model"].n_jobs == 99
+
+
 def test_successive_fit_replaces_old_dropped_state():
     """防止第二次成功拟合沿用第一次的剔除报告。"""
     selector = ModeSelector(threshold=0.75, n_jobs=1)
@@ -553,6 +668,72 @@ def test_successful_fit_preserves_external_binner_and_composite_child_identity()
     assert binner.fit_calls == 1
     assert composite.selectors is children
     assert child._is_fitted is True
+
+
+def test_prefitted_external_binner_keeps_learned_state_without_refit():
+    """预拟合 binner 的 learned 阈值必须由候选直接复用，不能被 sklearn clone 丢弃后重训。"""
+    binner = PrefittedThresholdBinner().fit(pd.DataFrame({"甲": [101.0, 102.0]}))
+    selector = TransactionalFailureSelector(binner=binner)
+
+    selector.fit(pd.DataFrame({"甲": [0.0, 1.0]}))
+
+    assert selector.binner is binner
+    assert selector._binner_instance is binner
+    assert binner.threshold_ == 101.0
+    assert binner.fit_calls == 1
+    assert binner.metrics == ["indices"]
+
+
+def test_adopt_failure_rolls_back_binner_first_child_and_self_atomically():
+    """第二个 child 提交异常后，所有已提交 target 与 self 都必须直接恢复深快照。"""
+    X = pd.DataFrame({"甲": [0, 1], "乙": [1, 0]})
+    binner = TransactionalBinner()
+    first = TransactionalFailureSelector()
+    second = FaultInjectedAdoptSelector()
+    second._fail_adopt = True
+    children = [first, second]
+    selector = CompositeFeatureSelector(children, binner=binner)
+    snapshots = {
+        "selector": pickle.dumps(selector),
+        "binner": pickle.dumps(binner),
+        "first": pickle.dumps(first),
+        "second": pickle.dumps(second),
+    }
+
+    with pytest.raises(RuntimeError, match="第二子筛选器提交失败"):
+        selector.fit(X)
+
+    assert pickle.dumps(selector) == snapshots["selector"]
+    assert pickle.dumps(binner) == snapshots["binner"]
+    assert pickle.dumps(first) == snapshots["first"]
+    assert pickle.dumps(second) == snapshots["second"]
+    assert selector.binner is binner
+    assert selector.selectors is children
+
+
+def test_scorecard_finalize_failure_is_inside_candidate_transaction():
+    """finalize 失败不得先提交 selector、外部 binner 或替换既有 stage children。"""
+    X = pd.DataFrame({"甲": [0.0, 1.0, 2.0, 3.0], "乙": [3.0, 2.0, 1.0, 0.0]})
+    y = pd.Series([0, 1, 0, 1])
+    binner = TransactionalBinner()
+    selector = FinalizeFailureScorecard(binner=binner).fit(X, y)
+    old_stage_selectors = selector.stage_selectors_
+    old_children = list(old_stage_selectors.values())
+    binner.metrics.append("保留标记")
+    selector.fail_finalize = True
+    snapshots = {
+        "selector": pickle.dumps(selector),
+        "binner": pickle.dumps(binner),
+        "children": [pickle.dumps(child) for child in old_children],
+    }
+
+    with pytest.raises(RuntimeError, match="finalize失败"):
+        selector.fit(X, y)
+
+    assert pickle.dumps(selector) == snapshots["selector"]
+    assert pickle.dumps(binner) == snapshots["binner"]
+    assert selector.stage_selectors_ is old_stage_selectors
+    assert [pickle.dumps(child) for child in old_children] == snapshots["children"]
 
 
 @pytest.mark.parametrize("backend", ["threading", "loky"])

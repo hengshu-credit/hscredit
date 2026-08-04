@@ -30,7 +30,7 @@ from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.linear_model import LogisticRegression, LinearRegression
 import warnings
 
-from .base import BaseFeatureSelector
+from .base import BaseFeatureSelector, _set_estimator_parallel_budget
 from ..._lazy import LazyModule
 from ...utils.parallel import _current_parallel_budget
 
@@ -363,8 +363,7 @@ class StepwiseSelector(BaseFeatureSelector):
 
         from sklearn.base import clone as sklearn_clone
         model = sklearn_clone(self.estimator)
-        if 'n_jobs' in model.get_params(deep=False):
-            model.set_params(n_jobs=_current_parallel_budget().available)
+        _set_estimator_parallel_budget(model, _current_parallel_budget().available)
 
         if self.intercept:
             if hasattr(model, 'fit_intercept'):
