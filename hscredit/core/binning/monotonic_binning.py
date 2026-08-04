@@ -122,6 +122,9 @@ class MonotonicBinning(BaseBinning):
         random_state: Optional[int] = None,
         verbose: Union[bool, int] = False,
         decimal: int = 4,
+        n_jobs: Union[int, float] = -1,
+        parallel_backend: Optional[str] = None,
+        parallel_config: Optional[Dict[str, Any]] = None,
     ):
         # monotonic=True 等价于 'auto'（与 BaseBinning 约定一致，自动检测最佳趋势）
         if monotonic is True:
@@ -142,6 +145,9 @@ class MonotonicBinning(BaseBinning):
             random_state=random_state,
             verbose=verbose,
             decimal=decimal,
+            n_jobs=n_jobs,
+            parallel_backend=parallel_backend,
+            parallel_config=parallel_config,
         )
         self.init_method = init_method
         self.init_n_bins = max(init_n_bins, max_n_bins * 3)

@@ -87,6 +87,9 @@ class TargetBadRateBinning(BaseBinning):
         handle_unknown: str = "value",
         random_state: Optional[int] = None,
         decimal: int = 4,
+        n_jobs: Union[int, float] = -1,
+        parallel_backend: Optional[str] = None,
+        parallel_config: Optional[Dict[str, Any]] = None,
         **kwargs,
     ):
         super().__init__(
@@ -104,6 +107,9 @@ class TargetBadRateBinning(BaseBinning):
             handle_unknown=handle_unknown,
             random_state=random_state,
             decimal=decimal,
+            n_jobs=n_jobs,
+            parallel_backend=parallel_backend,
+            parallel_config=parallel_config,
             **kwargs,
         )
         self.target_bad_rates = sorted(target_bad_rates) if target_bad_rates else None

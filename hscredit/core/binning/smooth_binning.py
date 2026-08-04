@@ -103,6 +103,9 @@ class SmoothBinning(BaseBinning):
         random_state: Optional[int] = None,
         verbose: Union[bool, int] = False,
         decimal: int = 4,
+        n_jobs: Union[int, float] = -1,
+        parallel_backend: Optional[str] = None,
+        parallel_config: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(
             target=target,
@@ -120,6 +123,9 @@ class SmoothBinning(BaseBinning):
             random_state=random_state,
             verbose=verbose,
             decimal=decimal,
+            n_jobs=n_jobs,
+            parallel_backend=parallel_backend,
+            parallel_config=parallel_config,
         )
         self.method = method
         self.smoothing_param = smoothing_param

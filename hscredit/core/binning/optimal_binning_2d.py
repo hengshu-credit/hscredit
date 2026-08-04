@@ -198,6 +198,9 @@ class OptimalBinning2D(ArtifactSerializableMixin, BaseEstimator, TransformerMixi
         decimal: int = 4,
         woe_clip: Optional[float] = None,
         verbose: Union[bool, int] = False,
+        n_jobs: Union[int, float] = -1,
+        parallel_backend: Optional[str] = None,
+        parallel_config: Optional[Dict[str, Any]] = None,
     ):
         # 目标变量
         self.target = target
@@ -240,6 +243,9 @@ class OptimalBinning2D(ArtifactSerializableMixin, BaseEstimator, TransformerMixi
         self.decimal = decimal
         self.woe_clip = woe_clip
         self.verbose = verbose
+        self.n_jobs = n_jobs
+        self.parallel_backend = parallel_backend
+        self.parallel_config = parallel_config
 
         # 内部属性
         self.binner_x_: Optional[OptimalBinning] = None
@@ -951,6 +957,9 @@ class OptimalBinning2D(ArtifactSerializableMixin, BaseEstimator, TransformerMixi
             'decimal': self.decimal,
             'woe_clip': self.woe_clip,
             'verbose': self.verbose,
+            'n_jobs': self.n_jobs,
+            'parallel_backend': self.parallel_backend,
+            'parallel_config': self.parallel_config,
         }
         extra_params = self.x_params if is_x else self.y_params
         valid_names = set(OptimalBinning().get_params(deep=False))

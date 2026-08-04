@@ -215,6 +215,9 @@ class OptimalBinning(BaseBinning):
         verbose: Union[bool, int] = False,
         decimal: int = 4,
         woe_clip: Optional[float] = None,
+        n_jobs: Union[int, float] = -1,
+        parallel_backend: Optional[str] = None,
+        parallel_config: Optional[Dict[str, Any]] = None,
         **kwargs,
     ):
         if "n_bins" in kwargs:
@@ -244,6 +247,9 @@ class OptimalBinning(BaseBinning):
             verbose=verbose,
             decimal=decimal,
             woe_clip=woe_clip,
+            n_jobs=n_jobs,
+            parallel_backend=parallel_backend,
+            parallel_config=parallel_config,
         )
 
         if method not in self.VALID_METHODS:
@@ -526,6 +532,9 @@ class OptimalBinning(BaseBinning):
             decimal=self.decimal,
             woe_clip=self.woe_clip,
             handle_unknown=self.handle_unknown,
+            n_jobs=self.n_jobs,
+            parallel_backend=self.parallel_backend,
+            parallel_config=self.parallel_config,
             **self.kwargs,
         ).fit(encoded.to_frame(), y)
         numeric_splits = method_binner.splits_.get(feature, np.array([]))
@@ -553,6 +562,9 @@ class OptimalBinning(BaseBinning):
             "decimal": self.decimal,
             "category_order": self.category_order,
             "handle_unknown": self.handle_unknown,
+            "n_jobs": self.n_jobs,
+            "parallel_backend": self.parallel_backend,
+            "parallel_config": self.parallel_config,
         }
 
         # 应用 prebinning_params 中的参数
@@ -1189,6 +1201,9 @@ class OptimalBinning(BaseBinning):
             "decimal": self.decimal,
             "category_order": self.category_order,
             "handle_unknown": self.handle_unknown,
+            "n_jobs": self.n_jobs,
+            "parallel_backend": self.parallel_backend,
+            "parallel_config": self.parallel_config,
         }
 
         # 安全地更新参数，过滤无效参数
@@ -1216,6 +1231,9 @@ class OptimalBinning(BaseBinning):
             "decimal": self.decimal,
             "category_order": self.category_order,
             "handle_unknown": self.handle_unknown,
+            "n_jobs": self.n_jobs,
+            "parallel_backend": self.parallel_backend,
+            "parallel_config": self.parallel_config,
         }
 
         # 安全地更新参数
@@ -1281,6 +1299,9 @@ class OptimalBinning(BaseBinning):
                 "force_numerical": False,
                 "category_order": self.category_order,
                 "handle_unknown": self.handle_unknown,
+                "n_jobs": self.n_jobs,
+                "parallel_backend": self.parallel_backend,
+                "parallel_config": self.parallel_config,
             }
             kmeans_params.update(self.kwargs)
             self._binner = KMeansBinning(**kmeans_params)
@@ -1299,6 +1320,9 @@ class OptimalBinning(BaseBinning):
                 "verbose": self.verbose,
                 "category_order": self.category_order,
                 "handle_unknown": self.handle_unknown,
+                "n_jobs": self.n_jobs,
+                "parallel_backend": self.parallel_backend,
+                "parallel_config": self.parallel_config,
             }
             mono_params.update(self.kwargs)
             self._binner = MonotonicBinning(**mono_params)
@@ -1323,6 +1347,9 @@ class OptimalBinning(BaseBinning):
                 "decimal": self.decimal,
                 "category_order": self.category_order,
                 "handle_unknown": self.handle_unknown,
+                "n_jobs": self.n_jobs,
+                "parallel_backend": self.parallel_backend,
+                "parallel_config": self.parallel_config,
             }
             for k, v in self.kwargs.items():
                 if k not in [
@@ -1732,7 +1759,14 @@ class OptimalBinning(BaseBinning):
 
     @staticmethod
     def auto_select_method(
-        X: pd.DataFrame, y: pd.Series, feature: str, methods: Optional[List[str]] = None, criterion: str = "iv"
+        X: pd.DataFrame,
+        y: pd.Series,
+        feature: str,
+        methods: Optional[List[str]] = None,
+        criterion: str = "iv",
+        n_jobs: Union[int, float] = -1,
+        parallel_backend: Optional[str] = None,
+        parallel_config: Optional[Dict[str, Any]] = None,
     ) -> str:
         """自动选择最优分箱方法.
 
@@ -1775,7 +1809,13 @@ class OptimalBinning(BaseBinning):
 
         for method in methods:
             try:
-                binner = OptimalBinning(method=method, verbose=False)
+                binner = OptimalBinning(
+                    method=method,
+                    verbose=False,
+                    n_jobs=n_jobs,
+                    parallel_backend=parallel_backend,
+                    parallel_config=parallel_config,
+                )
                 binner.fit(X[[feature]], y)
 
                 bin_table = binner.bin_tables_.get(feature)
