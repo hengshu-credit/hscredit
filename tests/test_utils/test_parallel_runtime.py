@@ -24,6 +24,12 @@ def _read_active_budget(_):
     return _ACTIVE_BUDGET.get()
 
 
+def _fail_on_two(value):
+    if value == 2:
+        raise KeyError("boom")
+    return value
+
+
 def _run_inner_parallel(_):
     return parallel_execute(
         _read_active_budget,
@@ -157,6 +163,81 @@ def test_worker_failure_has_chinese_context_and_original_cause():
     assert isinstance(error.value.__cause__, KeyError)
 
 
+@pytest.mark.parametrize("backend", ["threading", "loky"])
+def test_real_parallel_worker_failure_keeps_original_direct_cause(backend):
+    """真实多 worker 失败必须与串行路径一样直接链接原始异常。"""
+    with pytest.raises(ParallelExecutionError, match="特征B") as error:
+        parallel_execute(
+            _fail_on_two,
+            [1, 2, 3],
+            n_jobs=2,
+            parallel_backend=backend,
+            task_labels=["特征A", "特征B", "特征C"],
+        )
+    assert isinstance(error.value.__cause__, KeyError)
+    assert error.value.__cause__.args == ("boom",)
+
+
+@pytest.mark.parametrize(
+    ("parallel_backend", "default_backend"),
+    [("threading", None), (None, "threading")],
+)
+def test_threading_backend_rejects_inner_thread_limit_in_chinese(
+    parallel_backend, default_backend
+):
+    """显式或模块默认 threading 后端都不能泄漏 joblib 英文断言。"""
+    with pytest.raises(ValidationError, match="threading.*inner_max_num_threads"):
+        parallel_execute(
+            _square,
+            [1, 2],
+            n_jobs=2,
+            parallel_backend=parallel_backend,
+            default_backend=default_backend,
+            parallel_config={"inner_max_num_threads": 1},
+        )
+
+
+@pytest.mark.parametrize(
+    ("parallel_backend", "default_backend"),
+    [("loky", None), (None, "loky"), (None, None)],
+)
+def test_loky_and_implicit_default_accept_inner_thread_limit(
+    parallel_backend, default_backend
+):
+    """loky 和未指定模块后端时应通过 joblib 1.0 后端上下文设置线程上限。"""
+    assert parallel_execute(
+        _square,
+        [1, 2],
+        n_jobs=2,
+        parallel_backend=parallel_backend,
+        default_backend=default_backend,
+        parallel_config={"inner_max_num_threads": 1},
+    ) == [1, 4]
+
+
+@pytest.mark.parametrize(
+    ("parallel_backend", "default_backend", "parallel_config"),
+    [
+        ("missing-backend", None, None),
+        (None, "missing-backend", None),
+        ("loky", None, {"backend_kwargs": {"unknown_option": True}}),
+    ],
+)
+def test_invalid_backend_configuration_raises_chinese_validation_error(
+    parallel_backend, default_backend, parallel_config
+):
+    """无效显式/默认后端及后端参数应统一为中文公共校验异常。"""
+    with pytest.raises(ValidationError, match="并行后端配置无效"):
+        parallel_execute(
+            _square,
+            [1, 2],
+            n_jobs=2,
+            parallel_backend=parallel_backend,
+            default_backend=default_backend,
+            parallel_config=parallel_config,
+        )
+
+
 @pytest.mark.parametrize(
     ("available", "task_count", "has_parallel_children", "expected"),
     [
@@ -171,6 +252,40 @@ def test_split_parallel_budget_uses_square_root_only_for_real_nesting(
     assert split_parallel_budget(
         available, task_count, has_parallel_children
     ) == expected
+
+
+@pytest.mark.parametrize("available", [True, 0, -1, 1.5, "13"])
+def test_parallel_budget_rejects_invalid_available_with_chinese_error(available):
+    """预算总量必须是正整数，不能接受 bool 或隐式字符串转换。"""
+    with pytest.raises(ValidationError, match="available"):
+        ParallelBudget(available, 0)
+
+
+@pytest.mark.parametrize("depth", [True, -1, 1.5, "0"])
+def test_parallel_budget_rejects_invalid_depth_with_chinese_error(depth):
+    """预算深度必须是非负整数，不能接受 bool 或隐式字符串转换。"""
+    with pytest.raises(ValidationError, match="depth"):
+        ParallelBudget(1, depth)
+
+
+@pytest.mark.parametrize(
+    ("available", "task_count", "has_parallel_children", "field"),
+    [
+        (True, 1, False, "available"),
+        ("13", 1, False, "available"),
+        (0, 1, False, "available"),
+        (1, True, False, "task_count"),
+        (1, "2", False, "task_count"),
+        (1, -1, False, "task_count"),
+        (1, 1, "yes", "has_parallel_children"),
+    ],
+)
+def test_split_parallel_budget_rejects_invalid_inputs_in_chinese(
+    available, task_count, has_parallel_children, field
+):
+    """公开预算切分参数必须由 HSCredit 统一校验，不能泄漏原生转换错误。"""
+    with pytest.raises(ValidationError, match=field):
+        split_parallel_budget(available, task_count, has_parallel_children)
 
 
 def test_one_outer_task_with_children_receives_the_full_budget():

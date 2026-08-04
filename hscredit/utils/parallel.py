@@ -34,6 +34,18 @@ _PARALLEL_CONFIG_KEYS = {
 }
 
 
+def _validate_integer(value: Any, name: str, minimum: int) -> int:
+    """校验并规范化公开并行预算中的整数参数。"""
+    if isinstance(value, (bool, np.bool_)) or not isinstance(value, numbers.Integral):
+        requirement = "正整数" if minimum == 1 else "非负整数"
+        raise ValidationError(f"{name} 必须为{requirement}")
+    value = int(value)
+    if value < minimum:
+        requirement = "正整数" if minimum == 1 else "非负整数"
+        raise ValidationError(f"{name} 必须为{requirement}")
+    return value
+
+
 @dataclass(frozen=True)
 class ParallelBudget:
     """并行执行上下文中的可用预算。
@@ -53,10 +65,26 @@ class ParallelBudget:
     available: int
     depth: int
 
+    def __post_init__(self) -> None:
+        """校验并规范化预算边界。"""
+        object.__setattr__(
+            self, "available", _validate_integer(self.available, "available", 1)
+        )
+        object.__setattr__(self, "depth", _validate_integer(self.depth, "depth", 0))
+
 
 _ACTIVE_BUDGET: ContextVar[Optional[ParallelBudget]] = ContextVar(
     "hscredit_parallel_budget", default=None
 )
+
+
+@dataclass(frozen=True)
+class _TaskOutcome:
+    """可在线程和进程 worker 间传递的单任务结果。"""
+
+    label: Any
+    value: Any = None
+    error: Optional[Exception] = None
 
 
 def get_physical_cpu_count() -> int:
@@ -174,7 +202,10 @@ def split_parallel_budget(
     available: int, task_count: int, has_parallel_children: bool
 ) -> Tuple[int, int]:
     """计算当前层和真实并行子层的工作预算。"""
-    available = max(1, int(available))
+    available = _validate_integer(available, "available", 1)
+    task_count = _validate_integer(task_count, "task_count", 0)
+    if not isinstance(has_parallel_children, (bool, np.bool_)):
+        raise ValidationError("has_parallel_children 必须为布尔值")
     if not has_parallel_children:
         return min(available, max(1, task_count)), 1
     outer = min(max(1, task_count), math.ceil(math.sqrt(available)))
@@ -187,15 +218,27 @@ def _run_with_budget(
     label: Any,
     child_budget: int,
     depth: int,
-) -> Result:
+) -> _TaskOutcome:
     """在显式预算上下文中执行单个可序列化任务。"""
     token = _ACTIVE_BUDGET.set(ParallelBudget(child_budget, depth))
     try:
-        return function(task)
+        return _TaskOutcome(label=label, value=function(task))
     except Exception as exc:
-        raise ParallelExecutionError(f"并行任务 '{label}' 执行失败: {exc}") from exc
+        return _TaskOutcome(label=label, error=exc)
     finally:
         _ACTIVE_BUDGET.reset(token)
+
+
+def _unwrap_task_outcomes(outcomes: Iterable[_TaskOutcome]) -> List[Result]:
+    """在父调用中按提交顺序解包结果并恢复原始异常链。"""
+    results = []
+    for outcome in outcomes:
+        if outcome.error is not None:
+            raise ParallelExecutionError(
+                f"并行任务 '{outcome.label}' 执行失败: {outcome.error}"
+            ) from outcome.error
+        results.append(outcome.value)
+    return results
 
 
 def _current_parallel_budget() -> ParallelBudget:
@@ -204,6 +247,14 @@ def _current_parallel_budget() -> ParallelBudget:
     if active_budget is not None:
         return active_budget
     return ParallelBudget(resolve_n_jobs(-1) or 1, 0)
+
+
+def _create_joblib_parallel(workers: int, options: Mapping[str, Any]) -> Parallel:
+    """创建 joblib 执行器，并将公开配置错误转换为中文异常。"""
+    try:
+        return Parallel(n_jobs=workers, **dict(options))
+    except Exception as exc:
+        raise ValidationError(f"并行后端配置无效: {exc}") from exc
 
 
 def parallel_execute(
@@ -253,25 +304,36 @@ def parallel_execute(
         for task, label in zip(task_list, labels)
     )
     if workers == 1:
-        return [_run_with_budget(*call) for call in calls]
+        return _unwrap_task_outcomes(_run_with_budget(*call) for call in calls)
 
     parallel_options = dict(config)
     backend_options = parallel_options.pop("backend_kwargs", {}) or {}
     inner_max_num_threads = parallel_options.pop("inner_max_num_threads", None)
-    if inner_max_num_threads is not None:
-        backend_options["inner_max_num_threads"] = inner_max_num_threads
 
     backend = parallel_backend or default_backend
+    if inner_max_num_threads is not None:
+        if backend == "threading":
+            raise ValidationError("threading 后端不支持 inner_max_num_threads")
+        backend_options["inner_max_num_threads"] = inner_max_num_threads
+
     submitted = (
         delayed(_run_with_budget)(*call)
         for call in calls
     )
     if backend is None and not backend_options:
-        return Parallel(n_jobs=workers, **parallel_options)(submitted)
+        executor = _create_joblib_parallel(workers, parallel_options)
+        outcomes = executor(submitted)
+        return _unwrap_task_outcomes(outcomes)
 
     backend = backend or "loky"
-    with joblib_parallel_backend(backend, **backend_options):
-        return Parallel(n_jobs=workers, **parallel_options)(submitted)
+    try:
+        backend_context = joblib_parallel_backend(backend, **backend_options)
+    except Exception as exc:
+        raise ValidationError(f"并行后端配置无效: {exc}") from exc
+    with backend_context:
+        executor = _create_joblib_parallel(workers, parallel_options)
+        outcomes = executor(submitted)
+    return _unwrap_task_outcomes(outcomes)
 
 
 class ParallelizableMixin:
