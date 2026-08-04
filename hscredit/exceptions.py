@@ -30,6 +30,10 @@ class StateError(RuntimeError, HSCreditError):
     """对象状态不符合预期。"""
 
 
+class ParallelExecutionError(StateError):
+    """并行任务执行失败。"""
+
+
 class NotFittedError(ValueError, StateError):
     """对象尚未完成拟合。"""
 
@@ -66,6 +70,7 @@ __all__ = [
     "InputTypeError",
     "FeatureNotFoundError",
     "StateError",
+    "ParallelExecutionError",
     "NotFittedError",
     "DependencyError",
     "SerializationError",
