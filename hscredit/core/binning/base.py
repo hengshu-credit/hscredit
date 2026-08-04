@@ -12,11 +12,12 @@
 
 from abc import ABC, abstractmethod
 from collections import deque
-from copy import copy
+from copy import copy, deepcopy
+from functools import wraps
 from typing import Union, List, Dict, Optional, Any, Tuple
 import numpy as np
 import pandas as pd
-from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.base import BaseEstimator, TransformerMixin, clone
 
 from ...exceptions import FeatureNotFoundError, NotFittedError, ParallelExecutionError
 from ...utils.misc import round_float
@@ -215,6 +216,50 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
     )
     _FEATURE_SET_STATE = ("_categorical_encoded_features_",)
 
+    def __init_subclass__(cls, **kwargs):
+        """将具体分箱器的 ``fit`` 包装为估计器级事务。"""
+        super().__init_subclass__(**kwargs)
+        fit_method = cls.__dict__.get("fit")
+        if fit_method is None or getattr(fit_method, "_hscredit_transactional_fit", False):
+            return
+
+        @wraps(fit_method)
+        def transactional_fit(self, *args, **kwargs):
+            # 子类 fit 可能委托 super().fit，此时由外层事务持有候选和提交边界。
+            if getattr(self, "_fit_transaction_active", False):
+                return fit_method(self, *args, **kwargs)
+
+            # 常规拟合始终从构造参数创建空候选，避免复制或保留历史大状态。
+            # 导入规则是唯一刻意依赖旧状态的路径，只在已有规则上补充统计信息。
+            candidate = self._make_fit_transaction_candidate()
+            candidate._fit_transaction_active = True
+            try:
+                result = fit_method(candidate, *args, **kwargs)
+            finally:
+                candidate.__dict__.pop("_fit_transaction_active", None)
+
+            if result is not candidate:
+                raise TypeError("分箱器 fit 必须返回自身")
+            self.__dict__.clear()
+            self.__dict__.update(candidate.__dict__)
+            return self
+
+        transactional_fit._hscredit_transactional_fit = True
+        cls.fit = transactional_fit
+
+    def _make_fit_transaction_candidate(self) -> "BaseBinning":
+        """创建不携带历史拟合状态的事务候选对象。"""
+        if getattr(self, "_rules_imported_", False):
+            return deepcopy(self)
+        candidate = clone(self)
+        # ``**kwargs`` 不在 sklearn 的参数签名中；OptimalBinning 用它保存
+        # 求解器和后处理选项，需要显式复制到事务候选。
+        if hasattr(self, "kwargs"):
+            candidate.kwargs = clone(self.kwargs, safe=False)
+        if hasattr(self, "_fit_control_options"):
+            candidate._fit_control_options = clone(self._fit_control_options, safe=False)
+        return candidate
+
     def __init__(
         self,
         target: str = "target",
@@ -369,12 +414,19 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
 
     def _prepare_categorical_fit(self, X: pd.DataFrame, y: pd.Series) -> pd.DataFrame:
         """将类别列转换为有序数值编码，供具体分箱器复用数值算法。"""
-        if getattr(self, "_defer_categorical_adapter", False) or getattr(self, "force_numerical", False):
+        if getattr(self, "_defer_categorical_adapter", False):
+            return X
+
+        # 这些容器只描述本轮拟合输入，编码前重置以免成功重拟合保留旧类别列。
+        self._category_orders_ = {}
+        self._category_code_maps_ = {}
+        self._categorical_fit_context_ = {}
+        self._categorical_encoded_features_ = set()
+        self.__dict__.pop("_categorical_fit_y_", None)
+        if getattr(self, "force_numerical", False):
             return X
 
         X_fit = X.copy()
-        self._categorical_fit_context_ = {}
-        self._categorical_encoded_features_ = set()
         for feature in X.columns:
             if self._detect_feature_type(X[feature]) != "categorical":
                 continue
@@ -861,11 +913,19 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         """在隔离的估计器浅拷贝上完成一个特征的拟合并返回状态快照。"""
         feature, x, y, method_name = task
         encoded_categorical = feature in getattr(self, "_categorical_encoded_features_", set())
+        categorical_input = {}
+        for state_name in ("_category_orders_", "_category_code_maps_", "_categorical_fit_context_"):
+            values = getattr(self, state_name, {})
+            if feature in values:
+                categorical_input[state_name] = deepcopy(values[feature])
+
         worker = copy(self)
         for state_name in self._FEATURE_DICT_STATE:
             setattr(worker, state_name, {})
         for state_name in self._FEATURE_SET_STATE:
             setattr(worker, state_name, set())
+        for state_name, value in categorical_input.items():
+            getattr(worker, state_name)[feature] = value
         if encoded_categorical:
             # 这是 worker 的输入元数据，用于让内部数值编码继续走数值算法；
             # 容器仍与主对象隔离，并会作为该特征状态随快照返回。
@@ -909,22 +969,18 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
 
         # 只有全部 worker 成功且结果通过校验后，才在主线程一次性替换本轮特征状态。
         for state_name in self._FEATURE_DICT_STATE:
-            current = getattr(self, state_name, {})
             merged = {}
             for feature in features:
                 feature_state = snapshots[feature].get(state_name, {})
                 if feature in feature_state:
                     merged[feature] = feature_state[feature]
-                elif feature in current:
-                    merged[feature] = current[feature]
             if hasattr(self, state_name) or merged:
                 setattr(self, state_name, merged)
 
         for state_name in self._FEATURE_SET_STATE:
-            current = getattr(self, state_name, set())
             merged = set()
             for feature in features:
-                if feature in snapshots[feature].get(state_name, set()) or feature in current:
+                if feature in snapshots[feature].get(state_name, set()):
                     merged.add(feature)
             setattr(self, state_name, merged)
 
@@ -2301,6 +2357,7 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         >>> binner.import_rules(rules)
         """
         self._woe_maps_ = getattr(self, "_woe_maps_", {})
+        self._rules_imported_ = True
 
         for feature, rule in rules.items():
             # 判断是否为类别型变量

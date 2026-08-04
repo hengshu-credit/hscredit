@@ -1,16 +1,18 @@
 """分箱器公共并行配置与结果一致性测试。"""
 
 import inspect
+import pickle
 import time
 
 import hscredit.core.binning.optimal_binning as optimal_binning_module
+import hscredit.core.binning.base as base_binning_module
 import numpy as np
 import pandas as pd
 import pytest
 from sklearn.base import BaseEstimator, clone
 
 from hscredit.core import binning
-from hscredit.core.binning import BaseBinning, OptimalBinning, OptimalBinning2D, UniformBinning
+from hscredit.core.binning import BestIVBinning, BaseBinning, OptimalBinning, OptimalBinning2D, UniformBinning
 from hscredit.core.metrics import compute_bin_stats
 from hscredit.exceptions import ParallelExecutionError
 
@@ -153,6 +155,154 @@ def test_failed_feature_fit_does_not_commit_partial_state(backend):
         assert getattr(binner, state_name) == set(), state_name
 
 
+EXECUTION_MODES = [
+    pytest.param(1, None, id="serial"),
+    pytest.param(2, "threading", id="threading"),
+    pytest.param(2, "loky", id="loky"),
+]
+
+
+class RefitFailingUniformBinning(UniformBinning):
+    """仅在重拟合指定类别特征时失败。"""
+
+    def _fit_feature(self, feature, X, y):
+        if feature == "坏分类":
+            raise ValueError("坏分类重拟合失败")
+        return super()._fit_feature(feature, X, y)
+
+
+class PostFitFailingBestIVBinning(BestIVBinning):
+    """在指定重拟合数据的后处理阶段失败。"""
+
+    def _apply_post_fit_constraints(self, X, y, **kwargs):
+        if "后处理失败" in X.columns:
+            raise ValueError("后处理故意失败")
+        return super()._apply_post_fit_constraints(X, y, **kwargs)
+
+
+class FinalizeFailingUniformBinning(UniformBinning):
+    """在指定类别重拟合的最终还原阶段失败。"""
+
+    def _finalize_categorical_fit(self):
+        if "最终失败" in self._categorical_fit_context_:
+            raise ValueError("类别最终还原故意失败")
+        return super()._finalize_categorical_fit()
+
+
+class DelegatingUniformBinning(UniformBinning):
+    """验证子类 fit 委托父类时只建立一个事务候选。"""
+
+    def fit(self, X, y=None, **kwargs):
+        return super().fit(X, y, **kwargs)
+
+
+class RefinementFailingOptimalBinning(OptimalBinning):
+    """若 lift_refine=False 在事务候选中丢失则立即失败。"""
+
+    def _refine_splits_for_lift_stability(self, X, y):
+        raise AssertionError("lift_refine=False 未保留")
+
+
+def _successful_initial_fit(binner):
+    X = pd.DataFrame({"旧特征": np.arange(24, dtype=float)})
+    y = pd.Series(np.tile([0, 1], 12), name="目标")
+    return binner.fit(X, y), y
+
+
+@pytest.mark.parametrize("n_jobs,backend", EXECUTION_MODES)
+def test_failed_categorical_refit_restores_complete_previous_model(n_jobs, backend):
+    binner, y = _successful_initial_fit(
+        RefitFailingUniformBinning(n_jobs=n_jobs, parallel_backend=backend, random_state=17)
+    )
+    before = pickle.dumps(binner)
+    refit = pd.DataFrame(
+        {
+            "新分类": np.tile(["甲", "乙", "丙"], 8),
+            "坏分类": np.tile(["A", "B", "C", "D"], 6),
+        }
+    )
+
+    with pytest.raises(ParallelExecutionError, match="坏分类"):
+        binner.fit(refit, y)
+
+    assert pickle.dumps(binner) == before
+    assert binner._is_fitted is True
+
+
+@pytest.mark.parametrize("n_jobs,backend", EXECUTION_MODES)
+def test_post_fit_failure_restores_complete_previous_model(n_jobs, backend):
+    binner, y = _successful_initial_fit(
+        PostFitFailingBestIVBinning(n_jobs=n_jobs, parallel_backend=backend, random_state=17)
+    )
+    before = pickle.dumps(binner)
+
+    with pytest.raises(ValueError, match="后处理故意失败"):
+        binner.fit(pd.DataFrame({"后处理失败": np.arange(24, dtype=float)}), y)
+
+    assert pickle.dumps(binner) == before
+    assert binner._is_fitted is True
+
+
+@pytest.mark.parametrize("n_jobs,backend", EXECUTION_MODES)
+def test_finalize_failure_restores_complete_previous_model(n_jobs, backend):
+    binner, y = _successful_initial_fit(
+        FinalizeFailingUniformBinning(n_jobs=n_jobs, parallel_backend=backend, random_state=17)
+    )
+    before = pickle.dumps(binner)
+    refit = pd.DataFrame({"最终失败": np.tile(["甲", "乙", "丙"], 8)})
+
+    with pytest.raises(ValueError, match="类别最终还原故意失败"):
+        binner.fit(refit, y)
+
+    assert pickle.dumps(binner) == before
+    assert binner._is_fitted is True
+
+
+@pytest.mark.parametrize("n_jobs,backend", EXECUTION_MODES)
+def test_successful_refit_drops_stale_optional_feature_state(n_jobs, backend):
+    binner = UniformBinning(
+        left_clip=0.1,
+        right_clip=0.9,
+        n_jobs=n_jobs,
+        parallel_backend=backend,
+        random_state=17,
+    )
+    y = pd.Series(np.tile([0, 1], 12), name="目标")
+    binner.fit(pd.DataFrame({"特征": np.arange(24, dtype=float)}), y)
+    assert "特征" in binner.clip_bounds_
+
+    binner.fit(pd.DataFrame({"特征": np.full(24, np.nan)}), y)
+
+    assert getattr(binner, "clip_bounds_", {}) == {}
+
+
+@pytest.mark.parametrize("n_jobs,backend", EXECUTION_MODES)
+def test_fitted_binner_pickle_round_trip_preserves_parallel_results(n_jobs, backend, mixed_xy):
+    X, y = mixed_xy
+    fitted = UniformBinning(n_jobs=n_jobs, parallel_backend=backend, random_state=17).fit(X, y)
+    restored = pickle.loads(pickle.dumps(fitted))
+
+    _assert_feature_state_equal(fitted, restored, X.columns)
+    pd.testing.assert_frame_equal(fitted.transform(X, metric="woe"), restored.transform(X, metric="woe"))
+
+
+def test_delegating_fit_uses_single_candidate_transaction(monkeypatch, mixed_xy):
+    X, y = mixed_xy
+    clone_calls = []
+    sklearn_clone = base_binning_module.clone
+
+    def recording_clone(estimator):
+        clone_calls.append(estimator)
+        return sklearn_clone(estimator)
+
+    monkeypatch.setattr(base_binning_module, "clone", recording_clone)
+    fitted = DelegatingUniformBinning(n_jobs=1, random_state=17).fit(X, y)
+
+    assert len(clone_calls) == 1
+    assert fitted._is_fitted is True
+    assert "_fit_transaction_active" not in fitted.__dict__
+
+
 BINNER_SMOKE_CASES = [
     pytest.param("UniformBinning", {}, id="uniform"),
     pytest.param("QuantileBinning", {}, id="quantile"),
@@ -254,6 +404,12 @@ def test_all_exported_binners_store_parallel_parameters():
         assert params["n_jobs"] == 2, name
         assert params["parallel_backend"] == "threading", name
         assert params["parallel_config"] == {"batch_size": 1}, name
+        cloned = clone(binner)
+        restored = pickle.loads(pickle.dumps(binner))
+        assert cloned.get_params(deep=False) == params, name
+        assert restored.get_params(deep=False) == params, name
+        if issubclass(cls, BaseBinning):
+            assert inspect.signature(cls.fit) == inspect.signature(cls.fit.__wrapped__), name
 
     assert set(unavailable) <= {"ORBinning", "CPSATBinning"}
 
@@ -276,6 +432,25 @@ def test_uniform_parallel_parameters_survive_sklearn_clone():
     assert cloned.n_jobs == 2
     assert cloned.parallel_backend == "threading"
     assert cloned.parallel_config == {"batch_size": 1}
+
+
+def test_optimal_prebinning_parameters_survive_sklearn_clone():
+    params = {"max_n_bins": 12}
+    binner = OptimalBinning(prebinning="quantile", prebinning_params=params)
+    cloned = clone(binner)
+
+    assert cloned.prebinning_params == params
+
+
+def test_optimal_fit_transaction_preserves_keyword_options(mixed_xy):
+    X, y = mixed_xy
+    source = OptimalBinning(method="uniform", lift_refine=False, or_time_limit=7, n_jobs=1)
+    candidate = source._make_fit_transaction_candidate()
+    binner = RefinementFailingOptimalBinning(method="best_iv", lift_refine=False, n_jobs=1).fit(X, y)
+
+    assert candidate._fit_control_options["lift_refine"] is False
+    assert candidate.kwargs["or_time_limit"] == 7
+    assert binner._fit_control_options["lift_refine"] is False
 
 
 def test_optimal_binning_forwards_parallel_parameters_to_method_binner():
@@ -311,19 +486,21 @@ def test_prebinning_empty_splits_fallback_inherits_parallel_parameters(monkeypat
     created = []
 
     class RecordingOptimalBinning(OptimalBinning):
-        def __init__(self, *args, **kwargs):
-            super().__init__(*args, **kwargs)
-            created.append(self)
+        def __new__(cls, *args, **kwargs):
+            instance = super().__new__(cls)
+            created.append(instance)
+            return instance
 
     monkeypatch.setattr(optimal_binning_module, "OptimalBinning", RecordingOptimalBinning)
 
     parent._fit_with_method_and_prebins(X, y, pre_splits={})
 
-    assert len(created) == 1
-    fallback = created[0]
-    assert fallback.n_jobs == 2
-    assert fallback.parallel_backend == "threading"
-    assert fallback.parallel_config == {"batch_size": 1}
+    # 一个是工厂创建的临时分箱器，另一个是其 fit 事务的全新候选。
+    assert len(created) == 2
+    for fallback in created:
+        assert fallback.n_jobs == 2
+        assert fallback.parallel_backend == "threading"
+        assert fallback.parallel_config == {"batch_size": 1}
 
 
 def test_optimal_binning_2d_forwards_parallel_parameters_to_axis_binners():
