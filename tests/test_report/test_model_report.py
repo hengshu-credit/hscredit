@@ -4,6 +4,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 from openpyxl import load_workbook
 
 from hscredit.report.model_report import ModelReport
@@ -874,3 +875,33 @@ class TestModelReportRealDataContract:
 
         assert str(missing_plot) in caplog.text
         assert '2-模型性能' in caplog.text
+
+    def test_optional_plot_generation_failure_is_logged_with_context(self, tmp_path, monkeypatch, caplog):
+        X = pd.DataFrame({'f0': range(20), 'target': [0, 1] * 10})
+        report = ModelReport(MockModel(['f0']), datasets={'train': X}, target='target', feature_names=['f0'])
+
+        def fail_bin_plot(*args, **kwargs):
+            raise RuntimeError('injected model bin plot failure')
+
+        monkeypatch.setattr('hscredit.core.viz.bin_plot', fail_bin_plot)
+        report._export_plots(tmp_path)
+
+        assert '模型评分分箱图' in caplog.text
+        assert '训练集' in caplog.text
+        assert str(tmp_path / 'bin_train.png') in caplog.text
+        assert 'injected model bin plot failure' in caplog.text
+
+    def test_required_feature_effectiveness_table_failure_surfaces(self, tmp_path, monkeypatch):
+        X = pd.DataFrame({'f0': range(20), 'target': [0, 1] * 10})
+        report = ModelReport(MockModel(['f0']), datasets={'train': X}, target='target', feature_names=['f0'])
+
+        def fail_feature_table(*args, **kwargs):
+            raise ValueError('injected feature table failure')
+
+        monkeypatch.setattr(report, 'get_feature_bin_table', fail_feature_table)
+
+        with pytest.raises(RuntimeError, match=r'特征=f0.*数据集=训练集') as exc_info:
+            report.to_excel(str(tmp_path / 'required-section.xlsx'), with_plots=False)
+
+        assert isinstance(exc_info.value.__cause__, ValueError)
+        assert 'injected feature table failure' in str(exc_info.value.__cause__)

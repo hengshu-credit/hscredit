@@ -1340,31 +1340,31 @@ class ModelReport:
             tag = ds.label
             model_figs: List[str] = []
 
+            p = str(output_dir / f"bin_{ds_key}.png")
             try:
                 bt = self.get_bin_table(ds_key, method=bin_method, max_n_bins=n_bins, margins=True)
                 bd = bt.iloc[:-1].reset_index(drop=True) if len(bt) > 1 else bt
-                p = str(output_dir / f"bin_{ds_key}.png")
                 bin_plot(bd, desc="模型评分", ending=f" {tag}", save=p, figsize=(12, 7))
                 _safe_close_figs()
                 model_figs.append(p)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("生成模型评分分箱图失败 [数据集=%s, 文件=%s]: %s", tag, p, exc)
 
+            p = str(output_dir / f"ks_{ds_key}.png")
             try:
-                p = str(output_dir / f"ks_{ds_key}.png")
                 ks_plot(ds.score, ds.y, title=f"{tag} KS曲线", save=p, figsize=(12, 7))
                 _safe_close_figs()
                 model_figs.append(p)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("生成模型 KS 图失败 [数据集=%s, 文件=%s]: %s", tag, p, exc)
 
+            p = str(output_dir / f"lift_{ds_key}.png")
             try:
-                p = str(output_dir / f"lift_{ds_key}.png")
                 lift_plot(ds.y, ds.y_proba, n_bins=20, title=f"{tag} LIFT曲线", save=p, figsize=(12, 7))
                 _safe_close_figs()
                 model_figs.append(p)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("生成模型 LIFT 图失败 [数据集=%s, 文件=%s]: %s", tag, p, exc)
 
             if model_figs:
                 paths[f"model_{ds_key}"] = model_figs
@@ -1373,13 +1373,13 @@ class ModelReport:
         importance = self.get_feature_importance()
         top_features = importance.index.tolist()
         if len(top_features) >= 2:
+            p = str(output_dir / "feature_corr.png")
             try:
-                p = str(output_dir / "feature_corr.png")
                 corr_plot(self._datasets["train"].X[top_features], annot=False, save=p)
                 _safe_close_figs()
                 paths["feature_corr"] = [p]
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("生成特征相关性图失败 [数据集=训练集, 文件=%s]: %s", p, exc)
 
         # --- 逐特征图表（分箱图、分布图、PSI图） ---
         ds_keys = list(self._datasets.keys())
@@ -1387,15 +1387,21 @@ class ModelReport:
             # 分箱图：按 train/test 顺序分组
             bin_figs: List[str] = []
             for ds_key, ds in self._datasets.items():
+                p = str(output_dir / f"bin_{feat}_{ds_key}.png")
                 try:
                     ft = self.get_feature_bin_table(feat, ds_key, max_n_bins=n_bins, method=bin_method, margins=True)
                     fd = ft.iloc[:-1].reset_index(drop=True) if len(ft) > 1 else ft
-                    p = str(output_dir / f"bin_{feat}_{ds_key}.png")
                     bin_plot(fd, desc=feat, ending=f" {ds.label}", save=p, figsize=(12, 7))
                     _safe_close_figs()
                     bin_figs.append(p)
                 except Exception as exc:
-                    logger.warning("生成特征 %s 的 %s 分箱图失败: %s", feat, ds.label, exc)
+                    logger.warning(
+                        "生成特征分箱图失败 [特征=%s, 数据集=%s, 文件=%s]: %s",
+                        feat,
+                        ds.label,
+                        p,
+                        exc,
+                    )
             if bin_figs:
                 paths[f"feat_bin_{feat}"] = bin_figs
 
@@ -1403,6 +1409,7 @@ class ModelReport:
             # 处理缺失值和类别特征
             ks_figs: List[str] = []
             for ds_key, ds in self._datasets.items():
+                p = str(output_dir / f"ks_{feat}_{ds_key}.png")
                 try:
                     col_raw = ds.X[feat]
                     col = col_raw.dropna()
@@ -1417,17 +1424,23 @@ class ModelReport:
                     # 确保标签是二分类
                     if y_f.nunique() < 2:
                         continue
-                    p = str(output_dir / f"ks_{feat}_{ds_key}.png")
                     ks_plot(col, y_f, title=f"{ds.label} {feat}", save=p, figsize=(12, 7))
                     _safe_close_figs()
                     ks_figs.append(p)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning(
+                        "生成特征 KS 图失败 [特征=%s, 数据集=%s, 文件=%s]: %s",
+                        feat,
+                        ds.label,
+                        p,
+                        exc,
+                    )
             if ks_figs:
                 paths[f"feat_hist_{feat}"] = ks_figs
 
             # PSI 图（训练集 vs 第一个非训练集），传入 y 以便图与表均包含坏样本率信息
             if len(ds_keys) >= 2:
+                p = str(output_dir / f"psi_{feat}.png")
                 try:
                     train_ds = self._datasets[ds_keys[0]]
                     test_ds = self._datasets[ds_keys[1]]
@@ -1441,7 +1454,6 @@ class ModelReport:
                             test_ds.y.to_numpy()[test_mask.to_numpy()],
                         ]
                     )
-                    p = str(output_dir / f"psi_{feat}.png")
                     psi_result = psi_plot(
                         train_vals,
                         test_vals,
@@ -1457,21 +1469,22 @@ class ModelReport:
                     if isinstance(psi_result, pd.DataFrame):
                         tables[f"feat_psi_{feat}"] = psi_result
                 except Exception as exc:
-                    logger.warning("生成特征 %s 的 PSI 图表失败: %s", feat, exc)
+                    logger.warning("生成特征 PSI 图表失败 [特征=%s, 文件=%s]: %s", feat, p, exc)
 
         # --- 评分卡专属图表 ---
         if hasattr(self.model, "lr_model"):
+            p = str(output_dir / "plot_weights.png")
             try:
                 from ..core.viz import plot_weights as _pw
 
-                p = str(output_dir / "plot_weights.png")
                 _pw(self.model.lr_model, save=p)
                 _safe_close_figs()
                 paths["model_weights"] = [p]
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("生成评分卡权重图失败 [文件=%s]: %s", p, exc)
 
             if len(ds_keys) >= 2:
+                p = str(output_dir / "score_psi.png")
                 try:
                     train_ds = self._datasets[ds_keys[0]]
                     test_ds = self._datasets[ds_keys[1]]
@@ -1487,7 +1500,6 @@ class ModelReport:
                             test_ds.y.to_numpy()[test_mask.to_numpy()],
                         ]
                     )
-                    p = str(output_dir / "score_psi.png")
                     score_psi_df = psi_plot(
                         score_train,
                         score_test,
@@ -1503,7 +1515,7 @@ class ModelReport:
                     if isinstance(score_psi_df, pd.DataFrame):
                         tables["score_psi"] = score_psi_df
                 except Exception as exc:
-                    logger.warning("生成模型评分 PSI 图表失败: %s", exc)
+                    logger.warning("生成模型评分 PSI 图表失败 [文件=%s]: %s", p, exc)
 
         return paths, tables
 
@@ -2566,7 +2578,9 @@ class ModelReport:
                             condition_color="F76E6C",
                         )
                 except Exception as exc:
-                    logger.warning("生成特征 %s 的 %s 分箱表失败: %s", feat, ds.label, exc)
+                    raise RuntimeError(
+                        f"生成特征有效性分箱表失败 [特征={feat}, 数据集={ds.label}]"
+                    ) from exc
 
             # PSI 图表和数据表
             psi_fig_paths = plot_paths.get(f"feat_psi_{feat}", [])
