@@ -42,6 +42,28 @@ def test_task_count_caps_workers():
     assert resolve_n_jobs(-1, task_count=2, cpu_count=16) == 2
 
 
+@pytest.mark.parametrize(
+    ("cpus", "available_budget", "expected"),
+    [(8, 8, 7), (16, 8, 8)],
+)
+def test_available_budget_caps_automatic_workers(cpus, available_budget, expected):
+    """嵌套预算只能收紧自动工作数，不能绕过保守 CPU 限制。"""
+    assert resolve_n_jobs(-1, cpu_count=cpus, available_budget=available_budget) == expected
+
+
+@pytest.mark.parametrize("available_budget", [True, 0, -1, 1.5, "2"])
+def test_invalid_available_budget_raises_chinese_validation_error(available_budget):
+    """嵌套预算必须为正整数。"""
+    with pytest.raises(ValidationError, match="available_budget"):
+        resolve_n_jobs(-1, cpu_count=8, available_budget=available_budget)
+
+
+def test_large_integral_n_jobs_preserves_exact_worker_count():
+    """大整数工作数不能因浮点转换而丢失精度。"""
+    large_n_jobs = 2**53 + 1
+    assert resolve_n_jobs(large_n_jobs, cpu_count=8) == large_n_jobs
+
+
 @pytest.mark.parametrize("value", [True, 0, -2, 1.5, "2", object()])
 def test_invalid_n_jobs_raises_chinese_validation_error(value):
     """无效并行度应抛出统一校验异常。"""
@@ -62,3 +84,9 @@ def test_parallel_config_preserves_supported_joblib_values():
     source = {"batch_size": 4, "pre_dispatch": "2*n_jobs", "mmap_mode": "r"}
     assert validate_parallel_config("loky", source) == source
     assert source == {"batch_size": 4, "pre_dispatch": "2*n_jobs", "mmap_mode": "r"}
+
+
+def test_parallel_config_rejects_non_string_keys_with_chinese_validation_error():
+    """混合类型的未知配置键也必须返回统一中文校验错误。"""
+    with pytest.raises(ValidationError, match="parallel_config"):
+        validate_parallel_config(None, {"unknown": 1, 1: 2})
