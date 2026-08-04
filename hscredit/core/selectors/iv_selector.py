@@ -15,7 +15,7 @@
 >>> print(selector.selected_features_)
 """
 
-from typing import Union, List, Optional
+from typing import Union, List, Optional, Dict, Any
 import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
@@ -126,6 +126,26 @@ class IVSelector(BaseFeatureSelector):
         >>> print(selector.selected_features_)
         >>> print(selector.scores_)  # 查看IV值
 
+        >>> # 仅传分箱参数：内部创建并训练 OptimalBinning
+        >>> selector = IVSelector(
+        ...     threshold=0.02,
+        ...     binning_params={'method': 'best_iv', 'max_n_bins': 5},
+        ... )
+        >>> selector.fit(X, y)
+
+        >>> # 传入配置好的未训练实例：筛选器自动训练
+        >>> from hscredit.core.binning import OptimalBinning
+        >>> binner = OptimalBinning(method='best_iv', max_n_bins=5)
+        >>> selector = IVSelector(threshold=0.02, binner=binner).fit(X, y)
+
+        >>> # 传入已训练实例：直接复用规则，不重新训练
+        >>> trained_binner = OptimalBinning(method='best_iv').fit(X, y)
+        >>> selector = IVSelector(
+        ...     threshold=0.02,
+        ...     binner=trained_binner,
+        ...     binning_params={'method': 'uniform'},  # binner 优先，本参数被忽略
+        ... ).fit(X, y)
+
     **参数**
 
     除继承自 :class:`~hscredit.core.selectors.base.BaseFeatureSelector` 的通用参数
@@ -134,6 +154,9 @@ class IVSelector(BaseFeatureSelector):
     :param threshold: IV 保留阈值，``IV >= threshold`` 的特征被保留，默认为 ``0.02``
     :param regularization: 计算 WOE/IV 时的加性平滑系数，避免某类别好/坏样本数为 0
         导致取对数发散，默认为 ``1.0``
+    :param binner: 可选的已配置分箱器实例。未训练实例会自动训练，已训练实例直接复用
+    :param binning_params: 可选的 ``OptimalBinning`` 构造参数字典。未传 ``binner`` 时，
+        内部创建分箱器并将原始数据转换为分箱 index 后计算 IV
 
     .. note::
         本筛选器按特征的**唯一取值**直接计算 IV（类别型先 ``factorize``），适合已分箱
@@ -155,10 +178,13 @@ class IVSelector(BaseFeatureSelector):
         exclude: Optional[List[str]] = None,
         force_drop: Optional[List[str]] = None,
         n_jobs: int = 1,
+        binner: Optional[Any] = None,
+        binning_params: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(
             target=target, threshold=threshold, include=include,
             exclude=exclude, force_drop=force_drop, n_jobs=n_jobs,
+            binner=binner, binning_params=binning_params,
         )
         self.regularization = regularization
         self.method_name = 'IV值筛选'
