@@ -26,6 +26,7 @@
 from abc import ABC, abstractmethod
 from typing import Union, List, Dict, Optional, Any, Tuple
 from datetime import datetime
+import copy
 import inspect
 import numpy as np
 import pandas as pd
@@ -35,6 +36,19 @@ from sklearn.utils.validation import check_is_fitted
 
 from ...exceptions import NotFittedError, ValidationError
 from ...utils.parallel import ParallelizableMixin
+
+
+def _set_estimator_parallel_budget(estimator: Any, n_jobs: int) -> Any:
+    """仅在隔离克隆上为估计器及其嵌套估计器设置并行预算。"""
+    parameters = estimator.get_params(deep=True)
+    n_jobs_parameters = {
+        name: n_jobs
+        for name in parameters
+        if name == 'n_jobs' or name.endswith('__n_jobs')
+    }
+    if n_jobs_parameters:
+        estimator.set_params(**n_jobs_parameters)
+    return estimator
 
 
 def get_feature_importances(estimator) -> np.ndarray:
@@ -752,12 +766,80 @@ class BaseFeatureSelector(ParallelizableMixin, BaseEstimator, TransformerMixin, 
     ) -> 'BaseFeatureSelector':
         """事务式拟合筛选器，失败时恢复进入本次拟合前的完整状态。"""
         candidate = clone(self)
+        self._prepare_fit_candidate(candidate)
         candidate._fit_once(X, y)
+        candidate._finalize_fit()
         self._adopt_fitted_candidate(candidate)
         return self
 
+    def _prepare_fit_candidate(self, candidate: 'BaseFeatureSelector') -> None:
+        """为隔离拟合准备候选对象。
+
+        sklearn ``clone`` 会丢弃已拟合外部分箱器的学习状态，因此对显式传入且已拟合的
+        分箱器使用受控深拷贝。未拟合分箱器仍使用 clone 生成的隔离副本。
+        """
+        original_params = self.get_params(deep=False)
+        candidate_params = candidate.get_params(deep=False)
+
+        original_binner = original_params.get('binner')
+        if original_binner is not None and self._is_binner_fitted(original_binner):
+            candidate.binner = copy.deepcopy(original_binner)
+
+        original_selectors = original_params.get('selectors')
+        candidate_selectors = candidate_params.get('selectors')
+        if original_selectors is None or candidate_selectors is None:
+            return
+        if len(original_selectors) != len(candidate_selectors):
+            raise ValidationError("候选子筛选器数量与原配置不一致，无法准备拟合")
+
+        for original_item, candidate_item in zip(original_selectors, candidate_selectors):
+            original_child = self._selector_from_item(original_item)
+            candidate_child = self._selector_from_item(candidate_item)
+            if isinstance(original_child, BaseFeatureSelector) and isinstance(candidate_child, BaseFeatureSelector):
+                original_child._prepare_fit_candidate(candidate_child)
+
+    def _finalize_fit(self) -> None:
+        """在候选对象上完成子类拟合后处理。"""
+
     def _adopt_fitted_candidate(self, candidate: 'BaseFeatureSelector') -> None:
-        """一次性提交已成功拟合的候选状态，并保留公开构造参数身份。"""
+        """原子提交已成功拟合的候选状态。"""
+        plan = []
+        self._build_candidate_commit_plan(candidate, plan)
+
+        targets = [target for target, _, _ in plan]
+        if len({id(target) for target in targets}) != len(targets):
+            raise ValidationError("拟合提交计划包含重复目标，无法保证原子性")
+
+        snapshots = [(target, self._snapshot_target_state(target)) for target in targets]
+        try:
+            for target, payload, is_selector in plan:
+                if is_selector:
+                    target._apply_candidate_state(payload)
+                else:
+                    self._replace_object_state_direct(target, payload)
+        except Exception:
+            # 回滚必须绕过可覆写、可注入故障的提交辅助方法。
+            for target, snapshot in snapshots:
+                target.__dict__.clear()
+                target.__dict__.update(snapshot)
+            raise
+
+    @staticmethod
+    def _snapshot_target_state(target: Any) -> Dict[str, Any]:
+        """深拷贝目标状态，同时保留筛选器公开构造对象的身份。"""
+        snapshot = copy.deepcopy(target.__dict__)
+        if isinstance(target, BaseFeatureSelector):
+            for name, value in target.get_params(deep=False).items():
+                snapshot[name] = value
+        return snapshot
+
+    def _build_candidate_commit_plan(
+        self,
+        candidate: 'BaseFeatureSelector',
+        plan: List[Tuple[Any, Dict[str, Any], bool]],
+        parallel_overrides: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """验证候选树并构建无副作用的完整提交计划。"""
         original_params = self.get_params(deep=False)
         candidate_params = candidate.get_params(deep=False)
         candidate_state = dict(candidate.__dict__)
@@ -765,21 +847,57 @@ class BaseFeatureSelector(ParallelizableMixin, BaseEstimator, TransformerMixin, 
         original_binner = original_params.get('binner')
         candidate_binner = candidate_params.get('binner')
         if original_binner is not None and candidate_binner is not None:
-            self._adopt_external_object_state(original_binner, candidate_binner)
+            if not hasattr(original_binner, '__dict__') or not hasattr(candidate_binner, '__dict__'):
+                raise ValidationError("外部对象必须支持状态复制，才能保证事务式拟合")
+            plan.append((original_binner, dict(candidate_binner.__dict__), False))
             if candidate_state.get('_binner_instance') is candidate_binner:
                 candidate_state['_binner_instance'] = original_binner
 
         original_selectors = original_params.get('selectors')
         candidate_selectors = candidate_params.get('selectors')
         if original_selectors is not None and candidate_selectors is not None:
-            self._adopt_child_selector_states(original_selectors, candidate_selectors)
+            if len(original_selectors) != len(candidate_selectors):
+                raise ValidationError("候选子筛选器数量与原配置不一致，无法提交拟合状态")
+            child_parallel = {
+                'n_jobs': self.n_jobs,
+                'parallel_backend': self.parallel_backend,
+                'parallel_config': self.parallel_config,
+            }
+            for original_item, candidate_item in zip(original_selectors, candidate_selectors):
+                original_child = self._selector_from_item(original_item)
+                candidate_child = self._selector_from_item(candidate_item)
+                if not (
+                    isinstance(original_child, BaseFeatureSelector)
+                    and isinstance(candidate_child, BaseFeatureSelector)
+                ):
+                    raise ValidationError("候选子筛选器类型与原配置不一致，无法提交拟合状态")
+                original_child._build_candidate_commit_plan(candidate_child, plan, child_parallel)
 
         for name, value in original_params.items():
             candidate_state[name] = value
+        if parallel_overrides is not None:
+            candidate_state.update(parallel_overrides)
 
+        stage_selectors = candidate_state.get('stage_selectors_')
+        if isinstance(stage_selectors, dict):
+            for child in stage_selectors.values():
+                if isinstance(child, BaseFeatureSelector):
+                    child.n_jobs = candidate_state.get('n_jobs')
+                    child.parallel_backend = candidate_state.get('parallel_backend')
+                    child.parallel_config = candidate_state.get('parallel_config')
+
+        plan.append((self, candidate_state, True))
+
+    def _apply_candidate_state(self, candidate_state: Dict[str, Any]) -> None:
+        """应用一个已验证的候选状态载荷。"""
         self.__dict__.clear()
         self.__dict__.update(candidate_state)
-        self._rebind_committed_parallel_children()
+
+    @staticmethod
+    def _replace_object_state_direct(target: Any, payload: Dict[str, Any]) -> None:
+        """直接替换对象状态，仅用于已验证的提交计划。"""
+        target.__dict__.clear()
+        target.__dict__.update(payload)
 
     @staticmethod
     def _adopt_external_object_state(original: Any, candidate: Any) -> None:

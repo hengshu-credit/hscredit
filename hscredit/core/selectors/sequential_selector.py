@@ -30,7 +30,7 @@ import pandas as pd
 from sklearn.base import clone
 from sklearn.model_selection import cross_val_score
 
-from .base import BaseFeatureSelector
+from .base import BaseFeatureSelector, _set_estimator_parallel_budget
 from ...utils.parallel import _current_parallel_budget
 
 
@@ -42,8 +42,7 @@ def _evaluate_sequential_candidate(task):
     else:
         features = [feature for feature in selected if feature != candidate]
     model = clone(estimator)
-    if 'n_jobs' in model.get_params(deep=False):
-        model.set_params(n_jobs=_current_parallel_budget().available)
+    _set_estimator_parallel_budget(model, _current_parallel_budget().available)
     score = cross_val_score(
         model,
         X[features],

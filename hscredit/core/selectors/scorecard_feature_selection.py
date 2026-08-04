@@ -155,9 +155,11 @@ class ScorecardFeatureSelection(BaseFeatureSelector):
         y: Optional[Union[pd.Series, np.ndarray]] = None,
     ) -> 'ScorecardFeatureSelection':
         """拟合评分卡风格筛选器并同步兼容属性。"""
-        super().fit(X, y)
+        return super().fit(X, y)
+
+    def _finalize_fit(self) -> None:
+        """在隔离候选对象上整理最终选择结果。"""
         self._finalize_selection_result()
-        return self
 
     def transform(
         self,
