@@ -58,6 +58,31 @@ class ReversedClassModel(MockModel):
         return proba[:, ::-1]
 
 
+class RealDataContractModel:
+    """Deterministic non-constant model used by the real-data report contract."""
+
+    classes_ = np.array([0, 1])
+
+    def __init__(self, feature_names):
+        self.feature_names_in_ = np.asarray(feature_names)
+
+    def predict_proba(self, X):
+        values = np.asarray(X, dtype=float)
+        logits = (
+            (values[:, 0] - 0.09) * 5
+            + (values[:, 1] - 60) / 30
+            - (values[:, 2] - 600) / 200
+        )
+        probabilities = 1 / (1 + np.exp(-logits))
+        return np.column_stack([1 - probabilities, probabilities])
+
+    def get_feature_importances(self):
+        return pd.Series([0.5, 0.3, 0.2], index=self.feature_names_in_)
+
+    def get_params(self):
+        return {"name": "real-data-contract-model"}
+
+
 class TestModelReportTarget:
     """Test target parameter handling."""
 
@@ -666,3 +691,186 @@ class TestModelReportRegression:
         assert basic.cell(sample_total_header.row - 1, sample_total_header.column).value == '统计详情'
         assert basic.cell(sample_total_header.row - 1, sample_total_header.column - 1).value is None
         assert basic.cell(sample_total_header.row, sample_total_header.column - 1).value == '数据集'
+
+
+class TestModelReportRealDataContract:
+    """真实放款数据的完整 Excel 报告契约。"""
+
+    FEATURE_NAMES = ['衡枢鉴真分老客版', '近六个月非银多头机构数', '青云24']
+    EXPECTED_SHEETS = [
+        '目录', '1-基本信息', '2-模型性能', '3-入模变量分析',
+        '4-稳定性分析', '5-模型参数', '6-模型部署需求',
+    ]
+
+    @staticmethod
+    def _sheet_values(ws):
+        return [cell.value for row in ws.iter_rows() for cell in row]
+
+    @staticmethod
+    def _numeric_values_after(ws, label):
+        cell = next(cell for row in ws.iter_rows() for cell in row if cell.value == label)
+        return [
+            ws.cell(cell.row, col).value
+            for col in range(cell.column + 1, ws.max_column + 1)
+            if isinstance(ws.cell(cell.row, col).value, (int, float))
+        ]
+
+    def test_auto_model_report_real_data_excel_contract(self, tmp_path):
+        from hscredit.report.model_report import auto_model_report
+
+        source = pd.read_excel(Path(__file__).parents[2] / 'examples' / 'hscredit_yyp.xlsx')
+        frames = {
+            'train': source.iloc[:500].copy(),
+            'test': source.iloc[500:750].copy(),
+            'oot': source.iloc[750:].copy(),
+        }
+        expected_labels = ['MOB1>7', 'MOB1>3', 'MOB1>0']
+        expected_display_labels = ['MOB1@7', 'MOB1@3', 'MOB1@0']
+        expected_counts = [len(frame) for frame in frames.values()]
+        expected_bad_rates = {
+            label: [float((frame['MOB1'] > threshold).mean()) for frame in frames.values()]
+            for label, threshold in zip(expected_labels, [7, 3, 0])
+        }
+        output = tmp_path / '真实数据模型评估报告.xlsx'
+
+        report = auto_model_report(
+            model=RealDataContractModel(self.FEATURE_NAMES),
+            datasets=frames,
+            feature_names=self.FEATURE_NAMES,
+            overdue=['MOB1'],
+            dpds=[7, 3, 0],
+            excel_path=str(output),
+            amount_col='放款金额',
+            date_col='放款时间',
+            group_col='商品类别',
+            with_plots=True,
+            verbose=False,
+            model_name='真实数据契约模型',
+            project_desc='真实放款数据多标签模型验证',
+            data_source='examples/hscredit_yyp.xlsx',
+            loc_cols='客户编号',
+        )
+
+        assert output.exists() and output.stat().st_size > 0
+        assert report._label_names == expected_labels
+        for dataset_key, frame in frames.items():
+            dataset = report._datasets[dataset_key]
+            assert len(dataset.y) == len(frame)
+            assert np.ptp(dataset.y_proba) > 0
+            for label, threshold in zip(expected_labels, [7, 3, 0]):
+                expected_y = (frame['MOB1'] > threshold).astype(int).to_numpy()
+                np.testing.assert_array_equal(dataset.y_dict[label], expected_y)
+
+        summary = report.summary()
+        assert summary.index.tolist() == expected_display_labels
+        for label, display_label in zip(expected_labels, expected_display_labels):
+            for dataset_label, expected_rate in zip(['训练集', '测试集', 'OOT集'], expected_bad_rates[label]):
+                assert summary.loc[display_label, ('样本数', dataset_label)] == len(
+                    frames[{'训练集': 'train', '测试集': 'test', 'OOT集': 'oot'}[dataset_label]]
+                )
+                assert summary.loc[display_label, ('坏样本率', dataset_label)] == expected_rate
+
+        workbook = load_workbook(output, data_only=False)
+        assert workbook.sheetnames == self.EXPECTED_SHEETS
+
+        critical_headings = {
+            '目录': ['模型评估报告'],
+            '1-基本信息': ['一、基本信息', '1、项目目标', '2、数据样本描述', '3、数据样本统计', '4、样本分布情况'],
+            '2-模型性能': ['二、模型性能评估', '1、模型性能验证指标'],
+            '3-入模变量分析': ['三、入模变量分析', '1、入模变量重要性及分布情况', '2、入模变量相关性', '3、入模变量有效性分析'],
+            '4-稳定性分析': ['四、模型稳定性分析', '1、评分分布统计'],
+            '5-模型参数': ['五、模型选型及参数', '1、模型选型', '2、模型参数', '3、入模特征列表'],
+            '6-模型部署需求': ['六、模型部署需求', '1、入模变量信息', '2、生产订单测试用例'],
+        }
+        for sheet_name, headings in critical_headings.items():
+            values = self._sheet_values(workbook[sheet_name])
+            for heading in headings:
+                assert heading in values, f'{sheet_name} 缺少章节 {heading}'
+
+        basic = workbook['1-基本信息']
+        basic_values = self._sheet_values(basic)
+        assert '真实放款数据多标签模型验证' in basic_values
+        assert 'examples/hscredit_yyp.xlsx' in basic_values
+        assert '月度分布' in basic_values
+        assert '商品类别分布' in basic_values
+        assert set(source['商品类别'].unique()) <= set(basic_values)
+        assert all(any(isinstance(value, str) and f'{label}:' in value for value in basic_values) for label in expected_display_labels)
+
+        performance = workbook['2-模型性能']
+        assert self._numeric_values_after(performance, '样本总数')[:9] == expected_counts * 3
+        workbook_bad_rates = self._numeric_values_after(performance, '坏样本率')[:9]
+        np.testing.assert_allclose(
+            workbook_bad_rates,
+            [rate for label in expected_labels for rate in expected_bad_rates[label]],
+            atol=5e-5,
+        )
+        bad_rate_cell = next(cell for row in performance.iter_rows() for cell in row if cell.value == '坏样本率')
+        assert all(
+            performance.cell(bad_rate_cell.row, col).number_format == '0.00%'
+            for col in range(bad_rate_cell.column + 1, bad_rate_cell.column + 10)
+        )
+
+        for sheet_name in self.EXPECTED_SHEETS:
+            ws = workbook[sheet_name]
+            assert _merged_range_for_row(ws, 2) is not None
+        for sheet_name in self.EXPECTED_SHEETS[1:]:
+            assert workbook[sheet_name]['B2'].hyperlink.location == "#'目录'!B2"
+
+        contents = workbook['目录']
+        for sheet_name in self.EXPECTED_SHEETS[1:]:
+            content_cell = next(cell for row in contents.iter_rows() for cell in row if cell.value == sheet_name)
+            assert content_cell.hyperlink.location == f"#'{sheet_name}'!B2"
+
+        feature_sheet = workbook['3-入模变量分析']
+        for index, feature in enumerate(self.FEATURE_NAMES, start=1):
+            summary_cell = next(
+                cell for row in feature_sheet.iter_rows()
+                for cell in row if cell.value == feature and cell.hyperlink is not None
+            )
+            title_cell = next(
+                cell for row in feature_sheet.iter_rows()
+                for cell in row if cell.value == f'3.{index}、{feature} 有效性分析'
+            )
+            assert summary_cell.hyperlink.location == f"#'3-入模变量分析'!{title_cell.coordinate}"
+            assert title_cell.hyperlink.location == f"#'3-入模变量分析'!{summary_cell.coordinate}"
+
+        for sheet_name in ['1-基本信息', '2-模型性能', '3-入模变量分析', '4-稳定性分析', '5-模型参数', '6-模型部署需求']:
+            assert workbook[sheet_name].freeze_panes is not None
+        for sheet_name in ['2-模型性能', '6-模型部署需求']:
+            ref = workbook[sheet_name].auto_filter.ref
+            assert ref and ':' in ref
+        assert workbook['2-模型性能']._images
+        assert feature_sheet._images
+
+        deployment = workbook['6-模型部署需求']
+        deployment_values = self._sheet_values(deployment)
+        assert '客户编号' in deployment_values
+        assert all(feature in deployment_values for feature in self.FEATURE_NAMES)
+        assert '模型分数' in deployment_values
+        model_score = next(cell for row in deployment.iter_rows() for cell in row if cell.value == '模型分数')
+        scores = [
+            deployment.cell(row, model_score.column).value
+            for row in range(model_score.row + 1, model_score.row + 6)
+        ]
+        assert all(isinstance(value, (int, float)) for value in scores)
+        assert len(set(scores)) > 1
+
+        formula_errors = {'#NULL!', '#DIV/0!', '#VALUE!', '#REF!', '#NAME?', '#NUM!', '#N/A'}
+        assert not [
+            (ws.title, cell.coordinate, cell.value)
+            for ws in workbook.worksheets
+            for row in ws.iter_rows()
+            for cell in row
+            if isinstance(cell.value, str) and cell.value in formula_errors
+        ]
+
+    def test_optional_plot_insert_failure_is_logged(self, tmp_path, monkeypatch, caplog):
+        X = pd.DataFrame({'f0': range(20), 'target': [0, 1] * 10})
+        report = ModelReport(MockModel(['f0']), datasets={'train': X}, target='target', feature_names=['f0'])
+        missing_plot = tmp_path / 'missing-model-plot.png'
+        monkeypatch.setattr(report, '_export_plots', lambda *args, **kwargs: ({'model_train': [str(missing_plot)]}, {}))
+
+        report.to_excel(str(tmp_path / 'plot-warning.xlsx'), with_plots=True)
+
+        assert str(missing_plot) in caplog.text
+        assert '2-模型性能' in caplog.text

@@ -137,7 +137,7 @@ class CountEncoder(BaseEncoder):
         mapping = counts.to_dict()
 
         if self.handle_missing == 'value':
-            if not any(pd.isna(key) for key in mapping):
+            if not any(self._is_float_nan_key(key) for key in mapping):
                 mapping[np.nan] = 0 if not self.normalize else 0.0
         elif self.handle_missing == 'return_nan':
             mapping[np.nan] = np.nan

@@ -21,6 +21,7 @@ from hscredit.core.encoders import (
     WOEEncoder,
 )
 from hscredit.exceptions import ParallelExecutionError
+from hscredit.utils.parallel import ParallelBudget, _ACTIVE_BUDGET, parallel_execute
 
 
 ENCODER_CLASSES = [
@@ -221,3 +222,257 @@ def test_remaining_column_encoders_match_all_learned_state(factory, backend, enc
         parallel.transform(X[["a", "b"]], y),
         check_exact=True,
     )
+
+
+MISSING_LIKE_FACTORIES = [
+    ("count", lambda n, b: CountEncoder(cols=["a"], n_jobs=n, parallel_backend=b)),
+    ("woe", lambda n, b: WOEEncoder(cols=["a"], n_jobs=n, parallel_backend=b)),
+    ("target", lambda n, b: TargetEncoder(cols=["a"], n_jobs=n, parallel_backend=b)),
+    ("onehot", lambda n, b: OneHotEncoder(cols=["a"], n_jobs=n, parallel_backend=b)),
+    ("ordinal", lambda n, b: OrdinalEncoder(cols=["a"], n_jobs=n, parallel_backend=b)),
+    ("quantile", lambda n, b: QuantileEncoder(cols=["a"], n_jobs=n, parallel_backend=b)),
+    ("catboost", lambda n, b: CatBoostEncoder(cols=["a"], n_jobs=n, parallel_backend=b)),
+    ("cardinality", lambda n, b: CardinalityEncoder(cols=["a"], n_jobs=n, parallel_backend=b)),
+]
+
+
+def _missing_key_signature(mapping):
+    return [
+        (type(key).__module__, type(key).__name__, repr(key), value)
+        for key, value in mapping.items()
+    ]
+
+
+@pytest.mark.parametrize("name,factory", MISSING_LIKE_FACTORIES)
+@pytest.mark.parametrize("backend", ["threading", "loky"])
+def test_missing_like_keys_keep_serial_mapping_export_import_and_transform(name, factory, backend):
+    """将 None/NaT/NA 误当浮点 NaN 归一时，本测试应失败。"""
+    X = pd.DataFrame(
+        {"a": pd.Series([None, None, float("nan"), pd.NaT, pd.NA, "文本"], dtype=object)}
+    )
+    y = pd.Series([0, 1, 0, 1, 0, 1])
+
+    serial = factory(1, None).fit(X, y)
+    parallel = factory(2, backend).fit(X, y)
+    assert _missing_key_signature(serial.mapping_["a"]) == _missing_key_signature(parallel.mapping_["a"])
+    assert _missing_key_signature(serial.export_mapping()["mapping_"]["a"]) == _missing_key_signature(
+        parallel.export_mapping()["mapping_"]["a"]
+    )
+
+    expected = serial.transform(X)
+    pd.testing.assert_frame_equal(expected, parallel.transform(X), check_exact=True)
+    restored = factory(1, None).import_mapping(parallel.export_mapping())
+    pd.testing.assert_frame_equal(expected, restored.transform(X), check_exact=True)
+
+    if name == "count":
+        signature = _missing_key_signature(serial.mapping_["a"])
+        assert ("builtins", "NoneType", "None", 2) in signature
+        assert any(module == "pandas._libs.tslibs.nattype" for module, _, _, _ in signature)
+        assert any(type_name == "NAType" for _, type_name, _, _ in signature)
+        assert expected["a"].tolist() == [2, 2, 1, 1, 1, 1]
+
+
+def test_float_nan_normalization_does_not_capture_other_scalar_types():
+    """bool、Decimal、complex 或 pandas missing 标量被泛化时，本测试应失败。"""
+    from decimal import Decimal
+
+    mapping = {True: 1, Decimal("1.5"): 2, complex(1, 2): 3, None: 4, pd.NaT: 5, pd.NA: 6}
+    normalized = CountEncoder._canonicalize_nan_keys(mapping)
+    assert list(normalized.items()) == list(mapping.items())
+
+
+def test_target_noise_fixed_seed_matches_thread_and_loky(encoder_xy):
+    X, y = encoder_xy
+    columns = ["a", "b"]
+    serial = TargetEncoder(cols=columns, noise=0.1, random_state=42, n_jobs=1).fit(X, y)
+    expected = serial.transform(X, y)
+    for backend in ("threading", "loky"):
+        parallel = TargetEncoder(
+            cols=columns, noise=0.1, random_state=42, n_jobs=2, parallel_backend=backend
+        ).fit(X, y)
+        pd.testing.assert_frame_equal(expected, parallel.transform(X, y), check_exact=True)
+
+
+@pytest.mark.parametrize("cls", [TargetEncoder, CatBoostEncoder])
+def test_none_random_state_uses_local_rng_without_consuming_global_state(cls, encoder_xy):
+    X, y = encoder_xy
+    kwargs = {"noise": 0.1} if cls is TargetEncoder else {"sigma": 0.1}
+    encoder = cls(cols=["a", "b"], random_state=None, n_jobs=2, parallel_backend="threading", **kwargs).fit(X, y)
+    np.random.seed(20260805)
+    before = np.random.get_state()
+    encoder.transform(X, y)
+    after = np.random.get_state()
+    assert before[0] == after[0]
+    np.testing.assert_array_equal(before[1], after[1])
+    assert before[2:] == after[2:]
+
+
+def test_first_failed_fit_has_no_partial_state():
+    X = pd.DataFrame({"好列": ["a", "b"], "坏列": [1, 2]})
+    encoder = _FailingCountEncoder(cols=["好列", "坏列"], n_jobs=2, parallel_backend="threading")
+    with pytest.raises(ParallelExecutionError, match="坏列"):
+        encoder.fit(X)
+    assert encoder.mapping_ == {}
+    assert encoder.cols_ is None
+    assert encoder._is_fitted is False
+
+
+class _FinalizeFailingCountEncoder(CountEncoder):
+    def _fit(self, X, y=None):
+        super()._fit(X, y)
+        if "最终列" in (self.cols_ or []):
+            raise RuntimeError("最终提交前失败")
+
+
+def test_finalize_failure_preserves_previous_complete_model():
+    X = pd.DataFrame({"a": ["x", "x", "y"], "最终列": [1, 2, 3]})
+    encoder = _FinalizeFailingCountEncoder(cols=["a"], n_jobs=2, parallel_backend="threading").fit(X)
+    before = encoder.export_mapping()
+    encoder.cols = ["a", "最终列"]
+    with pytest.raises(RuntimeError, match="最终提交前失败"):
+        encoder.fit(X)
+    assert encoder.export_mapping()["mapping_"] == before["mapping_"]
+
+
+def test_loky_refit_failure_preserves_previous_complete_model():
+    X = pd.DataFrame({"好列": ["a", "a", "b"], "坏列": [1, 2, 3]})
+    encoder = _FailingCountEncoder(cols=["好列"], n_jobs=2, parallel_backend="loky").fit(X)
+    before = encoder.export_mapping()["mapping_"]
+    encoder.cols = ["好列", "坏列"]
+    with pytest.raises(ParallelExecutionError, match="坏列"):
+        encoder.fit(X)
+    assert encoder.export_mapping()["mapping_"] == before
+
+
+def test_successful_fit_preserves_mutable_parameter_identity():
+    ordinal_mapping = {"a": {"x": 1, "y": 2}}
+    ordinal = OrdinalEncoder(cols=["a"], mapping=ordinal_mapping, n_jobs=2).fit(
+        pd.DataFrame({"a": ["x", "y"]})
+    )
+    assert ordinal.mapping is ordinal_mapping
+
+    special_values = ["特殊"]
+    cardinality = CardinalityEncoder(cols=["a"], special_values=special_values, n_jobs=2).fit(
+        pd.DataFrame({"a": ["特殊", "x", "y"]})
+    )
+    assert cardinality.special_values is special_values
+
+
+class _FakeRiskModel:
+    def __init__(self, **params):
+        self.params = params
+
+    def fit(self, X, y, **kwargs):
+        return self
+
+
+def _gbm_child_worker(task):
+    model_type, public_n_jobs, model_params = task
+    encoder = GBMEncoder(
+        model_type=model_type,
+        n_estimators=2,
+        n_jobs=public_n_jobs,
+        model_params=model_params,
+    )
+    encoder.classes_ = np.asarray([0, 1])
+    X = pd.DataFrame({"x": [0.0, 1.0, 2.0, 3.0]})
+    y = pd.Series([0, 0, 1, 1])
+    getattr(encoder, f"_fit_{model_type}")(X, y)
+    key = "thread_count" if model_type == "catboost" else "n_jobs"
+    return encoder.model_.params[key]
+
+
+@pytest.mark.parametrize(
+    "model_type,model_name,worker_key",
+    [
+        ("xgboost", "XGBoostRiskModel", "n_jobs"),
+        ("lightgbm", "LightGBMRiskModel", "n_jobs"),
+        ("catboost", "CatBoostRiskModel", "thread_count"),
+    ],
+)
+def test_gbm_children_use_active_nested_budget(monkeypatch, model_type, model_name, worker_key):
+    import hscredit.core.models as models
+
+    monkeypatch.setattr(models, model_name, _FakeRiskModel)
+    explicit = {worker_key: 99}
+    task = (model_type, -1, explicit)
+    token = _ACTIVE_BUDGET.set(ParallelBudget(4, 0))
+    try:
+        multi = parallel_execute(
+            _gbm_child_worker,
+            [task, task],
+            n_jobs=2,
+            parallel_backend="threading",
+            has_parallel_children=True,
+        )
+        single = parallel_execute(
+            _gbm_child_worker,
+            [task],
+            n_jobs=1,
+            parallel_backend="threading",
+            has_parallel_children=True,
+        )
+        explicit_one = parallel_execute(
+            _gbm_child_worker,
+            [(model_type, 99, {worker_key: 1})],
+            n_jobs=1,
+            parallel_backend="threading",
+            has_parallel_children=True,
+        )
+    finally:
+        _ACTIVE_BUDGET.reset(token)
+
+    assert multi == [2, 2]
+    assert single == [4]
+    assert explicit_one == [1]
+    assert explicit == {worker_key: 99}
+
+
+@pytest.mark.parametrize(
+    "model_type,model_name,worker_key",
+    [
+        ("xgboost", "XGBoostRiskModel", "n_jobs"),
+        ("lightgbm", "LightGBMRiskModel", "n_jobs"),
+        ("catboost", "CatBoostRiskModel", "thread_count"),
+    ],
+)
+def test_gbm_top_level_explicit_workers_and_model_params_identity(monkeypatch, model_type, model_name, worker_key):
+    import hscredit.core.models as models
+
+    monkeypatch.setattr(models, model_name, _FakeRiskModel)
+    params = {worker_key: 3, "自定义": "保留"}
+    encoder = GBMEncoder(model_type=model_type, n_jobs=1, model_params=params)
+    encoder.classes_ = np.asarray([0, 1])
+    X = pd.DataFrame({"x": [0.0, 1.0]})
+    y = pd.Series([0, 1])
+    getattr(encoder, f"_fit_{model_type}")(X, y)
+    assert encoder.model_.params[worker_key] == 3
+    assert encoder.model_params is params
+    assert params == {worker_key: 3, "自定义": "保留"}
+
+
+def test_xgboost_serial_thread_loky_raw_model_parity():
+    pytest.importorskip("xgboost")
+    rng = np.random.RandomState(42)
+    X = pd.DataFrame(rng.normal(size=(120, 3)), columns=["a", "b", "c"])
+    y = pd.Series((X["a"] + X["b"] * 0.25 > 0).astype(int))
+
+    def factory(n_jobs, backend):
+        return GBMEncoder(
+            cols=list(X.columns),
+            model_type="xgboost",
+            n_estimators=5,
+            max_depth=2,
+            output_type="leaves",
+            random_state=42,
+            n_jobs=n_jobs,
+            parallel_backend=backend,
+        )
+
+    serial = factory(1, None).fit(X, y)
+    expected = serial.transform(X)
+    expected_raw = bytes(serial.model_._model.get_booster().save_raw())
+    for backend in ("threading", "loky"):
+        parallel = factory(2, backend).fit(X, y)
+        pd.testing.assert_frame_equal(expected, parallel.transform(X), check_exact=True)
+        assert bytes(parallel.model_._model.get_booster().save_raw()) == expected_raw

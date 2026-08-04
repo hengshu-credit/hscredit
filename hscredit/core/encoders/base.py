@@ -583,12 +583,8 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         """
         serialized = {}
         for key, value in mapping.items():
-            if not isinstance(key, (str, bytes)):
-                try:
-                    if pd.isna(key):
-                        key = np.nan
-                except (TypeError, ValueError):
-                    pass
+            if self._is_float_nan_key(key):
+                key = np.nan
             if isinstance(value, pd.Series):
                 serialized[key] = value.to_dict()
             elif isinstance(value, dict):
@@ -602,15 +598,14 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         """将进程往返产生的不同 NaN 键归一为同一稳定键。"""
         canonical = {}
         for key, value in mapping.items():
-            normalized = key
-            if not isinstance(key, (str, bytes)):
-                try:
-                    if pd.isna(key):
-                        normalized = np.nan
-                except (TypeError, ValueError):
-                    pass
+            normalized = np.nan if cls._is_float_nan_key(key) else key
             canonical[normalized] = value
         return canonical
+
+    @staticmethod
+    def _is_float_nan_key(key: Any) -> bool:
+        """仅识别 Python/NumPy 浮点 NaN，不合并其他 missing-like 标量。"""
+        return isinstance(key, (float, np.floating)) and bool(np.isnan(key))
 
     def _deserialize_mapping(self, mapping: Dict) -> Dict:
         """反序列化映射。
