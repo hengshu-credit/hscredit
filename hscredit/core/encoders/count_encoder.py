@@ -168,7 +168,12 @@ class CountEncoder(BaseEncoder):
             if not any(self._is_float_nan_key(key) for key in mapping):
                 mapping[np.nan] = 0 if not self.normalize else 0.0
         elif self.handle_missing == 'return_nan':
-            mapping[np.nan] = np.nan
+            typed_nan_keys = [key for key in mapping if self._is_float_nan_key(key)]
+            if typed_nan_keys:
+                for key in typed_nan_keys:
+                    mapping[key] = np.nan
+            else:
+                mapping[np.nan] = np.nan
 
         if self.handle_unknown == 'value':
             mapping['__UNKNOWN__'] = 0 if not self.normalize else 0.0
@@ -200,11 +205,19 @@ class CountEncoder(BaseEncoder):
             )
 
         result = self._map_with_typed_float_nan(result, mapping)
+        typed_missing = pd.Series(
+            [self._is_float_nan_key(value) for value in values.array],
+            index=values.index,
+        )
+        if self.handle_missing == 'value':
+            missing_default = 0 if not self.normalize else 0.0
+            result = result.mask(result.isna() & typed_missing, missing_default)
+        unknown = result.isna() & ~typed_missing
 
         if self.handle_unknown == 'value':
             default_value = 0 if not self.normalize else 0.0
-            result = result.fillna(default_value)
-        elif self.handle_unknown == 'error' and result.isna().any():
+            result = result.mask(unknown, default_value)
+        elif self.handle_unknown == 'error' and unknown.any():
             raise ValueError(f"列'{column}'包含未知类别")
 
         return result
