@@ -26,9 +26,12 @@
 from abc import ABC, abstractmethod
 from typing import Union, List, Dict, Optional, Any, Tuple
 from datetime import datetime
+import inspect
 import numpy as np
 import pandas as pd
+from sklearn.exceptions import NotFittedError as SklearnNotFittedError
 from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.utils.validation import check_is_fitted
 
 from ...exceptions import NotFittedError, ValidationError
 
@@ -590,6 +593,8 @@ class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
     :param exclude: 强制剔除的特征列表，这些特征无论如何都会被剔除
     :param binner: 可选的分箱器，支持已训练的分箱器实例、待训练的分箱器类（传入类而非实例）、
         或待训练的分箱器实例
+    :param binning_params: 可选的 ``OptimalBinning`` 构造参数字典。未传入 ``binner`` 时，
+        基类使用该字典创建分箱器；同时传入时 ``binner`` 优先
     :param threshold: 筛选阈值，不同筛选器含义不同
     :param n_jobs: 并行计算的任务数，默认为 1
     :param force_drop: 强制剔除的特征列表，效果与 exclude 合并
@@ -650,6 +655,7 @@ class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
         binner: Optional[Any] = None,
+        binning_params: Optional[Dict[str, Any]] = None,
         threshold: Union[float, int, str] = 0.0,
         n_jobs: int = 1,
         force_drop: Optional[List[str]] = None,
@@ -661,7 +667,8 @@ class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
         :param target: 目标变量列名，默认为 'target'。当 fit 传入 y 参数时优先使用 y
         :param include: 强制保留的特征列表，这些特征无论如何都会被保留
         :param exclude: 强制剔除的特征列表，这些特征无论如何都会被剔除
-        :param binner: 可选的分箱器，支持已训练/未训练的分箱器实例或类
+        :param binner: 可选的已配置分箱器实例，支持已训练或未训练状态，不接受分箱器类
+        :param binning_params: 可选的 ``OptimalBinning`` 构造参数字典；``binner`` 优先
         :param threshold: 筛选阈值，不同筛选器含义不同
         :param n_jobs: 并行计算的任务数，默认为 1
         :param force_drop: 强制剔除的特征列表，效果与 exclude 合并
@@ -670,6 +677,7 @@ class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
         self.include = include
         self.exclude = exclude
         self.binner = binner
+        self.binning_params = binning_params
         self.threshold = threshold
         self.n_jobs = n_jobs
         self.force_drop = force_drop
@@ -799,8 +807,9 @@ class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
             # 合并到exclude_（去重）
             self.exclude_ = list(set(self.exclude_ + force_drop_list))
 
-        # 如果有分箱器,先进行分箱
-        if self.binner is not None:
+        # 如果配置了分箱器或分箱参数，先进行分箱
+        self._binner_instance = None
+        if self._should_apply_binner(y_processed):
             X_processed = self._apply_binner(X_processed, y_processed)
 
         # 执行子类实现的具体fit逻辑
@@ -863,44 +872,101 @@ class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
         >>> X_binned.shape
         (100, 3)
         """
-        binner = self.binner
-
-        # 检查是否是类（未训练的）还是实例（已训练的）
-        is_class = isinstance(binner, type)
-
-        if is_class:
-            # 未训练的分箱器类,需要实例化并fit
-            binner_instance = binner()
-            if hasattr(binner_instance, 'fit'):
-                if y is not None:
-                    binner_instance.fit(X, y)
-                else:
-                    binner_instance.fit(X)
-            self._binner_instance = binner_instance
-        else:
-            # 已经是实例
-            self._binner_instance = binner
-            if hasattr(binner, 'fit') and (not hasattr(binner, 'fitted_') or not getattr(binner, 'is_fitted_', False)):
-                # 未训练的分箱器实例
-                if y is not None:
-                    binner.fit(X, y)
-                else:
-                    binner.fit(X)
-
-        # 转换数据
-        if hasattr(self._binner_instance, 'transform'):
-            X_binned = self._binner_instance.transform(X)
-        elif hasattr(self._binner_instance, 'apply'):
-            # 某些分箱器使用apply方法
-            X_binned = self._binner_instance.apply(X)
-        else:
-            # 如果没有transform方法,原样返回
+        self._binner_instance = self._resolve_binner()
+        if self._binner_instance is None:
             return X
 
-        # 确保返回DataFrame
-        if isinstance(X_binned, np.ndarray):
-            X_binned = pd.DataFrame(X_binned, columns=X.columns, index=X.index)
-        return X_binned
+        if not self._is_binner_fitted(self._binner_instance):
+            fit_method = getattr(self._binner_instance, 'fit', None)
+            if not callable(fit_method):
+                raise ValidationError("未训练的分箱器必须提供 fit 方法")
+            if y is not None:
+                fit_method(X, y)
+            else:
+                fit_method(X)
+
+        transform_method = getattr(self._binner_instance, 'transform', None)
+        apply_method = getattr(self._binner_instance, 'apply', None)
+        if callable(transform_method):
+            try:
+                parameters = inspect.signature(transform_method).parameters.values()
+                supports_metric = any(
+                    parameter.name == 'metric' or parameter.kind == inspect.Parameter.VAR_KEYWORD
+                    for parameter in parameters
+                )
+            except (TypeError, ValueError):
+                supports_metric = False
+            if supports_metric:
+                X_binned = transform_method(X, metric='indices')
+            else:
+                X_binned = transform_method(X)
+        elif callable(apply_method):
+            X_binned = apply_method(X)
+        else:
+            raise ValidationError("分箱器必须提供 transform 或 apply 方法")
+
+        return self._normalize_binned_output(X_binned, X)
+
+    def _resolve_binner(self) -> Optional[Any]:
+        """按 ``binner > binning_params`` 解析有效分箱器。"""
+        if self.binner is not None:
+            if isinstance(self.binner, type):
+                raise ValidationError("binner 必须传入配置好的分箱器实例，不能传入分箱器类")
+            return self.binner
+
+        if self.binning_params is None:
+            return None
+        if not isinstance(self.binning_params, dict):
+            raise ValidationError("binning_params 分箱参数必须是字典")
+
+        from ..binning import OptimalBinning
+
+        return OptimalBinning(**dict(self.binning_params))
+
+    def _is_binner_fitted(self, binner: Any) -> bool:
+        """兼容 HSCredit 与常见 sklearn 风格的分箱器拟合状态。"""
+        for name in ('_is_fitted', 'is_fitted_', 'fitted_'):
+            if hasattr(binner, name):
+                return bool(getattr(binner, name))
+
+        if not callable(getattr(binner, 'fit', None)):
+            return callable(getattr(binner, 'transform', None)) or callable(getattr(binner, 'apply', None))
+
+        try:
+            check_is_fitted(binner)
+        except (SklearnNotFittedError, TypeError):
+            return False
+        return True
+
+    def _should_apply_binner(
+        self,
+        y: Optional[Union[pd.Series, np.ndarray]],
+    ) -> bool:
+        """判断当前拟合是否需要执行前置分箱。"""
+        return self.binner is not None or self.binning_params is not None
+
+    @staticmethod
+    def _normalize_binned_output(X_binned: Any, X: pd.DataFrame) -> pd.DataFrame:
+        """将分箱器输出规范为与输入行列对齐的 DataFrame。"""
+        if isinstance(X_binned, pd.DataFrame):
+            if X_binned.shape != X.shape:
+                raise ValidationError(
+                    f"分箱结果形状 {X_binned.shape} 与输入形状 {X.shape} 不一致"
+                )
+            if set(X_binned.columns) != set(X.columns):
+                raise ValidationError("分箱结果字段与输入字段不一致")
+            result = X_binned.loc[:, X.columns].copy()
+            result.index = X.index
+            return result
+
+        values = np.asarray(X_binned)
+        if values.ndim == 1 and X.shape[1] == 1:
+            values = values.reshape(-1, 1)
+        if values.shape != X.shape:
+            raise ValidationError(
+                f"分箱结果形状 {values.shape} 与输入形状 {X.shape} 不一致"
+            )
+        return pd.DataFrame(values, columns=X.columns, index=X.index)
 
     def _apply_include(self, X: pd.DataFrame) -> None:
         """确保 include 的特征被保留。
