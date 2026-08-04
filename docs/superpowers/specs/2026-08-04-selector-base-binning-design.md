@@ -90,11 +90,11 @@
 }
 ```
 
-调用者不传 `binner` 和 `binning_params`、且拟合时提供 `y` 或目标列时，默认配置经由基类创建并训练 `OptimalBinning`。显式 `binning_params` 替换整份默认配置；显式 `binner` 仍具有最高优先级。
+`CorrSelector` 的构造签名直接使用上述默认配置；构造函数复制字典，不修改共享默认对象。调用者不传 `binner` 和 `binning_params`、且拟合时提供 `y` 或目标列时，默认配置经由基类创建并训练 `OptimalBinning`。显式字典替换整份默认配置，显式 `binning_params=None` 表示关闭 `CorrSelector` 的构造默认分箱，显式 `binner` 仍具有最高优先级。
 
 为了保持 `CorrSelector.fit(X)` 的既有无目标调用，未提供 `y` 且当前配置来自构造默认值时，跳过该默认监督分箱，继续按原始数值相关性和等权规则筛选。调用者显式提供未训练分箱器或显式 `binning_params` 时不静默跳过，其无目标拟合能力由具体分箱器决定；已训练分箱器可以在没有 `y` 时直接转换。
 
-`ScorecardFeatureSelection.corr_binning_params` 继续传给内部 `CorrSelector`，但含义统一为筛选前分箱配置，不再触发第二个内部指标分箱器。
+`ScorecardFeatureSelection.corr_binning_params` 继续控制内部 `CorrSelector` 的筛选前分箱配置，不再触发第二个指标分箱器：外层未分箱且未配置该参数时省略关键字，让内部 `CorrSelector` 使用默认配置；外层已经分箱且该参数为 `None` 时显式传入 `binning_params=None`，避免对 index 再次分箱；调用者显式配置 `corr_binning_params` 时按其要求执行内部二次分箱。
 
 ## 错误处理与兼容性
 
