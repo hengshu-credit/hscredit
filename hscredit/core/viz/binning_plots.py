@@ -2902,6 +2902,27 @@ def bin_2d_plot(
                         diverging=True, fontsize=fontsize, axis_color=axis_color)
     _cell_title(ax_improve, '坏账改善')
 
+    # 最终二维箱使用统一色阶绘制整体外轮廓；同箱内部仍只保留现有白色格线。
+    solution = np.asarray(b2d.solution_)
+    bin_ids = sorted(int(bin_id) for bin_id in np.unique(solution))
+    boundary_cmap = make_colormap("hscredit_2d_bin_boundaries", SEQUENTIAL_GRADIENT)
+    color_positions = (
+        np.linspace(0.0, 1.0, len(bin_ids))
+        if len(bin_ids) > 1
+        else np.array([0.5])
+    )
+    boundary_colors = {
+        bin_id: boundary_cmap(position)
+        for bin_id, position in zip(bin_ids, color_positions)
+    }
+    for heatmap_ax in (ax_prop, ax_bad, ax_lift, ax_reject, ax_improve):
+        _draw_2d_bin_boundaries(
+            heatmap_ax,
+            solution,
+            bin_colors=boundary_colors,
+            expected_shape=(nx, ny),
+        )
+
     # 热力图刻度标签：左列(样本占比/LIFT)显示 特征1(y)，底行(LIFT/坏账改善)显示 特征2(x)；
     # 坏样本率、风险拒绝比不显示刻度标签
     _set_cross_heat_ticklabels(ax_prop, nx, ny, ylabels=ylabels, axis_color=axis_color)

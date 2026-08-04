@@ -109,6 +109,14 @@ def _normalized_segment(segment):
     return tuple(sorted(points))
 
 
+def _boundary_collections(ax):
+    return [
+        artist
+        for artist in ax.collections
+        if (artist.get_gid() or "").startswith("bin-2d-boundary-")
+    ]
+
+
 def test_draw_2d_bin_boundaries_wraps_merged_region_without_internal_edges():
     """合并箱只绘制整体外缘，不能保留同箱格子间的彩色边。"""
     import matplotlib.pyplot as plt
@@ -188,6 +196,26 @@ def test_bin_2d_plot_uses_requested_grid(bin_2d_figure):
         "坏账改善",
         "特征1 KS曲线",
     ]
+
+
+def test_bin_2d_plot_draws_same_merged_bin_boundaries_on_five_metric_axes(bin_2d_figure):
+    """五个交叉指标子图必须复用同一组最终箱轮廓和颜色。"""
+    axes = bin_2d_figure.axes[:9]
+    metric_axis_indexes = (2, 3, 4, 6, 7)
+    reference = _boundary_collections(axes[metric_axis_indexes[0]])
+    reference_gids = [artist.get_gid() for artist in reference]
+    reference_colors = [artist.get_colors()[0] for artist in reference]
+
+    assert reference
+    for axis_index in metric_axis_indexes[1:]:
+        actual = _boundary_collections(axes[axis_index])
+        assert [artist.get_gid() for artist in actual] == reference_gids
+        assert np.allclose(
+            [artist.get_colors()[0] for artist in actual],
+            reference_colors,
+        )
+    for axis_index in (0, 1, 5, 8):
+        assert _boundary_collections(axes[axis_index]) == []
 
 
 def test_bin_2d_plot_hides_requested_axes_and_legends(bin_2d_figure):
@@ -330,3 +358,13 @@ def test_bin_2d_plot_includes_missing_bins_in_heatmaps():
 
     sample_share = np.asarray(axes[3].images[0].get_array(), dtype=float)
     assert np.isclose(np.nansum(sample_share), 1.0)
+
+    expected_boundary_gids = {
+        f"bin-2d-boundary-{bin_id}"
+        for bin_id in np.unique(binner.solution_)
+    }
+    for axis_index in (2, 3, 4, 6, 7):
+        assert {
+            artist.get_gid()
+            for artist in _boundary_collections(axes[axis_index])
+        } == expected_boundary_gids
