@@ -1326,6 +1326,7 @@ class ModelReport:
         n_bins: int = 10,
         bin_method: str = "quantile",
         amount_col: Optional[str] = None,
+        show_lift: bool = True,
     ) -> Tuple[Dict[str, List[str]], Dict[str, pd.DataFrame]]:
         """导出所有图表，返回 (图表路径字典, PSI数据表字典)."""
         from ..core.viz import ks_plot, bin_plot, corr_plot, psi_plot, lift_plot
@@ -1358,13 +1359,14 @@ class ModelReport:
             except Exception as exc:
                 logger.warning("生成模型 KS 图失败 [数据集=%s, 文件=%s]: %s", tag, p, exc)
 
-            p = str(output_dir / f"lift_{ds_key}.png")
-            try:
-                lift_plot(ds.y, ds.y_proba, n_bins=20, title=f"{tag} LIFT曲线", save=p, figsize=(12, 7))
-                _safe_close_figs()
-                model_figs.append(p)
-            except Exception as exc:
-                logger.warning("生成模型 LIFT 图失败 [数据集=%s, 文件=%s]: %s", tag, p, exc)
+            if show_lift:
+                p = str(output_dir / f"lift_{ds_key}.png")
+                try:
+                    lift_plot(ds.y, ds.y_proba, n_bins=20, title=f"{tag} LIFT曲线", save=p, figsize=(12, 7))
+                    _safe_close_figs()
+                    model_figs.append(p)
+                except Exception as exc:
+                    logger.warning("生成模型 LIFT 图失败 [数据集=%s, 文件=%s]: %s", tag, p, exc)
 
             if model_figs:
                 paths[f"model_{ds_key}"] = model_figs
@@ -1616,6 +1618,8 @@ class ModelReport:
         project_desc: Optional[str] = None,
         feature_map: Optional[Dict[str, str]] = None,
         feature_info: Optional[pd.DataFrame] = None,
+        show_lift: bool = True,
+        show_importance: bool = True,
         data_source: Optional[str] = None,
         loc_cols: Optional[Union[str, List[str]]] = None,
     ) -> str:
@@ -1627,6 +1631,8 @@ class ModelReport:
         - 2-模型性能（指标、TOP n%、PSI矩阵、分箱效果）
         - 3-入模变量分析（重要性、相关性、逐特征分箱/KS/PSI）
 
+        :param show_lift: 是否生成并插入 LIFT 曲线；LIFT 数值表始终保留
+        :param show_importance: 是否显示入模变量重要性及分布汇总章节
         :param loc_cols: 定位字段（订单号等），支持 str 或 List[str]，仅用于生产订单测试用例
         """
         from ..excel import ExcelWriter, dataframe2excel
@@ -1644,6 +1650,7 @@ class ModelReport:
                     n_bins=n_bins,
                     bin_method=bin_method,
                     amount_col=amount_col,
+                    show_lift=show_lift,
                 )
 
         writer = ExcelWriter()
@@ -1723,6 +1730,16 @@ class ModelReport:
                 max_content_col = _content_max_col(worksheet, row_idx + 1, end_row_for_title)
                 _merge_report_title(worksheet, row_idx, max_content_col)
 
+        def _insert_required_hyperlink(worksheet, cell, hyperlink: str, purpose: str) -> None:
+            """插入报告导航链接；失败时保留明确上下文并终止不完整报告。"""
+            try:
+                writer.insert_hyperlink2sheet(worksheet, cell, hyperlink=hyperlink)
+            except Exception as exc:
+                coordinate = writer.get_cell_space(cell)
+                raise RuntimeError(
+                    f"生成{purpose}失败 [工作表={worksheet.title}, 单元格={coordinate}, 目标={hyperlink}]"
+                ) from exc
+
         # ============================================================
         # 目录 Sheet
         # ============================================================
@@ -1744,13 +1761,13 @@ class ModelReport:
         end_row, _ = dataframe2excel(contents, writer, sheet_name=ws, start_row=end_row + 1, left_cols=["内容", "备注"])
 
         for i, row in contents.iterrows():
-            try:
-                target_cell = writer.get_cell_space((2, 2))
-                writer.insert_hyperlink2sheet(
-                    ws, (end_row - len(contents) + i, 3), hyperlink=f"#'{row['内容']}'!{target_cell}"
-                )
-            except Exception:
-                pass
+            target_cell = writer.get_cell_space((2, 2))
+            _insert_required_hyperlink(
+                ws,
+                (end_row - len(contents) + i, 3),
+                hyperlink=f"#'{row['内容']}'!{target_cell}",
+                purpose="目录链接",
+            )
 
         _, _ = writer.insert_value2sheet(
             ws, (end_row + 1, 2), value="版本号:", style="middle", end_space=(end_row + 1, 2)
@@ -1775,10 +1792,7 @@ class ModelReport:
         end_row, _ = writer.insert_value2sheet(
             ws, (2, 2), value="一、基本信息", style="header_middle"
         )
-        try:
-            writer.insert_hyperlink2sheet(ws, (2, 2), hyperlink="#'目录'!B2")
-        except Exception:
-            pass
+        _insert_required_hyperlink(ws, (2, 2), hyperlink="#'目录'!B2", purpose="返回目录链接")
 
         # 1.1 项目目标
         end_row, _ = writer.insert_value2sheet(
@@ -1987,10 +2001,7 @@ class ModelReport:
         end_row, _ = writer.insert_value2sheet(
             ws, (2, 2), value="二、模型性能评估", style="header_middle"
         )
-        try:
-            writer.insert_hyperlink2sheet(ws, (2, 2), hyperlink="#'目录'!B2")
-        except Exception:
-            pass
+        _insert_required_hyperlink(ws, (2, 2), hyperlink="#'目录'!B2", purpose="返回目录链接")
 
         section_idx = 1
 
@@ -2126,19 +2137,16 @@ class ModelReport:
                     value="统计指标",
                     style="header_left",
                 )
-                try:
-                    from openpyxl.utils import get_column_letter
+                from openpyxl.utils import get_column_letter
 
-                    # 金额口径表起始列为 end_col1 + 1，占据 索引层级 + 数据列 共 nlevels+ncols
-                    # 列，故其最后一列为 (end_col1 + 1) + nlevels + ncols - 1。
-                    filter_end_col = end_col1 + 1 + lift_amt.index.nlevels + len(lift_amt.columns) - 1
-                    header_row = table_start + lift_table.columns.nlevels + 1
-                    writer.add_auto_filter(
-                        ws,
-                        f"B{header_row}:{get_column_letter(filter_end_col)}{end_row - 1}",
-                    )
-                except Exception:
-                    pass
+                # 金额口径表起始列为 end_col1 + 1，占据 索引层级 + 数据列 共 nlevels+ncols
+                # 列，故其最后一列为 (end_col1 + 1) + nlevels + ncols - 1。
+                filter_end_col = end_col1 + 1 + lift_amt.index.nlevels + len(lift_amt.columns) - 1
+                header_row = table_start + lift_table.columns.nlevels + 1
+                writer.add_auto_filter(
+                    ws,
+                    f"B{header_row}:{get_column_letter(filter_end_col)}{end_row - 1}",
+                )
             else:
                 lift_table = self._get_top_n_lift_table(
                     percentiles=(0.01, 0.03, 0.05, 0.10),
@@ -2154,17 +2162,14 @@ class ModelReport:
                     index=True,
                 )
                 writer.insert_value2sheet(ws, (table_start, 2), value="统计指标", style="header_middle")
-                try:
-                    from openpyxl.utils import get_column_letter
+                from openpyxl.utils import get_column_letter
 
-                    filter_end_col = 2 + lift_table.index.nlevels + len(lift_table.columns) - 1
-                    writer.add_auto_filter(
-                        ws,
-                        f"B{table_start + lift_table.columns.nlevels}:"
-                        f"{get_column_letter(filter_end_col)}{end_row - 1}",
-                    )
-                except Exception:
-                    pass
+                filter_end_col = 2 + lift_table.index.nlevels + len(lift_table.columns) - 1
+                writer.add_auto_filter(
+                    ws,
+                    f"B{table_start + lift_table.columns.nlevels}:"
+                    f"{get_column_letter(filter_end_col)}{end_row - 1}",
+                )
             section_idx += 1
         elif amount_col:
             lift_table = self._get_top_n_lift_table(percentiles=(0.01, 0.03, 0.05, 0.10), amount_col=None)
@@ -2189,14 +2194,11 @@ class ModelReport:
                 percent_cols=pct_keys,
             )
             end_row = max(end_row1, end_row2)
-            try:
-                n_lift_cols = len(lift_table.columns)
-                filter_end_col = end_col1 + 2 + n_lift_cols - 1
-                from openpyxl.utils import get_column_letter
+            n_lift_cols = len(lift_table.columns)
+            filter_end_col = end_col1 + 2 + n_lift_cols - 1
+            from openpyxl.utils import get_column_letter
 
-                writer.add_auto_filter(ws, f"B{table_start + 2}:{get_column_letter(filter_end_col)}{end_row - 1}")
-            except Exception:
-                pass
+            writer.add_auto_filter(ws, f"B{table_start + 2}:{get_column_letter(filter_end_col)}{end_row - 1}")
         else:
             lift_table = self._get_top_n_lift_table()
             table_start = end_row + 3
@@ -2207,14 +2209,11 @@ class ModelReport:
                 start_row=table_start,
                 percent_cols=pct_keys,
             )
-            try:
-                from openpyxl.utils import get_column_letter
+            from openpyxl.utils import get_column_letter
 
-                writer.add_auto_filter(
-                    ws, f"B{table_start}:{get_column_letter(len(lift_table.columns) + 1)}{end_row - 1}"
-                )
-            except Exception:
-                pass
+            writer.add_auto_filter(
+                ws, f"B{table_start}:{get_column_letter(len(lift_table.columns) + 1)}{end_row - 1}"
+            )
         if not is_multi:
             section_idx += 1
 
@@ -2373,8 +2372,10 @@ class ModelReport:
                         condition_color="F76E6C",
                     )
                     end_row = max(order_end_row, amount_end_row)
-                except Exception:
-                    end_row = order_end_row
+                except Exception as exc:
+                    raise RuntimeError(
+                        f"生成金额口径评分分箱失败 [数据集={tag}, 金额字段={amount_col}]"
+                    ) from exc
             else:
                 order_table = self.get_bin_table(ds_key, method=bin_method, max_n_bins=n_bins, margins=True)
                 pct_cols = [c for c in self._PERCENT_COLS if c in order_table.columns]
@@ -2399,40 +2400,46 @@ class ModelReport:
         end_row, _ = writer.insert_value2sheet(
             ws, (2, 2), value="三、入模变量分析", style="header_middle"
         )
-        try:
-            writer.insert_hyperlink2sheet(ws, (2, 2), hyperlink="#'目录'!B2")
-        except Exception:
-            pass
+        _insert_required_hyperlink(ws, (2, 2), hyperlink="#'目录'!B2", purpose="返回目录链接")
 
-        # 3.1 入模变量重要性及分布情况
+        feature_section = 1
+        feature_name_col: Optional[int] = None
+        features_summary_rows: Dict[str, int] = {}
+        if show_importance:
+            # 3.1 入模变量重要性及分布情况
+            end_row, _ = writer.insert_value2sheet(
+                ws,
+                (end_row + 2, 2),
+                value=f"{feature_section}、入模变量重要性及分布情况",
+                style="header_middle",
+                align={"horizontal": "left"},
+            )
+            features_summary = self._get_features_summary()
+            if "特征名" not in features_summary.columns:
+                index_name = features_summary.index.name or "index"
+                features_summary = features_summary.reset_index().rename(columns={index_name: "特征名"})
+            features_summary_start_row = end_row + 1
+            end_row, _ = dataframe2excel(
+                features_summary,
+                writer,
+                sheet_name=ws,
+                start_row=features_summary_start_row,
+                right_cols=[0],
+            )
+            feature_name_col = 2 + features_summary.columns.get_loc("特征名")
+            features_summary_rows = {
+                str(feat): features_summary_start_row + features_summary.columns.nlevels + position
+                for position, feat in enumerate(features_summary["特征名"])
+            }
+            feature_section += 1
+
+        # 入模变量相关性
         end_row, _ = writer.insert_value2sheet(
             ws,
             (end_row + 2, 2),
-            value="1、入模变量重要性及分布情况",
+            value=f"{feature_section}、入模变量相关性",
             style="header_middle",
             align={"horizontal": "left"},
-        )
-        features_summary = self._get_features_summary()
-        if "特征名" not in features_summary.columns:
-            index_name = features_summary.index.name or "index"
-            features_summary = features_summary.reset_index().rename(columns={index_name: "特征名"})
-        features_summary_start_row = end_row + 1
-        end_row, _ = dataframe2excel(
-            features_summary,
-            writer,
-            sheet_name=ws,
-            start_row=features_summary_start_row,
-            right_cols=[0],
-        )
-        feature_name_col = 2 + features_summary.columns.get_loc("特征名")
-        features_summary_rows = {
-            str(feat): features_summary_start_row + features_summary.columns.nlevels + position
-            for position, feat in enumerate(features_summary["特征名"])
-        }
-
-        # 3.2 相关性
-        end_row, _ = writer.insert_value2sheet(
-            ws, (end_row + 2, 2), value="2、入模变量相关性", style="header_middle", align={"horizontal": "left"}
         )
         corr_df = self.get_features_corr()
         corr_figs = plot_paths.get("feature_corr", [])
@@ -2446,10 +2453,16 @@ class ModelReport:
             figures=corr_figs,
             right_cols=[0],
         )
+        feature_section += 1
 
-        # 3.3 入模变量有效性分析
+        # 入模变量有效性分析
+        effectiveness_section = feature_section
         end_row, _ = writer.insert_value2sheet(
-            ws, (end_row + 2, 2), value="3、入模变量有效性分析", style="header_middle", align={"horizontal": "left"}
+            ws,
+            (end_row + 2, 2),
+            value=f"{effectiveness_section}、入模变量有效性分析",
+            style="header_middle",
+            align={"horizontal": "left"},
         )
 
         importance = self.get_feature_importance()
@@ -2461,26 +2474,25 @@ class ModelReport:
             end_row, _ = writer.insert_value2sheet(
                 ws,
                 (feature_title_row, 2),
-                value=f"3.{i + 1}、{feat} 有效性分析",
+                value=f"{effectiveness_section}.{i + 1}、{feat} 有效性分析",
                 style="header_middle",
                 align={"horizontal": "left"},
             )
 
             summary_row = features_summary_rows.get(str(feat))
-            if summary_row is not None:
-                try:
-                    writer.insert_hyperlink2sheet(
-                        ws,
-                        (summary_row, feature_name_col),
-                        hyperlink=f"#'{ws.title}'!B{feature_title_row}",
-                    )
-                    writer.insert_hyperlink2sheet(
-                        ws,
-                        (feature_title_row, 2),
-                        hyperlink=f"#'{ws.title}'!{writer.get_cell_space((summary_row, feature_name_col))}",
-                    )
-                except Exception:
-                    pass
+            if summary_row is not None and feature_name_col is not None:
+                _insert_required_hyperlink(
+                    ws,
+                    (summary_row, feature_name_col),
+                    hyperlink=f"#'{ws.title}'!B{feature_title_row}",
+                    purpose=f"特征导航链接 [特征={feat}]",
+                )
+                _insert_required_hyperlink(
+                    ws,
+                    (feature_title_row, 2),
+                    hyperlink=f"#'{ws.title}'!{writer.get_cell_space((summary_row, feature_name_col))}",
+                    purpose=f"特征返回链接 [特征={feat}]",
+                )
 
             # 插入图表（同一行、左右排列，避免 figures 参数导致标题与分箱表之间出现图）
             bin_figs = plot_paths.get(f"feat_bin_{feat}", [])
@@ -2605,10 +2617,7 @@ class ModelReport:
                     start_row=end_row + 1,
                 )
 
-        try:
-            writer.set_freeze_panes(ws, (5, 4))
-        except Exception:
-            pass
+        writer.set_freeze_panes(ws, (5, 4))
 
         # ============================================================
         # 4-稳定性分析 Sheet
@@ -2617,10 +2626,7 @@ class ModelReport:
         end_row, _ = writer.insert_value2sheet(
             ws, (2, 2), value="四、模型稳定性分析", style="header_middle"
         )
-        try:
-            writer.insert_hyperlink2sheet(ws, (2, 2), hyperlink="#'目录'!B2")
-        except Exception:
-            pass
+        _insert_required_hyperlink(ws, (2, 2), hyperlink="#'目录'!B2", purpose="返回目录链接")
 
         stab_section = 1
 
@@ -2675,8 +2681,13 @@ class ModelReport:
                     else:
                         try:
                             psi_matrix.iloc[i, j] = _psi(self._datasets[k1].score, self._datasets[k2].score)
-                        except Exception:
-                            pass
+                        except Exception as exc:
+                            logger.warning(
+                                "计算评分 PSI 失败 [基准数据集=%s, 对比数据集=%s]: %s",
+                                self._datasets[k1].label,
+                                self._datasets[k2].label,
+                                exc,
+                            )
             end_row, _ = dataframe2excel(psi_matrix, writer, sheet_name=ws, start_row=end_row + 1, index=True)
 
             # 评分PSI参考阈值说明
@@ -2775,10 +2786,7 @@ class ModelReport:
         end_row, _ = writer.insert_value2sheet(
             ws, (2, 2), value="五、模型选型及参数", style="header_middle"
         )
-        try:
-            writer.insert_hyperlink2sheet(ws, (2, 2), hyperlink="#'目录'!B2")
-        except Exception:
-            pass
+        _insert_required_hyperlink(ws, (2, 2), hyperlink="#'目录'!B2", purpose="返回目录链接")
 
         param_section = 1
 
@@ -2807,8 +2815,8 @@ class ModelReport:
         if hasattr(self.model, "get_params"):
             try:
                 params_str = str(self.model.get_params())
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("读取模型参数失败 [模型=%s]: %s", model_name, exc)
         if not params_str and hasattr(self.model, "__dict__"):
             params_str = str(
                 {k: v for k, v in self.model.__dict__.items() if not k.startswith("_") and not callable(v)}
@@ -2864,8 +2872,8 @@ class ModelReport:
                 end_row, _ = dataframe2excel(
                     lr_summary, writer, sheet_name=ws, start_row=end_row + 1, title="逻辑回归系数"
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("生成逻辑回归系数表失败 [模型=%s]: %s", model_name, exc)
             param_section += 1
 
             # 评分卡刻度配置
@@ -2881,8 +2889,8 @@ class ModelReport:
                 end_row, _ = dataframe2excel(
                     scale_df, writer, sheet_name=ws, start_row=end_row + 1, right_cols=["刻度项"], left_cols=["备注"]
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("生成评分卡刻度配置失败 [模型=%s]: %s", model_name, exc)
             param_section += 1
 
             # 评分卡
@@ -2902,8 +2910,8 @@ class ModelReport:
                     start_row=end_row + 1,
                     right_cols=["对应分数", "变量分箱", "变量名称"],
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("生成评分卡分值表失败 [模型=%s]: %s", model_name, exc)
             param_section += 1
 
             # 评分与 Odds 对照
@@ -2917,8 +2925,8 @@ class ModelReport:
             try:
                 odds_ref = self.model.score_odds_reference
                 end_row, _ = dataframe2excel(odds_ref, writer, sheet_name=ws, start_row=end_row + 1)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("生成评分与 Odds 对照表失败 [模型=%s]: %s", model_name, exc)
             param_section += 1
 
             # 评分漂移分析
@@ -2955,10 +2963,7 @@ class ModelReport:
         end_row, _ = writer.insert_value2sheet(
             ws, (2, 2), value="六、模型部署需求", style="header_middle"
         )
-        try:
-            writer.insert_hyperlink2sheet(ws, (2, 2), hyperlink="#'目录'!B2")
-        except Exception:
-            pass
+        _insert_required_hyperlink(ws, (2, 2), hyperlink="#'目录'!B2", purpose="返回目录链接")
 
         # 6.1 入模变量信息
         end_row, _ = writer.insert_value2sheet(
@@ -3200,6 +3205,8 @@ def auto_model_report(
             project_desc=project_desc,
             feature_map=feature_map,
             feature_info=feature_info,
+            show_lift=show_lift,
+            show_importance=show_importance,
             data_source=data_source,
             loc_cols=loc_cols,
         )
