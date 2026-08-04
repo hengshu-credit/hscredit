@@ -84,6 +84,9 @@ class MDLPBinning(BaseBinning):
         handle_unknown: str = "value",
         random_state: Optional[int] = None,
         verbose: Union[bool, int] = False,
+        n_jobs: Union[int, float] = -1,
+        parallel_backend: Optional[str] = None,
+        parallel_config: Optional[Dict[str, Any]] = None,
         **kwargs,
     ):
         super().__init__(
@@ -101,6 +104,9 @@ class MDLPBinning(BaseBinning):
             handle_unknown=handle_unknown,
             random_state=random_state,
             verbose=verbose,
+            n_jobs=n_jobs,
+            parallel_backend=parallel_backend,
+            parallel_config=parallel_config,
         )
         self.min_samples_split = min_samples_split
         self.min_samples_leaf = min_samples_leaf

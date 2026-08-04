@@ -202,6 +202,9 @@ class ORBinning(BaseBinning):
         category_order=None,
         handle_unknown: str = "value",
         random_state: Optional[int] = None,
+        n_jobs: Union[int, float] = -1,
+        parallel_backend: Optional[str] = None,
+        parallel_config: Optional[Dict[str, Any]] = None,
         **kwargs,
     ):
         if not ORTOOLS_AVAILABLE:
@@ -221,6 +224,9 @@ class ORBinning(BaseBinning):
             category_order=category_order,
             handle_unknown=handle_unknown,
             random_state=random_state,
+            n_jobs=n_jobs,
+            parallel_backend=parallel_backend,
+            parallel_config=parallel_config,
             **kwargs,
         )
 
