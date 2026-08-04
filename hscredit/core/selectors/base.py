@@ -30,7 +30,7 @@ import inspect
 import numpy as np
 import pandas as pd
 from sklearn.exceptions import NotFittedError as SklearnNotFittedError
-from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.base import BaseEstimator, TransformerMixin, clone
 from sklearn.utils.validation import check_is_fitted
 
 from ...exceptions import NotFittedError, ValidationError
@@ -751,14 +751,75 @@ class BaseFeatureSelector(ParallelizableMixin, BaseEstimator, TransformerMixin, 
         y: Optional[Union[pd.Series, np.ndarray]] = None,
     ) -> 'BaseFeatureSelector':
         """事务式拟合筛选器，失败时恢复进入本次拟合前的完整状态。"""
-        previous_state = dict(self.__dict__)
-        self._clear_fitted_state()
-        try:
-            return self._fit_once(X, y)
-        except Exception:
-            self.__dict__.clear()
-            self.__dict__.update(previous_state)
-            raise
+        candidate = clone(self)
+        candidate._fit_once(X, y)
+        self._adopt_fitted_candidate(candidate)
+        return self
+
+    def _adopt_fitted_candidate(self, candidate: 'BaseFeatureSelector') -> None:
+        """一次性提交已成功拟合的候选状态，并保留公开构造参数身份。"""
+        original_params = self.get_params(deep=False)
+        candidate_params = candidate.get_params(deep=False)
+        candidate_state = dict(candidate.__dict__)
+
+        original_binner = original_params.get('binner')
+        candidate_binner = candidate_params.get('binner')
+        if original_binner is not None and candidate_binner is not None:
+            self._adopt_external_object_state(original_binner, candidate_binner)
+            if candidate_state.get('_binner_instance') is candidate_binner:
+                candidate_state['_binner_instance'] = original_binner
+
+        original_selectors = original_params.get('selectors')
+        candidate_selectors = candidate_params.get('selectors')
+        if original_selectors is not None and candidate_selectors is not None:
+            self._adopt_child_selector_states(original_selectors, candidate_selectors)
+
+        for name, value in original_params.items():
+            candidate_state[name] = value
+
+        self.__dict__.clear()
+        self.__dict__.update(candidate_state)
+        self._rebind_committed_parallel_children()
+
+    @staticmethod
+    def _adopt_external_object_state(original: Any, candidate: Any) -> None:
+        """把隔离候选对象的成功状态提交到原外部对象，同时保持对象身份。"""
+        if not hasattr(original, '__dict__') or not hasattr(candidate, '__dict__'):
+            raise ValidationError("外部对象必须支持状态复制，才能保证事务式拟合")
+        original.__dict__.clear()
+        original.__dict__.update(candidate.__dict__)
+
+    @staticmethod
+    def _selector_from_item(item: Any) -> Any:
+        """从 Composite 支持的命名元组或直接元素中取得子筛选器。"""
+        if isinstance(item, tuple) and len(item) == 2:
+            return item[1]
+        return item
+
+    def _adopt_child_selector_states(self, original_items: Any, candidate_items: Any) -> None:
+        """递归提交 Composite 候选子筛选器状态。"""
+        if len(original_items) != len(candidate_items):
+            raise ValidationError("候选子筛选器数量与原配置不一致，无法提交拟合状态")
+        for original_item, candidate_item in zip(original_items, candidate_items):
+            original = self._selector_from_item(original_item)
+            fitted_candidate = self._selector_from_item(candidate_item)
+            if isinstance(original, BaseFeatureSelector) and isinstance(fitted_candidate, BaseFeatureSelector):
+                original._adopt_fitted_candidate(fitted_candidate)
+                self._bind_parallel_config_to_child(original)
+
+    def _bind_parallel_config_to_child(self, child: 'BaseFeatureSelector') -> None:
+        """把父筛选器的完整并行配置绑定到已成功提交的子筛选器。"""
+        child.n_jobs = self.n_jobs
+        child.parallel_backend = self.parallel_backend
+        child.parallel_config = self.parallel_config
+
+    def _rebind_committed_parallel_children(self) -> None:
+        """修复候选 clone 中内部阶段对并行配置副本的引用。"""
+        stage_selectors = getattr(self, 'stage_selectors_', None)
+        if isinstance(stage_selectors, dict):
+            for child in stage_selectors.values():
+                if isinstance(child, BaseFeatureSelector):
+                    self._bind_parallel_config_to_child(child)
 
     def _clear_fitted_state(self) -> None:
         """清理上一次拟合产物，避免重复拟合沿用陈旧报告或得分。"""

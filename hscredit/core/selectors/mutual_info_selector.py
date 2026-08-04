@@ -57,7 +57,7 @@ class MutualInfoSelector(BaseFeatureSelector):
 
     :param threshold: 互信息阈值，默认为0.0
     :param n_neighbors: 邻居数，用于估计互信息，默认为3
-    :param random_state: 随机种子
+    :param random_state: 随机种子；None 使用稳定基准 0，负数和超大整数会归一化到合法范围
     :param target: 目标变量列名，默认为'target'
     :param n_jobs: 并行计算的任务数（注意：mutual_info_classif 不支持并行，此参数保留用于未来扩展）
 
@@ -78,7 +78,8 @@ class MutualInfoSelector(BaseFeatureSelector):
     **注意**
 
     互信息可捕捉线性与非线性依赖，连续特征用 k 近邻法估计（``n_neighbors`` 越大方差越小、
-    偏差略增），故结果依赖 ``random_state``。
+    偏差略增），故结果依赖 ``random_state``。为保证串行、线程和进程后端精确一致，``None``
+    按稳定基准 0 处理，每列使用按输入顺序派生的独立合法种子，不依赖全局随机数状态。
 
     **引用**
 
@@ -130,9 +131,11 @@ class MutualInfoSelector(BaseFeatureSelector):
 
         self._get_feature_names(X)
 
+        seed_modulus = 2**32 - 1
+        base_seed = 0 if self.random_state is None else int(self.random_state) % seed_modulus
         tasks = []
         for ordinal, col in enumerate(X.columns):
-            seed = None if self.random_state is None else int(self.random_state) + ordinal
+            seed = (base_seed + ordinal) % seed_modulus
             tasks.append((col, X[col], np.asarray(y), self.n_neighbors, seed))
         results = self._parallel_execute(
             _compute_mutual_info_feature,

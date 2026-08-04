@@ -31,6 +31,7 @@ from sklearn.base import clone
 from sklearn.model_selection import cross_val_score
 
 from .base import BaseFeatureSelector
+from ...utils.parallel import _current_parallel_budget
 
 
 def _evaluate_sequential_candidate(task):
@@ -41,6 +42,8 @@ def _evaluate_sequential_candidate(task):
     else:
         features = [feature for feature in selected if feature != candidate]
     model = clone(estimator)
+    if 'n_jobs' in model.get_params(deep=False):
+        model.set_params(n_jobs=_current_parallel_budget().available)
     score = cross_val_score(
         model,
         X[features],
@@ -197,6 +200,7 @@ class SequentialFeatureSelector(BaseFeatureSelector):
                 _evaluate_sequential_candidate,
                 tasks,
                 task_labels=candidates,
+                has_parallel_children=True,
             )
             # Ordered results + argmax preserve sklearn's first-candidate tie break.
             best_position = int(np.argmax([score for _, _, score in results]))
