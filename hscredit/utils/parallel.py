@@ -4,15 +4,20 @@ import math
 import numbers
 import os
 from collections.abc import Mapping
-from typing import Any, Dict, Optional, Union
+from contextvars import ContextVar
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple, TypeVar, Union
 
 import numpy as np
+from joblib import Parallel, delayed, parallel_backend as joblib_parallel_backend
 from joblib import cpu_count as joblib_cpu_count
 
-from ..exceptions import ValidationError
+from ..exceptions import ParallelExecutionError, ValidationError
 
 
 NJobs = Optional[Union[int, float]]
+Task = TypeVar("Task")
+Result = TypeVar("Result")
 
 _PARALLEL_CONFIG_KEYS = {
     "batch_size",
@@ -24,8 +29,34 @@ _PARALLEL_CONFIG_KEYS = {
     "require",
     "verbose",
     "timeout",
+    "inner_max_num_threads",
     "backend_kwargs",
 }
+
+
+@dataclass(frozen=True)
+class ParallelBudget:
+    """并行执行上下文中的可用预算。
+
+    **参数**
+        available: 当前调用可使用的最大并行预算。
+        depth: 当前调用所在的嵌套深度。
+
+    **属性**
+        available: 正整数并行预算。
+        depth: 非负嵌套深度。
+
+    **参考样例**
+        ``ParallelBudget(available=4, depth=1)`` 表示第一层 worker 可使用 4 个工作预算。
+    """
+
+    available: int
+    depth: int
+
+
+_ACTIVE_BUDGET: ContextVar[Optional[ParallelBudget]] = ContextVar(
+    "hscredit_parallel_budget", default=None
+)
 
 
 def get_physical_cpu_count() -> int:
@@ -137,3 +168,127 @@ def validate_parallel_config(
         config["backend_kwargs"] = dict(backend_kwargs)
 
     return config
+
+
+def split_parallel_budget(
+    available: int, task_count: int, has_parallel_children: bool
+) -> Tuple[int, int]:
+    """计算当前层和真实并行子层的工作预算。"""
+    available = max(1, int(available))
+    if not has_parallel_children:
+        return min(available, max(1, task_count)), 1
+    outer = min(max(1, task_count), math.ceil(math.sqrt(available)))
+    return outer, max(1, available // outer)
+
+
+def _run_with_budget(
+    function: Callable[[Task], Result],
+    task: Task,
+    label: Any,
+    child_budget: int,
+    depth: int,
+) -> Result:
+    """在显式预算上下文中执行单个可序列化任务。"""
+    token = _ACTIVE_BUDGET.set(ParallelBudget(child_budget, depth))
+    try:
+        return function(task)
+    except Exception as exc:
+        raise ParallelExecutionError(f"并行任务 '{label}' 执行失败: {exc}") from exc
+    finally:
+        _ACTIVE_BUDGET.reset(token)
+
+
+def _current_parallel_budget() -> ParallelBudget:
+    """返回当前预算；根调用使用统一的自动并行预算。"""
+    active_budget = _ACTIVE_BUDGET.get()
+    if active_budget is not None:
+        return active_budget
+    return ParallelBudget(resolve_n_jobs(-1) or 1, 0)
+
+
+def parallel_execute(
+    function: Callable[[Task], Result],
+    tasks: Iterable[Task],
+    *,
+    n_jobs: NJobs = -1,
+    parallel_backend: Optional[str] = None,
+    parallel_config: Optional[Mapping[str, Any]] = None,
+    task_labels: Optional[Iterable[Any]] = None,
+    default_backend: Optional[str] = None,
+    has_parallel_children: bool = False,
+) -> List[Result]:
+    """按提交顺序执行任务，并在线程和进程间传播并行预算。"""
+    task_list = list(tasks)
+    if task_labels is None:
+        labels: Sequence[Any] = list(range(len(task_list)))
+    else:
+        labels = list(task_labels)
+        if len(labels) != len(task_list):
+            raise ValidationError("task_labels 的数量必须与 tasks 一致")
+
+    config = validate_parallel_config(parallel_backend, parallel_config)
+    current_budget = _current_parallel_budget()
+    requested_workers = resolve_n_jobs(
+        n_jobs,
+        task_count=len(task_list),
+        available_budget=current_budget.available,
+    )
+    if not task_list:
+        return []
+
+    workers = requested_workers or 1
+    if has_parallel_children:
+        automatic_limit, _ = split_parallel_budget(
+            current_budget.available, len(task_list), True
+        )
+        if n_jobs == -1:
+            workers = min(workers, automatic_limit)
+        child_budget = max(1, current_budget.available // workers)
+    else:
+        child_budget = current_budget.available
+    depth = current_budget.depth + 1
+
+    calls = (
+        (function, task, label, child_budget, depth)
+        for task, label in zip(task_list, labels)
+    )
+    if workers == 1:
+        return [_run_with_budget(*call) for call in calls]
+
+    parallel_options = dict(config)
+    backend_options = parallel_options.pop("backend_kwargs", {}) or {}
+    inner_max_num_threads = parallel_options.pop("inner_max_num_threads", None)
+    if inner_max_num_threads is not None:
+        backend_options["inner_max_num_threads"] = inner_max_num_threads
+
+    backend = parallel_backend or default_backend
+    submitted = (
+        delayed(_run_with_budget)(*call)
+        for call in calls
+    )
+    if backend is None and not backend_options:
+        return Parallel(n_jobs=workers, **parallel_options)(submitted)
+
+    backend = backend or "loky"
+    with joblib_parallel_backend(backend, **backend_options):
+        return Parallel(n_jobs=workers, **parallel_options)(submitted)
+
+
+class ParallelizableMixin:
+    """为估计器提供统一并行执行入口的内部混入类。"""
+
+    def _parallel_execute(
+        self,
+        function: Callable[[Task], Result],
+        tasks: Iterable[Task],
+        **kwargs: Any,
+    ) -> List[Result]:
+        """使用实例保存的公共并行配置执行任务。"""
+        return parallel_execute(
+            function,
+            tasks,
+            n_jobs=self.n_jobs,
+            parallel_backend=self.parallel_backend,
+            parallel_config=self.parallel_config,
+            **kwargs,
+        )

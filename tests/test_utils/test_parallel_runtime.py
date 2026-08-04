@@ -3,8 +3,40 @@
 import pytest
 from unittest.mock import patch
 
-from hscredit.exceptions import ValidationError
-from hscredit.utils import get_physical_cpu_count, resolve_n_jobs, validate_parallel_config
+from hscredit.exceptions import ParallelExecutionError, ValidationError
+from hscredit.utils import (
+    ParallelBudget,
+    ParallelizableMixin,
+    get_physical_cpu_count,
+    parallel_execute,
+    resolve_n_jobs,
+    split_parallel_budget,
+    validate_parallel_config,
+)
+from hscredit.utils.parallel import _ACTIVE_BUDGET
+
+
+def _square(value):
+    return value * value
+
+
+def _read_active_budget(_):
+    return _ACTIVE_BUDGET.get()
+
+
+def _run_inner_parallel(_):
+    return parallel_execute(
+        _read_active_budget,
+        range(3),
+        n_jobs=2,
+        parallel_backend="threading",
+    )
+
+
+class _ParallelExecutor(ParallelizableMixin):
+    n_jobs = 2
+    parallel_backend = "threading"
+    parallel_config = None
 
 
 def test_physical_cpu_count_falls_back_to_joblib_without_keyword_support():
@@ -96,3 +128,113 @@ def test_parallel_config_rejects_non_string_keys_with_chinese_validation_error()
     """混合类型的未知配置键也必须返回统一中文校验错误。"""
     with pytest.raises(ValidationError, match="parallel_config"):
         validate_parallel_config(None, {"unknown": 1, 1: 2})
+
+
+@pytest.mark.parametrize("backend", ["threading", "loky"])
+def test_parallel_execute_preserves_submission_order(backend):
+    """并行结果必须保持任务提交顺序，而不是完成顺序。"""
+    assert parallel_execute(
+        _square, [3, 1, 2], n_jobs=2, parallel_backend=backend
+    ) == [9, 1, 4]
+
+
+def test_serial_and_parallel_call_the_same_worker():
+    """串并行调度必须复用同一个单任务函数。"""
+    serial = parallel_execute(_square, range(8), n_jobs=1)
+    parallel = parallel_execute(
+        _square, range(8), n_jobs=2, parallel_backend="threading"
+    )
+    assert parallel == serial
+
+
+def test_worker_failure_has_chinese_context_and_original_cause():
+    """任务失败应补充中文标签并保留原始异常链。"""
+    def fail(_):
+        raise KeyError("boom")
+
+    with pytest.raises(ParallelExecutionError, match="特征A") as error:
+        parallel_execute(fail, [1], task_labels=["特征A"])
+    assert isinstance(error.value.__cause__, KeyError)
+
+
+@pytest.mark.parametrize(
+    ("available", "task_count", "has_parallel_children", "expected"),
+    [
+        (13, 100, True, (4, 3)),
+        (13, 100, False, (13, 1)),
+    ],
+)
+def test_split_parallel_budget_uses_square_root_only_for_real_nesting(
+    available, task_count, has_parallel_children, expected
+):
+    """只有真实同时嵌套的任务才按平方根切分预算。"""
+    assert split_parallel_budget(
+        available, task_count, has_parallel_children
+    ) == expected
+
+
+def test_one_outer_task_with_children_receives_the_full_budget():
+    """只有一个外层任务时，其并行子任务可获得完整当前预算。"""
+    token = _ACTIVE_BUDGET.set(ParallelBudget(13, 0))
+    try:
+        result = parallel_execute(
+            _read_active_budget,
+            [None],
+            n_jobs=-1,
+            has_parallel_children=True,
+        )
+    finally:
+        _ACTIVE_BUDGET.reset(token)
+
+    assert result == [ParallelBudget(13, 1)]
+
+
+def test_sequential_composite_and_stepwise_labels_do_not_split_budget():
+    """阶段名称不能让顺序 Composite/Stepwise 调用被误判为真实嵌套。"""
+    token = _ACTIVE_BUDGET.set(ParallelBudget(13, 0))
+    try:
+        result = parallel_execute(
+            _read_active_budget,
+            [None, None],
+            n_jobs=2,
+            parallel_backend="threading",
+            task_labels=["Composite", "Stepwise"],
+        )
+    finally:
+        _ACTIVE_BUDGET.reset(token)
+
+    assert result == [ParallelBudget(13, 1), ParallelBudget(13, 1)]
+
+
+@pytest.mark.parametrize("backend", ["threading", "loky"])
+def test_real_workers_receive_divided_child_budget(backend):
+    """线程和进程 worker 都必须收到显式传播的真实子预算。"""
+    token = _ACTIVE_BUDGET.set(ParallelBudget(13, 0))
+    try:
+        result = parallel_execute(
+            _read_active_budget,
+            range(4),
+            n_jobs=4,
+            parallel_backend=backend,
+            has_parallel_children=True,
+        )
+    finally:
+        _ACTIVE_BUDGET.reset(token)
+
+    assert result == [ParallelBudget(3, 1)] * 4
+
+
+def test_sequential_parent_then_inner_parallel_call_keeps_full_budget():
+    """串行外层阶段随后启动内部并行时仍应看到完整当前预算。"""
+    token = _ACTIVE_BUDGET.set(ParallelBudget(13, 0))
+    try:
+        result = parallel_execute(_run_inner_parallel, [None], n_jobs=1)
+    finally:
+        _ACTIVE_BUDGET.reset(token)
+
+    assert result == [[ParallelBudget(13, 2)] * 3]
+
+
+def test_parallelizable_mixin_delegates_instance_configuration():
+    """估计器 mixin 应把实例公共配置交给同一执行器。"""
+    assert _ParallelExecutor()._parallel_execute(_square, [3, 1, 2]) == [9, 1, 4]
