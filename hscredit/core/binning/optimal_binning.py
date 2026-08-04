@@ -11,6 +11,7 @@
 """
 
 import logging
+from copy import deepcopy
 from typing import Union, List, Dict, Optional, Any, Callable
 import numpy as np
 import pandas as pd
@@ -314,6 +315,11 @@ class OptimalBinning(BaseBinning):
         :return: 拟合后的分箱器
         """
         X, y = self._check_input(X, y)
+        imported_features = [
+            feature
+            for feature in getattr(self, "_imported_rule_features_", ())
+            if getattr(self, "_rules_imported_", False) and feature in X.columns
+        ]
         excluded_features = (
             set(self.user_splits)
             if isinstance(self.user_splits, dict)
@@ -321,7 +327,13 @@ class OptimalBinning(BaseBinning):
             if callable(self.user_splits)
             else set()
         )
+        excluded_features.update(imported_features)
         self._record_category_orders(X, y, excluded_features=excluded_features)
+
+        if imported_features:
+            self._fit_imported_and_ordinary_features(X, y, imported_features)
+            self._is_fitted = True
+            return self
 
         # 如果已经拟合过（例如通过import_rules），只计算统计信息
         if self._is_fitted:
@@ -392,6 +404,64 @@ class OptimalBinning(BaseBinning):
 
         self._is_fitted = True
         return self
+
+    def _fit_imported_and_ordinary_features(
+        self, X: pd.DataFrame, y: pd.Series, imported_features: List[str]
+    ) -> None:
+        """按特征分派导入规则与普通算法，并按输入列顺序合并最终状态。"""
+        imported_set = set(imported_features)
+        ordinary_features = [feature for feature in X.columns if feature not in imported_set]
+
+        # 导入规则是不可再优化的固定输入，只补充本轮样本统计。
+        self._update_bin_stats(X[imported_features], y)
+
+        ordinary_binner = None
+        if ordinary_features:
+            ordinary_X = X[ordinary_features]
+            # 使用同一估计器配置创建干净事务候选；ordinary 子集沿用完整并行预算，
+            # 并完整经过现有工厂、预分箱、类别适配和后处理链路。
+            ordinary_binner = self._make_fit_transaction_candidate((ordinary_X, y), {})
+            ordinary_binner.fit(ordinary_X, y)
+
+        for state_name in self._FEATURE_DICT_STATE:
+            imported_state = getattr(self, state_name, {})
+            ordinary_state = getattr(ordinary_binner, state_name, {}) if ordinary_binner is not None else {}
+            merged = {}
+            for feature in X.columns:
+                source = imported_state if feature in imported_set else ordinary_state
+                if feature in source:
+                    merged[feature] = deepcopy(source[feature])
+            has_state = hasattr(self, state_name) or (
+                ordinary_binner is not None and hasattr(ordinary_binner, state_name)
+            )
+            if has_state or merged:
+                setattr(self, state_name, merged)
+
+        for state_name in self._FEATURE_SET_STATE:
+            imported_state = getattr(self, state_name, set())
+            ordinary_state = getattr(ordinary_binner, state_name, set()) if ordinary_binner is not None else set()
+            setattr(
+                self,
+                state_name,
+                {
+                    feature
+                    for feature in X.columns
+                    if feature in (imported_state if feature in imported_set else ordinary_state)
+                },
+            )
+
+        imported_woe = getattr(self, "_woe_maps_", {})
+        ordinary_woe = getattr(ordinary_binner, "_woe_maps_", {}) if ordinary_binner is not None else {}
+        self._woe_maps_ = {
+            feature: deepcopy((imported_woe if feature in imported_set else ordinary_woe)[feature])
+            for feature in X.columns
+            if feature in (imported_woe if feature in imported_set else ordinary_woe)
+        }
+
+        # mixed 模型的底层估计器只覆盖 ordinary 子集，不能作为整表 transform delegate。
+        # wrapper 已拥有合并后的完整规则、类别状态和统计表，统一从这里执行转换。
+        self._binner = None
+        self._prebinner = None
 
     def _update_bin_stats(self, X: pd.DataFrame, y: pd.Series):
         """更新分箱统计信息（用于已导入规则的情况）.
