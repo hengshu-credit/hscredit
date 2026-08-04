@@ -400,6 +400,99 @@ def test_non_float_nan_scalars_keep_pandas_count_and_map_semantics(n_jobs, backe
     assert encoder.transform(X)["a"].tolist() == [1, 1, 2, 2, 1, 1, 1]
 
 
+@pytest.mark.parametrize(
+    "n_jobs,backend",
+    [(1, None), (2, "threading"), (2, "loky")],
+)
+@pytest.mark.parametrize("handle_missing", ["value", "return_nan", "error"])
+@pytest.mark.parametrize("handle_unknown", ["value", "return_nan", "error"])
+def test_count_typed_nan_obeys_missing_policy_before_unknown_policy(
+    n_jobs,
+    backend,
+    handle_missing,
+    handle_unknown,
+):
+    """typed NaN 仍泄露计数或回落 unknown 策略时，本矩阵应失败。"""
+    X = pd.DataFrame(
+        {
+            "a": pd.Series(
+                [
+                    float("nan"),
+                    np.float32("nan"),
+                    float("nan"),
+                    np.float64("nan"),
+                    None,
+                    pd.NaT,
+                    pd.NA,
+                    "x",
+                ],
+                dtype=object,
+            )
+        }
+    )
+    kwargs = {
+        "cols": ["a"],
+        "handle_missing": handle_missing,
+        "handle_unknown": handle_unknown,
+        "n_jobs": n_jobs,
+        "parallel_backend": backend,
+    }
+
+    if handle_missing == "error":
+        with pytest.raises(ValueError, match="列'a'包含缺失值"):
+            CountEncoder(**kwargs).fit(X)
+
+        encoder = CountEncoder(**kwargs).fit(pd.DataFrame({"a": ["x", "x"]}))
+        for typed_nan in (float("nan"), np.float32("nan"), np.float64("nan")):
+            probe = pd.DataFrame({"a": pd.Series([typed_nan], dtype=object)})
+            with pytest.raises(ValueError, match="列'a'包含缺失值"):
+                encoder.transform(probe)
+        return
+
+    encoder = CountEncoder(**kwargs).fit(X)
+    typed_signature = _typed_float_nan_signature(encoder.mapping_["a"])
+    assert [(module, name) for module, name, _ in typed_signature] == [
+        ("builtins", "float"),
+        ("numpy", "float32"),
+        ("numpy", "float64"),
+    ]
+    if handle_missing == "value":
+        assert [value for _, _, value in typed_signature] == [2, 1, 1]
+    else:
+        assert all(pd.isna(value) for _, _, value in typed_signature)
+
+    def assert_policy(candidate):
+        transformed = candidate.transform(X)["a"].tolist()
+        if handle_missing == "value":
+            assert transformed[:4] == [2, 1, 2, 1]
+        else:
+            assert all(pd.isna(value) for value in transformed[:4])
+        assert transformed[4:] == [1, 1, 1, 1]
+
+        unseen_typed = pd.DataFrame({"a": pd.Series([np.float16("nan")], dtype=object)})
+        unseen_value = candidate.transform(unseen_typed)["a"].iloc[0]
+        if handle_missing == "value":
+            assert unseen_value == 0
+        else:
+            assert pd.isna(unseen_value)
+
+        unknown = pd.DataFrame({"a": ["未训练类别"]})
+        if handle_unknown == "error":
+            with pytest.raises(ParallelExecutionError, match="列'a'包含未知类别"):
+                candidate.transform(unknown)
+        else:
+            unknown_value = candidate.transform(unknown)["a"].iloc[0]
+            if handle_unknown == "value":
+                assert unknown_value == 0
+            else:
+                assert pd.isna(unknown_value)
+
+    assert_policy(encoder)
+    exported = pickle.loads(pickle.dumps(encoder.export_mapping()))
+    assert_policy(CountEncoder(cols=["a"]).import_mapping(exported))
+    assert_policy(pickle.loads(pickle.dumps(encoder)))
+
+
 def test_target_noise_fixed_seed_matches_thread_and_loky(encoder_xy):
     X, y = encoder_xy
     columns = ["a", "b"]
