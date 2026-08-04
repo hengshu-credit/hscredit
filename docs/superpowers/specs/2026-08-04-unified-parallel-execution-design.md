@@ -26,7 +26,7 @@ parallel_config: Optional[Dict[str, Any]] = None
 
 含义如下：
 
-- `n_jobs=-1`：自动并行，按物理核心数计算保守 worker 预算；
+- `n_jobs=-1`：自动并行，按物理核心数计算约 80% 的保守 worker 预算，并始终保留一个 CPU；
 - `n_jobs` 为正整数：使用指定数量的 worker；
 - `n_jobs` 为整数值浮点数，如 `1.0`、`2.0`：分别等价于 1、2 个 worker；
 - `0 < n_jobs < 1`：使用物理核心数乘该比例并向上取整；

@@ -58,7 +58,7 @@ def resolve_n_jobs(
 ) -> Optional[int]:
     """解析并行工作数。
 
-    ``-1`` 使用不超过物理 CPU 80% 的工作数，并在多核环境中保留一个 CPU。
+    ``-1`` 大约使用物理 CPU 的 80%，并在多核环境中保留一个 CPU。
     正整数表示固定工作数，``0`` 到 ``1`` 之间的小数表示物理 CPU 比例。
     """
     if n_jobs is None:
@@ -67,15 +67,37 @@ def resolve_n_jobs(
         raise ValidationError("n_jobs 必须为 -1、正整数或 0 到 1 之间的小数")
 
     cpus = max(1, int(cpu_count or get_physical_cpu_count()))
-    value = float(n_jobs)
-    if value == -1:
-        workers = available_budget or (1 if cpus == 1 else min(cpus - 1, math.ceil(cpus * 0.8)))
-    elif value.is_integer() and value >= 1:
-        workers = int(value)
-    elif 0 < value < 1:
-        workers = math.ceil(cpus * value)
+    if available_budget is not None:
+        if isinstance(available_budget, (bool, np.bool_)) or not isinstance(available_budget, numbers.Integral):
+            raise ValidationError("available_budget 必须为正整数")
+        if available_budget < 1:
+            raise ValidationError("available_budget 必须为正整数")
+        available_budget = int(available_budget)
+
+    if isinstance(n_jobs, numbers.Integral):
+        value = int(n_jobs)
+        if value == -1:
+            workers = 1 if cpus == 1 else min(cpus - 1, math.ceil(cpus * 0.8))
+            if available_budget is not None:
+                workers = min(workers, available_budget)
+        elif value >= 1:
+            workers = value
+        else:
+            raise ValidationError("n_jobs 必须为 -1、正整数或 0 到 1 之间的小数")
     else:
-        raise ValidationError("n_jobs 必须为 -1、正整数或 0 到 1 之间的小数")
+        value = float(n_jobs)
+        if not math.isfinite(value):
+            raise ValidationError("n_jobs 必须为 -1、正整数或 0 到 1 之间的小数")
+        if value == -1:
+            workers = 1 if cpus == 1 else min(cpus - 1, math.ceil(cpus * 0.8))
+            if available_budget is not None:
+                workers = min(workers, available_budget)
+        elif value.is_integer() and value >= 1:
+            workers = int(value)
+        elif 0 < value < 1:
+            workers = math.ceil(cpus * value)
+        else:
+            raise ValidationError("n_jobs 必须为 -1、正整数或 0 到 1 之间的小数")
 
     if task_count is not None:
         workers = min(workers, max(1, int(task_count)))
@@ -96,6 +118,8 @@ def validate_parallel_config(
         raise ValidationError("parallel_config 必须为字典")
 
     config = dict(parallel_config)
+    if any(not isinstance(key, str) for key in config):
+        raise ValidationError("parallel_config 的配置项名称必须为字符串")
     if "n_jobs" in config:
         raise ValidationError("parallel_config 不能包含 n_jobs，请使用 n_jobs 参数")
     if "backend" in config:

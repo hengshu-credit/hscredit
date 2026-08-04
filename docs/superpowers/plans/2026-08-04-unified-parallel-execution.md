@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - Public parallel parameters are `n_jobs=-1`, `parallel_backend=None`, and `parallel_config=None`.
-- Automatic `-1` uses at most 80% of physical CPUs and always leaves one CPU unused when more than one exists.
+- Automatic `-1` uses approximately 80% of physical CPUs and always leaves one CPU unused when more than one exists.
 - Positive integers and integer-valued floats are fixed worker counts; `0 < n_jobs < 1` is a physical-CPU ratio rounded upward; `1` and `1.0` both mean one worker.
 - `None` remains accepted as a legacy serial value.
 - Split nested budgets only when outer workers actually launch concurrent inner workers; sequential phases and rounds do not reserve child workers.
