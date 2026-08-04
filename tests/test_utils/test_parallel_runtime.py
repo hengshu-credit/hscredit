@@ -1,7 +1,9 @@
 """并行运行时配置测试。"""
 
-import pytest
+from time import sleep
 from unittest.mock import patch
+
+import pytest
 
 from hscredit.exceptions import ParallelExecutionError, ValidationError
 from hscredit.utils import (
@@ -27,6 +29,17 @@ def _read_active_budget(_):
 def _fail_on_two(value):
     if value == 2:
         raise KeyError("boom")
+    return value
+
+
+_FAIL_FAST_STARTED = []
+
+
+def _fail_first_and_record_started(value):
+    _FAIL_FAST_STARTED.append(value)
+    if value == 0:
+        raise KeyError("boom")
+    sleep(0.05)
     return value
 
 
@@ -176,6 +189,22 @@ def test_real_parallel_worker_failure_keeps_original_direct_cause(backend):
         )
     assert isinstance(error.value.__cause__, KeyError)
     assert error.value.__cause__.args == ("boom",)
+
+
+def test_threading_worker_failure_stops_before_all_tasks_start():
+    """首个线程任务失败后，joblib 应停止调度尚未启动的副作用任务。"""
+    _FAIL_FAST_STARTED.clear()
+    with pytest.raises(ParallelExecutionError, match="任务0"):
+        parallel_execute(
+            _fail_first_and_record_started,
+            range(20),
+            n_jobs=2,
+            parallel_backend="threading",
+            parallel_config={"batch_size": 1, "pre_dispatch": 2},
+            task_labels=[f"任务{index}" for index in range(20)],
+        )
+
+    assert len(_FAIL_FAST_STARTED) < 20
 
 
 @pytest.mark.parametrize(

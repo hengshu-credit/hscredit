@@ -78,13 +78,13 @@ _ACTIVE_BUDGET: ContextVar[Optional[ParallelBudget]] = ContextVar(
 )
 
 
-@dataclass(frozen=True)
-class _TaskOutcome:
-    """可在线程和进程 worker 间传递的单任务结果。"""
+class _WorkerExecutionError(Exception):
+    """在线程和进程 worker 间传递原始异常的内部包装。"""
 
-    label: Any
-    value: Any = None
-    error: Optional[Exception] = None
+    def __init__(self, label: Any, original_exception: Exception) -> None:
+        super().__init__(label, original_exception)
+        self.label = label
+        self.original_exception = original_exception
 
 
 def get_physical_cpu_count() -> int:
@@ -218,27 +218,22 @@ def _run_with_budget(
     label: Any,
     child_budget: int,
     depth: int,
-) -> _TaskOutcome:
+) -> Result:
     """在显式预算上下文中执行单个可序列化任务。"""
     token = _ACTIVE_BUDGET.set(ParallelBudget(child_budget, depth))
     try:
-        return _TaskOutcome(label=label, value=function(task))
+        return function(task)
     except Exception as exc:
-        return _TaskOutcome(label=label, error=exc)
+        raise _WorkerExecutionError(label, exc) from exc
     finally:
         _ACTIVE_BUDGET.reset(token)
 
 
-def _unwrap_task_outcomes(outcomes: Iterable[_TaskOutcome]) -> List[Result]:
-    """在父调用中按提交顺序解包结果并恢复原始异常链。"""
-    results = []
-    for outcome in outcomes:
-        if outcome.error is not None:
-            raise ParallelExecutionError(
-                f"并行任务 '{outcome.label}' 执行失败: {outcome.error}"
-            ) from outcome.error
-        results.append(outcome.value)
-    return results
+def _raise_parallel_execution_error(error: _WorkerExecutionError) -> None:
+    """在父调用中恢复统一的中文错误和原始直接异常链。"""
+    raise ParallelExecutionError(
+        f"并行任务 '{error.label}' 执行失败: {error.original_exception}"
+    ) from error.original_exception
 
 
 def _current_parallel_budget() -> ParallelBudget:
@@ -304,7 +299,10 @@ def parallel_execute(
         for task, label in zip(task_list, labels)
     )
     if workers == 1:
-        return _unwrap_task_outcomes(_run_with_budget(*call) for call in calls)
+        try:
+            return [_run_with_budget(*call) for call in calls]
+        except _WorkerExecutionError as exc:
+            _raise_parallel_execution_error(exc)
 
     parallel_options = dict(config)
     backend_options = parallel_options.pop("backend_kwargs", {}) or {}
@@ -322,8 +320,10 @@ def parallel_execute(
     )
     if backend is None and not backend_options:
         executor = _create_joblib_parallel(workers, parallel_options)
-        outcomes = executor(submitted)
-        return _unwrap_task_outcomes(outcomes)
+        try:
+            return executor(submitted)
+        except _WorkerExecutionError as exc:
+            _raise_parallel_execution_error(exc)
 
     backend = backend or "loky"
     try:
@@ -332,8 +332,10 @@ def parallel_execute(
         raise ValidationError(f"并行后端配置无效: {exc}") from exc
     with backend_context:
         executor = _create_joblib_parallel(workers, parallel_options)
-        outcomes = executor(submitted)
-    return _unwrap_task_outcomes(outcomes)
+        try:
+            return executor(submitted)
+        except _WorkerExecutionError as exc:
+            _raise_parallel_execution_error(exc)
 
 
 class ParallelizableMixin:
