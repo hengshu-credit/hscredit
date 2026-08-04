@@ -21,18 +21,19 @@
 """
 
 import ast
+import copy
 import os
 import re
 from enum import Enum
-from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 import numpy as np
 import pandas as pd
 from pandas import DataFrame
 from sklearn.metrics import f1_score, recall_score, accuracy_score, precision_score
 
-from ..binning import OptimalBinning
 from .expr_optimizer import optimize_expr, beautify_expr
 from ...exceptions import FeatureNotFoundError, InputTypeError, StateError
+from ...utils.parallel import ParallelizableMixin
 
 if TYPE_CHECKING:
     from ...excel import ExcelWriter
@@ -140,7 +141,20 @@ class RuleUnAppliedError(RuleStateError):
     pass
 
 
-class Rule:
+def _rule_report_target_worker(task: Tuple[Any, ...]) -> pd.DataFrame:
+    """执行一个独立目标标签的规则报告任务。"""
+    rule, data, target, desc, prior_rules, amount, margins = task
+    return rule.report(
+        data,
+        target=target,
+        desc=desc,
+        prior_rules=prior_rules,
+        amount=amount,
+        margins=margins,
+    )
+
+
+class Rule(ParallelizableMixin):
     """规则类。
 
     支持使用 pandas eval 语法的规则定义和评估，支持 &（与）、|（或）、
@@ -152,6 +166,9 @@ class Rule:
     :param name: 规则名称，用于标识和展示，默认为None（使用表达式作为名称）
     :param description: 规则描述，默认为空字符串
     :param weight: 规则权重，用于规则集分类器，默认为1.0
+    :param n_jobs: 并行任务数，默认为-1
+    :param parallel_backend: joblib并行后端，默认为None
+    :param parallel_config: joblib扩展配置，默认为None
     :ivar feature_names_in_: 从表达式中解析出的特征名列表
     :ivar result_: 最近一次 predict 的结果 Series
     :ivar _state: 当前规则状态（initialized/applied）
@@ -175,7 +192,10 @@ class Rule:
         expr: str,
         name: Optional[str] = None,
         description: str = "",
-        weight: float = 1.0
+        weight: float = 1.0,
+        n_jobs: Union[int, float] = -1,
+        parallel_backend: Optional[str] = None,
+        parallel_config: Optional[Dict[str, Any]] = None,
     ):
         """初始化规则。
 
@@ -186,12 +206,18 @@ class Rule:
         :param name: 规则名称，用于标识和展示，默认为None（使用表达式作为名称）
         :param description: 规则描述，默认为空字符串
         :param weight: 规则权重，用于规则集分类器，默认为1.0
+        :param n_jobs: 并行任务数，默认为-1
+        :param parallel_backend: joblib并行后端，默认为None
+        :param parallel_config: joblib扩展配置，默认为None
         """
         self._state = RuleState.INITIALIZED
         self.expr = expr
         self.name = name or expr
         self.description = description
         self.weight = weight
+        self.n_jobs = n_jobs
+        self.parallel_backend = parallel_backend
+        self.parallel_config = parallel_config
         self.feature_names_in_ = get_columns_from_query(self.expr)
         self.result_ = None
 
@@ -228,7 +254,10 @@ class Rule:
             optimized,
             name=f"({self_name})_AND_({other_name})",
             description=f"{self.description} 且 {other.description}" if self.description or other.description else "",
-            weight=max(self.weight, other.weight)
+            weight=max(self.weight, other.weight),
+            n_jobs=self.n_jobs,
+            parallel_backend=self.parallel_backend,
+            parallel_config=self.parallel_config,
         )
 
     def __or__(self, other):
@@ -257,7 +286,10 @@ class Rule:
             optimized,
             name=f"({self_name})_OR_({other_name})",
             description=f"{self.description} 或 {other.description}" if self.description or other.description else "",
-            weight=max(self.weight, other.weight)
+            weight=max(self.weight, other.weight),
+            n_jobs=self.n_jobs,
+            parallel_backend=self.parallel_backend,
+            parallel_config=self.parallel_config,
         )
 
     def __invert__(self):
@@ -280,7 +312,10 @@ class Rule:
             optimized,
             name=f"NOT_({self.name})",
             description=f"非: {self.description}" if self.description else "",
-            weight=self.weight
+            weight=self.weight,
+            n_jobs=self.n_jobs,
+            parallel_backend=self.parallel_backend,
+            parallel_config=self.parallel_config,
         )
 
     def __xor__(self, other):
@@ -312,7 +347,10 @@ class Rule:
             optimized,
             name=f"({self_name})_XOR_({other_name})",
             description=f"{self.description} 异或 {other.description}" if self.description or other.description else "",
-            weight=max(self.weight, other.weight)
+            weight=max(self.weight, other.weight),
+            n_jobs=self.n_jobs,
+            parallel_backend=self.parallel_backend,
+            parallel_config=self.parallel_config,
         )
 
     def __eq__(self, other):
@@ -716,32 +754,43 @@ class Rule:
             if "指标含义" in return_cols and "指标含义" not in merge_columns:
                 merge_columns = ["指标含义"] + merge_columns
 
-            # 遍历所有逾期标签组合
-            for i, col in enumerate(overdue):
-                for j, d in enumerate(dpds):
+            # 目标标签相互独立，worker 仅计算单标签表；列层级与合并顺序由主线程确定。
+            tasks = []
+            labels = []
+            combinations = []
+            for col in overdue:
+                for d in dpds:
                     _datasets = datasets.copy()
                     _datasets[f"{col}_{d}"] = (_datasets[col] > d).astype(int)
-
                     if isinstance(del_grey, bool) and del_grey:
                         _datasets = _datasets.query(f"({col} > {d}) | ({col} == 0)").reset_index(drop=True)
-
-                    # 生成当前标签的报告
-                    _table = _report_one_rule(_datasets, f"{col}_{d}", desc=desc, prior_rules=prior_rules)
-
-                    if i == 0 and j == 0:
-                        # 第一个标签，作为基础表
-                        table = _table
-                        # 转换为多层级列结构
-                        table.columns = pd.MultiIndex.from_tuples(
-                            [(detail_group_name, c) if c in merge_columns else (f"{col} {d}+", c) for c in table.columns]
+                    tasks.append(
+                        (
+                            copy.deepcopy(self),
+                            _datasets,
+                            f"{col}_{d}",
+                            desc,
+                            copy.deepcopy(prior_rules),
+                            amount,
+                            margins,
                         )
-                    else:
-                        # 后续标签，合并到基础表
-                        _table.columns = pd.MultiIndex.from_tuples(
-                            [(detail_group_name, c) if c in merge_columns else (f"{col} {d}+", c) for c in _table.columns]
-                        )
-                        # 合并表
-                        table = table.merge(_table, on=[(detail_group_name, c) for c in merge_columns])
+                    )
+                    labels.append(f"{col} {d}+")
+                    combinations.append((col, d))
+
+            tables = self._parallel_execute(
+                _rule_report_target_worker,
+                tasks,
+                task_labels=labels,
+            )
+            for position, ((col, d), _table) in enumerate(zip(combinations, tables)):
+                _table.columns = pd.MultiIndex.from_tuples(
+                    [(detail_group_name, c) if c in merge_columns else (f"{col} {d}+", c) for c in _table.columns]
+                )
+                if position == 0:
+                    table = _table
+                else:
+                    table = table.merge(_table, on=[(detail_group_name, c) for c in merge_columns])
         else:
             # 单标签情况
             table = _report_one_rule(datasets, target, desc=desc, prior_rules=prior_rules)
