@@ -27,9 +27,12 @@ class _CloneableEncoder(BaseEncoder):
 class _ExecutableBinning(BaseBinning):
     """仅用于验证基类特征任务委托的最小分箱器。"""
 
+    def _fit_feature(self, feature, x, y):
+        self.seen_.append(feature)
+
     def fit(self, X, y=None):
         self.seen_ = []
-        self._fit_features(X.columns, self.seen_.append)
+        self._fit_features(X, pd.Series(y, index=X.index), "_fit_feature")
         return self
 
     def transform(self, X, metric="indices"):

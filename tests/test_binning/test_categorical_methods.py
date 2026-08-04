@@ -269,41 +269,44 @@ def test_direct_binner_exposes_all_common_category_parameters(binner_cls):
     }.issubset(params)
 
 
-def test_hsk_wage_explicit_order_and_custom_missing_groups():
-    """在真实工资字段上固化显式顺序及两种缺失值自定义分组。"""
-    path = Path(__file__).resolve().parents[2] / "examples" / "hscredit_hsk.xlsx"
+def test_yyp_category_explicit_order_and_custom_missing_groups():
+    """在约定的商品类别字段上固化显式顺序及两种缺失值自定义分组。"""
+    path = Path(__file__).resolve().parents[2] / "examples" / "hscredit_yyp.xlsx"
     df = pd.read_excel(path)
-    X = df[["工资"]]
-    y = df["target"]
-    wage_order = X["工资"].dropna().drop_duplicates().tolist()
+    X = df[["商品类别"]]
+    y = df["FPD"]
+    category_order = X["商品类别"].dropna().drop_duplicates().tolist()
 
     explicit = OptimalBinning(
         method="uniform",
         min_n_bins=1,
         max_n_bins=5,
         min_bin_size=1,
-        category_order={"工资": wage_order},
+        category_order={"商品类别": category_order},
     ).fit(X, y)
-    assert explicit._category_orders_["工资"] == wage_order
+    assert explicit._category_orders_["商品类别"] == category_order
 
-    chunks = [wage_order[:4], wage_order[4:8], wage_order[8:]]
+    first_cut = max(1, len(category_order) // 3)
+    second_cut = max(first_cut + 1, 2 * len(category_order) // 3)
+    chunks = [category_order[:first_cut], category_order[first_cut:second_cut], category_order[second_cut:]]
+    assert all(chunks)
     missing_alone = [*chunks, [np.nan]]
     alone = OptimalBinning(
-        user_splits={"工资": missing_alone},
+        user_splits={"商品类别": missing_alone},
         strict_user_splits=True,
         min_n_bins=1,
         max_n_bins=4,
         min_bin_size=1,
     ).fit(X, y)
-    assert alone.transform(pd.DataFrame({"工资": [np.nan]}), metric="indices").iloc[0, 0] == 3
+    assert alone.transform(pd.DataFrame({"商品类别": [np.nan]}), metric="indices").iloc[0, 0] == 3
 
     missing_mixed = [chunks[0], chunks[1], [*chunks[2], np.nan]]
     mixed = OptimalBinning(
-        user_splits={"工资": missing_mixed},
+        user_splits={"商品类别": missing_mixed},
         strict_user_splits=True,
         missing_separate=False,
         min_n_bins=1,
         max_n_bins=3,
         min_bin_size=1,
     ).fit(X, y)
-    assert mixed.transform(pd.DataFrame({"工资": [np.nan]}), metric="indices").iloc[0, 0] == 2
+    assert mixed.transform(pd.DataFrame({"商品类别": [np.nan]}), metric="indices").iloc[0, 0] == 2
