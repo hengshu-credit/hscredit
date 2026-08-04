@@ -259,11 +259,21 @@ class OptimalBinning(BaseBinning):
         self.user_splits = user_splits
         self.strict_user_splits = strict_user_splits
         self.prebinning = prebinning
-        # 保存原始 prebinning_params，不修改传入的参数（为了sklearn clone兼容）
-        original_params = prebinning_params or {}
-        # 合并从kwargs中提取的预分箱参数，创建新的字典而不是修改原字典
-        merged_params = {**original_params, **prebinning_params_from_kwargs}
-        self.prebinning_params = merged_params if merged_params else None
+        # sklearn clone 要求显式构造参数按对象原样保存。仅在兼容旧式
+        # prebinning_* kwargs 时创建合并字典；普通路径保留传入对象。
+        if prebinning_params_from_kwargs:
+            self.prebinning_params = {**(prebinning_params or {}), **prebinning_params_from_kwargs}
+        else:
+            self.prebinning_params = prebinning_params
+
+        control_option_names = {
+            "lift_refine",
+            "lift_focus_weight",
+            "sample_stability_weight",
+            "lift_refine_max_bins",
+            "monotonic_bonus_weight",
+        }
+        self._fit_control_options = {name: kwargs[name] for name in control_option_names if name in kwargs}
 
         # 清理kwargs，移除不应该传递给底层分箱器的参数
         self.kwargs = self._clean_kwargs(kwargs)
@@ -325,7 +335,7 @@ class OptimalBinning(BaseBinning):
             if not self.strict_user_splits and self.method != "quantile":
                 # 统一后处理：围绕头尾Lift与样本稳定性微调切分点
                 # 默认开启，可通过 lift_refine=False 关闭
-                if self.kwargs.get("lift_refine", True) and self.method != "uniform":
+                if self._fit_control_options.get("lift_refine", True) and self.method != "uniform":
                     self._refine_splits_for_lift_stability(X, y)
 
                 # 统一收口约束：确保不同方法都遵守单调性/最小箱/最大箱限制
@@ -343,7 +353,7 @@ class OptimalBinning(BaseBinning):
 
             # 统一后处理：围绕头尾Lift与样本稳定性微调切分点
             # 默认开启，可通过 lift_refine=False 关闭
-            if self.kwargs.get("lift_refine", True) and self.method != "uniform":
+            if self._fit_control_options.get("lift_refine", True) and self.method != "uniform":
                 self._refine_splits_for_lift_stability(X, y)
 
             # quantile 方法需保持分位数切分点精确，跳过所有后处理
@@ -369,7 +379,7 @@ class OptimalBinning(BaseBinning):
 
             # 统一后处理：围绕头尾Lift与样本稳定性微调切分点
             # 默认开启，可通过 lift_refine=False 关闭
-            if self.kwargs.get("lift_refine", True) and self.method != "uniform":
+            if self._fit_control_options.get("lift_refine", True) and self.method != "uniform":
                 self._refine_splits_for_lift_stability(X, y)
 
             # 统一收口约束：确保不同方法都遵守单调性/最小箱/最大箱限制
@@ -1036,7 +1046,7 @@ class OptimalBinning(BaseBinning):
         non_zero = signs[signs != 0]
         sign_changes = 0 if len(non_zero) <= 1 else int(np.sum(non_zero[1:] * non_zero[:-1] < 0))
 
-        monotonic_bonus_weight = float(self.kwargs.get("monotonic_bonus_weight", 0.4))
+        monotonic_bonus_weight = float(self._fit_control_options.get("monotonic_bonus_weight", 0.4))
         monotonic_bonus = -float(sign_changes)
         if self.monotonic in ["ascending", "descending", "auto_asc_desc"]:
             monotonic_bonus *= 1.5
@@ -1077,9 +1087,9 @@ class OptimalBinning(BaseBinning):
             return
 
         min_samples_abs = self._get_min_samples(len(y))
-        focus_weight = float(self.kwargs.get("lift_focus_weight", 3.0))
-        sample_weight = float(self.kwargs.get("sample_stability_weight", 0.2))
-        max_search_bins = int(self.kwargs.get("lift_refine_max_bins", self.max_n_bins))
+        focus_weight = float(self._fit_control_options.get("lift_focus_weight", 3.0))
+        sample_weight = float(self._fit_control_options.get("sample_stability_weight", 0.2))
+        max_search_bins = int(self._fit_control_options.get("lift_refine_max_bins", self.max_n_bins))
 
         strict_mono = self.monotonic in ["ascending", "descending", "auto_asc_desc"]
 
