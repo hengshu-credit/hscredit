@@ -25,11 +25,6 @@ from sklearn.base import clone
 from .base import BaseFeatureSelector, get_feature_importances
 
 
-def _attach_importance_feature(task):
-    """携带特征名返回模型产生的单列重要性。"""
-    return task
-
-
 class FeatureImportanceSelector(BaseFeatureSelector):
     """特征重要性筛选器.
 
@@ -125,13 +120,7 @@ class FeatureImportanceSelector(BaseFeatureSelector):
         model.fit(X, y)
 
         # 获取特征重要性（兼容所有模型类型）
-        importances = get_feature_importances(model)
-        results = self._parallel_execute(
-            _attach_importance_feature,
-            list(zip(X.columns, importances)),
-            task_labels=X.columns,
-        )
-        importances = np.array([score for _, score in results])
+        importances = np.asarray(get_feature_importances(model))
         self.scores_ = pd.Series(importances, index=X.columns)
 
         # 根据阈值筛选

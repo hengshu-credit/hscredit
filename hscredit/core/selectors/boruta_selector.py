@@ -27,12 +27,6 @@ from .base import BaseFeatureSelector, get_feature_importances
 from ...utils.parallel import resolve_n_jobs
 
 
-def _compare_boruta_feature(task):
-    """比较单个真实特征与本轮影子阈值。"""
-    feature_index, importance, shadow_max, active = task
-    return feature_index, bool(active and importance > shadow_max)
-
-
 class BorutaSelector(BaseFeatureSelector):
     """Boruta筛选器.
 
@@ -177,15 +171,11 @@ class BorutaSelector(BaseFeatureSelector):
             })
 
             # 更新选中特征：简化版，只保留重要性高于影子特征最大值的特征
-            comparison = self._parallel_execute(
-                _compare_boruta_feature,
-                [
-                    (i, real_importances[i], shadow_max, i in selected)
-                    for i in range(n_features)
-                ],
-                task_labels=feature_names,
-            )
-            selected = {index for index, keep in comparison if keep}
+            selected = {
+                index
+                for index in selected
+                if real_importances[index] > shadow_max
+            }
 
             if len(selected) == 0:
                 break
