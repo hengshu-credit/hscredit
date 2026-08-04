@@ -317,7 +317,9 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         candidate._rules_imported_ = True
         candidate._imported_rule_features_ = tuple(selected)
         candidate._imported_rule_snapshot_ = filtered_snapshot
-        candidate._is_fitted = True
+        # “存在导入规则”是按特征的输入状态，不能提升为整个估计器已经拟合。
+        # OptimalBinning 会据此分别处理固定规则特征和仍需训练的普通特征。
+        candidate._is_fitted = False
 
     def __init__(
         self,
@@ -2422,6 +2424,10 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         self._woe_maps_ = getattr(self, "_woe_maps_", {})
 
         for feature, rule in rules.items():
+            # 当前规则没有携带 WOE；同名旧映射属于上一版切点，必须在抓取规则快照前失效。
+            # 其他特征仍保留 import_rules 的即时增量语义。load() 若显式携带新 WOE，
+            # 会在导入切点后写回新映射并重新抓取快照。
+            self._woe_maps_.pop(feature, None)
             # 判断是否为类别型变量
             if isinstance(rule, list) and len(rule) > 0 and isinstance(rule[0], list):
                 # 类别型变量：List[List]格式

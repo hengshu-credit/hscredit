@@ -212,6 +212,15 @@ class AxisWorkerFailingOptimalBinning(OptimalBinning):
         return super()._fit_with_method(X, y)
 
 
+class OrdinaryFeatureFailingOptimalBinning(OptimalBinning):
+    """在局部规则拟合的普通特征阶段失败。"""
+
+    def _fit_with_method(self, X, y):
+        if "普通失败" in X.columns:
+            raise ValueError("普通特征拟合失败")
+        return super()._fit_with_method(X, y)
+
+
 class AxisWorkerFailingOptimalBinning2D(OptimalBinning2D):
     """为新 Y 轴注入真实的失败 OptimalBinning。"""
 
@@ -462,18 +471,160 @@ def test_import_rules_immediately_override_same_feature(binner_factory):
     assert binner.transform(X, metric="indices").shape == (24, 1)
 
 
-def test_loaded_woe_map_remains_available_after_imported_rule_fit():
+@pytest.mark.parametrize("n_jobs,backend", EXECUTION_MODES)
+def test_loaded_woe_map_remains_available_after_imported_rule_fit(n_jobs, backend):
     rules = {
         "特征": [5.0, 10.0],
         "_woe_maps_": {"特征": {"0": 0.1, "1": 0.2, "2": 0.3, "-1": -0.1}},
     }
     X = pd.DataFrame({"特征": [1.0, 7.0, 12.0, np.nan]})
     y = pd.Series([0, 1, 0, 1], name="目标")
-    binner = OptimalBinning(method="uniform", n_jobs=1).load(rules)
+    binner = OptimalBinning(method="uniform", n_jobs=n_jobs, parallel_backend=backend).load(rules)
 
     binner.fit(X, y)
 
     np.testing.assert_allclose(binner.transform(X, metric="woe")["特征"], [0.1, 0.2, 0.3, -0.1])
+
+
+def test_import_rules_preserves_unmentioned_feature_immediate_rules_and_woe():
+    rules = {
+        "特征": [5.0, 10.0],
+        "其他特征": [4.0, 8.0],
+        "_woe_maps_": {
+            "特征": {"0": 0.1, "1": 0.2, "2": 0.3},
+            "其他特征": {"0": 0.4, "1": 0.5, "2": 0.6},
+        },
+    }
+    binner = OptimalBinning(method="uniform", n_jobs=1).load(rules)
+
+    binner.import_rules({"特征": [3.0, 6.0, 9.0]})
+
+    np.testing.assert_array_equal(binner.splits_["其他特征"], np.array([4.0, 8.0]))
+    assert binner._woe_maps_["其他特征"] == {0: 0.4, 1: 0.5, 2: 0.6}
+    other = pd.DataFrame({"其他特征": [1.0, 6.0, 10.0]})
+    np.testing.assert_allclose(binner.transform(other, metric="woe")["其他特征"], [0.4, 0.5, 0.6])
+
+
+@pytest.mark.parametrize("n_jobs,backend", EXECUTION_MODES)
+@pytest.mark.parametrize("imported_first", [True, False], ids=["imported-first", "imported-last"])
+@pytest.mark.parametrize("ordinary_kind", ["numerical", "categorical"])
+def test_partial_imported_rules_fit_ordinary_features_with_original_column_order(
+    n_jobs, backend, imported_first, ordinary_kind
+):
+    y = pd.Series(np.tile([0, 1, 0, 1, 1, 0], 4), name="目标")
+    ordinary = (
+        np.arange(24, dtype=float)
+        if ordinary_kind == "numerical"
+        else np.tile(["甲", "乙", "丙", "丁"], 6)
+    )
+    ordinary_feature = f"普通{ordinary_kind}"
+    X = pd.DataFrame(
+        {
+            "固定规则": np.tile([1.0, 4.0, 6.0, 9.0, 11.0, 14.0, 16.0, 19.0], 3),
+            ordinary_feature: ordinary,
+        }
+    )
+    columns = ["固定规则", ordinary_feature]
+    if not imported_first:
+        columns.reverse()
+    X = X[columns]
+
+    fixed_baseline = OptimalBinning(method="uniform", max_n_bins=4, n_jobs=1, random_state=17)
+    fixed_baseline.import_rules({"固定规则": [5.0, 10.0, 15.0]})
+    fixed_baseline.fit(X[["固定规则"]], y)
+    ordinary_baseline = OptimalBinning(method="uniform", max_n_bins=4, n_jobs=1, random_state=17).fit(
+        X[[ordinary_feature]], y
+    )
+
+    binner = OptimalBinning(
+        method="uniform",
+        max_n_bins=4,
+        n_jobs=n_jobs,
+        parallel_backend=backend,
+        random_state=17,
+    )
+    binner.import_rules({"固定规则": [5.0, 10.0, 15.0]})
+    binner.fit(X, y)
+
+    assert binner.feature_names_in_.tolist() == columns
+    assert binner.feature_names_ == columns
+    for state_name in ("splits_", "n_bins_", "bin_tables_", "feature_types_"):
+        assert list(getattr(binner, state_name)) == columns
+    np.testing.assert_array_equal(binner.splits_["固定规则"], np.array([5.0, 10.0, 15.0]))
+    _assert_value_equal(binner.splits_[ordinary_feature], ordinary_baseline.splits_[ordinary_feature])
+    pd.testing.assert_frame_equal(binner.get_bin_table("固定规则"), fixed_baseline.get_bin_table("固定规则"))
+    pd.testing.assert_frame_equal(
+        binner.get_bin_table(ordinary_feature), ordinary_baseline.get_bin_table(ordinary_feature)
+    )
+    assert binner._binner is None
+    assert binner._prebinner is None
+
+    for metric in ("indices", "bins", "woe"):
+        result = binner.transform(X, metric=metric)
+        assert result.index.equals(X.index)
+        assert list(result.columns) == columns
+        pd.testing.assert_series_equal(
+            result["固定规则"], fixed_baseline.transform(X[["固定规则"]], metric=metric)["固定规则"]
+        )
+        pd.testing.assert_series_equal(
+            result[ordinary_feature], ordinary_baseline.transform(X[[ordinary_feature]], metric=metric)[ordinary_feature]
+        )
+        if metric == "woe":
+            assert result.notna().all().all()
+
+
+@pytest.mark.parametrize("n_jobs,backend", EXECUTION_MODES)
+def test_partial_imported_rule_fit_failure_does_not_commit_fixed_stats(n_jobs, backend):
+    y = pd.Series(np.tile([0, 1], 12), name="目标")
+    binner = OrdinaryFeatureFailingOptimalBinning(
+        method="uniform", n_jobs=n_jobs, parallel_backend=backend, random_state=17
+    ).fit(pd.DataFrame({"旧特征": np.arange(24, dtype=float)}), y)
+    binner.import_rules({"固定规则": [5.0, 10.0, 15.0]})
+    before = pickle.dumps(binner)
+    X = pd.DataFrame(
+        {
+            "固定规则": np.arange(24, dtype=float),
+            "普通失败": np.arange(23, -1, -1, dtype=float),
+        }
+    )
+
+    with pytest.raises(ValueError, match="普通特征拟合失败"):
+        binner.fit(X, y)
+
+    assert pickle.dumps(binner) == before
+
+
+@pytest.mark.parametrize("n_jobs,backend", EXECUTION_MODES)
+@pytest.mark.parametrize("explicit_new_woe", [False, True], ids=["rules-only", "explicit-woe"])
+def test_same_feature_rule_replacement_does_not_reuse_stale_woe(n_jobs, backend, explicit_new_woe):
+    old_rules = {
+        "特征": [5.0, 10.0],
+        "_woe_maps_": {"特征": {"0": 0.1, "1": 0.2, "2": 0.3}},
+    }
+    new_rules = {"特征": [4.0, 8.0, 12.0]}
+    if explicit_new_woe:
+        new_rules["_woe_maps_"] = {"特征": {"0": 0.4, "1": 0.5, "2": 0.6, "3": 0.7}}
+    X = pd.DataFrame({"特征": np.tile([1.0, 6.0, 11.0, 16.0], 6)})
+    y = pd.Series(np.tile([0, 1, 1, 0, 1, 0], 4), name="目标")
+    binner = OptimalBinning(
+        method="uniform", n_jobs=n_jobs, parallel_backend=backend, random_state=17
+    ).load(old_rules)
+
+    if explicit_new_woe:
+        binner.load(new_rules)
+    else:
+        binner.import_rules(new_rules)
+    binner.fit(X, y)
+
+    np.testing.assert_array_equal(binner.splits_["特征"], np.array([4.0, 8.0, 12.0]))
+    result = binner.transform(X, metric="woe")["特征"]
+    assert result.notna().all()
+    if explicit_new_woe:
+        np.testing.assert_allclose(result.iloc[:4], [0.4, 0.5, 0.6, 0.7])
+    else:
+        assert "特征" not in getattr(binner, "_woe_maps_", {})
+        expected = dict(zip(range(4), binner.bin_tables_["特征"]["分档WOE值"].values))
+        np.testing.assert_allclose(result.iloc[:4], [expected[index] for index in range(4)])
 
 
 def test_load_update_true_keeps_direct_incremental_update_semantics():
