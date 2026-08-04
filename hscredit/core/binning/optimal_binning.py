@@ -1742,11 +1742,13 @@ class OptimalBinning(BaseBinning):
         ordinary_feature_set = set(getattr(self, "_ordinary_features_", ()))
         ordinary_features = [feature for feature in X.columns if feature in ordinary_feature_set]
         wrapper_features = [feature for feature in X.columns if feature not in ordinary_feature_set]
-        if ordinary_binner is not None and ordinary_features:
-            blocks = [ordinary_binner.transform(X[ordinary_features], metric=metric, **kwargs)]
+        if ordinary_binner is not None:
+            blocks = []
+            if ordinary_features:
+                blocks.append(ordinary_binner.transform(X[ordinary_features], metric=metric, **kwargs))
             if wrapper_features:
                 blocks.append(self._transform_with_wrapper_state(X[wrapper_features], metric, **kwargs))
-            result = pd.concat(blocks, axis=1).loc[:, list(X.columns)]
+            result = pd.concat(blocks, axis=1).loc[:, list(X.columns)] if blocks else pd.DataFrame(index=X.index)
             if metric == "woe":
                 result.attrs["hscredit_encoding"] = "woe"
                 result.attrs["hscredit_source"] = "OptimalBinning"
