@@ -10,6 +10,7 @@
 
 import copy
 import logging
+import numbers
 from typing import Union, List, Dict, Optional, Any, Tuple
 from enum import Enum
 from dataclasses import dataclass, field
@@ -17,8 +18,8 @@ import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, ClassifierMixin
 
-from ....exceptions import NotFittedError
-from ....utils.parallel import ParallelizableMixin, resolve_n_jobs
+from ....exceptions import NotFittedError, ValidationError
+from ....utils.parallel import ParallelizableMixin, _ACTIVE_BUDGET, parallel_execute, resolve_n_jobs
 from ....utils.serialization import ArtifactSerializableMixin
 from ...rules.rule import Rule, RuleState
 
@@ -161,6 +162,31 @@ def _commit_rule_component(
         _commit_rule_component(child, child_matches, sub_results, index)
 
 
+def _execute_rule_tasks(
+    owner: Union["RuleSet", "RulesClassifier"],
+    function,
+    tasks: List[Tuple[Any, ...]],
+    *,
+    task_labels: List[str],
+    has_parallel_children: bool,
+):
+    """执行规则任务，并仅在嵌套上下文中按 active budget 封顶显式 worker。"""
+    effective_n_jobs = owner.n_jobs
+    active_budget = _ACTIVE_BUDGET.get()
+    if active_budget is not None:
+        requested = resolve_n_jobs(effective_n_jobs, task_count=len(tasks)) or 1
+        effective_n_jobs = min(requested, active_budget.available)
+    return parallel_execute(
+        function,
+        tasks,
+        n_jobs=effective_n_jobs,
+        parallel_backend=owner.parallel_backend,
+        parallel_config=owner.parallel_config,
+        task_labels=task_labels,
+        has_parallel_children=has_parallel_children,
+    )
+
+
 class RuleSet(ParallelizableMixin):
     """规则集类.
     
@@ -259,7 +285,8 @@ class RuleSet(ParallelizableMixin):
             (i, self._rule_id, copy.deepcopy(rule), X)
             for i, rule in enumerate(self.rules)
         ]
-        evaluated = self._parallel_execute(
+        evaluated = _execute_rule_tasks(
+            self,
             _rule_component_worker,
             tasks,
             task_labels=[getattr(rule, "name", None) or f"Rule_{i}" for i, rule in enumerate(self.rules)],
@@ -289,10 +316,13 @@ class RuleSet(ParallelizableMixin):
         return final_result, details if return_details else []
 
     def _has_parallel_children(self) -> bool:
-        """仅在并发子规则集会启动内部 worker 时声明嵌套并行。"""
+        """递归判断任意子规则集后代是否会启动内部 worker。"""
         for rule in self.rules:
-            if isinstance(rule, RuleSet) and (resolve_n_jobs(rule.n_jobs, task_count=len(rule.rules)) or 1) > 1:
-                return True
+            if isinstance(rule, RuleSet):
+                if (resolve_n_jobs(rule.n_jobs, task_count=len(rule.rules)) or 1) > 1:
+                    return True
+                if rule._has_parallel_children():
+                    return True
         return False
     
     def get_all_rules(self, flatten: bool = False) -> List[Union[Rule, 'RuleSet']]:
@@ -534,7 +564,21 @@ class RulesClassifier(ArtifactSerializableMixin, ParallelizableMixin, BaseEstima
             return [1.0] * len(rules)
         if len(self.weights) != len(rules):
             raise ValueError(f"weights长度({len(self.weights)})必须等于rules数量({len(rules)})")
-        return list(self.weights)
+        return self._validate_weight_values(self.weights)
+
+    @staticmethod
+    def _validate_weight_values(weights: List[float]) -> List[float]:
+        """校验权重均为有限实数标量并返回独立列表。"""
+        validated = []
+        for index, weight in enumerate(weights):
+            if (
+                isinstance(weight, (bool, np.bool_))
+                or not isinstance(weight, numbers.Real)
+                or not np.isfinite(weight)
+            ):
+                raise ValidationError(f"weights 第 {index + 1} 项必须为有限数值标量")
+            validated.append(weight)
+        return validated
     
     def _auto_init(self, X: pd.DataFrame) -> None:
         """自动初始化（无需fit即可预测）.
@@ -646,7 +690,7 @@ class RulesClassifier(ArtifactSerializableMixin, ParallelizableMixin, BaseEstima
         if auto_initialize:
             self._validate_rules(X)
             return self._resolve_weights(), True
-        return self.weights_, False
+        return self._validate_weight_values(self.weights_), False
 
     def _commit_auto_state(self, X: pd.DataFrame, weights: List[float]) -> None:
         """在首次预测全部成功后一次提交自动初始化状态。"""
@@ -657,29 +701,41 @@ class RulesClassifier(ArtifactSerializableMixin, ParallelizableMixin, BaseEstima
         self._is_fitted = True
 
     def _has_parallel_rule_children(self) -> bool:
-        """仅在顶层规则集会启动内部 worker 时声明嵌套并行。"""
+        """递归判断任意顶层规则集后代是否会启动内部 worker。"""
         for rule in self._rule_list():
-            if isinstance(rule, RuleSet) and (resolve_n_jobs(rule.n_jobs, task_count=len(rule.rules)) or 1) > 1:
-                return True
+            if isinstance(rule, RuleSet):
+                if (resolve_n_jobs(rule.n_jobs, task_count=len(rule.rules)) or 1) > 1:
+                    return True
+                if rule._has_parallel_children():
+                    return True
         return False
 
     def _evaluate_rules(self, X: pd.DataFrame) -> List[Tuple[int, Union[Rule, RuleSet], np.ndarray, RuleResult]]:
-        """有序计算所有有效顶层规则，并在全成功后提交子规则状态。"""
+        """有序计算所有有效顶层规则，不修改原规则或分类器状态。"""
         rules = self._rule_list()
         valid = [(i, rule) for i, rule in enumerate(rules) if isinstance(rule, (Rule, RuleSet))]
         tasks = [(i, copy.deepcopy(rule), X) for i, rule in valid]
-        evaluated = self._parallel_execute(
+        evaluated = _execute_rule_tasks(
+            self,
             _classifier_component_worker,
             tasks,
             task_labels=[getattr(rule, "name", None) or f"Rule_{i}" for i, rule in valid],
             has_parallel_children=self._has_parallel_rule_children(),
         )
-        results = []
-        for (i, rule), (matches, detail) in zip(valid, evaluated):
+        return [
+            (i, rule, matches, detail)
+            for (i, rule), (matches, detail) in zip(valid, evaluated)
+        ]
+
+    @staticmethod
+    def _commit_evaluated_rules(
+        X: pd.DataFrame,
+        evaluated: List[Tuple[int, Union[Rule, RuleSet], np.ndarray, RuleResult]],
+    ) -> None:
+        """在所有预测后处理成功后一次提交候选规则状态。"""
+        for _, rule, matches, detail in evaluated:
             sub_results = detail.details.get("sub_results") if isinstance(rule, RuleSet) else None
             _commit_rule_component(rule, matches, sub_results, X.index)
-            results.append((i, rule, matches, detail))
-        return results
     
     def predict(
         self, 
@@ -709,7 +765,8 @@ class RulesClassifier(ArtifactSerializableMixin, ParallelizableMixin, BaseEstima
         final_results = []
         individual_results = {}
         all_rule_results = []
-        for i, rule, matches, detail in self._evaluate_rules(X):
+        evaluated = self._evaluate_rules(X)
+        for i, rule, matches, detail in evaluated:
             rule_name = getattr(rule, 'name', None) or f"Rule_{i}"
             if isinstance(rule, RuleSet):
                 final_results.append(matches * weights[i])
@@ -732,9 +789,6 @@ class RulesClassifier(ArtifactSerializableMixin, ParallelizableMixin, BaseEstima
                     'weight': weights[i]
                 })
 
-        if auto_initialize:
-            self._commit_auto_state(X, weights)
-        
         # 根据最外层逻辑操作符合并结果
         if len(final_results) == 0:
             n_samples = len(X)
@@ -754,21 +808,24 @@ class RulesClassifier(ArtifactSerializableMixin, ParallelizableMixin, BaseEstima
         
         # 根据输出模式返回结果
         if self.output_mode == 'final':
-            return final_result
-        
+            output = final_result
         elif self.output_mode == 'individual':
-            return pd.DataFrame(individual_results)
-        
+            output = pd.DataFrame(individual_results)
         elif self.output_mode == 'both':
-            return final_result, pd.DataFrame(individual_results)
-        
+            output = (final_result, pd.DataFrame(individual_results))
         elif self.output_mode == 'reason':
             reasons = self._generate_reasons(X, all_rule_results, final_result)
             if return_reason:
-                return final_result, reasons
-            return final_result
-        
-        return final_result
+                output = (final_result, reasons)
+            else:
+                output = final_result
+        else:
+            output = final_result
+
+        self._commit_evaluated_rules(X, evaluated)
+        if auto_initialize:
+            self._commit_auto_state(X, weights)
+        return output
     
     def _generate_reasons(
         self, 
@@ -842,29 +899,29 @@ class RulesClassifier(ArtifactSerializableMixin, ParallelizableMixin, BaseEstima
         weights, auto_initialize = self._prediction_state(X)
         evaluated = self._evaluate_rules(X)
         results = [matches * weights[i] for i, _, matches, _ in evaluated]
-        if auto_initialize:
-            self._commit_auto_state(X, weights)
-        
+
         if len(results) == 0:
             n_samples = len(X)
             proba = np.zeros((n_samples, 2))
             proba[:, 0] = 1.0
-            return proba
-        
-        # 计算加权概率
-        sum_weights = sum(weights)
-        if sum_weights > 0:
-            positive_prob = np.sum(results, axis=0) / sum_weights
         else:
-            positive_prob = np.zeros(len(X))
-        
-        # 限制概率范围
-        positive_prob = np.clip(positive_prob, 0, 1)
-        
-        proba = np.zeros((len(X), 2))
-        proba[:, 1] = positive_prob
-        proba[:, 0] = 1 - positive_prob
-        
+            # 计算加权概率
+            sum_weights = sum(weights)
+            if sum_weights > 0:
+                positive_prob = np.sum(results, axis=0) / sum_weights
+            else:
+                positive_prob = np.zeros(len(X))
+
+            # 限制概率范围
+            positive_prob = np.clip(positive_prob, 0, 1)
+
+            proba = np.zeros((len(X), 2))
+            proba[:, 1] = positive_prob
+            proba[:, 0] = 1 - positive_prob
+
+        self._commit_evaluated_rules(X, evaluated)
+        if auto_initialize:
+            self._commit_auto_state(X, weights)
         return proba
     
     def get_rule_summary(self) -> pd.DataFrame:

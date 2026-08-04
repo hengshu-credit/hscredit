@@ -1,7 +1,9 @@
 """规则执行统一并行配置与结果一致性测试。"""
 
 import inspect
+import os
 import pickle
+import time
 
 import numpy as np
 import pandas as pd
@@ -9,8 +11,10 @@ import pytest
 from sklearn.base import clone
 
 from hscredit.core.models import LogicOperator, RuleSet, RulesClassifier
+from hscredit.core.models.rules import rule_classifier as rule_classifier_module
 from hscredit.core.rules import Rule, RuleFlow
-from hscredit.exceptions import ParallelExecutionError
+from hscredit.exceptions import ParallelExecutionError, ValidationError
+from hscredit.utils.parallel import ParallelBudget, _ACTIVE_BUDGET
 
 
 @pytest.fixture
@@ -271,6 +275,208 @@ def test_rules_classifier_failed_prediction_preserves_learned_and_rule_state(rul
     pd.testing.assert_series_equal(good_rule.result(), old_result, check_exact=True)
     assert classifier.feature_names_in_ == old_features
     np.testing.assert_array_equal(classifier.classes_, old_classes)
+
+
+@pytest.mark.parametrize("fitted", [False, True])
+def test_rules_classifier_predict_postprocessing_failure_is_transactional(monkeypatch, fitted):
+    train = pd.DataFrame({"score": [1, -1]}, index=[10, 20])
+    changed = pd.DataFrame({"score": [-1, 1]}, index=[10, 20])
+    rule = Rule("score > 0", name="分数规则")
+    classifier = RulesClassifier(
+        rules=[rule],
+        output_mode="reason",
+        n_jobs=2,
+        parallel_backend="threading",
+    )
+    if fitted:
+        classifier.fit(train).predict(train, return_reason=True)
+        old_result = rule.result().copy()
+        old_state = (
+            classifier.n_features_in_,
+            classifier.feature_names_in_.copy(),
+            classifier.classes_.copy(),
+            classifier.weights_.copy(),
+            classifier._is_fitted,
+        )
+
+    def fail_after_workers(*args, **kwargs):
+        raise RuntimeError("输出后处理失败")
+
+    monkeypatch.setattr(classifier, "_generate_reasons", fail_after_workers)
+    with pytest.raises(RuntimeError, match="输出后处理失败"):
+        classifier.predict(changed, return_reason=True)
+
+    if fitted:
+        pd.testing.assert_series_equal(rule.result(), old_result, check_exact=True)
+        assert classifier.n_features_in_ == old_state[0]
+        assert classifier.feature_names_in_ == old_state[1]
+        np.testing.assert_array_equal(classifier.classes_, old_state[2])
+        assert classifier.weights_ == old_state[3]
+        assert classifier._is_fitted is old_state[4]
+    else:
+        assert rule.result_ is None
+        for attribute in ("n_features_in_", "feature_names_in_", "classes_", "weights_", "_is_fitted"):
+            assert not hasattr(classifier, attribute)
+
+
+@pytest.mark.parametrize("fitted", [False, True])
+def test_rules_classifier_predict_proba_postprocessing_failure_is_transactional(monkeypatch, fitted):
+    train = pd.DataFrame({"score": [1, -1]}, index=[10, 20])
+    changed = pd.DataFrame({"score": [-1, 1]}, index=[10, 20])
+    rule = Rule("score > 0", name="分数规则")
+    classifier = RulesClassifier(rules=[rule], n_jobs=2, parallel_backend="threading")
+    if fitted:
+        classifier.fit(train).predict_proba(train)
+        old_result = rule.result().copy()
+        old_state = (
+            classifier.n_features_in_,
+            classifier.feature_names_in_.copy(),
+            classifier.classes_.copy(),
+            classifier.weights_.copy(),
+            classifier._is_fitted,
+        )
+
+    def fail_after_workers(*args, **kwargs):
+        raise RuntimeError("概率后处理失败")
+
+    monkeypatch.setattr(rule_classifier_module.np, "clip", fail_after_workers)
+    with pytest.raises(RuntimeError, match="概率后处理失败"):
+        classifier.predict_proba(changed)
+
+    if fitted:
+        pd.testing.assert_series_equal(rule.result(), old_result, check_exact=True)
+        assert classifier.n_features_in_ == old_state[0]
+        assert classifier.feature_names_in_ == old_state[1]
+        np.testing.assert_array_equal(classifier.classes_, old_state[2])
+        assert classifier.weights_ == old_state[3]
+        assert classifier._is_fitted is old_state[4]
+    else:
+        assert rule.result_ is None
+        for attribute in ("n_features_in_", "feature_names_in_", "classes_", "weights_", "_is_fitted"):
+            assert not hasattr(classifier, attribute)
+
+
+@pytest.mark.parametrize("weight", [np.nan, np.inf, -np.inf, "1", True, object()])
+def test_rules_classifier_rejects_non_finite_or_non_numeric_weights_before_workers(monkeypatch, weight):
+    classifier = RulesClassifier(
+        rules=[Rule("score > 0")],
+        weights=[weight],
+        n_jobs=2,
+        parallel_backend="threading",
+    )
+
+    def worker_must_not_run(task):
+        raise AssertionError("权重校验后不应启动worker")
+
+    monkeypatch.setattr(rule_classifier_module, "_classifier_component_worker", worker_must_not_run)
+    with pytest.raises(ValidationError, match="weights"):
+        classifier.predict(pd.DataFrame({"score": [1, -1]}))
+
+
+def test_rules_classifier_accepts_finite_numpy_scalar_weights():
+    classifier = RulesClassifier(rules=[Rule("score > 0")], weights=[np.float64(1.5)], n_jobs=1)
+    np.testing.assert_array_equal(
+        classifier.predict(pd.DataFrame({"score": [1, -1]})),
+        np.array([1, 0]),
+    )
+
+
+class _ConcurrencyProbeRule(Rule):
+    """通过跨线程/进程独占文件探测并发 worker 数。"""
+
+    def __init__(self, expr, name, lock_path):
+        super().__init__(expr, name=name)
+        self.lock_path = str(lock_path)
+
+    def predict(self, X):
+        descriptor = None
+        try:
+            descriptor = os.open(self.lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            with open(f"{self.lock_path}.conflict", "w", encoding="utf-8") as stream:
+                stream.write("并发超出预算")
+        else:
+            time.sleep(0.1)
+        finally:
+            if descriptor is not None:
+                os.close(descriptor)
+                os.unlink(self.lock_path)
+        return super().predict(X)
+
+
+def _deep_parallel_ruleset(lock_path, backend):
+    leaf = RuleSet(
+        name="叶规则集",
+        rules=[
+            _ConcurrencyProbeRule("score > -10", name="叶规则1", lock_path=lock_path),
+            _ConcurrencyProbeRule("score < 10", name="叶规则2", lock_path=lock_path),
+        ],
+        n_jobs=2,
+        parallel_backend=backend,
+    )
+    middle = RuleSet(
+        name="中间规则集",
+        rules=[leaf],
+        n_jobs=1,
+        parallel_backend=backend,
+    )
+    outer = RuleSet(
+        name="外层规则集",
+        logic="or",
+        rules=[middle, Rule("score == 999", name="外层规则")],
+        n_jobs=2,
+        parallel_backend=backend,
+    )
+    return outer
+
+
+@pytest.mark.parametrize("backend", ["threading", "loky"])
+@pytest.mark.parametrize("owner", ["ruleset", "classifier"])
+def test_deep_parallel_descendants_are_detected_and_respect_active_budget(tmp_path, owner, backend):
+    lock_path = tmp_path / f"{owner}-{backend}.lock"
+    outer = _deep_parallel_ruleset(lock_path, backend)
+    if owner == "ruleset":
+        component = outer
+        assert component._has_parallel_children() is True
+    else:
+        component = RulesClassifier(
+            rules=[outer, Rule("score == -999", name="分类器规则")],
+            n_jobs=2,
+            parallel_backend=backend,
+        )
+        assert component._has_parallel_rule_children() is True
+    token = _ACTIVE_BUDGET.set(ParallelBudget(2, 0))
+    try:
+        data = pd.DataFrame({"score": [0, 1]})
+        if owner == "ruleset":
+            component.evaluate(data)
+        else:
+            component.predict(data)
+    finally:
+        _ACTIVE_BUDGET.reset(token)
+
+    assert not os.path.exists(f"{lock_path}.conflict")
+
+
+@pytest.mark.parametrize("backend", ["threading", "loky"])
+def test_root_explicit_positive_workers_are_not_budget_capped(monkeypatch, backend):
+    captured = {}
+
+    def capture_execute(function, tasks, **kwargs):
+        captured.update(kwargs)
+        return [function(task) for task in tasks]
+
+    monkeypatch.setattr(rule_classifier_module, "parallel_execute", capture_execute)
+    ruleset = RuleSet(
+        name="根规则集",
+        rules=[Rule("score > 0"), Rule("score < 10")],
+        n_jobs=2,
+        parallel_backend=backend,
+    )
+    ruleset.evaluate(pd.DataFrame({"score": [1, -1]}))
+
+    assert captured["n_jobs"] == 2
+    assert captured["parallel_backend"] == backend
 
 
 @pytest.mark.parametrize("backend", ["threading", "loky"])
