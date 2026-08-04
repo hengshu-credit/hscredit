@@ -1,19 +1,43 @@
 """生产规则流转一致性校验."""
 
-from typing import Dict, List, Optional, Sequence, Tuple, Union
+import copy
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import pandas as pd
 from pandas import DataFrame
 
 from ...exceptions import FeatureNotFoundError, InputTypeError
-from .rule import Rule
+from ...utils.parallel import ParallelizableMixin, resolve_n_jobs
+from .rule import Rule, RuleState
 
 
 RuleInput = Union[Rule, Sequence[Rule]]
 
 
-class RuleFlow:
+def _rule_flow_mask_worker(task: Tuple[Rule, DataFrame]) -> pd.Series:
+    """计算一条规则在全量数据上的命中掩码。"""
+    rule, data = task
+    return RuleFlow._predict_rule(rule, data)
+
+
+def _rule_flow_report_slice_worker(task: Tuple[Any, ...]) -> Tuple[Dict[str, object], pd.DataFrame]:
+    """计算一个独立分组的规则流明细。"""
+    flow, data, prefix = task
+    table = flow._report_one(data)
+    if prefix:
+        table = pd.concat([table, flow._report_total_row(data, "分组合计")], ignore_index=True)
+    return prefix, table
+
+
+def _rule_flow_summary_slice_worker(task: Tuple[Any, ...]) -> Dict[str, Union[int, float, str]]:
+    """计算一个独立分组的规则流汇总。"""
+    flow, data, prefix = task
+    row_type = "分组合计" if prefix else "整体合计"
+    return {**prefix, **flow._summary_one(data, row_type=row_type)}
+
+
+class RuleFlow(ParallelizableMixin):
     """生产规则流转校验器。
 
     按给定规则顺序计算每笔样本的规则命中结果，支持串行和并行两种执行模式。
@@ -24,6 +48,9 @@ class RuleFlow:
     :param mode: 执行模式，``"serial"``/``"串行"`` 表示命中第一条规则后停止，
         ``"parallel"``/``"并行"`` 表示所有规则都参与判断
     :param name: 规则流名称，默认 ``"RuleFlow"``
+    :param n_jobs: 并行任务数，默认为-1
+    :param parallel_backend: joblib并行后端，默认为None
+    :param parallel_config: joblib扩展配置，默认为None
 
     **属性**
 
@@ -43,10 +70,21 @@ class RuleFlow:
     _SERIAL_MODES = {"serial", "sequential", "串行"}
     _PARALLEL_MODES = {"parallel", "并行"}
 
-    def __init__(self, rules: RuleInput, mode: str = "serial", name: Optional[str] = None):
+    def __init__(
+        self,
+        rules: RuleInput,
+        mode: str = "serial",
+        name: Optional[str] = None,
+        n_jobs: Union[int, float] = -1,
+        parallel_backend: Optional[str] = None,
+        parallel_config: Optional[Dict[str, Any]] = None,
+    ):
         self.rules = self._normalize_rules(rules)
         self.mode = self._normalize_mode(mode)
         self.name = name or "RuleFlow"
+        self.n_jobs = n_jobs
+        self.parallel_backend = parallel_backend
+        self.parallel_config = parallel_config
         self.feature_names_in_ = sorted({feature for rule in self.rules for feature in rule.feature_names_in_})
         self.rule_labels_ = self._build_rule_labels()
 
@@ -348,8 +386,15 @@ class RuleFlow:
             result["命中规则序号"] = first_rule_index
             result["命中规则"] = first_rule_name
         else:
-            for rule, label in zip(self.rules, self.rule_labels_):
-                hit = self._predict_rule(rule, data)
+            tasks = [(copy.deepcopy(rule), data) for rule in self.rules]
+            hits = self._parallel_execute(
+                _rule_flow_mask_worker,
+                tasks,
+                task_labels=self.rule_labels_,
+            )
+            for rule, label, hit in zip(self.rules, self.rule_labels_, hits):
+                rule.result_ = hit
+                rule._state = RuleState.APPLIED
                 result[label] = hit
                 hit_any = hit_any | hit
 
@@ -505,10 +550,27 @@ class RuleFlow:
         self._validate_data(data)
         rows = []
         group_names = self._group_key_names(date_col, group_cols)
-        for prefix, index in self._group_slices(data, date_col, freq, group_cols, dropna):
-            table = self._report_one(data.loc[index])
-            if prefix:
-                table = pd.concat([table, self._report_total_row(data.loc[index], "分组合计")], ignore_index=True)
+        slices = self._group_slices(data, date_col, freq, group_cols, dropna)
+        if self.mode == "parallel":
+            tasks = [(copy.deepcopy(self), data.loc[index], prefix) for prefix, index in slices]
+            slice_tables = self._parallel_execute(
+                _rule_flow_report_slice_worker,
+                tasks,
+                task_labels=[str(prefix) for prefix, _ in slices],
+                has_parallel_children=self._has_parallel_rule_tasks(),
+            )
+        else:
+            slice_tables = []
+            for prefix, index in slices:
+                table = self._report_one(data.loc[index])
+                if prefix:
+                    table = pd.concat(
+                        [table, self._report_total_row(data.loc[index], "分组合计")],
+                        ignore_index=True,
+                    )
+                slice_tables.append((prefix, table))
+
+        for prefix, table in slice_tables:
             for key, value in reversed(prefix.items()):
                 table.insert(0, key, value)
             rows.append(table)
@@ -553,13 +615,30 @@ class RuleFlow:
         self._validate_data(data)
         rows = []
         group_names = self._group_key_names(date_col, group_cols)
-        for prefix, index in self._group_slices(data, date_col, freq, group_cols, dropna):
-            row_type = "分组合计" if prefix else "整体合计"
-            row = {**prefix, **self._summary_one(data.loc[index], row_type=row_type)}
-            rows.append(row)
+        slices = self._group_slices(data, date_col, freq, group_cols, dropna)
+        if self.mode == "parallel":
+            tasks = [(copy.deepcopy(self), data.loc[index], prefix) for prefix, index in slices]
+            rows.extend(
+                self._parallel_execute(
+                    _rule_flow_summary_slice_worker,
+                    tasks,
+                    task_labels=[str(prefix) for prefix, _ in slices],
+                    has_parallel_children=self._has_parallel_rule_tasks(),
+                )
+            )
+        else:
+            for prefix, index in slices:
+                row_type = "分组合计" if prefix else "整体合计"
+                rows.append({**prefix, **self._summary_one(data.loc[index], row_type=row_type)})
         if group_names:
             rows.append({**{key: "全部" for key in group_names}, **self._summary_one(data, row_type="整体合计")})
         return pd.DataFrame(rows)
+
+    def _has_parallel_rule_tasks(self) -> bool:
+        """返回当前规则流是否会真实启动多个规则 worker。"""
+        if self.mode != "parallel" or len(self.rules) < 2:
+            return False
+        return (resolve_n_jobs(self.n_jobs, task_count=len(self.rules)) or 1) > 1
 
     def __repr__(self) -> str:
         return f"RuleFlow(name={self.name!r}, mode={self.mode!r}, n_rules={len(self.rules)})"
