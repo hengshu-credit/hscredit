@@ -93,6 +93,9 @@ class CardinalityEncoder(BaseEncoder):
         drop_invariant: bool = False,
         return_df: bool = True,
         target: Optional[str] = None,
+        n_jobs: Optional[Union[int, float]] = -1,
+        parallel_backend: Optional[str] = None,
+        parallel_config: Optional[Dict[str, Any]] = None,
     ):
         """初始化高基数降维编码器。
 
@@ -113,10 +116,13 @@ class CardinalityEncoder(BaseEncoder):
             handle_unknown=handle_unknown,
             handle_missing=handle_missing,
             target=target,
+            n_jobs=n_jobs,
+            parallel_backend=parallel_backend,
+            parallel_config=parallel_config,
         )
         self.max_categories = max_categories
         self.other_label = other_label
-        self.special_values = special_values or []
+        self.special_values = special_values
 
         self.top_categories_: Dict[str, list] = {}
         self.category_counts_: Dict[str, pd.Series] = {}
@@ -128,42 +134,48 @@ class CardinalityEncoder(BaseEncoder):
         :param X: 输入数据，shape (n_samples, n_features)
         :param y: 目标变量（可选），本编码器不需要
         """
-        special_set = set(self.special_values)
+        self._fit_columns(
+            X,
+            y,
+            state_attrs=("mapping_", "top_categories_", "category_counts_", "special_counts_"),
+        )
 
-        for col in self.cols_:
-            series = X[col]
+    def _fit_column(self, column, values, y=None):
+        special_set = set(self.special_values or [])
+        series = values
 
-            # 排除缺失值和特殊值后统计频次
-            mask_special = series.isin(special_set) if special_set else pd.Series(False, index=series.index)
-            mask_valid = series.notna() & ~mask_special
-            counts = series[mask_valid].value_counts()
+        # 排除缺失值和特殊值后统计频次
+        mask_special = series.isin(special_set) if special_set else pd.Series(False, index=series.index)
+        mask_valid = series.notna() & ~mask_special
+        counts = series[mask_valid].value_counts()
 
-            self.category_counts_[col] = counts
+        # 记录实际出现的特殊值及其频次
+        special_counts = {sv: int((series == sv).sum()) for sv in special_set if (series == sv).any()}
 
-            # 记录实际出现的特殊值及其频次
-            self.special_counts_[col] = {sv: int((series == sv).sum()) for sv in special_set if (series == sv).any()}
+        # 保留前 max_categories - 1 个（给 other 留一个位置）
+        keep_n = max(self.max_categories - 1, 0)
+        top_cats = counts.head(keep_n).index.tolist()
+        # 构建映射：top 类别 → 自身，其余 → other_label
+        mapping = {}
+        for cat in counts.index:
+            mapping[cat] = cat if cat in top_cats else self.other_label
 
-            # 保留前 max_categories - 1 个（给 other 留一个位置）
-            keep_n = max(self.max_categories - 1, 0)
-            top_cats = counts.head(keep_n).index.tolist()
-            self.top_categories_[col] = top_cats
+        # 特殊值 → 自身（不受 max_categories 限制）
+        for sv in special_set:
+            mapping[sv] = sv
 
-            # 构建映射：top 类别 → 自身，其余 → other_label
-            mapping = {}
-            for cat in counts.index:
-                mapping[cat] = cat if cat in top_cats else self.other_label
+        # 未知类别处理
+        if self.handle_unknown == "other":
+            mapping["__UNKNOWN__"] = self.other_label
+        elif self.handle_unknown == "return_nan":
+            mapping["__UNKNOWN__"] = np.nan
 
-            # 特殊值 → 自身（不受 max_categories 限制）
-            for sv in special_set:
-                mapping[sv] = sv
-
-            # 未知类别处理
-            if self.handle_unknown == "other":
-                mapping["__UNKNOWN__"] = self.other_label
-            elif self.handle_unknown == "return_nan":
-                mapping["__UNKNOWN__"] = np.nan
-
-            self.mapping_[col] = mapping
+        return {
+            "mapping_": mapping,
+            "top_categories_": top_cats,
+            "category_counts_": counts,
+            "special_counts_": special_counts,
+        }
 
     def _transform(self, X: pd.DataFrame, y: Optional[pd.Series] = None) -> pd.DataFrame:
         """转换数据。
@@ -172,36 +184,33 @@ class CardinalityEncoder(BaseEncoder):
         :param y: 目标变量（可选），本编码器不需要
         :return: 编码后的数据
         """
-        for col in self.cols_:
-            if col not in self.mapping_:
-                continue
+        return self._transform_columns(X, y)
 
-            mapping = self.mapping_[col]
-            original = X[col]
+    def _transform_column(self, column, values, y=None, context=None):
+        mapping = self.mapping_[column]
+        original = values
 
-            # 标记缺失
-            is_na = original.isna()
+        # 标记缺失
+        is_na = original.isna()
 
-            # 映射：先用 map，未命中的为 NaN
-            mapped = original.map(mapping)
+        # 映射：先用 map，未命中的为 NaN
+        mapped = original.map(mapping)
 
-            # 对未命中且非缺失的值，按 handle_unknown 策略处理
-            unmapped = mapped.isna() & ~is_na
-            if unmapped.any():
-                if self.handle_unknown == "other":
-                    mapped[unmapped] = self.other_label
-                elif self.handle_unknown == "error":
-                    bad = original[unmapped].unique().tolist()
-                    raise ValueError(f"列 '{col}' 包含未知类别: {bad}")
-                # 'return_nan' 不需要额外处理，已经是 NaN
+        # 对未命中且非缺失的值，按 handle_unknown 策略处理
+        unmapped = mapped.isna() & ~is_na
+        if unmapped.any():
+            if self.handle_unknown == "other":
+                mapped[unmapped] = self.other_label
+            elif self.handle_unknown == "error":
+                bad = original[unmapped].unique().tolist()
+                raise ValueError(f"列 '{column}' 包含未知类别: {bad}")
+            # 'return_nan' 不需要额外处理，已经是 NaN
 
-            # 缺失值保持
-            if self.handle_missing == "error" and is_na.any():
-                raise ValueError(f"列 '{col}' 包含缺失值")
+        # 缺失值保持
+        if self.handle_missing == "error" and is_na.any():
+            raise ValueError(f"列 '{column}' 包含缺失值")
 
-            X[col] = mapped
-
-        return X
+        return mapped
 
     def inverse_transform(self, X: pd.DataFrame) -> pd.DataFrame:
         """逆编码。

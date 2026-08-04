@@ -3,7 +3,7 @@
 基于目标变量均值对类别特征进行编码。
 """
 
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Union, Any
 import numpy as np
 import pandas as pd
 
@@ -84,6 +84,9 @@ class TargetEncoder(BaseEncoder):
         return_df: bool = True,
         random_state: Optional[int] = None,
         target: Optional[str] = None,
+        n_jobs: Optional[Union[int, float]] = -1,
+        parallel_backend: Optional[str] = None,
+        parallel_config: Optional[Dict[str, Any]] = None,
     ):
         """初始化目标编码器。
 
@@ -105,6 +108,9 @@ class TargetEncoder(BaseEncoder):
             handle_unknown=handle_unknown,
             handle_missing=handle_missing,
             target=target,
+            n_jobs=n_jobs,
+            parallel_backend=parallel_backend,
+            parallel_config=parallel_config,
         )
         self.smoothing = smoothing
         self.min_samples_leaf = min_samples_leaf
@@ -124,34 +130,34 @@ class TargetEncoder(BaseEncoder):
             raise ValueError("TargetEncoder是有监督编码器，必须提供目标变量y")
 
         y = pd.Series(y, name="target")
-        self.global_mean_ = y.mean()
+        global_mean = y.mean()
+        self._fit_columns(X, y, shared_state={"global_mean_": global_mean})
+        self.global_mean_ = global_mean
 
-        for col in self.cols_:
-            mapping = {}
+    def _fit_column(self, column, values, y=None):
+        df_temp = pd.DataFrame({"feature": values, "target": y.values})
+        stats = df_temp.groupby("feature")["target"].agg(["mean", "count"])
 
-            df_temp = pd.DataFrame({col: X[col], "target": y.values})
-            stats = df_temp.groupby(col)["target"].agg(["mean", "count"])
+        smoothed_means = (stats["count"] * stats["mean"] + self.smoothing * self.global_mean_) / (
+            stats["count"] + self.smoothing
+        )
 
-            smoothed_means = (stats["count"] * stats["mean"] + self.smoothing * self.global_mean_) / (
-                stats["count"] + self.smoothing
-            )
+        small_sample_mask = stats["count"] < self.min_samples_leaf
+        smoothed_means[small_sample_mask] = self.global_mean_
 
-            small_sample_mask = stats["count"] < self.min_samples_leaf
-            smoothed_means[small_sample_mask] = self.global_mean_
+        mapping = smoothed_means.to_dict()
 
-            mapping = smoothed_means.to_dict()
+        if self.handle_missing == "value":
+            mapping[np.nan] = self.global_mean_
+        elif self.handle_missing == "return_nan":
+            mapping[np.nan] = np.nan
 
-            if self.handle_missing == "value":
-                mapping[np.nan] = self.global_mean_
-            elif self.handle_missing == "return_nan":
-                mapping[np.nan] = np.nan
+        if self.handle_unknown == "value":
+            mapping["__UNKNOWN__"] = self.global_mean_
+        elif self.handle_unknown == "return_nan":
+            mapping["__UNKNOWN__"] = np.nan
 
-            if self.handle_unknown == "value":
-                mapping["__UNKNOWN__"] = self.global_mean_
-            elif self.handle_unknown == "return_nan":
-                mapping["__UNKNOWN__"] = np.nan
-
-            self.mapping_[col] = mapping
+        return {"mapping_": mapping}
 
     def _transform(self, X: pd.DataFrame, y: Optional[pd.Series] = None) -> pd.DataFrame:
         """转换数据。
@@ -160,26 +166,22 @@ class TargetEncoder(BaseEncoder):
         :param y: 目标变量（可选），如果提供则添加噪声
         :return: 编码后的数据
         """
-        # 使用局部随机数发生器，避免污染全局 np.random 状态；
-        # 在按列循环外创建一次，使各列的噪声相互独立（而非每列重置为相同序列）
-        rng = np.random.RandomState(self.random_state) if (self.noise is not None and y is not None) else None
+        contexts = {}
+        if self.noise is not None and y is not None:
+            rng = np.random.RandomState(self.random_state)
+            contexts = {column: rng.normal(0, self.noise, len(X)) for column in self.cols_}
+        return self._transform_columns(X, y, contexts=contexts)
 
-        for col in self.cols_:
-            if col not in self.mapping_:
-                continue
+    def _transform_column(self, column, values, y=None, context=None):
+        mapping = self.mapping_[column]
+        result = values.map(mapping)
 
-            mapping = self.mapping_[col]
+        if self.handle_unknown == "value":
+            result = result.fillna(self.global_mean_)
+        elif self.handle_unknown == "error" and result.isna().any():
+            raise ValueError(f"列'{column}'包含未知类别")
 
-            original_values = X[col].copy()
+        if context is not None:
+            result = result * (1 + context)
 
-            X[col] = original_values.map(mapping)
-
-            if self.handle_unknown == "value":
-                X[col] = X[col].fillna(self.global_mean_)
-            elif self.handle_unknown == "error" and X[col].isna().any():
-                raise ValueError(f"列'{col}'包含未知类别")
-
-            if rng is not None:
-                X[col] = X[col] * (1 + rng.normal(0, self.noise, len(X)))
-
-        return X
+        return result

@@ -3,7 +3,7 @@
 基于类别出现频次进行编码。
 """
 
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Union, Any
 import numpy as np
 import pandas as pd
 
@@ -80,6 +80,9 @@ class CountEncoder(BaseEncoder):
         drop_invariant: bool = False,
         return_df: bool = True,
         target: Optional[str] = None,
+        n_jobs: Optional[Union[int, float]] = -1,
+        parallel_backend: Optional[str] = None,
+        parallel_config: Optional[Dict[str, Any]] = None,
     ):
         """初始化计数编码器。
 
@@ -99,6 +102,9 @@ class CountEncoder(BaseEncoder):
             handle_unknown=handle_unknown,
             handle_missing=handle_missing,
             target=target,
+            n_jobs=n_jobs,
+            parallel_backend=parallel_backend,
+            parallel_config=parallel_config,
         )
         self.normalize = normalize
         self.min_group_size = min_group_size
@@ -111,35 +117,37 @@ class CountEncoder(BaseEncoder):
         :param X: 输入数据，shape (n_samples, n_features)
         :param y: 目标变量（可选），计数编码器不需要
         """
-        self.total_count_ = len(X)
+        total_count = len(X)
+        self._fit_columns(X, y, shared_state={"total_count_": total_count})
+        self.total_count_ = total_count
 
-        for col in self.cols_:
-            counts = X[col].value_counts(dropna=False)
+    def _fit_column(self, column, values, y=None):
+        counts = values.value_counts(dropna=False)
 
-            if self.min_group_size is not None:
-                small_categories = counts[counts < self.min_group_size].index
-                if len(small_categories) > 0:
-                    other_count = counts[small_categories].sum()
-                    counts = counts[counts >= self.min_group_size]
-                    counts['__OTHER__'] = other_count
+        if self.min_group_size is not None:
+            small_categories = counts[counts < self.min_group_size].index
+            if len(small_categories) > 0:
+                other_count = counts[small_categories].sum()
+                counts = counts[counts >= self.min_group_size]
+                counts['__OTHER__'] = other_count
 
-            if self.normalize:
-                counts = counts / self.total_count_
+        if self.normalize:
+            counts = counts / self.total_count_
 
-            mapping = counts.to_dict()
+        mapping = counts.to_dict()
 
-            if self.handle_missing == 'value':
-                if np.nan not in mapping:
-                    mapping[np.nan] = 0 if not self.normalize else 0.0
-            elif self.handle_missing == 'return_nan':
-                mapping[np.nan] = np.nan
+        if self.handle_missing == 'value':
+            if not any(pd.isna(key) for key in mapping):
+                mapping[np.nan] = 0 if not self.normalize else 0.0
+        elif self.handle_missing == 'return_nan':
+            mapping[np.nan] = np.nan
 
-            if self.handle_unknown == 'value':
-                mapping['__UNKNOWN__'] = 0 if not self.normalize else 0.0
-            elif self.handle_unknown == 'return_nan':
-                mapping['__UNKNOWN__'] = np.nan
+        if self.handle_unknown == 'value':
+            mapping['__UNKNOWN__'] = 0 if not self.normalize else 0.0
+        elif self.handle_unknown == 'return_nan':
+            mapping['__UNKNOWN__'] = np.nan
 
-            self.mapping_[col] = mapping
+        return {"mapping_": mapping}
 
     def _transform(self, X: pd.DataFrame, y: Optional[pd.Series] = None) -> pd.DataFrame:
         """转换数据。
@@ -148,27 +156,27 @@ class CountEncoder(BaseEncoder):
         :param y: 目标变量（可选），计数编码器不需要
         :return: 编码后的数据
         """
-        for col in self.cols_:
-            if col not in self.mapping_:
-                continue
+        return self._transform_columns(X, y)
 
-            mapping = self.mapping_[col]
+    def _transform_column(self, column, values, y=None, context=None):
+        mapping = self.mapping_[column]
+        result = values.copy()
 
-            if self.min_group_size is not None and '__OTHER__' in mapping:
-                known_categories = set(mapping.keys())
-                known_categories.discard('__OTHER__')
-                known_categories.discard('__UNKNOWN__')
+        if self.min_group_size is not None and '__OTHER__' in mapping:
+            known_categories = set(mapping.keys())
+            known_categories.discard('__OTHER__')
+            known_categories.discard('__UNKNOWN__')
 
-                X[col] = X[col].apply(
-                    lambda x: '__OTHER__' if x not in known_categories and pd.notna(x) else x
-                )
+            result = result.apply(
+                lambda x: '__OTHER__' if x not in known_categories and pd.notna(x) else x
+            )
 
-            X[col] = X[col].map(mapping)
+        result = result.map(mapping)
 
-            if self.handle_unknown == 'value':
-                default_value = 0 if not self.normalize else 0.0
-                X[col] = X[col].fillna(default_value)
-            elif self.handle_unknown == 'error' and X[col].isna().any():
-                raise ValueError(f"列'{col}'包含未知类别")
+        if self.handle_unknown == 'value':
+            default_value = 0 if not self.normalize else 0.0
+            result = result.fillna(default_value)
+        elif self.handle_unknown == 'error' and result.isna().any():
+            raise ValueError(f"列'{column}'包含未知类别")
 
-        return X
+        return result

@@ -19,9 +19,9 @@ import logging
 from typing import Optional, List, Dict, Union, Any, Literal
 import numpy as np
 import pandas as pd
-import warnings
 
 from .base import BaseEncoder
+from ...utils.parallel import resolve_n_jobs
 
 logger = logging.getLogger(__name__)
 
@@ -164,6 +164,9 @@ class GBMEncoder(BaseEncoder):
         model_params: Optional[Dict[str, Any]] = None,
         task: Literal['classification', 'regression'] = 'classification',
         target: Optional[str] = None,
+        n_jobs: Optional[Union[int, float]] = -1,
+        parallel_backend: Optional[str] = None,
+        parallel_config: Optional[Dict[str, Any]] = None,
     ):
         """初始化GBM编码器。
 
@@ -193,6 +196,9 @@ class GBMEncoder(BaseEncoder):
             handle_unknown=handle_unknown,
             handle_missing=handle_missing,
             target=target,
+            n_jobs=n_jobs,
+            parallel_backend=parallel_backend,
+            parallel_config=parallel_config,
         )
         self.model_type = model_type
         self.n_estimators = n_estimators
@@ -204,7 +210,7 @@ class GBMEncoder(BaseEncoder):
         self.random_state = random_state
         self.output_type = output_type
         self.drop_origin = drop_origin
-        self.model_params = model_params or {}
+        self.model_params = model_params
         self.task = task
 
         # 拟合后的属性
@@ -370,7 +376,7 @@ class GBMEncoder(BaseEncoder):
             'colsample_bytree': self.colsample_bytree,
             'min_child_weight': self.min_child_samples,
             'random_state': self.random_state,
-            'n_jobs': -1,
+            'n_jobs': resolve_n_jobs(self.n_jobs) or 1,
         }
 
         # 添加任务相关参数
@@ -386,7 +392,7 @@ class GBMEncoder(BaseEncoder):
             params['objective'] = 'reg:squarederror'
 
         # 合并用户自定义参数
-        params.update(self.model_params)
+        params.update(self.model_params or {})
 
         # 使用 hscredit 的 XGBoostRiskModel
         self.model_ = XGBoostRiskModel(**params)
@@ -412,7 +418,7 @@ class GBMEncoder(BaseEncoder):
             'colsample_bytree': self.colsample_bytree,
             'min_child_samples': self.min_child_samples,
             'random_state': self.random_state,
-            'n_jobs': -1,
+            'n_jobs': resolve_n_jobs(self.n_jobs) or 1,
             'verbose': False,
         }
 
@@ -427,7 +433,7 @@ class GBMEncoder(BaseEncoder):
             params['objective'] = 'regression'
 
         # 合并用户自定义参数
-        params.update(self.model_params)
+        params.update(self.model_params or {})
 
         # 使用 hscredit 的 LightGBMRiskModel
         self.model_ = LightGBMRiskModel(**params)
@@ -466,6 +472,7 @@ class GBMEncoder(BaseEncoder):
             'min_data_in_leaf': self.min_child_samples,
             'random_state': self.random_state,
             'verbose': False,
+            'thread_count': resolve_n_jobs(self.n_jobs) or 1,
         }
 
         # 添加任务相关参数
@@ -478,7 +485,7 @@ class GBMEncoder(BaseEncoder):
             params['objective'] = 'RMSE'
 
         # 合并用户自定义参数
-        params.update(self.model_params)
+        params.update(self.model_params or {})
 
         # 使用 hscredit 的 CatBoostRiskModel
         self.model_ = CatBoostRiskModel(**params)

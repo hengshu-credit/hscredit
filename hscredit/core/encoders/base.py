@@ -17,11 +17,25 @@ from abc import ABC, abstractmethod
 from typing import List, Optional, Tuple, Union, Dict, Any
 import numpy as np
 import pandas as pd
-from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.base import BaseEstimator, TransformerMixin, clone
 
 from ...exceptions import FeatureNotFoundError, NotFittedError
 from ...utils.parallel import ParallelizableMixin
 from ...utils.serialization import ArtifactSerializableMixin
+
+
+def _fit_encoder_column_worker(task):
+    """在隔离编码器候选对象上拟合一个列任务。"""
+    ordinal, column, candidate, values, y = task
+    payload = candidate._fit_column(column, values, y)
+    return ordinal, column, payload
+
+
+def _transform_encoder_column_worker(task):
+    """只读转换一个编码列并保留提交序号。"""
+    ordinal, column, encoder, values, y, context = task
+    transformed = encoder._transform_column(column, values, y, context)
+    return ordinal, column, transformed
 
 
 class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator, TransformerMixin, ABC):
@@ -149,6 +163,23 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         3. 删除方差为0的列（如果drop_invariant=True）
         4. 计算编码映射
         """
+        if not getattr(self, "_fit_transaction_active", False):
+            candidate = clone(self)
+            candidate._fit_transaction_active = True
+            candidate.fit(X, y)
+            candidate.__dict__.pop("_fit_transaction_active", None)
+
+            # 拟合不得替换调用方传入的可变构造参数；仅提交候选对象的学习状态。
+            public_params = {
+                name: getattr(self, name)
+                for name in self.get_params(deep=False)
+            }
+            fitted_state = candidate.__dict__.copy()
+            fitted_state.update(public_params)
+            self.__dict__.clear()
+            self.__dict__.update(fitted_state)
+            return self
+
         X = self._check_input(X)
 
         # 处理两种API风格：如果y为None且提供了target参数，从X中提取目标列
@@ -179,6 +210,93 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
 
         self._is_fitted = True
         return self
+
+    def _fit_columns(
+        self,
+        X: pd.DataFrame,
+        y: Optional[pd.Series] = None,
+        *,
+        state_attrs: Tuple[str, ...] = ("mapping_",),
+        shared_state: Optional[Dict[str, Any]] = None,
+        has_parallel_children: bool = False,
+    ) -> None:
+        """隔离拟合各列，并在全部成功后按学习列顺序一次提交状态。"""
+        shared_state = shared_state or {}
+        tasks = []
+        for ordinal, column in enumerate(self.cols_ or []):
+            candidate = clone(self)
+            candidate.cols_ = [column]
+            for attr, value in shared_state.items():
+                setattr(candidate, attr, value)
+            tasks.append((ordinal, column, candidate, X[column].copy(), y))
+
+        results = self._parallel_execute(
+            _fit_encoder_column_worker,
+            tasks,
+            task_labels=[column for _, column, *_ in tasks],
+            default_backend="loky",
+            has_parallel_children=has_parallel_children,
+        )
+
+        staged = {attr: {} for attr in state_attrs}
+        for _, column, payload in results:
+            for attr in state_attrs:
+                if attr not in payload:
+                    raise ValueError(f"列'{column}'拟合结果缺少状态'{attr}'")
+                value = payload[attr]
+                if attr == "mapping_" and isinstance(value, dict):
+                    value = self._canonicalize_nan_keys(value)
+                staged[attr][column] = value
+
+        for attr, value in staged.items():
+            setattr(self, attr, value)
+
+    def _transform_columns(
+        self,
+        X: pd.DataFrame,
+        y: Optional[pd.Series] = None,
+        *,
+        contexts: Optional[Dict[str, Any]] = None,
+        passthrough: bool = False,
+    ) -> pd.DataFrame:
+        """只读并行转换各列，并按学习列顺序恢复索引、dtype 与列布局。"""
+        contexts = contexts or {}
+        tasks = [
+            (ordinal, column, self, X[column].copy(), y, contexts.get(column))
+            for ordinal, column in enumerate(self.cols_ or [])
+        ]
+        results = self._parallel_execute(
+            _transform_encoder_column_worker,
+            tasks,
+            task_labels=[column for _, column, *_ in tasks],
+            default_backend="loky",
+        )
+
+        if not results:
+            return X.copy()
+
+        ordered = [result for _, _, result in sorted(results, key=lambda item: item[0])]
+        if all(isinstance(result, pd.Series) for result in ordered):
+            output = X.copy()
+            for (_, column, _), result in zip(sorted(results, key=lambda item: item[0]), ordered):
+                result = result.copy()
+                result.index = X.index
+                output[column] = result
+            return output
+
+        if not all(isinstance(result, pd.DataFrame) for result in ordered):
+            raise TypeError("编码列转换结果必须全部为Series或全部为DataFrame")
+
+        blocks = []
+        if passthrough:
+            other_cols = [column for column in X.columns if column not in (self.cols_ or [])]
+            if other_cols:
+                blocks.append(X[other_cols].copy())
+        for block in ordered:
+            block = block.copy()
+            block.index = X.index
+            blocks.append(block)
+        return pd.concat(blocks, axis=1) if blocks else pd.DataFrame(index=X.index)
 
     def transform(self, X: pd.DataFrame, y: Optional[pd.Series] = None) -> Union[pd.DataFrame, np.ndarray]:
         """转换数据。
@@ -465,6 +583,12 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         """
         serialized = {}
         for key, value in mapping.items():
+            if not isinstance(key, (str, bytes)):
+                try:
+                    if pd.isna(key):
+                        key = np.nan
+                except (TypeError, ValueError):
+                    pass
             if isinstance(value, pd.Series):
                 serialized[key] = value.to_dict()
             elif isinstance(value, dict):
@@ -472,6 +596,21 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
             else:
                 serialized[key] = value
         return serialized
+
+    @classmethod
+    def _canonicalize_nan_keys(cls, mapping: Dict) -> Dict:
+        """将进程往返产生的不同 NaN 键归一为同一稳定键。"""
+        canonical = {}
+        for key, value in mapping.items():
+            normalized = key
+            if not isinstance(key, (str, bytes)):
+                try:
+                    if pd.isna(key):
+                        normalized = np.nan
+                except (TypeError, ValueError):
+                    pass
+            canonical[normalized] = value
+        return canonical
 
     def _deserialize_mapping(self, mapping: Dict) -> Dict:
         """反序列化映射。
