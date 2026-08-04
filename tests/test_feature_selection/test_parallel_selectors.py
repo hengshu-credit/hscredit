@@ -137,6 +137,25 @@ class FaultInjectedAdoptSelector(TransactionalFailureSelector):
         return super()._apply_candidate_state(state)
 
 
+class PublicParamMutatingComposite(CompositeFeatureSelector):
+    """在提交 helper 中原地污染所有公开可变参数后失败。"""
+
+    def __init__(self, selectors, include=None, parallel_config=None):
+        super().__init__(
+            selectors=selectors,
+            include=include,
+            parallel_config=parallel_config,
+        )
+
+    def _apply_candidate_state(self, state):
+        if getattr(self, "_fail_public_adopt", False):
+            state["include"].append("污染特征")
+            state["parallel_config"]["backend_kwargs"]["nested"]["values"].append(99)
+            state["selectors"].append(TransactionalFailureSelector())
+            raise RuntimeError("公开可变参数提交失败")
+        return super()._apply_candidate_state(state)
+
+
 class FinalizeFailureScorecard(ScorecardFeatureSelection):
     """在 finalize 修改候选子状态后注入异常。"""
 
@@ -184,6 +203,55 @@ class BudgetAwareClassifier(BaseEstimator, ClassifierMixin):
 
     def score(self, X, y):
         return 0.5
+
+
+class BudgetAwareMetaClassifier(BaseEstimator, ClassifierMixin):
+    """同时验证 meta 并行层和更深层 estimator 被限制为 1。"""
+
+    def __init__(self, estimator, n_jobs=99, worker_budget=2, root_budget=4):
+        self.estimator = estimator
+        self.n_jobs = n_jobs
+        self.worker_budget = worker_budget
+        self.root_budget = root_budget
+
+    def fit(self, X, y):
+        budget = _current_parallel_budget()
+        expected = self.worker_budget if budget.depth > 0 else self.root_budget
+        if budget.available != expected or self.n_jobs != expected:
+            raise RuntimeError(
+                f"meta预算错误: context={budget.available}, n_jobs={self.n_jobs}, expected={expected}"
+            )
+        self.estimator.fit(X, y)
+        self.classes_ = np.unique(y)
+        return self
+
+    def predict(self, X):
+        return np.full(len(X), self.classes_[0])
+
+    def predict_proba(self, X):
+        return np.full((len(X), 2), 0.5)
+
+    def score(self, X, y):
+        return 0.5
+
+
+class NestedSerialClassifier(BaseEstimator, ClassifierMixin):
+    """深层估计器只校验自身 n_jobs；ContextVar 仍表示当前 worker 总子预算。"""
+
+    def __init__(self, n_jobs=99):
+        self.n_jobs = n_jobs
+
+    def fit(self, X, y):
+        if self.n_jobs != 1:
+            raise RuntimeError(f"深层预算错误: n_jobs={self.n_jobs}, expected=1")
+        self.classes_ = np.unique(y)
+        return self
+
+    def predict(self, X):
+        return np.full(len(X), self.classes_[0])
+
+    def predict_proba(self, X):
+        return np.full((len(X), 2), 0.5)
 
 
 class NoIdentityParallelFeatureImportanceSelector(FeatureImportanceSelector):
@@ -564,6 +632,78 @@ def test_nested_estimator_single_candidate_receives_full_budget(monkeypatch):
     assert estimator.named_steps["model"].n_jobs == 99
 
 
+@pytest.mark.parametrize("backend", ["threading", "loky"])
+@pytest.mark.parametrize("selector_kind", ["sequential", "stepwise"])
+@pytest.mark.parametrize("pipeline_wrapped", [False, True])
+def test_multilevel_meta_estimator_only_gives_budget_to_shallowest_parallel_layer(
+    selector_xy, monkeypatch, backend, selector_kind, pipeline_wrapped
+):
+    """外层候选、最浅 meta 与深层 estimator 必须按 2×2×1 收敛。"""
+    monkeypatch.setattr(parallel_utils, "get_physical_cpu_count", lambda: 5)
+    X, y = selector_xy
+    nested = NestedSerialClassifier(n_jobs=99)
+    meta = BudgetAwareMetaClassifier(
+        nested,
+        n_jobs=99,
+        worker_budget=2,
+        root_budget=4,
+    )
+    estimator = Pipeline([("meta", meta)]) if pipeline_wrapped else meta
+
+    if selector_kind == "sequential":
+        selector = SequentialFeatureSelector(
+            estimator,
+            n_features_to_select=1,
+            direction="forward",
+            cv=2,
+            n_jobs=-1,
+            parallel_backend=backend,
+        )
+    else:
+        selector = StepwiseSelector(
+            estimator=estimator,
+            direction="forward",
+            criterion="auc",
+            max_features=1,
+            p_enter=0.0,
+            max_iter=2,
+            n_jobs=-1,
+            parallel_backend=backend,
+        )
+
+    selector.fit(X, y)
+
+    assert selector.selected_features_ == ["特征甲"]
+    original_meta = estimator.named_steps["meta"] if pipeline_wrapped else estimator
+    assert original_meta.n_jobs == 99
+    assert original_meta.estimator.n_jobs == 99
+
+
+def test_multilevel_meta_single_candidate_gets_full_budget_only_at_shallowest_layer(monkeypatch):
+    """单候选时最浅 meta 获得 4，其内层 estimator 仍只获得 1。"""
+    monkeypatch.setattr(parallel_utils, "get_physical_cpu_count", lambda: 5)
+    X = pd.DataFrame({"唯一特征": [0.0, 1.0, 0.0, 1.0]})
+    y = pd.Series([0, 1, 0, 1])
+    estimator = BudgetAwareMetaClassifier(
+        NestedSerialClassifier(n_jobs=99),
+        n_jobs=99,
+        worker_budget=4,
+        root_budget=4,
+    )
+
+    selector = SequentialFeatureSelector(
+        estimator,
+        n_features_to_select=1,
+        cv=2,
+        n_jobs=-1,
+        parallel_backend="threading",
+    ).fit(X, y)
+
+    assert selector.selected_features_ == ["唯一特征"]
+    assert estimator.n_jobs == 99
+    assert estimator.estimator.n_jobs == 99
+
+
 def test_successive_fit_replaces_old_dropped_state():
     """防止第二次成功拟合沿用第一次的剔除报告。"""
     selector = ModeSelector(threshold=0.75, n_jobs=1)
@@ -668,6 +808,112 @@ def test_successful_fit_preserves_external_binner_and_composite_child_identity()
     assert binner.fit_calls == 1
     assert composite.selectors is children
     assert child._is_fitted is True
+
+
+def test_successful_fit_preserves_all_public_mutable_parameter_identities_and_contents():
+    """成功提交后公开 list/dict 必须保留身份且 fit 不修改其内容。"""
+    X = pd.DataFrame({"甲": [0, 1], "乙": [1, 0]})
+    child = TransactionalFailureSelector()
+    selectors_list = [child]
+    include = ["甲"]
+    parallel_config = {"backend_kwargs": {"nested": {"values": [1]}}}
+    expected_config = pickle.dumps(parallel_config)
+    selector = PublicParamMutatingComposite(
+        selectors_list,
+        include=include,
+        parallel_config=parallel_config,
+    )
+
+    selector.fit(X)
+
+    assert selector.selectors is selectors_list
+    assert selector.include is include
+    assert selector.parallel_config is parallel_config
+    assert selector.selectors == [child]
+    assert selector.include == ["甲"]
+    assert pickle.dumps(selector.parallel_config) == expected_config
+
+
+def test_adopt_helper_cannot_pollute_public_mutable_parameters_on_failure():
+    """故障 helper 即使原地修改 state，也不得污染原公开参数内容。"""
+    X = pd.DataFrame({"甲": [0, 1], "乙": [1, 0]})
+    child = TransactionalFailureSelector()
+    selectors_list = [child]
+    include = ["甲"]
+    parallel_config = {"backend_kwargs": {"nested": {"values": [1]}}}
+    selector = PublicParamMutatingComposite(
+        selectors_list,
+        include=include,
+        parallel_config=parallel_config,
+    )
+    selector._fail_public_adopt = True
+    snapshots = {
+        "selector": pickle.dumps(selector),
+        "include": pickle.dumps(include),
+        "parallel_config": pickle.dumps(parallel_config),
+        "selectors": pickle.dumps(selectors_list),
+    }
+
+    with pytest.raises(RuntimeError, match="公开可变参数提交失败"):
+        selector.fit(X)
+
+    assert selector.include is include
+    assert selector.parallel_config is parallel_config
+    assert selector.selectors is selectors_list
+    assert pickle.dumps(include) == snapshots["include"]
+    assert pickle.dumps(parallel_config) == snapshots["parallel_config"]
+    assert pickle.dumps(selectors_list) == snapshots["selectors"]
+    assert pickle.dumps(selector) == snapshots["selector"]
+
+
+@pytest.mark.parametrize("prefitted", [False, True])
+def test_composite_children_share_one_candidate_binner_and_commit_once(prefitted):
+    """共享 binner 在候选树中仍必须是同一对象，不得分裂状态。"""
+    X = pd.DataFrame({"甲": [0, 1], "乙": [1, 0]})
+    binner = TransactionalBinner()
+    if prefitted:
+        binner.fit(X)
+    first = TransactionalFailureSelector(binner=binner)
+    second = TransactionalFailureSelector(binner=binner)
+    children = [first, second]
+    selector = CompositeFeatureSelector(children)
+
+    selector.fit(X)
+
+    assert selector.selectors is children
+    assert first.binner is binner
+    assert second.binner is binner
+    assert first._binner_instance is binner
+    assert second._binner_instance is binner
+    assert binner.fit_calls == 1
+    assert binner.metrics == ["indices", "indices"]
+
+
+def test_shared_binner_and_all_children_roll_back_after_late_adopt_failure():
+    """共享 binner 去重提交后遇到后序 child 故障仍必须整体回滚。"""
+    X = pd.DataFrame({"甲": [0, 1], "乙": [1, 0]})
+    binner = TransactionalBinner()
+    first = TransactionalFailureSelector(binner=binner)
+    second = FaultInjectedAdoptSelector(binner=binner)
+    second._fail_adopt = True
+    children = [first, second]
+    selector = CompositeFeatureSelector(children)
+    snapshots = {
+        "selector": pickle.dumps(selector),
+        "binner": pickle.dumps(binner),
+        "first": pickle.dumps(first),
+        "second": pickle.dumps(second),
+    }
+
+    with pytest.raises(RuntimeError, match="第二子筛选器提交失败"):
+        selector.fit(X)
+
+    assert pickle.dumps(selector) == snapshots["selector"]
+    assert pickle.dumps(binner) == snapshots["binner"]
+    assert pickle.dumps(first) == snapshots["first"]
+    assert pickle.dumps(second) == snapshots["second"]
+    assert first.binner is binner
+    assert second.binner is binner
 
 
 def test_prefitted_external_binner_keeps_learned_state_without_refit():
