@@ -4,10 +4,12 @@ import matplotlib
 import numpy as np
 import pandas as pd
 import pytest
+from matplotlib.colors import to_rgba
 
 matplotlib.use("Agg")
 
 from hscredit.core.binning import OptimalBinning2D
+import hscredit.core.viz.binning_plots as binning_plots
 from hscredit.core.viz.binning_plots import bin_2d_plot, bin_plot, _xtick_rotation_for_length
 
 
@@ -102,6 +104,60 @@ def test_metric_summary_shrinks_on_small_figure():
 # ---------------------------------------------------------------------------
 # 需求4：二维分箱图九宫格顺序、隐藏元素与紧凑间距
 # ---------------------------------------------------------------------------
+def _normalized_segment(segment):
+    points = tuple(tuple(float(value) for value in point) for point in segment)
+    return tuple(sorted(points))
+
+
+def test_draw_2d_bin_boundaries_wraps_merged_region_without_internal_edges():
+    """合并箱只绘制整体外缘，不能保留同箱格子间的彩色边。"""
+    import matplotlib.pyplot as plt
+
+    solution = np.array([[0, 0, 1], [0, 2, 1]])
+    fig, ax = plt.subplots()
+    try:
+        artists = binning_plots._draw_2d_bin_boundaries(
+            ax,
+            solution,
+            bin_colors={0: "#2639E9", 1: "#E0249A", 2: "#E43550"},
+            expected_shape=(2, 3),
+        )
+
+        bin_zero = next(
+            artist for artist in artists
+            if artist.get_gid() == "bin-2d-boundary-0"
+        )
+        segments = {
+            _normalized_segment(segment)
+            for segment in bin_zero.get_segments()
+        }
+
+        assert len(segments) == 8
+        assert _normalized_segment(((0.5, 0.5), (0.5, 1.5))) not in segments
+        assert _normalized_segment(((-0.5, 0.5), (0.5, 0.5))) not in segments
+        assert tuple(bin_zero.get_colors()[0]) == pytest.approx(to_rgba("#2639E9"))
+    finally:
+        plt.close(fig)
+
+
+def test_draw_2d_bin_boundaries_rejects_invalid_solution_shape():
+    """空映射和与热力图不一致的映射必须被明确拒绝。"""
+    import matplotlib.pyplot as plt
+
+    fig, ax = plt.subplots()
+    try:
+        with pytest.raises(ValueError, match="二维分箱映射必须是非空二维矩阵"):
+            binning_plots._draw_2d_bin_boundaries(ax, np.array([]))
+        with pytest.raises(ValueError, match="二维分箱映射形状"):
+            binning_plots._draw_2d_bin_boundaries(
+                ax,
+                np.zeros((2, 3)),
+                expected_shape=(3, 2),
+            )
+    finally:
+        plt.close(fig)
+
+
 @pytest.fixture(scope="module")
 def bin_2d_figure():
     rng = np.random.RandomState(42)

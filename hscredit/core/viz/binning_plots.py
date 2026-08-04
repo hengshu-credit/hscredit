@@ -14,6 +14,7 @@ import os
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from matplotlib.collections import LineCollection
 from matplotlib.ticker import PercentFormatter
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
@@ -24,7 +25,7 @@ from .utils import (
     DEFAULT_COLORS, setup_axis_style, save_figure,
     format_bin_label,
     BAD_RATE_COLOR, REFERENCE_COLOR, EXTENDED_COLORS, get_series_colors,
-    make_colormap, make_diverging_cmap,
+    make_colormap, make_diverging_cmap, SEQUENTIAL_GRADIENT,
 )
 from ..._lazy import LazyModule
 from ..._compat import normalize_seaborn_inf
@@ -2485,6 +2486,63 @@ def bin_overdues_plot(
         save_figure(fig, save)
 
     return fig
+
+
+def _draw_2d_bin_boundaries(
+    ax,
+    solution: np.ndarray,
+    *,
+    bin_colors: Optional[Dict[int, Any]] = None,
+    expected_shape: Optional[tuple] = None,
+    linewidth: float = 2.2,
+) -> List[LineCollection]:
+    """按最终二维箱绘制整体外轮廓，同箱内部不绘制彩色分隔线。"""
+    solution = np.asarray(solution)
+    if solution.ndim != 2 or solution.size == 0:
+        raise ValueError("二维分箱映射必须是非空二维矩阵")
+    if expected_shape is not None and solution.shape != tuple(expected_shape):
+        raise ValueError(
+            f"二维分箱映射形状 {solution.shape} 与热力图形状 {tuple(expected_shape)} 不一致"
+        )
+
+    display_solution = np.flipud(solution)
+    bin_ids = sorted(int(bin_id) for bin_id in np.unique(display_solution))
+    if bin_colors is None:
+        cmap = make_colormap("hscredit_2d_bin_boundaries", SEQUENTIAL_GRADIENT)
+        positions = np.linspace(0.0, 1.0, len(bin_ids)) if len(bin_ids) > 1 else np.array([0.5])
+        bin_colors = {
+            bin_id: cmap(position)
+            for bin_id, position in zip(bin_ids, positions)
+        }
+
+    n_rows, n_cols = display_solution.shape
+    artists = []
+    for bin_id in bin_ids:
+        segments = []
+        for row, col in np.argwhere(display_solution == bin_id):
+            left, right = col - 0.5, col + 0.5
+            bottom, top = row - 0.5, row + 0.5
+            if col == 0 or display_solution[row, col - 1] != bin_id:
+                segments.append(((left, bottom), (left, top)))
+            if col == n_cols - 1 or display_solution[row, col + 1] != bin_id:
+                segments.append(((right, bottom), (right, top)))
+            if row == 0 or display_solution[row - 1, col] != bin_id:
+                segments.append(((left, bottom), (right, bottom)))
+            if row == n_rows - 1 or display_solution[row + 1, col] != bin_id:
+                segments.append(((left, top), (right, top)))
+
+        artist = LineCollection(
+            segments,
+            colors=[bin_colors[bin_id]],
+            linewidths=linewidth,
+            capstyle="butt",
+            joinstyle="miter",
+            zorder=4,
+        )
+        artist.set_gid(f"bin-2d-boundary-{bin_id}")
+        ax.add_collection(artist)
+        artists.append(artist)
+    return artists
 
 
 def _cross_heatmap_cell(
