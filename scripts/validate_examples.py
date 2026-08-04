@@ -18,6 +18,13 @@ from nbclient.exceptions import CellExecutionError, CellTimeoutError
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_EXAMPLES_DIR = PROJECT_ROOT / "examples"
 EXAMPLE_SUFFIXES = {".ipynb", ".py"}
+EXCLUDED_EXAMPLE_DIRS = {
+    ".ipynb_checkpoints",
+    "__pycache__",
+    "model_report",
+    "model_report_demo",
+    "tree_viz_output",
+}
 
 
 @dataclass
@@ -34,7 +41,13 @@ class ExampleResult:
 def discover_examples(examples_dir: Path) -> list[Path]:
     """按稳定顺序发现目录下的 notebook 与 Python 示例。"""
     return sorted(
-        (path for path in examples_dir.rglob("*") if path.is_file() and path.suffix.lower() in EXAMPLE_SUFFIXES),
+        (
+            path
+            for path in examples_dir.rglob("*")
+            if path.is_file()
+            and path.suffix.lower() in EXAMPLE_SUFFIXES
+            and not EXCLUDED_EXAMPLE_DIRS.intersection(path.relative_to(examples_dir).parts[:-1])
+        ),
         key=lambda path: path.relative_to(examples_dir).as_posix(),
     )
 
