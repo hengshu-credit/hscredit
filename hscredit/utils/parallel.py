@@ -61,18 +61,19 @@ def resolve_n_jobs(
     ``-1`` 大约使用物理 CPU 的 80%，并在多核环境中保留一个 CPU。
     正整数表示固定工作数，``0`` 到 ``1`` 之间的小数表示物理 CPU 比例。
     """
-    if n_jobs is None:
-        return None
-    if isinstance(n_jobs, (bool, np.bool_)) or not isinstance(n_jobs, numbers.Real):
-        raise ValidationError("n_jobs 必须为 -1、正整数或 0 到 1 之间的小数")
-
-    cpus = max(1, int(cpu_count or get_physical_cpu_count()))
     if available_budget is not None:
         if isinstance(available_budget, (bool, np.bool_)) or not isinstance(available_budget, numbers.Integral):
             raise ValidationError("available_budget 必须为正整数")
         if available_budget < 1:
             raise ValidationError("available_budget 必须为正整数")
         available_budget = int(available_budget)
+
+    if n_jobs is None:
+        return None
+    if isinstance(n_jobs, (bool, np.bool_)) or not isinstance(n_jobs, numbers.Real):
+        raise ValidationError("n_jobs 必须为 -1、正整数或 0 到 1 之间的小数")
+
+    cpus = max(1, int(cpu_count or get_physical_cpu_count()))
 
     if isinstance(n_jobs, numbers.Integral):
         value = int(n_jobs)
