@@ -137,7 +137,7 @@ class BestLiftBinning(BaseBinning):
         X, y = self._check_input(X, y)
 
         # 对每个特征进行分箱
-        self._fit_features(X.columns, lambda f: self._fit_feature(f, X[f], y))
+        self._fit_features(X, y, "_fit_feature")
 
         self._apply_post_fit_constraints(X, y, enforce_monotonic=True)
         self._finalize_categorical_fit()
@@ -624,6 +624,19 @@ class BestLiftBinning(BaseBinning):
 
             return bins
 
+    def _transform_lift_metric(self, feature: str, bins: np.ndarray, metric: str):
+        """生成单特征 LIFT 转换结果。"""
+        if metric != "lift":
+            return None
+        bin_table = self.get_bin_table(feature)
+        lift_map = {}
+        for index, row in bin_table.iterrows():
+            if row["分箱标签"] in ["缺失", "special"]:
+                lift_map[-1 if row["分箱标签"] == "缺失" else -2] = np.nan
+            else:
+                lift_map[index] = row["LIFT值"]
+        return np.asarray([lift_map.get(value, np.nan) for value in bins])
+
     def transform(
         self, X: Union[pd.DataFrame, np.ndarray], metric: str = "indices", **kwargs
     ) -> Union[pd.DataFrame, np.ndarray]:
@@ -662,44 +675,13 @@ class BestLiftBinning(BaseBinning):
             else:
                 X = pd.DataFrame(X)
 
-        result = pd.DataFrame(index=X.index)
-
-        for feature in X.columns:
-            if feature not in self.splits_:
-                result[feature] = X[feature]
-                continue
-
-            bins = self._assign_bins(X[feature], feature)
-
-            if metric == "indices":
-                result[feature] = bins
-            elif metric == "bins":
-                result[feature] = self._assign_bin_labels(feature, bins)
-            elif metric == "woe":
-                # 优先使用_woe_maps_（从export/load导入）
-                if hasattr(self, "_woe_maps_") and feature in self._woe_maps_:
-                    woe_map = self._woe_maps_[feature]
-                elif feature in self.bin_tables_:
-                    bin_table = self.bin_tables_[feature]
-                    woe_map = dict(zip(range(len(bin_table)), bin_table["分档WOE值"].values))
-                    self._enrich_woe_map(woe_map, bin_table)
-                else:
-                    raise ValueError(f"特征 '{feature}' 没有WOE映射信息")
-                result[feature] = [woe_map.get(b, 0) for b in bins]
-            elif metric == "lift":
-                # 返回 Lift 值
-                bin_table = self.get_bin_table(feature)
-                lift_map = {}
-                for i, row in bin_table.iterrows():
-                    if row["分箱标签"] in ["缺失", "special"]:
-                        lift_map[-1 if row["分箱标签"] == "缺失" else -2] = np.nan
-                    else:
-                        lift_map[i] = row["LIFT值"]
-                result[feature] = [lift_map.get(b, np.nan) for b in bins]
-            else:
-                raise ValueError(f"不支持的metric: {metric}")
-
-        return result
+        return self._transform_binning_features(
+            X,
+            metric,
+            lambda feature: self._assign_bins(X[feature], feature),
+            woe_default=0.0,
+            extra_metric=self._transform_lift_metric,
+        )
 
     def get_bin_table(self, feature: str) -> pd.DataFrame:
         """获取分箱统计表.

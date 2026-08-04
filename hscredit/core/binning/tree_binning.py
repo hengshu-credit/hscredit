@@ -122,38 +122,28 @@ class TreeBinning(BaseBinning):
         # 检查输入数据
         X, y = self._check_input(X, y)
 
-        # 对每个特征进行分箱
-        def _fit_one(feature):
-            if self.verbose:
-                logger.info(f"处理特征: {feature}")
-
-            # 检测特征类型
-            if self.force_numerical:
-                feature_type = "numerical"
-            else:
-                feature_type = self._detect_feature_type(X[feature])
-            self.feature_types_[feature] = feature_type
-
-            if feature_type == "categorical":
-                # 类别型特征：按坏样本率排序
-                splits = self._fit_categorical(X[feature], y)
-                self.splits_[feature] = splits
-            else:
-                # 数值型特征：决策树分箱
-                splits = self._fit_numerical(X[feature], y)
-                self.splits_[feature] = self._round_splits(splits)
-            self.n_bins_[feature] = len(splits) + 1
-
-            # 计算分箱统计信息
-            bins = self._apply_bins(X[feature], splits)
-            self.bin_tables_[feature] = self._compute_bin_stats(feature, X[feature], y, bins)
-
-        self._fit_features(X.columns, _fit_one)
+        self._fit_features(X, y, "_fit_feature")
 
         self._apply_post_fit_constraints(X, y, enforce_monotonic=True)
         self._finalize_categorical_fit()
         self._is_fitted = True
         return self
+
+    def _fit_feature(self, feature: str, X: pd.Series, y: pd.Series) -> None:
+        """拟合单个特征。"""
+        if self.verbose:
+            logger.info(f"处理特征: {feature}")
+        feature_type = "numerical" if self.force_numerical else self._detect_feature_type(X)
+        self.feature_types_[feature] = feature_type
+        if feature_type == "categorical":
+            splits = self._fit_categorical(X, y)
+            self.splits_[feature] = splits
+        else:
+            splits = self._fit_numerical(X, y)
+            self.splits_[feature] = self._round_splits(splits)
+        self.n_bins_[feature] = len(splits) + 1
+        bins = self._apply_bins(X, splits)
+        self.bin_tables_[feature] = self._compute_bin_stats(feature, X, y, bins)
 
     def _fit_numerical(self, x: pd.Series, y: pd.Series) -> np.ndarray:
         """对数值型特征进行决策树分箱.
@@ -524,34 +514,12 @@ class TreeBinning(BaseBinning):
             else:
                 X = pd.DataFrame(X)
 
-        result = pd.DataFrame(index=X.index)
-
-        for feature in X.columns:
-            if feature not in self.splits_:
-                raise KeyError(f"特征 '{feature}' 未在训练数据中找到")
-
-            splits = self.splits_[feature]
-            bins = self._apply_bins(X[feature], splits)
-
-            if metric == "indices":
-                result[feature] = bins
-            elif metric == "bins":
-                result[feature] = self._assign_bin_labels(feature, bins)
-            elif metric == "woe":
-                # 优先使用_woe_maps_（从export/load导入）
-                if hasattr(self, "_woe_maps_") and feature in self._woe_maps_:
-                    woe_map = self._woe_maps_[feature]
-                elif feature in self.bin_tables_:
-                    bin_table = self.bin_tables_[feature]
-                    woe_map = dict(zip(range(len(bin_table)), bin_table["分档WOE值"].values))
-                    self._enrich_woe_map(woe_map, bin_table)
-                else:
-                    raise ValueError(f"特征 '{feature}' 没有WOE映射信息")
-                result[feature] = pd.Series(bins).map(woe_map).values
-            else:
-                raise ValueError(f"未知的metric: {metric}")
-
-        return result
+        return self._transform_binning_features(
+            X,
+            metric,
+            lambda feature: self._apply_bins(X[feature], self.splits_[feature]),
+            missing_feature="error",
+        )
 
 
 if __name__ == "__main__":

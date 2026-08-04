@@ -269,8 +269,9 @@ class ORBinning(BaseBinning):
         # 检查输入数据
         X, y = self._check_input(X, y)
 
-        # 对每个特征进行分箱
-        self._fit_features(X.columns, lambda f: self._fit_feature(f, X[f], y))
+        # 所有特征共享同一全量样本数，worker 只读继承该整轮状态。
+        self._n_total_samples = len(X)
+        self._fit_features(X, y, "_fit_feature")
 
         self._apply_post_fit_constraints(X, y, enforce_monotonic=True)
         self._finalize_categorical_fit()
@@ -306,7 +307,6 @@ class ORBinning(BaseBinning):
             self.n_bins_[feature] = len(splits) + 1 if splits else len(X_valid.unique())
         else:
             # 数值型变量：使用 OR-Tools 优化
-            self._n_total_samples = len(X)  # 记录全量样本数供 _score_splits 使用
             splits = self._or_numerical(X_valid, y_valid)
             self.splits_[feature] = self._round_splits(splits)
             self.n_bins_[feature] = len(splits) + 1
@@ -2219,32 +2219,12 @@ class ORBinning(BaseBinning):
             else:
                 X = pd.DataFrame(X)
 
-        result = pd.DataFrame(index=X.index)
-
-        for feature in X.columns:
-            if feature in self.splits_:
-                bins = self._assign_bins(X[feature], feature)
-
-                if metric == "indices":
-                    result[feature] = bins
-                elif metric == "bins":
-                    result[feature] = self._assign_bin_labels(feature, bins)
-                elif metric == "woe":
-                    # 优先使用_woe_maps_（从export/load导入）
-                    if hasattr(self, "_woe_maps_") and feature in self._woe_maps_:
-                        woe_map = self._woe_maps_[feature]
-                    elif feature in self.bin_tables_:
-                        woe_map = dict(zip(range(len(self.bin_tables_[feature])), self.bin_tables_[feature]["分档WOE值"]))
-                        self._enrich_woe_map(woe_map, self.bin_tables_[feature])
-                    else:
-                        raise ValueError(f"特征 '{feature}' 没有WOE映射信息")
-                    result[feature] = [woe_map.get(b, 0) for b in bins]
-                else:
-                    raise ValueError(f"不支持的metric: {metric}")
-            else:
-                result[feature] = X[feature]
-
-        return result
+        return self._transform_binning_features(
+            X,
+            metric,
+            lambda feature: self._assign_bins(X[feature], feature),
+            woe_default=0.0,
+        )
 
 
 # =============================================================================

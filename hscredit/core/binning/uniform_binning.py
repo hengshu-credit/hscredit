@@ -123,7 +123,7 @@ class UniformBinning(BaseBinning):
         X, y = self._check_input(X, y)
 
         # 对每个特征进行分箱
-        self._fit_features(X.columns, lambda f: self._fit_feature(f, X[f], y))
+        self._fit_features(X, y, "_fit_feature")
 
         self._finalize_categorical_fit()
         self._is_fitted = True
@@ -302,33 +302,6 @@ class UniformBinning(BaseBinning):
             else:
                 X = pd.DataFrame(X)
 
-        result = pd.DataFrame(index=X.index)
-
-        for feature in X.columns:
-            if feature in self.splits_:
-                bins = self._assign_bins(X[feature], feature)
-
-                if metric == "indices":
-                    result[feature] = bins
-                elif metric == "bins":
-                    result[feature] = self._assign_bin_labels(feature, bins)
-                elif metric == "woe":
-                    # 转换为WOE值，优先使用_woe_maps_（从export/load导入）
-                    if hasattr(self, "_woe_maps_") and feature in self._woe_maps_:
-                        woe_map = self._woe_maps_[feature]
-                    elif feature in self.bin_tables_:
-                        bin_table = self.bin_tables_[feature]
-                        woe_map = {}
-                        for idx, row in bin_table.iterrows():
-                            bin_idx = idx
-                            woe_map[bin_idx] = row["分档WOE值"]
-                        self._enrich_woe_map(woe_map, bin_table)
-                    else:
-                        raise ValueError(f"特征 '{feature}' 没有WOE映射信息")
-                    result[feature] = [woe_map.get(b, 0) for b in bins]
-                else:
-                    raise ValueError(f"不支持的metric: {metric}")
-            else:
-                result[feature] = X[feature]
-
-        return result
+        return self._transform_binning_features(
+            X, metric, lambda feature: self._assign_bins(X[feature], feature), woe_default=0.0
+        )

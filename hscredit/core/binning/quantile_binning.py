@@ -163,61 +163,47 @@ class QuantileBinning(BaseBinning):
         # 检查输入数据
         X, y = self._check_input(X, y)
 
-        # 对每个特征进行分箱
-        def _fit_one(feature):
-            if self.verbose:
-                logger.info(f"处理特征: {feature}")
-
-            # 检测特征类型
-            if self.force_numerical:
-                feature_type = "numerical"
-            else:
-                feature_type = self._detect_feature_type(X[feature])
-            self.feature_types_[feature] = feature_type
-
-            if feature_type == "categorical":
-                # 类别型特征：每个类别作为一个箱
-                splits = self._fit_categorical(X[feature], y)
-                self.splits_[feature] = splits
-            else:
-                # 数值型特征：等频分箱
-                splits = self._fit_numerical(X[feature], y)
-                splits = self._round_splits(splits)
-                if self.quantiles is not None and len(splits) > 0:
-                    # 四舍五入后可能产生相同切分点，去重以避免空箱
-                    splits = np.unique(splits)
-                if self.monotonic not in [False, None, "none"] and len(splits) > 0:
-                    from .monotonic_binning import MonotonicBinning
-
-                    mono = MonotonicBinning(
-                        monotonic=self.monotonic,
-                        max_n_bins=self.max_n_bins,
-                        min_n_bins=self.min_n_bins,
-                        min_bin_size=self.min_bin_size,
-                        special_codes=self.special_codes,
-                        missing_separate=self.missing_separate,
-                        random_state=self.random_state,
-                        verbose=False,
-                    )
-                    splits = mono._ensure_monotonic(
-                        X[feature].dropna(),
-                        y.loc[X[feature].dropna().index],
-                        splits,
-                        mono._detect_monotonic_mode(X[feature].dropna(), y.loc[X[feature].dropna().index], splits),
-                    )
-                    splits = self._round_splits(splits)
-                self.splits_[feature] = splits
-            self.n_bins_[feature] = len(splits) + 1
-
-            # 计算分箱统计信息
-            bins = self._apply_bins(X[feature], self.splits_[feature])
-            self.bin_tables_[feature] = self._compute_bin_stats(feature, X[feature], y, bins)
-
-        self._fit_features(X.columns, _fit_one)
+        self._fit_features(X, y, "_fit_feature")
 
         self._finalize_categorical_fit()
         self._is_fitted = True
         return self
+
+    def _fit_feature(self, feature: str, X: pd.Series, y: pd.Series) -> None:
+        """拟合单个特征。"""
+        if self.verbose:
+            logger.info(f"处理特征: {feature}")
+        feature_type = "numerical" if self.force_numerical else self._detect_feature_type(X)
+        self.feature_types_[feature] = feature_type
+        if feature_type == "categorical":
+            splits = self._fit_categorical(X, y)
+            self.splits_[feature] = splits
+        else:
+            splits = self._round_splits(self._fit_numerical(X, y))
+            if self.quantiles is not None and len(splits) > 0:
+                splits = np.unique(splits)
+            if self.monotonic not in [False, None, "none"] and len(splits) > 0:
+                from .monotonic_binning import MonotonicBinning
+
+                mono = MonotonicBinning(
+                    monotonic=self.monotonic,
+                    max_n_bins=self.max_n_bins,
+                    min_n_bins=self.min_n_bins,
+                    min_bin_size=self.min_bin_size,
+                    special_codes=self.special_codes,
+                    missing_separate=self.missing_separate,
+                    random_state=self.random_state,
+                    verbose=False,
+                )
+                clean = X.dropna()
+                splits = mono._ensure_monotonic(
+                    clean, y.loc[clean.index], splits, mono._detect_monotonic_mode(clean, y.loc[clean.index], splits)
+                )
+                splits = self._round_splits(splits)
+            self.splits_[feature] = splits
+        self.n_bins_[feature] = len(splits) + 1
+        bins = self._apply_bins(X, self.splits_[feature])
+        self.bin_tables_[feature] = self._compute_bin_stats(feature, X, y, bins)
 
     def _fit_numerical(self, x: pd.Series, y: pd.Series) -> np.ndarray:
         """对数值型特征进行等频分箱.
@@ -531,35 +517,11 @@ class QuantileBinning(BaseBinning):
             else:
                 X = pd.DataFrame(X)
 
-        result = pd.DataFrame(index=X.index)
-
-        for feature in X.columns:
-            if feature not in self.splits_:
-                result[feature] = X[feature]
-                continue
-
-            splits = self.splits_[feature]
-            bins = self._apply_bins(X[feature], splits)
-
-            if metric == "indices":
-                result[feature] = bins
-            elif metric == "bins":
-                result[feature] = self._assign_bin_labels(feature, bins)
-            elif metric == "woe":
-                # 根据WOE映射，优先使用_export的_woe_maps_
-                if hasattr(self, "_woe_maps_") and feature in self._woe_maps_:
-                    woe_map = self._woe_maps_[feature]
-                elif feature in self.bin_tables_:
-                    bin_table = self.bin_tables_[feature]
-                    woe_map = dict(zip(range(len(bin_table)), bin_table["分档WOE值"].values))
-                    self._enrich_woe_map(woe_map, bin_table)
-                else:
-                    raise ValueError(f"特征 '{feature}' 没有WOE映射信息，请先fit或加载包含WOE信息的规则")
-                result[feature] = pd.Series(bins).map(woe_map).values
-            else:
-                raise ValueError(f"未知的metric: {metric}")
-
-        return result
+        return self._transform_binning_features(
+            X,
+            metric,
+            lambda feature: self._apply_bins(X[feature], self.splits_[feature]),
+        )
 
 
 if __name__ == "__main__":
