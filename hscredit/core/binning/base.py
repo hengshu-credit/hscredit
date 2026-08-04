@@ -19,6 +19,7 @@ from sklearn.base import BaseEstimator, TransformerMixin
 
 from ...exceptions import FeatureNotFoundError, NotFittedError
 from ...utils.misc import round_float
+from ...utils.parallel import ParallelizableMixin
 from ...utils.serialization import ArtifactSerializableMixin
 from ._categorical import (
     CategoryOrder,
@@ -41,7 +42,7 @@ from ..metrics._binning import (
 )
 
 
-class BaseBinning(ArtifactSerializableMixin, BaseEstimator, TransformerMixin, ABC):
+class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator, TransformerMixin, ABC):
     """分箱算法基类.
 
     所有分箱算法都继承此类，实现统一的fit/transform接口。
@@ -77,10 +78,9 @@ class BaseBinning(ArtifactSerializableMixin, BaseEstimator, TransformerMixin, AB
         - 如果 >= 1, 表示保留频率最高的N个类别
     :param user_splits: 用户自定义分箱规则，例如{'feature': [0, 10, 20, 30]}
     :param random_state: 随机种子，用于可复现性，默认为None
-    :param n_jobs: 并行计算的任务数，默认为1
-        - 1: 单进程
-        - -1: 使用所有CPU
-        - n: 使用n个进程
+    :param n_jobs: 并行工作数，默认为-1；None沿用旧串行行为
+    :param parallel_backend: joblib并行后端，默认为None
+    :param parallel_config: joblib扩展配置，默认为None
     :param verbose: 是否输出详细信息，默认为False
     :param decimal: 数值型切分点小数点保留精度，默认为4
     :param woe_clip: WOE值截断阈值，默认为None
@@ -213,10 +213,12 @@ class BaseBinning(ArtifactSerializableMixin, BaseEstimator, TransformerMixin, AB
         category_order: CategoryOrder = None,
         handle_unknown: str = "value",
         random_state: Optional[int] = None,
-        n_jobs: int = 1,
+        n_jobs: Optional[Union[int, float]] = -1,
         verbose: Union[bool, int] = False,
         decimal: int = 4,
         woe_clip: Optional[float] = None,
+        parallel_backend: Optional[str] = None,
+        parallel_config: Optional[Dict[str, Any]] = None,
     ):
         self.target = target
         self.missing_separate = missing_separate
@@ -234,6 +236,8 @@ class BaseBinning(ArtifactSerializableMixin, BaseEstimator, TransformerMixin, AB
         self.handle_unknown = handle_unknown
         self.random_state = random_state
         self.n_jobs = n_jobs
+        self.parallel_backend = parallel_backend
+        self.parallel_config = parallel_config
         self.verbose = verbose
         if isinstance(decimal, (bool, np.bool_)) or not isinstance(decimal, (int, np.integer)) or int(decimal) < 0:
             raise ValueError("decimal 必须是大于等于 0 的整数")
@@ -845,14 +849,12 @@ class BaseBinning(ArtifactSerializableMixin, BaseEstimator, TransformerMixin, AB
         :param fit_one: 单特征拟合回调 ``fit_one(feature)``，内部完成该特征的全部拟合
         """
         features = list(features)
-        n_jobs = getattr(self, "n_jobs", 1) or 1
-        if n_jobs == 1 or len(features) <= 1:
-            for feature in features:
-                fit_one(feature)
-            return
-        from joblib import Parallel, delayed
-
-        Parallel(n_jobs=n_jobs, prefer="threads")(delayed(fit_one)(feature) for feature in features)
+        self._parallel_execute(
+            fit_one,
+            features,
+            default_backend="threading",
+            task_labels=features,
+        )
 
     def _get_min_samples(self, n_samples: int) -> int:
         """计算最小样本数.

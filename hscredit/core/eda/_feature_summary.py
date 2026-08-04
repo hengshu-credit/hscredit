@@ -9,8 +9,9 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import pandas as pd
-from joblib import Parallel, cpu_count, delayed
 from sklearn.model_selection import train_test_split
+
+from ...utils.parallel import parallel_execute, resolve_n_jobs
 
 
 TargetLike = Union[str, Sequence[Any], np.ndarray, pd.Series]
@@ -148,43 +149,25 @@ def _ratio(numerator: int, denominator: int) -> float:
     return numerator / denominator if denominator else 0.0
 
 
-def _physical_cpu_count() -> int:
-    """读取物理核心数，并兼容较早版本 joblib。"""
-    try:
-        count = cpu_count(only_physical_cores=True)
-    except TypeError:
-        count = cpu_count()
-    return max(1, int(count))
-
-
-def _resolve_n_jobs(n_jobs: int, task_count: int) -> int:
-    """解析并行工作单元上限，自动模式始终为系统保留计算余量。"""
-    if n_jobs == 0 or n_jobs < -1:
-        raise ValueError("n_jobs 必须为 -1 或正整数")
-
-    task_limit = max(1, int(task_count))
-    if n_jobs > 0:
-        return min(n_jobs, task_limit)
-
-    physical = _physical_cpu_count()
-    workers = max(1, math.floor(physical * 0.75))
-    if physical > 1:
-        workers = min(workers, physical - 1)
-    return min(workers, task_limit)
+def _resolve_n_jobs(
+    n_jobs: Optional[Union[int, float]], task_count: int
+) -> Optional[int]:
+    """使用全库共享规则解析字段摘要的并行工作数。"""
+    return resolve_n_jobs(n_jobs, task_count=task_count)
 
 
 def _select_parallel_strategy(
-    n_jobs: int,
+    n_jobs: Optional[Union[int, float]],
     feature_count: int,
     row_count: int,
     has_expensive_metrics: bool,
 ) -> Tuple[int, str]:
     """根据任务规模选择串行、线程或 loky 进程执行。"""
     available_workers = _resolve_n_jobs(n_jobs, feature_count)
-    if available_workers == 1:
+    if available_workers is None or available_workers == 1:
         return 1, "sequential"
 
-    if n_jobs > 0:
+    if n_jobs is not None and n_jobs > 0:
         backend = "threads" if feature_count < 128 else "processes"
         return available_workers, backend
 
@@ -841,30 +824,37 @@ def _slice_psi_context(context: Optional[_PsiContext], batch: Sequence[Any]) -> 
     return _PsiContext(kind=context.kind, pairs=context.pairs, val_df=context.val_df.loc[:, columns])
 
 
-def _process_batch_task(
-    df: pd.DataFrame,
-    batch: Sequence[Any],
-    percentiles: Sequence[float],
-    numeric_as_categorical: Sequence[Any],
-    force_numeric: Sequence[Any],
-    y_series: Optional[pd.Series],
-    psi_context: Optional[_PsiContext],
-    max_n_bins: int,
-    reporter,
-    binning_config: Optional[Dict[str, Any]] = None,
+@dataclass
+class _FeatureSummaryBatchTask:
+    """字段摘要 worker 的完整输入，在线程与进程后端间共用。"""
+
+    df: pd.DataFrame
+    batch: Sequence[Any]
+    percentiles: Sequence[float]
+    numeric_as_categorical: Sequence[Any]
+    force_numeric: Sequence[Any]
+    y_series: Optional[pd.Series]
+    psi_context: Optional[_PsiContext]
+    max_n_bins: int
+    reporter: Any
+    binning_config: Optional[Dict[str, Any]] = None
+
+
+def _run_feature_summary_batch(
+    task: _FeatureSummaryBatchTask,
 ) -> List[Dict[str, Any]]:
-    """loky 进程入口；仅接收当前字段批次的数据切片。"""
+    """执行一个字段摘要批次；串行、线程与进程使用同一 worker。"""
     return _summarize_complete_batch(
-        df,
-        batch,
-        percentiles,
-        numeric_as_categorical,
-        force_numeric,
-        y_series,
-        psi_context,
-        max_n_bins,
-        reporter,
-        binning_config,
+        task.df,
+        task.batch,
+        task.percentiles,
+        task.numeric_as_categorical,
+        task.force_numeric,
+        task.y_series,
+        task.psi_context,
+        task.max_n_bins,
+        task.reporter,
+        task.binning_config,
     )
 
 
@@ -924,46 +914,15 @@ def build_feature_summary_fields(
     event_queue = None
     monitor = None
     try:
-        if backend == "sequential":
-            batch_results = [
-                _summarize_complete_batch(
-                    df,
-                    batch,
-                    percentiles,
-                    numeric_as_categorical,
-                    force_numeric,
-                    y_series,
-                    psi_context,
-                    max_n_bins,
-                    reporter,
-                    _slice_binning_config(effective_binning_config, batch),
-                )
-                for batch in batches
-            ]
-        elif backend == "threads":
-            batch_results = Parallel(n_jobs=workers, prefer="threads", batch_size=1)(
-                delayed(_summarize_complete_batch)(
-                    df,
-                    batch,
-                    percentiles,
-                    numeric_as_categorical,
-                    force_numeric,
-                    y_series,
-                    psi_context,
-                    max_n_bins,
-                    reporter,
-                    _slice_binning_config(effective_binning_config, batch),
-                )
-                for batch in batches
-            )
-        else:
-            process_reporter = None
+        task_reporter = reporter
+        if backend == "processes":
+            task_reporter = None
             if show_progress:
                 from joblib.externals.loky.backend.context import get_context
 
                 manager = get_context().Manager()
                 event_queue = manager.Queue()
-                process_reporter = _QueueProgressReporter(event_queue)
+                task_reporter = _QueueProgressReporter(event_queue)
                 monitor = threading.Thread(
                     target=_monitor_progress_events,
                     args=(event_queue, reporter),
@@ -971,21 +930,41 @@ def build_feature_summary_fields(
                 )
                 monitor.start()
 
-            batch_results = Parallel(n_jobs=workers, prefer="processes", batch_size=1)(
-                delayed(_process_batch_task)(
-                    df.loc[:, batch],
-                    batch,
-                    percentiles,
-                    numeric_as_categorical,
-                    force_numeric,
-                    y_series,
-                    _slice_psi_context(psi_context, batch),
-                    max_n_bins,
-                    process_reporter,
-                    _slice_binning_config(effective_binning_config, batch),
-                )
-                for batch in batches
+        tasks = [
+            _FeatureSummaryBatchTask(
+                df=df.loc[:, batch] if backend == "processes" else df,
+                batch=batch,
+                percentiles=percentiles,
+                numeric_as_categorical=numeric_as_categorical,
+                force_numeric=force_numeric,
+                y_series=y_series,
+                psi_context=(
+                    _slice_psi_context(psi_context, batch)
+                    if backend == "processes"
+                    else psi_context
+                ),
+                max_n_bins=max_n_bins,
+                reporter=task_reporter,
+                binning_config=_slice_binning_config(effective_binning_config, batch),
             )
+            for batch in batches
+        ]
+        backend_name = {
+            "sequential": None,
+            "threads": "threading",
+            "processes": "loky",
+        }[backend]
+        batch_results = parallel_execute(
+            _run_feature_summary_batch,
+            tasks,
+            n_jobs=1 if backend == "sequential" else workers,
+            parallel_backend=backend_name,
+            parallel_config={"batch_size": 1},
+            task_labels=[
+                f"字段批次 {index + 1}: {task.batch[0] if task.batch else ''}"
+                for index, task in enumerate(tasks)
+            ],
+        )
     finally:
         if event_queue is not None:
             event_queue.put(("stop", None))
