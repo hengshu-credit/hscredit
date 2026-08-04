@@ -91,21 +91,29 @@ def run_quickstart(output_dir=None):
     tree_extractor.fit(X_train, y_train)
     tree_rules = tree_extractor.extract_rules()
 
+    artifact_path = None
+    report_path = None
+    if output_dir is not None:
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        artifact_path = model.save_artifact(output_dir / "risk_model.joblib")
+        report_path = output_dir / "quickstart_model_report.xlsx"
+
     report = auto_model_report(
         model,
         X_train=X_train,
         y_train=y_train,
         X_test=X_test,
         y_test=y_test,
+        excel_path=report_path,
         verbose=False,
         with_plots=False,
     )
+    report_metrics = report.get_metrics()
+    report_summary = report.summary()
 
-    artifact_path = None
-    if output_dir is not None:
-        output_dir = Path(output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
-        artifact_path = model.save_artifact(output_dir / "risk_model.joblib")
+    if report_path is not None:
+        assert report_path.is_file() and report_path.stat().st_size > 0, "模型报告未正确生成"
 
     return {
         "train_rows": len(train_df),
@@ -117,6 +125,9 @@ def run_quickstart(output_dir=None):
         "single_rules": single_rules,
         "tree_rules": tree_rules,
         "report": report,
+        "report_path": report_path,
+        "report_metrics": report_metrics,
+        "report_summary": report_summary,
         "artifact_path": artifact_path,
     }
 
@@ -127,3 +138,8 @@ if __name__ == "__main__":
         print("快速开始示例执行成功")
         print(f"训练集/测试集: {result['train_rows']}/{result['test_rows']}")
         print(f"测试集 AUC: {result['metrics']['AUC']:.4f}")
+        print(f"模型报告: {result['report_path']}")
+        print("模型报告核心指标:")
+        print(result["report_metrics"].to_string(index=False))
+        print("模型报告摘要:")
+        print(result["report_summary"].to_string())
