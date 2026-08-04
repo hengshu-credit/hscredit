@@ -58,6 +58,12 @@ def test_invalid_available_budget_raises_chinese_validation_error(available_budg
         resolve_n_jobs(-1, cpu_count=8, available_budget=available_budget)
 
 
+def test_serial_n_jobs_still_validates_available_budget():
+    """兼容的串行模式也不能绕过嵌套预算校验。"""
+    with pytest.raises(ValidationError, match="available_budget"):
+        resolve_n_jobs(None, available_budget=0)
+
+
 def test_large_integral_n_jobs_preserves_exact_worker_count():
     """大整数工作数不能因浮点转换而丢失精度。"""
     large_n_jobs = 2**53 + 1
