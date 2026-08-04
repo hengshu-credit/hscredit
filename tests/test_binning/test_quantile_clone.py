@@ -21,9 +21,9 @@ def test_quantile_binning_clone_keeps_constructor_quantiles_and_fitted_rules(qua
 
     binner = QuantileBinning(quantiles=quantiles)
 
-    assert binner.quantiles is quantiles
-
     cloned = clone(binner)
+
+    assert binner.quantiles is quantiles
     cloned.fit(data, target)
 
     assert cloned._is_fitted
