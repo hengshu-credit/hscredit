@@ -2242,8 +2242,8 @@ class ModelReport:
                     img_end_row, _ = writer.insert_pic2sheet(ws, fig, (img_start_row, current_col), figsize=(500, 300))
                     current_col = _next_image_col(ws, current_col, 500)
                     max_img_end_row = max(max_img_end_row, img_end_row)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("插入可选图表失败 [工作表=%s, 文件=%s]: %s", ws.title, fig, exc)
             if figs:
                 end_row = max_img_end_row
 
@@ -2482,8 +2482,8 @@ class ModelReport:
                     img_end_row, _ = writer.insert_pic2sheet(ws, fig, (img_start_row, current_col), figsize=(500, 300))
                     current_col = _next_image_col(ws, current_col, 500)
                     max_img_end_row = max(max_img_end_row, img_end_row)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("插入可选图表失败 [工作表=%s, 文件=%s]: %s", ws.title, fig, exc)
             if all_figs:
                 end_row = max_img_end_row  # 跳过图片占用的所有行，避免重叠
 
@@ -2575,8 +2575,13 @@ class ModelReport:
                 for fig_path in psi_fig_paths:
                     try:
                         end_row, _ = writer.insert_pic2sheet(ws, fig_path, (end_row + 1, 2), figsize=(500, 300))
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger.warning(
+                            "插入可选图表失败 [工作表=%s, 文件=%s]: %s",
+                            ws.title,
+                            fig_path,
+                            exc,
+                        )
             if isinstance(psi_df, pd.DataFrame) and not psi_df.empty:
                 end_row, _ = dataframe2excel(
                     psi_df,
@@ -2833,8 +2838,13 @@ class ModelReport:
                 for fig_path in weights_figs:
                     try:
                         end_row, _ = writer.insert_pic2sheet(ws, fig_path, (end_row + 1, 2), figsize=(500, 300))
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger.warning(
+                            "插入可选图表失败 [工作表=%s, 文件=%s]: %s",
+                            ws.title,
+                            fig_path,
+                            exc,
+                        )
             try:
                 lr_summary = self.model.lr_model.summary()
                 end_row, _ = dataframe2excel(
@@ -2911,8 +2921,13 @@ class ModelReport:
                     for fig_path in score_psi_figs:
                         try:
                             end_row, _ = writer.insert_pic2sheet(ws, fig_path, (end_row + 1, 2), figsize=(500, 300))
-                        except Exception:
-                            pass
+                        except Exception as exc:
+                            logger.warning(
+                                "插入可选图表失败 [工作表=%s, 文件=%s]: %s",
+                                ws.title,
+                                fig_path,
+                                exc,
+                            )
                 score_psi_df = psi_tables.get("score_psi")
                 if isinstance(score_psi_df, pd.DataFrame) and not score_psi_df.empty:
                     end_row, _ = dataframe2excel(
@@ -2973,13 +2988,32 @@ class ModelReport:
                     test_cases.insert(i, col, loc_df[col])
             test_cases.insert(0, "序号", range(1, sample_n + 1))
             test_cases["模型分数"] = train_ds.score[:sample_n]
-            end_row, _ = dataframe2excel(test_cases, writer, sheet_name=ws, start_row=end_row + 1)
-        except Exception:
-            pass
+            end_row, _ = dataframe2excel(
+                test_cases,
+                writer,
+                sheet_name=ws,
+                start_row=end_row + 1,
+                auto_filter=True,
+            )
+        except Exception as exc:
+            raise RuntimeError("生成生产订单测试用例失败") from exc
 
         # ============================================================
         # 保存
         # ============================================================
+        freeze_panes = {
+            "1-基本信息": (5, 2),
+            "2-模型性能": (5, 2),
+            "3-入模变量分析": (5, 4),
+            "4-稳定性分析": (5, 2),
+            "5-模型参数": (5, 2),
+            "6-模型部署需求": (5, 2),
+        }
+        for sheet_name, freeze_at in freeze_panes.items():
+            worksheet = writer.workbook[sheet_name]
+            if worksheet.freeze_panes is None:
+                writer.set_freeze_panes(worksheet, freeze_at)
+
         for sheet_name in [
             "目录",
             "1-基本信息",

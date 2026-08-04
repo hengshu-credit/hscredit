@@ -21,7 +21,7 @@ import numpy as np
 import pandas as pd
 
 from .base import BaseEncoder
-from ...utils.parallel import resolve_n_jobs
+from ...utils.parallel import _current_parallel_budget, resolve_n_jobs
 
 logger = logging.getLogger(__name__)
 
@@ -357,6 +357,18 @@ class GBMEncoder(BaseEncoder):
 
         return X
 
+    def _resolve_model_workers(self, parameter_name: str) -> int:
+        """按当前嵌套预算解析唯一底层模型的 worker 数。"""
+        configured = self.model_params or {}
+        desired = configured.get(parameter_name, self.n_jobs)
+        budget = _current_parallel_budget()
+        task_cap = budget.available if budget.depth > 0 else None
+        return resolve_n_jobs(
+            desired,
+            task_count=task_cap,
+            available_budget=budget.available,
+        ) or 1
+
     def _fit_xgboost(self, X: pd.DataFrame, y: pd.Series):
         """拟合XGBoost模型。
 
@@ -376,7 +388,6 @@ class GBMEncoder(BaseEncoder):
             'colsample_bytree': self.colsample_bytree,
             'min_child_weight': self.min_child_samples,
             'random_state': self.random_state,
-            'n_jobs': resolve_n_jobs(self.n_jobs) or 1,
         }
 
         # 添加任务相关参数
@@ -393,6 +404,7 @@ class GBMEncoder(BaseEncoder):
 
         # 合并用户自定义参数
         params.update(self.model_params or {})
+        params['n_jobs'] = self._resolve_model_workers('n_jobs')
 
         # 使用 hscredit 的 XGBoostRiskModel
         self.model_ = XGBoostRiskModel(**params)
@@ -418,7 +430,6 @@ class GBMEncoder(BaseEncoder):
             'colsample_bytree': self.colsample_bytree,
             'min_child_samples': self.min_child_samples,
             'random_state': self.random_state,
-            'n_jobs': resolve_n_jobs(self.n_jobs) or 1,
             'verbose': False,
         }
 
@@ -434,6 +445,7 @@ class GBMEncoder(BaseEncoder):
 
         # 合并用户自定义参数
         params.update(self.model_params or {})
+        params['n_jobs'] = self._resolve_model_workers('n_jobs')
 
         # 使用 hscredit 的 LightGBMRiskModel
         self.model_ = LightGBMRiskModel(**params)
@@ -472,7 +484,6 @@ class GBMEncoder(BaseEncoder):
             'min_data_in_leaf': self.min_child_samples,
             'random_state': self.random_state,
             'verbose': False,
-            'thread_count': resolve_n_jobs(self.n_jobs) or 1,
         }
 
         # 添加任务相关参数
@@ -486,6 +497,7 @@ class GBMEncoder(BaseEncoder):
 
         # 合并用户自定义参数
         params.update(self.model_params or {})
+        params['thread_count'] = self._resolve_model_workers('thread_count')
 
         # 使用 hscredit 的 CatBoostRiskModel
         self.model_ = CatBoostRiskModel(**params)
