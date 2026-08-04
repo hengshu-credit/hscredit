@@ -1127,6 +1127,41 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
 
         return self._transform_features(X, _transform_one)
 
+    def _transform_lift_metric(self, feature: str, bins: np.ndarray, metric: str):
+        """从当前分箱统计表生成只读 LIFT 映射结果。"""
+        if metric != "lift":
+            return None
+        bin_table = self._get_lift_bin_table(feature)
+        lift_map = {}
+        for _, row in bin_table.iterrows():
+            bin_index = int(row["分箱"])
+            lift_map[bin_index] = np.nan if bin_index < 0 else row["LIFT值"]
+        return np.asarray([lift_map.get(value, np.nan) for value in bins])
+
+    def _get_lift_bin_table(self, feature: str) -> pd.DataFrame:
+        """按 BestLift 的公开口径从当前统计状态计算 LIFT 表。"""
+        if feature not in self.bin_tables_:
+            raise KeyError(f"特征 '{feature}' 未找到")
+        bin_table = self.bin_tables_[feature].copy()
+        valid_mask = ~bin_table["分箱标签"].isin(["缺失", "special"])
+        if valid_mask.any():
+            valid_bad_rates = bin_table.loc[valid_mask, "坏样本率"]
+            valid_counts = bin_table.loc[valid_mask, "样本总数"]
+            total_bad = (valid_bad_rates * valid_counts).sum()
+            total_count = valid_counts.sum()
+            total_bad_rate = total_bad / total_count if total_count > 0 else 0
+        else:
+            total_bad_rate = bin_table["坏样本率"].mean()
+        bin_table["LIFT值"] = [
+            np.nan
+            if row["分箱标签"] in ["缺失", "special"]
+            else row["坏样本率"] / total_bad_rate
+            if total_bad_rate > 0
+            else 1.0
+            for _, row in bin_table.iterrows()
+        ]
+        return bin_table
+
     def _get_min_samples(self, n_samples: int) -> int:
         """计算最小样本数.
 

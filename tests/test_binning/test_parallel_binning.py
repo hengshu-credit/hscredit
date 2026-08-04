@@ -556,8 +556,10 @@ def test_partial_imported_rules_fit_ordinary_features_with_original_column_order
     pd.testing.assert_frame_equal(
         binner.get_bin_table(ordinary_feature), ordinary_baseline.get_bin_table(ordinary_feature)
     )
-    assert binner._binner is None
-    assert binner._prebinner is None
+    assert binner._ordinary_binner_ is not None
+    assert binner._ordinary_features_ == (ordinary_feature,)
+    assert binner._binner is binner._ordinary_binner_._binner
+    assert binner._prebinner is binner._ordinary_binner_._prebinner
 
     for metric in ("indices", "bins", "woe"):
         result = binner.transform(X, metric=metric)
@@ -571,6 +573,132 @@ def test_partial_imported_rules_fit_ordinary_features_with_original_column_order
         )
         if metric == "woe":
             assert result.notna().all().all()
+
+
+BEST_LIFT_Y = np.tile([0, 0, 1, 1, 1, 1, 0, 1, 0, 1, 1, 0], 4)
+
+
+def _best_lift_feature_values(kind, *, fixed):
+    if kind == "numerical":
+        if fixed:
+            return np.tile([1.0, 4.0, 6.0, 9.0, 11.0, 14.0, 16.0, 19.0], 6)
+        return np.arange(48, dtype=float)
+    categories = ["A", "B", "C", "D"] if fixed else ["W", "X", "Y", "Z"]
+    return np.tile(categories, 12)
+
+
+def _best_lift_imported_rule(kind):
+    if kind == "numerical":
+        return [5.0, 10.0, 15.0]
+    return [["A"], ["B"], ["C"], ["D"]]
+
+
+def _best_lift_optimal(n_jobs, backend):
+    return OptimalBinning(
+        method="best_lift",
+        max_n_bins=4,
+        n_jobs=n_jobs,
+        parallel_backend=backend,
+        random_state=17,
+        lift_refine=False,
+        n_prebins=6,
+    )
+
+
+def _expected_best_lift_from_stats(binner, X, feature):
+    table = binner.bin_tables_[feature]
+    valid = ~table["分箱标签"].isin(["缺失", "special"])
+    total_bad = (table.loc[valid, "坏样本率"] * table.loc[valid, "样本总数"]).sum()
+    total_count = table.loc[valid, "样本总数"].sum()
+    total_bad_rate = total_bad / total_count if total_count > 0 else 0
+    lift_map = {
+        int(row["分箱"]): np.nan
+        if int(row["分箱"]) < 0
+        else row["坏样本率"] / total_bad_rate
+        if total_bad_rate > 0
+        else 1.0
+        for _, row in table.iterrows()
+    }
+    indices = binner.transform(X[[feature]], metric="indices")[feature]
+    return indices.map(lift_map).astype(float)
+
+
+@pytest.mark.parametrize("n_jobs,backend", EXECUTION_MODES)
+@pytest.mark.parametrize("ordinary_kind", ["numerical", "categorical"])
+def test_optimal_best_lift_ordinary_only_matches_its_method_delegate(n_jobs, backend, ordinary_kind):
+    feature = f"普通{ordinary_kind}"
+    X = pd.DataFrame({feature: _best_lift_feature_values(ordinary_kind, fixed=False)})
+    y = pd.Series(BEST_LIFT_Y, name="目标")
+    binner = _best_lift_optimal(n_jobs, backend).fit(X, y)
+
+    expected = binner._binner.transform(X, metric="lift")
+    result = binner.transform(X, metric="lift")
+
+    pd.testing.assert_frame_equal(result, expected)
+    assert result.index.equals(X.index)
+    assert list(result.columns) == [feature]
+    assert pd.api.types.is_float_dtype(result[feature].dtype)
+
+
+@pytest.mark.parametrize("n_jobs,backend", EXECUTION_MODES)
+@pytest.mark.parametrize("imported_first", [True, False], ids=["imported-first", "imported-last"])
+@pytest.mark.parametrize("fixed_kind", ["numerical", "categorical"])
+@pytest.mark.parametrize("ordinary_kind", ["numerical", "categorical"])
+def test_mixed_best_lift_partitions_imported_and_ordinary_features(
+    n_jobs, backend, imported_first, fixed_kind, ordinary_kind
+):
+    fixed_feature = f"固定{fixed_kind}"
+    ordinary_feature = f"普通{ordinary_kind}"
+    X = pd.DataFrame(
+        {
+            fixed_feature: _best_lift_feature_values(fixed_kind, fixed=True),
+            ordinary_feature: _best_lift_feature_values(ordinary_kind, fixed=False),
+        }
+    )
+    columns = [fixed_feature, ordinary_feature]
+    if not imported_first:
+        columns.reverse()
+    X = X[columns]
+    y = pd.Series(BEST_LIFT_Y, name="目标")
+    fixed_rule = _best_lift_imported_rule(fixed_kind)
+
+    fixed_baseline = _best_lift_optimal(1, None)
+    fixed_baseline.import_rules({fixed_feature: fixed_rule})
+    fixed_baseline.fit(X[[fixed_feature]], y)
+    ordinary_baseline = _best_lift_optimal(1, None).fit(X[[ordinary_feature]], y)
+    ordinary_lift = ordinary_baseline._binner.transform(X[[ordinary_feature]], metric="lift")
+
+    binner = _best_lift_optimal(n_jobs, backend)
+    binner.import_rules({fixed_feature: fixed_rule})
+    binner.fit(X, y)
+
+    assert binner.feature_names_in_.tolist() == columns
+    assert list(binner.splits_) == columns
+    assert binner._ordinary_features_ == (ordinary_feature,)
+    assert binner._ordinary_binner_ is not None
+    assert binner._binner is binner._ordinary_binner_._binner
+    assert list(binner._ordinary_binner_.splits_) == [ordinary_feature]
+    _assert_value_equal(binner.splits_[fixed_feature], fixed_baseline.splits_[fixed_feature])
+
+    for metric in ("indices", "bins", "woe"):
+        result = binner.transform(X, metric=metric)
+        assert result.index.equals(X.index)
+        assert list(result.columns) == columns
+        pd.testing.assert_series_equal(
+            result[fixed_feature], fixed_baseline.transform(X[[fixed_feature]], metric=metric)[fixed_feature]
+        )
+        pd.testing.assert_series_equal(
+            result[ordinary_feature], ordinary_baseline.transform(X[[ordinary_feature]], metric=metric)[ordinary_feature]
+        )
+
+    expected_fixed_lift = _expected_best_lift_from_stats(fixed_baseline, X, fixed_feature)
+    result = binner.transform(X, metric="lift")
+
+    assert result.index.equals(X.index)
+    assert list(result.columns) == columns
+    pd.testing.assert_series_equal(result[fixed_feature], expected_fixed_lift)
+    pd.testing.assert_series_equal(result[ordinary_feature], ordinary_lift[ordinary_feature])
+    assert all(pd.api.types.is_float_dtype(dtype) for dtype in result.dtypes)
 
 
 @pytest.mark.parametrize("n_jobs,backend", EXECUTION_MODES)

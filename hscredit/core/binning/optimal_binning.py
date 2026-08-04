@@ -281,6 +281,8 @@ class OptimalBinning(BaseBinning):
         self._defer_categorical_adapter = True
         self._binner = None
         self._prebinner = None
+        self._ordinary_binner_ = None
+        self._ordinary_features_ = ()
         self.monotonic_trend_ = {}
 
     def _clean_kwargs(self, kwargs: Dict) -> Dict:
@@ -458,10 +460,12 @@ class OptimalBinning(BaseBinning):
             if feature in (imported_woe if feature in imported_set else ordinary_woe)
         }
 
-        # mixed 模型的底层估计器只覆盖 ordinary 子集，不能作为整表 transform delegate。
-        # wrapper 已拥有合并后的完整规则、类别状态和统计表，统一从这里执行转换。
-        self._binner = None
-        self._prebinner = None
+        # 只保留本轮 ordinary 子模型及其 delegate；transform 按特征分区调用，
+        # imported 特征不会进入这个只覆盖 ordinary 子集的估计器。
+        self._ordinary_binner_ = ordinary_binner
+        self._ordinary_features_ = tuple(ordinary_features)
+        self._binner = getattr(ordinary_binner, "_binner", None)
+        self._prebinner = getattr(ordinary_binner, "_prebinner", None)
 
     def _update_bin_stats(self, X: pd.DataFrame, y: pd.Series):
         """更新分箱统计信息（用于已导入规则的情况）.
@@ -1731,6 +1735,23 @@ class OptimalBinning(BaseBinning):
         if not self._is_fitted:
             raise NotFittedError("分箱器尚未拟合，请先调用fit方法")
 
+        if not isinstance(X, pd.DataFrame):
+            X = pd.DataFrame(X)
+
+        ordinary_binner = getattr(self, "_ordinary_binner_", None)
+        ordinary_feature_set = set(getattr(self, "_ordinary_features_", ()))
+        ordinary_features = [feature for feature in X.columns if feature in ordinary_feature_set]
+        wrapper_features = [feature for feature in X.columns if feature not in ordinary_feature_set]
+        if ordinary_binner is not None and ordinary_features:
+            blocks = [ordinary_binner.transform(X[ordinary_features], metric=metric, **kwargs)]
+            if wrapper_features:
+                blocks.append(self._transform_with_wrapper_state(X[wrapper_features], metric, **kwargs))
+            result = pd.concat(blocks, axis=1).loc[:, list(X.columns)]
+            if metric == "woe":
+                result.attrs["hscredit_encoding"] = "woe"
+                result.attrs["hscredit_source"] = "OptimalBinning"
+            return result
+
         # 含已在 wrapper 层重算分组的类别型特征时，使用 wrapper 自身的分箱逻辑
         # （_cat_bins_/bin_tables_），否则底层方法的类别状态与 wrapper 不一致；
         # 纯数值场景仍委托底层分箱器，保持原有行为。
@@ -1744,11 +1765,17 @@ class OptimalBinning(BaseBinning):
                 result.attrs["hscredit_source"] = "OptimalBinning"
             return result
 
-        # 直接使用本类的分箱逻辑
-        if not isinstance(X, pd.DataFrame):
-            X = pd.DataFrame(X)
+        result = self._transform_with_wrapper_state(X, metric, **kwargs)
 
-        result = self._transform_binning_features(
+        if metric == "woe":
+            result.attrs["hscredit_encoding"] = "woe"
+            result.attrs["hscredit_source"] = "OptimalBinning"
+
+        return result
+
+    def _transform_with_wrapper_state(self, X: pd.DataFrame, metric: str, **kwargs) -> pd.DataFrame:
+        """使用 Optimal 已合并的规则状态转换 imported 或 wrapper 特征。"""
+        return self._transform_binning_features(
             X,
             metric,
             lambda feature: self._apply_bins(
@@ -1759,13 +1786,8 @@ class OptimalBinning(BaseBinning):
                 self.feature_types_[feature],
                 feature,
             ),
+            extra_metric=self._transform_lift_metric if self.method == "best_lift" else None,
         )
-
-        if metric == "woe":
-            result.attrs["hscredit_encoding"] = "woe"
-            result.attrs["hscredit_source"] = "OptimalBinning"
-
-        return result
 
     def get_stats(self, feature: Optional[str] = None) -> Dict[str, Any]:
         """获取分箱统计信息.
