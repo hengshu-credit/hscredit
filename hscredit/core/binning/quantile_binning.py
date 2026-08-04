@@ -113,8 +113,8 @@ class QuantileBinning(BaseBinning):
         )
         self.force_numerical = force_numerical
 
-        # 验证并标准化 quantiles 参数（首尾的 0 / 1 支持自动补齐，也支持显式传入）
-        self.quantiles = self._normalize_quantiles(quantiles)
+        # 保留构造参数原值以兼容 sklearn.clone；标准化结果在 fit 时保存到 quantiles_。
+        self.quantiles = quantiles
 
     @staticmethod
     def _normalize_quantiles(quantiles: Optional[List[float]]) -> Optional[List[float]]:
@@ -162,6 +162,7 @@ class QuantileBinning(BaseBinning):
         """
         # 检查输入数据
         X, y = self._check_input(X, y)
+        self.quantiles_ = self._normalize_quantiles(self.quantiles)
 
         self._fit_features(X, y, "_fit_feature")
 
@@ -230,7 +231,7 @@ class QuantileBinning(BaseBinning):
         if self.quantiles is not None:
             # 使用自定义分位点：直接按用户指定的分位点切分，
             # 不受 min_n_bins / max_n_bins / min_bin_size 的二次约束（见类文档）
-            quantiles_to_use = np.asarray(self.quantiles, dtype=float)
+            quantiles_to_use = np.asarray(self.quantiles_, dtype=float)
             target_n_bins = len(quantiles_to_use) - 1
         else:
             # 基于max_n_bins计算分位点，并约束在 [min_n_bins, max_n_bins] 范围内
