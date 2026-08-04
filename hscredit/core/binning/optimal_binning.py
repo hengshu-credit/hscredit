@@ -720,6 +720,9 @@ class OptimalBinning(BaseBinning):
             random_state=self.random_state,
             verbose=False,
             decimal=self.decimal,
+            n_jobs=self.n_jobs,
+            parallel_backend=self.parallel_backend,
+            parallel_config=self.parallel_config,
         )
         temp_binner.fit(X, y)
 

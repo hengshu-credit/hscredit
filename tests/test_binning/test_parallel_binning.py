@@ -2,6 +2,7 @@
 
 import inspect
 
+import hscredit.core.binning.optimal_binning as optimal_binning_module
 import numpy as np
 import pandas as pd
 from sklearn.base import clone
@@ -105,6 +106,34 @@ def test_optimal_binning_forwards_parallel_parameters_to_method_binner():
     assert binner._binner.n_jobs == 1
     assert binner._binner.parallel_backend == "threading"
     assert binner._binner.parallel_config == {"batch_size": 1}
+
+
+def test_prebinning_empty_splits_fallback_inherits_parallel_parameters(monkeypatch):
+    X = pd.DataFrame({"数值": [1, 2, 3, 4, 5, 6, 7, 8]})
+    y = pd.Series([0, 1, 0, 1, 0, 1, 0, 1], name="目标")
+    parent = OptimalBinning(
+        method="best_iv",
+        max_n_bins=3,
+        n_jobs=2,
+        parallel_backend="threading",
+        parallel_config={"batch_size": 1},
+    )
+    created = []
+
+    class RecordingOptimalBinning(OptimalBinning):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            created.append(self)
+
+    monkeypatch.setattr(optimal_binning_module, "OptimalBinning", RecordingOptimalBinning)
+
+    parent._fit_with_method_and_prebins(X, y, pre_splits={})
+
+    assert len(created) == 1
+    fallback = created[0]
+    assert fallback.n_jobs == 2
+    assert fallback.parallel_backend == "threading"
+    assert fallback.parallel_config == {"batch_size": 1}
 
 
 def test_optimal_binning_2d_forwards_parallel_parameters_to_axis_binners():
