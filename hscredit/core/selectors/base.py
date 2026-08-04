@@ -39,12 +39,21 @@ from ...utils.parallel import ParallelizableMixin
 
 
 def _set_estimator_parallel_budget(estimator: Any, n_jobs: int) -> Any:
-    """仅在隔离克隆上为估计器及其嵌套估计器设置并行预算。"""
+    """仅在隔离克隆上收敛估计器并行预算。
+
+    最浅的有效并行层获得当前子预算；其下更深的并行层固定为 1，
+    避免“外层候选 × meta × nested estimator”再次超额。同一最浅深度的并列分支均获得子预算。
+    """
     parameters = estimator.get_params(deep=True)
+    n_jobs_names = [name for name in parameters if name == 'n_jobs' or name.endswith('__n_jobs')]
+    if not n_jobs_names:
+        return estimator
+
+    depths = {name: name.count('__') for name in n_jobs_names}
+    shallowest_depth = min(depths.values())
     n_jobs_parameters = {
-        name: n_jobs
-        for name in parameters
-        if name == 'n_jobs' or name.endswith('__n_jobs')
+        name: n_jobs if depth == shallowest_depth else 1
+        for name, depth in depths.items()
     }
     if n_jobs_parameters:
         estimator.set_params(**n_jobs_parameters)
@@ -772,18 +781,32 @@ class BaseFeatureSelector(ParallelizableMixin, BaseEstimator, TransformerMixin, 
         self._adopt_fitted_candidate(candidate)
         return self
 
-    def _prepare_fit_candidate(self, candidate: 'BaseFeatureSelector') -> None:
+    def _prepare_fit_candidate(
+        self,
+        candidate: 'BaseFeatureSelector',
+        binner_memo: Optional[Dict[int, Any]] = None,
+    ) -> None:
         """为隔离拟合准备候选对象。
 
         sklearn ``clone`` 会丢弃已拟合外部分箱器的学习状态，因此对显式传入且已拟合的
         分箱器使用受控深拷贝。未拟合分箱器仍使用 clone 生成的隔离副本。
         """
+        if binner_memo is None:
+            binner_memo = {}
         original_params = self.get_params(deep=False)
         candidate_params = candidate.get_params(deep=False)
 
         original_binner = original_params.get('binner')
-        if original_binner is not None and self._is_binner_fitted(original_binner):
-            candidate.binner = copy.deepcopy(original_binner)
+        if original_binner is not None:
+            memo_key = id(original_binner)
+            if memo_key in binner_memo:
+                candidate.binner = binner_memo[memo_key]
+            else:
+                candidate_binner = candidate_params.get('binner')
+                if self._is_binner_fitted(original_binner):
+                    candidate_binner = copy.deepcopy(original_binner)
+                    candidate.binner = candidate_binner
+                binner_memo[memo_key] = candidate_binner
 
         original_selectors = original_params.get('selectors')
         candidate_selectors = candidate_params.get('selectors')
@@ -796,62 +819,143 @@ class BaseFeatureSelector(ParallelizableMixin, BaseEstimator, TransformerMixin, 
             original_child = self._selector_from_item(original_item)
             candidate_child = self._selector_from_item(candidate_item)
             if isinstance(original_child, BaseFeatureSelector) and isinstance(candidate_child, BaseFeatureSelector):
-                original_child._prepare_fit_candidate(candidate_child)
+                original_child._prepare_fit_candidate(candidate_child, binner_memo)
 
     def _finalize_fit(self) -> None:
         """在候选对象上完成子类拟合后处理。"""
 
     def _adopt_fitted_candidate(self, candidate: 'BaseFeatureSelector') -> None:
         """原子提交已成功拟合的候选状态。"""
-        plan = []
-        self._build_candidate_commit_plan(candidate, plan)
+        raw_plan = []
+        self._build_candidate_commit_plan(candidate, raw_plan)
+        plan = self._normalize_candidate_commit_plan(raw_plan)
 
-        targets = [target for target, _, _ in plan]
-        if len({id(target) for target in targets}) != len(targets):
-            raise ValidationError("拟合提交计划包含重复目标，无法保证原子性")
-
-        snapshots = [(target, self._snapshot_target_state(target)) for target in targets]
+        snapshots = {
+            id(item['target']): self._snapshot_target_state(item['target'])
+            for item in plan
+        }
         try:
-            for target, payload, is_selector in plan:
-                if is_selector:
-                    target._apply_candidate_state(payload)
+            for item in plan:
+                target = item['target']
+                if item['is_selector']:
+                    target._apply_candidate_state(item['payload'])
+                    self._rebind_public_params_direct(target, item['success_param_refs'])
+                    if item['active_binner']:
+                        target._binner_instance = item['success_param_refs']['binner']
+                    target._rebind_committed_parallel_children()
                 else:
-                    self._replace_object_state_direct(target, payload)
+                    self._replace_object_state_direct(target, item['payload'])
         except Exception:
             # 回滚必须绕过可覆写、可注入故障的提交辅助方法。
-            for target, snapshot in snapshots:
+            for item in plan:
+                target = item['target']
                 target.__dict__.clear()
-                target.__dict__.update(snapshot)
+                target.__dict__.update(snapshots[id(target)])
+                if item['is_selector']:
+                    self._restore_public_param_contents(item)
+                    self._rebind_public_params_direct(target, item['rollback_param_refs'])
+                    if item['rollback_active_binner']:
+                        target._binner_instance = item['rollback_param_refs']['binner']
             raise
 
     @staticmethod
     def _snapshot_target_state(target: Any) -> Dict[str, Any]:
-        """深拷贝目标状态，同时保留筛选器公开构造对象的身份。"""
-        snapshot = copy.deepcopy(target.__dict__)
-        if isinstance(target, BaseFeatureSelector):
-            for name, value in target.get_params(deep=False).items():
-                snapshot[name] = value
-        return snapshot
+        """对目标状态做不携带原公开参数引用的完整深快照。"""
+        return copy.deepcopy(target.__dict__)
+
+    @staticmethod
+    def _rebind_public_params_direct(target: 'BaseFeatureSelector', param_refs: Dict[str, Any]) -> None:
+        """在可覆写 helper 返回后直接恢复公开构造参数身份。"""
+        for name, value in param_refs.items():
+            target.__dict__[name] = value
+
+    @staticmethod
+    def _restore_public_param_contents(item: Dict[str, Any]) -> None:
+        """原地恢复回滚目标的公开可变参数内容。"""
+        for name, original in item['rollback_param_refs'].items():
+            snapshot = item['rollback_param_snapshots'][name]
+            if isinstance(original, list):
+                original.clear()
+                if name == 'selectors':
+                    original.extend(item['rollback_param_shallow'][name])
+                else:
+                    original.extend(copy.deepcopy(snapshot))
+            elif isinstance(original, dict):
+                original.clear()
+                original.update(copy.deepcopy(snapshot))
+            elif isinstance(original, set):
+                original.clear()
+                original.update(copy.deepcopy(snapshot))
+
+    @classmethod
+    def _payloads_deep_equal(cls, left: Any, right: Any) -> bool:
+        """安全比较两个候选 payload，避免 numpy/pandas 布尔歧义。"""
+        if left is right:
+            return True
+        if type(left) is not type(right):
+            return False
+        if isinstance(left, dict):
+            return left.keys() == right.keys() and all(
+                cls._payloads_deep_equal(left[key], right[key]) for key in left
+            )
+        if isinstance(left, (list, tuple)):
+            return len(left) == len(right) and all(
+                cls._payloads_deep_equal(a, b) for a, b in zip(left, right)
+            )
+        if isinstance(left, np.ndarray):
+            return bool(np.array_equal(left, right, equal_nan=True))
+        if isinstance(left, (pd.DataFrame, pd.Series, pd.Index)):
+            return bool(left.equals(right))
+        try:
+            result = left == right
+            if isinstance(result, (np.ndarray, pd.Series, pd.DataFrame)):
+                return bool(np.asarray(result).all())
+            return bool(result)
+        except Exception:
+            return False
+
+    @classmethod
+    def _normalize_candidate_commit_plan(cls, raw_plan: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """对共享 target 去重；仅当候选来源相同或 payload 深等价时允许合并。"""
+        normalized = []
+        seen = {}
+        for item in raw_plan:
+            target_key = id(item['target'])
+            previous = seen.get(target_key)
+            if previous is None:
+                seen[target_key] = item
+                normalized.append(item)
+                continue
+            if (
+                previous['candidate_source'] is item['candidate_source']
+                or cls._payloads_deep_equal(previous['payload'], item['payload'])
+            ):
+                continue
+            raise ValidationError("共享外部对象产生了冲突的候选状态，无法原子提交")
+        return normalized
 
     def _build_candidate_commit_plan(
         self,
         candidate: 'BaseFeatureSelector',
-        plan: List[Tuple[Any, Dict[str, Any], bool]],
+        plan: List[Dict[str, Any]],
         parallel_overrides: Optional[Dict[str, Any]] = None,
     ) -> None:
         """验证候选树并构建无副作用的完整提交计划。"""
         original_params = self.get_params(deep=False)
         candidate_params = candidate.get_params(deep=False)
-        candidate_state = dict(candidate.__dict__)
+        candidate_state = copy.deepcopy(candidate.__dict__)
 
         original_binner = original_params.get('binner')
         candidate_binner = candidate_params.get('binner')
         if original_binner is not None and candidate_binner is not None:
             if not hasattr(original_binner, '__dict__') or not hasattr(candidate_binner, '__dict__'):
                 raise ValidationError("外部对象必须支持状态复制，才能保证事务式拟合")
-            plan.append((original_binner, dict(candidate_binner.__dict__), False))
-            if candidate_state.get('_binner_instance') is candidate_binner:
-                candidate_state['_binner_instance'] = original_binner
+            plan.append({
+                'target': original_binner,
+                'candidate_source': candidate_binner,
+                'payload': copy.deepcopy(candidate_binner.__dict__),
+                'is_selector': False,
+            })
 
         original_selectors = original_params.get('selectors')
         candidate_selectors = candidate_params.get('selectors')
@@ -873,10 +977,9 @@ class BaseFeatureSelector(ParallelizableMixin, BaseEstimator, TransformerMixin, 
                     raise ValidationError("候选子筛选器类型与原配置不一致，无法提交拟合状态")
                 original_child._build_candidate_commit_plan(candidate_child, plan, child_parallel)
 
-        for name, value in original_params.items():
-            candidate_state[name] = value
+        success_param_refs = dict(original_params)
         if parallel_overrides is not None:
-            candidate_state.update(parallel_overrides)
+            success_param_refs.update(parallel_overrides)
 
         stage_selectors = candidate_state.get('stage_selectors_')
         if isinstance(stage_selectors, dict):
@@ -886,7 +989,30 @@ class BaseFeatureSelector(ParallelizableMixin, BaseEstimator, TransformerMixin, 
                     child.parallel_backend = candidate_state.get('parallel_backend')
                     child.parallel_config = candidate_state.get('parallel_config')
 
-        plan.append((self, candidate_state, True))
+        plan.append({
+            'target': self,
+            'candidate_source': candidate,
+            'payload': candidate_state,
+            'is_selector': True,
+            'success_param_refs': success_param_refs,
+            'rollback_param_refs': dict(original_params),
+            'rollback_param_snapshots': {
+                name: copy.deepcopy(value) for name, value in original_params.items()
+            },
+            'rollback_param_shallow': {
+                name: list(value)
+                for name, value in original_params.items()
+                if name == 'selectors' and isinstance(value, list)
+            },
+            'active_binner': (
+                candidate_params.get('binner') is not None
+                and getattr(candidate, '_binner_instance', None) is candidate_params.get('binner')
+            ),
+            'rollback_active_binner': (
+                original_params.get('binner') is not None
+                and getattr(self, '_binner_instance', None) is original_params.get('binner')
+            ),
+        })
 
     def _apply_candidate_state(self, candidate_state: Dict[str, Any]) -> None:
         """应用一个已验证的候选状态载荷。"""
