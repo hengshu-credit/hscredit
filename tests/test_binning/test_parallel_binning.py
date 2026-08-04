@@ -701,6 +701,87 @@ def test_mixed_best_lift_partitions_imported_and_ordinary_features(
     assert all(pd.api.types.is_float_dtype(dtype) for dtype in result.dtypes)
 
 
+def _fitted_mixed_best_lift_subset_case(n_jobs, backend):
+    fixed_feature = "fixed_numerical"
+    ordinary_feature = "ordinary_numerical"
+    X = pd.DataFrame(
+        {
+            fixed_feature: _best_lift_feature_values("numerical", fixed=True),
+            ordinary_feature: _best_lift_feature_values("numerical", fixed=False),
+        }
+    )
+    y = pd.Series(BEST_LIFT_Y, name="target")
+    binner = _best_lift_optimal(n_jobs, backend)
+    binner.import_rules({fixed_feature: _best_lift_imported_rule("numerical")})
+    binner.fit(X, y)
+    return binner, X, fixed_feature, ordinary_feature, y
+
+
+@pytest.mark.parametrize("n_jobs,backend", EXECUTION_MODES)
+@pytest.mark.parametrize("metric", ["indices", "bins", "woe", "lift"])
+def test_mixed_best_lift_imported_only_transform_matches_full_result(n_jobs, backend, metric):
+    binner, X, fixed_feature, _, _ = _fitted_mixed_best_lift_subset_case(n_jobs, backend)
+
+    expected = binner.transform(X, metric=metric)[[fixed_feature]]
+    result = binner.transform(X[[fixed_feature]], metric=metric)
+    pd.testing.assert_frame_equal(result, expected)
+
+
+@pytest.mark.parametrize("n_jobs,backend", EXECUTION_MODES)
+def test_mixed_best_lift_imported_only_rejects_unsupported_metric(n_jobs, backend):
+    binner, X, fixed_feature, _, _ = _fitted_mixed_best_lift_subset_case(n_jobs, backend)
+    with pytest.raises(ValueError, match="不支持的metric: bogus"):
+        binner.transform(X[[fixed_feature]], metric="bogus")
+
+
+@pytest.mark.parametrize("n_jobs,backend", EXECUTION_MODES)
+@pytest.mark.parametrize("metric", ["indices", "bins", "woe", "lift"])
+def test_mixed_best_lift_ordinary_only_transform_matches_full_result(n_jobs, backend, metric):
+    binner, X, _, ordinary_feature, _ = _fitted_mixed_best_lift_subset_case(n_jobs, backend)
+
+    expected = binner.transform(X, metric=metric)[[ordinary_feature]]
+    result = binner.transform(X[[ordinary_feature]], metric=metric)
+    pd.testing.assert_frame_equal(result, expected)
+
+
+@pytest.mark.parametrize("n_jobs,backend", EXECUTION_MODES)
+def test_mixed_best_lift_ordinary_only_rejects_unsupported_metric(n_jobs, backend):
+    binner, X, _, ordinary_feature, _ = _fitted_mixed_best_lift_subset_case(n_jobs, backend)
+    with pytest.raises(ValueError, match="不支持的metric: bogus"):
+        binner.transform(X[[ordinary_feature]], metric="bogus")
+
+
+@pytest.mark.parametrize("n_jobs,backend", EXECUTION_MODES)
+def test_mixed_best_lift_unknown_columns_keep_public_passthrough_contract(n_jobs, backend):
+    binner, X, _, ordinary_feature, y = _fitted_mixed_best_lift_subset_case(n_jobs, backend)
+    public_binner = _best_lift_optimal(1, None).fit(X[[ordinary_feature]], y)
+    passthrough_frames = (
+        pd.DataFrame({"target": np.arange(len(X))}, index=X.index),
+        pd.DataFrame({"unknown": np.arange(len(X))}, index=X.index),
+    )
+
+    for passthrough in passthrough_frames:
+        for metric in ("indices", "bins", "woe", "lift", "bogus"):
+            expected = public_binner.transform(passthrough, metric=metric)
+            result = binner.transform(passthrough, metric=metric)
+            pd.testing.assert_frame_equal(result, expected)
+            pd.testing.assert_frame_equal(result, passthrough)
+
+
+@pytest.mark.parametrize("n_jobs,backend", EXECUTION_MODES)
+def test_mixed_best_lift_empty_transform_keeps_public_contract(n_jobs, backend):
+    binner, X, _, ordinary_feature, y = _fitted_mixed_best_lift_subset_case(n_jobs, backend)
+    public_binner = _best_lift_optimal(1, None).fit(X[[ordinary_feature]], y)
+    empty = pd.DataFrame(index=pd.Index([10, 20], name="row"))
+
+    for metric in ("indices", "bins", "woe", "lift", "bogus"):
+        expected = public_binner.transform(empty, metric=metric)
+        result = binner.transform(empty, metric=metric)
+        pd.testing.assert_frame_equal(result, expected)
+        assert result.shape == (2, 0)
+        assert result.index.equals(empty.index)
+
+
 @pytest.mark.parametrize("n_jobs,backend", EXECUTION_MODES)
 def test_partial_imported_rule_fit_failure_does_not_commit_fixed_stats(n_jobs, backend):
     y = pd.Series(np.tile([0, 1], 12), name="目标")
