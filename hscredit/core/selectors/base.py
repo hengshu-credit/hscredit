@@ -591,8 +591,7 @@ class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
         从 DataFrame 中提取目标列；在 sklearn 风格中若 fit 传入了 y 参数则优先使用 y
     :param include: 强制保留的特征列表，这些特征无论如何都会被保留
     :param exclude: 强制剔除的特征列表，这些特征无论如何都会被剔除
-    :param binner: 可选的分箱器，支持已训练的分箱器实例、待训练的分箱器类（传入类而非实例）、
-        或待训练的分箱器实例
+    :param binner: 可选的已配置分箱器实例，支持已训练或待训练状态，不接受分箱器类
     :param binning_params: 可选的 ``OptimalBinning`` 构造参数字典。未传入 ``binner`` 时，
         基类使用该字典创建分箱器；同时传入时 ``binner`` 优先
     :param threshold: 筛选阈值，不同筛选器含义不同
@@ -847,7 +846,7 @@ class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
     ) -> pd.DataFrame:
         """应用分箱器对数据进行分箱。
 
-        支持传入已训练的分箱器实例或待训练的分箱器类/实例。如果传入未训练的分箱器，
+        支持传入已训练或待训练的分箱器实例。如果传入未训练的分箱器，
         将自动在输入数据上进行拟合。
 
         **参数**
@@ -860,15 +859,16 @@ class BaseFeatureSelector(BaseEstimator, TransformerMixin, ABC):
         **参考样例**
 
         >>> from hscredit.core.selectors.base import BaseFeatureSelector
-        >>> from hscredit.core.binning import DecisionTreeBinner
+        >>> from hscredit.core.binning import OptimalBinning
         >>> import pandas as pd
         >>> class DummySelector(BaseFeatureSelector):
         ...     def _fit_impl(self, X, y): pass
         >>> import numpy as np
         >>> np.random.seed(42)
         >>> X = pd.DataFrame(np.random.randn(100, 3), columns=['a', 'b', 'c'])
-        >>> sel = DummySelector(binner=DecisionTreeBinner(max_depth=2))
-        >>> X_binned = sel._apply_binner(X)
+        >>> y = pd.Series(np.random.randint(0, 2, 100))
+        >>> sel = DummySelector(binner=OptimalBinning(method='uniform', max_n_bins=2))
+        >>> X_binned = sel._apply_binner(X, y)
         >>> X_binned.shape
         (100, 3)
         """
@@ -1503,6 +1503,7 @@ class CompositeFeatureSelector(BaseFeatureSelector):
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
         binner: Optional[Any] = None,
+        binning_params: Optional[Dict[str, Any]] = None,
     ):
         """初始化组合特征筛选器。
 
@@ -1514,8 +1515,15 @@ class CompositeFeatureSelector(BaseFeatureSelector):
         :param include: 强制保留的特征列表
         :param exclude: 强制剔除的特征列表
         :param binner: 可选的分箱器
+        :param binning_params: 可选的 OptimalBinning 构造参数
         """
-        super().__init__(target=target, include=include, exclude=exclude, binner=binner)
+        super().__init__(
+            target=target,
+            include=include,
+            exclude=exclude,
+            binner=binner,
+            binning_params=binning_params,
+        )
         self.selectors = selectors
         self.strategy = strategy
 

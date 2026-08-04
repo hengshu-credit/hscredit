@@ -275,7 +275,7 @@ Use a module-level immutable-by-convention default dictionary and copy it per co
 
 - [ ] **Step 5: Prevent duplicate binning inside ScorecardFeatureSelection**
 
-When constructing its internal `CorrSelector`, omit the `binning_params` keyword when `corr_binning_params is None` and the outer selector has no `_binner_instance`, allowing the Corr default. Pass `binning_params=None` when the outer selector already binned the data, and pass the caller's dictionary when `corr_binning_params` is explicit.
+When constructing its internal `CorrSelector`, pass the caller's dictionary when `corr_binning_params` is explicit. Otherwise pass `binning_params=None` when the outer selector already binned the data or `corr_weights` has already been resolved; omit the keyword only when no binning and no metric/user weights are available, allowing the Corr default.
 
 Add a regression test with a recording outer binner and enabled correlation stage; assert the outer binner fits once and the internal Corr selector has `_binner_instance is None`.
 

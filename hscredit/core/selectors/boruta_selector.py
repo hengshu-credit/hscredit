@@ -18,7 +18,7 @@
 >>> print(selector.selected_features_)
 """
 
-from typing import Union, List, Optional
+from typing import Union, List, Optional, Dict, Any
 import numpy as np
 import pandas as pd
 from sklearn.base import clone
@@ -84,10 +84,13 @@ class BorutaSelector(BaseFeatureSelector):
         exclude: Optional[List[str]] = None,
         force_drop: Optional[List[str]] = None,
         n_jobs: int = 1,
+        binner: Optional[Any] = None,
+        binning_params: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(
             target=target, include=include, exclude=exclude,
             force_drop=force_drop, n_jobs=n_jobs,
+            binner=binner, binning_params=binning_params,
         )
         self.estimator = estimator
         self.n_estimators = n_estimators
