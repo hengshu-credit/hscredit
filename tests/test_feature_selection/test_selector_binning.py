@@ -1,10 +1,14 @@
 """特征筛选器统一前置分箱测试。"""
 
+import inspect
+
 import numpy as np
 import pandas as pd
 import pytest
+from sklearn.base import clone
 
 from hscredit.core.binning import OptimalBinning
+from hscredit.core import selectors
 from hscredit.core.selectors import CorrSelector, IVSelector, ScorecardFeatureSelection
 from hscredit.core.selectors.base import BaseFeatureSelector
 from hscredit.exceptions import ValidationError
@@ -220,3 +224,33 @@ def test_scorecard_outer_binner_is_not_reapplied_by_internal_corr(sample_xy):
 
     assert binner.fit_calls == 1
     assert selector.stage_selectors_["corr"]._binner_instance is None
+
+
+def test_all_exported_selectors_expose_common_binning_parameters():
+    """防止任一公开筛选器因构造签名缺失而无法使用统一分箱。"""
+    missing = []
+    for name in selectors.__all__:
+        selector_class = getattr(selectors, name, None)
+        if not inspect.isclass(selector_class):
+            continue
+        if not issubclass(selector_class, BaseFeatureSelector):
+            continue
+        parameters = inspect.signature(selector_class.__init__).parameters
+        if "binner" not in parameters or "binning_params" not in parameters:
+            missing.append(name)
+
+    assert missing == []
+
+
+def test_selector_clone_preserves_independent_binning_configuration():
+    """防止 sklearn clone 丢失或共享可变分箱参数。"""
+    selector = IVSelector(
+        threshold=0.01,
+        binning_params={"method": "uniform", "max_n_bins": 3},
+    )
+
+    cloned = clone(selector)
+
+    assert cloned.binner is None
+    assert cloned.binning_params == {"method": "uniform", "max_n_bins": 3}
+    assert cloned.binning_params is not selector.binning_params

@@ -15,7 +15,7 @@
 >>> print(selector.selected_features_)
 """
 
-from typing import Union, List, Optional, Literal, Tuple
+from typing import Union, List, Optional, Literal, Tuple, Dict, Any
 import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
@@ -203,10 +203,13 @@ class LiftSelector(BaseFeatureSelector):
         exclude: Optional[List[str]] = None,
         force_drop: Optional[List[str]] = None,
         n_jobs: int = 1,
+        binner: Optional[Any] = None,
+        binning_params: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(
             target=target, threshold=threshold, include=include,
             exclude=exclude, force_drop=force_drop, n_jobs=n_jobs,
+            binner=binner, binning_params=binning_params,
         )
         self.ratio = ratio
         self.direction = direction

@@ -132,6 +132,8 @@ class StepwiseSelector(BaseFeatureSelector):
         force_drop: Optional[List[str]] = None,
         threshold: Union[float, int, str] = 0.0,
         n_jobs: int = 1,
+        binner: Optional[Any] = None,
+        binning_params: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(
             target=target,
@@ -140,6 +142,8 @@ class StepwiseSelector(BaseFeatureSelector):
             force_drop=force_drop,
             threshold=threshold,
             n_jobs=n_jobs,
+            binner=binner,
+            binning_params=binning_params,
         )
         self.estimator = estimator
         self.direction = direction

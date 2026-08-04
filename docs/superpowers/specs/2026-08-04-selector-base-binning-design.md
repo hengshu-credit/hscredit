@@ -94,7 +94,7 @@
 
 为了保持 `CorrSelector.fit(X)` 的既有无目标调用，未提供 `y` 且当前配置来自构造默认值时，跳过该默认监督分箱，继续按原始数值相关性和等权规则筛选。调用者显式提供未训练分箱器或显式 `binning_params` 时不静默跳过，其无目标拟合能力由具体分箱器决定；已训练分箱器可以在没有 `y` 时直接转换。
 
-`ScorecardFeatureSelection.corr_binning_params` 继续控制内部 `CorrSelector` 的筛选前分箱配置，不再触发第二个指标分箱器：外层未分箱且未配置该参数时省略关键字，让内部 `CorrSelector` 使用默认配置；外层已经分箱且该参数为 `None` 时显式传入 `binning_params=None`，避免对 index 再次分箱；调用者显式配置 `corr_binning_params` 时按其要求执行内部二次分箱。
+`ScorecardFeatureSelection.corr_binning_params` 继续控制内部 `CorrSelector` 的筛选前分箱配置，不再触发第二个指标分箱器：调用者显式配置 `corr_binning_params` 时按其要求执行内部二次分箱；外层已经分箱或粗筛流程已经提供 IV/用户权重时，显式传入 `binning_params=None`，避免重复分箱并保持既有相关性口径；只有尚未分箱且没有可用权重时才省略关键字，让内部 `CorrSelector` 使用默认配置。
 
 ## 错误处理与兼容性
 
