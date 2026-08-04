@@ -21,6 +21,7 @@ import numpy as np
 import pandas as pd
 
 from .base import BaseFeatureSelector
+from ...exceptions import ValidationError
 
 
 # bin_tables_ 中指标列名 → 聚合方式的映射
@@ -29,6 +30,13 @@ _METRIC_COL_MAP = {
     'ks': ('分档KS值', 'max'),                  # 取最大KS
     'lift': ('LIFT值', 'max'),                  # 取最大LIFT
     'bad_rate': ('坏样本率', 'max'),             # 取最大坏样本率
+}
+
+DEFAULT_BINNING_PARAMS = {
+    'method': 'best_iv',
+    'max_n_bins': 5,
+    'min_bin_size': 0.01,
+    'missing_separate': True,
 }
 
 
@@ -56,10 +64,10 @@ class CorrSelector(BaseFeatureSelector):
         指标通过分箱后的 bin_tables_ 计算得到。
     :param weights: 特征权重，用于决定保留哪个特征，默认为None
         如果同时传入 weights 和 metric，weights 优先。
-    :param binning_params: 透传给 OptimalBinning 的分箱参数，例如:
-        - method: 分箱方法，默认'cart'
+    :param binning_params: 透传给 OptimalBinning 的筛选前分箱参数，例如:
+        - method: 分箱方法，默认'best_iv'
         - max_n_bins: 最大分箱数，默认5
-        - min_bin_size: 最小分箱比例，默认0.05
+        - min_bin_size: 最小分箱比例，默认0.01
         - missing_separate: 是否缺失单独分箱，默认True
         - prebinning: 预分箱方法
         等等，详见 OptimalBinning 文档。
@@ -100,61 +108,53 @@ class CorrSelector(BaseFeatureSelector):
         method: str = 'pearson',
         metric: str = 'iv',
         weights: Optional[Union[pd.Series, Dict[str, float], List[float]]] = None,
-        binning_params: Optional[Dict[str, Any]] = None,
+        binning_params: Optional[Dict[str, Any]] = DEFAULT_BINNING_PARAMS,
         target: str = 'target',
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
         force_drop: Optional[List[str]] = None,
         n_jobs: int = 1,
+        binner: Optional[Any] = None,
     ):
+        self._uses_default_binning_params = (
+            binning_params is DEFAULT_BINNING_PARAMS
+            or binning_params == DEFAULT_BINNING_PARAMS
+        )
+        effective_binning_params = (
+            dict(DEFAULT_BINNING_PARAMS)
+            if self._uses_default_binning_params
+            else binning_params
+        )
         super().__init__(
             target=target, threshold=threshold, include=include,
             exclude=exclude, force_drop=force_drop, n_jobs=n_jobs,
+            binner=binner, binning_params=effective_binning_params,
         )
         self.method = method
         self.metric = metric
         self.weights = weights
-        self.binning_params = binning_params
         self.method_name = '相关性筛选'
 
-    def _compute_metric_weights(
-        self,
-        X: pd.DataFrame,
-        y: Optional[Union[pd.Series, np.ndarray]],
-    ) -> pd.Series:
-        """通过分箱计算每个特征的指标值作为权重.
-
-        :param X: 输入特征（仅数值列）
-        :param y: 目标变量
-        :return: 特征 → 指标值的 Series
-        """
-        from ..binning import OptimalBinning
-
-        # 构建分箱参数
-        params = {
-            'method': 'cart',
-            'max_n_bins': 5,
-            'min_bin_size': 0.05,
-            'missing_separate': True,
-        }
-        if self.binning_params:
-            params.update(self.binning_params)
-
-        binner = OptimalBinning(**params)
-        binner.fit(X, y)
-
-        # 从 bin_tables_ 提取指标
+    def _metric_weights_from_binner(self, feature_names: List[str]) -> pd.Series:
+        """从基类管理的同一分箱器中提取特征指标权重。"""
         metric_key = self.metric.lower()
         if metric_key not in _METRIC_COL_MAP:
-            raise ValueError(
+            raise ValidationError(
                 f"不支持的指标 '{self.metric}'，可选: {list(_METRIC_COL_MAP.keys())}"
             )
         col_name, agg_func = _METRIC_COL_MAP[metric_key]
+        binner = getattr(self, '_binner_instance', None)
+        bin_tables = getattr(binner, 'bin_tables_', {}) if binner is not None else {}
+        if not bin_tables:
+            raise ValidationError(
+                "CorrSelector 使用指标权重时需要配置 binner 或 binning_params，"
+                "也可以显式传入 weights"
+            )
 
         scores = {}
-        for col in X.columns:
-            if col in binner.bin_tables_:
-                bt = binner.bin_tables_[col]
+        for col in feature_names:
+            if col in bin_tables:
+                bt = bin_tables[col]
                 if col_name in bt.columns:
                     scores[col] = bt[col_name].agg(agg_func)
                 else:
@@ -163,6 +163,15 @@ class CorrSelector(BaseFeatureSelector):
                 scores[col] = 0.0
 
         return pd.Series(scores)
+
+    def _should_apply_binner(
+        self,
+        y: Optional[Union[pd.Series, np.ndarray]],
+    ) -> bool:
+        """无目标时仅跳过构造函数提供的默认监督分箱。"""
+        if y is None and self.binner is None and self._uses_default_binning_params:
+            return False
+        return super()._should_apply_binner(y)
 
     def _fit_impl(
         self,
@@ -191,27 +200,17 @@ class CorrSelector(BaseFeatureSelector):
                     np.array(self.weights)[:n_features],
                     index=feature_names[:len(self.weights)],
                 ).reindex(feature_names).fillna(0.0)
-        elif y is not None:
-            # 通过分箱计算指标权重
-            numeric_cols = X.select_dtypes(include=[np.number]).columns.tolist()
-            non_numeric = [c for c in feature_names if c not in numeric_cols]
-
-            if numeric_cols:
-                metric_scores = self._compute_metric_weights(X[numeric_cols], y)
-            else:
-                metric_scores = pd.Series(dtype=float)
-
-            # 非数值列给 0 权重
-            for c in non_numeric:
-                metric_scores[c] = 0.0
-
-            weight_series = metric_scores.reindex(feature_names).fillna(0.0)
+        elif y is not None or getattr(self, '_binner_instance', None) is not None:
+            # 从基类已训练的同一分箱器中读取指标权重
+            weight_series = self._metric_weights_from_binner(feature_names)
+            weight_series = weight_series.reindex(feature_names).fillna(0.0)
         else:
             # 无 y 且无 weights，使用等权（退化为按列顺序保留）
             weight_series = pd.Series(np.ones(n_features), index=feature_names)
 
         weight_arr = weight_series.values
         self.feature_scores_ = weight_series.copy()
+        self.scores_ = weight_series.copy()
 
         # ── 按权重降序排列（权重高的优先保留） ──
         sort_idx = np.argsort(weight_arr)[::-1]
@@ -258,7 +257,11 @@ class CorrSelector(BaseFeatureSelector):
                 max_corr_features.append(max_corr_feat)
                 metric_values.append(weight_series.get(col_name, 0.0))
 
-            metric_label = self.metric.upper() if self.weights is None and y is not None else '权重'
+            metric_label = (
+                self.metric.upper()
+                if self.weights is None and getattr(self, '_binner_instance', None) is not None
+                else '权重'
+            )
             self.dropped_ = pd.DataFrame({
                 '特征': dropped_cols,
                 '剔除原因': [

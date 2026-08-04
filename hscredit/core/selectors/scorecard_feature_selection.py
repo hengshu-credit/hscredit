@@ -119,6 +119,8 @@ class ScorecardFeatureSelection(BaseFeatureSelector):
         force_drop: Optional[List[str]] = None,
         target_rm: bool = False,
         n_jobs: int = 1,
+        binner: Optional[Any] = None,
+        binning_params: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(
             target=target,
@@ -127,6 +129,8 @@ class ScorecardFeatureSelection(BaseFeatureSelector):
             force_drop=force_drop,
             threshold='multi-stage',
             n_jobs=n_jobs,
+            binner=binner,
+            binning_params=binning_params,
         )
         self.null_threshold = null_threshold
         self.iv_threshold = iv_threshold
@@ -213,14 +217,23 @@ class ScorecardFeatureSelection(BaseFeatureSelector):
 
         if self._is_stage_enabled(self.corr_threshold) and len(current_X.columns) > 0:
             corr_weights = self._resolve_corr_weights(current_X, y, iv_scores)
+            corr_binning_kwargs = {}
+            if self.corr_binning_params is not None:
+                corr_binning_kwargs['binning_params'] = self.corr_binning_params
+            elif (
+                getattr(self, '_binner_instance', None) is not None
+                or corr_weights is not None
+            ):
+                # 外层已分箱或已有明确权重时，关闭内部 CorrSelector 的构造默认分箱。
+                corr_binning_kwargs['binning_params'] = None
             corr_selector = CorrSelector(
                 threshold=self.corr_threshold,
                 method=self.corr_method,
                 metric=self.corr_metric,
                 weights=corr_weights,
-                binning_params=self.corr_binning_params,
                 target=self.target,
                 n_jobs=self.n_jobs,
+                **corr_binning_kwargs,
             )
             current_X = self._run_stage(
                 stage_key='corr',

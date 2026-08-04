@@ -5,6 +5,7 @@ import pandas as pd
 import pytest
 
 from hscredit.core.binning import OptimalBinning
+from hscredit.core.selectors import CorrSelector, IVSelector, ScorecardFeatureSelection
 from hscredit.core.selectors.base import BaseFeatureSelector
 from hscredit.exceptions import ValidationError
 
@@ -60,6 +61,21 @@ def sample_xy():
         index=pd.Index(range(100, 120), name="样本号"),
     )
     y = pd.Series([0, 1] * 10, index=X.index)
+    return X, y
+
+
+@pytest.fixture
+def corr_xy():
+    rng = np.random.RandomState(42)
+    signal = np.linspace(-3.0, 3.0, 200)
+    X = pd.DataFrame(
+        {
+            "主特征": signal,
+            "相关特征": signal + rng.normal(0.0, 0.03, len(signal)),
+            "随机特征": rng.normal(0.0, 1.0, len(signal)),
+        }
+    )
+    y = pd.Series((signal + rng.normal(0.0, 0.4, len(signal)) > 0).astype(int))
     return X, y
 
 
@@ -138,3 +154,69 @@ def test_binner_without_transform_or_apply_is_rejected(sample_xy):
 
     with pytest.raises(ValidationError, match="transform 或 apply"):
         CaptureSelector(binner=NoTransformBinner()).fit(X, y)
+
+
+def test_iv_selector_computes_iv_from_uniform_bin_indices():
+    """防止 IVSelector 仍按连续原值而非分箱 index 计算。"""
+    X = pd.DataFrame({"连续变量": np.arange(1, 9, dtype=float)})
+    y = pd.Series([0, 0, 0, 1, 0, 1, 1, 1])
+
+    selector = IVSelector(
+        threshold=0.0,
+        regularization=1.0,
+        binning_params={"method": "uniform", "max_n_bins": 2, "min_n_bins": 2},
+    ).fit(X, y)
+
+    assert selector.scores_["连续变量"] == pytest.approx(0.462098, rel=1e-5)
+    assert selector.transform(X).equals(X)
+
+
+def test_corr_selector_uses_default_best_iv_binner_and_same_bin_tables(corr_xy):
+    """防止 CorrSelector 使用另一套隐藏分箱器计算指标。"""
+    X, y = corr_xy
+
+    selector = CorrSelector(threshold=0.8).fit(X, y)
+
+    binner = selector._binner_instance
+    assert binner.method == "best_iv"
+    assert binner.max_n_bins == 5
+    assert binner.min_bin_size == 0.01
+    expected = pd.Series(
+        {
+            column: binner.bin_tables_[column]["指标IV值"].iloc[0]
+            for column in X.columns
+        }
+    )
+    pd.testing.assert_series_equal(
+        selector.scores_.sort_index(),
+        expected.sort_index(),
+        check_names=False,
+    )
+
+
+def test_corr_selector_without_target_skips_only_constructor_default():
+    """防止默认监督分箱破坏 CorrSelector.fit(X) 兼容路径。"""
+    X = pd.DataFrame({"a": [1, 2, 3, 4], "b": [1, 2, 3, 4]})
+
+    selector = CorrSelector(threshold=0.8).fit(X)
+
+    assert selector._binner_instance is None
+    assert len(selector.selected_features_) == 1
+
+
+def test_scorecard_outer_binner_is_not_reapplied_by_internal_corr(sample_xy):
+    """防止组合筛选器对外层分箱 index 再次分箱。"""
+    X, y = sample_xy
+    binner = RecordingBinner()
+    selector = ScorecardFeatureSelection(
+        null_threshold=None,
+        iv_threshold=0.0,
+        corr_threshold=0.8,
+        mode_threshold=None,
+        binner=binner,
+    )
+
+    selector.fit(X, y)
+
+    assert binner.fit_calls == 1
+    assert selector.stage_selectors_["corr"]._binner_instance is None
