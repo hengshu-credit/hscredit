@@ -203,6 +203,53 @@ class RefinementFailingOptimalBinning(OptimalBinning):
         raise AssertionError("lift_refine=False 未保留")
 
 
+class AxisWorkerFailingOptimalBinning(OptimalBinning):
+    """在二维新 Y 轴的底层分箱 worker 阶段失败。"""
+
+    def _fit_with_method(self, X, y):
+        if "new_y" in X.columns:
+            raise ValueError("二维轴 worker 故意失败")
+        return super()._fit_with_method(X, y)
+
+
+class AxisWorkerFailingOptimalBinning2D(OptimalBinning2D):
+    """为新 Y 轴注入真实的失败 OptimalBinning。"""
+
+    def _create_binner(self, is_x):
+        binner = super()._create_binner(is_x)
+        if not is_x and self.feature_y_ == "new_y":
+            return AxisWorkerFailingOptimalBinning(**binner.get_params(deep=False), **binner.kwargs)
+        return binner
+
+
+class CrossTableFailingOptimalBinning2D(OptimalBinning2D):
+    """在两轴成功后的交叉统计阶段失败。"""
+
+    def _compute_cross_table(self):
+        if self.feature_x_ == "new_x":
+            raise ValueError("二维交叉统计故意失败")
+        return super()._compute_cross_table()
+
+
+class BinningTableFailingOptimalBinning2D(OptimalBinning2D):
+    """在最终二维分箱表阶段失败。"""
+
+    def _compute_binning_table(self):
+        if self.feature_x_ == "new_x":
+            raise ValueError("二维最终统计故意失败")
+        return super()._compute_binning_table()
+
+
+class UnregisteredStateUniformBinning(UniformBinning):
+    """模拟具体算法未登记的按特征拟合输出。"""
+
+    def fit(self, X, y=None, **kwargs):
+        result = super().fit(X, y, **kwargs)
+        self.audit_state_ = getattr(self, "audit_state_", {})
+        self.audit_state_.update({feature: "已拟合" for feature in X.columns})
+        return result
+
+
 def _successful_initial_fit(binner):
     X = pd.DataFrame({"旧特征": np.arange(24, dtype=float)})
     y = pd.Series(np.tile([0, 1], 12), name="目标")
@@ -301,6 +348,163 @@ def test_delegating_fit_uses_single_candidate_transaction(monkeypatch, mixed_xy)
     assert len(clone_calls) == 1
     assert fitted._is_fitted is True
     assert "_fit_transaction_active" not in fitted.__dict__
+
+
+@pytest.mark.parametrize(
+    "binner_cls,error_message",
+    [
+        pytest.param(AxisWorkerFailingOptimalBinning2D, "二维轴 worker 故意失败", id="axis-worker"),
+        pytest.param(CrossTableFailingOptimalBinning2D, "二维交叉统计故意失败", id="cross-table"),
+        pytest.param(BinningTableFailingOptimalBinning2D, "二维最终统计故意失败", id="binning-table"),
+    ],
+)
+@pytest.mark.parametrize("n_jobs,backend", EXECUTION_MODES)
+def test_2d_failed_refit_restores_complete_previous_model(binner_cls, error_message, n_jobs, backend):
+    y = pd.Series(np.tile([0, 1], 12), name="目标")
+    old = pd.DataFrame({"old_x": np.arange(24, dtype=float), "old_y": np.arange(23, -1, -1, dtype=float)})
+    new = pd.DataFrame({"new_x": np.arange(23, -1, -1, dtype=float), "new_y": np.arange(24, dtype=float)})
+    binner = binner_cls(method="uniform", n_jobs=n_jobs, parallel_backend=backend, random_state=17).fit(old, y)
+    before = pickle.dumps(binner)
+    old_result = binner.transform(old, metric="woe")
+
+    with pytest.raises(ValueError, match=error_message):
+        binner.fit(new, y)
+
+    assert pickle.dumps(binner) == before
+    pd.testing.assert_frame_equal(binner.transform(old, metric="woe"), old_result)
+
+
+@pytest.mark.parametrize("n_jobs,backend", EXECUTION_MODES)
+def test_2d_successful_refit_replaces_all_previous_state(n_jobs, backend):
+    y = pd.Series(np.tile([0, 1], 12), name="目标")
+    old = pd.DataFrame({"old_x": np.arange(24, dtype=float), "old_y": np.arange(23, -1, -1, dtype=float)})
+    new = pd.DataFrame({"new_x": np.arange(23, -1, -1, dtype=float), "new_y": np.arange(24, dtype=float)})
+    binner = OptimalBinning2D(
+        method="uniform", n_jobs=n_jobs, parallel_backend=backend, random_state=17
+    ).fit(old, y)
+
+    binner.fit(new, y)
+
+    assert (binner.feature_x_, binner.feature_y_) == ("new_x", "new_y")
+    assert binner.feature_names_in_.tolist() == ["new_x", "new_y"]
+    assert list(binner._X.columns) == ["new_x", "new_y"]
+    assert list(binner.binner_x_.splits_) == ["new_x"]
+    assert list(binner.binner_y_.splits_) == ["new_y"]
+    assert binner.transform(new, metric="indices").shape == (24, 1)
+
+
+def test_2d_transaction_preserves_signature_clone_and_pickle(mixed_xy):
+    X, y = mixed_xy
+    features = ["数值一", "数值二"]
+    params = inspect.signature(OptimalBinning2D.fit).parameters
+    assert list(params) == ["self", "X", "y", "features"]
+    source = OptimalBinning2D(method="uniform", max_n_bins=3, n_jobs=1, random_state=17)
+    assert clone(source).get_params(deep=False) == source.get_params(deep=False)
+
+    fitted = source.fit(X[features], y)
+    restored = pickle.loads(pickle.dumps(fitted))
+
+    pd.testing.assert_frame_equal(
+        fitted.transform(X[features], metric="woe"), restored.transform(X[features], metric="woe")
+    )
+
+
+@pytest.mark.parametrize("n_jobs,backend", EXECUTION_MODES)
+@pytest.mark.parametrize(
+    "binner_factory,extra_state_name",
+    [
+        pytest.param(lambda **kwargs: UnregisteredStateUniformBinning(**kwargs), "audit_state_", id="base"),
+        pytest.param(lambda **kwargs: OptimalBinning(method="uniform", **kwargs), None, id="optimal"),
+    ],
+)
+def test_imported_rule_fit_candidate_excludes_previous_fitted_outputs(
+    binner_factory, extra_state_name, n_jobs, backend
+):
+    y = pd.Series(np.tile([0, 1], 12), name="目标")
+    old = pd.DataFrame({"old": np.arange(24, dtype=float)})
+    new = pd.DataFrame({"new": np.arange(24, dtype=float)})
+    binner = binner_factory(n_jobs=n_jobs, parallel_backend=backend, random_state=17).fit(old, y)
+
+    binner.import_rules({"new": [5.0, 10.0, 15.0]})
+    assert set(binner.export_rules()) == {"old", "new"}
+    assert binner.transform(old, metric="indices").shape == (24, 1)
+    assert binner.transform(new, metric="indices").shape == (24, 1)
+
+    binner.fit(new, y)
+
+    assert binner.feature_names_in_.tolist() == ["new"]
+    assert list(binner.splits_) == ["new"]
+    assert list(binner.bin_tables_) == ["new"]
+    assert "old" not in getattr(binner, "_woe_maps_", {})
+    if extra_state_name is not None:
+        assert list(getattr(binner, extra_state_name)) == ["new"]
+    else:
+        assert binner._binner is None
+        np.testing.assert_array_equal(binner.splits_["new"], np.array([5.0, 10.0, 15.0]))
+    assert binner.transform(new, metric="indices").shape == (24, 1)
+
+
+@pytest.mark.parametrize(
+    "binner_factory",
+    [
+        pytest.param(lambda: UniformBinning(n_jobs=1), id="base"),
+        pytest.param(lambda: OptimalBinning(method="uniform", n_jobs=1), id="optimal"),
+    ],
+)
+def test_import_rules_immediately_override_same_feature(binner_factory):
+    y = pd.Series(np.tile([0, 1], 12), name="目标")
+    X = pd.DataFrame({"特征": np.arange(24, dtype=float)})
+    binner = binner_factory().fit(X, y)
+
+    binner.import_rules({"特征": [5.0, 10.0, 15.0]})
+
+    np.testing.assert_array_equal(binner.splits_["特征"], np.array([5.0, 10.0, 15.0]))
+    assert binner.transform(X, metric="indices").shape == (24, 1)
+
+
+def test_loaded_woe_map_remains_available_after_imported_rule_fit():
+    rules = {
+        "特征": [5.0, 10.0],
+        "_woe_maps_": {"特征": {"0": 0.1, "1": 0.2, "2": 0.3, "-1": -0.1}},
+    }
+    X = pd.DataFrame({"特征": [1.0, 7.0, 12.0, np.nan]})
+    y = pd.Series([0, 1, 0, 1], name="目标")
+    binner = OptimalBinning(method="uniform", n_jobs=1).load(rules)
+
+    binner.fit(X, y)
+
+    np.testing.assert_allclose(binner.transform(X, metric="woe")["特征"], [0.1, 0.2, 0.3, -0.1])
+
+
+def test_load_update_true_keeps_direct_incremental_update_semantics():
+    y = pd.Series(np.tile([0, 1], 12), name="目标")
+    old = pd.DataFrame({"old": np.arange(24, dtype=float)})
+    new = pd.DataFrame({"new": np.arange(24, dtype=float)})
+    binner = OptimalBinning(method="uniform", n_jobs=1).fit(old, y)
+
+    binner.load({"new": [5.0, 10.0, 15.0]}, update=True)
+
+    assert set(binner.export_rules()) == {"old", "new"}
+    assert binner.transform(old, metric="indices").shape == (24, 1)
+    assert binner.transform(new, metric="indices").shape == (24, 1)
+
+
+@pytest.mark.parametrize("n_jobs,backend", EXECUTION_MODES)
+def test_imported_rules_outside_fit_columns_do_not_skip_optimal_training(n_jobs, backend):
+    y = pd.Series(np.tile([0, 1], 12), name="目标")
+    old = pd.DataFrame({"old": np.arange(24, dtype=float)})
+    new = pd.DataFrame({"new": np.arange(23, -1, -1, dtype=float)})
+    binner = OptimalBinning(
+        method="uniform", n_jobs=n_jobs, parallel_backend=backend, random_state=17
+    ).fit(old, y)
+    binner.import_rules({"未使用规则": [5.0, 10.0, 15.0]})
+
+    binner.fit(new, y)
+
+    assert list(binner.splits_) == ["new"]
+    assert list(binner.bin_tables_) == ["new"]
+    assert binner._binner is not None
+    assert binner.transform(new, metric="indices").shape == (24, 1)
 
 
 BINNER_SMOKE_CASES = [

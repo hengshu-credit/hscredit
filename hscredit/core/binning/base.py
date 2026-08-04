@@ -215,6 +215,15 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         "clip_bounds_",
     )
     _FEATURE_SET_STATE = ("_categorical_encoded_features_",)
+    _IMPORTED_RULE_DICT_STATE = (
+        "splits_",
+        "n_bins_",
+        "feature_types_",
+        "_cat_bins_",
+        "_category_orders_",
+        "_category_code_maps_",
+        "_woe_maps_",
+    )
 
     def __init_subclass__(cls, **kwargs):
         """将具体分箱器的 ``fit`` 包装为估计器级事务。"""
@@ -230,8 +239,8 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
                 return fit_method(self, *args, **kwargs)
 
             # 常规拟合始终从构造参数创建空候选，避免复制或保留历史大状态。
-            # 导入规则是唯一刻意依赖旧状态的路径，只在已有规则上补充统计信息。
-            candidate = self._make_fit_transaction_candidate()
+            # 若刚导入规则，仅显式恢复本次规则快照与拟合列的交集。
+            candidate = self._make_fit_transaction_candidate(args, kwargs)
             candidate._fit_transaction_active = True
             try:
                 result = fit_method(candidate, *args, **kwargs)
@@ -247,10 +256,8 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         transactional_fit._hscredit_transactional_fit = True
         cls.fit = transactional_fit
 
-    def _make_fit_transaction_candidate(self) -> "BaseBinning":
+    def _make_fit_transaction_candidate(self, fit_args=(), fit_kwargs=None) -> "BaseBinning":
         """创建不携带历史拟合状态的事务候选对象。"""
-        if getattr(self, "_rules_imported_", False):
-            return deepcopy(self)
         candidate = clone(self)
         # ``**kwargs`` 不在 sklearn 的参数签名中；OptimalBinning 用它保存
         # 求解器和后处理选项，需要显式复制到事务候选。
@@ -258,7 +265,59 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
             candidate.kwargs = clone(self.kwargs, safe=False)
         if hasattr(self, "_fit_control_options"):
             candidate._fit_control_options = clone(self._fit_control_options, safe=False)
+        self._restore_imported_rule_snapshot(candidate, fit_args, fit_kwargs or {})
         return candidate
+
+    @staticmethod
+    def _fit_input_features(fit_args, fit_kwargs) -> Optional[List[str]]:
+        """从 fit 调用参数中提取本轮输入特征名。"""
+        X = fit_args[0] if fit_args else fit_kwargs.get("X")
+        if isinstance(X, pd.DataFrame):
+            return list(X.columns)
+        if isinstance(X, pd.Series):
+            return [X.name if X.name is not None else "feature"]
+        if isinstance(X, np.ndarray):
+            if X.ndim == 1:
+                return ["feature"]
+            return [f"feature_{index}" for index in range(X.shape[1])]
+        return None
+
+    def _capture_imported_rule_snapshot(self, features) -> None:
+        """记录最近一次 import_rules 的规则输入，不混入历史拟合输出。"""
+        ordered_features = tuple(dict.fromkeys(features))
+        snapshot = {}
+        for state_name in self._IMPORTED_RULE_DICT_STATE:
+            values = getattr(self, state_name, {})
+            snapshot[state_name] = {
+                feature: deepcopy(values[feature]) for feature in ordered_features if feature in values
+            }
+        self._imported_rule_features_ = ordered_features
+        self._imported_rule_snapshot_ = snapshot
+
+    def _restore_imported_rule_snapshot(self, candidate, fit_args, fit_kwargs) -> None:
+        """仅向干净候选注入最近导入且属于本轮 X 的规则。"""
+        snapshot = getattr(self, "_imported_rule_snapshot_", None)
+        if not getattr(self, "_rules_imported_", False) or snapshot is None:
+            return
+
+        input_features = self._fit_input_features(fit_args, fit_kwargs)
+        imported_features = getattr(self, "_imported_rule_features_", ())
+        selected = [
+            feature for feature in imported_features if input_features is None or feature in input_features
+        ]
+        if not selected:
+            return
+        filtered_snapshot = {}
+        for state_name in self._IMPORTED_RULE_DICT_STATE:
+            values = snapshot.get(state_name, {})
+            filtered = {feature: deepcopy(values[feature]) for feature in selected if feature in values}
+            setattr(candidate, state_name, filtered)
+            filtered_snapshot[state_name] = deepcopy(filtered)
+
+        candidate._rules_imported_ = True
+        candidate._imported_rule_features_ = tuple(selected)
+        candidate._imported_rule_snapshot_ = filtered_snapshot
+        candidate._is_fitted = True
 
     def __init__(
         self,
@@ -2328,6 +2387,10 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
             - 数值型: {'age': [25, 35, 45, 55]}
             - 类别型: {'city': [['北京', '上海'], ['广州', '深圳'], [np.nan]]}
 
+        调用本方法时沿用增量覆盖语义，导入后可立即 transform。随后调用 fit 时，
+        仅把最近一次导入规则中同时属于本轮 X 的特征作为候选输入；普通分箱器仍
+        重新运行其算法，OptimalBinning 则保留这些导入切点并补充分箱统计。
+
         **参考样例**
 
         >>> # 导入数值型规则
@@ -2357,7 +2420,6 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         >>> binner.import_rules(rules)
         """
         self._woe_maps_ = getattr(self, "_woe_maps_", {})
-        self._rules_imported_ = True
 
         for feature, rule in rules.items():
             # 判断是否为类别型变量
@@ -2391,6 +2453,8 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
                 self.feature_types_[feature] = "numerical"
                 self.n_bins_[feature] = len(self.splits_[feature]) + 1
 
+        self._rules_imported_ = True
+        self._capture_imported_rule_snapshot(rules.keys())
         self._is_fitted = True
         return self
 
@@ -2715,6 +2779,8 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
             for feature, woe_map in woe_maps.items():
                 # 将字符串键转换为整数键
                 self._woe_maps_[feature] = {int(k): float(v) for k, v in woe_map.items()}
+            if getattr(self, "_rules_imported_", False):
+                self._capture_imported_rule_snapshot(self._imported_rule_features_)
 
         return self
 

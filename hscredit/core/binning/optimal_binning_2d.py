@@ -48,7 +48,7 @@ from typing import Union, List, Dict, Optional, Any, Tuple, Literal
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.base import BaseEstimator, TransformerMixin, clone
 
 from .optimal_binning import OptimalBinning
 from ..metrics._binning import compute_bin_stats
@@ -282,6 +282,21 @@ class OptimalBinning2D(ArtifactSerializableMixin, BaseEstimator, TransformerMixi
     # -------------------------------------------------------------------------
 
     def fit(
+        self,
+        X: Union[pd.DataFrame, np.ndarray],
+        y: Optional[Union[pd.Series, np.ndarray]] = None,
+        features: Optional[List[str]] = None,
+    ) -> 'OptimalBinning2D':
+        """在干净候选对象上完整拟合并于成功后一次提交。"""
+        candidate = clone(self)
+        result = candidate._fit(X, y, features)
+        if result is not candidate:
+            raise TypeError("二维分箱器 fit 必须返回自身")
+        self.__dict__.clear()
+        self.__dict__.update(candidate.__dict__)
+        return self
+
+    def _fit(
         self,
         X: Union[pd.DataFrame, np.ndarray],
         y: Optional[Union[pd.Series, np.ndarray]] = None,
