@@ -14,6 +14,7 @@ API风格说明:
 """
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import List, Optional, Tuple, Union, Dict, Any
 import numpy as np
 import pandas as pd
@@ -22,6 +23,21 @@ from sklearn.base import BaseEstimator, TransformerMixin, clone
 from ...exceptions import FeatureNotFoundError, NotFittedError
 from ...utils.parallel import ParallelizableMixin
 from ...utils.serialization import ArtifactSerializableMixin
+
+
+@dataclass(frozen=True)
+class _FloatNaNBucket:
+    """浮点 NaN 的稳定类型桶；仅用于内部查找，不作为用户类别键。"""
+
+    family: str
+    dtype: Optional[str] = None
+
+
+_PYTHON_FLOAT_NAN_BUCKET = _FloatNaNBucket("python")
+_FLOAT_NAN_REPRESENTATIVES = {_PYTHON_FLOAT_NAN_BUCKET: float("nan")}
+for _float_dtype in (np.float16, np.float32, np.float64, np.longdouble):
+    _bucket = _FloatNaNBucket("numpy", np.dtype(_float_dtype).str)
+    _FLOAT_NAN_REPRESENTATIVES.setdefault(_bucket, _float_dtype("nan"))
 
 
 def _fit_encoder_column_worker(task):
@@ -602,10 +618,49 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
             canonical[normalized] = value
         return canonical
 
-    @staticmethod
-    def _is_float_nan_key(key: Any) -> bool:
+    @classmethod
+    def _float_nan_bucket(cls, key: Any) -> Optional[_FloatNaNBucket]:
+        """按 Python float 或 NumPy 浮点 dtype 区分 NaN 桶。"""
+        if type(key) is float and np.isnan(key):
+            return _PYTHON_FLOAT_NAN_BUCKET
+        if isinstance(key, np.floating) and np.isnan(key):
+            return _FloatNaNBucket("numpy", np.asarray(key).dtype.str)
+        return None
+
+    @classmethod
+    def _float_nan_representative(cls, key: Any) -> Any:
+        """返回 typed NaN 桶在当前进程中的稳定公开代表键。"""
+        bucket = cls._float_nan_bucket(key)
+        if bucket is None:
+            return key
+        representative = _FLOAT_NAN_REPRESENTATIVES.get(bucket)
+        if representative is None:
+            representative = np.asarray(np.nan, dtype=np.dtype(bucket.dtype))[()]
+            _FLOAT_NAN_REPRESENTATIVES[bucket] = representative
+        return representative
+
+    @classmethod
+    def _is_float_nan_key(cls, key: Any) -> bool:
         """仅识别 Python/NumPy 浮点 NaN，不合并其他 missing-like 标量。"""
-        return isinstance(key, (float, np.floating)) and bool(np.isnan(key))
+        return cls._float_nan_bucket(key) is not None
+
+    @classmethod
+    def _map_with_typed_float_nan(cls, values: pd.Series, mapping: Dict) -> pd.Series:
+        """按 typed NaN 桶修正 pandas map，避免依赖 NaN 对象身份。"""
+        result = values.map(mapping)
+        typed_lookup = {
+            bucket: value
+            for key, value in mapping.items()
+            if (bucket := cls._float_nan_bucket(key)) is not None
+        }
+        if not typed_lookup:
+            return result
+
+        for position, original in enumerate(values.array):
+            bucket = cls._float_nan_bucket(original)
+            if bucket in typed_lookup:
+                result.iloc[position] = typed_lookup[bucket]
+        return result
 
     def _deserialize_mapping(self, mapping: Dict) -> Dict:
         """反序列化映射。

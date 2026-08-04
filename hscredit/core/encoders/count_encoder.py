@@ -111,6 +111,27 @@ class CountEncoder(BaseEncoder):
 
         self.total_count_: int = 0
 
+    @classmethod
+    def _canonicalize_nan_keys(cls, mapping: Dict) -> Dict:
+        """按浮点标量类型规范化计数键，保留 pandas 的 typed-NaN 分组。"""
+        return {
+            cls._float_nan_representative(key): value
+            for key, value in mapping.items()
+        }
+
+    def _serialize_mapping(self, mapping: Dict) -> Dict:
+        """导出时保留 CountEncoder 的 typed-NaN 公开代表键。"""
+        serialized = {}
+        for key, value in mapping.items():
+            key = self._float_nan_representative(key)
+            if isinstance(value, pd.Series):
+                serialized[key] = value.to_dict()
+            elif isinstance(value, dict):
+                serialized[key] = self._serialize_mapping(value)
+            else:
+                serialized[key] = value
+        return serialized
+
     def _fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None):
         """拟合计数编码器。
 
@@ -134,7 +155,14 @@ class CountEncoder(BaseEncoder):
         if self.normalize:
             counts = counts / self.total_count_
 
-        mapping = counts.to_dict()
+        mapping = {}
+        for key, value in counts.items():
+            bucket = self._float_nan_bucket(key)
+            normalized = self._float_nan_representative(key)
+            if bucket is None:
+                mapping[normalized] = value
+            else:
+                mapping[normalized] = mapping.get(normalized, 0) + value
 
         if self.handle_missing == 'value':
             if not any(self._is_float_nan_key(key) for key in mapping):
@@ -171,7 +199,7 @@ class CountEncoder(BaseEncoder):
                 lambda x: '__OTHER__' if x not in known_categories and pd.notna(x) else x
             )
 
-        result = result.map(mapping)
+        result = self._map_with_typed_float_nan(result, mapping)
 
         if self.handle_unknown == 'value':
             default_value = 0 if not self.normalize else 0.0
