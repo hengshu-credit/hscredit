@@ -115,16 +115,16 @@ class TestOptimalBinning2DBasic:
         expected_rows = binner.n_bins_x_ * binner.n_bins_y_
         assert len(cross_table) == expected_rows
 
-    def test_both_tables_use_shared_compute_bin_stats(self, sample_df):
+    def test_both_tables_use_shared_compute_bin_stats(self, sample_df, monkeypatch):
         binner = OptimalBinning2D(max_n_bins=4)
-        original = binner._compute_bin_stats
+        original = OptimalBinning2D._compute_bin_stats
         calls = []
 
-        def spy(*args, **kwargs):
+        def spy(instance, *args, **kwargs):
             calls.append(np.asarray(args[0]).copy())
-            return original(*args, **kwargs)
+            return original(instance, *args, **kwargs)
 
-        binner._compute_bin_stats = spy
+        monkeypatch.setattr(OptimalBinning2D, "_compute_bin_stats", spy)
         binner.fit(sample_df, y=sample_df['target'], features=['age', 'income'])
 
         assert len(calls) == 2
