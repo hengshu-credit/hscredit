@@ -2,6 +2,8 @@
 
 import inspect
 import pickle
+from collections import Counter
+from decimal import Decimal
 
 import numpy as np
 import pandas as pd
@@ -279,6 +281,123 @@ def test_float_nan_normalization_does_not_capture_other_scalar_types():
     mapping = {True: 1, Decimal("1.5"): 2, complex(1, 2): 3, None: 4, pd.NaT: 5, pd.NA: 6}
     normalized = CountEncoder._canonicalize_nan_keys(mapping)
     assert list(normalized.items()) == list(mapping.items())
+
+
+def _typed_float_nan_signature(mapping):
+    return [
+        (type(key).__module__, type(key).__name__, value)
+        for key, value in mapping.items()
+        if type(key) is float or isinstance(key, np.floating)
+        if np.isnan(key)
+    ]
+
+
+def test_pandas_value_counts_keeps_float_nan_buckets_by_scalar_type():
+    """typed NaN 被错误视作同一 pandas 分组时，本基线刻画应失败。"""
+    values = [
+        float("nan"),
+        np.float32("nan"),
+        float("nan"),
+        np.float64("nan"),
+        None,
+        pd.NaT,
+        pd.NA,
+        "x",
+    ]
+    series = pd.Series(values, dtype=object)
+    counts = series.value_counts(dropna=False, sort=False)
+
+    assert _typed_float_nan_signature(counts.to_dict()) == [
+        ("builtins", "float", 2),
+        ("numpy", "float32", 1),
+        ("numpy", "float64", 1),
+    ]
+    assert series.map(counts).tolist() == [2, 1, 2, 1, 1, 1, 1, 1]
+
+
+@pytest.mark.parametrize(
+    "n_jobs,backend",
+    [(1, None), (2, "threading"), (2, "loky")],
+)
+def test_count_encoder_preserves_typed_float_nan_buckets_through_roundtrips(n_jobs, backend):
+    """fit 提交覆盖 typed NaN 桶或 transform 按对象身份查找时，本测试应失败。"""
+    X = pd.DataFrame(
+        {
+            "a": pd.Series(
+                [
+                    float("nan"),
+                    np.float32("nan"),
+                    float("nan"),
+                    np.float64("nan"),
+                    None,
+                    pd.NaT,
+                    pd.NA,
+                    "x",
+                ],
+                dtype=object,
+            )
+        }
+    )
+    encoder = CountEncoder(cols=["a"], n_jobs=n_jobs, parallel_backend=backend).fit(X)
+    expected_signature = [
+        ("builtins", "float", 2),
+        ("numpy", "float32", 1),
+        ("numpy", "float64", 1),
+    ]
+    expected_values = [2, 1, 2, 1, 1, 1, 1, 1]
+
+    assert _typed_float_nan_signature(encoder.mapping_["a"]) == expected_signature
+    assert encoder.transform(X)["a"].tolist() == expected_values
+
+    exported = pickle.loads(pickle.dumps(encoder.export_mapping()))
+    assert _typed_float_nan_signature(exported["mapping_"]["a"]) == expected_signature
+    restored = CountEncoder(cols=["a"]).import_mapping(exported)
+    assert _typed_float_nan_signature(restored.mapping_["a"]) == expected_signature
+    assert restored.transform(X)["a"].tolist() == expected_values
+
+    loaded = pickle.loads(pickle.dumps(encoder))
+    assert _typed_float_nan_signature(loaded.mapping_["a"]) == expected_signature
+    assert loaded.transform(X)["a"].tolist() == expected_values
+
+
+@pytest.mark.parametrize(
+    "n_jobs,backend",
+    [(1, None), (2, "threading"), (2, "loky")],
+)
+def test_non_float_nan_scalars_keep_pandas_count_and_map_semantics(n_jobs, backend):
+    """Decimal/complex NaN 被 typed-float 逻辑规范化或误合并时，本测试应失败。"""
+    X = pd.DataFrame(
+        {
+            "a": pd.Series(
+                [
+                    Decimal("NaN"),
+                    Decimal("NaN"),
+                    complex(float("nan"), 0),
+                    complex(float("nan"), 0),
+                    True,
+                    Decimal("1.5"),
+                    "x",
+                ],
+                dtype=object,
+            )
+        }
+    )
+    baseline = X["a"].value_counts(dropna=False, sort=False)
+    baseline_signature = _missing_key_signature(baseline.to_dict())
+    assert [(module, name, value) for module, name, _, value in baseline_signature] == [
+        ("decimal", "Decimal", 1),
+        ("decimal", "Decimal", 1),
+        ("builtins", "complex", 2),
+        ("builtins", "bool", 1),
+        ("decimal", "Decimal", 1),
+        ("builtins", "str", 1),
+    ]
+    assert X["a"].map(baseline).tolist() == [1, 1, 2, 2, 1, 1, 1]
+
+    encoder = CountEncoder(cols=["a"], n_jobs=n_jobs, parallel_backend=backend).fit(X)
+    learned = [item for item in _missing_key_signature(encoder.mapping_["a"]) if item[2] != "'__UNKNOWN__'"]
+    assert Counter(learned[:6]) == Counter(baseline_signature)
+    assert encoder.transform(X)["a"].tolist() == [1, 1, 2, 2, 1, 1, 1]
 
 
 def test_target_noise_fixed_seed_matches_thread_and_loky(encoder_xy):
