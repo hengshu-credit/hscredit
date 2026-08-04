@@ -17,19 +17,32 @@ def _write_notebook(path: Path, *sources: str) -> None:
 
 
 def test_discover_examples_returns_sorted_notebooks_and_python_files(tmp_path: Path) -> None:
-    """遗漏某种示例文件或返回不稳定顺序时应失败。"""
+    """纳入生成产物、遗漏真实嵌套示例或返回不稳定顺序时应失败。"""
     (tmp_path / "nested").mkdir()
     (tmp_path / "20_script.py").write_text("print('script')", encoding="utf-8")
     _write_notebook(tmp_path / "10_notebook.ipynb", "print('notebook')")
-    (tmp_path / "nested" / "30_nested.py").write_text("print('nested')", encoding="utf-8")
+    _write_notebook(tmp_path / "nested" / "30_nested.ipynb", "print('nested')")
     (tmp_path / "ignore.txt").write_text("ignore", encoding="utf-8")
+    generated_files = [
+        tmp_path / "model_report" / "scorecard_deploy.py",
+        tmp_path / "model_report_demo" / "report.ipynb",
+        tmp_path / "tree_viz_output" / "tree.py",
+        tmp_path / "__pycache__" / "cached.py",
+        tmp_path / ".ipynb_checkpoints" / "draft.ipynb",
+    ]
+    for path in generated_files:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.suffix == ".ipynb":
+            _write_notebook(path, "print('generated')")
+        else:
+            path.write_text("print('generated')", encoding="utf-8")
 
     examples = discover_examples(tmp_path)
 
     assert [path.relative_to(tmp_path).as_posix() for path in examples] == [
         "10_notebook.ipynb",
         "20_script.py",
-        "nested/30_nested.py",
+        "nested/30_nested.ipynb",
     ]
 
 
