@@ -905,3 +905,98 @@ class TestModelReportRealDataContract:
 
         assert isinstance(exc_info.value.__cause__, ValueError)
         assert 'injected feature table failure' in str(exc_info.value.__cause__)
+
+    def test_visibility_flags_hide_lift_and_importance_sections(self, tmp_path):
+        X = pd.DataFrame({'f0': range(20), 'target': [0, 1] * 10})
+        report = ModelReport(MockModel(['f0']), datasets={'train': X}, target='target', feature_names=['f0'])
+        output = tmp_path / 'visibility-flags.xlsx'
+
+        report.to_excel(
+            str(output),
+            with_plots=False,
+            show_lift=False,
+            show_importance=False,
+        )
+
+        workbook = load_workbook(output)
+        feature_values = self._sheet_values(workbook['3-入模变量分析'])
+        assert not any(isinstance(value, str) and '入模变量重要性及分布情况' in value for value in feature_values)
+        assert any(isinstance(value, str) and '入模变量相关性' in value for value in feature_values)
+        assert any(isinstance(value, str) and '入模变量有效性分析' in value for value in feature_values)
+
+    def test_export_plots_respects_show_lift(self, tmp_path, monkeypatch):
+        X = pd.DataFrame({'f0': range(20), 'target': [0, 1] * 10})
+        report = ModelReport(MockModel(['f0']), datasets={'train': X}, target='target', feature_names=['f0'])
+
+        def fail_if_called(*args, **kwargs):
+            raise AssertionError('show_lift=False 时不应生成 LIFT 曲线')
+
+        monkeypatch.setattr('hscredit.core.viz.lift_plot', fail_if_called)
+        paths, _ = report._export_plots(tmp_path, show_lift=False)
+
+        assert all('lift_' not in path for figures in paths.values() for path in figures)
+
+    def test_auto_model_report_forwards_visibility_flags(self, tmp_path, monkeypatch):
+        from hscredit.report.model_report import auto_model_report
+
+        X = pd.DataFrame({'f0': range(20)})
+        y = pd.Series([0, 1] * 10)
+        captured = {}
+
+        def capture_to_excel(self, filepath, **kwargs):
+            captured.update(kwargs)
+            return filepath
+
+        monkeypatch.setattr(ModelReport, 'to_excel', capture_to_excel)
+        auto_model_report(
+            MockModel(['f0']),
+            X_train=X,
+            y_train=y,
+            feature_names=['f0'],
+            excel_path=str(tmp_path / 'forwarding.xlsx'),
+            show_lift=False,
+            show_importance=False,
+            verbose=False,
+        )
+
+        assert captured['show_lift'] is False
+        assert captured['show_importance'] is False
+
+    def test_required_directory_hyperlink_failure_surfaces(self, tmp_path, monkeypatch):
+        from hscredit.excel import ExcelWriter
+
+        X = pd.DataFrame({'f0': range(20), 'target': [0, 1] * 10})
+        report = ModelReport(MockModel(['f0']), datasets={'train': X}, target='target', feature_names=['f0'])
+
+        def fail_hyperlink(*args, **kwargs):
+            raise ValueError('injected hyperlink failure')
+
+        monkeypatch.setattr(ExcelWriter, 'insert_hyperlink2sheet', fail_hyperlink)
+        with pytest.raises(RuntimeError, match='目录链接') as exc_info:
+            report.to_excel(str(tmp_path / 'required-link.xlsx'), with_plots=False)
+
+        assert isinstance(exc_info.value.__cause__, ValueError)
+
+    def test_required_amount_score_table_failure_surfaces(self, tmp_path, monkeypatch):
+        X = pd.DataFrame({
+            'f0': range(20),
+            'target': [0, 1] * 10,
+            '放款金额': np.linspace(1000, 2000, 20),
+        })
+        report = ModelReport(MockModel(['f0']), datasets={'train': X}, target='target', feature_names=['f0'])
+        original_get_bin_table = report.get_bin_table
+
+        def fail_amount_table(*args, **kwargs):
+            if kwargs.get('amount_col') is not None:
+                raise ValueError('injected amount table failure')
+            return original_get_bin_table(*args, **kwargs)
+
+        monkeypatch.setattr(report, 'get_bin_table', fail_amount_table)
+        with pytest.raises(RuntimeError, match=r'金额口径评分分箱.*数据集=训练集') as exc_info:
+            report.to_excel(
+                str(tmp_path / 'required-amount-table.xlsx'),
+                with_plots=False,
+                amount_col='放款金额',
+            )
+
+        assert isinstance(exc_info.value.__cause__, ValueError)
