@@ -624,19 +624,6 @@ class BestLiftBinning(BaseBinning):
 
             return bins
 
-    def _transform_lift_metric(self, feature: str, bins: np.ndarray, metric: str):
-        """生成单特征 LIFT 转换结果。"""
-        if metric != "lift":
-            return None
-        bin_table = self.get_bin_table(feature)
-        lift_map = {}
-        for index, row in bin_table.iterrows():
-            if row["分箱标签"] in ["缺失", "special"]:
-                lift_map[-1 if row["分箱标签"] == "缺失" else -2] = np.nan
-            else:
-                lift_map[index] = row["LIFT值"]
-        return np.asarray([lift_map.get(value, np.nan) for value in bins])
-
     def transform(
         self, X: Union[pd.DataFrame, np.ndarray], metric: str = "indices", **kwargs
     ) -> Union[pd.DataFrame, np.ndarray]:
@@ -689,35 +676,7 @@ class BestLiftBinning(BaseBinning):
         :param feature: 特征名
         :return: 分箱统计表
         """
-        if feature not in self.bin_tables_:
-            raise KeyError(f"特征 '{feature}' 未找到")
-
-        bin_table = self.bin_tables_[feature].copy()
-
-        # 添加 Lift 列
-        # 排除缺失和特殊值箱计算总体坏样本率
-        valid_mask = ~bin_table["分箱标签"].isin(["缺失", "special"])
-        if valid_mask.any():
-            valid_bad_rates = bin_table.loc[valid_mask, "坏样本率"]
-            valid_counts = bin_table.loc[valid_mask, "样本总数"]
-            total_bad = (valid_bad_rates * valid_counts).sum()
-            total_count = valid_counts.sum()
-            total_bad_rate = total_bad / total_count if total_count > 0 else 0
-        else:
-            total_bad_rate = bin_table["坏样本率"].mean()
-
-        # 计算每箱的 lift
-        lifts = []
-        for _, row in bin_table.iterrows():
-            if row["分箱标签"] in ["缺失", "special"]:
-                lifts.append(np.nan)
-            else:
-                lift = row["坏样本率"] / total_bad_rate if total_bad_rate > 0 else 1.0
-                lifts.append(lift)
-
-        bin_table["LIFT值"] = lifts
-
-        return bin_table
+        return self._get_lift_bin_table(feature)
 
 
 if __name__ == "__main__":
