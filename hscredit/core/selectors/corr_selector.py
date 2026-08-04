@@ -113,22 +113,20 @@ class CorrSelector(BaseFeatureSelector):
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
         force_drop: Optional[List[str]] = None,
-        n_jobs: int = 1,
+        n_jobs: Optional[Union[int, float]] = -1,
         binner: Optional[Any] = None,
+        parallel_backend: Optional[str] = None,
+        parallel_config: Optional[Dict[str, Any]] = None,
     ):
         self._uses_default_binning_params = (
             binning_params is DEFAULT_BINNING_PARAMS
             or binning_params == DEFAULT_BINNING_PARAMS
         )
-        effective_binning_params = (
-            dict(DEFAULT_BINNING_PARAMS)
-            if self._uses_default_binning_params
-            else binning_params
-        )
         super().__init__(
             target=target, threshold=threshold, include=include,
             exclude=exclude, force_drop=force_drop, n_jobs=n_jobs,
-            binner=binner, binning_params=effective_binning_params,
+            binner=binner, binning_params=binning_params,
+            parallel_backend=parallel_backend, parallel_config=parallel_config,
         )
         self.method = method
         self.metric = metric

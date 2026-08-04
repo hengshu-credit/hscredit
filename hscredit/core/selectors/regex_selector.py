@@ -23,6 +23,13 @@ import pandas as pd
 from .base import BaseFeatureSelector
 
 
+def _matches_regex_feature(task):
+    """判断单个特征名是否匹配正则表达式。"""
+    feature, pattern, flags = task
+    matched = pd.Index([feature]).str.contains(pattern, regex=True, flags=flags)[0]
+    return feature, bool(matched)
+
+
 class RegexSelector(BaseFeatureSelector):
     """正则表达式筛选器.
 
@@ -59,14 +66,17 @@ class RegexSelector(BaseFeatureSelector):
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
         force_drop: Optional[List[str]] = None,
-        n_jobs: int = 1,
+        n_jobs: Optional[Union[int, float]] = -1,
         binner: Optional[Any] = None,
         binning_params: Optional[Dict[str, Any]] = None,
+        parallel_backend: Optional[str] = None,
+        parallel_config: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(
             target=target, include=include, exclude=exclude,
             force_drop=force_drop, n_jobs=n_jobs,
             binner=binner, binning_params=binning_params,
+            parallel_backend=parallel_backend, parallel_config=parallel_config,
         )
         self.pattern = pattern
         self.invert = invert
@@ -85,15 +95,19 @@ class RegexSelector(BaseFeatureSelector):
         """
         self._get_feature_names(X)
 
-        # 正则匹配
-        matches = X.columns.str.contains(self.pattern, regex=True, flags=self.flags)
+        results = self._parallel_execute(
+            _matches_regex_feature,
+            [(col, self.pattern, self.flags) for col in X.columns],
+            task_labels=X.columns,
+        )
+        matches = np.array([matched for _, matched in results], dtype=bool)
 
         if self.invert:
             selected_cols = X.columns[~matches].tolist()
-            self.scores_ = (~matches).astype(int)
+            self.scores_ = pd.Series((~matches).astype(int), index=X.columns)
         else:
             selected_cols = X.columns[matches].tolist()
-            self.scores_ = matches.astype(int)
+            self.scores_ = pd.Series(matches.astype(int), index=X.columns)
 
         self.selected_features_ = selected_cols
         self._drop_reason = f'特征名不匹配正则表达式: {self.pattern}'

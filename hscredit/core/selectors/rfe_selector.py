@@ -79,14 +79,17 @@ class RFESelector(BaseFeatureSelector):
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
         force_drop: Optional[List[str]] = None,
-        n_jobs: int = 1,
+        n_jobs: Optional[Union[int, float]] = -1,
         binner: Optional[Any] = None,
         binning_params: Optional[Dict[str, Any]] = None,
+        parallel_backend: Optional[str] = None,
+        parallel_config: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(
             target=target, threshold=n_features_to_select, include=include,
             exclude=exclude, force_drop=force_drop, n_jobs=n_jobs,
             binner=binner, binning_params=binning_params,
+            parallel_backend=parallel_backend, parallel_config=parallel_config,
         )
         self.estimator = estimator
         self.n_features_to_select = n_features_to_select

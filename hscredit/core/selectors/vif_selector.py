@@ -22,7 +22,6 @@ from typing import Union, List, Optional, Dict, Any
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import LinearRegression
-from joblib import Parallel, delayed
 
 from .base import BaseFeatureSelector
 
@@ -50,7 +49,6 @@ def _compute_vif_single(x: np.ndarray, idx: int) -> float:
     valid = ~(np.isnan(x_target) | np.any(np.isnan(x_other), axis=1))
     if valid.sum() < 2:
         return np.inf
-    
     x_other = x_other[valid]
     x_target = x_target[valid]
     
@@ -88,6 +86,12 @@ def _compute_vif_single(x: np.ndarray, idx: int) -> float:
             return vif
     except Exception:
         return np.inf
+
+
+def _compute_vif_feature(task):
+    """计算单个特征 VIF 并携带列位置返回。"""
+    idx, x = task
+    return idx, _compute_vif_single(x, idx)
 
 
 class VIFSelector(BaseFeatureSelector):
@@ -147,15 +151,18 @@ class VIFSelector(BaseFeatureSelector):
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
         force_drop: Optional[List[str]] = None,
-        n_jobs: int = 1,
+        n_jobs: Optional[Union[int, float]] = -1,
         verbose: bool = False,
         binner: Optional[Any] = None,
         binning_params: Optional[Dict[str, Any]] = None,
+        parallel_backend: Optional[str] = None,
+        parallel_config: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(
             target=target, threshold=threshold, include=include,
             exclude=exclude, force_drop=force_drop, n_jobs=n_jobs,
             binner=binner, binning_params=binning_params,
+            parallel_backend=parallel_backend, parallel_config=parallel_config,
         )
         self.missing = missing
         self.max_iter = max_iter
@@ -174,18 +181,12 @@ class VIFSelector(BaseFeatureSelector):
         if n_features == 0:
             return pd.Series(dtype=float)
         
-        if self.n_jobs == 1:
-            vif_values = np.array([
-                _compute_vif_single(x_filled, i) 
-                for i in range(n_features)
-            ])
-        else:
-            vif_values = np.array(
-                Parallel(n_jobs=self.n_jobs)(
-                    delayed(_compute_vif_single)(x_filled, i)
-                    for i in range(n_features)
-                )
-            )
+        results = self._parallel_execute(
+            _compute_vif_feature,
+            [(i, x_filled) for i in range(n_features)],
+            task_labels=X.columns,
+        )
+        vif_values = np.array([value for _, value in results])
         
         return pd.Series(vif_values, index=X.columns)
 

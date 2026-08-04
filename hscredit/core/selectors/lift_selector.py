@@ -18,7 +18,6 @@
 from typing import Union, List, Optional, Literal, Tuple, Dict, Any
 import numpy as np
 import pandas as pd
-from joblib import Parallel, delayed
 
 from .base import BaseFeatureSelector
 
@@ -113,6 +112,12 @@ def _compute_lift_with_direction(
         return dist_good, lift_bad, lift_good, 'good'
 
 
+def _compute_lift_feature(task):
+    """计算单个特征的 LIFT 详情。"""
+    feature, values, y, ratio, direction = task
+    return (feature,) + _compute_lift_with_direction(values, y, ratio, direction)
+
+
 class LiftSelector(BaseFeatureSelector):
     """LIFT筛选器.
 
@@ -202,14 +207,17 @@ class LiftSelector(BaseFeatureSelector):
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
         force_drop: Optional[List[str]] = None,
-        n_jobs: int = 1,
+        n_jobs: Optional[Union[int, float]] = -1,
         binner: Optional[Any] = None,
         binning_params: Optional[Dict[str, Any]] = None,
+        parallel_backend: Optional[str] = None,
+        parallel_config: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(
             target=target, threshold=threshold, include=include,
             exclude=exclude, force_drop=force_drop, n_jobs=n_jobs,
             binner=binner, binning_params=binning_params,
+            parallel_backend=parallel_backend, parallel_config=parallel_config,
         )
         self.ratio = ratio
         self.direction = direction
@@ -229,23 +237,17 @@ class LiftSelector(BaseFeatureSelector):
 
         y = np.asarray(y)
 
-        # 计算每个特征的LIFT得分（含方向判断）
-        if self.n_jobs == 1:
-            results = [
-                _compute_lift_with_direction(X[col].values, y, self.ratio, self.direction)
-                for col in X.columns
-            ]
-        else:
-            results = Parallel(n_jobs=self.n_jobs)(
-                delayed(_compute_lift_with_direction)(X[col].values, y, self.ratio, self.direction)
-                for col in X.columns
-            )
+        results = self._parallel_execute(
+            _compute_lift_feature,
+            [(col, X[col].values, y, self.ratio, self.direction) for col in X.columns],
+            task_labels=X.columns,
+        )
 
         # 解包结果
-        scores = np.array([r[0] for r in results])
-        lift_bad = np.array([r[1] for r in results])
-        lift_good = np.array([r[2] for r in results])
-        best_dirs = [r[3] for r in results]
+        scores = np.array([r[1] for r in results])
+        lift_bad = np.array([r[2] for r in results])
+        lift_good = np.array([r[3] for r in results])
+        best_dirs = [r[4] for r in results]
 
         # 评分 = |LIFT - 1|
         self.scores_ = pd.Series(scores, index=X.columns)

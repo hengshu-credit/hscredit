@@ -23,6 +23,26 @@ from sklearn.feature_selection import mutual_info_classif
 from .base import BaseFeatureSelector
 
 
+def _compute_mutual_info_feature(task):
+    """编码并计算单个特征与目标的互信息。"""
+    feature, series, y, n_neighbors, seed = task
+    if series.dtype.name in ('object', 'category'):
+        values = pd.factorize(series)[0].astype(float)
+    else:
+        values = pd.to_numeric(series, errors='coerce').astype(float).values
+    if np.isnan(values).any():
+        median = np.nanmedian(values)
+        values = np.where(np.isnan(values), 0.0 if np.isnan(median) else median, values)
+    score = mutual_info_classif(
+        values.reshape(-1, 1),
+        y,
+        discrete_features=False,
+        n_neighbors=n_neighbors,
+        random_state=seed,
+    )[0]
+    return feature, score
+
+
 class MutualInfoSelector(BaseFeatureSelector):
     """互信息筛选器.
 
@@ -76,14 +96,17 @@ class MutualInfoSelector(BaseFeatureSelector):
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
         force_drop: Optional[List[str]] = None,
-        n_jobs: int = 1,
+        n_jobs: Optional[Union[int, float]] = -1,
         binner: Optional[Any] = None,
         binning_params: Optional[Dict[str, Any]] = None,
+        parallel_backend: Optional[str] = None,
+        parallel_config: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(
             target=target, threshold=threshold, include=include,
             exclude=exclude, force_drop=force_drop, n_jobs=n_jobs,
             binner=binner, binning_params=binning_params,
+            parallel_backend=parallel_backend, parallel_config=parallel_config,
         )
         self.n_neighbors = n_neighbors
         self.random_state = random_state
@@ -107,26 +130,16 @@ class MutualInfoSelector(BaseFeatureSelector):
 
         self._get_feature_names(X)
 
-        # 处理类别变量
-        X_encoded = X.copy()
-        for col in X.columns:
-            if X[col].dtype == 'object':
-                X_encoded[col] = pd.factorize(X[col])[0]
-
-        # 缺失值处理：mutual_info_classif 不接受 NaN，使用列中位数填充，
-        # 整列缺失时回退为 0，保持与 chi2/f_test 等筛选器对原始信贷数据的鲁棒性一致
-        if X_encoded.isna().any().any():
-            X_encoded = X_encoded.fillna(X_encoded.median(numeric_only=True)).fillna(0)
-
-        # 计算互信息
-        # 注意: mutual_info_classif 不支持 n_jobs 参数
-        mi_scores = mutual_info_classif(
-            X_encoded.values,
-            y,
-            discrete_features=False,
-            n_neighbors=self.n_neighbors,
-            random_state=self.random_state,
+        tasks = []
+        for ordinal, col in enumerate(X.columns):
+            seed = None if self.random_state is None else int(self.random_state) + ordinal
+            tasks.append((col, X[col], np.asarray(y), self.n_neighbors, seed))
+        results = self._parallel_execute(
+            _compute_mutual_info_feature,
+            tasks,
+            task_labels=X.columns,
         )
+        mi_scores = np.array([score for _, score in results])
 
         self.scores_ = pd.Series(mi_scores, index=X.columns)
 

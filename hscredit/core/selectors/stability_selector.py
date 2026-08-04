@@ -26,7 +26,6 @@
 from typing import Union, List, Optional, Dict, Any
 import numpy as np
 import pandas as pd
-from joblib import Parallel, delayed
 
 from .base import BaseFeatureSelector
 
@@ -86,6 +85,16 @@ def _compute_psi(expected: np.ndarray, actual: np.ndarray, n_bins: int = 10) -> 
     exp_r = exp_c / exp_c.sum()
     act_r = act_c / act_c.sum()
     return float(np.sum((act_r - exp_r) * np.log(act_r / exp_r)))
+
+
+def _compute_stability_feature(task):
+    """计算单个特征的 IV 与 PSI。"""
+    feature, iv_values, y, expected_values, oot_values, psi_bins = task
+    iv = _compute_iv(iv_values, y)
+    expected = pd.Series(expected_values).dropna().values.astype(float)
+    actual = pd.Series(oot_values).dropna().values.astype(float)
+    psi = _compute_psi(expected, actual, psi_bins)
+    return feature, iv, psi
 
 
 class StabilityAwareSelector(BaseFeatureSelector):
@@ -158,15 +167,18 @@ class StabilityAwareSelector(BaseFeatureSelector):
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
         force_drop: Optional[List[str]] = None,
-        n_jobs: int = 1,
+        n_jobs: Optional[Union[int, float]] = -1,
         random_state: Optional[int] = None,
         binner: Optional[Any] = None,
         binning_params: Optional[Dict[str, Any]] = None,
+        parallel_backend: Optional[str] = None,
+        parallel_config: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(
             target=target, threshold=iv_threshold, include=include,
             exclude=exclude, force_drop=force_drop, n_jobs=n_jobs,
             binner=binner, binning_params=binning_params,
+            parallel_backend=parallel_backend, parallel_config=parallel_config,
         )
         self.iv_threshold = iv_threshold
         self.psi_threshold = psi_threshold
@@ -198,16 +210,7 @@ class StabilityAwareSelector(BaseFeatureSelector):
         for col in X.columns:
             if X[col].dtype.name in ("object", "category"):
                 X_enc[col] = pd.factorize(X[col])[0]
-
-        # --- IV ---
-        if self.n_jobs == 1:
-            iv_vals = np.array([_compute_iv(X_enc[c].values, y) for c in X_enc.columns])
-        else:
-            iv_vals = np.array(
-                Parallel(n_jobs=self.n_jobs)(
-                    delayed(_compute_iv)(X_enc[c].values, y) for c in X_enc.columns
-                )
-            )
+        iv_enc = X_enc
 
         # --- PSI ---
         if self.oot_df is not None:
@@ -221,22 +224,26 @@ class StabilityAwareSelector(BaseFeatureSelector):
         else:
             # 随机对半拆分
             n = len(X_enc)
-            if self.random_state is not None:
-                np.random.seed(self.random_state)
-            idx = np.random.permutation(n)
+            rng = np.random.RandomState(self.random_state)
+            idx = rng.permutation(n)
             oot_enc = X_enc.iloc[idx[n // 2:]]
             X_enc_half = X_enc.iloc[idx[: n // 2]]
             # 使用前半作为 expected
             X_enc = X_enc_half
 
-        psi_vals = np.array([
-            _compute_psi(
-                X_enc[c].dropna().values.astype(float),
-                oot_enc[c].dropna().values.astype(float) if c in oot_enc.columns else X_enc[c].dropna().values.astype(float),
-                self.psi_bins,
+        tasks = []
+        for col in X.columns:
+            actual = oot_enc[col].values if col in oot_enc.columns else X_enc[col].values
+            tasks.append(
+                (col, iv_enc[col].values, y, X_enc[col].values, actual, self.psi_bins)
             )
-            for c in X.columns
-        ])
+        results = self._parallel_execute(
+            _compute_stability_feature,
+            tasks,
+            task_labels=X.columns,
+        )
+        iv_vals = np.array([iv for _, iv, _ in results])
+        psi_vals = np.array([psi for _, _, psi in results])
 
         # --- 综合评分 ---
         iv_norm = iv_vals / max(iv_vals.max(), 1e-10)

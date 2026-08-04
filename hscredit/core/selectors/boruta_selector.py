@@ -22,10 +22,15 @@ from typing import Union, List, Optional, Dict, Any
 import numpy as np
 import pandas as pd
 from sklearn.base import clone
-from sklearn.model_selection import check_cv
-from joblib import Parallel, delayed
 
 from .base import BaseFeatureSelector, get_feature_importances
+from ...utils.parallel import resolve_n_jobs
+
+
+def _compare_boruta_feature(task):
+    """比较单个真实特征与本轮影子阈值。"""
+    feature_index, importance, shadow_max, active = task
+    return feature_index, bool(active and importance > shadow_max)
 
 
 class BorutaSelector(BaseFeatureSelector):
@@ -83,14 +88,17 @@ class BorutaSelector(BaseFeatureSelector):
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
         force_drop: Optional[List[str]] = None,
-        n_jobs: int = 1,
+        n_jobs: Optional[Union[int, float]] = -1,
         binner: Optional[Any] = None,
         binning_params: Optional[Dict[str, Any]] = None,
+        parallel_backend: Optional[str] = None,
+        parallel_config: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(
             target=target, include=include, exclude=exclude,
             force_drop=force_drop, n_jobs=n_jobs,
             binner=binner, binning_params=binning_params,
+            parallel_backend=parallel_backend, parallel_config=parallel_config,
         )
         self.estimator = estimator
         self.n_estimators = n_estimators
@@ -99,13 +107,6 @@ class BorutaSelector(BaseFeatureSelector):
         self.method_name = 'Boruta筛选'
         
         # 默认使用随机森林
-        if estimator is None:
-            from sklearn.ensemble import RandomForestClassifier
-            self.estimator = RandomForestClassifier(
-                n_estimators=n_estimators,
-                n_jobs=n_jobs,
-                random_state=random_state
-            )
 
     def _fit_impl(
         self,
@@ -133,6 +134,17 @@ class BorutaSelector(BaseFeatureSelector):
         X_array = X_prepared.values
         feature_names = X.columns.tolist()
 
+        if self.estimator is None:
+            from sklearn.ensemble import RandomForestClassifier
+
+            base_estimator = RandomForestClassifier(
+                n_estimators=self.n_estimators,
+                n_jobs=resolve_n_jobs(self.n_jobs) or 1,
+                random_state=self.random_state,
+            )
+        else:
+            base_estimator = self.estimator
+
         # 迭代
         selected = set(range(n_features))
         history = []
@@ -144,7 +156,7 @@ class BorutaSelector(BaseFeatureSelector):
             X_with_shadow = np.hstack([X_array, X_shadow])
 
             # 训练模型
-            model = clone(self.estimator)
+            model = clone(base_estimator)
             model.fit(X_with_shadow, y)
 
             # 获取特征重要性（兼容所有模型类型）
@@ -165,13 +177,15 @@ class BorutaSelector(BaseFeatureSelector):
             })
 
             # 更新选中特征：简化版，只保留重要性高于影子特征最大值的特征
-            new_selected = set()
-            for i in range(n_features):
-                if i in selected:
-                    if real_importances[i] > shadow_max:
-                        new_selected.add(i)
-
-            selected = new_selected
+            comparison = self._parallel_execute(
+                _compare_boruta_feature,
+                [
+                    (i, real_importances[i], shadow_max, i in selected)
+                    for i in range(n_features)
+                ],
+                task_labels=feature_names,
+            )
+            selected = {index for index, keep in comparison if keep}
 
             if len(selected) == 0:
                 break

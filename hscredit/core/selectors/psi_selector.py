@@ -19,7 +19,6 @@ from typing import Union, List, Optional, Dict, Any
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import KFold
-from joblib import Parallel, delayed
 
 from .base import BaseFeatureSelector
 
@@ -62,6 +61,15 @@ def _compute_psi_single(expected: np.ndarray, actual: np.ndarray) -> float:
     )
 
     return psi
+
+
+def _compute_psi_feature(task):
+    """按既定折序计算单个特征的平均 PSI。"""
+    feature, values, splits = task
+    total = 0.0
+    for train_idx, test_idx in splits:
+        total += _compute_psi_single(values[train_idx], values[test_idx])
+    return feature, total / len(splits)
 
 
 class PSISelector(BaseFeatureSelector):
@@ -113,14 +121,17 @@ class PSISelector(BaseFeatureSelector):
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
         force_drop: Optional[List[str]] = None,
-        n_jobs: int = 1,
+        n_jobs: Optional[Union[int, float]] = -1,
         binner: Optional[Any] = None,
         binning_params: Optional[Dict[str, Any]] = None,
+        parallel_backend: Optional[str] = None,
+        parallel_config: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(
             target=target, threshold=threshold, include=include,
             exclude=exclude, force_drop=force_drop, n_jobs=n_jobs,
             binner=binner, binning_params=binning_params,
+            parallel_backend=parallel_backend, parallel_config=parallel_config,
         )
         self.n_splits = n_splits
         self.method_name = 'PSI筛选'
@@ -144,20 +155,13 @@ class PSISelector(BaseFeatureSelector):
         # 使用交叉验证计算PSI
         kfold = KFold(n_splits=self.n_splits, shuffle=True, random_state=42)
         
-        psi_values = np.zeros(len(X.columns))
-        
-        for train_idx, test_idx in kfold.split(X):
-            X_train = X.iloc[train_idx]
-            X_test = X.iloc[test_idx]
-            
-            for i, col in enumerate(X.columns):
-                psi = _compute_psi_single(
-                    X_train[col].values,
-                    X_test[col].values
-                )
-                psi_values[i] += psi
-
-        psi_values /= self.n_splits
+        splits = list(kfold.split(X))
+        results = self._parallel_execute(
+            _compute_psi_feature,
+            [(col, X[col].values, splits) for col in X.columns],
+            task_labels=X.columns,
+        )
+        psi_values = np.array([score for _, score in results])
         self.scores_ = pd.Series(psi_values, index=X.columns)
 
         # 选择PSI值小于阈值的特征（PSI越小越稳定）
