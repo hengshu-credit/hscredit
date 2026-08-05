@@ -1348,7 +1348,7 @@ def test_model_report_multiple_datasets_invoke_shared_executor(monkeypatch):
 def test_model_report_add_dataset_is_transactional_and_invalidates_old_cache():
     datasets = _task11_datasets()
     model = _CountingProbabilityModel(fail_after=1)
-    report = ModelReport(model, datasets={"train": datasets["train"]}, target="target", n_jobs=1)
+    report = ModelReport(model, datasets={"训练集": datasets["train"]}, target="target", n_jobs=1)
     old_summary = report.summary()
     old_keys = list(report._datasets)
     with pytest.raises(Exception, match="预测阶段注入失败"):
@@ -1358,7 +1358,7 @@ def test_model_report_add_dataset_is_transactional_and_invalidates_old_cache():
 
     model.fail_after = None
     report.add_dataset("test", "测试集", datasets["test"])
-    assert list(report._datasets) == ["train", "test"]
+    assert list(report._datasets) == ["训练集", "test"]
     assert list(report.summary().columns.get_level_values("数据集").unique()) == ["训练集", "测试集"]
 
 

@@ -98,7 +98,7 @@ class TestModelReportTarget:
             model=model, X_train=X, y_train=None,
             target='label', feature_names=['f0']
         )
-        assert report._datasets['train'].y.tolist() == [0, 0, 1, 1]
+        assert report._datasets['训练集'].y.tolist() == [0, 0, 1, 1]
 
     def test_target_dict_overdue_dpds(self):
         """target as dict with overdue+dpds."""
@@ -113,7 +113,7 @@ class TestModelReportTarget:
             target={'overdue': 'overdue', 'dpds': 'dpds', 'threshold': 3},
             feature_names=['f0']
         )
-        assert report._datasets['train'].y.tolist() == [0, 0, 0, 1, 1, 1]
+        assert report._datasets['训练集'].y.tolist() == [0, 0, 0, 1, 1, 1]
 
     def test_target_dict_overdue_only(self):
         """target as dict with overdue only (no dpds): overdue col > 0 → y=1."""
@@ -128,7 +128,7 @@ class TestModelReportTarget:
             feature_names=['f0']
         )
         # overdue > 0 → [0, 0, 1, 1]
-        assert report._datasets['train'].y.tolist() == [0, 0, 1, 1]
+        assert report._datasets['训练集'].y.tolist() == [0, 0, 1, 1]
 
     def test_datasets_y_none(self):
         """datasets dict with y=None derives y from target config."""
@@ -173,7 +173,7 @@ class TestModelReportTarget:
             model=model, X_train=X, y_train=None,
             target='label', feature_names=['f0']
         )
-        proba = report._datasets['train'].y_proba
+        proba = report._datasets['训练集'].y_proba
         assert proba is not None
         assert len(proba) == 4
         assert proba.min() >= 0 and proba.max() <= 1
@@ -205,7 +205,7 @@ class TestModelReportTarget:
             target=None, feature_names=['f0']
         )
         # Should find 'flag' column as fallback
-        assert report._datasets['train'].y.tolist() == [0, 0, 1, 1]
+        assert report._datasets['训练集'].y.tolist() == [0, 0, 1, 1]
 
 
 class TestModelReportOverdueDpdsSeparate:
@@ -223,7 +223,7 @@ class TestModelReportOverdueDpdsSeparate:
             overdue='dpds', dpds=3, feature_names=['f0']
         )
         # dpds > 3 → [0, 0, 1, 1]
-        assert report._datasets['train'].y.tolist() == [0, 0, 1, 1]
+        assert report._datasets['训练集'].y.tolist() == [0, 0, 1, 1]
 
     def test_overdue_dpds_single_col_list_thresholds(self):
         """overdue as str + dpds as list thresholds."""
@@ -241,7 +241,7 @@ class TestModelReportOverdueDpdsSeparate:
         #   3: 3>15? 3>7? 3>0? → false, false, true → 1 ← FAILS: test says [0,1,...]
         # Actually dpds > 0 for all values >= 1, so:
         #   [0, 1, 1, 1, 1, 1]  (only index 0 is false for >0)
-        assert report._datasets['train'].y.tolist() == [0, 1, 1, 1, 1, 1]
+        assert report._datasets['训练集'].y.tolist() == [0, 1, 1, 1, 1, 1]
 
     def test_overdue_dpds_multi_col(self):
         """overdue as list of str + dpds as list."""
@@ -259,7 +259,7 @@ class TestModelReportOverdueDpdsSeparate:
         # dpds_m1 > 3 or > 0 → [0, 0, 0, 0, 0, 0]
         # dpds_m3 > 3 or > 0 → [0, 0, 0, 0, 1, 1]
         # any true → y=1 → [0, 0, 0, 0, 1, 1]
-        assert report._datasets['train'].y.tolist() == [0, 0, 0, 0, 1, 1]
+        assert report._datasets['训练集'].y.tolist() == [0, 0, 0, 0, 1, 1]
 
     def test_overdue_dpds_override_target(self):
         """overdue/dpds takes priority over target when both provided."""
@@ -275,7 +275,7 @@ class TestModelReportOverdueDpdsSeparate:
             overdue='dpds', dpds=3, feature_names=['f0']
         )
         # dpds > 3 → [0, 0, 1, 1]
-        assert report._datasets['train'].y.tolist() == [0, 0, 1, 1]
+        assert report._datasets['训练集'].y.tolist() == [0, 0, 1, 1]
 
     def test_overdue_dpds_with_datasets_dict(self):
         """overdue/dpds works with datasets dict."""
@@ -313,8 +313,8 @@ class TestModelReportOverdueDpdsSeparate:
             verbose=False, with_plots=False,
         )
         # dpds > 30 or > 15 or > 7 → dpds > 7 → rows 8-99 → 92 out of 100
-        assert report._datasets['train'].y.sum() == 92
-        assert report._datasets['train'].y.mean() == 0.92
+        assert report._datasets['训练集'].y.sum() == 92
+        assert report._datasets['训练集'].y.mean() == 0.92
 
     def test_overdue_dpds_equivalent_to_dict_target(self):
         """overdue/dpds as separate params should produce same y as dict target."""
@@ -338,7 +338,7 @@ class TestModelReportOverdueDpdsSeparate:
             feature_names=['f0']
         )
 
-        assert r1._datasets['train'].y.tolist() == r2._datasets['train'].y.tolist()
+        assert r1._datasets['训练集'].y.tolist() == r2._datasets['训练集'].y.tolist()
 
 
 class TestModelReportRegression:
@@ -361,13 +361,13 @@ class TestModelReportRegression:
         report = ModelReport(model, X_train=X, y_train=y, feature_names=['f0'])
 
         expected = model.predict_proba(X)[:, 0]
-        np.testing.assert_allclose(report._datasets['train'].y_proba, expected)
+        np.testing.assert_allclose(report._datasets['训练集'].y_proba, expected)
 
     def test_multi_label_lift_contains_values_and_amount_metrics(self):
         X = self._multi_label_data()
         report = ModelReport(
             MockModel(['f0']),
-            datasets={'train': X, 'test': X.copy()},
+            datasets={'训练集': X, '测试集': X.copy()},
             overdue=['MOB1'],
             dpds=[7, 3, 0],
             feature_names=['f0'],
@@ -388,7 +388,7 @@ class TestModelReportRegression:
         X = self._multi_label_data()
         report = ModelReport(
             MockModel(['f0']),
-            datasets={'train': X, 'test': X.copy()},
+            datasets={'训练集': X, '测试集': X.copy()},
             overdue=['MOB1'],
             dpds=[7, 3, 0],
             feature_names=['f0'],
@@ -473,7 +473,7 @@ class TestModelReportRegression:
         X = self._multi_label_data()
         report = ModelReport(
             MockModel(['f0']),
-            datasets={'train': X, 'test': X.copy()},
+            datasets={'训练集': X, '测试集': X.copy()},
             overdue=['MOB1'],
             dpds=[7, 3, 0],
             feature_names=['f0'],
@@ -512,7 +512,7 @@ class TestModelReportRegression:
         X = self._multi_label_data()
         report = ModelReport(
             MockModel(['f0']),
-            datasets={'train': X, 'test': X.copy()},
+            datasets={'训练集': X, '测试集': X.copy()},
             overdue=['MOB1'],
             dpds=[7, 3, 0],
             feature_names=['f0'],
@@ -540,7 +540,7 @@ class TestModelReportRegression:
         X = self._multi_label_data()
         report = ModelReport(
             MockModel(['f0']),
-            datasets={'train': X, 'test': X.copy()},
+            datasets={'训练集': X, '测试集': X.copy()},
             overdue=['MOB1'],
             dpds=[7, 3, 0],
             feature_names=['f0'],
@@ -654,7 +654,7 @@ class TestModelReportRegression:
         X = self._multi_label_data()
         report = ModelReport(
             MockModel(['f0']),
-            datasets={'train': X, 'test': X.copy()},
+            datasets={'训练集': X, '测试集': X.copy()},
             overdue='MOB1',
             dpds=[7, 3, 0],
             feature_names=['f0'],
@@ -721,9 +721,9 @@ class TestModelReportRealDataContract:
 
         source = pd.read_excel(Path(__file__).parents[2] / 'examples' / 'hscredit_yyp.xlsx')
         frames = {
-            'train': source.iloc[:500].copy(),
-            'test': source.iloc[500:750].copy(),
-            'oot': source.iloc[750:].copy(),
+            '训练集': source.iloc[:500].copy(),
+            '测试集': source.iloc[500:750].copy(),
+            'OOT集': source.iloc[750:].copy(),
         }
         expected_labels = ['MOB1>7', 'MOB1>3', 'MOB1>0']
         expected_display_labels = ['MOB1@7', 'MOB1@3', 'MOB1@0']
@@ -767,7 +767,7 @@ class TestModelReportRealDataContract:
         for label, display_label in zip(expected_labels, expected_display_labels):
             for dataset_label, expected_rate in zip(['训练集', '测试集', 'OOT集'], expected_bad_rates[label]):
                 assert summary.loc[display_label, ('样本数', dataset_label)] == len(
-                    frames[{'训练集': 'train', '测试集': 'test', 'OOT集': 'oot'}[dataset_label]]
+                    frames[dataset_label]
                 )
                 assert summary.loc[display_label, ('坏样本率', dataset_label)] == expected_rate
 
@@ -887,7 +887,7 @@ class TestModelReportRealDataContract:
         report._export_plots(tmp_path)
 
         assert '模型评分分箱图' in caplog.text
-        assert '训练集' in caplog.text
+        assert 'train' in caplog.text
         assert str(tmp_path / 'bin_train.png') in caplog.text
         assert 'injected model bin plot failure' in caplog.text
 
@@ -900,7 +900,7 @@ class TestModelReportRealDataContract:
 
         monkeypatch.setattr(report, 'get_feature_bin_table', fail_feature_table)
 
-        with pytest.raises(RuntimeError, match=r'特征=f0.*数据集=训练集') as exc_info:
+        with pytest.raises(RuntimeError, match=r'特征=f0.*数据集=train') as exc_info:
             report.to_excel(str(tmp_path / 'required-section.xlsx'), with_plots=False)
 
         assert isinstance(exc_info.value.__cause__, ValueError)
@@ -992,7 +992,7 @@ class TestModelReportRealDataContract:
             return original_get_bin_table(*args, **kwargs)
 
         monkeypatch.setattr(report, 'get_bin_table', fail_amount_table)
-        with pytest.raises(RuntimeError, match=r'金额口径评分分箱.*数据集=训练集') as exc_info:
+        with pytest.raises(RuntimeError, match=r'金额口径评分分箱.*数据集=train') as exc_info:
             report.to_excel(
                 str(tmp_path / 'required-amount-table.xlsx'),
                 with_plots=False,
@@ -1000,3 +1000,141 @@ class TestModelReportRealDataContract:
             )
 
         assert isinstance(exc_info.value.__cause__, ValueError)
+
+
+class TestModelReportCustomDatasetKeys:
+    """datasets 传入自定义键（如 {'建模集': df, 'OOT': df}）时的回退逻辑."""
+
+    @staticmethod
+    def _custom_datasets():
+        train = pd.DataFrame({
+            'f0': np.arange(20),
+            'MOB1': [0, 1, 3, 7, 8] * 4,
+            '放款金额': np.arange(100, 120),
+        })
+        return {'建模集': train, 'OOT': train.copy()}
+
+    def _make_report(self):
+        return ModelReport(
+            MockModel(['f0']),
+            datasets=self._custom_datasets(),
+            overdue=['MOB1'],
+            dpds=[7, 3, 0],
+            feature_names=['f0'],
+        )
+
+    def test_train_test_key_fallback(self):
+        report = self._make_report()
+        assert report._train_key == '建模集'
+        assert report._test_key == 'OOT'
+        assert report._resolve_dataset_key('train') == '建模集'
+        assert report._resolve_dataset_key('test') == 'OOT'
+        assert report._resolve_dataset_key('建模集') == '建模集'
+
+    def test_resolve_dataset_key_missing(self):
+        report = self._make_report()
+        with pytest.raises(KeyError, match='不存在'):
+            report._resolve_dataset_key('unknown')
+
+    def test_feature_importance_custom_keys(self):
+        importance = self._make_report().get_feature_importance()
+        assert not importance.empty
+        assert {'特征重要性', 'IV', 'KS', 'PSI'} <= set(importance.columns)
+
+    def test_bin_table_default_dataset_custom_keys(self):
+        report = self._make_report()
+        assert not report.get_bin_table(max_n_bins=5).empty
+        assert not report.get_feature_bin_table('f0', max_n_bins=5).empty
+
+    def test_describe_corr_summary_custom_keys(self):
+        report = self._make_report()
+        assert not report.get_features_describe().empty
+        assert not report.get_features_corr().empty
+        assert not report._get_features_summary().empty
+
+    def test_print_report_custom_keys(self, capsys):
+        self._make_report().print_report(n_bins=5)
+        out = capsys.readouterr().out
+        assert '建模集' in out
+        assert 'OOT' in out
+
+    def test_to_excel_custom_keys(self, tmp_path):
+        report = self._make_report()
+        output = tmp_path / 'model_report_custom_keys.xlsx'
+        report.to_excel(str(output), with_plots=False, amount_col='放款金额')
+
+        workbook = load_workbook(output)
+        assert '4-稳定性分析' in workbook.sheetnames
+        stability = [cell.value for row in workbook['4-稳定性分析'].iter_rows() for cell in row]
+        assert any(isinstance(v, str) and '评分漂移分析（vs 建模集）' in v for v in stability)
+
+
+class TestModelReportDatasetNaming:
+    """数据集统一命名规则：list → 数据集N；X_train/X_test/X_oot → 训练集/测试集/跨时间验证集；dict → key."""
+
+    @staticmethod
+    def _data(n=6):
+        return pd.DataFrame({'f0': np.arange(n), 'target': [0, 1] * (n // 2)})
+
+    def test_list_datasets_named_sequentially(self):
+        report = ModelReport(
+            MockModel(['f0']),
+            datasets=[self._data(), self._data(), self._data()],
+            target='target',
+            feature_names=['f0'],
+        )
+        assert list(report._datasets.keys()) == ['数据集1', '数据集2', '数据集3']
+        assert [ds.label for ds in report._datasets.values()] == ['数据集1', '数据集2', '数据集3']
+
+    def test_xy_params_named_train_test_oot(self):
+        report = ModelReport(
+            MockModel(['f0']),
+            X_train=self._data(), X_test=self._data(), X_oot=self._data(),
+            target='target',
+            feature_names=['f0'],
+        )
+        assert list(report._datasets.keys()) == ['训练集', '测试集', '跨时间验证集']
+
+    def test_xy_params_sklearn_style_y_priority(self):
+        """sklearn 风格：显式传入的 y 优先于 target 列."""
+        X = self._data()
+        y = pd.Series([1, 1, 1, 0, 0, 0])
+        report = ModelReport(
+            MockModel(['f0']),
+            X_train=X, y_train=y, X_oot=X, y_oot=y,
+            target='target',
+            feature_names=['f0'],
+        )
+        assert report._datasets['训练集'].y.tolist() == [1, 1, 1, 0, 0, 0]
+        assert report._datasets['跨时间验证集'].y.tolist() == [1, 1, 1, 0, 0, 0]
+
+    def test_dict_uses_key_as_name(self):
+        report = ModelReport(
+            MockModel(['f0']),
+            datasets={'建模集': self._data(), 'OOT': self._data()},
+            target='target',
+            feature_names=['f0'],
+        )
+        assert list(report._datasets.keys()) == ['建模集', 'OOT']
+        assert [ds.label for ds in report._datasets.values()] == ['建模集', 'OOT']
+
+    def test_overdue_alone_ignores_target(self):
+        """传入 overdue（dpds 缺省为 0）时直接忽略 target."""
+        X = pd.DataFrame({
+            'f0': [1, 2, 3, 4],
+            'label': [1, 1, 1, 1],
+            'dpds': [0, 0, 5, 10],
+        })
+        report = ModelReport(
+            MockModel(['f0']),
+            X_train=X, y_train=None,
+            target='label',
+            overdue='dpds',
+            feature_names=['f0'],
+        )
+        # dpds > 0 → [0, 0, 1, 1]，而非 target 列的全 1
+        assert report._datasets['训练集'].y.tolist() == [0, 0, 1, 1]
+
+    def test_no_datasets_raises(self):
+        with pytest.raises(ValueError, match='未提供任何数据集'):
+            ModelReport(MockModel(['f0']), target='target', feature_names=['f0'])
