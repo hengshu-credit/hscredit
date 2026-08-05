@@ -443,6 +443,8 @@ class ModelReport:
         y_train=None,
         X_test=None,
         y_test=None,
+        X_oot=None,
+        y_oot=None,
         feature_names: Optional[List[str]] = None,
         target: Optional[Union[str, Dict]] = None,
         datasets: Optional[Union[List, Dict]] = None,
@@ -454,58 +456,55 @@ class ModelReport:
     ):
         """初始化模型报告.
 
-        支持三种调用方式：
+        数据集传入支持三种方式，内部统一规整为 ``{数据集名称: (X, y)}`` 的 dict 结构：
 
-        1. datasets API（推荐）：传入数据集字典/列表
-           - dict: {'train': DataFrame, 'test': DataFrame, 'oot': DataFrame}
-             DataFrame 需包含目标列，或通过 overdue/dpds 自动构建标签
-           - list: [DataFrame, DataFrame, ...] 自动命名为训练集、测试集、OOT集...
+        1. datasets 为 dict：直接以 key 作为数据集名称，
+           如 ``{'训练集': df, 'OOT': df}`` 或 ``{'train': (X, y), 'test': (X, y)}``
+        2. datasets 为 list：依次命名为 数据集1、数据集2、...、数据集N
+        3. X_train/X_test/X_oot 参数：依次命名为 训练集、测试集、跨时间验证集
 
-        2. 兼容 API：传入 X_train/y_train/X_test/y_test
-           - sklearn 风格：target='target'
-           - overdue/dpds 风格：传入单独的 overdue/dpds 参数
+        标签（y）解析遵循 hscredit 统一的两种传参风格：
 
-        3. datasets dict（最高优先级）：显式指定各数据集
-           覆盖 X_train/y_train/X_test/y_test
+        - sklearn 风格：显式传入 y（如 ``X_train=X, y_train=y`` 或
+          ``datasets={'train': (X, y)}``），y 优先使用
+        - scorecardpipeline 风格：数据全部在 X 中，通过 ``target='列名'`` 提取标签
+        - overdue + dpds 组合：传入后直接忽略 target，按 逾期天数 > 阈值 构建标签
 
         示例::
 
-            # 方式1: datasets dict（DataFrame 直接传入，X 中含目标列）
-            report = ModelReport(model, datasets={'train': train_df, 'test': test_df})
+            # 方式1: datasets dict（key 即数据集名称，X 中含目标列）
+            report = ModelReport(model, datasets={'训练集': train_df, 'OOT': oot_df}, target='target')
 
-            # 方式1: datasets list（自动命名为训练集、测试集）
-            report = ModelReport(model, datasets=[train_df, test_df])
+            # 方式2: datasets list（自动命名为 数据集1、数据集2）
+            report = ModelReport(model, datasets=[train_df, test_df], target='target')
 
-            # 方式1: overdue/dpds 自动构建标签（X 中不含目标列）
+            # overdue/dpds 自动构建标签（X 中不含目标列，忽略 target）
             report = ModelReport(
                 model,
-                datasets={'train': df},
+                datasets={'建模集': df},
                 overdue='dpds',     # 逾期天数列名
                 dpds=[15, 7, 0],    # 任一 MOB 下 DPD > threshold 则 y=1
             )
 
-            # 方式2: 兼容 sklearn API
+            # 方式3: 兼容 sklearn API（显式传入 y，y 优先于 target）
             report = ModelReport(model, X_train=X, y_train=y, X_test=X_val, y_test=y_val)
 
-            # 方式2: overdue/dpds 作为独立参数
-            report = ModelReport(
-                model,
-                X_train=df,
-                overdue='dpds',    # 逾期列名
-                dpds=5,            # DPD > 5 则标记为坏样本
-            )
+            # 方式3: 含跨时间验证集
+            report = ModelReport(model, X_train=X, y_train=y, X_oot=X_oot, y_oot=y_oot)
 
         :param model: 训练好的模型（ScoreCard / XGBoost / LightGBM / sklearn 等）
-        :param datasets: 数据集字典/列表（推荐方式）
-        :param X_train: 训练集特征（兼容旧 API）
-        :param y_train: 训练集标签（兼容旧 API）
-        :param X_test: 测试集特征（兼容旧 API）
-        :param y_test: 测试集标签（兼容旧 API）
+        :param datasets: 数据集字典/列表（推荐方式），dict 的 key 直接作为数据集名称
+        :param X_train: 训练集特征（命名为 训练集）
+        :param y_train: 训练集标签，None 时从 X_train 中通过 target / overdue+dpds 构建
+        :param X_test: 测试集特征（命名为 测试集）
+        :param y_test: 测试集标签，None 时从 X_test 中通过 target / overdue+dpds 构建
+        :param X_oot: 跨时间验证集特征（命名为 跨时间验证集）
+        :param y_oot: 跨时间验证集标签，None 时从 X_oot 中通过 target / overdue+dpds 构建
         :param feature_names: 特征名称列表
         :param target: 目标列配置
-            - str: 列名，如 'target'
+            - str: 列名，如 'target'，数据全部在 X 中时使用
             - dict: {'overdue': col, 'dpds': threshold} 或 {'overdue': col, 'dpds': [15, 7, 0]}
-        :param overdue: 逾期列名（str）或多个列名（List[str]），与 dpds 配合自动构建标签
+        :param overdue: 逾期列名（str）或多个列名（List[str]），传入后忽略 target
         :param dpds: 逾期天数阈值（int/float）或多个阈值（List），与 overdue 配合使用
         :param n_jobs: 并行工作数；-1 自动保留 CPU，None 使用兼容串行模式
         :param parallel_backend: joblib 后端，如 ``threading`` 或 ``loky``
@@ -521,8 +520,8 @@ class ModelReport:
         validate_parallel_config(parallel_backend, parallel_config)
         resolve_n_jobs(n_jobs, task_count=1)
 
-        # overdue/dpds 优先，构造 target dict
-        if overdue is not None and dpds is not None:
+        # 传入 overdue（配合 dpds）时直接忽略 target，按 逾期天数 > 阈值 构建标签
+        if overdue is not None:
             self._target_cfg: Optional[Union[str, Dict]] = {
                 "overdue": overdue,
                 "dpds": dpds,
@@ -552,12 +551,19 @@ class ModelReport:
         self._features_summary_cache: Optional[pd.DataFrame] = None
 
         # 确定目标列名
-        self._target_name = self._resolve_target_name(target)
+        self._target_name = self._resolve_target_name(self._target_cfg)
 
-        if datasets is not None:
-            self._init_from_datasets(datasets)
-        else:
-            self._init_from_xy(X_train, y_train, X_test, y_test)
+        # 将各种传入形式统一规整为 {数据集名称: (X, y)}，再基于该结构构建数据集
+        normalized = self._normalize_datasets(
+            datasets=datasets,
+            X_train=X_train,
+            y_train=y_train,
+            X_test=X_test,
+            y_test=y_test,
+            X_oot=X_oot,
+            y_oot=y_oot,
+        )
+        self._init_from_normalized(normalized)
 
         # 从第一个数据集获取特征名，再过滤为模型实际入模特征
         if self._feature_names:
@@ -732,85 +738,75 @@ class ModelReport:
 
         raise ValueError(f"target 参数格式错误：{target_cfg}")
 
-    def _init_from_datasets(self, datasets):
-        """从 datasets 初始化数据集.
+    def _normalize_datasets(
+        self,
+        datasets=None,
+        X_train=None,
+        y_train=None,
+        X_test=None,
+        y_test=None,
+        X_oot=None,
+        y_oot=None,
+    ) -> Dict[str, Tuple[Any, Any]]:
+        """将各种传入形式统一规整为 ``{数据集名称: (X, y)}`` 的 dict 结构.
 
-        datasets 支持两种格式：
-        - dict: {'train': DataFrame, 'test': DataFrame, ...}
-                  DataFrame 直接传入，y 从 X 中通过 target / overdue+dpds 自动构建
-        - list: [DataFrame, DataFrame, ...]
-                  自动命名为训练集、测试集、OOT集...，y 从 X 中自动构建
+        命名规则：
+
+        - datasets 为 dict：直接以 key 作为数据集名称；
+          value 支持 ``DataFrame``（y 为 None，自动构建标签）或 ``(X, y)`` 元组
+        - datasets 为 list/tuple：依次命名为 数据集1、数据集2、...、数据集N
+        - X_train/X_test/X_oot 参数：依次命名为 训练集、测试集、跨时间验证集；
+          y 为 None 时从 X 中通过 target / overdue+dpds 自动构建标签
         """
-        if isinstance(datasets, dict):
-            entries = list(datasets.items())
-            default_labels = {
-                "train": "训练集",
-                "test": "测试集",
-                "oot": "OOT集",
-                "val": "验证集",
-            }
-        elif isinstance(datasets, (list, tuple)):
-            default_names = ["train", "test", "oot", "val", "dev"]
-            default_labels_list = ["训练集", "测试集", "OOT集", "验证集", "开发集"]
-            entries = [
-                (default_names[i] if i < len(default_names) else f"dataset_{i}", value)
-                for i, value in enumerate(datasets)
-            ]
-            default_labels = {
-                key: default_labels_list[i] if i < len(default_labels_list) else f"数据集{i + 1}"
-                for i, (key, _) in enumerate(entries)
-            }
-        else:
-            raise ValueError("datasets 必须为字典或列表")
+        normalized: Dict[str, Tuple[Any, Any]] = {}
 
+        if datasets is not None:
+            if isinstance(datasets, dict):
+                entries = list(datasets.items())
+            elif isinstance(datasets, (list, tuple)):
+                entries = [(f"数据集{i + 1}", value) for i, value in enumerate(datasets)]
+            else:
+                raise ValueError("datasets 必须为字典或列表")
+            for name, value in entries:
+                if isinstance(value, (tuple, list)) and len(value) >= 2:
+                    normalized[str(name)] = (value[0], value[1])
+                else:
+                    normalized[str(name)] = (value, None)
+            return normalized
+
+        if X_train is not None:
+            normalized["训练集"] = (X_train, y_train)
+        if X_test is not None:
+            normalized["测试集"] = (X_test, y_test)
+        if X_oot is not None:
+            normalized["跨时间验证集"] = (X_oot, y_oot)
+        if not normalized:
+            raise ValueError(
+                "未提供任何数据集，请通过 datasets 或 X_train/y_train 等参数传入数据"
+            )
+        return normalized
+
+    def _init_from_normalized(self, normalized: Dict[str, Tuple[Any, Any]]):
+        """基于统一的 ``{数据集名称: (X, y)}`` 结构构建各数据集.
+
+        标签解析规则（y 优先，其次 target，最后 overdue+dpds）：
+
+        - y 不为 None（sklearn 风格）：直接使用传入的 y
+        - y 为 None（scorecardpipeline 风格）：从 X 中通过 target 列名提取，
+          或通过 overdue+dpds 组合构建标签
+        """
         specs: List[Tuple[Any, ...]] = []
         candidate_labels: List[str] = []
-        for key, value in entries:
-            label = default_labels.get(key, key)
-            if isinstance(value, (tuple, list)) and len(value) >= 2:
-                X_raw, y_raw = value[0], value[1]
-                X_df = _ensure_dataframe(X_raw, feature_names=self._feature_names)
-                if y_raw is None:
-                    y_s, y_dict = self._build_y(X_df, self._target_cfg)
-                else:
-                    y_s = _ensure_series(y_raw, name=self._target_name)
-                    y_dict = None
-            else:
-                X_df = _ensure_dataframe(value, feature_names=self._feature_names)
+        for name, (X_raw, y_raw) in normalized.items():
+            X_df = _ensure_dataframe(X_raw, feature_names=self._feature_names)
+            if y_raw is None:
                 y_s, y_dict = self._build_y(X_df, self._target_cfg)
+            else:
+                y_s = _ensure_series(y_raw, name=self._target_name)
+                y_dict = None
             if y_dict and not candidate_labels:
                 candidate_labels = list(y_dict)
-            specs.append((self.model, key, label, X_df, y_s, y_dict, self._feature_names))
-
-        self._commit_dataset_specs(specs)
-        self._label_names = candidate_labels
-
-    def _init_from_xy(self, X_train, y_train, X_test, y_test):
-        """从 X/y 参数初始化（兼容旧 API 及 scorecardpipeline 风格）."""
-        X_train_df = _ensure_dataframe(X_train, feature_names=self._feature_names)
-
-        # 支持 y_train 为 None 的 scorecardpipeline 风格（从 X 中推导标签）
-        if y_train is None:
-            y_train_s, y_dict_train = self._build_y(X_train_df, self._target_cfg)
-        else:
-            y_train_s = _ensure_series(y_train, name=self._target_name)
-            y_dict_train = None
-
-        specs: List[Tuple[Any, ...]] = [
-            (self.model, "train", "训练集", X_train_df, y_train_s, y_dict_train, self._feature_names)
-        ]
-        candidate_labels = list(y_dict_train) if y_dict_train else []
-
-        if X_test is not None:
-            X_test_df = _ensure_dataframe(X_test, feature_names=list(X_train_df.columns))
-            if y_test is None:
-                y_test_s, y_dict_test = self._build_y(X_test_df, self._target_cfg)
-            else:
-                y_test_s = _ensure_series(y_test, name=self._target_name)
-                y_dict_test = None
-            if y_dict_test and not candidate_labels:
-                candidate_labels = list(y_dict_test)
-            specs.append((self.model, "test", "测试集", X_test_df, y_test_s, y_dict_test, self._feature_names))
+            specs.append((self.model, name, name, X_df, y_s, y_dict, self._feature_names))
 
         self._commit_dataset_specs(specs)
         self._label_names = candidate_labels
@@ -875,6 +871,33 @@ class ModelReport:
             return ds.y_dict[label]
         return ds.y.to_numpy()
 
+    @property
+    def _train_key(self) -> str:
+        """训练集对应的内部 key：优先 ``'train'``，否则回退到第一个数据集."""
+        if "train" in self._datasets:
+            return "train"
+        return next(iter(self._datasets))
+
+    @property
+    def _test_key(self) -> Optional[str]:
+        """测试集对应的内部 key：优先 ``'test'``，否则回退到第二个数据集（不存在时为 None）."""
+        if "test" in self._datasets:
+            return "test"
+        keys = [k for k in self._datasets if k != self._train_key]
+        return keys[0] if keys else None
+
+    def _resolve_dataset_key(self, dataset: str) -> str:
+        """解析数据集标识，支持 ``'train'`` / ``'test'`` 在缺省时回退到第一 / 第二个数据集."""
+        if dataset in self._datasets:
+            return dataset
+        if dataset == "train":
+            return self._train_key
+        if dataset == "test":
+            test_key = self._test_key
+            if test_key is not None:
+                return test_key
+        raise KeyError(f"数据集 '{dataset}' 不存在，可用数据集: {list(self._datasets)}")
+
     def _is_overdue_cfg(self) -> bool:
         """目标配置是否为 overdue + dpds 逾期联合标签模式."""
         return isinstance(self._target_cfg, dict) and "overdue" in self._target_cfg
@@ -929,8 +952,8 @@ class ModelReport:
         if label in self._metrics_cache:
             return self._metrics_cache[label].copy()
 
-        ordered_keys = ["train", "test"] + [k for k in self._datasets if k not in ("train", "test")]
-        ds_keys = [k for k in ordered_keys if k in self._datasets]
+        # 数据集按传入顺序展示（dict 的 key / list 顺序 / 训练集→测试集→跨时间验证集）
+        ds_keys = list(self._datasets)
         labels_map = {k: self._datasets[k].label for k in ds_keys}
         tasks = [(self._get_y(key, label), self._datasets[key].y_proba) for key in ds_keys]
         metric_values = parallel_execute(
@@ -1017,6 +1040,7 @@ class ModelReport:
         """
         from .feature_analyzer import feature_bin_stats
 
+        dataset = self._resolve_dataset_key(dataset)
         ds = self._datasets[dataset]
         score_col = "__score__"
         df = ds.X.copy()
@@ -1131,14 +1155,15 @@ class ModelReport:
                 importance_df = pd.DataFrame(index=importances.index)
                 importance_df["特征重要性"] = importances.abs().values / total if total else importances.values
 
-                train_ds = self._datasets["train"]
+                train_ds = self._datasets[self._train_key]
+                test_key = self._test_key
                 y_arr = train_ds.y.to_numpy()
                 metric_tasks = []
                 for feat in importance_df.index:
                     train_values = train_ds.X[feat] if feat in train_ds.X.columns else pd.Series(dtype=float)
                     test_values = (
-                        self._datasets["test"].X[feat]
-                        if "test" in self._datasets and feat in self._datasets["test"].X.columns
+                        self._datasets[test_key].X[feat]
+                        if test_key is not None and feat in self._datasets[test_key].X.columns
                         else None
                     )
                     metric_tasks.append((y_arr, train_values, test_values))
@@ -1170,7 +1195,8 @@ class ModelReport:
 
         importance = self.get_feature_importance()
         features = importance.index.tolist()
-        train_X = self._datasets["train"].X[features] if features else self._datasets["train"].X[self.feature_names]
+        train_ds = self._datasets[self._train_key]
+        train_X = train_ds.X[features] if features else train_ds.X[self.feature_names]
         desc_stats = train_X.describe(percentiles=[0.01, 0.1, 0.5, 0.75, 0.9, 0.99]).T
         desc_stats = desc_stats.rename(
             columns={
@@ -1221,7 +1247,7 @@ class ModelReport:
         features = importance.index.tolist()
         if not features:
             features = self.feature_names
-        result = self._datasets["train"].X[features].corr()
+        result = self._datasets[self._train_key].X[features].corr()
         self._corr_cache = result.copy()
         return result
 
@@ -1274,6 +1300,7 @@ class ModelReport:
         """
         from .feature_analyzer import feature_bin_stats
 
+        dataset = self._resolve_dataset_key(dataset)
         ds = self._datasets[dataset]
         df = ds.X.copy()
         binner = getattr(self.model, "binner", None)
@@ -1496,13 +1523,16 @@ class ModelReport:
         features = importance.index.tolist() if not importance.empty else self.feature_names
 
         target_col = self._target_name or "target"
-        train_df = self._datasets["train"].X[features].copy()
-        train_df[target_col] = self._datasets["train"].y.values
+        train_ds = self._datasets[self._train_key]
+        train_df = train_ds.X[features].copy()
+        train_df[target_col] = train_ds.y.values
 
         test_df = None
-        if "test" in self._datasets:
-            test_df = self._datasets["test"].X[features].copy()
-            test_df[target_col] = self._datasets["test"].y.values
+        test_key = self._test_key
+        if test_key is not None:
+            test_ds = self._datasets[test_key]
+            test_df = test_ds.X[features].copy()
+            test_df[target_col] = test_ds.y.values
 
         try:
             summary_result = train_df.summary(
@@ -1666,7 +1696,7 @@ class ModelReport:
         if len(top_features) >= 2:
             p = str(output_dir / "feature_corr.png")
             try:
-                corr_plot(self._datasets["train"].X[top_features], annot=False, save=p)
+                corr_plot(self._datasets[self._train_key].X[top_features], annot=False, save=p)
                 _safe_close_figs()
                 paths["feature_corr"] = [p]
             except Exception as exc:
@@ -1834,8 +1864,8 @@ class ModelReport:
         if self._summary_cache is not None:
             return self._summary_cache.copy()
 
-        ordered_keys = ["train", "test"] + [k for k in self._datasets if k not in ("train", "test")]
-        ds_keys = [k for k in ordered_keys if k in self._datasets]
+        # 数据集按传入顺序展示（dict 的 key / list 顺序 / 训练集→测试集→跨时间验证集）
+        ds_keys = list(self._datasets)
         ds_labels = [self._datasets[k].label for k in ds_keys]
 
         if self._is_multi_label():
@@ -3153,23 +3183,25 @@ class ModelReport:
             stab_section += 1
 
         # 4.3 评分漂移分析（以训练集为基准）
-        if "train" in self._datasets and len(self._datasets) >= 2:
+        if len(self._datasets) >= 2:
+            base_key = self._train_key
+            base_label = self._datasets[base_key].label
             end_row, _ = writer.insert_value2sheet(
                 ws,
                 (end_row + 2, 2),
-                value=f"{stab_section}、评分漂移分析（vs 训练集）",
+                value=f"{stab_section}、评分漂移分析（vs {base_label}）",
                 style="header_middle",
                 align={"horizontal": "left"},
             )
             drift_rows: List[Dict[str, Any]] = []
-            base_scores = self._datasets["train"].score
+            base_scores = self._datasets[base_key].score
             for ds_key, ds in self._datasets.items():
-                if ds_key == "train":
+                if ds_key == base_key:
                     continue
                 sc = ds.score
                 drift = {
                     "数据集": ds.label,
-                    "vs": "训练集",
+                    "vs": base_label,
                     "均值偏移": float(np.nanmean(sc) - np.nanmean(base_scores)),
                     "均值偏移%": float((np.nanmean(sc) - np.nanmean(base_scores)) / (np.nanstd(base_scores) + 1e-9)),
                     "中位数偏移": float(np.nanmedian(sc) - np.nanmedian(base_scores)),
@@ -3203,10 +3235,9 @@ class ModelReport:
             importance = self.get_feature_importance()
             feat_list = importance.index.tolist() if not importance.empty else self.feature_names
             psi_rows: List[Dict[str, Any]] = []
-            base_ds = self._datasets.get("train") or self._datasets[list(self._datasets.keys())[0]]
-            other_ds_keys = [k for k in self._datasets if k != "train"]
-            if not other_ds_keys:
-                other_ds_keys = [k for k in self._datasets if k != list(self._datasets.keys())[0]]
+            base_key = self._train_key
+            base_ds = self._datasets[base_key]
+            other_ds_keys = [k for k in self._datasets if k != base_key]
 
             for feat in feat_list:
                 row: Dict[str, Any] = {"特征": feat}
@@ -3431,7 +3462,7 @@ class ModelReport:
                         "序号": idx + 1,
                         "特征名称": feat,
                         "特征含义": (feature_map or {}).get(feat, ""),
-                        "字段类型": str(self._datasets["train"].X[feat].dtype),
+                        "字段类型": str(self._datasets[self._train_key].X[feat].dtype),
                         "缺失值处理": "默认处理",
                     }
                 )
@@ -3442,7 +3473,7 @@ class ModelReport:
             ws, (end_row + 2, 2), value="2、生产订单测试用例", style="header_middle", align={"horizontal": "left"}
         )
         try:
-            train_ds = self._datasets["train"]
+            train_ds = self._datasets[self._train_key]
             sample_n = min(5, len(train_ds.X))
             sample_X = train_ds.X[self.feature_names].iloc[:sample_n].copy()
 
@@ -3529,6 +3560,8 @@ def auto_model_report(
     y_train=None,
     X_test=None,
     y_test=None,
+    X_oot=None,
+    y_oot=None,
     feature_names: Optional[List[str]] = None,
     target: Optional[Union[str, Dict]] = None,
     overdue: Optional[Union[str, List[str]]] = None,
@@ -3556,16 +3589,16 @@ def auto_model_report(
 ) -> ModelReport:
     """一键生成模型报告.
 
-    支持三种调用方式：
+    数据集传入支持三种方式，内部统一规整为 ``{数据集名称: (X, y)}`` 结构：
 
-    1. datasets API（推荐）：传入数据集字典/列表
-       - dict: {'train': DataFrame, 'test': DataFrame, 'oot': DataFrame}
-         DataFrame 需包含目标列，或通过 overdue/dpds 自动构建标签
-       - list: [DataFrame, DataFrame, ...] 自动命名为训练集、测试集、OOT集...
+    1. datasets 为 dict：直接以 key 作为数据集名称，
+       如 ``{'建模集': df, 'OOT': df}``，DataFrame 需包含目标列，或通过 overdue/dpds 自动构建标签
+    2. datasets 为 list：依次命名为 数据集1、数据集2、...、数据集N
+    3. X_train/X_test/X_oot 参数：依次命名为 训练集、测试集、跨时间验证集
 
-    2. 兼容 API：传入 X_train/y_train/X_test/y_test
-       - sklearn 风格：target='target'
-       - overdue/dpds 风格：传入单独的 overdue/dpds 参数
+    标签解析遵循 hscredit 统一传参风格：显式传入 y 优先（sklearn 风格）；
+    否则通过 target 列名从 X 中提取（scorecardpipeline 风格）；
+    传入 overdue+dpds 组合时直接忽略 target。
 
     overdue/dpds 用法（自动从 X 构建二分类标签）::
 
@@ -3606,11 +3639,13 @@ def auto_model_report(
         )
 
     :param model: 训练好的模型（ScoreCard / XGBoost / LightGBM / sklearn 等）
-    :param datasets: 数据集字典/列表，字典键为数据集名称（推荐）
-    :param X_train: 训练集特征（兼容旧 API）
-    :param y_train: 训练集标签（兼容旧 API）
-    :param X_test: 测试集/OOT 特征（兼容旧 API）
-    :param y_test: 测试集/OOT 标签（兼容旧 API）
+    :param datasets: 数据集字典/列表，字典键直接作为数据集名称（推荐）
+    :param X_train: 训练集特征（命名为 训练集）
+    :param y_train: 训练集标签，None 时从 X_train 中自动构建
+    :param X_test: 测试集特征（命名为 测试集）
+    :param y_test: 测试集标签，None 时从 X_test 中自动构建
+    :param X_oot: 跨时间验证集特征（命名为 跨时间验证集）
+    :param y_oot: 跨时间验证集标签，None 时从 X_oot 中自动构建
     :param feature_names: 特征名称列表
     :param target: 目标列配置，str 为列名，dict 为 {'overdue': col, 'dpds': threshold}
     :param overdue: 逾期列名（str）或多个列名（List[str]），与 dpds 配合自动构建标签
@@ -3644,6 +3679,8 @@ def auto_model_report(
         y_train=y_train,
         X_test=X_test,
         y_test=y_test,
+        X_oot=X_oot,
+        y_oot=y_oot,
         feature_names=feature_names,
         target=target,
         overdue=overdue,
