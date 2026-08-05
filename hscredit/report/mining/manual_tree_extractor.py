@@ -33,6 +33,86 @@ from sklearn.tree import DecisionTreeClassifier, export_graphviz
 from ...core.rules.rule import Rule
 from ...exceptions import InputValidationError
 from ...utils.pandas_extensions import style_rule_table
+from ...utils.parallel import (
+    ParallelizableMixin,
+    _current_parallel_budget,
+    parallel_execute,
+    resolve_n_jobs,
+)
+
+
+def _effective_nested_n_jobs(n_jobs):
+    """在活跃父预算中限制内部显式并发，根调用保留公开配置。"""
+    budget = _current_parallel_budget()
+    if budget.depth == 0:
+        return n_jobs
+    if n_jobs is None or n_jobs in (1, 1.0):
+        return 1
+    resolved = resolve_n_jobs(n_jobs, available_budget=budget.available) or 1
+    return min(resolved, budget.available)
+
+
+def _commit_transactional_state(instance, working, parameter_names):
+    """提交临时拟合状态，并将显式构造参数重新绑定到调用方原始对象。"""
+    parameter_references = {name: getattr(instance, name) for name in parameter_names}
+    instance.__dict__.clear()
+    instance.__dict__.update(working.__dict__)
+    for name, value in parameter_references.items():
+        setattr(instance, name, value)
+
+
+def _tree_metric_dataset_worker(task):
+    """计算一个独立数据集的树模型指标。"""
+    analyzer, name, data, metric_type, top_rate = task
+    if analyzer.target not in data.columns:
+        raise ValueError(f"测试集 '{name}' 缺少目标列: {analyzer.target}")
+    probability = analyzer.predict_proba(data)[:, 1]
+    value = analyzer._calc_metric(
+        probability,
+        data[analyzer.target].values,
+        metric_type,
+        top_rate,
+    )
+    return name, value
+
+
+def _node_hit_worker(task):
+    """计算一个独立节点规则在单个数据集上的命中报告。"""
+    node_id, is_leaf, rule, data, target, overdue, dpds, del_grey, kwargs = task
+    table = rule.report(
+        data,
+        target=target,
+        overdue=overdue,
+        dpds=dpds,
+        del_grey=del_grey,
+        desc=rule.description,
+        **kwargs,
+    )
+    is_multi = isinstance(table.columns, pd.MultiIndex)
+    group = "分箱详情" if is_multi else None
+    bin_col = (group, "分箱") if is_multi else "分箱"
+    node_col = (group, "节点编号") if is_multi else "节点编号"
+    leaf_col = (group, "是否叶子") if is_multi else "是否叶子"
+    hit = table[table[bin_col] == "命中"].copy()
+    hit[node_col] = node_id
+    hit[leaf_col] = "是" if is_leaf else "否"
+    front_cols = [node_col, leaf_col]
+    other_cols = [column for column in hit.columns if column not in front_cols]
+    return hit[front_cols + other_cols]
+
+
+def _tree_report_dataset_worker(task):
+    """计算一个独立数据集的整棵树节点报告。"""
+    analyzer, data, target, overdue, dpds, del_grey, leaf_only, kwargs = task
+    return analyzer._report_one_dataset(
+        data,
+        target=target,
+        overdue=overdue,
+        dpds=dpds,
+        del_grey=del_grey,
+        leaf_only=leaf_only,
+        report_kwargs=kwargs,
+    )
 
 
 def _sklearn_supports_native_missing() -> bool:
@@ -674,6 +754,9 @@ def _node_hit_report(
     dpds: Optional[Union[int, List[int]]],
     del_grey: bool,
     leaf_only: bool,
+    n_jobs=-1,
+    parallel_backend=None,
+    parallel_config=None,
     **kwargs: Any,
 ) -> pd.DataFrame:
     """对单个数据集，汇总每个节点规则 :meth:`Rule.report` 中"命中"分箱的结果行。
@@ -692,7 +775,8 @@ def _node_hit_report(
     """
     rules_df = df_rules[df_rules["if_leaf"]] if leaf_only else df_rules
 
-    hit_frames: List[pd.DataFrame] = []
+    tasks = []
+    labels = []
     for _, row in rules_df.iterrows():
         node_id = int(row["node"])
         is_leaf = bool(row["if_leaf"])
@@ -701,30 +785,34 @@ def _node_hit_report(
         rule = format_rule(rule_list)
         if rule is None:
             rule = Rule(expr="True", name="空规则", description="空规则")
-
-        table = rule.report(
-            data,
-            target=target,
-            overdue=overdue,
-            dpds=dpds,
-            del_grey=del_grey,
-            desc=rule.description,
-            **kwargs,
+        rule.n_jobs = 1 if n_jobs is None or n_jobs in (1, 1.0) else -1
+        rule.parallel_backend = parallel_backend
+        rule.parallel_config = parallel_config
+        tasks.append(
+            (
+                node_id,
+                is_leaf,
+                rule,
+                data,
+                target,
+                overdue,
+                dpds,
+                del_grey,
+                dict(kwargs),
+            )
         )
+        labels.append(f"节点 {node_id}")
 
-        is_multi = isinstance(table.columns, pd.MultiIndex)
-        group = "分箱详情" if is_multi else None
-        bin_col = (group, "分箱") if is_multi else "分箱"
-        node_col = (group, "节点编号") if is_multi else "节点编号"
-        leaf_col = (group, "是否叶子") if is_multi else "是否叶子"
-
-        hit = table[table[bin_col] == "命中"].copy()
-        hit[node_col] = node_id
-        hit[leaf_col] = "是" if is_leaf else "否"
-
-        front_cols = [node_col, leaf_col]
-        other_cols = [c for c in hit.columns if c not in front_cols]
-        hit_frames.append(hit[front_cols + other_cols])
+    hit_frames = parallel_execute(
+        _node_hit_worker,
+        tasks,
+        n_jobs=n_jobs,
+        parallel_backend=parallel_backend,
+        parallel_config=parallel_config,
+        task_labels=labels,
+        default_backend="threading",
+        has_parallel_children=overdue is not None,
+    )
 
     if not hit_frames:
         return pd.DataFrame()
@@ -799,7 +887,7 @@ class _SimTree:
 # ============================================================================
 
 
-class DecisionTreeAnalyzer:
+class DecisionTreeAnalyzer(ParallelizableMixin):
     """sklearn 决策树分析器。
 
     在标准 sklearn DecisionTreeClassifier 基础上，提供决策树训练、
@@ -843,6 +931,9 @@ class DecisionTreeAnalyzer:
         features: Optional[List[str]] = None,
         tree_params: Optional[Dict[str, Any]] = None,
         missing: Optional[float] = None,
+        n_jobs: Optional[Union[int, float]] = -1,
+        parallel_backend: Optional[str] = None,
+        parallel_config: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ):
         """初始化决策树训练器。
@@ -872,10 +963,14 @@ class DecisionTreeAnalyzer:
             例如：`ccp_alpha=0.01`、`class_weight='balanced'`、`min_weight_fraction_leaf=0.1` 等。
         """
         self.target = target
-        self.features = features or []
-        self.tree_params = tree_params or {}
+        self.features = features
+        self.tree_params = tree_params
         self.missing = missing
+        self.n_jobs = n_jobs
+        self.parallel_backend = parallel_backend
+        self.parallel_config = parallel_config
         self._sklearn_kwargs: Dict[str, Any] = kwargs
+        self.features_: List[str] = []
 
         # 默认树参数
         self._default_params = {
@@ -913,7 +1008,7 @@ class DecisionTreeAnalyzer:
             n_classes = getattr(self.clf, "n_classes_", getattr(self.clf.tree_, "n_classes", 2))
             n_classes = int(np.asarray(n_classes).ravel()[0])
             self.__tree_info_cache = _TreeInfo(
-                self.features,
+                self.features_,
                 n_classes,
             )
             tree = self.clf.tree_
@@ -934,6 +1029,38 @@ class DecisionTreeAnalyzer:
     # -------------------------------------------------------------------------
 
     def fit(
+        self,
+        X: Union[pd.DataFrame, np.ndarray],
+        y: Optional[Union[pd.Series, np.ndarray]] = None,
+        features: Optional[List[str]] = None,
+        tree_params: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
+    ) -> "DecisionTreeAnalyzer":
+        """在临时副本中训练，并在全部成功后提交拟合状态。"""
+        working = copy.deepcopy(self)
+        working._fit_inplace(
+            X,
+            y,
+            features=features,
+            tree_params=tree_params,
+            **kwargs,
+        )
+        _commit_transactional_state(
+            self,
+            working,
+            (
+                "target",
+                "features",
+                "tree_params",
+                "missing",
+                "n_jobs",
+                "parallel_backend",
+                "parallel_config",
+            ),
+        )
+        return self
+
+    def _fit_inplace(
         self,
         X: Union[pd.DataFrame, np.ndarray],
         y: Optional[Union[pd.Series, np.ndarray]] = None,
@@ -968,15 +1095,20 @@ class DecisionTreeAnalyzer:
         >>> # 使用 ccp_alpha 后剪枝
         >>> DecisionTreeAnalyzer(target='target').fit(df_train, ccp_alpha=0.01)
         """
+        self._parallel_execute(
+            _tree_metric_dataset_worker,
+            [],
+            default_backend="threading",
+        )
         # 解析双 API：sklearn 风格 (X, y) 或 scorecardpipeline 风格 (df)
         resolved_features = features if features is not None else (self.features or None)
-        df, self.features = _resolve_fit_data(X, y, resolved_features, self.target)
+        df, self.features_ = _resolve_fit_data(X, y, resolved_features, self.target)
 
         # 过滤缺失数据
-        self._data = df.loc[df[self.target].notna(), self.features + [self.target]].copy()
+        self._data = df.loc[df[self.target].notna(), self.features_ + [self.target]].copy()
 
         # 合并参数：默认参数 → 构造参数 → 调用参数 → kwargs（优先级最高）
-        params = {**self._default_params, **self.tree_params}
+        params = {**self._default_params, **(self.tree_params or {})}
         if tree_params:
             params = {**params, **tree_params}
         params = {**params, **self._sklearn_kwargs, **kwargs}
@@ -984,13 +1116,13 @@ class DecisionTreeAnalyzer:
         # 训练（按 sklearn 版本与 missing 自动处理缺失：指定 missing 则等价填充，
         # 新版 sklearn 原生支持缺失，旧版含缺失且未指定 missing 时给出明确提示）
         self.clf = DecisionTreeClassifier(**params)
-        X = _prepare_training_features(self._data, self.features, self.missing, "DecisionTreeAnalyzer")
+        X = _prepare_training_features(self._data, self.features_, self.missing, "DecisionTreeAnalyzer")
         y = self._data[self.target].values
         self.clf.fit(X, y)
 
         self._is_fitted = True
         self.__tree_info_cache = None
-        self._df_rules = _rule_generator(self.clf, self.features, missing=self.missing)
+        self._df_rules = _rule_generator(self.clf, self.features_, missing=self.missing)
         return self
 
     # -------------------------------------------------------------------------
@@ -1005,8 +1137,8 @@ class DecisionTreeAnalyzer:
         """
         self._check_fitted()
         data = df if df is not None else self._data
-        data = _impute_features(data, self.features, self.missing)
-        return self.clf.predict(data[self.features].values)
+        data = _impute_features(data, self.features_, self.missing)
+        return self.clf.predict(data[self.features_].values)
 
     def predict_proba(self, df: Optional[pd.DataFrame] = None) -> np.ndarray:
         """预测类别概率。
@@ -1016,8 +1148,8 @@ class DecisionTreeAnalyzer:
         """
         self._check_fitted()
         data = df if df is not None else self._data
-        data = _impute_features(data, self.features, self.missing)
-        return self.clf.predict_proba(data[self.features].values)
+        data = _impute_features(data, self.features_, self.missing)
+        return self.clf.predict_proba(data[self.features_].values)
 
     def apply(self, df: Optional[pd.DataFrame] = None) -> np.ndarray:
         """返回每个样本所属叶子节点的编号。
@@ -1032,8 +1164,8 @@ class DecisionTreeAnalyzer:
         """
         self._check_fitted()
         data = df if df is not None else self._data
-        data = _impute_features(data, self.features, self.missing)
-        return self.clf.apply(data[self.features].values)
+        data = _impute_features(data, self.features_, self.missing)
+        return self.clf.apply(data[self.features_].values)
 
     # -------------------------------------------------------------------------
     # 评估
@@ -1074,24 +1206,18 @@ class DecisionTreeAnalyzer:
         if metric_type not in ("auc", "ks", "lift", "top"):
             raise ValueError(f"不支持的指标类型: {metric_type}，可选值: auc/ks/lift/top")
 
-        results: List[Tuple[str, float]] = []
-
-        # 训练集评估
-        train_prob = self.predict_proba()[:, 1]
-        train_y = self._data[self.target].values
-        train_metric = self._calc_metric(train_prob, train_y, metric_type, top_rate)
-        results.append(("训练集", train_metric))
-
-        # 各测试集评估
-        for name, test_df in test_data_list:
-            if self.target not in test_df.columns:
-                raise ValueError(f"测试集 '{name}' 缺少目标列: {self.target}")
-            test_prob = self.predict_proba(test_df)[:, 1]
-            test_y = test_df[self.target].values
-            test_metric = self._calc_metric(test_prob, test_y, metric_type, top_rate)
-            results.append((name, test_metric))
-
-        return results
+        datasets = [("训练集", self._data)] + list(test_data_list)
+        tasks = [
+            (self, name, data, metric_type, top_rate)
+            for name, data in datasets
+        ]
+        return self._parallel_execute(
+            _tree_metric_dataset_worker,
+            tasks,
+            task_labels=[name for name, _ in datasets],
+            default_backend="threading",
+            has_parallel_children=False,
+        )
 
     def _calc_metric(
         self,
@@ -1150,25 +1276,68 @@ class DecisionTreeAnalyzer:
         """
         self._check_fitted()
 
-        def _report_one(data: pd.DataFrame) -> pd.DataFrame:
-            return _node_hit_report(
-                self._df_rules,
-                self._format_rule,
-                data,
-                target=target or self.target,
-                overdue=overdue,
-                dpds=dpds,
-                del_grey=del_grey,
-                leaf_only=leaf_only,
-                **kwargs,
-            )
-
         if isinstance(datasets, dict):
-            return {name: _report_one(data) for name, data in datasets.items()}
+            names = list(datasets)
+            data_values = list(datasets.values())
         elif isinstance(datasets, list):
-            return [_report_one(data) for data in datasets]
+            names = None
+            data_values = list(datasets)
         else:
-            return _report_one(datasets)
+            names = None
+            data_values = [datasets]
+
+        tasks = [
+            (
+                self,
+                data,
+                target or self.target,
+                overdue,
+                dpds,
+                del_grey,
+                leaf_only,
+                dict(kwargs),
+            )
+            for data in data_values
+        ]
+        results = self._parallel_execute(
+            _tree_report_dataset_worker,
+            tasks,
+            task_labels=names if names is not None else list(range(len(tasks))),
+            default_backend="threading",
+            has_parallel_children=True,
+        )
+        if isinstance(datasets, dict):
+            return dict(zip(names, results))
+        if isinstance(datasets, list):
+            return results
+        return results[0]
+
+    def _report_one_dataset(
+        self,
+        data,
+        *,
+        target,
+        overdue,
+        dpds,
+        del_grey,
+        leaf_only,
+        report_kwargs,
+    ):
+        """计算单个数据集的节点报告，供模块级 worker 调用。"""
+        return _node_hit_report(
+            self._df_rules,
+            self._format_rule,
+            data,
+            target=target,
+            overdue=overdue,
+            dpds=dpds,
+            del_grey=del_grey,
+            leaf_only=leaf_only,
+            n_jobs=_effective_nested_n_jobs(self.n_jobs),
+            parallel_backend=self.parallel_backend,
+            parallel_config=self.parallel_config,
+            **report_kwargs,
+        )
 
     def get_leaf_node_ids(self) -> List[int]:
         """获取所有叶子节点的 ID 列表。"""
@@ -1336,7 +1505,7 @@ class DecisionTreeAnalyzer:
             class_names = ["好", "坏"]
         return _export_dot_data(
             self.clf,
-            self.features,
+            self.features_,
             class_names=class_names,
             out_file=out_file,
             max_depth=max_depth,
@@ -1366,7 +1535,7 @@ class DecisionTreeAnalyzer:
         self._check_fitted()
         from ...core.viz.tree_plots import plot_tree
 
-        kwargs.setdefault("feature_names", self.features)
+        kwargs.setdefault("feature_names", self.features_)
         return plot_tree(self, backend=backend, save=save, title=title, **kwargs)
 
     def save(
@@ -1386,7 +1555,7 @@ class DecisionTreeAnalyzer:
         self._check_fitted()
         payload = {
             "clf": self.clf,
-            "features": self.features,
+            "features": self.features_,
             "target": self.target,
             "tree_params": self.tree_params,
             "missing": self.missing,
@@ -1416,12 +1585,13 @@ class DecisionTreeAnalyzer:
             missing=payload.get("missing"),
         )
         instance.clf = payload["clf"]
+        instance.features_ = list(payload.get("features", payload.get("feature_list", [])))
         instance._is_fitted = True
         if "_data" in payload:
             instance._data = payload["_data"]
         instance.__tree_info_cache = None
         instance._df_rules = _rule_generator(
-            instance.clf, instance.features, missing=instance.missing
+            instance.clf, instance.features_, missing=instance.missing
         )
         return instance
 
@@ -1439,7 +1609,7 @@ class DecisionTreeAnalyzer:
             n_leaves = int(self._df_rules["if_leaf"].sum()) if self._df_rules is not None else 0
             return (
                 f"DecisionTreeAnalyzer(target='{self.target}', "
-                f"features={self.features}, "
+                f"features={self.features_}, "
                 f"leaves={n_leaves})"
             )
         return "DecisionTreeAnalyzer(not fitted)"
@@ -1449,7 +1619,7 @@ class DecisionTreeAnalyzer:
 # ============================================================================
 
 
-class ManualTreeExtractor:
+class ManualTreeExtractor(ParallelizableMixin):
     """人工决策树提取器。
 
     支持对 sklearn 决策树进行**人工指定分裂节点**后重新训练，
@@ -1492,6 +1662,9 @@ class ManualTreeExtractor:
         min_samples_leaf: int = 5,
         random_state: int = 0,
         missing: Optional[float] = None,
+        n_jobs: Optional[Union[int, float]] = -1,
+        parallel_backend: Optional[str] = None,
+        parallel_config: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ):
         """初始化人工决策树提取器。
@@ -1515,6 +1688,9 @@ class ManualTreeExtractor:
         self.min_samples_leaf = min_samples_leaf
         self.random_state = random_state
         self.missing = missing
+        self.n_jobs = n_jobs
+        self.parallel_backend = parallel_backend
+        self.parallel_config = parallel_config
         self._sklearn_kwargs: Dict[str, Any] = kwargs
 
         # 内部状态
@@ -1594,6 +1770,44 @@ class ManualTreeExtractor:
         min_samples_leaf: Optional[int] = None,
         **kwargs: Any,
     ) -> "ManualTreeExtractor":
+        """串行构建临时树，全部成功后原子提交拟合状态。"""
+        working = copy.deepcopy(self)
+        working._fit_inplace(
+            X,
+            y,
+            features=features,
+            max_depth=max_depth,
+            min_samples_split=min_samples_split,
+            min_samples_leaf=min_samples_leaf,
+            **kwargs,
+        )
+        _commit_transactional_state(
+            self,
+            working,
+            (
+                "target",
+                "max_depth",
+                "min_samples_split",
+                "min_samples_leaf",
+                "random_state",
+                "missing",
+                "n_jobs",
+                "parallel_backend",
+                "parallel_config",
+            ),
+        )
+        return self
+
+    def _fit_inplace(
+        self,
+        X: Union[pd.DataFrame, np.ndarray],
+        y: Optional[Union[pd.Series, np.ndarray]] = None,
+        features: Optional[List[str]] = None,
+        max_depth: Optional[int] = None,
+        min_samples_split: Optional[int] = None,
+        min_samples_leaf: Optional[int] = None,
+        **kwargs: Any,
+    ) -> "ManualTreeExtractor":
         """训练基础决策树。
 
         使用数据训练一棵标准 sklearn 决策树。后续可通过 manual_split
@@ -1625,6 +1839,11 @@ class ManualTreeExtractor:
         >>> # 使用熵作为分裂准则 + ccp_alpha 后剪枝
         >>> ManualTreeExtractor(target='target').fit(df, features=['age', 'income'], criterion='entropy')
         """
+        self._parallel_execute(
+            _tree_metric_dataset_worker,
+            [],
+            default_backend="threading",
+        )
         # 解析双 API：sklearn 风格 (X, y) 或 scorecardpipeline 风格 (df)
         df, self._feature_list = _resolve_fit_data(X, y, features, self.target)
 
@@ -2163,25 +2382,68 @@ class ManualTreeExtractor:
         """
         self._check_fitted()
 
-        def _report_one(data: pd.DataFrame) -> pd.DataFrame:
-            return _node_hit_report(
-                self._df_rules,
-                self._format_rule,
-                data,
-                target=target or self.target,
-                overdue=overdue,
-                dpds=dpds,
-                del_grey=del_grey,
-                leaf_only=leaf_only,
-                **kwargs,
-            )
-
         if isinstance(datasets, dict):
-            return {name: _report_one(data) for name, data in datasets.items()}
+            names = list(datasets)
+            data_values = list(datasets.values())
         elif isinstance(datasets, list):
-            return [_report_one(data) for data in datasets]
+            names = None
+            data_values = list(datasets)
         else:
-            return _report_one(datasets)
+            names = None
+            data_values = [datasets]
+
+        tasks = [
+            (
+                self,
+                data,
+                target or self.target,
+                overdue,
+                dpds,
+                del_grey,
+                leaf_only,
+                dict(kwargs),
+            )
+            for data in data_values
+        ]
+        results = self._parallel_execute(
+            _tree_report_dataset_worker,
+            tasks,
+            task_labels=names if names is not None else list(range(len(tasks))),
+            default_backend="threading",
+            has_parallel_children=True,
+        )
+        if isinstance(datasets, dict):
+            return dict(zip(names, results))
+        if isinstance(datasets, list):
+            return results
+        return results[0]
+
+    def _report_one_dataset(
+        self,
+        data,
+        *,
+        target,
+        overdue,
+        dpds,
+        del_grey,
+        leaf_only,
+        report_kwargs,
+    ):
+        """计算单个数据集的节点报告，供模块级 worker 调用。"""
+        return _node_hit_report(
+            self._df_rules,
+            self._format_rule,
+            data,
+            target=target,
+            overdue=overdue,
+            dpds=dpds,
+            del_grey=del_grey,
+            leaf_only=leaf_only,
+            n_jobs=_effective_nested_n_jobs(self.n_jobs),
+            parallel_backend=self.parallel_backend,
+            parallel_config=self.parallel_config,
+            **report_kwargs,
+        )
 
     def get_rules(self) -> List[Rule]:
         """将当前树的叶子节点规则转换为 Rule 对象列表。

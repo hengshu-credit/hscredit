@@ -17,7 +17,7 @@ import numpy as np
 import pandas as pd
 import warnings
 
-from ...exceptions import NotFittedError
+from ...exceptions import NotFittedError, ParallelExecutionError
 from .base import BaseBinning
 from ._categorical import (
     CategoryOrder,
@@ -219,6 +219,7 @@ class OptimalBinning(BaseBinning):
         n_jobs: Union[int, float] = -1,
         parallel_backend: Optional[str] = None,
         parallel_config: Optional[Dict[str, Any]] = None,
+        split_points: Optional[Dict[str, List]] = None,
         **kwargs,
     ):
         if "n_bins" in kwargs:
@@ -241,7 +242,10 @@ class OptimalBinning(BaseBinning):
             min_bad_rate=min_bad_rate,
             monotonic=monotonic,
             special_codes=special_codes,
+            split_points=split_points,
             cat_cutoff=cat_cutoff,
+            user_splits=user_splits,
+            strict_user_splits=strict_user_splits,
             category_order=category_order,
             handle_unknown=handle_unknown,
             random_state=random_state,
@@ -295,6 +299,7 @@ class OptimalBinning(BaseBinning):
             "prebinning",
             "prebinning_params",
             "prebinning_method",
+            "split_points",
             "user_splits",
             "strict_user_splits",
             "method",
@@ -322,13 +327,11 @@ class OptimalBinning(BaseBinning):
             for feature in getattr(self, "_imported_rule_features_", ())
             if getattr(self, "_rules_imported_", False) and feature in X.columns
         ]
-        excluded_features = (
-            set(self.user_splits)
-            if isinstance(self.user_splits, dict)
-            else set(X.columns)
-            if callable(self.user_splits)
-            else set()
-        )
+        excluded_features = set(self.split_points) if isinstance(self.split_points, dict) else set()
+        if isinstance(self.user_splits, dict):
+            excluded_features.update(self.user_splits)
+        elif callable(self.user_splits):
+            excluded_features.update(X.columns)
         excluded_features.update(imported_features)
         self._record_category_orders(X, y, excluded_features=excluded_features)
 
@@ -343,22 +346,8 @@ class OptimalBinning(BaseBinning):
             return self
 
         # 如果指定了 user_splits，优先使用
-        if self.user_splits is not None:
+        if self.user_splits is not None or self.split_points is not None:
             self._fit_with_user_splits(X, y)
-            # strict_user_splits=True 或 quantile 方法时，跳过所有后处理
-            if not self.strict_user_splits and self.method != "quantile":
-                # 统一后处理：围绕头尾Lift与样本稳定性微调切分点
-                # 默认开启，可通过 lift_refine=False 关闭
-                if self._fit_control_options.get("lift_refine", True) and self.method != "uniform":
-                    self._refine_splits_for_lift_stability(X, y)
-
-                # 统一收口约束：确保不同方法都遵守单调性/最小箱/最大箱限制
-                self._apply_post_fit_constraints(
-                    X,
-                    y,
-                    enforce_monotonic=self.method != "monotonic",
-                    enforce_bad_rate=self.method not in ("uniform", "quantile"),
-                )
             self._is_fitted = True
             return self
         elif self.prebinning is not None:
@@ -495,91 +484,199 @@ class OptimalBinning(BaseBinning):
                 self._validate_categorical_constraints(feature, y)
 
     def _fit_with_user_splits(self, X: pd.DataFrame, y: pd.Series):
-        """使用用户指定的切分点进行分箱."""
-        for feature in X.columns:
-            feature_type = self._detect_feature_type(X[feature])
-            self.feature_types_[feature] = feature_type
-            has_explicit_user_rule = callable(self.user_splits) or (
-                isinstance(self.user_splits, dict) and feature in self.user_splits
+        """分派固定用户规则与普通字段，并按输入顺序合并状态。
+
+        ``strict_user_splits=False`` 保持历史语义：显式规则字段使用用户
+        切分，未配置字段使用默认切分，全部字段再经过统一后处理；区别仅是
+        逐特征工作改为并行执行。严格模式下，字典规则只覆盖显式字段，
+        这些字段直接应用固定规则，其余字段使用配置的 ``method`` 正常拟合。
+        可调用规则视为覆盖所有输入字段。
+        """
+        if not self.strict_user_splits:
+            # 兼容原有非严格模式：字典中未出现的字段也属于 user_splits
+            # 处理批次，由 _get_default_splits 生成原默认切分点。
+            try:
+                self._fit_features(X, y, "_fit_user_split_feature")
+            except ParallelExecutionError as exc:
+                if exc.__cause__ is not None:
+                    raise exc.__cause__
+                raise
+
+            if self.method != "quantile":
+                if self._fit_control_options.get("lift_refine", True) and self.method != "uniform":
+                    self._refine_splits_for_lift_stability(X, y)
+                self._apply_post_fit_constraints(
+                    X,
+                    y,
+                    enforce_monotonic=self.method != "monotonic",
+                    enforce_bad_rate=self.method not in ("uniform", "quantile"),
+                )
+
+            self._ordinary_binner_ = None
+            self._ordinary_features_ = ()
+            self._binner = None
+            self._prebinner = None
+            return
+
+        if callable(self.user_splits):
+            user_features = list(X.columns)
+        elif isinstance(self.user_splits, dict) or isinstance(self.split_points, dict):
+            user_features = [feature for feature in X.columns if self._has_explicit_user_rule(feature)]
+        else:
+            raise ValueError("user_splits/split_points 必须是字段规则字典、可调用对象或 None")
+
+        user_set = set(user_features)
+        ordinary_features = [feature for feature in X.columns if feature not in user_set]
+
+        if user_features:
+            user_X = X[user_features]
+            try:
+                self._fit_features(user_X, y, "_fit_user_split_feature")
+            except ParallelExecutionError as exc:
+                # user_splits 历史上直接暴露规则校验异常；并行化不能把
+                # ValueError/KeyError 等公共异常永久包装为并行内部异常。
+                if exc.__cause__ is not None:
+                    raise exc.__cause__
+                raise
+
+            # 非严格规则沿用既有的规则后处理语义，但只处理规则字段；普通
+            # 字段会在其独立 method 拟合链路中完成同样的后处理。
+            if not self.strict_user_splits and self.method != "quantile":
+                if self._fit_control_options.get("lift_refine", True) and self.method != "uniform":
+                    self._refine_splits_for_lift_stability(user_X, y)
+                self._apply_post_fit_constraints(
+                    user_X,
+                    y,
+                    enforce_monotonic=self.method != "monotonic",
+                    enforce_bad_rate=self.method not in ("uniform", "quantile"),
+                )
+
+        ordinary_binner = None
+        if ordinary_features:
+            ordinary_X = X[ordinary_features]
+            ordinary_binner = self._make_fit_transaction_candidate((ordinary_X, y), {})
+            # 关键边界：普通字段不得再次进入 user_splits 分支，而应完整使用
+            # 当前配置的 method/prebinning 及其逐特征并行实现。
+            ordinary_binner.user_splits = None
+            ordinary_binner.split_points = None
+            ordinary_binner.strict_user_splits = False
+            ordinary_binner.fit(ordinary_X, y)
+
+        self._merge_user_and_ordinary_feature_states(
+            X,
+            user_features=user_features,
+            ordinary_features=ordinary_features,
+            ordinary_binner=ordinary_binner,
+        )
+
+    def _fit_user_split_feature(self, feature: str, x: pd.Series, y: pd.Series) -> None:
+        """在隔离 worker 中直接应用单个字段的用户规则并计算统计。"""
+        feature_type = self._detect_feature_type(x)
+        self.feature_types_[feature] = feature_type
+        has_explicit_user_rule = self._has_explicit_user_rule(feature)
+
+        if has_explicit_user_rule:
+            splits = self._get_explicit_user_rule(feature, x)
+        elif (isinstance(self.user_splits, dict) or isinstance(self.split_points, dict)) and not self.strict_user_splits:
+            # 非严格模式的历史行为：未配置字段使用默认等频切分，再由
+            # OptimalBinning 的统一后处理收口。
+            splits = self._get_default_splits(x, y, feature_type)
+        else:
+            raise KeyError(f"特征 '{feature}' 没有对应的 user_splits 规则")
+
+        if feature_type == "numerical":
+            # 数值型自定义切分点：允许 np.nan/None 表示缺失箱；实际切分
+            # 点忽略这些值，缺失值仍由 missing_separate 统一处理。
+            numeric_splits = pd.to_numeric(pd.Series(list(splits)), errors="coerce")
+            splits = numeric_splits[~numeric_splits.isna()].to_numpy(dtype=float)
+            splits = np.unique(np.sort(splits))
+
+            if self.strict_user_splits:
+                self.splits_[feature] = splits
+            else:
+                x_non_missing = pd.to_numeric(x, errors="coerce").dropna()
+                if len(x_non_missing) > 0:
+                    x_min, x_max = x_non_missing.min(), x_non_missing.max()
+                    splits = splits[(splits > x_min) & (splits < x_max)]
+                else:
+                    splits = np.array([])
+                self.splits_[feature] = self._round_splits(splits)
+            self.n_bins_[feature] = len(self.splits_[feature]) + 1
+        else:
+            splits = list(splits)
+            if len(splits) > 0 and isinstance(splits[0], list):
+                splits = normalize_user_groups(
+                    feature,
+                    splits,
+                    x,
+                    special_codes=self.special_codes,
+                    missing_separate=self.missing_separate,
+                )
+                if not self.strict_user_splits:
+                    splits = self._merge_user_category_groups_with_method(feature, x, y, splits)
+
+            if len(splits) > 0 and isinstance(splits[0], list):
+                self._cat_bins_[feature] = splits
+                self.splits_[feature] = splits
+                self.n_bins_[feature] = len(splits)
+            else:
+                # 字符串格式（向后兼容）
+                self.splits_[feature] = splits
+                self.n_bins_[feature] = len(splits) + 1
+
+        bins = self._apply_bins(x, self.splits_[feature], feature_type, feature)
+        self.bin_tables_[feature] = self._compute_bin_stats(feature, x, y, bins)
+        if feature_type == "categorical" and has_explicit_user_rule and feature in self._cat_bins_:
+            self._validate_categorical_constraints(feature, y)
+
+    def _merge_user_and_ordinary_feature_states(
+        self,
+        X: pd.DataFrame,
+        *,
+        user_features: List[str],
+        ordinary_features: List[str],
+        ordinary_binner: Optional["OptimalBinning"],
+    ) -> None:
+        """确定性合并规则 worker 与普通 method 子模型的逐特征状态。"""
+        user_set = set(user_features)
+        for state_name in self._FEATURE_DICT_STATE:
+            user_state = getattr(self, state_name, {})
+            ordinary_state = getattr(ordinary_binner, state_name, {}) if ordinary_binner is not None else {}
+            merged = {}
+            for feature in X.columns:
+                source = user_state if feature in user_set else ordinary_state
+                if feature in source:
+                    # worker/普通子模型已完成事务隔离；提交阶段与直接 method
+                    # 拟合一样共享只读逐特征产物，避免高维场景复制大量分箱表。
+                    merged[feature] = source[feature]
+            if hasattr(self, state_name) or ordinary_binner is not None or merged:
+                setattr(self, state_name, merged)
+
+        for state_name in self._FEATURE_SET_STATE:
+            user_state = getattr(self, state_name, set())
+            ordinary_state = getattr(ordinary_binner, state_name, set()) if ordinary_binner is not None else set()
+            setattr(
+                self,
+                state_name,
+                {
+                    feature
+                    for feature in X.columns
+                    if feature in (user_state if feature in user_set else ordinary_state)
+                },
             )
 
-            # 获取切分点
-            if callable(self.user_splits):
-                splits = self.user_splits(X[feature])
-            elif isinstance(self.user_splits, dict) and feature in self.user_splits:
-                splits = self.user_splits[feature]
-            else:
-                # 如果没有指定该特征的切分点，使用默认方法
-                splits = self._get_default_splits(X[feature], y, feature_type)
+        user_woe = getattr(self, "_woe_maps_", {})
+        ordinary_woe = getattr(ordinary_binner, "_woe_maps_", {}) if ordinary_binner is not None else {}
+        self._woe_maps_ = {
+            feature: (user_woe if feature in user_set else ordinary_woe)[feature]
+            for feature in X.columns
+            if feature in (user_woe if feature in user_set else ordinary_woe)
+        }
 
-            if feature_type == "numerical":
-                # 数值型自定义切分点：允许用户传入 np.nan/None 表示缺失箱，
-                # 实际切分点中自动忽略这些值（缺失值由 missing_separate 统一处理）
-                numeric_splits = pd.to_numeric(pd.Series(list(splits)), errors="coerce")
-                splits = numeric_splits[~numeric_splits.isna()].to_numpy(dtype=float)
-                splits = np.unique(np.sort(splits))
-
-                if self.strict_user_splits:
-                    # 强制模式：完全保留用户指定的切分点，不做任何修改
-                    self.splits_[feature] = splits
-                    self.n_bins_[feature] = len(self.splits_[feature]) + 1
-                else:
-                    # 非强制模式：确保切分点在数据范围内
-                    x_non_missing = pd.to_numeric(X[feature], errors="coerce").dropna()
-                    if len(x_non_missing) > 0:
-                        x_min, x_max = x_non_missing.min(), x_non_missing.max()
-                        splits = splits[(splits > x_min) & (splits < x_max)]
-                    else:
-                        splits = np.array([])
-
-                    self.splits_[feature] = self._round_splits(splits)
-                    self.n_bins_[feature] = len(self.splits_[feature]) + 1
-            else:
-                # 类别型特征
-                splits = list(splits)
-
-                if len(splits) > 0 and isinstance(splits[0], list):
-                    splits = normalize_user_groups(
-                        feature,
-                        splits,
-                        X[feature],
-                        special_codes=self.special_codes,
-                        missing_separate=self.missing_separate,
-                    )
-                    if not self.strict_user_splits:
-                        splits = self._merge_user_category_groups_with_method(feature, X[feature], y, splits)
-
-                if self.strict_user_splits:
-                    # 强制模式：完全保留用户指定的分箱，不做任何修改
-                    # 检查是否为List[List]格式
-                    if len(splits) > 0 and isinstance(splits[0], list):
-                        # List[List]格式，保存到_cat_bins_
-                        self._cat_bins_[feature] = splits
-                        self.splits_[feature] = splits
-                        self.n_bins_[feature] = len(splits)
-                    else:
-                        # 字符串格式（向后兼容）
-                        self.splits_[feature] = splits
-                        self.n_bins_[feature] = len(splits) + 1
-                else:
-                    # 非强制模式：保持原有逻辑
-                    # 检查是否为List[List]格式
-                    if len(splits) > 0 and isinstance(splits[0], list):
-                        # List[List]格式，保存到_cat_bins_
-                        self._cat_bins_[feature] = splits
-                        # splits_保存为List[List]格式（用于export_rules）
-                        self.splits_[feature] = splits
-                        self.n_bins_[feature] = len(splits)
-                    else:
-                        # 字符串格式（向后兼容）
-                        self.splits_[feature] = splits
-                        self.n_bins_[feature] = len(splits) + 1
-
-            # 计算分箱统计
-            bins = self._apply_bins(X[feature], self.splits_[feature], feature_type, feature)
-            self.bin_tables_[feature] = self._compute_bin_stats(feature, X[feature], y, bins)
-            if feature_type == "categorical" and has_explicit_user_rule and feature in self._cat_bins_:
-                self._validate_categorical_constraints(feature, y)
+        self._ordinary_binner_ = ordinary_binner
+        self._ordinary_features_ = tuple(ordinary_features)
+        self._binner = getattr(ordinary_binner, "_binner", None)
+        self._prebinner = getattr(ordinary_binner, "_prebinner", None)
 
     def _merge_user_category_groups_with_method(
         self,
@@ -1295,7 +1392,7 @@ class OptimalBinning(BaseBinning):
 
         # 安全地更新参数，过滤无效参数
         for k, v in self.kwargs.items():
-            if k not in ["prebinning", "prebinning_params", "prebinning_method", "user_splits", "strict_user_splits"]:
+            if k not in ["prebinning", "prebinning_params", "prebinning_method", "split_points", "user_splits", "strict_user_splits"]:
                 base_params[k] = v
 
         # 需要 target 参数的方法
@@ -1325,7 +1422,7 @@ class OptimalBinning(BaseBinning):
 
         # 安全地更新参数
         for k, v in self.kwargs.items():
-            if k not in ["prebinning", "prebinning_params", "prebinning_method", "user_splits", "strict_user_splits"]:
+            if k not in ["prebinning", "prebinning_params", "prebinning_method", "split_points", "user_splits", "strict_user_splits"]:
                 full_params[k] = v
 
         if self.method == "uniform":
@@ -1443,6 +1540,7 @@ class OptimalBinning(BaseBinning):
                     "prebinning",
                     "prebinning_params",
                     "prebinning_method",
+                    "split_points",
                     "user_splits",
                     "strict_user_splits",
                 ]:

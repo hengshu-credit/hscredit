@@ -123,6 +123,13 @@ class TransactionalFailureSelector(BaseFeatureSelector):
             raise RuntimeError("事务测试失败")
 
 
+class NoDeepcopyChildSelector(TransactionalFailureSelector):
+    """Composite 事务不得递归深拷贝已由 clone 隔离的子筛选器。"""
+
+    def __deepcopy__(self, memo):
+        raise AssertionError("Composite 不应深拷贝子筛选器")
+
+
 class FaultInjectedAdoptSelector(TransactionalFailureSelector):
     """只在原 target 提交阶段注入故障，candidate clone 不继承该开关。"""
 
@@ -810,6 +817,16 @@ def test_successful_fit_preserves_external_binner_and_composite_child_identity()
     assert child._is_fitted is True
 
 
+def test_composite_transaction_does_not_deepcopy_child_selector():
+    child = NoDeepcopyChildSelector()
+    selector = CompositeFeatureSelector([child])
+
+    selector.fit(pd.DataFrame({"甲": [0, 1], "乙": [1, 0]}))
+
+    assert selector.selectors[0] is child
+    assert child._is_fitted is True
+
+
 def test_successful_fit_preserves_all_public_mutable_parameter_identities_and_contents():
     """成功提交后公开 list/dict 必须保留身份且 fit 不修改其内容。"""
     X = pd.DataFrame({"甲": [0, 1], "乙": [1, 0]})
@@ -1022,6 +1039,65 @@ def test_composite_stages_receive_full_config_and_preserve_input_order():
         assert child.n_jobs == 2
         assert child.parallel_backend == "threading"
         assert child.parallel_config is config
+
+
+def test_composite_explicit_child_parallel_config_has_per_field_priority():
+    """子级显式项优先，只有仍为默认值的并行项才从父级继承。"""
+    parent_config = {"batch_size": 8}
+    child_config = {"batch_size": 1}
+    fully_explicit = NullSelector(
+        threshold=1.0,
+        n_jobs=3,
+        parallel_backend="loky",
+        parallel_config=child_config,
+    )
+    backend_only = NullSelector(
+        threshold=1.0,
+        parallel_backend="loky",
+    )
+    selector = CompositeFeatureSelector(
+        [fully_explicit, backend_only],
+        n_jobs=2,
+        parallel_backend="threading",
+        parallel_config=parent_config,
+    ).fit(pd.DataFrame({"特征甲": [0, 1], "特征乙": [1, 0]}))
+
+    assert selector.n_jobs == 2
+    assert fully_explicit.n_jobs == 3
+    assert fully_explicit.parallel_backend == "loky"
+    assert fully_explicit.parallel_config is child_config
+    assert backend_only.n_jobs == 2
+    assert backend_only.parallel_backend == "loky"
+    assert backend_only.parallel_config is parent_config
+
+
+def test_pipeline_verbose_reports_outer_stage_names(capsys):
+    """Pipeline(verbose=True) 应能直接定位正在运行的外层阶段。"""
+    pipeline = Pipeline(
+        [
+            ("pre_selector", NullSelector(threshold=1.0, n_jobs=1)),
+            ("selector", ModeSelector(threshold=1.0, n_jobs=1)),
+        ],
+        verbose=True,
+    )
+
+    pipeline.fit(pd.DataFrame({"特征甲": [0, 1], "特征乙": [1, 0]}))
+
+    output = capsys.readouterr().out
+    assert "pre_selector" in output
+    assert "selector" in output
+
+
+@pytest.mark.parametrize("child_n_jobs", [1, 13, 0.5])
+def test_composite_default_n_jobs_preserves_explicit_child_value(child_n_jobs):
+    """外层默认 -1 不得覆盖子筛选器显式配置的并行数。"""
+    child = NullSelector(threshold=1.0, n_jobs=child_n_jobs)
+    selector = CompositeFeatureSelector([child])
+
+    selector.fit(pd.DataFrame({"特征甲": [0, 1], "特征乙": [1, 0]}))
+
+    assert selector.n_jobs == -1
+    assert child.n_jobs == child_n_jobs
 
 
 def test_scorecard_stages_receive_full_parallel_config(selector_xy):

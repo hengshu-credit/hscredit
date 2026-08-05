@@ -3,30 +3,45 @@
 提供丰富的规则评估指标，所有指标计算统一收口到hscredit.core.metrics。
 """
 
+import copy
 import logging
 import numpy as np
 import pandas as pd
-from typing import Union, List, Dict, Optional, Tuple, Any
+from typing import Union, List, Dict, Optional, Any
 from sklearn.metrics import (
     accuracy_score, precision_score, recall_score, f1_score,
-    roc_auc_score, confusion_matrix, roc_curve
+    confusion_matrix
 )
 
 # 从统一metrics模块导入指标
 from ...core.metrics import (
-    ks, auc, gini,
-    psi, psi_table,
-    iv, iv_table,
-    lift as metrics_lift,
+    ks, gini,
+    iv,
     lift_table as metrics_lift_table,
-    rule_lift,
-    badrate
 )
 
 logger = logging.getLogger(__name__)
 
+from ...utils.parallel import ParallelizableMixin
 
-class RuleMetrics:
+
+def _rule_metrics_worker(task):
+    """评估一个独立规则并附加稳定的输入序号。"""
+    calculator, ordinal, rule, X_train, y_train, X_test, y_test, kwargs = task
+    result = calculator.evaluate_rule(
+        copy.deepcopy(rule),
+        X_train,
+        y_train,
+        X_test,
+        y_test,
+        **kwargs,
+    )
+    result["规则编号"] = ordinal
+    result["规则"] = str(rule)
+    return result
+
+
+class RuleMetrics(ParallelizableMixin):
     """规则评估指标计算器.
     
     提供全面的规则评估指标，支持训练集和测试集的对比分析。
@@ -40,11 +55,20 @@ class RuleMetrics:
     >>> results = metrics.evaluate_rules(rules, X_train, y_train, X_test, y_test)  # 批量规则评估：返回规则列表各自的指标
     """
     
-    def __init__(self, target_positive: int = 1):
+    def __init__(
+        self,
+        target_positive: int = 1,
+        n_jobs: Optional[Union[int, float]] = -1,
+        parallel_backend: Optional[str] = None,
+        parallel_config: Optional[Dict[str, Any]] = None,
+    ):
         """
         :param target_positive: 正类标签，默认1
         """
         self.target_positive = target_positive
+        self.n_jobs = n_jobs
+        self.parallel_backend = parallel_backend
+        self.parallel_config = parallel_config
     
     def evaluate_rule(
         self,
@@ -203,19 +227,26 @@ class RuleMetrics:
         :param y_test: 测试集标签
         :return: 评估结果DataFrame
         """
-        results = []
-        
-        for i, rule in enumerate(rules):
-            try:
-                metrics = self.evaluate_rule(
-                    rule, X_train, y_train, X_test, y_test
-                )
-                metrics['规则编号'] = i
-                metrics['规则'] = str(rule)
-                results.append(metrics)
-            except Exception as exc:
-                logger.warning("评估规则 %s 时出错: %s", i, exc)
-        
+        tasks = [
+            (
+                self,
+                ordinal,
+                rule,
+                X_train,
+                y_train,
+                X_test,
+                y_test,
+                dict(kwargs),
+            )
+            for ordinal, rule in enumerate(rules)
+        ]
+        results = self._parallel_execute(
+            _rule_metrics_worker,
+            tasks,
+            task_labels=[f"规则 {ordinal}" for ordinal in range(len(rules))],
+            default_backend="threading",
+            has_parallel_children=False,
+        )
         return pd.DataFrame(results)
     
     def calculate_ks(self, y_true: np.ndarray, y_score: np.ndarray) -> float:

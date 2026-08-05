@@ -1,6 +1,8 @@
 """拒绝规则策略文档表格转换工具."""
 
 from collections import OrderedDict
+from copy import deepcopy
+from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 import numpy as np
@@ -8,6 +10,141 @@ import pandas as pd
 from openpyxl.styles import Alignment, Font, PatternFill
 
 from ..core.rules import Rule
+from ..utils.parallel import (
+    _ACTIVE_BUDGET,
+    ParallelBudget,
+    parallel_execute,
+    resolve_n_jobs,
+    split_parallel_budget,
+    validate_parallel_config,
+)
+
+
+@dataclass(frozen=True)
+class _ReportParallelPlan:
+    """报告外层任务及其真实 Rule.report 子任务的并行计划。"""
+
+    total_workers: int
+    outer_workers: int
+    child_workers: int
+    has_parallel_children: bool
+
+
+def _rule_report_task_count(overdue, dpds) -> int:
+    """严格复刻 ``Rule.report`` 的逾期列和 DPD 规范化，返回真实任务数。"""
+    if overdue is None:
+        return 1
+    overdue_values = overdue if isinstance(overdue, list) else [overdue]
+    if isinstance(dpds, list):
+        dpd_values = dpds
+    else:
+        dpd_values = [dpds] if dpds is not None else [0]
+    normalized_dpds = []
+    seen = set()
+    for value in dpd_values:
+        normalized = 0 if value is None else int(value)
+        if normalized not in seen:
+            seen.add(normalized)
+            normalized_dpds.append(normalized)
+    return len(overdue_values) * len(normalized_dpds)
+
+
+def _plan_report_parallel(n_jobs, outer_task_count: int, inner_task_count: int) -> _ReportParallelPlan:
+    """在当前 active budget 内规划报告 outer/child worker，且按真实任务数封顶。"""
+    total_workers = resolve_n_jobs(n_jobs) or 1
+    active_budget = _ACTIVE_BUDGET.get()
+    if active_budget is not None:
+        total_workers = min(total_workers, active_budget.available)
+    total_workers = max(1, total_workers)
+    outer_task_count = max(0, int(outer_task_count))
+    inner_task_count = max(0, int(inner_task_count))
+    has_parallel_children = outer_task_count > 1 and inner_task_count > 1
+
+    if has_parallel_children:
+        outer_workers, child_budget = split_parallel_budget(
+            total_workers,
+            outer_task_count,
+            True,
+        )
+        child_workers = min(child_budget, inner_task_count)
+    elif outer_task_count <= 1:
+        outer_workers = 1
+        child_workers = min(total_workers, max(1, inner_task_count))
+    else:
+        outer_workers = min(total_workers, outer_task_count)
+        child_workers = 1
+
+    return _ReportParallelPlan(
+        total_workers=total_workers,
+        outer_workers=max(1, outer_workers),
+        child_workers=max(1, child_workers),
+        has_parallel_children=has_parallel_children,
+    )
+
+
+def _execute_report_plan(function, tasks, plan: _ReportParallelPlan, **kwargs):
+    """按局部计划执行外层任务，并让根调用的 active budget 等于已解析总预算。"""
+    token = None
+    if _ACTIVE_BUDGET.get() is None:
+        token = _ACTIVE_BUDGET.set(ParallelBudget(plan.total_workers, 0))
+    try:
+        return parallel_execute(
+            function,
+            tasks,
+            n_jobs=plan.outer_workers,
+            has_parallel_children=plan.has_parallel_children,
+            **kwargs,
+        )
+    finally:
+        if token is not None:
+            _ACTIVE_BUDGET.reset(token)
+
+
+def _configured_rule_copy(rule: Rule, n_jobs, parallel_backend, parallel_config) -> Rule:
+    """返回调用级并行配置的独立 Rule 副本，不修改调用方对象。"""
+    rule_copy = deepcopy(rule)
+    rule_copy.n_jobs = n_jobs
+    rule_copy.parallel_backend = parallel_backend
+    rule_copy.parallel_config = parallel_config
+    return rule_copy
+
+
+def _configured_rule_report(rule: Rule, data: pd.DataFrame, call_kwargs: Dict[str, Any]) -> pd.DataFrame:
+    """在隔离副本上执行 Rule.report，并从指标 kwargs 中剥离并行配置。"""
+    n_jobs = call_kwargs.get("n_jobs", rule.n_jobs)
+    parallel_backend = call_kwargs.get("parallel_backend", rule.parallel_backend)
+    parallel_config = call_kwargs.get("parallel_config", rule.parallel_config)
+    report_kwargs = {
+        key: deepcopy(value)
+        for key, value in call_kwargs.items()
+        if key not in {"n_jobs", "parallel_backend", "parallel_config"}
+    }
+    rule_copy = _configured_rule_copy(rule, n_jobs, parallel_backend, parallel_config)
+    return rule_copy.report(data, **report_kwargs)
+
+
+def _validate_report_parallel(n_jobs, parallel_backend, parallel_config) -> None:
+    """校验无批量执行的表格转换入口所接收的统一并行参数。"""
+    validate_parallel_config(parallel_backend, parallel_config)
+    resolve_n_jobs(n_jobs, task_count=1)
+
+
+def _rule_group_report_call(task):
+    """计算单个分组的规则报告；模块级定义以支持进程后端。"""
+    group_name, rule, subset, call_kwargs = task
+    return group_name, _configured_rule_report(rule, subset, call_kwargs)
+
+
+def _swap_rule_report_call(task):
+    """计算策略报告的一张规则口径表，worker 不接触 Excel 对象。"""
+    key, rule, data, amount, report_kwargs = task
+    return key, _configured_rule_report(rule, data, {**report_kwargs, "amount": amount})
+
+
+def _swap_stability_call(task):
+    """计算策略报告的一张规则稳定性表。"""
+    key, data, rule, call_kwargs = task
+    return key, rule_group_compare(data, rule, **call_kwargs)
 
 
 _DETAIL_GROUPS = ("分箱详情", "规则详情")
@@ -149,6 +286,9 @@ def rule_report_table(
     target_names: Optional[Mapping[str, str]] = None,
     metrics: Optional[Sequence[str]] = None,
     target_name: str = "target",
+    n_jobs: Union[int, float] = -1,
+    parallel_backend: Optional[str] = None,
+    parallel_config: Optional[Dict[str, Any]] = None,
 ) -> pd.DataFrame:
     """生成按逾期指标横向展开的规则详情表.
 
@@ -166,6 +306,7 @@ def rule_report_table(
     >>> rep = Rule("score < 600").report(data, target='FPD')
     >>> rule_report_table(rep, rule_name='低分拒绝')
     """
+    _validate_report_parallel(n_jobs, parallel_backend, parallel_config)
     normalized, resolved_rule_name = _normalize_report(report, rule_name, target_names, target_name)
     metrics = list(metrics or _DEFAULT_METRICS)
     _validate_metrics(normalized, metrics)
@@ -190,6 +331,9 @@ def rule_target_analysis(
     rule_name: Optional[str] = None,
     target_names: Optional[Mapping[str, str]] = None,
     target_name: str = "target",
+    n_jobs: Union[int, float] = -1,
+    parallel_backend: Optional[str] = None,
+    parallel_config: Optional[Dict[str, Any]] = None,
 ) -> pd.DataFrame:
     """生成拒绝规则目标分析表.
 
@@ -212,6 +356,7 @@ def rule_target_analysis(
     >>> # 当前通过率 0.8 时，评估该拒绝规则带来的逾期改善与通过率变化
     >>> rule_target_analysis(rep, current_pass_rate=0.8, rule_name='低分拒绝')
     """
+    _validate_report_parallel(n_jobs, parallel_backend, parallel_config)
     if not isinstance(current_pass_rate, (int, float, np.integer, np.floating)) or not 0 <= current_pass_rate <= 1:
         raise ValueError("current_pass_rate 必须是[0, 1]范围内的数值")
 
@@ -271,6 +416,9 @@ def rule_target_table(
     target_names: Optional[Mapping[str, str]] = None,
     metrics: Optional[Sequence[str]] = None,
     target_name: str = "target",
+    n_jobs: Union[int, float] = -1,
+    parallel_backend: Optional[str] = None,
+    parallel_config: Optional[Dict[str, Any]] = None,
 ) -> pd.DataFrame:
     """生成规则、逾期指标和命中情况组成的纵向明细表.
 
@@ -291,6 +439,7 @@ def rule_target_table(
     >>> rep = Rule("score < 600").report(data, target='FPD')
     >>> rule_target_table(rep, rule_name='低分拒绝')
     """
+    _validate_report_parallel(n_jobs, parallel_backend, parallel_config)
     normalized, _ = _normalize_report(report, rule_name, target_names, target_name)
     metrics = list(metrics or _DEFAULT_TARGET_METRICS)
     _validate_metrics(normalized, metrics)
@@ -303,6 +452,9 @@ def rule_group_hit_table(
     target_names: Optional[Mapping[str, str]] = None,
     metrics: Optional[Mapping[str, str]] = None,
     target_name: str = "target",
+    n_jobs: Union[int, float] = -1,
+    parallel_backend: Optional[str] = None,
+    parallel_config: Optional[Dict[str, Any]] = None,
 ) -> pd.DataFrame:
     """生成多个样本分组下的规则命中效果对比表.
 
@@ -326,6 +478,7 @@ def rule_group_hit_table(
     ... }
     >>> rule_group_hit_table(reports, rule_name='低分拒绝')
     """
+    _validate_report_parallel(n_jobs, parallel_backend, parallel_config)
     if not isinstance(group_reports, Mapping) or not group_reports:
         raise ValueError("group_reports 必须是非空的分组名称到 DataFrame 的映射")
 
@@ -445,6 +598,9 @@ def rule_group_compare(
     del_grey: bool = False,
     dropna: bool = True,
     group_order: GroupOrder = "asc",
+    n_jobs: Union[int, float] = -1,
+    parallel_backend: Optional[str] = None,
+    parallel_config: Optional[Dict[str, Any]] = None,
     **kwargs: Any,
 ) -> pd.DataFrame:
     """直接从原始数据生成分组下的规则命中效果对比表.
@@ -502,21 +658,41 @@ def rule_group_compare(
     if not ordered_groups:
         raise ValueError("根据 date_col/group_col 未能切分出任何有效分组")
 
-    group_reports: "OrderedDict[str, pd.DataFrame]" = OrderedDict()
+    report_kwargs = dict(
+        target=target,
+        overdue=overdue,
+        dpds=dpds,
+        del_grey=del_grey,
+        prior_rules=prior_rules,
+        amount=amount,
+        n_jobs=-1,
+        parallel_backend=parallel_backend,
+        parallel_config=parallel_config,
+        **kwargs,
+    )
+    tasks = []
     for group in ordered_groups:
         subset = data.loc[labels == group]
         if subset.empty:
             continue
-        group_reports[str(group)] = rule.report(
-            subset,
-            target=target,
-            overdue=overdue,
-            dpds=dpds,
-            del_grey=del_grey,
-            prior_rules=prior_rules,
-            amount=amount,
-            **kwargs,
-        )
+        tasks.append((str(group), rule, subset, report_kwargs))
+
+    plan = _plan_report_parallel(
+        n_jobs,
+        outer_task_count=len(tasks),
+        inner_task_count=_rule_report_task_count(overdue, dpds),
+    )
+    report_kwargs["n_jobs"] = plan.child_workers
+    group_results = _execute_report_plan(
+        _rule_group_report_call,
+        tasks,
+        plan,
+        parallel_backend=parallel_backend,
+        parallel_config=parallel_config,
+        task_labels=[task[0] for task in tasks],
+        default_backend="threading",
+    )
+    group_reports: "OrderedDict[str, pd.DataFrame]" = OrderedDict(group_results)
 
     return rule_group_hit_table(
         group_reports,
@@ -524,6 +700,9 @@ def rule_group_compare(
         target_names=target_names,
         metrics=metrics,
         target_name=target,
+        n_jobs=n_jobs,
+        parallel_backend=parallel_backend,
+        parallel_config=parallel_config,
     )
 
 
@@ -1050,6 +1229,9 @@ def swap_out_report(
     target_names: Optional[Mapping[str, str]] = None,
     theme_color: str = "2639E9",
     sheet_name: str = "策略迭代",
+    n_jobs: Union[int, float] = -1,
+    parallel_backend: Optional[str] = None,
+    parallel_config: Optional[Dict[str, Any]] = None,
     **kwargs: Any,
 ):
     """生成拒绝规则置换（策略迭代）分析报告，输出 hscredit 美化后的 Excel 文件.
@@ -1124,7 +1306,17 @@ def swap_out_report(
     features = [feat for feat in features if feat in data.columns]
 
     targets = _resolve_swap_targets(data, target, overdue, dpds, del_grey)
-    report_kwargs = dict(target=target, overdue=overdue, dpds=dpds, del_grey=del_grey, prior_rules=prior_rules)
+    report_kwargs = dict(
+        target=target,
+        overdue=overdue,
+        dpds=dpds,
+        del_grey=del_grey,
+        prior_rules=prior_rules,
+        n_jobs=n_jobs,
+        parallel_backend=parallel_backend,
+        parallel_config=parallel_config,
+        **kwargs,
+    )
 
     # 整体 + 子规则（单规则时仅整体）
     section_rules: List[Tuple[str, "Rule"]] = [("整体", combined_rule)]
@@ -1144,9 +1336,114 @@ def swap_out_report(
             data, features, methods=methods_list, bin_params=bin_params,
             target=None if overdue is not None else target,
             overdue=overdue, dpds=dpds, del_grey=del_grey, long_format=True, verbose=0,
+            n_jobs=n_jobs, parallel_backend=parallel_backend, parallel_config=parallel_config,
         )
         # 统一分箱详情的逾期标签形式（MOB1@7 → MOB1 7+）并套用 target_names 映射
         binning_summary = _rename_target_level(binning_summary, target_names, level=1)
+
+    # ---------- 纯计算阶段：所有 Excel/worksheet 操作均在这些任务完成后开始 ----------
+    has_amount = amount is not None and amount in data.columns
+    rule_report_tasks = []
+    for label, rule in section_rules:
+        rule_report_tasks.append(((label, 'count'), rule, data, None, report_kwargs))
+        if has_amount:
+            rule_report_tasks.append(((label, 'amount'), rule, data, amount, report_kwargs))
+    target_task_count = _rule_report_task_count(overdue, dpds)
+    report_plan = _plan_report_parallel(
+        n_jobs,
+        outer_task_count=len(rule_report_tasks),
+        inner_task_count=target_task_count,
+    )
+    report_kwargs["n_jobs"] = report_plan.child_workers
+    rule_reports = dict(
+        _execute_report_plan(
+            _swap_rule_report_call,
+            rule_report_tasks,
+            report_plan,
+            parallel_backend=parallel_backend,
+            parallel_config=parallel_config,
+            task_labels=[f"{key[0]}:{key[1]}" for key, *_ in rule_report_tasks],
+            default_backend='threading',
+        )
+    )
+    impact_tables = {}
+    effect_tables = {}
+    for label, rule in section_rules:
+        order_rep = rule_reports[(label, 'count')]
+        impact_order = _rename_hit_labels(
+            rule_target_analysis(
+                order_rep, current_pass_rate=current_pass_rate, rule_name=rule.name,
+                target_names=target_names, target_name=target,
+            )
+        )
+        effect_order = _drop_total_rows(
+            rule_target_table(
+                order_rep, rule_name=rule.name, target_names=target_names,
+                metrics=_SWAP_EFFECT_METRICS, target_name=target,
+            )
+        )
+        impact_amount = None
+        effect_amount = None
+        if has_amount:
+            amount_rep = rule_reports[(label, 'amount')]
+            impact_amount = _rename_amount_caliber(
+                _rename_hit_labels(
+                    rule_target_analysis(
+                        amount_rep, current_pass_rate=current_pass_rate, rule_name=rule.name,
+                        target_names=target_names, target_name=target,
+                    )
+                )
+            )
+            effect_amount = _rename_amount_caliber(
+                _drop_total_rows(
+                    rule_target_table(
+                        amount_rep, rule_name=rule.name, target_names=target_names,
+                        metrics=_SWAP_EFFECT_METRICS, target_name=target,
+                    )
+                )
+            )
+        impact_tables[label] = (impact_order, impact_amount)
+        effect_tables[label] = (effect_order, effect_amount)
+
+    stability_blocks: List[Tuple[str, pd.DataFrame]] = []
+    if date_col is not None or group_col is not None:
+        stability_kwargs = dict(
+            date_col=date_col, freq=freq, group_col=group_col, target=target,
+            overdue=overdue, dpds=dpds, target_names=target_names,
+            prior_rules=prior_rules, del_grey=del_grey, n_jobs=-1,
+            parallel_backend=parallel_backend, parallel_config=parallel_config,
+        )
+        stability_tasks = [
+            (label, data, rule, {**stability_kwargs, 'rule_name': rule.name})
+            for label, rule in section_rules
+        ]
+        _, stability_groups = _resolve_group_labels(
+            data,
+            date_col,
+            freq,
+            group_col,
+            False,
+            None,
+        )
+        stability_plan = _plan_report_parallel(
+            n_jobs,
+            outer_task_count=len(stability_tasks),
+            inner_task_count=len(stability_groups) * target_task_count,
+        )
+        for _, _, _, call_kwargs in stability_tasks:
+            call_kwargs["n_jobs"] = stability_plan.child_workers
+        stability_results = _execute_report_plan(
+            _swap_stability_call,
+            stability_tasks,
+            stability_plan,
+            parallel_backend=parallel_backend,
+            parallel_config=parallel_config,
+            task_labels=[label for label, *_ in stability_tasks],
+            default_backend='threading',
+        )
+        for label, stability in stability_results:
+            prefix = "规则效果稳定性" if label == "整体" else f"{label}稳定性"
+            stability_blocks.append((prefix, stability))
 
     start_col = 2
     writer = ExcelWriter(theme_color=theme_color)
@@ -1165,7 +1462,6 @@ def swap_out_report(
     )
     summary_width = _table_display_width(binning_summary) if not binning_summary.empty else 14
     # 各表格模块的内容宽度（用于大标题横幅从起始列铺满到该模块最右列）
-    has_amount = amount is not None and amount in data.columns
     impact_pair = 14                                       # rule_target_analysis 固定 14 列
     effect_pair = 3 + len(_SWAP_EFFECT_METRICS)            # 规则详情/逾期指标/命中情况 + 各指标
     impact_width = impact_pair * 2 + _GAP_INNER if has_amount else impact_pair
@@ -1227,18 +1523,7 @@ def swap_out_report(
         row += _GAP_INNER
     for label, rule in section_rules:
         prefix = "业务影响情况" if label == "整体" else f"{label}影响情况"
-        order_rep = rule.report(data, amount=None, **report_kwargs, **kwargs)
-        order_tbl = _rename_hit_labels(rule_target_analysis(
-            order_rep, current_pass_rate=current_pass_rate, rule_name=rule.name,
-            target_names=target_names, target_name=target,
-        ))
-        amount_tbl = None
-        if amount is not None and amount in data.columns:
-            amt_rep = rule.report(data, amount=amount, **report_kwargs, **kwargs)
-            amount_tbl = _rename_amount_caliber(_rename_hit_labels(rule_target_analysis(
-                amt_rep, current_pass_rate=current_pass_rate, rule_name=rule.name,
-                target_names=target_names, target_name=target,
-            )))
+        order_tbl, amount_tbl = impact_tables[label]
         row = _write_caliber_pair(
             writer, worksheet, row, start_col, prefix, order_tbl, amount_tbl,
             bar_names=_CF_IMPACT_BAR, merge_header=[0],
@@ -1250,18 +1535,7 @@ def swap_out_report(
     effect_merge = ["规则详情", "逾期指标"]
     for label, rule in section_rules:
         prefix = "规则整体效果" if label == "整体" else f"{label}效果"
-        order_rep = rule.report(data, amount=None, **report_kwargs, **kwargs)
-        order_tbl = _drop_total_rows(rule_target_table(
-            order_rep, rule_name=rule.name, target_names=target_names,
-            metrics=_SWAP_EFFECT_METRICS, target_name=target,
-        ))
-        amount_tbl = None
-        if amount is not None and amount in data.columns:
-            amt_rep = rule.report(data, amount=amount, **report_kwargs, **kwargs)
-            amount_tbl = _rename_amount_caliber(_drop_total_rows(rule_target_table(
-                amt_rep, rule_name=rule.name, target_names=target_names,
-                metrics=_SWAP_EFFECT_METRICS, target_name=target,
-            )))
+        order_tbl, amount_tbl = effect_tables[label]
         row = _write_caliber_pair(
             writer, worksheet, row, start_col, prefix, order_tbl, amount_tbl,
             merge_column=effect_merge, merge=True, bar_names=_CF_EFFECT_BAR,
@@ -1270,21 +1544,6 @@ def swap_out_report(
 
     # —— 8. 规则稳定性分析（按时间或分组对比）——
     if date_col is not None or group_col is not None:
-        # 先逐规则计算稳定性表，按最大宽度铺横幅；全部失败时不写空模块
-        stability_blocks: List[Tuple[str, pd.DataFrame]] = []
-        for label, rule in section_rules:
-            try:
-                stability = rule_group_compare(
-                    data, rule, date_col=date_col, freq=freq, group_col=group_col,
-                    target=target, overdue=overdue, dpds=dpds, rule_name=rule.name,
-                    target_names=target_names, prior_rules=prior_rules, del_grey=del_grey,
-                )
-            except Exception as exc:  # noqa: BLE001 - 稳定性切分失败不阻断整体报告
-                if verbose:
-                    print(f"[swap_out_report] 规则稳定性分析失败 ({label}): {exc}")
-                continue
-            prefix = "规则效果稳定性" if label == "整体" else f"{label}稳定性"
-            stability_blocks.append((prefix, stability))
         if stability_blocks:
             stability_width = max(_table_display_width(tbl) for _, tbl in stability_blocks)
             row = _write_banner(writer, worksheet, row, "规则稳定性分析", start_col, stability_width, "swap_title")

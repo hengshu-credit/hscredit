@@ -31,11 +31,19 @@ class BaseRuleMiner(ParallelizableMixin, BaseEstimator, ABC):
         parallel_config: Optional[Dict[str, Any]] = None,
     ):
         self.target = target
-        self.exclude_cols = exclude_cols or []
+        self.exclude_cols = exclude_cols
         self.n_jobs = n_jobs
         self.parallel_backend = parallel_backend
         self.parallel_config = parallel_config
         self._is_fitted = False
+
+    def _commit_fitted_state(self, working: "BaseRuleMiner") -> None:
+        """提交临时拟合状态，同时保留全部公开构造参数的原始引用。"""
+        parameter_references = self.get_params(deep=False)
+        self.__dict__.clear()
+        self.__dict__.update(working.__dict__)
+        for name, value in parameter_references.items():
+            setattr(self, name, value)
     
     def _check_input_data(
         self,
@@ -65,7 +73,7 @@ class BaseRuleMiner(ParallelizableMixin, BaseEstimator, ABC):
             X = X.drop(columns=[self.target])
         
         # 排除指定列
-        for col in self.exclude_cols:
+        for col in self.exclude_cols or []:
             if col in X.columns:
                 X = X.drop(columns=[col])
         

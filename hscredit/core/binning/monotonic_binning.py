@@ -125,6 +125,9 @@ class MonotonicBinning(BaseBinning):
         n_jobs: Union[int, float] = -1,
         parallel_backend: Optional[str] = None,
         parallel_config: Optional[Dict[str, Any]] = None,
+        split_points: Optional[Dict[str, List]] = None,
+        user_splits: Optional[Dict[str, List]] = None,
+        strict_user_splits: bool = False,
     ):
         # monotonic=True 等价于 'auto'（与 BaseBinning 约定一致，自动检测最佳趋势）
         if monotonic is True:
@@ -140,6 +143,9 @@ class MonotonicBinning(BaseBinning):
             special_codes=special_codes,
             missing_separate=missing_separate,
             cat_cutoff=cat_cutoff,
+            split_points=split_points,
+            user_splits=user_splits,
+            strict_user_splits=strict_user_splits,
             category_order=category_order,
             handle_unknown=handle_unknown,
             random_state=random_state,

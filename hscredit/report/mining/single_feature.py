@@ -11,8 +11,6 @@ import numpy as np
 import pandas as pd
 from typing import Union, List, Dict, Optional, Tuple, Any
 from sklearn.preprocessing import KBinsDiscretizer
-from scipy.stats import chi2_contingency
-import warnings
 
 from .base import BaseRuleMiner, calculate_lift
 from ...core.rules.rule import Rule
@@ -187,8 +185,7 @@ class SingleFeatureRuleMiner(BaseRuleMiner):
         }
 
         working._is_fitted = True
-        self.__dict__.clear()
-        self.__dict__.update(working.__dict__)
+        self._commit_fitted_state(working)
         return self
     
     def _analyze_feature(self, feature: str) -> Tuple[pd.DataFrame, Any]:
@@ -245,22 +242,16 @@ class SingleFeatureRuleMiner(BaseRuleMiner):
             return pd.DataFrame([self._calculate_metrics(feature, None, 'isna')]), None
 
         binner = self._get_binning_instance()
-        try:
-            X_feature = pd.DataFrame({feature: valid_values})
-            y_valid = self.y_.loc[valid_values.index]
-            binner.fit(X_feature, y_valid)
+        X_feature = pd.DataFrame({feature: valid_values})
+        y_valid = self.y_.loc[valid_values.index]
+        binner.fit(X_feature, y_valid)
 
-            if hasattr(binner, 'splits_') and feature in binner.splits_:
-                thresholds = binner.splits_[feature]
-            elif hasattr(binner, 'bin_edges_'):
-                thresholds = sorted(set(binner.bin_edges_))
-            else:
-                thresholds = self._get_quantile_thresholds(valid_values)
-        except Exception as e:
-            if self.verbose:
-                warnings.warn(f"分箱器拟合失败，回退到quantile分箱: {str(e)}")
+        if hasattr(binner, 'splits_') and feature in binner.splits_:
+            thresholds = binner.splits_[feature]
+        elif hasattr(binner, 'bin_edges_'):
+            thresholds = sorted(set(binner.bin_edges_))
+        else:
             thresholds = self._get_quantile_thresholds(valid_values)
-            binner = None
 
         if isinstance(thresholds, np.ndarray):
             thresholds = thresholds.tolist()

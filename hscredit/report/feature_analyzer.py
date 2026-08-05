@@ -6,7 +6,6 @@
 
 import logging
 import os
-import traceback
 from copy import deepcopy
 from typing import Union, List, Dict, Optional, Tuple, Any
 
@@ -14,7 +13,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from openpyxl.worksheet.worksheet import Worksheet
-from tqdm import tqdm
 
 from ..core.binning import OptimalBinning
 from ..core.binning.base import BaseBinning
@@ -22,6 +20,7 @@ from ..core.viz import bin_plot, bin_trend_plot, corr_plot, distribution_plot, h
 from ..core.metrics._binning import compute_bin_stats, add_margins
 from ..excel import ExcelWriter, dataframe2excel
 from ..utils import init_setting
+from ..utils.parallel import parallel_execute, resolve_n_jobs, validate_parallel_config
 from ._sample_stats import build_group_distribution_table, build_sample_stats_table
 from .rule_strategy import GroupOrder, _resolve_group_labels
 
@@ -29,6 +28,146 @@ logger = logging.getLogger(__name__)
 
 
 _BINNING_SUMMARY_METRICS = ('分档KS值', 'LIFT值', '指标IV值', '坏样本数', '坏样本率')
+
+
+def _validate_report_parallel(n_jobs, parallel_backend, parallel_config) -> None:
+    validate_parallel_config(parallel_backend, parallel_config)
+    resolve_n_jobs(n_jobs, task_count=1)
+
+
+def _feature_stats_call(task):
+    """执行单个特征分箱任务；保持为模块级函数以兼容 loky。"""
+    feature_name, call_kwargs = task
+    return feature_name, feature_bin_stats(feature=feature_name, **call_kwargs)
+
+
+def _feature_summary_call(task):
+    """执行单个 ``方法 × 特征`` 汇总计算任务。"""
+    feature_name, method, call_kwargs = task
+    table = feature_bin_stats(feature=feature_name, method=method, **call_kwargs)
+    return feature_name, method, table
+
+
+def _feature_efficiency_table_call(task):
+    """执行效率报告中的单张分箱表计算，不在 worker 中创建图形。"""
+    kind, call_kwargs = task
+    return kind, feature_bin_stats(**call_kwargs)
+
+
+def _auto_feature_compute_call(task):
+    """计算自动报告中的单个特征，不创建图形或接触 Excel 对象。"""
+    (
+        data,
+        feature,
+        target,
+        overdue,
+        dpds,
+        dropna,
+        use_amount,
+        amount,
+        feature_desc,
+        margins,
+        bin_params,
+    ) = task
+    if overdue is None:
+        cols_needed = [feature, target]
+    else:
+        cols_needed = list(dict.fromkeys([feature, target] + list(overdue)))
+    if use_amount:
+        cols_needed = list(dict.fromkeys(cols_needed + [amount]))
+    feature_data = data[cols_needed].copy()
+    missing_rate = _feature_missing_rate(data, feature, dropna)
+
+    if isinstance(dropna, bool) and dropna is True:
+        feature_data = feature_data.dropna(subset=feature).reset_index(drop=True)
+    elif isinstance(dropna, (float, int, str)):
+        feature_data = feature_data[feature_data[feature] != dropna].reset_index(drop=True)
+
+    sample_table = feature_bin_stats(
+        feature_data,
+        feature,
+        overdue=overdue,
+        dpds=dpds,
+        desc=feature_desc,
+        target=target,
+        margins=margins,
+        **bin_params,
+    )
+    amount_table = None
+    if use_amount:
+        amount_table = feature_bin_stats(
+            feature_data,
+            feature,
+            overdue=overdue,
+            dpds=dpds,
+            desc=feature_desc,
+            target=target,
+            amount=amount,
+            margins=margins,
+            **bin_params,
+        )
+    actual_target = target if not overdue else f"{overdue[0]} {dpds[0]}+"
+    return {
+        "feature": feature,
+        "data": feature_data,
+        "missing_rate": missing_rate,
+        "sample_table": sample_table,
+        "amount_table": amount_table,
+        "actual_target": actual_target,
+    }
+
+
+def _feature_group_summary_call(task):
+    """计算一个 ``方法 × 特征`` 下的全部有序分组。"""
+    data, labels, ordered_groups, feature_name, method, params = task
+    fitted_binner = _fit_group_summary_binner(data, feature_name, method, params)
+    rows = []
+    for group in ordered_groups:
+        subset = data.loc[labels == group]
+        if subset.empty:
+            continue
+        table = feature_bin_stats(
+            data=subset,
+            feature=feature_name,
+            method=method,
+            binner=fitted_binner,
+            **params,
+        )
+        rows.append((str(group), table))
+    return feature_name, method, rows
+
+
+def _benchmark_binning_call(task):
+    """计算一个 ``DPD × 分箱方法`` 的基准结果。"""
+    x, y, feature, method, dpd, params = task
+    try:
+        binner = OptimalBinning(method=method, **params)
+        binner.fit(pd.DataFrame({feature: x}), y)
+        splits = np.asarray(binner.splits_.get(feature, []), dtype=float)
+        mask = x.notna() & y.notna()
+        xv = x[mask].to_numpy(dtype=float)
+        yv = y[mask].to_numpy(dtype=int)
+        if len(xv) == 0:
+            return {'method': f'hscredit-{method}', 'dpd': dpd, 'error': 'no valid samples'}
+        bins = np.digitize(xv, splits, right=True)
+        counts = np.bincount(bins, minlength=len(splits) + 1).astype(float)
+        bad = np.bincount(bins, weights=yv, minlength=len(splits) + 1).astype(float)
+        bad_rate = bad / np.maximum(counts, 1.0)
+        lift = bad_rate / max(yv.mean(), 1e-12)
+        diffs = np.diff(bad_rate)
+        nonzero_signs = np.sign(diffs)
+        nonzero_signs = nonzero_signs[nonzero_signs != 0]
+        turns = 0 if len(nonzero_signs) <= 1 else int(np.sum(nonzero_signs[1:] * nonzero_signs[:-1] < 0))
+        return {
+            'method': f'hscredit-{method}', 'dpd': dpd, 'n_bins': int(len(splits) + 1),
+            'head_lift': float(lift[0]), 'tail_lift': float(lift[-1]),
+            'edge_gap': float(abs(lift[-1] - lift[0])), 'max_lift': float(np.max(lift)),
+            'min_lift': float(np.min(lift)),
+            'monotonic': bool(np.all(diffs >= -1e-12) or np.all(diffs <= 1e-12)),
+            'turns': turns, 'splits': splits.tolist(),
+        }
+    except Exception as exc:  # 保持基准报告逐方法展示失败原因的既有契约
+        return {'method': f'hscredit-{method}', 'dpd': dpd, 'error': str(exc)}
 
 
 def _feature_missing_rate(data: pd.DataFrame, feature: str, dropna: Union[bool, float, int, str] = False) -> float:
@@ -282,6 +421,9 @@ def feature_binning_summary(
     monotonic: Optional[Union[str, bool]] = None,
     long_format: bool = False,
     metrics: Union[str, List[str]] = _BINNING_SUMMARY_METRICS,
+    n_jobs: Union[int, float] = -1,
+    parallel_backend: Optional[str] = None,
+    parallel_config: Optional[Dict[str, Any]] = None,
     **kwargs,
 ) -> Tuple[Dict[str, Dict[str, pd.DataFrame]], pd.DataFrame]:
     """对一个或多个字段执行多种分箱，并生成跨方法摘要。
@@ -367,17 +509,36 @@ def feature_binning_summary(
         if len(target_labels) == 1:
             single_target_name = target_labels[0]
 
+    tasks = []
     for method in normalized_methods:
         method_params = {**common_params, **per_method_params[method]}
         for reserved in ('data', 'feature', 'method', 'return_rules'):
             method_params.pop(reserved, None)
-
         for name in features:
-            table = feature_bin_stats(data=data, feature=name, method=method, **method_params)
-            binning_tables[name][method] = table
-            row = {('分箱详情', '分箱方法'): method, ('分箱详情', '指标名称'): name}
-            row.update(_summarize_binning_table(table, single_target_name=single_target_name, metrics=normalized_metrics))
-            summary_rows.append(row)
+            call_kwargs = dict(method_params)
+            call_kwargs.update(
+                data=data,
+                n_jobs=-1,
+                parallel_backend=parallel_backend,
+                parallel_config=parallel_config,
+            )
+            tasks.append((name, method, call_kwargs))
+
+    results = parallel_execute(
+        _feature_summary_call,
+        tasks,
+        n_jobs=n_jobs,
+        parallel_backend=parallel_backend,
+        parallel_config=parallel_config,
+        task_labels=[f"{method}:{name}" for name, method, _ in tasks],
+        default_backend="threading",
+        has_parallel_children=False,
+    )
+    for name, method, table in results:
+        binning_tables[name][method] = table
+        row = {('分箱详情', '分箱方法'): method, ('分箱详情', '指标名称'): name}
+        row.update(_summarize_binning_table(table, single_target_name=single_target_name, metrics=normalized_metrics))
+        summary_rows.append(row)
 
     binning_summary = pd.DataFrame(summary_rows)
     ordered_columns = [('分箱详情', '分箱方法'), ('分箱详情', '指标名称')]
@@ -487,6 +648,9 @@ def feature_group_binning_summary(
     monotonic: Optional[Union[str, bool]] = None,
     long_format: bool = False,
     metrics: Union[str, List[str]] = _BINNING_SUMMARY_METRICS,
+    n_jobs: Union[int, float] = -1,
+    parallel_backend: Optional[str] = None,
+    parallel_config: Optional[Dict[str, Any]] = None,
     **kwargs,
 ) -> Tuple[Dict[str, Dict[str, Dict[str, pd.DataFrame]]], pd.DataFrame]:
     """统计日期周期或类别分组下的特征分箱效果。
@@ -559,6 +723,9 @@ def feature_group_binning_summary(
         'verbose': verbose,
         'monotonic': monotonic,
         'long_format': long_format,
+        'n_jobs': -1,
+        'parallel_backend': parallel_backend,
+        'parallel_config': parallel_config,
         **kwargs,
     }
 
@@ -575,40 +742,41 @@ def feature_group_binning_summary(
         if len(target_labels) == 1:
             single_target_name = target_labels[0]
 
+    tasks = []
     for method in normalized_methods:
         method_params = {**common_params, **per_method_params[method]}
         for reserved in ('data', 'feature', 'method', 'return_rules', 'binner'):
             method_params.pop(reserved, None)
-
         for name in features:
-            fitted_binner = _fit_group_summary_binner(data, name, method, method_params)
-            for group in ordered_groups:
-                subset = data.loc[labels == group]
-                if subset.empty:
-                    continue
-                group_name = str(group)
-                table = feature_bin_stats(
-                    data=subset,
-                    feature=name,
-                    method=method,
-                    binner=fitted_binner,
-                    **method_params,
+            tasks.append((data, labels, ordered_groups, name, method, dict(method_params)))
+
+    results = parallel_execute(
+        _feature_group_summary_call,
+        tasks,
+        n_jobs=n_jobs,
+        parallel_backend=parallel_backend,
+        parallel_config=parallel_config,
+        task_labels=[f"{method}:{name}" for _, _, _, name, method, _ in tasks],
+        default_backend="threading",
+        has_parallel_children=False,
+    )
+    for name, method, group_results in results:
+        for group_name, table in group_results:
+            binning_tables[name][method][group_name] = table
+            row = {
+                ('分箱详情', '分箱方法'): method,
+                ('分箱详情', '指标名称'): name,
+                ('分箱详情', '分组字段'): group_field,
+                ('分箱详情', '分组'): group_name,
+            }
+            row.update(
+                _summarize_binning_table(
+                    table,
+                    single_target_name=single_target_name,
+                    metrics=normalized_metrics,
                 )
-                binning_tables[name][method][group_name] = table
-                row = {
-                    ('分箱详情', '分箱方法'): method,
-                    ('分箱详情', '指标名称'): name,
-                    ('分箱详情', '分组字段'): group_field,
-                    ('分箱详情', '分组'): group_name,
-                }
-                row.update(
-                    _summarize_binning_table(
-                        table,
-                        single_target_name=single_target_name,
-                        metrics=normalized_metrics,
-                    )
-                )
-                summary_rows.append(row)
+            )
+            summary_rows.append(row)
 
     binning_summary = pd.DataFrame(summary_rows)
     ordered_columns = [
@@ -813,6 +981,9 @@ def feature_bin_stats(
     verbose: int = 0,
     monotonic: Optional[Union[str, bool]] = None,
     long_format: bool = False,
+    n_jobs: Union[int, float] = -1,
+    parallel_backend: Optional[str] = None,
+    parallel_config: Optional[Dict[str, Any]] = None,
     **kwargs
 ) -> Union[pd.DataFrame, Tuple[pd.DataFrame, Dict]]:
     """特征分箱统计表，汇总统计特征每个分箱的各项指标信息.
@@ -912,11 +1083,67 @@ def feature_bin_stats(
     >>> # 长格式输出：多逾期标签纵向堆叠，新增"逾期标签"列
     >>> table = feature_bin_stats(data, 'score', overdue='MOB1', dpds=[15, 0], long_format=True)
     """
+    _validate_report_parallel(n_jobs, parallel_backend, parallel_config)
     # 统一处理 feature 参数
     if isinstance(feature, str):
         features = [feature]
     else:
-        features = feature
+        features = list(feature)
+
+    if len(features) > 1:
+        child_margins = margins if long_format else False
+        call_kwargs = {
+            'data': data,
+            'target': target,
+            'overdue': overdue,
+            'dpds': dpds,
+            'rules': rules,
+            'method': method,
+            'desc': desc,
+            'binner': binner,
+            'max_n_bins': max_n_bins,
+            'min_bin_size': min_bin_size,
+            'missing_separate': missing_separate,
+            'prebinning': prebinning,
+            'prebinning_params': prebinning_params,
+            'return_cols': return_cols,
+            'return_rules': True,
+            'del_grey': del_grey,
+            'margins': child_margins,
+            'amount': amount,
+            'verbose': verbose,
+            'monotonic': monotonic,
+            'long_format': long_format,
+            'n_jobs': -1,
+            'parallel_backend': parallel_backend,
+            'parallel_config': parallel_config,
+            **kwargs,
+        }
+        tasks = [(name, dict(call_kwargs)) for name in features]
+        results = parallel_execute(
+            _feature_stats_call,
+            tasks,
+            n_jobs=n_jobs,
+            parallel_backend=parallel_backend,
+            parallel_config=parallel_config,
+            task_labels=features,
+            default_backend="threading",
+            has_parallel_children=False,
+        )
+        tables = []
+        rules_by_feature = {}
+        for name, result in results:
+            table, learned_rules = result
+            tables.append(table)
+            rules_by_feature[name] = learned_rules.get(name, [])
+        final_table = pd.concat(tables, axis=0, ignore_index=True)
+        if long_format:
+            final_table = _reorder_long_format_columns(final_table)
+        elif margins:
+            final_table = add_margins(final_table)
+        if return_rules:
+            return final_table, rules_by_feature
+        return final_table
     
     # 统一处理 desc 参数
     if desc is None:
@@ -967,6 +1194,9 @@ def feature_bin_stats(
         'missing_separate': missing_separate,
         'prebinning': prebinning,
         'prebinning_params': prebinning_params,
+        'n_jobs': n_jobs,
+        'parallel_backend': parallel_backend,
+        'parallel_config': parallel_config,
     }
 
     # MDLP默认开启后处理微调，用户可通过 kwargs 覆盖
@@ -1201,6 +1431,9 @@ def benchmark_binning_methods(
     min_bin_size: float = 0.01,
     monotonic: str = 'auto_asc_desc',
     hscredit_methods: Optional[List[str]] = None,
+    n_jobs: Union[int, float] = -1,
+    parallel_backend: Optional[str] = None,
+    parallel_config: Optional[Dict[str, Any]] = None,
 ) -> pd.DataFrame:
     """逐方法对比 hscredit 内部分箱效果。
 
@@ -1252,26 +1485,26 @@ def benchmark_binning_methods(
             'splits': sp.tolist(),
         }
 
-    rows = []
-
+    tasks = []
     for d in dpds:
         y = (data[overdue_col] > d).astype(int)
-
         for method in hscredit_methods:
-            try:
-                binner = OptimalBinning(
-                    method=method,
-                    max_n_bins=max_n_bins,
-                    min_bin_size=min_bin_size,
-                    monotonic=monotonic,
-                    prebinning='quantile',
-                    prebinning_params={'max_n_bins': 100},
-                    lift_refine=True,
-                )
-                binner.fit(pd.DataFrame({feature: x}), y)
-                rows.append(_eval_splits(x, y, binner.splits_.get(feature, []), f'hscredit-{method}', d))
-            except Exception as e:
-                rows.append({'method': f'hscredit-{method}', 'dpd': d, 'error': str(e)})
+            params = dict(
+                max_n_bins=max_n_bins, min_bin_size=min_bin_size, monotonic=monotonic,
+                prebinning='quantile', prebinning_params={'max_n_bins': 100}, lift_refine=True,
+                n_jobs=-1, parallel_backend=parallel_backend, parallel_config=parallel_config,
+            )
+            tasks.append((x, y, feature, method, d, params))
+    rows = parallel_execute(
+        _benchmark_binning_call,
+        tasks,
+        n_jobs=n_jobs,
+        parallel_backend=parallel_backend,
+        parallel_config=parallel_config,
+        task_labels=[f"{task[4]}:{task[3]}" for task in tasks],
+        default_backend='threading',
+        has_parallel_children=False,
+    )
 
     result = pd.DataFrame(rows)
     if result.empty:
@@ -1439,6 +1672,9 @@ def feature_efficiency_analysis(
     quantiles: Optional[List[float]] = None,
     rule_decimals: int = 4,
     save: Optional[str] = None,
+    n_jobs: Union[int, float] = -1,
+    parallel_backend: Optional[str] = None,
+    parallel_config: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """特征效率分析：对比手工分箱与自动分箱效果，并输出趋势图。
 
@@ -1536,23 +1772,35 @@ def feature_efficiency_analysis(
     )
     target_params = {"target": target} if overdue is None else {"target": target, "overdue": overdue, "dpds": int(dpd)}
 
-    manual_table = feature_bin_stats(
-        working_data,
-        feature,
-        rules=manual_rules_list,
+    for reserved in ('n_jobs', 'parallel_backend', 'parallel_config'):
+        auto_kwargs.pop(reserved, None)
+    common_call = dict(
+        data=working_data,
+        feature=feature,
+        n_jobs=-1,
+        parallel_backend=parallel_backend,
+        parallel_config=parallel_config,
         **target_params,
         **common_bin_params,
     )
-
-    auto_table, auto_rules_map = feature_bin_stats(
-        working_data,
-        feature,
-        method=auto_method,
-        return_rules=True,
-        **target_params,
-        **common_bin_params,
-        **auto_kwargs,
+    table_tasks = [
+        ('manual', {**common_call, 'rules': manual_rules_list}),
+        ('auto', {**common_call, 'method': auto_method, 'return_rules': True, **auto_kwargs}),
+    ]
+    table_results = dict(
+        parallel_execute(
+            _feature_efficiency_table_call,
+            table_tasks,
+            n_jobs=n_jobs,
+            parallel_backend=parallel_backend,
+            parallel_config=parallel_config,
+            task_labels=['manual', 'auto'],
+            default_backend='threading',
+            has_parallel_children=False,
+        )
     )
+    manual_table = table_results['manual']
+    auto_table, auto_rules_map = table_results['auto']
     auto_rules = auto_rules_map.get(feature, [])
 
     comparison_fig, comparison_axes = plt.subplots(1, 4, figsize=figsize)
@@ -1677,6 +1925,9 @@ def auto_feature_analysis(
     margins=False,
     amount=None,
     image_table_gap_rows=None,
+    n_jobs=-1,
+    parallel_backend=None,
+    parallel_config=None,
 ):
     """自动特征分析.
 
@@ -1713,10 +1964,16 @@ def auto_feature_analysis(
     >>> from hscredit.report.feature_analyzer import auto_feature_analysis
     >>> auto_feature_analysis(data, features=['feature1'], target='target', excel_writer='分析结果.xlsx')
     """
+    _validate_report_parallel(n_jobs, parallel_backend, parallel_config)
     if writer_params is None:
         writer_params = {}
     if bin_params is None:
         bin_params = {}
+    else:
+        bin_params = dict(bin_params)
+    bin_params.setdefault('n_jobs', n_jobs)
+    bin_params.setdefault('parallel_backend', parallel_backend)
+    bin_params.setdefault('parallel_config', parallel_config)
     if feature_map is None:
         feature_map = {}
     if pictures is None:
@@ -1725,7 +1982,6 @@ def auto_feature_analysis(
     init_setting()
 
     data = data.copy()
-    os.makedirs(output_dir, exist_ok=True)
 
     if not isinstance(features, (list, tuple)):
         features = [features]
@@ -1753,6 +2009,85 @@ def auto_feature_analysis(
             if converted_date_excel.notna().sum() > converted_date.notna().sum():
                 converted_date = converted_date_excel
         data[date] = converted_date
+
+    if bin_params and "del_grey" in bin_params and bin_params.get("del_grey"):
+        merge_columns = ["指标名称", "指标含义", "分箱标签"]
+    else:
+        merge_columns = ["指标名称", "指标含义", "分箱标签", "样本总数", "样本占比"]
+
+    return_cols = []
+    if bin_params and bin_params.get("return_cols"):
+        return_cols = bin_params.pop("return_cols")
+        if not isinstance(return_cols, (list, np.ndarray)):
+            return_cols = [return_cols]
+        return_cols = list(set(return_cols) - set(merge_columns))
+
+    # 纯计算阶段：任何任务失败时，不接触外部 writer，也不创建图片目录。
+    dataset_labels = ["整体样本"]
+    sample_stats, sample_percent_cols = build_sample_stats_table(
+        dataset_labels,
+        [target_y_map],
+        target_label_names,
+        display_labels=target_display_labels,
+        n_jobs=n_jobs,
+        parallel_backend=parallel_backend,
+        parallel_config=parallel_config,
+    )
+    time_distribution = None
+    time_percent_cols = []
+    if date is not None and date in data.columns:
+        dates = pd.to_datetime(data[date], errors="coerce")
+        try:
+            period_values = dates.dt.to_period(freq).astype(str).values
+        except Exception:
+            period_values = dates.dt.to_period("M").astype(str).values
+        time_distribution, time_percent_cols = build_group_distribution_table(
+            dataset_labels,
+            [target_y_map],
+            [period_values],
+            target_label_names,
+            display_labels=target_display_labels,
+            n_jobs=n_jobs,
+            parallel_backend=parallel_backend,
+            parallel_config=parallel_config,
+        )
+
+    feature_summary = data[features].summary(y=data[target])
+    if "特征名" not in feature_summary.columns:
+        index_name = feature_summary.index.name or "index"
+        feature_summary = feature_summary.reset_index().rename(columns={index_name: "特征名"})
+    corr_data = data[features].select_dtypes(include="number") if corr else None
+    corr_table = corr_data.corr() if corr_data is not None else None
+
+    use_amount = amount is not None and amount in data.columns
+    feature_tasks = [
+        (
+            data,
+            col,
+            target,
+            overdue,
+            dpds,
+            dropna,
+            use_amount,
+            amount,
+            f"{feature_map.get(col, col)}",
+            margins,
+            bin_params,
+        )
+        for col in features
+    ]
+    feature_results = parallel_execute(
+        _auto_feature_compute_call,
+        feature_tasks,
+        n_jobs=n_jobs,
+        parallel_backend=parallel_backend,
+        parallel_config=parallel_config,
+        task_labels=list(features),
+        default_backend="threading",
+        has_parallel_children=False,
+    )
+
+    os.makedirs(output_dir, exist_ok=True)
 
     if isinstance(excel_writer, ExcelWriter):
         writer = excel_writer
@@ -1844,33 +2179,11 @@ def auto_feature_analysis(
                 content_end_row = next_boundary - 1 if next_boundary is not None else worksheet.max_row
             _merge_title_row(title_row, _content_max_col(title_row + 1, content_end_row))
 
-    if bin_params and "del_grey" in bin_params and bin_params.get("del_grey"):
-        merge_columns = ["指标名称", "指标含义", "分箱标签"]
-    else:
-        merge_columns = ["指标名称", "指标含义", "分箱标签", "样本总数", "样本占比"]
-
-    return_cols = []
-    if bin_params:
-        if "return_cols" in bin_params and bin_params.get("return_cols"):
-            return_cols = bin_params.pop("return_cols")
-            if not isinstance(return_cols, (list, np.ndarray)):
-                return_cols = [return_cols]
-            return_cols = list(set(return_cols) - set(merge_columns))
-        else:
-            return_cols = []
-
     end_row, end_col = writer.insert_value2sheet(
         worksheet, (start_row, start_col), value="数据有效性分析报告",
         style="header_middle"
     )
 
-    dataset_labels = ["整体样本"]
-    sample_stats, sample_percent_cols = build_sample_stats_table(
-        dataset_labels,
-        [target_y_map],
-        target_label_names,
-        display_labels=target_display_labels,
-    )
     sample_start_row = end_row + 2
     if isinstance(sample_stats.columns, pd.MultiIndex):
         end_row, end_col = dataframe2excel(
@@ -1911,18 +2224,6 @@ def auto_feature_analysis(
             worksheet, os.path.join(output_dir, f"sample_time_distribution{suffix}.png"),
             (end_row + 1, start_col), figsize=(720, 370)
         )
-        dates = pd.to_datetime(data[date], errors="coerce")
-        try:
-            period_values = dates.dt.to_period(freq).astype(str).values
-        except Exception:
-            period_values = dates.dt.to_period("M").astype(str).values
-        time_distribution, time_percent_cols = build_group_distribution_table(
-            dataset_labels,
-            [target_y_map],
-            [period_values],
-            target_label_names,
-            display_labels=target_display_labels,
-        )
         table_start_row = end_row
         end_row, end_col = dataframe2excel(
             time_distribution,
@@ -1935,10 +2236,6 @@ def auto_feature_analysis(
         )
         end_row += 2
 
-    feature_summary = data[features].summary(y=data[target])
-    if "特征名" not in feature_summary.columns:
-        index_name = feature_summary.index.name or "index"
-        feature_summary = feature_summary.reset_index().rename(columns={index_name: "特征名"})
     feature_summary_start_row = end_row
     end_row, end_col = dataframe2excel(
         feature_summary,
@@ -1956,18 +2253,17 @@ def auto_feature_analysis(
     end_row += 2
 
     if corr:
-        temp = data[features].select_dtypes(include="number")
         corr_plot(
-            temp, save=os.path.join(output_dir, f"auto_report_corr_plot{suffix}.png"),
-            annot=True if len(temp.columns) <= 10 else False,
-            fontsize=14 if len(temp.columns) <= 10 else 12
+            corr_data, save=os.path.join(output_dir, f"auto_report_corr_plot{suffix}.png"),
+            annot=True if len(corr_data.columns) <= 10 else False,
+            fontsize=14 if len(corr_data.columns) <= 10 else 12
         )
         end_row, end_col = dataframe2excel(
-            temp.corr(), writer, worksheet, color_cols=list(temp.columns),
+            corr_table, writer, worksheet, color_cols=list(corr_data.columns),
             start_row=end_row, figures=[os.path.join(output_dir, f"auto_report_corr_plot{suffix}.png")],
             title="数值类变量相关性",
-            figsize=(min(60 * len(temp.columns), 1080), min(55 * len(temp.columns), 950)),
-            index=True, custom_cols=list(temp.columns), custom_format="0.00"
+            figsize=(min(60 * len(corr_data.columns), 1080), min(55 * len(corr_data.columns), 950)),
+            index=True, custom_cols=list(corr_data.columns), custom_format="0.00"
         )
         end_row += 2
 
@@ -1976,48 +2272,15 @@ def auto_feature_analysis(
         style="header_middle"
     )
 
-    use_amount = amount is not None and amount in data.columns
+    for feature_result in feature_results:
+        col = feature_result["feature"]
+        temp = feature_result["data"]
+        missing_rate = feature_result["missing_rate"]
+        sample_table = feature_result["sample_table"]
+        amount_table = feature_result["amount_table"]
+        actual_target = feature_result["actual_target"]
 
-    features_iter = tqdm(features)
-    for col in features_iter:
-        features_iter.set_postfix(feature=feature_map.get(col, col))
-        try:
-            if overdue is None:
-                cols_needed = [col, target]
-            else:
-                cols_needed = list(dict.fromkeys([col, target] + overdue))
-            if use_amount:
-                cols_needed = list(dict.fromkeys(cols_needed + [amount]))
-            temp = data[cols_needed]
-            missing_rate = _feature_missing_rate(data, col, dropna)
-
-            if isinstance(dropna, bool) and dropna is True:
-                temp = temp.dropna(subset=col).reset_index(drop=True)
-            elif isinstance(dropna, (float, int, str)):
-                temp = temp[temp[col] != dropna].reset_index(drop=True)
-
-            actual_target = target
-            if overdue:
-                actual_target = f"{overdue[0]} {dpds[0]}+"
-
-            sample_table = feature_bin_stats(
-                temp, col, overdue=overdue, dpds=dpds,
-                desc=f"{feature_map.get(col, col)}", target=target,
-                margins=margins,
-                **bin_params
-            )
-
-            if use_amount:
-                amount_table = feature_bin_stats(
-                    temp, col, overdue=overdue, dpds=dpds,
-                    desc=f"{feature_map.get(col, col)}", target=target,
-                    amount=amount,
-                    margins=margins,
-                    **bin_params
-                )
-            else:
-                amount_table = None
-
+        if sample_table is not None:
             sample_title_columns_len = len(sample_table.columns)
             amount_title_columns_len = len(amount_table.columns) if (use_amount and amount_table is not None) else 0
 
@@ -2102,19 +2365,16 @@ def auto_feature_analysis(
 
             summary_row = feature_summary_rows.get(str(col))
             if summary_row is not None:
-                try:
-                    writer.insert_hyperlink2sheet(
-                        worksheet,
-                        (summary_row, feature_name_col),
-                        hyperlink=f"#'{worksheet.title}'!{writer.get_cell_space((feature_title_row, start_col))}",
-                    )
-                    writer.insert_hyperlink2sheet(
-                        worksheet,
-                        (feature_title_row, start_col),
-                        hyperlink=f"#'{worksheet.title}'!{writer.get_cell_space((summary_row, feature_name_col))}",
-                    )
-                except Exception:
-                    pass
+                writer.insert_hyperlink2sheet(
+                    worksheet,
+                    (summary_row, feature_name_col),
+                    hyperlink=f"#'{worksheet.title}'!{writer.get_cell_space((feature_title_row, start_col))}",
+                )
+                writer.insert_hyperlink2sheet(
+                    worksheet,
+                    (feature_title_row, start_col),
+                    hyperlink=f"#'{worksheet.title}'!{writer.get_cell_space((summary_row, feature_name_col))}",
+                )
 
             if pictures and len(pictures) > 0:
                 chart_row = end_row + 1
@@ -2191,9 +2451,6 @@ def auto_feature_analysis(
                         merge=True, fill=True,
                         start_row=table_start_row, start_col=amount_start_col
                     )
-
-        except Exception:
-            logger.warning("数据字段 %s 分析时发生异常，请排查数据中是否存在异常:\n%s", col, traceback.format_exc())
 
     _adjust_title_merges()
 

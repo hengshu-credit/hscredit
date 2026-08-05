@@ -3,7 +3,6 @@
 提供规则集综合评估与多标签规则分析功能，以及规则置入置出分析。
 """
 
-from copy import deepcopy
 from functools import reduce
 from typing import Dict, List, Optional, Union, Tuple
 
@@ -11,11 +10,106 @@ import numpy as np
 import pandas as pd
 
 from ..core.rules import Rule
-from ..core.binning import OptimalBinning
-from ..core.metrics._binning import compute_bin_stats
 from .mining.multi_label import MultiLabelRuleMiner
-from .overdue_predictor import OverduePredictor
 from .feature_analyzer import feature_bin_stats
+from .rule_strategy import (
+    _configured_rule_copy,
+    _configured_rule_report,
+    _plan_report_parallel,
+    _rule_report_task_count,
+)
+from ..utils.parallel import parallel_execute, resolve_n_jobs, validate_parallel_config
+
+
+def _swap_score_bin_table_call(task):
+    """计算并规范化单个评分分箱表。"""
+    name, col, reference_data, target, overdue, dpds, merged_params = task
+    if col not in reference_data.columns:
+        raise ValueError(f"reference_data 中缺少评分列 '{col}'")
+    table = feature_bin_stats(
+        reference_data,
+        feature=col,
+        target=target,
+        overdue=overdue,
+        dpds=dpds,
+        amount=None,
+        margins=True,
+        **merged_params,
+    )
+    return name, _normalize_bin_table(table, label=name)
+
+
+def _swap_normalize_bin_table_call(task):
+    """规范化调用方提供的单个评分分箱表。"""
+    name, table = task
+    return name, _normalize_bin_table(table, label=name)
+
+
+def _swap_score_prediction_call(task):
+    """计算单个评分对应的逐样本预测坏概率。"""
+    name, data, score_col, table = task
+    single_bad_col, _ = _extract_bad_rate_col(table)
+    return name, _compute_predicted_bad_prob(data, score_col, table, single_bad_col)
+
+
+def _swap_rule_mask_call(task):
+    """计算一条独立规则的命中掩码。"""
+    _, position, rule, data = task
+    mask = rule.predict(data)
+    if not isinstance(mask, pd.Series):
+        mask = pd.Series(np.asarray(mask, dtype=bool), index=data.index)
+    else:
+        mask = mask.reindex(data.index, fill_value=False).astype(bool)
+    return position, mask
+
+
+def _evaluate_swap_rule_masks(
+    rules,
+    data,
+    mode,
+    n_jobs,
+    parallel_backend,
+    parallel_config,
+):
+    """按独立或严格漏斗语义计算规则掩码。"""
+    if not rules:
+        return []
+    if mode == "independent":
+        tasks = [(rule.name, position, rule, data) for position, rule in enumerate(rules)]
+        results = parallel_execute(
+            _swap_rule_mask_call,
+            tasks,
+            n_jobs=n_jobs,
+            parallel_backend=parallel_backend,
+            parallel_config=parallel_config,
+            task_labels=[task[0] for task in tasks],
+            default_backend="threading",
+            has_parallel_children=False,
+        )
+        return [mask for _, mask in sorted(results, key=lambda item: item[0])]
+
+    active = pd.Series(True, index=data.index)
+    masks = []
+    for rule in rules:
+        subset = data.loc[active]
+        predicted = rule.predict(subset)
+        if not isinstance(predicted, pd.Series):
+            predicted = pd.Series(np.asarray(predicted, dtype=bool), index=subset.index)
+        else:
+            predicted = predicted.reindex(subset.index, fill_value=False).astype(bool)
+        mask = pd.Series(False, index=data.index)
+        mask.loc[subset.index] = predicted
+        masks.append(mask)
+        active &= ~mask
+    return masks
+
+
+def _combine_swap_masks(masks, index):
+    """按顺序合并若干布尔掩码。"""
+    combined = pd.Series(False, index=index)
+    for mask in masks:
+        combined |= mask.reindex(index, fill_value=False).astype(bool)
+    return combined
 
 
 def _get_detail_group_name(table: pd.DataFrame) -> str:
@@ -49,6 +143,9 @@ def _resolve_bin_table(
     missing_separate: bool,
     bin_params: Optional[dict],
     data: Optional[pd.DataFrame] = None,
+    n_jobs=-1,
+    parallel_backend=None,
+    parallel_config=None,
 ) -> Dict[str, pd.DataFrame]:
     """解析或计算分箱表，统一转换为 {评分名: 分箱表} 结构（简化版）。
 
@@ -65,14 +162,23 @@ def _resolve_bin_table(
             if len(score_map) == 1:
                 name = list(score_map.keys())[0]
                 return {name: _normalize_bin_table(bin_table, label=name)}
-            else:
-                return {name: _normalize_bin_table(bin_table, label=name) for name in score_map}
+            tasks = [(name, bin_table) for name in score_map]
         elif isinstance(bin_table, dict):
-            result = {}
-            for name, tbl in bin_table.items():
-                if isinstance(tbl, pd.DataFrame):
-                    result[name] = _normalize_bin_table(tbl, label=name)
-            return result
+            tasks = [(name, tbl) for name, tbl in bin_table.items() if isinstance(tbl, pd.DataFrame)]
+        else:
+            tasks = []
+        return dict(
+            parallel_execute(
+                _swap_normalize_bin_table_call,
+                tasks,
+                n_jobs=n_jobs,
+                parallel_backend=parallel_backend,
+                parallel_config=parallel_config,
+                task_labels=[name for name, _ in tasks],
+                default_backend="threading",
+                has_parallel_children=False,
+            )
+        )
 
     # 2. 从 reference_data 计算
     if reference_data is None:
@@ -93,19 +199,22 @@ def _resolve_bin_table(
     merged_params = {**extra_params, 'method': bin_method, 'max_n_bins': max_n_bins,
                       'min_bin_size': min_bin_size, 'missing_separate': missing_separate}
 
-    result = {}
-    for name, col in score_map.items():
-        if col not in reference_data.columns:
-            raise ValueError(f"reference_data 中缺少评分列 '{col}'")
-
-        # 订单口径
-        tbl_count = feature_bin_stats(
-            reference_data, feature=col, target=target, overdue=overdue, dpds=dpds,
-            amount=None, margins=True, **merged_params,
+    tasks = [
+        (name, col, reference_data, target, overdue, dpds, merged_params)
+        for name, col in score_map.items()
+    ]
+    return dict(
+        parallel_execute(
+            _swap_score_bin_table_call,
+            tasks,
+            n_jobs=n_jobs,
+            parallel_backend=parallel_backend,
+            parallel_config=parallel_config,
+            task_labels=[name for name, *_ in tasks],
+            default_backend="threading",
+            has_parallel_children=False,
         )
-        result[name] = _normalize_bin_table(tbl_count, label=name)
-
-    return result
+    )
 
 
 def _build_swap_pipeline(
@@ -127,6 +236,9 @@ def _build_swap_pipeline(
     out_in_amount_fill: Optional[float],
     out_in_amount_col: Optional[str],
     y: Optional[Union[np.ndarray, pd.Series]] = None,
+    n_jobs=-1,
+    parallel_backend=None,
+    parallel_config=None,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """构建简化的 swap_pipeline 和 swap_result（整合自 scorecardpipeline）。
 
@@ -139,11 +251,22 @@ def _build_swap_pipeline(
     n_total = len(data)
 
     # ── 计算每个样本的预测坏概率 ──────────────────────────────────────────────
-    score_bad_probs = {}
-    for name, df_bin in bin_table_result.items():
-        score_col = score_map[name]
-        single_bad_col, _ = _extract_bad_rate_col(df_bin)
-        score_bad_probs[name] = _compute_predicted_bad_prob(data, score_col, df_bin, single_bad_col)
+    score_tasks = [
+        (name, data, score_map[name], table)
+        for name, table in bin_table_result.items()
+    ]
+    score_bad_probs = dict(
+        parallel_execute(
+            _swap_score_prediction_call,
+            score_tasks,
+            n_jobs=n_jobs,
+            parallel_backend=parallel_backend,
+            parallel_config=parallel_config,
+            task_labels=[task[0] for task in score_tasks],
+            default_backend="threading",
+            has_parallel_children=False,
+        )
+    )
 
     if len(score_bad_probs) == 1:
         full_bad_probs = list(score_bad_probs.values())[0]
@@ -202,14 +325,15 @@ def _build_swap_pipeline(
 
     # 2. OUT-OUT拒绝样本（rules_base）
     if has_rules_base:
-        combined_base = reduce(lambda r1, r2: r1 | r2, rules_base)
-        base_hit = combined_base.predict(data)
+        base_masks = _evaluate_swap_rule_masks(
+            rules_base, data, rule_analysis_mode, n_jobs, parallel_backend, parallel_config
+        )
+        base_hit = _combine_swap_masks(base_masks, data.index)
         base_n = int(base_hit.sum())
         base_n_bad = float(full_bad_probs.loc[base_hit].sum())
         base_n_bad = max(0.0, min(base_n_bad, float(base_n)))
 
-        for rule in rules_base:
-            mask = rule.predict(data)
+        for rule, mask in zip(rules_base, base_masks):
             n_hit = int(mask.sum())
             n_bad = float(full_bad_probs.loc[mask].sum())
             n_bad = max(0.0, min(n_bad, float(n_hit)))
@@ -262,11 +386,12 @@ def _build_swap_pipeline(
     # 4. IN-OUT置出样本（rules_out）
     # 注意：IN-OUT 在 remain_data 范围内计算
     if has_rules_out:
-        combined_out = reduce(lambda r1, r2: r1 | r2, rules_out)
-        out_hit = combined_out.predict(remain_data)
+        out_masks = _evaluate_swap_rule_masks(
+            rules_out, remain_data, rule_analysis_mode, n_jobs, parallel_backend, parallel_config
+        )
+        out_hit = _combine_swap_masks(out_masks, remain_data.index)
 
-        for rule in rules_out:
-            mask = rule.predict(remain_data)
+        for rule, mask in zip(rules_out, out_masks):
             # 构建全量数据上的掩码：remain_mask AND mask
             full_mask_indices = remain_data.index[mask.values]
             full_mask = data.index.isin(full_mask_indices)
@@ -332,14 +457,16 @@ def _build_swap_pipeline(
     # OUT-IN：在 rules_base 拒绝范围外的样本（即 remain_mask）中，满足 rules_in 的样本
     # 注意：OUT-IN 行显示预测坏样本数（无 uplift），只在 ALL-IN 阶段应用一次 uplift
     if has_rules_in:
-        combined_in = reduce(lambda r1, r2: r1 | r2, rules_in)
-        # OUT-IN = remain_mask AND rules_in
-        outin_mask = remain_mask & combined_in.predict(data)
+        in_masks = _evaluate_swap_rule_masks(
+            rules_in, remain_data, rule_analysis_mode, n_jobs, parallel_backend, parallel_config
+        )
+        in_hit = _combine_swap_masks(in_masks, remain_data.index)
+        outin_mask = pd.Series(False, index=data.index)
+        outin_mask.loc[remain_data.index] = in_hit
 
-        for rule in rules_in:
-            mask = rule.predict(data)
-            # 单条规则的 OUT-IN：remain_mask AND mask
-            single_outin_mask = remain_mask & mask
+        for rule, local_mask in zip(rules_in, in_masks):
+            single_outin_mask = pd.Series(False, index=data.index)
+            single_outin_mask.loc[remain_data.index] = local_mask
             n_hit = int(single_outin_mask.sum())
             # OUT-IN 显示预测坏样本数（无 uplift）
             n_bad = float(full_bad_probs.loc[single_outin_mask].sum())
@@ -589,6 +716,9 @@ def ruleset_analysis(
     dpds: Optional[Union[int, List[int]]] = None,
     filter_cols: Optional[List[str]] = None,
     amount: Optional[str] = None,
+    n_jobs: Union[int, float] = -1,
+    parallel_backend: Optional[str] = None,
+    parallel_config: Optional[Dict] = None,
     **kwargs,
 ) -> pd.DataFrame:
     """用于D类调优时的规则集效果分析.
@@ -623,16 +753,26 @@ def ruleset_analysis(
 
     report = pd.DataFrame()
     all_rules = reduce(lambda r1, r2: r1 | r2, rules)
-
-    table_total = all_rules.report(
-        datasets,
+    report_plan = _plan_report_parallel(
+        n_jobs,
+        outer_task_count=1,
+        inner_task_count=_rule_report_task_count(overdue, dpds),
+    )
+    execution_kwargs = dict(
         target=target,
         overdue=overdue,
         dpds=dpds,
         filter_cols=filter_cols,
-        margins=True,
         amount=amount,
+        n_jobs=report_plan.child_workers,
+        parallel_backend=parallel_backend,
+        parallel_config=parallel_config,
         **kwargs,
+    )
+    table_total = _configured_rule_report(
+        all_rules,
+        datasets,
+        {**execution_kwargs, "margins": True},
     )
 
     if isinstance(table_total.columns, pd.MultiIndex):
@@ -649,15 +789,10 @@ def ruleset_analysis(
     report = pd.concat([report, original_row])
 
     for rule in rules:
-        table = rule.report(
+        table = _configured_rule_report(
+            rule,
             datasets,
-            target=target,
-            overdue=overdue,
-            dpds=dpds,
-            filter_cols=filter_cols,
-            margins=False,
-            amount=amount,
-            **kwargs,
+            {**execution_kwargs, "margins": False},
         )
 
         if isinstance(table.columns, pd.MultiIndex):
@@ -671,7 +806,13 @@ def ruleset_analysis(
             table = table.drop(columns=[c for c in cols_to_drop if c in table.columns])
 
         report = pd.concat([report, table])
-        datasets = datasets[~rule.predict(datasets)]
+        prediction_rule = _configured_rule_copy(
+            rule,
+            report_plan.child_workers,
+            parallel_backend,
+            parallel_config,
+        )
+        datasets = datasets[~prediction_rule.predict(datasets)]
 
     if isinstance(table_total.columns, pd.MultiIndex):
         detail_group = _get_detail_group_name(table_total)
@@ -689,6 +830,9 @@ def multi_label_rule_analysis(
     labels: Dict[str, str],
     miner_params: Optional[dict] = None,
     output_path: str = 'rule_analysis.xlsx',
+    n_jobs: Union[int, float] = -1,
+    parallel_backend: Optional[str] = None,
+    parallel_config: Optional[Dict] = None,
 ) -> str:
     """多标签规则分析（Excel 输出）.
 
@@ -725,6 +869,9 @@ def multi_label_rule_analysis(
     )
     if miner_params:
         params.update(miner_params)
+    params.setdefault('n_jobs', n_jobs)
+    params.setdefault('parallel_backend', parallel_backend)
+    params.setdefault('parallel_config', parallel_config)
 
     miner = MultiLabelRuleMiner(**params)
     miner.fit(df, features=features)
@@ -819,6 +966,9 @@ def rule_swap_analysis(
     missing_separate: bool = True,
     bin_params: Optional[dict] = None,
     rule_analysis_mode: str = 'independent',
+    n_jobs: Union[int, float] = -1,
+    parallel_backend: Optional[str] = None,
+    parallel_config: Optional[Dict] = None,
 ) -> Dict[str, pd.DataFrame]:
     """规则置入置出（Swap）分析。
 
@@ -900,6 +1050,14 @@ def rule_swap_analysis(
     ... )
     """
     # ── 第一步：解析与计算分箱表 ─────────────────────────────────────────
+    validate_parallel_config(parallel_backend, parallel_config)
+    resolve_n_jobs(n_jobs, task_count=1)
+    if rule_analysis_mode not in {"independent", "sequential"}:
+        raise ValueError("rule_analysis_mode 必须为 'independent' 或 'sequential'")
+    resolved_bin_params = dict(bin_params) if bin_params else {}
+    resolved_bin_params.setdefault('n_jobs', n_jobs)
+    resolved_bin_params.setdefault('parallel_backend', parallel_backend)
+    resolved_bin_params.setdefault('parallel_config', parallel_config)
     bin_table_result = _resolve_bin_table(
         reference_data=reference_data,
         bin_table=bin_table,
@@ -911,8 +1069,11 @@ def rule_swap_analysis(
         max_n_bins=max_n_bins,
         min_bin_size=min_bin_size,
         missing_separate=missing_separate,
-        bin_params=bin_params,
+        bin_params=resolved_bin_params,
         data=data,
+        n_jobs=n_jobs,
+        parallel_backend=parallel_backend,
+        parallel_config=parallel_config,
     )
 
     # ── 第二步：规则集预处理 ─────────────────────────────────────────────
@@ -971,6 +1132,9 @@ def rule_swap_analysis(
         out_in_amount_fill=out_in_amount_fill,
         out_in_amount_col=out_in_amount_col,
         y=y,
+        n_jobs=n_jobs,
+        parallel_backend=parallel_backend,
+        parallel_config=parallel_config,
     )
 
     # ── 返回结果 ────────────────────────────────────────────────────────────

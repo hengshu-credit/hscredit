@@ -54,6 +54,7 @@ from .optimal_binning import OptimalBinning
 from ..metrics._binning import compute_bin_stats
 from ...exceptions import HSCreditError, NotFittedError
 from ..._lazy import LazyModule
+from ...utils.parallel import ParallelizableMixin
 from ...utils.serialization import ArtifactSerializableMixin
 
 # 延迟加载 seaborn：仅在首次实际绘图（访问 sns 属性）时才导入，
@@ -61,7 +62,7 @@ from ...utils.serialization import ArtifactSerializableMixin
 sns = LazyModule("seaborn")
 
 
-class OptimalBinning2D(ArtifactSerializableMixin, BaseEstimator, TransformerMixin):
+class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator, TransformerMixin):
     """二维分箱器.
 
     对两个特征进行交叉分箱分析，生成二维分箱矩阵，用于揭示特征间的交互效应。
@@ -201,6 +202,8 @@ class OptimalBinning2D(ArtifactSerializableMixin, BaseEstimator, TransformerMixi
         n_jobs: Union[int, float] = -1,
         parallel_backend: Optional[str] = None,
         parallel_config: Optional[Dict[str, Any]] = None,
+        strict_user_splits_x: Optional[bool] = None,
+        strict_user_splits_y: Optional[bool] = None,
     ):
         # 目标变量
         self.target = target
@@ -246,6 +249,8 @@ class OptimalBinning2D(ArtifactSerializableMixin, BaseEstimator, TransformerMixi
         self.n_jobs = n_jobs
         self.parallel_backend = parallel_backend
         self.parallel_config = parallel_config
+        self.strict_user_splits_x = strict_user_splits_x
+        self.strict_user_splits_y = strict_user_splits_y
 
         # 内部属性
         self.binner_x_: Optional[OptimalBinning] = None
@@ -374,15 +379,18 @@ class OptimalBinning2D(ArtifactSerializableMixin, BaseEstimator, TransformerMixi
         self._y = y
         self.feature_name_ = f'{self.feature_x_}X{self.feature_y_}'
 
-        # 创建并拟合特征1的分箱器
-        self.binner_x_ = self._create_binner(is_x=True)
-        self.binner_x_.fit(X[[self.feature_x_]], y)
+        # X/Y 两个轴互不依赖，在同一外层批次并行拟合。子分箱器如果
+        # 显式配置了 n_jobs/后端，仍由 _resolve_axis_params 保留子级配置。
+        self.binner_x_, self.binner_y_ = self._parallel_execute(
+            self._fit_axis_binner,
+            [True, False],
+            task_labels=[self.feature_x_, self.feature_y_],
+            default_backend="threading",
+            has_parallel_children=True,
+        )
         self.splits_x_ = self.binner_x_.splits_.get(self.feature_x_, np.array([]))
         self.n_bins_x_ = self.binner_x_.n_bins_.get(self.feature_x_, 0)
 
-        # 创建并拟合特征2的分箱器
-        self.binner_y_ = self._create_binner(is_x=False)
-        self.binner_y_.fit(X[[self.feature_y_]], y)
         self.splits_y_ = self.binner_y_.splits_.get(self.feature_y_, np.array([]))
         self.n_bins_y_ = self.binner_y_.n_bins_.get(self.feature_y_, 0)
 
@@ -999,7 +1007,17 @@ class OptimalBinning2D(ArtifactSerializableMixin, BaseEstimator, TransformerMixi
         if user_splits is not None:
             feature = self.feature_x_ if is_x else self.feature_y_
             params['user_splits'] = {feature: user_splits}
+        strict_user_splits = self.strict_user_splits_x if is_x else self.strict_user_splits_y
+        if strict_user_splits is not None:
+            params['strict_user_splits'] = strict_user_splits
         return params
+
+    def _fit_axis_binner(self, is_x: bool) -> OptimalBinning:
+        """拟合单个轴的子分箱器，作为二维分箱的并行任务单元。"""
+        feature = self.feature_x_ if is_x else self.feature_y_
+        binner = self._create_binner(is_x=is_x)
+        binner.fit(self._X[[feature]], self._y)
+        return binner
 
     def _create_binner(self, is_x: bool) -> OptimalBinning:
         """创建内部 OptimalBinning 实例.

@@ -129,6 +129,159 @@ def test_threading_fit_state_keys_match_serial_input_order(mixed_xy):
     _assert_feature_state_equal(serial, parallel, X.columns)
 
 
+@pytest.mark.parametrize(
+    "n_jobs,backend",
+    [
+        pytest.param(1, None, id="serial"),
+        pytest.param(2, "threading", id="threading"),
+        pytest.param(2, "loky", id="loky"),
+    ],
+)
+def test_partial_user_splits_keep_rules_fixed_and_fit_remaining_with_method(n_jobs, backend):
+    values = np.asarray([0, 0, 0, 1, 1, 2, 3, 5, 8, 13, 21, 34] * 2, dtype=float)
+    X = pd.DataFrame(
+        {
+            "固定规则": np.arange(24, dtype=float),
+            "普通字段": values,
+        }
+    )
+    y = pd.Series(np.tile([0, 1, 0, 1, 1, 0], 4), name="目标")
+    baseline = OptimalBinning(
+        method="uniform",
+        max_n_bins=3,
+        min_n_bins=2,
+        n_jobs=1,
+        random_state=17,
+    ).fit(X[["普通字段"]], y)
+
+    binner = OptimalBinning(
+        method="uniform",
+        user_splits={"固定规则": [5.0, 10.0, 15.0]},
+        strict_user_splits=True,
+        max_n_bins=3,
+        min_n_bins=2,
+        n_jobs=n_jobs,
+        parallel_backend=backend,
+        random_state=17,
+    ).fit(X, y)
+
+    np.testing.assert_array_equal(binner.splits_["固定规则"], [5.0, 10.0, 15.0])
+    _assert_value_equal(binner.splits_["普通字段"], baseline.splits_["普通字段"])
+    pd.testing.assert_frame_equal(
+        binner.get_bin_table("普通字段"), baseline.get_bin_table("普通字段")
+    )
+    assert binner._ordinary_features_ == ("普通字段",)
+    assert binner._ordinary_binner_ is not None
+    assert list(binner._ordinary_binner_.splits_) == ["普通字段"]
+    assert list(binner.splits_) == list(X.columns)
+
+    for metric in ("indices", "bins", "woe"):
+        result = binner.transform(X, metric=metric)
+        expected_ordinary = baseline.transform(X[["普通字段"]], metric=metric)
+        pd.testing.assert_series_equal(result["普通字段"], expected_ordinary["普通字段"])
+
+
+@pytest.mark.parametrize(
+    "n_jobs,backend",
+    [
+        pytest.param(1, None, id="serial"),
+        pytest.param(2, "threading", id="threading"),
+        pytest.param(2, "loky", id="loky"),
+    ],
+)
+def test_non_strict_user_splits_preserve_legacy_default_splits_in_parallel(n_jobs, backend):
+    X = pd.DataFrame(
+        {
+            "用户规则": np.arange(40, dtype=float),
+            "未配置规则": np.arange(40, dtype=float),
+        }
+    )
+    y = pd.Series(np.tile([0, 1], 20), name="目标")
+    kwargs = {
+        "method": "uniform",
+        "user_splits": {"用户规则": [10.0, 20.0, 30.0]},
+        "strict_user_splits": False,
+        "max_n_bins": 4,
+        "min_n_bins": 2,
+        "lift_refine": False,
+        "random_state": 17,
+    }
+    serial = OptimalBinning(n_jobs=1, **kwargs).fit(X, y)
+    fitted = OptimalBinning(
+        n_jobs=n_jobs,
+        parallel_backend=backend,
+        **kwargs,
+    ).fit(X, y)
+
+    _assert_feature_state_equal(serial, fitted, X.columns)
+    # 原非严格逻辑对未配置字段使用默认等频切分，而不是 uniform method。
+    expected_default = np.percentile(X["未配置规则"], [25, 50, 75])
+    np.testing.assert_allclose(fitted.splits_["未配置规则"], expected_default)
+    np.testing.assert_array_equal(fitted.splits_["用户规则"], [10.0, 20.0, 30.0])
+    assert fitted._ordinary_binner_ is None
+    assert fitted._ordinary_features_ == ()
+
+    for metric in ("indices", "bins", "woe"):
+        pd.testing.assert_frame_equal(
+            serial.transform(X, metric=metric),
+            fitted.transform(X, metric=metric),
+        )
+
+
+def test_non_strict_user_splits_submit_explicit_and_default_fields_together(monkeypatch):
+    X = pd.DataFrame(
+        {
+            "用户规则": np.arange(24, dtype=float),
+            "未配置规则": np.arange(24, dtype=float)[::-1],
+        }
+    )
+    y = pd.Series(np.tile([0, 1], 12), name="目标")
+    calls = []
+    original = OptimalBinning._parallel_execute
+
+    def recording_execute(self, function, tasks, **kwargs):
+        calls.append((getattr(function, "__name__", ""), list(kwargs.get("task_labels", []))))
+        return original(self, function, tasks, **kwargs)
+
+    monkeypatch.setattr(OptimalBinning, "_parallel_execute", recording_execute)
+    OptimalBinning(
+        method="uniform",
+        user_splits={"用户规则": [6.0, 12.0, 18.0]},
+        strict_user_splits=False,
+        n_jobs=2,
+        parallel_backend="threading",
+    ).fit(X, y)
+
+    assert ("_fit_feature_transaction", ["用户规则", "未配置规则"]) in calls
+
+
+def test_user_rule_fields_are_submitted_as_one_parallel_feature_batch(monkeypatch):
+    X = pd.DataFrame(
+        {
+            "规则一": np.arange(24, dtype=float),
+            "规则二": np.arange(24, dtype=float)[::-1],
+        }
+    )
+    y = pd.Series(np.tile([0, 1], 12), name="目标")
+    calls = []
+    original = OptimalBinning._parallel_execute
+
+    def recording_execute(self, function, tasks, **kwargs):
+        calls.append((getattr(function, "__name__", ""), list(kwargs.get("task_labels", []))))
+        return original(self, function, tasks, **kwargs)
+
+    monkeypatch.setattr(OptimalBinning, "_parallel_execute", recording_execute)
+    OptimalBinning(
+        method="uniform",
+        user_splits={"规则一": [5.0, 10.0], "规则二": [8.0, 16.0]},
+        strict_user_splits=True,
+        n_jobs=2,
+        parallel_backend="threading",
+    ).fit(X, y)
+
+    assert ("_fit_feature_transaction", ["规则一", "规则二"]) in calls
+
+
 class FailingFeatureBinner(UniformBinning):
     """在成功特征完成后失败，用于验证整轮拟合原子性。"""
 
