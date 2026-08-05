@@ -308,11 +308,15 @@ def ks_bucket(y_true: Union[np.ndarray, pd.Series],
 
     :param y_true: 真实标签 (0/1)，0为负样本（好样本），1为正样本（坏样本）
     :param y_prob: 预测为正样本的概率值
-    :param method: 分箱方法，支持的分箱方法同OptimalBinning，默认为'quantile'
+    :param method: 分箱方法，取值与 OptimalBinning.VALID_METHODS 一致（共17种），
+        默认为'quantile'。常用值：
         - quantile: 等频分箱
+        - uniform: 等宽分箱
         - tree: 决策树最优分箱
         - chi: 卡方分箱
-        - 等其他分箱方法
+        - mdlp: MDLP信息论分箱
+        - best_iv/best_ks: 最优IV/KS分箱
+        完整列表见 :class:`~hscredit.core.binning.OptimalBinning`
     :param max_n_bins: 最大分桶数量，默认为10
     :param min_bin_size: 每桶最小样本占比，默认为0.01
     :param kwargs: 其他传递给OptimalBinning的参数

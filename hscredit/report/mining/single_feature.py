@@ -104,9 +104,9 @@ class SingleFeatureRuleMiner(BaseRuleMiner):
             parallel_config=parallel_config,
         )
         
-        if method not in self.VALID_METHODS:
-            raise ValueError(f"不支持的method: {method}，可选: {self.VALID_METHODS}")
-        
+        # 仅校验不归一化：sklearn clone 要求构造参数按对象原样保存，
+        # 大小写/空白归一化推迟到 fit 时统一进行
+        OptimalBinning.validate_method(method)
         self.method = method
         self.max_n_bins = max_n_bins
         self.min_n_bins = min_n_bins
@@ -151,11 +151,10 @@ class SingleFeatureRuleMiner(BaseRuleMiner):
             if hasattr(working, key):
                 setattr(working, key, value)
 
-        if working.method not in working.VALID_METHODS:
-            raise ValueError(f"不支持的method: {working.method}，可选: {working.VALID_METHODS}")
-        
+        working.method = OptimalBinning.validate_method(working.method)
+
         X, y = working._check_input_data(X, y)
-        
+
         if y is None:
             raise ValueError("单特征规则挖掘需要目标变量y")
         

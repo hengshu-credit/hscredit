@@ -71,11 +71,15 @@ def _compute_bin_stats_from_raw_data(
     :param data: 特征数据（DataFrame 或 Series）
     :param target: 目标变量（列名或数据）
     :param feature: 特征列名（当 data 为 DataFrame 时需要）
-    :param method: 分箱方法，可选：
-        - 基础方法: 'uniform'(等宽), 'quantile'(等频), 'tree'(决策树), 'chi'(卡方)
-        - 优化方法: 'best_ks'(最优KS), 'best_iv'(最优IV), 'mdlp'(信息论)
-        - 高级方法: 'cart'(CART), 'monotonic'(单调性), 'genetic'(遗传算法),
-                    'smooth'(平滑), 'kernel_density'(核密度)
+    :param method: 分箱方法，可选（与 OptimalBinning.VALID_METHODS 一致，共17种）：
+        - 无监督方法: 'uniform'(等宽), 'quantile'(等频), 'kmeans'(K-Means聚类),
+                    'kernel_density'(核密度)
+        - 有监督方法: 'tree'(决策树), 'cart'(CART), 'chi'(卡方), 'mdlp'(信息论),
+                    'best_ks'(最优KS), 'best_iv'(最优IV), 'best_lift'(最优Lift),
+                    'target_bad_rate'(目标坏样本率), 'monotonic'(单调性),
+                    'genetic'(遗传算法), 'smooth'(平滑)
+        - 运筹规划方法: 'or_tools'(OR-Tools整数规划，需安装 ortools),
+                    'cp_sat'(CP-SAT约束规划，需安装 ortools)
         默认: 'quantile'
     :param max_n_bins: 最大分箱数，默认10
     :param min_bin_size: 每箱最小样本占比，默认0.01
@@ -1766,7 +1770,8 @@ def bin_trend_plot(
     :param dimension_cols: 维度列名（单维或多维），用于分组展示
     :param date_col: 日期列名，如提供则按日期分组
     :param date_freq: 日期聚合频率，'D'/'W'/'M'/'Q'，默认'M'
-    :param method: 分箱方法，可选 'quantile'/'uniform'/'cart' 等
+    :param method: 分箱方法，取值与 OptimalBinning.VALID_METHODS 一致（共17种），
+        如 'quantile'/'uniform'/'cart' 等，默认 'quantile'
     :param max_n_bins: 最大分箱数，默认10
     :param min_bin_size: 最小箱占比，默认0.02
     :param rules: 预定义分箱规则 {特征名: 分箱边界列表}

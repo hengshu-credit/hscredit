@@ -40,8 +40,10 @@ def _normalize_binning_config(
     from ..binning import BaseBinning, OptimalBinning
 
     method = effective.get("method")
-    if method not in OptimalBinning.VALID_METHODS:
-        raise ValueError(f"无效的分箱方法: {method!r}，可选值为 {OptimalBinning.VALID_METHODS}")
+    try:
+        effective["method"] = OptimalBinning.validate_method(method)
+    except ValueError:
+        raise ValueError(f"无效的分箱方法: {method!r}，可选值为 {OptimalBinning.VALID_METHODS}") from None
 
     bins = effective.get("max_n_bins")
     if isinstance(bins, bool) or not isinstance(bins, (int, np.integer)) or int(bins) <= 0:
@@ -61,10 +63,17 @@ def _normalize_binning_config(
         prebinning_method = None
     else:
         raise ValueError("分箱配置 prebinning 必须是有效方法名、配置字典或分箱器实例")
-    if prebinning_method is not None and prebinning_method not in OptimalBinning.VALID_METHODS:
-        raise ValueError(
-            f"无效的预分箱方法: {prebinning_method!r}，可选值为 {OptimalBinning.VALID_METHODS}"
-        )
+    if prebinning_method is not None:
+        try:
+            normalized_prebinning_method = OptimalBinning.validate_method(prebinning_method)
+        except ValueError:
+            raise ValueError(
+                f"无效的预分箱方法: {prebinning_method!r}，可选值为 {OptimalBinning.VALID_METHODS}"
+            ) from None
+        if isinstance(prebinning, str):
+            effective["prebinning"] = normalized_prebinning_method
+        elif isinstance(prebinning, dict):
+            effective["prebinning"] = {**prebinning, "method": normalized_prebinning_method}
 
     # 字段任务会容错降级数据相关异常，但用户配置错误必须在并行和全表扫描前暴露。
     # 先构造一次分箱器，可复用其构造参数校验（例如已移除的 n_bins、非法 decimal），

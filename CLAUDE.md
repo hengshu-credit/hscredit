@@ -82,7 +82,7 @@ binner.fit(df, y=ext_y)
 
 ### 工厂模式：OptimalBinning
 
-`OptimalBinning` 是所有 18 种分箱方法的统一入口，支持预分箱 + 二次分箱的两阶段流程：
+`OptimalBinning` 是所有 17 种分箱方法（见 `OptimalBinning.VALID_METHODS`）的统一入口，支持预分箱 + 二次分箱的两阶段流程：
 
 ```python
 best_method = OptimalBinning.auto_select_method(X, y, 'feature_name')

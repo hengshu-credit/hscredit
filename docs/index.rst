@@ -56,8 +56,8 @@ hscredit 文档
      - 57 种 EDA
      - 数据质量、目标分布、坏率趋势、客群画像/迁移、Vintage、Roll Rate、策略仿真
    * - 变量分箱
-     - 18 种分箱器
-     - 等频/等宽/卡方/树/CART/Best IV/Best KS/Best Lift/MDLP/单调/遗传/二维分箱
+     - 17 种分箱器
+     - 等频/等宽/卡方/树/CART/Best IV/Best KS/Best Lift/MDLP/OR-Tools/CP-SAT/KMeans/单调/遗传/平滑/核密度/目标坏率/二维分箱
    * - 特征编码
      - 9 种编码器
      - WOE、目标编码、频数编码、独热、序数、分位数、CatBoost/GBM 编码
