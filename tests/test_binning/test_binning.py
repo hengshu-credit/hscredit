@@ -377,6 +377,55 @@ class TestOptimalBinning(unittest.TestCase):
         with self.assertRaises(ValueError):
             OptimalBinning(method='invalid_method')
 
+    def test_method_case_and_whitespace_normalized(self):
+        """method 大小写与首尾空白应在 fit 时被归一化（构造时原样保存以兼容 sklearn clone）."""
+        binner = OptimalBinning(method='  MDLP ')
+        self.assertEqual(binner.method, '  MDLP ')  # 构造时原样保存
+        binner.fit(self.X, self.y)
+        self.assertEqual(binner.method, 'mdlp')  # fit 时归一化
+        self.assertTrue(binner._is_fitted)
+
+        binner = OptimalBinning(method='Best_IV', max_n_bins=3)
+        binner.fit(self.X, self.y)
+        self.assertEqual(binner.method, 'best_iv')
+        self.assertTrue(binner._is_fitted)
+
+    def test_method_non_string_rejected(self):
+        """非字符串 method 应抛出友好的 ValueError."""
+        for bad_method in (None, 123, ['mdlp']):
+            with self.assertRaisesRegex(ValueError, 'method 必须是字符串'):
+                OptimalBinning(method=bad_method)
+
+    def test_method_alias_rejected(self):
+        """别名不被支持，应抛出 ValueError."""
+        for alias in ('iv', 'chi2', 'optimal_iv', 'dt'):
+            with self.assertRaisesRegex(ValueError, '不支持的method'):
+                OptimalBinning(method=alias)
+
+    def test_set_params_invalid_method_rejected_on_fit(self):
+        """set_params 绕过构造校验后，fit 应抛 ValueError 而非 AttributeError."""
+        binner = OptimalBinning(method='mdlp')
+        binner.set_params(method='invalid_method')
+        with self.assertRaisesRegex(ValueError, '不支持的method'):
+            binner.fit(self.X, self.y)
+
+    def test_validate_method_classmethod(self):
+        """validate_method 是统一的校验入口."""
+        self.assertEqual(OptimalBinning.validate_method(' Quantile '), 'quantile')
+        for m in OptimalBinning.VALID_METHODS:
+            self.assertEqual(OptimalBinning.validate_method(m), m)
+        with self.assertRaises(ValueError):
+            OptimalBinning.validate_method('not-exists')
+        with self.assertRaises(ValueError):
+            OptimalBinning.validate_method(None)
+
+    def test_auto_select_method_validates_methods(self):
+        """auto_select_method 应提前校验 methods 参数."""
+        with self.assertRaisesRegex(ValueError, '不支持的method'):
+            OptimalBinning.auto_select_method(self.X, self.y, self.X.columns[0], methods=['not-exists'])
+        with self.assertRaisesRegex(ValueError, 'methods 不能为空'):
+            OptimalBinning.auto_select_method(self.X, self.y, self.X.columns[0], methods=[])
+
 
 class TestMissingValues(unittest.TestCase):
     """测试缺失值处理."""

@@ -1,10 +1,11 @@
 """统一分箱接口 - 整合所有分箱方法.
 
-提供统一的 fit/transform 接口，支持所有分箱方法：
-- 基础方法: uniform, quantile, tree, chi
-- 优化方法: best_ks, best_iv, mdlp
-- 运筹规划: or_tools
-- 高级方法: cart, kmeans, monotonic, genetic, smooth, kernel_density, best_lift, target_bad_rate
+提供统一的 fit/transform 接口，支持全部分箱方法（共 17 种，
+见 ``OptimalBinning.VALID_METHODS``）：
+- 无监督方法: uniform, quantile, kmeans, kernel_density
+- 有监督方法: tree, cart, chi, mdlp, best_ks, best_iv, best_lift,
+  target_bad_rate, monotonic, genetic, smooth
+- 运筹规划: or_tools, cp_sat
 
 支持指定切割点 (user_splits) 和单调性约束。
 使用 core.metrics 中的指标计算方法。
@@ -92,6 +93,7 @@ class OptimalBinning(BaseBinning):
         - ``'target_bad_rate'``：按目标坏样本率梯度切分
         - ``'monotonic'``：单调最优分箱，强约束坏样本率/WOE 单调（含 U/倒U）
         - ``'genetic'``：遗传算法全局寻优，约束复杂时使用
+        - ``'smooth'``：平滑分箱，对箱内坏样本率做平滑收缩，适合小样本
 
         *运筹规划（数学规划全局最优）*
 
@@ -193,6 +195,27 @@ class OptimalBinning(BaseBinning):
         "target_bad_rate",
     ]
 
+    @classmethod
+    def validate_method(cls, method: str) -> str:
+        """校验并归一化分箱方法名.
+
+        统一所有入口的 method 校验逻辑：类型检查、大小写与首尾空白归一化、
+        枚举值校验。不支持别名（如 ``'iv'``、``'chi2'`` 会被拒绝）。
+
+        :param method: 分箱方法名
+        :return: 归一化后的方法名（小写、去除首尾空白）
+        :raises ValueError: method 不是字符串或不在 ``VALID_METHODS`` 中时抛出
+        """
+        if not isinstance(method, str):
+            raise ValueError(
+                f"method 必须是字符串，当前类型为 {type(method).__name__}: {method!r}，"
+                f"可选: {cls.VALID_METHODS}"
+            )
+        normalized = method.strip().lower()
+        if normalized not in cls.VALID_METHODS:
+            raise ValueError(f"不支持的method: {method}，可选: {cls.VALID_METHODS}")
+        return normalized
+
     def __init__(
         self,
         target: str = "target",
@@ -257,9 +280,9 @@ class OptimalBinning(BaseBinning):
             parallel_config=parallel_config,
         )
 
-        if method not in self.VALID_METHODS:
-            raise ValueError(f"不支持的method: {method}，可选: {self.VALID_METHODS}")
-
+        # 仅校验不归一化：sklearn clone 要求构造参数按对象原样保存，
+        # 大小写/空白归一化推迟到 fit 时统一进行
+        self.validate_method(method)
         self.method = method
         self.user_splits = user_splits
         self.strict_user_splits = strict_user_splits
@@ -321,6 +344,8 @@ class OptimalBinning(BaseBinning):
         :param kwargs: 其他参数
         :return: 拟合后的分箱器
         """
+        # 防御 set_params 绕过 __init__ 校验的场景，统一归一化 method
+        self.method = self.validate_method(self.method)
         X, y = self._check_input(X, y)
         imported_features = [
             feature
@@ -1550,6 +1575,9 @@ class OptimalBinning(BaseBinning):
             self._binner = BestLiftBinning(**target_params)
         elif self.method == "target_bad_rate":
             self._binner = TargetBadRateBinning(**base_params)
+        else:
+            # fit 入口已统一校验，此处为兜底防御（如子类改写校验逻辑）
+            raise ValueError(f"不支持的method: {self.method}，可选: {self.VALID_METHODS}")
 
         self._binner.fit(X, y)
 
@@ -1987,6 +2015,11 @@ class OptimalBinning(BaseBinning):
         """
         if methods is None:
             methods = ["uniform", "quantile", "tree", "chi", "best_ks", "best_iv", "mdlp", "cart", "kmeans"]
+        else:
+            if not methods:
+                raise ValueError("methods 不能为空列表")
+            # 统一校验并归一化，避免非法方法被逐个 warn 后返回无效结果
+            methods = [OptimalBinning.validate_method(m) for m in methods]
 
         best_method = methods[0]
         best_score = -1

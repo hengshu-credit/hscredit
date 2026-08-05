@@ -279,12 +279,21 @@ def _reorder_long_format_columns(table: pd.DataFrame) -> pd.DataFrame:
 
 
 def _normalize_binning_summary_methods(methods: Union[str, List[str]]) -> List[str]:
-    """标准化分箱方法并保持传入顺序。"""
-    normalized = [methods] if isinstance(methods, str) else list(methods)
-    if not normalized:
+    """标准化分箱方法并保持传入顺序。
+
+    统一走 :meth:`OptimalBinning.validate_method` 校验（大小写/空白归一化），
+    保持原有错误消息风格。
+    """
+    raw = [methods] if isinstance(methods, str) else list(methods)
+    if not raw:
         raise ValueError("methods 不能为空")
 
-    invalid = [method for method in normalized if method not in OptimalBinning.VALID_METHODS]
+    normalized, invalid = [], []
+    for method in raw:
+        try:
+            normalized.append(OptimalBinning.validate_method(method))
+        except ValueError:
+            invalid.append(method)
     if invalid:
         raise ValueError(f"不支持的methods: {invalid}，可选: {OptimalBinning.VALID_METHODS}")
     if len(normalized) != len(set(normalized)):
@@ -1000,14 +1009,15 @@ def feature_bin_stats(
     :param rules: 自定义分箱规则，支持 list（所有特征统一规则）或 dict（按特征名映射规则）。
         对 rules 中未包含的特征，按 method 参数重新训练分箱器。
         优先级: binner > rules > method
-    :param method: 分箱方法，可选：
-        - 基础方法: 'uniform'(等宽), 'quantile'(等频), 'tree'(决策树), 'chi'(卡方)
-        - 优化方法: 'best_ks'(最优KS), 'best_iv'(最优IV), 'mdlp'(信息论)
-        - 运筹规划方法: 'or_tools'(OR-Tools整数规划，需安装 ortools)
-        - 高级方法: 'cart'(CART), 'monotonic'(单调性), 'genetic'(遗传算法),
-                    'smooth'(平滑), 'kernel_density'(核密度), 
-                    'best_lift'(Best Lift), 'target_bad_rate'(目标坏样本率)
-        - 聚类方法: 'kmeans'
+    :param method: 分箱方法，可选（与 OptimalBinning.VALID_METHODS 一致，共17种）：
+        - 无监督方法: 'uniform'(等宽), 'quantile'(等频), 'kmeans'(K-Means聚类),
+                    'kernel_density'(核密度)
+        - 有监督方法: 'tree'(决策树), 'cart'(CART), 'chi'(卡方), 'mdlp'(信息论),
+                    'best_ks'(最优KS), 'best_iv'(最优IV), 'best_lift'(Best Lift),
+                    'target_bad_rate'(目标坏样本率), 'monotonic'(单调性),
+                    'genetic'(遗传算法), 'smooth'(平滑)
+        - 运筹规划方法: 'or_tools'(OR-Tools整数规划，需安装 ortools),
+                    'cp_sat'(CP-SAT约束规划，需安装 ortools)
         默认: 'mdlp'
     :param desc: 特征描述，支持 str（单个特征）或 dict（多个特征）
     :param binner: 分箱器，支持以下三种传入方式：
