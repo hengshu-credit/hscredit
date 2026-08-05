@@ -87,6 +87,9 @@ class MDLPBinning(BaseBinning):
         n_jobs: Union[int, float] = -1,
         parallel_backend: Optional[str] = None,
         parallel_config: Optional[Dict[str, Any]] = None,
+        split_points: Optional[Dict[str, List]] = None,
+        user_splits: Optional[Dict[str, List]] = None,
+        strict_user_splits: bool = False,
         **kwargs,
     ):
         super().__init__(
@@ -100,6 +103,9 @@ class MDLPBinning(BaseBinning):
             special_codes=special_codes,
             missing_separate=missing_separate,
             cat_cutoff=cat_cutoff,
+            split_points=split_points,
+            user_splits=user_splits,
+            strict_user_splits=strict_user_splits,
             category_order=category_order,
             handle_unknown=handle_unknown,
             random_state=random_state,

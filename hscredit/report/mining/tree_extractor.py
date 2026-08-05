@@ -8,21 +8,103 @@
 - 孤立森林 (Isolation Forest)
 """
 
+import copy
+
 import numpy as np
 import pandas as pd
-from typing import Union, List, Dict, Optional, Tuple, Any
+from typing import Union, List, Dict, Optional, Any
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 import warnings
 
 from .base import BaseRuleMiner
 from ...core.rules.rule import Rule
+from ...utils.parallel import _current_parallel_budget, resolve_n_jobs, validate_parallel_config
 
 # 从 hscredit.core.models 统一导入 sklearn 模型
 from ...core.models import (
     RandomForestRiskModel,
     GradientBoostingRiskModel,
 )
+
+
+def _normalize_tree_algorithm(algorithm: str) -> str:
+    """校验树算法名称，同时保留构造参数的原始 sklearn 契约。"""
+    resolved = algorithm.lower()
+    if resolved == "xgb":
+        resolved = "gbdt"
+        warnings.warn("'xgb'算法已弃用，请使用'gbdt'", DeprecationWarning)
+    if resolved not in TreeRuleExtractor.VALID_ALGORITHMS:
+        raise ValueError(
+            f"不支持的算法: {resolved}，可选: {TreeRuleExtractor.VALID_ALGORITHMS}"
+        )
+    return resolved
+
+
+def _tree_extract_worker(task):
+    """从一棵独立树提取规则。"""
+    extractor, tree, tree_id = task
+    return extractor._extract_from_tree(tree, tree_id=tree_id)
+
+
+def _gbdt_tree_extract_worker(task):
+    """提取并评估一棵独立 GBDT 基学习器的规则。"""
+    extractor, tree, tree_id = task
+    accepted = []
+    for rule in extractor._extract_from_tree(tree, tree_id=tree_id):
+        mask = extractor._apply_conditions(rule["conditions"], extractor.X_train_)
+        hit_count = mask.sum()
+        if hit_count >= 5:
+            hit_bad = extractor.y_train_[mask].sum()
+            badrate = hit_bad / hit_count
+            if badrate >= 0.05:
+                rule["sample_count"] = int(hit_count)
+                rule["class_probability"] = badrate
+                accepted.append(rule)
+    return accepted
+
+
+def _isolation_tree_extract_worker(task):
+    """从一棵独立孤立树提取异常路径规则。"""
+    extractor, estimator, tree_id, scores, anomaly_mask = task
+    return extractor._extract_from_isolation_tree(
+        estimator, tree_id, scores, anomaly_mask
+    )
+
+
+def _tree_rule_report_worker(task):
+    """构造并评估一条独立树规则。"""
+    ordinal, rule_item, expression, datasets, target = task
+    rule = Rule(
+        expr=expression,
+        name=f"TreeRule_{rule_item.get('rule_id', ordinal)}",
+        description=expression,
+        weight=float(rule_item.get("importance", 0)),
+        n_jobs=1,
+    )
+    metadata = dict(rule_item)
+    if datasets is not None:
+        report_df = rule.report(datasets=datasets, target=target)
+        hit_rows = (
+            report_df[report_df["分箱"] == "命中"]
+            if "分箱" in report_df.columns
+            else pd.DataFrame()
+        )
+        if not hit_rows.empty:
+            hit = hit_rows.iloc[0].to_dict()
+            metadata.update(
+                {
+                    "命中样本数": hit.get("样本总数"),
+                    "命中样本占比": hit.get("样本占比"),
+                    "命中坏样本率": hit.get("坏样本率"),
+                    "命中LIFT值": hit.get("LIFT值"),
+                    "坏账改善": hit.get("坏账改善"),
+                    "风险拒绝比": hit.get("风险拒绝比"),
+                }
+            )
+    rule.metadata_ = metadata
+    rule.metric_score_ = metadata.get("命中LIFT值", metadata.get("importance", 0))
+    return rule
 
 
 class TreeRuleExtractor(BaseRuleMiner):
@@ -91,19 +173,21 @@ class TreeRuleExtractor(BaseRuleMiner):
         random_state: int = 42,
         feature_trends: Optional[Dict[str, int]] = None,
         chi2_threshold: float = 3.841,
+        n_jobs: Optional[Union[int, float]] = -1,
+        parallel_backend: Optional[str] = None,
+        parallel_config: Optional[Dict[str, Any]] = None,
         **kwargs
     ):
-        super().__init__(target=target, exclude_cols=exclude_cols)
-        
-        algorithm = algorithm.lower()
-        if algorithm == 'xgb':
-            algorithm = 'gbdt'
-            warnings.warn("'xgb'算法已弃用，请使用'gbdt'", DeprecationWarning)
-        
-        if algorithm not in self.VALID_ALGORITHMS:
-            raise ValueError(f"不支持的算法: {algorithm}，可选: {self.VALID_ALGORITHMS}")
+        super().__init__(
+            target=target,
+            exclude_cols=exclude_cols,
+            n_jobs=n_jobs,
+            parallel_backend=parallel_backend,
+            parallel_config=parallel_config,
+        )
         
         self.algorithm = algorithm
+        self._resolved_algorithm = _normalize_tree_algorithm(algorithm)
         self.max_depth = max_depth
         self.min_samples_split = min_samples_split
         self.min_samples_leaf = min_samples_leaf
@@ -111,7 +195,7 @@ class TreeRuleExtractor(BaseRuleMiner):
         self.max_features = max_features
         self.test_size = test_size
         self.random_state = random_state
-        self.feature_trends = feature_trends or {}
+        self.feature_trends = feature_trends
         self.chi2_threshold = chi2_threshold
         self.model_kwargs = kwargs  # 存储额外的模型参数
         
@@ -127,6 +211,18 @@ class TreeRuleExtractor(BaseRuleMiner):
         y: Optional[Union[pd.Series, np.ndarray]] = None,
         **kwargs
     ) -> 'TreeRuleExtractor':
+        """在临时副本中拟合，成功后原子提交模型与编码状态。"""
+        working = copy.deepcopy(self)
+        working._fit_inplace(X, y, **kwargs)
+        self._commit_fitted_state(working)
+        return self
+
+    def _fit_inplace(
+        self,
+        X: Union[pd.DataFrame, np.ndarray],
+        y: Optional[Union[pd.Series, np.ndarray]] = None,
+        **kwargs
+    ) -> 'TreeRuleExtractor':
         """拟合提取器.
         
         :param X: 训练数据
@@ -134,13 +230,18 @@ class TreeRuleExtractor(BaseRuleMiner):
         :param kwargs: 额外参数，可覆盖初始化参数
         :return: self
         """
+        self._reset_fitted_state()
+
         # 更新参数
         for key, value in kwargs.items():
             if hasattr(self, key):
                 setattr(self, key, value)
             elif key in self.model_kwargs:
                 self.model_kwargs[key] = value
+        self._resolved_algorithm = _normalize_tree_algorithm(self.algorithm)
         
+        validate_parallel_config(self.parallel_backend, self.parallel_config)
+        self._effective_model_workers()
         X, y = self._check_input_data(X, y)
         
         # 保存特征名
@@ -152,7 +253,7 @@ class TreeRuleExtractor(BaseRuleMiner):
         # 初始化模型
         self.model_ = self._initialize_model()
         
-        if self.algorithm == 'isf':
+        if self._resolved_algorithm == 'isf':
             # 孤立森林不需要y
             self.model_.fit(X_encoded)
             self.X_train_ = X_encoded
@@ -160,7 +261,7 @@ class TreeRuleExtractor(BaseRuleMiner):
         else:
             # 监督学习需要y
             if y is None:
-                raise ValueError(f"算法 '{self.algorithm}' 需要目标变量y")
+                raise ValueError(f"算法 '{self._resolved_algorithm}' 需要目标变量y")
             
             # 划分训练集和测试集
             X_train, X_test, y_train, y_test = train_test_split(
@@ -176,7 +277,7 @@ class TreeRuleExtractor(BaseRuleMiner):
             self.X_ = X
             
             # 卡方分箱预处理
-            if self.algorithm == 'chi2':
+            if self._resolved_algorithm == 'chi2':
                 X_train = self._chi2_preprocess(X_train, y_train)
                 X_test = self._chi2_preprocess(X_test, y_test, fit=False)
             
@@ -189,6 +290,34 @@ class TreeRuleExtractor(BaseRuleMiner):
         
         self.is_fitted_ = True
         return self
+
+    def _reset_fitted_state(self) -> None:
+        """清除上一轮模型派生状态；仅在事务 working 副本中调用。"""
+        self.model_ = None
+        self.encoders_ = {}
+        self.feature_names_ = []
+        self.rules_ = []
+        self.is_fitted_ = False
+        for attribute in (
+            "X_",
+            "X_train_",
+            "X_test_",
+            "y_train_",
+            "y_test_",
+            "chi2_bins_",
+        ):
+            self.__dict__.pop(attribute, None)
+
+    def _effective_model_workers(self) -> int:
+        """解析底层树模型的工作数，并遵守活跃的父层预算。"""
+        budget = _current_parallel_budget()
+        workers = resolve_n_jobs(
+            self.n_jobs,
+            available_budget=budget.available,
+        ) or 1
+        if budget.depth > 0:
+            workers = min(workers, budget.available)
+        return max(1, workers)
     
     def _encode_categorical_features(self, X: pd.DataFrame) -> pd.DataFrame:
         """编码类别型特征.
@@ -217,7 +346,7 @@ class TreeRuleExtractor(BaseRuleMiner):
             'random_state': self.random_state
         }
         
-        if self.algorithm == 'dt':
+        if self._resolved_algorithm == 'dt':
             # 决策树直接使用 sklearn（hscredit 暂无 DecisionTreeRiskModel）
             from sklearn.tree import DecisionTreeClassifier
             base_params.update({
@@ -228,20 +357,20 @@ class TreeRuleExtractor(BaseRuleMiner):
             base_params.update(self.model_kwargs)
             return DecisionTreeClassifier(**base_params)
         
-        elif self.algorithm in ['rf', 'chi2']:
+        elif self._resolved_algorithm in ['rf', 'chi2']:
             base_params.update({
                 'n_estimators': self.n_estimators,
                 'max_depth': self.max_depth,
                 'min_samples_split': self.min_samples_split,
                 'min_samples_leaf': self.min_samples_leaf,
                 'max_features': self.max_features,
-                'n_jobs': -1
+                'n_jobs': self._effective_model_workers()
             })
             base_params.update(self.model_kwargs)
             # 使用 hscredit 的 RandomForestRiskModel
             return RandomForestRiskModel(**base_params)
         
-        elif self.algorithm == 'gbdt':
+        elif self._resolved_algorithm == 'gbdt':
             base_params.update({
                 'n_estimators': self.n_estimators,
                 'max_depth': self.max_depth,
@@ -253,14 +382,14 @@ class TreeRuleExtractor(BaseRuleMiner):
             # 使用 hscredit 的 GradientBoostingRiskModel
             return GradientBoostingRiskModel(**base_params)
         
-        elif self.algorithm == 'isf':
+        elif self._resolved_algorithm == 'isf':
             # 孤立森林直接使用 sklearn（hscredit 暂无 IsolationForestRiskModel）
             from sklearn.ensemble import IsolationForest
             base_params.update({
                 'n_estimators': self.n_estimators,
                 'max_samples': min(256, 1000),  # 限制最大样本数
                 'contamination': 0.1,
-                'n_jobs': -1
+                'n_jobs': self._effective_model_workers()
             })
             base_params.update(self.model_kwargs)
             return IsolationForest(**base_params)
@@ -345,16 +474,16 @@ class TreeRuleExtractor(BaseRuleMiner):
         """
         self._check_fitted()
         
-        if self.algorithm == 'dt':
+        if self._resolved_algorithm == 'dt':
             self.rules_ = self._extract_from_tree(self.model_, tree_id=0)
         
-        elif self.algorithm in ['rf', 'chi2']:
+        elif self._resolved_algorithm in ['rf', 'chi2']:
             self.rules_ = self._extract_from_forest()
         
-        elif self.algorithm == 'gbdt':
+        elif self._resolved_algorithm == 'gbdt':
             self.rules_ = self._extract_from_gbdt()
         
-        elif self.algorithm == 'isf':
+        elif self._resolved_algorithm == 'isf':
             self.rules_ = self._extract_from_isolation_forest()
         
         # 过滤规则
@@ -455,42 +584,35 @@ class TreeRuleExtractor(BaseRuleMiner):
         
         :return: 规则列表
         """
-        all_rules = []
         native_model = self._get_native_model()
-        
-        for i, tree in enumerate(native_model.estimators_):
-            tree_rules = self._extract_from_tree(tree, tree_id=i)
-            all_rules.extend(tree_rules)
-        
-        return all_rules
+        tasks = [(self, tree, index) for index, tree in enumerate(native_model.estimators_)]
+        extracted = self._parallel_execute(
+            _tree_extract_worker,
+            tasks,
+            task_labels=[f"树 {index}" for index in range(len(tasks))],
+            default_backend="loky",
+            has_parallel_children=False,
+        )
+        return [rule for tree_rules in extracted for rule in tree_rules]
     
     def _extract_from_gbdt(self) -> List[Dict[str, Any]]:
         """从GBDT提取规则.
         
         :return: 规则列表
         """
-        all_rules = []
         native_model = self._get_native_model()
-        
-        for i in range(native_model.n_estimators_):
-            tree = native_model.estimators_[i, 0]
-            tree_rules = self._extract_from_tree(tree, tree_id=i)
-            
-            # 过滤命中样本过少的规则
-            for rule in tree_rules:
-                mask = self._apply_conditions(rule['conditions'], self.X_train_)
-                hit_count = mask.sum()
-                
-                if hit_count >= 5:
-                    hit_bad = self.y_train_[mask].sum()
-                    badrate = hit_bad / hit_count
-                    
-                    if badrate >= 0.05:
-                        rule['sample_count'] = int(hit_count)
-                        rule['class_probability'] = badrate
-                        all_rules.append(rule)
-        
-        return all_rules
+        tasks = [
+            (self, native_model.estimators_[index, 0], index)
+            for index in range(native_model.n_estimators_)
+        ]
+        extracted = self._parallel_execute(
+            _gbdt_tree_extract_worker,
+            tasks,
+            task_labels=[f"树 {index}" for index in range(len(tasks))],
+            default_backend="loky",
+            has_parallel_children=False,
+        )
+        return [rule for tree_rules in extracted for rule in tree_rules]
     
     def _extract_from_isolation_forest(self) -> List[Dict[str, Any]]:
         """从孤立森林提取规则.
@@ -505,58 +627,69 @@ class TreeRuleExtractor(BaseRuleMiner):
         
         anomaly_mask = scores < threshold
         
+        tasks = [
+            (self, estimator, tree_idx, scores, anomaly_mask)
+            for tree_idx, estimator in enumerate(native_model.estimators_)
+        ]
+        extracted = self._parallel_execute(
+            _isolation_tree_extract_worker,
+            tasks,
+            task_labels=[f"树 {index}" for index in range(len(tasks))],
+            default_backend="loky",
+            has_parallel_children=False,
+        )
+        return [rule for tree_rules in extracted for rule in tree_rules]
+
+    def _extract_from_isolation_tree(self, estimator, tree_idx, scores, anomaly_mask):
+        """从一棵孤立树按既有深度和纯度约束提取规则。"""
+        tree = estimator.tree_
         rules = []
-        
-        # 从每棵树提取路径
-        for tree_idx, estimator in enumerate(native_model.estimators_):
-            tree = estimator.tree_
+
+        def extract_path(node_id, conditions, depth):
+            if depth > 3:  # 限制深度
+                return
+
+            if tree.feature[node_id] == -2:  # 叶子
+                mask = self._apply_conditions(conditions, self.X_train_)
+                hit_count = mask.sum()
+
+                if hit_count >= 5:
+                    anomaly_count = anomaly_mask[mask].sum()
+                    purity = anomaly_count / hit_count
+
+                    if purity >= 0.3:  # 异常纯度要求
+                        rule = {
+                            'rule_id': len(rules),
+                            'conditions': conditions.copy(),
+                            'predicted_class': 1,
+                            'class_name': 'anomaly',
+                            'class_probability': purity,
+                            'sample_count': int(hit_count),
+                            'tree_id': tree_idx,
+                            'anomaly_score': scores[mask].mean()
+                        }
+                        rules.append(rule)
+            else:
+                feature = self.feature_names_[tree.feature[node_id]]
+                thresh = tree.threshold[node_id]
+
+                # 左子树
+                left_cond = conditions + [{
+                    'feature': feature,
+                    'threshold': thresh,
+                    'operator': '<='
+                }]
+                extract_path(tree.children_left[node_id], left_cond, depth + 1)
+
+                # 右子树
+                right_cond = conditions + [{
+                    'feature': feature,
+                    'threshold': thresh,
+                    'operator': '>'
+                }]
+                extract_path(tree.children_right[node_id], right_cond, depth + 1)
             
-            def extract_path(node_id, conditions, depth):
-                if depth > 3:  # 限制深度
-                    return
-                
-                if tree.feature[node_id] == -2:  # 叶子
-                    mask = self._apply_conditions(conditions, self.X_train_)
-                    hit_count = mask.sum()
-                    
-                    if hit_count >= 5:
-                        anomaly_count = anomaly_mask[mask].sum()
-                        purity = anomaly_count / hit_count
-                        
-                        if purity >= 0.3:  # 异常纯度要求
-                            rule = {
-                                'rule_id': len(rules),
-                                'conditions': conditions.copy(),
-                                'predicted_class': 1,
-                                'class_name': 'anomaly',
-                                'class_probability': purity,
-                                'sample_count': int(hit_count),
-                                'tree_id': tree_idx,
-                                'anomaly_score': scores[mask].mean()
-                            }
-                            rules.append(rule)
-                else:
-                    feature = self.feature_names_[tree.feature[node_id]]
-                    thresh = tree.threshold[node_id]
-                    
-                    # 左子树
-                    left_cond = conditions + [{
-                        'feature': feature,
-                        'threshold': thresh,
-                        'operator': '<='
-                    }]
-                    extract_path(tree.children_left[node_id], left_cond, depth + 1)
-                    
-                    # 右子树
-                    right_cond = conditions + [{
-                        'feature': feature,
-                        'threshold': thresh,
-                        'operator': '>'
-                    }]
-                    extract_path(tree.children_right[node_id], right_cond, depth + 1)
-            
-            extract_path(0, [], 0)
-        
+        extract_path(0, [], 0)
         return rules
     
     def _apply_conditions(
@@ -716,8 +849,8 @@ class TreeRuleExtractor(BaseRuleMiner):
             self.extract_rules()
 
         target_col = target or self.target
-        rule_objects = []
-
+        tasks = []
+        labels = []
         for rule_item in self.rules_[:top_n]:
             if rule_item['sample_count'] < min_samples:
                 continue
@@ -725,36 +858,17 @@ class TreeRuleExtractor(BaseRuleMiner):
                 continue
 
             expr = self._rule_to_string(rule_item)
-            rule = Rule(
-                expr=expr,
-                name=f"TreeRule_{rule_item.get('rule_id', len(rule_objects))}",
-                description=expr,
-                weight=float(rule_item.get('importance', 0))
-            )
+            ordinal = len(tasks)
+            tasks.append((ordinal, rule_item, expr, datasets, target_col))
+            labels.append(f"规则 {rule_item.get('rule_id', ordinal)}")
 
-            metadata = dict(rule_item)
-            if datasets is not None:
-                try:
-                    report_df = rule.report(datasets=datasets, target=target_col)
-                    hit_rows = report_df[report_df['分箱'] == '命中'] if '分箱' in report_df.columns else pd.DataFrame()
-                    if not hit_rows.empty:
-                        hit = hit_rows.iloc[0].to_dict()
-                        metadata.update({
-                            '命中样本数': hit.get('样本总数'),
-                            '命中样本占比': hit.get('样本占比'),
-                            '命中坏样本率': hit.get('坏样本率'),
-                            '命中LIFT值': hit.get('LIFT值'),
-                            '坏账改善': hit.get('坏账改善'),
-                            '风险拒绝比': hit.get('风险拒绝比'),
-                        })
-                except Exception:
-                    pass
-
-            rule.metadata_ = metadata
-            rule.metric_score_ = metadata.get('命中LIFT值', metadata.get('importance', 0))
-            rule_objects.append(rule)
-
-        return rule_objects
+        return self._parallel_execute(
+            _tree_rule_report_worker,
+            tasks,
+            task_labels=labels,
+            default_backend="threading",
+            has_parallel_children=False,
+        )
 
     def get_rule_objects(
         self,
@@ -836,7 +950,7 @@ class TreeRuleExtractor(BaseRuleMiner):
         native_model = self._get_native_model()
         
         if not hasattr(native_model, 'feature_importances_'):
-            raise ValueError(f"算法 '{self.algorithm}' 不支持特征重要性")
+            raise ValueError(f"算法 '{self._resolved_algorithm}' 不支持特征重要性")
         
         importance = native_model.feature_importances_
         

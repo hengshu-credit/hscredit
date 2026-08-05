@@ -361,6 +361,54 @@ class TestOptimalBinning2DCustom:
         assert binner.n_bins_x_ == 4  # 3个切分点 -> 4个分箱
         assert binner.n_bins_y_ == 4
 
+    def test_strict_axis_user_splits_preserve_range_and_precision(self, sample_df):
+        """二维分箱应能显式把两轴规则传递为固定分箱。"""
+        splits_x = [10.123456, 35.000001, 80.987654]
+        splits_y = [-1000.25, 10000.125, 60000.75]
+        binner = OptimalBinning2D(
+            user_splits_x=splits_x,
+            user_splits_y=splits_y,
+            strict_user_splits_x=True,
+            strict_user_splits_y=True,
+            n_jobs=2,
+        ).fit(sample_df, y=sample_df['target'], features=['age', 'income'])
+
+        np.testing.assert_array_equal(binner.splits_x_, np.asarray(splits_x))
+        np.testing.assert_array_equal(binner.splits_y_, np.asarray(splits_y))
+
+    def test_axis_fit_is_one_parallel_batch_and_child_config_has_priority(self, sample_df, monkeypatch):
+        """X/Y 轴同批提交，子级显式并行配置不被父级覆盖。"""
+        original = OptimalBinning2D._parallel_execute
+        submissions = []
+
+        def recording_execute(self, function, tasks, **kwargs):
+            task_list = list(tasks)
+            submissions.append((function.__name__, task_list, dict(kwargs)))
+            return original(self, function, task_list, **kwargs)
+
+        monkeypatch.setattr(OptimalBinning2D, '_parallel_execute', recording_execute)
+        binner = OptimalBinning2D(
+            n_jobs=2,
+            parallel_backend='threading',
+            x_params={'n_jobs': 1, 'parallel_backend': 'loky'},
+        ).fit(sample_df, y=sample_df['target'], features=['age', 'income'])
+
+        assert submissions == [
+            (
+                '_fit_axis_binner',
+                [True, False],
+                {
+                    'task_labels': ['age', 'income'],
+                    'default_backend': 'threading',
+                    'has_parallel_children': True,
+                },
+            )
+        ]
+        assert binner.binner_x_.n_jobs == 1
+        assert binner.binner_x_.parallel_backend == 'loky'
+        assert binner.binner_y_.n_jobs == 2
+        assert binner.binner_y_.parallel_backend == 'threading'
+
     def test_user_splits_nan_reserves_missing_bin(self, sample_df):
         """用户规则中的 np.nan 应预留缺失箱，即使训练集没有缺失值."""
         binner = OptimalBinning2D(

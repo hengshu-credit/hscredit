@@ -858,10 +858,53 @@ class BaseFeatureSelector(ParallelizableMixin, BaseEstimator, TransformerMixin, 
                         target._binner_instance = item['rollback_param_refs']['binner']
             raise
 
-    @staticmethod
-    def _snapshot_target_state(target: Any) -> Dict[str, Any]:
-        """对目标状态做不携带原公开参数引用的完整深快照。"""
-        return copy.deepcopy(target.__dict__)
+    @classmethod
+    def _snapshot_target_state(cls, target: Any) -> Dict[str, Any]:
+        """建立回滚快照，但不递归复制独立提交的子筛选器和分箱器。
+
+        Composite 的子筛选器和显式 binner 都是提交计划中的独立 target，
+        各自已有快照。父级快照只需保留这些对象的引用，否则每一层都会
+        再深拷贝整棵已拟合子树，在高维场景造成成倍内存放大。
+        """
+        memo = cls._nested_commit_reference_memo(target)
+        return copy.deepcopy(target.__dict__, memo)
+
+    @classmethod
+    def _nested_commit_reference_memo(cls, target: Any) -> Dict[int, Any]:
+        """收集应由事务计划独立管理、不可随父状态递归复制的对象。"""
+        memo: Dict[int, Any] = {}
+        seen_containers = set()
+
+        def collect(value: Any) -> None:
+            if isinstance(value, BaseFeatureSelector):
+                memo[id(value)] = value
+                return
+            if isinstance(value, dict):
+                if id(value) in seen_containers:
+                    return
+                seen_containers.add(id(value))
+                for nested in value.values():
+                    collect(nested)
+                return
+            if isinstance(value, (list, tuple, set)):
+                if id(value) in seen_containers:
+                    return
+                seen_containers.add(id(value))
+                for nested in value:
+                    collect(nested)
+
+        for value in getattr(target, '__dict__', {}).values():
+            collect(value)
+
+        if isinstance(target, BaseFeatureSelector):
+            params = target.get_params(deep=False)
+            explicit_binner = params.get('binner')
+            if explicit_binner is not None:
+                memo[id(explicit_binner)] = explicit_binner
+            active_binner = getattr(target, '_binner_instance', None)
+            if active_binner is not None:
+                memo[id(active_binner)] = active_binner
+        return memo
 
     @staticmethod
     def _rebind_public_params_direct(target: 'BaseFeatureSelector', param_refs: Dict[str, Any]) -> None:
@@ -943,7 +986,9 @@ class BaseFeatureSelector(ParallelizableMixin, BaseEstimator, TransformerMixin, 
         """验证候选树并构建无副作用的完整提交计划。"""
         original_params = self.get_params(deep=False)
         candidate_params = candidate.get_params(deep=False)
-        candidate_state = copy.deepcopy(candidate.__dict__)
+        # candidate 已由 sklearn.clone 隔离并成功完成拟合，可直接转移其状态；
+        # 再 deepcopy 会重复复制全部 scores、报告、分箱表和子筛选器树。
+        candidate_state = dict(candidate.__dict__)
 
         original_binner = original_params.get('binner')
         candidate_binner = candidate_params.get('binner')
@@ -953,7 +998,8 @@ class BaseFeatureSelector(ParallelizableMixin, BaseEstimator, TransformerMixin, 
             plan.append({
                 'target': original_binner,
                 'candidate_source': candidate_binner,
-                'payload': copy.deepcopy(candidate_binner.__dict__),
+                # candidate binner 同样已隔离，提交时直接转移状态即可。
+                'payload': dict(candidate_binner.__dict__),
                 'is_selector': False,
             })
 
@@ -962,11 +1008,6 @@ class BaseFeatureSelector(ParallelizableMixin, BaseEstimator, TransformerMixin, 
         if original_selectors is not None and candidate_selectors is not None:
             if len(original_selectors) != len(candidate_selectors):
                 raise ValidationError("候选子筛选器数量与原配置不一致，无法提交拟合状态")
-            child_parallel = {
-                'n_jobs': self.n_jobs,
-                'parallel_backend': self.parallel_backend,
-                'parallel_config': self.parallel_config,
-            }
             for original_item, candidate_item in zip(original_selectors, candidate_selectors):
                 original_child = self._selector_from_item(original_item)
                 candidate_child = self._selector_from_item(candidate_item)
@@ -975,6 +1016,8 @@ class BaseFeatureSelector(ParallelizableMixin, BaseEstimator, TransformerMixin, 
                     and isinstance(candidate_child, BaseFeatureSelector)
                 ):
                     raise ValidationError("候选子筛选器类型与原配置不一致，无法提交拟合状态")
+                # 子级非默认配置优先；只有对应项未配置时才继承父级。
+                child_parallel = self._resolve_child_parallel_config(original_child)
                 original_child._build_candidate_commit_plan(candidate_child, plan, child_parallel)
 
         success_param_refs = dict(original_params)
@@ -997,7 +1040,14 @@ class BaseFeatureSelector(ParallelizableMixin, BaseEstimator, TransformerMixin, 
             'success_param_refs': success_param_refs,
             'rollback_param_refs': dict(original_params),
             'rollback_param_snapshots': {
-                name: copy.deepcopy(value) for name, value in original_params.items()
+                name: (
+                    list(value)
+                    if name == 'selectors' and isinstance(value, list)
+                    else copy.deepcopy(value)
+                    if isinstance(value, (list, dict, set))
+                    else value
+                )
+                for name, value in original_params.items()
             },
             'rollback_param_shallow': {
                 name: list(value)
@@ -1052,18 +1102,40 @@ class BaseFeatureSelector(ParallelizableMixin, BaseEstimator, TransformerMixin, 
                 self._bind_parallel_config_to_child(original)
 
     def _bind_parallel_config_to_child(self, child: 'BaseFeatureSelector') -> None:
-        """把父筛选器的完整并行配置绑定到已成功提交的子筛选器。"""
-        child.n_jobs = self.n_jobs
-        child.parallel_backend = self.parallel_backend
-        child.parallel_config = self.parallel_config
+        """按子级优先规则绑定父筛选器的并行配置。"""
+        for name, value in self._resolve_child_parallel_config(child).items():
+            setattr(child, name, value)
+
+    def _resolve_child_parallel_config(self, child: 'BaseFeatureSelector') -> Dict[str, Any]:
+        """逐项解析子级有效并行配置，非默认子级值拥有最高优先级。"""
+        return {
+            'n_jobs': child.n_jobs if child.n_jobs != -1 else self.n_jobs,
+            'parallel_backend': (
+                child.parallel_backend
+                if child.parallel_backend is not None
+                else self.parallel_backend
+            ),
+            'parallel_config': (
+                child.parallel_config
+                if child.parallel_config is not None
+                else self.parallel_config
+            ),
+        }
 
     def _rebind_committed_parallel_children(self) -> None:
-        """修复候选 clone 中内部阶段对并行配置副本的引用。"""
+        """修复候选 clone 中自动生成阶段对父级配置副本的引用。
+
+        ``stage_selectors_`` 是父筛选器内部创建的实现细节，不是用户传入的
+        Composite 子级，因此其配置始终跟随父级；公开 ``selectors`` 列表
+        仍由子级优先继承规则处理。
+        """
         stage_selectors = getattr(self, 'stage_selectors_', None)
         if isinstance(stage_selectors, dict):
             for child in stage_selectors.values():
                 if isinstance(child, BaseFeatureSelector):
-                    self._bind_parallel_config_to_child(child)
+                    child.n_jobs = self.n_jobs
+                    child.parallel_backend = self.parallel_backend
+                    child.parallel_config = self.parallel_config
 
     def _clear_fitted_state(self) -> None:
         """清理上一次拟合产物，避免重复拟合沿用陈旧报告或得分。"""
@@ -1146,16 +1218,31 @@ class BaseFeatureSelector(ParallelizableMixin, BaseEstimator, TransformerMixin, 
                 force_drop_list = list(self.force_drop)
             else:
                 force_drop_list = []
-            # 合并到exclude_（去重）
-            self.exclude_ = list(set(self.exclude_ + force_drop_list))
+            # 合并到exclude_（去重并保持用户传入顺序）
+            self.exclude_ = list(dict.fromkeys(self.exclude_ + force_drop_list))
 
-        # 如果配置了分箱器或分箱参数，先进行分箱
+        # 强制剔除字段不参与任何计算。普通筛选器的强制保留字段也直接
+        # 跳过计算；Corr/VIF/Stepwise 等比较型筛选器可通过钩子声明
+        # include 必须作为基准变量继续参与后续计算。
+        original_X = X_processed
+        selection_columns = self._get_selection_input_columns(original_X)
+        if selection_columns == list(original_X.columns):
+            # 最常见路径不创建全量列副本；高维数据上一次无意义的 DataFrame
+            # 复制就可能额外占用数 GB 内存。
+            X_processed = original_X
+        else:
+            X_processed = original_X.loc[:, selection_columns]
+
+        # 如果配置了分箱器或分箱参数，只对真正需要筛选的字段进行分箱
         self._binner_instance = None
-        if self._should_apply_binner(y_processed):
-            X_processed = self._apply_binner(X_processed, y_processed)
+        if X_processed.shape[1] > 0:
+            if self._should_apply_binner(y_processed):
+                X_processed = self._apply_binner(X_processed, y_processed)
 
-        # 执行子类实现的具体fit逻辑
-        self._fit_impl(X_processed, y_processed)
+            # 执行子类实现的具体fit逻辑
+            self._fit_impl(X_processed, y_processed)
+        else:
+            self._initialize_empty_selection_result()
 
         # 创建初始dropped_（只在子类没有设置dropped_时）
         if hasattr(self, 'selected_features_') and self.selected_features_ is not None:
@@ -1174,13 +1261,45 @@ class BaseFeatureSelector(ParallelizableMixin, BaseEstimator, TransformerMixin, 
                     self.removed_features_ = []
 
         # 确保include的特征被保留
-        self._apply_include(X_processed)
+        self._apply_include(original_X)
 
         # 应用exclude（强制剔除）
-        self._apply_exclude(X_processed)
+        self._apply_exclude(original_X)
+
+        # 子类通常会基于实际计算子集刷新特征名；对外仍应暴露本轮原始
+        # 输入的 sklearn 元数据，避免 include/exclude 改变 n_features_in_。
+        self._get_feature_names(original_X)
+        self.n_features_in_ = original_X.shape[1]
 
         self._is_fitted = True
         return self
+
+    def _included_features_participate_in_selection(self) -> bool:
+        """返回强制保留字段是否仍需参与筛选计算。
+
+        单变量阈值类筛选器直接保留 include 字段，不再为其分箱或计算指标。
+        需要把 include 当作比较基准的多变量筛选器应覆盖本方法并返回 True。
+        """
+        return False
+
+    def _get_selection_input_columns(self, X: pd.DataFrame) -> List[str]:
+        """按强制字段规则返回真正需要分箱和筛选的输入列。"""
+        excluded = set(self.exclude_)
+        included = set(self.include_)
+        include_participates = self._included_features_participate_in_selection()
+        return [
+            column
+            for column in X.columns
+            if column not in excluded
+            and (include_participates or column not in included)
+        ]
+
+    def _initialize_empty_selection_result(self) -> None:
+        """当所有输入列都已被强制处理时建立最小、完整的拟合结果。"""
+        self.selected_features_ = []
+        self.scores_ = pd.Series(dtype=float)
+        self.dropped_ = pd.DataFrame(columns=['特征', '剔除原因'])
+        self.removed_features_ = []
 
     def _apply_binner(
         self,
@@ -1903,7 +2022,9 @@ class CompositeFeatureSelector(BaseFeatureSelector):
         :param X: 输入特征 DataFrame
         :param y: 目标变量
         """
-        current_X = X.copy()
+        # 子筛选器只读输入，无需在第一阶段复制整个高维数据集；后续只在
+        # 特征集合真正收缩时创建列子集。
+        current_X = X
         all_dropped = []
 
         for i, item in enumerate(self.selectors):
@@ -1924,7 +2045,7 @@ class CompositeFeatureSelector(BaseFeatureSelector):
 
             # 记录被剔除的特征（穿透收集详细指标）
             if hasattr(selector, 'dropped_') and len(selector.dropped_) > 0:
-                dropped = selector.dropped_.copy()
+                dropped = selector.dropped_.copy(deep=False)
                 dropped['筛选轮次'] = i + 1
                 dropped['筛选器'] = selector_name
                 dropped['筛选器类型'] = selector.__class__.__name__
@@ -1932,7 +2053,8 @@ class CompositeFeatureSelector(BaseFeatureSelector):
 
             # 更新当前特征
             if len(selected) > 0:
-                current_X = current_X[selected]
+                if selected != list(current_X.columns):
+                    current_X = current_X.loc[:, selected]
             else:
                 break
 
@@ -1977,7 +2099,7 @@ class CompositeFeatureSelector(BaseFeatureSelector):
 
             # 收集每个筛选器的剔除信息
             if hasattr(selector, 'dropped_') and len(selector.dropped_) > 0:
-                dropped = selector.dropped_.copy()
+                dropped = selector.dropped_.copy(deep=False)
                 dropped['筛选器'] = selector_name
                 dropped['筛选器类型'] = selector.__class__.__name__
                 all_dropped.append(dropped)
@@ -2026,10 +2148,11 @@ class CompositeFeatureSelector(BaseFeatureSelector):
             self.detailed_dropped_ = pd.DataFrame()
 
     def _configure_child_selector(self, selector: BaseFeatureSelector) -> None:
-        """将组合器的完整并行配置传递给顺序执行的子筛选器。"""
-        selector.n_jobs = self.n_jobs
-        selector.parallel_backend = self.parallel_backend
-        selector.parallel_config = self.parallel_config
+        """将组合器的并行配置传递给顺序执行的子筛选器。
+
+        每项配置独立解析：子筛选器的非默认值优先，未配置项才继承父级。
+        """
+        self._bind_parallel_config_to_child(selector)
 
     def get_selection_report_df(self) -> pd.DataFrame:
         """获取详细的 DataFrame 格式报告，穿透底层筛选器。

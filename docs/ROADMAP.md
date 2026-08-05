@@ -187,7 +187,7 @@ hscredit/
 | hscredit 全搞定，告别所有库 | 高级分箱、XAI、PMML、CI 等仍需增强 | 减少多库拼装成本，覆盖常见评分卡建模与策略分析流程 |
 | 分箱能力超过 optbinning | optbinning 在数学规划和质量分析上仍很强 | 提供多种分箱方法，并持续增强质量分析和二维分箱能力 |
 | 生产级全面成熟 | 当前早期版本，测试和文档仍需补强 | 面向生产实践设计，持续完善工程化能力 |
-| 支持所有 Python 新版本和所有可选依赖 | 可选依赖对新版本支持不一定一致 | 支持 Python 3.8+，可选依赖兼容性以实际环境为准 |
+| 支持所有 Python 新版本和所有可选依赖 | 可选依赖对新版本支持不一定一致 | 支持 Python 3.9+，可选依赖兼容性以实际环境为准 |
 
 ### 5.2 推荐定位
 
@@ -229,7 +229,7 @@ hscredit/
 2. 更新 ROADMAP，形成清晰竞品策略和版本规划。
 3. 修正 `hscredit.info()` 中过期描述。
 4. 补充核心模块示例：EDA、分箱、WOE、筛选、ScoreCard、规则挖掘、Swap、模型报告。
-5. 建立 CI：Python 3.8 到当前主流版本的测试矩阵。
+5. 建立 CI：Python 3.9 到当前主流版本的测试矩阵。
 6. 补充 `core.metrics`、`core.eda`、`report.mining`、`ScoreCard`、`OptimalBinning2D` 的基础测试。
 7. 完善打包校验：`python -m build`、`twine check`、`check-manifest`。
 
@@ -358,7 +358,7 @@ hscredit/core/reject_inference/
 
 | 环境 | 说明 |
 |:---|:---|
-| Python 3.8 | 最低支持版本 |
+| Python 3.9 | 最低支持版本 |
 | Python 3.9 / 3.10 / 3.11 / 3.12 | 主流生产环境 |
 | Python 3.13 / 3.14 | 跟进验证，特别注意可选依赖支持情况 |
 

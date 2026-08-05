@@ -182,7 +182,8 @@ class ScorecardFeatureSelection(BaseFeatureSelector):
         self._validate_configuration(y)
         self._get_feature_names(X)
 
-        current_X = X.copy()
+        # 所有阶段只读输入；首阶段不复制完整高维 DataFrame。
+        current_X = X
         self.stage_selectors_ = {}
         self.stage_reports_ = []
         self.stage_report_df_ = pd.DataFrame()
@@ -313,7 +314,7 @@ class ScorecardFeatureSelection(BaseFeatureSelector):
         })
 
         if hasattr(selector, 'dropped_') and selector.dropped_ is not None and len(selector.dropped_) > 0:
-            dropped = selector.dropped_.copy()
+            dropped = selector.dropped_.copy(deep=False)
             dropped['筛选阶段'] = stage_key
             dropped['筛选阶段名称'] = stage_name
             dropped['筛选器'] = selector.__class__.__name__
@@ -323,7 +324,9 @@ class ScorecardFeatureSelection(BaseFeatureSelector):
         if len(selected) == 0:
             return current_X.iloc[:, 0:0]
 
-        return current_X[selected]
+        if selected == list(current_X.columns):
+            return current_X
+        return current_X.loc[:, selected]
 
     def _resolve_corr_weights(
         self,

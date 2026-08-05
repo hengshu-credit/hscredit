@@ -1,0 +1,124 @@
+# 并行执行指南
+
+HSCredit 的分箱器、特征筛选器、编码器、规则执行与规则挖掘组件，以及特征、规则、逾期、漂移和模型报告，统一使用 joblib 调度独立任务。并行只改变任务调度方式，不改变算法、样本、候选集合、迭代次数或数值精度。
+
+## 并行数 `n_jobs`
+
+设机器可用的物理 CPU 核数为 `P`。HSCredit 优先通过 joblib 查询物理核数；旧版 joblib 不支持该查询时依次退回逻辑核数和 `os.cpu_count()`，仍不可用时按 1 核处理。
+
+| 配置 | 含义 |
+|---|---|
+| `-1`（默认） | 自动并行。单核时使用 1 个 worker；多核时使用 `min(P - 1, ceil(0.8 × P))`，因此至少保留一个 CPU。实际 worker 数还受当前独立任务数和活动嵌套预算限制。 |
+| 正整数 | 使用明确指定的 worker 预算；例如 `4` 表示最多 4 个 worker。任务较少时不会创建无任务 worker。调用者可以显式选择超订阅。 |
+| 整数值浮点数 | 与对应整数完全相同；`1.0` 与 `1` 都只使用 1 个 worker，`4.0` 与 `4` 相同。 |
+| `0 < n_jobs < 1` | 按 `ceil(P × n_jobs)` 向上取整；例如 8 个物理核上的 `0.5` 为 4 个 worker。 |
+| `None` | 兼容旧调用，强制串行执行。新代码建议明确使用 `1` 表达串行意图。 |
+
+`bool`、`0`、小于 `-1` 的整数、非整数且大于等于 1 的浮点数、非有限浮点数以及其他类型会在创建 worker 前抛出中文 `ValidationError`。
+
+## 后端选择
+
+`parallel_backend` 可显式选择 joblib 已注册的后端。常用值为：
+
+- `threading`：线程共享同一个 DataFrame，不需要序列化大对象，适合 NumPy、pandas 或第三方实现会释放 GIL 的列级计算，也适合 I/O 较多的任务。
+- `loky`：隔离的进程 worker，适合可序列化、Python 计算较重的纯函数任务。进程启动和数据传输有固定成本，小任务不一定更快。
+- `multiprocessing`：保留兼容性；Windows 创建子进程时应从正常 Python 模块或 `if __name__ == "__main__":` 入口运行，不要把不可序列化的局部函数传给 worker。
+- `None`：由具体模块选择适合工作负载的默认后端，或使用 joblib 默认值。
+
+显式后端与 `parallel_config["prefer"]`、`parallel_config["require"]` 必须兼容。例如进程后端不能同时要求 `sharedmem`。不兼容或未注册的后端会在实际执行前转换为中文配置错误。
+
+## `parallel_config`
+
+支持以下稳定配置键。HSCredit 会复制配置再交给 joblib，不会修改调用者传入的字典。
+
+| 键 | 允许值与用途 |
+|---|---|
+| `prefer` | `"threads"`、`"processes"` 或 `None`，给 joblib 的软后端偏好。 |
+| `require` | `"sharedmem"` 或 `None`，给 joblib 的硬约束。 |
+| `batch_size` | `"auto"` 或正整数，控制每批任务数量。 |
+| `pre_dispatch` | `"all"`、整数或 joblib 表达式字符串，控制预提交任务数。 |
+| `max_nbytes` | 整数、容量字符串或 `None`，超过阈值的 NumPy 数组可使用内存映射。 |
+| `mmap_mode` | `"r"`、`"r+"`、`"w+"`、`"c"` 或 `None`。只读计算通常使用 `"r"`。 |
+| `temp_folder` | 内存映射临时目录或 `None`。目录应有足够空间，并允许所有 worker 访问。 |
+| `timeout` | 单个批次超时秒数或 `None`。 |
+| `verbose` | joblib 调度日志级别整数。 |
+| `inner_max_num_threads` | 进程后端中每个 worker 的第三方线程上限；`threading` 后端不支持。 |
+| `backend_kwargs` | 独立的后端专属字典，例如 loky 的 worker 生命周期配置。 |
+
+`n_jobs` 和 `backend` 不允许重复写入 `parallel_config`，应分别使用公共参数 `n_jobs` 和 `parallel_backend`。未知键、非字符串键、非字典 `backend_kwargs` 及已知冲突都会抛出中文 `ValidationError`。具体值的最终兼容性仍取决于已安装的 joblib 版本和所选后端；HSCredit 保持 `joblib>=1.0` 兼容，不依赖仅在新版本存在的接口。
+
+大数组使用进程后端时，可设置：
+
+```python
+parallel_config={
+    "max_nbytes": "64M",
+    "mmap_mode": "r",
+    "temp_folder": r"D:\joblib-cache",
+}
+```
+
+线程后端天然共享内存，通常不需要 mmap。内存映射只减少大数组的进程间复制，不能避免 pandas 对象序列化、结果对象占用内存或最终表格合并所需内存。任务过细时，可调整 `batch_size` 和 `pre_dispatch`，但不应通过抽样、降低精度或减少候选换取速度。
+
+## 嵌套预算
+
+只有“外层 worker 正在并行执行，且每个外层 worker 同时再次启动并行子任务”才属于真实嵌套。设当前可用预算为 `C`、外层独立任务数为 `T`：
+
+```text
+outer_workers = min(T, ceil(sqrt(C)))
+child_budget = max(1, floor(C / outer_workers))
+```
+
+该预算上下文会传播到线程和进程 worker。自动模式 `n_jobs=-1` 受活动子预算约束；显式正整数或比例表示调用者主动给当前层指定并发预算，任务数仍是最终上限。若父层和子层都显式指定很大的并行数，可能发生超订阅，调用者应同时用 `inner_max_num_threads` 控制 BLAS、OpenMP 或模型内部线程。
+
+按顺序执行的多个阶段不拆分预算。例如 Composite 筛选器逐级筛选、Stepwise/RFE 的依赖轮次、报告的先计算后写入、多个 Excel sheet 顺序渲染，都在当前阶段开始时使用完整可用预算。只有外层特征/标签/数据集任务与其内部候选计算确实重叠时才切分。
+
+## 一致性、随机性与失败行为
+
+- 串行和并行调用相同的单任务 worker；结果按提交顺序返回，由主线程按原特征、规则、标签和数据集顺序提交。
+- 不按数据行拆分浮点归约，不改变候选、迭代次数或输入 dtype。DataFrame 的索引、列名、列顺序、dtype 和缺失值语义应保持一致。
+- 拟合任务先写临时结果，所有任务成功后才由主线程一次性提交。首次拟合失败不留下半成品；重新拟合失败保留旧的有效状态。
+- 有 `random_state` 的算法应固定基础种子；子任务种子由稳定任务顺序决定，而不是 worker 编号或完成顺序。`random_state=None` 保留算法原有的非确定语义。
+- worker 失败时不会静默重试、跳过或改用近似算法。错误包含中文阶段/任务标识，并保留原始异常链。
+- Excel 写入、绘图和最终文件替换在主线程中按固定顺序完成；并行 worker 只计算表格、指标或绘图所需数据。
+
+第三方模型可能使用自己的 OpenMP、BLAS 或 GPU 线程，HSCredit 无法完全控制其内部归约顺序。因此固定随机种子仍可能出现平台级末位浮点差异；这类差异应只对明确字段使用严格局部容差，不能把整张表降级为宽松比较。
+
+## 使用示例
+
+```python
+from hscredit.core.binning import OptimalBinning
+from hscredit.core.encoders import WOEEncoder
+from hscredit.report import ModelReport
+
+# 默认自动并行：多核时约 80%，并至少保留一个 CPU。
+binner = OptimalBinning(n_jobs=-1)
+
+# 物理核数的 50%，线程共享输入 DataFrame。
+encoder = WOEEncoder(
+    n_jobs=0.5,
+    parallel_backend="threading",
+    parallel_config={"batch_size": 4, "pre_dispatch": "2*n_jobs"},
+)
+
+# CPU 较重的多数据集模型报告使用进程，并限制每个进程的内部线程。
+report = ModelReport(
+    model,
+    datasets=data,
+    n_jobs=4,
+    parallel_backend="loky",
+    parallel_config={
+        "batch_size": 2,
+        "max_nbytes": "64M",
+        "mmap_mode": "r",
+        "inner_max_num_threads": 1,
+    },
+)
+```
+
+同一组公共参数也适用于公开分箱器、筛选器、编码器、`Rule`/`RuleFlow`、`RuleSet`/`RulesClassifier`、规则挖掘器、`OverduePredictor`、Swap/漂移报告、`ModelReport`、`auto_model_report` 和 `compare_models`。单次标量辅助对象或函数（如规则条件、单个指标计算、Excel writer）不创建批量任务，因此不增加无意义的并行参数。
+
+## 性能和资源限制
+
+并行并不保证每个工作负载都更快。小数据、少特征或少规则时，线程切换、进程序列化和 worker 启动成本可能超过计算收益；此时使用 `n_jobs=1`。高维数据通常先选择共享内存的 `threading`，纯 Python CPU 重任务再比较 `loky`。基准测试应先预热，并对串行和并行分别运行至少三次后比较中位数。
+
+当内存不足、临时目录空间不足、对象不能 pickle、第三方库不支持多进程或后端超时时，HSCredit 会报告错误而不会损失精度继续运行。可依次减小 `n_jobs`、降低 `pre_dispatch`、启用 mmap、选择 `threading` 或将第三方模型内部线程设为 1；不要用降低样本量、分箱候选数或迭代次数掩盖资源问题。

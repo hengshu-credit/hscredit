@@ -26,10 +26,83 @@ import numpy as np
 import pandas as pd
 
 from ._sample_stats import build_group_distribution_table, build_sample_stats_table
+from ..utils.parallel import (
+    _ACTIVE_BUDGET,
+    ParallelBudget,
+    parallel_execute,
+    resolve_n_jobs,
+    split_parallel_budget,
+    validate_parallel_config,
+)
 
 logger = logging.getLogger(__name__)
 
 _SUMMARY_PERCENT_METRICS = {"KS", "AUC", "坏样本率"}
+
+
+@dataclass(frozen=True)
+class _ModelComparisonParallelPlan:
+    """模型比较外层和同时运行的数据集子任务预算。"""
+
+    total_workers: int
+    outer_workers: int
+    child_workers: int
+    has_parallel_children: bool
+
+
+def _plan_model_comparison_parallel(
+    n_jobs,
+    model_task_count: int,
+    dataset_task_count: int,
+) -> _ModelComparisonParallelPlan:
+    """在当前活动预算内按真实任务数规划模型比较并发。"""
+    total_workers = resolve_n_jobs(n_jobs) or 1
+    active_budget = _ACTIVE_BUDGET.get()
+    if active_budget is not None:
+        total_workers = min(total_workers, active_budget.available)
+    total_workers = max(1, total_workers)
+    model_task_count = max(0, int(model_task_count))
+    dataset_task_count = max(0, int(dataset_task_count))
+    has_parallel_children = model_task_count > 1 and dataset_task_count > 1 and total_workers > 1
+
+    if has_parallel_children:
+        outer_workers, child_budget = split_parallel_budget(
+            total_workers,
+            model_task_count,
+            True,
+        )
+        child_workers = min(child_budget, dataset_task_count)
+    elif model_task_count <= 1:
+        outer_workers = 1
+        child_workers = min(total_workers, max(1, dataset_task_count))
+    else:
+        outer_workers = min(total_workers, model_task_count)
+        child_workers = 1
+
+    return _ModelComparisonParallelPlan(
+        total_workers=total_workers,
+        outer_workers=max(1, outer_workers),
+        child_workers=max(1, child_workers),
+        has_parallel_children=has_parallel_children,
+    )
+
+
+def _execute_model_comparison_plan(function, tasks, plan, **kwargs):
+    """执行模型外层计划，并在根调用建立等于请求总量的活动预算。"""
+    token = None
+    if _ACTIVE_BUDGET.get() is None:
+        token = _ACTIVE_BUDGET.set(ParallelBudget(plan.total_workers, 0))
+    try:
+        return parallel_execute(
+            function,
+            tasks,
+            n_jobs=plan.outer_workers,
+            has_parallel_children=plan.has_parallel_children,
+            **kwargs,
+        )
+    finally:
+        if token is not None:
+            _ACTIVE_BUDGET.reset(token)
 
 
 # ---------------------------------------------------------------------------
@@ -90,25 +163,114 @@ def _summary_percent_cols(columns) -> List[Any]:
     return percent_cols
 
 
-def _score_from_model(model, X) -> np.ndarray:
+def _score_from_model(model, X, y_proba: Optional[np.ndarray] = None) -> np.ndarray:
     """从模型获取评分向量，兼容 ScoreCard / BaseRiskModel / sklearn."""
     # ScoreCard.predict → 评分
     if hasattr(model, "predict"):
-        try:
-            result = np.asarray(model.predict(X), dtype=float)
-            if np.nanmax(np.abs(result)) > 2.0:
-                return result
-        except Exception:
-            pass
+        result = np.asarray(model.predict(X), dtype=float)
+        if result.size and np.nanmax(np.abs(result)) > 2.0:
+            return result
     # predict_score（BaseRiskModel 子类）
     if hasattr(model, "predict_score"):
-        try:
-            return np.asarray(model.predict_score(X), dtype=float)
-        except Exception:
-            pass
+        return np.asarray(model.predict_score(X), dtype=float)
     # 兜底：概率转评分
-    proba = _proba_pos(model, X)
+    proba = _proba_pos(model, X) if y_proba is None else np.asarray(y_proba, dtype=float)
     return (1.0 - proba) * 1000.0
+
+
+def _build_report_dataset(task) -> "ReportDataset":
+    """构建单个报告数据集；该 worker 不接收可变的 ``ModelReport`` 实例。"""
+    model, key, label, X, y, y_dict, feature_names = task
+    required_features: Optional[List[str]] = None
+    if hasattr(model, "feature_names_") and model.feature_names_ is not None:
+        required_features = list(model.feature_names_)
+    elif hasattr(model, "feature_names_in_") and model.feature_names_in_ is not None:
+        required_features = list(model.feature_names_in_)
+
+    if required_features:
+        missing = set(required_features).difference(X.columns)
+        if missing:
+            raise ValueError(f"数据集缺少以下模型特征: {missing}")
+        X_for_pred = X[required_features]
+    elif feature_names:
+        missing = set(feature_names).difference(X.columns)
+        if missing:
+            raise ValueError(f"数据集缺少以下模型特征: {missing}")
+        X_for_pred = X[feature_names]
+    else:
+        X_for_pred = X
+
+    if len(X) != len(y):
+        raise ValueError(f"特征与标签样本数不一致: X={len(X)}, y={len(y)}")
+
+    y_proba = _proba_pos(model, X_for_pred)
+    score = _score_from_model(model, X_for_pred, y_proba=y_proba)
+    return ReportDataset(
+        name=key,
+        label=label,
+        X=X,
+        y=y,
+        y_proba=y_proba,
+        score=score,
+        y_dict=y_dict,
+    )
+
+
+def _binary_metric_worker(task) -> Tuple[float, float, int, float]:
+    """基于已缓存预测计算单个数据集/标签的确定性指标。"""
+    from ..core.metrics import auc, ks
+
+    y_true, y_proba = task
+    y_arr = np.asarray(y_true)
+    bad_rate = float(y_arr.mean()) if len(y_arr) else np.nan
+    return (
+        _safe_binary_metric(ks, y_arr, y_proba),
+        _safe_binary_metric(auc, y_arr, y_proba),
+        len(y_arr),
+        bad_rate,
+    )
+
+
+def _psi_metric_worker(task) -> float:
+    """计算一对评分分布 PSI。"""
+    from ..core.metrics import psi
+
+    expected, actual = task
+    return float(psi(expected, actual))
+
+
+def _feature_metric_worker(task) -> Tuple[float, float, float]:
+    """计算单特征 IV/KS/PSI；不读取或修改报告实例状态。"""
+    from ..core.metrics import iv, ks, psi
+
+    y_true, train_values, test_values = task
+
+    def optional_metric(metric, *values):
+        try:
+            return float(metric(*values))
+        except (TypeError, ValueError, ZeroDivisionError):
+            return np.nan
+
+    iv_value = optional_metric(iv, y_true, train_values)
+    ks_value = optional_metric(ks, y_true, train_values)
+    psi_value = optional_metric(psi, train_values, test_values) if test_values is not None else np.nan
+    return iv_value, ks_value, psi_value
+
+
+def _compare_model_worker(task) -> Tuple[str, pd.DataFrame]:
+    """构建单模型摘要；用于 ``compare_models`` 的模型外层并行。"""
+    name, model, X_train, y_train, X_test, y_test, n_jobs, backend, config = task
+    report = ModelReport(
+        model=model,
+        X_train=X_train,
+        y_train=y_train,
+        X_test=X_test,
+        y_test=y_test,
+        n_jobs=n_jobs,
+        parallel_backend=backend,
+        parallel_config=config,
+    )
+    return name, report.summary()
 
 
 def _safe_close_figs():
@@ -286,6 +448,9 @@ class ModelReport:
         datasets: Optional[Union[List, Dict]] = None,
         overdue: Optional[Union[str, List[str]]] = None,
         dpds: Optional[Union[int, float, List[Union[int, float]]]] = None,
+        n_jobs=-1,
+        parallel_backend: Optional[str] = None,
+        parallel_config: Optional[Dict[str, Any]] = None,
     ):
         """初始化模型报告.
 
@@ -342,9 +507,19 @@ class ModelReport:
             - dict: {'overdue': col, 'dpds': threshold} 或 {'overdue': col, 'dpds': [15, 7, 0]}
         :param overdue: 逾期列名（str）或多个列名（List[str]），与 dpds 配合自动构建标签
         :param dpds: 逾期天数阈值（int/float）或多个阈值（List），与 overdue 配合使用
+        :param n_jobs: 并行工作数；-1 自动保留 CPU，None 使用兼容串行模式
+        :param parallel_backend: joblib 后端，如 ``threading`` 或 ``loky``
+        :param parallel_config: joblib 其他并行配置，保留调用者字典引用
         """
         self.model = model
         self._feature_names = feature_names
+        self.n_jobs = n_jobs
+        self.parallel_backend = parallel_backend
+        self.parallel_config = parallel_config
+
+        # 在任何预测任务启动前完成公共配置校验；保留调用者传入字典的对象身份。
+        validate_parallel_config(parallel_backend, parallel_config)
+        resolve_n_jobs(n_jobs, task_count=1)
 
         # overdue/dpds 优先，构造 target dict
         if overdue is not None and dpds is not None:
@@ -362,6 +537,19 @@ class ModelReport:
         # 多标签指标名列表（用于多标签报告），按构建顺序从第一个数据集获取
         # 当 overdue/dpds 产生多指标时填充，如 ['dpds_m1>15', 'dpds_m1>7', 'dpds_m1>0', ...]
         self._label_names: List[str] = []
+
+        # 所有缓存仅在完整计算成功后提交。
+        self._metrics_cache: Dict[Optional[str], pd.DataFrame] = {}
+        self._summary_cache: Optional[pd.DataFrame] = None
+        self._importance_cache: Optional[pd.DataFrame] = None
+        self._features_describe_cache: Optional[pd.DataFrame] = None
+        self._corr_cache: Optional[pd.DataFrame] = None
+        self._bin_table_cache: Dict[Tuple[Any, ...], pd.DataFrame] = {}
+        self._feature_bin_table_cache: Dict[Tuple[Any, ...], pd.DataFrame] = {}
+        self._lift_table_cache: Dict[Tuple[Any, ...], pd.DataFrame] = {}
+        self._monthly_metrics_cache: Dict[str, pd.DataFrame] = {}
+        self._monthly_psi_cache: Dict[str, pd.DataFrame] = {}
+        self._features_summary_cache: Optional[pd.DataFrame] = None
 
         # 确定目标列名
         self._target_name = self._resolve_target_name(target)
@@ -394,10 +582,59 @@ class ModelReport:
             # 只保留模型实际入模特征，同时保留原始顺序
             self.feature_names = [f for f in self.feature_names if f in model_required]
 
-        # 缓存
-        self._metrics_cache: Optional[pd.DataFrame] = None
-        self._importance_cache: Optional[pd.DataFrame] = None
-        self._features_describe_cache: Optional[pd.DataFrame] = None
+    def _invalidate_caches(self) -> None:
+        """清除所有依赖数据集的派生结果。"""
+        self._metrics_cache.clear()
+        self._summary_cache = None
+        self._importance_cache = None
+        self._features_describe_cache = None
+        self._corr_cache = None
+        self._bin_table_cache.clear()
+        self._feature_bin_table_cache.clear()
+        self._lift_table_cache.clear()
+        self._monthly_metrics_cache.clear()
+        self._monthly_psi_cache.clear()
+        self._features_summary_cache = None
+
+    def _run_cache_transaction(self, function, *args, **kwargs):
+        """隔离派生缓存写入；仅在整个公共输出操作成功后提交。"""
+        cache_names = (
+            "_metrics_cache",
+            "_summary_cache",
+            "_importance_cache",
+            "_features_describe_cache",
+            "_corr_cache",
+            "_bin_table_cache",
+            "_feature_bin_table_cache",
+            "_lift_table_cache",
+            "_monthly_metrics_cache",
+            "_monthly_psi_cache",
+            "_features_summary_cache",
+        )
+        original = {name: getattr(self, name) for name in cache_names}
+        for name, value in original.items():
+            # 映射缓存使用独立容器，避免失败尝试污染调用方持有的旧引用。
+            setattr(self, name, dict(value) if isinstance(value, dict) else value)
+        try:
+            return function(*args, **kwargs)
+        except Exception:
+            for name, value in original.items():
+                setattr(self, name, value)
+            raise
+
+    def _commit_dataset_specs(self, specs: List[Tuple[Any, ...]]) -> None:
+        """并行计算一批数据集，并在全部成功后按输入顺序一次性提交。"""
+        results = parallel_execute(
+            _build_report_dataset,
+            specs,
+            n_jobs=self.n_jobs,
+            parallel_backend=self.parallel_backend,
+            parallel_config=self.parallel_config,
+            task_labels=[spec[1] for spec in specs],
+            default_backend="loky",
+        )
+        self._datasets = {dataset.name: dataset for dataset in results}
+        self._datasets_info = {dataset.name: dataset.label for dataset in results}
 
     def _resolve_target_name(self, target) -> str:
         """解析目标配置，返回标签列名.
@@ -505,63 +742,48 @@ class ModelReport:
                   自动命名为训练集、测试集、OOT集...，y 从 X 中自动构建
         """
         if isinstance(datasets, dict):
+            entries = list(datasets.items())
             default_labels = {
                 "train": "训练集",
                 "test": "测试集",
                 "oot": "OOT集",
                 "val": "验证集",
             }
-            for key, value in datasets.items():
-                # 区分 (X, y) 元组 和 直接传入 DataFrame 两种格式
-                if isinstance(value, (tuple, list)) and len(value) >= 2:
-                    # 传统元组格式: (X, y)
-                    X_raw, y_raw = value[0], value[1]
-                    label = default_labels.get(key, key)
-                    X_df = _ensure_dataframe(X_raw, feature_names=self._feature_names)
-                    if y_raw is None:
-                        y_s, y_dict = self._build_y(X_df, self._target_cfg)
-                        if y_dict and not self._label_names:
-                            self._label_names = list(y_dict.keys())
-                    else:
-                        y_s = _ensure_series(y_raw, name=self._target_name)
-                        y_dict = None
-                else:
-                    # DataFrame 直接传入: X 中含目标列或通过 overdue+dpds 构建标签
-                    X_raw = value
-                    label = default_labels.get(key, key)
-                    X_df = _ensure_dataframe(X_raw, feature_names=self._feature_names)
-                    y_s, y_dict = self._build_y(X_df, self._target_cfg)
-                    if y_dict and not self._label_names:
-                        self._label_names = list(y_dict.keys())
-
-                self._add_dataset(key, label, X_df, y_s, y_dict)
-                self._datasets_info[key] = label
-
         elif isinstance(datasets, (list, tuple)):
             default_names = ["train", "test", "oot", "val", "dev"]
-            default_labels = ["训练集", "测试集", "OOT集", "验证集", "开发集"]
-            for i, value in enumerate(datasets):
-                key = default_names[i] if i < len(default_names) else f"dataset_{i}"
-                label = default_labels[i] if i < len(default_labels) else f"数据集{i+1}"
-                if isinstance(value, (tuple, list)) and len(value) >= 2:
-                    X_raw, y_raw = value[0], value[1]
-                    X_df = _ensure_dataframe(X_raw, feature_names=self._feature_names)
-                    if y_raw is None:
-                        y_s, y_dict = self._build_y(X_df, self._target_cfg)
-                        if y_dict and not self._label_names:
-                            self._label_names = list(y_dict.keys())
-                    else:
-                        y_s = _ensure_series(y_raw, name=self._target_name)
-                        y_dict = None
-                else:
-                    X_raw = value
-                    X_df = _ensure_dataframe(X_raw, feature_names=self._feature_names)
-                    y_s, y_dict = self._build_y(X_df, self._target_cfg)
-                    if y_dict and not self._label_names:
-                        self._label_names = list(y_dict.keys())
+            default_labels_list = ["训练集", "测试集", "OOT集", "验证集", "开发集"]
+            entries = [
+                (default_names[i] if i < len(default_names) else f"dataset_{i}", value)
+                for i, value in enumerate(datasets)
+            ]
+            default_labels = {
+                key: default_labels_list[i] if i < len(default_labels_list) else f"数据集{i + 1}"
+                for i, (key, _) in enumerate(entries)
+            }
+        else:
+            raise ValueError("datasets 必须为字典或列表")
 
-                self._add_dataset(key, label, X_df, y_s, y_dict)
-                self._datasets_info[key] = label
+        specs: List[Tuple[Any, ...]] = []
+        candidate_labels: List[str] = []
+        for key, value in entries:
+            label = default_labels.get(key, key)
+            if isinstance(value, (tuple, list)) and len(value) >= 2:
+                X_raw, y_raw = value[0], value[1]
+                X_df = _ensure_dataframe(X_raw, feature_names=self._feature_names)
+                if y_raw is None:
+                    y_s, y_dict = self._build_y(X_df, self._target_cfg)
+                else:
+                    y_s = _ensure_series(y_raw, name=self._target_name)
+                    y_dict = None
+            else:
+                X_df = _ensure_dataframe(value, feature_names=self._feature_names)
+                y_s, y_dict = self._build_y(X_df, self._target_cfg)
+            if y_dict and not candidate_labels:
+                candidate_labels = list(y_dict)
+            specs.append((self.model, key, label, X_df, y_s, y_dict, self._feature_names))
+
+        self._commit_dataset_specs(specs)
+        self._label_names = candidate_labels
 
     def _init_from_xy(self, X_train, y_train, X_test, y_test):
         """从 X/y 参数初始化（兼容旧 API 及 scorecardpipeline 风格）."""
@@ -570,26 +792,28 @@ class ModelReport:
         # 支持 y_train 为 None 的 scorecardpipeline 风格（从 X 中推导标签）
         if y_train is None:
             y_train_s, y_dict_train = self._build_y(X_train_df, self._target_cfg)
-            if y_dict_train and not self._label_names:
-                self._label_names = list(y_dict_train.keys())
         else:
             y_train_s = _ensure_series(y_train, name=self._target_name)
             y_dict_train = None
 
-        self._add_dataset("train", "训练集", X_train_df, y_train_s, y_dict_train)
-        self._datasets_info["train"] = "训练集"
+        specs: List[Tuple[Any, ...]] = [
+            (self.model, "train", "训练集", X_train_df, y_train_s, y_dict_train, self._feature_names)
+        ]
+        candidate_labels = list(y_dict_train) if y_dict_train else []
 
         if X_test is not None:
             X_test_df = _ensure_dataframe(X_test, feature_names=list(X_train_df.columns))
             if y_test is None:
                 y_test_s, y_dict_test = self._build_y(X_test_df, self._target_cfg)
-                if y_dict_test and not self._label_names:
-                    self._label_names = list(y_dict_test.keys())
             else:
                 y_test_s = _ensure_series(y_test, name=self._target_name)
                 y_dict_test = None
-            self._add_dataset("test", "测试集", X_test_df, y_test_s, y_dict_test)
-            self._datasets_info["test"] = "测试集"
+            if y_dict_test and not candidate_labels:
+                candidate_labels = list(y_dict_test)
+            specs.append((self.model, "test", "测试集", X_test_df, y_test_s, y_dict_test, self._feature_names))
+
+        self._commit_dataset_specs(specs)
+        self._label_names = candidate_labels
 
     # ---------- 数据集管理 ----------
 
@@ -601,40 +825,20 @@ class ModelReport:
         y: pd.Series,
         y_dict: Optional[Dict[str, np.ndarray]] = None,
     ):
-        # 获取模型实际需要的特征列表，过滤掉额外列，避免预测时报错
-        # 优先级：ScoreCard.feature_names_ > sklearn.feature_names_in_ > None
-        required_features: Optional[List[str]] = None
-        if hasattr(self.model, "feature_names_") and self.model.feature_names_ is not None:
-            # ScoreCard 等模型：使用 fit 后确定的入模特征名
-            required_features = list(self.model.feature_names_)
-        elif hasattr(self.model, "feature_names_in_") and self.model.feature_names_in_ is not None:
-            # sklearn 模型
-            required_features = list(self.model.feature_names_in_)
-
-        if required_features:
-            missing = set(required_features) - set(X.columns)
-            if missing:
-                raise ValueError(f"数据集缺少以下模型特征: {missing}")
-            X_for_pred = X[required_features]
-        elif self._feature_names:
-            missing = set(self._feature_names) - set(X.columns)
-            if missing:
-                raise ValueError(f"数据集缺少以下模型特征: {missing}")
-            X_for_pred = X[self._feature_names]
-        else:
-            X_for_pred = X
-
-        if len(X) != len(y):
-            raise ValueError(f"特征与标签样本数不一致: X={len(X)}, y={len(y)}")
-        self._datasets[key] = ReportDataset(
-            name=key,
-            label=label,
-            X=X,
-            y=y,
-            y_proba=_proba_pos(self.model, X_for_pred),
-            score=_score_from_model(self.model, X_for_pred),
-            y_dict=y_dict,
-        )
+        spec = (self.model, key, label, X, y, y_dict, self._feature_names)
+        dataset = parallel_execute(
+            _build_report_dataset,
+            [spec],
+            n_jobs=self.n_jobs,
+            parallel_backend=self.parallel_backend,
+            parallel_config=self.parallel_config,
+            task_labels=[key],
+            default_backend="loky",
+        )[0]
+        # worker 成功后才提交；已有数据集与缓存不会被失败任务破坏。
+        self._datasets[key] = dataset
+        self._datasets_info[key] = label
+        self._invalidate_caches()
 
     def add_dataset(self, key: str, label: str, X, y=None, feature_names: Optional[List[str]] = None):
         """添加额外数据集（如 OOT）用于报告.
@@ -649,12 +853,12 @@ class ModelReport:
         # y=None 时从 X 中通过 overdue+dpds 自动构建标签（scorecardpipeline 风格）
         if y is None:
             y, y_dict = self._build_y(X, self._target_cfg)
-            if y_dict and not self._label_names:
-                self._label_names = list(y_dict.keys())
         else:
             y_dict = None
         y = _ensure_series(y, name=self._target_name)
         self._add_dataset(key, label, X, y, y_dict)
+        if y_dict and not self._label_names:
+            self._label_names = list(y_dict)
 
     def _is_multi_label(self) -> bool:
         """是否多标签模式."""
@@ -722,73 +926,81 @@ class ModelReport:
 
         :param label: 多标签模式下指定标签名，None 时使用 combined y
         """
-        from ..core.metrics import ks, auc, psi
+        if label in self._metrics_cache:
+            return self._metrics_cache[label].copy()
 
         ordered_keys = ["train", "test"] + [k for k in self._datasets if k not in ("train", "test")]
         ds_keys = [k for k in ordered_keys if k in self._datasets]
         labels_map = {k: self._datasets[k].label for k in ds_keys}
-
-        if self._is_multi_label() and label:
-            # 多标签模式：每列对应一个数据集，多行对应 KS/AUC/样本数/坏样本率
-            rows = []
-            rows.append(
-                {
-                    "统计项": "KS",
-                    **{
-                        labels_map[k]: _safe_binary_metric(ks, self._get_y(k, label), self._datasets[k].y_proba)
-                        for k in ds_keys
-                    },
-                }
-            )
-            rows.append(
-                {
-                    "统计项": "AUC",
-                    **{
-                        labels_map[k]: _safe_binary_metric(auc, self._get_y(k, label), self._datasets[k].y_proba)
-                        for k in ds_keys
-                    },
-                }
-            )
-            rows.append({"统计项": "样本数", **{labels_map[k]: len(self._get_y(k, label)) for k in ds_keys}})
-            rows.append({"统计项": "坏样本率", **{labels_map[k]: float(self._get_y(k, label).mean()) for k in ds_keys}})
-            return pd.DataFrame(rows)
-
-        # 单标签模式或 combined y
-        rows = []
-        rows.append(
-            {
-                "统计项": "KS",
-                **{
-                    labels_map[k]: _safe_binary_metric(ks, self._datasets[k].y, self._datasets[k].y_proba)
-                    for k in ds_keys
-                },
-            }
+        tasks = [(self._get_y(key, label), self._datasets[key].y_proba) for key in ds_keys]
+        metric_values = parallel_execute(
+            _binary_metric_worker,
+            tasks,
+            n_jobs=self.n_jobs,
+            parallel_backend=self.parallel_backend,
+            parallel_config=self.parallel_config,
+            task_labels=[f"指标:{label or 'combined'}:{key}" for key in ds_keys],
+            default_backend="loky",
         )
-        rows.append(
-            {
-                "统计项": "AUC",
-                **{
-                    labels_map[k]: _safe_binary_metric(auc, self._datasets[k].y, self._datasets[k].y_proba)
-                    for k in ds_keys
-                },
-            }
-        )
-        rows.append({"统计项": "样本数", **{labels_map[k]: len(self._datasets[k].y) for k in ds_keys}})
-        rows.append({"统计项": "坏样本率", **{labels_map[k]: float(self._datasets[k].y.mean()) for k in ds_keys}})
-        if len(ds_keys) >= 2:
-            psi_row: Dict[str, Any] = {"统计项": "PSI", labels_map[ds_keys[0]]: "\\"}
-            for k in ds_keys[1:]:
-                try:
-                    psi_row[labels_map[k]] = psi(self._datasets[ds_keys[0]].score, self._datasets[k].score)
-                except Exception:
-                    psi_row[labels_map[k]] = np.nan
+
+        rows = [
+            {"统计项": "KS", **{labels_map[k]: values[0] for k, values in zip(ds_keys, metric_values)}},
+            {"统计项": "AUC", **{labels_map[k]: values[1] for k, values in zip(ds_keys, metric_values)}},
+            {"统计项": "样本数", **{labels_map[k]: values[2] for k, values in zip(ds_keys, metric_values)}},
+            {"统计项": "坏样本率", **{labels_map[k]: values[3] for k, values in zip(ds_keys, metric_values)}},
+        ]
+
+        # 多标签的单独标签视图保持原布局，不附加 PSI 行。
+        if not (self._is_multi_label() and label) and len(ds_keys) >= 2:
+            base_key = ds_keys[0]
+            psi_tasks = [(self._datasets[base_key].score, self._datasets[key].score) for key in ds_keys[1:]]
+            psi_values = parallel_execute(
+                _psi_metric_worker,
+                psi_tasks,
+                n_jobs=self.n_jobs,
+                parallel_backend=self.parallel_backend,
+                parallel_config=self.parallel_config,
+                task_labels=[f"PSI:{base_key}:{key}" for key in ds_keys[1:]],
+                default_backend="loky",
+            )
+            psi_row: Dict[str, Any] = {"统计项": "PSI", labels_map[base_key]: "\\"}
+            psi_row.update({labels_map[key]: value for key, value in zip(ds_keys[1:], psi_values)})
             rows.append(psi_row)
 
-        return pd.DataFrame(rows)
+        result = pd.DataFrame(rows)
+        self._metrics_cache[label] = result.copy()
+        return result
 
     # ---------- 2. 评分分箱效果表 ----------
 
     def get_bin_table(
+        self,
+        dataset: str = "train",
+        method: str = "quantile",
+        max_n_bins: int = 10,
+        amount_col: Optional[str] = None,
+        margins: bool = True,
+        label: Optional[str] = None,
+        labels: Optional[List[str]] = None,
+    ) -> pd.DataFrame:
+        """返回评分分箱表，并缓存同一报告调用中的确定性结果。"""
+        cache_key = (dataset, method, max_n_bins, amount_col, margins, label, tuple(labels or ()))
+        cached = self._bin_table_cache.get(cache_key)
+        if cached is not None:
+            return cached.copy()
+        result = self._compute_bin_table(
+            dataset=dataset,
+            method=method,
+            max_n_bins=max_n_bins,
+            amount_col=amount_col,
+            margins=margins,
+            label=label,
+            labels=labels,
+        )
+        self._bin_table_cache[cache_key] = result.copy()
+        return result
+
+    def _compute_bin_table(
         self,
         dataset: str = "train",
         method: str = "quantile",
@@ -839,6 +1051,9 @@ class ModelReport:
                 missing_separate=True,
                 margins=margins,
                 return_cols=score_return_cols,
+                n_jobs=self.n_jobs,
+                parallel_backend=self.parallel_backend,
+                parallel_config=self.parallel_config,
             )
             if amount_col and amount_col in df.columns:
                 kw["amount"] = amount_col
@@ -874,6 +1089,9 @@ class ModelReport:
             missing_separate=True,
             margins=margins,
             return_cols=score_return_cols,
+            n_jobs=self.n_jobs,
+            parallel_backend=self.parallel_backend,
+            parallel_config=self.parallel_config,
         )
         if amount_col and amount_col in df.columns:
             kw["amount"] = amount_col
@@ -887,8 +1105,6 @@ class ModelReport:
 
     def get_feature_importance(self, top_n: Optional[int] = None) -> pd.DataFrame:
         if self._importance_cache is None:
-            from ..core.metrics import ks, iv, psi
-
             importances = None
             if hasattr(self.model, "get_feature_importances"):
                 try:
@@ -917,34 +1133,27 @@ class ModelReport:
 
                 train_ds = self._datasets["train"]
                 y_arr = train_ds.y.to_numpy()
-
-                iv_vals, ks_vals, psi_vals = [], [], []
+                metric_tasks = []
                 for feat in importance_df.index:
-                    col = train_ds.X[feat] if feat in train_ds.X.columns else None
-                    if col is not None:
-                        try:
-                            iv_vals.append(iv(y_arr, col))
-                        except Exception:
-                            iv_vals.append(np.nan)
-                        try:
-                            ks_vals.append(ks(y_arr, col))
-                        except Exception:
-                            ks_vals.append(np.nan)
-                        if "test" in self._datasets and feat in self._datasets["test"].X.columns:
-                            try:
-                                psi_vals.append(psi(col, self._datasets["test"].X[feat]))
-                            except Exception:
-                                psi_vals.append(np.nan)
-                        else:
-                            psi_vals.append(np.nan)
-                    else:
-                        iv_vals.append(np.nan)
-                        ks_vals.append(np.nan)
-                        psi_vals.append(np.nan)
-
-                importance_df["IV"] = iv_vals
-                importance_df["KS"] = ks_vals
-                importance_df["PSI"] = psi_vals
+                    train_values = train_ds.X[feat] if feat in train_ds.X.columns else pd.Series(dtype=float)
+                    test_values = (
+                        self._datasets["test"].X[feat]
+                        if "test" in self._datasets and feat in self._datasets["test"].X.columns
+                        else None
+                    )
+                    metric_tasks.append((y_arr, train_values, test_values))
+                metric_values = parallel_execute(
+                    _feature_metric_worker,
+                    metric_tasks,
+                    n_jobs=self.n_jobs,
+                    parallel_backend=self.parallel_backend,
+                    parallel_config=self.parallel_config,
+                    task_labels=[f"特征指标:{feat}" for feat in importance_df.index],
+                    default_backend="loky",
+                )
+                importance_df["IV"] = [values[0] for values in metric_values]
+                importance_df["KS"] = [values[1] for values in metric_values]
+                importance_df["PSI"] = [values[2] for values in metric_values]
                 self._importance_cache = importance_df.sort_values("特征重要性", ascending=False)
 
         df = self._importance_cache.copy()
@@ -1006,15 +1215,48 @@ class ModelReport:
     # ---------- 5. 特征相关性 ----------
 
     def get_features_corr(self) -> pd.DataFrame:
+        if self._corr_cache is not None:
+            return self._corr_cache.copy()
         importance = self.get_feature_importance()
         features = importance.index.tolist()
         if not features:
             features = self.feature_names
-        return self._datasets["train"].X[features].corr()
+        result = self._datasets["train"].X[features].corr()
+        self._corr_cache = result.copy()
+        return result
 
     # ---------- 6. 特征分箱分析 ----------
 
     def get_feature_bin_table(
+        self,
+        feature: str,
+        dataset: str = "train",
+        max_n_bins: int = 10,
+        method: str = "quantile",
+        margins: bool = True,
+        amount_col: Optional[str] = None,
+        label: Optional[str] = None,
+        labels: Optional[List[str]] = None,
+    ) -> pd.DataFrame:
+        """返回特征分箱表，并缓存同一报告调用中的确定性结果。"""
+        cache_key = (feature, dataset, max_n_bins, method, margins, amount_col, label, tuple(labels or ()))
+        cached = self._feature_bin_table_cache.get(cache_key)
+        if cached is not None:
+            return cached.copy()
+        result = self._compute_feature_bin_table(
+            feature=feature,
+            dataset=dataset,
+            max_n_bins=max_n_bins,
+            method=method,
+            margins=margins,
+            amount_col=amount_col,
+            label=label,
+            labels=labels,
+        )
+        self._feature_bin_table_cache[cache_key] = result.copy()
+        return result
+
+    def _compute_feature_bin_table(
         self,
         feature: str,
         dataset: str = "train",
@@ -1048,6 +1290,9 @@ class ModelReport:
                 max_n_bins=max_n_bins,
                 margins=margins,
                 missing_separate=True,
+                n_jobs=self.n_jobs,
+                parallel_backend=self.parallel_backend,
+                parallel_config=self.parallel_config,
             )
             if binner is not None:
                 kw["binner"] = binner
@@ -1084,6 +1329,9 @@ class ModelReport:
             max_n_bins=max_n_bins,
             margins=margins,
             missing_separate=True,
+            n_jobs=self.n_jobs,
+            parallel_backend=self.parallel_backend,
+            parallel_config=self.parallel_config,
         )
         if binner is not None:
             kw["binner"] = binner
@@ -1099,6 +1347,26 @@ class ModelReport:
     # ---------- 8. 图表导出 ----------
 
     def _get_top_n_lift_table(
+        self,
+        percentiles: Tuple[float, ...] = (0.01, 0.03, 0.05, 0.10),
+        amount_col: Optional[str] = None,
+        label: Optional[str] = None,
+        labels: Optional[List[str]] = None,
+    ) -> pd.DataFrame:
+        cache_key = (tuple(percentiles), amount_col, label, tuple(labels or ()))
+        cached = self._lift_table_cache.get(cache_key)
+        if cached is not None:
+            return cached.copy()
+        result = self._compute_top_n_lift_table(
+            percentiles=percentiles,
+            amount_col=amount_col,
+            label=label,
+            labels=labels,
+        )
+        self._lift_table_cache[cache_key] = result.copy()
+        return result
+
+    def _compute_top_n_lift_table(
         self,
         percentiles: Tuple[float, ...] = (0.01, 0.03, 0.05, 0.10),
         amount_col: Optional[str] = None,
@@ -1222,6 +1490,8 @@ class ModelReport:
 
     def _get_features_summary(self) -> pd.DataFrame:
         """使用 pd.DataFrame.summary() 获取入模变量综合统计."""
+        if self._features_summary_cache is not None:
+            return self._features_summary_cache.copy()
         importance = self.get_feature_importance()
         features = importance.index.tolist() if not importance.empty else self.feature_names
 
@@ -1240,14 +1510,25 @@ class ModelReport:
                 y=target_col,
                 val_df=test_df,
             )
+            self._features_summary_cache = summary_result.copy()
             return summary_result
         except Exception:
-            return self.get_features_describe()
+            result = self.get_features_describe()
+            self._features_summary_cache = result.copy()
+            return result
 
     # 分月评分分布分位数（与特征效率分析保持一致的分位数口径）
     _SCORE_DIST_QUANTILES = [0.01, 0.03, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.97, 0.99]
 
     def _get_monthly_metrics(self, date_col: str) -> pd.DataFrame:
+        cached = self._monthly_metrics_cache.get(date_col)
+        if cached is not None:
+            return cached.copy()
+        result = self._compute_monthly_metrics(date_col)
+        self._monthly_metrics_cache[date_col] = result.copy()
+        return result
+
+    def _compute_monthly_metrics(self, date_col: str) -> pd.DataFrame:
         """分月计算 KS/AUC 及评分分布（均值/标准差/极值/分位数）."""
         from ..core.metrics import ks, auc
 
@@ -1288,6 +1569,14 @@ class ModelReport:
         return pd.DataFrame(rows) if rows else pd.DataFrame()
 
     def _get_monthly_psi_matrix(self, date_col: str) -> pd.DataFrame:
+        cached = self._monthly_psi_cache.get(date_col)
+        if cached is not None:
+            return cached.copy()
+        result = self._compute_monthly_psi_matrix(date_col)
+        self._monthly_psi_cache[date_col] = result.copy()
+        return result
+
+    def _compute_monthly_psi_matrix(self, date_col: str) -> pd.DataFrame:
         """分月 PSI 交叉矩阵."""
         from ..core.metrics import psi
 
@@ -1542,7 +1831,8 @@ class ModelReport:
         ...                           overdue=['MOB1'], dpds=[7, 3, 0])
         >>> report.summary()  # 行: MOB1@7 / MOB1@3 / MOB1@0；列: (KS, 训练集) ...
         """
-        from ..core.metrics import ks, auc
+        if self._summary_cache is not None:
+            return self._summary_cache.copy()
 
         ordered_keys = ["train", "test"] + [k for k in self._datasets if k not in ("train", "test")]
         ds_keys = [k for k in ordered_keys if k in self._datasets]
@@ -1556,16 +1846,37 @@ class ModelReport:
             targets = [None]
             index_labels = [self._target_name or "target"]
 
+        tasks = [
+            (self._get_y(ds_key, target_name), self._datasets[ds_key].y_proba)
+            for target_name in targets
+            for ds_key in ds_keys
+        ]
+        labels = [
+            f"摘要:{target_name or 'target'}:{ds_key}"
+            for target_name in targets
+            for ds_key in ds_keys
+        ]
+        values = parallel_execute(
+            _binary_metric_worker,
+            tasks,
+            n_jobs=self.n_jobs,
+            parallel_backend=self.parallel_backend,
+            parallel_config=self.parallel_config,
+            task_labels=labels,
+            default_backend="loky",
+        )
+
         rows: List[Dict[tuple, Any]] = []
-        for tgt in targets:
+        offset = 0
+        for _ in targets:
             row: Dict[tuple, Any] = {}
-            for ds_key, ds_label in zip(ds_keys, ds_labels):
-                y_arr = self._get_y(ds_key, tgt)
-                proba = self._datasets[ds_key].y_proba
-                row[("KS", ds_label)] = _safe_binary_metric(ks, y_arr, proba)
-                row[("AUC", ds_label)] = _safe_binary_metric(auc, y_arr, proba)
-                row[("样本数", ds_label)] = len(y_arr)
-                row[("坏样本率", ds_label)] = float(y_arr.mean()) if len(y_arr) else np.nan
+            for ds_label in ds_labels:
+                ks_value, auc_value, sample_count, bad_rate = values[offset]
+                offset += 1
+                row[("KS", ds_label)] = ks_value
+                row[("AUC", ds_label)] = auc_value
+                row[("样本数", ds_label)] = sample_count
+                row[("坏样本率", ds_label)] = bad_rate
             rows.append(row)
 
         columns = pd.MultiIndex.from_tuples(
@@ -1573,7 +1884,9 @@ class ModelReport:
             names=["统计指标", "数据集"],
         )
         index = pd.Index(index_labels, name="逾期指标")
-        return pd.DataFrame(rows, index=index, columns=columns)
+        result = pd.DataFrame(rows, index=index, columns=columns)
+        self._summary_cache = result.copy()
+        return result
 
     # ---------- 10. 控制台输出 ----------
 
@@ -1603,7 +1916,134 @@ class ModelReport:
 
     # ---------- 11. to_excel ----------
 
+    def _precompute_excel_tables(
+        self,
+        *,
+        n_bins: int,
+        bin_method: str,
+        amount_col: Optional[str],
+        date_col: Optional[str],
+        show_importance: bool,
+    ) -> None:
+        """在创建绘图与工作簿对象前完成报告核心数据计算。"""
+        self.summary()
+        if self._is_multi_label():
+            for label in self._label_names:
+                self.get_metrics(label)
+        else:
+            self.get_metrics()
+        importance = self.get_feature_importance()
+        self.get_features_corr()
+        if show_importance:
+            self.get_features_describe()
+
+        labels_arg = self._label_names if self._is_multi_label() else None
+        for dataset, ds in self._datasets.items():
+            try:
+                self.get_bin_table(
+                    dataset,
+                    method=bin_method,
+                    max_n_bins=n_bins,
+                    margins=True,
+                    labels=labels_arg,
+                )
+            except Exception as exc:
+                raise RuntimeError(f"生成评分分箱失败 [数据集={ds.label}]") from exc
+            if amount_col:
+                try:
+                    self.get_bin_table(
+                        dataset,
+                        method=bin_method,
+                        max_n_bins=n_bins,
+                        amount_col=amount_col,
+                        margins=True,
+                        labels=labels_arg,
+                    )
+                except Exception as exc:
+                    raise RuntimeError(
+                        f"生成金额口径评分分箱失败 [数据集={ds.label}, 金额字段={amount_col}]"
+                    ) from exc
+        self._get_top_n_lift_table(labels=labels_arg)
+        if amount_col:
+            self._get_top_n_lift_table(amount_col=amount_col, labels=labels_arg)
+        if date_col:
+            self._get_monthly_metrics(date_col)
+            self._get_monthly_psi_matrix(date_col)
+
+        feature_list = importance.index.tolist() if not importance.empty else self.feature_names
+        for feature in feature_list:
+            for dataset, ds in self._datasets.items():
+                try:
+                    self.get_feature_bin_table(
+                        feature,
+                        dataset,
+                        max_n_bins=n_bins,
+                        method=bin_method,
+                        margins=True,
+                        labels=labels_arg,
+                    )
+                except Exception as exc:
+                    raise RuntimeError(
+                        f"生成特征有效性分箱失败 [特征={feature}, 数据集={ds.label}]"
+                    ) from exc
+                if amount_col:
+                    try:
+                        self.get_feature_bin_table(
+                            feature,
+                            dataset,
+                            max_n_bins=n_bins,
+                            method=bin_method,
+                            margins=True,
+                            amount_col=amount_col,
+                            labels=labels_arg,
+                        )
+                    except Exception as exc:
+                        raise RuntimeError(
+                            f"生成金额口径特征分箱失败 [特征={feature}, 数据集={ds.label}, 金额字段={amount_col}]"
+                        ) from exc
+
     def to_excel(
+        self,
+        filepath: str,
+        *,
+        n_bins: int = 10,
+        bin_method: str = "quantile",
+        amount_col: Optional[str] = None,
+        date_col: Optional[str] = None,
+        date_freq: Optional[str] = None,
+        group_col: Optional[str] = None,
+        with_plots: bool = True,
+        model_name: Optional[str] = None,
+        project_desc: Optional[str] = None,
+        feature_map: Optional[Dict[str, str]] = None,
+        feature_info: Optional[pd.DataFrame] = None,
+        show_lift: bool = True,
+        show_importance: bool = True,
+        data_source: Optional[str] = None,
+        loc_cols: Optional[Union[str, List[str]]] = None,
+    ) -> str:
+        """事务性生成 Excel；失败时恢复进入调用前的全部派生缓存。"""
+        return self._run_cache_transaction(
+            self._to_excel_impl,
+            filepath,
+            n_bins=n_bins,
+            bin_method=bin_method,
+            amount_col=amount_col,
+            date_col=date_col,
+            date_freq=date_freq,
+            group_col=group_col,
+            with_plots=with_plots,
+            model_name=model_name,
+            project_desc=project_desc,
+            feature_map=feature_map,
+            feature_info=feature_info,
+            show_lift=show_lift,
+            show_importance=show_importance,
+            data_source=data_source,
+            loc_cols=loc_cols,
+        )
+
+    def _to_excel_impl(
         self,
         filepath: str,
         *,
@@ -1637,6 +2077,13 @@ class ModelReport:
         """
         from ..excel import ExcelWriter, dataframe2excel
 
+        self._precompute_excel_tables(
+            n_bins=n_bins,
+            bin_method=bin_method,
+            amount_col=amount_col,
+            date_col=date_col,
+            show_importance=show_importance,
+        )
         model_name = model_name or self.model.__class__.__name__
 
         plot_paths: Dict[str, List[str]] = {}
@@ -1901,6 +2348,9 @@ class ModelReport:
             self._label_names if is_multi else [label_text],
             display_labels=self._overdue_label_map(separator="@") if is_multi else None,
             flat_total_col="样本数",
+            n_jobs=self.n_jobs,
+            parallel_backend=self.parallel_backend,
+            parallel_config=self.parallel_config,
         )
         if is_multi:
             stat_start_row = end_row + 1
@@ -1951,8 +2401,10 @@ class ModelReport:
                     group_values,
                     self._label_names if is_multi else [label_text],
                     display_labels=self._overdue_label_map(separator="@") if is_multi else None,
+                    n_jobs=self.n_jobs,
+                    parallel_backend=self.parallel_backend,
+                    parallel_config=self.parallel_config,
                 )
-                dist_start_row = end_row + 1
                 result = dataframe2excel(
                     dist_df,
                     writer,
@@ -3050,6 +3502,10 @@ class ModelReport:
     # ---------- 12. to_dict ----------
 
     def to_dict(self) -> Dict[str, Any]:
+        """事务性返回报告字典；任一表失败时恢复调用前缓存。"""
+        return self._run_cache_transaction(self._to_dict_impl)
+
+    def _to_dict_impl(self) -> Dict[str, Any]:
         labels_arg = self._label_names if self._is_multi_label() else None
         result: Dict[str, Any] = {
             "summary": self.summary().reset_index().to_dict(orient="records"),
@@ -3094,6 +3550,9 @@ def auto_model_report(
     show_importance: bool = True,
     data_source: Optional[str] = None,
     loc_cols: Optional[Union[str, List[str]]] = None,
+    n_jobs=-1,
+    parallel_backend: Optional[str] = None,
+    parallel_config: Optional[Dict[str, Any]] = None,
 ) -> ModelReport:
     """一键生成模型报告.
 
@@ -3173,6 +3632,9 @@ def auto_model_report(
     :param show_importance: 是否在报告中显示特征重要性
     :param data_source: 数据源描述
     :param loc_cols: 定位字段（订单号等），支持 str 或 List[str]，用于生产测试用例列
+    :param n_jobs: 并行工作数；-1 自动保留 CPU，None 使用兼容串行模式
+    :param parallel_backend: joblib 后端，如 ``threading`` 或 ``loky``
+    :param parallel_config: joblib 其他并行配置
     :return: ModelReport 实例
     """
     report = ModelReport(
@@ -3186,6 +3648,9 @@ def auto_model_report(
         target=target,
         overdue=overdue,
         dpds=dpds,
+        n_jobs=n_jobs,
+        parallel_backend=parallel_backend,
+        parallel_config=parallel_config,
     )
 
     if verbose:
@@ -3223,11 +3688,14 @@ def compare_models(
     X_test=None,
     y_test=None,
     excel_path: Optional[str] = None,
+    n_jobs=-1,
+    parallel_backend: Optional[str] = None,
+    parallel_config: Optional[Dict[str, Any]] = None,
 ) -> pd.DataFrame:
     """横向对比多个模型的评估指标.
 
     对每个模型分别构建 :class:`ModelReport` 并取其 :meth:`~ModelReport.summary`，
-    纵向拼接为一张对比表；单个模型构建失败时以 ``错误`` 列记录原因，不影响其余模型。
+    按输入映射顺序纵向拼接为一张对比表；任一模型失败时立即抛出并保留原始异常链。
 
     :param models: 模型名称到模型对象的映射，如 ``{'XGB': xgb_model, 'LR': lr_model}``
     :param X_train: 训练集特征
@@ -3235,6 +3703,9 @@ def compare_models(
     :param X_test: 测试集特征，可选
     :param y_test: 测试集标签，可选
     :param excel_path: 可选，若提供则将对比表导出到该 Excel 路径
+    :param n_jobs: 模型外层并行工作数；-1 自动保留 CPU
+    :param parallel_backend: joblib 后端，如 ``threading`` 或 ``loky``
+    :param parallel_config: joblib 其他并行配置
     :return: 含 ``模型名称`` 列的指标对比 ``DataFrame``
 
     **参考样例**
@@ -3247,20 +3718,37 @@ def compare_models(
     ... )
     >>> print(result)
     """
-    parts: Dict[str, pd.DataFrame] = {}
-    for name, model in models.items():
-        try:
-            report = ModelReport(
-                model=model,
-                X_train=X_train,
-                y_train=y_train,
-                X_test=X_test,
-                y_test=y_test,
-            )
-            parts[name] = report.summary()
-        except Exception as e:
-            # 失败的模型以「错误」列记录原因，不影响其余模型对比
-            parts[name] = pd.DataFrame({"错误": [str(e)]}, index=pd.Index(["target"], name="逾期指标"))
+    validate_parallel_config(parallel_backend, parallel_config)
+    dataset_task_count = 1 + int(X_test is not None)
+    plan = _plan_model_comparison_parallel(
+        n_jobs,
+        model_task_count=len(models),
+        dataset_task_count=dataset_task_count,
+    )
+    tasks = [
+        (
+            name,
+            model,
+            X_train,
+            y_train,
+            X_test,
+            y_test,
+            plan.child_workers,
+            parallel_backend,
+            parallel_config,
+        )
+        for name, model in models.items()
+    ]
+    computed = _execute_model_comparison_plan(
+        _compare_model_worker,
+        tasks,
+        plan,
+        parallel_backend=parallel_backend,
+        parallel_config=parallel_config,
+        task_labels=list(models),
+        default_backend="loky",
+    )
+    parts: Dict[str, pd.DataFrame] = {name: summary for name, summary in computed}
 
     # 以「模型名称」作为最外层行索引纵向拼接，保留 summary 的「统计指标 × 数据集」多层列
     result = pd.concat(parts, names=["模型名称"]) if parts else pd.DataFrame()

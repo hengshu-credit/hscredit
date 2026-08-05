@@ -2,11 +2,45 @@
 
 import subprocess
 import sys
+import inspect
 from pathlib import Path
 
 import nbformat
+import pytest
 
 from scripts.validate_examples import discover_examples, execute_notebook, execute_python, main
+
+
+@pytest.fixture(autouse=True)
+def _isolate_notebook_kernel_from_reusable_loky_pool(request):
+    """启动 Jupyter kernel 前关闭当前 pytest 进程复用的 loky worker。
+
+    Windows 上旧版 pyzmq 会继承前序 loky 运行时持有的文件描述符，随后在 kernel
+    启动时以 ``Bad file descriptor`` 直接终止 pytest。这里只处理当前进程中已经
+    存在的 joblib 可复用 executor；没有 pool 时不会创建新 pool，也不触碰系统中
+    其他 Python 进程。joblib 1.0 的 ``shutdown`` 没有 ``kill_workers`` 参数，故按
+    运行时签名兼容调用。
+    """
+    if "notebook" not in request.node.name:
+        yield
+        return
+
+    try:
+        from joblib.externals.loky import reusable_executor
+    except (ImportError, AttributeError):
+        yield
+        return
+
+    executor = getattr(reusable_executor, "_executor", None)
+    if executor is not None:
+        shutdown_kwargs = {"wait": True}
+        if "kill_workers" in inspect.signature(executor.shutdown).parameters:
+            shutdown_kwargs["kill_workers"] = True
+        executor.shutdown(**shutdown_kwargs)
+        if getattr(reusable_executor, "_executor", None) is executor:
+            reusable_executor._executor = None
+
+    yield
 
 
 def _write_notebook(path: Path, *sources: str) -> None:

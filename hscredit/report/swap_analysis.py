@@ -24,11 +24,55 @@ Author: hscredit
 
 import numpy as np
 import pandas as pd
-from typing import Union, List, Dict, Optional, Tuple, Any
-from dataclasses import dataclass, field
+from typing import Union, List, Dict, Optional, Any
+from dataclasses import dataclass
 from enum import Enum
+from sklearn.base import BaseEstimator
 
 from ..core.rules import Rule
+from ..utils.parallel import parallel_execute, resolve_n_jobs, validate_parallel_config
+
+
+def _validate_report_parallel(n_jobs, parallel_backend, parallel_config) -> None:
+    validate_parallel_config(parallel_backend, parallel_config)
+    resolve_n_jobs(n_jobs, task_count=1)
+
+
+def _reference_target_stats(task):
+    """计算参考数据中一个目标的有序分箱统计。"""
+    df, target_col, amount_col = task
+    stats = []
+    for interval in df['bin'].cat.categories:
+        subset = df[df['bin'] == interval]
+        if subset.empty:
+            continue
+        sample_count = len(subset)
+        bad_count = subset[target_col].sum()
+        stats.append({
+            'bin_label': f"[{interval.left:.2f}, {interval.right:.2f})",
+            'score_min': interval.left,
+            'score_max': interval.right,
+            'sample_count': sample_count,
+            'bad_count': bad_count,
+            'bad_rate': bad_count / sample_count if sample_count > 0 else 0.0,
+            'amount_sum': subset[amount_col].sum() if amount_col else None,
+        })
+    return target_col, stats
+
+
+def _swap_target_prediction(task):
+    """计算 swap 数据中一个目标的预测及调整坏样本率。"""
+    provider, scores, target, out_in_mask, uplift = task
+    predicted = provider.predict_bad_rate(scores, target)
+    adjusted = pd.Series(np.asarray(predicted), index=scores.index, dtype=float)
+    adjusted.loc[out_in_mask] *= uplift
+    return target, predicted, adjusted.clip(upper=1.0)
+
+
+def _rule_mask_call(task):
+    """计算单条规则命中掩码。"""
+    rule, df = task
+    return pd.Series(rule.predict(df), index=df.index).fillna(False).astype(bool)
 
 
 class SwapType(Enum):
@@ -138,7 +182,7 @@ class RiskRejectionMetrics:
         }
 
 
-class ReferenceDataProvider:
+class ReferenceDataProvider(BaseEstimator):
     """参考数据提供者.
     
     从有标签的参考数据计算评分区间逾期率，用于swap分析中的风险预估。
@@ -158,15 +202,22 @@ class ReferenceDataProvider:
         amount_col: Optional[str] = None,
         method: str = "quantile",
         max_n_bins: int = 10,
-        custom_bins: Optional[List[float]] = None
+        custom_bins: Optional[List[float]] = None,
+        n_jobs: Union[int, float] = -1,
+        parallel_backend: Optional[str] = None,
+        parallel_config: Optional[Dict[str, Any]] = None,
     ):
         self.score_col = score_col
-        self.target_cols = [target_cols] if isinstance(target_cols, str) else target_cols
+        self.target_cols = target_cols
         self.amount_col = amount_col
         self.method = method
         self.max_n_bins = max_n_bins
         self.custom_bins = custom_bins
-        self.bin_stats: Dict[str, List[Dict]] = {t: [] for t in self.target_cols}
+        self.n_jobs = n_jobs
+        self.parallel_backend = parallel_backend
+        self.parallel_config = parallel_config
+        target_names = [target_cols] if isinstance(target_cols, str) else target_cols
+        self.bin_stats: Dict[str, List[Dict]] = {t: [] for t in target_names}
         self._is_fitted = False
     
     def fit(self, df: pd.DataFrame) -> "ReferenceDataProvider":
@@ -177,43 +228,26 @@ class ReferenceDataProvider:
         """
         df = df.copy()
         
+        target_cols = [self.target_cols] if isinstance(self.target_cols, str) else list(self.target_cols)
         if self.custom_bins is not None:
             bins = self.custom_bins
         else:
             bins = self._generate_bins(df[self.score_col])
         
-        self.bins = bins
         df['bin'] = pd.cut(df[self.score_col], bins=bins, include_lowest=True)
-        
-        for target_col in self.target_cols:
-            stats = []
-            for interval in df['bin'].cat.categories:
-                mask = df['bin'] == interval
-                subset = df[mask]
-                
-                if len(subset) == 0:
-                    continue
-                
-                sample_count = len(subset)
-                bad_count = subset[target_col].sum()
-                bad_rate = bad_count / sample_count if sample_count > 0 else 0.0
-                
-                amount_sum = None
-                if self.amount_col:
-                    amount_sum = subset[self.amount_col].sum()
-                
-                stats.append({
-                    'bin_label': f"[{interval.left:.2f}, {interval.right:.2f})",
-                    'score_min': interval.left,
-                    'score_max': interval.right,
-                    'sample_count': sample_count,
-                    'bad_count': bad_count,
-                    'bad_rate': bad_rate,
-                    'amount_sum': amount_sum
-                })
-            
-            self.bin_stats[target_col] = stats
-        
+        tasks = [(df, target_col, self.amount_col) for target_col in target_cols]
+        results = parallel_execute(
+            _reference_target_stats,
+            tasks,
+            n_jobs=self.n_jobs,
+            parallel_backend=self.parallel_backend,
+            parallel_config=self.parallel_config,
+            task_labels=target_cols,
+            default_backend="threading",
+        )
+        candidate_stats = dict(results)
+        self.bins = bins
+        self.bin_stats = candidate_stats
         self._is_fitted = True
         return self
     
@@ -247,7 +281,8 @@ class ReferenceDataProvider:
         if not self._is_fitted:
             raise ValueError("需要先调用fit方法")
         
-        target = target_col or self.target_cols[0]
+        target_names = [self.target_cols] if isinstance(self.target_cols, str) else self.target_cols
+        target = target_col or target_names[0]
         stats = self.bin_stats[target]
         
         is_scalar = np.isscalar(scores)
@@ -277,7 +312,7 @@ class ReferenceDataProvider:
         return pd.Series(bad_rates)
 
 
-class SwapAnalyzer:
+class SwapAnalyzer(BaseEstimator):
     """Swap规则置换分析器.
     
     对swap数据进行风险预估和指标计算。
@@ -289,10 +324,16 @@ class SwapAnalyzer:
     def __init__(
         self,
         config: Optional[SwapRiskConfig] = None,
-        ref_provider: Optional[ReferenceDataProvider] = None
+        ref_provider: Optional[ReferenceDataProvider] = None,
+        n_jobs: Union[int, float] = -1,
+        parallel_backend: Optional[str] = None,
+        parallel_config: Optional[Dict[str, Any]] = None,
     ):
-        self.config = config or SwapRiskConfig()
+        self.config = config
         self.ref_provider = ref_provider
+        self.n_jobs = n_jobs
+        self.parallel_backend = parallel_backend
+        self.parallel_config = parallel_config
         self.result: Optional[SwapAnalysisResult] = None
     
     def analyze(
@@ -306,29 +347,40 @@ class SwapAnalyzer:
         :param ref_provider: 参考数据提供者（可选）
         :return: SwapAnalysisResult分析结果
         """
-        if ref_provider is not None:
-            self.ref_provider = ref_provider
-        
-        if self.ref_provider is None:
+        candidate_provider = ref_provider if ref_provider is not None else self.ref_provider
+        if candidate_provider is None:
             raise ValueError("需要提供ReferenceDataProvider")
         
-        if not self.ref_provider._is_fitted:
+        if not candidate_provider._is_fitted:
             raise ValueError("ReferenceDataProvider需要先调用fit方法")
         
         df = swap_df.copy()
-        cfg = self.config
-        targets = cfg.targets or self.ref_provider.target_cols
+        cfg = self.config or SwapRiskConfig()
+        provider_targets = ([candidate_provider.target_cols]
+                            if isinstance(candidate_provider.target_cols, str)
+                            else candidate_provider.target_cols)
+        targets = cfg.targets or provider_targets
         
         # 为每个样本、每个标签预估坏样本率
-        for target in targets:
-            df[f'predicted_bad_rate_{target}'] = self.ref_provider.predict_bad_rate(df[cfg.score_col], target)
-            df[f'adjusted_bad_rate_{target}'] = df[f'predicted_bad_rate_{target}']
-            out_in_mask = df[cfg.swap_type_col] == SwapType.OUT_IN.value
-            df.loc[out_in_mask, f'adjusted_bad_rate_{target}'] *= cfg.out_in_uplift
-            df[f'adjusted_bad_rate_{target}'] = df[f'adjusted_bad_rate_{target}'].clip(upper=1.0)
-        
-        self.result = self._calculate_stats(df, targets)
-        return self.result
+        out_in_mask = df[cfg.swap_type_col] == SwapType.OUT_IN.value
+        tasks = [(candidate_provider, df[cfg.score_col], target, out_in_mask, cfg.out_in_uplift) for target in targets]
+        predictions = parallel_execute(
+            _swap_target_prediction,
+            tasks,
+            n_jobs=self.n_jobs,
+            parallel_backend=self.parallel_backend,
+            parallel_config=self.parallel_config,
+            task_labels=targets,
+            default_backend="threading",
+        )
+        for target, predicted, adjusted in predictions:
+            df[f'predicted_bad_rate_{target}'] = np.asarray(predicted)
+            df[f'adjusted_bad_rate_{target}'] = np.asarray(adjusted)
+
+        candidate_result = self._calculate_stats(df, list(targets))
+        self.ref_provider = candidate_provider
+        self.result = candidate_result
+        return candidate_result
     
     def _calculate_stats(self, df: pd.DataFrame, targets: List[str]) -> "SwapAnalysisResult":
         """计算各swap类型的统计信息.
@@ -337,7 +389,7 @@ class SwapAnalyzer:
         :param targets: 目标变量列表
         :return: SwapAnalysisResult
         """
-        cfg = self.config
+        cfg = self.config or SwapRiskConfig()
         total_samples = len(df)
         
         # 计算订单口径统计
@@ -387,7 +439,7 @@ class SwapAnalyzer:
         :param metric: 统计口径，'count'或'amount'
         :return: 各swap类型统计字典
         """
-        cfg = self.config
+        cfg = self.config or SwapRiskConfig()
         stats = {}
         
         for swap_type in SwapType:
@@ -538,7 +590,7 @@ class SwapAnalyzer:
         :param total_samples: 总样本数
         :return: PassRateAnalysis
         """
-        cfg = self.config
+        cfg = self.config or SwapRiskConfig()
         
         in_in_count = stats[SwapType.IN_IN]['total_count']
         in_out_count = stats[SwapType.IN_OUT]['total_count']
@@ -893,7 +945,10 @@ def create_swap_dataset(
     score_col: str,
     swap_type_col: str = "swap_type",
     amount_col: Optional[str] = None,
-    rule_type: str = "reject"
+    rule_type: str = "reject",
+    n_jobs: Union[int, float] = -1,
+    parallel_backend: Optional[str] = None,
+    parallel_config: Optional[Dict[str, Any]] = None,
 ) -> pd.DataFrame:
     """创建swap数据集.
     
@@ -907,6 +962,7 @@ def create_swap_dataset(
                       "pass"表示通过规则（1=通过,0=拒绝）
     :return: 包含swap_type的数据集
     """
+    _validate_report_parallel(n_jobs, parallel_backend, parallel_config)
     df = df.copy()
     
     if rule_type == "reject":
@@ -946,7 +1002,10 @@ def create_swap_dataset_from_rules(
     amount_col: Optional[str] = None,
     rule_type: str = "reject",
     original_rule_name: str = "original_reject",
-    new_rule_name: str = "new_reject"
+    new_rule_name: str = "new_reject",
+    n_jobs: Union[int, float] = -1,
+    parallel_backend: Optional[str] = None,
+    parallel_config: Optional[Dict[str, Any]] = None,
 ) -> pd.DataFrame:
     """从Rule对象创建swap数据集.
     
@@ -964,8 +1023,16 @@ def create_swap_dataset_from_rules(
     df = df.copy()
     
     # 应用规则
-    df[original_rule_name] = original_rule.predict(df)
-    df[new_rule_name] = new_rule.predict(df)
+    masks = parallel_execute(
+        _rule_mask_call,
+        [(original_rule, df), (new_rule, df)],
+        n_jobs=n_jobs,
+        parallel_backend=parallel_backend,
+        parallel_config=parallel_config,
+        task_labels=[original_rule_name, new_rule_name],
+        default_backend="threading",
+    )
+    df[original_rule_name], df[new_rule_name] = masks
     
     return create_swap_dataset(
         df, 
@@ -974,7 +1041,10 @@ def create_swap_dataset_from_rules(
         score_col, 
         swap_type_col, 
         amount_col,
-        rule_type
+        rule_type,
+        n_jobs=n_jobs,
+        parallel_backend=parallel_backend,
+        parallel_config=parallel_config,
     )
 
 
@@ -1000,12 +1070,25 @@ def _predict_rule_set(
     rules: List[Rule],
     available_mask: pd.Series,
     execution_mode: str = "parallel",
+    n_jobs: Union[int, float] = -1,
+    parallel_backend: Optional[str] = None,
+    parallel_config: Optional[Dict[str, Any]] = None,
 ) -> pd.Series:
     """Return a non-duplicated hit mask for a rule set."""
     module_mask = pd.Series(False, index=df.index)
-    for rule in rules:
-        rule_mask = rule.predict(df)
-        rule_mask = pd.Series(rule_mask, index=df.index).fillna(False).astype(bool)
+    if execution_mode == "parallel":
+        rule_masks = parallel_execute(
+            _rule_mask_call,
+            [(rule, df) for rule in rules],
+            n_jobs=n_jobs,
+            parallel_backend=parallel_backend,
+            parallel_config=parallel_config,
+            task_labels=[rule.name or rule.expr for rule in rules],
+            default_backend="threading",
+        )
+    else:
+        rule_masks = [_rule_mask_call((rule, df)) for rule in rules]
+    for rule_mask in rule_masks:
         if execution_mode == "serial":
             rule_mask = rule_mask & available_mask & ~module_mask
         module_mask = module_mask | rule_mask
@@ -1020,6 +1103,9 @@ def _apply_swap_type_rule_sets(
     rules_in_in: Optional[Union[Rule, List[Rule]]] = None,
     rules_out_in: Optional[Union[Rule, List[Rule]]] = None,
     rule_execution_mode: str = "parallel",
+    n_jobs: Union[int, float] = -1,
+    parallel_backend: Optional[str] = None,
+    parallel_config: Optional[Dict[str, Any]] = None,
 ) -> pd.DataFrame:
     """Apply optional quadrant rule sets to populate swap_type."""
     if rule_execution_mode not in {"parallel", "serial"}:
@@ -1044,7 +1130,10 @@ def _apply_swap_type_rule_sets(
         rules = rule_sets[swap_type]
         if not rules:
             continue
-        mask = _predict_rule_set(result, rules, available_mask, rule_execution_mode)
+        mask = _predict_rule_set(
+            result, rules, available_mask, rule_execution_mode,
+            n_jobs=n_jobs, parallel_backend=parallel_backend, parallel_config=parallel_config,
+        )
         result.loc[mask, swap_type_col] = swap_type.value
         available_mask = available_mask & ~mask
     return result
@@ -1067,6 +1156,9 @@ def swap_analysis(
     rules_in_in: Optional[Union[Rule, List[Rule]]] = None,
     rules_out_in: Optional[Union[Rule, List[Rule]]] = None,
     rule_execution_mode: str = "parallel",
+    n_jobs: Union[int, float] = -1,
+    parallel_backend: Optional[str] = None,
+    parallel_config: Optional[Dict[str, Any]] = None,
     **kwargs
 ) -> SwapAnalysisResult:
     """统一的Swap分析入口函数.
@@ -1132,6 +1224,9 @@ def swap_analysis(
         rules_in_in=rules_in_in,
         rules_out_in=rules_out_in,
         rule_execution_mode=rule_execution_mode,
+        n_jobs=n_jobs,
+        parallel_backend=parallel_backend,
+        parallel_config=parallel_config,
     )
     if swap_type_col not in swap_df.columns:
         raise ValueError(f"swap_df 必须包含 {swap_type_col!r} 列，或传入至少一个 swap 象限规则集")
@@ -1175,10 +1270,16 @@ def swap_analysis(
         score_col=score_col,
         target_cols=target_cols,
         amount_col=amount_col,
+        n_jobs=n_jobs,
+        parallel_backend=parallel_backend,
+        parallel_config=parallel_config,
         **{k: v for k, v in kwargs.items() if k in ['method', 'max_n_bins', 'custom_bins']}
     )
     ref_provider.fit(reference_df)
     
     # 执行分析
-    analyzer = SwapAnalyzer(config, ref_provider)
+    analyzer = SwapAnalyzer(
+        config, ref_provider, n_jobs=n_jobs,
+        parallel_backend=parallel_backend, parallel_config=parallel_config,
+    )
     return analyzer.analyze(swap_df)

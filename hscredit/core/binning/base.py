@@ -14,7 +14,7 @@ from abc import ABC, abstractmethod
 from collections import deque
 from copy import copy, deepcopy
 from functools import wraps
-from typing import Union, List, Dict, Optional, Any, Tuple
+from typing import Union, List, Dict, Optional, Any, Tuple, Callable
 import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, TransformerMixin, clone
@@ -79,6 +79,7 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         - 如果 < 1, 表示保留占比超过该值的类别
         - 如果 >= 1, 表示保留频率最高的N个类别
     :param user_splits: 用户自定义分箱规则，例如{'feature': [0, 10, 20, 30]}
+    :param strict_user_splits: 是否将用户规则视为不可改写的固定分箱，默认为False
     :param random_state: 随机种子，用于可复现性，默认为None
     :param n_jobs: 并行工作数，默认为-1；None沿用旧串行行为
     :param parallel_backend: joblib并行后端，默认为None
@@ -334,7 +335,7 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         special_codes: Optional[List] = None,
         split_points: Optional[Dict[str, List]] = None,
         cat_cutoff: Optional[Union[float, int]] = None,
-        user_splits: Optional[Dict[str, List]] = None,
+        user_splits: Optional[Union[Dict[str, List], Callable]] = None,
         category_order: CategoryOrder = None,
         handle_unknown: str = "value",
         random_state: Optional[int] = None,
@@ -344,6 +345,7 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         woe_clip: Optional[float] = None,
         parallel_backend: Optional[str] = None,
         parallel_config: Optional[Dict[str, Any]] = None,
+        strict_user_splits: bool = False,
     ):
         self.target = target
         self.missing_separate = missing_separate
@@ -357,6 +359,7 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         self.split_points = split_points
         self.cat_cutoff = cat_cutoff
         self.user_splits = user_splits
+        self.strict_user_splits = strict_user_splits
         self.category_order = category_order
         self.handle_unknown = handle_unknown
         self.random_state = random_state
@@ -445,6 +448,12 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
             raise ValueError(f"monotonic 不支持: {self.monotonic}")
         if self.handle_unknown not in {"value", "error"}:
             raise ValueError("handle_unknown 只能是 'value' 或 'error'")
+        if not isinstance(self.strict_user_splits, (bool, np.bool_)):
+            raise ValueError("strict_user_splits 必须是布尔值")
+        if self.split_points is not None and not isinstance(self.split_points, dict):
+            raise ValueError("split_points 必须是字段规则字典或 None")
+        if self.user_splits is not None and not isinstance(self.user_splits, dict) and not callable(self.user_splits):
+            raise ValueError("user_splits 必须是字段规则字典、可调用对象或 None")
         if (
             self.category_order is not None
             and not isinstance(self.category_order, dict)
@@ -489,6 +498,10 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
 
         X_fit = X.copy()
         for feature in X.columns:
+            # 显式用户规则必须在原始类别值上校验和应用，不能先被
+            # 通用类别适配器编码。规则 worker 与普通字段 worker 仍在同一批并行。
+            if self._has_explicit_user_rule(feature):
+                continue
             if self._detect_feature_type(X[feature]) != "categorical":
                 continue
             order = resolve_category_order(
@@ -1008,10 +1021,144 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
             state[state_name] = {feature} if feature in values else set()
         return feature, state
 
+    def _has_explicit_user_rule(self, feature: str) -> bool:
+        """判断字段是否有显式用户分箱规则。
+
+        ``user_splits`` 的优先级高于兼容参数 ``split_points``；
+        可调用的 ``user_splits`` 视为覆盖所有输入字段。
+        """
+        if callable(self.user_splits):
+            return True
+        if isinstance(self.user_splits, dict) and feature in self.user_splits:
+            return True
+        return isinstance(self.split_points, dict) and feature in self.split_points
+
+    def _get_explicit_user_rule(self, feature: str, x: pd.Series):
+        """获取字段规则，并统一 ``user_splits``/``split_points`` 优先级。"""
+        if callable(self.user_splits):
+            return self.user_splits(x)
+        if isinstance(self.user_splits, dict) and feature in self.user_splits:
+            return self.user_splits[feature]
+        if isinstance(self.split_points, dict) and feature in self.split_points:
+            return self.split_points[feature]
+        raise KeyError(f"特征 '{feature}' 没有对应的用户分箱规则")
+
+    def _fit_common_user_split_feature(self, feature: str, x: pd.Series, y: pd.Series) -> None:
+        """在隔离 worker 中应用具体分箱器共享的用户规则。"""
+        feature_type = "numerical" if getattr(self, "force_numerical", False) else self._detect_feature_type(x)
+        self.feature_types_[feature] = feature_type
+        rule = self._get_explicit_user_rule(feature, x)
+        if rule is None or isinstance(rule, (str, bytes)):
+            raise ValueError(f"特征 '{feature}' 的用户分箱规则必须是非字符串序列")
+
+        try:
+            rule_values = list(rule)
+        except TypeError as exc:
+            raise ValueError(f"特征 '{feature}' 的用户分箱规则必须是可迭代序列") from exc
+
+        if feature_type == "numerical":
+            numeric = pd.to_numeric(pd.Series(rule_values), errors="coerce")
+            splits = numeric[~numeric.isna()].to_numpy(dtype=float)
+            splits = np.unique(np.sort(splits[np.isfinite(splits)]))
+            if not self.strict_user_splits:
+                valid = pd.to_numeric(x, errors="coerce")
+                valid = valid[np.isfinite(valid)]
+                if self.special_codes:
+                    valid = valid[~x.loc[valid.index].isin(self.special_codes)]
+                if len(valid) > 0:
+                    splits = splits[(splits > valid.min()) & (splits < valid.max())]
+                else:
+                    splits = np.array([], dtype=float)
+                splits = self._round_splits(splits)
+            self.splits_[feature] = splits
+            self.n_bins_[feature] = len(splits) + 1
+            bins = self._get_feature_bins(feature, x, splits)
+        else:
+            groups = self._normalize_common_user_category_groups(feature, x, rule_values)
+            if not self.strict_user_splits and len(groups) > 1:
+                groups = self._merge_common_user_category_groups_with_method(feature, x, y, groups)
+            self._cat_bins_[feature] = groups
+            self.splits_[feature] = groups
+            self.n_bins_[feature] = len(groups)
+            ordered = [value for group in groups for value in group if not is_missing_marker(value)]
+            self._category_orders_[feature] = ordered
+            self._category_code_maps_[feature] = [(category, code) for code, category in enumerate(ordered)]
+            bins = self._assign_categorical_bins(feature, x)
+
+        self.bin_tables_[feature] = self._compute_bin_stats(feature, x, y, bins)
+        if feature_type == "categorical":
+            self._validate_categorical_constraints(feature, y)
+
+    def _normalize_common_user_category_groups(
+        self, feature: str, x: pd.Series, rule_values: List[Any]
+    ) -> List[List[Any]]:
+        """规范化类别规则，并兼容历史的扁平类别列表。"""
+        if not rule_values:
+            raise ValueError(f"特征 '{feature}' 的自定义类别分箱不能为空")
+        nested = any(isinstance(value, (list, tuple, np.ndarray)) for value in rule_values)
+        if nested:
+            if not all(isinstance(value, (list, tuple, np.ndarray)) for value in rule_values):
+                raise ValueError(f"特征 '{feature}' 的自定义类别分箱不能混用标量和分组")
+            groups = [list(value) for value in rule_values]
+        else:
+            groups = [[value] for value in rule_values]
+        return normalize_user_groups(
+            feature,
+            groups,
+            x,
+            special_codes=self.special_codes,
+            missing_separate=self.missing_separate,
+        )
+
+    def _merge_common_user_category_groups_with_method(
+        self,
+        feature: str,
+        x: pd.Series,
+        y: pd.Series,
+        groups: List[List[Any]],
+    ) -> List[List[Any]]:
+        """把用户类别组当作原子箱，由当前具体方法决定是否合并。"""
+        group_codes = assign_category_groups(
+            feature,
+            x,
+            groups,
+            special_codes=self.special_codes,
+            missing_separate=self.missing_separate,
+            handle_unknown="error",
+        )
+        encoded = pd.Series(group_codes, index=x.index, name=feature, dtype=float)
+        encoded.loc[encoded < 0] = np.nan
+
+        # 当前函数已经处于按特征并行的 worker 内。内部只有一个编码字段，
+        # 再启动 joblib 不会增加并行度，反而容易形成嵌套超额调度。
+        method_worker = copy(self)
+        for state_name in self._FEATURE_DICT_STATE:
+            setattr(method_worker, state_name, {})
+        for state_name in self._FEATURE_SET_STATE:
+            setattr(method_worker, state_name, set())
+        method_worker.user_splits = None
+        method_worker.split_points = None
+        method_worker.strict_user_splits = False
+        method_worker.n_jobs = 1
+        method_worker._fit_feature(feature, encoded, y)
+
+        numeric_splits = np.asarray(method_worker.splits_.get(feature, np.array([])), dtype=float)
+        atomic_groups = restore_category_groups(list(range(len(groups))), numeric_splits)
+        return [
+            [value for group_index in atomic_group for value in groups[group_index]]
+            for atomic_group in atomic_groups
+        ]
+
     def _fit_features(self, X: pd.DataFrame, y: pd.Series, method_name: str) -> None:
         """事务式拟合所有特征，并按输入列顺序一次性提交状态。"""
         features = list(X.columns)
-        tasks = [(feature, X[feature], y, method_name) for feature in features]
+        task_methods = [
+            "_fit_common_user_split_feature"
+            if method_name == "_fit_feature" and self._has_explicit_user_rule(feature)
+            else method_name
+            for feature in features
+        ]
+        tasks = [(feature, X[feature], y, feature_method) for feature, feature_method in zip(features, task_methods)]
         results = self._parallel_execute(
             self._fit_feature_transaction,
             tasks,
@@ -1420,7 +1567,9 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
 
     def _enforce_bin_size_constraints(self, X: pd.DataFrame, y: pd.Series) -> None:
         """统一收口最小/最大分箱样本量约束。"""
-        for feature in list(self.splits_.keys()):
+        for feature in X.columns:
+            if feature not in self.splits_:
+                continue
             if self.feature_types_.get(feature) != "numerical":
                 continue
 
@@ -1472,7 +1621,9 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         优先合并策略进行截断。
         """
         max_splits = max(0, self.max_n_bins - 1)
-        for feature in list(self.splits_.keys()):
+        for feature in X.columns:
+            if feature not in self.splits_:
+                continue
             if self.feature_types_.get(feature) != "numerical":
                 continue
             splits = self.splits_[feature]
@@ -1515,7 +1666,9 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         """
         min_bad_rate = float(getattr(self, "min_bad_rate", 0.0) or 0.0)
 
-        for feature in list(self.splits_.keys()):
+        for feature in X.columns:
+            if feature not in self.splits_:
+                continue
             if self.feature_types_.get(feature) != "numerical":
                 continue
             splits = self.splits_.get(feature)
@@ -1570,6 +1723,14 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         :param enforce_bad_rate: 是否合并退化分箱/坏样本率不达标分箱，默认 True。
             等宽(uniform)/等频(quantile)等机械分箱以"精确切分结构"为契约，应传 False。
         """
+        # 严格用户规则是固定分箱，后处理不得移动或合并其边界。
+        # 非严格规则仍走各具体分箱器原有的约束收口逻辑。
+        if self.strict_user_splits:
+            mutable_features = [feature for feature in X.columns if not self._has_explicit_user_rule(feature)]
+            if not mutable_features:
+                return
+            X = X.loc[:, mutable_features]
+
         self._enforce_bin_size_constraints(X, y)
 
         monotonic_adjuster = getattr(self, "_apply_monotonic_adjustment", None)
@@ -1808,7 +1969,9 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         if monotonic_trend is None:
             self.monotonic_trend_ = {}
 
-        for feature in list(self.splits_.keys()):
+        for feature in X.columns:
+            if feature not in self.splits_:
+                continue
             if self.feature_types_.get(feature) != "numerical":
                 continue
             splits = self.splits_.get(feature)

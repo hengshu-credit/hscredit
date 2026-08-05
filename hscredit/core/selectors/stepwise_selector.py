@@ -162,6 +162,10 @@ class StepwiseSelector(BaseFeatureSelector):
         self.verbose = verbose
         self.method_name = '逐步回归筛选'
 
+    def _included_features_participate_in_selection(self) -> bool:
+        """逐步回归必须把强制保留字段放入固定起始模型。"""
+        return True
+
     def _fit_impl(
         self,
         X: pd.DataFrame,

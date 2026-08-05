@@ -16,7 +16,6 @@
 3. 支持多逾期标签（overdue+dpds）场景
 """
 
-import warnings
 import numpy as np
 import pandas as pd
 from typing import Union, List, Dict, Optional, Tuple, Any
@@ -24,11 +23,21 @@ from copy import deepcopy
 
 from sklearn.base import BaseEstimator, TransformerMixin
 
-from .feature_analyzer import feature_bin_stats, _create_bin_table
-from ..core.binning.base import BaseBinning
+from .feature_analyzer import feature_bin_stats
+from ..utils.parallel import ParallelizableMixin, resolve_n_jobs, validate_parallel_config
 
 
-class OverduePredictor(BaseEstimator, TransformerMixin):
+def _overdue_target_transform(task):
+    """计算单个逾期标签的基础及调整后逾期率。"""
+    predictor, values, target_name, bin_labels = task
+    rates = predictor.bin_rates_.get(target_name, {})
+    _, base_rates = predictor._assign_bins_and_rates(values, rates)
+    coefficients = predictor._resolve_coefficients(rates, target_name)
+    adjusted = predictor._apply_coefficients(bin_labels, base_rates, coefficients)
+    return target_name, base_rates, adjusted
+
+
+class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
     """逾期率预测器.
 
     基于特征分箱对应的逾期率，对无标签样本进行加权逾期率预测。
@@ -128,6 +137,9 @@ class OverduePredictor(BaseEstimator, TransformerMixin):
         rules: Optional[List] = None,
         desc: Optional[str] = None,
         bin_params: Optional[Dict] = None,
+        n_jobs: Union[int, float] = -1,
+        parallel_backend: Optional[str] = None,
+        parallel_config: Optional[Dict[str, Any]] = None,
     ):
         self.feature = feature
         self.target = target
@@ -142,7 +154,10 @@ class OverduePredictor(BaseEstimator, TransformerMixin):
         self.bin_label_col = bin_label_col
         self.rules = rules
         self.desc = desc
-        self.bin_params = bin_params or {}
+        self.bin_params = bin_params
+        self.n_jobs = n_jobs
+        self.parallel_backend = parallel_backend
+        self.parallel_config = parallel_config
 
     def fit(self, X: Union[pd.DataFrame, pd.Series], y=None) -> "OverduePredictor":
         """拟合预估器.
@@ -158,12 +173,29 @@ class OverduePredictor(BaseEstimator, TransformerMixin):
         if not isinstance(X, pd.DataFrame):
             raise TypeError("X 必须是 pd.DataFrame，支持原始数据或分箱表")
 
-        self.feature_names_in_ = [self.feature]
+        validate_parallel_config(self.parallel_backend, self.parallel_config)
+        resolve_n_jobs(self.n_jobs, task_count=1)
 
-        if self._is_bin_table(X):
-            self._fit_from_bin_table(X)
+        learned_attrs = (
+            'feature_names_in_', 'target_names_', 'bin_table_', 'bin_rates_',
+            'splits_', 'coefficients_',
+        )
+        candidate = deepcopy(self)
+        for name in learned_attrs:
+            if hasattr(candidate, name):
+                delattr(candidate, name)
+        candidate.feature_names_in_ = [candidate.feature]
+        if candidate._is_bin_table(X):
+            candidate._fit_from_bin_table(X)
         else:
-            self._fit_from_raw_data(X)
+            candidate._fit_from_raw_data(X)
+
+        for name in learned_attrs:
+            if hasattr(self, name):
+                delattr(self, name)
+        for name in learned_attrs:
+            if hasattr(candidate, name):
+                setattr(self, name, getattr(candidate, name))
 
         return self
 
@@ -236,7 +268,8 @@ class OverduePredictor(BaseEstimator, TransformerMixin):
         }
         if self.rules is not None:
             bin_kwargs['rules'] = self.rules
-        bin_kwargs.update(self.bin_params)
+        if self.bin_params:
+            bin_kwargs.update(self.bin_params)
 
         result = feature_bin_stats(
             df,
@@ -245,6 +278,9 @@ class OverduePredictor(BaseEstimator, TransformerMixin):
             overdue=self.overdue,
             dpds=self.dpds,
             desc=self.desc or self.feature,
+            n_jobs=self.n_jobs,
+            parallel_backend=self.parallel_backend,
+            parallel_config=self.parallel_config,
             **bin_kwargs,
         )
 
@@ -530,13 +566,14 @@ class OverduePredictor(BaseEstimator, TransformerMixin):
         bin_labels, _ = self._assign_bins_and_rates(X[self.feature], first_rates)
         X[f'{self.feature}_分箱'] = bin_labels
 
-        for target_name in self.target_names_:
-            rates = self.bin_rates_.get(target_name, {})
-            _, base_rates = self._assign_bins_and_rates(X[self.feature], rates)
-
-            coefficients_map = self._resolve_coefficients(rates, target_name)
-            adjusted_rates = self._apply_coefficients(bin_labels, base_rates, coefficients_map)
-
+        tasks = [(self, X[self.feature], target_name, bin_labels) for target_name in self.target_names_]
+        target_results = self._parallel_execute(
+            _overdue_target_transform,
+            tasks,
+            task_labels=self.target_names_,
+            default_backend="threading",
+        )
+        for target_name, base_rates, adjusted_rates in target_results:
             X[f'{self.feature}_{target_name}_基础逾期率'] = base_rates
             X[f'{self.feature}_{target_name}_预测逾期率'] = adjusted_rates
 
@@ -553,8 +590,6 @@ class OverduePredictor(BaseEstimator, TransformerMixin):
         :param rates: {分箱标签: 逾期率}
         :return: (分箱标签列表, 逾期率列表)
         """
-        import re
-
         # 解析分箱区间
         bin_intervals = self._parse_rate_intervals(rates)
 
@@ -850,6 +885,9 @@ def overdue_prediction_report(
     desc: Optional[str] = None,
     excel_writer=None,
     sheet: str = "逾期率预估报告",
+    n_jobs: Union[int, float] = -1,
+    parallel_backend: Optional[str] = None,
+    parallel_config: Optional[Dict[str, Any]] = None,
     **kwargs,
 ) -> pd.DataFrame:
     """逾期率预估报告便捷函数.
@@ -915,6 +953,10 @@ def overdue_prediction_report(
         coefficients=coefficients,
         rules=rules,
         desc=desc,
+        bin_params=kwargs or None,
+        n_jobs=n_jobs,
+        parallel_backend=parallel_backend,
+        parallel_config=parallel_config,
     )
 
     predictor.fit(fit_data)
@@ -931,28 +973,23 @@ def overdue_prediction_report(
 
     # 输出到Excel
     if excel_writer is not None:
-        try:
-            from ..excel import ExcelWriter, dataframe2excel
-            from ..utils import init_setting
+        from ..excel import ExcelWriter, dataframe2excel
+        from ..utils import init_setting
 
-            init_setting()
-
-            if isinstance(excel_writer, str):
-                writer = ExcelWriter()
-                worksheet = writer.get_sheet_by_name(sheet)
-
-                end_row, end_col = dataframe2excel(
-                    report, writer, worksheet,
-                    sheet_name=sheet if isinstance(excel_writer, str) else None,
-                    percent_cols=['坏样本率', '样本占比', '好样本占比', '坏样本占比',
-                                  '调整后逾期率', '预测逾期率'],
-                    condition_cols=['坏样本率', '调整后逾期率'],
-                    start_row=2,
-                )
-
-                writer.save(excel_writer)
-        except Exception:
-            warnings.warn("Excel输出失败，请确保已安装openpyxl")
+        init_setting()
+        owns_writer = isinstance(excel_writer, str)
+        writer = ExcelWriter() if owns_writer else excel_writer
+        worksheet = writer.get_sheet_by_name(sheet)
+        dataframe2excel(
+            report, writer, worksheet,
+            sheet_name=sheet if owns_writer else None,
+            percent_cols=['坏样本率', '样本占比', '好样本占比', '坏样本占比',
+                          '调整后逾期率', '预测逾期率'],
+            condition_cols=['坏样本率', '调整后逾期率'],
+            start_row=2,
+        )
+        if owns_writer:
+            writer.save(excel_writer)
 
     return report
 

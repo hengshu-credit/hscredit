@@ -169,6 +169,10 @@ class VIFSelector(BaseFeatureSelector):
         self.verbose = verbose
         self.method_name = 'VIF筛选'
 
+    def _included_features_participate_in_selection(self) -> bool:
+        """强制保留字段参与共线性计算，但不会成为迭代剔除对象。"""
+        return True
+
     def _compute_vif_all(self, X: pd.DataFrame) -> pd.Series:
         """计算所有特征的VIF值。
 
@@ -206,6 +210,7 @@ class VIFSelector(BaseFeatureSelector):
         
         # 保留的特征列表
         remaining_features = X.columns.tolist()
+        forced_include = set(self.include_).intersection(remaining_features)
         # 被剔除的特征及原因
         dropped_features = []
         dropped_reasons = []
@@ -222,9 +227,15 @@ class VIFSelector(BaseFeatureSelector):
             vif_series = self._compute_vif_all(X_current)
             vif_history.append(vif_series.copy())
             
-            # 找到VIF最大的特征
-            max_vif = vif_series.max()
-            max_feature = vif_series.idxmax()
+            # include 字段需要参与 VIF 回归，但不能被迭代剔除；只在其余
+            # 候选字段中寻找本轮最大 VIF。
+            removable_vif = vif_series.drop(
+                labels=[feature for feature in forced_include if feature in vif_series.index]
+            )
+            if removable_vif.empty:
+                break
+            max_vif = removable_vif.max()
+            max_feature = removable_vif.idxmax()
             
             if self.verbose:
                 logger.info(f"迭代 {iteration + 1}: 最大VIF = {max_vif:.4f} (特征: {max_feature})")

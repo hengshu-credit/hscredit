@@ -24,6 +24,21 @@ import pandas as pd
 from typing import List, Optional, Tuple
 
 from ..excel import ExcelWriter, dataframe2excel
+from ..exceptions import ValidationError
+from ..utils.parallel import parallel_execute
+
+
+def _population_feature_task(task):
+    """计算单个特征的 PSI、分布和可选坏样本率表。"""
+    expected, actual, feature, target_col, n_bins, window = task
+    expected_values = expected[feature].dropna()
+    actual_values = actual[feature].dropna()
+    psi_value = _calc_psi(expected_values, actual_values, n_bins)
+    distribution = _feature_distribution_compare(expected_values, actual_values, feature, n_bins)
+    badrate = None
+    if target_col and target_col in expected.columns and target_col in actual.columns:
+        badrate = _badrate_compare(expected, actual, feature, target_col, n_bins)
+    return feature, window, psi_value, distribution, badrate
 
 
 def population_drift(
@@ -37,6 +52,9 @@ def population_drift(
     output: str = "客群偏移监控报告.xlsx",
     *,
     target: Optional[str] = None,
+    n_jobs=-1,
+    parallel_backend=None,
+    parallel_config=None,
 ) -> str:
     """生成客群偏移综合监控结果（Excel）.
 
@@ -74,32 +92,67 @@ def population_drift(
     """
     target_col = target or target_col
 
+    valid_features = [
+        feature for feature in features
+        if feature in expected.columns and feature in actual.columns
+    ]
+    windows = [(None, actual)]
+    if date_col is not None:
+        if date_col not in actual.columns:
+            raise ValidationError(f"实际数据集缺少日期列: {date_col}")
+        parsed_dates = pd.to_datetime(actual[date_col], errors="coerce")
+        invalid_mask = actual[date_col].notna() & parsed_dates.isna()
+        if invalid_mask.any():
+            raise ValidationError(f"日期列 {date_col} 包含无效日期")
+        if not parsed_dates.notna().any():
+            raise ValidationError(f"日期列 {date_col} 没有有效日期")
+        periods = parsed_dates.dt.to_period("M")
+        ordered_periods = sorted(periods.dropna().unique())
+        windows = [
+            (str(period), actual.loc[periods == period].copy())
+            for period in ordered_periods
+        ]
+
+    tasks = [
+        (expected, window_data, feature, target_col, n_bins, window)
+        for feature in valid_features
+        for window, window_data in windows
+    ]
+    feature_results = parallel_execute(
+        _population_feature_task,
+        tasks,
+        n_jobs=n_jobs,
+        parallel_backend=parallel_backend,
+        parallel_config=parallel_config,
+        task_labels=[f"{task[2]}:{task[5]}" if task[5] is not None else task[2] for task in tasks],
+        default_backend="threading",
+    )
+
     writer = ExcelWriter()
 
     # ---------- Sheet 1: PSI 总览 ----------
     psi_rows = []
-    for feat in features:
-        if feat not in expected.columns or feat not in actual.columns:
-            continue
-        psi_val = _calc_psi(expected[feat].dropna(), actual[feat].dropna(), n_bins)
-        psi_rows.append({
+    for feat, window, psi_val, _, _ in feature_results:
+        row = {
             "特征名": feat,
             "PSI": round(psi_val, 4),
             "稳定性": _psi_rating(psi_val),
-        })
+        }
+        if date_col is not None:
+            row["时间窗口"] = window
+            row = {"特征名": row["特征名"], "时间窗口": row["时间窗口"], "PSI": row["PSI"], "稳定性": row["稳定性"]}
+        psi_rows.append(row)
     psi_df = pd.DataFrame(psi_rows)
-    if not psi_df.empty:
+    if not psi_df.empty and date_col is None:
         psi_df = psi_df.sort_values("PSI", ascending=False).reset_index(drop=True)
     dataframe2excel(psi_df, writer, sheet_name="PSI总览")
 
     # ---------- Sheet 2: 特征分布对比 ----------
     dist_rows = []
-    for feat in features:
-        if feat not in expected.columns or feat not in actual.columns:
-            continue
-        detail = _feature_distribution_compare(
-            expected[feat].dropna(), actual[feat].dropna(), feat, n_bins
-        )
+    for _, window, _, detail, _ in feature_results:
+        if date_col is not None and not detail.empty:
+            detail = detail.copy()
+            detail.insert(1, "时间窗口", window)
         dist_rows.append(detail)
     if dist_rows:
         dist_df = pd.concat(dist_rows, ignore_index=True)
@@ -108,13 +161,12 @@ def population_drift(
     # ---------- Sheet 3: 逾期率对比 (可选) ----------
     if target_col and target_col in expected.columns and target_col in actual.columns:
         br_rows = []
-        for feat in features:
-            if feat not in expected.columns or feat not in actual.columns:
-                continue
-            br_detail = _badrate_compare(
-                expected, actual, feat, target_col, n_bins
-            )
-            br_rows.append(br_detail)
+        for _, window, _, _, br_detail in feature_results:
+            if br_detail is not None:
+                if date_col is not None and not br_detail.empty:
+                    br_detail = br_detail.copy()
+                    br_detail.insert(1, "时间窗口", window)
+                br_rows.append(br_detail)
         if br_rows:
             br_df = pd.concat(br_rows, ignore_index=True)
             dataframe2excel(br_df, writer, sheet_name="逾期率对比")

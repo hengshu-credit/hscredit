@@ -11,12 +11,14 @@
 >>> np.random.seed(42)
 >>> X = pd.DataFrame(np.random.randn(1000, 5), columns=[f'f{i}' for i in range(5)])  # 5个特征
 >>> y = pd.Series(np.random.randint(0, 2, 1000))  # 目标变量（用于IV计算）
->>> selector = CorrSelector(threshold=0.7, metric='iv')  # 相关性>0.7时移除，保留IV更高的特征
+>>> selector = CorrSelector(threshold=0.7, metric='iv')  # 默认Spearman，相关性>0.7时移除
 >>> selector.fit(X, y)
 >>> print(selector.selected_features_)
 """
 
+import numbers
 from typing import Union, List, Optional, Dict, Any
+
 import numpy as np
 import pandas as pd
 
@@ -40,19 +42,80 @@ DEFAULT_BINNING_PARAMS = {
 }
 
 
+def _corr_block_worker(task):
+    """计算当前候选块与一个已处理块的相关性。"""
+    (
+        ordinal,
+        values,
+        row_start,
+        row_stop,
+        column_start,
+        column_stop,
+        threshold,
+        method,
+        fast_matrix,
+        kept_rows,
+    ) = task
+
+    left = values[:, row_start:row_stop]
+    right = values[:, column_start:column_stop]
+    if fast_matrix:
+        corr = np.matmul(left.T, right)
+        corr = np.clip(corr, -1.0, 1.0)
+    else:
+        if row_start == column_start:
+            corr = pd.DataFrame(left).corr(method=method).to_numpy(dtype=np.float64)
+        else:
+            combined = np.concatenate((left, right), axis=1)
+            combined_corr = pd.DataFrame(combined).corr(method=method).to_numpy(dtype=np.float64)
+            corr = combined_corr[: left.shape[1], left.shape[1] :]
+
+    absolute = np.abs(np.asarray(corr, dtype=np.float64))
+    if row_start == column_start:
+        np.fill_diagonal(absolute, np.nan)
+        return ordinal, 'diagonal', column_start, absolute, None
+
+    kept_positions = np.flatnonzero(np.asarray(kept_rows, dtype=bool))
+    width = column_stop - column_start
+    if kept_positions.size == 0:
+        return (
+            ordinal,
+            'prior',
+            column_start,
+            np.full(width, np.nan, dtype=np.float64),
+            np.full(width, -1, dtype=np.int64),
+        )
+
+    candidates = absolute[kept_positions]
+    safe = np.where(np.isnan(candidates), -np.inf, candidates)
+    positions = np.argmax(safe, axis=0)
+    column_positions = np.arange(width)
+    max_values = safe[positions, column_positions]
+    related_indices = row_start + kept_positions[positions]
+    conflicts = np.isfinite(max_values) & (max_values > threshold)
+    return (
+        ordinal,
+        'prior',
+        column_start,
+        np.where(conflicts, max_values, np.nan).astype(np.float64, copy=False),
+        np.where(conflicts, related_indices, -1).astype(np.int64, copy=False),
+    )
+
+
 class CorrSelector(BaseFeatureSelector):
     """相关性筛选器.
 
     移除与其它特征相关性高于阈值的特征。
-    当两个特征高度相关时，保留指定指标（默认 IV）更高的特征，
-    与 scorecardpipeline / toad 的相关性筛选逻辑一致。
+    当两个特征高度相关时，保留指定指标（默认 IV）更高的特征。
+    特征按指标稳定降序逐步处理，只允许已实际保留的特征淘汰后续特征，
+    避免相关链中已删除变量继续造成过度筛除。
 
     **参数**
 
     :param threshold: 相关系数阈值，默认为0.7
         - 0.7: 移除与其它特征相关性超过0.7的特征
         - 范围: 0-1之间的浮点数
-    :param method: 相关性计算方法，默认为'pearson'
+    :param method: 相关性计算方法，默认为'spearman'
         - 'pearson': 皮尔逊相关系数
         - 'spearman': 斯皮尔曼等级相关系数
         - 'kendall': 肯德尔相关系数
@@ -71,6 +134,8 @@ class CorrSelector(BaseFeatureSelector):
         - missing_separate: 是否缺失单独分箱，默认True
         - prebinning: 预分箱方法
         等等，详见 OptimalBinning 文档。
+    :param corr_block_size: 相关矩阵分块列数，默认为512。仅控制内存和任务粒度，
+        不改变相关系数、筛选阈值或结果顺序。
 
     **参考样例**
 
@@ -97,15 +162,16 @@ class CorrSelector(BaseFeatureSelector):
 
     **引用**
 
-    相关系数计算基于 ``pandas.DataFrame.corr``（Pearson/Spearman/Kendall）：
+    无缺失 Pearson 使用数学等价的标准化分块矩阵乘法；含缺失数据及
+    Spearman/Kendall 使用 ``pandas.DataFrame.corr`` 的分块兼容路径：
     https://pandas.pydata.org/docs/reference/api/pandas.DataFrame.corr.html ；
-    高相关特征对中保留 IV/KS 更高者的策略对齐 toad / scorecardpipeline 的相关性筛选。
+    高相关特征对中保留 IV/KS 更高者的原则参考 toad / scorecardpipeline。
     """
 
     def __init__(
         self,
         threshold: float = 0.7,
-        method: str = 'pearson',
+        method: str = 'spearman',
         metric: str = 'iv',
         weights: Optional[Union[pd.Series, Dict[str, float], List[float]]] = None,
         binning_params: Optional[Dict[str, Any]] = DEFAULT_BINNING_PARAMS,
@@ -117,6 +183,7 @@ class CorrSelector(BaseFeatureSelector):
         binner: Optional[Any] = None,
         parallel_backend: Optional[str] = None,
         parallel_config: Optional[Dict[str, Any]] = None,
+        corr_block_size: int = 512,
     ):
         self._uses_default_binning_params = (
             binning_params is DEFAULT_BINNING_PARAMS
@@ -131,7 +198,189 @@ class CorrSelector(BaseFeatureSelector):
         self.method = method
         self.metric = metric
         self.weights = weights
+        self.corr_block_size = corr_block_size
         self.method_name = '相关性筛选'
+
+    def _validate_corr_block_size(self) -> int:
+        """校验并返回相关计算块大小。"""
+        if (
+            isinstance(self.corr_block_size, (bool, np.bool_))
+            or not isinstance(self.corr_block_size, numbers.Integral)
+            or int(self.corr_block_size) < 1
+        ):
+            raise ValidationError("corr_block_size 必须为正整数")
+        return int(self.corr_block_size)
+
+    @staticmethod
+    def _merge_max_candidates(
+        max_values: np.ndarray,
+        max_indices: np.ndarray,
+        indices: np.ndarray,
+        values: np.ndarray,
+        others: np.ndarray,
+    ) -> None:
+        """按完整相关矩阵的列顺序确定性合并最大相关候选。"""
+        for index, value, other in zip(indices, values, others):
+            index = int(index)
+            other = int(other)
+            if other < 0 or np.isnan(value):
+                continue
+            current_value = max_values[index]
+            current_other = max_indices[index]
+            if (
+                np.isnan(current_value)
+                or value > current_value
+                or (value == current_value and (current_other < 0 or other < current_other))
+            ):
+                max_values[index] = float(value)
+                max_indices[index] = other
+
+    def _compute_block_correlations(
+        self,
+        X: pd.DataFrame,
+        sorted_names: List[str],
+        forced_keep_count: int = 0,
+    ):
+        """按 metric 顺序分块筛选，只与已实际保留的特征比较。"""
+        block_size = self._validate_corr_block_size()
+        n_features = len(sorted_names)
+        if n_features == 0:
+            return set(), np.empty(0, dtype=float), np.empty(0, dtype=np.int64)
+
+        try:
+            values = X.loc[:, sorted_names].to_numpy(dtype=np.float64, copy=True)
+        except (TypeError, ValueError) as exc:
+            raise ValidationError("CorrSelector 相关计算仅支持可转换为数值的特征") from exc
+
+        fast_matrix = self.method in ('pearson', 'spearman') and np.isfinite(values).all()
+        if fast_matrix:
+            if self.method == 'spearman':
+                # 无缺失时，Spearman 等价于先按列进行一次平均秩转换，再计算 Pearson；
+                # 排名只做一次，避免每个相关块重复排序。
+                values = pd.DataFrame(values).rank(method='average').to_numpy(dtype=np.float64)
+            values -= values.mean(axis=0)
+            norms = np.sqrt(np.einsum('ij,ij->j', values, values))
+            with np.errstate(divide='ignore', invalid='ignore'):
+                values /= norms
+            values[:, norms == 0.0] = np.nan
+
+        blocks = [
+            (start, min(start + block_size, n_features))
+            for start in range(0, n_features, block_size)
+        ]
+        kept = np.zeros(n_features, dtype=bool)
+        drops = set()
+        max_values = np.full(n_features, np.nan, dtype=np.float64)
+        max_indices = np.full(n_features, -1, dtype=np.int64)
+        has_inner_thread_limit = (
+            isinstance(self.parallel_config, dict)
+            and self.parallel_config.get('inner_max_num_threads') is not None
+        )
+        default_backend = (
+            'threading'
+            if fast_matrix and not has_inner_thread_limit
+            else 'loky'
+        )
+
+        for column_block, (column_start, column_stop) in enumerate(blocks):
+            tasks = []
+            labels = []
+            ordinal = 0
+            for row_start, row_stop in blocks[:column_block]:
+                kept_rows = kept[row_start:row_stop]
+                if not np.any(kept_rows):
+                    continue
+                tasks.append(
+                    (
+                        ordinal,
+                        values,
+                        row_start,
+                        row_stop,
+                        column_start,
+                        column_stop,
+                        self.threshold,
+                        self.method,
+                        fast_matrix,
+                        kept_rows.copy(),
+                    )
+                )
+                labels.append(ordinal)
+                ordinal += 1
+            tasks.append(
+                (
+                    ordinal,
+                    values,
+                    column_start,
+                    column_stop,
+                    column_start,
+                    column_stop,
+                    self.threshold,
+                    self.method,
+                    fast_matrix,
+                    None,
+                )
+            )
+            labels.append(ordinal)
+
+            results = self._parallel_execute(
+                _corr_block_worker,
+                tasks,
+                task_labels=labels,
+                default_backend=default_backend,
+            )
+
+            diagonal = None
+            for expected_ordinal, result in enumerate(results):
+                if not isinstance(result, tuple) or len(result) != 5 or result[0] != expected_ordinal:
+                    raise TypeError(f"相关块任务 {expected_ordinal} 返回结果无效")
+                _, result_type, result_start, result_values, result_indices = result
+                if result_type == 'diagonal':
+                    if result_start != column_start or diagonal is not None:
+                        raise TypeError(f"相关块任务 {expected_ordinal} 返回对角块无效")
+                    diagonal = result_values
+                    continue
+                if result_type != 'prior' or result_start != column_start:
+                    raise TypeError(f"相关块任务 {expected_ordinal} 返回前置块无效")
+                column_indices = np.arange(column_start, column_stop, dtype=np.int64)
+                self._merge_max_candidates(
+                    max_values,
+                    max_indices,
+                    column_indices,
+                    result_values,
+                    result_indices,
+                )
+
+            width = column_stop - column_start
+            if diagonal is None or diagonal.shape != (width, width):
+                raise TypeError(f"相关块 {column_block} 缺少有效的对角相关矩阵")
+
+            for local_index, feature_index in enumerate(range(column_start, column_stop)):
+                if local_index:
+                    local_kept = kept[column_start:feature_index]
+                    if np.any(local_kept):
+                        local_values = diagonal[:local_index, local_index]
+                        safe = np.where(local_kept & ~np.isnan(local_values), local_values, -np.inf)
+                        related_local = int(np.argmax(safe))
+                        related_value = float(safe[related_local])
+                        if np.isfinite(related_value) and related_value > self.threshold:
+                            self._merge_max_candidates(
+                                max_values,
+                                max_indices,
+                                np.asarray([feature_index], dtype=np.int64),
+                                np.asarray([related_value], dtype=np.float64),
+                                np.asarray([column_start + related_local], dtype=np.int64),
+                            )
+
+                if feature_index < forced_keep_count:
+                    max_values[feature_index] = np.nan
+                    max_indices[feature_index] = -1
+                    kept[feature_index] = True
+                elif max_indices[feature_index] >= 0:
+                    drops.add(feature_index)
+                else:
+                    kept[feature_index] = True
+
+        return drops, max_values, max_indices
 
     def _metric_weights_from_binner(self, feature_names: List[str]) -> pd.Series:
         """从基类管理的同一分箱器中提取特征指标权重。"""
@@ -171,6 +420,28 @@ class CorrSelector(BaseFeatureSelector):
             return False
         return super()._should_apply_binner(y)
 
+    def _resolve_binner(self) -> Optional[Any]:
+        """创建指标分箱器，并在未显式覆盖时继承 CorrSelector 的并行配置。"""
+        binner = super()._resolve_binner()
+        if binner is None or self.binner is not None:
+            return binner
+
+        configured = self.binning_params if isinstance(self.binning_params, dict) else {}
+        if 'n_jobs' not in configured:
+            binner.n_jobs = self.n_jobs
+        if 'parallel_backend' not in configured:
+            # BestIV/MDLP 等包含较多 Python 循环；默认使用进程避免 GIL 退化。
+            binner.parallel_backend = self.parallel_backend or 'loky'
+        if 'parallel_config' not in configured:
+            binner.parallel_config = (
+                dict(self.parallel_config) if self.parallel_config is not None else None
+            )
+        return binner
+
+    def _included_features_participate_in_selection(self) -> bool:
+        """强制保留字段仍作为相关性比较基准参与分箱和相关计算。"""
+        return True
+
     def _fit_impl(
         self,
         X: pd.DataFrame,
@@ -182,6 +453,7 @@ class CorrSelector(BaseFeatureSelector):
         :param y: 目标变量
         """
         self._get_feature_names(X)
+        self._validate_corr_block_size()
 
         n_features = X.shape[1]
         feature_names = X.columns.tolist()
@@ -206,34 +478,40 @@ class CorrSelector(BaseFeatureSelector):
             # 无 y 且无 weights，使用等权（退化为按列顺序保留）
             weight_series = pd.Series(np.ones(n_features), index=feature_names)
 
-        weight_arr = weight_series.values
+        try:
+            weight_arr = weight_series.to_numpy(dtype=np.float64)
+        except (TypeError, ValueError) as exc:
+            raise ValidationError("CorrSelector 的 weights 或 metric 必须为数值") from exc
         self.feature_scores_ = weight_series.copy()
         self.scores_ = weight_series.copy()
 
-        # ── 按权重降序排列（权重高的优先保留） ──
-        sort_idx = np.argsort(weight_arr)[::-1]
-        sorted_names = [feature_names[i] for i in sort_idx]
-        sorted_weights = weight_arr[sort_idx]
+        # ── 强制保留优先，其余特征按权重稳定降序排列 ──
+        forced_exclude = set(getattr(self, 'exclude_', []))
+        forced_include = set(getattr(self, 'include_', [])).difference(forced_exclude)
+        included_names = [name for name in feature_names if name in forced_include]
+        sort_idx = np.argsort(-weight_arr, kind='stable')
+        sorted_names = included_names + [
+            feature_names[index]
+            for index in sort_idx
+            if feature_names[index] not in forced_include
+            and feature_names[index] not in forced_exclude
+        ]
+        forced_keep_count = len(included_names)
 
-        # ── 计算相关矩阵 ──
-        X_sorted = X[sorted_names]
-        corr_matrix = X_sorted.corr(method=self.method).abs()
-
-        # ── 贪心剔除：扫描上三角，剔除权重低的 ──
-        drops = set()
-        upper = np.triu(np.ones(corr_matrix.shape), k=1).astype(bool)
-        high_corr = np.where((corr_matrix.values > self.threshold) & upper)
-
-        for i, j in zip(high_corr[0], high_corr[1]):
-            # i 在排序后的位置比 j 小 → i 权重 >= j 权重
-            # 剔除权重低的那个；如果权重相同，剔除后出现的（j）
-            if sorted_weights[i] >= sorted_weights[j]:
-                drops.add(j)
-            else:
-                drops.add(i)
+        # ── 分块计算相关性，不再分配完整 p×p 相关矩阵 ──
+        if forced_keep_count == len(sorted_names):
+            drops = set()
+            max_corr_by_index = np.full(len(sorted_names), np.nan, dtype=np.float64)
+            max_corr_feature_index = np.full(len(sorted_names), -1, dtype=np.int64)
+        else:
+            drops, max_corr_by_index, max_corr_feature_index = self._compute_block_correlations(
+                X,
+                sorted_names,
+                forced_keep_count=forced_keep_count,
+            )
 
         # ── 获取保留的特征 ──
-        keep_idx = [idx for idx in range(n_features) if idx not in drops]
+        keep_idx = [idx for idx in range(len(sorted_names)) if idx not in drops]
         self.selected_features_ = [sorted_names[idx] for idx in keep_idx]
 
         # 保存 scores（与原始列顺序一致）
@@ -241,16 +519,16 @@ class CorrSelector(BaseFeatureSelector):
 
         # ── 构建 dropped_ 报告 ──
         if len(drops) > 0:
-            dropped_cols = [sorted_names[idx] for idx in drops]
+            ordered_drops = sorted(drops)
+            dropped_cols = [sorted_names[idx] for idx in ordered_drops]
             max_corr_values = []
             max_corr_features = []
             metric_values = []
-            for idx in drops:
+            for idx in ordered_drops:
                 col_name = sorted_names[idx]
-                corr_values = corr_matrix.loc[col_name, :].copy()
-                corr_values[col_name] = 0
-                max_corr = corr_values.max()
-                max_corr_feat = corr_values.idxmax()
+                max_corr = max_corr_by_index[idx]
+                related_index = int(max_corr_feature_index[idx])
+                max_corr_feat = sorted_names[related_index] if related_index >= 0 else None
                 max_corr_values.append(max_corr)
                 max_corr_features.append(max_corr_feat)
                 metric_values.append(weight_series.get(col_name, 0.0))
@@ -260,13 +538,21 @@ class CorrSelector(BaseFeatureSelector):
                 if self.weights is None and getattr(self, '_binner_instance', None) is not None
                 else '权重'
             )
+            drop_reasons = []
+            for index, col_name in enumerate(dropped_cols):
+                related_name = max_corr_features[index]
+                if related_name in forced_include:
+                    suffix = '相关特征为强制保留变量'
+                else:
+                    suffix = f'{metric_label}({metric_values[index]:.4f})不高于相关特征'
+                drop_reasons.append(
+                    f'与{related_name}相关系数({max_corr_values[index]:.4f})>'
+                    f'{self.threshold}，{suffix}'
+                )
+
             self.dropped_ = pd.DataFrame({
                 '特征': dropped_cols,
-                '剔除原因': [
-                    f'与{max_corr_features[k]}相关系数({max_corr_values[k]:.4f})>={self.threshold}，'
-                    f'{metric_label}({metric_values[k]:.4f})较低'
-                    for k in range(len(dropped_cols))
-                ],
+                '剔除原因': drop_reasons,
                 '最大相关系数': max_corr_values,
                 '相关特征': max_corr_features,
                 metric_label: metric_values,

@@ -9,11 +9,9 @@ import copy
 import numpy as np
 import pandas as pd
 from typing import Union, List, Dict, Optional, Tuple, Any
-from sklearn.preprocessing import KBinsDiscretizer
 from itertools import combinations
-import warnings
 
-from .base import BaseRuleMiner, calculate_lift
+from .base import BaseRuleMiner
 from ...core.rules.rule import Rule
 from ...core.binning import OptimalBinning
 
@@ -141,6 +139,8 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
         :return: self
         """
         working = copy.deepcopy(self)
+        working.cross_results_ = {}
+        working._binner_instances_ = {}
 
         # 更新参数
         for key, value in kwargs.items():
@@ -166,8 +166,7 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
         working.overall_badrate_ = y.mean()
         
         working._is_fitted = True
-        self.__dict__.clear()
-        self.__dict__.update(working.__dict__)
+        self._commit_fitted_state(working)
         return self
     
     def _get_binning_instance(self, **override_params) -> OptimalBinning:
@@ -247,41 +246,35 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
         # 创建分箱器
         binner = self._get_binning_instance()
         
-        try:
-            # 准备数据
-            X_feature = self.X_[[feature]].copy()
-            valid_mask = X_feature[feature].notna()
-            
-            if valid_mask.sum() < self.min_samples * 2:
-                return self.X_[feature]
-            
-            # 拟合分箱器
-            binner.fit(X_feature[valid_mask], self.y_[valid_mask])
-            
-            # 存储分箱器实例
-            self._binner_instances_[feature] = binner
-            
-            # 转换数据
-            X_binned = binner.transform(X_feature)
-            
-            # 获取分箱标签
-            if hasattr(binner, 'get_bin_table'):
-                bin_table = binner.get_bin_table(feature)
-                if bin_table is not None and '分箱标签' in bin_table.columns:
-                    # 创建映射
-                    bin_labels = bin_table['分箱标签'].values
-                    result = pd.Series(index=self.X_.index, dtype=object)
-                    for i, label in enumerate(bin_labels):
-                        result[X_binned[feature] == i] = label
-                    return result
-            
-            # 回退：使用数值分箱索引
-            return X_binned[feature].astype(str).replace('nan', '缺失')
-            
-        except Exception as e:
-            if self.verbose:
-                warnings.warn(f"分箱失败，使用原始值: {str(e)}")
+        # 准备数据
+        X_feature = self.X_[[feature]].copy()
+        valid_mask = X_feature[feature].notna()
+
+        if valid_mask.sum() < self.min_samples * 2:
             return self.X_[feature]
+
+        # 拟合分箱器
+        binner.fit(X_feature[valid_mask], self.y_[valid_mask])
+
+        # 存储分箱器实例
+        self._binner_instances_[feature] = binner
+
+        # 转换数据
+        X_binned = binner.transform(X_feature)
+
+        # 获取分箱标签
+        if hasattr(binner, 'get_bin_table'):
+            bin_table = binner.get_bin_table(feature)
+            if bin_table is not None and '分箱标签' in bin_table.columns:
+                # 创建映射
+                bin_labels = bin_table['分箱标签'].values
+                result = pd.Series(index=self.X_.index, dtype=object)
+                for i, label in enumerate(bin_labels):
+                    result[X_binned[feature] == i] = label
+                return result
+
+        # 回退：使用数值分箱索引
+        return X_binned[feature].astype(str).replace('nan', '缺失')
     
     def generate_cross_matrix(
         self,
@@ -740,7 +733,7 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
         except ImportError:
             raise ImportError("需要安装matplotlib和seaborn")
         
-        from ...core.viz.utils import DEFAULT_COLORS, setup_axis_style
+        from ...core.viz.utils import setup_axis_style
         
         cross_matrix = self.generate_cross_matrix(feature1, feature2)
         
