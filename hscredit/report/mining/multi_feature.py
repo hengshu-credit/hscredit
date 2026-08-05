@@ -4,6 +4,8 @@
 支持hscredit所有分箱方法。
 """
 
+import copy
+
 import numpy as np
 import pandas as pd
 from typing import Union, List, Dict, Optional, Tuple, Any
@@ -14,6 +16,27 @@ import warnings
 from .base import BaseRuleMiner, calculate_lift
 from ...core.rules.rule import Rule
 from ...core.binning import OptimalBinning
+
+
+def _multi_feature_pair_worker(task):
+    """生成一个独立特征组合的规则及临时拟合状态。"""
+    miner, feature1, feature2, top_n, metric, min_samples, min_lift = task
+    rules = miner.get_cross_rules(
+        feature1,
+        feature2,
+        top_n=top_n,
+        metric=metric,
+        min_samples=min_samples,
+        min_lift=min_lift,
+    )
+    pair = (feature1, feature2)
+    pair_state = miner.cross_results_.get(pair)
+    binners = {
+        feature: miner._binner_instances_[feature]
+        for feature in pair
+        if feature in miner._binner_instances_
+    }
+    return pair, rules, pair_state, binners
 
 
 class MultiFeatureRuleMiner(BaseRuleMiner):
@@ -68,9 +91,18 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
         special_codes: Optional[List] = None,
         random_state: Optional[int] = None,
         verbose: Union[bool, int] = False,
+        n_jobs: Optional[Union[int, float]] = -1,
+        parallel_backend: Optional[str] = None,
+        parallel_config: Optional[Dict[str, Any]] = None,
         **binning_kwargs
     ):
-        super().__init__(target=target, exclude_cols=exclude_cols)
+        super().__init__(
+            target=target,
+            exclude_cols=exclude_cols,
+            n_jobs=n_jobs,
+            parallel_backend=parallel_backend,
+            parallel_config=parallel_config,
+        )
         
         if method not in self.VALID_METHODS:
             raise ValueError(f"不支持的method: {method}，可选: {self.VALID_METHODS}")
@@ -108,30 +140,34 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
         :param kwargs: 额外参数，可覆盖初始化参数
         :return: self
         """
+        working = copy.deepcopy(self)
+
         # 更新参数
         for key, value in kwargs.items():
-            if hasattr(self, key):
-                setattr(self, key, value)
+            if hasattr(working, key):
+                setattr(working, key, value)
 
-        if self.method not in self.VALID_METHODS:
-            raise ValueError(f"不支持的method: {self.method}，可选: {self.VALID_METHODS}")
+        if working.method not in working.VALID_METHODS:
+            raise ValueError(f"不支持的method: {working.method}，可选: {working.VALID_METHODS}")
         
-        X, y = self._check_input_data(X, y)
+        X, y = working._check_input_data(X, y)
         
         if y is None:
             raise ValueError("多特征规则挖掘需要目标变量y")
         
-        self.X_ = X
-        self.y_ = y
+        working.X_ = X
+        working.y_ = y
         
         # 分类特征
-        self.numerical_features_ = self._get_numeric_features(X)
-        self.categorical_features_ = self._get_categorical_features(X)
+        working.numerical_features_ = working._get_numeric_features(X)
+        working.categorical_features_ = working._get_categorical_features(X)
         
         # 计算整体坏账率
-        self.overall_badrate_ = y.mean()
+        working.overall_badrate_ = y.mean()
         
-        self._is_fitted = True
+        working._is_fitted = True
+        self.__dict__.clear()
+        self.__dict__.update(working.__dict__)
         return self
     
     def _get_binning_instance(self, **override_params) -> OptimalBinning:
@@ -153,6 +189,9 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
             'cat_cutoff': self.cat_cutoff,
             'random_state': self.random_state,
             'verbose': self.verbose,
+            'n_jobs': -1,
+            'parallel_backend': self.parallel_backend,
+            'parallel_config': self.parallel_config,
             **self.binning_kwargs,
             **override_params
         }
@@ -512,23 +551,40 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
         
         feature_pairs = list(combinations(selected_features, 2))[:max_feature_pairs]
         
+        tasks = [
+            (
+                copy.deepcopy(self),
+                f1,
+                f2,
+                top_n,
+                metric,
+                min_samples,
+                min_lift,
+            )
+            for f1, f2 in feature_pairs
+        ]
+        pair_results = self._parallel_execute(
+            _multi_feature_pair_worker,
+            tasks,
+            task_labels=[f"{f1} × {f2}" for f1, f2 in feature_pairs],
+            default_backend="threading",
+            has_parallel_children=False,
+        )
+
         all_rules = []
-        
-        for f1, f2 in feature_pairs:
-            try:
-                rules = self.get_cross_rules(
-                    f1, f2,
-                    top_n=top_n,
-                    metric=metric,
-                    min_samples=min_samples,
-                    min_lift=min_lift
-                )
-                if not rules.empty:
-                    rules['特征组合'] = f"{f1} × {f2}"
-                    all_rules.append(rules)
-            except Exception as e:
-                if self.verbose:
-                    warnings.warn(f"生成{f1}和{f2}的交叉规则时出错: {str(e)}")
+        next_cross_results = dict(self.cross_results_)
+        next_binners = dict(self._binner_instances_)
+        for (f1, f2), rules, pair_state, binners in pair_results:
+            if pair_state is not None:
+                next_cross_results[(f1, f2)] = pair_state
+            next_binners.update(binners)
+            if not rules.empty:
+                rules = rules.copy()
+                rules['特征组合'] = f"{f1} × {f2}"
+                all_rules.append(rules)
+
+        self.cross_results_ = next_cross_results
+        self._binner_instances_ = next_binners
         
         if not all_rules:
             return pd.DataFrame()
@@ -542,7 +598,7 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
         }
         sort_col = sort_map.get(metric, metric)
         if sort_col in combined.columns:
-            combined = combined.sort_values(by=sort_col, ascending=False)
+            combined = combined.sort_values(by=sort_col, ascending=False, kind="mergesort")
         return combined
 
 
