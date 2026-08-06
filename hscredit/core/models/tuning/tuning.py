@@ -123,6 +123,11 @@ def _normalize_space_param(name: str, spec: Any) -> Dict[str, Any]:
     :return: 内部 DSL 字典，含 ``type`` 及相应键
     :raises ValueError: 无法识别的格式或取值非法时抛出
     """
+    # 0. hscredit 维度对象（search_space 模块的 Real/Integer/Categorical/suggest_*/hp.* 返回值）
+    # 对象自带 to_spec 方法时优先委托，再走统一字典解析路径
+    if hasattr(spec, 'to_spec') and callable(getattr(spec, 'to_spec')):
+        return _normalize_space_param(name, spec.to_spec())
+
     # 1. optuna 原生分布对象
     if OPTUNA_AVAILABLE and isinstance(spec, optuna.distributions.BaseDistribution):
         return _space_param_from_optuna(name, spec)
@@ -220,10 +225,39 @@ def _space_param_from_dict(name: str, spec: Dict[str, Any]) -> Dict[str, Any]:
             raise ValueError(f"参数 {name!r} 的 choice 类型必须提供非空 choices")
         return {'type': 'categorical', 'choices': list(choices)}
 
+    # hyperopt 正态族（normal/lognormal/qnormal/qlognormal）
+    # optuna 无原生正态采样，归一化为 'normal' DSL，由 _sample_params 逆 CDF 变换实现
+    if param_type in ('normal', 'qnormal', 'lognormal', 'qlognormal'):
+        if 'mu' not in spec or 'sigma' not in spec:
+            raise ValueError(
+                f"参数 {name!r} 的 {param_type} 类型必须提供 'mu' 和 'sigma'"
+            )
+        mu = float(spec['mu'])
+        sigma = float(spec['sigma'])
+        if sigma <= 0:
+            raise ValueError(f"参数 {name!r} 的 sigma 必须 > 0")
+        log = param_type in ('lognormal', 'qlognormal')
+        q = None
+        if param_type in ('qnormal', 'qlognormal'):
+            if 'q' not in spec:
+                raise ValueError(f"参数 {name!r} 的 {param_type} 类型必须提供步长 'q'")
+            q = float(spec['q'])
+        # 截断区间 [mu-4σ, mu+4σ]，log 时映射到 exp
+        lo, hi = mu - 4 * sigma, mu + 4 * sigma
+        low = float(np.exp(lo)) if log else float(lo)
+        high = float(np.exp(hi)) if log else float(hi)
+        result = {'type': 'normal', 'mu': mu, 'sigma': sigma, 'low': low, 'high': high}
+        if q is not None:
+            result['q'] = q
+        if log:
+            result['log'] = True
+        return result
+
     raise ValueError(
         f"参数 {name!r} 的搜索空间类型未知: {param_type!r}，"
         "可选: 'int'/'float'/'categorical'（optuna 风格）或 "
-        "'uniform'/'loguniform'/'quniform'/'randint'/'choice'（hyperopt 风格）"
+        "'uniform'/'loguniform'/'quniform'/'randint'/'choice'（hyperopt 风格）或 "
+        "'normal'/'qnormal'/'lognormal'/'qlognormal'（hyperopt 正态族）"
     )
 
 
@@ -1984,6 +2018,8 @@ class ModelTuner:
                     param_name,
                     param_config['choices']
                 )
+            elif param_type == 'normal':
+                params[param_name] = self._sample_normal(trial, param_name, param_config)
             else:
                 raise ValueError(f"未知参数类型: {param_type}")
             
@@ -2005,6 +2041,39 @@ class ModelTuner:
             )
 
         return params
+
+    def _sample_normal(self, trial: 'optuna.Trial', param_name: str, param_config: Dict[str, Any]) -> float:
+        """从截断正态/对数正态分布采样（hyperopt normal/lognormal 近似）。
+
+        optuna 无原生正态采样，在 [0,1] 均匀采样后经逆 CDF 变换为目标分布，
+        保证 optuna 可记录与复现。截断区间取 [mu-4σ, mu+4σ]，log 时为对数空间。
+
+        :param trial: Optuna trial 对象
+        :param param_name: 参数名
+        :param param_config: 'normal' DSL 配置（含 mu/sigma/low/high/q/log）
+        :return: 采样值
+        """
+        from scipy.stats import norm
+
+        mu = param_config['mu']
+        sigma = param_config['sigma']
+        low = param_config['low']
+        high = param_config['high']
+        q = param_config.get('q')
+        log = param_config.get('log', False)
+
+        a = float(norm.cdf((low - mu) / sigma))
+        b = float(norm.cdf((high - mu) / sigma))
+        # 用带 '__u' 后缀的内部参数名做均匀采样，避免与外层参数名冲突
+        u = trial.suggest_float(param_name + '__u', 0.0, 1.0)
+        p = a + (b - a) * u
+        p = min(max(p, 1e-12), 1.0 - 1e-12)
+        val = float(norm.ppf(p) * sigma + mu)
+        if log:
+            val = float(np.exp(val))
+        if q is not None:
+            val = float(round(val / q) * q)
+        return val
 
     def get_best_model(self) -> Any:
         """获取使用最佳参数的模型实例.
