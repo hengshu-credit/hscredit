@@ -52,7 +52,7 @@ from sklearn.base import BaseEstimator, TransformerMixin, clone
 
 from .optimal_binning import OptimalBinning
 from ..metrics._binning import compute_bin_stats
-from ...exceptions import HSCreditError, NotFittedError
+from ...exceptions import HSCreditError, NotFittedError, ParallelExecutionError
 from ..._lazy import LazyModule
 from ...utils.parallel import ParallelizableMixin
 from ...utils.serialization import ArtifactSerializableMixin
@@ -381,13 +381,20 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
 
         # X/Y 两个轴互不依赖，在同一外层批次并行拟合。子分箱器如果
         # 显式配置了 n_jobs/后端，仍由 _resolve_axis_params 保留子级配置。
-        self.binner_x_, self.binner_y_ = self._parallel_execute(
-            self._fit_axis_binner,
-            [True, False],
-            task_labels=[self.feature_x_, self.feature_y_],
-            default_backend="threading",
-            has_parallel_children=True,
-        )
+        try:
+            self.binner_x_, self.binner_y_ = self._parallel_execute(
+                self._fit_axis_binner,
+                [True, False],
+                task_labels=[self.feature_x_, self.feature_y_],
+                default_backend="threading",
+                has_parallel_children=True,
+            )
+        except ParallelExecutionError as exc:
+            # 在二维分箱的轴级子任务失败场景下，测试期望恢复并抛出原始异常类型，
+            # 因此在此处尝试解包并重新抛出原始异常以保留原始语义。
+            if exc.__cause__ is not None:
+                raise exc.__cause__
+            raise
         self.splits_x_ = self.binner_x_.splits_.get(self.feature_x_, np.array([]))
         self.n_bins_x_ = self.binner_x_.n_bins_.get(self.feature_x_, 0)
 
