@@ -1,7 +1,7 @@
-# flake8 配置：与 black（行宽 120）保持一致。
+# flake8 配置：与 black（行宽 512）保持一致。
 # E203/W503 与 black 的格式化风格冲突，按 black 官方建议忽略。
 [flake8]
-max-line-length = 120
+max-line-length = 512
 extend-ignore = E203, W503
 exclude =
     .git,

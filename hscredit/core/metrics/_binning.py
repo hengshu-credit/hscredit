@@ -81,6 +81,73 @@ def _count_curve_violations(values: np.ndarray, trend: str) -> int:
     return 0
 
 
+def _fit_monotone_quadratic(
+    x: np.ndarray,
+    y: np.ndarray,
+    trend: Literal['ascending', 'descending'] = 'descending',
+) -> np.ndarray:
+    """带单调约束的二次曲线最小二乘拟合.
+
+    拟合 ``y ≈ a·x² + b·x + c``，通过约束保证拟合曲线在 ``x`` 的取值区间内
+    严格单调（抛物线顶点落在区间之外），避免无约束 ``np.polyfit`` 的顶点落入
+    区间内部，导致二次项系数无法反映"单调趋势下的弯曲程度"。
+
+    约束原理：导数 ``y' = 2a·x + b`` 是线性函数，其区间最值在端点处取得，
+    因此只需约束两端点的导数符号即可保证整个区间单调：
+
+    - ``'descending'``：``y'(x_min) ≤ 0`` 且 ``y'(x_max) ≤ 0``（区间内只减不增）
+    - ``'ascending'``：``y'(x_min) ≥ 0`` 且 ``y'(x_max) ≥ 0``（区间内只增不减）
+
+    使用 SLSQP 约束优化求解（以无约束解为初值，允许不可行初值自动投影），
+    优化失败时回退为无约束二次拟合。
+
+    :param x: 自变量数组
+    :param y: 因变量数组
+    :param trend: 目标单调方向，``'ascending'`` 或 ``'descending'``
+    :return: 拟合系数 ``[a, b, c]``
+    """
+    from scipy.optimize import minimize
+
+    x_arr = np.asarray(x, dtype=float)
+    y_arr = np.asarray(y, dtype=float)
+
+    # 无约束解：既作为 SLSQP 初值，也作为优化失败时的回退结果
+    fallback = np.polyfit(x_arr, y_arr, 2)
+
+    x_min = float(np.min(x_arr))
+    x_max = float(np.max(x_arr))
+
+    def objective(params):
+        a, b, c = params
+        return float(np.sum((y_arr - (a * x_arr ** 2 + b * x_arr + c)) ** 2))
+
+    if trend == 'descending':
+        # 两端点导数均 <= 0：2a·x + b <= 0  =>  -(2a·x + b) >= 0
+        constraints = [
+            {'type': 'ineq', 'fun': lambda p: -(2.0 * p[0] * x_min + p[1])},
+            {'type': 'ineq', 'fun': lambda p: -(2.0 * p[0] * x_max + p[1])},
+        ]
+    else:
+        # 两端点导数均 >= 0：2a·x + b >= 0
+        constraints = [
+            {'type': 'ineq', 'fun': lambda p: 2.0 * p[0] * x_min + p[1]},
+            {'type': 'ineq', 'fun': lambda p: 2.0 * p[0] * x_max + p[1]},
+        ]
+
+    try:
+        result = minimize(
+            objective,
+            x0=np.asarray(fallback, dtype=float),
+            constraints=constraints,
+            method='SLSQP',
+        )
+        if result.success and np.all(np.isfinite(result.x)):
+            return np.asarray(result.x, dtype=float)
+    except Exception:
+        pass
+    return np.asarray(fallback, dtype=float)
+
+
 
 def quadratic_curve_coefficient(
     bins: np.ndarray,
@@ -105,8 +172,10 @@ def quadratic_curve_coefficient(
 
     :param monotonic: 目标趋势，默认 ``'descending'``：
 
-        - ``'ascending'``：期望曲线单调递增
-        - ``'descending'``：期望曲线单调递减
+        - ``'ascending'``：期望曲线单调递增（使用单调约束二次拟合，
+          保证拟合曲线在区间内只增不减）
+        - ``'descending'``：期望曲线单调递减（使用单调约束二次拟合，
+          保证拟合曲线在区间内只减不增）
         - ``'valley'``：期望曲线先降后升（U 形，二次项系数为正）
         - ``'peak'``：期望曲线先升后降（倒 U 形，二次项系数为负）
 
@@ -134,7 +203,12 @@ def quadratic_curve_coefficient(
         return 0.0
 
     x_axis = np.linspace(-1.0, 1.0, len(curve_values), dtype=float)
-    coef = float(np.polyfit(x_axis, curve_values, 2)[0])
+    if monotonic in ('ascending', 'descending'):
+        # 单调趋势使用约束二次拟合：保证拟合曲线在区间内单调，
+        # 避免无约束抛物线顶点落入区间内部导致系数方向与趋势相悖
+        coef = float(_fit_monotone_quadratic(x_axis, curve_values, monotonic)[0])
+    else:
+        coef = float(np.polyfit(x_axis, curve_values, 2)[0])
 
     if monotonic == 'peak':
         oriented_coef = -coef

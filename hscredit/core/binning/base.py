@@ -41,6 +41,7 @@ from ..metrics._binning import (
     ks_for_splits,
     compare_splits_iv,
     compare_splits_ks,
+    _fit_monotone_quadratic,
 )
 
 
@@ -2002,18 +2003,25 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
             self.bin_tables_[feature] = self._compute_bin_stats(feature, X[feature], y, bins)
             self.monotonic_trend_[feature] = final_mode
 
-    def _quadratic_curve_coefficient(self, values: np.ndarray) -> float:
-        """计算曲线二次拟合系数。"""
+    def _quadratic_curve_coefficient(self, values: np.ndarray, trend: Optional[str] = None) -> float:
+        """计算曲线二次拟合系数。
+
+        ``trend`` 为 ``'ascending'``/``'descending'`` 时使用带单调约束的二次拟合，
+        保证拟合曲线在区间内单调（抛物线顶点落在区间之外）；
+        其他情况（如 U 形/倒 U 形）使用无约束二次拟合。
+        """
         arr = np.asarray(values, dtype=float)
         if len(arr) < 3 or np.allclose(arr, arr[0], atol=1e-12, rtol=0):
             return 0.0
         x = np.linspace(-1.0, 1.0, len(arr), dtype=float)
+        if trend in ("ascending", "descending"):
+            return float(_fit_monotone_quadratic(x, arr, trend)[0])
         coeffs = np.polyfit(x, arr, 2)
         return float(coeffs[0])
 
     def _quadratic_curve_score(self, values: np.ndarray, mode: str) -> float:
         """根据目标趋势解释二次拟合系数方向。"""
-        coef = self._quadratic_curve_coefficient(values)
+        coef = self._quadratic_curve_coefficient(values, trend=mode)
         if mode == "peak":
             return -coef
         return coef

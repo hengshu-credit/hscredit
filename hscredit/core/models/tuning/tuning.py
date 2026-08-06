@@ -97,6 +97,291 @@ except ImportError:
     StudyDirection = None
 
 
+def _normalize_space_param(name: str, spec: Any) -> Dict[str, Any]:
+    """将单个超参数定义统一为内部 DSL（optuna 风格字典）.
+
+    支持的输入格式（按识别顺序）：
+
+    - dict（hscredit/optuna 风格）：
+      ``{'type': 'int'/'float'/'categorical', 'low':, 'high':, 'step':, 'log':, 'choices':}``
+    - dict（hyperopt 风格 type）：
+      ``{'type': 'uniform'/'loguniform'/'quniform'/'randint'/'choice', ...}``
+    - tuple ``(low, high)``（bayesian-optimization / skopt 简写）：
+      两端均为整数时为 int，否则为 float
+    - tuple ``(low, high, prior)``（skopt 简写）：
+      prior 为 ``'log-uniform'`` 时 float(log=True)，``'uniform'`` 时 float
+    - list（sklearn 网格 / skopt Categorical / hyperopt choice 简写）：
+      视为 categorical 的 choices
+    - scipy.stats 冻结分布（sklearn RandomizedSearchCV 风格）：
+      ``randint`` / ``loguniform``(reciprocal) / ``uniform``
+    - optuna.distributions 分布对象（安装 optuna 时）：
+      ``IntDistribution`` / ``FloatDistribution`` / ``CategoricalDistribution``
+      及 optuna 旧版 ``IntUniformDistribution`` 等
+
+    :param name: 参数名（用于错误提示）
+    :param spec: 参数定义
+    :return: 内部 DSL 字典，含 ``type`` 及相应键
+    :raises ValueError: 无法识别的格式或取值非法时抛出
+    """
+    # 1. optuna 原生分布对象
+    if OPTUNA_AVAILABLE and isinstance(spec, optuna.distributions.BaseDistribution):
+        return _space_param_from_optuna(name, spec)
+
+    # 2. scipy 冻结分布（sklearn RandomizedSearchCV 风格）
+    # 鸭子类型识别 rv_frozen（rv_frozen 基类在 scipy 各版本中的暴露路径不稳定）
+    if (
+        hasattr(spec, 'dist')
+        and hasattr(spec, 'args')
+        and callable(getattr(spec, 'rvs', None))
+        and getattr(getattr(spec, 'dist', None), 'name', None) is not None
+    ):
+        return _space_param_from_scipy(name, spec)
+
+    # 3. tuple：bayesian-optimization / skopt 简写
+    if isinstance(spec, tuple):
+        return _space_param_from_tuple(name, spec)
+
+    # 4. list：sklearn 网格 / skopt Categorical / hyperopt choice 简写
+    if isinstance(spec, list):
+        if not spec:
+            raise ValueError(f"参数 {name!r} 的 choices 不能为空列表")
+        return {'type': 'categorical', 'choices': list(spec)}
+
+    # 5. dict：hscredit DSL 或 hyperopt 风格
+    if isinstance(spec, dict):
+        return _space_param_from_dict(name, spec)
+
+    raise ValueError(
+        f"参数 {name!r} 的搜索空间定义无法识别: {spec!r}。"
+        "支持 dict（optuna/hyperopt 风格）、tuple（bayesian-optimization/skopt 风格）、"
+        "list（categorical 简写）、scipy.stats 分布或 optuna.distributions 分布对象"
+    )
+
+
+def _space_param_from_dict(name: str, spec: Dict[str, Any]) -> Dict[str, Any]:
+    """解析字典形式（hscredit DSL 或 hyperopt 风格 type）的参数定义。"""
+    param_type = spec.get('type')
+    if param_type is None:
+        raise ValueError(
+            f"参数 {name!r} 的搜索空间字典缺少 'type' 键: {spec!r}"
+        )
+    param_type = str(param_type).strip().lower()
+
+    if param_type == 'int':
+        _check_bounds(name, spec, integer=True)
+        result = {'type': 'int', 'low': int(spec['low']), 'high': int(spec['high'])}
+        if spec.get('log', False):
+            result['log'] = True
+        elif 'step' in spec:
+            result['step'] = int(spec['step'])
+        return result
+    if param_type == 'float':
+        _check_bounds(name, spec, integer=False)
+        result = {'type': 'float', 'low': float(spec['low']), 'high': float(spec['high'])}
+        if spec.get('log', False):
+            result['log'] = True
+        if 'step' in spec and spec['step'] is not None:
+            result['step'] = float(spec['step'])
+        return result
+    if param_type == 'categorical':
+        choices = spec.get('choices', spec.get('options'))
+        if not choices:
+            raise ValueError(f"参数 {name!r} 的 categorical 类型必须提供非空 choices")
+        return {'type': 'categorical', 'choices': list(choices)}
+
+    # hyperopt 风格
+    if param_type == 'uniform':
+        _check_bounds(name, spec, integer=False)
+        return {'type': 'float', 'low': float(spec['low']), 'high': float(spec['high'])}
+    if param_type == 'loguniform':
+        _check_bounds(name, spec, integer=False)
+        return {'type': 'float', 'low': float(spec['low']), 'high': float(spec['high']), 'log': True}
+    if param_type == 'quniform':
+        _check_bounds(name, spec, integer=False)
+        if 'q' not in spec:
+            raise ValueError(f"参数 {name!r} 的 quniform 类型必须提供步长 'q'")
+        return {
+            'type': 'float',
+            'low': float(spec['low']),
+            'high': float(spec['high']),
+            'step': float(spec['q']),
+        }
+    if param_type == 'randint':
+        low = int(spec.get('low', 0))
+        if 'high' not in spec:
+            raise ValueError(f"参数 {name!r} 的 randint 类型必须提供 'high'")
+        high = int(spec['high'])
+        if low > high:
+            raise ValueError(f"参数 {name!r} 的 low({low}) 不能大于 high({high})")
+        return {'type': 'int', 'low': low, 'high': high}
+    if param_type == 'choice':
+        choices = spec.get('choices', spec.get('options'))
+        if not choices:
+            raise ValueError(f"参数 {name!r} 的 choice 类型必须提供非空 choices")
+        return {'type': 'categorical', 'choices': list(choices)}
+
+    raise ValueError(
+        f"参数 {name!r} 的搜索空间类型未知: {param_type!r}，"
+        "可选: 'int'/'float'/'categorical'（optuna 风格）或 "
+        "'uniform'/'loguniform'/'quniform'/'randint'/'choice'（hyperopt 风格）"
+    )
+
+
+def _space_param_from_tuple(name: str, spec: tuple) -> Dict[str, Any]:
+    """解析元组形式（bayesian-optimization / skopt 简写）的参数定义。"""
+    if len(spec) == 2:
+        low, high = spec
+        if low > high:
+            raise ValueError(f"参数 {name!r} 的下界({low})不能大于上界({high})")
+        # 两端均为整数（排除 bool）时视为整数参数，否则为浮点参数
+        if (
+            isinstance(low, (int, np.integer))
+            and isinstance(high, (int, np.integer))
+            and not isinstance(low, bool)
+            and not isinstance(high, bool)
+        ):
+            return {'type': 'int', 'low': int(low), 'high': int(high)}
+        return {'type': 'float', 'low': float(low), 'high': float(high)}
+    if len(spec) == 3:
+        low, high, prior = spec
+        if low > high:
+            raise ValueError(f"参数 {name!r} 的下界({low})不能大于上界({high})")
+        prior_norm = str(prior).strip().lower()
+        if prior_norm == 'log-uniform':
+            return {'type': 'float', 'low': float(low), 'high': float(high), 'log': True}
+        if prior_norm == 'uniform':
+            return {'type': 'float', 'low': float(low), 'high': float(high)}
+        raise ValueError(
+            f"参数 {name!r} 的元组第三元素（prior）仅支持 'uniform'/'log-uniform'，"
+            f"当前为 {prior!r}"
+        )
+    raise ValueError(
+        f"参数 {name!r} 的元组形式仅支持 (low, high) 或 (low, high, prior)，"
+        f"当前长度: {len(spec)}"
+    )
+
+
+def _space_param_from_scipy(name: str, spec: Any) -> Dict[str, Any]:
+    """解析 scipy 冻结分布（sklearn RandomizedSearchCV 风格）的参数定义。"""
+    dist_name = getattr(getattr(spec, 'dist', None), 'name', None)
+    args = getattr(spec, 'args', ())
+
+    if dist_name == 'randint':
+        # scipy randint 采样区间为 [low, high)，转为闭区间 [low, high-1]
+        low, high = int(args[0]), int(args[1]) - 1
+        if low > high:
+            raise ValueError(f"参数 {name!r} 的 randint 分布区间为空: {spec!r}")
+        return {'type': 'int', 'low': low, 'high': high}
+    if dist_name in ('loguniform', 'reciprocal'):
+        low, high = float(args[0]), float(args[1])
+        if low <= 0 or high <= 0:
+            raise ValueError(f"参数 {name!r} 的 loguniform 分布要求区间为正数: {spec!r}")
+        return {'type': 'float', 'low': low, 'high': high, 'log': True}
+    if dist_name == 'uniform':
+        # scipy uniform 参数为 (loc, scale)，采样区间 [loc, loc+scale]
+        low, high = float(args[0]), float(args[0] + args[1])
+        return {'type': 'float', 'low': low, 'high': high}
+
+    raise ValueError(
+        f"参数 {name!r} 的 scipy 分布暂不支持: {dist_name!r}，"
+        "仅支持 randint / loguniform / uniform"
+    )
+
+
+def _space_param_from_optuna(name: str, spec: Any) -> Dict[str, Any]:
+    """解析 optuna 分布对象的参数定义（含旧版分布类的兼容映射）。"""
+    # optuna >= 2.4 的统一分布类
+    if isinstance(spec, optuna.distributions.IntDistribution):
+        result = {'type': 'int', 'low': int(spec.low), 'high': int(spec.high)}
+        if getattr(spec, 'log', False):
+            result['log'] = True
+        else:
+            step = int(getattr(spec, 'step', 1))
+            if step != 1:
+                result['step'] = step
+        return result
+    if isinstance(spec, optuna.distributions.FloatDistribution):
+        result = {'type': 'float', 'low': float(spec.low), 'high': float(spec.high)}
+        if getattr(spec, 'log', False):
+            result['log'] = True
+        step = getattr(spec, 'step', None)
+        if step is not None:
+            result['step'] = float(step)
+        return result
+    if isinstance(spec, optuna.distributions.CategoricalDistribution):
+        return {'type': 'categorical', 'choices': list(spec.choices)}
+
+    # optuna < 2.4 的旧版分布类
+    legacy = optuna.distributions
+    if hasattr(legacy, 'IntLogUniformDistribution') and isinstance(spec, legacy.IntLogUniformDistribution):
+        return {'type': 'int', 'low': int(spec.low), 'high': int(spec.high), 'log': True}
+    if hasattr(legacy, 'IntUniformDistribution') and isinstance(spec, legacy.IntUniformDistribution):
+        result = {'type': 'int', 'low': int(spec.low), 'high': int(spec.high)}
+        step = int(getattr(spec, 'step', 1))
+        if step != 1:
+            result['step'] = step
+        return result
+    if hasattr(legacy, 'LogUniformDistribution') and isinstance(spec, legacy.LogUniformDistribution):
+        return {'type': 'float', 'low': float(spec.low), 'high': float(spec.high), 'log': True}
+    if hasattr(legacy, 'DiscreteUniformDistribution') and isinstance(spec, legacy.DiscreteUniformDistribution):
+        return {
+            'type': 'float',
+            'low': float(spec.low),
+            'high': float(spec.high),
+            'step': float(spec.q),
+        }
+    if hasattr(legacy, 'UniformDistribution') and isinstance(spec, legacy.UniformDistribution):
+        return {'type': 'float', 'low': float(spec.low), 'high': float(spec.high)}
+
+    raise ValueError(f"参数 {name!r} 的 optuna 分布类型不支持: {type(spec).__name__}")
+
+
+def _check_bounds(name: str, spec: Dict[str, Any], integer: bool) -> None:
+    """校验字典形式参数定义的 low/high 边界。"""
+    if 'low' not in spec or 'high' not in spec:
+        raise ValueError(f"参数 {name!r} 的搜索空间必须提供 'low' 和 'high': {spec!r}")
+    low, high = spec['low'], spec['high']
+    if low > high:
+        raise ValueError(f"参数 {name!r} 的下界({low})不能大于上界({high})")
+    if integer:
+        if isinstance(low, bool) or isinstance(high, bool) or not isinstance(
+            low, (int, np.integer)
+        ) or not isinstance(high, (int, np.integer)):
+            raise ValueError(f"参数 {name!r} 的 int 类型要求整数边界: {spec!r}")
+
+
+def normalize_search_space(search_space: Optional[Dict[str, Any]]) -> Optional[Dict[str, Dict[str, Any]]]:
+    """将多种超参数框架的搜索空间格式统一为内部 DSL（optuna 风格）.
+
+    每个参数单独定义，支持以下框架的入参格式（无需安装对应库，
+    仅需按其风格以 dict/tuple/list/分布对象表达）：
+
+    - **hscredit/optuna 风格**：
+      ``{'max_depth': {'type': 'int', 'low': 2, 'high': 4}}``
+    - **optuna 分布对象**：``{'max_depth': optuna.distributions.IntDistribution(2, 4)}``
+    - **bayesian-optimization 风格**：
+      ``{'max_depth': (2, 4), 'learning_rate': (1e-3, 0.1)}``
+    - **scikit-optimize 风格**：
+      ``{'learning_rate': (1e-3, 0.1, 'log-uniform'), 'penalty': ['l1', 'l2']}``
+    - **sklearn 风格**：
+      ``{'C': [0.1, 1, 10]}`` 或 scipy 分布 ``{'C': scipy.stats.loguniform(1e-3, 1e1)}``
+    - **hyperopt 风格**：
+      ``{'learning_rate': {'type': 'loguniform', 'low': 1e-3, 'high': 0.1},
+        'penalty': {'type': 'choice', 'choices': ['l1', 'l2']}}``
+
+    :param search_space: 搜索空间字典，键为参数名；为 None 时原样返回 None
+    :return: 统一为 ``{'type': 'int'/'float'/'categorical', ...}`` 形式的字典
+    :raises ValueError: 格式无法识别或取值非法时抛出
+    """
+    if search_space is None:
+        return None
+    if not isinstance(search_space, dict):
+        raise ValueError(
+            f"search_space 必须是字典（参数名 -> 参数定义），当前类型: {type(search_space).__name__}"
+        )
+    return {name: _normalize_space_param(name, spec) for name, spec in search_space.items()}
+
+
 class TuningSampler:
     """采样器码表 - 统一管理 optuna 内置及 optunahub 提供的搜索器.
 
@@ -684,13 +969,16 @@ class ModelTuner:
     :param model_class: 模型类 (如XGBoostRiskModel)
     :param search_space: 参数搜索空间，默认None则使用预定义空间
     :param fixed_params: 固定参数，不参与搜索
-    :param metric: 优化指标，可选:
+    :param metric: 优化指标（决定评估计算逻辑），可选:
         - 字符串: 'auc', 'ks', 'ks_diff', 'accuracy', 'precision', 'recall', 'f1', 'logloss'
         - 列表: 多个指标，用于多目标优化，如 ['ks', 'ks_diff']
         - 函数: 自定义评估函数，接收(y_true, y_pred)返回float
         - 列表的函数: 多个自定义函数
     :param direction: 优化方向，'maximize'或'minimize'，或列表（多目标时）
-    :param metric_names: 指标名称列表（多目标时用于显示），默认自动推断
+    :param metric_names: 指标显示名称列表（仅用于日志/报告/可视化的展示标签，
+        不参与任何计算逻辑），默认 None 时从 metric 自动推断
+        （内置字符串取其大写形式，自定义函数取其 ``__name__``）。
+        与 metric 不重复：metric 决定"算什么"，metric_names 只决定"叫什么"
     :param cv: 交叉验证折数，默认5
     :param n_jobs: 并行任务数，默认-1
     :param random_state: 随机种子，默认None
@@ -700,10 +988,20 @@ class ModelTuner:
 
     **搜索空间定义**
 
-    搜索空间是一个字典，每个参数定义如下:
+    搜索空间是一个字典，每个参数单独定义。内部统一为 optuna 风格 DSL:
+
     - 整数参数: {'type': 'int', 'low': 1, 'high': 10, 'step': 1}
     - 浮点参数: {'type': 'float', 'low': 0.01, 'high': 1.0, 'log': True}
     - 类别参数: {'type': 'categorical', 'choices': ['a', 'b', 'c']}
+
+    同时兼容多种超参数框架的入参格式（无需安装对应库），传入后自动归一化:
+
+    - bayesian-optimization 风格: {'max_depth': (2, 4), 'learning_rate': (1e-3, 0.1)}
+    - scikit-optimize 风格: {'learning_rate': (1e-3, 0.1, 'log-uniform'), 'penalty': ['l1', 'l2']}
+    - sklearn 风格: {'C': [0.1, 1, 10]} 或 scipy 分布 {'C': scipy.stats.loguniform(1e-3, 1e1)}
+    - hyperopt 风格: {'learning_rate': {'type': 'loguniform', 'low': 1e-3, 'high': 0.1},
+      'penalty': {'type': 'choice', 'choices': ['l1', 'l2']}}
+    - optuna 分布对象: {'max_depth': optuna.distributions.IntDistribution(2, 4)}
 
     **内部建模经验**
 
@@ -820,7 +1118,8 @@ class ModelTuner:
             )
 
         self.model_class = model_class
-        self.search_space = search_space
+        # 统一为多框架兼容的内部 DSL（optuna 风格），后续采样只认该格式
+        self.search_space = normalize_search_space(search_space)
         self.fixed_params = fixed_params or {}
         self.objective = objective
         self.objective_kwargs = objective_kwargs or {}
@@ -1659,12 +1958,27 @@ class ModelTuner:
                         step=param_config.get('step', 1)
                     )
             elif param_type == 'float':
-                params[param_name] = trial.suggest_float(
-                    param_name,
-                    param_config['low'],
-                    param_config['high'],
-                    log=param_config.get('log', False)
-                )
+                # optuna 要求 log=True 时 step 必须为 None，二者不可同时指定
+                if param_config.get('log', False):
+                    params[param_name] = trial.suggest_float(
+                        param_name,
+                        param_config['low'],
+                        param_config['high'],
+                        log=True
+                    )
+                elif param_config.get('step') is not None:
+                    params[param_name] = trial.suggest_float(
+                        param_name,
+                        param_config['low'],
+                        param_config['high'],
+                        step=param_config['step']
+                    )
+                else:
+                    params[param_name] = trial.suggest_float(
+                        param_name,
+                        param_config['low'],
+                        param_config['high']
+                    )
             elif param_type == 'categorical':
                 params[param_name] = trial.suggest_categorical(
                     param_name,

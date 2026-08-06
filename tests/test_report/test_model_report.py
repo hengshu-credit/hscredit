@@ -1138,3 +1138,81 @@ class TestModelReportDatasetNaming:
     def test_no_datasets_raises(self):
         with pytest.raises(ValueError, match='未提供任何数据集'):
             ModelReport(MockModel(['f0']), target='target', feature_names=['f0'])
+
+
+class NumpyFeatureModel(MockModel):
+    """feature_names_in_ 为 numpy 数组的模拟模型（模拟 XGBoost/LightGBM）."""
+
+    def __init__(self, feature_names):
+        super().__init__(feature_names)
+        self.feature_names_in_ = np.asarray(feature_names)
+
+
+class TestModelReportNumpyInputs:
+    """numpy 类型入参（ndarray / np.str_）兼容性回归测试."""
+
+    @staticmethod
+    def _data(n=8):
+        return pd.DataFrame({
+            'f0': np.arange(n, dtype=float),
+            'f1': np.arange(n, dtype=float) * 0.5,
+            'target': [0, 1] * (n // 2),
+        })
+
+    def test_feature_names_numpy_array(self):
+        """feature_names 传 numpy 数组时不应触发真值歧义报错."""
+        report = ModelReport(
+            NumpyFeatureModel(['f0', 'f1']),
+            X_train=self._data(),
+            target='target',
+            feature_names=np.array(['f0', 'f1']),
+        )
+        assert report.feature_names == ['f0', 'f1']
+        assert all(type(f) is str for f in report.feature_names)
+
+    def test_model_feature_names_in_numpy(self):
+        """model.feature_names_in_ 为 np.str_ 数组时特征校验与筛选正常."""
+        report = ModelReport(
+            NumpyFeatureModel(['f0', 'f1']),
+            X_train=self._data(),
+            target='target',
+            feature_names=['f0', 'f1'],
+        )
+        assert report.feature_names == ['f0', 'f1']
+
+    def test_np_str_columns_normalized(self):
+        """DataFrame 列名为 np.str_ 时统一规整为 Python str."""
+        df = self._data()
+        df.columns = list(np.asarray(df.columns))  # np.str_ 列名
+        report = ModelReport(
+            NumpyFeatureModel(['f0', 'f1']),
+            X_train=df,
+            target='target',
+            feature_names=np.array(['f0', 'f1']),
+        )
+        train_X = report._datasets['训练集'].X
+        assert all(type(c) is str for c in train_X.columns)
+        assert report.feature_names == ['f0', 'f1']
+
+    def test_numpy_X_with_numpy_feature_names(self):
+        """X 为 ndarray 且 feature_names 为 ndarray 时正常构建数据集."""
+        df = self._data()
+        report = ModelReport(
+            NumpyFeatureModel(['f0', 'f1']),
+            X_train=df[['f0', 'f1']].to_numpy(),
+            y_train=df['target'],
+            feature_names=np.array(['f0', 'f1']),
+        )
+        assert list(report._datasets['训练集'].X.columns) == ['f0', 'f1']
+        assert report.feature_names == ['f0', 'f1']
+
+    def test_add_dataset_numpy_feature_names(self):
+        """add_dataset 的 feature_names 传 numpy 数组时不应真值歧义报错."""
+        report = ModelReport(
+            NumpyFeatureModel(['f0', 'f1']),
+            X_train=self._data(),
+            target='target',
+            feature_names=['f0', 'f1'],
+        )
+        report.add_dataset('验证集', '验证集', self._data(), feature_names=np.array(['f0', 'f1']))
+        assert '验证集' in report._datasets

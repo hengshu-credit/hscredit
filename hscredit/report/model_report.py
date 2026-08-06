@@ -110,13 +110,32 @@ def _execute_model_comparison_plan(function, tasks, plan, **kwargs):
 # ---------------------------------------------------------------------------
 
 
+def _normalize_feature_names(feature_names) -> Optional[List[str]]:
+    """将特征名入参统一规整为 Python ``str`` 列表.
+
+    兼容 numpy 数组、``np.str_`` 标量、pandas Index 等输入，
+    避免对 numpy 数组直接做真值判断（``if``/``or``）时报错。
+    """
+    if feature_names is None:
+        return None
+    if isinstance(feature_names, (np.ndarray, pd.Index)):
+        feature_names = feature_names.tolist()
+    return [str(name) for name in list(feature_names)]
+
+
 def _ensure_dataframe(X, feature_names: Optional[List[str]] = None) -> pd.DataFrame:
     if isinstance(X, pd.DataFrame):
-        return X.copy()
+        out = X.copy()
+        # numpy 字符串标量（np.str_）列名统一为 Python str，保证下游比较/索引一致
+        if any(type(col) is not str and isinstance(col, str) for col in out.columns):
+            out.columns = [str(col) if isinstance(col, str) else col for col in out.columns]
+        return out
     arr = np.asarray(X)
     if arr.ndim == 1:
         arr = arr.reshape(-1, 1)
-    cols = feature_names or [f"feature_{i}" for i in range(arr.shape[1])]
+    cols = _normalize_feature_names(feature_names)
+    if cols is None:
+        cols = [f"feature_{i}" for i in range(arr.shape[1])]
     return pd.DataFrame(arr, columns=cols)
 
 
@@ -183,9 +202,10 @@ def _build_report_dataset(task) -> "ReportDataset":
     model, key, label, X, y, y_dict, feature_names = task
     required_features: Optional[List[str]] = None
     if hasattr(model, "feature_names_") and model.feature_names_ is not None:
-        required_features = list(model.feature_names_)
+        required_features = _normalize_feature_names(model.feature_names_)
     elif hasattr(model, "feature_names_in_") and model.feature_names_in_ is not None:
-        required_features = list(model.feature_names_in_)
+        required_features = _normalize_feature_names(model.feature_names_in_)
+    feature_names = _normalize_feature_names(feature_names)
 
     if required_features:
         missing = set(required_features).difference(X.columns)
@@ -511,7 +531,7 @@ class ModelReport:
         :param parallel_config: joblib 其他并行配置，保留调用者字典引用
         """
         self.model = model
-        self._feature_names = feature_names
+        self._feature_names = _normalize_feature_names(feature_names)
         self.n_jobs = n_jobs
         self.parallel_backend = parallel_backend
         self.parallel_config = parallel_config
@@ -580,9 +600,9 @@ class ModelReport:
         # 统一为模型实际入模特征（排除数据集传入的非入模字段如 MOB1、放款金额 等）
         model_required: Optional[List[str]] = None
         if hasattr(self.model, "feature_names_") and self.model.feature_names_ is not None:
-            model_required = list(self.model.feature_names_)
+            model_required = _normalize_feature_names(self.model.feature_names_)
         elif hasattr(self.model, "feature_names_in_") and self.model.feature_names_in_ is not None:
-            model_required = list(self.model.feature_names_in_)
+            model_required = _normalize_feature_names(self.model.feature_names_in_)
 
         if model_required:
             # 只保留模型实际入模特征，同时保留原始顺序
@@ -845,7 +865,7 @@ class ModelReport:
         :param y: 标签列，None 时从 X 中通过 target / overdue+dpds 自动构建
         :param feature_names: 特征名列表
         """
-        X = _ensure_dataframe(X, feature_names=feature_names or self.feature_names)
+        X = _ensure_dataframe(X, feature_names=_normalize_feature_names(feature_names) or self.feature_names)
         # y=None 时从 X 中通过 overdue+dpds 自动构建标签（scorecardpipeline 风格）
         if y is None:
             y, y_dict = self._build_y(X, self._target_cfg)
