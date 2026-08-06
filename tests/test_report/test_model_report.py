@@ -1216,3 +1216,46 @@ class TestModelReportNumpyInputs:
         )
         report.add_dataset('验证集', '验证集', self._data(), feature_names=np.array(['f0', 'f1']))
         assert '验证集' in report._datasets
+
+
+class TestModelReportFeatureNamesResolution:
+    """feature_names 解析优先级回归测试."""
+
+    def test_feature_names_from_model_when_not_passed(self):
+        """未传 feature_names 时直接从模型 feature_names_in_ 获取（顺序以模型为准，排除非入模字段）."""
+        df = pd.DataFrame({
+            'f1': [1.0, 2.0, 3.0, 4.0],
+            'f0': [2.0, 1.0, 0.5, 0.2],
+            'extra': [9, 9, 9, 9],  # 非入模字段
+            'target': [0, 0, 1, 1],
+        })
+        # 模型特征顺序与 X 列顺序不同
+        report = ModelReport(NumpyFeatureModel(['f0', 'f1']), X_train=df, target='target')
+        assert report.feature_names == ['f0', 'f1']
+        assert all(type(f) is str for f in report.feature_names)
+
+    def test_explicit_feature_names_filtered_by_model_required(self):
+        """显式传入 feature_names 时按模型入模特征过滤，保留传入顺序."""
+        df = pd.DataFrame({
+            'f0': [1.0, 2.0, 3.0, 4.0],
+            'f1': [2.0, 1.0, 0.5, 0.2],
+            'extra': [9, 9, 9, 9],
+            'target': [0, 0, 1, 1],
+        })
+        report = ModelReport(
+            NumpyFeatureModel(['f0', 'f1']),
+            X_train=df,
+            target='target',
+            feature_names=['f1', 'f0', 'extra'],
+        )
+        assert report.feature_names == ['f1', 'f0']
+
+    def test_no_model_attrs_uses_dataset_columns(self):
+        """模型无 feature_names_in_ / feature_names_ 时回退到数据集全部列名（含 target 列）."""
+        df = pd.DataFrame({
+            'f0': [1.0, 2.0, 3.0, 4.0],
+            'f1': [2.0, 1.0, 0.5, 0.2],
+            'target': [0, 0, 1, 1],
+        })
+        report = ModelReport(MockModel(), X_train=df, target='target')
+        assert report.feature_names == ['f0', 'f1', 'target']

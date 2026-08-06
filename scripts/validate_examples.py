@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 import time
@@ -141,13 +142,19 @@ def execute_python(path: Path, timeout: int) -> ExampleResult:
     """在脚本所在目录隔离执行 Python 示例。"""
     started_at = time.monotonic()
     script_path = path.resolve()
+    # 强制子进程使用 UTF-8 标准流编码，避免在 Windows 默认 GBK 环境下
+    # 中文输出与父进程解码编码不一致而产生乱码
+    child_env = dict(os.environ)
+    child_env["PYTHONIOENCODING"] = "utf-8"
     try:
         completed = subprocess.run(
-            [sys.executable, str(script_path)],
+            [sys.executable, "-X", "utf8", str(script_path)],
             cwd=script_path.parent,
             capture_output=True,
             text=True,
+            encoding="utf-8",
             errors="replace",
+            env=child_env,
             timeout=timeout,
             check=False,
         )

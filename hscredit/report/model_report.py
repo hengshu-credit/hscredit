@@ -426,7 +426,7 @@ class ModelReport:
     :param target: 目标列名（sklearn/scorecardpipeline 风格）
     :param overdue: 逾期天数列名或列表，配合 ``dpds`` 自动构建 0/1 标签
     :param dpds: 逾期定义天数或列表（逾期天数 > dpds 记为坏样本）
-    :param feature_names: 特征名称列表，可选
+    :param feature_names: 特征名称列表，可选；None 时自动从模型 feature_names_ / feature_names_in_ 获取
 
     **属性**
 
@@ -520,7 +520,7 @@ class ModelReport:
         :param y_test: 测试集标签，None 时从 X_test 中通过 target / overdue+dpds 构建
         :param X_oot: 跨时间验证集特征（命名为 跨时间验证集）
         :param y_oot: 跨时间验证集标签，None 时从 X_oot 中通过 target / overdue+dpds 构建
-        :param feature_names: 特征名称列表
+        :param feature_names: 特征名称列表，可选；None 时自动从模型 feature_names_ / feature_names_in_ 获取
         :param target: 目标列配置
             - str: 列名，如 'target'，数据全部在 X 中时使用
             - dict: {'overdue': col, 'dpds': threshold} 或 {'overdue': col, 'dpds': [15, 7, 0]}
@@ -585,28 +585,27 @@ class ModelReport:
         )
         self._init_from_normalized(normalized)
 
-        # 从第一个数据集获取特征名，再过滤为模型实际入模特征
-        if self._feature_names:
-            self.feature_names = list(self._feature_names)
-        elif not hasattr(self, "feature_names") or not self.feature_names:
-            if self._datasets:
-                first_ds = next(iter(self._datasets.values()))
-                self.feature_names = list(first_ds.X.columns)
-            elif self._feature_names:
-                self.feature_names = self._feature_names
-            else:
-                self.feature_names = []
-
-        # 统一为模型实际入模特征（排除数据集传入的非入模字段如 MOB1、放款金额 等）
+        # 解析最终使用的特征名列表
+        # 优先级：显式传入 feature_names > 模型自带 feature_names_ / feature_names_in_ > 数据集列名
         model_required: Optional[List[str]] = None
         if hasattr(self.model, "feature_names_") and self.model.feature_names_ is not None:
             model_required = _normalize_feature_names(self.model.feature_names_)
         elif hasattr(self.model, "feature_names_in_") and self.model.feature_names_in_ is not None:
             model_required = _normalize_feature_names(self.model.feature_names_in_)
 
-        if model_required:
-            # 只保留模型实际入模特征，同时保留原始顺序
-            self.feature_names = [f for f in self.feature_names if f in model_required]
+        if self._feature_names:
+            # 显式传入：按模型实际入模特征过滤（排除 MOB1、放款金额 等非入模字段），保留传入顺序
+            self.feature_names = list(self._feature_names)
+            if model_required:
+                self.feature_names = [f for f in self.feature_names if f in model_required]
+        elif model_required:
+            # 未显式传入：直接从模型获取入模特征（顺序以模型为准）
+            self.feature_names = list(model_required)
+        elif self._datasets:
+            first_ds = next(iter(self._datasets.values()))
+            self.feature_names = list(first_ds.X.columns)
+        else:
+            self.feature_names = []
 
     def _invalidate_caches(self) -> None:
         """清除所有依赖数据集的派生结果。"""
@@ -3666,7 +3665,7 @@ def auto_model_report(
     :param y_test: 测试集标签，None 时从 X_test 中自动构建
     :param X_oot: 跨时间验证集特征（命名为 跨时间验证集）
     :param y_oot: 跨时间验证集标签，None 时从 X_oot 中自动构建
-    :param feature_names: 特征名称列表
+    :param feature_names: 特征名称列表，可选；None 时自动从模型 feature_names_ / feature_names_in_ 获取
     :param target: 目标列配置，str 为列名，dict 为 {'overdue': col, 'dpds': threshold}
     :param overdue: 逾期列名（str）或多个列名（List[str]），与 dpds 配合自动构建标签
     :param dpds: 逾期天数阈值（int/float）或多个阈值（List），与 overdue 配合使用
