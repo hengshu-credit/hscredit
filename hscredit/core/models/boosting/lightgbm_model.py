@@ -50,10 +50,19 @@ else:
 
 
 def _lightgbm_fit_api(version: Optional[Version]) -> str:
-    """按 LightGBM 版本返回稳定的 sklearn fit 调用策略。"""
+    """按 LightGBM 版本返回稳定的 sklearn fit 调用策略。
+
+    LightGBM 3.3.0 起提供 ``early_stopping`` / ``log_evaluation`` 回调，同时
+    ``fit`` 的 ``verbose`` / ``early_stopping_rounds`` 参数被弃用（4.0 起移除）；
+    因此 3.3.0 及以上走 callbacks 路径以消除弃用告警，更早版本回退到 fit 参数。
+
+    :param version: LightGBM 版本
+    :return: ``'legacy'``（< 3.3.0，用 fit 参数）或 ``'callbacks'``（≥ 3.3.0，用回调）
+    :raises ImportError: LightGBM 未安装时
+    """
     if version is None:
         raise ImportError("LightGBM未安装，请使用 pip install lightgbm 安装")
-    return "legacy" if version < Version("4.0.0") else "callbacks"
+    return "legacy" if version < Version("3.3.0") else "callbacks"
 
 
 class LightGBMRiskModel(BaseRiskModel):
@@ -290,11 +299,25 @@ class LightGBMRiskModel(BaseRiskModel):
 
         fit_api = _lightgbm_fit_api(LIGHTGBM_VERSION)
         if fit_api == "legacy":
+            # LightGBM < 3.3.0：无回调 API，使用 fit 的 verbose / early_stopping_rounds 参数
             fit_kwargs["verbose"] = self.verbose
             if self.early_stopping_rounds is not None and eval_set:
                 fit_kwargs["early_stopping_rounds"] = self.early_stopping_rounds
-        elif self.early_stopping_rounds is not None and eval_set:
-            fit_kwargs["callbacks"] = self._build_early_stopping_callbacks()
+        else:
+            # LightGBM >= 3.3.0：用 callbacks API，避免 verbose / early_stopping_rounds 弃用告警
+            callbacks: List[Any] = []
+            if self.early_stopping_rounds is not None and eval_set:
+                callbacks.append(
+                    lgb.early_stopping(
+                        stopping_rounds=self.early_stopping_rounds,
+                        first_metric_only=self.first_metric_only,
+                        verbose=self.verbose,
+                    )
+                )
+            if self.verbose:
+                callbacks.append(lgb.log_evaluation(period=1))
+            if callbacks:
+                fit_kwargs["callbacks"] = callbacks
 
         self._model.fit(X_train, y_train, **fit_kwargs)
 
@@ -305,22 +328,6 @@ class LightGBMRiskModel(BaseRiskModel):
         self._is_fitted = True
 
         return self
-
-    def _build_early_stopping_callbacks(self) -> List[Any]:
-        """构建早停回调函数列表。
-
-        此方法只在 LightGBM 4.0 及以上版本分支调用。
-
-        :return: 早停与日志回调函数列表
-        """
-        return [
-            lgb.early_stopping(
-                stopping_rounds=self.early_stopping_rounds,
-                first_metric_only=self.first_metric_only,
-                verbose=self.verbose,
-            ),
-            lgb.log_evaluation(period=1 if self.verbose else 0),
-        ]
 
     def predict(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
         """预测类别标签.

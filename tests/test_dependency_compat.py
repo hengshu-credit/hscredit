@@ -145,11 +145,12 @@ def test_lazy_loader_preserves_real_import_error(monkeypatch, module_name, attri
 
 
 def test_lightgbm_fit_strategy_is_version_based():
-    """LightGBM 4.0 是旧参数与 callbacks API 的唯一分界。"""
+    """LightGBM 3.3.0 是旧参数与 callbacks API 的分界（callbacks 自 3.3.0 起可用）。"""
     from hscredit.core.models.boosting.lightgbm_model import _lightgbm_fit_api
 
-    assert _lightgbm_fit_api(Version("3.3.5")) == "legacy"
-    assert _lightgbm_fit_api(Version("3.99.0")) == "legacy"
+    assert _lightgbm_fit_api(Version("3.2.9")) == "legacy"
+    assert _lightgbm_fit_api(Version("3.3.0")) == "callbacks"
+    assert _lightgbm_fit_api(Version("3.3.5")) == "callbacks"
     assert _lightgbm_fit_api(Version("4.0.0")) == "callbacks"
     assert _lightgbm_fit_api(Version("4.6.0")) == "callbacks"
 
