@@ -240,3 +240,7 @@ tmp_outputs
 .codex
 docs/superpowers/
 .worktrees/
+tmp_plots
+.codebuddy
+.agents
+CLAUDE.md
