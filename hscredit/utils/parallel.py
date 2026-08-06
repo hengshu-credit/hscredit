@@ -33,6 +33,48 @@ _PARALLEL_CONFIG_KEYS = {
     "backend_kwargs",
 }
 
+# 各 joblib 内置后端支持的 backend_kwargs 白名单。
+# joblib 的 LokyBackend.configure 等实现会通过 **kwargs 静默吞掉未知参数，
+# 需要在校验阶段拦截，保证配置错误以中文公共异常暴露。
+_BACKEND_OPTION_KEYS = {
+    "loky": {
+        "inner_max_num_threads",
+        "prefer",
+        "require",
+        "idle_worker_timeout",
+        "temp_folder",
+        "temp_folder_root",
+        "max_nbytes",
+        "mmap_mode",
+        "context",
+        "timeout",
+    },
+    "multiprocessing": {
+        "prefer",
+        "require",
+        "temp_folder",
+        "temp_folder_root",
+        "max_nbytes",
+        "mmap_mode",
+        "context",
+    },
+    "threading": {"prefer", "require"},
+    "sequential": {"prefer", "require"},
+}
+
+
+def _validate_backend_options(backend: str, backend_options: Mapping[str, Any]) -> None:
+    """校验后端专属参数，未知参数统一转换为中文公共校验异常。"""
+    if not backend_options:
+        return
+    allowed = _BACKEND_OPTION_KEYS.get(backend)
+    if allowed is None:
+        # 外部注册的自定义后端不做白名单校验
+        return
+    unknown = sorted(set(backend_options).difference(allowed))
+    if unknown:
+        raise ValidationError(f"并行后端配置无效: 后端 '{backend}' 不支持的参数 {unknown}")
+
 
 def _validate_integer(value: Any, name: str, minimum: int) -> int:
     """校验并规范化公开并行预算中的整数参数。"""
@@ -326,6 +368,7 @@ def parallel_execute(
             _raise_parallel_execution_error(exc)
 
     backend = backend or "loky"
+    _validate_backend_options(backend, backend_options)
     try:
         backend_context = joblib_parallel_backend(backend, **backend_options)
     except Exception as exc:
