@@ -35,7 +35,9 @@ HSCredit 的模型调优统一由 Optuna 执行，并已提供一组模仿 Optun
 5. 修复现有兼容代码中的已知错误，并用真实调用形式而非内部实现细节建立回归测试；
 6. 在 `examples/04_models.ipynb` 中分别演示五种框架风格以及混合风格，并实际执行整个
    笔记本确认输出无异常；
-7. 不新增任何第三方依赖，不改动用户当前工作区中与本任务无关的文件。
+7. 接受各框架常见的手工搜索点格式，将模型最终参数值统一转换后通过 Optuna
+   `study.enqueue_trial` 入队；
+8. 不新增任何第三方依赖，不改动用户当前工作区中与本任务无关的文件。
 
 ## 3. 非目标与兼容边界
 
@@ -80,6 +82,49 @@ HSCredit 的模型调优统一由 Optuna 执行，并已提供一组模仿 Optun
 
 映射值含内部名称时，该名称必须与映射键一致。名称不一致、序列项无名称或存在重复名称
 时抛出中文 `ValueError`，不得静默覆盖。
+
+### 4.3 手工搜索点入口
+
+`ModelTuner` 保留现有 `trial_points=dict/list[dict]` 和 `enqueue_trials(...)`，并新增
+以下兼容入口：
+
+```python
+# Optuna
+tuner.enqueue_trial(
+    {"C": 1.0},
+    user_attrs={"来源": "经验值"},
+    skip_if_exists=True,
+)
+
+# GridSearch：按 ParameterGrid 展开后逐点入队
+tuner.enqueue_trials(param_grid={"C": [0.1, 1.0], "solver": ["liblinear"]})
+
+# skopt：按搜索空间维度顺序传入 x0
+tuner.enqueue_trials(x0=[[0.1, "liblinear"], [1.0, "lbfgs"]])
+
+# bayesian-optimization
+tuner.probe(params={"C": 1.0, "max_iter": 200}, lazy=True)
+tuner.probe(params=[1.0, 200], lazy=True)
+
+# Hyperopt
+tuner = ModelTuner(
+    ...,
+    points_to_evaluate=[
+        {"C": 0.1, "solver": "liblinear"},
+        {"C": 1.0, "solver": "lbfgs"},
+    ],
+)
+```
+
+Optuna 同名方法签名为
+`enqueue_trial(params, user_attrs=None, skip_if_exists=False)`。`probe` 接受字典或按搜索空间
+顺序排列的序列；`lazy` 参数保持 bayesian-optimization 的调用兼容，但统一 Optuna 后端
+下无论取值均表示加入待评估队列。`x0` 支持单点一维序列或多点二维序列，并利用搜索空间
+维度数量消除二者歧义。
+
+`trial_points`、`points_to_evaluate` 和 Optuna 字典点允许只指定部分参数，其余参数在 trial
+中正常采样。GridSearch 展开点、skopt `x0` 和 bayesian-optimization 序列点必须提供完整
+维度。所有格式中的值均表示模型最终收到的参数值，不要求用户了解内部潜变量。
 
 ## 5. 同名构造器语义
 
@@ -184,7 +229,39 @@ trial 完成后，最佳参数和历史展示由同一个规格将 `trial.params
 量化值选择对应区间中点，确保重新采样能还原为用户指定的有效值；超出范围或不属于类别
 候选的值以中文错误拒绝。
 
-### 6.4 LightGBM 特殊约束
+### 6.4 手工点归一化与入队
+
+适配器用一个内部入队记录统一保存：
+
+- 模型最终参数字典；
+- 可选 `user_attrs`；
+- `skip_if_exists`；
+- 输入来源，仅用于中文错误上下文和调试，不改变搜索结果。
+
+各入口先转换为有序的模型最终参数字典：
+
+- Optuna、现有 `trial_points` 和 Hyperopt `points_to_evaluate` 直接读取字典；
+- GridSearch `param_grid` 使用项目已有的 sklearn `ParameterGrid` 完整展开笛卡尔积，
+  不限制或抽样候选数量；
+- skopt `x0` 和 bayesian-optimization 序列按归一化搜索空间的稳定顺序映射参数名；
+- bayesian-optimization 字典与 Optuna 字典走相同名称路径。
+
+入队前，适配器验证参数名、候选、边界、类型和量化结果，再将模型最终值反向转换为 Optuna
+实际采样名称和值。直接分布保持原参数名；对数、正态、量化和带权类别分布转换为对应潜
+变量。量化值的反向映射选择能稳定还原该有效值的区间中点，避免浮点边界误差。
+
+如果 study 尚未创建，入队记录保存在 tuner 中；每次 `fit` 新建或加载 study 后，记录均
+逐项调用 `study.enqueue_trial`。如果 study 已存在，新增记录也立即提交给当前 study，且
+仍保留为 tuner 配置，保证后续重新创建 study 时不会丢失。`skip_if_exists` 原样传给
+Optuna；未显式指定时保持 Optuna 的 `False` 默认值。
+
+`n_trials` 继续采用 Optuna 语义，包含本次实际执行的已入队 trial。如果队列数量大于
+`n_trials`，剩余点保留为待评估状态，不自动扩大用户请求的 trial 数。
+
+用户仍可直接访问 `tuner.study_`，但对包含潜变量的搜索空间，应使用 tuner 的兼容入口；
+直接调用 `tuner.study_.enqueue_trial` 不执行模型最终值到潜变量的反向转换。
+
+### 6.5 LightGBM 特殊约束
 
 现有 `num_leaves <= 2 ** max_depth` 动态约束继续保留，但通过适配器提供的直接采样入口
 执行。若用户为这两个参数声明变换分布而无法安全收紧动态上界，则在初始化时给出明确
@@ -201,7 +278,10 @@ trial 完成后，最佳参数和历史展示由同一个规格将 `trial.params
 - bayesian-optimization 元组类型无法识别；
 - Hyperopt `randint` 空区间、choice 含不支持的嵌套维度；
 - 用户参数使用内部保留前缀；
-- 预设搜索点无法映射到搜索空间。
+- 手工点参数名未知、值超出范围、值不符合量化结果或类别不存在；
+- skopt/bayesian-optimization 序列点维数不等于搜索空间维数；
+- GridSearch `param_grid` 的值不是合法候选序列；
+- 预设搜索点无法稳定反向映射到搜索空间。
 
 所有新增用户可见错误使用中文 `ValueError`，并包含参数名与失败原因。
 
@@ -222,6 +302,14 @@ trial 完成后，最佳参数和历史展示由同一个规格将 `trial.params
   潜变量名；
 - `evaluate_study_trials` 使用还原后的模型参数；
 - `trial_points` 对直接、对数、量化、正态和带权类别参数完成往返。
+- Optuna `enqueue_trial` 保留 `user_attrs` 和 `skip_if_exists` 并调用真实 study；
+- GridSearch `param_grid` 按确定顺序展开所有组合并逐点入队；
+- skopt 单点/多点 `x0` 按维度顺序转换，错误维数被拒绝；
+- bayesian-optimization `probe` 的字典和序列形式得到相同最终点；
+- Hyperopt `points_to_evaluate` 支持部分参数点；
+- 入队的变换分布点在执行时还原为用户提交的模型最终值；
+- study 创建前后追加点均不会在下一次 `fit` 时丢失；
+- `n_trials` 小于待评估队列长度时不被适配器静默扩大。
 
 测试断言模型实际收到的参数和值，不把内部规格字典文本作为主要验收目标。
 
@@ -242,6 +330,7 @@ bayesian-optimization、Hyperopt 各建立至少一个真实 `ModelTuner.fit` �
 - skopt 具名 `Dimension` 序列和字典；
 - bayesian-optimization 连续、显式整数与类别元组；
 - Hyperopt 十种分布的声明与代表性实际调优；
+- 五种框架各自的手工搜索点写法，并展示它们进入同一个 Optuna study；
 - 多框架混合搜索空间。
 
 示例控制 trial 数和数据规模，避免重复演示显著增加运行时间。修改后使用现有开发依赖
@@ -251,6 +340,7 @@ bayesian-optimization、Hyperopt 各建立至少一个真实 `ModelTuner.fit` �
 
 - 每项生产行为均有先失败后通过的回归测试；
 - 搜索空间和调优定向测试全部通过；
+- 五类手工点入口都经过真实 `study.enqueue_trial` 并优先得到评估；
 - 非 slow、非 integration 测试无新增失败；
 - `examples/04_models.ipynb` 从头到尾执行成功；
 - `git diff --check`、Black、flake8 和相关 mypy 检查无本次新增问题；
