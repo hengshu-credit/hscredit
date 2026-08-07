@@ -1,8 +1,8 @@
 # `bin_2d_plot` Inset Colored Boundaries Implementation Plan
 
-**Goal:** Draw a distinct, slightly inset colored outline for every final 2D bin without changing heatmap values, fills, white pre-bin grids, or axes frames.
+**Goal:** Draw a distinct, slightly inset colored outline for every final 2D bin and add its index at the bin's top-left, without changing heatmap values, fills, white pre-bin grids, or axes frames.
 
-**Architecture:** Convert `solution_` to display orientation, extract each bin's exposed cell sides, shift every side inward by `0.04` cell units, and connect shifted endpoints at straight seams and concave corners. Allocate colors once from the project's categorical palette and reuse the mapping across all five metric heatmaps.
+**Architecture:** Convert `solution_` to display orientation, extract each bin's exposed cell sides, shift every side inward by `0.04` cell units, and connect shifted endpoints at straight seams and concave corners. Allocate colors once from the project's categorical palette and reuse the mapping across all five metric heatmaps. Anchor one white-background, black-text index at the leftmost cell of each bin's highest displayed row.
 
 **Tech Stack:** Python 3, NumPy, Matplotlib `LineCollection`, pytest.
 
@@ -12,7 +12,7 @@
 - Every colored point is strictly inside the heatmap frame.
 - Same-bin cell interfaces have no colored line.
 - Existing cell metrics, heatmap colors, annotations, and white grids remain unchanged.
-- No bin IDs, labels, legends, or markers are added.
+- Each final bin shows its actual ID once as a white-background, black-text index; no legends or point markers are added.
 - Missing-value rows and columns participate through `solution_`.
 - Public `bin_2d_plot` parameters and `OptimalBinning2D` remain unchanged.
 
@@ -29,13 +29,14 @@
 5. Verify a single final bin still receives one complete inset outline.
 6. Verify all five metric axes reuse identical per-bin gids, segments, and distinct colors.
 7. Verify missing-bin plots contain one outline collection for every ID in `solution_`.
-8. Run:
+8. Verify each final bin receives exactly one correctly positioned white-background, black-text index and that all five metric axes reuse the same labels.
+9. Run:
 
    ```powershell
    pytest tests/test_visualization/test_bin_plot_layout.py -q
    ```
 
-   Expected before implementation: four failures caused by the single-color internal-separator implementation.
+   Expected before implementation: failures caused by missing index labels.
 
 ## Task 2: Inset categorical outlines
 
@@ -49,7 +50,9 @@
 4. At each original grid vertex, connect the shifted endpoint pair; when four endpoints represent diagonal components, pair endpoints by source cell.
 5. Use `get_series_colors` to create a categorical `bin_id -> color` mapping once in `bin_2d_plot`.
 6. Pass the same mapping to all five metric heatmaps.
-7. Run the focused test file and require all 18 tests to pass.
+7. Add one `bin-2d-index-<id>` text artist per final bin at the leftmost cell of its highest displayed row.
+8. Style each index with an opaque white background and black text, offset inside the cell corner.
+9. Run the focused test file and require all 20 tests to pass.
 
 ## Task 3: Regression and visual verification
 
@@ -63,4 +66,4 @@
 
 2. Fit `OptimalBinning2D` against `examples/hscredit_yyp.xlsx` for the C3 score column and `CURRENT_DPD`.
 3. Save and inspect the generated `bin_2d_plot`.
-4. Confirm every metric axis has one collection and one distinct category color per final bin, all colored points are strictly inset, shared edges show both colors, and blue axes frames remain intact.
+4. Confirm every metric axis has one collection and one distinct category color per final bin, one white-background black index per bin, all colored points are strictly inset, shared edges show both colors, and blue axes frames remain intact.
