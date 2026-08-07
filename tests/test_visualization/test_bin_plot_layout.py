@@ -117,6 +117,14 @@ def _boundary_collections(ax):
     ]
 
 
+def _bin_index_labels(ax):
+    return [
+        text
+        for text in ax.texts
+        if (text.get_gid() or "").startswith("bin-2d-index-")
+    ]
+
+
 def _has_segment(artist, expected):
     expected = np.asarray(_normalized_segment(expected))
     return any(
@@ -161,6 +169,39 @@ def test_draw_2d_bin_boundaries_insets_distinct_bin_outlines():
                 assert np.all(points[:, 0] < 2.5)
                 assert np.all(points[:, 1] > -0.5)
                 assert np.all(points[:, 1] < 1.5)
+    finally:
+        plt.close(fig)
+
+
+def test_draw_2d_bin_boundaries_labels_each_bin_at_top_left():
+    """每个最终箱只在自身最高一行的最左单元格左上角显示一次箱 index。"""
+    import matplotlib.pyplot as plt
+
+    solution = np.array([[0, 0, 1], [0, 2, 1]])
+    fig, ax = plt.subplots()
+    try:
+        binning_plots._draw_2d_bin_boundaries(ax, solution, expected_shape=(2, 3))
+
+        labels = _bin_index_labels(ax)
+        assert {label.get_gid() for label in labels} == {
+            "bin-2d-index-0",
+            "bin-2d-index-1",
+            "bin-2d-index-2",
+        }
+        by_id = {int(label.get_gid().rsplit("-", 1)[1]): label for label in labels}
+        assert {bin_id: label.get_text() for bin_id, label in by_id.items()} == {
+            0: "0",
+            1: "1",
+            2: "2",
+        }
+        assert np.allclose(by_id[0].get_position(), (-0.4, 1.4))
+        assert np.allclose(by_id[1].get_position(), (1.6, 1.4))
+        assert np.allclose(by_id[2].get_position(), (0.6, 0.4))
+        for label in labels:
+            assert label.get_horizontalalignment() == "left"
+            assert label.get_verticalalignment() == "top"
+            assert label.get_color() == "#000000"
+            assert np.allclose(label.get_bbox_patch().get_facecolor(), (1.0, 1.0, 1.0, 1.0))
     finally:
         plt.close(fig)
 
@@ -265,6 +306,37 @@ def test_bin_2d_plot_draws_same_distinct_inset_boundaries_on_five_metric_axes(bi
         )
     for axis_index in (0, 1, 5, 8):
         assert _boundary_collections(axes[axis_index]) == []
+
+
+def test_bin_2d_plot_draws_same_bin_indexes_on_five_metric_axes(bin_2d_figure):
+    """五个交叉指标子图复用相同的白底黑字分箱 index。"""
+    axes = bin_2d_figure.axes[:9]
+    metric_axis_indexes = (2, 3, 4, 6, 7)
+    reference = _bin_index_labels(axes[metric_axis_indexes[0]])
+
+    assert reference
+    expected = [
+        (label.get_gid(), label.get_text(), label.get_position())
+        for label in reference
+    ]
+    for label in reference:
+        assert label.get_color() == "#000000"
+        assert np.allclose(label.get_bbox_patch().get_facecolor(), (1.0, 1.0, 1.0, 1.0))
+
+    for axis_index in metric_axis_indexes[1:]:
+        actual = _bin_index_labels(axes[axis_index])
+        assert [
+            (label.get_gid(), label.get_text(), label.get_position())
+            for label in actual
+        ] == expected
+        assert all(label.get_color() == "#000000" for label in actual)
+        assert all(
+            np.allclose(label.get_bbox_patch().get_facecolor(), (1.0, 1.0, 1.0, 1.0))
+            for label in actual
+        )
+
+    for axis_index in (0, 1, 5, 8):
+        assert _bin_index_labels(axes[axis_index]) == []
 
 
 def test_bin_2d_plot_hides_requested_axes_and_legends(bin_2d_figure):
@@ -412,8 +484,16 @@ def test_bin_2d_plot_includes_missing_bins_in_heatmaps():
         f"bin-2d-boundary-{bin_id}"
         for bin_id in np.unique(binner.solution_)
     }
+    expected_index_gids = {
+        f"bin-2d-index-{bin_id}"
+        for bin_id in np.unique(binner.solution_)
+    }
     for axis_index in (2, 3, 4, 6, 7):
         assert {
             artist.get_gid()
             for artist in _boundary_collections(axes[axis_index])
         } == expected_boundary_gids
+        assert {
+            label.get_gid()
+            for label in _bin_index_labels(axes[axis_index])
+        } == expected_index_gids

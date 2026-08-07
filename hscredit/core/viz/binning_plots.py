@@ -2501,8 +2501,9 @@ def _draw_2d_bin_boundaries(
     expected_shape: Optional[tuple] = None,
     linewidth: float = 2.4,
     inset: float = 0.04,
+    index_fontsize: float = 8,
 ) -> List[LineCollection]:
-    """按最终二维箱绘制内缩彩色轮廓，同箱内部不绘制彩色分隔线。"""
+    """绘制最终二维箱的内缩彩色轮廓，并在各箱左上角标注箱 index。"""
     solution = np.asarray(solution)
     if solution.ndim != 2 or solution.size == 0:
         raise ValueError("二维分箱映射必须是非空二维矩阵")
@@ -2521,6 +2522,7 @@ def _draw_2d_bin_boundaries(
     n_rows, n_cols = display_solution.shape
     artists = []
     for bin_id in bin_ids:
+        bin_cells = np.argwhere(display_solution == bin_id)
         segments = []
         corner_points = {}
 
@@ -2529,7 +2531,7 @@ def _draw_2d_bin_boundaries(
             corner_points.setdefault(start_vertex, []).append((start_point, cell))
             corner_points.setdefault(end_vertex, []).append((end_point, cell))
 
-        for row, col in np.argwhere(display_solution == bin_id):
+        for row, col in bin_cells:
             cell = (int(row), int(col))
             left, right = col - 0.5, col + 0.5
             bottom, top = row - 0.5, row + 0.5
@@ -2579,6 +2581,30 @@ def _draw_2d_bin_boundaries(
         artist.set_gid(f"bin-2d-boundary-{bin_id}")
         ax.add_collection(artist)
         artists.append(artist)
+
+        # 非矩形箱也只标一次：取显示区域最高一行中最左侧的单元格左上角。
+        top_row = int(bin_cells[:, 0].max())
+        left_col = int(bin_cells[bin_cells[:, 0] == top_row, 1].min())
+        index_offset = min(max(inset + 0.06, 0.10), 0.45)
+        index_label = ax.text(
+            left_col - 0.5 + index_offset,
+            top_row + 0.5 - index_offset,
+            str(bin_id),
+            ha="left",
+            va="top",
+            fontsize=index_fontsize,
+            fontweight="semibold",
+            color="#000000",
+            zorder=5,
+            clip_on=True,
+            bbox={
+                "boxstyle": "round,pad=0.12",
+                "facecolor": "#FFFFFF",
+                "edgecolor": "none",
+                "alpha": 1.0,
+            },
+        )
+        index_label.set_gid(f"bin-2d-index-{bin_id}")
     return artists
 
 
@@ -2949,6 +2975,7 @@ def bin_2d_plot(
             solution,
             bin_colors=boundary_colors,
             expected_shape=(nx, ny),
+            index_fontsize=max(fontsize - 2, 7),
         )
 
     # 热力图刻度标签：左列(样本占比/LIFT)显示 特征1(y)，底行(LIFT/坏账改善)显示 特征2(x)；
