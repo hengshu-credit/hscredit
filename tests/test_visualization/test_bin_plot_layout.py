@@ -161,10 +161,15 @@ def test_draw_2d_bin_boundaries_insets_distinct_bin_outlines():
         # 显示矩阵顶行的两个相邻格同属箱 0，不能出现平行的彩色内部边。
         assert not _has_segment(by_id[0], ((0.46, 0.54), (0.46, 1.46)))
         assert not _has_segment(by_id[0], ((0.54, 0.54), (0.54, 1.46)))
+        # L 形箱的凹拐角必须用水平/垂直短线闭合，不能跨角画斜线。
+        assert _has_segment(by_id[0], ((0.46, 0.46), (0.46, 0.54)))
+        assert _has_segment(by_id[0], ((0.46, 0.54), (0.54, 0.54)))
 
         for artist in artists:
             for segment in artist.get_segments():
                 points = np.asarray(segment)
+                delta = np.abs(points[1] - points[0])
+                assert np.isclose(delta[0], 0.0) or np.isclose(delta[1], 0.0)
                 assert np.all(points[:, 0] > -0.5)
                 assert np.all(points[:, 0] < 2.5)
                 assert np.all(points[:, 1] > -0.5)
