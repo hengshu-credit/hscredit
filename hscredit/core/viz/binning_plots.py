@@ -2567,8 +2567,31 @@ def _draw_2d_bin_boundaries(
                     by_cell.setdefault(cell, []).append(point)
                 point_groups.extend(points for points in by_cell.values() if len(points) == 2)
             for first, second in point_groups:
-                if not np.allclose(first, second):
+                if np.allclose(first, second):
+                    continue
+                if np.isclose(first[0], second[0]) or np.isclose(first[1], second[1]):
                     segments.append((first, second))
+                    continue
+
+                # 凹角的两个内缩端点在对角线上。选择仍落在当前箱内的折点，
+                # 拆成两条正交短线，避免直接连接产生斜边。
+                bend_candidates = (
+                    (first[0], second[1]),
+                    (second[0], first[1]),
+                )
+                bend = bend_candidates[0]
+                for candidate in bend_candidates:
+                    candidate_col = int(np.floor(candidate[0] + 0.5))
+                    candidate_row = int(np.floor(candidate[1] + 0.5))
+                    if (
+                        0 <= candidate_row < n_rows
+                        and 0 <= candidate_col < n_cols
+                        and display_solution[candidate_row, candidate_col] == bin_id
+                    ):
+                        bend = candidate
+                        break
+                segments.append((first, bend))
+                segments.append((bend, second))
 
         artist = LineCollection(
             segments,
