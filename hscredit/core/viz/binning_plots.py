@@ -25,7 +25,7 @@ from .utils import (
     DEFAULT_COLORS, setup_axis_style, save_figure,
     format_bin_label,
     BAD_RATE_COLOR, REFERENCE_COLOR, EXTENDED_COLORS, get_series_colors,
-    make_colormap, make_diverging_cmap, SEQUENTIAL_GRADIENT,
+    make_colormap, make_diverging_cmap,
 )
 from ..._lazy import LazyModule
 from ..._compat import normalize_seaborn_inf
@@ -2499,9 +2499,10 @@ def _draw_2d_bin_boundaries(
     *,
     bin_colors: Optional[Dict[int, Any]] = None,
     expected_shape: Optional[tuple] = None,
-    linewidth: float = 2.2,
+    linewidth: float = 2.4,
+    inset: float = 0.04,
 ) -> List[LineCollection]:
-    """按最终二维箱绘制整体外轮廓，同箱内部不绘制彩色分隔线。"""
+    """按最终二维箱绘制内缩彩色轮廓，同箱内部不绘制彩色分隔线。"""
     solution = np.asarray(solution)
     if solution.ndim != 2 or solution.size == 0:
         raise ValueError("二维分箱映射必须是非空二维矩阵")
@@ -2509,32 +2510,63 @@ def _draw_2d_bin_boundaries(
         raise ValueError(
             f"二维分箱映射形状 {solution.shape} 与热力图形状 {tuple(expected_shape)} 不一致"
         )
+    if not 0 < inset < 0.5:
+        raise ValueError("二维分箱轮廓内缩量必须大于 0 且小于 0.5")
 
     display_solution = np.flipud(solution)
     bin_ids = sorted(int(bin_id) for bin_id in np.unique(display_solution))
     if bin_colors is None:
-        cmap = make_colormap("hscredit_2d_bin_boundaries", SEQUENTIAL_GRADIENT)
-        positions = np.linspace(0.0, 1.0, len(bin_ids)) if len(bin_ids) > 1 else np.array([0.5])
-        bin_colors = {
-            bin_id: cmap(position)
-            for bin_id, position in zip(bin_ids, positions)
-        }
+        bin_colors = dict(zip(bin_ids, get_series_colors(len(bin_ids))))
 
     n_rows, n_cols = display_solution.shape
     artists = []
     for bin_id in bin_ids:
         segments = []
+        corner_points = {}
+
+        def _add_side(start_vertex, end_vertex, start_point, end_point, cell):
+            segments.append((start_point, end_point))
+            corner_points.setdefault(start_vertex, []).append((start_point, cell))
+            corner_points.setdefault(end_vertex, []).append((end_point, cell))
+
         for row, col in np.argwhere(display_solution == bin_id):
+            cell = (int(row), int(col))
             left, right = col - 0.5, col + 0.5
             bottom, top = row - 0.5, row + 0.5
             if col == 0 or display_solution[row, col - 1] != bin_id:
-                segments.append(((left, bottom), (left, top)))
+                _add_side(
+                    (left, bottom), (left, top),
+                    (left + inset, bottom + inset), (left + inset, top - inset), cell,
+                )
             if col == n_cols - 1 or display_solution[row, col + 1] != bin_id:
-                segments.append(((right, bottom), (right, top)))
+                _add_side(
+                    (right, bottom), (right, top),
+                    (right - inset, bottom + inset), (right - inset, top - inset), cell,
+                )
             if row == 0 or display_solution[row - 1, col] != bin_id:
-                segments.append(((left, bottom), (right, bottom)))
+                _add_side(
+                    (left, bottom), (right, bottom),
+                    (left + inset, bottom + inset), (right - inset, bottom + inset), cell,
+                )
             if row == n_rows - 1 or display_solution[row + 1, col] != bin_id:
-                segments.append(((left, top), (right, top)))
+                _add_side(
+                    (left, top), (right, top),
+                    (left + inset, top - inset), (right - inset, top - inset), cell,
+                )
+
+        # 每条边沿切向也做了内缩；在直线接缝和凹角处补短连接段，保持轮廓连续。
+        for entries in corner_points.values():
+            point_groups = []
+            if len(entries) == 2:
+                point_groups.append([entry[0] for entry in entries])
+            else:
+                by_cell = {}
+                for point, cell in entries:
+                    by_cell.setdefault(cell, []).append(point)
+                point_groups.extend(points for points in by_cell.values() if len(points) == 2)
+            for first, second in point_groups:
+                if not np.allclose(first, second):
+                    segments.append((first, second))
 
         artist = LineCollection(
             segments,
@@ -2907,19 +2939,10 @@ def bin_2d_plot(
                         diverging=True, fontsize=fontsize, axis_color=axis_color)
     _cell_title(ax_improve, '坏账改善')
 
-    # 最终二维箱使用统一色阶绘制整体外轮廓；同箱内部仍只保留现有白色格线。
+    # 最终二维箱使用高区分度类别色绘制内缩轮廓，共享边界两侧保留各自箱色。
     solution = np.asarray(b2d.solution_)
     bin_ids = sorted(int(bin_id) for bin_id in np.unique(solution))
-    boundary_cmap = make_colormap("hscredit_2d_bin_boundaries", SEQUENTIAL_GRADIENT)
-    color_positions = (
-        np.linspace(0.0, 1.0, len(bin_ids))
-        if len(bin_ids) > 1
-        else np.array([0.5])
-    )
-    boundary_colors = {
-        bin_id: boundary_cmap(position)
-        for bin_id, position in zip(bin_ids, color_positions)
-    }
+    boundary_colors = dict(zip(bin_ids, get_series_colors(len(bin_ids))))
     for heatmap_ax in (ax_prop, ax_bad, ax_lift, ax_reject, ax_improve):
         _draw_2d_bin_boundaries(
             heatmap_ax,
