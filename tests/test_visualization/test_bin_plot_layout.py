@@ -117,8 +117,16 @@ def _boundary_collections(ax):
     ]
 
 
-def test_draw_2d_bin_boundaries_wraps_merged_region_without_internal_edges():
-    """合并箱只绘制整体外缘，不能保留同箱格子间的彩色边。"""
+def _has_segment(artist, expected):
+    expected = np.asarray(_normalized_segment(expected))
+    return any(
+        np.allclose(np.asarray(_normalized_segment(segment)), expected)
+        for segment in artist.get_segments()
+    )
+
+
+def test_draw_2d_bin_boundaries_insets_distinct_bin_outlines():
+    """共享边界两侧保留各自箱色，且彩色轮廓不覆盖坐标轴外框。"""
     import matplotlib.pyplot as plt
 
     solution = np.array([[0, 0, 1], [0, 2, 1]])
@@ -127,23 +135,55 @@ def test_draw_2d_bin_boundaries_wraps_merged_region_without_internal_edges():
         artists = binning_plots._draw_2d_bin_boundaries(
             ax,
             solution,
-            bin_colors={0: "#2639E9", 1: "#E0249A", 2: "#E43550"},
             expected_shape=(2, 3),
         )
 
-        bin_zero = next(
-            artist for artist in artists
-            if artist.get_gid() == "bin-2d-boundary-0"
-        )
-        segments = {
-            _normalized_segment(segment)
-            for segment in bin_zero.get_segments()
+        assert {artist.get_gid() for artist in artists} == {
+            "bin-2d-boundary-0",
+            "bin-2d-boundary-1",
+            "bin-2d-boundary-2",
         }
+        colors = {tuple(artist.get_colors()[0]) for artist in artists}
+        assert len(colors) == 3
 
-        assert len(segments) == 8
-        assert _normalized_segment(((0.5, 0.5), (0.5, 1.5))) not in segments
-        assert _normalized_segment(((-0.5, 0.5), (0.5, 0.5))) not in segments
-        assert tuple(bin_zero.get_colors()[0]) == pytest.approx(to_rgba("#2639E9"))
+        by_id = {int(artist.get_gid().rsplit("-", 1)[1]): artist for artist in artists}
+        # 显示矩阵底行中，箱 0 与箱 2 的共享边界为 x=0.5；两侧轮廓分别内缩到 0.46/0.54。
+        assert _has_segment(by_id[0], ((0.46, -0.46), (0.46, 0.46)))
+        assert _has_segment(by_id[2], ((0.54, -0.46), (0.54, 0.46)))
+        # 显示矩阵顶行的两个相邻格同属箱 0，不能出现平行的彩色内部边。
+        assert not _has_segment(by_id[0], ((0.46, 0.54), (0.46, 1.46)))
+        assert not _has_segment(by_id[0], ((0.54, 0.54), (0.54, 1.46)))
+
+        for artist in artists:
+            for segment in artist.get_segments():
+                points = np.asarray(segment)
+                assert np.all(points[:, 0] > -0.5)
+                assert np.all(points[:, 0] < 2.5)
+                assert np.all(points[:, 1] > -0.5)
+                assert np.all(points[:, 1] < 1.5)
+    finally:
+        plt.close(fig)
+
+
+def test_draw_2d_bin_boundaries_insets_single_bin_outline():
+    """单一最终箱仍有完整内缩轮廓，但不能覆盖坐标轴外框。"""
+    import matplotlib.pyplot as plt
+
+    fig, ax = plt.subplots()
+    try:
+        artists = binning_plots._draw_2d_bin_boundaries(
+            ax,
+            np.zeros((2, 3), dtype=int),
+            expected_shape=(2, 3),
+        )
+        assert len(artists) == 1
+        assert artists[0].get_segments()
+        for segment in artists[0].get_segments():
+            points = np.asarray(segment)
+            assert np.all(points[:, 0] > -0.5)
+            assert np.all(points[:, 0] < 2.5)
+            assert np.all(points[:, 1] > -0.5)
+            assert np.all(points[:, 1] < 1.5)
     finally:
         plt.close(fig)
 
@@ -198,18 +238,27 @@ def test_bin_2d_plot_uses_requested_grid(bin_2d_figure):
     ]
 
 
-def test_bin_2d_plot_draws_same_merged_bin_boundaries_on_five_metric_axes(bin_2d_figure):
-    """五个交叉指标子图必须复用同一组最终箱轮廓和颜色。"""
+def test_bin_2d_plot_draws_same_distinct_inset_boundaries_on_five_metric_axes(bin_2d_figure):
+    """五个交叉指标子图必须复用同一组高区分度内缩彩色轮廓。"""
     axes = bin_2d_figure.axes[:9]
     metric_axis_indexes = (2, 3, 4, 6, 7)
     reference = _boundary_collections(axes[metric_axis_indexes[0]])
-    reference_gids = [artist.get_gid() for artist in reference]
-    reference_colors = [artist.get_colors()[0] for artist in reference]
 
-    assert reference
+    assert len(reference) > 1
+    reference_gids = [artist.get_gid() for artist in reference]
+    reference_segments = [
+        [_normalized_segment(segment) for segment in artist.get_segments()]
+        for artist in reference
+    ]
+    reference_colors = [artist.get_colors()[0] for artist in reference]
+    assert len({tuple(np.round(color, 6)) for color in reference_colors}) == len(reference)
     for axis_index in metric_axis_indexes[1:]:
         actual = _boundary_collections(axes[axis_index])
         assert [artist.get_gid() for artist in actual] == reference_gids
+        assert [
+            [_normalized_segment(segment) for segment in artist.get_segments()]
+            for artist in actual
+        ] == reference_segments
         assert np.allclose(
             [artist.get_colors()[0] for artist in actual],
             reference_colors,
