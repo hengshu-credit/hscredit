@@ -11,7 +11,7 @@ from threadpoolctl import threadpool_limits
 
 from hscredit.core.binning import QuantileBinning
 from hscredit.core.rules import Rule, RuleFlow
-from hscredit.core.selectors import MutualInfoSelector
+from hscredit.core.selectors import CorrSelector, MutualInfoSelector
 from hscredit.utils.parallel import get_physical_cpu_count, parallel_execute
 
 
@@ -137,6 +137,53 @@ def test_cpu_heavy_wide_selector_reaches_speedup_gate(benchmark_data):
     )
     pd.testing.assert_series_equal(serial.scores_, parallel.scores_, check_exact=True)
     assert serial.selected_features_ == parallel.selected_features_
+    _assert_speed_gate(
+        serial_median, parallel_median, speedup, diagnostic, require_speedup=True
+    )
+
+
+def test_corr_selector_spearman_ranking_reaches_speedup_gate():
+    """Spearman 宽表排名必须由真实工作线程加速，并保持精确结果一致。"""
+    rng = np.random.RandomState(20260807)
+    rows = 50_000
+    feature_count = 64
+    X = pd.DataFrame(
+        rng.normal(size=(rows, feature_count)),
+        columns=[f"相关特征{index}" for index in range(feature_count)],
+    )
+    weights = {
+        column: float(feature_count - index)
+        for index, column in enumerate(X.columns)
+    }
+
+    def serial_call():
+        return CorrSelector(
+            method="spearman",
+            weights=weights,
+            binning_params=None,
+            corr_block_size=feature_count,
+            n_jobs=1,
+            parallel_backend="threading",
+        ).fit(X)
+
+    def parallel_call():
+        return CorrSelector(
+            method="spearman",
+            weights=weights,
+            binning_params=None,
+            corr_block_size=feature_count,
+            n_jobs=PARALLEL_WORKERS,
+            parallel_backend="threading",
+        ).fit(X)
+
+    serial, parallel, serial_median, parallel_median, speedup, diagnostic = _measure_medians(
+        "corr_selector_spearman_wide",
+        serial_call,
+        parallel_call,
+        "rows=50000 numeric_features=64 backend=threading workers=4",
+    )
+    assert serial.selected_features_ == parallel.selected_features_
+    pd.testing.assert_frame_equal(serial.dropped_, parallel.dropped_, check_exact=True)
     _assert_speed_gate(
         serial_median, parallel_median, speedup, diagnostic, require_speedup=True
     )

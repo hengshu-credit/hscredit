@@ -11,7 +11,7 @@ optuna / skopt / hyperopt，只需::
 各框架风格对应关系：
 
 * **optuna** —— ``suggest_int`` / ``suggest_float`` / ``suggest_categorical`` /
-  ``suggest_discrete_uniform`` / ``suggest_loguniform``
+  ``suggest_uniform`` / ``suggest_discrete_uniform`` / ``suggest_loguniform``
 * **optuna 分布对象** —— ``IntDistribution`` / ``FloatDistribution`` /
   ``CategoricalDistribution``
 * **scikit-optimize (skopt)** —— ``Real`` / ``Integer`` / ``Categorical`` /
@@ -44,7 +44,7 @@ optuna / skopt / hyperopt，只需::
 
 from __future__ import annotations
 
-from typing import Any, List, Optional, Sequence, Union
+from typing import Any, List, Optional, Sequence
 
 import numpy as np
 
@@ -63,6 +63,7 @@ __all__ = [
     "suggest_int",
     "suggest_float",
     "suggest_categorical",
+    "suggest_uniform",
     "suggest_discrete_uniform",
     "suggest_loguniform",
     # hyperopt hp.* 风格
@@ -115,8 +116,8 @@ class IntDistribution(Dimension):
 
     :param low: 下界（含）
     :param high: 上界（含）
-    :param step: 采样步长，默认 1；仅当 ``log=False`` 生效
     :param log: 是否在对数尺度上采样，默认 False；与 ``step`` 互斥
+    :param step: 采样步长，默认 1；仅当 ``log=False`` 生效
     :param name: 维度名，仅用于记录，可选
 
     **属性**
@@ -128,8 +129,8 @@ class IntDistribution(Dimension):
         self,
         low: int,
         high: int,
-        step: int = 1,
         log: bool = False,
+        step: int = 1,
         name: Optional[str] = None,
     ) -> None:
         super().__init__(name)
@@ -154,8 +155,8 @@ class FloatDistribution(Dimension):
 
     :param low: 下界（含）
     :param high: 上界（含）
-    :param step: 采样步长，默认 None（连续采样）；与 ``log`` 互斥
     :param log: 是否在对数尺度上采样，默认 False；与 ``step`` 互斥
+    :param step: 采样步长，默认 None（连续采样）；与 ``log`` 互斥
     :param name: 维度名，仅用于记录，可选
 
     **属性**
@@ -167,17 +168,26 @@ class FloatDistribution(Dimension):
         self,
         low: float,
         high: float,
-        step: Optional[float] = None,
         log: bool = False,
+        step: Optional[float] = None,
         name: Optional[str] = None,
+        _distribution: Optional[str] = None,
+        _q: Optional[float] = None,
     ) -> None:
         super().__init__(name)
         self.low = float(low)
         self.high = float(high)
         self.step = float(step) if step is not None else None
         self.log = bool(log)
+        self._distribution = _distribution
+        self._q = float(_q) if _q is not None else None
 
     def to_spec(self) -> dict:
+        if self._distribution is not None:
+            spec = {"type": self._distribution, "low": self.low, "high": self.high}
+            if self._q is not None:
+                spec["q"] = self._q
+            return spec
         spec: dict = {"type": "float", "low": self.low, "high": self.high}
         if self.log:
             spec["log"] = True
@@ -285,8 +295,34 @@ class Integer(IntDistribution):
     :param name: 维度名，仅用于记录，可选
     """
 
-    def __init__(self, low: int, high: int, name: Optional[str] = None) -> None:
-        super().__init__(low, high, step=1, log=False, name=name)
+    def __init__(
+        self,
+        low: int,
+        high: int,
+        prior: str = "uniform",
+        base: int = 10,
+        transform: Optional[str] = None,
+        name: Optional[str] = None,
+        dtype: Any = np.int64,
+    ) -> None:
+        prior_norm = str(prior).strip().lower()
+        if prior_norm not in {"uniform", "log-uniform"}:
+            raise ValueError("Integer 的 prior 仅支持 'uniform' 或 'log-uniform'")
+        if transform not in {None, "identity", "normalize"}:
+            raise ValueError("Integer 的 transform 仅支持 None、'identity' 或 'normalize'")
+        if base <= 0 or base == 1:
+            raise ValueError("Integer 的 base 必须大于 0 且不能等于 1")
+        super().__init__(low, high, step=1, log=prior_norm == "log-uniform", name=name)
+        self.prior = prior
+        self.base = base
+        self.transform = transform
+        self.dtype = dtype
+
+    def to_spec(self) -> dict:
+        spec = super().to_spec()
+        if self.dtype is not np.int64:
+            spec["dtype"] = self.dtype
+        return spec
 
 
 class Real(FloatDistribution):
@@ -309,16 +345,31 @@ class Real(FloatDistribution):
         low: float,
         high: float,
         prior: str = "uniform",
+        base: int = 10,
+        transform: Optional[str] = None,
         name: Optional[str] = None,
+        dtype: Any = float,
     ) -> None:
-        log = str(prior).strip().lower() == "log-uniform"
+        prior_norm = str(prior).strip().lower()
+        if prior_norm not in {"uniform", "log-uniform"}:
+            raise ValueError("Real 的 prior 仅支持 'uniform' 或 'log-uniform'")
+        if transform not in {None, "identity", "normalize"}:
+            raise ValueError("Real 的 transform 仅支持 None、'identity' 或 'normalize'")
+        if base <= 0 or base == 1:
+            raise ValueError("Real 的 base 必须大于 0 且不能等于 1")
+        log = prior_norm == "log-uniform"
         super().__init__(low, high, step=None, log=log, name=name)
         self.prior = prior
+        self.base = base
+        self.transform = transform
+        self.dtype = dtype
 
     def to_spec(self) -> dict:
         spec: dict = {"type": "float", "low": self.low, "high": self.high}
         if self.log:
             spec["log"] = True
+        if self.dtype is not float:
+            spec["dtype"] = self.dtype
         return spec
 
 
@@ -335,10 +386,22 @@ class Categorical(CategoricalDistribution):
         self,
         categories: Sequence[Any],
         prior: Optional[List[float]] = None,
+        transform: Optional[str] = None,
         name: Optional[str] = None,
     ) -> None:
+        if transform not in {None, "identity", "onehot", "string", "label"}:
+            raise ValueError(
+                "Categorical 的 transform 仅支持 None、'identity'、'onehot'、'string' 或 'label'"
+            )
         super().__init__(categories, name=name)
-        self.prior = prior
+        self.prior = list(prior) if prior is not None else None
+        self.transform = transform
+
+    def to_spec(self) -> dict:
+        spec = super().to_spec()
+        if self.prior is not None:
+            spec["prior"] = list(self.prior)
+        return spec
 
 
 # ---------------------------------------------------------------------------
@@ -407,6 +470,17 @@ def suggest_discrete_uniform(name: str, low: float, high: float, q: float) -> Fl
     return FloatDistribution(low, high, step=q, log=False, name=name)
 
 
+def suggest_uniform(name: str, low: float, high: float) -> FloatDistribution:
+    """均匀浮点参数（同名于 Optuna 已弃用的 ``suggest_uniform``）。
+
+    :param name: 参数名
+    :param low: 下界（含）
+    :param high: 上界（含）
+    :return: 连续浮点维度对象
+    """
+    return FloatDistribution(low, high, log=False, step=None, name=name)
+
+
 def suggest_loguniform(name: str, low: float, high: float) -> FloatDistribution:
     """对数均匀浮点参数（同名于 optuna 已弃用的 ``suggest_loguniform``）。
 
@@ -432,18 +506,18 @@ def uniform(name: str, low: float, high: float) -> FloatDistribution:
     :param high: 上界（含）
     :return: 浮点维度对象
     """
-    return FloatDistribution(low, high, step=None, log=False, name=name)
+    return FloatDistribution(low, high, name=name, _distribution="uniform")
 
 
 def loguniform(name: str, low: float, high: float) -> FloatDistribution:
     """对数均匀分布浮点参数（同名于 ``hyperopt.hp.loguniform``）。
 
     :param name: 参数名
-    :param low: 下界（含，需 > 0）
-    :param high: 上界（含）
+    :param low: 对数空间下界（含）
+    :param high: 对数空间上界（含）
     :return: 浮点维度对象（log=True）
     """
-    return FloatDistribution(low, high, step=None, log=True, name=name)
+    return FloatDistribution(low, high, name=name, _distribution="loguniform")
 
 
 def quniform(name: str, low: float, high: float, q: float) -> FloatDistribution:
@@ -455,22 +529,19 @@ def quniform(name: str, low: float, high: float, q: float) -> FloatDistribution:
     :param q: 量化步长
     :return: 浮点维度对象（带 step）
     """
-    return FloatDistribution(low, high, step=q, log=False, name=name)
+    return FloatDistribution(low, high, name=name, _distribution="quniform", _q=q)
 
 
 def qloguniform(name: str, low: float, high: float, q: float) -> FloatDistribution:
     """量化对数均匀分布浮点参数（同名于 ``hyperopt.hp.qloguniform``）。
 
-    optuna 不支持同时指定 log 与 step，此处以对数均匀采样近似（量化特性由采样
-    数量自然体现，不再做取整约束）。
-
     :param name: 参数名
-    :param low: 下界（含，需 > 0）
-    :param high: 上界（含）
-    :param q: 量化步长（仅记录，不影响采样）
-    :return: 浮点维度对象（log=True）
+    :param low: 对数空间下界（含）
+    :param high: 对数空间上界（含）
+    :param q: 最终值空间的量化步长
+    :return: 量化对数均匀维度对象
     """
-    return FloatDistribution(low, high, step=q, log=True, name=name)
+    return FloatDistribution(low, high, name=name, _distribution="qloguniform", _q=q)
 
 
 def choice(name: str, options: Sequence[Any]) -> CategoricalDistribution:
@@ -483,7 +554,12 @@ def choice(name: str, options: Sequence[Any]) -> CategoricalDistribution:
     return CategoricalDistribution(options, name=name)
 
 
-def randint(name: str, upper: int, low: int = 0) -> IntDistribution:
+def randint(
+    name: str,
+    *args: int,
+    low: Optional[int] = None,
+    upper: Optional[int] = None,
+) -> IntDistribution:
     """整数参数（同名于 ``hyperopt.hp.randint``）。
 
     hyperopt ``hp.randint(label, upper)`` 返回 [0, upper) 内整数；本实现支持
@@ -494,10 +570,22 @@ def randint(name: str, upper: int, low: int = 0) -> IntDistribution:
     :param low: 下界（含），默认 0
     :return: 整数维度对象
     """
-    high = int(upper) - 1
-    if high < int(low):
-        raise ValueError(f"参数 {name!r} 的 randint 上界({upper})需大于下界({low})")
-    return IntDistribution(int(low), high, step=1, log=False, name=name)
+    if upper is not None:
+        if args:
+            raise TypeError("randint 同时使用位置参数和 upper 关键字时含义不明确")
+        lower = 0 if low is None else int(low)
+        upper_value = int(upper)
+    elif len(args) == 1:
+        upper_value = int(args[0])
+        lower = 0 if low is None else int(low)
+    elif len(args) == 2 and low is None:
+        lower, upper_value = map(int, args)
+    else:
+        raise TypeError("randint 用法为 randint(name, upper) 或 randint(name, low, upper)")
+    high = upper_value - 1
+    if high < lower:
+        raise ValueError(f"参数 {name!r} 的 randint 上界({upper_value})需大于下界({lower})")
+    return IntDistribution(lower, high, step=1, log=False, name=name)
 
 
 def normal(name: str, mu: float, sigma: float) -> NormalDistribution:

@@ -391,6 +391,31 @@ def test_backend_conflict_is_rejected_before_worker_submission():
         )
 
 
+@pytest.mark.parametrize("tasks", [[], [-1]])
+def test_explicit_unknown_backend_is_rejected_before_serial_shortcut(tasks):
+    """空任务和单任务也必须在串行短路前校验显式后端。"""
+    with pytest.raises(ValidationError, match="并行后端配置无效"):
+        parallel_execute(
+            abs,
+            tasks,
+            n_jobs=12,
+            parallel_backend="不存在的后端",
+        )
+
+
+@pytest.mark.parametrize("tasks", [[], [-1]])
+def test_threading_inner_thread_limit_is_rejected_before_serial_shortcut(tasks):
+    """任务数量不得掩盖 threading 与原生线程限制的配置冲突。"""
+    with pytest.raises(ValidationError, match="threading 后端不支持 inner_max_num_threads"):
+        parallel_execute(
+            abs,
+            tasks,
+            n_jobs=12,
+            parallel_backend="threading",
+            parallel_config={"inner_max_num_threads": 1},
+        )
+
+
 def test_base_parallel_execute_preserves_order_for_threading_backend():
     encoder = _CloneableEncoder(n_jobs=2, parallel_backend="threading")
     assert encoder._parallel_execute(abs, [-3, -1, -2]) == [3, 1, 2]

@@ -17,11 +17,9 @@
 >>> print(selector.selected_features_)
 """
 
-from typing import Union, List, Optional, Callable, Dict, Any
+from typing import Union, List, Optional, Dict, Any
 import numpy as np
 import pandas as pd
-from sklearn.base import clone
-
 from .base import BaseFeatureSelector, get_feature_importances
 
 
@@ -115,9 +113,10 @@ class FeatureImportanceSelector(BaseFeatureSelector):
 
         self._get_feature_names(X)
 
-        # 克隆并训练模型
-        model = clone(self.estimator)
-        model.fit(X, y)
+        # 克隆并训练模型；调用者 estimator 保持不变。
+        model = self._clone_estimator_for_parallel(self.estimator)
+        with self._estimator_parallel_context():
+            model.fit(X, y)
 
         # 获取特征重要性（兼容所有模型类型）
         importances = np.asarray(get_feature_importances(model))

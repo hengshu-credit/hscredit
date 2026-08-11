@@ -24,7 +24,6 @@ import pandas as pd
 from sklearn.base import clone
 
 from .base import BaseFeatureSelector, get_feature_importances
-from ...utils.parallel import resolve_n_jobs
 
 
 class BorutaSelector(BaseFeatureSelector):
@@ -133,11 +132,11 @@ class BorutaSelector(BaseFeatureSelector):
 
             base_estimator = RandomForestClassifier(
                 n_estimators=self.n_estimators,
-                n_jobs=resolve_n_jobs(self.n_jobs) or 1,
                 random_state=self.random_state,
             )
         else:
             base_estimator = self.estimator
+        base_estimator = self._clone_estimator_for_parallel(base_estimator)
 
         # 迭代
         selected = set(range(n_features))
@@ -151,7 +150,8 @@ class BorutaSelector(BaseFeatureSelector):
 
             # 训练模型
             model = clone(base_estimator)
-            model.fit(X_with_shadow, y)
+            with self._estimator_parallel_context():
+                model.fit(X_with_shadow, y)
 
             # 获取特征重要性（兼容所有模型类型）
             importances = get_feature_importances(model)

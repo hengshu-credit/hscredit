@@ -162,6 +162,33 @@ from .evaluation import model_explain_report
 # 导入超参数调优 (tuning/, 可选重依赖 optuna，懒加载)
 _LAZY_TUNING_MODELS = ("ModelTuner", "AutoTuner", "TuningObjective", "TuningSampler")
 
+# 搜索空间兼容符号本身不依赖 Optuna，可安全地作为模型模块常规公开 API 导出。
+from .tuning.search_space import (  # noqa: E402
+    Categorical,
+    CategoricalDistribution,
+    Dimension,
+    FloatDistribution,
+    IntDistribution,
+    Integer,
+    Real,
+    choice,
+    lognormal,
+    loguniform,
+    normal,
+    qlognormal,
+    qloguniform,
+    qnormal,
+    quniform,
+    randint,
+    suggest_categorical,
+    suggest_discrete_uniform,
+    suggest_float,
+    suggest_int,
+    suggest_loguniform,
+    suggest_uniform,
+    uniform,
+)
+
 
 def __getattr__(name):
     """懒加载 boosting/tuning 子包及 ModelReport 兼容别名，避免 import hscredit 时即时加载重依赖."""
@@ -248,5 +275,29 @@ __all__ = [
     # 评估报告
     "ModelReport",
     "model_explain_report",
+    # 统一超参数搜索空间声明
+    "Dimension",
+    "Real",
+    "Integer",
+    "Categorical",
+    "IntDistribution",
+    "FloatDistribution",
+    "CategoricalDistribution",
+    "suggest_int",
+    "suggest_float",
+    "suggest_categorical",
+    "suggest_uniform",
+    "suggest_discrete_uniform",
+    "suggest_loguniform",
+    "uniform",
+    "loguniform",
+    "quniform",
+    "qloguniform",
+    "choice",
+    "randint",
+    "normal",
+    "qnormal",
+    "lognormal",
+    "qlognormal",
     # 超参数调优为懒加载，不放入 __all__（可通过 from hscredit.core.models import AutoTuner 等方式显式访问）
 ]

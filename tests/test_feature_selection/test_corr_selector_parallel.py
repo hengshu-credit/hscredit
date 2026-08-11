@@ -1,12 +1,16 @@
 """CorrSelector 分块并行相关计算测试。"""
 
+from contextlib import contextmanager
 import pickle
+import threading
+import time
 
 import numpy as np
 import pandas as pd
 import pytest
 from sklearn.base import clone
 
+import hscredit.core.selectors.corr_selector as corr_module
 from hscredit.core.selectors import CorrSelector
 from hscredit.exceptions import ValidationError
 
@@ -182,6 +186,141 @@ def test_default_spearman_uses_fast_block_path_and_matches_dense(correlated_fram
         rtol=1e-12,
         atol=1e-12,
     )
+
+
+def test_default_block_spearman_ranking_uses_multiple_worker_threads(monkeypatch):
+    """特征数小于默认块大小时，排名阶段仍必须实际使用多个线程。"""
+    rng = np.random.RandomState(20260807)
+    X = pd.DataFrame(
+        rng.normal(size=(1200, 32)),
+        columns=[f"特征{index}" for index in range(32)],
+    )
+    weights = {column: float(32 - index) for index, column in enumerate(X.columns)}
+    rank_thread_ids = set()
+    lock = threading.Lock()
+    original_rank = pd.Series.rank
+
+    def recording_rank(series, *args, **kwargs):
+        with lock:
+            rank_thread_ids.add(threading.get_ident())
+        time.sleep(0.01)
+        return original_rank(series, *args, **kwargs)
+
+    monkeypatch.setattr(pd.Series, "rank", recording_rank)
+    CorrSelector(
+        method="spearman",
+        weights=weights,
+        binning_params=None,
+        n_jobs=4,
+        parallel_backend="threading",
+    ).fit(X)
+
+    assert len(rank_thread_ids) >= 2
+
+
+def test_spearman_ranking_reuses_the_input_buffer():
+    """超宽表排名必须分批原地写回，避免再分配一个完整矩阵。"""
+    rng = np.random.RandomState(20260807)
+    values = rng.normal(size=(120, 13))
+    original = values.copy()
+    selector = CorrSelector(
+        method="spearman",
+        binning_params=None,
+        corr_block_size=4,
+        n_jobs=3,
+        parallel_backend="threading",
+    )
+
+    ranked = selector._rank_corr_values(values, "threading")
+
+    assert ranked is values
+    expected = pd.DataFrame(original).rank(method="average").to_numpy(dtype=np.float64)
+    np.testing.assert_array_equal(ranked, expected)
+
+
+def test_threaded_spearman_ranking_starts_the_executor_once(monkeypatch):
+    """共享内存排名不得按块反复创建线程池。"""
+    rng = np.random.RandomState(20260807)
+    values = rng.normal(size=(120, 13))
+    selector = CorrSelector(
+        method="spearman",
+        binning_params=None,
+        corr_block_size=4,
+        n_jobs=3,
+        parallel_backend="threading",
+    )
+    calls = []
+    original_execute = selector._parallel_execute
+
+    def recording_execute(*args, **kwargs):
+        calls.append(len(args[1]))
+        return original_execute(*args, **kwargs)
+
+    monkeypatch.setattr(selector, "_parallel_execute", recording_execute)
+    selector._rank_corr_values(values, "threading")
+
+    assert calls == [13]
+
+
+def test_corr_threading_divides_total_budget_between_outer_and_native_threads(monkeypatch):
+    """相关块任务与 BLAS 线程共享同一份 n_jobs 总预算。"""
+    rng = np.random.RandomState(20260807)
+    X = pd.DataFrame(rng.normal(size=(80, 6)), columns=list("abcdef"))
+    weights = {column: float(6 - index) for index, column in enumerate(X.columns)}
+    observed_limits = []
+
+    @contextmanager
+    def recording_limits(*, limits):
+        observed_limits.append(limits)
+        yield
+
+    monkeypatch.setattr(corr_module, "threadpool_limits", recording_limits, raising=False)
+    CorrSelector(
+        method="pearson",
+        weights=weights,
+        binning_params=None,
+        corr_block_size=2,
+        n_jobs=4,
+        parallel_backend="threading",
+    ).fit(X)
+
+    assert observed_limits == [4, 2, 1]
+
+
+def test_removed_rows_are_not_multiplied_in_later_correlation_blocks(monkeypatch):
+    """前一块已剔除的特征不得继续进入后续跨块矩阵乘法。"""
+    rng = np.random.RandomState(20260807)
+    first = rng.normal(size=160)
+    X = pd.DataFrame(
+        {
+            "保留": first,
+            "剔除": first.copy(),
+            "独立甲": rng.normal(size=160),
+            "独立乙": rng.normal(size=160),
+        }
+    )
+    weights = {"保留": 4.0, "剔除": 3.0, "独立甲": 2.0, "独立乙": 1.0}
+    left_widths = []
+    lock = threading.Lock()
+    original_matmul = np.matmul
+
+    def recording_matmul(left, right, *args, **kwargs):
+        with lock:
+            left_widths.append(left.shape[0])
+        return original_matmul(left, right, *args, **kwargs)
+
+    monkeypatch.setattr(corr_module.np, "matmul", recording_matmul)
+    CorrSelector(
+        threshold=0.7,
+        method="pearson",
+        weights=weights,
+        binning_params=None,
+        corr_block_size=2,
+        n_jobs=2,
+        parallel_backend="threading",
+    ).fit(X)
+
+    assert sorted(left_widths) == [1, 2, 2]
 
 
 @pytest.mark.parametrize("backend", ["threading", "loky"])

@@ -21,9 +21,12 @@ from hscredit.report import (
 from hscredit.report.mining import SingleFeatureRuleMiner
 
 
-pytestmark = pytest.mark.integration
-
 WORKBOOK = Path(__file__).resolve().parents[1] / "examples" / "hscredit_yyp.xlsx"
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.skipif(not WORKBOOK.exists(), reason="缺少 examples/hscredit_yyp.xlsx"),
+]
+
 FEATURES = ["衡枢鉴真分老客版", "近六个月非银多头机构数", "青云24"]
 TARGET = "FPD"
 OVERDUE = ["MOB1"]

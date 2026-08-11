@@ -196,6 +196,21 @@ def test_tree_rule_reports_parallel_match_serial_and_fail_fast(mining_data, back
     assert error.value.__cause__ is not None
 
 
+def test_tree_rule_string_normalizes_numpy_scalar_threshold():
+    """NumPy 2.x 标量 repr 不得把 np 误解析成输入数据列。"""
+    extractor = TreeRuleExtractor(n_jobs=1)
+    expression = extractor._rule_to_string(
+        {
+            "conditions": [
+                {"feature": "score", "operator": ">", "threshold": np.float64(0.5)}
+            ]
+        }
+    )
+
+    assert expression == "(score > 0.5)"
+    assert Rule(expression).predict(pd.DataFrame({"score": [0.25, 0.75]})).tolist() == [False, True]
+
+
 def test_tree_analyzer_and_manual_tree_report_parallel_datasets_match_serial(mining_data):
     """自动树和人工树的数据集/节点报告并行必须保持容器与表格精确一致。"""
     train = mining_data.iloc[:120][["score", "debt", "target"]]

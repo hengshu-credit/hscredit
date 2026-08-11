@@ -21,9 +21,11 @@ from typing import Union, List, Optional, Dict, Any
 
 import numpy as np
 import pandas as pd
+from threadpoolctl import threadpool_limits
 
 from .base import BaseFeatureSelector
 from ...exceptions import ValidationError
+from ...utils.parallel import _current_parallel_budget, resolve_n_jobs
 
 
 # bin_tables_ 中指标列名 → 聚合方式的映射
@@ -42,6 +44,16 @@ DEFAULT_BINNING_PARAMS = {
 }
 
 
+def _rank_corr_column(task):
+    """按列计算平均秩；线程后端可直接写回当前列。"""
+    ordinal, column, *options = task
+    ranked = pd.Series(column, copy=False).rank(method='average').to_numpy(dtype=np.float64)
+    if options and options[0]:
+        column[:] = ranked
+        return ordinal, None
+    return ordinal, ranked
+
+
 def _corr_block_worker(task):
     """计算当前候选块与一个已处理块的相关性。"""
     (
@@ -57,13 +69,29 @@ def _corr_block_worker(task):
         kept_rows,
     ) = task
 
-    left = values[:, row_start:row_stop]
     right = values[:, column_start:column_stop]
+    diagonal = row_start == column_start
+    if diagonal:
+        left = values[:, row_start:row_stop]
+        kept_positions = None
+    else:
+        kept_positions = np.flatnonzero(np.asarray(kept_rows, dtype=bool))
+        width = column_stop - column_start
+        if kept_positions.size == 0:
+            return (
+                ordinal,
+                'prior',
+                column_start,
+                np.full(width, np.nan, dtype=np.float64),
+                np.full(width, -1, dtype=np.int64),
+            )
+        left = values[:, row_start:row_stop][:, kept_positions]
+
     if fast_matrix:
         corr = np.matmul(left.T, right)
         corr = np.clip(corr, -1.0, 1.0)
     else:
-        if row_start == column_start:
+        if diagonal:
             corr = pd.DataFrame(left).corr(method=method).to_numpy(dtype=np.float64)
         else:
             combined = np.concatenate((left, right), axis=1)
@@ -71,23 +99,12 @@ def _corr_block_worker(task):
             corr = combined_corr[: left.shape[1], left.shape[1] :]
 
     absolute = np.abs(np.asarray(corr, dtype=np.float64))
-    if row_start == column_start:
+    if diagonal:
         np.fill_diagonal(absolute, np.nan)
         return ordinal, 'diagonal', column_start, absolute, None
 
-    kept_positions = np.flatnonzero(np.asarray(kept_rows, dtype=bool))
     width = column_stop - column_start
-    if kept_positions.size == 0:
-        return (
-            ordinal,
-            'prior',
-            column_start,
-            np.full(width, np.nan, dtype=np.float64),
-            np.full(width, -1, dtype=np.int64),
-        )
-
-    candidates = absolute[kept_positions]
-    safe = np.where(np.isnan(candidates), -np.inf, candidates)
+    safe = np.where(np.isnan(absolute), -np.inf, absolute)
     positions = np.argmax(safe, axis=0)
     column_positions = np.arange(width)
     max_values = safe[positions, column_positions]
@@ -211,6 +228,87 @@ class CorrSelector(BaseFeatureSelector):
             raise ValidationError("corr_block_size 必须为正整数")
         return int(self.corr_block_size)
 
+    def _resolve_corr_total_workers(self, task_count: int) -> int:
+        """解析 Corr 阶段可由外层任务和原生线程共同使用的总预算。"""
+        budget = _current_parallel_budget()
+        return resolve_n_jobs(
+            self.n_jobs,
+            task_count=task_count,
+            available_budget=budget.available,
+        ) or 1
+
+    def _rank_corr_values(self, values: np.ndarray, default_backend: str) -> np.ndarray:
+        """按输入列顺序分批并行排名，并原地复用 float64 输入缓冲区。"""
+        if values.dtype != np.float64:
+            values = values.astype(np.float64, copy=False)
+
+        expected_shape = (values.shape[0],)
+        effective_backend = self.parallel_backend or default_backend
+        if effective_backend == 'threading':
+            ordinals = list(range(values.shape[1]))
+            tasks = [(ordinal, values[:, ordinal], True) for ordinal in ordinals]
+            results = self._parallel_execute(
+                _rank_corr_column,
+                tasks,
+                task_labels=ordinals,
+                default_backend=default_backend,
+            )
+            for expected_ordinal, result in zip(ordinals, results):
+                if result != (expected_ordinal, None):
+                    raise TypeError(f"相关排名任务 {expected_ordinal} 返回结果无效")
+            return values
+
+        batch_size = self._validate_corr_block_size()
+        for batch_start in range(0, values.shape[1], batch_size):
+            batch_stop = min(batch_start + batch_size, values.shape[1])
+            ordinals = list(range(batch_start, batch_stop))
+            tasks = [(ordinal, values[:, ordinal]) for ordinal in ordinals]
+            results = self._parallel_execute(
+                _rank_corr_column,
+                tasks,
+                task_labels=ordinals,
+                default_backend=default_backend,
+            )
+            for expected_ordinal, result in zip(ordinals, results):
+                if (
+                    not isinstance(result, tuple)
+                    or len(result) != 2
+                    or result[0] != expected_ordinal
+                ):
+                    raise TypeError(f"相关排名任务 {expected_ordinal} 返回结果无效")
+                ranked = np.asarray(result[1], dtype=np.float64)
+                if ranked.shape != expected_shape:
+                    raise TypeError(f"相关排名任务 {expected_ordinal} 返回形状无效")
+                values[:, expected_ordinal] = ranked
+        return values
+
+    def _execute_corr_tasks(
+        self,
+        tasks,
+        labels,
+        default_backend: str,
+        total_workers: int,
+    ):
+        """在同一总预算内协调相关块 joblib 任务和 BLAS 原生线程。"""
+        effective_backend = self.parallel_backend or default_backend
+        if effective_backend != 'threading':
+            return self._parallel_execute(
+                _corr_block_worker,
+                tasks,
+                task_labels=labels,
+                default_backend=default_backend,
+            )
+
+        outer_workers = min(total_workers, max(1, len(tasks)))
+        native_threads = max(1, total_workers // outer_workers)
+        with threadpool_limits(limits=native_threads):
+            return self._parallel_execute(
+                _corr_block_worker,
+                tasks,
+                task_labels=labels,
+                default_backend=default_backend,
+            )
+
     @staticmethod
     def _merge_max_candidates(
         max_values: np.ndarray,
@@ -253,11 +351,20 @@ class CorrSelector(BaseFeatureSelector):
             raise ValidationError("CorrSelector 相关计算仅支持可转换为数值的特征") from exc
 
         fast_matrix = self.method in ('pearson', 'spearman') and np.isfinite(values).all()
+        has_inner_thread_limit = (
+            isinstance(self.parallel_config, dict)
+            and self.parallel_config.get('inner_max_num_threads') is not None
+        )
+        default_backend = (
+            'threading'
+            if fast_matrix and not has_inner_thread_limit
+            else 'loky'
+        )
         if fast_matrix:
             if self.method == 'spearman':
                 # 无缺失时，Spearman 等价于先按列进行一次平均秩转换，再计算 Pearson；
                 # 排名只做一次，避免每个相关块重复排序。
-                values = pd.DataFrame(values).rank(method='average').to_numpy(dtype=np.float64)
+                values = self._rank_corr_values(values, default_backend)
             values -= values.mean(axis=0)
             norms = np.sqrt(np.einsum('ij,ij->j', values, values))
             with np.errstate(divide='ignore', invalid='ignore'):
@@ -272,15 +379,7 @@ class CorrSelector(BaseFeatureSelector):
         drops = set()
         max_values = np.full(n_features, np.nan, dtype=np.float64)
         max_indices = np.full(n_features, -1, dtype=np.int64)
-        has_inner_thread_limit = (
-            isinstance(self.parallel_config, dict)
-            and self.parallel_config.get('inner_max_num_threads') is not None
-        )
-        default_backend = (
-            'threading'
-            if fast_matrix and not has_inner_thread_limit
-            else 'loky'
-        )
+        total_workers = self._resolve_corr_total_workers(n_features)
 
         for column_block, (column_start, column_stop) in enumerate(blocks):
             tasks = []
@@ -322,11 +421,11 @@ class CorrSelector(BaseFeatureSelector):
             )
             labels.append(ordinal)
 
-            results = self._parallel_execute(
-                _corr_block_worker,
+            results = self._execute_corr_tasks(
                 tasks,
-                task_labels=labels,
-                default_backend=default_backend,
+                labels,
+                default_backend,
+                total_workers,
             )
 
             diagonal = None

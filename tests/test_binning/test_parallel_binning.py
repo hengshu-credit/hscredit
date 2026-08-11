@@ -2,6 +2,7 @@
 
 import inspect
 import pickle
+import threading
 import time
 
 import hscredit.core.binning.optimal_binning as optimal_binning_module
@@ -55,6 +56,34 @@ def mixed_xy():
     )
     y = pd.Series(np.tile([0, 1, 0, 1, 1, 0], 4), index=index, name="目标")
     return X, y
+
+
+def test_multi_feature_binner_uses_multiple_real_threads(monkeypatch):
+    """BaseBinning 的多特征拟合必须由多个真实 worker 承担。"""
+    rng = np.random.RandomState(20260807)
+    X = pd.DataFrame(
+        rng.normal(size=(160, 8)),
+        columns=[f"特征{index}" for index in range(8)],
+    )
+    y = pd.Series((X["特征0"] > 0).astype(int), index=X.index)
+    thread_ids = set()
+    lock = threading.Lock()
+    original_worker = BaseBinning._fit_feature_transaction
+
+    def recording_worker(self, task):
+        with lock:
+            thread_ids.add(threading.get_ident())
+        time.sleep(0.01)
+        return original_worker(self, task)
+
+    monkeypatch.setattr(BaseBinning, "_fit_feature_transaction", recording_worker)
+    UniformBinning(
+        max_n_bins=5,
+        n_jobs=4,
+        parallel_backend="threading",
+    ).fit(X, y)
+
+    assert len(thread_ids) >= 2
 
 
 def _assert_value_equal(left, right):
