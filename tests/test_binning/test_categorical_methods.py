@@ -269,6 +269,10 @@ def test_direct_binner_exposes_all_common_category_parameters(binner_cls):
     }.issubset(params)
 
 
+@pytest.mark.skipif(
+    not (Path(__file__).resolve().parents[2] / "examples" / "hscredit_yyp.xlsx").exists(),
+    reason="缺少 examples/hscredit_yyp.xlsx",
+)
 def test_yyp_category_explicit_order_and_custom_missing_groups():
     """在约定的商品类别字段上固化显式顺序及两种缺失值自定义分组。"""
     path = Path(__file__).resolve().parents[2] / "examples" / "hscredit_yyp.xlsx"

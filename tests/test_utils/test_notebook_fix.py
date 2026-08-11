@@ -1,54 +1,49 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
-"""测试notebook修复."""
+"""Notebook 中单逾期标签分箱统计的回归测试。"""
 
-import pandas as pd
 import numpy as np
+import pandas as pd
+
 from hscredit.report import feature_bin_stats
 
-# 创建测试数据
-np.random.seed(42)
-n = 1000
-df = pd.DataFrame({
-    'score': np.random.randn(n) * 50 + 600,
-    'MOB1': np.random.choice([0, 1, 2, 3, 5, 7, 10, 15, 30, 60], n),
-})
 
-# 测试1: 单个overdue，不剔除灰客户
-table1 = feature_bin_stats(
-    data=df,
-    feature='score',
-    overdue='MOB1',
-    dpds=7,
-    del_grey=False,
-    method='quantile',
-    max_n_bins=5,
-    verbose=1
-)
+def _make_overdue_data():
+    rng = np.random.RandomState(42)
+    sample_count = 1000
+    return pd.DataFrame(
+        {
+            "score": rng.randn(sample_count) * 50 + 600,
+            "MOB1": rng.choice([0, 1, 2, 3, 5, 7, 10, 15, 30, 60], sample_count),
+        }
+    )
 
-print('\n测试1结果:')
-print('是否多级表头:', isinstance(table1.columns, pd.MultiIndex))
 
-# 尝试访问列
-try:
-    print(table1[['分箱标签', '样本总数', '坏样本数', '坏样本率', '分档WOE值']].head(2))
-    print('✅ 列访问成功')
-except Exception as e:
-    print(f'❌ 列访问失败: {e}')
+def test_single_overdue_feature_bin_stats_uses_flat_columns():
+    table = feature_bin_stats(
+        data=_make_overdue_data(),
+        feature="score",
+        overdue="MOB1",
+        dpds=7,
+        del_grey=False,
+        method="quantile",
+        max_n_bins=5,
+        verbose=0,
+    )
 
-# 测试2: 单个overdue，剔除灰客户
-table2 = feature_bin_stats(
-    data=df,
-    feature='score',
-    overdue='MOB1',
-    dpds=7,
-    del_grey=True,
-    method='quantile',
-    max_n_bins=5,
-    verbose=1
-)
+    assert not isinstance(table.columns, pd.MultiIndex)
+    assert {"分箱标签", "样本总数", "坏样本数", "坏样本率", "分档WOE值"}.issubset(table.columns)
 
-print('\n测试2结果:')
-print('样本数:', table2['样本总数'].sum())
 
-print('\n✅ 所有测试通过！')
+def test_single_overdue_feature_bin_stats_supports_grey_customer_filtering():
+    data = _make_overdue_data()
+    table = feature_bin_stats(
+        data=data,
+        feature="score",
+        overdue="MOB1",
+        dpds=7,
+        del_grey=True,
+        method="quantile",
+        max_n_bins=5,
+        verbose=0,
+    )
+
+    assert 0 < table["样本总数"].sum() < len(data)

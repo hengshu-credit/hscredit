@@ -2,7 +2,10 @@
 
 import inspect
 import pickle
+import threading
+import time
 
+import hscredit.core.selectors.iv_selector as iv_selector_module
 import numpy as np
 import pandas as pd
 import pytest
@@ -26,6 +29,7 @@ from hscredit.core.selectors import (
     NullImportanceSelector,
     PSISelector,
     RegexSelector,
+    RFESelector,
     ScorecardFeatureSelection,
     SequentialFeatureSelector,
     StabilityAwareSelector,
@@ -50,6 +54,25 @@ class MeanDifferenceImportanceClassifier(BaseEstimator, ClassifierMixin):
         positive = values[target == self.classes_[-1]]
         negative = values[target == self.classes_[0]]
         self.feature_importances_ = np.abs(positive.mean(axis=0) - negative.mean(axis=0))
+        return self
+
+    def predict(self, X):
+        return np.full(len(X), self.classes_[0])
+
+
+ESTIMATOR_N_JOBS_OBSERVED = []
+
+
+class RecordingParallelImportanceClassifier(BaseEstimator, ClassifierMixin):
+    """记录底层联合模型实际收到的并行预算。"""
+
+    def __init__(self, n_jobs=1):
+        self.n_jobs = n_jobs
+
+    def fit(self, X, y):
+        ESTIMATOR_N_JOBS_OBSERVED.append(self.n_jobs)
+        self.classes_ = np.unique(y)
+        self.feature_importances_ = np.arange(X.shape[1], 0, -1, dtype=float)
         return self
 
     def predict(self, X):
@@ -370,6 +393,48 @@ def test_joint_model_selectors_do_not_schedule_identity_parallel_tasks(selector_
     assert boruta.scores_.index.tolist() == X.columns.tolist()
 
 
+def test_feature_importance_estimator_receives_selector_budget(selector_xy):
+    """联合重要性模型使用 selector 的预算且不修改调用者模型。"""
+    X, y = selector_xy
+    estimator = RecordingParallelImportanceClassifier(n_jobs=1)
+    ESTIMATOR_N_JOBS_OBSERVED.clear()
+
+    FeatureImportanceSelector(estimator, threshold=0.0, n_jobs=12).fit(X, y)
+
+    assert ESTIMATOR_N_JOBS_OBSERVED == [12]
+    assert estimator.n_jobs == 1
+
+
+def test_rfe_estimator_receives_selector_budget(selector_xy):
+    """RFE 每轮底层拟合都继承 selector 的预算。"""
+    X, y = selector_xy
+    estimator = RecordingParallelImportanceClassifier(n_jobs=1)
+    ESTIMATOR_N_JOBS_OBSERVED.clear()
+
+    RFESelector(
+        estimator,
+        n_features_to_select=1,
+        step=1,
+        n_jobs=12,
+    ).fit(X, y)
+
+    assert ESTIMATOR_N_JOBS_OBSERVED
+    assert set(ESTIMATOR_N_JOBS_OBSERVED) == {12}
+    assert estimator.n_jobs == 1
+
+
+def test_custom_boruta_estimator_receives_selector_budget(selector_xy):
+    """自定义 Boruta 模型与默认模型使用相同的预算传递路径。"""
+    X, y = selector_xy
+    estimator = RecordingParallelImportanceClassifier(n_jobs=1)
+    ESTIMATOR_N_JOBS_OBSERVED.clear()
+
+    BorutaSelector(estimator, max_iter=1, n_jobs=12).fit(X, y)
+
+    assert ESTIMATOR_N_JOBS_OBSERVED == [12]
+    assert estimator.n_jobs == 1
+
+
 def test_selector_parallel_params_support_get_params_clone_and_pickle():
     """防止公共配置在 sklearn 参数协议或序列化中丢失。"""
     config = {"batch_size": 1, "pre_dispatch": "all"}
@@ -410,6 +475,29 @@ def test_selector_scores_and_columns_match_serial(selector_factory, selector_xy)
 
     pd.testing.assert_series_equal(serial.scores_, parallel.scores_)
     assert serial.selected_features_ == parallel.selected_features_
+
+
+def test_column_worker_selector_uses_multiple_real_threads(selector_xy, monkeypatch):
+    """代表性按列筛选器必须由多个真实 worker 承担昂贵计算。"""
+    X, y = selector_xy
+    thread_ids = set()
+    lock = threading.Lock()
+    original_worker = iv_selector_module._compute_iv_feature
+
+    def recording_worker(task):
+        with lock:
+            thread_ids.add(threading.get_ident())
+        time.sleep(0.01)
+        return original_worker(task)
+
+    monkeypatch.setattr(iv_selector_module, "_compute_iv_feature", recording_worker)
+    IVSelector(
+        threshold=0.0,
+        n_jobs=2,
+        parallel_backend="threading",
+    ).fit(X, y)
+
+    assert len(thread_ids) >= 2
 
 
 @pytest.mark.parametrize("backend", ["threading", "loky"])
@@ -1086,6 +1174,17 @@ def test_pipeline_verbose_reports_outer_stage_names(capsys):
     output = capsys.readouterr().out
     assert "pre_selector" in output
     assert "selector" in output
+
+
+def test_fit_preserves_sklearn_parent_callback_context():
+    """事务提交不得提前删除 sklearn callback 上下文的临时状态。"""
+    selector = NullSelector(threshold=1.0, n_jobs=1)
+    callback_ctx = object()
+    selector._parent_callback_ctx = callback_ctx
+
+    selector.fit(pd.DataFrame({"特征甲": [0, 1], "特征乙": [1, 0]}))
+
+    assert selector._parent_callback_ctx is callback_ctx
 
 
 @pytest.mark.parametrize("child_n_jobs", [1, 13, 0.5])

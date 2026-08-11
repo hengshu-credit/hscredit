@@ -117,13 +117,15 @@ class RFESelector(BaseFeatureSelector):
         # 使用sklearn的RFE
         # importance_getter='auto'：sklearn 自动按 feature_importances_/coef_ 取重要性，
         # 兼容树模型（hscredit RiskModels, XGBoost, LightGBM, CatBoost 等）与线性模型（LogisticRegression 等）
+        estimator = self._clone_estimator_for_parallel(self.estimator)
         rfe = SklearnRFE(
-            estimator=self.estimator,
+            estimator=estimator,
             n_features_to_select=self.n_features_to_select,
             step=self.step,
             importance_getter='auto'
         )
-        rfe.fit(X, y)
+        with self._estimator_parallel_context():
+            rfe.fit(X, y)
 
         # 获取选中特征
         selected_mask = rfe.support_

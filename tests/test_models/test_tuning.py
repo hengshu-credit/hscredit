@@ -11,6 +11,12 @@ from hscredit.core.models.tuning import normalize_search_space
 optuna = pytest.importorskip("optuna")
 
 
+def test_model_tuner_trial_annotations_use_a_type_name_not_module_variable():
+    """Pylance 不应把运行时可选模块变量 ``optuna`` 当作类型命名空间。"""
+    assert ModelTuner._sample_params.__annotations__['trial'] == 'Trial'
+    assert ModelTuner._sample_normal.__annotations__['trial'] == 'Trial'
+
+
 def _small_binary_data(as_frame=False):
     X, y = make_classification(
         n_samples=120,
@@ -54,9 +60,58 @@ def test_lightgbm_tuner_samples_num_leaves_after_max_depth_constraint():
     assert len(tuner.best_scores_) == 2
     for trial in tuner.study_.trials:
         assert trial.state == optuna.trial.TrialState.COMPLETE
-        max_depth = trial.params["max_depth"]
-        num_leaves = trial.params["num_leaves"]
+        public_params = tuner._get_params_from_trial(trial)
+        max_depth = public_params["max_depth"]
+        num_leaves = public_params["num_leaves"]
         assert num_leaves <= 2**max_depth
+
+
+def test_lightgbm_grid_candidates_do_not_assume_low_high_fields():
+    class LightGBMStub:
+        pass
+
+    tuner = ModelTuner(
+        LightGBMStub,
+        search_space={'max_depth': [2], 'num_leaves': [8]},
+        metric='ks',
+        cv=2,
+    )
+    params = tuner._sample_params(optuna.trial.FixedTrial({'max_depth': 2, 'num_leaves': 8}))
+
+    assert params == {'max_depth': 2, 'num_leaves': 4}
+
+
+def test_num_leaves_constraint_is_not_applied_to_unrelated_models():
+    class UnrelatedEstimator:
+        pass
+
+    tuner = ModelTuner(
+        UnrelatedEstimator,
+        search_space={
+            'max_depth': {'type': 'int', 'low': 2, 'high': 2},
+            'num_leaves': {'type': 'int', 'low': 10, 'high': 10},
+        },
+        metric='ks',
+        cv=2,
+    )
+    params = tuner._sample_params(optuna.create_study().ask())
+
+    assert params == {'max_depth': 2, 'num_leaves': 10}
+
+
+def test_lightgbm_rejects_explicit_invalid_manual_leaf_point():
+    class LightGBMStub:
+        pass
+
+    tuner = ModelTuner(
+        LightGBMStub,
+        search_space={'max_depth': [2], 'num_leaves': [4, 8]},
+        metric='ks',
+        cv=2,
+    )
+
+    with pytest.raises(ValueError, match='num_leaves.*2\*\*max_depth'):
+        tuner.enqueue_trial({'max_depth': 2, 'num_leaves': 8})
 
 
 def test_multi_objective_default_best_trial_uses_primary_metric_first():
@@ -127,8 +182,8 @@ class TestNormalizeSearchSpace:
     def test_bayesian_optimization_tuple_style(self):
         """bayesian-optimization 风格: (low, high) 元组."""
         normalized = normalize_search_space({
-            'max_depth': (2, 4),          # 两端整数 -> int
-            'learning_rate': (1e-3, 0.1), # 含浮点 -> float
+            'max_depth': (2, 4),  # 两端整数 -> int
+            'learning_rate': (1e-3, 0.1),  # 含浮点 -> float
         })
         assert normalized['max_depth'] == {'type': 'int', 'low': 2, 'high': 4}
         assert normalized['learning_rate'] == {'type': 'float', 'low': 1e-3, 'high': 0.1}
@@ -165,14 +220,16 @@ class TestNormalizeSearchSpace:
         """hyperopt 风格: uniform/loguniform/quniform/randint/choice."""
         normalized = normalize_search_space({
             'subsample': {'type': 'uniform', 'low': 0.5, 'high': 1.0},
-            'learning_rate': {'type': 'loguniform', 'low': 1e-3, 'high': 0.1},
+            'learning_rate': {'type': 'loguniform', 'low': np.log(1e-3), 'high': np.log(0.1)},
             'gamma': {'type': 'quniform', 'low': 0.0, 'high': 5.0, 'q': 0.5},
             'max_depth': {'type': 'randint', 'low': 2, 'high': 4},
             'penalty': {'type': 'choice', 'choices': ['l1', 'l2']},
         })
         assert normalized['subsample'] == {'type': 'float', 'low': 0.5, 'high': 1.0}
-        assert normalized['learning_rate'] == {'type': 'float', 'low': 1e-3, 'high': 0.1, 'log': True}
-        assert normalized['gamma'] == {'type': 'float', 'low': 0.0, 'high': 5.0, 'step': 0.5}
+        assert normalized['learning_rate'] == {
+            'type': 'float', 'low': pytest.approx(1e-3), 'high': pytest.approx(0.1), 'log': True,
+        }
+        assert normalized['gamma'] == {'type': 'quniform', 'low': 0.0, 'high': 5.0, 'q': 0.5}
         assert normalized['max_depth'] == {'type': 'int', 'low': 2, 'high': 4}
         assert normalized['penalty'] == {'type': 'categorical', 'choices': ['l1', 'l2']}
 
@@ -212,7 +269,7 @@ class TestNormalizeSearchSpace:
             normalize_search_space({'x': []})
         with pytest.raises(ValueError, match="无法识别"):
             normalize_search_space({'x': 123})
-        with pytest.raises(ValueError, match="字典"):
+        with pytest.raises(ValueError, match="必须设置 name"):
             normalize_search_space([('x', (1, 2))])
 
     def test_model_tuner_accepts_multi_framework_search_space(self):
@@ -242,3 +299,202 @@ class TestNormalizeSearchSpace:
         assert tuner.search_space['C'] == {'type': 'float', 'low': 1e-3, 'high': 1.0, 'log': True}
         assert tuner.search_space['max_iter'] == {'type': 'int', 'low': 100, 'high': 200}
         assert tuner.search_space['solver'] == {'type': 'categorical', 'choices': ['liblinear', 'lbfgs']}
+
+
+class TestManualSearchPoints:
+    """各框架的手工搜索点最终都通过 Optuna enqueue_trial 执行。"""
+
+    @staticmethod
+    def _tuner():
+        from sklearn.linear_model import LogisticRegression
+
+        return ModelTuner(
+            LogisticRegression,
+            search_space={'C': [0.1, 1.0], 'solver': ['liblinear', 'lbfgs']},
+            fixed_params={'max_iter': 100},
+            metric='ks',
+            cv=2,
+            random_state=42,
+        )
+
+    def test_optuna_enqueue_trial_preserves_attrs_and_runs_first(self):
+        X, y = _small_binary_data(as_frame=True)
+        tuner = self._tuner()
+        tuner.enqueue_trial({'C': 1.0, 'solver': 'liblinear'}, user_attrs={'来源': '经验值'})
+
+        tuner.fit(X, y, n_trials=1, show_progress_bar=False)
+
+        assert tuner.study_.trials[0].params == {'C': 1.0, 'solver': 'liblinear'}
+        assert tuner.study_.trials[0].user_attrs == {'来源': '经验值'}
+
+    def test_gridsearch_param_grid_expands_with_parameter_grid_order(self):
+        X, y = _small_binary_data(as_frame=True)
+        tuner = self._tuner().enqueue_trials(
+            param_grid={'C': [0.1, 1.0], 'solver': ['liblinear']}
+        )
+
+        tuner.fit(X, y, n_trials=2, show_progress_bar=False)
+
+        assert [trial.params for trial in tuner.study_.trials] == [
+            {'C': 0.1, 'solver': 'liblinear'},
+            {'C': 1.0, 'solver': 'liblinear'},
+        ]
+
+    def test_skopt_x0_uses_declared_dimension_order(self):
+        X, y = _small_binary_data(as_frame=True)
+        tuner = self._tuner().enqueue_trials(
+            x0=[[0.1, 'liblinear'], [1.0, 'lbfgs']]
+        )
+
+        tuner.fit(X, y, n_trials=2, show_progress_bar=False)
+
+        assert [trial.params for trial in tuner.study_.trials] == [
+            {'C': 0.1, 'solver': 'liblinear'},
+            {'C': 1.0, 'solver': 'lbfgs'},
+        ]
+
+    def test_bayesian_probe_accepts_dict_and_ordered_sequence(self):
+        X, y = _small_binary_data(as_frame=True)
+        tuner = self._tuner()
+        tuner.probe(params={'C': 0.1, 'solver': 'liblinear'}, lazy=False)
+        tuner.probe(params=[1.0, 'lbfgs'], lazy=True)
+
+        tuner.fit(X, y, n_trials=2, show_progress_bar=False)
+
+        assert [trial.params for trial in tuner.study_.trials] == [
+            {'C': 0.1, 'solver': 'liblinear'},
+            {'C': 1.0, 'solver': 'lbfgs'},
+        ]
+
+    def test_hyperopt_points_to_evaluate_constructor_alias(self):
+        from sklearn.linear_model import LogisticRegression
+
+        X, y = _small_binary_data(as_frame=True)
+        tuner = ModelTuner(
+            LogisticRegression,
+            search_space={'C': [0.1, 1.0], 'solver': ['liblinear']},
+            fixed_params={'max_iter': 100},
+            points_to_evaluate=[{'C': 1.0, 'solver': 'liblinear'}],
+            metric='ks',
+            cv=2,
+            random_state=42,
+        )
+
+        tuner.fit(X, y, n_trials=1, show_progress_bar=False)
+
+        assert tuner.study_.trials[0].params == {'C': 1.0, 'solver': 'liblinear'}
+
+    def test_transformed_point_is_inverted_for_optuna_but_public_results_stay_clean(self):
+        from hscredit import qloguniform
+        from sklearn.linear_model import LogisticRegression
+
+        X, y = _small_binary_data(as_frame=True)
+        tuner = ModelTuner(
+            LogisticRegression,
+            search_space={
+                'C': qloguniform('C', np.log(0.1), np.log(2.0), 0.1),
+                'solver': ['liblinear'],
+            },
+            fixed_params={'max_iter': 100},
+            metric='ks',
+            cv=2,
+            random_state=42,
+        )
+        tuner.enqueue_trial({'C': 1.0, 'solver': 'liblinear'})
+
+        tuner.fit(X, y, n_trials=1, show_progress_bar=False)
+
+        assert tuner.best_params_['C'] == pytest.approx(1.0)
+        assert '__hscredit__C' in tuner.study_.trials[0].params
+        assert not any('__hscredit__' in column for column in tuner.optimization_history_.columns)
+        assert tuner.optimization_history_.loc[0, 'params_C'] == pytest.approx(1.0)
+
+    def test_partial_dict_point_leaves_other_parameters_to_sampler(self):
+        X, y = _small_binary_data(as_frame=True)
+        tuner = self._tuner().enqueue_trial({'C': 1.0})
+
+        tuner.fit(X, y, n_trials=1, show_progress_bar=False)
+
+        assert tuner.study_.trials[0].params['C'] == 1.0
+        assert tuner.study_.trials[0].params['solver'] in {'liblinear', 'lbfgs'}
+
+    def test_sequence_points_require_all_dimensions_and_values_are_validated(self):
+        tuner = self._tuner()
+        with pytest.raises(ValueError, match='维度数量'):
+            tuner.enqueue_trials(x0=[[0.1]])
+        with pytest.raises(ValueError, match='不存在'):
+            tuner.enqueue_trial({'unknown': 1})
+        with pytest.raises(ValueError, match='choices'):
+            tuner.probe(params=[0.1, 'not-a-solver'])
+
+    def test_dict_point_can_be_cached_before_adaptive_space_is_known(self):
+        X, y = _small_binary_data(as_frame=True)
+        tuner = AutoTuner.create(
+            'lr',
+            metric='ks',
+            cv=2,
+            random_state=42,
+            trial_points={'C': 1.0},
+        )
+
+        tuner.fit(X, y, n_trials=1, show_progress_bar=False)
+
+        assert tuner.study_.trials[0].params['C'] == 1.0
+
+
+def test_all_declared_framework_styles_run_on_optuna_backend():
+    """五类原声明格式都能直接驱动同一个 Optuna ModelTuner。"""
+    from hscredit import (
+        Categorical,
+        Integer,
+        Real,
+        choice,
+        loguniform,
+        randint,
+        suggest_categorical,
+        suggest_float,
+        suggest_int,
+    )
+    from sklearn.linear_model import LogisticRegression
+
+    X, y = _small_binary_data(as_frame=True)
+    spaces = {
+        'optuna': {
+            'C': suggest_float('C', 0.1, 1.0, log=True),
+            'max_iter': suggest_int('max_iter', 80, 120),
+            'solver': suggest_categorical('solver', ['liblinear', 'lbfgs']),
+        },
+        'gridsearch': {
+            'C': [0.1, 1.0],
+            'max_iter': [100],
+            'solver': ['liblinear', 'lbfgs'],
+        },
+        'skopt': [
+            Real(0.1, 1.0, prior='log-uniform', name='C'),
+            Integer(80, 120, name='max_iter'),
+            Categorical(['liblinear', 'lbfgs'], name='solver'),
+        ],
+        'bayesian-optimization': {
+            'C': (0.1, 1.0, float),
+            'max_iter': (80, 120, int),
+            'solver': ('liblinear', 'lbfgs'),
+        },
+        'hyperopt': {
+            'C': loguniform('C', np.log(0.1), np.log(1.0)),
+            'max_iter': randint('max_iter', 80, 121),
+            'solver': choice('solver', ['liblinear', 'lbfgs']),
+        },
+    }
+
+    for framework, space in spaces.items():
+        tuner = ModelTuner(
+            LogisticRegression,
+            search_space=space,
+            metric='ks',
+            cv=2,
+            random_state=42,
+        )
+        best = tuner.fit(X, y, n_trials=1, show_progress_bar=False)
+        assert set(best) == {'C', 'max_iter', 'solver'}, framework
+        assert len(tuner.study_.trials) == 1, framework
+        assert tuner.study_.trials[0].state == optuna.trial.TrialState.COMPLETE, framework

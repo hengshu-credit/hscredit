@@ -59,3 +59,14 @@ def test_ci_covers_setuptools_with_and_without_pkg_resources():
     assert 'setuptools-version: "77.0.3"' in workflow
     assert 'setuptools-version: "82.0.1"' in workflow
     assert 'setuptools-version: "latest"' in workflow
+
+
+def test_ci_runs_full_suite_with_all_extras_on_every_supported_python():
+    workflow = (PROJECT_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+
+    assert 'python-version: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]' in workflow
+    assert workflow.count('pip install -e ".[all]"') == 2
+    assert 'pip install -e ".[dev' not in workflow
+    assert 'test-full:' not in workflow
+    assert '-m "not slow and not integration"' not in workflow
+    assert 'run: pytest tests/ --tb=short' in workflow

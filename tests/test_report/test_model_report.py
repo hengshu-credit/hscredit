@@ -694,6 +694,10 @@ class TestModelReportRegression:
         assert basic.cell(sample_total_header.row, sample_total_header.column - 1).value == '数据集'
 
 
+@pytest.mark.skipif(
+    not (Path(__file__).parents[2] / "examples" / "hscredit_yyp.xlsx").exists(),
+    reason="缺少 examples/hscredit_yyp.xlsx",
+)
 class TestModelReportRealDataContract:
     """真实放款数据的完整 Excel 报告契约。"""
 

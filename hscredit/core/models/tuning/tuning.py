@@ -74,16 +74,23 @@ pip install optuna
 
 import logging
 import warnings
-from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence, TYPE_CHECKING, Tuple, Type, Union
 import numpy as np
 import pandas as pd
 from ....utils.parallel import resolve_n_jobs
-from sklearn.model_selection import cross_val_score, StratifiedKFold
+from sklearn.model_selection import ParameterGrid, cross_val_score, StratifiedKFold
 from sklearn.metrics import get_scorer, roc_auc_score, roc_curve
 
 from sklearn.utils.validation import check_is_fitted
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from optuna.trial import Trial
+else:
+    # 类型标注在运行时无需加载 Optuna 的 Trial 类；保留该名称可支持
+    # inspect/get_type_hints 等运行时注解读取，同时避免 Pylance 将 optuna 变量当类型命名空间。
+    Trial = Any
 
 try:
     import optuna
@@ -384,7 +391,7 @@ def _check_bounds(name: str, spec: Dict[str, Any], integer: bool) -> None:
             raise ValueError(f"参数 {name!r} 的 int 类型要求整数边界: {spec!r}")
 
 
-def normalize_search_space(search_space: Optional[Dict[str, Any]]) -> Optional[Dict[str, Dict[str, Any]]]:
+def _legacy_normalize_search_space(search_space: Optional[Dict[str, Any]]) -> Optional[Dict[str, Dict[str, Any]]]:
     """将多种超参数框架的搜索空间格式统一为内部 DSL（optuna 风格）.
 
     每个参数单独定义，支持以下框架的入参格式（无需安装对应库，
@@ -414,6 +421,11 @@ def normalize_search_space(search_space: Optional[Dict[str, Any]]) -> Optional[D
             f"search_space 必须是字典（参数名 -> 参数定义），当前类型: {type(search_space).__name__}"
         )
     return {name: _normalize_space_param(name, spec) for name, spec in search_space.items()}
+
+
+# 新适配器覆盖上方保留的旧解析实现；旧私有函数暂留用于兼容可能存在的内部导入，
+# 所有公开入口与 ModelTuner 从这里开始统一走同一套格式、校验和采样语义。
+from .space_adapter import SearchSpaceAdapter, normalize_search_space  # noqa: E402
 
 
 class TuningSampler:
@@ -1022,7 +1034,8 @@ class ModelTuner:
 
     **搜索空间定义**
 
-    搜索空间是一个字典，每个参数单独定义。内部统一为 optuna 风格 DSL:
+    搜索空间可使用参数字典，或使用每个维度都设置 ``name`` 的 skopt 维度列表。
+    内部统一转换并由 Optuna Study 执行：
 
     - 整数参数: {'type': 'int', 'low': 1, 'high': 10, 'step': 1}
     - 浮点参数: {'type': 'float', 'low': 0.01, 'high': 1.0, 'log': True}
@@ -1030,11 +1043,11 @@ class ModelTuner:
 
     同时兼容多种超参数框架的入参格式（无需安装对应库），传入后自动归一化:
 
-    - bayesian-optimization 风格: {'max_depth': (2, 4), 'learning_rate': (1e-3, 0.1)}
-    - scikit-optimize 风格: {'learning_rate': (1e-3, 0.1, 'log-uniform'), 'penalty': ['l1', 'l2']}
+    - bayesian-optimization 风格: {'max_depth': (2, 4, int), 'booster': ('gbtree', 'dart')}
+    - scikit-optimize 风格: [Real(1e-3, 0.1, prior='log-uniform', name='learning_rate')]
     - sklearn 风格: {'C': [0.1, 1, 10]} 或 scipy 分布 {'C': scipy.stats.loguniform(1e-3, 1e1)}
-    - hyperopt 风格: {'learning_rate': {'type': 'loguniform', 'low': 1e-3, 'high': 0.1},
-      'penalty': {'type': 'choice', 'choices': ['l1', 'l2']}}
+    - hyperopt 风格: {'learning_rate': loguniform('learning_rate', log(1e-3), log(0.1)),
+      'penalty': choice('penalty', ['l1', 'l2'])}
     - optuna 分布对象: {'max_depth': optuna.distributions.IntDistribution(2, 4)}
 
     **内部建模经验**
@@ -1097,7 +1110,7 @@ class ModelTuner:
     def __init__(
         self,
         model_class: Type,
-        search_space: Optional[Dict[str, Dict[str, Any]]] = None,
+        search_space: Optional[Any] = None,
         fixed_params: Optional[Dict[str, Any]] = None,
         metric: Union[str, Callable, List[Union[str, Callable]]] = 'ks',
         direction: Union[str, List[str]] = 'maximize',
@@ -1116,7 +1129,8 @@ class ModelTuner:
         n_jobs: int = -1,
         random_state: Optional[int] = None,
         verbose: bool = False,
-        early_stopping_rounds: int = 20
+        early_stopping_rounds: int = 20,
+        points_to_evaluate: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
     ):
         """初始化 ModelTuner.
 
@@ -1134,6 +1148,8 @@ class ModelTuner:
             （例如已知的经验最优配置或上一轮调优结果），随后再进行常规采样。
             每个 dict 的键应为搜索空间中的参数名，可只指定部分参数（其余由采样器补全）。
             也可在实例化后通过 :meth:`enqueue_trials` 追加。
+        :param points_to_evaluate: Hyperopt 风格的初始搜索点，格式与 ``fmin`` 的
+            ``points_to_evaluate`` 一致；内部与 ``trial_points`` 一并转换并入队。
         :param sampler: 搜索器，支持:
             - 字符串名称：见 :class:`TuningSampler`，如 'tpe'（默认）/'cmaes'/'random'/
               'gp'/'nsgaii' 等内置采样器，或 'auto'/'hebo'/'smac' 等 optunahub 采样器
@@ -1152,13 +1168,18 @@ class ModelTuner:
             )
 
         self.model_class = model_class
-        # 统一为多框架兼容的内部 DSL（optuna 风格），后续采样只认该格式
-        self.search_space = normalize_search_space(search_space)
+        self._space_adapter = SearchSpaceAdapter(search_space)
+        self.search_space = self._space_adapter.space
         self.fixed_params = fixed_params or {}
+        self._validate_lightgbm_leaf_point(self.fixed_params)
         self.objective = objective
         self.objective_kwargs = objective_kwargs or {}
         self.eval_ratios = eval_ratios or [0.01, 0.03, 0.05, 0.10]
-        self.trial_points = self._normalize_trial_points(trial_points)
+        initial_points = self._normalize_trial_points(trial_points)
+        initial_points.extend(self._normalize_trial_points(points_to_evaluate))
+        self.trial_points: List[Dict[str, Any]] = []
+        self._pending_trials: List[Tuple[Dict[str, Any], Optional[Dict[str, Any]], bool]] = []
+        self._pending_public_trials: List[Tuple[Dict[str, Any], Optional[Dict[str, Any]], bool]] = []
         self.sampler = sampler
         self.sampler_kwargs = sampler_kwargs or {}
         self.storage = storage
@@ -1202,6 +1223,9 @@ class ModelTuner:
         self._n_samples = None
         self._n_features = None
         self._is_multi_objective = len(self.metrics) > 1
+
+        for point in initial_points:
+            self.enqueue_trial(point)
 
     def _setup_metrics(
         self,
@@ -1318,6 +1342,8 @@ class ModelTuner:
         # 如果没有指定搜索空间，使用自适应搜索空间
         if self.search_space is None:
             self.search_space = self._get_adaptive_search_space()
+            self._space_adapter = SearchSpaceAdapter(self.search_space)
+            self.search_space = self._space_adapter.space
         
         # 创建采样器（支持 optuna 内置及 optunahub 采样器，见 TuningSampler 码表）
         sampler = TuningSampler.create(
@@ -1354,6 +1380,7 @@ class ModelTuner:
             # 从搜索空间采样参数
             params = self._sample_params(trial)
             params.update(self.fixed_params)
+            params = self._apply_model_param_constraints(params)
 
             # 添加早停参数（仅当模型构造函数支持时，逻辑回归等不支持）
             self._inject_fit_params(params)
@@ -1375,7 +1402,7 @@ class ModelTuner:
         # 保存结果
         self._save_results()
             
-        self.optimization_history_ = self.study_.trials_dataframe()
+        self.optimization_history_ = self._build_public_history()
 
         if self.verbose:
             if self._is_multi_objective:
@@ -1468,11 +1495,12 @@ class ModelTuner:
             self.best_score_ = self.best_scores_[0]  # 第一个指标作为主指标
         else:
             # 单目标优化
-            self.best_params_ = self.study_.best_params.copy()
+            self.best_params_ = self._get_params_from_trial(self.study_.best_trial)
             self.best_score_ = self.study_.best_value
             self.best_scores_ = [self.best_score_]
         
         self.best_params_.update(self.fixed_params)
+        self.best_params_ = self._apply_model_param_constraints(self.best_params_)
 
     def _select_best_pareto_trial(self, trials: Sequence[Any]) -> Any:
         """从帕累托前沿按主指标优先规则选择一个默认最优 trial."""
@@ -1536,8 +1564,9 @@ class ModelTuner:
                 logger.info(f"评估 trial point {i+1}/{len(trial_points)}: {params}")
             
             # 合并固定参数
-            full_params = self.fixed_params.copy()
-            full_params.update(params)
+            full_params = dict(params)
+            full_params.update(self.fixed_params)
+            full_params = self._apply_model_param_constraints(full_params)
             self._inject_fit_params(full_params)
 
             # 创建模型并评估
@@ -1637,14 +1666,15 @@ class ModelTuner:
 
         for idx in indices:
             trial = all_trials[idx]
-            params = dict(trial.params)
+            params = self._get_params_from_trial(trial)
 
             if self.verbose:
                 logger.info(f"评估 study trial #{idx} (state={trial.state.name}): {params}")
 
             # 合并固定参数并按模型签名注入早停参数
-            full_params = self.fixed_params.copy()
-            full_params.update(params)
+            full_params = dict(params)
+            full_params.update(self.fixed_params)
+            full_params = self._apply_model_param_constraints(full_params)
             self._inject_fit_params(full_params)
 
             # 创建模型并评估
@@ -1670,10 +1700,22 @@ class ModelTuner:
 
     def _get_params_from_trial(self, trial) -> Dict[str, Any]:
         """从trial中获取参数."""
-        params = {}
-        for param_name in self.search_space.keys():
-            params[param_name] = trial.params.get(param_name)
-        return params
+        return self._apply_model_param_constraints(self._space_adapter.public_params(trial))
+
+    def _build_public_history(self) -> pd.DataFrame:
+        """生成只包含模型最终参数名和值的 Optuna 历史表。"""
+        history = self.study_.trials_dataframe()
+        latent_columns = [column for column in history if column.startswith("params___hscredit__")]
+        history = history.drop(columns=latent_columns, errors="ignore")
+        for name in self.search_space:
+            column = f"params_{name}"
+            values = []
+            for trial in self.study_.trials:
+                params = self._space_adapter.public_params(trial)
+                params.update(self.fixed_params)
+                values.append(self._apply_model_param_constraints(params).get(name))
+            history[column] = values
+        return history
     
     def _get_adaptive_search_space(self) -> Dict[str, Dict[str, Any]]:
         """根据数据特征获取自适应搜索空间.
@@ -1898,37 +1940,108 @@ class ModelTuner:
             f"trial_points 必须为 dict 或 list[dict]，收到: {type(trial_points).__name__}"
         )
 
+    def enqueue_trial(
+        self,
+        params: Dict[str, Any],
+        user_attrs: Optional[Dict[str, Any]] = None,
+        skip_if_exists: bool = False,
+    ) -> 'ModelTuner':
+        """按 Optuna ``Study.enqueue_trial`` 风格追加一个手工搜索点。
+
+        ``params`` 使用模型最终参数名和值。若某一声明需要内部潜变量采样，本方法
+        会先完成逆变换，再把内部参数传给 Study；公开记录仍保留最终值。
+        """
+        public_point = dict(params)
+        attrs = dict(user_attrs) if user_attrs is not None else None
+        point_with_fixed = dict(public_point)
+        point_with_fixed.update(self.fixed_params)
+        self._validate_lightgbm_leaf_point(point_with_fixed)
+        self.trial_points.append(public_point)
+        if self.search_space is None:
+            self._pending_public_trials.append((public_point, attrs, bool(skip_if_exists)))
+            return self
+        internal_point = self._space_adapter.to_internal_point(public_point)
+        if self.study_ is not None:
+            self.study_.enqueue_trial(internal_point, user_attrs=attrs, skip_if_exists=skip_if_exists)
+            if self.verbose:
+                logger.info(f"已入队手工搜索点: {public_point}")
+        else:
+            self._pending_trials.append((internal_point, attrs, bool(skip_if_exists)))
+        return self
+
+    def _ordered_point(self, values: Sequence[Any], source: str) -> Dict[str, Any]:
+        """按搜索空间声明顺序把序列点转换为参数字典。"""
+        values = list(values)
+        names = self._space_adapter.names
+        if len(values) != len(names):
+            raise ValueError(f"{source} 搜索点维度数量为 {len(values)}，搜索空间要求 {len(names)}")
+        return dict(zip(names, values))
+
     def enqueue_trials(
         self,
-        trial_points: Union[Dict[str, Any], List[Dict[str, Any]]]
+        trial_points: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
+        *,
+        param_grid: Optional[Union[Dict[str, Sequence[Any]], List[Dict[str, Sequence[Any]]]]] = None,
+        x0: Optional[Sequence[Any]] = None,
+        user_attrs: Optional[Dict[str, Any]] = None,
+        skip_if_exists: bool = False,
     ) -> 'ModelTuner':
-        """追加预指定的超参数搜索点（dict 或 list[dict]）.
+        """按 Optuna、GridSearch 或 skopt 格式追加一个或多个搜索点。
 
         若 study 已创建（已调用过 fit），则立即通过 ``study.enqueue_trial`` 入队，
         在后续 ``fit`` 的采样中优先评估；否则缓存到 ``self.trial_points``，
         在下次 ``fit`` 创建 study 后入队。
 
-        :param trial_points: 超参数点，``dict`` 或 ``list[dict]``，键为搜索空间参数名
+        :param trial_points: Optuna/hscredit 格式，``dict`` 或 ``list[dict]``
+        :param param_grid: GridSearch 格式，由 ``ParameterGrid`` 展开
+        :param x0: skopt 格式，单个值序列或多个值序列，顺序与搜索空间一致
         :return: self，便于链式调用
         """
-        points = self._normalize_trial_points(trial_points)
-        if self.study_ is not None:
-            for point in points:
-                self.study_.enqueue_trial(point, skip_if_exists=False)
-                if self.verbose:
-                    logger.info(f"已入队 trial point: {point}")
+        supplied = sum(value is not None for value in (trial_points, param_grid, x0))
+        if supplied != 1:
+            raise ValueError("enqueue_trials 必须且只能提供 trial_points、param_grid 或 x0 中的一项")
+        if param_grid is not None:
+            points = [dict(point) for point in ParameterGrid(param_grid)]
+        elif x0 is not None:
+            raw = list(x0)
+            if not raw:
+                raise ValueError("x0 不能为空")
+            first = raw[0]
+            if isinstance(first, (list, tuple, np.ndarray)):
+                points = [self._ordered_point(row, "x0") for row in raw]
+            else:
+                points = [self._ordered_point(raw, "x0")]
         else:
-            self.trial_points.extend(points)
+            points = self._normalize_trial_points(trial_points)
+        for point in points:
+            self.enqueue_trial(point, user_attrs=user_attrs, skip_if_exists=skip_if_exists)
         return self
+
+    def probe(
+        self,
+        params: Union[Dict[str, Any], Sequence[Any]],
+        lazy: bool = True,
+    ) -> 'ModelTuner':
+        """按 bayesian-optimization ``probe`` 风格追加一个搜索点。
+
+        ``lazy`` 为兼容原方法保留；Optuna 后端无立即执行单点的等价操作，因此
+        ``True`` 与 ``False`` 都会进入同一个 Study 队列，并在下一次 optimize 时执行。
+        """
+        del lazy
+        point = dict(params) if isinstance(params, dict) else self._ordered_point(params, "probe")
+        return self.enqueue_trial(point)
 
     def _enqueue_trial_points(self) -> None:
         """将 self.trial_points 入队到当前 study（fit 内部调用）."""
-        if not self.trial_points:
-            return
-        for point in self.trial_points:
-            self.study_.enqueue_trial(point, skip_if_exists=False)
+        for public_point, user_attrs, skip_if_exists in self._pending_public_trials:
+            internal_point = self._space_adapter.to_internal_point(public_point)
+            self._pending_trials.append((internal_point, user_attrs, skip_if_exists))
+        self._pending_public_trials.clear()
+        for point, user_attrs, skip_if_exists in self._pending_trials:
+            self.study_.enqueue_trial(point, user_attrs=user_attrs, skip_if_exists=skip_if_exists)
             if self.verbose:
-                logger.info(f"已入队预指定 trial point: {point}")
+                logger.info(f"已入队预指定手工搜索点: {point}")
+        self._pending_trials.clear()
 
     def _inject_fit_params(self, params: Dict[str, Any]) -> None:
         """按模型构造函数签名注入早停/验证集参数（原地修改 params）.
@@ -1960,89 +2073,53 @@ class ModelTuner:
             if name in accepted:
                 params.setdefault(name, value)
 
-    def _sample_params(self, trial: 'optuna.Trial') -> Dict[str, Any]:
+    def _sample_params(self, trial: 'Trial') -> Dict[str, Any]:
         """从搜索空间采样参数.
 
         :param trial: Optuna trial对象
         :return: 参数字典
         """
-        params = {}
+        params = self._space_adapter.sample(trial)
+        return self._apply_model_param_constraints(params)
 
-        for param_name, param_config in self.search_space.items():
-            # LightGBM 的 num_leaves 需要在 max_depth 采样后动态收紧上界。
-            if param_name == 'num_leaves' and 'max_depth' in self.search_space:
-                continue
+    def _uses_lightgbm_leaf_constraint(self) -> bool:
+        """当前模型是否使用 LightGBM 的叶子数/深度约束。"""
+        model_name = getattr(self.model_class, '__name__', '').lower()
+        return 'lightgbm' in model_name or 'lgbm' in model_name
 
-            param_type = param_config['type']
+    def _leaf_limit(self, params: Dict[str, Any]) -> Optional[int]:
+        """根据正的整数 max_depth 计算 LightGBM num_leaves 上限。"""
+        if not self._uses_lightgbm_leaf_constraint():
+            return None
+        max_depth = params.get('max_depth')
+        if isinstance(max_depth, (bool, np.bool_)) or not isinstance(max_depth, (int, np.integer)):
+            return None
+        if max_depth <= 0:
+            return None
+        return 2 ** int(max_depth)
 
-            if param_type == 'int':
-                # optuna 要求 log=True 时 step 必须为 1，二者不可同时指定
-                if param_config.get('log', False):
-                    params[param_name] = trial.suggest_int(
-                        param_name,
-                        param_config['low'],
-                        param_config['high'],
-                        log=True
-                    )
-                else:
-                    params[param_name] = trial.suggest_int(
-                        param_name,
-                        param_config['low'],
-                        param_config['high'],
-                        step=param_config.get('step', 1)
-                    )
-            elif param_type == 'float':
-                # optuna 要求 log=True 时 step 必须为 None，二者不可同时指定
-                if param_config.get('log', False):
-                    params[param_name] = trial.suggest_float(
-                        param_name,
-                        param_config['low'],
-                        param_config['high'],
-                        log=True
-                    )
-                elif param_config.get('step') is not None:
-                    params[param_name] = trial.suggest_float(
-                        param_name,
-                        param_config['low'],
-                        param_config['high'],
-                        step=param_config['step']
-                    )
-                else:
-                    params[param_name] = trial.suggest_float(
-                        param_name,
-                        param_config['low'],
-                        param_config['high']
-                    )
-            elif param_type == 'categorical':
-                params[param_name] = trial.suggest_categorical(
-                    param_name,
-                    param_config['choices']
-                )
-            elif param_type == 'normal':
-                params[param_name] = self._sample_normal(trial, param_name, param_config)
-            else:
-                raise ValueError(f"未知参数类型: {param_type}")
-            
-        # LightGBM特殊处理：num_leaves不超过2^max_depth，避免同一 trial 内重复
-        # suggest 同名参数导致 Optuna 分布不一致或约束失效。
-        if 'num_leaves' in self.search_space and 'num_leaves' not in params:
-            leaves_config = self.search_space['num_leaves']
-            leaves_low = leaves_config['low']
-            leaves_high = leaves_config['high']
-            max_depth = params.get('max_depth')
-            if max_depth is not None and max_depth > 0:
-                leaves_high = min(2 ** max_depth, leaves_high)
-            leaves_low = min(leaves_low, leaves_high)
-            params['num_leaves'] = trial.suggest_int(
-                'num_leaves',
-                leaves_low,
-                leaves_high,
-                step=leaves_config.get('step', 1)
+    def _apply_model_param_constraints(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """把模型关联约束应用到最终模型参数，不改变 Optuna 的稳定搜索分布。"""
+        constrained = dict(params)
+        limit = self._leaf_limit(constrained)
+        num_leaves = constrained.get('num_leaves')
+        if limit is not None and isinstance(num_leaves, (int, np.integer)) and not isinstance(
+            num_leaves, (bool, np.bool_)
+        ):
+            constrained['num_leaves'] = min(int(num_leaves), limit)
+        return constrained
+
+    def _validate_lightgbm_leaf_point(self, params: Dict[str, Any]) -> None:
+        """拒绝显式给出的无效 LightGBM 深度/叶子数组合。"""
+        limit = self._leaf_limit(params)
+        num_leaves = params.get('num_leaves')
+        if limit is not None and isinstance(num_leaves, (int, np.integer)) and num_leaves > limit:
+            raise ValueError(
+                f"LightGBM 手工搜索点 num_leaves={num_leaves} 不能大于 "
+                f"2**max_depth={limit}"
             )
 
-        return params
-
-    def _sample_normal(self, trial: 'optuna.Trial', param_name: str, param_config: Dict[str, Any]) -> float:
+    def _sample_normal(self, trial: 'Trial', param_name: str, param_config: Dict[str, Any]) -> float:
         """从截断正态/对数正态分布采样（hyperopt normal/lognormal 近似）。
 
         optuna 无原生正态采样，在 [0,1] 均匀采样后经逆 CDF 变换为目标分布，
@@ -2053,27 +2130,7 @@ class ModelTuner:
         :param param_config: 'normal' DSL 配置（含 mu/sigma/low/high/q/log）
         :return: 采样值
         """
-        from scipy.stats import norm
-
-        mu = param_config['mu']
-        sigma = param_config['sigma']
-        low = param_config['low']
-        high = param_config['high']
-        q = param_config.get('q')
-        log = param_config.get('log', False)
-
-        a = float(norm.cdf((low - mu) / sigma))
-        b = float(norm.cdf((high - mu) / sigma))
-        # 用带 '__u' 后缀的内部参数名做均匀采样，避免与外层参数名冲突
-        u = trial.suggest_float(param_name + '__u', 0.0, 1.0)
-        p = a + (b - a) * u
-        p = min(max(p, 1e-12), 1.0 - 1e-12)
-        val = float(norm.ppf(p) * sigma + mu)
-        if log:
-            val = float(np.exp(val))
-        if q is not None:
-            val = float(round(val / q) * q)
-        return val
+        return self._space_adapter.sample_one(trial, param_name, param_config)
 
     def get_best_model(self) -> Any:
         """获取使用最佳参数的模型实例.

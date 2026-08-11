@@ -17,6 +17,7 @@ from hscredit.core.models.tuning.search_space import (  # noqa: F401
     suggest_int,
     suggest_float,
     suggest_categorical,
+    suggest_uniform,
     suggest_discrete_uniform,
     suggest_loguniform,
     uniform,
@@ -53,6 +54,59 @@ class TestSkoptStyle:
     def test_categorical(self):
         assert _norm(Categorical(['a', 'b'])) == {'type': 'categorical', 'choices': ['a', 'b']}
 
+    def test_common_constructor_signatures_are_compatible(self):
+        real = Real(
+            1e-4,
+            1e-1,
+            prior='log-uniform',
+            base=2,
+            transform='normalize',
+            name='learning_rate',
+            dtype=np.float32,
+        )
+        integer = Integer(
+            2,
+            32,
+            prior='log-uniform',
+            base=2,
+            transform='identity',
+            name='max_depth',
+            dtype=np.int32,
+        )
+        categorical = Categorical(
+            ['l1', 'l2'],
+            prior=[0.8, 0.2],
+            transform='onehot',
+            name='penalty',
+        )
+
+        assert real.name == 'learning_rate' and real.base == 2 and real.dtype is np.float32
+        assert integer.name == 'max_depth' and integer.prior == 'log-uniform'
+        assert integer.dtype is np.int32
+        assert categorical.name == 'penalty' and categorical.transform == 'onehot'
+        assert categorical.prior == [0.8, 0.2]
+
+    def test_named_dimension_must_match_dictionary_key(self):
+        with pytest.raises(ValueError, match='参数名.*不一致'):
+            normalize_search_space({'actual_name': Real(0.0, 1.0, name='declared_name')})
+
+    def test_named_dimension_list_is_native_skopt_search_space(self):
+        norm = normalize_search_space([
+            Real(1e-3, 0.1, prior='log-uniform', name='learning_rate'),
+            Integer(2, 8, name='max_depth'),
+            Categorical(['gbtree', 'dart'], name='booster'),
+        ])
+        assert list(norm) == ['learning_rate', 'max_depth', 'booster']
+        assert norm['learning_rate']['log'] is True
+        assert norm['max_depth']['type'] == 'int'
+        assert norm['booster']['choices'] == ['gbtree', 'dart']
+
+    def test_dimension_list_requires_unique_names(self):
+        with pytest.raises(ValueError, match='必须设置 name'):
+            normalize_search_space([Real(0.0, 1.0)])
+        with pytest.raises(ValueError, match='重复'):
+            normalize_search_space([Real(0.0, 1.0, name='x'), Integer(1, 2, name='x')])
+
 
 # ---------- optuna 分布对象风格 ----------
 class TestOptunaDistributionStyle:
@@ -64,8 +118,18 @@ class TestOptunaDistributionStyle:
             'type': 'int', 'low': 2, 'high': 256, 'log': True
         }
 
+    def test_int_distribution_native_positional_order(self):
+        assert _norm(IntDistribution(2, 10, False, 2)) == {
+            'type': 'int', 'low': 2, 'high': 10, 'step': 2,
+        }
+
     def test_float_distribution(self):
         assert _norm(FloatDistribution(0.0, 1.0)) == {'type': 'float', 'low': 0.0, 'high': 1.0}
+
+    def test_float_distribution_native_positional_order(self):
+        assert _norm(FloatDistribution(0.0, 1.0, False, 0.1)) == {
+            'type': 'float', 'low': 0.0, 'high': 1.0, 'step': 0.1,
+        }
 
     def test_categorical_distribution(self):
         assert _norm(CategoricalDistribution(['x', 'y'])) == {
@@ -93,6 +157,11 @@ class TestOptunaSuggestStyle:
             'type': 'categorical', 'choices': ['gbtree', 'dart']
         }
 
+    def test_suggest_uniform(self):
+        assert _norm(suggest_uniform('p', 0.0, 1.0)) == {
+            'type': 'float', 'low': 0.0, 'high': 1.0,
+        }
+
     def test_suggest_discrete_uniform(self):
         assert _norm(suggest_discrete_uniform('p', 0.0, 1.0, 0.1)) == {
             'type': 'float', 'low': 0.0, 'high': 1.0, 'step': 0.1
@@ -110,13 +179,13 @@ class TestHyperoptStyle:
         assert _norm(uniform('p', 0.6, 1.0)) == {'type': 'float', 'low': 0.6, 'high': 1.0}
 
     def test_loguniform(self):
-        assert _norm(loguniform('p', 1e-3, 0.1)) == {
-            'type': 'float', 'low': 1e-3, 'high': 0.1, 'log': True
+        assert _norm(loguniform('p', np.log(1e-3), np.log(0.1))) == {
+            'type': 'float', 'low': pytest.approx(1e-3), 'high': pytest.approx(0.1), 'log': True
         }
 
     def test_quniform(self):
         assert _norm(quniform('p', 0.0, 1.0, 0.1)) == {
-            'type': 'float', 'low': 0.0, 'high': 1.0, 'step': 0.1
+            'type': 'quniform', 'low': 0.0, 'high': 1.0, 'q': 0.1
         }
 
     def test_choice(self):
@@ -129,7 +198,17 @@ class TestHyperoptStyle:
         assert _norm(randint('p', 5)) == {'type': 'int', 'low': 0, 'high': 4}
 
     def test_randint_with_low(self):
+        assert _norm(randint('p', 2, 10)) == {'type': 'int', 'low': 2, 'high': 9}
+
+    def test_randint_legacy_keyword_low_is_preserved(self):
         assert _norm(randint('p', 10, low=2)) == {'type': 'int', 'low': 2, 'high': 9}
+
+    def test_qloguniform_keeps_hyperopt_log_space_and_quantization(self):
+        spec = _norm(qloguniform('p', np.log(0.01), np.log(1.0), 0.05))
+        assert spec['type'] == 'qloguniform'
+        assert spec['low'] == pytest.approx(np.log(0.01))
+        assert spec['high'] == pytest.approx(np.log(1.0))
+        assert spec['q'] == 0.05
 
 
 # ---------- hyperopt 正态族 ----------
@@ -179,6 +258,59 @@ class TestNormalFamily:
         low, high = tuner.search_space['p']['low'], tuner.search_space['p']['high']
         assert all(low - 1e-6 <= v <= high + 1e-6 for v in values)
 
+    def test_lognormal_uses_mu_in_log_space(self):
+        tuner = ModelTuner(
+            model_class=None,
+            search_space={'p': lognormal('p', -2.0, 0.5)},
+            metric='ks',
+            cv=2,
+        )
+        trial = optuna.trial.FixedTrial({'__hscredit__p': 0.5})
+        assert tuner._sample_params(trial)['p'] == pytest.approx(np.exp(-2.0))
+
+    def test_quantized_distributions_round_in_final_value_space(self):
+        tuner = ModelTuner(
+            model_class=None,
+            search_space={
+                'uniform_value': quniform('uniform_value', 0.0, 1.0, 0.1),
+                'log_value': qloguniform('log_value', np.log(0.01), np.log(1.0), 0.1),
+            },
+            metric='ks',
+            cv=2,
+        )
+        trial = optuna.trial.FixedTrial({
+            '__hscredit__uniform_value': 0.26,
+            '__hscredit__log_value': np.log(0.26),
+        })
+        assert tuner._sample_params(trial) == {
+            'uniform_value': pytest.approx(0.3),
+            'log_value': pytest.approx(0.3),
+        }
+
+    def test_skopt_categorical_prior_controls_latent_intervals(self):
+        tuner = ModelTuner(
+            model_class=None,
+            search_space={'p': Categorical(['common', 'rare'], prior=[0.8, 0.2], name='p')},
+            metric='ks',
+            cv=2,
+        )
+        assert tuner._sample_params(optuna.trial.FixedTrial({'__hscredit__p': 0.79}))['p'] == 'common'
+        assert tuner._sample_params(optuna.trial.FixedTrial({'__hscredit__p': 0.81}))['p'] == 'rare'
+
+    @pytest.mark.parametrize(
+        'distribution, point',
+        [
+            (quniform('p', -2.0, 2.0, 0.5), -0.5),
+            (qnormal('p', 0.0, 1.0, 0.5), -0.5),
+            (qlognormal('p', -2.0, 0.5, 0.1), 0.1),
+        ],
+    )
+    def test_quantized_manual_points_round_trip_through_latent_space(self, distribution, point):
+        tuner = ModelTuner(model_class=None, search_space={'p': distribution}, metric='ks', cv=2)
+        internal = tuner._space_adapter.to_internal_point({'p': point})
+        sampled = tuner._sample_params(optuna.trial.FixedTrial(internal))['p']
+        assert sampled == pytest.approx(point)
+
 
 # ---------- 混合格式可整体归一化 ----------
 class TestMixedFormat:
@@ -209,3 +341,27 @@ class TestMixedFormat:
     def test_dimension_base_to_spec_raises(self):
         with pytest.raises(NotImplementedError):
             Dimension().to_spec()
+
+    def test_bayesian_optimization_typed_and_categorical_tuples(self):
+        norm = normalize_search_space({
+            'max_depth': (2, 10, int),
+            'learning_rate': (0.01, 0.2, float),
+            'booster': ('gbtree', 'dart'),
+        })
+        assert norm['max_depth'] == {'type': 'int', 'low': 2, 'high': 10}
+        assert norm['learning_rate'] == {'type': 'float', 'low': 0.01, 'high': 0.2}
+        assert norm['booster'] == {'type': 'categorical', 'choices': ['gbtree', 'dart']}
+
+    def test_all_compatibility_symbols_are_available_from_hscredit(self):
+        import hscredit
+
+        public_names = {
+            'Dimension', 'Real', 'Integer', 'Categorical',
+            'IntDistribution', 'FloatDistribution', 'CategoricalDistribution',
+            'suggest_int', 'suggest_float', 'suggest_categorical',
+            'suggest_uniform', 'suggest_discrete_uniform', 'suggest_loguniform',
+            'uniform', 'loguniform', 'quniform', 'qloguniform',
+            'choice', 'randint', 'normal', 'qnormal', 'lognormal', 'qlognormal',
+        }
+        assert public_names <= set(hscredit.__all__)
+        assert all(callable(getattr(hscredit, name)) for name in public_names)

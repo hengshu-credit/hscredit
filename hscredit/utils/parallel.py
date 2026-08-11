@@ -6,7 +6,7 @@ import os
 from collections.abc import Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple, TypeVar, Union
+from typing import Any, Callable, Dict, Iterable, List, NoReturn, Optional, Sequence, Tuple, TypeVar, Union
 
 import numpy as np
 from joblib import Parallel, delayed, parallel_backend as joblib_parallel_backend
@@ -271,7 +271,7 @@ def _run_with_budget(
         _ACTIVE_BUDGET.reset(token)
 
 
-def _raise_parallel_execution_error(error: _WorkerExecutionError) -> None:
+def _raise_parallel_execution_error(error: _WorkerExecutionError) -> NoReturn:
     """在父调用中恢复统一的中文错误和原始直接异常链。"""
     raise ParallelExecutionError(
         f"并行任务 '{error.label}' 执行失败: {error.original_exception}"
@@ -290,6 +290,20 @@ def _create_joblib_parallel(workers: int, options: Mapping[str, Any]) -> Paralle
     """创建 joblib 执行器，并将公开配置错误转换为中文异常。"""
     try:
         return Parallel(n_jobs=workers, **dict(options))
+    except Exception as exc:
+        raise ValidationError(f"并行后端配置无效: {exc}") from exc
+
+
+def _validate_parallel_backend(
+    backend: Optional[str], backend_options: Mapping[str, Any]
+) -> None:
+    """在任务数量触发串行短路前验证有效 joblib 后端。"""
+    if backend is None:
+        return
+    _validate_backend_options(backend, backend_options)
+    try:
+        with joblib_parallel_backend(backend, **dict(backend_options)):
+            pass
     except Exception as exc:
         raise ValidationError(f"并行后端配置无效: {exc}") from exc
 
@@ -321,6 +335,20 @@ def parallel_execute(
         task_count=len(task_list),
         available_budget=current_budget.available,
     )
+
+    parallel_options = dict(config)
+    backend_options = parallel_options.pop("backend_kwargs", {}) or {}
+    inner_max_num_threads = parallel_options.pop("inner_max_num_threads", None)
+
+    backend = parallel_backend or default_backend
+    if inner_max_num_threads is not None:
+        if backend == "threading":
+            raise ValidationError("threading 后端不支持 inner_max_num_threads")
+        backend_options["inner_max_num_threads"] = inner_max_num_threads
+    if backend is None and backend_options:
+        backend = "loky"
+    _validate_parallel_backend(backend, backend_options)
+
     if not task_list:
         return []
 
@@ -346,16 +374,6 @@ def parallel_execute(
         except _WorkerExecutionError as exc:
             _raise_parallel_execution_error(exc)
 
-    parallel_options = dict(config)
-    backend_options = parallel_options.pop("backend_kwargs", {}) or {}
-    inner_max_num_threads = parallel_options.pop("inner_max_num_threads", None)
-
-    backend = parallel_backend or default_backend
-    if inner_max_num_threads is not None:
-        if backend == "threading":
-            raise ValidationError("threading 后端不支持 inner_max_num_threads")
-        backend_options["inner_max_num_threads"] = inner_max_num_threads
-
     submitted = (
         delayed(_run_with_budget)(*call)
         for call in calls
@@ -368,7 +386,6 @@ def parallel_execute(
             _raise_parallel_execution_error(exc)
 
     backend = backend or "loky"
-    _validate_backend_options(backend, backend_options)
     try:
         backend_context = joblib_parallel_backend(backend, **backend_options)
     except Exception as exc:
@@ -383,6 +400,10 @@ def parallel_execute(
 
 class ParallelizableMixin:
     """为估计器提供统一并行执行入口的内部混入类。"""
+
+    n_jobs: NJobs
+    parallel_backend: Optional[str]
+    parallel_config: Optional[Mapping[str, Any]]
 
     def _parallel_execute(
         self,

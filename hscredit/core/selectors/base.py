@@ -24,18 +24,26 @@
 """
 
 from abc import ABC, abstractmethod
+from contextlib import contextmanager
 from typing import Union, List, Dict, Optional, Any, Tuple
 from datetime import datetime
 import copy
 import inspect
 import numpy as np
 import pandas as pd
+from joblib import parallel_backend as joblib_parallel_backend
 from sklearn.exceptions import NotFittedError as SklearnNotFittedError
 from sklearn.base import BaseEstimator, TransformerMixin, clone
 from sklearn.utils.validation import check_is_fitted
 
 from ...exceptions import NotFittedError, ValidationError
-from ...utils.parallel import ParallelizableMixin
+from ...utils.parallel import (
+    ParallelizableMixin,
+    _current_parallel_budget,
+    _validate_parallel_backend,
+    resolve_n_jobs,
+    validate_parallel_config,
+)
 
 
 def _set_estimator_parallel_budget(estimator: Any, n_jobs: int) -> Any:
@@ -713,6 +721,38 @@ class BaseFeatureSelector(ParallelizableMixin, BaseEstimator, TransformerMixin, 
         self.parallel_backend = parallel_backend
         self.parallel_config = parallel_config
 
+    def _clone_estimator_for_parallel(self, estimator: Any) -> Any:
+        """克隆 estimator，并只向最浅并行层传递当前有效预算。"""
+        model = clone(estimator)
+        budget = _current_parallel_budget()
+        workers = resolve_n_jobs(
+            self.n_jobs,
+            available_budget=budget.available,
+        ) or 1
+        return _set_estimator_parallel_budget(model, workers)
+
+    @contextmanager
+    def _estimator_parallel_context(self):
+        """为使用 joblib 的底层 estimator 建立已验证后端上下文。"""
+        config = validate_parallel_config(self.parallel_backend, self.parallel_config)
+        backend_options = config.get('backend_kwargs', {}) or {}
+        backend_options = dict(backend_options)
+        inner_max_num_threads = config.get('inner_max_num_threads')
+        backend = self.parallel_backend
+        if inner_max_num_threads is not None:
+            if backend == 'threading':
+                raise ValidationError("threading 后端不支持 inner_max_num_threads")
+            backend = backend or 'loky'
+            backend_options['inner_max_num_threads'] = inner_max_num_threads
+
+        _validate_parallel_backend(backend, backend_options)
+        if backend is None:
+            yield
+            return
+
+        with joblib_parallel_backend(backend, **backend_options):
+            yield
+
     def _check_input(
         self,
         X: Union[pd.DataFrame, np.ndarray],
@@ -1066,8 +1106,14 @@ class BaseFeatureSelector(ParallelizableMixin, BaseEstimator, TransformerMixin, 
 
     def _apply_candidate_state(self, candidate_state: Dict[str, Any]) -> None:
         """应用一个已验证的候选状态载荷。"""
+        # sklearn>=1.8 的 callback 上下文会在调用 estimator 前临时写入该属性，
+        # 并在调用返回后负责删除。事务提交不能提前清掉这个框架所有的状态。
+        parent_callback_ctx = self.__dict__.get('_parent_callback_ctx')
+        has_parent_callback_ctx = '_parent_callback_ctx' in self.__dict__
         self.__dict__.clear()
         self.__dict__.update(candidate_state)
+        if has_parent_callback_ctx:
+            self.__dict__['_parent_callback_ctx'] = parent_callback_ctx
 
     @staticmethod
     def _replace_object_state_direct(target: Any, payload: Dict[str, Any]) -> None:

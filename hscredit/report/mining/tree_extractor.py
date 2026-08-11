@@ -937,7 +937,10 @@ class TreeRuleExtractor(BaseRuleMiner):
         for c in conditions:
             feature = c['feature']
             feature_expr = f"`{feature}`" if not str(feature).isidentifier() else str(feature)
-            parts.append(f"({feature_expr} {c['operator']} {repr(c['threshold'])})")
+            threshold = c['threshold']
+            if isinstance(threshold, np.generic):
+                threshold = threshold.item()
+            parts.append(f"({feature_expr} {c['operator']} {repr(threshold)})")
         
         return " & ".join(parts)
     

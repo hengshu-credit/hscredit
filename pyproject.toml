@@ -96,6 +96,7 @@ dev = [
     "pytest-cov>=2.0.0",
     "nbclient>=0.5",
     "nbformat>=5",
+    "ipykernel>=6.0",
     "black>=21.0",
     "flake8>=3.9.0",
     "mypy>=1.8",
@@ -136,7 +137,7 @@ zip-safe = false
 hscredit = ["py.typed", "resources/**/*"]
 
 [tool.black]
-line-length = 120
+line-length = 512
 target-version = ['py39', 'py310', 'py311', 'py312', 'py313', 'py314']
 include = '\.pyi?$'
 extend-exclude = '''
