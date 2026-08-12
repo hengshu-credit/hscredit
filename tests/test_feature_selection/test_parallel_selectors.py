@@ -399,11 +399,12 @@ def test_joint_model_selectors_do_not_schedule_identity_parallel_tasks(selector_
     assert boruta.scores_.index.tolist() == X.columns.tolist()
 
 
-def test_feature_importance_estimator_receives_selector_budget(selector_xy):
+def test_feature_importance_estimator_receives_selector_budget(selector_xy, monkeypatch):
     """联合重要性模型使用 selector 的预算且不修改调用者模型。"""
     X, y = selector_xy
     estimator = RecordingParallelImportanceClassifier(n_jobs=1)
     ESTIMATOR_N_JOBS_OBSERVED.clear()
+    monkeypatch.setattr("hscredit.utils.parallel.get_physical_cpu_count", lambda: 1)
 
     FeatureImportanceSelector(estimator, threshold=0.0, n_jobs=12).fit(X, y)
 
@@ -411,11 +412,12 @@ def test_feature_importance_estimator_receives_selector_budget(selector_xy):
     assert estimator.n_jobs == 1
 
 
-def test_feature_importance_native_thread_alias_receives_selector_budget(selector_xy):
+def test_feature_importance_native_thread_alias_receives_selector_budget(selector_xy, monkeypatch):
     """只公开 thread_count 的模型也必须收到同一子预算。"""
     X, y = selector_xy
     estimator = RecordingNativeImportanceClassifier(thread_count=99)
     ESTIMATOR_NATIVE_WORKERS_OBSERVED.clear()
+    monkeypatch.setattr("hscredit.utils.parallel.get_physical_cpu_count", lambda: 1)
 
     FeatureImportanceSelector(estimator, threshold=0.0, n_jobs=4).fit(X, y)
 
@@ -423,11 +425,12 @@ def test_feature_importance_native_thread_alias_receives_selector_budget(selecto
     assert estimator.thread_count == 99
 
 
-def test_rfe_estimator_receives_selector_budget(selector_xy):
+def test_rfe_estimator_receives_selector_budget(selector_xy, monkeypatch):
     """RFE 每轮底层拟合都继承 selector 的预算。"""
     X, y = selector_xy
     estimator = RecordingParallelImportanceClassifier(n_jobs=1)
     ESTIMATOR_N_JOBS_OBSERVED.clear()
+    monkeypatch.setattr("hscredit.utils.parallel.get_physical_cpu_count", lambda: 1)
 
     RFESelector(
         estimator,
@@ -441,11 +444,12 @@ def test_rfe_estimator_receives_selector_budget(selector_xy):
     assert estimator.n_jobs == 1
 
 
-def test_custom_boruta_estimator_receives_selector_budget(selector_xy):
+def test_custom_boruta_estimator_receives_selector_budget(selector_xy, monkeypatch):
     """自定义 Boruta 模型与默认模型使用相同的预算传递路径。"""
     X, y = selector_xy
     estimator = RecordingParallelImportanceClassifier(n_jobs=1)
     ESTIMATOR_N_JOBS_OBSERVED.clear()
+    monkeypatch.setattr("hscredit.utils.parallel.get_physical_cpu_count", lambda: 1)
 
     BorutaSelector(estimator, max_iter=1, n_jobs=12).fit(X, y)
 

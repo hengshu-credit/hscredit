@@ -11,6 +11,7 @@ import pytest
 
 import hscredit  # noqa: F401 - 导入即注册 pandas 扩展
 from hscredit.exceptions import ValidationError
+from hscredit.utils.pandas_parallel import _ApplyProgressReporter, _call_group_apply_item
 
 
 def _row_total(row, offset=0):
@@ -246,6 +247,21 @@ def test_multikey_groupby_function_receives_native_group_name():
     )
 
     pd.testing.assert_frame_equal(actual, expected)
+
+
+def test_groupby_worker_normalizes_numpy_scalar_key_to_python_scalar():
+    """NumPy 2 的标量 repr 不能泄漏到 pandas 原生 group.name。"""
+    seen = []
+
+    def capture_name(group):
+        seen.append(group.name)
+        return group["x"].sum()
+
+    group = pd.DataFrame({"x": [3]})
+    reporter = _ApplyProgressReporter(False, 1, "GroupBy 分组计算")
+    _call_group_apply_item((0, ("a", np.int64(1)), group, capture_name, (), {}, 0, reporter))
+
+    assert type(seen[0][1]) is int
 
 
 def test_groupby_type_error_is_not_retried():

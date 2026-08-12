@@ -725,14 +725,15 @@ def test_serial_only_capability_wins_over_forced_parallel_configuration():
 
 def test_native_worker_aliases_share_active_budget_and_public_n_jobs_priority():
     """CP-SAT/CatBoost 等原生线程池不得绕过当前总预算。"""
-    token = _ACTIVE_BUDGET.set(ParallelBudget(4, 0))
-    try:
-        assert resolve_native_workers(-1) == 4
-        assert resolve_native_workers(-1, native_workers=2) == 2
-        assert resolve_native_workers(3, native_workers=99) == 3
-        assert resolve_native_workers(1, native_workers=99) == 1
-    finally:
-        _ACTIVE_BUDGET.reset(token)
+    with patch("hscredit.utils.parallel.get_physical_cpu_count", return_value=1):
+        token = _ACTIVE_BUDGET.set(ParallelBudget(4, 0))
+        try:
+            assert resolve_native_workers(-1) == 4
+            assert resolve_native_workers(-1, native_workers=2) == 2
+            assert resolve_native_workers(3, native_workers=99) == 3
+            assert resolve_native_workers(1, native_workers=99) == 1
+        finally:
+            _ACTIVE_BUDGET.reset(token)
 
 
 def test_single_worker_timeout_is_enforced_instead_of_serial_shortcut():
