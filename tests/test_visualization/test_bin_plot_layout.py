@@ -101,6 +101,41 @@ def test_metric_summary_shrinks_on_small_figure():
     assert fs_small < fs_default
 
 
+def test_metric_summary_keeps_readable_font_on_report_figure():
+    summary = _summary_text(bin_plot(_numeric_feature_table(), figsize=(10, 5)))
+    assert summary.get_fontsize() >= 10.0
+    assert all(len(line.split("    ")) == 2 for line in summary.get_text().splitlines())
+
+
+@pytest.mark.parametrize(("figsize", "minimum"), [((12, 7), 12.0), ((6, 4), 8.0)])
+def test_metric_summary_uses_readable_font_floor(figsize, minimum):
+    summary = _summary_text(bin_plot(_numeric_feature_table(), figsize=figsize))
+    assert summary.get_fontsize() >= minimum
+
+
+@pytest.mark.parametrize("figsize", [(12, 7), (10, 5), (6, 4)])
+def test_metric_summary_stays_clear_of_legend(figsize):
+    fig = bin_plot(_numeric_feature_table(), figsize=figsize)
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+    summary_bbox = _summary_text(fig).get_window_extent(renderer)
+    legend_bbox = fig.legends[0].get_window_extent(renderer)
+    gap_pixels = 8.0 * fig.dpi / 72.0
+    assert summary_bbox.x1 + gap_pixels <= legend_bbox.x0 + 1.0
+
+
+def test_embedded_metric_summary_keeps_readable_font_floor():
+    import matplotlib.pyplot as plt
+
+    fig, ax = plt.subplots(figsize=(4, 3))
+    try:
+        bin_plot(_numeric_feature_table(), ax=ax)
+        summary = next(text for axis in fig.axes for text in axis.texts if "IV" in text.get_text())
+        assert summary.get_fontsize() >= 8.0
+    finally:
+        plt.close(fig)
+
+
 # ---------------------------------------------------------------------------
 # 需求4：二维分箱图九宫格顺序、隐藏元素与紧凑间距
 # ---------------------------------------------------------------------------

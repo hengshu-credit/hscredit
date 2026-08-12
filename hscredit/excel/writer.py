@@ -60,6 +60,7 @@ class ExcelWriter:
     :param theme_color: 主题颜色（不包含#），默认为"2639E9"
     :param opacity: 颜色填充的透明度，默认为0.85
     :param system: 操作系统类型，可选'mac'、'windows'、'linux'，默认自动检测
+    :param condition_color: 条件格式颜色（不包含#），默认为副主题色"F76E6C"
 
     **参考样例**
 
@@ -96,7 +97,8 @@ class ExcelWriter:
         font: Optional[str] = None,
         theme_color: str = '2639E9',
         opacity: float = 0.85,
-        system: Optional[str] = None
+        system: Optional[str] = None,
+        condition_color: str = "F76E6C"
     ):
         # 系统检测
         self.system = system
@@ -116,6 +118,7 @@ class ExcelWriter:
         self.opacity = opacity
         self.fontsize = fontsize
         self.theme_color = theme_color
+        self.condition_color = condition_color
 
         # 加载模板
         if style_excel is None:
@@ -220,14 +223,14 @@ class ExcelWriter:
         :param worksheet: 工作表对象
         :param start_space: 开始单元格位置，如'B2'
         :param end_space: 结束单元格位置，如'B10'
-        :param condition_color: 条件格式颜色，默认使用主题色
+        :param condition_color: 条件格式颜色，默认使用ExcelWriter的condition_color
         """
         worksheet.conditional_formatting.add(
             f'{start_space}:{end_space}',
             DataBarRule(
                 start_type='min',
                 end_type='max',
-                color=condition_color or self.theme_color
+                color=condition_color or self.condition_color
             )
         )
 
@@ -2980,13 +2983,14 @@ def dataframe2excel(
     :param title: 标题，默认为None
     :param header: 是否保存列名，默认为True
     :param theme_color: 主题颜色，默认为"2639E9"
-    :param condition_color: 条件格式（数据条/颜色渐变）颜色，默认为None（使用主题色）。支持三种类型：
+    :param condition_color: 条件格式（数据条/颜色渐变）颜色，默认为None（使用ExcelWriter的condition_color，
+        其默认值为副主题色"F76E6C"）。单次传入值优先于ExcelWriter配置。支持三种类型：
 
         - str：所有 condition_cols/color_cols/condition_rows/color_rows 统一使用该颜色
         - list/tuple：2 或 3 个颜色组成的异色色阶锚点，仅对 color_cols/color_rows 颜色渐变生效（2 色为
           ``[低值色, 高值色]`` 双色阶，3 色为 ``[低值色, 中值色, 高值色]`` 三色阶；超过 3 个自动取首/中/尾；
           数据条等单色场景取末位颜色）
-        - dict：以列名（或行索引值）为key分别指定颜色，值可为 str 或上述 list/tuple，匹配方式类似 ``condition_cols`` —— 单层为列名，多层级可为完整列名tuple或其中任意层级名称；未匹配到的回退使用主题色
+        - dict：以列名（或行索引值）为key分别指定颜色，值可为 str 或上述 list/tuple，匹配方式类似 ``condition_cols`` —— 单层为列名，多层级可为完整列名tuple或其中任意层级名称；未匹配到的回退使用ExcelWriter的condition_color
     :param fill: 是否使用颜色填充，默认为True
     :param percent_cols: 需要显示为百分数的列，默认为None
     :param condition_cols: 需要显示数据条的列，默认为None
@@ -3043,6 +3047,7 @@ def dataframe2excel(
         writer = excel_writer
     else:
         writer = ExcelWriter(theme_color=theme_color, mode=mode, **writer_params)
+    default_condition_color = writer.condition_color
 
     if isinstance(sheet_name, Worksheet):
         worksheet = sheet_name
@@ -3122,7 +3127,7 @@ def dataframe2excel(
                 worksheet,
                 f'{conditional_column}{end_row - len(data)}',
                 f'{conditional_column}{end_row - 1}',
-                condition_color=resolve_condition_color(condition_color, c, theme_color)
+                condition_color=resolve_condition_color(condition_color, c, default_condition_color)
             )
 
     # 设置颜色渐变列
@@ -3131,7 +3136,10 @@ def dataframe2excel(
             color_cols = [c for c in data.columns if (isinstance(c, tuple) and c[-1] in color_cols) or (not isinstance(c, tuple) and c in color_cols)]
         for c in [c for c in color_cols if c in data.columns]:
             try:
-                rule = _build_color_scale_rule(data[c], _resolve_condition_value(condition_color, c, theme_color))
+                rule = _build_color_scale_rule(
+                    data[c],
+                    _resolve_condition_value(condition_color, c, default_condition_color),
+                )
                 conditional_column = get_column_letter(
                     start_col + data.columns.get_loc(c) + data.index.nlevels if kwargs.get("index", False) else start_col + data.columns.get_loc(c)
                 )
@@ -3172,7 +3180,7 @@ def dataframe2excel(
                 worksheet,
                 f'{get_column_letter(index_col)}{index_row}',
                 f'{get_column_letter(index_col + len(data.columns) - 1)}{index_row}',
-                condition_color=resolve_condition_color(condition_color, c, theme_color)
+                condition_color=resolve_condition_color(condition_color, c, default_condition_color)
             )
 
     # 设置颜色渐变行
@@ -3182,7 +3190,10 @@ def dataframe2excel(
         for c in [c for c in color_rows if c in data.index]:
             try:
                 insert_row = data.index.get_loc(c).start if data.index.nlevels > 1 and not isinstance(data.index.get_loc(c), (int, float)) else data.index.get_loc(c)
-                rule = _build_color_scale_rule(data.loc[c], _resolve_condition_value(condition_color, c, theme_color))
+                rule = _build_color_scale_rule(
+                    data.loc[c],
+                    _resolve_condition_value(condition_color, c, default_condition_color),
+                )
                 index_row = start_row + insert_row + data.columns.nlevels if kwargs.get("header", True) else start_row + insert_row
                 index_col = start_col + data.index.nlevels if kwargs.get("index", False) else start_col
                 worksheet.conditional_formatting.add(f"{get_column_letter(index_col)}{index_row}:{get_column_letter(index_col + len(data.columns) - 1)}{index_row}", rule)

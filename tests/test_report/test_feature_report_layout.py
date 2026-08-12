@@ -56,6 +56,244 @@ def _row_for_value(ws, value, col=2):
     raise AssertionError(f"未找到单元格值: {value}")
 
 
+def _fake_feature_bin_stats(data, feature, **kwargs):
+    return pd.DataFrame(
+        {
+            "指标名称": [feature],
+            "指标含义": [feature],
+            "分箱标签": ["(0, 1]"],
+            "样本总数": [len(data)],
+            "样本占比": [1.0],
+            "坏样本率": [0.5],
+            "LIFT值": [1.0],
+            "分档KS值": [0.25],
+        }
+    )
+
+
+def _conditional_format_colors(ws):
+    colors = set()
+    for rules in ws.conditional_formatting._cf_rules.values():
+        for rule in rules:
+            if rule.type == "dataBar":
+                colors.add(rule.dataBar.color.rgb)
+            elif rule.type == "colorScale":
+                colors.update(color.rgb for color in rule.colorScale.color)
+    return colors
+
+
+def test_auto_feature_analysis_defaults_to_non_role_columns(monkeypatch, tmp_path):
+    monkeypatch.setattr(feature_analyzer_module, "feature_bin_stats", _fake_feature_bin_stats)
+
+    data = pd.DataFrame(
+        {
+            "x": [1, 2, 3, 4],
+            "apply_date": pd.date_range("2024-01-01", periods=4),
+            "target": [0, 1, 0, 1],
+            "mob": [0, 4, 1, 8],
+            "amount": [10, 20, 30, 40],
+        }
+    )
+    writer = ExcelWriter(system="windows")
+
+    auto_feature_analysis(
+        data,
+        features=None,
+        target="target",
+        overdue="mob",
+        dpds=3,
+        date="apply_date",
+        amount="amount",
+        excel_writer=writer,
+        sheet="default_features",
+        pictures=[],
+        output_dir=str(tmp_path),
+        n_jobs=1,
+    )
+
+    ws = writer.get_sheet_by_name("default_features")
+    feature_titles = [cell.value for row in ws.iter_rows() for cell in row if isinstance(cell.value, str) and cell.value.startswith("数据字段:")]
+    assert feature_titles == ["数据字段: x (缺失率: 0.0%)", "数据字段: amount (缺失率: 0.0%)"]
+
+
+def test_auto_feature_analysis_can_analyze_amount_as_default_feature(tmp_path):
+    data = pd.DataFrame({
+        "amount": list(range(1, 41)),
+        "target": [0, 1] * 20,
+    })
+    writer = ExcelWriter(system="windows")
+
+    auto_feature_analysis(
+        data,
+        features=None,
+        target="target",
+        amount="amount",
+        excel_writer=writer,
+        sheet="amount_as_feature",
+        pictures=[],
+        output_dir=str(tmp_path),
+        bin_params={"method": "quantile", "max_n_bins": 4},
+        n_jobs=1,
+    )
+
+    ws = writer.get_sheet_by_name("amount_as_feature")
+    assert _row_for_value(ws, "数据字段: amount (缺失率: 0.0%)") > 0
+    assert _row_for_value(ws, "订单口径") > 0
+    assert any(cell.value == "金额口径" for row in ws.iter_rows() for cell in row)
+
+
+def test_auto_feature_analysis_labels_order_and_amount_tables_in_existing_gap(monkeypatch, tmp_path):
+    monkeypatch.setattr(feature_analyzer_module, "feature_bin_stats", _fake_feature_bin_stats)
+
+    data = pd.DataFrame(
+        {
+            "x": [1, 2, 3, 4],
+            "target": [0, 1, 0, 1],
+            "amount": [10, 20, 30, 40],
+        }
+    )
+    writer = ExcelWriter(system="windows")
+
+    auto_feature_analysis(
+        data,
+        features=["x"],
+        target="target",
+        amount="amount",
+        excel_writer=writer,
+        sheet="metric_titles",
+        pictures=[],
+        output_dir=str(tmp_path),
+        n_jobs=1,
+    )
+
+    ws = writer.get_sheet_by_name("metric_titles")
+    order_title = next(cell for row in ws.iter_rows() for cell in row if cell.value == "订单口径")
+    amount_title = next(cell for row in ws.iter_rows() for cell in row if cell.value == "金额口径")
+    table_headers = [cell for row in ws.iter_rows() for cell in row if cell.value == "指标名称"]
+    order_header, amount_header = table_headers
+    order_title_range = _merged_range_for_row(ws, order_title.row, order_title.column)
+    amount_title_range = _merged_range_for_row(ws, amount_title.row, amount_title.column)
+
+    assert order_title.row == order_header.row - 1
+    assert amount_title.row == amount_header.row - 1
+    assert order_title.column == order_header.column
+    assert amount_title.column == amount_header.column
+    assert order_title.alignment.horizontal == "left"
+    assert amount_title.alignment.horizontal == "left"
+    assert order_title_range.max_col - order_title_range.min_col + 1 == 8
+    assert amount_title_range.max_col - amount_title_range.min_col + 1 == 8
+
+
+def test_auto_feature_analysis_reserves_title_row_when_amount_gap_is_zero(monkeypatch, tmp_path):
+    monkeypatch.setattr(feature_analyzer_module, "feature_bin_stats", _fake_feature_bin_stats)
+
+    data = pd.DataFrame({
+        "x": [1, 2, 3, 4],
+        "target": [0, 1, 0, 1],
+        "amount": [10, 20, 30, 40],
+    })
+    writer = ExcelWriter(system="windows")
+
+    auto_feature_analysis(
+        data,
+        features=["x"],
+        target="target",
+        amount="amount",
+        image_table_gap_rows=0,
+        excel_writer=writer,
+        sheet="zero_metric_title_gap",
+        pictures=[],
+        output_dir=str(tmp_path),
+        n_jobs=1,
+    )
+
+    ws = writer.get_sheet_by_name("zero_metric_title_gap")
+    order_title = next(cell for row in ws.iter_rows() for cell in row if cell.value == "订单口径")
+    amount_title = next(cell for row in ws.iter_rows() for cell in row if cell.value == "金额口径")
+    table_headers = [cell for row in ws.iter_rows() for cell in row if cell.value == "指标名称"]
+    assert order_title.row == table_headers[0].row - 1
+    assert amount_title.row == table_headers[1].row - 1
+
+
+def test_auto_feature_analysis_left_aligns_feature_effect_section(monkeypatch, tmp_path):
+    monkeypatch.setattr(feature_analyzer_module, "feature_bin_stats", _fake_feature_bin_stats)
+
+    data = pd.DataFrame({"x": [1, 2, 3, 4], "target": [0, 1, 0, 1]})
+    writer = ExcelWriter(system="windows")
+
+    auto_feature_analysis(
+        data,
+        features=["x"],
+        target="target",
+        excel_writer=writer,
+        sheet="section_alignment",
+        pictures=[],
+        output_dir=str(tmp_path),
+        n_jobs=1,
+    )
+
+    ws = writer.get_sheet_by_name("section_alignment")
+    section_row = _row_for_value(ws, "数值类特征 OR 评分效果评估")
+    assert ws.cell(section_row, 2).alignment.horizontal == "left"
+
+
+def test_auto_feature_analysis_defaults_condition_color_to_secondary_theme(monkeypatch, tmp_path):
+    monkeypatch.setattr(feature_analyzer_module, "feature_bin_stats", _fake_feature_bin_stats)
+
+    data = pd.DataFrame({"x": [1, 2, 3, 4], "target": [0, 1, 0, 1]})
+    writer = ExcelWriter(system="windows")
+
+    auto_feature_analysis(
+        data,
+        features=["x"],
+        target="target",
+        excel_writer=writer,
+        sheet="default_condition_color",
+        pictures=[],
+        output_dir=str(tmp_path),
+        n_jobs=1,
+    )
+
+    ws = writer.get_sheet_by_name("default_condition_color")
+    assert _conditional_format_colors(ws) == {"00F76E6C"}
+
+
+def test_auto_feature_analysis_applies_custom_condition_color_everywhere(monkeypatch, tmp_path):
+    monkeypatch.setattr(feature_analyzer_module, "feature_bin_stats", _fake_feature_bin_stats)
+    monkeypatch.setattr(feature_analyzer_module, "distribution_plot", lambda *args, **kwargs: pd.DataFrame())
+    monkeypatch.setattr(feature_analyzer_module, "corr_plot", lambda *args, **kwargs: None)
+
+    data = pd.DataFrame(
+        {
+            "x": [1, 2, 3, 4],
+            "y": [4, 3, 2, 1],
+            "target": [0, 1, 0, 1],
+            "apply_date": pd.date_range("2024-01-01", periods=4),
+        }
+    )
+    writer = ExcelWriter(system="windows")
+    writer.insert_pic2sheet = types.MethodType(_mock_insert_pic2sheet, writer)
+
+    auto_feature_analysis(
+        data,
+        features=["x", "y"],
+        target="target",
+        date="apply_date",
+        corr=True,
+        condition_color="12AB34",
+        excel_writer=writer,
+        sheet="custom_condition_color",
+        pictures=[],
+        output_dir=str(tmp_path),
+        n_jobs=1,
+    )
+
+    ws = writer.get_sheet_by_name("custom_condition_color")
+    colors = _conditional_format_colors(ws)
+    assert "0012AB34" in colors
+    assert "002639E9" not in colors
+
+
 def test_auto_feature_analysis_system_gap(monkeypatch):
     # 屏蔽绘图函数，避免真实生成图片
     monkeypatch.setattr(feature_analyzer_module, "bin_plot", lambda *args, **kwargs: None)
