@@ -1,7 +1,9 @@
 """构建和安装元数据契约测试。"""
 
+import re
 import runpy
 import sys
+from collections import Counter
 from pathlib import Path
 
 from packaging.requirements import Requirement
@@ -59,6 +61,24 @@ def test_ci_covers_setuptools_with_and_without_pkg_resources():
     assert 'setuptools-version: "77.0.3"' in workflow
     assert 'setuptools-version: "82.0.1"' in workflow
     assert 'setuptools-version: "latest"' in workflow
+
+
+def test_ci_build_compat_covers_every_supported_python():
+    """构建兼容矩阵覆盖全部受支持 Python，并额外保留 3.9 的 setuptools 边界。"""
+    workflow = (PROJECT_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    build_compat = workflow.split("  build-compat:\n", 1)[1].split("\n  build:\n", 1)[0]
+    versions = re.findall(r'^\s+- python-version: "([^"]+)"$', build_compat, flags=re.MULTILINE)
+
+    assert Counter(versions) == Counter(
+        {
+            "3.9": 2,
+            "3.10": 1,
+            "3.11": 1,
+            "3.12": 1,
+            "3.13": 1,
+            "3.14": 1,
+        }
+    )
 
 
 def test_ci_runs_full_suite_with_all_extras_on_every_supported_python():
