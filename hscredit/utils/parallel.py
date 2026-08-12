@@ -467,13 +467,18 @@ def resolve_native_workers(
         native_workers = _validate_integer(native_workers, "native_workers", 1)
     budget = _current_parallel_budget()
     active = _ACTIVE_BUDGET.get() is not None
-    requested = (
-        resolve_n_jobs(
-            n_jobs,
-            available_budget=budget.available if active else None,
+    if active and n_jobs == -1:
+        # 父调度器已经按当前机器能力解析过 ``-1`` 并下放了预算；子模型
+        # 直接复用该预算，不能在受限 runner/容器中再次按可见 CPU 缩减。
+        requested = budget.available
+    else:
+        requested = (
+            resolve_n_jobs(
+                n_jobs,
+                available_budget=budget.available if active else None,
+            )
+            or 1
         )
-        or 1
-    )
     if active:
         requested = min(requested, budget.available)
     if n_jobs == -1 and native_workers is not None:
@@ -692,6 +697,7 @@ def parallel_execute(
             _raise_parallel_execution_error(exc, preserve_exceptions=preserve_exceptions)
 
     serial_timeout_batch = workers == 1 and enforce_timeout
+    submitted: Iterable[Any]
     if serial_timeout_batch:
         # joblib 的 n_jobs=1 会绕过后端并忽略 timeout；用一个批次交给
         # n_jobs=2 的执行器可保留 timeout，同时批次内部仍严格串行。
