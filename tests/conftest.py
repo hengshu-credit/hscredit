@@ -1,6 +1,9 @@
-"""共享测试配置与演示数据路径."""
+"""共享测试配置、演示数据路径与 CI 跳过策略."""
 
+import os
 from pathlib import Path
+
+import pytest
 
 # tests/conftest.py -> 仓库根目录
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -23,3 +26,21 @@ if not HSCREDIT_DEMO_XLSX.exists():
             "test_utils/test_feature_type_edge_cases.py",
         ]
     )
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """CI 仅允许因缺少本地演示工作簿而跳过测试。"""
+    if os.environ.get("HSCREDIT_STRICT_CI_SKIPS") != "1":
+        return
+
+    terminal = session.config.pluginmanager.get_plugin("terminalreporter")
+    skipped = terminal.stats.get("skipped", []) if terminal is not None else []
+    unexpected = [report for report in skipped if "hscredit_yyp.xlsx" not in str(report.longrepr)]
+    if not unexpected:
+        return
+
+    if terminal is not None:
+        terminal.write_sep("=", "CI 检测到非工作簿原因的测试跳过")
+        for report in unexpected:
+            terminal.write_line(f"{report.nodeid}: {report.longrepr}")
+    session.exitstatus = pytest.ExitCode.TESTS_FAILED

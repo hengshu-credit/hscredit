@@ -2004,14 +2004,15 @@ class ScoreCard(StandardScoreTransformer):
         :return: debug=True 时返回 PMMLPipeline，否则返回 None
         """
         try:
-            from sklearn_pandas import DataFrameMapper
+            from sklearn.compose import ColumnTransformer
             from sklearn.linear_model import LinearRegression
+            from sklearn.pipeline import Pipeline
             from sklearn2pmml import sklearn2pmml, PMMLPipeline
             from sklearn2pmml.decoration import Alias, CategoricalDomain, ContinuousDomain
-            from sklearn2pmml.preprocessing import LookupTransformer, ExpressionTransformer
+            from sklearn2pmml.preprocessing import ConcatTransformer, ExpressionTransformer, LookupTransformer
         except ImportError:
             warnings.warn(
-                "PMML 导出需要安装依赖: pip install hscredit[pmml] 或分别安装 sklearn-pandas 和 sklearn2pmml。"
+                "PMML 导出需要安装依赖: pip install hscredit[pmml] 或安装 sklearn2pmml。"
                 "当前环境中相关依赖不可用，PMML 导出已跳过。"
             )
             return
@@ -2050,6 +2051,8 @@ class ScoreCard(StandardScoreTransformer):
                     missing_value_replacement=missing_replacement if missing_score is not None else None,
                 )
                 transformer = LookupTransformer(lookup_mapping, default_value=float(default_score))
+                input_columns = [var]
+                transformer_steps = [('prepare', ConcatTransformer())]
             else:
                 expression_string = self._build_pmml_expression_from_rules(
                     bins,
@@ -2062,8 +2065,20 @@ class ScoreCard(StandardScoreTransformer):
                     missing_value_treatment='as_is',
                 )
                 transformer = ExpressionTransformer(expression_string)
+                # ExpressionTransformer treats a single-column DataFrame as 1D. Selecting the
+                # same source twice keeps its row expression 2D for ColumnTransformer output.
+                input_columns = [var, var]
+                transformer_steps = []
 
-            mapper.append(([var], [domain, Alias(transformer, f'__score_{var}', prefit=True)]))
+            mapper.append((
+                f'score_{len(mapper)}',
+                Pipeline(
+                    [('domain', domain)]
+                    + transformer_steps
+                    + [('score', Alias(transformer, f'__score_{var}', prefit=True))]
+                ),
+                input_columns,
+            ))
 
             if feature_type == 'categorical':
                 sample_value = None
@@ -2078,7 +2093,11 @@ class ScoreCard(StandardScoreTransformer):
         if not mapper:
             raise ValueError("没有有效的评分规则可以导出")
 
-        scorecard_mapper = DataFrameMapper(mapper, df_out=True)
+        scorecard_mapper = ColumnTransformer(
+            mapper,
+            remainder='drop',
+            verbose_feature_names_out=False,
+        )
 
         pipeline = PMMLPipeline([
             ('preprocessing', scorecard_mapper),

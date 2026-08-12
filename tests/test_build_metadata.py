@@ -70,3 +70,16 @@ def test_ci_runs_full_suite_with_all_extras_on_every_supported_python():
     assert 'test-full:' not in workflow
     assert '-m "not slow and not integration"' not in workflow
     assert 'run: pytest tests/ --tb=short' in workflow
+    assert 'HSCREDIT_STRICT_CI_SKIPS: "1"' in workflow
+
+
+def test_pmml_extra_does_not_install_incompatible_sklearn_pandas():
+    """PMML 导出使用 sklearn 原生组合器，不得再安装已不兼容新版 sklearn 的桥接包。"""
+    names = {
+        Requirement(item).name.lower()
+        for item in _pyproject()["project"]["optional-dependencies"]["pmml"]
+    }
+
+    assert "sklearn-pandas" not in names
+    requirements = (PROJECT_ROOT / "requirements.txt").read_text(encoding="utf-8").lower()
+    assert "sklearn-pandas" not in requirements
