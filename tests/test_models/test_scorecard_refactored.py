@@ -48,7 +48,7 @@ class TestScoreCardRefactored(unittest.TestCase):
     
     def test_predict_with_raw_data_auto_detect(self):
         """测试 predict 自动检测原始数据并转换."""
-        scorecard = ScoreCard(pdo=60, rate=2, base_odds=35, base_score=750)
+        scorecard = ScoreCard(binner=self.binner, pdo=60, rate=2, base_odds=35, base_score=750)
         scorecard.fit(self.X_woe, self.y)
         
         # predict 传入原始数据
@@ -64,7 +64,7 @@ class TestScoreCardRefactored(unittest.TestCase):
         scorecard.fit(self.X_woe, self.y)
         
         # predict 传入 WOE 数据
-        scores = scorecard.predict(self.X_woe)
+        scores = scorecard.predict(self.X_woe, input_type='auto')
         
         self.assertEqual(len(scores), len(self.X_woe))
         # 评分应该有意义（不为 NaN）
@@ -72,7 +72,7 @@ class TestScoreCardRefactored(unittest.TestCase):
     
     def test_predict_with_input_type_param(self):
         """测试 predict 的 input_type 参数."""
-        scorecard = ScoreCard(pdo=60, rate=2, base_odds=35, base_score=750)
+        scorecard = ScoreCard(binner=self.binner, pdo=60, rate=2, base_odds=35, base_score=750)
         scorecard.fit(self.X_woe, self.y)
         
         # 强制作为原始数据处理
@@ -129,7 +129,7 @@ class TestScoreCardRefactored(unittest.TestCase):
     
     def test_scorecard_output(self):
         """测试评分卡输出."""
-        scorecard = ScoreCard(pdo=60, rate=2, base_odds=35, base_score=750)
+        scorecard = ScoreCard(binner=self.binner, pdo=60, rate=2, base_odds=35, base_score=750)
         scorecard.fit(self.X_woe, self.y)
         
         # 评分卡刻度
@@ -144,7 +144,7 @@ class TestScoreCardRefactored(unittest.TestCase):
     
     def test_predict_proba(self):
         """测试预测概率."""
-        scorecard = ScoreCard(pdo=60, rate=2, base_odds=35, base_score=750)
+        scorecard = ScoreCard(binner=self.binner, pdo=60, rate=2, base_odds=35, base_score=750)
         scorecard.fit(self.X_woe, self.y)
         
         proba = scorecard.predict_proba(self.X)
@@ -197,7 +197,7 @@ class TestScoreCardRefactored(unittest.TestCase):
     
     def test_get_reason(self):
         """测试获取评分原因."""
-        scorecard = ScoreCard(pdo=60, rate=2, base_odds=35, base_score=750)
+        scorecard = ScoreCard(binner=self.binner, pdo=60, rate=2, base_odds=35, base_score=750)
         scorecard.fit(self.X_woe, self.y)
         
         reasons = scorecard.get_reason(self.X, keep=2)

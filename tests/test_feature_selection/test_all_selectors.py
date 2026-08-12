@@ -58,7 +58,7 @@ def test_vif():
     X = pd.DataFrame({
         'a': [1, 2, 3, 4, 5],
         'b': [1, 2, 3, 4, 5],  # 与 a 完全相关
-        'c': [5, 4, 3, 2, 1]
+        'c': [1, 4, 2, 5, 3]  # 与 a/b 不构成线性关系
     })
     
     vif_selector = VIFSelector(threshold=4.0, verbose=False)

@@ -26,7 +26,7 @@ def test_perfect_correlation():
     X = pd.DataFrame({
         'a': [1, 2, 3, 4, 5],
         'b': [1, 2, 3, 4, 5],  # 与 a 完全相关
-        'c': [5, 4, 3, 2, 1]
+        'c': [1, 4, 2, 5, 3]  # 与 a/b 不构成线性关系
     })
     
     print("\n原始数据相关性:")

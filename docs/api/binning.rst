@@ -58,18 +58,18 @@
 
    strict = OptimalBinning(
        user_splits=missing_alone,
-       strict_user_splits=True,
+       user_splits_fixed=True,
    ).fit(X[["工资"]], y)
 
    mixed = OptimalBinning(
        user_splits=missing_mixed,
-       strict_user_splits=True,
+       user_splits_fixed=True,
        missing_separate=False,
    ).fit(X[["工资"]], y)
 
-``strict_user_splits=True`` 会完整保留用户分组；非严格模式把每个用户组视为不可拆分的
+``user_splits_fixed=True`` 会完整保留用户分组；非严格模式把每个用户组视为不可拆分的
 原子单位，再用当前 ``method`` 决定是否合并相邻组。未知预测期类别默认转换为索引 ``-3``、
-标签 ``unknown`` 和中性 WOE ``0.0``；设置 ``handle_unknown="error"`` 可改为直接报错。
+标签 ``unknown`` 和中性 WOE ``0.0``；``handle_unknown`` 可指定任意已记录的整数箱号，默认 ``-3``。
 
 ``max_n_bins``、``min_bin_size``、``max_bin_size``、``min_bad_rate`` 和明确的单调方向同样
 适用于类别路径。如果单个类别或用户原子组本身已使约束不可满足，分箱器会指出字段、参数和

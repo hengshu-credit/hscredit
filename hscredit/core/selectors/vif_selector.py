@@ -63,7 +63,7 @@ def _compute_vif_single(x: np.ndarray, idx: int) -> float:
 
     # 线性回归
     try:
-        lr = LinearRegression(fit_intercept=False)
+        lr = LinearRegression(fit_intercept=True)
         lr.fit(x_other, x_target)
         y_pred = lr.predict(x_other)
 
@@ -143,6 +143,8 @@ class VIFSelector(BaseFeatureSelector):
     Linear Statistical Models*；https://en.wikipedia.org/wiki/Variance_inflation_factor
     """
 
+    method_name = "VIF筛选"
+
     def __init__(
         self,
         threshold: float = 4.0,
@@ -174,7 +176,6 @@ class VIFSelector(BaseFeatureSelector):
         self.missing = missing
         self.max_iter = max_iter
         self.verbose = verbose
-        self.method_name = "VIF筛选"
 
     def _included_features_participate_in_selection(self) -> bool:
         """强制保留字段参与共线性计算，但不会成为迭代剔除对象。"""

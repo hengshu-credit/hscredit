@@ -49,6 +49,18 @@ def test_build_tools_are_not_runtime_dependencies():
     assert names.isdisjoint({"setuptools", "wheel", "build", "pkg-resources"})
 
 
+def test_runtime_dependency_floors_avoid_known_pandas_warning_combinations():
+    """运行时依赖下限不得允许 pandas 已明确警告的不兼容版本。"""
+    requirements = {
+        item.name.lower(): item
+        for item in (Requirement(raw) for raw in _pyproject()["project"]["dependencies"])
+    }
+
+    assert str(requirements["numexpr"].specifier) == ">=2.8.4"
+    assert str(requirements["bottleneck"].specifier) == ">=1.3.6"
+    assert str(requirements["seaborn"].specifier) == ">=0.13.2"
+
+
 def test_environment_validator_checks_packaging():
     namespace = runpy.run_path(str(PROJECT_ROOT / "scripts" / "validate_environment.py"))
 

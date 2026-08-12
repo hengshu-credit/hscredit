@@ -16,6 +16,7 @@
 >>> selector.fit(X)
 """
 
+import re
 from typing import Union, List, Optional, Dict, Any
 import numpy as np
 import pandas as pd
@@ -26,8 +27,7 @@ from .base import BaseFeatureSelector
 def _matches_regex_feature(task):
     """判断单个特征名是否匹配正则表达式。"""
     feature, pattern, flags = task
-    matched = pd.Index([feature]).str.contains(pattern, regex=True, flags=flags)[0]
-    return feature, bool(matched)
+    return feature, re.search(pattern, str(feature), flags=flags) is not None
 
 
 class RegexSelector(BaseFeatureSelector):
@@ -56,6 +56,8 @@ class RegexSelector(BaseFeatureSelector):
         >>> selector = RegexSelector(pattern='^income')
         >>> selector.fit(X)
     """
+
+    method_name = "正则筛选"
 
     def __init__(
         self,
@@ -86,7 +88,6 @@ class RegexSelector(BaseFeatureSelector):
         self.pattern = pattern
         self.invert = invert
         self.flags = flags
-        self.method_name = "正则筛选"
 
     def _fit_impl(
         self,

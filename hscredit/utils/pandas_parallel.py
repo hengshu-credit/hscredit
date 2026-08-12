@@ -495,7 +495,7 @@ def _execute_series_apply(
         or capability == "vectorized"
         or proxy.parallel_backend == "sequential"
         or whole_series_call
-        or pd.api.types.is_categorical_dtype(series.dtype)
+        or isinstance(series.dtype, pd.CategoricalDtype)
     ):
         return _native_apply_with_progress(
             proxy,

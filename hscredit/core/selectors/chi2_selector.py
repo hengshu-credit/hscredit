@@ -74,6 +74,8 @@ class Chi2Selector(BaseFeatureSelector):
     https://scikit-learn.org/stable/modules/generated/sklearn.feature_selection.chi2.html
     """
 
+    method_name = "卡方检验筛选"
+
     def __init__(
         self,
         threshold: float = 0.0,
@@ -103,7 +105,6 @@ class Chi2Selector(BaseFeatureSelector):
         )
         self.k = k
         self.missing = missing
-        self.method_name = "卡方检验筛选"
 
     def _fit_impl(
         self,
@@ -116,6 +117,12 @@ class Chi2Selector(BaseFeatureSelector):
         :param y: 目标变量
         """
         self._get_feature_names(X)
+
+        if isinstance(self.k, (int, np.integer)) and not isinstance(self.k, (bool, np.bool_)):
+            if int(self.k) <= 0:
+                raise ValueError("k 必须大于 0")
+        elif self.k != "all":
+            raise ValueError("k 必须是大于 0 的整数或 'all'")
 
         # 处理类别变量
         X_pos = X.copy()
@@ -147,15 +154,14 @@ class Chi2Selector(BaseFeatureSelector):
         self.scores_ = pd.Series(chi2_scores, index=X.columns)
 
         # 选择特征
-        if isinstance(self.k, int):
-            # 保留top-k
-            top_k = min(self.k, len(X.columns))
-            top_indices = np.argsort(chi2_scores)[-top_k:]
-            selected_cols = X.columns[top_indices].tolist()
-        else:
-            # 使用阈值
-            selected_mask = chi2_scores >= self.threshold
-            selected_cols = X.columns[selected_mask].tolist()
+        selected_mask = chi2_scores >= self.threshold
+        if isinstance(self.k, (int, np.integer)) and not isinstance(self.k, (bool, np.bool_)):
+            top_k = min(int(self.k), len(X.columns))
+            ranking = np.argsort(-chi2_scores, kind="stable")
+            top_mask = np.zeros(len(X.columns), dtype=bool)
+            top_mask[ranking[:top_k]] = True
+            selected_mask &= top_mask
+        selected_cols = X.columns[selected_mask].tolist()
 
         self.selected_features_ = selected_cols
 

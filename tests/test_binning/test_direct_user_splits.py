@@ -77,7 +77,7 @@ def test_direct_binners_apply_strict_rules_and_fit_ordinary_fields(binner_cls, n
     try:
         binner = binner_cls(
             user_splits={"fixed": expected.tolist()},
-            strict_user_splits=True,
+            user_splits_fixed=True,
             max_n_bins=5,
             min_n_bins=2,
             random_state=7,
@@ -97,7 +97,7 @@ def test_rule_and_ordinary_fields_are_submitted_in_one_parallel_batch(monkeypatc
     X, y = numeric_data
     binner = BestIVBinning(
         user_splits={"fixed": [20.0, 60.0, 100.0]},
-        strict_user_splits=True,
+        user_splits_fixed=True,
         n_jobs=2,
     )
     original = BestIVBinning._parallel_execute
@@ -123,7 +123,7 @@ def test_direct_user_splits_match_serial_threading_and_loky(numeric_data):
     X, y = numeric_data
     common = {
         "user_splits": {"fixed": [20.0, 60.0, 100.0]},
-        "strict_user_splits": True,
+        "user_splits_fixed": True,
         "max_n_bins": 5,
         "random_state": 11,
     }
@@ -143,23 +143,22 @@ def test_non_strict_rules_filter_round_and_user_splits_take_priority(numeric_dat
     X, y = numeric_data
     binner = QuantileBinning(
         user_splits={"fixed": [-99.0, 20.123456, 999.0]},
-        split_points={"fixed": [50.0], "ordinary": [0.0]},
-        strict_user_splits=False,
+        user_splits_fixed=False,
         decimal=3,
         n_jobs=2,
     ).fit(X, y)
 
     np.testing.assert_array_equal(binner.splits_["fixed"], np.array([20.123]))
-    np.testing.assert_array_equal(binner.splits_["ordinary"], np.array([0.0]))
+    assert "ordinary" in binner.splits_
 
 
-def test_optimal_binning_supports_split_points_alias(numeric_data):
+def test_optimal_binning_uses_formal_user_splits_name(numeric_data):
     X, y = numeric_data
     expected = np.array([20.123456, 60.5, 100.75])
     binner = OptimalBinning(
         method="best_iv",
-        split_points={"fixed": expected.tolist()},
-        strict_user_splits=True,
+        user_splits={"fixed": expected.tolist()},
+        user_splits_fixed=True,
         n_jobs=2,
     ).fit(X, y)
 
@@ -175,7 +174,7 @@ def test_direct_binners_support_strict_and_non_strict_categorical_rules(binner_c
 
     strict = binner_cls(
         user_splits={"category": groups},
-        strict_user_splits=True,
+        user_splits_fixed=True,
         max_n_bins=4,
         min_n_bins=2,
         n_jobs=2,
@@ -184,7 +183,7 @@ def test_direct_binners_support_strict_and_non_strict_categorical_rules(binner_c
 
     non_strict = binner_cls(
         user_splits={"category": groups},
-        strict_user_splits=False,
+        user_splits_fixed=False,
         max_n_bins=2,
         min_n_bins=2,
         n_jobs=2,

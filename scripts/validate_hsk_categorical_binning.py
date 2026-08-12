@@ -45,9 +45,9 @@ def _method_kwargs(method: str) -> Dict:
     if method == "genetic":
         kwargs.update(population_size=12, generations=4)
     elif method == "or_tools":
-        kwargs.update(or_time_limit=2, n_prebins=10, max_candidates=20)
+        kwargs.update(time_limit=2, n_prebins=10, max_candidates=20)
     elif method == "cp_sat":
-        kwargs.update(cp_sat_time_limit=2, cp_sat_n_prebins=10, max_candidates=20)
+        kwargs.update(time_limit=2, n_prebins=10, max_candidates=20)
     elif method == "kernel_density":
         kwargs.update(n_grid_points=128)
     elif method == "smooth":
@@ -106,7 +106,7 @@ def validate_wage_rules(X: pd.DataFrame, y: pd.Series, wage_column: str, wage_or
     missing_alone = [*chunks, [np.nan]]
     alone_binner = OptimalBinning(
         user_splits={wage_column: missing_alone},
-        strict_user_splits=True,
+        user_splits_fixed=True,
         min_n_bins=1,
         max_n_bins=4,
         min_bin_size=1,
@@ -116,7 +116,7 @@ def validate_wage_rules(X: pd.DataFrame, y: pd.Series, wage_column: str, wage_or
     missing_mixed = [chunks[0], chunks[1], [*chunks[2], np.nan]]
     mixed_binner = OptimalBinning(
         user_splits={wage_column: missing_mixed},
-        strict_user_splits=True,
+        user_splits_fixed=True,
         missing_separate=False,
         min_n_bins=1,
         max_n_bins=3,

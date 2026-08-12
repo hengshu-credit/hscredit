@@ -18,6 +18,7 @@
 from typing import Union, List, Optional, Dict, Any
 import numpy as np
 import pandas as pd
+from pandas.api.types import is_bool_dtype, is_object_dtype, is_string_dtype
 from sklearn.feature_selection import mutual_info_classif
 
 from .base import BaseFeatureSelector
@@ -27,7 +28,13 @@ from ...utils.parallel import ParallelWorkload
 def _compute_mutual_info_feature(task):
     """编码并计算单个特征与目标的互信息。"""
     feature, series, y, n_neighbors, seed = task
-    if series.dtype.name in ("object", "category"):
+    discrete = bool(
+        is_object_dtype(series.dtype)
+        or is_string_dtype(series.dtype)
+        or isinstance(series.dtype, pd.CategoricalDtype)
+        or is_bool_dtype(series.dtype)
+    )
+    if discrete:
         values = pd.factorize(series)[0].astype(float)
     else:
         values = pd.to_numeric(series, errors="coerce").astype(float).values
@@ -37,7 +44,7 @@ def _compute_mutual_info_feature(task):
     score = mutual_info_classif(
         values.reshape(-1, 1),
         y,
-        discrete_features=False,
+        discrete_features=discrete,
         n_neighbors=n_neighbors,
         random_state=seed,
     )[0]
@@ -89,6 +96,8 @@ class MutualInfoSelector(BaseFeatureSelector):
     Kraskov, A. et al. (2004). *Estimating mutual information.* Phys. Rev. E 69.
     """
 
+    method_name = "互信息筛选"
+
     def __init__(
         self,
         threshold: float = 0.0,
@@ -118,7 +127,6 @@ class MutualInfoSelector(BaseFeatureSelector):
         )
         self.n_neighbors = n_neighbors
         self.random_state = random_state
-        self.method_name = "互信息筛选"
 
     def _fit_impl(
         self,
@@ -137,6 +145,9 @@ class MutualInfoSelector(BaseFeatureSelector):
             X = X.drop(columns=self.target)
 
         self._get_feature_names(X)
+
+        if isinstance(self.n_neighbors, (bool, np.bool_)) or not isinstance(self.n_neighbors, (int, np.integer)) or int(self.n_neighbors) < 1:
+            raise ValueError("n_neighbors 必须是正整数")
 
         seed_modulus = 2**32 - 1
         base_seed = 0 if self.random_state is None else int(self.random_state) % seed_modulus

@@ -133,9 +133,9 @@ def _make_optimal_binner(method, order):
     if method == "genetic":
         kwargs.update(population_size=12, generations=4)
     elif method == "or_tools":
-        kwargs.update(or_time_limit=2, n_prebins=8, max_candidates=20)
+        kwargs.update(time_limit=2, n_prebins=8, max_candidates=20)
     elif method == "cp_sat":
-        kwargs.update(cp_sat_time_limit=2, cp_sat_n_prebins=8, max_candidates=20)
+        kwargs.update(time_limit=2, n_prebins=8, max_candidates=20)
     elif method == "kernel_density":
         kwargs.update(n_grid_points=128)
     elif method == "smooth":
@@ -236,9 +236,9 @@ def test_optimal_binning_forwards_category_detection_and_missing_policy(method):
     if method == "genetic":
         kwargs.update(population_size=12, generations=4)
     elif method == "or_tools":
-        kwargs.update(or_time_limit=2, n_prebins=8, max_candidates=20)
+        kwargs.update(time_limit=2, n_prebins=8, max_candidates=20)
     elif method == "cp_sat":
-        kwargs.update(cp_sat_time_limit=2, cp_sat_n_prebins=8, max_candidates=20)
+        kwargs.update(time_limit=2, n_prebins=8, max_candidates=20)
     elif method == "kernel_density":
         kwargs.update(n_grid_points=128)
     elif method == "smooth":
@@ -297,7 +297,7 @@ def test_yyp_category_explicit_order_and_custom_missing_groups():
     missing_alone = [*chunks, [np.nan]]
     alone = OptimalBinning(
         user_splits={"商品类别": missing_alone},
-        strict_user_splits=True,
+        user_splits_fixed=True,
         min_n_bins=1,
         max_n_bins=4,
         min_bin_size=1,
@@ -307,7 +307,7 @@ def test_yyp_category_explicit_order_and_custom_missing_groups():
     missing_mixed = [chunks[0], chunks[1], [*chunks[2], np.nan]]
     mixed = OptimalBinning(
         user_splits={"商品类别": missing_mixed},
-        strict_user_splits=True,
+        user_splits_fixed=True,
         missing_separate=False,
         min_n_bins=1,
         max_n_bins=3,

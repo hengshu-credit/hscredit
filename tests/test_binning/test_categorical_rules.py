@@ -156,7 +156,7 @@ def _make_explicit_rule_data():
 def test_strict_custom_groups_support_missing_alone_or_merged(groups, expected_missing_bin, expected_c4_bin):
     """防止显式缺失组在拟合、转换或导出时被移出用户指定箱。"""
     X, y = _make_explicit_rule_data()
-    binner = OptimalBinning(user_splits={"category": groups}, strict_user_splits=True).fit(X, y)
+    binner = OptimalBinning(user_splits={"category": groups}, user_splits_fixed=True).fit(X, y)
 
     transformed = binner.transform(pd.DataFrame({"category": [np.nan, "c4"]}), metric="indices")["category"]
     exported = binner.export_rules()["category"]
@@ -181,20 +181,21 @@ def test_invalid_strict_custom_groups_raise_value_error(groups):
     X, y = _make_explicit_rule_data()
 
     with pytest.raises(ValueError, match="category"):
-        OptimalBinning(user_splits={"category": groups}, strict_user_splits=True).fit(X, y)
+        OptimalBinning(user_splits={"category": groups}, user_splits_fixed=True).fit(X, y)
 
 
-def test_custom_groups_require_explicit_missing_when_not_separate():
-    """防止 missing_separate=False 时缺失训练值静默成为未知类别。"""
+def test_custom_groups_learn_missing_target_when_not_separate():
+    """未手工指定缺失位置时，missing_separate=False 应学习普通箱归属。"""
     X, y = _make_explicit_rule_data()
     groups = [["c1", "c2"], ["c3", "c4"]]
 
-    with pytest.raises(ValueError, match="category.*缺失"):
-        OptimalBinning(
-            user_splits={"category": groups},
-            strict_user_splits=True,
-            missing_separate=False,
-        ).fit(X, y)
+    binner = OptimalBinning(
+        user_splits={"category": groups},
+        user_splits_fixed=True,
+        missing_separate=False,
+    ).fit(X, y)
+
+    assert binner.transform(pd.DataFrame({"category": [np.nan]})).iloc[0, 0] in {0, 1}
 
 
 def test_user_splits_take_priority_over_category_order():
@@ -204,7 +205,7 @@ def test_user_splits_take_priority_over_category_order():
 
     binner = OptimalBinning(
         user_splits={"category": groups},
-        strict_user_splits=True,
+        user_splits_fixed=True,
         category_order={"category": ["not-used"]},
     ).fit(X, y)
 
@@ -222,7 +223,7 @@ def test_non_strict_custom_groups_are_merged_as_atomic_units_by_method():
         min_n_bins=2,
         max_n_bins=2,
         user_splits={"category": groups},
-        strict_user_splits=False,
+        user_splits_fixed=False,
     ).fit(X, y)
 
     assert binner.export_rules()["category"] == [["a", "b", "c", "d"], ["e", "f", "g", "h"]]
@@ -283,7 +284,7 @@ def test_update_validates_category_coverage_when_training_data_is_available():
     X, y = _make_explicit_rule_data()
     binner = OptimalBinning(
         user_splits={"category": [["c1", "c2"], ["c3"], ["c4", np.nan]]},
-        strict_user_splits=True,
+        user_splits_fixed=True,
     ).fit(X, y)
 
     with pytest.raises(ValueError, match="category.*未覆盖"):

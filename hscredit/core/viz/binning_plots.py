@@ -15,6 +15,8 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.collections import LineCollection
+from matplotlib.offsetbox import AnchoredOffsetbox, DrawingArea, HPacker, TextArea
+from matplotlib.transforms import offset_copy
 from matplotlib.ticker import PercentFormatter
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
@@ -349,6 +351,120 @@ def _fit_bin_metric_summary_text(
         text_artist.set_fontsize(max(minimum_fontsize, fitted_fontsize))
 
 
+class _FullWidthBinMetricSummary(AnchoredOffsetbox):
+    """与所属坐标轴等宽、文字居中的单行分箱指标摘要。"""
+
+    def __init__(self, ax: Any, text: str, fontsize: float, color: str) -> None:
+        text_area = TextArea(
+            text,
+            textprops={
+                'fontsize': fontsize,
+                'color': color,
+                'horizontalalignment': 'center',
+            },
+        )
+        self.metric_text = text_area.get_children()[0]
+        self._full_width_child = HPacker(
+            pad=0,
+            sep=0,
+            width=None,
+            height=None,
+            align='center',
+            mode='expand',
+            children=[DrawingArea(0, 0), text_area, DrawingArea(0, 0)],
+        )
+        super().__init__(
+            loc='lower left',
+            pad=0.28,
+            borderpad=0,
+            child=self._full_width_child,
+            prop={'size': fontsize},
+            frameon=True,
+            bbox_to_anchor=(0.0, 1.0),
+            bbox_transform=ax.transAxes,
+        )
+        self.patch.set_boxstyle('round,pad=0')
+        self.patch.set_facecolor('white')
+        self.patch.set_edgecolor(color)
+        self.patch.set_alpha(0.9)
+        self.patch.set_linewidth(0.8)
+        self.set_clip_on(False)
+        self.set_gid('bin-metric-summary')
+
+    def get_extent(self, renderer: Any):
+        """在每次渲染时按最新坐标轴像素宽度更新摘要容器。"""
+        axes_width = self.axes.get_window_extent(renderer).width
+        fontsize_pixels = renderer.points_to_pixels(self.prop.get_size_in_points())
+        padding_pixels = self.pad * fontsize_pixels
+        self._full_width_child.set_width(max(0.0, axes_width - 2.0 * padding_pixels))
+        return super().get_extent(renderer)
+
+
+def _embedded_bin_plot_decoration_top(ax1: Any, ax2: Any, renderer: Any) -> float:
+    """返回嵌入式分箱图坐标轴及其刻度/轴标题占用的最高像素位置。"""
+    tops = []
+    for axis in (ax1, ax2):
+        tops.append(axis.get_window_extent(renderer).y1)
+        for component in (axis.xaxis, axis.yaxis):
+            if not component.get_visible():
+                continue
+            bbox = component.get_tightbbox(renderer)
+            if bbox is not None and np.isfinite(bbox.y1):
+                tops.append(bbox.y1)
+    return max(tops)
+
+
+def _layout_embedded_bin_plot_header(
+    fig: Any,
+    ax1: Any,
+    ax2: Any,
+    summary_text: Any,
+    title_text: str,
+    min_gap_points: float = 6.5,
+) -> None:
+    """按真实渲染边界依次排布坐标轴、指标摘要和子图标题。"""
+    title_artist = ax1.set_title(title_text)
+    summary_text.set_gid('bin-metric-summary')
+
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+    axes_top = ax1.get_window_extent(renderer).y1
+    decoration_top = _embedded_bin_plot_decoration_top(ax1, ax2, renderer)
+    decoration_offset_points = max(0.0, decoration_top - axes_top) * 72.0 / fig.dpi
+
+    summary_transform = offset_copy(
+        ax1.transAxes,
+        fig=fig,
+        y=decoration_offset_points + float(min_gap_points),
+        units='points',
+    )
+    if isinstance(summary_text, _FullWidthBinMetricSummary):
+        summary_text.set_bbox_to_anchor((0.0, 1.0), transform=summary_transform)
+    else:
+        summary_text.set_position((0.0, 1.0))
+        summary_text.set_transform(summary_transform)
+
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+    summary_bbox = summary_text.get_window_extent(renderer)
+    title_bbox = title_artist.get_window_extent(renderer)
+    min_gap_pixels = float(min_gap_points) * fig.dpi / 72.0
+    missing_gap_pixels = summary_bbox.y1 + min_gap_pixels - title_bbox.y0
+
+    if missing_gap_pixels > 0:
+        default_pad = float(plt.rcParams.get('axes.titlepad', 6.0))
+        title_pad = default_pad + missing_gap_pixels * 72.0 / fig.dpi
+        title_artist = ax1.set_title(title_text, pad=title_pad)
+
+        # 字体度量存在亚像素取整，二次校正可确保导出到不同 DPI 时仍保留最小间距。
+        fig.canvas.draw()
+        renderer = fig.canvas.get_renderer()
+        title_bbox = title_artist.get_window_extent(renderer)
+        remaining_gap_pixels = summary_text.get_window_extent(renderer).y1 + min_gap_pixels - title_bbox.y0
+        if remaining_gap_pixels > 0.5:
+            ax1.set_title(title_text, pad=title_pad + remaining_gap_pixels * 72.0 / fig.dpi)
+
+
 def _xtick_rotation_for_length(max_len: int, threshold: int = 5):
     """根据刻度文本最大长度决定横向分箱图 x 轴刻度的旋转角度与对齐方式.
 
@@ -407,6 +523,7 @@ def bin_plot(
     show_data_points: bool = True,
     show_overall_bad_rate: bool = True,
     show_metric_summary: bool = True,
+    metric_summary_layout: str = 'compact',
     show_rate_axis: bool = True,
     iv: bool = True,
     return_frame: bool = False,
@@ -458,6 +575,8 @@ def bin_plot(
     :param show_data_points: 是否显示数据点标记
     :param show_overall_bad_rate: 是否显示整体坏样本率参考线
     :param show_metric_summary: 是否显示左上角的指标角标（IV/KS/LIFT/趋势摘要），默认显示
+    :param metric_summary_layout: 指标摘要布局；``'compact'`` 为紧凑左对齐，
+        ``'full_width_center'`` 为与坐标轴等宽的单行居中摘要条
     :param show_rate_axis: 是否显示坏样本率坐标轴刻度与标签（趋势线本身始终保留），默认显示
     :param iv: 是否显示 IV 值（暂不支持）
     :param return_frame: 是否返回分箱统计表
@@ -686,8 +805,19 @@ def bin_plot(
     if is_horizontal:
         _auto_rotate_horizontal_xticks(fig, ax1)
 
+    valid_summary_layouts = {'compact', 'full_width_center'}
+    if metric_summary_layout not in valid_summary_layouts:
+        raise ValueError(f"metric_summary_layout 必须是 {sorted(valid_summary_layouts)} 之一")
+
     _summary_source = feature_table.drop(columns=['_plot_bin_label'], errors='ignore')
-    metric_summary = _build_bin_metric_summary(_summary_source) if show_metric_summary else ''
+    summary_items_per_row = 100 if metric_summary_layout == 'full_width_center' else 2
+    metric_summary = (
+        _build_bin_metric_summary(_summary_source, per_row=summary_items_per_row)
+        if show_metric_summary
+        else ''
+    )
+    axis_title = ax1.xaxis.label if is_horizontal else ax1.yaxis.label
+    summary_fontsize = float(axis_title.get_fontsize())
     if not return_ax:
         # 图例字号随图尺寸自适应；角标在完成布局后按实际可用宽度单独调整。
         fig_w, fig_h = fig.get_size_inches()
@@ -723,7 +853,7 @@ def bin_plot(
             ax_pos = ax1.get_position()
             legend_bbox = legend.get_window_extent(renderer).transformed(fig.transFigure.inverted())
             summary_text = fig.text(ax_pos.x0, legend_bbox.y0, metric_summary, ha='left', va='bottom',
-                                    fontsize=12.0, color=axis_theme,
+                                    fontsize=summary_fontsize, color=axis_theme,
                                     bbox=dict(boxstyle='round,pad=0.28', facecolor='white',
                                               edgecolor=axis_theme, alpha=0.9, linewidth=0.8))
             gap_pixels = 8.0 * fig.dpi / 72.0
@@ -734,8 +864,8 @@ def bin_plot(
                 _summary_source,
                 renderer,
                 available_width_pixels,
-                preferred_fontsize=12.0,
-                minimum_fontsize=8.0,
+                preferred_fontsize=summary_fontsize,
+                minimum_fontsize=summary_fontsize,
             )
         save_figure(fig, save)
 
@@ -743,40 +873,49 @@ def bin_plot(
             return fig, _sorted_table.drop(columns=['_plot_bin_label'], errors='ignore')
         return fig
     else:
+        title_text = title if title is not None else f'{desc}{ending}'
         if metric_summary:
-            # 嵌入到已有画布时按子图的实际渲染宽度选择列数与字号。
-            summary_text = ax2.text(
-                0.0,
-                1.02,
-                metric_summary,
-                transform=ax2.transAxes,
-                ha='left',
-                va='bottom',
-                fontsize=11.0,
-                color=axis_theme,
-                bbox=dict(
-                    boxstyle='round,pad=0.28',
-                    facecolor='white',
-                    edgecolor=axis_theme,
-                    alpha=0.9,
-                    linewidth=0.8,
-                ),
-                clip_on=False,
-            )
-            fig.canvas.draw()
-            renderer = fig.canvas.get_renderer()
-            _fit_bin_metric_summary_text(
-                summary_text,
-                _summary_source,
-                renderer,
-                ax2.get_window_extent(renderer).width,
-                preferred_fontsize=11.0,
-                minimum_fontsize=8.0,
-            )
-        if title is not None:
-            ax1.set_title(title)
+            if metric_summary_layout == 'full_width_center':
+                summary_text = _FullWidthBinMetricSummary(
+                    ax1,
+                    metric_summary,
+                    fontsize=summary_fontsize,
+                    color=axis_theme,
+                )
+                ax1.add_artist(summary_text)
+            else:
+                # 摘要挂在主轴上，便于外层共享图例布局统一识别并预留顶部空间。
+                summary_text = ax1.text(
+                    0.0,
+                    1.0,
+                    metric_summary,
+                    transform=ax1.transAxes,
+                    ha='left',
+                    va='bottom',
+                    fontsize=summary_fontsize,
+                    color=axis_theme,
+                    bbox=dict(
+                        boxstyle='round,pad=0.28',
+                        facecolor='white',
+                        edgecolor=axis_theme,
+                        alpha=0.9,
+                        linewidth=0.8,
+                    ),
+                    clip_on=False,
+                )
+                fig.canvas.draw()
+                renderer = fig.canvas.get_renderer()
+                _fit_bin_metric_summary_text(
+                    summary_text,
+                    _summary_source,
+                    renderer,
+                    ax1.get_window_extent(renderer).width,
+                    preferred_fontsize=summary_fontsize,
+                    minimum_fontsize=summary_fontsize,
+                )
+            _layout_embedded_bin_plot_header(fig, ax1, ax2, summary_text, title_text)
         else:
-            ax1.set_title(f'{desc}{ending}')
+            ax1.set_title(title_text)
         return ax1
 
 
@@ -1538,6 +1677,13 @@ def distribution_plot(data, date="date", target="target", save=None, figsize=(10
     if 'time' not in str(df[date].dtype):
         df[date] = pd.to_datetime(df[date])
 
+    resample_freq = {
+        'M': pd.offsets.MonthEnd(),
+        'Q': pd.offsets.QuarterEnd(),
+        'Y': pd.offsets.YearEnd(),
+        'A': pd.offsets.YearEnd(),
+    }.get(freq.upper(), freq) if isinstance(freq, str) else freq
+
     # ---------- 多逾期口径模式 ----------
     if overdue is not None and dpds is not None:
         if len(overdue) != len(dpds):
@@ -1545,7 +1691,7 @@ def distribution_plot(data, date="date", target="target", save=None, figsize=(10
 
         # 按日期聚合样本总数
         df_indexed = df.set_index(date)
-        total_counts = df_indexed.resample(freq).size()
+        total_counts = df_indexed.resample(resample_freq).size()
         total_counts.index = [i.strftime("%Y-%m-%d") for i in total_counts.index]
 
         fig, ax1 = plt.subplots(1, 1, figsize=figsize)
@@ -1575,7 +1721,7 @@ def distribution_plot(data, date="date", target="target", save=None, figsize=(10
             y_target = (df[dpd_col] >= threshold).astype(int)
             df_temp = df_indexed.copy()
             df_temp['_bad'] = y_target.values
-            bad_rate = df_temp.resample(freq)['_bad'].mean()
+            bad_rate = df_temp.resample(resample_freq)['_bad'].mean()
             bad_rate.index = [idx.strftime("%Y-%m-%d") for idx in bad_rate.index]
 
             label = f"{dpd_col}>={threshold}"
@@ -1620,7 +1766,7 @@ def distribution_plot(data, date="date", target="target", save=None, figsize=(10
     temp = df.set_index(date).assign(
         好样本=lambda x: (x[target] == 0).astype(int),
         坏样本=lambda x: (x[target] == 1).astype(int),
-    ).resample(freq).agg({"好样本": sum, "坏样本": sum})
+    ).resample(resample_freq).agg({"好样本": "sum", "坏样本": "sum"})
 
     temp.index = [i.strftime("%Y-%m-%d") for i in temp.index]
 
@@ -1685,7 +1831,7 @@ def _compute_feature_bin_stats(
     max_n_bins: int = 10,
     min_bin_size: float = 0.02,
     rules: Optional[Dict] = None,
-    special_values: Optional[List] = None,
+    special_codes: Optional[List] = None,
     **kwargs
 ) -> pd.DataFrame:
     """计算特征分箱统计.
@@ -1699,7 +1845,7 @@ def _compute_feature_bin_stats(
     :param max_n_bins: 最大分箱数
     :param min_bin_size: 最小箱占比
     :param rules: 预定义分箱规则
-    :param special_values: 特殊值列表
+    :param special_codes: 特殊值列表
     :return: 分箱统计表
     """
     # 筛选分组数据
@@ -1730,6 +1876,7 @@ def _compute_feature_bin_stats(
             user_splits={feature: rules[feature]},
             max_n_bins=max_n_bins,
             min_bin_size=min_bin_size,
+            special_codes=special_codes,
             verbose=False,
             **kwargs
         )
@@ -1738,6 +1885,7 @@ def _compute_feature_bin_stats(
             method=method,
             max_n_bins=max_n_bins,
             min_bin_size=min_bin_size,
+            special_codes=special_codes,
             verbose=False,
             **kwargs
         )
@@ -1803,6 +1951,95 @@ def _compute_feature_bin_stats(
         return pd.DataFrame()
 
 
+def _bin_plot_legend_handles(colors: List[str]) -> List[Any]:
+    """返回分箱图共享的四项标准图例。"""
+    return [
+        Patch(facecolor=colors[0], edgecolor='white', label='好样本'),
+        Patch(facecolor=colors[1], edgecolor='white', label='坏样本'),
+        Line2D(
+            [0],
+            [0],
+            color=BAD_RATE_COLOR,
+            linestyle=(0, (4, 3)),
+            linewidth=2.1,
+            marker='o',
+            markersize=5,
+            markerfacecolor='white',
+            label='坏样本率',
+        ),
+        Line2D(
+            [0],
+            [0],
+            color=REFERENCE_COLOR,
+            linestyle=(0, (2, 2)),
+            linewidth=1.8,
+            label='整体坏样本率',
+        ),
+    ]
+
+
+def _create_bin_plot_figure_legend(fig: plt.Figure, colors: List[str], anchor: float = 0.94) -> Any:
+    """创建水平居中的 Figure 级分箱图图例。"""
+    return fig.legend(
+        handles=_bin_plot_legend_handles(colors),
+        loc='upper center',
+        ncol=4,
+        bbox_to_anchor=(0.5, anchor),
+        frameon=False,
+        fontsize=9,
+    )
+
+
+def _layout_horizontal_bin_panel_rows(
+    fig: plt.Figure,
+    axes: List[Any],
+    min_gap_points: float = 6.0,
+    max_iterations: int = 8,
+) -> None:
+    """按真实渲染边界为横向多行分箱图保留垂直间距。"""
+    panel_axes = sorted(
+        (axis for axis in axes if axis.get_visible()),
+        key=lambda axis: axis.get_position().y0,
+        reverse=True,
+    )
+    if len(panel_axes) < 2:
+        return
+
+    min_gap_pixels = float(min_gap_points) * fig.dpi / 72.0
+    for _ in range(max_iterations):
+        fig.canvas.draw()
+        renderer = fig.canvas.get_renderer()
+        maximum_deficit = 0.0
+
+        for upper_axis, lower_axis in zip(panel_axes, panel_axes[1:]):
+            upper_bottoms = [upper_axis.get_window_extent(renderer).y0]
+            upper_xaxis_bbox = upper_axis.xaxis.get_tightbbox(renderer)
+            if upper_xaxis_bbox is not None and np.isfinite(upper_xaxis_bbox.y0):
+                upper_bottoms.append(upper_xaxis_bbox.y0)
+
+            lower_header_tops = [lower_axis.get_window_extent(renderer).y1]
+            if lower_axis.title.get_visible() and lower_axis.title.get_text().strip():
+                title_bbox = lower_axis.title.get_window_extent(renderer)
+                if np.isfinite(title_bbox.y1):
+                    lower_header_tops.append(title_bbox.y1)
+            for artist in [*lower_axis.texts, *lower_axis.artists]:
+                if artist.get_visible() and artist.get_gid() == 'bin-metric-summary':
+                    summary_bbox = artist.get_window_extent(renderer)
+                    if np.isfinite(summary_bbox.y1):
+                        lower_header_tops.append(summary_bbox.y1)
+
+            actual_gap = min(upper_bottoms) - max(lower_header_tops)
+            maximum_deficit = max(maximum_deficit, min_gap_pixels - actual_gap)
+
+        if maximum_deficit <= 0.05:
+            return
+
+        average_axis_height = np.mean([axis.get_window_extent(renderer).height for axis in panel_axes])
+        if not np.isfinite(average_axis_height) or average_axis_height <= 0:
+            return
+        fig.subplots_adjust(hspace=fig.subplotpars.hspace + maximum_deficit / average_axis_height)
+
+
 def bin_trend_plot(
     data: pd.DataFrame,
     feature: str,
@@ -1814,7 +2051,7 @@ def bin_trend_plot(
     max_n_bins: int = 10,
     min_bin_size: float = 0.02,
     rules: Optional[Dict] = None,
-    special_values: Optional[List] = None,
+    special_codes: Optional[List] = None,
     shared_bins: Optional[Union[str, bool]] = 'max_samples',
     sort_by: Optional[str] = None,
     sort_order: str = 'asc',
@@ -1846,7 +2083,7 @@ def bin_trend_plot(
     :param max_n_bins: 最大分箱数，默认10
     :param min_bin_size: 最小箱占比，默认0.02
     :param rules: 预定义分箱规则 {特征名: 分箱边界列表}
-    :param special_values: 特殊值列表
+    :param special_codes: 特殊值列表
     :param shared_bins: 各分组是否共享同一切分点，默认 'max_samples'
         - 'first': 使用第一个分组（最早时间/第一个维度值）的切分点
         - 'last': 使用最后一个分组（最近时间/最后一个维度值）的切分点
@@ -1977,7 +2214,7 @@ def bin_trend_plot(
     overall_stats = _compute_feature_bin_stats(
         data, feature, target,
         method=method, max_n_bins=max_n_bins, min_bin_size=min_bin_size,
-        rules=rules, special_values=special_values, **kwargs
+        rules=rules, special_codes=special_codes, **kwargs
     )
 
     if overall_stats.empty:
@@ -2002,7 +2239,7 @@ def bin_trend_plot(
                 data, feature, target,
                 group_col=group_col, group_value=group_val,
                 method=method, max_n_bins=max_n_bins, min_bin_size=min_bin_size,
-                rules=rules, special_values=special_values, **kwargs
+                rules=rules, special_codes=special_codes, **kwargs
             )
             if not stats.empty:
                 panel_stats.append((group_val, stats.copy()))
@@ -2032,13 +2269,6 @@ def bin_trend_plot(
         title = f"{feature} - Risk Trend Analysis"
     fig.suptitle(title, fontsize=14, fontweight='bold', y=0.98)
 
-    legend_handles = [
-        Patch(facecolor=colors[0], edgecolor='white', label='好样本'),
-        Patch(facecolor=colors[1], edgecolor='white', label='坏样本'),
-        Line2D([0], [0], color=BAD_RATE_COLOR, linestyle=(0, (4, 3)), linewidth=2.1, marker='o', markersize=5, markerfacecolor='white', label='坏样本率'),
-        Line2D([0], [0], color=REFERENCE_COLOR, linestyle=(0, (2, 2)), linewidth=1.8, label='整体坏样本率'),
-    ]
-
     summary_cols = ['指标IV值', '分档KS值', 'LIFT值']
     panel_max_len = 22 if is_horizontal else 18
 
@@ -2062,6 +2292,8 @@ def bin_trend_plot(
                 orientation='horizontal' if is_horizontal else 'vertical',
                 max_len=panel_max_len,
                 show_overall_bad_rate=True,
+                show_metric_summary=show_stats,
+                metric_summary_layout='full_width_center',
             )
         except Exception as e:
             ax.text(0.5, 0.5, f'Error: {e}', ha='center', va='center', transform=ax.transAxes)
@@ -2071,23 +2303,18 @@ def bin_trend_plot(
         axes_flat[idx].axis('off')
 
     legend_anchor = 0.94 if anchor is None else anchor
-    legend = fig.legend(
-        handles=legend_handles,
-        loc='upper center',
-        ncol=4,
-        bbox_to_anchor=(0.5, legend_anchor),
-        frameon=False,
-        fontsize=9,
-    )
+    legend = _create_bin_plot_figure_legend(fig, colors, anchor=legend_anchor)
 
     fig.subplots_adjust(
         top=0.84 if n_rows > 1 else 0.80,
         bottom=0.08,
-        left=0.06,
-        right=0.98,
+        left=0.08 if is_horizontal else 0.06,
+        right=0.98 if is_horizontal else 0.94,
         hspace=0.62 if n_rows > 1 else 0.42,
         wspace=0.28,
     )
+    if is_horizontal and n_rows > 1:
+        _layout_horizontal_bin_panel_rows(fig, list(axes_flat[:n_panels]))
     if anchor is None:
         _layout_top_center_legend(fig, legend, title=fig._suptitle, axes=list(axes_flat[:n_panels]))
 
@@ -2106,7 +2333,7 @@ def batch_bin_trend_plot(
     date_freq: str = 'M',
     sort_by: str = 'iv',
     max_features: int = 10,
-    figsize_per_feature: tuple = (12, 4),
+    figsize_per_feature: Optional[tuple] = None,
     save_dir: Optional[str] = None,
     **kwargs
 ) -> Dict[str, plt.Figure]:
@@ -2120,7 +2347,7 @@ def batch_bin_trend_plot(
     :param date_freq: 日期聚合频率，``'D'`` 日 / ``'W'`` 周 / ``'M'`` 月 / ``'Q'`` 季度，默认 ``'M'``
     :param sort_by: 特征排序指标，``'iv'``（默认）/ ``'ks'`` / ``'auc'``，决定绘图先后顺序
     :param max_features: 最大绘制特征数，默认 10
-    :param figsize_per_feature: 每个特征的图尺寸
+    :param figsize_per_feature: 每个特征的图尺寸，默认 None（由 bin_trend_plot 按面板数量和方向自动计算）
     :param save_dir: 保存目录，提供时各特征图按特征名保存为图片
     :param kwargs: 其他参数传递给 bin_trend_plot
     :return: 特征名到 ``Figure`` 的字典
@@ -2236,9 +2463,9 @@ def _get_stats_for_target(bin_table: pd.DataFrame, target_name: str) -> pd.DataF
         '坏样本率': '坏样本率',
         '累计好样本占比': '累计好样本占比',
         '累计坏样本占比': '累计坏样本占比',
-        'Lift': 'Lift',
+        'Lift': 'LIFT值',
         'WOE值': 'WOE值',
-        'IV值': 'IV值'
+        'IV值': '指标IV值'
     }
     
     for orig_col, std_col in target_col_mapping.items():
@@ -2247,7 +2474,7 @@ def _get_stats_for_target(bin_table: pd.DataFrame, target_name: str) -> pd.DataF
     
     # 计算 KS 值（如果坏样本率和累计占比存在）
     if '累计坏样本占比' in stats_df.columns and '累计好样本占比' in stats_df.columns:
-        stats_df['KS值'] = (stats_df['累计坏样本占比'] - stats_df['累计好样本占比']).abs()
+        stats_df['分档KS值'] = (stats_df['累计坏样本占比'] - stats_df['累计好样本占比']).abs()
     
     return stats_df
 
@@ -2352,7 +2579,7 @@ def bin_overdues_plot(
         
         # 自动计算图像尺寸
         if figsize is None:
-            figsize = (4 * n_cols, 4 * n_rows)
+            figsize = (5.2 * n_cols, 4 * n_rows)
         
         fig, axes = plt.subplots(n_rows, n_cols, figsize=figsize)
         
@@ -2384,36 +2611,10 @@ def bin_overdues_plot(
                     ax=ax,
                     title=target_name,
                     colors=colors,
-                    orientation='vertical'
+                    orientation='vertical',
+                    show_metric_summary=show_stats,
+                    metric_summary_layout='full_width_center',
                 )
-                
-                # 添加统计信息（从分箱表中提取）
-                if show_stats:
-                    stats_parts = []
-                    
-                    # 计算 IV（IV值列的和）
-                    if 'IV值' in stats_df.columns:
-                        iv_val = stats_df['IV值'].sum()
-                        stats_parts.append(f"IV: {iv_val:.3f}")
-                    
-                    # 获取 KS（KS值列的最大值）
-                    if 'KS值' in stats_df.columns:
-                        ks_val = stats_df['KS值'].max()
-                        stats_parts.append(f"KS: {ks_val:.2f}")
-                    
-                    # 计算整体坏样本率
-                    if '坏样本数' in stats_df.columns and '样本总数' in stats_df.columns:
-                        total_bad = stats_df['坏样本数'].sum()
-                        total_samples = stats_df['样本总数'].sum()
-                        if total_samples > 0:
-                            bad_rate = total_bad / total_samples
-                            stats_parts.append(f"BadRate: {bad_rate:.2%}")
-                    
-                    if stats_parts:
-                        stats_text = ", ".join(stats_parts)
-                        ax.text(0.98, 0.98, stats_text, transform=ax.transAxes,
-                               ha='right', va='top', fontsize=8,
-                               bbox=dict(boxstyle='round', facecolor='white', alpha=0.7))
                 
             except Exception as e:
                 ax.text(0.5, 0.5, f'Error: {str(e)}', ha='center', va='center', transform=ax.transAxes)
@@ -2426,9 +2627,11 @@ def bin_overdues_plot(
         # 设置总标题
         if title is None:
             title = f"{feature} - Multi DPD Binning Analysis"
-        fig.suptitle(title, fontsize=14, fontweight='bold', y=1.02)
+        fig.suptitle(title, fontsize=14, fontweight='bold', y=0.98)
         
-        plt.tight_layout()
+        fig.tight_layout(rect=(0, 0, 1, 0.92))
+        legend = _create_bin_plot_figure_legend(fig, colors)
+        _layout_top_center_legend(fig, legend, title=fig._suptitle, axes=list(axes[:n_plots]))
         
         if save:
             save_figure(fig, save)
@@ -2452,7 +2655,7 @@ def bin_overdues_plot(
 
     # 自动计算图像尺寸
     if figsize is None:
-        figsize = (4 * n_cols, 4 * n_rows)
+        figsize = (5.2 * n_cols, 4 * n_rows)
 
     fig, axes = plt.subplots(n_rows, n_cols, figsize=figsize)
 
@@ -2527,26 +2730,10 @@ def bin_overdues_plot(
                 ax=ax,
                 title=f"{dpd_col} (>= {threshold})",
                 colors=colors,
-                orientation='vertical'
+                orientation='vertical',
+                show_metric_summary=show_stats,
+                metric_summary_layout='full_width_center',
             )
-
-            # 添加统计信息
-            if show_stats:
-                valid_mask = ~(pd.isna(data[feature]) | pd.isna(y))
-                X_valid = data.loc[valid_mask, feature]
-                y_valid = y[valid_mask]
-
-                try:
-                    from ..metrics import iv as iv_metric, ks as ks_metric
-                    iv_val = iv_metric(X_valid, y_valid)
-                    ks_val = ks_metric(X_valid, y_valid)
-                    bad_rate = y_valid.mean()
-                    stats_text = f"IV: {iv_val:.3f}, KS: {ks_val:.2f}, BadRate: {bad_rate:.2%}"
-                    ax.text(0.98, 0.98, stats_text, transform=ax.transAxes,
-                           ha='right', va='top', fontsize=8,
-                           bbox=dict(boxstyle='round', facecolor='white', alpha=0.7))
-                except Exception:
-                    pass
 
         except Exception as e:
             ax.text(0.5, 0.5, f'Error: {str(e)}', ha='center', va='center', transform=ax.transAxes)
@@ -2559,9 +2746,11 @@ def bin_overdues_plot(
     # 设置总标题
     if title is None:
         title = f"{feature} - Multi DPD Binning Analysis"
-    fig.suptitle(title, fontsize=14, fontweight='bold', y=1.02)
+    fig.suptitle(title, fontsize=14, fontweight='bold', y=0.98)
 
-    plt.tight_layout()
+    fig.tight_layout(rect=(0, 0, 1, 0.92))
+    legend = _create_bin_plot_figure_legend(fig, colors)
+    _layout_top_center_legend(fig, legend, title=fig._suptitle, axes=list(axes[:n_plots]))
 
     if save:
         save_figure(fig, save)

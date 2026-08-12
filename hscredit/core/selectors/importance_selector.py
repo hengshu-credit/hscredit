@@ -17,7 +17,8 @@
 >>> print(selector.selected_features_)
 """
 
-from typing import Union, List, Optional, Dict, Any
+from operator import attrgetter
+from typing import Union, List, Optional, Dict, Any, Callable
 import numpy as np
 import pandas as pd
 from .base import BaseFeatureSelector, get_feature_importances
@@ -70,11 +71,13 @@ class FeatureImportanceSelector(BaseFeatureSelector):
     https://scikit-learn.org/stable/modules/generated/sklearn.feature_selection.SelectFromModel.html
     """
 
+    method_name = '特征重要性筛选'
+
     def __init__(
         self,
         estimator,
         threshold: Union[float, int] = 0.0,
-        importance_getter: str = 'auto',
+        importance_getter: Union[str, Callable[[Any], Any]] = 'auto',
         target: str = 'target',
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
@@ -93,7 +96,6 @@ class FeatureImportanceSelector(BaseFeatureSelector):
         )
         self.estimator = estimator
         self.importance_getter = importance_getter
-        self.method_name = '特征重要性筛选'
 
     def _fit_impl(
         self,
@@ -113,21 +115,46 @@ class FeatureImportanceSelector(BaseFeatureSelector):
 
         self._get_feature_names(X)
 
+        if isinstance(self.threshold, (bool, np.bool_)):
+            raise ValueError("threshold 不能是布尔值")
+        if isinstance(self.threshold, (int, np.integer)) and not isinstance(self.threshold, (bool, np.bool_)):
+            if int(self.threshold) <= 0:
+                raise ValueError("top-k 特征数必须大于 0")
+
         # 克隆并训练模型；调用者 estimator 保持不变。
         model = self._clone_estimator_for_parallel(self.estimator)
         with self._estimator_parallel_context():
             model.fit(X, y)
 
         # 获取特征重要性（兼容所有模型类型）
-        importances = np.asarray(get_feature_importances(model))
+        if self.importance_getter == "auto":
+            importances = np.asarray(get_feature_importances(model), dtype=float)
+        elif callable(self.importance_getter):
+            importances = np.asarray(self.importance_getter(model), dtype=float)
+        elif isinstance(self.importance_getter, str):
+            try:
+                importances = np.asarray(attrgetter(self.importance_getter)(model), dtype=float)
+            except AttributeError as exc:
+                raise ValueError(f"importance_getter 无法读取属性 '{self.importance_getter}'") from exc
+            if importances.ndim > 1:
+                importances = np.linalg.norm(importances, axis=0)
+            else:
+                importances = np.abs(importances)
+        else:
+            raise ValueError("importance_getter 必须为 'auto'、属性路径或可调用对象")
+        importances = np.ravel(importances)
+        if importances.shape[0] != X.shape[1]:
+            raise ValueError(f"重要性数量 {importances.shape[0]} 与特征数 {X.shape[1]} 不一致")
         self.scores_ = pd.Series(importances, index=X.columns)
 
         # 根据阈值筛选
-        if isinstance(self.threshold, int):
+        if isinstance(self.threshold, (int, np.integer)) and not isinstance(self.threshold, (bool, np.bool_)):
             # 保留top-k
-            top_k = min(self.threshold, len(X.columns))
-            selected_idx = np.argsort(importances)[-top_k:]
-            selected_cols = X.columns[selected_idx].tolist()
+            top_k = min(int(self.threshold), len(X.columns))
+            ranking = np.argsort(-importances, kind="stable")
+            selected_mask = np.zeros(len(X.columns), dtype=bool)
+            selected_mask[ranking[:top_k]] = True
+            selected_cols = X.columns[selected_mask].tolist()
         else:
             # 保留重要性 >= threshold
             selected_mask = importances >= self.threshold

@@ -176,7 +176,7 @@ def test_series_summary_forwards_binning_configuration():
         y=y,
         binning_params={
             "user_splits": {"score": [1.5, 3.5]},
-            "strict_user_splits": True,
+            "user_splits_fixed": True,
         },
         n_jobs=1,
     )
@@ -661,7 +661,7 @@ def test_shared_binning_user_splits_control_trend():
         y=y,
         binning_params={
             "user_splits": {"x": [1.5, 3.5]},
-            "strict_user_splits": True,
+            "user_splits_fixed": True,
         },
         n_jobs=1,
     )
@@ -680,11 +680,11 @@ def test_custom_binning_user_splits_are_mapped_to_psi():
         train["x"],
         valid["x"],
         method="uniform",
-        max_n_bins=3,
+        max_n_bins=4,
         min_bin_size=0.05,
         random_state=99,
         user_splits={"value": splits},
-        strict_user_splits=True,
+        user_splits_fixed=True,
     )["PSI贡献"].sum()
 
     result = feature_summary(
@@ -694,11 +694,11 @@ def test_custom_binning_user_splits_are_mapped_to_psi():
         max_n_bins=10,
         binning_params={
             "method": "uniform",
-            "max_n_bins": 3,
+            "max_n_bins": 4,
             "min_bin_size": 0.05,
             "random_state": 99,
             "user_splits": {"x": splits},
-            "strict_user_splits": True,
+            "user_splits_fixed": True,
         },
         n_jobs=1,
     )
@@ -718,7 +718,7 @@ def test_multi_feature_user_splits_match_between_serial_and_loky():
             "f63": [-0.25, 0.75],
             "f127": [0.0, 1.0],
         },
-        "strict_user_splits": True,
+        "user_splits_fixed": True,
     }
 
     serial = feature_summary(df, y=y, binning_params=binning_params, n_jobs=1)

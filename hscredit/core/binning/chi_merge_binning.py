@@ -5,7 +5,7 @@
 """
 
 import logging
-from typing import Union, List, Dict, Optional, Any, Tuple
+from typing import Union, List, Dict, Optional, Any
 import numpy as np
 import pandas as pd
 from scipy.stats import chi2
@@ -37,7 +37,6 @@ class ChiMergeBinning(BaseBinning):
     :param min_chi2_threshold: 卡方合并阈值（停止合并的下限），默认为 ``None``。
         为 ``None`` 时取自由度 1、显著性水平 ``significance_level`` 的卡方临界值
         （如 0.05 对应约 3.841）。当相邻箱的最小卡方值大于该阈值即停止合并
-    :param min_chi2: **已废弃**，请改用 ``min_chi2_threshold``；传入非 ``None`` 将报错
     :param significance_level: 显著性水平，用于在 ``min_chi2_threshold`` 为 ``None`` 时
         换算卡方临界值，默认为 ``0.05``（值越小阈值越大、分箱越粗）
     :param min_bin_size: 每箱最小样本数（``>=1``）或占比（``<1``），默认为 ``0.01``
@@ -81,7 +80,6 @@ class ChiMergeBinning(BaseBinning):
         max_n_bins: int = 10,
         min_n_bins: int = 2,
         min_chi2_threshold: Optional[float] = None,
-        min_chi2: Optional[float] = None,
         significance_level: float = 0.05,
         min_bin_size: Union[float, int] = 0.01,
         max_bin_size: Optional[Union[float, int]] = None,
@@ -91,16 +89,15 @@ class ChiMergeBinning(BaseBinning):
         missing_separate: bool = True,
         cat_cutoff: Optional[Union[float, int]] = None,
         category_order=None,
-        handle_unknown: str = "value",
+        handle_unknown: Union[int, str] = -3,
         random_state: Optional[int] = None,
         verbose: Union[bool, int] = False,
         decimal: int = 4,
         n_jobs: Union[int, float] = -1,
         parallel_backend: Optional[str] = None,
         parallel_config: Optional[Dict[str, Any]] = None,
-        split_points: Optional[Dict[str, List]] = None,
         user_splits: Optional[Dict[str, List]] = None,
-        strict_user_splits: bool = False,
+        user_splits_fixed: Optional[Union[bool, Dict[str, Union[bool, List[bool]]]]] = None,
     ):
         super().__init__(
             target=target,
@@ -113,9 +110,8 @@ class ChiMergeBinning(BaseBinning):
             special_codes=special_codes,
             missing_separate=missing_separate,
             cat_cutoff=cat_cutoff,
-            split_points=split_points,
             user_splits=user_splits,
-            strict_user_splits=strict_user_splits,
+            user_splits_fixed=user_splits_fixed,
             category_order=category_order,
             handle_unknown=handle_unknown,
             random_state=random_state,
@@ -125,9 +121,6 @@ class ChiMergeBinning(BaseBinning):
             parallel_backend=parallel_backend,
             parallel_config=parallel_config,
         )
-        self.min_chi2 = min_chi2
-        if min_chi2 is not None:
-            raise ValueError("min_chi2 参数已移除，请使用 min_chi2_threshold")
         self.min_chi2_threshold = min_chi2_threshold
         self.significance_level = significance_level
 
@@ -161,6 +154,7 @@ class ChiMergeBinning(BaseBinning):
 
         self._apply_post_fit_constraints(X, y, enforce_monotonic=True)
         self._finalize_categorical_fit()
+        self._finalize_reserved_bins(X, y)
         self._is_fitted = True
         return self
 

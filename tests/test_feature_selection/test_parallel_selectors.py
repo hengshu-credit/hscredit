@@ -1331,7 +1331,11 @@ def mixed_lightweight_selector_frame():
     ("selector", "expected_scores", "expected_selected"),
     [
         (NullSelector(threshold=0.5), [0.25, 0.25, 0.25, 0.25], ["数值", "字符串", "分类", "混合对象"]),
-        (ModeSelector(threshold=0.75), [0.5, 0.5, 0.5, 0.5], ["数值", "字符串", "分类", "混合对象"]),
+        (
+            ModeSelector(threshold=0.75),
+            [2 / 3, 2 / 3, 2 / 3, 2 / 3],
+            ["数值", "字符串", "分类", "混合对象"],
+        ),
         (CardinalitySelector(threshold=2), [2, 2, 2, 2], ["数值", "字符串", "分类", "混合对象"]),
         (TypeSelector(dtype_include="category"), [0, 0, 1, 0], ["分类"]),
         (RegexSelector(pattern="^(字符串|分类)$"), [0, 1, 1, 0], ["字符串", "分类"]),

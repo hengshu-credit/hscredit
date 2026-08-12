@@ -81,31 +81,31 @@ def _compute_lift_with_direction(
     :param y: 目标变量数组
     :param ratio: 覆盖率
     :param direction: 方向模式
-        - 'auto': 同时计算找坏人和找好人的LIFT，取 |LIFT-1| 最大的方向
+        - 'auto': 同时计算两个方向，只比较各自目标方向上的改善
         - 'bad': 仅计算找坏人的LIFT（降序取头部，LIFT越高越好）
         - 'good': 仅计算找好人的LIFT（升序取头部，LIFT越低越好）
     :return: (score, lift_bad, lift_good, best_direction)
-        - score: |LIFT - 1|，与1的距离，越大区分力越强
+        - score: 指定方向相对 LIFT=1 的有效改善，越大区分力越强
         - lift_bad: 降序LIFT值（找坏人方向）
         - lift_good: 升序LIFT值（找好人方向）
         - best_direction: 最优方向 'bad' 或 'good'
     """
     if direction == "bad":
         lift_bad = _compute_lift_single(x, y, ratio, ascending=False)
-        score = abs(lift_bad - 1.0)
+        score = max(lift_bad - 1.0, 0.0)
         return score, lift_bad, np.nan, "bad"
 
     if direction == "good":
         lift_good = _compute_lift_single(x, y, ratio, ascending=True)
-        score = abs(lift_good - 1.0)
+        score = max(1.0 - lift_good, 0.0)
         return score, np.nan, lift_good, "good"
 
-    # auto: 同时计算两个方向，取 |LIFT - 1| 更大的
+    # auto: 同时计算两个方向，只奖励方向正确的改善。
     lift_bad = _compute_lift_single(x, y, ratio, ascending=False)
     lift_good = _compute_lift_single(x, y, ratio, ascending=True)
 
-    dist_bad = abs(lift_bad - 1.0)
-    dist_good = abs(lift_good - 1.0)
+    dist_bad = max(lift_bad - 1.0, 0.0)
+    dist_good = max(1.0 - lift_good, 0.0)
 
     if dist_bad >= dist_good:
         return dist_bad, lift_bad, lift_good, "bad"
@@ -135,21 +135,21 @@ class LiftSelector(BaseFeatureSelector):
 
     | direction | 含义 | 评分方式 |
     |-----------|------|----------|
-    | auto | 自动选择最优方向（默认） | score = max(|LIFT_bad-1|, |LIFT_good-1|) |
-    | bad | 仅评估找坏人能力 | score = |LIFT_bad - 1|，LIFT >> 1 越强 |
-    | good | 仅评估找好人能力 | score = |LIFT_good - 1|，LIFT << 1 越强 |
+    | auto | 自动选择最优方向（默认） | score = max(LIFT_bad-1, 1-LIFT_good, 0) |
+    | bad | 仅评估找坏人能力 | score = max(LIFT_bad - 1, 0) |
+    | good | 仅评估找好人能力 | score = max(1 - LIFT_good, 0) |
 
     **评分含义**
 
-    score = |LIFT - 1|，即与基准LIFT=1的距离:
+    score 只度量目标方向相对基准 LIFT=1 的改善，反向偏离按 0 计:
 
     - score = 0: 无区分能力（LIFT = 1）
-    - score = 4.0: 强区分力（如 LIFT=5.0 找坏人，或 LIFT=0.0 找好人）
+    - score = 4.0: 强找坏人能力（LIFT_bad=5.0）；找好人得分上限为 1（LIFT_good=0）
     - 内部经验: score >= 0.5 通常认为有一定区分力
 
     **参数**
 
-    :param threshold: 得分阈值（|LIFT-1|），默认0.5
+    :param threshold: 目标方向的改善得分阈值，默认0.5
         - 仅保留 score >= threshold 的特征
         - threshold=0.5 等价于旧版 LIFT >= 1.5（找坏人方向）
         - 内部经验: 风控场景常用 0.5~1.0
@@ -166,7 +166,7 @@ class LiftSelector(BaseFeatureSelector):
 
     **属性**
 
-    - scores\_: 各特征的区分力得分（|LIFT-1|），pd.Series
+    - scores\_: 各特征在目标方向上的改善得分，pd.Series
     - lift_detail\_: 各特征的LIFT详情表，pd.DataFrame
         包含列: LIFT_bad, LIFT_good, best_direction, score
 
@@ -199,6 +199,8 @@ class LiftSelector(BaseFeatureSelector):
     *Credit Risk Scorecards.* Wiley。
     """
 
+    method_name = "LIFT筛选"
+
     def __init__(
         self,
         threshold: float = 0.5,
@@ -228,7 +230,6 @@ class LiftSelector(BaseFeatureSelector):
         )
         self.ratio = ratio
         self.direction = direction
-        self.method_name = "LIFT筛选"
 
     def _fit_impl(
         self,
@@ -241,6 +242,13 @@ class LiftSelector(BaseFeatureSelector):
         :param y: 目标变量
         """
         self._get_feature_names(X)
+
+        if y is None:
+            raise ValueError("LiftSelector 需要目标变量 y")
+        if not 0 < float(self.ratio) <= 1:
+            raise ValueError("ratio 必须在 (0, 1] 范围内")
+        if self.direction not in {"auto", "bad", "good"}:
+            raise ValueError("direction 必须是 'auto'、'bad' 或 'good'")
 
         y = np.asarray(y)
 
@@ -267,7 +275,7 @@ class LiftSelector(BaseFeatureSelector):
         lift_good = np.array([r[3] for r in results])
         best_dirs = [r[4] for r in results]
 
-        # 评分 = |LIFT - 1|
+        # 评分只奖励目标方向上的改善
         self.scores_ = pd.Series(scores, index=X.columns)
 
         # LIFT详情表
@@ -287,4 +295,4 @@ class LiftSelector(BaseFeatureSelector):
 
         # 生成剔除原因
         dir_label = {"auto": "自动", "bad": "找坏人", "good": "找好人"}
-        self._drop_reason = f"LIFT@{self.ratio:.0%} |LIFT-1| < {self.threshold}" f"（方向: {dir_label.get(self.direction, self.direction)}）"
+        self._drop_reason = f"LIFT@{self.ratio:.0%} 方向改善得分 < {self.threshold}" f"（方向: {dir_label.get(self.direction, self.direction)}）"

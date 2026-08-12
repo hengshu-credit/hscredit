@@ -107,6 +107,8 @@ class SequentialFeatureSelector(BaseFeatureSelector):
     https://scikit-learn.org/stable/modules/generated/sklearn.feature_selection.SequentialFeatureSelector.html
     """
 
+    method_name = "逐步筛选"
+
     def __init__(
         self,
         estimator,
@@ -141,7 +143,6 @@ class SequentialFeatureSelector(BaseFeatureSelector):
         self.direction = direction
         self.scoring = scoring
         self.cv = cv
-        self.method_name = "逐步筛选"
 
     def _fit_impl(
         self,

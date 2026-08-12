@@ -186,7 +186,7 @@ def test_ordinary_selector_skips_forced_fields_before_binning_and_selection():
     assert binner.fit_columns == [["普通字段"]]
     assert binner.transform_columns == [["普通字段"]]
     assert selector.fit_X_.columns.tolist() == ["普通字段"]
-    assert selector.selected_features_ == ["普通字段", "强制保留"]
+    assert selector.selected_features_ == ["强制保留", "普通字段"]
     assert selector.feature_names_in_.tolist() == list(X.columns)
     assert selector.n_features_in_ == X.shape[1]
     assert set(selector.forced_dropped_) == {"显式剔除", "强制删除"}

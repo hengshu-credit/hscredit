@@ -38,7 +38,10 @@ def _compute_mode_ratio(series: pd.Series, dropna: bool = True) -> float:
     if len(summary) == 0:
         return 1.0
 
-    return summary.iloc[0] / len(series)
+    denominator = int(series.notna().sum()) if dropna else len(series)
+    if denominator == 0:
+        return 1.0
+    return summary.iloc[0] / denominator
 
 
 def _compute_mode_feature(task):
@@ -58,7 +61,7 @@ class ModeSelector(BaseFeatureSelector):
     :param threshold: 单一值占比阈值，默认为0.95
         - 0.95: 移除单一值占比超过95%的特征
         - 范围: 0-1之间的浮点数
-    :param dropna: 是否将NaN视为独立类别，默认为True
+    :param dropna: 是否在计算众数占比时排除NaN，默认为True
     :param n_jobs: 并行计算的任务数
 
     **参考样例**
@@ -77,6 +80,8 @@ class ModeSelector(BaseFeatureSelector):
         >>> print(selector.selected_features_)
         ['a', 'b']
     """
+
+    method_name = "单一值筛选"
 
     def __init__(
         self,
@@ -105,7 +110,6 @@ class ModeSelector(BaseFeatureSelector):
             parallel_config=parallel_config,
         )
         self.dropna = dropna
-        self.method_name = "单一值筛选"
 
     def _fit_impl(
         self,

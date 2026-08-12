@@ -36,12 +36,40 @@ _METRIC_COL_MAP = {
     "bad_rate": ("坏样本率", "max"),  # 取最大坏样本率
 }
 
-DEFAULT_BINNING_PARAMS = {
-    "method": "best_iv",
-    "max_n_bins": 5,
-    "min_bin_size": 0.01,
-    "missing_separate": True,
-}
+class _DefaultBinningParams(dict):
+    """可被 sklearn clone 保留身份的不可变默认配置标记。"""
+
+    def __deepcopy__(self, memo):
+        return self
+
+    def __reduce__(self):
+        return _get_default_binning_params, ()
+
+    def _immutable(self, *args, **kwargs):
+        raise TypeError("默认分箱配置不可变；如需修改请显式传入新的 binning_params 字典")
+
+    __setitem__ = _immutable
+    __delitem__ = _immutable
+    clear = _immutable
+    pop = _immutable
+    popitem = _immutable
+    setdefault = _immutable
+    update = _immutable
+
+
+DEFAULT_BINNING_PARAMS = _DefaultBinningParams(
+    {
+        "method": "best_iv",
+        "max_n_bins": 5,
+        "min_bin_size": 0.01,
+        "missing_separate": True,
+    }
+)
+
+
+def _get_default_binning_params():
+    """供 pickle 恢复不可变默认配置单例。"""
+    return DEFAULT_BINNING_PARAMS
 
 
 def _rank_corr_column(task):
@@ -185,6 +213,8 @@ class CorrSelector(BaseFeatureSelector):
     高相关特征对中保留 IV/KS 更高者的原则参考 toad / scorecardpipeline。
     """
 
+    method_name = "相关性筛选"
+
     def __init__(
         self,
         threshold: float = 0.7,
@@ -202,7 +232,6 @@ class CorrSelector(BaseFeatureSelector):
         parallel_config: Optional[Dict[str, Any]] = None,
         corr_block_size: int = 512,
     ):
-        self._uses_default_binning_params = binning_params is DEFAULT_BINNING_PARAMS or binning_params == DEFAULT_BINNING_PARAMS
         super().__init__(
             target=target,
             threshold=threshold,
@@ -219,7 +248,11 @@ class CorrSelector(BaseFeatureSelector):
         self.metric = metric
         self.weights = weights
         self.corr_block_size = corr_block_size
-        self.method_name = "相关性筛选"
+
+    @property
+    def _uses_default_binning_params(self) -> bool:
+        """区分隐式默认配置与内容相同的显式用户配置。"""
+        return isinstance(self.binning_params, _DefaultBinningParams)
 
     def _validate_corr_block_size(self) -> int:
         """校验并返回相关计算块大小。"""

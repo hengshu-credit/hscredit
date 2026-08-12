@@ -73,6 +73,8 @@ class FTestSelector(BaseFeatureSelector):
     https://scikit-learn.org/stable/modules/generated/sklearn.feature_selection.f_classif.html
     """
 
+    method_name = "F检验筛选"
+
     def __init__(
         self,
         threshold: float = 0.0,
@@ -102,7 +104,6 @@ class FTestSelector(BaseFeatureSelector):
         )
         self.k = k
         self.percentile = percentile
-        self.method_name = "F检验筛选"
 
     def _fit_impl(
         self,
@@ -121,6 +122,18 @@ class FTestSelector(BaseFeatureSelector):
             X = X.drop(columns=self.target)
 
         self._get_feature_names(X)
+
+        if isinstance(self.k, (int, np.integer)) and not isinstance(self.k, (bool, np.bool_)):
+            if int(self.k) <= 0:
+                raise ValueError("k 必须大于 0")
+        elif self.k != "all":
+            raise ValueError("k 必须是大于 0 的整数或 'all'")
+        if self.percentile is not None and (
+            isinstance(self.percentile, (bool, np.bool_))
+            or not isinstance(self.percentile, (int, np.integer))
+            or not 0 < int(self.percentile) <= 100
+        ):
+            raise ValueError("percentile 必须是 (0, 100] 范围内的整数")
 
         # 处理类别变量
         X_encoded = X.copy()
@@ -143,20 +156,17 @@ class FTestSelector(BaseFeatureSelector):
         self.scores_ = pd.Series(f_scores, index=X.columns)
 
         # 选择特征
+        selected_mask = f_scores >= self.threshold
         if self.percentile is not None:
-            # 使用百分比
             selector = SelectPercentile(percentile=self.percentile)
             selector.fit(X_encoded.values, y)
-            selected_mask = selector.get_support()
-        elif isinstance(self.k, int):
-            # 保留top-k
-            top_k = min(self.k, len(X.columns))
-            top_indices = np.argsort(f_scores)[-top_k:]
-            selected_mask = np.zeros(len(X.columns), dtype=bool)
-            selected_mask[top_indices] = True
-        else:
-            # 使用阈值
-            selected_mask = f_scores >= self.threshold
+            selected_mask &= selector.get_support()
+        if isinstance(self.k, (int, np.integer)) and not isinstance(self.k, (bool, np.bool_)):
+            top_k = min(int(self.k), len(X.columns))
+            ranking = np.argsort(-f_scores, kind="stable")
+            top_mask = np.zeros(len(X.columns), dtype=bool)
+            top_mask[ranking[:top_k]] = True
+            selected_mask &= top_mask
 
         self.selected_features_ = X.columns[selected_mask].tolist()
         self._drop_reason = f"F值 < {self.threshold}"

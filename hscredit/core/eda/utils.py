@@ -199,7 +199,7 @@ def infer_feature_types(df: pd.DataFrame,
         # 尝试转换为日期
         if series.dtype == 'object':
             try:
-                pd.to_datetime(series.dropna().iloc[:100])
+                pd.to_datetime(series.dropna().iloc[:100], format='mixed')
                 feature_types[col] = 'datetime'
                 continue
             except Exception:

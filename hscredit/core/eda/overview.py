@@ -23,7 +23,7 @@ def _psm_binning_worker(task):
         "parallel_config": parallel_config,
     }
     if method == "uniform":
-        binner = UniformBinning(n_bins=n_bins, **common)
+        binner = UniformBinning(max_n_bins=n_bins, **common)
     elif method == "tree":
         binner = TreeBinning(max_depth=int(np.log2(n_bins)) + 1, **common)
     else:
@@ -299,7 +299,7 @@ def feature_summary(
     ...     binning_params={
     ...         'min_bin_size': 0.05,
     ...         'user_splits': {'age': [25, 35, 45]},
-    ...         'strict_user_splits': True,
+    ...         'user_splits_fixed': True,
     ...     },
     ... )
     """
@@ -995,7 +995,7 @@ def _calc_psm_stats(df, segment_cols, segment_labels, dim_name, metrics):
 
             results.append(result)
     else:
-        grouped = df.groupby(segment_cols)
+        grouped = df.groupby(segment_cols, observed=False)
         for group_values, group_df in grouped:
             if not isinstance(group_values, tuple):
                 group_values = (group_values,)

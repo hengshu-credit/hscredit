@@ -232,7 +232,7 @@ def test_partial_user_splits_keep_rules_fixed_and_fit_remaining_with_method(n_jo
     y = pd.Series(np.tile([0, 1, 0, 1, 1, 0], 4), name="目标")
     baseline = OptimalBinning(
         method="uniform",
-        max_n_bins=3,
+        max_n_bins=4,
         min_n_bins=2,
         n_jobs=1,
         random_state=17,
@@ -241,8 +241,8 @@ def test_partial_user_splits_keep_rules_fixed_and_fit_remaining_with_method(n_jo
     binner = OptimalBinning(
         method="uniform",
         user_splits={"固定规则": [5.0, 10.0, 15.0]},
-        strict_user_splits=True,
-        max_n_bins=3,
+        user_splits_fixed=True,
+        max_n_bins=4,
         min_n_bins=2,
         n_jobs=n_jobs,
         parallel_backend=backend,
@@ -271,7 +271,7 @@ def test_partial_user_splits_keep_rules_fixed_and_fit_remaining_with_method(n_jo
         pytest.param(2, "loky", id="loky"),
     ],
 )
-def test_non_strict_user_splits_preserve_legacy_default_splits_in_parallel(n_jobs, backend):
+def test_mutable_user_splits_and_ordinary_method_are_stable_in_parallel(n_jobs, backend):
     X = pd.DataFrame(
         {
             "用户规则": np.arange(40, dtype=float),
@@ -282,7 +282,7 @@ def test_non_strict_user_splits_preserve_legacy_default_splits_in_parallel(n_job
     kwargs = {
         "method": "uniform",
         "user_splits": {"用户规则": [10.0, 20.0, 30.0]},
-        "strict_user_splits": False,
+        "user_splits_fixed": False,
         "max_n_bins": 4,
         "min_n_bins": 2,
         "lift_refine": False,
@@ -296,12 +296,13 @@ def test_non_strict_user_splits_preserve_legacy_default_splits_in_parallel(n_job
     ).fit(X, y)
 
     _assert_feature_state_equal(serial, fitted, X.columns)
-    # 原非严格逻辑对未配置字段使用默认等频切分，而不是 uniform method。
-    expected_default = np.percentile(X["未配置规则"], [25, 50, 75])
-    np.testing.assert_allclose(fitted.splits_["未配置规则"], expected_default)
+    expected_ordinary = OptimalBinning(method="uniform", max_n_bins=4, min_n_bins=2, lift_refine=False).fit(
+        X[["未配置规则"]], y
+    )
+    np.testing.assert_allclose(fitted.splits_["未配置规则"], expected_ordinary.splits_["未配置规则"])
     np.testing.assert_array_equal(fitted.splits_["用户规则"], [10.0, 20.0, 30.0])
-    assert fitted._ordinary_binner_ is None
-    assert fitted._ordinary_features_ == ()
+    assert fitted._ordinary_binner_ is not None
+    assert fitted._ordinary_features_ == ("未配置规则",)
 
     for metric in ("indices", "bins", "woe"):
         pd.testing.assert_frame_equal(
@@ -310,7 +311,7 @@ def test_non_strict_user_splits_preserve_legacy_default_splits_in_parallel(n_job
         )
 
 
-def test_non_strict_user_splits_submit_explicit_and_default_fields_together(monkeypatch):
+def test_mutable_user_splits_and_ordinary_fields_use_their_own_batches(monkeypatch):
     X = pd.DataFrame(
         {
             "用户规则": np.arange(24, dtype=float),
@@ -329,12 +330,12 @@ def test_non_strict_user_splits_submit_explicit_and_default_fields_together(monk
     OptimalBinning(
         method="uniform",
         user_splits={"用户规则": [6.0, 12.0, 18.0]},
-        strict_user_splits=False,
+        user_splits_fixed=False,
         n_jobs=2,
         parallel_backend="threading",
     ).fit(X, y)
 
-    assert ("_fit_feature_transaction", ["用户规则", "未配置规则"]) in calls
+    assert ("_fit_feature_transaction", ["用户规则"]) in calls
 
 
 def test_user_rule_fields_are_submitted_as_one_parallel_feature_batch(monkeypatch):
@@ -356,7 +357,7 @@ def test_user_rule_fields_are_submitted_as_one_parallel_feature_batch(monkeypatc
     OptimalBinning(
         method="uniform",
         user_splits={"规则一": [5.0, 10.0], "规则二": [8.0, 16.0]},
-        strict_user_splits=True,
+        user_splits_fixed=True,
         n_jobs=2,
         parallel_backend="threading",
     ).fit(X, y)
@@ -1023,8 +1024,8 @@ def test_same_feature_rule_replacement_does_not_reuse_stale_woe(n_jobs, backend,
     if explicit_new_woe:
         np.testing.assert_allclose(result.iloc[:4], [0.4, 0.5, 0.6, 0.7])
     else:
-        assert "特征" not in getattr(binner, "_woe_maps_", {})
-        expected = dict(zip(range(4), binner.bin_tables_["特征"]["分档WOE值"].values))
+        expected = dict(zip(binner.bin_tables_["特征"]["分箱"], binner.bin_tables_["特征"]["分档WOE值"]))
+        assert binner._woe_maps_["特征"] == {**expected, -3: 0.0}
         np.testing.assert_allclose(result.iloc[:4], [expected[index] for index in range(4)])
 
 
@@ -1192,12 +1193,12 @@ def test_optimal_prebinning_parameters_survive_sklearn_clone():
 
 def test_optimal_fit_transaction_preserves_keyword_options(mixed_xy):
     X, y = mixed_xy
-    source = OptimalBinning(method="uniform", lift_refine=False, or_time_limit=7, n_jobs=1)
+    source = OptimalBinning(method="uniform", lift_refine=False, time_limit=7, n_jobs=1)
     candidate = source._make_fit_transaction_candidate()
     binner = RefinementFailingOptimalBinning(method="best_iv", lift_refine=False, n_jobs=1).fit(X, y)
 
     assert candidate._fit_control_options["lift_refine"] is False
-    assert candidate.kwargs["or_time_limit"] == 7
+    assert candidate.kwargs["time_limit"] == 7
     assert binner._fit_control_options["lift_refine"] is False
 
 

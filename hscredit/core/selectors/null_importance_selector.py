@@ -27,19 +27,14 @@ from sklearn.model_selection import check_cv
 from sklearn.base import clone
 from sklearn.utils import check_random_state
 
-from .base import BaseFeatureSelector, get_feature_importances
+from .base import BaseFeatureSelector, _set_estimator_parallel_budget, get_feature_importances
 from ...utils.parallel import ParallelWorkload, _current_parallel_budget
 
 
 def _fit_importance_model(estimator, X, y):
     """克隆并拟合单个重要性模型，遵守当前子预算。"""
     model = clone(estimator)
-    params = model.get_params(deep=False) if hasattr(model, "get_params") else {}
-    model_n_jobs = params.get("n_jobs")
-    if isinstance(model_n_jobs, (int, np.integer)) and model_n_jobs != 1:
-        budget = _current_parallel_budget().available
-        requested = budget if model_n_jobs == -1 else min(int(model_n_jobs), budget)
-        model.set_params(n_jobs=max(1, requested))
+    model = _set_estimator_parallel_budget(model, _current_parallel_budget().available)
     model.fit(X, y)
     return get_feature_importances(model)
 
@@ -123,6 +118,8 @@ class NullImportanceSelector(BaseFeatureSelector):
     https://doi.org/10.1093/bioinformatics/btq134
     """
 
+    method_name = "零重要性筛选"
+
     def __init__(
         self,
         estimator,
@@ -156,7 +153,6 @@ class NullImportanceSelector(BaseFeatureSelector):
         self.cv = cv
         self.n_runs = n_runs
         self.random_state = random_state
-        self.method_name = "零重要性筛选"
 
     def _fit_impl(
         self,
@@ -200,9 +196,14 @@ class NullImportanceSelector(BaseFeatureSelector):
             base_seed = int(self.random_state)
         max_seed = np.iinfo(np.int32).max
         tasks = [(run, (base_seed + run) % max_seed, self.estimator, X, y, self.cv) for run in range(self.n_runs)]
-        estimator_params = self.estimator.get_params(deep=False) if hasattr(self.estimator, "get_params") else {}
-        inner_n_jobs = estimator_params.get("n_jobs")
-        has_parallel_children = isinstance(inner_n_jobs, (int, np.integer)) and inner_n_jobs not in (0, 1)
+        estimator_params = self.estimator.get_params(deep=True) if hasattr(self.estimator, "get_params") else {}
+        worker_aliases = {"n_jobs", "thread_count", "num_workers"}
+        has_parallel_children = any(
+            name.rsplit("__", 1)[-1] in worker_aliases
+            and isinstance(value, (int, np.integer))
+            and value not in (0, 1)
+            for name, value in estimator_params.items()
+        )
         cv_cost = float(self.cv) if isinstance(self.cv, (int, np.integer)) else 5.0
         results = self._parallel_execute(
             _run_null_importance_experiment,

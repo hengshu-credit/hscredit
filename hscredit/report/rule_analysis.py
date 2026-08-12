@@ -1224,7 +1224,7 @@ def _store_splits_from_labels(tbl: pd.DataFrame) -> None:
                 continue
 
     splits = sorted(set(splits))
-    tbl._splits = np.array(splits) if splits else np.array([])
+    object.__setattr__(tbl, '_splits', np.array(splits) if splits else np.array([]))
 
 
 def _normalize_bin_table(

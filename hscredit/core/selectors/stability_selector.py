@@ -28,6 +28,9 @@ import numpy as np
 import pandas as pd
 
 from .base import BaseFeatureSelector
+from .iv_selector import _compute_iv_feature, _compute_iv_single
+from .psi_selector import _compute_psi_single
+from ...exceptions import ValidationError
 from ...utils.parallel import ParallelWorkload
 
 
@@ -41,30 +44,7 @@ def _compute_iv(x: np.ndarray, y: np.ndarray, regularization: float = 1.0) -> fl
     :param regularization: 正则化系数，默认1.0，用于平滑分箱占比避免零除
     :return: IV值，类型为float
     """
-    try:
-        s = pd.Series(x)
-        valid = ~s.isnull().values
-    except Exception:
-        valid = ~pd.isnull(x)
-    x_v, y_v = x[valid], y[valid]
-    if len(x_v) == 0:
-        return 0.0
-    uniques = np.unique(x_v)
-    if len(uniques) <= 1:
-        return 0.0
-
-    event = y_v == 1
-    nonevent = ~event
-    e_tot = np.count_nonzero(event) + 2 * regularization
-    ne_tot = np.count_nonzero(nonevent) + 2 * regularization
-
-    iv = 0.0
-    for cat in uniques:
-        mask = x_v == cat
-        e_r = (np.count_nonzero(mask & event) + regularization) / e_tot
-        ne_r = (np.count_nonzero(mask & nonevent) + regularization) / ne_tot
-        iv += (e_r - ne_r) * np.log(max(e_r, 1e-10) / max(ne_r, 1e-10))
-    return float(iv)
+    return _compute_iv_single(x, y, regularization)
 
 
 def _compute_psi(expected: np.ndarray, actual: np.ndarray, n_bins: int = 10) -> float:
@@ -77,24 +57,14 @@ def _compute_psi(expected: np.ndarray, actual: np.ndarray, n_bins: int = 10) -> 
     :param n_bins: 分箱数量，默认10，用于计算各分箱的占比差异
     :return: PSI值，类型为float
     """
-    bins = np.percentile(expected, np.linspace(0, 100, n_bins + 1))
-    bins = np.unique(bins)
-    if len(bins) < 2:
-        return 0.0
-    exp_c = np.maximum(np.histogram(expected, bins=bins)[0], 1)
-    act_c = np.maximum(np.histogram(actual, bins=bins)[0], 1)
-    exp_r = exp_c / exp_c.sum()
-    act_r = act_c / act_c.sum()
-    return float(np.sum((act_r - exp_r) * np.log(act_r / exp_r)))
+    return _compute_psi_single(expected, actual, n_bins=n_bins)
 
 
 def _compute_stability_feature(task):
     """计算单个特征的 IV 与 PSI。"""
-    feature, iv_values, y, expected_values, oot_values, psi_bins = task
-    iv = _compute_iv(iv_values, y)
-    expected = pd.Series(expected_values).dropna().values.astype(float)
-    actual = pd.Series(oot_values).dropna().values.astype(float)
-    psi = _compute_psi(expected, actual, psi_bins)
+    feature, iv_series, y, expected_values, oot_values, psi_bins = task
+    _, iv = _compute_iv_feature((feature, iv_series, y, 1.0))
+    psi = _compute_psi(expected_values, oot_values, psi_bins)
     return feature, iv, psi
 
 
@@ -155,6 +125,8 @@ class StabilityAwareSelector(BaseFeatureSelector):
     *Credit Risk Scorecards.* Wiley。
     """
 
+    method_name = "稳定性感知筛选"
+
     def __init__(
         self,
         iv_threshold: float = 0.02,
@@ -195,7 +167,6 @@ class StabilityAwareSelector(BaseFeatureSelector):
         self.oot_df = oot_df
         self.psi_bins = psi_bins
         self.random_state = random_state
-        self.method_name = "稳定性感知筛选"
 
     # ----------------------------------------------------------
     def _fit_impl(
@@ -203,6 +174,12 @@ class StabilityAwareSelector(BaseFeatureSelector):
         X: pd.DataFrame,
         y: Optional[Union[pd.Series, np.ndarray]],
     ) -> None:
+        if self.iv_threshold < 0 or self.psi_threshold < 0:
+            raise ValueError("iv_threshold 和 psi_threshold 不能小于 0")
+        if self.iv_weight < 0 or self.psi_weight < 0 or self.iv_weight + self.psi_weight <= 0:
+            raise ValueError("iv_weight 和 psi_weight 必须非负且至少一个大于 0")
+        if isinstance(self.psi_bins, (bool, np.bool_)) or not isinstance(self.psi_bins, (int, np.integer)) or int(self.psi_bins) < 2:
+            raise ValueError("psi_bins 必须是大于等于 2 的整数")
         if y is None:
             if self.target not in X.columns:
                 raise ValueError(f"需要传入 y 或 X 中包含 '{self.target}' 列")
@@ -212,36 +189,35 @@ class StabilityAwareSelector(BaseFeatureSelector):
         self._get_feature_names(X)
         y = np.asarray(y)
 
-        # 编码类别变量
-        X_enc = X.copy()
-        for col in X.columns:
-            if X[col].dtype.name in ("object", "category"):
-                X_enc[col] = pd.factorize(X[col])[0]
-        iv_enc = X_enc
+        iv_source = X
 
         # --- PSI ---
         if self.oot_df is not None:
+            if not isinstance(self.oot_df, pd.DataFrame):
+                raise ValidationError("oot_df 必须是 DataFrame")
             oot = self.oot_df
             if self.target in oot.columns:
                 oot = oot.drop(columns=self.target)
-            oot_enc = oot.copy()
-            for col in oot.columns:
-                if oot[col].dtype.name in ("object", "category"):
-                    oot_enc[col] = pd.factorize(oot[col])[0]
+            missing = [column for column in X.columns if column not in oot.columns]
+            if missing:
+                raise ValidationError(f"OOT 数据缺少拟合字段: {missing}")
+            oot_source = oot.loc[:, X.columns]
+            if self._binner_instance is not None:
+                oot_source = self._transform_with_fitted_binner(oot_source)
+            expected_source = X
         else:
             # 随机对半拆分
-            n = len(X_enc)
+            n = len(X)
+            if n < 2:
+                raise ValidationError("稳定性筛选至少需要 2 条样本")
             rng = np.random.RandomState(self.random_state)
             idx = rng.permutation(n)
-            oot_enc = X_enc.iloc[idx[n // 2 :]]
-            X_enc_half = X_enc.iloc[idx[: n // 2]]
-            # 使用前半作为 expected
-            X_enc = X_enc_half
+            expected_source = X.iloc[idx[: n // 2]]
+            oot_source = X.iloc[idx[n // 2 :]]
 
         def iter_tasks():
             for col in X.columns:
-                actual = oot_enc[col].values if col in oot_enc.columns else X_enc[col].values
-                yield col, iv_enc[col].values, y, X_enc[col].values, actual, self.psi_bins
+                yield col, iv_source[col], y, expected_source[col].values, oot_source[col].values, self.psi_bins
 
         results = self._parallel_execute(
             _compute_stability_feature,
