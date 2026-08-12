@@ -266,6 +266,10 @@ def test_scorecard_pmml_export_uses_expression_transformer_for_string_categories
     class FakeConcatTransformer:
         pass
 
+    class FakeAggregateTransformer:
+        def __init__(self, function):
+            self.function = function
+
     class FakeAlias:
         def __init__(self, transformer, name, prefit=False):
             self.transformer = transformer
@@ -304,6 +308,7 @@ def test_scorecard_pmml_export_uses_expression_transformer_for_string_categories
     fake_decoration.ContinuousDomain = FakeContinuousDomain
 
     fake_preprocessing = types.ModuleType('sklearn2pmml.preprocessing')
+    fake_preprocessing.AggregateTransformer = FakeAggregateTransformer
     fake_preprocessing.ConcatTransformer = FakeConcatTransformer
     fake_preprocessing.LookupTransformer = FakeLookupTransformer
     fake_preprocessing.ExpressionTransformer = FakeExpressionTransformer
@@ -323,7 +328,10 @@ def test_scorecard_pmml_export_uses_expression_transformer_for_string_categories
     numeric_steps = dict(next(
         transformer.steps
         for _, transformer, features in mapper
-        if features == ['duration_in_month', 'duration_in_month']
+        if (
+            features == ['duration_in_month']
+            and transformer.steps[-1][1].name == '__score_duration_in_month'
+        )
     ))
 
     assert isinstance(categorical_steps['domain'], FakeCategoricalDomain)
@@ -336,6 +344,8 @@ def test_scorecard_pmml_export_uses_expression_transformer_for_string_categories
     )
 
     assert isinstance(numeric_steps['domain'], FakeContinuousDomain)
+    assert isinstance(numeric_steps['prepare'], FakeAggregateTransformer)
+    assert numeric_steps['prepare'].function == 'min'
     assert isinstance(numeric_steps['score'], FakeAlias)
     assert isinstance(numeric_steps['score'].transformer, FakeExpressionTransformer)
     assert 'X[0] < 6.5' in numeric_steps['score'].transformer.expression
@@ -355,6 +365,10 @@ def test_scorecard_pmml_export_tolerates_sklearn2pmml_none_len_bug(tmp_path, mon
 
     class FakeConcatTransformer:
         pass
+
+    class FakeAggregateTransformer:
+        def __init__(self, function):
+            self.function = function
 
     class FakeAlias:
         def __init__(self, transformer, name, prefit=False):
@@ -400,6 +414,7 @@ def test_scorecard_pmml_export_tolerates_sklearn2pmml_none_len_bug(tmp_path, mon
     fake_decoration.ContinuousDomain = FakeContinuousDomain
 
     fake_preprocessing = types.ModuleType('sklearn2pmml.preprocessing')
+    fake_preprocessing.AggregateTransformer = FakeAggregateTransformer
     fake_preprocessing.ConcatTransformer = FakeConcatTransformer
     fake_preprocessing.LookupTransformer = FakeLookupTransformer
     fake_preprocessing.ExpressionTransformer = FakeExpressionTransformer
