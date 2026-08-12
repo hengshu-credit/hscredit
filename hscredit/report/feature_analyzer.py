@@ -1435,7 +1435,7 @@ def feature_bin_stats(
             if target_cfg["mob_col"] is not None:
                 # 逾期模式：需要包含金额字段（如果有）
                 cols_to_select = [feat, target_cfg["mob_col"]]
-                if amount is not None and amount in data.columns:
+                if amount is not None and amount in data.columns and amount not in cols_to_select:
                     cols_to_select.append(amount)
                 analysis_data = data[cols_to_select].copy()
                 y = (analysis_data[target_cfg["mob_col"]] > target_cfg["dpd"]).astype(int)
@@ -1449,7 +1449,7 @@ def feature_bin_stats(
             else:
                 # 普通目标模式：需要包含金额字段（如果有）
                 cols_to_select = [feat, target_name]
-                if amount is not None and amount in data.columns:
+                if amount is not None and amount in data.columns and amount not in cols_to_select:
                     cols_to_select.append(amount)
                 analysis_data = data[cols_to_select].copy()
                 y = analysis_data[target_name]
@@ -2066,6 +2066,7 @@ def auto_feature_analysis(
     n_jobs=-1,
     parallel_backend=None,
     parallel_config=None,
+    condition_color="F76E6C",
 ):
     """自动特征分析.
 
@@ -2095,6 +2096,7 @@ def auto_feature_analysis(
     :param margins: 是否在每个特征分箱表末尾添加合计行，默认 False
     :param amount: 放款金额或余额字段名称。传入后同时生成订单口径和金额口径两张分箱表
     :param image_table_gap_rows: 图片区与分箱表之间的额外空行数
+    :param condition_color: 条件格式颜色，默认使用副主题色 ``"F76E6C"``；支持颜色字符串、色阶列表或按列配置的字典
     :return: (end_row, end_col) 分析结束位置
 
     **参考样例**
@@ -2120,8 +2122,9 @@ def auto_feature_analysis(
     init_setting()
 
     data = data.copy()
+    requested_target = target
 
-    if not isinstance(features, (list, tuple)):
+    if features is not None and not isinstance(features, (list, tuple)):
         features = [features]
 
     if overdue and not isinstance(overdue, (list, tuple, np.ndarray)):
@@ -2137,6 +2140,10 @@ def auto_feature_analysis(
     target, target_label_names, target_display_labels, target_y_map = _auto_feature_target_maps(data, target=target, overdue=overdue, dpds=dpds)
     if overdue:
         data[target] = target_y_map[target_label_names[0]]
+
+    if features is None:
+        excluded_features = {column for column in [date, requested_target, target, *(overdue or [])] if column is not None}
+        features = [column for column in data.columns if column not in excluded_features]
 
     if date is not None and date in data.columns and not pd.api.types.is_datetime64_any_dtype(data[date]):
         converted_date = pd.to_datetime(data[date], errors="coerce")
@@ -2358,6 +2365,7 @@ def auto_feature_analysis(
             worksheet,
             percent_cols=time_percent_cols,
             condition_cols=time_percent_cols,
+            condition_color=condition_color,
             start_row=table_start_row,
             index=not isinstance(time_distribution.columns, pd.MultiIndex),
         )
@@ -2378,10 +2386,10 @@ def auto_feature_analysis(
 
     if corr:
         corr_plot(corr_data, save=os.path.join(output_dir, f"auto_report_corr_plot{suffix}.png"), annot=True if len(corr_data.columns) <= 10 else False, fontsize=14 if len(corr_data.columns) <= 10 else 12)
-        end_row, end_col = dataframe2excel(corr_table, writer, worksheet, color_cols=list(corr_data.columns), start_row=end_row, figures=[os.path.join(output_dir, f"auto_report_corr_plot{suffix}.png")], title="数值类变量相关性", figsize=(min(60 * len(corr_data.columns), 1080), min(55 * len(corr_data.columns), 950)), index=True, custom_cols=list(corr_data.columns), custom_format="0.00")
+        end_row, end_col = dataframe2excel(corr_table, writer, worksheet, color_cols=list(corr_data.columns), condition_color=condition_color, start_row=end_row, figures=[os.path.join(output_dir, f"auto_report_corr_plot{suffix}.png")], title="数值类变量相关性", figsize=(min(60 * len(corr_data.columns), 1080), min(55 * len(corr_data.columns), 950)), index=True, custom_cols=list(corr_data.columns), custom_format="0.00")
         end_row += 2
 
-    end_row, end_col = writer.insert_value2sheet(worksheet, (end_row, start_col), value="数值类特征 OR 评分效果评估", style="header_middle")
+    end_row, end_col = writer.insert_value2sheet(worksheet, (end_row, start_col), value="数值类特征 OR 评分效果评估", style="header_middle", align={"horizontal": "left"})
 
     for feature_result in feature_results:
         col = feature_result["feature"]
@@ -2422,7 +2430,7 @@ def auto_feature_analysis(
                     if "分箱标签" in plot_table.columns:
                         plot_table.rename(columns={"分箱标签": "分箱"}, inplace=True)
 
-                    bin_plot(plot_table, desc=f"{feature_map.get(col, col)}", figsize=(10, 5), anchor=0.935, save=os.path.join(output_dir, f"feature_bins_plot_{col}{suffix}.png"))
+                    bin_plot(plot_table, desc=f"{feature_map.get(col, col)}", figsize=(10, 5), save=os.path.join(output_dir, f"feature_bins_plot_{col}{suffix}.png"))
 
                 if temp[col].dtypes.name not in ["object", "str", "category"]:
                     if "ks" in pictures:
@@ -2433,7 +2441,7 @@ def auto_feature_analysis(
                     if "hist" in pictures:
                         plot_source = temp.dropna().reset_index(drop=True)
                         if len(plot_source) > 0:
-                            hist_plot(plot_source[col], y_true=plot_source[actual_target], figsize=(10, 6), desc=f"{feature_map.get(col, col)} 好客户 VS 坏客户", bins=30, anchor=1.11, fontsize=14, labels={0: "好客户", 1: "坏客户"}, save=os.path.join(output_dir, f"feature_hist_plot_{col}{suffix}.png"))
+                            hist_plot(plot_source[col], y_true=plot_source[actual_target], figsize=(10, 6), desc=f"{feature_map.get(col, col)} 好客户 VS 坏客户", bins=30, fontsize=14, labels={0: "好客户", 1: "坏客户"}, save=os.path.join(output_dir, f"feature_hist_plot_{col}{suffix}.png"))
 
             if use_amount and amount_table is not None:
                 title_span = sample_title_columns_len + 1 + amount_title_columns_len
@@ -2466,7 +2474,18 @@ def auto_feature_analysis(
                     if "hist" in pictures:
                         end_row, end_col = writer.insert_pic2sheet(worksheet, os.path.join(output_dir, f"feature_hist_plot_{col}{suffix}.png"), (chart_row, end_col - 1), figsize=(600, 350))
 
-            table_start_row = end_row + image_table_gap_rows
+            has_amount_table = use_amount and amount_table is not None
+            effective_gap_rows = max(image_table_gap_rows, 1) if has_amount_table else image_table_gap_rows
+            table_start_row = end_row + effective_gap_rows
+            if has_amount_table:
+                writer.insert_value2sheet(
+                    worksheet,
+                    (table_start_row - 1, start_col),
+                    value="订单口径",
+                    style="header",
+                    end_space=(table_start_row - 1, start_col + sample_title_columns_len - 1),
+                    align={"horizontal": "left"},
+                )
             if return_cols:
                 if sample_table.columns.nlevels > 1 and not isinstance(merge_columns[0], tuple):
                     sample_merge_cols = [("分箱详情", c) for c in merge_columns]
@@ -2478,16 +2497,25 @@ def auto_feature_analysis(
                     worksheet,
                     percent_cols=["样本占比", "好样本占比", "坏样本占比", "坏样本率", "LIFT值", "坏账改善", "累积LIFT值", "累积坏账改善"],
                     condition_cols=["坏样本率", "LIFT值"],
+                    condition_color=condition_color,
                     merge_column=["指标名称", "指标含义"],
                     merge=True,
                     fill=True,
                     start_row=table_start_row,
                 )
             else:
-                end_row, end_col = dataframe2excel(sample_table, writer, worksheet, percent_cols=["样本占比", "好样本占比", "坏样本占比", "坏样本率", "LIFT值", "坏账改善", "累积LIFT值", "累积坏账改善"], condition_cols=["坏样本率", "LIFT值"], merge_column=["指标名称", "指标含义"], merge=True, fill=True, start_row=table_start_row)
+                end_row, end_col = dataframe2excel(sample_table, writer, worksheet, percent_cols=["样本占比", "好样本占比", "坏样本占比", "坏样本率", "LIFT值", "坏账改善", "累积LIFT值", "累积坏账改善"], condition_cols=["坏样本率", "LIFT值"], condition_color=condition_color, merge_column=["指标名称", "指标含义"], merge=True, fill=True, start_row=table_start_row)
 
-            if use_amount and amount_table is not None:
+            if has_amount_table:
                 amount_start_col = end_col + 1
+                writer.insert_value2sheet(
+                    worksheet,
+                    (table_start_row - 1, amount_start_col),
+                    value="金额口径",
+                    style="header",
+                    end_space=(table_start_row - 1, amount_start_col + amount_title_columns_len - 1),
+                    align={"horizontal": "left"},
+                )
                 if return_cols:
                     if amount_table.columns.nlevels > 1 and not isinstance(merge_columns[0], tuple):
                         amount_merge_cols = [("分箱详情", c) for c in merge_columns]
@@ -2499,6 +2527,7 @@ def auto_feature_analysis(
                         worksheet,
                         percent_cols=["样本占比", "好样本占比", "坏样本占比", "坏样本率", "LIFT值", "坏账改善", "累积LIFT值", "累积坏账改善"],
                         condition_cols=["坏样本率", "LIFT值"],
+                        condition_color=condition_color,
                         merge_column=["指标名称", "指标含义"],
                         merge=True,
                         fill=True,
@@ -2506,7 +2535,7 @@ def auto_feature_analysis(
                         start_col=amount_start_col,
                     )
                 else:
-                    dataframe2excel(amount_table, writer, worksheet, percent_cols=["样本占比", "好样本占比", "坏样本占比", "坏样本率", "LIFT值", "坏账改善", "累积LIFT值", "累积坏账改善"], condition_cols=["坏样本率", "LIFT值"], merge_column=["指标名称", "指标含义"], merge=True, fill=True, start_row=table_start_row, start_col=amount_start_col)
+                    dataframe2excel(amount_table, writer, worksheet, percent_cols=["样本占比", "好样本占比", "坏样本占比", "坏样本率", "LIFT值", "坏账改善", "累积LIFT值", "累积坏账改善"], condition_cols=["坏样本率", "LIFT值"], condition_color=condition_color, merge_column=["指标名称", "指标含义"], merge=True, fill=True, start_row=table_start_row, start_col=amount_start_col)
 
     _adjust_title_merges()
 

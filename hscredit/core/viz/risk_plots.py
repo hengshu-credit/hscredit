@@ -33,6 +33,7 @@ from .utils import (
     DEFAULT_COLORS, setup_axis_style, save_figure,
     get_or_create_ax, BAD_RATE_COLOR, NEUTRAL_COLOR,
     get_series_colors, make_colormap, make_risk_cmap,
+    _layout_top_center_legend,
 )
 from ..._lazy import LazyModule
 
@@ -566,10 +567,11 @@ def score_dist_plot(
 
     >>> fig = score_dist_plot(df, 'score', 'target')
     """
+    created_ax = ax is None
     fig, ax = get_or_create_ax(figsize=figsize, ax=ax)
 
     fontsize = kwargs.pop('fontsize', 14)
-    anchor = kwargs.pop('anchor', 1.15)
+    anchor = kwargs.pop('anchor', None)
     labels = kwargs.pop('labels', ["好样本", "坏样本"])
 
     # 支持两种调用方式：
@@ -625,7 +627,10 @@ def score_dist_plot(
     # 标题
     if title is None:
         title = f"{score_col}分布情况"
-    ax.set_title(f"{title}\n\n", fontsize=fontsize)
+    if created_ax:
+        title_artist = fig.suptitle(title, fontsize=fontsize)
+    else:
+        title_artist = ax.set_title(title, fontsize=fontsize)
 
     # KS 统计信息
     if has_target and show_stats:
@@ -639,14 +644,20 @@ def score_dist_plot(
 
     # 图例（顶部居中，与 hist_plot 一致）
     if has_target:
+        legend_anchor = 1.15 if anchor is None else anchor
         handles, legend_labels = ax.get_legend_handles_labels()
         if handles:
             ax.legend(handles, hue_order_final[:len(handles)],
                       loc='upper center', ncol=len(handles),
-                      bbox_to_anchor=(0.5, anchor), frameon=False, fontsize=fontsize)
+                      bbox_to_anchor=(0.5, legend_anchor), frameon=False, fontsize=fontsize)
         else:
             ax.legend(hue_order, loc='upper center', ncol=target_unique,
-                      bbox_to_anchor=(0.5, anchor), frameon=False, fontsize=fontsize)
+                      bbox_to_anchor=(0.5, legend_anchor), frameon=False, fontsize=fontsize)
+
+    if created_ax:
+        fig.tight_layout()
+    if created_ax and has_target and anchor is None:
+        _layout_top_center_legend(fig, ax.get_legend(), title=title_artist, axes=[ax])
 
     if save:
         save_figure(fig, save)

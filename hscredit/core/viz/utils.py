@@ -5,6 +5,7 @@
 提供公共的可视化辅助函数，减少代码重复。
 """
 
+import math
 import os
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
@@ -39,6 +40,76 @@ BLUE_GRADIENT = list(GRADIENT_PALETTES["blue"])
 SEQUENTIAL_GRADIENT = list(GRADIENT_PALETTES["blue_purple_red"])
 # 发散色阶，用于相关性、改善率等可正可负指标
 DIVERGING_GRADIENT = list(GRADIENT_PALETTES["diverging"])
+
+
+def _axes_top_boundary(axes: list, renderer: Any) -> float:
+    """返回坐标轴边框及顶部 x 轴装饰共同占用的最高像素位置。"""
+    tops = []
+    for ax in axes:
+        tops.append(ax.get_window_extent(renderer).y1)
+        if ax.xaxis.get_visible():
+            xaxis_bbox = ax.xaxis.get_tightbbox(renderer)
+            if xaxis_bbox is not None and math.isfinite(xaxis_bbox.y1):
+                tops.append(xaxis_bbox.y1)
+    return max(tops)
+
+
+def _layout_top_center_legend(
+    fig: Any,
+    legend: Any,
+    *,
+    title: Optional[Any] = None,
+    axes: Optional[list] = None,
+    min_gap_points: float = 6.0,
+) -> None:
+    """将图例等距放在标题与坐标轴上边界之间。"""
+    if legend is None:
+        return
+
+    title = title or getattr(fig, "_suptitle", None)
+    if title is None or not title.get_text().strip():
+        return
+    axes = [ax for ax in (axes or fig.axes) if ax.get_visible()]
+    if not axes:
+        return
+
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+    legend_bbox = legend.get_window_extent(renderer)
+    title_bbox = title.get_window_extent(renderer)
+    axes_top = _axes_top_boundary(axes, renderer)
+    min_gap_pixels = float(min_gap_points) * fig.dpi / 72.0
+    required_height = legend_bbox.height + 2.0 * min_gap_pixels
+    available_height = title_bbox.y0 - axes_top
+
+    # 空间不足时只压低坐标轴上边界，标题位置和坐标轴底边保持不变。
+    deficit = required_height - available_height
+    fig_height = float(fig.bbox.height)
+    if deficit > 0 and math.isfinite(fig_height) and fig_height > 0:
+        deficit_fraction = deficit / fig_height
+        for ax in axes:
+            position = ax.get_position()
+            new_height = position.height - deficit_fraction
+            if new_height > 0.05:
+                ax.set_position((position.x0, position.y0, position.width, new_height))
+
+        fig.canvas.draw()
+        renderer = fig.canvas.get_renderer()
+        title_bbox = title.get_window_extent(renderer)
+        axes_top = _axes_top_boundary(axes, renderer)
+        legend_bbox = legend.get_window_extent(renderer)
+
+    target_center = (title_bbox.y0 + axes_top) / 2.0
+    current_center = (legend_bbox.y0 + legend_bbox.y1) / 2.0
+    shift_pixels = target_center - current_center
+    if not math.isfinite(shift_pixels) or not math.isfinite(fig_height) or fig_height <= 0:
+        return
+
+    anchor_bbox = legend.get_bbox_to_anchor().transformed(fig.transFigure.inverted())
+    legend.set_bbox_to_anchor(
+        (0.5, anchor_bbox.y0 + shift_pixels / fig_height),
+        transform=fig.transFigure,
+    )
 
 
 def make_colormap(name: str, colors: Optional[list] = None, n: int = 256):
@@ -119,11 +190,11 @@ def setup_axis_style(ax, colors: Optional[list] = None, hide_top_right: bool = F
     
     color = colors[0] if colors else "#2639E9"
     
-    ax.spines['top'].set_color(color)
-    ax.spines['bottom'].set_color(color)
-    ax.spines['right'].set_color(color)
-    ax.spines['left'].set_color(color)
+    for spine in ax.spines.values():
+        spine.set_color(color)
     ax.tick_params(axis='both', colors=color)
+    ax.xaxis.label.set_color(color)
+    ax.yaxis.label.set_color(color)
     
     if hide_top_right:
         ax.spines['top'].set_visible(False)

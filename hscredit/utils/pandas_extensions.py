@@ -282,7 +282,7 @@ def _dataframe_save(
     :param title: 标题，默认为None
     :param header: 是否保存列名，默认为True
     :param theme_color: 主题颜色，默认为"2639E9"
-    :param condition_color: 条件格式颜色，默认None。支持 str（统一）、list/tuple（2或3色异色锚点，仅颜色渐变列/行生效，构成双/三色阶）或 dict（按列名/行索引分别指定，值可为 str 或 list/tuple，未匹配回退主题色）
+    :param condition_color: 条件格式颜色，默认None（使用ExcelWriter的condition_color）。支持 str（统一）、list/tuple（2或3色异色锚点，仅颜色渐变列/行生效，构成双/三色阶）或 dict（按列名/行索引分别指定，值可为 str 或 list/tuple，未匹配时回退ExcelWriter的condition_color）
     :param fill: 是否使用颜色填充，默认为True
     :param percent_cols: 需要显示为百分数的列，默认为None
     :param condition_cols: 需要显示数据条的列，默认为None
@@ -379,7 +379,7 @@ def _dataframe_save(
                 condition_cols = [c for c in self.columns if (isinstance(c, tuple) and c[-1] in condition_cols) or (not isinstance(c, tuple) and c in condition_cols)]
             for c in [c for c in condition_cols if c in self.columns]:
                 conditional_column = get_column_letter(start_col + self.columns.get_loc(c) + self.index.nlevels if kwargs.get("index", False) else start_col + self.columns.get_loc(c))
-                writer.add_conditional_formatting(worksheet, f"{conditional_column}{end_row - len(self)}", f"{conditional_column}{end_row - 1}", condition_color=resolve_condition_color(condition_color, c, theme_color))
+                writer.add_conditional_formatting(worksheet, f"{conditional_column}{end_row - len(self)}", f"{conditional_column}{end_row - 1}", condition_color=resolve_condition_color(condition_color, c, writer.condition_color))
 
         return writer
 
@@ -451,7 +451,7 @@ def _series_save(
     :param title: 标题，默认为None
     :param header: 是否保存列名，默认为True
     :param theme_color: 主题颜色，默认为"2639E9"
-    :param condition_color: 条件格式颜色，默认None。支持 str（统一）、list/tuple（2或3色异色锚点，仅颜色渐变列/行生效，构成双/三色阶）或 dict（按列名/行索引分别指定，值可为 str 或 list/tuple，未匹配回退主题色）
+    :param condition_color: 条件格式颜色，默认None（使用ExcelWriter的condition_color）。支持 str（统一）、list/tuple（2或3色异色锚点，仅颜色渐变列/行生效，构成双/三色阶）或 dict（按列名/行索引分别指定，值可为 str 或 list/tuple，未匹配时回退ExcelWriter的condition_color）
     :param fill: 是否使用颜色填充，默认为True
     :param percent_cols: 需要显示为百分数的列，默认为None
     :param condition_cols: 需要显示数据条的列，默认为None

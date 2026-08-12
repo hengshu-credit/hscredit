@@ -16,6 +16,19 @@ from hscredit.utils import fonts
 import hscredit.excel.writer as writer_module
 
 
+def _conditional_format_colors(worksheet):
+    """提取工作表数据条与色阶规则中的实际颜色。"""
+    data_bar_colors = []
+    color_scale_colors = []
+    for rules in worksheet.conditional_formatting._cf_rules.values():
+        for rule in rules:
+            if rule.type == "dataBar":
+                data_bar_colors.append(rule.dataBar.color.rgb)
+            elif rule.type == "colorScale":
+                color_scale_colors.extend(color.rgb for color in rule.colorScale.color)
+    return data_bar_colors, color_scale_colors
+
+
 class TestExcelWriter:
     """测试ExcelWriter类"""
     
@@ -51,6 +64,43 @@ class TestExcelWriter:
         assert writer.font == "楷体"
         content_style = next(style for style in writer.name_styles if style.name == "content")
         assert content_style.font.name == "楷体"
+
+    def test_condition_color_defaults_to_secondary_theme_for_data_bar(self):
+        """ExcelWriter 默认应使用副主题色生成数据条。"""
+        writer = ExcelWriter()
+        worksheet = writer.get_sheet_by_name("Condition")
+
+        writer.add_conditional_formatting(worksheet, "B2", "B3")
+
+        data_bar_colors, _ = _conditional_format_colors(worksheet)
+        assert writer.condition_color == "F76E6C"
+        assert data_bar_colors == ["00F76E6C"]
+
+    @pytest.mark.parametrize(
+        ("call_color", "expected_color"),
+        [
+            (None, "00112233"),
+            ("445566", "00445566"),
+        ],
+    )
+    def test_add_conditional_formatting_prefers_call_color_over_writer_color(
+        self,
+        call_color,
+        expected_color,
+    ):
+        """方法显式颜色应覆盖 ExcelWriter 级条件格式颜色。"""
+        writer = ExcelWriter(condition_color="112233")
+        worksheet = writer.get_sheet_by_name("Condition")
+
+        writer.add_conditional_formatting(
+            worksheet,
+            "B2",
+            "B3",
+            condition_color=call_color,
+        )
+
+        data_bar_colors, _ = _conditional_format_colors(worksheet)
+        assert data_bar_colors == [expected_color]
 
     @pytest.mark.parametrize("speed", ["normal", "fast"])
     def test_runtime_default_font_persists_in_written_cells(self, monkeypatch, speed):
@@ -899,6 +949,79 @@ class TestDataframe2Excel:
         
         # 检查条件格式是否存在
         assert len(ws.conditional_formatting._cf_rules) > 0
+
+    @pytest.mark.parametrize(
+        ("call_color", "expected_color"),
+        [
+            (None, "00112233"),
+            ("445566", "00445566"),
+            ({"未命中字段": "445566"}, "00112233"),
+        ],
+    )
+    def test_dataframe2excel_prefers_call_color_over_existing_writer_color(
+        self,
+        call_color,
+        expected_color,
+    ):
+        """单次调用颜色优先，未传或字典未命中时继承已有 Writer。"""
+        writer = ExcelWriter(condition_color="112233")
+        worksheet = writer.get_sheet_by_name("Condition")
+        data = pd.DataFrame({"数据条": [1, 2], "色阶": [2, 1]})
+
+        dataframe2excel(
+            data,
+            writer,
+            sheet_name=worksheet,
+            condition_cols=["数据条"],
+            color_cols=["色阶"],
+            condition_color=call_color,
+        )
+
+        data_bar_colors, color_scale_colors = _conditional_format_colors(worksheet)
+        assert data_bar_colors == [expected_color]
+        assert expected_color in color_scale_colors
+
+    @pytest.mark.parametrize(
+        ("writer_params", "expected_color"),
+        [
+            ({}, "00F76E6C"),
+            ({"condition_color": "112233"}, "00112233"),
+        ],
+    )
+    def test_dataframe2excel_file_path_uses_writer_condition_color(
+        self,
+        writer_params,
+        expected_color,
+    ):
+        """文件路径模式应使用默认或 writer_params 指定的条件格式颜色。"""
+        data = pd.DataFrame({"数值": [1, 2]})
+
+        dataframe2excel(
+            data,
+            self.test_file,
+            condition_cols=["数值"],
+            writer_params=writer_params,
+        )
+
+        loaded_wb = load_workbook(self.test_file)
+        data_bar_colors, _ = _conditional_format_colors(loaded_wb.active)
+        loaded_wb.close()
+        assert data_bar_colors == [expected_color]
+
+    def test_dataframe_save_existing_writer_uses_writer_condition_color(self):
+        """DataFrame.save 复用 Writer 时也应继承其条件格式颜色。"""
+        writer = ExcelWriter(condition_color="112233")
+        worksheet = writer.get_sheet_by_name("Condition")
+        data = pd.DataFrame({"数值": [1, 2]})
+
+        data.save(
+            writer,
+            worksheet=worksheet,
+            condition_cols=["数值"],
+        )
+
+        data_bar_colors, _ = _conditional_format_colors(worksheet)
+        assert data_bar_colors == ["00112233"]
     
     def test_write_with_custom_format(self):
         """测试自定义格式"""

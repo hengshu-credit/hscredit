@@ -25,7 +25,7 @@ from .utils import (
     DEFAULT_COLORS, setup_axis_style, save_figure,
     format_bin_label,
     BAD_RATE_COLOR, REFERENCE_COLOR, EXTENDED_COLORS, get_series_colors,
-    make_colormap, make_diverging_cmap,
+    make_colormap, make_diverging_cmap, _layout_top_center_legend,
 )
 from ..._lazy import LazyModule
 from ..._compat import normalize_seaborn_inf
@@ -323,6 +323,32 @@ def _build_bin_metric_summary(feature_table: pd.DataFrame, per_row: int = 2) -> 
     return '\n'.join(rows)
 
 
+def _fit_bin_metric_summary_text(
+    text_artist: Any,
+    feature_table: pd.DataFrame,
+    renderer: Any,
+    available_width_pixels: float,
+    preferred_fontsize: float,
+    minimum_fontsize: float = 8.0,
+) -> None:
+    """按实际可用宽度调整分箱指标摘要的列数与字号。"""
+    preferred_fontsize = float(preferred_fontsize)
+    minimum_fontsize = float(min(minimum_fontsize, preferred_fontsize))
+    available_width_pixels = max(float(available_width_pixels), 0.0)
+
+    text_artist.set_text(_build_bin_metric_summary(feature_table, per_row=2))
+    text_artist.set_fontsize(preferred_fontsize)
+    summary_width = text_artist.get_window_extent(renderer).width
+
+    if summary_width > available_width_pixels:
+        text_artist.set_text(_build_bin_metric_summary(feature_table, per_row=1))
+        summary_width = text_artist.get_window_extent(renderer).width
+
+    if summary_width > available_width_pixels and summary_width > 0:
+        fitted_fontsize = preferred_fontsize * available_width_pixels / summary_width
+        text_artist.set_fontsize(max(minimum_fontsize, fitted_fontsize))
+
+
 def _xtick_rotation_for_length(max_len: int, threshold: int = 5):
     """根据刻度文本最大长度决定横向分箱图 x 轴刻度的旋转角度与对齐方式.
 
@@ -369,7 +395,7 @@ def bin_plot(
     figsize: tuple = (12, 7),
     colors: Optional[List[str]] = None,
     save: Optional[str] = None,
-    anchor: float = 0.935,
+    anchor: Optional[float] = None,
     max_len: int = 35,
     fontdict: Optional[dict] = None,
     hatch: bool = True,
@@ -420,7 +446,7 @@ def bin_plot(
     :param figsize: 图像尺寸（创建新图时使用）
     :param colors: 配色方案
     :param save: 保存路径
-    :param anchor: 图例位置
+    :param anchor: 图例位置；默认根据实际图高自适应，显式传入时以用户值为准
     :param max_len: 分箱标签最大长度
     :param fontdict: 字体样式
     :param hatch: 是否显示斜线
@@ -663,20 +689,16 @@ def bin_plot(
     _summary_source = feature_table.drop(columns=['_plot_bin_label'], errors='ignore')
     metric_summary = _build_bin_metric_summary(_summary_source) if show_metric_summary else ''
     if not return_ax:
-        # 角标与图例字号随图尺寸自适应：默认 (12, 7) 不缩放，小图等比缩小以避免相互遮盖
+        # 图例字号随图尺寸自适应；角标在完成布局后按实际可用宽度单独调整。
         fig_w, fig_h = fig.get_size_inches()
         raw_scale = min(fig_w / 12.0, fig_h / 7.0)
         size_scale = float(np.clip(raw_scale, 0.5, 1.0))
-        # 图较小时角标改为单列竖排，更窄以便挤入图例左侧而不遮盖
-        if metric_summary and raw_scale < 0.65:
-            metric_summary = _build_bin_metric_summary(_summary_source, per_row=1)
-        summary_fontsize = float(np.clip(10.0 * size_scale, 6.0, 10.0))
         legend_fontsize = float(np.clip(10.0 * size_scale, 7.0, 10.0))
 
         if title is not None:
-            fig.suptitle(f'{title}\n\n')
+            title_artist = fig.suptitle(title)
         else:
-            fig.suptitle(f'{desc}{ending}\n\n')
+            title_artist = fig.suptitle(f'{desc}{ending}')
 
         handles1, labels1 = ax1.get_legend_handles_labels()
         handles2, labels2 = ax2.get_legend_handles_labels()
@@ -687,26 +709,34 @@ def bin_plot(
             legend_ncol = int(np.ceil(n_items / 2))
         else:
             legend_ncol = n_items
+        legend_anchor = 0.935 if anchor is None else anchor
         legend = fig.legend(handles1 + handles2, legend_labels, loc='upper center',
-                            ncol=legend_ncol, bbox_to_anchor=(0.5, anchor),
+                            ncol=legend_ncol, bbox_to_anchor=(0.5, legend_anchor),
                             frameon=False, fontsize=legend_fontsize)
 
         plt.tight_layout()
+        if anchor is None:
+            _layout_top_center_legend(fig, legend, title=title_artist, axes=[ax1, ax2])
         if metric_summary:
             fig.canvas.draw()
             renderer = fig.canvas.get_renderer()
             ax_pos = ax1.get_position()
             legend_bbox = legend.get_window_extent(renderer).transformed(fig.transFigure.inverted())
             summary_text = fig.text(ax_pos.x0, legend_bbox.y0, metric_summary, ha='left', va='bottom',
-                                    fontsize=summary_fontsize, color=axis_theme,
+                                    fontsize=12.0, color=axis_theme,
                                     bbox=dict(boxstyle='round,pad=0.28', facecolor='white',
                                               edgecolor=axis_theme, alpha=0.9, linewidth=0.8))
-            # 角标右边界不越过居中图例左边界，必要时进一步缩小字号以免遮盖
-            fig.canvas.draw()
-            summary_bbox = summary_text.get_window_extent(renderer).transformed(fig.transFigure.inverted())
-            available = legend_bbox.x0 - ax_pos.x0 - 0.015
-            if available > 0.02 and summary_bbox.width > available:
-                summary_text.set_fontsize(max(5.0, summary_fontsize * available / summary_bbox.width))
+            gap_pixels = 8.0 * fig.dpi / 72.0
+            axes_left_pixels = ax_pos.x0 * fig.bbox.width
+            available_width_pixels = legend.get_window_extent(renderer).x0 - axes_left_pixels - gap_pixels
+            _fit_bin_metric_summary_text(
+                summary_text,
+                _summary_source,
+                renderer,
+                available_width_pixels,
+                preferred_fontsize=12.0,
+                minimum_fontsize=8.0,
+            )
         save_figure(fig, save)
 
         if return_frame:
@@ -714,18 +744,35 @@ def bin_plot(
         return fig
     else:
         if metric_summary:
-            # 嵌入到已有画布时按子图实际尺寸自适应字号，避免在小子图上遮盖内容
-            ax_pos = ax1.get_position()
-            fig_w, fig_h = fig.get_size_inches()
-            ax_w_in, ax_h_in = ax_pos.width * fig_w, ax_pos.height * fig_h
-            ax_scale = min(ax_w_in / 7.5, ax_h_in / 4.5)
-            summary_fontsize = float(np.clip(10.0 * ax_scale, 6.0, 10.0))
-            if ax_scale < 0.65:
-                metric_summary = _build_bin_metric_summary(_summary_source, per_row=1)
-            ax2.text(0.0, 1.02, metric_summary, transform=ax2.transAxes, ha='left', va='bottom',
-                     fontsize=summary_fontsize, color=axis_theme,
-                     bbox=dict(boxstyle='round,pad=0.28', facecolor='white', edgecolor=axis_theme, alpha=0.9, linewidth=0.8),
-                     clip_on=False)
+            # 嵌入到已有画布时按子图的实际渲染宽度选择列数与字号。
+            summary_text = ax2.text(
+                0.0,
+                1.02,
+                metric_summary,
+                transform=ax2.transAxes,
+                ha='left',
+                va='bottom',
+                fontsize=11.0,
+                color=axis_theme,
+                bbox=dict(
+                    boxstyle='round,pad=0.28',
+                    facecolor='white',
+                    edgecolor=axis_theme,
+                    alpha=0.9,
+                    linewidth=0.8,
+                ),
+                clip_on=False,
+            )
+            fig.canvas.draw()
+            renderer = fig.canvas.get_renderer()
+            _fit_bin_metric_summary_text(
+                summary_text,
+                _summary_source,
+                renderer,
+                ax2.get_window_extent(renderer).width,
+                preferred_fontsize=11.0,
+                minimum_fontsize=8.0,
+            )
         if title is not None:
             ax1.set_title(title)
         else:
@@ -786,6 +833,9 @@ def corr_plot(data, figure_size=None, fontsize=16, mask=False, save=None,
 
     map_plot.tick_params(axis='x', labelrotation=270, labelsize=fontsize)
     map_plot.tick_params(axis='y', labelrotation=0, labelsize=fontsize)
+    setup_axis_style(map_plot)
+    if map_plot.collections and map_plot.collections[0].colorbar is not None:
+        setup_axis_style(map_plot.collections[0].colorbar.ax)
 
     if not return_ax:
         save_figure(fig, save)
@@ -795,7 +845,7 @@ def corr_plot(data, figure_size=None, fontsize=16, mask=False, save=None,
 
 
 def ks_plot(score, target, title="", fontsize=14, figsize=(16, 8), save=None,
-            colors=None, anchor=0.945, axes=None, ax=None, curve='both'):
+            colors=None, anchor=None, axes=None, ax=None, curve='both'):
     """
     KS曲线和ROC曲线.
 
@@ -806,7 +856,7 @@ def ks_plot(score, target, title="", fontsize=14, figsize=(16, 8), save=None,
     :param figsize: 图像尺寸（创建新图时使用）
     :param save: 保存路径
     :param colors: 配色方案
-    :param anchor: 图例位置
+    :param anchor: 图例位置；默认根据实际图高自适应，显式传入时以用户值为准
     :param axes: 可选的 matplotlib Axes 对象数组 [ax1, ax2]
     :param ax: 可选的单个 Axes（配合 curve='ks'/'roc' 仅绘制单条曲线时使用）
     :param curve: 绘制内容，默认 ``'both'``：
@@ -957,13 +1007,20 @@ def ks_plot(score, target, title="", fontsize=14, figsize=(16, 8), save=None,
             ax2.yaxis.set_label_position("right")
         handles2, labels2 = ax2.get_legend_handles_labels()
 
+    for plot_ax in (ax1, ax2):
+        if plot_ax is not None:
+            setup_axis_style(plot_ax, colors)
+
     if not return_axes:
         if curve == 'both':
             if title:
                 title += " "
-            fig.suptitle(f"{title}K-S & ROC CURVE\n", fontsize=fontsize, fontweight="bold")
-            fig.legend(handles1 + handles2, labels1 + labels2, loc='upper center',
-                       ncol=len(labels1 + labels2), bbox_to_anchor=(0.5, anchor), frameon=False)
+            title_artist = fig.suptitle(
+                f"{title}K-S & ROC CURVE", fontsize=fontsize, fontweight="bold"
+            )
+            legend_anchor = 0.945 if anchor is None else anchor
+            legend = fig.legend(handles1 + handles2, labels1 + labels2, loc='upper center',
+                                ncol=len(labels1 + labels2), bbox_to_anchor=(0.5, legend_anchor), frameon=False)
         else:
             single_ax = ax1 if curve == 'ks' else ax2
             if title:
@@ -973,6 +1030,8 @@ def ks_plot(score, target, title="", fontsize=14, figsize=(16, 8), save=None,
                 single_ax.legend(handles, labels, loc='best', frameon=False,
                                  fontsize=max(fontsize - 4, 8))
         plt.tight_layout()
+        if curve == 'both' and anchor is None:
+            _layout_top_center_legend(fig, legend, title=title_artist, axes=[ax1, ax2])
         save_figure(fig, save)
         return fig
     else:
@@ -989,7 +1048,7 @@ def ks_plot(score, target, title="", fontsize=14, figsize=(16, 8), save=None,
 
 
 def hist_plot(score, y_true=None, figsize=(15, 10), bins=30, save=None,
-              labels=None, desc="", anchor=1.15, fontsize=14, kde=False, title=None,
+              labels=None, desc="", anchor=None, fontsize=14, kde=False, title=None,
               ax=None, **kwargs):
     """
     特征值分布直方图.
@@ -1001,7 +1060,7 @@ def hist_plot(score, y_true=None, figsize=(15, 10), bins=30, save=None,
     :param save: 保存路径
     :param labels: 图例标签
     :param desc: 描述
-    :param anchor: 图例位置
+    :param anchor: 图例位置；默认根据实际图高自适应，显式传入时以用户值为准
     :param fontsize: 字体大小
     :param kde: 是否显示核密度估计
     :param title: 完整标题（优先级高于 desc）
@@ -1074,25 +1133,29 @@ def hist_plot(score, y_true=None, figsize=(15, 10), bins=30, save=None,
     ax.set_ylabel("样本占比", fontsize=fontsize)
     ax.yaxis.set_major_formatter(PercentFormatter(1))
 
-    # 标题处理：优先使用 title 参数
-    if title is not None:
-        ax.set_title(f"{title}\n\n", fontsize=fontsize)
+    # 标题处理：独立画布使用 Figure 标题，为标题/图例/坐标轴建立稳定的三段布局。
+    title_text = title if title is not None else f"{desc + ' ' if desc else '特征'}分布情况"
+    if return_ax:
+        title_artist = ax.set_title(title_text, fontsize=fontsize)
     else:
-        ax.set_title(f"{desc + ' ' if desc else '特征'}分布情况\n\n", fontsize=fontsize)
+        title_artist = fig.suptitle(title_text, fontsize=fontsize)
 
     if y_true is not None:
+        legend_anchor = 1.15 if anchor is None else anchor
         handles, legend_labels = ax.get_legend_handles_labels()
         if handles:
             ax.legend(handles, hue_order_final[:len(handles)] if hue_order_final else legend_labels,
                       loc='upper center', ncol=len(handles),
-                      bbox_to_anchor=(0.5, anchor), frameon=False, fontsize=fontsize)
+                      bbox_to_anchor=(0.5, legend_anchor), frameon=False, fontsize=fontsize)
         else:
             ax.legend(hue_order,
                       loc='upper center', ncol=target_unique,
-                      bbox_to_anchor=(0.5, anchor), frameon=False, fontsize=fontsize)
+                      bbox_to_anchor=(0.5, legend_anchor), frameon=False, fontsize=fontsize)
 
     if not return_ax:
         fig.tight_layout()
+        if y_true is not None and anchor is None:
+            _layout_top_center_legend(fig, ax.get_legend(), title=title_artist, axes=[ax])
         save_figure(fig, save)
         return fig
     else:
@@ -1100,7 +1163,7 @@ def hist_plot(score, y_true=None, figsize=(15, 10), bins=30, save=None,
 
 
 def psi_plot(expected, actual, y=None, labels=None, desc="", save=None, colors=None,
-             figsize=(15, 8), anchor=0.94, width=0.35, result=False, plot=True,
+             figsize=(15, 8), anchor=None, width=0.35, result=False, plot=True,
              max_len=None, hatch=True, title=None, **kwargs):
     """
     PSI稳定性分析图.
@@ -1118,7 +1181,7 @@ def psi_plot(expected, actual, y=None, labels=None, desc="", save=None, colors=N
     :param save: 保存路径
     :param colors: 配色
     :param figsize: 图像尺寸
-    :param anchor: 图例位置
+    :param anchor: 图例位置；默认根据实际图高自适应，显式传入时以用户值为准
     :param width: 柱宽
     :param result: 是否返回统计表
     :param plot: 是否绘图
@@ -1330,19 +1393,22 @@ def psi_plot(expected, actual, y=None, labels=None, desc="", save=None, colors=N
 
         # 标题处理：优先使用 title 参数
         if title is not None:
-            fig.suptitle(f"{title}\n\n")
+            title_artist = fig.suptitle(title)
         else:
-            fig.suptitle(
+            title_artist = fig.suptitle(
                 f"{desc + ' ' if desc else ''}{labels[0]} vs {labels[1]} "
-                f"群体稳定性指数(PSI): {df_psi['分档PSI值'].sum():.4f}\n\n"
+                f"群体稳定性指数(PSI): {df_psi['分档PSI值'].sum():.4f}"
             )
 
         handles1, labels1 = ax1.get_legend_handles_labels()
         handles2, labels2 = ax2.get_legend_handles_labels()
-        fig.legend(handles1 + handles2, labels1 + labels2, loc='upper center', 
-                  ncol=len(labels1 + labels2), bbox_to_anchor=(0.5, anchor), frameon=False)
+        legend_anchor = 0.94 if anchor is None else anchor
+        legend = fig.legend(handles1 + handles2, labels1 + labels2, loc='upper center',
+                            ncol=len(labels1 + labels2), bbox_to_anchor=(0.5, legend_anchor), frameon=False)
 
         fig.tight_layout()
+        if anchor is None:
+            _layout_top_center_legend(fig, legend, title=title_artist, axes=[ax1, ax2])
 
         if save:
             save_figure(fig, save)
@@ -1429,7 +1495,7 @@ def dataframe_plot(df, row_height=0.4, font_size=14, header_color=None,
 
 
 def distribution_plot(data, date="date", target="target", save=None, figsize=(10, 6), 
-                    colors=None, freq="M", anchor=0.94, result=False, hatch=True,
+                    colors=None, freq="M", anchor=None, result=False, hatch=True,
                     overdue=None, dpds=None, title=None):
     """
     样本时间分布图.
@@ -1445,7 +1511,7 @@ def distribution_plot(data, date="date", target="target", save=None, figsize=(10
     :param figsize: 图像尺寸
     :param colors: 配色
     :param freq: 日期频率，'D'/'W'/'M'/'Q'
-    :param anchor: 图例位置
+    :param anchor: 图例位置；默认根据实际图高自适应，显式传入时以用户值为准
     :param result: 是否返回统计表
     :param hatch: 是否显示斜线
     :param overdue: 逾期列名列表，如 ['dpd7', 'dpd15', 'dpd30']（多逾期口径模式）
@@ -1492,10 +1558,8 @@ def distribution_plot(data, date="date", target="target", save=None, figsize=(10
         ax1.set_ylabel('样本数')
 
         if title is None:
-            title = '不同时点多逾期口径坏样本率分布\n\n'
-        else:
-            title = f'{title}\n\n'
-        ax1.set_title(title)
+            title = '不同时点多逾期口径坏样本率分布'
+        title_artist = fig.suptitle(title)
 
         ax2 = ax1.twinx()
         # 定义多条折线的样式
@@ -1531,11 +1595,14 @@ def distribution_plot(data, date="date", target="target", save=None, figsize=(10
 
         handles1, labels1 = ax1.get_legend_handles_labels()
         handles2, labels2 = ax2.get_legend_handles_labels()
-        fig.legend(handles1 + handles2, labels1 + labels2, loc='upper center',
-                  ncol=min(len(labels1 + labels2), 6),
-                  bbox_to_anchor=(0.5, anchor), frameon=False)
+        legend_anchor = 0.94 if anchor is None else anchor
+        legend = fig.legend(handles1 + handles2, labels1 + labels2, loc='upper center',
+                            ncol=min(len(labels1 + labels2), 6),
+                            bbox_to_anchor=(0.5, legend_anchor), frameon=False)
 
         fig.tight_layout()
+        if anchor is None:
+            _layout_top_center_legend(fig, legend, title=title_artist, axes=[ax1, ax2])
 
         save_figure(fig, save)
 
@@ -1565,10 +1632,8 @@ def distribution_plot(data, date="date", target="target", save=None, figsize=(10
     ax1.set_ylabel('样本数')
 
     if title is None:
-        title = '不同时点数据集样本分布情况\n\n'
-    else:
-        title = f'{title}\n\n'
-    ax1.set_title(title)
+        title = '不同时点数据集样本分布情况'
+    title_artist = fig.suptitle(title)
 
     ax2 = ax1.twinx()
     (temp["坏样本"] / temp.sum(axis=1)).plot(
@@ -1576,13 +1641,18 @@ def distribution_plot(data, date="date", target="target", save=None, figsize=(10
     )
     ax2.set_ylabel('坏样本率')
     ax2.yaxis.set_major_formatter(PercentFormatter(1))
+    setup_axis_style(ax1, colors)
+    setup_axis_style(ax2, colors)
 
     handles1, labels1 = ax1.get_legend_handles_labels()
     handles2, labels2 = ax2.get_legend_handles_labels()
-    fig.legend(handles1 + handles2, labels1 + labels2, loc='upper center', 
-              ncol=len(labels1 + labels2), bbox_to_anchor=(0.5, anchor), frameon=False)
+    legend_anchor = 0.94 if anchor is None else anchor
+    legend = fig.legend(handles1 + handles2, labels1 + labels2, loc='upper center',
+                        ncol=len(labels1 + labels2), bbox_to_anchor=(0.5, legend_anchor), frameon=False)
 
     fig.tight_layout()
+    if anchor is None:
+        _layout_top_center_legend(fig, legend, title=title_artist, axes=[ax1, ax2])
 
     save_figure(fig, save)
 
@@ -1757,6 +1827,7 @@ def bin_trend_plot(
     orientation: str = 'vertical',
     dpi: int = 150,
     save: Optional[str] = None,
+    anchor: Optional[float] = None,
     **kwargs
 ) -> plt.Figure:
     """绘制特征分箱风险趋势图.
@@ -1792,6 +1863,7 @@ def bin_trend_plot(
     :param orientation: 图表方向，'vertical'（纵向，默认）或 'horizontal'
     :param dpi: 图像分辨率
     :param save: 保存路径
+    :param anchor: 图例位置；默认根据实际图高自适应，显式传入时以用户值为准
     :param kwargs: 其他参数
     :return: matplotlib Figure
 
@@ -1946,11 +2018,12 @@ def bin_trend_plot(
         n_cols = min(3, n_panels)
         n_rows = int(np.ceil(n_panels / n_cols))
 
+    if is_horizontal:
+        default_figsize = (10.5, max(4.8 * n_rows, 5.2))
+    else:
+        default_figsize = (max(5.2 * n_cols, 10.5), max(5.4 * n_rows, 5.2))
     if figsize is None:
-        if is_horizontal:
-            figsize = (10.5, max(4.8 * n_rows, 5.2))
-        else:
-            figsize = (max(5.2 * n_cols, 10.5), max(5.4 * n_rows, 5.2))
+        figsize = default_figsize
 
     fig, axes = plt.subplots(n_rows, n_cols, figsize=figsize, squeeze=False)
     axes_flat = axes.flatten()
@@ -1997,11 +2070,12 @@ def bin_trend_plot(
     for idx in range(n_panels, len(axes_flat)):
         axes_flat[idx].axis('off')
 
-    fig.legend(
+    legend_anchor = 0.94 if anchor is None else anchor
+    legend = fig.legend(
         handles=legend_handles,
         loc='upper center',
         ncol=4,
-        bbox_to_anchor=(0.5, 0.94),
+        bbox_to_anchor=(0.5, legend_anchor),
         frameon=False,
         fontsize=9,
     )
@@ -2014,6 +2088,8 @@ def bin_trend_plot(
         hspace=0.62 if n_rows > 1 else 0.42,
         wspace=0.28,
     )
+    if anchor is None:
+        _layout_top_center_legend(fig, legend, title=fig._suptitle, axes=list(axes_flat[:n_panels]))
 
     if save:
         save_figure(fig, save)
