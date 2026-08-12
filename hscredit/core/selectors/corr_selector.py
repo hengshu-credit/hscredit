@@ -25,7 +25,7 @@ from threadpoolctl import threadpool_limits
 
 from .base import BaseFeatureSelector
 from ...exceptions import ValidationError
-from ...utils.parallel import ParallelWorkload, _current_parallel_budget, resolve_n_jobs
+from ...utils.parallel import ParallelWorkload, _resolve_current_n_jobs
 
 
 # bin_tables_ 中指标列名 → 聚合方式的映射
@@ -229,14 +229,7 @@ class CorrSelector(BaseFeatureSelector):
 
     def _resolve_corr_total_workers(self, task_count: int) -> int:
         """解析 Corr 阶段可由外层任务和原生线程共同使用的总预算。"""
-        budget = _current_parallel_budget()
-        return (
-            resolve_n_jobs(
-                self.n_jobs,
-                available_budget=budget.available,
-            )
-            or 1
-        )
+        return _resolve_current_n_jobs(self.n_jobs) or 1
 
     def _rank_corr_values(self, values: np.ndarray, default_backend: str) -> np.ndarray:
         """按输入列顺序分批并行排名，并原地复用 float64 输入缓冲区。"""

@@ -260,10 +260,19 @@ def _is_indexed_like(result, group_axes, axis: int) -> bool:
     return False
 
 
+def _normalize_group_key(key):
+    """把 NumPy 分组键还原为 pandas 原生 apply 暴露的 Python 标量。"""
+    if isinstance(key, tuple):
+        return tuple(_normalize_group_key(value) for value in key)
+    if isinstance(key, np.generic):
+        return key.item()
+    return key
+
+
 def _call_group_apply_item(task):
     """执行一个 GroupBy 分组并返回 pandas 装配所需的索引变化标记。"""
     position, key, group, func, udf_args, udf_kwargs, axis, reporter = task
-    object.__setattr__(group, "name", key)
+    object.__setattr__(group, "name", _normalize_group_key(key))
     group_axes = group.axes
     result = func(group, *udf_args, **udf_kwargs)
     if isinstance(result, pd.Series):

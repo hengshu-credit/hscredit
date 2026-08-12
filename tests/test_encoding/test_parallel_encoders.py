@@ -602,6 +602,7 @@ def _gbm_child_worker(task):
 def test_gbm_children_use_active_nested_budget(monkeypatch, model_type, model_name, worker_key):
     import hscredit.core.models as models
 
+    monkeypatch.setattr("hscredit.utils.parallel.get_physical_cpu_count", lambda: 1)
     monkeypatch.setattr(models, model_name, _FakeRiskModel)
     explicit = {worker_key: 99}
     task = (model_type, -1, explicit)
@@ -648,6 +649,7 @@ def test_gbm_children_use_active_nested_budget(monkeypatch, model_type, model_na
 def test_gbm_top_level_explicit_workers_and_model_params_identity(monkeypatch, model_type, model_name, worker_key):
     import hscredit.core.models as models
 
+    monkeypatch.setattr("hscredit.utils.parallel.get_physical_cpu_count", lambda: 1)
     monkeypatch.setattr(models, model_name, _FakeRiskModel)
     params = {worker_key: 3, "自定义": "保留"}
     encoder = GBMEncoder(model_type=model_type, n_jobs=1, model_params=params)

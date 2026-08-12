@@ -458,6 +458,25 @@ def _current_parallel_budget() -> ParallelBudget:
     return ParallelBudget(resolve_n_jobs(-1) or 1, 0)
 
 
+def _resolve_current_n_jobs(
+    n_jobs: NJobs,
+    task_count: Optional[int] = None,
+) -> Optional[int]:
+    """解析当前调用的 worker 数，仅在真实嵌套上下文中施加父级预算。"""
+    active_budget = _ACTIVE_BUDGET.get()
+    if active_budget is None:
+        return resolve_n_jobs(n_jobs, task_count=task_count)
+    if n_jobs == -1:
+        # 父级已经把自动并行度解析为可下放预算；子级继承该值，不能再次按容器可见 CPU 缩减。
+        n_jobs = active_budget.available
+    return resolve_n_jobs(
+        n_jobs,
+        task_count=task_count,
+        cpu_count=active_budget.available,
+        available_budget=active_budget.available,
+    )
+
+
 def resolve_native_workers(
     n_jobs: NJobs,
     native_workers: Optional[int] = None,
@@ -467,13 +486,7 @@ def resolve_native_workers(
         native_workers = _validate_integer(native_workers, "native_workers", 1)
     budget = _current_parallel_budget()
     active = _ACTIVE_BUDGET.get() is not None
-    requested = (
-        resolve_n_jobs(
-            n_jobs,
-            available_budget=budget.available if active else None,
-        )
-        or 1
-    )
+    requested = _resolve_current_n_jobs(n_jobs) or 1
     if active:
         requested = min(requested, budget.available)
     if n_jobs == -1 and native_workers is not None:
@@ -692,6 +705,7 @@ def parallel_execute(
             _raise_parallel_execution_error(exc, preserve_exceptions=preserve_exceptions)
 
     serial_timeout_batch = workers == 1 and enforce_timeout
+    submitted: Iterable[Any]
     if serial_timeout_batch:
         # joblib 的 n_jobs=1 会绕过后端并忽略 timeout；用一个批次交给
         # n_jobs=2 的执行器可保留 timeout，同时批次内部仍严格串行。

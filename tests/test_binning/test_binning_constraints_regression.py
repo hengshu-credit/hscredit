@@ -162,7 +162,8 @@ class TestORBinningConstraintRegression(unittest.TestCase):
         self.assertGreaterEqual(len(valid), 2)
         self.assertLessEqual(len(valid), 5)
         self.assertTrue(np.all(np.diff(bad_rates) <= 1e-10), msg=bad_rates.tolist())
-    @unittest.skipUnless(ORTOOLS_AVAILABLE and TARGET_DATA_PATH.exists(), '目标数据或 OR-Tools 不可用')
+    @unittest.skipUnless(ORTOOLS_AVAILABLE, 'OR-Tools 未安装')
+    @unittest.skipUnless(TARGET_DATA_PATH.exists(), '缺少 examples/hscredit_yyp.xlsx')
     def test_or_tools_uses_more_than_three_bins_on_target_field(self):
         df = pd.read_excel(TARGET_DATA_PATH)
         X = df[['中智小牛分C3']].copy()
@@ -215,7 +216,7 @@ class TestBinningMethodBenchmark(unittest.TestCase):
 class TestNotebookTargetFieldRegression(unittest.TestCase):
     """覆盖 notebook 中暴露的目标字段问题。"""
 
-    @unittest.skipUnless(TARGET_DATA_PATH.exists(), '目标数据不存在')
+    @unittest.skipUnless(TARGET_DATA_PATH.exists(), '缺少 examples/hscredit_yyp.xlsx')
     def test_notebook_methods_do_not_error_and_do_not_leave_adjacent_zero_bad_rate_bins(self):
         df = pd.read_excel(TARGET_DATA_PATH)
         X = df[['中智小牛分C3']].copy()

@@ -1,6 +1,7 @@
-import sys
+import json
 import re
 import subprocess
+import sys
 import types
 import ast
 from pathlib import Path
@@ -38,22 +39,6 @@ def test_scorecard_source_has_no_duplicate_dictionary_keys():
         if repeated:
             duplicates.append((node.lineno, repeated))
     assert duplicates == []
-
-
-def _skip_unless_importable(modname: str):
-    """导入失败即跳过。
-
-    ``pytest.importorskip`` 默认仅在 ``ModuleNotFoundError`` 时跳过；当依赖已安装
-    但因与当前 sklearn 版本不兼容而在导入时抛出 ``ImportError``（如旧版
-    ``sklearn_pandas`` 引用已移除的 ``sklearn.utils.tosequence``）时，会被当成测试
-    失败。这里统一捕获 ``ImportError`` 并跳过。
-    """
-    import importlib
-
-    try:
-        return importlib.import_module(modname)
-    except ImportError as exc:
-        pytest.skip(f"{modname} 不可用：{exc}")
 
 
 def _skip_if_java_too_old_for_sklearn2pmml():
@@ -156,42 +141,29 @@ def test_scorecard_export_load_without_binner_predicts_raw_by_rules(cls):
 
 
 def test_scorecard_loads_toad_export_json_as_offline_model(tmp_path):
-    """toad.ScoreCard.export(to_json=...) 产物可直接作为离线评分卡导入."""
-    toad = pytest.importorskip('toad')
-
+    """toad 0.1.5 的真实导出产物可直接作为离线评分卡导入。"""
     X = pd.DataFrame({
-        'age': [18, 22, 25, 30, 35, 42, 48, 55, 60, 63] * 20,
-        'city': ['A', 'A', 'B', 'C', 'A', 'B', 'D', 'D', 'C', 'E'] * 20,
+        'age': [18, 22, 25, 30, 35, 42, 48, 55, 60, 63] * 2,
+        'city': ['A', 'A', 'B', 'C', 'A', 'B', 'D', 'D', 'C', 'E'] * 2,
     })
-    y = ((X['age'] > 40) | X['city'].isin(['D', 'E'])).astype(int).to_numpy()
-
-    combiner = toad.transform.Combiner()
-    combiner.fit(X, y, method='dt', min_samples=0.05)
-    X_bins = combiner.transform(X)
-    transer = toad.transform.WOETransformer()
-    transer.fit(X_bins, y)
-    X_woe = transer.transform(X_bins)
-
-    toad_card = toad.ScoreCard(
-        combiner=combiner,
-        transer=transer,
-        pdo=60,
-        rate=2,
-        base_odds=35,
-        base_score=750,
-    )
-    toad_card.fit(X_woe, y)
+    exported_rules = {
+        'age': {'[-inf ~ 38.5)': 739.64, '[38.5 ~ inf)': -297.39},
+        'city': {'A': 336.6, 'B': 221.12, 'C': 221.12, 'E,D': 105.65},
+    }
+    reference = np.asarray([
+        1076.2311719694264, 1076.2311719694264, 960.7572641665862,
+        960.7572641665862, 1076.2311719694264, -76.27122619998207,
+        -191.74513400282234, -191.74513400282234, -76.27122619998207,
+        -191.74513400282234,
+    ] * 2)
     json_path = tmp_path / 'toad_scorecard.json'
-    exported_rules = toad_card.export(to_json=str(json_path))
+    json_path.write_text(json.dumps(exported_rules), encoding='utf-8')
 
     loaded_from_path = ScoreCard(pdo=60, rate=2, base_odds=35, base_score=750).load(str(json_path))
     loaded_from_dict = ScoreCard(pdo=60, rate=2, base_odds=35, base_score=750).load(exported_rules)
 
-    sample = X.iloc[:20].copy()
-    reference = toad_card.predict(sample)
-
-    np.testing.assert_allclose(loaded_from_path.predict(sample, input_type='raw'), reference, atol=0.02)
-    np.testing.assert_allclose(loaded_from_dict.predict(sample, input_type='raw'), reference, atol=0.02)
+    np.testing.assert_allclose(loaded_from_path.predict(X, input_type='raw'), reference, atol=0.02)
+    np.testing.assert_allclose(loaded_from_dict.predict(X, input_type='raw'), reference, atol=0.02)
 
 
 def test_scorecard_loads_scorecardpipeline_export_labels():
@@ -282,11 +254,6 @@ def test_scorecard_pmml_export_uses_expression_transformer_for_string_categories
     scorecard, _, _ = _train_scorecard(direction='descending')
     captured = {}
 
-    class FakeDataFrameMapper:
-        def __init__(self, mapper, df_out=True):
-            self.mapper = mapper
-            self.df_out = df_out
-
     class FakeLookupTransformer:
         def __init__(self, mapping, default_value=0.0):
             self.mapping = mapping
@@ -295,6 +262,9 @@ def test_scorecard_pmml_export_uses_expression_transformer_for_string_categories
     class FakeExpressionTransformer:
         def __init__(self, expression):
             self.expression = expression
+
+    class FakeConcatTransformer:
+        pass
 
     class FakeAlias:
         def __init__(self, transformer, name, prefit=False):
@@ -324,9 +294,6 @@ def test_scorecard_pmml_export_uses_expression_transformer_for_string_categories
         captured['pipeline'] = pipeline
         captured['pmml_file'] = pmml_file
 
-    fake_sklearn_pandas = types.ModuleType('sklearn_pandas')
-    fake_sklearn_pandas.DataFrameMapper = FakeDataFrameMapper
-
     fake_sklearn2pmml_module = types.ModuleType('sklearn2pmml')
     fake_sklearn2pmml_module.sklearn2pmml = fake_sklearn2pmml
     fake_sklearn2pmml_module.PMMLPipeline = FakePMMLPipeline
@@ -337,49 +304,45 @@ def test_scorecard_pmml_export_uses_expression_transformer_for_string_categories
     fake_decoration.ContinuousDomain = FakeContinuousDomain
 
     fake_preprocessing = types.ModuleType('sklearn2pmml.preprocessing')
+    fake_preprocessing.ConcatTransformer = FakeConcatTransformer
     fake_preprocessing.LookupTransformer = FakeLookupTransformer
     fake_preprocessing.ExpressionTransformer = FakeExpressionTransformer
 
-    monkeypatch.setitem(sys.modules, 'sklearn_pandas', fake_sklearn_pandas)
     monkeypatch.setitem(sys.modules, 'sklearn2pmml', fake_sklearn2pmml_module)
     monkeypatch.setitem(sys.modules, 'sklearn2pmml.decoration', fake_decoration)
     monkeypatch.setitem(sys.modules, 'sklearn2pmml.preprocessing', fake_preprocessing)
 
     scorecard.export_pmml(str(tmp_path / 'scorecard.pmml'))
 
-    mapper = captured['pipeline'].named_steps['preprocessing'].mapper
-    categorical_steps = next(
-        transformer_steps
-        for features, transformer_steps in mapper
+    mapper = captured['pipeline'].named_steps['preprocessing'].transformers
+    categorical_steps = dict(next(
+        transformer.steps
+        for _, transformer, features in mapper
         if features == ['status_of_existing_checking_account']
-    )
-    numeric_steps = next(
-        transformer_steps
-        for features, transformer_steps in mapper
-        if features == ['duration_in_month']
+    ))
+    numeric_steps = dict(next(
+        transformer.steps
+        for _, transformer, features in mapper
+        if features == ['duration_in_month', 'duration_in_month']
+    ))
+
+    assert isinstance(categorical_steps['domain'], FakeCategoricalDomain)
+    assert isinstance(categorical_steps['prepare'], FakeConcatTransformer)
+    assert isinstance(categorical_steps['score'], FakeAlias)
+    assert isinstance(categorical_steps['score'].transformer, FakeLookupTransformer)
+    assert categorical_steps['score'].transformer.mapping['no checking account'] != 0.0
+    assert categorical_steps['score'].transformer.default_value == pytest.approx(
+        categorical_steps['score'].transformer.mapping['no checking account']
     )
 
-    assert isinstance(categorical_steps[0], FakeCategoricalDomain)
-    assert isinstance(categorical_steps[1], FakeAlias)
-    assert isinstance(categorical_steps[1].transformer, FakeLookupTransformer)
-    assert categorical_steps[1].transformer.mapping['no checking account'] != 0.0
-    assert categorical_steps[1].transformer.default_value == pytest.approx(
-        categorical_steps[1].transformer.mapping['no checking account']
-    )
-
-    assert isinstance(numeric_steps[0], FakeContinuousDomain)
-    assert isinstance(numeric_steps[1], FakeAlias)
-    assert isinstance(numeric_steps[1].transformer, FakeExpressionTransformer)
-    assert 'X[0] < 6.5' in numeric_steps[1].transformer.expression
+    assert isinstance(numeric_steps['domain'], FakeContinuousDomain)
+    assert isinstance(numeric_steps['score'], FakeAlias)
+    assert isinstance(numeric_steps['score'].transformer, FakeExpressionTransformer)
+    assert 'X[0] < 6.5' in numeric_steps['score'].transformer.expression
 
 
 def test_scorecard_pmml_export_tolerates_sklearn2pmml_none_len_bug(tmp_path, monkeypatch):
     scorecard, _, _ = _train_scorecard(direction='descending')
-
-    class FakeDataFrameMapper:
-        def __init__(self, mapper, df_out=True):
-            self.mapper = mapper
-            self.df_out = df_out
 
     class FakeExpressionTransformer:
         def __init__(self, expression):
@@ -389,6 +352,9 @@ def test_scorecard_pmml_export_tolerates_sklearn2pmml_none_len_bug(tmp_path, mon
         def __init__(self, mapping, default_value=0.0):
             self.mapping = mapping
             self.default_value = default_value
+
+    class FakeConcatTransformer:
+        pass
 
     class FakeAlias:
         def __init__(self, transformer, name, prefit=False):
@@ -421,9 +387,6 @@ def test_scorecard_pmml_export_tolerates_sklearn2pmml_none_len_bug(tmp_path, mon
             handle.write('<PMML/>')
         raise TypeError("object of type 'NoneType' has no len()")
 
-    fake_sklearn_pandas = types.ModuleType('sklearn_pandas')
-    fake_sklearn_pandas.DataFrameMapper = FakeDataFrameMapper
-
     fake_linear_model = types.ModuleType('sklearn.linear_model')
     fake_linear_model.LinearRegression = FakeLinearRegression
 
@@ -437,10 +400,10 @@ def test_scorecard_pmml_export_tolerates_sklearn2pmml_none_len_bug(tmp_path, mon
     fake_decoration.ContinuousDomain = FakeContinuousDomain
 
     fake_preprocessing = types.ModuleType('sklearn2pmml.preprocessing')
+    fake_preprocessing.ConcatTransformer = FakeConcatTransformer
     fake_preprocessing.LookupTransformer = FakeLookupTransformer
     fake_preprocessing.ExpressionTransformer = FakeExpressionTransformer
 
-    monkeypatch.setitem(sys.modules, 'sklearn_pandas', fake_sklearn_pandas)
     monkeypatch.setitem(sys.modules, 'sklearn.linear_model', fake_linear_model)
     monkeypatch.setitem(sys.modules, 'sklearn2pmml', fake_sklearn2pmml_module)
     monkeypatch.setitem(sys.modules, 'sklearn2pmml.decoration', fake_decoration)
@@ -456,7 +419,6 @@ def test_scorecard_pmml_export_tolerates_sklearn2pmml_none_len_bug(tmp_path, mon
 
 
 def test_scorecard_pmml_preprocessing_matches_reference_feature_scores(tmp_path):
-    _skip_unless_importable('sklearn_pandas')
     pytest.importorskip('sklearn2pmml')
     _skip_if_java_too_old_for_sklearn2pmml()
 
@@ -469,11 +431,10 @@ def test_scorecard_pmml_preprocessing_matches_reference_feature_scores(tmp_path)
     woe = binner.transform(sample, metric='woe')[scorecard.feature_names_]
     reference = scorecard._woe_to_score(woe, scorecard.feature_names_)
 
-    np.testing.assert_allclose(transformed.to_numpy(dtype=float), reference, atol=1e-9)
+    np.testing.assert_allclose(np.asarray(transformed, dtype=float), reference, atol=1e-9)
 
 
 def test_scorecard_pmml_predict_matches_reference_scores(tmp_path):
-    _skip_unless_importable('sklearn_pandas')
     pytest.importorskip('sklearn2pmml')
     pytest.importorskip('pypmml')
     _skip_if_java_too_old_for_sklearn2pmml()

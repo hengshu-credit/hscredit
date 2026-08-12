@@ -40,7 +40,7 @@ from ...exceptions import NotFittedError, ValidationError
 from ...utils.parallel import (
     ParallelWorkload,
     ParallelizableMixin,
-    _current_parallel_budget,
+    _resolve_current_n_jobs,
     _validate_parallel_backend,
     resolve_n_jobs,
     validate_parallel_config,
@@ -715,14 +715,7 @@ class BaseFeatureSelector(ParallelizableMixin, BaseEstimator, TransformerMixin, 
     def _clone_estimator_for_parallel(self, estimator: Any) -> Any:
         """克隆 estimator，并只向最浅并行层传递当前有效预算。"""
         model = clone(estimator)
-        budget = _current_parallel_budget()
-        workers = (
-            resolve_n_jobs(
-                self.n_jobs,
-                available_budget=budget.available,
-            )
-            or 1
-        )
+        workers = _resolve_current_n_jobs(self.n_jobs) or 1
         return _set_estimator_parallel_budget(model, workers)
 
     @contextmanager

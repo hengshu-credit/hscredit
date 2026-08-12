@@ -76,7 +76,6 @@ autodoc_mock_imports = [
     "ngboost",
     "shap",
     "sklearn2pmml",
-    "sklearn_pandas",
     "pypmml",
     "optunahub",
     "optuna_dashboard",
