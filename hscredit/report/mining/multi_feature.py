@@ -11,7 +11,7 @@ import pandas as pd
 from typing import Union, List, Dict, Optional, Tuple, Any
 from itertools import combinations
 
-from .base import BaseRuleMiner
+from .base import BaseRuleMiner, _binning_has_parallel_children, _mining_workload
 from ...core.rules.rule import Rule
 from ...core.binning import OptimalBinning
 
@@ -555,12 +555,20 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
             )
             for f1, f2 in feature_pairs
         ]
+        has_parallel_children = _binning_has_parallel_children(self.method, self.binning_kwargs)
         pair_results = self._parallel_execute(
             _multi_feature_pair_worker,
             tasks,
             task_labels=[f"{f1} × {f2}" for f1, f2 in feature_pairs],
             default_backend="threading",
-            has_parallel_children=False,
+            has_parallel_children=has_parallel_children,
+            workload=_mining_workload(
+                self.X_,
+                len(tasks),
+                operation="多特征交叉规则挖掘",
+                cost_per_item=20.0,
+                has_parallel_children=has_parallel_children,
+            ),
         )
 
         all_rules = []

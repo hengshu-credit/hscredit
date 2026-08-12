@@ -39,6 +39,7 @@ from ...utils.parallel import (
     parallel_execute,
     resolve_n_jobs,
 )
+from .base import _mining_workload
 
 
 def _effective_nested_n_jobs(n_jobs):
@@ -812,6 +813,13 @@ def _node_hit_report(
         task_labels=labels,
         default_backend="threading",
         has_parallel_children=overdue is not None,
+        workload=_mining_workload(
+            data,
+            len(tasks),
+            operation="决策树节点规则报告",
+            cost_per_item=12.0,
+            has_parallel_children=overdue is not None,
+        ),
     )
 
     if not hit_frames:
@@ -1099,6 +1107,7 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
             _tree_metric_dataset_worker,
             [],
             default_backend="threading",
+            workload=_mining_workload(None, 0, operation="决策树并行配置校验"),
         )
         # 解析双 API：sklearn 风格 (X, y) 或 scorecardpipeline 风格 (df)
         resolved_features = features if features is not None else (self.features or None)
@@ -1217,6 +1226,12 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
             task_labels=[name for name, _ in datasets],
             default_backend="threading",
             has_parallel_children=False,
+            workload=_mining_workload(
+                self._data,
+                len(tasks),
+                operation="决策树数据集指标评估",
+                cost_per_item=10.0,
+            ),
         )
 
     def _calc_metric(
@@ -1305,6 +1320,13 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
             task_labels=names if names is not None else list(range(len(tasks))),
             default_backend="threading",
             has_parallel_children=True,
+            workload=_mining_workload(
+                max(data_values, key=len, default=None),
+                len(tasks),
+                operation="决策树多数据集报告",
+                cost_per_item=16.0,
+                has_parallel_children=True,
+            ),
         )
         if isinstance(datasets, dict):
             return dict(zip(names, results))
@@ -1843,6 +1865,7 @@ class ManualTreeExtractor(ParallelizableMixin):
             _tree_metric_dataset_worker,
             [],
             default_backend="threading",
+            workload=_mining_workload(None, 0, operation="人工决策树并行配置校验"),
         )
         # 解析双 API：sklearn 风格 (X, y) 或 scorecardpipeline 风格 (df)
         df, self._feature_list = _resolve_fit_data(X, y, features, self.target)
@@ -2411,6 +2434,13 @@ class ManualTreeExtractor(ParallelizableMixin):
             task_labels=names if names is not None else list(range(len(tasks))),
             default_backend="threading",
             has_parallel_children=True,
+            workload=_mining_workload(
+                max(data_values, key=len, default=None),
+                len(tasks),
+                operation="人工决策树多数据集报告",
+                cost_per_item=16.0,
+                has_parallel_children=True,
+            ),
         )
         if isinstance(datasets, dict):
             return dict(zip(names, results))

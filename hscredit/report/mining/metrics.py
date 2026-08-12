@@ -23,6 +23,7 @@ from ...core.metrics import (
 logger = logging.getLogger(__name__)
 
 from ...utils.parallel import ParallelizableMixin
+from .base import _mining_workload
 
 
 def _rule_metrics_worker(task):
@@ -246,6 +247,12 @@ class RuleMetrics(ParallelizableMixin):
             task_labels=[f"规则 {ordinal}" for ordinal in range(len(rules))],
             default_backend="threading",
             has_parallel_children=False,
+            workload=_mining_workload(
+                X_train,
+                len(tasks),
+                operation="规则指标批量评估",
+                cost_per_item=10.0,
+            ),
         )
         return pd.DataFrame(results)
     

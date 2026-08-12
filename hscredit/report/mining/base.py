@@ -6,7 +6,70 @@ from abc import ABC, abstractmethod
 from typing import Union, List, Dict, Optional, Tuple, Any
 from sklearn.base import BaseEstimator
 
-from ...utils.parallel import ParallelizableMixin
+from ...utils.parallel import ParallelizableMixin, ParallelWorkload
+
+
+_NESTED_BINNING_METHODS = frozenset({"genetic", "or_tools", "cp_sat"})
+
+
+def _binning_has_parallel_children(method: Any, params: Optional[Dict[str, Any]] = None) -> bool:
+    """判断规则挖掘中的分箱任务是否包含真实子并行。"""
+    params = params or {}
+
+    def can_spawn(method_name: Any, n_jobs: Any) -> bool:
+        return (
+            isinstance(method_name, str)
+            and method_name.strip().lower() in _NESTED_BINNING_METHODS
+            and n_jobs is not None
+            and n_jobs not in (1, 1.0)
+        )
+
+    inherited_n_jobs = params.get("n_jobs", -1)
+    if can_spawn(method, inherited_n_jobs):
+        return True
+    prebinning = params.get("prebinning")
+    if isinstance(prebinning, str):
+        return can_spawn(prebinning, inherited_n_jobs)
+    if isinstance(prebinning, dict):
+        return can_spawn(prebinning.get("method", "cart"), prebinning.get("n_jobs", inherited_n_jobs))
+    prebinning_name = prebinning.__class__.__name__.lower() if prebinning is not None else ""
+    prebinning_method = next(
+        (name for name in _NESTED_BINNING_METHODS if name.replace("_", "") in prebinning_name),
+        None,
+    )
+    return can_spawn(prebinning_method, getattr(prebinning, "n_jobs", inherited_n_jobs))
+
+
+def _mining_workload(
+    data: Any,
+    task_count: int,
+    *,
+    operation: str,
+    cost_per_item: float = 12.0,
+    capability: str = "thread_safe",
+    has_parallel_children: bool = False,
+) -> ParallelWorkload:
+    """构造规则挖掘和树报告批次的统一工作量描述。"""
+    rows = len(data) if data is not None and hasattr(data, "__len__") else 1
+    columns = max(1, task_count)
+    data_bytes = 0
+    memory_usage = getattr(data, "memory_usage", None)
+    if callable(memory_usage):
+        usage = memory_usage(deep=True)
+        data_bytes = int(usage.sum()) if hasattr(usage, "sum") else int(usage)
+    elif isinstance(data, np.ndarray):
+        data_bytes = int(data.nbytes)
+    return ParallelWorkload(
+        task_count=task_count,
+        rows=rows,
+        columns=columns,
+        data_bytes=data_bytes,
+        cost_per_item=cost_per_item,
+        capability=capability,
+        releases_gil=capability == "thread_safe",
+        has_parallel_children=has_parallel_children,
+        operation=operation,
+    )
 
 
 class BaseRuleMiner(ParallelizableMixin, BaseEstimator, ABC):

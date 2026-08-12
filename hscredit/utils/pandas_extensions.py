@@ -9,6 +9,7 @@ from __future__ import annotations
 - df.missing_analysis(): 缺失值分析
 - df.show(): 美化展示分箱表
 - df.save(): 保存到Excel
+- df.hscredit(...).apply(): DataFrame/Series/GroupBy 严格单次并行 apply
 
 使用方式:
     >>> import pandas as pd
@@ -25,6 +26,9 @@ from __future__ import annotations
     >>> 
     >>> # 美化展示分箱表
     >>> table.show(compact=True)
+    >>>
+    >>> # 并行 apply（Series 和 GroupBy 用法相同）
+    >>> result = df.hscredit(n_jobs=-1, bar=True).apply(func, axis=1)
 """
 
 import logging
@@ -42,34 +46,37 @@ if TYPE_CHECKING:
 # 1. EDA相关扩展方法 (原pandas_ext.py)
 # =============================================================================
 
+
 def _summary_method(
     self,
     features: List[str] = None,
     y: Optional[Union[str, pd.Series, np.ndarray, List, Tuple]] = None,
     val_df: Optional[pd.DataFrame] = None,
     models: Optional[Dict[str, Any]] = None,
-    model_type: Optional[Literal['xgboost', 'lightgbm', 'catboost', 'randomforest']] = None,
+    model_type: Optional[Literal["xgboost", "lightgbm", "catboost", "randomforest"]] = None,
     model_params: Optional[Dict] = None,
     max_n_bins: int = 10,
-    psi_method: Literal['random_split', 'group_col', 'date_col'] = 'random_split',
+    psi_method: Literal["random_split", "group_col", "date_col"] = "random_split",
     psi_group_col: Optional[str] = None,
     psi_date_col: Optional[str] = None,
-    psi_freq: str = 'M',
+    psi_freq: str = "M",
     psi_test_size: float = 0.3,
     percentiles: List[float] = None,
     random_state: int = 42,
-    return_type: Literal['dataframe', 'dict'] = 'dataframe',
+    return_type: Literal["dataframe", "dict"] = "dataframe",
     numeric_as_categorical: Optional[List[str]] = None,
     force_numeric: Optional[List[str]] = None,
     n_jobs: int = -1,
+    parallel_backend: Optional[str] = None,
+    parallel_config: Optional[Dict[str, Any]] = None,
     show_progress: bool = False,
-    binning_method: str = 'quantile',
+    binning_method: str = "quantile",
     binning_params: Optional[Dict[str, Any]] = None,
 ) -> Union[pd.DataFrame, List[Dict[str, Any]]]:
     """DataFrame 数据分布摘要统计.
-    
+
     快速获取数据集特征详情，包括基础统计、IV、KS、趋势、PSI和特征重要性。
-    
+
     :param features: 特征列表，None则分析全部
     :param y: 目标变量，支持列名、数组、列表、元组或Series，不传则不计算IV/KS/趋势/特征重要性
     :param val_df: 验证集，用于计算PSI
@@ -93,19 +100,19 @@ def _summary_method(
     :param binning_params: 传给OptimalBinning的完整参数；内层method覆盖外层binning_method，
         max_n_bins、random_state等重复键也直接覆盖外层参数。user_splits字典按原DataFrame字段名配置
     :return: 综合特征描述DataFrame或字典
-    
+
     Example:
         >>> # 基础统计
         >>> summary = df.summary()
-        
+
         >>> # 包含IV、KS、趋势（传入目标变量）
         >>> summary = df.summary(y='target')
-        
+
         >>> # 按日期分组计算PSI
         >>> summary = df.summary(y='target', psi_method='date_col', psi_date_col='apply_date')
     """
     from ..core.eda import feature_summary
-    
+
     result = feature_summary(
         df=self,
         features=features,
@@ -125,13 +132,15 @@ def _summary_method(
         numeric_as_categorical=numeric_as_categorical,
         force_numeric=force_numeric,
         n_jobs=n_jobs,
+        parallel_backend=parallel_backend,
+        parallel_config=parallel_config,
         show_progress=show_progress,
         binning_method=binning_method,
         binning_params=binning_params,
     )
-    
-    if return_type == 'dict':
-        return result.to_dict(orient='records')
+
+    if return_type == "dict":
+        return result.to_dict(orient="records")
     return result
 
 
@@ -140,22 +149,24 @@ def _series_summary_method(
     y: Optional[Union[pd.Series, np.ndarray, List, Tuple]] = None,
     val_df: Optional[Union[pd.DataFrame, pd.Series]] = None,
     models: Optional[Dict[str, Any]] = None,
-    model_type: Optional[Literal['xgboost', 'lightgbm', 'catboost', 'randomforest']] = None,
+    model_type: Optional[Literal["xgboost", "lightgbm", "catboost", "randomforest"]] = None,
     model_params: Optional[Dict] = None,
     max_n_bins: int = 10,
-    psi_method: Literal['random_split', 'group_col', 'date_col'] = 'random_split',
+    psi_method: Literal["random_split", "group_col", "date_col"] = "random_split",
     psi_group_col: Optional[str] = None,
     psi_date_col: Optional[str] = None,
-    psi_freq: str = 'M',
+    psi_freq: str = "M",
     psi_test_size: float = 0.3,
     percentiles: List[float] = None,
     random_state: int = 42,
     numeric_as_categorical: Optional[List[str]] = None,
     force_numeric: Optional[List[str]] = None,
     n_jobs: int = -1,
+    parallel_backend: Optional[str] = None,
+    parallel_config: Optional[Dict[str, Any]] = None,
     show_progress: bool = False,
-    return_type: Literal['dataframe', 'dict'] = 'dataframe',
-    binning_method: str = 'quantile',
+    return_type: Literal["dataframe", "dict"] = "dataframe",
+    binning_method: str = "quantile",
     binning_params: Optional[Dict[str, Any]] = None,
 ) -> Union[pd.DataFrame, List[Dict[str, Any]]]:
     """Series 单字段综合摘要统计。
@@ -189,6 +200,8 @@ def _series_summary_method(
         numeric_as_categorical=numeric_as_categorical,
         force_numeric=force_numeric,
         n_jobs=n_jobs,
+        parallel_backend=parallel_backend,
+        parallel_config=parallel_config,
         show_progress=show_progress,
         return_type=return_type,
         binning_method=binning_method,
@@ -198,37 +211,39 @@ def _series_summary_method(
 
 def _eda_info_method(self) -> Dict[str, Any]:
     """DataFrame EDA 基础信息.
-    
+
     快速获取数据集基础信息，包括样本数、特征数、缺失值等。
-    
+
     :return: 字典格式的数据集信息
-    
+
     Example:
         >>> info = df.eda_info()
         >>> print(info['样本数'])
     """
     from ..core.eda import data_info
-    
+
     result = data_info(self)
-    return dict(zip(result['信息项'], result['值']))
+    return dict(zip(result["信息项"], result["值"]))
 
 
 def _missing_analysis_method(self, threshold: float = 0.0) -> pd.DataFrame:
     """DataFrame 缺失值分析.
-    
+
     :param threshold: 缺失率阈值，仅返回缺失率>=该值的特征
     :return: 缺失值分析DataFrame
-    
+
     Example:
         >>> missing = df.missing_analysis(threshold=0.05)
     """
     from ..core.eda import missing_analysis
+
     return missing_analysis(self, threshold=threshold)
 
 
 # =============================================================================
 # 2. Excel保存相关扩展方法 (原report/excel/pandas_extension.py)
 # =============================================================================
+
 
 def _dataframe_save(
     self,
@@ -256,7 +271,7 @@ def _dataframe_save(
     figsize: Tuple[int, int] = (600, 350),
     image_bottom_padding_rows: int = 1,
     writer_params: Optional[Dict] = None,
-    **kwargs
+    **kwargs,
 ) -> Union[Tuple[int, int], ExcelWriter]:
     """
     将DataFrame保存到Excel文件或已有的ExcelWriter中。
@@ -292,12 +307,12 @@ def _dataframe_save(
 
     >>> import pandas as pd
     >>> from hscredit.excel import ExcelWriter
-    >>> 
+    >>>
     >>> df = pd.DataFrame({'A': [1, 2, 3], 'B': [4, 5, 6]})
-    >>> 
+    >>>
     >>> # 方式1：直接保存到文件
     >>> df.save("report.xlsx", sheet_name="数据", title="统计表")
-    >>> 
+    >>>
     >>> # 方式2：写入已有的ExcelWriter
     >>> writer = ExcelWriter()
     >>> worksheet = writer.get_sheet_by_name("Sheet1")
@@ -307,23 +322,18 @@ def _dataframe_save(
     from ..excel import ExcelWriter, dataframe2excel, resolve_condition_color
     from openpyxl.worksheet.worksheet import Worksheet
     from openpyxl.utils import get_column_letter
-    
+
     # 如果提供了worksheet，说明要使用已有的writer
     if worksheet is not None and isinstance(excel_writer, ExcelWriter):
         # 直接插入到指定的worksheet
         writer = excel_writer
-        
+
         # 插入标题
         if title:
             col_width = len(self.columns) + self.index.nlevels if kwargs.get("index", False) else len(self.columns)
-            _start_row, _end_col = writer.insert_value2sheet(
-                worksheet, (start_row, start_col),
-                value=title,
-                style="header",
-                end_space=(start_row, start_col + col_width - 1)
-            )
+            _start_row, _end_col = writer.insert_value2sheet(worksheet, (start_row, start_col), value=title, style="header", end_space=(start_row, start_col + col_width - 1))
             start_row += 1
-        
+
         # 插入图片
         if figures is not None:
             if isinstance(figures, str):
@@ -338,55 +348,41 @@ def _dataframe_save(
                         start_row, end_col = writer.insert_pic2sheet(worksheet, pic, (pic_row, end_col - 1), figsize=figsize)
 
                 start_row += 0 if image_bottom_padding_rows is None else max(int(image_bottom_padding_rows), 0)
-        
+
         # 处理merge_column参数
         if "merge_column" in kwargs and kwargs["merge_column"]:
             if not isinstance(kwargs["merge_column"][0], (tuple, list)):
                 kwargs["merge_column"] = [c for c in self.columns if (isinstance(c, tuple) and c[-1] in kwargs["merge_column"]) or (not isinstance(c, tuple) and c in kwargs["merge_column"])]
-        
+
         # 插入DataFrame
-        end_row, end_col = writer.insert_df2sheet(
-            worksheet, self, (start_row, start_col),
-            fill=fill, header=header, **kwargs
-        )
-        
+        end_row, end_col = writer.insert_df2sheet(worksheet, self, (start_row, start_col), fill=fill, header=header, **kwargs)
+
         # 设置百分比格式列
         if percent_cols:
             if not isinstance(percent_cols[0], (tuple, list)):
                 percent_cols = [c for c in self.columns if (isinstance(c, tuple) and c[-1] in percent_cols) or (not isinstance(c, tuple) and c in percent_cols)]
             for c in [c for c in percent_cols if c in self.columns]:
-                conditional_column = get_column_letter(
-                    start_col + self.columns.get_loc(c) + self.index.nlevels if kwargs.get("index", False) else start_col + self.columns.get_loc(c)
-                )
+                conditional_column = get_column_letter(start_col + self.columns.get_loc(c) + self.index.nlevels if kwargs.get("index", False) else start_col + self.columns.get_loc(c))
                 writer.set_number_format(worksheet, f"{conditional_column}{end_row - len(self)}:{conditional_column}{end_row - 1}", "0.00%")
-        
+
         # 设置自定义格式列
         if custom_cols:
             if not isinstance(custom_cols[0], (tuple, list)):
                 custom_cols = [c for c in self.columns if (isinstance(c, tuple) and c[-1] in custom_cols) or (not isinstance(c, tuple) and c in custom_cols)]
             for c in [c for c in custom_cols if c in self.columns]:
-                conditional_column = get_column_letter(
-                    start_col + self.columns.get_loc(c) + self.index.nlevels if kwargs.get("index", False) else start_col + self.columns.get_loc(c)
-                )
+                conditional_column = get_column_letter(start_col + self.columns.get_loc(c) + self.index.nlevels if kwargs.get("index", False) else start_col + self.columns.get_loc(c))
                 writer.set_number_format(worksheet, f"{conditional_column}{end_row - len(self)}:{conditional_column}{end_row - 1}", custom_format)
-        
+
         # 设置条件格式列
         if condition_cols:
             if not isinstance(condition_cols[0], (tuple, list)):
                 condition_cols = [c for c in self.columns if (isinstance(c, tuple) and c[-1] in condition_cols) or (not isinstance(c, tuple) and c in condition_cols)]
             for c in [c for c in condition_cols if c in self.columns]:
-                conditional_column = get_column_letter(
-                    start_col + self.columns.get_loc(c) + self.index.nlevels if kwargs.get("index", False) else start_col + self.columns.get_loc(c)
-                )
-                writer.add_conditional_formatting(
-                    worksheet,
-                    f'{conditional_column}{end_row - len(self)}',
-                    f'{conditional_column}{end_row - 1}',
-                    condition_color=resolve_condition_color(condition_color, c, theme_color)
-                )
+                conditional_column = get_column_letter(start_col + self.columns.get_loc(c) + self.index.nlevels if kwargs.get("index", False) else start_col + self.columns.get_loc(c))
+                writer.add_conditional_formatting(worksheet, f"{conditional_column}{end_row - len(self)}", f"{conditional_column}{end_row - 1}", condition_color=resolve_condition_color(condition_color, c, theme_color))
 
         return writer
-    
+
     # 使用dataframe2excel函数（传入文件路径或ExcelWriter但没有worksheet）
     return dataframe2excel(
         data=self,
@@ -413,7 +409,7 @@ def _dataframe_save(
         figsize=figsize,
         image_bottom_padding_rows=image_bottom_padding_rows,
         writer_params=writer_params,
-        **kwargs
+        **kwargs,
     )
 
 
@@ -443,7 +439,7 @@ def _series_save(
     figsize: Tuple[int, int] = (600, 350),
     image_bottom_padding_rows: int = 1,
     writer_params: Optional[Dict] = None,
-    **kwargs
+    **kwargs,
 ) -> Union[Tuple[int, int], ExcelWriter]:
     """
     将Series保存到Excel文件或已有的ExcelWriter中。
@@ -480,12 +476,12 @@ def _series_save(
 
     >>> import pandas as pd
     >>> from hscredit.excel import ExcelWriter
-    >>> 
+    >>>
     >>> s = pd.Series([1, 2, 3], name='数值', index=['a', 'b', 'c'])
-    >>> 
+    >>>
     >>> # 方式1：直接保存到文件
     >>> s.save("report.xlsx", sheet_name="数据", title="序列数据")
-    >>> 
+    >>>
     >>> # 方式2：写入已有的ExcelWriter
     >>> writer = ExcelWriter()
     >>> worksheet = writer.get_sheet_by_name("Sheet1")
@@ -494,7 +490,7 @@ def _series_save(
     """
     # 将Series转换为DataFrame
     df = self.to_frame()
-    
+
     # 调用DataFrame的save方法
     return df.save(
         excel_writer=excel_writer,
@@ -521,7 +517,7 @@ def _series_save(
         figsize=figsize,
         image_bottom_padding_rows=image_bottom_padding_rows,
         writer_params=writer_params,
-        **kwargs
+        **kwargs,
     )
 
 
@@ -529,43 +525,31 @@ def _series_save(
 # 3. 分箱表展示相关扩展方法 (原bin_table_display.py)
 # =============================================================================
 
+
 class BinTableDisplay:
     """分箱表展示器.
-    
+
     提供链式调用接口，方便在 Jupyter 中展示美观的分箱表。
-    
+
     **参考样例**
-    
+
     >>> table = feature_bin_stats(data, 'score', target='target')
     >>> table.show()
     >>> table.show(compact=True)
     >>> table.show(highlight_iv=False)
     """
-    
+
     def __init__(self, df: pd.DataFrame):
         """初始化展示器.
-        
+
         :param df: 分箱统计表
         """
         self._df = df
         self._styler = None
-    
-    def show(
-        self,
-        max_rows: Optional[int] = None,
-        highlight_iv: bool = True,
-        highlight_bad_rate: bool = True,
-        highlight_lift: bool = True,
-        highlight_ks: bool = True,
-        compact: bool = False,
-        precision: Optional[Dict[str, int]] = None,
-        index_as_bin: bool = False,
-        percent_format: bool = True,
-        high_tech_style: bool = False,
-        **kwargs
-    ) -> 'BinTableDisplay':
+
+    def show(self, max_rows: Optional[int] = None, highlight_iv: bool = True, highlight_bad_rate: bool = True, highlight_lift: bool = True, highlight_ks: bool = True, compact: bool = False, precision: Optional[Dict[str, int]] = None, index_as_bin: bool = False, percent_format: bool = True, high_tech_style: bool = False, **kwargs) -> "BinTableDisplay":
         """展示美化的分箱表.
-        
+
         :param max_rows: 最大显示行数
         :param highlight_iv: 是否高亮 IV 值
         :param highlight_bad_rate: 是否高亮坏样本率
@@ -579,64 +563,55 @@ class BinTableDisplay:
         :param kwargs: 其他参数
         :return: self，支持链式调用
         """
-        self._styler = _style_bin_table(
-            self._df,
-            max_rows=max_rows,
-            highlight_iv=highlight_iv,
-            highlight_bad_rate=highlight_bad_rate,
-            highlight_lift=highlight_lift,
-            highlight_ks=highlight_ks,
-            compact=compact,
-            precision=precision,
-            index_as_bin=index_as_bin,
-            percent_format=percent_format,
-            high_tech_style=high_tech_style
-        )
+        self._styler = _style_bin_table(self._df, max_rows=max_rows, highlight_iv=highlight_iv, highlight_bad_rate=highlight_bad_rate, highlight_lift=highlight_lift, highlight_ks=highlight_ks, compact=compact, precision=precision, index_as_bin=index_as_bin, percent_format=percent_format, high_tech_style=high_tech_style)
         try:
             from IPython.display import display
+
             display(self._styler)
         except ImportError:
             pass
         return self
-    
-    def highlight_bins(self, bins: Union[int, List[int]], color: str = '#e3f2fd') -> 'BinTableDisplay':
+
+    def highlight_bins(self, bins: Union[int, List[int]], color: str = "#e3f2fd") -> "BinTableDisplay":
         """高亮指定的分箱行.
-        
+
         :param bins: 要高亮的分箱索引或索引列表
         :param color: 高亮颜色
         :return: self，支持链式调用
         """
         if self._styler is None:
             self._styler = _style_bin_table(self._df)
-        
+
         if isinstance(bins, int):
             bins = [bins]
-        
+
         def highlight_row(row):
             if row.name in bins:
-                return ['background-color: #e3f2fd; color: #1565C0'] * len(row)
-            return [''] * len(row)
-        
+                return ["background-color: #e3f2fd; color: #1565C0"] * len(row)
+            return [""] * len(row)
+
         self._styler = self._styler.apply(highlight_row, axis=1)
         try:
             from IPython.display import display
+
             display(self._styler)
         except ImportError:
             pass
         return self
-    
-    def export_html(self, filename: str) -> 'BinTableDisplay':
+
+    def export_html(self, filename: str) -> "BinTableDisplay":
         """导出为 HTML 文件.
-        
+
         :param filename: 文件名
         :return: self，支持链式调用
         """
         if self._styler is None:
             self._styler = _style_bin_table(self._df)
-        
+
         html = self._styler.to_html()
-        with open(filename, 'w', encoding='utf-8') as f:
-            f.write(f'''
+        with open(filename, "w", encoding="utf-8") as f:
+            f.write(
+                f"""
             <!DOCTYPE html>
             <html>
             <head>
@@ -652,21 +627,22 @@ class BinTableDisplay:
                 {html}
             </body>
             </html>
-            ''')
+            """
+            )
         logger.info("已导出到: %s", filename)
         return self
-    
-    def to_excel(self, filename: str, sheet_name: str = '分箱统计') -> 'BinTableDisplay':
+
+    def to_excel(self, filename: str, sheet_name: str = "分箱统计") -> "BinTableDisplay":
         """导出为 Excel 文件.
-        
+
         :param filename: 文件名
         :param sheet_name: 工作表名称
         :return: self，支持链式调用
         """
         if self._styler is None:
             self._styler = _style_bin_table(self._df)
-        
-        self._styler.to_excel(filename, sheet_name=sheet_name, engine='openpyxl')
+
+        self._styler.to_excel(filename, sheet_name=sheet_name, engine="openpyxl")
         logger.info("已导出到: %s", filename)
         return self
 
@@ -714,34 +690,34 @@ def _style_bin_table(
         bin_label_col = None
         indicator_name_col = None
         indicator_desc_col = None
-        
+
         for col in df_display.columns:
             col_name = col[1] if isinstance(col, tuple) else col
-            if col_name == '分箱标签':
+            if col_name == "分箱标签":
                 bin_label_col = col
-            if col_name == '指标名称':
+            if col_name == "指标名称":
                 indicator_name_col = col
-            if col_name == '指标含义':
+            if col_name == "指标含义":
                 indicator_desc_col = col
-        
+
         # 先合并指标名称和指标含义
         if indicator_name_col is not None and indicator_desc_col is not None:
             # 合并为新列
             if is_multi_level:
-                df_display['指标名称_合并'] = df_display[indicator_name_col].astype(str) + ' - ' + df_display[indicator_desc_col].astype(str)
+                df_display["指标名称_合并"] = df_display[indicator_name_col].astype(str) + " - " + df_display[indicator_desc_col].astype(str)
                 df_display = df_display.drop(columns=[indicator_name_col, indicator_desc_col])
                 # 重建多级索引列名
                 new_columns = []
                 for col in df_display.columns:
-                    if col == '指标名称_合并':
-                        new_columns.append(('基本信息', '指标'))
+                    if col == "指标名称_合并":
+                        new_columns.append(("基本信息", "指标"))
                     elif isinstance(col, tuple):
                         new_columns.append(col)
                     else:
                         new_columns.append(col)
                 df_display.columns = pd.MultiIndex.from_tuples(new_columns)
                 is_multi_level = isinstance(df_display.columns, pd.MultiIndex)
-        
+
         if bin_label_col is not None:
             # 将分箱标签设为索引名称
             df_display = df_display.set_index(bin_label_col)
@@ -751,7 +727,7 @@ def _style_bin_table(
                     df_display = df_display.drop(columns=[bin_col])
                 except KeyError:
                     pass
-        
+
         # 重新检查是否为多级表头（因为可能改变了列结构）
         is_multi_level = isinstance(df_display.columns, pd.MultiIndex)
 
@@ -767,8 +743,7 @@ def _style_bin_table(
             # 多级表头
             all_cols = df_display.columns.tolist()
             # 保留核心列
-            keep_patterns = ['指标', '分箱标签', '样本总数', 
-                           '坏样本率', '分档WOE值', '分档IV值', '指标IV值', 'LIFT值', '分档KS值']
+            keep_patterns = ["指标", "分箱标签", "样本总数", "坏样本率", "分档WOE值", "分档IV值", "指标IV值", "LIFT值", "分档KS值"]
             for col in all_cols:
                 col_name = col[1] if isinstance(col, tuple) else col
                 if not any(p in col_name for p in keep_patterns):
@@ -776,8 +751,7 @@ def _style_bin_table(
         else:
             # 单层表头
             all_cols = df_display.columns.tolist()
-            keep_patterns = ['指标名称', '指标含义', '指标', '分箱标签', '样本总数', 
-                           '坏样本率', '分档WOE值', '分档IV值', '指标IV值', 'LIFT值', '分档KS值']
+            keep_patterns = ["指标名称", "指标含义", "指标", "分箱标签", "样本总数", "坏样本率", "分档WOE值", "分档IV值", "指标IV值", "LIFT值", "分档KS值"]
             hide_cols = [c for c in all_cols if not any(p in str(c) for p in keep_patterns)]
 
         if hide_cols:
@@ -788,42 +762,42 @@ def _style_bin_table(
 
     # 定义默认小数位数
     default_precision = {
-        '样本总数': 0,
-        '好样本数': 0,
-        '坏样本数': 0,
-        '样本占比': 2,
-        '好样本占比': 2,
-        '坏样本占比': 2,
-        '坏样本率': 2,
-        '分档WOE值': 4,
-        '分档IV值': 4,
-        '指标IV值': 4,
-        'LIFT值': 2,
-        '坏账改善': 2,
-        '累积LIFT值': 2,
-        '累积坏账改善': 2,
-        '分档KS值': 2,
+        "样本总数": 0,
+        "好样本数": 0,
+        "坏样本数": 0,
+        "样本占比": 2,
+        "好样本占比": 2,
+        "坏样本占比": 2,
+        "坏样本率": 2,
+        "分档WOE值": 4,
+        "分档IV值": 4,
+        "指标IV值": 4,
+        "LIFT值": 2,
+        "坏账改善": 2,
+        "累积LIFT值": 2,
+        "累积坏账改善": 2,
+        "分档KS值": 2,
     }
 
     # 定义需要显示为百分比的列
     percent_columns = {
-        '样本占比': 2,
-        '好样本占比': 2,
-        '坏样本占比': 2,
-        '坏样本率': 2,
-        'LIFT值': 2,
-        '坏账改善': 2,
-        '累积LIFT值': 2,
-        '累积坏账改善': 2,
-        '分档KS值': 2,
+        "样本占比": 2,
+        "好样本占比": 2,
+        "坏样本占比": 2,
+        "坏样本率": 2,
+        "LIFT值": 2,
+        "坏账改善": 2,
+        "累积LIFT值": 2,
+        "累积坏账改善": 2,
+        "分档KS值": 2,
     }
 
     # 预定义的百分比格式
     percent_formats = {
-        2: '{:.2%}',
-        3: '{:.3%}',
-        1: '{:.1%}',
-        0: '{:.0f}',
+        2: "{:.2%}",
+        3: "{:.3%}",
+        1: "{:.1%}",
+        0: "{:.0f}",
     }
 
     # 更新自定义精度
@@ -838,15 +812,15 @@ def _style_bin_table(
             col_name = col[1]
             if percent_format and col_name in percent_columns:
                 precision_val = percent_columns[col_name]
-                format_dict[col] = percent_formats.get(precision_val, '{:.2%}')
+                format_dict[col] = percent_formats.get(precision_val, "{:.2%}")
             elif col_name in default_precision:
                 precision_val = default_precision[col_name]
                 if precision_val == 0:
-                    format_dict[col] = '{:.0f}'
+                    format_dict[col] = "{:.0f}"
                 else:
-                    format_dict[col] = f'{{:.{precision_val}f}}'
+                    format_dict[col] = f"{{:.{precision_val}f}}"
         if format_dict:
-            styler = styler.format(format_dict, na_rep='-')
+            styler = styler.format(format_dict, na_rep="-")
     else:
         # 单层表头
         format_dict = {}
@@ -854,25 +828,25 @@ def _style_bin_table(
             col_name = str(col)
             if percent_format and col_name in percent_columns:
                 precision_val = percent_columns[col_name]
-                format_dict[col] = percent_formats.get(precision_val, '{:.2%}')
+                format_dict[col] = percent_formats.get(precision_val, "{:.2%}")
             elif col_name in default_precision:
                 precision_val = default_precision[col_name]
                 if precision_val == 0:
-                    format_dict[col] = '{:.0f}'
+                    format_dict[col] = "{:.0f}"
                 else:
-                    format_dict[col] = f'{{:.{precision_val}f}}'
+                    format_dict[col] = f"{{:.{precision_val}f}}"
         if format_dict:
-            styler = styler.format(format_dict, na_rep='-')
+            styler = styler.format(format_dict, na_rep="-")
 
     # ===== 条件格式：只对坏样本率、LIFT、KS使用进度条 =====
     # 进度条颜色
-    bad_rate_color = '#5B8FF9'   # 蓝色
-    lift_color = '#5AD8A6'       # 绿色
-    ks_color = '#F6BD16'         # 金色
+    bad_rate_color = "#5B8FF9"  # 蓝色
+    lift_color = "#5AD8A6"  # 绿色
+    ks_color = "#F6BD16"  # 金色
 
     # 高亮坏样本率（进度条）
     if highlight_bad_rate:
-        bad_rate_cols = _find_columns(df_display, '坏样本率')
+        bad_rate_cols = _find_columns(df_display, "坏样本率")
         for col in bad_rate_cols:
             values = df_display[col].dropna()
             vmin = 0
@@ -881,17 +855,11 @@ def _style_bin_table(
                 vmax = min(vmax * 1.2, 1)
             else:
                 vmax = 1
-            styler = styler.bar(
-                subset=[col],
-                color=bad_rate_color,
-                vmin=vmin,
-                vmax=vmax,
-                axis=0
-            )
+            styler = styler.bar(subset=[col], color=bad_rate_color, vmin=vmin, vmax=vmax, axis=0)
 
     # 高亮 LIFT 值（进度条）
     if highlight_lift:
-        lift_cols = _find_columns(df_display, 'LIFT值')
+        lift_cols = _find_columns(df_display, "LIFT值")
         for col in lift_cols:
             lift_values = df_display[col].dropna()
             vmin = 0
@@ -900,17 +868,11 @@ def _style_bin_table(
                 vmax = min(vmax * 1.2, 5)
             else:
                 vmax = 2
-            styler = styler.bar(
-                subset=[col],
-                color=lift_color,
-                vmin=vmin,
-                vmax=vmax,
-                axis=0
-            )
+            styler = styler.bar(subset=[col], color=lift_color, vmin=vmin, vmax=vmax, axis=0)
 
     # 高亮 KS 值（进度条）
     if highlight_ks:
-        ks_cols = _find_columns(df_display, '分档KS值')
+        ks_cols = _find_columns(df_display, "分档KS值")
         for col in ks_cols:
             ks_values = df_display[col].dropna()
             vmin = 0
@@ -919,57 +881,76 @@ def _style_bin_table(
                 vmax = min(vmax * 1.2, 1)
             else:
                 vmax = 1
-            styler = styler.bar(
-                subset=[col],
-                color=ks_color,
-                vmin=vmin,
-                vmax=vmax,
-                axis=0
-            )
+            styler = styler.bar(subset=[col], color=ks_color, vmin=vmin, vmax=vmax, axis=0)
 
     # 设置表格样式 - 列名不换行，横向滚动
-    styler = styler.set_properties(**{
-        'white-space': 'nowrap',
-        'text-align': 'center',
-        'font-size': '12px',
-    })
+    styler = styler.set_properties(
+        **{
+            "white-space": "nowrap",
+            "text-align": "center",
+            "font-size": "12px",
+        }
+    )
 
     # 表头和行列样式 - 简洁清爽风格
-    styler = styler.set_table_styles([
-        {'selector': 'thead th', 'props': [
-            ('background-color', '#f5f5f5'),
-            ('color', '#333333'),
-            ('font-weight', 'bold'),
-            ('text-align', 'center'),
-            ('font-size', '12px'),
-            ('padding', '8px'),
-            ('border', '1px solid #dddddd'),
-            ('white-space', 'nowrap'),
-        ]},
-        {'selector': 'td', 'props': [
-            ('padding', '6px 8px'),
-            ('border', '1px solid #dddddd'),
-        ]},
-        # 奇偶行颜色不同
-        {'selector': 'tr:nth-child(odd)', 'props': [
-            ('background-color', '#ffffff'),
-        ]},
-        {'selector': 'tr:nth-child(even)', 'props': [
-            ('background-color', '#fafafa'),
-        ]},
-        {'selector': 'tr:hover', 'props': [
-            ('background-color', '#f0f0f0'),
-        ]},
-        # 进度条样式
-        {'selector': '.pd-bar', 'props': [
-            ('opacity', '0.7'),
-        ]},
-        # 选中样式 - 柔和的颜色对比
-        {'selector': 'tr.selected, td.selected', 'props': [
-            ('background-color', '#e3f2fd'),
-            ('color', '#1565C0'),
-        ]},
-    ])
+    styler = styler.set_table_styles(
+        [
+            {
+                "selector": "thead th",
+                "props": [
+                    ("background-color", "#f5f5f5"),
+                    ("color", "#333333"),
+                    ("font-weight", "bold"),
+                    ("text-align", "center"),
+                    ("font-size", "12px"),
+                    ("padding", "8px"),
+                    ("border", "1px solid #dddddd"),
+                    ("white-space", "nowrap"),
+                ],
+            },
+            {
+                "selector": "td",
+                "props": [
+                    ("padding", "6px 8px"),
+                    ("border", "1px solid #dddddd"),
+                ],
+            },
+            # 奇偶行颜色不同
+            {
+                "selector": "tr:nth-child(odd)",
+                "props": [
+                    ("background-color", "#ffffff"),
+                ],
+            },
+            {
+                "selector": "tr:nth-child(even)",
+                "props": [
+                    ("background-color", "#fafafa"),
+                ],
+            },
+            {
+                "selector": "tr:hover",
+                "props": [
+                    ("background-color", "#f0f0f0"),
+                ],
+            },
+            # 进度条样式
+            {
+                "selector": ".pd-bar",
+                "props": [
+                    ("opacity", "0.7"),
+                ],
+            },
+            # 选中样式 - 柔和的颜色对比
+            {
+                "selector": "tr.selected, td.selected",
+                "props": [
+                    ("background-color", "#e3f2fd"),
+                    ("color", "#1565C0"),
+                ],
+            },
+        ]
+    )
 
     return styler
 
@@ -1067,18 +1048,18 @@ def style_rule_table(
         return df_d.style
 
     # 兼容报告格式与旧版精简格式的列名
-    badrate_col = '坏样本率' if '坏样本率' in df_d.columns else '坏账率'
-    count_col = '样本总数' if '样本总数' in df_d.columns else '样本数'
-    rule_col = '指标含义' if '指标含义' in df_d.columns else '规则表达式'
+    badrate_col = "坏样本率" if "坏样本率" in df_d.columns else "坏账率"
+    count_col = "样本总数" if "样本总数" in df_d.columns else "样本数"
+    rule_col = "指标含义" if "指标含义" in df_d.columns else "规则表达式"
 
     # 报告格式中恒为常量的噪声列，展示时隐藏（指标名称为原始表达式，与指标含义重复）
-    hide_cols = [c for c in ('规则分类', '指标名称', '分箱') if c in df_d.columns]
+    hide_cols = [c for c in ("规则分类", "指标名称", "分箱") if c in df_d.columns]
 
     # 推断全局坏样本率（颜色梯度用）
     if overall_badrate is None:
-        if count_col in df_d.columns and '坏样本数' in df_d.columns:
+        if count_col in df_d.columns and "坏样本数" in df_d.columns:
             total_samples = df_d[count_col].sum()
-            total_bad = df_d['坏样本数'].sum()
+            total_bad = df_d["坏样本数"].sum()
             overall_badrate = total_bad / total_samples if total_samples > 0 else 0.0
         else:
             overall_badrate = 0.0
@@ -1086,17 +1067,25 @@ def style_rule_table(
     # 创建 Styler
     styler = df_d.style
     if hide_cols:
-        styler = styler.hide(subset=hide_cols, axis='columns')
+        styler = styler.hide(subset=hide_cols, axis="columns")
 
     # 默认精度：整数列、百分数列、普通小数列
-    _int_cols = ('节点编号', count_col, '好样本数', '坏样本数')
+    _int_cols = ("节点编号", count_col, "好样本数", "坏样本数")
     _pct_cols = (
-        '样本占比', badrate_col, '好样本占比', '坏样本占比',
-        '坏账改善', '风险拒绝比', '准确率', '精确率', '召回率', 'F1分数',
+        "样本占比",
+        badrate_col,
+        "好样本占比",
+        "坏样本占比",
+        "坏账改善",
+        "风险拒绝比",
+        "准确率",
+        "精确率",
+        "召回率",
+        "F1分数",
     )
     default_precision = {c: 0 for c in _int_cols}
     default_precision.update({c: 2 for c in _pct_cols})
-    default_precision['LIFT值'] = 2  # LIFT 为倍数，按普通小数显示
+    default_precision["LIFT值"] = 2  # LIFT 为倍数，按普通小数显示
     if precision:
         default_precision.update(precision)
 
@@ -1105,13 +1094,13 @@ def style_rule_table(
     for col, prec in default_precision.items():
         if col in df_d.columns:
             if col in _pct_cols:
-                format_dict[col] = f'{{:.{max(prec, 2)}%}}'
+                format_dict[col] = f"{{:.{max(prec, 2)}%}}"
             elif prec == 0:
-                format_dict[col] = '{:.0f}'
+                format_dict[col] = "{:.0f}"
             else:
-                format_dict[col] = f'{{:.{prec}f}}'
+                format_dict[col] = f"{{:.{prec}f}}"
     if format_dict:
-        styler = styler.format(format_dict, na_rep='-')
+        styler = styler.format(format_dict, na_rep="-")
 
     # --- 坏样本率颜色梯度：低=绿，高=红 ---
     if badrate_col in df_d.columns:
@@ -1119,102 +1108,126 @@ def style_rule_table(
         vmin, vmax = 0.0, max(bad_vals.max() * 1.2, max(overall_badrate * 1.5, 0.3), 0.01)
         styler = styler.background_gradient(
             subset=[badrate_col],
-            cmap='RdYlGn_r',
+            cmap="RdYlGn_r",
             vmin=vmin,
             vmax=vmax,
         )
 
     # --- LIFT值颜色梯度：高=深色，低=浅色 ---
-    if 'LIFT值' in df_d.columns:
-        lift_vals = df_d['LIFT值'].fillna(1)
+    if "LIFT值" in df_d.columns:
+        lift_vals = df_d["LIFT值"].fillna(1)
         vmin_l, vmax_l = max(0, lift_vals.min() * 0.8), lift_vals.max() * 1.2
         styler = styler.background_gradient(
-            subset=['LIFT值'],
-            cmap='RdYlGn',
+            subset=["LIFT值"],
+            cmap="RdYlGn",
             vmin=vmin_l,
             vmax=vmax_l,
         )
 
     # --- 样本占比进度条 ---
-    if '样本占比' in df_d.columns:
+    if "样本占比" in df_d.columns:
         styler = styler.bar(
-            subset=['样本占比'],
-            color='#5B8FF9',
+            subset=["样本占比"],
+            color="#5B8FF9",
             vmin=0,
             vmax=1,
-            align='left',
+            align="left",
         )
 
     # --- 是否叶子列高亮 ---
-    if '是否叶子' in df_d.columns:
+    if "是否叶子" in df_d.columns:
+
         def _leaf_color(val):
-            if val == '是':
-                return 'background-color: #e8f5e9; color: #2e7d32; font-weight: bold'
-            elif val == '否':
-                return 'background-color: #fff8e1; color: #f57f17; font-weight: bold'
-            return ''
-        styler = styler.applymap(_leaf_color, subset=['是否叶子'])
+            if val == "是":
+                return "background-color: #e8f5e9; color: #2e7d32; font-weight: bold"
+            elif val == "否":
+                return "background-color: #fff8e1; color: #f57f17; font-weight: bold"
+            return ""
+
+        styler = styler.applymap(_leaf_color, subset=["是否叶子"])
 
     # --- 基础样式 ---
-    styler = styler.set_properties(**{
-        'white-space': 'nowrap',
-        'text-align': 'center',
-        'font-size': '12px',
-        'font-family': 'Arial, sans-serif',
-    })
+    styler = styler.set_properties(
+        **{
+            "white-space": "nowrap",
+            "text-align": "center",
+            "font-size": "12px",
+            "font-family": "Arial, sans-serif",
+        }
+    )
 
     # --- 规则文本列左对齐 + 等宽字体（按列名定位，避免依赖列顺序）---
     if rule_col in df_d.columns:
         styler = styler.set_properties(
             subset=[rule_col],
             **{
-                'text-align': 'left',
-                'font-family': 'monospace',
-                'font-size': '11px',
+                "text-align": "left",
+                "font-family": "monospace",
+                "font-size": "11px",
             },
         )
 
     # --- 表头样式 ---
-    styler = styler.set_table_styles([
-        {'selector': 'thead th', 'props': [
-            ('background-color', '#2639E9'),
-            ('color', '#ffffff'),
-            ('font-weight', 'bold'),
-            ('text-align', 'center'),
-            ('font-size', '12px'),
-            ('padding', '8px 10px'),
-            ('border', '1px solid rgba(255,255,255,0.3)'),
-        ]},
-        {'selector': 'tbody td', 'props': [
-            ('padding', '6px 10px'),
-            ('border', '1px solid #e0e0e0'),
-        ]},
-        {'selector': 'tbody tr:nth-child(odd)', 'props': [
-            ('background-color', '#ffffff'),
-        ]},
-        {'selector': 'tbody tr:nth-child(even)', 'props': [
-            ('background-color', '#f8f9ff'),
-        ]},
-        {'selector': 'tbody tr:hover', 'props': [
-            ('background-color', '#e8eaff'),
-        ]},
-        # 进度条样式
-        {'selector': '.pd-bar', 'props': [
-            ('opacity', '0.75'),
-        ]},
-    ])
+    styler = styler.set_table_styles(
+        [
+            {
+                "selector": "thead th",
+                "props": [
+                    ("background-color", "#2639E9"),
+                    ("color", "#ffffff"),
+                    ("font-weight", "bold"),
+                    ("text-align", "center"),
+                    ("font-size", "12px"),
+                    ("padding", "8px 10px"),
+                    ("border", "1px solid rgba(255,255,255,0.3)"),
+                ],
+            },
+            {
+                "selector": "tbody td",
+                "props": [
+                    ("padding", "6px 10px"),
+                    ("border", "1px solid #e0e0e0"),
+                ],
+            },
+            {
+                "selector": "tbody tr:nth-child(odd)",
+                "props": [
+                    ("background-color", "#ffffff"),
+                ],
+            },
+            {
+                "selector": "tbody tr:nth-child(even)",
+                "props": [
+                    ("background-color", "#f8f9ff"),
+                ],
+            },
+            {
+                "selector": "tbody tr:hover",
+                "props": [
+                    ("background-color", "#e8eaff"),
+                ],
+            },
+            # 进度条样式
+            {
+                "selector": ".pd-bar",
+                "props": [
+                    ("opacity", "0.75"),
+                ],
+            },
+        ]
+    )
 
     return styler
 
 
 def _show_method(self, **kwargs):
     """展示美化的分箱表.
-    
+
     :param kwargs: 传递给 BinTableDisplay.show() 的参数
     :return: BinTableDisplay 对象，支持链式调用
-    
+
     **参考样例**
-    
+
     >>> table = feature_bin_stats(data, 'score', target='target')
     >>> table.show()
     >>> table.show(compact=True)
@@ -1233,7 +1246,7 @@ _EXTENSIONS_REGISTERED = False
 
 def register_extensions():
     """注册 pandas DataFrame/Series 扩展方法.
-    
+
     在导入 hscredit 时自动调用，将以下方法添加到 pandas:
     - df.summary(): 综合特征描述统计
     - df.eda_info(): EDA基础信息
@@ -1242,6 +1255,7 @@ def register_extensions():
     - df.save(): 保存到Excel
     - s.summary(): 单字段综合特征描述统计
     - s.save(): Series保存到Excel
+    - df/s/groupby.hscredit(...).apply(): 严格单次并行 apply
 
     幂等：重复调用不会重复注册（已存在同名属性时跳过）。导入 hscredit 时已自动执行，
     通常无需手动调用。
@@ -1254,36 +1268,46 @@ def register_extensions():
     >>> df = pd.DataFrame({'age': [25, 40], 'target': [0, 1]})
     >>> summary = df.summary(y='target')
     >>> df.save("report.xlsx")
+    >>> result = df.hscredit(n_jobs=-1, bar=False).apply(func, axis=1)
     """
     global _EXTENSIONS_REGISTERED
-    
+
     if _EXTENSIONS_REGISTERED:
         return
-    
+
+    from pandas.core.groupby.generic import DataFrameGroupBy, SeriesGroupBy
+
+    from .pandas_parallel import create_hscredit_apply_proxy
+
+    # 统一并行 apply 配置代理
+    for pandas_type in (pd.DataFrame, pd.Series, DataFrameGroupBy, SeriesGroupBy):
+        if not hasattr(pandas_type, "hscredit"):
+            pandas_type.hscredit = create_hscredit_apply_proxy
+
     # EDA相关方法
-    if not hasattr(pd.DataFrame, 'summary'):
+    if not hasattr(pd.DataFrame, "summary"):
         pd.DataFrame.summary = _summary_method
-    
-    if not hasattr(pd.DataFrame, 'eda_info'):
+
+    if not hasattr(pd.DataFrame, "eda_info"):
         pd.DataFrame.eda_info = _eda_info_method
-    
-    if not hasattr(pd.DataFrame, 'missing_analysis'):
+
+    if not hasattr(pd.DataFrame, "missing_analysis"):
         pd.DataFrame.missing_analysis = _missing_analysis_method
-    
+
     # Excel保存方法
-    if not hasattr(pd.DataFrame, 'save'):
+    if not hasattr(pd.DataFrame, "save"):
         pd.DataFrame.save = _dataframe_save
-    
-    if not hasattr(pd.Series, 'save'):
+
+    if not hasattr(pd.Series, "save"):
         pd.Series.save = _series_save
 
-    if not hasattr(pd.Series, 'summary'):
+    if not hasattr(pd.Series, "summary"):
         pd.Series.summary = _series_summary_method
-    
+
     # 分箱表展示方法
-    if not hasattr(pd.DataFrame, 'show'):
+    if not hasattr(pd.DataFrame, "show"):
         pd.DataFrame.show = _show_method
-    
+
     _EXTENSIONS_REGISTERED = True
 
 

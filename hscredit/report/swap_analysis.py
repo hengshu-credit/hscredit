@@ -30,6 +30,7 @@ from enum import Enum
 from sklearn.base import BaseEstimator
 
 from ..core.rules import Rule
+from .mining.base import _mining_workload
 from ..utils.parallel import parallel_execute, resolve_n_jobs, validate_parallel_config
 
 
@@ -244,6 +245,12 @@ class ReferenceDataProvider(BaseEstimator):
             parallel_config=self.parallel_config,
             task_labels=target_cols,
             default_backend="threading",
+            workload=_mining_workload(
+                df,
+                len(tasks),
+                operation="参考评分多目标统计",
+                cost_per_item=8.0,
+            ),
         )
         candidate_stats = dict(results)
         self.bins = bins
@@ -372,6 +379,12 @@ class SwapAnalyzer(BaseEstimator):
             parallel_config=self.parallel_config,
             task_labels=targets,
             default_backend="threading",
+            workload=_mining_workload(
+                df,
+                len(tasks),
+                operation="Swap多目标风险预测",
+                cost_per_item=6.0,
+            ),
         )
         for target, predicted, adjusted in predictions:
             df[f'predicted_bad_rate_{target}'] = np.asarray(predicted)
@@ -1023,14 +1036,21 @@ def create_swap_dataset_from_rules(
     df = df.copy()
     
     # 应用规则
+    rule_tasks = [(original_rule, df), (new_rule, df)]
     masks = parallel_execute(
         _rule_mask_call,
-        [(original_rule, df), (new_rule, df)],
+        rule_tasks,
         n_jobs=n_jobs,
         parallel_backend=parallel_backend,
         parallel_config=parallel_config,
         task_labels=[original_rule_name, new_rule_name],
         default_backend="threading",
+        workload=_mining_workload(
+            df,
+            len(rule_tasks),
+            operation="Swap新旧规则命中计算",
+            cost_per_item=6.0,
+        ),
     )
     df[original_rule_name], df[new_rule_name] = masks
     
@@ -1077,14 +1097,21 @@ def _predict_rule_set(
     """Return a non-duplicated hit mask for a rule set."""
     module_mask = pd.Series(False, index=df.index)
     if execution_mode == "parallel":
+        rule_tasks = [(rule, df) for rule in rules]
         rule_masks = parallel_execute(
             _rule_mask_call,
-            [(rule, df) for rule in rules],
+            rule_tasks,
             n_jobs=n_jobs,
             parallel_backend=parallel_backend,
             parallel_config=parallel_config,
             task_labels=[rule.name or rule.expr for rule in rules],
             default_backend="threading",
+            workload=_mining_workload(
+                df,
+                len(rule_tasks),
+                operation="Swap规则集命中计算",
+                cost_per_item=6.0,
+            ),
         )
     else:
         rule_masks = [_rule_mask_call((rule, df)) for rule in rules]

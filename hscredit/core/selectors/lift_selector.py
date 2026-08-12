@@ -20,6 +20,7 @@ import numpy as np
 import pandas as pd
 
 from .base import BaseFeatureSelector
+from ...utils.parallel import ParallelWorkload
 
 
 def _compute_lift_single(
@@ -56,9 +57,9 @@ def _compute_lift_single(
 
     # 按特征值排序
     if ascending:
-        order = np.argsort(x, kind='stable')        # 升序：最小值在前
+        order = np.argsort(x, kind="stable")  # 升序：最小值在前
     else:
-        order = np.argsort(x, kind='stable')[::-1]  # 降序：最大值在前
+        order = np.argsort(x, kind="stable")[::-1]  # 降序：最大值在前
 
     # 取头部 k 个样本
     top_idx = order[:k]
@@ -72,7 +73,7 @@ def _compute_lift_with_direction(
     x: np.ndarray,
     y: np.ndarray,
     ratio: float = 0.10,
-    direction: str = 'auto',
+    direction: str = "auto",
 ) -> Tuple[float, float, float, str]:
     """计算单个特征的LIFT得分（支持方向判断）.
 
@@ -89,15 +90,15 @@ def _compute_lift_with_direction(
         - lift_good: 升序LIFT值（找好人方向）
         - best_direction: 最优方向 'bad' 或 'good'
     """
-    if direction == 'bad':
+    if direction == "bad":
         lift_bad = _compute_lift_single(x, y, ratio, ascending=False)
         score = abs(lift_bad - 1.0)
-        return score, lift_bad, np.nan, 'bad'
+        return score, lift_bad, np.nan, "bad"
 
-    if direction == 'good':
+    if direction == "good":
         lift_good = _compute_lift_single(x, y, ratio, ascending=True)
         score = abs(lift_good - 1.0)
-        return score, np.nan, lift_good, 'good'
+        return score, np.nan, lift_good, "good"
 
     # auto: 同时计算两个方向，取 |LIFT - 1| 更大的
     lift_bad = _compute_lift_single(x, y, ratio, ascending=False)
@@ -107,9 +108,9 @@ def _compute_lift_with_direction(
     dist_good = abs(lift_good - 1.0)
 
     if dist_bad >= dist_good:
-        return dist_bad, lift_bad, lift_good, 'bad'
+        return dist_bad, lift_bad, lift_good, "bad"
     else:
-        return dist_good, lift_bad, lift_good, 'good'
+        return dist_good, lift_bad, lift_good, "good"
 
 
 def _compute_lift_feature(task):
@@ -202,8 +203,8 @@ class LiftSelector(BaseFeatureSelector):
         self,
         threshold: float = 0.5,
         ratio: float = 0.10,
-        direction: Literal['auto', 'bad', 'good'] = 'auto',
-        target: str = 'target',
+        direction: Literal["auto", "bad", "good"] = "auto",
+        target: str = "target",
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
         force_drop: Optional[List[str]] = None,
@@ -214,14 +215,20 @@ class LiftSelector(BaseFeatureSelector):
         parallel_config: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(
-            target=target, threshold=threshold, include=include,
-            exclude=exclude, force_drop=force_drop, n_jobs=n_jobs,
-            binner=binner, binning_params=binning_params,
-            parallel_backend=parallel_backend, parallel_config=parallel_config,
+            target=target,
+            threshold=threshold,
+            include=include,
+            exclude=exclude,
+            force_drop=force_drop,
+            n_jobs=n_jobs,
+            binner=binner,
+            binning_params=binning_params,
+            parallel_backend=parallel_backend,
+            parallel_config=parallel_config,
         )
         self.ratio = ratio
         self.direction = direction
-        self.method_name = 'LIFT筛选'
+        self.method_name = "LIFT筛选"
 
     def _fit_impl(
         self,
@@ -239,8 +246,19 @@ class LiftSelector(BaseFeatureSelector):
 
         results = self._parallel_execute(
             _compute_lift_feature,
-            [(col, X[col].values, y, self.ratio, self.direction) for col in X.columns],
+            ((col, X[col].values, y, self.ratio, self.direction) for col in X.columns),
             task_labels=X.columns,
+            default_backend="threading",
+            workload=ParallelWorkload(
+                task_count=X.shape[1],
+                rows=X.shape[0],
+                columns=X.shape[1],
+                data_bytes=int(X.memory_usage(deep=True).sum()),
+                cost_per_item=8.0,
+                capability="thread_safe",
+                releases_gil=True,
+                operation="LIFT字段排序",
+            ),
         )
 
         # 解包结果
@@ -253,20 +271,20 @@ class LiftSelector(BaseFeatureSelector):
         self.scores_ = pd.Series(scores, index=X.columns)
 
         # LIFT详情表
-        self.lift_detail_ = pd.DataFrame({
-            'LIFT_bad': lift_bad,
-            'LIFT_good': lift_good,
-            'best_direction': best_dirs,
-            'score': scores,
-        }, index=X.columns)
+        self.lift_detail_ = pd.DataFrame(
+            {
+                "LIFT_bad": lift_bad,
+                "LIFT_good": lift_good,
+                "best_direction": best_dirs,
+                "score": scores,
+            },
+            index=X.columns,
+        )
 
         # 选择 score >= threshold 的特征
         selected_mask = scores >= self.threshold
         self.selected_features_ = X.columns[selected_mask].tolist()
 
         # 生成剔除原因
-        dir_label = {'auto': '自动', 'bad': '找坏人', 'good': '找好人'}
-        self._drop_reason = (
-            f'LIFT@{self.ratio:.0%} |LIFT-1| < {self.threshold}'
-            f'（方向: {dir_label.get(self.direction, self.direction)}）'
-        )
+        dir_label = {"auto": "自动", "bad": "找坏人", "good": "找好人"}
+        self._drop_reason = f"LIFT@{self.ratio:.0%} |LIFT-1| < {self.threshold}" f"（方向: {dir_label.get(self.direction, self.direction)}）"

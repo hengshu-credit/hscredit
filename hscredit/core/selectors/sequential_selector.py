@@ -31,13 +31,13 @@ from sklearn.base import clone
 from sklearn.model_selection import cross_val_score
 
 from .base import BaseFeatureSelector, _set_estimator_parallel_budget
-from ...utils.parallel import _current_parallel_budget
+from ...utils.parallel import ParallelWorkload, _current_parallel_budget
 
 
 def _evaluate_sequential_candidate(task):
     """评估当前轮的一个候选子集。"""
     ordinal, candidate, estimator, X, y, selected, direction, scoring, cv = task
-    if direction == 'forward':
+    if direction == "forward":
         features = selected + [candidate]
     else:
         features = [feature for feature in selected if feature != candidate]
@@ -110,11 +110,11 @@ class SequentialFeatureSelector(BaseFeatureSelector):
     def __init__(
         self,
         estimator,
-        n_features_to_select: Union[int, float, str] = 'auto',
-        direction: str = 'forward',
+        n_features_to_select: Union[int, float, str] = "auto",
+        direction: str = "forward",
         scoring: Optional[str] = None,
         cv: int = 5,
-        target: str = 'target',
+        target: str = "target",
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
         force_drop: Optional[List[str]] = None,
@@ -125,17 +125,23 @@ class SequentialFeatureSelector(BaseFeatureSelector):
         parallel_config: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(
-            target=target, threshold=n_features_to_select, include=include,
-            exclude=exclude, force_drop=force_drop, n_jobs=n_jobs,
-            binner=binner, binning_params=binning_params,
-            parallel_backend=parallel_backend, parallel_config=parallel_config,
+            target=target,
+            threshold=n_features_to_select,
+            include=include,
+            exclude=exclude,
+            force_drop=force_drop,
+            n_jobs=n_jobs,
+            binner=binner,
+            binning_params=binning_params,
+            parallel_backend=parallel_backend,
+            parallel_config=parallel_config,
         )
         self.estimator = estimator
         self.n_features_to_select = n_features_to_select
         self.direction = direction
         self.scoring = scoring
         self.cv = cv
-        self.method_name = '逐步筛选'
+        self.method_name = "逐步筛选"
 
     def _fit_impl(
         self,
@@ -156,7 +162,7 @@ class SequentialFeatureSelector(BaseFeatureSelector):
         self._get_feature_names(X)
 
         n_features = X.shape[1]
-        if self.n_features_to_select == 'auto':
+        if self.n_features_to_select == "auto":
             n_to_select = n_features // 2
         elif isinstance(self.n_features_to_select, float):
             if not 0 < self.n_features_to_select <= 1:
@@ -166,21 +172,13 @@ class SequentialFeatureSelector(BaseFeatureSelector):
             n_to_select = int(self.n_features_to_select)
         if not 0 < n_to_select <= n_features:
             raise ValueError("n_features_to_select 必须在有效特征数量范围内")
-        if self.direction not in ('forward', 'backward'):
+        if self.direction not in ("forward", "backward"):
             raise ValueError("direction 必须为 'forward' 或 'backward'")
 
-        selected = [] if self.direction == 'forward' else X.columns.tolist()
+        selected = [] if self.direction == "forward" else X.columns.tolist()
         self.selection_history_ = []
-        while (
-            len(selected) < n_to_select
-            if self.direction == 'forward'
-            else len(selected) > n_to_select
-        ):
-            candidates = (
-                [feature for feature in X.columns if feature not in selected]
-                if self.direction == 'forward'
-                else list(selected)
-            )
+        while len(selected) < n_to_select if self.direction == "forward" else len(selected) > n_to_select:
+            candidates = [feature for feature in X.columns if feature not in selected] if self.direction == "forward" else list(selected)
             tasks = [
                 (
                     ordinal,
@@ -200,24 +198,30 @@ class SequentialFeatureSelector(BaseFeatureSelector):
                 tasks,
                 task_labels=candidates,
                 has_parallel_children=True,
+                default_backend="loky",
+                workload=ParallelWorkload(
+                    task_count=len(tasks),
+                    rows=len(X),
+                    columns=max(1, len(selected) + 1),
+                    data_bytes=int(X.memory_usage(deep=True).sum()),
+                    cost_per_item=max(10.0, float(self.cv) * 10.0),
+                    capability="process_safe",
+                    has_parallel_children=True,
+                    operation="逐步筛选候选交叉验证",
+                ),
             )
             # Ordered results + argmax preserve sklearn's first-candidate tie break.
             best_position = int(np.argmax([score for _, _, score in results]))
             _, best_feature, best_score = results[best_position]
-            if self.direction == 'forward':
+            if self.direction == "forward":
                 selected.append(best_feature)
-                action = 'add'
+                action = "add"
             else:
                 selected.remove(best_feature)
-                action = 'remove'
-            self.selection_history_.append(
-                {'轮次': len(self.selection_history_) + 1, '动作': action, '特征': best_feature, '得分': best_score}
-            )
+                action = "remove"
+            self.selection_history_.append({"轮次": len(self.selection_history_) + 1, "动作": action, "特征": best_feature, "得分": best_score})
 
         selected_mask = X.columns.isin(selected)
         self.selected_features_ = X.columns[selected_mask].tolist()
-        self.scores_ = pd.Series(
-            selected_mask.astype(int),
-            index=X.columns
-        )
-        self._drop_reason = '未选中'
+        self.scores_ = pd.Series(selected_mask.astype(int), index=X.columns)
+        self._drop_reason = "未选中"

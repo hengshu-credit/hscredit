@@ -28,6 +28,7 @@ import numpy as np
 import pandas as pd
 
 from .base import BaseFeatureSelector
+from ...utils.parallel import ParallelWorkload
 
 
 def _compute_iv(x: np.ndarray, y: np.ndarray, regularization: float = 1.0) -> float:
@@ -175,10 +176,16 @@ class StabilityAwareSelector(BaseFeatureSelector):
         parallel_config: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(
-            target=target, threshold=iv_threshold, include=include,
-            exclude=exclude, force_drop=force_drop, n_jobs=n_jobs,
-            binner=binner, binning_params=binning_params,
-            parallel_backend=parallel_backend, parallel_config=parallel_config,
+            target=target,
+            threshold=iv_threshold,
+            include=include,
+            exclude=exclude,
+            force_drop=force_drop,
+            n_jobs=n_jobs,
+            binner=binner,
+            binning_params=binning_params,
+            parallel_backend=parallel_backend,
+            parallel_config=parallel_config,
         )
         self.iv_threshold = iv_threshold
         self.psi_threshold = psi_threshold
@@ -226,21 +233,30 @@ class StabilityAwareSelector(BaseFeatureSelector):
             n = len(X_enc)
             rng = np.random.RandomState(self.random_state)
             idx = rng.permutation(n)
-            oot_enc = X_enc.iloc[idx[n // 2:]]
+            oot_enc = X_enc.iloc[idx[n // 2 :]]
             X_enc_half = X_enc.iloc[idx[: n // 2]]
             # 使用前半作为 expected
             X_enc = X_enc_half
 
-        tasks = []
-        for col in X.columns:
-            actual = oot_enc[col].values if col in oot_enc.columns else X_enc[col].values
-            tasks.append(
-                (col, iv_enc[col].values, y, X_enc[col].values, actual, self.psi_bins)
-            )
+        def iter_tasks():
+            for col in X.columns:
+                actual = oot_enc[col].values if col in oot_enc.columns else X_enc[col].values
+                yield col, iv_enc[col].values, y, X_enc[col].values, actual, self.psi_bins
+
         results = self._parallel_execute(
             _compute_stability_feature,
-            tasks,
+            iter_tasks(),
             task_labels=X.columns,
+            default_backend="loky",
+            workload=ParallelWorkload(
+                task_count=X.shape[1],
+                rows=X.shape[0],
+                columns=X.shape[1],
+                data_bytes=int(X.memory_usage(deep=True).sum()),
+                cost_per_item=10.0,
+                capability="process_safe",
+                operation="IV与PSI稳定性计算",
+            ),
         )
         iv_vals = np.array([iv for _, iv, _ in results])
         psi_vals = np.array([psi for _, _, psi in results])
@@ -271,13 +287,15 @@ class StabilityAwareSelector(BaseFeatureSelector):
                 if self.combined_scores_[c] < self.score_threshold:
                     parts.append(f"综合分({self.combined_scores_[c]:.4f})<{self.score_threshold}")
                 reasons.append("; ".join(parts) if parts else "综合不达标")
-            self.dropped_ = pd.DataFrame({
-                "特征": dropped_cols,
-                "剔除原因": reasons,
-                "IV值": [self.iv_scores_[c] for c in dropped_cols],
-                "PSI值": [self.psi_scores_[c] for c in dropped_cols],
-                "综合评分": [self.combined_scores_[c] for c in dropped_cols],
-            })
+            self.dropped_ = pd.DataFrame(
+                {
+                    "特征": dropped_cols,
+                    "剔除原因": reasons,
+                    "IV值": [self.iv_scores_[c] for c in dropped_cols],
+                    "PSI值": [self.psi_scores_[c] for c in dropped_cols],
+                    "综合评分": [self.combined_scores_[c] for c in dropped_cols],
+                }
+            )
         else:
             self.dropped_ = pd.DataFrame(columns=["特征", "剔除原因", "IV值", "PSI值", "综合评分"])
 
@@ -288,10 +306,12 @@ class StabilityAwareSelector(BaseFeatureSelector):
         """
         if not hasattr(self, "iv_scores_"):
             return pd.DataFrame()
-        df = pd.DataFrame({
-            "IV": self.iv_scores_,
-            "PSI": self.psi_scores_,
-            "综合评分": self.combined_scores_,
-            "入选": [c in self.selected_features_ for c in self.iv_scores_.index],
-        })
+        df = pd.DataFrame(
+            {
+                "IV": self.iv_scores_,
+                "PSI": self.psi_scores_,
+                "综合评分": self.combined_scores_,
+                "入选": [c in self.selected_features_ for c in self.iv_scores_.index],
+            }
+        )
         return df.sort_values("综合评分", ascending=False)

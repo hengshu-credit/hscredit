@@ -109,6 +109,23 @@ def test_single_feature_parallel_fit_matches_serial_for_both_backends(mining_dat
         assert [rule.expr for rule in serial.get_rules()] == [rule.expr for rule in parallel.get_rules()]
 
 
+def test_single_feature_mining_declares_explicit_workload(mining_data, monkeypatch):
+    """规则挖掘入口不得回退到旧的深度有限载荷推断。"""
+    import hscredit.utils.parallel as parallel_module
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("规则挖掘调用缺少显式 workload")
+
+    monkeypatch.setattr(parallel_module, "_infer_legacy_workload", forbidden)
+    SingleFeatureRuleMiner(
+        method="quantile",
+        max_n_bins=4,
+        min_samples=2,
+        min_lift=1.0,
+        n_jobs=1,
+    ).fit(mining_data[["score", "debt", "category", "target"]])
+
+
 def test_multi_feature_parallel_combinations_match_serial(mining_data):
     """组合并行必须按 combinations 生成顺序提交并产生相同结果。"""
     data = mining_data[["score", "debt", "category", "target"]]

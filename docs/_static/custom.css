@@ -206,6 +206,8 @@ samp,
 
 /* 导航链接 */
 .wy-menu-vertical a {
+    box-sizing: border-box;
+    border-left: 3px solid transparent;
     color: var(--hs-lav);
     transition: color 0.15s ease, background-color 0.15s ease;
 }
@@ -231,8 +233,8 @@ samp,
 .wy-menu-vertical li.toctree-l1.current > a {
     background: rgba(0, 0, 0, 0.16);
     color: #ffffff;
-    border-right: none;
     border-left: 3px solid transparent;
+    border-right: none;
     border-image: var(--hs-grad) 1;
     box-shadow: inset 12px 0 22px -18px rgba(0, 245, 255, 0.6);
 }

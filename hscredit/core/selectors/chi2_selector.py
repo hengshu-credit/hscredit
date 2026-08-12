@@ -77,9 +77,9 @@ class Chi2Selector(BaseFeatureSelector):
     def __init__(
         self,
         threshold: float = 0.0,
-        k: Union[int, str] = 'all',
+        k: Union[int, str] = "all",
         missing: Union[float, int, str, None, bool] = -99.0,
-        target: str = 'target',
+        target: str = "target",
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
         force_drop: Optional[List[str]] = None,
@@ -90,14 +90,20 @@ class Chi2Selector(BaseFeatureSelector):
         parallel_config: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(
-            target=target, threshold=threshold, include=include,
-            exclude=exclude, force_drop=force_drop, n_jobs=n_jobs,
-            binner=binner, binning_params=binning_params,
-            parallel_backend=parallel_backend, parallel_config=parallel_config,
+            target=target,
+            threshold=threshold,
+            include=include,
+            exclude=exclude,
+            force_drop=force_drop,
+            n_jobs=n_jobs,
+            binner=binner,
+            binning_params=binning_params,
+            parallel_backend=parallel_backend,
+            parallel_config=parallel_config,
         )
         self.k = k
         self.missing = missing
-        self.method_name = '卡方检验筛选'
+        self.method_name = "卡方检验筛选"
 
     def _fit_impl(
         self,
@@ -114,7 +120,7 @@ class Chi2Selector(BaseFeatureSelector):
         # 处理类别变量
         X_pos = X.copy()
         for col in X_pos.columns:
-            if X_pos[col].dtype == 'object':
+            if X_pos[col].dtype == "object":
                 X_pos[col] = pd.factorize(X_pos[col])[0]
 
         # 处理缺失值
@@ -123,7 +129,7 @@ class Chi2Selector(BaseFeatureSelector):
             X_pos = X_pos.loc[mask]
             y = np.asarray(y)[mask.values] if not isinstance(mask, np.ndarray) else np.asarray(y)[mask]
         elif isinstance(self.missing, str):
-            fill_funcs = {'mean': X_pos.mean, 'min': X_pos.min, 'max': X_pos.max}
+            fill_funcs = {"mean": X_pos.mean, "min": X_pos.min, "max": X_pos.max}
             if self.missing not in fill_funcs:
                 raise ValueError(f"missing 仅支持 'mean'/'min'/'max'，收到: '{self.missing}'")
             X_pos = X_pos.fillna(fill_funcs[self.missing]())
@@ -133,13 +139,10 @@ class Chi2Selector(BaseFeatureSelector):
         # 确保非负
         X_array = np.maximum(X_pos.values, 0)
 
-        results = self._parallel_execute(
-            _compute_chi2_feature,
-            [(col, X_array[:, i], np.asarray(y)) for i, col in enumerate(X.columns)],
-            task_labels=X.columns,
-        )
-        chi2_scores = np.array([score for _, score, _ in results])
-        p_values = np.array([p_value for _, _, p_value in results])
+        self._validate_parallel_configuration()
+        # sklearn 已能在一次矩阵调用中计算所有字段；拆成列级 joblib
+        # 任务只会重复校验和调度，宽表上反而更慢。
+        chi2_scores, _ = chi2(X_array, np.asarray(y))
 
         self.scores_ = pd.Series(chi2_scores, index=X.columns)
 
@@ -161,13 +164,15 @@ class Chi2Selector(BaseFeatureSelector):
         if len(dropped_cols) > 0:
             if isinstance(self.k, int):
                 # top-k模式
-                reason = f'未进入前{self.k}名'
+                reason = f"未进入前{self.k}名"
             else:
-                reason = f'卡方得分 < {self.threshold}'
-            self.dropped_ = pd.DataFrame({
-                '特征': dropped_cols,
-                '剔除原因': [f'{reason} (得分: {self.scores_[col]:.4f})' for col in dropped_cols],
-                '卡方得分': [self.scores_[col] for col in dropped_cols],
-            })
+                reason = f"卡方得分 < {self.threshold}"
+            self.dropped_ = pd.DataFrame(
+                {
+                    "特征": dropped_cols,
+                    "剔除原因": [f"{reason} (得分: {self.scores_[col]:.4f})" for col in dropped_cols],
+                    "卡方得分": [self.scores_[col] for col in dropped_cols],
+                }
+            )
         else:
-            self.dropped_ = pd.DataFrame(columns=['特征', '剔除原因', '卡方得分'])
+            self.dropped_ = pd.DataFrame(columns=["特征", "剔除原因", "卡方得分"])

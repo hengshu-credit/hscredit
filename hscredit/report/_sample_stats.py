@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 import numpy as np
 import pandas as pd
 
-from ..utils.parallel import parallel_execute
+from ..utils.parallel import ParallelWorkload, parallel_execute
 
 
 def _sample_stats_row(task):
@@ -80,31 +80,47 @@ def build_sample_stats_table(
     is_multi = len(label_names) > 1
 
     if is_multi:
-        columns = [("统计详情", "样本总数")] + [
-            (metric, display_labels.get(label, label))
-            for metric in ["好样本数", "坏样本数", "坏样本率"]
-            for label in label_names
-        ]
+        columns = [("统计详情", "样本总数")] + [(metric, display_labels.get(label, label)) for metric in ["好样本数", "坏样本数", "坏样本率"] for label in label_names]
         multi_cols = pd.MultiIndex.from_tuples(columns, names=["统计详情", ""])
-        tasks = [
-            (y_map, label_names, display_labels, True, flat_total_col, dataset_label)
-            for dataset_label, y_map in zip(dataset_labels, y_by_dataset)
-        ]
+        tasks = [(y_map, label_names, display_labels, True, flat_total_col, dataset_label) for dataset_label, y_map in zip(dataset_labels, y_by_dataset)]
         rows = parallel_execute(
-            _sample_stats_row, tasks, n_jobs=n_jobs, parallel_backend=parallel_backend,
-            parallel_config=parallel_config, task_labels=list(dataset_labels), default_backend="threading",
+            _sample_stats_row,
+            tasks,
+            n_jobs=n_jobs,
+            parallel_backend=parallel_backend,
+            parallel_config=parallel_config,
+            task_labels=list(dataset_labels),
+            default_backend="threading",
+            workload=ParallelWorkload(
+                task_count=len(tasks),
+                rows=sum(len(_as_array(y_map[label_names[0]])) for y_map in y_by_dataset),
+                columns=len(label_names),
+                cost_per_item=1.0,
+                capability="vectorized",
+                operation="报告样本统计",
+            ),
         )
         result = pd.DataFrame(rows, index=list(dataset_labels), columns=multi_cols)
         result.index.name = "数据集"
         return result, [c for c in multi_cols if c[0] == "坏样本率"]
 
-    tasks = [
-        (y_map, label_names, display_labels, False, flat_total_col, dataset_label)
-        for dataset_label, y_map in zip(dataset_labels, y_by_dataset)
-    ]
+    tasks = [(y_map, label_names, display_labels, False, flat_total_col, dataset_label) for dataset_label, y_map in zip(dataset_labels, y_by_dataset)]
     rows = parallel_execute(
-        _sample_stats_row, tasks, n_jobs=n_jobs, parallel_backend=parallel_backend,
-        parallel_config=parallel_config, task_labels=list(dataset_labels), default_backend="threading",
+        _sample_stats_row,
+        tasks,
+        n_jobs=n_jobs,
+        parallel_backend=parallel_backend,
+        parallel_config=parallel_config,
+        task_labels=list(dataset_labels),
+        default_backend="threading",
+        workload=ParallelWorkload(
+            task_count=len(tasks),
+            rows=sum(len(_as_array(y_map[label_names[0]])) for y_map in y_by_dataset),
+            columns=1,
+            cost_per_item=1.0,
+            capability="vectorized",
+            operation="报告样本统计",
+        ),
     )
     return pd.DataFrame(rows), ["坏样本率"]
 
@@ -133,9 +149,21 @@ def build_group_distribution_table(
             tasks.append((dataset_label, group, y_map, mask, label_names, display_labels, is_multi, group_name))
 
     results = parallel_execute(
-        _group_stats_row, tasks, n_jobs=n_jobs, parallel_backend=parallel_backend,
+        _group_stats_row,
+        tasks,
+        n_jobs=n_jobs,
+        parallel_backend=parallel_backend,
         parallel_config=parallel_config,
-        task_labels=[f"{task[0]}:{task[1]}" for task in tasks], default_backend="threading",
+        task_labels=[f"{task[0]}:{task[1]}" for task in tasks],
+        default_backend="threading",
+        workload=ParallelWorkload(
+            task_count=len(tasks),
+            rows=sum(len(values) for values in group_values_by_dataset),
+            columns=max(1, len(label_names)),
+            cost_per_item=1.0,
+            capability="vectorized",
+            operation="报告分组样本统计",
+        ),
     )
     index_tuples = [item[0] for item in results]
     rows = [item[1] for item in results]
@@ -145,11 +173,7 @@ def build_group_distribution_table(
 
     index = pd.MultiIndex.from_tuples(index_tuples, names=["数据集", group_name])
     if is_multi:
-        columns = [("统计详情", "数据集"), ("统计详情", group_name), ("统计详情", "样本总数")] + [
-            (metric, display_labels.get(label, label))
-            for metric in ["好样本数", "坏样本数", "坏样本率"]
-            for label in label_names
-        ]
+        columns = [("统计详情", "数据集"), ("统计详情", group_name), ("统计详情", "样本总数")] + [(metric, display_labels.get(label, label)) for metric in ["好样本数", "坏样本数", "坏样本率"] for label in label_names]
         multi_cols = pd.MultiIndex.from_tuples(columns, names=["统计详情", ""])
         result = pd.DataFrame(rows, columns=multi_cols)
         return result, [c for c in multi_cols if c[0] == "坏样本率"]

@@ -13,7 +13,118 @@ import numpy as np
 import pandas as pd
 from typing import List, Dict, Optional, Union
 
-from .utils import validate_dataframe, psi_rating
+from ...utils.parallel import parallel_execute
+from .utils import _eda_workload, _validate_eda_parallel, validate_dataframe, psi_rating
+
+
+def _period_psi_worker(task):
+    """计算一个时期和一个特征的 PSI 行。"""
+    base_df, period_df, feature, n_bins, base_period, period, period_column, keep_failure = task
+    try:
+        result = psi_analysis(base_df, period_df, feature, n_bins)
+        return {
+            "特征名": result["特征名"],
+            "基准期": base_period,
+            period_column: period,
+            "PSI值": result["PSI值"],
+            "稳定性": result["稳定性"],
+        }
+    except Exception:
+        if not keep_failure:
+            return None
+        return {
+            "特征名": feature,
+            "基准期": base_period,
+            period_column: period,
+            "PSI值": np.nan,
+            "稳定性": "计算失败",
+        }
+
+
+def _feature_drift_worker(task):
+    """计算单个特征在基准集和目标集间的漂移统计。"""
+    base_series, target_series, feature, psi_bins = task
+    base_col = pd.to_numeric(base_series, errors="coerce")
+    tgt_col = pd.to_numeric(target_series, errors="coerce")
+    base_arr = base_col.dropna().values
+    tgt_arr = tgt_col.dropna().values
+    if len(base_arr) == 0 or len(tgt_arr) == 0:
+        return {
+            "特征名": feature,
+            "PSI": np.nan,
+            "偏移等级": "数据不足",
+            "均值变化(%)": np.nan,
+            "缺失率变化(%)": np.nan,
+        }
+    try:
+        from ..metrics import psi_table as _psi_table
+
+        psi_df = _psi_table(pd.Series(base_arr), pd.Series(tgt_arr), max_n_bins=psi_bins)
+        psi_val = float(psi_df["PSI贡献"].sum())
+    except Exception:
+        psi_val = np.nan
+    mean_base = float(base_col.mean())
+    mean_tgt = float(tgt_col.mean())
+    mean_change = round((mean_tgt - mean_base) / abs(mean_base) * 100, 2) if mean_base != 0 else np.nan
+    missing_base = round(base_series.isna().mean() * 100, 2)
+    missing_tgt = round(target_series.isna().mean() * 100, 2)
+    return {
+        "特征名": feature,
+        "PSI": round(psi_val, 4) if not np.isnan(psi_val) else np.nan,
+        "偏移等级": psi_rating(psi_val) if not np.isnan(psi_val) else "未知",
+        "基准均值": round(mean_base, 4),
+        "目标均值": round(mean_tgt, 4),
+        "均值变化(%)": mean_change,
+        "基准缺失率(%)": missing_base,
+        "目标缺失率(%)": missing_tgt,
+        "缺失率变化(%)": round(missing_tgt - missing_base, 2),
+    }
+
+
+def _psi_cross_feature_worker(task):
+    """计算单个特征的分组两两 PSI 矩阵或长表。"""
+    frame, feature, group_col, groups, n_bins, return_matrix = task
+    from ..metrics import psi_table
+
+    psi_matrix = pd.DataFrame(index=groups, columns=groups, dtype=float)
+    stability_matrix = pd.DataFrame(index=groups, columns=groups, dtype=object)
+    for index, group1 in enumerate(groups):
+        for other_index, group2 in enumerate(groups):
+            if index == other_index:
+                psi_matrix.loc[group1, group2] = 0.0
+                stability_matrix.loc[group1, group2] = "相同组"
+            elif index < other_index:
+                data1 = frame.loc[frame[group_col] == group1, feature].dropna()
+                data2 = frame.loc[frame[group_col] == group2, feature].dropna()
+                if len(data1) == 0 or len(data2) == 0:
+                    psi_value, stability = np.nan, "数据不足"
+                else:
+                    try:
+                        psi_df = psi_table(data1, data2, max_n_bins=n_bins)
+                        psi_value = psi_df["PSI贡献"].sum()
+                        stability = psi_rating(psi_value)
+                    except Exception:
+                        psi_value, stability = np.nan, "计算失败"
+                psi_matrix.loc[group1, group2] = psi_value
+                psi_matrix.loc[group2, group1] = psi_value
+                stability_matrix.loc[group1, group2] = stability
+                stability_matrix.loc[group2, group1] = stability
+    if return_matrix:
+        return feature, psi_matrix
+    rows = []
+    for index, group1 in enumerate(groups):
+        for other_index, group2 in enumerate(groups):
+            if index != other_index:
+                rows.append(
+                    {
+                        "特征名": feature,
+                        "基准组": group1,
+                        "对比组": group2,
+                        "PSI值": psi_matrix.loc[group1, group2],
+                        "稳定性": stability_matrix.loc[group1, group2],
+                    }
+                )
+    return feature, pd.DataFrame(rows)
 
 
 def psi_analysis(base_df: pd.DataFrame,
@@ -56,7 +167,10 @@ def batch_psi_analysis(df: pd.DataFrame,
                       date_col: str,
                       base_period: str,
                       compare_periods: List[str],
-                      n_bins: int = 10) -> pd.DataFrame:
+                      n_bins: int = 10,
+                      n_jobs=-1,
+                      parallel_backend=None,
+                      parallel_config=None) -> pd.DataFrame:
     """批量PSI时间稳定性分析.
     
     :param df: 输入数据
@@ -82,35 +196,42 @@ def batch_psi_analysis(df: pd.DataFrame,
     # 基准期数据
     base_df = df[df[date_col] == base_period]
     
-    results = []
-    
-    for period in compare_periods:
-        period_df = df[df[date_col] == period]
-        
-        if len(period_df) == 0:
-            continue
-        
-        for feature in features:
-            if feature not in df.columns:
-                continue
-            
-            try:
-                psi_result = psi_analysis(base_df, period_df, feature, n_bins)
-                results.append({
-                    '特征名': psi_result['特征名'],
-                    '基准期': base_period,
-                    '对比期': period,
-                    'PSI值': psi_result['PSI值'],
-                    '稳定性': psi_result['稳定性'],
-                })
-            except Exception:
-                results.append({
-                    '特征名': feature,
-                    '基准期': base_period,
-                    '对比期': period,
-                    'PSI值': np.nan,
-                    '稳定性': '计算失败',
-                })
+    valid_features = [feature for feature in features if feature in df.columns]
+    valid_periods = [period for period in compare_periods if bool((df[date_col] == period).any())]
+    task_count = len(valid_periods) * len(valid_features)
+
+    def iter_tasks():
+        base_columns = base_df.loc[:, valid_features]
+        for period in valid_periods:
+            period_columns = df.loc[df[date_col] == period, valid_features]
+            for feature in valid_features:
+                yield (
+                    base_columns.loc[:, [feature]],
+                    period_columns.loc[:, [feature]],
+                    feature,
+                    n_bins,
+                    base_period,
+                    period,
+                    "对比期",
+                    True,
+                )
+
+    results = parallel_execute(
+        _period_psi_worker,
+        iter_tasks(),
+        n_jobs=n_jobs,
+        parallel_backend=parallel_backend,
+        parallel_config=parallel_config,
+        task_labels=[f"{period}:{feature}" for period in valid_periods for feature in valid_features],
+        default_backend="loky",
+        workload=_eda_workload(
+            df.loc[:, valid_features],
+            task_count,
+            operation="批量PSI分析",
+            cost_per_item=12.0,
+            capability="process_safe",
+        ),
+    )
     
     return pd.DataFrame(results)
 
@@ -163,7 +284,10 @@ def time_psi_tracking(df: pd.DataFrame,
                      features: List[str],
                      date_col: str,
                      freq: str = 'M',
-                     n_bins: int = 10) -> pd.DataFrame:
+                     n_bins: int = 10,
+                     n_jobs=-1,
+                     parallel_backend=None,
+                     parallel_config=None) -> pd.DataFrame:
     """PSI时序追踪分析.
     
     计算每个特征在不同时间段的PSI值变化趋势
@@ -204,26 +328,43 @@ def time_psi_tracking(df: pd.DataFrame,
     base_period = periods[0]
     base_df = df[df['时间周期'] == base_period]
     
-    results = []
-    
-    for period in periods[1:]:
-        period_df = df[df['时间周期'] == period]
-        
-        for feature in features:
-            if feature not in df.columns:
-                continue
-            
-            try:
-                psi_result = psi_analysis(base_df, period_df, feature, n_bins)
-                results.append({
-                    '特征名': psi_result['特征名'],
-                    '基准期': base_period,
-                    '时间周期': period,
-                    'PSI值': psi_result['PSI值'],
-                    '稳定性': psi_result['稳定性'],
-                })
-            except Exception:
-                pass
+    valid_features = [feature for feature in features if feature in df.columns]
+    compare_periods = periods[1:]
+    task_count = len(compare_periods) * len(valid_features)
+
+    def iter_tasks():
+        base_columns = base_df.loc[:, valid_features]
+        for period in compare_periods:
+            period_columns = df.loc[df["时间周期"] == period, valid_features]
+            for feature in valid_features:
+                yield (
+                    base_columns.loc[:, [feature]],
+                    period_columns.loc[:, [feature]],
+                    feature,
+                    n_bins,
+                    base_period,
+                    period,
+                    "时间周期",
+                    False,
+                )
+
+    analyzed = parallel_execute(
+        _period_psi_worker,
+        iter_tasks(),
+        n_jobs=n_jobs,
+        parallel_backend=parallel_backend,
+        parallel_config=parallel_config,
+        task_labels=[f"{period}:{feature}" for period in compare_periods for feature in valid_features],
+        default_backend="loky",
+        workload=_eda_workload(
+            df.loc[:, valid_features],
+            task_count,
+            operation="PSI时序追踪",
+            cost_per_item=12.0,
+            capability="process_safe",
+        ),
+    )
+    results = [row for row in analyzed if row is not None]
     
     return pd.DataFrame(results)
 
@@ -232,7 +373,10 @@ def stability_report(df: pd.DataFrame,
                     features: List[str],
                     date_col: str,
                     target: str = None,
-                    psi_threshold: float = 0.1) -> pd.DataFrame:
+                    psi_threshold: float = 0.1,
+                    n_jobs=-1,
+                    parallel_backend=None,
+                    parallel_config=None) -> pd.DataFrame:
     """综合稳定性报告.
     
     包含PSI分析和时间稳定性评估
@@ -252,7 +396,14 @@ def stability_report(df: pd.DataFrame,
     validate_dataframe(df, required_cols=[date_col])
     
     # PSI时序追踪
-    psi_tracking = time_psi_tracking(df, features, date_col)
+    psi_tracking = time_psi_tracking(
+        df,
+        features,
+        date_col,
+        n_jobs=n_jobs,
+        parallel_backend=parallel_backend,
+        parallel_config=parallel_config,
+    )
     
     if psi_tracking.empty or '信息' in psi_tracking.columns:
         return pd.DataFrame({'信息': ['数据不足以生成稳定性报告']})
@@ -290,7 +441,10 @@ def psi_cross_analysis(
     group_col: Optional[str] = None,
     freq: str = 'M',
     n_bins: int = 10,
-    return_matrix: bool = True
+    return_matrix: bool = True,
+    n_jobs=-1,
+    parallel_backend=None,
+    parallel_config=None,
 ) -> Union[pd.DataFrame, Dict[str, pd.DataFrame]]:
     """PSI交叉分析 - 计算两两组之间的PSI矩阵.
     
@@ -325,8 +479,6 @@ def psi_cross_analysis(
     >>> result = psi_cross_analysis(df, ['age'], date_col='apply_date', 
     ...                             freq='M', return_matrix=False)
     """
-    from ..metrics import psi_table
-    
     validate_dataframe(df)
     
     # 检查参数
@@ -370,61 +522,28 @@ def psi_cross_analysis(
     if len(groups) < 2:
         return pd.DataFrame({'信息': ['分组数不足，至少需要2个组']})
     
-    results = {}
-    
-    for feature in features:
-        if feature not in df.columns:
-            continue
-        
-        # 为每个特征计算PSI矩阵
-        psi_matrix = pd.DataFrame(index=groups, columns=groups, dtype=float)
-        stability_matrix = pd.DataFrame(index=groups, columns=groups, dtype=object)
-        
-        # 计算两两之间的PSI
-        for i, group1 in enumerate(groups):
-            for j, group2 in enumerate(groups):
-                if i == j:
-                    psi_matrix.loc[group1, group2] = 0.0
-                    stability_matrix.loc[group1, group2] = '相同组'
-                elif i < j:
-                    # 只计算上三角，下三角对称
-                    data1 = df[df[group_col] == group1][feature].dropna()
-                    data2 = df[df[group_col] == group2][feature].dropna()
-                    
-                    if len(data1) == 0 or len(data2) == 0:
-                        psi_value = np.nan
-                        stability = '数据不足'
-                    else:
-                        try:
-                            # 使用 psi_table 计算 PSI
-                            psi_df = psi_table(data1, data2, max_n_bins=n_bins)
-                            psi_value = psi_df['PSI贡献'].sum()
-                            stability = psi_rating(psi_value)
-                        except Exception:
-                            psi_value = np.nan
-                            stability = '计算失败'
-                    
-                    psi_matrix.loc[group1, group2] = psi_value
-                    psi_matrix.loc[group2, group1] = psi_value
-                    stability_matrix.loc[group1, group2] = stability
-                    stability_matrix.loc[group2, group1] = stability
-        
-        if return_matrix:
-            results[feature] = psi_matrix
-        else:
-            # 转换为长格式
-            long_results = []
-            for i, group1 in enumerate(groups):
-                for j, group2 in enumerate(groups):
-                    if i != j:  # 排除对角线
-                        long_results.append({
-                            '特征名': feature,
-                            '基准组': group1,
-                            '对比组': group2,
-                            'PSI值': psi_matrix.loc[group1, group2],
-                            '稳定性': stability_matrix.loc[group1, group2]
-                        })
-            results[feature] = pd.DataFrame(long_results)
+    valid_features = [feature for feature in features if feature in df.columns]
+    results = dict(
+        parallel_execute(
+            _psi_cross_feature_worker,
+            (
+                (df.loc[:, [group_col, feature]], feature, group_col, tuple(groups), n_bins, return_matrix)
+                for feature in valid_features
+            ),
+            n_jobs=n_jobs,
+            parallel_backend=parallel_backend,
+            parallel_config=parallel_config,
+            task_labels=valid_features,
+            default_backend="loky",
+            workload=_eda_workload(
+                df.loc[:, list(dict.fromkeys([group_col] + valid_features))],
+                len(valid_features),
+                operation="PSI交叉分析",
+                cost_per_item=16.0,
+                capability="process_safe",
+            ),
+        )
+    )
     
     # 如果只有一个特征，直接返回结果；否则返回字典
     if len(results) == 1:
@@ -442,6 +561,9 @@ def feature_drift_report(
     features=None,
     method: str = 'psi',
     psi_bins: int = 10,
+    n_jobs=-1,
+    parallel_backend=None,
+    parallel_config=None,
 ) -> pd.DataFrame:
     """特征偏移综合报告.
 
@@ -472,45 +594,24 @@ def feature_drift_report(
     else:
         features = list(features)
 
-    rows = []
-    for feat in features:
-        if feat not in df_base.columns or feat not in df_target.columns:
-            continue
-        base_col = pd.to_numeric(df_base[feat], errors='coerce')
-        tgt_col = pd.to_numeric(df_target[feat], errors='coerce')
-        base_arr = base_col.dropna().values
-        tgt_arr = tgt_col.dropna().values
-
-        if len(base_arr) == 0 or len(tgt_arr) == 0:
-            rows.append({'特征名': feat, 'PSI': np.nan, '偏移等级': '数据不足', '均值变化(%)': np.nan,
-                         '缺失率变化(%)': np.nan})
-            continue
-
-        try:
-            from ..metrics import psi_table as _psi_table
-            psi_df = _psi_table(pd.Series(base_arr), pd.Series(tgt_arr), max_n_bins=psi_bins)
-            psi_val = float(psi_df['PSI贡献'].sum())
-        except Exception:
-            psi_val = np.nan
-
-        mean_base = float(base_col.mean())
-        mean_tgt = float(tgt_col.mean())
-        mean_change = round((mean_tgt - mean_base) / abs(mean_base) * 100, 2) if mean_base != 0 else np.nan
-
-        missing_base = round(df_base[feat].isna().mean() * 100, 2)
-        missing_tgt = round(df_target[feat].isna().mean() * 100, 2)
-
-        rows.append({
-            '特征名': feat,
-            'PSI': round(psi_val, 4) if not np.isnan(psi_val) else np.nan,
-            '偏移等级': psi_rating(psi_val) if not np.isnan(psi_val) else '未知',
-            '基准均值': round(mean_base, 4),
-            '目标均值': round(mean_tgt, 4),
-            '均值变化(%)': mean_change,
-            '基准缺失率(%)': missing_base,
-            '目标缺失率(%)': missing_tgt,
-            '缺失率变化(%)': round(missing_tgt - missing_base, 2),
-        })
+    valid_features = [feat for feat in features if feat in df_base.columns and feat in df_target.columns]
+    rows = parallel_execute(
+        _feature_drift_worker,
+        ((df_base[feat], df_target[feat], feat, psi_bins) for feat in valid_features),
+        n_jobs=n_jobs,
+        parallel_backend=parallel_backend,
+        parallel_config=parallel_config,
+        task_labels=valid_features,
+        default_backend="loky",
+        workload=_eda_workload(
+            df_base.loc[:, valid_features],
+            len(valid_features),
+            operation="特征漂移报告",
+            cost_per_item=12.0,
+            capability="process_safe",
+            additional_data=(df_target.loc[:, valid_features],),
+        ),
+    )
 
     result = pd.DataFrame(rows)
     if not result.empty and 'PSI' in result.columns:
@@ -528,6 +629,9 @@ def score_drift_report(
     y_base=None,
     y_target=None,
     n_bins: int = 10,
+    n_jobs=-1,
+    parallel_backend=None,
+    parallel_config=None,
 ) -> dict:
     """评分分布偏移报告.
 
@@ -547,6 +651,7 @@ def score_drift_report(
     >>> print(report['PSI'], report['偏移等级'])
     >>> print(report['分布统计'])
     """
+    _validate_eda_parallel(n_jobs, parallel_backend, parallel_config, "评分漂移报告")
     # 统一转换为 Series（按位置对齐），兼容传入 np.ndarray / list / Series
     score_base = pd.Series(np.asarray(score_base))
     score_target = pd.Series(np.asarray(score_target))
@@ -659,6 +764,9 @@ def model_drift_report(
     score_method: str = 'auto',
     psi_bins: int = 10,
     predict_kwargs: Optional[dict] = None,
+    n_jobs=-1,
+    parallel_backend=None,
+    parallel_config=None,
 ) -> Dict[str, Union[pd.DataFrame, dict]]:
     """模型漂移监控报告.
 
@@ -692,12 +800,18 @@ def model_drift_report(
         y_base=y_base,
         y_target=y_target,
         n_bins=psi_bins,
+        n_jobs=n_jobs,
+        parallel_backend=parallel_backend,
+        parallel_config=parallel_config,
     )
     feature_report = feature_drift_report(
         X_base,
         X_target,
         features=features,
         psi_bins=psi_bins,
+        n_jobs=n_jobs,
+        parallel_backend=parallel_backend,
+        parallel_config=parallel_config,
     )
 
     drifted_count = 0

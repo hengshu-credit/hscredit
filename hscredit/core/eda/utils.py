@@ -5,7 +5,62 @@
 
 import numpy as np
 import pandas as pd
-from typing import List, Dict, Tuple, Optional, Union
+from typing import Any, List, Dict, Tuple, Optional, Sequence, Union
+
+from ...utils.parallel import ParallelWorkload, parallel_execute
+
+
+def _eda_noop(task):
+    """仅用于无批量任务入口的并行配置校验。"""
+    return task
+
+
+def _data_memory_bytes(value: Any) -> int:
+    """返回 pandas/NumPy 载荷的近似内存字节数。"""
+    memory_usage = getattr(value, "memory_usage", None)
+    if callable(memory_usage):
+        usage = memory_usage(deep=True)
+        return int(usage.sum()) if hasattr(usage, "sum") else int(usage)
+    if isinstance(value, np.ndarray):
+        return int(value.nbytes)
+    return 0
+
+
+def _eda_workload(
+    data: Any,
+    task_count: int,
+    *,
+    operation: str,
+    cost_per_item: float = 6.0,
+    capability: str = "thread_safe",
+    has_parallel_children: bool = False,
+    additional_data: Sequence[Any] = (),
+) -> ParallelWorkload:
+    """构造独立特征、时期或客群 EDA 的统一工作量描述。"""
+    rows = len(data) if data is not None and hasattr(data, "__len__") else 1
+    return ParallelWorkload(
+        task_count=task_count,
+        rows=rows,
+        columns=max(1, task_count),
+        data_bytes=_data_memory_bytes(data) + sum(_data_memory_bytes(item) for item in additional_data),
+        cost_per_item=cost_per_item,
+        capability=capability,
+        releases_gil=capability == "thread_safe",
+        has_parallel_children=has_parallel_children,
+        operation=operation,
+    )
+
+
+def _validate_eda_parallel(n_jobs, parallel_backend, parallel_config, operation: str) -> None:
+    """校验无独立批次入口的并行设置，且不创建执行后端。"""
+    parallel_execute(
+        _eda_noop,
+        (),
+        n_jobs=n_jobs,
+        parallel_backend=parallel_backend,
+        parallel_config=parallel_config,
+        workload=_eda_workload(None, 0, operation=operation),
+    )
 
 
 # ==================== 评级标准 ====================

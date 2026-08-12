@@ -21,6 +21,7 @@ import pandas as pd
 from sklearn.model_selection import KFold
 
 from .base import BaseFeatureSelector
+from ...utils.parallel import ParallelWorkload
 
 
 def _compute_psi_single(expected: np.ndarray, actual: np.ndarray) -> float:
@@ -32,14 +33,14 @@ def _compute_psi_single(expected: np.ndarray, actual: np.ndarray) -> float:
     """
     # 获取所有唯一值
     all_values = np.unique(np.concatenate([expected, actual]))
-    
+
     if len(all_values) <= 1:
         return 0.0
 
     # 计算分位数区间
     bins = np.percentile(expected, np.linspace(0, 100, 11))
     bins = np.unique(bins)
-    
+
     if len(bins) < 2:
         return 0.0
 
@@ -55,10 +56,7 @@ def _compute_psi_single(expected: np.ndarray, actual: np.ndarray) -> float:
     actual_rates = actual_counts / actual_counts.sum()
 
     # 计算PSI
-    psi = np.sum(
-        (actual_rates - expected_rates) * 
-        np.log(actual_rates / expected_rates)
-    )
+    psi = np.sum((actual_rates - expected_rates) * np.log(actual_rates / expected_rates))
 
     return psi
 
@@ -117,7 +115,7 @@ class PSISelector(BaseFeatureSelector):
         self,
         threshold: float = 0.25,
         n_splits: int = 5,
-        target: str = 'target',
+        target: str = "target",
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
         force_drop: Optional[List[str]] = None,
@@ -128,13 +126,19 @@ class PSISelector(BaseFeatureSelector):
         parallel_config: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(
-            target=target, threshold=threshold, include=include,
-            exclude=exclude, force_drop=force_drop, n_jobs=n_jobs,
-            binner=binner, binning_params=binning_params,
-            parallel_backend=parallel_backend, parallel_config=parallel_config,
+            target=target,
+            threshold=threshold,
+            include=include,
+            exclude=exclude,
+            force_drop=force_drop,
+            n_jobs=n_jobs,
+            binner=binner,
+            binning_params=binning_params,
+            parallel_backend=parallel_backend,
+            parallel_config=parallel_config,
         )
         self.n_splits = n_splits
-        self.method_name = 'PSI筛选'
+        self.method_name = "PSI筛选"
 
     def _fit_impl(
         self,
@@ -154,12 +158,23 @@ class PSISelector(BaseFeatureSelector):
 
         # 使用交叉验证计算PSI
         kfold = KFold(n_splits=self.n_splits, shuffle=True, random_state=42)
-        
+
         splits = list(kfold.split(X))
         results = self._parallel_execute(
             _compute_psi_feature,
-            [(col, X[col].values, splits) for col in X.columns],
+            ((col, X[col].values, splits) for col in X.columns),
             task_labels=X.columns,
+            default_backend="threading",
+            workload=ParallelWorkload(
+                task_count=X.shape[1],
+                rows=X.shape[0],
+                columns=X.shape[1],
+                data_bytes=int(X.memory_usage(deep=True).sum()),
+                cost_per_item=max(4.0, float(self.n_splits) * 2.0),
+                capability="thread_safe",
+                releases_gil=True,
+                operation="PSI交叉验证",
+            ),
         )
         psi_values = np.array([score for _, score in results])
         self.scores_ = pd.Series(psi_values, index=X.columns)
@@ -171,11 +186,13 @@ class PSISelector(BaseFeatureSelector):
         # 构建详细的dropped_记录，包含PSI值
         dropped_cols = X.columns[~selected_mask].tolist()
         if len(dropped_cols) > 0:
-            self.dropped_ = pd.DataFrame({
-                '特征': dropped_cols,
-                '剔除原因': [f'PSI值({self.scores_[col]:.4f}) >= 阈值({self.threshold})' for col in dropped_cols],
-                'PSI值': [self.scores_[col] for col in dropped_cols],
-                '阈值': [self.threshold] * len(dropped_cols),
-            })
+            self.dropped_ = pd.DataFrame(
+                {
+                    "特征": dropped_cols,
+                    "剔除原因": [f"PSI值({self.scores_[col]:.4f}) >= 阈值({self.threshold})" for col in dropped_cols],
+                    "PSI值": [self.scores_[col] for col in dropped_cols],
+                    "阈值": [self.threshold] * len(dropped_cols),
+                }
+            )
         else:
-            self.dropped_ = pd.DataFrame(columns=['特征', '剔除原因', 'PSI值', '阈值'])
+            self.dropped_ = pd.DataFrame(columns=["特征", "剔除原因", "PSI值", "阈值"])

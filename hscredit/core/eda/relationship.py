@@ -12,9 +12,50 @@ Fawcett, T. (2006). *An introduction to ROC analysis.* Pattern Recognition Lette
 
 import numpy as np
 import pandas as pd
-from typing import List, Dict, Optional, Union
+from typing import Any, List, Dict, Optional, Union
 
-from .utils import validate_dataframe, validate_binary_target, iv_rating
+from ...utils.parallel import parallel_execute
+from .utils import _eda_workload, validate_dataframe, validate_binary_target, iv_rating
+
+
+_NESTED_BINNING_METHODS = frozenset({"genetic", "or_tools", "cp_sat"})
+
+
+def _batch_iv_worker(task):
+    """计算单个特征 IV，并保留批量接口原有的容错行。"""
+    feature_df, feature, target, n_bins, method = task
+    try:
+        result = iv_analysis(feature_df, feature, target, n_bins, method)
+        return (
+            {
+                "特征名": result["特征名"],
+                "IV值": result["IV值"],
+                "预测能力": result["预测能力"],
+                "分箱数": result["分箱数"],
+            },
+            result["分箱明细"],
+        )
+    except Exception:
+        return ({"特征名": feature, "IV值": np.nan, "预测能力": "计算失败", "分箱数": 0}, None)
+
+
+def _feature_importance_worker(task):
+    """计算单个特征的 IV/AUC 组合指标。"""
+    feature_df, feature, target, metrics = task
+    result: Dict[str, Any] = {"特征名": feature}
+    if "iv" in metrics:
+        try:
+            iv_result = iv_analysis(feature_df, feature, target)
+            result["IV值"] = iv_result["IV值"]
+            result["预测能力"] = iv_result["预测能力"]
+        except Exception:
+            result["IV值"] = np.nan
+    if "auc" in metrics:
+        try:
+            result["AUC值"] = univariate_auc(feature_df, feature, target)["AUC值"]
+        except Exception:
+            result["AUC值"] = np.nan
+    return result
 
 
 def iv_analysis(df: pd.DataFrame,
@@ -67,7 +108,10 @@ def batch_iv_analysis(df: pd.DataFrame,
                      target: str,
                      n_bins: int = 10,
                      method: str = 'quantile',
-                     return_details: bool = False) -> pd.DataFrame:
+                     return_details: bool = False,
+                     n_jobs=-1,
+                     parallel_backend=None,
+                     parallel_config=None) -> pd.DataFrame:
     """批量IV分析.
     
     复用 hscredit.core.metrics.batch_iv
@@ -90,33 +134,37 @@ def batch_iv_analysis(df: pd.DataFrame,
     validate_dataframe(df, required_cols=[target])
     validate_binary_target(df[target])
     
-    # 批量计算IV
-    results = []
-    detail_results = {}
-    
-    for feature in features:
-        if feature not in df.columns:
-            continue
-        
-        try:
-            result = iv_analysis(df, feature, target, n_bins, method)
-            results.append({
-                '特征名': result['特征名'],
-                'IV值': result['IV值'],
-                '预测能力': result['预测能力'],
-                '分箱数': result['分箱数'],
-            })
-            
-            if return_details:
-                detail_results[feature] = result['分箱明细']
-                
-        except Exception:
-            results.append({
-                '特征名': feature,
-                'IV值': np.nan,
-                '预测能力': '计算失败',
-                '分箱数': 0,
-            })
+    valid_features = [feature for feature in features if feature in df.columns]
+
+    def iter_tasks():
+        for feature in valid_features:
+            yield (df.loc[:, [feature, target]], feature, target, n_bins, method)
+
+    has_parallel_children = method.strip().lower() in _NESTED_BINNING_METHODS
+    analyzed = parallel_execute(
+        _batch_iv_worker,
+        iter_tasks(),
+        n_jobs=n_jobs,
+        parallel_backend=parallel_backend,
+        parallel_config=parallel_config,
+        task_labels=valid_features,
+        default_backend="loky",
+        has_parallel_children=has_parallel_children,
+        workload=_eda_workload(
+            df.loc[:, list(dict.fromkeys(valid_features + [target]))],
+            len(valid_features),
+            operation="批量IV分析",
+            cost_per_item=16.0,
+            capability="process_safe",
+            has_parallel_children=has_parallel_children,
+        ),
+    )
+    results = [row for row, _ in analyzed]
+    detail_results = {
+        feature: detail
+        for feature, (_, detail) in zip(valid_features, analyzed)
+        if return_details and detail is not None
+    }
     
     result_df = pd.DataFrame(results).sort_values('IV值', ascending=False).reset_index(drop=True)
     
@@ -342,7 +390,10 @@ def univariate_auc(df: pd.DataFrame,
 def feature_importance_ranking(df: pd.DataFrame,
                               features: List[str],
                               target: str,
-                              metrics: List[str] = ['iv', 'auc']) -> pd.DataFrame:
+                              metrics: List[str] = ['iv', 'auc'],
+                              n_jobs=-1,
+                              parallel_backend=None,
+                              parallel_config=None) -> pd.DataFrame:
     """综合特征重要性排序.
     
     综合IV和AUC等多个指标评估特征重要性
@@ -360,32 +411,29 @@ def feature_importance_ranking(df: pd.DataFrame,
     """
     validate_dataframe(df, required_cols=[target])
     
-    results = []
-    
-    for feature in features:
-        if feature not in df.columns:
-            continue
-        
-        result = {'特征名': feature}
-        
-        # IV值
-        if 'iv' in metrics:
-            try:
-                iv_result = iv_analysis(df, feature, target)
-                result['IV值'] = iv_result['IV值']
-                result['预测能力'] = iv_result['预测能力']
-            except Exception:
-                result['IV值'] = np.nan
-        
-        # AUC值
-        if 'auc' in metrics:
-            try:
-                auc_result = univariate_auc(df, feature, target)
-                result['AUC值'] = auc_result['AUC值']
-            except Exception:
-                result['AUC值'] = np.nan
-        
-        results.append(result)
+    valid_features = [feature for feature in features if feature in df.columns]
+
+    def iter_tasks():
+        for feature in valid_features:
+            yield (df.loc[:, [feature, target]], feature, target, tuple(metrics))
+
+    results = parallel_execute(
+        _feature_importance_worker,
+        iter_tasks(),
+        n_jobs=n_jobs,
+        parallel_backend=parallel_backend,
+        parallel_config=parallel_config,
+        task_labels=valid_features,
+        default_backend="loky",
+        has_parallel_children=False,
+        workload=_eda_workload(
+            df.loc[:, list(dict.fromkeys(valid_features + [target]))],
+            len(valid_features),
+            operation="特征重要性排名",
+            cost_per_item=16.0 if "iv" in metrics else 4.0,
+            capability="process_safe",
+        ),
+    )
     
     result_df = pd.DataFrame(results)
     

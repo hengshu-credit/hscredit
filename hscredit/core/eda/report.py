@@ -24,7 +24,10 @@ logger = logging.getLogger(__name__)
 def eda_summary(df: pd.DataFrame,
                target: str = None,
                features: List[str] = None,
-               date_col: str = None) -> Dict[str, pd.DataFrame]:
+               date_col: str = None,
+               n_jobs=-1,
+               parallel_backend=None,
+               parallel_config=None) -> Dict[str, pd.DataFrame]:
     """EDA分析摘要.
     
     快速生成数据集的关键分析结果
@@ -56,7 +59,13 @@ def eda_summary(df: pd.DataFrame,
     summary['缺失值分析'] = missing_analysis(df, threshold=0.0)
     
     # 3. 特征描述统计
-    summary['特征描述统计'] = feature_summary(df, features)
+    summary['特征描述统计'] = feature_summary(
+        df,
+        features,
+        n_jobs=n_jobs,
+        parallel_backend=parallel_backend,
+        parallel_config=parallel_config,
+    )
     
     # 4. 数据质量问题
     summary['数据质量问题'] = data_quality_report(df)
@@ -80,7 +89,10 @@ def generate_report(df: pd.DataFrame,
                    target: str = None,
                    features: List[str] = None,
                    date_col: str = None,
-                   config: Dict = None) -> Dict[str, pd.DataFrame]:
+                   config: Dict = None,
+                   n_jobs=-1,
+                   parallel_backend=None,
+                   parallel_config=None) -> Dict[str, pd.DataFrame]:
     """生成完整EDA报告.
     
     :param df: 输入数据
@@ -112,7 +124,13 @@ def generate_report(df: pd.DataFrame,
     # 1. 数据概览
     report['1.数据基础信息'] = data_info(df)
     report['2.缺失值分析'] = missing_analysis(df)
-    report['3.特征描述统计'] = feature_summary(df, features)
+    report['3.特征描述统计'] = feature_summary(
+        df,
+        features,
+        n_jobs=n_jobs,
+        parallel_backend=parallel_backend,
+        parallel_config=parallel_config,
+    )
     report['4.数据质量问题'] = data_quality_report(df)
     
     # 2. 目标变量分析
@@ -128,7 +146,14 @@ def generate_report(df: pd.DataFrame,
         
         # 3. IV分析
         try:
-            iv_result = batch_iv_analysis(df, features, target)
+            iv_result = batch_iv_analysis(
+                df,
+                features,
+                target,
+                n_jobs=n_jobs,
+                parallel_backend=parallel_backend,
+                parallel_config=parallel_config,
+            )
             report['8.IV分析'] = iv_result[iv_result['IV值'] >= iv_threshold]
         except Exception:
             pass

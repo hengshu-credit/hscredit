@@ -12,7 +12,7 @@ import pandas as pd
 from typing import Union, List, Dict, Optional, Tuple, Any
 from sklearn.preprocessing import KBinsDiscretizer
 
-from .base import BaseRuleMiner, calculate_lift
+from .base import BaseRuleMiner, _binning_has_parallel_children, _mining_workload, calculate_lift
 from ...core.rules.rule import Rule
 from ...core.binning import OptimalBinning
 
@@ -171,12 +171,20 @@ class SingleFeatureRuleMiner(BaseRuleMiner):
         
         # 分析所有特征
         tasks = [(working, feature) for feature in working.features_]
+        has_parallel_children = _binning_has_parallel_children(working.method, working.binning_kwargs)
         analyzed = working._parallel_execute(
             _single_feature_worker,
             tasks,
             task_labels=working.features_,
             default_backend="threading",
-            has_parallel_children=False,
+            has_parallel_children=has_parallel_children,
+            workload=_mining_workload(
+                working.X_,
+                len(tasks),
+                operation="单特征规则挖掘",
+                cost_per_item=16.0,
+                has_parallel_children=has_parallel_children,
+            ),
         )
         working.results_ = {feature: result for feature, result, _ in analyzed}
         working._binning_instances_ = {

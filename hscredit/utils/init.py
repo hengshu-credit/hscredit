@@ -1,7 +1,7 @@
 """环境初始化.
 
 提供 hscredit 全局环境配置函数，包括警告屏蔽、pandas 显示、
-matplotlib 字体、随机种子等一站式设置。
+系统字体安装、matplotlib 字体、随机种子等一站式设置。
 """
 
 import warnings
@@ -11,6 +11,8 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib import font_manager
 
+from .fonts import FONT_NAME, get_bundled_font_path, initialize_bundled_font
+
 
 def init_setting(font_path=None, seed=None, freeze_torch=False, logger=False, **kwargs):
     """初始化环境配置。
@@ -18,7 +20,7 @@ def init_setting(font_path=None, seed=None, freeze_torch=False, logger=False, **
     去除警告信息、修改 pandas 默认配置、固定随机种子。
 
     :param font_path: 画图时图像使用的字体，支持系统已注册字体名称或本地 ``.ttf``
-        字体文件路径；为 None 时使用包内置中文字体 ``resources/fonts/font.ttf``
+        字体文件路径；为 None 时自动安装并使用包内置字体，安装不可用时回退到“楷体”
     :param seed: 随机种子，默认为 None（不固定）。非 None 时调用
         :func:`~hscredit.utils.seed_everything`
     :param freeze_torch: 是否同时固定 PyTorch 随机种子，默认 False（仅 seed 非 None 时生效）
@@ -28,8 +30,9 @@ def init_setting(font_path=None, seed=None, freeze_torch=False, logger=False, **
 
     **注意**
 
-    本函数在 ``import hscredit`` 时被自动调用，会全局执行
-    ``warnings.filterwarnings("ignore")`` 屏蔽所有警告，并修改 pandas/matplotlib 全局配置。
+    本函数在 ``import hscredit`` 时被自动调用，会尝试将内置字体安装到当前用户字体目录，
+    全局执行 ``warnings.filterwarnings("ignore")`` 屏蔽所有警告，并修改 pandas/matplotlib 全局配置。
+    字体安装失败不会阻断导入，系统不存在品牌字体时将回退到“楷体”。
 
     **参考样例**
 
@@ -41,6 +44,8 @@ def init_setting(font_path=None, seed=None, freeze_torch=False, logger=False, **
     """
     warnings.filterwarnings("ignore")
 
+    default_font_name = initialize_bundled_font()
+
     pd.options.display.float_format = '{:.4f}'.format
     pd.set_option("display.max_colwidth", 300)
     pd.set_option('expand_frame_repr', False)
@@ -50,24 +55,31 @@ def init_setting(font_path=None, seed=None, freeze_torch=False, logger=False, **
     else:
         plt.style.use('seaborn-v0_8-ticks')
 
-    if font_path is not None and font_path.lower() in [font.fname.lower() for font in font_manager.fontManager.ttflist]:
-        plt.rcParams['font.family'] = font_path
+    resolved_font_name = default_font_name
+    resolved_font_path = None
+    if font_path is None:
+        if default_font_name == FONT_NAME:
+            resolved_font_path = os.fspath(get_bundled_font_path())
     else:
-        # 使用resources目录下的字体文件
-        if font_path is None:
-            font_path = os.path.join(
-                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                'resources', 'fonts', 'font.ttf'
-            )
+        candidate = os.fspath(font_path)
+        if os.path.isfile(candidate):
+            resolved_font_path = candidate
+        else:
+            resolved_font_name = candidate
 
-        if os.path.isfile(font_path):
-            font_manager.fontManager.addfont(font_path)
-            font_name = font_manager.FontProperties(fname=font_path).get_name()
-            plt.rcParams['font.family'] = font_name
+    if resolved_font_path is not None and os.path.isfile(resolved_font_path):
+        try:
+            font_manager.fontManager.addfont(resolved_font_path)
+            resolved_font_name = font_manager.FontProperties(fname=resolved_font_path).get_name()
             # 使用粗体字
             plt.rcParams['font.weight'] = 'bold'
             plt.rcParams['axes.titleweight'] = 'bold'
             plt.rcParams['axes.labelweight'] = 'bold'
+        except Exception:
+            if font_path is not None:
+                raise
+
+    plt.rcParams['font.family'] = resolved_font_name
 
     plt.rcParams['axes.unicode_minus'] = False
 

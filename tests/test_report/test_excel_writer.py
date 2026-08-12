@@ -12,6 +12,7 @@ import numpy as np
 from openpyxl import load_workbook
 
 from hscredit.excel import ExcelWriter, dataframe2excel, register_pivot_aggregation
+from hscredit.utils import fonts
 import hscredit.excel.writer as writer_module
 
 
@@ -29,12 +30,47 @@ class TestExcelWriter:
         if os.path.exists(self.temp_dir):
             shutil.rmtree(self.temp_dir)
     
-    def test_init(self):
-        """测试初始化"""
+    def test_init_uses_runtime_default_font(self, monkeypatch):
+        """默认构造应在运行时读取字体初始化结果."""
+        monkeypatch.setattr(fonts, "_default_font_name", "Alimama FangYuanTi VF")
+
         writer = ExcelWriter(theme_color='3f1dba')
+
         assert writer.theme_color == '3f1dba'
         assert writer.fontsize == 10
-        assert writer.font == '楷体'
+        assert writer.font == 'Alimama FangYuanTi VF'
+        content_style = next(style for style in writer.name_styles if style.name == "content")
+        assert content_style.font.name == 'Alimama FangYuanTi VF'
+
+    def test_init_explicit_font_overrides_runtime_default(self, monkeypatch):
+        """显式字体参数应优先于自动初始化结果."""
+        monkeypatch.setattr(fonts, "_default_font_name", "Alimama FangYuanTi VF")
+
+        writer = ExcelWriter(font="楷体")
+
+        assert writer.font == "楷体"
+        content_style = next(style for style in writer.name_styles if style.name == "content")
+        assert content_style.font.name == "楷体"
+
+    @pytest.mark.parametrize("speed", ["normal", "fast"])
+    def test_runtime_default_font_persists_in_written_cells(self, monkeypatch, speed):
+        """普通与快速写入保存后都应保留运行时默认字体."""
+        monkeypatch.setattr(fonts, "_default_font_name", "Alimama FangYuanTi VF")
+        writer = ExcelWriter()
+        worksheet = writer.get_sheet_by_name("Font")
+
+        writer.insert_df2sheet(
+            worksheet,
+            pd.DataFrame({"特征": ["年龄"]}),
+            "B2",
+            speed=speed,
+        )
+        writer.save(self.test_file)
+
+        loaded = load_workbook(self.test_file)
+        assert loaded["Font"]["B2"].font.name == "Alimama FangYuanTi VF"
+        assert loaded["Font"]["B3"].font.name == "Alimama FangYuanTi VF"
+        loaded.close()
     
     def test_get_sheet_by_name(self):
         """测试获取或创建sheet"""

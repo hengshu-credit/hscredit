@@ -12,13 +12,49 @@ from pathlib import Path
 from typing import Optional, Tuple
 
 
-FONT_NAME = "阿里妈妈方圆体 VF Medium"
+FONT_NAME = "Alimama FangYuanTi VF"
+FALLBACK_FONT_NAME = "楷体"
 FONT_FILENAME = "hscredit-font.ttf"
+_default_font_name = FALLBACK_FONT_NAME
 
 
 def get_bundled_font_path() -> Path:
     """返回 hscredit 包内置字体文件路径."""
     return Path(__file__).resolve().parent.parent / "resources" / "fonts" / "font.ttf"
+
+
+def is_font_available(font_name: str = FONT_NAME) -> bool:
+    """检查当前系统字体列表是否包含指定字体家族."""
+    from matplotlib import font_manager
+
+    expected_name = font_name.casefold()
+    return any(font.name.casefold() == expected_name for font in font_manager.fontManager.ttflist)
+
+
+def initialize_bundled_font() -> str:
+    """安装内置字体并返回本次初始化选出的默认字体名称.
+
+    字体安装属于可选的环境增强，任何安装异常均不得阻断 hscredit 导入。
+    安装失败时若系统已经存在品牌字体则继续使用，否则回退到楷体。
+    """
+    global _default_font_name
+
+    try:
+        install_bundled_font()
+        available = True
+    except Exception:
+        try:
+            available = is_font_available(FONT_NAME)
+        except Exception:
+            available = False
+
+    _default_font_name = FONT_NAME if available else FALLBACK_FONT_NAME
+    return _default_font_name
+
+
+def get_default_font_name() -> str:
+    """返回最近一次环境初始化选出的默认字体名称."""
+    return _default_font_name
 
 
 def _same_file_content(source: Path, destination: Path) -> bool:
@@ -60,9 +96,10 @@ def _install_windows_font(source: Path, force: bool) -> Tuple[Path, bool]:
     with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, registry_path, 0, winreg.KEY_SET_VALUE) as key:
         winreg.SetValueEx(key, f"{FONT_NAME} (TrueType)", 0, winreg.REG_SZ, str(destination))
 
-    # 将字体加载到当前 Windows 会话，并通知已打开的应用刷新字体列表。
-    # 返回 0 也可能表示字体已在当前会话中加载，因此不将其视为安装失败。
-    ctypes.windll.gdi32.AddFontResourceW(str(destination))
+    # 将字体加载到当前 Windows 会话；返回 0 表示加载失败，由上层选择安全回退字体。
+    loaded_fonts = ctypes.windll.gdi32.AddFontResourceW(str(destination))
+    if loaded_fonts == 0:
+        raise OSError("无法将字体加载到当前 Windows 会话。")
 
     hwnd_broadcast = 0xFFFF
     wm_fontchange = 0x001D
@@ -88,7 +125,8 @@ def _install_macos_font(source: Path, force: bool) -> Tuple[Path, bool]:
 
 def _install_linux_font(source: Path, force: bool) -> Tuple[Path, bool]:
     """将字体安装到 Linux 当前用户字体库."""
-    data_home = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
+    configured_data_home = os.environ.get("XDG_DATA_HOME")
+    data_home = Path(configured_data_home) if configured_data_home else Path.home() / ".local" / "share"
     destination = data_home / "fonts" / FONT_FILENAME
     changed = _copy_font(source, destination, force)
 

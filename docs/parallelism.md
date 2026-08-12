@@ -8,8 +8,8 @@ HSCredit 的分箱器、特征筛选器、编码器、规则执行与规则挖�
 
 | 配置 | 含义 |
 |---|---|
-| `-1`（默认） | 自动并行。单核时使用 1 个 worker；多核时使用 `min(P - 1, ceil(0.8 × P))`，因此至少保留一个 CPU。实际 worker 数还受当前独立任务数和活动嵌套预算限制。 |
-| 正整数 | 使用明确指定的 worker 预算；例如 `4` 表示最多 4 个 worker。任务较少时不会创建无任务 worker。调用者可以显式选择超订阅。 |
+| `-1`（默认） | 自动并行。先建立 `min(P - 1, ceil(0.8 × P))` 的总预算，再根据任务数、行列规模、数据字节数、单项成本和实现能力决定实际 worker；小任务会自动串行。 |
+| 正整数 | 使用明确指定的 worker 总预算；例如 `4` 表示最多 4 个 worker。显式设置优先于自动工作量策略，仅受任务数、实现能力和活动嵌套总预算约束。 |
 | 整数值浮点数 | 与对应整数完全相同；`1.0` 与 `1` 都只使用 1 个 worker，`4.0` 与 `4` 相同。 |
 | `0 < n_jobs < 1` | 按 `ceil(P × n_jobs)` 向上取整；例如 8 个物理核上的 `0.5` 为 4 个 worker。 |
 | `None` | 兼容旧调用，强制串行执行。新代码建议明确使用 `1` 表达串行意图。 |
@@ -20,7 +20,7 @@ HSCredit 的分箱器、特征筛选器、编码器、规则执行与规则挖�
 
 `parallel_backend` 可显式选择 joblib 已注册的后端。常用值为：
 
-- `threading`：线程共享同一个 DataFrame，不需要序列化大对象，适合 NumPy、pandas 或第三方实现会释放 GIL 的列级计算，也适合 I/O 较多的任务。
+- `threading`：线程共享同一个 DataFrame，不需要序列化大对象，适合 NumPy、pandas 或第三方实现会释放 GIL 的列级计算，也适合 I/O 较多的任务。字符串/分类列只有在底层操作释放 GIL 时才能获得计算加速，但仍可避免进程序列化和重复内存。
 - `loky`：隔离的进程 worker，适合可序列化、Python 计算较重的纯函数任务。进程启动和数据传输有固定成本，小任务不一定更快。
 - `multiprocessing`：保留兼容性；Windows 创建子进程时应从正常 Python 模块或 `if __name__ == "__main__":` 入口运行，不要把不可序列化的局部函数传给 worker。
 - `None`：由具体模块选择适合工作负载的默认后端，或使用 joblib 默认值。
@@ -33,6 +33,7 @@ HSCredit 的分箱器、特征筛选器、编码器、规则执行与规则挖�
 
 | 键 | 允许值与用途 |
 |---|---|
+| `adaptive` | 布尔值，默认 `True`。仅在 `n_jobs=-1` 且未显式选择后端时按工作量收缩 worker；显式 `n_jobs` 或显式后端始终优先。设为 `False` 可关闭自动工作量收缩。 |
 | `prefer` | `"threads"`、`"processes"` 或 `None`，给 joblib 的软后端偏好。 |
 | `require` | `"sharedmem"` 或 `None`，给 joblib 的硬约束。 |
 | `batch_size` | `"auto"` 或正整数，控制每批任务数量。 |
@@ -68,7 +69,7 @@ outer_workers = min(T, ceil(sqrt(C)))
 child_budget = max(1, floor(C / outer_workers))
 ```
 
-该预算上下文会传播到线程和进程 worker。自动模式 `n_jobs=-1` 受活动子预算约束；显式正整数或比例表示调用者主动给当前层指定并发预算，任务数仍是最终上限。若父层和子层都显式指定很大的并行数，可能发生超订阅，调用者应同时用 `inner_max_num_threads` 控制 BLAS、OpenMP 或模型内部线程。
+该预算上下文会传播到线程和进程 worker。`n_jobs=-1`、显式正整数、比例预算以及第三方模型的 `thread_count`/`num_workers` 都受活动子预算约束；因此父子层不会各自重复使用整机核数。`inner_max_num_threads` 仍可用于进一步限制进程 worker 内的 BLAS/OpenMP 线程。
 
 按顺序执行的多个阶段不拆分预算。例如 Composite 筛选器逐级筛选、Stepwise/RFE 的依赖轮次、报告的先计算后写入、多个 Excel sheet 顺序渲染，都在当前阶段开始时使用完整可用预算。只有外层特征/标签/数据集任务与其内部候选计算确实重叠时才切分。
 
@@ -79,6 +80,7 @@ child_budget = max(1, floor(C / outer_workers))
 - 拟合任务先写临时结果，所有任务成功后才由主线程一次性提交。首次拟合失败不留下半成品；重新拟合失败保留旧的有效状态。
 - 有 `random_state` 的算法应固定基础种子；子任务种子由稳定任务顺序决定，而不是 worker 编号或完成顺序。`random_state=None` 保留算法原有的非确定语义。
 - worker 失败时不会静默重试、跳过或改用近似算法。错误包含中文阶段/任务标识，并保留原始异常链。
+- `timeout` 在单 worker 路径同样生效；不会因为自适应退化为串行而被绕过。
 - Excel 写入、绘图和最终文件替换在主线程中按固定顺序完成；并行 worker 只计算表格、指标或绘图所需数据。
 
 第三方模型可能使用自己的 OpenMP、BLAS 或 GPU 线程，HSCredit 无法完全控制其内部归约顺序。因此固定随机种子仍可能出现平台级末位浮点差异；这类差异应只对明确字段使用严格局部容差，不能把整张表降级为宽松比较。
@@ -90,7 +92,7 @@ from hscredit.core.binning import OptimalBinning
 from hscredit.core.encoders import WOEEncoder
 from hscredit.report import ModelReport
 
-# 默认自动并行：多核时约 80%，并至少保留一个 CPU。
+# 默认自动并行：总预算约为物理核的 80%，小任务自动串行。
 binner = OptimalBinning(n_jobs=-1)
 
 # 物理核数的 50%，线程共享输入 DataFrame。
@@ -117,9 +119,46 @@ report = ModelReport(
 
 同一组公共参数也适用于公开分箱器、筛选器、编码器、`Rule`/`RuleFlow`、`RuleSet`/`RulesClassifier`、规则挖掘器、`OverduePredictor`、Swap/漂移报告、`ModelReport`、`auto_model_report` 和 `compare_models`。单次标量辅助对象或函数（如规则条件、单个指标计算、Excel writer）不创建批量任务，因此不增加无意义的并行参数。
 
+EDA 的批量 IV、特征重要性、异常值、稀有类别、集中度、时间稳定性、PSI、特征/评分漂移、客群画像与客群监控等入口同样接受 `n_jobs`、`parallel_backend` 和 `parallel_config`。统计计算可并行，Excel 写入和最终结果组装仍在主线程按固定顺序完成。
+
+`ModelReport` 对已经训练的模型只做读取和预测，不会为并行执行改写模型参数。VIF 计算继续使用原生 statsmodels 逻辑，不为并行化重写算法。
+
+## pandas apply 并行扩展
+
+导入 `hscredit` 后，DataFrame、Series、DataFrameGroupBy 和 SeriesGroupBy 都会注册
+`hscredit` 链式代理。代理后的 `apply` 保留当前 pandas 版本的原生参数边界和结果装配：
+
+```python
+import hscredit
+
+rows = df.hscredit(n_jobs=-1, bar=True).apply(score_row, axis=1)
+values = df["amount"].hscredit(n_jobs=4, bar=False).apply(normalize)
+summary = (
+    df.groupby(["month", "channel"])
+    .hscredit(
+        n_jobs=-1,
+        bar=True,
+        parallel_backend="loky",
+        parallel_config={"batch_size": "auto", "pre_dispatch": "2*n_jobs", "timeout": 300},
+    )
+    .apply(summarize, include_groups=False)
+)
+```
+
+- `n_jobs=-1` 使用统一自适应预算；任务很小或只有一项时自动串行，足够大时才启动多 worker。
+- 后端决策严格发生在执行前：纯 Python 且可序列化的 callable 使用 `loky` 进程，明确的 NumPy/内置归约使用 `threading`，不可序列化的 callable 回退到线程。显式 `parallel_backend` 优先。
+- 不抽样、不测速、不调用用户函数进行能力探测。每一行、列、元素或分组在单次 `apply` 中最多调用一次，失败不会静默重试。
+- `bar=True` 只按已真实完成的逻辑项推进；失败、超时或中断时立即关闭，不伪造 100% 完成。
+- 用户函数异常、`TimeoutError` 和 `KeyboardInterrupt` 保留原始异常类型。Jupyter 中断只终止当前调用并把错误交回当前 kernel，不主动终止或重启 kernel；已经存在的变量仍保留。
+- 多进程 worker 中对普通 Python 全局变量的修改不会回写主进程；需要共享副作用时应显式选择 `threading`，或让函数返回结果后在主进程合并。
+
+`raw=True`、`result_type="broadcast"`、NumPy ufunc、非 Python engine 和 pandas 需要整体对象语义的调用会安全委托给原生 `apply`。这些兼容路径仍只执行一次，但不会拆分为并行任务。
+
+Windows 上第一次使用 `loky` 需要启动 worker 并导入依赖，可能明显慢于后续调用。严格单次契约下 HSCredit 不会隐藏执行一次 UDF 来预热或测速，因此短任务应保留 `n_jobs=-1` 让静态成本模型自动串行；确认任务足够重时可显式设置正整数 `n_jobs`。同一 Python/Jupyter 进程内 joblib 会复用可用 worker，稳定进程池下的重 CPU UDF 才是多进程加速的主要场景。
+
 ## 性能和资源限制
 
-并行并不保证每个工作负载都更快。小数据、少特征或少规则时，线程切换、进程序列化和 worker 启动成本可能超过计算收益；此时使用 `n_jobs=1`。高维数据通常先选择共享内存的 `threading`，纯 Python CPU 重任务再比较 `loky`。基准测试应先预热，并对串行和并行分别运行至少三次后比较中位数。
+并行并不保证每个工作负载都更快。默认 `n_jobs=-1` 且未显式选择后端时，自适应策略会让小数据、少特征、少规则和已向量化任务保持串行；计算量足够大时才扩展 worker。高维混合类型数据通常优先使用共享内存的 `threading`，纯 Python CPU 重且可序列化的任务使用 `loky`。用户显式设置 `n_jobs`、后端或 `adaptive=False` 时以显式设置为准。基准测试应先预热，并对串行和并行分别运行至少三次后比较中位数。
 
 ### CorrSelector 超宽表
 

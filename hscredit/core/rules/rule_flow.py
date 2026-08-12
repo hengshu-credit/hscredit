@@ -8,17 +8,24 @@ import pandas as pd
 from pandas import DataFrame
 
 from ...exceptions import FeatureNotFoundError, InputTypeError
-from ...utils.parallel import ParallelizableMixin, resolve_n_jobs
+from ...utils.parallel import (
+    _ACTIVE_BUDGET,
+    ParallelizableMixin,
+    ParallelWorkload,
+    _current_parallel_budget,
+    plan_parallel_execution,
+    resolve_n_jobs,
+)
 from .rule import Rule, RuleState
 
 
 RuleInput = Union[Rule, Sequence[Rule]]
 
 
-def _rule_flow_mask_worker(task: Tuple[Rule, DataFrame]) -> pd.Series:
-    """计算一条规则在全量数据上的命中掩码。"""
-    rule, data = task
-    return RuleFlow._predict_rule(rule, data)
+def _rule_flow_mask_batch_worker(task) -> List[pd.Series]:
+    """在单个 worker 内顺序计算一批规则，摊薄细粒度调度开销。"""
+    rules, data = task
+    return [RuleFlow._predict_rule(rule, data) for rule in rules]
 
 
 def _rule_flow_report_slice_worker(task: Tuple[Any, ...]) -> Tuple[Dict[str, object], pd.DataFrame]:
@@ -145,6 +152,25 @@ class RuleFlow(ParallelizableMixin):
     def _join_rule_indices(row: pd.Series, labels: Sequence[str]) -> str:
         matched = [str(i + 1) for i, label in enumerate(labels) if bool(row.get(label, False))]
         return "|".join(matched)
+
+    @staticmethod
+    def _format_rule_matrix(
+        matrix: pd.DataFrame,
+        labels: Sequence[str],
+        *,
+        indices: bool = False,
+    ) -> pd.Series:
+        """按列向量化组合布尔命中矩阵，保持规则顺序和空字符串语义。"""
+        values = matrix.loc[:, list(labels)].fillna(False).to_numpy(dtype=bool)
+        output = np.full(len(matrix), "", dtype=object)
+        tokens = [str(index + 1) for index in range(len(labels))] if indices else list(labels)
+        for column_index, token in enumerate(tokens):
+            mask = values[:, column_index]
+            if not mask.any():
+                continue
+            current = output[mask]
+            output[mask] = np.where(current == "", token, current + "|" + token)
+        return pd.Series(output, index=matrix.index, dtype=object)
 
     @staticmethod
     def _is_missing(value) -> bool:
@@ -325,19 +351,17 @@ class RuleFlow(ParallelizableMixin):
             )
         report = pd.DataFrame(rows)
 
-        online_names = online_matrix.apply(lambda row: self._join_rule_names(row, self.rule_labels_), axis=1)
-        offline_names = offline_matrix.apply(lambda row: self._join_rule_names(row, self.rule_labels_), axis=1)
+        online_names = self._format_rule_matrix(online_matrix, self.rule_labels_)
+        offline_names = self._format_rule_matrix(offline_matrix, self.rule_labels_)
         diff_mask = offline_matrix.ne(online_matrix).any(axis=1)
         detail = pd.DataFrame(index=data.index)
         detail["线下命中规则"] = offline_names
         detail["线上命中规则"] = online_names
         offline_only = offline_matrix & ~online_matrix
         online_only = online_matrix & ~offline_matrix
-        detail["差异规则"] = offline_matrix.ne(online_matrix).apply(
-            lambda row: self._join_rule_names(row, self.rule_labels_), axis=1
-        )
-        detail["线下独有规则"] = offline_only.apply(lambda row: self._join_rule_names(row, self.rule_labels_), axis=1)
-        detail["线上独有规则"] = online_only.apply(lambda row: self._join_rule_names(row, self.rule_labels_), axis=1)
+        detail["差异规则"] = self._format_rule_matrix(offline_matrix.ne(online_matrix), self.rule_labels_)
+        detail["线下独有规则"] = self._format_rule_matrix(offline_only, self.rule_labels_)
+        detail["线上独有规则"] = self._format_rule_matrix(online_only, self.rule_labels_)
 
         for label in self.rule_labels_:
             detail[f"线下_{label}"] = offline_matrix[label]
@@ -386,20 +410,53 @@ class RuleFlow(ParallelizableMixin):
             result["命中规则序号"] = first_rule_index
             result["命中规则"] = first_rule_name
         else:
-            tasks = [(copy.deepcopy(rule), data) for rule in self.rules]
-            hits = self._parallel_execute(
-                _rule_flow_mask_worker,
-                tasks,
-                task_labels=self.rule_labels_,
+            workload = ParallelWorkload(
+                task_count=len(self.rules),
+                rows=len(data),
+                columns=len(self.rules),
+                data_bytes=int(data.memory_usage(deep=True).sum()),
+                cost_per_item=4.0,
+                capability="vectorized",
+                releases_gil=False,
+                operation="规则流向量化命中",
             )
+            budget = _current_parallel_budget()
+            plan = plan_parallel_execution(
+                self.n_jobs,
+                workload,
+                parallel_backend=self.parallel_backend,
+                parallel_config=self.parallel_config,
+                default_backend="threading",
+                available_budget=(budget.available if _ACTIVE_BUDGET.get() is not None else None),
+            )
+            batch_count = min(len(self.rules), plan.workers)
+            rule_indices = np.array_split(np.arange(len(self.rules)), batch_count) if batch_count else []
+            batches = [[copy.deepcopy(self.rules[int(index)]) for index in indices] for indices in rule_indices if len(indices) > 0]
+            batch_results = self._parallel_execute(
+                _rule_flow_mask_batch_worker,
+                ((batch, data) for batch in batches),
+                task_labels=[f"规则批次{index + 1}" for index in range(len(batches))],
+                default_backend="threading",
+                workload=ParallelWorkload(
+                    task_count=len(batches),
+                    rows=len(data),
+                    columns=len(self.rules),
+                    data_bytes=workload.data_bytes,
+                    cost_per_item=workload.cost_per_item,
+                    capability="vectorized",
+                    releases_gil=False,
+                    operation=workload.operation,
+                ),
+            )
+            hits = [hit for batch in batch_results for hit in batch]
             for rule, label, hit in zip(self.rules, self.rule_labels_, hits):
                 rule.result_ = hit
                 rule._state = RuleState.APPLIED
                 result[label] = hit
                 hit_any = hit_any | hit
 
-            result["命中规则序号"] = result.apply(lambda row: self._join_rule_indices(row, self.rule_labels_), axis=1)
-            result["命中规则"] = result.apply(lambda row: self._join_rule_names(row, self.rule_labels_), axis=1)
+            result["命中规则序号"] = self._format_rule_matrix(result, self.rule_labels_, indices=True)
+            result["命中规则"] = self._format_rule_matrix(result, self.rule_labels_)
 
         result["是否命中"] = hit_any
         result["是否通过"] = ~hit_any
@@ -552,12 +609,23 @@ class RuleFlow(ParallelizableMixin):
         group_names = self._group_key_names(date_col, group_cols)
         slices = self._group_slices(data, date_col, freq, group_cols, dropna)
         if self.mode == "parallel":
-            tasks = [(copy.deepcopy(self), data.loc[index], prefix) for prefix, index in slices]
+            tasks = ((copy.deepcopy(self), data.loc[index], prefix) for prefix, index in slices)
             slice_tables = self._parallel_execute(
                 _rule_flow_report_slice_worker,
                 tasks,
                 task_labels=[str(prefix) for prefix, _ in slices],
                 has_parallel_children=self._has_parallel_rule_tasks(),
+                default_backend="threading",
+                workload=ParallelWorkload(
+                    task_count=len(slices),
+                    rows=len(data),
+                    columns=data.shape[1],
+                    data_bytes=int(data.memory_usage(deep=True).sum()),
+                    cost_per_item=max(4.0, float(len(self.rules)) * 2.0),
+                    capability="thread_safe",
+                    has_parallel_children=self._has_parallel_rule_tasks(),
+                    operation="规则流分组报表",
+                ),
             )
         else:
             slice_tables = []
@@ -617,13 +685,24 @@ class RuleFlow(ParallelizableMixin):
         group_names = self._group_key_names(date_col, group_cols)
         slices = self._group_slices(data, date_col, freq, group_cols, dropna)
         if self.mode == "parallel":
-            tasks = [(copy.deepcopy(self), data.loc[index], prefix) for prefix, index in slices]
+            tasks = ((copy.deepcopy(self), data.loc[index], prefix) for prefix, index in slices)
             rows.extend(
                 self._parallel_execute(
                     _rule_flow_summary_slice_worker,
                     tasks,
                     task_labels=[str(prefix) for prefix, _ in slices],
                     has_parallel_children=self._has_parallel_rule_tasks(),
+                    default_backend="threading",
+                    workload=ParallelWorkload(
+                        task_count=len(slices),
+                        rows=len(data),
+                        columns=data.shape[1],
+                        data_bytes=int(data.memory_usage(deep=True).sum()),
+                        cost_per_item=max(4.0, float(len(self.rules)) * 2.0),
+                        capability="thread_safe",
+                        has_parallel_children=self._has_parallel_rule_tasks(),
+                        operation="规则流分组汇总",
+                    ),
                 )
             )
         else:

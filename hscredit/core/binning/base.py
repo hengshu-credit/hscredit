@@ -21,7 +21,7 @@ from sklearn.base import BaseEstimator, TransformerMixin, clone
 
 from ...exceptions import FeatureNotFoundError, NotFittedError, ParallelExecutionError
 from ...utils.misc import round_float
-from ...utils.parallel import ParallelizableMixin
+from ...utils.parallel import ParallelizableMixin, ParallelWorkload
 from ...utils.serialization import ArtifactSerializableMixin
 from ._categorical import (
     CategoryOrder,
@@ -290,9 +290,7 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         snapshot = {}
         for state_name in self._IMPORTED_RULE_DICT_STATE:
             values = getattr(self, state_name, {})
-            snapshot[state_name] = {
-                feature: deepcopy(values[feature]) for feature in ordered_features if feature in values
-            }
+            snapshot[state_name] = {feature: deepcopy(values[feature]) for feature in ordered_features if feature in values}
         self._imported_rule_features_ = ordered_features
         self._imported_rule_snapshot_ = snapshot
 
@@ -304,9 +302,7 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
 
         input_features = self._fit_input_features(fit_args, fit_kwargs)
         imported_features = getattr(self, "_imported_rule_features_", ())
-        selected = [
-            feature for feature in imported_features if input_features is None or feature in input_features
-        ]
+        selected = [feature for feature in imported_features if input_features is None or feature in input_features]
         if not selected:
             return
         filtered_snapshot = {}
@@ -403,30 +399,15 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
             if not np.isfinite(value) or float(value) <= 0:
                 raise ValueError(f"{name} 必须是正数")
 
-        if (
-            isinstance(self.min_bad_rate, (bool, np.bool_))
-            or not isinstance(self.min_bad_rate, (int, float, np.integer, np.floating))
-            or not np.isfinite(self.min_bad_rate)
-            or not 0 <= float(self.min_bad_rate) <= 1
-        ):
+        if isinstance(self.min_bad_rate, (bool, np.bool_)) or not isinstance(self.min_bad_rate, (int, float, np.integer, np.floating)) or not np.isfinite(self.min_bad_rate) or not 0 <= float(self.min_bad_rate) <= 1:
             raise ValueError("min_bad_rate 必须位于 [0, 1] 范围内")
 
         if self.cat_cutoff is not None:
-            if (
-                isinstance(self.cat_cutoff, (bool, np.bool_))
-                or not isinstance(self.cat_cutoff, (int, float, np.integer, np.floating))
-                or not np.isfinite(self.cat_cutoff)
-                or float(self.cat_cutoff) <= 0
-            ):
+            if isinstance(self.cat_cutoff, (bool, np.bool_)) or not isinstance(self.cat_cutoff, (int, float, np.integer, np.floating)) or not np.isfinite(self.cat_cutoff) or float(self.cat_cutoff) <= 0:
                 raise ValueError("cat_cutoff 必须是正数")
 
         if self.woe_clip is not None:
-            if (
-                isinstance(self.woe_clip, (bool, np.bool_))
-                or not isinstance(self.woe_clip, (int, float, np.integer, np.floating))
-                or not np.isfinite(self.woe_clip)
-                or float(self.woe_clip) <= 0
-            ):
+            if isinstance(self.woe_clip, (bool, np.bool_)) or not isinstance(self.woe_clip, (int, float, np.integer, np.floating)) or not np.isfinite(self.woe_clip) or float(self.woe_clip) <= 0:
                 raise ValueError("woe_clip 必须是正数")
 
         valid_monotonic = {
@@ -455,11 +436,7 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
             raise ValueError("split_points 必须是字段规则字典或 None")
         if self.user_splits is not None and not isinstance(self.user_splits, dict) and not callable(self.user_splits):
             raise ValueError("user_splits 必须是字段规则字典、可调用对象或 None")
-        if (
-            self.category_order is not None
-            and not isinstance(self.category_order, dict)
-            and not callable(self.category_order)
-        ):
+        if self.category_order is not None and not isinstance(self.category_order, dict) and not callable(self.category_order):
             raise ValueError("category_order 必须是特征顺序字典、排序函数或 None")
 
     def _record_category_orders(
@@ -626,10 +603,7 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         available_categories = len(self._category_orders_.get(feature, []))
         required_min_bins = min(self.min_n_bins, available_categories) if available_categories else 1
         if n_bins < required_min_bins:
-            raise ValueError(
-                f"特征 '{feature}' 的类别分箱无法满足 min_n_bins={self.min_n_bins}；"
-                f"最终普通箱数为 {n_bins}，可用类别数为 {available_categories}"
-            )
+            raise ValueError(f"特征 '{feature}' 的类别分箱无法满足 min_n_bins={self.min_n_bins}；" f"最终普通箱数为 {n_bins}，可用类别数为 {available_categories}")
         if n_bins > self.max_n_bins:
             raise ValueError(f"特征 '{feature}' 的类别分箱无法满足 max_n_bins={self.max_n_bins}；" f"最终普通箱数为 {n_bins}")
 
@@ -637,18 +611,12 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         min_samples = BaseBinning._get_min_samples(self, len(y))
         if np.any(counts < min_samples):
             observed = int(counts.min())
-            raise ValueError(
-                f"特征 '{feature}' 的类别分箱无法满足 min_bin_size={self.min_bin_size}；" f"最小箱样本数为 {observed}，要求至少 {min_samples}"
-            )
+            raise ValueError(f"特征 '{feature}' 的类别分箱无法满足 min_bin_size={self.min_bin_size}；" f"最小箱样本数为 {observed}，要求至少 {min_samples}")
 
         max_samples = BaseBinning._get_max_samples(self, len(y))
         if max_samples is not None and np.any(counts > max_samples):
             observed = int(counts.max())
-            raise ValueError(
-                f"特征 '{feature}' 的类别分箱无法满足 max_bin_size={self.max_bin_size}；"
-                f"最大箱样本数为 {observed}，要求至多 {max_samples}；"
-                "单个类别或用户类别组是不可拆分的原子单位"
-            )
+            raise ValueError(f"特征 '{feature}' 的类别分箱无法满足 max_bin_size={self.max_bin_size}；" f"最大箱样本数为 {observed}，要求至多 {max_samples}；" "单个类别或用户类别组是不可拆分的原子单位")
 
         bad_rates = ordinary["坏样本率"].to_numpy(dtype=float)
         if self.min_bad_rate > 0 and np.any(bad_rates < self.min_bad_rate - 1e-12):
@@ -659,9 +627,7 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
             differences = np.diff(bad_rates)
             valid = np.all(differences >= -1e-12) if self.monotonic == "ascending" else np.all(differences <= 1e-12)
             if not valid:
-                raise ValueError(
-                    f"特征 '{feature}' 的类别分箱无法满足 monotonic={self.monotonic}；" f"最终坏样本率为 {bad_rates.tolist()}"
-                )
+                raise ValueError(f"特征 '{feature}' 的类别分箱无法满足 monotonic={self.monotonic}；" f"最终坏样本率为 {bad_rates.tolist()}")
 
     def _set_input_feature_attributes(self, X: pd.DataFrame) -> None:
         """记录 sklearn 兼容的输入特征元数据。"""
@@ -671,9 +637,7 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         self.feature_names_ = feature_names
 
     @abstractmethod
-    def fit(
-        self, X: Union[pd.DataFrame, np.ndarray], y: Optional[Union[pd.Series, np.ndarray]] = None, **kwargs
-    ) -> "BaseBinning":
+    def fit(self, X: Union[pd.DataFrame, np.ndarray], y: Optional[Union[pd.Series, np.ndarray]] = None, **kwargs) -> "BaseBinning":
         """拟合分箱。
 
         支持两种API风格：
@@ -728,9 +692,7 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         pass
 
     @abstractmethod
-    def transform(
-        self, X: Union[pd.DataFrame, np.ndarray], metric: str = "indices", **kwargs
-    ) -> Union[pd.DataFrame, np.ndarray]:
+    def transform(self, X: Union[pd.DataFrame, np.ndarray], metric: str = "indices", **kwargs) -> Union[pd.DataFrame, np.ndarray]:
         """应用分箱转换.
 
         将原始特征值转换为分箱索引、分箱标签或WOE值。
@@ -854,9 +816,7 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         """
         return self.fit(X, y, **kwargs).transform(X, metric=metric, **kwargs)
 
-    def _check_input(
-        self, X: Union[pd.DataFrame, np.ndarray], y: Optional[Union[pd.Series, np.ndarray]] = None
-    ) -> Tuple[pd.DataFrame, pd.Series]:
+    def _check_input(self, X: Union[pd.DataFrame, np.ndarray], y: Optional[Union[pd.Series, np.ndarray]] = None) -> Tuple[pd.DataFrame, pd.Series]:
         """检查并准备输入数据，支持sklearn和scorecardpipeline两种API风格。
 
         该方法统一处理两种风格的输入：
@@ -963,11 +923,7 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
                 y.name = self.target
                 X = X.drop(columns=[self.target])
             else:
-                raise ValueError(
-                    f"目标变量 '{self.target}' 未在数据中找到。"
-                    f"请提供y参数（sklearn风格）或在数据中包含 '{self.target}' 列（scorecardpipeline风格）。"
-                    f"可用列: {list(X.columns)}"
-                )
+                raise ValueError(f"目标变量 '{self.target}' 未在数据中找到。" f"请提供y参数（sklearn风格）或在数据中包含 '{self.target}' 列（scorecardpipeline风格）。" f"可用列: {list(X.columns)}")
 
         # 验证数据长度
         if len(X) != len(y):
@@ -1090,9 +1046,7 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         if feature_type == "categorical":
             self._validate_categorical_constraints(feature, y)
 
-    def _normalize_common_user_category_groups(
-        self, feature: str, x: pd.Series, rule_values: List[Any]
-    ) -> List[List[Any]]:
+    def _normalize_common_user_category_groups(self, feature: str, x: pd.Series, rule_values: List[Any]) -> List[List[Any]]:
         """规范化类别规则，并兼容历史的扁平类别列表。"""
         if not rule_values:
             raise ValueError(f"特征 '{feature}' 的自定义类别分箱不能为空")
@@ -1145,26 +1099,43 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
 
         numeric_splits = np.asarray(method_worker.splits_.get(feature, np.array([])), dtype=float)
         atomic_groups = restore_category_groups(list(range(len(groups))), numeric_splits)
-        return [
-            [value for group_index in atomic_group for value in groups[group_index]]
-            for atomic_group in atomic_groups
-        ]
+        return [[value for group_index in atomic_group for value in groups[group_index]] for atomic_group in atomic_groups]
 
     def _fit_features(self, X: pd.DataFrame, y: pd.Series, method_name: str) -> None:
         """事务式拟合所有特征，并按输入列顺序一次性提交状态。"""
         features = list(X.columns)
-        task_methods = [
-            "_fit_common_user_split_feature"
-            if method_name == "_fit_feature" and self._has_explicit_user_rule(feature)
-            else method_name
-            for feature in features
-        ]
-        tasks = [(feature, X[feature], y, feature_method) for feature, feature_method in zip(features, task_methods)]
+        task_methods = ["_fit_common_user_split_feature" if method_name == "_fit_feature" and self._has_explicit_user_rule(feature) else method_name for feature in features]
+        tasks = ((feature, X[feature], y, feature_method) for feature, feature_method in zip(features, task_methods))
+        algorithm = self.__class__.__name__.lower()
+        process_algorithms = ("genetic", "orbinning", "cpsat", "bestiv", "bestks", "mdlp")
+        is_process_safe = any(name in algorithm for name in process_algorithms)
+        is_quantile = "quantile" in algorithm
+        is_uniform = "uniform" in algorithm
+        cost = 20.0 if is_process_safe else 1.0 if is_quantile or is_uniform else 3.0
+        auto_max_workers = 8 if is_quantile else 4 if is_uniform else None
+        has_children = "genetic" in algorithm
+        data_bytes = int(X.memory_usage(deep=True).sum())
+        if hasattr(y, "memory_usage"):
+            data_bytes += int(y.memory_usage(deep=True))
+        workload = ParallelWorkload(
+            task_count=len(features),
+            rows=len(X),
+            columns=len(features),
+            data_bytes=data_bytes,
+            cost_per_item=cost,
+            capability="process_safe" if is_process_safe else "thread_safe",
+            releases_gil=not is_process_safe,
+            has_parallel_children=has_children,
+            auto_max_workers=auto_max_workers,
+            operation=f"{self.__class__.__name__}字段拟合",
+        )
         results = self._parallel_execute(
             self._fit_feature_transaction,
             tasks,
-            default_backend="threading",
+            default_backend="loky" if is_process_safe else "threading",
             task_labels=features,
+            has_parallel_children=has_children,
+            workload=workload,
         )
 
         snapshots = {}
@@ -1206,6 +1177,16 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
                 features,
                 default_backend="threading",
                 task_labels=features,
+                workload=ParallelWorkload(
+                    task_count=len(features),
+                    rows=len(X),
+                    columns=len(features),
+                    data_bytes=int(X.memory_usage(deep=True).sum()),
+                    cost_per_item=1.0,
+                    capability="thread_safe",
+                    releases_gil=True,
+                    operation=f"{self.__class__.__name__}字段转换",
+                ),
             )
         except ParallelExecutionError as exc:
             # transform 历史上直接抛出未知类别等原始校验错误，保持该公共语义。
@@ -1300,14 +1281,7 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
             total_bad_rate = total_bad / total_count if total_count > 0 else 0
         else:
             total_bad_rate = bin_table["坏样本率"].mean()
-        bin_table["LIFT值"] = [
-            np.nan
-            if row["分箱标签"] in ["缺失", "special"]
-            else row["坏样本率"] / total_bad_rate
-            if total_bad_rate > 0
-            else 1.0
-            for _, row in bin_table.iterrows()
-        ]
+        bin_table["LIFT值"] = [np.nan if row["分箱标签"] in ["缺失", "special"] else row["坏样本率"] / total_bad_rate if total_bad_rate > 0 else 1.0 for _, row in bin_table.iterrows()]
         return bin_table
 
     def _get_min_samples(self, n_samples: int) -> int:
@@ -1353,18 +1327,14 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         right_score = abs(bad_rates[bin_idx] - bad_rates[bin_idx + 1])
         return bin_idx - 1 if left_score <= right_score else bin_idx
 
-    def _choose_split_point_within_bin(
-        self, x: pd.Series, bins: np.ndarray, bin_idx: int, min_samples: int
-    ) -> Optional[float]:
+    def _choose_split_point_within_bin(self, x: pd.Series, bins: np.ndarray, bin_idx: int, min_samples: int) -> Optional[float]:
         """为样本量过大的分箱选择新的切分点。"""
         values = np.sort(pd.to_numeric(x[bins == bin_idx], errors="coerce").dropna().to_numpy(dtype=float))
         if len(values) < max(2, min_samples * 2):
             return None
 
         center = len(values) // 2
-        candidate_positions = sorted(
-            range(min_samples, len(values) - min_samples + 1), key=lambda pos: abs(pos - center)
-        )
+        candidate_positions = sorted(range(min_samples, len(values) - min_samples + 1), key=lambda pos: abs(pos - center))
 
         for pos in candidate_positions:
             left_value = values[pos - 1]
@@ -1394,35 +1364,16 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
 
         current_bins = np.digitize(x, current) if len(current) > 0 else np.zeros(len(x), dtype=int)
         current_counts = np.bincount(current_bins, minlength=len(current) + 1).astype(int)
-        current_is_feasible = (
-            min_bins <= len(current_counts) <= max_bins
-            and np.all(current_counts >= min_samples)
-            and (max_samples is None or np.all(current_counts <= max_samples))
-        )
+        current_is_feasible = min_bins <= len(current_counts) <= max_bins and np.all(current_counts >= min_samples) and (max_samples is None or np.all(current_counts <= max_samples))
         if current_is_feasible:
             return current
 
         prefix_counts = np.concatenate(([0], np.cumsum(atomic_counts, dtype=int)))
         total_samples = int(prefix_counts[-1])
-        current_positions = tuple(
-            sorted(
-                {
-                    int(np.searchsorted(values, split, side="right"))
-                    for split in current
-                    if values[0] < split < values[-1]
-                }
-            )
-        )
+        current_positions = tuple(sorted({int(np.searchsorted(values, split, side="right")) for split in current if values[0] < split < values[-1]}))
         current_position_set = set(current_positions)
         preferred_bins = len(current_positions) + 1
-        movement_costs = {
-            index: (
-                float(min(abs(index - position) for position in current_positions))
-                if current_positions
-                else 0.0
-            )
-            for index in range(1, n_categories)
-        }
+        movement_costs = {index: (float(min(abs(index - position) for position in current_positions)) if current_positions else 0.0) for index in range(1, n_categories)}
         best_key = None
         best_cuts = None
 
@@ -1475,10 +1426,7 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
             cost, cuts = solution
             shared_boundaries = (n_bins - 1) - cost[0]
             boundary_changes = len(current_positions) + (n_bins - 1) - 2 * shared_boundaries
-            balance = sum(
-                abs(float(prefix_counts[index]) - total_samples * position / n_bins)
-                for position, index in enumerate(cuts, start=1)
-            )
+            balance = sum(abs(float(prefix_counts[index]) - total_samples * position / n_bins) for position, index in enumerate(cuts, start=1))
             candidate_key = (
                 abs(n_bins - preferred_bins),
                 boundary_changes,
@@ -1509,9 +1457,7 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         if (splits is None or len(splits) == 0) and not allow_empty_splits:
             return np.array([])
 
-        current = (
-            np.array([], dtype=float) if splits is None else np.unique(np.sort(np.asarray(splits, dtype=float)))
-        )
+        current = np.array([], dtype=float) if splits is None else np.unique(np.sort(np.asarray(splits, dtype=float)))
         x_numeric = pd.to_numeric(x, errors="coerce")
         valid_mask = x_numeric.notna()
         if self.special_codes:
@@ -1716,9 +1662,7 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
             bins = self._get_feature_bins(feature, x, self.splits_[feature])
             self.bin_tables_[feature] = self._compute_bin_stats(feature, x, y, bins)
 
-    def _apply_post_fit_constraints(
-        self, X: pd.DataFrame, y: pd.Series, enforce_monotonic: bool = True, enforce_bad_rate: bool = True
-    ) -> None:
+    def _apply_post_fit_constraints(self, X: pd.DataFrame, y: pd.Series, enforce_monotonic: bool = True, enforce_bad_rate: bool = True) -> None:
         """拟合后统一收口约束。
 
         :param enforce_bad_rate: 是否合并退化分箱/坏样本率不达标分箱，默认 True。
@@ -1807,19 +1751,11 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         if mode == "peak":
             if len(bad_rates) < 3:
                 return self._count_monotonic_violations(bad_rates, "descending")
-            return min(
-                self._count_monotonic_violations(bad_rates[: pivot + 1], "ascending")
-                + self._count_monotonic_violations(bad_rates[pivot:], "descending")
-                for pivot in range(1, len(bad_rates) - 1)
-            )
+            return min(self._count_monotonic_violations(bad_rates[: pivot + 1], "ascending") + self._count_monotonic_violations(bad_rates[pivot:], "descending") for pivot in range(1, len(bad_rates) - 1))
         if mode == "valley":
             if len(bad_rates) < 3:
                 return self._count_monotonic_violations(bad_rates, "ascending")
-            return min(
-                self._count_monotonic_violations(bad_rates[: pivot + 1], "descending")
-                + self._count_monotonic_violations(bad_rates[pivot:], "ascending")
-                for pivot in range(1, len(bad_rates) - 1)
-            )
+            return min(self._count_monotonic_violations(bad_rates[: pivot + 1], "descending") + self._count_monotonic_violations(bad_rates[pivot:], "ascending") for pivot in range(1, len(bad_rates) - 1))
         return 0
 
     def _choose_monotonic_merge_index(self, bad_rates: np.ndarray, mode: str) -> int:
@@ -1837,17 +1773,14 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         if mode == "peak":
             best_pivot = min(
                 range(1, len(bad_rates) - 1),
-                key=lambda pivot: self._count_monotonic_violations(bad_rates[: pivot + 1], "ascending")
-                + self._count_monotonic_violations(bad_rates[pivot:], "descending"),
+                key=lambda pivot: self._count_monotonic_violations(bad_rates[: pivot + 1], "ascending") + self._count_monotonic_violations(bad_rates[pivot:], "descending"),
             )
             left_diffs = diffs[:best_pivot]
             right_diffs = diffs[best_pivot:]
             left_idx = np.where(left_diffs < -tol)[0]
             right_idx = np.where(right_diffs > tol)[0]
             left_choice = None if len(left_idx) == 0 else int(left_idx[np.argmin(left_diffs[left_idx])])
-            right_choice = (
-                None if len(right_idx) == 0 else int(best_pivot + right_idx[np.argmax(right_diffs[right_idx])])
-            )
+            right_choice = None if len(right_idx) == 0 else int(best_pivot + right_idx[np.argmax(right_diffs[right_idx])])
             if left_choice is None:
                 return right_choice if right_choice is not None else 0
             if right_choice is None:
@@ -1856,17 +1789,14 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         if mode == "valley":
             best_pivot = min(
                 range(1, len(bad_rates) - 1),
-                key=lambda pivot: self._count_monotonic_violations(bad_rates[: pivot + 1], "descending")
-                + self._count_monotonic_violations(bad_rates[pivot:], "ascending"),
+                key=lambda pivot: self._count_monotonic_violations(bad_rates[: pivot + 1], "descending") + self._count_monotonic_violations(bad_rates[pivot:], "ascending"),
             )
             left_diffs = diffs[:best_pivot]
             right_diffs = diffs[best_pivot:]
             left_idx = np.where(left_diffs > tol)[0]
             right_idx = np.where(right_diffs < -tol)[0]
             left_choice = None if len(left_idx) == 0 else int(left_idx[np.argmax(left_diffs[left_idx])])
-            right_choice = (
-                None if len(right_idx) == 0 else int(best_pivot + right_idx[np.argmin(right_diffs[right_idx])])
-            )
+            right_choice = None if len(right_idx) == 0 else int(best_pivot + right_idx[np.argmin(right_diffs[right_idx])])
             if left_choice is None:
                 return right_choice if right_choice is not None else 0
             if right_choice is None:
@@ -1874,9 +1804,7 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
             return left_choice if abs(diffs[left_choice]) >= abs(diffs[right_choice]) else right_choice
         return 0
 
-    def _merge_splits_for_monotonicity(
-        self, feature: str, x: pd.Series, y: pd.Series, splits: Union[np.ndarray, list], target_mode: Union[bool, str]
-    ) -> Tuple[np.ndarray, str]:
+    def _merge_splits_for_monotonicity(self, feature: str, x: pd.Series, y: pd.Series, splits: Union[np.ndarray, list], target_mode: Union[bool, str]) -> Tuple[np.ndarray, str]:
         """基于当前切分点，通过相邻合并满足单调约束。"""
         current = np.unique(np.sort(np.asarray(splits, dtype=float))) if len(splits) > 0 else np.array([])
         if len(current) == 0:
@@ -1920,9 +1848,7 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         zero_mask = arr <= 1e-12
         return int(np.sum(zero_mask[:-1] & zero_mask[1:]))
 
-    def _merge_adjacent_zero_bad_rate_bins(
-        self, feature: str, x: pd.Series, y: pd.Series, splits: Union[np.ndarray, list]
-    ) -> np.ndarray:
+    def _merge_adjacent_zero_bad_rate_bins(self, feature: str, x: pd.Series, y: pd.Series, splits: Union[np.ndarray, list]) -> np.ndarray:
         """合并相邻坏样本率全为 0 的分箱。"""
         current = np.unique(np.sort(np.asarray(splits, dtype=float))) if len(splits) > 0 else np.array([])
         if len(current) == 0:
@@ -1933,11 +1859,7 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
             bin_table = self._compute_bin_stats(feature, x, y, bins)
             valid = bin_table[bin_table["分箱"] >= 0].reset_index(drop=True)
             bad_rates = valid["坏样本率"].to_numpy(dtype=float)
-            zero_pairs = (
-                np.where((bad_rates[:-1] <= 1e-12) & (bad_rates[1:] <= 1e-12))[0]
-                if len(bad_rates) > 1
-                else np.array([])
-            )
+            zero_pairs = np.where((bad_rates[:-1] <= 1e-12) & (bad_rates[1:] <= 1e-12))[0] if len(bad_rates) > 1 else np.array([])
             if len(zero_pairs) == 0:
                 break
             if len(current) == 0:
@@ -1991,9 +1913,7 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
                 adjusted_splits = np.unique(np.sort(np.asarray(splits, dtype=float)))
                 final_mode = target_mode
             else:
-                adjusted_splits, final_mode = self._merge_splits_for_monotonicity(
-                    feature, X[feature], y, splits, target_mode
-                )
+                adjusted_splits, final_mode = self._merge_splits_for_monotonicity(feature, X[feature], y, splits, target_mode)
 
             adjusted_splits = self._expand_splits_with_monotonicity(feature, X[feature], y, adjusted_splits, final_mode)
             adjusted_splits = self._merge_adjacent_zero_bad_rate_bins(feature, X[feature], y, adjusted_splits)
@@ -2026,9 +1946,7 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
             return -coef
         return coef
 
-    def _evaluate_split_scheme(
-        self, feature: str, x: pd.Series, y: pd.Series, splits: np.ndarray, mode: str
-    ) -> Tuple[bool, float, np.ndarray, np.ndarray]:
+    def _evaluate_split_scheme(self, feature: str, x: pd.Series, y: pd.Series, splits: np.ndarray, mode: str) -> Tuple[bool, float, np.ndarray, np.ndarray]:
         """评估切分方案是否满足单调与样本约束，并给出 lift 导向评分。"""
         bins = self._get_feature_bins(feature, x, splits)
         bin_table = self._compute_bin_stats(feature, x, y, bins)
@@ -2053,19 +1971,10 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         quad_score = self._quadratic_curve_score(curve_values, mode)
         flat_penalty = float(np.sum(np.abs(np.diff(curve_values)) < 1e-8)) if len(curve_values) > 1 else 0.0
         iv_value = float(valid["分档IV值"].sum()) if "分档IV值" in valid.columns else 0.0
-        score = (
-            quad_score * 1000.0
-            + curve_spread * 100.0
-            + curve_step_sum * 10.0
-            + len(valid) * 80.0
-            - flat_penalty * 200.0
-            + iv_value * 1e-3
-        )
+        score = quad_score * 1000.0 + curve_spread * 100.0 + curve_step_sum * 10.0 + len(valid) * 80.0 - flat_penalty * 200.0 + iv_value * 1e-3
         return is_valid, score, bad_rates, counts
 
-    def _expand_splits_with_monotonicity(
-        self, feature: str, x: pd.Series, y: pd.Series, splits: Union[np.ndarray, list], mode: str
-    ) -> np.ndarray:
+    def _expand_splits_with_monotonicity(self, feature: str, x: pd.Series, y: pd.Series, splits: Union[np.ndarray, list], mode: str) -> np.ndarray:
         """在保持单调的前提下，尽量补足到允许的分箱预算。"""
         current = np.unique(np.sort(np.asarray(splits, dtype=float))) if len(splits) > 0 else np.array([])
         max_splits_allowed = max(0, self.max_n_bins - 1)
@@ -2233,12 +2142,7 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
             feature_type = self.feature_types_.get(feature, "numerical")
 
             # 检查是否为类别型变量的List[List]格式
-            if (
-                feature_type == "categorical"
-                and isinstance(splits, list)
-                and len(splits) > 0
-                and isinstance(splits[0], list)
-            ):
+            if feature_type == "categorical" and isinstance(splits, list) and len(splits) > 0 and isinstance(splits[0], list):
                 # List[List]格式：先获取unique bins，再生成标签
                 unique_bins = np.unique(bins)
                 bin_labels = []
@@ -2259,12 +2163,7 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
                             bin_labels.append(str(group))
                     else:
                         bin_labels.append(f"bin_{bin_idx}")
-            elif (
-                feature_type == "categorical"
-                and isinstance(splits, list)
-                and len(splits) > 0
-                and not isinstance(splits[0], list)
-            ):
+            elif feature_type == "categorical" and isinstance(splits, list) and len(splits) > 0 and not isinstance(splits[0], list):
                 # 扁平列表格式：每个元素对应一个分箱的类别名
                 unique_bins = np.unique(bins)
                 bin_labels = []
@@ -2288,9 +2187,7 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
 
         # 如果没有分箱标签，生成默认标签
         if "分箱标签" not in bin_stats.columns:
-            bin_stats["分箱标签"] = bin_stats["分箱"].apply(
-                lambda x: f"bin_{x}" if x >= 0 else ("缺失" if x == -1 else ("special" if x == -2 else "unknown"))
-            )
+            bin_stats["分箱标签"] = bin_stats["分箱"].apply(lambda x: f"bin_{x}" if x >= 0 else ("缺失" if x == -1 else ("special" if x == -2 else "unknown")))
 
         # 调整列顺序（将分箱标签放在分箱后面）
         chinese_columns = [
@@ -2567,12 +2464,7 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
                 if feature in self._cat_bins_:
                     # 将numpy数组转换为列表
                     bins = self._cat_bins_[feature]
-                    rules[feature] = [
-                        [item if not (isinstance(item, float) and np.isnan(item)) else np.nan for item in group]
-                        if isinstance(group, (list, np.ndarray))
-                        else group
-                        for group in bins
-                    ]
+                    rules[feature] = [[item if not (isinstance(item, float) and np.isnan(item)) else np.nan for item in group] if isinstance(group, (list, np.ndarray)) else group for group in bins]
                 else:
                     # 如果没有分组信息，返回空列表
                     rules[feature] = []

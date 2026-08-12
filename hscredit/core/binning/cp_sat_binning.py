@@ -32,6 +32,7 @@ except ImportError:
 
 from ...exceptions import NotFittedError
 from .base import BaseBinning
+from ...utils.parallel import resolve_native_workers
 
 
 class CPSATBinning(BaseBinning):
@@ -66,7 +67,7 @@ class CPSATBinning(BaseBinning):
         - 如果唯一值超过此数，将使用分位数采样
     :param time_limit: 求解时间限制（秒），默认为30
         - 超过此时间将返回当前找到的最优解
-    :param num_workers: 并行求解器数量，默认为1
+    :param num_workers: 原生求解器线程数；默认 None，继承统一 n_jobs 预算
         - 可以设置为大于1以加速求解
     :param missing_separate: 缺失值是否单独分箱，默认为True
     :param special_codes: 特殊值列表，默认为None
@@ -120,7 +121,7 @@ class CPSATBinning(BaseBinning):
         n_prebins: int = 50,
         max_candidates: int = 100,
         time_limit: int = 30,
-        num_workers: int = 1,
+        num_workers: Optional[int] = None,
         missing_separate: bool = True,
         special_codes: Optional[List] = None,
         cat_cutoff: Optional[Union[float, int]] = None,
@@ -172,9 +173,7 @@ class CPSATBinning(BaseBinning):
         self.time_limit = time_limit
         self.num_workers = num_workers
 
-    def fit(
-        self, X: Union[pd.DataFrame, np.ndarray], y: Optional[Union[pd.Series, np.ndarray]] = None, **kwargs
-    ) -> "CPSATBinning":
+    def fit(self, X: Union[pd.DataFrame, np.ndarray], y: Optional[Union[pd.Series, np.ndarray]] = None, **kwargs) -> "CPSATBinning":
         """拟合 CP-SAT 运筹规划分箱.
 
         :param X: 训练数据
@@ -343,28 +342,20 @@ class CPSATBinning(BaseBinning):
         # ======== 约束4: 单调性约束（可选）=======
         monotonic_direction = self._resolve_monotonic_direction(X, y)
         if monotonic_direction:
-            self._add_monotonic_constraints_cp_sat(
-                model, x, candidates, positions, prefix_bad, prefix_good, total_good, total_bad, monotonic_direction
-            )
+            self._add_monotonic_constraints_cp_sat(model, x, candidates, positions, prefix_bad, prefix_good, total_good, total_bad, monotonic_direction)
 
         # ======== 目标函数: 最大化 IV ========
         if self.objective == "iv":
-            self._add_iv_objective_cp_sat(
-                model, x, candidates, positions, prefix_bad, prefix_good, total_good, total_bad
-            )
+            self._add_iv_objective_cp_sat(model, x, candidates, positions, prefix_bad, prefix_good, total_good, total_bad)
         elif self.objective == "ks":
-            self._add_ks_objective_cp_sat(
-                model, x, candidates, positions, prefix_bad, prefix_good, total_good, total_bad
-            )
+            self._add_ks_objective_cp_sat(model, x, candidates, positions, prefix_bad, prefix_good, total_good, total_bad)
         elif self.objective == "gini":
-            self._add_gini_objective_cp_sat(
-                model, x, candidates, positions, prefix_bad, prefix_good, total_good, total_bad
-            )
+            self._add_gini_objective_cp_sat(model, x, candidates, positions, prefix_bad, prefix_good, total_good, total_bad)
 
         # ======== 求解 ========
         solver = cp_model.CpSolver()
         solver.parameters.max_time_in_seconds = self.time_limit
-        solver.parameters.num_workers = self.num_workers
+        solver.parameters.num_workers = resolve_native_workers(self.n_jobs, native_workers=self.num_workers)
         solver.parameters.log_search_progress = False
 
         status = solver.Solve(model)
@@ -374,9 +365,7 @@ class CPSATBinning(BaseBinning):
             return sorted([candidates[i] for i in selected])
         else:
             # 求解失败，使用启发式备选
-            return self._heuristic_fallback(
-                candidates, positions, prefix_bad, prefix_good, total_good, total_bad, min_samples
-            )
+            return self._heuristic_fallback(candidates, positions, prefix_bad, prefix_good, total_good, total_bad, min_samples)
 
     def _add_monotonic_constraints_cp_sat(
         self,
@@ -610,9 +599,7 @@ class CPSATBinning(BaseBinning):
                 break
 
         # 局部搜索优化
-        selected = self._local_search(
-            selected, candidates, positions, prefix_bad, prefix_good, total_good, total_bad, min_samples
-        )
+        selected = self._local_search(selected, candidates, positions, prefix_bad, prefix_good, total_good, total_bad, min_samples)
 
         return [candidates[i] for i in selected]
 
@@ -752,9 +739,7 @@ class CPSATBinning(BaseBinning):
 
             return bins
 
-    def transform(
-        self, X: Union[pd.DataFrame, np.ndarray], metric: str = "indices", **kwargs
-    ) -> Union[pd.DataFrame, np.ndarray]:
+    def transform(self, X: Union[pd.DataFrame, np.ndarray], metric: str = "indices", **kwargs) -> Union[pd.DataFrame, np.ndarray]:
         """应用分箱转换."""
         if not self._is_fitted:
             raise NotFittedError("分箱器尚未拟合，请先调用fit方法")

@@ -25,7 +25,7 @@ from typing import List, Optional, Tuple
 
 from ..excel import ExcelWriter, dataframe2excel
 from ..exceptions import ValidationError
-from ..utils.parallel import parallel_execute
+from ..utils.parallel import ParallelWorkload, parallel_execute
 
 
 def _population_feature_task(task):
@@ -92,10 +92,7 @@ def population_drift(
     """
     target_col = target or target_col
 
-    valid_features = [
-        feature for feature in features
-        if feature in expected.columns and feature in actual.columns
-    ]
+    valid_features = [feature for feature in features if feature in expected.columns and feature in actual.columns]
     windows = [(None, actual)]
     if date_col is not None:
         if date_col not in actual.columns:
@@ -108,16 +105,9 @@ def population_drift(
             raise ValidationError(f"日期列 {date_col} 没有有效日期")
         periods = parsed_dates.dt.to_period("M")
         ordered_periods = sorted(periods.dropna().unique())
-        windows = [
-            (str(period), actual.loc[periods == period].copy())
-            for period in ordered_periods
-        ]
+        windows = [(str(period), actual.loc[periods == period].copy()) for period in ordered_periods]
 
-    tasks = [
-        (expected, window_data, feature, target_col, n_bins, window)
-        for feature in valid_features
-        for window, window_data in windows
-    ]
+    tasks = [(expected, window_data, feature, target_col, n_bins, window) for feature in valid_features for window, window_data in windows]
     feature_results = parallel_execute(
         _population_feature_task,
         tasks,
@@ -126,6 +116,16 @@ def population_drift(
         parallel_config=parallel_config,
         task_labels=[f"{task[2]}:{task[5]}" if task[5] is not None else task[2] for task in tasks],
         default_backend="threading",
+        workload=ParallelWorkload(
+            task_count=len(tasks),
+            rows=len(expected) + sum(len(window_data) for _, window_data in windows),
+            columns=len(valid_features),
+            data_bytes=int(expected.memory_usage(deep=True).sum()) + sum(int(window_data.memory_usage(deep=True).sum()) for _, window_data in windows),
+            cost_per_item=10.0,
+            capability="thread_safe",
+            releases_gil=True,
+            operation="客群漂移字段窗口计算",
+        ),
     )
 
     writer = ExcelWriter()
@@ -173,9 +173,7 @@ def population_drift(
 
     # ---------- Sheet 4: 评分分布 (可选) ----------
     if score_col and score_col in expected.columns and score_col in actual.columns:
-        score_detail = _feature_distribution_compare(
-            expected[score_col].dropna(), actual[score_col].dropna(), score_col, 20
-        )
+        score_detail = _feature_distribution_compare(expected[score_col].dropna(), actual[score_col].dropna(), score_col, 20)
         dataframe2excel(score_detail, writer, sheet_name="评分分布对比")
 
     writer.save(output)
@@ -241,6 +239,7 @@ def _format_bin_labels(breakpoints: np.ndarray) -> List[str]:
         labels.append(f"[{lo}, {hi})")
     return labels
 
+
 def _calc_psi(expected: pd.Series, actual: pd.Series, n_bins: int = 10) -> float:
     """计算 PSI."""
     breakpoints = _build_numeric_bin_edges(expected, actual, n_bins)
@@ -266,9 +265,7 @@ def _psi_rating(psi: float) -> str:
         return "显著漂移"
 
 
-def _feature_distribution_compare(
-    expected: pd.Series, actual: pd.Series, feat_name: str, n_bins: int
-) -> pd.DataFrame:
+def _feature_distribution_compare(expected: pd.Series, actual: pd.Series, feat_name: str, n_bins: int) -> pd.DataFrame:
     """对比单特征在两个数据集的分箱分布."""
     breakpoints = _build_numeric_bin_edges(expected, actual, n_bins)
     if breakpoints is None:
@@ -277,13 +274,15 @@ def _feature_distribution_compare(
     exp_pct, act_pct = _compute_distribution_percentages(expected, actual, breakpoints)
     labels = _format_bin_labels(breakpoints)
 
-    df = pd.DataFrame({
-        "特征名": feat_name,
-        "分箱": labels,
-        "基准占比": np.round(exp_pct, 4),
-        "实际占比": np.round(act_pct, 4),
-        "偏移量": np.round(act_pct - exp_pct, 4),
-    })
+    df = pd.DataFrame(
+        {
+            "特征名": feat_name,
+            "分箱": labels,
+            "基准占比": np.round(exp_pct, 4),
+            "实际占比": np.round(act_pct, 4),
+            "偏移量": np.round(act_pct - exp_pct, 4),
+        }
+    )
     return df
 
 
@@ -305,11 +304,13 @@ def _badrate_compare(
     exp_br = expected.groupby(exp_cut, observed=False)[target_col].mean()
     act_br = actual.groupby(act_cut, observed=False)[target_col].mean()
 
-    df = pd.DataFrame({
-        "特征名": feat,
-        "分箱": [str(x) for x in exp_br.index],
-        "基准逾期率": np.round(exp_br.values, 4),
-        "实际逾期率": np.round(act_br.values, 4),
-        "逾期率偏移": np.round(act_br.values - exp_br.values, 4),
-    })
+    df = pd.DataFrame(
+        {
+            "特征名": feat,
+            "分箱": [str(x) for x in exp_br.index],
+            "基准逾期率": np.round(exp_br.values, 4),
+            "实际逾期率": np.round(act_br.values, 4),
+            "逾期率偏移": np.round(act_br.values - exp_br.values, 4),
+        }
+    )
     return df

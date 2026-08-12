@@ -33,7 +33,7 @@ from sklearn.metrics import f1_score, recall_score, accuracy_score, precision_sc
 
 from .expr_optimizer import optimize_expr, beautify_expr
 from ...exceptions import FeatureNotFoundError, InputTypeError, StateError
-from ...utils.parallel import ParallelizableMixin
+from ...utils.parallel import ParallelizableMixin, ParallelWorkload
 
 if TYPE_CHECKING:
     from ...excel import ExcelWriter
@@ -73,16 +73,16 @@ def get_columns_from_query(query_str: str) -> List[str]:
     """
 
     parsed_query, backtick_columns = _replace_backtick_columns(query_str)
-    tree = ast.parse(parsed_query, mode='eval')
+    tree = ast.parse(parsed_query, mode="eval")
 
     columns = set()
-    reserved_names = {'and', 'or', 'not', 'True', 'False', 'None'}
+    reserved_names = {"and", "or", "not", "True", "False", "None"}
 
     # 反引号包裹的列名（pandas query/eval 语法，用于含空格/特殊字符/非标识符的列名），
     # ast.parse 无法解析反引号，需先用正则提取并替换为占位标识符
-    backtick_names = re.findall(r'`([^`]+)`', query_str)
+    backtick_names = re.findall(r"`([^`]+)`", query_str)
     columns.update(name.strip() for name in backtick_names)
-    cleaned = re.sub(r'`[^`]+`', ' _hscredit_bt_ ', query_str)
+    cleaned = re.sub(r"`[^`]+`", " _hscredit_bt_ ", query_str)
 
     def visit_node(node):
         if isinstance(node, ast.Attribute):
@@ -95,14 +95,14 @@ def get_columns_from_query(query_str: str) -> List[str]:
             visit_node(node.func)
 
     try:
-        tree = ast.parse(cleaned, mode='eval')
+        tree = ast.parse(cleaned, mode="eval")
         for node in ast.walk(tree):
             visit_node(node)
     except SyntaxError:
         # 极端情况下（如复杂的非标识符表达式）退化为仅返回反引号列名
         pass
 
-    columns.discard('_hscredit_bt_')
+    columns.discard("_hscredit_bt_")
     return sorted(columns)
 
 
@@ -119,6 +119,7 @@ class RuleState(str, Enum):
     - ``APPLIED`` (``"applied"``)：规则已对某数据集执行过 :meth:`Rule.predict`，
       ``result_`` 中存有最近一次命中结果
     """
+
     INITIALIZED = "initialized"
     APPLIED = "applied"
 
@@ -129,6 +130,7 @@ class RuleStateError(StateError):
     当在规则不允许的状态下调用方法时抛出，继承自
     :class:`~hscredit.exceptions.StateError`。
     """
+
     pass
 
 
@@ -138,12 +140,20 @@ class RuleUnAppliedError(RuleStateError):
     在未先调用 :meth:`Rule.predict` 的情况下访问 :meth:`Rule.result` 等依赖预测
     结果的方法时抛出。
     """
+
     pass
 
 
 def _rule_report_target_worker(task: Tuple[Any, ...]) -> pd.DataFrame:
     """执行一个独立目标标签的规则报告任务。"""
-    rule, data, target, desc, prior_rules, amount, margins = task
+    rule, data, overdue, dpd, del_grey, desc, prior_rules, amount, margins = task
+    target = f"{overdue}_{dpd}"
+    # 浅拷贝共享原始列块，只为派生标签创建新列；避免每个 DPD 任务深拷贝
+    # 完整混合类型 DataFrame。灰度过滤发生在派生视图上，不修改调用方数据。
+    data = data.copy(deep=False)
+    data[target] = (data[overdue] > dpd).astype(int)
+    if isinstance(del_grey, bool) and del_grey:
+        data = data.query(f"({overdue} > {dpd}) | ({overdue} == 0)").reset_index(drop=True)
     return rule.report(
         data,
         target=target,
@@ -248,8 +258,8 @@ class Rule(ParallelizableMixin):
             raise InputTypeError(f"& 运算两侧必须是 Rule，实际右侧类型为 {type(other).__name__}")
         combined_expr = f"({self.expr}) & ({other.expr})"
         optimized = optimize_expr(beautify_expr(combined_expr))
-        self_name = getattr(self, 'name', None) or self.expr
-        other_name = getattr(other, 'name', None) or other.expr
+        self_name = getattr(self, "name", None) or self.expr
+        other_name = getattr(other, "name", None) or other.expr
         return Rule(
             optimized,
             name=f"({self_name})_AND_({other_name})",
@@ -280,8 +290,8 @@ class Rule(ParallelizableMixin):
             raise InputTypeError(f"| 运算两侧必须是 Rule，实际右侧类型为 {type(other).__name__}")
         combined_expr = f"({self.expr}) | ({other.expr})"
         optimized = optimize_expr(beautify_expr(combined_expr))
-        self_name = getattr(self, 'name', None) or self.expr
-        other_name = getattr(other, 'name', None) or other.expr
+        self_name = getattr(self, "name", None) or self.expr
+        other_name = getattr(other, "name", None) or other.expr
         return Rule(
             optimized,
             name=f"({self_name})_OR_({other_name})",
@@ -337,12 +347,10 @@ class Rule(ParallelizableMixin):
         if not isinstance(other, Rule):
             raise InputTypeError(f"^ 运算两侧必须是 Rule，实际右侧类型为 {type(other).__name__}")
         # pandas eval 不支持布尔 ^（BitXor），用等价的 (a & ~b) | (~a & b) 表达异或
-        combined_expr = (
-            f"(({self.expr}) & ~({other.expr})) | (~({self.expr}) & ({other.expr}))"
-        )
+        combined_expr = f"(({self.expr}) & ~({other.expr})) | (~({self.expr}) & ({other.expr}))"
         optimized = optimize_expr(beautify_expr(combined_expr))
-        self_name = getattr(self, 'name', None) or self.expr
-        other_name = getattr(other, 'name', None) or other.expr
+        self_name = getattr(self, "name", None) or self.expr
+        other_name = getattr(other, "name", None) or other.expr
         return Rule(
             optimized,
             name=f"({self_name})_XOR_({other_name})",
@@ -445,20 +453,7 @@ class Rule(ParallelizableMixin):
         prediction = self.predict(X)
         return X[prediction]
 
-    def report(
-        self,
-        datasets: pd.DataFrame,
-        target: str = "target",
-        overdue: Optional[Union[str, List[str]]] = None,
-        dpds: Optional[Union[int, List[int]]] = None,
-        del_grey: bool = False,
-        desc: str = "",
-        filter_cols: Optional[List[str]] = None,
-        prior_rules: Optional["Rule"] = None,
-        amount: Optional[str] = None,
-        margins: bool = False,
-        **kwargs
-    ) -> pd.DataFrame:
+    def report(self, datasets: pd.DataFrame, target: str = "target", overdue: Optional[Union[str, List[str]]] = None, dpds: Optional[Union[int, List[int]]] = None, del_grey: bool = False, desc: str = "", filter_cols: Optional[List[str]] = None, prior_rules: Optional["Rule"] = None, amount: Optional[str] = None, margins: bool = False, **kwargs) -> pd.DataFrame:
         """规则效果报告表格输出。
 
         将规则命中与否作为二分类，对数据集计算统计指标，
@@ -502,68 +497,52 @@ class Rule(ParallelizableMixin):
         >>> print(report)
         """
         detail_group_name = "分箱详情"
-        return_cols = ['指标名称', '指标含义', '分箱', '样本总数', '样本占比', '好样本数',
-                       '好样本占比', '坏样本数', '坏样本占比', '坏样本率', 'LIFT值', '坏账改善']
+        return_cols = ["指标名称", "指标含义", "分箱", "样本总数", "样本占比", "好样本数", "好样本占比", "坏样本数", "坏样本占比", "坏样本率", "LIFT值", "坏账改善"]
         if not desc:
-            if '指标含义' in return_cols:
-                return_cols.remove('指标含义')
+            if "指标含义" in return_cols:
+                return_cols.remove("指标含义")
 
         rule_expr = self.expr
 
-        def _report_one_rule(data, target, desc='', prior_rules=None):
+        def _report_one_rule(data, target, desc="", prior_rules=None):
             """生成单标签的规则报告。
-            
+
             直接手动计算统计指标，规则只有命中/未命中两种状态，不需要分箱器。
             支持金额口径分析，当传入 amount 参数时会计算金额相关指标。
             列名与 feature_bin_stats 保持一致，便于统一处理。
             """
             if prior_rules:
-                prior_tables = prior_rules.report(data, target=target, desc=desc, prior_rules=None, 
-                                                  margins=margins, amount=amount)
+                prior_tables = prior_rules.report(data, target=target, desc=desc, prior_rules=None, margins=margins, amount=amount)
                 prior_tables["规则分类"] = "先验规则"
                 temp = data[~prior_rules.predict(data)]
                 if amount is not None and amount in temp.columns:
-                    rule_result = pd.DataFrame({
-                        rule_expr: np.where(self.predict(temp), "命中", "未命中"),
-                        amount: temp[amount].values,
-                        "target": temp[target].tolist()
-                    })
+                    rule_result = pd.DataFrame({rule_expr: np.where(self.predict(temp), "命中", "未命中"), amount: temp[amount].values, "target": temp[target].tolist()})
                 else:
-                    rule_result = pd.DataFrame({
-                        rule_expr: np.where(self.predict(temp), "命中", "未命中"),
-                        "target": temp[target].tolist()
-                    })
+                    rule_result = pd.DataFrame({rule_expr: np.where(self.predict(temp), "命中", "未命中"), "target": temp[target].tolist()})
             else:
                 prior_tables = pd.DataFrame(columns=return_cols)
                 if amount is not None and amount in data.columns:
-                    rule_result = pd.DataFrame({
-                        rule_expr: np.where(self.predict(data), "命中", "未命中"),
-                        amount: data[amount].values,
-                        "target": data[target].tolist()
-                    })
+                    rule_result = pd.DataFrame({rule_expr: np.where(self.predict(data), "命中", "未命中"), amount: data[amount].values, "target": data[target].tolist()})
                 else:
-                    rule_result = pd.DataFrame({
-                        rule_expr: np.where(self.predict(data), "命中", "未命中"),
-                        "target": data[target].tolist()
-                    })
+                    rule_result = pd.DataFrame({rule_expr: np.where(self.predict(data), "命中", "未命中"), "target": data[target].tolist()})
 
             # 判断是否使用金额口径
             has_amount = amount is not None and amount in rule_result.columns
-            
+
             if has_amount:
                 # 金额口径：使用金额替代样本数，但列名保持统一
                 total_amount = rule_result[amount].sum()
                 total_good_amount = rule_result[rule_result["target"] == 0][amount].sum()
                 total_bad_amount = rule_result[rule_result["target"] == 1][amount].sum()
                 overall_bad_rate = total_bad_amount / total_amount if total_amount > 0 else 0
-                
+
                 rows = []
                 for bin_name in ["命中", "未命中"]:
                     matched = rule_result[rule_result[rule_expr] == bin_name]
                     bin_amount = matched[amount].sum()
                     bin_bad_amount = matched[matched["target"] == 1][amount].sum()
                     bin_good_amount = bin_amount - bin_bad_amount
-                    
+
                     # 使用统一的列名，但存储金额数据
                     sample_ratio = bin_amount / total_amount if total_amount > 0 else 0
                     good_ratio = bin_good_amount / total_good_amount if total_good_amount > 0 else 0
@@ -575,39 +554,39 @@ class Rule(ParallelizableMixin):
                     other_total = total_amount - bin_amount
                     remaining_bad_rate = other_bad / other_total if other_total > 0 else 0
                     bad_decrease = (overall_bad_rate - remaining_bad_rate) / overall_bad_rate if overall_bad_rate > 0 else 0
-                    
+
                     row = {
-                        '指标名称': rule_expr,
-                        '指标含义': desc if desc else '',
-                        '分箱': bin_name,
-                        '样本总数': bin_amount,  # 金额口径：存储金额
-                        '样本占比': sample_ratio,  # 金额占比
-                        '好样本数': bin_good_amount,  # 好金额
-                        '好样本占比': good_ratio,  # 好金额占比
-                        '坏样本数': bin_bad_amount,  # 坏金额
-                        '坏样本占比': bad_ratio,  # 坏金额占比
-                        '坏样本率': bad_rate,  # 金额口径坏账率
-                        'LIFT值': lift,
-                        '坏账改善': bad_decrease,
+                        "指标名称": rule_expr,
+                        "指标含义": desc if desc else "",
+                        "分箱": bin_name,
+                        "样本总数": bin_amount,  # 金额口径：存储金额
+                        "样本占比": sample_ratio,  # 金额占比
+                        "好样本数": bin_good_amount,  # 好金额
+                        "好样本占比": good_ratio,  # 好金额占比
+                        "坏样本数": bin_bad_amount,  # 坏金额
+                        "坏样本占比": bad_ratio,  # 坏金额占比
+                        "坏样本率": bad_rate,  # 金额口径坏账率
+                        "LIFT值": lift,
+                        "坏账改善": bad_decrease,
                     }
                     rows.append(row)
-                
+
                 table = pd.DataFrame(rows)
-                
+
                 # 计算合计行
                 total_row_data = {
-                    '指标名称': '合计',
-                    '指标含义': '',
-                    '分箱': '合计',
-                    '样本总数': total_amount,
-                    '样本占比': 1.0,
-                    '好样本数': total_good_amount,
-                    '好样本占比': 1.0,
-                    '坏样本数': total_bad_amount,
-                    '坏样本占比': 1.0,
-                    '坏样本率': overall_bad_rate,
-                    'LIFT值': 1.0,
-                    '坏账改善': 0.0,
+                    "指标名称": "合计",
+                    "指标含义": "",
+                    "分箱": "合计",
+                    "样本总数": total_amount,
+                    "样本占比": 1.0,
+                    "好样本数": total_good_amount,
+                    "好样本占比": 1.0,
+                    "坏样本数": total_bad_amount,
+                    "坏样本占比": 1.0,
+                    "坏样本率": overall_bad_rate,
+                    "LIFT值": 1.0,
+                    "坏账改善": 0.0,
                 }
             else:
                 # 样本数口径（原有逻辑）
@@ -615,14 +594,14 @@ class Rule(ParallelizableMixin):
                 total_good = rule_result["target"].eq(0).sum()
                 total_bad = rule_result["target"].eq(1).sum()
                 overall_bad_rate = rule_result["target"].mean() if total > 0 else 0
-                
+
                 rows = []
                 for bin_name in ["命中", "未命中"]:
                     matched = rule_result[rule_result[rule_expr] == bin_name]
                     bin_total = len(matched)
                     bin_bad = matched["target"].sum() if bin_total > 0 else 0
                     bin_good = bin_total - bin_bad
-                    
+
                     sample_ratio = bin_total / total if total > 0 else 0
                     good_ratio = bin_good / total_good if total_good > 0 else 0
                     bad_ratio = bin_bad / total_bad if total_bad > 0 else 0
@@ -633,44 +612,44 @@ class Rule(ParallelizableMixin):
                     other_total = total - bin_total
                     remaining_bad_rate = other_bad / other_total if other_total > 0 else 0
                     bad_decrease = (overall_bad_rate - remaining_bad_rate) / overall_bad_rate if overall_bad_rate > 0 else 0
-                    
+
                     row = {
-                        '指标名称': rule_expr,
-                        '指标含义': desc if desc else '',
-                        '分箱': bin_name,
-                        '样本总数': bin_total,
-                        '样本占比': sample_ratio,
-                        '好样本数': bin_good,
-                        '好样本占比': good_ratio,
-                        '坏样本数': bin_bad,
-                        '坏样本占比': bad_ratio,
-                        '坏样本率': bad_rate,
-                        'LIFT值': lift,
-                        '坏账改善': bad_decrease,
+                        "指标名称": rule_expr,
+                        "指标含义": desc if desc else "",
+                        "分箱": bin_name,
+                        "样本总数": bin_total,
+                        "样本占比": sample_ratio,
+                        "好样本数": bin_good,
+                        "好样本占比": good_ratio,
+                        "坏样本数": bin_bad,
+                        "坏样本占比": bad_ratio,
+                        "坏样本率": bad_rate,
+                        "LIFT值": lift,
+                        "坏账改善": bad_decrease,
                     }
                     rows.append(row)
-                
+
                 table = pd.DataFrame(rows)
-                
+
                 # 计算合计行
                 y_true = rule_result["target"]
                 y_pred = rule_result[rule_expr].map({"命中": 1, "未命中": 0})
-                
+
                 total_row_data = {
-                    '指标名称': '合计',
-                    '指标含义': '',
-                    '分箱': '合计',
-                    '样本总数': total,
-                    '样本占比': 1.0,
-                    '好样本数': total_good,
-                    '好样本占比': 1.0 if total_good > 0 else 0.0,
-                    '坏样本数': total_bad,
-                    '坏样本占比': 1.0 if total_bad > 0 else 0.0,
-                    '坏样本率': rule_result["target"].mean(),
-                    'LIFT值': 1.0,
-                    '坏账改善': 0.0,
+                    "指标名称": "合计",
+                    "指标含义": "",
+                    "分箱": "合计",
+                    "样本总数": total,
+                    "样本占比": 1.0,
+                    "好样本数": total_good,
+                    "好样本占比": 1.0 if total_good > 0 else 0.0,
+                    "坏样本数": total_bad,
+                    "坏样本占比": 1.0 if total_bad > 0 else 0.0,
+                    "坏样本率": rule_result["target"].mean(),
+                    "LIFT值": 1.0,
+                    "坏账改善": 0.0,
                 }
-            
+
             # 添加风险拒绝比 = 坏账改善 / 样本占比
             table["风险拒绝比"] = np.divide(
                 table["坏账改善"],
@@ -685,22 +664,10 @@ class Rule(ParallelizableMixin):
 
             metrics_data = {
                 "分箱": ["命中", "未命中"],
-                "准确率": [
-                    accuracy_score(y_true, y_pred) if len(y_true) > 0 else 0,
-                    accuracy_score(y_true, 1 - y_pred) if len(y_true) > 0 else 0
-                ],
-                "精确率": [
-                    precision_score(y_true, y_pred, zero_division=0) if len(y_true) > 0 else 0,
-                    precision_score(y_true, 1 - y_pred, zero_division=0) if len(y_true) > 0 else 0
-                ],
-                "召回率": [
-                    recall_score(y_true, y_pred, zero_division=0) if len(y_true) > 0 else 0,
-                    recall_score(y_true, 1 - y_pred, zero_division=0) if len(y_true) > 0 else 0
-                ],
-                "F1分数": [
-                    f1_score(y_true, y_pred, zero_division=0) if len(y_true) > 0 else 0,
-                    f1_score(y_true, 1 - y_pred, zero_division=0) if len(y_true) > 0 else 0
-                ],
+                "准确率": [accuracy_score(y_true, y_pred) if len(y_true) > 0 else 0, accuracy_score(y_true, 1 - y_pred) if len(y_true) > 0 else 0],
+                "精确率": [precision_score(y_true, y_pred, zero_division=0) if len(y_true) > 0 else 0, precision_score(y_true, 1 - y_pred, zero_division=0) if len(y_true) > 0 else 0],
+                "召回率": [recall_score(y_true, y_pred, zero_division=0) if len(y_true) > 0 else 0, recall_score(y_true, 1 - y_pred, zero_division=0) if len(y_true) > 0 else 0],
+                "F1分数": [f1_score(y_true, y_pred, zero_division=0) if len(y_true) > 0 else 0, f1_score(y_true, 1 - y_pred, zero_division=0) if len(y_true) > 0 else 0],
             }
             metrics = pd.DataFrame(metrics_data)
 
@@ -709,13 +676,15 @@ class Rule(ParallelizableMixin):
 
             # 如果需要合计行，添加合计
             if margins:
-                total_row_data.update({
-                    '风险拒绝比': 0.0,
-                    '准确率': accuracy_score(y_true, y_pred) if len(y_true) > 0 else 0,
-                    '精确率': precision_score(y_true, y_pred, zero_division=0) if len(y_true) > 0 else 0,
-                    '召回率': recall_score(y_true, y_pred, zero_division=0) if len(y_true) > 0 else 0,
-                    'F1分数': f1_score(y_true, y_pred, zero_division=0) if len(y_true) > 0 else 0,
-                })
+                total_row_data.update(
+                    {
+                        "风险拒绝比": 0.0,
+                        "准确率": accuracy_score(y_true, y_pred) if len(y_true) > 0 else 0,
+                        "精确率": precision_score(y_true, y_pred, zero_division=0) if len(y_true) > 0 else 0,
+                        "召回率": recall_score(y_true, y_pred, zero_division=0) if len(y_true) > 0 else 0,
+                        "F1分数": f1_score(y_true, y_pred, zero_division=0) if len(y_true) > 0 else 0,
+                    }
+                )
                 table = pd.concat([table, pd.DataFrame([total_row_data])], ignore_index=True)
 
             if not desc and "指标含义" in table.columns:
@@ -755,38 +724,46 @@ class Rule(ParallelizableMixin):
                 merge_columns = ["指标含义"] + merge_columns
 
             # 目标标签相互独立，worker 仅计算单标签表；列层级与合并顺序由主线程确定。
-            tasks = []
             labels = []
             combinations = []
             for col in overdue:
                 for d in dpds:
-                    _datasets = datasets.copy()
-                    _datasets[f"{col}_{d}"] = (_datasets[col] > d).astype(int)
-                    if isinstance(del_grey, bool) and del_grey:
-                        _datasets = _datasets.query(f"({col} > {d}) | ({col} == 0)").reset_index(drop=True)
-                    tasks.append(
-                        (
-                            copy.deepcopy(self),
-                            _datasets,
-                            f"{col}_{d}",
-                            desc,
-                            copy.deepcopy(prior_rules),
-                            amount,
-                            margins,
-                        )
-                    )
                     labels.append(f"{col} {d}+")
                     combinations.append((col, d))
+
+            tasks = (
+                (
+                    copy.deepcopy(self),
+                    datasets,
+                    col,
+                    d,
+                    del_grey,
+                    desc,
+                    copy.deepcopy(prior_rules),
+                    amount,
+                    margins,
+                )
+                for col, d in combinations
+            )
 
             tables = self._parallel_execute(
                 _rule_report_target_worker,
                 tasks,
                 task_labels=labels,
+                default_backend="threading",
+                workload=ParallelWorkload(
+                    task_count=len(combinations),
+                    rows=len(datasets),
+                    columns=len(combinations),
+                    data_bytes=int(datasets.memory_usage(deep=True).sum()),
+                    cost_per_item=6.0,
+                    capability="thread_safe",
+                    releases_gil=True,
+                    operation="规则多标签报告",
+                ),
             )
             for position, ((col, d), _table) in enumerate(zip(combinations, tables)):
-                _table.columns = pd.MultiIndex.from_tuples(
-                    [(detail_group_name, c) if c in merge_columns else (f"{col} {d}+", c) for c in _table.columns]
-                )
+                _table.columns = pd.MultiIndex.from_tuples([(detail_group_name, c) if c in merge_columns else (f"{col} {d}+", c) for c in _table.columns])
                 if position == 0:
                     table = _table
                 else:
@@ -805,13 +782,13 @@ class Rule(ParallelizableMixin):
                 cols_to_keep = []
                 for col in table.columns:
                     # 保留 merge_columns 中的列
-                    if col[1] in ['规则分类', '指标名称', '指标含义', '分箱'] or col[1] in filter_cols:
+                    if col[1] in ["规则分类", "指标名称", "指标含义", "分箱"] or col[1] in filter_cols:
                         cols_to_keep.append(col)
                 if cols_to_keep:
                     table = table[cols_to_keep]
             else:
                 # 单层级列结构
-                cols_to_keep = [c for c in table.columns if c in filter_cols or c in ['规则分类', '指标名称', '指标含义', '分箱']]
+                cols_to_keep = [c for c in table.columns if c in filter_cols or c in ["规则分类", "指标名称", "指标含义", "分箱"]]
                 if cols_to_keep:
                     table = table[cols_to_keep]
 

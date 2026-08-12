@@ -28,14 +28,14 @@ from sklearn.base import clone
 from sklearn.utils import check_random_state
 
 from .base import BaseFeatureSelector, get_feature_importances
-from ...utils.parallel import _current_parallel_budget
+from ...utils.parallel import ParallelWorkload, _current_parallel_budget
 
 
 def _fit_importance_model(estimator, X, y):
     """克隆并拟合单个重要性模型，遵守当前子预算。"""
     model = clone(estimator)
-    params = model.get_params(deep=False) if hasattr(model, 'get_params') else {}
-    model_n_jobs = params.get('n_jobs')
+    params = model.get_params(deep=False) if hasattr(model, "get_params") else {}
+    model_n_jobs = params.get("n_jobs")
     if isinstance(model_n_jobs, (int, np.integer)) and model_n_jobs != 1:
         budget = _current_parallel_budget().available
         requested = budget if model_n_jobs == -1 else min(int(model_n_jobs), budget)
@@ -130,7 +130,7 @@ class NullImportanceSelector(BaseFeatureSelector):
         cv: int = 5,
         n_runs: int = 5,
         random_state: Optional[int] = 42,
-        target: str = 'target',
+        target: str = "target",
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
         force_drop: Optional[List[str]] = None,
@@ -141,16 +141,22 @@ class NullImportanceSelector(BaseFeatureSelector):
         parallel_config: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(
-            target=target, threshold=threshold, include=include,
-            exclude=exclude, force_drop=force_drop, n_jobs=n_jobs,
-            binner=binner, binning_params=binning_params,
-            parallel_backend=parallel_backend, parallel_config=parallel_config,
+            target=target,
+            threshold=threshold,
+            include=include,
+            exclude=exclude,
+            force_drop=force_drop,
+            n_jobs=n_jobs,
+            binner=binner,
+            binning_params=binning_params,
+            parallel_backend=parallel_backend,
+            parallel_config=parallel_config,
         )
         self.estimator = estimator
         self.cv = cv
         self.n_runs = n_runs
         self.random_state = random_state
-        self.method_name = '零重要性筛选'
+        self.method_name = "零重要性筛选"
 
     def _fit_impl(
         self,
@@ -178,12 +184,12 @@ class NullImportanceSelector(BaseFeatureSelector):
         X = X.reset_index(drop=True)
 
         self._get_feature_names(X)
-        
+
         cv = check_cv(self.cv, y, classifier=True)
-        
+
         n_samples, n_features = X.shape
         n_splits = cv.get_n_splits()
-        
+
         # 计算实际标签下的重要性和 shuffle 目标后的 null 重要性。
         actual_importances = np.zeros((n_features, n_splits * self.n_runs))
         null_importances = np.zeros((n_features, n_splits * self.n_runs))
@@ -193,22 +199,27 @@ class NullImportanceSelector(BaseFeatureSelector):
         else:
             base_seed = int(self.random_state)
         max_seed = np.iinfo(np.int32).max
-        tasks = [
-            (run, (base_seed + run) % max_seed, self.estimator, X, y, self.cv)
-            for run in range(self.n_runs)
-        ]
-        estimator_params = (
-            self.estimator.get_params(deep=False)
-            if hasattr(self.estimator, 'get_params')
-            else {}
-        )
-        inner_n_jobs = estimator_params.get('n_jobs')
+        tasks = [(run, (base_seed + run) % max_seed, self.estimator, X, y, self.cv) for run in range(self.n_runs)]
+        estimator_params = self.estimator.get_params(deep=False) if hasattr(self.estimator, "get_params") else {}
+        inner_n_jobs = estimator_params.get("n_jobs")
         has_parallel_children = isinstance(inner_n_jobs, (int, np.integer)) and inner_n_jobs not in (0, 1)
+        cv_cost = float(self.cv) if isinstance(self.cv, (int, np.integer)) else 5.0
         results = self._parallel_execute(
             _run_null_importance_experiment,
             tasks,
-            task_labels=[f'实验{run + 1}' for run in range(self.n_runs)],
+            task_labels=[f"实验{run + 1}" for run in range(self.n_runs)],
             has_parallel_children=has_parallel_children,
+            default_backend="loky",
+            workload=ParallelWorkload(
+                task_count=self.n_runs,
+                rows=len(X),
+                columns=X.shape[1],
+                data_bytes=int(X.memory_usage(deep=True).sum()),
+                cost_per_item=max(10.0, cv_cost * 10.0),
+                capability="process_safe",
+                has_parallel_children=has_parallel_children,
+                operation="Null Importance重复实验",
+            ),
         )
         for run, actual, null in results:
             start = n_splits * run
@@ -225,37 +236,41 @@ class NullImportanceSelector(BaseFeatureSelector):
         self.scores_ = pd.Series(scores, index=X.columns)
         self.actual_importance_runs_ = pd.DataFrame(actual_importances.T, columns=X.columns)
         self.null_importance_runs_ = pd.DataFrame(null_importances.T, columns=X.columns)
-        self.importance_details_ = pd.DataFrame({
-            '特征': X.columns,
-            '实际重要性': actual_mean,
-            'Null重要性': null_mean,
-            '特征得分': scores,
-        })
+        self.importance_details_ = pd.DataFrame(
+            {
+                "特征": X.columns,
+                "实际重要性": actual_mean,
+                "Null重要性": null_mean,
+                "特征得分": scores,
+            }
+        )
 
         # 筛选
         selected_mask = scores > self.threshold
         self.selected_features_ = X.columns[selected_mask].tolist()
-        self._drop_reason = f'实际重要性-Null重要性 <= {self.threshold}'
+        self._drop_reason = f"实际重要性-Null重要性 <= {self.threshold}"
 
         dropped_cols = X.columns[~selected_mask].tolist()
         if len(dropped_cols) > 0:
-            details = self.importance_details_.set_index('特征')
-            self.dropped_ = pd.DataFrame({
-                '特征': dropped_cols,
-                '剔除原因': [self._drop_reason] * len(dropped_cols),
-                '实际重要性': [details.loc[col, '实际重要性'] for col in dropped_cols],
-                'Null重要性': [details.loc[col, 'Null重要性'] for col in dropped_cols],
-                '特征得分': [details.loc[col, '特征得分'] for col in dropped_cols],
-                '阈值': [self.threshold] * len(dropped_cols),
-            })
+            details = self.importance_details_.set_index("特征")
+            self.dropped_ = pd.DataFrame(
+                {
+                    "特征": dropped_cols,
+                    "剔除原因": [self._drop_reason] * len(dropped_cols),
+                    "实际重要性": [details.loc[col, "实际重要性"] for col in dropped_cols],
+                    "Null重要性": [details.loc[col, "Null重要性"] for col in dropped_cols],
+                    "特征得分": [details.loc[col, "特征得分"] for col in dropped_cols],
+                    "阈值": [self.threshold] * len(dropped_cols),
+                }
+            )
         else:
-            self.dropped_ = pd.DataFrame(columns=['特征', '剔除原因', '实际重要性', 'Null重要性', '特征得分', '阈值'])
+            self.dropped_ = pd.DataFrame(columns=["特征", "剔除原因", "实际重要性", "Null重要性", "特征得分", "阈值"])
 
     def get_importance_details(self) -> pd.DataFrame:
         """获取实际重要性、Null重要性和差值得分明细。
 
         :returns: 包含 ``特征``、``实际重要性``、``Null重要性``、``特征得分`` 的 DataFrame
         """
-        if not hasattr(self, 'importance_details_'):
-            return pd.DataFrame(columns=['特征', '实际重要性', 'Null重要性', '特征得分'])
+        if not hasattr(self, "importance_details_"):
+            return pd.DataFrame(columns=["特征", "实际重要性", "Null重要性", "特征得分"])
         return self.importance_details_.copy()

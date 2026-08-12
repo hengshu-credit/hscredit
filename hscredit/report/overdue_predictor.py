@@ -24,6 +24,7 @@ from copy import deepcopy
 from sklearn.base import BaseEstimator, TransformerMixin
 
 from .feature_analyzer import feature_bin_stats
+from .mining.base import _mining_workload
 from ..utils.parallel import ParallelizableMixin, resolve_n_jobs, validate_parallel_config
 
 
@@ -572,6 +573,12 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
             tasks,
             task_labels=self.target_names_,
             default_backend="threading",
+            workload=_mining_workload(
+                X,
+                len(tasks),
+                operation="多标签逾期率预测",
+                cost_per_item=6.0,
+            ),
         )
         for target_name, base_rates, adjusted_rates in target_results:
             X[f'{self.feature}_{target_name}_基础逾期率'] = base_rates

@@ -11,6 +11,7 @@ import pandas as pd
 import pytest
 from sklearn.base import BaseEstimator, ClassifierMixin, clone
 from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import StratifiedKFold
 from sklearn.pipeline import Pipeline
 
 from hscredit.core import selectors
@@ -61,6 +62,7 @@ class MeanDifferenceImportanceClassifier(BaseEstimator, ClassifierMixin):
 
 
 ESTIMATOR_N_JOBS_OBSERVED = []
+ESTIMATOR_NATIVE_WORKERS_OBSERVED = []
 
 
 class RecordingParallelImportanceClassifier(BaseEstimator, ClassifierMixin):
@@ -71,6 +73,22 @@ class RecordingParallelImportanceClassifier(BaseEstimator, ClassifierMixin):
 
     def fit(self, X, y):
         ESTIMATOR_N_JOBS_OBSERVED.append(self.n_jobs)
+        self.classes_ = np.unique(y)
+        self.feature_importances_ = np.arange(X.shape[1], 0, -1, dtype=float)
+        return self
+
+    def predict(self, X):
+        return np.full(len(X), self.classes_[0])
+
+
+class RecordingNativeImportanceClassifier(BaseEstimator, ClassifierMixin):
+    """模拟只公开 thread_count 的第三方模型。"""
+
+    def __init__(self, thread_count=99):
+        self.thread_count = thread_count
+
+    def fit(self, X, y):
+        ESTIMATOR_NATIVE_WORKERS_OBSERVED.append(self.thread_count)
         self.classes_ = np.unique(y)
         self.feature_importances_ = np.arange(X.shape[1], 0, -1, dtype=float)
         return self
@@ -219,9 +237,7 @@ class BudgetAwareClassifier(BaseEstimator, ClassifierMixin):
         budget = _current_parallel_budget()
         expected = self.worker_budget if budget.depth > 0 else self.root_budget
         if budget.available != expected or self.n_jobs != expected:
-            raise RuntimeError(
-                f"内部预算错误: context={budget.available}, n_jobs={self.n_jobs}, expected={expected}"
-            )
+            raise RuntimeError(f"内部预算错误: context={budget.available}, n_jobs={self.n_jobs}, expected={expected}")
         self.classes_ = np.unique(y)
         return self
 
@@ -248,9 +264,7 @@ class BudgetAwareMetaClassifier(BaseEstimator, ClassifierMixin):
         budget = _current_parallel_budget()
         expected = self.worker_budget if budget.depth > 0 else self.root_budget
         if budget.available != expected or self.n_jobs != expected:
-            raise RuntimeError(
-                f"meta预算错误: context={budget.available}, n_jobs={self.n_jobs}, expected={expected}"
-            )
+            raise RuntimeError(f"meta预算错误: context={budget.available}, n_jobs={self.n_jobs}, expected={expected}")
         self.estimator.fit(X, y)
         self.classes_ = np.unique(y)
         return self
@@ -343,11 +357,7 @@ def test_all_exported_concrete_selectors_support_clone_and_pickle():
     config = {"batch_size": 1}
     for name in selectors.__all__:
         selector_class = getattr(selectors, name, None)
-        if (
-            not inspect.isclass(selector_class)
-            or selector_class is BaseFeatureSelector
-            or not issubclass(selector_class, BaseFeatureSelector)
-        ):
+        if not inspect.isclass(selector_class) or selector_class is BaseFeatureSelector or not issubclass(selector_class, BaseFeatureSelector):
             continue
         try:
             selector = selector_class(
@@ -382,12 +392,8 @@ def test_boruta_preserves_default_estimator_constructor_parameter():
 def test_joint_model_selectors_do_not_schedule_identity_parallel_tasks(selector_xy):
     """真正昂贵的联合拟合保持串行时，不应为廉价标量映射创建并行任务。"""
     X, y = selector_xy
-    importance = NoIdentityParallelFeatureImportanceSelector(
-        MeanDifferenceImportanceClassifier(), threshold=0.0, n_jobs=2
-    ).fit(X, y)
-    boruta = NoIdentityParallelBorutaSelector(
-        MeanDifferenceImportanceClassifier(), max_iter=1, n_jobs=2
-    ).fit(X, y)
+    importance = NoIdentityParallelFeatureImportanceSelector(MeanDifferenceImportanceClassifier(), threshold=0.0, n_jobs=2).fit(X, y)
+    boruta = NoIdentityParallelBorutaSelector(MeanDifferenceImportanceClassifier(), max_iter=1, n_jobs=2).fit(X, y)
 
     assert importance.scores_.index.tolist() == X.columns.tolist()
     assert boruta.scores_.index.tolist() == X.columns.tolist()
@@ -403,6 +409,18 @@ def test_feature_importance_estimator_receives_selector_budget(selector_xy):
 
     assert ESTIMATOR_N_JOBS_OBSERVED == [12]
     assert estimator.n_jobs == 1
+
+
+def test_feature_importance_native_thread_alias_receives_selector_budget(selector_xy):
+    """只公开 thread_count 的模型也必须收到同一子预算。"""
+    X, y = selector_xy
+    estimator = RecordingNativeImportanceClassifier(thread_count=99)
+    ESTIMATOR_NATIVE_WORKERS_OBSERVED.clear()
+
+    FeatureImportanceSelector(estimator, threshold=0.0, n_jobs=4).fit(X, y)
+
+    assert ESTIMATOR_NATIVE_WORKERS_OBSERVED == [4]
+    assert estimator.thread_count == 99
 
 
 def test_rfe_estimator_receives_selector_budget(selector_xy):
@@ -509,17 +527,11 @@ def test_column_worker_selector_uses_multiple_real_threads(selector_xy, monkeypa
             lambda n, b: CardinalitySelector(threshold=1000, n_jobs=n, parallel_backend=b),
             id="cardinality",
         ),
-        pytest.param(
-            lambda n, b: TypeSelector(dtype_include="number", n_jobs=n, parallel_backend=b), id="type"
-        ),
-        pytest.param(
-            lambda n, b: RegexSelector(pattern="^特征", n_jobs=n, parallel_backend=b), id="regex"
-        ),
+        pytest.param(lambda n, b: TypeSelector(dtype_include="number", n_jobs=n, parallel_backend=b), id="type"),
+        pytest.param(lambda n, b: RegexSelector(pattern="^特征", n_jobs=n, parallel_backend=b), id="regex"),
         pytest.param(lambda n, b: VarianceSelector(threshold=0.0, n_jobs=n, parallel_backend=b), id="variance"),
         pytest.param(lambda n, b: ModeSelector(threshold=1.0, n_jobs=n, parallel_backend=b), id="mode"),
-        pytest.param(
-            lambda n, b: PSISelector(threshold=10.0, n_splits=3, n_jobs=n, parallel_backend=b), id="psi"
-        ),
+        pytest.param(lambda n, b: PSISelector(threshold=10.0, n_splits=3, n_jobs=n, parallel_backend=b), id="psi"),
         pytest.param(
             lambda n, b: StabilityAwareSelector(
                 iv_threshold=0.0,
@@ -532,9 +544,7 @@ def test_column_worker_selector_uses_multiple_real_threads(selector_xy, monkeypa
             id="stability",
         ),
         pytest.param(
-            lambda n, b: MutualInfoSelector(
-                threshold=0.0, random_state=31, n_jobs=n, parallel_backend=b
-            ),
+            lambda n, b: MutualInfoSelector(threshold=0.0, random_state=31, n_jobs=n, parallel_backend=b),
             id="mutual_info",
         ),
         pytest.param(lambda n, b: Chi2Selector(threshold=0.0, n_jobs=n, parallel_backend=b), id="chi2"),
@@ -584,6 +594,24 @@ def test_null_importance_experiments_match_serial(selector_xy, backend):
     assert serial.selected_features_ == parallel.selected_features_
 
 
+def test_null_importance_accepts_cross_validation_splitter(selector_xy):
+    """工作量估算不能把 sklearn 交叉验证器强制转换为浮点数。"""
+    X, y = selector_xy
+    selector = NullImportanceSelector(
+        MeanDifferenceImportanceClassifier(),
+        threshold=-1.0,
+        cv=StratifiedKFold(n_splits=2, shuffle=True, random_state=23),
+        n_runs=2,
+        random_state=23,
+        n_jobs=2,
+        parallel_backend="threading",
+    ).fit(X, y)
+
+    assert len(selector.actual_importance_runs_) == 4
+    assert len(selector.null_importance_runs_) == 4
+    assert list(selector.scores_.index) == list(X.columns)
+
+
 def test_round_based_selector_matches_serial(selector_xy):
     """防止逐轮候选并行改变轮次、排名或稳定平局顺序。"""
     X, y = selector_xy
@@ -602,10 +630,70 @@ def test_round_based_selector_matches_serial(selector_xy):
     assert serial.selected_features_ == parallel.selected_features_
 
 
+def test_generic_selector_binner_inherits_parallel_configuration():
+    """非 Corr 筛选器创建的内部 OptimalBinning 也必须继承公共并行预算。"""
+    selector = IVSelector(
+        binning_params={"method": "quantile"},
+        n_jobs=3,
+        parallel_backend="threading",
+        parallel_config={"batch_size": 2},
+    )
+
+    binner = selector._resolve_binner()
+
+    assert binner.n_jobs == 3
+    assert binner.parallel_backend == "threading"
+    assert binner.parallel_config == {"batch_size": 2}
+
+
+def test_generic_selector_binner_keeps_more_specific_parallel_overrides():
+    """binning_params 中的显式子级配置应优先于筛选器默认值。"""
+    selector = IVSelector(
+        binning_params={
+            "method": "quantile",
+            "n_jobs": 2,
+            "parallel_backend": "loky",
+            "parallel_config": {"batch_size": 1},
+        },
+        n_jobs=4,
+        parallel_backend="threading",
+        parallel_config={"batch_size": 4},
+    )
+
+    binner = selector._resolve_binner()
+
+    assert binner.n_jobs == 2
+    assert binner.parallel_backend == "loky"
+    assert binner.parallel_config == {"batch_size": 1}
+
+
+@pytest.mark.parametrize(
+    "selector",
+    [Chi2Selector(threshold=0.0), FTestSelector(threshold=0.0)],
+)
+def test_vectorized_statistical_selectors_do_not_dispatch_per_column(selector, monkeypatch):
+    """可一次计算整张数值矩阵的卡方/F 检验不得拆成细粒度 worker。"""
+    X = pd.DataFrame(
+        {
+            "数值甲": [0.0, 1.0, 2.0, 3.0, 4.0, 5.0],
+            "数值乙": [5.0, 4.0, 3.0, 2.0, 1.0, 0.0],
+        }
+    )
+    y = pd.Series([0, 0, 0, 1, 1, 1])
+
+    monkeypatch.setattr(
+        type(selector),
+        "_parallel_execute",
+        lambda self, *args, **kwargs: pytest.fail("向量化筛选器不应创建列级 worker"),
+    )
+
+    selector.fit(X, y)
+
+    assert selector.scores_.index.tolist() == ["数值甲", "数值乙"]
+
+
 @pytest.mark.parametrize("backend", ["threading", "loky"])
-def test_sequential_candidate_estimator_receives_child_budget_and_preserves_ties(
-    selector_xy, monkeypatch, backend
-):
+def test_sequential_candidate_estimator_receives_child_budget_and_preserves_ties(selector_xy, monkeypatch, backend):
     """轮内候选模型必须使用 child budget，且不得改变稳定首候选平局顺序。"""
     monkeypatch.setattr(parallel_utils, "get_physical_cpu_count", lambda: 5)
     X, y = selector_xy
@@ -643,9 +731,7 @@ def test_sequential_single_candidate_receives_full_budget(monkeypatch):
 
 
 @pytest.mark.parametrize("backend", ["threading", "loky"])
-def test_stepwise_candidate_estimator_receives_child_budget_and_preserves_tie_order(
-    selector_xy, monkeypatch, backend
-):
+def test_stepwise_candidate_estimator_receives_child_budget_and_preserves_tie_order(selector_xy, monkeypatch, backend):
     """Stepwise 当前轮并行模型与最终串行模型须分别使用 child/full budget。"""
     monkeypatch.setattr(parallel_utils, "get_physical_cpu_count", lambda: 5)
     X, y = selector_xy
@@ -669,15 +755,11 @@ def test_stepwise_candidate_estimator_receives_child_budget_and_preserves_tie_or
 
 @pytest.mark.parametrize("backend", ["threading", "loky"])
 @pytest.mark.parametrize("selector_kind", ["sequential", "stepwise"])
-def test_nested_estimator_receives_child_budget_without_mutating_original(
-    selector_xy, monkeypatch, backend, selector_kind
-):
+def test_nested_estimator_receives_child_budget_without_mutating_original(selector_xy, monkeypatch, backend, selector_kind):
     """Pipeline 内层 n_jobs 必须收到当前轮子预算，且不回写外部模型。"""
     monkeypatch.setattr(parallel_utils, "get_physical_cpu_count", lambda: 5)
     X, y = selector_xy
-    estimator = Pipeline(
-        [("model", BudgetAwareClassifier(n_jobs=99, worker_budget=2, root_budget=4))]
-    )
+    estimator = Pipeline([("model", BudgetAwareClassifier(n_jobs=99, worker_budget=2, root_budget=4))])
 
     if selector_kind == "sequential":
         selector = SequentialFeatureSelector(
@@ -711,9 +793,7 @@ def test_nested_estimator_single_candidate_receives_full_budget(monkeypatch):
     monkeypatch.setattr(parallel_utils, "get_physical_cpu_count", lambda: 5)
     X = pd.DataFrame({"唯一特征": [0.0, 1.0, 0.0, 1.0]})
     y = pd.Series([0, 1, 0, 1])
-    estimator = Pipeline(
-        [("model", BudgetAwareClassifier(n_jobs=99, worker_budget=4, root_budget=4))]
-    )
+    estimator = Pipeline([("model", BudgetAwareClassifier(n_jobs=99, worker_budget=4, root_budget=4))])
 
     selector = SequentialFeatureSelector(
         estimator,
@@ -730,9 +810,7 @@ def test_nested_estimator_single_candidate_receives_full_budget(monkeypatch):
 @pytest.mark.parametrize("backend", ["threading", "loky"])
 @pytest.mark.parametrize("selector_kind", ["sequential", "stepwise"])
 @pytest.mark.parametrize("pipeline_wrapped", [False, True])
-def test_multilevel_meta_estimator_only_gives_budget_to_shallowest_parallel_layer(
-    selector_xy, monkeypatch, backend, selector_kind, pipeline_wrapped
-):
+def test_multilevel_meta_estimator_only_gives_budget_to_shallowest_parallel_layer(selector_xy, monkeypatch, backend, selector_kind, pipeline_wrapped):
     """外层候选、最浅 meta 与深层 estimator 必须按 2×2×1 收敛。"""
     monkeypatch.setattr(parallel_utils, "get_physical_cpu_count", lambda: 5)
     X, y = selector_xy
@@ -1226,6 +1304,106 @@ def test_selector_uses_shared_parallel_config_validation(selector):
 
     with pytest.raises(ValidationError, match="不支持的配置项"):
         selector.fit(pd.DataFrame({"特征甲": [0, 1], "特征乙": [1, 0]}))
+
+
+@pytest.fixture
+def mixed_lightweight_selector_frame():
+    """覆盖字符串、Category、混合 object 和缺失值的轻量筛选输入。"""
+    return pd.DataFrame(
+        {
+            "数值": [1.0, 1.0, np.nan, 2.0],
+            "字符串": pd.Series(["甲", "甲", None, "乙"], dtype="string"),
+            "分类": pd.Categorical(
+                ["甲", "甲", None, "乙"],
+                categories=["乙", "甲", "未出现"],
+                ordered=True,
+            ),
+            "混合对象": pd.Series([1, "1", None, 1], dtype=object),
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    ("selector", "expected_scores", "expected_selected"),
+    [
+        (NullSelector(threshold=0.5), [0.25, 0.25, 0.25, 0.25], ["数值", "字符串", "分类", "混合对象"]),
+        (ModeSelector(threshold=0.75), [0.5, 0.5, 0.5, 0.5], ["数值", "字符串", "分类", "混合对象"]),
+        (CardinalitySelector(threshold=2), [2, 2, 2, 2], ["数值", "字符串", "分类", "混合对象"]),
+        (TypeSelector(dtype_include="category"), [0, 0, 1, 0], ["分类"]),
+        (RegexSelector(pattern="^(字符串|分类)$"), [0, 1, 1, 0], ["字符串", "分类"]),
+    ],
+)
+def test_lightweight_selectors_batch_mixed_fields_without_joblib(
+    monkeypatch,
+    mixed_lightweight_selector_frame,
+    selector,
+    expected_scores,
+    expected_selected,
+):
+    """能批量处理的轻量统计不得为每个混合字段创建 joblib 任务。"""
+
+    def fail_parallel(*args, **kwargs):
+        raise AssertionError("轻量批量筛选不应调用按列并行执行器")
+
+    monkeypatch.setattr(BaseFeatureSelector, "_parallel_execute", fail_parallel)
+    fitted = selector.fit(mixed_lightweight_selector_frame)
+
+    pd.testing.assert_series_equal(
+        fitted.scores_,
+        pd.Series(expected_scores, index=mixed_lightweight_selector_frame.columns),
+        check_dtype=False,
+    )
+    assert fitted.selected_features_ == expected_selected
+
+
+def test_composite_intersection_runs_independent_children_in_parallel(monkeypatch):
+    """intersection 子筛选器读取同一输入且互不依赖，应共享父级预算并行拟合。"""
+    X = pd.DataFrame(
+        {
+            "甲": [1.0, 2.0, np.nan, 4.0],
+            "乙": [1.0, 1.0, 1.0, 1.0],
+            "丙": [1.0, 2.0, 3.0, 4.0],
+        }
+    )
+    thread_ids = set()
+    lock = threading.Lock()
+    original = NullSelector._fit_impl
+
+    def recording_fit(self, X, y):
+        with lock:
+            thread_ids.add(threading.get_ident())
+        time.sleep(0.01)
+        return original(self, X, y)
+
+    monkeypatch.setattr(NullSelector, "_fit_impl", recording_fit)
+    selector = CompositeFeatureSelector(
+        [NullSelector(threshold=1.0), NullSelector(threshold=0.9)],
+        strategy="intersection",
+        n_jobs=2,
+        parallel_backend="threading",
+    ).fit(X)
+
+    assert selector.selected_features_ == ["甲", "乙", "丙"]
+    assert len(thread_ids) >= 2
+
+
+def test_variance_selector_batches_numeric_and_nullable_columns_without_joblib(monkeypatch):
+    """数值与 nullable 数值方差可整表计算，不应拆成廉价列任务。"""
+    X = pd.DataFrame(
+        {
+            "浮点": [1.0, 2.0, np.nan, 4.0],
+            "可空整数": pd.Series([1, 1, None, 1], dtype="Int64"),
+        }
+    )
+
+    def fail_parallel(*args, **kwargs):
+        raise AssertionError("方差批量统计不应调用按列并行执行器")
+
+    monkeypatch.setattr(BaseFeatureSelector, "_parallel_execute", fail_parallel)
+    fitted = VarianceSelector(threshold=0.0).fit(X)
+
+    assert fitted.selected_features_ == ["浮点"]
+    assert fitted.scores_.index.tolist() == ["浮点", "可空整数"]
 
 
 def test_stability_random_split_matches_serial(selector_xy):

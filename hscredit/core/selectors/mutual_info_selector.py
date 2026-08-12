@@ -21,15 +21,16 @@ import pandas as pd
 from sklearn.feature_selection import mutual_info_classif
 
 from .base import BaseFeatureSelector
+from ...utils.parallel import ParallelWorkload
 
 
 def _compute_mutual_info_feature(task):
     """编码并计算单个特征与目标的互信息。"""
     feature, series, y, n_neighbors, seed = task
-    if series.dtype.name in ('object', 'category'):
+    if series.dtype.name in ("object", "category"):
         values = pd.factorize(series)[0].astype(float)
     else:
-        values = pd.to_numeric(series, errors='coerce').astype(float).values
+        values = pd.to_numeric(series, errors="coerce").astype(float).values
     if np.isnan(values).any():
         median = np.nanmedian(values)
         values = np.where(np.isnan(values), 0.0 if np.isnan(median) else median, values)
@@ -93,7 +94,7 @@ class MutualInfoSelector(BaseFeatureSelector):
         threshold: float = 0.0,
         n_neighbors: int = 3,
         random_state: Optional[int] = 42,
-        target: str = 'target',
+        target: str = "target",
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
         force_drop: Optional[List[str]] = None,
@@ -104,14 +105,20 @@ class MutualInfoSelector(BaseFeatureSelector):
         parallel_config: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(
-            target=target, threshold=threshold, include=include,
-            exclude=exclude, force_drop=force_drop, n_jobs=n_jobs,
-            binner=binner, binning_params=binning_params,
-            parallel_backend=parallel_backend, parallel_config=parallel_config,
+            target=target,
+            threshold=threshold,
+            include=include,
+            exclude=exclude,
+            force_drop=force_drop,
+            n_jobs=n_jobs,
+            binner=binner,
+            binning_params=binning_params,
+            parallel_backend=parallel_backend,
+            parallel_config=parallel_config,
         )
         self.n_neighbors = n_neighbors
         self.random_state = random_state
-        self.method_name = '互信息筛选'
+        self.method_name = "互信息筛选"
 
     def _fit_impl(
         self,
@@ -133,14 +140,26 @@ class MutualInfoSelector(BaseFeatureSelector):
 
         seed_modulus = 2**32 - 1
         base_seed = 0 if self.random_state is None else int(self.random_state) % seed_modulus
-        tasks = []
-        for ordinal, col in enumerate(X.columns):
-            seed = (base_seed + ordinal) % seed_modulus
-            tasks.append((col, X[col], np.asarray(y), self.n_neighbors, seed))
+
+        def iter_tasks():
+            for ordinal, col in enumerate(X.columns):
+                seed = (base_seed + ordinal) % seed_modulus
+                yield col, X[col], np.asarray(y), self.n_neighbors, seed
+
         results = self._parallel_execute(
             _compute_mutual_info_feature,
-            tasks,
+            iter_tasks(),
             task_labels=X.columns,
+            default_backend="loky",
+            workload=ParallelWorkload(
+                task_count=X.shape[1],
+                rows=X.shape[0],
+                columns=X.shape[1],
+                data_bytes=int(X.memory_usage(deep=True).sum()),
+                cost_per_item=12.0,
+                capability="process_safe",
+                operation="互信息字段计算",
+            ),
         )
         mi_scores = np.array([score for _, score in results])
 
@@ -149,4 +168,4 @@ class MutualInfoSelector(BaseFeatureSelector):
         # 选择互信息大于阈值的特征
         selected_mask = mi_scores >= self.threshold
         self.selected_features_ = X.columns[selected_mask].tolist()
-        self._drop_reason = f'互信息值 < {self.threshold}'
+        self._drop_reason = f"互信息值 < {self.threshold}"

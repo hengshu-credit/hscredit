@@ -16,7 +16,8 @@ import numpy as np
 import pandas as pd
 from typing import Any, Dict, List, Optional, Union
 
-from .utils import validate_dataframe, psi_rating, iv_rating
+from ...utils.parallel import parallel_execute
+from .utils import _eda_workload, validate_dataframe, psi_rating, iv_rating
 
 
 # ---------------------------------------------------------------------------
@@ -55,6 +56,166 @@ def _safe_badrate(y: pd.Series) -> Optional[float]:
     return np.nan
 
 
+def _population_profile_worker(task):
+    """计算一个分组内单个特征的画像行。"""
+    feature_series, target_series, feature, group_value, percentiles, percentile_labels = task
+    valid = pd.to_numeric(feature_series, errors="coerce").dropna()
+    row: Dict[str, Any] = {
+        "特征": feature,
+        "分组": group_value,
+        "样本数": len(feature_series),
+        "缺失率(%)": round(feature_series.isna().mean() * 100, 2),
+        "均值": round(float(valid.mean()), 4) if len(valid) > 0 else np.nan,
+        "标准差": round(float(valid.std()), 4) if len(valid) > 1 else np.nan,
+    }
+    values = [
+        round(float(np.percentile(valid, percentile * 100)), 4) if len(valid) > 0 else np.nan
+        for percentile in percentiles
+    ]
+    for label, value in zip(percentile_labels, values):
+        row[label] = value
+    if target_series is not None:
+        bad_rate = _safe_badrate(target_series)
+        row["坏率(%)"] = round(bad_rate * 100, 4) if not np.isnan(bad_rate) else np.nan
+    return row
+
+
+def _population_shift_worker(task):
+    """计算单个特征的两客群偏移行。"""
+    (
+        base_series,
+        target_series,
+        feature,
+        psi_n_bins,
+        warning_threshold,
+        alert_threshold,
+        base_bad_rate,
+        target_bad_rate,
+    ) = task
+    base_col = pd.to_numeric(base_series, errors="coerce")
+    target_col = pd.to_numeric(target_series, errors="coerce")
+    psi_value = _quick_psi(base_col.dropna().values, target_col.dropna().values, psi_n_bins)
+    mean_base = float(base_col.mean()) if base_col.notna().sum() > 0 else np.nan
+    mean_target = float(target_col.mean()) if target_col.notna().sum() > 0 else np.nan
+    mean_change = (
+        round((mean_target - mean_base) / abs(mean_base) * 100, 2)
+        if not np.isnan(mean_base) and not np.isnan(mean_target) and mean_base != 0
+        else np.nan
+    )
+    if np.isnan(psi_value):
+        level, suggestion = "未知", "数据不足，无法评估"
+    elif psi_value < warning_threshold:
+        level, suggestion = "稳定", "无需关注"
+    elif psi_value < alert_threshold:
+        level, suggestion = "轻微偏移", "建议关注，监控趋势"
+    else:
+        level, suggestion = "显著偏移", "强烈建议排查原因，可能影响模型效果"
+    missing_base = round(base_series.isna().mean() * 100, 2)
+    missing_target = round(target_series.isna().mean() * 100, 2)
+    row: Dict[str, Any] = {
+        "特征名": feature,
+        "基准样本数": len(base_series),
+        "目标样本数": len(target_series),
+        "PSI": round(psi_value, 4) if not np.isnan(psi_value) else np.nan,
+        "偏移等级": level,
+        "基准均值": round(mean_base, 4) if not np.isnan(mean_base) else np.nan,
+        "目标均值": round(mean_target, 4) if not np.isnan(mean_target) else np.nan,
+        "均值变化(%)": mean_change,
+        "基准缺失率(%)": missing_base,
+        "目标缺失率(%)": missing_target,
+        "缺失率变化(%)": round(missing_target - missing_base, 2),
+        "建议": suggestion,
+    }
+    if base_bad_rate is not None:
+        row["基准坏率(%)"] = round(base_bad_rate * 100, 4) if not np.isnan(base_bad_rate) else np.nan
+        row["目标坏率(%)"] = round(target_bad_rate * 100, 4) if not np.isnan(target_bad_rate) else np.nan
+    return row
+
+
+def _monitoring_psi_worker(task):
+    """计算监控期和特征的快速 PSI。"""
+    base_series, compare_series, feature, label, n_bins = task
+    value = _quick_psi(
+        pd.to_numeric(base_series, errors="coerce").dropna().values,
+        pd.to_numeric(compare_series, errors="coerce").dropna().values,
+        n_bins,
+    )
+    return feature, label, round(value, 4) if not np.isnan(value) else np.nan
+
+
+def _monitoring_distribution_worker(task):
+    """生成单个 Top 偏移特征的多期分布明细。"""
+    feature, base, comparisons, labels, n_bins = task
+    base_col = pd.to_numeric(base.get(feature), errors="coerce").dropna()
+    if len(base_col) == 0:
+        return feature, pd.DataFrame()
+    edges = np.unique(np.percentile(base_col, np.linspace(0, 100, n_bins + 1)))
+    if len(edges) < 2:
+        return feature, pd.DataFrame()
+    rows = []
+    for label, frame in [("基准", base)] + list(zip(labels, comparisons)):
+        if feature not in frame.columns:
+            continue
+        counts = np.histogram(pd.to_numeric(frame[feature], errors="coerce").dropna().values, bins=edges)[0]
+        total = counts.sum()
+        for index, count in enumerate(counts):
+            rows.append(
+                {
+                    "特征名": feature,
+                    "期次": label,
+                    "分箱": f"bin_{index + 1}",
+                    "样本数": int(count),
+                    "占比(%)": round(count / total * 100, 2) if total > 0 else 0,
+                }
+            )
+    return feature, pd.DataFrame(rows)
+
+
+def _segment_drift_worker(task):
+    """计算一个客群、时期和特征的漂移行。"""
+    base_frame, target_frame, feature, segment, period, base_period, target, n_bins = task
+    psi_value = _quick_psi(
+        pd.to_numeric(base_frame[feature], errors="coerce").dropna().values,
+        pd.to_numeric(target_frame[feature], errors="coerce").dropna().values,
+        n_bins,
+    )
+    row: Dict[str, Any] = {
+        "特征名": feature,
+        "客群": segment,
+        "时间": period,
+        "基准期": base_period,
+        "PSI": round(psi_value, 4) if not np.isnan(psi_value) else np.nan,
+        "偏移等级": psi_rating(psi_value) if not np.isnan(psi_value) else "未知",
+    }
+    if target is not None and target in target_frame.columns:
+        base_bad_rate = _safe_badrate(base_frame[target])
+        target_bad_rate = _safe_badrate(target_frame[target])
+        row["基准坏率(%)"] = round(base_bad_rate * 100, 2) if not np.isnan(base_bad_rate) else np.nan
+        row["当期坏率(%)"] = round(target_bad_rate * 100, 2) if not np.isnan(target_bad_rate) else np.nan
+    return row
+
+
+def _cross_segment_metric_worker(task):
+    """计算一个特征在一个客群下的 IV/KS/AUC。"""
+    series, target, feature, label, metric, min_segment_size = task
+    from ..metrics import auc, iv, ks
+
+    try:
+        numeric = pd.to_numeric(series, errors="coerce")
+        mask = numeric.notna() & target.notna()
+        if mask.sum() < min_segment_size or target[mask].nunique() < 2:
+            value = np.nan
+        elif metric == "iv":
+            value = round(float(iv(target[mask], numeric[mask])), 4)
+        elif metric == "ks":
+            value = round(float(ks(target[mask], numeric[mask])), 4)
+        else:
+            value = round(float(auc(target[mask], numeric[mask])), 4)
+    except Exception:
+        value = np.nan
+    return feature, label, value
+
+
 # ---------------------------------------------------------------------------
 # 1. population_profile
 # ---------------------------------------------------------------------------
@@ -67,6 +228,9 @@ def population_profile(
     target: Optional[str] = None,
     freq: str = 'M',
     percentiles: List[float] = [0.25, 0.5, 0.75],
+    n_jobs=-1,
+    parallel_backend=None,
+    parallel_config=None,
 ) -> pd.DataFrame:
     """客群画像分析.
 
@@ -105,41 +269,41 @@ def population_profile(
     if target is not None and target in df.columns:
         stat_cols.append('坏率(%)')
 
-    rows = []
-
-    def _calc_stats(sub: pd.DataFrame, group_val: Any) -> None:
-        for feat in features:
-            if feat not in sub.columns:
-                continue
-            col = sub[feat]
-            n = len(col)
-            missing_rate = round(col.isna().mean() * 100, 2)
-            col_num = pd.to_numeric(col, errors='coerce')
-            valid = col_num.dropna()
-            mean_val = round(float(valid.mean()), 4) if len(valid) > 0 else np.nan
-            std_val = round(float(valid.std()), 4) if len(valid) > 1 else np.nan
-            pct_vals = [round(float(np.percentile(valid, p * 100)), 4) if len(valid) > 0 else np.nan
-                        for p in percentiles]
-            row: Dict[str, Any] = {
-                '特征': feat,
-                '分组': group_val,
-                '样本数': n,
-                '缺失率(%)': missing_rate,
-                '均值': mean_val,
-                '标准差': std_val,
-            }
-            for label, val in zip(pct_labels, pct_vals):
-                row[label] = val
-            if target is not None and target in sub.columns:
-                br = _safe_badrate(sub[target])
-                row['坏率(%)'] = round(br * 100, 4) if not np.isnan(br) else np.nan
-            rows.append(row)
-
     if group_col is not None:
-        for gval, gdf in df.groupby(group_col, sort=True):
-            _calc_stats(gdf, gval)
+        groups = list(df.groupby(group_col, sort=True))
     else:
-        _calc_stats(df, '全量')
+        groups = [('全量', df)]
+
+    def iter_tasks():
+        for group_value, group_frame in groups:
+            target_series = group_frame[target] if target is not None and target in group_frame.columns else None
+            for feature in features:
+                if feature in group_frame.columns:
+                    yield (
+                        group_frame[feature],
+                        target_series,
+                        feature,
+                        group_value,
+                        tuple(percentiles),
+                        tuple(pct_labels),
+                    )
+
+    actual_task_count = sum(1 for _, group_frame in groups for feature in features if feature in group_frame.columns)
+    rows = parallel_execute(
+        _population_profile_worker,
+        iter_tasks(),
+        n_jobs=n_jobs,
+        parallel_backend=parallel_backend,
+        parallel_config=parallel_config,
+        task_labels=[
+            f"{group_value}:{feature}"
+            for group_value, group_frame in groups
+            for feature in features
+            if feature in group_frame.columns
+        ],
+        default_backend="threading",
+        workload=_eda_workload(df, actual_task_count, operation="客群画像", cost_per_item=5.0),
+    )
 
     result = pd.DataFrame(rows)
     # 清理临时列
@@ -160,6 +324,9 @@ def population_shift_analysis(
     psi_n_bins: int = 10,
     psi_threshold_warn: float = 0.1,
     psi_threshold_alert: float = 0.25,
+    n_jobs=-1,
+    parallel_backend=None,
+    parallel_config=None,
 ) -> pd.DataFrame:
     """客群偏移分析.
 
@@ -183,64 +350,37 @@ def population_shift_analysis(
     validate_dataframe(df_base, required_cols=features)
     validate_dataframe(df_target, required_cols=features)
 
-    rows = []
-    for feat in features:
-        if feat not in df_base.columns or feat not in df_target.columns:
-            continue
-
-        base_col = pd.to_numeric(df_base[feat], errors='coerce')
-        tgt_col = pd.to_numeric(df_target[feat], errors='coerce')
-
-        n_base = len(df_base)
-        n_tgt = len(df_target)
-        missing_base = round(df_base[feat].isna().mean() * 100, 2)
-        missing_tgt = round(df_target[feat].isna().mean() * 100, 2)
-
-        psi_val = _quick_psi(base_col.dropna().values, tgt_col.dropna().values, psi_n_bins)
-
-        mean_base = float(base_col.mean()) if base_col.notna().sum() > 0 else np.nan
-        mean_tgt = float(tgt_col.mean()) if tgt_col.notna().sum() > 0 else np.nan
-        if not np.isnan(mean_base) and not np.isnan(mean_tgt) and mean_base != 0:
-            mean_change_pct = round((mean_tgt - mean_base) / abs(mean_base) * 100, 2)
-        else:
-            mean_change_pct = np.nan
-
-        # 偏移等级
-        if np.isnan(psi_val):
-            level = '未知'
-            suggestion = '数据不足，无法评估'
-        elif psi_val < psi_threshold_warn:
-            level = '稳定'
-            suggestion = '无需关注'
-        elif psi_val < psi_threshold_alert:
-            level = '轻微偏移'
-            suggestion = '建议关注，监控趋势'
-        else:
-            level = '显著偏移'
-            suggestion = '强烈建议排查原因，可能影响模型效果'
-
-        row: Dict[str, Any] = {
-            '特征名': feat,
-            '基准样本数': n_base,
-            '目标样本数': n_tgt,
-            'PSI': round(psi_val, 4) if not np.isnan(psi_val) else np.nan,
-            '偏移等级': level,
-            '基准均值': round(mean_base, 4) if not np.isnan(mean_base) else np.nan,
-            '目标均值': round(mean_tgt, 4) if not np.isnan(mean_tgt) else np.nan,
-            '均值变化(%)': mean_change_pct,
-            '基准缺失率(%)': missing_base,
-            '目标缺失率(%)': missing_tgt,
-            '缺失率变化(%)': round(missing_tgt - missing_base, 2),
-            '建议': suggestion,
-        }
-
-        if target is not None:
-            br_base = _safe_badrate(df_base.get(target))  # type: ignore[arg-type]
-            br_tgt = _safe_badrate(df_target.get(target))  # type: ignore[arg-type]
-            row['基准坏率(%)'] = round(br_base * 100, 4) if br_base is not None and not np.isnan(br_base) else np.nan
-            row['目标坏率(%)'] = round(br_tgt * 100, 4) if br_tgt is not None and not np.isnan(br_tgt) else np.nan
-
-        rows.append(row)
+    valid_features = [feature for feature in features if feature in df_base.columns and feature in df_target.columns]
+    base_bad_rate = _safe_badrate(df_base.get(target)) if target is not None else None  # type: ignore[arg-type]
+    target_bad_rate = _safe_badrate(df_target.get(target)) if target is not None else None  # type: ignore[arg-type]
+    rows = parallel_execute(
+        _population_shift_worker,
+        (
+            (
+                df_base[feature],
+                df_target[feature],
+                feature,
+                psi_n_bins,
+                psi_threshold_warn,
+                psi_threshold_alert,
+                base_bad_rate,
+                target_bad_rate,
+            )
+            for feature in valid_features
+        ),
+        n_jobs=n_jobs,
+        parallel_backend=parallel_backend,
+        parallel_config=parallel_config,
+        task_labels=valid_features,
+        default_backend="threading",
+        workload=_eda_workload(
+            df_base.loc[:, valid_features],
+            len(valid_features),
+            operation="客群偏移分析",
+            cost_per_item=6.0,
+            additional_data=(df_target.loc[:, valid_features],),
+        ),
+    )
 
     result = pd.DataFrame(rows)
     if not result.empty and 'PSI' in result.columns:
@@ -261,6 +401,9 @@ def population_monitoring_report(
     psi_n_bins: int = 10,
     top_drift_n: int = 10,
     output_path: str = 'population_monitor.xlsx',
+    n_jobs=-1,
+    parallel_backend=None,
+    parallel_config=None,
 ) -> str:
     """多期客群监控 Excel 报告.
 
@@ -301,15 +444,33 @@ def population_monitoring_report(
     # Sheet 1 - PSI 总览矩阵
     # ======================================================================
     psi_matrix_rows: Dict[str, Dict[str, Any]] = {f: {} for f in features}
-    for label, df_cmp in zip(compare_labels, df_compare_list):
-        for feat in features:
-            if feat not in df_base.columns or feat not in df_cmp.columns:
-                psi_matrix_rows[feat][label] = np.nan
-                continue
-            base_arr = pd.to_numeric(df_base[feat], errors='coerce').dropna().values
-            cmp_arr = pd.to_numeric(df_cmp[feat], errors='coerce').dropna().values
-            psi_val = _quick_psi(base_arr, cmp_arr, psi_n_bins)
-            psi_matrix_rows[feat][label] = round(psi_val, 4) if not np.isnan(psi_val) else np.nan
+    valid_pairs = []
+    for label, compare_frame in zip(compare_labels, df_compare_list):
+        for feature in features:
+            psi_matrix_rows[feature][label] = np.nan
+            if feature in df_base.columns and feature in compare_frame.columns:
+                valid_pairs.append((label, compare_frame, feature))
+    psi_results = parallel_execute(
+        _monitoring_psi_worker,
+        (
+            (df_base[feature], compare_frame[feature], feature, label, psi_n_bins)
+            for label, compare_frame, feature in valid_pairs
+        ),
+        n_jobs=n_jobs,
+        parallel_backend=parallel_backend,
+        parallel_config=parallel_config,
+        task_labels=[f"{label}:{feature}" for label, _, feature in valid_pairs],
+        default_backend="threading",
+        workload=_eda_workload(
+            df_base,
+            len(valid_pairs),
+            operation="客群监控PSI矩阵",
+            cost_per_item=6.0,
+            additional_data=tuple(df_compare_list),
+        ),
+    )
+    for feature, label, value in psi_results:
+        psi_matrix_rows[feature][label] = value
 
     psi_df = pd.DataFrame(psi_matrix_rows).T.reset_index().rename(columns={'index': '特征名'})
     # 添加均值 PSI 和等级
@@ -358,32 +519,26 @@ def population_monitoring_report(
                                              style='header_middle', end_space=(cur_row, 30))
     cur_row = end_row3 + 1
 
-    for feat in top_features:
-        base_col = pd.to_numeric(df_base.get(feat), errors='coerce').dropna()  # type: ignore[arg-type]
-        if len(base_col) == 0:
-            continue
-        edges = np.percentile(base_col, np.linspace(0, 100, psi_n_bins + 1))
-        edges = np.unique(edges)
-        if len(edges) < 2:
-            continue
-
-        dist_rows = []
-        for label, df_cmp in [('基准', df_base)] + list(zip(compare_labels, df_compare_list)):  # type: ignore[list-item]
-            if feat not in df_cmp.columns:
-                continue
-            arr = pd.to_numeric(df_cmp[feat], errors='coerce').dropna().values
-            counts = np.histogram(arr, bins=edges)[0]
-            total = counts.sum()
-            for i, cnt in enumerate(counts):
-                dist_rows.append({
-                    '特征名': feat,
-                    '期次': label,
-                    '分箱': f'bin_{i + 1}',
-                    '样本数': int(cnt),
-                    '占比(%)': round(cnt / total * 100, 2) if total > 0 else 0,
-                })
-
-        dist_df = pd.DataFrame(dist_rows)
+    distribution_results = parallel_execute(
+        _monitoring_distribution_worker,
+        (
+            (feature, df_base, tuple(df_compare_list), tuple(compare_labels), psi_n_bins)
+            for feature in top_features
+        ),
+        n_jobs=n_jobs,
+        parallel_backend=parallel_backend,
+        parallel_config=parallel_config,
+        task_labels=top_features,
+        default_backend="threading",
+        workload=_eda_workload(
+            df_base,
+            len(top_features),
+            operation="客群监控Top特征分布",
+            cost_per_item=4.0,
+            additional_data=tuple(df_compare_list),
+        ),
+    )
+    for feat, dist_df in distribution_results:
         if not dist_df.empty:
             end_row3, _ = dataframe2excel(
                 dist_df, writer, sheet_name=ws3,
@@ -409,6 +564,9 @@ def segment_drift_analysis(
     base_period: Optional[str] = None,
     freq: str = 'M',
     psi_n_bins: int = 10,
+    n_jobs=-1,
+    parallel_backend=None,
+    parallel_config=None,
 ) -> pd.DataFrame:
     """分客群、分时间的特征偏移三维矩阵.
 
@@ -442,9 +600,8 @@ def segment_drift_analysis(
     if base_period is None:
         base_period = all_periods[0]
 
-    rows = []
     segments = sorted(df[segment_col].dropna().unique())
-
+    task_specs = []
     for seg in segments:
         seg_df = df[df[segment_col] == seg]
         base_seg = seg_df[seg_df['__period__'] == base_period]
@@ -459,26 +616,19 @@ def segment_drift_analysis(
                 continue
 
             for feat in features:
-                if feat not in base_seg.columns:
-                    continue
-                base_arr = pd.to_numeric(base_seg[feat], errors='coerce').dropna().values
-                tgt_arr = pd.to_numeric(period_seg[feat], errors='coerce').dropna().values
-                psi_val = _quick_psi(base_arr, tgt_arr, psi_n_bins)
+                if feat in base_seg.columns:
+                    task_specs.append((base_seg, period_seg, feat, seg, period, base_period, target, psi_n_bins))
 
-                row: Dict[str, Any] = {
-                    '特征名': feat,
-                    '客群': seg,
-                    '时间': period,
-                    '基准期': base_period,
-                    'PSI': round(psi_val, 4) if not np.isnan(psi_val) else np.nan,
-                    '偏移等级': psi_rating(psi_val) if not np.isnan(psi_val) else '未知',
-                }
-                if target is not None and target in period_seg.columns:
-                    br_base = _safe_badrate(base_seg[target])
-                    br_tgt = _safe_badrate(period_seg[target])
-                    row['基准坏率(%)'] = round(br_base * 100, 2) if not np.isnan(br_base) else np.nan
-                    row['当期坏率(%)'] = round(br_tgt * 100, 2) if not np.isnan(br_tgt) else np.nan
-                rows.append(row)
+    rows = parallel_execute(
+        _segment_drift_worker,
+        iter(task_specs),
+        n_jobs=n_jobs,
+        parallel_backend=parallel_backend,
+        parallel_config=parallel_config,
+        task_labels=[f"{segment}:{period}:{feature}" for _, _, feature, segment, period, *_ in task_specs],
+        default_backend="threading",
+        workload=_eda_workload(df, len(task_specs), operation="分客群分时间偏移", cost_per_item=6.0),
+    )
 
     result = pd.DataFrame(rows)
     if not result.empty:
@@ -498,6 +648,9 @@ def feature_cross_segment_effectiveness(
     metric: str = 'iv',
     n_bins: int = 10,
     min_segment_size: int = 50,
+    n_jobs=-1,
+    parallel_backend=None,
+    parallel_config=None,
 ) -> pd.DataFrame:
     """特征在不同客群下的有效性矩阵.
 
@@ -528,37 +681,36 @@ def feature_cross_segment_effectiveness(
     metric = metric.lower()
     assert metric in ('iv', 'ks', 'auc'), "metric 须为 'iv' / 'ks' / 'auc'"
 
-    from ..metrics import iv, ks, auc  # type: ignore[attr-defined]
-
-    def _calc(col: pd.Series, y: pd.Series) -> float:
-        try:
-            col_num = pd.to_numeric(col, errors='coerce')
-            mask = col_num.notna() & y.notna()
-            if mask.sum() < min_segment_size or y[mask].nunique() < 2:
-                return np.nan
-            if metric == 'iv':
-                return round(float(iv(y[mask], col_num[mask])), 4)
-            elif metric == 'ks':
-                return round(float(ks(y[mask], col_num[mask])), 4)
-            else:
-                return round(float(auc(y[mask], col_num[mask])), 4)
-        except Exception:
-            return np.nan
-
     segments = sorted(df[segment_col].dropna().unique())
     records: Dict[str, Dict[str, Any]] = {f: {} for f in features}
-
-    # 全量
-    for feat in features:
-        records[feat]['全量'] = _calc(df[feat], df[target])
-
-    # 各客群
+    task_specs = [(df[feature], df[target], feature, "全量", metric, min_segment_size) for feature in features]
     for seg in segments:
         seg_df = df[df[segment_col] == seg]
         if len(seg_df) < min_segment_size:
             continue
-        for feat in features:
-            records[feat][str(seg)] = _calc(seg_df[feat], seg_df[target])
+        task_specs.extend(
+            (seg_df[feature], seg_df[target], feature, str(seg), metric, min_segment_size)
+            for feature in features
+        )
+
+    metric_results = parallel_execute(
+        _cross_segment_metric_worker,
+        iter(task_specs),
+        n_jobs=n_jobs,
+        parallel_backend=parallel_backend,
+        parallel_config=parallel_config,
+        task_labels=[f"{label}:{feature}" for _, _, feature, label, *_ in task_specs],
+        default_backend="loky" if metric == "iv" else "threading",
+        workload=_eda_workload(
+            df,
+            len(task_specs),
+            operation="特征跨客群有效性",
+            cost_per_item=12.0 if metric == "iv" else 4.0,
+            capability="process_safe" if metric == "iv" else "thread_safe",
+        ),
+    )
+    for feature, label, value in metric_results:
+        records[feature][label] = value
 
     result = pd.DataFrame(records).T
     result.index.name = '特征名'

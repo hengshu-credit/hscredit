@@ -101,6 +101,31 @@ def test_rule_flow_parallel_evaluates_all_rules_for_all_samples():
     assert overall["规则通过"] == 1
 
 
+def test_rule_flow_parallel_formats_hits_without_row_wise_apply(monkeypatch):
+    """命中名称和序号应按布尔矩阵向量化组合，避免每行 Python apply。"""
+    data = _flow_data()
+    flow = RuleFlow(
+        [
+            Rule("score < 500", name="低分拒绝"),
+            Rule("multi > 6", name="多头拒绝"),
+        ],
+        mode="parallel",
+        n_jobs=1,
+    )
+    original_apply = pd.DataFrame.apply
+
+    def reject_row_apply(self, func, axis=0, *args, **kwargs):
+        if axis in (1, "columns"):
+            raise AssertionError("RuleFlow 不应使用逐行 DataFrame.apply")
+        return original_apply(self, func, axis=axis, *args, **kwargs)
+
+    monkeypatch.setattr(pd.DataFrame, "apply", reject_row_apply)
+    prediction = flow.predict(data)
+
+    assert prediction["命中规则序号"].tolist() == ["1", "2", "2", "", "1"]
+    assert prediction["命中规则"].tolist() == ["低分拒绝", "多头拒绝", "多头拒绝", "", "低分拒绝"]
+
+
 def test_rule_flow_report_and_summary_support_date_and_category_groups():
     data = _flow_data()
     flow = RuleFlow(
@@ -120,9 +145,7 @@ def test_rule_flow_report_and_summary_support_date_and_category_groups():
         {"统计周期": "2024-02", "channel": "B"},
     ]
 
-    january_summary = summary.loc[
-        (summary["统计类型"] == "分组合计") & (summary["统计周期"] == "2024-01") & (summary["channel"] == "A")
-    ].iloc[0]
+    january_summary = summary.loc[(summary["统计类型"] == "分组合计") & (summary["统计周期"] == "2024-01") & (summary["channel"] == "A")].iloc[0]
     assert january_summary["样本总数"] == 2
     assert january_summary["命中样本"] == 2
     assert january_summary["通过样本"] == 0
@@ -135,19 +158,12 @@ def test_rule_flow_report_and_summary_support_date_and_category_groups():
     assert overall_summary["命中样本"] == 4
     assert overall_summary["通过样本"] == 1
 
-    february_second_rule = report.loc[
-        (report["统计类型"] == "明细")
-        & (report["统计周期"] == "2024-02")
-        & (report["channel"] == "B")
-        & (report["规则名称"] == "多头拒绝")
-    ].iloc[0]
+    february_second_rule = report.loc[(report["统计类型"] == "明细") & (report["统计周期"] == "2024-02") & (report["channel"] == "B") & (report["规则名称"] == "多头拒绝")].iloc[0]
     assert february_second_rule["当前规则样本数"] == 2
     assert february_second_rule["规则命中"] == 1
     assert february_second_rule["通过率(统计范围)"] == 0.5
 
-    group_total = report.loc[
-        (report["统计类型"] == "分组合计") & (report["统计周期"] == "2024-02") & (report["channel"] == "B")
-    ].iloc[0]
+    group_total = report.loc[(report["统计类型"] == "分组合计") & (report["统计周期"] == "2024-02") & (report["channel"] == "B")].iloc[0]
     assert group_total["统计范围样本数"] == 2
     assert group_total["规则命中"] == 1
     assert group_total["规则通过"] == 1

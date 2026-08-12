@@ -9,6 +9,7 @@ import pytest
 from sklearn.base import clone
 from sklearn.linear_model import LogisticRegression
 
+import hscredit.report.feature_analyzer as feature_analyzer_module
 from hscredit.core.rules import Rule
 from hscredit.exceptions import ParallelExecutionError, ValidationError
 from hscredit.excel import ExcelWriter
@@ -388,6 +389,40 @@ def test_single_and_empty_report_tasks_do_not_create_backend(report_data, monkey
     OverduePredictor(
         "score", target="target", rules=[560, 620], n_jobs=8,
     ).fit(report_data).transform(report_data[["score"]])
+
+
+def test_feature_binning_summary_preserves_explicit_child_parallel_config(report_data, monkeypatch):
+    """方法级显式 child 配置不得被报告层继承默认值覆盖。"""
+    captured = []
+    original = feature_analyzer_module.parallel_execute
+
+    def recording_execute(function, tasks, **kwargs):
+        task_list = list(tasks)
+        captured.extend(task[2] for task in task_list)
+        assert "workload" in kwargs
+        return original(function, task_list, **kwargs)
+
+    monkeypatch.setattr(feature_analyzer_module, "parallel_execute", recording_execute)
+    child_config = {"batch_size": 1}
+    feature_binning_summary(
+        report_data,
+        "score",
+        methods="quantile",
+        target="target",
+        n_jobs=1,
+        bin_params={
+            "quantile": {
+                "n_jobs": 3,
+                "parallel_backend": "threading",
+                "parallel_config": child_config,
+            }
+        },
+    )
+
+    assert len(captured) == 1
+    assert captured[0]["n_jobs"] == 3
+    assert captured[0]["parallel_backend"] == "threading"
+    assert captured[0]["parallel_config"] is child_config
 
 
 def test_rule_group_compare_declares_real_nested_children(report_data, monkeypatch):
@@ -1302,6 +1337,28 @@ def test_model_report_parallel_tables_match_serial_exactly(backend):
     pd.testing.assert_frame_equal(
         parallel._get_monthly_metrics("date"), serial._get_monthly_metrics("date"), check_exact=True
     )
+
+
+def test_model_report_does_not_change_trained_model_parameters():
+    frame = _task11_datasets()["train"]
+    X, y = frame[["f0", "f1"]], frame["target"]
+    model = LogisticRegression(C=0.75, random_state=20260811, max_iter=300).fit(X, y)
+    params_before = model.get_params(deep=True).copy()
+    coef_before = model.coef_.copy()
+    intercept_before = model.intercept_.copy()
+
+    report = ModelReport(
+        model,
+        datasets=_task11_datasets(),
+        target="target",
+        n_jobs=2,
+        parallel_backend="threading",
+    )
+    report.summary()
+
+    assert model.get_params(deep=True) == params_before
+    np.testing.assert_array_equal(model.coef_, coef_before)
+    np.testing.assert_array_equal(model.intercept_, intercept_before)
 
 
 def test_model_report_single_dataset_does_not_create_backend(monkeypatch):

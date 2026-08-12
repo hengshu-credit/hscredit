@@ -10,6 +10,7 @@ from sklearn.base import BaseEstimator, clone
 from sklearn.linear_model import LogisticRegression
 
 from hscredit.core import binning, encoders, selectors
+from hscredit.core import eda
 from hscredit.core.binning.base import BaseBinning
 from hscredit.core.encoders.base import BaseEncoder
 from hscredit.core.models import rules as model_rules
@@ -29,6 +30,40 @@ from hscredit.utils.parallel import (
 
 
 COMMON_PARAMETERS = ("n_jobs", "parallel_backend", "parallel_config")
+
+EDA_PARALLEL_FUNCTIONS = (
+    eda.batch_iv_analysis,
+    eda.feature_importance_ranking,
+    eda.batch_psi_analysis,
+    eda.time_psi_tracking,
+    eda.stability_report,
+    eda.feature_drift_report,
+    eda.score_drift_report,
+    eda.outlier_detection,
+    eda.rare_category_detection,
+    eda.concentration_analysis,
+    eda.feature_stability_over_time,
+    eda.population_profile,
+    eda.population_shift_analysis,
+    eda.population_monitoring_report,
+    eda.segment_drift_analysis,
+    eda.feature_cross_segment_effectiveness,
+    eda.eda_summary,
+    eda.generate_report,
+    eda.population_stability_monitor,
+    eda.feature_group_analysis,
+    eda.psi_cross_analysis,
+    eda.model_drift_report,
+)
+
+
+@pytest.mark.parametrize("function", EDA_PARALLEL_FUNCTIONS)
+def test_batch_eda_exposes_common_parallel_parameters(function):
+    """独立特征或时期批量 EDA 统一暴露公共并行参数。"""
+    parameters = inspect.signature(function).parameters
+    assert parameters["n_jobs"].default == -1
+    assert parameters["parallel_backend"].default is None
+    assert parameters["parallel_config"].default is None
 
 # 明确列出 Task 1-11 范围内的每个批量入口。下面的覆盖测试还会与各模块
 # __all__ 双向核对，避免只抽查少数类而漏掉新增或删除的公开入口。

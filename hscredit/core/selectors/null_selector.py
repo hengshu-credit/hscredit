@@ -64,7 +64,7 @@ class NullSelector(BaseFeatureSelector):
     def __init__(
         self,
         threshold: float = 0.95,
-        target: str = 'target',
+        target: str = "target",
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
         force_drop: Optional[List[str]] = None,
@@ -75,12 +75,18 @@ class NullSelector(BaseFeatureSelector):
         parallel_config: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(
-            target=target, threshold=threshold, include=include,
-            exclude=exclude, force_drop=force_drop, n_jobs=n_jobs,
-            binner=binner, binning_params=binning_params,
-            parallel_backend=parallel_backend, parallel_config=parallel_config,
+            target=target,
+            threshold=threshold,
+            include=include,
+            exclude=exclude,
+            force_drop=force_drop,
+            n_jobs=n_jobs,
+            binner=binner,
+            binning_params=binning_params,
+            parallel_backend=parallel_backend,
+            parallel_config=parallel_config,
         )
-        self.method_name = '缺失率筛选'
+        self.method_name = "缺失率筛选"
 
     def _fit_impl(
         self,
@@ -94,12 +100,8 @@ class NullSelector(BaseFeatureSelector):
         """
         self._get_feature_names(X)
 
-        results = self._parallel_execute(
-            _compute_null_feature,
-            [(col, X[col]) for col in X.columns],
-            task_labels=X.columns,
-        )
-        null_rates = pd.Series(dict(results)).reindex(X.columns)
+        self._validate_parallel_configuration()
+        null_rates = X.isnull().mean(axis=0).reindex(X.columns)
         self.scores_ = null_rates
 
         # 选择缺失率低于阈值的特征
@@ -109,11 +111,13 @@ class NullSelector(BaseFeatureSelector):
         # 构建详细的dropped_记录，包含缺失率数值
         dropped_cols = X.columns[~selected_mask].tolist()
         if len(dropped_cols) > 0:
-            self.dropped_ = pd.DataFrame({
-                '特征': dropped_cols,
-                '剔除原因': [f'缺失率({null_rates[col]:.2%}) >= 阈值({self.threshold:.2%})' for col in dropped_cols],
-                '缺失率': [null_rates[col] for col in dropped_cols],
-                '阈值': [self.threshold] * len(dropped_cols),
-            })
+            self.dropped_ = pd.DataFrame(
+                {
+                    "特征": dropped_cols,
+                    "剔除原因": [f"缺失率({null_rates[col]:.2%}) >= 阈值({self.threshold:.2%})" for col in dropped_cols],
+                    "缺失率": [null_rates[col] for col in dropped_cols],
+                    "阈值": [self.threshold] * len(dropped_cols),
+                }
+            )
         else:
-            self.dropped_ = pd.DataFrame(columns=['特征', '剔除原因', '缺失率', '阈值'])
+            self.dropped_ = pd.DataFrame(columns=["特征", "剔除原因", "缺失率", "阈值"])

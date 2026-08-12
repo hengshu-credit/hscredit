@@ -65,7 +65,7 @@ class VarianceSelector(BaseFeatureSelector):
     def __init__(
         self,
         threshold: float = 0.0,
-        target: str = 'target',
+        target: str = "target",
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
         force_drop: Optional[List[str]] = None,
@@ -76,12 +76,18 @@ class VarianceSelector(BaseFeatureSelector):
         parallel_config: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(
-            target=target, threshold=threshold, include=include,
-            exclude=exclude, force_drop=force_drop, n_jobs=n_jobs,
-            binner=binner, binning_params=binning_params,
-            parallel_backend=parallel_backend, parallel_config=parallel_config,
+            target=target,
+            threshold=threshold,
+            include=include,
+            exclude=exclude,
+            force_drop=force_drop,
+            n_jobs=n_jobs,
+            binner=binner,
+            binning_params=binning_params,
+            parallel_backend=parallel_backend,
+            parallel_config=parallel_config,
         )
-        self.method_name = '方差筛选'
+        self.method_name = "方差筛选"
 
     def _fit_impl(
         self,
@@ -95,21 +101,13 @@ class VarianceSelector(BaseFeatureSelector):
         """
         self._get_feature_names(X)
 
-        results = self._parallel_execute(
-            _compute_variance_feature,
-            [(col, X[col]) for col in X.columns],
-            task_labels=X.columns,
-        )
-        variances = {feature: variance for feature, variance, _ in results}
-        peak_to_peak = {feature: spread for feature, _, spread in results}
-        self.scores_ = pd.Series(variances).reindex(X.columns)
+        self._validate_parallel_configuration()
+        self.scores_ = X.var(axis=0, ddof=0, numeric_only=False).reindex(X.columns)
+        peak_to_peak = (X.max(axis=0) - X.min(axis=0)).reindex(X.columns)
 
         # 根据阈值筛选
         if self.threshold == 0:
-            scores = np.minimum(
-                self.scores_.fillna(0).values,
-                pd.Series(peak_to_peak).reindex(X.columns).fillna(0).values
-            )
+            scores = np.minimum(self.scores_.fillna(0).values, peak_to_peak.fillna(0).values)
             self.scores_ = pd.Series(scores, index=X.columns)
 
         # 选择方差大于阈值的特征
@@ -119,11 +117,13 @@ class VarianceSelector(BaseFeatureSelector):
         # 构建详细的dropped_记录，包含方差值
         dropped_cols = X.columns[~selected_mask].tolist()
         if len(dropped_cols) > 0:
-            self.dropped_ = pd.DataFrame({
-                '特征': dropped_cols,
-                '剔除原因': [f'方差({self.scores_[col]:.6f}) <= 阈值({self.threshold})' for col in dropped_cols],
-                '方差': [self.scores_[col] for col in dropped_cols],
-                '阈值': [self.threshold] * len(dropped_cols),
-            })
+            self.dropped_ = pd.DataFrame(
+                {
+                    "特征": dropped_cols,
+                    "剔除原因": [f"方差({self.scores_[col]:.6f}) <= 阈值({self.threshold})" for col in dropped_cols],
+                    "方差": [self.scores_[col] for col in dropped_cols],
+                    "阈值": [self.threshold] * len(dropped_cols),
+                }
+            )
         else:
-            self.dropped_ = pd.DataFrame(columns=['特征', '剔除原因', '方差', '阈值'])
+            self.dropped_ = pd.DataFrame(columns=["特征", "剔除原因", "方差", "阈值"])
