@@ -43,7 +43,7 @@ DIVERGING_GRADIENT = list(GRADIENT_PALETTES["diverging"])
 
 
 def _axes_top_boundary(axes: list, renderer: Any) -> float:
-    """返回坐标轴边框及顶部 x 轴装饰共同占用的最高像素位置。"""
+    """返回坐标轴、轴装饰和显式顶部头部元素共同占用的最高像素位置。"""
     tops = []
     for ax in axes:
         tops.append(ax.get_window_extent(renderer).y1)
@@ -51,6 +51,23 @@ def _axes_top_boundary(axes: list, renderer: Any) -> float:
             xaxis_bbox = ax.xaxis.get_tightbbox(renderer)
             if xaxis_bbox is not None and math.isfinite(xaxis_bbox.y1):
                 tops.append(xaxis_bbox.y1)
+
+        summaries = [
+            artist
+            for artist in [*ax.texts, *ax.artists]
+            if artist.get_visible() and artist.get_gid() == 'bin-metric-summary'
+        ]
+        if summaries:
+            title = ax.title
+            if title.get_visible() and title.get_text().strip():
+                title_bbox = title.get_window_extent(renderer)
+                if math.isfinite(title_bbox.y1):
+                    tops.append(title_bbox.y1)
+
+            for text in summaries:
+                text_bbox = text.get_window_extent(renderer)
+                if math.isfinite(text_bbox.y1):
+                    tops.append(text_bbox.y1)
     return max(tops)
 
 

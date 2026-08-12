@@ -40,8 +40,12 @@ def _quick_psi(base: np.ndarray, target: np.ndarray, n_bins: int = 10) -> float:
     eps = 1e-8
     base_counts = np.histogram(base, bins=bin_edges)[0].astype(float)
     tgt_counts = np.histogram(target, bins=bin_edges)[0].astype(float)
-    base_pct = base_counts / base_counts.sum() + eps
-    tgt_pct = tgt_counts / tgt_counts.sum() + eps
+    base_total = base_counts.sum()
+    target_total = tgt_counts.sum()
+    if base_total == 0 or target_total == 0:
+        return np.nan
+    base_pct = base_counts / base_total + eps
+    tgt_pct = tgt_counts / target_total + eps
     return float(np.sum((tgt_pct - base_pct) * np.log(tgt_pct / base_pct)))
 
 

@@ -186,8 +186,8 @@ class TestCategoricalBinning:
         assert bin_table_orig['样本总数'].tolist() == bin_table_new['样本总数'].tolist()
         print("✅ 导出-导入循环一致性验证成功")
 
-    def test_backward_compatibility_string_format(self):
-        """测试向后兼容 - 字符串格式."""
+    def test_legacy_string_format_is_rejected(self):
+        """旧字符串类别规则不能再形成第二套公共格式。"""
         user_splits_old = {
             '城市': [
                 '北京,上海',
@@ -196,15 +196,8 @@ class TestCategoricalBinning:
             ]
         }
         
-        binner_old = OptimalBinning(user_splits=user_splits_old, missing_separate=True)
-        binner_old.fit(self.X[['城市']], self.y)
-        
-        bin_table_old = binner_old.get_bin_table('城市')
-        print("字符串格式分箱结果:")
-        print(bin_table_old[['分箱标签', '样本总数', '坏样本率']].to_string(index=False))
-        
-        # 验证分箱表不为空
-        assert len(bin_table_old) > 0
+        with pytest.raises(ValueError, match="List\\[List\\]"):
+            OptimalBinning(user_splits=user_splits_old, missing_separate=True).fit(self.X[['城市']], self.y)
 
     def test_mixed_type_binning(self):
         """测试混合类型分箱."""

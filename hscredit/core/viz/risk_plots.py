@@ -745,7 +745,7 @@ def score_bin_plot(
         else:
             bins = pd.cut(df[score_col], bins=n_bins)
 
-        bin_stats = df.groupby(bins).agg({
+        bin_stats = df.groupby(bins, observed=False).agg({
             target_col: ['count', 'sum', 'mean'],
             score_col: ['min', 'max']
         }).reset_index()

@@ -70,6 +70,8 @@ class RFESelector(BaseFeatureSelector):
     https://scikit-learn.org/stable/modules/generated/sklearn.feature_selection.RFE.html
     """
 
+    method_name = 'RFE筛选'
+
     def __init__(
         self,
         estimator,
@@ -94,7 +96,6 @@ class RFESelector(BaseFeatureSelector):
         self.estimator = estimator
         self.n_features_to_select = n_features_to_select
         self.step = step
-        self.method_name = 'RFE筛选'
 
     def _fit_impl(
         self,

@@ -101,15 +101,14 @@ class CartBinning(BaseBinning):
         missing_separate: bool = True,
         cat_cutoff: Optional[Union[float, int]] = None,
         category_order=None,
-        handle_unknown: str = "value",
+        handle_unknown: Union[int, str] = -3,
         random_state: Optional[int] = None,
         verbose: bool = False,
         n_jobs: Union[int, float] = -1,
         parallel_backend: Optional[str] = None,
         parallel_config: Optional[Dict[str, Any]] = None,
-        split_points: Optional[Dict[str, List]] = None,
         user_splits: Optional[Dict[str, List]] = None,
-        strict_user_splits: bool = False,
+        user_splits_fixed: Optional[Union[bool, Dict[str, Union[bool, List[bool]]]]] = None,
         **kwargs,
     ):
         super().__init__(
@@ -123,9 +122,8 @@ class CartBinning(BaseBinning):
             special_codes=special_codes,
             missing_separate=missing_separate,
             cat_cutoff=cat_cutoff,
-            split_points=split_points,
             user_splits=user_splits,
-            strict_user_splits=strict_user_splits,
+            user_splits_fixed=user_splits_fixed,
             category_order=category_order,
             handle_unknown=handle_unknown,
             random_state=random_state,
@@ -161,6 +159,7 @@ class CartBinning(BaseBinning):
 
         self._apply_post_fit_constraints(X, y, enforce_monotonic=True)
         self._finalize_categorical_fit()
+        self._finalize_reserved_bins(X, y)
         self._is_fitted = True
         return self
 

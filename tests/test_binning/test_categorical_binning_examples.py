@@ -161,28 +161,9 @@ binner_loaded.import_rules(rules_loaded)
 
 print("✅ JSON序列化和反序列化成功")
 
-# 测试5: 向后兼容 - 字符串格式
+# 测试5: 混合类型
 print("\n" + "="*80)
-print("测试5: 向后兼容 - 字符串逗号分隔格式")
-print("="*80)
-
-user_splits_old = {
-    '城市': ['北京,上海', '广州,深圳,杭州', '成都,武汉,西安'],
-    '学历': ['高中,大专', '本科', '硕士,博士']
-}
-
-binner_old = OptimalBinning(user_splits=user_splits_old, missing_separate=True)
-binner_old.fit(X, y)
-
-print("\n【城市】字符串格式分箱结果:")
-bin_table_old = binner_old.get_bin_table('城市')
-print(bin_table_old[['分箱标签', '样本总数', '坏样本率', '分档WOE值']].to_string(index=False))
-
-print("\n✅ 字符串格式向后兼容成功")
-
-# 测试6: 混合类型
-print("\n" + "="*80)
-print("测试6: 混合数值型和类别型特征")
+print("测试5: 混合数值型和类别型特征")
 print("="*80)
 
 print("\n所有特征的分箱结果:")
@@ -203,6 +184,5 @@ print("  ✅ List[List]格式分箱")
 print("  ✅ 导出/导入规则")
 print("  ✅ 分箱转换（indices和bins）")
 print("  ✅ JSON序列化")
-print("  ✅ 向后兼容字符串格式")
 print("  ✅ 混合类型处理")
 print("\n类别型变量分箱功能完善，可以使用！")

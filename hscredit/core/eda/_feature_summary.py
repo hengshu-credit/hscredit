@@ -98,7 +98,7 @@ def _binning_config_for_feature(
 
     if feature not in user_splits:
         # 宽表按字段并行时不能把其他字段的切分点带入当前任务，否则
-        # strict_user_splits 会改变未配置字段的默认分箱路径。
+        # user_splits_fixed 会改变未配置字段的默认分箱路径。
         feature_config.pop("user_splits", None)
         return feature_config
 
@@ -438,7 +438,7 @@ def _infer_feature_type(
         return "datetime"
     if series.dtype == "object":
         try:
-            pd.to_datetime(series.dropna().iloc[:100])
+            pd.to_datetime(series.dropna().iloc[:100], format="mixed")
             return "datetime"
         except Exception:
             pass

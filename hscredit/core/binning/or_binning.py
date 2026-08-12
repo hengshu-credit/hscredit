@@ -31,6 +31,7 @@ except ImportError:
 
 from ...exceptions import NotFittedError
 from .base import BaseBinning
+from ._candidate_search import search_candidate_splits
 from ...utils.parallel import resolve_native_workers
 from hscredit.core.metrics import composite_binning_quality
 from hscredit.core.metrics._binning import _composite_binning_quality_components
@@ -201,14 +202,13 @@ class ORBinning(BaseBinning):
         special_codes: Optional[List] = None,
         cat_cutoff: Optional[Union[float, int]] = None,
         category_order=None,
-        handle_unknown: str = "value",
+        handle_unknown: Union[int, str] = -3,
         random_state: Optional[int] = None,
         n_jobs: Union[int, float] = -1,
         parallel_backend: Optional[str] = None,
         parallel_config: Optional[Dict[str, Any]] = None,
-        split_points: Optional[Dict[str, List]] = None,
         user_splits: Optional[Dict[str, List]] = None,
-        strict_user_splits: bool = False,
+        user_splits_fixed: Optional[Union[bool, Dict[str, Union[bool, List[bool]]]]] = None,
         **kwargs,
     ):
         if not ORTOOLS_AVAILABLE:
@@ -225,9 +225,8 @@ class ORBinning(BaseBinning):
             missing_separate=missing_separate,
             special_codes=special_codes,
             cat_cutoff=cat_cutoff,
-            split_points=split_points,
             user_splits=user_splits,
-            strict_user_splits=strict_user_splits,
+            user_splits_fixed=user_splits_fixed,
             category_order=category_order,
             handle_unknown=handle_unknown,
             random_state=random_state,
@@ -253,7 +252,9 @@ class ORBinning(BaseBinning):
         self.use_cp_sat = use_cp_sat
         self.num_workers = num_workers
 
-    def fit(self, X: Union[pd.DataFrame, np.ndarray], y: Optional[Union[pd.Series, np.ndarray]] = None, **kwargs) -> "ORBinning":
+    def fit(
+        self, X: Union[pd.DataFrame, np.ndarray], y: Optional[Union[pd.Series, np.ndarray]] = None, **kwargs
+    ) -> "ORBinning":
         """拟合 OR-Tools 运筹规划分箱.
 
         支持两种API风格：
@@ -280,6 +281,7 @@ class ORBinning(BaseBinning):
 
         self._apply_post_fit_constraints(X, y, enforce_monotonic=True)
         self._finalize_categorical_fit()
+        self._finalize_reserved_bins(X, y)
         self._is_fitted = True
         return self
 
@@ -392,6 +394,22 @@ class ORBinning(BaseBinning):
 
         # ====== 如果启用 CP-SAT，使用真正的约束规划求解器 ======
         if self.use_cp_sat and ORTOOLS_AVAILABLE:
+            if self.objective in {"iv", "ks", "gini"}:
+                return search_candidate_splits(
+                    x_sorted,
+                    y_sorted,
+                    candidates,
+                    objective=self.objective,
+                    min_n_bins=self.min_n_bins,
+                    max_n_bins=self.max_n_bins,
+                    min_samples=min_samples,
+                    max_samples=self._get_max_samples(len(x_sorted)),
+                    monotonic=self.monotonic,
+                    time_limit=self.time_limit,
+                )
+            if self.objective != "iv":
+                # entropy/chi2/custom 走现有目标感知搜索，不能静默退化为 IV。
+                return self._greedy_fallback(x_sorted, y_sorted, candidates)
             return self._cp_sat_solve(
                 x_sorted,
                 y_sorted,
@@ -424,10 +442,14 @@ class ORBinning(BaseBinning):
         mono_dp_splits = self._dp_monotonic_splits(candidates, cum_bad, cum_good, total_good, total_bad, min_samples)
 
         # ====== 策略3: 快速贪心 ======
-        greedy_splits = self._greedy_splits_fast(candidates, cum_bad, cum_good, total_good, total_bad, n_samples, min_samples)
+        greedy_splits = self._greedy_splits_fast(
+            candidates, cum_bad, cum_good, total_good, total_bad, n_samples, min_samples
+        )
 
         # ====== 策略4: DP top-K 候选 + 复合评分筛选 ======
-        topk_splits = self._dp_topk_with_composite(candidates, cum_bad, cum_good, total_good, total_bad, min_samples, x_sorted, y_sorted)
+        topk_splits = self._dp_topk_with_composite(
+            candidates, cum_bad, cum_good, total_good, total_bad, min_samples, x_sorted, y_sorted
+        )
 
         # ====== 从所有策略中选出最优 ======
         best_score = -np.inf
@@ -442,7 +464,9 @@ class ORBinning(BaseBinning):
                 best_score = score_raw
                 best_splits = list(splits)
             # 也尝试 IV 精化版本（可能进一步提升）
-            refined = self._local_refine_fast(splits, candidates, cum_bad, cum_good, total_good, total_bad, n_samples, min_samples)
+            refined = self._local_refine_fast(
+                splits, candidates, cum_bad, cum_good, total_good, total_bad, n_samples, min_samples
+            )
             score_refined = self._score_splits(x_sorted, y_sorted, total_good, total_bad, refined)
             if score_refined > best_score:
                 best_score = score_refined
@@ -450,7 +474,9 @@ class ORBinning(BaseBinning):
 
         # 对最优候选做复合评分精化（仅一次，避免重复计算）
         if best_splits:
-            best_splits = self._local_refine_composite(best_splits, candidates, x_sorted, y_sorted, total_good, total_bad)
+            best_splits = self._local_refine_composite(
+                best_splits, candidates, x_sorted, y_sorted, total_good, total_bad
+            )
 
         if not best_splits:
             best_splits = dp_splits or greedy_splits or []
@@ -550,11 +576,6 @@ class ORBinning(BaseBinning):
                 else:
                     model.Add(right_size >= min_samples).OnlyEnforceIf(x[i])
 
-        # ====== 约束4: 单调性约束（可选）=======
-        monotonic_direction = self._resolve_monotonic_direction_cp_sat(x_sorted, y_sorted)
-        if monotonic_direction and monotonic_direction != "none":
-            self._add_cp_sat_monotonic_constraints(model, x, positions, prefix_bad, prefix_good, total_good, total_bad, monotonic_direction)
-
         # ====== 目标函数: 最大化 IV ======
         self._add_cp_sat_iv_objective(model, x, positions, prefix_bad, prefix_good, total_good, total_bad)
 
@@ -596,67 +617,6 @@ class ORBinning(BaseBinning):
             return "descending"
 
         return "none"
-
-    def _add_cp_sat_monotonic_constraints(
-        self,
-        model: cp_model.CpModel,
-        x: List[Any],
-        positions: List[int],
-        prefix_bad: np.ndarray,
-        prefix_good: np.ndarray,
-        total_good: int,
-        total_bad: int,
-        direction: str,
-    ) -> None:
-        """添加单调性约束到 CP-SAT 模型.
-
-        约束: 相邻箱的坏样本率必须单调递增/递减
-        使用区间计数约束来处理非线性坏样本率计算。
-        """
-        n_candidates = len(x)
-        n_segments = n_candidates + 1
-        eps = 1e-10
-
-        # 为每对相邻段添加单调性约束
-        for i in range(n_segments - 1):
-            # 段 i 的范围: [positions[i-1], positions[i]) 对于 i > 0, 否则 [0, positions[0])
-            # 段 i+1 的范围: [positions[i], positions[i+1])
-
-            # 获取段的统计信息
-            seg1_start = positions[i]
-            seg1_end = positions[i + 1]
-            seg2_start = positions[i + 1]
-
-            # 对于 i = n_candidates - 1, 段 i+1 是最后一个段
-            if i + 1 < n_candidates:
-                seg2_end = positions[i + 2]
-            else:
-                seg2_end = len(prefix_bad) - 1
-
-            # 计算段的坏样本数
-            seg1_bad = prefix_bad[seg1_end] - prefix_bad[seg1_start]
-            seg1_good = prefix_good[seg1_end] - prefix_good[seg1_start]
-            seg2_bad = prefix_bad[seg2_end] - prefix_bad[seg2_start]
-            seg2_good = prefix_good[seg2_end] - prefix_good[seg2_start]
-
-            seg1_count = seg1_bad + seg1_good
-            seg2_count = seg2_bad + seg2_good
-
-            # 如果 count > 0，计算坏样本率
-            if seg1_count > 0 and seg2_count > 0:
-                seg1_br = seg1_bad / seg1_count
-                seg2_br = seg2_bad / seg2_count
-
-                if direction == "ascending":
-                    # 坏样本率递增: seg1_br <= seg2_br
-                    if seg1_br > seg2_br + eps:
-                        # 添加约束: x[i] = 1 时，必须满足约束
-                        # 这是一个简化处理，实际实现需要更复杂的建模
-                        pass
-                elif direction == "descending":
-                    # 坏样本率递减: seg1_br >= seg2_br
-                    if seg1_br < seg2_br - eps:
-                        pass
 
     def _add_cp_sat_iv_objective(
         self,
@@ -760,14 +720,28 @@ class ORBinning(BaseBinning):
 
         if mono in (True, "auto", "auto_asc_desc", "auto_heuristic"):
             # 尝试两个方向
-            asc_indices = self._dp_mono_direction(candidates, cum_bad, cum_good, total_good, total_bad, min_samples, "ascending")
-            desc_indices = self._dp_mono_direction(candidates, cum_bad, cum_good, total_good, total_bad, min_samples, "descending")
+            asc_indices = self._dp_mono_direction(
+                candidates, cum_bad, cum_good, total_good, total_bad, min_samples, "ascending"
+            )
+            desc_indices = self._dp_mono_direction(
+                candidates, cum_bad, cum_good, total_good, total_bad, min_samples, "descending"
+            )
             # 选 IV 更大的
-            iv_asc = self._iv_from_split_indices(asc_indices, cum_bad, cum_good, total_good, total_bad, len(candidates)) if asc_indices else -np.inf
-            iv_desc = self._iv_from_split_indices(desc_indices, cum_bad, cum_good, total_good, total_bad, len(candidates)) if desc_indices else -np.inf
+            iv_asc = (
+                self._iv_from_split_indices(asc_indices, cum_bad, cum_good, total_good, total_bad, len(candidates))
+                if asc_indices
+                else -np.inf
+            )
+            iv_desc = (
+                self._iv_from_split_indices(desc_indices, cum_bad, cum_good, total_good, total_bad, len(candidates))
+                if desc_indices
+                else -np.inf
+            )
             best_indices = asc_indices if iv_asc >= iv_desc else desc_indices
         else:
-            best_indices = self._dp_mono_direction(candidates, cum_bad, cum_good, total_good, total_bad, min_samples, mono)
+            best_indices = self._dp_mono_direction(
+                candidates, cum_bad, cum_good, total_good, total_bad, min_samples, mono
+            )
 
         return [candidates[i] for i in best_indices]
 
@@ -1168,7 +1142,12 @@ class ORBinning(BaseBinning):
 
         # 可行性检查
         for i in range(n_bins):
-            count = int(cum_bad[boundaries[i + 1]] - cum_bad[boundaries[i]] + cum_good[boundaries[i + 1]] - cum_good[boundaries[i]])
+            count = int(
+                cum_bad[boundaries[i + 1]]
+                - cum_bad[boundaries[i]]
+                + cum_good[boundaries[i + 1]]
+                - cum_good[boundaries[i]]
+            )
             if count < min_samples:
                 return -np.inf
 
@@ -1247,7 +1226,9 @@ class ORBinning(BaseBinning):
                 if idx in selected:
                     continue
                 trial = sorted(selected + [idx])
-                score = self._fast_objective_from_indices(trial, cum_bad, cum_good, total_good, total_bad, n_samples, min_samples)
+                score = self._fast_objective_from_indices(
+                    trial, cum_bad, cum_good, total_good, total_bad, n_samples, min_samples
+                )
                 if score > best_score:
                     best_score = score
                     best_idx = idx
@@ -1277,7 +1258,9 @@ class ORBinning(BaseBinning):
         # 将 splits 映射回候选索引
         current = sorted(set(int(np.argmin(np.abs(cand_arr - s))) for s in splits))
 
-        best_score = self._fast_objective_from_indices(current, cum_bad, cum_good, total_good, total_bad, n_samples, min_samples)
+        best_score = self._fast_objective_from_indices(
+            current, cum_bad, cum_good, total_good, total_bad, n_samples, min_samples
+        )
 
         for _ in range(4):
             improved = False
@@ -1293,7 +1276,9 @@ class ORBinning(BaseBinning):
                     trial = sorted(set(trial))
                     if len(trial) != len(current):
                         continue
-                    score = self._fast_objective_from_indices(trial, cum_bad, cum_good, total_good, total_bad, n_samples, min_samples)
+                    score = self._fast_objective_from_indices(
+                        trial, cum_bad, cum_good, total_good, total_bad, n_samples, min_samples
+                    )
                     if score > best_score + 1e-12:
                         best_score = score
                         best_indices = trial
@@ -1305,7 +1290,9 @@ class ORBinning(BaseBinning):
                     if idx in current:
                         continue
                     trial = sorted(set(current + [idx]))
-                    score = self._fast_objective_from_indices(trial, cum_bad, cum_good, total_good, total_bad, n_samples, min_samples)
+                    score = self._fast_objective_from_indices(
+                        trial, cum_bad, cum_good, total_good, total_bad, n_samples, min_samples
+                    )
                     if score > best_score + 1e-12:
                         best_score = score
                         best_indices = trial
@@ -1315,7 +1302,9 @@ class ORBinning(BaseBinning):
             if len(current) > max(1, self.min_n_bins - 1):
                 for i in range(len(current)):
                     trial = current[:i] + current[i + 1 :]
-                    score = self._fast_objective_from_indices(trial, cum_bad, cum_good, total_good, total_bad, n_samples, min_samples)
+                    score = self._fast_objective_from_indices(
+                        trial, cum_bad, cum_good, total_good, total_bad, n_samples, min_samples
+                    )
                     if score > best_score + 1e-12:
                         best_score = score
                         best_indices = trial
@@ -1327,7 +1316,9 @@ class ORBinning(BaseBinning):
 
         return [candidates[i] for i in current]
 
-    def _compute_bin_stats_for_candidates(self, x_sorted: np.ndarray, y_sorted: np.ndarray, candidates: List[float]) -> List[Dict]:
+    def _compute_bin_stats_for_candidates(
+        self, x_sorted: np.ndarray, y_sorted: np.ndarray, candidates: List[float]
+    ) -> List[Dict]:
         """预计算每个候选分割点相关的箱统计.
 
         :param x_sorted: 排序后的特征值
@@ -1368,7 +1359,9 @@ class ORBinning(BaseBinning):
 
         return bin_stats
 
-    def _get_bin_count_var(self, model: cp_model.CpModel, select: List[Any], bin_stats: List[Dict], bin_idx: int) -> Any:
+    def _get_bin_count_var(
+        self, model: cp_model.CpModel, select: List[Any], bin_stats: List[Dict], bin_idx: int
+    ) -> Any:
         """获取指定箱的样本数变量（用于约束）.
 
         简化处理：使用线性约束近似
@@ -1376,16 +1369,9 @@ class ORBinning(BaseBinning):
         # 返回该箱的固定样本数
         return bin_stats[bin_idx]["count"]
 
-    def _add_monotonic_constraints(self, model: cp_model.CpModel, select: List[Any], bin_stats: List[Dict]):
-        """添加单调性约束.
-
-        简化实现：假设选择连续的分割点
-        """
-        # 实际实现中需要根据选中的分割点动态计算
-        # 这里简化处理，依赖目标函数自然趋向单调
-        pass
-
-    def _create_objective(self, model: cp_model.CpModel, select: List[Any], bin_stats: List[Dict], total_good: int, total_bad: int) -> Any:
+    def _create_objective(
+        self, model: cp_model.CpModel, select: List[Any], bin_stats: List[Dict], total_good: int, total_bad: int
+    ) -> Any:
         """创建目标函数变量.
 
         :param model: CP-SAT 模型
@@ -1540,9 +1526,20 @@ class ORBinning(BaseBinning):
             metric="lift",
             monotonic=monotonic,
         )
-        return float(comp.get("head_peak_bonus", 0.0) * 2.20 + comp.get("tail_zero_bonus", 0.0) * 1.80 - comp.get("tail_collapse_penalty", 0.0) * 1.50 + comp.get("head_cumulative_gain", 0.0) * 1.10 + comp.get("spread", 0.0) * 0.18 + comp.get("marginal_return", 0.0) * 0.55 - comp.get("marginal_decay_penalty", 0.0) * 0.35 - comp.get("zero_pairs_penalty", 0.0) * 0.50)
+        return float(
+            comp.get("head_peak_bonus", 0.0) * 2.20
+            + comp.get("tail_zero_bonus", 0.0) * 1.80
+            - comp.get("tail_collapse_penalty", 0.0) * 1.50
+            + comp.get("head_cumulative_gain", 0.0) * 1.10
+            + comp.get("spread", 0.0) * 0.18
+            + comp.get("marginal_return", 0.0) * 0.55
+            - comp.get("marginal_decay_penalty", 0.0) * 0.35
+            - comp.get("zero_pairs_penalty", 0.0) * 0.50
+        )
 
-    def _score_splits(self, x_sorted: np.ndarray, y_sorted: np.ndarray, total_good: int, total_bad: int, splits: List[float]) -> float:
+    def _score_splits(
+        self, x_sorted: np.ndarray, y_sorted: np.ndarray, total_good: int, total_bad: int, splits: List[float]
+    ) -> float:
         if not splits:
             return -1e18
         # 验证所有箱的样本数 >= min_samples，避免后处理合并
@@ -1572,12 +1569,16 @@ class ORBinning(BaseBinning):
         # 综合评分：IV为基础 + composite为质量指标 + 箱数利用率
         return float(raw_objective + composite_score * 0.40 + focus_score * 0.30 + bin_utilization_bonus)
 
-    def _raw_objective_score(self, x_sorted: np.ndarray, y_sorted: np.ndarray, total_good: int, total_bad: int, splits: List[float]) -> float:
+    def _raw_objective_score(
+        self, x_sorted: np.ndarray, y_sorted: np.ndarray, total_good: int, total_bad: int, splits: List[float]
+    ) -> float:
         """计算纯目标函数值（IV/KS/gini/entropy/chi2），不含 lift bonus."""
         if not splits:
             return 0.0
         eps = 1e-10
-        split_positions = [0] + [int(np.searchsorted(x_sorted, s, side="right")) for s in sorted(splits)] + [len(x_sorted)]
+        split_positions = (
+            [0] + [int(np.searchsorted(x_sorted, s, side="right")) for s in sorted(splits)] + [len(x_sorted)]
+        )
 
         if self.objective in ("iv", "custom"):
             iv = 0.0
@@ -1618,9 +1619,23 @@ class ORBinning(BaseBinning):
             metric="lift",
             monotonic=monotonic,
         )
-        return float(comp["quadratic_score"] + comp.get("head_peak_bonus", 0.0) * 1.50 + comp["head_cumulative_gain"] * 1.35 + comp.get("tail_zero_bonus", 0.0) * 1.20 - comp.get("tail_collapse_penalty", 0.0) * 1.10 + comp["tail_compression_gain"] * 0.85 + comp["marginal_return"] * 0.90 - comp["marginal_decay_penalty"] * 0.35 + comp["share_floor_bonus"] * 0.20 - comp["zero_pairs_penalty"] + comp["monotonic_bonus"])
+        return float(
+            comp["quadratic_score"]
+            + comp.get("head_peak_bonus", 0.0) * 1.50
+            + comp["head_cumulative_gain"] * 1.35
+            + comp.get("tail_zero_bonus", 0.0) * 1.20
+            - comp.get("tail_collapse_penalty", 0.0) * 1.10
+            + comp["tail_compression_gain"] * 0.85
+            + comp["marginal_return"] * 0.90
+            - comp["marginal_decay_penalty"] * 0.35
+            + comp["share_floor_bonus"] * 0.20
+            - comp["zero_pairs_penalty"]
+            + comp["monotonic_bonus"]
+        )
 
-    def _search_segment_dp_splits(self, x_sorted: np.ndarray, y_sorted: np.ndarray, candidates: List[float]) -> List[float]:
+    def _search_segment_dp_splits(
+        self, x_sorted: np.ndarray, y_sorted: np.ndarray, candidates: List[float]
+    ) -> List[float]:
         """方案B第三阶段：段级路径搜索，直接偏向高头部 lift 与低尾部 lift。"""
         total_good = int(np.sum(y_sorted == 0))
         total_bad = int(np.sum(y_sorted == 1))
@@ -1661,9 +1676,18 @@ class ORBinning(BaseBinning):
                     if end <= (0 if len(path) == 0 else positions[path[-1]]):
                         continue
                     monotonic_penalty = 0.0
-                    if self.monotonic in [True, "auto", "descending"] and last_bad_rate < np.inf and bad_rate > last_bad_rate + 1e-10:
+                    if (
+                        self.monotonic in [True, "auto", "descending"]
+                        and last_bad_rate < np.inf
+                        and bad_rate > last_bad_rate + 1e-10
+                    ):
                         monotonic_penalty = (bad_rate - last_bad_rate) * 8.0
-                    segment_gain = max(lift - 1.0, 0.0) * (2.4 if len(path) == 0 else 0.8) + max(1.0 - lift, 0.0) * (0.15 if depth < self.max_n_bins - 2 else 1.6) + share * (0.45 if len(path) == 0 else 0.1) - monotonic_penalty
+                    segment_gain = (
+                        max(lift - 1.0, 0.0) * (2.4 if len(path) == 0 else 0.8)
+                        + max(1.0 - lift, 0.0) * (0.15 if depth < self.max_n_bins - 2 else 1.6)
+                        + share * (0.45 if len(path) == 0 else 0.1)
+                        - monotonic_penalty
+                    )
                     next_states.append((partial_score + segment_gain, path + [pos_idx], pos_idx + 1, bad_rate))
 
             if not next_states:
@@ -1673,7 +1697,10 @@ class ORBinning(BaseBinning):
             dedup = {}
             for score, path, next_idx, last_bad_rate in next_states:
                 dedup.setdefault(tuple(path), (score, next_idx, last_bad_rate))
-            states = [(score, list(path), next_idx, last_bad_rate) for path, (score, next_idx, last_bad_rate) in list(dedup.items())[:beam_width]]
+            states = [
+                (score, list(path), next_idx, last_bad_rate)
+                for path, (score, next_idx, last_bad_rate) in list(dedup.items())[:beam_width]
+            ]
 
             for _, path, _, _ in states:
                 splits = [candidate_pool[idx] for idx in path]
@@ -1685,7 +1712,9 @@ class ORBinning(BaseBinning):
 
         return sorted(set(best_splits))
 
-    def _search_segment_graph_splits(self, x_sorted: np.ndarray, y_sorted: np.ndarray, candidates: List[float]) -> List[float]:
+    def _search_segment_graph_splits(
+        self, x_sorted: np.ndarray, y_sorted: np.ndarray, candidates: List[float]
+    ) -> List[float]:
         """方案B第二阶段：基于候选段图的动态组合搜索。"""
         total_good = int(np.sum(y_sorted == 0))
         total_bad = int(np.sum(y_sorted == 1))
@@ -1729,7 +1758,9 @@ class ORBinning(BaseBinning):
 
         return sorted(set(best_splits))
 
-    def _search_composite_optimal_splits(self, x_sorted: np.ndarray, y_sorted: np.ndarray, candidates: List[float]) -> List[float]:
+    def _search_composite_optimal_splits(
+        self, x_sorted: np.ndarray, y_sorted: np.ndarray, candidates: List[float]
+    ) -> List[float]:
         """方案B当前实现：候选段组合 + beam search + 动态复合评分。"""
         total_good = int(np.sum(y_sorted == 0))
         total_bad = int(np.sum(y_sorted == 1))
@@ -1813,7 +1844,9 @@ class ORBinning(BaseBinning):
             else:
                 break
 
-        selected_splits = self._local_refine_splits(x_sorted, y_sorted, total_good, total_bad, selected_splits, candidates)
+        selected_splits = self._local_refine_splits(
+            x_sorted, y_sorted, total_good, total_bad, selected_splits, candidates
+        )
         return sorted(selected_splits)
 
     def _local_refine_splits(
@@ -1882,7 +1915,9 @@ class ORBinning(BaseBinning):
 
         return current
 
-    def _calculate_objective_score(self, x_sorted: np.ndarray, y_sorted: np.ndarray, total_good: int, total_bad: int, splits: List[float]) -> float:
+    def _calculate_objective_score(
+        self, x_sorted: np.ndarray, y_sorted: np.ndarray, total_good: int, total_bad: int, splits: List[float]
+    ) -> float:
         """计算目标函数分数.
 
         :param x_sorted: 排序后的特征值
@@ -2096,7 +2131,9 @@ class ORBinning(BaseBinning):
 
             return bins
 
-    def transform(self, X: Union[pd.DataFrame, np.ndarray], metric: str = "indices", **kwargs) -> Union[pd.DataFrame, np.ndarray]:
+    def transform(
+        self, X: Union[pd.DataFrame, np.ndarray], metric: str = "indices", **kwargs
+    ) -> Union[pd.DataFrame, np.ndarray]:
         """应用分箱转换.
 
         将原始特征值转换为分箱索引、分箱标签或WOE值。
@@ -2337,7 +2374,7 @@ class CustomObjectives:
                 return iv_weight * total_iv
 
             # 最大LIFT离1的距离
-            max_lift_dist = max(abs(l - 1.0) for l in lift_values)
+            max_lift_dist = max(abs(lift - 1.0) for lift in lift_values)
 
             return iv_weight * total_iv + lift_weight * max_lift_dist
 
@@ -2381,7 +2418,7 @@ class CustomObjectives:
                 return iv_weight * total_iv
 
             # 最小LIFT离1的距离
-            min_lift_dist = min(abs(l - 1.0) for l in lift_values)
+            min_lift_dist = min(abs(lift - 1.0) for lift in lift_values)
 
             return iv_weight * total_iv + lift_weight * min_lift_dist
 
@@ -2425,7 +2462,7 @@ class CustomObjectives:
                 return iv_weight * total_iv
 
             # 最大LIFT距离 + 最小LIFT距离
-            lift_distances = [abs(l - 1.0) for l in lift_values]
+            lift_distances = [abs(lift - 1.0) for lift in lift_values]
             dist_sum = max(lift_distances) + min(lift_distances)
 
             return iv_weight * total_iv + lift_weight * dist_sum

@@ -5,7 +5,7 @@
 
 报告系统设计:
 1. 单个筛选器报告: 每个筛选器实现 get_selection_report(),返回标准化报告
-2. 全局报告收集器: SelectionReportCollector 自动收集 Pipeline 中所有筛选器的结果
+2. 全局报告收集器: SelectionReportCollector 手动聚合多个筛选器的结果
 3. 报告格式: 统一的中文格式,包含统计信息、选中/剔除特征、得分等
 
 **参考样例**
@@ -27,14 +27,18 @@ from abc import ABC, abstractmethod
 from contextlib import contextmanager
 from typing import Union, List, Dict, Optional, Any, Tuple
 from datetime import datetime
+from pathlib import Path
 import copy
 import inspect
 import numpy as np
 import pandas as pd
+from pandas.api.types import is_complex_dtype
+from pandas.api.types import is_numeric_dtype
 from joblib import parallel_backend as joblib_parallel_backend
 from sklearn.exceptions import NotFittedError as SklearnNotFittedError
 from sklearn.base import BaseEstimator, TransformerMixin, clone
 from sklearn.utils.validation import check_is_fitted
+from scipy.sparse import issparse
 
 from ...exceptions import NotFittedError, ValidationError
 from ...utils.parallel import (
@@ -107,7 +111,7 @@ def get_feature_importances(estimator) -> np.ndarray:
     if hasattr(estimator, "coef_"):
         coef = np.asarray(estimator.coef_, dtype=float)
         if coef.ndim > 1:
-            coef = coef[0]
+            coef = np.linalg.norm(coef, axis=0)
         return np.abs(coef)
 
     # 3. 原生 xgboost Booster
@@ -141,8 +145,8 @@ def get_feature_importances(estimator) -> np.ndarray:
 class SelectionReportCollector:
     """特征筛选报告收集器.
 
-    自动收集 Pipeline 中所有筛选器的结果,生成汇总报告。
-    支持在 sklearn Pipeline 中作为回调使用,或手动添加筛选器。
+    聚合多个已拟合筛选器的结果并生成汇总报告。
+    当前通过 ``add_report`` 手动添加，不会自动挂接 sklearn Pipeline。
 
     **使用方式**
 
@@ -335,12 +339,14 @@ class SelectionReportCollector:
         if len(self.reports) == 0:
             return pd.DataFrame()
 
-        # 收集所有特征
-        all_features = set()
+        # 收集所有特征，按首次出现顺序稳定输出。
+        all_features = []
+        seen_features = set()
         for r in self.reports:
-            all_features.update(r.get("选中特征", []))
-            if "剔除特征" in r:
-                all_features.update(r.get("剔除特征", []))
+            for feature in list(r.get("选中特征", [])) + list(r.get("剔除特征", [])):
+                if feature not in seen_features:
+                    all_features.append(feature)
+                    seen_features.add(feature)
 
         # 构建追踪表
         trace_data = []
@@ -495,7 +501,11 @@ class SelectionReportCollector:
         >>> collector.add_report(selector)
         >>> collector.to_excel("筛选报告.xlsx")
         """
-        with pd.ExcelWriter(filepath, engine="openpyxl") as writer:
+        output_path = Path(filepath)
+        if output_path.suffix.lower() != ".xlsx":
+            output_path = output_path.with_suffix(".xlsx")
+
+        with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
             # 写入汇总表
             summary_df = self.to_dataframe()
             summary_df.to_excel(writer, sheet_name="筛选汇总", index=False)
@@ -531,7 +541,8 @@ class SelectionReportCollector:
 
             summary = convert(summary)
             summary_json = json.dumps(summary, ensure_ascii=False, indent=2)
-            with open(filepath.replace(".xlsx", "_report.json"), "w", encoding="utf-8") as f:
+            report_path = output_path.with_name(f"{output_path.stem}_report.json")
+            with report_path.open("w", encoding="utf-8") as f:
                 f.write(summary_json)
 
     def print_summary(self) -> None:
@@ -561,6 +572,11 @@ class SelectionReportCollector:
         >>> collector.print_summary()  # doctest: +SKIP
         """
         summary = self.get_summary()
+
+        if summary.get("状态") == "无筛选记录":
+            print(summary["状态"])
+            print(summary["message"])
+            return
 
         print("=" * 60)
         print(f"特征筛选报告 - {summary['流程名称']}")
@@ -602,7 +618,7 @@ class SelectionReportCollector:
         return f"SelectionReportCollector(name='{self.name}', stages={len(self.reports)})"
 
 
-class BaseFeatureSelector(ParallelizableMixin, BaseEstimator, TransformerMixin, ABC):
+class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, ABC):
     """特征筛选器基类.
 
     所有特征筛选器都继承此类，实现统一的 fit/transform 接口。
@@ -712,6 +728,16 @@ class BaseFeatureSelector(ParallelizableMixin, BaseEstimator, TransformerMixin, 
         self.parallel_backend = parallel_backend
         self.parallel_config = parallel_config
 
+    def __sklearn_tags__(self):
+        """声明筛选器支持缺失值，由具体算法按自身语义处理。"""
+        tags = super().__sklearn_tags__()
+        tags.input_tags.allow_nan = True
+        return tags
+
+    def _more_tags(self):
+        """兼容 sklearn 1.5 及更早版本的缺失值标签接口。"""
+        return {"allow_nan": True}
+
     def _clone_estimator_for_parallel(self, estimator: Any) -> Any:
         """克隆 estimator，并只向最浅并行层传递当前有效预算。"""
         model = clone(estimator)
@@ -777,19 +803,47 @@ class BaseFeatureSelector(ParallelizableMixin, BaseEstimator, TransformerMixin, 
         >>> X_out.shape
         (5, 3)
         """
+        if issparse(X):
+            raise ValidationError("Sparse input is not supported（不支持稀疏矩阵输入）")
+
         # 转换为DataFrame
         if not isinstance(X, pd.DataFrame):
-            X = pd.DataFrame(X)
+            values = np.asarray(X)
+            if values.ndim != 2:
+                raise ValidationError(
+                    f"Expected 2D array, got {values.ndim}D array instead（特征矩阵必须为二维）"
+                )
+            X = pd.DataFrame(values)
+
+        if any(is_complex_dtype(dtype) for dtype in X.dtypes):
+            raise ValidationError("Complex data not supported（不支持复数特征）")
+        for column in X.columns:
+            if is_numeric_dtype(X[column].dtype) and np.isinf(X[column].to_numpy(dtype=float, na_value=np.nan)).any():
+                raise ValidationError("Input X contains infinity（输入特征不能包含无穷值）")
+        if X.shape[0] == 0:
+            raise ValidationError("Found array with 0 sample(s)（输入数据不能为空）")
+        if X.shape[1] == 0:
+            raise ValidationError(
+                f"0 feature(s) (shape=({len(X)}, 0)) while a minimum of 1 is required.（至少需要一个特征）"
+            )
 
         # 如果y不为None,使用sklearn风格
         if y is not None:
-            return X, y
+            y_array = np.asarray(y)
+            if len(y_array) != len(X):
+                raise ValidationError(f"输入特征与目标变量的样本数量不一致: [{len(X)}, {len(y_array)}]")
+            return X, y_array
 
         # y为None时,检查是否是scorecardpipeline风格
         if isinstance(X, pd.DataFrame) and self.target in X.columns:
             # 从X中分离目标列
             y = X[self.target]
             X = X.drop(columns=[self.target])
+            if X.shape[1] == 0:
+                raise ValidationError(
+                    f"0 feature(s) (shape=({len(X)}, 0)) while a minimum of 1 is required."
+                    "（目标列之外至少需要一个特征）"
+                )
             return X, y
 
         # 没有目标变量(如无监督筛选器)
@@ -1260,6 +1314,11 @@ class BaseFeatureSelector(ParallelizableMixin, BaseEstimator, TransformerMixin, 
         # 应用exclude（强制剔除）
         self._apply_exclude(original_X)
 
+        # 所有公开筛选结果都按拟合输入字段顺序输出，include 只改变保留状态，
+        # 不应把字段追加到末尾。
+        selected_set = set(self.selected_features_)
+        self.selected_features_ = [column for column in original_X.columns if column in selected_set]
+
         # 子类通常会基于实际计算子集刷新特征名；对外仍应暴露本轮原始
         # 输入的 sklearn 元数据，避免 include/exclude 改变 n_features_in_。
         self._get_feature_names(original_X)
@@ -1335,6 +1394,13 @@ class BaseFeatureSelector(ParallelizableMixin, BaseEstimator, TransformerMixin, 
                 fit_method(X, y)
             else:
                 fit_method(X)
+
+        return self._transform_with_fitted_binner(X)
+
+    def _transform_with_fitted_binner(self, X: pd.DataFrame) -> pd.DataFrame:
+        """使用本轮已经拟合的分箱器转换外部同构数据。"""
+        if self._binner_instance is None:
+            return X
 
         transform_method = getattr(self._binner_instance, "transform", None)
         apply_method = getattr(self._binner_instance, "apply", None)
@@ -1560,23 +1626,35 @@ class BaseFeatureSelector(ParallelizableMixin, BaseEstimator, TransformerMixin, 
             raise NotFittedError("筛选器尚未拟合，请先调用fit方法")
 
         # 如果传入的是列表，返回筛选后的特征列表
-        if isinstance(X, list):
+        if isinstance(X, list) and (len(X) == 0 or all(isinstance(item, str) for item in X)):
             selected = [c for c in X if c in self.selected_features_]
             return selected
 
-        # 如果传入的是 DataFrame 或 ndarray
-        if not isinstance(X, pd.DataFrame):
-            X = pd.DataFrame(X)
+        if isinstance(X, pd.DataFrame):
+            missing = [column for column in self.feature_names_in_ if column not in X.columns]
+            if missing:
+                raise ValidationError(f"转换数据缺少拟合字段: {missing}")
+            if not X.columns.is_unique:
+                raise ValidationError("转换数据字段名不能重复")
 
-        # 返回选中的特征
-        selected = [c for c in self.selected_features_ if c in X.columns]
+            selected = list(self.selected_features_)
 
-        # scorecardpipeline 风格: 如果 X 中包含 target 列，透传到输出
-        target_col = getattr(self, "target", None)
-        if target_col and target_col in X.columns and target_col not in selected:
-            return X[selected + [target_col]]
+            # scorecardpipeline 风格: 如果 X 中包含 target 列，透传到输出
+            target_col = getattr(self, "target", None)
+            if target_col and target_col in X.columns and target_col not in selected:
+                return X.loc[:, selected + [target_col]]
 
-        return X[selected]
+            return X.loc[:, selected]
+
+        values = np.asarray(X)
+        if values.ndim != 2:
+            raise ValidationError("Expected 2D array. Reshape your data（ndarray 输入必须是二维特征矩阵）")
+        if values.shape[1] != self.n_features_in_:
+            raise ValidationError(
+                f"X has {values.shape[1]} features, but {self.__class__.__name__} is expecting "
+                f"{self.n_features_in_} features as input（转换数据特征数与拟合时不一致）"
+            )
+        return values[:, self.get_support()]
 
     def fit_transform(
         self,
@@ -1629,6 +1707,25 @@ class BaseFeatureSelector(ParallelizableMixin, BaseEstimator, TransformerMixin, 
                 idx = self._feature_names.index(col)
                 mask[idx] = True
         return mask
+
+    def _get_support_mask(self) -> np.ndarray:
+        """实现 sklearn 特征选择器的标准支持掩码接口。"""
+        return self.get_support_mask()
+
+    def get_support(self, indices: bool = False) -> np.ndarray:
+        """返回选择掩码；``indices=True`` 时返回选中列位置。"""
+        mask = self.get_support_mask()
+        return np.flatnonzero(mask) if indices else mask
+
+    def get_feature_names_out(self, input_features=None) -> np.ndarray:
+        """返回转换后的字段名，兼容 sklearn Pipeline。"""
+        if not hasattr(self, "_is_fitted"):
+            raise NotFittedError("筛选器尚未拟合，请先调用fit方法")
+        if input_features is not None:
+            provided = np.asarray(input_features, dtype=object)
+            if provided.shape != self.feature_names_in_.shape or not np.array_equal(provided, self.feature_names_in_):
+                raise ValidationError("input_features 与拟合字段不一致")
+        return np.asarray(self.selected_features_, dtype=object)
 
     def get_selection_report(self) -> Dict[str, Any]:
         """获取中文筛选报告。
@@ -2029,6 +2126,7 @@ class CompositeFeatureSelector(BaseFeatureSelector):
                 if selected != list(current_X.columns):
                     current_X = current_X.loc[:, selected]
             else:
+                current_X = current_X.iloc[:, 0:0]
                 break
 
         # 最终选中的特征

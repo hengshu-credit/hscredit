@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from typing import Union, List, Dict, Optional, Any, Tuple, Callable
+from typing import Union, List, Dict, Optional, Any, Tuple
 import numpy as np
 import pandas as pd
 import warnings
@@ -32,7 +32,7 @@ except ImportError:
 
 from ...exceptions import NotFittedError
 from .base import BaseBinning
-from ...utils.parallel import resolve_native_workers
+from ._candidate_search import search_candidate_splits
 
 
 class CPSATBinning(BaseBinning):
@@ -126,14 +126,13 @@ class CPSATBinning(BaseBinning):
         special_codes: Optional[List] = None,
         cat_cutoff: Optional[Union[float, int]] = None,
         category_order=None,
-        handle_unknown: str = "value",
+        handle_unknown: Union[int, str] = -3,
         random_state: Optional[int] = None,
         n_jobs: Union[int, float] = -1,
         parallel_backend: Optional[str] = None,
         parallel_config: Optional[Dict[str, Any]] = None,
-        split_points: Optional[Dict[str, List]] = None,
         user_splits: Optional[Dict[str, List]] = None,
-        strict_user_splits: bool = False,
+        user_splits_fixed: Optional[Union[bool, Dict[str, Union[bool, List[bool]]]]] = None,
         **kwargs,
     ):
         if not ORTOOLS_AVAILABLE:
@@ -150,9 +149,8 @@ class CPSATBinning(BaseBinning):
             missing_separate=missing_separate,
             special_codes=special_codes,
             cat_cutoff=cat_cutoff,
-            split_points=split_points,
             user_splits=user_splits,
-            strict_user_splits=strict_user_splits,
+            user_splits_fixed=user_splits_fixed,
             category_order=category_order,
             handle_unknown=handle_unknown,
             random_state=random_state,
@@ -173,7 +171,9 @@ class CPSATBinning(BaseBinning):
         self.time_limit = time_limit
         self.num_workers = num_workers
 
-    def fit(self, X: Union[pd.DataFrame, np.ndarray], y: Optional[Union[pd.Series, np.ndarray]] = None, **kwargs) -> "CPSATBinning":
+    def fit(
+        self, X: Union[pd.DataFrame, np.ndarray], y: Optional[Union[pd.Series, np.ndarray]] = None, **kwargs
+    ) -> "CPSATBinning":
         """拟合 CP-SAT 运筹规划分箱.
 
         :param X: 训练数据
@@ -187,6 +187,7 @@ class CPSATBinning(BaseBinning):
 
         self._apply_post_fit_constraints(X, y, enforce_monotonic=True)
         self._finalize_categorical_fit()
+        self._finalize_reserved_bins(X, y)
         self._is_fitted = True
         return self
 
@@ -297,132 +298,20 @@ class CPSATBinning(BaseBinning):
         n_total = getattr(self, "_n_total_samples", n_samples)
         min_samples = self._get_min_samples(n_total)
 
-        # ======== 构建 CP-SAT 模型 ========
-        model = cp_model.CpModel()
-
-        # 决策变量: x[i] = 是否在位置 i 选择分割点
-        x: List[IntVar] = [model.NewBoolVar(f"x_{i}") for i in range(n_candidates)]
-
-        # ======== 约束1: 分箱数量约束 ========
-        n_splits_needed = self.max_n_bins - 1
-        min_splits_needed = max(1, self.min_n_bins - 1)
-
-        # 至少 min_splits_needed 个分割点，最多 n_splits_needed 个
-        if min_splits_needed > 0:
-            model.Add(sum(x) >= min_splits_needed)
-        model.Add(sum(x) <= n_splits_needed)
-
-        # ======== 约束2: 连续分割点约束 ========
-        # 如果选择了位置 i 和 j (i < j)，那么 i+1, i+2, ..., j-1 也必须被选择
-        # 这确保了分割点之间的区间是有序连续的
-        for i in range(n_candidates - 1):
-            for j in range(i + 1, n_candidates):
-                model.Add(x[j] >= x[i]).OnlyEnforceIf(x[i])
-                # 确保没有"洞"
-                model.Add(x[i] >= x[j] - 1).OnlyEnforceIf(x[j])
-
-        # ======== 约束3: 最小样本数约束 ========
-        # positions 数组结构: [0, pos1, pos2, ..., posN, n_samples]
-        # 长度 = n_candidates + 2
-        # 段 i 覆盖 positions[i] 到 positions[i+1]
-
-        # 第一个段（始终被选中）
-        first_bin_size = int(positions[1])
-        model.Add(first_bin_size >= min_samples)
-
-        # 最后一个段（始终被选中）
-        last_bin_size = int(n_samples - positions[-2])
-        model.Add(last_bin_size >= min_samples)
-
-        # 中间段：如果前一个分割点被选中，则该段必须满足最小样本数
-        for i in range(1, n_candidates):
-            bin_size = int(positions[i + 1] - positions[i])
-            model.Add(bin_size >= min_samples).OnlyEnforceIf(x[i - 1])
-
-        # ======== 约束4: 单调性约束（可选）=======
-        monotonic_direction = self._resolve_monotonic_direction(X, y)
-        if monotonic_direction:
-            self._add_monotonic_constraints_cp_sat(model, x, candidates, positions, prefix_bad, prefix_good, total_good, total_bad, monotonic_direction)
-
-        # ======== 目标函数: 最大化 IV ========
-        if self.objective == "iv":
-            self._add_iv_objective_cp_sat(model, x, candidates, positions, prefix_bad, prefix_good, total_good, total_bad)
-        elif self.objective == "ks":
-            self._add_ks_objective_cp_sat(model, x, candidates, positions, prefix_bad, prefix_good, total_good, total_bad)
-        elif self.objective == "gini":
-            self._add_gini_objective_cp_sat(model, x, candidates, positions, prefix_bad, prefix_good, total_good, total_bad)
-
-        # ======== 求解 ========
-        solver = cp_model.CpSolver()
-        solver.parameters.max_time_in_seconds = self.time_limit
-        solver.parameters.num_workers = resolve_native_workers(self.n_jobs, native_workers=self.num_workers)
-        solver.parameters.log_search_progress = False
-
-        status = solver.Solve(model)
-
-        if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-            selected = [i for i in range(n_candidates) if solver.Value(x[i])]
-            return sorted([candidates[i] for i in selected])
-        else:
-            # 求解失败，使用启发式备选
-            return self._heuristic_fallback(candidates, positions, prefix_bad, prefix_good, total_good, total_bad, min_samples)
-
-    def _add_monotonic_constraints_cp_sat(
-        self,
-        model: cp_model.CpModel,
-        x: List[IntVar],
-        candidates: np.ndarray,
-        positions: np.ndarray,
-        prefix_bad: np.ndarray,
-        prefix_good: np.ndarray,
-        total_good: int,
-        total_bad: int,
-        direction: str,
-    ) -> None:
-        """添加单调性约束到 CP-SAT 模型.
-
-        约束: 相邻箱的坏样本率必须单调递增/递减
-        由于 CP-SAT 不能直接处理非线性坏样本率计算，
-        这里使用简化实现：基于预计算的坏样本率顺序添加约束。
-        """
-        n_candidates = len(candidates)
-        n_segments = n_candidates + 1
-
-        # 预计算每个段的坏样本率
-        bad_rates = np.zeros(n_segments)
-        for i in range(n_segments):
-            if i == 0:
-                start = 0
-                end = int(positions[0])
-            elif i == n_candidates:
-                start = int(positions[i - 1])
-                end = len(prefix_bad) - 1
-            else:
-                start = int(positions[i - 1])
-                end = int(positions[i])
-            bad = int(prefix_bad[end] - prefix_bad[start])
-            good = int(prefix_good[end] - prefix_good[start])
-            count = bad + good
-            bad_rates[i] = bad / count if count > 0 else 0
-
-        eps = 1e-10
-
-        # 为每对相邻箱添加单调性约束
-        for i in range(n_segments - 1):
-            br_i = bad_rates[i]
-            br_j = bad_rates[i + 1]
-
-            if direction == "ascending":
-                # 坏样本率递增: br_i <= br_j
-                if br_i > br_j + eps:
-                    # 添加弱约束，让求解器倾向于选择单调的方向
-                    pass
-            elif direction == "descending":
-                # 坏样本率递减: br_i >= br_j
-                if br_i < br_j - eps:
-                    pass
-                for split_j in range(i + 1, n_candidates + 1):
-                    pass  # 约束在运行时动态添加
+        # 所有目标都从任意候选边界组合中求解；IV 使用动态规划，KS/Gini 与
+        # 单调约束使用有时限的确定性候选搜索。
+        return search_candidate_splits(
+            x_vals,
+            y_vals,
+            candidates,
+            objective=self.objective,
+            min_n_bins=self.min_n_bins,
+            max_n_bins=self.max_n_bins,
+            min_samples=min_samples,
+            max_samples=self._get_max_samples(n_total),
+            monotonic=self.monotonic,
+            time_limit=self.time_limit,
+        )
 
     def _add_iv_objective_cp_sat(
         self,
@@ -499,36 +388,6 @@ class CPSATBinning(BaseBinning):
         model.Add(objective_var == sum(iv_terms))
         model.Maximize(objective_var)
 
-    def _add_ks_objective_cp_sat(
-        self,
-        model: cp_model.CpModel,
-        x: List[IntVar],
-        candidates: np.ndarray,
-        positions: np.ndarray,
-        prefix_bad: np.ndarray,
-        prefix_good: np.ndarray,
-        total_good: int,
-        total_bad: int,
-    ) -> None:
-        """添加 KS 最大化目标函数到 CP-SAT 模型."""
-        # KS 优化类似 IV，也需要预计算和整数近似
-        pass
-
-    def _add_gini_objective_cp_sat(
-        self,
-        model: cp_model.CpModel,
-        x: List[IntVar],
-        candidates: np.ndarray,
-        positions: np.ndarray,
-        prefix_bad: np.ndarray,
-        prefix_good: np.ndarray,
-        total_good: int,
-        total_bad: int,
-    ) -> None:
-        """添加 Gini 最大化目标函数到 CP-SAT 模型."""
-        # Gini 系数优化
-        pass
-
     def _resolve_monotonic_direction(self, X: pd.Series, y: pd.Series) -> Optional[str]:
         """解析单调性方向.
 
@@ -599,7 +458,9 @@ class CPSATBinning(BaseBinning):
                 break
 
         # 局部搜索优化
-        selected = self._local_search(selected, candidates, positions, prefix_bad, prefix_good, total_good, total_bad, min_samples)
+        selected = self._local_search(
+            selected, candidates, positions, prefix_bad, prefix_good, total_good, total_bad, min_samples
+        )
 
         return [candidates[i] for i in selected]
 
@@ -739,7 +600,9 @@ class CPSATBinning(BaseBinning):
 
             return bins
 
-    def transform(self, X: Union[pd.DataFrame, np.ndarray], metric: str = "indices", **kwargs) -> Union[pd.DataFrame, np.ndarray]:
+    def transform(
+        self, X: Union[pd.DataFrame, np.ndarray], metric: str = "indices", **kwargs
+    ) -> Union[pd.DataFrame, np.ndarray]:
         """应用分箱转换."""
         if not self._is_fitted:
             raise NotFittedError("分箱器尚未拟合，请先调用fit方法")

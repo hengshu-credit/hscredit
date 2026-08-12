@@ -31,6 +31,14 @@ def _compute_iv_single(x: np.ndarray, y: np.ndarray, regularization: float = 1.0
     :param regularization: 正则化参数，避免除零
     :return: IV值
     """
+    if regularization <= 0:
+        raise ValueError("regularization 必须大于 0")
+
+    x = np.asarray(x)
+    y = np.asarray(y)
+    if x.shape[0] != y.shape[0]:
+        raise ValueError("特征与目标变量长度不一致")
+
     # 处理缺失值 - 兼容category和object类型
     # 先转换为object类型，然后用isnull判断
     if isinstance(x, pd.Series):
@@ -57,12 +65,18 @@ def _compute_iv_single(x: np.ndarray, y: np.ndarray, regularization: float = 1.0
     if n_cats <= 1:
         return 0.0
 
+    labels = set(np.unique(y_valid).tolist())
+    if not labels.issubset({0, 1}):
+        raise ValueError("IV 计算要求目标变量只包含 0 和 1")
+    if labels != {0, 1}:
+        return 0.0
+
     # 统计好坏样本
     event_mask = y_valid == 1
-    nonevent_mask = ~event_mask
+    nonevent_mask = y_valid == 0
 
-    event_tot = np.count_nonzero(event_mask) + 2 * regularization
-    nonevent_tot = np.count_nonzero(nonevent_mask) + 2 * regularization
+    event_tot = np.count_nonzero(event_mask) + n_cats * regularization
+    nonevent_tot = np.count_nonzero(nonevent_mask) + n_cats * regularization
 
     event_rates = np.zeros(n_cats, dtype=np.float64)
     nonevent_rates = np.zeros(n_cats, dtype=np.float64)
@@ -72,15 +86,11 @@ def _compute_iv_single(x: np.ndarray, y: np.ndarray, regularization: float = 1.0
         event_rates[i] = np.count_nonzero(mask & event_mask) + regularization
         nonevent_rates[i] = np.count_nonzero(mask & nonevent_mask) + regularization
 
-    # 避免极端值
-    bad_pos = (event_rates + nonevent_rates) == (2 * regularization + 1)
     event_rates /= event_tot
     nonevent_rates /= nonevent_tot
 
     # 计算IV
     ivs = (event_rates - nonevent_rates) * np.log(np.maximum(event_rates, 1e-10) / np.maximum(nonevent_rates, 1e-10))
-    ivs[bad_pos] = 0.0
-
     return np.sum(ivs).item()
 
 
@@ -88,7 +98,8 @@ def _compute_iv_feature(task):
     """编码并计算单个特征 IV。"""
     feature, series, y, regularization = task
     if series.dtype.name in ["object", "category"]:
-        values = pd.factorize(series)[0]
+        values = pd.factorize(series)[0].astype(float)
+        values[pd.isna(series).to_numpy()] = np.nan
     else:
         values = series.values
     return feature, _compute_iv_single(values, y, regularization)
@@ -177,6 +188,8 @@ class IVSelector(BaseFeatureSelector):
     Wiley；阈值经验区间（0.02/0.1/0.3/0.5）为业界通行标准。
     """
 
+    method_name = "IV值筛选"
+
     def __init__(
         self,
         threshold: float = 0.02,
@@ -204,7 +217,6 @@ class IVSelector(BaseFeatureSelector):
             parallel_config=parallel_config,
         )
         self.regularization = regularization
-        self.method_name = "IV值筛选"
 
     def _fit_impl(
         self,
@@ -218,6 +230,8 @@ class IVSelector(BaseFeatureSelector):
         """
         self._get_feature_names(X)
 
+        if y is None:
+            raise ValueError("IVSelector 需要目标变量 y")
         y = np.asarray(y)
 
         results = self._parallel_execute(

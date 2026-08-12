@@ -74,7 +74,7 @@ class ScorecardFeatureSelection(BaseFeatureSelector):
     :param corr_weights: 自定义相关性筛选权重，优先级高于corr_metric
     :param corr_binning_params: 透传给CorrSelector的分箱参数
     :param iv_regularization: IV计算正则项，默认为1.0
-    :param mode_dropna: 计算单一值占比时是否将缺失值作为独立类别，默认为True
+    :param mode_dropna: 计算单一值占比时是否排除缺失值，默认为True
     :param target: 目标变量列名，默认为'target'
     :param include: 强制保留特征列表
     :param exclude: 强制剔除特征列表
@@ -100,6 +100,8 @@ class ScorecardFeatureSelection(BaseFeatureSelector):
     >>> print(selector.selected_features_)
     >>> print(selector.stage_report_df_)
     """
+
+    method_name = '评分卡特征粗筛'
 
     def __init__(
         self,
@@ -147,7 +149,6 @@ class ScorecardFeatureSelection(BaseFeatureSelector):
         self.iv_regularization = iv_regularization
         self.mode_dropna = mode_dropna
         self.target_rm = target_rm
-        self.method_name = '评分卡特征粗筛'
 
     def fit(
         self,
@@ -338,7 +339,7 @@ class ScorecardFeatureSelection(BaseFeatureSelector):
         if self.corr_weights is not None:
             return self.corr_weights
 
-        if iv_scores is not None:
+        if iv_scores is not None and str(self.corr_metric).lower() == 'iv':
             return iv_scores.reindex(X.columns).fillna(0.0)
 
         if str(self.corr_metric).lower() == 'iv':

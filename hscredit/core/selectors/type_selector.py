@@ -65,6 +65,8 @@ class TypeSelector(BaseFeatureSelector):
         >>> selector.fit(X)
     """
 
+    method_name = "类型筛选"
+
     def __init__(
         self,
         dtype_include: Optional[Union[str, Type, List[str]]] = None,
@@ -92,7 +94,6 @@ class TypeSelector(BaseFeatureSelector):
         )
         self.dtype_include = dtype_include
         self.dtype_exclude = dtype_exclude
-        self.method_name = "类型筛选"
 
     def _fit_impl(
         self,

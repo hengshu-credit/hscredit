@@ -5,6 +5,8 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Union
 import numpy as np
 import pandas as pd
 
+from ._contracts import HandleUnknown, MISSING_BIN, SPECIAL_BIN, UNKNOWN_BIN, is_missing_marker, validate_handle_unknown
+
 
 CategoryOrder = Optional[
     Union[
@@ -12,17 +14,6 @@ CategoryOrder = Optional[
         Callable[[str, pd.Series, pd.Series], Sequence[Any]],
     ]
 ]
-
-
-def is_missing_marker(value: Any) -> bool:
-    """判断标量是否为统一缺失标记。"""
-    if value is None or value is pd.NA:
-        return True
-    try:
-        result = pd.isna(value)
-    except (TypeError, ValueError):
-        return False
-    return isinstance(result, (bool, np.bool_)) and bool(result)
 
 
 def _normalize_scalar(value: Any) -> Any:
@@ -152,31 +143,38 @@ def assign_category_groups(
     groups: Sequence[Sequence[Any]],
     special_codes: Optional[Sequence[Any]] = None,
     missing_separate: bool = True,
-    handle_unknown: str = "value",
+    handle_unknown: HandleUnknown = UNKNOWN_BIN,
 ) -> np.ndarray:
     """按类型安全规则应用类别组。"""
-    bins = np.full(len(x), -3, dtype=int)
+    unknown_policy = validate_handle_unknown(handle_unknown)
+    unknown_bin = UNKNOWN_BIN if unknown_policy == "raise" else unknown_policy
+    bins = np.full(len(x), unknown_bin, dtype=int)
+    user_owned = np.zeros(len(x), dtype=bool)
     missing_mask = x.map(is_missing_marker).to_numpy(dtype=bool)
     for bin_index, group in enumerate(groups):
         for category in group:
             if is_missing_marker(category):
-                bins[missing_mask] = bin_index
+                category_mask = missing_mask
             else:
-                bins[_typed_mask(x, category).to_numpy(dtype=bool)] = bin_index
+                category_mask = _typed_mask(x, category).to_numpy(dtype=bool)
+            bins[category_mask] = bin_index
+            user_owned |= category_mask
 
-    if missing_separate:
-        has_explicit_missing = any(any(is_missing_marker(value) for value in group) for group in groups)
-        if not has_explicit_missing:
-            bins[missing_mask] = -1
-
+    special_owned = np.zeros(len(x), dtype=bool)
     if special_codes:
         for special in special_codes:
-            bins[_typed_mask(x, special).to_numpy(dtype=bool)] = -2
+            special_mask = _typed_mask(x, special).to_numpy(dtype=bool) & ~user_owned
+            bins[special_mask] = SPECIAL_BIN
+            special_owned |= special_mask
 
-    unknown_mask = (bins == -3) & ~missing_mask
-    if handle_unknown == "error" and unknown_mask.any():
-        unknown_values = unique_non_missing_typed(x.iloc[np.flatnonzero(unknown_mask)])
-        raise ValueError(f"特征 '{feature}' 包含未知类别: {unknown_values}")
+    if missing_separate:
+        unresolved_missing = missing_mask & ~user_owned & ~special_owned
+        bins[unresolved_missing] = MISSING_BIN
+    if unknown_policy == "raise":
+        unresolved_unknown = (bins == UNKNOWN_BIN) & ~missing_mask & ~special_owned
+        if unresolved_unknown.any():
+            unknown_values = unique_non_missing_typed(x.loc[unresolved_unknown])
+            raise ValueError(f"特征 '{feature}' 在 transform 中出现训练期未知类别: {unknown_values}")
     return bins
 
 
@@ -218,6 +216,4 @@ def normalize_user_groups(
         unknown = [value for value in ordinary_values if not _contains_typed(observed_values, value)]
         if uncovered or unknown:
             raise ValueError(f"特征 '{feature}' 的自定义分箱必须完整覆盖训练类别；" f"未覆盖类别: {uncovered}，规则外类别: {unknown}")
-        if observed.map(is_missing_marker).any() and not missing_separate and not missing_seen:
-            raise ValueError(f"特征 '{feature}' 存在缺失值且 missing_separate=False，" "自定义分箱必须显式指定缺失值所属箱")
     return normalized

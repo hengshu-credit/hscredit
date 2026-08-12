@@ -50,6 +50,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from sklearn.base import BaseEstimator, TransformerMixin, clone
 
+from ._contracts import UNKNOWN_BIN, parse_numerical_user_splits
 from .optimal_binning import OptimalBinning
 from ..metrics._binning import compute_bin_stats
 from ...exceptions import HSCreditError, NotFittedError, ParallelExecutionError
@@ -202,8 +203,8 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
         n_jobs: Union[int, float] = -1,
         parallel_backend: Optional[str] = None,
         parallel_config: Optional[Dict[str, Any]] = None,
-        strict_user_splits_x: Optional[bool] = None,
-        strict_user_splits_y: Optional[bool] = None,
+        user_splits_fixed_x: Optional[Union[bool, List[bool]]] = None,
+        user_splits_fixed_y: Optional[Union[bool, List[bool]]] = None,
     ):
         # 目标变量
         self.target = target
@@ -249,8 +250,8 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
         self.n_jobs = n_jobs
         self.parallel_backend = parallel_backend
         self.parallel_config = parallel_config
-        self.strict_user_splits_x = strict_user_splits_x
-        self.strict_user_splits_y = strict_user_splits_y
+        self.user_splits_fixed_x = user_splits_fixed_x
+        self.user_splits_fixed_y = user_splits_fixed_y
 
         # 内部属性
         self.binner_x_: Optional[OptimalBinning] = None
@@ -333,7 +334,9 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
         if is_sklearn_style and isinstance(X, np.ndarray):
             # 二维数组直接作为两个特征的数值矩阵
             if X.ndim != 2 or X.shape[1] != 2:
-                raise HSCreditError(f"sklearn 风格需要 X 为二维数组且恰好有2列，" f"但得到 shape={X.shape}，请使用 features=['col1','col2'] 指定列名")
+                raise HSCreditError(
+                    f"sklearn 风格需要 X 为二维数组且恰好有2列，" f"但得到 shape={X.shape}，请使用 features=['col1','col2'] 指定列名"
+                )
             col_x = "feature_0"
             col_y = "feature_1"
             X_df = pd.DataFrame(X, columns=[col_x, col_y])
@@ -346,7 +349,9 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
         elif is_sklearn_style and isinstance(X, pd.DataFrame):
             # DataFrame：取前两列作为特征，不传 features
             if len(X.columns) < 2:
-                raise HSCreditError(f"sklearn 风格需要 X 至少有2列，但只有 {len(X.columns)} 列，" f"请使用 features=['col1','col2'] 指定列名")
+                raise HSCreditError(
+                    f"sklearn 风格需要 X 至少有2列，但只有 {len(X.columns)} 列，" f"请使用 features=['col1','col2'] 指定列名"
+                )
             col_x, col_y = X.columns[0], X.columns[1]
             self.feature_x_ = col_x
             self.feature_y_ = col_y
@@ -419,7 +424,9 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
         self._is_fitted = True
         return self
 
-    def transform(self, X: Union[pd.DataFrame, np.ndarray], metric: Literal["indices", "bins", "woe", "event_rate"] = "indices") -> pd.DataFrame:
+    def transform(
+        self, X: Union[pd.DataFrame, np.ndarray], metric: Literal["indices", "bins", "woe", "event_rate"] = "indices"
+    ) -> pd.DataFrame:
         """将新数据映射到二维分箱.
 
         :param X: 待转换的数据
@@ -461,7 +468,11 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
         if metric == "indices":
             values = merged
         elif metric == "bins":
-            values = np.array([self._bin_labels_2d_[b] if b >= 0 else ("特殊值" if b == -2 else "缺失值") for b in merged], dtype=object)
+            reserved_labels = {-1: "缺失值", -2: "特殊值", UNKNOWN_BIN: "未知值"}
+            values = np.array(
+                [self._bin_labels_2d_[b] if b >= 0 else reserved_labels.get(int(b), f"保留箱{b}") for b in merged],
+                dtype=object,
+            )
         elif metric == "woe":
             values = np.array([self._woe_map_2d_.get(int(b), np.nan) for b in merged], dtype=float)
         elif metric == "event_rate":
@@ -482,7 +493,9 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
         if input_features is not None:
             input_features = np.asarray(input_features, dtype=object)
             if not np.array_equal(input_features, self.feature_names_in_):
-                raise ValueError(f"input_features 必须与拟合时特征一致，期望 " f"{self.feature_names_in_.tolist()}，实际 {input_features.tolist()}")
+                raise ValueError(
+                    f"input_features 必须与拟合时特征一致，期望 " f"{self.feature_names_in_.tolist()}，实际 {input_features.tolist()}"
+                )
         return np.asarray([self.feature_name_], dtype=object)
 
     def get_cross_table(self) -> pd.DataFrame:
@@ -543,7 +556,10 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
         """获取边缘分箱统计（各特征独立分箱的统计）."""
         if not self._is_fitted:
             raise NotFittedError("分箱器尚未拟合，请先调用 fit 方法")
-        return {self.feature_x_: self.binner_x_.get_bin_table(self.feature_x_), self.feature_y_: self.binner_y_.get_bin_table(self.feature_y_)}
+        return {
+            self.feature_x_: self.binner_x_.get_bin_table(self.feature_x_),
+            self.feature_y_: self.binner_y_.get_bin_table(self.feature_y_),
+        }
 
     def get_bin_table(self, feature: Optional[str] = None) -> pd.DataFrame:
         """获取分箱统计表.
@@ -622,14 +638,16 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
             if feature == self.feature_name_:
                 normal = self.binning_table_[self.binning_table_["分箱"] >= 0]
                 return {
-                    "n_bins": self.n_bins_2d_,
+                    "n_bins_": self.n_bins_2d_,
                     "bin_table": self.binning_table_.copy(),
                     "iv": self.iv_2d_,
                     "ks": float(normal["分档KS值"].max()) if len(normal) else 0.0,
                     "solution": self.solution_.copy(),
                 }
             if feature not in (self.feature_x_, self.feature_y_):
-                raise HSCreditError(f"特征 '{feature}' 未找到，可用: " f"['{self.feature_x_}', '{self.feature_y_}', '{self.feature_name_}']")
+                raise HSCreditError(
+                    f"特征 '{feature}' 未找到，可用: " f"['{self.feature_x_}', '{self.feature_y_}', '{self.feature_name_}']"
+                )
             binner_inst = self.binner_x_ if feature == self.feature_x_ else self.binner_y_
             return _stats_for(binner_inst, feature)
         else:
@@ -677,8 +695,8 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
     def export_rules(self) -> Dict[str, List]:
         """导出分箱规则.
 
-        与 OptimalBinning.export_rules 保持一致。启用缺失值独立分箱的数值型特征，
-        末尾追加 np.nan 表示缺失值单独一箱。
+        与 OptimalBinning.export_rules 保持一致。数值规则中的 np.nan 位置只表示
+        缺失值归属的普通箱；独立 -1 缺失箱由 ``missing_separate`` 配置表达。
 
         :return: 分箱规则字典，格式同 OptimalBinning.export_rules
 
@@ -687,21 +705,15 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
         >>> binner = OptimalBinning2D()
         >>> binner.fit(df, y=df['target'], features=['age', 'income'])
         >>> rules = binner.export_rules()
-        >>> print(rules['age'])      # [25, 35, 45, np.nan]
-        >>> print(rules['income'])   # [5000, 10000, 20000, np.nan]
+        >>> print(rules['age'])      # [25, 35, 45]
+        >>> print(rules['income'])   # [5000, 10000, 20000]
         """
         if not self._is_fitted:
             raise NotFittedError("分箱器尚未拟合，请先调用 fit 方法")
 
-        def _export_one(splits: np.ndarray, missing_separate: bool) -> List:
-            arr = splits.tolist() if isinstance(splits, np.ndarray) else list(splits)
-            if missing_separate:
-                arr.append(np.nan)
-            return arr
-
         return {
-            self.feature_x_: _export_one(self.splits_x_, bool(self.binner_x_.missing_separate)),
-            self.feature_y_: _export_one(self.splits_y_, bool(self.binner_y_.missing_separate)),
+            self.feature_x_: self.binner_x_.export_rules()[self.feature_x_],
+            self.feature_y_: self.binner_y_.export_rules()[self.feature_y_],
         }
 
     def import_rules(self, rules: Dict[str, List]) -> "OptimalBinning2D":
@@ -722,15 +734,39 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
         if not self._is_fitted:
             raise NotFittedError("分箱器尚未拟合，请先调用 fit 方法")
 
+        candidate = clone(self)
         if self.feature_x_ in rules:
-            vals = rules[self.feature_x_]
-            self.user_splits_x = [v for v in vals if not (isinstance(v, float) and np.isnan(v))]
+            vals = list(rules[self.feature_x_])
+            parse_numerical_user_splits(self.feature_x_, vals)
+            candidate.user_splits_x = vals
+            candidate.user_splits_fixed_x = True
         if self.feature_y_ in rules:
-            vals = rules[self.feature_y_]
-            self.user_splits_y = [v for v in vals if not (isinstance(v, float) and np.isnan(v))]
+            vals = list(rules[self.feature_y_])
+            parse_numerical_user_splits(self.feature_y_, vals)
+            candidate.user_splits_y = vals
+            candidate.user_splits_fixed_y = True
+
+        training_X = self._X[[self.feature_x_, self.feature_y_]].copy()
+        training_y = self._y.copy()
+        candidate.fit(training_X, training_y, features=[self.feature_x_, self.feature_y_])
+        self.__dict__.clear()
+        self.__dict__.update(candidate.__dict__)
         return self
 
-    def plot(self, metric: Literal["bad_rate", "woe", "iv", "lift", "count"] = "bad_rate", figsize: Optional[tuple] = None, cmap: Optional[str] = None, annot: bool = True, fmt: str = ".2%", title: Optional[str] = None, xlabel: Optional[str] = None, ylabel: Optional[str] = None, save: Optional[str] = None, ax: Optional[Any] = None, **kwargs) -> Any:
+    def plot(
+        self,
+        metric: Literal["bad_rate", "woe", "iv", "lift", "count"] = "bad_rate",
+        figsize: Optional[tuple] = None,
+        cmap: Optional[str] = None,
+        annot: bool = True,
+        fmt: str = ".2%",
+        title: Optional[str] = None,
+        xlabel: Optional[str] = None,
+        ylabel: Optional[str] = None,
+        save: Optional[str] = None,
+        ax: Optional[Any] = None,
+        **kwargs,
+    ) -> Any:
         """绘制二维分箱热力图.
 
         :param metric: 显示指标，可选 'bad_rate'（默认）、'woe'、'iv'、'lift'、'count'
@@ -785,7 +821,17 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
             fig = ax.figure
             return_fig = False
 
-        sns.heatmap(matrix, ax=ax, cmap=cmap, annot=annot, fmt=fmt, linewidths=0.5, linecolor="white", cbar_kws={"label": self._get_metric_label(metric)}, **kwargs)
+        sns.heatmap(
+            matrix,
+            ax=ax,
+            cmap=cmap,
+            annot=annot,
+            fmt=fmt,
+            linewidths=0.5,
+            linecolor="white",
+            cbar_kws={"label": self._get_metric_label(metric)},
+            **kwargs,
+        )
 
         # 用粗线标出最终二维分箱边界，同一边界内的格子属于同一个箱。
         for i in range(self.n_bins_x_):
@@ -824,8 +870,22 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
         total_samples = self.cross_table_["样本总数"].sum()
         total_bad = self.cross_table_["坏样本数"].sum()
         overall_bad_rate = total_bad / total_samples if total_samples > 0 else 0.0
-        stats_text = f"总样本: {total_samples:,} | " f"坏样本: {total_bad:,} ({overall_bad_rate:.1%}) | " f"二维分箱: {self.n_bins_2d_} | " f"交互IV: {self.iv_interaction_:.4f}"
-        ax.text(0.5, 1.015, stats_text, transform=ax.transAxes, ha="center", va="bottom", fontsize=10, bbox=dict(boxstyle="round", facecolor="white", alpha=0.8))
+        stats_text = (
+            f"总样本: {total_samples:,} | "
+            f"坏样本: {total_bad:,} ({overall_bad_rate:.1%}) | "
+            f"二维分箱: {self.n_bins_2d_} | "
+            f"交互IV: {self.iv_interaction_:.4f}"
+        )
+        ax.text(
+            0.5,
+            1.015,
+            stats_text,
+            transform=ax.transAxes,
+            ha="center",
+            va="bottom",
+            fontsize=10,
+            bbox=dict(boxstyle="round", facecolor="white", alpha=0.8),
+        )
 
         plt.tight_layout()
 
@@ -834,7 +894,14 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
 
         return fig if return_fig else ax
 
-    def plot_3d(self, metric: Literal["bad_rate", "woe", "lift"] = "bad_rate", figsize: Optional[tuple] = None, title: Optional[str] = None, save: Optional[str] = None, **kwargs) -> Any:
+    def plot_3d(
+        self,
+        metric: Literal["bad_rate", "woe", "lift"] = "bad_rate",
+        figsize: Optional[tuple] = None,
+        title: Optional[str] = None,
+        save: Optional[str] = None,
+        **kwargs,
+    ) -> Any:
         """绘制三维表面图展示交互效应."""
         if not self._is_fitted:
             raise NotFittedError("分箱器尚未拟合，请先调用 fit 方法")
@@ -966,9 +1033,9 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
         if user_splits is not None:
             feature = self.feature_x_ if is_x else self.feature_y_
             params["user_splits"] = {feature: user_splits}
-        strict_user_splits = self.strict_user_splits_x if is_x else self.strict_user_splits_y
-        if strict_user_splits is not None:
-            params["strict_user_splits"] = strict_user_splits
+        user_splits_fixed = self.user_splits_fixed_x if is_x else self.user_splits_fixed_y
+        if user_splits_fixed is not None:
+            params["user_splits_fixed"] = user_splits_fixed
         return params
 
     def _fit_axis_binner(self, is_x: bool) -> OptimalBinning:
@@ -986,7 +1053,9 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
         """
         return OptimalBinning(**self._resolve_axis_params(is_x))
 
-    def _check_input(self, X: Union[pd.DataFrame, np.ndarray], y: Optional[Union[pd.Series, np.ndarray]] = None) -> Tuple[pd.DataFrame, pd.Series]:
+    def _check_input(
+        self, X: Union[pd.DataFrame, np.ndarray], y: Optional[Union[pd.Series, np.ndarray]] = None
+    ) -> Tuple[pd.DataFrame, pd.Series]:
         """检查并准备输入数据."""
         if isinstance(X, np.ndarray):
             X = pd.DataFrame(X, columns=[f"feature_{i}" for i in range(X.shape[1])])
@@ -1011,33 +1080,13 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
 
         return X, y
 
-    def _user_splits_include_missing(self, is_x: bool) -> bool:
-        """判断用户分箱规则是否显式声明缺失箱."""
-        splits = self.user_splits_x if is_x else self.user_splits_y
-        if splits is None:
-            return False
-
-        for value in splits:
-            if isinstance(value, (list, tuple, set, np.ndarray, pd.Series)):
-                values = value
-            else:
-                values = [value]
-            for item in values:
-                if item is None or (np.isscalar(item) and pd.isna(item)):
-                    return True
-        return False
-
     def _normalize_missing_bins(self, bins: np.ndarray, is_x: bool) -> np.ndarray:
-        """按轴级配置统一缺失值索引.
+        """保留一维分箱器已经学习或保留的缺失箱结果."""
+        return np.asarray(bins, dtype=int).copy()
 
-        部分底层分箱器即使 ``missing_separate=False`` 仍会为缺失值返回 -1。
-        二维分箱中不单独处理缺失值时，将其归入首个普通箱，避免样本被网格过滤。
-        """
-        result = np.asarray(bins, dtype=int).copy()
-        binner = self.binner_x_ if is_x else self.binner_y_
-        if not bool(binner.missing_separate):
-            result[result == -1] = 0
-        return result
+    def _axis_has_separate_missing(self, bins: np.ndarray, is_x: bool) -> bool:
+        """判断指定轴是否需要在二维网格中保留独立 -1 行或列."""
+        return bool(np.any(np.asarray(bins) == -1))
 
     def _compute_cross_table(self) -> None:
         """计算二维交叉分箱统计表."""
@@ -1049,12 +1098,9 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
         bins_y = self._normalize_missing_bins(bins_y, is_x=False)
 
         # 缺失箱扩展为独立行/列，与另一特征的所有普通箱组成笛卡尔积。
-        # 用户规则中的 np.nan/None 表示显式预留缺失箱，即使训练集暂时没有缺失值也要展示，
-        # 并保证后续 transform 遇到缺失值时能映射到该二维箱。
-        missing_separate_x = bool(self.binner_x_.missing_separate)
-        missing_separate_y = bool(self.binner_y_.missing_separate)
-        self._has_missing_x_ = bool(missing_separate_x and (np.any(bins_x == -1) or self._user_splits_include_missing(is_x=True)))
-        self._has_missing_y_ = bool(missing_separate_y and (np.any(bins_y == -1) or self._user_splits_include_missing(is_x=False)))
+        # user_splits 中的 NaN 表示普通箱位置；这里只为真实保留为 -1 的缺失值扩展行/列。
+        self._has_missing_x_ = self._axis_has_separate_missing(bins_x, is_x=True)
+        self._has_missing_y_ = self._axis_has_separate_missing(bins_y, is_x=False)
         grid_n_x = self.n_bins_x_ + int(self._has_missing_x_)
         grid_n_y = self.n_bins_y_ + int(self._has_missing_y_)
 
@@ -1381,6 +1427,7 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
         bins_y = self._normalize_missing_bins(bins_y, is_x=False)
         result = np.full(len(bins_x), -1, dtype=int)
         special = (bins_x == -2) | (bins_y == -2)
+        unknown = (bins_x == UNKNOWN_BIN) | (bins_y == UNKNOWN_BIN)
         grid_x = bins_x.copy()
         grid_y = bins_y.copy()
         if getattr(self, "_has_missing_x_", False):
@@ -1389,6 +1436,7 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
             grid_y[grid_y == -1] = self.n_bins_y_
         valid = (grid_x >= 0) & (grid_x < self.solution_.shape[0]) & (grid_y >= 0) & (grid_y < self.solution_.shape[1])
         result[special] = -2
+        result[unknown & ~special] = UNKNOWN_BIN
         result[valid] = self.solution_[grid_x[valid], grid_y[valid]]
         return result
 
@@ -1413,7 +1461,7 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
         self._bin_labels_2d_ = labels
 
         unique_bins = np.unique(merged)
-        special = {-1: "缺失值", -2: "特殊值"}
+        special = {-1: "缺失值", -2: "特殊值", UNKNOWN_BIN: "未知值"}
         label_by_id = {**{i: labels[i] for i in range(self.n_bins_2d_)}, **special}
 
         bin_labels = [label_by_id[int(bin_id)] for bin_id in unique_bins]
@@ -1485,7 +1533,10 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
             normal_count = self.n_bins_x_ if is_x else self.n_bins_y_
             return normal_count if value == -1 else value
 
-        self.cross_table_["分箱"] = [int(self.solution_[grid_index(i, True), grid_index(j, False)]) for i, j in zip(self.cross_table_["特征1分箱"], self.cross_table_["特征2分箱"])]
+        self.cross_table_["分箱"] = [
+            int(self.solution_[grid_index(i, True), grid_index(j, False)])
+            for i, j in zip(self.cross_table_["特征1分箱"], self.cross_table_["特征2分箱"])
+        ]
         self.cross_table_["分箱标签"] = self.cross_table_["分箱"].map(lookup)
         leading = [
             "分箱",
@@ -1499,9 +1550,16 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
             "样本总数",
             "样本占比",
         ]
-        self.cross_table_ = self.cross_table_[leading + [column for column in self.cross_table_.columns if column not in leading]]
+        self.cross_table_ = self.cross_table_[
+            leading + [column for column in self.cross_table_.columns if column not in leading]
+        ]
         category = (self.cross_table_["特征1分箱"] == -1).astype(int) * 2 + (self.cross_table_["特征2分箱"] == -1).astype(int)
-        self.cross_table_ = self.cross_table_.assign(_组合顺序=category).sort_values(["_组合顺序", "特征1分箱", "特征2分箱"], kind="stable").drop(columns="_组合顺序").reset_index(drop=True)
+        self.cross_table_ = (
+            self.cross_table_.assign(_组合顺序=category)
+            .sort_values(["_组合顺序", "特征1分箱", "特征2分箱"], kind="stable")
+            .drop(columns="_组合顺序")
+            .reset_index(drop=True)
+        )
 
     def _compute_bin_stats(
         self,
@@ -1601,7 +1659,14 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
 
     def __repr__(self) -> str:
         if self._is_fitted:
-            return f"OptimalBinning2D(" f"fitted=True, " f"features=['{self.feature_x_}', '{self.feature_y_}'], " f"prebins=[{self.n_bins_x_}, {self.n_bins_y_}], " f"n_bins_2d={self.n_bins_2d_}, " f"iv={self.iv_interaction_:.4f})"
+            return (
+                f"OptimalBinning2D("
+                f"fitted=True, "
+                f"features=['{self.feature_x_}', '{self.feature_y_}'], "
+                f"prebins=[{self.n_bins_x_}, {self.n_bins_y_}], "
+                f"n_bins_2d={self.n_bins_2d_}, "
+                f"iv={self.iv_interaction_:.4f})"
+            )
         else:
             return "OptimalBinning2D(fitted=False)"
 

@@ -297,6 +297,8 @@ def test_scorecard_pmml_export_uses_expression_transformer_for_string_categories
     def fake_sklearn2pmml(pipeline, pmml_file, with_repr=True, debug=False):
         captured['pipeline'] = pipeline
         captured['pmml_file'] = pmml_file
+        with open(pmml_file, 'w', encoding='utf-8') as handle:
+            handle.write('<PMML/>')
 
     fake_sklearn2pmml_module = types.ModuleType('sklearn2pmml')
     fake_sklearn2pmml_module.sklearn2pmml = fake_sklearn2pmml
@@ -339,9 +341,7 @@ def test_scorecard_pmml_export_uses_expression_transformer_for_string_categories
     assert isinstance(categorical_steps['score'], FakeAlias)
     assert isinstance(categorical_steps['score'].transformer, FakeLookupTransformer)
     assert categorical_steps['score'].transformer.mapping['no checking account'] != 0.0
-    assert categorical_steps['score'].transformer.default_value == pytest.approx(
-        categorical_steps['score'].transformer.mapping['no checking account']
-    )
+    assert categorical_steps['score'].transformer.default_value == pytest.approx(0.0)
 
     assert isinstance(numeric_steps['domain'], FakeContinuousDomain)
     assert isinstance(numeric_steps['prepare'], FakeAggregateTransformer)

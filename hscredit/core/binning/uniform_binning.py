@@ -3,7 +3,7 @@
 基于数值范围等距切分的分箱方法，适用于均匀分布的数据。
 """
 
-from typing import Union, List, Dict, Optional, Any
+from typing import Union, List, Dict, Optional, Any, Sequence
 import numpy as np
 import pandas as pd
 
@@ -78,7 +78,7 @@ class UniformBinning(BaseBinning):
         special_codes: Optional[List] = None,
         cat_cutoff: Optional[Union[float, int]] = None,
         category_order=None,
-        handle_unknown: str = "value",
+        handle_unknown: Union[int, str] = -3,
         left_clip: Optional[float] = None,
         right_clip: Optional[float] = None,
         force_numerical: bool = False,
@@ -86,9 +86,8 @@ class UniformBinning(BaseBinning):
         n_jobs: Union[int, float] = -1,
         parallel_backend: Optional[str] = None,
         parallel_config: Optional[Dict[str, Any]] = None,
-        split_points: Optional[Dict[str, List]] = None,
         user_splits: Optional[Dict[str, List]] = None,
-        strict_user_splits: bool = False,
+        user_splits_fixed: Optional[Union[bool, Dict[str, Union[bool, Sequence[bool]]]]] = None,
         **kwargs,
     ):
         super().__init__(
@@ -101,9 +100,8 @@ class UniformBinning(BaseBinning):
             missing_separate=missing_separate,
             special_codes=special_codes,
             cat_cutoff=cat_cutoff,
-            split_points=split_points,
             user_splits=user_splits,
-            strict_user_splits=strict_user_splits,
+            user_splits_fixed=user_splits_fixed,
             category_order=category_order,
             handle_unknown=handle_unknown,
             random_state=random_state,
@@ -132,6 +130,7 @@ class UniformBinning(BaseBinning):
         self._fit_features(X, y, "_fit_feature")
 
         self._finalize_categorical_fit()
+        self._finalize_reserved_bins(X, y)
         self._is_fitted = True
         return self
 
@@ -303,10 +302,14 @@ class UniformBinning(BaseBinning):
 
         # 转换为DataFrame
         if not isinstance(X, pd.DataFrame):
-            if isinstance(X, np.ndarray):
-                X = pd.DataFrame(X)
+            if isinstance(X, np.ndarray) and X.ndim == 1:
+                X = pd.DataFrame(X, columns=list(self.feature_names_in_))
             else:
-                X = pd.DataFrame(X)
+                X = pd.DataFrame(X, columns=list(self.feature_names_in_))
+        else:
+            unknown = [feature for feature in X.columns if feature not in self.splits_]
+            if unknown:
+                raise KeyError(f"转换数据包含未拟合特征: {unknown}")
 
         return self._transform_binning_features(
             X, metric, lambda feature: self._assign_bins(X[feature], feature), woe_default=0.0

@@ -28,6 +28,34 @@ def _safe_divide(numerator, denominator, default: float = 0.0) -> np.ndarray:
     return result
 
 
+def _risk_oriented_cumulative_sums(
+    bin_ids: np.ndarray,
+    good_values: np.ndarray,
+    bad_values: np.ndarray,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """从正常分箱中风险较高的一端计算累计好坏样本量。"""
+    bin_ids = np.asarray(bin_ids)
+    good_values = np.asarray(good_values, dtype=float)
+    bad_values = np.asarray(bad_values, dtype=float)
+
+    normal_positions = np.flatnonzero(bin_ids >= 0)
+    reserved_positions = np.flatnonzero(bin_ids < 0)
+    if len(normal_positions) > 1:
+        normal_bad_rates = _safe_divide(
+            bad_values[normal_positions],
+            good_values[normal_positions] + bad_values[normal_positions],
+        )
+        if normal_bad_rates[-1] > normal_bad_rates[0]:
+            normal_positions = normal_positions[::-1]
+
+    cumulative_order = np.concatenate([normal_positions, reserved_positions])
+    cumulative_good = np.empty_like(good_values, dtype=float)
+    cumulative_bad = np.empty_like(bad_values, dtype=float)
+    cumulative_good[cumulative_order] = np.cumsum(good_values[cumulative_order])
+    cumulative_bad[cumulative_order] = np.cumsum(bad_values[cumulative_order])
+    return cumulative_good, cumulative_bad
+
+
 def _normalize_curve_metric(metric: str) -> str:
     metric_norm = str(metric).strip().lower()
     aliases = {
@@ -443,7 +471,9 @@ def compute_bin_stats(
     :return: 分箱统计 DataFrame（中文列名）。``binary`` 模式主要列包括：
         ``分箱`` / ``分箱标签`` / ``样本总数`` / ``好样本数`` / ``坏样本数`` /
         ``样本占比`` / ``坏样本率`` / ``WOE值`` / ``分档IV值`` / ``LIFT值`` /
-        ``累积坏样本数`` / ``累积好样本数`` / ``分档KS值`` / ``坏账改善`` 等
+        ``累积坏样本数`` / ``累积好样本数`` / ``分档KS值`` / ``坏账改善`` 等。
+        累积类指标从正常分箱中坏样本率较高的一端开始计算，缺失值、特殊值等
+        保留箱最后纳入累计，输出行顺序保持不变
 
     **参考样例**
 
@@ -566,9 +596,8 @@ def _compute_bin_stats_binary(
     # 反映"每拒绝1%样本能带来多少坏账改善"
     risk_reject = _safe_divide(bad_improve, count_distr)
 
-    # 按分箱顺序计算累积指标
-    cum_good = np.cumsum(good_counts)
-    cum_bad = np.cumsum(bad_counts)
+    # 从正常分箱中风险较高的一端累计；缺失值、特殊值等保留箱最后纳入累计
+    cum_good, cum_bad = _risk_oriented_cumulative_sums(unique_bins, good_counts, bad_counts)
     cum_total = cum_good + cum_bad
 
     cum_bad_rate = _safe_divide(cum_bad, cum_total)
@@ -880,9 +909,8 @@ def _compute_bin_stats_amount_weighted(
     # 风险拒绝比 = 样本占比 = 该箱金额 / 全量金额
     risk_reject = amount_ratios
 
-    # 按分箱顺序计算累积指标
-    cum_good = np.cumsum(good_amounts)
-    cum_bad = np.cumsum(bad_amounts)
+    # 金额口径与样本口径保持一致，从正常分箱中风险较高的一端累计
+    cum_good, cum_bad = _risk_oriented_cumulative_sums(unique_bins, good_amounts, bad_amounts)
     cum_total = cum_good + cum_bad
 
     cum_bad_rate = _safe_divide(cum_bad, cum_total)
@@ -935,7 +963,8 @@ def _compute_bin_stats_amount_weighted(
 def add_margins(table: pd.DataFrame) -> pd.DataFrame:
     """为分箱表添加合计行.
 
-    在分箱统计表末尾追加一行“合计”，对计数类列求和、对率值类列按总体重算。
+    在分箱统计表末尾追加一行“合计”，对原始计数列求和、累计计数列取总体值，
+    对率值类列按总体重算。
     缺失值箱与特殊值箱被放在正常分箱之后、合计行之前。
     兼容单层表头与多级表头（MultiIndex），同时支持样本口径与金额口径。
 
@@ -986,15 +1015,18 @@ def add_margins(table: pd.DataFrame) -> pd.DataFrame:
     total_row = table.iloc[0].copy()
     total_row[bin_label_col] = '合计'
     
-    # 需要汇总的数值列（列名已统一）
+    # 需要汇总的原始计数列（累计计数不能再次求和）
     numeric_cols = []
+    cumulative_count_cols = []
     sample_total_col = None
     bad_sample_col = None
     
     for col in table.columns:
         col_name = col[1] if is_multi else col
-        if col_name in ['样本总数', '好样本数', '坏样本数', '累积好样本数', '累积坏样本数']:
+        if col_name in ['样本总数', '好样本数', '坏样本数']:
             numeric_cols.append(col)
+        if col_name in ['累积好样本数', '累积坏样本数']:
+            cumulative_count_cols.append(col)
         if col_name == '样本总数':
             sample_total_col = col
         if col_name == '坏样本数':
@@ -1003,6 +1035,21 @@ def add_margins(table: pd.DataFrame) -> pd.DataFrame:
     # 对每一列求和
     for col in numeric_cols:
         total_row[col] = table[col].sum()
+
+    # 合计行的累计计数就是总体计数，而不是各行前缀和的总和
+    cumulative_to_total = {'累积好样本数': '好样本数', '累积坏样本数': '坏样本数'}
+    for cumulative_col in cumulative_count_cols:
+        cumulative_name = cumulative_col[1] if is_multi else cumulative_col
+        total_name = cumulative_to_total[cumulative_name]
+        matching_total_col = None
+        for col in table.columns:
+            col_name = col[1] if is_multi else col
+            same_group = not is_multi or col[0] == cumulative_col[0]
+            if col_name == total_name and same_group:
+                matching_total_col = col
+                break
+        if matching_total_col is not None:
+            total_row[cumulative_col] = total_row[matching_total_col]
     
     # 计算占比类指标 = 1
     ratio_cols = []
@@ -1033,15 +1080,33 @@ def add_margins(table: pd.DataFrame) -> pd.DataFrame:
             # 缺少坏样本数/样本总数时无法重算总体坏样本率，置空避免沿用首行的错误值
             total_row[bad_rate_col] = np.nan
     
-    # 计算LIFT和坏账改善（合计行LIFT=1，坏账改善=1）
-    lift_cols = []
+    # 合计行表示总体：LIFT=1，单箱拒绝改善=0；累计全量指标回到总体基准
+    overall_metric_values = {
+        'LIFT值': 1.0,
+        '坏账改善': 0.0,
+        '风险拒绝比': 0.0,
+    }
+    cumulative_total_value = (
+        1.0
+        if (
+            bad_sample_col is not None
+            and sample_total_col is not None
+            and total_row[bad_sample_col] > 0
+            and total_row[sample_total_col] > 0
+        )
+        else 0.0
+    )
+    cumulative_metric_values = {
+        '累积LIFT值': cumulative_total_value,
+        '累积坏账改善': cumulative_total_value,
+        '累计风险拒绝比': cumulative_total_value,
+    }
     for col in table.columns:
         col_name = col[1] if is_multi else col
-        if col_name in ['LIFT值', '坏账改善', '累积LIFT值', '累积坏账改善']:
-            lift_cols.append(col)
-    
-    for col in lift_cols:
-        total_row[col] = 1.0
+        if col_name in overall_metric_values:
+            total_row[col] = overall_metric_values[col_name]
+        elif col_name in cumulative_metric_values:
+            total_row[col] = cumulative_metric_values[col_name]
     
     # WOE和IV值：分档WOE=0，分档IV=0，指标IV=各分档IV之和
     woe_col = None

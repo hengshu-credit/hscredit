@@ -113,14 +113,57 @@ def test_unknown_category_has_reserved_index_label_and_neutral_woe(factory):
     ],
     ids=["OptimalBinning", "UniformBinning"],
 )
-def test_handle_unknown_error_reports_feature_and_value(factory):
-    """防止 handle_unknown='error' 在转换时被忽略。"""
+def test_handle_unknown_can_route_to_an_existing_ordinary_bin(factory):
+    """用户指定的已有普通箱应接收预测期未知类别。"""
     X = pd.DataFrame({"city": ["A", "B", "A", "B"]})
     y = pd.Series([0, 1, 0, 1], name="target")
-    binner = factory(min_n_bins=2, max_n_bins=2, handle_unknown="error").fit(X, y)
+    binner = factory(min_n_bins=2, max_n_bins=2, handle_unknown=0).fit(X, y)
 
-    with pytest.raises(ValueError, match="city.*C"):
-        binner.transform(pd.DataFrame({"city": ["C"]}), metric="indices")
+    assert binner.transform(pd.DataFrame({"city": ["C"]}), metric="indices").iloc[0, 0] == 0
+
+
+@pytest.mark.parametrize(
+    "factory",
+    [
+        lambda **kwargs: OptimalBinning(method="uniform", **kwargs),
+        lambda **kwargs: UniformBinning(**kwargs),
+    ],
+    ids=["OptimalBinning", "UniformBinning"],
+)
+@pytest.mark.parametrize("metric", ["indices", "bins", "woe"])
+def test_handle_unknown_raise_rejects_unseen_categories_for_every_metric(factory, metric):
+    """handle_unknown='raise' 必须在所有 transform 输出模式下拒绝训练期未见类别。"""
+    X = pd.DataFrame({"city": ["A", "B", "A", "B"]})
+    y = pd.Series([0, 1, 0, 1], name="target")
+    binner = factory(min_n_bins=2, max_n_bins=2, handle_unknown="raise").fit(X, y)
+
+    with pytest.raises(ValueError, match="特征 'city'.*未知类别.*'C'"):
+        binner.transform(pd.DataFrame({"city": ["C"]}), metric=metric)
+
+
+@pytest.mark.parametrize(
+    "factory",
+    [
+        lambda **kwargs: OptimalBinning(method="uniform", **kwargs),
+        lambda **kwargs: UniformBinning(**kwargs),
+    ],
+    ids=["OptimalBinning", "UniformBinning"],
+)
+def test_handle_unknown_raise_does_not_override_missing_or_special_policies(factory):
+    """raise 只针对真正未知类别，不能抢占缺失值和特殊值的保留箱优先级。"""
+    X = pd.DataFrame({"city": ["A", "B", np.nan, "SPECIAL", "A", "B"]})
+    y = pd.Series([0, 1, 1, 0, 0, 1], name="target")
+    binner = factory(
+        min_n_bins=2,
+        max_n_bins=2,
+        special_codes=["SPECIAL"],
+        missing_separate=True,
+        handle_unknown="raise",
+    ).fit(X, y)
+
+    actual = binner.transform(pd.DataFrame({"city": [np.nan, "SPECIAL", "A"]}), metric="indices")["city"]
+
+    assert actual.tolist() == [-1, -2, 0]
 
 
 @pytest.mark.parametrize(

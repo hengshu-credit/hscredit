@@ -59,15 +59,16 @@ def _manual_score_from_points(scorecard: RoundScoreCard, X_raw: pd.DataFrame):
         for value in X_raw[feature].tolist():
             matched_score = None
             matched_label = None
-            for _, row in feature_points.iterrows():
+            categorical_bins = getattr(scorecard.binner, '_cat_bins_', {}).get(feature)
+            for row_index, row in feature_points.iterrows():
                 bin_label = row['变量分箱']
-                condition = scorecard._bin_label_to_python_condition('value', bin_label, special_codes=special_codes)
+                descriptor = (
+                    categorical_bins[row_index]
+                    if categorical_bins is not None and row_index < len(categorical_bins)
+                    else bin_label
+                )
+                condition = scorecard._bin_label_to_python_condition('value', descriptor, special_codes=special_codes)
                 matched = eval(condition, {'pd': pd}, {'value': value})
-
-                if not matched and isinstance(bin_label, str) and ',' in bin_label and not bin_label.strip().startswith(('[', '(')):
-
-                    categories = [item.strip() for item in bin_label.split(',') if item.strip()]
-                    matched = str(value) in categories
 
                 if matched:
                     matched_score = float(row['对应分数'])

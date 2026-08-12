@@ -93,12 +93,13 @@ def test_metric_summary_can_be_hidden():
 
 
 # ---------------------------------------------------------------------------
-# 需求3：小图时角标动态缩小，避免遮盖其他元素
+# 需求3：指标摘要字号与坐标轴标题一致，并保持防重叠布局
 # ---------------------------------------------------------------------------
-def test_metric_summary_shrinks_on_small_figure():
-    fs_default = _summary_text(bin_plot(_numeric_feature_table(), figsize=(12, 7))).get_fontsize()
-    fs_small = _summary_text(bin_plot(_numeric_feature_table(), figsize=(6, 4))).get_fontsize()
-    assert fs_small < fs_default
+@pytest.mark.parametrize("orientation", ["horizontal", "vertical"])
+def test_metric_summary_matches_axis_title_fontsize(orientation):
+    fig = bin_plot(_numeric_feature_table(), figsize=(10, 5), orientation=orientation)
+    axis_title = fig.axes[0].xaxis.label if orientation == "horizontal" else fig.axes[0].yaxis.label
+    assert _summary_text(fig).get_fontsize() == pytest.approx(axis_title.get_fontsize())
 
 
 def test_metric_summary_keeps_readable_font_on_report_figure():
@@ -107,10 +108,13 @@ def test_metric_summary_keeps_readable_font_on_report_figure():
     assert all(len(line.split("    ")) == 2 for line in summary.get_text().splitlines())
 
 
-@pytest.mark.parametrize(("figsize", "minimum"), [((12, 7), 12.0), ((6, 4), 8.0)])
-def test_metric_summary_uses_readable_font_floor(figsize, minimum):
-    summary = _summary_text(bin_plot(_numeric_feature_table(), figsize=figsize))
-    assert summary.get_fontsize() >= minimum
+def test_metric_summary_inherits_configured_axis_title_fontsize():
+    import matplotlib.pyplot as plt
+
+    with plt.rc_context({"axes.labelsize": 13.0}):
+        fig = bin_plot(_numeric_feature_table(), figsize=(10, 5))
+    assert fig.axes[0].xaxis.label.get_fontsize() == pytest.approx(13.0)
+    assert _summary_text(fig).get_fontsize() == pytest.approx(13.0)
 
 
 @pytest.mark.parametrize("figsize", [(12, 7), (10, 5), (6, 4)])
@@ -124,14 +128,14 @@ def test_metric_summary_stays_clear_of_legend(figsize):
     assert summary_bbox.x1 + gap_pixels <= legend_bbox.x0 + 1.0
 
 
-def test_embedded_metric_summary_keeps_readable_font_floor():
+def test_embedded_metric_summary_matches_axis_title_fontsize():
     import matplotlib.pyplot as plt
 
     fig, ax = plt.subplots(figsize=(4, 3))
     try:
         bin_plot(_numeric_feature_table(), ax=ax)
         summary = next(text for axis in fig.axes for text in axis.texts if "IV" in text.get_text())
-        assert summary.get_fontsize() >= 8.0
+        assert summary.get_fontsize() == pytest.approx(ax.xaxis.label.get_fontsize())
     finally:
         plt.close(fig)
 

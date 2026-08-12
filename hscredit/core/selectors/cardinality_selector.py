@@ -37,7 +37,7 @@ class CardinalitySelector(BaseFeatureSelector):
 
     :param threshold: 基数阈值，默认为10
         - 10: 移除唯一值数量超过10的类别型特征
-    :param dropna: 是否将NaN视为独立类别，默认为True
+    :param dropna: 是否在统计唯一值数量时排除NaN，默认为True
 
     **参考样例**
 
@@ -52,6 +52,8 @@ class CardinalitySelector(BaseFeatureSelector):
         >>> selector = CardinalitySelector(threshold=4)
         >>> selector.fit(X)
     """
+
+    method_name = "基数筛选"
 
     def __init__(
         self,
@@ -80,7 +82,6 @@ class CardinalitySelector(BaseFeatureSelector):
             parallel_config=parallel_config,
         )
         self.dropna = dropna
-        self.method_name = "基数筛选"
 
     def _fit_impl(
         self,

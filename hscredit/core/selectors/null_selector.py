@@ -61,6 +61,8 @@ class NullSelector(BaseFeatureSelector):
         ['a', 'b']
     """
 
+    method_name = "缺失率筛选"
+
     def __init__(
         self,
         threshold: float = 0.95,
@@ -86,7 +88,6 @@ class NullSelector(BaseFeatureSelector):
             parallel_backend=parallel_backend,
             parallel_config=parallel_config,
         )
-        self.method_name = "缺失率筛选"
 
     def _fit_impl(
         self,

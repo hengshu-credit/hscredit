@@ -62,6 +62,8 @@ class VarianceSelector(BaseFeatureSelector):
     https://scikit-learn.org/stable/modules/generated/sklearn.feature_selection.VarianceThreshold.html
     """
 
+    method_name = "方差筛选"
+
     def __init__(
         self,
         threshold: float = 0.0,
@@ -87,7 +89,6 @@ class VarianceSelector(BaseFeatureSelector):
             parallel_backend=parallel_backend,
             parallel_config=parallel_config,
         )
-        self.method_name = "方差筛选"
 
     def _fit_impl(
         self,
