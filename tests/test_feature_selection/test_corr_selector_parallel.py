@@ -269,6 +269,8 @@ def test_corr_threading_divides_total_budget_between_outer_and_native_threads(mo
     weights = {column: float(6 - index) for index, column in enumerate(X.columns)}
     observed_limits = []
 
+    monkeypatch.setattr("hscredit.utils.parallel.get_physical_cpu_count", lambda: 1)
+
     @contextmanager
     def recording_limits(*, limits):
         observed_limits.append(limits)
