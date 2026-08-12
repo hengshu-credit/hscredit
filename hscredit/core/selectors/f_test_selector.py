@@ -76,9 +76,9 @@ class FTestSelector(BaseFeatureSelector):
     def __init__(
         self,
         threshold: float = 0.0,
-        k: Union[int, str] = 'all',
+        k: Union[int, str] = "all",
         percentile: Optional[int] = None,
-        target: str = 'target',
+        target: str = "target",
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
         force_drop: Optional[List[str]] = None,
@@ -89,14 +89,20 @@ class FTestSelector(BaseFeatureSelector):
         parallel_config: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(
-            target=target, threshold=threshold, include=include,
-            exclude=exclude, force_drop=force_drop, n_jobs=n_jobs,
-            binner=binner, binning_params=binning_params,
-            parallel_backend=parallel_backend, parallel_config=parallel_config,
+            target=target,
+            threshold=threshold,
+            include=include,
+            exclude=exclude,
+            force_drop=force_drop,
+            n_jobs=n_jobs,
+            binner=binner,
+            binning_params=binning_params,
+            parallel_backend=parallel_backend,
+            parallel_config=parallel_config,
         )
         self.k = k
         self.percentile = percentile
-        self.method_name = 'F检验筛选'
+        self.method_name = "F检验筛选"
 
     def _fit_impl(
         self,
@@ -119,7 +125,7 @@ class FTestSelector(BaseFeatureSelector):
         # 处理类别变量
         X_encoded = X.copy()
         for col in X.columns:
-            if X[col].dtype == 'object':
+            if X[col].dtype == "object":
                 X_encoded[col] = pd.factorize(X[col])[0]
 
         # 缺失值处理：f_classif 不接受 NaN，使用列中位数填充，整列缺失时回退为 0，
@@ -127,17 +133,13 @@ class FTestSelector(BaseFeatureSelector):
         if X_encoded.isna().any().any():
             X_encoded = X_encoded.fillna(X_encoded.median(numeric_only=True)).fillna(0)
 
-        results = self._parallel_execute(
-            _compute_f_test_feature,
-            [(col, X_encoded[col].values, np.asarray(y)) for col in X.columns],
-            task_labels=X.columns,
-        )
-        f_scores = np.array([score for _, score, _ in results])
-        p_values = np.array([p_value for _, _, p_value in results])
+        self._validate_parallel_configuration()
+        # f_classif 原生支持二维矩阵，整表计算可复用中心化/校验开销。
+        f_scores, _ = f_classif(X_encoded.values, np.asarray(y))
 
         # 处理NaN
         f_scores = np.nan_to_num(f_scores, nan=0.0)
-        
+
         self.scores_ = pd.Series(f_scores, index=X.columns)
 
         # 选择特征
@@ -157,4 +159,4 @@ class FTestSelector(BaseFeatureSelector):
             selected_mask = f_scores >= self.threshold
 
         self.selected_features_ = X.columns[selected_mask].tolist()
-        self._drop_reason = f'F值 < {self.threshold}'
+        self._drop_reason = f"F值 < {self.threshold}"

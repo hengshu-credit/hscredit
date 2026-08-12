@@ -12,6 +12,7 @@ from sklearn.base import clone
 
 from hscredit.core import encoders
 from hscredit.core.encoders import (
+    BaseEncoder,
     CardinalityEncoder,
     CatBoostEncoder,
     CountEncoder,
@@ -79,11 +80,7 @@ def test_all_exported_encoders_expose_explicit_parallel_parameters():
     for cls in concrete:
         params = inspect.signature(cls.__init__).parameters
         absent = [name for name in ("n_jobs", "parallel_backend", "parallel_config") if name not in params]
-        wrong_default = [
-            name
-            for name, expected in (("n_jobs", -1), ("parallel_backend", None), ("parallel_config", None))
-            if name in params and params[name].default != expected
-        ]
+        wrong_default = [name for name, expected in (("n_jobs", -1), ("parallel_backend", None), ("parallel_config", None)) if name in params and params[name].default != expected]
         if absent or wrong_default:
             missing[cls.__name__] = {"缺失": absent, "默认值错误": wrong_default}
     assert missing == {}
@@ -126,6 +123,28 @@ def test_encoder_parallel_fit_transform_matches_serial(encoder_factory, backend,
     assert serial.export_mapping() == parallel.export_mapping()
     pd.testing.assert_frame_equal(serial.transform(X), parallel.transform(X), check_exact=True)
     pd.testing.assert_frame_equal(serial.fit_transform(X, y), parallel.fit_transform(X, y), check_exact=True)
+
+
+def test_automatic_encoder_transform_uses_shared_memory_strategy(monkeypatch, encoder_xy):
+    """映射型 transform 不得默认向 loky 重复序列化完整编码器。"""
+    X, _ = encoder_xy
+    calls = []
+    original = BaseEncoder._parallel_execute
+
+    def recording_execute(self, function, tasks, **kwargs):
+        calls.append((function.__name__, kwargs.get("default_backend"), kwargs.get("workload")))
+        return original(self, function, tasks, **kwargs)
+
+    monkeypatch.setattr(BaseEncoder, "_parallel_execute", recording_execute)
+    encoder = CountEncoder(cols=["a", "b"], n_jobs=-1).fit(X)
+    encoder.transform(X)
+
+    transform_calls = [call for call in calls if call[0] == "_transform_encoder_column_worker"]
+    assert len(transform_calls) == 1
+    _, backend, workload = transform_calls[0]
+    assert backend == "threading"
+    assert workload.capability == "thread_safe"
+    assert workload.auto_max_workers == 8
 
 
 @pytest.mark.parametrize("backend", [None, "threading", "loky"])
@@ -183,12 +202,8 @@ def test_failed_parallel_refit_preserves_complete_previous_model():
     [
         lambda n, b: OrdinalEncoder(cols=["a", "b"], n_jobs=n, parallel_backend=b),
         lambda n, b: QuantileEncoder(cols=["a", "b"], n_jobs=n, parallel_backend=b),
-        lambda n, b: CatBoostEncoder(
-            cols=["a", "b"], sigma=0.05, random_state=42, n_jobs=n, parallel_backend=b
-        ),
-        lambda n, b: CardinalityEncoder(
-            cols=["a", "b"], max_categories=3, special_values=[3], n_jobs=n, parallel_backend=b
-        ),
+        lambda n, b: CatBoostEncoder(cols=["a", "b"], sigma=0.05, random_state=42, n_jobs=n, parallel_backend=b),
+        lambda n, b: CardinalityEncoder(cols=["a", "b"], max_categories=3, special_values=[3], n_jobs=n, parallel_backend=b),
     ],
 )
 @pytest.mark.parametrize("backend", ["threading", "loky"])
@@ -239,27 +254,20 @@ MISSING_LIKE_FACTORIES = [
 
 
 def _missing_key_signature(mapping):
-    return [
-        (type(key).__module__, type(key).__name__, repr(key), value)
-        for key, value in mapping.items()
-    ]
+    return [(type(key).__module__, type(key).__name__, repr(key), value) for key, value in mapping.items()]
 
 
 @pytest.mark.parametrize("name,factory", MISSING_LIKE_FACTORIES)
 @pytest.mark.parametrize("backend", ["threading", "loky"])
 def test_missing_like_keys_keep_serial_mapping_export_import_and_transform(name, factory, backend):
     """将 None/NaT/NA 误当浮点 NaN 归一时，本测试应失败。"""
-    X = pd.DataFrame(
-        {"a": pd.Series([None, None, float("nan"), pd.NaT, pd.NA, "文本"], dtype=object)}
-    )
+    X = pd.DataFrame({"a": pd.Series([None, None, float("nan"), pd.NaT, pd.NA, "文本"], dtype=object)})
     y = pd.Series([0, 1, 0, 1, 0, 1])
 
     serial = factory(1, None).fit(X, y)
     parallel = factory(2, backend).fit(X, y)
     assert _missing_key_signature(serial.mapping_["a"]) == _missing_key_signature(parallel.mapping_["a"])
-    assert _missing_key_signature(serial.export_mapping()["mapping_"]["a"]) == _missing_key_signature(
-        parallel.export_mapping()["mapping_"]["a"]
-    )
+    assert _missing_key_signature(serial.export_mapping()["mapping_"]["a"]) == _missing_key_signature(parallel.export_mapping()["mapping_"]["a"])
 
     expected = serial.transform(X)
     pd.testing.assert_frame_equal(expected, parallel.transform(X), check_exact=True)
@@ -284,12 +292,7 @@ def test_float_nan_normalization_does_not_capture_other_scalar_types():
 
 
 def _typed_float_nan_signature(mapping):
-    return [
-        (type(key).__module__, type(key).__name__, value)
-        for key, value in mapping.items()
-        if type(key) is float or isinstance(key, np.floating)
-        if np.isnan(key)
-    ]
+    return [(type(key).__module__, type(key).__name__, value) for key, value in mapping.items() if type(key) is float or isinstance(key, np.floating) if np.isnan(key)]
 
 
 def test_pandas_value_counts_keeps_float_nan_buckets_by_scalar_type():
@@ -499,9 +502,7 @@ def test_target_noise_fixed_seed_matches_thread_and_loky(encoder_xy):
     serial = TargetEncoder(cols=columns, noise=0.1, random_state=42, n_jobs=1).fit(X, y)
     expected = serial.transform(X, y)
     for backend in ("threading", "loky"):
-        parallel = TargetEncoder(
-            cols=columns, noise=0.1, random_state=42, n_jobs=2, parallel_backend=backend
-        ).fit(X, y)
+        parallel = TargetEncoder(cols=columns, noise=0.1, random_state=42, n_jobs=2, parallel_backend=backend).fit(X, y)
         pd.testing.assert_frame_equal(expected, parallel.transform(X, y), check_exact=True)
 
 
@@ -558,15 +559,11 @@ def test_loky_refit_failure_preserves_previous_complete_model():
 
 def test_successful_fit_preserves_mutable_parameter_identity():
     ordinal_mapping = {"a": {"x": 1, "y": 2}}
-    ordinal = OrdinalEncoder(cols=["a"], mapping=ordinal_mapping, n_jobs=2).fit(
-        pd.DataFrame({"a": ["x", "y"]})
-    )
+    ordinal = OrdinalEncoder(cols=["a"], mapping=ordinal_mapping, n_jobs=2).fit(pd.DataFrame({"a": ["x", "y"]}))
     assert ordinal.mapping is ordinal_mapping
 
     special_values = ["特殊"]
-    cardinality = CardinalityEncoder(cols=["a"], special_values=special_values, n_jobs=2).fit(
-        pd.DataFrame({"a": ["特殊", "x", "y"]})
-    )
+    cardinality = CardinalityEncoder(cols=["a"], special_values=special_values, n_jobs=2).fit(pd.DataFrame({"a": ["特殊", "x", "y"]}))
     assert cardinality.special_values is special_values
 
 

@@ -8,15 +8,76 @@ import numpy as np
 import pandas as pd
 from typing import List, Dict, Optional, Union, Literal, Any, Callable, Tuple
 
-from .utils import infer_feature_types, validate_dataframe
+from ...utils.parallel import parallel_execute
+from .utils import _eda_workload, infer_feature_types, validate_dataframe
+
+
+def _psm_binning_worker(task):
+    """为单个客群分层字段计算分箱边界。"""
+    series, column, method, n_bins, child_n_jobs, parallel_backend, parallel_config = task
+    from ..binning import QuantileBinning, TreeBinning, UniformBinning
+
+    common = {
+        "n_jobs": child_n_jobs,
+        "parallel_backend": parallel_backend,
+        "parallel_config": parallel_config,
+    }
+    if method == "uniform":
+        binner = UniformBinning(n_bins=n_bins, **common)
+    elif method == "tree":
+        binner = TreeBinning(max_depth=int(np.log2(n_bins)) + 1, **common)
+    else:
+        binner = QuantileBinning(max_n_bins=n_bins, **common)
+    if len(series) < 2:
+        return column, []
+    # BaseBinning 的双 API 要求二元 y；Quantile/Uniform 不使用 y 决定切点，
+    # Tree 在本无标签监控入口中使用稳定的交替伪标签以保留既有 method 选项。
+    dummy_target = pd.Series(np.resize([0, 1], len(series)), index=series.index)
+    binner.fit(series.to_frame(name=column), dummy_target)
+    splits = np.asarray(binner.splits_.get(column, []), dtype=float)
+    return column, [-np.inf, *splits.tolist(), np.inf]
+
+
+def _psm_stats_worker(task):
+    """计算一个 PSM 维度的统计行。"""
+    return _calc_psm_stats(*task)
+
+
+def _feature_group_stats_worker(task):
+    """计算一个分组内单个特征的全部基础与目标统计。"""
+    series, y_series, feature, group_label, group_keys, group_values, stat_funcs, y_stat_funcs, overall = task
+    rows = []
+    for stat_name, stat_func in stat_funcs.items():
+        try:
+            value = stat_func(series)
+        except Exception:
+            value = np.nan
+        row = {"特征名": feature, "统计项": stat_name, "分组": group_label}
+        for index, group_key in enumerate(group_keys):
+            column = group_key if overall else group_key.replace("_time_group", "时间分组")
+            row[column] = group_values[index]
+        row["值"] = value
+        rows.append(row)
+    for stat_name, stat_func in y_stat_funcs.items():
+        try:
+            value = stat_func(series, y_series)
+        except Exception:
+            value = np.nan
+        row = {"特征名": feature, "统计项": stat_name, "分组": group_label}
+        for index, group_key in enumerate(group_keys):
+            column = group_key if overall else group_key.replace("_time_group", "时间分组")
+            row[column] = group_values[index]
+        row["值"] = value
+        rows.append(row)
+    return rows
 
 
 def data_info(df: pd.DataFrame) -> pd.DataFrame:
     """数据集基础信息统计.
-    
+
     :param df: 输入数据
     :return: 数据集信息DataFrame，列包括[信息项, 值]
-    
+
     **参考样例**
 
     >>> info = data_info(df)
@@ -31,61 +92,59 @@ def data_info(df: pd.DataFrame) -> pd.DataFrame:
     6    内存使用(MB)      15.5
     """
     validate_dataframe(df, check_empty=False)
-    
+
     if df.empty:
-        return pd.DataFrame({'信息项': ['样本数（行）', '特征数（列）'], '值': [0, 0]})
-    
+        return pd.DataFrame({"信息项": ["样本数（行）", "特征数（列）"], "值": [0, 0]})
+
     # 推断特征类型
     feature_types = infer_feature_types(df)
     type_counts = pd.Series(feature_types).value_counts().to_dict()
-    
+
     # 计算内存使用
     memory_mb = df.memory_usage(deep=True).sum() / 1024 / 1024
-    
+
     # 缺失值统计
     missing_cols = (df.isnull().sum() > 0).sum()
     total_missing = df.isnull().sum().sum()
-    
+
     info_data = {
-        '信息项': [
-            '样本数（行）',
-            '特征数（列）',
-            '数值型特征',
-            '分类型特征',
-            '日期型特征',
-            '常数特征',
-            'ID特征',
-            '缺失值列数',
-            '总缺失值数',
-            '内存使用(MB)',
+        "信息项": [
+            "样本数（行）",
+            "特征数（列）",
+            "数值型特征",
+            "分类型特征",
+            "日期型特征",
+            "常数特征",
+            "ID特征",
+            "缺失值列数",
+            "总缺失值数",
+            "内存使用(MB)",
         ],
-        '值': [
+        "值": [
             len(df),
             len(df.columns),
-            type_counts.get('numerical', 0),
-            type_counts.get('categorical', 0),
-            type_counts.get('datetime', 0),
-            type_counts.get('constant', 0),
-            type_counts.get('id', 0),
+            type_counts.get("numerical", 0),
+            type_counts.get("categorical", 0),
+            type_counts.get("datetime", 0),
+            type_counts.get("constant", 0),
+            type_counts.get("id", 0),
             missing_cols,
             total_missing,
             round(memory_mb, 2),
-        ]
+        ],
     }
-    
+
     return pd.DataFrame(info_data)
 
 
-def missing_analysis(df: pd.DataFrame,
-                    threshold: float = 0.0,
-                    features: List[str] = None) -> pd.DataFrame:
+def missing_analysis(df: pd.DataFrame, threshold: float = 0.0, features: List[str] = None) -> pd.DataFrame:
     """缺失值分析.
-    
+
     :param df: 输入数据
     :param threshold: 缺失率阈值，仅返回缺失率>=该值的特征
     :param features: 指定分析的特征列表，None则分析全部
     :return: 缺失值分析DataFrame，列包括[特征名, 缺失数, 缺失率, 非空数, 查得率]
-    
+
     **参考样例**
 
     >>> missing = missing_analysis(df, threshold=0.05)
@@ -95,33 +154,35 @@ def missing_analysis(df: pd.DataFrame,
     1  income    500      5.00   9500     95.0
     """
     validate_dataframe(df)
-    
+
     if features is None:
         features = df.columns.tolist()
-    
+
     total = len(df)
     results = []
-    
+
     for col in features:
         if col not in df.columns:
             continue
-        
+
         missing_count = df[col].isnull().sum()
         missing_rate = missing_count / total
-        
+
         if missing_rate >= threshold:
-            results.append({
-                '特征名': col,
-                '缺失数': int(missing_count),
-                '缺失率(%)': round(missing_rate * 100, 2),
-                '非空数': int(total - missing_count),
-                '查得率(%)': round((1 - missing_rate) * 100, 2),
-            })
-    
+            results.append(
+                {
+                    "特征名": col,
+                    "缺失数": int(missing_count),
+                    "缺失率(%)": round(missing_rate * 100, 2),
+                    "非空数": int(total - missing_count),
+                    "查得率(%)": round((1 - missing_rate) * 100, 2),
+                }
+            )
+
     result_df = pd.DataFrame(results)
     if not result_df.empty:
-        result_df = result_df.sort_values('缺失率(%)', ascending=False).reset_index(drop=True)
-    
+        result_df = result_df.sort_values("缺失率(%)", ascending=False).reset_index(drop=True)
+
     return result_df
 
 
@@ -131,21 +192,23 @@ def feature_summary(
     y: Optional[Union[str, pd.Series, np.ndarray, List, Tuple]] = None,
     val_df: Optional[pd.DataFrame] = None,
     models: Optional[Dict[str, Any]] = None,
-    model_type: Optional[Literal['xgboost', 'lightgbm', 'catboost', 'randomforest']] = None,
+    model_type: Optional[Literal["xgboost", "lightgbm", "catboost", "randomforest"]] = None,
     model_params: Optional[Dict] = None,
     max_n_bins: int = 10,
-    psi_method: Literal['random_split', 'group_col', 'date_col'] = 'random_split',
+    psi_method: Literal["random_split", "group_col", "date_col"] = "random_split",
     psi_group_col: Optional[str] = None,
     psi_date_col: Optional[str] = None,
-    psi_freq: str = 'M',
+    psi_freq: str = "M",
     psi_test_size: float = 0.3,
     percentiles: List[float] = None,
     random_state: int = 42,
     numeric_as_categorical: Optional[List[str]] = None,
     force_numeric: Optional[List[str]] = None,
     n_jobs: int = -1,
+    parallel_backend: Optional[str] = None,
+    parallel_config: Optional[Dict[str, Any]] = None,
     show_progress: bool = False,
-    binning_method: str = 'quantile',
+    binning_method: str = "quantile",
     binning_params: Optional[Dict[str, Any]] = None,
 ) -> pd.DataFrame:
     """综合特征描述统计.
@@ -178,6 +241,8 @@ def feature_summary(
     :param numeric_as_categorical: 强制视为分类变量的数值列名列表（仅当指定时才生效）
     :param force_numeric: 强制视为数值变量的列名列表（仅当指定时才生效）
     :param n_jobs: 并行工作数。-1根据数据规模保守推断，1为串行，正整数为明确指定
+    :param parallel_backend: 显式 joblib 后端；指定后优先于自动后端选择
+    :param parallel_config: 统一并行扩展配置，不会被函数原地修改
     :param show_progress: 是否显示已处理字段数、总字段数和当前处理字段
     :param binning_method: IV、趋势和PSI共用的分箱方法，默认'quantile'（等频分箱）
     :param binning_params: 传给OptimalBinning的扩展参数。外层 binning_method、max_n_bins、
@@ -239,10 +304,10 @@ def feature_summary(
     ... )
     """
     validate_dataframe(df)
-    
+
     if percentiles is None:
         percentiles = [0.01, 0.05, 0.25, 0.5, 0.75, 0.95, 0.99]
-    
+
     if features is None:
         if isinstance(y, str):
             features = [c for c in df.columns if c != y]
@@ -250,14 +315,14 @@ def feature_summary(
             features = df.columns.tolist()
         if len(features) == 0:
             features = df.columns.tolist()
-    
+
     # 获取目标变量。外部数组型目标按位置匹配，不受双方索引标签影响。
     from ._feature_summary import _normalize_target
 
     y_series = _normalize_target(df, y)
     if isinstance(y, str) and y in features:
         features = [f for f in features if f != y]
-    
+
     valid_features = [feature for feature in features if feature in df.columns]
     from ._feature_summary import build_feature_summary_fields
 
@@ -277,24 +342,26 @@ def feature_summary(
         psi_test_size=psi_test_size,
         random_state=random_state,
         n_jobs=n_jobs,
+        parallel_backend=parallel_backend,
+        parallel_config=parallel_config,
         show_progress=show_progress,
         binning_method=binning_method,
         binning_params=binning_params,
     )
-    
+
     # 特征重要性（传入已训练模型）
     if models is not None:
         for model_name, model in models.items():
             # 统一使用 BaseRiskModel 的 get_feature_importances() 方法
-            if hasattr(model, 'get_feature_importances'):
+            if hasattr(model, "get_feature_importances"):
                 try:
                     importances = model.get_feature_importances()
                     if isinstance(importances, pd.Series):
                         # Series索引为特征名，值为重要性
-                        results_df[f'{model_name}重要性'] = importances.reindex(features)
+                        results_df[f"{model_name}重要性"] = importances.reindex(features)
                 except Exception:
                     pass
-    
+
     # 自动训练模型获取特征重要性（使用hscredit统一封装模型）
     if model_type is not None and y_series is not None:
         try:
@@ -302,10 +369,7 @@ def feature_summary(
             valid_features = [f for f in features if f in df.columns and df[f].notna().sum() > 0]
 
             # 只保留数值型特征（模型无法处理object/datetime等类型）
-            numeric_features = [
-                f for f in valid_features
-                if pd.api.types.is_numeric_dtype(df[f])
-            ]
+            numeric_features = [f for f in valid_features if pd.api.types.is_numeric_dtype(df[f])]
 
             if len(numeric_features) == 0:
                 raise ValueError("没有数值型特征可用于训练模型")
@@ -313,39 +377,44 @@ def feature_summary(
             X_train = df[numeric_features].fillna(df[numeric_features].median())
 
             # 默认参数
-            default_params = {'random_state': random_state}
+            default_params = {"random_state": random_state}
             if model_params:
                 default_params.update(model_params)
 
             # 根据模型类型使用hscredit统一封装的模型类
             model_class = None
-            if model_type == 'xgboost':
+            if model_type == "xgboost":
                 try:
                     from ..models import XGBoostRiskModel
+
                     model_class = XGBoostRiskModel
                 except ImportError:
                     pass
-            elif model_type == 'lightgbm':
+            elif model_type == "lightgbm":
                 try:
                     from ..models import LightGBMRiskModel
+
                     model_class = LightGBMRiskModel
                 except ImportError:
                     pass
-            elif model_type == 'catboost':
+            elif model_type == "catboost":
                 try:
                     from ..models import CatBoostRiskModel
+
                     model_class = CatBoostRiskModel
                 except ImportError:
                     pass
-            elif model_type in ('randomforest', 'rf'):
+            elif model_type in ("randomforest", "rf"):
                 try:
                     from ..models import RandomForestRiskModel
+
                     model_class = RandomForestRiskModel
                 except ImportError:
                     pass
-            elif model_type == 'logistic':
+            elif model_type == "logistic":
                 try:
                     from ..models import LogisticRegression
+
                     model_class = LogisticRegression
                 except ImportError:
                     pass
@@ -358,26 +427,26 @@ def feature_summary(
             model.fit(X_train, y_series)
             importances = model.get_feature_importances()
             if isinstance(importances, pd.Series):
-                results_df[f'{model_type}重要性'] = importances.reindex(numeric_features)
+                results_df[f"{model_type}重要性"] = importances.reindex(numeric_features)
         except Exception:
             # 训练失败不中断
             pass
-    
+
     # 重置索引，使特征名成为列
     results_df = results_df.reset_index()
 
     # 将特征效果指标（特征重要性、KS、IV、PSI、趋势）调整到靠前位置
     # 基础统计列之后的合理位置：放在缺失率之后，唯一值数之前
-    base_cols = ['特征名', '字段类型', '样本数', '缺失数', '缺失率']
+    base_cols = ["特征名", "字段类型", "样本数", "缺失数", "缺失率"]
     effect_cols = [c for c in results_df.columns if c not in base_cols]
     # 特征重要性列（包含"重要性"字样）放最前，KS/IV/趋势/PSI紧随其后，其他放最后
     importance_cols = []
     metric_cols = []
     other_effect = []
     for c in effect_cols:
-        if '重要性' in c:
+        if "重要性" in c:
             importance_cols.append(c)
-        elif c in ('KS', 'IV', 'PSI', '趋势'):
+        elif c in ("KS", "IV", "PSI", "趋势"):
             metric_cols.append(c)
         else:
             other_effect.append(c)
@@ -387,135 +456,128 @@ def feature_summary(
     return results_df
 
 
-def numeric_summary(df: pd.DataFrame,
-                   features: List[str] = None,
-                   percentiles: List[float] = None) -> pd.DataFrame:
+def numeric_summary(df: pd.DataFrame, features: List[str] = None, percentiles: List[float] = None) -> pd.DataFrame:
     """数值特征详细统计.
-    
+
     :param df: 输入数据
     :param features: 指定分析的特征列表，None则分析全部数值型特征
     :param percentiles: 额外分位数，默认[0.01, 0.05, 0.95, 0.99]
     :return: 数值特征统计DataFrame
-    
+
     **参考样例**
 
     >>> num_stats = numeric_summary(df)
     >>> print(num_stats[['特征名', '均值', '标准差', '偏度', '峰度']])
     """
     validate_dataframe(df)
-    
+
     if percentiles is None:
         percentiles = [0.01, 0.05, 0.95, 0.99]
-    
+
     if features is None:
         features = df.select_dtypes(include=[np.number]).columns.tolist()
     else:
         features = [f for f in features if f in df.columns and pd.api.types.is_numeric_dtype(df[f])]
-    
+
     results = []
-    
+
     for col in features:
         series = df[col].dropna()
-        
+
         if len(series) == 0:
             continue
-        
+
         # 基础统计
         result = {
-            '特征名': col,
-            '样本数': len(series),
-            '均值': round(series.mean(), 4),
-            '标准差': round(series.std(), 4),
-            '最小值': round(series.min(), 4),
-            '最大值': round(series.max(), 4),
-            '中位数': round(series.median(), 4),
-            '偏度': round(series.skew(), 4),
-            '峰度': round(series.kurtosis(), 4),
+            "特征名": col,
+            "样本数": len(series),
+            "均值": round(series.mean(), 4),
+            "标准差": round(series.std(), 4),
+            "最小值": round(series.min(), 4),
+            "最大值": round(series.max(), 4),
+            "中位数": round(series.median(), 4),
+            "偏度": round(series.skew(), 4),
+            "峰度": round(series.kurtosis(), 4),
         }
-        
+
         # 分位数
         for p in percentiles:
-            col_name = f'{int(p*100)}%'
+            col_name = f"{int(p*100)}%"
             result[col_name] = round(series.quantile(p), 4)
-        
+
         # 零值和负值统计
-        result['零值数'] = (series == 0).sum()
-        result['零值率(%)'] = round((series == 0).sum() / len(series) * 100, 2)
-        result['负值数'] = (series < 0).sum()
-        result['负值率(%)'] = round((series < 0).sum() / len(series) * 100, 2)
-        
+        result["零值数"] = (series == 0).sum()
+        result["零值率(%)"] = round((series == 0).sum() / len(series) * 100, 2)
+        result["负值数"] = (series < 0).sum()
+        result["负值率(%)"] = round((series < 0).sum() / len(series) * 100, 2)
+
         results.append(result)
-    
+
     return pd.DataFrame(results)
 
 
-def category_summary(df: pd.DataFrame,
-                    features: List[str] = None,
-                    max_categories: int = 10) -> pd.DataFrame:
+def category_summary(df: pd.DataFrame, features: List[str] = None, max_categories: int = 10) -> pd.DataFrame:
     """类别特征统计.
-    
+
     :param df: 输入数据
     :param features: 指定分析的特征列表，None则分析全部分类别特征
     :param max_categories: 显示最常见的N个类别
     :return: 类别特征统计DataFrame
-    
+
     **参考样例**
 
     >>> cat_stats = category_summary(df)
     >>> print(cat_stats[['特征名', '类别数', '最常见类别', '最常见占比(%)']])
     """
     validate_dataframe(df)
-    
+
     if features is None:
         # 选择object类型和类别少的数值类型
         feature_types = infer_feature_types(df)
-        features = [f for f, t in feature_types.items() if t == 'categorical']
-    
+        features = [f for f, t in feature_types.items() if t == "categorical"]
+
     results = []
-    
+
     for col in features:
         if col not in df.columns:
             continue
-        
+
         series = df[col].dropna()
-        
+
         if len(series) == 0:
             continue
-        
+
         value_counts = series.value_counts()
-        
+
         result = {
-            '特征名': col,
-            '样本数': len(series),
-            '类别数': len(value_counts),
-            '最常见类别': value_counts.index[0] if len(value_counts) > 0 else None,
-            '最常见占比(%)': round(value_counts.iloc[0] / len(series) * 100, 2) if len(value_counts) > 0 else 0,
+            "特征名": col,
+            "样本数": len(series),
+            "类别数": len(value_counts),
+            "最常见类别": value_counts.index[0] if len(value_counts) > 0 else None,
+            "最常见占比(%)": round(value_counts.iloc[0] / len(series) * 100, 2) if len(value_counts) > 0 else 0,
         }
-        
+
         # 前N个类别的分布
         for i in range(min(max_categories, len(value_counts))):
             cat_name = value_counts.index[i]
             cat_count = value_counts.iloc[i]
-            result[f'类别{i+1}'] = cat_name
-            result[f'类别{i+1}占比(%)'] = round(cat_count / len(series) * 100, 2)
-        
+            result[f"类别{i+1}"] = cat_name
+            result[f"类别{i+1}占比(%)"] = round(cat_count / len(series) * 100, 2)
+
         results.append(result)
-    
+
     return pd.DataFrame(results)
 
 
-def data_quality_report(df: pd.DataFrame,
-                       features: List[str] = None,
-                       missing_threshold: float = 0.5,
-                       constant_threshold: float = 0.95) -> pd.DataFrame:
+def data_quality_report(df: pd.DataFrame, features: List[str] = None, missing_threshold: float = 0.5, constant_threshold: float = 0.95) -> pd.DataFrame:
     """数据质量综合报告.
-    
+
     :param df: 输入数据
     :param features: 指定分析的特征列表，None则分析全部
     :param missing_threshold: 缺失率阈值，超过视为质量问题
     :param constant_threshold: 常数比例阈值，超过视为准常数特征
     :return: 数据质量报告DataFrame，列包括[特征名, 问题类型, 严重程度, 建议处理]
-    
+
     **参考样例**
 
     >>> quality = data_quality_report(df)
@@ -525,94 +587,87 @@ def data_quality_report(df: pd.DataFrame,
     1   status    准常数特征      中  检查业务意义
     """
     validate_dataframe(df)
-    
+
     if features is None:
         features = df.columns.tolist()
-    
+
     issues = []
     total = len(df)
-    
+
     for col in features:
         if col not in df.columns:
             continue
-        
+
         series = df[col]
-        
+
         # 检查缺失率
         missing_rate = series.isnull().sum() / total
         if missing_rate >= missing_threshold:
-            issues.append({
-                '特征名': col,
-                '问题类型': '高缺失率',
-                '严重程度': '高' if missing_rate > 0.7 else '中',
-                '问题值': f'{missing_rate*100:.1f}%',
-                '建议处理': '考虑删除或业务填充',
-            })
-        
+            issues.append(
+                {
+                    "特征名": col,
+                    "问题类型": "高缺失率",
+                    "严重程度": "高" if missing_rate > 0.7 else "中",
+                    "问题值": f"{missing_rate*100:.1f}%",
+                    "建议处理": "考虑删除或业务填充",
+                }
+            )
+
         # 检查准常数特征
         if series.nunique() > 0:
             mode_ratio = series.value_counts().iloc[0] / total
             if mode_ratio >= constant_threshold:
-                issues.append({
-                    '特征名': col,
-                    '问题类型': '准常数特征',
-                    '严重程度': '中',
-                    '问题值': f'{mode_ratio*100:.1f}%',
-                    '建议处理': '检查业务意义，考虑删除',
-                })
-        
+                issues.append(
+                    {
+                        "特征名": col,
+                        "问题类型": "准常数特征",
+                        "严重程度": "中",
+                        "问题值": f"{mode_ratio*100:.1f}%",
+                        "建议处理": "检查业务意义，考虑删除",
+                    }
+                )
+
         # 检查数据类型问题
-        if series.dtype == 'object':
+        if series.dtype == "object":
             # 尝试转换为数值
             try:
                 pd.to_numeric(series.dropna().iloc[:100])
-                issues.append({
-                    '特征名': col,
-                    '问题类型': '数值型存储为字符串',
-                    '严重程度': '低',
-                    '问题值': 'object',
-                    '建议处理': '转换为数值类型',
-                })
+                issues.append(
+                    {
+                        "特征名": col,
+                        "问题类型": "数值型存储为字符串",
+                        "严重程度": "低",
+                        "问题值": "object",
+                        "建议处理": "转换为数值类型",
+                    }
+                )
             except Exception:
                 pass
-    
+
     if not issues:
-        return pd.DataFrame({'信息': ['未发现明显数据质量问题']})
-    
+        return pd.DataFrame({"信息": ["未发现明显数据质量问题"]})
+
     return pd.DataFrame(issues)
 
 
-def population_stability_monitor(
-    expected: pd.DataFrame,
-    actual: pd.DataFrame,
-    segment_cols: Union[str, List[str]],
-    binning_method: str = 'quantile',
-    n_bins: int = 5,
-    bin_edges: Optional[Dict[str, List]] = None,
-    date_col: Optional[str] = None,
-    date_freq: str = 'M',
-    group_col: Optional[str] = None,
-    metrics: Union[str, List[str]] = '占比',
-    sort_by: Optional[str] = None,
-    sort_order: Literal['desc', 'asc'] = 'desc'
-) -> pd.DataFrame:
+def population_stability_monitor(expected: pd.DataFrame, actual: pd.DataFrame, segment_cols: Union[str, List[str]], binning_method: str = "quantile", n_bins: int = 5, bin_edges: Optional[Dict[str, List]] = None, date_col: Optional[str] = None, date_freq: str = "M", group_col: Optional[str] = None, metrics: Union[str, List[str]] = "占比", sort_by: Optional[str] = None, sort_order: Literal["desc", "asc"] = "desc", n_jobs=-1, parallel_backend=None, parallel_config=None) -> pd.DataFrame:
     """群体稳定性监控分析（Population Stability Monitor）.
-    
+
     金融风控中监控客群分布变化的核心方法，基于期望样本（expected）构建客群分层标准，
     分析实际样本（actual）在各维度下的客群占比变化。
-    
+
     适用场景:
     - 模型上线后监控生产客群是否偏离训练样本分布
     - 对比不同时间段（如各月、各季度）的客群结构变化
     - 分析不同渠道、产品线的客群构成差异
     - 快速识别客群漂移（Population Drift）风险
-    
+
     指标说明:
     - 占比: 该分层在总样本中的比例（默认）
     - 样本数: 该分层的样本数量
     - 绝对变化率: actual占比 - expected占比（百分点差值）
     - 相对变化率: (actual占比 - expected占比) / expected占比 × 100%
-    
+
     :param expected: 期望/基准数据集（如训练集、历史样本），用于构建分层标准
     :param actual: 实际/监控数据集（如生产数据、近期样本），用于分析客群变化
     :param segment_cols: 客群分层变量，支持单变量或多变量交叉
@@ -639,7 +694,7 @@ def population_stability_monitor(
     :return: 客群监控结果DataFrame
         - Index: 分层标签（单级或多级索引）
         - Columns: (维度, 指标) 多级列，维度包含expected和各actual维度
-    
+
     **参考样例**
 
     >>> # 1. 基础用法：监控生产客群相对训练集的变化
@@ -648,7 +703,7 @@ def population_stability_monitor(
     ...     actual=prod_df,                 # 生产数据
     ...     segment_cols='income'           # 收入分层监控
     ... )
-    >>> 
+    >>>
     >>> # 2. 时间维度：监控各月客群变化趋势
     >>> result = population_stability_monitor(
     ...     expected=historical_df,
@@ -657,14 +712,14 @@ def population_stability_monitor(
     ...     date_col='apply_date',
     ...     date_freq='M'
     ... )
-    >>> 
+    >>>
     >>> # 3. 多维度交叉：收入+信用等级
     >>> result = population_stability_monitor(
     ...     expected=baseline_df,
     ...     actual=current_df,
     ...     segment_cols=['income_level', 'credit_grade']
     ... )
-    >>> 
+    >>>
     >>> # 4. 自定义分箱边界（expected可传可不传）
     >>> bin_edges = {'age': [0, 25, 35, 45, 55, 100]}
     >>> result = population_stability_monitor(
@@ -673,7 +728,7 @@ def population_stability_monitor(
     ...     segment_cols='age',
     ...     bin_edges=bin_edges
     ... )
-    >>> 
+    >>>
     >>> # 5. 多指标显示
     >>> result = population_stability_monitor(
     ...     expected=train_df,
@@ -681,7 +736,7 @@ def population_stability_monitor(
     ...     segment_cols='score',
     ...     metrics=['占比', '样本数', '绝对变化率', '相对变化率']
     ... )
-    >>> 
+    >>>
     >>> # 6. 渠道维度对比
     >>> result = population_stability_monitor(
     ...     expected=train_df,
@@ -690,207 +745,223 @@ def population_stability_monitor(
     ...     group_col='channel'
     ... )
     """
-    from ..binning import QuantileBinning, UniformBinning, TreeBinning
-    
     validate_dataframe(actual)
-    
+
     # 处理metrics参数
     if isinstance(metrics, str):
         metrics = [metrics]
-    available_metrics = ['占比', '样本数', '绝对变化率', '相对变化率']
+    available_metrics = ["占比", "样本数", "绝对变化率", "相对变化率"]
     metrics = [m for m in metrics if m in available_metrics]
     if not metrics:
-        metrics = ['占比']
-    
+        metrics = ["占比"]
+
     # 标准化segment_cols
     if isinstance(segment_cols, str):
         segment_cols = [segment_cols]
-    
+
     # 检查变量存在性
     for col in segment_cols:
         if col not in actual.columns:
             raise ValueError(f"客群分层变量 '{col}' 不存在于actual数据集")
         if expected is not None and col not in expected.columns:
             raise ValueError(f"客群分层变量 '{col}' 不存在于expected数据集")
-    
+
     # 确定分箱标准来源
     use_custom_edges = bin_edges is not None and any(col in bin_edges for col in segment_cols)
-    
+
     if not use_custom_edges and expected is None:
         raise ValueError("必须传入expected数据集或bin_edges分箱边界")
-    
+
     # 构建分箱标准
     segment_labels = {}
     actual_copy = actual.copy()
-    
+    edges_by_column: Dict[str, List] = {}
+    child_n_jobs = 1 if n_jobs is None or n_jobs in (1, 1.0) else -1
+    binning_tasks = []
     for col in segment_cols:
-        # 确定分箱边界
         if use_custom_edges and col in bin_edges:
-            edges = bin_edges[col]
+            edges_by_column[col] = bin_edges[col]
         elif expected is not None and pd.api.types.is_numeric_dtype(expected[col]):
-            # 从expected计算分箱
-            if binning_method == 'uniform':
-                binner = UniformBinning(n_bins=n_bins)
-            elif binning_method == 'tree':
-                binner = TreeBinning(max_depth=int(np.log2(n_bins)) + 1)
-            else:
-                binner = QuantileBinning(max_n_bins=n_bins)
-            
-            binner.fit(expected[[col]])
-            edges = binner.edges_.get(col, [])
+            binning_tasks.append(
+                (expected[col], col, binning_method, n_bins, child_n_jobs, parallel_backend, parallel_config)
+            )
         else:
-            # 类别型，不分箱
-            edges = []
-        
+            edges_by_column[col] = []
+
+    for column, edges in parallel_execute(
+        _psm_binning_worker,
+        iter(binning_tasks),
+        n_jobs=n_jobs,
+        parallel_backend=parallel_backend,
+        parallel_config=parallel_config,
+        task_labels=[task[1] for task in binning_tasks],
+        default_backend="threading",
+        workload=_eda_workload(
+            expected if expected is not None else actual,
+            len(binning_tasks),
+            operation="群体稳定性分层拟合",
+            cost_per_item=8.0,
+        ),
+    ):
+        edges_by_column[column] = edges
+
+    for col in segment_cols:
+        edges = edges_by_column[col]
         # 生成分层标签并应用
         if len(edges) >= 2:
             labels = []
             for i in range(len(edges) - 1):
                 if i == 0:
-                    label = f"≤{edges[i+1]:.2f}".rstrip('0').rstrip('.')
+                    label = f"≤{edges[i+1]:.2f}".rstrip("0").rstrip(".")
                 elif i == len(edges) - 2:
-                    label = f">{edges[i]:.2f}".rstrip('0').rstrip('.')
+                    label = f">{edges[i]:.2f}".rstrip("0").rstrip(".")
                 else:
-                    left = f"{edges[i]:.2f}".rstrip('0').rstrip('.')
-                    right = f"{edges[i+1]:.2f}".rstrip('0').rstrip('.')
+                    left = f"{edges[i]:.2f}".rstrip("0").rstrip(".")
+                    right = f"{edges[i+1]:.2f}".rstrip("0").rstrip(".")
                     label = f"({left}, {right}]"
                 labels.append(label)
-            
+
             segment_labels[col] = labels
-            actual_copy[f'{col}_分层'] = pd.cut(actual_copy[col], bins=edges, labels=labels, include_lowest=True)
+            actual_copy[f"{col}_分层"] = pd.cut(actual_copy[col], bins=edges, labels=labels, include_lowest=True)
         else:
             # 类别型
             ref_data = expected[col] if expected is not None else actual[col]
             segment_labels[col] = ref_data.dropna().unique().tolist()
-            actual_copy[f'{col}_分层'] = actual_copy[col]
-    
+            actual_copy[f"{col}_分层"] = actual_copy[col]
+
     # 构建监控维度
     monitor_dims = []
-    
+
     if date_col and date_col in actual.columns:
         actual_copy[date_col] = pd.to_datetime(actual_copy[date_col])
-        if date_freq == 'M':
-            actual_copy['_period'] = actual_copy[date_col].dt.to_period('M').astype(str)
-        elif date_freq == 'W':
-            actual_copy['_period'] = actual_copy[date_col].dt.to_period('W').astype(str)
-        elif date_freq == 'Q':
-            actual_copy['_period'] = actual_copy[date_col].dt.to_period('Q').astype(str)
-        elif date_freq == 'D':
-            actual_copy['_period'] = actual_copy[date_col].dt.date.astype(str)
+        if date_freq == "M":
+            actual_copy["_period"] = actual_copy[date_col].dt.to_period("M").astype(str)
+        elif date_freq == "W":
+            actual_copy["_period"] = actual_copy[date_col].dt.to_period("W").astype(str)
+        elif date_freq == "Q":
+            actual_copy["_period"] = actual_copy[date_col].dt.to_period("Q").astype(str)
+        elif date_freq == "D":
+            actual_copy["_period"] = actual_copy[date_col].dt.date.astype(str)
         else:
-            actual_copy['_period'] = actual_copy[date_col].dt.to_period('M').astype(str)
-        monitor_dims.append(('date', '_period'))
-    
+            actual_copy["_period"] = actual_copy[date_col].dt.to_period("M").astype(str)
+        monitor_dims.append(("date", "_period"))
+
     if group_col and group_col in actual.columns:
-        monitor_dims.append(('group', group_col))
-    
+        monitor_dims.append(("group", group_col))
+
     # 计算统计
     results = []
-    segment_hierarchy_cols = [f'{col}_分层' for col in segment_cols]
-    
+    segment_hierarchy_cols = [f"{col}_分层" for col in segment_cols]
+
     # Expected统计
     if expected is not None:
         expected_copy = expected.copy()
         # 对expected应用相同的分箱
         for col in segment_cols:
-            if f'{col}_分层' in actual_copy.columns and col in expected_copy.columns:
+            if f"{col}_分层" in actual_copy.columns and col in expected_copy.columns:
+                edges = edges_by_column[col]
                 if pd.api.types.is_numeric_dtype(expected_copy[col]) and len(edges) >= 2:
-                    expected_copy[f'{col}_分层'] = pd.cut(expected_copy[col], bins=edges, labels=segment_labels[col], include_lowest=True)
+                    expected_copy[f"{col}_分层"] = pd.cut(expected_copy[col], bins=edges, labels=segment_labels[col], include_lowest=True)
                 else:
-                    expected_copy[f'{col}_分层'] = expected_copy[col]
-        
-        exp_stats = _calc_psm_stats(
-            expected_copy, segment_hierarchy_cols, segment_labels, 
-            'expected', metrics
-        )
-        results.extend(exp_stats)
-    
+                    expected_copy[f"{col}_分层"] = expected_copy[col]
+
+        results.append((expected_copy, segment_hierarchy_cols, segment_labels, "expected", metrics))
+
     # Actual各维度统计
     if monitor_dims:
         dim_col = monitor_dims[0][1]  # 主维度
         dim_values = sorted(actual_copy[dim_col].dropna().unique())
-        
+
         for val in dim_values:
             subset = actual_copy[actual_copy[dim_col] == val]
-            subset_stats = _calc_psm_stats(
-                subset, segment_hierarchy_cols, segment_labels,
-                str(val), metrics
-            )
-            results.extend(subset_stats)
+            results.append((subset, segment_hierarchy_cols, segment_labels, str(val), metrics))
     else:
         # 无维度划分，整体actual
-        act_stats = _calc_psm_stats(
-            actual_copy, segment_hierarchy_cols, segment_labels,
-            'actual', metrics
+        results.append((actual_copy, segment_hierarchy_cols, segment_labels, "actual", metrics))
+
+    stats_tasks = results
+    results = [
+        row
+        for dimension_rows in parallel_execute(
+            _psm_stats_worker,
+            iter(stats_tasks),
+            n_jobs=n_jobs,
+            parallel_backend=parallel_backend,
+            parallel_config=parallel_config,
+            task_labels=[task[3] for task in stats_tasks],
+            default_backend="threading",
+            workload=_eda_workload(
+                actual,
+                len(stats_tasks),
+                operation="群体稳定性维度统计",
+                cost_per_item=4.0,
+                additional_data=((expected,) if expected is not None else ()),
+            ),
         )
-        results.extend(act_stats)
-    
+        for row in dimension_rows
+    ]
+
     # 构建DataFrame
     result_df = pd.DataFrame(results)
     if result_df.empty:
         return pd.DataFrame()
-    
+
     # 排序处理（在计算变化率之前）
     if sort_by is not None:
-        ascending = (sort_order == 'asc')
-        
+        ascending = sort_order == "asc"
+
         # 获取排序依据列的值
-        if sort_by == 'expected' and 'expected' in result_df['维度'].values:
-            sort_values = result_df[result_df['维度'] == 'expected'].set_index('分层标签')['占比'].to_dict()
-        elif sort_by.startswith('actual_'):
+        if sort_by == "expected" and "expected" in result_df["维度"].values:
+            sort_values = result_df[result_df["维度"] == "expected"].set_index("分层标签")["占比"].to_dict()
+        elif sort_by.startswith("actual_"):
             # actual_首列或actual_末列
-            actual_dims = [d for d in result_df['维度'].unique() if d != 'expected']
+            actual_dims = [d for d in result_df["维度"].unique() if d != "expected"]
             if actual_dims:
-                target_dim = actual_dims[0] if '首列' in sort_by else actual_dims[-1]
-                sort_values = result_df[result_df['维度'] == target_dim].set_index('分层标签')['占比'].to_dict()
+                target_dim = actual_dims[0] if "首列" in sort_by else actual_dims[-1]
+                sort_values = result_df[result_df["维度"] == target_dim].set_index("分层标签")["占比"].to_dict()
             else:
                 sort_values = {}
         else:
             sort_values = {}
-        
+
         if sort_values:
-            result_df['_sort_key'] = result_df['分层标签'].map(sort_values)
-            result_df = result_df.sort_values('分层标签', key=lambda x: result_df['_sort_key'], ascending=ascending)
-            result_df = result_df.drop(columns=['_sort_key'])
-    
+            result_df["_sort_key"] = result_df["分层标签"].map(sort_values)
+            result_df = result_df.sort_values("分层标签", key=lambda x: result_df["_sort_key"], ascending=ascending)
+            result_df = result_df.drop(columns=["_sort_key"])
+
     # 计算变化率（排序后）
-    if '绝对变化率' in metrics or '相对变化率' in metrics:
-        if expected is not None and 'expected' in result_df['维度'].values:
-            exp_ratios = result_df[result_df['维度'] == 'expected'].set_index('分层标签')['占比'].to_dict()
-            
+    if "绝对变化率" in metrics or "相对变化率" in metrics:
+        if expected is not None and "expected" in result_df["维度"].values:
+            exp_ratios = result_df[result_df["维度"] == "expected"].set_index("分层标签")["占比"].to_dict()
+
             def calc_rate_change(row):
-                if row['维度'] == 'expected':
+                if row["维度"] == "expected":
                     return 0.0, 0.0
-                exp_val = exp_ratios.get(row['分层标签'], 0)
-                act_val = row['占比']
+                exp_val = exp_ratios.get(row["分层标签"], 0)
+                act_val = row["占比"]
                 abs_change = act_val - exp_val
                 rel_change = (abs_change / exp_val * 100) if exp_val > 0 else 0.0
                 return round(abs_change, 2), round(rel_change, 2)
-            
+
             changes = result_df.apply(calc_rate_change, axis=1)
-            result_df['绝对变化率'] = [c[0] for c in changes]
-            result_df['相对变化率'] = [c[1] for c in changes]
-    
+            result_df["绝对变化率"] = [c[0] for c in changes]
+            result_df["相对变化率"] = [c[1] for c in changes]
+
     # 构建透视表
     pivot_results = []
     for metric in metrics:
         if metric in result_df.columns:
-            pivot_table = result_df.pivot_table(
-                index='分层标签',
-                columns='维度',
-                values=metric,
-                aggfunc='first'
-            )
+            pivot_table = result_df.pivot_table(index="分层标签", columns="维度", values=metric, aggfunc="first")
             # 调整列顺序：expected在前，其他按时间/分类排序
             cols = pivot_table.columns.tolist()
-            if 'expected' in cols:
-                other_cols = [c for c in sorted(cols) if c != 'expected']
-                pivot_table = pivot_table[['expected'] + other_cols]
-            pivot_table['指标'] = metric
-            pivot_results.append(pivot_table.reset_index().set_index(['分层标签', '指标']))
-    
+            if "expected" in cols:
+                other_cols = [c for c in sorted(cols) if c != "expected"]
+                pivot_table = pivot_table[["expected"] + other_cols]
+            pivot_table["指标"] = metric
+            pivot_results.append(pivot_table.reset_index().set_index(["分层标签", "指标"]))
+
     if pivot_results:
-        final_result = pd.concat(pivot_results).unstack('指标')
+        final_result = pd.concat(pivot_results).unstack("指标")
         # 列顺序调整
         final_result.columns = final_result.columns.swaplevel(0, 1)
         final_result = final_result.sort_index(axis=1)
@@ -903,43 +974,43 @@ def _calc_psm_stats(df, segment_cols, segment_labels, dim_name, metrics):
     """计算PSM单个维度的统计."""
     results = []
     total = len(df)
-    
+
     if total == 0:
         return results
-    
+
     if len(segment_cols) == 1:
         col = segment_cols[0]
         value_counts = df[col].value_counts()
-        ref_col = col.replace('_分层', '')
-        
+        ref_col = col.replace("_分层", "")
+
         for label in segment_labels.get(ref_col, []):
             count = value_counts.get(label, 0)
             ratio = count / total * 100 if total > 0 else 0
-            
-            result = {'分层标签': label, '维度': dim_name}
-            if '样本数' in metrics:
-                result['样本数'] = int(count)
-            if '占比' in metrics or '绝对变化率' in metrics or '相对变化率' in metrics:
-                result['占比'] = round(ratio, 2)
-            
+
+            result = {"分层标签": label, "维度": dim_name}
+            if "样本数" in metrics:
+                result["样本数"] = int(count)
+            if "占比" in metrics or "绝对变化率" in metrics or "相对变化率" in metrics:
+                result["占比"] = round(ratio, 2)
+
             results.append(result)
     else:
         grouped = df.groupby(segment_cols)
         for group_values, group_df in grouped:
             if not isinstance(group_values, tuple):
                 group_values = (group_values,)
-            label = ' × '.join(str(v) for v in group_values)
+            label = " × ".join(str(v) for v in group_values)
             count = len(group_df)
             ratio = count / total * 100 if total > 0 else 0
-            
-            result = {'分层标签': label, '维度': dim_name}
-            if '样本数' in metrics:
-                result['样本数'] = int(count)
-            if '占比' in metrics or '绝对变化率' in metrics or '相对变化率' in metrics:
-                result['占比'] = round(ratio, 2)
-            
+
+            result = {"分层标签": label, "维度": dim_name}
+            if "样本数" in metrics:
+                result["样本数"] = int(count)
+            if "占比" in metrics or "绝对变化率" in metrics or "相对变化率" in metrics:
+                result["占比"] = round(ratio, 2)
+
             results.append(result)
-    
+
     return results
 
 
@@ -948,22 +1019,25 @@ def feature_group_analysis(
     features: List[str] = None,
     group_cols: Union[str, List[str]] = None,
     date_col: Optional[str] = None,
-    date_freq: str = 'M',
-    stats: Union[str, List[str], Callable, Dict[str, Callable]] = 'default',
+    date_freq: str = "M",
+    stats: Union[str, List[str], Callable, Dict[str, Callable]] = "default",
     y: Optional[Union[str, pd.Series]] = None,
     y_stats: List[str] = None,
     sort_by: Optional[Union[str, Tuple[str, str]]] = None,
-    sort_order: Literal['desc', 'asc', 'custom'] = 'desc',
+    sort_order: Literal["desc", "asc", "custom"] = "desc",
     custom_sort_func: Optional[Callable] = None,
     feature_order: Optional[List[str]] = None,
     include_overall: bool = True,
-    pivot: bool = True
+    pivot: bool = True,
+    n_jobs=-1,
+    parallel_backend=None,
+    parallel_config=None,
 ) -> pd.DataFrame:
     """分组特征分布分析.
-    
+
     分析生产环境中特定时间段、客群或两者交叉组合下的特征分布，
     适用于监控不同维度下的特征表现、对比分析等场景。
-    
+
     :param df: 输入数据
     :param features: 分析的特征列表，None则分析全部数值型特征
     :param group_cols: 客群分组列（单级或多级），如 'segment' 或 ['segment', 'channel']
@@ -987,17 +1061,17 @@ def feature_group_analysis(
     :return: 分组分析结果DataFrame
         - pivot=True时：多级索引(特征名, 统计项)，列为分组
         - pivot=False时：长格式，包含[特征名, 统计项, 分组, 值]等列
-    
+
     **参考样例**
 
     >>> # 单维度客群分组分析
     >>> result = feature_group_analysis(
-    ...     df, 
+    ...     df,
     ...     features=['age', 'income'],
     ...     group_cols='customer_segment',
     ...     stats=['均值', '中位数', '缺失率']
     ... )
-    >>> 
+    >>>
     >>> # 时间维度分析（按月）
     >>> result = feature_group_analysis(
     ...     df,
@@ -1006,7 +1080,7 @@ def feature_group_analysis(
     ...     date_freq='M',
     ...     stats='default'
     ... )
-    >>> 
+    >>>
     >>> # 客群+时间交叉分析（多级列）
     >>> result = feature_group_analysis(
     ...     df,
@@ -1015,7 +1089,7 @@ def feature_group_analysis(
     ...     date_col='apply_date',
     ...     date_freq='M'
     ... )
-    >>> 
+    >>>
     >>> # 自定义统计指标
     >>> custom_stats = {
     ...     '变异系数': lambda x: x.std() / x.mean() if x.mean() != 0 else np.nan,
@@ -1023,7 +1097,7 @@ def feature_group_analysis(
     ...     '90%分位数': lambda x: x.quantile(0.9),
     ... }
     >>> result = feature_group_analysis(df, features=['age'], stats=custom_stats)
-    >>> 
+    >>>
     >>> # 包含目标变量分析（如逾期率）
     >>> result = feature_group_analysis(
     ...     df,
@@ -1032,7 +1106,7 @@ def feature_group_analysis(
     ...     y='fpd15',
     ...     y_stats=['逾期率', '样本数']
     ... )
-    >>> 
+    >>>
     >>> # 排序展示
     >>> result = feature_group_analysis(
     ...     df,
@@ -1043,18 +1117,18 @@ def feature_group_analysis(
     ... )
     """
     from ..metrics import iv as iv_metric, ks as ks_metric
-    
+
     validate_dataframe(df)
-    
+
     # 确定分析的特征
     if features is None:
         features = df.select_dtypes(include=[np.number]).columns.tolist()
     else:
         features = [f for f in features if f in df.columns]
-    
+
     if len(features) == 0:
         raise ValueError("没有有效的特征可供分析")
-    
+
     # 处理目标变量
     y_series = None
     if y is not None:
@@ -1067,10 +1141,10 @@ def feature_group_analysis(
             y_series = pd.Series(y)
             if len(y_series) != len(df):
                 raise ValueError("目标变量长度与数据不匹配")
-    
+
     # 构建分组键
     group_keys = []
-    
+
     # 处理客群分组
     if group_cols is not None:
         if isinstance(group_cols, str):
@@ -1078,53 +1152,53 @@ def feature_group_analysis(
         for col in group_cols:
             if col in df.columns:
                 group_keys.append(col)
-    
+
     # 处理时间分组
     if date_col is not None and date_col in df.columns:
         df = df.copy()
         df[date_col] = pd.to_datetime(df[date_col])
-        
-        if date_freq == 'M':
-            df['_time_group'] = df[date_col].dt.to_period('M').astype(str)
-        elif date_freq == 'W':
-            df['_time_group'] = df[date_col].dt.to_period('W').astype(str)
-        elif date_freq == 'Q':
-            df['_time_group'] = df[date_col].dt.to_period('Q').astype(str)
-        elif date_freq == 'Y':
-            df['_time_group'] = df[date_col].dt.to_period('Y').astype(str)
-        elif date_freq == 'D':
-            df['_time_group'] = df[date_col].dt.date.astype(str)
+
+        if date_freq == "M":
+            df["_time_group"] = df[date_col].dt.to_period("M").astype(str)
+        elif date_freq == "W":
+            df["_time_group"] = df[date_col].dt.to_period("W").astype(str)
+        elif date_freq == "Q":
+            df["_time_group"] = df[date_col].dt.to_period("Q").astype(str)
+        elif date_freq == "Y":
+            df["_time_group"] = df[date_col].dt.to_period("Y").astype(str)
+        elif date_freq == "D":
+            df["_time_group"] = df[date_col].dt.date.astype(str)
         else:
-            df['_time_group'] = df[date_col].dt.to_period('M').astype(str)
-        
-        group_keys.append('_time_group')
-    
+            df["_time_group"] = df[date_col].dt.to_period("M").astype(str)
+
+        group_keys.append("_time_group")
+
     # 定义统计指标
     default_stats = {
-        '均值': lambda x: round(x.mean(), 4) if len(x) > 0 else np.nan,
-        '中位数': lambda x: round(x.median(), 4) if len(x) > 0 else np.nan,
-        '标准差': lambda x: round(x.std(), 4) if len(x) > 0 else np.nan,
-        '最小值': lambda x: round(x.min(), 4) if len(x) > 0 else np.nan,
-        '最大值': lambda x: round(x.max(), 4) if len(x) > 0 else np.nan,
-        '缺失率': lambda x: round(x.isnull().sum() / len(x) * 100, 2) if len(x) > 0 else 0,
-        '唯一值数': lambda x: x.nunique(),
-        '样本数': lambda x: len(x),
+        "均值": lambda x: round(x.mean(), 4) if len(x) > 0 else np.nan,
+        "中位数": lambda x: round(x.median(), 4) if len(x) > 0 else np.nan,
+        "标准差": lambda x: round(x.std(), 4) if len(x) > 0 else np.nan,
+        "最小值": lambda x: round(x.min(), 4) if len(x) > 0 else np.nan,
+        "最大值": lambda x: round(x.max(), 4) if len(x) > 0 else np.nan,
+        "缺失率": lambda x: round(x.isnull().sum() / len(x) * 100, 2) if len(x) > 0 else 0,
+        "唯一值数": lambda x: x.nunique(),
+        "样本数": lambda x: len(x),
     }
-    
+
     all_stats = {
         **default_stats,
-        '零值率': lambda x: round((x == 0).sum() / len(x) * 100, 2) if len(x) > 0 else 0,
-        '负值率': lambda x: round((x < 0).sum() / len(x) * 100, 2) if len(x) > 0 else 0,
-        '偏度': lambda x: round(x.skew(), 4) if len(x) > 0 else np.nan,
-        '峰度': lambda x: round(x.kurtosis(), 4) if len(x) > 0 else np.nan,
-        '25%': lambda x: round(x.quantile(0.25), 4) if len(x) > 0 else np.nan,
-        '75%': lambda x: round(x.quantile(0.75), 4) if len(x) > 0 else np.nan,
+        "零值率": lambda x: round((x == 0).sum() / len(x) * 100, 2) if len(x) > 0 else 0,
+        "负值率": lambda x: round((x < 0).sum() / len(x) * 100, 2) if len(x) > 0 else 0,
+        "偏度": lambda x: round(x.skew(), 4) if len(x) > 0 else np.nan,
+        "峰度": lambda x: round(x.kurtosis(), 4) if len(x) > 0 else np.nan,
+        "25%": lambda x: round(x.quantile(0.25), 4) if len(x) > 0 else np.nan,
+        "75%": lambda x: round(x.quantile(0.75), 4) if len(x) > 0 else np.nan,
     }
-    
+
     # 处理stats参数
-    if stats == 'default':
+    if stats == "default":
         stat_funcs = default_stats
-    elif stats == 'all':
+    elif stats == "all":
         stat_funcs = all_stats
     elif isinstance(stats, list):
         stat_funcs = {k: all_stats.get(k, default_stats.get(k)) for k in stats if k in all_stats or k in default_stats}
@@ -1133,183 +1207,136 @@ def feature_group_analysis(
     elif isinstance(stats, dict):
         stat_funcs = stats
     elif callable(stats):
-        stat_funcs = {'自定义统计': stats}
+        stat_funcs = {"自定义统计": stats}
     else:
         stat_funcs = default_stats
-    
+
     # 处理y相关统计
     y_stat_funcs = {}
     if y_series is not None and y_stats:
-        if '逾期率' in y_stats or 'bad_rate' in y_stats:
-            y_stat_funcs['逾期率'] = lambda x, y: round(y.mean() * 100, 2) if len(y) > 0 else np.nan
-        if '样本数' in y_stats or 'count' in y_stats:
-            y_stat_funcs['样本数'] = lambda x, y: len(y)
-        if '坏样本数' in y_stats or 'bad_count' in y_stats:
-            y_stat_funcs['坏样本数'] = lambda x, y: int(y.sum())
-    
-    # 执行分组统计
-    results = []
-    
-    # 总体统计
+        if "逾期率" in y_stats or "bad_rate" in y_stats:
+            y_stat_funcs["逾期率"] = lambda x, y: round(y.mean() * 100, 2) if len(y) > 0 else np.nan
+        if "样本数" in y_stats or "count" in y_stats:
+            y_stat_funcs["样本数"] = lambda x, y: len(y)
+        if "坏样本数" in y_stats or "bad_count" in y_stats:
+            y_stat_funcs["坏样本数"] = lambda x, y: int(y.sum())
+
+    task_specs = []
     if include_overall:
         for feat in features:
-            series = df[feat]
-            for stat_name, stat_func in stat_funcs.items():
-                try:
-                    value = stat_func(series)
-                except Exception:
-                    value = np.nan
-                
-                result = {
-                    '特征名': feat,
-                    '统计项': stat_name,
-                    '分组': '总体',
-                }
-                if group_keys:
-                    for gk in group_keys:
-                        result[gk] = '总体'
-                result['值'] = value
-                results.append(result)
-            
-            # y相关统计
-            for stat_name, stat_func in y_stat_funcs.items():
-                try:
-                    value = stat_func(series, y_series)
-                except Exception:
-                    value = np.nan
-                
-                result = {
-                    '特征名': feat,
-                    '统计项': stat_name,
-                    '分组': '总体',
-                }
-                if group_keys:
-                    for gk in group_keys:
-                        result[gk] = '总体'
-                result['值'] = value
-                results.append(result)
-    
-    # 分组统计
+            task_specs.append(
+                (
+                    df[feat],
+                    y_series,
+                    feat,
+                    "总体",
+                    tuple(group_keys),
+                    tuple("总体" for _ in group_keys),
+                    stat_funcs,
+                    y_stat_funcs,
+                    True,
+                )
+            )
+
     if group_keys:
         grouped = df.groupby(group_keys)
-        
         for group_values, group_df in grouped:
             if not isinstance(group_values, tuple):
                 group_values = (group_values,)
-            
-            group_label = '_'.join(str(v) for v in group_values)
-            
+            group_label = "_".join(str(v) for v in group_values)
             for feat in features:
-                series = group_df[feat]
                 y_group = y_series[group_df.index] if y_series is not None else None
-                
-                for stat_name, stat_func in stat_funcs.items():
-                    try:
-                        value = stat_func(series)
-                    except Exception:
-                        value = np.nan
-                    
-                    result = {
-                        '特征名': feat,
-                        '统计项': stat_name,
-                        '分组': group_label,
-                    }
-                    for i, gk in enumerate(group_keys):
-                        col_name = gk.replace('_time_group', '时间分组') if '_time_group' in gk else gk
-                        result[col_name] = group_values[i]
-                    result['值'] = value
-                    results.append(result)
-                
-                # y相关统计
-                for stat_name, stat_func in y_stat_funcs.items():
-                    try:
-                        value = stat_func(series, y_group)
-                    except Exception:
-                        value = np.nan
-                    
-                    result = {
-                        '特征名': feat,
-                        '统计项': stat_name,
-                        '分组': group_label,
-                    }
-                    for i, gk in enumerate(group_keys):
-                        col_name = gk.replace('_time_group', '时间分组') if '_time_group' in gk else gk
-                        result[col_name] = group_values[i]
-                    result['值'] = value
-                    results.append(result)
-    
+                task_specs.append(
+                    (
+                        group_df[feat],
+                        y_group,
+                        feat,
+                        group_label,
+                        tuple(group_keys),
+                        tuple(group_values),
+                        stat_funcs,
+                        y_stat_funcs,
+                        False,
+                    )
+                )
+
+    results = [
+        row
+        for task_rows in parallel_execute(
+            _feature_group_stats_worker,
+            iter(task_specs),
+            n_jobs=n_jobs,
+            parallel_backend=parallel_backend,
+            parallel_config=parallel_config,
+            task_labels=[f"{task[3]}:{task[2]}" for task in task_specs],
+            default_backend="threading",
+            workload=_eda_workload(df, len(task_specs), operation="分组特征分布分析", cost_per_item=5.0),
+        )
+        for row in task_rows
+    ]
+
     # 创建DataFrame
     result_df = pd.DataFrame(results)
-    
+
     if result_df.empty:
         return pd.DataFrame()
-    
+
     # 排序处理
     if sort_by is not None:
-        if sort_order == 'custom' and custom_sort_func is not None:
+        if sort_order == "custom" and custom_sort_func is not None:
             result_df = custom_sort_func(result_df)
         else:
-            ascending = (sort_order == 'asc')
-            
+            ascending = sort_order == "asc"
+
             if isinstance(sort_by, str):
                 # 按统计项排序（所有特征的该统计项）
-                mask = result_df['统计项'] == sort_by
+                mask = result_df["统计项"] == sort_by
                 if mask.any():
-                    sort_values = result_df[mask].set_index('特征名')['值'].to_dict()
-                    result_df['_sort_key'] = result_df['特征名'].map(sort_values)
-                    result_df = result_df.sort_values(['特征名', '_sort_key'], ascending=[True, ascending])
-                    result_df = result_df.drop(columns=['_sort_key'])
+                    sort_values = result_df[mask].set_index("特征名")["值"].to_dict()
+                    result_df["_sort_key"] = result_df["特征名"].map(sort_values)
+                    result_df = result_df.sort_values(["特征名", "_sort_key"], ascending=[True, ascending])
+                    result_df = result_df.drop(columns=["_sort_key"])
             elif isinstance(sort_by, tuple) and len(sort_by) == 2:
                 feat, stat = sort_by
-                mask = (result_df['特征名'] == feat) & (result_df['统计项'] == stat)
+                mask = (result_df["特征名"] == feat) & (result_df["统计项"] == stat)
                 if mask.any():
                     # 获取该特征-统计项在各分组的值
-                    sort_df = result_df[mask][['分组', '值']].copy()
-                    sort_order_dict = sort_df.set_index('分组')['值'].to_dict()
-                    result_df['_sort_key'] = result_df['分组'].map(sort_order_dict)
-                    result_df = result_df.sort_values(['特征名', '_sort_key'], ascending=[True, ascending])
-                    result_df = result_df.drop(columns=['_sort_key'])
-    
+                    sort_df = result_df[mask][["分组", "值"]].copy()
+                    sort_order_dict = sort_df.set_index("分组")["值"].to_dict()
+                    result_df["_sort_key"] = result_df["分组"].map(sort_order_dict)
+                    result_df = result_df.sort_values(["特征名", "_sort_key"], ascending=[True, ascending])
+                    result_df = result_df.drop(columns=["_sort_key"])
+
     # 特征顺序处理
     if feature_order is not None:
-        result_df['_feat_order'] = result_df['特征名'].apply(lambda x: feature_order.index(x) if x in feature_order else 9999)
-        result_df = result_df.sort_values(['_feat_order', '统计项']).drop(columns=['_feat_order'])
-    
+        result_df["_feat_order"] = result_df["特征名"].apply(lambda x: feature_order.index(x) if x in feature_order else 9999)
+        result_df = result_df.sort_values(["_feat_order", "统计项"]).drop(columns=["_feat_order"])
+
     # 透视处理
     if pivot:
         # 构建透视表
-        index_cols = ['特征名', '统计项']
-        
+        index_cols = ["特征名", "统计项"]
+
         # 确定分组列名（排除'分组'汇总列）
         group_col_names = []
         for gk in group_keys:
-            col_name = gk.replace('_time_group', '时间分组') if '_time_group' in gk else gk
+            col_name = gk.replace("_time_group", "时间分组") if "_time_group" in gk else gk
             if col_name in result_df.columns and col_name not in group_col_names:
                 group_col_names.append(col_name)
-        
+
         # 创建多级列
         if group_col_names:
             # 使用实际分组列作为列
-            pivot_df = result_df.pivot_table(
-                index=index_cols,
-                columns=group_col_names,
-                values='值',
-                aggfunc='first'
-            )
+            pivot_df = result_df.pivot_table(index=index_cols, columns=group_col_names, values="值", aggfunc="first")
         else:
             # 使用分组列
-            pivot_df = result_df.pivot_table(
-                index=index_cols,
-                columns='分组',
-                values='值',
-                aggfunc='first'
-            )
-        
+            pivot_df = result_df.pivot_table(index=index_cols, columns="分组", values="值", aggfunc="first")
+
         # 确保总体列在最前面
-        if '总体' in pivot_df.columns:
-            cols = ['总体'] + [c for c in pivot_df.columns if c != '总体']
+        if "总体" in pivot_df.columns:
+            cols = ["总体"] + [c for c in pivot_df.columns if c != "总体"]
             pivot_df = pivot_df[cols]
-        
+
         return pivot_df
     else:
         # 长格式返回

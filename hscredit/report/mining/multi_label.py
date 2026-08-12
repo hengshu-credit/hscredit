@@ -9,7 +9,7 @@ import copy
 import numpy as np
 import pandas as pd
 from typing import Union, List, Dict, Optional, Any
-from .base import BaseRuleMiner
+from .base import BaseRuleMiner, _mining_workload
 from .single_feature import SingleFeatureRuleMiner
 
 
@@ -177,6 +177,13 @@ class MultiLabelRuleMiner(BaseRuleMiner):
             task_labels=labels,
             default_backend="threading",
             has_parallel_children=True,
+            workload=_mining_workload(
+                df,
+                len(tasks),
+                operation="多标签规则挖掘",
+                cost_per_item=20.0,
+                has_parallel_children=True,
+            ),
         )
         for label, rules in mined_by_label:
             label_rules[label] = {}

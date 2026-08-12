@@ -10,13 +10,14 @@ import pytest
 from threadpoolctl import threadpool_limits
 
 from hscredit.core.binning import QuantileBinning
+from hscredit.core.encoders import WOEEncoder
 from hscredit.core.rules import Rule, RuleFlow
 from hscredit.core.selectors import CorrSelector, MutualInfoSelector
 from hscredit.utils.parallel import get_physical_cpu_count, parallel_execute
 
 
 pytestmark = pytest.mark.slow
-REPEATS = 3
+REPEATS = 5
 PARALLEL_WORKERS = 4
 
 
@@ -64,11 +65,7 @@ def _measure_medians(name, serial_call, parallel_call, metadata):
     serial_times = []
     parallel_times = []
     for run in range(REPEATS):
-        calls = (
-            (("serial", serial_call), ("parallel", parallel_call))
-            if run % 2 == 0
-            else (("parallel", parallel_call), ("serial", serial_call))
-        )
+        calls = (("serial", serial_call), ("parallel", parallel_call)) if run % 2 == 0 else (("parallel", parallel_call), ("serial", serial_call))
         for mode, call in calls:
             started = perf_counter()
             call()
@@ -78,12 +75,7 @@ def _measure_medians(name, serial_call, parallel_call, metadata):
     serial_median = median(serial_times)
     parallel_median = median(parallel_times)
     speedup = serial_median / parallel_median
-    diagnostic = (
-        f"BENCHMARK {name} {metadata} physical_cpus={get_physical_cpu_count()} "
-        f"serial_runs={serial_times} parallel_runs={parallel_times} "
-        f"serial_median={serial_median:.6f}s parallel_median={parallel_median:.6f}s "
-        f"speedup={speedup:.3f}x"
-    )
+    diagnostic = f"BENCHMARK {name} {metadata} physical_cpus={get_physical_cpu_count()} " f"serial_runs={serial_times} parallel_runs={parallel_times} " f"serial_median={serial_median:.6f}s parallel_median={parallel_median:.6f}s " f"speedup={speedup:.3f}x"
     print(diagnostic)
     return serial_warm, parallel_warm, serial_median, parallel_median, speedup, diagnostic
 
@@ -117,9 +109,7 @@ def test_cpu_heavy_wide_selector_reaches_speedup_gate(benchmark_data):
     config = {"batch_size": 1, "inner_max_num_threads": 1}
 
     def serial_call():
-        return MutualInfoSelector(
-            random_state=20260805, n_jobs=1, parallel_config=config
-        ).fit(X, y)
+        return MutualInfoSelector(random_state=20260805, n_jobs=1, parallel_config=config).fit(X, y)
 
     def parallel_call():
         return MutualInfoSelector(
@@ -137,9 +127,7 @@ def test_cpu_heavy_wide_selector_reaches_speedup_gate(benchmark_data):
     )
     pd.testing.assert_series_equal(serial.scores_, parallel.scores_, check_exact=True)
     assert serial.selected_features_ == parallel.selected_features_
-    _assert_speed_gate(
-        serial_median, parallel_median, speedup, diagnostic, require_speedup=True
-    )
+    _assert_speed_gate(serial_median, parallel_median, speedup, diagnostic, require_speedup=True)
 
 
 def test_corr_selector_spearman_ranking_reaches_speedup_gate():
@@ -151,10 +139,7 @@ def test_corr_selector_spearman_ranking_reaches_speedup_gate():
         rng.normal(size=(rows, feature_count)),
         columns=[f"相关特征{index}" for index in range(feature_count)],
     )
-    weights = {
-        column: float(feature_count - index)
-        for index, column in enumerate(X.columns)
-    }
+    weights = {column: float(feature_count - index) for index, column in enumerate(X.columns)}
 
     def serial_call():
         return CorrSelector(
@@ -184,28 +169,60 @@ def test_corr_selector_spearman_ranking_reaches_speedup_gate():
     )
     assert serial.selected_features_ == parallel.selected_features_
     pd.testing.assert_frame_equal(serial.dropped_, parallel.dropped_, check_exact=True)
-    _assert_speed_gate(
-        serial_median, parallel_median, speedup, diagnostic, require_speedup=True
-    )
+    _assert_speed_gate(serial_median, parallel_median, speedup, diagnostic, require_speedup=True)
 
 
-def test_wide_numeric_categorical_binning_parallel_overhead_gate(benchmark_data):
-    """宽数值+类别分箱不得因线程调度慢于串行超过 5%。"""
+def test_wide_numeric_categorical_binning_auto_keeps_exact_serial_path(benchmark_data, monkeypatch):
+    """该规模的轻量分箱自动策略必须保持串行，并与显式串行精确一致。"""
+    import hscredit.utils.parallel as parallel_module
+
+    features = [f"n{index}" for index in range(48)] + [f"c{index}" for index in range(8)]
+    X = benchmark_data[features]
+    y = benchmark_data["target"]
+    config = {"batch_size": 1}
+    original_create = parallel_module._create_joblib_parallel
+    created_workers = []
+
+    def recording_create(n_jobs, options):
+        created_workers.append(n_jobs)
+        return original_create(n_jobs, options)
+
+    monkeypatch.setattr(parallel_module, "_create_joblib_parallel", recording_create)
+
+    def serial_call():
+        return QuantileBinning(max_n_bins=8, random_state=20260805, n_jobs=1, parallel_config=config).fit(X, y)
+
+    def parallel_call():
+        return QuantileBinning(
+            max_n_bins=8,
+            random_state=20260805,
+            n_jobs=-1,
+            parallel_config=config,
+        ).fit(X, y)
+
+    serial = serial_call()
+    automatic = parallel_call()
+    pd.testing.assert_frame_equal(serial.transform(X), automatic.transform(X), check_exact=True)
+    for feature in features:
+        pd.testing.assert_frame_equal(serial.get_bin_table(feature), automatic.get_bin_table(feature), check_exact=True)
+    assert created_workers == []
+
+
+def test_wide_numeric_categorical_binning_explicit_threading_overhead_gate(benchmark_data):
+    """用户显式指定线程时仍执行并行，并保持结果和性能门禁。"""
     features = [f"n{index}" for index in range(48)] + [f"c{index}" for index in range(8)]
     X = benchmark_data[features]
     y = benchmark_data["target"]
     config = {"batch_size": 1}
 
     def serial_call():
-        return QuantileBinning(
-            max_n_bins=8, random_state=20260805, n_jobs=1, parallel_config=config
-        ).fit(X, y)
+        return QuantileBinning(max_n_bins=8, random_state=20260805, n_jobs=1, parallel_config=config).fit(X, y)
 
     def parallel_call():
         return QuantileBinning(
             max_n_bins=8,
             random_state=20260805,
-            n_jobs=PARALLEL_WORKERS,
+            n_jobs=8,
             parallel_backend="threading",
             parallel_config=config,
         ).fit(X, y)
@@ -214,21 +231,48 @@ def test_wide_numeric_categorical_binning_parallel_overhead_gate(benchmark_data)
         "quantile_binning_wide",
         serial_call,
         parallel_call,
-        "rows=12000 numeric_features=48 categorical_features=8 backend=threading workers=4",
+        "rows=12000 numeric_features=48 categorical_features=8 backend=threading workers=8",
     )
     pd.testing.assert_frame_equal(serial.transform(X), parallel.transform(X), check_exact=True)
     for feature in features:
-        pd.testing.assert_frame_equal(
-            serial.get_bin_table(feature), parallel.get_bin_table(feature), check_exact=True
-        )
-    _assert_speed_gate(serial_median, parallel_median, speedup, diagnostic)
+        pd.testing.assert_frame_equal(serial.get_bin_table(feature), parallel.get_bin_table(feature), check_exact=True)
+    assert parallel_median <= serial_median * 1.25, diagnostic
+
+
+def test_default_woe_transform_avoids_small_work_parallel_regression():
+    """默认自动策略不得让已拟合 WOE 的轻量列映射因线程调度明显变慢。"""
+    rng = np.random.RandomState(20260811)
+    X = pd.DataFrame(
+        rng.randint(0, 10, size=(24_000, 56)),
+        columns=[f"n{index}" for index in range(56)],
+    )
+    for index in range(8):
+        X[f"n{48 + index}"] = X[f"n{48 + index}"].map(lambda value: f"类别{value}")
+    y = pd.Series(rng.randint(0, 2, size=len(X)))
+    encoder = WOEEncoder(n_jobs=1).fit(X, y)
+
+    def serial_call():
+        encoder.n_jobs = 1
+        encoder.parallel_backend = None
+        return encoder.transform(X)
+
+    def automatic_call():
+        encoder.n_jobs = -1
+        encoder.parallel_backend = None
+        return encoder.transform(X)
+
+    serial, automatic, serial_median, automatic_median, speedup, diagnostic = _measure_medians(
+        "woe_transform_auto",
+        serial_call,
+        automatic_call,
+        "rows=24000 numeric_features=48 categorical_features=8 backend=auto",
+    )
+    pd.testing.assert_frame_equal(serial, automatic, check_exact=True)
+    _assert_speed_gate(serial_median, automatic_median, speedup, diagnostic)
 
 
 def _benchmark_rules():
-    return [
-        Rule(f"n{index % 48} > {(index % 7 - 3) / 4}", name=f"规则{index}")
-        for index in range(72)
-    ]
+    return [Rule(f"n{index % 48} > {(index % 7 - 3) / 4}", name=f"规则{index}") for index in range(72)]
 
 
 def test_many_rule_flow_parallel_overhead_gate(benchmark_data):
@@ -236,16 +280,13 @@ def test_many_rule_flow_parallel_overhead_gate(benchmark_data):
     config = {"batch_size": 1}
 
     def serial_call():
-        return RuleFlow(
-            _benchmark_rules(), mode="parallel", n_jobs=1, parallel_config=config
-        ).predict(benchmark_data)
+        return RuleFlow(_benchmark_rules(), mode="parallel", n_jobs=1, parallel_config=config).predict(benchmark_data)
 
     def parallel_call():
         return RuleFlow(
             _benchmark_rules(),
             mode="parallel",
-            n_jobs=PARALLEL_WORKERS,
-            parallel_backend="threading",
+            n_jobs=-1,
             parallel_config=config,
         ).predict(benchmark_data)
 
@@ -253,7 +294,7 @@ def test_many_rule_flow_parallel_overhead_gate(benchmark_data):
         "rule_flow_many_rules",
         serial_call,
         parallel_call,
-        "rows=12000 rules=72 backend=threading workers=4",
+        "rows=12000 rules=72 backend=auto-vectorized",
     )
     pd.testing.assert_frame_equal(serial, parallel, check_exact=True)
     _assert_speed_gate(serial_median, parallel_median, speedup, diagnostic)
@@ -273,12 +314,7 @@ def test_three_label_rule_report_parallel_overhead_gate(benchmark_data):
         )
 
     def parallel_call():
-        return Rule(
-            "n0 > 0",
-            n_jobs=3,
-            parallel_backend="threading",
-            parallel_config=config,
-        ).report(
+        return Rule("n0 > 0", n_jobs=3, parallel_backend="threading", parallel_config=config,).report(
             label_data,
             overdue=["label0", "label1", "label2"],
             dpds=[0],

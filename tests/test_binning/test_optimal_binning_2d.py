@@ -393,17 +393,22 @@ class TestOptimalBinning2DCustom:
             x_params={'n_jobs': 1, 'parallel_backend': 'loky'},
         ).fit(sample_df, y=sample_df['target'], features=['age', 'income'])
 
-        assert submissions == [
-            (
-                '_fit_axis_binner',
-                [True, False],
-                {
-                    'task_labels': ['age', 'income'],
-                    'default_backend': 'threading',
-                    'has_parallel_children': True,
-                },
-            )
-        ]
+        assert len(submissions) == 1
+        function_name, tasks, options = submissions[0]
+        workload = options.pop('workload')
+        assert (function_name, tasks, options) == (
+            '_fit_axis_binner',
+            [True, False],
+            {
+                'task_labels': ['age', 'income'],
+                'default_backend': 'threading',
+                'has_parallel_children': True,
+            },
+        )
+        assert workload.task_count == 2
+        assert workload.rows == len(sample_df)
+        assert workload.columns == 2
+        assert workload.operation == '二维分箱轴拟合'
         assert binner.binner_x_.n_jobs == 1
         assert binner.binner_x_.parallel_backend == 'loky'
         assert binner.binner_y_.n_jobs == 2

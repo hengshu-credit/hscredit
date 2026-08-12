@@ -69,7 +69,7 @@ class TypeSelector(BaseFeatureSelector):
         self,
         dtype_include: Optional[Union[str, Type, List[str]]] = None,
         dtype_exclude: Optional[Union[str, Type, List[str]]] = None,
-        target: str = 'target',
+        target: str = "target",
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
         force_drop: Optional[List[str]] = None,
@@ -80,14 +80,19 @@ class TypeSelector(BaseFeatureSelector):
         parallel_config: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(
-            target=target, include=include, exclude=exclude,
-            force_drop=force_drop, n_jobs=n_jobs,
-            binner=binner, binning_params=binning_params,
-            parallel_backend=parallel_backend, parallel_config=parallel_config,
+            target=target,
+            include=include,
+            exclude=exclude,
+            force_drop=force_drop,
+            n_jobs=n_jobs,
+            binner=binner,
+            binning_params=binning_params,
+            parallel_backend=parallel_backend,
+            parallel_config=parallel_config,
         )
         self.dtype_include = dtype_include
         self.dtype_exclude = dtype_exclude
-        self.method_name = '类型筛选'
+        self.method_name = "类型筛选"
 
     def _fit_impl(
         self,
@@ -101,12 +106,14 @@ class TypeSelector(BaseFeatureSelector):
         """
         self._get_feature_names(X)
 
-        results = self._parallel_execute(
-            _matches_dtype_feature,
-            [(col, X[col], self.dtype_include, self.dtype_exclude) for col in X.columns],
-            task_labels=X.columns,
-        )
-        selected_cols = [feature for feature, selected in results if selected]
+        self._validate_parallel_configuration()
+        if self.dtype_include is None and self.dtype_exclude is None:
+            selected_cols = list(X.columns)
+        else:
+            selected_cols = X.select_dtypes(
+                include=self.dtype_include,
+                exclude=self.dtype_exclude,
+            ).columns.tolist()
 
         self.dtypes_ = X.dtypes
         self.scores_ = pd.Series(
@@ -114,4 +121,4 @@ class TypeSelector(BaseFeatureSelector):
             index=X.columns,
         )
         self.selected_features_ = selected_cols
-        self._drop_reason = '数据类型不匹配'
+        self._drop_reason = "数据类型不匹配"

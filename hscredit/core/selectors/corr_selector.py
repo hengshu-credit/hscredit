@@ -25,29 +25,29 @@ from threadpoolctl import threadpool_limits
 
 from .base import BaseFeatureSelector
 from ...exceptions import ValidationError
-from ...utils.parallel import _current_parallel_budget, resolve_n_jobs
+from ...utils.parallel import ParallelWorkload, _current_parallel_budget, resolve_n_jobs
 
 
 # bin_tables_ 中指标列名 → 聚合方式的映射
 _METRIC_COL_MAP = {
-    'iv': ('指标IV值', lambda s: s.iloc[0]),   # 每行相同，取第一个
-    'ks': ('分档KS值', 'max'),                  # 取最大KS
-    'lift': ('LIFT值', 'max'),                  # 取最大LIFT
-    'bad_rate': ('坏样本率', 'max'),             # 取最大坏样本率
+    "iv": ("指标IV值", lambda s: s.iloc[0]),  # 每行相同，取第一个
+    "ks": ("分档KS值", "max"),  # 取最大KS
+    "lift": ("LIFT值", "max"),  # 取最大LIFT
+    "bad_rate": ("坏样本率", "max"),  # 取最大坏样本率
 }
 
 DEFAULT_BINNING_PARAMS = {
-    'method': 'best_iv',
-    'max_n_bins': 5,
-    'min_bin_size': 0.01,
-    'missing_separate': True,
+    "method": "best_iv",
+    "max_n_bins": 5,
+    "min_bin_size": 0.01,
+    "missing_separate": True,
 }
 
 
 def _rank_corr_column(task):
     """按列计算平均秩；线程后端可直接写回当前列。"""
     ordinal, column, *options = task
-    ranked = pd.Series(column, copy=False).rank(method='average').to_numpy(dtype=np.float64)
+    ranked = pd.Series(column, copy=False).rank(method="average").to_numpy(dtype=np.float64)
     if options and options[0]:
         column[:] = ranked
         return ordinal, None
@@ -80,7 +80,7 @@ def _corr_block_worker(task):
         if kept_positions.size == 0:
             return (
                 ordinal,
-                'prior',
+                "prior",
                 column_start,
                 np.full(width, np.nan, dtype=np.float64),
                 np.full(width, -1, dtype=np.int64),
@@ -101,7 +101,7 @@ def _corr_block_worker(task):
     absolute = np.abs(np.asarray(corr, dtype=np.float64))
     if diagonal:
         np.fill_diagonal(absolute, np.nan)
-        return ordinal, 'diagonal', column_start, absolute, None
+        return ordinal, "diagonal", column_start, absolute, None
 
     width = column_stop - column_start
     safe = np.where(np.isnan(absolute), -np.inf, absolute)
@@ -112,7 +112,7 @@ def _corr_block_worker(task):
     conflicts = np.isfinite(max_values) & (max_values > threshold)
     return (
         ordinal,
-        'prior',
+        "prior",
         column_start,
         np.where(conflicts, max_values, np.nan).astype(np.float64, copy=False),
         np.where(conflicts, related_indices, -1).astype(np.int64, copy=False),
@@ -188,11 +188,11 @@ class CorrSelector(BaseFeatureSelector):
     def __init__(
         self,
         threshold: float = 0.7,
-        method: str = 'spearman',
-        metric: str = 'iv',
+        method: str = "spearman",
+        metric: str = "iv",
         weights: Optional[Union[pd.Series, Dict[str, float], List[float]]] = None,
         binning_params: Optional[Dict[str, Any]] = DEFAULT_BINNING_PARAMS,
-        target: str = 'target',
+        target: str = "target",
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
         force_drop: Optional[List[str]] = None,
@@ -202,40 +202,41 @@ class CorrSelector(BaseFeatureSelector):
         parallel_config: Optional[Dict[str, Any]] = None,
         corr_block_size: int = 512,
     ):
-        self._uses_default_binning_params = (
-            binning_params is DEFAULT_BINNING_PARAMS
-            or binning_params == DEFAULT_BINNING_PARAMS
-        )
+        self._uses_default_binning_params = binning_params is DEFAULT_BINNING_PARAMS or binning_params == DEFAULT_BINNING_PARAMS
         super().__init__(
-            target=target, threshold=threshold, include=include,
-            exclude=exclude, force_drop=force_drop, n_jobs=n_jobs,
-            binner=binner, binning_params=binning_params,
-            parallel_backend=parallel_backend, parallel_config=parallel_config,
+            target=target,
+            threshold=threshold,
+            include=include,
+            exclude=exclude,
+            force_drop=force_drop,
+            n_jobs=n_jobs,
+            binner=binner,
+            binning_params=binning_params,
+            parallel_backend=parallel_backend,
+            parallel_config=parallel_config,
         )
         self.method = method
         self.metric = metric
         self.weights = weights
         self.corr_block_size = corr_block_size
-        self.method_name = '相关性筛选'
+        self.method_name = "相关性筛选"
 
     def _validate_corr_block_size(self) -> int:
         """校验并返回相关计算块大小。"""
-        if (
-            isinstance(self.corr_block_size, (bool, np.bool_))
-            or not isinstance(self.corr_block_size, numbers.Integral)
-            or int(self.corr_block_size) < 1
-        ):
+        if isinstance(self.corr_block_size, (bool, np.bool_)) or not isinstance(self.corr_block_size, numbers.Integral) or int(self.corr_block_size) < 1:
             raise ValidationError("corr_block_size 必须为正整数")
         return int(self.corr_block_size)
 
     def _resolve_corr_total_workers(self, task_count: int) -> int:
         """解析 Corr 阶段可由外层任务和原生线程共同使用的总预算。"""
         budget = _current_parallel_budget()
-        return resolve_n_jobs(
-            self.n_jobs,
-            task_count=task_count,
-            available_budget=budget.available,
-        ) or 1
+        return (
+            resolve_n_jobs(
+                self.n_jobs,
+                available_budget=budget.available,
+            )
+            or 1
+        )
 
     def _rank_corr_values(self, values: np.ndarray, default_backend: str) -> np.ndarray:
         """按输入列顺序分批并行排名，并原地复用 float64 输入缓冲区。"""
@@ -244,7 +245,7 @@ class CorrSelector(BaseFeatureSelector):
 
         expected_shape = (values.shape[0],)
         effective_backend = self.parallel_backend or default_backend
-        if effective_backend == 'threading':
+        if effective_backend == "threading":
             ordinals = list(range(values.shape[1]))
             tasks = [(ordinal, values[:, ordinal], True) for ordinal in ordinals]
             results = self._parallel_execute(
@@ -252,6 +253,16 @@ class CorrSelector(BaseFeatureSelector):
                 tasks,
                 task_labels=ordinals,
                 default_backend=default_backend,
+                workload=ParallelWorkload(
+                    task_count=len(tasks),
+                    rows=values.shape[0],
+                    columns=values.shape[1],
+                    data_bytes=int(values.nbytes),
+                    cost_per_item=2.0,
+                    capability="thread_safe",
+                    releases_gil=True,
+                    operation="Spearman字段排名",
+                ),
             )
             for expected_ordinal, result in zip(ordinals, results):
                 if result != (expected_ordinal, None):
@@ -268,13 +279,18 @@ class CorrSelector(BaseFeatureSelector):
                 tasks,
                 task_labels=ordinals,
                 default_backend=default_backend,
+                workload=ParallelWorkload(
+                    task_count=len(tasks),
+                    rows=values.shape[0],
+                    columns=len(tasks),
+                    data_bytes=int(values[:, batch_start:batch_stop].nbytes),
+                    cost_per_item=2.0,
+                    capability="process_safe",
+                    operation="Spearman字段排名",
+                ),
             )
             for expected_ordinal, result in zip(ordinals, results):
-                if (
-                    not isinstance(result, tuple)
-                    or len(result) != 2
-                    or result[0] != expected_ordinal
-                ):
+                if not isinstance(result, tuple) or len(result) != 2 or result[0] != expected_ordinal:
                     raise TypeError(f"相关排名任务 {expected_ordinal} 返回结果无效")
                 ranked = np.asarray(result[1], dtype=np.float64)
                 if ranked.shape != expected_shape:
@@ -291,12 +307,24 @@ class CorrSelector(BaseFeatureSelector):
     ):
         """在同一总预算内协调相关块 joblib 任务和 BLAS 原生线程。"""
         effective_backend = self.parallel_backend or default_backend
-        if effective_backend != 'threading':
+        matrix = tasks[0][1] if tasks else np.empty((0, 0), dtype=float)
+        workload = ParallelWorkload(
+            task_count=len(tasks),
+            rows=matrix.shape[0] if matrix.ndim > 0 else 0,
+            columns=matrix.shape[1] if matrix.ndim > 1 else 1,
+            data_bytes=int(matrix.nbytes),
+            cost_per_item=max(4.0, float(matrix.shape[1] if matrix.ndim > 1 else 1)),
+            capability="thread_safe" if effective_backend == "threading" else "process_safe",
+            releases_gil=effective_backend == "threading",
+            operation=f"{self.method}相关块计算",
+        )
+        if effective_backend != "threading":
             return self._parallel_execute(
                 _corr_block_worker,
                 tasks,
                 task_labels=labels,
                 default_backend=default_backend,
+                workload=workload,
             )
 
         outer_workers = min(total_workers, max(1, len(tasks)))
@@ -307,6 +335,7 @@ class CorrSelector(BaseFeatureSelector):
                 tasks,
                 task_labels=labels,
                 default_backend=default_backend,
+                workload=workload,
             )
 
     @staticmethod
@@ -325,11 +354,7 @@ class CorrSelector(BaseFeatureSelector):
                 continue
             current_value = max_values[index]
             current_other = max_indices[index]
-            if (
-                np.isnan(current_value)
-                or value > current_value
-                or (value == current_value and (current_other < 0 or other < current_other))
-            ):
+            if np.isnan(current_value) or value > current_value or (value == current_value and (current_other < 0 or other < current_other)):
                 max_values[index] = float(value)
                 max_indices[index] = other
 
@@ -350,31 +375,21 @@ class CorrSelector(BaseFeatureSelector):
         except (TypeError, ValueError) as exc:
             raise ValidationError("CorrSelector 相关计算仅支持可转换为数值的特征") from exc
 
-        fast_matrix = self.method in ('pearson', 'spearman') and np.isfinite(values).all()
-        has_inner_thread_limit = (
-            isinstance(self.parallel_config, dict)
-            and self.parallel_config.get('inner_max_num_threads') is not None
-        )
-        default_backend = (
-            'threading'
-            if fast_matrix and not has_inner_thread_limit
-            else 'loky'
-        )
+        fast_matrix = self.method in ("pearson", "spearman") and np.isfinite(values).all()
+        has_inner_thread_limit = isinstance(self.parallel_config, dict) and self.parallel_config.get("inner_max_num_threads") is not None
+        default_backend = "threading" if fast_matrix and not has_inner_thread_limit else "loky"
         if fast_matrix:
-            if self.method == 'spearman':
+            if self.method == "spearman":
                 # 无缺失时，Spearman 等价于先按列进行一次平均秩转换，再计算 Pearson；
                 # 排名只做一次，避免每个相关块重复排序。
                 values = self._rank_corr_values(values, default_backend)
             values -= values.mean(axis=0)
-            norms = np.sqrt(np.einsum('ij,ij->j', values, values))
-            with np.errstate(divide='ignore', invalid='ignore'):
+            norms = np.sqrt(np.einsum("ij,ij->j", values, values))
+            with np.errstate(divide="ignore", invalid="ignore"):
                 values /= norms
             values[:, norms == 0.0] = np.nan
 
-        blocks = [
-            (start, min(start + block_size, n_features))
-            for start in range(0, n_features, block_size)
-        ]
+        blocks = [(start, min(start + block_size, n_features)) for start in range(0, n_features, block_size)]
         kept = np.zeros(n_features, dtype=bool)
         drops = set()
         max_values = np.full(n_features, np.nan, dtype=np.float64)
@@ -433,12 +448,12 @@ class CorrSelector(BaseFeatureSelector):
                 if not isinstance(result, tuple) or len(result) != 5 or result[0] != expected_ordinal:
                     raise TypeError(f"相关块任务 {expected_ordinal} 返回结果无效")
                 _, result_type, result_start, result_values, result_indices = result
-                if result_type == 'diagonal':
+                if result_type == "diagonal":
                     if result_start != column_start or diagonal is not None:
                         raise TypeError(f"相关块任务 {expected_ordinal} 返回对角块无效")
                     diagonal = result_values
                     continue
-                if result_type != 'prior' or result_start != column_start:
+                if result_type != "prior" or result_start != column_start:
                     raise TypeError(f"相关块任务 {expected_ordinal} 返回前置块无效")
                 column_indices = np.arange(column_start, column_stop, dtype=np.int64)
                 self._merge_max_candidates(
@@ -485,17 +500,12 @@ class CorrSelector(BaseFeatureSelector):
         """从基类管理的同一分箱器中提取特征指标权重。"""
         metric_key = self.metric.lower()
         if metric_key not in _METRIC_COL_MAP:
-            raise ValidationError(
-                f"不支持的指标 '{self.metric}'，可选: {list(_METRIC_COL_MAP.keys())}"
-            )
+            raise ValidationError(f"不支持的指标 '{self.metric}'，可选: {list(_METRIC_COL_MAP.keys())}")
         col_name, agg_func = _METRIC_COL_MAP[metric_key]
-        binner = getattr(self, '_binner_instance', None)
-        bin_tables = getattr(binner, 'bin_tables_', {}) if binner is not None else {}
+        binner = getattr(self, "_binner_instance", None)
+        bin_tables = getattr(binner, "bin_tables_", {}) if binner is not None else {}
         if not bin_tables:
-            raise ValidationError(
-                "CorrSelector 使用指标权重时需要配置 binner 或 binning_params，"
-                "也可以显式传入 weights"
-            )
+            raise ValidationError("CorrSelector 使用指标权重时需要配置 binner 或 binning_params，" "也可以显式传入 weights")
 
         scores = {}
         for col in feature_names:
@@ -526,15 +536,13 @@ class CorrSelector(BaseFeatureSelector):
             return binner
 
         configured = self.binning_params if isinstance(self.binning_params, dict) else {}
-        if 'n_jobs' not in configured:
+        if "n_jobs" not in configured:
             binner.n_jobs = self.n_jobs
-        if 'parallel_backend' not in configured:
+        if "parallel_backend" not in configured:
             # BestIV/MDLP 等包含较多 Python 循环；默认使用进程避免 GIL 退化。
-            binner.parallel_backend = self.parallel_backend or 'loky'
-        if 'parallel_config' not in configured:
-            binner.parallel_config = (
-                dict(self.parallel_config) if self.parallel_config is not None else None
-            )
+            binner.parallel_backend = self.parallel_backend or "loky"
+        if "parallel_config" not in configured:
+            binner.parallel_config = dict(self.parallel_config) if self.parallel_config is not None else None
         return binner
 
     def _included_features_participate_in_selection(self) -> bool:
@@ -565,11 +573,15 @@ class CorrSelector(BaseFeatureSelector):
             elif isinstance(self.weights, dict):
                 weight_series = pd.Series(self.weights).reindex(feature_names).fillna(0.0)
             else:
-                weight_series = pd.Series(
-                    np.array(self.weights)[:n_features],
-                    index=feature_names[:len(self.weights)],
-                ).reindex(feature_names).fillna(0.0)
-        elif y is not None or getattr(self, '_binner_instance', None) is not None:
+                weight_series = (
+                    pd.Series(
+                        np.array(self.weights)[:n_features],
+                        index=feature_names[: len(self.weights)],
+                    )
+                    .reindex(feature_names)
+                    .fillna(0.0)
+                )
+        elif y is not None or getattr(self, "_binner_instance", None) is not None:
             # 从基类已训练的同一分箱器中读取指标权重
             weight_series = self._metric_weights_from_binner(feature_names)
             weight_series = weight_series.reindex(feature_names).fillna(0.0)
@@ -585,16 +597,11 @@ class CorrSelector(BaseFeatureSelector):
         self.scores_ = weight_series.copy()
 
         # ── 强制保留优先，其余特征按权重稳定降序排列 ──
-        forced_exclude = set(getattr(self, 'exclude_', []))
-        forced_include = set(getattr(self, 'include_', [])).difference(forced_exclude)
+        forced_exclude = set(getattr(self, "exclude_", []))
+        forced_include = set(getattr(self, "include_", [])).difference(forced_exclude)
         included_names = [name for name in feature_names if name in forced_include]
-        sort_idx = np.argsort(-weight_arr, kind='stable')
-        sorted_names = included_names + [
-            feature_names[index]
-            for index in sort_idx
-            if feature_names[index] not in forced_include
-            and feature_names[index] not in forced_exclude
-        ]
+        sort_idx = np.argsort(-weight_arr, kind="stable")
+        sorted_names = included_names + [feature_names[index] for index in sort_idx if feature_names[index] not in forced_include and feature_names[index] not in forced_exclude]
         forced_keep_count = len(included_names)
 
         # ── 分块计算相关性，不再分配完整 p×p 相关矩阵 ──
@@ -632,32 +639,25 @@ class CorrSelector(BaseFeatureSelector):
                 max_corr_features.append(max_corr_feat)
                 metric_values.append(weight_series.get(col_name, 0.0))
 
-            metric_label = (
-                self.metric.upper()
-                if self.weights is None and getattr(self, '_binner_instance', None) is not None
-                else '权重'
-            )
+            metric_label = self.metric.upper() if self.weights is None and getattr(self, "_binner_instance", None) is not None else "权重"
             drop_reasons = []
             for index, col_name in enumerate(dropped_cols):
                 related_name = max_corr_features[index]
                 if related_name in forced_include:
-                    suffix = '相关特征为强制保留变量'
+                    suffix = "相关特征为强制保留变量"
                 else:
-                    suffix = f'{metric_label}({metric_values[index]:.4f})不高于相关特征'
-                drop_reasons.append(
-                    f'与{related_name}相关系数({max_corr_values[index]:.4f})>'
-                    f'{self.threshold}，{suffix}'
-                )
+                    suffix = f"{metric_label}({metric_values[index]:.4f})不高于相关特征"
+                drop_reasons.append(f"与{related_name}相关系数({max_corr_values[index]:.4f})>" f"{self.threshold}，{suffix}")
 
-            self.dropped_ = pd.DataFrame({
-                '特征': dropped_cols,
-                '剔除原因': drop_reasons,
-                '最大相关系数': max_corr_values,
-                '相关特征': max_corr_features,
-                metric_label: metric_values,
-                '阈值': [self.threshold] * len(dropped_cols),
-            })
-        else:
             self.dropped_ = pd.DataFrame(
-                columns=['特征', '剔除原因', '最大相关系数', '相关特征', '阈值']
+                {
+                    "特征": dropped_cols,
+                    "剔除原因": drop_reasons,
+                    "最大相关系数": max_corr_values,
+                    "相关特征": max_corr_features,
+                    metric_label: metric_values,
+                    "阈值": [self.threshold] * len(dropped_cols),
+                }
             )
+        else:
+            self.dropped_ = pd.DataFrame(columns=["特征", "剔除原因", "最大相关系数", "相关特征", "阈值"])

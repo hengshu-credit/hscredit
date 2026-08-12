@@ -57,7 +57,7 @@ class CardinalitySelector(BaseFeatureSelector):
         self,
         threshold: int = 10,
         dropna: bool = True,
-        target: str = 'target',
+        target: str = "target",
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
         force_drop: Optional[List[str]] = None,
@@ -68,13 +68,19 @@ class CardinalitySelector(BaseFeatureSelector):
         parallel_config: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(
-            target=target, threshold=threshold, include=include,
-            exclude=exclude, force_drop=force_drop, n_jobs=n_jobs,
-            binner=binner, binning_params=binning_params,
-            parallel_backend=parallel_backend, parallel_config=parallel_config,
+            target=target,
+            threshold=threshold,
+            include=include,
+            exclude=exclude,
+            force_drop=force_drop,
+            n_jobs=n_jobs,
+            binner=binner,
+            binning_params=binning_params,
+            parallel_backend=parallel_backend,
+            parallel_config=parallel_config,
         )
         self.dropna = dropna
-        self.method_name = '基数筛选'
+        self.method_name = "基数筛选"
 
     def _fit_impl(
         self,
@@ -88,12 +94,8 @@ class CardinalitySelector(BaseFeatureSelector):
         """
         self._get_feature_names(X)
 
-        results = self._parallel_execute(
-            _compute_cardinality_feature,
-            [(col, X[col], self.dropna) for col in X.columns],
-            task_labels=X.columns,
-        )
-        cardinalities = pd.Series(dict(results)).reindex(X.columns)
+        self._validate_parallel_configuration()
+        cardinalities = X.nunique(axis=0, dropna=self.dropna).reindex(X.columns)
         self.scores_ = cardinalities
 
         # 选择基数低于阈值的特征
@@ -103,11 +105,13 @@ class CardinalitySelector(BaseFeatureSelector):
         # 构建详细的dropped_记录，包含基数信息
         dropped_cols = X.columns[~selected_mask].tolist()
         if len(dropped_cols) > 0:
-            self.dropped_ = pd.DataFrame({
-                '特征': dropped_cols,
-                '剔除原因': [f'唯一值数量({self.scores_[col]}) > 阈值({self.threshold})' for col in dropped_cols],
-                '唯一值数量': [self.scores_[col] for col in dropped_cols],
-                '阈值': [self.threshold] * len(dropped_cols),
-            })
+            self.dropped_ = pd.DataFrame(
+                {
+                    "特征": dropped_cols,
+                    "剔除原因": [f"唯一值数量({self.scores_[col]}) > 阈值({self.threshold})" for col in dropped_cols],
+                    "唯一值数量": [self.scores_[col] for col in dropped_cols],
+                    "阈值": [self.threshold] * len(dropped_cols),
+                }
+            )
         else:
-            self.dropped_ = pd.DataFrame(columns=['特征', '剔除原因', '唯一值数量', '阈值'])
+            self.dropped_ = pd.DataFrame(columns=["特征", "剔除原因", "唯一值数量", "阈值"])

@@ -17,7 +17,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 import warnings
 
-from .base import BaseRuleMiner
+from .base import BaseRuleMiner, _mining_workload
 from ...core.rules.rule import Rule
 from ...utils.parallel import _current_parallel_budget, resolve_n_jobs, validate_parallel_config
 
@@ -592,6 +592,13 @@ class TreeRuleExtractor(BaseRuleMiner):
             task_labels=[f"树 {index}" for index in range(len(tasks))],
             default_backend="loky",
             has_parallel_children=False,
+            workload=_mining_workload(
+                self.X_train_,
+                len(tasks),
+                operation="随机森林规则提取",
+                cost_per_item=8.0,
+                capability="process_safe",
+            ),
         )
         return [rule for tree_rules in extracted for rule in tree_rules]
     
@@ -611,6 +618,13 @@ class TreeRuleExtractor(BaseRuleMiner):
             task_labels=[f"树 {index}" for index in range(len(tasks))],
             default_backend="loky",
             has_parallel_children=False,
+            workload=_mining_workload(
+                self.X_train_,
+                len(tasks),
+                operation="GBDT规则提取",
+                cost_per_item=8.0,
+                capability="process_safe",
+            ),
         )
         return [rule for tree_rules in extracted for rule in tree_rules]
     
@@ -637,6 +651,13 @@ class TreeRuleExtractor(BaseRuleMiner):
             task_labels=[f"树 {index}" for index in range(len(tasks))],
             default_backend="loky",
             has_parallel_children=False,
+            workload=_mining_workload(
+                self.X_train_,
+                len(tasks),
+                operation="孤立森林规则提取",
+                cost_per_item=8.0,
+                capability="process_safe",
+            ),
         )
         return [rule for tree_rules in extracted for rule in tree_rules]
 
@@ -868,6 +889,12 @@ class TreeRuleExtractor(BaseRuleMiner):
             task_labels=labels,
             default_backend="threading",
             has_parallel_children=False,
+            workload=_mining_workload(
+                datasets if datasets is not None else self.X_train_,
+                len(tasks),
+                operation="树规则报告",
+                cost_per_item=10.0,
+            ),
         )
 
     def get_rule_objects(

@@ -25,12 +25,95 @@ HAS_XGBOOST = importlib.util.find_spec("xgboost") is not None
 HAS_LIGHTGBM = importlib.util.find_spec("lightgbm") is not None
 
 
+def test_catboost_public_n_jobs_controls_native_thread_count(monkeypatch):
+    """公共 n_jobs 必须覆盖旧的全核默认和冲突的原生 thread_count。"""
+    import hscredit.core.models.boosting.catboost_model as catboost_module
+
+    observed = {}
+
+    class FakeCatBoostClassifier:
+        def __init__(self, **params):
+            observed.update(params)
+
+        def fit(self, X, y, **kwargs):
+            return self
+
+        def get_best_iteration(self):
+            return 0
+
+        def get_best_score(self):
+            return {}
+
+        def get_evals_result(self):
+            return {}
+
+    monkeypatch.setattr(catboost_module, "CATBOOST_AVAILABLE", True)
+    monkeypatch.setattr(
+        catboost_module,
+        "cb",
+        type("FakeCatBoostModule", (), {"CatBoostClassifier": FakeCatBoostClassifier}),
+    )
+    model = catboost_module.CatBoostRiskModel(
+        n_jobs=3,
+        params={"thread_count": 99},
+        validation_fraction=0,
+    )
+    X = pd.DataFrame({"x": [0.0, 1.0, 2.0, 3.0]})
+    y = pd.Series([0, 1, 0, 1])
+
+    model.fit(X, y)
+
+    assert observed["thread_count"] == 3
+
+
+def test_ngboost_public_n_jobs_limits_native_training_threads(monkeypatch):
+    """NGBoost 不公开 n_jobs 时，公共预算仍须约束其底层原生线程池。"""
+    import hscredit.core.models.boosting.ngboost_model as ngboost_module
+
+    observed = {"limits": [], "fit_inside_context": False}
+
+    class RecordingThreadLimit:
+        def __init__(self, limits):
+            observed["limits"].append(limits)
+
+        def __enter__(self):
+            observed["active"] = True
+
+        def __exit__(self, exc_type, exc, traceback):
+            observed["active"] = False
+
+    class FakeNGBClassifier:
+        def __init__(self, **params):
+            self.params = params
+
+        def fit(self, X, y, **kwargs):
+            observed["fit_inside_context"] = observed.get("active", False)
+            return self
+
+    monkeypatch.setattr(ngboost_module, "NGBOOST_AVAILABLE", True)
+    monkeypatch.setattr(ngboost_module, "NGBClassifier", FakeNGBClassifier)
+    monkeypatch.setattr(ngboost_module, "Bernoulli", object())
+    monkeypatch.setattr(ngboost_module, "LogScore", object())
+    monkeypatch.setattr(ngboost_module, "threadpool_limits", RecordingThreadLimit)
+
+    model = ngboost_module.NGBoostRiskModel(
+        n_jobs=3,
+        n_estimators=2,
+        validation_fraction=0,
+    )
+    X = pd.DataFrame({"x": [0.0, 1.0, 2.0, 3.0]})
+    y = pd.Series([0, 1, 0, 1])
+
+    model.fit(X, y)
+
+    assert observed["limits"] == [3]
+    assert observed["fit_inside_context"] is True
+
+
 @pytest.fixture
 def sample_data():
     """创建测试数据."""
-    X, y = make_classification(
-        n_samples=1000, n_features=10, n_informative=6, n_redundant=2, n_classes=2, weights=[0.7, 0.3], random_state=42
-    )
+    X, y = make_classification(n_samples=1000, n_features=10, n_informative=6, n_redundant=2, n_classes=2, weights=[0.7, 0.3], random_state=42)
     feature_names = [f"feature_{i}" for i in range(10)]
     X = pd.DataFrame(X, columns=feature_names)
     y = pd.Series(y, name="target")

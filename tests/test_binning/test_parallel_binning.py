@@ -13,7 +13,15 @@ import pytest
 from sklearn.base import BaseEstimator, clone
 
 from hscredit.core import binning
-from hscredit.core.binning import BestIVBinning, BaseBinning, OptimalBinning, OptimalBinning2D, UniformBinning
+from hscredit.core.binning import (
+    BestIVBinning,
+    BaseBinning,
+    GeneticBinning,
+    OptimalBinning,
+    OptimalBinning2D,
+    QuantileBinning,
+    UniformBinning,
+)
 from hscredit.core.metrics import compute_bin_stats
 from hscredit.exceptions import ParallelExecutionError
 
@@ -84,6 +92,53 @@ def test_multi_feature_binner_uses_multiple_real_threads(monkeypatch):
     ).fit(X, y)
 
     assert len(thread_ids) >= 2
+
+
+def test_tiny_automatic_binning_stays_serial(monkeypatch):
+    """自动模式应避免为少量轻量字段支付线程调度成本。"""
+    X = pd.DataFrame(
+        {
+            "数值一": np.arange(1, 17, dtype=float),
+            "分类": pd.Categorical(np.tile(["甲", "乙"], 8)),
+            "数值二": np.arange(16, 0, -1, dtype=float),
+        }
+    )
+    y = pd.Series(np.tile([0, 1], 8))
+    thread_ids = set()
+    original_worker = BaseBinning._fit_feature_transaction
+
+    def recording_worker(self, task):
+        thread_ids.add(threading.get_ident())
+        return original_worker(self, task)
+
+    monkeypatch.setattr(BaseBinning, "_fit_feature_transaction", recording_worker)
+    UniformBinning(max_n_bins=4, n_jobs=-1).fit(X, y)
+
+    assert len(thread_ids) == 1
+
+
+def test_wide_quantile_automatic_plan_avoids_unprofitable_threads(monkeypatch):
+    """宽表 Quantile 自动模式不得强制创建收益不稳定的线程。"""
+    rng = np.random.RandomState(20260811)
+    X = pd.DataFrame(
+        rng.normal(size=(4_000, 48)),
+        columns=[f"特征{index}" for index in range(48)],
+    )
+    y = pd.Series((X.iloc[:, :4].sum(axis=1) > 0).astype(int), index=X.index)
+    thread_ids = set()
+    lock = threading.Lock()
+    original_worker = BaseBinning._fit_feature_transaction
+
+    def recording_worker(self, task):
+        with lock:
+            thread_ids.add(threading.get_ident())
+        time.sleep(0.005)
+        return original_worker(self, task)
+
+    monkeypatch.setattr(BaseBinning, "_fit_feature_transaction", recording_worker)
+    QuantileBinning(max_n_bins=8, n_jobs=-1).fit(X, y)
+
+    assert len(thread_ids) == 1
 
 
 def _assert_value_equal(left, right):
@@ -196,9 +251,7 @@ def test_partial_user_splits_keep_rules_fixed_and_fit_remaining_with_method(n_jo
 
     np.testing.assert_array_equal(binner.splits_["固定规则"], [5.0, 10.0, 15.0])
     _assert_value_equal(binner.splits_["普通字段"], baseline.splits_["普通字段"])
-    pd.testing.assert_frame_equal(
-        binner.get_bin_table("普通字段"), baseline.get_bin_table("普通字段")
-    )
+    pd.testing.assert_frame_equal(binner.get_bin_table("普通字段"), baseline.get_bin_table("普通字段"))
     assert binner._ordinary_features_ == ("普通字段",)
     assert binner._ordinary_binner_ is not None
     assert list(binner._ordinary_binner_.splits_) == ["普通字段"]
@@ -449,9 +502,7 @@ def _successful_initial_fit(binner):
 
 @pytest.mark.parametrize("n_jobs,backend", EXECUTION_MODES)
 def test_failed_categorical_refit_restores_complete_previous_model(n_jobs, backend):
-    binner, y = _successful_initial_fit(
-        RefitFailingUniformBinning(n_jobs=n_jobs, parallel_backend=backend, random_state=17)
-    )
+    binner, y = _successful_initial_fit(RefitFailingUniformBinning(n_jobs=n_jobs, parallel_backend=backend, random_state=17))
     before = pickle.dumps(binner)
     refit = pd.DataFrame(
         {
@@ -469,9 +520,7 @@ def test_failed_categorical_refit_restores_complete_previous_model(n_jobs, backe
 
 @pytest.mark.parametrize("n_jobs,backend", EXECUTION_MODES)
 def test_post_fit_failure_restores_complete_previous_model(n_jobs, backend):
-    binner, y = _successful_initial_fit(
-        PostFitFailingBestIVBinning(n_jobs=n_jobs, parallel_backend=backend, random_state=17)
-    )
+    binner, y = _successful_initial_fit(PostFitFailingBestIVBinning(n_jobs=n_jobs, parallel_backend=backend, random_state=17))
     before = pickle.dumps(binner)
 
     with pytest.raises(ValueError, match="后处理故意失败"):
@@ -483,9 +532,7 @@ def test_post_fit_failure_restores_complete_previous_model(n_jobs, backend):
 
 @pytest.mark.parametrize("n_jobs,backend", EXECUTION_MODES)
 def test_finalize_failure_restores_complete_previous_model(n_jobs, backend):
-    binner, y = _successful_initial_fit(
-        FinalizeFailingUniformBinning(n_jobs=n_jobs, parallel_backend=backend, random_state=17)
-    )
+    binner, y = _successful_initial_fit(FinalizeFailingUniformBinning(n_jobs=n_jobs, parallel_backend=backend, random_state=17))
     before = pickle.dumps(binner)
     refit = pd.DataFrame({"最终失败": np.tile(["甲", "乙", "丙"], 8)})
 
@@ -570,9 +617,7 @@ def test_2d_successful_refit_replaces_all_previous_state(n_jobs, backend):
     y = pd.Series(np.tile([0, 1], 12), name="目标")
     old = pd.DataFrame({"old_x": np.arange(24, dtype=float), "old_y": np.arange(23, -1, -1, dtype=float)})
     new = pd.DataFrame({"new_x": np.arange(23, -1, -1, dtype=float), "new_y": np.arange(24, dtype=float)})
-    binner = OptimalBinning2D(
-        method="uniform", n_jobs=n_jobs, parallel_backend=backend, random_state=17
-    ).fit(old, y)
+    binner = OptimalBinning2D(method="uniform", n_jobs=n_jobs, parallel_backend=backend, random_state=17).fit(old, y)
 
     binner.fit(new, y)
 
@@ -595,9 +640,7 @@ def test_2d_transaction_preserves_signature_clone_and_pickle(mixed_xy):
     fitted = source.fit(X[features], y)
     restored = pickle.loads(pickle.dumps(fitted))
 
-    pd.testing.assert_frame_equal(
-        fitted.transform(X[features], metric="woe"), restored.transform(X[features], metric="woe")
-    )
+    pd.testing.assert_frame_equal(fitted.transform(X[features], metric="woe"), restored.transform(X[features], metric="woe"))
 
 
 @pytest.mark.parametrize("n_jobs,backend", EXECUTION_MODES)
@@ -608,9 +651,7 @@ def test_2d_transaction_preserves_signature_clone_and_pickle(mixed_xy):
         pytest.param(lambda **kwargs: OptimalBinning(method="uniform", **kwargs), None, id="optimal"),
     ],
 )
-def test_imported_rule_fit_candidate_excludes_previous_fitted_outputs(
-    binner_factory, extra_state_name, n_jobs, backend
-):
+def test_imported_rule_fit_candidate_excludes_previous_fitted_outputs(binner_factory, extra_state_name, n_jobs, backend):
     y = pd.Series(np.tile([0, 1], 12), name="目标")
     old = pd.DataFrame({"old": np.arange(24, dtype=float)})
     new = pd.DataFrame({"new": np.arange(24, dtype=float)})
@@ -690,15 +731,9 @@ def test_import_rules_preserves_unmentioned_feature_immediate_rules_and_woe():
 @pytest.mark.parametrize("n_jobs,backend", EXECUTION_MODES)
 @pytest.mark.parametrize("imported_first", [True, False], ids=["imported-first", "imported-last"])
 @pytest.mark.parametrize("ordinary_kind", ["numerical", "categorical"])
-def test_partial_imported_rules_fit_ordinary_features_with_original_column_order(
-    n_jobs, backend, imported_first, ordinary_kind
-):
+def test_partial_imported_rules_fit_ordinary_features_with_original_column_order(n_jobs, backend, imported_first, ordinary_kind):
     y = pd.Series(np.tile([0, 1, 0, 1, 1, 0], 4), name="目标")
-    ordinary = (
-        np.arange(24, dtype=float)
-        if ordinary_kind == "numerical"
-        else np.tile(["甲", "乙", "丙", "丁"], 6)
-    )
+    ordinary = np.arange(24, dtype=float) if ordinary_kind == "numerical" else np.tile(["甲", "乙", "丙", "丁"], 6)
     ordinary_feature = f"普通{ordinary_kind}"
     X = pd.DataFrame(
         {
@@ -714,9 +749,7 @@ def test_partial_imported_rules_fit_ordinary_features_with_original_column_order
     fixed_baseline = OptimalBinning(method="uniform", max_n_bins=4, n_jobs=1, random_state=17)
     fixed_baseline.import_rules({"固定规则": [5.0, 10.0, 15.0]})
     fixed_baseline.fit(X[["固定规则"]], y)
-    ordinary_baseline = OptimalBinning(method="uniform", max_n_bins=4, n_jobs=1, random_state=17).fit(
-        X[[ordinary_feature]], y
-    )
+    ordinary_baseline = OptimalBinning(method="uniform", max_n_bins=4, n_jobs=1, random_state=17).fit(X[[ordinary_feature]], y)
 
     binner = OptimalBinning(
         method="uniform",
@@ -735,9 +768,7 @@ def test_partial_imported_rules_fit_ordinary_features_with_original_column_order
     np.testing.assert_array_equal(binner.splits_["固定规则"], np.array([5.0, 10.0, 15.0]))
     _assert_value_equal(binner.splits_[ordinary_feature], ordinary_baseline.splits_[ordinary_feature])
     pd.testing.assert_frame_equal(binner.get_bin_table("固定规则"), fixed_baseline.get_bin_table("固定规则"))
-    pd.testing.assert_frame_equal(
-        binner.get_bin_table(ordinary_feature), ordinary_baseline.get_bin_table(ordinary_feature)
-    )
+    pd.testing.assert_frame_equal(binner.get_bin_table(ordinary_feature), ordinary_baseline.get_bin_table(ordinary_feature))
     assert binner._ordinary_binner_ is not None
     assert binner._ordinary_features_ == (ordinary_feature,)
     assert binner._binner is binner._ordinary_binner_._binner
@@ -747,12 +778,8 @@ def test_partial_imported_rules_fit_ordinary_features_with_original_column_order
         result = binner.transform(X, metric=metric)
         assert result.index.equals(X.index)
         assert list(result.columns) == columns
-        pd.testing.assert_series_equal(
-            result["固定规则"], fixed_baseline.transform(X[["固定规则"]], metric=metric)["固定规则"]
-        )
-        pd.testing.assert_series_equal(
-            result[ordinary_feature], ordinary_baseline.transform(X[[ordinary_feature]], metric=metric)[ordinary_feature]
-        )
+        pd.testing.assert_series_equal(result["固定规则"], fixed_baseline.transform(X[["固定规则"]], metric=metric)["固定规则"])
+        pd.testing.assert_series_equal(result[ordinary_feature], ordinary_baseline.transform(X[[ordinary_feature]], metric=metric)[ordinary_feature])
         if metric == "woe":
             assert result.notna().all().all()
 
@@ -793,14 +820,7 @@ def _expected_best_lift_from_stats(binner, X, feature):
     total_bad = (table.loc[valid, "坏样本率"] * table.loc[valid, "样本总数"]).sum()
     total_count = table.loc[valid, "样本总数"].sum()
     total_bad_rate = total_bad / total_count if total_count > 0 else 0
-    lift_map = {
-        int(row["分箱"]): np.nan
-        if int(row["分箱"]) < 0
-        else row["坏样本率"] / total_bad_rate
-        if total_bad_rate > 0
-        else 1.0
-        for _, row in table.iterrows()
-    }
+    lift_map = {int(row["分箱"]): np.nan if int(row["分箱"]) < 0 else row["坏样本率"] / total_bad_rate if total_bad_rate > 0 else 1.0 for _, row in table.iterrows()}
     indices = binner.transform(X[[feature]], metric="indices")[feature]
     return indices.map(lift_map).astype(float)
 
@@ -826,9 +846,7 @@ def test_optimal_best_lift_ordinary_only_matches_its_method_delegate(n_jobs, bac
 @pytest.mark.parametrize("imported_first", [True, False], ids=["imported-first", "imported-last"])
 @pytest.mark.parametrize("fixed_kind", ["numerical", "categorical"])
 @pytest.mark.parametrize("ordinary_kind", ["numerical", "categorical"])
-def test_mixed_best_lift_partitions_imported_and_ordinary_features(
-    n_jobs, backend, imported_first, fixed_kind, ordinary_kind
-):
+def test_mixed_best_lift_partitions_imported_and_ordinary_features(n_jobs, backend, imported_first, fixed_kind, ordinary_kind):
     fixed_feature = f"固定{fixed_kind}"
     ordinary_feature = f"普通{ordinary_kind}"
     X = pd.DataFrame(
@@ -866,12 +884,8 @@ def test_mixed_best_lift_partitions_imported_and_ordinary_features(
         result = binner.transform(X, metric=metric)
         assert result.index.equals(X.index)
         assert list(result.columns) == columns
-        pd.testing.assert_series_equal(
-            result[fixed_feature], fixed_baseline.transform(X[[fixed_feature]], metric=metric)[fixed_feature]
-        )
-        pd.testing.assert_series_equal(
-            result[ordinary_feature], ordinary_baseline.transform(X[[ordinary_feature]], metric=metric)[ordinary_feature]
-        )
+        pd.testing.assert_series_equal(result[fixed_feature], fixed_baseline.transform(X[[fixed_feature]], metric=metric)[fixed_feature])
+        pd.testing.assert_series_equal(result[ordinary_feature], ordinary_baseline.transform(X[[ordinary_feature]], metric=metric)[ordinary_feature])
 
     expected_fixed_lift = _expected_best_lift_from_stats(fixed_baseline, X, fixed_feature)
     result = binner.transform(X, metric="lift")
@@ -967,9 +981,7 @@ def test_mixed_best_lift_empty_transform_keeps_public_contract(n_jobs, backend):
 @pytest.mark.parametrize("n_jobs,backend", EXECUTION_MODES)
 def test_partial_imported_rule_fit_failure_does_not_commit_fixed_stats(n_jobs, backend):
     y = pd.Series(np.tile([0, 1], 12), name="目标")
-    binner = OrdinaryFeatureFailingOptimalBinning(
-        method="uniform", n_jobs=n_jobs, parallel_backend=backend, random_state=17
-    ).fit(pd.DataFrame({"旧特征": np.arange(24, dtype=float)}), y)
+    binner = OrdinaryFeatureFailingOptimalBinning(method="uniform", n_jobs=n_jobs, parallel_backend=backend, random_state=17).fit(pd.DataFrame({"旧特征": np.arange(24, dtype=float)}), y)
     binner.import_rules({"固定规则": [5.0, 10.0, 15.0]})
     before = pickle.dumps(binner)
     X = pd.DataFrame(
@@ -997,9 +1009,7 @@ def test_same_feature_rule_replacement_does_not_reuse_stale_woe(n_jobs, backend,
         new_rules["_woe_maps_"] = {"特征": {"0": 0.4, "1": 0.5, "2": 0.6, "3": 0.7}}
     X = pd.DataFrame({"特征": np.tile([1.0, 6.0, 11.0, 16.0], 6)})
     y = pd.Series(np.tile([0, 1, 1, 0, 1, 0], 4), name="目标")
-    binner = OptimalBinning(
-        method="uniform", n_jobs=n_jobs, parallel_backend=backend, random_state=17
-    ).load(old_rules)
+    binner = OptimalBinning(method="uniform", n_jobs=n_jobs, parallel_backend=backend, random_state=17).load(old_rules)
 
     if explicit_new_woe:
         binner.load(new_rules)
@@ -1036,9 +1046,7 @@ def test_imported_rules_outside_fit_columns_do_not_skip_optimal_training(n_jobs,
     y = pd.Series(np.tile([0, 1], 12), name="目标")
     old = pd.DataFrame({"old": np.arange(24, dtype=float)})
     new = pd.DataFrame({"new": np.arange(23, -1, -1, dtype=float)})
-    binner = OptimalBinning(
-        method="uniform", n_jobs=n_jobs, parallel_backend=backend, random_state=17
-    ).fit(old, y)
+    binner = OptimalBinning(method="uniform", n_jobs=n_jobs, parallel_backend=backend, random_state=17).fit(old, y)
     binner.import_rules({"未使用规则": [5.0, 10.0, 15.0]})
 
     binner.fit(new, y)
@@ -1073,9 +1081,7 @@ BINNER_SMOKE_CASES = [
 
 @pytest.mark.parametrize("class_name,algorithm_kwargs", BINNER_SMOKE_CASES)
 @pytest.mark.parametrize("backend", ["threading", "loky"])
-def test_exported_concrete_binner_smoke_matrix_matches_serial(
-    class_name, algorithm_kwargs, backend, mixed_xy
-):
+def test_exported_concrete_binner_smoke_matrix_matches_serial(class_name, algorithm_kwargs, backend, mixed_xy):
     X, y = mixed_xy
     cls = getattr(binning, class_name)
     common = dict(max_n_bins=3, min_n_bins=2, min_bin_size=0.05, random_state=17)
@@ -1094,12 +1100,8 @@ def test_exported_concrete_binner_smoke_matrix_matches_serial(
 def test_optimal_binning_2d_transform_matches_serial(backend, mixed_xy):
     X, y = mixed_xy
     features = ["数值一", "数值二"]
-    serial = OptimalBinning2D(method="uniform", max_n_bins=3, n_jobs=1, random_state=17).fit(
-        X[features], y
-    )
-    parallel = OptimalBinning2D(
-        method="uniform", max_n_bins=3, n_jobs=2, parallel_backend=backend, random_state=17
-    ).fit(X[features], y)
+    serial = OptimalBinning2D(method="uniform", max_n_bins=3, n_jobs=1, random_state=17).fit(X[features], y)
+    parallel = OptimalBinning2D(method="uniform", max_n_bins=3, n_jobs=2, parallel_backend=backend, random_state=17).fit(X[features], y)
 
     for metric in ("indices", "bins", "woe", "event_rate"):
         pd.testing.assert_frame_equal(serial.transform(X[features], metric=metric), parallel.transform(X[features], metric=metric))
@@ -1267,3 +1269,60 @@ def test_optimal_binning_2d_forwards_parallel_parameters_to_axis_binners():
         assert axis_binner.n_jobs == 1
         assert axis_binner.parallel_backend == "threading"
         assert axis_binner.parallel_config == {"batch_size": 1}
+
+
+def test_auto_select_method_evaluates_candidates_on_multiple_threads(monkeypatch):
+    """单特征自动选方法应并行候选算法，而不是把 n_jobs 留给单字段内层。"""
+    X = pd.DataFrame({"数值": np.arange(1, 121, dtype=float)})
+    y = pd.Series(np.tile([0, 1], 60), name="目标")
+    thread_ids = set()
+    lock = threading.Lock()
+    original_fit = OptimalBinning.fit
+
+    def recording_fit(self, *args, **kwargs):
+        with lock:
+            thread_ids.add(threading.get_ident())
+        time.sleep(0.01)
+        return original_fit(self, *args, **kwargs)
+
+    monkeypatch.setattr(OptimalBinning, "fit", recording_fit)
+    selected = OptimalBinning.auto_select_method(
+        X,
+        y,
+        "数值",
+        methods=["uniform", "quantile", "tree", "cart"],
+        n_jobs=4,
+        parallel_backend="threading",
+    )
+
+    assert selected in {"uniform", "quantile", "tree", "cart"}
+    assert len(thread_ids) >= 2
+
+
+def test_genetic_fitness_population_uses_available_threads(monkeypatch):
+    """遗传算法每代相互独立的适应度必须使用当前预算。"""
+    x = pd.Series(np.arange(1, 81, dtype=float))
+    y = pd.Series(np.tile([0, 1], 40))
+    candidates = np.array([10.0, 20.0, 30.0, 40.0, 50.0, 60.0])
+    thread_ids = set()
+    lock = threading.Lock()
+    original = GeneticBinning._evaluate_fitness
+
+    def recording_fitness(self, *args, **kwargs):
+        with lock:
+            thread_ids.add(threading.get_ident())
+        time.sleep(0.005)
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(GeneticBinning, "_evaluate_fitness", recording_fitness)
+    binner = GeneticBinning(
+        population_size=12,
+        generations=2,
+        random_state=31,
+        n_jobs=4,
+        parallel_backend="threading",
+    )
+    result = binner._genetic_algorithm(x, y, candidates)
+
+    assert isinstance(result, np.ndarray)
+    assert len(thread_ids) >= 2

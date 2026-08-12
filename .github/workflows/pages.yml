@@ -28,6 +28,11 @@ jobs:
           python-version: "3.11"
           cache: pip
 
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
       - name: 安装项目和文档依赖
         run: |
           python -m pip install --upgrade pip
@@ -44,6 +49,7 @@ jobs:
           test -f docs/_build/html/index.html
           test "$(cat docs/_build/html/CNAME)" = "hscredit.hengshucredit.com"
           test -f docs/_build/html/.nojekyll
+          python scripts/validate_docs_build.py docs/_build/html
 
       - name: 上传 Pages 构建产物
         uses: actions/upload-pages-artifact@v3

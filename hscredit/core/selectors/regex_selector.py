@@ -62,7 +62,7 @@ class RegexSelector(BaseFeatureSelector):
         pattern: str,
         invert: bool = False,
         flags: int = 0,
-        target: str = 'target',
+        target: str = "target",
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
         force_drop: Optional[List[str]] = None,
@@ -73,15 +73,20 @@ class RegexSelector(BaseFeatureSelector):
         parallel_config: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(
-            target=target, include=include, exclude=exclude,
-            force_drop=force_drop, n_jobs=n_jobs,
-            binner=binner, binning_params=binning_params,
-            parallel_backend=parallel_backend, parallel_config=parallel_config,
+            target=target,
+            include=include,
+            exclude=exclude,
+            force_drop=force_drop,
+            n_jobs=n_jobs,
+            binner=binner,
+            binning_params=binning_params,
+            parallel_backend=parallel_backend,
+            parallel_config=parallel_config,
         )
         self.pattern = pattern
         self.invert = invert
         self.flags = flags
-        self.method_name = '正则筛选'
+        self.method_name = "正则筛选"
 
     def _fit_impl(
         self,
@@ -95,12 +100,11 @@ class RegexSelector(BaseFeatureSelector):
         """
         self._get_feature_names(X)
 
-        results = self._parallel_execute(
-            _matches_regex_feature,
-            [(col, self.pattern, self.flags) for col in X.columns],
-            task_labels=X.columns,
+        self._validate_parallel_configuration()
+        matches = np.array(
+            [_matches_regex_feature((col, self.pattern, self.flags))[1] for col in X.columns],
+            dtype=bool,
         )
-        matches = np.array([matched for _, matched in results], dtype=bool)
 
         if self.invert:
             selected_cols = X.columns[~matches].tolist()
@@ -110,4 +114,4 @@ class RegexSelector(BaseFeatureSelector):
             self.scores_ = pd.Series(matches.astype(int), index=X.columns)
 
         self.selected_features_ = selected_cols
-        self._drop_reason = f'特征名不匹配正则表达式: {self.pattern}'
+        self._drop_reason = f"特征名不匹配正则表达式: {self.pattern}"

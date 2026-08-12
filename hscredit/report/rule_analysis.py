@@ -12,6 +12,7 @@ import pandas as pd
 from ..core.rules import Rule
 from .mining.multi_label import MultiLabelRuleMiner
 from .feature_analyzer import feature_bin_stats
+from .mining.base import _binning_has_parallel_children, _mining_workload
 from .rule_strategy import (
     _configured_rule_copy,
     _configured_rule_report,
@@ -85,6 +86,12 @@ def _evaluate_swap_rule_masks(
             task_labels=[task[0] for task in tasks],
             default_backend="threading",
             has_parallel_children=False,
+            workload=_mining_workload(
+                data,
+                len(tasks),
+                operation="独立规则命中计算",
+                cost_per_item=6.0,
+            ),
         )
         return [mask for _, mask in sorted(results, key=lambda item: item[0])]
 
@@ -177,6 +184,12 @@ def _resolve_bin_table(
                 task_labels=[name for name, _ in tasks],
                 default_backend="threading",
                 has_parallel_children=False,
+                workload=_mining_workload(
+                    tasks[0][1] if tasks else data,
+                    len(tasks),
+                    operation="评分分箱表规范化",
+                    cost_per_item=4.0,
+                ),
             )
         )
 
@@ -198,11 +211,15 @@ def _resolve_bin_table(
     extra_params = dict(bin_params) if bin_params else {}
     merged_params = {**extra_params, 'method': bin_method, 'max_n_bins': max_n_bins,
                       'min_bin_size': min_bin_size, 'missing_separate': missing_separate}
+    merged_params.setdefault("n_jobs", -1)
+    merged_params.setdefault("parallel_backend", parallel_backend)
+    merged_params.setdefault("parallel_config", parallel_config)
 
     tasks = [
         (name, col, reference_data, target, overdue, dpds, merged_params)
         for name, col in score_map.items()
     ]
+    has_parallel_children = _binning_has_parallel_children(bin_method, merged_params)
     return dict(
         parallel_execute(
             _swap_score_bin_table_call,
@@ -212,7 +229,14 @@ def _resolve_bin_table(
             parallel_config=parallel_config,
             task_labels=[name for name, *_ in tasks],
             default_backend="threading",
-            has_parallel_children=False,
+            has_parallel_children=has_parallel_children,
+            workload=_mining_workload(
+                reference_data,
+                len(tasks),
+                operation="评分分箱表计算",
+                cost_per_item=16.0,
+                has_parallel_children=has_parallel_children,
+            ),
         )
     )
 
@@ -265,6 +289,12 @@ def _build_swap_pipeline(
             task_labels=[task[0] for task in score_tasks],
             default_backend="threading",
             has_parallel_children=False,
+            workload=_mining_workload(
+                data,
+                len(score_tasks),
+                operation="评分坏概率预测",
+                cost_per_item=6.0,
+            ),
         )
     )
 

@@ -33,11 +33,11 @@ def _compute_mode_ratio(series: pd.Series, dropna: bool = True) -> float:
     """
     if len(series) == 0:
         return 1.0
-    
+
     summary = series.value_counts(dropna=dropna)
     if len(summary) == 0:
         return 1.0
-    
+
     return summary.iloc[0] / len(series)
 
 
@@ -82,7 +82,7 @@ class ModeSelector(BaseFeatureSelector):
         self,
         threshold: float = 0.95,
         dropna: bool = True,
-        target: str = 'target',
+        target: str = "target",
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
         force_drop: Optional[List[str]] = None,
@@ -93,13 +93,19 @@ class ModeSelector(BaseFeatureSelector):
         parallel_config: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(
-            target=target, threshold=threshold, include=include,
-            exclude=exclude, force_drop=force_drop, n_jobs=n_jobs,
-            binner=binner, binning_params=binning_params,
-            parallel_backend=parallel_backend, parallel_config=parallel_config,
+            target=target,
+            threshold=threshold,
+            include=include,
+            exclude=exclude,
+            force_drop=force_drop,
+            n_jobs=n_jobs,
+            binner=binner,
+            binning_params=binning_params,
+            parallel_backend=parallel_backend,
+            parallel_config=parallel_config,
         )
         self.dropna = dropna
-        self.method_name = '单一值筛选'
+        self.method_name = "单一值筛选"
 
     def _fit_impl(
         self,
@@ -113,16 +119,12 @@ class ModeSelector(BaseFeatureSelector):
         """
         self._get_feature_names(X)
 
-        results = self._parallel_execute(
-            _compute_mode_feature,
-            [(col, X[col], self.dropna) for col in X.columns],
-            task_labels=X.columns,
-        )
-        mode_ratios = pd.Series(dict(results)).reindex(X.columns)
+        self._validate_parallel_configuration()
+        mode_ratios = X.apply(_compute_mode_ratio, dropna=self.dropna).reindex(X.columns)
 
         self.scores_ = mode_ratios
 
         # 选择众数占比低于阈值的特征
         selected_mask = mode_ratios < self.threshold
         self.selected_features_ = X.columns[selected_mask].tolist()
-        self._drop_reason = f'单一值占比 >= {self.threshold:.2%}'
+        self._drop_reason = f"单一值占比 >= {self.threshold:.2%}"

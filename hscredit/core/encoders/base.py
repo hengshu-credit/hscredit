@@ -21,7 +21,7 @@ import pandas as pd
 from sklearn.base import BaseEstimator, TransformerMixin, clone
 
 from ...exceptions import FeatureNotFoundError, NotFittedError
-from ...utils.parallel import ParallelizableMixin
+from ...utils.parallel import ParallelizableMixin, ParallelWorkload
 from ...utils.serialization import ArtifactSerializableMixin
 
 
@@ -80,7 +80,7 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
 
     **属性**
 
-    - mapping\_: 编码映射字典，格式为 {col: {category: encoded_value}}
+    - mapping\\_: 编码映射字典，格式为 {col: {category: encoded_value}}
     - cols_: 实际进行编码的列名列表（经过自动识别或过滤后）
     - _dropped_cols: 被删除的方差为0的列
 
@@ -186,10 +186,7 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
             candidate.__dict__.pop("_fit_transaction_active", None)
 
             # 拟合不得替换调用方传入的可变构造参数；仅提交候选对象的学习状态。
-            public_params = {
-                name: getattr(self, name)
-                for name in self.get_params(deep=False)
-            }
+            public_params = {name: getattr(self, name) for name in self.get_params(deep=False)}
             fitted_state = candidate.__dict__.copy()
             fitted_state.update(public_params)
             self.__dict__.clear()
@@ -238,20 +235,33 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
     ) -> None:
         """隔离拟合各列，并在全部成功后按学习列顺序一次提交状态。"""
         shared_state = shared_state or {}
-        tasks = []
-        for ordinal, column in enumerate(self.cols_ or []):
-            candidate = clone(self)
-            candidate.cols_ = [column]
-            for attr, value in shared_state.items():
-                setattr(candidate, attr, value)
-            tasks.append((ordinal, column, candidate, X[column].copy(), y))
+        columns = list(self.cols_ or [])
+
+        def iter_tasks():
+            for ordinal, column in enumerate(columns):
+                candidate = clone(self)
+                candidate.cols_ = [column]
+                for attr, value in shared_state.items():
+                    setattr(candidate, attr, value)
+                yield ordinal, column, candidate, X[column].copy(), y
 
         results = self._parallel_execute(
             _fit_encoder_column_worker,
-            tasks,
-            task_labels=[column for _, column, *_ in tasks],
+            iter_tasks(),
+            task_labels=columns,
             default_backend="loky",
             has_parallel_children=has_parallel_children,
+            workload=ParallelWorkload(
+                task_count=len(columns),
+                rows=len(X),
+                columns=len(columns),
+                data_bytes=int(X.loc[:, self.cols_ or []].memory_usage(deep=True).sum()),
+                cost_per_item=(10.0 if self.__class__.__name__ in {"WOEEncoder", "TargetEncoder", "CatBoostEncoder", "QuantileEncoder", "GBMEncoder"} else 3.0),
+                capability="process_safe",
+                has_parallel_children=has_parallel_children,
+                auto_max_workers=8,
+                operation=f"{self.__class__.__name__}列拟合",
+            ),
         )
 
         staged = {attr: {} for attr in state_attrs}
@@ -277,15 +287,24 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
     ) -> pd.DataFrame:
         """只读并行转换各列，并按学习列顺序恢复索引、dtype 与列布局。"""
         contexts = contexts or {}
-        tasks = [
-            (ordinal, column, self, X[column].copy(), y, contexts.get(column))
-            for ordinal, column in enumerate(self.cols_ or [])
-        ]
+        columns = list(self.cols_ or [])
+        tasks = ((ordinal, column, self, X[column].copy(), y, contexts.get(column)) for ordinal, column in enumerate(columns))
         results = self._parallel_execute(
             _transform_encoder_column_worker,
             tasks,
-            task_labels=[column for _, column, *_ in tasks],
-            default_backend="loky",
+            task_labels=columns,
+            default_backend="threading",
+            workload=ParallelWorkload(
+                task_count=len(columns),
+                rows=len(X),
+                columns=len(columns),
+                data_bytes=int(X.loc[:, self.cols_ or []].memory_usage(deep=True).sum()),
+                cost_per_item=1.0,
+                capability="thread_safe",
+                releases_gil=True,
+                auto_max_workers=8,
+                operation=f"{self.__class__.__name__}列转换",
+            ),
         )
 
         if not results:
@@ -349,12 +368,7 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
 
         # scorecardpipeline 风格: 如果输入的 X 中包含 target 列，透传到输出
         target_col = getattr(self, "target", None)
-        if (
-            target_col is not None
-            and isinstance(X_transformed, pd.DataFrame)
-            and target_col not in X_transformed.columns
-            and target_col in X.columns
-        ):
+        if target_col is not None and isinstance(X_transformed, pd.DataFrame) and target_col not in X_transformed.columns and target_col in X.columns:
             # 按位置赋值，避免非默认索引下 concat 对齐错位
             X_transformed[target_col] = np.asarray(X[target_col])
 
@@ -648,11 +662,7 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
     def _map_with_typed_float_nan(cls, values: pd.Series, mapping: Dict) -> pd.Series:
         """按 typed NaN 桶修正 pandas map，避免依赖 NaN 对象身份。"""
         result = values.map(mapping)
-        typed_lookup = {
-            bucket: value
-            for key, value in mapping.items()
-            if (bucket := cls._float_nan_bucket(key)) is not None
-        }
+        typed_lookup = {bucket: value for key, value in mapping.items() if (bucket := cls._float_nan_bucket(key)) is not None}
         if not typed_lookup:
             return result
 

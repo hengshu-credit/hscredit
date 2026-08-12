@@ -170,9 +170,7 @@ def test_series_summary_forwards_binning_configuration():
     """Series.summary 应支持与 DataFrame.summary 相同的统一分箱参数。"""
     series = pd.Series(np.repeat([1.0, 2.0, 3.0, 4.0], 40), name="score")
     rates = [0.1, 0.9, 0.2, 0.8]
-    y = np.concatenate(
-        [np.array([1] * int(40 * rate) + [0] * (40 - int(40 * rate))) for rate in rates]
-    )
+    y = np.concatenate([np.array([1] * int(40 * rate) + [0] * (40 - int(40 * rate))) for rate in rates])
 
     result = series.summary(
         y=y,
@@ -655,9 +653,7 @@ def test_shared_binning_user_splits_control_trend():
     """趋势必须来自与 IV 相同的显式分箱结构。"""
     x = np.repeat([1.0, 2.0, 3.0, 4.0], 40)
     rates = [0.1, 0.9, 0.2, 0.8]
-    y = np.concatenate(
-        [np.array([1] * int(40 * rate) + [0] * (40 - int(40 * rate))) for rate in rates]
-    )
+    y = np.concatenate([np.array([1] * int(40 * rate) + [0] * (40 - int(40 * rate))) for rate in rates])
     df = pd.DataFrame({"x": x})
 
     result = feature_summary(
@@ -789,6 +785,88 @@ def test_parallel_strategy_adapts_to_workload(monkeypatch):
         row_count=200,
         has_expensive_metrics=True,
     ) == (2, "threads")
+    assert feature_summary_impl._select_parallel_strategy(
+        n_jobs=4,
+        feature_count=16,
+        row_count=20_000,
+        has_expensive_metrics=True,
+        has_python_objects=True,
+    ) == (4, "processes")
+
+
+def test_feature_summary_honors_explicit_backend_and_config(monkeypatch):
+    """公共 EDA 与 pandas 扩展必须把用户 backend/config 传到统一执行器。"""
+    observed = []
+    original = feature_summary_impl.parallel_execute
+
+    def recording_execute(*args, **kwargs):
+        observed.append((kwargs.get("parallel_backend"), kwargs.get("parallel_config")))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(feature_summary_impl, "parallel_execute", recording_execute)
+    df = pd.DataFrame({"数值": np.arange(20), "分类": pd.Categorical(np.tile(["甲", "乙"], 10))})
+    config = {"adaptive": False, "batch_size": 1}
+
+    direct = feature_summary(
+        df,
+        n_jobs=2,
+        parallel_backend="threading",
+        parallel_config=config,
+    )
+    via_pandas = df.summary(
+        n_jobs=2,
+        parallel_backend="threading",
+        parallel_config=config,
+    )
+
+    pdt.assert_frame_equal(direct, via_pandas)
+    assert observed
+    assert all(backend == "threading" for backend, _ in observed)
+    assert all(call_config == config for _, call_config in observed)
+
+
+def test_feature_summary_marks_nested_binning_children(monkeypatch):
+    """分箱批次漏标 Genetic 子并行时，父层不会拆分总预算。"""
+    captured = []
+    original_execute = feature_summary_impl.parallel_execute
+
+    def recording_execute(function, tasks, **kwargs):
+        captured.append(kwargs["workload"])
+        return original_execute(function, tasks, **kwargs)
+
+    def fake_batch(task):
+        return [{"特征名": feature, "字段类型": "numeric", "样本数": len(task.df)} for feature in task.batch]
+
+    monkeypatch.setattr(feature_summary_impl, "parallel_execute", recording_execute)
+    monkeypatch.setattr(feature_summary_impl, "_run_feature_summary_batch", fake_batch)
+    df = pd.DataFrame({"x": np.arange(20, dtype=float)})
+    y = pd.Series(np.tile([0, 1], 10), index=df.index)
+
+    feature_summary_impl.build_feature_summary_fields(
+        df=df,
+        features=["x"],
+        percentiles=[0.25, 0.5, 0.75],
+        numeric_as_categorical=None,
+        force_numeric=None,
+        y_series=y,
+        val_df=None,
+        max_n_bins=5,
+        psi_method="split",
+        psi_group_col=None,
+        psi_date_col=None,
+        psi_freq="M",
+        psi_test_size=0.2,
+        random_state=42,
+        n_jobs=1,
+        parallel_backend=None,
+        parallel_config=None,
+        show_progress=False,
+        binning_method="genetic",
+        binning_params={"population_size": 10, "generations": 2},
+    )
+
+    assert len(captured) == 1
+    assert captured[0].has_parallel_children is True
 
 
 def test_loky_progress_reports_all_fields(capsys):

@@ -11,10 +11,11 @@ import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
 
-from ...utils.parallel import parallel_execute, resolve_n_jobs
+from ...utils.parallel import ParallelWorkload, parallel_execute, resolve_n_jobs
 
 
 TargetLike = Union[str, Sequence[Any], np.ndarray, pd.Series]
+_NESTED_BINNING_METHODS = frozenset({"genetic", "or_tools", "cp_sat"})
 
 
 def _normalize_binning_config(
@@ -67,9 +68,7 @@ def _normalize_binning_config(
         try:
             normalized_prebinning_method = OptimalBinning.validate_method(prebinning_method)
         except ValueError:
-            raise ValueError(
-                f"无效的预分箱方法: {prebinning_method!r}，可选值为 {OptimalBinning.VALID_METHODS}"
-            ) from None
+            raise ValueError(f"无效的预分箱方法: {prebinning_method!r}，可选值为 {OptimalBinning.VALID_METHODS}") from None
         if isinstance(prebinning, str):
             effective["prebinning"] = normalized_prebinning_method
         elif isinstance(prebinning, dict):
@@ -125,6 +124,33 @@ def _slice_binning_config(binning_config: Dict[str, Any], features: Sequence[Any
     return batch_config
 
 
+def _binning_has_parallel_children(binning_config: Dict[str, Any]) -> bool:
+    """判断字段摘要使用的分箱配置是否会启动真实子并行。"""
+
+    def can_spawn(method: Any, n_jobs: Any) -> bool:
+        return method in _NESTED_BINNING_METHODS and n_jobs is not None and n_jobs not in (1, 1.0)
+
+    inherited_n_jobs = binning_config.get("n_jobs", -1)
+    if can_spawn(binning_config.get("method"), inherited_n_jobs):
+        return True
+
+    prebinning = binning_config.get("prebinning")
+    if isinstance(prebinning, str):
+        return can_spawn(prebinning, inherited_n_jobs)
+    if isinstance(prebinning, dict):
+        return can_spawn(
+            prebinning.get("method", "cart"),
+            prebinning.get("n_jobs", inherited_n_jobs),
+        )
+
+    prebinning_name = prebinning.__class__.__name__.lower() if prebinning is not None else ""
+    prebinning_method = next(
+        (method for method in _NESTED_BINNING_METHODS if method.replace("_", "") in prebinning_name),
+        None,
+    )
+    return can_spawn(prebinning_method, getattr(prebinning, "n_jobs", inherited_n_jobs))
+
+
 def _metric_binning_arguments(binning_config: Dict[str, Any]) -> Tuple[str, int, float, Dict[str, Any]]:
     """拆出指标函数的显式参数，避免与透传参数产生重复关键字。"""
     metric_kwargs = dict(binning_config)
@@ -158,9 +184,7 @@ def _ratio(numerator: int, denominator: int) -> float:
     return numerator / denominator if denominator else 0.0
 
 
-def _resolve_n_jobs(
-    n_jobs: Optional[Union[int, float]], task_count: int
-) -> Optional[int]:
+def _resolve_n_jobs(n_jobs: Optional[Union[int, float]], task_count: int) -> Optional[int]:
     """使用全库共享规则解析字段摘要的并行工作数。"""
     return resolve_n_jobs(n_jobs, task_count=task_count)
 
@@ -170,6 +194,7 @@ def _select_parallel_strategy(
     feature_count: int,
     row_count: int,
     has_expensive_metrics: bool,
+    has_python_objects: bool = False,
 ) -> Tuple[int, str]:
     """根据任务规模选择串行、线程或 loky 进程执行。"""
     available_workers = _resolve_n_jobs(n_jobs, feature_count)
@@ -177,7 +202,7 @@ def _select_parallel_strategy(
         return 1, "sequential"
 
     if n_jobs is not None and n_jobs > 0:
-        backend = "threads" if feature_count < 128 else "processes"
+        backend = "processes" if feature_count >= 128 or (has_python_objects and row_count >= 10_000) else "threads"
         return available_workers, backend
 
     if has_expensive_metrics:
@@ -234,13 +259,7 @@ class _FeatureProgressReporter:
             from tqdm.auto import tqdm
 
             count_width = max(1, len(str(self.total)))
-            bar_format = (
-                "{desc}: {percentage:3.0f}%|{bar:20}| "
-                f"{{n_fmt:>{count_width}}}/{{total_fmt}} "
-                f"[{{elapsed:>{self._TIME_WIDTH}.{self._TIME_WIDTH}}}"
-                f"<{{remaining:>{self._TIME_WIDTH}.{self._TIME_WIDTH}}}, "
-                f"{{rate_fmt:>{self._RATE_WIDTH}.{self._RATE_WIDTH}}}]{{postfix}}"
-            )
+            bar_format = "{desc}: {percentage:3.0f}%|{bar:20}| " f"{{n_fmt:>{count_width}}}/{{total_fmt}} " f"[{{elapsed:>{self._TIME_WIDTH}.{self._TIME_WIDTH}}}" f"<{{remaining:>{self._TIME_WIDTH}.{self._TIME_WIDTH}}}, " f"{{rate_fmt:>{self._RATE_WIDTH}.{self._RATE_WIDTH}}}]{{postfix}}"
             self._bar = tqdm(
                 total=self.total,
                 desc="特征计算",
@@ -586,11 +605,7 @@ def _prepare_psi_context(
     if psi_method == "group_col" and psi_group_col is not None and psi_group_col in df.columns:
         groups = df[psi_group_col].dropna().unique().tolist()
         positions = _positions_by_value(df[psi_group_col], groups)
-        pairs = [
-            (positions[first], positions[second])
-            for index, first in enumerate(groups)
-            for second in groups[index + 1 :]
-        ]
+        pairs = [(positions[first], positions[second]) for index, first in enumerate(groups) for second in groups[index + 1 :]]
         return _PsiContext(kind="group_col", pairs=pairs)
 
     if psi_method == "date_col" and psi_date_col is not None and psi_date_col in df.columns:
@@ -606,11 +621,7 @@ def _prepare_psi_context(
                 periods = dates.dt.date.astype(str)
             ordered_periods = sorted(periods.dropna().unique().tolist())
             positions = _positions_by_value(periods, ordered_periods)
-            pairs = [
-                (positions[first], positions[second])
-                for index, first in enumerate(ordered_periods)
-                for second in ordered_periods[index + 1 :]
-            ]
+            pairs = [(positions[first], positions[second]) for index, first in enumerate(ordered_periods) for second in ordered_periods[index + 1 :]]
             return _PsiContext(kind="date_col", pairs=pairs)
         except Exception:
             return _PsiContext(kind="date_col", pairs=[])
@@ -883,6 +894,8 @@ def build_feature_summary_fields(
     psi_test_size: float,
     random_state: int,
     n_jobs: int,
+    parallel_backend: Optional[str],
+    parallel_config: Optional[Dict[str, Any]],
     show_progress: bool,
     binning_method: str,
     binning_params: Optional[Dict[str, Any]],
@@ -915,7 +928,15 @@ def build_feature_summary_fields(
         feature_count=len(features),
         row_count=len(df),
         has_expensive_metrics=y_series is not None or psi_context is not None,
+        has_python_objects=any(not pd.api.types.is_numeric_dtype(df[feature]) for feature in features),
     )
+    if parallel_backend is not None:
+        if workers == 1:
+            backend = "sequential"
+        elif parallel_backend in {"loky", "multiprocessing"}:
+            backend = "processes"
+        else:
+            backend = "threads"
 
     batches = list(_feature_batches(features, workers))
     reporter = _FeatureProgressReporter(show_progress, len(features))
@@ -947,32 +968,47 @@ def build_feature_summary_fields(
                 numeric_as_categorical=numeric_as_categorical,
                 force_numeric=force_numeric,
                 y_series=y_series,
-                psi_context=(
-                    _slice_psi_context(psi_context, batch)
-                    if backend == "processes"
-                    else psi_context
-                ),
+                psi_context=(_slice_psi_context(psi_context, batch) if backend == "processes" else psi_context),
                 max_n_bins=max_n_bins,
                 reporter=task_reporter,
                 binning_config=_slice_binning_config(effective_binning_config, batch),
             )
             for batch in batches
         ]
-        backend_name = {
-            "sequential": None,
-            "threads": "threading",
-            "processes": "loky",
-        }[backend]
+        backend_name = (
+            parallel_backend
+            or {
+                "sequential": None,
+                "threads": "threading",
+                "processes": "loky",
+            }[backend]
+        )
+        execution_config = {"batch_size": 1}
+        execution_config.update(dict(parallel_config or {}))
+        has_parallel_children = _binning_has_parallel_children(effective_binning_config)
         batch_results = parallel_execute(
             _run_feature_summary_batch,
             tasks,
             n_jobs=1 if backend == "sequential" else workers,
             parallel_backend=backend_name,
-            parallel_config={"batch_size": 1},
-            task_labels=[
-                f"字段批次 {index + 1}: {task.batch[0] if task.batch else ''}"
-                for index, task in enumerate(tasks)
-            ],
+            parallel_config=execution_config,
+            task_labels=[f"字段批次 {index + 1}: {task.batch[0] if task.batch else ''}" for index, task in enumerate(tasks)],
+            workload=ParallelWorkload(
+                task_count=len(tasks),
+                rows=len(df),
+                columns=len(features),
+                data_bytes=int(df.loc[:, features].memory_usage(deep=True).sum()),
+                cost_per_item=(12.0 if y_series is not None or psi_context is not None else 1.0),
+                capability={
+                    "sequential": "serial_only",
+                    "threads": "thread_safe",
+                    "processes": "process_safe",
+                }[backend],
+                releases_gil=backend == "threads",
+                has_parallel_children=has_parallel_children,
+                operation="综合特征摘要字段批次",
+            ),
+            has_parallel_children=has_parallel_children,
         )
     finally:
         if event_queue is not None:

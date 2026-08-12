@@ -20,6 +20,7 @@ import numpy as np
 import pandas as pd
 
 from .base import BaseFeatureSelector
+from ...utils.parallel import ParallelWorkload
 
 
 def _compute_iv_single(x: np.ndarray, y: np.ndarray, regularization: float = 1.0) -> float:
@@ -41,54 +42,52 @@ def _compute_iv_single(x: np.ndarray, y: np.ndarray, regularization: float = 1.0
         except Exception:
             # 如果转换失败，使用pd.isnull直接判断
             has_missing = pd.isnull(x)
-    
+
     valid = ~has_missing
     x_valid = x[valid]
     y_valid = y[valid]
-    
+
     if len(x_valid) == 0:
         return 0.0
-    
+
     # 获取唯一值
     uniques = np.unique(x_valid)
     n_cats = len(uniques)
-    
+
     if n_cats <= 1:
         return 0.0
-    
+
     # 统计好坏样本
     event_mask = y_valid == 1
     nonevent_mask = ~event_mask
-    
+
     event_tot = np.count_nonzero(event_mask) + 2 * regularization
     nonevent_tot = np.count_nonzero(nonevent_mask) + 2 * regularization
-    
+
     event_rates = np.zeros(n_cats, dtype=np.float64)
     nonevent_rates = np.zeros(n_cats, dtype=np.float64)
-    
+
     for i, cat in enumerate(uniques):
         mask = x_valid == cat
         event_rates[i] = np.count_nonzero(mask & event_mask) + regularization
         nonevent_rates[i] = np.count_nonzero(mask & nonevent_mask) + regularization
-    
+
     # 避免极端值
     bad_pos = (event_rates + nonevent_rates) == (2 * regularization + 1)
     event_rates /= event_tot
     nonevent_rates /= nonevent_tot
-    
+
     # 计算IV
-    ivs = (event_rates - nonevent_rates) * np.log(
-        np.maximum(event_rates, 1e-10) / np.maximum(nonevent_rates, 1e-10)
-    )
+    ivs = (event_rates - nonevent_rates) * np.log(np.maximum(event_rates, 1e-10) / np.maximum(nonevent_rates, 1e-10))
     ivs[bad_pos] = 0.0
-    
+
     return np.sum(ivs).item()
 
 
 def _compute_iv_feature(task):
     """编码并计算单个特征 IV。"""
     feature, series, y, regularization = task
-    if series.dtype.name in ['object', 'category']:
+    if series.dtype.name in ["object", "category"]:
         values = pd.factorize(series)[0]
     else:
         values = series.values
@@ -181,7 +180,7 @@ class IVSelector(BaseFeatureSelector):
     def __init__(
         self,
         threshold: float = 0.02,
-        target: str = 'target',
+        target: str = "target",
         regularization: float = 1.0,
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
@@ -193,13 +192,19 @@ class IVSelector(BaseFeatureSelector):
         parallel_config: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(
-            target=target, threshold=threshold, include=include,
-            exclude=exclude, force_drop=force_drop, n_jobs=n_jobs,
-            binner=binner, binning_params=binning_params,
-            parallel_backend=parallel_backend, parallel_config=parallel_config,
+            target=target,
+            threshold=threshold,
+            include=include,
+            exclude=exclude,
+            force_drop=force_drop,
+            n_jobs=n_jobs,
+            binner=binner,
+            binning_params=binning_params,
+            parallel_backend=parallel_backend,
+            parallel_config=parallel_config,
         )
         self.regularization = regularization
-        self.method_name = 'IV值筛选'
+        self.method_name = "IV值筛选"
 
     def _fit_impl(
         self,
@@ -217,8 +222,19 @@ class IVSelector(BaseFeatureSelector):
 
         results = self._parallel_execute(
             _compute_iv_feature,
-            [(col, X[col], y, self.regularization) for col in X.columns],
+            ((col, X[col], y, self.regularization) for col in X.columns),
             task_labels=X.columns,
+            default_backend="threading",
+            workload=ParallelWorkload(
+                task_count=X.shape[1],
+                rows=X.shape[0],
+                columns=X.shape[1],
+                data_bytes=int(X.memory_usage(deep=True).sum()),
+                cost_per_item=5.0,
+                capability="thread_safe",
+                releases_gil=True,
+                operation="IV字段计算",
+            ),
         )
         iv_values = np.array([score for _, score in results])
 
@@ -231,38 +247,36 @@ class IVSelector(BaseFeatureSelector):
         # 构建详细的dropped_记录，包含IV值
         dropped_cols = X.columns[~selected_mask].tolist()
         if len(dropped_cols) > 0:
-            self.dropped_ = pd.DataFrame({
-                '特征': dropped_cols,
-                '剔除原因': [f'IV值({self.scores_[col]:.4f}) <= 阈值({self.threshold})' for col in dropped_cols],
-                'IV值': [self.scores_[col] for col in dropped_cols],
-                '阈值': [self.threshold] * len(dropped_cols),
-            })
+            self.dropped_ = pd.DataFrame(
+                {
+                    "特征": dropped_cols,
+                    "剔除原因": [f"IV值({self.scores_[col]:.4f}) <= 阈值({self.threshold})" for col in dropped_cols],
+                    "IV值": [self.scores_[col] for col in dropped_cols],
+                    "阈值": [self.threshold] * len(dropped_cols),
+                }
+            )
         else:
-            self.dropped_ = pd.DataFrame(columns=['特征', '剔除原因', 'IV值', '阈值'])
+            self.dropped_ = pd.DataFrame(columns=["特征", "剔除原因", "IV值", "阈值"])
 
     def get_iv_interpretation(self) -> pd.DataFrame:
         """获取IV值的中文解释。
 
         :return: 包含IV值及解释的DataFrame
         """
-        if not hasattr(self, 'scores_'):
+        if not hasattr(self, "scores_"):
             return pd.DataFrame()
 
         def interpret_iv(iv):
             if iv < 0.02:
-                return '无预测能力'
+                return "无预测能力"
             elif iv < 0.1:
-                return '弱预测能力'
+                return "弱预测能力"
             elif iv < 0.3:
-                return '中等预测能力'
+                return "中等预测能力"
             elif iv < 0.5:
-                return '强预测能力'
+                return "强预测能力"
             else:
-                return '极强预测能力（可能过拟合）'
+                return "极强预测能力（可能过拟合）"
 
-        df = pd.DataFrame({
-            '特征': self.scores_.index,
-            'IV值': self.scores_.values,
-            '预测能力': [interpret_iv(iv) for iv in self.scores_.values]
-        })
-        return df.sort_values('IV值', ascending=False)
+        df = pd.DataFrame({"特征": self.scores_.index, "IV值": self.scores_.values, "预测能力": [interpret_iv(iv) for iv in self.scores_.values]})
+        return df.sort_values("IV值", ascending=False)

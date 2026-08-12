@@ -24,12 +24,14 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 import numpy as np
 import pandas as pd
 from sklearn.utils.validation import check_is_fitted
+from threadpoolctl import threadpool_limits
 
 try:
     import ngboost
     from ngboost import NGBClassifier
     from ngboost.distns import Bernoulli
     from ngboost.scores import LogScore
+
     NGBOOST_AVAILABLE = True
 except ImportError:
     NGBOOST_AVAILABLE = False
@@ -121,11 +123,11 @@ class NGBoostRiskModel(BaseRiskModel):
         minibatch_frac: float = 1.0,
         col_sample: float = 1.0,
         base_max_depth: int = 3,
-        base_criterion: str = 'friedman_mse',
+        base_criterion: str = "friedman_mse",
         base_min_samples_split: int = 2,
         base_min_samples_leaf: int = 1,
         natural_gradient: bool = True,
-        objective: str = 'binary',
+        objective: str = "binary",
         eval_metric: Union[str, List[str], None] = None,
         early_stopping_rounds: Optional[int] = None,
         validation_fraction: float = 0.2,
@@ -133,40 +135,29 @@ class NGBoostRiskModel(BaseRiskModel):
         n_jobs: int = -1,
         verbose: bool = False,
         params: Optional[Dict[str, Any]] = None,
-        **kwargs
+        **kwargs,
     ):
         if not NGBOOST_AVAILABLE:
-            raise ImportError(
-                "NGBoost未安装，请使用 pip install ngboost 安装"
-            )
+            raise ImportError("NGBoost未安装，请使用 pip install ngboost 安装")
 
         # 保存原生params参数
         self.params = params  # 用于sklearn get_params兼容性
         self._native_params = params or {}
 
         # 从params中提取参数（如果提供了原生参数）
-        n_estimators = self._native_params.get('n_estimators', n_estimators)
-        learning_rate = self._native_params.get('learning_rate', learning_rate)
-        minibatch_frac = self._native_params.get('minibatch_frac', minibatch_frac)
-        col_sample = self._native_params.get('col_sample', col_sample)
-        base_max_depth = self._native_params.get('base_max_depth', base_max_depth)
-        base_criterion = self._native_params.get('base_criterion', base_criterion)
-        base_min_samples_split = self._native_params.get('base_min_samples_split', base_min_samples_split)
-        base_min_samples_leaf = self._native_params.get('base_min_samples_leaf', base_min_samples_leaf)
-        natural_gradient = self._native_params.get('natural_gradient', natural_gradient)
-        objective = self._native_params.get('objective', objective)
-        random_state = self._native_params.get('random_state', random_state)
+        n_estimators = self._native_params.get("n_estimators", n_estimators)
+        learning_rate = self._native_params.get("learning_rate", learning_rate)
+        minibatch_frac = self._native_params.get("minibatch_frac", minibatch_frac)
+        col_sample = self._native_params.get("col_sample", col_sample)
+        base_max_depth = self._native_params.get("base_max_depth", base_max_depth)
+        base_criterion = self._native_params.get("base_criterion", base_criterion)
+        base_min_samples_split = self._native_params.get("base_min_samples_split", base_min_samples_split)
+        base_min_samples_leaf = self._native_params.get("base_min_samples_leaf", base_min_samples_leaf)
+        natural_gradient = self._native_params.get("natural_gradient", natural_gradient)
+        objective = self._native_params.get("objective", objective)
+        random_state = self._native_params.get("random_state", random_state)
 
-        super().__init__(
-            objective=objective,
-            eval_metric=eval_metric,
-            early_stopping_rounds=early_stopping_rounds,
-            validation_fraction=validation_fraction,
-            random_state=random_state,
-            n_jobs=n_jobs,
-            verbose=verbose,
-            **kwargs
-        )
+        super().__init__(objective=objective, eval_metric=eval_metric, early_stopping_rounds=early_stopping_rounds, validation_fraction=validation_fraction, random_state=random_state, n_jobs=n_jobs, verbose=verbose, **kwargs)
 
         # NGBoost特有参数
         self.n_estimators = n_estimators
@@ -179,14 +170,7 @@ class NGBoostRiskModel(BaseRiskModel):
         self.base_min_samples_leaf = base_min_samples_leaf
         self.natural_gradient = natural_gradient
 
-    def fit(
-        self,
-        X: Union[np.ndarray, pd.DataFrame],
-        y: Optional[Union[np.ndarray, pd.Series]] = None,
-        sample_weight: Optional[np.ndarray] = None,
-        eval_set: Optional[List[Tuple]] = None,
-        **fit_params
-    ) -> 'NGBoostRiskModel':
+    def fit(self, X: Union[np.ndarray, pd.DataFrame], y: Optional[Union[np.ndarray, pd.Series]] = None, sample_weight: Optional[np.ndarray] = None, eval_set: Optional[List[Tuple]] = None, **fit_params) -> "NGBoostRiskModel":
         """训练NGBoost模型.
 
         支持两种调用方式:
@@ -219,9 +203,7 @@ class NGBoostRiskModel(BaseRiskModel):
                 y_val = y_val.values
             X_train, y_train = X, y
         elif self.validation_fraction > 0 and (self.early_stopping_rounds is not None):
-            X_train, X_val, y_train, y_val, sw_train, _ = self._create_eval_set(
-                X, y, sample_weight
-            )
+            X_train, X_val, y_train, y_val, sw_train, _ = self._create_eval_set(X, y, sample_weight)
             sample_weight = sw_train
         else:
             X_train, y_train = X, y
@@ -236,16 +218,16 @@ class NGBoostRiskModel(BaseRiskModel):
 
         # 构建NGBoost参数
         ngb_params = {
-            'Dist': Bernoulli,
-            'Score': LogScore,
-            'Base': base_learner,
-            'n_estimators': self.n_estimators,
-            'learning_rate': self.learning_rate,
-            'minibatch_frac': self.minibatch_frac,
-            'col_sample': self.col_sample,
-            'natural_gradient': self.natural_gradient,
-            'verbose': self.verbose,
-            'random_state': self.random_state,
+            "Dist": Bernoulli,
+            "Score": LogScore,
+            "Base": base_learner,
+            "n_estimators": self.n_estimators,
+            "learning_rate": self.learning_rate,
+            "minibatch_frac": self.minibatch_frac,
+            "col_sample": self.col_sample,
+            "natural_gradient": self.natural_gradient,
+            "verbose": self.verbose,
+            "random_state": self.random_state,
         }
 
         # 更新kwargs参数
@@ -253,7 +235,7 @@ class NGBoostRiskModel(BaseRiskModel):
 
         # 最后更新原生params（优先级最高，但排除已处理的base参数）
         for k, v in self._native_params.items():
-            if not k.startswith('base_'):
+            if not k.startswith("base_"):
                 ngb_params[k] = v
 
         # 创建模型
@@ -262,17 +244,21 @@ class NGBoostRiskModel(BaseRiskModel):
         # 训练
         fit_kwargs = {}
         if sample_weight is not None:
-            fit_kwargs['sample_weight'] = sample_weight
+            fit_kwargs["sample_weight"] = sample_weight
         if X_val is not None and y_val is not None:
-            fit_kwargs['X_val'] = X_val
-            fit_kwargs['Y_val'] = y_val
+            fit_kwargs["X_val"] = X_val
+            fit_kwargs["Y_val"] = y_val
             if self.early_stopping_rounds is not None:
-                fit_kwargs['early_stopping_rounds'] = self.early_stopping_rounds
+                fit_kwargs["early_stopping_rounds"] = self.early_stopping_rounds
 
-        self._model.fit(X_train, y_train, **fit_kwargs)
+        # NGBoost 的提升轮次存在顺序依赖，不能安全地在轮次层并行；其
+        # 决策树/NumPy 原生计算仍会使用 OpenMP/BLAS。统一 n_jobs 在这里
+        # 约束原生线程池，也防止调参或报告外层并行时发生线程超订阅。
+        with threadpool_limits(limits=max(1, int(self.n_jobs or 1))):
+            self._model.fit(X_train, y_train, **fit_kwargs)
 
         # 保存结果
-        self._best_iteration = getattr(self._model, 'best_val_loss_itr', None)
+        self._best_iteration = getattr(self._model, "best_val_loss_itr", None)
         self._best_score = None
         self._evals_result = {}
         self._is_fitted = True
@@ -294,7 +280,7 @@ class NGBoostRiskModel(BaseRiskModel):
 
         支持传入包含target列的数据框（scorecardpipeline风格）。
         """
-        check_is_fitted(self, '_is_fitted')
+        check_is_fitted(self, "_is_fitted")
         X, _, _ = self._prepare_data(X, extract_target=True)
         return self._model.predict(X)
 
@@ -306,7 +292,7 @@ class NGBoostRiskModel(BaseRiskModel):
         :param X: 特征矩阵
         :return: 预测概率，形状 (n_samples, 2)
         """
-        check_is_fitted(self, '_is_fitted')
+        check_is_fitted(self, "_is_fitted")
         X, _, _ = self._prepare_data(X, extract_target=True)
         return self._model.predict_proba(X)
 
@@ -325,11 +311,11 @@ class NGBoostRiskModel(BaseRiskModel):
         >>> dist = model.pred_dist(X_test)
         >>> print(dist.params)
         """
-        check_is_fitted(self, '_is_fitted')
+        check_is_fitted(self, "_is_fitted")
         X, _, _ = self._prepare_data(X, extract_target=True)
         return self._model.pred_dist(X)
 
-    def get_feature_importances(self, importance_type: str = 'gain') -> pd.Series:
+    def get_feature_importances(self, importance_type: str = "gain") -> pd.Series:
         """获取特征重要性.
 
         NGBoost为每个分布参数维护独立的基学习器序列。
@@ -338,7 +324,7 @@ class NGBoostRiskModel(BaseRiskModel):
         :param importance_type: 重要性类型（保留参数，NGBoost使用基学习器默认重要性）
         :return: 特征重要性Series
         """
-        check_is_fitted(self, '_is_fitted')
+        check_is_fitted(self, "_is_fitted")
 
         # NGBoost feature_importances_ 返回 (n_params, n_features) 数组
         # 对于Bernoulli二分类，取第一个参数(p)的重要性
@@ -351,11 +337,7 @@ class NGBoostRiskModel(BaseRiskModel):
             importances = np.asarray(raw_importances).ravel()
 
         # 创建Series
-        importance_series = pd.Series(
-            importances,
-            index=self.feature_names_in_,
-            name='importance'
-        ).sort_values(ascending=False)
+        importance_series = pd.Series(importances, index=self.feature_names_in_, name="importance").sort_values(ascending=False)
 
         self._feature_importances = importance_series
 
@@ -367,7 +349,7 @@ class NGBoostRiskModel(BaseRiskModel):
 
         返回一维numpy数组，与其他RiskModel保持一致。
         """
-        check_is_fitted(self, '_is_fitted')
+        check_is_fitted(self, "_is_fitted")
         raw_importances = self._model.feature_importances_
         if isinstance(raw_importances, np.ndarray) and raw_importances.ndim == 2:
             return raw_importances[0].astype(float)
@@ -383,7 +365,7 @@ class NGBoostRiskModel(BaseRiskModel):
         :param X: 特征矩阵
         :return: 预测结果列表，长度为n_estimators
         """
-        check_is_fitted(self, '_is_fitted')
+        check_is_fitted(self, "_is_fitted")
         X, _, _ = self._prepare_data(X, extract_target=True)
         return self._model.staged_predict(X)
 
@@ -395,7 +377,7 @@ class NGBoostRiskModel(BaseRiskModel):
         :param X: 特征矩阵
         :return: 分布对象列表
         """
-        check_is_fitted(self, '_is_fitted')
+        check_is_fitted(self, "_is_fitted")
         X, _, _ = self._prepare_data(X, extract_target=True)
         return self._model.staged_pred_dist(X)
 
@@ -408,14 +390,14 @@ class NGBoostRiskModel(BaseRiskModel):
         """
         import matplotlib.pyplot as plt
 
-        check_is_fitted(self, '_is_fitted')
+        check_is_fitted(self, "_is_fitted")
         importances = self.get_feature_importances()
         top_features = importances.head(max_num_features)
 
         fig, ax = plt.subplots(figsize=figsize)
         top_features.iloc[::-1].plot.barh(ax=ax, **kwargs)
-        ax.set_title('NGBoost Feature Importance')
-        ax.set_xlabel('Importance')
+        ax.set_title("NGBoost Feature Importance")
+        ax.set_xlabel("Importance")
         return fig
 
     def save_model(self, path: str):
@@ -424,19 +406,21 @@ class NGBoostRiskModel(BaseRiskModel):
         :param path: 保存路径（.pkl格式）
         """
         from ....utils import save_pickle
-        check_is_fitted(self, '_is_fitted')
+
+        check_is_fitted(self, "_is_fitted")
         save_pickle(self._model, path)
 
-    def load_model(self, path: str) -> 'NGBoostRiskModel':
+    def load_model(self, path: str) -> "NGBoostRiskModel":
         """加载底层NGBoost模型（pickle格式）.
 
         :param path: 模型路径（.pkl格式）
         :return: self
         """
         from ....utils import load_pickle
+
         self._model = load_pickle(path)
         self._is_fitted = True
-        self.classes_ = getattr(self, 'classes_', np.array([0, 1]))
+        self.classes_ = getattr(self, "classes_", np.array([0, 1]))
         return self
 
     def _convert_metrics(self, metrics: Union[str, List[str]]) -> Union[str, List[str]]:
@@ -447,9 +431,9 @@ class NGBoostRiskModel(BaseRiskModel):
         """
         # NGBoost使用NLL作为内部损失，评估指标通过evaluate方法处理
         metric_map = {
-            'auc': 'auc',
-            'logloss': 'logloss',
-            'nll': 'nll',
+            "auc": "auc",
+            "logloss": "logloss",
+            "nll": "nll",
         }
 
         if isinstance(metrics, str):
