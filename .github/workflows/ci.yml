@@ -61,6 +61,8 @@ jobs:
   test:
     name: 全功能测试 (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    env:
+      HSCREDIT_STRICT_CI_SKIPS: "1"
     strategy:
       fail-fast: false
       matrix:
