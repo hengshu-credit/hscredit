@@ -2009,7 +2009,12 @@ class ScoreCard(StandardScoreTransformer):
             from sklearn.pipeline import Pipeline
             from sklearn2pmml import sklearn2pmml, PMMLPipeline
             from sklearn2pmml.decoration import Alias, CategoricalDomain, ContinuousDomain
-            from sklearn2pmml.preprocessing import ConcatTransformer, ExpressionTransformer, LookupTransformer
+            from sklearn2pmml.preprocessing import (
+                AggregateTransformer,
+                ConcatTransformer,
+                ExpressionTransformer,
+                LookupTransformer,
+            )
         except ImportError:
             warnings.warn(
                 "PMML 导出需要安装依赖: pip install hscredit[pmml] 或安装 sklearn2pmml。"
@@ -2065,10 +2070,11 @@ class ScoreCard(StandardScoreTransformer):
                     missing_value_treatment='as_is',
                 )
                 transformer = ExpressionTransformer(expression_string)
-                # ExpressionTransformer treats a single-column DataFrame as 1D. Selecting the
-                # same source twice keeps its row expression 2D for ColumnTransformer output.
-                input_columns = [var, var]
-                transformer_steps = []
+                # ExpressionTransformer treats a single-column DataFrame as 1D. Aggregating a
+                # single numeric value with ``min`` is an identity operation that keeps the
+                # intermediate output two-dimensional without duplicating the source column.
+                input_columns = [var]
+                transformer_steps = [('prepare', AggregateTransformer('min'))]
 
             mapper.append((
                 f'score_{len(mapper)}',
