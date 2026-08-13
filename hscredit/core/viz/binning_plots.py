@@ -393,11 +393,20 @@ class _FullWidthBinMetricSummary(AnchoredOffsetbox):
 
     def get_extent(self, renderer: Any):
         """在每次渲染时按最新坐标轴像素宽度更新摘要容器。"""
+        self._update_child_width(renderer)
+        return super().get_extent(renderer)
+
+    def get_bbox(self, renderer: Any):
+        """兼容 Matplotlib 3.7+ 的 ``OffsetBox`` 尺寸计算接口。"""
+        self._update_child_width(renderer)
+        return super().get_bbox(renderer)
+
+    def _update_child_width(self, renderer: Any) -> None:
+        """按当前坐标轴宽度同步摘要子容器，兼容新旧 Matplotlib。"""
         axes_width = self.axes.get_window_extent(renderer).width
         fontsize_pixels = renderer.points_to_pixels(self.prop.get_size_in_points())
         padding_pixels = self.pad * fontsize_pixels
         self._full_width_child.set_width(max(0.0, axes_width - 2.0 * padding_pixels))
-        return super().get_extent(renderer)
 
 
 def _embedded_bin_plot_decoration_top(ax1: Any, ax2: Any, renderer: Any) -> float:

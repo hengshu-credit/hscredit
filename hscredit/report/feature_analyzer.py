@@ -2480,10 +2480,10 @@ def auto_feature_analysis(
             if has_amount_table:
                 writer.insert_value2sheet(
                     worksheet,
-                    (table_start_row - 2, start_col),
+                    (table_start_row - 1, start_col),
                     value="订单口径",
                     style="header",
-                    end_space=(table_start_row - 2, start_col + sample_title_columns_len - 1),
+                    end_space=(table_start_row - 1, start_col + sample_title_columns_len - 1),
                     align={"horizontal": "left"},
                 )
             if return_cols:
@@ -2510,10 +2510,10 @@ def auto_feature_analysis(
                 amount_start_col = end_col + 1
                 writer.insert_value2sheet(
                     worksheet,
-                    (table_start_row - 2, amount_start_col),
+                    (table_start_row - 1, amount_start_col),
                     value="金额口径",
                     style="header",
-                    end_space=(table_start_row - 2, amount_start_col + amount_title_columns_len - 1),
+                    end_space=(table_start_row - 1, amount_start_col + amount_title_columns_len - 1),
                     align={"horizontal": "left"},
                 )
                 if return_cols:
