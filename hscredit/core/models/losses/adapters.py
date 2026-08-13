@@ -16,9 +16,9 @@
 - NGBoost 自定义 Score：https://stanfordmlgroup.github.io/ngboost/
 """
 
-from typing import Callable, Union, Tuple
+from typing import Callable, Tuple
 import numpy as np
-from .base import BaseLoss, BaseMetric
+from .base import BaseLoss, BaseMetric, _margin_derivatives
 
 
 class XGBoostLossAdapter:
@@ -59,6 +59,7 @@ class XGBoostLossAdapter:
 
         :return: XGBoost格式的目标函数
         """
+
         def xgb_objective(preds: np.ndarray, dtrain) -> Tuple[np.ndarray, np.ndarray]:
             """XGBoost目标函数格式.
 
@@ -72,14 +73,7 @@ class XGBoostLossAdapter:
             # 将原始分数转换为概率（sigmoid）
             probs = 1.0 / (1.0 + np.exp(-preds))
 
-            # 计算梯度和二阶导
-            grad = self.loss.gradient(labels, probs)
-            hess = self.loss.hessian(labels, probs)
-
-            if hess is None:
-                hess = np.ones_like(grad) * 0.5
-
-            return grad, hess
+            return _margin_derivatives(self.loss, labels, probs)
 
         return xgb_objective
 
@@ -89,6 +83,7 @@ class XGBoostLossAdapter:
         :param metric: 评估指标对象
         :return: XGBoost格式的评估指标
         """
+
         def xgb_metric(preds: np.ndarray, dtrain) -> Tuple[str, float]:
             """XGBoost评估指标格式.
 
@@ -137,6 +132,7 @@ class LightGBMLossAdapter:
 
         :return: LightGBM格式的目标函数
         """
+
         def lgb_objective(y_true: np.ndarray, y_pred: np.ndarray):
             """LightGBM目标函数格式.
 
@@ -147,14 +143,7 @@ class LightGBMLossAdapter:
             # 将原始分数转换为概率
             probs = 1.0 / (1.0 + np.exp(-y_pred))
 
-            # 计算梯度和二阶导
-            grad = self.loss.gradient(y_true, probs)
-            hess = self.loss.hessian(y_true, probs)
-
-            if hess is None:
-                hess = np.ones_like(grad) * 0.5
-
-            return grad, hess
+            return _margin_derivatives(self.loss, y_true, probs)
 
         return lgb_objective
 
@@ -164,6 +153,7 @@ class LightGBMLossAdapter:
         :param metric: 评估指标对象
         :return: LightGBM格式的评估指标
         """
+
         def lgb_metric(y_true: np.ndarray, y_pred: np.ndarray):
             """LightGBM评估指标格式.
 
@@ -233,12 +223,8 @@ class CatBoostLossAdapter:
                 # 将原始分数转换为概率
                 probs = 1.0 / (1.0 + np.exp(-approx))
 
-                # 计算梯度和二阶导（定义在概率 p 上）
-                grad = np.asarray(loss_obj.gradient(target, probs), dtype=float)
-                hess = loss_obj.hessian(target, probs)
-                if hess is None:
-                    hess = np.ones_like(grad) * 0.5
-                hess = np.asarray(hess, dtype=float)
+                # 转换为相对于 raw margin 的真实导数。
+                grad, hess = _margin_derivatives(loss_obj, target, probs)
 
                 # CatBoost 约定：梯度上升最小化损失，取负
                 der1 = -grad
@@ -292,6 +278,38 @@ class CatBoostLossAdapter:
         return CatBoostMetric()
 
 
+def _tabnet_binary_loss_and_gradient(loss_obj: BaseLoss, logits, y_true):
+    """计算 TabNet 二分类 raw logits 对应的平均损失和梯度。"""
+    logits = np.asarray(logits, dtype=float)
+    y_true = np.asarray(y_true, dtype=float).reshape(-1)
+
+    if logits.ndim == 1:
+        if len(logits) != len(y_true):
+            raise ValueError("TabNet预测行数与标签行数不一致")
+        probability = 1.0 / (1.0 + np.exp(-logits))
+        probability_gradient = np.asarray(loss_obj.gradient(y_true, probability), dtype=float) / max(1, len(y_true))
+        gradient = probability_gradient * probability * (1.0 - probability)
+    elif logits.ndim == 2 and logits.shape[1] == 1:
+        if logits.shape[0] != len(y_true):
+            raise ValueError("TabNet预测行数与标签行数不一致")
+        probability = 1.0 / (1.0 + np.exp(-logits[:, 0]))
+        probability_gradient = np.asarray(loss_obj.gradient(y_true, probability), dtype=float) / max(1, len(y_true))
+        gradient = (probability_gradient * probability * (1.0 - probability))[:, None]
+    elif logits.ndim == 2 and logits.shape[1] == 2:
+        if logits.shape[0] != len(y_true):
+            raise ValueError("TabNet预测行数与标签行数不一致")
+        shifted = logits - np.max(logits, axis=1, keepdims=True)
+        exp_logits = np.exp(shifted)
+        probability = exp_logits[:, 1] / np.sum(exp_logits, axis=1)
+        probability_gradient = np.asarray(loss_obj.gradient(y_true, probability), dtype=float) / max(1, len(y_true))
+        logit_gradient = probability_gradient * probability * (1.0 - probability)
+        gradient = np.column_stack([-logit_gradient, logit_gradient])
+    else:
+        raise ValueError("TabNet二分类损失仅支持一维、单列或两列raw logits")
+
+    return float(loss_obj(y_true, probability)), gradient
+
+
 class TabNetLossAdapter:
     """TabNet损失函数适配器.
 
@@ -336,22 +354,31 @@ class TabNetLossAdapter:
         loss_obj = self.loss
 
         class CustomLoss(nn.Module):
+            class _NumpyLossFunction(torch.autograd.Function):
+                @staticmethod
+                def forward(ctx, y_pred, y_true):
+                    loss_value, gradient = _tabnet_binary_loss_and_gradient(
+                        loss_obj,
+                        y_pred.detach().cpu().numpy(),
+                        y_true.detach().cpu().numpy(),
+                    )
+                    gradient_tensor = torch.as_tensor(gradient, dtype=y_pred.dtype, device=y_pred.device)
+                    ctx.save_for_backward(gradient_tensor)
+                    return y_pred.new_tensor(loss_value)
+
+                @staticmethod
+                def backward(ctx, grad_output):
+                    (gradient_tensor,) = ctx.saved_tensors
+                    return grad_output * gradient_tensor, None
+
             def forward(self, y_pred, y_true):
                 """计算损失.
 
-                :param y_pred: 预测概率
+                :param y_pred: 二分类raw logits（一维、单列或两列）
                 :param y_true: 真实标签
                 :return: 损失值
                 """
-                # 转换为numpy计算
-                y_pred_np = y_pred.detach().cpu().numpy()
-                y_true_np = y_true.detach().cpu().numpy()
-
-                # 使用自定义损失计算
-                loss_value = loss_obj(y_true_np, y_pred_np)
-
-                # 转换回torch tensor
-                return torch.tensor(loss_value, dtype=torch.float32, device=y_pred.device)
+                return self._NumpyLossFunction.apply(y_pred, y_true)
 
         return CustomLoss()
 

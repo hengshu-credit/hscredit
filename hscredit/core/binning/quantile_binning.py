@@ -170,8 +170,13 @@ class QuantileBinning(BaseBinning):
 
         self._fit_features(X, y, "_fit_feature")
 
-        self._finalize_categorical_fit()
+        # 分箱表、reserved-bin 和 WOE 统一在最终收口中一次生成，避免先按
+        # 中间状态统计后又被相同最终状态覆盖。
+        self._finalize_categorical_fit(build_stats=False)
         self._finalize_reserved_bins(X, y)
+        for feature, feature_type in self.feature_types_.items():
+            if feature_type == "categorical":
+                self._validate_categorical_constraints(feature, y)
         self._is_fitted = True
         return self
 
@@ -208,8 +213,6 @@ class QuantileBinning(BaseBinning):
                 splits = self._round_splits(splits)
             self.splits_[feature] = splits
         self.n_bins_[feature] = len(splits) + 1
-        bins = self._apply_bins(X, self.splits_[feature])
-        self.bin_tables_[feature] = self._compute_bin_stats(feature, X, y, bins)
 
     def _fit_numerical(self, x: pd.Series, y: pd.Series) -> np.ndarray:
         """对数值型特征进行等频分箱.

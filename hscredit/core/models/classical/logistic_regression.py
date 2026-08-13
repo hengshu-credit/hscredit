@@ -206,6 +206,7 @@ class LogisticRegression(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, 
         self.positive_woe_coef = positive_woe_coef
         self.target = target
         self._initialize_scorecard_params(scorecard_params)
+        self.tuner = None
 
     def fit(
         self,
@@ -964,6 +965,7 @@ class LogisticRegression(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, 
             verbose=verbose,
             **kwargs
         )
+        self.tuner = tuner
 
         best_params = tuner.fit(X, y, n_trials=n_trials, timeout=timeout)
         best_model = self.__class__(**best_params)
@@ -971,7 +973,7 @@ class LogisticRegression(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, 
         if self.target is not None and getattr(best_model, 'target', None) is None:
             best_model.target = self.target
         best_model.fit(X, y)
-        best_model._tuner = tuner
+        best_model.tuner = tuner
 
         return best_model
 

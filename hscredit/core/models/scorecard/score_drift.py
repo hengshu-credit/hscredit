@@ -71,6 +71,7 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 from scipy.interpolate import interp1d
+from scipy.special import expit, logit
 from sklearn.base import BaseEstimator
 from sklearn.utils.validation import check_is_fitted
 
@@ -92,8 +93,8 @@ class BaseDriftCalibrator(BaseEstimator, ABC):
     def __init__(
         self,
         reference_scores: Optional[Union[np.ndarray, pd.Series]] = None,
-        method: str = 'linear',
-        clip_bounds: bool = True
+        method: str = "linear",
+        clip_bounds: bool = True,
     ):
         self.reference_scores = reference_scores
         self.method = method
@@ -104,8 +105,8 @@ class BaseDriftCalibrator(BaseEstimator, ABC):
         self,
         X: Union[np.ndarray, pd.DataFrame],
         y: Optional[Union[np.ndarray, pd.Series]] = None,
-        target: str = 'target',
-        require_y: bool = False
+        target: str = "target",
+        require_y: bool = False,
     ) -> Tuple[np.ndarray, Optional[np.ndarray]]:
         """准备数据，支持两种传参风格.
 
@@ -131,11 +132,7 @@ class BaseDriftCalibrator(BaseEstimator, ABC):
 
         return X, y
 
-    def _get_reference_scores(
-        self,
-        model: Any,
-        X_ref: Optional[Union[np.ndarray, pd.DataFrame]] = None
-    ) -> np.ndarray:
+    def _get_reference_scores(self, model: Any, X_ref: Optional[Union[np.ndarray, pd.DataFrame]] = None) -> np.ndarray:
         """获取参考评分.
 
         :param model: 模型
@@ -157,8 +154,8 @@ class BaseDriftCalibrator(BaseEstimator, ABC):
         X: Union[np.ndarray, pd.DataFrame],
         y: Optional[Union[np.ndarray, pd.Series]] = None,
         X_reference: Optional[Union[np.ndarray, pd.DataFrame]] = None,
-        **kwargs
-    ) -> 'BaseDriftCalibrator':
+        **kwargs,
+    ) -> "BaseDriftCalibrator":
         """拟合漂移校准器.
 
         :param model: 已训练的模型
@@ -170,10 +167,7 @@ class BaseDriftCalibrator(BaseEstimator, ABC):
         pass
 
     @abstractmethod
-    def calibrate(
-        self,
-        scores: Union[np.ndarray, pd.Series]
-    ) -> np.ndarray:
+    def calibrate(self, scores: Union[np.ndarray, pd.Series]) -> np.ndarray:
         """校准评分.
 
         :param scores: 原始评分
@@ -185,7 +179,7 @@ class BaseDriftCalibrator(BaseEstimator, ABC):
         self,
         X: Optional[Union[np.ndarray, pd.DataFrame]] = None,
         scores: Optional[Union[np.ndarray, pd.Series]] = None,
-        proba: Optional[Union[np.ndarray, pd.Series]] = None
+        proba: Optional[Union[np.ndarray, pd.Series]] = None,
     ) -> np.ndarray:
         """预测校准后的评分.
 
@@ -212,7 +206,7 @@ class BaseDriftCalibrator(BaseEstimator, ABC):
         elif proba is not None:
             scores = np.asarray(proba)
         elif X is not None:
-            if not hasattr(self, 'model_'):
+            if not hasattr(self, "model_"):
                 raise ValueError("未找到模型，请先调用fit()")
             scores = self.model_.predict_proba(X)[:, 1]
         else:
@@ -227,8 +221,8 @@ class BaseDriftCalibrator(BaseEstimator, ABC):
         self,
         X_reference: Union[np.ndarray, pd.DataFrame],
         X_current: Union[np.ndarray, pd.DataFrame],
-        metric: str = 'psi',
-        threshold: Optional[float] = None
+        metric: str = "psi",
+        threshold: Optional[float] = None,
     ) -> Dict[str, Any]:
         """检测评分漂移.
 
@@ -241,51 +235,42 @@ class BaseDriftCalibrator(BaseEstimator, ABC):
         :param threshold: 漂移阈值，默认None(使用推荐值)
         :return: 漂移检测报告
         """
-        if not hasattr(self, 'model_'):
+        if not hasattr(self, "model_"):
             raise ValueError("未找到模型，请先调用fit()")
 
         # 获取评分
         scores_ref = self.model_.predict_proba(X_reference)[:, 1]
         scores_cur = self.model_.predict_proba(X_current)[:, 1]
 
-        result = {
-            'metric': metric,
-            'threshold': threshold,
-            'drift_detected': False,
-            'statistics': {}
-        }
+        result = {"metric": metric, "threshold": threshold, "drift_detected": False, "statistics": {}}
 
-        if metric == 'psi':
+        if metric == "psi":
             psi_value = self._calculate_psi(scores_ref, scores_cur)
-            result['statistics']['psi'] = psi_value
-            result['threshold'] = threshold or 0.25
-            result['drift_detected'] = psi_value > result['threshold']
+            result["statistics"]["psi"] = psi_value
+            result["threshold"] = 0.25 if threshold is None else threshold
+            result["drift_detected"] = psi_value > result["threshold"]
 
-        elif metric == 'ks':
+        elif metric == "ks":
             ks_stat, p_value = stats.ks_2samp(scores_ref, scores_cur)
-            result['statistics']['ks_statistic'] = ks_stat
-            result['statistics']['p_value'] = p_value
-            result['threshold'] = threshold or 0.1
-            result['drift_detected'] = ks_stat > result['threshold']
+            result["statistics"]["ks_statistic"] = ks_stat
+            result["statistics"]["p_value"] = p_value
+            result["threshold"] = 0.1 if threshold is None else threshold
+            result["drift_detected"] = ks_stat > result["threshold"]
 
-        elif metric == 'wasserstein':
+        elif metric == "wasserstein":
             from scipy.stats import wasserstein_distance
+
             w_dist = wasserstein_distance(scores_ref, scores_cur)
-            result['statistics']['wasserstein_distance'] = w_dist
-            result['threshold'] = threshold or 0.1
-            result['drift_detected'] = w_dist > result['threshold']
+            result["statistics"]["wasserstein_distance"] = w_dist
+            result["threshold"] = 0.1 if threshold is None else threshold
+            result["drift_detected"] = w_dist > result["threshold"]
 
         else:
             raise ValueError(f"不支持的漂移检测指标: {metric}")
 
         return result
 
-    def _calculate_psi(
-        self,
-        expected: np.ndarray,
-        actual: np.ndarray,
-        n_bins: int = 10
-    ) -> float:
+    def _calculate_psi(self, expected: np.ndarray, actual: np.ndarray, n_bins: int = 10) -> float:
         """计算PSI (Population Stability Index).
 
         :param expected: 参考分布
@@ -313,7 +298,7 @@ class BaseDriftCalibrator(BaseEstimator, ABC):
 
     # ==================== 持久化（复用 utils.io） ====================
 
-    def save(self, file: str, engine: str = 'joblib', **kwargs) -> str:
+    def save(self, file: str, engine: str = "joblib", **kwargs) -> str:
         """保存漂移校准器到文件.
 
         复用 ``hscredit.utils.io.save_pickle`` 进行持久化。
@@ -334,7 +319,7 @@ class BaseDriftCalibrator(BaseEstimator, ABC):
         return file
 
     @classmethod
-    def load(cls, file: str, engine: str = 'auto', **kwargs) -> 'BaseDriftCalibrator':
+    def load(cls, file: str, engine: str = "auto", **kwargs) -> "BaseDriftCalibrator":
         """从文件加载漂移校准器（离线模型加载）.
 
         复用 ``hscredit.utils.io.load_pickle`` 进行读取。
@@ -348,9 +333,7 @@ class BaseDriftCalibrator(BaseEstimator, ABC):
 
         obj = _load_pickle(file, engine=engine, **kwargs)
         if not isinstance(obj, BaseDriftCalibrator):
-            raise TypeError(
-                f"加载的对象类型为 {type(obj).__name__}，不是 BaseDriftCalibrator 子类"
-            )
+            raise TypeError(f"加载的对象类型为 {type(obj).__name__}，不是 BaseDriftCalibrator 子类")
         return obj
 
 
@@ -381,9 +364,9 @@ class LinearDriftCalibrator(BaseDriftCalibrator):
         reference_scores: Optional[Union[np.ndarray, pd.Series]] = None,
         target_mean: Optional[float] = None,
         target_std: Optional[float] = None,
-        clip_bounds: bool = True
+        clip_bounds: bool = True,
     ):
-        super().__init__(reference_scores, 'linear', clip_bounds)
+        super().__init__(reference_scores, "linear", clip_bounds)
         self.target_mean = target_mean
         self.target_std = target_std
 
@@ -393,9 +376,9 @@ class LinearDriftCalibrator(BaseDriftCalibrator):
         X: Union[np.ndarray, pd.DataFrame],
         y: Optional[Union[np.ndarray, pd.Series]] = None,
         X_reference: Optional[Union[np.ndarray, pd.DataFrame]] = None,
-        target: str = 'target',
-        **kwargs
-    ) -> 'LinearDriftCalibrator':
+        target: str = "target",
+        **kwargs,
+    ) -> "LinearDriftCalibrator":
         """拟合线性漂移校准器.
 
         :param model: 已训练的模型
@@ -409,7 +392,7 @@ class LinearDriftCalibrator(BaseDriftCalibrator):
         X_prep, _ = self._prepare_data(X, y, target, require_y=False)
 
         # 保存模型
-        if not hasattr(model, 'predict_proba'):
+        if not hasattr(model, "predict_proba"):
             raise ValueError("模型必须有predict_proba方法")
         self.model_ = model
 
@@ -457,10 +440,7 @@ class LinearDriftCalibrator(BaseDriftCalibrator):
 
         return self
 
-    def calibrate(
-        self,
-        scores: Union[np.ndarray, pd.Series]
-    ) -> np.ndarray:
+    def calibrate(self, scores: Union[np.ndarray, pd.Series]) -> np.ndarray:
         """校准评分.
 
         :param scores: 原始评分
@@ -474,11 +454,7 @@ class LinearDriftCalibrator(BaseDriftCalibrator):
 
         # 边界限制
         if self.clip_bounds:
-            scores_calibrated = np.clip(
-                scores_calibrated,
-                self.lower_bound_,
-                self.upper_bound_
-            )
+            scores_calibrated = np.clip(scores_calibrated, self.lower_bound_, self.upper_bound_)
 
         return scores_calibrated
 
@@ -509,10 +485,10 @@ class QuantileAligner(BaseDriftCalibrator):
         self,
         reference_scores: Optional[Union[np.ndarray, pd.Series]] = None,
         n_quantiles: int = 100,
-        interpolation: str = 'linear',
-        clip_bounds: bool = True
+        interpolation: str = "linear",
+        clip_bounds: bool = True,
     ):
-        super().__init__(reference_scores, 'quantile', clip_bounds)
+        super().__init__(reference_scores, "quantile", clip_bounds)
         self.n_quantiles = n_quantiles
         self.interpolation = interpolation
 
@@ -522,9 +498,9 @@ class QuantileAligner(BaseDriftCalibrator):
         X: Union[np.ndarray, pd.DataFrame],
         y: Optional[Union[np.ndarray, pd.Series]] = None,
         X_reference: Optional[Union[np.ndarray, pd.DataFrame]] = None,
-        target: str = 'target',
-        **kwargs
-    ) -> 'QuantileAligner':
+        target: str = "target",
+        **kwargs,
+    ) -> "QuantileAligner":
         """拟合分位数对齐器.
 
         :param model: 已训练的模型
@@ -538,7 +514,7 @@ class QuantileAligner(BaseDriftCalibrator):
         X_prep, _ = self._prepare_data(X, y, target, require_y=False)
 
         # 保存模型
-        if not hasattr(model, 'predict_proba'):
+        if not hasattr(model, "predict_proba"):
             raise ValueError("模型必须有predict_proba方法")
         self.model_ = model
 
@@ -560,13 +536,20 @@ class QuantileAligner(BaseDriftCalibrator):
         self.cur_quantiles_ = np.quantile(scores_cur, quantiles)
 
         # 创建插值函数
-        self._transform_func = interp1d(
-            self.cur_quantiles_,
-            self.ref_quantiles_,
-            kind=self.interpolation,
-            bounds_error=False,
-            fill_value=(self.ref_quantiles_[0], self.ref_quantiles_[-1])
-        )
+        unique_current, unique_indices = np.unique(self.cur_quantiles_, return_index=True)
+        mapped_reference = self.ref_quantiles_[unique_indices]
+        self._constant_current_ = len(unique_current) == 1
+        if self._constant_current_:
+            self._constant_target_ = float(np.median(self.ref_quantiles_))
+            self._transform_func = None
+        else:
+            self._transform_func = interp1d(
+                unique_current,
+                mapped_reference,
+                kind=self.interpolation,
+                bounds_error=False,
+                fill_value=(mapped_reference[0], mapped_reference[-1]),
+            )
 
         # 边界
         if self.clip_bounds:
@@ -577,10 +560,7 @@ class QuantileAligner(BaseDriftCalibrator):
 
         return self
 
-    def calibrate(
-        self,
-        scores: Union[np.ndarray, pd.Series]
-    ) -> np.ndarray:
+    def calibrate(self, scores: Union[np.ndarray, pd.Series]) -> np.ndarray:
         """校准评分.
 
         :param scores: 原始评分
@@ -590,15 +570,14 @@ class QuantileAligner(BaseDriftCalibrator):
         scores = np.asarray(scores)
 
         # 分位数映射
-        scores_calibrated = self._transform_func(scores)
+        if self._constant_current_:
+            scores_calibrated = np.full(scores.shape, self._constant_target_, dtype=float)
+        else:
+            scores_calibrated = self._transform_func(scores)
 
         # 边界限制
         if self.clip_bounds:
-            scores_calibrated = np.clip(
-                scores_calibrated,
-                self.lower_bound_,
-                self.upper_bound_
-            )
+            scores_calibrated = np.clip(scores_calibrated, self.lower_bound_, self.upper_bound_)
 
         return scores_calibrated
 
@@ -633,10 +612,14 @@ class BinningRecalibrator(BaseDriftCalibrator):
         reference_scores: Optional[Union[np.ndarray, pd.Series]] = None,
         reference_y: Optional[Union[np.ndarray, pd.Series]] = None,
         n_bins: int = 10,
-        binning_strategy: str = 'quantile',
-        clip_bounds: bool = True
+        binning_strategy: str = "quantile",
+        clip_bounds: bool = True,
     ):
-        super().__init__(reference_scores, 'binning', clip_bounds)
+        super().__init__(reference_scores, "binning", clip_bounds)
+        if not isinstance(n_bins, int) or n_bins < 1:
+            raise ValueError("n_bins必须是大于等于1的整数")
+        if binning_strategy not in {"quantile", "uniform"}:
+            raise ValueError("binning_strategy必须是'quantile'或'uniform'")
         self.reference_y = reference_y
         self.n_bins = n_bins
         self.binning_strategy = binning_strategy
@@ -648,9 +631,9 @@ class BinningRecalibrator(BaseDriftCalibrator):
         y: Optional[Union[np.ndarray, pd.Series]] = None,
         X_reference: Optional[Union[np.ndarray, pd.DataFrame]] = None,
         y_reference: Optional[Union[np.ndarray, pd.Series]] = None,
-        target: str = 'target',
-        **kwargs
-    ) -> 'BinningRecalibrator':
+        target: str = "target",
+        **kwargs,
+    ) -> "BinningRecalibrator":
         """拟合分箱重校准器.
 
         :param model: 已训练的模型
@@ -665,7 +648,7 @@ class BinningRecalibrator(BaseDriftCalibrator):
         X_prep, y_prep = self._prepare_data(X, y, target, require_y=True)
 
         # 保存模型
-        if not hasattr(model, 'predict_proba'):
+        if not hasattr(model, "predict_proba"):
             raise ValueError("模型必须有predict_proba方法")
         self.model_ = model
 
@@ -683,28 +666,27 @@ class BinningRecalibrator(BaseDriftCalibrator):
         scores_cur = model.predict_proba(X_prep)[:, 1]
 
         # 创建分箱边界(基于参考分布)
-        if self.binning_strategy == 'quantile':
-            self.bin_edges_ = np.quantile(
-                scores_ref,
-                np.linspace(0, 1, self.n_bins + 1)
-            )
+        if self.binning_strategy == "quantile":
+            self.bin_edges_ = np.quantile(scores_ref, np.linspace(0, 1, self.n_bins + 1))
         else:  # uniform
-            self.bin_edges_ = np.linspace(
-                scores_ref.min(),
-                scores_ref.max(),
-                self.n_bins + 1
-            )
+            self.bin_edges_ = np.linspace(scores_ref.min(), scores_ref.max(), self.n_bins + 1)
 
         # 确保边界唯一
         self.bin_edges_ = np.unique(self.bin_edges_)
+        if len(self.bin_edges_) < 2:
+            # 输入是正类概率；常量分布仍应形成一个覆盖完整概率域的有效箱。
+            self.bin_edges_ = np.array([0.0, 1.0])
         self.n_bins_actual_ = len(self.bin_edges_) - 1
+
+        ref_bin_indices = np.digitize(scores_ref, self.bin_edges_[1:-1], right=True)
+        cur_bin_indices = np.digitize(scores_cur, self.bin_edges_[1:-1], right=True)
+        ref_bin_indices = np.clip(ref_bin_indices, 0, self.n_bins_actual_ - 1)
+        cur_bin_indices = np.clip(cur_bin_indices, 0, self.n_bins_actual_ - 1)
 
         # 计算参考分布每个箱的坏样本率
         self.ref_bad_rates_ = []
         for i in range(self.n_bins_actual_):
-            mask = (scores_ref >= self.bin_edges_[i]) & (scores_ref < self.bin_edges_[i + 1])
-            if i == self.n_bins_actual_ - 1:  # 最后一个箱包含右边界
-                mask = (scores_ref >= self.bin_edges_[i]) & (scores_ref <= self.bin_edges_[i + 1])
+            mask = ref_bin_indices == i
 
             if mask.sum() > 0:
                 bad_rate = y_ref[mask].mean()
@@ -717,9 +699,7 @@ class BinningRecalibrator(BaseDriftCalibrator):
         # 计算当前分布每个箱的坏样本率
         self.cur_bad_rates_ = []
         for i in range(self.n_bins_actual_):
-            mask = (scores_cur >= self.bin_edges_[i]) & (scores_cur < self.bin_edges_[i + 1])
-            if i == self.n_bins_actual_ - 1:
-                mask = (scores_cur >= self.bin_edges_[i]) & (scores_cur <= self.bin_edges_[i + 1])
+            mask = cur_bin_indices == i
 
             if mask.sum() > 0:
                 bad_rate = y_prep[mask].mean()
@@ -729,18 +709,16 @@ class BinningRecalibrator(BaseDriftCalibrator):
 
         self.cur_bad_rates_ = np.array(self.cur_bad_rates_)
 
-        # 计算校准映射(从当前坏样本率到参考坏样本率)
-        # 使用log-odds空间进行映射
-        ref_odds = np.clip(self.ref_bad_rates_ / (1 - self.ref_bad_rates_), 1e-10, 1e10)
-        cur_odds = np.clip(self.cur_bad_rates_ / (1 - self.cur_bad_rates_), 1e-10, 1e10)
-
-        self.ref_scores_ = np.log(ref_odds)
-        self.cur_scores_ = np.log(cur_odds)
+        # 在 logit 空间保存每箱坏样本率偏移，校准时再映射回概率。
+        eps = np.finfo(float).eps
+        self.ref_logits_ = logit(np.clip(self.ref_bad_rates_, eps, 1 - eps))
+        self.cur_logits_ = logit(np.clip(self.cur_bad_rates_, eps, 1 - eps))
+        self.logit_offsets_ = self.ref_logits_ - self.cur_logits_
 
         # 边界
         if self.clip_bounds:
-            self.lower_bound_ = np.min(scores_ref)
-            self.upper_bound_ = np.max(scores_ref)
+            self.lower_bound_ = 0.0
+            self.upper_bound_ = 1.0
 
         self._is_fitted = True
 
@@ -750,42 +728,33 @@ class BinningRecalibrator(BaseDriftCalibrator):
 
         return self
 
-    def calibrate(
-        self,
-        scores: Union[np.ndarray, pd.Series]
-    ) -> np.ndarray:
+    def calibrate(self, scores: Union[np.ndarray, pd.Series]) -> np.ndarray:
         """校准评分.
 
         :param scores: 原始评分
         :return: 校准后的评分
         """
         check_is_fitted(self)
-        scores = np.asarray(scores)
+        scores = np.asarray(scores, dtype=float)
+        if not np.isfinite(scores).all() or np.any((scores < 0) | (scores > 1)):
+            raise ValueError("scores必须是[0, 1]范围内的有限正类概率")
 
         # 找到每个分数所属的箱
         bin_indices = np.digitize(scores, self.bin_edges_[1:-1], right=True)
         bin_indices = np.clip(bin_indices, 0, self.n_bins_actual_ - 1)
 
         # 应用校准映射
-        scores_calibrated = np.zeros_like(scores)
+        scores_calibrated = np.zeros_like(scores, dtype=float)
+        eps = np.finfo(float).eps
         for i in range(self.n_bins_actual_):
             mask = bin_indices == i
             if mask.any():
-                bin_scores = scores[mask]
-                # 映射到参考评分空间
-                ref_score = self.ref_scores_[i]
-                cur_score = self.cur_scores_[i]
-
-                # 调整分数
-                scores_calibrated[mask] = bin_scores + (ref_score - cur_score) * 0.1
+                bin_scores = np.clip(scores[mask], eps, 1 - eps)
+                scores_calibrated[mask] = expit(logit(bin_scores) + self.logit_offsets_[i])
 
         # 边界限制
         if self.clip_bounds:
-            scores_calibrated = np.clip(
-                scores_calibrated,
-                self.lower_bound_,
-                self.upper_bound_
-            )
+            scores_calibrated = np.clip(scores_calibrated, self.lower_bound_, self.upper_bound_)
 
         return scores_calibrated
 
@@ -837,11 +806,11 @@ class ScoreDriftCalibrator(BaseDriftCalibrator):
 
     def __init__(
         self,
-        method: Literal['linear', 'quantile', 'binning'] = 'linear',
+        method: Literal["linear", "quantile", "binning"] = "linear",
         reference_scores: Optional[Union[np.ndarray, pd.Series]] = None,
         clip_bounds: bool = True,
-        target: str = 'target',
-        **kwargs
+        target: str = "target",
+        **kwargs,
     ):
         super().__init__(reference_scores, method, clip_bounds)
         self.target = target
@@ -855,8 +824,8 @@ class ScoreDriftCalibrator(BaseDriftCalibrator):
         X_reference: Optional[Union[np.ndarray, pd.DataFrame]] = None,
         y_reference: Optional[Union[np.ndarray, pd.Series]] = None,
         target: Optional[str] = None,
-        **kwargs
-    ) -> 'ScoreDriftCalibrator':
+        **kwargs,
+    ) -> "ScoreDriftCalibrator":
         """拟合漂移校准器.
 
         支持两种传参风格:
@@ -879,31 +848,25 @@ class ScoreDriftCalibrator(BaseDriftCalibrator):
         target = target or self.target
 
         # 创建具体的校准器
-        if self.method == 'linear':
+        if self.method == "linear":
             self.calibrator_ = LinearDriftCalibrator(
-                reference_scores=self.reference_scores,
-                clip_bounds=self.clip_bounds,
-                **self.calibrator_params
+                reference_scores=self.reference_scores, clip_bounds=self.clip_bounds, **self.calibrator_params
             )
-        elif self.method == 'quantile':
+        elif self.method == "quantile":
             self.calibrator_ = QuantileAligner(
-                reference_scores=self.reference_scores,
-                clip_bounds=self.clip_bounds,
-                **self.calibrator_params
+                reference_scores=self.reference_scores, clip_bounds=self.clip_bounds, **self.calibrator_params
             )
-        elif self.method == 'binning':
+        elif self.method == "binning":
             self.calibrator_ = BinningRecalibrator(
-                reference_scores=self.reference_scores,
-                clip_bounds=self.clip_bounds,
-                **self.calibrator_params
+                reference_scores=self.reference_scores, clip_bounds=self.clip_bounds, **self.calibrator_params
             )
         else:
             raise ValueError(f"不支持的校准方法: {self.method}")
 
         # 拟合具体校准器
-        fit_kwargs = {'target': target, **kwargs}
+        fit_kwargs = {"target": target, **kwargs}
         if y_reference is not None:
-            fit_kwargs['y_reference'] = y_reference
+            fit_kwargs["y_reference"] = y_reference
 
         self.calibrator_.fit(model, X, y, X_reference=X_reference, **fit_kwargs)
 
@@ -914,10 +877,7 @@ class ScoreDriftCalibrator(BaseDriftCalibrator):
 
         return self
 
-    def calibrate(
-        self,
-        scores: Union[np.ndarray, pd.Series]
-    ) -> np.ndarray:
+    def calibrate(self, scores: Union[np.ndarray, pd.Series]) -> np.ndarray:
         """校准评分.
 
         :param scores: 原始评分
@@ -930,6 +890,7 @@ class ScoreDriftCalibrator(BaseDriftCalibrator):
 # 尝试导入matplotlib进行绘图
 try:
     import matplotlib.pyplot as plt
+
     MATPLOTLIB_AVAILABLE = True
 except ImportError:
     MATPLOTLIB_AVAILABLE = False
@@ -941,7 +902,7 @@ def plot_drift_comparison(
     X_current: Union[np.ndarray, pd.DataFrame],
     figsize: Tuple[int, int] = (15, 5),
     show: bool = True,
-    colors: Optional[List[str]] = None
+    colors: Optional[List[str]] = None,
 ) -> Any:
     """绘制漂移对比图.
 
@@ -971,12 +932,12 @@ def plot_drift_comparison(
 
     # 辅助函数：设置坐标轴样式
     def _setup_axis_style(ax, color="#2639E9"):
-        ax.spines['top'].set_color(color)
-        ax.spines['bottom'].set_color(color)
-        ax.spines['right'].set_color(color)
-        ax.spines['left'].set_color(color)
-        ax.spines['top'].set_visible(False)
-        ax.spines['right'].set_visible(False)
+        ax.spines["top"].set_color(color)
+        ax.spines["bottom"].set_color(color)
+        ax.spines["right"].set_color(color)
+        ax.spines["left"].set_color(color)
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
 
     # 获取评分
     scores_ref = calibrator.model_.predict_proba(X_reference)[:, 1]
@@ -988,24 +949,32 @@ def plot_drift_comparison(
 
     # 左图: 分布对比
     ax1 = axes[0]
-    ax1.hist(scores_ref, bins=30, alpha=0.6, label='Reference', color=colors[0], density=True, edgecolor='white')
-    ax1.hist(scores_cur, bins=30, alpha=0.6, label='Current (Raw)', color=colors[1], density=True, edgecolor='white')
-    ax1.set_xlabel('Score', fontweight='bold')
-    ax1.set_ylabel('Density', fontweight='bold')
-    ax1.set_title('Distribution Comparison', fontweight='bold')
+    ax1.hist(scores_ref, bins=30, alpha=0.6, label="Reference", color=colors[0], density=True, edgecolor="white")
+    ax1.hist(scores_cur, bins=30, alpha=0.6, label="Current (Raw)", color=colors[1], density=True, edgecolor="white")
+    ax1.set_xlabel("Score", fontweight="bold")
+    ax1.set_ylabel("Density", fontweight="bold")
+    ax1.set_title("Distribution Comparison", fontweight="bold")
     ax1.legend(frameon=False)
-    ax1.grid(True, alpha=0.3, linestyle='--')
+    ax1.grid(True, alpha=0.3, linestyle="--")
     _setup_axis_style(ax1)
 
     # 中图: 校准后对比
     ax2 = axes[1]
-    ax2.hist(scores_ref, bins=30, alpha=0.6, label='Reference', color=colors[0], density=True, edgecolor='white')
-    ax2.hist(scores_cur_calib, bins=30, alpha=0.6, label='Current (Calibrated)', color=colors[2], density=True, edgecolor='white')
-    ax2.set_xlabel('Score', fontweight='bold')
-    ax2.set_ylabel('Density', fontweight='bold')
-    ax2.set_title('After Calibration', fontweight='bold')
+    ax2.hist(scores_ref, bins=30, alpha=0.6, label="Reference", color=colors[0], density=True, edgecolor="white")
+    ax2.hist(
+        scores_cur_calib,
+        bins=30,
+        alpha=0.6,
+        label="Current (Calibrated)",
+        color=colors[2],
+        density=True,
+        edgecolor="white",
+    )
+    ax2.set_xlabel("Score", fontweight="bold")
+    ax2.set_ylabel("Density", fontweight="bold")
+    ax2.set_title("After Calibration", fontweight="bold")
     ax2.legend(frameon=False)
-    ax2.grid(True, alpha=0.3, linestyle='--')
+    ax2.grid(True, alpha=0.3, linestyle="--")
     _setup_axis_style(ax2)
 
     # 右图: Q-Q图
@@ -1015,14 +984,14 @@ def plot_drift_comparison(
     cur_q = np.quantile(scores_cur, quantiles)
     cur_calib_q = np.quantile(scores_cur_calib, quantiles)
 
-    ax3.plot(ref_q, cur_q, 'o', color=colors[1], label='Raw', alpha=0.5, markersize=4)
-    ax3.plot(ref_q, cur_calib_q, 'o', color=colors[2], label='Calibrated', alpha=0.5, markersize=4)
-    ax3.plot([ref_q.min(), ref_q.max()], [ref_q.min(), ref_q.max()], 'k--', label='Ideal', alpha=0.5)
-    ax3.set_xlabel('Reference Quantiles', fontweight='bold')
-    ax3.set_ylabel('Current Quantiles', fontweight='bold')
-    ax3.set_title('Q-Q Plot', fontweight='bold')
+    ax3.plot(ref_q, cur_q, "o", color=colors[1], label="Raw", alpha=0.5, markersize=4)
+    ax3.plot(ref_q, cur_calib_q, "o", color=colors[2], label="Calibrated", alpha=0.5, markersize=4)
+    ax3.plot([ref_q.min(), ref_q.max()], [ref_q.min(), ref_q.max()], "k--", label="Ideal", alpha=0.5)
+    ax3.set_xlabel("Reference Quantiles", fontweight="bold")
+    ax3.set_ylabel("Current Quantiles", fontweight="bold")
+    ax3.set_title("Q-Q Plot", fontweight="bold")
     ax3.legend(frameon=False)
-    ax3.grid(True, alpha=0.3, linestyle='--')
+    ax3.grid(True, alpha=0.3, linestyle="--")
     _setup_axis_style(ax3)
 
     if show:
@@ -1040,7 +1009,7 @@ def compare_drift_methods(
     methods: List[str] = None,
     figsize: Tuple[int, int] = (12, 4),
     show: bool = True,
-    colors: Optional[List[str]] = None
+    colors: Optional[List[str]] = None,
 ) -> Any:
     """对比多种漂移校准方法.
 
@@ -1067,16 +1036,16 @@ def compare_drift_methods(
         colors = ["#2639E9", "#F76E6C", "#FE7715"]
 
     if methods is None:
-        methods = ['linear', 'quantile']
+        methods = ["linear", "quantile"]
 
     # 辅助函数：设置坐标轴样式
     def _setup_axis_style(ax, color="#2639E9"):
-        ax.spines['top'].set_color(color)
-        ax.spines['bottom'].set_color(color)
-        ax.spines['right'].set_color(color)
-        ax.spines['left'].set_color(color)
-        ax.spines['top'].set_visible(False)
-        ax.spines['right'].set_visible(False)
+        ax.spines["top"].set_color(color)
+        ax.spines["bottom"].set_color(color)
+        ax.spines["right"].set_color(color)
+        ax.spines["left"].set_color(color)
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
 
     # 获取评分
     scores_ref = model.predict_proba(X_reference)[:, 1]
@@ -1088,13 +1057,13 @@ def compare_drift_methods(
 
     # 第一个子图: 原始分布
     ax = axes[0]
-    ax.hist(scores_ref, bins=30, alpha=0.6, label='Reference', color=colors[0], density=True, edgecolor='white')
-    ax.hist(scores_cur, bins=30, alpha=0.6, label='Current', color=colors[1], density=True, edgecolor='white')
-    ax.set_xlabel('Score', fontweight='bold')
-    ax.set_ylabel('Density', fontweight='bold')
-    ax.set_title('Original', fontweight='bold')
+    ax.hist(scores_ref, bins=30, alpha=0.6, label="Reference", color=colors[0], density=True, edgecolor="white")
+    ax.hist(scores_cur, bins=30, alpha=0.6, label="Current", color=colors[1], density=True, edgecolor="white")
+    ax.set_xlabel("Score", fontweight="bold")
+    ax.set_ylabel("Density", fontweight="bold")
+    ax.set_title("Original", fontweight="bold")
     ax.legend(frameon=False)
-    ax.grid(True, alpha=0.3, linestyle='--')
+    ax.grid(True, alpha=0.3, linestyle="--")
     _setup_axis_style(ax)
 
     # 其他子图: 各种校准方法
@@ -1104,25 +1073,27 @@ def compare_drift_methods(
         try:
             calibrator = ScoreDriftCalibrator(method=method)
 
-            if method == 'binning' and y_current is not None:
+            if method == "binning" and y_current is not None:
                 calibrator.fit(model, X_current, y_current, X_reference=X_reference)
             else:
                 calibrator.fit(model, X_current, X_reference=X_reference)
 
             scores_calib = calibrator.predict_score(X_current)
 
-            ax.hist(scores_ref, bins=30, alpha=0.6, label='Reference', color=colors[0], density=True, edgecolor='white')
-            ax.hist(scores_calib, bins=30, alpha=0.6, label='Calibrated', color=colors[2], density=True, edgecolor='white')
-            ax.set_xlabel('Score', fontweight='bold')
-            ax.set_ylabel('Density', fontweight='bold')
-            ax.set_title(f'Method: {method}', fontweight='bold')
+            ax.hist(scores_ref, bins=30, alpha=0.6, label="Reference", color=colors[0], density=True, edgecolor="white")
+            ax.hist(
+                scores_calib, bins=30, alpha=0.6, label="Calibrated", color=colors[2], density=True, edgecolor="white"
+            )
+            ax.set_xlabel("Score", fontweight="bold")
+            ax.set_ylabel("Density", fontweight="bold")
+            ax.set_title(f"Method: {method}", fontweight="bold")
             ax.legend(frameon=False)
-            ax.grid(True, alpha=0.3, linestyle='--')
+            ax.grid(True, alpha=0.3, linestyle="--")
             _setup_axis_style(ax)
 
         except Exception as e:
-            ax.text(0.5, 0.5, f'Error: {e}', ha='center', va='center', transform=ax.transAxes)
-            ax.set_title(f'Method: {method}', fontweight='bold')
+            ax.text(0.5, 0.5, f"Error: {e}", ha="center", va="center", transform=ax.transAxes)
+            ax.set_title(f"Method: {method}", fontweight="bold")
             _setup_axis_style(ax)
 
     if show:

@@ -18,7 +18,6 @@ from sklearn.ensemble import (
     ExtraTreesClassifier,
     GradientBoostingClassifier,
 )
-from sklearn.utils.validation import check_is_fitted
 
 from ..base import BaseRiskModel
 
@@ -68,14 +67,14 @@ class SklearnRiskModel(BaseRiskModel):
     def __init__(
         self,
         estimator_class,
-        objective: str = 'binary',
+        objective: str = "binary",
         eval_metric: Union[str, List[str], None] = None,
         validation_fraction: float = 0.2,
         random_state: Optional[int] = None,
         n_jobs: int = -1,
         verbose: bool = False,
         scorecard_params: Optional[Dict[str, Any]] = None,
-        **kwargs
+        **kwargs,
     ):
         super().__init__(
             objective=objective,
@@ -86,7 +85,7 @@ class SklearnRiskModel(BaseRiskModel):
             n_jobs=n_jobs,
             verbose=verbose,
             scorecard_params=scorecard_params,
-            **kwargs
+            **kwargs,
         )
         self._estimator_class = estimator_class
 
@@ -96,8 +95,8 @@ class SklearnRiskModel(BaseRiskModel):
         y: Optional[Union[np.ndarray, pd.Series]] = None,
         sample_weight: Optional[np.ndarray] = None,
         eval_set: Optional[List[Tuple]] = None,
-        **fit_params
-    ) -> 'SklearnRiskModel':
+        **fit_params,
+    ) -> "SklearnRiskModel":
         """训练模型.
 
         支持两种调用方式:
@@ -105,7 +104,7 @@ class SklearnRiskModel(BaseRiskModel):
         2. scorecardpipeline风格: fit(X) 在init中指定target
         """
         # 准备数据（支持从X中提取target）
-        X, y, sample_weight = self._prepare_data(X, y, sample_weight, extract_target=True)
+        X, y, sample_weight = self._prepare_data(X, y, sample_weight, extract_target=True, training=True)
         self._fit_probability_scorecard(y)
 
         # 保存特征信息
@@ -115,11 +114,11 @@ class SklearnRiskModel(BaseRiskModel):
 
         # 构建参数
         params = self.kwargs.copy()
-        params['random_state'] = self.random_state
-        params['verbose'] = self.verbose
+        params["random_state"] = self.random_state
+        params["verbose"] = self.verbose
         # GradientBoosting不支持n_jobs参数
         if self._estimator_class != GradientBoostingClassifier:
-            params['n_jobs'] = self.n_jobs
+            params["n_jobs"] = self.n_jobs
 
         # 创建模型
         self._model = self._estimator_class(**params)
@@ -130,14 +129,17 @@ class SklearnRiskModel(BaseRiskModel):
         else:
             self._model.fit(X, y)
 
+        # 底层模型已经完成拟合；先提交状态，确保 eval_set 走统一评估入口时
+        # 能通过严格的布尔训练状态检查。
+        self._is_fitted = True
+
         # 保存评估结果
         self._evals_result = {}
         if eval_set:
             for i, (X_val, y_val) in enumerate(eval_set):
                 scores = self.evaluate(X_val, y_val)
-                self._evals_result[f'validation_{i}'] = scores
+                self._evals_result[f"validation_{i}"] = scores
 
-        self._is_fitted = True
         return self
 
     def predict(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
@@ -147,7 +149,7 @@ class SklearnRiskModel(BaseRiskModel):
         :return: 预测类别数组（0/1）
         :raises NotFittedError: 模型尚未训练时
         """
-        check_is_fitted(self, '_is_fitted')
+        self._require_fitted()
         X = self._prepare_data(X)[0]
         return self._model.predict(X)
 
@@ -158,11 +160,11 @@ class SklearnRiskModel(BaseRiskModel):
         :return: 概率数组，shape ``(n_samples, 2)``，第 1 列为正类（坏样本）概率
         :raises NotFittedError: 模型尚未训练时
         """
-        check_is_fitted(self, '_is_fitted')
+        self._require_fitted()
         X = self._prepare_data(X)[0]
         return self._model.predict_proba(X)
 
-    def get_feature_importances(self, importance_type: str = 'gain') -> pd.Series:
+    def get_feature_importances(self, importance_type: str = "gain") -> pd.Series:
         """获取特征重要性（基于底层模型的不纯度下降）。
 
         :param importance_type: 重要性类型，默认 ``'gain'``（sklearn 树模型仅支持基于
@@ -170,16 +172,14 @@ class SklearnRiskModel(BaseRiskModel):
         :return: 以特征名为索引、按重要性降序的 Series
         :raises NotFittedError: 模型尚未训练时
         """
-        check_is_fitted(self, '_is_fitted')
+        self._require_fitted()
 
         importances = self._model.feature_importances_
 
         # 创建Series
-        importance_series = pd.Series(
-            importances,
-            index=self.feature_names_in_,
-            name='importance'
-        ).sort_values(ascending=False)
+        importance_series = pd.Series(importances, index=self.feature_names_in_, name="importance").sort_values(
+            ascending=False
+        )
 
         self._feature_importances = importance_series
 
@@ -191,7 +191,7 @@ class SklearnRiskModel(BaseRiskModel):
 
         直接在包装类上暴露重要性，兼容sklearn RFE/SFS等组件的 importance_getter。
         """
-        check_is_fitted(self, '_is_fitted')
+        self._require_fitted()
         # 直接从内部模型获取，避免缓存逻辑在clone后出错
         return self._model.feature_importances_
 
@@ -201,24 +201,26 @@ class SklearnRiskModel(BaseRiskModel):
         :param path: 保存路径
         """
         from ....utils import save_pickle
-        check_is_fitted(self, '_is_fitted')
+
+        self._require_fitted()
         save_pickle(self._model, path)
 
-    def load_model(self, path: str) -> 'SklearnRiskModel':
+    def load_model(self, path: str) -> "SklearnRiskModel":
         """加载底层sklearn模型（pickle格式）.
 
         :param path: 模型路径
         :return: self
         """
         from ....utils import load_pickle
+
         self._model = load_pickle(path)
         self._is_fitted = True
-        self.classes_ = getattr(self._model, 'classes_', np.array([0, 1]))
-        if hasattr(self._model, 'n_features_in_'):
+        self.classes_ = getattr(self._model, "classes_", np.array([0, 1]))
+        if hasattr(self._model, "n_features_in_"):
             self.n_features_in_ = self._model.n_features_in_
-        if not hasattr(self, 'feature_names_in_'):
-            n_feat = getattr(self, 'n_features_in_', 0)
-            self.feature_names_in_ = [f'feature_{i}' for i in range(n_feat)]
+        if not hasattr(self, "feature_names_in_"):
+            n_feat = getattr(self, "n_features_in_", 0)
+            self.feature_names_in_ = [f"feature_{i}" for i in range(n_feat)]
         return self
 
 
@@ -248,15 +250,15 @@ class RandomForestRiskModel(SklearnRiskModel):
         max_depth: Optional[int] = None,
         min_samples_split: Union[int, float] = 2,
         min_samples_leaf: Union[int, float] = 1,
-        max_features: Union[str, int, float] = 'sqrt',
+        max_features: Union[str, int, float] = "sqrt",
         bootstrap: bool = True,
         class_weight: Optional[Union[str, Dict]] = None,
-        criterion: str = 'gini',
+        criterion: str = "gini",
         random_state: Optional[int] = None,
         n_jobs: int = -1,
         verbose: bool = False,
         scorecard_params: Optional[Dict[str, Any]] = None,
-        **kwargs
+        **kwargs,
     ):
         super().__init__(
             estimator_class=RandomForestClassifier,
@@ -264,7 +266,7 @@ class RandomForestRiskModel(SklearnRiskModel):
             n_jobs=n_jobs,
             verbose=verbose,
             scorecard_params=scorecard_params,
-            **kwargs
+            **kwargs,
         )
 
         self.n_estimators = n_estimators
@@ -277,16 +279,18 @@ class RandomForestRiskModel(SklearnRiskModel):
         self.criterion = criterion
 
         # 更新kwargs
-        self.kwargs.update({
-            'n_estimators': n_estimators,
-            'max_depth': max_depth,
-            'min_samples_split': min_samples_split,
-            'min_samples_leaf': min_samples_leaf,
-            'max_features': max_features,
-            'bootstrap': bootstrap,
-            'class_weight': class_weight,
-            'criterion': criterion,
-        })
+        self.kwargs.update(
+            {
+                "n_estimators": n_estimators,
+                "max_depth": max_depth,
+                "min_samples_split": min_samples_split,
+                "min_samples_leaf": min_samples_leaf,
+                "max_features": max_features,
+                "bootstrap": bootstrap,
+                "class_weight": class_weight,
+                "criterion": criterion,
+            }
+        )
 
 
 class ExtraTreesRiskModel(SklearnRiskModel):
@@ -316,15 +320,15 @@ class ExtraTreesRiskModel(SklearnRiskModel):
         max_depth: Optional[int] = None,
         min_samples_split: Union[int, float] = 2,
         min_samples_leaf: Union[int, float] = 1,
-        max_features: Union[str, int, float] = 'sqrt',
+        max_features: Union[str, int, float] = "sqrt",
         bootstrap: bool = False,
         class_weight: Optional[Union[str, Dict]] = None,
-        criterion: str = 'gini',
+        criterion: str = "gini",
         random_state: Optional[int] = None,
         n_jobs: int = -1,
         verbose: bool = False,
         scorecard_params: Optional[Dict[str, Any]] = None,
-        **kwargs
+        **kwargs,
     ):
         super().__init__(
             estimator_class=ExtraTreesClassifier,
@@ -332,7 +336,7 @@ class ExtraTreesRiskModel(SklearnRiskModel):
             n_jobs=n_jobs,
             verbose=verbose,
             scorecard_params=scorecard_params,
-            **kwargs
+            **kwargs,
         )
 
         self.n_estimators = n_estimators
@@ -345,16 +349,18 @@ class ExtraTreesRiskModel(SklearnRiskModel):
         self.criterion = criterion
 
         # 更新kwargs
-        self.kwargs.update({
-            'n_estimators': n_estimators,
-            'max_depth': max_depth,
-            'min_samples_split': min_samples_split,
-            'min_samples_leaf': min_samples_leaf,
-            'max_features': max_features,
-            'bootstrap': bootstrap,
-            'class_weight': class_weight,
-            'criterion': criterion,
-        })
+        self.kwargs.update(
+            {
+                "n_estimators": n_estimators,
+                "max_depth": max_depth,
+                "min_samples_split": min_samples_split,
+                "min_samples_leaf": min_samples_leaf,
+                "max_features": max_features,
+                "bootstrap": bootstrap,
+                "class_weight": class_weight,
+                "criterion": criterion,
+            }
+        )
 
 
 class GradientBoostingRiskModel(SklearnRiskModel):
@@ -385,13 +391,13 @@ class GradientBoostingRiskModel(SklearnRiskModel):
         min_samples_leaf: Union[int, float] = 1,
         subsample: float = 1.0,
         max_features: Optional[Union[str, int, float]] = None,
-        criterion: str = 'friedman_mse',
+        criterion: str = "friedman_mse",
         validation_fraction: float = 0.1,
         n_iter_no_change: Optional[int] = None,
         random_state: Optional[int] = None,
         verbose: bool = False,
         scorecard_params: Optional[Dict[str, Any]] = None,
-        **kwargs
+        **kwargs,
     ):
         super().__init__(
             estimator_class=GradientBoostingClassifier,
@@ -399,7 +405,7 @@ class GradientBoostingRiskModel(SklearnRiskModel):
             n_jobs=1,  # GBT不支持n_jobs
             verbose=verbose,
             scorecard_params=scorecard_params,
-            **kwargs
+            **kwargs,
         )
 
         self.n_estimators = n_estimators
@@ -414,18 +420,20 @@ class GradientBoostingRiskModel(SklearnRiskModel):
         self.n_iter_no_change = n_iter_no_change
 
         # 更新kwargs
-        self.kwargs.update({
-            'n_estimators': n_estimators,
-            'learning_rate': learning_rate,
-            'max_depth': max_depth,
-            'min_samples_split': min_samples_split,
-            'min_samples_leaf': min_samples_leaf,
-            'subsample': subsample,
-            'max_features': max_features,
-            'criterion': criterion,
-            'validation_fraction': validation_fraction,
-            'n_iter_no_change': n_iter_no_change,
-        })
+        self.kwargs.update(
+            {
+                "n_estimators": n_estimators,
+                "learning_rate": learning_rate,
+                "max_depth": max_depth,
+                "min_samples_split": min_samples_split,
+                "min_samples_leaf": min_samples_leaf,
+                "subsample": subsample,
+                "max_features": max_features,
+                "criterion": criterion,
+                "validation_fraction": validation_fraction,
+                "n_iter_no_change": n_iter_no_change,
+            }
+        )
 
     def fit(
         self,
@@ -433,8 +441,8 @@ class GradientBoostingRiskModel(SklearnRiskModel):
         y: Optional[Union[np.ndarray, pd.Series]] = None,
         sample_weight: Optional[np.ndarray] = None,
         eval_set: Optional[List[Tuple]] = None,
-        **fit_params
-    ) -> 'GradientBoostingRiskModel':
+        **fit_params,
+    ) -> "GradientBoostingRiskModel":
         """训练模型.
 
         支持两种调用方式:
@@ -444,13 +452,13 @@ class GradientBoostingRiskModel(SklearnRiskModel):
         result = super().fit(X, y, sample_weight, eval_set, **fit_params)
 
         # 保存训练过程中的损失
-        if hasattr(self._model, 'train_score_'):
-            self._evals_result['train'] = {'loss': self._model.train_score_}
-        if hasattr(self._model, 'validation_score_') and self._model.validation_score_:
-            self._evals_result['validation'] = {'loss': self._model.validation_score_}
+        if hasattr(self._model, "train_score_"):
+            self._evals_result["train"] = {"loss": self._model.train_score_}
+        if hasattr(self._model, "validation_score_") and self._model.validation_score_:
+            self._evals_result["validation"] = {"loss": self._model.validation_score_}
 
         # 最佳迭代次数
-        if hasattr(self._model, 'n_estimators_'):
+        if hasattr(self._model, "n_estimators_"):
             self._best_iteration = self._model.n_estimators_
 
         return result

@@ -140,10 +140,16 @@ class BaseScoreTransformer(ArtifactSerializableMixin, BaseEstimator, ABC):
         self,
         lower: Optional[float] = None,
         upper: Optional[float] = None,
-        direction: Literal['descending', 'ascending', 'auto'] = 'auto',
+        direction: Literal["descending", "ascending", "auto"] = "auto",
         decimal: int = 0,
-        clip: bool = True
+        clip: bool = True,
     ):
+        if direction not in {"descending", "ascending", "auto"}:
+            raise ValueError("direction必须是'descending'、'ascending'或'auto'")
+        if lower is not None and upper is not None and lower >= upper:
+            raise ValueError("lower必须小于upper")
+        if not isinstance(decimal, int) or decimal < 0:
+            raise ValueError("decimal必须是大于等于0的整数")
         self.lower = lower
         self.upper = upper
         self.direction = direction
@@ -152,13 +158,26 @@ class BaseScoreTransformer(ArtifactSerializableMixin, BaseEstimator, ABC):
         self.clip = clip
         self._is_fitted = False
 
+    def __sklearn_is_fitted__(self) -> bool:
+        """返回真实拟合状态，避免仅凭学习属性存在误判。"""
+        return bool(self._is_fitted)
+
+    @staticmethod
+    def _validate_probabilities(proba: Union[np.ndarray, pd.Series]) -> np.ndarray:
+        """校验并返回一维或多维有限概率数组。"""
+        values = np.asarray(proba, dtype=float)
+        if values.size == 0:
+            raise ValueError("proba不能为空")
+        if not np.isfinite(values).all() or np.any((values < 0) | (values > 1)):
+            raise ValueError("proba必须是[0, 1]范围内的有限概率")
+        return values
 
     def _determine_direction(self) -> str:
         """确定评分方向.
 
         :return: 'descending' 或 'ascending'
         """
-        if self.direction != 'auto':
+        if self.direction != "auto":
             return self.direction
 
         # 根据常见的分数范围自动判断
@@ -166,13 +185,13 @@ class BaseScoreTransformer(ArtifactSerializableMixin, BaseEstimator, ABC):
             score_range = self.upper - self.lower
             # 信用评分通常范围较大(如300-1000)
             if score_range >= 500:
-                return 'descending'  # 信用分：概率越低，分数越高
+                return "descending"  # 信用分：概率越低，分数越高
             # 欺诈评分通常范围较小(如0-100)
             if score_range <= 100:
-                return 'ascending'   # 欺诈分：概率越高，分数越高
+                return "ascending"  # 欺诈分：概率越高，分数越高
 
         # 默认: descending (信用分模式)
-        return 'descending'
+        return "descending"
 
     def _clip_scores(self, scores: np.ndarray) -> np.ndarray:
         """截断超出范围的评分.
@@ -196,11 +215,7 @@ class BaseScoreTransformer(ArtifactSerializableMixin, BaseEstimator, ABC):
         return np.round(scores, self.decimal)
 
     @abstractmethod
-    def fit(
-        self,
-        proba: Union[np.ndarray, pd.Series],
-        **kwargs
-    ) -> 'BaseScoreTransformer':
+    def fit(self, proba: Union[np.ndarray, pd.Series], **kwargs) -> "BaseScoreTransformer":
         """拟合评分转换器.
 
         :param proba: 训练数据的预测概率(正类概率)
@@ -230,10 +245,7 @@ class BaseScoreTransformer(ArtifactSerializableMixin, BaseEstimator, ABC):
         """
         check_is_fitted(self)
 
-        proba = np.asarray(proba)
-
-        # 确保概率在有效范围内
-        proba = np.clip(proba, 1e-10, 1 - 1e-10)
+        proba = self._validate_probabilities(proba)
 
         # 转换为评分
         scores = self.transform(proba)
@@ -259,7 +271,7 @@ class BaseScoreTransformer(ArtifactSerializableMixin, BaseEstimator, ABC):
 
     # ==================== 持久化（复用 utils.io） ====================
 
-    def save(self, file: str, engine: str = 'joblib', **kwargs) -> str:
+    def save(self, file: str, engine: str = "joblib", **kwargs) -> str:
         """保存评分转换器到文件.
 
         复用 ``hscredit.utils.io.save_pickle`` 进行持久化，支持多种序列化引擎
@@ -286,7 +298,7 @@ class BaseScoreTransformer(ArtifactSerializableMixin, BaseEstimator, ABC):
         return file
 
     @classmethod
-    def load(cls, file: str, engine: str = 'auto', **kwargs) -> 'BaseScoreTransformer':
+    def load(cls, file: str, engine: str = "auto", **kwargs) -> "BaseScoreTransformer":
         """从文件加载评分转换器（离线模型加载）.
 
         复用 ``hscredit.utils.io.load_pickle`` 进行读取。
@@ -305,9 +317,7 @@ class BaseScoreTransformer(ArtifactSerializableMixin, BaseEstimator, ABC):
 
         obj = _load_pickle(file, engine=engine, **kwargs)
         if not isinstance(obj, BaseScoreTransformer):
-            raise TypeError(
-                f"加载的对象类型为 {type(obj).__name__}，不是 BaseScoreTransformer 子类"
-            )
+            raise TypeError(f"加载的对象类型为 {type(obj).__name__}，不是 BaseScoreTransformer 子类")
         return obj
 
 
@@ -379,16 +389,24 @@ class StandardScoreTransformer(BaseScoreTransformer):
         self,
         lower: Optional[float] = None,
         upper: Optional[float] = None,
-        direction: Literal['descending', 'ascending', 'auto'] = 'descending',
+        direction: Literal["descending", "ascending", "auto"] = "descending",
         base_odds: float = 0.05,
         base_score: float = 600,
         pdo: float = 20,
         rate: float = 2,
         step: Optional[int] = None,
         decimal: int = 0,
-        clip: bool = True
+        clip: bool = True,
     ):
         super().__init__(lower, upper, direction, decimal, clip)
+        if not np.isfinite(base_odds) or base_odds <= 0:
+            raise ValueError("base_odds必须是大于0的有限数值")
+        if not np.isfinite(pdo) or pdo <= 0:
+            raise ValueError("pdo必须是大于0的有限数值")
+        if not np.isfinite(rate) or rate <= 1:
+            raise ValueError("rate必须是大于1的有限数值")
+        if step is not None and step <= 0:
+            raise ValueError("step必须大于0")
         self.base_odds = base_odds
         self.base_score = base_score
         self.pdo = pdo
@@ -420,18 +438,14 @@ class StandardScoreTransformer(BaseScoreTransformer):
 
         :return: (A, B)
         """
-        sign = 1 if self.direction_ == 'descending' else -1
+        sign = 1 if self.direction_ == "descending" else -1
         B_abs = self.pdo / np.log(self.rate)
         B = sign * B_abs
         # A 的计算逻辑：base_score + sign × B_abs × ln(base_odds)（等价于 base_score + B×ln(base_odds)）
         A = self.base_score + sign * B_abs * np.log(self.base_odds)
         return A, B
 
-    def fit(
-        self,
-        proba: Union[np.ndarray, pd.Series],
-        **kwargs
-    ) -> 'StandardScoreTransformer':
+    def fit(self, proba: Union[np.ndarray, pd.Series], **kwargs) -> "StandardScoreTransformer":
         """拟合评分转换器.
 
         标准评分卡方法的参数在初始化时已确定，fit主要用于验证参数合理性。
@@ -440,7 +454,7 @@ class StandardScoreTransformer(BaseScoreTransformer):
         :return: self
         """
         # 保存训练概率用于参考
-        self.train_proba_ = np.asarray(proba)
+        self.train_proba_ = self._validate_probabilities(proba)
 
         # 确定方向（必须在计算参数之前，因为 sign 依赖 direction_）
         self.direction_ = self._determine_direction()
@@ -463,13 +477,13 @@ class StandardScoreTransformer(BaseScoreTransformer):
         对于 ascending（欺诈分），极高P应得高分，极低P应得低分。
         """
         # 计算极端概率对应的分数
-        low_prob = 0.001   # 极低逾率 = 好客户
+        low_prob = 0.001  # 极低逾率 = 好客户
         high_prob = 0.999  # 极高逾率 = 坏客户
         low_score = self._transform_single(low_prob)
         high_score = self._transform_single(high_prob)
 
         # 检查方向是否与预期一致
-        if self.direction_ == 'descending':
+        if self.direction_ == "descending":
             # 递减：低概率应该对应高分
             if low_score <= high_score:
                 warnings.warn(
@@ -492,6 +506,7 @@ class StandardScoreTransformer(BaseScoreTransformer):
         :param proba: 单个概率值
         :return: 评分
         """
+        proba = float(np.clip(proba, np.finfo(float).eps, 1 - np.finfo(float).eps))
         odds = proba / (1 - proba)
         # direction 已在 A/B 计算中体现，此处直接用 descending 公式（符号不影响排序比较）
         score = self.A_ - self.B_ * np.log(odds)
@@ -504,7 +519,8 @@ class StandardScoreTransformer(BaseScoreTransformer):
         :return: 评分数组
         """
         check_is_fitted(self)
-        proba = np.asarray(proba)
+        proba = self._validate_probabilities(proba)
+        proba = np.clip(proba, np.finfo(float).eps, 1 - np.finfo(float).eps)
 
         # 计算 odds
         odds = proba / (1 - proba)
@@ -572,24 +588,25 @@ class StandardScoreTransformer(BaseScoreTransformer):
             else:
                 ratio_display = f"1:{1/good_bad_ratio:.1f}"
 
-            results.append({
-                '评分': score,
-                '理论Odds(坏好比)': round(odds_lr, 4),
-                '好客户:坏客户': ratio_display,
-                '理论逾期率': round(prob, 6),
-                '理论逾期率(%)': f"{prob*100:.4f}%",
-                '对数Odds': round(np.log(odds_lr), 4) if odds_lr > 0 else -np.inf,
-            })
+            results.append(
+                {
+                    "评分": score,
+                    "理论Odds(坏好比)": round(odds_lr, 4),
+                    "好客户:坏客户": ratio_display,
+                    "理论逾期率": round(prob, 6),
+                    "理论逾期率(%)": f"{prob*100:.4f}%",
+                    "对数Odds": round(np.log(odds_lr), 4) if odds_lr > 0 else -np.inf,
+                }
+            )
 
         df = pd.DataFrame(results)
 
         # 按评分从高到低排列（分数越高，逾期率越低 → 越安全）
-        df = df.sort_values('评分', ascending=False).reset_index(drop=True)
+        df = df.sort_values("评分", ascending=False).reset_index(drop=True)
 
         return df
 
-    def get_score_reference_by_prob(self, prob_range: tuple = (0.001, 0.5),
-                                     n_points: int = 50) -> pd.DataFrame:
+    def get_score_reference_by_prob(self, prob_range: tuple = (0.001, 0.5), n_points: int = 50) -> pd.DataFrame:
         """根据逾期率范围获取对应的评分参照表.
 
         :param prob_range: 概率范围，默认(0.001, 0.5)
@@ -606,12 +623,14 @@ class StandardScoreTransformer(BaseScoreTransformer):
             odds = prob / (1 - prob)
             score = self.A_ - self.B_ * np.log(odds)
 
-            results.append({
-                '理论逾期率': round(prob, 6),
-                '理论逾期率(%)': f"{prob*100:.4f}%",
-                '理论Odds': round(odds, 4),
-                '评分': round(score, 2),
-            })
+            results.append(
+                {
+                    "理论逾期率": round(prob, 6),
+                    "理论逾期率(%)": f"{prob*100:.4f}%",
+                    "理论Odds": round(odds, 4),
+                    "评分": round(score, 2),
+                }
+            )
 
         return pd.DataFrame(results)
 
@@ -674,17 +693,13 @@ class LinearScoreTransformer(BaseScoreTransformer):
         self,
         lower: Optional[float] = 0,
         upper: Optional[float] = 100,
-        direction: Literal['descending', 'ascending', 'auto'] = 'ascending',
+        direction: Literal["descending", "ascending", "auto"] = "ascending",
         decimal: int = 0,
-        clip: bool = True
+        clip: bool = True,
     ):
         super().__init__(lower, upper, direction, decimal, clip)
 
-    def fit(
-        self,
-        proba: Union[np.ndarray, pd.Series],
-        **kwargs
-    ) -> 'LinearScoreTransformer':
+    def fit(self, proba: Union[np.ndarray, pd.Series], **kwargs) -> "LinearScoreTransformer":
         """拟合评分转换器.
 
         线性方法的参数在初始化时已确定，fit主要用于保存训练概率分布。
@@ -693,7 +708,7 @@ class LinearScoreTransformer(BaseScoreTransformer):
         :return: self
         """
         # 保存训练概率用于参考
-        self.train_proba_ = np.asarray(proba)
+        self.train_proba_ = self._validate_probabilities(proba)
 
         # 确定方向
         self.direction_ = self._determine_direction()
@@ -709,12 +724,12 @@ class LinearScoreTransformer(BaseScoreTransformer):
         :return: 评分数组
         """
         check_is_fitted(self)
-        proba = np.asarray(proba)
+        proba = self._validate_probabilities(proba)
 
         lower = self.lower if self.lower is not None else 0
         upper = self.upper if self.upper is not None else 100
 
-        if self.direction_ == 'descending':
+        if self.direction_ == "descending":
             # 信用分: 低概率->高分
             scores = upper - (upper - lower) * proba
         else:
@@ -735,7 +750,7 @@ class LinearScoreTransformer(BaseScoreTransformer):
         lower = self.lower if self.lower is not None else 0
         upper = self.upper if self.upper is not None else 100
 
-        if self.direction_ == 'descending':
+        if self.direction_ == "descending":
             # 反向: 高分->低概率
             proba = (upper - scores) / (upper - lower)
         else:
@@ -785,19 +800,17 @@ class QuantileScoreTransformer(BaseScoreTransformer):
         self,
         lower: Optional[float] = 0,
         upper: Optional[float] = 100,
-        direction: Literal['descending', 'ascending', 'auto'] = 'ascending',
+        direction: Literal["descending", "ascending", "auto"] = "ascending",
         n_quantiles: int = 100,
         decimal: int = 0,
-        clip: bool = True
+        clip: bool = True,
     ):
         super().__init__(lower, upper, direction, decimal, clip)
+        if not isinstance(n_quantiles, int) or n_quantiles < 2:
+            raise ValueError("n_quantiles必须是大于等于2的整数")
         self.n_quantiles = n_quantiles
 
-    def fit(
-        self,
-        proba: Union[np.ndarray, pd.Series],
-        **kwargs
-    ) -> 'QuantileScoreTransformer':
+    def fit(self, proba: Union[np.ndarray, pd.Series], **kwargs) -> "QuantileScoreTransformer":
         """拟合评分转换器.
 
         学习训练数据的概率分布，用于后续分位数映射。
@@ -806,7 +819,7 @@ class QuantileScoreTransformer(BaseScoreTransformer):
         :return: self
         """
         # 保存训练概率
-        self.train_proba_ = np.asarray(proba)
+        self.train_proba_ = self._validate_probabilities(proba)
 
         # 保存分位数
         quantiles = np.linspace(0, 1, self.n_quantiles + 1)
@@ -826,18 +839,18 @@ class QuantileScoreTransformer(BaseScoreTransformer):
         :return: 评分数组
         """
         check_is_fitted(self)
-        proba = np.asarray(proba)
+        proba = self._validate_probabilities(proba)
 
         lower = self.lower if self.lower is not None else 0
         upper = self.upper if self.upper is not None else 100
 
         # 计算分位数排名
         # 使用搜索找到每个概率对应的分位数
-        quantile_ranks = np.searchsorted(self.quantile_values_, proba, side='right') - 1
+        quantile_ranks = np.searchsorted(self.quantile_values_, proba, side="right") - 1
         quantile_ranks = np.clip(quantile_ranks, 0, self.n_quantiles - 1)
 
         # 将分位数映射到评分
-        if self.direction_ == 'descending':
+        if self.direction_ == "descending":
             # 信用分: 低分位数(低概率)->高分
             scores = upper - (upper - lower) * quantile_ranks / (self.n_quantiles - 1)
         else:
@@ -858,7 +871,7 @@ class QuantileScoreTransformer(BaseScoreTransformer):
         lower = self.lower if self.lower is not None else 0
         upper = self.upper if self.upper is not None else 100
 
-        if self.direction_ == 'descending':
+        if self.direction_ == "descending":
             # 反向计算分位数排名
             quantile_ranks = (upper - scores) / (upper - lower) * (self.n_quantiles - 1)
         else:
@@ -949,13 +962,17 @@ class BoxCoxScoreTransformer(BaseScoreTransformer):
         self,
         lower: Optional[float] = 300,
         upper: Optional[float] = 1000,
-        direction: Literal['descending', 'ascending', 'auto'] = 'descending',
+        direction: Literal["descending", "ascending", "auto"] = "descending",
         lmbda: Optional[float] = None,
         shift: float = 1e-6,
         decimal: int = 0,
         clip: bool = True,
     ):
         super().__init__(lower, upper, direction, decimal, clip)
+        if not np.isfinite(shift) or shift <= 0:
+            raise ValueError("shift必须是大于0的有限数")
+        if lmbda is not None and not np.isfinite(lmbda):
+            raise ValueError("lmbda必须是有限数或None")
         self.lmbda = lmbda
         self.shift = shift
 
@@ -999,7 +1016,7 @@ class BoxCoxScoreTransformer(BaseScoreTransformer):
 
             _, lmbda = _scipy_boxcox(odds)
             return float(lmbda)
-        except ImportError:
+        except (ImportError, ValueError, FloatingPointError):
             pass
 
         # fallback: 简单网格搜索，最大化 log-likelihood 的正态近似
@@ -1020,7 +1037,7 @@ class BoxCoxScoreTransformer(BaseScoreTransformer):
         self,
         proba: Union[np.ndarray, pd.Series],
         **kwargs,
-    ) -> 'BoxCoxScoreTransformer':
+    ) -> "BoxCoxScoreTransformer":
         """拟合 Box-Cox 评分转换器。
 
         1. 计算训练数据的 odds
@@ -1030,7 +1047,7 @@ class BoxCoxScoreTransformer(BaseScoreTransformer):
         :param proba: 训练数据的预测概率（正类概率）
         :return: self
         """
-        self.train_proba_ = np.asarray(proba, dtype=float)
+        self.train_proba_ = self._validate_probabilities(proba)
 
         # 确保概率在合理范围
         proba_safe = np.clip(self.train_proba_, 1e-10, 1 - 1e-10)
@@ -1066,7 +1083,7 @@ class BoxCoxScoreTransformer(BaseScoreTransformer):
         :return: 评分数组
         """
         check_is_fitted(self)
-        proba = np.clip(np.asarray(proba, dtype=float), 1e-10, 1 - 1e-10)
+        proba = np.clip(self._validate_probabilities(proba), 1e-10, 1 - 1e-10)
 
         lower = self.lower if self.lower is not None else 300
         upper = self.upper if self.upper is not None else 1000
@@ -1077,7 +1094,7 @@ class BoxCoxScoreTransformer(BaseScoreTransformer):
         z_norm = (z - self.z_min_) / (self.z_max_ - self.z_min_)
         z_norm = np.clip(z_norm, 0, 1)
 
-        if self.direction_ == 'descending':
+        if self.direction_ == "descending":
             # 信用分: odds 越大(坏) → z 越大 → 分数越低
             scores = upper - (upper - lower) * z_norm
         else:
@@ -1099,7 +1116,7 @@ class BoxCoxScoreTransformer(BaseScoreTransformer):
         upper = self.upper if self.upper is not None else 1000
 
         # 评分 → 归一化 z → 逆 Box-Cox → odds → 概率
-        if self.direction_ == 'descending':
+        if self.direction_ == "descending":
             z_norm = (upper - scores) / (upper - lower)
         else:
             z_norm = (scores - lower) / (upper - lower)
@@ -1179,65 +1196,57 @@ class ScoreTransformer(BaseScoreTransformer):
 
     def __init__(
         self,
-        method: Literal['standard', 'linear', 'quantile', 'boxcox'] = 'standard',
+        method: Literal["standard", "linear", "quantile", "boxcox"] = "standard",
         lower: Optional[float] = None,
         upper: Optional[float] = None,
-        direction: Literal['descending', 'ascending', 'auto'] = 'auto',
+        direction: Literal["descending", "ascending", "auto"] = "auto",
         decimal: int = 0,
         clip: bool = True,
-        target: str = 'target',
-        **kwargs
+        target: str = "target",
+        **kwargs,
     ):
         super().__init__(lower, upper, direction, decimal, clip)
         self.method = method
         self.target = target
         self.transformer_params = kwargs
 
-    def fit(
-        self,
-        proba: Union[np.ndarray, pd.Series],
-        **kwargs
-    ) -> 'ScoreTransformer':
+    def fit(self, proba: Union[np.ndarray, pd.Series], **kwargs) -> "ScoreTransformer":
         """拟合评分转换器.
 
         :param proba: 训练数据的预测概率(正类概率)
         :return: self
         """
         # 创建具体的转换器
-        if self.method == 'standard':
+        if self.method == "standard":
             self.transformer_ = StandardScoreTransformer(
                 lower=self.lower,
                 upper=self.upper,
                 direction=self.direction,
                 decimal=self.decimal,
                 clip=self.clip,
-                **self.transformer_params
+                **self.transformer_params,
             )
-        elif self.method == 'linear':
+        elif self.method == "linear":
             self.transformer_ = LinearScoreTransformer(
-                lower=self.lower,
-                upper=self.upper,
-                direction=self.direction,
-                decimal=self.decimal,
-                clip=self.clip
+                lower=self.lower, upper=self.upper, direction=self.direction, decimal=self.decimal, clip=self.clip
             )
-        elif self.method == 'quantile':
+        elif self.method == "quantile":
             self.transformer_ = QuantileScoreTransformer(
                 lower=self.lower,
                 upper=self.upper,
                 direction=self.direction,
                 decimal=self.decimal,
                 clip=self.clip,
-                **self.transformer_params
+                **self.transformer_params,
             )
-        elif self.method == 'boxcox':
+        elif self.method == "boxcox":
             self.transformer_ = BoxCoxScoreTransformer(
                 lower=self.lower,
                 upper=self.upper,
                 direction=self.direction,
                 decimal=self.decimal,
                 clip=self.clip,
-                **self.transformer_params
+                **self.transformer_params,
             )
         else:
             raise ValueError(f"不支持的转换方法: {self.method}")
@@ -1247,7 +1256,7 @@ class ScoreTransformer(BaseScoreTransformer):
 
         # 复制重要属性
         self.direction_ = self.transformer_.direction_
-        if hasattr(self.transformer_, 'train_proba_'):
+        if hasattr(self.transformer_, "train_proba_"):
             self.train_proba_ = self.transformer_.train_proba_
 
         self._is_fitted = True
@@ -1279,7 +1288,7 @@ class ScoreTransformer(BaseScoreTransformer):
         :return: 公式字典；非解析方法（linear/quantile/boxcox）返回方法说明
         """
         check_is_fitted(self)
-        if hasattr(self.transformer_, 'score_formula'):
+        if hasattr(self.transformer_, "score_formula"):
             return self.transformer_.score_formula(decimal=decimal)
         return {
             "method": self.method,
@@ -1290,12 +1299,12 @@ class ScoreTransformer(BaseScoreTransformer):
 
 def transform_probability_to_score(
     proba: Union[np.ndarray, pd.Series],
-    method: str = 'standard',
+    method: str = "standard",
     lower: Optional[float] = None,
     upper: Optional[float] = None,
-    direction: str = 'descending',
+    direction: str = "descending",
     decimal: int = 0,
-    **kwargs
+    **kwargs,
 ) -> np.ndarray:
     """便捷函数: 将概率转换为评分.
 
@@ -1324,15 +1333,15 @@ def transform_probability_to_score(
     proba = np.asarray(proba)
     proba = np.clip(proba, 1e-10, 1 - 1e-10)
 
-    if method == 'standard':
+    if method == "standard":
         # 标准评分卡方法
-        base_odds = kwargs.get('base_odds', 0.05)
-        base_score = kwargs.get('base_score', 600)
-        pdo = kwargs.get('pdo', 20)
-        rate = kwargs.get('rate', 2)
+        base_odds = kwargs.get("base_odds", 0.05)
+        base_score = kwargs.get("base_score", 600)
+        pdo = kwargs.get("pdo", 20)
+        rate = kwargs.get("rate", 2)
 
         # sign 决定方向：descending -> P↑时Score↓（经典信用分），ascending -> P↑时Score↑（欺诈分）
-        sign = 1 if direction == 'descending' else -1
+        sign = 1 if direction == "descending" else -1
 
         B = sign * pdo / np.log(rate)
         A = base_score + B * np.log(base_odds)
@@ -1340,12 +1349,12 @@ def transform_probability_to_score(
         odds = proba / (1 - proba)
         scores = A - B * np.log(odds)
 
-    elif method == 'linear':
+    elif method == "linear":
         # 线性映射
         lower_val = lower if lower is not None else 0
         upper_val = upper if upper is not None else 100
 
-        if direction == 'descending':
+        if direction == "descending":
             scores = upper_val - (upper_val - lower_val) * proba
         else:
             scores = lower_val + (upper_val - lower_val) * proba
@@ -1368,6 +1377,7 @@ def transform_probability_to_score(
 # 尝试导入matplotlib进行绘图
 try:
     import matplotlib.pyplot as plt
+
     MATPLOTLIB_AVAILABLE = True
 except ImportError:
     MATPLOTLIB_AVAILABLE = False
@@ -1379,7 +1389,7 @@ def plot_score_transformation_curve(
     figsize: Tuple[int, int] = (10, 6),
     title: Optional[str] = None,
     show: bool = True,
-    colors: Optional[List[str]] = None
+    colors: Optional[List[str]] = None,
 ) -> Any:
     """绘制概率-评分转换曲线.
 
@@ -1410,12 +1420,12 @@ def plot_score_transformation_curve(
 
     # 辅助函数：设置坐标轴样式
     def _setup_axis_style(ax, color="#2639E9"):
-        ax.spines['top'].set_color(color)
-        ax.spines['bottom'].set_color(color)
-        ax.spines['right'].set_color(color)
-        ax.spines['left'].set_color(color)
-        ax.spines['top'].set_visible(False)
-        ax.spines['right'].set_visible(False)
+        ax.spines["top"].set_color(color)
+        ax.spines["bottom"].set_color(color)
+        ax.spines["right"].set_color(color)
+        ax.spines["left"].set_color(color)
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
 
     if proba_range is None:
         proba_range = np.linspace(0.001, 0.999, 100)
@@ -1426,25 +1436,25 @@ def plot_score_transformation_curve(
     # 创建图表
     fig, ax = plt.subplots(figsize=figsize)
 
-    ax.plot(proba_range, scores, color=colors[0], linewidth=2, label='转换曲线')
+    ax.plot(proba_range, scores, color=colors[0], linewidth=2, label="转换曲线")
 
     # 添加参考线
     if transformer.lower is not None:
-        ax.axhline(y=transformer.lower, color=colors[1], linestyle='--', alpha=0.5, label=f'下界={transformer.lower}')
+        ax.axhline(y=transformer.lower, color=colors[1], linestyle="--", alpha=0.5, label=f"下界={transformer.lower}")
     if transformer.upper is not None:
-        ax.axhline(y=transformer.upper, color=colors[1], linestyle='--', alpha=0.5, label=f'上界={transformer.upper}')
+        ax.axhline(y=transformer.upper, color=colors[1], linestyle="--", alpha=0.5, label=f"上界={transformer.upper}")
 
     # 设置标签
-    direction_text = "递增(ascending)" if transformer.direction_ == 'ascending' else "递减(descending)"
-    ax.set_xlabel('预测概率 (P)', fontsize=12, fontweight='bold')
-    ax.set_ylabel('评分', fontsize=12, fontweight='bold')
+    direction_text = "递增(ascending)" if transformer.direction_ == "ascending" else "递减(descending)"
+    ax.set_xlabel("预测概率 (P)", fontsize=12, fontweight="bold")
+    ax.set_ylabel("评分", fontsize=12, fontweight="bold")
 
     if title is None:
-        title = f'概率-评分转换曲线 ({direction_text})'
-    ax.set_title(title, fontsize=14, fontweight='bold')
+        title = f"概率-评分转换曲线 ({direction_text})"
+    ax.set_title(title, fontsize=14, fontweight="bold")
 
-    ax.grid(True, alpha=0.3, linestyle='--')
-    ax.legend(loc='best', frameon=False)
+    ax.grid(True, alpha=0.3, linestyle="--")
+    ax.legend(loc="best", frameon=False)
     _setup_axis_style(ax)
 
     if show:
@@ -1459,10 +1469,10 @@ def compare_score_transformers(
     methods: List[str] = None,
     lower: Optional[float] = None,
     upper: Optional[float] = None,
-    direction: str = 'descending',
+    direction: str = "descending",
     figsize: Tuple[int, int] = (12, 5),
     show: bool = True,
-    colors: Optional[List[str]] = None
+    colors: Optional[List[str]] = None,
 ) -> Any:
     """对比多种评分转换方法.
 
@@ -1490,16 +1500,16 @@ def compare_score_transformers(
         colors = ["#2639E9", "#F76E6C", "#FE7715", "#2E8B57", "#9370DB"]
 
     if methods is None:
-        methods = ['standard', 'linear', 'quantile']
+        methods = ["standard", "linear", "quantile"]
 
     # 辅助函数：设置坐标轴样式
     def _setup_axis_style(ax, color="#2639E9"):
-        ax.spines['top'].set_color(color)
-        ax.spines['bottom'].set_color(color)
-        ax.spines['right'].set_color(color)
-        ax.spines['left'].set_color(color)
-        ax.spines['top'].set_visible(False)
-        ax.spines['right'].set_visible(False)
+        ax.spines["top"].set_color(color)
+        ax.spines["bottom"].set_color(color)
+        ax.spines["right"].set_color(color)
+        ax.spines["left"].set_color(color)
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
 
     proba = np.asarray(proba)
 
@@ -1512,23 +1522,18 @@ def compare_score_transformers(
 
     for i, method in enumerate(methods):
         try:
-            transformer = ScoreTransformer(
-                method=method,
-                lower=lower,
-                upper=upper,
-                direction=direction
-            )
+            transformer = ScoreTransformer(method=method, lower=lower, upper=upper, direction=direction)
             transformer.fit(proba)
             scores = transformer.transform(proba_range)
             ax1.plot(proba_range, scores, label=method, color=colors[i % len(colors)], linewidth=2)
         except Exception as e:
             warnings.warn(f"方法 {method} 失败: {e}")
 
-    ax1.set_xlabel('预测概率 (P)', fontsize=11, fontweight='bold')
-    ax1.set_ylabel('评分', fontsize=11, fontweight='bold')
-    ax1.set_title('转换曲线对比', fontsize=12, fontweight='bold')
-    ax1.legend(loc='best', frameon=False)
-    ax1.grid(True, alpha=0.3, linestyle='--')
+    ax1.set_xlabel("预测概率 (P)", fontsize=11, fontweight="bold")
+    ax1.set_ylabel("评分", fontsize=11, fontweight="bold")
+    ax1.set_title("转换曲线对比", fontsize=12, fontweight="bold")
+    ax1.legend(loc="best", frameon=False)
+    ax1.grid(True, alpha=0.3, linestyle="--")
     _setup_axis_style(ax1)
 
     # 右图: 评分分布对比
@@ -1536,23 +1541,18 @@ def compare_score_transformers(
 
     for i, method in enumerate(methods):
         try:
-            transformer = ScoreTransformer(
-                method=method,
-                lower=lower,
-                upper=upper,
-                direction=direction
-            )
+            transformer = ScoreTransformer(method=method, lower=lower, upper=upper, direction=direction)
             transformer.fit(proba)
             scores = transformer.predict(proba)
-            ax2.hist(scores, bins=30, alpha=0.6, label=method, color=colors[i % len(colors)], edgecolor='white')
+            ax2.hist(scores, bins=30, alpha=0.6, label=method, color=colors[i % len(colors)], edgecolor="white")
         except Exception as e:
             warnings.warn(f"方法 {method} 失败: {e}")
 
-    ax2.set_xlabel('评分', fontsize=11, fontweight='bold')
-    ax2.set_ylabel('频数', fontsize=11, fontweight='bold')
-    ax2.set_title('评分分布对比', fontsize=12, fontweight='bold')
-    ax2.legend(loc='best', frameon=False)
-    ax2.grid(True, alpha=0.3, linestyle='--')
+    ax2.set_xlabel("评分", fontsize=11, fontweight="bold")
+    ax2.set_ylabel("频数", fontsize=11, fontweight="bold")
+    ax2.set_title("评分分布对比", fontsize=12, fontweight="bold")
+    ax2.legend(loc="best", frameon=False)
+    ax2.grid(True, alpha=0.3, linestyle="--")
     _setup_axis_style(ax2)
 
     if show:

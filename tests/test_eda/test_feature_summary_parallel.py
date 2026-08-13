@@ -741,6 +741,33 @@ def test_psi_keeps_full_precision():
     assert row["PSI"] == expected
 
 
+def test_default_psi_computes_final_bin_stats_once_per_feature(monkeypatch):
+    """重复收口不能让默认 PSI 为同一字段反复生成相同分箱统计。"""
+    from hscredit.core.binning.base import BaseBinning
+
+    original = BaseBinning._compute_bin_stats
+    calls = []
+
+    def counting_compute(self, feature, X, y, bins):
+        calls.append(feature)
+        return original(self, feature, X, y, bins)
+
+    monkeypatch.setattr(BaseBinning, "_compute_bin_stats", counting_compute)
+    df = pd.DataFrame(
+        {
+            "first": np.arange(120, dtype=float),
+            "second": np.tile(["A", "B", "C"], 40),
+        }
+    )
+
+    result = feature_summary(df, val_df=df.copy(), n_jobs=1)
+
+    assert result["特征名"].tolist() == ["first", "second"]
+    assert result["样本数"].tolist() == [120, 120]
+    assert result["PSI"].tolist() == [0.0, 0.0]
+    assert calls == ["value", "value"]
+
+
 def test_model_importance_keeps_full_precision():
     """已训练模型的重要性不应被摘要层限制为六位小数。"""
 

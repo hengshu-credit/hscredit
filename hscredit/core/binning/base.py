@@ -552,7 +552,7 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
             handle_unknown=self.handle_unknown,
         )
 
-    def _finalize_categorical_fit(self) -> None:
+    def _finalize_categorical_fit(self, build_stats: bool = True) -> None:
         """把具体方法产生的数值切分点还原为类别规则和统计表。"""
         if not self._categorical_fit_context_:
             return
@@ -579,9 +579,10 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
             self.splits_[feature] = groups
             self.n_bins_[feature] = len(groups)
             self.feature_types_[feature] = "categorical"
-            bins = self._assign_categorical_bins(feature, original)
-            self.bin_tables_[feature] = self._compute_bin_stats(feature, original, y, bins)
-            self._validate_categorical_constraints(feature, y)
+            if build_stats:
+                bins = self._assign_categorical_bins(feature, original)
+                self.bin_tables_[feature] = self._compute_bin_stats(feature, original, y, bins)
+                self._validate_categorical_constraints(feature, y)
         # 原始类别值保留到统一保留箱收口完成，避免用内部编码重算统计表。
 
     def _ensure_categorical_minimum_bins(

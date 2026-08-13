@@ -14,7 +14,7 @@
 import logging
 import inspect
 from copy import deepcopy
-from typing import Union, List, Dict, Optional, Any, Callable
+from typing import Union, List, Dict, Optional, Any, Callable, Iterable
 import numpy as np
 import pandas as pd
 import warnings
@@ -503,7 +503,8 @@ class OptimalBinning(BaseBinning):
 
             # quantile 方法需保持分位数切分点精确，跳过所有后处理
             if self.method == "quantile":
-                self._finalize_reserved_bins(X, y)
+                if not self._reserved_bins_are_finalized(X.columns):
+                    self._finalize_reserved_bins(X, y)
                 self._is_fitted = True
                 return self
 
@@ -1008,6 +1009,30 @@ class OptimalBinning(BaseBinning):
         ):
             if hasattr(binner, attribute):
                 setattr(self, attribute, getattr(binner, attribute).copy())
+
+    def _copy_finalized_bin_state_from(self, binner: BaseBinning) -> None:
+        """复制底层分箱器已经完成统一收口的逐特征状态。"""
+        self._copy_categorical_state_from(binner)
+        for attribute in (
+            "_user_splits_fixed_masks_",
+            "_user_missing_bin_targets_",
+            "_missing_bin_targets_",
+            "_woe_maps_",
+            "_recorded_bins_",
+        ):
+            setattr(self, attribute, deepcopy(getattr(binner, attribute, {})))
+        self._reserved_bins_finalized_ = set(getattr(binner, "_reserved_bins_finalized_", set()))
+
+    def _reserved_bins_are_finalized(self, features: Iterable[Any]) -> bool:
+        """判断当前字段是否都已有可直接复用的最终分箱产物。"""
+        finalized = getattr(self, "_reserved_bins_finalized_", set())
+        return all(
+            feature in finalized
+            and feature in self.bin_tables_
+            and feature in self._woe_maps_
+            and feature in self._recorded_bins_
+            for feature in features
+        )
 
     def _optimize_iv_splits(self, x: pd.Series, y: pd.Series, initial_splits: np.ndarray) -> np.ndarray:
         """基于预分箱切分点优化IV."""
@@ -1633,14 +1658,10 @@ class OptimalBinning(BaseBinning):
         self.n_bins_ = self._binner.n_bins_
         self.bin_tables_ = self._binner.bin_tables_
         self.feature_types_ = self._binner.feature_types_
-        if hasattr(self._binner, "_cat_bins_"):
-            self._cat_bins_ = self._binner._cat_bins_
-        if hasattr(self._binner, "_category_orders_"):
-            self._category_orders_ = self._binner._category_orders_
-        if hasattr(self._binner, "_category_code_maps_"):
-            self._category_code_maps_ = self._binner._category_code_maps_
-        if hasattr(self._binner, "_categorical_numeric_splits_"):
-            self._categorical_numeric_splits_ = self._binner._categorical_numeric_splits_
+        if self.method == "quantile":
+            self._copy_finalized_bin_state_from(self._binner)
+        else:
+            self._copy_categorical_state_from(self._binner)
 
         if hasattr(self._binner, "ks_stats_"):
             self.ks_stats_ = self._binner.ks_stats_

@@ -20,10 +20,9 @@ pip install ngboost
 >>> dist = model.pred_dist(X_test)
 """
 
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 import numpy as np
 import pandas as pd
-from sklearn.utils.validation import check_is_fitted
 from threadpoolctl import threadpool_limits
 
 try:
@@ -158,7 +157,17 @@ class NGBoostRiskModel(BaseRiskModel):
         objective = self._native_params.get("objective", objective)
         random_state = self._native_params.get("random_state", random_state)
 
-        super().__init__(objective=objective, eval_metric=eval_metric, early_stopping_rounds=early_stopping_rounds, validation_fraction=validation_fraction, random_state=random_state, n_jobs=n_jobs, verbose=verbose, scorecard_params=scorecard_params, **kwargs)
+        super().__init__(
+            objective=objective,
+            eval_metric=eval_metric,
+            early_stopping_rounds=early_stopping_rounds,
+            validation_fraction=validation_fraction,
+            random_state=random_state,
+            n_jobs=n_jobs,
+            verbose=verbose,
+            scorecard_params=scorecard_params,
+            **kwargs,
+        )
 
         # NGBoost特有参数
         self.n_estimators = n_estimators
@@ -171,7 +180,14 @@ class NGBoostRiskModel(BaseRiskModel):
         self.base_min_samples_leaf = base_min_samples_leaf
         self.natural_gradient = natural_gradient
 
-    def fit(self, X: Union[np.ndarray, pd.DataFrame], y: Optional[Union[np.ndarray, pd.Series]] = None, sample_weight: Optional[np.ndarray] = None, eval_set: Optional[List[Tuple]] = None, **fit_params) -> "NGBoostRiskModel":
+    def fit(
+        self,
+        X: Union[np.ndarray, pd.DataFrame],
+        y: Optional[Union[np.ndarray, pd.Series]] = None,
+        sample_weight: Optional[np.ndarray] = None,
+        eval_set: Optional[List[Tuple]] = None,
+        **fit_params,
+    ) -> "NGBoostRiskModel":
         """训练NGBoost模型.
 
         支持两种调用方式:
@@ -188,7 +204,7 @@ class NGBoostRiskModel(BaseRiskModel):
         from sklearn.tree import DecisionTreeRegressor
 
         # 准备数据（支持从X中提取target）
-        X, y, sample_weight = self._prepare_data(X, y, sample_weight, extract_target=True)
+        X, y, sample_weight = self._prepare_data(X, y, sample_weight, extract_target=True, training=True)
         self._fit_probability_scorecard(y)
 
         # 保存特征信息
@@ -197,6 +213,7 @@ class NGBoostRiskModel(BaseRiskModel):
 
         # 创建验证集
         X_val, y_val = None, None
+        sw_val = None
         if eval_set is not None and len(eval_set) > 0:
             X_val, y_val = eval_set[0]
             if isinstance(X_val, pd.DataFrame):
@@ -205,7 +222,7 @@ class NGBoostRiskModel(BaseRiskModel):
                 y_val = y_val.values
             X_train, y_train = X, y
         elif self.validation_fraction > 0 and (self.early_stopping_rounds is not None):
-            X_train, X_val, y_train, y_val, sw_train, _ = self._create_eval_set(X, y, sample_weight)
+            X_train, X_val, y_train, y_val, sw_train, sw_val = self._create_eval_set(X, y, sample_weight)
             sample_weight = sw_train
         else:
             X_train, y_train = X, y
@@ -244,12 +261,14 @@ class NGBoostRiskModel(BaseRiskModel):
         self._model = NGBClassifier(**ngb_params)
 
         # 训练
-        fit_kwargs = {}
+        fit_kwargs = dict(fit_params)
         if sample_weight is not None:
             fit_kwargs["sample_weight"] = sample_weight
         if X_val is not None and y_val is not None:
             fit_kwargs["X_val"] = X_val
             fit_kwargs["Y_val"] = y_val
+            if sw_val is not None:
+                fit_kwargs.setdefault("val_sample_weight", sw_val)
             if self.early_stopping_rounds is not None:
                 fit_kwargs["early_stopping_rounds"] = self.early_stopping_rounds
 
@@ -282,7 +301,7 @@ class NGBoostRiskModel(BaseRiskModel):
 
         支持传入包含target列的数据框（scorecardpipeline风格）。
         """
-        check_is_fitted(self, "_is_fitted")
+        self._require_fitted()
         X, _, _ = self._prepare_data(X, extract_target=True)
         return self._model.predict(X)
 
@@ -294,7 +313,7 @@ class NGBoostRiskModel(BaseRiskModel):
         :param X: 特征矩阵
         :return: 预测概率，形状 (n_samples, 2)
         """
-        check_is_fitted(self, "_is_fitted")
+        self._require_fitted()
         X, _, _ = self._prepare_data(X, extract_target=True)
         return self._model.predict_proba(X)
 
@@ -313,7 +332,7 @@ class NGBoostRiskModel(BaseRiskModel):
         >>> dist = model.pred_dist(X_test)
         >>> print(dist.params)
         """
-        check_is_fitted(self, "_is_fitted")
+        self._require_fitted()
         X, _, _ = self._prepare_data(X, extract_target=True)
         return self._model.pred_dist(X)
 
@@ -326,7 +345,7 @@ class NGBoostRiskModel(BaseRiskModel):
         :param importance_type: 重要性类型（保留参数，NGBoost使用基学习器默认重要性）
         :return: 特征重要性Series
         """
-        check_is_fitted(self, "_is_fitted")
+        self._require_fitted()
 
         # NGBoost feature_importances_ 返回 (n_params, n_features) 数组
         # 对于Bernoulli二分类，取第一个参数(p)的重要性
@@ -339,7 +358,9 @@ class NGBoostRiskModel(BaseRiskModel):
             importances = np.asarray(raw_importances).ravel()
 
         # 创建Series
-        importance_series = pd.Series(importances, index=self.feature_names_in_, name="importance").sort_values(ascending=False)
+        importance_series = pd.Series(importances, index=self.feature_names_in_, name="importance").sort_values(
+            ascending=False
+        )
 
         self._feature_importances = importance_series
 
@@ -351,7 +372,7 @@ class NGBoostRiskModel(BaseRiskModel):
 
         返回一维numpy数组，与其他RiskModel保持一致。
         """
-        check_is_fitted(self, "_is_fitted")
+        self._require_fitted()
         raw_importances = self._model.feature_importances_
         if isinstance(raw_importances, np.ndarray) and raw_importances.ndim == 2:
             return raw_importances[0].astype(float)
@@ -367,7 +388,7 @@ class NGBoostRiskModel(BaseRiskModel):
         :param X: 特征矩阵
         :return: 预测结果列表，长度为n_estimators
         """
-        check_is_fitted(self, "_is_fitted")
+        self._require_fitted()
         X, _, _ = self._prepare_data(X, extract_target=True)
         return self._model.staged_predict(X)
 
@@ -379,7 +400,7 @@ class NGBoostRiskModel(BaseRiskModel):
         :param X: 特征矩阵
         :return: 分布对象列表
         """
-        check_is_fitted(self, "_is_fitted")
+        self._require_fitted()
         X, _, _ = self._prepare_data(X, extract_target=True)
         return self._model.staged_pred_dist(X)
 
@@ -392,7 +413,7 @@ class NGBoostRiskModel(BaseRiskModel):
         """
         import matplotlib.pyplot as plt
 
-        check_is_fitted(self, "_is_fitted")
+        self._require_fitted()
         importances = self.get_feature_importances()
         top_features = importances.head(max_num_features)
 
@@ -409,7 +430,7 @@ class NGBoostRiskModel(BaseRiskModel):
         """
         from ....utils import save_pickle
 
-        check_is_fitted(self, "_is_fitted")
+        self._require_fitted()
         save_pickle(self._model, path)
 
     def load_model(self, path: str) -> "NGBoostRiskModel":
