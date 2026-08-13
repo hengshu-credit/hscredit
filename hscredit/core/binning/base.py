@@ -400,6 +400,13 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         self._reserved_bins_finalized_ = set()
         self._is_fitted = False
 
+    def set_params(self, **params) -> "BaseBinning":
+        """设置 sklearn 参数，并立即规范化未知类别策略。"""
+        if "handle_unknown" in params:
+            params = dict(params)
+            params["handle_unknown"] = validate_handle_unknown(params["handle_unknown"])
+        return super().set_params(**params)
+
     def _validate_common_parameters(self) -> None:
         """统一校验所有分箱器共享的公共参数。"""
         for name, value in (("min_n_bins", self.min_n_bins), ("max_n_bins", self.max_n_bins)):

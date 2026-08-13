@@ -652,6 +652,18 @@ class TestOptimalBinning2DEdgeCases:
         with pytest.raises(Exception):
             binner.transform(df)
 
+    def test_axis_handle_unknown_raise_is_propagated(self):
+        """二维分箱必须把轴向 raise 策略传递给内部一维分箱器。"""
+        X = pd.DataFrame({"city": ["A", "B", "A", "B"] * 20, "income": np.arange(80, dtype=float)})
+        y = pd.Series([0, 1, 0, 1] * 20, name="target")
+        binner = OptimalBinning2D(
+            max_n_bins=2,
+            x_params={"handle_unknown": "raise"},
+        ).fit(X, y)
+
+        with pytest.raises(ValueError, match="特征 'city'.*未知类别.*'C'"):
+            binner.transform(pd.DataFrame({"city": ["C"], "income": [10.0]}))
+
 
 class TestOptimalBinning2DStats:
     """统计指标测试."""

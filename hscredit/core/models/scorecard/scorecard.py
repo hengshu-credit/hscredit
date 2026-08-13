@@ -33,6 +33,7 @@ from sklearn.base import BaseEstimator, TransformerMixin
 import inspect
 
 from ....exceptions import DependencyError, NotFittedError, ValidationError
+from ...binning._contracts import validate_handle_unknown
 from ..classical.logistic_regression import LogisticRegression
 from .score_transformer import StandardScoreTransformer
 
@@ -3481,7 +3482,7 @@ class ScoreCard(StandardScoreTransformer):
         self._loaded_feature_types = dict(meta.get('feature_types', {}))
         self._loaded_categorical_bins = dict(meta.get('categorical_bins', {}))
         self._loaded_special_codes = list(meta.get('special_codes', []))
-        self._loaded_handle_unknown = meta.get('handle_unknown', -3)
+        self._loaded_handle_unknown = validate_handle_unknown(meta.get('handle_unknown', -3))
 
     def _get_export_categorical_bins(self) -> Dict[str, List[List[Any]]]:
         """获取可 JSON 序列化且不丢失逗号类别的结构化类别规则。"""

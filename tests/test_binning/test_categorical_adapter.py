@@ -113,6 +113,27 @@ def test_unknown_category_has_reserved_index_label_and_neutral_woe(factory):
     ],
     ids=["OptimalBinning", "UniformBinning"],
 )
+def test_handle_unknown_value_matches_default_unknown_bin(factory):
+    """handle_unknown='value' 应规范化为 -3，并保持 unknown 标签和中性 WOE。"""
+    X = pd.DataFrame({"city": ["A", "B", "A", "B"]})
+    y = pd.Series([0, 1, 0, 1], name="target")
+    binner = factory(min_n_bins=2, max_n_bins=2, handle_unknown="value").fit(X, y)
+    unseen = pd.DataFrame({"city": ["C"]})
+
+    assert binner.handle_unknown == -3
+    assert binner.transform(unseen, metric="indices").iloc[0, 0] == -3
+    assert binner.transform(unseen, metric="bins").iloc[0, 0] == "unknown"
+    assert binner.transform(unseen, metric="woe").iloc[0, 0] == 0.0
+
+
+@pytest.mark.parametrize(
+    "factory",
+    [
+        lambda **kwargs: OptimalBinning(method="uniform", **kwargs),
+        lambda **kwargs: UniformBinning(**kwargs),
+    ],
+    ids=["OptimalBinning", "UniformBinning"],
+)
 def test_handle_unknown_can_route_to_an_existing_ordinary_bin(factory):
     """用户指定的已有普通箱应接收预测期未知类别。"""
     X = pd.DataFrame({"city": ["A", "B", "A", "B"]})

@@ -137,6 +137,11 @@ def test_handle_unknown_accepts_raise_policy():
     assert validate_handle_unknown("raise") == "raise"
 
 
+def test_handle_unknown_value_is_normalized_to_default_unknown_bin():
+    """兼容值 value 必须与默认未知箱 -3 完全等价，而不是形成新的箱号。"""
+    assert validate_handle_unknown("value") == UNKNOWN_BIN
+
+
 def test_category_assignment_uses_user_rule_before_special_and_missing_policy():
     """特殊值和缺失策略不能覆盖用户显式指定的类别箱。"""
     values = pd.Series([np.nan, "SPECIAL", "A", "UNKNOWN"], name="city")

@@ -367,6 +367,22 @@ def test_rule_roundtrip_preserves_handle_unknown_raise_policy():
             candidate.predict(pd.DataFrame({"cat": ["UNKNOWN"]}), input_type="raw")
 
 
+def test_rule_loader_normalizes_legacy_handle_unknown_value_to_minus_three():
+    """历史规则元数据中的 value 必须按当前统一契约恢复为未知箱 -3。"""
+    card, X = _fit_comma_category_scorecard()
+    rules = card.export(decimal=12)
+    rules["__meta__"]["handle_unknown"] = "value"
+
+    restored = ScoreCard().load_rules(rules)
+
+    assert restored.binner.handle_unknown == -3
+    np.testing.assert_allclose(
+        restored.predict(X, input_type="raw"),
+        card.predict(X, input_type="raw"),
+        atol=1e-9,
+    )
+
+
 def test_pmml_decode_bug_does_not_accept_a_stale_existing_destination(tmp_path, monkeypatch):
     """防止上次留下的 PMML 被误判为本次导出成功。"""
     sklearn2pmml_module = pytest.importorskip("sklearn2pmml")

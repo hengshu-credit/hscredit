@@ -12,7 +12,7 @@ UNKNOWN_BIN = -3
 
 FixedFeatureValue = Union[bool, Sequence[bool]]
 UserSplitsFixed = Optional[Union[bool, Mapping[str, FixedFeatureValue]]]
-HandleUnknown = Union[int, Literal["raise"]]
+HandleUnknown = Union[int, Literal["value", "raise"]]
 
 
 def is_missing_marker(value: Any) -> bool:
@@ -28,10 +28,14 @@ def is_missing_marker(value: Any) -> bool:
 
 def validate_handle_unknown(value: Any) -> HandleUnknown:
     """校验未知类别策略，并将整数箱号统一为 Python 整数。"""
-    if value == "raise":
-        return "raise"
+    if isinstance(value, str):
+        if value == "value":
+            return UNKNOWN_BIN
+        if value == "raise":
+            return "raise"
+        raise ValueError("handle_unknown 必须是整数箱号、字符串 'value' 或字符串 'raise'")
     if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer)):
-        raise ValueError("handle_unknown 必须是整数箱号或字符串 'raise'")
+        raise ValueError("handle_unknown 必须是整数箱号、字符串 'value' 或字符串 'raise'")
     return int(value)
 
 
