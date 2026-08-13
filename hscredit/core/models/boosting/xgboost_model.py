@@ -175,6 +175,7 @@ class XGBoostRiskModel(BaseRiskModel):
         n_jobs: int = -1,
         verbose: bool = False,
         params: Optional[Dict[str, Any]] = None,
+        scorecard_params: Optional[Dict[str, Any]] = None,
         **kwargs
     ):
         if not XGBOOST_AVAILABLE:
@@ -214,6 +215,7 @@ class XGBoostRiskModel(BaseRiskModel):
             random_state=random_state,
             n_jobs=n_jobs,
             verbose=verbose,
+            scorecard_params=scorecard_params,
             **kwargs
         )
 
@@ -261,6 +263,7 @@ class XGBoostRiskModel(BaseRiskModel):
         """
         # 准备数据（支持从X中提取target）
         X, y, sample_weight = self._prepare_data(X, y, sample_weight, extract_target=True)
+        self._fit_probability_scorecard(y)
 
         # 保存特征信息
         self.n_features_in_ = X.shape[1]

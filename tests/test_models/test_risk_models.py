@@ -64,6 +64,8 @@ def test_catboost_public_n_jobs_controls_native_thread_count(monkeypatch):
     model.fit(X, y)
 
     assert observed["thread_count"] == 3
+    assert model.base_odds_ == pytest.approx(1.0)
+    assert model.scorecard_config_["pdo"] == 50
 
 
 def test_ngboost_public_n_jobs_limits_native_training_threads(monkeypatch):
@@ -108,6 +110,8 @@ def test_ngboost_public_n_jobs_limits_native_training_threads(monkeypatch):
 
     assert observed["limits"] == [3]
     assert observed["fit_inside_context"] is True
+    assert model.base_odds_ == pytest.approx(1.0)
+    assert model.scorecard_config_["pdo"] == 50
 
 
 @pytest.fixture

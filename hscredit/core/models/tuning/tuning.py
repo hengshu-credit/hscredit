@@ -980,9 +980,10 @@ class ModelTuner:
         （内置字符串取其大写形式，自定义函数取其 ``__name__``）。
         与 metric 不重复：metric 决定"算什么"，metric_names 只决定"叫什么"
     :param cv: 交叉验证折数，默认5
-    :param n_jobs: 并行任务数，默认-1
+    :param n_jobs: 当前 trial 中模型可使用的并行任务数，默认-1；
+        trial 本身顺序执行，确保主动中断及时生效并让自适应采样器利用全部历史结果
     :param random_state: 随机种子，默认None
-    :param verbose: 是否输出详细信息，默认False
+    :param verbose: 是否逐 Trial 输出得分、参数、当前最佳结果及最终摘要，默认False
     :param early_stopping_rounds: 早停轮数，默认20
     :param min_resource: 多目标优化时的最小资源，默认'auto'
 
@@ -1302,10 +1303,11 @@ class ModelTuner:
         # 入队预指定的超参数搜索点（优先评估）
         self._enqueue_trial_points()
 
-        # 定义目标函数
-        total_workers = max(1, int(self.n_jobs or 1))
-        trial_workers = min(total_workers, max(1, int(n_trials)))
-        model_workers = max(1, total_workers // trial_workers)
+        # Optuna 的并行 trial 使用线程池。Jupyter 主线程收到中断后，
+        # 线程池会等待正在训练的 trial 完成，导致主动中断不能立即返回。
+        # trial 顺序执行还可确保自适应采样器利用此前全部完成结果；
+        # 调参总预算全部交给当前模型的原生并行参数。
+        model_workers = max(1, int(self.n_jobs or 1))
 
         def objective(trial):
             # 从搜索空间采样参数
@@ -1329,7 +1331,8 @@ class ModelTuner:
             n_trials=n_trials,
             timeout=timeout,
             show_progress_bar=show_progress_bar and self.verbose,
-            n_jobs=trial_workers,
+            n_jobs=1,
+            callbacks=[self._print_trial_progress] if self.verbose else None,
         )
 
         # 保存结果
@@ -1338,19 +1341,53 @@ class ModelTuner:
         self.optimization_history_ = self._build_public_history()
 
         if self.verbose:
-            if self._is_multi_objective:
-                logger.info(f"\n找到 {len(self.study_.best_trials)} 个帕累托最优解")
-                for i, trial in enumerate(self.study_.best_trials[:3]):  # 显示前3个
-                    scores = ", ".join([f"{name}={val:.4f}" for name, val in zip(self.metric_names, trial.values)])
-                    logger.info(f"  解 {i+1}: {scores}")
-            else:
-                logger.info(f"\n最佳得分: {self.best_score_:.4f}")
-            logger.info(f"最佳参数: {self.best_params_}")
+            self._print_tuning_summary()
 
         return self.best_params_
 
+    def _format_scores(self, values: Optional[Sequence[float]]) -> str:
+        """将单目标或多目标得分格式化为稳定、易读的日志文本。"""
+        if values is None:
+            return "不可用"
+
+        formatted = []
+        for name, value in zip(self.metric_names, values):
+            score = "不可用" if value is None else f"{float(value):.6f}"
+            formatted.append(f"{name}={score}")
+        return ", ".join(formatted) if formatted else "不可用"
+
+    def _print_trial_progress(self, study: Any, trial: Any) -> None:
+        """在 Trial 结束后立即输出本次结果和当前最佳结果。"""
+        params = self._get_params_from_trial(trial)
+        if trial.state != optuna.trial.TrialState.COMPLETE or trial.values is None:
+            print(f"[调参] Trial {trial.number} {trial.state.name} | 参数: {params}", flush=True)
+            return
+
+        if self._is_multi_objective:
+            best_trial = self._select_best_pareto_trial(study.best_trials)
+        else:
+            best_trial = study.best_trial
+
+        print(
+            f"[调参] Trial {trial.number} 完成 | 得分: {self._format_scores(trial.values)} | "
+            f"参数: {params} | 当前最佳: {self._format_scores(best_trial.values)} "
+            f"(Trial {best_trial.number})",
+            flush=True,
+        )
+
+    def _print_tuning_summary(self) -> None:
+        """在调参正常完成并保存结果后输出最终摘要。"""
+        completed_trials = sum(
+            trial.state == optuna.trial.TrialState.COMPLETE for trial in self.study_.trials
+        )
+        print(f"[调参] 调参完成 | 完成 Trial: {completed_trials}", flush=True)
+        if self._is_multi_objective:
+            print(f"[调参] 帕累托最优解: {len(self.study_.best_trials)}", flush=True)
+        print(f"[调参] 最佳得分: {self._format_scores(self.best_scores_)}", flush=True)
+        print(f"[调参] 最佳参数: {self.best_params_}", flush=True)
+
     def _inject_model_parallel_budget(self, params: Dict[str, Any], workers: int) -> None:
-        """把 trial 子预算写入模型公开的最外层原生并行参数。"""
+        """把调参总预算写入当前模型公开的最外层原生并行参数。"""
         try:
             signature = inspect.signature(self.model_class.__init__)
         except (TypeError, ValueError, AttributeError):

@@ -31,6 +31,7 @@ from ..metrics.stability import psi
 from ..metrics.finance import lift_at, lift_monotonicity_check
 from ...utils.serialization import ArtifactSerializableMixin
 from ...utils.parallel import resolve_n_jobs
+from .scorecard_support import _ProbabilityScoreCardMixin
 
 if TYPE_CHECKING:
     import matplotlib
@@ -93,7 +94,7 @@ def resolve_custom_objective(objective):
     return _sklearn_obj
 
 
-class BaseRiskModel(ArtifactSerializableMixin, BaseEstimator, ClassifierMixin, ABC):
+class BaseRiskModel(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, BaseEstimator, ClassifierMixin, ABC):
     """风控模型基类.
 
     所有风控模型的抽象基类，定义统一接口。
@@ -122,6 +123,8 @@ class BaseRiskModel(ArtifactSerializableMixin, BaseEstimator, ClassifierMixin, A
     :param random_state: 随机种子，默认None
     :param n_jobs: 并行任务数，默认-1
     :param verbose: 是否输出详细信息，默认False
+    :param scorecard_params: 概率评分卡参数，可传部分配置覆盖默认值；默认使用
+        PDO=50、基准分=600、坏好比由训练标签计算、分数范围0-1000且分越高风险越低
     :param kwargs: 模型特定参数
 
     **属性**
@@ -133,6 +136,9 @@ class BaseRiskModel(ArtifactSerializableMixin, BaseEstimator, ClassifierMixin, A
     :ivar evals_result_: 训练过程评估结果
     :ivar best_iteration_: 最佳迭代次数
     :ivar best_score_: 最佳得分
+    :ivar bad_rate_: 训练集坏样本率
+    :ivar base_odds_: 训练集坏好比
+    :ivar scorecard_: 已拟合的概率评分卡
     """
 
     artifact_kind = "风险模型"
@@ -166,6 +172,7 @@ class BaseRiskModel(ArtifactSerializableMixin, BaseEstimator, ClassifierMixin, A
         random_state: Optional[int] = None,
         n_jobs: int = -1,
         verbose: bool = False,
+        scorecard_params: Optional[Dict[str, Any]] = None,
         **kwargs,
     ):
         self.objective = objective
@@ -177,6 +184,7 @@ class BaseRiskModel(ArtifactSerializableMixin, BaseEstimator, ClassifierMixin, A
         self.n_jobs = resolve_n_jobs(n_jobs)
         self.verbose = verbose
         self.kwargs = kwargs
+        self._initialize_scorecard_params(scorecard_params)
 
         # 内部属性
         self._model = None
@@ -229,15 +237,12 @@ class BaseRiskModel(ArtifactSerializableMixin, BaseEstimator, ClassifierMixin, A
         pass
 
     def predict_score(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
-        """预测风险评分 (概率转换).
+        """使用训练坏好比对应的标准概率评分卡预测风险评分.
 
         :param X: 特征矩阵
         :return: 风险评分 (0-1000)
         """
-        proba = self.predict_proba(X)
-        # 转换为评分 (0-1000)
-        scores = (1 - proba[:, 1]) * 1000
-        return scores
+        return self._predict_probability_score(X)
 
     @property
     def best_iteration_(self):
@@ -656,10 +661,13 @@ class BaseRiskModel(ArtifactSerializableMixin, BaseEstimator, ClassifierMixin, A
         if verbose is None:
             verbose = self.verbose
 
+        effective_fixed_params = dict(fixed_params or {})
+        effective_fixed_params.setdefault("scorecard_params", self.scorecard_params)
+
         tuner = ModelTuner(
             model_class=self.__class__,
             search_space=search_space,
-            fixed_params=fixed_params,
+            fixed_params=effective_fixed_params,
             metric=metric,
             direction=direction,
             target=self.target or "target",

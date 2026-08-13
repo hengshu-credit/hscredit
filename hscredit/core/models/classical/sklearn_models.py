@@ -42,6 +42,7 @@ class SklearnRiskModel(BaseRiskModel):
     :param random_state: 随机种子，默认 ``None``
     :param n_jobs: 并行任务数，默认 ``-1``（用满 CPU；``GradientBoosting`` 不支持，自动忽略）
     :param verbose: 是否输出训练日志，默认 ``False``
+    :param scorecard_params: 概率评分卡部分覆盖参数，默认 PDO=50、基准分=600、范围0-1000
     :param kwargs: 透传给底层 sklearn 分类器的其他超参数
 
     **属性**
@@ -73,6 +74,7 @@ class SklearnRiskModel(BaseRiskModel):
         random_state: Optional[int] = None,
         n_jobs: int = -1,
         verbose: bool = False,
+        scorecard_params: Optional[Dict[str, Any]] = None,
         **kwargs
     ):
         super().__init__(
@@ -83,6 +85,7 @@ class SklearnRiskModel(BaseRiskModel):
             random_state=random_state,
             n_jobs=n_jobs,
             verbose=verbose,
+            scorecard_params=scorecard_params,
             **kwargs
         )
         self._estimator_class = estimator_class
@@ -103,6 +106,7 @@ class SklearnRiskModel(BaseRiskModel):
         """
         # 准备数据（支持从X中提取target）
         X, y, sample_weight = self._prepare_data(X, y, sample_weight, extract_target=True)
+        self._fit_probability_scorecard(y)
 
         # 保存特征信息
         self.n_features_in_ = X.shape[1]
@@ -251,6 +255,7 @@ class RandomForestRiskModel(SklearnRiskModel):
         random_state: Optional[int] = None,
         n_jobs: int = -1,
         verbose: bool = False,
+        scorecard_params: Optional[Dict[str, Any]] = None,
         **kwargs
     ):
         super().__init__(
@@ -258,6 +263,7 @@ class RandomForestRiskModel(SklearnRiskModel):
             random_state=random_state,
             n_jobs=n_jobs,
             verbose=verbose,
+            scorecard_params=scorecard_params,
             **kwargs
         )
 
@@ -317,6 +323,7 @@ class ExtraTreesRiskModel(SklearnRiskModel):
         random_state: Optional[int] = None,
         n_jobs: int = -1,
         verbose: bool = False,
+        scorecard_params: Optional[Dict[str, Any]] = None,
         **kwargs
     ):
         super().__init__(
@@ -324,6 +331,7 @@ class ExtraTreesRiskModel(SklearnRiskModel):
             random_state=random_state,
             n_jobs=n_jobs,
             verbose=verbose,
+            scorecard_params=scorecard_params,
             **kwargs
         )
 
@@ -382,6 +390,7 @@ class GradientBoostingRiskModel(SklearnRiskModel):
         n_iter_no_change: Optional[int] = None,
         random_state: Optional[int] = None,
         verbose: bool = False,
+        scorecard_params: Optional[Dict[str, Any]] = None,
         **kwargs
     ):
         super().__init__(
@@ -389,6 +398,7 @@ class GradientBoostingRiskModel(SklearnRiskModel):
             random_state=random_state,
             n_jobs=1,  # GBT不支持n_jobs
             verbose=verbose,
+            scorecard_params=scorecard_params,
             **kwargs
         )
 

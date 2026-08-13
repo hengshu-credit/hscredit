@@ -1,3 +1,7 @@
+import _thread
+import threading
+import time
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -5,7 +9,7 @@ from scipy import stats as scipy_stats
 from sklearn.datasets import make_classification
 from sklearn.base import BaseEstimator, ClassifierMixin
 
-from hscredit.core.models import AutoTuner, ModelTuner, TuningObjective
+from hscredit.core.models import AutoTuner, BaseRiskModel, ModelTuner, TuningObjective
 from hscredit.core.models.tuning import normalize_search_space
 
 
@@ -13,6 +17,8 @@ optuna = pytest.importorskip("optuna")
 
 
 _TUNER_MODEL_WORKERS = []
+_TUNER_INTERRUPT_STARTED = threading.Event()
+_TUNER_INTERRUPT_FIT_CALLS = 0
 
 
 class _RecordingTunerEstimator(BaseEstimator, ClassifierMixin):
@@ -30,6 +36,64 @@ class _RecordingTunerEstimator(BaseEstimator, ClassifierMixin):
     def predict_proba(self, X):
         positive = np.full(len(X), self.positive_rate_, dtype=float)
         return np.column_stack([1.0 - positive, positive])
+
+
+class _VerboseTunerEstimator(BaseEstimator, ClassifierMixin):
+    """提供可搜索参数的轻量分类器，用于验证调参过程输出。"""
+
+    def __init__(self, marker=0, n_jobs=1):
+        self.marker = marker
+        self.n_jobs = n_jobs
+
+    def fit(self, X, y):
+        self.classes_ = np.unique(y)
+        self.positive_rate_ = float(np.mean(y))
+        return self
+
+    def predict_proba(self, X):
+        positive = np.full(len(X), self.positive_rate_, dtype=float)
+        return np.column_stack([1.0 - positive, positive])
+
+
+class _InterruptibleTunerEstimator(BaseEstimator, ClassifierMixin):
+    """保持单次训练忙碌，便于模拟 Jupyter 向主线程发送中断。"""
+
+    def __init__(self, n_jobs=1, fit_seconds=1.0):
+        self.n_jobs = n_jobs
+        self.fit_seconds = fit_seconds
+
+    def fit(self, X, y):
+        global _TUNER_INTERRUPT_FIT_CALLS
+        _TUNER_INTERRUPT_FIT_CALLS += 1
+        _TUNER_INTERRUPT_STARTED.set()
+        deadline = time.perf_counter() + self.fit_seconds
+        while time.perf_counter() < deadline:
+            pass
+        self.classes_ = np.unique(y)
+        return self
+
+    def predict_proba(self, X):
+        positive = np.full(len(X), 0.5, dtype=float)
+        return np.column_stack([1.0 - positive, positive])
+
+
+class _InterruptRecordingRiskModel(BaseRiskModel):
+    """记录最终模型是否在调参中断后被错误重训。"""
+
+    fit_calls = 0
+
+    def fit(self, X, y=None, sample_weight=None, eval_set=None, **fit_params):
+        type(self).fit_calls += 1
+        return self
+
+    def predict(self, X):
+        return np.zeros(len(X), dtype=int)
+
+    def predict_proba(self, X):
+        return np.column_stack([np.ones(len(X)), np.zeros(len(X))])
+
+    def get_feature_importances(self):
+        return pd.Series(dtype=float)
 
 
 def test_model_tuner_trial_annotations_use_a_type_name_not_module_variable():
@@ -64,8 +128,76 @@ def test_model_tuner_supports_numpy_input_without_failed_trials():
     assert all(np.isfinite(trial.value) for trial in tuner.study_.trials)
 
 
-def test_model_tuner_uses_trial_workers_and_splits_native_model_budget(monkeypatch):
-    """调参器 n_jobs 必须进入 Optuna，并避免每个 trial 再次用满全部 CPU。"""
+def test_model_tuner_verbose_prints_each_trial_and_final_summary(capsys):
+    """verbose=True 应独立于 Optuna 日志配置输出每次 Trial 和最终摘要。"""
+    X, y = _small_binary_data(as_frame=True)
+    previous_verbosity = optuna.logging.get_verbosity()
+    optuna.logging.set_verbosity(optuna.logging.CRITICAL)
+    try:
+        tuner = ModelTuner(
+            _VerboseTunerEstimator,
+            search_space={"marker": [0, 1]},
+            metric="ks",
+            cv=2,
+            random_state=42,
+            verbose=True,
+        )
+        tuner.fit(X, y, n_trials=2, show_progress_bar=False)
+    finally:
+        optuna.logging.set_verbosity(previous_verbosity)
+
+    output = capsys.readouterr().out
+    assert output.count("[调参] Trial ") == 2
+    assert "得分: KS=" in output
+    assert "参数: {'marker':" in output
+    assert "当前最佳: KS=" in output
+    assert "[调参] 调参完成 | 完成 Trial: 2" in output
+    assert "[调参] 最佳得分: KS=" in output
+    assert "[调参] 最佳参数:" in output
+
+
+def test_model_tuner_verbose_false_does_not_print_tuning_lines(capsys):
+    """verbose=False 不应产生 HSCredit 调参过程输出。"""
+    X, y = _small_binary_data(as_frame=True)
+    tuner = ModelTuner(
+        _VerboseTunerEstimator,
+        search_space={"marker": [0]},
+        metric="ks",
+        cv=2,
+        random_state=42,
+        verbose=False,
+    )
+
+    tuner.fit(X, y, n_trials=1, show_progress_bar=False)
+
+    assert "[调参]" not in capsys.readouterr().out
+
+
+def test_model_tuner_verbose_prints_all_multi_objective_scores(capsys):
+    """多目标调参应输出全部指标、当前最佳结果和帕累托摘要。"""
+    X, y = _small_binary_data(as_frame=True)
+    tuner = ModelTuner(
+        _VerboseTunerEstimator,
+        search_space={"marker": [0]},
+        metric=["ks", "ks_diff"],
+        direction=["maximize", "minimize"],
+        metric_names=["KS", "KS差异"],
+        cv=2,
+        random_state=42,
+        verbose=True,
+    )
+
+    tuner.fit(X, y, n_trials=1, show_progress_bar=False)
+
+    output = capsys.readouterr().out
+    assert "得分: KS=" in output
+    assert "KS差异=" in output
+    assert "当前最佳:" in output
+    assert "帕累托最优解: 1" in output
+
+
+def test_model_tuner_runs_trials_sequentially_and_gives_model_full_budget(monkeypatch):
+    """每个 trial 应利用全部历史结果，同时让当前模型使用完整 CPU 预算。"""
     X, y = _small_binary_data(as_frame=True)
     optimize_workers = []
     original_optimize = optuna.study.Study.optimize
@@ -87,9 +219,90 @@ def test_model_tuner_uses_trial_workers_and_splits_native_model_budget(monkeypat
 
     tuner.fit(X, y, n_trials=2, show_progress_bar=False)
 
-    assert optimize_workers == [2]
+    assert optimize_workers == [1]
     assert _TUNER_MODEL_WORKERS
-    assert set(_TUNER_MODEL_WORKERS) == {2}
+    assert set(_TUNER_MODEL_WORKERS) == {4}
+
+
+def test_each_tuning_trial_observes_all_previous_completed_trials(monkeypatch):
+    """顺序采样时，新 trial 开始前应能看到全部历史完成结果。"""
+    X, y = _small_binary_data(as_frame=True)
+    tuner = ModelTuner(
+        _RecordingTunerEstimator,
+        search_space={},
+        metric="ks",
+        cv=2,
+        n_jobs=4,
+        random_state=42,
+    )
+    observed_completed = []
+    original_evaluate = tuner._evaluate_model
+
+    def recording_evaluate(*args, **kwargs):
+        observed_completed.append(
+            sum(trial.state == optuna.trial.TrialState.COMPLETE for trial in tuner.study_.trials)
+        )
+        return original_evaluate(*args, **kwargs)
+
+    monkeypatch.setattr(tuner, "_evaluate_model", recording_evaluate)
+
+    tuner.fit(X, y, n_trials=3, show_progress_bar=False)
+
+    assert observed_completed == [0, 1, 2]
+
+
+def test_model_tuner_keyboard_interrupt_returns_without_waiting_for_parallel_trials(monkeypatch):
+    """Jupyter 主线程中断必须停止当前训练，不能等待其他 trial 线程。"""
+    global _TUNER_INTERRUPT_FIT_CALLS
+    X, y = _small_binary_data(as_frame=True)
+    _TUNER_INTERRUPT_STARTED.clear()
+    _TUNER_INTERRUPT_FIT_CALLS = 0
+    postprocessing_calls = []
+    tuner = ModelTuner(
+        _InterruptibleTunerEstimator,
+        search_space={},
+        metric="ks",
+        cv=2,
+        n_jobs=4,
+        random_state=42,
+    )
+    monkeypatch.setattr(tuner, "_save_results", lambda: postprocessing_calls.append("保存结果"))
+    monkeypatch.setattr(tuner, "_build_public_history", lambda: postprocessing_calls.append("构建历史"))
+
+    def interrupt_main_when_training_starts():
+        if _TUNER_INTERRUPT_STARTED.wait(timeout=2.0):
+            time.sleep(0.05)
+            _thread.interrupt_main()
+
+    interrupter = threading.Thread(target=interrupt_main_when_training_starts, daemon=True)
+    interrupter.start()
+    started = time.perf_counter()
+
+    with pytest.raises(KeyboardInterrupt):
+        tuner.fit(X, y, n_trials=4, show_progress_bar=False)
+
+    elapsed = time.perf_counter() - started
+    interrupter.join(timeout=1.0)
+    assert elapsed < 0.6
+    assert _TUNER_INTERRUPT_FIT_CALLS == 1
+    assert len(tuner.study_.trials) == 1
+    assert postprocessing_calls == []
+
+
+def test_risk_model_tune_does_not_refit_after_keyboard_interrupt(monkeypatch):
+    """调参器中断后，便捷 tune API 不得继续训练所谓最佳模型。"""
+    X, y = _small_binary_data(as_frame=True)
+    _InterruptRecordingRiskModel.fit_calls = 0
+
+    def interrupt_tuning(*args, **kwargs):
+        raise KeyboardInterrupt("用户中断")
+
+    monkeypatch.setattr(ModelTuner, "fit", interrupt_tuning)
+
+    with pytest.raises(KeyboardInterrupt, match="用户中断"):
+        _InterruptRecordingRiskModel(random_state=42).tune(X, y, n_trials=4, cv=2)
+
+    assert _InterruptRecordingRiskModel.fit_calls == 0
 
 
 def test_lightgbm_tuner_samples_num_leaves_after_max_depth_constraint():

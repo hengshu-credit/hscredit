@@ -135,6 +135,7 @@ class NGBoostRiskModel(BaseRiskModel):
         n_jobs: int = -1,
         verbose: bool = False,
         params: Optional[Dict[str, Any]] = None,
+        scorecard_params: Optional[Dict[str, Any]] = None,
         **kwargs,
     ):
         if not NGBOOST_AVAILABLE:
@@ -157,7 +158,7 @@ class NGBoostRiskModel(BaseRiskModel):
         objective = self._native_params.get("objective", objective)
         random_state = self._native_params.get("random_state", random_state)
 
-        super().__init__(objective=objective, eval_metric=eval_metric, early_stopping_rounds=early_stopping_rounds, validation_fraction=validation_fraction, random_state=random_state, n_jobs=n_jobs, verbose=verbose, **kwargs)
+        super().__init__(objective=objective, eval_metric=eval_metric, early_stopping_rounds=early_stopping_rounds, validation_fraction=validation_fraction, random_state=random_state, n_jobs=n_jobs, verbose=verbose, scorecard_params=scorecard_params, **kwargs)
 
         # NGBoost特有参数
         self.n_estimators = n_estimators
@@ -188,6 +189,7 @@ class NGBoostRiskModel(BaseRiskModel):
 
         # 准备数据（支持从X中提取target）
         X, y, sample_weight = self._prepare_data(X, y, sample_weight, extract_target=True)
+        self._fit_probability_scorecard(y)
 
         # 保存特征信息
         self.n_features_in_ = X.shape[1]
