@@ -386,7 +386,6 @@ def test_rule_loader_normalizes_legacy_handle_unknown_value_to_minus_three():
 def test_pmml_decode_bug_does_not_accept_a_stale_existing_destination(tmp_path, monkeypatch):
     """防止上次留下的 PMML 被误判为本次导出成功。"""
     sklearn2pmml_module = pytest.importorskip("sklearn2pmml")
-    pytest.importorskip("sklearn_pandas")
     card, _, _, _ = _fit_simple_scorecard()
     destination = tmp_path / "scorecard.pmml"
     destination.write_text("<OLD/>", encoding="utf-8")
@@ -405,7 +404,6 @@ def test_pmml_decode_bug_does_not_accept_a_stale_existing_destination(tmp_path, 
 def test_pmml_is_generated_to_a_temporary_file_then_atomically_replaced(tmp_path, monkeypatch):
     """防止导出失败时覆盖一个原本有效的 PMML 文件。"""
     sklearn2pmml_module = pytest.importorskip("sklearn2pmml")
-    pytest.importorskip("sklearn_pandas")
     card, _, _, _ = _fit_simple_scorecard()
     destination = tmp_path / "scorecard.pmml"
     destination.write_text("<OLD/>", encoding="utf-8")
@@ -428,7 +426,6 @@ def test_pmml_is_generated_to_a_temporary_file_then_atomically_replaced(tmp_path
 def test_pmml_prediction_applies_the_same_score_clipping_as_predict(tmp_path):
     """防止 PMML 只输出未裁剪的线性总分。"""
     pytest.importorskip("sklearn2pmml")
-    pytest.importorskip("sklearn_pandas")
     pypmml = pytest.importorskip("pypmml")
     card = ScoreCard().load_rules(
         {
@@ -587,7 +584,6 @@ def test_generated_java_is_self_contained_and_handles_colliding_feature_names(tm
 def test_pmml_preserves_numeric_category_types_and_unknown_default(tmp_path):
     """防止 PMML lookup 把数值类别键字符串化，并确认未知类别贡献为 0。"""
     pytest.importorskip("sklearn2pmml")
-    pytest.importorskip("sklearn_pandas")
     pypmml = pytest.importorskip("pypmml")
     X = pd.DataFrame({"code": [1] * 60 + [2] * 60 + [3] * 60})
     y = pd.Series(([0] * 50 + [1] * 10) + ([0] * 30 + [1] * 30) + ([0] * 10 + [1] * 50))
@@ -613,7 +609,6 @@ def test_pmml_preserves_numeric_category_types_and_unknown_default(tmp_path):
 def test_ascending_pmml_uses_the_same_single_direction_transform(tmp_path):
     """防止 PMML 与 ascending 本地评分使用不同的翻转次数。"""
     pytest.importorskip("sklearn2pmml")
-    pytest.importorskip("sklearn_pandas")
     pypmml = pytest.importorskip("pypmml")
     card, _, X, _ = _fit_simple_scorecard(direction="ascending")
     sample = X.iloc[[0, 30, 60, 90]].copy()
