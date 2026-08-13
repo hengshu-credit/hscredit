@@ -239,6 +239,7 @@ _deploy_docs
 tmp_outputs
 .codex
 docs/superpowers/
+.superpowers
 .worktrees/
 tmp_plots
 .codebuddy
