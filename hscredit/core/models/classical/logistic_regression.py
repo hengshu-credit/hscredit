@@ -28,16 +28,17 @@ import pandas as pd
 import scipy.special
 import scipy.stats
 import inspect
-from typing import Union, Optional, List
+from typing import Any, Dict, Union, Optional, List
 from sklearn.linear_model import LogisticRegression as SklearnLogisticRegression
 from sklearn.utils.validation import check_is_fitted
 from ....utils.serialization import ArtifactSerializableMixin
+from ..scorecard_support import _ProbabilityScoreCardMixin
 
 
 _SKLEARN_LOGISTIC_PARAMS = set(inspect.signature(SklearnLogisticRegression.__init__).parameters)
 
 
-class LogisticRegression(ArtifactSerializableMixin, SklearnLogisticRegression):
+class LogisticRegression(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, SklearnLogisticRegression):
     artifact_kind = "风险模型"
     """扩展逻辑回归模型.
 
@@ -94,6 +95,8 @@ class LogisticRegression(ArtifactSerializableMixin, SklearnLogisticRegression):
         - 'auto': 仅当输入 DataFrame 被标记为 hscredit 的 WOE 编码结果时启用
         - True: 始终启用。会将负系数对应列乘以 -1，并把系数改为正值
         - False: 禁用，保持 sklearn 原始系数符号
+    :param target: scorecardpipeline 风格的目标列名，默认 None
+    :param scorecard_params: 概率评分卡部分覆盖参数，默认 PDO=50、基准分=600、范围0-1000
 
     **属性**
 
@@ -175,6 +178,7 @@ class LogisticRegression(ArtifactSerializableMixin, SklearnLogisticRegression):
         l1_ratio: Optional[float] = None,
         positive_woe_coef: Union[bool, str] = 'auto',
         target: Optional[str] = None,
+        scorecard_params: Optional[Dict[str, Any]] = None,
     ):
         init_kwargs = {
             "penalty": penalty,
@@ -201,6 +205,7 @@ class LogisticRegression(ArtifactSerializableMixin, SklearnLogisticRegression):
         self.multi_class = multi_class
         self.positive_woe_coef = positive_woe_coef
         self.target = target
+        self._initialize_scorecard_params(scorecard_params)
 
     def fit(
         self,
@@ -261,6 +266,8 @@ class LogisticRegression(ArtifactSerializableMixin, SklearnLogisticRegression):
             if isinstance(X, pd.DataFrame) and self.target in X.columns:
                 y = X[self.target]
                 X = X.drop(columns=[self.target])
+
+        self._fit_probability_scorecard(y)
 
         # 保存特征名
         if isinstance(X, pd.DataFrame):
@@ -850,13 +857,12 @@ class LogisticRegression(ArtifactSerializableMixin, SklearnLogisticRegression):
         return results
 
     def predict_score(self, X: Union[pd.DataFrame, np.ndarray]) -> np.ndarray:
-        """预测风险评分（与 BaseRiskModel.predict_score 接口一致）.
+        """使用训练坏好比对应的标准概率评分卡预测风险评分.
 
         :param X: 特征矩阵
         :return: 风险评分 (0-1000)
         """
-        proba = self.predict_proba(X)
-        return (1 - proba[:, 1]) * 1000
+        return self._predict_probability_score(X)
 
     def report(
         self,
