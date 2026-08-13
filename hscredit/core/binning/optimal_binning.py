@@ -22,7 +22,13 @@ import warnings
 from ...exceptions import NotFittedError, ParallelExecutionError
 from ...utils.parallel import ParallelWorkload, parallel_execute
 from .base import BaseBinning
-from ._contracts import HandleUnknown, UNKNOWN_BIN, UserSplitsFixed, is_missing_marker
+from ._contracts import (
+    HandleUnknown,
+    UNKNOWN_BIN,
+    UserSplitsFixed,
+    is_missing_marker,
+    validate_handle_unknown,
+)
 from ._categorical import (
     CategoryOrder,
     assign_category_groups,
@@ -402,6 +408,8 @@ class OptimalBinning(BaseBinning):
 
         nested = {name: value for name, value in params.items() if "__" in name}
         direct = {name: value for name, value in params.items() if "__" not in name}
+        if "handle_unknown" in direct:
+            direct["handle_unknown"] = validate_handle_unknown(direct["handle_unknown"])
         for name, value in direct.items():
             if name in explicit:
                 setattr(self, name, value)

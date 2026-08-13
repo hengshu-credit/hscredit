@@ -5,6 +5,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
+from sklearn.base import clone
 
 from hscredit.core.binning import (
     BestIVBinning,
@@ -267,6 +268,27 @@ def test_direct_binner_exposes_all_common_category_parameters(binner_cls):
         "min_bad_rate",
         "monotonic",
     }.issubset(params)
+
+
+@pytest.mark.parametrize("binner_cls", DIRECT_BINNER_CLASSES, ids=lambda cls: cls.__name__)
+@pytest.mark.parametrize("policy, expected", [("value", -3), ("raise", "raise")])
+def test_direct_binner_accepts_and_clones_handle_unknown_policies(binner_cls, policy, expected):
+    """所有直接分箱器必须统一接受 value/raise，并保持 sklearn clone 可用。"""
+    binner = binner_cls(handle_unknown=policy)
+    cloned = clone(binner)
+
+    assert binner.handle_unknown == expected
+    assert cloned.handle_unknown == expected
+
+
+@pytest.mark.parametrize("binner_cls", [OptimalBinning, *DIRECT_BINNER_CLASSES], ids=lambda cls: cls.__name__)
+@pytest.mark.parametrize("policy, expected", [("value", -3), ("raise", "raise")])
+def test_set_params_normalizes_handle_unknown_policies(binner_cls, policy, expected):
+    """set_params 必须与构造器使用同一契约，不能把 value 留成无效字符串箱号。"""
+    binner = binner_cls().set_params(handle_unknown=policy)
+
+    assert binner.handle_unknown == expected
+    assert clone(binner).handle_unknown == expected
 
 
 @pytest.mark.skipif(
