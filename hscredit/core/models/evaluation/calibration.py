@@ -64,19 +64,18 @@
 >>> calibrator.plot_reliability_diagram(X_test, y_test)
 """
 
-import warnings
+import copy
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
-from scipy.optimize import minimize
-from scipy.special import expit, logit
+from scipy.special import logit
 from sklearn.base import BaseEstimator, ClassifierMixin, clone
 from sklearn.isotonic import IsotonicRegression
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
-from sklearn.utils.validation import check_is_fitted, check_X_y
+from sklearn.utils.validation import check_is_fitted
 from ....utils.serialization import ArtifactSerializableMixin
 
 if TYPE_CHECKING:
@@ -98,16 +97,67 @@ class BaseCalibrator(ArtifactSerializableMixin, BaseEstimator, ABC):
 
     artifact_kind = "概率校准器"
 
-    def __init__(self, n_bins: int = 10, strategy: str = 'uniform'):
+    def __init__(self, n_bins: int = 10, strategy: str = "uniform"):
+        if not isinstance(n_bins, int) or n_bins < 1:
+            raise ValueError("n_bins必须是大于等于1的整数")
+        if strategy not in {"uniform", "quantile"}:
+            raise ValueError("strategy必须是'uniform'或'quantile'")
         self.n_bins = n_bins
         self.strategy = strategy
+
+    def _bin_boundaries(self, y_prob: np.ndarray) -> np.ndarray:
+        """按配置生成覆盖完整概率区间的去重分箱边界。"""
+        if self.strategy == "quantile":
+            boundaries = np.quantile(y_prob, np.linspace(0, 1, self.n_bins + 1))
+            boundaries = np.concatenate(([0.0], boundaries, [1.0]))
+        else:
+            boundaries = np.linspace(0, 1, self.n_bins + 1)
+        return np.unique(np.clip(boundaries, 0.0, 1.0))
+
+    def _iter_bin_masks(self, y_prob: np.ndarray):
+        boundaries = self._bin_boundaries(y_prob)
+        for index, (lower, upper) in enumerate(zip(boundaries[:-1], boundaries[1:])):
+            if index == 0:
+                mask = (y_prob >= lower) & (y_prob <= upper)
+            else:
+                mask = (y_prob > lower) & (y_prob <= upper)
+            yield mask
+
+    @staticmethod
+    def _validate_probabilities(y_prob: Union[np.ndarray, pd.Series]) -> np.ndarray:
+        """校验并返回一维有限概率。"""
+        values = np.asarray(y_prob, dtype=float)
+        if values.ndim != 1 or values.size == 0:
+            raise ValueError("概率必须是一维非空数组")
+        if not np.isfinite(values).all() or np.any((values < 0) | (values > 1)):
+            raise ValueError("概率必须是[0, 1]范围内的有限数")
+        return values
+
+    @classmethod
+    def _validate_fit_data(
+        cls,
+        y_prob: Union[np.ndarray, pd.Series],
+        y_true: Union[np.ndarray, pd.Series],
+        require_both_classes: bool = False,
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """校验校准训练概率与0/1标签。"""
+        probabilities = cls._validate_probabilities(y_prob)
+        labels = np.asarray(y_true)
+        if labels.ndim != 1 or labels.shape[0] != probabilities.shape[0]:
+            raise ValueError("y_true与概率必须是一维等长数组")
+        classes = np.unique(labels)
+        if not set(classes).issubset({0, 1}):
+            raise ValueError("校准器仅支持0/1标签")
+        if require_both_classes and classes.size != 2:
+            raise ValueError("校准器拟合数据必须同时包含0和1标签")
+        return probabilities, labels
 
     @abstractmethod
     def fit(
         self,
         y_prob: Union[np.ndarray, pd.Series],
         y_true: Union[np.ndarray, pd.Series],
-    ) -> 'BaseCalibrator':
+    ) -> "BaseCalibrator":
         """拟合校准器.
 
         :param y_prob: 原始预测概率（正类概率）
@@ -117,10 +167,7 @@ class BaseCalibrator(ArtifactSerializableMixin, BaseEstimator, ABC):
         pass
 
     @abstractmethod
-    def calibrate(
-        self,
-        y_prob: Union[np.ndarray, pd.Series]
-    ) -> np.ndarray:
+    def calibrate(self, y_prob: Union[np.ndarray, pd.Series]) -> np.ndarray:
         """校准概率.
 
         :param y_prob: 原始预测概率
@@ -141,7 +188,7 @@ class BaseCalibrator(ArtifactSerializableMixin, BaseEstimator, ABC):
         self,
         X: Union[np.ndarray, pd.DataFrame],
         y: Optional[Union[np.ndarray, pd.Series]] = None,
-        target: str = 'target'
+        target: str = "target",
     ) -> Tuple[np.ndarray, Optional[np.ndarray]]:
         """准备数据，支持两种传参风格.
 
@@ -165,11 +212,7 @@ class BaseCalibrator(ArtifactSerializableMixin, BaseEstimator, ABC):
 
         return X, y
 
-    def compute_brier_score(
-        self,
-        y_true: Union[np.ndarray, pd.Series],
-        y_prob: Union[np.ndarray, pd.Series]
-    ) -> float:
+    def compute_brier_score(self, y_true: Union[np.ndarray, pd.Series], y_prob: Union[np.ndarray, pd.Series]) -> float:
         """计算Brier分数.
 
         Brier分数是衡量概率校准的指标，范围[0, 1]，越小越好。
@@ -179,14 +222,11 @@ class BaseCalibrator(ArtifactSerializableMixin, BaseEstimator, ABC):
         :param y_prob: 预测概率
         :return: Brier分数
         """
-        y_true = np.asarray(y_true)
-        y_prob = np.asarray(y_prob)
+        y_prob, y_true = self._validate_fit_data(y_prob, y_true)
         return np.mean((y_true - y_prob) ** 2)
 
     def compute_calibration_metrics(
-        self,
-        y_true: Union[np.ndarray, pd.Series],
-        y_prob: Union[np.ndarray, pd.Series]
+        self, y_true: Union[np.ndarray, pd.Series], y_prob: Union[np.ndarray, pd.Series]
     ) -> Dict[str, float]:
         """计算校准相关指标.
 
@@ -194,20 +234,15 @@ class BaseCalibrator(ArtifactSerializableMixin, BaseEstimator, ABC):
         :param y_prob: 预测概率
         :return: 包含校准指标的字典
         """
-        y_true = np.asarray(y_true)
-        y_prob = np.asarray(y_prob)
+        y_prob, y_true = self._validate_fit_data(y_prob, y_true)
 
         # Brier分数
         brier_score = self.compute_brier_score(y_true, y_prob)
 
         # 可靠性曲线的平均绝对误差(MAE)
-        bin_boundaries = np.linspace(0, 1, self.n_bins + 1)
-        bin_lowers = bin_boundaries[:-1]
-        bin_uppers = bin_boundaries[1:]
-
         mae = 0.0
-        for bin_lower, bin_upper in zip(bin_lowers, bin_uppers):
-            in_bin = (y_prob > bin_lower) & (y_prob <= bin_upper)
+        bin_masks = list(self._iter_bin_masks(y_prob))
+        for in_bin in bin_masks:
             prop_in_bin = in_bin.mean()
 
             if prop_in_bin > 0:
@@ -220,8 +255,7 @@ class BaseCalibrator(ArtifactSerializableMixin, BaseEstimator, ABC):
 
         # Maximum Calibration Error (MCE)
         mce = 0.0
-        for bin_lower, bin_upper in zip(bin_lowers, bin_uppers):
-            in_bin = (y_prob > bin_lower) & (y_prob <= bin_upper)
+        for in_bin in bin_masks:
             prop_in_bin = in_bin.mean()
 
             if prop_in_bin > 0:
@@ -230,10 +264,10 @@ class BaseCalibrator(ArtifactSerializableMixin, BaseEstimator, ABC):
                 mce = max(mce, np.abs(avg_confidence - avg_accuracy))
 
         return {
-            'brier_score': brier_score,
-            'expected_calibration_error': ece,
-            'max_calibration_error': mce,
-            'n_samples': len(y_true)
+            "brier_score": brier_score,
+            "expected_calibration_error": ece,
+            "max_calibration_error": mce,
+            "n_samples": len(y_true),
         }
 
     def plot_reliability_diagram(
@@ -244,8 +278,8 @@ class BaseCalibrator(ArtifactSerializableMixin, BaseEstimator, ABC):
         figsize: Tuple[int, int] = (10, 8),
         title: Optional[str] = None,
         show: bool = True,
-        colors: Optional[List[str]] = None
-    ) -> 'matplotlib.figure.Figure':
+        colors: Optional[List[str]] = None,
+    ) -> "matplotlib.figure.Figure":
         """绘制可靠性曲线.
 
         可靠性曲线显示预测概率与实际频率之间的关系。
@@ -266,44 +300,53 @@ class BaseCalibrator(ArtifactSerializableMixin, BaseEstimator, ABC):
         if colors is None:
             colors = ["#2639E9", "#F76E6C", "#FE7715"]
 
-        y_true = np.asarray(y_true)
-        y_prob = np.asarray(y_prob)
+        y_prob, y_true = self._validate_fit_data(y_prob, y_true)
 
         fig, axes = plt.subplots(2, 2, figsize=figsize)
 
         # 辅助函数：设置坐标轴样式
         def _setup_axis_style(ax, color="#2639E9"):
-            ax.spines['top'].set_color(color)
-            ax.spines['bottom'].set_color(color)
-            ax.spines['right'].set_color(color)
-            ax.spines['left'].set_color(color)
-            ax.spines['top'].set_visible(False)
-            ax.spines['right'].set_visible(False)
+            ax.spines["top"].set_color(color)
+            ax.spines["bottom"].set_color(color)
+            ax.spines["right"].set_color(color)
+            ax.spines["left"].set_color(color)
+            ax.spines["top"].set_visible(False)
+            ax.spines["right"].set_visible(False)
 
         # 1. 可靠性曲线
         ax1 = axes[0, 0]
-        self._plot_reliability_curve(ax1, y_true, y_prob, 'Original', colors[0])
+        self._plot_reliability_curve(ax1, y_true, y_prob, "Original", colors[0])
         if y_prob_calibrated is not None:
             y_prob_calibrated = np.asarray(y_prob_calibrated)
-            self._plot_reliability_curve(ax1, y_true, y_prob_calibrated, 'Calibrated', colors[1])
-        ax1.plot([0, 1], [0, 1], 'k--', label='Perfectly Calibrated', alpha=0.5)
-        ax1.set_xlabel('Mean Predicted Probability', fontweight='bold')
-        ax1.set_ylabel('Fraction of Positives', fontweight='bold')
-        ax1.set_title('Reliability Diagram', fontweight='bold')
-        ax1.legend(loc='lower right', frameon=False)
-        ax1.grid(True, alpha=0.3, linestyle='--')
+            self._plot_reliability_curve(ax1, y_true, y_prob_calibrated, "Calibrated", colors[1])
+        ax1.plot([0, 1], [0, 1], "k--", label="Perfectly Calibrated", alpha=0.5)
+        ax1.set_xlabel("Mean Predicted Probability", fontweight="bold")
+        ax1.set_ylabel("Fraction of Positives", fontweight="bold")
+        ax1.set_title("Reliability Diagram", fontweight="bold")
+        ax1.legend(loc="lower right", frameon=False)
+        ax1.grid(True, alpha=0.3, linestyle="--")
         _setup_axis_style(ax1)
 
         # 2. 概率分布直方图
         ax2 = axes[0, 1]
-        ax2.hist(y_prob, bins=self.n_bins, range=(0, 1), alpha=0.6, color=colors[0], label='Original', edgecolor='white')
+        ax2.hist(
+            y_prob, bins=self.n_bins, range=(0, 1), alpha=0.6, color=colors[0], label="Original", edgecolor="white"
+        )
         if y_prob_calibrated is not None:
-            ax2.hist(y_prob_calibrated, bins=self.n_bins, range=(0, 1), alpha=0.6, color=colors[1], label='Calibrated', edgecolor='white')
-        ax2.set_xlabel('Predicted Probability', fontweight='bold')
-        ax2.set_ylabel('Count', fontweight='bold')
-        ax2.set_title('Probability Distribution', fontweight='bold')
+            ax2.hist(
+                y_prob_calibrated,
+                bins=self.n_bins,
+                range=(0, 1),
+                alpha=0.6,
+                color=colors[1],
+                label="Calibrated",
+                edgecolor="white",
+            )
+        ax2.set_xlabel("Predicted Probability", fontweight="bold")
+        ax2.set_ylabel("Count", fontweight="bold")
+        ax2.set_title("Probability Distribution", fontweight="bold")
         ax2.legend(frameon=False)
-        ax2.grid(True, alpha=0.3, linestyle='--')
+        ax2.grid(True, alpha=0.3, linestyle="--")
         _setup_axis_style(ax2)
 
         # 3. 校准前后对比
@@ -311,40 +354,60 @@ class BaseCalibrator(ArtifactSerializableMixin, BaseEstimator, ABC):
         metrics_orig = self.compute_calibration_metrics(y_true, y_prob)
         if y_prob_calibrated is not None:
             metrics_calib = self.compute_calibration_metrics(y_true, y_prob_calibrated)
-            metrics_names = ['Brier Score', 'ECE', 'MCE']
+            metrics_names = ["Brier Score", "ECE", "MCE"]
             x = np.arange(len(metrics_names))
             width = 0.35
-            ax3.bar(x - width/2, [metrics_orig['brier_score'], metrics_orig['expected_calibration_error'], metrics_orig['max_calibration_error']],
-                   width, label='Original', color=colors[0], alpha=0.8)
-            ax3.bar(x + width/2, [metrics_calib['brier_score'], metrics_calib['expected_calibration_error'], metrics_calib['max_calibration_error']],
-                   width, label='Calibrated', color=colors[1], alpha=0.8)
+            ax3.bar(
+                x - width / 2,
+                [
+                    metrics_orig["brier_score"],
+                    metrics_orig["expected_calibration_error"],
+                    metrics_orig["max_calibration_error"],
+                ],
+                width,
+                label="Original",
+                color=colors[0],
+                alpha=0.8,
+            )
+            ax3.bar(
+                x + width / 2,
+                [
+                    metrics_calib["brier_score"],
+                    metrics_calib["expected_calibration_error"],
+                    metrics_calib["max_calibration_error"],
+                ],
+                width,
+                label="Calibrated",
+                color=colors[1],
+                alpha=0.8,
+            )
             ax3.set_xticks(x)
             ax3.set_xticklabels(metrics_names)
-            ax3.set_ylabel('Score', fontweight='bold')
-            ax3.set_title('Calibration Metrics Comparison', fontweight='bold')
+            ax3.set_ylabel("Score", fontweight="bold")
+            ax3.set_title("Calibration Metrics Comparison", fontweight="bold")
             ax3.legend(frameon=False)
-            ax3.grid(True, alpha=0.3, axis='y', linestyle='--')
+            ax3.grid(True, alpha=0.3, axis="y", linestyle="--")
         else:
-            ax3.text(0.5, 0.5, 'No Calibrated Data', ha='center', va='center')
-            ax3.set_title('Calibration Metrics Comparison', fontweight='bold')
+            ax3.text(0.5, 0.5, "No Calibrated Data", ha="center", va="center")
+            ax3.set_title("Calibration Metrics Comparison", fontweight="bold")
         _setup_axis_style(ax3)
 
         # 4. 预测概率变化散点图
         ax4 = axes[1, 1]
         if y_prob_calibrated is not None:
             ax4.scatter(y_prob, y_prob_calibrated, alpha=0.4, color=colors[0], s=20)
-            ax4.plot([0, 1], [0, 1], 'k--', alpha=0.5)
-            ax4.set_xlabel('Original Probability', fontweight='bold')
-            ax4.set_ylabel('Calibrated Probability', fontweight='bold')
-            ax4.set_title('Probability Transformation', fontweight='bold')
-            ax4.grid(True, alpha=0.3, linestyle='--')
+            ax4.plot([0, 1], [0, 1], "k--", alpha=0.5)
+            ax4.set_xlabel("Original Probability", fontweight="bold")
+            ax4.set_ylabel("Calibrated Probability", fontweight="bold")
+            ax4.set_title("Probability Transformation", fontweight="bold")
+            ax4.grid(True, alpha=0.3, linestyle="--")
         else:
-            ax4.text(0.5, 0.5, 'No Calibrated Data', ha='center', va='center')
-            ax4.set_title('Probability Transformation', fontweight='bold')
+            ax4.text(0.5, 0.5, "No Calibrated Data", ha="center", va="center")
+            ax4.set_title("Probability Transformation", fontweight="bold")
         _setup_axis_style(ax4)
 
         if title:
-            fig.suptitle(title, fontsize=14, fontweight='bold')
+            fig.suptitle(title, fontsize=14, fontweight="bold")
 
         plt.tight_layout()
 
@@ -353,24 +416,12 @@ class BaseCalibrator(ArtifactSerializableMixin, BaseEstimator, ABC):
 
         return fig
 
-    def _plot_reliability_curve(
-        self,
-        ax,
-        y_true: np.ndarray,
-        y_prob: np.ndarray,
-        label: str,
-        color: str
-    ):
+    def _plot_reliability_curve(self, ax, y_true: np.ndarray, y_prob: np.ndarray, label: str, color: str):
         """绘制单条可靠性曲线."""
-        bin_boundaries = np.linspace(0, 1, self.n_bins + 1)
-        bin_lowers = bin_boundaries[:-1]
-        bin_uppers = bin_boundaries[1:]
-
         bin_centers = []
         bin_accuracies = []
 
-        for bin_lower, bin_upper in zip(bin_lowers, bin_uppers):
-            in_bin = (y_prob > bin_lower) & (y_prob <= bin_upper)
+        for in_bin in self._iter_bin_masks(y_prob):
             prop_in_bin = in_bin.mean()
 
             if prop_in_bin > 0:
@@ -379,14 +430,14 @@ class BaseCalibrator(ArtifactSerializableMixin, BaseEstimator, ABC):
                 bin_centers.append(avg_confidence)
                 bin_accuracies.append(avg_accuracy)
 
-        ax.plot(bin_centers, bin_accuracies, 's-', color=color, label=label)
+        ax.plot(bin_centers, bin_accuracies, "s-", color=color, label=label)
 
 
 class PlattCalibrator(BaseCalibrator):
     """Platt Scaling 概率校准器.
 
-    使用Sigmoid函数对原始概率进行校准：
-    p_calibrated = 1 / (1 + exp(A * p_original + B))
+    在原始概率的 log-odds 上拟合 Sigmoid：
+    ``p_calibrated = sigmoid(A * logit(p_original) + B)``。
 
     这是最常见的校准方法，适用于大多数情况。
 
@@ -403,7 +454,7 @@ class PlattCalibrator(BaseCalibrator):
     >>> proba_calib = calibrator.calibrate(y_prob_test)
     """
 
-    def __init__(self, n_bins: int = 10, strategy: str = 'uniform', C: float = 1.0):
+    def __init__(self, n_bins: int = 10, strategy: str = "uniform", C: float = 1.0):
         super().__init__(n_bins=n_bins, strategy=strategy)
         self.C = C
 
@@ -411,40 +462,35 @@ class PlattCalibrator(BaseCalibrator):
         self,
         y_prob: Union[np.ndarray, pd.Series],
         y_true: Union[np.ndarray, pd.Series],
-    ) -> 'PlattCalibrator':
+    ) -> "PlattCalibrator":
         """拟合Platt Scaling参数.
 
         :param y_true: 真实标签
         :param y_prob: 原始预测概率
         :return: self
         """
-        y_true = np.asarray(y_true)
-        y_prob = np.asarray(y_prob)
+        y_prob, y_true = self._validate_fit_data(y_prob, y_true, require_both_classes=True)
 
         # 确保概率在(0, 1)范围内，避免log(0)
         y_prob = np.clip(y_prob, 1e-15, 1 - 1e-15)
 
-        # 使用逻辑回归拟合sigmoid参数
-        # 输入是原始概率的对数几率，输出是真实标签
+        # Platt Scaling 在线性预测分数（此处为概率的 log-odds）上拟合 sigmoid。
         self.lr_ = LogisticRegression(C=self.C, max_iter=1000)
-        self.lr_.fit(y_prob.reshape(-1, 1), y_true)
+        self.lr_.fit(logit(y_prob).reshape(-1, 1), y_true)
 
         return self
 
-    def calibrate(
-        self,
-        y_prob: Union[np.ndarray, pd.Series]
-    ) -> np.ndarray:
+    def calibrate(self, y_prob: Union[np.ndarray, pd.Series]) -> np.ndarray:
         """校准概率.
 
         :param y_prob: 原始预测概率
         :return: 校准后的概率
         """
-        check_is_fitted(self, 'lr_')
-        y_prob = np.asarray(y_prob)
+        check_is_fitted(self, "lr_")
+        y_prob = self._validate_probabilities(y_prob)
         y_prob = np.clip(y_prob, 1e-15, 1 - 1e-15)
 
-        return self.lr_.predict_proba(y_prob.reshape(-1, 1))[:, 1]
+        return self.lr_.predict_proba(logit(y_prob).reshape(-1, 1))[:, 1]
 
 
 class IsotonicCalibrator(BaseCalibrator):
@@ -468,12 +514,7 @@ class IsotonicCalibrator(BaseCalibrator):
     >>> proba_calib = calibrator.calibrate(y_prob_test)
     """
 
-    def __init__(
-        self,
-        n_bins: int = 10,
-        strategy: str = 'uniform',
-        out_of_bounds: str = 'clip'
-    ):
+    def __init__(self, n_bins: int = 10, strategy: str = "uniform", out_of_bounds: str = "clip"):
         super().__init__(n_bins=n_bins, strategy=strategy)
         self.out_of_bounds = out_of_bounds
 
@@ -481,46 +522,36 @@ class IsotonicCalibrator(BaseCalibrator):
         self,
         y_prob: Union[np.ndarray, pd.Series],
         y_true: Union[np.ndarray, pd.Series],
-    ) -> 'IsotonicCalibrator':
+    ) -> "IsotonicCalibrator":
         """拟合保序回归.
 
         :param y_true: 真实标签
         :param y_prob: 原始预测概率
         :return: self
         """
-        y_true = np.asarray(y_true)
-        y_prob = np.asarray(y_prob)
+        y_prob, y_true = self._validate_fit_data(y_prob, y_true, require_both_classes=True)
 
-        self.iso_ = IsotonicRegression(
-            y_min=0.0,
-            y_max=1.0,
-            out_of_bounds=self.out_of_bounds
-        )
+        self.iso_ = IsotonicRegression(y_min=0.0, y_max=1.0, out_of_bounds=self.out_of_bounds)
         self.iso_.fit(y_prob, y_true)
 
         return self
 
-    def calibrate(
-        self,
-        y_prob: Union[np.ndarray, pd.Series]
-    ) -> np.ndarray:
+    def calibrate(self, y_prob: Union[np.ndarray, pd.Series]) -> np.ndarray:
         """校准概率.
 
         :param y_prob: 原始预测概率
         :return: 校准后的概率
         """
-        check_is_fitted(self, 'iso_')
-        y_prob = np.asarray(y_prob)
+        check_is_fitted(self, "iso_")
+        y_prob = self._validate_probabilities(y_prob)
         return self.iso_.predict(y_prob)
 
 
 class BetaCalibrator(BaseCalibrator):
     """Beta Calibration 概率校准器.
 
-    使用Beta分布进行概率校准，适合处理已经接近0或1的概率。
-
-    校准公式: p_calib = I_p^{-1}(a, b)
-    其中 I_p 是不完全Beta函数
+    使用标准 Beta Calibration 特征 ``log(p)`` 与 ``-log(1-p)`` 拟合
+    逻辑回归，适合处理已经接近0或1的概率。
 
     **参数**
 
@@ -538,57 +569,36 @@ class BetaCalibrator(BaseCalibrator):
         self,
         y_prob: Union[np.ndarray, pd.Series],
         y_true: Union[np.ndarray, pd.Series],
-    ) -> 'BetaCalibrator':
-        """拟合Beta分布参数.
+    ) -> "BetaCalibrator":
+        """拟合Beta Calibration参数.
 
         :param y_true: 真实标签
         :param y_prob: 原始预测概率
         :return: self
         """
-        from scipy.stats import beta
-
-        y_true = np.asarray(y_true)
-        y_prob = np.asarray(y_prob)
+        y_prob, y_true = self._validate_fit_data(y_prob, y_true, require_both_classes=True)
 
         # 确保概率在(0, 1)范围内
         y_prob = np.clip(y_prob, 1e-15, 1 - 1e-15)
 
-        # 使用最大似然估计拟合Beta分布参数
-        def neg_log_likelihood(params):
-            a, b = params
-            if a <= 0 or b <= 0:
-                return np.inf
-            # 加权Beta分布
-            ll = 0
-            for yt, yp in zip(y_true, y_prob):
-                if yt == 1:
-                    ll += np.log(beta.pdf(yp, a, b) + 1e-15)
-                else:
-                    ll += np.log(beta.pdf(1 - yp, a, b) + 1e-15)
-            return -ll
-
-        result = minimize(neg_log_likelihood, [1.0, 1.0], method='Nelder-Mead')
-        self.a_, self.b_ = result.x
+        features = np.column_stack([np.log(y_prob), -np.log1p(-y_prob)])
+        self.lr_ = LogisticRegression(C=1e6, max_iter=1000)
+        self.lr_.fit(features, y_true)
 
         return self
 
-    def calibrate(
-        self,
-        y_prob: Union[np.ndarray, pd.Series]
-    ) -> np.ndarray:
+    def calibrate(self, y_prob: Union[np.ndarray, pd.Series]) -> np.ndarray:
         """校准概率.
 
         :param y_prob: 原始预测概率
         :return: 校准后的概率
         """
-        from scipy.stats import beta
-
-        check_is_fitted(self, ['a_', 'b_'])
-        y_prob = np.asarray(y_prob)
+        check_is_fitted(self, "lr_")
+        y_prob = self._validate_probabilities(y_prob)
         y_prob = np.clip(y_prob, 1e-15, 1 - 1e-15)
 
-        # 使用累积分布函数进行校准
-        return beta.cdf(y_prob, self.a_, self.b_)
+        features = np.column_stack([np.log(y_prob), -np.log1p(-y_prob)])
+        return self.lr_.predict_proba(features)[:, 1]
 
 
 class HistogramCalibrator(BaseCalibrator):
@@ -610,25 +620,24 @@ class HistogramCalibrator(BaseCalibrator):
     >>> proba_calib = calibrator.calibrate(y_prob_test)
     """
 
-    def __init__(self, n_bins: int = 10, strategy: str = 'quantile'):
+    def __init__(self, n_bins: int = 10, strategy: str = "quantile"):
         super().__init__(n_bins=n_bins, strategy=strategy)
 
     def fit(
         self,
         y_prob: Union[np.ndarray, pd.Series],
         y_true: Union[np.ndarray, pd.Series],
-    ) -> 'HistogramCalibrator':
+    ) -> "HistogramCalibrator":
         """拟合直方图校准器.
 
         :param y_true: 真实标签
         :param y_prob: 原始预测概率
         :return: self
         """
-        y_true = np.asarray(y_true)
-        y_prob = np.asarray(y_prob)
+        y_prob, y_true = self._validate_fit_data(y_prob, y_true)
 
         # 创建分箱边界
-        if self.strategy == 'quantile':
+        if self.strategy == "quantile":
             # 等频分箱
             quantiles = np.linspace(0, 100, self.n_bins + 1)
             self.bin_edges_ = np.percentile(y_prob, quantiles)
@@ -654,17 +663,14 @@ class HistogramCalibrator(BaseCalibrator):
 
         return self
 
-    def calibrate(
-        self,
-        y_prob: Union[np.ndarray, pd.Series]
-    ) -> np.ndarray:
+    def calibrate(self, y_prob: Union[np.ndarray, pd.Series]) -> np.ndarray:
         """校准概率.
 
         :param y_prob: 原始预测概率
         :return: 校准后的概率
         """
-        check_is_fitted(self, ['bin_edges_', 'bin_freqs_'])
-        y_prob = np.asarray(y_prob)
+        check_is_fitted(self, ["bin_edges_", "bin_freqs_"])
+        y_prob = self._validate_probabilities(y_prob)
 
         # 找到每个概率所属的箱
         bin_indices = np.digitize(y_prob, self.bin_edges_[1:-1])
@@ -723,24 +729,24 @@ class ProbabilityCalibrator(ArtifactSerializableMixin, BaseEstimator, Classifier
     """
 
     CALIB_METHODS = {
-        'platt': PlattCalibrator,
-        'sigmoid': PlattCalibrator,
-        'isotonic': IsotonicCalibrator,
-        'beta': BetaCalibrator,
-        'histogram': HistogramCalibrator,
+        "platt": PlattCalibrator,
+        "sigmoid": PlattCalibrator,
+        "isotonic": IsotonicCalibrator,
+        "beta": BetaCalibrator,
+        "histogram": HistogramCalibrator,
     }
     artifact_kind = "概率校准模型"
 
     def __init__(
         self,
-        method: str = 'platt',
+        method: str = "platt",
         calib_ratio: Optional[float] = 0.2,
         n_bins: int = 10,
         random_state: Optional[int] = None,
-        target: str = 'target',
+        target: str = "target",
         model: Optional[Any] = None,
         calibrator_params: Optional[Dict[str, Any]] = None,
-        **kwargs
+        **kwargs,
     ):
         if method not in self.CALIB_METHODS:
             raise ValueError(f"不支持的校准方法: {method}，可选: {list(self.CALIB_METHODS.keys())}")
@@ -770,8 +776,8 @@ class ProbabilityCalibrator(ArtifactSerializableMixin, BaseEstimator, Classifier
         y: Optional[Union[np.ndarray, pd.Series]] = None,
         model=None,
         target: Optional[str] = None,
-        **fit_params
-    ) -> 'ProbabilityCalibrator':
+        **fit_params,
+    ) -> "ProbabilityCalibrator":
         """拟合校准器.
 
         支持两种传参风格：
@@ -804,7 +810,6 @@ class ProbabilityCalibrator(ArtifactSerializableMixin, BaseEstimator, Classifier
         model = model if model is not None else self.model
         if model is None or not hasattr(model, "predict_proba"):
             raise ValueError("必须提供实现 predict_proba 方法的基础模型")
-        self.model_ = model
 
         # 使用初始化时设置的target
         target = target or self.target
@@ -813,33 +818,55 @@ class ProbabilityCalibrator(ArtifactSerializableMixin, BaseEstimator, Classifier
         # 处理两种传参风格
         X, y = self._prepare_data(X, y, target)
 
+        self.classes_ = np.asarray(getattr(model, "classes_", np.unique(y)))
+        if len(self.classes_) != 2:
+            raise ValueError("概率校准目前仅支持二分类模型")
+        self.positive_class_ = self.classes_[1]
+
         # 如果需要划分校准集
         if self.calib_ratio is not None and self.calib_ratio > 0:
-            X_train, X_calib, y_train, y_calib = train_test_split(
-                X, y,
-                test_size=self.calib_ratio,
-                random_state=self.random_state,
-                stratify=y
+            if not 0 < self.calib_ratio < 1:
+                raise ValueError("calib_ratio必须在(0, 1)范围内，或设为None使用独立校准集")
+            indices = np.arange(len(y))
+            train_indices, calib_indices = train_test_split(
+                indices, test_size=self.calib_ratio, random_state=self.random_state, stratify=y
             )
-            # 在剩余数据上重新训练模型（可选，这里保持原模型不变）
-            # 使用划分出的校准集进行校准
-            X, y = X_calib, y_calib
+
+            def take(values, idx):
+                return values.iloc[idx] if hasattr(values, "iloc") else np.asarray(values)[idx]
+
+            X_train, y_train = take(X, train_indices), take(y, train_indices)
+            X, y = take(X, calib_indices), take(y, calib_indices)
+            try:
+                fitted_model = clone(model)
+            except Exception:
+                fitted_model = copy.deepcopy(model)
+
+            model_fit_params = {}
+            for name, value in fit_params.items():
+                if hasattr(value, "__len__") and len(value) == len(indices):
+                    model_fit_params[name] = take(value, train_indices)
+                else:
+                    model_fit_params[name] = value
+            fitted_model.fit(X_train, y_train, **model_fit_params)
+            self.model_ = fitted_model
+        else:
+            self.model_ = model
+
+        y_binary = (np.asarray(y) == self.positive_class_).astype(int)
 
         # 获取模型预测概率
         y_prob = self._get_model_proba(X)
 
         # 拟合校准器
-        self.calibrator_.fit(y_prob, y)
+        self.calibrator_.fit(y_prob, y_binary)
 
         # 计算校准前后的指标
-        self.calib_metrics_['original'] = self.calibrator_.compute_calibration_metrics(y, y_prob)
+        self.calib_metrics_["original"] = self.calibrator_.compute_calibration_metrics(y_binary, y_prob)
         y_prob_calib = self.calibrator_.calibrate(y_prob)
-        self.calib_metrics_['calibrated'] = self.calibrator_.compute_calibration_metrics(y, y_prob_calib)
+        self.calib_metrics_["calibrated"] = self.calibrator_.compute_calibration_metrics(y_binary, y_prob_calib)
 
         self.is_fitted_ = True
-        self.classes_ = np.asarray(getattr(self.model_, "classes_", [0, 1]))
-        if len(self.classes_) != 2:
-            raise ValueError("概率校准目前仅支持二分类模型")
         if hasattr(X, "shape") and len(X.shape) == 2:
             self.n_features_in_ = X.shape[1]
         if isinstance(X, pd.DataFrame):
@@ -847,10 +874,7 @@ class ProbabilityCalibrator(ArtifactSerializableMixin, BaseEstimator, Classifier
 
         return self
 
-    def predict_proba(
-        self,
-        X: Union[np.ndarray, pd.DataFrame]
-    ) -> np.ndarray:
+    def predict_proba(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
         """预测校准后的概率.
 
         :param X: 特征矩阵
@@ -865,41 +889,34 @@ class ProbabilityCalibrator(ArtifactSerializableMixin, BaseEstimator, Classifier
         positive = np.clip(self.calibrator_.calibrate(y_prob), 0.0, 1.0)
         return np.column_stack([1.0 - positive, positive])
 
-    def predict(
-        self,
-        X: Union[np.ndarray, pd.DataFrame],
-        threshold: float = 0.5
-    ) -> np.ndarray:
+    def predict(self, X: Union[np.ndarray, pd.DataFrame], threshold: float = 0.5) -> np.ndarray:
         """预测类别标签.
 
         :param X: 特征矩阵
         :param threshold: 分类阈值，默认0.5
         :return: 预测类别
         """
+        if not 0 <= threshold <= 1:
+            raise ValueError("threshold必须在[0, 1]范围内")
         proba = self.predict_proba(X)[:, 1]
-        return (proba >= threshold).astype(int)
+        return np.where(proba >= threshold, self.classes_[1], self.classes_[0])
 
-    def _get_model_proba(
-        self,
-        X: Union[np.ndarray, pd.DataFrame]
-    ) -> np.ndarray:
+    def _get_model_proba(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
         """获取模型预测概率."""
-        if hasattr(self.model_, 'predict_proba'):
+        if hasattr(self.model_, "predict_proba"):
             proba = np.asarray(self.model_.predict_proba(X))
             if proba.ndim == 2 and proba.shape[1] == 2:
-                classes = np.asarray(getattr(self.model_, "classes_", [0, 1]))
-                positive_index = int(np.flatnonzero(classes == 1)[0]) if 1 in classes else 1
+                classes = np.asarray(getattr(self.model_, "classes_", self.classes_))
+                matches = np.flatnonzero(classes == self.positive_class_)
+                if len(matches) != 1:
+                    raise ValueError(f"基础模型概率列中不存在正类标签: {self.positive_class_!r}")
+                positive_index = int(matches[0])
                 return proba[:, positive_index]
             return proba
         else:
             raise ValueError("模型必须实现predict_proba方法")
 
-    def _prepare_data(
-        self,
-        X: Union[np.ndarray, pd.DataFrame],
-        y: Optional[Union[np.ndarray, pd.Series]],
-        target: str
-    ):
+    def _prepare_data(self, X: Union[np.ndarray, pd.DataFrame], y: Optional[Union[np.ndarray, pd.Series]], target: str):
         """准备数据，支持两种传参风格."""
         # scorecardpipeline风格：从X中提取target
         if y is None:
@@ -935,12 +952,13 @@ class ProbabilityCalibrator(ArtifactSerializableMixin, BaseEstimator, Classifier
         """
         check_is_fitted(self, "classes_")
         X, y = self._prepare_data(X, y, target or self.target_)
+        y_binary = (np.asarray(y) == self.positive_class_).astype(int)
         original = self.calibrator_.compute_calibration_metrics(
-            y,
+            y_binary,
             self._get_model_proba(X),
         )
         calibrated = self.calibrator_.compute_calibration_metrics(
-            y,
+            y_binary,
             self.predict_proba(X)[:, 1],
         )
         labels = {
@@ -972,11 +990,11 @@ class ProbabilityCalibrator(ArtifactSerializableMixin, BaseEstimator, Classifier
         self,
         X: Union[np.ndarray, pd.DataFrame],
         y: Optional[Union[np.ndarray, pd.Series]] = None,
-        target: str = 'target',
+        target: str = "target",
         figsize: Tuple[int, int] = (10, 8),
         title: Optional[str] = None,
-        show: bool = True
-    ) -> 'matplotlib.figure.Figure':
+        show: bool = True,
+    ) -> "matplotlib.figure.Figure":
         """绘制可靠性曲线.
 
         :param X: 特征矩阵或包含target的DataFrame
@@ -991,20 +1009,17 @@ class ProbabilityCalibrator(ArtifactSerializableMixin, BaseEstimator, Classifier
 
         # 处理两种传参风格
         X, y = self._prepare_data(X, y, target)
+        y_binary = (np.asarray(y) == self.positive_class_).astype(int)
 
         # 获取原始和校准后的概率
         y_prob_orig = self._get_model_proba(X)
         y_prob_calib = self.predict_proba(X)[:, 1]
 
         return self.calibrator_.plot_reliability_diagram(
-            y, y_prob_orig, y_prob_calib,
-            figsize=figsize, title=title, show=show
+            y_binary, y_prob_orig, y_prob_calib, figsize=figsize, title=title, show=show
         )
 
-    def calibrate_proba(
-        self,
-        y_prob: Union[np.ndarray, pd.Series]
-    ) -> np.ndarray:
+    def calibrate_proba(self, y_prob: Union[np.ndarray, pd.Series]) -> np.ndarray:
         """直接校准概率（不通过模型）.
 
         :param y_prob: 原始概率
@@ -1044,19 +1059,12 @@ class CalibratedModel(ArtifactSerializableMixin, BaseEstimator, ClassifierMixin)
 
     artifact_kind = "概率校准模型"
 
-    def __init__(
-        self,
-        base_model,
-        calibrator: ProbabilityCalibrator
-    ):
+    def __init__(self, base_model, calibrator: ProbabilityCalibrator):
         self.base_model = base_model
         self.calibrator = calibrator
         self.classes_ = np.asarray(getattr(base_model, "classes_", [0, 1]))
 
-    def predict_proba(
-        self,
-        X: Union[np.ndarray, pd.DataFrame]
-    ) -> np.ndarray:
+    def predict_proba(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
         """预测校准后的正类（坏样本）概率。
 
         将基础模型输出的原始概率经已拟合的校准器映射为更准确的概率。
@@ -1064,20 +1072,28 @@ class CalibratedModel(ArtifactSerializableMixin, BaseEstimator, ClassifierMixin)
         :param X: 特征矩阵，DataFrame 或 ndarray
         :return: 两列校准概率数组，shape ``(n_samples, 2)``
         """
-        return self.calibrator.predict_proba(X)
+        raw = np.asarray(self.base_model.predict_proba(X))
+        if raw.ndim != 2 or raw.shape[1] != 2:
+            raise ValueError("基础模型必须返回两列二分类概率")
+        base_classes = np.asarray(getattr(self.base_model, "classes_", self.classes_))
+        positive_matches = np.flatnonzero(base_classes == self.classes_[1])
+        if len(positive_matches) != 1:
+            raise ValueError(f"基础模型概率列中不存在正类标签: {self.classes_[1]!r}")
+        positive = self.calibrator.calibrator_.calibrate(raw[:, int(positive_matches[0])])
+        positive = np.clip(positive, 0.0, 1.0)
+        return np.column_stack([1.0 - positive, positive])
 
-    def predict(
-        self,
-        X: Union[np.ndarray, pd.DataFrame],
-        threshold: float = 0.5
-    ) -> np.ndarray:
+    def predict(self, X: Union[np.ndarray, pd.DataFrame], threshold: float = 0.5) -> np.ndarray:
         """基于校准后概率预测类别标签。
 
         :param X: 特征矩阵，DataFrame 或 ndarray
         :param threshold: 判正阈值，校准概率 ``>= threshold`` 记为 1，默认为 ``0.5``
         :return: 0/1 类别数组
         """
-        return self.calibrator.predict(X, threshold)
+        if not 0 <= threshold <= 1:
+            raise ValueError("threshold必须在[0, 1]范围内")
+        positive = self.predict_proba(X)[:, 1]
+        return np.where(positive >= threshold, self.classes_[1], self.classes_[0])
 
     def predict_score(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
         """将校准后概率线性映射为 0–1000 的风险评分（概率越低分越高）。
@@ -1092,11 +1108,7 @@ class CalibratedModel(ArtifactSerializableMixin, BaseEstimator, ClassifierMixin)
         proba = self.predict_proba(X)[:, 1]
         return (1 - proba) * 1000
 
-    def evaluate(
-        self,
-        X: Union[np.ndarray, pd.DataFrame],
-        y: Union[np.ndarray, pd.Series]
-    ) -> Dict[str, float]:
+    def evaluate(self, X: Union[np.ndarray, pd.DataFrame], y: Union[np.ndarray, pd.Series]) -> Dict[str, float]:
         """评估校准后模型的区分度与校准度。
 
         :param X: 特征矩阵，DataFrame 或 ndarray
@@ -1111,11 +1123,16 @@ class CalibratedModel(ArtifactSerializableMixin, BaseEstimator, ClassifierMixin)
         from ...metrics.classification import ks, auc
 
         y_proba = self.predict_proba(X)[:, 1]
+        y = np.asarray(y)
+        unknown_labels = set(np.unique(y)) - set(self.classes_)
+        if unknown_labels:
+            raise ValueError(f"y包含模型未见过的标签: {sorted(unknown_labels, key=str)}")
+        y_binary = (y == self.classes_[1]).astype(int)
 
         return {
-            'AUC': auc(y, y_proba),
-            'KS': ks(y, y_proba),
-            'Brier': self.calibrator.calibrator_.compute_brier_score(y, y_proba)
+            "AUC": auc(y_binary, y_proba),
+            "KS": ks(y_binary, y_proba),
+            "Brier": self.calibrator.calibrator_.compute_brier_score(y_binary, y_proba),
         }
 
 
@@ -1126,8 +1143,8 @@ def plot_calibration_comparison(
     figsize: Tuple[int, int] = (12, 5),
     title: Optional[str] = None,
     show: bool = True,
-    colors: Optional[List[str]] = None
-) -> 'matplotlib.figure.Figure':
+    colors: Optional[List[str]] = None,
+) -> "matplotlib.figure.Figure":
     """绘制多个模型的校准对比图.
 
     :param y_true: 真实标签
@@ -1159,16 +1176,16 @@ def plot_calibration_comparison(
 
     # 辅助函数：设置坐标轴样式
     def _setup_axis_style(ax, color="#2639E9"):
-        ax.spines['top'].set_color(color)
-        ax.spines['bottom'].set_color(color)
-        ax.spines['right'].set_color(color)
-        ax.spines['left'].set_color(color)
-        ax.spines['top'].set_visible(False)
-        ax.spines['right'].set_visible(False)
+        ax.spines["top"].set_color(color)
+        ax.spines["bottom"].set_color(color)
+        ax.spines["right"].set_color(color)
+        ax.spines["left"].set_color(color)
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
 
     # 1. 可靠性曲线
     ax1 = axes[0]
-    color_list = colors[:len(y_prob_dict)]
+    color_list = colors[: len(y_prob_dict)]
 
     for (name, y_prob), color in zip(y_prob_dict.items(), color_list):
         y_prob = np.asarray(y_prob)
@@ -1176,17 +1193,17 @@ def plot_calibration_comparison(
         calibrator = PlattCalibrator(n_bins=n_bins)
         calibrator._plot_reliability_curve(ax1, y_true, y_prob, name, color)
 
-    ax1.plot([0, 1], [0, 1], 'k--', label='Perfectly Calibrated', alpha=0.5)
-    ax1.set_xlabel('Mean Predicted Probability', fontweight='bold')
-    ax1.set_ylabel('Fraction of Positives', fontweight='bold')
-    ax1.set_title('Reliability Diagram', fontweight='bold')
-    ax1.legend(loc='lower right', frameon=False)
-    ax1.grid(True, alpha=0.3, linestyle='--')
+    ax1.plot([0, 1], [0, 1], "k--", label="Perfectly Calibrated", alpha=0.5)
+    ax1.set_xlabel("Mean Predicted Probability", fontweight="bold")
+    ax1.set_ylabel("Fraction of Positives", fontweight="bold")
+    ax1.set_title("Reliability Diagram", fontweight="bold")
+    ax1.legend(loc="lower right", frameon=False)
+    ax1.grid(True, alpha=0.3, linestyle="--")
     _setup_axis_style(ax1)
 
     # 2. 指标对比
     ax2 = axes[1]
-    metrics_names = ['Brier', 'ECE']
+    metrics_names = ["Brier", "ECE"]
     x = np.arange(len(metrics_names))
     width = 0.8 / len(y_prob_dict)
 
@@ -1195,19 +1212,19 @@ def plot_calibration_comparison(
         # 使用PlattCalibrator实例来调用方法
         calibrator = PlattCalibrator(n_bins=n_bins)
         metrics = calibrator.compute_calibration_metrics(y_true, y_prob)
-        values = [metrics['brier_score'], metrics['expected_calibration_error']]
+        values = [metrics["brier_score"], metrics["expected_calibration_error"]]
         ax2.bar(x + i * width, values, width, label=name, color=colors[i % len(colors)], alpha=0.8)
 
     ax2.set_xticks(x + width * (len(y_prob_dict) - 1) / 2)
     ax2.set_xticklabels(metrics_names)
-    ax2.set_ylabel('Score (lower is better)', fontweight='bold')
-    ax2.set_title('Calibration Metrics Comparison', fontweight='bold')
+    ax2.set_ylabel("Score (lower is better)", fontweight="bold")
+    ax2.set_title("Calibration Metrics Comparison", fontweight="bold")
     ax2.legend(frameon=False)
-    ax2.grid(True, alpha=0.3, axis='y', linestyle='--')
+    ax2.grid(True, alpha=0.3, axis="y", linestyle="--")
     _setup_axis_style(ax2)
 
     if title:
-        fig.suptitle(title, fontsize=14, fontweight='bold')
+        fig.suptitle(title, fontsize=14, fontweight="bold")
 
     plt.tight_layout()
 
@@ -1221,9 +1238,9 @@ def calibrate_model(
     model,
     X_calib: Union[np.ndarray, pd.DataFrame],
     y_calib: Optional[Union[np.ndarray, pd.Series]] = None,
-    method: str = 'platt',
-    target: str = 'target',
-    **kwargs
+    method: str = "platt",
+    target: str = "target",
+    **kwargs,
 ) -> ProbabilityCalibrator:
     """便捷函数：创建并拟合概率校准器.
 

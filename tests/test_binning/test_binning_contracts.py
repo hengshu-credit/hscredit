@@ -4,6 +4,7 @@ import inspect
 
 import numpy as np
 import pandas as pd
+import pandas.testing as pdt
 import pytest
 from sklearn.base import clone
 
@@ -58,6 +59,38 @@ DIRECT_BINNER_CLASSES = [
     BestLiftBinning,
     TargetBadRateBinning,
 ]
+
+
+def test_quantile_wrapper_preserves_finalized_reserved_bin_artifacts():
+    """包装层跳过重复收口时必须完整保留底层最终分箱状态。"""
+    X = pd.DataFrame(
+        {
+            "num": [0.0, 1.0, 2.0, np.nan, 999.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0],
+            "cat": ["A", "B", "A", None, "SPECIAL", "C", "B", "C", "A", "B", "C", "A"],
+        }
+    )
+    y = pd.Series([0, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1])
+    params = {
+        "max_n_bins": 4,
+        "special_codes": [999.0, "SPECIAL"],
+        "missing_separate": True,
+        "handle_unknown": UNKNOWN_BIN,
+        "n_jobs": 1,
+    }
+
+    direct = QuantileBinning(**params).fit(X, y)
+    wrapped = OptimalBinning(method="quantile", **params).fit(X, y)
+
+    np.testing.assert_array_equal(wrapped.splits_["num"], direct.splits_["num"])
+    assert wrapped.splits_["cat"] == direct.splits_["cat"]
+    for feature in X.columns:
+        pdt.assert_frame_equal(wrapped.bin_tables_[feature], direct.bin_tables_[feature])
+    assert wrapped._woe_maps_ == direct._woe_maps_
+    assert wrapped._missing_bin_targets_ == direct._missing_bin_targets_
+    assert wrapped._recorded_bins_ == direct._recorded_bins_
+    assert wrapped._reserved_bins_finalized_ == direct._reserved_bins_finalized_
+    pdt.assert_frame_equal(wrapped.transform(X, metric="indices"), direct.transform(X, metric="indices"))
+    pdt.assert_frame_equal(wrapped.transform(X, metric="woe"), direct.transform(X, metric="woe"))
 
 
 @pytest.mark.parametrize(

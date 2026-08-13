@@ -15,20 +15,17 @@
 4. 内置风控常用评估指标(KS、AUC、Gini、PSI等)
 """
 
-import warnings
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple, Union
 import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, ClassifierMixin
-from sklearn.utils.validation import check_X_y, check_array, check_is_fitted
-from sklearn.utils.multiclass import type_of_target
+from sklearn.exceptions import NotFittedError
 from sklearn.model_selection import train_test_split
 
 from ..metrics.classification import ks, auc, gini
-from ..metrics.stability import psi
-from ..metrics.finance import lift_at, lift_monotonicity_check
+from ..metrics.finance import lift_monotonicity_check
 from ...utils.serialization import ArtifactSerializableMixin
 from ...utils.parallel import resolve_n_jobs
 from .scorecard_support import _ProbabilityScoreCardMixin
@@ -41,8 +38,14 @@ if TYPE_CHECKING:
 
 def _lift_score(y_true, y_proba, top_ratio=0.1):
     """计算Lift值（内部辅助函数）."""
+    y_true = np.asarray(y_true)
+    y_proba = np.asarray(y_proba)
     n = len(y_true)
-    n_top = int(n * top_ratio)
+    if n == 0:
+        raise ValueError("计算Lift时标签不能为空")
+    if not 0 < top_ratio <= 1:
+        raise ValueError("top_ratio必须在(0, 1]范围内")
+    n_top = max(1, int(np.ceil(n * top_ratio)))
 
     # 按概率降序排序
     sorted_indices = np.argsort(-y_proba)
@@ -73,7 +76,7 @@ def resolve_custom_objective(objective):
     :return: 解析后的目标函数（字符串/可调用对象）
     """
     try:
-        from .losses.base import BaseLoss
+        from .losses.base import BaseLoss, _margin_derivatives
     except Exception:
         return objective
 
@@ -85,11 +88,7 @@ def resolve_custom_objective(objective):
     def _sklearn_obj(y_true: np.ndarray, y_pred: np.ndarray):
         # boosting 框架回调传入原始分数，先 sigmoid 转概率再求梯度
         prob = 1.0 / (1.0 + np.exp(-np.asarray(y_pred, dtype=float)))
-        grad = loss.gradient(y_true, prob)
-        hess = loss.hessian(y_true, prob)
-        if hess is None:
-            hess = np.ones_like(grad) * 0.5
-        return grad, hess
+        return _margin_derivatives(loss, y_true, prob)
 
     return _sklearn_obj
 
@@ -136,6 +135,7 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, BaseE
     :ivar evals_result_: 训练过程评估结果
     :ivar best_iteration_: 最佳迭代次数
     :ivar best_score_: 最佳得分
+    :ivar tuner: 最近一次通过 :meth:`tune` 创建的 ModelTuner，未调参时为 None
     :ivar bad_rate_: 训练集坏样本率
     :ivar base_odds_: 训练集坏好比
     :ivar scorecard_: 已拟合的概率评分卡
@@ -193,6 +193,7 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, BaseE
         self._best_score = None
         self._feature_importances = None
         self._is_fitted = False
+        self.tuner = None
 
     @abstractmethod
     def fit(
@@ -257,6 +258,11 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, BaseE
         """最佳得分（早停验证集上），未启用早停时为 None."""
         return self._best_score
 
+    @property
+    def evals_result_(self) -> Dict[str, Any]:
+        """返回训练期间记录的验证集指标。"""
+        return self._evals_result
+
     @abstractmethod
     def get_feature_importances(self, importance_type: str = "gain") -> pd.Series:
         """获取特征重要性.
@@ -275,7 +281,7 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, BaseE
 
         :return: 包含模型信息的字典
         """
-        check_is_fitted(self, "_is_fitted")
+        self._require_fitted()
 
         info = {
             "model_type": self.__class__.__name__,
@@ -315,13 +321,36 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, BaseE
         :param metrics: 评估指标列表，默认全部
         :return: 评估结果字典
         """
-        check_is_fitted(self, "_is_fitted")
+        self._require_fitted()
 
         y_pred = self.predict(X)
         y_proba = self.predict_proba(X)[:, 1]
 
         if metrics is None:
             metrics = self.DEFAULT_METRICS
+
+        supported_metrics = {
+            "auc",
+            "ks",
+            "gini",
+            "lift",
+            "lift@1%",
+            "lift_1",
+            "lift@3%",
+            "lift_3",
+            "lift@5%",
+            "lift_5",
+            "lift@10%",
+            "lift_10",
+            "logloss",
+            "accuracy",
+            "precision",
+            "recall",
+            "f1",
+        }
+        unknown_metrics = [metric for metric in metrics if metric.lower() not in supported_metrics]
+        if unknown_metrics:
+            raise ValueError(f"不支持的评估指标: {unknown_metrics}")
 
         results = {}
 
@@ -365,9 +394,7 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, BaseE
 
                     results["F1"] = f1_score(y, y_pred, sample_weight=sample_weight)
             except Exception as e:
-                if self.verbose:
-                    warnings.warn(f"计算指标 {metric} 时出错: {e}")
-                continue
+                raise ValueError(f"计算指标 {metric} 时出错: {e}") from e
 
         # 头部单调性检验（始终计算，不依赖 metrics 参数）
         try:
@@ -463,7 +490,7 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, BaseE
         :param kwargs: 传递给 auto_model_report 的其他参数
         :return: ModelReport 实例
         """
-        check_is_fitted(self, "_is_fitted")
+        self._require_fitted()
         from ...report import auto_model_report
 
         return auto_model_report(
@@ -507,7 +534,7 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, BaseE
         >>> model.save('model.pkl.gz')
         >>> model.save('model.pkl', engine='dill')
         """
-        check_is_fitted(self, "_is_fitted")
+        self._require_fitted()
         from ...utils import save_pickle
 
         path_str = str(path)
@@ -557,6 +584,9 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, BaseE
         """保存模型参数和元数据为JSON."""
         import json
 
+        if self._model is None or not hasattr(self._model, "save_model"):
+            raise ValueError(f"{self.__class__.__name__}不支持完整的JSON模型序列化，请使用joblib或pickle格式")
+
         meta = {
             "model_class": f"{self.__class__.__module__}.{self.__class__.__name__}",
             "model_type": self.__class__.__name__,
@@ -564,6 +594,7 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, BaseE
             "n_features_in_": getattr(self, "n_features_in_", None),
             "feature_names_in_": getattr(self, "feature_names_in_", None),
             "classes_": getattr(self, "classes_", np.array([])).tolist(),
+            "probability_scorecard": self._probability_scorecard_state(),
         }
 
         params = self.get_params(deep=False)
@@ -579,10 +610,8 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, BaseE
 
         # 保存底层模型到同级目录
         native_path = str(Path(path).with_suffix(".native"))
-        if hasattr(self, "_model") and self._model is not None:
-            if hasattr(self._model, "save_model"):
-                self._model.save_model(native_path)
-                meta["native_model_path"] = str(Path(native_path).name)
+        self._model.save_model(native_path)
+        meta["native_model_path"] = str(Path(native_path).name)
 
         with open(path, "w", encoding="utf-8") as f:
             json.dump(meta, f, ensure_ascii=False, indent=2)
@@ -602,14 +631,20 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, BaseE
 
         model = model_cls(**meta.get("params", {}))
 
-        if "native_model_path" in meta:
-            native_path = str(Path(path).parent / meta["native_model_path"])
-            if hasattr(model, "load_model"):
-                model.load_model(native_path)
+        if "native_model_path" not in meta:
+            raise ValueError("JSON模型元数据缺少原生模型文件，无法恢复已训练模型")
+
+        native_path = str(Path(path).parent / meta["native_model_path"])
+        if not Path(native_path).exists():
+            raise ValueError(f"JSON模型引用的原生模型文件不存在: {native_path}")
+        if not hasattr(model, "load_model"):
+            raise ValueError(f"{model.__class__.__name__}不支持从原生模型文件恢复")
+        model.load_model(native_path)
 
         model.n_features_in_ = meta.get("n_features_in_")
         model.feature_names_in_ = meta.get("feature_names_in_")
         model.classes_ = np.array(meta.get("classes_", [0, 1]))
+        model._restore_probability_scorecard(meta.get("probability_scorecard"))
 
         return model
 
@@ -676,15 +711,12 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, BaseE
             verbose=verbose,
             **kwargs,
         )
+        self.tuner = tuner
 
-        best_params = tuner.fit(X, y, n_trials=n_trials, timeout=timeout)
-        best_model = self.__class__(**best_params)
-        # 透传 target，确保 scorecardpipeline 风格（y=None，从 X 提取 target）下重训正常
-        if self.target is not None and getattr(best_model, "target", None) is None:
-            best_model.target = self.target
-        best_model.fit(X, y)
+        tuner.fit(X, y, n_trials=n_trials, timeout=timeout)
+        best_model = tuner.get_best_model()
 
-        best_model._tuner = tuner
+        best_model.tuner = tuner
 
         return best_model
 
@@ -694,6 +726,7 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, BaseE
         y: Optional[Union[np.ndarray, pd.Series]] = None,
         sample_weight: Optional[np.ndarray] = None,
         extract_target: bool = False,
+        training: bool = False,
     ) -> Tuple[np.ndarray, Optional[np.ndarray], Optional[np.ndarray]]:
         """准备数据.
 
@@ -703,24 +736,36 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, BaseE
         :param y: 目标变量
         :param sample_weight: 样本权重
         :param extract_target: 是否从X中提取target列
+        :param training: 是否为拟合阶段；仅拟合阶段记录输入字段契约
         :return: 处理后的X, y, sample_weight
         """
         # 处理DataFrame
         if isinstance(X, pd.DataFrame):
-            if not hasattr(self, "feature_names_in_"):
-                self.feature_names_in_ = X.columns.tolist()
-
             # scorecardpipeline风格：从X中提取target列
             if extract_target and self.target is not None and self.target in X.columns:
-                y = X[self.target].values
+                if y is None:
+                    y = X[self.target].values
                 X = X.drop(columns=[self.target])
-                # 更新特征名列表
+
+            if training or not hasattr(self, "feature_names_in_"):
                 self.feature_names_in_ = X.columns.tolist()
+            else:
+                expected = list(self.feature_names_in_)
+                missing = [column for column in expected if column not in X.columns]
+                if missing:
+                    raise ValueError(f"输入数据缺少训练字段: {missing}")
+                # 只使用训练字段并恢复训练顺序；额外业务字段按约定忽略。
+                X = X.loc[:, expected]
 
             X = X.values
         else:
-            if not hasattr(self, "feature_names_in_"):
+            X = np.asarray(X)
+            if X.ndim != 2:
+                raise ValueError(f"输入特征必须是二维数组，当前维度为{X.ndim}")
+            if training or not hasattr(self, "feature_names_in_"):
                 self.feature_names_in_ = [f"feature_{i}" for i in range(X.shape[1])]
+            elif hasattr(self, "n_features_in_") and X.shape[1] != self.n_features_in_:
+                raise ValueError(f"输入特征数量不匹配：训练时为{self.n_features_in_}，当前为{X.shape[1]}")
 
         # 处理y
         if y is not None:
@@ -744,19 +789,66 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, BaseE
         :param sample_weight: 样本权重
         :return: X_train, X_val, y_train, y_val, sw_train, sw_val
         """
-        if self.validation_fraction > 0 and self.validation_fraction < 1:
-            if sample_weight is not None:
-                X_train, X_val, y_train, y_val, sw_train, sw_val = train_test_split(
-                    X, y, sample_weight, test_size=self.validation_fraction, random_state=self.random_state, stratify=y
-                )
-                return X_train, X_val, y_train, y_val, sw_train, sw_val
-            else:
-                X_train, X_val, y_train, y_val = train_test_split(
-                    X, y, test_size=self.validation_fraction, random_state=self.random_state, stratify=y
-                )
-                return X_train, X_val, y_train, y_val, None, None
-        else:
-            return X, None, y, None, sample_weight, None
+        if 0 < self.validation_fraction < 1:
+            indices = np.arange(len(y))
+            train_indices, val_indices = train_test_split(
+                indices,
+                test_size=self.validation_fraction,
+                random_state=self.random_state,
+                stratify=y,
+            )
+            self._eval_train_indices_ = np.asarray(train_indices)
+            self._eval_val_indices_ = np.asarray(val_indices)
+            return (
+                self._take_rows(X, train_indices),
+                self._take_rows(X, val_indices),
+                self._take_rows(y, train_indices),
+                self._take_rows(y, val_indices),
+                self._take_rows(sample_weight, train_indices),
+                self._take_rows(sample_weight, val_indices),
+            )
+
+        self._eval_train_indices_ = np.arange(len(y))
+        self._eval_val_indices_ = np.asarray([], dtype=int)
+        return X, None, y, None, sample_weight, None
+
+    @staticmethod
+    def _take_rows(values, indices):
+        """按位置选取与样本逐行对齐的数据。"""
+        if values is None:
+            return None
+        if hasattr(values, "iloc"):
+            return values.iloc[indices]
+        return np.asarray(values)[indices]
+
+    def _split_row_aligned_value(self, values):
+        """使用最近一次自动验证集索引切分样本级参数。"""
+        if values is None:
+            return None, None
+
+        train_indices = getattr(self, "_eval_train_indices_", None)
+        val_indices = getattr(self, "_eval_val_indices_", None)
+        if train_indices is None or val_indices is None or len(val_indices) == 0:
+            return values, None
+
+        try:
+            value_length = len(values)
+        except TypeError:
+            return values, None
+
+        if value_length != len(train_indices) + len(val_indices):
+            return values, None
+
+        return self._take_rows(values, train_indices), self._take_rows(values, val_indices)
+
+    def _split_row_aligned_fit_param(self, fit_kwargs, train_name: str, eval_name: str) -> None:
+        """切分一个已知的样本级 fit 参数，并补充对应验证集参数。"""
+        if train_name not in fit_kwargs:
+            return
+        train_values, val_values = self._split_row_aligned_value(fit_kwargs[train_name])
+        fit_kwargs[train_name] = train_values
+        if val_values is not None:
+            fit_kwargs.setdefault(eval_name, [val_values])
 
     def get_native_model(self) -> Any:
         """获取底层原生模型对象.
@@ -775,7 +867,7 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, BaseE
         >>> native_model = model.get_native_model()
         >>> leaf_indices = native_model.apply(X)
         """
-        check_is_fitted(self, "_is_fitted")
+        self._require_fitted()
         return self._model
 
     def _get_metric_func(self, metric: str) -> Callable:
@@ -794,6 +886,11 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, BaseE
     def __sklearn_is_fitted__(self):
         """用于sklearn的check_is_fitted检查."""
         return hasattr(self, "_is_fitted") and self._is_fitted
+
+    def _require_fitted(self) -> None:
+        """按布尔训练状态校验模型，避免仅检查属性存在性。"""
+        if not getattr(self, "_is_fitted", False):
+            raise NotFittedError(f"该{self.__class__.__name__}实例尚未拟合，请先调用fit方法")
 
     def plot_feature_importance(
         self,

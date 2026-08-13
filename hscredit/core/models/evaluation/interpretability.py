@@ -31,7 +31,9 @@ pip install shap
 """
 
 import warnings
-from typing import Any, Dict, List, Optional, Tuple, Union
+import importlib
+from importlib import util
+from typing import Any, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -39,13 +41,24 @@ import pandas as pd
 # 绘图
 import matplotlib.pyplot as plt
 
-# 检查shap是否可用
-try:
-    import shap
-    SHAP_AVAILABLE = True
-except ImportError:
-    SHAP_AVAILABLE = False
-    shap = None
+# 只检查模块是否存在，不在 ``import hscredit`` 时加载 SHAP 的重依赖链。
+SHAP_AVAILABLE = util.find_spec("shap") is not None
+shap = None
+
+
+def _load_shap():
+    """按需加载 SHAP，并把不兼容依赖错误转换为清晰的可选依赖异常。"""
+    global shap
+    if shap is not None:
+        return shap
+    if not SHAP_AVAILABLE:
+        raise ImportError("SHAP未安装，请使用 pip install shap 安装")
+    try:
+        shap = importlib.import_module("shap")
+    except Exception as exc:
+        raise ImportError(f"SHAP加载失败，请检查shap/numba依赖兼容性: {exc}") from exc
+    return shap
+
 
 from ..base import BaseRiskModel
 
@@ -85,12 +98,9 @@ class ModelExplainer:
         model: BaseRiskModel,
         feature_names: Optional[List[str]] = None,
         background_data: Optional[Union[np.ndarray, pd.DataFrame]] = None,
-        explainer_type: str = 'auto'
+        explainer_type: str = "auto",
     ):
-        if not SHAP_AVAILABLE:
-            raise ImportError(
-                "SHAP未安装，请使用 pip install shap 安装"
-            )
+        _load_shap()
 
         self.model = model
         self.explainer_type = explainer_type
@@ -101,7 +111,7 @@ class ModelExplainer:
         # 获取特征名称
         if feature_names is not None:
             self.feature_names = feature_names
-        elif hasattr(model, 'feature_names_in_'):
+        elif hasattr(model, "feature_names_in_"):
             self.feature_names = model.feature_names_in_
         else:
             self.feature_names = None
@@ -118,13 +128,13 @@ class ModelExplainer:
         model_type = model.__class__.__name__.lower()
 
         # 自动选择解释器类型
-        if self.explainer_type == 'auto':
-            if any(x in model_type for x in ['xgboost', 'lightgbm', 'catboost', 'tree', 'forest']):
-                self.explainer_type = 'tree'
-            elif 'logistic' in model_type or 'linear' in model_type:
-                self.explainer_type = 'linear'
+        if self.explainer_type == "auto":
+            if any(x in model_type for x in ["xgboost", "lightgbm", "catboost", "tree", "forest"]):
+                self.explainer_type = "tree"
+            elif "logistic" in model_type or "linear" in model_type:
+                self.explainer_type = "linear"
             else:
-                self.explainer_type = 'kernel'
+                self.explainer_type = "kernel"
 
         # 准备背景数据
         background = self.background_data
@@ -133,24 +143,21 @@ class ModelExplainer:
                 background = background.values
 
         # 创建解释器
-        if self.explainer_type == 'tree':
-            self._explainer = shap.TreeExplainer(model._model)
-        elif self.explainer_type == 'linear':
+        native_model = getattr(model, "_model", model)
+        if self.explainer_type == "tree":
+            self._explainer = shap.TreeExplainer(native_model)
+        elif self.explainer_type == "linear":
             if background is None:
                 raise ValueError("线性模型解释器需要提供background_data")
-            self._explainer = shap.LinearExplainer(model._model, background)
-        elif self.explainer_type == 'kernel':
+            self._explainer = shap.LinearExplainer(native_model, background)
+        elif self.explainer_type == "kernel":
             if background is None:
                 raise ValueError("Kernel解释器需要提供background_data")
-            self._explainer = shap.KernelExplainer(model._model.predict_proba, background)
+            self._explainer = shap.KernelExplainer(model.predict_proba, background)
         else:
             raise ValueError(f"不支持的解释器类型: {self.explainer_type}")
 
-    def compute_shap_values(
-        self,
-        X: Union[np.ndarray, pd.DataFrame],
-        check_additivity: bool = True
-    ) -> np.ndarray:
+    def compute_shap_values(self, X: Union[np.ndarray, pd.DataFrame], check_additivity: bool = True) -> np.ndarray:
         """计算SHAP值.
 
         :param X: 特征矩阵
@@ -166,18 +173,19 @@ class ModelExplainer:
             X_array = X
 
         # 计算SHAP值
-        shap_values = self._explainer.shap_values(
-            X_array,
-            check_additivity=check_additivity
-        )
+        shap_values = self._explainer.shap_values(X_array, check_additivity=check_additivity)
 
         # 处理二分类情况
         if isinstance(shap_values, list):
             # 二分类返回两个数组，取正类的SHAP值
             shap_values = shap_values[1]
+        elif isinstance(shap_values, np.ndarray) and shap_values.ndim == 3:
+            # SHAP 0.45+ 对多输出模型统一返回 (样本, 特征, 输出)。
+            output_index = 1 if shap_values.shape[2] > 1 else 0
+            shap_values = shap_values[:, :, output_index]
 
         self._shap_values = shap_values
-        self._expected_value = getattr(self._explainer, 'expected_value', None)
+        self._expected_value = getattr(self._explainer, "expected_value", None)
 
         # 如果是二分类，expected_value也可能是数组
         if isinstance(self._expected_value, (list, np.ndarray)):
@@ -203,13 +211,11 @@ class ModelExplainer:
 
         # 获取特征名称
         if self.feature_names is None:
-            self.feature_names = [f'feature_{i}' for i in range(len(mean_shap))]
+            self.feature_names = [f"feature_{i}" for i in range(len(mean_shap))]
 
-        importance_series = pd.Series(
-            mean_shap,
-            index=self.feature_names,
-            name='shap_importance'
-        ).sort_values(ascending=False)
+        importance_series = pd.Series(mean_shap, index=self.feature_names, name="shap_importance").sort_values(
+            ascending=False
+        )
 
         return importance_series
 
@@ -217,11 +223,11 @@ class ModelExplainer:
         self,
         X: Union[np.ndarray, pd.DataFrame],
         max_display: int = 20,
-        plot_type: str = 'dot',
+        plot_type: str = "dot",
         figsize: Tuple[int, int] = (10, 8),
         title: Optional[str] = None,
         show: bool = True,
-        **kwargs
+        **kwargs,
     ) -> plt.Figure:
         """绘制SHAP摘要图.
 
@@ -239,7 +245,7 @@ class ModelExplainer:
         :param kwargs: 其他shap.summary_plot参数
         :return: matplotlib Figure对象
         """
-        if self._shap_values is None or not np.array_equal(X, getattr(self, '_last_X', None)):
+        if self._shap_values is None or not np.array_equal(X, getattr(self, "_last_X", None)):
             self.compute_shap_values(X)
             self._last_X = X.copy() if isinstance(X, pd.DataFrame) else X
 
@@ -257,13 +263,13 @@ class ModelExplainer:
             max_display=max_display,
             plot_type=plot_type,
             show=False,
-            **kwargs
+            **kwargs,
         )
 
         if title:
-            ax.set_title(title, fontsize=14, fontweight='bold')
+            ax.set_title(title, fontsize=14, fontweight="bold")
         else:
-            ax.set_title('SHAP Summary Plot', fontsize=14, fontweight='bold')
+            ax.set_title("SHAP Summary Plot", fontsize=14, fontweight="bold")
 
         plt.tight_layout()
 
@@ -278,7 +284,7 @@ class ModelExplainer:
         max_display: int = 15,
         figsize: Tuple[int, int] = (10, 8),
         title: Optional[str] = None,
-        show: bool = True
+        show: bool = True,
     ) -> plt.Figure:
         """绘制SHAP条形图.
 
@@ -305,7 +311,7 @@ class ModelExplainer:
 
         # 获取特征名称
         if self.feature_names is None:
-            self.feature_names = [f'feature_{i}' for i in range(len(mean_shap))]
+            self.feature_names = [f"feature_{i}" for i in range(len(mean_shap))]
         feature_names_sorted = [self.feature_names[i] for i in feature_order]
 
         # 创建图表
@@ -319,16 +325,16 @@ class ModelExplainer:
         ax.set_yticks(range(len(feature_names_sorted)))
         ax.set_yticklabels(feature_names_sorted)
         ax.invert_yaxis()
-        ax.set_xlabel('Mean |SHAP Value|', fontsize=12)
+        ax.set_xlabel("Mean |SHAP Value|", fontsize=12)
 
         if title:
-            ax.set_title(title, fontsize=14, fontweight='bold')
+            ax.set_title(title, fontsize=14, fontweight="bold")
         else:
-            ax.set_title('Feature Importance (Mean |SHAP Value|)', fontsize=14, fontweight='bold')
+            ax.set_title("Feature Importance (Mean |SHAP Value|)", fontsize=14, fontweight="bold")
 
         # 添加数值标签
         for i, (bar, val) in enumerate(zip(bars, mean_shap_sorted)):
-            ax.text(val, i, f' {val:.4f}', va='center', fontsize=9)
+            ax.text(val, i, f" {val:.4f}", va="center", fontsize=9)
 
         plt.tight_layout()
 
@@ -345,7 +351,7 @@ class ModelExplainer:
         figsize: Tuple[int, int] = (10, 6),
         title: Optional[str] = None,
         show: bool = True,
-        **kwargs
+        **kwargs,
     ) -> plt.Figure:
         """绘制SHAP依赖图.
 
@@ -393,11 +399,11 @@ class ModelExplainer:
             interaction_index=interaction_index,
             show=False,
             ax=ax,
-            **kwargs
+            **kwargs,
         )
 
         if title:
-            ax.set_title(title, fontsize=14, fontweight='bold')
+            ax.set_title(title, fontsize=14, fontweight="bold")
 
         plt.tight_layout()
 
@@ -412,7 +418,7 @@ class ModelExplainer:
         index: int = 0,
         figsize: Tuple[int, int] = (20, 4),
         show: bool = True,
-        **kwargs
+        **kwargs,
     ):
         """绘制SHAP力图.
 
@@ -448,7 +454,7 @@ class ModelExplainer:
             feature_names=self.feature_names,
             show=show,
             matplotlib=True,
-            **kwargs
+            **kwargs,
         )
 
         return fig
@@ -458,9 +464,9 @@ class ModelExplainer:
         X: Union[np.ndarray, pd.DataFrame],
         top_n: int = 15,
         figsize: Tuple[int, int] = (16, 10),
-        importance_type: str = 'gain',
+        importance_type: str = "gain",
         title: Optional[str] = None,
-        show: bool = True
+        show: bool = True,
     ) -> plt.Figure:
         """绘制组合特征重要性图.
 
@@ -485,18 +491,17 @@ class ModelExplainer:
         all_features = list(all_features)
 
         # 创建DataFrame
-        importance_df = pd.DataFrame({
-            'Traditional': traditional_importance.reindex(all_features),
-            'SHAP': shap_importance.reindex(all_features)
-        }).fillna(0)
+        importance_df = pd.DataFrame(
+            {"Traditional": traditional_importance.reindex(all_features), "SHAP": shap_importance.reindex(all_features)}
+        ).fillna(0)
 
         # 归一化
-        importance_df['Traditional_norm'] = importance_df['Traditional'] / importance_df['Traditional'].max()
-        importance_df['SHAP_norm'] = importance_df['SHAP'] / importance_df['SHAP'].max()
+        importance_df["Traditional_norm"] = importance_df["Traditional"] / importance_df["Traditional"].max()
+        importance_df["SHAP_norm"] = importance_df["SHAP"] / importance_df["SHAP"].max()
 
         # 计算综合排名
-        importance_df['Combined'] = (importance_df['Traditional_norm'] + importance_df['SHAP_norm']) / 2
-        importance_df = importance_df.sort_values('Combined', ascending=True)
+        importance_df["Combined"] = (importance_df["Traditional_norm"] + importance_df["SHAP_norm"]) / 2
+        importance_df = importance_df.sort_values("Combined", ascending=True)
 
         # 创建图表
         fig, axes = plt.subplots(1, 2, figsize=figsize)
@@ -504,35 +509,35 @@ class ModelExplainer:
         # 左图：传统特征重要性
         ax1 = axes[0]
         colors1 = plt.cm.Blues(np.linspace(0.4, 0.9, len(importance_df)))
-        bars1 = ax1.barh(range(len(importance_df)), importance_df['Traditional'], color=colors1)
+        bars1 = ax1.barh(range(len(importance_df)), importance_df["Traditional"], color=colors1)
         ax1.set_yticks(range(len(importance_df)))
         ax1.set_yticklabels(importance_df.index)
-        ax1.set_xlabel('Traditional Importance', fontsize=12)
-        ax1.set_title('Traditional Feature Importance', fontsize=13, fontweight='bold')
+        ax1.set_xlabel("Traditional Importance", fontsize=12)
+        ax1.set_title("Traditional Feature Importance", fontsize=13, fontweight="bold")
 
         # 添加数值标签
-        for i, (bar, val) in enumerate(zip(bars1, importance_df['Traditional'])):
+        for i, (bar, val) in enumerate(zip(bars1, importance_df["Traditional"])):
             if val > 0:
-                ax1.text(val, i, f' {val:.2f}', va='center', fontsize=9)
+                ax1.text(val, i, f" {val:.2f}", va="center", fontsize=9)
 
         # 右图：SHAP重要性
         ax2 = axes[1]
         colors2 = plt.cm.Reds(np.linspace(0.4, 0.9, len(importance_df)))
-        bars2 = ax2.barh(range(len(importance_df)), importance_df['SHAP'], color=colors2)
+        bars2 = ax2.barh(range(len(importance_df)), importance_df["SHAP"], color=colors2)
         ax2.set_yticks(range(len(importance_df)))
         ax2.set_yticklabels(importance_df.index)
-        ax2.set_xlabel('Mean |SHAP Value|', fontsize=12)
-        ax2.set_title('SHAP Feature Importance', fontsize=13, fontweight='bold')
+        ax2.set_xlabel("Mean |SHAP Value|", fontsize=12)
+        ax2.set_title("SHAP Feature Importance", fontsize=13, fontweight="bold")
 
         # 添加数值标签
-        for i, (bar, val) in enumerate(zip(bars2, importance_df['SHAP'])):
+        for i, (bar, val) in enumerate(zip(bars2, importance_df["SHAP"])):
             if val > 0:
-                ax2.text(val, i, f' {val:.4f}', va='center', fontsize=9)
+                ax2.text(val, i, f" {val:.4f}", va="center", fontsize=9)
 
         if title:
-            fig.suptitle(title, fontsize=15, fontweight='bold')
+            fig.suptitle(title, fontsize=15, fontweight="bold")
         else:
-            fig.suptitle('Feature Importance Comparison', fontsize=15, fontweight='bold')
+            fig.suptitle("Feature Importance Comparison", fontsize=15, fontweight="bold")
 
         plt.tight_layout()
 
@@ -548,7 +553,7 @@ class ModelExplainer:
         max_display: int = 10,
         figsize: Tuple[int, int] = (12, 8),
         title: Optional[str] = None,
-        show: bool = True
+        show: bool = True,
     ) -> plt.Figure:
         """绘制SHAP瀑布图.
 
@@ -579,7 +584,7 @@ class ModelExplainer:
             values=shap_values_instance,
             base_values=self._expected_value,
             data=X_display[index],
-            feature_names=self.feature_names
+            feature_names=self.feature_names,
         )
 
         # 创建图表
@@ -589,7 +594,7 @@ class ModelExplainer:
         shap.waterfall_plot(explanation, max_display=max_display, show=False)
 
         if title:
-            ax.set_title(title, fontsize=14, fontweight='bold')
+            ax.set_title(title, fontsize=14, fontweight="bold")
 
         plt.tight_layout()
 
@@ -598,11 +603,7 @@ class ModelExplainer:
 
         return fig
 
-    def get_feature_interactions(
-        self,
-        X: Union[np.ndarray, pd.DataFrame],
-        top_n: int = 10
-    ) -> pd.DataFrame:
+    def get_feature_interactions(self, X: Union[np.ndarray, pd.DataFrame], top_n: int = 10) -> pd.DataFrame:
         """获取特征交互重要性.
 
         :param X: 特征矩阵
@@ -618,13 +619,17 @@ class ModelExplainer:
 
         if isinstance(shap_interaction, list):
             shap_interaction = shap_interaction[1]
+        elif isinstance(shap_interaction, np.ndarray) and shap_interaction.ndim == 4:
+            # SHAP 0.45+ 多输出交互值为 (样本, 特征, 特征, 输出)。
+            output_index = 1 if shap_interaction.shape[3] > 1 else 0
+            shap_interaction = shap_interaction[:, :, :, output_index]
 
         # 计算交互重要性
         interaction_importance = np.abs(shap_interaction).sum(axis=0)
 
         # 获取特征名称
         if self.feature_names is None:
-            self.feature_names = [f'feature_{i}' for i in range(interaction_importance.shape[0])]
+            self.feature_names = [f"feature_{i}" for i in range(interaction_importance.shape[0])]
 
         # 构建交互DataFrame
         interactions = []
@@ -632,14 +637,16 @@ class ModelExplainer:
 
         for i in range(n_features):
             for j in range(i + 1, n_features):
-                interactions.append({
-                    'Feature_1': self.feature_names[i],
-                    'Feature_2': self.feature_names[j],
-                    'Interaction_Strength': interaction_importance[i, j]
-                })
+                interactions.append(
+                    {
+                        "Feature_1": self.feature_names[i],
+                        "Feature_2": self.feature_names[j],
+                        "Interaction_Strength": interaction_importance[i, j],
+                    }
+                )
 
         interactions_df = pd.DataFrame(interactions)
-        interactions_df = interactions_df.sort_values('Interaction_Strength', ascending=False)
+        interactions_df = interactions_df.sort_values("Interaction_Strength", ascending=False)
 
         return interactions_df.head(top_n)
 
@@ -662,21 +669,21 @@ def _infer_feature_names(
     """从输入数据或模型属性推断特征名."""
     if isinstance(X, pd.DataFrame):
         return X.columns.tolist()
-    if hasattr(model, 'feature_names_in_'):
+    if hasattr(model, "feature_names_in_"):
         return list(model.feature_names_in_)
-    if hasattr(model, '_feature_names'):
+    if hasattr(model, "_feature_names"):
         return list(model._feature_names)
-    if hasattr(model, 'feature_names'):
-        names = getattr(model, 'feature_names')
+    if hasattr(model, "feature_names"):
+        names = getattr(model, "feature_names")
         if names is not None:
             return list(names)
-    return [f'feature_{i}' for i in range(n_features)]
+    return [f"feature_{i}" for i in range(n_features)]
 
 
 def model_explain_report(
     model: BaseRiskModel,
     X: Optional[Union[np.ndarray, pd.DataFrame]] = None,
-    importance_type: str = 'gain',
+    importance_type: str = "gain",
     top_n: Optional[int] = None,
     normalize: bool = True,
 ) -> pd.DataFrame:
@@ -697,7 +704,7 @@ def model_explain_report(
     >>> report = model_explain_report(model, X_test, importance_type='coef')
     >>> print(report[['特征名', '重要性', '排名']].head())
     """
-    source = 'get_feature_importances'
+    source = "get_feature_importances"
     direction = None
 
     try:
@@ -709,13 +716,13 @@ def model_explain_report(
             values = _as_1d_importance(importances)
             feature_names = _infer_feature_names(model, X, len(values))
     except Exception:
-        if hasattr(model, 'feature_importances_'):
-            source = 'feature_importances_'
-            values = _as_1d_importance(getattr(model, 'feature_importances_'))
+        if hasattr(model, "feature_importances_"):
+            source = "feature_importances_"
+            values = _as_1d_importance(getattr(model, "feature_importances_"))
             feature_names = _infer_feature_names(model, X, len(values))
-        elif hasattr(model, 'coef_'):
-            source = 'coef_'
-            coef = _as_1d_importance(getattr(model, 'coef_'))
+        elif hasattr(model, "coef_"):
+            source = "coef_"
+            coef = _as_1d_importance(getattr(model, "coef_"))
             direction = np.sign(coef)
             values = np.abs(coef)
             feature_names = _infer_feature_names(model, X, len(values))
@@ -723,26 +730,26 @@ def model_explain_report(
             raise ValueError("模型未提供可解释的特征重要性或系数")
 
     if len(feature_names) != len(values):
-        feature_names = [f'feature_{i}' for i in range(len(values))]
+        feature_names = [f"feature_{i}" for i in range(len(values))]
 
-    result = pd.DataFrame({
-        '特征名': feature_names,
-        '重要性': values,
-        '重要性类型': importance_type if source == 'get_feature_importances' else source,
-        '来源': source,
-    })
+    result = pd.DataFrame(
+        {
+            "特征名": feature_names,
+            "重要性": values,
+            "重要性类型": importance_type if source == "get_feature_importances" else source,
+            "来源": source,
+        }
+    )
     if direction is not None and len(direction) == len(result):
-        direction_map = {1.0: '正向', -1.0: '负向', 0.0: '无方向'}
-        result['影响方向'] = [direction_map.get(float(v), '无方向') for v in direction]
+        direction_map = {1.0: "正向", -1.0: "负向", 0.0: "无方向"}
+        result["影响方向"] = [direction_map.get(float(v), "无方向") for v in direction]
 
-    result['排名'] = result['重要性'].rank(method='first', ascending=False).astype(int)
-    result = result.sort_values(['排名', '特征名']).reset_index(drop=True)
+    result["排名"] = result["重要性"].rank(method="first", ascending=False).astype(int)
+    result = result.sort_values(["排名", "特征名"]).reset_index(drop=True)
 
     if normalize:
-        total = float(np.nansum(np.abs(result['重要性'].to_numpy(dtype=float))))
-        result['归一化重要性'] = (
-            result['重要性'] / total if total > 0 else np.zeros(len(result), dtype=float)
-        )
+        total = float(np.nansum(np.abs(result["重要性"].to_numpy(dtype=float))))
+        result["归一化重要性"] = result["重要性"] / total if total > 0 else np.zeros(len(result), dtype=float)
 
     if top_n is not None:
         result = result.head(top_n).reset_index(drop=True)
@@ -754,12 +761,12 @@ def plot_feature_importance(
     model: BaseRiskModel,
     X: Optional[Union[np.ndarray, pd.DataFrame]] = None,
     top_n: int = 20,
-    importance_type: str = 'gain',
+    importance_type: str = "gain",
     figsize: Tuple[int, int] = (10, 8),
     title: Optional[str] = None,
-    color: str = '#2E86AB',
+    color: str = "#2E86AB",
     show_values: bool = True,
-    show: bool = True
+    show: bool = True,
 ) -> plt.Figure:
     """绘制传统特征重要性图.
 
@@ -805,20 +812,20 @@ def plot_feature_importance(
     ax.set_yticks(range(len(importances)))
     ax.set_yticklabels(importances.index)
     ax.invert_yaxis()
-    ax.set_xlabel('Importance', fontsize=12)
+    ax.set_xlabel("Importance", fontsize=12)
 
     if title:
-        ax.set_title(title, fontsize=14, fontweight='bold')
+        ax.set_title(title, fontsize=14, fontweight="bold")
     else:
-        ax.set_title(f'Feature Importance ({importance_type})', fontsize=14, fontweight='bold')
+        ax.set_title(f"Feature Importance ({importance_type})", fontsize=14, fontweight="bold")
 
     # 添加数值标签
     if show_values:
         for i, (bar, val) in enumerate(zip(bars, importances.values)):
-            ax.text(val, i, f' {val:.2f}', va='center', fontsize=9)
+            ax.text(val, i, f" {val:.2f}", va="center", fontsize=9)
 
     # 添加网格线
-    ax.grid(axis='x', alpha=0.3, linestyle='--')
+    ax.grid(axis="x", alpha=0.3, linestyle="--")
     ax.set_axisbelow(True)
 
     plt.tight_layout()
@@ -835,7 +842,7 @@ def plot_shap_importance(
     top_n: int = 20,
     figsize: Tuple[int, int] = (10, 8),
     title: Optional[str] = None,
-    show: bool = True
+    show: bool = True,
 ) -> plt.Figure:
     """绘制SHAP特征重要性图.
 
@@ -861,9 +868,9 @@ def plot_importance_comparison(
     X: Union[np.ndarray, pd.DataFrame],
     top_n: int = 15,
     figsize: Tuple[int, int] = (16, 10),
-    importance_type: str = 'gain',
+    importance_type: str = "gain",
     title: Optional[str] = None,
-    show: bool = True
+    show: bool = True,
 ) -> plt.Figure:
     """绘制特征重要性对比图（传统 vs SHAP）.
 

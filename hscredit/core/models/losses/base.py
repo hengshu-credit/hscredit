@@ -5,8 +5,31 @@
 """
 
 from abc import ABC, abstractmethod
-from typing import Callable, Dict, Optional, Tuple, Union
+from typing import Callable, Optional, Tuple
 import numpy as np
+
+
+def _margin_derivatives(
+    loss: "BaseLoss",
+    y_true: np.ndarray,
+    probability: np.ndarray,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """把定义在概率上的一、二阶导转换为对 raw margin 的导数。"""
+    probability = np.asarray(probability, dtype=float)
+    grad_probability = np.asarray(loss.gradient(y_true, probability), dtype=float)
+    hess_probability = loss.hessian(y_true, probability)
+    link_grad = probability * (1.0 - probability)
+
+    grad_margin = grad_probability * link_grad
+    if hess_probability is None:
+        # 缺少真实二阶导时只能提供稳定的正对角近似；一阶导仍严格应用链式法则。
+        hess_margin = np.maximum(link_grad, np.finfo(float).eps)
+    else:
+        hess_probability = np.asarray(hess_probability, dtype=float)
+        link_hess = link_grad * (1.0 - 2.0 * probability)
+        hess_margin = hess_probability * link_grad**2 + grad_probability * link_hess
+
+    return grad_margin, hess_margin
 
 
 class BaseLoss(ABC):
@@ -38,16 +61,12 @@ class BaseLoss(ABC):
     >>> booster = xgb.train({'disable_default_eval_metric': 1}, dtrain,
     ...                      obj=loss.to_xgboost())     # 自定义目标
     """
-    
+
     def __init__(self, name: str = "custom_loss"):
         self.name = name
-    
+
     @abstractmethod
-    def __call__(
-        self,
-        y_true: np.ndarray,
-        y_pred: np.ndarray
-    ) -> float:
+    def __call__(self, y_true: np.ndarray, y_pred: np.ndarray) -> float:
         """计算损失值。
 
         :param y_true: 真实标签, shape (n_samples,)
@@ -55,13 +74,9 @@ class BaseLoss(ABC):
         :return: 损失值
         """
         pass
-    
+
     @abstractmethod
-    def gradient(
-        self,
-        y_true: np.ndarray,
-        y_pred: np.ndarray
-    ) -> np.ndarray:
+    def gradient(self, y_true: np.ndarray, y_pred: np.ndarray) -> np.ndarray:
         """计算梯度（一阶导数）。
 
         :param y_true: 真实标签
@@ -69,12 +84,8 @@ class BaseLoss(ABC):
         :return: 梯度数组, shape (n_samples,)
         """
         pass
-    
-    def hessian(
-        self,
-        y_true: np.ndarray,
-        y_pred: np.ndarray
-    ) -> Optional[np.ndarray]:
+
+    def hessian(self, y_true: np.ndarray, y_pred: np.ndarray) -> Optional[np.ndarray]:
         """计算二阶导数（可选）。
 
         某些框架如XGBoost需要二阶导数，如果不需要可以返回None
@@ -84,22 +95,18 @@ class BaseLoss(ABC):
         :return: 二阶导数数组, shape (n_samples,), 或None
         """
         return None
-    
+
     def to_xgboost(self) -> Callable:
         """转换为XGBoost格式的损失函数。
 
         :return: XGBoost可用的损失函数
         """
+
         def xgb_loss(preds: np.ndarray, dtrain) -> Tuple[np.ndarray, np.ndarray]:
             labels = dtrain.get_label()
             # 原生 xgb.train 回调传入原始分数，先 sigmoid 转概率再求梯度
             probs = 1.0 / (1.0 + np.exp(-np.asarray(preds, dtype=float)))
-            grad = self.gradient(labels, probs)
-            hess = self.hessian(labels, probs)
-            if hess is None:
-                # 如果没有二阶导，使用近似值
-                hess = np.ones_like(grad) * 0.5
-            return grad, hess
+            return _margin_derivatives(self, labels, probs)
 
         return xgb_loss
 
@@ -108,14 +115,11 @@ class BaseLoss(ABC):
 
         :return: LightGBM可用的损失函数
         """
+
         def lgb_loss(y_true: np.ndarray, y_pred: np.ndarray):
             # LightGBM 回调传入原始分数，先 sigmoid 转概率再求梯度
             probs = 1.0 / (1.0 + np.exp(-np.asarray(y_pred, dtype=float)))
-            grad = self.gradient(y_true, probs)
-            hess = self.hessian(y_true, probs)
-            if hess is None:
-                hess = np.ones_like(grad) * 0.5
-            return grad, hess
+            return _margin_derivatives(self, y_true, probs)
 
         return lgb_loss
 
@@ -130,10 +134,12 @@ class BaseLoss(ABC):
         :return: CatBoost 可用的损失对象（含 calc_ders_range 方法）
         """
         from .adapters import CatBoostLossAdapter
+
         return CatBoostLossAdapter(self).objective()
 
     def _legacy_catboost_loss(self) -> Callable:
         """旧版 CatBoost 损失闭包（保留备查，不推荐使用）。"""
+
         def catboost_loss(approxes, target, weight):
             # CatBoost使用不同的接口
             approx = approxes[0]
@@ -178,9 +184,7 @@ class BaseLoss(ABC):
         try:
             from ngboost.scores import Score as _NGBScore
         except ImportError:
-            raise ImportError(
-                "NGBoost未安装，请使用 pip install ngboost 安装"
-            )
+            raise ImportError("NGBoost未安装，请使用 pip install ngboost 安装")
 
         loss_obj = self
 
@@ -233,17 +237,13 @@ class BaseMetric(ABC):
     :param name: 指标名称，默认为"custom_metric"
     :param greater_is_better: 是否越大越好，默认为True
     """
-    
+
     def __init__(self, name: str = "custom_metric", greater_is_better: bool = True):
         self.name = name
         self.greater_is_better = greater_is_better
-    
+
     @abstractmethod
-    def __call__(
-        self,
-        y_true: np.ndarray,
-        y_pred: np.ndarray
-    ) -> float:
+    def __call__(self, y_true: np.ndarray, y_pred: np.ndarray) -> float:
         """计算评估指标。
 
         :param y_true: 真实标签
@@ -257,6 +257,7 @@ class BaseMetric(ABC):
 
         :return: XGBoost可用的评估指标
         """
+
         def xgb_metric(preds: np.ndarray, dtrain) -> Tuple[str, float]:
             labels = dtrain.get_label()
             value = self(labels, preds)
@@ -269,6 +270,7 @@ class BaseMetric(ABC):
 
         :return: LightGBM可用的评估指标
         """
+
         def lgb_metric(y_true: np.ndarray, y_pred: np.ndarray):
             value = self(y_true, y_pred)
             return self.name, value, self.greater_is_better
@@ -280,6 +282,7 @@ class BaseMetric(ABC):
 
         :return: CatBoost可用的评估指标
         """
+
         class CatBoostMetricWrapper:
             def __init__(self, metric_obj):
                 self.metric_obj = metric_obj

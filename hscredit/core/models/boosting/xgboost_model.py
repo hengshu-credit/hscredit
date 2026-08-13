@@ -20,15 +20,15 @@ pip install xgboost
 """
 
 import logging
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 import numpy as np
 import pandas as pd
-from sklearn.utils.validation import check_is_fitted
 
 logger = logging.getLogger(__name__)
 
 try:
     import xgboost as xgb
+
     XGBOOST_AVAILABLE = True
 except ImportError:
     XGBOOST_AVAILABLE = False
@@ -110,20 +110,20 @@ class XGBoostRiskModel(BaseRiskModel):
     >>> # 基础使用
     >>> model = XGBoostRiskModel(max_depth=5, learning_rate=0.1)
     >>> model.fit(X_train, y_train)
-    
+
     >>> # 自动处理不平衡数据
     >>> model = XGBoostRiskModel(scale_pos_weight='auto')
     >>> model.fit(X_train, y_train)
-    
+
     >>> # 使用KS作为评估指标
     >>> model = XGBoostRiskModel(eval_metric='ks')
     >>> model.fit(X_train, y_train)
-    
+
     >>> # 使用原生XGBoost参数
     >>> params = {'max_depth': 5, 'learning_rate': 0.05, 'subsample': 0.8}
     >>> model = XGBoostRiskModel(params=params)
     >>> model.fit(X_train, y_train)
-    
+
     >>> # 早停设置 - 使用多个评估指标，指定logloss作为早停指标（越小越好）
     >>> model = XGBoostRiskModel(
     ...     n_estimators=1000,
@@ -133,7 +133,7 @@ class XGBoostRiskModel(BaseRiskModel):
     ... )
     >>> model.fit(X_train, y_train)
     >>> print(f'最佳迭代次数: {model.best_iteration_}')
-    
+
     >>> # 早停设置 - 使用AUC作为早停指标（越大越好）
     >>> model = XGBoostRiskModel(
     ...     n_estimators=1000,
@@ -161,11 +161,11 @@ class XGBoostRiskModel(BaseRiskModel):
         colsample_bylevel: float = 1.0,
         reg_alpha: float = 0,
         reg_lambda: float = 1,
-        scale_pos_weight: Union[str, float] = 'auto',
+        scale_pos_weight: Union[str, float] = "auto",
         gamma: float = 0,
         max_delta_step: float = 0,
-        tree_method: str = 'hist',
-        objective: str = 'binary:logistic',
+        tree_method: str = "hist",
+        objective: str = "binary:logistic",
         eval_metric: Union[str, List[str], None] = None,
         early_stopping_rounds: Optional[int] = None,
         early_stopping_metric: Optional[str] = None,
@@ -176,36 +176,34 @@ class XGBoostRiskModel(BaseRiskModel):
         verbose: bool = False,
         params: Optional[Dict[str, Any]] = None,
         scorecard_params: Optional[Dict[str, Any]] = None,
-        **kwargs
+        **kwargs,
     ):
         if not XGBOOST_AVAILABLE:
-            raise ImportError(
-                "XGBoost未安装，请使用 pip install xgboost 安装"
-            )
+            raise ImportError("XGBoost未安装，请使用 pip install xgboost 安装")
 
         # 保存原生params参数
         self.params = params  # 用于sklearn get_params兼容性
         self._native_params = params or {}
 
         # 从params中提取参数（如果提供了原生参数）
-        max_depth = self._native_params.get('max_depth', max_depth)
-        learning_rate = self._native_params.get('learning_rate', learning_rate)
-        n_estimators = self._native_params.get('n_estimators', n_estimators)
-        min_child_weight = self._native_params.get('min_child_weight', min_child_weight)
-        subsample = self._native_params.get('subsample', subsample)
-        colsample_bytree = self._native_params.get('colsample_bytree', colsample_bytree)
-        colsample_bylevel = self._native_params.get('colsample_bylevel', colsample_bylevel)
-        reg_alpha = self._native_params.get('reg_alpha', reg_alpha)
-        reg_lambda = self._native_params.get('reg_lambda', reg_lambda)
-        scale_pos_weight = self._native_params.get('scale_pos_weight', scale_pos_weight)
-        gamma = self._native_params.get('gamma', gamma)
-        max_delta_step = self._native_params.get('max_delta_step', max_delta_step)
-        tree_method = self._native_params.get('tree_method', tree_method)
-        objective = self._native_params.get('objective', objective)
-        random_state = self._native_params.get('random_state', random_state)
-        n_jobs = self._native_params.get('n_jobs', n_jobs)
+        max_depth = self._native_params.get("max_depth", max_depth)
+        learning_rate = self._native_params.get("learning_rate", learning_rate)
+        n_estimators = self._native_params.get("n_estimators", n_estimators)
+        min_child_weight = self._native_params.get("min_child_weight", min_child_weight)
+        subsample = self._native_params.get("subsample", subsample)
+        colsample_bytree = self._native_params.get("colsample_bytree", colsample_bytree)
+        colsample_bylevel = self._native_params.get("colsample_bylevel", colsample_bylevel)
+        reg_alpha = self._native_params.get("reg_alpha", reg_alpha)
+        reg_lambda = self._native_params.get("reg_lambda", reg_lambda)
+        scale_pos_weight = self._native_params.get("scale_pos_weight", scale_pos_weight)
+        gamma = self._native_params.get("gamma", gamma)
+        max_delta_step = self._native_params.get("max_delta_step", max_delta_step)
+        tree_method = self._native_params.get("tree_method", tree_method)
+        objective = self._native_params.get("objective", objective)
+        random_state = self._native_params.get("random_state", random_state)
+        n_jobs = self._native_params.get("n_jobs", n_jobs)
         # 从params中提取early_stopping_rounds（优先级最高）
-        early_stopping_rounds = self._native_params.get('early_stopping_rounds', early_stopping_rounds)
+        early_stopping_rounds = self._native_params.get("early_stopping_rounds", early_stopping_rounds)
 
         super().__init__(
             objective=objective,
@@ -216,7 +214,7 @@ class XGBoostRiskModel(BaseRiskModel):
             n_jobs=n_jobs,
             verbose=verbose,
             scorecard_params=scorecard_params,
-            **kwargs
+            **kwargs,
         )
 
         # 早停相关参数
@@ -234,7 +232,7 @@ class XGBoostRiskModel(BaseRiskModel):
         self.reg_alpha = reg_alpha
         self.reg_lambda = reg_lambda
         self._scale_pos_weight_input = scale_pos_weight  # 保存原始输入
-        self.scale_pos_weight = scale_pos_weight if scale_pos_weight != 'auto' else 1.0
+        self.scale_pos_weight = scale_pos_weight if scale_pos_weight != "auto" else 1.0
         self.gamma = gamma
         self.max_delta_step = max_delta_step
         self.tree_method = tree_method
@@ -246,8 +244,8 @@ class XGBoostRiskModel(BaseRiskModel):
         y: Optional[Union[np.ndarray, pd.Series]] = None,
         sample_weight: Optional[np.ndarray] = None,
         eval_set: Optional[List[Tuple]] = None,
-        **fit_params
-    ) -> 'XGBoostRiskModel':
+        **fit_params,
+    ) -> "XGBoostRiskModel":
         """训练XGBoost模型.
 
         支持两种调用方式:
@@ -262,7 +260,7 @@ class XGBoostRiskModel(BaseRiskModel):
         :return: self
         """
         # 准备数据（支持从X中提取target）
-        X, y, sample_weight = self._prepare_data(X, y, sample_weight, extract_target=True)
+        X, y, sample_weight = self._prepare_data(X, y, sample_weight, extract_target=True, training=True)
         self._fit_probability_scorecard(y)
 
         # 保存特征信息
@@ -270,7 +268,7 @@ class XGBoostRiskModel(BaseRiskModel):
         self.classes_ = np.unique(y)
 
         # 自动计算scale_pos_weight（内部建模经验：当bad_rate<0.05时）
-        if self._scale_pos_weight_input == 'auto':
+        if self._scale_pos_weight_input == "auto":
             pos_ratio = np.mean(y == 1)
             if pos_ratio < 0.05:
                 # 内部经验: 0.05 * n_samples / n_positive
@@ -281,14 +279,14 @@ class XGBoostRiskModel(BaseRiskModel):
                 self.scale_pos_weight = 1.0
         else:
             self.scale_pos_weight = self._scale_pos_weight_input
-        
+
         self.scale_pos_weight_ = self.scale_pos_weight
 
         # 创建验证集
-        if eval_set is None and self.validation_fraction > 0:
-            X_train, X_val, y_train, y_val, sw_train, sw_val = self._create_eval_set(
-                X, y, sample_weight
-            )
+        auto_eval_split = eval_set is None and self.validation_fraction > 0 and self.early_stopping_rounds is not None
+        sw_val = None
+        if auto_eval_split:
+            X_train, X_val, y_train, y_val, sw_train, sw_val = self._create_eval_set(X, y, sample_weight)
             eval_set = [(X_val, y_val)]
             sample_weight = sw_train
         else:
@@ -307,81 +305,103 @@ class XGBoostRiskModel(BaseRiskModel):
 
         # 构建参数 - 在构造函数中传入所有参数
         params = {
-            'max_depth': self.max_depth,
-            'learning_rate': self.learning_rate,
-            'n_estimators': self.n_estimators,
-            'min_child_weight': self.min_child_weight,
-            'subsample': self.subsample,
-            'colsample_bytree': self.colsample_bytree,
-            'colsample_bylevel': self.colsample_bylevel,
-            'reg_alpha': self.reg_alpha,
-            'reg_lambda': self.reg_lambda,
-            'scale_pos_weight': self.scale_pos_weight,
-            'gamma': self.gamma,
-            'max_delta_step': self.max_delta_step,
-            'tree_method': self.tree_method,
-            'objective': self.objective,
-            'n_jobs': self.n_jobs,
-            'random_state': self.random_state,
-            'verbosity': 2 if self.verbose else 0,
+            "max_depth": self.max_depth,
+            "learning_rate": self.learning_rate,
+            "n_estimators": self.n_estimators,
+            "min_child_weight": self.min_child_weight,
+            "subsample": self.subsample,
+            "colsample_bytree": self.colsample_bytree,
+            "colsample_bylevel": self.colsample_bylevel,
+            "reg_alpha": self.reg_alpha,
+            "reg_lambda": self.reg_lambda,
+            "scale_pos_weight": self.scale_pos_weight,
+            "gamma": self.gamma,
+            "max_delta_step": self.max_delta_step,
+            "tree_method": self.tree_method,
+            "objective": self.objective,
+            "n_jobs": self.n_jobs,
+            "random_state": self.random_state,
+            "verbosity": 2 if self.verbose else 0,
         }
 
         # 处理评估指标
+        wants_ks = False
         if self.eval_metric is not None:
-            params['eval_metric'] = self._convert_metrics(self.eval_metric)
+            converted_metrics = self._convert_metrics(self.eval_metric)
+            metric_list = [converted_metrics] if isinstance(converted_metrics, str) else list(converted_metrics)
+            wants_ks = any(str(metric).lower() == "ks" for metric in metric_list)
+            native_metrics = [metric for metric in metric_list if str(metric).lower() != "ks"]
+            if native_metrics:
+                params["eval_metric"] = native_metrics[0] if isinstance(converted_metrics, str) else native_metrics
 
         # 处理早停参数（XGBoost 2.0+ 在构造函数中传入）
+        callbacks = []
+        if wants_ks and eval_set:
+            callbacks.append(self._create_ks_callback(eval_set))
+
         if self.early_stopping_rounds is not None and eval_set:
             # 如果指定了早停指标，使用EarlyStopping回调
             if self.early_stopping_metric is not None:
                 try:
                     from xgboost.callback import EarlyStopping
-                    callbacks = [EarlyStopping(
-                        rounds=self.early_stopping_rounds,
-                        metric_name=self.early_stopping_metric,
-                        data_name=self.early_stopping_data,
-                        save_best=True
-                    )]
-                    params['callbacks'] = callbacks
+
+                    callbacks.append(
+                        EarlyStopping(
+                            rounds=self.early_stopping_rounds,
+                            metric_name=self.early_stopping_metric,
+                            data_name=self.early_stopping_data,
+                            save_best=True,
+                        )
+                    )
                     if self.verbose:
-                        logger.info(f"使用早停: rounds={self.early_stopping_rounds}, "
-                              f"metric='{self.early_stopping_metric}'")
+                        logger.info(
+                            f"使用早停: rounds={self.early_stopping_rounds}, " f"metric='{self.early_stopping_metric}'"
+                        )
                 except ImportError:
                     # 回退到旧方式
-                    params['early_stopping_rounds'] = self.early_stopping_rounds
+                    params["early_stopping_rounds"] = self.early_stopping_rounds
                     if self.verbose:
                         logger.info(f"使用早停: rounds={self.early_stopping_rounds} (默认指标)")
             else:
                 # 未指定早停指标，使用默认方式（第一个eval_metric）
-                params['early_stopping_rounds'] = self.early_stopping_rounds
+                params["early_stopping_rounds"] = self.early_stopping_rounds
                 if self.verbose:
                     logger.info(f"使用早停: rounds={self.early_stopping_rounds} (默认使用第一个指标)")
 
+        if callbacks:
+            params["callbacks"] = callbacks
+
         # 更新kwargs参数
         params.update(self.kwargs)
-        
+
         # 最后更新原生params（优先级最高）
         params.update(self._native_params)
 
         # 解析自定义损失（BaseLoss 实例 -> sklearn 包装器可用的目标函数）
-        params['objective'] = resolve_custom_objective(params.get('objective'))
+        params["objective"] = resolve_custom_objective(params.get("objective"))
 
         # 创建模型
         self._model = xgb.XGBClassifier(**params)
 
         # 训练 - fit时不传早停参数（已在构造函数中传入）
-        fit_kwargs = {'eval_set': eval_set} if eval_set else {}
+        fit_kwargs = dict(fit_params)
+        if auto_eval_split:
+            self._split_row_aligned_fit_param(fit_kwargs, "base_margin", "base_margin_eval_set")
+            if sw_val is not None:
+                fit_kwargs.setdefault("sample_weight_eval_set", [sw_val])
+        if eval_set:
+            fit_kwargs["eval_set"] = eval_set
         if sample_weight is not None:
-            fit_kwargs['sample_weight'] = sample_weight
-        fit_kwargs['verbose'] = self.verbose
+            fit_kwargs["sample_weight"] = sample_weight
+        fit_kwargs["verbose"] = self.verbose
 
         # 执行训练
         self._model.fit(X_train, y_train, **fit_kwargs)
 
         # 保存结果
-        self._best_iteration = getattr(self._model, 'best_iteration', None)
-        self._best_score = getattr(self._model, 'best_score', None)
-        self._evals_result = getattr(self._model, 'evals_result_', {})
+        self._best_iteration = getattr(self._model, "best_iteration", None)
+        self._best_score = getattr(self._model, "best_score", None)
+        self._evals_result = getattr(self._model, "evals_result_", {})
         self._is_fitted = True
 
         return self
@@ -402,10 +422,31 @@ class XGBoostRiskModel(BaseRiskModel):
         参考内部建模常用KS作为评估指标。
         """
         from sklearn.metrics import roc_curve
+
         y_true = dtrain.get_label()
         fpr, tpr, _ = roc_curve(y_true, y_pred, pos_label=1)
         ks = abs(tpr - fpr).max()
-        return 'KS', ks
+        return "KS", ks
+
+    @staticmethod
+    def _create_ks_callback(eval_set):
+        """创建逐轮计算 KS 的 XGBoost 回调，支持与原生指标并存。"""
+        from sklearn.metrics import roc_curve
+
+        matrices = [xgb.DMatrix(eval_X, label=eval_y) for eval_X, eval_y in eval_set]
+
+        class KSEvaluationCallback(xgb.callback.TrainingCallback):
+            def after_iteration(self, model, epoch, evals_log):
+                for index, matrix in enumerate(matrices):
+                    prediction = model.predict(matrix, iteration_range=(0, epoch + 1))
+                    labels = matrix.get_label()
+                    fpr, tpr, _ = roc_curve(labels, prediction, pos_label=1)
+                    value = float(np.max(np.abs(tpr - fpr)))
+                    dataset_log = evals_log.setdefault(f"validation_{index}", {})
+                    dataset_log.setdefault("ks", []).append(value)
+                return False
+
+        return KSEvaluationCallback()
 
     def predict(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
         """预测类别标签.
@@ -413,7 +454,7 @@ class XGBoostRiskModel(BaseRiskModel):
         支持传入包含target列的数据框（scorecardpipeline风格）。
         基于 predict_proba 取阈值，确保自定义损失（原始分数输出）下也能返回正确类别。
         """
-        check_is_fitted(self, '_is_fitted')
+        self._require_fitted()
         proba = self.predict_proba(X)
         indices = np.argmax(proba, axis=1)
         return np.asarray(self.classes_)[indices]
@@ -427,7 +468,7 @@ class XGBoostRiskModel(BaseRiskModel):
         未经过链接函数转换的原始分数（raw margin，一维数组），此处自动应用
         sigmoid 转换为概率并补齐为二维 (n_samples, 2) 输出，与内置目标保持一致。
         """
-        check_is_fitted(self, '_is_fitted')
+        self._require_fitted()
         X, _, _ = self._prepare_data(X, extract_target=True)
         proba = np.asarray(self._model.predict_proba(X))
 
@@ -438,7 +479,7 @@ class XGBoostRiskModel(BaseRiskModel):
 
         return proba
 
-    def get_feature_importances(self, importance_type: str = 'gain') -> pd.Series:
+    def get_feature_importances(self, importance_type: str = "gain") -> pd.Series:
         """获取特征重要性.
 
         :param importance_type: 重要性类型，可选:
@@ -449,16 +490,14 @@ class XGBoostRiskModel(BaseRiskModel):
             - 'total_cover': 总覆盖度
         :return: 特征重要性Series
         """
-        check_is_fitted(self, '_is_fitted')
+        self._require_fitted()
 
         importances = self._model.feature_importances_
 
         # 创建Series
-        importance_series = pd.Series(
-            importances,
-            index=self.feature_names_in_,
-            name='importance'
-        ).sort_values(ascending=False)
+        importance_series = pd.Series(importances, index=self.feature_names_in_, name="importance").sort_values(
+            ascending=False
+        )
 
         self._feature_importances = importance_series
 
@@ -470,17 +509,17 @@ class XGBoostRiskModel(BaseRiskModel):
 
         直接在包装类上暴露重要性，兼容sklearn RFE/SFS等组件的 importance_getter。
         """
-        check_is_fitted(self, '_is_fitted')
+        self._require_fitted()
         if self._feature_importances is None:
             self._feature_importances = self.get_feature_importances()
         return self._feature_importances.values
 
-    def get_booster(self) -> 'xgb.Booster':
+    def get_booster(self) -> "xgb.Booster":
         """获取底层XGBoost booster对象.
 
         :return: XGBoost Booster对象
         """
-        check_is_fitted(self, '_is_fitted')
+        self._require_fitted()
         return self._model.get_booster()
 
     def plot_tree(self, num_trees: int = 0, **kwargs):
@@ -489,7 +528,7 @@ class XGBoostRiskModel(BaseRiskModel):
         :param num_trees: 树的索引
         :param kwargs: 其他绘图参数
         """
-        check_is_fitted(self, '_is_fitted')
+        self._require_fitted()
         return xgb.plot_tree(self._model, num_trees=num_trees, **kwargs)
 
     def plot_importance(self, max_num_features: int = 10, **kwargs):
@@ -498,12 +537,8 @@ class XGBoostRiskModel(BaseRiskModel):
         :param max_num_features: 显示的最大特征数
         :param kwargs: 其他绘图参数
         """
-        check_is_fitted(self, '_is_fitted')
-        return xgb.plot_importance(
-            self._model,
-            max_num_features=max_num_features,
-            **kwargs
-        )
+        self._require_fitted()
+        return xgb.plot_importance(self._model, max_num_features=max_num_features, **kwargs)
 
     def get_leaf_indices(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
         """获取叶子节点索引.
@@ -520,7 +555,7 @@ class XGBoostRiskModel(BaseRiskModel):
         >>> leaf_indices = model.get_leaf_indices(X)
         >>> print(leaf_indices.shape)
         """
-        check_is_fitted(self, '_is_fitted')
+        self._require_fitted()
         X = self._prepare_data(X)[0]
         return self._model.apply(X)
 
@@ -531,14 +566,14 @@ class XGBoostRiskModel(BaseRiskModel):
         :return: XGBoost格式的指标名称
         """
         metric_map = {
-            'auc': 'auc',
-            'logloss': 'logloss',
-            'error': 'error',
-            'rmse': 'rmse',
-            'mae': 'mae',
-            'map': 'map',
-            'merror': 'merror',
-            'mlogloss': 'mlogloss',
+            "auc": "auc",
+            "logloss": "logloss",
+            "error": "error",
+            "rmse": "rmse",
+            "mae": "mae",
+            "map": "map",
+            "merror": "merror",
+            "mlogloss": "mlogloss",
         }
 
         if isinstance(metrics, str):
@@ -551,10 +586,10 @@ class XGBoostRiskModel(BaseRiskModel):
 
         :param path: 保存路径（.json/.ubj/.bin 格式）
         """
-        check_is_fitted(self, '_is_fitted')
+        self._require_fitted()
         self._model.save_model(path)
 
-    def load_model(self, path: str) -> 'XGBoostRiskModel':
+    def load_model(self, path: str) -> "XGBoostRiskModel":
         """加载底层XGBoost模型（原生格式）.
 
         :param path: 模型路径
@@ -563,9 +598,9 @@ class XGBoostRiskModel(BaseRiskModel):
         self._model = xgb.XGBClassifier()
         self._model.load_model(path)
         self._is_fitted = True
-        self.classes_ = getattr(self, 'classes_', np.array([0, 1]))
-        if not hasattr(self, 'feature_names_in_'):
-            n_feat = self._model.n_features_in_ if hasattr(self._model, 'n_features_in_') else 0
-            self.feature_names_in_ = [f'feature_{i}' for i in range(n_feat)]
+        self.classes_ = getattr(self, "classes_", np.array([0, 1]))
+        if not hasattr(self, "feature_names_in_"):
+            n_feat = self._model.n_features_in_ if hasattr(self._model, "n_features_in_") else 0
+            self.feature_names_in_ = [f"feature_{i}" for i in range(n_feat)]
             self.n_features_in_ = n_feat
         return self

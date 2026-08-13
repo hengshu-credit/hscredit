@@ -27,17 +27,15 @@ logger = logging.getLogger(__name__)
 
 
 def _check_input_data(
-    X: Union[pd.DataFrame, np.ndarray],
-    y: Optional[Union[pd.Series, np.ndarray]] = None,
-    target: str = 'target'
+    X: Union[pd.DataFrame, np.ndarray], y: Optional[Union[pd.Series, np.ndarray]] = None, target: str = "target"
 ) -> Tuple[pd.DataFrame, Optional[pd.Series]]:
     """检查并处理输入数据.
-    
+
     支持三种模式:
     1. sklearn风格: fit(X, y) - X是特征矩阵，y是目标变量
     2. scorecardpipeline风格: fit(df) - df包含特征列和目标列
     3. 只传入X: fit(X) - 仅用于验证特征
-    
+
     :param X: 输入数据
     :param y: 目标变量（可选）
     :param target: 目标变量列名（scorecardpipeline风格使用）
@@ -49,12 +47,12 @@ def _check_input_data(
             X = pd.DataFrame(X)
         else:
             X = pd.DataFrame(X)
-    
+
     # 如果y为None且target列存在于X中，提取target
     if y is None and target in X.columns:
         y = X[target]
         X = X.drop(columns=[target])
-    
+
     return X, y
 
 
@@ -66,6 +64,7 @@ class LogicOperator(str, Enum):
     - ``AND`` = ``"and"``：与逻辑，所有子规则同时命中才算命中（取交集）
     - ``OR`` = ``"or"``：或逻辑，任一子规则命中即算命中（取并集）
     """
+
     AND = "and"
     OR = "or"
 
@@ -73,7 +72,7 @@ class LogicOperator(str, Enum):
 @dataclass
 class RuleResult:
     """规则评估结果.
-    
+
     :param rule_id: 规则标识
     :param rule_name: 规则名称
     :param expression: 规则表达式
@@ -82,6 +81,7 @@ class RuleResult:
     :param matched_count: 命中样本数
     :param details: 额外详情
     """
+
     rule_id: str
     rule_name: str
     expression: str
@@ -89,16 +89,16 @@ class RuleResult:
     matched_indices: np.ndarray = field(repr=False)
     matched_count: int
     details: Dict[str, Any] = field(default_factory=dict)
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典格式."""
         return {
-            'rule_id': self.rule_id,
-            'rule_name': self.rule_name,
-            'expression': self.expression,
-            'matched': self.matched,
-            'matched_count': self.matched_count,
-            'details': self.details
+            "rule_id": self.rule_id,
+            "rule_name": self.rule_name,
+            "expression": self.expression,
+            "matched": self.matched,
+            "matched_count": self.matched_count,
+            "details": self.details,
         }
 
 
@@ -189,10 +189,10 @@ def _execute_rule_tasks(
 
 class RuleSet(ParallelizableMixin):
     """规则集类.
-    
+
     支持规则的层次化组合，可以包含单规则或嵌套规则集。
     支持且/或逻辑操作。
-    
+
     :param name: 规则集名称，默认为"RuleSet"
     :param logic: 逻辑操作符，'and' 表示所有规则都命中才算命中，'or' 表示任一规则命中就算命中
     :param rules: 规则列表，可以是 Rule 或 RuleSet 对象
@@ -201,7 +201,7 @@ class RuleSet(ParallelizableMixin):
     :param n_jobs: 并行任务数，默认为-1
     :param parallel_backend: joblib并行后端，默认为None
     :param parallel_config: joblib扩展配置，默认为None
-    
+
     **参考样例**
 
     >>> from hscredit.core.rules import Rule
@@ -218,12 +218,12 @@ class RuleSet(ParallelizableMixin):
     >>> outer_set = RuleSet(name="外层规则集", logic="and",
     ...                     rules=[inner_set, rule2])
     """
-    
+
     def __init__(
         self,
         name: str = "RuleSet",
         logic: Union[str, LogicOperator] = LogicOperator.AND,
-        rules: Optional[List[Union[Rule, 'RuleSet']]] = None,
+        rules: Optional[List[Union[Rule, "RuleSet"]]] = None,
         weight: float = 1.0,
         description: str = "",
         n_jobs: Union[int, float] = -1,
@@ -239,39 +239,36 @@ class RuleSet(ParallelizableMixin):
         self.parallel_backend = parallel_backend
         self.parallel_config = parallel_config
         self._rule_id = self._generate_id()
-        
+
     def _generate_id(self) -> str:
         """生成规则集唯一标识."""
         import hashlib
+
         content = f"{self.name}_{self.logic}_{len(self.rules)}_{id(self)}"
         return hashlib.md5(content.encode()).hexdigest()[:8]
-    
-    def add_rule(self, rule: Union[Rule, 'RuleSet']) -> 'RuleSet':
+
+    def add_rule(self, rule: Union[Rule, "RuleSet"]) -> "RuleSet":
         """添加规则到规则集.
-        
+
         :param rule: Rule 或 RuleSet 对象
         :return: self，支持链式调用
         """
         self.rules.append(rule)
         return self
-    
-    def remove_rule(self, index: int) -> 'RuleSet':
+
+    def remove_rule(self, index: int) -> "RuleSet":
         """移除指定索引的规则.
-        
+
         :param index: 规则索引
         :return: self，支持链式调用
         """
         if 0 <= index < len(self.rules):
             self.rules.pop(index)
         return self
-    
-    def evaluate(
-        self, 
-        X: pd.DataFrame,
-        return_details: bool = True
-    ) -> Tuple[np.ndarray, List[RuleResult]]:
+
+    def evaluate(self, X: pd.DataFrame, return_details: bool = True) -> Tuple[np.ndarray, List[RuleResult]]:
         """评估规则集.
-        
+
         :param X: 输入数据
         :param return_details: 是否返回详细结果
         :return: (整体命中结果, 各规则详细结果列表)
@@ -279,12 +276,9 @@ class RuleSet(ParallelizableMixin):
         if len(self.rules) == 0:
             n_samples = len(X)
             return np.zeros(n_samples, dtype=bool), []
-        
+
         n_samples = len(X)
-        tasks = [
-            (i, self._rule_id, copy.deepcopy(rule), X)
-            for i, rule in enumerate(self.rules)
-        ]
+        tasks = [(i, self._rule_id, copy.deepcopy(rule), X) for i, rule in enumerate(self.rules)]
         evaluated = _execute_rule_tasks(
             self,
             _rule_component_worker,
@@ -298,7 +292,7 @@ class RuleSet(ParallelizableMixin):
         for rule, matches, detail in zip(self.rules, rule_matches, details):
             sub_results = detail.details.get("sub_results") if isinstance(rule, RuleSet) else None
             _commit_rule_component(rule, matches, sub_results, X.index)
-        
+
         # 根据逻辑操作符合并结果
         if self.logic == LogicOperator.AND:
             # 且逻辑：所有规则都命中才算命中
@@ -312,7 +306,7 @@ class RuleSet(ParallelizableMixin):
                 final_result = np.any(rule_matches, axis=0)
             else:
                 final_result = np.zeros(n_samples, dtype=bool)
-        
+
         return final_result, details if return_details else []
 
     def _has_parallel_children(self) -> bool:
@@ -324,16 +318,16 @@ class RuleSet(ParallelizableMixin):
                 if rule._has_parallel_children():
                     return True
         return False
-    
-    def get_all_rules(self, flatten: bool = False) -> List[Union[Rule, 'RuleSet']]:
+
+    def get_all_rules(self, flatten: bool = False) -> List[Union[Rule, "RuleSet"]]:
         """获取所有规则.
-        
+
         :param flatten: 是否扁平化返回（展开嵌套规则集）
         :return: 规则列表
         """
         if not flatten:
             return self.rules.copy()
-        
+
         # 扁平化展开
         flat_rules = []
         for rule in self.rules:
@@ -342,11 +336,11 @@ class RuleSet(ParallelizableMixin):
             else:
                 flat_rules.append(rule)
         return flat_rules
-    
+
     def __repr__(self) -> str:
         return f"RuleSet(name='{self.name}', logic='{self.logic.value}', n_rules={len(self.rules)})"
-    
-    def __and__(self, other: Union[Rule, 'RuleSet']) -> 'RuleSet':
+
+    def __and__(self, other: Union[Rule, "RuleSet"]) -> "RuleSet":
         """与另一个规则或规则集组合（且逻辑）."""
         return RuleSet(
             name=f"{self.name}_AND_{getattr(other, 'name', 'Other')}",
@@ -357,8 +351,8 @@ class RuleSet(ParallelizableMixin):
             parallel_backend=self.parallel_backend,
             parallel_config=self.parallel_config,
         )
-    
-    def __or__(self, other: Union[Rule, 'RuleSet']) -> 'RuleSet':
+
+    def __or__(self, other: Union[Rule, "RuleSet"]) -> "RuleSet":
         """与另一个规则或规则集组合（或逻辑）."""
         return RuleSet(
             name=f"{self.name}_OR_{getattr(other, 'name', 'Other')}",
@@ -459,15 +453,15 @@ class RulesClassifier(ArtifactSerializableMixin, ParallelizableMixin, BaseEstima
         ... )
         >>> clf = RulesClassifier(rules=[nested_rules, Rule("fraud_flag == 1")])
     """
-    
+
     def __init__(
         self,
         rules: Optional[Union[Rule, RuleSet, List[Union[Rule, RuleSet]]]] = None,
         logic: Union[str, LogicOperator] = LogicOperator.OR,
-        output_mode: str = 'final',
+        output_mode: str = "final",
         weights: Optional[List[float]] = None,
         threshold: float = 0.5,
-        target: str = 'target',
+        target: str = "target",
         verbose: bool = False,
         n_jobs: Union[int, float] = -1,
         parallel_backend: Optional[str] = None,
@@ -491,9 +485,9 @@ class RulesClassifier(ArtifactSerializableMixin, ParallelizableMixin, BaseEstima
         self.n_jobs = n_jobs
         self.parallel_backend = parallel_backend
         self.parallel_config = parallel_config
-        
+
         # 验证参数
-        valid_modes = ['final', 'individual', 'both', 'reason']
+        valid_modes = ["final", "individual", "both", "reason"]
         if output_mode not in valid_modes:
             raise ValueError(f"不支持的output_mode: {output_mode}，可选: {valid_modes}")
 
@@ -504,20 +498,17 @@ class RulesClassifier(ArtifactSerializableMixin, ParallelizableMixin, BaseEstima
         if isinstance(self.rules, (Rule, RuleSet)):
             return [self.rules]
         return list(self.rules)
-    
+
     def fit(
-        self, 
-        X: Union[pd.DataFrame, np.ndarray],
-        y: Optional[Union[pd.Series, np.ndarray]] = None,
-        **kwargs
-    ) -> 'RulesClassifier':
+        self, X: Union[pd.DataFrame, np.ndarray], y: Optional[Union[pd.Series, np.ndarray]] = None, **kwargs
+    ) -> "RulesClassifier":
         """拟合分类器（学习特征名）.
-        
+
         支持三种模式:
         1. sklearn风格: fit(X, y) - X是特征矩阵，y是目标变量
         2. scorecardpipeline风格: fit(df) - df包含特征列和目标列（由target参数指定）
         3. 仅验证: fit(X) - 仅验证特征，不学习y
-        
+
         :param X: 训练数据
             - sklearn风格: 特征矩阵，shape (n_samples, n_features)
             - scorecardpipeline风格: 完整数据框，包含特征列和目标列
@@ -529,18 +520,20 @@ class RulesClassifier(ArtifactSerializableMixin, ParallelizableMixin, BaseEstima
         """
         # 处理输入数据
         X, y = _check_input_data(X, y, self.target)
-        
+
         # 所有校验和派生均在局部变量完成，成功后一次提交，失败时保留旧模型。
         self._validate_rules(X)
-        classes = np.unique(y) if y is not None else np.array([0, 1])
+        observed_classes = np.unique(y) if y is not None else np.array([0, 1])
+        if y is not None and not set(observed_classes).issubset({0, 1}):
+            raise ValueError("RulesClassifier仅支持0/1二分类标签")
         weights = self._resolve_weights()
 
         self.n_features_in_ = X.shape[1]
         self.feature_names_in_ = list(X.columns)
-        self.classes_ = classes
+        self.classes_ = np.array([0, 1])
         self.weights_ = weights
         self._is_fitted = True
-        
+
         if self.verbose:
             logger.info("RulesClassifier 已拟合")
             logger.info(f"  - 特征数量: {self.n_features_in_}")
@@ -550,9 +543,9 @@ class RulesClassifier(ArtifactSerializableMixin, ParallelizableMixin, BaseEstima
             # 统计总规则数（包括嵌套）
             total_rules = self._count_total_rules()
             logger.info(f"  - 总规则数（含嵌套）: {total_rules}")
-        
+
         return self
-    
+
     def _setup_weights(self) -> None:
         """设置权重."""
         self.weights_ = self._resolve_weights()
@@ -564,46 +557,47 @@ class RulesClassifier(ArtifactSerializableMixin, ParallelizableMixin, BaseEstima
             return [1.0] * len(rules)
         if len(self.weights) != len(rules):
             raise ValueError(f"weights长度({len(self.weights)})必须等于rules数量({len(rules)})")
-        return self._validate_weight_values(self.weights)
+        validated = self._validate_weight_values(self.weights)
+        if rules and not any(weight > 0 for weight in validated):
+            raise ValidationError("至少一个规则权重必须为正数")
+        return validated
 
     @staticmethod
     def _validate_weight_values(weights: List[float]) -> List[float]:
         """校验权重均为有限实数标量并返回独立列表。"""
         validated = []
         for index, weight in enumerate(weights):
-            if (
-                isinstance(weight, (bool, np.bool_))
-                or not isinstance(weight, numbers.Real)
-                or not np.isfinite(weight)
-            ):
+            if isinstance(weight, (bool, np.bool_)) or not isinstance(weight, numbers.Real) or not np.isfinite(weight):
                 raise ValidationError(f"weights 第 {index + 1} 项必须为有限数值标量")
+            if weight < 0:
+                raise ValidationError(f"规则权重必须为非负数，weights 第 {index + 1} 项为 {weight}")
             validated.append(weight)
         return validated
-    
+
     def _auto_init(self, X: pd.DataFrame) -> None:
         """自动初始化（无需fit即可预测）.
-        
+
         :param X: 输入数据
         """
         # 存储特征信息
         self.n_features_in_ = X.shape[1]
         self.feature_names_in_ = list(X.columns)
-        
+
         # 设置默认类别
         self.classes_ = np.array([0, 1])
-        
+
         # 设置权重
         self._setup_weights()
-        
+
         self._is_fitted = True
-    
+
     def _count_total_rules(self) -> int:
         """统计总规则数（包括嵌套）."""
         count = 0
         for rule in self._rule_list():
             count += self._count_rule_recursive(rule)
         return count
-    
+
     def _count_rule_recursive(self, rule: Union[Rule, RuleSet]) -> int:
         """递归统计规则数."""
         if isinstance(rule, RuleSet):
@@ -613,16 +607,18 @@ class RulesClassifier(ArtifactSerializableMixin, ParallelizableMixin, BaseEstima
             return total
         else:
             return 1
-    
+
     def _validate_rules(self, X: pd.DataFrame) -> None:
         """验证规则的有效性.
-        
+
         :param X: 输入数据
         :raises ValueError: 当规则使用了不存在于数据中的特征时
         """
         available_cols = set(X.columns)
-        
+
         def check_rule_columns(rule: Union[Rule, RuleSet]) -> None:
+            if not isinstance(rule, (Rule, RuleSet)):
+                raise ValueError(f"rules中的元素必须是Rule或RuleSet，当前类型为{type(rule).__name__}")
             if isinstance(rule, RuleSet):
                 # 递归检查规则集中的所有规则
                 for r in rule.rules:
@@ -630,58 +626,57 @@ class RulesClassifier(ArtifactSerializableMixin, ParallelizableMixin, BaseEstima
             elif isinstance(rule, Rule):
                 # 获取规则使用的特征
                 from ...rules.rule import get_columns_from_query
+
                 used_cols = set(get_columns_from_query(rule.expr))
                 missing = used_cols - available_cols
                 if missing:
                     raise ValueError(f"规则 '{rule.expr}' 使用了不存在的特征: {missing}")
-        
+
         for rule in self._rule_list():
             check_rule_columns(rule)
-    
-    def get_feature_importances(self, importance_type: str = 'frequency') -> pd.Series:
+
+    def get_feature_importances(self, importance_type: str = "frequency") -> pd.Series:
         """获取特征重要性（基于规则使用频率）.
-        
+
         规则分类器通过统计特征在规则中的使用频率来计算重要性。
-        
+
         :param importance_type: 重要性类型，默认'frequency'
             - 'frequency': 特征在规则中出现的次数
             - 'weighted': 考虑规则权重的加权频率
         :return: 特征重要性Series
         """
-        if not hasattr(self, '_is_fitted') or not self._is_fitted:
+        if not hasattr(self, "_is_fitted") or not self._is_fitted:
             raise NotFittedError("规则分类器尚未拟合，请先调用fit方法")
 
-        if not hasattr(self, 'feature_names_in_') or self.feature_names_in_ is None:
+        if not hasattr(self, "feature_names_in_") or self.feature_names_in_ is None:
             raise ValueError("未获取特征名称")
-        
+
         # 统计特征使用频率
         feature_counts = {name: 0 for name in self.feature_names_in_}
-        
+
         def count_features(rule: Union[Rule, RuleSet], weight: float = 1.0) -> None:
             if isinstance(rule, RuleSet):
                 for r in rule.rules:
                     count_features(r, weight * rule.weight)
             elif isinstance(rule, Rule):
                 from ...rules.rule import get_columns_from_query
+
                 used_cols = get_columns_from_query(rule.expr)
                 for col in used_cols:
                     if col in feature_counts:
-                        if importance_type == 'frequency':
+                        if importance_type == "frequency":
                             feature_counts[col] += 1
-                        elif importance_type == 'weighted':
+                        elif importance_type == "weighted":
                             feature_counts[col] += weight
-        
+
         for rule in self._rule_list():
             count_features(rule)
-        
+
         # 创建Series
-        importance_series = pd.Series(
-            feature_counts,
-            name='importance'
-        ).sort_values(ascending=False)
-        
+        importance_series = pd.Series(feature_counts, name="importance").sort_values(ascending=False)
+
         self._feature_importances = importance_series
-        
+
         return importance_series
 
     def _prediction_state(self, X: pd.DataFrame) -> Tuple[List[float], bool]:
@@ -691,6 +686,27 @@ class RulesClassifier(ArtifactSerializableMixin, ParallelizableMixin, BaseEstima
             self._validate_rules(X)
             return self._resolve_weights(), True
         return self._validate_weight_values(self.weights_), False
+
+    def _prepare_prediction_input(self, X: Union[pd.DataFrame, np.ndarray]) -> pd.DataFrame:
+        """按训练字段契约整理预测输入，忽略额外字段。"""
+        fitted = bool(getattr(self, "_is_fitted", False))
+        expected = list(getattr(self, "feature_names_in_", []))
+        if isinstance(X, pd.DataFrame):
+            if fitted:
+                missing = [column for column in expected if column not in X.columns]
+                if missing:
+                    raise ValueError(f"输入数据缺少训练字段: {missing}")
+                return X.loc[:, expected]
+            return X
+
+        values = np.asarray(X)
+        if values.ndim != 2:
+            raise ValueError(f"输入特征必须是二维数组，当前维度为{values.ndim}")
+        if fitted:
+            if values.shape[1] != len(expected):
+                raise ValueError(f"输入特征数量不匹配：训练时为{len(expected)}，当前为{values.shape[1]}")
+            return pd.DataFrame(values, columns=expected)
+        return pd.DataFrame(values)
 
     def _commit_auto_state(self, X: pd.DataFrame, weights: List[float]) -> None:
         """在首次预测全部成功后一次提交自动初始化状态。"""
@@ -722,10 +738,7 @@ class RulesClassifier(ArtifactSerializableMixin, ParallelizableMixin, BaseEstima
             task_labels=[getattr(rule, "name", None) or f"Rule_{i}" for i, rule in valid],
             has_parallel_children=self._has_parallel_rule_children(),
         )
-        return [
-            (i, rule, matches, detail)
-            for (i, rule), (matches, detail) in zip(valid, evaluated)
-        ]
+        return [(i, rule, matches, detail) for (i, rule), (matches, detail) in zip(valid, evaluated)]
 
     @staticmethod
     def _commit_evaluated_rules(
@@ -736,16 +749,14 @@ class RulesClassifier(ArtifactSerializableMixin, ParallelizableMixin, BaseEstima
         for _, rule, matches, detail in evaluated:
             sub_results = detail.details.get("sub_results") if isinstance(rule, RuleSet) else None
             _commit_rule_component(rule, matches, sub_results, X.index)
-    
+
     def predict(
-        self, 
-        X: Union[pd.DataFrame, np.ndarray],
-        return_reason: bool = False
+        self, X: Union[pd.DataFrame, np.ndarray], return_reason: bool = False
     ) -> Union[np.ndarray, pd.DataFrame, Tuple]:
         """预测.
-        
+
         无需fit即可直接预测。
-        
+
         :param X: 输入数据
         :param return_reason: 是否返回命中原因，当output_mode='reason'时自动为True
         :return: 根据output_mode返回不同格式的结果
@@ -754,40 +765,39 @@ class RulesClassifier(ArtifactSerializableMixin, ParallelizableMixin, BaseEstima
             - 'both': tuple，(最终结果, 单规则结果)
             - 'reason': tuple，(最终结果, 命中原因列表)
         """
-        # 转换输入数据
-        if not isinstance(X, pd.DataFrame):
-            if isinstance(X, np.ndarray):
-                X = pd.DataFrame(X)
-            else:
-                X = pd.DataFrame(X)
-        
+        X = self._prepare_prediction_input(X)
+
         weights, auto_initialize = self._prediction_state(X)
         final_results = []
         individual_results = {}
         all_rule_results = []
         evaluated = self._evaluate_rules(X)
         for i, rule, matches, detail in evaluated:
-            rule_name = getattr(rule, 'name', None) or f"Rule_{i}"
+            rule_name = getattr(rule, "name", None) or f"Rule_{i}"
             if isinstance(rule, RuleSet):
                 final_results.append(matches * weights[i])
                 individual_results[rule_name] = matches
-                all_rule_results.append({
-                    'name': rule_name,
-                    'type': 'ruleset',
-                    'matches': matches,
-                    'details': detail.details.get('sub_results', []),
-                    'weight': weights[i]
-                })
+                all_rule_results.append(
+                    {
+                        "name": rule_name,
+                        "type": "ruleset",
+                        "matches": matches,
+                        "details": detail.details.get("sub_results", []),
+                        "weight": weights[i],
+                    }
+                )
             elif isinstance(rule, Rule):
                 final_results.append(matches * weights[i])
                 individual_results[rule_name] = matches
-                all_rule_results.append({
-                    'name': rule_name,
-                    'type': 'rule',
-                    'expression': rule.expr,
-                    'matches': matches,
-                    'weight': weights[i]
-                })
+                all_rule_results.append(
+                    {
+                        "name": rule_name,
+                        "type": "rule",
+                        "expression": rule.expr,
+                        "matches": matches,
+                        "weight": weights[i],
+                    }
+                )
 
         # 根据最外层逻辑操作符合并结果
         if len(final_results) == 0:
@@ -805,20 +815,17 @@ class RulesClassifier(ArtifactSerializableMixin, ParallelizableMixin, BaseEstima
                 final_result = (prob >= self.threshold).astype(int)
             else:
                 final_result = np.zeros(len(X), dtype=int)
-        
+
         # 根据输出模式返回结果
-        if self.output_mode == 'final':
+        if self.output_mode == "final":
             output = final_result
-        elif self.output_mode == 'individual':
+        elif self.output_mode == "individual":
             output = pd.DataFrame(individual_results)
-        elif self.output_mode == 'both':
+        elif self.output_mode == "both":
             output = (final_result, pd.DataFrame(individual_results))
-        elif self.output_mode == 'reason':
+        elif self.output_mode == "reason":
             reasons = self._generate_reasons(X, all_rule_results, final_result)
-            if return_reason:
-                output = (final_result, reasons)
-            else:
-                output = final_result
+            output = (final_result, reasons)
         else:
             output = final_result
 
@@ -826,15 +833,10 @@ class RulesClassifier(ArtifactSerializableMixin, ParallelizableMixin, BaseEstima
         if auto_initialize:
             self._commit_auto_state(X, weights)
         return output
-    
-    def _generate_reasons(
-        self, 
-        X: pd.DataFrame, 
-        rule_results: List[Dict],
-        final_result: np.ndarray
-    ) -> List[List[str]]:
+
+    def _generate_reasons(self, X: pd.DataFrame, rule_results: List[Dict], final_result: np.ndarray) -> List[List[str]]:
         """生成每条样本的命中原因.
-        
+
         :param X: 输入数据
         :param rule_results: 规则评估结果
         :param final_result: 最终结果
@@ -842,60 +844,55 @@ class RulesClassifier(ArtifactSerializableMixin, ParallelizableMixin, BaseEstima
         """
         n_samples = len(X)
         sample_reasons = [[] for _ in range(n_samples)]
-        
+
         def collect_reasons(rule_info: Dict, depth: int = 0) -> None:
             """递归收集命中原因."""
-            matches = rule_info['matches']
-            rule_name = rule_info['name']
+            matches = rule_info["matches"]
+            rule_name = rule_info["name"]
             indent = "  " * depth
-            
-            if rule_info['type'] == 'rule':
-                expr = rule_info.get('expression', '')
+
+            if rule_info["type"] == "rule":
+                expr = rule_info.get("expression", "")
                 for idx in np.where(matches)[0]:
                     sample_reasons[idx].append(f"{indent}命中规则 '{rule_name}': {expr}")
             else:
                 # 规则集
                 for idx in np.where(matches)[0]:
                     sample_reasons[idx].append(f"{indent}命中规则集 '{rule_name}'")
-                
+
                 # 递归收集子规则的原因
-                details = rule_info.get('details', [])
+                details = rule_info.get("details", [])
                 for detail in details:
-                    if 'sub_results' in detail.details:
-                        for sub in detail.details['sub_results']:
+                    if "sub_results" in detail.details:
+                        for sub in detail.details["sub_results"]:
                             # 转换回字典格式
                             sub_dict = {
-                                'name': sub.rule_name,
-                                'type': sub.details.get('type', 'rule'),
-                                'expression': sub.expression,
-                                'matches': np.zeros(n_samples, dtype=bool),
-                                'details': sub.details
+                                "name": sub.rule_name,
+                                "type": sub.details.get("type", "rule"),
+                                "expression": sub.expression,
+                                "matches": np.zeros(n_samples, dtype=bool),
+                                "details": sub.details,
                             }
                             # 填充matches
                             for matched_idx in sub.matched_indices:
-                                sub_dict['matches'][matched_idx] = True
+                                sub_dict["matches"][matched_idx] = True
                             collect_reasons(sub_dict, depth + 1)
-        
+
         for rule_info in rule_results:
             collect_reasons(rule_info)
-        
+
         return sample_reasons
-    
+
     def predict_proba(self, X: Union[pd.DataFrame, np.ndarray]) -> np.ndarray:
         """预测概率.
-        
+
         无需fit即可直接预测概率。
-        
+
         :param X: 输入数据
         :return: 概率数组，shape (n_samples, 2)
         """
-        # 转换输入数据
-        if not isinstance(X, pd.DataFrame):
-            if isinstance(X, np.ndarray):
-                X = pd.DataFrame(X)
-            else:
-                X = pd.DataFrame(X)
-        
+        X = self._prepare_prediction_input(X)
+
         weights, auto_initialize = self._prediction_state(X)
         evaluated = self._evaluate_rules(X)
         results = [matches * weights[i] for i, _, matches, _ in evaluated]
@@ -923,47 +920,51 @@ class RulesClassifier(ArtifactSerializableMixin, ParallelizableMixin, BaseEstima
         if auto_initialize:
             self._commit_auto_state(X, weights)
         return proba
-    
+
     def get_rule_summary(self) -> pd.DataFrame:
         """获取规则摘要.
-        
+
         :return: 规则摘要DataFrame
         """
         rows = []
-        
+
         def process_rule(rule: Union[Rule, RuleSet], depth: int = 0) -> None:
             indent = "  " * depth
             if isinstance(rule, RuleSet):
-                rows.append({
-                    '层级': depth,
-                    '类型': '规则集',
-                    '名称': indent + rule.name,
-                    '逻辑': rule.logic.value,
-                    '表达式': '-',
-                    '权重': rule.weight,
-                    '描述': rule.description
-                })
+                rows.append(
+                    {
+                        "层级": depth,
+                        "类型": "规则集",
+                        "名称": indent + rule.name,
+                        "逻辑": rule.logic.value,
+                        "表达式": "-",
+                        "权重": rule.weight,
+                        "描述": rule.description,
+                    }
+                )
                 for r in rule.rules:
                     process_rule(r, depth + 1)
             elif isinstance(rule, Rule):
-                rows.append({
-                    '层级': depth,
-                    '类型': '单规则',
-                    '名称': indent + (getattr(rule, 'name', None) or '-'),
-                    '逻辑': '-',
-                    '表达式': rule.expr,
-                    '权重': getattr(rule, 'weight', 1.0),
-                    '描述': getattr(rule, 'description', '')
-                })
-        
+                rows.append(
+                    {
+                        "层级": depth,
+                        "类型": "单规则",
+                        "名称": indent + (getattr(rule, "name", None) or "-"),
+                        "逻辑": "-",
+                        "表达式": rule.expr,
+                        "权重": getattr(rule, "weight", 1.0),
+                        "描述": getattr(rule, "description", ""),
+                    }
+                )
+
         for i, rule in enumerate(self._rule_list()):
             process_rule(rule)
-        
+
         return pd.DataFrame(rows)
-    
-    def add_rule(self, rule: Union[Rule, RuleSet]) -> 'RulesClassifier':
+
+    def add_rule(self, rule: Union[Rule, RuleSet]) -> "RulesClassifier":
         """添加规则（拟合前使用）.
-        
+
         :param rule: Rule 或 RuleSet 对象
         :return: self，支持链式调用
         """
@@ -974,23 +975,22 @@ class RulesClassifier(ArtifactSerializableMixin, ParallelizableMixin, BaseEstima
         else:
             self.rules.append(rule)
         return self
-    
+
     def __repr__(self) -> str:
-        return (f"RulesClassifier(n_rules={len(self._rule_list())}, "
-                f"logic='{self.logic.value}', output_mode='{self.output_mode}')")
+        return (
+            f"RulesClassifier(n_rules={len(self._rule_list())}, "
+            f"logic='{self.logic.value}', output_mode='{self.output_mode}')"
+        )
 
 
 # =============================================================================
 # 便捷函数
 # =============================================================================
 
-def create_and_ruleset(
-    rules: List[Union[Rule, RuleSet]],
-    name: str = "AND_RuleSet",
-    description: str = ""
-) -> RuleSet:
+
+def create_and_ruleset(rules: List[Union[Rule, RuleSet]], name: str = "AND_RuleSet", description: str = "") -> RuleSet:
     """创建且逻辑规则集.
-    
+
     :param rules: 规则列表
     :param name: 规则集名称
     :param description: 规则集描述
@@ -999,13 +999,9 @@ def create_and_ruleset(
     return RuleSet(name=name, logic=LogicOperator.AND, rules=rules, description=description)
 
 
-def create_or_ruleset(
-    rules: List[Union[Rule, RuleSet]],
-    name: str = "OR_RuleSet",
-    description: str = ""
-) -> RuleSet:
+def create_or_ruleset(rules: List[Union[Rule, RuleSet]], name: str = "OR_RuleSet", description: str = "") -> RuleSet:
     """创建或逻辑规则集.
-    
+
     :param rules: 规则列表
     :param name: 规则集名称
     :param description: 规则集描述
@@ -1015,19 +1011,16 @@ def create_or_ruleset(
 
 
 def combine_rules(
-    *rules: Union[Rule, RuleSet],
-    logic: str = 'or',
-    name: str = "Combined",
-    description: str = ""
+    *rules: Union[Rule, RuleSet], logic: str = "or", name: str = "Combined", description: str = ""
 ) -> RuleSet:
     """组合多个规则为规则集.
-    
+
     :param rules: 多个规则或规则集
     :param logic: 逻辑操作符，'and' 或 'or'
     :param name: 规则集名称
     :param description: 规则集描述
     :return: RuleSet对象
-    
+
     **参考样例**
 
     >>> from hscredit.core.rules import Rule

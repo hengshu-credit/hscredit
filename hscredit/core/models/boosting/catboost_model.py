@@ -17,10 +17,10 @@ pip install catboost
 >>> proba = model.predict_proba(X_test)
 """
 
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 import numpy as np
 import pandas as pd
-from sklearn.utils.validation import check_is_fitted
+from sklearn.metrics import roc_curve
 
 try:
     import catboost as cb
@@ -46,6 +46,31 @@ def _get_catboost_version():
 CATBOOST_VERSION = _get_catboost_version()
 
 from ..base import BaseRiskModel
+
+
+class CatBoostKSMetric:
+    """CatBoost Python 自定义 KS 指标。"""
+
+    def is_max_optimal(self):
+        return True
+
+    def evaluate(self, approxes, target, weight):
+        raw_prediction = np.asarray(approxes[0], dtype=float)
+        probability = 1.0 / (1.0 + np.exp(-raw_prediction))
+        target = np.asarray(target)
+        if np.unique(target).size < 2:
+            return 0.0, 1.0
+        sample_weight = None if weight is None or len(weight) == 0 else np.asarray(weight)
+        fpr, tpr, _ = roc_curve(
+            target,
+            probability,
+            pos_label=1,
+            sample_weight=sample_weight,
+        )
+        return float(np.max(np.abs(tpr - fpr))), 1.0
+
+    def get_final_error(self, error, weight):
+        return error / weight
 
 
 class CatBoostRiskModel(BaseRiskModel):
@@ -164,7 +189,17 @@ class CatBoostRiskModel(BaseRiskModel):
         objective = self._native_params.get("loss_function", objective)
         random_state = self._native_params.get("random_seed", random_state)
 
-        super().__init__(objective=objective, eval_metric=eval_metric, early_stopping_rounds=early_stopping_rounds, validation_fraction=validation_fraction, random_state=random_state, n_jobs=n_jobs, verbose=verbose, scorecard_params=scorecard_params, **kwargs)
+        super().__init__(
+            objective=objective,
+            eval_metric=eval_metric,
+            early_stopping_rounds=early_stopping_rounds,
+            validation_fraction=validation_fraction,
+            random_state=random_state,
+            n_jobs=n_jobs,
+            verbose=verbose,
+            scorecard_params=scorecard_params,
+            **kwargs,
+        )
 
         # CatBoost特有参数
         self.depth = depth
@@ -181,7 +216,15 @@ class CatBoostRiskModel(BaseRiskModel):
         # 早停相关参数
         self.early_stopping_metric = early_stopping_metric
 
-    def fit(self, X: Union[np.ndarray, pd.DataFrame], y: Optional[Union[np.ndarray, pd.Series]] = None, sample_weight: Optional[np.ndarray] = None, eval_set: Optional[List[Tuple]] = None, cat_features: Optional[List[int]] = None, **fit_params) -> "CatBoostRiskModel":
+    def fit(
+        self,
+        X: Union[np.ndarray, pd.DataFrame],
+        y: Optional[Union[np.ndarray, pd.Series]] = None,
+        sample_weight: Optional[np.ndarray] = None,
+        eval_set: Optional[List[Tuple]] = None,
+        cat_features: Optional[List[int]] = None,
+        **fit_params,
+    ) -> "CatBoostRiskModel":
         """训练CatBoost模型.
 
         支持两种调用方式:
@@ -202,7 +245,7 @@ class CatBoostRiskModel(BaseRiskModel):
             cat_features = [cols.index(c) if isinstance(c, str) else int(c) for c in cat_features]
 
         # 准备数据（支持从X中提取target）
-        X, y, sample_weight = self._prepare_data(X, y, sample_weight, extract_target=True)
+        X, y, sample_weight = self._prepare_data(X, y, sample_weight, extract_target=True, training=True)
         self._fit_probability_scorecard(y)
 
         # 保存特征信息
@@ -210,9 +253,10 @@ class CatBoostRiskModel(BaseRiskModel):
         self.classes_ = np.unique(y)
 
         # 创建验证集
-        if eval_set is None and self.validation_fraction > 0:
+        auto_eval_split = eval_set is None and self.validation_fraction > 0 and self.early_stopping_rounds is not None
+        sw_val = None
+        if auto_eval_split:
             X_train, X_val, y_train, y_val, sw_train, sw_val = self._create_eval_set(X, y, sample_weight)
-            eval_set = [(X_val, y_val)]
             sample_weight = sw_train
         else:
             X_train, y_train = X, y
@@ -236,10 +280,23 @@ class CatBoostRiskModel(BaseRiskModel):
         }
 
         # 处理评估指标
+        requested_metrics = []
         if self.eval_metric is not None:
-            # 转换评估指标格式
-            eval_metric_converted = self._convert_metrics(self.eval_metric)
-            params["eval_metric"] = eval_metric_converted
+            requested_metrics = [self.eval_metric] if isinstance(self.eval_metric, str) else list(self.eval_metric)
+            wants_ks = any(str(metric).lower() == "ks" for metric in requested_metrics)
+            if wants_ks:
+                params["eval_metric"] = CatBoostKSMetric()
+                native_metrics = [
+                    self._convert_metrics(metric) for metric in requested_metrics if str(metric).lower() != "ks"
+                ]
+                if native_metrics:
+                    params["custom_metric"] = native_metrics
+            else:
+                # CatBoost 只允许一个主评估指标，其余指标放入 custom_metric。
+                converted = [self._convert_metrics(metric) for metric in requested_metrics]
+                params["eval_metric"] = converted[0]
+                if len(converted) > 1:
+                    params["custom_metric"] = converted[1:]
 
         # 处理早停 - CatBoost仍支持early_stopping_rounds参数
         if self.early_stopping_rounds is not None:
@@ -247,9 +304,16 @@ class CatBoostRiskModel(BaseRiskModel):
 
             # 如果指定了专门的早停指标，覆盖eval_metric
             if self.early_stopping_metric is not None:
-                params["eval_metric"] = self.early_stopping_metric
+                if str(self.early_stopping_metric).lower() == "ks":
+                    params["eval_metric"] = CatBoostKSMetric()
+                else:
+                    params["eval_metric"] = self._convert_metrics(self.early_stopping_metric)
             # 如果有多个评估指标且没有指定早停指标，使用第一个
-            elif isinstance(self.eval_metric, list) and len(self.eval_metric) > 0:
+            elif (
+                isinstance(self.eval_metric, list)
+                and len(self.eval_metric) > 0
+                and not any(str(metric).lower() == "ks" for metric in self.eval_metric)
+            ):
                 params["eval_metric"] = self._convert_metrics(self.eval_metric[0])
 
         # 更新kwargs参数
@@ -273,7 +337,19 @@ class CatBoostRiskModel(BaseRiskModel):
         self._model = cb.CatBoostClassifier(**params)
 
         # 准备训练参数
-        fit_kwargs = {}
+        fit_kwargs = dict(fit_params)
+        if auto_eval_split:
+            validation_pool_kwargs = {}
+            if "baseline" in fit_kwargs:
+                train_baseline, val_baseline = self._split_row_aligned_value(fit_kwargs["baseline"])
+                fit_kwargs["baseline"] = train_baseline
+                if val_baseline is not None:
+                    validation_pool_kwargs["baseline"] = val_baseline
+            if sw_val is not None:
+                validation_pool_kwargs["weight"] = sw_val
+            if cat_features is not None:
+                validation_pool_kwargs["cat_features"] = cat_features
+            eval_set = cb.Pool(X_val, y_val, **validation_pool_kwargs)
         if eval_set:
             fit_kwargs["eval_set"] = eval_set
         if sample_weight is not None:
@@ -288,6 +364,13 @@ class CatBoostRiskModel(BaseRiskModel):
         self._best_iteration = self._model.get_best_iteration()
         self._best_score = self._model.get_best_score()
         self._evals_result = self._model.get_evals_result()
+        for dataset_metrics in self._evals_result.values():
+            if "CatBoostKSMetric" in dataset_metrics:
+                dataset_metrics["ks"] = dataset_metrics.pop("CatBoostKSMetric")
+        if isinstance(self._best_score, dict):
+            for dataset_metrics in self._best_score.values():
+                if isinstance(dataset_metrics, dict) and "CatBoostKSMetric" in dataset_metrics:
+                    dataset_metrics["ks"] = dataset_metrics.pop("CatBoostKSMetric")
         self._is_fitted = True
 
         return self
@@ -315,7 +398,7 @@ class CatBoostRiskModel(BaseRiskModel):
 
         基于 predict_proba 取阈值，确保自定义损失（原始分数输出）下也能返回正确类别。
         """
-        check_is_fitted(self, "_is_fitted")
+        self._require_fitted()
         proba = self.predict_proba(X)
         indices = np.argmax(proba, axis=1)
         return np.asarray(self.classes_)[indices]
@@ -327,7 +410,7 @@ class CatBoostRiskModel(BaseRiskModel):
         未经过链接函数转换的原始分数（raw margin，一维数组），此处自动应用
         sigmoid 转换为概率并补齐为二维 (n_samples, 2) 输出，与内置目标保持一致。
         """
-        check_is_fitted(self, "_is_fitted")
+        self._require_fitted()
         X = self._prepare_data(X)[0]
         proba = np.asarray(self._model.predict_proba(X))
 
@@ -347,12 +430,14 @@ class CatBoostRiskModel(BaseRiskModel):
             - 'FeatureImportance': 分裂次数
         :return: 特征重要性Series
         """
-        check_is_fitted(self, "_is_fitted")
+        self._require_fitted()
 
         importances = self._model.get_feature_importance(type=importance_type)
 
         # 创建Series
-        importance_series = pd.Series(importances, index=self.feature_names_in_, name="importance").sort_values(ascending=False)
+        importance_series = pd.Series(importances, index=self.feature_names_in_, name="importance").sort_values(
+            ascending=False
+        )
 
         self._feature_importances = importance_series
 
@@ -364,7 +449,7 @@ class CatBoostRiskModel(BaseRiskModel):
 
         直接在包装类上暴露重要性，兼容sklearn RFE/SFS等组件的 importance_getter。
         """
-        check_is_fitted(self, "_is_fitted")
+        self._require_fitted()
         if self._feature_importances is None:
             self._feature_importances = self.get_feature_importances()
         return self._feature_importances.values
@@ -375,7 +460,7 @@ class CatBoostRiskModel(BaseRiskModel):
         :param tree_index: 树的索引
         :param kwargs: 其他绘图参数
         """
-        check_is_fitted(self, "_is_fitted")
+        self._require_fitted()
         return self._model.plot_tree(tree_idx=tree_index, **kwargs)
 
     def get_leaf_indices(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
@@ -393,7 +478,7 @@ class CatBoostRiskModel(BaseRiskModel):
         >>> leaf_indices = model.get_leaf_indices(X)
         >>> print(leaf_indices.shape)
         """
-        check_is_fitted(self, "_is_fitted")
+        self._require_fitted()
         X = self._prepare_data(X)[0]
         return self._model.calc_leaf_indexes(X)
 
@@ -402,7 +487,7 @@ class CatBoostRiskModel(BaseRiskModel):
 
         :param path: 保存路径（.cbm/.json 格式）
         """
-        check_is_fitted(self, "_is_fitted")
+        self._require_fitted()
         self._model.save_model(path)
 
     def load_model(self, path: str) -> "CatBoostRiskModel":

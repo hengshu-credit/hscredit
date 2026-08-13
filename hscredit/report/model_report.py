@@ -2860,6 +2860,9 @@ class ModelReport:
                 sheet_name=ws,
                 start_row=features_summary_start_row,
                 right_cols=[0],
+                condition_color='F76E6C',
+                percent_cols=['缺失率', 'KS', 'PSI', '众数占比', '零值率', '负值率', '重复率'],
+                condition_cols=['IV', 'KS'],
             )
             feature_name_col = 2 + features_summary.columns.get_loc("特征名")
             features_summary_rows = {str(feat): features_summary_start_row + features_summary.columns.nlevels + position for position, feat in enumerate(features_summary["特征名"])}

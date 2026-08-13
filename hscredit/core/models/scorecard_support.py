@@ -57,6 +57,33 @@ class _ProbabilityScoreCardMixin:
             **config,
         ).fit(proba=np.asarray([self.bad_rate_], dtype=float))
 
+    def _probability_scorecard_state(self) -> Dict[str, Any]:
+        """返回原生模型序列化时需要保留的评分刻度状态。"""
+        if not hasattr(self, "scorecard_"):
+            raise NotFittedError("模型评分卡尚未拟合，无法保存完整模型")
+        return {
+            "bad_rate": float(self.bad_rate_),
+            "base_odds": float(self.base_odds_),
+            "scorecard_params": dict(self.scorecard_params or {}),
+        }
+
+    def _restore_probability_scorecard(self, state: Dict[str, Any]) -> None:
+        """从原生模型元数据恢复概率评分卡。"""
+        if not isinstance(state, dict) or "bad_rate" not in state or "base_odds" not in state:
+            raise ValueError("JSON模型元数据缺少概率评分卡状态，无法完整恢复模型")
+
+        self._initialize_scorecard_params(state.get("scorecard_params"))
+        self.bad_rate_ = float(state["bad_rate"])
+        self.base_odds_ = float(state["base_odds"])
+
+        from .scorecard.model_scorecard import ProbabilityScoreCard
+
+        self.scorecard_ = ProbabilityScoreCard(
+            model=None,
+            base_odds=self.base_odds_,
+            **dict(self.scorecard_config_),
+        ).fit(proba=np.asarray([self.bad_rate_], dtype=float))
+
     def _predict_probability_score(self, X: Any) -> np.ndarray:
         """把模型正类概率转换为已拟合的标准风险评分。"""
         if not hasattr(self, "scorecard_"):

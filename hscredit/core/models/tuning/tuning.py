@@ -72,6 +72,7 @@ pip install optuna
     >>> results = tuner.evaluate_trials(df, trial_points=trial_points)
 """
 
+import copy
 import inspect
 import logging
 import warnings
@@ -79,10 +80,9 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, TYPE_CHECKING,
 import numpy as np
 import pandas as pd
 from ....utils.parallel import resolve_n_jobs
-from sklearn.model_selection import ParameterGrid, cross_val_score, StratifiedKFold
+from sklearn.base import clone
+from sklearn.model_selection import ParameterGrid, StratifiedKFold
 from sklearn.metrics import get_scorer, roc_auc_score, roc_curve
-
-from sklearn.utils.validation import check_is_fitted
 
 logger = logging.getLogger(__name__)
 
@@ -143,7 +143,12 @@ def _normalize_space_param(name: str, spec: Any) -> Dict[str, Any]:
 
     # 2. scipy 冻结分布（sklearn RandomizedSearchCV 风格）
     # 鸭子类型识别 rv_frozen（rv_frozen 基类在 scipy 各版本中的暴露路径不稳定）
-    if hasattr(spec, "dist") and hasattr(spec, "args") and callable(getattr(spec, "rvs", None)) and getattr(getattr(spec, "dist", None), "name", None) is not None:
+    if (
+        hasattr(spec, "dist")
+        and hasattr(spec, "args")
+        and callable(getattr(spec, "rvs", None))
+        and getattr(getattr(spec, "dist", None), "name", None) is not None
+    ):
         return _space_param_from_scipy(name, spec)
 
     # 3. tuple：bayesian-optimization / skopt 简写
@@ -160,7 +165,11 @@ def _normalize_space_param(name: str, spec: Any) -> Dict[str, Any]:
     if isinstance(spec, dict):
         return _space_param_from_dict(name, spec)
 
-    raise ValueError(f"参数 {name!r} 的搜索空间定义无法识别: {spec!r}。" "支持 dict（optuna/hyperopt 风格）、tuple（bayesian-optimization/skopt 风格）、" "list（categorical 简写）、scipy.stats 分布或 optuna.distributions 分布对象")
+    raise ValueError(
+        f"参数 {name!r} 的搜索空间定义无法识别: {spec!r}。"
+        "支持 dict（optuna/hyperopt 风格）、tuple（bayesian-optimization/skopt 风格）、"
+        "list（categorical 简写）、scipy.stats 分布或 optuna.distributions 分布对象"
+    )
 
 
 def _space_param_from_dict(name: str, spec: Dict[str, Any]) -> Dict[str, Any]:
@@ -249,7 +258,12 @@ def _space_param_from_dict(name: str, spec: Dict[str, Any]) -> Dict[str, Any]:
             result["log"] = True
         return result
 
-    raise ValueError(f"参数 {name!r} 的搜索空间类型未知: {param_type!r}，" "可选: 'int'/'float'/'categorical'（optuna 风格）或 " "'uniform'/'loguniform'/'quniform'/'randint'/'choice'（hyperopt 风格）或 " "'normal'/'qnormal'/'lognormal'/'qlognormal'（hyperopt 正态族）")
+    raise ValueError(
+        f"参数 {name!r} 的搜索空间类型未知: {param_type!r}，"
+        "可选: 'int'/'float'/'categorical'（optuna 风格）或 "
+        "'uniform'/'loguniform'/'quniform'/'randint'/'choice'（hyperopt 风格）或 "
+        "'normal'/'qnormal'/'lognormal'/'qlognormal'（hyperopt 正态族）"
+    )
 
 
 def _space_param_from_tuple(name: str, spec: tuple) -> Dict[str, Any]:
@@ -259,7 +273,12 @@ def _space_param_from_tuple(name: str, spec: tuple) -> Dict[str, Any]:
         if low > high:
             raise ValueError(f"参数 {name!r} 的下界({low})不能大于上界({high})")
         # 两端均为整数（排除 bool）时视为整数参数，否则为浮点参数
-        if isinstance(low, (int, np.integer)) and isinstance(high, (int, np.integer)) and not isinstance(low, bool) and not isinstance(high, bool):
+        if (
+            isinstance(low, (int, np.integer))
+            and isinstance(high, (int, np.integer))
+            and not isinstance(low, bool)
+            and not isinstance(high, bool)
+        ):
             return {"type": "int", "low": int(low), "high": int(high)}
         return {"type": "float", "low": float(low), "high": float(high)}
     if len(spec) == 3:
@@ -355,7 +374,12 @@ def _check_bounds(name: str, spec: Dict[str, Any], integer: bool) -> None:
     if low > high:
         raise ValueError(f"参数 {name!r} 的下界({low})不能大于上界({high})")
     if integer:
-        if isinstance(low, bool) or isinstance(high, bool) or not isinstance(low, (int, np.integer)) or not isinstance(high, (int, np.integer)):
+        if (
+            isinstance(low, bool)
+            or isinstance(high, bool)
+            or not isinstance(low, (int, np.integer))
+            or not isinstance(high, (int, np.integer))
+        ):
             raise ValueError(f"参数 {name!r} 的 int 类型要求整数边界: {spec!r}")
 
 
@@ -391,7 +415,7 @@ def _legacy_normalize_search_space(search_space: Optional[Dict[str, Any]]) -> Op
 
 # 新适配器覆盖上方保留的旧解析实现；旧私有函数暂留用于兼容可能存在的内部导入，
 # 所有公开入口与 ModelTuner 从这里开始统一走同一套格式、校验和采样语义。
-from .space_adapter import SearchSpaceAdapter, normalize_search_space  # noqa: E402
+from .space_adapter import SearchSpaceAdapter, normalize_search_space  # noqa: E402, F401
 
 
 class TuningSampler:
@@ -511,7 +535,9 @@ class TuningSampler:
             try:
                 import optunahub
             except ImportError:
-                raise ImportError(f"使用 '{sampler}' 采样器需要 optunahub，请使用 " f"pip install optunahub 安装（或 pip install hscredit[tune]）")
+                raise ImportError(
+                    f"使用 '{sampler}' 采样器需要 optunahub，请使用 " f"pip install optunahub 安装（或 pip install hscredit[tune]）"
+                )
             package, class_name = cls.OPTUNAHUB_SAMPLERS[key]
             module = optunahub.load_module(package)
             sampler_cls = getattr(module, class_name, None)
@@ -540,7 +566,9 @@ def _calc_ks(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     return abs(tpr - fpr).max()
 
 
-def _calc_ks_with_diff(y_train: np.ndarray, y_train_pred: np.ndarray, y_val: np.ndarray, y_val_pred: np.ndarray) -> Tuple[float, float]:
+def _calc_ks_with_diff(
+    y_train: np.ndarray, y_train_pred: np.ndarray, y_val: np.ndarray, y_val_pred: np.ndarray
+) -> Tuple[float, float]:
     """计算KS及训练/验证差异.
 
     :return: (验证集KS, KS差异)
@@ -916,7 +944,13 @@ class Metric:
                 raise ValueError("使用自定义metric时必须指定direction")
             self.direction = direction
 
-    def __call__(self, y_true: np.ndarray, y_pred: np.ndarray, y_train: Optional[np.ndarray] = None, y_train_pred: Optional[np.ndarray] = None) -> float:
+    def __call__(
+        self,
+        y_true: np.ndarray,
+        y_pred: np.ndarray,
+        y_train: Optional[np.ndarray] = None,
+        y_train_pred: Optional[np.ndarray] = None,
+    ) -> float:
         """计算指标值.
 
         :param y_true: 验证集真实标签
@@ -1037,7 +1071,7 @@ class ModelTuner:
     >>> # 单目标：最大化 KS
     >>> tuner = ModelTuner(XGBoostRiskModel, metric='ks', direction='maximize', cv=5)
     >>> tuner.fit(X_train, y_train, n_trials=50)   # 返回最佳参数 best_params_
-    >>> best_model = tuner.get_best_model().fit(X_train, y_train)
+    >>> best_model = tuner.get_best_model()  # 已使用完整训练集重训
     >>>
     >>> # 多目标：同时优化 KS 与训练/测试 KS 差异（帕累托最优）
     >>> tuner = ModelTuner(
@@ -1180,7 +1214,12 @@ class ModelTuner:
         for point in initial_points:
             self.enqueue_trial(point)
 
-    def _setup_metrics(self, metric: Union[str, Callable, List[Union[str, Callable]]], direction: Union[str, List[str]], metric_names: Optional[List[str]]):
+    def _setup_metrics(
+        self,
+        metric: Union[str, Callable, List[Union[str, Callable]]],
+        direction: Union[str, List[str]],
+        metric_names: Optional[List[str]],
+    ):
         """设置评估指标."""
         # 统一转换为列表
         if not isinstance(metric, list):
@@ -1220,7 +1259,9 @@ class ModelTuner:
         self.directions = [m.direction for m in self.metrics]
         self.metric_names = [m.name for m in self.metrics]
 
-    def _check_input(self, X: Union[np.ndarray, pd.DataFrame], y: Optional[Union[np.ndarray, pd.Series]] = None) -> Tuple[Union[np.ndarray, pd.DataFrame], Union[np.ndarray, pd.Series]]:
+    def _check_input(
+        self, X: Union[np.ndarray, pd.DataFrame], y: Optional[Union[np.ndarray, pd.Series]] = None
+    ) -> Tuple[Union[np.ndarray, pd.DataFrame], Union[np.ndarray, pd.Series]]:
         """检查并处理输入数据.
 
         支持两种风格:
@@ -1243,7 +1284,15 @@ class ModelTuner:
 
         return X, y
 
-    def fit(self, X: Union[np.ndarray, pd.DataFrame], y: Optional[Union[np.ndarray, pd.Series]] = None, n_trials: int = 100, timeout: Optional[int] = None, show_progress_bar: bool = True, sample_weight: Optional[np.ndarray] = None) -> Dict[str, Any]:
+    def fit(
+        self,
+        X: Union[np.ndarray, pd.DataFrame],
+        y: Optional[Union[np.ndarray, pd.Series]] = None,
+        n_trials: int = 100,
+        timeout: Optional[int] = None,
+        show_progress_bar: bool = True,
+        sample_weight: Optional[np.ndarray] = None,
+    ) -> Dict[str, Any]:
         """执行超参数调优.
 
         支持两种调用风格:
@@ -1333,7 +1382,16 @@ class ModelTuner:
             show_progress_bar=show_progress_bar and self.verbose,
             n_jobs=1,
             callbacks=[self._print_trial_progress] if self.verbose else None,
+            catch=(Exception,),
         )
+
+        completed_trials = [
+            trial
+            for trial in self.study_.trials
+            if trial.state == optuna.trial.TrialState.COMPLETE and trial.values is not None
+        ]
+        if not completed_trials:
+            raise ValueError("所有Trial均失败，请检查模型参数、数据和训练异常")
 
         # 保存结果
         self._save_results()
@@ -1377,9 +1435,7 @@ class ModelTuner:
 
     def _print_tuning_summary(self) -> None:
         """在调参正常完成并保存结果后输出最终摘要。"""
-        completed_trials = sum(
-            trial.state == optuna.trial.TrialState.COMPLETE for trial in self.study_.trials
-        )
+        completed_trials = sum(trial.state == optuna.trial.TrialState.COMPLETE for trial in self.study_.trials)
         print(f"[调参] 调参完成 | 完成 Trial: {completed_trials}", flush=True)
         if self._is_multi_objective:
             print(f"[调参] 帕累托最优解: {len(self.study_.best_trials)}", flush=True)
@@ -1406,58 +1462,45 @@ class ModelTuner:
                     params[parameter_name] = workers
             return
 
-    def _evaluate_model(self, model: Any, X: Union[np.ndarray, pd.DataFrame], y: Union[np.ndarray, pd.Series], sample_weight: Optional[np.ndarray] = None) -> Union[float, Tuple[float, ...]]:
+    def _evaluate_model(
+        self,
+        model: Any,
+        X: Union[np.ndarray, pd.DataFrame],
+        y: Union[np.ndarray, pd.Series],
+        sample_weight: Optional[np.ndarray] = None,
+    ) -> Union[float, Tuple[float, ...]]:
         """评估模型，返回一个或多个指标值."""
-        try:
-            kf = StratifiedKFold(n_splits=self.cv, shuffle=True, random_state=self.random_state)
+        kf = StratifiedKFold(n_splits=self.cv, shuffle=True, random_state=self.random_state)
+        fold_results = {i: [] for i in range(len(self.metrics))}
 
-            # 存储每折的结果
-            fold_results = {i: [] for i in range(len(self.metrics))}
+        for train_idx, val_idx in kf.split(X, y):
+            X_train_fold, X_val_fold = _safe_index(X, train_idx), _safe_index(X, val_idx)
+            y_train_fold, y_val_fold = _safe_index(y, train_idx), _safe_index(y, val_idx)
+            sample_weight_fold = _safe_index(sample_weight, train_idx)
 
-            for train_idx, val_idx in kf.split(X, y):
-                X_train_fold, X_val_fold = _safe_index(X, train_idx), _safe_index(X, val_idx)
-                y_train_fold, y_val_fold = _safe_index(y, train_idx), _safe_index(y, val_idx)
-                sample_weight_fold = _safe_index(sample_weight, train_idx)
+            try:
+                fold_model = clone(model)
+            except Exception:
+                fold_model = copy.deepcopy(model)
 
-                if sample_weight_fold is None:
-                    model.fit(X_train_fold, y_train_fold)
-                else:
-                    model.fit(X_train_fold, y_train_fold, sample_weight=sample_weight_fold)
-
-                # 获取预测概率
-                y_train_pred = model.predict_proba(X_train_fold)[:, 1]
-                y_val_pred = model.predict_proba(X_val_fold)[:, 1]
-
-                # 计算每个指标
-                for i, metric in enumerate(self.metrics):
-                    y_val_arr = y_val_fold.values if hasattr(y_val_fold, "values") else np.asarray(y_val_fold)
-                    y_train_arr = y_train_fold.values if hasattr(y_train_fold, "values") else np.asarray(y_train_fold)
-                    value = metric(y_val_arr, y_val_pred, y_train=y_train_arr, y_train_pred=y_train_pred)
-                    fold_results[i].append(value)
-
-            # 返回各指标的平均值
-            results = [np.mean(fold_results[i]) for i in range(len(self.metrics))]
-
-            if self._is_multi_objective:
-                return tuple(results)
+            if sample_weight_fold is None:
+                fold_model.fit(X_train_fold, y_train_fold)
             else:
-                return results[0]
+                fold_model.fit(X_train_fold, y_train_fold, sample_weight=sample_weight_fold)
 
-        except Exception as e:
-            if self.verbose:
-                warnings.warn(f"Trial failed: {e}")
-            # 返回极差的值
-            bad_values = []
-            for direction in self.directions:
-                if direction == "maximize":
-                    bad_values.append(float("-inf"))
-                else:
-                    bad_values.append(float("inf"))
+            y_train_pred = fold_model.predict_proba(X_train_fold)[:, 1]
+            y_val_pred = fold_model.predict_proba(X_val_fold)[:, 1]
 
-            if self._is_multi_objective:
-                return tuple(bad_values)
-            else:
-                return bad_values[0]
+            for i, metric in enumerate(self.metrics):
+                y_val_arr = y_val_fold.values if hasattr(y_val_fold, "values") else np.asarray(y_val_fold)
+                y_train_arr = y_train_fold.values if hasattr(y_train_fold, "values") else np.asarray(y_train_fold)
+                value = metric(y_val_arr, y_val_pred, y_train=y_train_arr, y_train_pred=y_train_pred)
+                fold_results[i].append(value)
+
+        results = [np.mean(fold_results[i]) for i in range(len(self.metrics))]
+        if self._is_multi_objective:
+            return tuple(results)
+        return results[0]
 
     def _save_results(self):
         """保存优化结果."""
@@ -1500,7 +1543,13 @@ class ModelTuner:
 
         return max(trials, key=sort_key)
 
-    def evaluate_trials(self, X: Union[np.ndarray, pd.DataFrame], y: Optional[Union[np.ndarray, pd.Series]] = None, trial_points: Optional[List[Dict[str, Any]]] = None, sample_weight: Optional[np.ndarray] = None) -> pd.DataFrame:
+    def evaluate_trials(
+        self,
+        X: Union[np.ndarray, pd.DataFrame],
+        y: Optional[Union[np.ndarray, pd.Series]] = None,
+        trial_points: Optional[List[Dict[str, Any]]] = None,
+        sample_weight: Optional[np.ndarray] = None,
+    ) -> pd.DataFrame:
         """评估指定超参数点的模型效果.
 
         无需运行完整调优，直接评估给定超参数配置的性能。
@@ -1554,7 +1603,13 @@ class ModelTuner:
 
         return pd.DataFrame(results)
 
-    def evaluate_study_trials(self, trial_indices: Optional[Union[int, Sequence[int]]] = None, X: Optional[Union[np.ndarray, pd.DataFrame]] = None, y: Optional[Union[np.ndarray, pd.Series]] = None, sample_weight: Optional[np.ndarray] = None) -> pd.DataFrame:
+    def evaluate_study_trials(
+        self,
+        trial_indices: Optional[Union[int, Sequence[int]]] = None,
+        X: Optional[Union[np.ndarray, pd.DataFrame]] = None,
+        y: Optional[Union[np.ndarray, pd.Series]] = None,
+        sample_weight: Optional[np.ndarray] = None,
+    ) -> pd.DataFrame:
         """评估已完成 study 中指定 trial 的模型效果.
 
         从 ``self.study_.trials[i]`` 取出对应超参数重新评估，便于复核某次
@@ -1871,7 +1926,9 @@ class ModelTuner:
         }
 
     @staticmethod
-    def _normalize_trial_points(trial_points: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]]) -> List[Dict[str, Any]]:
+    def _normalize_trial_points(
+        trial_points: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]]
+    ) -> List[Dict[str, Any]]:
         """将 trial_points 归一化为 list[dict].
 
         :param trial_points: ``None`` / 单个 dict / list[dict]
@@ -2051,7 +2108,11 @@ class ModelTuner:
         constrained = dict(params)
         limit = self._leaf_limit(constrained)
         num_leaves = constrained.get("num_leaves")
-        if limit is not None and isinstance(num_leaves, (int, np.integer)) and not isinstance(num_leaves, (bool, np.bool_)):
+        if (
+            limit is not None
+            and isinstance(num_leaves, (int, np.integer))
+            and not isinstance(num_leaves, (bool, np.bool_))
+        ):
             constrained["num_leaves"] = min(int(num_leaves), limit)
         return constrained
 
@@ -2083,7 +2144,12 @@ class ModelTuner:
         if self.best_params_ is None:
             raise ValueError("请先调用fit()进行调优")
 
-        return self.model_class(**self.best_params_)
+        model = self.model_class(**self.best_params_)
+        if self._sample_weight is None:
+            model.fit(self._X, self._y)
+        else:
+            model.fit(self._X, self._y, sample_weight=self._sample_weight)
+        return model
 
     def get_optimization_history(self) -> pd.DataFrame:
         """获取优化历史.
@@ -2156,7 +2222,9 @@ class ModelTuner:
 
         target = self._resolve_multi_objective_target(target)
         if self._is_multi_objective:
-            return optuna.visualization.plot_optimization_history(self.study_, target=lambda t: t.values[target], target_name=self.metric_names[target], **kwargs)
+            return optuna.visualization.plot_optimization_history(
+                self.study_, target=lambda t: t.values[target], target_name=self.metric_names[target], **kwargs
+            )
 
         return optuna.visualization.plot_optimization_history(self.study_, **kwargs)
 
@@ -2172,7 +2240,9 @@ class ModelTuner:
 
         target = self._resolve_multi_objective_target(target)
         if self._is_multi_objective:
-            return optuna.visualization.plot_param_importances(self.study_, target=lambda t: t.values[target], target_name=self.metric_names[target], **kwargs)
+            return optuna.visualization.plot_param_importances(
+                self.study_, target=lambda t: t.values[target], target_name=self.metric_names[target], **kwargs
+            )
 
         return optuna.visualization.plot_param_importances(self.study_, **kwargs)
 
@@ -2188,7 +2258,9 @@ class ModelTuner:
 
         target = self._resolve_multi_objective_target(target)
         if self._is_multi_objective:
-            return optuna.visualization.plot_slice(self.study_, target=lambda t: t.values[target], target_name=self.metric_names[target], **kwargs)
+            return optuna.visualization.plot_slice(
+                self.study_, target=lambda t: t.values[target], target_name=self.metric_names[target], **kwargs
+            )
 
         return optuna.visualization.plot_slice(self.study_, **kwargs)
 
@@ -2222,7 +2294,13 @@ class ModelTuner:
 
         target = self._resolve_multi_objective_target(target)
         if self._is_multi_objective:
-            return optuna.visualization.plot_contour(self.study_, params=params, target=lambda t: t.values[target], target_name=self.metric_names[target], **kwargs)
+            return optuna.visualization.plot_contour(
+                self.study_,
+                params=params,
+                target=lambda t: t.values[target],
+                target_name=self.metric_names[target],
+                **kwargs,
+            )
 
         return optuna.visualization.plot_contour(self.study_, params=params, **kwargs)
 
@@ -2238,7 +2316,9 @@ class ModelTuner:
 
         target = self._resolve_multi_objective_target(target)
         if self._is_multi_objective:
-            return optuna.visualization.plot_parallel_coordinate(self.study_, target=lambda t: t.values[target], target_name=self.metric_names[target], **kwargs)
+            return optuna.visualization.plot_parallel_coordinate(
+                self.study_, target=lambda t: t.values[target], target_name=self.metric_names[target], **kwargs
+            )
 
         return optuna.visualization.plot_parallel_coordinate(self.study_, **kwargs)
 
@@ -2254,7 +2334,9 @@ class ModelTuner:
 
         target = self._resolve_multi_objective_target(target)
         if self._is_multi_objective:
-            return optuna.visualization.plot_edf(self.study_, target=lambda t: t.values[target], target_name=self.metric_names[target], **kwargs)
+            return optuna.visualization.plot_edf(
+                self.study_, target=lambda t: t.values[target], target_name=self.metric_names[target], **kwargs
+            )
 
         return optuna.visualization.plot_edf(self.study_, **kwargs)
 
@@ -2285,7 +2367,19 @@ class AutoTuner:
     """
 
     @classmethod
-    def create(cls, model_type: str, metric: Union[str, Callable, List[Union[str, Callable]]] = "ks", direction: Union[str, List[str]] = "maximize", metric_names: Optional[List[str]] = None, target: str = "target", cv: int = 5, random_state: Optional[int] = None, verbose: bool = False, early_stopping_rounds: int = 20, **kwargs) -> ModelTuner:
+    def create(
+        cls,
+        model_type: str,
+        metric: Union[str, Callable, List[Union[str, Callable]]] = "ks",
+        direction: Union[str, List[str]] = "maximize",
+        metric_names: Optional[List[str]] = None,
+        target: str = "target",
+        cv: int = 5,
+        random_state: Optional[int] = None,
+        verbose: bool = False,
+        early_stopping_rounds: int = 20,
+        **kwargs,
+    ) -> ModelTuner:
         """创建自动调优器.
 
         :param model_type: 模型类型，可选:
@@ -2343,4 +2437,16 @@ class AutoTuner:
 
         model_class = model_map[model_type]
 
-        return ModelTuner(model_class=model_class, search_space=None, metric=metric, direction=direction, metric_names=metric_names, target=target, cv=cv, random_state=random_state, verbose=verbose, early_stopping_rounds=early_stopping_rounds, **kwargs)  # 使用自适应搜索空间
+        return ModelTuner(
+            model_class=model_class,
+            search_space=None,
+            metric=metric,
+            direction=direction,
+            metric_names=metric_names,
+            target=target,
+            cv=cv,
+            random_state=random_state,
+            verbose=verbose,
+            early_stopping_rounds=early_stopping_rounds,
+            **kwargs,
+        )  # 使用自适应搜索空间
