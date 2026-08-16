@@ -51,9 +51,9 @@ class TestExcelWriter:
 
         assert writer.theme_color == '3f1dba'
         assert writer.fontsize == 10
-        assert writer.font == 'Alimama FangYuanTi VF'
+        assert writer.font == '阿里妈妈方圆体 VF Medium'
         content_style = next(style for style in writer.name_styles if style.name == "content")
-        assert content_style.font.name == 'Alimama FangYuanTi VF'
+        assert content_style.font.name == '阿里妈妈方圆体 VF Medium'
 
     def test_init_explicit_font_overrides_runtime_default(self, monkeypatch):
         """显式字体参数应优先于自动初始化结果."""
@@ -118,8 +118,8 @@ class TestExcelWriter:
         writer.save(self.test_file)
 
         loaded = load_workbook(self.test_file)
-        assert loaded["Font"]["B2"].font.name == "Alimama FangYuanTi VF"
-        assert loaded["Font"]["B3"].font.name == "Alimama FangYuanTi VF"
+        assert loaded["Font"]["B2"].font.name == "阿里妈妈方圆体 VF Medium"
+        assert loaded["Font"]["B3"].font.name == "阿里妈妈方圆体 VF Medium"
         loaded.close()
     
     def test_get_sheet_by_name(self):

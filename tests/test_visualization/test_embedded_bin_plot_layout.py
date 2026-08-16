@@ -128,23 +128,40 @@ def _assert_full_width_metric_summaries(fig):
         assert metric_text.get_fontsize() == pytest.approx(summary.axes.xaxis.label.get_fontsize())
 
 
-def _assert_horizontal_panel_rows_are_clear(fig):
+def _assert_bin_panel_rows_are_clear(fig):
     fig.canvas.draw()
     renderer = fig.canvas.get_renderer()
     gap_pixels = _minimum_gap_pixels(fig)
     summary_by_axis = {summary.axes: summary for summary in _metric_summary_artists(fig)}
-    panel_axes = sorted(summary_by_axis, key=lambda axis: axis.get_position().y0, reverse=True)
-    assert len(panel_axes) > 1
+    panel_rows = []
+    for axis in summary_by_axis:
+        for row in panel_rows:
+            if np.isclose(axis.get_position().y0, row[0].get_position().y0):
+                row.append(axis)
+                break
+        else:
+            panel_rows.append([axis])
 
-    for upper_axis, lower_axis in zip(panel_axes, panel_axes[1:]):
-        upper_bottoms = [upper_axis.get_window_extent(renderer).y0]
-        xaxis_bbox = upper_axis.xaxis.get_tightbbox(renderer)
-        if xaxis_bbox is not None:
-            upper_bottoms.append(xaxis_bbox.y0)
+    panel_rows.sort(key=lambda row: row[0].get_position().y0, reverse=True)
+    assert len(panel_rows) > 1
 
-        lower_header_tops = [lower_axis.title.get_window_extent(renderer).y1]
-        lower_header_tops.append(summary_by_axis[lower_axis].get_window_extent(renderer).y1)
+    for upper_row, lower_row in zip(panel_rows, panel_rows[1:]):
+        upper_bottoms = []
+        for upper_axis in upper_row:
+            upper_bottoms.append(upper_axis.get_window_extent(renderer).y0)
+            xaxis_bbox = upper_axis.xaxis.get_tightbbox(renderer)
+            if xaxis_bbox is not None:
+                upper_bottoms.append(xaxis_bbox.y0)
+
+        lower_header_tops = []
+        for lower_axis in lower_row:
+            lower_header_tops.append(lower_axis.title.get_window_extent(renderer).y1)
+            lower_header_tops.append(summary_by_axis[lower_axis].get_window_extent(renderer).y1)
         assert min(upper_bottoms) >= max(lower_header_tops) + gap_pixels - 1.0
+
+
+def _assert_horizontal_panel_rows_are_clear(fig):
+    _assert_bin_panel_rows_are_clear(fig)
 
 
 def _assert_unified_bin_legend(fig):
@@ -287,6 +304,34 @@ def test_batch_bin_trend_plot_horizontal_rows_do_not_overlap():
     finally:
         for fig in figures.values():
             plt.close(fig)
+
+
+def test_vertical_bin_trend_plot_rows_do_not_overlap_with_long_bin_labels():
+    """纵向多行趋势图应为旋转的长分箱标签留出标题安全间距。"""
+    groups = np.repeat(["2025-12", "2026-01", "2026-02"], 50)
+    values = 123450.123 + np.arange(10) * 17.111
+    data = pd.DataFrame(
+        {
+            "score": np.tile(values, 15),
+            "target": np.tile([0, 0, 0, 1, 0, 1, 1, 1, 0, 1], 15),
+            "period": groups,
+        }
+    )
+
+    fig = bin_trend_plot(
+        data,
+        feature="score",
+        target="target",
+        dimension_cols="period",
+        rules={"score": list(123450.123 + np.arange(1, 10) * 17.111)},
+        orientation="vertical",
+        show_stats=True,
+        figsize=(15.6, 8),
+    )
+    try:
+        _assert_bin_panel_rows_are_clear(fig)
+    finally:
+        plt.close(fig)
 
 
 def test_bin_overdues_plot_raw_mode_preserves_embedded_header_layout():
