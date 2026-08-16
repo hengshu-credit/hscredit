@@ -1999,19 +1999,28 @@ def _create_bin_plot_figure_legend(fig: plt.Figure, colors: List[str], anchor: f
     )
 
 
-def _layout_horizontal_bin_panel_rows(
+def _layout_bin_panel_rows(
     fig: plt.Figure,
     axes: List[Any],
     min_gap_points: float = 6.0,
     max_iterations: int = 8,
 ) -> None:
-    """按真实渲染边界为横向多行分箱图保留垂直间距。"""
+    """按真实渲染边界为多行分箱图保留垂直间距。"""
     panel_axes = sorted(
         (axis for axis in axes if axis.get_visible()),
         key=lambda axis: axis.get_position().y0,
         reverse=True,
     )
-    if len(panel_axes) < 2:
+    panel_rows = []
+    for axis in panel_axes:
+        for row in panel_rows:
+            if np.isclose(axis.get_position().y0, row[0].get_position().y0):
+                row.append(axis)
+                break
+        else:
+            panel_rows.append([axis])
+
+    if len(panel_rows) < 2:
         return
 
     min_gap_pixels = float(min_gap_points) * fig.dpi / 72.0
@@ -2020,22 +2029,26 @@ def _layout_horizontal_bin_panel_rows(
         renderer = fig.canvas.get_renderer()
         maximum_deficit = 0.0
 
-        for upper_axis, lower_axis in zip(panel_axes, panel_axes[1:]):
-            upper_bottoms = [upper_axis.get_window_extent(renderer).y0]
-            upper_xaxis_bbox = upper_axis.xaxis.get_tightbbox(renderer)
-            if upper_xaxis_bbox is not None and np.isfinite(upper_xaxis_bbox.y0):
-                upper_bottoms.append(upper_xaxis_bbox.y0)
+        for upper_row, lower_row in zip(panel_rows, panel_rows[1:]):
+            upper_bottoms = []
+            for upper_axis in upper_row:
+                upper_bottoms.append(upper_axis.get_window_extent(renderer).y0)
+                upper_xaxis_bbox = upper_axis.xaxis.get_tightbbox(renderer)
+                if upper_xaxis_bbox is not None and np.isfinite(upper_xaxis_bbox.y0):
+                    upper_bottoms.append(upper_xaxis_bbox.y0)
 
-            lower_header_tops = [lower_axis.get_window_extent(renderer).y1]
-            if lower_axis.title.get_visible() and lower_axis.title.get_text().strip():
-                title_bbox = lower_axis.title.get_window_extent(renderer)
-                if np.isfinite(title_bbox.y1):
-                    lower_header_tops.append(title_bbox.y1)
-            for artist in [*lower_axis.texts, *lower_axis.artists]:
-                if artist.get_visible() and artist.get_gid() == 'bin-metric-summary':
-                    summary_bbox = artist.get_window_extent(renderer)
-                    if np.isfinite(summary_bbox.y1):
-                        lower_header_tops.append(summary_bbox.y1)
+            lower_header_tops = []
+            for lower_axis in lower_row:
+                lower_header_tops.append(lower_axis.get_window_extent(renderer).y1)
+                if lower_axis.title.get_visible() and lower_axis.title.get_text().strip():
+                    title_bbox = lower_axis.title.get_window_extent(renderer)
+                    if np.isfinite(title_bbox.y1):
+                        lower_header_tops.append(title_bbox.y1)
+                for artist in [*lower_axis.texts, *lower_axis.artists]:
+                    if artist.get_visible() and artist.get_gid() == 'bin-metric-summary':
+                        summary_bbox = artist.get_window_extent(renderer)
+                        if np.isfinite(summary_bbox.y1):
+                            lower_header_tops.append(summary_bbox.y1)
 
             actual_gap = min(upper_bottoms) - max(lower_header_tops)
             maximum_deficit = max(maximum_deficit, min_gap_pixels - actual_gap)
@@ -2322,8 +2335,8 @@ def bin_trend_plot(
         hspace=0.62 if n_rows > 1 else 0.42,
         wspace=0.28,
     )
-    if is_horizontal and n_rows > 1:
-        _layout_horizontal_bin_panel_rows(fig, list(axes_flat[:n_panels]))
+    if n_rows > 1:
+        _layout_bin_panel_rows(fig, list(axes_flat[:n_panels]))
     if anchor is None:
         _layout_top_center_legend(fig, legend, title=fig._suptitle, axes=list(axes_flat[:n_panels]))
 

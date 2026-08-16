@@ -13,6 +13,7 @@ from typing import Optional, Tuple
 
 
 FONT_NAME = "Alimama FangYuanTi VF"
+EXCEL_FONT_NAME = "阿里妈妈方圆体 VF Medium"
 FALLBACK_FONT_NAME = "楷体"
 FONT_FILENAME = "hscredit-font.ttf"
 _default_font_name = FALLBACK_FONT_NAME
@@ -54,6 +55,13 @@ def initialize_bundled_font() -> str:
 
 def get_default_font_name() -> str:
     """返回最近一次环境初始化选出的默认字体名称."""
+    return _default_font_name
+
+
+def get_default_excel_font_name() -> str:
+    """返回 Excel 样式应使用的默认字体名称."""
+    if _default_font_name == FONT_NAME:
+        return EXCEL_FONT_NAME
     return _default_font_name
 
 

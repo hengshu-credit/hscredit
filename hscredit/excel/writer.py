@@ -56,7 +56,7 @@ class ExcelWriter:
         - replace: 替换已有文件
         - append: 在已有文件基础上追加内容
     :param fontsize: 字体大小，默认为10
-    :param font: 字体名称，默认为环境初始化选出的品牌字体；安装不可用时回退为"楷体"
+    :param font: 字体名称，默认为"阿里妈妈方圆体 VF Medium"；安装不可用时回退为"楷体"
     :param theme_color: 主题颜色（不包含#），默认为"2639E9"
     :param opacity: 颜色填充的透明度，默认为0.85
     :param system: 操作系统类型，可选'mac'、'windows'、'linux'，默认自动检测
@@ -106,9 +106,9 @@ class ExcelWriter:
             self.system = "mac" if sys.platform == "darwin" else "windows"
 
         if font is None:
-            from ..utils.fonts import get_default_font_name
+            from ..utils.fonts import get_default_excel_font_name
 
-            font = get_default_font_name()
+            font = get_default_excel_font_name()
 
         # 样式参数
         self.english_width = 0.12
