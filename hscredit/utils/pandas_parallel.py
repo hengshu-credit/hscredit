@@ -7,6 +7,7 @@ pandas 原生 ``apply`` 参数边界的前提下调度具体执行器。
 from __future__ import annotations
 
 import inspect
+import pickle
 import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -14,7 +15,9 @@ from typing import Any, Dict, Mapping, Optional, Tuple
 
 import numpy as np
 import pandas as pd
+from joblib import wrap_non_picklable_objects
 from joblib.externals import cloudpickle
+from joblib.externals.loky.backend.reduction import get_loky_pickler_name
 
 from ..exceptions import ValidationError
 from .parallel import (
@@ -145,6 +148,7 @@ class HSCreditApplyProxy:
         所有配置均只属于当前代理；创建代理不会修改原 pandas 对象。
 
     **参考样例**
+        ``df.hscredit.apply(func, axis=1)``
         ``df.hscredit(n_jobs=-1, bar=True).apply(func, axis=1)``
     """
 
@@ -154,9 +158,34 @@ class HSCreditApplyProxy:
     parallel_backend: Optional[str] = None
     parallel_config: Optional[Mapping[str, Any]] = None
 
+    def __call__(
+        self,
+        n_jobs=-1,
+        bar: bool = True,
+        parallel_backend: Optional[str] = None,
+        parallel_config: Optional[Mapping[str, Any]] = None,
+    ) -> "HSCreditApplyProxy":
+        """返回保存显式配置的新代理，兼容 ``obj.hscredit(...).apply``。"""
+        return create_hscredit_apply_proxy(
+            self._obj,
+            n_jobs=n_jobs,
+            bar=bar,
+            parallel_backend=parallel_backend,
+            parallel_config=parallel_config,
+        )
+
     def apply(self, func, *args, **kwargs):
         """使用已配置的 hscredit 执行策略调用 pandas apply。"""
         return _apply_object(self, func, args, kwargs)
+
+
+class HSCreditApplyAccessor:
+    """把 ``hscredit`` 暴露为同时可调用且可直接 ``apply`` 的访问器。"""
+
+    def __get__(self, instance, owner=None):
+        if instance is None:
+            return create_hscredit_apply_proxy
+        return create_hscredit_apply_proxy(instance)
 
 
 def create_hscredit_apply_proxy(
@@ -168,7 +197,7 @@ def create_hscredit_apply_proxy(
 ) -> HSCreditApplyProxy:
     """为当前 pandas 对象创建独立的 apply 配置代理。
 
-    此函数会绑定为 pandas 对象的 ``hscredit`` 方法。它只保存配置，不读取样本、
+    此函数由 pandas 对象的 ``hscredit`` 访问器调用。它只保存配置，不读取样本、
     不调用用户函数，也不会改变原对象。
     """
     return HSCreditApplyProxy(
@@ -241,6 +270,25 @@ def _resolve_default_backend(proxy: HSCreditApplyProxy, capability: str, func, u
     return None
 
 
+def _wrap_callable_for_process_backend(func, backend: Optional[str]):
+    """让进程任务中的 UDF 不依赖 loky 当前选择的全局 pickler。"""
+    if backend not in {"loky", "multiprocessing"}:
+        return func
+    if backend == "loky" and get_loky_pickler_name() == "cloudpickle":
+        return func
+
+    try:
+        pickle.dumps(func)
+    except Exception:
+        return wrap_non_picklable_objects(func)
+
+    # 标准 pickle 会把 __main__ 中的命名函数按引用序列化，但独立 worker
+    # 无法从自己的 __main__ 找回 Jupyter 单元格里定义的函数。
+    if getattr(func, "__module__", None) == "__main__":
+        return wrap_non_picklable_objects(func)
+    return func
+
+
 def _call_apply_item(task):
     """执行一个已编号的 pandas apply 逻辑任务。"""
     position, func, value, udf_args, udf_kwargs, reporter = task
@@ -297,8 +345,12 @@ def _execute_items(
     """通过 hscredit 统一预算执行已物化的 apply 任务。"""
     default_backend = _resolve_default_backend(proxy, capability, func, udf_args, udf_kwargs)
     effective_backend = proxy.parallel_backend or default_backend
+    task_func = _wrap_callable_for_process_backend(func, effective_backend)
     with _apply_progress_context(proxy.bar, len(tasks), operation, effective_backend) as reporter:
-        progress_tasks = [(*task, reporter) for task in tasks]
+        progress_tasks = [
+            (position, task_func, value, task_args, task_kwargs, reporter)
+            for position, _, value, task_args, task_kwargs in tasks
+        ]
         return parallel_execute(
             _call_apply_item,
             progress_tasks,
@@ -336,9 +388,13 @@ def _execute_group_items(
     """通过统一预算执行按组任务。"""
     default_backend = _resolve_default_backend(proxy, capability, func, udf_args, udf_kwargs)
     effective_backend = proxy.parallel_backend or default_backend
+    task_func = _wrap_callable_for_process_backend(func, effective_backend)
     description = "GroupBy 分组计算"
     with _apply_progress_context(proxy.bar, len(tasks), description, effective_backend) as reporter:
-        progress_tasks = [(*task, reporter) for task in tasks]
+        progress_tasks = [
+            (position, key, group, task_func, task_args, task_kwargs, axis, reporter)
+            for position, key, group, _, task_args, task_kwargs, axis in tasks
+        ]
         return parallel_execute(
             _call_group_apply_item,
             progress_tasks,

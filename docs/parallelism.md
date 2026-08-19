@@ -131,6 +131,7 @@ EDA 的批量 IV、特征重要性、异常值、稀有类别、集中度、时�
 ```python
 import hscredit
 
+default_rows = df.hscredit.apply(score_row, axis=1)
 rows = df.hscredit(n_jobs=-1, bar=True).apply(score_row, axis=1)
 values = df["amount"].hscredit(n_jobs=4, bar=False).apply(normalize)
 summary = (

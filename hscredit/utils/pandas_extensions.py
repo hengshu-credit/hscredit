@@ -9,7 +9,7 @@ from __future__ import annotations
 - df.missing_analysis(): 缺失值分析
 - df.show(): 美化展示分箱表
 - df.save(): 保存到Excel
-- df.hscredit(...).apply(): DataFrame/Series/GroupBy 严格单次并行 apply
+- df.hscredit.apply() / df.hscredit(...).apply(): DataFrame/Series/GroupBy 严格单次并行 apply
 
 使用方式:
     >>> import pandas as pd
@@ -28,6 +28,7 @@ from __future__ import annotations
     >>> table.show(compact=True)
     >>>
     >>> # 并行 apply（Series 和 GroupBy 用法相同）
+    >>> default_result = df.hscredit.apply(func, axis=1)
     >>> result = df.hscredit(n_jobs=-1, bar=True).apply(func, axis=1)
 """
 
@@ -1255,7 +1256,7 @@ def register_extensions():
     - df.save(): 保存到Excel
     - s.summary(): 单字段综合特征描述统计
     - s.save(): Series保存到Excel
-    - df/s/groupby.hscredit(...).apply(): 严格单次并行 apply
+    - df/s/groupby.hscredit.apply() / hscredit(...).apply(): 严格单次并行 apply
 
     幂等：重复调用不会重复注册（已存在同名属性时跳过）。导入 hscredit 时已自动执行，
     通常无需手动调用。
@@ -1268,6 +1269,7 @@ def register_extensions():
     >>> df = pd.DataFrame({'age': [25, 40], 'target': [0, 1]})
     >>> summary = df.summary(y='target')
     >>> df.save("report.xlsx")
+    >>> default_result = df.hscredit.apply(func, axis=1)
     >>> result = df.hscredit(n_jobs=-1, bar=False).apply(func, axis=1)
     """
     global _EXTENSIONS_REGISTERED
@@ -1277,12 +1279,12 @@ def register_extensions():
 
     from pandas.core.groupby.generic import DataFrameGroupBy, SeriesGroupBy
 
-    from .pandas_parallel import create_hscredit_apply_proxy
+    from .pandas_parallel import HSCreditApplyAccessor
 
     # 统一并行 apply 配置代理
     for pandas_type in (pd.DataFrame, pd.Series, DataFrameGroupBy, SeriesGroupBy):
         if not hasattr(pandas_type, "hscredit"):
-            pandas_type.hscredit = create_hscredit_apply_proxy
+            pandas_type.hscredit = HSCreditApplyAccessor()
 
     # EDA相关方法
     if not hasattr(pd.DataFrame, "summary"):
