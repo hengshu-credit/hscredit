@@ -293,7 +293,7 @@ auto_model_report(
 <summary>代码示例：<code>DataFrame.hscredit.apply</code></summary>
 
 ```python
-result = df[features].hscredit(n_jobs=-1, bar=True).apply(np.sum, axis=1)
+result = df[features].hscredit.apply(np.sum, axis=1)
 mapped = df["放款金额"].hscredit(n_jobs=4).apply(np.log1p)
 ```
 

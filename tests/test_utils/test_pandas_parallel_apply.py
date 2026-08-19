@@ -1,6 +1,8 @@
 """pandas ``hscredit(...).apply`` 并行扩展测试。"""
 
 import os
+import subprocess
+import sys
 import threading
 from multiprocessing import TimeoutError as MultiprocessingTimeoutError
 from collections import Counter
@@ -11,7 +13,11 @@ import pytest
 
 import hscredit  # noqa: F401 - 导入即注册 pandas 扩展
 from hscredit.exceptions import ValidationError
-from hscredit.utils.pandas_parallel import _ApplyProgressReporter, _call_group_apply_item
+from hscredit.utils.pandas_parallel import (
+    _ApplyProgressReporter,
+    _call_group_apply_item,
+    _wrap_callable_for_process_backend,
+)
 
 
 def _row_total(row, offset=0):
@@ -58,6 +64,27 @@ def test_import_registers_hscredit_proxy_on_all_apply_objects():
     for obj in objects:
         proxy = obj.hscredit(n_jobs=1, bar=False)
         assert type(proxy).__name__ == "HSCreditApplyProxy"
+
+
+def test_hscredit_default_accessor_supports_apply_without_configuration_call():
+    """若 hscredit 仍注册为普通方法，省略配置括号时将找不到 apply。"""
+    series = pd.Series([1, 2, 3], name="金额")
+
+    actual = series.hscredit.apply(lambda value: value + 10)
+
+    expected = pd.Series([11, 12, 13], name="金额")
+    pd.testing.assert_series_equal(actual, expected)
+
+
+def test_hscredit_accessor_preserves_class_level_unbound_configuration_call():
+    """描述符不能破坏既有的类级未绑定 hscredit 调用方式。"""
+    series = pd.Series([1, 2, 3], name="金额")
+
+    proxy = pd.Series.hscredit(series, n_jobs=1, bar=False)
+    actual = proxy.apply(lambda value: value * 2)
+
+    expected = pd.Series([2, 4, 6], name="金额")
+    pd.testing.assert_series_equal(actual, expected)
 
 
 def test_hscredit_returns_fresh_configuration_without_mutating_source():
@@ -188,6 +215,42 @@ def test_plain_python_callable_automatically_uses_processes():
     worker_pids = series.hscredit(n_jobs=2, bar=False).apply(_worker_process_id)
 
     assert set(worker_pids).isdisjoint({os.getpid()})
+
+
+def test_loky_standard_pickle_still_runs_lambda_in_worker_processes():
+    """loky 使用标准 pickle 时，Jupyter lambda 也必须封装后送入子进程。"""
+    script = """
+import os
+import pandas as pd
+import hscredit
+from joblib.externals.loky.backend.reduction import set_loky_pickler
+
+set_loky_pickler("pickle")
+main_pid = os.getpid()
+actual = pd.Series(["a", "bb", "ccc", "dddd"]).hscredit(
+    n_jobs=2,
+    parallel_backend="loky",
+).apply(lambda value: (os.getpid(), len(value)))
+assert actual.map(lambda item: item[1]).tolist() == [1, 2, 3, 4]
+assert set(actual.map(lambda item: item[0])).isdisjoint({main_pid})
+"""
+
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+
+
+def test_loky_cloudpickle_keeps_importable_callable_unwrapped():
+    """默认 cloudpickle 已可序列化函数时，不应额外引入包装开销。"""
+    actual = _wrap_callable_for_process_backend(_worker_process_id, "loky")
+
+    assert actual is _worker_process_id
 
 
 def test_dataframe_groupby_scalar_result_matches_pandas():
