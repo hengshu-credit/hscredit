@@ -62,7 +62,7 @@ def _load_shap():
 from ..base import BaseRiskModel
 
 
-class ModelExplainer:
+class _LegacyModelExplainer:
     """模型解释器.
 
     基于SHAP的模型可解释性分析工具。
@@ -648,6 +648,9 @@ class ModelExplainer:
         interactions_df = interactions_df.sort_values("Interaction_Strength", ascending=False)
 
         return interactions_df.head(top_n)
+
+
+from .explainer import ModelExplainer
 
 
 def _as_1d_importance(values: Any) -> np.ndarray:

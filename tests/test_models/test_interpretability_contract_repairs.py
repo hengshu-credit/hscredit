@@ -57,5 +57,5 @@ def test_feature_interactions_handle_modern_multioutput_shape():
 
     result = explainer.get_feature_interactions(X.head(3), top_n=2)
 
-    assert result.iloc[0][["Feature_1", "Feature_2"]].tolist() == ["a", "b"]
-    assert result.iloc[0]["Interaction_Strength"] == pytest.approx(6.0)
+    assert result.iloc[0][["特征1", "特征2"]].tolist() == ["a", "b"]
+    assert result.iloc[0]["交互强度"] == pytest.approx(2.0)

@@ -11,6 +11,7 @@
 import importlib
 
 from .interpretability import model_explain_report
+from .explanation import ExplanationResult
 from .calibration import (
     ProbabilityCalibrator,
     CalibratedModel,
@@ -29,13 +30,14 @@ __all__ = [
     "BetaCalibrator",
     "HistogramCalibrator",
     "ModelExplainer",
+    "ExplanationResult",
     "model_explain_report",
 ]
 
 
 def __getattr__(name):
     if name == "ModelExplainer":
-        module = importlib.import_module(".interpretability", __name__)
+        module = importlib.import_module(".explainer", __name__)
         value = module.ModelExplainer
     elif name == "ModelReport":
         # 模型报告已统一由 hscredit.report.model_report 生成，这里仅做兼容别名，

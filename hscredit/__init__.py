@@ -100,6 +100,7 @@ _LAZY_MODEL_NAMES = (
     "AutoTuner",
     "TuningObjective",
     "TuningSampler",
+    "ModelExplainer",
 )
 
 
