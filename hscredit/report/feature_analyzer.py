@@ -17,6 +17,7 @@ from openpyxl.worksheet.worksheet import Worksheet
 from ..core.binning import OptimalBinning
 from ..core.binning.base import BaseBinning
 from ..core.viz import bin_plot, bin_trend_plot, corr_plot, distribution_plot, hist_plot, ks_plot
+from ..core.viz.utils import _layout_top_center_legend
 from ..core.metrics._binning import compute_bin_stats, add_margins
 from ..excel import ExcelWriter, dataframe2excel
 from ..utils import init_setting
@@ -34,6 +35,18 @@ _NESTED_BINNING_METHODS = frozenset({"genetic", "or_tools", "cp_sat"})
 def _validate_report_parallel(n_jobs, parallel_backend, parallel_config) -> None:
     validate_parallel_config(parallel_backend, parallel_config)
     resolve_n_jobs(n_jobs, task_count=1)
+
+
+def _safe_close_plot_result(result) -> None:
+    """关闭当前绘图调用返回的画布，不影响用户已有的 matplotlib 图。"""
+    try:
+        candidate = result[0] if isinstance(result, tuple) and result else result
+        if hasattr(candidate, "figure"):
+            candidate = candidate.figure
+        if hasattr(candidate, "savefig"):
+            plt.close(candidate)
+    except Exception:
+        pass
 
 
 def _binning_has_parallel_children(method: Any, params: Optional[Dict[str, Any]] = None) -> bool:
@@ -1792,7 +1805,7 @@ def feature_efficiency_analysis(
     del_grey: bool = False,
     margins: bool = False,
     amount: Optional[str] = None,
-    figsize: Tuple[float, float] = (24, 5),
+    figsize: Tuple[float, float] = (15, 10),
     trend_figsize: Optional[Tuple[float, float]] = None,
     comparison_orientation: str = "horizontal",
     auto_kwargs: Optional[Dict[str, Any]] = None,
@@ -1811,7 +1824,7 @@ def feature_efficiency_analysis(
     适用于单个数值型指标或评分变量的快速效果评估。函数会：
     1. 自动生成分位数分箱规则（默认使用 [0.01, 0.03, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.97, 0.99]）
     2. 生成手工分箱与自动分箱两张分箱表
-    3. 输出一行四列的组合图：手工分箱图、自动分箱图、KS 曲线、ROC 曲线
+    3. 输出 2×2 组合图：上排为手工/自动分箱图，下排为 KS/ROC 曲线
     4. 当传入日期字段或分组字段时，额外输出手工分箱与自动分箱两张 bin_trend_plot 趋势图
 
     :param data: 输入数据集
@@ -1833,7 +1846,7 @@ def feature_efficiency_analysis(
     :param del_grey: overdue 模式下是否剔除灰样本，默认 False
     :param margins: 是否追加合计行，默认 False
     :param amount: 金额字段，传入后输出金额口径分箱表
-    :param figsize: 一行四列组合图尺寸，默认 (24, 5)
+    :param figsize: 2×2 组合图尺寸，默认 (15, 10)
     :param trend_figsize: 趋势图尺寸，默认 None（由 bin_trend_plot 自动计算）
     :param comparison_orientation: 两张分箱图的方向，默认 horizontal
     :param auto_kwargs: 额外传给自动分箱 feature_bin_stats 的参数
@@ -1938,28 +1951,57 @@ def feature_efficiency_analysis(
     auto_table, auto_rules_map = table_results["auto"]
     auto_rules = auto_rules_map.get(feature, [])
 
-    comparison_fig, comparison_axes = plt.subplots(1, 4, figsize=figsize)
-    comparison_axes = np.atleast_1d(comparison_axes)
+    comparison_fig, comparison_axes = plt.subplots(2, 2, figsize=figsize)
+    comparison_axes = np.asarray(comparison_axes).reshape(-1)
 
     bin_plot(
         manual_table.copy(),
         ax=comparison_axes[0],
-        title=f"手工分箱图\n{feature_desc}",
+        title="手工分箱图",
         desc="",
         orientation=comparison_orientation,
+        metric_summary_layout="full_width_center",
     )
+    manual_panel_axes = [
+        axis
+        for axis in comparison_fig.axes
+        if np.allclose(axis.get_position().bounds, comparison_axes[0].get_position().bounds)
+    ]
     bin_plot(
         auto_table.copy(),
         ax=comparison_axes[1],
-        title=f"自动分箱图({auto_method})\n{feature_desc}",
+        title=f"自动分箱图({auto_method})",
         desc="",
         orientation=comparison_orientation,
+        metric_summary_layout="full_width_center",
     )
     ks_plot(plot_data[feature], plot_data[actual_target], axes=[comparison_axes[2], comparison_axes[3]])
     comparison_axes[2].set_title("KS 曲线")
     comparison_axes[3].set_title("ROC 曲线")
     comparison_fig.suptitle(f"{feature_desc} 分箱效率分析", fontsize=14, fontweight="bold")
     comparison_fig.tight_layout(rect=(0, 0, 1, 0.94))
+
+    bin_legend_entries = {}
+    for axis in manual_panel_axes:
+        handles, labels = axis.get_legend_handles_labels()
+        for handle, label in zip(handles, labels):
+            bin_legend_entries.setdefault(label, handle)
+    if bin_legend_entries:
+        bin_legend = comparison_fig.legend(
+            handles=list(bin_legend_entries.values()),
+            labels=list(bin_legend_entries),
+            loc="upper center",
+            ncol=len(bin_legend_entries),
+            bbox_to_anchor=(0.5, 0.94),
+            frameon=False,
+            fontsize=9,
+        )
+        _layout_top_center_legend(
+            comparison_fig,
+            bin_legend,
+            title=comparison_fig._suptitle,
+            axes=list(comparison_axes),
+        )
 
     trend_figures: Dict[str, plt.Figure] = {}
     if date_col is not None or group_cols is not None:
@@ -2368,7 +2410,14 @@ def auto_feature_analysis(
     end_row += 2
 
     if date is not None and date in data.columns:
-        distribution_plot(data, date=date, freq=freq, target=target, save=os.path.join(output_dir, f"sample_time_distribution{suffix}.png"), result=True)
+        distribution_figure = distribution_plot(
+            data,
+            date=date,
+            freq=freq,
+            target=target,
+            save=os.path.join(output_dir, f"sample_time_distribution{suffix}.png"),
+        )
+        _safe_close_plot_result(distribution_figure)
         time_title_columns_len = len(sample_stats.columns) + sample_stats.index.nlevels if isinstance(sample_stats.columns, pd.MultiIndex) else len(sample_stats.columns)
         time_section_title, _ = _next_section_title("样本时间分布情况")
         end_row, end_col = writer.insert_value2sheet(worksheet, (end_row, start_col), value=time_section_title, style="header", end_space=(end_row, start_col + time_title_columns_len - 1))
@@ -2410,7 +2459,13 @@ def auto_feature_analysis(
     end_row += 2
 
     if corr:
-        corr_plot(corr_data, save=os.path.join(output_dir, f"auto_report_corr_plot{suffix}.png"), annot=True if len(corr_data.columns) <= 10 else False, fontsize=14 if len(corr_data.columns) <= 10 else 12)
+        corr_figure = corr_plot(
+            corr_data,
+            save=os.path.join(output_dir, f"auto_report_corr_plot{suffix}.png"),
+            annot=len(corr_data.columns) <= 10,
+            fontsize=14 if len(corr_data.columns) <= 10 else 12,
+        )
+        _safe_close_plot_result(corr_figure)
         corr_section_title, _ = _next_section_title("数值类变量相关性")
         end_row, end_col = dataframe2excel(corr_table, writer, worksheet, color_cols=list(corr_data.columns), condition_color=condition_color, start_row=end_row, figures=[os.path.join(output_dir, f"auto_report_corr_plot{suffix}.png")], title=corr_section_title, figsize=(min(60 * len(corr_data.columns), 1080), min(55 * len(corr_data.columns), 950)), index=True, custom_cols=list(corr_data.columns), custom_format="0.00")
         end_row += 2
@@ -2458,18 +2513,41 @@ def auto_feature_analysis(
                     if "分箱标签" in plot_table.columns:
                         plot_table.rename(columns={"分箱标签": "分箱"}, inplace=True)
 
-                    bin_plot(plot_table, desc=f"{feature_map.get(col, col)}", figsize=(10, 5), save=os.path.join(output_dir, f"feature_bins_plot_{col}{suffix}.png"))
+                    bin_figure = bin_plot(
+                        plot_table,
+                        desc=f"{feature_map.get(col, col)}",
+                        figsize=(10, 5),
+                        save=os.path.join(output_dir, f"feature_bins_plot_{col}{suffix}.png"),
+                    )
+                    _safe_close_plot_result(bin_figure)
 
                 if temp[col].dtypes.name not in ["object", "str", "category"]:
                     if "ks" in pictures:
                         plot_source = temp.dropna().reset_index(drop=True)
                         has_ks = len(plot_source) > 0 and plot_source[col].nunique() > 1 and plot_source[actual_target].nunique() > 1
                         if has_ks:
-                            ks_plot(plot_source[col], plot_source[actual_target], figsize=(10, 5), title=f"{feature_map.get(col, col)}", save=os.path.join(output_dir, f"feature_ks_plot_{col}{suffix}.png"))
+                            ks_figure = ks_plot(
+                                plot_source[col],
+                                plot_source[actual_target],
+                                figsize=(10, 5),
+                                title=f"{feature_map.get(col, col)}",
+                                save=os.path.join(output_dir, f"feature_ks_plot_{col}{suffix}.png"),
+                            )
+                            _safe_close_plot_result(ks_figure)
                     if "hist" in pictures:
                         plot_source = temp.dropna().reset_index(drop=True)
                         if len(plot_source) > 0:
-                            hist_plot(plot_source[col], y_true=plot_source[actual_target], figsize=(10, 6), desc=f"{feature_map.get(col, col)} 好客户 VS 坏客户", bins=30, fontsize=14, labels={0: "好客户", 1: "坏客户"}, save=os.path.join(output_dir, f"feature_hist_plot_{col}{suffix}.png"))
+                            hist_figure = hist_plot(
+                                plot_source[col],
+                                y_true=plot_source[actual_target],
+                                figsize=(10, 6),
+                                desc=f"{feature_map.get(col, col)} 好客户 VS 坏客户",
+                                bins=30,
+                                fontsize=14,
+                                labels={0: "好客户", 1: "坏客户"},
+                                save=os.path.join(output_dir, f"feature_hist_plot_{col}{suffix}.png"),
+                            )
+                            _safe_close_plot_result(hist_figure)
 
             if use_amount and amount_table is not None:
                 title_span = sample_title_columns_len + 1 + amount_title_columns_len

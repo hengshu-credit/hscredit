@@ -208,6 +208,10 @@ class LogisticRegression(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, 
         self._initialize_scorecard_params(scorecard_params)
         self.tuner = None
 
+    def __sklearn_is_fitted__(self) -> bool:
+        """按真实训练产物判断拟合状态，避免构造期配置属性造成误判。"""
+        return all(hasattr(self, attr) for attr in ('coef_', 'intercept_', 'classes_'))
+
     def fit(
         self,
         X: Union[pd.DataFrame, np.ndarray],

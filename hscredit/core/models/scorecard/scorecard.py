@@ -233,6 +233,7 @@ class ScoreCard(StandardScoreTransformer):
         self._feature_names = None
         self.lr_model_ = None
         self._pipeline_components = {}
+        self._loaded_deployment_defaults: Dict[str, Dict[str, float]] = {}
         
         # 内部标志：binner 是否可以直接作为 WOE 转换器（hscredit 风格）
         self._binner_is_woe_transformer = False
@@ -1472,7 +1473,14 @@ class ScoreCard(StandardScoreTransformer):
             }
 
             label_series = X_bins[col].map(self._normalize_rule_label)
-            scores[:, i] = label_series.map(score_map).fillna(0.0).to_numpy()
+            mapped_scores = label_series.map(score_map)
+            missing_score = self._get_feature_missing_score(col)
+            if missing_score is not None:
+                missing_mask = label_series.eq('missing') & mapped_scores.isna()
+                mapped_scores.loc[missing_mask] = float(missing_score)
+            fallback_bins = list(zip(rule_labels, rule['scores']))
+            default_score = self._get_deployment_default_score(fallback_bins, feature=col)
+            scores[:, i] = mapped_scores.fillna(default_score).to_numpy()
 
         return scores
 
@@ -2023,6 +2031,103 @@ class ScoreCard(StandardScoreTransformer):
 
         return base_score, score_sign
 
+    def _get_rule_score_for_bin_index(self, feature: str, bin_index: int) -> Optional[float]:
+        """按分箱索引获取特征原始贡献分，用于恢复保留箱策略."""
+        rule = self.rules_.get(feature)
+        if not rule:
+            return None
+        scores = np.asarray(rule.get('scores', []), dtype=float)
+        if len(scores) == 0:
+            return None
+
+        bin_tables = getattr(self.binner, 'bin_tables_', {}) if self.binner is not None else {}
+        bin_table = bin_tables.get(feature)
+        if (
+            bin_table is not None
+            and '分箱' in bin_table.columns
+            and len(bin_table) == len(scores)
+        ):
+            positions = np.flatnonzero(
+                bin_table['分箱'].astype(int).to_numpy() == int(bin_index)
+            )
+            if len(positions) == 1:
+                return float(scores[int(positions[0])])
+
+        feature_types = getattr(self.binner, 'feature_types_', {}) if self.binner is not None else {}
+        cat_bins = getattr(self.binner, '_cat_bins_', {}) if self.binner is not None else {}
+        if (
+            feature_types.get(feature) == 'categorical'
+            and feature in cat_bins
+            and len(cat_bins[feature]) == len(scores)
+            and 0 <= int(bin_index) < len(scores)
+        ):
+            return float(scores[int(bin_index)])
+        return None
+
+    def _get_feature_unknown_score(self, feature: str) -> Optional[float]:
+        """获取未知类别按指定已有箱回退时的贡献分."""
+        loaded = getattr(self, '_loaded_deployment_defaults', {}).get(feature, {})
+        if 'unknown_score' in loaded:
+            return float(loaded['unknown_score'])
+
+        handle_unknown = getattr(self.binner, 'handle_unknown', -3) if self.binner is not None else -3
+        if isinstance(handle_unknown, (int, np.integer)) and int(handle_unknown) != -3:
+            return self._get_rule_score_for_bin_index(feature, int(handle_unknown))
+        return None
+
+    def _get_feature_missing_score(self, feature: str) -> Optional[float]:
+        """获取 missing_separate=False 学到的缺失值目标箱贡献分."""
+        loaded = getattr(self, '_loaded_deployment_defaults', {}).get(feature, {})
+        if 'missing_score' in loaded:
+            return float(loaded['missing_score'])
+
+        missing_targets = (
+            getattr(self.binner, '_missing_bin_targets_', {})
+            if self.binner is not None
+            else {}
+        )
+        target = missing_targets.get(feature)
+        if target is None:
+            return None
+        return self._get_rule_score_for_bin_index(feature, int(target))
+
+    def _feature_raises_on_unknown(self, feature: str) -> bool:
+        """判断类别特征是否要求对未知类别直接报错."""
+        if self.binner is None:
+            return False
+        feature_types = getattr(self.binner, 'feature_types_', {})
+        return (
+            feature_types.get(feature) == 'categorical'
+            and getattr(self.binner, 'handle_unknown', None) == 'raise'
+        )
+
+    def _features_raising_on_unknown(self) -> List[str]:
+        """返回部署时要求未知类别报错的特征列表."""
+        return [feature for feature in self.feature_names_ if self._feature_raises_on_unknown(feature)]
+
+    def _validate_unknown_raise_support(self, target: str) -> None:
+        """拒绝目标格式无法表达的未知类别 raise 策略."""
+        features = self._features_raising_on_unknown()
+        if features:
+            raise ValidationError(
+                f"{target} 无法表达未知类别 handle_unknown='raise' 策略，涉及特征: {features}"
+            )
+
+    def _get_export_deployment_defaults(self) -> Dict[str, Dict[str, float]]:
+        """导出规则重载后仍需保留的逐特征回退分."""
+        defaults: Dict[str, Dict[str, float]] = {}
+        for feature in self.feature_names_:
+            feature_defaults: Dict[str, float] = {}
+            unknown_score = self._get_feature_unknown_score(feature)
+            missing_score = self._get_feature_missing_score(feature)
+            if unknown_score is not None:
+                feature_defaults['unknown_score'] = float(unknown_score)
+            if missing_score is not None:
+                feature_defaults['missing_score'] = float(missing_score)
+            if feature_defaults:
+                defaults[feature] = feature_defaults
+        return defaults
+
     def _get_deployment_rules(self, decimal: int) -> Dict[str, List[Tuple[Any, float]]]:
         """获取部署导出时使用的精确规则定义."""
         deployment_rules: Dict[str, List[Tuple[Any, float]]] = {}
@@ -2047,12 +2152,130 @@ class ScoreCard(StandardScoreTransformer):
             if descriptors is None:
                 continue
 
-            deployment_rules[feature] = [
+            feature_rules = [
                 (descriptor, round(float(score), decimal))
                 for descriptor, score in zip(descriptors, scores)
             ]
+            missing_score = self._get_feature_missing_score(feature)
+            if (
+                missing_score is not None
+                and not any(self._is_missing_descriptor(descriptor) for descriptor, _ in feature_rules)
+            ):
+                feature_rules.append(('missing', round(float(missing_score), decimal)))
+
+            unknown_score = self._get_feature_unknown_score(feature)
+            if (
+                feature_types.get(feature) == 'categorical'
+                and unknown_score is not None
+                and not any(self._normalize_rule_label(descriptor) == 'else' for descriptor, _ in feature_rules)
+            ):
+                feature_rules.append(('else', round(float(unknown_score), decimal)))
+
+            deployment_rules[feature] = feature_rules
 
         return deployment_rules
+
+    def _validate_deployment_rules(self, deployment_rules: Dict[str, List[Tuple[Any, float]]]) -> None:
+        """确保每个入模特征都有完整、非空的可部署规则."""
+        expected_features = (
+            list(self._feature_names)
+            if getattr(self, '_feature_names', None) is not None
+            else list(self.feature_names_)
+        )
+        missing_features = [
+            feature
+            for feature in expected_features
+            if feature not in deployment_rules or not deployment_rules[feature]
+        ]
+        if missing_features:
+            raise ValidationError(
+                "以下特征缺少可部署规则，无法保证导出结果与原模型一致: "
+                f"{missing_features}；请提供包含完整分箱标签的 binner，或使用 pickle 持久化模型"
+            )
+
+    @staticmethod
+    def _deployment_descriptor_to_export_label(descriptor: Any) -> str:
+        """将结构化部署描述符转换为外部评分卡规则标签."""
+        if isinstance(descriptor, (list, tuple, np.ndarray)):
+            return ', '.join(str(value) for value in descriptor)
+        return str(descriptor)
+
+    def _build_external_compatibility_card(self, decimal: int) -> Dict[str, Dict[str, float]]:
+        """构建可由 toad/scorecardpipeline 直接按分箱分求和的规则."""
+        self._validate_unknown_raise_support("外部兼容规则")
+        if self.clip and (self.lower is not None or self.upper is not None):
+            raise ValidationError(
+                "toad/scorecardpipeline 规则格式无法表达总分裁剪；"
+                "请取消 lower/upper，或使用本库完整规则、部署代码、PMML 或 pickle"
+            )
+
+        deployment_rules = self._get_deployment_rules(decimal=decimal)
+        self._validate_deployment_rules(deployment_rules)
+        deployment_base_score, score_sign = self._get_deployment_base_score_and_sign()
+        base_share = float(deployment_base_score) / len(deployment_rules)
+        card: Dict[str, Dict[str, float]] = {}
+        special_codes = self._get_deployment_special_codes()
+
+        for feature, bins in deployment_rules.items():
+            feature_rules: Dict[str, float] = {}
+
+            def add_rule(label: str, score: float) -> None:
+                transformed_score = round(
+                    base_share + self._format_deployment_score(score, score_sign),
+                    decimal,
+                )
+                if label in feature_rules and feature_rules[label] != transformed_score:
+                    raise ValidationError(
+                        f"特征 '{feature}' 的外部兼容规则标签发生冲突: {label!r}"
+                    )
+                feature_rules[label] = transformed_score
+
+            has_missing = False
+            has_else = False
+            for descriptor, score in bins:
+                normalized = self._normalize_rule_label(descriptor)
+                if isinstance(descriptor, (list, tuple, np.ndarray)):
+                    regular_values = [value for value in descriptor if not pd.isna(value)]
+                    ambiguous_values = [
+                        value
+                        for value in regular_values
+                        if isinstance(value, str) and ',' in value
+                    ]
+                    if ambiguous_values:
+                        raise ValidationError(
+                            f"特征 '{feature}' 的类别值包含逗号，toad/scorecardpipeline "
+                            f"兼容格式无法无损表达: {ambiguous_values}"
+                        )
+                    if len(regular_values) != len(descriptor):
+                        add_rule('missing', score)
+                        has_missing = True
+                    if regular_values:
+                        add_rule(', '.join(str(value) for value in regular_values), score)
+                    continue
+
+                if normalized == 'special':
+                    for code in special_codes:
+                        if pd.isna(code):
+                            add_rule('missing', score)
+                            has_missing = True
+                        else:
+                            add_rule(str(code), score)
+                    continue
+
+                label = self._deployment_descriptor_to_export_label(descriptor)
+                add_rule(label, score)
+                has_missing = has_missing or normalized == 'missing'
+                has_else = has_else or normalized == 'else'
+
+            if not has_missing:
+                add_rule('missing', 0.0)
+            if not has_else:
+                add_rule(
+                    'else',
+                    self._get_deployment_default_score(bins, feature=feature),
+                )
+            card[feature] = feature_rules
+        return card
 
     def export_pmml(
         self,
@@ -2067,6 +2290,9 @@ class ScoreCard(StandardScoreTransformer):
         :param debug: 是否返回中间对象进行调试，默认 False
         :return: debug=True 时返回 PMMLPipeline，否则返回 None
         """
+        self._check_fitted()
+        self._validate_unknown_raise_support("PMML")
+
         try:
             from sklearn.compose import ColumnTransformer
             from sklearn.linear_model import LinearRegression
@@ -2079,14 +2305,10 @@ class ScoreCard(StandardScoreTransformer):
                 ExpressionTransformer,
                 LookupTransformer,
             )
-        except ImportError:
-            warnings.warn(
-                "PMML 导出需要安装依赖: pip install hscredit[pmml] 或安装 sklearn2pmml。"
-                "当前环境中相关依赖不可用，PMML 导出已跳过。"
-            )
-            return
-
-        self._check_fitted()
+        except ImportError as exc:
+            raise DependencyError(
+                "PMML 导出需要安装依赖: pip install hscredit[pmml] 或安装 sklearn2pmml"
+            ) from exc
 
         base_score, score_sign = self._get_deployment_base_score_and_sign()
         special_codes = self._get_deployment_special_codes()
@@ -2096,10 +2318,11 @@ class ScoreCard(StandardScoreTransformer):
         samples = {}
 
         deployment_rules = self._get_deployment_rules(decimal=decimal)
+        self._validate_deployment_rules(deployment_rules)
 
         for var, bins in deployment_rules.items():
             feature_type = feature_types.get(var)
-            default_score = self._get_deployment_default_score(bins) if feature_type == 'categorical' else 0.0
+            default_score = self._get_deployment_default_score(bins, feature=var) if feature_type == 'categorical' else 0.0
 
             if bins is None or len(bins) == 0:
                 continue
@@ -2109,7 +2332,7 @@ class ScoreCard(StandardScoreTransformer):
                     bins,
                     special_codes=special_codes,
                 )
-                missing_replacement = '__MISSING__'
+                missing_replacement = self._choose_pmml_missing_replacement(lookup_mapping)
                 if missing_score is not None:
                     lookup_mapping[missing_replacement] = float(missing_score)
 
@@ -2325,8 +2548,11 @@ class ScoreCard(StandardScoreTransformer):
         language_normalized = language.lower()
         if language_normalized in ('python', 'java'):
             self._validate_deployment_function_name(function_name, language_normalized)
+        if language_normalized == 'sql':
+            self._validate_unknown_raise_support("SQL 部署")
 
         card = self._get_deployment_rules(decimal=decimal)
+        self._validate_deployment_rules(card)
         base_score, score_sign = self._get_deployment_base_score_and_sign()
         base_score = round(float(base_score), decimal)
 
@@ -2387,9 +2613,11 @@ class ScoreCard(StandardScoreTransformer):
 
         for feature, bins in card.items():
             feature_type = feature_types.get(feature)
-            default_score = self._get_deployment_default_score(bins) if feature_type == 'categorical' else 0.0
+            default_score = self._get_deployment_default_score(bins, feature=feature) if feature_type == 'categorical' else 0.0
             expression_lines.append(f"    + CASE")
             for bin_descriptor, score in bins:
+                if self._normalize_rule_label(bin_descriptor) == 'else':
+                    continue
                 cond = self._bin_label_to_sql_condition(feature, bin_descriptor, special_codes=special_codes)
                 adjusted_score = self._format_deployment_score(score, score_sign)
                 expression_lines.append(f"        WHEN {cond} THEN {adjusted_score}")
@@ -2452,26 +2680,40 @@ class ScoreCard(StandardScoreTransformer):
             f'    :param row: 样本特征字典',
             f'    :return: 评分',
             f'    """',
+            f'    missing_features = [feature for feature in feature_names_in_ if feature not in row]',
+            f'    if missing_features:',
+            f'        raise KeyError(f"缺少必需特征: {{missing_features}}")',
             f'    score = {base_score}  # base_score',
         ]
 
         for feature, bins in card.items():
             feature_type = feature_types.get(feature)
-            default_score = self._get_deployment_default_score(bins) if feature_type == 'categorical' else 0.0
+            default_score = self._get_deployment_default_score(bins, feature=feature) if feature_type == 'categorical' else 0.0
             lines.append(f'')
             feature_comment = str(feature).replace('\r', ' ').replace('\n', ' ')
             lines.append(f'    # {feature_comment}')
             lines.append(f'    val = row.get({feature!r})')
             first = True
             for bin_descriptor, sc in bins:
+                if self._normalize_rule_label(bin_descriptor) == 'else':
+                    continue
                 prefix = 'if' if first else 'elif'
                 cond = self._bin_label_to_python_condition('val', bin_descriptor, special_codes=special_codes)
                 adjusted_score = self._format_deployment_score(sc, score_sign)
                 lines.append(f'    {prefix} {cond}:')
                 lines.append(f'        score += {adjusted_score}')
                 first = False
-            lines.append(f'    else:')
-            lines.append(f'        score += {self._format_deployment_score(default_score, score_sign)}')
+            if self._feature_raises_on_unknown(feature):
+                if first:
+                    lines.append(f'    raise ValueError("特征 {feature_comment} 出现训练期未知类别")')
+                else:
+                    lines.append(f'    else:')
+                    lines.append(f'        raise ValueError("特征 {feature_comment} 出现训练期未知类别")')
+            elif first:
+                lines.append(f'    score += {self._format_deployment_score(default_score, score_sign)}')
+            else:
+                lines.append(f'    else:')
+                lines.append(f'        score += {self._format_deployment_score(default_score, score_sign)}')
 
         if self.clip and self.lower is not None:
             lines.append(f'    score = max({float(self.lower)!r}, score)')
@@ -2500,12 +2742,19 @@ class ScoreCard(StandardScoreTransformer):
             f'public class ScoreCard {{',
             f'',
             f'    public static double {func_name}(Map<String, Object> row) {{',
-            f'        double score = {base_score};  // base_score',
         ]
+
+        for feature in self.feature_names_:
+            feature_literal = self._java_string_literal(feature)
+            message_literal = self._java_string_literal(f"缺少必需特征: {feature}")
+            lines.append(f'        if (!row.containsKey({feature_literal})) {{')
+            lines.append(f'            throw new IllegalArgumentException({message_literal});')
+            lines.append(f'        }}')
+        lines.append(f'        double score = {base_score};  // base_score')
 
         for feature_index, (feature, bins) in enumerate(card.items()):
             feature_type = feature_types.get(feature)
-            default_score = self._get_deployment_default_score(bins) if feature_type == 'categorical' else 0.0
+            default_score = self._get_deployment_default_score(bins, feature=feature) if feature_type == 'categorical' else 0.0
             java_var = self._safe_java_var(f'feature_{feature_index}_{feature}')
             lines.append(f'')
             feature_comment = str(feature).replace('\r', ' ').replace('\n', ' ')
@@ -2515,6 +2764,8 @@ class ScoreCard(StandardScoreTransformer):
             )
             first = True
             for bin_descriptor, sc in bins:
+                if self._normalize_rule_label(bin_descriptor) == 'else':
+                    continue
                 prefix = 'if' if first else 'else if'
                 cond = self._bin_label_to_java_condition(
                     java_var, bin_descriptor, special_codes=special_codes
@@ -2524,9 +2775,25 @@ class ScoreCard(StandardScoreTransformer):
                 lines.append(f'            score += {adjusted_score};')
                 lines.append(f'        }}')
                 first = False
-            lines.append(f'        else {{')
-            lines.append(f'            score += {self._format_deployment_score(default_score, score_sign)};')
-            lines.append(f'        }}')
+            if self._feature_raises_on_unknown(feature):
+                if first:
+                    lines.append(
+                        f'        throw new IllegalArgumentException('
+                        f'{self._java_string_literal(f"特征 {feature_comment} 出现训练期未知类别")});'
+                    )
+                else:
+                    lines.append(f'        else {{')
+                    lines.append(
+                        f'            throw new IllegalArgumentException('
+                        f'{self._java_string_literal(f"特征 {feature_comment} 出现训练期未知类别")});'
+                    )
+                    lines.append(f'        }}')
+            elif first:
+                lines.append(f'        score += {self._format_deployment_score(default_score, score_sign)};')
+            else:
+                lines.append(f'        else {{')
+                lines.append(f'            score += {self._format_deployment_score(default_score, score_sign)};')
+                lines.append(f'        }}')
 
         if self.clip and self.lower is not None:
             lines.append(f'        score = Math.max({float(self.lower)!r}, score);')
@@ -2746,7 +3013,11 @@ class ScoreCard(StandardScoreTransformer):
         label = str(descriptor).strip().lower()
         return label in ('special', '特殊值', '特殊')
 
-    def _get_deployment_default_score(self, bins: List[Tuple[Any, float]]) -> float:
+    def _get_deployment_default_score(
+        self,
+        bins: List[Tuple[Any, float]],
+        feature: Optional[str] = None,
+    ) -> float:
         """获取部署规则的默认回退分数.
 
         显式 ``else`` 规则优先；否则未知类别沿用分箱器的 WOE=0 语义，贡献分为 0。
@@ -2754,6 +3025,10 @@ class ScoreCard(StandardScoreTransformer):
         for descriptor, score in bins:
             if self._normalize_rule_label(descriptor) == 'else':
                 return float(score)
+        if feature is not None:
+            unknown_score = self._get_feature_unknown_score(feature)
+            if unknown_score is not None:
+                return float(unknown_score)
         return 0.0
 
     def _build_pmml_expression_from_rules(
@@ -2766,6 +3041,8 @@ class ScoreCard(StandardScoreTransformer):
         expression = repr(float(default_score))
 
         for descriptor, score in reversed(bins):
+            if self._normalize_rule_label(descriptor) == 'else':
+                continue
             condition = self._bin_label_to_pmml_condition('X[0]', descriptor, special_codes=special_codes)
             expression = f"({float(score)!r}) if ({condition}) else ({expression})"
 
@@ -2778,16 +3055,37 @@ class ScoreCard(StandardScoreTransformer):
     ) -> Tuple[Dict[str, float], Optional[float]]:
         """为类别变量构建 PMML LookupTransformer 映射."""
         mapping: Dict[str, float] = {}
+        key_sources: Dict[str, Tuple[str, str, str]] = {}
         missing_score: Optional[float] = None
 
+        def add_mapping(value: Any, score: float) -> None:
+            key = str(value)
+            source = (
+                type(value).__module__,
+                type(value).__qualname__,
+                repr(value),
+            )
+            existing_source = key_sources.get(key)
+            if existing_source is not None and existing_source != source:
+                raise ValidationError(
+                    "PMML 类别键发生类型冲突: "
+                    f"{key!r} 同时来自 {existing_source[1]} 和 {source[1]}"
+                )
+            if key in mapping and not np.isclose(mapping[key], float(score), rtol=0, atol=0):
+                raise ValidationError(f"PMML 类别键发生分数冲突: {key!r}")
+            key_sources[key] = source
+            mapping[key] = float(score)
+
         for descriptor, score in bins:
+            if self._normalize_rule_label(descriptor) == 'else':
+                continue
             if isinstance(descriptor, (list, np.ndarray)):
                 contains_missing = False
                 for value in descriptor:
                     if pd.isna(value):
                         contains_missing = True
                     else:
-                        mapping[str(value)] = float(score)
+                        add_mapping(value, score)
                 if contains_missing:
                     missing_score = float(score)
                 continue
@@ -2802,12 +3100,23 @@ class ScoreCard(StandardScoreTransformer):
                         if missing_score is None:
                             missing_score = float(score)
                     else:
-                        mapping[str(code)] = float(score)
+                        add_mapping(code, score)
                 continue
 
-            mapping[str(descriptor)] = float(score)
+            add_mapping(descriptor, score)
 
         return mapping, missing_score
+
+    @staticmethod
+    def _choose_pmml_missing_replacement(mapping: Dict[str, float]) -> str:
+        """选择不会覆盖真实类别的 PMML 缺失值替代哨兵."""
+        base = '__HSCREDIT_MISSING__'
+        if base not in mapping:
+            return base
+        suffix = 1
+        while f'{base}_{suffix}' in mapping:
+            suffix += 1
+        return f'{base}_{suffix}'
 
     @staticmethod
     def _bin_label_to_pmml_condition(var: str, label: Any, special_codes: Optional[List[Any]] = None) -> str:
@@ -3280,7 +3589,7 @@ class ScoreCard(StandardScoreTransformer):
         self,
         to_json: Optional[str] = None,
         to_frame: bool = False,
-        decimal: int = 2,
+        decimal: int = 12,
         include_meta: bool = True,
         compatibility: Optional[str] = None,
     ) -> Union[Dict, pd.DataFrame]:
@@ -3290,7 +3599,7 @@ class ScoreCard(StandardScoreTransformer):
 
         :param to_json: 可选，JSON 文件保存路径。如果提供，将规则保存到该文件
         :param to_frame: 是否返回 DataFrame 格式，默认为 False
-        :param decimal: 分数保留小数位数，默认为 2
+        :param decimal: 分数保留小数位数，默认为 12，确保规则往返与原模型一致
         :param include_meta: 是否额外导出重建评分所需元数据，默认为 True
         :param compatibility: 外部兼容格式；设为 ``'toad'`` 时等价于 ``include_meta=False``
         :return: 评分卡规则字典或 DataFrame
@@ -3336,47 +3645,49 @@ class ScoreCard(StandardScoreTransformer):
                 raise ValueError("compatibility 仅支持 'toad' 或 'scorecardpipeline'")
             include_meta = False
 
-        # 构建与 toad 兼容的格式
-        card: Dict[str, Any] = {}
-        for col in self.feature_names_:
-            rule = self.rules_[col]
-            bins = rule['bins']
-            bin_labels = rule.get('bin_labels')
-            scores = rule['scores']
+        external_compatibility = compatibility is not None or not include_meta
+        if external_compatibility:
+            card: Dict[str, Any] = self._build_external_compatibility_card(decimal=decimal)
+        else:
+            deployment_rules = self._get_deployment_rules(decimal=decimal)
+            self._validate_deployment_rules(deployment_rules)
 
-            if (bins is None or len(bins) == 0) and (bin_labels is None or len(bin_labels) == 0):
-                continue
+            card = {}
+            for col in self.feature_names_:
+                rule = self.rules_[col]
+                bins = rule['bins']
+                bin_labels = rule.get('bin_labels')
+                scores = rule['scores']
 
-            feature_rules = {}
-            if bin_labels is not None and len(bin_labels) == len(scores):
-                for bin_label, score in zip(bin_labels, scores):
-                    feature_rules[str(bin_label)] = round(float(score), decimal)
-            elif isinstance(bins[0], (list, np.ndarray)):
-                # 类别特征
-                for bin_vals, score in zip(bins, scores):
-                    bin_label = ', '.join([str(v) for v in bin_vals])
-                    feature_rules[bin_label] = round(float(score), decimal)
-            else:
-                # 数值特征 - 格式化为区间标签
-                has_string_bins = (len(bins) > 0 and isinstance(bins[0], str) and
-                                 ('[' in str(bins[0]) or '(' in str(bins[0])))
-                
-                if has_string_bins:
-                    # 已经是格式化的标签
-                    for bin_label, score in zip(bins, scores):
+                feature_rules = {}
+                if bin_labels is not None and len(bin_labels) == len(scores):
+                    for bin_label, score in zip(bin_labels, scores):
                         feature_rules[str(bin_label)] = round(float(score), decimal)
-                else:
-                    # 数值切分点，格式化为区间
-                    for i, score in enumerate(scores):
-                        if i == 0:
-                            bin_label = f'[-inf, {bins[0]})' if len(bins) > 0 else '[-inf, +inf)'
-                        elif i == len(scores) - 1:
-                            bin_label = f'[{bins[-1]}, +inf)' if len(bins) > 0 else '[-inf, +inf)'
-                        else:
-                            bin_label = f'[{bins[i-1]}, {bins[i]})'
+                elif isinstance(bins[0], (list, np.ndarray)):
+                    for bin_vals, score in zip(bins, scores):
+                        bin_label = ', '.join([str(v) for v in bin_vals])
                         feature_rules[bin_label] = round(float(score), decimal)
+                else:
+                    has_string_bins = (
+                        len(bins) > 0
+                        and isinstance(bins[0], str)
+                        and ('[' in str(bins[0]) or '(' in str(bins[0]))
+                    )
 
-            card[col] = feature_rules
+                    if has_string_bins:
+                        for bin_label, score in zip(bins, scores):
+                            feature_rules[str(bin_label)] = round(float(score), decimal)
+                    else:
+                        for i, score in enumerate(scores):
+                            if i == 0:
+                                bin_label = f'[-inf, {bins[0]})' if len(bins) > 0 else '[-inf, +inf)'
+                            elif i == len(scores) - 1:
+                                bin_label = f'[{bins[-1]}, +inf)' if len(bins) > 0 else '[-inf, +inf)'
+                            else:
+                                bin_label = f'[{bins[i-1]}, {bins[i]})'
+                            feature_rules[bin_label] = round(float(score), decimal)
+
+                card[col] = feature_rules
 
         if include_meta:
             intercept_score = float(self.A_ - self.B_ * self.intercept_)
@@ -3412,6 +3723,7 @@ class ScoreCard(StandardScoreTransformer):
                     for value in special_codes
                 ],
                 'handle_unknown': handle_unknown,
+                'deployment_defaults': self._get_export_deployment_defaults(),
             }
 
         # 保存到 JSON 文件
@@ -3483,6 +3795,13 @@ class ScoreCard(StandardScoreTransformer):
         self._loaded_categorical_bins = dict(meta.get('categorical_bins', {}))
         self._loaded_special_codes = list(meta.get('special_codes', []))
         self._loaded_handle_unknown = validate_handle_unknown(meta.get('handle_unknown', -3))
+        self._loaded_deployment_defaults = {
+            str(feature): {
+                str(name): float(score)
+                for name, score in feature_defaults.items()
+            }
+            for feature, feature_defaults in meta.get('deployment_defaults', {}).items()
+        }
 
     def _get_export_categorical_bins(self) -> Dict[str, List[List[Any]]]:
         """获取可 JSON 序列化且不丢失逗号类别的结构化类别规则。"""
@@ -3667,6 +3986,7 @@ class ScoreCard(StandardScoreTransformer):
             self._loaded_categorical_bins = {}
             self._loaded_special_codes = []
             self._loaded_handle_unknown = -3
+            self._loaded_deployment_defaults = {}
         else:
             # update=True 同样表示后续评分以规则为准；保留现有分箱器用于产生箱标签，
             # 但必须移除旧 LR，否则更新后的分值不会被 predict 使用。
@@ -3998,7 +4318,36 @@ class RoundScoreCard(ScoreCard):
             }
 
             label_series = X_bins[col].map(self._normalize_rule_label)
-            scores[:, i] = label_series.map(score_map).fillna(0.0).to_numpy(dtype=float)
+            mapped_scores = label_series.map(score_map)
+            missing_score = self._get_feature_missing_score(col)
+            if missing_score is not None:
+                missing_mask = label_series.eq('missing') & mapped_scores.isna()
+                mapped_scores.loc[missing_mask] = self._round_score_value(
+                    self._get_score_sign() * missing_score,
+                    decimal,
+                )
+            fallback_bins = list(zip(rule_labels, rounded_scores))
+            explicit_default = next(
+                (
+                    float(score)
+                    for descriptor, score in fallback_bins
+                    if self._normalize_rule_label(descriptor) == 'else'
+                ),
+                None,
+            )
+            if explicit_default is None:
+                unknown_score = self._get_feature_unknown_score(col)
+                default_score = (
+                    0.0
+                    if unknown_score is None
+                    else self._round_score_value(
+                        self._get_score_sign() * unknown_score,
+                        decimal,
+                    )
+                )
+            else:
+                default_score = explicit_default
+            scores[:, i] = mapped_scores.fillna(default_score).to_numpy(dtype=float)
 
         return scores
 
@@ -4414,10 +4763,42 @@ class RoundScoreCard(ScoreCard):
             if descriptors is None:
                 continue
 
-            deployment_rules[feature] = [
+            feature_rules = [
                 (descriptor, float(score))
                 for descriptor, score in zip(descriptors, rounded_scores)
             ]
+            missing_score = self._get_feature_missing_score(feature)
+            if (
+                missing_score is not None
+                and not any(self._is_missing_descriptor(descriptor) for descriptor, _ in feature_rules)
+            ):
+                feature_rules.append(
+                    (
+                        'missing',
+                        self._round_score_value(
+                            self._get_score_sign() * missing_score,
+                            self.decimal,
+                        ),
+                    )
+                )
+
+            unknown_score = self._get_feature_unknown_score(feature)
+            if (
+                feature_types.get(feature) == 'categorical'
+                and unknown_score is not None
+                and not any(self._normalize_rule_label(descriptor) == 'else' for descriptor, _ in feature_rules)
+            ):
+                feature_rules.append(
+                    (
+                        'else',
+                        self._round_score_value(
+                            self._get_score_sign() * unknown_score,
+                            self.decimal,
+                        ),
+                    )
+                )
+
+            deployment_rules[feature] = feature_rules
 
         return deployment_rules
 

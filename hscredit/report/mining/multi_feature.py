@@ -11,7 +11,13 @@ import pandas as pd
 from typing import Union, List, Dict, Optional, Tuple, Any
 from itertools import combinations
 
-from .base import BaseRuleMiner, _binning_has_parallel_children, _mining_workload
+from .base import (
+    BaseRuleMiner,
+    FeatureNames,
+    _binning_has_parallel_children,
+    _mining_workload,
+    resolve_feature_map,
+)
 from ...core.rules.rule import Rule
 from ...core.binning import OptimalBinning
 
@@ -46,6 +52,8 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
     
     :param target: 目标变量列名，默认为'target'
     :param exclude_cols: 需要排除的列名列表
+    :param features: 参与挖掘的字段名或字段名列表，默认None（使用全部候选字段）
+    :param feature_map: 字段名到字段含义的映射，用于规则报告展示
     :param method: 分箱方法，取值与 `OptimalBinning.VALID_METHODS` 完全一致，不支持别名。
         默认为'quantile'
     :param max_n_bins: 最大分箱数，默认5。超过此值的数值型特征将分箱
@@ -92,6 +100,8 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
         n_jobs: Optional[Union[int, float]] = -1,
         parallel_backend: Optional[str] = None,
         parallel_config: Optional[Dict[str, Any]] = None,
+        features: FeatureNames = None,
+        feature_map: Optional[Dict[str, str]] = None,
         **binning_kwargs
     ):
         super().__init__(
@@ -100,6 +110,8 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
             n_jobs=n_jobs,
             parallel_backend=parallel_backend,
             parallel_config=parallel_config,
+            features=features,
+            feature_map=feature_map,
         )
         
         # 仅校验不归一化：sklearn clone 要求构造参数按对象原样保存，
@@ -119,6 +131,8 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
         self.verbose = verbose
         self.binning_kwargs = binning_kwargs
         
+        self._features_explicit_ = False
+        self.features_ = []
         self.numerical_features_ = []
         self.categorical_features_ = []
         self.overall_badrate_ = 0.0
@@ -129,12 +143,14 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
         self,
         X: Union[pd.DataFrame, np.ndarray],
         y: Optional[Union[pd.Series, np.ndarray]] = None,
+        feature_names: FeatureNames = None,
         **kwargs
     ) -> 'MultiFeatureRuleMiner':
         """拟合挖掘器.
         
         :param X: 训练数据
         :param y: 目标变量（可选）
+        :param feature_names: 本次拟合使用的字段名或字段名列表，优先于构造参数 ``features``
         :param kwargs: 额外参数，可覆盖初始化参数
         :return: self
         """
@@ -149,7 +165,8 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
 
         working.method = OptimalBinning.validate_method(working.method)
 
-        X, y = working._check_input_data(X, y)
+        working._features_explicit_ = feature_names is not None or working.features is not None
+        X, y = working._check_input_data(X, y, feature_names=feature_names)
 
         if y is None:
             raise ValueError("多特征规则挖掘需要目标变量y")
@@ -160,6 +177,11 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
         # 分类特征
         working.numerical_features_ = working._get_numeric_features(X)
         working.categorical_features_ = working._get_categorical_features(X)
+        working.features_ = (
+            list(X.columns)
+            if working._features_explicit_
+            else working.numerical_features_ + working.categorical_features_
+        )
         
         # 计算整体坏账率
         working.overall_badrate_ = y.mean()
@@ -418,6 +440,13 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
             datasets[target_col] = self.y_.values
 
         rows = []
+        feature_map = resolve_feature_map(self.feature_map)
+        input_fields = f"{feature1} × {feature2}"
+        field_meanings = (
+            f"{feature_map.get(feature1, '')} × {feature_map.get(feature2, '')}"
+            if feature_map is not None
+            else ""
+        )
         for _, row in long_df.head(top_n).iterrows():
             v1, v2 = row['feature1_value'], row['feature2_value']
             f1_expr = f"`{feature1}`" if not str(feature1).isidentifier() else str(feature1)
@@ -437,7 +466,7 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
             hit_rows = report_df[report_df['分箱'] == '命中'] if '分箱' in report_df.columns else pd.DataFrame()
             hit = hit_rows.iloc[0].to_dict() if not hit_rows.empty else {}
 
-            rows.append({
+            report_row = {
                 '规则表达式': rule.expr,
                 '规则名称': rule.name,
                 'feature1_value': v1,
@@ -449,7 +478,10 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
                 '命中LIFT值': hit.get('LIFT值'),
                 '坏账改善': hit.get('坏账改善'),
                 '规则报告': report_df,
-            })
+            }
+            if feature_map is not None:
+                report_row = {'入参字段': input_fields, '字段含义': field_meanings, **report_row}
+            rows.append(report_row)
 
         result_df = pd.DataFrame(rows)
         if not result_df.empty:
@@ -517,10 +549,12 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
         """
         self._check_fitted()
         
-        all_features = self.numerical_features_ + self.categorical_features_
+        all_features = self.features_
         
         # 选择信息价值最高的特征对
-        if len(all_features) > 10:
+        if self._features_explicit_:
+            selected_features = all_features
+        elif len(all_features) > 10:
             # 数值特征按方差排序；日期、类别等非数值字段不能直接计算方差。
             numeric_variance = (
                 self.X_[self.numerical_features_]
@@ -667,6 +701,8 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
                 '命中LIFT值': hit.get('LIFT值'),
                 '坏账改善': hit.get('坏账改善'),
             }
+            if '入参字段' in row:
+                metadata.update({'入参字段': row['入参字段'], '字段含义': row['字段含义']})
             rule.metadata_ = metadata
             rule.metric_score_ = metadata.get('命中LIFT值', 0)
             rule_objects.append(rule)

@@ -1,5 +1,6 @@
 import matplotlib.pyplot as plt
 import pandas as pd
+from matplotlib.figure import Figure
 
 from hscredit.report import feature_efficiency_analysis
 import hscredit.report.feature_analyzer as feature_analyzer_module
@@ -90,3 +91,37 @@ def test_feature_efficiency_analysis_supports_overdue_target_building(monkeypatc
     assert result["target"] == "MOB1 3+"
     assert "manual" in result["trend_figures"]
     assert "auto" in result["trend_figures"]
+
+
+def test_feature_efficiency_analysis_skips_shared_legend_without_handles(monkeypatch):
+    monkeypatch.setattr(feature_analyzer_module, "bin_plot", _fake_bin_plot)
+    monkeypatch.setattr(feature_analyzer_module, "ks_plot", _fake_ks_plot)
+
+    original_legend = Figure.legend
+
+    def reject_empty_legend(self, *args, **kwargs):
+        if not kwargs.get("handles"):
+            raise ValueError("number sections must be larger than 0")
+        return original_legend(self, *args, **kwargs)
+
+    monkeypatch.setattr(Figure, "legend", reject_empty_legend)
+    figures_before = set(plt.get_fignums())
+    try:
+        result = feature_efficiency_analysis(
+            data=pd.DataFrame(
+                {
+                    "score": [420, 455, 500, 530, 580, 615, 660, 710],
+                    "target": [1, 1, 1, 0, 1, 0, 0, 0],
+                }
+            ),
+            feature="score",
+            manual_rules=[450, 600],
+            target="target",
+            auto_method="quantile",
+            n_jobs=1,
+        )
+
+        assert result["comparison_figure"].legends == []
+    finally:
+        for figure_number in set(plt.get_fignums()) - figures_before:
+            plt.close(figure_number)

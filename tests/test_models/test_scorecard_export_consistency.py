@@ -449,12 +449,9 @@ def test_scorecard_pmml_preprocessing_matches_reference_feature_scores(tmp_path)
     np.testing.assert_allclose(np.asarray(transformed, dtype=float), reference, atol=1e-9)
 
 
-def test_scorecard_pmml_predict_matches_reference_scores(tmp_path):
+def test_scorecard_pmml_predict_matches_reference_scores(tmp_path, pypmml_model):
     pytest.importorskip('sklearn2pmml')
-    pytest.importorskip('pypmml')
     _skip_if_java_too_old_for_sklearn2pmml()
-
-    from pypmml import Model
 
     scorecard, _, X_test = _train_scorecard(direction='descending')
     sample = X_test.copy()
@@ -463,6 +460,6 @@ def test_scorecard_pmml_predict_matches_reference_scores(tmp_path):
     pmml_path = tmp_path / 'scorecard.pmml'
     scorecard.export_pmml(str(pmml_path))
 
-    pmml_scores = Model.load(str(pmml_path)).predict(sample)['predicted_score'].to_numpy()
+    pmml_scores = pypmml_model.load(str(pmml_path)).predict(sample)['predicted_score'].to_numpy()
 
     np.testing.assert_allclose(reference, pmml_scores, atol=1e-9)

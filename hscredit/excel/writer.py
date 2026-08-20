@@ -20,9 +20,11 @@ import re
 import os
 import copy
 import math
+import posixpath
 import shutil
 import tempfile
 import zipfile
+import xml.etree.ElementTree as ET
 from typing import Optional, Union, List, Tuple, Dict, Any, Sequence
 
 import numpy as np
@@ -35,7 +37,7 @@ from openpyxl.worksheet.worksheet import Worksheet
 from openpyxl.worksheet.hyperlink import Hyperlink
 from openpyxl.utils.dataframe import dataframe_to_rows
 from openpyxl.formatting.rule import DataBarRule, ColorScaleRule
-from openpyxl.utils import get_column_letter, column_index_from_string
+from openpyxl.utils import get_column_letter, column_index_from_string, range_boundaries
 from openpyxl.styles import NamedStyle, Border, Side, Alignment, PatternFill, Font
 
 from . import _pivot
@@ -50,8 +52,9 @@ class ExcelWriter:
     支持DataFrame数据写入、图片插入、超链接等功能。
     支持上下文管理器（with语句）自动保存。
 
-    :param style_excel: 样式模板文件路径，默认使用包内的template.xlsx
-    :param style_sheet_name: 模板文件内初始样式sheet名称，默认为"初始化"
+    :param style_excel: 样式模板或已有Excel文件路径，默认使用包内的template.xlsx
+    :param style_sheet_name: 模板文件内初始样式sheet名称，默认为"初始化"；已有Excel中不存在该
+        Sheet时保留全部业务Sheet，后续工作表直接创建为空白Sheet
     :param mode: 写入模式，可选'replace'或'append'，默认为'replace'
         - replace: 替换已有文件
         - append: 在已有文件基础上追加内容
@@ -120,7 +123,7 @@ class ExcelWriter:
         self.theme_color = theme_color
         self.condition_color = condition_color
 
-        # 加载模板
+        # 加载模板或已有工作簿
         if style_excel is None:
             # 使用resources目录下的template.xlsx
             package_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -134,7 +137,7 @@ class ExcelWriter:
             if style_sheet_name in self.workbook.sheetnames:
                 self.style_sheet = self.workbook[style_sheet_name]
             else:
-                self.style_sheet = self.workbook.active
+                self.style_sheet = None
         else:
             # 模板文件不存在时，创建新的空 Workbook
             self.workbook = Workbook()
@@ -168,6 +171,10 @@ class ExcelWriter:
         self._pivot_specs: List[Dict[str, Any]] = []
         # 数据透视图规格缓存：记录需在对应 chart XML 中注入 pivotSource 的透视图
         self._pivot_chart_specs: List[Dict[str, Any]] = []
+
+        # 记录明确以文本形式写入的数字样单元格；openpyxl 不会序列化 ignoredErrors，
+        # 保存后需按工作表向 OOXML 注入 numberStoredAsText 忽略声明。
+        self._number_stored_as_text_cells: Dict[Worksheet, set] = {}
 
     def __enter__(self) -> 'ExcelWriter':
         """进入上下文管理器。
@@ -283,7 +290,8 @@ class ExcelWriter:
         col_idx = column_index_from_string(col_letter)
         cells_data = []
         # 使用模板的max_row作为上限，确保处理所有行（包括空白行）
-        max_row = max(worksheet.max_row, self.style_sheet.max_row)
+        template_max_row = self.style_sheet.max_row if self.style_sheet is not None else 0
+        max_row = max(worksheet.max_row, template_max_row)
         for row_idx in range(1, max_row + 1):
             cell = worksheet.cell(row=row_idx, column=col_idx)
             style_snapshot = copy.copy(cell._style) if cell.has_style else None
@@ -301,13 +309,13 @@ class ExcelWriter:
 
         for row_idx, value, style_snapshot in cells_data:
             cell = worksheet.cell(row=row_idx, column=col_idx)
-            # 检查是否需要保留文本格式（用于消除绿色感叹号）
+            # 检查是否需要保留文本格式；绿色错误提示由保存后的 ignoredErrors 声明关闭。
             need_text_format = isinstance(value, str) and self.is_numeric_like_string(value)
 
             # 仅恢复调用前已经存在的样式；空白模板区域依赖列维度样式提供白底。
             cell._style = copy.copy(style_snapshot) if style_snapshot is not None else None
 
-            # 如果值是类似数字的字符串，强制设置为文本格式以消除绿色感叹号
+            # 如果值是类似数字的字符串，强制设置为文本格式以保留字符串语义。
             # 这必须在应用样式之后执行，因为命名样式可能包含数字格式
             if need_text_format:
                 cell.number_format = '@'
@@ -486,8 +494,11 @@ class ExcelWriter:
         :return: 工作表对象
         """
         if name not in self.workbook.sheetnames:
-            worksheet = self.workbook.copy_worksheet(self.style_sheet)
-            worksheet.title = name
+            if self.style_sheet is None:
+                worksheet = self.workbook.create_sheet(name)
+            else:
+                worksheet = self.workbook.copy_worksheet(self.style_sheet)
+                worksheet.title = name
         else:
             worksheet = self.workbook[name]
 
@@ -589,6 +600,17 @@ class ExcelWriter:
             display=f"{cell.value}"
         )
 
+    def _set_number_stored_as_text_cell(self, worksheet: Worksheet, cell: Cell, value: Any) -> None:
+        """保留数字样字符串的文本语义，并记录需关闭 Excel 错误提示的单元格。"""
+        ignored_cells = self._number_stored_as_text_cells.setdefault(worksheet, set())
+        if self.is_numeric_like_string(value):
+            cell.number_format = '@'
+            ignored_cells.add(cell)
+        else:
+            ignored_cells.discard(cell)
+            if not ignored_cells:
+                self._number_stored_as_text_cells.pop(worksheet, None)
+
     def insert_value2sheet(
         self,
         worksheet: Worksheet,
@@ -623,6 +645,9 @@ class ExcelWriter:
         >>>
         >>> # 批量调整列宽（推荐在所有数据写入完成后调用）
         >>> writer.adjust_columns_width(worksheet, columns=['A', 'B', 'C'])
+
+        数字样字符串（如 ``"466"``、``"25%"``、``"00123"``）会保持为文本；保存时自动关闭
+        Excel 的“以文本形式存储的数字”错误提示。
         """
         # 解析位置
         if isinstance(insert_space, str):
@@ -660,9 +685,7 @@ class ExcelWriter:
         # 设置值
         worksheet[f"{start_col}{start_row}"] = formatted_value
 
-        # 如果是类似数字的字符串，设置单元格为文本格式以避免绿色感叹号
-        if self.is_numeric_like_string(value):
-            cell.number_format = '@'
+        self._set_number_stored_as_text_cell(worksheet, cell, value)
 
         # 自动调整列宽
         if auto_width:
@@ -1136,7 +1159,8 @@ class ExcelWriter:
                                 if i == df.columns.nlevels - 1:
                                     yield list(df.index.names) + [c[i] for c in columns]
                                 else:
-                                    yield [None] * df.index.nlevels + [c[i] for c in columns]
+                                    column_level_name = df.columns.names[i]
+                                    yield [column_level_name] * df.index.nlevels + [c[i] for c in columns]
                             else:
                                 yield list(df.index.names) + columns
                         else:
@@ -1311,8 +1335,7 @@ class ExcelWriter:
 
         formatted_value = self.astype_insertvalue(value, decimal=decimal)
         cell.value = formatted_value
-        if self.is_numeric_like_string(value):
-            cell.number_format = '@'
+        self._set_number_stored_as_text_cell(worksheet, cell, value)
         if widths is not None:
             widths[col_index] = max(
                 widths.get(col_index, 8.0),
@@ -1646,7 +1669,7 @@ class ExcelWriter:
 
     @staticmethod
     def is_numeric_like_string(value: Any) -> bool:
-        """检查值是否为类似数字的字符串（如 "00123"、"123.45"、"12.34%"、"1,234.56"）。
+        """检查值是否为类似数字的字符串（如 "123"、"00123"、"123.45"、"12.34%"、"1,234.56"）。
 
         这类字符串在Excel中会显示绿色感叹号（以文本形式存储的数字）。
 
@@ -1679,17 +1702,7 @@ class ExcelWriter:
         
         # 检查是否为纯数字字符串（包括前导零，如 "00123"）
         if re.match(r'^[+-]?\d+\.?\d*$', value):
-            # 排除纯整数（非前导零情况）
-            # 如果字符串长度大于1且以0开头且后面跟着数字，则是前导零数字
-            if len(value) > 1 and value[0] == '0' and value[1].isdigit():
-                return True
-            # 检查是否包含小数点
-            if '.' in value:
-                return True
-            # 检查是否带正负号
-            if value[0] in '+-':
-                return True
-            return False
+            return True
         
         # 检查是否为科学计数法（如 "1e5"、"1.2E-3"）
         if re.match(r'^[+-]?\d+(\.\d+)?[eE][+-]?\d+$', value):
@@ -2255,8 +2268,8 @@ class ExcelWriter:
     def insert_pivot_table2sheet(
         self,
         worksheet: Union[Worksheet, str],
-        data: pd.DataFrame,
-        pivot_anchor: Union[str, Tuple[int, int]],
+        data: Optional[pd.DataFrame] = None,
+        pivot_anchor: Optional[Union[str, Tuple[int, int]]] = None,
         rows: Optional[Union[str, List[str]]] = None,
         columns: Optional[Union[str, List[str]]] = None,
         values: Optional[Any] = None,
@@ -2273,6 +2286,7 @@ class ExcelWriter:
         theme_style: bool = True,
         style: Optional[str] = None,
         fill: bool = True,
+        source_range: Optional[str] = None,
     ) -> Tuple[int, int]:
         """向工作表插入Excel原生数据透视表。
 
@@ -2282,12 +2296,13 @@ class ExcelWriter:
         Excel 打开时会基于源数据自动刷新。
 
         .. note::
-            透视表通过在保存后直接注入 xlsx 内部部件实现。openpyxl 追加模式（``mode='append'``）
-            会基于单元格值/样式重建工作簿，不保留原文件中的透视表、原生图、迷你图与图片。
-            因此请勿用追加模式向已含透视表的文件追加内容，否则原透视表会丢失；建议透视表在最终输出步骤生成。
+            将已有文件作为 ``style_excel`` 加载时，可保留其中已有透视表并继续追加。若仅在
+            :meth:`save` 阶段通过 ``mode='append'`` 合并另一个目标文件，仍只复制单元格值/样式，
+            不保证保留该目标文件中的原生图、迷你图与图片；此类文件应先作为 ``style_excel`` 加载。
 
         :param worksheet: 透视表放置的工作表对象或名称
-        :param data: 源数据 DataFrame（透视缓存基于此构建）
+        :param data: 源数据 DataFrame（透视缓存基于此构建）。省略时从
+            ``source_sheet`` 的 ``source_range`` 读取
         :param pivot_anchor: 透视表左上角锚点，如'B2'或(2, 2)
         :param rows: 行字段（列名或列名列表），默认为None
         :param columns: 列字段（列名或列名列表），默认为None
@@ -2315,6 +2330,8 @@ class ExcelWriter:
         :param theme_style: 是否套用适配 ``theme_color`` 的 hscredit 主题样式，默认为True
         :param style: 透视表样式名，默认为None（``theme_style`` 为True时用主题样式，否则用内置 PivotStyleLight16）
         :param fill: 自动写入源数据时是否使用颜色填充，默认为True
+        :param source_range: 已有源数据区域（含首行字段名），如 ``'A1:H5000'``。
+            仅在 ``data`` 为None时使用，且不会改写源数据
         :return: (透视表区域下一行行号, 下一列列号)
 
         **参考样例**
@@ -2335,9 +2352,72 @@ class ExcelWriter:
         ...         groups={'放款金额': {'start': 0, 'interval': 100}},
         ...         subtotals=True,
         ...     )
+        >>> # 也可直接引用已有Excel中的数据区域，不会重写源数据
+        >>> writer = ExcelWriter(style_excel='existing.xlsx', mode='append')
+        >>> writer.insert_pivot_table2sheet(
+        ...     worksheet='透视分析', pivot_anchor='B2',
+        ...     source_sheet='贷款明细', source_range='A1:H5000',
+        ...     rows='区域', values=[('放款金额', 'sum')],
+        ... )
+        >>> writer.save('existing.xlsx')  # 或另存为其他路径
         """
         if values is None:
             raise ValueError("数据透视表至少需要指定一个值字段（values）")
+        if pivot_anchor is None:
+            raise ValueError("请指定数据透视表左上角位置（pivot_anchor）")
+        if data is not None and source_range is not None:
+            raise ValueError("data与source_range不能同时指定，请选择一种数据源")
+
+        range_source_ws: Optional[Worksheet] = None
+        range_source_ref: Optional[str] = None
+        if data is None:
+            if source_sheet is None or source_range is None:
+                raise ValueError("未提供data时，必须同时指定source_sheet和source_range")
+            if write_source:
+                raise ValueError("使用source_range时不会写入源数据，请勿设置write_source=True")
+
+            if isinstance(source_sheet, Worksheet):
+                range_source_ws = source_sheet
+                if range_source_ws.parent is not self.workbook:
+                    raise ValueError("源数据工作表必须属于当前工作簿")
+            else:
+                if source_sheet not in self.workbook.sheetnames:
+                    raise ValueError("源数据工作表不存在：{}".format(source_sheet))
+                range_source_ws = self.workbook[source_sheet]
+
+            try:
+                min_col, min_row, max_col, max_row = range_boundaries(source_range)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("无效的源数据区域：{}".format(source_range)) from exc
+            if None in (min_col, min_row, max_col, max_row):
+                raise ValueError("无效的源数据区域：{}，请指定完整的起止单元格".format(source_range))
+            if min_col > max_col or min_row > max_row:
+                raise ValueError("无效的源数据区域：{}，起始单元格不能晚于结束单元格".format(source_range))
+
+            source_rows = list(
+                range_source_ws.iter_rows(
+                    min_row=min_row,
+                    max_row=max_row,
+                    min_col=min_col,
+                    max_col=max_col,
+                    values_only=True,
+                )
+            )
+            if not source_rows or not source_rows[0]:
+                raise ValueError("无效的源数据区域：{}".format(source_range))
+            headers = [str(value).strip() if value is not None else "" for value in source_rows[0]]
+            if any(not header for header in headers):
+                raise ValueError("源数据区域首行必须包含非空字段名")
+            if len({header.casefold() for header in headers}) != len(headers):
+                raise ValueError("源数据区域首行的字段名不能重复")
+
+            data = pd.DataFrame(source_rows[1:], columns=headers)
+            range_source_ref = "{}{}:{}{}".format(
+                get_column_letter(min_col),
+                min_row,
+                get_column_letter(max_col),
+                max_row,
+            )
 
         data = data.copy()
         rows = [] if rows is None else ([rows] if isinstance(rows, str) else list(rows))
@@ -2370,12 +2450,27 @@ class ExcelWriter:
         pivot_sheet = worksheet.title
         pivot_anchor = self._parse_anchor(pivot_anchor)
 
-        name = name or "数据透视表{}".format(len(self._pivot_specs) + 1)
+        existing_pivot_names = {
+            pivot.name
+            for sheet in self.workbook.worksheets
+            for pivot in getattr(sheet, "_pivots", [])
+        }
+        existing_pivot_names.update(spec["name"] for spec in self._pivot_specs)
+        if name is None:
+            sequence = 1
+            while "数据透视表{}".format(sequence) in existing_pivot_names:
+                sequence += 1
+            name = "数据透视表{}".format(sequence)
+        elif name in existing_pivot_names:
+            raise ValueError("数据透视表名称已存在：{}".format(name))
         value_fields = _pivot.normalize_values(values, data)
 
         # 解析/写入源数据
         src_row, src_col = self._parse_anchor(source_anchor)
-        if source_sheet is None:
+        if range_source_ws is not None:
+            source_ws = range_source_ws
+            do_write = False
+        elif source_sheet is None:
             source_ws = self.get_sheet_by_name(self._unique_source_sheet_name(name))
             do_write = True if write_source is None else write_source
         else:
@@ -2389,7 +2484,7 @@ class ExcelWriter:
         # 源数据区域引用（worksheetSource 的 sheet 单独存储，ref 不含 sheet 前缀/$）
         n_cols = len(data.columns)
         n_rows = len(data)
-        source_ref = "{}{}:{}{}".format(
+        source_ref = range_source_ref or "{}{}:{}{}".format(
             get_column_letter(src_col), src_row,
             get_column_letter(src_col + n_cols - 1), src_row + n_rows,
         )
@@ -2558,6 +2653,17 @@ class ExcelWriter:
                         custom_numfmts.append((next_fmt_id, nf))
                         next_fmt_id += 1
             want_theme = any(spec.get("_theme") for spec in self._pivot_specs)
+            stripe_color = self.calculate_rgba_color(self.theme_color, self.opacity, prefix="")
+            theme_style_name = None
+            if styles_xml is not None and want_theme:
+                theme_style_name = _pivot.resolve_theme_pivot_style_name(
+                    styles_xml,
+                    self.theme_color,
+                    stripe_color,
+                )
+                for spec in self._pivot_specs:
+                    if spec.get("_theme"):
+                        spec["style"] = theme_style_name
 
             # sheet 名 -> r:id -> worksheet 部件路径（复用 sparkline 注入同样的解析方式）
             name_to_rid = {}
@@ -2583,18 +2689,34 @@ class ExcelWriter:
             existing_rids = [int(m) for m in re.findall(r'Id="rId(\d+)"', wb_rels)]
             next_rid = max(existing_rids) + 1 if existing_rids else 1
 
+            # 已有透视表/缓存部件与 cacheId 最大值，追加时不得覆盖原生对象。
+            existing_part_indices = []
+            for part in names:
+                match = re.fullmatch(
+                    r"xl/(?:pivotTables/pivotTable|pivotCache/pivotCacheDefinition|"
+                    r"pivotCache/pivotCacheRecords)(\d+)\.xml",
+                    part,
+                )
+                if match:
+                    existing_part_indices.append(int(match.group(1)))
+            next_part_index = max(existing_part_indices, default=0) + 1
+            existing_cache_ids = [int(value) for value in re.findall(r'cacheId="(\d+)"', workbook_xml)]
+            next_cache_id = max(existing_cache_ids, default=-1) + 1
+
             new_parts: Dict[str, bytes] = {}
             sheet_pivot_rels: Dict[str, List[Tuple[str, str]]] = {}  # sheet part -> [(rid, pivotTable target)]
             wb_pivotcache_entries: List[Tuple[int, str]] = []       # (cacheId, rId)
             wb_new_rels: List[Tuple[str, str, str]] = []            # (rId, type, target)
             ct_overrides: List[Tuple[str, str]] = []                # (PartName, ContentType)
 
-            for i, spec in enumerate(self._pivot_specs, start=1):
-                cache_def_part = "xl/pivotCache/pivotCacheDefinition{}.xml".format(i)
-                cache_rec_part = "xl/pivotCache/pivotCacheRecords{}.xml".format(i)
-                pivot_part = "xl/pivotTables/pivotTable{}.xml".format(i)
-                cache_def_rels = "xl/pivotCache/_rels/pivotCacheDefinition{}.xml.rels".format(i)
-                pivot_rels = "xl/pivotTables/_rels/pivotTable{}.xml.rels".format(i)
+            for offset, spec in enumerate(self._pivot_specs):
+                part_index = next_part_index + offset
+                spec["cache_id"] = next_cache_id + offset
+                cache_def_part = "xl/pivotCache/pivotCacheDefinition{}.xml".format(part_index)
+                cache_rec_part = "xl/pivotCache/pivotCacheRecords{}.xml".format(part_index)
+                pivot_part = "xl/pivotTables/pivotTable{}.xml".format(part_index)
+                cache_def_rels = "xl/pivotCache/_rels/pivotCacheDefinition{}.xml.rels".format(part_index)
+                pivot_rels = "xl/pivotTables/_rels/pivotTable{}.xml.rels".format(part_index)
 
                 # cacheDefinition -> records 的关系（部件内固定 rId1）
                 cache_def_xml = _pivot.render_cache_definition_xml(spec, "rId1")
@@ -2608,26 +2730,28 @@ class ExcelWriter:
                     '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n'
                     '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
                     '<Relationship Id="rId1" Type="{}" Target="pivotCacheRecords{}.xml"/>'
-                    '</Relationships>'.format(_pivot.REL_CACHE_REC, i)
+                    '</Relationships>'.format(_pivot.REL_CACHE_REC, part_index)
                 ).encode("utf-8")
                 new_parts[pivot_rels] = (
                     '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n'
                     '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
                     '<Relationship Id="rId1" Type="{}" Target="../pivotCache/pivotCacheDefinition{}.xml"/>'
-                    '</Relationships>'.format(_pivot.REL_CACHE_DEF, i)
+                    '</Relationships>'.format(_pivot.REL_CACHE_DEF, part_index)
                 ).encode("utf-8")
 
                 # workbook -> cacheDefinition 关系 + pivotCaches 条目
                 rid = "rId{}".format(next_rid)
                 next_rid += 1
-                wb_new_rels.append((rid, _pivot.REL_CACHE_DEF, "pivotCache/pivotCacheDefinition{}.xml".format(i)))
+                wb_new_rels.append(
+                    (rid, _pivot.REL_CACHE_DEF, "pivotCache/pivotCacheDefinition{}.xml".format(part_index))
+                )
                 wb_pivotcache_entries.append((spec["cache_id"], rid))
 
                 # sheet -> pivotTable 关系
                 sheet_part = rid_to_target.get(name_to_rid.get(spec["pivot_sheet"]))
                 if sheet_part:
                     sheet_rels_part = sheet_part.replace("xl/worksheets/", "xl/worksheets/_rels/") + ".rels"
-                    rel_target = "../pivotTables/pivotTable{}.xml".format(i)
+                    rel_target = "../pivotTables/pivotTable{}.xml".format(part_index)
                     sheet_pivot_rels.setdefault(sheet_rels_part, []).append((_pivot.REL_PIVOT_TABLE, rel_target))
 
                 ct_overrides.append(("/" + cache_def_part, _pivot.CT_CACHE_DEF))
@@ -2646,20 +2770,27 @@ class ExcelWriter:
                     styles_xml=styles_xml,
                     want_theme=want_theme,
                     theme_color=self.theme_color,
-                    stripe_color=self.calculate_rgba_color(self.theme_color, self.opacity, prefix=""),
+                    stripe_color=stripe_color,
                     custom_numfmts=custom_numfmts,
+                    theme_style_name=theme_style_name,
                 )
 
             # 2) workbook.xml 追加 <pivotCaches>（位于 extLst / </workbook> 之前）
-            pivotcaches_xml = "<pivotCaches>" + "".join(
+            pivotcache_entries_xml = "".join(
                 '<pivotCache cacheId="{}" r:id="{}"/>'.format(cid, rid)
                 for cid, rid in wb_pivotcache_entries
-            ) + "</pivotCaches>"
-            if "<extLst" in workbook_xml:
-                idx = workbook_xml.find("<extLst")
-                workbook_xml = workbook_xml[:idx] + pivotcaches_xml + workbook_xml[idx:]
+            )
+            existing_pivotcaches_end = re.search(r"</(?:[\w.-]+:)?pivotCaches\s*>", workbook_xml)
+            if existing_pivotcaches_end:
+                idx = existing_pivotcaches_end.start()
+                workbook_xml = workbook_xml[:idx] + pivotcache_entries_xml + workbook_xml[idx:]
             else:
-                workbook_xml = workbook_xml.replace("</workbook>", pivotcaches_xml + "</workbook>")
+                pivotcaches_xml = "<pivotCaches>" + pivotcache_entries_xml + "</pivotCaches>"
+                if "<extLst" in workbook_xml:
+                    idx = workbook_xml.find("<extLst")
+                    workbook_xml = workbook_xml[:idx] + pivotcaches_xml + workbook_xml[idx:]
+                else:
+                    workbook_xml = workbook_xml.replace("</workbook>", pivotcaches_xml + "</workbook>")
             # 确保 r 命名空间存在（openpyxl 默认会写入，稳妥起见兜底）
             if "xmlns:r=" not in workbook_xml.split(">", 1)[0]:
                 workbook_xml = workbook_xml.replace(
@@ -2773,19 +2904,142 @@ class ExcelWriter:
                 break
         return result
 
+    @staticmethod
+    def _collapse_contiguous_indexes(indexes: Sequence[int]) -> List[Tuple[int, int]]:
+        """将连续的行号或列号折叠为闭区间。"""
+        if not indexes:
+            return []
+
+        ranges = []
+        start = previous = indexes[0]
+        for current in indexes[1:]:
+            if current != previous + 1:
+                ranges.append((start, previous))
+                start = current
+            previous = current
+        ranges.append((start, previous))
+        return ranges
+
+    @classmethod
+    def _compact_cell_references(cls, coordinates: Sequence[Tuple[int, int]]) -> List[str]:
+        """将单元格坐标压缩为较短的横向或纵向 OOXML sqref 范围列表。"""
+        rows: Dict[int, List[int]] = {}
+        columns: Dict[int, List[int]] = {}
+        for row, column in sorted(set(coordinates)):
+            rows.setdefault(row, []).append(column)
+            columns.setdefault(column, []).append(row)
+
+        horizontal_refs = []
+        for row, row_columns in rows.items():
+            for start_col, end_col in cls._collapse_contiguous_indexes(row_columns):
+                start_ref = f"{get_column_letter(start_col)}{row}"
+                end_ref = f"{get_column_letter(end_col)}{row}"
+                horizontal_refs.append(start_ref if start_ref == end_ref else f"{start_ref}:{end_ref}")
+
+        vertical_refs = []
+        for column, column_rows in columns.items():
+            column_letter = get_column_letter(column)
+            for start_row, end_row in cls._collapse_contiguous_indexes(column_rows):
+                start_ref = f"{column_letter}{start_row}"
+                end_ref = f"{column_letter}{end_row}"
+                vertical_refs.append(start_ref if start_ref == end_ref else f"{start_ref}:{end_ref}")
+
+        return min(
+            (horizontal_refs, vertical_refs),
+            key=lambda refs: (len(refs), sum(len(ref) for ref in refs)),
+        )
+
+    def _inject_number_stored_as_text_ignored_errors(self, filename: str) -> None:
+        """向 xlsx 注入数字样文本单元格的 ``ignoredErrors`` 声明。"""
+        refs_by_sheet = {}
+        workbook_worksheets = set(self.workbook.worksheets)
+        for worksheet, cells in self._number_stored_as_text_cells.items():
+            if worksheet not in workbook_worksheets:
+                continue
+            coordinates = [
+                (cell.row, cell.column)
+                for cell in cells
+                if self.is_numeric_like_string(cell.value)
+            ]
+            if coordinates:
+                refs_by_sheet[worksheet.title] = self._compact_cell_references(coordinates)
+
+        if not refs_by_sheet:
+            return
+
+        spreadsheet_ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+        document_rel_ns = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+        package_rel_ns = "http://schemas.openxmlformats.org/package/2006/relationships"
+        modified = {}
+
+        with zipfile.ZipFile(filename, "r") as zin:
+            names = set(zin.namelist())
+            workbook_root = ET.fromstring(zin.read("xl/workbook.xml"))
+            name_to_rid = {
+                sheet.attrib["name"]: sheet.attrib[f"{{{document_rel_ns}}}id"]
+                for sheet in workbook_root.findall(f".//{{{spreadsheet_ns}}}sheet")
+            }
+
+            relationships_root = ET.fromstring(zin.read("xl/_rels/workbook.xml.rels"))
+            rid_to_target = {}
+            for relationship in relationships_root.findall(f"{{{package_rel_ns}}}Relationship"):
+                target = relationship.attrib["Target"].lstrip("/")
+                if not target.startswith("xl/"):
+                    target = posixpath.join("xl", target)
+                rid_to_target[relationship.attrib["Id"]] = posixpath.normpath(target)
+
+            for sheet_name, refs in refs_by_sheet.items():
+                relationship_id = name_to_rid.get(sheet_name)
+                part = rid_to_target.get(relationship_id)
+                if not part or part not in names:
+                    continue
+
+                ignored_error_xml = "".join(
+                    f'<ignoredError sqref="{" ".join(refs[index:index + 8192])}" numberStoredAsText="1"/>'
+                    for index in range(0, len(refs), 8192)
+                )
+                sheet_xml = zin.read(part).decode("utf-8")
+                ignored_errors_end = re.search(r"</(?:[\w.-]+:)?ignoredErrors\s*>", sheet_xml)
+                if ignored_errors_end:
+                    insert_at = ignored_errors_end.start()
+                    sheet_xml = sheet_xml[:insert_at] + ignored_error_xml + sheet_xml[insert_at:]
+                else:
+                    ignored_errors_xml = f"<ignoredErrors>{ignored_error_xml}</ignoredErrors>"
+                    following_element = re.search(
+                        r"<(?:[\w.-]+:)?(?:smartTags|drawing|legacyDrawing|legacyDrawingHF|picture|"
+                        r"oleObjects|controls|webPublishItems|tableParts|extLst)\b",
+                        sheet_xml,
+                    )
+                    insert_at = following_element.start() if following_element else sheet_xml.rfind("</worksheet>")
+                    sheet_xml = sheet_xml[:insert_at] + ignored_errors_xml + sheet_xml[insert_at:]
+
+                modified[part] = sheet_xml.encode("utf-8")
+
+            if not modified:
+                return
+
+            tmp_fd, tmp_path = tempfile.mkstemp(suffix=".xlsx")
+            os.close(tmp_fd)
+            with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as zout:
+                for item in zin.infolist():
+                    zout.writestr(item, modified.get(item.filename, zin.read(item.filename)))
+
+        shutil.move(tmp_path, filename)
+
     def save(self, filename: str, close: bool = True) -> None:
         """保存Excel文件。
 
         .. note::
             迷你图、数据透视表/透视图均在 openpyxl 保存后通过注入 xlsx 内部 XML 实现。
-            追加模式（``mode='append'``）会基于单元格值/样式重建工作簿，不保留原文件中的
-            迷你图、透视表、原生图与图片，请在最终输出步骤再添加这些内容。
+            将已有文件作为 ``style_excel`` 加载可保留并追加透视表；但仅在保存阶段通过
+            ``mode='append'`` 合并另一个目标文件时，只复制单元格值/样式，不保证保留该目标
+            文件中的迷你图、透视表、原生图与图片。
 
         :param filename: 保存路径
         :param close: 是否关闭workbook，默认为True
         """
         # 移除样式模板sheet
-        if self.style_sheet.title in self.workbook.sheetnames:
+        if self.style_sheet is not None and self.style_sheet.title in self.workbook.sheetnames:
             self.workbook.remove(self.style_sheet)
 
         # 处理append模式
@@ -2818,6 +3072,9 @@ class ExcelWriter:
 
         # 注入数据透视表/透视图（openpyxl 不支持创建透视表，需在保存后修改 xlsx XML）
         self._inject_pivots(filename)
+
+        # 关闭数字样文本的“以文本形式存储的数字”错误提示；openpyxl 不会写出 ignoredErrors。
+        self._inject_number_stored_as_text_ignored_errors(filename)
 
         if close:
             self.workbook.close()

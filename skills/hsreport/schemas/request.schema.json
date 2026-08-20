@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "hsreport request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "operation", "inputs", "parameters", "output"],
+  "properties": {
+    "version": {"const": "1"},
+    "operation": {"enum": ["auto_feature_analysis", "auto_model_report", "swap_out_report"]},
+    "inputs": {"type": "object", "minProperties": 1, "additionalProperties": {"$ref": "#/$defs/inputSource"}},
+    "parameters": {"type": "object"},
+    "output": {"$ref": "#/$defs/output"},
+    "environment": {"$ref": "#/$defs/environment"}
+  },
+  "$defs": {
+    "inputSource": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "path"],
+          "properties": {
+            "kind": {"const": "file"},
+            "path": {"type": "string", "minLength": 1},
+            "sheet_name": {"type": ["string", "integer"]},
+            "encoding": {"type": "string"},
+            "separator": {"type": "string"},
+            "trusted": {"type": "boolean"},
+            "engine": {"type": "string"}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "ref"],
+          "properties": {"kind": {"const": "object_ref"}, "ref": {"type": "string", "minLength": 1}}
+        }
+      ]
+    },
+    "output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["directory", "name"],
+      "properties": {
+        "directory": {"type": "string", "minLength": 1},
+        "name": {"type": "string", "minLength": 1},
+        "overwrite": {"type": "boolean"}
+      }
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {"enum": ["isolated", "current"]},
+        "reuse": {"type": "boolean"},
+        "install_missing": {"type": "boolean"}
+      }
+    }
+  }
+}

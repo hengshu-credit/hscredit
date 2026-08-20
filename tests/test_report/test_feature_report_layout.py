@@ -1,6 +1,11 @@
 import types
 
+import matplotlib.pyplot as plt
 import pandas as pd
+from matplotlib._pylab_helpers import Gcf
+from matplotlib.backend_bases import FigureManagerBase
+from matplotlib.backends.backend_agg import FigureCanvasAgg
+from matplotlib.figure import Figure
 
 from hscredit.excel import ExcelWriter
 from hscredit.report.feature_analyzer import auto_feature_analysis
@@ -80,6 +85,57 @@ def _conditional_format_colors(ws):
             elif rule.type == "colorScale":
                 colors.update(color.rgb for color in rule.colorScale.color)
     return colors
+
+
+def test_auto_feature_analysis_closes_only_report_figures(monkeypatch, tmp_path):
+    """自动报告保存图片后不得向 Jupyter 遗留画布，也不能关闭用户已有画布。"""
+    monkeypatch.setattr(feature_analyzer_module, "feature_bin_stats", _fake_feature_bin_stats)
+
+    figures_before_test = set(plt.get_fignums())
+    next_figure_number = max(figures_before_test, default=0) + 1
+
+    def figure_plot(*args, **kwargs):
+        nonlocal next_figure_number
+        figure = Figure()
+        canvas = FigureCanvasAgg(figure)
+        manager = FigureManagerBase(canvas, next_figure_number)
+        Gcf.set_active(manager)
+        next_figure_number += 1
+        return figure
+
+    for plot_name in ("distribution_plot", "corr_plot", "bin_plot", "ks_plot", "hist_plot"):
+        monkeypatch.setattr(feature_analyzer_module, plot_name, figure_plot)
+
+    data = pd.DataFrame(
+        {
+            "x": [1.0, 2.0, 3.0, 4.0],
+            "target": [0, 1, 0, 1],
+            "apply_date": pd.date_range("2024-01-01", periods=4),
+        }
+    )
+    writer = ExcelWriter(system="windows")
+    writer.insert_pic2sheet = types.MethodType(_mock_insert_pic2sheet, writer)
+
+    user_figure = figure_plot()
+    user_figure_number = Gcf.get_fig_manager(next_figure_number - 1).num
+    figures_before = set(plt.get_fignums())
+    try:
+        auto_feature_analysis(
+            data,
+            features=["x"],
+            target="target",
+            date="apply_date",
+            corr=True,
+            excel_writer=writer,
+            output_dir=str(tmp_path / "plots"),
+            n_jobs=1,
+        )
+
+        assert set(plt.get_fignums()) == figures_before
+        assert Gcf.get_fig_manager(user_figure_number).canvas.figure is user_figure
+    finally:
+        for figure_number in set(plt.get_fignums()) - figures_before_test:
+            plt.close(figure_number)
 
 
 def test_auto_feature_analysis_defaults_to_non_role_columns(monkeypatch, tmp_path):
@@ -615,8 +671,15 @@ def test_auto_feature_analysis_sample_distribution_uses_model_report_layout(monk
     assert "mob@7" in values
 
     sample_total_header = next(cell for row in ws.iter_rows() for cell in row if cell.value == "样本总数")
-    assert ws.cell(sample_total_header.row - 1, sample_total_header.column).value == "统计详情"
-    assert ws.cell(sample_total_header.row - 1, sample_total_header.column - 1).value is None
+    sample_group_row = sample_total_header.row - 1
+    assert ws.cell(sample_group_row, sample_total_header.column - 1).value == "统计详情"
+    assert _has_merged_range(
+        ws,
+        sample_group_row,
+        sample_total_header.column - 1,
+        sample_group_row,
+        sample_total_header.column,
+    )
 
     data_group_header = next(cell for row in ws.iter_rows() for cell in row if cell.value == "数据分组")
     time_header_row = data_group_header.row

@@ -213,18 +213,24 @@ swap = rule_swap_analysis(
 ```python
 from hscredit.report.mining import ManualTreeExtractor
 
-tree = ManualTreeExtractor(target="target", max_depth=3, min_samples_leaf=25)
-tree.fit(df, features=features[:3])
+tree = ManualTreeExtractor(
+    target="target",
+    features="青云24",
+    feature_map={"青云24": "青云信用评分"},
+    max_depth=3,
+    min_samples_leaf=25,
+)
+tree.fit(df, feature_names=features[:3])
 tree.manual_split(df, feature="青云24", threshold=600, node=0)
 rules = tree.get_rule_table(df, target="target", amount="放款金额", leaf_only=True)
 ```
 
 </details>
 
-| 节点 | 叶节点 | 人工规则 | 样本金额 | 坏样本率 | Lift | 风险拒绝比 |
-|---:|:---:|:---|---:|---:|---:|---:|
-| `1` | 是 | `青云24 <= 600` | `1,724,221` | `16.89%` | `1.1892` | `0.3273` |
-| `2` | 是 | `青云24 > 600（含缺失）` | `2,362,982` | `12.24%` | `0.8619` | `-0.3273` |
+| 节点 | 叶节点 | 入参字段 | 字段含义 | 人工规则 | 样本金额 | 坏样本率 | Lift | 风险拒绝比 |
+|---:|:---:|:---|:---|:---|---:|---:|---:|---:|
+| `1` | 是 | `青云24` | 青云信用评分 | `青云24 <= 600` | `1,724,221` | `16.89%` | `1.1892` | `0.3273` |
+| `2` | 是 | `青云24` | 青云信用评分 | `青云24 > 600（含缺失）` | `2,362,982` | `12.24%` | `0.8619` | `-0.3273` |
 
 #### `plot_tree_matplotlib`
 

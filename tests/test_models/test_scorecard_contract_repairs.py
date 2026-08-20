@@ -5,6 +5,7 @@ import copy
 import shutil
 import sqlite3
 import subprocess
+import sys
 
 import numpy as np
 import pandas as pd
@@ -12,7 +13,7 @@ import pytest
 
 from hscredit.core.binning import OptimalBinning
 from hscredit.core.models import RoundScoreCard, ScoreCard
-from hscredit.exceptions import ValidationError
+from hscredit.exceptions import DependencyError, ValidationError
 
 
 def _fit_simple_scorecard(direction="descending", scorecard_cls=ScoreCard, **kwargs):
@@ -42,6 +43,26 @@ def _fit_comma_category_scorecard():
     ).fit(X, y)
     card = ScoreCard(binner=binner).fit(binner.transform(X, metric="woe"), y, input_type="woe")
     return card, X
+
+
+def _fit_two_category_scorecard(handle_unknown=-3):
+    X = pd.DataFrame({"cat": ["A"] * 60 + ["B"] * 60})
+    y = pd.Series(([0] * 50 + [1] * 10) + ([0] * 10 + [1] * 50))
+    binner = OptimalBinning(
+        method="target_bad_rate",
+        user_splits={"cat": [["A"], ["B"]]},
+        user_splits_fixed=True,
+        min_n_bins=2,
+        max_n_bins=2,
+        handle_unknown=handle_unknown,
+        n_jobs=1,
+    ).fit(X, y)
+    card = ScoreCard(binner=binner).fit(
+        binner.transform(X, metric="woe"),
+        y,
+        input_type="woe",
+    )
+    return card, binner, X, y
 
 
 def _python_deployment_scores(card, X, decimal=12):
@@ -423,10 +444,9 @@ def test_pmml_is_generated_to_a_temporary_file_then_atomically_replaced(tmp_path
     assert destination.read_text(encoding="utf-8") == "<PMML/>"
 
 
-def test_pmml_prediction_applies_the_same_score_clipping_as_predict(tmp_path):
+def test_pmml_prediction_applies_the_same_score_clipping_as_predict(tmp_path, pypmml_model):
     """防止 PMML 只输出未裁剪的线性总分。"""
     pytest.importorskip("sklearn2pmml")
-    pypmml = pytest.importorskip("pypmml")
     card = ScoreCard().load_rules(
         {
             "__meta__": {
@@ -448,7 +468,7 @@ def test_pmml_prediction_applies_the_same_score_clipping_as_predict(tmp_path):
     destination = tmp_path / "clipped.pmml"
 
     card.export_pmml(str(destination))
-    pmml_scores = pypmml.Model.load(str(destination)).predict(sample)["predicted_score"].to_numpy()
+    pmml_scores = pypmml_model.load(str(destination)).predict(sample)["predicted_score"].to_numpy()
 
     np.testing.assert_allclose(pmml_scores, card.predict(sample, input_type="raw"))
 
@@ -581,10 +601,9 @@ def test_generated_java_is_self_contained_and_handles_colliding_feature_names(tm
     assert result.returncode == 0, result.stderr
 
 
-def test_pmml_preserves_numeric_category_types_and_unknown_default(tmp_path):
+def test_pmml_preserves_numeric_category_types_and_unknown_default(tmp_path, pypmml_model):
     """防止 PMML lookup 把数值类别键字符串化，并确认未知类别贡献为 0。"""
     pytest.importorskip("sklearn2pmml")
-    pypmml = pytest.importorskip("pypmml")
     X = pd.DataFrame({"code": [1] * 60 + [2] * 60 + [3] * 60})
     y = pd.Series(([0] * 50 + [1] * 10) + ([0] * 30 + [1] * 30) + ([0] * 10 + [1] * 50))
     binner = OptimalBinning(
@@ -601,20 +620,323 @@ def test_pmml_preserves_numeric_category_types_and_unknown_default(tmp_path):
     destination = tmp_path / "numeric-categories.pmml"
 
     card.export_pmml(str(destination))
-    pmml_scores = pypmml.Model.load(str(destination)).predict(sample)["predicted_score"].to_numpy()
+    pmml_scores = pypmml_model.load(str(destination)).predict(sample)["predicted_score"].to_numpy()
 
     np.testing.assert_allclose(pmml_scores, card.predict(sample, input_type="raw"), atol=1e-9)
 
 
-def test_ascending_pmml_uses_the_same_single_direction_transform(tmp_path):
+def test_ascending_pmml_uses_the_same_single_direction_transform(tmp_path, pypmml_model):
     """防止 PMML 与 ascending 本地评分使用不同的翻转次数。"""
     pytest.importorskip("sklearn2pmml")
-    pypmml = pytest.importorskip("pypmml")
     card, _, X, _ = _fit_simple_scorecard(direction="ascending")
     sample = X.iloc[[0, 30, 60, 90]].copy()
     destination = tmp_path / "ascending.pmml"
 
     card.export_pmml(str(destination))
-    pmml_scores = pypmml.Model.load(str(destination)).predict(sample)["predicted_score"].to_numpy()
+    pmml_scores = pypmml_model.load(str(destination)).predict(sample)["predicted_score"].to_numpy()
 
     np.testing.assert_allclose(pmml_scores, card.predict(sample, input_type="raw"), atol=1e-9)
+
+
+@pytest.mark.parametrize("compatibility", ["toad", "scorecardpipeline"])
+@pytest.mark.parametrize("direction", ["descending", "ascending"])
+def test_external_compatibility_export_folds_base_score_and_direction_into_points(
+    compatibility,
+    direction,
+):
+    """外部规则只有分箱分，必须把截距和方向折入各特征分后才能直接求和。"""
+    card, _, X, _ = _fit_simple_scorecard(direction=direction)
+    sample = X.iloc[[0, 30, 60, 90]].copy()
+
+    exported = card.export(compatibility=compatibility, decimal=12)
+    restored = ScoreCard(
+        pdo=card.pdo,
+        rate=card.rate,
+        base_odds=card.base_odds,
+        base_score=card.base_score,
+    ).load_rules(exported)
+
+    np.testing.assert_allclose(
+        restored.predict(sample, input_type="raw"),
+        card.predict(sample, input_type="raw"),
+        atol=1e-9,
+    )
+
+
+def test_external_compatibility_export_rejects_unrepresentable_score_clipping():
+    """toad/scp 规则格式无法表达总分裁剪，不能静默导出不等价规则。"""
+    card, _, _, _ = _fit_simple_scorecard(lower=300.0, upper=700.0)
+
+    with pytest.raises(ValidationError, match="无法表达.*裁剪"):
+        card.export(compatibility="toad", decimal=12)
+
+
+def test_external_compatibility_preserves_base_share_for_missing_and_unknown_values():
+    """多特征外部规则在回退分支仍必须贡献该特征分摊到的基础分。"""
+    card = ScoreCard().load_rules(
+        {
+            "__meta__": {
+                "intercept_score": 600.0,
+                "feature_names": ["x", "cat"],
+                "feature_types": {"x": "numerical", "cat": "categorical"},
+                "categorical_bins": {"cat": [["A"], ["B"]]},
+                "coef": [1.0, 1.0],
+            },
+            "x": {"[-inf, 0)": 10.0, "[0, +inf)": 20.0},
+            "cat": {"A": 30.0, "B": 40.0},
+        }
+    )
+    sample = pd.DataFrame(
+        {
+            "x": [-1.0, np.nan, 1.0],
+            "cat": ["A", "A", "UNKNOWN"],
+        }
+    )
+    expected = card.predict(sample, input_type="raw")
+
+    restored = ScoreCard().load_rules(card.export(compatibility="toad", decimal=12))
+
+    np.testing.assert_allclose(restored.predict(sample, input_type="raw"), expected, atol=1e-9)
+
+
+def test_external_compatibility_rejects_category_values_containing_delimiter():
+    """toad/scp 用逗号分隔同箱类别，真实类别含逗号时必须拒绝有损导出。"""
+    card, _ = _fit_comma_category_scorecard()
+
+    with pytest.raises(ValidationError, match="类别值.*逗号.*无法无损"):
+        card.export(compatibility="toad")
+
+
+def test_woe_only_scorecard_rejects_rule_and_deployment_exports():
+    """没有原始分箱描述符时，不得生成看似可用的基础分部署模型。"""
+    X_woe = pd.DataFrame({"x": np.repeat([-1.0, 1.0], 60)})
+    y = pd.Series(([0] * 50 + [1] * 10) + ([0] * 10 + [1] * 50))
+    card = ScoreCard().fit(X_woe, y, input_type="woe")
+
+    with pytest.raises(ValidationError, match="缺少可部署规则"):
+        card.export(decimal=12)
+    for language in ("sql", "python", "java"):
+        with pytest.raises(ValidationError, match="缺少可部署规则"):
+            card.export_deployment_code(language=language)
+
+
+def test_partial_deployment_rules_are_rejected_instead_of_omitting_features():
+    """任一入模特征缺少规则时都必须终止导出，不能生成部分评分卡。"""
+    card = ScoreCard().load_rules(
+        {
+            "__meta__": {
+                "intercept_score": 600.0,
+                "feature_names": ["x", "missing_feature"],
+                "coef": [1.0, 1.0],
+            },
+            "x": {"[-inf, +inf)": 10.0},
+        }
+    )
+
+    with pytest.raises(ValidationError, match="missing_feature"):
+        card.export_deployment_code(language="python")
+
+
+def test_handle_unknown_target_bin_matches_rules_python_and_sql_deployments():
+    """未知类别映射到指定已有箱时，各部署端和规则重载必须复用该箱分。"""
+    card, _, _, _ = _fit_two_category_scorecard(handle_unknown=0)
+    sample = pd.DataFrame({"cat": ["A", "B", "UNKNOWN"]})
+    expected = card.predict(sample, input_type="raw")
+
+    restored = ScoreCard().load_rules(card.export(decimal=12))
+
+    np.testing.assert_allclose(restored.predict(sample, input_type="raw"), expected, atol=1e-9)
+    np.testing.assert_allclose(_python_deployment_scores(card, sample), expected, atol=1e-9)
+    np.testing.assert_allclose(_sqlite_deployment_scores(card, sample), expected, atol=1e-9)
+
+
+def test_handle_unknown_raise_is_preserved_by_python_and_rejected_by_sql_export():
+    """原模型配置未知类别报错时，部署端不能静默返回中性分。"""
+    card, _, _, _ = _fit_two_category_scorecard(handle_unknown="raise")
+    unknown = pd.DataFrame({"cat": ["UNKNOWN"]})
+
+    with pytest.raises(ValueError, match="未知类别"):
+        card.predict(unknown, input_type="raw")
+
+    namespace = {}
+    exec(card.export_deployment_code(language="python"), namespace)
+    with pytest.raises(ValueError, match="未知类别"):
+        namespace["calculate_score"]({"cat": "UNKNOWN"})
+
+    java = card.export_deployment_code(language="java")
+    assert "throw new IllegalArgumentException" in java
+
+    with pytest.raises(ValidationError, match="SQL.*未知类别.*raise"):
+        card.export_deployment_code(language="sql")
+    with pytest.raises(ValidationError, match="外部兼容.*未知类别.*raise"):
+        card.export(compatibility="toad")
+
+
+def test_missing_separate_false_uses_learned_target_bin_in_all_rule_deployments():
+    """合并缺失箱必须保留训练时目标箱，而不是在部署端退化为零贡献。"""
+    X = pd.DataFrame({"x": np.r_[np.repeat([0.0, 1.0, 2.0, 3.0], 30), [np.nan] * 20]})
+    y = pd.Series(
+        (([0] * 27 + [1] * 3)
+        + ([0] * 21 + [1] * 9)
+        + ([0] * 9 + [1] * 21)
+        + ([0] * 3 + [1] * 27))
+        + ([0] * 18 + [1] * 2)
+    )
+    binner = OptimalBinning(
+        method="target_bad_rate",
+        max_n_bins=4,
+        missing_separate=False,
+        n_jobs=1,
+    ).fit(X, y)
+    card = ScoreCard(binner=binner).fit(
+        binner.transform(X, metric="woe"),
+        y,
+        input_type="woe",
+    )
+    sample = pd.DataFrame({"x": [np.nan, 0.0, 3.0]})
+    expected = card.predict(sample, input_type="raw")
+
+    restored = ScoreCard().load_rules(card.export(decimal=12))
+
+    np.testing.assert_allclose(restored.predict(sample, input_type="raw"), expected, atol=1e-9)
+    np.testing.assert_allclose(_python_deployment_scores(card, sample), expected, atol=1e-9)
+    np.testing.assert_allclose(_sqlite_deployment_scores(card, sample), expected, atol=1e-9)
+
+
+def test_unseen_missing_value_uses_neutral_woe_across_model_rules_and_deployment():
+    """训练期没有缺失箱时，预测缺失值应统一使用 WOE=0，而不是模型 NaN、部署基础分。"""
+    card, binner, _, _ = _fit_simple_scorecard()
+    sample = pd.DataFrame({"x": [np.nan]})
+
+    transformed = binner.transform(sample, metric="woe")
+    expected = card.predict(sample, input_type="raw")
+    restored = ScoreCard().load_rules(card.export(decimal=12))
+
+    assert transformed.loc[0, "x"] == pytest.approx(0.0)
+    assert np.isfinite(expected[0])
+    np.testing.assert_allclose(restored.predict(sample, input_type="raw"), expected, atol=1e-9)
+    np.testing.assert_allclose(_python_deployment_scores(card, sample), expected, atol=1e-9)
+    np.testing.assert_allclose(_sqlite_deployment_scores(card, sample), expected, atol=1e-9)
+
+
+def test_round_scorecard_preserves_unknown_target_bin_for_ascending_deployments():
+    """RoundScoreCard 覆盖部署规则后仍须合成未知箱分，并应用 ascending 方向。"""
+    _, binner, X, y = _fit_two_category_scorecard(handle_unknown=0)
+    card = RoundScoreCard(direction="ascending", decimal=1, binner=binner).fit(
+        binner.transform(X, metric="woe"),
+        y,
+        input_type="woe",
+    )
+    sample = pd.DataFrame({"cat": ["A", "B", "UNKNOWN"]})
+    expected = card.predict(sample, input_type="raw")
+    restored = RoundScoreCard().load_rules(card.export())
+
+    np.testing.assert_allclose(restored.predict(sample, input_type="raw"), expected, atol=1e-9)
+    np.testing.assert_allclose(_python_deployment_scores(card, sample), expected, atol=1e-9)
+    np.testing.assert_allclose(_sqlite_deployment_scores(card, sample), expected, atol=1e-9)
+
+
+def test_round_scorecard_preserves_merged_missing_target_for_ascending_deployments():
+    """RoundScoreCard 的合并缺失箱分必须按方向取整后用于规则与部署。"""
+    X = pd.DataFrame({"x": np.r_[np.repeat([0.0, 1.0, 2.0, 3.0], 30), [np.nan] * 20]})
+    y = pd.Series(
+        (([0] * 27 + [1] * 3)
+        + ([0] * 21 + [1] * 9)
+        + ([0] * 9 + [1] * 21)
+        + ([0] * 3 + [1] * 27))
+        + ([0] * 18 + [1] * 2)
+    )
+    binner = OptimalBinning(
+        method="target_bad_rate",
+        max_n_bins=4,
+        missing_separate=False,
+        n_jobs=1,
+    ).fit(X, y)
+    card = RoundScoreCard(direction="ascending", decimal=1, binner=binner).fit(
+        binner.transform(X, metric="woe"),
+        y,
+        input_type="woe",
+    )
+    sample = pd.DataFrame({"x": [np.nan, 0.0, 3.0]})
+    expected = card.predict(sample, input_type="raw")
+    restored = RoundScoreCard().load_rules(card.export())
+
+    np.testing.assert_allclose(restored.predict(sample, input_type="raw"), expected, atol=1e-9)
+    np.testing.assert_allclose(_python_deployment_scores(card, sample), expected, atol=1e-9)
+    np.testing.assert_allclose(_sqlite_deployment_scores(card, sample), expected, atol=1e-9)
+
+
+def test_generated_python_and_java_reject_missing_required_features():
+    """部署字典缺字段时必须失败，不能把字段缺失静默当成空值或未知类别。"""
+    card, _, _, _ = _fit_simple_scorecard()
+
+    namespace = {}
+    exec(card.export_deployment_code(language="python"), namespace)
+    with pytest.raises(KeyError, match="x"):
+        namespace["calculate_score"]({"other": 1.0})
+
+    java = card.export_deployment_code(language="java")
+    assert 'row.containsKey("x")' in java
+    assert "缺少必需特征" in java
+
+
+def test_pmml_rejects_categorical_values_with_colliding_string_keys(tmp_path):
+    """PMML 单一字符串域无法区分数值 1 与字符串 '1'，必须拒绝有损导出。"""
+    pytest.importorskip("sklearn2pmml")
+    card = ScoreCard().load_rules(
+        {
+            "__meta__": {
+                "format": "hscredit-scorecard-rules",
+                "version": 1,
+                "intercept_score": 600.0,
+                "feature_names": ["cat"],
+                "feature_types": {"cat": "categorical"},
+                "categorical_bins": {"cat": [[1], ["1"]]},
+                "coef": [1.0],
+            },
+            "cat": {"number-one": 10.0, "string-one": 20.0},
+        }
+    )
+
+    with pytest.raises(ValidationError, match="PMML.*类别键.*冲突"):
+        card.export_pmml(str(tmp_path / "mixed-type.pmml"))
+
+
+def test_pmml_missing_replacement_never_collides_with_real_category():
+    """PMML 缺失替代哨兵必须避开真实类别，避免覆盖其分数。"""
+    mapping = {
+        "__HSCREDIT_MISSING__": 10.0,
+        "__HSCREDIT_MISSING___1": 20.0,
+    }
+
+    replacement = ScoreCard._choose_pmml_missing_replacement(mapping)
+
+    assert replacement not in mapping
+    assert replacement == "__HSCREDIT_MISSING___2"
+
+
+def test_default_rule_export_roundtrips_standard_scorecard_at_deployment_precision():
+    """标准 ScoreCard 默认规则导出应使用部署精度，而不是逐特征仅保留两位。"""
+    card, _, X, _ = _fit_simple_scorecard()
+    sample = X.iloc[[0, 30, 60, 90]].copy()
+
+    restored = ScoreCard().load_rules(card.export())
+
+    np.testing.assert_allclose(
+        restored.predict(sample, input_type="raw"),
+        card.predict(sample, input_type="raw"),
+        atol=1e-9,
+    )
+
+
+def test_pmml_missing_dependency_raises_and_preserves_existing_destination(tmp_path, monkeypatch):
+    """PMML 依赖缺失必须显式失败，不能让调用方误用旧模型文件。"""
+    card, _, _, _ = _fit_simple_scorecard()
+    destination = tmp_path / "scorecard.pmml"
+    destination.write_text("<OLD/>", encoding="utf-8")
+    monkeypatch.setitem(sys.modules, "sklearn2pmml", None)
+
+    with pytest.raises(DependencyError, match="PMML 导出需要"):
+        card.export_pmml(str(destination))
+
+    assert destination.read_text(encoding="utf-8") == "<OLD/>"

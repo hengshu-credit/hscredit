@@ -2,6 +2,7 @@
 
 import os
 from pathlib import Path
+import site
 
 import pytest
 
@@ -26,6 +27,33 @@ if not HSCREDIT_DEMO_XLSX.exists():
             "test_utils/test_feature_type_edge_cases.py",
         ]
     )
+
+
+@pytest.fixture(scope="session")
+def pypmml_model():
+    """提供可用的 PyPMML 模型类，并在 Py4J 缺 launcher JAR 时回退 JPype。"""
+    pypmml = pytest.importorskip("pypmml")
+    from pypmml import PMMLContext
+    import py4j
+    import py4j.java_gateway as java_gateway
+
+    py4j_jar = java_gateway.find_jar_path()
+    if not py4j_jar:
+        user_jar = (
+            Path(site.USER_BASE)
+            / "share"
+            / "py4j"
+            / f"py4j{py4j.__version__}.jar"
+        )
+        if user_jar.exists():
+            py4j_jar = str(user_jar)
+            java_gateway.find_jar_path = lambda: py4j_jar
+
+    if py4j_jar:
+        PMMLContext.getOrCreate()
+    else:
+        PMMLContext.getOrCreate(gateway="jpype")
+    return pypmml.Model
 
 
 def pytest_sessionfinish(session, exitstatus):

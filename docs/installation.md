@@ -62,6 +62,13 @@ hscredit.info()          # 打印包信息与模块概览
 print(hscredit.__version__)
 ```
 
+## Agent Skills
+
+hscredit 还提供可供 AI Agent 直接调用的分箱分析和完整报告 Skills。Skills 与 Python 包分别安装，
+支持从仓库复制、由 Agent 从 GitHub 安装，或上传到 OpenAI 项目。
+
+完整安装、调用示例和环境隔离说明见 {doc}`skills`。
+
 ## 构建文档
 
 ```bash

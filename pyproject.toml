@@ -91,6 +91,33 @@ tune = [
     "plotly",
 ]
 explain = ["shap>=0.40.0"]
+skills = ["jsonschema>=4.18"]
+parquet = ["pyarrow>=12"]
+db-mysql = [
+    "DBUtils>=3.1.2,<4",
+    "PyMySQL>=1.1,<2",
+]
+db-hive = [
+    "DBUtils>=3.1.2,<4",
+    "impyla>=0.22,<1",
+]
+db-impala = [
+    "DBUtils>=3.1.2,<4",
+    "impyla>=0.22,<1",
+]
+db-oracle = ["oracledb>=2,<5"]
+db-starrocks = [
+    "DBUtils>=3.1.2,<4",
+    "PyMySQL>=1.1,<2",
+]
+db-clickhouse = [
+    "clickhouse-connect>=0.7.17,<0.14.1; python_version < '3.10'",
+    "clickhouse-connect>=1.0,<2; python_version >= '3.10'",
+]
+db-maxcompute = ["pyodps>=0.12.6,<1"]
+database-all = [
+    "hscredit[db-mysql,db-hive,db-impala,db-oracle,db-starrocks,db-clickhouse,db-maxcompute]",
+]
 dev = [
     "pytest>=6.0.0",
     "pytest-cov>=2.0.0",
@@ -112,7 +139,7 @@ docs = [
     "myst-parser>=2.0.0",
 ]
 all = [
-    "hscredit[boost,net,pmml,tune,explain,dev,docs]"
+    "hscredit[boost,net,pmml,tune,explain,skills,parquet,database-all,dev,docs]"
 ]
 
 [project.urls]
@@ -127,7 +154,14 @@ Issues = "https://github.com/hscredit/hscredit/issues"
 version = {attr = "hscredit.__version__"}
 
 [tool.setuptools.packages.find]
-exclude = ["tests", "tests.*", "docs", "docs.*", "examples", "examples.*"]
+exclude = [
+    "tests", "tests.*",
+    "docs", "docs.*",
+    "examples", "examples.*",
+    "skills", "skills.*",
+    "scripts", "scripts.*",
+    "build", "build.*",
+]
 
 [tool.setuptools]
 include-package-data = true

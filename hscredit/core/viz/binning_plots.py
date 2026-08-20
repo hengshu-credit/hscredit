@@ -2606,10 +2606,8 @@ def bin_overdues_plot(
         
         fig, axes = plt.subplots(n_rows, n_cols, figsize=figsize)
         
-        # 处理单个子图的情况
-        if n_plots == 1:
-            axes = np.array([axes])
-        axes = axes.flatten() if n_plots > 1 else [axes]
+        # 统一为一维 Axes 列表；单图时 axes 本身就是 Axes，不能再次包成 ndarray。
+        axes = np.asarray(axes, dtype=object).reshape(-1).tolist()
         
         # 绘制每个目标的分箱图
         for idx, target_name in enumerate(target_names):
@@ -2682,10 +2680,8 @@ def bin_overdues_plot(
 
     fig, axes = plt.subplots(n_rows, n_cols, figsize=figsize)
 
-    # 处理单个子图的情况
-    if n_plots == 1:
-        axes = np.array([axes])
-    axes = axes.flatten() if n_plots > 1 else [axes]
+    # 统一为一维 Axes 列表；单图时 axes 本身就是 Axes，不能再次包成 ndarray。
+    axes = np.asarray(axes, dtype=object).reshape(-1).tolist()
 
     # 计算全局分箱规则
     if rules is None or feature not in rules:

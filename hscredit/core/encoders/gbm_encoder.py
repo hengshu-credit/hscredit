@@ -382,6 +382,7 @@ class GBMEncoder(BaseEncoder):
             'colsample_bytree': self.colsample_bytree,
             'min_child_weight': self.min_child_samples,
             'random_state': self.random_state,
+            'seed_per_iteration': True,
         }
 
         # 添加任务相关参数

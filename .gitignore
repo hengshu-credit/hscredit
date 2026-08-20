@@ -242,6 +242,7 @@ docs/superpowers/
 .superpowers
 .worktrees/
 tmp_plots
+tmp_diag
 .codebuddy
 .agents
 CLAUDE.md

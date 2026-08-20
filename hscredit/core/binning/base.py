@@ -1399,7 +1399,13 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
                 return self._assign_bin_labels(feature, bins)
             if metric == "woe":
                 if hasattr(self, "_woe_maps_") and feature in self._woe_maps_:
-                    woe_map = self._woe_maps_[feature]
+                    woe_map = dict(self._woe_maps_[feature])
+                    bin_table = self.bin_tables_.get(feature)
+                    if bin_table is not None:
+                        reserved_woe = {}
+                        self._enrich_woe_map(reserved_woe, bin_table)
+                        for bin_index, value in reserved_woe.items():
+                            woe_map.setdefault(bin_index, value)
                 elif feature in self.bin_tables_:
                     bin_table = self.bin_tables_[feature]
                     woe_map = dict(zip(bin_table["分箱"].astype(int), bin_table["分档WOE值"].values))

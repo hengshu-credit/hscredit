@@ -1,0 +1,12 @@
+{
+  "protocol_version": "1",
+  "skill": "hsreport",
+  "hscredit": {
+    "package": "hscredit",
+    "repository": "https://github.com/hengshu-credit/hscredit.git",
+    "ref": "main"
+  },
+  "extras": [
+    "skills"
+  ]
+}

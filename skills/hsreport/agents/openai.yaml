@@ -1,0 +1,4 @@
+interface:
+  display_name: "HSCredit 分析报告"
+  short_description: "生成 hscredit 特征、模型和策略 Excel 分析报告"
+  default_prompt: "Use $hsreport to assemble the data and generate the requested Excel report."

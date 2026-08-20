@@ -1,0 +1,4 @@
+interface:
+  display_name: "HSCredit 分箱分析"
+  short_description: "调用 hscredit 完成分箱统计、评估和分箱可视化"
+  default_prompt: "Use $hsbin to analyze this credit-risk feature and save the requested artifacts."

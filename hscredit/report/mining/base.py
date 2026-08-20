@@ -12,6 +12,47 @@ from ...utils.parallel import ParallelizableMixin, ParallelWorkload
 _NESTED_BINNING_METHODS = frozenset({"genetic", "or_tools", "cp_sat"})
 
 
+FeatureNames = Optional[Union[str, List[str]]]
+
+
+def normalize_feature_names(features: FeatureNames, parameter_name: str = "features") -> Optional[List[str]]:
+    """将单个字段名或字段名列表归一化为列表，并保持原始顺序。"""
+    if features is None:
+        return None
+    if isinstance(features, str):
+        return [features]
+    if not isinstance(features, list) or any(not isinstance(feature, str) for feature in features):
+        raise TypeError(f"{parameter_name} 必须是 str、list[str] 或 None")
+    if len(features) != len(set(features)):
+        raise ValueError(f"{parameter_name} 中不能包含重复字段")
+    return list(features)
+
+
+def resolve_feature_map(
+    configured: Optional[Dict[str, str]],
+    override: Optional[Dict[str, str]] = None,
+) -> Optional[Dict[str, str]]:
+    """解析报告字段含义映射，显式调用参数优先于构造参数。"""
+    resolved = configured if override is None else override
+    if resolved is not None and (
+        not isinstance(resolved, dict)
+        or any(not isinstance(key, str) or not isinstance(value, str) for key, value in resolved.items())
+    ):
+        raise TypeError("feature_map 必须是 dict[str, str] 或 None")
+    return resolved
+
+
+def format_feature_context(
+    features: List[str],
+    feature_map: Optional[Dict[str, str]],
+    separator: str = "、",
+) -> Tuple[str, str]:
+    """格式化规则实际使用的入参字段及其字段含义。"""
+    ordered = list(dict.fromkeys(features))
+    meanings = feature_map or {}
+    return separator.join(ordered), separator.join(meanings.get(feature, "") for feature in ordered)
+
+
 def _binning_has_parallel_children(method: Any, params: Optional[Dict[str, Any]] = None) -> bool:
     """判断规则挖掘中的分箱任务是否包含真实子并行。"""
     params = params or {}
@@ -80,6 +121,8 @@ class BaseRuleMiner(ParallelizableMixin, BaseEstimator, ABC):
     
     :param target: 目标变量列名，默认为'target'
     :param exclude_cols: 需要排除的列名列表
+    :param features: 参与规则挖掘的字段名或字段名列表，默认None（使用全部候选字段）
+    :param feature_map: 字段名到字段含义的映射，用于报告展示
     :param n_jobs: 并行工作数，默认为-1；None沿用旧串行行为
     :param parallel_backend: joblib并行后端，默认为None
     :param parallel_config: joblib扩展配置，默认为None
@@ -92,12 +135,16 @@ class BaseRuleMiner(ParallelizableMixin, BaseEstimator, ABC):
         n_jobs: Optional[Union[int, float]] = -1,
         parallel_backend: Optional[str] = None,
         parallel_config: Optional[Dict[str, Any]] = None,
+        features: FeatureNames = None,
+        feature_map: Optional[Dict[str, str]] = None,
     ):
         self.target = target
         self.exclude_cols = exclude_cols
         self.n_jobs = n_jobs
         self.parallel_backend = parallel_backend
         self.parallel_config = parallel_config
+        self.features = features
+        self.feature_map = feature_map
         self._is_fitted = False
 
     def _commit_fitted_state(self, working: "BaseRuleMiner") -> None:
@@ -111,7 +158,8 @@ class BaseRuleMiner(ParallelizableMixin, BaseEstimator, ABC):
     def _check_input_data(
         self,
         X: Union[pd.DataFrame, np.ndarray],
-        y: Optional[Union[pd.Series, np.ndarray]] = None
+        y: Optional[Union[pd.Series, np.ndarray]] = None,
+        feature_names: FeatureNames = None,
     ) -> Tuple[pd.DataFrame, Optional[pd.Series]]:
         """检查并处理输入数据.
         
@@ -122,6 +170,7 @@ class BaseRuleMiner(ParallelizableMixin, BaseEstimator, ABC):
         
         :param X: 输入数据
         :param y: 目标变量（可选）
+        :param feature_names: 本次拟合使用的字段，优先于构造参数 ``features``
         :return: (处理后的X, y)
         """
         # 转换为DataFrame
@@ -139,6 +188,13 @@ class BaseRuleMiner(ParallelizableMixin, BaseEstimator, ABC):
         for col in self.exclude_cols or []:
             if col in X.columns:
                 X = X.drop(columns=[col])
+
+        requested = feature_names if feature_names is not None else self.features
+        parameter_name = "feature_names" if feature_names is not None else "features"
+        selected = normalize_feature_names(requested, parameter_name)
+        if selected is not None:
+            check_features_valid(X, selected)
+            X = X.loc[:, selected].copy()
         
         return X, y
     

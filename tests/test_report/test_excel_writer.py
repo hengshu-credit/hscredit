@@ -9,7 +9,8 @@ import xml.etree.ElementTree as ET
 import pytest
 import pandas as pd
 import numpy as np
-from openpyxl import load_workbook
+from openpyxl import load_workbook, Workbook
+from openpyxl.utils import column_index_from_string, get_column_letter
 
 from hscredit.excel import ExcelWriter, dataframe2excel, register_pivot_aggregation
 from hscredit.utils import fonts
@@ -27,6 +28,50 @@ def _conditional_format_colors(worksheet):
             elif rule.type == "colorScale":
                 color_scale_colors.extend(color.rgb for color in rule.colorScale.color)
     return data_bar_colors, color_scale_colors
+
+
+def _number_stored_as_text_ignored_cells(filename, sheet_name):
+    """读取 xlsx 中指定工作表明确忽略“数字存为文本”的单元格。"""
+    spreadsheet_ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+    document_rel_ns = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+    package_rel_ns = "http://schemas.openxmlformats.org/package/2006/relationships"
+
+    with zipfile.ZipFile(filename) as zf:
+        workbook_root = ET.fromstring(zf.read("xl/workbook.xml"))
+        sheet = next(
+            node
+            for node in workbook_root.findall(f".//{{{spreadsheet_ns}}}sheet")
+            if node.attrib["name"] == sheet_name
+        )
+        relationship_id = sheet.attrib[f"{{{document_rel_ns}}}id"]
+
+        relationships_root = ET.fromstring(zf.read("xl/_rels/workbook.xml.rels"))
+        target = next(
+            node.attrib["Target"]
+            for node in relationships_root.findall(f"{{{package_rel_ns}}}Relationship")
+            if node.attrib["Id"] == relationship_id
+        ).lstrip("/")
+        if not target.startswith("xl/"):
+            target = f"xl/{target}"
+
+        worksheet_root = ET.fromstring(zf.read(target))
+
+    ignored_cells = set()
+    for ignored_error in worksheet_root.findall(
+        f"{{{spreadsheet_ns}}}ignoredErrors/{{{spreadsheet_ns}}}ignoredError"
+    ):
+        if ignored_error.attrib.get("numberStoredAsText") != "1":
+            continue
+        for ref in ignored_error.attrib["sqref"].split():
+            start_ref, _, end_ref = ref.partition(":")
+            start_match = re.fullmatch(r"([A-Z]+)(\d+)", start_ref)
+            end_match = re.fullmatch(r"([A-Z]+)(\d+)", end_ref or start_ref)
+            start_col = column_index_from_string(start_match.group(1))
+            end_col = column_index_from_string(end_match.group(1))
+            for row in range(int(start_match.group(2)), int(end_match.group(2)) + 1):
+                for col in range(start_col, end_col + 1):
+                    ignored_cells.add(f"{get_column_letter(col)}{row}")
+    return ignored_cells
 
 
 class TestExcelWriter:
@@ -64,6 +109,30 @@ class TestExcelWriter:
         assert writer.font == "楷体"
         content_style = next(style for style in writer.name_styles if style.name == "content")
         assert content_style.font.name == "楷体"
+
+    def test_existing_excel_without_template_sheet_preserves_data_and_creates_blank_sheet(self):
+        """已有 Excel 缺少模板 Sheet 时，不应复制或删除活动业务 Sheet。"""
+        source_file = os.path.join(self.temp_dir, "existing.xlsx")
+        output_file = os.path.join(self.temp_dir, "output.xlsx")
+        workbook = Workbook()
+        source_sheet = workbook.active
+        source_sheet.title = "贷款明细"
+        source_sheet.append(["区域", "放款金额"])
+        source_sheet.append(["华东", 100])
+        workbook.save(source_file)
+        workbook.close()
+
+        writer = ExcelWriter(style_excel=source_file, style_sheet_name="初始化")
+        pivot_sheet = writer.get_sheet_by_name("透视分析")
+        writer.save(output_file)
+
+        assert pivot_sheet["A1"].value is None
+        saved = load_workbook(output_file)
+        assert saved.sheetnames == ["贷款明细", "透视分析"]
+        assert saved["贷款明细"]["A1"].value == "区域"
+        assert saved["贷款明细"]["B2"].value == 100
+        assert saved["透视分析"]["A1"].value is None
+        saved.close()
 
     def test_condition_color_defaults_to_secondary_theme_for_data_bar(self):
         """ExcelWriter 默认应使用副主题色生成数据条。"""
@@ -144,6 +213,50 @@ class TestExcelWriter:
         assert ws["B2"].value == "测试内容"
         assert end_row == 3
         assert end_col == 3
+
+    def test_insert_numeric_like_strings_suppresses_only_number_as_text_warning(self):
+        """数字样字符串应保持文本值，并只对对应单元格关闭“数字存为文本”提示。"""
+        writer = ExcelWriter()
+        ws = writer.get_sheet_by_name("NumericText")
+
+        writer.insert_value2sheet(ws, "B2", value="466")
+        writer.insert_value2sheet(ws, "C2", value="25%")
+        writer.insert_value2sheet(ws, "D2", value="00123")
+        writer.insert_value2sheet(ws, "E2", value="普通文本")
+        writer.insert_value2sheet(ws, "F2", value=466)
+        writer.save(self.test_file)
+
+        loaded = load_workbook(self.test_file)
+        loaded_ws = loaded["NumericText"]
+        assert [loaded_ws.cell(2, col).value for col in range(2, 7)] == [
+            "466",
+            "25%",
+            "00123",
+            "普通文本",
+            466,
+        ]
+        assert [loaded_ws.cell(2, col).data_type for col in range(2, 7)] == ["s", "s", "s", "s", "n"]
+        assert [loaded_ws.cell(2, col).number_format for col in range(2, 5)] == ["@", "@", "@"]
+        loaded.close()
+
+        assert _number_stored_as_text_ignored_cells(self.test_file, "NumericText") == {"B2", "C2", "D2"}
+
+    @pytest.mark.parametrize("speed", ["normal", "fast"])
+    def test_dataframe_numeric_like_strings_suppress_warning_in_all_write_speeds(self, speed):
+        """普通与快速 DataFrame 写入应对数字样文本保持一致的错误忽略行为。"""
+        writer = ExcelWriter()
+        ws = writer.get_sheet_by_name("NumericText")
+        data = pd.DataFrame(
+            {
+                "数字文本": ["466", "25%"],
+                "普通文本": ["通过", "拒绝"],
+            }
+        )
+
+        writer.insert_df2sheet(ws, data, "B2", speed=speed)
+        writer.save(self.test_file)
+
+        assert _number_stored_as_text_ignored_cells(self.test_file, "NumericText") == {"B3", "B4"}
 
     def test_auto_width_preserves_template_column_fill(self):
         """测试自动列宽保留模板列白色填充样式。"""
@@ -249,6 +362,31 @@ class TestExcelWriter:
         assert "B3:C3" not in merged_ranges
         assert ws["B3"].value == "拒绝"
         assert ws["C3"].value == "拒绝"
+
+    def test_multi_header_uses_column_and_index_names_for_index_corner(self):
+        """多层表头应由 DataFrame 元数据生成左上角分组，不需要事后补写单元格。"""
+        writer = ExcelWriter()
+        ws = writer.get_sheet_by_name("Test")
+        df = pd.DataFrame(
+            [[20, 12, 8]],
+            index=pd.Index(["训练集"], name="数据集"),
+            columns=pd.MultiIndex.from_tuples(
+                [
+                    ("统计详情", "样本总数"),
+                    ("好样本数", "MOB1@7"),
+                    ("坏样本数", "MOB1@7"),
+                ],
+                names=["统计详情", ""],
+            ),
+        )
+
+        writer.insert_df2sheet(ws, df, "B2", index=True)
+
+        assert ws["B2"].value == "统计详情"
+        assert ws["B2"].style == "header_left"
+        assert ws["B3"].value == "数据集"
+        assert ws["C3"].value == "样本总数"
+        assert "B2:C2" in {str(cell_range) for cell_range in ws.merged_cells.ranges}
 
     def test_multi_header_does_not_write_single_cell_merge_refs(self):
         """多层表头不应在 xlsx XML 中写入单格 mergeCell 记录。"""
@@ -1283,6 +1421,259 @@ class TestPivotTable:
         )
         assert len(writer._pivot_specs) == 1
         assert writer._pivot_specs[0]["name"] == "数据透视表1"
+
+    def test_existing_sheet_range_creates_native_pivot_without_rewriting_source(self):
+        """已有 Sheet 的指定区域应可直接作为原生透视表数据源。"""
+        source_file = os.path.join(self.temp_dir, "existing.xlsx")
+        output_file = os.path.join(self.temp_dir, "existing-pivot.xlsx")
+        workbook = Workbook()
+        source_sheet = workbook.active
+        source_sheet.title = "贷款明细"
+        rows = [list(self.df.columns)] + self.df.values.tolist()
+        for row in rows:
+            source_sheet.append(row)
+        workbook.save(source_file)
+        workbook.close()
+
+        writer = ExcelWriter(style_excel=source_file, mode="replace")
+        writer.insert_pivot_table2sheet(
+            worksheet="透视分析",
+            pivot_anchor="B2",
+            source_sheet="贷款明细",
+            source_range="A1:D7",
+            rows="商品类别",
+            columns="区域",
+            values=[("放款金额", "sum")],
+        )
+        writer.save(output_file)
+
+        saved = load_workbook(output_file)
+        assert saved["贷款明细"]["A1"].value == "商品类别"
+        assert saved["贷款明细"]["C2"].value == 100
+        saved.close()
+        cache = self._read(output_file, "xl/pivotCache/pivotCacheDefinition1.xml")
+        records = self._read(output_file, "xl/pivotCache/pivotCacheRecords1.xml")
+        assert '<worksheetSource ref="A1:D7" sheet="贷款明细"/>' in cache
+        assert 'count="6"' in records
+
+    def test_existing_excel_keeps_previous_pivot_when_adding_another(self):
+        """向已有透视表文件追加时，新透视表不得覆盖原有 OOXML 部件。"""
+        first_writer = ExcelWriter()
+        first_sheet = first_writer.get_sheet_by_name("透视分析一")
+        first_writer.insert_pivot_table2sheet(
+            first_sheet,
+            self.df,
+            "B2",
+            rows="商品类别",
+            values=[("放款金额", "sum")],
+        )
+        first_writer.save(self.test_file)
+
+        second_writer = ExcelWriter(style_excel=self.test_file, mode="append")
+        second_writer.insert_pivot_table2sheet(
+            worksheet="透视分析二",
+            pivot_anchor="B2",
+            source_sheet="数据透视表1_源数据",
+            source_range="A1:D7",
+            rows="区域",
+            values=[("放款金额", "sum")],
+        )
+        second_writer.save(self.test_file)
+
+        parts = self._pivot_parts(self.test_file)
+        assert "xl/pivotTables/pivotTable1.xml" in parts
+        assert "xl/pivotTables/pivotTable2.xml" in parts
+        assert "xl/pivotCache/pivotCacheDefinition1.xml" in parts
+        assert "xl/pivotCache/pivotCacheDefinition2.xml" in parts
+        assert 'name="数据透视表1"' in self._read(
+            self.test_file, "xl/pivotTables/pivotTable1.xml"
+        )
+        assert 'name="数据透视表2"' in self._read(
+            self.test_file, "xl/pivotTables/pivotTable2.xml"
+        )
+        workbook_xml = self._read(self.test_file, "xl/workbook.xml")
+        assert len(re.findall(r"<pivotCache\b", workbook_xml)) == 2
+        styles_xml = self._read(self.test_file, "xl/styles.xml")
+        pivot_style_names = re.findall(r'<tableStyle name="([^"]+)"[^>]*pivot="1"', styles_xml)
+        assert len(pivot_style_names) == len(set(pivot_style_names))
+        assert pivot_style_names.count("HSCreditPivotStyle") == 1
+        assert '<dxfs count="2">' in styles_xml
+        self._assert_all_xml_wellformed(self.test_file)
+        reloaded = load_workbook(self.test_file)
+        assert len(reloaded["透视分析一"]._pivots) == 1
+        assert len(reloaded["透视分析二"]._pivots) == 1
+        reloaded.close()
+
+    def test_append_with_different_theme_uses_unique_pivot_style(self):
+        """已有主题色不同时，新透视表应使用唯一的新样式名。"""
+        first_writer = ExcelWriter(theme_color="2639E9")
+        first_writer.insert_pivot_table2sheet(
+            worksheet="透视分析一",
+            data=self.df,
+            pivot_anchor="B2",
+            rows="商品类别",
+            values=[("放款金额", "sum")],
+        )
+        first_writer.save(self.test_file)
+
+        second_writer = ExcelWriter(
+            style_excel=self.test_file,
+            mode="append",
+            theme_color="3F1DBA",
+        )
+        second_writer.insert_pivot_table2sheet(
+            worksheet="透视分析二",
+            pivot_anchor="B2",
+            source_sheet="数据透视表1_源数据",
+            source_range="A1:D7",
+            rows="区域",
+            values=[("放款金额", "sum")],
+        )
+        second_writer.save(self.test_file)
+
+        third_writer = ExcelWriter(
+            style_excel=self.test_file,
+            mode="append",
+            theme_color="3F1DBA",
+        )
+        third_writer.insert_pivot_table2sheet(
+            worksheet="透视分析三",
+            pivot_anchor="B2",
+            source_sheet="数据透视表1_源数据",
+            source_range="A1:D7",
+            rows="商品类别",
+            values=[("笔数", "sum")],
+        )
+        third_writer.save(self.test_file)
+
+        first_pivot = self._read(self.test_file, "xl/pivotTables/pivotTable1.xml")
+        second_pivot = self._read(self.test_file, "xl/pivotTables/pivotTable2.xml")
+        third_pivot = self._read(self.test_file, "xl/pivotTables/pivotTable3.xml")
+        styles_xml = self._read(self.test_file, "xl/styles.xml")
+        assert 'name="HSCreditPivotStyle"' in first_pivot
+        assert 'name="HSCreditPivotStyle2"' in second_pivot
+        assert 'name="HSCreditPivotStyle2"' in third_pivot
+        assert styles_xml.count('name="HSCreditPivotStyle"') == 1
+        assert styles_xml.count('name="HSCreditPivotStyle2"') == 1
+        assert 'name="HSCreditPivotStyle3"' not in styles_xml
+        assert 'rgb="FF3F1DBA"' in styles_xml
+        assert '<dxfs count="4">' in styles_xml
+
+    def test_source_worksheet_must_belong_to_writer_workbook(self):
+        """外部 Workbook 的 Worksheet 不能生成指向当前文件之外的无效数据源。"""
+        external_workbook = Workbook()
+        external_sheet = external_workbook.active
+        external_sheet.append(["商品类别", "放款金额"])
+        external_sheet.append(["数码", 100])
+        writer = ExcelWriter()
+
+        with pytest.raises(ValueError, match="当前工作簿"):
+            writer.insert_pivot_table2sheet(
+                worksheet="透视分析",
+                pivot_anchor="B2",
+                source_sheet=external_sheet,
+                source_range="A1:B2",
+                rows="商品类别",
+                values=[("放款金额", "sum")],
+            )
+        external_workbook.close()
+
+    def test_source_range_requires_explicit_rows(self):
+        """整列引用缺少表头行边界时，应返回明确的中文参数错误。"""
+        writer = ExcelWriter()
+        source_sheet = writer.get_sheet_by_name("贷款明细")
+        source_sheet.append(["商品类别", "放款金额"])
+        source_sheet.append(["数码", 100])
+
+        with pytest.raises(ValueError, match="无效的源数据区域"):
+            writer.insert_pivot_table2sheet(
+                worksheet="透视分析",
+                pivot_anchor="B2",
+                source_sheet=source_sheet,
+                source_range="A:B",
+                rows="商品类别",
+                values=[("放款金额", "sum")],
+            )
+
+    @pytest.mark.parametrize("source_range", ["D1:A2", "A2:D1"])
+    def test_source_range_rejects_reversed_boundaries(self, source_range):
+        """反向起止边界应返回参数错误，而不是泄漏 IndexError。"""
+        writer = ExcelWriter()
+        source_sheet = writer.get_sheet_by_name("贷款明细")
+        source_sheet.append(["商品类别", "区域", "放款金额", "笔数"])
+        source_sheet.append(["数码", "华东", 100, 1])
+
+        with pytest.raises(ValueError, match="无效的源数据区域"):
+            writer.insert_pivot_table2sheet(
+                worksheet="透视分析",
+                pivot_anchor="B2",
+                source_sheet=source_sheet,
+                source_range=source_range,
+                rows="商品类别",
+                values=[("放款金额", "sum")],
+            )
+
+    @pytest.mark.parametrize(
+        "headers, expected_message",
+        [
+            (["商品类别", "", "放款金额"], "非空字段名"),
+            (["商品类别", "区域", "区域"], "字段名不能重复"),
+        ],
+    )
+    def test_source_range_requires_nonempty_unique_headers(self, headers, expected_message):
+        """透视表数据源首行必须是 Excel 可用的非空唯一字段名。"""
+        writer = ExcelWriter()
+        source_sheet = writer.get_sheet_by_name("贷款明细")
+        source_sheet.append(headers)
+        source_sheet.append(["数码", "华东", 100])
+
+        with pytest.raises(ValueError, match=expected_message):
+            writer.insert_pivot_table2sheet(
+                worksheet="透视分析",
+                pivot_anchor="B2",
+                source_sheet=source_sheet,
+                source_range="A1:C2",
+                rows="商品类别",
+                values=[(headers[-1], "sum")],
+            )
+
+    def test_dataframe_and_source_range_are_mutually_exclusive(self):
+        """DataFrame 与已有区域不能同时作为透视表数据源。"""
+        writer = ExcelWriter()
+        source_sheet = writer.get_sheet_by_name("贷款明细")
+
+        with pytest.raises(ValueError, match="不能同时"):
+            writer.insert_pivot_table2sheet(
+                worksheet="透视分析",
+                data=self.df,
+                pivot_anchor="B2",
+                source_sheet=source_sheet,
+                source_range="A1:D7",
+                rows="商品类别",
+                values=[("放款金额", "sum")],
+            )
+
+    def test_explicit_pivot_name_must_be_unique(self):
+        """同一工作簿不能记录两个同名的原生数据透视表。"""
+        writer = ExcelWriter()
+        writer.insert_pivot_table2sheet(
+            worksheet="透视分析一",
+            data=self.df,
+            pivot_anchor="B2",
+            rows="商品类别",
+            values=[("放款金额", "sum")],
+            name="放款分析",
+        )
+
+        with pytest.raises(ValueError, match="名称已存在"):
+            writer.insert_pivot_table2sheet(
+                worksheet="透视分析二",
+                data=self.df,
+                pivot_anchor="B2",
+                rows="区域",
+                values=[("放款金额", "sum")],
+                name="放款分析",
+            )
 
     def test_requires_values(self):
         writer = ExcelWriter()

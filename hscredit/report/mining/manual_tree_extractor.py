@@ -16,7 +16,7 @@
 >>> # ManualTreeExtractor：人工分裂
 >>> from hscredit.report.mining import ManualTreeExtractor
 >>> ext = ManualTreeExtractor(target='target')
->>> ext.fit(df, features=['age', 'income'])
+>>> ext.fit(df, feature_names=['age', 'income'])
 >>> ext.manual_split(df, feature='age', threshold=35)
 >>> print(ext.get_rule_table())
 """
@@ -39,7 +39,14 @@ from ...utils.parallel import (
     parallel_execute,
     resolve_n_jobs,
 )
-from .base import _mining_workload
+from .base import (
+    FeatureNames,
+    _mining_workload,
+    check_features_valid,
+    format_feature_context,
+    normalize_feature_names,
+    resolve_feature_map,
+)
 
 
 def _effective_nested_n_jobs(n_jobs):
@@ -104,7 +111,7 @@ def _node_hit_worker(task):
 
 def _tree_report_dataset_worker(task):
     """计算一个独立数据集的整棵树节点报告。"""
-    analyzer, data, target, overdue, dpds, del_grey, leaf_only, kwargs = task
+    analyzer, data, target, overdue, dpds, del_grey, leaf_only, feature_map, kwargs = task
     return analyzer._report_one_dataset(
         data,
         target=target,
@@ -112,6 +119,7 @@ def _tree_report_dataset_worker(task):
         dpds=dpds,
         del_grey=del_grey,
         leaf_only=leaf_only,
+        feature_map=feature_map,
         report_kwargs=kwargs,
     )
 
@@ -241,7 +249,7 @@ def _prepare_training_features(
 def _resolve_fit_data(
     X: Union[pd.DataFrame, np.ndarray],
     y: Optional[Union[pd.Series, np.ndarray, List]] = None,
-    features: Optional[List[str]] = None,
+    features: FeatureNames = None,
     target: str = "target",
 ) -> Tuple[pd.DataFrame, List[str]]:
     """统一解析 sklearn 风格 (X, y) 与 scorecardpipeline 风格 (df) 两种调用方式。
@@ -258,6 +266,7 @@ def _resolve_fit_data(
     :return: ``(含目标列的 DataFrame, 特征名列表)``
     :raises InputValidationError: 入参不满足任一风格时
     """
+    selected = normalize_feature_names(features, "feature_names")
     if y is not None:
         # sklearn 风格：X=特征，y=标签
         if isinstance(X, pd.DataFrame):
@@ -267,14 +276,18 @@ def _resolve_fit_data(
             arr = np.asarray(X)
             if arr.ndim == 1:
                 arr = arr.reshape(-1, 1)
-            inferred = list(features) if features is not None else [f"feature_{i}" for i in range(arr.shape[1])]
+            inferred = selected if selected is not None else [f"feature_{i}" for i in range(arr.shape[1])]
+            if len(inferred) != arr.shape[1]:
+                raise InputValidationError(
+                    "ndarray 输入无法按字段名选择子集；feature_names 数量必须与特征列数一致"
+                )
             data = pd.DataFrame(arr, columns=inferred)
         y_arr = np.asarray(y.values if isinstance(y, pd.Series) else y).ravel()
         if len(y_arr) != len(data):
             raise InputValidationError(f"特征与标签数量不匹配：{len(data)} != {len(y_arr)}")
         data = data.copy()
         data[target] = y_arr
-        feats = list(features) if features is not None else inferred
+        feats = selected if selected is not None else inferred
     else:
         # scorecardpipeline 风格：X=含目标列的 DataFrame
         if not isinstance(X, pd.DataFrame):
@@ -288,10 +301,13 @@ def _resolve_fit_data(
                 f"或在 DataFrame 中包含 '{target}' 列（scorecardpipeline 风格）"
             )
         data = X
-        if features is not None:
-            feats = list(features)
+        if selected is not None:
+            feats = selected
         else:
             feats = [c for c in X.columns if c != target and pd.api.types.is_numeric_dtype(X[c])]
+    if target in feats:
+        raise ValueError(f"目标列 '{target}' 不能作为特征")
+    check_features_valid(data.drop(columns=[target], errors="ignore"), feats)
     return data, feats
 
 
@@ -755,6 +771,7 @@ def _node_hit_report(
     dpds: Optional[Union[int, List[int]]],
     del_grey: bool,
     leaf_only: bool,
+    feature_map: Optional[Dict[str, str]] = None,
     n_jobs=-1,
     parallel_backend=None,
     parallel_config=None,
@@ -827,6 +844,16 @@ def _node_hit_report(
 
     result = pd.concat(hit_frames, ignore_index=True)
     sort_col = ("分箱详情", "节点编号") if isinstance(result.columns, pd.MultiIndex) else "节点编号"
+    resolved_map = resolve_feature_map(feature_map)
+    if resolved_map is not None:
+        node_context = {}
+        for _, row in rules_df.iterrows():
+            used_features = [condition[0] for condition in row["rule_list"]]
+            node_context[int(row["node"])] = format_feature_context(used_features, resolved_map)
+        field_col = ("分箱详情", "入参字段") if isinstance(result.columns, pd.MultiIndex) else "入参字段"
+        meaning_col = ("分箱详情", "字段含义") if isinstance(result.columns, pd.MultiIndex) else "字段含义"
+        result[field_col] = result[sort_col].map(lambda node: node_context.get(int(node), ("", ""))[0])
+        result[meaning_col] = result[sort_col].map(lambda node: node_context.get(int(node), ("", ""))[1])
     return result.sort_values(sort_col).reset_index(drop=True)
 
 
@@ -904,7 +931,8 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
     **参数**
 
     :param target: 目标变量列名（0=好样本，1=坏样本）
-    :param features: 特征名列表（默认自动从数据中推断数值列）
+    :param features: 特征名或特征名列表（默认自动从数据中推断数值列）
+    :param feature_map: 字段名到字段含义的映射，用于节点规则报告展示
     :param tree_params: 决策树参数字典，默认值如下：
 
         ============ ================================
@@ -936,12 +964,13 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
     def __init__(
         self,
         target: str = "target",
-        features: Optional[List[str]] = None,
+        features: FeatureNames = None,
         tree_params: Optional[Dict[str, Any]] = None,
         missing: Optional[float] = None,
         n_jobs: Optional[Union[int, float]] = -1,
         parallel_backend: Optional[str] = None,
         parallel_config: Optional[Dict[str, Any]] = None,
+        feature_map: Optional[Dict[str, str]] = None,
         **kwargs: Any,
     ):
         """初始化决策树训练器。
@@ -977,6 +1006,7 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
         self.n_jobs = n_jobs
         self.parallel_backend = parallel_backend
         self.parallel_config = parallel_config
+        self.feature_map = feature_map
         self._sklearn_kwargs: Dict[str, Any] = kwargs
         self.features_: List[str] = []
 
@@ -1040,16 +1070,20 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
         self,
         X: Union[pd.DataFrame, np.ndarray],
         y: Optional[Union[pd.Series, np.ndarray]] = None,
-        features: Optional[List[str]] = None,
+        feature_names: FeatureNames = None,
         tree_params: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> "DecisionTreeAnalyzer":
         """在临时副本中训练，并在全部成功后提交拟合状态。"""
+        legacy_features = kwargs.pop("features", None)
+        if feature_names is not None and legacy_features is not None:
+            raise ValueError("feature_names 与兼容参数 features 不能同时传入")
+        resolved_feature_names = feature_names if feature_names is not None else legacy_features
         working = copy.deepcopy(self)
         working._fit_inplace(
             X,
             y,
-            features=features,
+            feature_names=resolved_feature_names,
             tree_params=tree_params,
             **kwargs,
         )
@@ -1064,6 +1098,7 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
                 "n_jobs",
                 "parallel_backend",
                 "parallel_config",
+                "feature_map",
             ),
         )
         return self
@@ -1072,7 +1107,7 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
         self,
         X: Union[pd.DataFrame, np.ndarray],
         y: Optional[Union[pd.Series, np.ndarray]] = None,
-        features: Optional[List[str]] = None,
+        feature_names: FeatureNames = None,
         tree_params: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> "DecisionTreeAnalyzer":
@@ -1081,12 +1116,12 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
         支持两种 API 风格：
 
         - **sklearn 风格**：``fit(X, y)``，``X`` 为特征矩阵（DataFrame/ndarray），``y`` 为标签；
-        - **scorecardpipeline 风格**：``fit(df, features=[...])``，``df`` 含目标列，
+        - **scorecardpipeline 风格**：``fit(df, feature_names=[...])``，``df`` 含目标列，
           目标列名由初始化 ``target`` 指定。
 
         :param X: 特征矩阵（sklearn 风格）或含目标列的 DataFrame（scorecardpipeline 风格）
         :param y: 目标变量（可选）；传入时按 sklearn 风格解析，优先于 ``X`` 中的目标列
-        :param features: 特征名列表（默认：scorecardpipeline 风格取除 target 外的数值列，
+        :param feature_names: 特征名或特征名列表（默认：scorecardpipeline 风格取除 target 外的数值列，
             未指定时回退到构造参数 ``features``）
         :param tree_params: 决策树参数字典（与构造参数合并，覆盖默认参数）
         :param kwargs: sklearn DecisionTreeClassifier 的其他参数，直接透传给底层分类器。
@@ -1097,7 +1132,7 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
 
         >>> # scorecardpipeline 风格
         >>> analyzer = DecisionTreeAnalyzer(target='target')
-        >>> analyzer.fit(df_train, features=['age', 'income', 'loan'])
+        >>> analyzer.fit(df_train, feature_names=['age', 'income', 'loan'])
         >>> # sklearn 风格
         >>> DecisionTreeAnalyzer(target='target').fit(X_train, y_train)
         >>> # 使用 ccp_alpha 后剪枝
@@ -1110,7 +1145,7 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
             workload=_mining_workload(None, 0, operation="决策树并行配置校验"),
         )
         # 解析双 API：sklearn 风格 (X, y) 或 scorecardpipeline 风格 (df)
-        resolved_features = features if features is not None else (self.features or None)
+        resolved_features = feature_names if feature_names is not None else self.features
         df, self.features_ = _resolve_fit_data(X, y, resolved_features, self.target)
 
         # 过滤缺失数据
@@ -1257,6 +1292,7 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
         dpds: Optional[Union[int, List[int]]] = None,
         del_grey: bool = False,
         leaf_only: bool = False,
+        feature_map: Optional[Dict[str, str]] = None,
         **kwargs: Any,
     ) -> Union[pd.DataFrame, List[pd.DataFrame], Dict[Any, pd.DataFrame]]:
         """在新数据集上评估决策树各节点规则的效果。
@@ -1276,6 +1312,7 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
             传入列表时支持多DPD联合分析，参考 :meth:`Rule.report`
         :param del_grey: 是否删除逾期天数在(0, DPD]区间内的灰度样本，默认为False
         :param leaf_only: 是否仅评估叶子节点，默认 False（评估所有节点）
+        :param feature_map: 字段名到字段含义的映射，显式传入时覆盖构造参数
         :param kwargs: 其余传递给 :meth:`Rule.report` 的参数（如 ``amount``、``margins``）
         :return: 各节点效果评估表（DataFrame），结构与输入一致：
             单个 DataFrame 输入返回单个 DataFrame，列表输入返回 DataFrame 列表，
@@ -1301,6 +1338,7 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
             names = None
             data_values = [datasets]
 
+        resolved_feature_map = resolve_feature_map(self.feature_map, feature_map)
         tasks = [
             (
                 self,
@@ -1310,6 +1348,7 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
                 dpds,
                 del_grey,
                 leaf_only,
+                resolved_feature_map,
                 dict(kwargs),
             )
             for data in data_values
@@ -1343,6 +1382,7 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
         dpds,
         del_grey,
         leaf_only,
+        feature_map,
         report_kwargs,
     ):
         """计算单个数据集的节点报告，供模块级 worker 调用。"""
@@ -1355,6 +1395,7 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
             dpds=dpds,
             del_grey=del_grey,
             leaf_only=leaf_only,
+            feature_map=feature_map,
             n_jobs=_effective_nested_n_jobs(self.n_jobs),
             parallel_backend=self.parallel_backend,
             parallel_config=self.parallel_config,
@@ -1550,7 +1591,7 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
 
         **参考样例**
 
-        >>> analyzer = DecisionTreeAnalyzer(target='target').fit(df, features=['age', 'income'])
+        >>> analyzer = DecisionTreeAnalyzer(target='target').fit(df, feature_names=['age', 'income'])
         >>> fig = analyzer.plot()
         >>> analyzer.plot(backend='graphviz', save='tree.pdf')
         """
@@ -1581,6 +1622,7 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
             "target": self.target,
             "tree_params": self.tree_params,
             "missing": self.missing,
+            "feature_map": self.feature_map,
         }
         if include_data and self._data is not None:
             payload["_data"] = self._data
@@ -1605,6 +1647,7 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
             features=payload.get("features", payload.get("feature_list")),
             tree_params=payload["tree_params"],
             missing=payload.get("missing"),
+            feature_map=payload.get("feature_map"),
         )
         instance.clf = payload["clf"]
         instance.features_ = list(payload.get("features", payload.get("feature_list", [])))
@@ -1659,13 +1702,15 @@ class ManualTreeExtractor(ParallelizableMixin):
     :param min_samples_split: 分裂节点最小样本数，默认 10
     :param min_samples_leaf: 叶子节点最小样本数，默认 5
     :param random_state: 随机种子，默认 0
+    :param features: 参与建树的字段名或字段名列表，默认None（自动推断数值字段）
+    :param feature_map: 字段名到字段含义的映射，用于节点规则报告展示
     :param missing: 缺失值的等价填充数值（可选），参考 :class:`DecisionTreeAnalyzer`
 
     **参考样例**
 
     >>> from hscredit.report.mining import ManualTreeExtractor
     >>> ext = ManualTreeExtractor(target='target', max_depth=2)
-    >>> ext.fit(df, features=['age', 'income'])
+    >>> ext.fit(df, feature_names=['age', 'income'])
     >>> # 人工分裂：指定在某节点用某特征+阈值分裂
     >>> ext.manual_split(df_sub, feature='age', threshold=35, node=1)
     >>> # 获取规则表
@@ -1687,6 +1732,8 @@ class ManualTreeExtractor(ParallelizableMixin):
         n_jobs: Optional[Union[int, float]] = -1,
         parallel_backend: Optional[str] = None,
         parallel_config: Optional[Dict[str, Any]] = None,
+        features: FeatureNames = None,
+        feature_map: Optional[Dict[str, str]] = None,
         **kwargs: Any,
     ):
         """初始化人工决策树提取器。
@@ -1713,6 +1760,8 @@ class ManualTreeExtractor(ParallelizableMixin):
         self.n_jobs = n_jobs
         self.parallel_backend = parallel_backend
         self.parallel_config = parallel_config
+        self.features = features
+        self.feature_map = feature_map
         self._sklearn_kwargs: Dict[str, Any] = kwargs
 
         # 内部状态
@@ -1734,6 +1783,7 @@ class ManualTreeExtractor(ParallelizableMixin):
         feature_names: Optional[List[str]] = None,
         target: str = "target",
         missing: Optional[float] = None,
+        feature_map: Optional[Dict[str, str]] = None,
     ) -> "ManualTreeExtractor":
         """从已训练的 sklearn DecisionTreeClassifier 创建 ManualTreeExtractor。
 
@@ -1765,6 +1815,8 @@ class ManualTreeExtractor(ParallelizableMixin):
             max_depth=clf.max_depth,
             random_state=getattr(clf, "random_state", 0),
             missing=missing,
+            features=feature_names,
+            feature_map=feature_map,
         )
         instance._feature_list = list(feature_names)
         instance._n_total_samples = int(clf.tree_.n_node_samples[0]) if clf.tree_.n_node_samples.size > 0 else 0
@@ -1786,18 +1838,22 @@ class ManualTreeExtractor(ParallelizableMixin):
         self,
         X: Union[pd.DataFrame, np.ndarray],
         y: Optional[Union[pd.Series, np.ndarray]] = None,
-        features: Optional[List[str]] = None,
+        feature_names: FeatureNames = None,
         max_depth: Optional[int] = None,
         min_samples_split: Optional[int] = None,
         min_samples_leaf: Optional[int] = None,
         **kwargs: Any,
     ) -> "ManualTreeExtractor":
         """串行构建临时树，全部成功后原子提交拟合状态。"""
+        legacy_features = kwargs.pop("features", None)
+        if feature_names is not None and legacy_features is not None:
+            raise ValueError("feature_names 与兼容参数 features 不能同时传入")
+        resolved_feature_names = feature_names if feature_names is not None else legacy_features
         working = copy.deepcopy(self)
         working._fit_inplace(
             X,
             y,
-            features=features,
+            feature_names=resolved_feature_names,
             max_depth=max_depth,
             min_samples_split=min_samples_split,
             min_samples_leaf=min_samples_leaf,
@@ -1816,6 +1872,8 @@ class ManualTreeExtractor(ParallelizableMixin):
                 "n_jobs",
                 "parallel_backend",
                 "parallel_config",
+                "features",
+                "feature_map",
             ),
         )
         return self
@@ -1824,7 +1882,7 @@ class ManualTreeExtractor(ParallelizableMixin):
         self,
         X: Union[pd.DataFrame, np.ndarray],
         y: Optional[Union[pd.Series, np.ndarray]] = None,
-        features: Optional[List[str]] = None,
+        feature_names: FeatureNames = None,
         max_depth: Optional[int] = None,
         min_samples_split: Optional[int] = None,
         min_samples_leaf: Optional[int] = None,
@@ -1836,14 +1894,15 @@ class ManualTreeExtractor(ParallelizableMixin):
         在指定节点人工干预分裂。支持两种 API 风格：
 
         - **sklearn 风格**：``fit(X, y)``，``X`` 为特征矩阵（DataFrame/ndarray），``y`` 为标签；
-        - **scorecardpipeline 风格**：``fit(df, features=[...])``，``df`` 含目标列，
+        - **scorecardpipeline 风格**：``fit(df, feature_names=[...])``，``df`` 含目标列，
           目标列名由初始化 ``target`` 指定。
 
         **参数**
 
         :param X: 特征矩阵（sklearn 风格）或含目标列的 DataFrame（scorecardpipeline 风格）
         :param y: 目标变量（可选）；传入时按 sklearn 风格解析，优先于 ``X`` 中的目标列
-        :param features: 特征名列表（默认使用除 target 外的所有数值列）
+        :param feature_names: 特征名或特征名列表（默认回退到构造参数 ``features``，
+            两者均未传入时使用除 target 外的所有数值列）
         :param max_depth: 树最大深度（覆盖构造参数）
         :param min_samples_split: 分裂最小样本数（覆盖构造参数）
         :param min_samples_leaf: 叶子最小样本数（覆盖构造参数）
@@ -1855,11 +1914,13 @@ class ManualTreeExtractor(ParallelizableMixin):
 
         >>> # scorecardpipeline 风格
         >>> ext = ManualTreeExtractor(target='target')
-        >>> ext.fit(df, features=['age', 'income', 'loan_amount'])
+        >>> ext.fit(df, feature_names=['age', 'income', 'loan_amount'])
         >>> # sklearn 风格
         >>> ManualTreeExtractor(target='target').fit(X_train, y_train)
         >>> # 使用熵作为分裂准则 + ccp_alpha 后剪枝
-        >>> ManualTreeExtractor(target='target').fit(df, features=['age', 'income'], criterion='entropy')
+        >>> ManualTreeExtractor(target='target').fit(
+        ...     df, feature_names=['age', 'income'], criterion='entropy'
+        ... )
         """
         self._parallel_execute(
             _tree_metric_dataset_worker,
@@ -1868,7 +1929,8 @@ class ManualTreeExtractor(ParallelizableMixin):
             workload=_mining_workload(None, 0, operation="人工决策树并行配置校验"),
         )
         # 解析双 API：sklearn 风格 (X, y) 或 scorecardpipeline 风格 (df)
-        df, self._feature_list = _resolve_fit_data(X, y, features, self.target)
+        resolved_features = feature_names if feature_names is not None else self.features
+        df, self._feature_list = _resolve_fit_data(X, y, resolved_features, self.target)
 
         # 过滤缺失数据
         self._data = df.loc[df[self.target].notna(), self._feature_list + [self.target]].copy()
@@ -2308,7 +2370,7 @@ class ManualTreeExtractor(ParallelizableMixin):
 
         **参考样例**
 
-        >>> ext = ManualTreeExtractor(target='target').fit(df, features=['age', 'income'])
+        >>> ext = ManualTreeExtractor(target='target').fit(df, feature_names=['age', 'income'])
         >>> fig = ext.plot()
         >>> ext.manual_split(df, 'age', 35).plot(save='tree.png')
         """
@@ -2331,7 +2393,7 @@ class ManualTreeExtractor(ParallelizableMixin):
         **参考样例**
 
         >>> ext = ManualTreeExtractor(target='target')
-        >>> ext.fit(df, features=['age', 'income'])
+        >>> ext.fit(df, feature_names=['age', 'income'])
         >>> ext.display()   # 在 Jupyter 中展示树图和规则表
         >>> ext.manual_split(df, 'income', 5000, node=1).display()
         """
@@ -2371,6 +2433,7 @@ class ManualTreeExtractor(ParallelizableMixin):
         dpds: Optional[Union[int, List[int]]] = None,
         del_grey: bool = False,
         leaf_only: bool = False,
+        feature_map: Optional[Dict[str, str]] = None,
         **kwargs,
     ) -> Union[pd.DataFrame, List[pd.DataFrame], Dict[Any, pd.DataFrame]]:
         """在新数据集上评估当前树各节点规则的效果。
@@ -2390,6 +2453,7 @@ class ManualTreeExtractor(ParallelizableMixin):
             传入列表时支持多DPD联合分析，参考 :meth:`Rule.report`
         :param del_grey: 是否删除逾期天数在(0, DPD]区间内的灰度样本，默认为False
         :param leaf_only: 是否仅评估叶子节点，默认 False（评估所有节点）
+        :param feature_map: 字段名到字段含义的映射，显式传入时覆盖构造参数
         :param kwargs: 其余传递给 :meth:`Rule.report` 的参数（如 ``amount``、``margins``）
         :return: 各节点效果评估表（DataFrame），结构与输入一致：
             单个 DataFrame 输入返回单个 DataFrame，列表输入返回 DataFrame 列表，
@@ -2415,6 +2479,7 @@ class ManualTreeExtractor(ParallelizableMixin):
             names = None
             data_values = [datasets]
 
+        resolved_feature_map = resolve_feature_map(self.feature_map, feature_map)
         tasks = [
             (
                 self,
@@ -2424,6 +2489,7 @@ class ManualTreeExtractor(ParallelizableMixin):
                 dpds,
                 del_grey,
                 leaf_only,
+                resolved_feature_map,
                 dict(kwargs),
             )
             for data in data_values
@@ -2457,6 +2523,7 @@ class ManualTreeExtractor(ParallelizableMixin):
         dpds,
         del_grey,
         leaf_only,
+        feature_map,
         report_kwargs,
     ):
         """计算单个数据集的节点报告，供模块级 worker 调用。"""
@@ -2469,6 +2536,7 @@ class ManualTreeExtractor(ParallelizableMixin):
             dpds=dpds,
             del_grey=del_grey,
             leaf_only=leaf_only,
+            feature_map=feature_map,
             n_jobs=_effective_nested_n_jobs(self.n_jobs),
             parallel_backend=self.parallel_backend,
             parallel_config=self.parallel_config,

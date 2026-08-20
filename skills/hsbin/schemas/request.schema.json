@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "hsbin request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "operation", "inputs", "parameters", "output"],
+  "properties": {
+    "version": {"const": "1"},
+    "operation": {
+      "enum": [
+        "feature_bin_stats",
+        "feature_efficiency_analysis",
+        "benchmark_binning_methods",
+        "feature_binning_summary",
+        "feature_group_binning_summary",
+        "optimal_binning_fit",
+        "optimal_binning_fit_transform",
+        "optimal_binning_transform",
+        "optimal_binning_2d_fit",
+        "optimal_binning_2d_transform",
+        "bin_plot",
+        "bin_trend_plot",
+        "bin_overdues_plot",
+        "bin_2d_plot"
+      ]
+    },
+    "inputs": {"type": "object", "minProperties": 1, "additionalProperties": {"$ref": "#/$defs/inputSource"}},
+    "parameters": {"type": "object"},
+    "output": {"$ref": "#/$defs/output"},
+    "environment": {"$ref": "#/$defs/environment"}
+  },
+  "$defs": {
+    "inputSource": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "path"],
+          "properties": {
+            "kind": {"const": "file"},
+            "path": {"type": "string", "minLength": 1},
+            "sheet_name": {"type": ["string", "integer"]},
+            "encoding": {"type": "string"},
+            "separator": {"type": "string"},
+            "trusted": {"type": "boolean"},
+            "engine": {"type": "string"}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "ref"],
+          "properties": {"kind": {"const": "object_ref"}, "ref": {"type": "string", "minLength": 1}}
+        }
+      ]
+    },
+    "output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["directory", "name"],
+      "properties": {
+        "directory": {"type": "string", "minLength": 1},
+        "name": {"type": "string", "minLength": 1},
+        "format": {"enum": ["png", "svg", "xlsx"]},
+        "overwrite": {"type": "boolean"}
+      }
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {"enum": ["isolated", "current"]},
+        "reuse": {"type": "boolean"},
+        "install_missing": {"type": "boolean"}
+      }
+    }
+  }
+}

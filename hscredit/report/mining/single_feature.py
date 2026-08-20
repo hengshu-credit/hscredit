@@ -12,7 +12,14 @@ import pandas as pd
 from typing import Union, List, Dict, Optional, Tuple, Any
 from sklearn.preprocessing import KBinsDiscretizer
 
-from .base import BaseRuleMiner, _binning_has_parallel_children, _mining_workload, calculate_lift
+from .base import (
+    BaseRuleMiner,
+    FeatureNames,
+    _binning_has_parallel_children,
+    _mining_workload,
+    calculate_lift,
+    resolve_feature_map,
+)
 from ...core.rules.rule import Rule
 from ...core.binning import OptimalBinning
 
@@ -34,6 +41,8 @@ class SingleFeatureRuleMiner(BaseRuleMiner):
     
     :param target: 目标变量列名，默认为'target'
     :param exclude_cols: 需要排除的列名列表
+    :param features: 参与挖掘的字段名或字段名列表，默认None（使用全部候选字段）
+    :param feature_map: 字段名到字段含义的映射，用于规则报告展示
     :param method: 分箱方法，取值与 `OptimalBinning.VALID_METHODS` 完全一致，不支持别名。
         默认为'mdlp'
     :param max_n_bins: 最大分箱数，默认20。同binning模块的max_n_bins
@@ -94,6 +103,8 @@ class SingleFeatureRuleMiner(BaseRuleMiner):
         n_jobs: Optional[Union[int, float]] = -1,
         parallel_backend: Optional[str] = None,
         parallel_config: Optional[Dict[str, Any]] = None,
+        features: FeatureNames = None,
+        feature_map: Optional[Dict[str, str]] = None,
         **binning_kwargs
     ):
         super().__init__(
@@ -102,6 +113,8 @@ class SingleFeatureRuleMiner(BaseRuleMiner):
             n_jobs=n_jobs,
             parallel_backend=parallel_backend,
             parallel_config=parallel_config,
+            features=features,
+            feature_map=feature_map,
         )
         
         # 仅校验不归一化：sklearn clone 要求构造参数按对象原样保存，
@@ -134,12 +147,14 @@ class SingleFeatureRuleMiner(BaseRuleMiner):
         self,
         X: Union[pd.DataFrame, np.ndarray],
         y: Optional[Union[pd.Series, np.ndarray]] = None,
+        feature_names: FeatureNames = None,
         **kwargs
     ) -> 'SingleFeatureRuleMiner':
         """拟合挖掘器.
         
         :param X: 训练数据，DataFrame或numpy数组
         :param y: 目标变量（可选）
+        :param feature_names: 本次拟合使用的字段名或字段名列表，优先于构造参数 ``features``
         :param kwargs: 额外参数，可覆盖初始化参数
         :return: self
         """
@@ -153,7 +168,8 @@ class SingleFeatureRuleMiner(BaseRuleMiner):
 
         working.method = OptimalBinning.validate_method(working.method)
 
-        X, y = working._check_input_data(X, y)
+        features_explicit = feature_names is not None or working.features is not None
+        X, y = working._check_input_data(X, y, feature_names=feature_names)
 
         if y is None:
             raise ValueError("单特征规则挖掘需要目标变量y")
@@ -164,7 +180,11 @@ class SingleFeatureRuleMiner(BaseRuleMiner):
         # 分类特征
         working.numerical_features_ = working._get_numeric_features(X)
         working.categorical_features_ = working._get_categorical_features(X)
-        working.features_ = working.numerical_features_ + working.categorical_features_
+        working.features_ = (
+            list(X.columns)
+            if features_explicit
+            else working.numerical_features_ + working.categorical_features_
+        )
         
         # 计算整体坏账率
         working.overall_badrate_ = y.mean()
@@ -440,6 +460,7 @@ self, feature_values: pd.Series) -> List[float]:
             datasets[target_col] = self.y_.values
 
         rows = []
+        feature_map = resolve_feature_map(self.feature_map)
         for _, row in all_rules.head(top_n).iterrows():
             feature_name = row['feature']
             operator = row['operator']
@@ -458,7 +479,7 @@ self, feature_values: pd.Series) -> List[float]:
             hit_rows = report_df[report_df['分箱'] == '命中'] if '分箱' in report_df.columns else pd.DataFrame()
             hit = hit_rows.iloc[0].to_dict() if not hit_rows.empty else {}
 
-            rows.append({
+            report_row = {
                 '规则表达式': rule.expr,
                 '规则名称': rule.name,
                 '命中样本数': hit.get('样本总数'),
@@ -468,7 +489,14 @@ self, feature_values: pd.Series) -> List[float]:
                 '命中LIFT值': hit.get('LIFT值'),
                 '坏账改善': hit.get('坏账改善'),
                 '规则报告': report_df,
-            })
+            }
+            if feature_map is not None:
+                report_row = {
+                    '入参字段': feature_name,
+                    '字段含义': feature_map.get(feature_name, ''),
+                    **report_row,
+                }
+            rows.append(report_row)
 
         result_df = pd.DataFrame(rows)
         if not result_df.empty:
@@ -530,6 +558,8 @@ self, feature_values: pd.Series) -> List[float]:
                 '命中LIFT值': hit.get('LIFT值'),
                 '坏账改善': hit.get('坏账改善'),
             }
+            if '入参字段' in row:
+                metadata.update({'入参字段': row['入参字段'], '字段含义': row['字段含义']})
             rule.metadata_ = metadata
             rule.metric_score_ = metadata.get('命中LIFT值', 0)
             rule_objects.append(rule)
@@ -609,6 +639,7 @@ self, feature_values: pd.Series) -> List[float]:
         self._check_fitted()
         
         summaries = []
+        feature_map = resolve_feature_map(self.feature_map)
         for feature, df in self.results_.items():
             if df.empty:
                 continue
@@ -616,7 +647,7 @@ self, feature_values: pd.Series) -> List[float]:
             best_idx = df['lift'].idxmax()
             best = df.loc[best_idx]
             
-            summaries.append({
+            summary = {
                 'feature': feature,
                 'max_lift': df['lift'].max(),
                 'max_ks': df['ks'].max() if 'ks' in df.columns else np.nan,
@@ -624,7 +655,15 @@ self, feature_values: pd.Series) -> List[float]:
                 'best_operator': best['operator'],
                 'best_badrate': best['badrate'],
                 'n_candidates': len(df)
-            })
+            }
+            if feature_map is not None:
+                summary = {
+                    'feature': summary.pop('feature'),
+                    '入参字段': feature,
+                    '字段含义': feature_map.get(feature, ''),
+                    **summary,
+                }
+            summaries.append(summary)
         
         return pd.DataFrame(summaries).sort_values('max_lift', ascending=False)
     

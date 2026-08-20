@@ -120,6 +120,12 @@ hscredit 文档
    api/index
 
 .. toctree::
+   :maxdepth: 2
+   :caption: Agent Skills
+
+   skills
+
+.. toctree::
    :maxdepth: 1
    :caption: 项目
 

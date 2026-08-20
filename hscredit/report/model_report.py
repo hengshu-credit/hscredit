@@ -656,6 +656,7 @@ class ModelReport:
         # 所有缓存仅在完整计算成功后提交。
         self._metrics_cache: Dict[Optional[str], pd.DataFrame] = {}
         self._summary_cache: Optional[pd.DataFrame] = None
+        self._raw_importance_cache: Optional[pd.Series] = None
         self._importance_cache: Optional[pd.DataFrame] = None
         self._features_describe_cache: Optional[pd.DataFrame] = None
         self._corr_cache: Optional[pd.DataFrame] = None
@@ -707,6 +708,7 @@ class ModelReport:
         """清除所有依赖数据集的派生结果。"""
         self._metrics_cache.clear()
         self._summary_cache = None
+        self._raw_importance_cache = None
         self._importance_cache = None
         self._features_describe_cache = None
         self._corr_cache = None
@@ -722,6 +724,7 @@ class ModelReport:
         cache_names = (
             "_metrics_cache",
             "_summary_cache",
+            "_raw_importance_cache",
             "_importance_cache",
             "_features_describe_cache",
             "_corr_cache",
@@ -1378,27 +1381,234 @@ class ModelReport:
 
     # ---------- 3. 特征重要性 ----------
 
+    def _get_raw_feature_importance(self) -> pd.Series:
+        """按模型能力提取原始绝对重要性，并与最终入模字段对齐。"""
+        if self._raw_importance_cache is not None:
+            return self._raw_importance_cache.copy()
+
+        candidates: List[Any] = []
+        seen = set()
+        for candidate in [
+            self.model,
+            getattr(self.model, "model_", None),
+            getattr(self.model, "_model", None),
+            getattr(self.model, "model", None),
+            getattr(self.model, "lr_model_", None),
+            getattr(self.model, "lr_model", None),
+        ]:
+            if candidate is None or id(candidate) in seen:
+                continue
+            seen.add(id(candidate))
+            candidates.append(candidate)
+
+        resolved: Optional[pd.Series] = None
+        for candidate in candidates:
+            values = None
+            if callable(getattr(candidate, "get_feature_importances", None)):
+                try:
+                    values = candidate.get_feature_importances()
+                except Exception:
+                    values = None
+            if values is None and hasattr(candidate, "feature_importances_"):
+                try:
+                    values = getattr(candidate, "feature_importances_")
+                except Exception:
+                    values = None
+            if values is None and hasattr(candidate, "coef_"):
+                try:
+                    coefficients = np.asarray(getattr(candidate, "coef_"), dtype=float)
+                    values = np.mean(np.abs(coefficients), axis=0) if coefficients.ndim > 1 else np.abs(coefficients)
+                except Exception:
+                    values = None
+            if values is None:
+                continue
+
+            if isinstance(values, pd.Series):
+                series = pd.to_numeric(values, errors="coerce")
+            else:
+                array = np.asarray(values, dtype=float).reshape(-1)
+                if len(array) != len(self.feature_names):
+                    continue
+                series = pd.Series(array, index=self.feature_names)
+
+            if not set(series.index).intersection(self.feature_names) and len(series) == len(self.feature_names):
+                series.index = self.feature_names
+            resolved = series.reindex(self.feature_names).abs()
+            break
+
+        if resolved is None:
+            resolved = pd.Series(index=self.feature_names, dtype=float, name="特征重要性")
+        else:
+            resolved.name = "特征重要性"
+        self._raw_importance_cache = resolved.copy()
+        return resolved
+
+    def _get_model_input_table(self, feature_map: Optional[Dict[str, str]] = None) -> pd.DataFrame:
+        """构造入参字段、重要性占比及累计贡献表。"""
+        importance = self._get_raw_feature_importance()
+        table = pd.DataFrame(
+            {
+                "入参字段": self.feature_names,
+                "特征重要性": importance.reindex(self.feature_names).to_numpy(dtype=float),
+            }
+        )
+        if table["特征重要性"].notna().any():
+            table = table.sort_values("特征重要性", ascending=False, kind="mergesort").reset_index(drop=True)
+            total_importance = float(table["特征重要性"].sum())
+            if total_importance > 0:
+                table["特征重要性%"] = table["特征重要性"] / total_importance
+                table["累积特征重要性%"] = table["特征重要性%"].cumsum()
+            else:
+                table["特征重要性%"] = np.nan
+                table["累积特征重要性%"] = np.nan
+        else:
+            table["特征重要性%"] = np.nan
+            table["累积特征重要性%"] = np.nan
+
+        table.insert(0, "序号", np.arange(1, len(table) + 1))
+        if feature_map:
+            table.insert(2, "字段名称", table["入参字段"].map(feature_map).fillna(""))
+        return table
+
+    @staticmethod
+    def _validate_feature_contribution_label_limit(value: Optional[int]) -> Optional[int]:
+        """校验贡献图显示标签的最大特征数。"""
+        if value is None:
+            return None
+        if isinstance(value, bool) or not isinstance(value, (int, np.integer)) or value < 0:
+            raise ValueError("feature_contribution_label_max_features 必须是非负整数或 None")
+        return int(value)
+
+    def _create_feature_contribution_figure(
+        self,
+        table: pd.DataFrame,
+        label_max_features: Optional[int] = 10,
+    ):
+        """绘制序号维度的单字段贡献柱和累计贡献折线。"""
+        from matplotlib.ticker import PercentFormatter
+
+        from ..core.viz.utils import (
+            BAD_RATE_COLOR,
+            DEFAULT_COLORS,
+            _create_subplots,
+            _layout_top_center_legend,
+            setup_axis_style,
+        )
+
+        figure, primary = _create_subplots(figsize=(10, 5))
+        secondary = primary.twinx()
+        axis_theme = DEFAULT_COLORS[0]
+        sequence = table["序号"].to_numpy(dtype=int)
+        importance_ratio = table["特征重要性%"].to_numpy(dtype=float)
+        cumulative_ratio = table["累积特征重要性%"].to_numpy(dtype=float)
+        label_max_features = self._validate_feature_contribution_label_limit(label_max_features)
+        show_labels = label_max_features is None or len(table) <= label_max_features
+
+        secondary.bar(
+            sequence,
+            importance_ratio,
+            width=0.66,
+            color=axis_theme,
+            edgecolor="white",
+            linewidth=0.8,
+            alpha=0.92,
+            hatch="/",
+            label="特征重要性%",
+        )
+        primary.plot(
+            sequence,
+            cumulative_ratio,
+            color=BAD_RATE_COLOR,
+            linestyle=(0, (4, 3)),
+            marker="o",
+            markerfacecolor="white",
+            markeredgecolor=BAD_RATE_COLOR,
+            markeredgewidth=1.4,
+            markersize=5.5,
+            linewidth=2.1,
+            clip_on=False,
+            label="累积特征重要性%",
+        )
+        primary.set(
+            xlabel="序号",
+            ylabel="累积特征重要性%",
+            xticks=sequence,
+            ylim=(0, 1),
+        )
+        secondary.set_ylabel("特征重要性%")
+        secondary.set_ylim(0, 1)
+        primary.yaxis.set_major_formatter(PercentFormatter(1, decimals=0, is_latex=True))
+        secondary.yaxis.set_major_formatter(PercentFormatter(1, decimals=0, is_latex=True))
+        if show_labels:
+            for item, ratio in zip(sequence, cumulative_ratio):
+                label_y = ratio - 0.035 if ratio >= 0.95 else ratio + 0.025
+                primary.text(
+                    item,
+                    label_y,
+                    f"{ratio:.2%}",
+                    ha="center",
+                    va="top" if ratio >= 0.95 else "bottom",
+                    color=BAD_RATE_COLOR,
+                    fontsize=10,
+                    fontweight="semibold",
+                    bbox={
+                        "boxstyle": "round,pad=0.18",
+                        "facecolor": "white",
+                        "edgecolor": BAD_RATE_COLOR,
+                        "linewidth": 0.6,
+                        "alpha": 0.92,
+                    },
+                )
+            for item, ratio in zip(sequence[1:], importance_ratio[1:]):
+                secondary.text(
+                    item,
+                    ratio + 0.018,
+                    f"{ratio:.2%}",
+                    ha="center",
+                    va="bottom",
+                    color=axis_theme,
+                    fontsize=10,
+                    fontweight="semibold",
+                    bbox={
+                        "boxstyle": "round,pad=0.18",
+                        "facecolor": "white",
+                        "edgecolor": axis_theme,
+                        "linewidth": 0.6,
+                        "alpha": 0.92,
+                    },
+                )
+        setup_axis_style(primary, [axis_theme], hide_top_right=False)
+        setup_axis_style(secondary, [axis_theme], hide_top_right=False)
+        primary.spines["top"].set_visible(False)
+        secondary.spines["top"].set_visible(False)
+        primary.tick_params(axis="both", colors=axis_theme)
+        secondary.tick_params(axis="both", colors=axis_theme)
+        primary.grid(False)
+        secondary.grid(False)
+        title_artist = figure.suptitle("入模特征贡献", fontsize=14, fontweight="bold")
+        handles1, labels1 = primary.get_legend_handles_labels()
+        handles2, labels2 = secondary.get_legend_handles_labels()
+        legend = figure.legend(
+            handles2 + handles1,
+            labels2 + labels1,
+            loc="upper center",
+            bbox_to_anchor=(0.5, 0.90),
+            ncol=2,
+            frameon=False,
+        )
+        figure.tight_layout()
+        _layout_top_center_legend(
+            figure,
+            legend,
+            title=title_artist,
+            axes=[primary, secondary],
+        )
+        return figure
+
     def get_feature_importance(self, top_n: Optional[int] = None) -> pd.DataFrame:
         if self._importance_cache is None:
-            importances = None
-            if hasattr(self.model, "get_feature_importances"):
-                try:
-                    importances = self.model.get_feature_importances()
-                except Exception:
-                    pass
-            if importances is None and hasattr(self.model, "feature_importances_"):
-                values = np.asarray(self.model.feature_importances_).reshape(-1)
-                if len(values) == len(self.feature_names):
-                    importances = pd.Series(values, index=self.feature_names)
-
-            if importances is not None and not isinstance(importances, pd.Series):
-                values = np.asarray(importances).reshape(-1)
-                if len(values) == len(self.feature_names):
-                    importances = pd.Series(values, index=self.feature_names)
-                else:
-                    importances = None
-
-            if importances is None:
+            importances = self._get_raw_feature_importance().dropna()
+            if importances.empty:
                 self._importance_cache = pd.DataFrame(columns=["特征重要性", "IV", "KS", "PSI"])
             else:
                 importances = importances.reindex([f for f in importances.index if f in self.feature_names])
@@ -1442,6 +1652,256 @@ class ModelReport:
         if top_n is not None:
             df = df.head(top_n)
         return df
+
+    def _is_scorecard_model(self) -> bool:
+        """按评分卡能力识别 hscredit、toad 与 scorecardpipeline 对象。"""
+        model_name = type(self.model).__name__.lower()
+        has_points = callable(getattr(self.model, "scorecard_points", None))
+        has_rules = isinstance(getattr(self.model, "rules", None), dict) or isinstance(
+            getattr(self.model, "rules_", None), dict
+        )
+        has_export = callable(getattr(self.model, "export", None))
+        return "scorecard" in model_name and (has_points or (has_rules and has_export))
+
+    def _scorecard_lr_model(self):
+        """解析三类评分卡实际持有的逻辑回归模型。"""
+        for attribute in ("lr_model_", "lr_model", "pretrain_lr", "model"):
+            candidate = getattr(self.model, attribute, None)
+            if candidate is not None and candidate is not self.model:
+                return candidate
+        return None
+
+    @staticmethod
+    def _mapping_table(mapping: Dict[str, Any], key_name: str = "配置项", value_name: str = "配置值") -> pd.DataFrame:
+        """把有序配置映射转为 Excel 友好的两列表。"""
+        return pd.DataFrame([{key_name: key, value_name: value} for key, value in mapping.items()])
+
+    def _get_score_conversion_sections(self) -> Optional[Dict[str, pd.DataFrame]]:
+        """返回普通模型已拟合概率评分转换器的选型、参数与公式。"""
+        if self.method != "predict_score" or self._is_scorecard_model():
+            return None
+
+        owner = getattr(self.model, "scorecard_", None)
+        if owner is None and hasattr(self.model, "transformer_"):
+            owner = self.model
+        converter = getattr(self.model, "score_transformer_", None)
+        if converter is None and owner is not None:
+            converter = getattr(owner, "transformer_", None)
+        if converter is None:
+            return None
+
+        actual_converter = getattr(converter, "transformer_", converter)
+        is_fitted = any(
+            bool(getattr(candidate, "_is_fitted", False))
+            for candidate in (owner, converter, actual_converter)
+            if candidate is not None
+        )
+        if not is_fitted:
+            return None
+
+        selection = {
+            "转换入口": type(converter).__name__,
+            "转换方法": getattr(converter, "method", getattr(owner, "method", None)),
+            "实际转换器": type(actual_converter).__name__,
+        }
+
+        params: Dict[str, Any] = {}
+        if owner is not None and callable(getattr(owner, "get_params_info", None)):
+            try:
+                params.update(owner.get_params_info())
+            except Exception:
+                pass
+        if not params:
+            for name in (
+                "method",
+                "direction_",
+                "direction",
+                "lower",
+                "upper",
+                "decimal",
+                "clip",
+                "base_odds",
+                "base_score",
+                "pdo",
+                "rate",
+                "A_",
+                "B_",
+            ):
+                for candidate in (converter, actual_converter):
+                    if hasattr(candidate, name):
+                        params[name.rstrip("_")] = getattr(candidate, name)
+                        break
+
+        formula: Dict[str, Any] = {}
+        for candidate in (owner, converter, actual_converter):
+            if candidate is None or not callable(getattr(candidate, "score_formula", None)):
+                continue
+            try:
+                result = candidate.score_formula()
+                formula = result if isinstance(result, dict) else {"公式": str(result)}
+                break
+            except Exception:
+                continue
+
+        return {
+            "selection": self._mapping_table(selection),
+            "params": self._mapping_table(params),
+            "formula": self._mapping_table(formula, key_name="公式项", value_name="公式内容"),
+        }
+
+    def _scorecard_lr_summary(self) -> pd.DataFrame:
+        """优先读取 LR summary，不支持时按系数构造统一表。"""
+        lr_model = self._scorecard_lr_model()
+        if lr_model is None:
+            return pd.DataFrame()
+        if callable(getattr(lr_model, "summary", None)):
+            try:
+                summary = lr_model.summary()
+                if isinstance(summary, pd.DataFrame):
+                    return summary
+                tables = getattr(summary, "tables", None)
+                if tables and len(tables) > 1 and hasattr(tables[1], "data"):
+                    rows = tables[1].data
+                    return pd.DataFrame(rows[1:], columns=rows[0])
+            except Exception:
+                pass
+
+        try:
+            coefficients = np.asarray(lr_model.coef_, dtype=float)
+        except Exception:
+            return pd.DataFrame()
+        coefficients = coefficients.mean(axis=0) if coefficients.ndim > 1 else coefficients
+        feature_names = getattr(lr_model, "feature_names_in_", self.feature_names)
+        feature_names = list(feature_names) if len(feature_names) == len(coefficients) else self.feature_names
+        rows = [{"变量": name, "系数": float(value)} for name, value in zip(feature_names, coefficients)]
+        intercept = np.asarray(getattr(lr_model, "intercept_", []), dtype=float).reshape(-1)
+        if len(intercept):
+            rows.insert(0, {"变量": "截距", "系数": float(intercept[0])})
+        return pd.DataFrame(rows)
+
+    def _scorecard_scale_table(self) -> pd.DataFrame:
+        """统一评分卡基础刻度参数。"""
+        if callable(getattr(self.model, "scorecard_scale", None)):
+            try:
+                scale = self.model.scorecard_scale()
+                if isinstance(scale, pd.DataFrame):
+                    return scale
+            except Exception:
+                pass
+        rows = []
+        descriptions = {
+            "base_odds": "基础 Odds",
+            "base_score": "基础 Odds 对应分数",
+            "rate": "Odds 倍率",
+            "pdo": "Odds 增长 rate 倍时的分数变化",
+            "factor": "评分转换系数",
+            "offset": "评分转换截距",
+        }
+        for name, description in descriptions.items():
+            if hasattr(self.model, name):
+                rows.append({"刻度项": name, "刻度值": getattr(self.model, name), "备注": description})
+        return pd.DataFrame(rows)
+
+    def _scorecard_formula_table(self) -> pd.DataFrame:
+        """统一评分卡概率转评分公式。"""
+        if callable(getattr(self.model, "score_formula", None)):
+            try:
+                formula = self.model.score_formula()
+                if isinstance(formula, dict):
+                    return self._mapping_table(formula, key_name="公式项", value_name="公式内容")
+                return self._mapping_table({"公式": str(formula)}, key_name="公式项", value_name="公式内容")
+            except Exception:
+                pass
+        factor = getattr(self.model, "factor", getattr(self.model, "B_", None))
+        offset = getattr(self.model, "offset", getattr(self.model, "A_", None))
+        if factor is None or offset is None:
+            return pd.DataFrame()
+        formula = {
+            "公式": f"Score = {float(offset):.4f} - {float(factor):.4f} × ln(P / (1 - P))",
+            "offset": float(offset),
+            "factor": float(factor),
+        }
+        return self._mapping_table(formula, key_name="公式项", value_name="公式内容")
+
+    def _scorecard_points_table(self, feature_map: Optional[Dict[str, str]] = None) -> pd.DataFrame:
+        """统一评分卡分箱分值表。"""
+        if callable(getattr(self.model, "scorecard_points", None)):
+            try:
+                points = self.model.scorecard_points(feature_map=feature_map)
+            except TypeError:
+                points = self.model.scorecard_points()
+            except Exception:
+                points = None
+            if isinstance(points, pd.DataFrame):
+                return points
+
+        if callable(getattr(self.model, "export", None)):
+            try:
+                points = self.model.export(to_frame=True)
+                if isinstance(points, pd.DataFrame):
+                    points = points.rename(
+                        columns={"name": "变量名称", "value": "变量分箱", "score": "对应分数"}
+                    )
+                    if feature_map:
+                        points.insert(
+                            points.columns.get_loc("变量名称") + 1,
+                            "变量含义",
+                            points["变量名称"].map(feature_map).fillna(""),
+                        )
+                    return points
+            except Exception:
+                pass
+        return pd.DataFrame()
+
+    def _scorecard_odds_reference_table(self) -> pd.DataFrame:
+        """统一评分、Odds 与理论逾期率参考表。"""
+        try:
+            reference = getattr(self.model, "score_odds_reference")
+        except Exception:
+            reference = None
+        if isinstance(reference, pd.DataFrame):
+            return reference
+
+        factor = getattr(self.model, "factor", getattr(self.model, "B_", None))
+        offset = getattr(self.model, "offset", getattr(self.model, "A_", None))
+        base_score = getattr(self.model, "base_score", None)
+        pdo = getattr(self.model, "pdo", None)
+        if factor is None or offset is None or base_score is None or pdo is None:
+            return pd.DataFrame()
+        scores = np.arange(float(base_score) + 5 * float(pdo), float(base_score) - 5 * float(pdo) - 1, -float(pdo))
+        odds = np.exp((float(offset) - scores) / float(factor))
+        bad_rate = odds / (1 + odds)
+        return pd.DataFrame(
+            {
+                "评分": scores,
+                "理论Odds(坏好比)": odds,
+                "理论逾期率": bad_rate,
+            }
+        )
+
+    def _score_psi_matrix(self) -> pd.DataFrame:
+        """计算全部数据集两两评分 PSI。"""
+        if len(self._datasets) < 2:
+            return pd.DataFrame()
+        from ..core.metrics import psi
+
+        keys = list(self._datasets)
+        labels = [self._datasets[key].label for key in keys]
+        matrix = pd.DataFrame(np.nan, index=labels, columns=labels)
+        for row_index, left_key in enumerate(keys):
+            for column_index, right_key in enumerate(keys):
+                if row_index == column_index:
+                    matrix.iloc[row_index, column_index] = 0.0
+                else:
+                    try:
+                        matrix.iloc[row_index, column_index] = psi(
+                            self._datasets[left_key].score,
+                            self._datasets[right_key].score,
+                        )
+                    except Exception:
+                        pass
+        matrix.index.name = "基准数据集"
+        return matrix
 
     # ---------- 4. 特征描述 ----------
 
@@ -1902,9 +2362,10 @@ class ModelReport:
         bin_method: str = "quantile",
         amount_col: Optional[str] = None,
         show_lift: bool = True,
+        feature_contribution_label_max_features: Optional[int] = 10,
     ) -> Tuple[Dict[str, List[str]], Dict[str, pd.DataFrame]]:
         """串行导出全部图表，作为线程实现的结果与性能参考."""
-        from ..core.viz import ks_plot, bin_plot, corr_plot, psi_plot, lift_plot
+        from ..core.viz import ks_plot, bin_plot, corr_plot, psi_plot, lift_plot, hist_plot
 
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -1943,8 +2404,32 @@ class ModelReport:
                 except Exception as exc:
                     logger.warning("生成模型 LIFT 图失败 [数据集=%s, 文件=%s]: %s", tag, p, exc)
 
+            p = str(output_dir / f"hist_{ds_key}.png")
+            try:
+                hist_plot(ds.score, y_true=ds.y, title=f"{tag} 评分分布", save=p, figsize=(12, 7))
+                _safe_close_figs()
+                model_figs.append(p)
+            except Exception as exc:
+                logger.warning("生成模型评分分布图失败 [数据集=%s, 文件=%s]: %s", tag, p, exc)
+
             if model_figs:
                 paths[f"model_{ds_key}"] = model_figs
+
+        contribution_table = self._get_model_input_table()
+        if contribution_table["特征重要性%"].notna().any():
+            p = str(output_dir / "feature_contribution.png")
+            try:
+                from ..core.viz.utils import save_figure
+
+                figure = self._create_feature_contribution_figure(
+                    contribution_table,
+                    label_max_features=feature_contribution_label_max_features,
+                )
+                save_figure(figure, p)
+                _safe_close_plot_result(figure)
+                paths["feature_contribution"] = [p]
+            except Exception as exc:
+                logger.warning("生成入模特征贡献图失败 [文件=%s]: %s", p, exc)
 
         # --- 特征相关性图 ---
         importance = self.get_feature_importance()
@@ -2047,16 +2532,18 @@ class ModelReport:
                     logger.warning("生成特征 PSI 图表失败 [特征=%s, 文件=%s]: %s", feat, p, exc)
 
         # --- 评分卡专属图表 ---
-        if hasattr(self.model, "lr_model"):
-            p = str(output_dir / "plot_weights.png")
-            try:
-                from ..core.viz import plot_weights as _pw
+        if self._is_scorecard_model():
+            lr_model = self._scorecard_lr_model()
+            if lr_model is not None:
+                p = str(output_dir / "plot_weights.png")
+                try:
+                    from ..core.viz import plot_weights as _pw
 
-                _pw(self.model.lr_model, save=p)
-                _safe_close_figs()
-                paths["model_weights"] = [p]
-            except Exception as exc:
-                logger.warning("生成评分卡权重图失败 [文件=%s]: %s", p, exc)
+                    figure = _pw(lr_model, save=p)
+                    _safe_close_plot_result(figure)
+                    paths["model_weights"] = [p]
+                except Exception as exc:
+                    logger.warning("生成评分卡权重图失败 [文件=%s]: %s", p, exc)
 
             if len(ds_keys) >= 2:
                 p = str(output_dir / "score_psi.png")
@@ -2101,9 +2588,10 @@ class ModelReport:
         bin_method: str = "quantile",
         amount_col: Optional[str] = None,
         show_lift: bool = True,
+        feature_contribution_label_max_features: Optional[int] = 10,
     ) -> Tuple[Dict[str, List[str]], Dict[str, pd.DataFrame]]:
         """使用线程并行导出全部图表，并按原报告顺序汇总结果."""
-        from ..core.viz import bin_plot, corr_plot, ks_plot, lift_plot, psi_plot
+        from ..core.viz import bin_plot, corr_plot, hist_plot, ks_plot, lift_plot, psi_plot
 
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -2160,11 +2648,46 @@ class ModelReport:
                     except Exception as exc:
                         logger.warning("生成模型 LIFT 图失败 [数据集=%s, 文件=%s]: %s", tag, path, exc)
 
+                path = str(output_dir / f"hist_{ds_key}.png")
+                try:
+                    figure = hist_plot(
+                        ds.score,
+                        y_true=ds.y,
+                        title=f"{tag} 评分分布",
+                        save=path,
+                        figsize=(12, 7),
+                    )
+                    _safe_close_plot_result(figure)
+                    model_figs.append(path)
+                except Exception as exc:
+                    logger.warning("生成模型评分分布图失败 [数据集=%s, 文件=%s]: %s", tag, path, exc)
+
                 if model_figs:
                     group_paths[f"model_{ds_key}"] = model_figs
                 return group_paths, {}
 
             add_plot_group(f"模型图表:{ds.label}", render_model_group)
+
+        contribution_table = self._get_model_input_table()
+        if contribution_table["特征重要性%"].notna().any():
+            def render_contribution_group():
+                group_paths: Dict[str, List[str]] = {}
+                path = str(output_dir / "feature_contribution.png")
+                try:
+                    from ..core.viz.utils import save_figure
+
+                    figure = self._create_feature_contribution_figure(
+                        contribution_table,
+                        label_max_features=feature_contribution_label_max_features,
+                    )
+                    save_figure(figure, path)
+                    _safe_close_plot_result(figure)
+                    group_paths["feature_contribution"] = [path]
+                except Exception as exc:
+                    logger.warning("生成入模特征贡献图失败 [文件=%s]: %s", path, exc)
+                return group_paths, {}
+
+            add_plot_group("入模特征贡献图", render_contribution_group)
 
         importance = self.get_feature_importance()
         top_features = importance.index.tolist()
@@ -2288,19 +2811,21 @@ class ModelReport:
 
             add_plot_group(f"特征图表:{feature}", render_feature_group)
 
-        if hasattr(self.model, "lr_model"):
+        if self._is_scorecard_model():
             def render_scorecard_group():
                 group_paths: Dict[str, List[str]] = {}
                 group_tables: Dict[str, pd.DataFrame] = {}
-                path = str(output_dir / "plot_weights.png")
-                try:
-                    from ..core.viz import plot_weights
+                lr_model = self._scorecard_lr_model()
+                if lr_model is not None:
+                    path = str(output_dir / "plot_weights.png")
+                    try:
+                        from ..core.viz import plot_weights
 
-                    figure = plot_weights(self.model.lr_model, save=path)
-                    _safe_close_plot_result(figure)
-                    group_paths["model_weights"] = [path]
-                except Exception as exc:
-                    logger.warning("生成评分卡权重图失败 [文件=%s]: %s", path, exc)
+                        figure = plot_weights(lr_model, save=path)
+                        _safe_close_plot_result(figure)
+                        group_paths["model_weights"] = [path]
+                    except Exception as exc:
+                        logger.warning("生成评分卡权重图失败 [文件=%s]: %s", path, exc)
 
                 if len(ds_keys) >= 2:
                     path = str(output_dir / "score_psi.png")
@@ -2536,6 +3061,7 @@ class ModelReport:
         feature_info: Optional[pd.DataFrame] = None,
         show_lift: bool = True,
         show_importance: bool = True,
+        feature_contribution_label_max_features: Optional[int] = 10,
         data_source: Optional[str] = None,
         loc_cols: Optional[Union[str, List[str]]] = None,
     ) -> str:
@@ -2556,6 +3082,7 @@ class ModelReport:
             feature_info=feature_info,
             show_lift=show_lift,
             show_importance=show_importance,
+            feature_contribution_label_max_features=feature_contribution_label_max_features,
             data_source=data_source,
             loc_cols=loc_cols,
         )
@@ -2577,6 +3104,7 @@ class ModelReport:
         feature_info: Optional[pd.DataFrame] = None,
         show_lift: bool = True,
         show_importance: bool = True,
+        feature_contribution_label_max_features: Optional[int] = 10,
         data_source: Optional[str] = None,
         loc_cols: Optional[Union[str, List[str]]] = None,
     ) -> str:
@@ -2590,6 +3118,8 @@ class ModelReport:
 
         :param show_lift: 是否生成并插入 LIFT 曲线；LIFT 数值表始终保留
         :param show_importance: 是否显示入模变量重要性及分布汇总章节
+        :param feature_contribution_label_max_features: 贡献图显示数据标签的最大特征数；默认 10，
+            ``None`` 始终显示，0 始终隐藏
         :param loc_cols: 定位字段（订单号等），支持 str 或 List[str]，仅用于生产订单测试用例
         """
         from ..excel import ExcelWriter, dataframe2excel as _dataframe2excel
@@ -2600,6 +3130,10 @@ class ModelReport:
             if isinstance(data, pd.DataFrame) and data.empty:
                 for option in ("percent_cols", "custom_cols", "condition_cols", "color_cols"):
                     kwargs[option] = None
+            worksheet = kwargs.get("sheet_name")
+            worksheet_title = getattr(worksheet, "title", worksheet if isinstance(worksheet, str) else None)
+            if worksheet_title in {"2-模型性能", "3-入模变量分析"}:
+                kwargs.setdefault("auto_width", True)
             kwargs["speed"] = "fast"
             return _dataframe2excel(*args, **kwargs)
 
@@ -2609,6 +3143,9 @@ class ModelReport:
             amount_col=amount_col,
             date_col=date_col,
             show_importance=show_importance,
+        )
+        feature_contribution_label_max_features = self._validate_feature_contribution_label_limit(
+            feature_contribution_label_max_features
         )
         model_name = model_name or self.model.__class__.__name__
 
@@ -2624,6 +3161,7 @@ class ModelReport:
                     bin_method=bin_method,
                     amount_col=amount_col,
                     show_lift=show_lift,
+                    feature_contribution_label_max_features=feature_contribution_label_max_features,
                 )
 
         writer = ExcelWriter()
@@ -2970,7 +3508,6 @@ class ModelReport:
                 custom_rows=["样本总数"],
                 custom_format="#,##0",
             )
-            writer.insert_value2sheet(ws, (metrics_start_row, 2), value="统计项", style="header_middle")
         else:
             metrics = self.get_metrics().replace({"统计项": {"样本数": "样本总数"}}).set_index("统计项")
             end_row, _ = dataframe2excel(
@@ -3489,12 +4026,26 @@ class ModelReport:
                             exc,
                         )
             if isinstance(psi_df, pd.DataFrame) and not psi_df.empty:
+                psi_percent_cols = [
+                    column
+                    for column in psi_df.columns
+                    if "占比" in str(column)
+                    or "样本率" in str(column)
+                    or str(column) in {"实际% - 预期%", "分档PSI值", "总体PSI值"}
+                ]
+                psi_condition_cols = [
+                    column
+                    for column in psi_df.columns
+                    if str(column) in {"实际% - 预期%", "分档PSI值"}
+                ]
                 end_row, _ = dataframe2excel(
                     psi_df,
                     writer,
                     sheet_name=ws,
                     title="PSI稳定性分析",
                     start_row=end_row + 1,
+                    percent_cols=psi_percent_cols,
+                    condition_cols=psi_condition_cols,
                 )
 
         # ============================================================
@@ -3564,7 +4115,13 @@ class ModelReport:
                                 self._datasets[k2].label,
                                 exc,
                             )
-            end_row, _ = dataframe2excel(psi_matrix, writer, sheet_name=ws, start_row=end_row + 1, index=True)
+            end_row, psi_matrix_end_col = dataframe2excel(
+                psi_matrix,
+                writer,
+                sheet_name=ws,
+                start_row=end_row + 1,
+                index=True,
+            )
 
             # 评分PSI参考阈值说明
             end_row, _ = writer.insert_value2sheet(
@@ -3572,6 +4129,7 @@ class ModelReport:
                 (end_row + 1, 2),
                 value="PSI参考标准：<0.1 稳定 | 0.1~0.25 略变 | >0.25 不稳定",
                 style="middle",
+                end_space=(end_row + 1, psi_matrix_end_col - 1),
                 align={"horizontal": "left"},
             )
             stab_section += 1
@@ -3703,18 +4261,64 @@ class ModelReport:
             style="header_middle",
             align={"horizontal": "left"},
         )
-        features_df = pd.DataFrame({"序号": range(1, len(self.feature_names) + 1), "变量名": self.feature_names})
-        if feature_map:
-            features_df["变量含义"] = [feature_map.get(f, "") for f in self.feature_names]
-        end_row, _ = dataframe2excel(features_df, writer, sheet_name=ws, start_row=end_row + 1, left_cols=["变量名", "变量含义"])
+        features_df = self._get_model_input_table(feature_map)
+        features_start_row = end_row + 1
+        left_columns = [column for column in ("入参字段", "字段名称") if column in features_df.columns]
+        features_end_row, features_end_col = dataframe2excel(
+            features_df,
+            writer,
+            sheet_name=ws,
+            start_row=features_start_row,
+            percent_cols=["特征重要性%", "累积特征重要性%"],
+            left_cols=left_columns,
+        )
+        end_row = features_end_row
+        contribution_figures = plot_paths.get("feature_contribution", [])
+        if contribution_figures:
+            try:
+                contribution_end_row, _ = writer.insert_pic2sheet(
+                    ws,
+                    contribution_figures[0],
+                    (features_start_row, features_end_col + 1),
+                    figsize=(500, 300),
+                )
+                end_row = max(end_row, contribution_end_row)
+            except Exception as exc:
+                logger.warning(
+                    "插入入模特征贡献图失败 [工作表=%s, 文件=%s]: %s",
+                    ws.title,
+                    contribution_figures[0],
+                    exc,
+                )
         param_section += 1
 
-        # 5.4+ 评分卡专属内容
-        # 判断是否为评分卡模型
-        is_scorecard = hasattr(self.model, "lr_model") and hasattr(self.model, "scorecard_points")
+        score_conversion_sections = self._get_score_conversion_sections()
+        if score_conversion_sections is not None:
+            for title, key in (
+                ("评分转换器选型", "selection"),
+                ("评分转换基础参数配置", "params"),
+                ("概率转评分公式", "formula"),
+            ):
+                end_row, _ = writer.insert_value2sheet(
+                    ws,
+                    (end_row + 2, 2),
+                    value=f"{param_section}、{title}",
+                    style="header_middle",
+                    align={"horizontal": "left"},
+                )
+                section_table = score_conversion_sections[key]
+                if not section_table.empty:
+                    end_row, _ = dataframe2excel(
+                        section_table,
+                        writer,
+                        sheet_name=ws,
+                        start_row=end_row + 1,
+                        left_cols=list(section_table.columns),
+                    )
+                param_section += 1
 
-        if is_scorecard:
-            # plot_weights + LR 拟合结果
+        # 5.4+ 评分卡专属内容（hscredit / toad / scorecardpipeline）
+        if self._is_scorecard_model():
             end_row, _ = writer.insert_value2sheet(
                 ws,
                 (end_row + 2, 2),
@@ -3734,29 +4338,55 @@ class ModelReport:
                             fig_path,
                             exc,
                         )
-            try:
-                lr_summary = self.model.lr_model.summary()
-                end_row, _ = dataframe2excel(lr_summary, writer, sheet_name=ws, start_row=end_row + 1, title="逻辑回归系数")
-            except Exception as exc:
-                logger.warning("生成逻辑回归系数表失败 [模型=%s]: %s", model_name, exc)
+            lr_summary = self._scorecard_lr_summary()
+            if not lr_summary.empty:
+                end_row, _ = dataframe2excel(
+                    lr_summary,
+                    writer,
+                    sheet_name=ws,
+                    start_row=end_row + 1,
+                    title="逻辑回归系数",
+                    left_cols=[column for column in ("变量",) if column in lr_summary.columns],
+                )
             param_section += 1
 
-            # 评分卡刻度配置
             end_row, _ = writer.insert_value2sheet(
                 ws,
                 (end_row + 2, 2),
-                value=f"{param_section}、评分卡刻度配置",
+                value=f"{param_section}、评分卡基础参数配置",
                 style="header_middle",
                 align={"horizontal": "left"},
             )
-            try:
-                scale_df = self.model.scorecard_scale()
-                end_row, _ = dataframe2excel(scale_df, writer, sheet_name=ws, start_row=end_row + 1, right_cols=["刻度项"], left_cols=["备注"])
-            except Exception as exc:
-                logger.warning("生成评分卡刻度配置失败 [模型=%s]: %s", model_name, exc)
+            scale_df = self._scorecard_scale_table()
+            if not scale_df.empty:
+                end_row, _ = dataframe2excel(
+                    scale_df,
+                    writer,
+                    sheet_name=ws,
+                    start_row=end_row + 1,
+                    right_cols=["刻度项"],
+                    left_cols=["备注"],
+                )
             param_section += 1
 
-            # 评分卡
+            end_row, _ = writer.insert_value2sheet(
+                ws,
+                (end_row + 2, 2),
+                value=f"{param_section}、评分卡转换公式",
+                style="header_middle",
+                align={"horizontal": "left"},
+            )
+            scorecard_formula = self._scorecard_formula_table()
+            if not scorecard_formula.empty:
+                end_row, _ = dataframe2excel(
+                    scorecard_formula,
+                    writer,
+                    sheet_name=ws,
+                    start_row=end_row + 1,
+                    left_cols=list(scorecard_formula.columns),
+                )
+            param_section += 1
+
             end_row, _ = writer.insert_value2sheet(
                 ws,
                 (end_row + 2, 2),
@@ -3764,8 +4394,8 @@ class ModelReport:
                 style="header_middle",
                 align={"horizontal": "left"},
             )
-            try:
-                sc_points = self.model.scorecard_points(feature_map=feature_map)
+            sc_points = self._scorecard_points_table(feature_map)
+            if not sc_points.empty:
                 end_row, _ = dataframe2excel(
                     sc_points,
                     writer,
@@ -3773,34 +4403,44 @@ class ModelReport:
                     start_row=end_row + 1,
                     right_cols=["对应分数", "变量分箱", "变量名称"],
                 )
-            except Exception as exc:
-                logger.warning("生成评分卡分值表失败 [模型=%s]: %s", model_name, exc)
             param_section += 1
 
-            # 评分与 Odds 对照
             end_row, _ = writer.insert_value2sheet(
                 ws,
                 (end_row + 2, 2),
-                value=f"{param_section}、评分与Odds对照表",
+                value=f"{param_section}、评分、ODDS与逾期率参考表",
                 style="header_middle",
                 align={"horizontal": "left"},
             )
-            try:
-                odds_ref = self.model.score_odds_reference
-                end_row, _ = dataframe2excel(odds_ref, writer, sheet_name=ws, start_row=end_row + 1)
-            except Exception as exc:
-                logger.warning("生成评分与 Odds 对照表失败 [模型=%s]: %s", model_name, exc)
+            odds_ref = self._scorecard_odds_reference_table()
+            if not odds_ref.empty:
+                percent_columns = [column for column in odds_ref.columns if "逾期率" in str(column)]
+                end_row, _ = dataframe2excel(
+                    odds_ref,
+                    writer,
+                    sheet_name=ws,
+                    start_row=end_row + 1,
+                    percent_cols=percent_columns,
+                )
             param_section += 1
 
-            # 评分漂移分析
             if len(self._datasets) >= 2:
                 end_row, _ = writer.insert_value2sheet(
                     ws,
                     (end_row + 2, 2),
-                    value=f"{param_section}、稳定性分析",
+                    value=f"{param_section}、评分稳定性分析",
                     style="header_middle",
                     align={"horizontal": "left"},
                 )
+                score_psi_matrix = self._score_psi_matrix()
+                if not score_psi_matrix.empty:
+                    end_row, _ = dataframe2excel(
+                        score_psi_matrix,
+                        writer,
+                        sheet_name=ws,
+                        start_row=end_row + 1,
+                        index=True,
+                    )
                 score_psi_figs = plot_paths.get("score_psi", [])
                 if score_psi_figs:
                     for fig_path in score_psi_figs:
@@ -3816,6 +4456,7 @@ class ModelReport:
                 score_psi_df = psi_tables.get("score_psi")
                 if isinstance(score_psi_df, pd.DataFrame) and not score_psi_df.empty:
                     end_row, _ = dataframe2excel(score_psi_df, writer, sheet_name=ws, start_row=end_row + 1, title="评分PSI")
+                param_section += 1
 
         # ============================================================
         # 6-模型部署需求 Sheet
@@ -3875,6 +4516,13 @@ class ModelReport:
         # ============================================================
         # 保存
         # ============================================================
+        basic_info_sheet = writer.workbook["1-基本信息"]
+        if basic_info_sheet.max_column >= 4:
+            writer.adjust_columns_width(
+                basic_info_sheet,
+                start_col=4,
+                end_col=basic_info_sheet.max_column,
+            )
         for sheet_name in [
             "目录",
             "1-基本信息",
@@ -3940,6 +4588,7 @@ def auto_model_report(
     feature_info: Optional[pd.DataFrame] = None,
     show_lift: bool = True,
     show_importance: bool = True,
+    feature_contribution_label_max_features: Optional[int] = 10,
     data_source: Optional[str] = None,
     loc_cols: Optional[Union[str, List[str]]] = None,
     method: Union[str, Callable] = "predict_proba",
@@ -4027,6 +4676,8 @@ def auto_model_report(
     :param feature_info: 特征部署信息表
     :param show_lift: 是否在报告中显示 LIFT 曲线
     :param show_importance: 是否在报告中显示特征重要性
+    :param feature_contribution_label_max_features: 贡献图显示数据标签的最大特征数；默认 10，
+        ``None`` 始终显示，0 始终隐藏
     :param data_source: 数据源描述
     :param loc_cols: 定位字段（订单号等），支持 str 或 List[str]，用于生产测试用例列
     :param method: 数据集唯一预测方法，默认 ``predict_proba``，也支持 callable
@@ -4077,6 +4728,7 @@ def auto_model_report(
             feature_info=feature_info,
             show_lift=show_lift,
             show_importance=show_importance,
+            feature_contribution_label_max_features=feature_contribution_label_max_features,
             data_source=data_source,
             loc_cols=loc_cols,
         )

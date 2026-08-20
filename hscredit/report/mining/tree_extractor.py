@@ -17,7 +17,13 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 import warnings
 
-from .base import BaseRuleMiner, _mining_workload
+from .base import (
+    BaseRuleMiner,
+    FeatureNames,
+    _mining_workload,
+    format_feature_context,
+    resolve_feature_map,
+)
 from ...core.rules.rule import Rule
 from ...utils.parallel import _current_parallel_budget, resolve_n_jobs, validate_parallel_config
 
@@ -75,7 +81,7 @@ def _isolation_tree_extract_worker(task):
 
 def _tree_rule_report_worker(task):
     """构造并评估一条独立树规则。"""
-    ordinal, rule_item, expression, datasets, target = task
+    ordinal, rule_item, expression, datasets, target, feature_map = task
     rule = Rule(
         expr=expression,
         name=f"TreeRule_{rule_item.get('rule_id', ordinal)}",
@@ -84,6 +90,10 @@ def _tree_rule_report_worker(task):
         n_jobs=1,
     )
     metadata = dict(rule_item)
+    if feature_map is not None:
+        used_features = [condition["feature"] for condition in rule_item.get("conditions", [])]
+        input_fields, field_meanings = format_feature_context(used_features, feature_map)
+        metadata.update({"入参字段": input_fields, "字段含义": field_meanings})
     if datasets is not None:
         report_df = rule.report(datasets=datasets, target=target)
         hit_rows = (
@@ -119,6 +129,8 @@ class TreeRuleExtractor(BaseRuleMiner):
     :param algorithm: 算法类型，'dt', 'rf', 'chi2', 'gbdt', 'xgb', 'isf'
     :param target: 目标变量列名，默认为'target'
     :param exclude_cols: 需要排除的列名列表
+    :param features: 参与建树的字段名或字段名列表，默认None（使用全部候选字段）
+    :param feature_map: 字段名到字段含义的映射，用于规则报告展示
     :param max_depth: 树的最大深度，默认5
     :param min_samples_split: 分裂节点最小样本数，默认10
     :param min_samples_leaf: 叶子节点最小样本数，默认5
@@ -177,6 +189,8 @@ class TreeRuleExtractor(BaseRuleMiner):
         n_jobs: Optional[Union[int, float]] = -1,
         parallel_backend: Optional[str] = None,
         parallel_config: Optional[Dict[str, Any]] = None,
+        features: FeatureNames = None,
+        feature_map: Optional[Dict[str, str]] = None,
         **kwargs
     ):
         super().__init__(
@@ -185,6 +199,8 @@ class TreeRuleExtractor(BaseRuleMiner):
             n_jobs=n_jobs,
             parallel_backend=parallel_backend,
             parallel_config=parallel_config,
+            features=features,
+            feature_map=feature_map,
         )
         
         self.algorithm = algorithm
@@ -210,11 +226,12 @@ class TreeRuleExtractor(BaseRuleMiner):
         self,
         X: Union[pd.DataFrame, np.ndarray],
         y: Optional[Union[pd.Series, np.ndarray]] = None,
+        feature_names: FeatureNames = None,
         **kwargs
     ) -> 'TreeRuleExtractor':
         """在临时副本中拟合，成功后原子提交模型与编码状态。"""
         working = copy.deepcopy(self)
-        working._fit_inplace(X, y, **kwargs)
+        working._fit_inplace(X, y, feature_names=feature_names, **kwargs)
         self._commit_fitted_state(working)
         return self
 
@@ -222,12 +239,14 @@ class TreeRuleExtractor(BaseRuleMiner):
         self,
         X: Union[pd.DataFrame, np.ndarray],
         y: Optional[Union[pd.Series, np.ndarray]] = None,
+        feature_names: FeatureNames = None,
         **kwargs
     ) -> 'TreeRuleExtractor':
         """拟合提取器.
         
         :param X: 训练数据
         :param y: 目标变量（监督学习需要）
+        :param feature_names: 本次拟合使用的字段名或字段名列表，优先于构造参数 ``features``
         :param kwargs: 额外参数，可覆盖初始化参数
         :return: self
         """
@@ -243,7 +262,7 @@ class TreeRuleExtractor(BaseRuleMiner):
         
         validate_parallel_config(self.parallel_backend, self.parallel_config)
         self._effective_model_workers()
-        X, y = self._check_input_data(X, y)
+        X, y = self._check_input_data(X, y, feature_names=feature_names)
         
         # 保存特征名
         self.feature_names_ = list(X.columns)
@@ -870,6 +889,7 @@ class TreeRuleExtractor(BaseRuleMiner):
             self.extract_rules()
 
         target_col = target or self.target
+        feature_map = resolve_feature_map(self.feature_map)
         tasks = []
         labels = []
         for rule_item in self.rules_[:top_n]:
@@ -880,7 +900,7 @@ class TreeRuleExtractor(BaseRuleMiner):
 
             expr = self._rule_to_string(rule_item)
             ordinal = len(tasks)
-            tasks.append((ordinal, rule_item, expr, datasets, target_col))
+            tasks.append((ordinal, rule_item, expr, datasets, target_col, feature_map))
             labels.append(f"规则 {rule_item.get('rule_id', ordinal)}")
 
         return self._parallel_execute(
@@ -937,7 +957,7 @@ class TreeRuleExtractor(BaseRuleMiner):
         data = []
         for i, rule in enumerate(rule_objs):
             md = getattr(rule, 'metadata_', {}) or {}
-            data.append({
+            report_row = {
                 '规则编号': md.get('rule_id', i),
                 '规则表达式': rule.expr,
                 '命中样本数': md.get('命中样本数'),
@@ -946,7 +966,15 @@ class TreeRuleExtractor(BaseRuleMiner):
                 '命中LIFT值': md.get('命中LIFT值'),
                 '坏账改善': md.get('坏账改善'),
                 '风险拒绝比': md.get('风险拒绝比'),
-            })
+            }
+            if '入参字段' in md:
+                report_row = {
+                    '规则编号': report_row.pop('规则编号'),
+                    '入参字段': md['入参字段'],
+                    '字段含义': md['字段含义'],
+                    **report_row,
+                }
+            data.append(report_row)
         return pd.DataFrame(data)
     
     def _rule_to_string(self, rule: Dict) -> str:
@@ -984,10 +1012,15 @@ class TreeRuleExtractor(BaseRuleMiner):
         
         importance = native_model.feature_importances_
         
-        return pd.DataFrame({
+        result = pd.DataFrame({
             'feature': self.feature_names_,
             'importance': importance
         }).sort_values('importance', ascending=False)
+        feature_map = resolve_feature_map(self.feature_map)
+        if feature_map is not None:
+            result.insert(1, '入参字段', result['feature'])
+            result.insert(2, '字段含义', result['feature'].map(feature_map).fillna(''))
+        return result
     
     def _check_fitted(self):
         """检查是否已拟合."""

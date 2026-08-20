@@ -380,7 +380,7 @@ def test_score_bin_plot_preserves_embedded_header_layout():
 
 
 @pytest.mark.parametrize("orientation", ["horizontal", "vertical"])
-def test_feature_efficiency_comparison_preserves_embedded_header_layout(orientation):
+def test_feature_efficiency_comparison_uses_concise_titles_and_full_width_metric_summaries(orientation):
     data = _trend_data().rename(columns={"评分": "score", "目标": "target"})
     result = feature_efficiency_analysis(
         data,
@@ -393,7 +393,62 @@ def test_feature_efficiency_comparison_preserves_embedded_header_layout(orientat
     )
     fig = result["comparison_figure"]
     try:
+        assert [axis.get_title() for axis in fig.axes[:2]] == [
+            "手工分箱图",
+            "自动分箱图(quantile)",
+        ]
         _assert_embedded_bin_headers_are_clear(fig)
+        _assert_full_width_metric_summaries(fig)
         _assert_axis_decorations_are_inside_canvas(fig)
+    finally:
+        plt.close(fig)
+
+
+def test_feature_efficiency_comparison_uses_two_by_two_layout():
+    data = _trend_data().rename(columns={"评分": "score", "目标": "target"})
+    result = feature_efficiency_analysis(
+        data,
+        feature="score",
+        manual_rules=[2, 4, 6, 8],
+        target="target",
+        auto_method="quantile",
+        n_jobs=1,
+    )
+    fig = result["comparison_figure"]
+    try:
+        primary_axes = fig.axes[:4]
+        positions = [axis.get_position() for axis in primary_axes]
+
+        assert [axis.get_title() for axis in primary_axes] == [
+            "手工分箱图",
+            "自动分箱图(quantile)",
+            "KS 曲线",
+            "ROC 曲线",
+        ]
+        assert positions[0].y0 == pytest.approx(positions[1].y0)
+        assert positions[2].y0 == pytest.approx(positions[3].y0)
+        assert positions[0].y0 > positions[2].y0
+        assert positions[0].x0 == pytest.approx(positions[2].x0)
+        assert positions[1].x0 == pytest.approx(positions[3].x0)
+        assert positions[0].x0 < positions[1].x0
+        assert fig.get_size_inches() == pytest.approx((15.0, 10.0))
+    finally:
+        plt.close(fig)
+
+
+def test_feature_efficiency_comparison_places_unified_bin_legend_below_figure_title():
+    data = _trend_data().rename(columns={"评分": "score", "目标": "target"})
+    result = feature_efficiency_analysis(
+        data,
+        feature="score",
+        manual_rules=[2, 4, 6, 8],
+        target="target",
+        auto_method="quantile",
+        n_jobs=1,
+    )
+    fig = result["comparison_figure"]
+    try:
+        _assert_unified_bin_legend(fig)
+        _assert_embedded_bin_headers_are_clear(fig)
     finally:
         plt.close(fig)

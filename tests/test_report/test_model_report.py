@@ -5,6 +5,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pytest
@@ -61,6 +62,160 @@ class ReversedClassModel(MockModel):
     def predict_proba(self, X):
         proba = super().predict_proba(X)
         return proba[:, ::-1]
+
+
+class RankedImportanceModel(MockModel):
+    """按 3:1 返回可手算重要性的模型。"""
+
+    def __init__(self):
+        super().__init__(["f0", "f1"])
+
+    def get_feature_importances(self):
+        return pd.Series({"f0": 3.0, "f1": 1.0})
+
+
+class ZeroImportanceModel(RankedImportanceModel):
+    def get_feature_importances(self):
+        return pd.Series({"f0": 0.0, "f1": 0.0})
+
+
+class ScoreConversionModel(RankedImportanceModel):
+    """带已拟合概率评分转换器的普通风险模型。"""
+
+    def __init__(self):
+        from hscredit.core.models import ScoreTransformer
+
+        super().__init__()
+        self.score_transformer_ = ScoreTransformer(
+            method="standard",
+            lower=300,
+            upper=900,
+            direction="descending",
+            base_odds=0.05,
+            base_score=600,
+            pdo=20,
+            rate=2,
+        ).fit(np.array([0.05, 0.1, 0.2, 0.4]))
+
+    def predict_score(self, X):
+        probability = self.predict_proba(X)[:, 1]
+        return self.score_transformer_.predict(probability)
+
+
+class _ScorecardLogisticModel:
+    feature_names_in_ = np.array(["f0", "f1"])
+    coef_ = np.array([[0.8, -0.2]])
+    intercept_ = np.array([-0.3])
+
+    def summary(self):
+        return pd.DataFrame(
+            {
+                "变量": ["截距", "f0", "f1"],
+                "系数": [-0.3, 0.8, -0.2],
+            }
+        )
+
+
+class _CompatibleScoreCardBase:
+    feature_names_ = ["f0", "f1"]
+    feature_names_in_ = np.array(["f0", "f1"])
+    pdo = 60
+    rate = 2
+    base_odds = 35
+    base_score = 750
+    factor = 60 / np.log(2)
+    offset = 750 - factor * np.log(35)
+    rules = {
+        "f0": {"低": 20.0, "高": -10.0},
+        "f1": {"低": 8.0, "高": -4.0},
+    }
+
+    def get_feature_importances(self):
+        return pd.Series({"f0": 0.8, "f1": 0.2})
+
+    def predict(self, X):
+        values = np.asarray(X[["f0", "f1"]], dtype=float)
+        return 650.0 - values[:, 0] * 5.0 - values[:, 1] * 2.0
+
+    def predict_proba(self, X):
+        score = self.predict(X)
+        probability = 1 / (np.exp((score - self.offset) / self.factor) + 1)
+        return np.column_stack([1 - probability, probability])
+
+
+class HsCreditScoreCard(_CompatibleScoreCardBase):
+    lr_model = _ScorecardLogisticModel()
+    rules_ = _CompatibleScoreCardBase.rules
+
+    def scorecard_scale(self):
+        return pd.DataFrame(
+            {
+                "刻度项": ["base_score", "pdo"],
+                "刻度值": [750, 60],
+                "备注": ["基础分", "分数翻倍点数"],
+            }
+        )
+
+    def score_formula(self, decimal=4):
+        return {"公式": "Score = 750 - 86.5617 × ln(odds)", "A": 750, "B": 86.5617}
+
+    def scorecard_points(self, feature_map=None):
+        return pd.DataFrame(
+            {
+                "变量名称": ["f0", "f1"],
+                "变量含义": [(feature_map or {}).get("f0", ""), (feature_map or {}).get("f1", "")],
+                "变量分箱": ["低", "高"],
+                "对应分数": [20.0, -4.0],
+            }
+        )
+
+    @property
+    def score_odds_reference(self):
+        return pd.DataFrame(
+            {
+                "评分": [750, 690],
+                "理论Odds(坏好比)": [1 / 35, 2 / 35],
+                "理论逾期率": [1 / 36, 2 / 37],
+            }
+        )
+
+
+class ScorecardPipelineScoreCard(_CompatibleScoreCardBase):
+    model = _ScorecardLogisticModel()
+
+    def scorecard_scale(self):
+        return pd.DataFrame(
+            {
+                "刻度项": ["base_odds", "base_score", "rate", "pdo"],
+                "刻度值": [35, 750, 2, 60],
+                "备注": ["好坏比", "基础分", "倍率", "PDO"],
+            }
+        )
+
+    def scorecard_points(self, feature_map=None):
+        return pd.DataFrame(
+            {
+                "变量名称": ["f0", "f1"],
+                "变量含义": [(feature_map or {}).get("f0", ""), (feature_map or {}).get("f1", "")],
+                "变量分箱": ["低", "高"],
+                "对应分数": [20.0, -4.0],
+            }
+        )
+
+
+class ToadScoreCard(_CompatibleScoreCardBase):
+    model = _ScorecardLogisticModel()
+
+    def export(self, to_frame=False, **kwargs):
+        if not to_frame:
+            return self.rules
+        return pd.DataFrame(
+            {
+                "name": ["f0", "f0", "f1", "f1"],
+                "value": ["低", "高", "低", "高"],
+                "score": [20.0, -10.0, 8.0, -4.0],
+            }
+        )
 
 
 def test_model_report_excel_tables_always_use_fast_writer(tmp_path, monkeypatch):
@@ -135,6 +290,7 @@ def test_export_plots_runs_all_plot_groups_concurrently_and_preserves_order(tmp_
     monkeypatch.setattr("hscredit.core.viz.bin_plot", record_plot("bin"))
     monkeypatch.setattr("hscredit.core.viz.ks_plot", record_plot("ks"))
     monkeypatch.setattr("hscredit.core.viz.lift_plot", record_plot("lift"))
+    monkeypatch.setattr("hscredit.core.viz.hist_plot", record_plot("hist"))
     monkeypatch.setattr("hscredit.core.viz.corr_plot", record_plot("corr"))
     monkeypatch.setattr("hscredit.core.viz.psi_plot", record_plot("psi", psi=True))
 
@@ -158,10 +314,11 @@ def test_export_plots_runs_all_plot_groups_concurrently_and_preserves_order(tmp_
     assert state["max_active"] >= 2
     assert len(thread_ids) >= 2
     assert all(thread_id != main_thread_id for _, _, thread_id in calls)
-    assert len(calls) == 17
+    assert len(calls) == 19
     assert list(paths) == [
         "model_train",
         "model_test",
+        "feature_contribution",
         "feature_corr",
         "feat_bin_f0",
         "feat_hist_f0",
@@ -171,7 +328,19 @@ def test_export_plots_runs_all_plot_groups_concurrently_and_preserves_order(tmp_
         "feat_psi_f1",
     ]
     assert list(tables) == ["feat_psi_f0", "feat_psi_f1"]
-    assert sum(len(figures) for figures in paths.values()) == 17
+    assert [Path(path).name for path in paths["model_train"]] == [
+        "bin_train.png",
+        "ks_train.png",
+        "lift_train.png",
+        "hist_train.png",
+    ]
+    assert [Path(path).name for path in paths["model_test"]] == [
+        "bin_test.png",
+        "ks_test.png",
+        "lift_test.png",
+        "hist_test.png",
+    ]
+    assert sum(len(figures) for figures in paths.values()) == 20
 
 
 def test_threaded_plot_context_uses_agg_canvas_without_switching_user_backend():
@@ -572,6 +741,316 @@ class TestModelReportRegression:
         assert not amount_table.isna().any().any()
         assert not order_table.equals(amount_table)
 
+    def test_model_input_table_contains_ranked_importance_contract(self):
+        X = pd.DataFrame(
+            {
+                "f0": [0.0, 1.0, 2.0, 3.0],
+                "f1": [3.0, 2.0, 1.0, 0.0],
+            }
+        )
+        y = pd.Series([0, 0, 1, 1])
+        report = ModelReport(
+            RankedImportanceModel(),
+            X_train=X,
+            y_train=y,
+            feature_names=["f0", "f1"],
+            n_jobs=1,
+        )
+
+        table = report._get_model_input_table({"f0": "字段零", "f1": "字段一"})
+
+        assert table.columns.tolist() == [
+            "序号",
+            "入参字段",
+            "字段名称",
+            "特征重要性",
+            "特征重要性%",
+            "累积特征重要性%",
+        ]
+        assert table["入参字段"].tolist() == ["f0", "f1"]
+        assert table["字段名称"].tolist() == ["字段零", "字段一"]
+        np.testing.assert_allclose(table["特征重要性"], [3.0, 1.0])
+        np.testing.assert_allclose(table["特征重要性%"], [0.75, 0.25])
+        np.testing.assert_allclose(table["累积特征重要性%"], [0.75, 1.0])
+
+    def test_feature_contribution_figure_uses_rank_and_two_percent_axes(self):
+        X = pd.DataFrame({"f0": [0.0, 1.0], "f1": [1.0, 0.0]})
+        y = pd.Series([0, 1])
+        report = ModelReport(
+            RankedImportanceModel(),
+            X_train=X,
+            y_train=y,
+            feature_names=["f0", "f1"],
+            n_jobs=1,
+        )
+        table = pd.DataFrame(
+            {
+                "序号": [1, 2],
+                "入参字段": ["f0", "f1"],
+                "特征重要性": [3.0, 1.0],
+                "特征重要性%": [0.75, 0.25],
+                "累积特征重要性%": [0.75, 1.0],
+            }
+        )
+
+        figure = report._create_feature_contribution_figure(table)
+        try:
+            assert len(figure.axes) == 2
+            primary, secondary = figure.axes
+            assert primary.get_ylabel() == "累积特征重要性%"
+            assert secondary.get_ylabel() == "特征重要性%"
+            np.testing.assert_allclose(primary.lines[0].get_ydata(), [0.75, 1.0])
+            np.testing.assert_allclose([patch.get_height() for patch in secondary.patches], [0.75, 0.25])
+            assert [tick.get_text() for tick in primary.get_xticklabels()] == ["1", "2"]
+            assert primary.get_ylim() == pytest.approx((0.0, 1.0))
+            assert secondary.get_ylim() == pytest.approx((0.0, 1.0))
+            figure.canvas.draw()
+            renderer = figure.canvas.get_renderer()
+            title_box = figure._suptitle.get_window_extent(renderer)
+            legend_box = figure.legends[0].get_window_extent(renderer)
+            axes_box = primary.get_window_extent(renderer)
+            assert not title_box.overlaps(legend_box)
+            assert legend_box.y0 >= axes_box.y1 + 8
+        finally:
+            plt.close(figure)
+
+    def test_zero_importance_keeps_fields_without_fake_contribution_percentages(self):
+        X = pd.DataFrame({"f0": [0.0, 1.0], "f1": [1.0, 0.0]})
+        y = pd.Series([0, 1])
+        report = ModelReport(
+            ZeroImportanceModel(),
+            X_train=X,
+            y_train=y,
+            feature_names=["f0", "f1"],
+            n_jobs=1,
+        )
+
+        table = report._get_model_input_table()
+
+        assert table["入参字段"].tolist() == ["f0", "f1"]
+        assert table["特征重要性%"].isna().all()
+        assert table["累积特征重要性%"].isna().all()
+
+    def test_feature_contribution_figure_uses_hscredit_theme(self):
+        from matplotlib.colors import to_hex
+
+        from hscredit.core.viz.utils import BAD_RATE_COLOR, DEFAULT_COLORS
+
+        X = pd.DataFrame({"f0": [0.0, 1.0], "f1": [1.0, 0.0]})
+        y = pd.Series([0, 1])
+        report = ModelReport(
+            RankedImportanceModel(),
+            X_train=X,
+            y_train=y,
+            feature_names=["f0", "f1"],
+            n_jobs=1,
+        )
+        table = pd.DataFrame(
+            {
+                "序号": [1, 2],
+                "入参字段": ["f0", "f1"],
+                "特征重要性": [3.0, 1.0],
+                "特征重要性%": [0.75, 0.25],
+                "累积特征重要性%": [0.75, 1.0],
+            }
+        )
+
+        figure = report._create_feature_contribution_figure(table)
+        try:
+            primary, secondary = figure.axes
+            line = primary.lines[0]
+            bars = secondary.patches
+            theme_color = DEFAULT_COLORS[0].lower()
+
+            assert to_hex(line.get_color(), keep_alpha=False).lower() == BAD_RATE_COLOR.lower()
+            assert line.is_dashed()
+            assert line.get_clip_on() is False
+            assert to_hex(bars[0].get_facecolor(), keep_alpha=False).lower() == theme_color
+            assert all(bar.get_hatch() == "/" for bar in bars)
+            assert to_hex(primary.spines["left"].get_edgecolor(), keep_alpha=False).lower() == theme_color
+            assert to_hex(secondary.spines["right"].get_edgecolor(), keep_alpha=False).lower() == theme_color
+            assert primary.spines["top"].get_visible() is False
+            assert secondary.spines["top"].get_visible() is False
+            assert primary.xaxis.label.get_color().lower() == theme_color
+            assert primary.yaxis.label.get_color().lower() == theme_color
+            assert secondary.yaxis.label.get_color().lower() == theme_color
+            assert not any(gridline.get_visible() for gridline in primary.get_ygridlines())
+            assert [text.get_text() for text in primary.texts] == ["75.00%", "100.00%"]
+            assert [text.get_text() for text in secondary.texts] == ["25.00%"]
+            assert [text.get_text() for text in figure.texts if text.get_text()] == ["入模特征贡献"]
+        finally:
+            plt.close(figure)
+
+    @pytest.mark.parametrize(
+        ("feature_count", "label_limit", "expected_line_labels", "expected_bar_labels"),
+        [
+            (10, 10, 10, 9),
+            (11, 10, 0, 0),
+            (11, None, 11, 10),
+            (2, 0, 0, 0),
+        ],
+    )
+    def test_feature_contribution_label_limit_is_configurable(
+        self,
+        feature_count,
+        label_limit,
+        expected_line_labels,
+        expected_bar_labels,
+    ):
+        feature_names = [f"f{index}" for index in range(feature_count)]
+        X = pd.DataFrame(
+            np.arange(feature_count * 4, dtype=float).reshape(4, feature_count),
+            columns=feature_names,
+        )
+        y = pd.Series([0, 1, 0, 1])
+        report = ModelReport(
+            MockModel(feature_names),
+            X_train=X,
+            y_train=y,
+            feature_names=feature_names,
+            n_jobs=1,
+        )
+        importance_ratio = np.repeat(1 / feature_count, feature_count)
+        table = pd.DataFrame(
+            {
+                "序号": np.arange(1, feature_count + 1),
+                "入参字段": feature_names,
+                "特征重要性": np.ones(feature_count),
+                "特征重要性%": importance_ratio,
+                "累积特征重要性%": importance_ratio.cumsum(),
+            }
+        )
+
+        figure = report._create_feature_contribution_figure(
+            table,
+            label_max_features=label_limit,
+        )
+        try:
+            primary, secondary = figure.axes
+            assert len(primary.texts) == expected_line_labels
+            assert len(secondary.texts) == expected_bar_labels
+        finally:
+            plt.close(figure)
+
+    def test_model_parameter_sheet_places_contribution_chart_after_one_blank_column(self, tmp_path, monkeypatch):
+        X = pd.DataFrame(
+            {
+                "f0": [0.0, 1.0, 2.0, 3.0],
+                "f1": [3.0, 2.0, 1.0, 0.0],
+            }
+        )
+        y = pd.Series([0, 0, 1, 1])
+        report = ModelReport(
+            RankedImportanceModel(),
+            X_train=X,
+            y_train=y,
+            feature_names=["f0", "f1"],
+            n_jobs=1,
+        )
+        contribution_path = tmp_path / "feature_contribution.png"
+        figure = plt.figure(figsize=(2, 1))
+        figure.savefig(contribution_path)
+        plt.close(figure)
+        monkeypatch.setattr(
+            report,
+            "_export_plots",
+            lambda *args, **kwargs: ({"feature_contribution": [str(contribution_path)]}, {}),
+        )
+        output = tmp_path / "model_parameter_contribution.xlsx"
+
+        report.to_excel(
+            str(output),
+            with_plots=True,
+            feature_map={"f0": "字段零", "f1": "字段一"},
+        )
+
+        worksheet = load_workbook(output)["5-模型参数"]
+        input_header = next(cell for row in worksheet.iter_rows() for cell in row if cell.value == "入参字段")
+        headers = [worksheet.cell(input_header.row, column).value for column in range(2, 8)]
+        assert headers == ["序号", "入参字段", "字段名称", "特征重要性", "特征重要性%", "累积特征重要性%"]
+        assert worksheet.cell(input_header.row + 1, 6).number_format == "0.00%"
+        assert worksheet.cell(input_header.row + 1, 7).number_format == "0.00%"
+        assert len(worksheet._images) == 1
+        assert worksheet._images[0].anchor._from.col == 8
+
+    def test_predict_score_report_outputs_fitted_transformer_sections(self, tmp_path):
+        X = pd.DataFrame(
+            {
+                "f0": [0.0, 1.0, 2.0, 3.0],
+                "f1": [3.0, 2.0, 1.0, 0.0],
+            }
+        )
+        y = pd.Series([0, 0, 1, 1])
+        report = ModelReport(
+            ScoreConversionModel(),
+            X_train=X,
+            y_train=y,
+            feature_names=["f0", "f1"],
+            method="predict_score",
+            n_jobs=1,
+        )
+        output = tmp_path / "score_conversion_report.xlsx"
+
+        report.to_excel(str(output), with_plots=False)
+
+        worksheet = load_workbook(output)["5-模型参数"]
+        values = [cell.value for row in worksheet.iter_rows() for cell in row]
+        assert "4、评分转换器选型" in values
+        assert "5、评分转换基础参数配置" in values
+        assert "6、概率转评分公式" in values
+        assert "standard" in values
+        assert "StandardScoreTransformer" in values
+        assert "base_score" in values
+        assert 600 in values
+        assert any(isinstance(value, str) and value.startswith("Score =") for value in values)
+
+    @pytest.mark.parametrize(
+        "scorecard_type",
+        [HsCreditScoreCard, ScorecardPipelineScoreCard, ToadScoreCard],
+    )
+    def test_scorecard_report_normalizes_compatible_model_sections(self, tmp_path, scorecard_type):
+        train_X = pd.DataFrame(
+            {
+                "f0": [0.0, 1.0, 2.0, 3.0, 4.0, 5.0],
+                "f1": [5.0, 4.0, 3.0, 2.0, 1.0, 0.0],
+            }
+        )
+        test_X = train_X + pd.DataFrame({"f0": [0.5] * 6, "f1": [0.25] * 6})
+        train_y = pd.Series([0, 0, 0, 1, 1, 1])
+        test_y = pd.Series([0, 0, 1, 0, 1, 1])
+        report = ModelReport(
+            scorecard_type(),
+            X_train=train_X,
+            y_train=train_y,
+            X_test=test_X,
+            y_test=test_y,
+            feature_names=["f0", "f1"],
+            method="predict",
+            n_jobs=1,
+        )
+        output = tmp_path / f"{scorecard_type.__name__}.xlsx"
+
+        report.to_excel(
+            str(output),
+            with_plots=False,
+            feature_map={"f0": "字段零", "f1": "字段一"},
+        )
+
+        worksheet = load_workbook(output)["5-模型参数"]
+        values = [cell.value for row in worksheet.iter_rows() for cell in row]
+        assert "4、逻辑回归拟合结果" in values
+        assert "5、评分卡基础参数配置" in values
+        assert "6、评分卡转换公式" in values
+        assert "7、评分卡分值表" in values
+        assert "8、评分、ODDS与逾期率参考表" in values
+        assert "9、评分稳定性分析" in values
+        assert "变量名称" in values
+        assert "变量分箱" in values
+        assert "对应分数" in values
+        assert "f0" in values
+        assert "理论逾期率" in values
+        assert any(isinstance(value, str) and value.startswith("Score =") for value in values)
+
     def test_excel_contains_all_sections_and_multi_label_description(self, tmp_path):
         X = self._multi_label_data()
         report = ModelReport(
@@ -618,8 +1097,15 @@ class TestModelReportRegression:
 
         basic_info_sheet = workbook["1-基本信息"]
         sample_total_header = next(cell for row in basic_info_sheet.iter_rows() for cell in row if cell.value == "样本总数")
-        assert basic_info_sheet.cell(sample_total_header.row - 1, sample_total_header.column).value == "统计详情"
-        assert basic_info_sheet.cell(sample_total_header.row - 1, sample_total_header.column - 1).value is None
+        stats_group_row = sample_total_header.row - 1
+        assert basic_info_sheet.cell(stats_group_row, sample_total_header.column - 1).value == "统计详情"
+        assert any(
+            cell_range.min_row == stats_group_row
+            and cell_range.max_row == stats_group_row
+            and cell_range.min_col == sample_total_header.column - 1
+            and cell_range.max_col == sample_total_header.column
+            for cell_range in basic_info_sheet.merged_cells.ranges
+        )
 
         feature_values = [cell.value for row in feature_sheet.iter_rows() for cell in row]
         assert feature_values.count("训练集 订单口径") == 1
@@ -648,6 +1134,36 @@ class TestModelReportRegression:
         assert contents_sheet.column_dimensions["B"].width > 8
         assert contents_sheet.column_dimensions["C"].width > 20
         assert contents_sheet.column_dimensions["D"].width > 30
+
+    def test_report_sheets_apply_requested_auto_width_ranges(self, tmp_path):
+        overdue_col = "一个特别长的逾期指标字段名称"
+        feature_col = "一个特别长的入模特征字段名称"
+        X = pd.DataFrame(
+            {
+                feature_col: np.arange(20),
+                overdue_col: [0, 1, 3, 7, 8] * 4,
+            }
+        )
+        report = ModelReport(
+            MockModel([feature_col]),
+            datasets={"数据集名称非常非常长用于验证自动列宽": X, "测试集": X.copy()},
+            overdue=overdue_col,
+            dpds=[7, 3],
+            feature_names=[feature_col],
+        )
+        output = tmp_path / "model_report_auto_width.xlsx"
+
+        report.to_excel(str(output), with_plots=False)
+
+        workbook = load_workbook(output)
+        basic = workbook["1-基本信息"]
+        performance = workbook["2-模型性能"]
+        feature_sheet = workbook["3-入模变量分析"]
+        assert basic.column_dimensions["B"].width == pytest.approx(14.1640625)
+        assert basic.column_dimensions["C"].width == pytest.approx(10.83203125)
+        assert basic.column_dimensions["D"].width > 20
+        assert performance.column_dimensions["C"].width > 20
+        assert feature_sheet.column_dimensions["B"].width > 20
 
     def test_excel_title_merges_follow_actual_content_width(self, tmp_path):
         X = self._multi_label_data()
@@ -828,6 +1344,7 @@ class TestModelReportRegression:
         basic = workbook["1-基本信息"]
 
         assert performance["B7"].value == "统计项"
+        assert performance["B7"].style == "header_left"
         assert [performance.cell(7, col).value for col in (3, 5, 7)] == ["MOB1>7", "MOB1>3", "MOB1>0"]
         assert [performance.cell(8, col).value for col in range(2, 8)] == ["统计指标", "训练集", "测试集", "训练集", "测试集", "训练集"]
         assert performance["B11"].value == "样本总数"
@@ -838,9 +1355,108 @@ class TestModelReportRegression:
         assert performance["B19"].value == "统计指标"
         assert performance.auto_filter.ref == "B20:AJ26"
         sample_total_header = next(cell for row in basic.iter_rows() for cell in row if cell.value == "样本总数")
-        assert basic.cell(sample_total_header.row - 1, sample_total_header.column).value == "统计详情"
-        assert basic.cell(sample_total_header.row - 1, sample_total_header.column - 1).value is None
+        stats_group_row = sample_total_header.row - 1
+        assert basic.cell(stats_group_row, sample_total_header.column - 1).value == "统计详情"
+        assert any(
+            cell_range.min_row == stats_group_row
+            and cell_range.max_row == stats_group_row
+            and cell_range.min_col == sample_total_header.column - 1
+            and cell_range.max_col == sample_total_header.column
+            for cell_range in basic.merged_cells.ranges
+        )
         assert basic.cell(sample_total_header.row, sample_total_header.column - 1).value == "数据集"
+
+    def test_feature_psi_table_uses_percent_and_condition_formats(self, tmp_path, monkeypatch):
+        X = pd.DataFrame({"f0": np.arange(20), "target": [0, 1] * 10})
+        report = ModelReport(
+            MockModel(["f0"]),
+            datasets={"train": X, "test": X.copy()},
+            target="target",
+            feature_names=["f0"],
+        )
+        psi_table = pd.DataFrame(
+            {
+                "指标名称": ["f0", "f0"],
+                "分箱": ["(-inf, 0]", "(0, inf)"],
+                "预期样本数": [10, 10],
+                "预期样本占比": [0.5, 0.5],
+                "预期坏样本率": [0.2, 0.8],
+                "实际样本数": [8, 12],
+                "实际样本占比": [0.4, 0.6],
+                "实际坏样本率": [0.25, 0.75],
+                "实际% - 预期%": [-0.1, 0.1],
+                "ln(实际% / 预期%)": [-0.2231, 0.1823],
+                "分档PSI值": [0.02231, 0.01823],
+                "总体PSI值": [0.04054, 0.04054],
+            }
+        )
+        monkeypatch.setattr(
+            report,
+            "_export_plots",
+            lambda *args, **kwargs: ({}, {"feat_psi_f0": psi_table}),
+        )
+        output = tmp_path / "feature_psi_formats.xlsx"
+
+        report.to_excel(str(output), with_plots=True)
+
+        worksheet = load_workbook(output)["3-入模变量分析"]
+        percent_headers = {
+            "预期样本占比",
+            "预期坏样本率",
+            "实际样本占比",
+            "实际坏样本率",
+            "实际% - 预期%",
+            "分档PSI值",
+            "总体PSI值",
+        }
+        header_cells = {
+            cell.value: cell
+            for row in worksheet.iter_rows()
+            for cell in row
+            if cell.value in percent_headers
+        }
+        assert set(header_cells) == percent_headers
+        assert all(
+            worksheet.cell(cell.row + 1, cell.column).number_format == "0.00%"
+            for cell in header_cells.values()
+        )
+        data_bar_columns = {
+            cell_range.min_col
+            for key, rules in worksheet.conditional_formatting._cf_rules.items()
+            if any(rule.type == "dataBar" for rule in rules)
+            for cell_range in key.sqref.ranges
+        }
+        assert header_cells["实际% - 预期%"].column in data_bar_columns
+        assert header_cells["分档PSI值"].column in data_bar_columns
+
+    def test_score_psi_reference_matches_matrix_width_and_is_left_aligned(self, tmp_path):
+        X = pd.DataFrame({"f0": np.arange(20), "target": [0, 1] * 10})
+        report = ModelReport(
+            MockModel(["f0"]),
+            datasets={"train": X, "test": X.copy()},
+            target="target",
+            feature_names=["f0"],
+        )
+        output = tmp_path / "score_psi_reference.xlsx"
+
+        report.to_excel(str(output), with_plots=False)
+
+        worksheet = load_workbook(output)["4-稳定性分析"]
+        reference = next(
+            cell
+            for row in worksheet.iter_rows()
+            for cell in row
+            if isinstance(cell.value, str) and cell.value.startswith("PSI参考标准：")
+        )
+        merged_range = next(
+            cell_range
+            for cell_range in worksheet.merged_cells.ranges
+            if cell_range.min_row == reference.row
+            and cell_range.max_row == reference.row
+            and cell_range.min_col == reference.column
+        )
+        assert merged_range.max_col == reference.column + 2
+        assert reference.alignment.horizontal == "left"
 
 
 @pytest.mark.skipif(
@@ -1086,11 +1702,13 @@ class TestModelReportRealDataContract:
             excel_path=str(tmp_path / "forwarding.xlsx"),
             show_lift=False,
             show_importance=False,
+            feature_contribution_label_max_features=3,
             verbose=False,
         )
 
         assert captured["show_lift"] is False
         assert captured["show_importance"] is False
+        assert captured["feature_contribution_label_max_features"] == 3
 
     def test_required_directory_hyperlink_failure_surfaces(self, tmp_path, monkeypatch):
         from hscredit.excel import ExcelWriter
