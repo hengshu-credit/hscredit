@@ -39,6 +39,8 @@
 
 这些操作只接受对应 hscredit 函数显式声明的参数。底层函数的 `**kwargs` 不作为开放的任意参数入口。
 
+`feature_bin_stats`、`feature_binning_summary` 和 `feature_group_binning_summary` 的多标签逾期分析使用一次请求：`overdue` 和 `dpds` 都使用列表，由 hscredit 展开全部组合并生成一个 Excel。不要按单个逾期字段或单个阈值拆分请求。运行结果在原表格摘要之外通过 `summary.label_combinations` 返回实际组合。
+
 ## 分箱器生命周期
 
 | operation | 必要参数 | 说明 |

@@ -32,6 +32,8 @@ python scripts/run.py request.json
 ## 报告约束
 
 - 输出路径只从 `output` 注入，拒绝 `parameters.excel_path`、`excel_writer`、`save` 和 `output_dir`。
+- `auto_feature_analysis` 的多标签分析把所有逾期字段放入同一个 `overdue` 列表、所有阈值放入同一个 `dpds` 列表，只提交一个请求并生成一个 Excel；字段与阈值的全部组合由 hscredit 展开。
+- `auto_feature_analysis` 的运行摘要包含标签组合，以及“变量综合统计”中可用关键列的受限预览。
 - 不覆盖 hscredit 的显式参数优先级、条件格式颜色、主题色、绘图 anchor、字段默认选择和并行配置。
 - 一个请求只调用一次对应顶层报告函数，失败不自动重试。
 - 发布前必须重新打开 Excel；失败时不留下被标记为成功的半成品。

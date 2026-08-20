@@ -42,6 +42,8 @@ python scripts/run.py request.json
 
 ## 约束
 
+- 支持组合式逾期标签的表格分析把所有逾期字段放入同一个 `overdue` 列表、所有阈值放入同一个 `dpds` 列表，只提交一个请求并生成一个 Excel；字段与阈值的全部组合由 hscredit 展开。
+- 这些表格分析的运行摘要保留原有行列和受限预览，并追加实际标签组合。
 - 显式参数优先于 hscredit 默认值；不得自行改写 `anchor`、分箱规则、WOE/indices 指标或并行参数。
 - Binner artifact 只有在输入显式声明 `trusted=true` 时才反序列化。
 - 失败不自动重试训练、分箱或绘图；先报告稳定错误码和中文原因。

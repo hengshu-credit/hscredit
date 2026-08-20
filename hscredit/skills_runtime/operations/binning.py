@@ -53,6 +53,28 @@ def _data(context) -> pd.DataFrame:
     return value
 
 
+def _as_parameter_list(value: Any) -> list:
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple)):
+        return list(value)
+    return [value]
+
+
+def _label_combinations(parameters: Mapping[str, Any]) -> list:
+    overdue_fields = _as_parameter_list(parameters.get("overdue"))
+    dpds = _as_parameter_list(parameters.get("dpds"))
+    return [{"overdue": overdue, "dpd": dpd} for overdue in overdue_fields for dpd in dpds]
+
+
+def _summarize_binning_table(table: pd.DataFrame, parameters: Mapping[str, Any]) -> dict:
+    summary = summarize_dataframe(table)
+    combinations = _label_combinations(parameters)
+    if combinations:
+        summary["label_combinations"] = combinations
+    return summary
+
+
 def _safe_sheet_name(name: str, used: set) -> str:
     cleaned = re.sub(r"[\\/*?:\[\]]", "-", str(name)).strip(" '") or "数据"
     base = cleaned[:31]
@@ -95,7 +117,7 @@ def _feature_bin_stats(context) -> dict:
     result = feature_bin_stats(_data(context), **params)
     table = result[0] if isinstance(result, tuple) else result
     _write_workbook(context, [("分箱统计", table)])
-    return {"summary": summarize_dataframe(table)}
+    return {"summary": _summarize_binning_table(table, params)}
 
 
 def _benchmark_binning_methods(context) -> dict:
@@ -124,7 +146,7 @@ def _feature_binning_summary(context) -> dict:
     tables, summary = feature_binning_summary(_data(context), **params)
     workbook_tables = [("分箱摘要", summary), *_flatten_tables(tables)]
     _write_workbook(context, workbook_tables)
-    return {"summary": summarize_dataframe(summary)}
+    return {"summary": _summarize_binning_table(summary, params)}
 
 
 def _feature_group_binning_summary(context) -> dict:
@@ -132,7 +154,7 @@ def _feature_group_binning_summary(context) -> dict:
     tables, summary = feature_group_binning_summary(_data(context), **params)
     workbook_tables = [("分组摘要", summary), *_flatten_tables(tables)]
     _write_workbook(context, workbook_tables)
-    return {"summary": summarize_dataframe(summary)}
+    return {"summary": _summarize_binning_table(summary, params)}
 
 
 def _feature_efficiency_analysis(context) -> dict:

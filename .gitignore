@@ -247,3 +247,6 @@ tmp_diag
 .agents
 CLAUDE.md
 .codex-temp
+outputs
+*.db
+examples/26_test_model.ipynb
