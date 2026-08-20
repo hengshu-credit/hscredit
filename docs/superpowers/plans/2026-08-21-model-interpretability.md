@@ -45,13 +45,11 @@
 
 ```python
 def test_shap_is_base_dependency_and_explain_extra_is_removed():
-    config = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
-    dependencies = config["project"]["dependencies"]
-    extras = config["project"]["optional-dependencies"]
-    assert any("shap>=0.49.1,<0.50" in item for item in dependencies)
-    assert any("shap>=0.51,<0.53" in item for item in dependencies)
-    assert "explain" not in extras
-    assert "explain" not in extras["all"][0]
+    requirements = importlib.metadata.requires("hscredit") or []
+    shap_requirements = [item for item in requirements if item.lower().startswith("shap")]
+    assert any("<0.50" in item and "python_version < \"3.14\"" in item for item in shap_requirements)
+    assert any("<0.53" in item and "python_version >= \"3.14\"" in item for item in shap_requirements)
+    assert not any('extra == "explain"' in item for item in requirements)
 
 
 def test_compute_bin_stats_accepts_numpy_int8_bin_indices():
@@ -851,7 +849,7 @@ git commit -m "feat: add model explanation report sheet"
 
 ---
 
-### Task 10: 文档、示例、构建、回归与真实数据验收
+### Task 10: 文档、可执行示例、构建、回归与真实数据验收
 
 **Files:**
 - Modify: `README.md`
@@ -860,30 +858,40 @@ git commit -m "feat: add model explanation report sheet"
 - Create: `docs/articles/model-interpretability.md`
 - Create: `examples/27_model_interpretability.py`
 - Modify: `tests/test_models/test_interpretability_dependencies.py`
+- Create: `tests/test_models/test_interpretability_example.py`
 
 **Interfaces:**
-- Consumes: all public APIs delivered by Tasks 1–9.
-- Produces: runnable Chinese example, public documentation, validated wheel metadata and real-data evidence.
+- Consumes: all public APIs delivered by Tasks 1–9 and a caller-supplied xlsx dataset.
+- Produces: runnable Chinese CLI example, public documentation, validated wheel metadata and real-data evidence.
 
-- [ ] **Step 1: Write the public import and documentation contract test**
+- [ ] **Step 1: Write a failing end-to-end example test with controlled data**
 
 ```python
-def test_public_interpretability_documentation_uses_base_install_and_no_lime():
-    text = "\n".join(
-        Path(path).read_text(encoding="utf-8")
-        for path in ["README.md", "docs/installation.md", "docs/articles/model-interpretability.md"]
+def test_interpretability_example_runs_and_writes_explanation_sheet(tmp_path):
+    source = tmp_path / "样例数据.xlsx"
+    output = tmp_path / "模型解释报告.xlsx"
+    frame = pd.DataFrame({
+        "衡枢鉴真分老客版": np.linspace(300, 900, 80),
+        "近六个月非银多头机构数": np.tile(np.arange(8), 10),
+        "青云24": np.linspace(0.1, 0.9, 80),
+        "FPD": np.tile([0, 1], 40),
+    })
+    frame.to_excel(source, index=False)
+    completed = subprocess.run(
+        [sys.executable, "examples/27_model_interpretability.py",
+         "--input", str(source), "--output", str(output), "--max-samples", "20",
+         "--bootstrap", "3"],
+        cwd=REPOSITORY_ROOT, capture_output=True, text=True, check=False,
     )
-    assert "hscredit[explain]" not in text
-    assert "pip install lime" not in text.lower()
-    assert "ModelExplainer" in text
-    assert "CounterfactualExplainer" in text
+    assert completed.returncode == 0, completed.stderr
+    assert "7-模型解释" in load_workbook(output, read_only=True).sheetnames
 ```
 
-- [ ] **Step 2: Run the documentation contract and confirm the new article is missing**
+- [ ] **Step 2: Run the executable example test and confirm the script is missing**
 
-Run: `pytest tests/test_models/test_interpretability_dependencies.py -q`
+Run: `pytest tests/test_models/test_interpretability_example.py -q`
 
-Expected: FAIL because `docs/articles/model-interpretability.md` does not exist.
+Expected: FAIL because `examples/27_model_interpretability.py` does not exist.
 
 - [ ] **Step 3: Add runnable Chinese documentation and example**
 
@@ -901,7 +909,7 @@ counter = CounterfactualExplainer(model, X_train, constraints={"年龄": {"mutab
 print(counter.generate(X_test.iloc[[0]], target_probability=0.20))
 ```
 
-Document output scales, target class, two stability modes, reason directions, constraints, report opt-in and the non-causal limitation. Add the article to `docs/api/models.rst` or the active Sphinx toctree.
+Give the script explicit `--input`, `--output`, `--max-samples` and `--bootstrap` arguments. It must validate the four required columns, train a deterministic model, produce global/local/reason/counterfactual console output, write a report and reopen it to assert `7-模型解释`. Document output scales, target class, two stability modes, reason directions, constraints, report opt-in and the non-causal limitation. Add the article to the active `docs/api/models.rst` toctree.
 
 - [ ] **Step 4: Run focused interpretability and report suites**
 
@@ -934,7 +942,7 @@ Expected: using `examples/hscredit_yyp.xlsx`, target `FPD` and features `衡枢�
 - [ ] **Step 8: Commit documentation and validation assets**
 
 ```bash
-git add README.md docs/installation.md docs/api/models.rst docs/articles/model-interpretability.md examples/27_model_interpretability.py tests/test_models/test_interpretability_dependencies.py
+git add README.md docs/installation.md docs/api/models.rst docs/articles/model-interpretability.md examples/27_model_interpretability.py tests/test_models/test_interpretability_dependencies.py tests/test_models/test_interpretability_example.py
 git commit -m "docs: document model interpretability workflow"
 ```
 
