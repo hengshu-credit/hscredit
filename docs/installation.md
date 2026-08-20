@@ -20,7 +20,7 @@ pip install hscredit
 | `pip install hscredit[boost]` | XGBoost、LightGBM、CatBoost、NGBoost 等 Boosting 模型 |
 | `pip install hscredit[net]` | PyTorch 与 TabNet 深度学习模型 |
 | `pip install hscredit[tune]` | Optuna 参数调优和调参看板 |
-| `pip install hscredit[explain]` | SHAP 模型解释 |
+| `pip install hscredit` | 已内置 SHAP 模型解释、特征重要性和单样本分析 |
 | `pip install hscredit[pmml]` | PMML 导出相关能力 |
 | `pip install hscredit[docs]` | 构建本文档所需的 Sphinx 工具链 |
 | `pip install hscredit[all]` | 安装全部可选能力 |

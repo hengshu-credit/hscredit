@@ -1154,7 +1154,7 @@ Python 支持范围：**3.9–3.14**。Boosting、深度学习、调参、解释
 | `pip install hscredit[boost]` | XGBoost、LightGBM、CatBoost、NGBoost |
 | `pip install hscredit[net]` | PyTorch、TabNet |
 | `pip install hscredit[tune]` | Optuna、调参看板 |
-| `pip install hscredit[explain]` | SHAP 模型解释 |
+| `pip install hscredit` | 已内置 SHAP 模型解释、特征重要性和单样本分析 |
 | `pip install hscredit[pmml]` | PMML 导出与加载 |
 | `pip install hscredit[db-mysql]` | MySQL / MariaDB 连接池与流式读写 |
 | `pip install hscredit[db-hive]` | HiveServer2 连接池与流式读写 |

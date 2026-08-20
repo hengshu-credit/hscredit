@@ -7,8 +7,7 @@
 - SHAP力图
 - 传统特征重要性 + SHAP值组合图
 
-**依赖**
-pip install shap
+SHAP 是 hscredit 的基础依赖，并在首次解释模型时按需加载。
 
 **参考样例**
 >>> from hscredit.core.models import XGBoost
@@ -52,7 +51,7 @@ def _load_shap():
     if shap is not None:
         return shap
     if not SHAP_AVAILABLE:
-        raise ImportError("SHAP未安装，请使用 pip install shap 安装")
+        raise ImportError("SHAP基础依赖不可用，请检查hscredit安装是否完整")
     try:
         shap = importlib.import_module("shap")
     except Exception as exc:
