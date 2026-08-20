@@ -28,6 +28,7 @@ import pandas as pd
 from joblib.externals import cloudpickle
 
 from ._sample_stats import build_group_distribution_table, build_sample_stats_table
+from .model_explanation import build_model_explanation, explanation_to_dict, normalize_explain_config
 from ..exceptions import SerializationError, ValidationError
 from ..utils.parallel import (
     _ACTIVE_BUDGET,
@@ -526,6 +527,7 @@ class ModelReport:
         n_jobs=-1,
         parallel_backend: Optional[str] = None,
         parallel_config: Optional[Dict[str, Any]] = None,
+        explain_config: Optional[Dict[str, Any]] = None,
         **kwargs,
     ):
         """初始化模型报告.
@@ -588,6 +590,7 @@ class ModelReport:
         :param kwargs: 透传给 callable 的额外同名参数
         """
         self.model = model
+        self.explain_config = normalize_explain_config(explain_config)
         self._feature_names = _normalize_feature_names(feature_names)
         if not isinstance(method, str) and not callable(method):
             raise ValidationError("method 必须是方法名字符串或 callable")
@@ -630,6 +633,7 @@ class ModelReport:
             "n_jobs": n_jobs,
             "parallel_backend": parallel_backend,
             "parallel_config": parallel_config,
+            "explain_config": explain_config,
         }
 
         # 在任何预测任务启动前完成公共配置校验；保留调用者传入字典的对象身份。
@@ -666,6 +670,7 @@ class ModelReport:
         self._monthly_metrics_cache: Dict[str, pd.DataFrame] = {}
         self._monthly_psi_cache: Dict[str, pd.DataFrame] = {}
         self._features_summary_cache: Optional[pd.DataFrame] = None
+        self._model_explanation_cache: Optional[Dict[str, Any]] = None
 
         # 确定目标列名
         self._target_name = self._resolve_target_name(self._target_cfg)
@@ -718,6 +723,7 @@ class ModelReport:
         self._monthly_metrics_cache.clear()
         self._monthly_psi_cache.clear()
         self._features_summary_cache = None
+        self._model_explanation_cache = None
 
     def _run_cache_transaction(self, function, *args, **kwargs):
         """隔离派生缓存写入；仅在整个公共输出操作成功后提交。"""
@@ -734,6 +740,7 @@ class ModelReport:
             "_monthly_metrics_cache",
             "_monthly_psi_cache",
             "_features_summary_cache",
+            "_model_explanation_cache",
         )
         original = {name: getattr(self, name) for name in cache_names}
         for name, value in original.items():
@@ -3044,6 +3051,27 @@ class ModelReport:
                     except Exception as exc:
                         raise RuntimeError(f"生成金额口径特征分箱失败 [特征={feature}, 数据集={ds.label}, 金额字段={amount_col}]") from exc
 
+    def get_model_explanation(self) -> Dict[str, Any]:
+        """返回显式配置的结构化模型解释结果。"""
+        if not self.explain_config["enabled"]:
+            raise ValidationError("模型解释未启用，请设置 explain_config={'enabled': True}")
+        if self._model_explanation_cache is not None:
+            return self._model_explanation_cache
+        config = dict(self.explain_config)
+        train = self._datasets[self._train_key].X
+        feature_names = self.feature_names or list(train.columns)
+        if config["data"] is None:
+            config["data"] = train[feature_names]
+        elif isinstance(config["data"], pd.DataFrame):
+            config["data"] = config["data"][feature_names]
+        if config["background_data"] is None:
+            config["background_data"] = train[feature_names]
+        elif isinstance(config["background_data"], pd.DataFrame):
+            config["background_data"] = config["background_data"][feature_names]
+        explanation = build_model_explanation(self.model, config)
+        self._model_explanation_cache = explanation
+        return explanation
+
     def to_excel(
         self,
         filepath: str,
@@ -3244,6 +3272,12 @@ class ModelReport:
                 {"序号": 6, "内容": "6-模型部署需求", "备注": "入模变量信息及测试用例"},
             ]
         )
+        if self.explain_config["enabled"]:
+            contents.loc[len(contents)] = {
+                "序号": 7,
+                "内容": "7-模型解释",
+                "备注": "SHAP贡献、解释稳定性、代表样本及原因码",
+            }
 
         ws = writer.get_sheet_by_name("目录")
         end_row, _ = writer.insert_value2sheet(ws, (2, 2), value="模型评估报告", style="header_middle")
@@ -4514,6 +4548,72 @@ class ModelReport:
             raise RuntimeError("生成生产订单测试用例失败") from exc
 
         # ============================================================
+        # 7-模型解释 Sheet（显式启用）
+        # ============================================================
+        if self.explain_config["enabled"]:
+            explanation = self.get_model_explanation()
+            ws = writer.get_sheet_by_name("7-模型解释")
+            end_row, _ = writer.insert_value2sheet(ws, (2, 2), value="七、模型解释", style="header_middle")
+            _insert_required_hyperlink(ws, (2, 2), hyperlink="#'目录'!B2", purpose="返回目录链接")
+            if "失败原因" in explanation:
+                end_row, _ = dataframe2excel(
+                    pd.DataFrame([{"失败原因": explanation["失败原因"]}]),
+                    writer,
+                    sheet_name=ws,
+                    start_row=end_row + 2,
+                    title="1、解释计算状态",
+                )
+            else:
+                metadata_table = pd.DataFrame(
+                    [{"项目": key, "值": str(value)} for key, value in explanation["元信息"].items()]
+                )
+                end_row, _ = dataframe2excel(
+                    metadata_table, writer, sheet_name=ws, start_row=end_row + 2, title="1、解释范围与元信息"
+                )
+                for title, key in [
+                    ("2、全局SHAP重要性", "全局解释"),
+                    ("3、SHAP贡献相关性", "相关性"),
+                    ("4、特征聚类", "特征聚类"),
+                    ("5、主要交互", "交互"),
+                    ("6、解释稳定性", "稳定性"),
+                    ("7、代表样本", "代表样本"),
+                    ("8、业务原因码", "原因码"),
+                ]:
+                    table = explanation[key]
+                    end_row, _ = dataframe2excel(
+                        table, writer, sheet_name=ws, start_row=end_row + 2, title=title, index=key == "相关性"
+                    )
+                local_tables = []
+                for sample_id, table in explanation["样本解释"].items():
+                    local = table.copy()
+                    local.insert(0, "代表样本", sample_id)
+                    local_tables.append(local)
+                if local_tables:
+                    end_row, _ = dataframe2excel(
+                        pd.concat(local_tables, ignore_index=True),
+                        writer,
+                        sheet_name=ws,
+                        start_row=end_row + 2,
+                        title="9、代表样本局部贡献",
+                    )
+                end_row, _ = writer.insert_value2sheet(
+                    ws,
+                    (end_row + 2, 2),
+                    value="说明：模型贡献不等于因果关系，也不应单独作为审批或授信依据。",
+                    style="middle",
+                )
+                if with_plots:
+                    figure = explanation["解释器"].plot_explanation_overview(
+                        explanation["解释结果"], show=False
+                    )
+                    try:
+                        end_row, _ = writer.insert_pic2sheet(ws, figure, (end_row + 2, 2), figsize=(800, 550))
+                    finally:
+                        import matplotlib.pyplot as plt
+
+                        plt.close(figure)
+
+        # ============================================================
         # 保存
         # ============================================================
         basic_info_sheet = writer.workbook["1-基本信息"]
@@ -4531,6 +4631,7 @@ class ModelReport:
             "4-稳定性分析",
             "5-模型参数",
             "6-模型部署需求",
+            "7-模型解释",
         ]:
             if sheet_name in writer.workbook.sheetnames:
                 _adjust_report_title_merges(writer.workbook[sheet_name])
@@ -4552,6 +4653,8 @@ class ModelReport:
         }
         for ds_key in self._datasets:
             result[f"bin_table_{ds_key}"] = self.get_bin_table(ds_key, labels=labels_arg).to_dict(orient="records")
+        if self.explain_config["enabled"]:
+            result["模型解释"] = explanation_to_dict(self.get_model_explanation())
         return result
 
 
