@@ -11,6 +11,15 @@ from pathlib import Path
 from typing import Any, Callable, Sequence
 
 _BorderCandidate = tuple[bool, tuple[int, int, int], int, int, str]
+_EXPECTED_MODEL_MENU = (
+    "经典模型",
+    "Boosting",
+    "规则器",
+    "评分卡",
+    "损失函数",
+    "评估指标",
+    "超参数调优",
+)
 
 
 class _LevelFiveLinkParser(HTMLParser):
@@ -33,6 +42,51 @@ class _LevelFiveLinkParser(HTMLParser):
 
     def handle_endtag(self, tag: str) -> None:
         if tag == "li" and self._li_stack:
+            self._li_stack.pop()
+
+
+class _ModelMenuParser(HTMLParser):
+    """收集“模型”二级菜单下直接生成的三级菜单文字。"""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._li_stack: list[dict[str, Any]] = []
+        self._anchor: tuple[int, list[str]] | None = None
+        self.items: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attributes = dict(attrs)
+        if tag == "li":
+            self._li_stack.append(
+                {
+                    "classes": set((attributes.get("class") or "").split()),
+                    "is_model": False,
+                }
+            )
+        elif tag == "a" and self._li_stack:
+            classes = self._li_stack[-1]["classes"]
+            if "toctree-l2" in classes or "toctree-l3" in classes:
+                self._anchor = (len(self._li_stack) - 1, [])
+
+    def handle_data(self, data: str) -> None:
+        if self._anchor is not None:
+            self._anchor[1].append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "a" and self._anchor is not None:
+            stack_index, text_parts = self._anchor
+            self._anchor = None
+            if stack_index >= len(self._li_stack):
+                return
+            item = self._li_stack[stack_index]
+            label = " ".join("".join(text_parts).split())
+            if "toctree-l2" in item["classes"] and label == "模型":
+                item["is_model"] = True
+            elif "toctree-l3" in item["classes"] and any(
+                parent["is_model"] for parent in self._li_stack[:stack_index]
+            ):
+                self.items.append(label)
+        elif tag == "li" and self._li_stack:
             self._li_stack.pop()
 
 
@@ -213,11 +267,19 @@ def collect_search_runtime_errors(build_dir: Path) -> list[str]:
 def collect_validation_errors(build_dir: Path) -> list[str]:
     """返回文档构建产物违反导航与搜索契约的错误列表。"""
     errors: list[str] = []
+    modeling_html = _read(build_dir, "api/modeling.html", errors)
     boosting_html = _read(build_dir, "api/boosting.html", errors)
     eda_html = _read(build_dir, "api/eda.html", errors)
     search_index = _read(build_dir, "searchindex.js", errors)
     language_data = _read(build_dir, "_static/language_data.js", errors)
     custom_css = _read(build_dir, "_static/custom.css", errors)
+
+    model_menu_parser = _ModelMenuParser()
+    model_menu_parser.feed(modeling_html)
+    if tuple(model_menu_parser.items) != _EXPECTED_MODEL_MENU:
+        expected = "、".join(_EXPECTED_MODEL_MENU)
+        actual = "、".join(model_menu_parser.items) or "未生成"
+        errors.append(f"模型菜单必须依次生成七个直接子项：{expected}；实际为：{actual}")
 
     level_five_parser = _LevelFiveLinkParser()
     level_five_parser.feed(boosting_html)

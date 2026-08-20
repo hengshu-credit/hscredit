@@ -20,7 +20,7 @@ from hscredit.exceptions import HSCreditError, ValidationError
 
 
 def test_database_package_imports_without_optional_drivers():
-    code = "from hscredit.database import WriteResult, DatabaseCapabilityError"
+    code = "from hscredit import Database, WriteResult, DatabaseCapabilityError"
 
     result = subprocess.run(
         [sys.executable, "-c", code],

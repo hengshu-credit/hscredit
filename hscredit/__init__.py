@@ -53,6 +53,7 @@ from .core import model_selection as _model_selection
 from . import excel as _excel
 from . import report as _report
 from . import utils as _utils
+from . import database as _database
 
 from .core.binning import *
 from .core.encoders import *
@@ -68,6 +69,7 @@ from .core.model_selection import *
 from .excel import *
 from .report import *
 from .utils import *
+from .database import *
 
 init_setting()
 
@@ -188,6 +190,7 @@ _MODULE_EXPORTS = _collect_public_exports(
     _excel,
     _report,
     _utils,
+    _database,
 )
 
 __all__ = _BASE_EXPORTS + [name for name in _MODULE_EXPORTS if name not in _BASE_EXPORTS]

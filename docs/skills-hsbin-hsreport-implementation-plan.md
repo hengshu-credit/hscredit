@@ -76,7 +76,7 @@
 - Create `tests/test_skills/test_hsbin_visualization.py`.
 - Create `tests/test_skills/test_hsreport.py`.
 - Create `tests/test_skills/test_skill_installation.py`.
-- Modify `pyproject.toml`: add the `skills` and `parquet` optional dependency groups and include them in `all`.
+- Modify `pyproject.toml`: add the `skills` optional dependency group, include it in `all`, and add `pyarrow` to the base dependencies.
 - Modify `docs/skills-framework-design.md`: mark Phase 1 implementation status after verification.
 
 ---
@@ -154,14 +154,19 @@ Expected: collection fails because `hscredit.skills_runtime` does not exist.
 
 Use dataclasses with JSON-compatible fields. `SkillExecutionError.__str__` must render the Chinese message while preserving `__cause__` when raised from another exception. Registry lookup keys are exact `(skill, operation)` tuples; no import-path fallback is permitted.
 
-Add optional dependencies:
+Add the Parquet engine to the base dependencies and add the Skills optional dependency:
 
 ```toml
+dependencies = [
+    # Existing base dependencies...
+    "pyarrow>=12",
+]
+
+[project.optional-dependencies]
 skills = ["jsonschema>=4.18"]
-parquet = ["pyarrow>=12"]
 ```
 
-Add `skills,parquet` to the existing `all` extra.
+Add `skills` to the existing `all` extra.
 
 - [ ] **Step 4: Implement schema validation and the public execution seam**
 
@@ -348,7 +353,7 @@ Expected: bootstrap and dependency modules are missing.
 
 - [ ] **Step 3: Implement environment planning**
 
-The allowlist maps Phase 1 operations to `skills`; `.parquet` inputs additionally require `parquet`. Request data cannot add extras. The environment hash includes Python major/minor, normalized hscredit source, and sorted extras.
+The allowlist maps Phase 1 operations to `skills`; Parquet support comes from the base installation. Request data cannot add extras. The environment hash includes Python major/minor, normalized hscredit source, and sorted extras.
 
 Use a user cache path, not the repository. Use the current interpreter's `venv` module and invoke pip as argument arrays with `shell=False`. Sanitize captured output and map nonzero exits to `DEPENDENCY_INSTALL_FAILED`.
 

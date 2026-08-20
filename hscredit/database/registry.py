@@ -9,7 +9,6 @@ from typing import Dict, Iterable, Tuple, Type, Union
 from ..exceptions import ValidationError
 from .adapters.base import BaseDatabaseAdapter
 
-
 AdapterEntry = Union[str, Type[BaseDatabaseAdapter]]
 
 

@@ -1,7 +1,8 @@
-超参数调优 ``hscredit.core.models.tuning``
-==========================================
+超参数调优
+==========
 
-基于 Optuna 的超参数调优组件（``pip install hscredit[tune]``）。可从顶层
+``hscredit.core.models.tuning`` 提供基于 Optuna 的超参数调优组件
+（``pip install hscredit[tune]``）。可从顶层
 ``hscredit`` 懒加载导入 ``ModelTuner`` / ``AutoTuner`` / ``TuningObjective``。
 
 .. autoclass:: hscredit.core.models.tuning.tuning.ModelTuner

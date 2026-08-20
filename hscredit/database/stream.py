@@ -38,9 +38,7 @@ class QueryStream:
         self._chunks: List[pd.DataFrame] = []
         self._columns = list(getattr(resource, "columns", ()))
         self._resource_closed = False
-        self._progress_bar = (
-            tqdm(total=total_rows, desc="流式读取", unit="行") if progress else None
-        )
+        self._progress_bar = tqdm(total=total_rows, desc="流式读取", unit="行") if progress else None
 
     def __iter__(self) -> "QueryStream":
         return self

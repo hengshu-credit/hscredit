@@ -58,9 +58,7 @@ def test_query_binds_params_and_returns_dataframe(adapter, state):
 
 
 def test_query_supports_records_rows_and_empty_dataframe(adapter, state):
-    assert adapter.query("select id, name from users", result="records") == [
-        {"id": 2, "name": "李四"}
-    ]
+    assert adapter.query("select id, name from users", result="records") == [{"id": 2, "name": "李四"}]
     assert adapter.query("select id, name from users", result="rows") == [(2, "李四")]
 
     state.rows = []

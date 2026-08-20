@@ -124,7 +124,7 @@ $hsreport 分析规则“score < 560”和“age < 25”，
 |:---|:---|
 | CSV | 可指定 `encoding` 和 `separator` |
 | XLSX | 可指定 `sheet_name` |
-| Parquet | 自动启用受控 `parquet` 依赖组 |
+| Parquet | 默认由基础依赖 `pyarrow` 支持 |
 | hscredit/joblib artifact | 必须显式声明 `trusted=true` |
 
 Pickle 和 joblib 反序列化可能执行代码。只对自己生成或已经验证来源的制品使用可信模式。

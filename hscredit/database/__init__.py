@@ -21,6 +21,8 @@ from .types import (
 from .client import Database
 from .registry import available_adapters, get_adapter_class, register_adapter
 from .stream import QueryStream
+from .metadata import METADATA_COLUMNS_ZH, MetadataInspection, QualifiedTarget
+from .writing import BatchWriteResult, iter_write_batches
 
 __all__ = [
     "WRITE_MODES",
@@ -39,4 +41,9 @@ __all__ = [
     "get_adapter_class",
     "available_adapters",
     "QueryStream",
+    "METADATA_COLUMNS_ZH",
+    "QualifiedTarget",
+    "MetadataInspection",
+    "BatchWriteResult",
+    "iter_write_batches",
 ]

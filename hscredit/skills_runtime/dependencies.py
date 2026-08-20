@@ -37,25 +37,12 @@ def _contains_object_ref(value: Any) -> bool:
     return False
 
 
-def _contains_parquet_input(value: Any) -> bool:
-    if isinstance(value, Mapping):
-        path = value.get("path")
-        if value.get("kind") == "file" and isinstance(path, str) and path.lower().endswith(".parquet"):
-            return True
-        return any(_contains_parquet_input(item) for item in value.values())
-    if isinstance(value, (list, tuple)):
-        return any(_contains_parquet_input(item) for item in value)
-    return False
-
-
 def resolve_required_extras(skill: str, operation: str, request: Mapping[str, Any]) -> Tuple[str, ...]:
-    """只从内部映射和文件格式计算允许安装的 extras。"""
+    """只从内部映射计算允许安装的 extras。"""
     skill_map = _OPERATION_EXTRAS.get(skill)
     if skill_map is None:
         raise SkillExecutionError(code="OPERATION_NOT_ALLOWED", message=f"未登记 Skill“{skill}”")
     extras = set(skill_map.get(operation, skill_map.get("*", ())))
-    if _contains_parquet_input(request.get("inputs", {})):
-        extras.add("parquet")
     return tuple(sorted(extras))
 
 

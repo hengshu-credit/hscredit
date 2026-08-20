@@ -9,7 +9,6 @@ from typing import Any, Dict, FrozenSet, Mapping, Optional, Tuple
 
 from ..exceptions import ValidationError
 
-
 WRITE_MODES = frozenset({"a", "r", "o", "d"})
 
 

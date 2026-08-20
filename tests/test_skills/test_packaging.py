@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+from packaging.requirements import Requirement
 from setuptools import find_namespace_packages
 
 try:
@@ -11,6 +12,16 @@ except ImportError:  # pragma: no cover - Python 3.9/3.10
 
 
 ROOT = Path(__file__).parents[2]
+
+
+def test_parquet_engine_is_installed_with_the_base_package():
+    """防止默认安装缺失 Parquet 读写引擎。"""
+    config = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    dependencies = {Requirement(value).name.lower() for value in config["project"]["dependencies"]}
+    extras = config["project"]["optional-dependencies"]
+
+    assert "pyarrow" in dependencies
+    assert "parquet" not in extras
 
 
 def test_setuptools_packages_runtime_but_not_root_skill_directories():

@@ -23,6 +23,15 @@ class FakeAdapter:
         self.calls.append(("query", sql, params, result))
         return {"sql": sql, "params": params, "result": result}
 
+    def execute(self, sql, params=None):
+        self.calls.append(("execute", sql, params))
+        return 1
+
+    def executemany(self, sql, values):
+        materialized = list(values)
+        self.calls.append(("executemany", sql, materialized))
+        return len(materialized)
+
     def close(self):
         self.calls.append(("close",))
         self.closed = True
@@ -55,9 +64,7 @@ class FakeDBAPIDriver:
 class FakeCursor:
     def __init__(self, state):
         self.state = state
-        self.description = [
-            (name, None, None, None, None, None, None) for name in state.columns
-        ]
+        self.description = [(name, None, None, None, None, None, None) for name in state.columns]
         self.executed = None
         self.executemany_call = None
         self.closed = False

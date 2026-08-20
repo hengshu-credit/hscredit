@@ -1,11 +1,15 @@
 模型
 ====
 
-经典风控模型、Boosting 模型与自动调参 API。
+模型训练、规则器、评分卡、损失函数、评估指标与自动调参 API。
 
 .. toctree::
    :maxdepth: 2
 
-   models
+   classical_models
    boosting
+   model_rules
+   scorecard
+   losses
+   model_metrics
    tuning

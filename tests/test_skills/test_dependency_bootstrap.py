@@ -39,7 +39,7 @@ def test_object_ref_cannot_be_moved_to_an_isolated_interpreter():
     assert exc_info.value.code == "OBJECT_REF_REQUIRES_CURRENT_ENV"
 
 
-def test_required_extras_come_only_from_the_operation_and_file_format():
+def test_parquet_input_uses_only_the_operation_extras():
     """防止请求把任意包名注入自动安装列表。"""
     request = {
         "inputs": {"data": {"kind": "file", "path": "sample.parquet"}},
@@ -48,13 +48,13 @@ def test_required_extras_come_only_from_the_operation_and_file_format():
 
     extras = resolve_required_extras("hsbin", "feature_bin_stats", request)
 
-    assert extras == ("parquet", "skills")
+    assert extras == ("skills",)
 
 
 def test_environment_key_is_order_independent():
     """防止相同依赖集合重复创建隔离环境。"""
-    first = environment_key("C:/repo", ("skills", "parquet"), "3.14")
-    second = environment_key("C:/repo", ("parquet", "skills"), "3.14")
+    first = environment_key("C:/repo", ("skills", "tune"), "3.14")
+    second = environment_key("C:/repo", ("tune", "skills"), "3.14")
 
     assert first == second
     assert len(first) == 16

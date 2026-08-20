@@ -52,6 +52,23 @@ def test_database_delegates_query_without_changing_values():
     }
 
 
+def test_database_delegates_execute_and_executemany():
+    database = Database("fake_contract")
+
+    affected = database.execute("delete from t where id=%s", params=(7,))
+    inserted = database.executemany(
+        "insert into t(id) values (%s)",
+        ((8,), (9,)),
+    )
+
+    assert affected == 1
+    assert inserted == 2
+    assert database.adapter.calls == [
+        ("execute", "delete from t where id=%s", (7,)),
+        ("executemany", "insert into t(id) values (%s)", [(8,), (9,)]),
+    ]
+
+
 def test_close_is_idempotent_and_closed_database_rejects_operations():
     database = Database("fake_contract")
 

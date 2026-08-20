@@ -1156,7 +1156,122 @@ Python 支持范围：**3.9–3.14**。Boosting、深度学习、调参、解释
 | `pip install hscredit[tune]` | Optuna、调参看板 |
 | `pip install hscredit[explain]` | SHAP 模型解释 |
 | `pip install hscredit[pmml]` | PMML 导出与加载 |
+| `pip install hscredit[db-mysql]` | MySQL / MariaDB 连接池与流式读写 |
+| `pip install hscredit[db-hive]` | HiveServer2 连接池与流式读写 |
+| `pip install hscredit[db-impala]` | Impala / Kudu 连接池与流式读写 |
+| `pip install hscredit[db-oracle]` | Oracle 原生连接池与流式读写 |
+| `pip install hscredit[db-starrocks]` | StarRocks MySQL 协议与 Stream Load |
+| `pip install hscredit[db-clickhouse]` | ClickHouse 原生 DataFrame 流式读写 |
+| `pip install hscredit[db-maxcompute]` | MaxCompute DB-API、原生写入与元数据 |
+| `pip install hscredit[database-all]` | 全部数据库适配器 |
 | `pip install hscredit[all]` | 全部可选能力、开发和文档依赖 |
+
+### 数据库连接、流式读写与表结构导出
+
+数据库驱动均为可选依赖；普通 `import hscredit` 不会加载 PyMySQL、Impyla、python-oracledb、clickhouse-connect 或 PyODPS。所有连接参数直接交给对应驱动，连接池参数单独放在 `pool_options` 中：
+
+```python
+from hscredit import Database
+
+db = Database(
+    "mysql",
+    host="127.0.0.1",
+    port=3306,
+    user="risk_user",
+    password="从环境变量读取",
+    database="risk_db",
+    pool_options={
+        "mincached": 1,
+        "maxcached": 5,
+        "maxconnections": 10,
+        "blocking": True,
+    },
+)
+```
+
+流式读取默认产生 DataFrame 分块。`progress=False` 不执行额外统计 SQL；启用进度条后，适配器才使用 `COUNT(1)` 查询总数。主动 `stop()` 或读取期间按 `Ctrl+C` 后，可直接合并当前已经读取的数据：
+
+```python
+stream = db.stream_query(
+    "SELECT * FROM feature_db.user_profile WHERE created_at >= %s",
+    params=("2026-01-01",),
+    chunksize=50_000,
+    progress=True,
+)
+
+for chunk in stream:
+    consume(chunk)
+    if should_stop():
+        stream.stop()
+
+partial = stream.to_dataframe()
+print(partial.attrs["completed"], partial.attrs["rows_read"])
+
+# 便捷接口会自动消费流；Ctrl+C 后直接返回部分 DataFrame
+frame = db.read_query(sql, chunksize=50_000, progress=True)
+```
+
+流式写入支持单个 DataFrame、DataFrame 分块迭代器以及行记录迭代器：
+
+| mode | 语义 |
+|:---:|:---|
+| `a` | 追加；已有主键记录保持不变 |
+| `r` | 追加；主键冲突时用新记录覆盖 |
+| `o` | 保留表结构，清空数据后重写 |
+| `d` | 删除表，根据输入数据重建结构后写入 |
+
+```python
+result = db.stream_write(
+    dataframe_chunks,
+    "feature_db.user_profile",
+    mode="r",
+    batch_size=10_000,
+    key_columns=["user_id"],
+)
+```
+
+也可以显式建表；`dialect_options` 负责数据库专有的表引擎、分区、排序和生命周期参数。`d` 模式等价于“校验新 DDL → 删除旧表 → 重建 → 写入”，适合希望根据首批数据自动重建结构的场景：
+
+```python
+db.create_table(
+    first_chunk,
+    "feature_db.user_profile",
+    dialect_options={
+        "key_columns": ["user_id"],
+        "engine": "InnoDB",
+        "table_comment": "用户特征宽表",
+    },
+)
+```
+
+`column_types` 仅接受由字母、数字、空格及平衡的 `()` / `<>` 组成的安全类型表达式（如 `DECIMAL(18, 2)`、`ARRAY<STRING>`、`Nullable(String)`），不接受引号、注释或 SQL 片段。带引号参数的特殊类型应使用对应数据库适配器的专用方言参数配置。
+
+`a/r` 仅在数据库和当前表模型可以原生保证冲突语义时开放。例如 Impala Kudu 的 `a` 会保留已有主键行、`r` 使用 UPSERT；StarRocks 主键/唯一键表只支持 `r`，没有可靠冲突忽略能力，因此不开放 `a`；ClickHouse 的 `r` 要求 ReplacingMergeTree 且属于最终一致性。不支持时会抛出中文 `DatabaseCapabilityError`，不会使用并发不安全的客户端“先查再写”替代。
+
+表结构导出按“每个字段一行”返回中文列名 DataFrame，数据库返回值保持原样。可指定整个数据库或 `数据库.表`；Excel 仅通过 `dataframe2excel` 导出，不提供 CSV/TSV：
+
+```python
+schema = db.export_schema(
+    targets=["risk_db", "feature_db.user_profile"],
+    output="数据库表结构.xlsx",
+    excel_params={
+        "sheet_name": "字段清单",
+        "title": "数据库字段信息",
+        "auto_width": True,
+    },
+)
+
+db.close()
+```
+
+第三方数据库通过适配器注册表扩展，注册动作不会加载其他内置数据库驱动：
+
+```python
+from hscredit import register_adapter
+
+register_adapter("custom_db", CustomDatabaseAdapter, aliases=("custom",))
+custom = Database("custom", endpoint="https://database.example")
+```
 
 ## 5 分钟上手
 

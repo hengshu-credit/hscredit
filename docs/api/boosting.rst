@@ -1,7 +1,8 @@
-Boosting 模型 ``hscredit.core.models.boosting``
-===============================================
+Boosting
+========
 
-基于梯度提升框架的风控模型，统一继承 ``BaseRiskModel``，需要安装对应可选依赖
+``hscredit.core.models.boosting`` 提供基于梯度提升框架的风控模型，统一继承
+``BaseRiskModel``，需要安装对应可选依赖
 （``pip install hscredit[boost]``）。可直接从顶层 ``hscredit`` 懒加载导入，例如
 ``from hscredit import XGBoost``。
 

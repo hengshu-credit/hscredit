@@ -13,7 +13,6 @@ from ..exceptions import DatabaseConnectionError, DatabaseQueryError
 from ..types import DatabaseCapabilities, PoolOptions
 from .base import BaseDatabaseAdapter
 
-
 RESULT_TYPES = frozenset({"dataframe", "records", "rows"})
 
 
@@ -80,9 +79,7 @@ class DBAPIAdapter(BaseDatabaseAdapter):
         try:
             from dbutils.pooled_db import PooledDB
         except ImportError as exc:  # pragma: no cover - 由隔离导入测试覆盖用户行为
-            raise DependencyError(
-                "缺少数据库连接池可选依赖 DBUtils，请安装对应 hscredit[db-*] 扩展"
-            ) from exc
+            raise DependencyError("缺少数据库连接池可选依赖 DBUtils，请安装对应 hscredit[db-*] 扩展") from exc
         return PooledDB
 
     def _create_pool(self) -> Any:
@@ -92,9 +89,7 @@ class DBAPIAdapter(BaseDatabaseAdapter):
         try:
             return pool_class(self.driver, **kwargs)
         except Exception as exc:
-            raise DatabaseConnectionError(
-                f"创建 {self.database_type} 数据库连接池失败"
-            ) from exc
+            raise DatabaseConnectionError(f"创建 {self.database_type} 数据库连接池失败") from exc
 
     def create_cursor(self, connection: Any, *, stream: bool = False) -> Any:
         """创建普通或流式游标。"""
@@ -116,9 +111,7 @@ class DBAPIAdapter(BaseDatabaseAdapter):
         except (DatabaseConnectionError, DatabaseQueryError):
             raise
         except Exception as exc:
-            raise DatabaseConnectionError(
-                f"获取 {self.database_type} 数据库连接或游标失败"
-            ) from exc
+            raise DatabaseConnectionError(f"获取 {self.database_type} 数据库连接或游标失败") from exc
         finally:
             if cursor is not None:
                 try:
@@ -141,9 +134,7 @@ class DBAPIAdapter(BaseDatabaseAdapter):
         """执行查询并转换为 DataFrame、记录字典或原始行。"""
 
         if result not in RESULT_TYPES:
-            raise ValidationError(
-                f"result 只支持 {sorted(RESULT_TYPES)}，收到 {result!r}"
-            )
+            raise ValidationError(f"result 只支持 {sorted(RESULT_TYPES)}，收到 {result!r}")
         try:
             with self.connection_cursor() as (_, cursor):
                 self.execute_cursor(cursor, sql, params)

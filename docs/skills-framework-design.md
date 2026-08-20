@@ -281,7 +281,7 @@ hscredit/skills_runtime/
 
 ### 8.1 文件输入
 
-数据文件支持 CSV、XLSX 和 Parquet。XLSX 可指定 Sheet；CSV 可指定编码和分隔符；Parquet 由 pandas 可用引擎读取。
+数据文件支持 CSV、XLSX 和 Parquet。XLSX 可指定 Sheet；CSV 可指定编码和分隔符；Parquet 由基础依赖 `pyarrow` 为 pandas 提供读写引擎。
 
 模型、分箱器、Selector 和其他 Python artifact 支持 hscredit 自身序列化格式。Pickle 或 joblib 仅在输入同时声明 `trusted: true` 时加载；错误响应必须说明反序列化不可信文件可能执行代码。
 

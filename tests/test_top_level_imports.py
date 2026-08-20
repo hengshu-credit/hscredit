@@ -34,6 +34,10 @@ def test_star_import_exposes_key_top_level_apis():
             'AmountWeightedLoss',
             'ExpectedValueLoss',
             'NGBoostLossAdapter',
+            'Database',
+            'WriteResult',
+            'DatabaseCapabilityError',
+            'register_adapter',
         ]
 
         missing = [name for name in expected if name not in namespace]
@@ -42,6 +46,7 @@ def test_star_import_exposes_key_top_level_apis():
         assert '_build_overdue_labels' not in namespace
         assert namespace['Rule'].__module__ == 'hscredit.core.rules.rule'
         assert namespace['feature_summary'].__module__.startswith('hscredit.core.eda')
+        assert namespace['Database'].__module__ == 'hscredit.database.client'
         """
     )
 

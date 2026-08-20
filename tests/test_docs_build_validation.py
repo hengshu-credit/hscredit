@@ -21,6 +21,18 @@ def _write(path: Path, content: str) -> None:
 def test_accepts_complete_docs_artifacts(tmp_path):
     """完整产物应通过导航、搜索运行时与布局契约校验。"""
     _write(
+        tmp_path / "api" / "modeling.html",
+        '<li class="toctree-l2 current"><a href="#">模型</a><ul>'
+        '<li class="toctree-l3"><a href="classical_models.html">经典模型</a></li>'
+        '<li class="toctree-l3"><a href="boosting.html">Boosting</a></li>'
+        '<li class="toctree-l3"><a href="model_rules.html">规则器</a></li>'
+        '<li class="toctree-l3"><a href="scorecard.html">评分卡</a></li>'
+        '<li class="toctree-l3"><a href="losses.html">损失函数</a></li>'
+        '<li class="toctree-l3"><a href="model_metrics.html">评估指标</a></li>'
+        '<li class="toctree-l3"><a href="tuning.html">超参数调优</a></li>'
+        "</ul></li>",
+    )
+    _write(
         tmp_path / "api" / "boosting.html",
         '<li class="toctree-l5"><a href="#hscredit.core.models.boosting.xgboost_model.XGBoost.fit">'
         "fit</a></li>"
@@ -44,6 +56,29 @@ def test_accepts_complete_docs_artifacts(tmp_path):
     )
 
     assert collect_validation_errors(tmp_path) == []
+
+
+def test_rejects_nested_or_reordered_model_menu(tmp_path):
+    """模型菜单必须移除包级中间页，并按产品顺序生成七个直接子项。"""
+    _write(
+        tmp_path / "api" / "modeling.html",
+        '<li class="toctree-l2 current"><a href="#">模型</a><ul>'
+        '<li class="toctree-l3"><a href="models.html">模型 hscredit.core.models</a><ul>'
+        '<li class="toctree-l4"><a href="models.html#classical">经典模型</a></li>'
+        '<li class="toctree-l4"><a href="models.html#rules">规则器</a></li>'
+        "</ul></li>"
+        '<li class="toctree-l3"><a href="boosting.html">Boosting</a></li>'
+        '<li class="toctree-l3"><a href="tuning.html">超参数调优</a></li>'
+        "</ul></li>",
+    )
+
+    errors = collect_validation_errors(tmp_path)
+
+    assert any(
+        "模型菜单" in error
+        and "经典模型、Boosting、规则器、评分卡、损失函数、评估指标、超参数调优" in error
+        for error in errors
+    )
 
 
 def test_reports_broken_search_runtime_and_navigation(tmp_path):
