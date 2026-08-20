@@ -3279,6 +3279,40 @@ class ScoreCard(StandardScoreTransformer):
             'importance': np.abs(self.coef_)
         }).sort_values('importance', ascending=False)
 
+    def get_reason_codes(
+        self,
+        X: Union[pd.DataFrame, np.ndarray],
+        keep: int = 3,
+        feature_map: Optional[Dict[str, str]] = None,
+        reason_map: Optional[Dict[str, Dict[str, str]]] = None,
+    ) -> pd.DataFrame:
+        """返回评分卡中真正拉低分数的不利原因码。"""
+        self._check_fitted()
+        raw = X.copy() if isinstance(X, pd.DataFrame) else pd.DataFrame(X, columns=self.feature_names_)
+        woe = raw if self._detect_input_type(raw) else self._transform_to_woe(raw)
+        sub_scores = self._woe_to_score(woe[self.feature_names_])
+        base = self.base_effect_.values if isinstance(self.base_effect_, pd.Series) else np.asarray(self.base_effect_)
+        diffs = sub_scores - base
+        feature_map = feature_map or {}
+        reason_map = reason_map or {}
+        rows = []
+        for position, sample_id in enumerate(raw.index):
+            order = [idx for idx in np.argsort(diffs[position], kind='stable') if diffs[position, idx] < 0][:keep]
+            if not order:
+                rows.append({'样本索引': sample_id, '原因状态': '无不利贡献'})
+                continue
+            for rank, idx in enumerate(order, 1):
+                feature = self.feature_names_[idx]
+                mapping = reason_map.get(feature, {})
+                rows.append({
+                    '样本索引': sample_id, '原因排名': rank, '特征': feature,
+                    '业务特征名': feature_map.get(feature, feature), '特征值': raw.iloc[position].get(feature, np.nan),
+                    '分数影响': float(diffs[position, idx]), '原因码': mapping.get('code', f'SCORE_{idx + 1:03d}'),
+                    '原因描述': mapping.get('description', f'{feature_map.get(feature, feature)}拉低评分'),
+                    '原因状态': '存在不利贡献',
+                })
+        return pd.DataFrame(rows)
+
     def get_reason(self, X: Union[pd.DataFrame, np.ndarray], keep: int = 3) -> pd.DataFrame:
         """输出每个样本评分的主要驱动原因（reason codes / 拒绝原因）。
 
@@ -3294,39 +3328,12 @@ class ScoreCard(StandardScoreTransformer):
 
         >>> scorecard.get_reason(X_test, keep=3)
         """
-        self._check_fitted()
-
-        if not isinstance(X, pd.DataFrame):
-            X = pd.DataFrame(X)
-
-        # 转换数据
-        is_woe = self._detect_input_type(X)
-        if not is_woe:
-            X = self._transform_to_woe(X)
-
-        sub_scores = self._woe_to_score(X[self.feature_names_])
-        # 兼容 base_effect_ 为 numpy array 或 pandas Series 的情况
-        if isinstance(self.base_effect_, pd.Series):
-            base_effect_values = self.base_effect_.values
-        else:
-            base_effect_values = np.asarray(self.base_effect_)
-        effect_diff = sub_scores - base_effect_values
-        
-        reasons_list = []
-        for i in range(len(X)):
-            row_diff = effect_diff[i]
-            top_indices = np.argsort(np.abs(row_diff))[::-1][:keep]
-            
-            reasons = []
-            for idx in top_indices:
-                feature = self.feature_names_[idx]
-                diff = row_diff[idx]
-                direction = "降低" if diff < 0 else "提升"
-                reasons.append(f"{feature}({direction}{abs(diff):.1f}分)")
-            
-            reasons_list.append('; '.join(reasons))
-
-        return pd.DataFrame({'reason': reasons_list})
+        raw = X if isinstance(X, pd.DataFrame) else pd.DataFrame(X, columns=self.feature_names_)
+        codes = self.get_reason_codes(raw, keep=keep)
+        grouped = codes.dropna(subset=['特征']).groupby('样本索引', sort=False).apply(
+            lambda group: '; '.join(f"{row.特征}(降低{abs(row.分数影响):.1f}分)" for row in group.itertuples())
+        )
+        return pd.DataFrame({'reason': [grouped.get(index, '') for index in raw.index]})
 
     def score_to_probability_table(
         self,
@@ -4598,6 +4605,39 @@ class RoundScoreCard(ScoreCard):
         total_score = self._clip_scores(total_score)
         return self._round_score_array(total_score)
 
+    def get_reason_codes(
+        self,
+        X: Union[pd.DataFrame, np.ndarray],
+        keep: int = 3,
+        feature_map: Optional[Dict[str, str]] = None,
+        reason_map: Optional[Dict[str, Dict[str, str]]] = None,
+    ) -> pd.DataFrame:
+        """返回与取整后最终计分一致的不利原因码。"""
+        self._check_fitted()
+        resolved = self._resolve_round_scoring_inputs(X, input_type='auto')
+        raw = resolved['X_raw']
+        names = resolved['feature_names']
+        diffs = resolved['sub_scores'] - self._get_base_effect_values(names)
+        feature_map = feature_map or {}
+        reason_map = reason_map or {}
+        rows = []
+        for position, sample_id in enumerate(raw.index):
+            order = [idx for idx in np.argsort(diffs[position], kind='stable') if diffs[position, idx] < 0][:keep]
+            if not order:
+                rows.append({'样本索引': sample_id, '原因状态': '无不利贡献'})
+                continue
+            for rank, idx in enumerate(order, 1):
+                feature = names[idx]
+                mapping = reason_map.get(feature, {})
+                rows.append({
+                    '样本索引': sample_id, '原因排名': rank, '特征': feature,
+                    '业务特征名': feature_map.get(feature, feature), '特征值': raw.iloc[position].get(feature, np.nan),
+                    '分数影响': float(diffs[position, idx]), '原因码': mapping.get('code', f'SCORE_{idx + 1:03d}'),
+                    '原因描述': mapping.get('description', f'{feature_map.get(feature, feature)}拉低评分'),
+                    '原因状态': '存在不利贡献',
+                })
+        return pd.DataFrame(rows)
+
     def get_reason(self, X: Union[pd.DataFrame, np.ndarray], keep: int = 3) -> pd.DataFrame:
         """输出主要评分原因（基于取整后评分卡）。
 
@@ -4607,25 +4647,14 @@ class RoundScoreCard(ScoreCard):
         :param keep: 每个样本保留的主要原因个数，默认为 ``3``
         :return: 每行一个样本、含 ``reason`` 列的 DataFrame
         """
-        self._check_fitted()
-        resolved = self._resolve_round_scoring_inputs(X, input_type='auto')
-
-        sub_scores = resolved['sub_scores']
-        feature_names = resolved['feature_names']
-        effect_diff = sub_scores - self._get_base_effect_values(feature_names)
-
-        reasons_list = []
-        for row_diff in effect_diff:
-            top_indices = np.argsort(np.abs(row_diff))[::-1][:keep]
-            reasons = []
-            for idx in top_indices:
-                feature = feature_names[idx]
-                diff = row_diff[idx]
-                direction = '降低' if diff < 0 else '提升'
-                reasons.append(f"{feature}({direction}{self._format_score_text(abs(diff))}分)")
-            reasons_list.append('; '.join(reasons))
-
-        return pd.DataFrame({'reason': reasons_list})
+        raw = X if isinstance(X, pd.DataFrame) else pd.DataFrame(X, columns=self.feature_names_)
+        codes = self.get_reason_codes(raw, keep=keep)
+        grouped = codes.dropna(subset=['特征']).groupby('样本索引', sort=False).apply(
+            lambda group: '; '.join(
+                f"{row.特征}(降低{self._format_score_text(abs(row.分数影响))}分)" for row in group.itertuples()
+            )
+        )
+        return pd.DataFrame({'reason': [grouped.get(index, '') for index in raw.index]})
 
     def get_detailed_score(
         self,

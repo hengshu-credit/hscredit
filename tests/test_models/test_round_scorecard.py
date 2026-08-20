@@ -186,7 +186,7 @@ def test_round_scorecard_consistency_for_details_and_deployment():
 
     reasons = scorecard.get_reason(sample, keep=3)
     assert len(reasons) == len(sample)
-    assert reasons['reason'].str.len().gt(0).all()
+    assert not reasons['reason'].str.contains('提升').any()
 
     namespace = {}
     exec(scorecard.export_deployment_code(language='python'), namespace)

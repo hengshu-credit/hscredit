@@ -502,6 +502,26 @@ class ModelExplainer:
             )
         return pd.DataFrame(rows).sort_values(["排名均值", "特征"]).reset_index(drop=True)
 
+    def get_reason_codes(
+        self,
+        result=None,
+        *,
+        keep=3,
+        risk_direction="higher_output_higher_risk",
+        feature_map=None,
+        reason_map=None,
+    ) -> pd.DataFrame:
+        """返回只包含不利局部贡献的中文业务原因码。"""
+        from .reason_codes import build_reason_codes
+
+        return build_reason_codes(
+            self._require_result(result),
+            keep=keep,
+            risk_direction=risk_direction,
+            feature_map=feature_map,
+            reason_map=reason_map,
+        )
+
     # 新图形入口延迟导入，避免核心计算依赖绘图实现。
     def _plot(self, name, result=None, **kwargs):
         from . import explanation_plots
