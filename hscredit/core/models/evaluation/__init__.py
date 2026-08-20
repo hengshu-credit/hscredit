@@ -10,7 +10,12 @@
 
 import importlib
 
-from .interpretability import model_explain_report
+from .interpretability import (
+    model_explain_report,
+    plot_feature_importance,
+    plot_importance_comparison,
+    plot_shap_importance,
+)
 from .explanation import ExplanationResult
 from .counterfactual import CounterfactualExplainer
 from .calibration import (
@@ -34,6 +39,9 @@ __all__ = [
     "ExplanationResult",
     "CounterfactualExplainer",
     "model_explain_report",
+    "plot_feature_importance",
+    "plot_shap_importance",
+    "plot_importance_comparison",
 ]
 
 

@@ -3068,6 +3068,10 @@ class ModelReport:
             config["background_data"] = train[feature_names]
         elif isinstance(config["background_data"], pd.DataFrame):
             config["background_data"] = config["background_data"][feature_names]
+        if config["stability_mode"] == "refit":
+            config["X_train"] = train[feature_names] if config["X_train"] is None else config["X_train"]
+            config["y_train"] = self._datasets[self._train_key].y if config["y_train"] is None else config["y_train"]
+            config["X_validation"] = config["data"] if config["X_validation"] is None else config["X_validation"]
         explanation = build_model_explanation(self.model, config)
         self._model_explanation_cache = explanation
         return explanation

@@ -7,9 +7,7 @@ from hscredit.core.models import CounterfactualExplainer
 
 
 def _fixture():
-    reference = pd.DataFrame(
-        {"年龄": [20, 30, 40, 50, 60, 70], "收入": [1, 2, 4, 7, 10, 14], "负债": [12, 10, 8, 5, 3, 1]}
-    )
+    reference = pd.DataFrame({"年龄": [20, 30, 40, 50, 60, 70], "收入": [1, 2, 4, 7, 10, 14], "负债": [12, 10, 8, 5, 3, 1]})
     y = [1, 1, 1, 0, 0, 0]
     return LogisticRegression().fit(reference, y), reference
 
@@ -33,9 +31,7 @@ def test_generic_counterfactual_respects_immutable_direction_and_change_limit():
 
 def test_counterfactual_returns_structured_failure_when_target_is_unreachable():
     model, reference = _fixture()
-    counter = CounterfactualExplainer(
-        model, reference, constraints={name: {"mutable": False} for name in reference.columns}
-    )
+    counter = CounterfactualExplainer(model, reference, constraints={name: {"mutable": False} for name in reference.columns})
     result = counter.generate(reference.iloc[[0]], target_probability=0.0)
     assert result.loc[0, "是否达标"] == "否"
     assert "不可变" in result.loc[0, "失败原因"]

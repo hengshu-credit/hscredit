@@ -1,17 +1,26 @@
 """不依赖额外解释库的受约束反事实建议。"""
 
-from itertools import product
-from typing import Any, Dict, Mapping, Optional
-
 import numpy as np
 import pandas as pd
 
 from hscredit.exceptions import ValidationError
 
-
 COUNTERFACTUAL_COLUMNS = [
-    "样本索引", "方案编号", "是否达标", "变更特征数", "总成本", "预测前值", "预测后值", "目标值",
-    "特征", "原值", "新值", "变化方向", "约束检查", "失败原因", "说明",
+    "样本索引",
+    "方案编号",
+    "是否达标",
+    "变更特征数",
+    "总成本",
+    "预测前值",
+    "预测后值",
+    "目标值",
+    "特征",
+    "原值",
+    "新值",
+    "变化方向",
+    "约束检查",
+    "失败原因",
+    "说明",
 ]
 
 
@@ -137,7 +146,10 @@ class CounterfactualExplainer:
                             solutions.append((candidate_changes, prediction, cost))
             if solutions:
                 break
-            objective_key = (lambda state: (abs(state[1] - target), state[2], repr(state[0])))
+
+            def objective_key(state):
+                return abs(state[1] - target), state[2], repr(state[0])
+
             states = sorted(expanded.values(), key=objective_key)[:beam_width]
         solutions.sort(key=lambda state: (len(state[0]), state[2], abs(state[1] - target), repr(state[0])))
         return before, solutions[:top_n]
@@ -169,22 +181,12 @@ class CounterfactualExplainer:
             before, solutions = self._search(subject, float(target), max_changes, top_n, beam_width)
             if not solutions:
                 immutable = all(not config["mutable"] for config in self.constraints.values())
-                rows.append(
-                    {"样本索引": sample_id, "方案编号": 0, "是否达标": "否", "变更特征数": 0,
-                     "总成本": np.nan, "预测前值": before, "预测后值": before, "目标值": target,
-                     "约束检查": "通过", "失败原因": "所有特征均不可变" if immutable else "约束和搜索范围内未找到可行方案",
-                     "说明": "模型条件下的非因果建议，不代表真实因果效果或授信承诺"}
-                )
+                rows.append({"样本索引": sample_id, "方案编号": 0, "是否达标": "否", "变更特征数": 0, "总成本": np.nan, "预测前值": before, "预测后值": before, "目标值": target, "约束检查": "通过", "失败原因": "所有特征均不可变" if immutable else "约束和搜索范围内未找到可行方案", "说明": "模型条件下的非因果建议，不代表真实因果效果或授信承诺"})
                 continue
             for plan_number, (changes, after, cost) in enumerate(solutions, 1):
                 items = changes.items() or [(None, None)]
                 for feature, new in items:
                     old = subject[feature] if feature is not None else np.nan
                     direction = "不变" if feature is None else "增加" if new > old else "减少" if new < old else "替换"
-                    rows.append(
-                        {"样本索引": sample_id, "方案编号": plan_number, "是否达标": "是", "变更特征数": len(changes),
-                         "总成本": cost, "预测前值": before, "预测后值": after, "目标值": target,
-                         "特征": feature, "原值": old, "新值": new, "变化方向": direction, "约束检查": "通过",
-                         "失败原因": None, "说明": "模型条件下的非因果建议，不代表真实因果效果或授信承诺"}
-                    )
+                    rows.append({"样本索引": sample_id, "方案编号": plan_number, "是否达标": "是", "变更特征数": len(changes), "总成本": cost, "预测前值": before, "预测后值": after, "目标值": target, "特征": feature, "原值": old, "新值": new, "变化方向": direction, "约束检查": "通过", "失败原因": None, "说明": "模型条件下的非因果建议，不代表真实因果效果或授信承诺"})
         return pd.DataFrame(rows).reindex(columns=COUNTERFACTUAL_COLUMNS)

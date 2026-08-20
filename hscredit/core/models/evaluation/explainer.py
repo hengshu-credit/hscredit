@@ -93,9 +93,7 @@ class ModelExplainer:
     def _is_tree_model(self) -> bool:
         native = self._native_model()
         name = native.__class__.__name__.lower()
-        return hasattr(native, "tree_") or hasattr(native, "estimators_") or any(
-            token in name for token in ("forest", "tree", "boost", "xgb", "lgbm", "catboost")
-        )
+        return hasattr(native, "tree_") or hasattr(native, "estimators_") or any(token in name for token in ("forest", "tree", "boost", "xgb", "lgbm", "catboost"))
 
     def _is_linear_model(self) -> bool:
         native = self._native_model()
@@ -125,9 +123,7 @@ class ModelExplainer:
         return frame.sample(n=limit, random_state=self.random_state).sort_index()
 
     def _resolve_background(self, frame: pd.DataFrame) -> pd.DataFrame:
-        source = frame if self.background_data is None else coerce_explanation_frame(
-            self.background_data, feature_names=frame.columns
-        )
+        source = frame if self.background_data is None else coerce_explanation_frame(self.background_data, feature_names=frame.columns)
         return self._sample(source, self.max_background)
 
     def _predict_selected(self, frame, class_index):
@@ -174,14 +170,10 @@ class ModelExplainer:
                 raise ValidationError("LinearExplainer 仅支持 raw 输出；概率尺度请使用 permutation")
             backend = shap.LinearExplainer(native, background)
         elif algorithm == "permutation":
-            predictor = lambda values: self._predict_selected(  # noqa: E731
-                pd.DataFrame(values, columns=background.columns), class_index
-            )
+            predictor = lambda values: self._predict_selected(pd.DataFrame(values, columns=background.columns), class_index)  # noqa: E731
             backend = shap.Explainer(predictor, background, algorithm="permutation")
         elif algorithm == "kernel":
-            predictor = lambda values: self._predict_selected(  # noqa: E731
-                pd.DataFrame(values, columns=background.columns), class_index
-            )
+            predictor = lambda values: self._predict_selected(pd.DataFrame(values, columns=background.columns), class_index)  # noqa: E731
             backend = shap.KernelExplainer(predictor, background)
         else:
             raise ValidationError(f"不支持的解释算法: {algorithm}")
@@ -396,9 +388,7 @@ class ModelExplainer:
         count = max_clusters or min(4, n_features)
         labels = fcluster(tree, t=count, criterion="maxclust")
         leaf_order = {int(feature): position + 1 for position, feature in enumerate(leaves)}
-        return pd.DataFrame(
-            {"特征": result.feature_names, "叶序": [leaf_order[i] for i in range(n_features)], "聚类编号": labels}
-        ).sort_values("叶序").reset_index(drop=True)
+        return pd.DataFrame({"特征": result.feature_names, "叶序": [leaf_order[i] for i in range(n_features)], "聚类编号": labels}).sort_values("叶序").reset_index(drop=True)
 
     def get_feature_interactions(self, X=None, top_n=10, result=None) -> pd.DataFrame:
         result = self._require_result(result) if result is not None else (self.explain(X) if X is not None else self._require_result())
@@ -452,10 +442,7 @@ class ModelExplainer:
         if mode == "sample":
             resolved = self._require_result(result)
             names = resolved.feature_names
-            runs = [
-                np.abs(resolved.values[rng.integers(0, len(resolved.data), len(resolved.data))]).mean(axis=0)
-                for _ in range(n_bootstrap)
-            ]
+            runs = [np.abs(resolved.values[rng.integers(0, len(resolved.data), len(resolved.data))]).mean(axis=0) for _ in range(n_bootstrap)]
             label = "样本Bootstrap"
         elif mode == "refit":
             if X_train is None or y_train is None or X_validation is None:
@@ -528,15 +515,32 @@ class ModelExplainer:
 
         return getattr(explanation_plots, name)(self._require_result(result), explainer=self, **kwargs)
 
-    def plot_decision(self, result=None, **kwargs): return self._plot("plot_decision", result, **kwargs)
-    def plot_heatmap(self, result=None, **kwargs): return self._plot("plot_heatmap", result, **kwargs)
-    def plot_distribution(self, result=None, **kwargs): return self._plot("plot_distribution", result, **kwargs)
-    def plot_correlation(self, result=None, **kwargs): return self._plot("plot_correlation", result, **kwargs)
-    def plot_feature_clustering(self, result=None, **kwargs): return self._plot("plot_feature_clustering", result, **kwargs)
-    def plot_interaction_heatmap(self, result=None, **kwargs): return self._plot("plot_interaction_heatmap", result, **kwargs)
-    def plot_interaction_bubble(self, result=None, **kwargs): return self._plot("plot_interaction_bubble", result, **kwargs)
-    def plot_importance_overview(self, result=None, **kwargs): return self._plot("plot_importance_overview", result, **kwargs)
-    def plot_explanation_overview(self, result=None, **kwargs): return self._plot("plot_explanation_overview", result, **kwargs)
+    def plot_decision(self, result=None, **kwargs):
+        return self._plot("plot_decision", result, **kwargs)
+
+    def plot_heatmap(self, result=None, **kwargs):
+        return self._plot("plot_heatmap", result, **kwargs)
+
+    def plot_distribution(self, result=None, **kwargs):
+        return self._plot("plot_distribution", result, **kwargs)
+
+    def plot_correlation(self, result=None, **kwargs):
+        return self._plot("plot_correlation", result, **kwargs)
+
+    def plot_feature_clustering(self, result=None, **kwargs):
+        return self._plot("plot_feature_clustering", result, **kwargs)
+
+    def plot_interaction_heatmap(self, result=None, **kwargs):
+        return self._plot("plot_interaction_heatmap", result, **kwargs)
+
+    def plot_interaction_bubble(self, result=None, **kwargs):
+        return self._plot("plot_interaction_bubble", result, **kwargs)
+
+    def plot_importance_overview(self, result=None, **kwargs):
+        return self._plot("plot_importance_overview", result, **kwargs)
+
+    def plot_explanation_overview(self, result=None, **kwargs):
+        return self._plot("plot_explanation_overview", result, **kwargs)
 
     # 旧绘图方法保留原名，转到统一结果。
     def plot_shap_summary(self, X=None, plot_type="dot", max_display=20, show=True, **kwargs):

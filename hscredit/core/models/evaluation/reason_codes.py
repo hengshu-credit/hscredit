@@ -7,10 +7,20 @@ import pandas as pd
 
 from hscredit.exceptions import ValidationError
 
-
 REASON_CODE_COLUMNS = [
-    "样本索引", "原因排名", "特征", "业务特征名", "特征值", "SHAP值", "风险贡献",
-    "原因码", "原因描述", "原因状态", "目标类别", "输出尺度", "风险方向",
+    "样本索引",
+    "原因排名",
+    "特征",
+    "业务特征名",
+    "特征值",
+    "SHAP值",
+    "风险贡献",
+    "原因码",
+    "原因描述",
+    "原因状态",
+    "目标类别",
+    "输出尺度",
+    "风险方向",
 ]
 
 
@@ -35,10 +45,7 @@ def build_reason_codes(
         adverse = sign * result.values[position]
         order = [index for index in np.argsort(adverse, kind="stable")[::-1] if adverse[index] > 0][:keep]
         if not order:
-            rows.append(
-                {"样本索引": sample_id, "原因状态": "无不利贡献", "目标类别": result.target_class,
-                 "输出尺度": result.model_output, "风险方向": risk_direction}
-            )
+            rows.append({"样本索引": sample_id, "原因状态": "无不利贡献", "目标类别": result.target_class, "输出尺度": result.model_output, "风险方向": risk_direction})
             continue
         for rank, index in enumerate(order, 1):
             feature = result.feature_names[index]

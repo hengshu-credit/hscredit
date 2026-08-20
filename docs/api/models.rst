@@ -14,3 +14,5 @@
 * :doc:`tuning`
 
 模型报告位于 :doc:`report`。
+
+模型解释完整工作流见 :doc:`../articles/model-interpretability`。

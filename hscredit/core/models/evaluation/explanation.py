@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from hashlib import sha256
 from types import MappingProxyType
-from typing import Any, Mapping, Optional, Sequence, Tuple
+from typing import Any, Mapping, Optional, Sequence
 
 import numpy as np
 import pandas as pd

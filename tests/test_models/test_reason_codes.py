@@ -10,9 +10,7 @@ from hscredit.core.models.evaluation.reason_codes import build_reason_codes
 
 def test_model_reason_codes_only_include_adverse_contributions():
     X = pd.DataFrame({"负债": [8.0], "收入": [3.0], "年龄": [35]})
-    explanation = shap.Explanation(
-        values=np.array([[0.3, -0.2, 0.0]]), base_values=np.array([0.4]), data=X.to_numpy(), feature_names=list(X)
-    )
+    explanation = shap.Explanation(values=np.array([[0.3, -0.2, 0.0]]), base_values=np.array([0.4]), data=X.to_numpy(), feature_names=list(X))
     result = ExplanationResult.from_explanation(
         explanation,
         data=X,

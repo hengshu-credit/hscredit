@@ -4,6 +4,7 @@ import pandas as pd
 import pytest
 from sklearn.datasets import make_classification
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import LogisticRegression
 
 from hscredit.core.models.evaluation import ModelExplainer
 
@@ -39,3 +40,20 @@ def test_correlation_clusters_interactions_and_stability_are_structured(explaine
     stability = explainer.get_stability_report(result, n_bootstrap=8, top_k=2, random_state=3)
     assert {"稳定性模式", "置信区间下限", "置信区间上限", "排名标准差", "Top-K入选率"} <= set(stability)
     assert stability["Top-K入选率"].between(0, 1).all()
+
+
+def test_refit_stability_retrains_cloned_model_on_fixed_validation_data():
+    values, y = make_classification(n_samples=50, n_features=4, random_state=31)
+    X = pd.DataFrame(values, columns=list("abcd"))
+    model = LogisticRegression(max_iter=300).fit(X, y)
+    explainer = ModelExplainer(model, background_data=X.head(12), random_state=31)
+    table = explainer.get_stability_report(
+        mode="refit",
+        X_train=X.iloc[:40],
+        y_train=y[:40],
+        X_validation=X.iloc[40:],
+        n_bootstrap=3,
+        top_k=2,
+        random_state=31,
+    )
+    assert set(table["稳定性模式"]) == {"重训Bootstrap"}

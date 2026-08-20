@@ -1,7 +1,5 @@
 """模型解释的中文 Matplotlib 可视化。"""
 
-from typing import Any, Optional
-
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
