@@ -19,7 +19,7 @@ from sklearn.datasets import make_classification
 
 from hscredit.core.binning import OptimalBinning
 from hscredit.core.model_selection import time_train_test_split
-from hscredit.core.models import RandomForestRiskModel, ScoreCard
+from hscredit.core.models import RandomForest, ScoreCard
 from hscredit.core.models.evaluation import ProbabilityCalibrator
 from hscredit.core.selectors import IVSelector, VIFSelector, CompositeFeatureSelector
 from hscredit.report import auto_model_report
@@ -67,7 +67,7 @@ def run_quickstart(output_dir=None):
     scorecard.fit(X_train_woe, y_train)
     scores = scorecard.predict(X_test)
 
-    model = RandomForestRiskModel(n_estimators=30, random_state=42)
+    model = RandomForest(n_estimators=30, random_state=42)
     model.fit(X_train, y_train)
     metrics = model.evaluate(X_test, y_test)
 

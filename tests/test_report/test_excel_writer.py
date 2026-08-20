@@ -950,6 +950,29 @@ class TestDataframe2Excel:
         # 检查条件格式是否存在
         assert len(ws.conditional_formatting._cf_rules) > 0
 
+    @pytest.mark.parametrize("speed", ["normal", "fast"])
+    def test_empty_dataframe_skips_all_body_column_formats(self, speed):
+        """空表只有表头，不能生成反向数据行范围或条件格式规则。"""
+        writer = ExcelWriter(system="windows")
+        worksheet = writer.get_sheet_by_name("Empty")
+        data = pd.DataFrame(columns=["比例", "自定义", "数据条", "色阶"])
+
+        dataframe2excel(
+            data,
+            writer,
+            sheet_name=worksheet,
+            percent_cols=["比例"],
+            custom_cols=["自定义"],
+            custom_format="0.000",
+            condition_cols=["数据条"],
+            color_cols=["色阶"],
+            speed=speed,
+        )
+
+        values = [cell.value for row in worksheet.iter_rows() for cell in row]
+        assert {"比例", "自定义", "数据条", "色阶"} <= set(values)
+        assert len(worksheet.conditional_formatting._cf_rules) == 0
+
     @pytest.mark.parametrize(
         ("call_color", "expected_color"),
         [

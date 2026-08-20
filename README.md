@@ -27,7 +27,7 @@
 | 特征编码 | **9 种编码器** | WOE、Target、Count、OneHot、Ordinal、Quantile、CatBoost、Cardinality、GBM | 同时服务评分卡、树模型和高基数类别变量处理 |
 | 特征筛选 | **23 种筛选器** | 缺失率、众数率、方差、相关性、VIF、IV、Lift、PSI、RFE、Boruta、逐步回归、组合筛选 | 从区分度、稳定性、共线性、贡献度与业务解释多角度筛选变量 |
 | 风控指标 | **43 种指标** | KS、AUC、Gini、Lift、坏样本率、IV、PSI、CSI、分箱统计、分类与回归指标 | 建模、变量、策略和监控使用统一指标口径 |
-| 模型训练 | **36 个建模组件** | 逻辑回归、ScoreCard、RandomForest、GBDT、XGBoost、LightGBM、CatBoost、NGBoost、风控损失、调参 | 覆盖传统评分卡、机器学习风控模型与业务目标导向建模 |
+| 模型训练 | **38 个建模组件** | 逻辑回归、ScoreCard、RandomForest、DecisionTree、SVM、GBDT、XGBoost、LightGBM、CatBoost、NGBoost、风控损失、调参 | 覆盖传统评分卡、机器学习风控模型与业务目标导向建模 |
 | 可视化分析 | **46 种图表** | 分箱趋势、KS/ROC/PR/Lift/Gain、评分分布、策略阈值、Vintage、稳定性、客群漂移、树图 | 将分析结论直接转为评审、沟通和复盘材料 |
 | 报告交付 | **28 种报告工具** | 特征分析、规则分析、Swap、逾期预测、模型报告、模型对比 | 输出中文明细表、图表与多 Sheet Excel 报告 |
 | Excel 报表 | **10+ 种 Excel 操作** | 数据写入、图片、超链接、条件格式、样式、数字格式、冻结窗格、列宽、Sheet 复制 | 生成可直接评审、汇报和归档的样式化报表 |
@@ -272,8 +272,19 @@ auto_model_report(
     amount_col="放款金额",
     date_col="date",
     feature_names=features,
+    method="predict_proba",  # 每个数据集只调用这一个方法
     excel_path="模型报告.xlsx",
     with_plots=True,
+)
+
+# callable 中 self 是最终返回的 ModelReport，模型通过 self.model 访问
+custom_report = auto_model_report(
+    model,
+    X_train=X_test,
+    y_train=y_test,
+    method=lambda self, x, scale: self.model.predict_proba(x)[:, 1] * scale,
+    scale=100,
+    verbose=False,
 )
 ```
 
@@ -284,6 +295,8 @@ auto_model_report(
 <p align="center"><a href="docs/assets/readme/api-gallery/report-auto-model-report-performance.png"><img src="docs/assets/readme/api-gallery/report-auto-model-report-performance.png" alt="auto_model_report KS ROC Lift 与排序性" width="100%"></a></p>
 
 <p align="center"><sub>金额口径</sub><br><a href="docs/assets/readme/api-gallery/report-auto-model-report-amount.png"><img src="docs/assets/readme/api-gallery/report-auto-model-report-amount.png" alt="auto_model_report 放款金额表现" width="100%"></a></p>
+
+`ModelReport` 不自动创建评分转换器，也不额外预测概率；指标、分箱和 PSI 全部使用 `method` 单次调用的结果。
 
 ### 2. 数据分析与 pandas 扩展
 
@@ -771,17 +784,19 @@ report = rule.report(
 
 ### 6. 模型、风控 Loss 与统一调优
 
+> **破坏性命名变更：** 七个具体模型现已统一使用 `XGBoost`、`LightGBM`、`CatBoost`、`NGBoost`、`RandomForest`、`ExtraTrees` 和 `GradientBoosting`。不再提供旧 `RiskModel` 后缀类名。引用旧类路径的 pickle、joblib 或 JSON 制品需先用旧版 hscredit 加载并重新训练或导出，再升级使用。
+
 #### Boosting
 
 统一 `fit / predict_proba / evaluate`，同时输出评估指标和特征贡献。
 
 <details>
-<summary>代码示例：<code>GradientBoostingRiskModel</code></summary>
+<summary>代码示例：<code>GradientBoosting</code></summary>
 
 ```python
-from hscredit.core.models import GradientBoostingRiskModel
+from hscredit.core.models import GradientBoosting
 
-model = GradientBoostingRiskModel(
+model = GradientBoosting(
     n_estimators=100,
     learning_rate=0.05,
     max_depth=3,
@@ -802,6 +817,18 @@ metrics = model.evaluate(X_test, y_test, metrics=["auc", "ks", "gini", "accuracy
 | Accuracy | `0.8519` |
 
 <p align="center"><a href="docs/assets/readme/api-gallery/model-boosting.png"><img src="docs/assets/readme/api-gallery/model-boosting.png" alt="Boosting ROC 与特征重要性" width="100%"></a></p>
+
+#### sklearn 分类模型
+
+```python
+from hscredit.core.models import DecisionTreeClassifier, SVM
+
+svm = SVM(C=1.0, kernel="rbf", random_state=42).fit(X_train, y_train)
+tree = DecisionTreeClassifier(max_depth=4, min_samples_leaf=20, random_state=42).fit(X_train, y_train)
+
+svm_probability = svm.predict_proba(X_test)[:, 1]
+tree_probability = tree.predict_proba(X_test)[:, 1]
+```
 
 #### `ScoreCard`
 
@@ -1102,7 +1129,7 @@ ExcelWriter 支持样式、图表、条件格式、数字格式、冻结窗格�
 | 场景 | hscredit 能力 | 典型输出 |
 |:---|:---|:---|
 | 贷前评分卡建模 | IV/WOE、最优/单调分箱、VIF/PSI 筛选、逻辑回归、ScoreCard | 分箱表、评分映射、KS/AUC/Lift、模型报告 |
-| 机器学习风控 | RandomForest、GBDT、XGBoost、LightGBM、CatBoost、NGBoost、调参、校准 | 模型指标、特征重要性、概率/评分分布、模型制品 |
+| 机器学习风控 | RandomForest、DecisionTree、SVM、GBDT、XGBoost、LightGBM、CatBoost、NGBoost、调参、校准 | 模型指标、特征重要性、概率/评分分布、模型制品 |
 | 策略规则分析 | Rule、规则挖掘、规则集、命中评估、Swap 置换 | 命中率、坏样本率、Lift、通过率变化、置换报告 |
 | 贷后表现分析 | Vintage、Roll Rate、MOB 逾期预测、坏率趋势 | 账龄表现、迁徙矩阵、逾期预测与趋势图 |
 | 模型与客群监控 | PSI/CSI、分数漂移、变量漂移、客群迁移 | 稳定性指标、漂移明细、分月和分群监控图 |
@@ -1157,7 +1184,7 @@ bin_table.save("分箱结果.xlsx", title="变量分箱")
 | 分箱 `binning` | 18 种一维/二维分箱，用户切点、单调和最小样本约束 | `OptimalBinning`、各独立分箱器 | 分箱规则、WOE 数据、分箱统计与图表 |
 | 编码 `encoders` | WOE、Target、Count、OneHot、Ordinal、Quantile、CatBoost/GBM | `WOEEncoder` 等 sklearn Transformer | 编码后的 DataFrame、可序列化编码器 |
 | 筛选 `selectors` | 23 种单项与组合筛选，支持筛选报告汇总 | `IVSelector`、`VIFSelector`、`CompositeFeatureSelector` | 入选变量、淘汰原因、中文筛选报告 |
-| 模型 `models` | ScoreCard、树模型、Boosting、概率校准、风控损失、调参 | `ScoreCard`、`RandomForestRiskModel`、Boosting 风控模型 | 预测概率/评分、评估指标、模型制品 |
+| 模型 `models` | ScoreCard、树模型、SVM、Boosting、概率校准、风控损失、调参 | `ScoreCard`、`RandomForest`、`DecisionTreeClassifier`、`SVM`、Boosting 模型 | 预测概率/评分、评估指标、模型制品 |
 | 指标 `metrics` | `ks`、`auc`、`gini`、`iv`、`psi`、`csi`、`lift`、回归指标 | `hscredit.core.metrics` | 标量指标、分箱/稳定性明细表 |
 | 可视化 `viz` | 模型、分箱、评分、规则、稳定性、Vintage 与树图 | `hscredit.core.viz` | Matplotlib Figure、Pyecharts 图表、PNG/SVG |
 | 规则 `rules` | Rule 表达式、逻辑组合、规则集分类器、树规则 | `Rule`、`RuleFlow`、`hscredit.core.models.RulesClassifier` | 命中标记、规则报告、规则树与策略结果 |

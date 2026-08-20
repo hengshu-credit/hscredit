@@ -23,8 +23,9 @@ from ...utils.parallel import _current_parallel_budget, resolve_n_jobs, validate
 
 # 从 hscredit.core.models 统一导入 sklearn 模型
 from ...core.models import (
-    RandomForestRiskModel,
-    GradientBoostingRiskModel,
+    DecisionTreeClassifier,
+    RandomForest,
+    GradientBoosting,
 )
 
 
@@ -347,12 +348,11 @@ class TreeRuleExtractor(BaseRuleMiner):
         }
         
         if self._resolved_algorithm == 'dt':
-            # 决策树直接使用 sklearn（hscredit 暂无 DecisionTreeRiskModel）
-            from sklearn.tree import DecisionTreeClassifier
             base_params.update({
                 'max_depth': self.max_depth,
                 'min_samples_split': self.min_samples_split,
                 'min_samples_leaf': self.min_samples_leaf,
+                'n_jobs': self._effective_model_workers(),
             })
             base_params.update(self.model_kwargs)
             return DecisionTreeClassifier(**base_params)
@@ -367,8 +367,8 @@ class TreeRuleExtractor(BaseRuleMiner):
                 'n_jobs': self._effective_model_workers()
             })
             base_params.update(self.model_kwargs)
-            # 使用 hscredit 的 RandomForestRiskModel
-            return RandomForestRiskModel(**base_params)
+            # 使用 hscredit 的 RandomForest
+            return RandomForest(**base_params)
         
         elif self._resolved_algorithm == 'gbdt':
             base_params.update({
@@ -379,8 +379,8 @@ class TreeRuleExtractor(BaseRuleMiner):
                 'max_features': self.max_features,
             })
             base_params.update(self.model_kwargs)
-            # 使用 hscredit 的 GradientBoostingRiskModel
-            return GradientBoostingRiskModel(**base_params)
+            # 使用 hscredit 的 GradientBoosting
+            return GradientBoosting(**base_params)
         
         elif self._resolved_algorithm == 'isf':
             # 孤立森林直接使用 sklearn（hscredit 暂无 IsolationForestRiskModel）

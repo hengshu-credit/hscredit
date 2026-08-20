@@ -28,6 +28,7 @@ from .utils import (
     format_bin_label,
     BAD_RATE_COLOR, REFERENCE_COLOR, EXTENDED_COLORS, get_series_colors,
     make_colormap, make_diverging_cmap, _layout_top_center_legend,
+    _create_subplots, _tight_layout,
 )
 from ..._lazy import LazyModule
 from ..._compat import normalize_seaborn_inf
@@ -723,7 +724,7 @@ def bin_plot(
         fig = ax.figure
         return_ax = True
     else:
-        fig, ax1 = plt.subplots(figsize=figsize)
+        fig, ax1 = _create_subplots(figsize=figsize)
         return_ax = False
 
     if is_horizontal:
@@ -853,7 +854,7 @@ def bin_plot(
                             ncol=legend_ncol, bbox_to_anchor=(0.5, legend_anchor),
                             frameon=False, fontsize=legend_fontsize)
 
-        plt.tight_layout()
+        _tight_layout(fig)
         if anchor is None:
             _layout_top_center_legend(fig, legend, title=title_artist, axes=[ax1, ax2])
         if metric_summary:
@@ -966,7 +967,7 @@ def corr_plot(data, figure_size=None, fontsize=16, mask=False, save=None,
     # 获取或创建 Axes
     figsize = figure_size or figsize
     if ax is None:
-        fig, ax = plt.subplots(figsize=figsize)
+        fig, ax = _create_subplots(figsize=figsize)
         return_ax = False
     else:
         fig = ax.figure
@@ -1097,7 +1098,7 @@ def ks_plot(score, target, title="", fontsize=14, figsize=(16, 8), save=None,
             fig = ax1.figure
             return_axes = True
         else:
-            fig, _ax = plt.subplots(1, 2, figsize=figsize)
+            fig, _ax = _create_subplots(1, 2, figsize=figsize)
             ax1, ax2 = _ax[0], _ax[1]
             return_axes = False
     else:
@@ -1110,7 +1111,7 @@ def ks_plot(score, target, title="", fontsize=14, figsize=(16, 8), save=None,
             fig = target_ax.figure
             return_axes = True
         else:
-            fig, target_ax = plt.subplots(figsize=figsize)
+            fig, target_ax = _create_subplots(figsize=figsize)
             return_axes = False
         ax1 = target_ax if curve == 'ks' else None
         ax2 = target_ax if curve == 'roc' else None
@@ -1177,7 +1178,7 @@ def ks_plot(score, target, title="", fontsize=14, figsize=(16, 8), save=None,
             if labels:
                 single_ax.legend(handles, labels, loc='best', frameon=False,
                                  fontsize=max(fontsize - 4, 8))
-        plt.tight_layout()
+        _tight_layout(fig)
         if curve == 'both' and anchor is None:
             _layout_top_center_legend(fig, legend, title=title_artist, axes=[ax1, ax2])
         save_figure(fig, save)
@@ -1514,7 +1515,7 @@ def psi_plot(expected, actual, y=None, labels=None, desc="", save=None, colors=N
             lambda l: l if max_len is None or len(str(l)) < max_len else f"{str(l)[:max_len]}..."
         )
         x_indexes = np.arange(len(x))
-        fig, ax1 = plt.subplots(figsize=figsize)
+        fig, ax1 = _create_subplots(figsize=figsize)
 
         ax1.bar(x_indexes - width / 2, df_psi[f'{labels[0]}样本占比'], width,
                 label=f'{labels[0]}样本占比', color=colors[0], hatch="/" if hatch else None,

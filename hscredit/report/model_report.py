@@ -14,18 +14,21 @@
 from __future__ import annotations
 
 import logging
+import inspect
 import re
-
 import warnings
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
+from joblib.externals import cloudpickle
 
 from ._sample_stats import build_group_distribution_table, build_sample_stats_table
+from ..exceptions import SerializationError, ValidationError
 from ..utils.parallel import (
     _ACTIVE_BUDGET,
     ParallelBudget,
@@ -183,23 +186,8 @@ def _summary_percent_cols(columns) -> List[Any]:
     return percent_cols
 
 
-def _score_from_model(model, X, y_proba: Optional[np.ndarray] = None) -> np.ndarray:
-    """从模型获取评分向量，兼容 ScoreCard / BaseRiskModel / sklearn."""
-    # ScoreCard.predict → 评分
-    if hasattr(model, "predict"):
-        result = np.asarray(model.predict(X), dtype=float)
-        if result.size and np.nanmax(np.abs(result)) > 2.0:
-            return result
-    # predict_score（BaseRiskModel 子类）
-    if hasattr(model, "predict_score"):
-        return np.asarray(model.predict_score(X), dtype=float)
-    # 兜底：概率转评分
-    proba = _proba_pos(model, X) if y_proba is None else np.asarray(y_proba, dtype=float)
-    return (1.0 - proba) * 1000.0
-
-
-def _build_report_dataset(task) -> "ReportDataset":
-    """构建单个报告数据集；该 worker 不接收可变的 ``ModelReport`` 实例。"""
+def _prepare_report_dataset(task):
+    """校验并准备单个报告数据集；worker 不执行模型方法。"""
     model, key, label, X, y, y_dict, feature_names = task
     required_features: Optional[List[str]] = None
     if hasattr(model, "feature_names_") and model.feature_names_ is not None:
@@ -224,17 +212,47 @@ def _build_report_dataset(task) -> "ReportDataset":
     if len(X) != len(y):
         raise ValueError(f"特征与标签样本数不一致: X={len(X)}, y={len(y)}")
 
-    y_proba = _proba_pos(model, X_for_pred)
-    score = _score_from_model(model, X_for_pred, y_proba=y_proba)
-    return ReportDataset(
-        name=key,
-        label=label,
-        X=X,
-        y=y,
-        y_proba=y_proba,
-        score=score,
-        y_dict=y_dict,
-    )
+    return key, label, X, y, y_dict, X_for_pred
+
+
+def _normalize_prediction(model, result, expected_length: int, probability: bool) -> np.ndarray:
+    """把唯一方法结果规整为与数据集等长的一维有限数组。"""
+    values = np.asarray(result, dtype=float)
+    if probability and values.ndim == 2 and values.shape[1] >= 2:
+        classes = getattr(model, "classes_", None)
+        positive_index = 1
+        if classes is not None:
+            positive = np.flatnonzero(np.asarray(classes) == 1)
+            if len(positive) == 1:
+                positive_index = int(positive[0])
+        values = values[:, positive_index]
+    elif values.ndim == 2 and values.shape[1] == 1:
+        values = values[:, 0]
+    elif values.ndim != 1:
+        raise ValidationError("method 返回值必须是一维数组或单列二维数组")
+    if len(values) != expected_length:
+        raise ValidationError(f"method 返回值长度 {len(values)} 与数据集长度 {expected_length} 不一致")
+    if not np.isfinite(values).all():
+        raise ValidationError("method 返回值必须全部为有限数值")
+    return values
+
+
+def _invoke_named_prediction(model, X, method: str) -> np.ndarray:
+    """调用一次已校验的模型方法。"""
+    method_name = "predict_proba" if method == "predict_prob" else method
+    result = getattr(model, method_name)(X)
+    return _normalize_prediction(model, result, len(X), probability=method_name == "predict_proba")
+
+
+def _build_report_dataset(task):
+    """准备数据，并在字符串 method 路径于共享 worker 中执行唯一预测。"""
+    *base_task, method = task
+    prepared = _prepare_report_dataset(tuple(base_task))
+    if method is None:
+        return prepared
+    key, label, X, y, y_dict, X_for_pred = prepared
+    prediction = _invoke_named_prediction(base_task[0], X_for_pred, method)
+    return ReportDataset(name=key, label=label, X=X, y=y, prediction=prediction, y_dict=y_dict)
 
 
 def _binary_metric_worker(task) -> Tuple[float, float, int, float]:
@@ -302,6 +320,35 @@ def _safe_close_figs():
         plt.close("all")
     except Exception:
         pass
+
+
+def _safe_close_plot_result(result) -> None:
+    """在线程内仅关闭当前绘图调用返回的画布，不误关其他线程图表."""
+    try:
+        import matplotlib.pyplot as plt
+
+        candidate = result[0] if isinstance(result, tuple) and result else result
+        if hasattr(candidate, "figure"):
+            candidate = candidate.figure
+        if hasattr(candidate, "savefig"):
+            plt.close(candidate)
+    except Exception:
+        pass
+
+
+@contextmanager
+def _threaded_agg_rendering():
+    """让当前报告工作线程使用独立 Agg 画布."""
+    from ..core.viz.utils import _threaded_agg_rendering as rendering_context
+
+    with rendering_context():
+        yield
+
+
+def _execute_plot_group(group):
+    """执行一个完整图表分组；分组仅在线程后端中提交."""
+    with _threaded_agg_rendering():
+        return group()
 
 
 def _merge_multi_label_bin_tables(tables: List[pd.DataFrame], labels: List[str]) -> pd.DataFrame:
@@ -398,9 +445,12 @@ class ReportDataset:
     label: str  # 中文标签: "训练集" / "测试集" / "OOT"
     X: pd.DataFrame
     y: pd.Series
-    y_proba: np.ndarray
-    score: np.ndarray
+    prediction: np.ndarray
     y_dict: Optional[Dict[str, np.ndarray]] = None  # {label_name: y_array}，多标签场景下各标签的独立标签
+
+    def __post_init__(self):
+        self.y_proba = self.prediction
+        self.score = self.prediction
 
 
 # ---------------------------------------------------------------------------
@@ -471,9 +521,12 @@ class ModelReport:
         datasets: Optional[Union[List, Dict]] = None,
         overdue: Optional[Union[str, List[str]]] = None,
         dpds: Optional[Union[int, float, List[Union[int, float]]]] = None,
+        method: Union[str, Callable] = "predict_proba",
+        method_kwargs: Optional[Dict[str, Any]] = None,
         n_jobs=-1,
         parallel_backend: Optional[str] = None,
         parallel_config: Optional[Dict[str, Any]] = None,
+        **kwargs,
     ):
         """初始化模型报告.
 
@@ -527,15 +580,57 @@ class ModelReport:
             - dict: {'overdue': col, 'dpds': threshold} 或 {'overdue': col, 'dpds': [15, 7, 0]}
         :param overdue: 逾期列名（str）或多个列名（List[str]），传入后忽略 target
         :param dpds: 逾期天数阈值（int/float）或多个阈值（List），与 overdue 配合使用
+        :param method: 数据集唯一预测方法，支持 predict_proba/predict_prob/predict/predict_score/transform/callable
+        :param method_kwargs: callable 同名参数的显式覆盖字典
         :param n_jobs: 并行工作数；-1 自动保留 CPU，None 使用兼容串行模式
         :param parallel_backend: joblib 后端，如 ``threading`` 或 ``loky``
         :param parallel_config: joblib 其他并行配置，保留调用者字典引用
+        :param kwargs: 透传给 callable 的额外同名参数
         """
         self.model = model
         self._feature_names = _normalize_feature_names(feature_names)
+        if not isinstance(method, str) and not callable(method):
+            raise ValidationError("method 必须是方法名字符串或 callable")
+        if isinstance(method, str):
+            normalized_method = "predict_proba" if method == "predict_prob" else method
+            allowed_methods = {"predict_proba", "predict", "predict_score", "transform"}
+            if normalized_method not in allowed_methods:
+                raise ValidationError(f"不支持的 method: {method!r}，可选: {sorted(allowed_methods)}")
+            if not callable(getattr(model, normalized_method, None)):
+                raise ValidationError(f"模型 {type(model).__name__} 不支持方法 {normalized_method}")
+        if method_kwargs is not None and not isinstance(method_kwargs, dict):
+            raise ValidationError("method_kwargs 必须是字典或 None")
+        self.method = method
+        self.method_kwargs = dict(method_kwargs or {})
+        self.kwargs = dict(kwargs)
+        self.method_source_ = None
+        if callable(method):
+            try:
+                self.method_source_ = inspect.getsource(method).strip()
+            except (OSError, TypeError):
+                pass
         self.n_jobs = n_jobs
         self.parallel_backend = parallel_backend
         self.parallel_config = parallel_config
+        self.init_params_ = {
+            "model": model,
+            "datasets": datasets,
+            "X_train": X_train,
+            "y_train": y_train,
+            "X_test": X_test,
+            "y_test": y_test,
+            "X_oot": X_oot,
+            "y_oot": y_oot,
+            "feature_names": feature_names,
+            "target": target,
+            "overdue": overdue,
+            "dpds": dpds,
+            "method": method,
+            "method_kwargs": method_kwargs,
+            "n_jobs": n_jobs,
+            "parallel_backend": parallel_backend,
+            "parallel_config": parallel_config,
+        }
 
         # 在任何预测任务启动前完成公共配置校验；保留调用者传入字典的对象身份。
         validate_parallel_config(parallel_backend, parallel_config)
@@ -648,14 +743,103 @@ class ModelReport:
                 setattr(self, name, value)
             raise
 
+    def __getstate__(self):
+        """把 callable method 转为 cloudpickle 载荷，避免执行源码字符串。"""
+        state = dict(self.__dict__)
+        if callable(self.method):
+            try:
+                state["_method_payload"] = cloudpickle.dumps(self.method)
+            except Exception as exc:
+                raise SerializationError(f"method callable 无法序列化: {exc}") from exc
+            state["method"] = None
+            init_params = dict(state.get("init_params_", {}))
+            init_params["method"] = None
+            state["init_params_"] = init_params
+        return state
+
+    def __setstate__(self, state):
+        """从可信制品恢复 callable method。"""
+        payload = state.pop("_method_payload", None)
+        self.__dict__.update(state)
+        if payload is not None:
+            try:
+                self.method = cloudpickle.loads(payload)
+            except Exception as exc:
+                raise SerializationError(f"method callable 无法恢复: {exc}") from exc
+            self.init_params_["method"] = self.method
+
+    def _call_custom_method(self, X: pd.DataFrame):
+        """按签名同名注入上下文并严格调用 callable 一次。"""
+        signature = inspect.signature(self.method)
+        available: Dict[str, Any] = dict(self.init_params_)
+        for name, value in vars(self).items():
+            available.setdefault(name, value)
+        available.update(self.kwargs)
+        available.update(self.method_kwargs)
+        available.update({"self": self, "report": self, "x": X, "X": X})
+
+        args: List[Any] = []
+        call_kwargs: Dict[str, Any] = {}
+        consumed = set()
+        missing = []
+        accepts_kwargs = False
+        for parameter in signature.parameters.values():
+            if parameter.kind == inspect.Parameter.VAR_POSITIONAL:
+                continue
+            if parameter.kind == inspect.Parameter.VAR_KEYWORD:
+                accepts_kwargs = True
+                continue
+            if parameter.name in available:
+                consumed.add(parameter.name)
+                if parameter.kind == inspect.Parameter.POSITIONAL_ONLY:
+                    args.append(available[parameter.name])
+                else:
+                    call_kwargs[parameter.name] = available[parameter.name]
+            elif parameter.default is inspect.Parameter.empty:
+                missing.append(parameter.name)
+
+        if missing:
+            raise ValidationError(
+                f"method callable 缺少必填参数 {missing}，可用参数: {sorted(available)}"
+            )
+        if accepts_kwargs:
+            call_kwargs.update({name: value for name, value in available.items() if name not in consumed})
+        return self.method(*args, **call_kwargs)
+
+    def _normalize_method_result(self, result, X: pd.DataFrame, probability: bool) -> np.ndarray:
+        """把唯一方法结果规整为与数据集等长的一维有限数组。"""
+        return _normalize_prediction(self.model, result, len(X), probability=probability)
+
+    def _calculate_prediction(self, X: pd.DataFrame) -> np.ndarray:
+        """调用一次指定 method 并返回唯一数据集结果。"""
+        if callable(self.method):
+            return self._normalize_method_result(self._call_custom_method(X), X, probability=False)
+
+        return _invoke_named_prediction(self.model, X, self.method)
+
+    def _dataset_from_prepared(self, prepared) -> ReportDataset:
+        """在主进程调用 method，并在成功后构建数据集。"""
+        key, label, X, y, y_dict, X_for_pred = prepared
+        prediction = self._calculate_prediction(X_for_pred)
+        return ReportDataset(
+            name=key,
+            label=label,
+            X=X,
+            y=y,
+            prediction=prediction,
+            y_dict=y_dict,
+        )
+
     def _commit_dataset_specs(self, specs: List[Tuple[Any, ...]]) -> None:
         """并行计算一批数据集，并在全部成功后按输入顺序一次性提交。"""
         total_rows = sum(len(spec[3]) for spec in specs)
         max_columns = max((spec[3].shape[1] for spec in specs), default=1)
         data_bytes = sum(int(spec[3].memory_usage(deep=True).sum()) for spec in specs)
-        results = parallel_execute(
+        worker_method = None if callable(self.method) else self.method
+        tasks = [(*spec, worker_method) for spec in specs]
+        prepared = parallel_execute(
             _build_report_dataset,
-            specs,
+            tasks,
             n_jobs=self.n_jobs,
             parallel_backend=self.parallel_backend,
             parallel_config=self.parallel_config,
@@ -672,6 +856,11 @@ class ModelReport:
                 has_parallel_children=True,
                 operation="模型报告数据集预测",
             ),
+        )
+        results = (
+            [self._dataset_from_prepared(item) for item in prepared]
+            if callable(self.method)
+            else prepared
         )
         self._datasets = {dataset.name: dataset for dataset in results}
         self._datasets_info = {dataset.name: dataset.label for dataset in results}
@@ -851,9 +1040,10 @@ class ModelReport:
         y_dict: Optional[Dict[str, np.ndarray]] = None,
     ):
         spec = (self.model, key, label, X, y, y_dict, self._feature_names)
-        dataset = parallel_execute(
+        worker_method = None if callable(self.method) else self.method
+        prepared = parallel_execute(
             _build_report_dataset,
-            [spec],
+            [(*spec, worker_method)],
             n_jobs=self.n_jobs,
             parallel_backend=self.parallel_backend,
             parallel_config=self.parallel_config,
@@ -871,6 +1061,7 @@ class ModelReport:
                 operation="模型报告新增数据集预测",
             ),
         )[0]
+        dataset = self._dataset_from_prepared(prepared) if callable(self.method) else prepared
         # worker 成功后才提交；已有数据集与缓存不会被失败任务破坏。
         self._datasets[key] = dataset
         self._datasets_info[key] = label
@@ -1704,7 +1895,7 @@ class ModelReport:
 
     # ---------- 8. 图表导出 ----------
 
-    def _export_plots(
+    def _export_plots_serial(
         self,
         output_dir: Path,
         n_bins: int = 10,
@@ -1712,7 +1903,7 @@ class ModelReport:
         amount_col: Optional[str] = None,
         show_lift: bool = True,
     ) -> Tuple[Dict[str, List[str]], Dict[str, pd.DataFrame]]:
-        """导出所有图表，返回 (图表路径字典, PSI数据表字典)."""
+        """串行导出全部图表，作为线程实现的结果与性能参考."""
         from ..core.viz import ks_plot, bin_plot, corr_plot, psi_plot, lift_plot
 
         output_dir = Path(output_dir)
@@ -1901,6 +2092,269 @@ class ModelReport:
                 except Exception as exc:
                     logger.warning("生成模型评分 PSI 图表失败 [文件=%s]: %s", p, exc)
 
+        return paths, tables
+
+    def _export_plots(
+        self,
+        output_dir: Path,
+        n_bins: int = 10,
+        bin_method: str = "quantile",
+        amount_col: Optional[str] = None,
+        show_lift: bool = True,
+    ) -> Tuple[Dict[str, List[str]], Dict[str, pd.DataFrame]]:
+        """使用线程并行导出全部图表，并按原报告顺序汇总结果."""
+        from ..core.viz import bin_plot, corr_plot, ks_plot, lift_plot, psi_plot
+
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        plot_groups = []
+        task_labels = []
+
+        def add_plot_group(label: str, group) -> None:
+            plot_groups.append(group)
+            task_labels.append(label)
+
+        for ds_key, ds in self._datasets.items():
+            def render_model_group(ds_key=ds_key, ds=ds):
+                group_paths: Dict[str, List[str]] = {}
+                model_figs: List[str] = []
+                tag = ds.label
+
+                path = str(output_dir / f"bin_{ds_key}.png")
+                try:
+                    table = self.get_bin_table(ds_key, method=bin_method, max_n_bins=n_bins, margins=True)
+                    plot_data = table.iloc[:-1].reset_index(drop=True) if len(table) > 1 else table
+                    figure = bin_plot(
+                        plot_data,
+                        desc="模型评分",
+                        ending=f" {tag}",
+                        save=path,
+                        figsize=(12, 7),
+                    )
+                    _safe_close_plot_result(figure)
+                    model_figs.append(path)
+                except Exception as exc:
+                    logger.warning("生成模型评分分箱图失败 [数据集=%s, 文件=%s]: %s", tag, path, exc)
+
+                path = str(output_dir / f"ks_{ds_key}.png")
+                try:
+                    figure = ks_plot(ds.score, ds.y, title=f"{tag} KS曲线", save=path, figsize=(12, 7))
+                    _safe_close_plot_result(figure)
+                    model_figs.append(path)
+                except Exception as exc:
+                    logger.warning("生成模型 KS 图失败 [数据集=%s, 文件=%s]: %s", tag, path, exc)
+
+                if show_lift:
+                    path = str(output_dir / f"lift_{ds_key}.png")
+                    try:
+                        figure = lift_plot(
+                            ds.y,
+                            ds.y_proba,
+                            n_bins=20,
+                            title=f"{tag} LIFT曲线",
+                            save=path,
+                            figsize=(12, 7),
+                        )
+                        _safe_close_plot_result(figure)
+                        model_figs.append(path)
+                    except Exception as exc:
+                        logger.warning("生成模型 LIFT 图失败 [数据集=%s, 文件=%s]: %s", tag, path, exc)
+
+                if model_figs:
+                    group_paths[f"model_{ds_key}"] = model_figs
+                return group_paths, {}
+
+            add_plot_group(f"模型图表:{ds.label}", render_model_group)
+
+        importance = self.get_feature_importance()
+        top_features = importance.index.tolist()
+        if len(top_features) >= 2:
+            def render_corr_group():
+                group_paths: Dict[str, List[str]] = {}
+                path = str(output_dir / "feature_corr.png")
+                try:
+                    figure = corr_plot(self._datasets[self._train_key].X[top_features], annot=False, save=path)
+                    _safe_close_plot_result(figure)
+                    group_paths["feature_corr"] = [path]
+                except Exception as exc:
+                    logger.warning("生成特征相关性图失败 [数据集=训练集, 文件=%s]: %s", path, exc)
+                return group_paths, {}
+
+            add_plot_group("特征相关性图", render_corr_group)
+
+        ds_keys = list(self._datasets.keys())
+        for feature in top_features or self.feature_names:
+            def render_feature_group(feature=feature):
+                group_paths: Dict[str, List[str]] = {}
+                group_tables: Dict[str, pd.DataFrame] = {}
+
+                bin_figs: List[str] = []
+                for ds_key, ds in self._datasets.items():
+                    path = str(output_dir / f"bin_{feature}_{ds_key}.png")
+                    try:
+                        table = self.get_feature_bin_table(
+                            feature,
+                            ds_key,
+                            max_n_bins=n_bins,
+                            method=bin_method,
+                            margins=True,
+                        )
+                        plot_data = table.iloc[:-1].reset_index(drop=True) if len(table) > 1 else table
+                        figure = bin_plot(
+                            plot_data,
+                            desc=feature,
+                            ending=f" {ds.label}",
+                            save=path,
+                            figsize=(12, 7),
+                        )
+                        _safe_close_plot_result(figure)
+                        bin_figs.append(path)
+                    except Exception as exc:
+                        logger.warning(
+                            "生成特征分箱图失败 [特征=%s, 数据集=%s, 文件=%s]: %s",
+                            feature,
+                            ds.label,
+                            path,
+                            exc,
+                        )
+                if bin_figs:
+                    group_paths[f"feat_bin_{feature}"] = bin_figs
+
+                ks_figs: List[str] = []
+                for ds_key, ds in self._datasets.items():
+                    path = str(output_dir / f"ks_{feature}_{ds_key}.png")
+                    try:
+                        column = ds.X[feature].dropna()
+                        is_categorical = column.dtype == "object" or (
+                            column.dtype in ["int64", "float64"] and column.nunique() <= 10
+                        )
+                        if is_categorical:
+                            continue
+                        target = ds.y.loc[column.index]
+                        if target.nunique() < 2:
+                            continue
+                        figure = ks_plot(
+                            column,
+                            target,
+                            title=f"{ds.label} {feature}",
+                            save=path,
+                            figsize=(12, 7),
+                        )
+                        _safe_close_plot_result(figure)
+                        ks_figs.append(path)
+                    except Exception as exc:
+                        logger.warning(
+                            "生成特征 KS 图失败 [特征=%s, 数据集=%s, 文件=%s]: %s",
+                            feature,
+                            ds.label,
+                            path,
+                            exc,
+                        )
+                if ks_figs:
+                    group_paths[f"feat_hist_{feature}"] = ks_figs
+
+                if len(ds_keys) >= 2:
+                    path = str(output_dir / f"psi_{feature}.png")
+                    try:
+                        train_ds = self._datasets[ds_keys[0]]
+                        test_ds = self._datasets[ds_keys[1]]
+                        train_mask = train_ds.X[feature].notna()
+                        test_mask = test_ds.X[feature].notna()
+                        train_values = train_ds.X[feature][train_mask]
+                        test_values = test_ds.X[feature][test_mask]
+                        psi_target = np.concatenate(
+                            [
+                                train_ds.y.to_numpy()[train_mask.to_numpy()],
+                                test_ds.y.to_numpy()[test_mask.to_numpy()],
+                            ]
+                        )
+                        psi_result = psi_plot(
+                            train_values,
+                            test_values,
+                            y=psi_target,
+                            desc=feature,
+                            save=path,
+                            result=True,
+                            plot=True,
+                            figsize=(15, 8),
+                        )
+                        group_paths[f"feat_psi_{feature}"] = [path]
+                        if isinstance(psi_result, pd.DataFrame):
+                            group_tables[f"feat_psi_{feature}"] = psi_result
+                    except Exception as exc:
+                        logger.warning("生成特征 PSI 图表失败 [特征=%s, 文件=%s]: %s", feature, path, exc)
+
+                return group_paths, group_tables
+
+            add_plot_group(f"特征图表:{feature}", render_feature_group)
+
+        if hasattr(self.model, "lr_model"):
+            def render_scorecard_group():
+                group_paths: Dict[str, List[str]] = {}
+                group_tables: Dict[str, pd.DataFrame] = {}
+                path = str(output_dir / "plot_weights.png")
+                try:
+                    from ..core.viz import plot_weights
+
+                    figure = plot_weights(self.model.lr_model, save=path)
+                    _safe_close_plot_result(figure)
+                    group_paths["model_weights"] = [path]
+                except Exception as exc:
+                    logger.warning("生成评分卡权重图失败 [文件=%s]: %s", path, exc)
+
+                if len(ds_keys) >= 2:
+                    path = str(output_dir / "score_psi.png")
+                    try:
+                        train_ds = self._datasets[ds_keys[0]]
+                        test_ds = self._datasets[ds_keys[1]]
+                        score_train = pd.Series(train_ds.score)
+                        score_test = pd.Series(test_ds.score)
+                        train_mask = score_train.notna()
+                        test_mask = score_test.notna()
+                        score_train = score_train[train_mask]
+                        score_test = score_test[test_mask]
+                        score_target = np.concatenate(
+                            [
+                                train_ds.y.to_numpy()[train_mask.to_numpy()],
+                                test_ds.y.to_numpy()[test_mask.to_numpy()],
+                            ]
+                        )
+                        score_psi = psi_plot(
+                            score_train,
+                            score_test,
+                            y=score_target,
+                            desc="模型评分",
+                            save=path,
+                            result=True,
+                            plot=True,
+                            figsize=(15, 8),
+                        )
+                        group_paths["score_psi"] = [path]
+                        if isinstance(score_psi, pd.DataFrame):
+                            group_tables["score_psi"] = score_psi
+                    except Exception as exc:
+                        logger.warning("生成模型评分 PSI 图表失败 [文件=%s]: %s", path, exc)
+
+                return group_paths, group_tables
+
+            add_plot_group("评分卡图表", render_scorecard_group)
+
+        rendered_groups = parallel_execute(
+            _execute_plot_group,
+            plot_groups,
+            n_jobs=self.n_jobs,
+            parallel_backend="threading",
+            parallel_config={"batch_size": 1},
+            task_labels=task_labels,
+            default_backend="threading",
+            preserve_exceptions=True,
+        )
+
+        paths: Dict[str, List[str]] = {}
+        tables: Dict[str, pd.DataFrame] = {}
+        for group_paths, group_tables in rendered_groups:
+            paths.update(group_paths)
+            tables.update(group_tables)
         return paths, tables
 
     # ---------- 9. 模型摘要 ----------
@@ -2138,7 +2592,16 @@ class ModelReport:
         :param show_importance: 是否显示入模变量重要性及分布汇总章节
         :param loc_cols: 定位字段（订单号等），支持 str 或 List[str]，仅用于生产订单测试用例
         """
-        from ..excel import ExcelWriter, dataframe2excel
+        from ..excel import ExcelWriter, dataframe2excel as _dataframe2excel
+
+        def dataframe2excel(*args, **kwargs):
+            """模型报告由大量小表组成，统一使用保样式快速写入。"""
+            data = args[0] if args else kwargs.get("data")
+            if isinstance(data, pd.DataFrame) and data.empty:
+                for option in ("percent_cols", "custom_cols", "condition_cols", "color_cols"):
+                    kwargs[option] = None
+            kwargs["speed"] = "fast"
+            return _dataframe2excel(*args, **kwargs)
 
         self._precompute_excel_tables(
             n_bins=n_bins,
@@ -3034,8 +3497,6 @@ class ModelReport:
                     start_row=end_row + 1,
                 )
 
-        writer.set_freeze_panes(ws, (5, 4))
-
         # ============================================================
         # 4-稳定性分析 Sheet
         # ============================================================
@@ -3414,19 +3875,6 @@ class ModelReport:
         # ============================================================
         # 保存
         # ============================================================
-        freeze_panes = {
-            "1-基本信息": (5, 2),
-            "2-模型性能": (5, 2),
-            "3-入模变量分析": (5, 4),
-            "4-稳定性分析": (5, 2),
-            "5-模型参数": (5, 2),
-            "6-模型部署需求": (5, 2),
-        }
-        for sheet_name, freeze_at in freeze_panes.items():
-            worksheet = writer.workbook[sheet_name]
-            if worksheet.freeze_panes is None:
-                writer.set_freeze_panes(worksheet, freeze_at)
-
         for sheet_name in [
             "目录",
             "1-基本信息",
@@ -3494,9 +3942,12 @@ def auto_model_report(
     show_importance: bool = True,
     data_source: Optional[str] = None,
     loc_cols: Optional[Union[str, List[str]]] = None,
+    method: Union[str, Callable] = "predict_proba",
+    method_kwargs: Optional[Dict[str, Any]] = None,
     n_jobs=-1,
     parallel_backend: Optional[str] = None,
     parallel_config: Optional[Dict[str, Any]] = None,
+    **kwargs,
 ) -> ModelReport:
     """一键生成模型报告.
 
@@ -3578,9 +4029,12 @@ def auto_model_report(
     :param show_importance: 是否在报告中显示特征重要性
     :param data_source: 数据源描述
     :param loc_cols: 定位字段（订单号等），支持 str 或 List[str]，用于生产测试用例列
+    :param method: 数据集唯一预测方法，默认 ``predict_proba``，也支持 callable
+    :param method_kwargs: callable 同名参数的显式覆盖字典
     :param n_jobs: 并行工作数；-1 自动保留 CPU，None 使用兼容串行模式
     :param parallel_backend: joblib 后端，如 ``threading`` 或 ``loky``
     :param parallel_config: joblib 其他并行配置
+    :param kwargs: 透传给 callable 的额外同名参数
     :return: ModelReport 实例
     """
     report = ModelReport(
@@ -3596,9 +4050,12 @@ def auto_model_report(
         target=target,
         overdue=overdue,
         dpds=dpds,
+        method=method,
+        method_kwargs=method_kwargs,
         n_jobs=n_jobs,
         parallel_backend=parallel_backend,
         parallel_config=parallel_config,
+        **kwargs,
     )
 
     if verbose:

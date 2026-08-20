@@ -44,11 +44,11 @@
 - sklearn 校准指南：https://scikit-learn.org/stable/modules/calibration.html
 
 **参考样例**
->>> from hscredit.core.models import XGBoostRiskModel
+>>> from hscredit.core.models import XGBoost
 >>> from hscredit.core.models.evaluation import ProbabilityCalibrator
 >>>
 >>> # 训练基础模型
->>> model = XGBoostRiskModel()
+>>> model = XGBoost()
 >>> model.fit(X_train, y_train)
 >>>
 >>> # 创建校准器
@@ -1041,11 +1041,11 @@ class CalibratedModel(ArtifactSerializableMixin, BaseEstimator, ClassifierMixin)
 
     **参考样例**
 
-    >>> from hscredit.core.models import XGBoostRiskModel
+    >>> from hscredit.core.models import XGBoost
     >>> from hscredit.core.models.evaluation import ProbabilityCalibrator, CalibratedModel
     >>>
     >>> # 训练基础模型
-    >>> model = XGBoostRiskModel()
+    >>> model = XGBoost()
     >>> model.fit(X_train, y_train)
     >>>
     >>> # 创建校准器并拟合

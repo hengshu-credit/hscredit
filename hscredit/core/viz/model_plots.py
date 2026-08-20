@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-from .utils import DEFAULT_COLORS, setup_axis_style, save_figure
+from .utils import DEFAULT_COLORS, setup_axis_style, save_figure, _create_subplots, _tight_layout
 
 
 def plot_weights(summary, save=None, figsize=(15, 8), fontsize=14, colors=None, ax=None):
@@ -146,7 +146,7 @@ def plot_weights(summary, save=None, figsize=(15, 8), fontsize=14, colors=None, 
         fig = ax.figure
     else:
         return_ax = False
-        fig, ax = plt.subplots(1, 1, figsize=figsize)
+        fig, ax = _create_subplots(1, 1, figsize=figsize)
     
     # 绘制误差图
     ax.errorbar(
@@ -179,7 +179,7 @@ def plot_weights(summary, save=None, figsize=(15, 8), fontsize=14, colors=None, 
 
     if not return_ax:
         # 自动调整布局
-        plt.tight_layout()
+        _tight_layout(fig)
         save_figure(fig, save)
         return fig
     else:

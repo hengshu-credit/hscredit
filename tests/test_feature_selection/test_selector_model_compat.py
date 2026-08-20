@@ -1,8 +1,8 @@
 """测试嵌入法/包装法选择器对所有模型类型的兼容性.
 
 覆盖:
-- hscredit 模型: XGBoostRiskModel, LightGBMRiskModel, CatBoostRiskModel,
-  RandomForestRiskModel, ExtraTreesRiskModel, GradientBoostingRiskModel, LogisticRegression
+- hscredit 模型: XGBoost, LightGBM, CatBoost,
+  RandomForest, ExtraTrees, GradientBoosting, LogisticRegression
 - sklearn 模型: LogisticRegression, RandomForestClassifier, GradientBoostingClassifier, SVC(linear)
 - 原生 xgboost, lightgbm, catboost sklearn API
 """

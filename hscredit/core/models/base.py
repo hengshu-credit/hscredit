@@ -565,8 +565,8 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, BaseE
 
         **参考样例**
 
-        >>> model = XGBoostRiskModel.load('model.pkl')
-        >>> model = LightGBMRiskModel.load('model.joblib')
+        >>> model = XGBoost.load('model.pkl')
+        >>> model = LightGBM.load('model.joblib')
         >>> model = BaseRiskModel.load('model.pkl')  # 自动推断模型类型
         """
         from ...utils import load_pickle
@@ -612,6 +612,8 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, BaseE
         native_path = str(Path(path).with_suffix(".native"))
         self._model.save_model(native_path)
         meta["native_model_path"] = str(Path(native_path).name)
+        transformer_path = self._save_score_transformer_sidecar(native_path)
+        meta["score_transformer_path"] = str(Path(transformer_path).name)
 
         with open(path, "w", encoding="utf-8") as f:
             json.dump(meta, f, ensure_ascii=False, indent=2)
@@ -644,7 +646,15 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, BaseE
         model.n_features_in_ = meta.get("n_features_in_")
         model.feature_names_in_ = meta.get("feature_names_in_")
         model.classes_ = np.array(meta.get("classes_", [0, 1]))
-        model._restore_probability_scorecard(meta.get("probability_scorecard"))
+        transformer_path = meta.get("score_transformer_path")
+        if transformer_path:
+            native_transformer_base = str(Path(path).parent / transformer_path)
+            suffix = ".score_transformer.joblib"
+            if not native_transformer_base.endswith(suffix):
+                raise ValueError("JSON模型元数据中的评分转换器路径无效")
+            model._load_score_transformer_sidecar(native_transformer_base[: -len(suffix)], required=True)
+        else:
+            model._restore_probability_scorecard(meta.get("probability_scorecard"))
 
         return model
 
@@ -683,12 +693,12 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, BaseE
 
         **参考样例**
 
-        >>> model = XGBoostRiskModel()
+        >>> model = XGBoost()
         >>> best_model = model.tune(X_train, y_train, n_trials=50)
         >>> proba = best_model.predict_proba(X_test)
 
         >>> # scorecardpipeline风格
-        >>> model = LightGBMRiskModel(target='target')
+        >>> model = LightGBM(target='target')
         >>> best_model = model.tune(df, n_trials=50)
         """
         from .tuning import ModelTuner
@@ -862,7 +872,7 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, BaseE
 
         **参考样例**
 
-        >>> model = XGBoostRiskModel()
+        >>> model = XGBoost()
         >>> model.fit(X, y)
         >>> native_model = model.get_native_model()
         >>> leaf_indices = native_model.apply(X)

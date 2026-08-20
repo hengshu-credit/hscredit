@@ -1,5 +1,8 @@
 """Tests for model_report module."""
 
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
@@ -58,6 +61,156 @@ class ReversedClassModel(MockModel):
     def predict_proba(self, X):
         proba = super().predict_proba(X)
         return proba[:, ::-1]
+
+
+def test_model_report_excel_tables_always_use_fast_writer(tmp_path, monkeypatch):
+    """模型报告由大量小表组成，不能逐表退回普通逐单元格写入。"""
+    from hscredit.excel import ExcelWriter
+
+    observed_speeds = []
+    original = ExcelWriter.insert_df2sheet
+
+    def capture_speed(self, worksheet, data, insert_space, *args, **kwargs):
+        observed_speeds.append(kwargs.get("speed", "auto"))
+        return original(self, worksheet, data, insert_space, *args, **kwargs)
+
+    monkeypatch.setattr(ExcelWriter, "insert_df2sheet", capture_speed)
+    X = pd.DataFrame({"f0": np.linspace(0.0, 1.0, 20)})
+    y = pd.Series([0, 1] * 10)
+    report = ModelReport(MockModel(["f0"]), X_train=X, y_train=y, feature_names=["f0"], n_jobs=1)
+
+    report.to_excel(str(tmp_path / "fast-report.xlsx"), with_plots=False)
+
+    assert observed_speeds
+    assert set(observed_speeds) == {"fast"}
+
+
+def test_model_report_does_not_freeze_any_worksheet(tmp_path):
+    """模型报告每个 Sheet 都应保持可自由滚动，不设置冻结窗口。"""
+    X = pd.DataFrame({"f0": np.linspace(0.0, 1.0, 20)})
+    y = pd.Series([0, 1] * 10)
+    output = tmp_path / "no-freeze-report.xlsx"
+    report = ModelReport(MockModel(["f0"]), X_train=X, y_train=y, feature_names=["f0"], n_jobs=1)
+
+    report.to_excel(str(output), with_plots=False)
+
+    workbook = load_workbook(output)
+    assert {sheet.title: sheet.freeze_panes for sheet in workbook.worksheets} == {
+        "目录": None,
+        "1-基本信息": None,
+        "2-模型性能": None,
+        "3-入模变量分析": None,
+        "4-稳定性分析": None,
+        "5-模型参数": None,
+        "6-模型部署需求": None,
+    }
+
+
+def test_export_plots_runs_all_plot_groups_concurrently_and_preserves_order(tmp_path, monkeypatch):
+    """完整图表必须在线程中重叠执行，并按原报告顺序返回全部路径和 PSI 表。"""
+    state = {"active": 0, "max_active": 0}
+    lock = threading.Lock()
+    main_thread_id = threading.get_ident()
+    thread_ids = set()
+    calls = []
+
+    def record_plot(kind, *, psi=False):
+        def plot(*args, save=None, result=False, **kwargs):
+            assert "dpi" not in kwargs
+            with lock:
+                state["active"] += 1
+                state["max_active"] = max(state["max_active"], state["active"])
+                thread_ids.add(threading.get_ident())
+                calls.append((kind, Path(save).name, threading.get_ident()))
+            time.sleep(0.02)
+            Path(save).touch()
+            with lock:
+                state["active"] -= 1
+            if psi and result:
+                return pd.DataFrame({"指标名称": [kwargs.get("desc", "")], "分箱": ["全部"]})
+            return None
+
+        return plot
+
+    monkeypatch.setattr("hscredit.core.viz.bin_plot", record_plot("bin"))
+    monkeypatch.setattr("hscredit.core.viz.ks_plot", record_plot("ks"))
+    monkeypatch.setattr("hscredit.core.viz.lift_plot", record_plot("lift"))
+    monkeypatch.setattr("hscredit.core.viz.corr_plot", record_plot("corr"))
+    monkeypatch.setattr("hscredit.core.viz.psi_plot", record_plot("psi", psi=True))
+
+    X = pd.DataFrame(
+        {
+            "f0": np.linspace(0.0, 1.0, 40),
+            "f1": np.linspace(1.0, 3.0, 40) ** 2,
+            "target": [0, 1] * 20,
+        }
+    )
+    report = ModelReport(
+        MockModel(["f0", "f1"]),
+        datasets={"train": X, "test": X.copy()},
+        target="target",
+        feature_names=["f0", "f1"],
+        n_jobs=4,
+    )
+
+    paths, tables = report._export_plots(tmp_path)
+
+    assert state["max_active"] >= 2
+    assert len(thread_ids) >= 2
+    assert all(thread_id != main_thread_id for _, _, thread_id in calls)
+    assert len(calls) == 17
+    assert list(paths) == [
+        "model_train",
+        "model_test",
+        "feature_corr",
+        "feat_bin_f0",
+        "feat_hist_f0",
+        "feat_psi_f0",
+        "feat_bin_f1",
+        "feat_hist_f1",
+        "feat_psi_f1",
+    ]
+    assert list(tables) == ["feat_psi_f0", "feat_psi_f1"]
+    assert sum(len(figures) for figures in paths.values()) == 17
+
+
+def test_threaded_plot_context_uses_agg_canvas_without_switching_user_backend():
+    """报告线程必须使用独立 Agg 画布，且不能改变调用者的交互式 backend。"""
+    import matplotlib
+    import matplotlib.pyplot as plt
+    from hscredit.core.viz import utils as viz_utils
+
+    original_backend = matplotlib.get_backend()
+    original_subplots = plt.subplots
+
+    def build_figure(_):
+        with model_report_module._threaded_agg_rendering():
+            figure, _ = viz_utils._create_subplots(figsize=(2, 1))
+            viz_utils._tight_layout(figure)
+        return figure.canvas.__class__.__name__
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        canvas_names = list(executor.map(build_figure, range(2)))
+
+    assert canvas_names == ["FigureCanvasAgg", "FigureCanvasAgg"]
+    assert matplotlib.get_backend() == original_backend
+    assert plt.subplots is original_subplots
+
+
+def test_threaded_plot_context_does_not_patch_unrelated_pyplot_calls(monkeypatch):
+    """报告线程的 Agg 上下文不能改变其他调用线程看到的 pyplot 函数。"""
+    import matplotlib.pyplot as plt
+
+    sentinel = object()
+
+    def caller_subplots(*args, **kwargs):
+        return sentinel, None
+
+    monkeypatch.setattr(plt, "subplots", caller_subplots)
+    with model_report_module._threaded_agg_rendering():
+        figure, _ = plt.subplots()
+
+    assert figure is sentinel
 
 
 def test_feature_summary_inherits_model_report_parallel_configuration(monkeypatch):
@@ -822,8 +975,7 @@ class TestModelReportRealDataContract:
             assert summary_cell.hyperlink.location == f"#'3-入模变量分析'!{title_cell.coordinate}"
             assert title_cell.hyperlink.location == f"#'3-入模变量分析'!{summary_cell.coordinate}"
 
-        for sheet_name in ["1-基本信息", "2-模型性能", "3-入模变量分析", "4-稳定性分析", "5-模型参数", "6-模型部署需求"]:
-            assert workbook[sheet_name].freeze_panes is not None
+        assert all(workbook[sheet_name].freeze_panes is None for sheet_name in self.EXPECTED_SHEETS)
         for sheet_name in ["2-模型性能", "6-模型部署需求"]:
             ref = workbook[sheet_name].auto_filter.ref
             assert ref and ":" in ref

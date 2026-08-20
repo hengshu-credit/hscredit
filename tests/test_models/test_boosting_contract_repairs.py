@@ -15,6 +15,14 @@ def _binary_data():
     return make_classification(n_samples=100, n_features=4, random_state=23)
 
 
+class _ProbabilityFake:
+    """补齐真实分类器必备的二维概率接口。"""
+
+    def predict_proba(self, X):
+        positive = np.full(len(X), 0.5, dtype=float)
+        return np.column_stack([1.0 - positive, positive])
+
+
 def test_importing_hscredit_does_not_import_shap_eagerly():
     code = "import sys, hscredit; assert 'shap' not in sys.modules"
     result = subprocess.run(
@@ -29,7 +37,7 @@ def test_importing_hscredit_does_not_import_shap_eagerly():
 def test_xgboost_without_early_stopping_uses_all_rows_and_forwards_fit_params(monkeypatch):
     from hscredit.core.models.boosting import xgboost_model as module
 
-    class FakeXGBClassifier:
+    class FakeXGBClassifier(_ProbabilityFake):
         instance = None
 
         def __init__(self, **params):
@@ -48,7 +56,7 @@ def test_xgboost_without_early_stopping_uses_all_rows_and_forwards_fit_params(mo
     X, y = _binary_data()
 
     base_margin = np.zeros(len(y))
-    module.XGBoostRiskModel(validation_fraction=0.2).fit(X, y, base_margin=base_margin)
+    module.XGBoost(validation_fraction=0.2).fit(X, y, base_margin=base_margin)
 
     fitted = FakeXGBClassifier.instance
     assert fitted.n_rows == len(y)
@@ -59,7 +67,7 @@ def test_xgboost_without_early_stopping_uses_all_rows_and_forwards_fit_params(mo
 def test_xgboost_auto_split_slices_row_fit_params_and_validation_weights(monkeypatch):
     from hscredit.core.models.boosting import xgboost_model as module
 
-    class FakeXGBClassifier:
+    class FakeXGBClassifier(_ProbabilityFake):
         instance = None
 
         def __init__(self, **params):
@@ -75,7 +83,7 @@ def test_xgboost_auto_split_slices_row_fit_params_and_validation_weights(monkeyp
 
     monkeypatch.setattr(module.xgb, "XGBClassifier", FakeXGBClassifier)
     X, y = _binary_data()
-    model = module.XGBoostRiskModel(validation_fraction=0.2, early_stopping_rounds=2, random_state=23)
+    model = module.XGBoost(validation_fraction=0.2, early_stopping_rounds=2, random_state=23)
     model.fit(X, y, sample_weight=np.arange(1, 101), base_margin=np.arange(100))
 
     fitted = FakeXGBClassifier.instance
@@ -89,7 +97,7 @@ def test_xgboost_auto_split_slices_row_fit_params_and_validation_weights(monkeyp
 def test_xgboost_prediction_reorders_training_fields_and_ignores_extra_fields(monkeypatch):
     from hscredit.core.models.boosting import xgboost_model as module
 
-    class FakeXGBClassifier:
+    class FakeXGBClassifier(_ProbabilityFake):
         def __init__(self, **params):
             self.best_iteration = None
             self.best_score = None
@@ -105,7 +113,7 @@ def test_xgboost_prediction_reorders_training_fields_and_ignores_extra_fields(mo
 
     monkeypatch.setattr(module.xgb, "XGBClassifier", FakeXGBClassifier)
     train = pd.DataFrame({"a": [1.0, 2.0], "b": [3.0, 4.0]})
-    model = module.XGBoostRiskModel(validation_fraction=0).fit(train, np.array([0, 1]))
+    model = module.XGBoost(validation_fraction=0).fit(train, np.array([0, 1]))
 
     prediction = pd.DataFrame({"b": [30.0], "extra": [99.0], "a": [10.0]})
     model.predict_proba(prediction)
@@ -117,10 +125,10 @@ def test_xgboost_prediction_reorders_training_fields_and_ignores_extra_fields(mo
 
 @pytest.mark.skipif(importlib.util.find_spec("xgboost") is None, reason="XGBoost未安装")
 def test_xgboost_ks_metric_is_actually_evaluated():
-    from hscredit.core.models import XGBoostRiskModel
+    from hscredit.core.models import XGBoost
 
     X, y = _binary_data()
-    model = XGBoostRiskModel(
+    model = XGBoost(
         n_estimators=2,
         eval_metric="ks",
         validation_fraction=0,
@@ -131,19 +139,19 @@ def test_xgboost_ks_metric_is_actually_evaluated():
 
 
 def test_xgboost_predict_rejects_unfitted_model():
-    from hscredit.core.models import XGBoostRiskModel
+    from hscredit.core.models import XGBoost
 
     with pytest.raises(NotFittedError, match="尚未拟合"):
-        XGBoostRiskModel(n_estimators=1).predict_proba(np.zeros((2, 4)))
+        XGBoost(n_estimators=1).predict_proba(np.zeros((2, 4)))
 
 
 @pytest.mark.skipif(importlib.util.find_spec("xgboost") is None, reason="XGBoost未安装")
 def test_xgboost_json_round_trip_preserves_probability_scorecard(tmp_path):
-    from hscredit.core.models import XGBoostRiskModel
+    from hscredit.core.models import XGBoost
 
     X, y = _binary_data()
     X = pd.DataFrame(X, columns=["a", "b", "c", "d"])
-    model = XGBoostRiskModel(
+    model = XGBoost(
         n_estimators=2,
         validation_fraction=0,
         random_state=23,
@@ -153,8 +161,10 @@ def test_xgboost_json_round_trip_preserves_probability_scorecard(tmp_path):
 
     path = tmp_path / "xgb.json"
     model.save(path)
-    restored = XGBoostRiskModel.load(path)
+    restored = XGBoost.load(path)
 
+    assert (tmp_path / "xgb.native.score_transformer.joblib").exists()
+    assert restored.scorecard_.transformer_ is restored.score_transformer_
     np.testing.assert_array_equal(restored.predict_score(X.iloc[:5]), expected)
 
 
@@ -164,7 +174,7 @@ def test_lightgbm_without_early_stopping_uses_all_rows_and_forwards_fit_params(m
     except Exception as exc:
         pytest.skip(f"当前环境无法导入LightGBM: {exc}")
 
-    class FakeLGBMClassifier:
+    class FakeLGBMClassifier(_ProbabilityFake):
         instance = None
 
         def __init__(self, **params):
@@ -182,12 +192,40 @@ def test_lightgbm_without_early_stopping_uses_all_rows_and_forwards_fit_params(m
     monkeypatch.setattr(module.lgb, "LGBMClassifier", FakeLGBMClassifier)
     X, y = _binary_data()
 
-    module.LightGBMRiskModel(validation_fraction=0.2).fit(X, y, init_model="sentinel")
+    module.LightGBM(validation_fraction=0.2).fit(X, y, init_model="sentinel")
 
     fitted = FakeLGBMClassifier.instance
     assert fitted.n_rows == len(y)
     assert "eval_set" not in fitted.fit_kwargs
     assert fitted.fit_kwargs["init_model"] == "sentinel"
+
+
+def test_lightgbm_score_transformer_uses_wrapper_margin_normalization(monkeypatch):
+    """自定义目标的一维 margin 必须先经 wrapper sigmoid 再拟合评分转换器。"""
+    try:
+        from hscredit.core.models.boosting import lightgbm_model as module
+    except Exception as exc:
+        pytest.skip(f"当前环境无法导入LightGBM: {exc}")
+
+    class FakeLGBMClassifier:
+        def __init__(self, **params):
+            self.best_iteration_ = None
+            self.best_score_ = None
+            self.evals_result_ = {}
+
+        def fit(self, X, y, **kwargs):
+            return self
+
+        def predict_proba(self, X):
+            return np.zeros(len(X), dtype=float)
+
+    monkeypatch.setattr(module, "LIGHTGBM_AVAILABLE", True)
+    monkeypatch.setattr(module.lgb, "LGBMClassifier", FakeLGBMClassifier)
+    X, y = _binary_data()
+
+    model = module.LightGBM(validation_fraction=0).fit(X, y)
+
+    np.testing.assert_allclose(model.score_transformer_.train_proba_, 0.5)
 
 
 def test_lightgbm_ks_metric_is_forwarded_as_callable(monkeypatch):
@@ -196,7 +234,7 @@ def test_lightgbm_ks_metric_is_forwarded_as_callable(monkeypatch):
     except Exception as exc:
         pytest.skip(f"当前环境无法导入LightGBM: {exc}")
 
-    class FakeLGBMClassifier:
+    class FakeLGBMClassifier(_ProbabilityFake):
         instance = None
 
         def __init__(self, **params):
@@ -212,7 +250,7 @@ def test_lightgbm_ks_metric_is_forwarded_as_callable(monkeypatch):
 
     monkeypatch.setattr(module.lgb, "LGBMClassifier", FakeLGBMClassifier)
     X, y = _binary_data()
-    module.LightGBMRiskModel(n_estimators=2, eval_metric=["auc", "ks"], validation_fraction=0).fit(
+    module.LightGBM(n_estimators=2, eval_metric=["auc", "ks"], validation_fraction=0).fit(
         X, y, eval_set=[(X, y)]
     )
 
@@ -227,7 +265,7 @@ def test_lightgbm_merges_user_callbacks_with_internal_callbacks(monkeypatch):
     except Exception as exc:
         pytest.skip(f"当前环境无法导入LightGBM: {exc}")
 
-    class FakeLGBMClassifier:
+    class FakeLGBMClassifier(_ProbabilityFake):
         instance = None
 
         def __init__(self, **params):
@@ -243,7 +281,7 @@ def test_lightgbm_merges_user_callbacks_with_internal_callbacks(monkeypatch):
     monkeypatch.setattr(module.lgb, "LGBMClassifier", FakeLGBMClassifier)
     X, y = _binary_data()
     user_callback = object()
-    module.LightGBMRiskModel(
+    module.LightGBM(
         n_estimators=2,
         early_stopping_rounds=2,
         validation_fraction=0,
@@ -260,7 +298,7 @@ def test_lightgbm_auto_split_slices_init_score_and_validation_weights(monkeypatc
     except Exception as exc:
         pytest.skip(f"当前环境无法导入LightGBM: {exc}")
 
-    class FakeLGBMClassifier:
+    class FakeLGBMClassifier(_ProbabilityFake):
         instance = None
 
         def __init__(self, **params):
@@ -276,7 +314,7 @@ def test_lightgbm_auto_split_slices_init_score_and_validation_weights(monkeypatc
 
     monkeypatch.setattr(module.lgb, "LGBMClassifier", FakeLGBMClassifier)
     X, y = _binary_data()
-    module.LightGBMRiskModel(validation_fraction=0.2, early_stopping_rounds=2, random_state=23).fit(
+    module.LightGBM(validation_fraction=0.2, early_stopping_rounds=2, random_state=23).fit(
         X, y, sample_weight=np.arange(1, 101), init_score=np.arange(100)
     )
 
@@ -290,10 +328,10 @@ def test_lightgbm_auto_split_slices_init_score_and_validation_weights(monkeypatc
 
 @pytest.mark.skipif(importlib.util.find_spec("lightgbm") is None, reason="LightGBM未安装")
 def test_lightgbm_ks_metric_is_actually_evaluated():
-    from hscredit.core.models import LightGBMRiskModel
+    from hscredit.core.models import LightGBM
 
     X, y = _binary_data()
-    model = LightGBMRiskModel(
+    model = LightGBM(
         n_estimators=2,
         eval_metric="ks",
         validation_fraction=0,
@@ -306,7 +344,7 @@ def test_lightgbm_ks_metric_is_actually_evaluated():
 def test_catboost_without_early_stopping_uses_all_rows_and_forwards_fit_params(monkeypatch):
     from hscredit.core.models.boosting import catboost_model as module
 
-    class FakeCatBoostClassifier:
+    class FakeCatBoostClassifier(_ProbabilityFake):
         instance = None
 
         def __init__(self, **params):
@@ -330,7 +368,7 @@ def test_catboost_without_early_stopping_uses_all_rows_and_forwards_fit_params(m
     monkeypatch.setattr(module.cb, "CatBoostClassifier", FakeCatBoostClassifier)
     X, y = _binary_data()
 
-    module.CatBoostRiskModel(validation_fraction=0.2).fit(X, y, baseline=np.zeros(len(y)))
+    module.CatBoost(validation_fraction=0.2).fit(X, y, baseline=np.zeros(len(y)))
 
     fitted = FakeCatBoostClassifier.instance
     assert fitted.n_rows == len(y)
@@ -341,7 +379,7 @@ def test_catboost_without_early_stopping_uses_all_rows_and_forwards_fit_params(m
 def test_catboost_ks_metric_is_configured_as_custom_metric(monkeypatch):
     from hscredit.core.models.boosting import catboost_model as module
 
-    class FakeCatBoostClassifier:
+    class FakeCatBoostClassifier(_ProbabilityFake):
         instance = None
 
         def __init__(self, **params):
@@ -362,7 +400,7 @@ def test_catboost_ks_metric_is_configured_as_custom_metric(monkeypatch):
 
     monkeypatch.setattr(module.cb, "CatBoostClassifier", FakeCatBoostClassifier)
     X, y = _binary_data()
-    module.CatBoostRiskModel(iterations=2, eval_metric=["auc", "ks"], validation_fraction=0).fit(
+    module.CatBoost(iterations=2, eval_metric=["auc", "ks"], validation_fraction=0).fit(
         X, y, eval_set=[(X, y)]
     )
 
@@ -380,7 +418,7 @@ def test_catboost_auto_split_slices_baseline_and_uses_weighted_eval_pool(monkeyp
             self.y = y
             self.kwargs = kwargs
 
-    class FakeCatBoostClassifier:
+    class FakeCatBoostClassifier(_ProbabilityFake):
         instance = None
 
         def __init__(self, **params):
@@ -403,7 +441,7 @@ def test_catboost_auto_split_slices_baseline_and_uses_weighted_eval_pool(monkeyp
     monkeypatch.setattr(module.cb, "Pool", FakePool)
     monkeypatch.setattr(module.cb, "CatBoostClassifier", FakeCatBoostClassifier)
     X, y = _binary_data()
-    module.CatBoostRiskModel(validation_fraction=0.2, early_stopping_rounds=2, random_state=23).fit(
+    module.CatBoost(validation_fraction=0.2, early_stopping_rounds=2, random_state=23).fit(
         X, y, sample_weight=np.arange(1, 101), baseline=np.arange(100)
     )
 
@@ -418,10 +456,10 @@ def test_catboost_auto_split_slices_baseline_and_uses_weighted_eval_pool(monkeyp
 
 @pytest.mark.skipif(importlib.util.find_spec("catboost") is None, reason="CatBoost未安装")
 def test_catboost_ks_metric_is_actually_evaluated():
-    from hscredit.core.models import CatBoostRiskModel
+    from hscredit.core.models import CatBoost
 
     X, y = _binary_data()
-    model = CatBoostRiskModel(
+    model = CatBoost(
         iterations=2,
         eval_metric="ks",
         validation_fraction=0,
@@ -437,7 +475,7 @@ def test_ngboost_forwards_fit_params(monkeypatch):
     except Exception as exc:
         pytest.skip(f"当前环境无法导入NGBoost: {exc}")
 
-    class FakeNGBClassifier:
+    class FakeNGBClassifier(_ProbabilityFake):
         instance = None
 
         def __init__(self, **params):
@@ -453,7 +491,7 @@ def test_ngboost_forwards_fit_params(monkeypatch):
     monkeypatch.setattr(module, "NGBClassifier", FakeNGBClassifier)
     X, y = _binary_data()
     sentinel = lambda *args: 0.0
-    module.NGBoostRiskModel(validation_fraction=0).fit(X, y, train_loss_monitor=sentinel)
+    module.NGBoost(validation_fraction=0).fit(X, y, train_loss_monitor=sentinel)
 
     fitted = FakeNGBClassifier.instance
     assert fitted.n_rows == len(y)
@@ -466,7 +504,7 @@ def test_ngboost_auto_split_preserves_validation_weights(monkeypatch):
     except Exception as exc:
         pytest.skip(f"当前环境无法导入NGBoost: {exc}")
 
-    class FakeNGBClassifier:
+    class FakeNGBClassifier(_ProbabilityFake):
         instance = None
 
         def __init__(self, **params):
@@ -480,7 +518,7 @@ def test_ngboost_auto_split_preserves_validation_weights(monkeypatch):
 
     monkeypatch.setattr(module, "NGBClassifier", FakeNGBClassifier)
     X, y = _binary_data()
-    module.NGBoostRiskModel(validation_fraction=0.2, early_stopping_rounds=2, random_state=23).fit(
+    module.NGBoost(validation_fraction=0.2, early_stopping_rounds=2, random_state=23).fit(
         X, y, sample_weight=np.arange(1, 101)
     )
 

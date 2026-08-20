@@ -91,10 +91,10 @@ def test_get_best_model_returns_model_refitted_on_full_input():
 
 
 def test_risk_model_tune_exposes_one_shared_tuner_with_analysis_results():
-    from hscredit.core.models import RandomForestRiskModel
+    from hscredit.core.models import RandomForest
 
     X, y = _data()
-    model = RandomForestRiskModel(n_estimators=2, n_jobs=1, random_state=43)
+    model = RandomForest(n_estimators=2, n_jobs=1, random_state=43)
 
     assert model.tuner is None
 

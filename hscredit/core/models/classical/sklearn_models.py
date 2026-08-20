@@ -1,16 +1,18 @@
 """基于sklearn的风控模型.
 
-提供RandomForest、ExtraTrees、GradientBoosting等模型的统一封装。
+提供 RandomForest、ExtraTrees、GradientBoosting、SVM 和 DecisionTreeClassifier 等模型的统一封装。
 
 **参考样例**
 
->>> from hscredit.core.models import RandomForestRiskModel, GradientBoostingRiskModel
->>> model = RandomForestRiskModel(n_estimators=100, max_depth=10)  # 随机森林模型
+>>> from hscredit.core.models import RandomForest, GradientBoosting
+>>> model = RandomForest(n_estimators=100, max_depth=10)  # 随机森林模型
 >>> model.fit(X_train, y_train)  # 训练模型
 >>> proba = model.predict_proba(X_test)  # 预测概率
 """
 
+import inspect
 from typing import Any, Dict, List, Optional, Tuple, Union
+
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import (
@@ -18,7 +20,10 @@ from sklearn.ensemble import (
     ExtraTreesClassifier,
     GradientBoostingClassifier,
 )
+from sklearn.svm import SVC
+from sklearn.tree import DecisionTreeClassifier as SklearnDecisionTreeClassifier
 
+from ....exceptions import ValidationError
 from ..base import BaseRiskModel
 
 
@@ -29,8 +34,8 @@ class SklearnRiskModel(BaseRiskModel):
     继承 :class:`~hscredit.core.models.base.BaseRiskModel`，提供 ``fit`` /
     ``predict`` / ``predict_proba`` / ``get_feature_importances`` / ``evaluate`` /
     ``save_model`` / ``load_model`` 及 scorecardpipeline 风格（``fit(df)`` 自动提取
-    ``target`` 列）。具体模型由子类 :class:`RandomForestRiskModel` /
-    :class:`ExtraTreesRiskModel` / :class:`GradientBoostingRiskModel` 指定。
+    ``target`` 列）。具体模型由子类 :class:`RandomForest` /
+    :class:`ExtraTrees` / :class:`GradientBoosting` 指定。
 
     **参数**
 
@@ -52,8 +57,8 @@ class SklearnRiskModel(BaseRiskModel):
 
     **参考样例**
 
-    >>> from hscredit.core.models import RandomForestRiskModel
-    >>> model = RandomForestRiskModel(n_estimators=200, max_depth=8)
+    >>> from hscredit.core.models import RandomForest
+    >>> model = RandomForest(n_estimators=200, max_depth=8)
     >>> model.fit(X_train, y_train)
     >>> proba = model.predict_proba(X_test)[:, 1]
     >>> model.get_feature_importances().head()
@@ -105,20 +110,20 @@ class SklearnRiskModel(BaseRiskModel):
         """
         # 准备数据（支持从X中提取target）
         X, y, sample_weight = self._prepare_data(X, y, sample_weight, extract_target=True, training=True)
-        self._fit_probability_scorecard(y)
+        self._validate_probability_scorecard_labels(y)
 
         # 保存特征信息
         self.n_features_in_ = X.shape[1]
         # _prepare_data 已在内部设置 feature_names_in_（DataFrame 或人工命名）
         self.classes_ = np.unique(y)
 
-        # 构建参数
+        # 只向底层模型传递其真实支持的统一参数，避免 SVC/决策树收到 n_jobs 等未知参数。
         params = self.kwargs.copy()
-        params["random_state"] = self.random_state
-        params["verbose"] = self.verbose
-        # GradientBoosting不支持n_jobs参数
-        if self._estimator_class != GradientBoostingClassifier:
-            params["n_jobs"] = self.n_jobs
+        supported = inspect.signature(self._estimator_class).parameters
+        public_params = self.get_params(deep=False)
+        for name in supported:
+            if name in public_params:
+                params[name] = public_params[name]
 
         # 创建模型
         self._model = self._estimator_class(**params)
@@ -132,6 +137,7 @@ class SklearnRiskModel(BaseRiskModel):
         # 底层模型已经完成拟合；先提交状态，确保 eval_set 走统一评估入口时
         # 能通过严格的布尔训练状态检查。
         self._is_fitted = True
+        self._fit_probability_scorecard(X, y)
 
         # 保存评估结果
         self._evals_result = {}
@@ -174,7 +180,7 @@ class SklearnRiskModel(BaseRiskModel):
         """
         self._require_fitted()
 
-        importances = self._model.feature_importances_
+        importances = self._native_feature_importances()
 
         # 创建Series
         importance_series = pd.Series(importances, index=self.feature_names_in_, name="importance").sort_values(
@@ -192,8 +198,21 @@ class SklearnRiskModel(BaseRiskModel):
         直接在包装类上暴露重要性，兼容sklearn RFE/SFS等组件的 importance_getter。
         """
         self._require_fitted()
-        # 直接从内部模型获取，避免缓存逻辑在clone后出错
-        return self._model.feature_importances_
+        return self._native_feature_importances()
+
+    def _native_feature_importances(self) -> np.ndarray:
+        """返回底层模型真实提供的重要性或线性系数绝对值。"""
+        if hasattr(self._model, "feature_importances_"):
+            return np.asarray(self._model.feature_importances_, dtype=float)
+        if hasattr(self._model, "coef_"):
+            coefficient = self._model.coef_
+            if hasattr(coefficient, "toarray"):
+                coefficient = coefficient.toarray()
+            coefficient = np.abs(np.asarray(coefficient, dtype=float))
+            return coefficient if coefficient.ndim == 1 else coefficient.mean(axis=0)
+        raise ValidationError(
+            "当前非线性模型没有原生逐字段特征重要性，请使用 permutation importance 或模型解释工具"
+        )
 
     def save_model(self, path: str):
         """保存底层sklearn模型（pickle格式）.
@@ -204,6 +223,7 @@ class SklearnRiskModel(BaseRiskModel):
 
         self._require_fitted()
         save_pickle(self._model, path)
+        self._save_score_transformer_sidecar(path)
 
     def load_model(self, path: str) -> "SklearnRiskModel":
         """加载底层sklearn模型（pickle格式）.
@@ -221,10 +241,11 @@ class SklearnRiskModel(BaseRiskModel):
         if not hasattr(self, "feature_names_in_"):
             n_feat = getattr(self, "n_features_in_", 0)
             self.feature_names_in_ = [f"feature_{i}" for i in range(n_feat)]
+        self._load_score_transformer_sidecar(path)
         return self
 
 
-class RandomForestRiskModel(SklearnRiskModel):
+class RandomForest(SklearnRiskModel):
     """随机森林风控模型.
 
     基于sklearn的RandomForestClassifier封装。
@@ -293,7 +314,7 @@ class RandomForestRiskModel(SklearnRiskModel):
         )
 
 
-class ExtraTreesRiskModel(SklearnRiskModel):
+class ExtraTrees(SklearnRiskModel):
     """极端随机树风控模型.
 
     基于sklearn的ExtraTreesClassifier封装。
@@ -363,7 +384,7 @@ class ExtraTreesRiskModel(SklearnRiskModel):
         )
 
 
-class GradientBoostingRiskModel(SklearnRiskModel):
+class GradientBoosting(SklearnRiskModel):
     """梯度提升树风控模型.
 
     基于sklearn的GradientBoostingClassifier封装。
@@ -442,7 +463,7 @@ class GradientBoostingRiskModel(SklearnRiskModel):
         sample_weight: Optional[np.ndarray] = None,
         eval_set: Optional[List[Tuple]] = None,
         **fit_params,
-    ) -> "GradientBoostingRiskModel":
+    ) -> "GradientBoosting":
         """训练模型.
 
         支持两种调用方式:
@@ -462,3 +483,167 @@ class GradientBoostingRiskModel(SklearnRiskModel):
             self._best_iteration = self._model.n_estimators_
 
         return result
+
+
+class SVM(SklearnRiskModel):
+    """基于 sklearn SVC 的概率型支持向量机模型。
+
+    **参数**
+
+    :param C: 正则强度倒数，默认 ``1.0``
+    :param kernel: 核函数，默认 ``'rbf'``
+    :param degree: 多项式核次数，默认 ``3``
+    :param gamma: 核系数，默认 ``'scale'``
+    :param probability: 是否启用概率估计，只允许 ``True``
+    :param class_weight: 类别权重，默认 ``None``
+    :param random_state: 随机种子，默认 ``None``
+    :param n_jobs: hscredit 包装层并行预算，不传给 SVC，默认 ``1``
+    :param verbose: 是否输出训练日志，默认 ``False``
+
+    **属性**
+
+    - ``classes_``: 训练类别标签
+    - ``feature_names_in_``: 训练字段名称
+    - ``tuner``: 最近一次调优使用的 ModelTuner
+
+    **参考样例**
+
+    >>> from hscredit.core.models import SVM
+    >>> model = SVM(C=1.0, kernel="rbf", random_state=42)
+    >>> model.fit(X_train, y_train)
+    >>> probability = model.predict_proba(X_test)[:, 1]
+    """
+
+    def __init__(
+        self,
+        C: float = 1.0,
+        kernel: str = "rbf",
+        degree: int = 3,
+        gamma: Union[str, float] = "scale",
+        coef0: float = 0.0,
+        shrinking: bool = True,
+        probability: bool = True,
+        tol: float = 1e-3,
+        class_weight: Optional[Union[str, Dict]] = None,
+        max_iter: int = -1,
+        random_state: Optional[int] = None,
+        n_jobs: int = 1,
+        verbose: bool = False,
+        scorecard_params: Optional[Dict[str, Any]] = None,
+        **kwargs,
+    ):
+        if probability is not True:
+            raise ValidationError("SVM 必须设置 probability=True 以提供统一概率预测")
+        super().__init__(
+            estimator_class=SVC,
+            random_state=random_state,
+            n_jobs=n_jobs,
+            verbose=verbose,
+            scorecard_params=scorecard_params,
+            **kwargs,
+        )
+        self.C = C
+        self.kernel = kernel
+        self.degree = degree
+        self.gamma = gamma
+        self.coef0 = coef0
+        self.shrinking = shrinking
+        self.probability = True
+        self.tol = tol
+        self.class_weight = class_weight
+        self.max_iter = max_iter
+        self.kwargs.update(
+            {
+                "C": C,
+                "kernel": kernel,
+                "degree": degree,
+                "gamma": gamma,
+                "coef0": coef0,
+                "shrinking": shrinking,
+                "probability": True,
+                "tol": tol,
+                "class_weight": class_weight,
+                "max_iter": max_iter,
+            }
+        )
+
+    def set_params(self, **params):
+        """设置 sklearn 参数，同时禁止关闭统一概率能力。"""
+        if "probability" in params and params["probability"] is not True:
+            raise ValidationError("SVM 必须设置 probability=True 以提供统一概率预测")
+        return super().set_params(**params)
+
+
+class DecisionTreeClassifier(SklearnRiskModel):
+    """基于 sklearn DecisionTreeClassifier 的统一风控模型。
+
+    **参数**
+
+    :param criterion: 节点划分质量指标，默认 ``'gini'``
+    :param splitter: 节点划分策略，默认 ``'best'``
+    :param max_depth: 最大树深，默认 ``None``
+    :param min_samples_split: 节点分裂最小样本数，默认 ``2``
+    :param min_samples_leaf: 叶节点最小样本数，默认 ``1``
+    :param max_features: 每次分裂考虑的最大特征数，默认 ``None``
+    :param class_weight: 类别权重，默认 ``None``
+    :param ccp_alpha: 最小代价复杂度剪枝系数，默认 ``0.0``
+    :param random_state: 随机种子，默认 ``None``
+    :param n_jobs: hscredit 包装层并行预算，不传给底层决策树，默认 ``1``
+
+    **属性**
+
+    - ``feature_importances_``: 决策树原生特征重要性
+    - ``classes_``: 训练类别标签
+    - ``feature_names_in_``: 训练字段名称
+
+    **参考样例**
+
+    >>> from hscredit.core.models import DecisionTreeClassifier
+    >>> model = DecisionTreeClassifier(max_depth=4, min_samples_leaf=20, random_state=42)
+    >>> model.fit(X_train, y_train)
+    >>> probability = model.predict_proba(X_test)[:, 1]
+    """
+
+    def __init__(
+        self,
+        criterion: str = "gini",
+        splitter: str = "best",
+        max_depth: Optional[int] = None,
+        min_samples_split: Union[int, float] = 2,
+        min_samples_leaf: Union[int, float] = 1,
+        max_features: Optional[Union[str, int, float]] = None,
+        class_weight: Optional[Union[str, Dict]] = None,
+        ccp_alpha: float = 0.0,
+        random_state: Optional[int] = None,
+        n_jobs: int = 1,
+        scorecard_params: Optional[Dict[str, Any]] = None,
+        **kwargs,
+    ):
+        super().__init__(
+            estimator_class=SklearnDecisionTreeClassifier,
+            random_state=random_state,
+            n_jobs=n_jobs,
+            verbose=False,
+            scorecard_params=scorecard_params,
+            **kwargs,
+        )
+        self.criterion = criterion
+        self.splitter = splitter
+        self.max_depth = max_depth
+        self.min_samples_split = min_samples_split
+        self.min_samples_leaf = min_samples_leaf
+        self.max_features = max_features
+        self.class_weight = class_weight
+        self.ccp_alpha = ccp_alpha
+        self.kwargs.update(
+            {
+                "criterion": criterion,
+                "splitter": splitter,
+                "max_depth": max_depth,
+                "min_samples_split": min_samples_split,
+                "min_samples_leaf": min_samples_leaf,
+                "max_features": max_features,
+                "class_weight": class_weight,
+                "ccp_alpha": ccp_alpha,
+            }
+        )

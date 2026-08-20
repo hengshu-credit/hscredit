@@ -83,10 +83,10 @@ scores = scorecard.predict(X_test)
 ## 5. 机器学习模型与概率校准
 
 ```python
-from hscredit.core.models import RandomForestRiskModel
+from hscredit.core.models import DecisionTreeClassifier, RandomForest, SVM
 from hscredit.core.models.evaluation import ProbabilityCalibrator
 
-model = RandomForestRiskModel(n_estimators=30, random_state=42)
+model = RandomForest(n_estimators=30, random_state=42)
 model.fit(X_train, y_train)
 metrics = model.evaluate(X_test, y_test)
 
@@ -97,6 +97,11 @@ calibrator = ProbabilityCalibrator(
 ).fit(X_test, y_test)
 calibrated_proba = calibrator.predict_proba(X_test)
 calibration_report = calibrator.report(X_test, y_test)
+
+svm_model = SVM(C=1.0, kernel="rbf", random_state=42).fit(X_train, y_train)
+tree_model = DecisionTreeClassifier(max_depth=4, random_state=42).fit(X_train, y_train)
+svm_proba = svm_model.predict_proba(X_test)[:, 1]
+tree_proba = tree_model.predict_proba(X_test)[:, 1]
 ```
 
 ## 6. 策略规则挖掘
@@ -128,14 +133,20 @@ report = auto_model_report(
     y_train=y_train,
     X_test=X_test,
     y_test=y_test,
+    method="predict_score",
     excel_path="模型评估报告.xlsx",
     verbose=False,
     with_plots=False,
 )
 
 model.save_artifact("risk_model.joblib")
-restored_model = RandomForestRiskModel.load_artifact("risk_model.joblib")
+restored_model = RandomForest.load_artifact("risk_model.joblib")
+assert restored_model.scorecard_.transformer_ is restored_model.score_transformer_
 ```
+
+模型在 `fit` 后可通过 `model.score_transformer_` 直接访问使用完整训练概率拟合的转换器。`sklearn.clone` 只保留其初始化配置；copy、joblib/pickle 和 native sidecar 保存拟合状态。
+
+> 当前版本不再提供七个具体模型的旧 `RiskModel` 后缀类名。引用旧类路径的 Python 序列化制品应先使用旧版 hscredit 加载并重新训练或导出，再升级使用。
 
 ## 8. 规则表达式
 

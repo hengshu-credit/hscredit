@@ -7,6 +7,8 @@
 
 import math
 import os
+import threading
+from contextlib import contextmanager
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 from typing import Optional, Tuple, Any
@@ -23,6 +25,83 @@ from .style import (
 
 # 默认配色方案：主题色 + 2 个副主题色（与 PRIMARY_COLORS 一致）
 DEFAULT_COLORS = list(PRIMARY_COLORS)
+_RENDER_STATE = threading.local()
+
+
+@contextmanager
+def _threaded_agg_rendering():
+    """仅让当前工作线程使用 Agg 画布，不修改全局 pyplot backend 或函数."""
+    previous = getattr(_RENDER_STATE, "use_agg", None)
+    _RENDER_STATE.use_agg = True
+    try:
+        yield
+    finally:
+        if previous is None:
+            _RENDER_STATE.__dict__.pop("use_agg", None)
+        else:
+            _RENDER_STATE.use_agg = previous
+
+
+def _create_subplots(
+    nrows=1,
+    ncols=1,
+    *,
+    sharex=False,
+    sharey=False,
+    squeeze=True,
+    width_ratios=None,
+    height_ratios=None,
+    subplot_kw=None,
+    gridspec_kw=None,
+    **figure_kwargs,
+):
+    """按当前线程的报告渲染上下文创建 pyplot 或独立 Agg 画布."""
+    normalized_gridspec = dict(gridspec_kw or {})
+    for option, value in (
+        ("width_ratios", width_ratios),
+        ("height_ratios", height_ratios),
+    ):
+        if value is None:
+            continue
+        if option in normalized_gridspec:
+            raise ValueError(f"{option} 不能同时通过独立参数和 gridspec_kw 指定")
+        normalized_gridspec[option] = value
+    normalized_gridspec = normalized_gridspec or None
+
+    if not getattr(_RENDER_STATE, "use_agg", False):
+        return plt.subplots(
+            nrows,
+            ncols,
+            sharex=sharex,
+            sharey=sharey,
+            squeeze=squeeze,
+            subplot_kw=subplot_kw,
+            gridspec_kw=normalized_gridspec,
+            **figure_kwargs,
+        )
+
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from matplotlib.figure import Figure
+
+    figure = Figure(**figure_kwargs)
+    FigureCanvasAgg(figure)
+    axes = figure.subplots(
+        nrows,
+        ncols,
+        sharex=sharex,
+        sharey=sharey,
+        squeeze=squeeze,
+        subplot_kw=subplot_kw,
+        gridspec_kw=normalized_gridspec,
+    )
+    return figure, axes
+
+
+def _tight_layout(figure, *args, **kwargs):
+    """对当前线程创建的画布执行布局，避免依赖 pyplot 的全局当前图."""
+    if getattr(_RENDER_STATE, "use_agg", False):
+        return figure.tight_layout(*args, **kwargs)
+    return plt.tight_layout(*args, **kwargs)
 
 # 语义色（与 bin_plot 参考样式一致）：坏样本率折线、整体基线参考线
 BAD_RATE_COLOR = SEMANTIC_COLORS["bad_rate"]            # #F0556F 坏样本率折线（副主题红融粉）
@@ -270,7 +349,7 @@ def get_or_create_ax(figsize: Tuple[float, float] = (10, 6),
             return ax
     
     # 创建新的 figure 和 ax
-    fig, ax = plt.subplots(figsize=figsize)
+    fig, ax = _create_subplots(figsize=figsize)
     
     if return_fig:
         return fig, ax

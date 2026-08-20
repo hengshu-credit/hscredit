@@ -385,30 +385,30 @@ def feature_summary(
             model_class = None
             if model_type == "xgboost":
                 try:
-                    from ..models import XGBoostRiskModel
+                    from ..models import XGBoost
 
-                    model_class = XGBoostRiskModel
+                    model_class = XGBoost
                 except ImportError:
                     pass
             elif model_type == "lightgbm":
                 try:
-                    from ..models import LightGBMRiskModel
+                    from ..models import LightGBM
 
-                    model_class = LightGBMRiskModel
+                    model_class = LightGBM
                 except ImportError:
                     pass
             elif model_type == "catboost":
                 try:
-                    from ..models import CatBoostRiskModel
+                    from ..models import CatBoost
 
-                    model_class = CatBoostRiskModel
+                    model_class = CatBoost
                 except ImportError:
                     pass
             elif model_type in ("randomforest", "rf"):
                 try:
-                    from ..models import RandomForestRiskModel
+                    from ..models import RandomForest
 
-                    model_class = RandomForestRiskModel
+                    model_class = RandomForest
                 except ImportError:
                     pass
             elif model_type == "logistic":

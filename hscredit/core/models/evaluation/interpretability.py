@@ -11,10 +11,10 @@
 pip install shap
 
 **参考样例**
->>> from hscredit.core.models import XGBoostRiskModel
+>>> from hscredit.core.models import XGBoost
 >>> from hscredit.core.models.interpretability import ModelExplainer
 >>>
->>> model = XGBoostRiskModel()
+>>> model = XGBoost()
 >>> model.fit(X_train, y_train)
 >>>
 >>> # 创建解释器

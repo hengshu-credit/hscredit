@@ -8,8 +8,8 @@ NGBoost(Natural Gradient Boosting)使用自然梯度来提升概率预测的质�
 pip install ngboost
 
 **参考样例**
->>> from hscredit.core.models import NGBoostRiskModel
->>> model = NGBoostRiskModel(
+>>> from hscredit.core.models import NGBoost
+>>> model = NGBoost(
 ...     n_estimators=500,
 ...     learning_rate=0.01,
 ...     eval_metric=['auc', 'ks']
@@ -42,7 +42,7 @@ except ImportError:
 from ..base import BaseRiskModel
 
 
-class NGBoostRiskModel(BaseRiskModel):
+class NGBoost(BaseRiskModel):
     """NGBoost风控模型.
 
     基于NGBoost的二分类模型，针对风控场景优化。
@@ -88,11 +88,11 @@ class NGBoostRiskModel(BaseRiskModel):
     **参考样例**
 
     >>> # 基础使用
-    >>> model = NGBoostRiskModel(n_estimators=500, learning_rate=0.01)
+    >>> model = NGBoost(n_estimators=500, learning_rate=0.01)
     >>> model.fit(X_train, y_train)
 
     >>> # 使用验证集早停
-    >>> model = NGBoostRiskModel(
+    >>> model = NGBoost(
     ...     n_estimators=1000,
     ...     learning_rate=0.01,
     ...     early_stopping_rounds=50
@@ -101,7 +101,7 @@ class NGBoostRiskModel(BaseRiskModel):
 
     >>> # 使用原生NGBoost参数
     >>> params = {'n_estimators': 500, 'learning_rate': 0.01, 'minibatch_frac': 0.8}
-    >>> model = NGBoostRiskModel(params=params)
+    >>> model = NGBoost(params=params)
     >>> model.fit(X_train, y_train)
 
     >>> # 获取概率分布（不确定性估计）
@@ -187,7 +187,7 @@ class NGBoostRiskModel(BaseRiskModel):
         sample_weight: Optional[np.ndarray] = None,
         eval_set: Optional[List[Tuple]] = None,
         **fit_params,
-    ) -> "NGBoostRiskModel":
+    ) -> "NGBoost":
         """训练NGBoost模型.
 
         支持两种调用方式:
@@ -205,7 +205,7 @@ class NGBoostRiskModel(BaseRiskModel):
 
         # 准备数据（支持从X中提取target）
         X, y, sample_weight = self._prepare_data(X, y, sample_weight, extract_target=True, training=True)
-        self._fit_probability_scorecard(y)
+        self._validate_probability_scorecard_labels(y)
 
         # 保存特征信息
         self.n_features_in_ = X.shape[1]
@@ -283,6 +283,7 @@ class NGBoostRiskModel(BaseRiskModel):
         self._best_score = None
         self._evals_result = {}
         self._is_fitted = True
+        self._fit_probability_scorecard(X, y)
 
         return self
 
@@ -327,7 +328,7 @@ class NGBoostRiskModel(BaseRiskModel):
 
         **参考样例**
 
-        >>> model = NGBoostRiskModel()
+        >>> model = NGBoost()
         >>> model.fit(X_train, y_train)
         >>> dist = model.pred_dist(X_test)
         >>> print(dist.params)
@@ -432,8 +433,9 @@ class NGBoostRiskModel(BaseRiskModel):
 
         self._require_fitted()
         save_pickle(self._model, path)
+        self._save_score_transformer_sidecar(path)
 
-    def load_model(self, path: str) -> "NGBoostRiskModel":
+    def load_model(self, path: str) -> "NGBoost":
         """加载底层NGBoost模型（pickle格式）.
 
         :param path: 模型路径（.pkl格式）
@@ -444,6 +446,7 @@ class NGBoostRiskModel(BaseRiskModel):
         self._model = load_pickle(path)
         self._is_fitted = True
         self.classes_ = getattr(self, "classes_", np.array([0, 1]))
+        self._load_score_transformer_sidecar(path)
         return self
 
     def _convert_metrics(self, metrics: Union[str, List[str]]) -> Union[str, List[str]]:

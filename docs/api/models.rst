@@ -19,15 +19,23 @@ Boosting 模型与调参器为懒加载，分别见 :doc:`boosting` 与 :doc:`tu
    :members:
    :show-inheritance:
 
-.. autoclass:: hscredit.core.models.RandomForestRiskModel
+.. autoclass:: hscredit.core.models.RandomForest
    :members:
    :show-inheritance:
 
-.. autoclass:: hscredit.core.models.ExtraTreesRiskModel
+.. autoclass:: hscredit.core.models.ExtraTrees
    :members:
    :show-inheritance:
 
-.. autoclass:: hscredit.core.models.GradientBoostingRiskModel
+.. autoclass:: hscredit.core.models.GradientBoosting
+   :members:
+   :show-inheritance:
+
+.. autoclass:: hscredit.core.models.SVM
+   :members:
+   :show-inheritance:
+
+.. autoclass:: hscredit.core.models.DecisionTreeClassifier
    :members:
    :show-inheritance:
 

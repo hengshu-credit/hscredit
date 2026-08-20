@@ -22,9 +22,9 @@ def test_accepts_complete_docs_artifacts(tmp_path):
     """完整产物应通过导航、搜索运行时与布局契约校验。"""
     _write(
         tmp_path / "api" / "boosting.html",
-        '<li class="toctree-l5"><a href="#hscredit.core.models.boosting.xgboost_model.XGBoostRiskModel.fit">'
+        '<li class="toctree-l5"><a href="#hscredit.core.models.boosting.xgboost_model.XGBoost.fit">'
         "fit</a></li>"
-        '<li class="toctree-l5"><a href="#hscredit.core.models.boosting.xgboost_model.XGBoostRiskModel.predict">'
+        '<li class="toctree-l5"><a href="#hscredit.core.models.boosting.xgboost_model.XGBoost.predict">'
         "predict</a></li>",
     )
     _write(
@@ -69,7 +69,7 @@ def test_reports_current_nav_rule_that_drops_reserved_border(tmp_path):
     """当前项规则必须覆盖 RTD 的 border:none，保持点击前后文字位置一致。"""
     _write(
         tmp_path / "api" / "boosting.html",
-        '<li class="toctree-l5"><a href="#XGBoostRiskModel.fit">fit</a></li>',
+        '<li class="toctree-l5"><a href="#XGBoost.fit">fit</a></li>',
     )
     _write(tmp_path / "api" / "eda.html", '<dt id="hscredit.core.eda.feature_summary">feature_summary</dt>')
     _write(tmp_path / "searchindex.js", 'Search.setIndex({"terms":{"feature_summary":1}})')
@@ -88,8 +88,8 @@ def test_rejects_feature_summary_outside_searchable_api_objects(tmp_path):
     """无关元数据中的函数名不能冒充可跳转的 API 搜索结果。"""
     _write(
         tmp_path / "api" / "boosting.html",
-        '<li class="toctree-l5"><a href="#XGBoostRiskModel.fit">fit</a></li>'
-        '<li class="toctree-l5"><a href="#XGBoostRiskModel.predict">predict</a></li>',
+        '<li class="toctree-l5"><a href="#XGBoost.fit">fit</a></li>'
+        '<li class="toctree-l5"><a href="#XGBoost.predict">predict</a></li>',
     )
     _write(tmp_path / "api" / "eda.html", '<dt id="hscredit.core.eda.feature_summary">feature_summary</dt>')
     _write(
@@ -114,7 +114,7 @@ def test_rejects_method_anchors_outside_level_five_navigation(tmp_path):
     _write(
         tmp_path / "api" / "boosting.html",
         '<li class="toctree-l5"><a href="#unrelated">unrelated</a></li>'
-        '<main><a href="#XGBoostRiskModel.fit">fit</a><a href="#XGBoostRiskModel.predict">predict</a></main>',
+        '<main><a href="#XGBoost.fit">fit</a><a href="#XGBoost.predict">predict</a></main>',
     )
     _write(tmp_path / "api" / "eda.html", '<dt id="hscredit.core.eda.feature_summary">feature_summary</dt>')
     _write(
@@ -138,8 +138,8 @@ def test_rejects_later_border_shorthand_in_the_same_rule(tmp_path):
     """同一规则内后出现的 border 简写不得破坏稳定左边框。"""
     _write(
         tmp_path / "api" / "boosting.html",
-        '<li class="toctree-l5"><a href="#XGBoostRiskModel.fit">fit</a></li>'
-        '<li class="toctree-l5"><a href="#XGBoostRiskModel.predict">predict</a></li>',
+        '<li class="toctree-l5"><a href="#XGBoost.fit">fit</a></li>'
+        '<li class="toctree-l5"><a href="#XGBoost.predict">predict</a></li>',
     )
     _write(tmp_path / "api" / "eda.html", '<dt id="hscredit.core.eda.feature_summary">feature_summary</dt>')
     _write(

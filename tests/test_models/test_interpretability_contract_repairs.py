@@ -6,7 +6,7 @@ import pytest
 from sklearn.datasets import make_classification
 from sklearn.ensemble import RandomForestClassifier
 
-from hscredit.core.models import RandomForestRiskModel
+from hscredit.core.models import RandomForest
 from hscredit.core.models.evaluation import ModelExplainer
 
 
@@ -24,7 +24,7 @@ def _data():
 def test_shap_importance_handles_binary_three_dimensional_output():
     pytest.importorskip("shap")
     X, y = _data()
-    model = RandomForestRiskModel(n_estimators=8, random_state=47).fit(X, y)
+    model = RandomForest(n_estimators=8, random_state=47).fit(X, y)
     explainer = ModelExplainer(model)
 
     values = explainer.compute_shap_values(X.head())

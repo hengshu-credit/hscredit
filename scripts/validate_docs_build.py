@@ -222,11 +222,11 @@ def collect_validation_errors(build_dir: Path) -> list[str]:
     level_five_parser = _LevelFiveLinkParser()
     level_five_parser.feed(boosting_html)
     required_method_links = {
-        "#hscredit.core.models.boosting.xgboost_model.XGBoostRiskModel.fit",
-        "#hscredit.core.models.boosting.xgboost_model.XGBoostRiskModel.predict",
+        "#hscredit.core.models.boosting.xgboost_model.XGBoost.fit",
+        "#hscredit.core.models.boosting.xgboost_model.XGBoost.predict",
     }
     if not required_method_links.issubset(level_five_parser.hrefs):
-        errors.append("侧边栏第 5 层未同时生成 XGBoostRiskModel.fit() 与 predict() 方法入口")
+        errors.append("侧边栏第 5 层未同时生成 XGBoost.fit() 与 predict() 方法入口")
 
     if "hscredit.core.eda.feature_summary" not in eda_html:
         errors.append("feature_summary 的 API 页面锚点缺失")

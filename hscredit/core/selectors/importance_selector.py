@@ -36,7 +36,7 @@ class FeatureImportanceSelector(BaseFeatureSelector):
     :param estimator: 评估器
         - 树模型: RandomForestClassifier, XGBClassifier, LGBMClassifier, CatBoostClassifier
         - 线性模型: LogisticRegression, LinearSVC 等
-        - hscredit模型: XGBoostRiskModel, LightGBMRiskModel, CatBoostRiskModel 等
+        - hscredit模型: XGBoost, LightGBM, CatBoost 等
     :param threshold: 重要性阈值或保留特征数
         - 浮点数: 保留重要性 >= threshold的特征
         - 整数: 保留top-k个特征

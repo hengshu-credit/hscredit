@@ -2,7 +2,7 @@
 
 from unittest.mock import patch
 
-from hscredit.core.models import RandomForestRiskModel
+from hscredit.core.models import RandomForest
 from hscredit.utils import resolve_n_jobs
 
 
@@ -29,5 +29,5 @@ def test_resolve_n_jobs_preserves_explicit_values():
 
 def test_risk_model_uses_resolved_cpu_count():
     with patch("hscredit.utils.parallel.get_physical_cpu_count", return_value=12):
-        model = RandomForestRiskModel(n_jobs=-1)
+        model = RandomForest(n_jobs=-1)
     assert model.n_jobs == 10

@@ -6,8 +6,8 @@
 pip install catboost
 
 **参考样例**
->>> from hscredit.core.models import CatBoostRiskModel
->>> model = CatBoostRiskModel(
+>>> from hscredit.core.models import CatBoost
+>>> model = CatBoost(
 ...     depth=6,
 ...     learning_rate=0.1,
 ...     iterations=100,
@@ -73,7 +73,7 @@ class CatBoostKSMetric:
         return error / weight
 
 
-class CatBoostRiskModel(BaseRiskModel):
+class CatBoost(BaseRiskModel):
     """CatBoost风控模型.
 
     基于CatBoost的二分类模型，针对风控场景优化。
@@ -120,12 +120,12 @@ class CatBoostRiskModel(BaseRiskModel):
     **参考样例**
 
     >>> # 基础使用
-    >>> model = CatBoostRiskModel(depth=6, learning_rate=0.1)
+    >>> model = CatBoost(depth=6, learning_rate=0.1)
     >>> model.fit(X_train, y_train)
 
     >>> # 使用原生CatBoost参数
     >>> params = {'depth': 6, 'learning_rate': 0.05, 'l2_leaf_reg': 3.0}
-    >>> model = CatBoostRiskModel(params=params)
+    >>> model = CatBoost(params=params)
     >>> model.fit(X_train, y_train)
 
     **引用**
@@ -224,7 +224,7 @@ class CatBoostRiskModel(BaseRiskModel):
         eval_set: Optional[List[Tuple]] = None,
         cat_features: Optional[List[int]] = None,
         **fit_params,
-    ) -> "CatBoostRiskModel":
+    ) -> "CatBoost":
         """训练CatBoost模型.
 
         支持两种调用方式:
@@ -246,7 +246,7 @@ class CatBoostRiskModel(BaseRiskModel):
 
         # 准备数据（支持从X中提取target）
         X, y, sample_weight = self._prepare_data(X, y, sample_weight, extract_target=True, training=True)
-        self._fit_probability_scorecard(y)
+        self._validate_probability_scorecard_labels(y)
 
         # 保存特征信息
         self.n_features_in_ = X.shape[1]
@@ -372,6 +372,7 @@ class CatBoostRiskModel(BaseRiskModel):
                 if isinstance(dataset_metrics, dict) and "CatBoostKSMetric" in dataset_metrics:
                     dataset_metrics["ks"] = dataset_metrics.pop("CatBoostKSMetric")
         self._is_fitted = True
+        self._fit_probability_scorecard(X, y)
 
         return self
 
@@ -473,7 +474,7 @@ class CatBoostRiskModel(BaseRiskModel):
 
         **参考样例**
 
-        >>> model = CatBoostRiskModel(iterations=50)
+        >>> model = CatBoost(iterations=50)
         >>> model.fit(X, y)
         >>> leaf_indices = model.get_leaf_indices(X)
         >>> print(leaf_indices.shape)
@@ -489,8 +490,9 @@ class CatBoostRiskModel(BaseRiskModel):
         """
         self._require_fitted()
         self._model.save_model(path)
+        self._save_score_transformer_sidecar(path)
 
-    def load_model(self, path: str) -> "CatBoostRiskModel":
+    def load_model(self, path: str) -> "CatBoost":
         """加载底层CatBoost模型（原生格式）.
 
         :param path: 模型路径
@@ -504,6 +506,7 @@ class CatBoostRiskModel(BaseRiskModel):
             n_feat = self._model.feature_count_ if hasattr(self._model, "feature_count_") else 0
             self.feature_names_in_ = [f"feature_{i}" for i in range(n_feat)]
             self.n_features_in_ = n_feat
+        self._load_score_transformer_sidecar(path)
         return self
 
     def _convert_metrics(self, metrics: Union[str, List[str]]) -> Union[str, List[str]]:

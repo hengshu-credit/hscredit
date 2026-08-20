@@ -594,9 +594,9 @@ def _gbm_child_worker(task):
 @pytest.mark.parametrize(
     "model_type,model_name,worker_key",
     [
-        ("xgboost", "XGBoostRiskModel", "n_jobs"),
-        ("lightgbm", "LightGBMRiskModel", "n_jobs"),
-        ("catboost", "CatBoostRiskModel", "thread_count"),
+        ("xgboost", "XGBoost", "n_jobs"),
+        ("lightgbm", "LightGBM", "n_jobs"),
+        ("catboost", "CatBoost", "thread_count"),
     ],
 )
 def test_gbm_children_use_active_nested_budget(monkeypatch, model_type, model_name, worker_key):
@@ -641,9 +641,9 @@ def test_gbm_children_use_active_nested_budget(monkeypatch, model_type, model_na
 @pytest.mark.parametrize(
     "model_type,model_name,worker_key",
     [
-        ("xgboost", "XGBoostRiskModel", "n_jobs"),
-        ("lightgbm", "LightGBMRiskModel", "n_jobs"),
-        ("catboost", "CatBoostRiskModel", "thread_count"),
+        ("xgboost", "XGBoost", "n_jobs"),
+        ("lightgbm", "LightGBM", "n_jobs"),
+        ("catboost", "CatBoost", "thread_count"),
     ],
 )
 def test_gbm_top_level_explicit_workers_and_model_params_identity(monkeypatch, model_type, model_name, worker_key):
