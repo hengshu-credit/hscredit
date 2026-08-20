@@ -524,10 +524,10 @@ class ModelReport:
         dpds: Optional[Union[int, float, List[Union[int, float]]]] = None,
         method: Union[str, Callable] = "predict_proba",
         method_kwargs: Optional[Dict[str, Any]] = None,
+        explain_config: Optional[Dict[str, Any]] = None,
         n_jobs=-1,
         parallel_backend: Optional[str] = None,
         parallel_config: Optional[Dict[str, Any]] = None,
-        explain_config: Optional[Dict[str, Any]] = None,
         **kwargs,
     ):
         """初始化模型报告.
