@@ -7,8 +7,8 @@ pip install xgboost
 
 **参考样例**
 
->>> from hscredit.core.models import XGBoostRiskModel
->>> model = XGBoostRiskModel(
+>>> from hscredit.core.models import XGBoost
+>>> model = XGBoost(
 ...     max_depth=5,          # 树最大深度
 ...     learning_rate=0.1,    # 学习率
 ...     n_estimators=100,     # 树数量
@@ -37,7 +37,7 @@ except ImportError:
 from ..base import BaseRiskModel, resolve_custom_objective
 
 
-class XGBoostRiskModel(BaseRiskModel):
+class XGBoost(BaseRiskModel):
     """XGBoost风控模型 - 基于内部建模经验优化.
 
     基于XGBoost的二分类模型，针对风控场景优化。
@@ -108,24 +108,24 @@ class XGBoostRiskModel(BaseRiskModel):
     **参考样例**
 
     >>> # 基础使用
-    >>> model = XGBoostRiskModel(max_depth=5, learning_rate=0.1)
+    >>> model = XGBoost(max_depth=5, learning_rate=0.1)
     >>> model.fit(X_train, y_train)
 
     >>> # 自动处理不平衡数据
-    >>> model = XGBoostRiskModel(scale_pos_weight='auto')
+    >>> model = XGBoost(scale_pos_weight='auto')
     >>> model.fit(X_train, y_train)
 
     >>> # 使用KS作为评估指标
-    >>> model = XGBoostRiskModel(eval_metric='ks')
+    >>> model = XGBoost(eval_metric='ks')
     >>> model.fit(X_train, y_train)
 
     >>> # 使用原生XGBoost参数
     >>> params = {'max_depth': 5, 'learning_rate': 0.05, 'subsample': 0.8}
-    >>> model = XGBoostRiskModel(params=params)
+    >>> model = XGBoost(params=params)
     >>> model.fit(X_train, y_train)
 
     >>> # 早停设置 - 使用多个评估指标，指定logloss作为早停指标（越小越好）
-    >>> model = XGBoostRiskModel(
+    >>> model = XGBoost(
     ...     n_estimators=1000,
     ...     eval_metric=['auc', 'logloss'],
     ...     early_stopping_rounds=10,
@@ -135,7 +135,7 @@ class XGBoostRiskModel(BaseRiskModel):
     >>> print(f'最佳迭代次数: {model.best_iteration_}')
 
     >>> # 早停设置 - 使用AUC作为早停指标（越大越好）
-    >>> model = XGBoostRiskModel(
+    >>> model = XGBoost(
     ...     n_estimators=1000,
     ...     eval_metric=['auc', 'logloss'],
     ...     early_stopping_rounds=10,
@@ -245,7 +245,7 @@ class XGBoostRiskModel(BaseRiskModel):
         sample_weight: Optional[np.ndarray] = None,
         eval_set: Optional[List[Tuple]] = None,
         **fit_params,
-    ) -> "XGBoostRiskModel":
+    ) -> "XGBoost":
         """训练XGBoost模型.
 
         支持两种调用方式:
@@ -261,7 +261,7 @@ class XGBoostRiskModel(BaseRiskModel):
         """
         # 准备数据（支持从X中提取target）
         X, y, sample_weight = self._prepare_data(X, y, sample_weight, extract_target=True, training=True)
-        self._fit_probability_scorecard(y)
+        self._validate_probability_scorecard_labels(y)
 
         # 保存特征信息
         self.n_features_in_ = X.shape[1]
@@ -403,6 +403,7 @@ class XGBoostRiskModel(BaseRiskModel):
         self._best_score = getattr(self._model, "best_score", None)
         self._evals_result = getattr(self._model, "evals_result_", {})
         self._is_fitted = True
+        self._fit_probability_scorecard(X, y)
 
         return self
 
@@ -550,7 +551,7 @@ class XGBoostRiskModel(BaseRiskModel):
 
         **参考样例**
 
-        >>> model = XGBoostRiskModel(n_estimators=50)
+        >>> model = XGBoost(n_estimators=50)
         >>> model.fit(X, y)
         >>> leaf_indices = model.get_leaf_indices(X)
         >>> print(leaf_indices.shape)
@@ -588,8 +589,9 @@ class XGBoostRiskModel(BaseRiskModel):
         """
         self._require_fitted()
         self._model.save_model(path)
+        self._save_score_transformer_sidecar(path)
 
-    def load_model(self, path: str) -> "XGBoostRiskModel":
+    def load_model(self, path: str) -> "XGBoost":
         """加载底层XGBoost模型（原生格式）.
 
         :param path: 模型路径
@@ -603,4 +605,5 @@ class XGBoostRiskModel(BaseRiskModel):
             n_feat = self._model.n_features_in_ if hasattr(self._model, "n_features_in_") else 0
             self.feature_names_in_ = [f"feature_{i}" for i in range(n_feat)]
             self.n_features_in_ = n_feat
+        self._load_score_transformer_sidecar(path)
         return self

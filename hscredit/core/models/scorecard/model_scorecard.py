@@ -22,10 +22,10 @@ CatBoost、NGBoost、TabNet/Net 等）转换为评分卡式的信用/欺诈评�
 
 **使用示例**
 
-    >>> from hscredit.core.models import LightGBMRiskModel
+    >>> from hscredit.core.models import LightGBM
     >>> from hscredit.core.models.scorecard import ProbabilityScoreCard
     >>>
-    >>> model = LightGBMRiskModel()
+    >>> model = LightGBM()
     >>> card = ProbabilityScoreCard(
     ...     model=model, method='standard',
     ...     base_odds=0.05, base_score=600, pdo=20,
@@ -210,7 +210,7 @@ class ProbabilityScoreCard(ArtifactSerializableMixin, BaseEstimator):
 
         1. 训练底层模型并拟合评分映射::
 
-            card = ProbabilityScoreCard(model=LightGBMRiskModel())
+            card = ProbabilityScoreCard(model=LightGBM())
             card.fit(X_train, y_train)
 
         2. 复用已训练模型，仅拟合评分映射::

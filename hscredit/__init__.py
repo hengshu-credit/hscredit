@@ -87,13 +87,13 @@ def _collect_public_exports(*modules):
 
 # boosting/tuning 模型为懒加载（core.models 不将其放入 __all__，避免本文件顶部的
 # `from .core.models import *` 在 import hscredit 时即时触发 xgboost/lightgbm/
-# catboost/ngboost/optuna 的加载）。这里通过 __getattr__ 保留 hscredit.XGBoostRiskModel
+# catboost/ngboost/optuna 的加载）。这里通过 __getattr__ 保留 hscredit.XGBoost
 # 等顶层直接访问方式，首次访问时才委托给 core.models 完成真正的导入。
 _LAZY_MODEL_NAMES = (
-    "XGBoostRiskModel",
-    "LightGBMRiskModel",
-    "CatBoostRiskModel",
-    "NGBoostRiskModel",
+    "XGBoost",
+    "LightGBM",
+    "CatBoost",
+    "NGBoost",
     "ModelTuner",
     "AutoTuner",
     "TuningObjective",

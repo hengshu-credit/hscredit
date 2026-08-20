@@ -371,7 +371,7 @@ class GBMEncoder(BaseEncoder):
         :raises ImportError: 当xgboost未安装时抛出
         """
         # 懒加载，避免 import hscredit 时即时加载 xgboost 重依赖
-        from ..models import XGBoostRiskModel
+        from ..models import XGBoost
 
         # 基础参数
         params = {
@@ -400,8 +400,8 @@ class GBMEncoder(BaseEncoder):
         params.update(self.model_params or {})
         params['n_jobs'] = self._resolve_model_workers('n_jobs')
 
-        # 使用 hscredit 的 XGBoostRiskModel
-        self.model_ = XGBoostRiskModel(**params)
+        # 使用 hscredit 的 XGBoost
+        self.model_ = XGBoost(**params)
         self.model_.fit(X, y, verbose=False)
         self.n_trees_ = self.n_estimators
 
@@ -413,7 +413,7 @@ class GBMEncoder(BaseEncoder):
         :raises ImportError: 当lightgbm未安装时抛出
         """
         # 懒加载，避免 import hscredit 时即时加载 lightgbm 重依赖
-        from ..models import LightGBMRiskModel
+        from ..models import LightGBM
 
         # 基础参数
         params = {
@@ -441,8 +441,8 @@ class GBMEncoder(BaseEncoder):
         params.update(self.model_params or {})
         params['n_jobs'] = self._resolve_model_workers('n_jobs')
 
-        # 使用 hscredit 的 LightGBMRiskModel
-        self.model_ = LightGBMRiskModel(**params)
+        # 使用 hscredit 的 LightGBM
+        self.model_ = LightGBM(**params)
         self.model_.fit(X, y)
         self.n_trees_ = self.n_estimators
 
@@ -454,7 +454,7 @@ class GBMEncoder(BaseEncoder):
         :raises ImportError: 当catboost未安装时抛出
         """
         # 懒加载，避免 import hscredit 时即时加载 catboost 重依赖
-        from ..models import CatBoostRiskModel
+        from ..models import CatBoost
 
         # 复制数据，避免修改原始数据
         X_cb = X.copy()
@@ -469,7 +469,7 @@ class GBMEncoder(BaseEncoder):
             # 确保列为字符串类型
             X_cb[col] = X_cb[col].astype(str)
 
-        # 基础参数 (CatBoostRiskModel使用不同的参数名)
+        # 基础参数 (CatBoost使用不同的参数名)
         params = {
             'iterations': self.n_estimators,
             'depth': self.max_depth,
@@ -493,8 +493,8 @@ class GBMEncoder(BaseEncoder):
         params.update(self.model_params or {})
         params['thread_count'] = self._resolve_model_workers('thread_count')
 
-        # 使用 hscredit 的 CatBoostRiskModel
-        self.model_ = CatBoostRiskModel(**params)
+        # 使用 hscredit 的 CatBoost
+        self.model_ = CatBoost(**params)
 
         self.model_.fit(X_cb, y, cat_features=cat_features if cat_features else None)
         self.n_trees_ = self.n_estimators

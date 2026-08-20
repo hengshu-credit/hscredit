@@ -6,8 +6,8 @@
 pip install lightgbm
 
 **参考样例**
->>> from hscredit.core.models import LightGBMRiskModel
->>> model = LightGBMRiskModel(
+>>> from hscredit.core.models import LightGBM
+>>> model = LightGBM(
 ...     num_leaves=31,
 ...     learning_rate=0.1,
 ...     n_estimators=100,
@@ -74,7 +74,7 @@ def _lightgbm_ks_metric(y_true, y_pred):
     return "ks", float(np.max(np.abs(tpr - fpr))), True
 
 
-class LightGBMRiskModel(BaseRiskModel):
+class LightGBM(BaseRiskModel):
     """LightGBM风控模型.
 
     基于LightGBM的二分类模型，针对风控场景优化。
@@ -127,12 +127,12 @@ class LightGBMRiskModel(BaseRiskModel):
     **参考样例**
 
     >>> # 基础使用
-    >>> model = LightGBMRiskModel(num_leaves=31, learning_rate=0.1)
+    >>> model = LightGBM(num_leaves=31, learning_rate=0.1)
     >>> model.fit(X_train, y_train)
 
     >>> # 使用原生LightGBM参数
     >>> params = {'num_leaves': 31, 'learning_rate': 0.05, 'subsample': 0.8}
-    >>> model = LightGBMRiskModel(params=params)
+    >>> model = LightGBM(params=params)
     >>> model.fit(X_train, y_train)
 
     **引用**
@@ -233,7 +233,7 @@ class LightGBMRiskModel(BaseRiskModel):
         sample_weight: Optional[np.ndarray] = None,
         eval_set: Optional[List[Tuple]] = None,
         **fit_params,
-    ) -> "LightGBMRiskModel":
+    ) -> "LightGBM":
         """训练LightGBM模型.
 
         支持两种调用方式:
@@ -249,7 +249,7 @@ class LightGBMRiskModel(BaseRiskModel):
         """
         # 准备数据（支持从X中提取target）
         X, y, sample_weight = self._prepare_data(X, y, sample_weight, extract_target=True, training=True)
-        self._fit_probability_scorecard(y)
+        self._validate_probability_scorecard_labels(y)
 
         # 保存特征信息
         self.n_features_in_ = X.shape[1]
@@ -365,6 +365,7 @@ class LightGBMRiskModel(BaseRiskModel):
         self._best_score = getattr(self._model, "best_score_", None)
         self._evals_result = getattr(self._model, "evals_result_", {})
         self._is_fitted = True
+        self._fit_probability_scorecard(X, y)
 
         return self
 
@@ -387,6 +388,8 @@ class LightGBMRiskModel(BaseRiskModel):
         """
         self._require_fitted()
         X = self._prepare_data(X)[0]
+        if not isinstance(X, pd.DataFrame) and hasattr(self._model, "feature_name_"):
+            X = pd.DataFrame(X, columns=list(self._model.feature_name_))
         proba = self._model.predict_proba(X)
         proba = np.asarray(proba)
 
@@ -465,7 +468,7 @@ class LightGBMRiskModel(BaseRiskModel):
 
         **参考样例**
 
-        >>> model = LightGBMRiskModel(n_estimators=50)
+        >>> model = LightGBM(n_estimators=50)
         >>> model.fit(X, y)
         >>> leaf_indices = model.get_leaf_indices(X)
         >>> print(leaf_indices.shape)
@@ -501,19 +504,27 @@ class LightGBMRiskModel(BaseRiskModel):
         """
         self._require_fitted()
         self._model.booster_.save_model(path)
+        self._save_score_transformer_sidecar(path)
 
-    def load_model(self, path: str) -> "LightGBMRiskModel":
+    def load_model(self, path: str) -> "LightGBM":
         """加载底层LightGBM模型（原生格式）.
 
         :param path: 模型路径
         :return: self
         """
+        booster = lgb.Booster(model_file=path)
         self._model = lgb.LGBMClassifier()
-        self._model.booster_ = lgb.Booster(model_file=path)
+        self._model._Booster = booster
+        self._model.fitted_ = True
+        self._model._n_features = booster.num_feature()
+        self._model._n_features_in = booster.num_feature()
+        self._model._classes = np.asarray([0, 1])
+        self._model._n_classes = 2
         self._is_fitted = True
         self.classes_ = getattr(self, "classes_", np.array([0, 1]))
         if not hasattr(self, "feature_names_in_"):
             n_feat = self._model.booster_.num_feature()
             self.feature_names_in_ = [f"feature_{i}" for i in range(n_feat)]
             self.n_features_in_ = n_feat
+        self._load_score_transformer_sidecar(path)
         return self

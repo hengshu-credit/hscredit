@@ -17,6 +17,7 @@ from hscredit.report.mining import (
 )
 from hscredit.core.rules import Rule
 from hscredit.core.binning import OptimalBinning
+from hscredit.core.models import DecisionTreeClassifier as HSCreditDecisionTreeClassifier
 
 
 @pytest.fixture
@@ -328,7 +329,7 @@ class TestTreeRuleExtractor:
         extractor.fit(df)
         
         assert extractor.is_fitted_
-        assert extractor.model_ is not None
+        assert isinstance(extractor.model_, HSCreditDecisionTreeClassifier)
     
     def test_fit_rf(self, sample_data):
         """测试随机森林拟合."""

@@ -13,7 +13,7 @@
 pip install optuna
 
 **参考样例**
->>> from hscredit.core.models import XGBoostRiskModel, ModelTuner
+>>> from hscredit.core.models import XGBoost, ModelTuner
 >>>
 >>> # 定义搜索空间
 >>> search_space = {
@@ -24,7 +24,7 @@ pip install optuna
 >>>
 >>> # sklearn风格
 >>> tuner = ModelTuner(
-...     model_class=XGBoostRiskModel,
+...     model_class=XGBoost,
 ...     search_space=search_space,
 ...     metric='ks',
 ...     direction='maximize'
@@ -33,7 +33,7 @@ pip install optuna
 >>>
 >>> # scorecardpipeline风格
 >>> tuner = ModelTuner(
-...     model_class=XGBoostRiskModel,
+...     model_class=XGBoost,
 ...     search_space=search_space,
 ...     metric='ks',
 ...     target='label'
@@ -42,7 +42,7 @@ pip install optuna
 >>>
 >>> # 多目标调优（KS + 稳定性）
 >>> tuner = ModelTuner(
-...     model_class=XGBoostRiskModel,
+...     model_class=XGBoost,
 ...     search_space=search_space,
 ...     metric=['ks', 'ks_diff'],
 ...     direction=['maximize', 'minimize'],
@@ -54,7 +54,7 @@ pip install optuna
 ...     return some_score(y_true, y_pred)
 >>> 
 >>> tuner = ModelTuner(
-...     model_class=XGBoostRiskModel,
+...     model_class=XGBoost,
 ...     search_space=search_space,
 ...     metric=custom_metric,
 ...     direction='maximize'
@@ -606,9 +606,9 @@ class TuningObjective:
     - ``'expected_profit'`` : 固定通过率下优化通过客群期望利润
 
     Example:
-        >>> from hscredit.core.models import ModelTuner, XGBoostRiskModel
+        >>> from hscredit.core.models import ModelTuner, XGBoost
         >>> tuner = ModelTuner(
-        ...     model_class=XGBoostRiskModel,
+        ...     model_class=XGBoost,
         ...     objective='lift_head',
         ...     objective_kwargs={'ratio': 0.05},
         ... )
@@ -1000,7 +1000,7 @@ class ModelTuner:
 
     **参数**
 
-    :param model_class: 模型类 (如XGBoostRiskModel)
+    :param model_class: 模型类 (如XGBoost)
     :param search_space: 参数搜索空间，默认None则使用预定义空间
     :param fixed_params: 固定参数，不参与搜索
     :param metric: 优化指标（决定评估计算逻辑），可选:
@@ -1067,15 +1067,15 @@ class ModelTuner:
 
     **参考样例**
 
-    >>> from hscredit.core.models import XGBoostRiskModel, ModelTuner
+    >>> from hscredit.core.models import XGBoost, ModelTuner
     >>> # 单目标：最大化 KS
-    >>> tuner = ModelTuner(XGBoostRiskModel, metric='ks', direction='maximize', cv=5)
+    >>> tuner = ModelTuner(XGBoost, metric='ks', direction='maximize', cv=5)
     >>> tuner.fit(X_train, y_train, n_trials=50)   # 返回最佳参数 best_params_
     >>> best_model = tuner.get_best_model()  # 已使用完整训练集重训
     >>>
     >>> # 多目标：同时优化 KS 与训练/测试 KS 差异（帕累托最优）
     >>> tuner = ModelTuner(
-    ...     XGBoostRiskModel,
+    ...     XGBoost,
     ...     metric=['ks', 'ks_diff'],
     ...     direction=['maximize', 'minimize'],
     ...     sampler='nsgaii',
@@ -1085,7 +1085,7 @@ class ModelTuner:
     >>> # 自定义搜索空间
     >>> space = {'max_depth': {'type': 'int', 'low': 2, 'high': 4},
     ...          'learning_rate': {'type': 'float', 'low': 1e-3, 'high': 0.1, 'log': True}}
-    >>> tuner = ModelTuner(XGBoostRiskModel, search_space=space, metric='auc')
+    >>> tuner = ModelTuner(XGBoost, search_space=space, metric='auc')
 
     **引用**
 
@@ -1748,6 +1748,10 @@ class ModelTuner:
             return self._get_ngboost_search_space()
         elif "logistic" in model_name or model_name in ("lr",):
             return self._get_logisticregression_search_space()
+        elif model_name == "svm":
+            return self._get_svm_search_space()
+        elif model_name == "decisiontreeclassifier":
+            return self._get_decisiontree_search_space()
         else:
             # 默认使用XGBoost搜索空间
             return self._get_xgboost_search_space()
@@ -1840,6 +1844,27 @@ class ModelTuner:
                 "type": "categorical",
                 "choices": ["liblinear", "sag", "lbfgs", "newton-cg"],
             },
+        }
+
+    def _get_svm_search_space(self) -> Dict[str, Dict[str, Any]]:
+        """SVC 搜索空间，始终保留 probability=True 的模型固定契约。"""
+        return {
+            "C": {"type": "float", "low": 1e-3, "high": 1e3, "log": True},
+            "kernel": {"type": "categorical", "choices": ["rbf", "linear", "poly", "sigmoid"]},
+            "gamma": {"type": "categorical", "choices": ["scale", "auto"]},
+            "degree": {"type": "int", "low": 2, "high": 5},
+            "coef0": {"type": "float", "low": 0.0, "high": 1.0},
+        }
+
+    def _get_decisiontree_search_space(self) -> Dict[str, Dict[str, Any]]:
+        """sklearn 决策树搜索空间。"""
+        return {
+            "criterion": {"type": "categorical", "choices": ["gini", "entropy"]},
+            "max_depth": {"type": "int", "low": 2, "high": 12},
+            "min_samples_split": {"type": "int", "low": 2, "high": 30},
+            "min_samples_leaf": {"type": "int", "low": 1, "high": 20},
+            "max_features": {"type": "categorical", "choices": ["sqrt", "log2", None]},
+            "ccp_alpha": {"type": "float", "low": 0.0, "high": 0.05},
         }
 
     def _get_catboost_search_space(self) -> Dict[str, Dict[str, Any]]:
@@ -2390,6 +2415,8 @@ class AutoTuner:
             - 'randomforest' / 'rf'
             - 'gradientboosting' / 'gbdt'
             - 'logisticregression' / 'lr'
+            - 'svm' / 'svc'
+            - 'decisiontree' / 'dt'
         :param metric: 优化指标，可以是字符串、函数或列表
         :param direction: 优化方向，单目标时str，多目标时list
         :param metric_names: 指标名称列表（多目标时用于显示）
@@ -2402,33 +2429,39 @@ class AutoTuner:
         :return: ModelTuner实例
         """
         from .. import (
-            XGBoostRiskModel,
-            LightGBMRiskModel,
-            CatBoostRiskModel,
-            NGBoostRiskModel,
-            RandomForestRiskModel,
-            ExtraTreesRiskModel,
-            GradientBoostingRiskModel,
+            XGBoost,
+            LightGBM,
+            CatBoost,
+            NGBoost,
+            RandomForest,
+            ExtraTrees,
+            GradientBoosting,
             LogisticRegression,
+            SVM,
+            DecisionTreeClassifier,
         )
 
         model_map = {
-            "xgboost": XGBoostRiskModel,
-            "xgb": XGBoostRiskModel,
-            "lightgbm": LightGBMRiskModel,
-            "lgb": LightGBMRiskModel,
-            "catboost": CatBoostRiskModel,
-            "cat": CatBoostRiskModel,
-            "ngboost": NGBoostRiskModel,
-            "ngb": NGBoostRiskModel,
-            "randomforest": RandomForestRiskModel,
-            "rf": RandomForestRiskModel,
-            "extratrees": ExtraTreesRiskModel,
-            "et": ExtraTreesRiskModel,
-            "gradientboosting": GradientBoostingRiskModel,
-            "gbdt": GradientBoostingRiskModel,
+            "xgboost": XGBoost,
+            "xgb": XGBoost,
+            "lightgbm": LightGBM,
+            "lgb": LightGBM,
+            "catboost": CatBoost,
+            "cat": CatBoost,
+            "ngboost": NGBoost,
+            "ngb": NGBoost,
+            "randomforest": RandomForest,
+            "rf": RandomForest,
+            "extratrees": ExtraTrees,
+            "et": ExtraTrees,
+            "gradientboosting": GradientBoosting,
+            "gbdt": GradientBoosting,
             "logisticregression": LogisticRegression,
             "lr": LogisticRegression,
+            "svm": SVM,
+            "svc": SVM,
+            "decisiontree": DecisionTreeClassifier,
+            "dt": DecisionTreeClassifier,
         }
 
         model_type = model_type.lower()

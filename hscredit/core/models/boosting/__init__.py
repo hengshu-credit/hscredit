@@ -1,10 +1,10 @@
 """提升树模型子包.
 
 包含基于梯度提升的风控模型:
-- XGBoostRiskModel
-- LightGBMRiskModel
-- CatBoostRiskModel
-- NGBoostRiskModel
+- XGBoost
+- LightGBM
+- CatBoost
+- NGBoost
 
 各模型均为懒加载：仅在首次访问对应类名时才真正导入
 xgboost/lightgbm/catboost/ngboost，避免 `import hscredit` 时
@@ -13,13 +13,13 @@ xgboost/lightgbm/catboost/ngboost，避免 `import hscredit` 时
 
 import importlib
 
-__all__ = ["XGBoostRiskModel", "LightGBMRiskModel", "CatBoostRiskModel", "NGBoostRiskModel"]
+__all__ = ["XGBoost", "LightGBM", "CatBoost", "NGBoost"]
 
 _LAZY_SUBMODULES = {
-    "XGBoostRiskModel": ".xgboost_model",
-    "LightGBMRiskModel": ".lightgbm_model",
-    "CatBoostRiskModel": ".catboost_model",
-    "NGBoostRiskModel": ".ngboost_model",
+    "XGBoost": ".xgboost_model",
+    "LightGBM": ".lightgbm_model",
+    "CatBoost": ".catboost_model",
+    "NGBoost": ".ngboost_model",
 }
 
 

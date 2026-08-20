@@ -268,7 +268,7 @@ class LogisticRegression(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, 
                 y = X[self.target]
                 X = X.drop(columns=[self.target])
 
-        self._fit_probability_scorecard(y)
+        self._validate_probability_scorecard_labels(y)
 
         # 保存特征名
         if isinstance(X, pd.DataFrame):
@@ -283,6 +283,7 @@ class LogisticRegression(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, 
             fitted_model = super().fit(X, y, sample_weight=sample_weight, **kwargs)
             if apply_positive_woe_coef:
                 self.ensure_positive_woe_coefficients()
+            self._fit_probability_scorecard(X, y)
             return fitted_model
 
         # 转换稀疏矩阵
@@ -313,6 +314,7 @@ class LogisticRegression(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, 
 
         # 计算协方差矩阵和统计信息
         self._compute_statistics(X_design, pred_probs)
+        self._fit_probability_scorecard(X, y)
 
         return self
 

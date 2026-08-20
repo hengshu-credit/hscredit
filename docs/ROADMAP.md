@@ -91,7 +91,7 @@ hscredit/
 
 | 业务任务 | 推荐能力 |
 |:---|:---|
-| 树模型训练 | `RandomForestRiskModel`、`GradientBoostingRiskModel`、`XGBoostRiskModel`、`LightGBMRiskModel`、`CatBoostRiskModel` |
+| 树模型训练 | `RandomForest`、`GradientBoosting`、`XGBoost`、`LightGBM`、`CatBoost` |
 | 不平衡样本处理 | `FocalLoss`、`BalancedFocalLoss`、`WeightedBCELoss` |
 | 业务目标优化 | `BadDebtLoss`、`ApprovalRateLoss`、`ProfitMaxLoss`、`TopKBadCaptureLoss`、`AmountWeightedLoss` |
 | 模型调参 | `ModelTuner`、`AutoTuner`、`TuningObjective` |

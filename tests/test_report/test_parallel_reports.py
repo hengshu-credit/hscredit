@@ -1244,7 +1244,9 @@ def test_configured_parent_rule_group_parallel_matches_serial_and_stays_unchange
 )
 def test_task11_model_report_entries_expose_common_parallel_parameters(entry):
     signature = inspect.signature(entry)
-    assert list(signature.parameters)[-3:] == list(COMMON)
+    names = list(signature.parameters)
+    expected_slice = names[-4:-1] if names[-1] == "kwargs" else names[-3:]
+    assert expected_slice == list(COMMON)
     assert signature.parameters["n_jobs"].default == -1
     assert signature.parameters["parallel_backend"].default is None
     assert signature.parameters["parallel_config"].default is None
@@ -1291,7 +1293,7 @@ def test_model_report_computes_each_dataset_prediction_once():
     )
     assert list(report._datasets) == ["train", "test", "oot"]
     assert model.proba_calls == 3
-    assert model.predict_calls == 3
+    assert model.predict_calls == 0
 
     report.summary()
     report.get_metrics()
@@ -1299,7 +1301,7 @@ def test_model_report_computes_each_dataset_prediction_once():
     report.get_feature_importance()
     report.get_features_corr()
     assert model.proba_calls == 3
-    assert model.predict_calls == 3
+    assert model.predict_calls == 0
 
 
 @pytest.mark.parametrize("backend", ["threading", "loky"])

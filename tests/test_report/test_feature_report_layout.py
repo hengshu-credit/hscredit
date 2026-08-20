@@ -23,7 +23,7 @@ def _get_feature_title_and_table_header_rows(ws):
 
     for r in range(1, ws.max_row + 1):
         val = ws.cell(row=r, column=2).value
-        if isinstance(val, str) and val.startswith("数据字段:") and feature_title_row is None:
+        if isinstance(val, str) and "、数据字段:" in val and feature_title_row is None:
             feature_title_row = r
         if val == "指标名称" and feature_title_row is not None and r > feature_title_row:
             table_header_row = r
@@ -112,8 +112,8 @@ def test_auto_feature_analysis_defaults_to_non_role_columns(monkeypatch, tmp_pat
     )
 
     ws = writer.get_sheet_by_name("default_features")
-    feature_titles = [cell.value for row in ws.iter_rows() for cell in row if isinstance(cell.value, str) and cell.value.startswith("数据字段:")]
-    assert feature_titles == ["数据字段: x (缺失率: 0.0%)", "数据字段: amount (缺失率: 0.0%)"]
+    feature_titles = [cell.value for row in ws.iter_rows() for cell in row if isinstance(cell.value, str) and "、数据字段:" in cell.value]
+    assert feature_titles == ["4.1、数据字段: x (缺失率: 0.0%)", "4.2、数据字段: amount (缺失率: 0.0%)"]
 
 
 def test_auto_feature_analysis_can_analyze_amount_as_default_feature(tmp_path):
@@ -137,7 +137,7 @@ def test_auto_feature_analysis_can_analyze_amount_as_default_feature(tmp_path):
     )
 
     ws = writer.get_sheet_by_name("amount_as_feature")
-    assert _row_for_value(ws, "数据字段: amount (缺失率: 0.0%)") > 0
+    assert _row_for_value(ws, "3.1、数据字段: amount (缺失率: 0.0%)") > 0
     assert _row_for_value(ws, "订单口径") > 0
     assert any(cell.value == "金额口径" for row in ws.iter_rows() for cell in row)
 
@@ -208,11 +208,13 @@ def test_auto_feature_analysis_reserves_title_row_when_amount_gap_is_zero(monkey
     )
 
     ws = writer.get_sheet_by_name("zero_metric_title_gap")
+    feature_title = next(cell for row in ws.iter_rows() for cell in row if cell.value == "3.1、数据字段: x (缺失率: 0.0%)")
     order_title = next(cell for row in ws.iter_rows() for cell in row if cell.value == "订单口径")
     amount_title = next(cell for row in ws.iter_rows() for cell in row if cell.value == "金额口径")
     table_headers = [cell for row in ws.iter_rows() for cell in row if cell.value == "指标名称"]
     assert order_title.row == table_headers[0].row - 1
     assert amount_title.row == table_headers[1].row - 1
+    assert feature_title.row < order_title.row
 
 
 def test_auto_feature_analysis_left_aligns_feature_effect_section(monkeypatch, tmp_path):
@@ -233,8 +235,75 @@ def test_auto_feature_analysis_left_aligns_feature_effect_section(monkeypatch, t
     )
 
     ws = writer.get_sheet_by_name("section_alignment")
-    section_row = _row_for_value(ws, "数值类特征 OR 评分效果评估")
+    section_row = _row_for_value(ws, "3、数值类特征 OR 评分效果评估")
     assert ws.cell(section_row, 2).alignment.horizontal == "left"
+
+
+def test_auto_feature_analysis_numbers_titles_and_formats_feature_summary(monkeypatch, tmp_path):
+    """章节应连续编号，summary 比率列显示百分数且仅 KS/IV 使用色阶。"""
+    monkeypatch.setattr(feature_analyzer_module, "feature_bin_stats", _fake_feature_bin_stats)
+
+    def fake_summary(self, **kwargs):
+        return pd.DataFrame(
+            {
+                "特征名": ["x"],
+                "缺失率": [0.25],
+                "众数占比": [0.50],
+                "覆盖占比": [0.60],
+                "零值率": [0.10],
+                "负值率": [0.20],
+                "重复率": [0.40],
+                "通过率": [0.70],
+                "IV": [0.15],
+                "KS": [0.30],
+                "PSI": [0.08],
+            }
+        )
+
+    monkeypatch.setattr(pd.DataFrame, "summary", fake_summary, raising=False)
+    data = pd.DataFrame({"x": [1.0, 2.0, 3.0, 4.0], "target": [0, 1, 0, 1]})
+    writer = ExcelWriter(system="windows")
+
+    auto_feature_analysis(
+        data,
+        features=["x"],
+        target="target",
+        corr=False,
+        excel_writer=writer,
+        sheet="numbered_summary",
+        pictures=[],
+        output_dir=str(tmp_path),
+        n_jobs=1,
+    )
+
+    ws = writer.get_sheet_by_name("numbered_summary")
+    title_rows = [_row_for_value(ws, title) for title in [
+        "1、样本总体分布情况",
+        "2、变量综合统计",
+        "3、数值类特征 OR 评分效果评估",
+        "3.1、数据字段: x (缺失率: 0.0%)",
+    ]]
+    assert title_rows == sorted(title_rows)
+
+    summary_title_row = _row_for_value(ws, "2、变量综合统计")
+    header_row = summary_title_row + 2
+    data_row = header_row + 1
+    header_columns = {
+        ws.cell(header_row, column).value: column
+        for column in range(1, ws.max_column + 1)
+        if ws.cell(header_row, column).value is not None
+    }
+    percent_columns = {"缺失率", "众数占比", "覆盖占比", "零值率", "负值率", "重复率", "通过率", "KS", "PSI"}
+    assert all(ws.cell(data_row, header_columns[column]).number_format == "0.00%" for column in percent_columns)
+    assert ws.cell(data_row, header_columns["IV"]).number_format != "0.00%"
+
+    color_scale_headers = set()
+    for conditional_range, rules in ws.conditional_formatting._cf_rules.items():
+        if not any(rule.type == "colorScale" for rule in rules):
+            continue
+        for cell_range in conditional_range.sqref.ranges:
+            color_scale_headers.add(ws.cell(header_row, cell_range.min_col).value)
+    assert color_scale_headers == {"KS", "IV"}
 
 
 def test_auto_feature_analysis_defaults_condition_color_to_secondary_theme(monkeypatch, tmp_path):
@@ -255,7 +324,9 @@ def test_auto_feature_analysis_defaults_condition_color_to_secondary_theme(monke
     )
 
     ws = writer.get_sheet_by_name("default_condition_color")
-    assert _conditional_format_colors(ws) == {"00F76E6C"}
+    colors = _conditional_format_colors(ws)
+    assert "00F76E6C" in colors
+    assert "002639E9" not in colors
 
 
 def test_auto_feature_analysis_applies_custom_condition_color_everywhere(monkeypatch, tmp_path):
@@ -405,10 +476,10 @@ def test_auto_feature_analysis_title_merges_follow_actual_content_width(monkeypa
 
     ws = writer.get_sheet_by_name("dynamic_titles")
     main_title = _merged_range_for_row(ws, 2)
-    feature_section_row = _row_for_value(ws, "数值类特征 OR 评分效果评估")
-    first_feature_row = _row_for_value(ws, "数据字段: x (缺失率: 0.0%)")
-    second_feature_row = _row_for_value(ws, "数据字段: y (缺失率: 0.0%)")
-    sample_title_row = _row_for_value(ws, "样本总体分布情况")
+    feature_section_row = _row_for_value(ws, "3、数值类特征 OR 评分效果评估")
+    first_feature_row = _row_for_value(ws, "3.1、数据字段: x (缺失率: 0.0%)")
+    second_feature_row = _row_for_value(ws, "3.2、数据字段: y (缺失率: 0.0%)")
+    sample_title_row = _row_for_value(ws, "1、样本总体分布情况")
     feature_module_max_col = max(
         _merged_range_for_row(ws, first_feature_row).max_col,
         _merged_range_for_row(ws, second_feature_row).max_col,
@@ -537,8 +608,8 @@ def test_auto_feature_analysis_sample_distribution_uses_model_report_layout(monk
     ws = writer.get_sheet_by_name("sample_layout")
     values = [cell.value for row in ws.iter_rows() for cell in row]
 
-    assert "样本总体分布情况" in values
-    assert "样本时间分布情况" in values
+    assert "1、样本总体分布情况" in values
+    assert "2、样本时间分布情况" in values
     assert values.count("整体样本") >= 2
     assert "mob@3" in values
     assert "mob@7" in values

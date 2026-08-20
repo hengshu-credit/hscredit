@@ -16,13 +16,15 @@
 
 | 模型 | 类名 | 说明 |
 |------|------|------|
-| XGBoost | XGBoostRiskModel | 高效梯度提升树 |
-| LightGBM | LightGBMRiskModel | 快速梯度提升树 |
-| CatBoost | CatBoostRiskModel | 对类别特征友好的提升树 |
-| RandomForest | RandomForestRiskModel | 随机森林 |
-| ExtraTrees | ExtraTreesRiskModel | 极端随机树 |
-| GradientBoosting | GradientBoostingRiskModel | 梯度提升树 |
-| NGBoost | NGBoostRiskModel | 自然梯度提升（概率预测） |
+| XGBoost | XGBoost | 高效梯度提升树 |
+| LightGBM | LightGBM | 快速梯度提升树 |
+| CatBoost | CatBoost | 对类别特征友好的提升树 |
+| RandomForest | RandomForest | 随机森林 |
+| ExtraTrees | ExtraTrees | 极端随机树 |
+| GradientBoosting | GradientBoosting | 梯度提升树 |
+| SVM | SVM | 支持向量机概率分类 |
+| DecisionTree | DecisionTreeClassifier | 单棵决策树分类 |
+| NGBoost | NGBoost | 自然梯度提升（概率预测） |
 | LogisticRegression | LogisticRegression | 扩展逻辑回归 |
 | ScoreCard | ScoreCard | 评分卡模型 |
 
@@ -30,8 +32,8 @@
 
 **1. 基础模型训练**
 
->>> from hscredit.core.models import XGBoostRiskModel
->>> model = XGBoostRiskModel(
+>>> from hscredit.core.models import XGBoost
+>>> model = XGBoost(
 ...     max_depth=5,
 ...     learning_rate=0.1,
 ...     n_estimators=100,
@@ -60,15 +62,15 @@
 **5. 统一接口使用不同模型**
 
 >>> from hscredit.core.models import (
-...     XGBoostRiskModel,
-...     LightGBMRiskModel,
-...     CatBoostRiskModel
+...     XGBoost,
+...     LightGBM,
+...     CatBoost
 ... )
 >>>
 >>> models = {
-...     'xgboost': XGBoostRiskModel(max_depth=5),
-...     'lightgbm': LightGBMRiskModel(num_leaves=31),
-...     'catboost': CatBoostRiskModel(depth=6),
+...     'xgboost': XGBoost(max_depth=5),
+...     'lightgbm': LightGBM(num_leaves=31),
+...     'catboost': CatBoost(depth=6),
 ... }
 >>>
 >>> for name, model in models.items():
@@ -119,13 +121,15 @@ from .losses import (
 from .base import BaseRiskModel
 
 # 导入提升树模型 (boosting/, 可选重依赖 xgboost/lightgbm/catboost/ngboost，懒加载)
-_LAZY_BOOSTING_MODELS = ("XGBoostRiskModel", "LightGBMRiskModel", "CatBoostRiskModel", "NGBoostRiskModel")
+_LAZY_BOOSTING_MODELS = ("XGBoost", "LightGBM", "CatBoost", "NGBoost")
 
 # 导入经典模型 (classical/)
 from .classical import (
-    RandomForestRiskModel,
-    ExtraTreesRiskModel,
-    GradientBoostingRiskModel,
+    RandomForest,
+    ExtraTrees,
+    GradientBoosting,
+    SVM,
+    DecisionTreeClassifier,
     LogisticRegression,
 )
 
@@ -244,10 +248,12 @@ __all__ = [
     # 模型基类
     "BaseRiskModel",
     # 各模型类（boosting 系列为懒加载，不放入 __all__ 以避免 `import *` 触发重依赖加载，
-    # 可通过 from hscredit.core.models import XGBoostRiskModel 等方式显式访问）
-    "RandomForestRiskModel",
-    "ExtraTreesRiskModel",
-    "GradientBoostingRiskModel",
+    # 可通过 from hscredit.core.models import XGBoost 等方式显式访问）
+    "RandomForest",
+    "ExtraTrees",
+    "GradientBoosting",
+    "SVM",
+    "DecisionTreeClassifier",
     # 逻辑回归
     "LogisticRegression",
     # 评分卡

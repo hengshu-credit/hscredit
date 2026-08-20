@@ -3096,7 +3096,7 @@ def dataframe2excel(
     )
 
     # 设置百分比格式列
-    if percent_cols:
+    if percent_cols and len(data) > 0:
         if not isinstance(percent_cols[0], (tuple, list)):
             percent_cols = [c for c in data.columns if (isinstance(c, tuple) and c[-1] in percent_cols) or (not isinstance(c, tuple) and c in percent_cols)]
         for c in [c for c in percent_cols if c in data.columns]:
@@ -3106,7 +3106,7 @@ def dataframe2excel(
             writer.set_number_format(worksheet, f"{conditional_column}{end_row - len(data)}:{conditional_column}{end_row - 1}", "0.00%")
 
     # 设置自定义格式列
-    if custom_cols:
+    if custom_cols and len(data) > 0:
         if not isinstance(custom_cols[0], (tuple, list)):
             custom_cols = [c for c in data.columns if (isinstance(c, tuple) and c[-1] in custom_cols) or (not isinstance(c, tuple) and c in custom_cols)]
         for c in [c for c in custom_cols if c in data.columns]:
@@ -3116,7 +3116,7 @@ def dataframe2excel(
             writer.set_number_format(worksheet, f"{conditional_column}{end_row - len(data)}:{conditional_column}{end_row - 1}", custom_format)
 
     # 设置条件格式列
-    if condition_cols:
+    if condition_cols and len(data) > 0:
         if not isinstance(condition_cols[0], (tuple, list)):
             condition_cols = [c for c in data.columns if (isinstance(c, tuple) and c[-1] in condition_cols) or (not isinstance(c, tuple) and c in condition_cols)]
         for c in [c for c in condition_cols if c in data.columns]:
@@ -3131,7 +3131,7 @@ def dataframe2excel(
             )
 
     # 设置颜色渐变列
-    if color_cols:
+    if color_cols and len(data) > 0:
         if not isinstance(color_cols[0], (tuple, list)):
             color_cols = [c for c in data.columns if (isinstance(c, tuple) and c[-1] in color_cols) or (not isinstance(c, tuple) and c in color_cols)]
         for c in [c for c in color_cols if c in data.columns]:

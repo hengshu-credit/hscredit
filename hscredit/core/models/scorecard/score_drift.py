@@ -42,11 +42,11 @@
 
 **参考样例**
 
->>> from hscredit.core.models import XGBoostRiskModel
+>>> from hscredit.core.models import XGBoost
 >>> from hscredit.core.models.score_drift import ScoreDriftCalibrator
 >>>
 >>> # 训练基础模型
->>> model = XGBoostRiskModel()
+>>> model = XGBoost()
 >>> model.fit(X_train, y_train)
 >>>
 >>> # 创建漂移校准器

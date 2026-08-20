@@ -123,7 +123,7 @@ def test_prepare_runtime_compatibility_prepares_supported_dependencies(monkeypat
 @pytest.mark.parametrize(
     "module_name, attribute",
     [
-        ("hscredit.core.models.boosting", "LightGBMRiskModel"),
+        ("hscredit.core.models.boosting", "LightGBM"),
         ("hscredit.core.models.tuning", "ModelTuner"),
     ],
 )

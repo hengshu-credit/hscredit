@@ -2274,15 +2274,28 @@ def auto_feature_analysis(
         "数值类变量相关性",
         "数值类特征 OR 评分效果评估",
     }
+    section_number = 0
+
+    def _next_section_title(title: str) -> Tuple[str, int]:
+        nonlocal section_number
+        section_number += 1
+        return f"{section_number}、{title}", section_number
 
     def _title_level(row_idx: int, value: Any) -> Optional[int]:
         if not isinstance(value, str) or not value:
             return None
         if row_idx == start_row and value == "数据有效性分析报告":
             return 0
-        if value in section_title_values:
+        number, separator, title = value.partition("、")
+        if separator and number.isdigit() and title in section_title_values:
             return 1
-        if value.startswith("数据字段:"):
+        number_levels = number.split(".")
+        if (
+            separator
+            and len(number_levels) == 2
+            and all(level.isdigit() for level in number_levels)
+            and title.startswith("数据字段:")
+        ):
             return 2
         return None
 
@@ -2332,6 +2345,7 @@ def auto_feature_analysis(
     end_row, end_col = writer.insert_value2sheet(worksheet, (start_row, start_col), value="数据有效性分析报告", style="header_middle")
 
     sample_start_row = end_row + 2
+    sample_section_title, _ = _next_section_title("样本总体分布情况")
     if isinstance(sample_stats.columns, pd.MultiIndex):
         end_row, end_col = dataframe2excel(
             sample_stats,
@@ -2339,7 +2353,7 @@ def auto_feature_analysis(
             worksheet,
             percent_cols=sample_percent_cols,
             start_row=sample_start_row,
-            title="样本总体分布情况",
+            title=sample_section_title,
             index=True,
         )
     else:
@@ -2349,14 +2363,15 @@ def auto_feature_analysis(
             worksheet,
             percent_cols=sample_percent_cols,
             start_row=sample_start_row,
-            title="样本总体分布情况",
+            title=sample_section_title,
         )
     end_row += 2
 
     if date is not None and date in data.columns:
         distribution_plot(data, date=date, freq=freq, target=target, save=os.path.join(output_dir, f"sample_time_distribution{suffix}.png"), result=True)
         time_title_columns_len = len(sample_stats.columns) + sample_stats.index.nlevels if isinstance(sample_stats.columns, pd.MultiIndex) else len(sample_stats.columns)
-        end_row, end_col = writer.insert_value2sheet(worksheet, (end_row, start_col), value="样本时间分布情况", style="header", end_space=(end_row, start_col + time_title_columns_len - 1))
+        time_section_title, _ = _next_section_title("样本时间分布情况")
+        end_row, end_col = writer.insert_value2sheet(worksheet, (end_row, start_col), value=time_section_title, style="header", end_space=(end_row, start_col + time_title_columns_len - 1))
         end_row, end_col = writer.insert_pic2sheet(worksheet, os.path.join(output_dir, f"sample_time_distribution{suffix}.png"), (end_row + 1, start_col), figsize=(720, 370))
         table_start_row = end_row
         end_row, end_col = dataframe2excel(
@@ -2372,12 +2387,22 @@ def auto_feature_analysis(
         end_row += 2
 
     feature_summary_start_row = end_row
+    summary_section_title, _ = _next_section_title("变量综合统计")
+    feature_summary_percent_cols = [
+        column
+        for column in feature_summary.columns
+        if column in {"KS", "PSI"} or "占比" in str(column) or str(column).endswith("率")
+    ]
+    feature_summary_color_cols = [column for column in ("KS", "IV") if column in feature_summary.columns]
     end_row, end_col = dataframe2excel(
         feature_summary,
         writer,
         worksheet,
         start_row=feature_summary_start_row,
-        title="变量综合统计",
+        title=summary_section_title,
+        percent_cols=feature_summary_percent_cols,
+        color_cols=feature_summary_color_cols,
+        condition_color=condition_color,
         right_cols=[0],
     )
     feature_name_col = start_col + feature_summary.columns.get_loc("特征名")
@@ -2386,10 +2411,13 @@ def auto_feature_analysis(
 
     if corr:
         corr_plot(corr_data, save=os.path.join(output_dir, f"auto_report_corr_plot{suffix}.png"), annot=True if len(corr_data.columns) <= 10 else False, fontsize=14 if len(corr_data.columns) <= 10 else 12)
-        end_row, end_col = dataframe2excel(corr_table, writer, worksheet, color_cols=list(corr_data.columns), condition_color=condition_color, start_row=end_row, figures=[os.path.join(output_dir, f"auto_report_corr_plot{suffix}.png")], title="数值类变量相关性", figsize=(min(60 * len(corr_data.columns), 1080), min(55 * len(corr_data.columns), 950)), index=True, custom_cols=list(corr_data.columns), custom_format="0.00")
+        corr_section_title, _ = _next_section_title("数值类变量相关性")
+        end_row, end_col = dataframe2excel(corr_table, writer, worksheet, color_cols=list(corr_data.columns), condition_color=condition_color, start_row=end_row, figures=[os.path.join(output_dir, f"auto_report_corr_plot{suffix}.png")], title=corr_section_title, figsize=(min(60 * len(corr_data.columns), 1080), min(55 * len(corr_data.columns), 950)), index=True, custom_cols=list(corr_data.columns), custom_format="0.00")
         end_row += 2
 
-    end_row, end_col = writer.insert_value2sheet(worksheet, (end_row, start_col), value="数值类特征 OR 评分效果评估", style="header_middle", align={"horizontal": "left"})
+    feature_section_title, feature_section_number = _next_section_title("数值类特征 OR 评分效果评估")
+    end_row, end_col = writer.insert_value2sheet(worksheet, (end_row, start_col), value=feature_section_title, style="header_middle", align={"horizontal": "left"})
+    feature_detail_number = 0
 
     for feature_result in feature_results:
         col = feature_result["feature"]
@@ -2449,7 +2477,8 @@ def auto_feature_analysis(
                 title_span = sample_title_columns_len
 
             feature_title_row = end_row + 2
-            end_row, end_col = writer.insert_value2sheet(worksheet, (feature_title_row, start_col), value=f"数据字段: {feature_map.get(col, col)} (缺失率: {round(missing_rate * 100, 2)}%)", style="header", end_space=(feature_title_row, start_col + title_span - 1))
+            feature_detail_number += 1
+            end_row, end_col = writer.insert_value2sheet(worksheet, (feature_title_row, start_col), value=f"{feature_section_number}.{feature_detail_number}、数据字段: {feature_map.get(col, col)} (缺失率: {round(missing_rate * 100, 2)}%)", style="header", end_space=(feature_title_row, start_col + title_span - 1))
 
             summary_row = feature_summary_rows.get(str(col))
             if summary_row is not None:
@@ -2480,10 +2509,10 @@ def auto_feature_analysis(
             if has_amount_table:
                 writer.insert_value2sheet(
                     worksheet,
-                    (table_start_row - 2, start_col),
+                    (table_start_row - 1, start_col),
                     value="订单口径",
                     style="header",
-                    end_space=(table_start_row - 2, start_col + sample_title_columns_len - 1),
+                    end_space=(table_start_row - 1, start_col + sample_title_columns_len - 1),
                     align={"horizontal": "left"},
                 )
             if return_cols:
@@ -2510,10 +2539,10 @@ def auto_feature_analysis(
                 amount_start_col = end_col + 1
                 writer.insert_value2sheet(
                     worksheet,
-                    (table_start_row - 2, amount_start_col),
+                    (table_start_row - 1, amount_start_col),
                     value="金额口径",
                     style="header",
-                    end_space=(table_start_row - 2, amount_start_col + amount_title_columns_len - 1),
+                    end_space=(table_start_row - 1, amount_start_col + amount_title_columns_len - 1),
                     align={"horizontal": "left"},
                 )
                 if return_cols:

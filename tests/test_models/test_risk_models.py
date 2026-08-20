@@ -13,10 +13,10 @@ from sklearn.model_selection import train_test_split
 
 from hscredit.core.models import (
     BaseRiskModel,
-    XGBoostRiskModel,
-    LightGBMRiskModel,
-    RandomForestRiskModel,
-    GradientBoostingRiskModel,
+    XGBoost,
+    LightGBM,
+    RandomForest,
+    GradientBoosting,
     ModelReport,
 )
 
@@ -38,6 +38,10 @@ def test_catboost_public_n_jobs_controls_native_thread_count(monkeypatch):
         def fit(self, X, y, **kwargs):
             return self
 
+        def predict_proba(self, X):
+            positive = np.full(len(X), 0.5)
+            return np.column_stack([1.0 - positive, positive])
+
         def get_best_iteration(self):
             return 0
 
@@ -53,7 +57,7 @@ def test_catboost_public_n_jobs_controls_native_thread_count(monkeypatch):
         "cb",
         type("FakeCatBoostModule", (), {"CatBoostClassifier": FakeCatBoostClassifier}),
     )
-    model = catboost_module.CatBoostRiskModel(
+    model = catboost_module.CatBoost(
         n_jobs=3,
         params={"thread_count": 99},
         validation_fraction=0,
@@ -92,13 +96,17 @@ def test_ngboost_public_n_jobs_limits_native_training_threads(monkeypatch):
             observed["fit_inside_context"] = observed.get("active", False)
             return self
 
+        def predict_proba(self, X):
+            positive = np.full(len(X), 0.5)
+            return np.column_stack([1.0 - positive, positive])
+
     monkeypatch.setattr(ngboost_module, "NGBOOST_AVAILABLE", True)
     monkeypatch.setattr(ngboost_module, "NGBClassifier", FakeNGBClassifier)
     monkeypatch.setattr(ngboost_module, "Bernoulli", object())
     monkeypatch.setattr(ngboost_module, "LogScore", object())
     monkeypatch.setattr(ngboost_module, "threadpool_limits", RecordingThreadLimit)
 
-    model = ngboost_module.NGBoostRiskModel(
+    model = ngboost_module.NGBoost(
         n_jobs=3,
         n_estimators=2,
         validation_fraction=0,
@@ -131,12 +139,12 @@ class TestBaseRiskModel:
         """测试模型信息获取."""
         X_train, X_test, y_train, y_test = sample_data
 
-        model = RandomForestRiskModel(n_estimators=10, random_state=42)
+        model = RandomForest(n_estimators=10, random_state=42)
         model.fit(X_train, y_train)
 
         info = model.get_model_info()
 
-        assert info["model_type"] == "RandomForestRiskModel"
+        assert info["model_type"] == "RandomForest"
         assert info["n_features"] == X_train.shape[1]
         assert info["n_classes"] == 2
         assert "params" in info
@@ -145,7 +153,7 @@ class TestBaseRiskModel:
         """测试模型评估."""
         X_train, X_test, y_train, y_test = sample_data
 
-        model = RandomForestRiskModel(n_estimators=10, random_state=42)
+        model = RandomForest(n_estimators=10, random_state=42)
         model.fit(X_train, y_train)
 
         metrics = model.evaluate(X_test, y_test)
@@ -159,7 +167,7 @@ class TestBaseRiskModel:
         """测试风险评分预测."""
         X_train, X_test, y_train, y_test = sample_data
 
-        model = RandomForestRiskModel(n_estimators=10, random_state=42)
+        model = RandomForest(n_estimators=10, random_state=42)
         model.fit(X_train, y_train)
 
         scores = model.predict_score(X_test)
@@ -169,7 +177,7 @@ class TestBaseRiskModel:
         assert 0 <= scores.max() <= 1000
 
 
-class TestXGBoostRiskModel:
+class TestXGBoost:
     """测试XGBoost模型."""
 
     @pytest.mark.skipif(not HAS_XGBOOST, reason="XGBoost 未安装")
@@ -177,7 +185,7 @@ class TestXGBoostRiskModel:
         """测试训练和预测."""
         X_train, X_test, y_train, y_test = sample_data
 
-        model = XGBoostRiskModel(n_estimators=10, max_depth=3, random_state=42)
+        model = XGBoost(n_estimators=10, max_depth=3, random_state=42)
         model.fit(X_train, y_train)
 
         predictions = model.predict(X_test)
@@ -192,7 +200,7 @@ class TestXGBoostRiskModel:
         """测试特征重要性."""
         X_train, X_test, y_train, y_test = sample_data
 
-        model = XGBoostRiskModel(n_estimators=10, random_state=42)
+        model = XGBoost(n_estimators=10, random_state=42)
         model.fit(X_train, y_train)
 
         importances = model.get_feature_importances()
@@ -202,7 +210,7 @@ class TestXGBoostRiskModel:
         assert importances.index[0] in X_train.columns
 
 
-class TestLightGBMRiskModel:
+class TestLightGBM:
     """测试LightGBM模型."""
 
     @pytest.mark.skipif(not HAS_LIGHTGBM, reason="LightGBM 未安装")
@@ -210,7 +218,7 @@ class TestLightGBMRiskModel:
         """测试训练和预测."""
         X_train, X_test, y_train, y_test = sample_data
 
-        model = LightGBMRiskModel(n_estimators=10, num_leaves=10, random_state=42)
+        model = LightGBM(n_estimators=10, num_leaves=10, random_state=42)
         model.fit(X_train, y_train)
 
         predictions = model.predict(X_test)
@@ -224,20 +232,20 @@ class TestLightGBMRiskModel:
         """测试早停功能."""
         X_train, X_test, y_train, y_test = sample_data
 
-        model = LightGBMRiskModel(n_estimators=100, early_stopping_rounds=5, validation_fraction=0.2, random_state=42)
+        model = LightGBM(n_estimators=100, early_stopping_rounds=5, validation_fraction=0.2, random_state=42)
         model.fit(X_train, y_train)
 
         assert model._best_iteration is not None
 
 
-class TestRandomForestRiskModel:
+class TestRandomForest:
     """测试随机森林模型."""
 
     def test_fit_predict(self, sample_data):
         """测试训练和预测."""
         X_train, X_test, y_train, y_test = sample_data
 
-        model = RandomForestRiskModel(n_estimators=10, max_depth=5, random_state=42)
+        model = RandomForest(n_estimators=10, max_depth=5, random_state=42)
         model.fit(X_train, y_train)
 
         predictions = model.predict(X_test)
@@ -254,7 +262,7 @@ class TestRandomForestRiskModel:
         sample_weight = np.ones(len(X_train))
         sample_weight[y_train == 1] = 2.0  # 增加正样本权重
 
-        model = RandomForestRiskModel(n_estimators=10, random_state=42)
+        model = RandomForest(n_estimators=10, random_state=42)
         model.fit(X_train, y_train, sample_weight=sample_weight)
 
         predictions = model.predict(X_test)
@@ -274,7 +282,7 @@ class TestModelReport:
         """测试指标计算（多层：统计项 × 数据集）."""
         X_train, X_test, y_train, y_test = sample_data
 
-        model = RandomForestRiskModel(n_estimators=10, random_state=42)
+        model = RandomForest(n_estimators=10, random_state=42)
         model.fit(X_train, y_train)
 
         report = ModelReport(model, X_train, y_train, X_test, y_test)
@@ -291,7 +299,7 @@ class TestModelReport:
         """测试特征重要性分析."""
         X_train, X_test, y_train, y_test = sample_data
 
-        model = RandomForestRiskModel(n_estimators=10, random_state=42)
+        model = RandomForest(n_estimators=10, random_state=42)
         model.fit(X_train, y_train)
 
         report = ModelReport(model, X_train, y_train, X_test, y_test)
@@ -305,7 +313,7 @@ class TestModelReport:
         """summary 应为「统计指标 × 数据集」多层列、逾期指标为行."""
         X_train, X_test, y_train, y_test = sample_data
 
-        model = RandomForestRiskModel(n_estimators=10, random_state=42)
+        model = RandomForest(n_estimators=10, random_state=42)
         model.fit(X_train, y_train)
 
         report = ModelReport(model, X_train, y_train, X_test, y_test)
@@ -320,7 +328,7 @@ class TestModelReport:
         """评分分箱效果表（替代旧 get_score_distribution）."""
         X_train, X_test, y_train, y_test = sample_data
 
-        model = RandomForestRiskModel(n_estimators=10, random_state=42)
+        model = RandomForest(n_estimators=10, random_state=42)
         model.fit(X_train, y_train)
 
         report = ModelReport(model, X_train, y_train, X_test, y_test)
@@ -333,7 +341,7 @@ class TestModelReport:
         """print_report 应输出完整文本报告."""
         X_train, X_test, y_train, y_test = sample_data
 
-        model = RandomForestRiskModel(n_estimators=10, random_state=42)
+        model = RandomForest(n_estimators=10, random_state=42)
         model.fit(X_train, y_train)
 
         report = ModelReport(model, X_train, y_train, X_test, y_test)
@@ -352,8 +360,8 @@ class TestUnifiedInterface:
         X_train, X_test, y_train, y_test = sample_data
 
         models = [
-            RandomForestRiskModel(n_estimators=5, random_state=42),
-            GradientBoostingRiskModel(n_estimators=5, random_state=42),
+            RandomForest(n_estimators=5, random_state=42),
+            GradientBoosting(n_estimators=5, random_state=42),
         ]
 
         for model in models:

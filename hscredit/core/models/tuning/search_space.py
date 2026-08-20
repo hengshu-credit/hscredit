@@ -27,7 +27,7 @@ optuna / skopt / hyperopt，只需::
 **参考样例**
 
 >>> from hscredit.core.models.tuning.search_space import *
->>> from hscredit.core.models import XGBoostRiskModel
+>>> from hscredit.core.models import XGBoost
 >>>
 >>> # optuna / skopt / hyperopt / GridSearch 风格混用，无需关心底层归一化
 >>> search_space = {
@@ -39,7 +39,7 @@ optuna / skopt / hyperopt，只需::
 ...     'colsample_bytree': [0.6, 0.8, 1.0],                    # GridSearch 风格
 ...     'n_estimators': (50, 200),                              # bayesian-optimization 风格
 ... }
->>> best = XGBoostRiskModel(random_state=42).tune(X_train, y_train, search_space=search_space)
+>>> best = XGBoost(random_state=42).tune(X_train, y_train, search_space=search_space)
 """
 
 from __future__ import annotations
