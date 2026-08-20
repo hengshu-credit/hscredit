@@ -12,6 +12,7 @@ import importlib
 
 from .interpretability import model_explain_report
 from .explanation import ExplanationResult
+from .counterfactual import CounterfactualExplainer
 from .calibration import (
     ProbabilityCalibrator,
     CalibratedModel,
@@ -31,6 +32,7 @@ __all__ = [
     "HistogramCalibrator",
     "ModelExplainer",
     "ExplanationResult",
+    "CounterfactualExplainer",
     "model_explain_report",
 ]
 

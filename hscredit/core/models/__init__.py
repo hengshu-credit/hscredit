@@ -161,7 +161,7 @@ from .rules import (
 
 # 导入解释工具 (evaluation/)；ModelReport 已统一为 hscredit.report.ModelReport，
 # 通过 __getattr__ 懒加载兼容别名，避免 import hscredit 期间触发 hscredit.report 循环导入。
-from .evaluation import ExplanationResult, model_explain_report
+from .evaluation import CounterfactualExplainer, ExplanationResult, model_explain_report
 
 # 导入超参数调优 (tuning/, 可选重依赖 optuna，懒加载)
 _LAZY_TUNING_MODELS = ("ModelTuner", "AutoTuner", "TuningObjective", "TuningSampler")
@@ -284,6 +284,7 @@ __all__ = [
     "ModelReport",
     "model_explain_report",
     "ExplanationResult",
+    "CounterfactualExplainer",
     "ModelExplainer",
     # 统一超参数搜索空间声明
     "Dimension",
