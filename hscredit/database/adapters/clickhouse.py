@@ -16,8 +16,9 @@ from ..exceptions import (
     DatabaseWriteError,
 )
 from ..metadata import MetadataInspection, QualifiedTarget
-from ..types import DatabaseCapabilities, PoolOptions, WriteResult
-from ..writing import BatchWriteResult, validate_column_mapping_keys, validate_sql_type
+from ..type_inference import profile_string_series
+from ..types import DatabaseCapabilities, PoolOptions, WriteResult, validate_result_type
+from ..writing import BatchWriteResult, resolve_column_type, validate_column_mapping_keys
 from .base import BaseDatabaseAdapter
 
 _SAFE_ENGINE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
@@ -69,6 +70,14 @@ class ClickHouseAdapter(BaseDatabaseAdapter):
         write_modes={"a", "o", "d"},
     )
 
+    def json_extract_expression(self, column_sql: str, path: str) -> str:
+        """使用 ClickHouse SQL/JSON 函数兼容标量和对象/数组。"""
+
+        exists = f"JSON_EXISTS({column_sql}, '{path}')"
+        nested = f"JSON_QUERY({column_sql}, '{path}')"
+        scalar = f"JSON_VALUE({column_sql}, '{path}')"
+        return f"if({exists}, nullIf(coalesce(nullIf({nested}, ''), {scalar}), 'null'), NULL)"
+
     def __init__(
         self,
         *,
@@ -100,8 +109,7 @@ class ClickHouseAdapter(BaseDatabaseAdapter):
         return clickhouse_connect
 
     def query(self, sql: str, params: Any = None, result: str = "dataframe") -> Any:
-        if result not in {"dataframe", "records", "rows"}:
-            raise ValidationError("result 只支持 dataframe、records 或 rows")
+        validate_result_type(result)
         settings = self.adapter_options.get("query_settings")
         try:
             if result == "dataframe":
@@ -160,8 +168,11 @@ class ClickHouseAdapter(BaseDatabaseAdapter):
         finally:
             super().close()
 
-    @staticmethod
-    def _column_type(series: pd.Series) -> str:
+    def _column_type(
+        self,
+        series: pd.Series,
+        options: Optional[Mapping[str, Any]] = None,
+    ) -> str:
         dtype = series.dtype
         if ptypes.is_bool_dtype(dtype):
             return "UInt8"
@@ -173,6 +184,19 @@ class ClickHouseAdapter(BaseDatabaseAdapter):
             return "Float64"
         if ptypes.is_datetime64_any_dtype(dtype):
             return "DateTime64(6)"
+
+        resolved_options = dict(options or {})
+        profile = profile_string_series(series)
+        if profile.all_json_documents and resolved_options.get("infer_json", True):
+            json_type = resolved_options.get("json_type", "auto")
+            if json_type == "JSON":
+                return "JSON"
+            if json_type == "String":
+                return "String"
+            version = str(getattr(self.client, "server_version", ""))
+            match = re.match(r"^(\d+)\.(\d+)", version)
+            if match and (int(match.group(1)), int(match.group(2))) >= (25, 3):
+                return "JSON"
         return "String"
 
     @staticmethod
@@ -186,6 +210,9 @@ class ClickHouseAdapter(BaseDatabaseAdapter):
         dialect_options: Optional[Mapping[str, Any]] = None,
     ) -> str:
         options = dict(dialect_options or {})
+        json_type = options.get("json_type", "auto")
+        if json_type not in {"auto", "JSON", "String"}:
+            raise ValidationError("ClickHouse json_type 只支持 auto、JSON 或 String")
         engine = str(options.get("engine", "MergeTree"))
         if not _SAFE_ENGINE.fullmatch(engine):
             raise ValidationError(f"ClickHouse engine 参数无效: {engine!r}")
@@ -210,8 +237,10 @@ class ClickHouseAdapter(BaseDatabaseAdapter):
         )
         definitions = []
         for column in data.columns:
-            column_type = validate_sql_type(
-                column_types.get(column) or self._column_type(data[column]),
+            column_type = resolve_column_type(
+                column_types,
+                column,
+                self._column_type(data[column], options),
                 database_type="ClickHouse",
             )
             definition = f"{self.quote_identifier(str(column))} {column_type}"

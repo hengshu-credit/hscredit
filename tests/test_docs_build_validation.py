@@ -49,11 +49,13 @@ def test_accepts_complete_docs_artifacts(tmp_path):
     )
     _write(
         tmp_path / "database.html",
-        "数据库连接、流式读写与表结构导出",
+        "数据库连接、流式读写与表结构导出 大 JSON 字段按路径读取 json_fields",
     )
     _write(
         tmp_path / "api" / "database.html",
-        '<dt id="hscredit.database.client.Database">Database</dt>',
+        '<dt id="hscredit.database.client.Database">Database</dt>'
+        '<dt id="hscredit.database.client.Database.stream_query">stream_query</dt>'
+        '<dt id="hscredit.database.stream.QueryStream.to_result">to_result</dt>',
     )
     _write(
         tmp_path / "api" / "tooling.html",
@@ -93,8 +95,7 @@ def test_rejects_nested_or_reordered_model_menu(tmp_path):
     errors = collect_validation_errors(tmp_path)
 
     assert any(
-        "模型菜单" in error
-        and "经典模型、Boosting、规则器、评分卡、损失函数、评估指标、超参数调优" in error
+        "模型菜单" in error and "经典模型、Boosting、规则器、评分卡、损失函数、评估指标、超参数调优" in error
         for error in errors
     )
 
@@ -142,6 +143,20 @@ def test_rejects_database_docs_without_navigation_or_search_result(tmp_path):
 
     assert any("数据库 API 导航" in error for error in errors)
     assert any("Database" in error and "搜索结果" in error for error in errors)
+
+
+def test_rejects_database_docs_without_json_projection_and_public_method_anchors(tmp_path):
+    """数据库指南与 API 页面必须发布 JSON 投影和流式结果方法。"""
+    _write(tmp_path / "database.html", "数据库连接、流式读写与表结构导出")
+    _write(
+        tmp_path / "api" / "database.html",
+        '<dt id="hscredit.database.client.Database">Database</dt>',
+    )
+
+    errors = collect_validation_errors(tmp_path)
+
+    assert any("JSON 字段投影" in error for error in errors)
+    assert any("stream_query" in error and "to_result" in error for error in errors)
 
 
 def test_reports_current_nav_rule_that_drops_reserved_border(tmp_path):

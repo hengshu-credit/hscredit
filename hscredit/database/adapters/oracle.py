@@ -11,12 +11,13 @@ from pandas.api import types as ptypes
 from ...exceptions import DependencyError, InputValidationError, ValidationError
 from ..exceptions import DatabaseCapabilityError, DatabaseQueryError
 from ..metadata import MetadataInspection, QualifiedTarget
+from ..type_inference import profile_string_series, resolve_bounded_string_length
 from ..types import DatabaseCapabilities
 from ..writing import (
     BatchWriteResult,
+    resolve_column_type,
     split_qualified_name,
     validate_column_mapping_keys,
-    validate_sql_type,
 )
 from .dbapi import DBAPIAdapter
 
@@ -47,6 +48,13 @@ class OracleAdapter(DBAPIAdapter):
         metadata_export=True,
         write_modes={"a", "r", "o", "d"},
     )
+
+    def json_extract_expression(self, column_sql: str, path: str) -> str:
+        """同时兼容 Oracle JSON 标量和对象/数组路径。"""
+
+        scalar = f"JSON_VALUE({column_sql}, '{path}' RETURNING CLOB NULL ON EMPTY NULL ON ERROR)"
+        nested = f"JSON_QUERY({column_sql}, '{path}' RETURNING CLOB NULL ON EMPTY NULL ON ERROR)"
+        return f"COALESCE({scalar}, {nested})"
 
     def load_driver(self) -> Any:
         try:
@@ -86,7 +94,10 @@ class OracleAdapter(DBAPIAdapter):
         return "'" + str(value).replace("'", "''") + "'"
 
     @staticmethod
-    def _default_column_type(series: pd.Series) -> str:
+    def _default_column_type(
+        series: pd.Series,
+        options: Optional[Mapping[str, Any]] = None,
+    ) -> str:
         dtype = series.dtype
         if ptypes.is_bool_dtype(dtype):
             return "NUMBER(1)"
@@ -98,7 +109,23 @@ class OracleAdapter(DBAPIAdapter):
             return "TIMESTAMP"
         if ptypes.is_timedelta64_dtype(dtype):
             return "INTERVAL DAY TO SECOND"
-        return "VARCHAR2(255 CHAR)"
+
+        resolved_options = dict(options or {})
+        profile = profile_string_series(series)
+        if profile.all_json_documents and resolved_options.get("infer_json", True):
+            return "JSON" if resolved_options.get("native_json", False) else "CLOB"
+        if not profile.all_strings or profile.non_null_count == 0:
+            return "VARCHAR2(255 CHAR)"
+        varchar_limit = int(resolved_options.get("varchar_max_length", 4_000))
+        if not 1 <= varchar_limit <= 32_767:
+            raise ValidationError("Oracle varchar_max_length 必须位于 1 到 32767")
+        if profile.max_characters > varchar_limit:
+            return "CLOB"
+        length = resolve_bounded_string_length(
+            profile.max_characters,
+            maximum=varchar_limit,
+        )
+        return f"VARCHAR2({length} CHAR)"
 
     def build_create_table_sql(
         self,
@@ -131,8 +158,10 @@ class OracleAdapter(DBAPIAdapter):
         )
         definitions: List[str] = []
         for column in data.columns:
-            column_type = validate_sql_type(
-                column_types.get(column) or self._default_column_type(data[column]),
+            column_type = resolve_column_type(
+                column_types,
+                column,
+                self._default_column_type(data[column], options),
                 database_type="Oracle",
             )
             definition = f"{self.quote_identifier(str(column))} {column_type}"

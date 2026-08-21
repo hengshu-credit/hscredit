@@ -68,7 +68,7 @@ def round_float(num, decimal: int = 4):
     return num
 
 
-def force_reload_module(module_name):
+def reload(module_name):
     """在jupyter中强制重载模块，忽略所有缓存
     
     :param module_name: 模块名称
@@ -77,7 +77,7 @@ def force_reload_module(module_name):
     **参考样例**
 
     >>> import hscredit.utils.misc
-    >>> hscredit.utils.misc.force_reload_module('hscredit.utils.misc')
+    >>> hscredit.utils.misc.reload('hscredit.utils.misc')
     <module 'hscredit.utils.misc' from '...'>
     """
     if module_name in sys.modules:

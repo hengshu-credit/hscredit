@@ -13,7 +13,7 @@ from ...exceptions import DependencyError, InputValidationError, ValidationError
 from ..exceptions import DatabaseCapabilityError, DatabaseQueryError
 from ..metadata import MetadataInspection, QualifiedTarget
 from ..types import DatabaseCapabilities, PoolOptions
-from ..writing import BatchWriteResult, validate_column_mapping_keys, validate_sql_type
+from ..writing import BatchWriteResult, resolve_column_type, validate_column_mapping_keys
 from .dbapi import DBAPIAdapter
 
 _SAFE_STORAGE = re.compile(r"^[A-Za-z0-9_]+$")
@@ -99,6 +99,11 @@ class HiveAdapter(DBAPIAdapter):
         write_modes={"a", "o", "d"},
     )
 
+    def json_extract_expression(self, column_sql: str, path: str) -> str:
+        """使用 Hive ``GET_JSON_OBJECT`` 提取 JSON 路径。"""
+
+        return f"GET_JSON_OBJECT({column_sql}, '{path}')"
+
     def __init__(
         self,
         *,
@@ -175,8 +180,10 @@ class HiveAdapter(DBAPIAdapter):
         )
         definitions = []
         for column in data.columns:
-            column_type = validate_sql_type(
-                types.get(column) or self._column_type(data[column]),
+            column_type = resolve_column_type(
+                types,
+                column,
+                self._column_type(data[column]),
                 database_type=self.database_type,
             )
             definition = f"{self.quote_identifier(str(column))} {column_type}"

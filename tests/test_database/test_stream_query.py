@@ -1,5 +1,8 @@
 """可中断流式读取、进度计数和部分结果测试。"""
 
+import math
+import warnings
+
 import pandas as pd
 import pytest
 
@@ -50,11 +53,14 @@ class ObservableStreamAdapter(BaseDatabaseAdapter):
         rows = connect_kwargs.get("rows", [(1,), (2,), (3,), (4,), (5,)])
         self.resource = ObservableStreamResource(
             rows,
-            ["id"],
+            connect_kwargs.get("columns", ["id"]),
             interrupt_on_call=connect_kwargs.get("interrupt_on_call"),
             fail_on_call=connect_kwargs.get("fail_on_call"),
         )
         self.count_calls = []
+
+    def json_extract_expression(self, column_sql, path):
+        return f"JSON_GET({column_sql}, '{path}')"
 
     def open_stream(self, sql, params=None):
         self.stream_call = (sql, params)
@@ -189,3 +195,205 @@ def test_native_dataframe_chunks_are_not_reconstructed():
 
     assert len(chunks) == 1
     assert chunks[0] is native_chunk
+
+
+def test_stream_query_projects_json_fields_without_returning_source_json():
+    database = Database(
+        "observable_stream",
+        rows=[(1, None), (2, "上海")],
+        columns=["id", "city"],
+    )
+
+    chunks = list(
+        database.stream_query(
+            "select id, huge_json from user_profile;",
+            columns=["id"],
+            json_fields={"huge_json": {"city": ("$.address.city", "未知")}},
+            chunksize=10,
+            result="dataframe",
+        )
+    )
+
+    assert chunks[0].to_dict("records") == [
+        {"id": 1, "city": "未知"},
+        {"id": 2, "city": "上海"},
+    ]
+    assert database.adapter.stream_call == (
+        'SELECT "hscredit_json_source"."id", '
+        'JSON_GET("hscredit_json_source"."huge_json", \'$.address.city\') AS "city" '
+        'FROM (select id, huge_json from user_profile) "hscredit_json_source"',
+        None,
+    )
+
+
+@pytest.mark.parametrize(
+    ("result", "expected"),
+    [
+        ("records", [[{"id": 1, "city": "未知"}, {"id": 2, "city": ""}]]),
+        ("rows", [[(1, "未知"), (2, "")]]),
+    ],
+)
+def test_stream_query_uses_existing_result_types(result, expected):
+    database = Database(
+        "observable_stream",
+        rows=[(1, None), (2, "")],
+        columns=["id", "city"],
+    )
+
+    chunks = list(
+        database.stream_query(
+            "select id, huge_json from user_profile",
+            columns=["id"],
+            json_fields={"huge_json": {"city": ("$.city", "未知")}},
+            result=result,
+        )
+    )
+
+    assert chunks == expected
+
+
+def test_json_projection_copies_mutable_default_per_row():
+    database = Database(
+        "observable_stream",
+        rows=[(None,), (None,)],
+        columns=["risk_tags"],
+    )
+
+    frame = next(
+        database.stream_query(
+            "select huge_json from user_profile",
+            json_fields={"huge_json": {"risk_tags": ("$.risk.tags", [])}},
+        )
+    )
+
+    assert frame["risk_tags"].tolist() == [[], []]
+    assert frame.at[0, "risk_tags"] is not frame.at[1, "risk_tags"]
+
+
+def test_json_projection_default_can_differ_from_driver_inferred_dtype():
+    database = Database(
+        "observable_stream",
+        rows=[(float("nan"),), (None,)],
+        columns=["risk_score"],
+    )
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        frame = next(
+            database.stream_query(
+                "select huge_json from user_profile",
+                json_fields={"huge_json": {"risk_score": ("$.risk.score", "未知")}},
+            )
+        )
+
+    assert caught == []
+    assert math.isnan(frame.at[0, "risk_score"])
+    assert frame.at[1, "risk_score"] == "未知"
+
+
+def test_json_projection_default_uses_positions_when_dataframe_index_repeats():
+    native_chunk = pd.DataFrame(
+        {"city": [None, "上海"]},
+        index=[7, 7],
+        dtype=object,
+    )
+    database = Database("observable_stream", rows=[native_chunk])
+
+    frame = next(
+        database.stream_query(
+            "select huge_json from user_profile",
+            json_fields={"huge_json": {"city": ("$.city", "未知")}},
+        )
+    )
+
+    assert frame["city"].tolist() == ["未知", "上海"]
+
+
+@pytest.mark.parametrize(
+    ("result", "expected"),
+    [
+        ("records", [[{"id": 1}, {"id": 2}]]),
+        ("rows", [[(1,), (2,)]]),
+    ],
+)
+def test_stream_query_result_types_also_apply_without_json_projection(result, expected):
+    database = Database("observable_stream", rows=[(1,), (2,)])
+
+    assert list(database.stream_query("select id from t", result=result)) == expected
+
+
+def test_read_query_returns_partial_records_after_interrupt():
+    database = Database(
+        "observable_stream",
+        rows=[(1, None), (2, "北京"), (3, "上海")],
+        columns=["id", "city"],
+        interrupt_on_call=2,
+    )
+
+    records = database.read_query(
+        "select id, huge_json from user_profile",
+        columns=["id"],
+        json_fields={"huge_json": {"city": ("$.city", "未知")}},
+        chunksize=2,
+        result="records",
+    )
+
+    assert records == [{"id": 1, "city": "未知"}, {"id": 2, "city": "北京"}]
+
+
+def test_progress_count_uses_original_sql_before_json_projection():
+    database = Database(
+        "observable_stream",
+        rows=[(1,)],
+        columns=["customer_id"],
+    )
+
+    list(
+        database.stream_query(
+            "select huge_json from user_profile where id > %s",
+            params=(10,),
+            json_fields={"huge_json": {"customer_id": "$.customer.id"}},
+            progress=True,
+        )
+    )
+
+    assert database.adapter.count_calls == [
+        (
+            "SELECT COUNT(1) FROM (select huge_json from user_profile where id > %s) hscredit_count",
+            (10,),
+        )
+    ]
+
+
+@pytest.mark.parametrize("result", ["list", "dict", "DATAFRAME", None, []])
+def test_stream_query_rejects_result_outside_existing_types(result):
+    database = Database("observable_stream")
+
+    with pytest.raises(ValidationError, match="result"):
+        database.stream_query("select id from t", result=result)
+
+
+@pytest.mark.parametrize(
+    ("columns", "json_fields", "message"),
+    [
+        ("id", {"payload": {"name": "$.name"}}, "columns"),
+        (["id"], None, "json_fields"),
+        (None, {}, "json_fields"),
+        (None, {"payload": {}}, "json_fields"),
+        (None, {"payload": {"name": ("$.name",)}}, "JSON字段定义"),
+        (None, {"payload": {"name": "name"}}, "JSONPath"),
+        (None, {"payload": {"name": "$.name'; DROP TABLE users; --"}}, "JSONPath"),
+        (["name"], {"payload": {"name": "$.name"}}, "重复"),
+        (["payload"], {"payload": {"name": "$.name"}}, "JSON源字段"),
+        (["PAYLOAD"], {"payload": {"name": "$.name"}}, "JSON源字段"),
+    ],
+)
+def test_stream_query_rejects_invalid_json_projection(columns, json_fields, message):
+    database = Database("observable_stream")
+
+    with pytest.raises(ValidationError, match=message):
+        database.stream_query(
+            "select id from t",
+            columns=columns,
+            json_fields=json_fields,
+        )

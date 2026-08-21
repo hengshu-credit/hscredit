@@ -12,11 +12,16 @@ from .exceptions import (
     DatabaseWriteError,
 )
 from .types import (
+    RESULT_TYPES,
     WRITE_MODES,
     DatabaseCapabilities,
+    MongoPoolOptions,
+    NoSQLWriteResult,
     PoolOptions,
+    RedisPoolOptions,
     StreamState,
     WriteResult,
+    validate_result_type,
 )
 from .client import Database
 from .registry import available_adapters, get_adapter_class, register_adapter
@@ -25,11 +30,16 @@ from .metadata import METADATA_COLUMNS_ZH, MetadataInspection, QualifiedTarget
 from .writing import BatchWriteResult, iter_write_batches
 
 __all__ = [
+    "RESULT_TYPES",
     "WRITE_MODES",
     "StreamState",
     "PoolOptions",
+    "RedisPoolOptions",
+    "MongoPoolOptions",
     "DatabaseCapabilities",
     "WriteResult",
+    "NoSQLWriteResult",
+    "validate_result_type",
     "DatabaseError",
     "DatabaseConnectionError",
     "DatabaseQueryError",

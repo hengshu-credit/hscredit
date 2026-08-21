@@ -40,14 +40,27 @@ METADATA_COLUMNS_ZH = [chinese for _, chinese in METADATA_COLUMN_MAP]
 
 @dataclass(frozen=True)
 class QualifiedTarget:
-    """未改写大小写的数据库对象限定名。"""
+    """未改写大小写的数据库对象限定名。
+
+    **参数**
+
+    raw : str
+        用户提供并去除首尾空白后的原始目标。
+    parts : tuple[str, ...]
+        以点拆分的数据库、模式和表名片段。
+    """
 
     raw: str
     parts: Tuple[str, ...]
 
     @classmethod
     def parse(cls, value: str) -> "QualifiedTarget":
-        """解析以点分隔的数据库、模式和表目标。"""
+        """解析以点分隔的数据库、模式和表目标。
+
+        :param value: ``数据库``、``数据库.表`` 或多级限定名。
+        :return: 保持原始大小写的限定目标。
+        :raises ValidationError: 目标为空或包含空片段。
+        """
 
         if not isinstance(value, str) or not value.strip():
             raise ValidationError("元数据目标必须是非空字符串")
@@ -60,7 +73,15 @@ class QualifiedTarget:
 
 @dataclass
 class MetadataInspection:
-    """适配器元数据扫描结果。"""
+    """适配器元数据扫描结果。
+
+    **参数**
+
+    rows : iterable of mapping
+        使用内部英文字段键保存的表/字段记录。
+    errors : list
+        部分数据库或表扫描失败时保留的原始错误信息。
+    """
 
     rows: Iterable[Mapping[str, Any]] = field(default_factory=tuple)
     errors: List[Any] = field(default_factory=list)
@@ -69,7 +90,12 @@ class MetadataInspection:
 def parse_targets(
     targets: Optional[Sequence[str]],
 ) -> Optional[Tuple[QualifiedTarget, ...]]:
-    """将目标参数规范化为限定名元组。"""
+    """将目标参数规范化为限定名元组。
+
+    :param targets: 单个目标字符串、目标字符串序列或 ``None``。
+    :return: 限定目标元组；``None`` 表示由适配器扫描默认可见范围。
+    :raises ValidationError: 输入不是字符串序列、序列为空或目标格式无效。
+    """
 
     if targets is None:
         return None
@@ -84,7 +110,12 @@ def parse_targets(
 
 
 def metadata_frame(inspection: MetadataInspection) -> pd.DataFrame:
-    """将内部元数据映射为中文列名宽表。"""
+    """将内部元数据映射为中文列名宽表。
+
+    :param inspection: 适配器返回的元数据记录和错误。
+    :return: 固定中文列名的 DataFrame；原始字段值不翻译，错误保存在 ``attrs["错误"]``。
+    :rtype: pandas.DataFrame
+    """
 
     records = []
     for row in inspection.rows:

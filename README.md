@@ -1163,6 +1163,8 @@ Python 支持范围：**3.9–3.14**。Boosting、深度学习、调参、解释
 | `pip install hscredit[db-starrocks]` | StarRocks MySQL 协议与 Stream Load |
 | `pip install hscredit[db-clickhouse]` | ClickHouse 原生 DataFrame 流式读写 |
 | `pip install hscredit[db-maxcompute]` | MaxCompute DB-API、原生写入与元数据 |
+| `pip install hscredit[db-redis]` | Redis 连接池与统一 NoSQL 读写 |
+| `pip install hscredit[db-mongodb]` | MongoDB 连接池与统一 NoSQL 读写 |
 | `pip install hscredit[database-all]` | 全部数据库适配器 |
 | `pip install hscredit[all]` | 全部可选能力、开发和文档依赖 |
 
@@ -1170,7 +1172,7 @@ SHAP 已是基础依赖。可直接使用 `ModelExplainer.explain()` 生成带�
 
 ### 数据库连接、流式读写与表结构导出
 
-数据库驱动均为可选依赖；普通 `import hscredit` 不会加载 PyMySQL、Impyla、python-oracledb、clickhouse-connect 或 PyODPS。所有连接参数直接交给对应驱动，连接池参数单独放在 `pool_options` 中：
+数据库驱动均为可选依赖；普通 `import hscredit` 不会加载 PyMySQL、Impyla、python-oracledb、clickhouse-connect、PyODPS、redis-py 或 PyMongo。所有连接参数直接交给对应驱动，连接池参数单独放在 `pool_options` 中：
 
 ```python
 from hscredit import Database
@@ -1248,6 +1250,24 @@ db.create_table(
 
 `column_types` 仅接受由字母、数字、空格及平衡的 `()` / `<>` 组成的安全类型表达式（如 `DECIMAL(18, 2)`、`ARRAY<STRING>`、`Nullable(String)`），不接受引号、注释或 SQL 片段。带引号参数的特殊类型应使用对应数据库适配器的专用方言参数配置。
 
+未显式指定类型时会分析当前建表 DataFrame：短文本使用带余量的自适应 VARCHAR，MySQL 长文本按容量使用 `TEXT/MEDIUMTEXT/LONGTEXT`，Oracle 长文本使用 `CLOB`。只有全部非空字符串都能解析为 JSON 对象或数组时才推断 JSON；混合普通文本会回退字符串类型。各后端规则、版本开关和长度上限见[数据库完整指南](docs/database.md#字符串长度与-json-内容推断)。
+
+流式读取超大 JSON 字段时，可将少量路径直接下推到数据库，避免传输完整 JSON。字段定义使用“JSON 源字段 → 输出字段名 → JSONPath 或 `(JSONPath, 默认值)`”，结果类型继续使用 `dataframe/records/rows`：
+
+```python
+records = db.read_query(
+    "SELECT id, huge_json FROM user_profile",
+    columns=["id"],
+    json_fields={
+        "huge_json": {
+            "customer_id": "$.customer.id",
+            "city": ("$.address.city", "未知"),
+        }
+    },
+    result="records",
+)
+```
+
 `a/r` 仅在数据库和当前表模型可以原生保证冲突语义时开放。例如 Impala Kudu 的 `a` 会保留已有主键行、`r` 使用 UPSERT；StarRocks 主键/唯一键表只支持 `r`，没有可靠冲突忽略能力，因此不开放 `a`；ClickHouse 的 `r` 要求 ReplacingMergeTree 且属于最终一致性。不支持时会抛出中文 `DatabaseCapabilityError`，不会使用并发不安全的客户端“先查再写”替代。
 
 表结构导出按“每个字段一行”返回中文列名 DataFrame，数据库返回值保持原样。可指定整个数据库或 `数据库.表`；Excel 仅通过 `dataframe2excel` 导出，不提供 CSV/TSV：
@@ -1265,6 +1285,25 @@ schema = db.export_schema(
 
 db.close()
 ```
+
+Redis 与 MongoDB 使用统一的 `read_one/read_many`、`write_one/write_many`、`delete_one/delete_many` 和 `exists` 方法，并提供自适应 `read/write/delete`：
+
+```python
+redis_db = Database("redis", url="redis://127.0.0.1:6379/0")
+redis_db.write({"score:1": "720", "score:2": "680"})
+scores = redis_db.read(["score:1", "score:2"])
+
+mongo_db = Database(
+    "mongodb",
+    uri="mongodb://127.0.0.1:27017/risk",
+    database="risk",
+)
+mongo_db.write("model_score", {"user_id": 1, "score": 720})
+documents = mongo_db.read("model_score", {"score": {"$gte": 700}})
+mongo_db.delete("model_score", {"user_id": 1})  # 默认只删除一个匹配文档
+```
+
+MongoDB 的 `read()` 默认返回列表，`limit=1` 或 `many=False` 返回单个文档；`write()` 根据单个映射或文档序列自动选择单条/批量写入；`delete()` 默认单条，批量删除必须显式设置 `many=True`。完整连接池参数、更新/替换模式和安全删除规则见[数据库完整指南](docs/database.md#redis-与-mongodb-的统一-nosql-方法)。
 
 第三方数据库通过适配器注册表扩展，注册动作不会加载其他内置数据库驱动：
 

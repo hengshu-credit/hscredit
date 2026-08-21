@@ -90,7 +90,7 @@ def test_starrocks_default_ddl_uses_explicit_key_and_distribution(adapter):
     assert "ENGINE=OLAP" in ddl
     assert "PRIMARY KEY (`id`)" in ddl
     assert "DISTRIBUTED BY HASH(`id`) BUCKETS 8" in ddl
-    assert "`name` VARCHAR(65533)" in ddl
+    assert "`name` VARCHAR(16)" in ddl
 
 
 def test_starrocks_insert_sql_uses_table_model_semantics(adapter):
@@ -234,3 +234,154 @@ def test_starrocks_drop_mode_recreate_does_not_use_if_not_exists(adapter):
     create_sql = [call[1] for call in adapter.sql_calls if call[0] == "execute"][-1]
     assert create_sql.startswith("CREATE TABLE `risk`.`events`")
     assert "IF NOT EXISTS" not in create_sql
+
+
+def test_starrocks_string_inference_uses_bounded_varchar_and_json(adapter):
+    frame = pd.DataFrame(
+        {
+            "description": ["a" * 300],
+            "payload": ['{"id": 1}'],
+        }
+    )
+
+    ddl = adapter.build_create_table_sql(
+        frame,
+        "risk.string_types",
+        {"table_model": "DUPLICATE KEY", "key_columns": ["description"]},
+    )
+
+    assert "`description` VARCHAR(512)" in ddl
+    assert "`payload` JSON" in ddl
+
+
+def test_starrocks_rejects_strings_beyond_single_column_limit(adapter):
+    frame = pd.DataFrame({"description": ["a" * 70_000]})
+
+    with pytest.raises(Exception, match="65533"):
+        adapter.build_create_table_sql(frame, "risk.too_long")
+
+
+def test_starrocks_sql_write_wraps_only_json_placeholders(adapter):
+    batch = pd.DataFrame(
+        {
+            "id": [1],
+            "payload": ['{"event": "apply"}'],
+            "note": ["普通文本"],
+        }
+    )
+
+    adapter.write_batch(
+        "risk.events",
+        batch,
+        "o",
+        1,
+    )
+
+    sql = adapter.sql_calls[-1][1]
+    assert "VALUES (%s, parse_json(%s), %s)" in sql
+
+
+def test_starrocks_json_columns_are_fixed_from_first_create_batch(adapter):
+    first = pd.DataFrame({"id": [1], "payload": ['{"event": "apply"}']})
+    second = pd.DataFrame({"id": [2], "payload": ["later plain text"]})
+    options = {"table_model": "DUPLICATE KEY"}
+
+    adapter.prepare_write(
+        "risk.events",
+        "d",
+        first,
+        key_columns=["id"],
+        dialect_options=options,
+    )
+    adapter.write_batch("risk.events", first, "d", 1, dialect_options=options)
+    adapter.write_batch("risk.events", second, "d", 2, dialect_options=options)
+
+    writes = [call[1] for call in adapter.sql_calls if call[0] == "executemany"]
+    assert len(writes) == 2
+    assert all("VALUES (%s, parse_json(%s))" in sql for sql in writes)
+
+
+def test_starrocks_later_json_does_not_change_first_plain_text_schema(adapter):
+    first = pd.DataFrame({"id": [1], "payload": ["first plain text"]})
+    second = pd.DataFrame({"id": [2], "payload": ['{"event": "later"}']})
+    options = {"table_model": "DUPLICATE KEY"}
+
+    adapter.prepare_write(
+        "risk.events",
+        "d",
+        first,
+        key_columns=["id"],
+        dialect_options=options,
+    )
+    adapter.write_batch("risk.events", first, "d", 1, dialect_options=options)
+    adapter.write_batch("risk.events", second, "d", 2, dialect_options=options)
+
+    writes = [call[1] for call in adapter.sql_calls if call[0] == "executemany"]
+    assert len(writes) == 2
+    assert all("parse_json" not in sql for sql in writes)
+
+
+def test_starrocks_interleaved_writes_keep_operation_scoped_json_schema(adapter):
+    json_options = {"table_model": "DUPLICATE KEY"}
+    plain_options = {"table_model": "DUPLICATE KEY"}
+    json_first = pd.DataFrame({"id": [1], "payload": ['{"event": "json"}']})
+    plain_first = pd.DataFrame({"id": [2], "payload": ["plain text"]})
+
+    adapter.prepare_write(
+        "risk.events",
+        "d",
+        json_first,
+        key_columns=["id"],
+        dialect_options=json_options,
+    )
+    adapter.prepare_write(
+        "risk.events",
+        "d",
+        plain_first,
+        key_columns=["id"],
+        dialect_options=plain_options,
+    )
+    adapter.write_batch(
+        "risk.events",
+        json_first,
+        "d",
+        1,
+        dialect_options=json_options,
+    )
+    adapter.write_batch(
+        "risk.events",
+        plain_first,
+        "d",
+        1,
+        dialect_options=plain_options,
+    )
+
+    writes = [call[1] for call in adapter.sql_calls if call[0] == "executemany"]
+    assert "parse_json(%s)" in writes[-2]
+    assert "parse_json(%s)" not in writes[-1]
+
+
+def test_starrocks_explicit_empty_column_type_is_rejected(adapter):
+    with pytest.raises(Exception, match="数据类型"):
+        adapter.build_create_table_sql(
+            pd.DataFrame({"id": [1]}),
+            "risk.invalid_type",
+            {
+                "table_model": "DUPLICATE KEY",
+                "column_types": {"id": ""},
+            },
+        )
+
+
+def test_starrocks_json_projection_uses_get_json_string(adapter):
+    sql = adapter.build_json_projection_sql(
+        "select id, payload from risk.events;",
+        columns=["id"],
+        json_fields={"payload": {"city": "$.address.city"}},
+    )
+
+    assert sql == (
+        "SELECT `hscredit_json_source`.`id`, "
+        "GET_JSON_STRING(`hscredit_json_source`.`payload`, '$.address.city') AS `city` "
+        "FROM (select id, payload from risk.events) `hscredit_json_source`"
+    )

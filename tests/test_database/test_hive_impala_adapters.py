@@ -282,3 +282,44 @@ def test_hadoop_drop_mode_recreate_does_not_use_if_not_exists(adapter_class):
     create_sql = [call[1] for call in adapter.sql_calls if call[0] == "execute"][-1]
     assert create_sql.startswith("CREATE TABLE `risk`.`events`")
     assert "IF NOT EXISTS" not in create_sql
+
+
+@pytest.mark.parametrize("adapter_class", [ObservableHiveAdapter, ObservableImpalaAdapter])
+def test_hadoop_json_strings_remain_unbounded_string(adapter_class):
+    adapter = adapter_class()
+
+    ddl = adapter.build_create_table_sql(
+        pd.DataFrame({"payload": ['{"id": 1}']}),
+        "risk.json_text",
+    )
+
+    assert "`payload` STRING" in ddl
+
+
+@pytest.mark.parametrize("adapter_class", [ObservableHiveAdapter, ObservableImpalaAdapter])
+def test_hadoop_explicit_empty_column_type_is_rejected(adapter_class):
+    adapter = adapter_class()
+
+    with pytest.raises(Exception, match="数据类型"):
+        adapter.build_create_table_sql(
+            pd.DataFrame({"id": [1]}),
+            "risk.invalid_type",
+            {"column_types": {"id": ""}},
+        )
+
+
+@pytest.mark.parametrize("adapter_class", [ObservableHiveAdapter, ObservableImpalaAdapter])
+def test_hive_and_impala_json_projection_uses_get_json_object(adapter_class):
+    adapter = adapter_class()
+
+    sql = adapter.build_json_projection_sql(
+        "select id, payload from events;",
+        columns=["id"],
+        json_fields={"payload": {"city": "$.address.city"}},
+    )
+
+    assert sql == (
+        "SELECT `hscredit_json_source`.`id`, "
+        "GET_JSON_OBJECT(`hscredit_json_source`.`payload`, '$.address.city') AS `city` "
+        "FROM (select id, payload from events) `hscredit_json_source`"
+    )

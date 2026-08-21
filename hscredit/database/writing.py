@@ -14,7 +14,13 @@ from ..exceptions import InputValidationError, ValidationError
 
 @dataclass(frozen=True)
 class BatchWriteResult:
-    """单个已提交写入批次的统计。"""
+    """单个已提交写入批次的统计。
+
+    **参数**
+
+    inserted、updated、skipped : int, optional
+        当前批次插入、更新和跳过的行数；后端无法可靠报告时为 ``None``。
+    """
 
     inserted: Optional[int] = None
     updated: Optional[int] = None
@@ -51,6 +57,19 @@ def validate_sql_type(value: Any, *, database_type: str) -> str:
     if stack:
         raise ValidationError(f"{database_type} 数据类型括号不匹配: {value!r}")
     return expression
+
+
+def resolve_column_type(
+    column_types: Mapping[Any, Any],
+    column: Any,
+    inferred_type: str,
+    *,
+    database_type: str,
+) -> str:
+    """显式字段类型按键存在性优先，并始终经过安全语法校验。"""
+
+    candidate = column_types[column] if column in column_types else inferred_type
+    return validate_sql_type(candidate, database_type=database_type)
 
 
 def validate_column_mapping_keys(
@@ -172,7 +191,17 @@ def iter_write_batches(
     batch_size: int = 10_000,
     columns: Optional[Sequence[str]] = None,
 ) -> Iterator[pd.DataFrame]:
-    """将支持的写入输入规范化为非空 DataFrame 批次。"""
+    """将支持的写入输入惰性规范化为非空 DataFrame 批次。
+
+    函数不会预执行、抽样或重试用户迭代器；每条输入记录只消费一次。
+
+    :param data: DataFrame、DataFrame 分块、映射记录或位置行迭代器。
+    :param batch_size: 每个输出批次的最大行数，默认 10000。
+    :param columns: 显式字段顺序；位置行输入时必须提供。
+    :return: 非空且字段顺序稳定的 DataFrame 迭代器。
+    :raises InputValidationError: 输入为空之外的结构、字段或记录类型不一致。
+    :raises ValidationError: ``batch_size`` 不是正整数。
+    """
 
     validate_batch_size(batch_size)
     if isinstance(data, pd.DataFrame):
@@ -205,5 +234,6 @@ __all__ = [
     "split_qualified_name",
     "validate_batch_size",
     "validate_column_mapping_keys",
+    "resolve_column_type",
     "validate_sql_type",
 ]

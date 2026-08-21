@@ -252,3 +252,52 @@ def test_clickhouse_drop_mode_recreate_does_not_use_if_not_exists(adapter):
     create_sql = adapter.client.commands[-1][0]
     assert create_sql.startswith("CREATE TABLE `risk`.`events`")
     assert "IF NOT EXISTS" not in create_sql
+
+
+def test_clickhouse_json_inference_respects_server_version_and_override(adapter):
+    frame = pd.DataFrame({"payload": ['{"id": 1}']})
+
+    adapter.client.server_version = "25.3.1"
+    automatic = adapter.build_create_table_sql(frame, "risk.json_auto")
+    forced_string = adapter.build_create_table_sql(
+        frame,
+        "risk.json_string",
+        {"json_type": "String"},
+    )
+
+    assert "`payload` JSON" in automatic
+    assert "`payload` String" in forced_string
+
+
+def test_clickhouse_invalid_json_type_is_rejected_even_for_plain_text(adapter):
+    with pytest.raises(Exception, match="json_type"):
+        adapter.build_create_table_sql(
+            pd.DataFrame({"note": ["plain text"]}),
+            "risk.invalid_json_option",
+            {"json_type": "JSNO"},
+        )
+
+
+def test_clickhouse_explicit_empty_column_type_is_rejected(adapter):
+    with pytest.raises(Exception, match="数据类型"):
+        adapter.build_create_table_sql(
+            pd.DataFrame({"id": [1]}),
+            "risk.invalid_type",
+            {"column_types": {"id": ""}},
+        )
+
+
+def test_clickhouse_json_projection_handles_scalar_and_nested_values(adapter):
+    sql = adapter.build_json_projection_sql(
+        "select id, payload from events;",
+        columns=["id"],
+        json_fields={"payload": {"risk_tags": "$.risk.tags"}},
+    )
+
+    assert sql == (
+        "SELECT `hscredit_json_source`.`id`, "
+        "if(JSON_EXISTS(`hscredit_json_source`.`payload`, '$.risk.tags'), "
+        "nullIf(coalesce(nullIf(JSON_QUERY(`hscredit_json_source`.`payload`, '$.risk.tags'), ''), "
+        "JSON_VALUE(`hscredit_json_source`.`payload`, '$.risk.tags')), 'null'), NULL) AS `risk_tags` "
+        "FROM (select id, payload from events) `hscredit_json_source`"
+    )

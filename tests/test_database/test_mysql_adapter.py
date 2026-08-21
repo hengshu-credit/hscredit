@@ -178,7 +178,7 @@ def test_mysql_create_table_maps_types_keys_and_comments(adapter):
     assert "`enabled` BOOLEAN" in ddl
     assert "`amount` DOUBLE" in ddl
     assert "`created_at` DATETIME" in ddl
-    assert "`name` VARCHAR(255) COMMENT '姓名'" in ddl
+    assert "`name` VARCHAR(16) COMMENT '姓名'" in ddl
     assert "PRIMARY KEY (`id`)" in ddl
     assert "ENGINE=InnoDB DEFAULT CHARSET=utf8mb4" in ddl
     assert "COMMENT='事件表'" in ddl
@@ -192,6 +192,60 @@ def test_mysql_comments_escape_backslashes_before_quotes(adapter):
     )
 
     assert "前缀\\\\''; DROP TABLE x; --" in ddl
+
+
+def test_mysql_string_inference_uses_json_and_text_families(adapter):
+    frame = pd.DataFrame(
+        {
+            "short_text": ["a" * 50],
+            "long_text": ["b" * 300],
+            "medium_text": ["c" * 70_000],
+            "json_value": ['{"id": 1, "tags": ["a"]}'],
+            "mixed_value": ['{"id": 1}普通文本'],
+        }
+    )
+
+    ddl = adapter.build_create_table_sql(frame, "risk.string_types")
+
+    assert "`short_text` VARCHAR(64)" in ddl
+    assert "`long_text` TEXT" in ddl
+    assert "`medium_text` MEDIUMTEXT" in ddl
+    assert "`json_value` JSON" in ddl
+    assert "`mixed_value` VARCHAR(16)" in ddl
+
+
+def test_mysql_varchar_inference_respects_utf8mb4_byte_capacity(adapter):
+    frame = pd.DataFrame({"description": ["衡" * 20_000]})
+
+    ddl = adapter.build_create_table_sql(
+        frame,
+        "risk.utf8_text",
+        {"varchar_max_length": 65_535, "charset": "utf8mb4"},
+    )
+
+    assert "`description` MEDIUMTEXT" in ddl
+
+
+def test_mysql_explicit_empty_column_type_is_rejected(adapter):
+    with pytest.raises(Exception, match="数据类型"):
+        adapter.build_create_table_sql(
+            pd.DataFrame({"id": [1]}),
+            "risk.invalid_type",
+            {"column_types": {"id": ""}},
+        )
+
+
+def test_mysql_known_charset_width_cannot_be_overridden_lower(adapter):
+    with pytest.raises(Exception, match="utf8mb4"):
+        adapter.build_create_table_sql(
+            pd.DataFrame({"description": ["衡" * 20_000]}),
+            "risk.unsafe_width",
+            {
+                "charset": "utf8mb4",
+                "varchar_max_length": 65_535,
+                "charset_max_bytes_per_character": 1,
+            },
+        )
 
 
 def test_mysql_stream_cursor_uses_sscursor(adapter):
@@ -364,3 +418,19 @@ def test_mysql_drop_mode_validates_ddl_before_drop(adapter):
         )
 
     assert adapter.sql_calls == []
+
+
+def test_mysql_json_projection_uses_server_side_path_extraction(adapter):
+    sql = adapter.build_json_projection_sql(
+        "select id, payload from risk.events;",
+        columns=["id"],
+        json_fields={"payload": {"customer_id": "$.customer.id"}},
+    )
+
+    assert sql == (
+        "SELECT `hscredit_json_source`.`id`, "
+        "CASE WHEN JSON_TYPE(JSON_EXTRACT(`hscredit_json_source`.`payload`, '$.customer.id')) = 'NULL' "
+        "THEN NULL ELSE JSON_UNQUOTE(JSON_EXTRACT(`hscredit_json_source`.`payload`, '$.customer.id')) END "
+        "AS `customer_id` "
+        "FROM (select id, payload from risk.events) `hscredit_json_source`"
+    )

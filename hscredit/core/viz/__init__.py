@@ -52,7 +52,7 @@ from .binning_plots import (
     bin_overdues_plot,
 )
 
-from .model_plots import plot_model_feature_importance, plot_weights
+from .model_plots import plot_model_feature_importance, plot_model_sample_shap, plot_weights
 
 # 金融风控专用图表
 from .risk_plots import (
@@ -168,6 +168,7 @@ __all__ = [
     # 模型相关
     "plot_weights",
     "plot_model_feature_importance",
+    "plot_model_sample_shap",
     # 模型评估
     "roc_plot",
     "pr_plot",

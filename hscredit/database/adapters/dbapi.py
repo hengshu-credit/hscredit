@@ -8,12 +8,10 @@ from typing import Any, Iterable, Iterator, List, Mapping, Optional, Sequence, T
 
 import pandas as pd
 
-from ...exceptions import DependencyError, ValidationError
+from ...exceptions import DependencyError
 from ..exceptions import DatabaseConnectionError, DatabaseQueryError
-from ..types import DatabaseCapabilities, PoolOptions
+from ..types import DatabaseCapabilities, PoolOptions, validate_result_type
 from .base import BaseDatabaseAdapter
-
-RESULT_TYPES = frozenset({"dataframe", "records", "rows"})
 
 
 class DBAPIQueryResource:
@@ -133,8 +131,7 @@ class DBAPIAdapter(BaseDatabaseAdapter):
     def query(self, sql: str, params: Any = None, result: str = "dataframe") -> Any:
         """执行查询并转换为 DataFrame、记录字典或原始行。"""
 
-        if result not in RESULT_TYPES:
-            raise ValidationError(f"result 只支持 {sorted(RESULT_TYPES)}，收到 {result!r}")
+        validate_result_type(result)
         try:
             with self.connection_cursor() as (_, cursor):
                 self.execute_cursor(cursor, sql, params)
@@ -234,4 +231,4 @@ class DBAPIAdapter(BaseDatabaseAdapter):
             super().close()
 
 
-__all__ = ["DBAPIAdapter", "DBAPIQueryResource", "RESULT_TYPES"]
+__all__ = ["DBAPIAdapter", "DBAPIQueryResource"]

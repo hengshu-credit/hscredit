@@ -98,7 +98,7 @@ def test_importing_database_package_does_not_import_backend_drivers():
     code = """
 import sys
 import hscredit.database
-drivers = ['pymysql', 'impala', 'oracledb', 'clickhouse_connect', 'odps']
+drivers = ['pymysql', 'impala', 'oracledb', 'clickhouse_connect', 'odps', 'redis', 'pymongo']
 loaded = [name for name in drivers if name in sys.modules]
 assert not loaded, loaded
 """

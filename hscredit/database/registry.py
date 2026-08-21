@@ -20,6 +20,8 @@ _BUILTIN_ADAPTERS: Dict[str, AdapterEntry] = {
     "starrocks": "hscredit.database.adapters.starrocks:StarRocksAdapter",
     "clickhouse": "hscredit.database.adapters.clickhouse:ClickHouseAdapter",
     "maxcompute": "hscredit.database.adapters.maxcompute:MaxComputeAdapter",
+    "redis": "hscredit.database.adapters.redis:RedisAdapter",
+    "mongodb": "hscredit.database.adapters.mongodb:MongoDBAdapter",
 }
 
 _ADAPTERS: Dict[str, AdapterEntry] = dict(_BUILTIN_ADAPTERS)
@@ -28,6 +30,7 @@ _ALIASES: Dict[str, str] = {
     "odps": "maxcompute",
     "max_computer": "maxcompute",
     "maxcomputer": "maxcompute",
+    "mongo": "mongodb",
 }
 _REGISTERED_ALIASES: Dict[str, Tuple[str, ...]] = {}
 
@@ -39,7 +42,13 @@ def _normalize_name(name: str) -> str:
 
 
 def canonical_adapter_name(name: str) -> str:
-    """解析数据库类型或别名的规范名称。"""
+    """解析数据库类型或别名的规范名称。
+
+    :param name: 数据库类型、内置别名或自定义别名，不区分大小写和连字符。
+    :return: 注册表使用的小写下划线名称。
+    :rtype: str
+    :raises ValidationError: ``name`` 不是非空字符串。
+    """
 
     normalized = _normalize_name(name)
     return _ALIASES.get(normalized, normalized)
@@ -52,7 +61,20 @@ def register_adapter(
     aliases: Iterable[str] = (),
     replace: bool = False,
 ) -> None:
-    """注册自定义数据库适配器。"""
+    """注册自定义数据库适配器及其别名。
+
+    :param name: 新适配器的规范名称。
+    :param adapter_class: :class:`BaseDatabaseAdapter` 的实现类。
+    :param aliases: 可选别名集合。
+    :param replace: 是否允许替换同名适配器和冲突别名，默认 ``False``。
+    :return: ``None``。
+    :raises ValidationError: 名称、适配器类型或别名冲突无效。
+
+    **参考样例**
+
+    >>> register_adapter("custom_db", CustomDatabaseAdapter, aliases=["custom"])
+    >>> Database("custom", host="127.0.0.1")
+    """
 
     canonical = _normalize_name(name)
     if not isinstance(adapter_class, type):
@@ -92,7 +114,14 @@ def _load_entry(canonical: str, entry: AdapterEntry) -> Type[BaseDatabaseAdapter
 
 
 def get_adapter_class(name: str) -> Type[BaseDatabaseAdapter]:
-    """按数据库类型获取适配器类。"""
+    """按数据库类型或别名获取适配器类。
+
+    内置适配器在第一次获取时才导入，从而保持所有数据库驱动均为可选依赖。
+
+    :param name: 数据库类型或别名。
+    :return: 已加载的适配器类。
+    :raises ValidationError: 数据库类型未注册或导入入口无效。
+    """
 
     canonical = canonical_adapter_name(name)
     entry = _ADAPTERS.get(canonical)
@@ -103,7 +132,11 @@ def get_adapter_class(name: str) -> Type[BaseDatabaseAdapter]:
 
 
 def available_adapters() -> Tuple[str, ...]:
-    """返回已注册的规范数据库类型。"""
+    """返回当前已注册的规范数据库类型。
+
+    :return: 按名称排序且不包含别名的数据库类型元组。
+    :rtype: tuple[str, ...]
+    """
 
     return tuple(sorted(_ADAPTERS))
 

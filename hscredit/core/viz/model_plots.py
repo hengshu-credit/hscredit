@@ -5,15 +5,19 @@
 提供模型相关的可视化功能，包括统一特征重要性看板、逻辑回归系数误差图等。
 """
 
+import re
+from numbers import Real
 from typing import Any, Callable, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from matplotlib.colors import LinearSegmentedColormap, Normalize
+from matplotlib.colors import LinearSegmentedColormap, Normalize, to_hex
+from matplotlib.ticker import FormatStrFormatter
+from matplotlib.transforms import ScaledTranslation
 
 from .utils import DEFAULT_COLORS, setup_axis_style, save_figure, _create_subplots, _tight_layout
-from .style import PRIMARY_COLORS
+from .style import EXTENDED_COLORS, GRADIENT_PALETTES, PRIMARY_COLORS
 
 
 PredictionMethod = Union[str, Callable[[Union[np.ndarray, pd.DataFrame]], Any]]
@@ -84,12 +88,19 @@ def _resolve_prediction_function(
 
 
 def _native_feature_importance(model: Any, feature_names: list) -> pd.Series:
-    """在没有 y 时读取模型原生重要性并统一为降序 Series。"""
+    """读取模型原生重要性并统一为降序 Series；线性模型使用系数绝对值。"""
     getter = getattr(model, "get_feature_importances", None)
     if callable(getter):
         importance = getter()
         if isinstance(importance, pd.Series):
-            return importance.astype(float).sort_values(ascending=False)
+            importance = importance.astype(float).copy()
+            importance.index = importance.index.map(str)
+            if not importance.index.is_unique:
+                raise ValueError("模型特征重要性的特征名不能重复")
+            missing = [name for name in feature_names if name not in importance.index]
+            if missing:
+                raise ValueError(f"模型特征重要性缺少特征: {missing}")
+            return importance.reindex(feature_names).sort_values(ascending=False)
         values = np.asarray(importance, dtype=float)
     elif hasattr(model, "feature_importances_"):
         values = np.asarray(model.feature_importances_, dtype=float)
@@ -97,12 +108,40 @@ def _native_feature_importance(model: Any, feature_names: list) -> pd.Series:
         coefficients = np.asarray(model.coef_, dtype=float)
         values = np.abs(coefficients) if coefficients.ndim == 1 else np.mean(np.abs(coefficients), axis=0)
     else:
-        raise ValueError("未提供 y，且模型没有可用的特征重要性或系数")
+        raise ValueError("模型没有可用的原生特征重要性或系数")
 
     values = np.asarray(values, dtype=float).ravel()
     if len(values) != len(feature_names):
         raise ValueError(f"特征重要性数量 {len(values)} 与特征数量 {len(feature_names)} 不一致")
     return pd.Series(values, index=feature_names, name="importance").sort_values(ascending=False)
+
+
+def _resolve_importance_source(importance_source: str) -> str:
+    """校验综合看板的特征重要性来源。"""
+    if not isinstance(importance_source, str):
+        raise TypeError("importance_source 必须是 'raw' 或 'shap'")
+    normalized = importance_source.strip().lower()
+    if normalized not in {"raw", "shap"}:
+        raise ValueError("importance_source 必须是 'raw' 或 'shap'")
+    return normalized
+
+
+def _label_bar_color(label: Any, position: int) -> str:
+    """标签 0 使用主题色、标签 1 使用副主题色，其余标签顺延扩展色板。"""
+    if label == 0 or str(label) == "0":
+        return PRIMARY_COLORS[0]
+    if label == 1 or str(label) == "1":
+        return PRIMARY_COLORS[1]
+    return EXTENDED_COLORS[(position + 2) % len(EXTENDED_COLORS)]
+
+
+def _label_bar_hatch(label: Any, position: int) -> str:
+    """标签 0/1 分别使用正反斜线，其余标签按位置交替。"""
+    if label == 0 or str(label) == "0":
+        return "/"
+    if label == 1 or str(label) == "1":
+        return "\\"
+    return "/" if position % 2 == 0 else "\\"
 
 
 def _resolve_top_n(top_n: Optional[int], n_features: int, parameter_name: str) -> int:
@@ -114,14 +153,10 @@ def _resolve_top_n(top_n: Optional[int], n_features: int, parameter_name: str) -
     return min(int(top_n), n_features)
 
 
-def _shap_classic_colormap():
-    """返回 SHAP 经典蓝紫红色阶，兼容不同 SHAP 版本。"""
-    try:
-        import shap
-
-        return shap.plots.colors.red_blue
-    except (AttributeError, ImportError):
-        return LinearSegmentedColormap.from_list("shap_blue_purple_red", ["#008BFB", "#7B2CBF", "#FF0051"])
+def _shap_theme_colormap():
+    """返回以 hscredit 主题蓝为低值端的蓝紫红色阶。"""
+    colors = [PRIMARY_COLORS[0], *GRADIENT_PALETTES["blue_purple_red"][2:]]
+    return LinearSegmentedColormap.from_list("hscredit_shap_blue_purple_red", colors)
 
 
 def _normalized_feature_values(values: np.ndarray) -> np.ndarray:
@@ -168,6 +203,7 @@ def _plot_native_importance(
     title: Optional[str],
     save: Optional[str],
     show: bool,
+    hatch: bool,
 ):
     """绘制缺少 y 时的原生特征重要性降级图。"""
     n_left = _resolve_top_n(left_top_n, len(importance), "left_top_n")
@@ -184,13 +220,14 @@ def _plot_native_importance(
         alpha=0.65,
         edgecolor=PRIMARY_COLORS[0],
         linewidth=0.8,
+        hatch="/" if hatch else None,
     )
     ax.set_yticks(positions)
     ax.set_yticklabels(displayed.index[::-1])
     ax.set_xlabel("特征重要性")
     ax.set_ylabel("特征")
     ax.set_title(title or "模型特征重要性")
-    ax.grid(True, axis="x", linestyle="--", alpha=0.3)
+    ax.grid(False)
     setup_axis_style(ax, PRIMARY_COLORS, hide_top_right=True)
 
     maximum = float(np.nanmax(displayed.to_numpy())) if len(displayed) else 0.0
@@ -219,11 +256,18 @@ def plot_model_feature_importance(
     save: Optional[str] = None,
     random_state: Optional[int] = 42,
     show: bool = True,
+    importance_source: str = "raw",
+    shap_by_label: bool = True,
+    hatch: bool = True,
 ):
     """绘制模型的 SHAP 特征重要性综合看板。
 
-    有 ``y`` 时，左侧叠加平均绝对 SHAP 柱状图与 SHAP 蜂群分布，右侧展示
-    Top N 特征的依赖关系；没有 ``y`` 时按约定仅绘制模型原生特征重要性。
+    有 ``y`` 时，左侧叠加特征重要性柱状图与 SHAP 蜂群分布，右侧展示 Top N
+    特征的依赖关系。柱状图和 Top N 排序默认使用模型原生特征重要性，可通过
+    ``importance_source='shap'`` 改为平均绝对 SHAP 值；逻辑回归的模型重要性
+    使用系数绝对值。SHAP 模式默认按标签同时展示各组平均绝对 SHAP 柱条，设置
+    ``shap_by_label=False`` 可只展示全样本平均柱条。没有 ``y`` 时仅支持绘制
+    模型原生特征重要性。
     ``prediction_method`` 决定 SHAP 解释的模型输出，可传 ``'predict'``、
     ``'predict_score'``、``'predict_proba'`` 或接收 ``X`` 的 callable。
 
@@ -243,6 +287,9 @@ def plot_model_feature_importance(
     :param save: 图片保存路径，默认 None
     :param random_state: 背景抽样和蜂群抖动随机种子，默认 42
     :param show: 是否调用 ``plt.show()``，默认 True
+    :param importance_source: 重要性与 Top N 排序来源，可选 ``'raw'``（默认）或 ``'shap'``
+    :param shap_by_label: SHAP 模式是否按标签分别显示平均绝对 SHAP 柱条，默认 True
+    :param hatch: 是否显示重要性柱斜线纹理，默认 True；标签 0/1 分别使用 ``/`` 和 ``\\``
     :return: matplotlib Figure
 
     **参考样例**
@@ -253,6 +300,8 @@ def plot_model_feature_importance(
     ...     prediction_method='predict_proba',
     ...     left_top_n=None,
     ...     right_top_n=6,
+    ...     importance_source='raw',
+    ...     hatch=True,
     ... )
     >>> fig.savefig('模型特征重要性.png', dpi=300, bbox_inches='tight')
     """
@@ -263,9 +312,14 @@ def plot_model_feature_importance(
         raise ValueError("X 不能为空")
 
     names = _feature_names(model, X)
+    importance_source = _resolve_importance_source(importance_source)
+    if not isinstance(shap_by_label, (bool, np.bool_)):
+        raise TypeError("shap_by_label 必须是布尔值")
     if y is None:
+        if importance_source == "shap":
+            raise ValueError("importance_source='shap' 时必须提供 y")
         return _plot_native_importance(
-            _native_feature_importance(model, names), left_top_n, figsize, title, save, show
+            _native_feature_importance(model, names), left_top_n, figsize, title, save, show, hatch
         )
 
     y_values = np.asarray(y).ravel()
@@ -312,7 +366,24 @@ def plot_model_feature_importance(
         raise ValueError(f"SHAP 输出形状 {shap_values.shape} 与 X 形状 {X_values.shape} 不一致")
 
     shap_importance = np.mean(np.abs(shap_values), axis=0)
-    ranking = np.argsort(-shap_importance, kind="stable")
+    label_importances = []
+    if importance_source == "raw":
+        selected_importance = _native_feature_importance(model, names).reindex(names).to_numpy(dtype=float)
+        importance_axis_label = "模型原生特征重要性"
+        panel_title = "模型原生特征重要性与 SHAP 分布"
+    else:
+        selected_importance = shap_importance
+        if shap_by_label:
+            label_codes, label_values = pd.factorize(y_values, sort=True)
+            if np.any(label_codes < 0):
+                raise ValueError("按标签展示 SHAP 重要性时 y 不能包含缺失值")
+            label_importances = [(label, np.mean(np.abs(shap_values[label_codes == code]), axis=0)) for code, label in enumerate(label_values)]
+            importance_axis_label = "各标签平均 |SHAP 值|"
+            panel_title = "分标签平均 |SHAP| 重要性与 SHAP 分布"
+        else:
+            importance_axis_label = "平均 |SHAP 值|"
+            panel_title = "平均 |SHAP| 重要性与 SHAP 分布"
+    ranking = np.argsort(-selected_importance, kind="stable")
     n_left = _resolve_top_n(left_top_n, len(names), "left_top_n")
     n_right = _resolve_top_n(right_top_n, len(names), "right_top_n") if show_dependence else 0
     has_right = show_dependence and n_right > 0
@@ -324,30 +395,67 @@ def plot_model_feature_importance(
         main_ax = fig.add_subplot(outer_grid[0, 0])
         right_columns = 2 if n_right > 1 else 1
         right_rows = int(np.ceil(n_right / right_columns))
-        right_grid = outer_grid[0, 1].subgridspec(right_rows, right_columns, wspace=0.06, hspace=0.34)
-        dependence_axes = [fig.add_subplot(right_grid[i // right_columns, i % right_columns]) for i in range(n_right)]
+        right_grid = outer_grid[0, 1].subgridspec(
+            right_rows + 1,
+            right_columns,
+            height_ratios=[0.12, *([1.0] * right_rows)],
+            wspace=0.06,
+            hspace=0.34,
+        )
+        right_title_ax = fig.add_subplot(right_grid[0, :])
+        right_title_ax.set_label("SHAP依赖总标题")
+        right_title_ax.set_axis_off()
+        right_title_ax.text(
+            0.5,
+            0.5,
+            "SHAP 特征依赖关系",
+            transform=right_title_ax.transAxes,
+            ha="center",
+            va="center",
+            fontsize=plt.rcParams["axes.titlesize"],
+            fontweight=plt.rcParams["axes.titleweight"],
+        )
+        dependence_axes = [fig.add_subplot(right_grid[i // right_columns + 1, i % right_columns]) for i in range(n_right)]
     else:
         main_ax = fig.add_subplot(111)
+        right_title_ax = None
         dependence_axes = []
 
     main_ax.set_label("SHAP分布")
     display_indices = ranking[:n_left]
     display_positions = np.arange(n_left)
     reversed_indices = display_indices[::-1]
-    cmap = _shap_classic_colormap()
+    cmap = _shap_theme_colormap()
 
     importance_ax = main_ax.twiny()
-    importance_ax.set_label("SHAP重要性")
-    importance_ax.barh(
-        display_positions,
-        shap_importance[reversed_indices],
-        color=PRIMARY_COLORS[0],
-        alpha=0.22,
-        height=0.72,
-        edgecolor=PRIMARY_COLORS[0],
-        linewidth=0.6,
-    )
-    importance_ax.set_xlabel("平均 |SHAP 值|")
+    importance_ax.set_label("特征重要性")
+    if label_importances:
+        group_height = 0.68 / len(label_importances)
+        offsets = (np.arange(len(label_importances)) - (len(label_importances) - 1) / 2) * group_height
+        for position, ((label, values), offset) in enumerate(zip(label_importances, offsets)):
+            color = _label_bar_color(label, position)
+            importance_ax.barh(
+                display_positions + offset,
+                values[reversed_indices],
+                color=color,
+                alpha=0.22,
+                height=group_height * 0.86,
+                edgecolor=color,
+                linewidth=0.6,
+                hatch=_label_bar_hatch(label, position) if hatch else None,
+            )
+    else:
+        importance_ax.barh(
+            display_positions,
+            selected_importance[reversed_indices],
+            color=PRIMARY_COLORS[0],
+            alpha=0.22,
+            height=0.72,
+            edgecolor=PRIMARY_COLORS[0],
+            linewidth=0.6,
+            hatch="/" if hatch else None,
+        )
+    importance_ax.set_xlabel(importance_axis_label)
     importance_ax.grid(False)
     setup_axis_style(importance_ax, PRIMARY_COLORS)
     importance_ax.spines["bottom"].set_visible(False)
@@ -376,9 +484,9 @@ def plot_model_feature_importance(
     main_ax.set_yticklabels([names[index] for index in reversed_indices])
     main_ax.set_xlabel("SHAP 值（对模型输出的影响）")
     main_ax.set_ylabel("特征")
-    main_ax.set_title("全局特征重要性与 SHAP 分布")
-    main_ax.axvline(0.0, color="#8A8FA3", linestyle="--", linewidth=1.0, alpha=0.8)
-    main_ax.grid(True, axis="x", linestyle="--", alpha=0.3)
+    main_ax.set_title(panel_title if has_right else "")
+    main_ax.axvline(0.0, color=PRIMARY_COLORS[1], linestyle="--", linewidth=1.0, alpha=0.8)
+    main_ax.grid(False)
     setup_axis_style(main_ax, PRIMARY_COLORS, hide_top_right=True)
 
     if shap_scatter is not None:
@@ -388,7 +496,7 @@ def plot_model_feature_importance(
             orientation="horizontal",
             pad=0.075,
             fraction=0.045,
-            aspect=38,
+            aspect=max(60.0, figure_size[0] / (2 if has_right else 1) / (figure_size[1] * 0.045)),
         )
         shap_colorbar.set_ticks([0.0, 1.0])
         shap_colorbar.set_ticklabels(["低", "高"])
@@ -449,7 +557,7 @@ def plot_model_feature_importance(
             ax.set_title(f"Top {rank_position}: {names[feature_index]}", fontsize=11)
             ax.set_xlabel(names[feature_index], fontsize=10)
             ax.set_ylabel("SHAP 值", fontsize=10)
-            ax.grid(True, linestyle="--", alpha=0.3)
+            ax.grid(False)
             setup_axis_style(ax, PRIMARY_COLORS, hide_top_right=True)
 
         label_colorbar = fig.colorbar(dependence_scatter, ax=dependence_axes, pad=0.025, fraction=0.04, aspect=28)
@@ -463,6 +571,388 @@ def plot_model_feature_importance(
 
     model_name = model.__class__.__name__
     fig.suptitle(title or f"SHAP 综合特征重要性：{model_name}（{method_name}）", fontsize=16, fontweight="bold")
+    save_figure(fig, save)
+    if show:
+        plt.show()
+    return fig
+
+
+def plot_model_sample_shap(
+    model: Any,
+    sample: Union[np.ndarray, pd.Series, pd.DataFrame],
+    background_data: Union[np.ndarray, pd.DataFrame],
+    prediction_method: PredictionMethod = "predict_proba",
+    class_index: int = 1,
+    background_size: Optional[int] = 100,
+    max_display: Optional[int] = None,
+    value_precision: int = 4,
+    figsize: Tuple[float, float] = (14, 10),
+    title: Optional[str] = None,
+    save: Optional[str] = None,
+    random_state: Optional[int] = 42,
+    show: bool = True,
+):
+    """绘制单样本 SHAP 力图与瀑布图组合图。
+
+    上方直接复用 SHAP 原生 Matplotlib 力图展示全部字段如何把基准值推向当前
+    预测值，不经过整图栅格化或图片缩放；下方使用 SHAP 瀑布图按贡献绝对值
+    拆解同一结果。``sample`` 与 ``background_data`` 独立传入，避免把待解释
+    样本误当作背景分布。
+
+    **参数**
+
+    :param model: 已拟合模型
+    :param sample: 单个待解释样本，可传 Series、单行 DataFrame、1D 或单行 ndarray
+    :param background_data: SHAP 背景数据，必须是非空二维 DataFrame 或 ndarray
+    :param prediction_method: SHAP 使用的预测方法或 callable，默认 ``'predict_proba'``
+    :param class_index: 二维模型或 SHAP 输出中要解释的列索引，默认 1（正类）
+    :param background_size: 背景抽样数，None 表示使用全部背景数据，默认 100
+    :param max_display: 瀑布图最大展示特征数，None 表示全部特征，默认 None
+    :param value_precision: 特征值、SHAP 贡献与输出刻度显示小数位数，默认 4
+    :param figsize: 组合图大小，默认 ``(14, 10)``
+    :param title: 总标题，默认包含模型名和预测方法
+    :param save: 图片保存路径，默认 None
+    :param random_state: 背景抽样随机种子，默认 42
+    :param show: 是否调用 ``plt.show()``，默认 True
+    :return: matplotlib Figure
+
+    **参考样例**
+
+    >>> from hscredit.core.viz import plot_model_sample_shap
+    >>> fig = plot_model_sample_shap(
+    ...     model,
+    ...     sample=X_test.iloc[0],
+    ...     background_data=X_train,
+    ...     max_display=None,
+    ...     value_precision=4,
+    ...     show=False,
+    ... )
+    """
+    background_values = background_data.to_numpy() if isinstance(background_data, pd.DataFrame) else np.asarray(background_data)
+    if background_values.ndim != 2:
+        raise ValueError(f"background_data 必须是二维背景数据，当前维度为 {background_values.ndim}")
+    if background_values.shape[0] == 0 or background_values.shape[1] == 0:
+        raise ValueError("background_data 不能为空")
+
+    names = _feature_names(model, background_data)
+    preserve_dataframe = isinstance(background_data, pd.DataFrame)
+    if preserve_dataframe:
+        background = background_data.copy()
+        background.columns = names
+    else:
+        background = background_values
+
+    if isinstance(sample, pd.Series):
+        sample_frame = sample.to_frame().T
+    elif isinstance(sample, pd.DataFrame):
+        sample_frame = sample.copy()
+    else:
+        sample_values = np.asarray(sample)
+        if sample_values.ndim == 1:
+            sample_values = sample_values.reshape(1, -1)
+        elif sample_values.ndim != 2:
+            raise ValueError(f"sample 必须是单个一维或单行二维样本，当前维度为 {sample_values.ndim}")
+        if sample_values.shape[1] != len(names):
+            raise ValueError(f"sample 特征数量 {sample_values.shape[1]} 与 background_data 特征数量 {len(names)} 不一致")
+        sample_frame = pd.DataFrame(sample_values, columns=names)
+
+    if len(sample_frame) != 1:
+        raise ValueError(f"sample 必须且只能包含单个样本，当前包含 {len(sample_frame)} 行")
+    sample_frame.columns = sample_frame.columns.astype(str)
+    if list(sample_frame.columns) != names:
+        raise ValueError("sample 与 background_data 的特征名称或顺序必须一致")
+    if sample_frame.shape[1] != background_values.shape[1]:
+        raise ValueError("sample 与 background_data 的特征数量必须一致")
+    sample_input = sample_frame if preserve_dataframe else sample_frame.to_numpy()
+
+    if background_size is not None:
+        if isinstance(background_size, bool) or not isinstance(background_size, (int, np.integer)):
+            raise TypeError("background_size 必须是正整数或 None")
+        if background_size <= 0:
+            raise ValueError("background_size 必须是正整数或 None")
+    if max_display is None:
+        resolved_max_display = len(names)
+    else:
+        if isinstance(max_display, bool) or not isinstance(max_display, (int, np.integer)):
+            raise TypeError("max_display 必须是正整数或 None")
+        if max_display <= 0:
+            raise ValueError("max_display 必须是正整数或 None")
+        resolved_max_display = min(int(max_display), len(names))
+    if isinstance(value_precision, bool) or not isinstance(value_precision, (int, np.integer)):
+        raise TypeError("value_precision 必须是非负整数")
+    if value_precision < 0:
+        raise ValueError("value_precision 必须是非负整数")
+
+    predict_function, method_name = _resolve_prediction_function(
+        model,
+        prediction_method,
+        class_index,
+        names,
+        preserve_dataframe,
+    )
+    rng = np.random.default_rng(random_state)
+    n_background = len(background_values)
+    if background_size is None or background_size >= n_background:
+        background_indices = np.arange(n_background)
+    else:
+        background_indices = np.sort(rng.choice(n_background, size=int(background_size), replace=False))
+    background_input = background.iloc[background_indices] if preserve_dataframe else background[background_indices]
+
+    try:
+        import shap
+    except ImportError as exc:
+        raise ImportError("绘制单样本 SHAP 归因图需要安装 shap") from exc
+
+    explanation = shap.Explainer(predict_function, background_input)(sample_input)
+    raw_values = np.asarray(explanation.values, dtype=float)
+    has_output_axis = raw_values.ndim == 3
+    if has_output_axis:
+        if not 0 <= class_index < raw_values.shape[2]:
+            raise ValueError(f"class_index={class_index} 超出 SHAP 输出列范围 {raw_values.shape[2]}")
+        selected_values = raw_values[:, :, class_index]
+    elif raw_values.ndim == 2:
+        selected_values = raw_values
+    else:
+        raise ValueError(f"SHAP 输出必须是二维或三维数组，当前形状为 {raw_values.shape}")
+    if selected_values.shape != (1, len(names)):
+        raise ValueError(f"SHAP 输出形状 {selected_values.shape} 与单样本形状 {(1, len(names))} 不一致")
+
+    raw_base_values = np.asarray(getattr(explanation, "base_values", 0.0), dtype=float)
+    if raw_base_values.ndim == 0:
+        base_value = float(raw_base_values)
+    elif raw_base_values.ndim == 1:
+        if has_output_axis and len(raw_base_values) > class_index:
+            base_value = float(raw_base_values[class_index])
+        else:
+            base_value = float(raw_base_values[0])
+    else:
+        if has_output_axis:
+            if raw_base_values.shape[1] <= class_index:
+                raise ValueError(f"class_index={class_index} 超出 SHAP 基准值列范围 {raw_base_values.shape[1]}")
+            base_value = float(raw_base_values[0, class_index])
+        else:
+            base_value = float(raw_base_values.reshape(-1)[0])
+
+    sample_values = sample_frame.iloc[0].to_numpy()
+    display_values = np.asarray(
+        [round(float(value), int(value_precision)) if isinstance(value, Real) and not isinstance(value, (bool, np.bool_)) and np.isfinite(value) else value for value in sample_values],
+        dtype=object,
+    )
+    single_explanation = shap.Explanation(
+        values=selected_values[0],
+        base_values=base_value,
+        data=display_values,
+        feature_names=names,
+    )
+
+    force_feature_names = []
+    if len(names) <= 4:
+        force_line_length = 8
+    elif len(names) <= 8:
+        force_line_length = 4
+    else:
+        force_line_length = 3
+    for name in names:
+        name_text = str(name)
+        wrapped_name = "\n".join(
+            name_text[index : index + force_line_length]
+            for index in range(0, len(name_text), force_line_length)
+        )
+        if len(name_text) > force_line_length:
+            wrapped_name += "\n"
+        force_feature_names.append(wrapped_name)
+    force_text_rotation = 0
+
+    force_figure = shap.force_plot(
+        base_value,
+        selected_values[0],
+        display_values,
+        feature_names=force_feature_names,
+        out_names="output value",
+        plot_cmap=[PRIMARY_COLORS[0], PRIMARY_COLORS[1]],
+        matplotlib=True,
+        show=False,
+        figsize=figsize,
+        text_rotation=force_text_rotation,
+        contribution_threshold=0.05,
+    )
+    # SHAP 将 base value、higher/lower 和 output value 放在坐标轴上方；
+    # 默认 axes 几乎占满画布时，这些原生标注会落到画布边界之外而被裁掉。
+    force_figure.subplots_adjust(top=0.7, bottom=0.16)
+    native_force_ax = force_figure.axes[0]
+    force_artist_color_map = {
+        "#1e88e5": PRIMARY_COLORS[0],
+        "#1f77b4": PRIMARY_COLORS[0],
+        "#ff0d57": PRIMARY_COLORS[1],
+    }
+    for line in native_force_ax.lines:
+        line_color = to_hex(line.get_color(), keep_alpha=False).lower()
+        if line_color in force_artist_color_map:
+            line.set_color(force_artist_color_map[line_color])
+    for patch in native_force_ax.patches:
+        facecolor = to_hex(patch.get_facecolor(), keep_alpha=False).lower()
+        edgecolor = to_hex(patch.get_edgecolor(), keep_alpha=False).lower()
+        if facecolor in force_artist_color_map:
+            patch.set_facecolor(force_artist_color_map[facecolor])
+        if edgecolor in force_artist_color_map:
+            patch.set_edgecolor(force_artist_color_map[edgecolor])
+    for text_artist in native_force_ax.texts:
+        text_color = to_hex(text_artist.get_color(), keep_alpha=False).lower()
+        if text_color in force_artist_color_map:
+            text_artist.set_color(force_artist_color_map[text_color])
+        if " = " in text_artist.get_text():
+            text_artist.set_verticalalignment("top")
+        if re.fullmatch(r"-?\d+(?:\.\d+)?", text_artist.get_text()):
+            text_artist.set_text(f"{float(text_artist.get_text()):.{int(value_precision)}f}")
+    native_force_ax.spines["top"].set_color(PRIMARY_COLORS[0])
+    native_force_ax.spines["top"].set_linewidth(0.8)
+    native_force_ax.tick_params(axis="x", colors=PRIMARY_COLORS[0])
+    native_force_ax.xaxis.set_major_formatter(FormatStrFormatter(f"%.{int(value_precision)}f"))
+    fig = force_figure
+    force_ax = native_force_ax
+    force_ax.set_label("SHAP力图")
+    force_ax.set_position((0.08, 0.62, 0.84, 0.25))
+
+    waterfall_ax = fig.add_axes((0.16, 0.08, 0.80, 0.45))
+    waterfall_ax.set_label("SHAP瀑布图")
+    axes_before_waterfall = set(fig.axes)
+    plt.sca(waterfall_ax)
+    shap.plots.waterfall(single_explanation, max_display=resolved_max_display, show=False)
+    fig.set_size_inches(figsize)
+    waterfall_aux_axes = [axis for axis in fig.axes if axis not in axes_before_waterfall]
+    waterfall_color_map = {
+        "#008bfb": PRIMARY_COLORS[0],
+        "#1e88e5": PRIMARY_COLORS[0],
+        "#ff0051": PRIMARY_COLORS[1],
+        "#ff0d57": PRIMARY_COLORS[1],
+    }
+    for patch in waterfall_ax.patches:
+        facecolor = to_hex(patch.get_facecolor(), keep_alpha=False).lower()
+        if facecolor in waterfall_color_map:
+            patch.set_facecolor(waterfall_color_map[facecolor])
+            patch.set_edgecolor(waterfall_color_map[facecolor])
+    for text_artist in waterfall_ax.texts:
+        text_color = to_hex(text_artist.get_color(), keep_alpha=False).lower()
+        if text_color in waterfall_color_map:
+            text_artist.set_color(waterfall_color_map[text_color])
+    contribution_order = np.argsort(-np.abs(selected_values[0]))
+    if resolved_max_display == len(names):
+        displayed_contributions = selected_values[0][contribution_order]
+    else:
+        individual_count = resolved_max_display - 1
+        displayed_contributions = list(selected_values[0][contribution_order[:individual_count]])
+        displayed_contributions.append(float(np.sum(selected_values[0][contribution_order[individual_count:]])))
+        displayed_contributions = np.asarray(displayed_contributions)
+    ordered_text_values = [value for value in displayed_contributions if value >= 0] + [value for value in displayed_contributions if value < 0]
+    for text_artist, contribution in zip(waterfall_ax.texts, ordered_text_values):
+        sign = "+" if contribution >= 0 else "−"
+        text_artist.set_text(f"{sign}{abs(float(contribution)):.{int(value_precision)}f}")
+    waterfall_ax.set_title("SHAP 瀑布图")
+    waterfall_ticks = waterfall_ax.get_yticks()
+    waterfall_labels = [re.sub(r"(\d+) other features", r"其他 \1 个特征", tick.get_text()) for tick in waterfall_ax.get_yticklabels()]
+    formatted_feature_values = {name: f"{float(value):.{int(value_precision)}f}" if isinstance(value, Real) and np.isfinite(value) else str(value) for name, value in zip(names, display_values)}
+    for index, label in enumerate(waterfall_labels):
+        feature_name = next((name for name in names if label.strip().endswith(f"= {name}")), None)
+        if feature_name is not None:
+            waterfall_labels[index] = f"{formatted_feature_values[feature_name]} = {feature_name}"
+    waterfall_ax.set_yticks(waterfall_ticks, labels=waterfall_labels)
+    waterfall_ax.xaxis.set_major_formatter(FormatStrFormatter(f"%.{int(value_precision)}f"))
+    setup_axis_style(waterfall_ax, PRIMARY_COLORS, hide_top_right=True)
+    waterfall_ax.tick_params(axis="both", colors=PRIMARY_COLORS[0])
+    for auxiliary_axis in waterfall_aux_axes:
+        auxiliary_ticks = auxiliary_axis.get_xticks()
+        auxiliary_labels = [
+            re.sub(
+                r"(?<== )-?\d+(?:\.\d+)?",
+                lambda match: f"{float(match.group()):.{int(value_precision)}f}",
+                tick.get_text(),
+            )
+            for tick in auxiliary_axis.get_xticklabels()
+        ]
+        auxiliary_axis.set_xticks(auxiliary_ticks, labels=auxiliary_labels)
+        auxiliary_axis.tick_params(axis="x", colors=PRIMARY_COLORS[0])
+        for spine in auxiliary_axis.spines.values():
+            if spine.get_visible():
+                spine.set_color(PRIMARY_COLORS[0])
+
+    model_name = model.__class__.__name__
+    fig.suptitle(title or f"单样本 SHAP 预测归因：{model_name}（{method_name}）", fontsize=16, fontweight="bold")
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+
+    def median_patch_height_fraction(axis):
+        axis_height = axis.get_window_extent(renderer).height
+        patch_heights = [patch.get_window_extent(renderer).height for patch in axis.patches]
+        return float(np.median(patch_heights)) / axis_height
+
+    force_bar_fraction = median_patch_height_fraction(force_ax)
+    waterfall_bar_fraction = median_patch_height_fraction(waterfall_ax)
+    force_to_waterfall_height = waterfall_bar_fraction / force_bar_fraction
+    layout_bottom = 0.08
+    layout_top = 0.76
+    panel_gap = 0.10
+    available_height = layout_top - layout_bottom - panel_gap
+    waterfall_height = available_height / (1.0 + force_to_waterfall_height)
+    force_height = available_height - waterfall_height
+    waterfall_position = (0.16, layout_bottom, 0.80, waterfall_height)
+    force_position = (0.08, layout_bottom + waterfall_height + panel_gap, 0.84, force_height)
+    force_ax.set_in_layout(False)
+    force_ax.set_position(force_position)
+    waterfall_ax.set_position(waterfall_position)
+    for auxiliary_axis in waterfall_aux_axes:
+        auxiliary_axis.set_position(waterfall_position)
+    for _ in range(2):
+        fig.canvas.draw()
+        renderer = fig.canvas.get_renderer()
+        tight_box = fig.get_tightbbox(renderer).transformed(fig.dpi_scale_trans)
+        force_box = force_ax.get_window_extent(renderer)
+        tight_center = (tight_box.x0 + tight_box.x1) / 2.0
+        force_center = (force_box.x0 + force_box.x1) / 2.0
+        center_shift = (tight_center - force_center) / fig.bbox.width
+        current_position = force_ax.get_position()
+        target_center = (current_position.x0 + current_position.x1) / 2.0 + center_shift
+        target_center = float(
+            np.clip(
+                target_center,
+                current_position.width / 2.0,
+                1.0 - current_position.width / 2.0,
+            )
+        )
+        force_ax.set_position(
+            (
+                target_center - current_position.width / 2.0,
+                current_position.y0,
+                current_position.width,
+                current_position.height,
+            )
+        )
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+    visible_tick_boxes = [
+        tick.get_window_extent(renderer)
+        for tick in force_ax.get_xticklabels()
+        if tick.get_visible()
+    ]
+    native_top_texts = [
+        text_artist
+        for text_artist in force_ax.texts
+        if " = " not in text_artist.get_text()
+    ]
+    if visible_tick_boxes and native_top_texts:
+        tick_top = max(box.y1 for box in visible_tick_boxes)
+        annotation_bottom = min(
+            text_artist.get_window_extent(renderer).y0
+            for text_artist in native_top_texts
+        )
+        annotation_shift = max(0.0, tick_top + 10.0 - annotation_bottom)
+        if annotation_shift > 0:
+            offset = ScaledTranslation(
+                0.0,
+                annotation_shift / fig.dpi,
+                fig.dpi_scale_trans,
+            )
+            for text_artist in native_top_texts:
+                text_artist.set_transform(text_artist.get_transform() + offset)
     save_figure(fig, save)
     if show:
         plt.show()

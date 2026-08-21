@@ -17,12 +17,13 @@ from ..exceptions import (
     DatabaseWriteError,
 )
 from ..metadata import MetadataInspection, QualifiedTarget
+from ..type_inference import profile_string_series
 from ..types import DatabaseCapabilities, PoolOptions
 from ..writing import (
     BatchWriteResult,
+    resolve_column_type,
     split_qualified_name,
     validate_column_mapping_keys,
-    validate_sql_type,
 )
 from .dbapi import DBAPIAdapter
 
@@ -39,6 +40,12 @@ class MaxComputeAdapter(DBAPIAdapter):
         metadata_export=True,
         write_modes={"a", "o", "d"},
     )
+
+    def json_extract_expression(self, column_sql: str, path: str) -> str:
+        """使用 MaxCompute ``JSON_EXTRACT`` 提取 JSON 路径。"""
+
+        extracted = f"JSON_EXTRACT({column_sql}, '{path}')"
+        return f"CASE WHEN JSON_TYPE({extracted}) = 'null' THEN NULL ELSE {extracted} END"
 
     def __init__(
         self,
@@ -117,7 +124,10 @@ class MaxComputeAdapter(DBAPIAdapter):
             raise DatabaseQueryError("MaxCompute SQL批量执行失败") from exc
 
     @staticmethod
-    def _column_type(series: pd.Series) -> str:
+    def _column_type(
+        series: pd.Series,
+        options: Optional[Mapping[str, Any]] = None,
+    ) -> str:
         dtype = series.dtype
         if ptypes.is_bool_dtype(dtype):
             return "BOOLEAN"
@@ -127,6 +137,9 @@ class MaxComputeAdapter(DBAPIAdapter):
             return "DOUBLE"
         if ptypes.is_datetime64_any_dtype(dtype):
             return "DATETIME"
+        profile = profile_string_series(series)
+        if profile.all_json_documents and dict(options or {}).get("infer_json", True):
+            return "JSON"
         return "STRING"
 
     @staticmethod
@@ -161,8 +174,10 @@ class MaxComputeAdapter(DBAPIAdapter):
             raise InputValidationError(f"MaxCompute 数据缺少分区字段: {missing}")
 
         def definition(column: Any) -> str:
-            column_type = validate_sql_type(
-                types.get(column) or self._column_type(data[column]),
+            column_type = resolve_column_type(
+                types,
+                column,
+                self._column_type(data[column], options),
                 database_type="MaxCompute",
             )
             result = f"{self.quote_identifier(str(column))} {column_type}"

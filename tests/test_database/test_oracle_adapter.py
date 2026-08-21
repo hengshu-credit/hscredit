@@ -141,7 +141,7 @@ def test_oracle_create_table_maps_types_and_primary_key(adapter):
     assert '"ENABLED" NUMBER(1)' in ddl
     assert '"AMOUNT" BINARY_DOUBLE' in ddl
     assert '"CREATED_AT" TIMESTAMP' in ddl
-    assert '"NAME" VARCHAR2(255 CHAR)' in ddl
+    assert '"NAME" VARCHAR2(16 CHAR)' in ddl
     assert 'CONSTRAINT "EVENTS_PK" PRIMARY KEY ("ID")' in ddl
 
     adapter.create_table(
@@ -257,3 +257,49 @@ def test_oracle_drop_mode_validates_comments_before_drop(adapter):
         )
 
     assert adapter.sql_calls == []
+
+
+def test_oracle_string_inference_uses_clob_and_optional_native_json(adapter):
+    frame = pd.DataFrame(
+        {
+            "SHORT_TEXT": ["a" * 200],
+            "LONG_TEXT": ["b" * 5_000],
+            "JSON_TEXT": ['{"id": 1}'],
+        }
+    )
+
+    compatible = adapter.build_create_table_sql(frame, "RISK.TEXT_TYPES")
+    native = adapter.build_create_table_sql(
+        frame,
+        "RISK.TEXT_TYPES_NATIVE",
+        {"native_json": True},
+    )
+
+    assert '"SHORT_TEXT" VARCHAR2(255 CHAR)' in compatible
+    assert '"LONG_TEXT" CLOB' in compatible
+    assert '"JSON_TEXT" CLOB' in compatible
+    assert '"JSON_TEXT" JSON' in native
+
+
+def test_oracle_explicit_empty_column_type_is_rejected(adapter):
+    with pytest.raises(Exception, match="数据类型"):
+        adapter.build_create_table_sql(
+            pd.DataFrame({"ID": [1]}),
+            "RISK.INVALID_TYPE",
+            {"column_types": {"ID": ""}},
+        )
+
+
+def test_oracle_json_projection_supports_scalar_and_nested_values(adapter):
+    sql = adapter.build_json_projection_sql(
+        "select ID, PAYLOAD from RISK.EVENTS;",
+        columns=["ID"],
+        json_fields={"PAYLOAD": {"customer": "$.customer"}},
+    )
+
+    assert sql == (
+        'SELECT "hscredit_json_source"."ID", '
+        'COALESCE(JSON_VALUE("hscredit_json_source"."PAYLOAD", \'$.customer\' RETURNING CLOB NULL ON EMPTY '
+        'NULL ON ERROR), JSON_QUERY("hscredit_json_source"."PAYLOAD", \'$.customer\' RETURNING CLOB NULL ON EMPTY '
+        'NULL ON ERROR)) AS "customer" FROM (select ID, PAYLOAD from RISK.EVENTS) "hscredit_json_source"'
+    )

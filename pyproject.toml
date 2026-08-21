@@ -116,8 +116,10 @@ db-clickhouse = [
     "clickhouse-connect>=1.0,<2; python_version >= '3.10'",
 ]
 db-maxcompute = ["pyodps>=0.12.6,<1"]
+db-redis = ["redis>=6.2,<9"]
+db-mongodb = ["pymongo>=4.6,<5"]
 database-all = [
-    "hscredit[db-mysql,db-hive,db-impala,db-oracle,db-starrocks,db-clickhouse,db-maxcompute]",
+    "hscredit[db-mysql,db-hive,db-impala,db-oracle,db-starrocks,db-clickhouse,db-maxcompute,db-redis,db-mongodb]",
 ]
 dev = [
     "pytest>=6.0.0",

@@ -1,6 +1,6 @@
-# 数据库连接、流式读写与表结构导出
+# 数据库与 NoSQL 连接池、读写及表结构导出
 
-`hscredit.database` 为风控建模和数据分析流程提供统一的数据库入口，覆盖连接池、参数化 SQL、可中断流式读取、DataFrame 建表、分批写入和全库字段清单导出。数据库驱动均为可选依赖；普通 `import hscredit` 不会加载任何数据库驱动。
+`hscredit.database` 为风控建模和数据分析流程提供统一的数据存储入口，覆盖 SQL 数据库以及 Redis、MongoDB 的连接池。SQL 后端支持参数化查询、可中断流式读取、DataFrame 建表、分批写入和全库字段清单导出；NoSQL 后端提供同名的单条、批量和自适应 CRUD 方法。数据库驱动均为可选依赖；普通 `import hscredit` 不会加载任何数据库驱动。
 
 完整类与方法签名见 {doc}`api/database`。
 
@@ -17,6 +17,8 @@
 | StarRocks | `pip install hscredit[db-starrocks]` | MySQL 协议 + 可选 Stream Load |
 | ClickHouse | `pip install hscredit[db-clickhouse]` | clickhouse-connect 原生 DataFrame 流 |
 | MaxCompute | `pip install hscredit[db-maxcompute]` | PyODPS DB-API + 原生表读写 |
+| Redis | `pip install hscredit[db-redis]` | redis-py 原生 ConnectionPool / BlockingConnectionPool |
+| MongoDB | `pip install hscredit[db-mongodb]` | PyMongo MongoClient 内建连接池 |
 | 全部数据库 | `pip install hscredit[database-all]` | 安装以上全部驱动 |
 
 缺少驱动时只会在创建对应 `Database` 时抛出中文 `DependencyError`，不会阻止其他 hscredit 模块导入。
@@ -54,6 +56,77 @@ with Database("mysql", **connect_params) as db:
 ```
 
 密码、AccessKey、Token 和带凭据 DSN 不会进入 `repr`、用户错误信息或日志。
+
+## Redis 与 MongoDB 的统一 NoSQL 方法
+
+Redis 和 MongoDB 对外使用相同的方法名；参数中的 `resource` 在 Redis 表示 key 或 keys，在 MongoDB 表示集合名：
+
+| 方法 | Redis | MongoDB |
+|:---|:---|:---|
+| `read_one` / `read_many` | `GET` / `MGET` | `find_one` / `find` |
+| `write_one` / `write_many` | `SET` / `MSET` | 单条或批量 insert/update/replace |
+| `delete_one` / `delete_many` | 单 key / 多 key `DELETE` | `delete_one` / `delete_many` |
+| `exists` | key 是否存在 | 是否存在匹配文档 |
+| `read` / `write` / `delete` | 按单 key、keys 或映射自动分派 | 按 `limit`、文档形态和 `many` 自动分派 |
+
+Redis 连接示例：
+
+```python
+redis_db = Database(
+    "redis",
+    url="redis://127.0.0.1:6379/0",
+    decode_responses=True,
+    pool_options={
+        "max_connections": 20,
+        "blocking": True,
+        "timeout": 2,
+    },
+)
+
+redis_db.write("score:1001", "720", ttl=3600)
+redis_db.write({"score:1002": "680", "score:1003": "700"})
+assert redis_db.read("score:1001") == "720"
+scores = redis_db.read(["score:1002", "score:1003"])
+redis_db.delete(["score:1001", "score:1002", "score:1003"])
+```
+
+MongoDB 的 `MongoClient` 自身管理连接池，`pool_options` 会转换为 PyMongo 的 `minPoolSize`、`maxPoolSize`、`maxConnecting`、`waitQueueTimeoutMS` 和 `maxIdleTimeMS`：
+
+```python
+mongo_db = Database(
+    "mongodb",
+    uri="mongodb://127.0.0.1:27017/risk",
+    database="risk",
+    pool_options={"min_pool_size": 1, "max_pool_size": 20},
+)
+
+mongo_db.write("model_score", {"user_id": 1001, "score": 720})
+mongo_db.write(
+    "model_score",
+    [{"user_id": 1002, "score": 680}, {"user_id": 1003, "score": 700}],
+)
+high_scores = mongo_db.read(
+    "model_score",
+    {"score": {"$gte": 700}},
+    sort=[("score", -1)],
+)
+mongo_db.write_one(
+    "model_score",
+    {"$set": {"score": 730}},
+    selector={"user_id": 1001},
+    mode="update",
+)
+mongo_db.delete("model_score", {"user_id": 1001})
+```
+
+自适应规则保持可预测且优先保护数据：
+
+- Redis 的字符串或 bytes key 使用单条方法，key 序列和 key-value 映射使用批量方法。
+- MongoDB `read()` 默认返回匹配文档列表；`limit=1` 或 `many=False` 返回单个文档。
+- MongoDB `write()` 对单个映射使用 `write_one()`，对文档序列使用 `write_many()`。
+- MongoDB `delete()` 默认只删除首个匹配文档；批量删除必须显式传入 `many=True`。空 selector 的批量删除还必须设置 `allow_all=True`。
+
+所有写入、更新和删除返回 `NoSQLWriteResult`，统一暴露 `acknowledged`、`affected_count`、`matched_count`、`modified_count` 和 `identifiers`。需要发布订阅、pipeline、聚合等高级能力时，可使用 `db.native_client`；Redis 和 MongoDB 不接受 SQL `query()`。
 
 ## 参数化查询与 SQL 执行
 
@@ -129,6 +202,58 @@ frame = db.read_query(
 
 若读取被主动中断，返回值的 `DataFrame.attrs` 会记录 `completed=False`、`rows_read`、`total_rows`、`state`、`interrupted_at` 和 `interrupt_reason`。
 
+### 大 JSON 字段按路径读取
+
+当查询包含非常大的 JSON 字段、但实际只需要少量子字段时，可以通过 `columns` 和 `json_fields` 把路径提取下推到数据库。原始 JSON 不会传输到 Python：
+
+```python
+json_fields = {
+    "huge_json": {
+        "customer_id": "$.customer.id",
+        "city": ("$.address.city", "未知"),
+        "risk_tags": ("$.risk.tags", []),
+    }
+}
+
+stream = db.stream_query(
+    """
+    SELECT id, created_at, huge_json
+    FROM feature_db.user_profile
+    WHERE created_at >= %s
+    """,
+    params=("2026-01-01",),
+    columns=["id", "created_at"],
+    json_fields=json_fields,
+    result="records",
+    chunksize=50_000,
+    progress=True,
+)
+
+for records in stream:
+    consume(records)
+```
+
+`json_fields` 使用“JSON 源字段 → 输出字段 → 字段定义”的顺序：
+
+- 字符串定义只包含 JSONPath，路径缺失或结果为 `null` 时返回 `None`；
+- `(JSONPath, 默认值)` 二元组可以指定缺失默认值；列表、字典等可变默认值会为每行独立复制；
+- 不指定返回类型，也不在 Python 中强制转换；值保持目标数据库 JSON 函数的原始返回形式；
+- `columns` 是需要原样保留的普通字段，不能包含任何 JSON 源字段；输出顺序为 `columns` 后接 `json_fields` 的定义顺序；
+- 原始 SQL 必须输出 `columns` 和 JSON 源字段，公共层再包装为只选择所需结果的外层查询；
+- JSONPath 必须以 `$` 开头，并拒绝引号、反斜线、分号、注释和控制字符，避免路径被当作 SQL 片段。
+
+`result` 沿用整个 Database 模块已有取值：
+
+| result | `stream_query()` 每批结果 | `read_query()` 合并结果 |
+|:---|:---|:---|
+| `dataframe` | DataFrame | DataFrame |
+| `records` | `list[dict]` | `list[dict]` |
+| `rows` | 原始行元组列表 | 原始行元组列表 |
+
+主动停止和键盘中断仍会保留当前已读数据。DataFrame 的读取状态位于 `attrs`；使用列表结果时，可从 `QueryStream.state`、`rows_read` 和 `interrupt_reason` 查看流状态。启用进度时，`COUNT(1)` 针对原始查询执行，不会重复计算 JSON 投影表达式；未启用进度时不会查询总数。
+
+各适配器分别使用 MySQL `JSON_EXTRACT`、Oracle `JSON_VALUE/JSON_QUERY`、StarRocks `GET_JSON_STRING`、ClickHouse `JSON_VALUE/JSON_QUERY`、Hive/Impala `GET_JSON_OBJECT` 和 MaxCompute `JSON_EXTRACT`。第三方适配器可实现 `json_extract_expression()` 获得相同公共接口。
+
 ## 自动建表
 
 `create_table()` 根据 DataFrame 字段类型生成后端 DDL，各数据库可以通过 `dialect_options` 指定物理表参数：
@@ -152,6 +277,30 @@ db.create_table(
 常用方言参数包括 `key_columns`、`column_types`、`column_comments`、`table_comment`、`storage`、`engine`、`partition_columns`、`order_by`、`buckets` 和 `lifecycle`。具体可用项由目标适配器决定。
 
 `column_types` 默认只接受由字母、数字、空格及平衡的 `()` / `<>` 组成的安全类型表达式，例如 `DECIMAL(18, 2)`、`ARRAY<STRING>`、`Nullable(String)`。不接受引号、注释、分号或原样 SQL 片段。
+
+### 字符串长度与 JSON 内容推断
+
+没有显式指定 `column_types` 时，适配器会分析当前用于建表的 DataFrame。流式写入只分析首个有效分块，不会预执行、抽样或重复消费后续用户迭代器。
+
+字符串画像包含最大字符数、最大 UTF-8 字节数以及 JSON 标记。JSON 使用严格规则：所有非空值都必须是字符串、都能被标准 JSON 解析，并且顶层都是对象或数组。JSON 标量（如 `123`、`true`、`"text"`）、无效 JSON、混合普通文本或混入 Python `dict/list` 时均不会自动推断为 JSON。显式 `column_types` 始终优先。
+
+| 后端 | 普通字符推断 | JSON 字符串推断 |
+|:---|:---|:---|
+| MySQL / MariaDB | 观察长度增加 20% 余量并落到稳定 VARCHAR 档位；超过 `varchar_max_length=255` 后按 UTF-8 字节数使用 `TEXT`、`MEDIUMTEXT`、`LONGTEXT` | `JSON` |
+| Oracle | 长度不超过 `varchar_max_length=4000` 时使用自适应 `VARCHAR2(n CHAR)`，否则使用 `CLOB` | 默认 `CLOB` 兼容旧版本；`native_json=True` 时使用原生 `JSON` |
+| StarRocks | 使用自适应 `VARCHAR(n)`；超过单字段 65533 字节时明确报错 | `JSON`，SQL 协议写入自动使用 `parse_json(%s)` |
+| ClickHouse | `String`，不按长度截断 | `json_type="auto"` 在服务器 25.3+ 使用 `JSON`，旧版本回退 `String`；也可显式指定 `JSON` 或 `String` |
+| Hive / Impala | `STRING`，保留后端无固定长度语义 | 继续使用 `STRING`，不伪造后端原生 JSON 类型 |
+| MaxCompute | `STRING` | `JSON` |
+
+可以通过 `infer_json=False` 关闭内容识别。Oracle 可调整 `varchar_max_length`；ClickHouse 可用 `json_type` 固定兼容策略。MySQL 还支持以下容量参数：
+
+- `varchar_max_length`：VARCHAR 的字符数上限，默认 255；
+- `varchar_max_bytes`：VARCHAR 的行内字节预算，默认 65533；
+- `string_length_headroom`：观察长度的扩容系数，默认 1.2，不能小于 1；
+- `charset_max_bytes_per_character`：未知或自定义字符集的单字符最大字节数。对 `utf8mb4`、`utf8`、`latin1` 等已知字符集，不能设置为低于其安全宽度的值。
+
+由于推断只依据首个建表分块，生产任务应让首批数据具有代表性；字段容量或后端版本要求明确时，优先使用 `column_types` 覆盖。
 
 ## 流式写入与 mode
 
@@ -267,4 +416,4 @@ custom = Database("custom", endpoint="https://database.example")
 - `DatabaseMetadataError`：元数据读取或 Excel 导出失败。
 - `DatabaseCapabilityError`：数据库或表模型不能保证所请求语义。
 
-仓库为七类后端提供环境变量门控的真实集成测试。未配置服务时测试会明确 skip，不代表远程数据库已经验证。对应入口位于 `tests/test_database/integration/`。
+仓库为九类后端提供环境变量门控的真实集成测试。Redis 使用 `HSCREDIT_TEST_REDIS_URL`，MongoDB 使用 `HSCREDIT_TEST_MONGODB_URI` 和可选的 `HSCREDIT_TEST_MONGODB_DATABASE`。未配置服务时测试会明确 skip，不代表远程数据库已经验证。对应入口位于 `tests/test_database/integration/`。

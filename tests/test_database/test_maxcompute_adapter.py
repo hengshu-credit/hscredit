@@ -256,3 +256,41 @@ def test_maxcompute_drop_mode_validates_ddl_before_delete(adapter):
 
     assert adapter.odps.calls == []
     assert adapter.sql_calls == []
+
+
+def test_maxcompute_json_string_infers_json_but_mixed_text_stays_string(adapter):
+    frame = pd.DataFrame(
+        {
+            "payload": ['{"id": 1}'],
+            "mixed": ['{"id": 1}普通文本'],
+        }
+    )
+
+    ddl = adapter.build_create_table_sql(frame, "risk.json_types")
+
+    assert "`payload` JSON" in ddl
+    assert "`mixed` STRING" in ddl
+
+
+def test_maxcompute_explicit_empty_column_type_is_rejected(adapter):
+    with pytest.raises(Exception, match="数据类型"):
+        adapter.build_create_table_sql(
+            pd.DataFrame({"id": [1]}),
+            "risk.invalid_type",
+            {"column_types": {"id": ""}},
+        )
+
+
+def test_maxcompute_json_projection_uses_json_extract(adapter):
+    sql = adapter.build_json_projection_sql(
+        "select id, payload from events;",
+        columns=["id"],
+        json_fields={"payload": {"risk_tags": "$.risk.tags"}},
+    )
+
+    assert sql == (
+        "SELECT `hscredit_json_source`.`id`, "
+        "CASE WHEN JSON_TYPE(JSON_EXTRACT(`hscredit_json_source`.`payload`, '$.risk.tags')) = 'null' "
+        "THEN NULL ELSE JSON_EXTRACT(`hscredit_json_source`.`payload`, '$.risk.tags') END AS `risk_tags` "
+        "FROM (select id, payload from events) `hscredit_json_source`"
+    )

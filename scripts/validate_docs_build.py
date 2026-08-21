@@ -82,9 +82,7 @@ class _ModelMenuParser(HTMLParser):
             label = " ".join("".join(text_parts).split())
             if "toctree-l2" in item["classes"] and label == "模型":
                 item["is_model"] = True
-            elif "toctree-l3" in item["classes"] and any(
-                parent["is_model"] for parent in self._li_stack[:stack_index]
-            ):
+            elif "toctree-l3" in item["classes"] and any(parent["is_model"] for parent in self._li_stack[:stack_index]):
                 self.items.append(label)
         elif tag == "li" and self._li_stack:
             self._li_stack.pop()
@@ -324,8 +322,16 @@ def collect_validation_errors(build_dir: Path) -> list[str]:
 
     if "数据库连接、流式读写与表结构导出" not in database_html:
         errors.append("数据库用户指南标题或正文缺失")
+    if "大 JSON 字段按路径读取" not in database_html or "json_fields" not in database_html:
+        errors.append("数据库用户指南缺少大 JSON 字段投影说明")
     if "hscredit.database.client.Database" not in database_api_html:
         errors.append("数据库 API 页面缺少 Database 公共类锚点")
+    required_database_methods = (
+        "hscredit.database.client.Database.stream_query",
+        "hscredit.database.stream.QueryStream.to_result",
+    )
+    if not all(method in database_api_html for method in required_database_methods):
+        errors.append("数据库 API 页面必须包含 stream_query 与 QueryStream.to_result 方法锚点")
     if 'href="database.html"' not in tooling_html or ">数据库" not in tooling_html:
         errors.append("数据库 API 导航未进入报告与工具侧边栏")
     if not _has_database_result(parsed_search_index):

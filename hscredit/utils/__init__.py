@@ -25,7 +25,7 @@ from .parallel import (
 )
 from .describe import feature_describe, groupby_feature_describe
 from .datasets import germancredit
-from .misc import round_float, force_reload_module, trapz
+from .misc import reload, round_float, trapz
 from .init import init_setting
 from .fonts import FONT_NAME, get_bundled_font_path, install_bundled_font
 from .logger import init_logger, get_logger
@@ -72,7 +72,7 @@ __all__ = [
     "germancredit",
     # 杂项工具
     "round_float",
-    "force_reload_module",
+    "reload",
     "trapz",
     "init_setting",
     "FONT_NAME",

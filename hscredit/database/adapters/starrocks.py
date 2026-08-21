@@ -6,6 +6,7 @@
 import base64
 import json
 import uuid
+from collections.abc import MutableMapping
 from typing import Any, List, Mapping, Optional, Sequence, Tuple
 from urllib import request as urllib_request
 
@@ -15,15 +16,23 @@ from pandas.api import types as ptypes
 from ...exceptions import DependencyError, InputValidationError, ValidationError
 from ..exceptions import DatabaseCapabilityError, DatabaseWriteError
 from ..metadata import MetadataInspection, QualifiedTarget
+from ..type_inference import profile_string_series, resolve_bounded_string_length
 from ..types import DatabaseCapabilities, PoolOptions
-from ..writing import BatchWriteResult, validate_column_mapping_keys, validate_sql_type
+from ..writing import BatchWriteResult, resolve_column_type, validate_column_mapping_keys
 from .mysql import MySQLAdapter
+
+_RESOLVED_JSON_COLUMNS = "_hscredit_resolved_json_columns"
 
 
 class StarRocksAdapter(MySQLAdapter):
     """StarRocks MySQL 协议与 Stream Load 适配器。"""
 
     database_type = "starrocks"
+
+    def json_extract_expression(self, column_sql: str, path: str) -> str:
+        """使用 StarRocks ``GET_JSON_STRING`` 提取 JSON 路径。"""
+
+        return f"GET_JSON_STRING({column_sql}, '{path}')"
 
     def __init__(
         self,
@@ -90,7 +99,10 @@ class StarRocksAdapter(MySQLAdapter):
         )
 
     @staticmethod
-    def _column_type(series: pd.Series) -> str:
+    def _column_type(
+        series: pd.Series,
+        options: Optional[Mapping[str, Any]] = None,
+    ) -> str:
         dtype = series.dtype
         if ptypes.is_bool_dtype(dtype):
             return "BOOLEAN"
@@ -100,7 +112,22 @@ class StarRocksAdapter(MySQLAdapter):
             return "DOUBLE"
         if ptypes.is_datetime64_any_dtype(dtype):
             return "DATETIME"
-        return "VARCHAR(65533)"
+
+        resolved_options = dict(options or {})
+        profile = profile_string_series(series)
+        if profile.all_json_documents and resolved_options.get("infer_json", True):
+            return "JSON"
+        if not profile.all_strings or profile.non_null_count == 0:
+            return "VARCHAR(65533)"
+        if profile.max_utf8_bytes > 65_533:
+            raise InputValidationError(
+                "StarRocks 单个字符串字段超过 VARCHAR/STRING 上限 65533 字节，请拆分字段或改用外部存储"
+            )
+        length = resolve_bounded_string_length(
+            profile.max_utf8_bytes,
+            maximum=65_533,
+        )
+        return f"VARCHAR({length})"
 
     @staticmethod
     def _quote_double(value: Any) -> str:
@@ -142,8 +169,10 @@ class StarRocksAdapter(MySQLAdapter):
         )
         definitions = []
         for column in data.columns:
-            column_type = validate_sql_type(
-                types.get(column) or self._column_type(data[column]),
+            column_type = resolve_column_type(
+                types,
+                column,
+                self._column_type(data[column], options),
                 database_type="StarRocks",
             )
             definition = f"{self.quote_identifier(str(column))} {column_type}"
@@ -189,6 +218,39 @@ class StarRocksAdapter(MySQLAdapter):
         ddl = self.build_create_table_sql(data, table_name, dialect_options)
         self.execute(ddl)
         return ddl
+
+    def _infer_json_columns(
+        self,
+        data: pd.DataFrame,
+        options: Mapping[str, Any],
+    ) -> Tuple[str, ...]:
+        explicit_types = dict(options.get("column_types") or {})
+        return tuple(
+            str(column)
+            for column in data.columns
+            if resolve_column_type(
+                explicit_types,
+                column,
+                self._column_type(data[column], options),
+                database_type="StarRocks",
+            ).upper()
+            == "JSON"
+        )
+
+    def get_json_columns(self, table_name: str) -> Tuple[str, ...]:
+        schema, table = self._schema_and_table(table_name)
+        rows = self.query(
+            "SELECT COLUMN_NAME FROM information_schema.columns "
+            "WHERE TABLE_SCHEMA=%s AND TABLE_NAME=%s AND UPPER(DATA_TYPE)='JSON' "
+            "ORDER BY ORDINAL_POSITION",
+            params=(schema, table),
+            result="records",
+        )
+        return tuple(
+            str(row.get("COLUMN_NAME", row.get("column_name")))
+            for row in rows
+            if row.get("COLUMN_NAME", row.get("column_name")) is not None
+        )
 
     def get_key_columns(self, table_name: str) -> Tuple[str, ...]:
         schema, table = self._schema_and_table(table_name)
@@ -238,10 +300,12 @@ ORDER BY ORDINAL_POSITION
         *,
         mode: str,
         key_columns: Optional[Sequence[str]] = None,
+        json_columns: Optional[Sequence[str]] = None,
     ) -> str:
         del mode, key_columns
         quoted_columns = ", ".join(self.quote_identifier(str(column)) for column in columns)
-        placeholders = ", ".join(["%s"] * len(columns))
+        json_names = set(json_columns or ())
+        placeholders = ", ".join("parse_json(%s)" if column in json_names else "%s" for column in columns)
         return f"INSERT INTO {self.quote_qualified_name(table_name)} ({quoted_columns}) " f"VALUES ({placeholders})"
 
     def prepare_write(
@@ -270,6 +334,7 @@ ORDER BY ORDINAL_POSITION
             raise DatabaseCapabilityError(f"StarRocks {model} 覆盖写入必须指定键字段")
         quoted = self.quote_qualified_name(table_name)
         if mode == "o":
+            json_columns = self.get_json_columns(table_name)
             self.execute(f"TRUNCATE TABLE {quoted}")
         elif mode == "d":
             options["table_model"] = model
@@ -277,8 +342,13 @@ ORDER BY ORDINAL_POSITION
                 options["key_columns"] = list(key_columns)
             options["if_not_exists"] = False
             ddl = self.build_create_table_sql(first_batch, table_name, options)
+            json_columns = self._infer_json_columns(first_batch, options)
             self.execute(f"DROP TABLE IF EXISTS {quoted}")
             self.execute(ddl)
+        else:
+            json_columns = self.get_json_columns(table_name)
+        if isinstance(dialect_options, MutableMapping):
+            dialect_options[_RESOLVED_JSON_COLUMNS] = tuple(json_columns)
 
     def _stream_load_request(
         self,
@@ -362,11 +432,18 @@ ORDER BY ORDINAL_POSITION
                 skipped=(max(len(batch) - inserted, 0) if inserted is not None else None),
             )
 
+        if _RESOLVED_JSON_COLUMNS in options:
+            json_columns = tuple(options[_RESOLVED_JSON_COLUMNS])
+        else:
+            json_columns = self.get_json_columns(table_name)
+            if not json_columns:
+                json_columns = self._infer_json_columns(batch, options)
         sql = self.build_insert_sql(
             table_name,
             [str(column) for column in batch.columns],
             mode=mode,
             key_columns=key_columns,
+            json_columns=json_columns,
         )
         values = [tuple(self._dbapi_value(value) for value in row) for row in batch.itertuples(index=False, name=None)]
         affected = self.executemany(sql, values)

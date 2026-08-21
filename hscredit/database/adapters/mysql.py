@@ -3,6 +3,7 @@
 使用 PyMySQL、DBUtils 和服务端游标实现池化查询、流式读取、建表、元数据扫描和四种写入模式。
 """
 
+import math
 import re
 from collections import OrderedDict
 from typing import Any, List, Mapping, Optional, Sequence, Tuple
@@ -13,12 +14,13 @@ from pandas.api import types as ptypes
 from ...exceptions import DependencyError, InputValidationError, ValidationError
 from ..exceptions import DatabaseCapabilityError, DatabaseQueryError
 from ..metadata import MetadataInspection, QualifiedTarget
+from ..type_inference import profile_string_series, resolve_bounded_string_length
 from ..types import DatabaseCapabilities
 from ..writing import (
     BatchWriteResult,
+    resolve_column_type,
     split_qualified_name,
     validate_column_mapping_keys,
-    validate_sql_type,
 )
 from .dbapi import DBAPIAdapter
 
@@ -37,6 +39,12 @@ class MySQLAdapter(DBAPIAdapter):
         metadata_export=True,
         write_modes={"a", "r", "o", "d"},
     )
+
+    def json_extract_expression(self, column_sql: str, path: str) -> str:
+        """使用 MySQL JSON 函数提取标量或嵌套 JSON 文本。"""
+
+        extracted = f"JSON_EXTRACT({column_sql}, '{path}')"
+        return f"CASE WHEN JSON_TYPE({extracted}) = 'NULL' THEN NULL ELSE JSON_UNQUOTE({extracted}) END"
 
     def load_driver(self) -> Any:
         """按需加载 PyMySQL。"""
@@ -65,7 +73,10 @@ class MySQLAdapter(DBAPIAdapter):
         return "'" + str(value).replace("\\", "\\\\").replace("'", "''") + "'"
 
     @staticmethod
-    def _default_column_type(series: pd.Series) -> str:
+    def _default_column_type(
+        series: pd.Series,
+        options: Optional[Mapping[str, Any]] = None,
+    ) -> str:
         dtype = series.dtype
         if ptypes.is_bool_dtype(dtype):
             return "BOOLEAN"
@@ -77,7 +88,66 @@ class MySQLAdapter(DBAPIAdapter):
             return "DATETIME"
         if ptypes.is_timedelta64_dtype(dtype):
             return "BIGINT"
-        return "VARCHAR(255)"
+
+        resolved_options = dict(options or {})
+        profile = profile_string_series(series)
+        if profile.all_json_documents and resolved_options.get("infer_json", True):
+            return "JSON"
+        if not profile.all_strings or profile.non_null_count == 0:
+            return "VARCHAR(255)"
+
+        varchar_limit = int(resolved_options.get("varchar_max_length", 255))
+        if not 1 <= varchar_limit <= 65_535:
+            raise ValidationError("MySQL varchar_max_length 必须位于 1 到 65535")
+        charset = str(resolved_options.get("charset", "utf8mb4")).lower()
+        default_widths = {
+            "ascii": 1,
+            "binary": 1,
+            "latin1": 1,
+            "ucs2": 2,
+            "utf8": 3,
+            "utf8mb3": 3,
+            "utf8mb4": 4,
+            "utf16": 4,
+            "utf32": 4,
+        }
+        known_charset_width = default_widths.get(charset)
+        configured_charset_width = resolved_options.get("charset_max_bytes_per_character")
+        if (
+            configured_charset_width is not None
+            and known_charset_width is not None
+            and int(configured_charset_width) < known_charset_width
+        ):
+            raise ValidationError(f"MySQL {charset} 字符集最大字节宽度不能小于 {known_charset_width}")
+        charset_width = int(
+            configured_charset_width if configured_charset_width is not None else (known_charset_width or 4)
+        )
+        if charset_width <= 0:
+            raise ValidationError("MySQL charset_max_bytes_per_character 必须是正整数")
+        varchar_byte_limit = int(resolved_options.get("varchar_max_bytes", 65_533))
+        if not 1 <= varchar_byte_limit <= 65_533:
+            raise ValidationError("MySQL varchar_max_bytes 必须位于 1 到 65533")
+        headroom = float(resolved_options.get("string_length_headroom", 1.2))
+        if headroom < 1:
+            raise ValidationError("MySQL string_length_headroom 不能小于 1")
+        safe_character_limit = min(
+            varchar_limit,
+            varchar_byte_limit // charset_width,
+        )
+        target_characters = math.ceil(profile.max_characters * headroom)
+        target_bytes = math.ceil(profile.max_utf8_bytes * headroom)
+        if target_characters <= safe_character_limit and target_bytes <= varchar_byte_limit:
+            length = resolve_bounded_string_length(
+                profile.max_characters,
+                maximum=safe_character_limit,
+                headroom=headroom,
+            )
+            return f"VARCHAR({length})"
+        if target_bytes <= 65_535:
+            return "TEXT"
+        if target_bytes <= 16_777_215:
+            return "MEDIUMTEXT"
+        return "LONGTEXT"
 
     def build_create_table_sql(
         self,
@@ -113,8 +183,10 @@ class MySQLAdapter(DBAPIAdapter):
         )
         definitions: List[str] = []
         for column in data.columns:
-            column_type = validate_sql_type(
-                column_types.get(column) or self._default_column_type(data[column]),
+            column_type = resolve_column_type(
+                column_types,
+                column,
+                self._default_column_type(data[column], options),
                 database_type="MySQL",
             )
             definition = f"{self.quote_identifier(str(column))} {column_type}"
