@@ -398,9 +398,9 @@ def plot_model_feature_importance(
         right_grid = outer_grid[0, 1].subgridspec(
             right_rows + 1,
             right_columns,
-            height_ratios=[0.12, *([1.0] * right_rows)],
-            wspace=0.06,
-            hspace=0.34,
+            height_ratios=[0.08, *([1.0] * right_rows)],
+            wspace=0.02,
+            hspace=0.12,
         )
         right_title_ax = fig.add_subplot(right_grid[0, :])
         right_title_ax.set_label("SHAP依赖总标题")

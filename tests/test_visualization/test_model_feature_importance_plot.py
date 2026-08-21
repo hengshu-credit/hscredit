@@ -94,6 +94,35 @@ def test_combined_plot_uses_independent_top_n_and_brand_styles(fitted_forest):
     plt.close(fig)
 
 
+def test_dependence_panels_use_compact_spacing(fitted_forest):
+    """2×2 依赖图的行列间隔不应接近单个子图本身的尺寸。"""
+    pytest.importorskip("shap")
+    model, X, y = fitted_forest
+
+    fig = plot_model_feature_importance(
+        model,
+        X.head(30),
+        y[:30],
+        left_top_n=4,
+        right_top_n=4,
+        background_size=16,
+        figsize=(18, 8),
+        random_state=23,
+        show=False,
+    )
+
+    fig.canvas.draw()
+    dependence_axes = [ax for ax in fig.axes if ax.get_label() == "SHAP依赖"]
+    horizontal_gap = dependence_axes[1].get_position().x0 - dependence_axes[0].get_position().x1
+    vertical_gap = dependence_axes[0].get_position().y0 - dependence_axes[2].get_position().y1
+    mean_width = np.mean([ax.get_position().width for ax in dependence_axes])
+    mean_height = np.mean([ax.get_position().height for ax in dependence_axes])
+
+    assert 0 < horizontal_gap / mean_width < 0.55
+    assert 0 < vertical_gap / mean_height < 0.55
+    plt.close(fig)
+
+
 def test_feature_importance_panels_hide_all_gridlines(fitted_forest):
     """原生重要性、左侧 SHAP 和右侧依赖图都不应显示网格线。"""
     pytest.importorskip("shap")
