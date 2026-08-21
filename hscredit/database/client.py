@@ -31,7 +31,7 @@ class Database:
         连接池配置。
     adapter_options : mapping, optional
         后端专有配置。
-    **connect_kwargs
+    ``**connect_kwargs``
         直接传递给后端驱动的连接参数。
 
     **属性**

@@ -773,6 +773,61 @@ class TestModelReportRegression:
         np.testing.assert_allclose(table["特征重要性%"], [0.75, 0.25])
         np.testing.assert_allclose(table["累积特征重要性%"], [0.75, 1.0])
 
+    @pytest.mark.parametrize(
+        ("feature_map", "expected_headers", "expected_descriptions"),
+        [
+            (None, ["入参字段", "Coef."], None),
+            (
+                {"f0": "字段零", "f1": "字段一"},
+                ["入参字段", "字段名称", "Coef."],
+                {"const": None, "f0": "字段零", "f1": "字段一"},
+            ),
+        ],
+    )
+    def test_auto_model_report_writes_direct_lr_summary_after_feature_importance(
+        self,
+        tmp_path,
+        feature_map,
+        expected_headers,
+        expected_descriptions,
+    ):
+        """直接传入 LR 时，统计摘要必须紧随入模特征列表并应用字段映射。"""
+        from hscredit.core.models import LogisticRegression
+        from hscredit.report.model_report import auto_model_report
+
+        rng = np.random.default_rng(20260821)
+        X = pd.DataFrame(rng.normal(size=(60, 2)), columns=["f0", "f1"])
+        y = pd.Series(np.tile([0, 1], 30))
+        model = LogisticRegression(max_iter=500).fit(X, y)
+        output = tmp_path / f"direct_lr_summary_{feature_map is not None}.xlsx"
+
+        auto_model_report(
+            model,
+            X_train=X,
+            y_train=y,
+            feature_names=["f0", "f1"],
+            excel_path=str(output),
+            feature_map=feature_map,
+            with_plots=False,
+            verbose=False,
+            n_jobs=1,
+        )
+
+        worksheet = load_workbook(output)["5-模型参数"]
+        feature_heading_row = _row_for_value(worksheet, "3、入模特征列表")
+        summary_heading_row = _row_for_value(worksheet, "4、逻辑回归拟合结果")
+        assert summary_heading_row > feature_heading_row
+
+        summary_header_row = next(row for row in range(summary_heading_row + 1, worksheet.max_row + 1) if worksheet.cell(row, 2).value == "入参字段")
+        headers = [worksheet.cell(summary_header_row, column).value for column in range(2, 2 + len(expected_headers))]
+        assert headers == expected_headers
+
+        summary_rows = {worksheet.cell(row, 2).value: row for row in range(summary_header_row + 1, summary_header_row + 4)}
+        assert set(summary_rows) == {"const", "f0", "f1"}
+        if expected_descriptions is not None:
+            for feature, description in expected_descriptions.items():
+                assert worksheet.cell(summary_rows[feature], 3).value == description
+
     def test_feature_contribution_figure_uses_rank_and_two_percent_axes(self):
         X = pd.DataFrame({"f0": [0.0, 1.0], "f1": [1.0, 0.0]})
         y = pd.Series([0, 1])

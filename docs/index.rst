@@ -115,6 +115,12 @@ hscredit 文档
 
 .. toctree::
    :maxdepth: 2
+   :caption: 数据接入
+
+   database
+
+.. toctree::
+   :maxdepth: 2
    :caption: API 参考
 
    api/index

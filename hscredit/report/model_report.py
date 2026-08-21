@@ -1786,6 +1786,40 @@ class ModelReport:
             rows.insert(0, {"变量": "截距", "系数": float(intercept[0])})
         return pd.DataFrame(rows)
 
+    def _direct_lr_summary(self, feature_map: Optional[Dict[str, str]] = None) -> pd.DataFrame:
+        """读取直接传入的 LR 统计摘要，并补充字段含义。"""
+        if self._is_scorecard_model() or not callable(getattr(self.model, "summary", None)):
+            return pd.DataFrame()
+
+        class_names = {base.__name__.lower().replace("_", "") for base in type(self.model).__mro__}
+        if not any("logisticregression" in name or name == "lr" for name in class_names):
+            return pd.DataFrame()
+
+        try:
+            summary = self.model.summary()
+        except Exception as exc:
+            logger.warning("读取逻辑回归统计摘要失败 [模型=%s]: %s", type(self.model).__name__, exc)
+            return pd.DataFrame()
+        if not isinstance(summary, pd.DataFrame):
+            logger.warning("逻辑回归 summary() 未返回 DataFrame [模型=%s]", type(self.model).__name__)
+            return pd.DataFrame()
+
+        table = summary.copy()
+        feature_column = next(
+            (column for column in ("入参字段", "Features", "变量", "feature", "特征") if column in table.columns),
+            None,
+        )
+        if feature_column is None and not isinstance(table.index, pd.RangeIndex):
+            table = table.rename_axis("入参字段").reset_index()
+            feature_column = "入参字段"
+        if feature_map and feature_column is not None:
+            table.insert(
+                table.columns.get_loc(feature_column) + 1,
+                "字段名称",
+                table[feature_column].map(feature_map).fillna(""),
+            )
+        return table
+
     def _scorecard_scale_table(self) -> pd.DataFrame:
         """统一评分卡基础刻度参数。"""
         if callable(getattr(self.model, "scorecard_scale", None)):
@@ -4329,6 +4363,24 @@ class ModelReport:
                     exc,
                 )
         param_section += 1
+
+        direct_lr_summary = self._direct_lr_summary(feature_map)
+        if not direct_lr_summary.empty:
+            end_row, _ = writer.insert_value2sheet(
+                ws,
+                (end_row + 2, 2),
+                value=f"{param_section}、逻辑回归拟合结果",
+                style="header_middle",
+                align={"horizontal": "left"},
+            )
+            end_row, _ = dataframe2excel(
+                direct_lr_summary,
+                writer,
+                sheet_name=ws,
+                start_row=end_row + 1,
+                left_cols=[column for column in ("入参字段", "Features", "变量", "feature", "特征", "字段名称") if column in direct_lr_summary.columns],
+            )
+            param_section += 1
 
         score_conversion_sections = self._get_score_conversion_sections()
         if score_conversion_sections is not None:

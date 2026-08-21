@@ -4,6 +4,10 @@ from pathlib import Path
 
 from packaging.requirements import Requirement
 from packaging.version import Version
+from docutils import nodes
+from docutils.core import publish_doctree
+
+from hscredit.database.client import Database
 
 from scripts.validate_docs_build import collect_search_runtime_errors, collect_validation_errors
 
@@ -44,8 +48,22 @@ def test_accepts_complete_docs_artifacts(tmp_path):
         '<dt id="hscredit.core.eda.feature_summary">feature_summary</dt>',
     )
     _write(
+        tmp_path / "database.html",
+        "数据库连接、流式读写与表结构导出",
+    )
+    _write(
+        tmp_path / "api" / "database.html",
+        '<dt id="hscredit.database.client.Database">Database</dt>',
+    )
+    _write(
+        tmp_path / "api" / "tooling.html",
+        '<li class="toctree-l2"><a href="database.html">数据库</a></li>',
+    )
+    _write(
         tmp_path / "searchindex.js",
-        'Search.setIndex({"docnames":["api/eda"],"objects":{"hscredit.core.eda":' '[[0,0,1,"","feature_summary"]]}})',
+        'Search.setIndex({"docnames":["api/eda","api/database"],"objects":{'
+        '"hscredit.core.eda":[[0,0,1,"","feature_summary"]],'
+        '"hscredit.database.client":[[1,0,1,"","Database"]]}})',
     )
     _write(tmp_path / "_static" / "language_data.js", "var Stemmer = function () {};")
     _write(
@@ -98,6 +116,32 @@ def test_reports_broken_search_runtime_and_navigation(tmp_path):
     assert any("feature_summary" in error for error in errors)
     assert any("ChineseStemmer" in error for error in errors)
     assert any("3px" in error for error in errors)
+
+
+def test_reports_missing_database_guide_and_api_artifacts(tmp_path):
+    """数据库用户指南与 API 页面必须是发布构建的一部分。"""
+
+    errors = collect_validation_errors(tmp_path)
+
+    assert any("database.html" in error for error in errors)
+    assert any("api/database.html" in error for error in errors)
+
+
+def test_rejects_database_docs_without_navigation_or_search_result(tmp_path):
+    """页面存在但未进入 API 导航和搜索对象表时仍应阻止发布。"""
+
+    _write(tmp_path / "database.html", "数据库连接、流式读写与表结构导出")
+    _write(
+        tmp_path / "api" / "database.html",
+        '<dt id="hscredit.database.client.Database">Database</dt>',
+    )
+    _write(tmp_path / "api" / "tooling.html", "<html></html>")
+    _write(tmp_path / "searchindex.js", "Search.setIndex({})")
+
+    errors = collect_validation_errors(tmp_path)
+
+    assert any("数据库 API 导航" in error for error in errors)
+    assert any("Database" in error and "搜索结果" in error for error in errors)
 
 
 def test_reports_current_nav_rule_that_drops_reserved_border(tmp_path):
@@ -215,3 +259,12 @@ def test_docs_dependency_excludes_broken_sphinx_9_search():
 
     assert Version("8.2.3") in sphinx.specifier
     assert Version("9.0.0") not in sphinx.specifier
+
+
+def test_database_class_docstring_is_valid_rst():
+    """数据库公共门面 docstring 不得向 autodoc 注入 RST 解析告警。"""
+
+    document = publish_doctree(Database.__doc__ or "")
+    messages = list(document.findall(nodes.system_message))
+
+    assert messages == []

@@ -1,7 +1,7 @@
 # 安装
 
 `hscredit` 需要 **Python 3.9+**。基础安装保持轻量，重型依赖（Boosting、深度学习、
-调参、解释、PMML）按需安装。
+调参、PMML 与数据库驱动）按需安装。
 
 ## 基础安装
 
@@ -22,6 +22,14 @@ pip install hscredit
 | `pip install hscredit[tune]` | Optuna 参数调优和调参看板 |
 | `pip install hscredit` | 已内置 SHAP 模型解释、特征重要性和单样本分析 |
 | `pip install hscredit[pmml]` | PMML 导出相关能力 |
+| `pip install hscredit[db-mysql]` | MySQL / MariaDB 连接池与流式读写 |
+| `pip install hscredit[db-hive]` | HiveServer2 连接池与流式读写 |
+| `pip install hscredit[db-impala]` | Impala / Kudu 连接池与流式读写 |
+| `pip install hscredit[db-oracle]` | Oracle 原生连接池与流式读写 |
+| `pip install hscredit[db-starrocks]` | StarRocks MySQL 协议与 Stream Load |
+| `pip install hscredit[db-clickhouse]` | ClickHouse 原生 DataFrame 流式读写 |
+| `pip install hscredit[db-maxcompute]` | MaxCompute DB-API、原生写入与元数据 |
+| `pip install hscredit[database-all]` | 安装全部数据库适配器 |
 | `pip install hscredit[docs]` | 构建本文档所需的 Sphinx 工具链 |
 | `pip install hscredit[all]` | 安装全部可选能力 |
 
@@ -29,6 +37,11 @@ pip install hscredit
 PMML 导出（`hscredit[pmml]`）依赖 `sklearn2pmml`，运行时需要 **Java 11+**。
 若本机 Java 版本过低，调用 `ScoreCard.export_pmml(...)` 会抛出
 `UnsupportedClassVersionError`，这属于运行环境问题而非库本身缺陷。
+```
+
+```{note}
+数据库驱动全部为可选依赖。基础安装仍可安全导入 `Database`、`QueryStream` 和适配器
+注册接口；只有创建对应数据库连接时才检查驱动。完整指南见 {doc}`database`。
 ```
 
 ## 开发模式安装

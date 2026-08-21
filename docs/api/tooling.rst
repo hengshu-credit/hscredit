@@ -7,6 +7,7 @@
    :maxdepth: 2
 
    report
+   database
    excel
    utils
    exceptions

@@ -136,6 +136,29 @@ def _has_feature_summary_result(index: dict[str, Any]) -> bool:
     return False
 
 
+def _has_database_result(index: dict[str, Any]) -> bool:
+    """确认搜索对象表可跳转到 ``Database`` 公共类。"""
+    docnames = index.get("docnames")
+    objects = index.get("objects")
+    if not isinstance(docnames, list) or not isinstance(objects, dict):
+        return False
+
+    prefix = "hscredit.database.client"
+    entries = objects.get(prefix)
+    if not isinstance(entries, list):
+        return False
+    for entry in entries:
+        if not isinstance(entry, list) or len(entry) < 5 or entry[4] != "Database":
+            continue
+        doc_index, anchor = entry[0], entry[3]
+        if not isinstance(doc_index, int) or not 0 <= doc_index < len(docnames):
+            continue
+        resolved_anchor = anchor or f"{prefix}.Database"
+        if docnames[doc_index] == "api/database" and resolved_anchor == "hscredit.database.client.Database":
+            return True
+    return False
+
+
 def _normalize_selector(selector: str) -> str:
     """把选择器空白标准化，便于比较同一条导航规则。"""
     selector = re.sub(r"/\*.*?\*/", " ", selector, flags=re.DOTALL)
@@ -270,6 +293,9 @@ def collect_validation_errors(build_dir: Path) -> list[str]:
     modeling_html = _read(build_dir, "api/modeling.html", errors)
     boosting_html = _read(build_dir, "api/boosting.html", errors)
     eda_html = _read(build_dir, "api/eda.html", errors)
+    database_html = _read(build_dir, "database.html", errors)
+    database_api_html = _read(build_dir, "api/database.html", errors)
+    tooling_html = _read(build_dir, "api/tooling.html", errors)
     search_index = _read(build_dir, "searchindex.js", errors)
     language_data = _read(build_dir, "_static/language_data.js", errors)
     custom_css = _read(build_dir, "_static/custom.css", errors)
@@ -295,6 +321,15 @@ def collect_validation_errors(build_dir: Path) -> list[str]:
     parsed_search_index = _load_search_index(search_index, errors)
     if not _has_feature_summary_result(parsed_search_index):
         errors.append("搜索结果未包含可跳转到 API 页面锚点的 feature_summary")
+
+    if "数据库连接、流式读写与表结构导出" not in database_html:
+        errors.append("数据库用户指南标题或正文缺失")
+    if "hscredit.database.client.Database" not in database_api_html:
+        errors.append("数据库 API 页面缺少 Database 公共类锚点")
+    if 'href="database.html"' not in tooling_html or ">数据库" not in tooling_html:
+        errors.append("数据库 API 导航未进入报告与工具侧边栏")
+    if not _has_database_result(parsed_search_index):
+        errors.append("Database 搜索结果未包含可跳转的 API 页面锚点")
 
     defines_chinese = re.search(r"(?:class|function|var|let|const)\s+ChineseStemmer\b", language_data)
     references_chinese = re.search(r"(?:window\s*\.\s*)?Stemmer\s*=\s*ChineseStemmer\b", language_data)
