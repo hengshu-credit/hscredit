@@ -1193,7 +1193,7 @@ db = Database(
 )
 ```
 
-流式读取默认产生 DataFrame 分块。`progress=False` 不执行额外统计 SQL；启用进度条后，适配器才使用 `COUNT(1)` 查询总数。主动 `stop()` 或读取期间按 `Ctrl+C` 后，可直接合并当前已经读取的数据：
+流式读取默认产生 DataFrame 分块。`progress=True` 只显示累计读取行数、速度和耗时，默认不执行额外统计 SQL；只有显式设置 `count_total=True` 或传入 `count_sql` 时才查询总数。主动 `stop()` 或读取期间按 `Ctrl+C` 后，可直接合并当前已经读取的数据：
 
 ```python
 stream = db.stream_query(
@@ -1213,6 +1213,9 @@ print(partial.attrs["completed"], partial.attrs["rows_read"])
 
 # 便捷接口会自动消费流；Ctrl+C 后直接返回部分 DataFrame
 frame = db.read_query(sql, chunksize=50_000, progress=True)
+
+# 明确需要完成百分比时，额外执行一次 COUNT(1)
+frame = db.read_query(sql, progress=True, count_total=True)
 ```
 
 流式写入支持单个 DataFrame、DataFrame 分块迭代器以及行记录迭代器：

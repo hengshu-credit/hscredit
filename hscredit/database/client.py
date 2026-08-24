@@ -148,9 +148,7 @@ class Database:
         self._ensure_open()
         method = getattr(self.adapter, method_name, None)
         if not callable(method):
-            raise DatabaseCapabilityError(
-                f"数据库 {self.database_type} 不支持 NoSQL 方法 {method_name}"
-            )
+            raise DatabaseCapabilityError(f"数据库 {self.database_type} 不支持 NoSQL 方法 {method_name}")
         return method(*args, **kwargs)
 
     def read_one(self, resource: Any, selector: Any = None, **options: Any) -> Any:
@@ -210,6 +208,8 @@ class Database:
         retain: bool,
         total_rows: Optional[int],
         result: str,
+        count_total: bool,
+        count_sql: Optional[str],
     ) -> None:
         if isinstance(chunksize, bool) or not isinstance(chunksize, int) or chunksize <= 0:
             raise ValidationError("chunksize 必须是正整数")
@@ -220,6 +220,14 @@ class Database:
         if total_rows is not None:
             if isinstance(total_rows, bool) or not isinstance(total_rows, int) or total_rows < 0:
                 raise ValidationError("total_rows 必须是非负整数或 None")
+        if not isinstance(count_total, bool):
+            raise ValidationError("count_total 必须是布尔值")
+        if count_sql is not None and (not isinstance(count_sql, str) or not count_sql.strip()):
+            raise ValidationError("count_sql 必须是非空字符串或 None")
+        if not progress and (count_total or count_sql is not None):
+            raise ValidationError("count_total 或 count_sql 仅能在 progress=True 时使用")
+        if total_rows is not None and (count_total or count_sql is not None):
+            raise ValidationError("total_rows 不能与 count_total 或 count_sql 同时使用")
         validate_result_type(result)
 
     def stream_query(
@@ -230,6 +238,7 @@ class Database:
         chunksize: int = 50_000,
         progress: bool = False,
         retain: bool = True,
+        count_total: bool = False,
         count_sql: Optional[str] = None,
         total_rows: Optional[int] = None,
         columns: Optional[Sequence[str]] = None,
@@ -245,10 +254,10 @@ class Database:
         :param sql: 原始查询 SQL。JSON 投影会把该查询包装为子查询。
         :param params: 原始 SQL 的绑定参数，默认为 ``None``。
         :param chunksize: 每次向 DB-API 流式游标请求的最大行数，默认 50000。
-        :param progress: 是否显示读取进度，默认 ``False``。只有启用进度且未提供
-            ``total_rows`` 时才会执行统计查询。
+        :param progress: 是否显示读取进度，默认 ``False``。未知总数时显示累计行数、速度和耗时。
         :param retain: 是否保留已经产生的分块，默认 ``True``。设为 ``False`` 后不能合并历史数据。
-        :param count_sql: 启用进度时使用的自定义统计 SQL，默认由原始查询生成 ``COUNT(1)``。
+        :param count_total: 是否为进度条自动执行 ``COUNT(1)``，默认 ``False``。
+        :param count_sql: 为进度条显式指定的统计 SQL；提供后会执行该 SQL。
         :param total_rows: 已知总行数；提供后不执行统计 SQL。
         :param columns: JSON 投影时原样保留的普通输出字段；不能包含 JSON 源字段。
         :param json_fields: JSON 源字段、输出字段、JSONPath 和可选默认值的嵌套映射。
@@ -277,11 +286,19 @@ class Database:
         """
 
         self._ensure_open()
-        self._validate_stream_options(chunksize, progress, retain, total_rows, result)
+        self._validate_stream_options(
+            chunksize,
+            progress,
+            retain,
+            total_rows,
+            result,
+            count_total,
+            count_sql,
+        )
         projection = normalize_json_projection(columns, json_fields)
 
         resolved_total = total_rows
-        if progress and resolved_total is None:
+        if progress and resolved_total is None and (count_total or count_sql is not None):
             resolved_count_sql = count_sql or self.adapter.build_count_sql(sql)
             resolved_total = self.adapter.count_rows(resolved_count_sql, params=params)
 
@@ -312,6 +329,7 @@ class Database:
         *,
         chunksize: int = 50_000,
         progress: bool = False,
+        count_total: bool = False,
         count_sql: Optional[str] = None,
         total_rows: Optional[int] = None,
         columns: Optional[Sequence[str]] = None,
@@ -327,7 +345,8 @@ class Database:
         :param params: 原始 SQL 的绑定参数，默认为 ``None``。
         :param chunksize: 每次请求的最大行数，默认 50000。
         :param progress: 是否显示进度，默认 ``False``。
-        :param count_sql: 自定义统计 SQL。
+        :param count_total: 是否自动执行 ``COUNT(1)`` 获取进度条总数，默认 ``False``。
+        :param count_sql: 为进度条显式指定的统计 SQL。
         :param total_rows: 已知总行数。
         :param columns: JSON 投影时原样保留的普通输出字段；不能包含 JSON 源字段。
         :param json_fields: JSON 子字段投影映射。
@@ -347,6 +366,7 @@ class Database:
             params=params,
             chunksize=chunksize,
             progress=progress,
+            count_total=count_total,
             retain=True,
             count_sql=count_sql,
             total_rows=total_rows,

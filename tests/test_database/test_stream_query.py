@@ -86,7 +86,17 @@ def test_progress_false_never_executes_count_query():
     assert database.adapter.resource.closed is True
 
 
-def test_progress_true_counts_with_count_one_and_bound_params():
+def test_progress_true_does_not_count_without_explicit_opt_in():
+    database = Database("observable_stream")
+
+    stream = database.stream_query("select id from t", chunksize=2, progress=True)
+    list(stream)
+
+    assert database.adapter.count_calls == []
+    assert stream.total_rows is None
+
+
+def test_count_total_true_counts_with_count_one_and_bound_params():
     database = Database("observable_stream")
 
     list(
@@ -95,6 +105,7 @@ def test_progress_true_counts_with_count_one_and_bound_params():
             params=(1,),
             chunksize=2,
             progress=True,
+            count_total=True,
         )
     )
 
@@ -126,6 +137,36 @@ def test_custom_count_sql_is_executed_verbatim():
     )
 
     assert database.adapter.count_calls == [("select 5", None)]
+
+
+def test_read_query_only_counts_when_explicitly_requested():
+    default_database = Database("observable_stream")
+    explicit_database = Database("observable_stream")
+
+    default_frame = default_database.read_query("select id from t", progress=True)
+    explicit_database.read_query("select id from t", progress=True, count_total=True)
+
+    assert default_database.adapter.count_calls == []
+    assert default_frame.attrs["total_rows"] is None
+    assert explicit_database.adapter.count_calls == [("SELECT COUNT(1) FROM (select id from t) hscredit_count", None)]
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"count_total": 1}, "count_total"),
+        ({"progress": False, "count_total": True}, "progress"),
+        ({"progress": False, "count_sql": "select 5"}, "progress"),
+        ({"progress": True, "count_total": True, "total_rows": 5}, "total_rows"),
+        ({"progress": True, "count_sql": "select 5", "total_rows": 5}, "total_rows"),
+        ({"progress": True, "count_sql": "  "}, "count_sql"),
+    ],
+)
+def test_stream_query_rejects_conflicting_count_options(kwargs, message):
+    database = Database("observable_stream")
+
+    with pytest.raises(ValidationError, match=message):
+        database.stream_query("select id from t", **kwargs)
 
 
 def test_read_query_returns_retained_rows_after_keyboard_interrupt():
@@ -354,6 +395,7 @@ def test_progress_count_uses_original_sql_before_json_projection():
             params=(10,),
             json_fields={"huge_json": {"customer_id": "$.customer.id"}},
             progress=True,
+            count_total=True,
         )
     )
 

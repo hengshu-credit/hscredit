@@ -184,8 +184,10 @@ print(partial.attrs["rows_read"])
 进度行为有明确约束：
 
 - `progress=False` 时不执行额外统计 SQL。
-- `progress=True` 且未提供 `total_rows` 时，适配器先生成 `SELECT COUNT(1) FROM (...)`。
-- 复杂查询可以传入 `count_sql`；已知总数可以传入 `total_rows`，两者都能避免自动包装。
+- `progress=True` 默认只显示累计读取行数、速度和耗时，不查询总数。
+- `progress=True, count_total=True` 时，适配器才生成并执行 `SELECT COUNT(1) FROM (...)`。
+- `count_sql` 表示明确执行自定义统计 SQL；已知总数可以直接传入 `total_rows`，不执行统计查询。
+- `progress=False` 时不能设置 `count_total=True` 或 `count_sql`；`total_rows` 也不能与这两项同时使用。
 - `retain=True` 默认保留已读分块，因此 `stop()` 或读取期间按 `Ctrl+C` 后可直接合并部分结果。
 - 只需要恒定内存消费时设置 `retain=False`；此模式不会保留已经消费的数据，也不能调用 `to_dataframe()` 合并历史分块。
 
@@ -250,7 +252,7 @@ for records in stream:
 | `records` | `list[dict]` | `list[dict]` |
 | `rows` | 原始行元组列表 | 原始行元组列表 |
 
-主动停止和键盘中断仍会保留当前已读数据。DataFrame 的读取状态位于 `attrs`；使用列表结果时，可从 `QueryStream.state`、`rows_read` 和 `interrupt_reason` 查看流状态。启用进度时，`COUNT(1)` 针对原始查询执行，不会重复计算 JSON 投影表达式；未启用进度时不会查询总数。
+主动停止和键盘中断仍会保留当前已读数据。DataFrame 的读取状态位于 `attrs`；使用列表结果时，可从 `QueryStream.state`、`rows_read` 和 `interrupt_reason` 查看流状态。默认不会查询总数；显式设置 `count_total=True` 或 `count_sql` 时，统计 SQL 针对原始查询执行，不会重复计算 JSON 投影表达式。
 
 各适配器分别使用 MySQL `JSON_EXTRACT`、Oracle `JSON_VALUE/JSON_QUERY`、StarRocks `GET_JSON_STRING`、ClickHouse `JSON_VALUE/JSON_QUERY`、Hive/Impala `GET_JSON_OBJECT` 和 MaxCompute `JSON_EXTRACT`。第三方适配器可实现 `json_extract_expression()` 获得相同公共接口。
 

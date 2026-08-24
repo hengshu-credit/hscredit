@@ -20,6 +20,7 @@ _EXPECTED_MODEL_MENU = (
     "评估指标",
     "超参数调优",
 )
+_EXPECTED_DATABASE_GUIDE_TITLE = "数据库与 NoSQL 连接池、读写及表结构导出"
 
 
 class _LevelFiveLinkParser(HTMLParser):
@@ -320,7 +321,7 @@ def collect_validation_errors(build_dir: Path) -> list[str]:
     if not _has_feature_summary_result(parsed_search_index):
         errors.append("搜索结果未包含可跳转到 API 页面锚点的 feature_summary")
 
-    if "数据库连接、流式读写与表结构导出" not in database_html:
+    if _EXPECTED_DATABASE_GUIDE_TITLE not in database_html:
         errors.append("数据库用户指南标题或正文缺失")
     if "大 JSON 字段按路径读取" not in database_html or "json_fields" not in database_html:
         errors.append("数据库用户指南缺少大 JSON 字段投影说明")

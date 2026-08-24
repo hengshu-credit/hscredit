@@ -49,7 +49,7 @@ def test_accepts_complete_docs_artifacts(tmp_path):
     )
     _write(
         tmp_path / "database.html",
-        "数据库连接、流式读写与表结构导出 大 JSON 字段按路径读取 json_fields",
+        "数据库与 NoSQL 连接池、读写及表结构导出 大 JSON 字段按路径读取 json_fields",
     )
     _write(
         tmp_path / "api" / "database.html",
@@ -131,7 +131,7 @@ def test_reports_missing_database_guide_and_api_artifacts(tmp_path):
 def test_rejects_database_docs_without_navigation_or_search_result(tmp_path):
     """页面存在但未进入 API 导航和搜索对象表时仍应阻止发布。"""
 
-    _write(tmp_path / "database.html", "数据库连接、流式读写与表结构导出")
+    _write(tmp_path / "database.html", "数据库与 NoSQL 连接池、读写及表结构导出")
     _write(
         tmp_path / "api" / "database.html",
         '<dt id="hscredit.database.client.Database">Database</dt>',
@@ -147,7 +147,7 @@ def test_rejects_database_docs_without_navigation_or_search_result(tmp_path):
 
 def test_rejects_database_docs_without_json_projection_and_public_method_anchors(tmp_path):
     """数据库指南与 API 页面必须发布 JSON 投影和流式结果方法。"""
-    _write(tmp_path / "database.html", "数据库连接、流式读写与表结构导出")
+    _write(tmp_path / "database.html", "数据库与 NoSQL 连接池、读写及表结构导出")
     _write(
         tmp_path / "api" / "database.html",
         '<dt id="hscredit.database.client.Database">Database</dt>',
