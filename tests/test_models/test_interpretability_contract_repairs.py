@@ -7,7 +7,7 @@ from sklearn.datasets import make_classification
 from sklearn.ensemble import RandomForestClassifier
 
 from hscredit.core.models import RandomForest
-from hscredit.core.models.evaluation import ModelExplainer
+from hscredit.core.models.explainability import ModelExplainer
 
 
 def _data():
@@ -53,7 +53,11 @@ def test_feature_interactions_handle_modern_multioutput_shape():
     explainer = ModelExplainer(model, feature_names=list(X.columns))
     interactions = np.zeros((3, 4, 4, 2), dtype=float)
     interactions[:, 0, 1, 1] = 2.0
-    explainer._explainer.shap_interaction_values = lambda values: interactions
+    explainer._interaction_explainer = type(
+        "InteractionExplainer",
+        (),
+        {"shap_interaction_values": lambda self, values: interactions},
+    )()
 
     result = explainer.get_feature_interactions(X.head(3), top_n=2)
 

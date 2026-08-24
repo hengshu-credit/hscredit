@@ -43,7 +43,7 @@
 | 评分卡模型 | 逻辑回归、ScoreCard、RoundScoreCard、评分转换、分数漂移校准 |
 | 机器学习模型 | RandomForest、ExtraTrees、GradientBoosting、XGBoost、LightGBM、CatBoost、NGBoost |
 | 风控损失函数 | Focal、非对称 Focal、加权 BCE、成本敏感、坏账、审批率、利润最大化、排序、KS 聚焦、Top-K 坏样本捕获、金额加权等 |
-| 调参与解释 | Optuna 调参、模型评估、概率校准、解释性分析、SHAP 可选支持 |
+| 调参与解释 | Optuna 调参、模型评估、概率校准、解释性分析、内置 SHAP 支持 |
 | 风控指标 | KS、AUC、Gini、Lift、坏率、IV、PSI、CSI、回归指标、分箱统计 |
 | 金融计算 | FV/PV/PMT/NPER/IPMT/PPMT/RATE 现值终值年金计算，NPV/IRR/MIRR 净现值与收益率计算 |
 

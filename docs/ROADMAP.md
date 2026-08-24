@@ -53,7 +53,7 @@ hscredit/
 | 筛选 | `core.selectors` | 缺失率、众数率、基数、方差、相关性、VIF、IV、Lift、PSI、模型重要性、零重要性、RFE、序列选择、逐步回归、Boruta、互信息、卡方、F 检验、稳定性感知、组合筛选 |
 | 模型 | `core.models` | LogisticRegression、RandomForest、ExtraTrees、GradientBoosting、XGBoost、LightGBM、CatBoost、NGBoost、ScoreCard、RuleSet、RulesClassifier |
 | 损失函数 | `core.models.losses` | Focal、非对称 Focal、加权 BCE、成本敏感、坏账、审批率、利润最大化、排序、KS 聚焦、Top-K 捕获、金额加权、期望收益等 |
-| 调参与评估 | `core.models.tuning` / `evaluation` | Optuna 调参、模型报告、概率校准、解释性分析 |
+| 调参、校准与解释 | `core.models.tuning` / `calibration` / `explainability` | Optuna 调参、模型报告、概率校准、解释性分析 |
 | 指标 | `core.metrics` | KS、AUC、Gini、Lift、坏率、IV、PSI、CSI、分类/回归指标、分箱统计 |
 | 规则 | `core.rules` / `report.mining` | Rule 表达式、规则优化、单特征规则、多特征规则、多标签规则、树规则提取、手工树分析、规则指标 |
 | 策略分析 | `report.swap_analysis` / `report.rule_analysis` | 策略置换、规则集分析、多标签规则分析、规则 Swap 分析 |
@@ -69,7 +69,7 @@ hscredit/
 | Pipeline | 主要分箱、编码、筛选和模型组件遵循 sklearn 风格，便于 Pipeline 与调参集成 |
 | 目标列 | 支持 `X, y` 风格，也支持 DataFrame 内通过 `target` 参数指定目标列 |
 | 输出语言 | 用户可见的列名、错误消息、报告内容尽量使用中文 |
-| 可选依赖 | Boosting、深度学习、调参、解释、PMML 按 optional extras 安装 |
+| 可选依赖 | Boosting、深度学习、调参和 PMML 按 optional extras 安装；SHAP 随基础安装提供 |
 | 报告交付 | 重要分析结果优先支持 DataFrame 和 Excel 输出 |
 
 ## 三、业务场景映射
@@ -96,7 +96,7 @@ hscredit/
 | 业务目标优化 | `BadDebtLoss`、`ApprovalRateLoss`、`ProfitMaxLoss`、`TopKBadCaptureLoss`、`AmountWeightedLoss` |
 | 模型调参 | `ModelTuner`、`AutoTuner`、`TuningObjective` |
 | 概率校准 | `PlattCalibrator`、`IsotonicCalibrator`、`ProbabilityCalibrator`、`CalibratedModel` |
-| 解释性 | `ModelExplainer`、`plot_feature_importance`、SHAP 可选依赖 |
+| 解释性 | `ModelExplainer`、`plot_feature_importance`、SHAP 基础依赖 |
 
 ### 3.3 策略规则挖掘与运营
 

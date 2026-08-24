@@ -31,6 +31,8 @@ def test_accepts_complete_docs_artifacts(tmp_path):
         '<li class="toctree-l3"><a href="boosting.html">Boosting</a></li>'
         '<li class="toctree-l3"><a href="model_rules.html">规则器</a></li>'
         '<li class="toctree-l3"><a href="scorecard.html">评分卡</a></li>'
+        '<li class="toctree-l3"><a href="calibration.html">概率校准</a></li>'
+        '<li class="toctree-l3"><a href="explainability.html">模型可解释性</a></li>'
         '<li class="toctree-l3"><a href="losses.html">损失函数</a></li>'
         '<li class="toctree-l3"><a href="model_metrics.html">评估指标</a></li>'
         '<li class="toctree-l3"><a href="tuning.html">超参数调优</a></li>'
@@ -82,7 +84,7 @@ def test_accepts_complete_docs_artifacts(tmp_path):
 
 
 def test_rejects_nested_or_reordered_model_menu(tmp_path):
-    """模型菜单必须移除包级中间页，并按产品顺序生成七个直接子项。"""
+    """模型菜单必须移除包级中间页，并按产品顺序生成九个直接子项。"""
     _write(
         tmp_path / "api" / "modeling.html",
         '<li class="toctree-l2 current"><a href="#">模型</a><ul>'
@@ -98,7 +100,8 @@ def test_rejects_nested_or_reordered_model_menu(tmp_path):
     errors = collect_validation_errors(tmp_path)
 
     assert any(
-        "模型菜单" in error and "经典模型、Boosting、规则器、评分卡、损失函数、评估指标、超参数调优" in error
+        "模型菜单" in error
+        and "经典模型、Boosting、规则器、评分卡、概率校准、模型可解释性、损失函数、评估指标、超参数调优" in error
         for error in errors
     )
 

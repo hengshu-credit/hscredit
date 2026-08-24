@@ -7,7 +7,7 @@ from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.datasets import make_classification
 from sklearn.linear_model import LogisticRegression
 
-from hscredit.core.models.evaluation.calibration import (
+from hscredit.core.models.calibration import (
     BetaCalibrator,
     CalibratedModel,
     PlattCalibrator,
@@ -66,6 +66,30 @@ def test_probability_calibrator_preserves_binary_label_domain(labels):
     assert calibrator.classes_.tolist() == model.classes_.tolist()
 
 
+def test_probability_calibrator_places_explicit_positive_class_in_its_model_column():
+    """显式正类位于 classes_[0] 时，校准概率不能仍硬编码到第2列。"""
+    X, y01 = make_classification(n_samples=120, n_features=4, random_state=32)
+    y = np.where(y01 == 1, -1, 1)
+    model = LogisticRegression(max_iter=300).fit(X, y)
+    calibrator = ProbabilityCalibrator(
+        model=model,
+        positive_class=-1,
+        method="platt",
+        calib_ratio=None,
+    ).fit(X, y)
+
+    calibrated = calibrator.predict_proba(X)
+    expected = calibrator.calibrate_proba(model.predict_proba(X)[:, 0])
+
+    np.testing.assert_allclose(calibrated[:, 0], expected)
+    np.testing.assert_allclose(calibrated.sum(axis=1), 1.0)
+    assert set(np.unique(calibrator.predict(X))).issubset({-1, 1})
+
+    report = calibrator.calibration_report(X, y)
+    expected_brier = calibrator.calibrator_.compute_brier_score((y == -1).astype(int), calibrated[:, 0])
+    assert report.loc[report["指标"] == "Brier分数", "校准后"].iloc[0] == pytest.approx(expected_brier)
+
+
 class _TrackingClassifier(BaseEstimator, ClassifierMixin):
     def __init__(self, offset=0.0):
         self.offset = offset
@@ -109,6 +133,17 @@ def test_calibrated_model_uses_its_explicit_base_model_for_predictions():
     np.testing.assert_allclose(wrapped.predict_proba(X)[:, 1], expected)
 
 
+def test_calibrated_model_rejects_incompatible_positive_class():
+    """包装模型的类别顺序不能与校准器正类语义冲突。"""
+    X, y = make_classification(n_samples=100, n_features=4, random_state=42)
+    calibration_model = LogisticRegression(max_iter=300).fit(X, y)
+    calibrator = ProbabilityCalibrator(model=calibration_model, calib_ratio=None).fit(X, y)
+    serving_model = LogisticRegression(max_iter=300).fit(X, np.where(y == 1, "坏", "好"))
+
+    with pytest.raises(ValueError, match="正类"):
+        CalibratedModel(serving_model, calibrator)
+
+
 def test_calibrated_model_evaluate_supports_string_labels():
     X, y01 = make_classification(n_samples=100, n_features=4, random_state=43)
     labels = np.array(["正常", "逾期"])
@@ -129,6 +164,13 @@ def test_calibrated_model_evaluate_supports_string_labels():
 def test_calibrator_rejects_invalid_binning_parameters(kwargs, message):
     with pytest.raises(ValueError, match=message):
         PlattCalibrator(**kwargs)
+
+
+@pytest.mark.parametrize("ratio", [-0.2, 0.0, 1.0, np.nan, np.inf])
+def test_probability_calibrator_rejects_invalid_calibration_ratio(ratio):
+    """自动校准比例只能为 None 或 (0, 1) 内有限数。"""
+    with pytest.raises(ValueError, match="calib_ratio"):
+        ProbabilityCalibrator(calib_ratio=ratio)
 
 
 @pytest.mark.parametrize("factory", [PlattCalibrator, BetaCalibrator])

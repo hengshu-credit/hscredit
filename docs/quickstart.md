@@ -83,18 +83,28 @@ scores = scorecard.predict(X_test)
 ## 5. 机器学习模型与概率校准
 
 ```python
+from sklearn.model_selection import train_test_split
+
 from hscredit.core.models import DecisionTreeClassifier, RandomForest, SVM
-from hscredit.core.models.evaluation import ProbabilityCalibrator
+from hscredit.core.models.calibration import ProbabilityCalibrator
+
+X_model_train, X_calib, y_model_train, y_calib = train_test_split(
+    X_train,
+    y_train,
+    test_size=0.2,
+    random_state=42,
+    stratify=y_train,
+)
 
 model = RandomForest(n_estimators=30, random_state=42)
-model.fit(X_train, y_train)
+model.fit(X_model_train, y_model_train)
 metrics = model.evaluate(X_test, y_test)
 
 calibrator = ProbabilityCalibrator(
     model=model,
     method="platt",
     calib_ratio=None,
-).fit(X_test, y_test)
+).fit(X_calib, y_calib)
 calibrated_proba = calibrator.predict_proba(X_test)
 calibration_report = calibrator.report(X_test, y_test)
 

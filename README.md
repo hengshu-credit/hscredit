@@ -1168,7 +1168,7 @@ Python 支持范围：**3.9–3.14**。Boosting、深度学习、调参、解释
 | `pip install hscredit[database-all]` | 全部数据库适配器 |
 | `pip install hscredit[all]` | 全部可选能力、开发和文档依赖 |
 
-SHAP 已是基础依赖。可直接使用 `ModelExplainer.explain()` 生成带样本索引、目标类别、输出尺度和数据指纹的结构化结果，并继续下钻全局重要性、单样本贡献、代表样本、交互、稳定性和不利原因码。`CounterfactualExplainer` 提供遵守不可变字段、上下界和变化方向约束的非因果候选建议；`ModelReport` 通过 `explain_config={"enabled": True, ...}` 追加 `7-模型解释`。完整示例见 `examples/27_model_interpretability.py`。
+SHAP 已是基础依赖。可直接使用 `ModelExplainer.explain()` 生成带样本索引、目标类别、输出尺度和数据指纹的结构化结果，并继续下钻全局重要性、单样本贡献、代表样本、交互、稳定性和不利原因码。`CounterfactualExplainer` 提供遵守不可变字段、上下界和变化方向约束的非因果候选建议；`ModelReport` 通过 `explain_config={"enabled": True, ...}` 追加 `7-模型解释`。完整示例见 `examples/27_model_interpretability.ipynb`。
 
 ### 数据库连接、流式读写与表结构导出
 

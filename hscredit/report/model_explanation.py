@@ -5,7 +5,7 @@ from typing import Any, Dict
 
 import pandas as pd
 
-from ..core.models.evaluation import ModelExplainer
+from ..core.models.explainability import ModelExplainer
 
 DEFAULT_EXPLAIN_CONFIG = {
     "enabled": False,

@@ -9,6 +9,12 @@ from scipy.spatial.distance import squareform
 from hscredit.exceptions import ValidationError
 
 
+def _validate_positive_int(name, value):
+    """校验绘图展示数量参数。"""
+    if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+        raise ValidationError(f"{name} 必须是正整数")
+
+
 def _finish(fig, show):
     fig.tight_layout()
     if show:
@@ -27,8 +33,11 @@ def _feature_index(result, feature):
 
 def plot_decision(result, *, explainer=None, sample_id=None, position=0, max_display=15, figsize=(9, 6), show=True):
     """绘制单样本贡献决策路径。"""
+    _validate_positive_int("max_display", max_display)
     if sample_id is not None:
         position = result.position_for(sample_id)
+    if not isinstance(position, int) or isinstance(position, bool) or not 0 <= position < len(result.data):
+        raise ValidationError("样本位置超出范围")
     values = result.values[position]
     order = np.argsort(np.abs(values))[::-1][:max_display][::-1]
     fig, ax = plt.subplots(figsize=figsize)
@@ -43,6 +52,7 @@ def plot_decision(result, *, explainer=None, sample_id=None, position=0, max_dis
 
 def plot_heatmap(result, *, explainer=None, max_display=20, figsize=(11, 6), show=True):
     """绘制多样本 SHAP 热力图。"""
+    _validate_positive_int("max_display", max_display)
     order = np.argsort(np.abs(result.values).mean(axis=0))[::-1][:max_display]
     fig, ax = plt.subplots(figsize=figsize)
     limit = np.max(np.abs(result.values[:, order])) or 1.0
@@ -112,6 +122,7 @@ def _interaction_matrix(result, explainer):
 
 
 def plot_interaction_heatmap(result, *, explainer, figsize=(8, 7), show=True):
+    """绘制全部特征对的 SHAP 交互强度热力图。"""
     table, matrix = _interaction_matrix(result, explainer)
     fig, ax = plt.subplots(figsize=figsize)
     image = ax.imshow(matrix, cmap="Blues")
@@ -123,6 +134,8 @@ def plot_interaction_heatmap(result, *, explainer, figsize=(8, 7), show=True):
 
 
 def plot_interaction_bubble(result, *, explainer, top_n=20, figsize=(9, 6), show=True):
+    """绘制前 N 个 SHAP 交互特征对的气泡图。"""
+    _validate_positive_int("top_n", top_n)
     table = explainer.get_feature_interactions(result=result, top_n=top_n)
     fig, ax = plt.subplots(figsize=figsize)
     if not table.empty:
@@ -137,6 +150,7 @@ def plot_interaction_bubble(result, *, explainer, top_n=20, figsize=(9, 6), show
 
 def plot_importance_overview(result, *, explainer=None, max_display=20, figsize=(12, 7), show=True):
     """组合展示贡献分布和全局重要性。"""
+    _validate_positive_int("max_display", max_display)
     order = np.argsort(np.abs(result.values).mean(axis=0))[::-1][:max_display]
     names = np.asarray(result.feature_names)[order]
     fig, (distribution_ax, importance_ax) = plt.subplots(1, 2, figsize=figsize)
@@ -154,6 +168,7 @@ def plot_importance_overview(result, *, explainer=None, max_display=20, figsize=
 
 def plot_explanation_overview(result, *, explainer, max_display=10, figsize=(14, 10), show=True):
     """展示重要性、方向、相关性和代表样本的综合总览。"""
+    _validate_positive_int("max_display", max_display)
     report = explainer.get_global_report(result).head(max_display)
     representative = explainer.select_representative_samples(result)
     fig, axes = plt.subplots(2, 2, figsize=figsize)
@@ -173,4 +188,131 @@ def plot_explanation_overview(result, *, explainer, max_display=10, figsize=(14,
     axes[1, 1].set_xlabel("风险排名")
     axes[1, 1].set_ylabel("模型输出")
     fig.suptitle("模型解释综合总览")
+    return _finish(fig, show)
+
+
+def plot_feature_importance(
+    model,
+    X=None,
+    top_n=20,
+    importance_type="gain",
+    figsize=(10, 8),
+    title=None,
+    color="#2E86AB",
+    show_values=True,
+    show=True,
+):
+    """绘制模型原生特征重要性水平条形图。
+
+    :param model: 已拟合且提供原生重要性或系数的模型。
+    :param X: 用于推断特征名的 DataFrame 或数组，可选。
+    :param top_n: 展示前 N 个特征，必须为正整数。
+    :param importance_type: 传给模型重要性接口的类型。
+    :param figsize: Matplotlib 画布大小。
+    :param title: 自定义标题；None 时使用中文默认标题。
+    :param color: 条形颜色，显式值优先。
+    :param show_values: 是否标注重要性数值。
+    :param show: 是否调用 ``plt.show()``。
+    :return: Matplotlib Figure。
+    """
+    from .reports import model_explain_report
+
+    if not isinstance(top_n, int) or isinstance(top_n, bool) or top_n <= 0:
+        raise ValidationError("top_n 必须是正整数")
+    table = model_explain_report(model, X=X, importance_type=importance_type, top_n=top_n, normalize=False)
+    fig, ax = plt.subplots(figsize=figsize)
+    display = table.iloc[::-1]
+    bars = ax.barh(display["特征名"], display["重要性"], color=color)
+    ax.set_xlabel("重要性")
+    ax.set_ylabel("特征")
+    ax.set_title(title or f"原生特征重要性（{importance_type}）")
+    ax.grid(axis="x", alpha=0.3, linestyle="--")
+    ax.set_axisbelow(True)
+    if show_values:
+        for bar, value in zip(bars, display["重要性"]):
+            ax.text(value, bar.get_y() + bar.get_height() / 2, f" {value:.4g}", va="center", fontsize=9)
+    return _finish(fig, show)
+
+
+def plot_shap_importance(model, X, top_n=20, figsize=(10, 8), title=None, color="#4C78A8", show=True):
+    """计算并绘制平均绝对 SHAP 特征重要性。
+
+    :return: 单坐标轴 Matplotlib Figure，``show=False`` 时不显示窗口。
+    """
+    from .explainer import ModelExplainer
+
+    if not isinstance(top_n, int) or isinstance(top_n, bool) or top_n <= 0:
+        raise ValidationError("top_n 必须是正整数")
+    importance = ModelExplainer(model).get_shap_importance(X).head(top_n).iloc[::-1]
+    fig, ax = plt.subplots(figsize=figsize)
+    ax.barh(importance.index, importance.values, color=color)
+    ax.set_xlabel("平均绝对SHAP值")
+    ax.set_ylabel("特征")
+    ax.set_title(title or "SHAP特征重要性")
+    ax.grid(axis="x", alpha=0.3, linestyle="--")
+    ax.set_axisbelow(True)
+    return _finish(fig, show)
+
+
+def plot_shap_result_importance(
+    result,
+    max_display=20,
+    figsize=(10, 8),
+    title=None,
+    color="#4C78A8",
+    show=True,
+):
+    """使用既有 ExplanationResult 绘制单面板 SHAP 重要性图。"""
+    if not isinstance(max_display, int) or isinstance(max_display, bool) or max_display <= 0:
+        raise ValidationError("max_display 必须是正整数")
+    importance = pd.Series(
+        np.abs(result.values).mean(axis=0), index=result.feature_names, name="SHAP重要性"
+    ).sort_values(ascending=False, kind="mergesort").head(max_display).iloc[::-1]
+    fig, ax = plt.subplots(figsize=figsize)
+    ax.barh(importance.index, importance.values, color=color)
+    ax.set_xlabel("平均绝对SHAP值")
+    ax.set_ylabel("特征")
+    ax.set_title(title or "SHAP特征重要性")
+    ax.grid(axis="x", alpha=0.3, linestyle="--")
+    ax.set_axisbelow(True)
+    return _finish(fig, show)
+
+
+def plot_importance_comparison(
+    model,
+    X,
+    top_n=15,
+    figsize=(16, 10),
+    importance_type="gain",
+    title=None,
+    colors=("#2E86AB", "#4C78A8"),
+    show=True,
+):
+    """并排比较模型原生重要性与平均绝对 SHAP 重要性。
+
+    :return: 含“原生特征重要性”和“SHAP特征重要性”两个面板的 Figure。
+    """
+    from .explainer import ModelExplainer
+    from .reports import model_explain_report
+
+    if not isinstance(top_n, int) or isinstance(top_n, bool) or top_n <= 0:
+        raise ValidationError("top_n 必须是正整数")
+    if len(colors) < 2:
+        raise ValidationError("colors 至少需要两种颜色")
+    native = model_explain_report(model, X=X, importance_type=importance_type, top_n=top_n, normalize=False)
+    shap_importance = ModelExplainer(model).get_shap_importance(X).head(top_n)
+    fig, axes = plt.subplots(1, 2, figsize=figsize)
+    native_display = native.iloc[::-1]
+    shap_display = shap_importance.iloc[::-1]
+    axes[0].barh(native_display["特征名"], native_display["重要性"], color=colors[0])
+    axes[0].set_title("原生特征重要性")
+    axes[0].set_xlabel("重要性")
+    axes[1].barh(shap_display.index, shap_display.values, color=colors[1])
+    axes[1].set_title("SHAP特征重要性")
+    axes[1].set_xlabel("平均绝对SHAP值")
+    for axis in axes:
+        axis.grid(axis="x", alpha=0.3, linestyle="--")
+        axis.set_axisbelow(True)
+    if title:
+        fig.suptitle(title)
     return _finish(fig, show)

@@ -3,7 +3,7 @@
 HSCredit 基础安装已经包含 SHAP，无需安装额外的 `explain` extra。解释 API 将模型贡献、业务原因和行动建议明确分层：SHAP 解释模型为何产生当前输出，原因码仅筛选风险方向一致的不利贡献，反事实则是在模型与约束下搜索的非因果候选变化。
 
 ```python
-from hscredit.core.models import CounterfactualExplainer, ModelExplainer
+from hscredit.core.models.explainability import CounterfactualExplainer, ModelExplainer
 
 explainer = ModelExplainer(
     model,
@@ -36,7 +36,6 @@ counter = CounterfactualExplainer(
         "年龄": {"mutable": False},
         "收入": {"min": 0, "direction": "increase_only", "weight": 2.0},
     },
-    random_state=42,
 )
 plans = counter.generate(X_test.iloc[[0]], target_probability=0.20, max_changes=2)
 ```
@@ -63,4 +62,5 @@ report = ModelReport(
 report.to_excel("模型解释报告.xlsx")
 ```
 
-完整可执行示例见 `examples/27_model_interpretability.py`。
+完整教程见 `examples/27_model_interpretability.ipynb`；命令行生成报告可运行
+`examples/27_model_interpretability.py --input <数据.xlsx> --output <报告.xlsx>`。

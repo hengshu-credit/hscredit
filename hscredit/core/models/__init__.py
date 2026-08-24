@@ -159,11 +159,23 @@ from .rules import (
     combine_rules,
 )
 
-# 导入解释工具 (evaluation/)；ModelReport 已统一为 hscredit.report.ModelReport，
-# 通过 __getattr__ 懒加载兼容别名，避免 import hscredit 期间触发 hscredit.report 循环导入。
-from .evaluation import (
+# 概率校准与模型解释使用独立子包；ModelReport 仅由 hscredit.report 提供。
+from .calibration import (
+    BaseCalibrator,
+    BetaCalibrator,
+    CalibratedModel,
+    HistogramCalibrator,
+    IsotonicCalibrator,
+    PlattCalibrator,
+    ProbabilityCalibrator,
+    calibrate_model,
+    plot_calibration_comparison,
+)
+from .explainability import (
     CounterfactualExplainer,
     ExplanationResult,
+    ModelExplainer,
+    build_reason_codes,
     model_explain_report,
     plot_feature_importance,
     plot_importance_comparison,
@@ -207,10 +219,8 @@ def __getattr__(name):
         value = getattr(importlib.import_module(".boosting", __name__), name)
     elif name in _LAZY_TUNING_MODELS:
         value = getattr(importlib.import_module(".tuning", __name__), name)
-    elif name in {"ModelExplainer"}:
-        value = getattr(importlib.import_module(".evaluation", __name__), name)
     elif name == "ModelReport":
-        value = getattr(importlib.import_module(".evaluation", __name__), "ModelReport")
+        value = getattr(importlib.import_module("hscredit.report.model_report"), "ModelReport")
     else:
         raise AttributeError(f"模块 {__name__!r} 不存在属性 {name!r}")
     globals()[name] = value
@@ -289,9 +299,21 @@ __all__ = [
     "combine_rules",
     # 评估报告
     "ModelReport",
+    # 概率校准
+    "BaseCalibrator",
+    "PlattCalibrator",
+    "IsotonicCalibrator",
+    "BetaCalibrator",
+    "HistogramCalibrator",
+    "ProbabilityCalibrator",
+    "CalibratedModel",
+    "calibrate_model",
+    "plot_calibration_comparison",
+    # 模型可解释性
     "model_explain_report",
     "ExplanationResult",
     "CounterfactualExplainer",
+    "build_reason_codes",
     "plot_feature_importance",
     "plot_shap_importance",
     "plot_importance_comparison",

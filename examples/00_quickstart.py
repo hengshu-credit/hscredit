@@ -16,11 +16,12 @@ if str(PROJECT_ROOT) not in sys.path:
 import numpy as np
 import pandas as pd
 from sklearn.datasets import make_classification
+from sklearn.model_selection import train_test_split as sklearn_train_test_split
 
 from hscredit.core.binning import OptimalBinning
 from hscredit.core.model_selection import time_train_test_split
 from hscredit.core.models import RandomForest, ScoreCard
-from hscredit.core.models.evaluation import ProbabilityCalibrator
+from hscredit.core.models.calibration import ProbabilityCalibrator
 from hscredit.core.selectors import IVSelector, VIFSelector, CompositeFeatureSelector
 from hscredit.report import auto_model_report
 from hscredit.report.mining import SingleFeatureRuleMiner, TreeRuleExtractor
@@ -50,6 +51,13 @@ def run_quickstart(output_dir=None):
     features = ["年龄", "收入", "负债率", "申请次数"]
     X_train, y_train = train_df[features], train_df["目标"]
     X_test, y_test = test_df[features], test_df["目标"]
+    X_model_train, X_calib, y_model_train, y_calib = sklearn_train_test_split(
+        X_train,
+        y_train,
+        test_size=0.2,
+        random_state=42,
+        stratify=y_train,
+    )
 
     binner = OptimalBinning(method="best_iv", max_n_bins=5)
     binner.fit(X_train, y_train)
@@ -68,14 +76,14 @@ def run_quickstart(output_dir=None):
     scores = scorecard.predict(X_test)
 
     model = RandomForest(n_estimators=30, random_state=42)
-    model.fit(X_train, y_train)
+    model.fit(X_model_train, y_model_train)
     metrics = model.evaluate(X_test, y_test)
 
     calibrator = ProbabilityCalibrator(
         model=model,
         method="platt",
         calib_ratio=None,
-    ).fit(X_test, y_test)
+    ).fit(X_calib, y_calib)
     calibration_report = calibrator.report(X_test, y_test)
 
     rule_df = train_df[features + ["目标"]]
@@ -101,8 +109,8 @@ def run_quickstart(output_dir=None):
 
     report = auto_model_report(
         model,
-        X_train=X_train,
-        y_train=y_train,
+        X_train=X_model_train,
+        y_train=y_model_train,
         X_test=X_test,
         y_test=y_test,
         excel_path=report_path,
@@ -118,6 +126,7 @@ def run_quickstart(output_dir=None):
     return {
         "train_rows": len(train_df),
         "test_rows": len(test_df),
+        "calibration_rows": len(X_calib),
         "selected_features": list(X_selected.columns),
         "scores": scores,
         "metrics": metrics,

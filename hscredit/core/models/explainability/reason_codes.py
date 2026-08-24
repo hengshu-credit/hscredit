@@ -40,10 +40,13 @@ def build_reason_codes(
     sign = 1.0 if risk_direction == "higher_output_higher_risk" else -1.0
     feature_map = dict(feature_map or {})
     reason_map = dict(reason_map or {})
+    values = result.values
+    data = result.data
+    sample_ids = result.sample_ids
     rows = []
-    for position, sample_id in enumerate(result.sample_ids):
-        adverse = sign * result.values[position]
-        order = [index for index in np.argsort(adverse, kind="stable")[::-1] if adverse[index] > 0][:keep]
+    for position, sample_id in enumerate(sample_ids):
+        adverse = sign * values[position]
+        order = [index for index in np.argsort(-adverse, kind="stable") if adverse[index] > 0][:keep]
         if not order:
             rows.append({"样本索引": sample_id, "原因状态": "无不利贡献", "目标类别": result.target_class, "输出尺度": result.model_output, "风险方向": risk_direction})
             continue
@@ -56,8 +59,8 @@ def build_reason_codes(
                     "原因排名": rank,
                     "特征": feature,
                     "业务特征名": feature_map.get(feature, feature),
-                    "特征值": result.data.iloc[position, index],
-                    "SHAP值": result.values[position, index],
+                    "特征值": data.iloc[position, index],
+                    "SHAP值": values[position, index],
                     "风险贡献": adverse[index],
                     "原因码": mapping.get("code", f"MODEL_{index + 1:03d}"),
                     "原因描述": mapping.get("description", f"{feature_map.get(feature, feature)}对风险输出产生不利影响"),

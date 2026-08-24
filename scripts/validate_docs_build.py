@@ -16,6 +16,8 @@ _EXPECTED_MODEL_MENU = (
     "Boosting",
     "规则器",
     "评分卡",
+    "概率校准",
+    "模型可解释性",
     "损失函数",
     "评估指标",
     "超参数调优",
@@ -304,7 +306,7 @@ def collect_validation_errors(build_dir: Path) -> list[str]:
     if tuple(model_menu_parser.items) != _EXPECTED_MODEL_MENU:
         expected = "、".join(_EXPECTED_MODEL_MENU)
         actual = "、".join(model_menu_parser.items) or "未生成"
-        errors.append(f"模型菜单必须依次生成七个直接子项：{expected}；实际为：{actual}")
+        errors.append(f"模型菜单必须依次生成九个直接子项：{expected}；实际为：{actual}")
 
     level_five_parser = _LevelFiveLinkParser()
     level_five_parser.feed(boosting_html)

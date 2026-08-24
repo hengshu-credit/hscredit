@@ -2,12 +2,14 @@
 
 import numpy as np
 import pandas as pd
+import pytest
 from sklearn.base import clone
 from sklearn.datasets import make_classification
 from sklearn.linear_model import LogisticRegression
 
-from hscredit.core.models.evaluation import (
+from hscredit.core.models.calibration import (
     CalibratedModel,
+    IsotonicCalibrator,
     PlattCalibrator,
     ProbabilityCalibrator,
 )
@@ -92,6 +94,32 @@ def test_probability_calibrator_clone_preserves_parameters():
     assert cloned.method == "isotonic"
     assert cloned.calib_ratio is None
     assert cloned.calibrator_params == {"out_of_bounds": "clip"}
+
+
+def test_probability_calibrator_set_params_rebuilds_requested_method_on_fit():
+    """修改 method 后必须按新参数创建底层校准器。"""
+    model, X, y = _fitted_model_and_data()
+    calibrator = ProbabilityCalibrator(method="platt", model=model, calib_ratio=None)
+
+    calibrator.set_params(method="isotonic").fit(X, y)
+
+    assert isinstance(calibrator.calibrator_, IsotonicCalibrator)
+
+
+def test_probability_calibrator_clone_keeps_only_explicit_calibrator_params():
+    """底层参数必须通过可克隆的 calibrator_params 传递。"""
+    calibrator = ProbabilityCalibrator(method="platt", calibrator_params={"C": 0.123})
+
+    cloned = clone(calibrator)
+
+    assert cloned.calibrator_params == {"C": 0.123}
+    assert "C" not in cloned.get_params()
+
+
+def test_probability_calibrator_rejects_arbitrary_constructor_kwargs():
+    """任意 kwargs 会在 clone 时丢失，因此不再接受。"""
+    with pytest.raises(TypeError):
+        ProbabilityCalibrator(C=0.123)
 
 
 def test_probability_calibrator_artifact_roundtrip(tmp_path):

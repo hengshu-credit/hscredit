@@ -6,7 +6,8 @@ from sklearn.datasets import make_classification
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 
-from hscredit.core.models.evaluation import ModelExplainer
+from hscredit import ValidationError
+from hscredit.core.models.explainability import ModelExplainer
 
 
 @pytest.fixture()
@@ -57,3 +58,32 @@ def test_refit_stability_retrains_cloned_model_on_fixed_validation_data():
         random_state=31,
     )
     assert set(table["稳定性模式"]) == {"重训Bootstrap"}
+
+
+def test_single_feature_interactions_return_fixed_empty_schema():
+    """单特征模型没有特征对，应返回可消费的空表而不是排序报错。"""
+    X = pd.DataFrame({"收入": [-2.0, -1.0, -0.5, 0.5, 1.0, 2.0]})
+    y = [0, 0, 0, 1, 1, 1]
+    model = RandomForestClassifier(n_estimators=4, max_depth=2, random_state=9).fit(X, y)
+    explainer = ModelExplainer(model, background_data=X.iloc[:3], random_state=9)
+
+    table = explainer.get_feature_interactions(X=X.iloc[3:])
+
+    assert table.empty
+    assert table.columns.tolist() == ["特征1", "特征2", "交互强度"]
+
+
+def test_structured_analysis_rejects_invalid_limits(explained):
+    """展示、聚类、交互和稳定性上限不能静默产生空或失真结果。"""
+    explainer, result = explained
+
+    with pytest.raises(ValidationError, match="top_n"):
+        explainer.get_sample_report(result, top_n=0)
+    with pytest.raises(ValidationError, match="max_clusters"):
+        explainer.get_feature_clusters(result, max_clusters=0)
+    with pytest.raises(ValidationError, match="top_n"):
+        explainer.get_feature_interactions(result=result, top_n=0)
+    with pytest.raises(ValidationError, match="confidence_level"):
+        explainer.get_stability_report(result, n_bootstrap=3, confidence_level=1.5)
+    with pytest.raises(ValidationError, match="top_k"):
+        explainer.get_stability_report(result, n_bootstrap=3, top_k=0)

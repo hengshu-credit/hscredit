@@ -18,6 +18,7 @@
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple, Union
+import warnings
 import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, ClassifierMixin
@@ -33,7 +34,7 @@ from .scorecard_support import _ProbabilityScoreCardMixin
 if TYPE_CHECKING:
     import matplotlib
     from ...report import ModelReport
-    from .evaluation.interpretability import ModelExplainer
+    from .explainability import ModelExplainer
 
 
 def _lift_score(y_true, y_proba, top_ratio=0.1):
@@ -59,6 +60,128 @@ def _lift_score(y_true, y_proba, top_ratio=0.1):
         return 1.0
 
     return top_bad_rate / overall_bad_rate
+
+
+def _evaluate_binary_predictions(
+    y_true,
+    y_proba,
+    y_pred,
+    *,
+    metrics,
+    sample_weight=None,
+) -> Dict[str, float]:
+    """按统一模型评估契约计算二值标签指标。"""
+    from sklearn.metrics import (
+        accuracy_score,
+        brier_score_loss,
+        f1_score,
+        log_loss,
+        precision_score,
+        recall_score,
+        roc_auc_score,
+    )
+
+    y_true = np.asarray(y_true)
+    y_proba = np.asarray(y_proba, dtype=float)
+    y_pred = np.asarray(y_pred)
+    if y_true.ndim != 1 or y_proba.ndim != 1 or y_pred.ndim != 1:
+        raise ValueError("模型评估标签、概率和预测类别必须是一维数组")
+    if not (len(y_true) == len(y_proba) == len(y_pred)) or len(y_true) == 0:
+        raise ValueError("模型评估标签、概率和预测类别必须非空且等长")
+    if not np.isfinite(y_proba).all() or np.any((y_proba < 0) | (y_proba > 1)):
+        raise ValueError("模型评估概率必须是[0, 1]范围内的有限数")
+    if not set(np.unique(y_true)).issubset({0, 1}):
+        raise ValueError("模型评估内部标签必须是0/1")
+
+    weights = None
+    if sample_weight is not None:
+        weights = np.asarray(sample_weight, dtype=float)
+        if weights.ndim != 1 or len(weights) != len(y_true):
+            raise ValueError("sample_weight必须是一维且与评估样本等长")
+        if not np.isfinite(weights).all() or np.any(weights < 0) or weights.sum() <= 0:
+            raise ValueError("sample_weight必须是有限非负数且总和大于0")
+
+    aliases = {
+        "lift": ("LIFT@10%", 0.10),
+        "lift@1%": ("LIFT@1%", 0.01),
+        "lift_1": ("LIFT@1%", 0.01),
+        "lift@3%": ("LIFT@3%", 0.03),
+        "lift_3": ("LIFT@3%", 0.03),
+        "lift@5%": ("LIFT@5%", 0.05),
+        "lift_5": ("LIFT@5%", 0.05),
+        "lift@10%": ("LIFT@10%", 0.10),
+        "lift_10": ("LIFT@10%", 0.10),
+    }
+    supported = {
+        "auc",
+        "ks",
+        "gini",
+        "logloss",
+        "accuracy",
+        "brier",
+        "precision",
+        "recall",
+        "f1",
+        "lift_monotonicity",
+        *aliases,
+    }
+    normalized = [str(metric).lower() for metric in metrics]
+    unknown = [metric for metric, name in zip(metrics, normalized) if name not in supported]
+    if unknown:
+        raise ValueError(f"不支持的评估指标: {unknown}")
+
+    if weights is not None:
+        unsupported = []
+        for name in normalized:
+            if name == "ks":
+                label = "KS"
+            elif name in aliases:
+                label = aliases[name][0]
+            elif name == "lift_monotonicity":
+                label = "LIFT单调性"
+            else:
+                continue
+            if label not in unsupported:
+                unsupported.append(label)
+        if unsupported:
+            warnings.warn(
+                f"sample_weight 不支持以下指标，已按未加权方式计算: {'、'.join(unsupported)}",
+                UserWarning,
+                stacklevel=2,
+            )
+
+    results = {}
+    for name in normalized:
+        try:
+            if name == "auc":
+                results["AUC"] = roc_auc_score(y_true, y_proba, sample_weight=weights)
+            elif name == "ks":
+                results["KS"] = ks(y_true, y_proba)
+            elif name == "gini":
+                results["Gini"] = 2 * roc_auc_score(y_true, y_proba, sample_weight=weights) - 1
+            elif name in aliases:
+                key, ratio = aliases[name]
+                results[key] = _lift_score(y_true, y_proba, top_ratio=ratio)
+            elif name == "logloss":
+                results["LogLoss"] = log_loss(y_true, y_proba, sample_weight=weights, labels=[0, 1])
+            elif name == "accuracy":
+                results["Accuracy"] = accuracy_score(y_true, y_pred, sample_weight=weights)
+            elif name == "brier":
+                results["Brier"] = brier_score_loss(y_true, y_proba, sample_weight=weights)
+            elif name == "precision":
+                results["Precision"] = precision_score(y_true, y_pred, sample_weight=weights, zero_division=0)
+            elif name == "recall":
+                results["Recall"] = recall_score(y_true, y_pred, sample_weight=weights, zero_division=0)
+            elif name == "f1":
+                results["F1"] = f1_score(y_true, y_pred, sample_weight=weights, zero_division=0)
+            elif name == "lift_monotonicity":
+                monotonicity = lift_monotonicity_check(y_true, y_proba, n_bins=10, direction="both")
+                results["头部LIFT单调"] = monotonicity["head_monotonic"]
+                results["头部违反单调比例"] = monotonicity["head_violation_ratio"]
+                results["尾部LIFT单调"] = monotonicity["tail_monotonic"]
+        except Exception as exc:
+            raise ValueError(f"计算指标 {name} 时出错: {exc}") from exc
+    return results
 
 
 def resolve_custom_objective(objective):
@@ -155,9 +278,11 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, BaseE
         "lift@10%",
         "logloss",
         "accuracy",
+        "brier",
         "precision",
         "recall",
         "f1",
+        "lift_monotonicity",
     ]
     # 默认评估指标（evaluate() 不传 metrics 时使用）
     DEFAULT_METRICS = ["auc", "ks", "gini", "lift@1%", "lift@3%", "lift@5%", "lift@10%"]
@@ -312,6 +437,7 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, BaseE
         y: Union[np.ndarray, pd.Series],
         sample_weight: Optional[np.ndarray] = None,
         metrics: Optional[List[str]] = None,
+        positive_class: Optional[Any] = None,
     ) -> Dict[str, float]:
         """评估模型性能.
 
@@ -319,93 +445,36 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, BaseE
         :param y: 真实标签
         :param sample_weight: 样本权重
         :param metrics: 评估指标列表，默认全部
+        :param positive_class: 显式正类标签；None 时使用 ``classes_[1]``
         :return: 评估结果字典
         """
         self._require_fitted()
+        requested_metrics = list(self.DEFAULT_METRICS if metrics is None else metrics)
+        probabilities = np.asarray(self.predict_proba(X), dtype=float)
+        classes = np.asarray(getattr(self, "classes_", []))
+        if classes.shape != (2,) or probabilities.ndim != 2 or probabilities.shape[1] != 2:
+            raise ValueError("模型评估目前仅支持提供两列概率和两个classes_的二分类模型")
+        resolved_positive = classes[1] if positive_class is None else positive_class
+        matches = np.flatnonzero(classes == resolved_positive)
+        if len(matches) != 1:
+            raise ValueError(f"positive_class={resolved_positive!r} 不在模型类别 {classes.tolist()!r} 中")
 
-        y_pred = self.predict(X)
-        y_proba = self.predict_proba(X)[:, 1]
-
-        if metrics is None:
-            metrics = self.DEFAULT_METRICS
-
-        supported_metrics = {
-            "auc",
-            "ks",
-            "gini",
-            "lift",
-            "lift@1%",
-            "lift_1",
-            "lift@3%",
-            "lift_3",
-            "lift@5%",
-            "lift_5",
-            "lift@10%",
-            "lift_10",
-            "logloss",
-            "accuracy",
-            "precision",
-            "recall",
-            "f1",
-        }
-        unknown_metrics = [metric for metric in metrics if metric.lower() not in supported_metrics]
-        if unknown_metrics:
-            raise ValueError(f"不支持的评估指标: {unknown_metrics}")
-
-        results = {}
-
-        for metric in metrics:
-            metric_lower = metric.lower()
-            try:
-                if metric_lower == "auc":
-                    results["AUC"] = auc(y, y_proba)
-                elif metric_lower == "ks":
-                    results["KS"] = ks(y, y_proba)
-                elif metric_lower == "gini":
-                    results["Gini"] = gini(y, y_proba)
-                elif metric_lower == "lift":
-                    results["Lift@10%"] = _lift_score(y, y_proba, top_ratio=0.1)
-                elif metric_lower in ("lift@1%", "lift_1"):
-                    results["LIFT@1%"] = _lift_score(y, y_proba, top_ratio=0.01)
-                elif metric_lower in ("lift@3%", "lift_3"):
-                    results["LIFT@3%"] = _lift_score(y, y_proba, top_ratio=0.03)
-                elif metric_lower in ("lift@5%", "lift_5"):
-                    results["LIFT@5%"] = _lift_score(y, y_proba, top_ratio=0.05)
-                elif metric_lower in ("lift@10%", "lift_10"):
-                    results["LIFT@10%"] = _lift_score(y, y_proba, top_ratio=0.10)
-                elif metric_lower == "logloss":
-                    from sklearn.metrics import log_loss
-
-                    results["LogLoss"] = log_loss(y, y_proba, sample_weight=sample_weight)
-                elif metric_lower == "accuracy":
-                    from sklearn.metrics import accuracy_score
-
-                    results["Accuracy"] = accuracy_score(y, y_pred, sample_weight=sample_weight)
-                elif metric_lower == "precision":
-                    from sklearn.metrics import precision_score
-
-                    results["Precision"] = precision_score(y, y_pred, sample_weight=sample_weight)
-                elif metric_lower == "recall":
-                    from sklearn.metrics import recall_score
-
-                    results["Recall"] = recall_score(y, y_pred, sample_weight=sample_weight)
-                elif metric_lower == "f1":
-                    from sklearn.metrics import f1_score
-
-                    results["F1"] = f1_score(y, y_pred, sample_weight=sample_weight)
-            except Exception as e:
-                raise ValueError(f"计算指标 {metric} 时出错: {e}") from e
-
-        # 头部单调性检验（始终计算，不依赖 metrics 参数）
-        try:
-            mono = lift_monotonicity_check(y, y_proba, n_bins=10, direction="both")
-            results["头部LIFT单调"] = mono["head_monotonic"]
-            results["头部违反单调比例"] = mono["head_violation_ratio"]
-            results["尾部LIFT单调"] = mono["tail_monotonic"]
-        except Exception:
-            pass
-
-        return results
+        labels = np.asarray(y)
+        if labels.ndim != 1 or len(labels) != len(probabilities):
+            raise ValueError("y必须是一维且与评估样本等长")
+        unknown_labels = set(np.unique(labels)) - set(classes)
+        if unknown_labels:
+            raise ValueError(f"y包含模型未见过的标签: {sorted(unknown_labels, key=str)}")
+        binary_labels = (labels == resolved_positive).astype(int)
+        predicted_labels = np.asarray(self.predict(X))
+        binary_predictions = (predicted_labels == resolved_positive).astype(int)
+        return _evaluate_binary_predictions(
+            binary_labels,
+            probabilities[:, int(matches[0])],
+            binary_predictions,
+            metrics=requested_metrics,
+            sample_weight=sample_weight,
+        )
 
     def generate_report(
         self,
@@ -944,7 +1013,7 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, BaseE
         >>> # 组合对比图
         >>> fig = model.plot_feature_importance(X_test, method='combined', top_n=10)
         """
-        from .evaluation.interpretability import (
+        from .explainability import (
             plot_feature_importance,
             plot_shap_importance,
             plot_importance_comparison,
@@ -986,6 +1055,6 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, BaseE
         >>> shap_values = explainer.compute_shap_values(X_test)
         >>> explainer.plot_shap_summary(X_test)
         """
-        from .evaluation.interpretability import ModelExplainer
+        from .explainability import ModelExplainer
 
         return ModelExplainer(self, **kwargs)

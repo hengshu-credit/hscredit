@@ -1,5 +1,6 @@
 """结构化模型解释结果与输入规范化工具。"""
 
+import copy
 from dataclasses import dataclass
 from hashlib import sha256
 from types import MappingProxyType
@@ -15,12 +16,16 @@ def coerce_explanation_frame(data: Any, feature_names: Optional[Sequence[str]] =
     """将解释输入转为保留样本身份和列顺序的 DataFrame。"""
     if isinstance(data, pd.DataFrame):
         frame = data.copy()
+        if frame.empty or frame.shape[1] == 0:
+            raise ValidationError("解释数据不能为空")
         if feature_names is not None and list(frame.columns) != list(feature_names):
             raise ValidationError("解释数据的特征名称或顺序与模型不一致")
         return frame
     array = np.asarray(data)
     if array.ndim != 2:
         raise ValidationError("解释数据必须是二维表格")
+    if array.shape[0] == 0 or array.shape[1] == 0:
+        raise ValidationError("解释数据不能为空")
     names = list(feature_names) if feature_names is not None else [f"特征{i + 1}" for i in range(array.shape[1])]
     if len(names) != array.shape[1]:
         raise ValidationError("feature_names 数量与解释数据列数不一致")
@@ -41,13 +46,13 @@ def fingerprint_frame(frame: pd.DataFrame) -> str:
 def _select_output(values: Any, output_index: Optional[int]) -> np.ndarray:
     if isinstance(values, (list, tuple)):
         index = 0 if output_index is None else output_index
-        if index >= len(values):
+        if index < 0 or index >= len(values):
             raise ValidationError("目标类别对应的 SHAP 输出索引不存在")
         return np.asarray(values[index])
     array = np.asarray(values)
     if array.ndim == 3:
         index = 0 if output_index is None else output_index
-        if index >= array.shape[2]:
+        if index < 0 or index >= array.shape[2]:
             raise ValidationError("目标类别对应的 SHAP 输出索引不存在")
         return array[:, :, index]
     if array.ndim != 2:
@@ -55,15 +60,26 @@ def _select_output(values: Any, output_index: Optional[int]) -> np.ndarray:
     return array
 
 
-def _select_base_values(base_values: Any, output_index: Optional[int], n_samples: int) -> np.ndarray:
+def _select_base_values(
+    base_values: Any,
+    output_index: Optional[int],
+    n_samples: int,
+    *,
+    multi_output: bool = False,
+) -> np.ndarray:
     base = np.asarray(base_values)
     if base.ndim == 0:
         return np.repeat(float(base), n_samples)
     if base.ndim == 1:
+        if multi_output:
+            index = 0 if output_index is None else output_index
+            if index < 0 or index >= base.shape[0]:
+                raise ValidationError("目标类别对应的 SHAP 基准值索引不存在")
+            return np.repeat(float(base[index]), n_samples)
         if base.shape[0] == n_samples:
             return base.astype(float)
         index = 0 if output_index is None else output_index
-        if index < base.shape[0]:
+        if 0 <= index < base.shape[0]:
             return np.repeat(float(base[index]), n_samples)
     if base.ndim >= 2:
         index = 0 if output_index is None else output_index
@@ -79,7 +95,14 @@ def normalize_explanation_output(explanation: Any, output_index: Optional[int] =
     values_source = getattr(explanation, "values", explanation)
     values = _select_output(values_source, output_index)
     base_source = getattr(explanation, "base_values", 0.0)
-    base_values = _select_base_values(base_source, output_index, values.shape[0])
+    source_array = None if isinstance(values_source, (list, tuple)) else np.asarray(values_source)
+    multi_output = isinstance(values_source, (list, tuple)) or (source_array is not None and source_array.ndim == 3)
+    base_values = _select_base_values(
+        base_source,
+        output_index,
+        values.shape[0],
+        multi_output=multi_output,
+    )
     data = getattr(explanation, "data", None)
     feature_names = getattr(explanation, "feature_names", None)
     try:
@@ -94,9 +117,9 @@ def normalize_explanation_output(explanation: Any, output_index: Optional[int] =
 class ExplanationResult:
     """一次模型解释计算的只读、可审计结果。"""
 
-    explanation: Any
-    data: pd.DataFrame
-    sample_ids: pd.Index
+    _explanation: Any
+    _data: pd.DataFrame
+    _sample_ids: pd.Index
     target_class: Any
     output_index: Optional[int]
     model_output: str
@@ -118,39 +141,61 @@ class ExplanationResult:
         background_summary: Mapping[str, Any],
         metadata: Mapping[str, Any],
     ) -> "ExplanationResult":
+        """规范化 SHAP 输出并构造形状一致、外部不可原地修改的审计结果。"""
         names = getattr(explanation, "feature_names", None)
         frame = coerce_explanation_frame(data, feature_names=names)
         normalized = normalize_explanation_output(explanation, output_index=output_index)
         if normalized.values.shape != frame.shape:
             raise ValidationError("SHAP 值形状与解释数据不一致")
+        base_values = np.asarray(normalized.base_values, dtype=float).reshape(-1)
+        if base_values.shape != (len(frame),):
+            raise ValidationError("SHAP 基准值数量与解释样本数不一致")
         return cls(
-            explanation=normalized,
-            data=frame,
-            sample_ids=frame.index.copy(),
+            _explanation=copy.deepcopy(normalized),
+            _data=frame.copy(deep=True),
+            _sample_ids=frame.index.copy(deep=True),
             target_class=target_class,
             output_index=output_index,
             model_output=model_output,
             explainer_type=explainer_type,
-            background_summary=MappingProxyType(dict(background_summary)),
+            background_summary=MappingProxyType(copy.deepcopy(dict(background_summary))),
             dataset_fingerprint=fingerprint_frame(frame),
-            metadata=MappingProxyType(dict(metadata)),
+            metadata=MappingProxyType(copy.deepcopy(dict(metadata))),
         )
 
     @property
+    def explanation(self) -> Any:
+        """返回独立的 SHAP Explanation 副本。"""
+        return copy.deepcopy(self._explanation)
+
+    @property
+    def data(self) -> pd.DataFrame:
+        """返回解释输入的深复制，避免外部修改审计结果。"""
+        return self._data.copy(deep=True)
+
+    @property
+    def sample_ids(self) -> pd.Index:
+        """返回样本索引副本。"""
+        return self._sample_ids.copy(deep=True)
+
+    @property
     def values(self) -> np.ndarray:
-        return np.asarray(self.explanation.values)
+        """返回二维 SHAP 贡献值副本。"""
+        return np.array(self._explanation.values, copy=True)
 
     @property
     def base_values(self) -> np.ndarray:
-        return np.asarray(self.explanation.base_values, dtype=float).reshape(-1)
+        """返回每个样本的 SHAP 基准值副本。"""
+        return np.array(self._explanation.base_values, dtype=float, copy=True).reshape(-1)
 
     @property
     def feature_names(self) -> list:
-        return list(self.data.columns)
+        """返回固定顺序的特征名。"""
+        return list(self._data.columns)
 
     def position_for(self, sample_id: Any) -> int:
         """按样本索引返回唯一的位置。"""
-        positions = np.flatnonzero(self.sample_ids == sample_id)
+        positions = np.flatnonzero(self._sample_ids == sample_id)
         if len(positions) == 0:
             raise ValidationError(f"样本索引不存在: {sample_id}")
         if len(positions) > 1:
