@@ -57,6 +57,58 @@ with Database("mysql", **connect_params) as db:
 
 密码、AccessKey、Token 和带凭据 DSN 不会进入 `repr`、用户错误信息或日志。
 
+## 类外快捷操作
+
+不需要复用连接池时，可以直接把连接配置和操作参数交给 `hscredit.database` 的同名快捷函数。
+配置中的数据库类型使用精简键 `db_type`：
+
+```python
+from hscredit.database import read_query, execute, stream_write
+
+mysql_config = {
+    "db_type": "mysql",
+    "host": "127.0.0.1",
+    "port": 3306,
+    "user": "risk",
+    "password": "password",
+    "database": "risk",
+}
+
+frame = read_query(mysql_config, "SELECT id FROM events")
+affected = execute(mysql_config, "DELETE FROM events WHERE id=%s", params=(1,))
+```
+
+第一个参数也可以是已有 Database 实例或原生 DB-API 连接：
+
+```python
+frame = read_query(database, sql)
+frame = read_query(pymysql.connect(**connect_kwargs), sql)
+
+# 无法自动识别方言，或 PyMySQL 连接实际指向 StarRocks 时显式指定
+frame = read_query(connection, sql, db_type="starrocks")
+```
+
+快捷层覆盖全部公开数据操作：
+
+- SQL：`query`、`execute`、`executemany`、`stream_query`、`read_query`、
+  `export_schema`、`create_table`、`stream_write`；
+- Redis/MongoDB：`read_one`、`read_many`、`read`、`write_one`、`write_many`、
+  `write`、`delete_one`、`delete_many`、`delete`、`exists`。
+
+资源所有权规则：
+
+- 配置创建的连接池在非流式操作完成后自动关闭；
+- 配置创建的流式查询在流完成、失败、主动停止或关闭后释放连接池；
+- 传入的 Database 实例和原生 DB-API 连接视为借用，不由快捷函数关闭；
+- 原生连接继续使用现有提交/回滚和游标关闭契约；不属于 DB-API 的原生客户端应使用配置或
+  Database 实例。
+- MaxCompute 的 `export_schema` 和 `stream_write` 依赖 ODPS 元数据/Tunnel 入口，不能仅凭
+  原生 DB-API 连接完成；这两项应传入配置或 Database 实例。
+
+快捷函数可从 `hscredit.database` 或 `hscredit.database.shortcuts` 显式导入，但不会注册成
+`hscredit.query`、`hscredit.read` 等包顶层名称。需要连续执行多个操作时，仍建议显式创建
+Database，以复用连接池而不是每次重新创建。
+
 ## Redis 与 MongoDB 的统一 NoSQL 方法
 
 Redis 和 MongoDB 对外使用相同的方法名；参数中的 `resource` 在 Redis 表示 key 或 keys，在 MongoDB 表示集合名：

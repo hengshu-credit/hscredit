@@ -2,16 +2,21 @@
 """
 可视化模块 (viz).
 
-提供评分卡开发过程中常用的可视化功能，包括：
+推荐的公开绘图入口：
 - 特征分箱图 (bin_plot)
-- 特征相关性热力图 (corr_plot)  
-- KS/ROC曲线图 (ks_plot)
+- KS/ROC 曲线图 (ks_plot)
 - 特征分布图 (hist_plot)
+- 特征相关性热力图 (corr_plot)
 - PSI稳定性分析图 (psi_plot)
-- CSI特征稳定性图 (csi_plot)
+- Lift 提升图 (lift_plot)
 - DataFrame表格图 (dataframe_plot)
 - 时间分布图 (distribution_plot)
+- 模型特征重要性图 (plot_model_feature_importance)
 - 逻辑回归系数误差图 (plot_weights)
+
+``score_*``、``feature_importance_plot`` 等同类函数为兼容或特定报告场景入口；
+新代码优先使用以上推荐方法。全局图片样式由 :func:`hscredit.init_setting`
+初始化，``set_style`` / ``reset_style`` 仅作为可选主题覆盖层。
 
 金融风控专用图表 (risk_plots)：
 - ROC曲线图 (roc_plot)
@@ -27,7 +32,7 @@
 - Vintage账龄曲线图 (vintage_plot)
 - 特征重要性图 (feature_importance_plot)
 - 审批通过率趋势图 (approval_rate_trend_plot)
-- 逾期率趋势图 (bad_rate_trend_plot)
+- 坏样本率趋势图 (bad_rate_trend_plot)
 
 辅助函数已移至 utils 模块：
 - init_setting -> hscredit.utils.init_setting

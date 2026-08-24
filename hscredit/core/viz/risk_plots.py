@@ -7,7 +7,7 @@
 - Lift提升图 (lift_plot)
 - Gain增益图 (gain_plot)
 - 评分分布对比图 (score_dist_plot)
-- 逾期率趋势图 (bad_rate_trend_plot)
+- 坏样本率趋势图 (bad_rate_trend_plot)
 - 特征重要性图 (feature_importance_plot)
 - 混淆矩阵图 (confusion_matrix_plot)
 - PR曲线图 (pr_plot)
@@ -25,8 +25,11 @@ import matplotlib.pyplot as plt
 from typing import Union, Optional, List, Dict, Tuple, Any
 from sklearn.metrics import (
     roc_curve, auc, precision_recall_curve,
-    confusion_matrix, brier_score_loss
+    confusion_matrix, brier_score_loss,
+    accuracy_score, precision_score, recall_score, f1_score,
 )
+from sklearn.calibration import calibration_curve
+from matplotlib.colors import to_hex
 from matplotlib.ticker import PercentFormatter
 
 from .utils import (
@@ -197,7 +200,7 @@ def lift_plot(
     n_bins: int = 10,
     ax: Optional[plt.Axes] = None,
     figsize: Tuple[float, float] = (10, 6),
-    title: str = "Lift Chart",
+    title: str = "Lift 提升图",
     colors: Optional[List[str]] = None,
     show_baseline: bool = True,
     save: Optional[str] = None,
@@ -223,6 +226,25 @@ def lift_plot(
 
     >>> fig = lift_plot(y_test, model.predict_proba(X_test)[:, 1], n_bins=10)
     """
+    y_true = np.asarray(y_true)
+    y_score = np.asarray(y_score, dtype=float)
+    if y_true.ndim != 1 or y_score.ndim != 1:
+        raise ValueError("y_true 和 y_score 必须是一维数组")
+    if len(y_true) != len(y_score):
+        raise ValueError(f"y_true 与 y_score 长度不一致: {len(y_true)} != {len(y_score)}")
+    valid_mask = ~pd.isna(y_true) & ~pd.isna(y_score)
+    y_true = y_true[valid_mask]
+    y_score = y_score[valid_mask]
+    if len(y_true) == 0:
+        raise ValueError("y_true 和 y_score 没有可用的非缺失数据")
+    unique_labels = np.unique(y_true)
+    if len(unique_labels) != 2 or not set(unique_labels).issubset({0, 1, False, True}):
+        raise ValueError("y_true 必须是包含 0/1 的二分类标签")
+    if isinstance(n_bins, bool) or not isinstance(n_bins, (int, np.integer)) or n_bins <= 0:
+        raise ValueError("分箱数 n_bins 必须是正整数")
+    if n_bins > len(y_true):
+        raise ValueError(f"分箱数 ({n_bins}) 不能大于有效样本数 ({len(y_true)})")
+
     fig, ax = get_or_create_ax(figsize=figsize, ax=ax)
     
     if colors is None:
@@ -236,24 +258,22 @@ def lift_plot(
     y_true_sorted = np.array(y_true)[sorted_indices]
     
     # 计算每个分箱的Lift
-    bin_size = len(y_true) // n_bins
     lifts = []
     depths = []
-    
-    for i in range(n_bins):
-        start = i * bin_size
-        end = (i + 1) * bin_size if i < n_bins - 1 else len(y_true)
-        
-        bin_bad_rate = np.mean(y_true_sorted[start:end])
+    end = 0
+
+    for bin_values in np.array_split(y_true_sorted, n_bins):
+        end += len(bin_values)
+        bin_bad_rate = np.mean(bin_values)
         lift = bin_bad_rate / overall_bad_rate if overall_bad_rate > 0 else 1.0
-        
+
         lifts.append(lift)
         depths.append((end / len(y_true)) * 100)
     
     # 绘制基线
     if show_baseline:
         ax.axhline(y=1, color=NEUTRAL_COLOR, linestyle='--',
-                   alpha=0.5, label='Baseline (Lift=1)')
+                   alpha=0.5, label='基准线（Lift=1）')
     
     # 绘制Lift曲线
     ax.plot(depths, lifts, color=colors[0], marker='o', lw=2, markersize=6, **kwargs)
@@ -262,8 +282,8 @@ def lift_plot(
     ax.bar(depths, lifts, width=8, alpha=0.3, color=colors[0], edgecolor=colors[0])
     
     # 设置图表属性
-    ax.set_xlabel('Depth (% of Population)', fontsize=12)
-    ax.set_ylabel('Lift', fontsize=12)
+    ax.set_xlabel('样本深度（累计占比）', fontsize=12)
+    ax.set_ylabel('Lift 值', fontsize=12)
     ax.set_title(title, fontsize=14, fontweight='bold')
     ax.set_xlim([0, 105])
     
@@ -365,7 +385,7 @@ def confusion_matrix_plot(
     y_pred: Union[pd.Series, np.ndarray],
     ax: Optional[plt.Axes] = None,
     figsize: Tuple[float, float] = (8, 6),
-    title: str = "Confusion Matrix",
+    title: str = "混淆矩阵",
     cmap: Optional[Any] = None,
     normalize: Optional[str] = None,
     show_values: bool = True,
@@ -397,8 +417,10 @@ def confusion_matrix_plot(
     if cmap is None:
         cmap = make_colormap("hscredit_confusion", ["#F7F8FF", DEFAULT_COLORS[0]])
     
-    # 计算混淆矩阵
-    cm = confusion_matrix(y_true, y_pred)
+    # 计算混淆矩阵；标签来自真实值与预测值并集，兼容二分类和多分类。
+    labels = np.unique(np.concatenate([np.asarray(y_true), np.asarray(y_pred)]))
+    cm_counts = confusion_matrix(y_true, y_pred, labels=labels)
+    cm = cm_counts.copy()
     
     # 归一化
     if normalize == 'true':
@@ -407,27 +429,37 @@ def confusion_matrix_plot(
         cm = cm.astype('float') / cm.sum(axis=0, keepdims=True)
     elif normalize == 'all':
         cm = cm.astype('float') / cm.sum()
+    elif normalize is not None:
+        raise ValueError("normalize 仅支持 None/'true'/'pred'/'all'")
     
     # 绘制热力图
     sns.heatmap(cm, annot=show_values, fmt='.2f' if normalize else 'd',
                 cmap=cmap, square=True, ax=ax,
-                xticklabels=['Good', 'Bad'],
-                yticklabels=['Good', 'Bad'],
+                xticklabels=[str(label) for label in labels],
+                yticklabels=[str(label) for label in labels],
                 **kwargs)
     
-    ax.set_xlabel('Predicted Label', fontsize=12)
-    ax.set_ylabel('True Label', fontsize=12)
+    ax.set_xlabel('预测标签', fontsize=12)
+    ax.set_ylabel('真实标签', fontsize=12)
     ax.set_title(title, fontsize=14, fontweight='bold')
     
     # 显示评估指标
     if show_metrics:
-        tn, fp, fn, tp = confusion_matrix(y_true, y_pred).ravel()
-        accuracy = (tp + tn) / (tp + tn + fp + fn)
-        precision = tp / (tp + fp) if (tp + fp) > 0 else 0
-        recall = tp / (tp + fn) if (tp + fn) > 0 else 0
-        f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0
+        accuracy = accuracy_score(y_true, y_pred)
+        if len(labels) == 2:
+            tn, fp, fn, tp = cm_counts.ravel()
+            precision = tp / (tp + fp) if (tp + fp) > 0 else 0
+            recall = tp / (tp + fn) if (tp + fn) > 0 else 0
+            f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0
+        else:
+            precision = precision_score(y_true, y_pred, average='macro', zero_division=0)
+            recall = recall_score(y_true, y_pred, average='macro', zero_division=0)
+            f1 = f1_score(y_true, y_pred, average='macro', zero_division=0)
         
-        metrics_text = f'Accuracy: {accuracy:.3f} | Precision: {precision:.3f} | Recall: {recall:.3f} | F1: {f1:.3f}'
+        metrics_text = (
+            f'准确率: {accuracy:.3f} | 精确率: {precision:.3f} | '
+            f'召回率: {recall:.3f} | F1: {f1:.3f}'
+        )
         ax.set_title(f'{title}\n{metrics_text}', fontsize=12, fontweight='bold')
     
     if save:
@@ -442,7 +474,7 @@ def calibration_plot(
     n_bins: int = 10,
     ax: Optional[plt.Axes] = None,
     figsize: Tuple[float, float] = (8, 8),
-    title: str = "Calibration Curve",
+    title: str = "校准曲线",
     colors: Optional[List[str]] = None,
     show_histogram: bool = True,
     save: Optional[str] = None,
@@ -470,53 +502,52 @@ def calibration_plot(
     """
     if colors is None:
         colors = DEFAULT_COLORS
-    
-    # 如果需要显示直方图，创建双轴
-    if show_histogram:
-        fig = plt.figure(figsize=figsize)
-        ax = fig.add_subplot(111)
-        ax_hist = ax.twinx()
-    else:
-        fig, ax = get_or_create_ax(figsize=figsize, ax=ax)
-        ax_hist = None
-    
-    # 计算校准曲线
-    bin_boundaries = np.linspace(0, 1, n_bins + 1)
-    bin_lowers = bin_boundaries[:-1]
-    bin_uppers = bin_boundaries[1:]
-    
-    bin_centers = []
-    bin_accuracies = []
-    bin_counts = []
-    
-    for bin_lower, bin_upper in zip(bin_lowers, bin_uppers):
-        in_bin = (y_score > bin_lower) & (y_score <= bin_upper)
-        prop_in_bin = np.mean(in_bin)
-        
-        if prop_in_bin > 0:
-            accuracy_in_bin = np.mean(y_true[in_bin])
-            bin_centers.append((bin_lower + bin_upper) / 2)
-            bin_accuracies.append(accuracy_in_bin)
-            bin_counts.append(np.sum(in_bin))
+
+    y_true = np.asarray(y_true)
+    y_score = np.asarray(y_score, dtype=float)
+    if y_true.ndim != 1 or y_score.ndim != 1:
+        raise ValueError("y_true 和 y_score 必须是一维数组")
+    if len(y_true) != len(y_score):
+        raise ValueError(f"y_true 与 y_score 长度不一致: {len(y_true)} != {len(y_score)}")
+    valid_mask = ~pd.isna(y_true) & ~pd.isna(y_score)
+    y_true = y_true[valid_mask]
+    y_score = y_score[valid_mask]
+    if len(y_true) == 0:
+        raise ValueError("y_true 和 y_score 没有可用的非缺失数据")
+    if isinstance(n_bins, bool) or not isinstance(n_bins, (int, np.integer)) or n_bins <= 0:
+        raise ValueError("n_bins 必须是正整数")
+
+    fig, ax = get_or_create_ax(figsize=figsize, ax=ax)
+    ax_hist = ax.twinx() if show_histogram else None
+
+    bin_accuracies, mean_probabilities = calibration_curve(
+        y_true,
+        y_score,
+        n_bins=n_bins,
+        strategy='uniform',
+    )
     
     # 绘制完美校准线
     ax.plot([0, 1], [0, 1], color=NEUTRAL_COLOR, linestyle='--',
-            label='Perfectly calibrated')
+            label='完美校准')
     
     # 绘制校准曲线
     brier = brier_score_loss(y_true, y_score)
-    ax.plot(bin_centers, bin_accuracies, 's-', color=colors[0],
-            label=f'Model (Brier={brier:.3f})', **kwargs)
+    ax.plot(mean_probabilities, bin_accuracies, 's-', color=colors[0],
+            label=f'模型（Brier={brier:.3f}）', **kwargs)
     
     # 绘制样本分布直方图
     if show_histogram and ax_hist is not None:
+        bin_boundaries = np.linspace(0, 1, n_bins + 1)
+        bin_centers = (bin_boundaries[:-1] + bin_boundaries[1:]) / 2
+        bin_counts = np.histogram(y_score, bins=bin_boundaries)[0]
         ax_hist.bar(bin_centers, bin_counts, width=1/n_bins, alpha=0.3,
                     color=colors[1], edgecolor=colors[1])
-        ax_hist.set_ylabel('Count', fontsize=10, color=colors[1])
+        ax_hist.set_ylabel('样本数', fontsize=10, color=colors[1])
         ax_hist.tick_params(axis='y', labelcolor=colors[1])
     
-    ax.set_xlabel('Mean Predicted Probability', fontsize=12)
-    ax.set_ylabel('Fraction of Positives', fontsize=12)
+    ax.set_xlabel('平均预测概率', fontsize=12)
+    ax.set_ylabel('实际正样本率', fontsize=12)
     ax.set_title(title, fontsize=14, fontweight='bold')
     ax.set_xlim([0, 1])
     ax.set_ylim([0, 1])
@@ -706,25 +737,37 @@ def score_bin_plot(
 
     if colors is None:
         colors = DEFAULT_COLORS
+    if bin_type not in {'quantile', 'uniform'}:
+        raise ValueError("bin_type 仅支持 'quantile' 或 'uniform'")
 
     # 提取数据
     score_series = df[score_col]
     target_series = df[target_col]
 
-    # 使用 bin_plot 绘制横向分箱图
-    fig_charts, axes = plt.subplots(1, 2, figsize=figsize,
-                                    gridspec_kw={'width_ratios': [2.5, 1]})
-    ax_chart = axes[0]
-    ax_table = axes[1]
+    # 传入 ax 时复用调用方画布；未传 ax 时按是否展示表格创建一栏或两栏布局。
+    if ax is not None:
+        fig_charts = ax.figure
+        ax_chart = ax
+        if show_table:
+            from mpl_toolkits.axes_grid1 import make_axes_locatable
 
-    # 1) bin_plot（横向）
-    from matplotlib.figure import Figure
-    if isinstance(ax_chart, Figure):
-        # ax_chart 实际上是 Figure，ax 参数传入的是子 axes
-        pass
+            ax_table = make_axes_locatable(ax_chart).append_axes("right", size="42%", pad=0.6)
+        else:
+            ax_table = None
+    elif show_table:
+        fig_charts, axes = plt.subplots(
+            1,
+            2,
+            figsize=figsize,
+            gridspec_kw={'width_ratios': [2.5, 1]},
+        )
+        ax_chart, ax_table = axes
+    else:
+        fig_charts, ax_chart = plt.subplots(figsize=figsize)
+        ax_table = None
 
-    # 让 bin_plot 在 ax_chart 上绘图
-    _ = bin_plot(
+    # 统一由推荐入口 bin_plot 同时生成图形和统计表，避免两套分箱口径漂移。
+    _, bin_stats = bin_plot(
         score_series,
         target=target_series,
         desc=title or f'{score_col}分箱',
@@ -732,30 +775,18 @@ def score_bin_plot(
         colors=colors,
         ax=ax_chart,
         orientation='horizontal',
+        n_bins=n_bins,
+        method=bin_type,
         show_data_points=True,
         show_overall_bad_rate=True,
+        return_frame=True,
         save=None,
     )
 
     # 2) dataframe_plot 显示分箱统计表
-    if show_table:
-        # 先计算分箱统计
-        if bin_type == 'quantile':
-            bins = pd.qcut(df[score_col], q=n_bins, duplicates='drop')
-        else:
-            bins = pd.cut(df[score_col], bins=n_bins)
-
-        bin_stats = df.groupby(bins, observed=False).agg({
-            target_col: ['count', 'sum', 'mean'],
-            score_col: ['min', 'max']
-        }).reset_index()
-        bin_stats.columns = ['bin', 'count', 'bad_count', 'bad_rate', 'min_score', 'max_score']
-        bin_stats['good_count'] = bin_stats['count'] - bin_stats['bad_count']
-        bin_stats['bin_label'] = bin_stats.apply(
-            lambda x: f'[{x["min_score"]:.0f}, {x["max_score"]:.0f})', axis=1
-        )
-
-        table_df = bin_stats[['bin_label', 'count', 'bad_count', 'bad_rate']].copy()
+    if show_table and ax_table is not None:
+        label_col = '分箱标签' if '分箱标签' in bin_stats.columns else '分箱'
+        table_df = bin_stats[[label_col, '样本总数', '坏样本数', '坏样本率']].copy()
         table_df.columns = ['评分区间', '样本总数', '坏样本数', '坏样本率']
         table_df['坏样本率'] = table_df['坏样本率'].apply(lambda x: f'{x:.2%}')
 
@@ -768,9 +799,6 @@ def score_bin_plot(
             ax=ax_table,
             save=None,
         )
-    else:
-        ax_table.axis('off')
-
     fig_charts.tight_layout()
 
     if save:
@@ -1187,6 +1215,7 @@ def approval_rate_trend_plot(
     >>> fig = approval_rate_trend_plot(df, 'apply_date', decision_col='is_approved')
     >>> fig = approval_rate_trend_plot(df, 'apply_date', score_col='score', threshold=500)
     """
+    df = df.copy()
     fig, ax = get_or_create_ax(figsize=figsize, ax=ax)
     
     if colors is None:
@@ -1265,7 +1294,10 @@ def approval_rate_trend_plot(
 def bad_rate_trend_plot(
     df: pd.DataFrame,
     date_col: str,
-    target_col: str,
+    target: Optional[str] = None,
+    overdue: Optional[Union[str, List[str]]] = None,
+    dpds: Optional[Union[int, List[int]]] = None,
+    del_grey: bool = False,
     dimension_col: Optional[str] = None,
     freq: str = 'M',
     ax: Optional[plt.Axes] = None,
@@ -1276,11 +1308,14 @@ def bad_rate_trend_plot(
     save: Optional[str] = None,
     **kwargs
 ) -> plt.Figure:
-    """绘制逾期率趋势图（支持分维度展示）.
+    """绘制坏样本率趋势图（支持分维度和多逾期标签展示）.
     
     :param df: 数据DataFrame
     :param date_col: 日期列名
-    :param target_col: 目标变量列名
+    :param target: 目标变量列名（单标签模式）
+    :param overdue: 逾期天数字段名或列表，优先于 target
+    :param dpds: 逾期定义天数或列表，与 overdue 配合生成标签
+    :param del_grey: 是否排除逾期天数在 (0, dpd] 区间的灰样本
     :param dimension_col: 维度列名（如客户等级），None时不分维度
     :param freq: 时间频率，'D'/'W'/'M'/'Q'
     :param ax: matplotlib Axes对象
@@ -1294,18 +1329,73 @@ def bad_rate_trend_plot(
     
     **参考样例**
 
-    >>> fig = bad_rate_trend_plot(df, 'apply_date', 'target')
-    >>> fig = bad_rate_trend_plot(df, 'apply_date', 'target', dimension_col='customer_grade')
+    >>> fig = bad_rate_trend_plot(df, 'apply_date', target='target')
+    >>> fig = bad_rate_trend_plot(df, 'apply_date', overdue='MOB1', dpds=[7, 30])
     """
+    if 'target_col' in kwargs:
+        raise TypeError("bad_rate_trend_plot 已统一使用 target 参数，请将 target_col 改为 target")
+    df = df.copy()
+
+    # 全库统一标签入口：overdue + dpds 显式传入时优先于 target。
+    target_groups = {}
+    using_overdue = overdue is not None
+    if using_overdue:
+        if dpds is None:
+            raise ValueError("传入 overdue 参数时必须同时传入 dpds")
+        overdue_cols = [overdue] if isinstance(overdue, str) else list(overdue)
+        dpd_values = [dpds] if isinstance(dpds, (int, np.integer)) else list(dpds)
+        if not overdue_cols or not dpd_values:
+            raise ValueError("overdue 和 dpds 不能为空")
+        for overdue_col in overdue_cols:
+            if overdue_col not in df.columns:
+                raise ValueError(f"数据集缺少逾期天数列: {overdue_col}")
+            overdue_days = pd.to_numeric(df[overdue_col], errors='coerce')
+            overdue_targets = []
+            for dpd in dpd_values:
+                label = f"{overdue_col}_{dpd}+"
+                generated_target = (overdue_days > dpd).astype(float)
+                if del_grey:
+                    generated_target[(overdue_days > 0) & (overdue_days <= dpd)] = np.nan
+                overdue_targets.append((label, generated_target))
+            target_groups[overdue_col] = overdue_targets
+    else:
+        if target is None or target not in df.columns:
+            raise ValueError("必须传入数据集中存在的 target 或 overdue+dpds 参数")
+        target_values = pd.to_numeric(df[target], errors='coerce')
+        invalid_values = target_values.dropna()[~target_values.dropna().isin([0, 1])]
+        if not invalid_values.empty:
+            raise ValueError(f"target 列 {target} 必须是 0/1 二分类标签")
+        target_groups[target] = [(target, target_values)]
+
+    all_targets = [
+        (target_label, target_values)
+        for grouped_targets in target_groups.values()
+        for target_label, target_values in grouped_targets
+    ]
+
     # 传入ax时复用该ax绘制主曲线，样本数柱状图作为附加面板挂载在同一figure上，
     # 而不是整体重新plt.subplots()丢弃调用方传入的ax
     if ax is not None:
         ax_line = ax
         fig = ax_line.get_figure()
         if show_sample_count:
-            from mpl_toolkits.axes_grid1 import make_axes_locatable
-            ax_bar = make_axes_locatable(ax_line).append_axes(
-                "bottom", size="33%", pad=0.1, sharex=ax_line)
+            panel_position = ax_line.get_position().frozen()
+            panel_gap = min(0.02, panel_position.height * 0.05)
+            available_height = panel_position.height - panel_gap
+            bar_height = available_height / 4.0
+            line_height = available_height * 3.0 / 4.0
+            ax_bar = fig.add_axes(
+                [panel_position.x0, panel_position.y0, panel_position.width, bar_height],
+                sharex=ax_line,
+            )
+            ax_line.set_position(
+                [
+                    panel_position.x0,
+                    panel_position.y0 + bar_height + panel_gap,
+                    panel_position.width,
+                    line_height,
+                ]
+            )
     elif show_sample_count:
         fig, (ax_line, ax_bar) = plt.subplots(2, 1, figsize=figsize,
                                               sharex=True,
@@ -1314,65 +1404,272 @@ def bad_rate_trend_plot(
     else:
         fig, ax_line = get_or_create_ax(figsize=figsize, ax=ax)
     
-    # 确保日期格式正确
+    # 日期先转为周期，再用离散位置绘制；刻度只来自真实分组，不交给日期定位器补点。
+    if date_col not in df.columns:
+        raise ValueError(f"数据集缺少日期列: {date_col}")
     df[date_col] = pd.to_datetime(df[date_col])
+    freq = str(freq).upper()
+    if freq not in {'D', 'W', 'M', 'Q'}:
+        raise ValueError("freq 必须是 'D'/'W'/'M'/'Q' 之一")
     df['_period'] = df[date_col].dt.to_period(freq)
-    
-    # 计算趋势
+    periods = sorted(df['_period'].dropna().unique())
+    positions = np.arange(len(periods))
+
+    if colors is not None and not colors:
+        raise ValueError("colors 至少需要包含一种颜色")
+
+    def _unique_series_palette(requested_colors, required_count):
+        palette = []
+        normalized_colors = set()
+        fallback_colors = [BAD_RATE_COLOR, *get_series_colors(required_count + 1)]
+        for color in [*requested_colors, *fallback_colors]:
+            normalized = to_hex(color).lower()
+            if normalized in normalized_colors:
+                continue
+            palette.append(color)
+            normalized_colors.add(normalized)
+            if len(palette) >= required_count:
+                return palette
+
+        risk_cmap = make_risk_cmap()
+        for position in np.linspace(0.0, 1.0, max(required_count * 2, 2)):
+            color = to_hex(risk_cmap(position))
+            normalized = color.lower()
+            if normalized in normalized_colors:
+                continue
+            palette.append(color)
+            normalized_colors.add(normalized)
+            if len(palette) >= required_count:
+                break
+        return palette
+
+    requested_series_colors = (
+        [BAD_RATE_COLOR, *get_series_colors(len(all_targets) + 1)]
+        if colors is None
+        else list(colors)
+    )
+    series_colors = _unique_series_palette(requested_series_colors, len(all_targets))
+
+    dimensions = None
+    dimension_series_colors = None
     if dimension_col:
-        trend_data = df.groupby(['_period', dimension_col]).agg({
-            target_col: ['count', 'mean']
-        }).reset_index()
-        trend_data.columns = ['period', 'dimension', 'count', 'bad_rate']
-        trend_data['period'] = trend_data['period'].dt.to_timestamp()
-        
-        # 绘制各维度曲线
-        dimensions = trend_data['dimension'].unique()
-        if colors is None:
-            colors = get_series_colors(len(dimensions))
-        for i, dim in enumerate(dimensions):
-            dim_data = trend_data[trend_data['dimension'] == dim]
-            ax_line.plot(dim_data['period'], dim_data['bad_rate'] * 100,
-                        'o-', label=str(dim), color=colors[i % len(colors)],
-                        lw=2, markersize=4)
-    else:
-        if colors is None:
-            colors = DEFAULT_COLORS
-        trend_data = df.groupby('_period').agg({
-            target_col: ['count', 'mean']
-        }).reset_index()
-        trend_data.columns = ['period', 'count', 'bad_rate']
-        trend_data['period'] = trend_data['period'].dt.to_timestamp()
-        
-        ax_line.plot(trend_data['period'], trend_data['bad_rate'] * 100,
-                    'o-', color=colors[0], lw=2, markersize=4, label='Bad Rate')
-        ax_line.fill_between(trend_data['period'], trend_data['bad_rate'] * 100,
-                            alpha=0.2, color=colors[0])
-    
-    ax_line.set_ylabel('Bad Rate (%)', fontsize=12)
-    ax_line.yaxis.set_major_formatter(PercentFormatter())
+        if dimension_col not in df.columns:
+            raise ValueError(f"数据集缺少维度列: {dimension_col}")
+        dimensions = list(pd.unique(df[dimension_col].dropna()))
+        required_dimension_colors = len(all_targets) * len(dimensions)
+        requested_dimension_colors = (
+            get_series_colors(required_dimension_colors)
+            if colors is None
+            else list(colors)
+        )
+        dimension_series_colors = _unique_series_palette(
+            requested_dimension_colors,
+            required_dimension_colors,
+        )
+
+    rate_axes = []
+    line_handles = []
+    line_labels = []
+    line_styles = ['-', '--', '-.', ':']
+    target_index = 0
+    for axis_index, (axis_label, grouped_targets) in enumerate(target_groups.items()):
+        rate_ax = ax_line if axis_index == 0 else ax_line.twinx()
+        if axis_index > 0:
+            rate_ax.spines['right'].set_position(('outward', 52 * (axis_index - 1)))
+        rate_axes.append(rate_ax)
+        axis_color = series_colors[target_index % len(series_colors)]
+
+        for target_label, target_values in grouped_targets:
+            color = series_colors[target_index % len(series_colors)]
+            working = pd.DataFrame({
+                '_period': df['_period'],
+                '_target': target_values,
+            }, index=df.index)
+            if dimension_col:
+                working['_dimension'] = df[dimension_col]
+                for dimension_index, dimension in enumerate(dimensions):
+                    dimension_rates = (
+                        working[working['_dimension'] == dimension]
+                        .groupby('_period', observed=False)['_target']
+                        .mean()
+                        .reindex(periods)
+                    )
+                    legend_label = (
+                        str(dimension)
+                        if not using_overdue and len(all_targets) == 1
+                        else f"{target_label} · {dimension}"
+                    )
+                    color_index = target_index * len(dimensions) + dimension_index
+                    line_color = dimension_series_colors[color_index % len(dimension_series_colors)]
+                    line, = rate_ax.plot(
+                        positions,
+                        dimension_rates.to_numpy(dtype=float),
+                        marker='o',
+                        linestyle=line_styles[dimension_index % len(line_styles)],
+                        color=line_color,
+                        lw=2,
+                        markersize=4,
+                        label=legend_label,
+                    )
+                    line_handles.append(line)
+                    line_labels.append(legend_label)
+            else:
+                bad_rates = (
+                    working.groupby('_period', observed=False)['_target']
+                    .mean()
+                    .reindex(periods)
+                )
+                line, = rate_ax.plot(
+                    positions,
+                    bad_rates.to_numpy(dtype=float),
+                    'o-',
+                    color=color,
+                    lw=2,
+                    markersize=4,
+                    label=(
+                        target_label
+                        if using_overdue or len(all_targets) > 1
+                        else '坏样本率'
+                    ),
+                )
+                line_handles.append(line)
+                line_labels.append(line.get_label())
+                if len(all_targets) == 1:
+                    rate_ax.fill_between(
+                        positions,
+                        bad_rates.to_numpy(dtype=float),
+                        alpha=0.12,
+                        color=color,
+                    )
+            target_index += 1
+
+        rate_ax.set_ylabel(
+            f'{axis_label} 坏样本率' if using_overdue else '坏样本率',
+            fontsize=12,
+            color=axis_color,
+        )
+        rate_ax.tick_params(axis='y', colors=axis_color)
+        rate_ax.yaxis.set_major_formatter(PercentFormatter(1.0))
+
+        if axis_index == 0:
+            setup_axis_style(rate_ax, [axis_color], hide_top_right=True)
+        else:
+            rate_ax.spines['top'].set_visible(False)
+            rate_ax.spines['bottom'].set_visible(False)
+            rate_ax.spines['left'].set_visible(False)
+            rate_ax.spines['right'].set_color(axis_color)
+            rate_ax.tick_params(axis='x', bottom=False, labelbottom=False)
+        rate_ax.set_axisbelow(True)
+        rate_ax.grid(False)
+
+    # 多坐标轴必须共享同一自适应百分比范围，否则成比例的序列会被各自缩放成完全重合的像素轨迹。
+    if len(rate_axes) > 1:
+        plotted_rates = np.concatenate([
+            np.asarray(line.get_ydata(), dtype=float)
+            for rate_ax in rate_axes
+            for line in rate_ax.lines
+        ])
+        finite_rates = plotted_rates[np.isfinite(plotted_rates)]
+        if finite_rates.size:
+            rate_min = float(finite_rates.min())
+            rate_max = float(finite_rates.max())
+            rate_span = rate_max - rate_min
+            padding = max(rate_span * 0.08, 0.01)
+            lower_limit = max(0.0, rate_min - padding)
+            upper_limit = min(1.0, rate_max + padding)
+            if upper_limit <= lower_limit:
+                upper_limit = min(1.0, lower_limit + 0.05)
+                lower_limit = max(0.0, upper_limit - 0.05)
+            for rate_ax in rate_axes:
+                rate_ax.set_ylim(lower_limit, upper_limit)
     
     if title is None:
-        title = 'Bad Rate Trend' + (f' by {dimension_col}' if dimension_col else '')
-    ax_line.set_title(title, fontsize=14, fontweight='bold')
-    
-    ax_line.legend(loc='best', frameon=True)
-    setup_axis_style(ax_line, colors, hide_top_right=True)
-    ax_line.grid(True, alpha=0.3)
+        title = '坏样本率趋势' + (f'（按{dimension_col}）' if dimension_col else '')
+    title_artist = fig.suptitle(title, fontsize=14, fontweight='bold')
+    max_legend_columns = max(1, int(fig.get_figwidth() // 2.2))
+    legend = fig.legend(
+        line_handles,
+        line_labels,
+        loc='upper center',
+        bbox_to_anchor=(0.5, 0.94),
+        ncol=min(len(line_labels), max_legend_columns),
+        frameon=False,
+    )
+    ax_line.grid(True, axis='y', alpha=0.3, linestyle='--')
     
     # 绘制样本数柱状图
     if show_sample_count:
-        overall_trend = df.groupby('_period').size().reset_index(name='count')
-        overall_trend['period'] = overall_trend['_period'].dt.to_timestamp()
-        
-        ax_bar.bar(overall_trend['period'], overall_trend['count'],
-                  width=20, alpha=0.6, color=colors[2])
-        ax_bar.set_ylabel('Sample Count', fontsize=10)
-        ax_bar.set_xlabel('Date', fontsize=12)
-    
-    # 清理临时列
-    df.drop(columns=['_period'], inplace=True, errors='ignore')
-    
+        sample_counts = df.groupby('_period', observed=False).size().reindex(periods, fill_value=0)
+        bar_color = DEFAULT_COLORS[0]
+        ax_bar.bar(positions, sample_counts.to_numpy(), width=0.65, alpha=0.6, color=bar_color)
+        ax_bar.set_ylabel('样本数', fontsize=10)
+        ax_bar.set_xlabel('日期', fontsize=12)
+        setup_axis_style(ax_bar, [bar_color], hide_top_right=True)
+        ax_bar.set_axisbelow(True)
+        ax_bar.grid(True, axis='y', alpha=0.3, linestyle='--')
+    else:
+        ax_line.set_xlabel('日期', fontsize=12)
+
+    tick_axis = ax_bar if show_sample_count else ax_line
+    tick_axis.set_xticks(positions)
+    tick_axis.set_xticklabels([str(period) for period in periods])
+    tick_axis.tick_params(axis='x', labelrotation=30)
+    for label in tick_axis.get_xticklabels():
+        label.set_horizontalalignment('right')
+    if show_sample_count:
+        for rate_ax in rate_axes:
+            rate_ax.tick_params(axis='x', bottom=False, labelbottom=False)
+
+    x_limits = (-0.5, len(periods) - 0.5) if periods else (-0.5, 0.5)
+    for rate_ax in rate_axes:
+        rate_ax.set_xlim(x_limits)
+    if show_sample_count:
+        ax_bar.set_xlim(x_limits)
+
+    # 多个右侧坏率轴按实际渲染宽度收缩内容区，避免外移轴及标签被画布裁切。
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+    right_artists = []
+    for rate_ax in rate_axes[1:]:
+        right_artists.extend([rate_ax.yaxis.label, *rate_ax.get_yticklabels()])
+    right_edges = [
+        artist.get_window_extent(renderer).x1
+        for artist in right_artists
+        if artist.get_visible() and artist.get_text()
+    ]
+    padding_pixels = 6.0 * fig.dpi / 72.0
+    if right_edges:
+        overflow = max(right_edges) - (fig.bbox.x1 - padding_pixels)
+    else:
+        overflow = 0.0
+
+    # twinx 轴共享位置；公共几何只计算一次并原样赋给上下所有面板，避免逐轴重复收窄。
+    rate_position = ax_line.get_position().frozen()
+    shrink_fraction = max(0.0, overflow) / float(fig.bbox.width) + (0.01 if overflow > 0 else 0.0)
+    common_width = max(0.2, rate_position.width - shrink_fraction)
+    common_x0 = rate_position.x0
+    common_rate_position = (common_x0, rate_position.y0, common_width, rate_position.height)
+    for rate_ax in rate_axes:
+        rate_ax.set_position(common_rate_position)
+    if show_sample_count:
+        bar_position = ax_bar.get_position().frozen()
+        ax_bar.set_position((common_x0, bar_position.y0, common_width, bar_position.height))
+
+    _layout_top_center_legend(fig, legend, title=title_artist, axes=[ax_line])
+    final_rate_position = ax_line.get_position().frozen()
+    for rate_ax in rate_axes[1:]:
+        rate_ax.set_position(final_rate_position.bounds)
+    if show_sample_count:
+        final_bar_position = ax_bar.get_position().frozen()
+        ax_bar.set_position(
+            (
+                final_rate_position.x0,
+                final_bar_position.y0,
+                final_rate_position.width,
+                final_bar_position.height,
+            )
+        )
+
     if save:
         save_figure(fig, save)
     

@@ -110,7 +110,10 @@ def _compute_bin_stats_from_raw_data(
         else:
             raise ValueError(f"目标列 '{target}' 不在数据中")
     elif isinstance(target, (pd.Series, np.ndarray)):
-        y = pd.Series(target)
+        target_values = np.asarray(target)
+        if target_values.ndim != 1:
+            raise ValueError("target 必须是一维 Series 或数组")
+        y = pd.Series(target_values, index=X.index, name='target')
     else:
         raise ValueError("target 必须是列名、Series 或数组")
     
@@ -118,8 +121,8 @@ def _compute_bin_stats_from_raw_data(
     if len(X) != len(y):
         raise ValueError(f"特征数据长度 ({len(X)}) 与目标变量长度 ({len(y)}) 不一致")
     
-    # 移除缺失值
-    valid_mask = ~(pd.isna(X) | pd.isna(y))
+    # 目标缺失无法参与监督统计；特征缺失由分箱器保留为独立缺失箱。
+    valid_mask = ~pd.isna(y)
     X_valid = X[valid_mask]
     y_valid = y[valid_mask]
     
@@ -128,8 +131,8 @@ def _compute_bin_stats_from_raw_data(
     
     # 构建DataFrame
     df = pd.DataFrame({
-        feature: X_valid,
-        'target': y_valid
+        feature: X_valid.to_numpy(),
+        'target': y_valid.to_numpy(),
     })
     
     # 使用OptimalBinning进行分箱
@@ -162,8 +165,21 @@ def _compute_bin_stats_from_raw_data(
     bin_labels = None
     if feature in binner.bin_tables_:
         bin_table = binner.bin_tables_[feature]
-        if '分箱标签' in bin_table.columns:
-            bin_labels = bin_table['分箱标签'].tolist()
+        if '分箱' in bin_table.columns and '分箱标签' in bin_table.columns:
+            label_by_bin = {}
+            for _, bin_row in bin_table.iterrows():
+                bin_id = int(bin_row['分箱'])
+                if bin_id == -1:
+                    label = '缺失值'
+                elif bin_id == -2:
+                    label = '特殊值'
+                else:
+                    label = bin_row['分箱标签']
+                label_by_bin[bin_id] = label
+            bin_labels = [
+                label_by_bin.get(int(bin_id), f'分箱_{int(bin_id)}')
+                for bin_id in np.unique(bin_indices)
+            ]
     
     # 使用统一的compute_bin_stats计算分箱统计
     stats_df = compute_bin_stats(bin_indices, y_valid.values, bin_labels=bin_labels, round_digits=False)
@@ -175,7 +191,13 @@ def _compute_bin_stats_from_raw_data(
         if '分箱标签' in row and pd.notna(row['分箱标签']):
             label = row['分箱标签']
         else:
-            label = f"Bin_{int(row['分箱'])}"
+            bin_id = int(row['分箱'])
+            if bin_id == -1:
+                label = "缺失值"
+            elif bin_id == -2:
+                label = "特殊值"
+            else:
+                label = f"分箱_{bin_id}"
         
         results.append({
             '分箱': label,
@@ -547,24 +569,26 @@ def bin_plot(
     支持两种使用方式：
     
     **方式1：传入原始数据（toad 模式）**
-    ```python
-    # DataFrame + 列名
-    bin_plot(df, x='feature_name', target='target')
-    
-    # Series + 目标数组
-    bin_plot(df['feature'], target=df['target'])
-    
-    # 使用已创建的画布
-    fig, axes = plt.subplots(2, 3, figsize=(18, 10))
-    for i, col in enumerate(features):
-        bin_plot(df[col], target=y, ax=axes[i], title=f'{col}分箱')
-    ```
-    
+
+    .. code-block:: python
+
+        # DataFrame + 列名
+        bin_plot(df, x='feature_name', target='target')
+
+        # Series + 目标数组
+        bin_plot(df['feature'], target=df['target'])
+
+        # 使用已创建的画布
+        fig, axes = plt.subplots(2, 3, figsize=(18, 10))
+        for i, col in enumerate(features):
+            bin_plot(df[col], target=y, ax=axes[i], title=f'{col}分箱')
+
     **方式2：传入分箱统计表（scorecardpipeline 模式）**
-    ```python
-    # 传入已计算好的分箱统计表
-    bin_plot(feature_table, desc="特征描述")
-    ```
+
+    .. code-block:: python
+
+        # 传入已计算好的分箱统计表
+        bin_plot(feature_table, desc="特征描述")
 
     :param data: 数据（DataFrame、Series 或分箱统计表）
     :param target: 目标变量（列名、Series 或数组）
@@ -593,7 +617,8 @@ def bin_plot(
     :param ax: 可选的 matplotlib Axes 对象，用于在已有画布上绘图
     :param orientation: 图表方向，'horizontal'/'h'(横向，默认) 或 'vertical'/'v'(纵向)
     :param kwargs: 其他参数（兼容性）
-    :return: matplotlib Figure 或 (Figure, DataFrame)，如果传入 ax 则返回 ax
+    :return: 独立绘图时返回 Figure 或 (Figure, DataFrame)；传入 ax 时返回
+        Axes，``return_frame=True`` 时返回 (Axes, DataFrame)
 
     **参考样例**
 
@@ -926,6 +951,8 @@ def bin_plot(
             _layout_embedded_bin_plot_header(fig, ax1, ax2, summary_text, title_text)
         else:
             ax1.set_title(title_text)
+        if return_frame:
+            return ax1, _sorted_table.drop(columns=['_plot_bin_label'], errors='ignore')
         return ax1
 
 
@@ -994,7 +1021,8 @@ def corr_plot(data, figure_size=None, fontsize=16, mask=False, save=None,
 
 
 def ks_plot(score, target, title="", fontsize=14, figsize=(16, 8), save=None,
-            colors=None, anchor=None, axes=None, ax=None, curve='both'):
+            colors=None, anchor=None, axes=None, ax=None, curve='both',
+            pos_label=1, score_direction='auto'):
     """
     KS曲线和ROC曲线.
 
@@ -1014,6 +1042,10 @@ def ks_plot(score, target, title="", fontsize=14, figsize=(16, 8), save=None,
         - ``'ks'``：仅绘制 KS 曲线（单个 Axes，便于嵌入组合图）
         - ``'roc'``：仅绘制 ROC 曲线（单个 Axes）
 
+    :param pos_label: 正样本标签，默认 1；字符串或非 0/1 标签必须显式指定
+    :param score_direction: 分数方向，可选 auto（默认，AUC 小于 0.5 时自动反向）、
+        higher_risk（值越大正样本风险越高）或 higher_safe（值越大越安全）
+
     :return: matplotlib Figure 或 Axes（嵌入模式下返回所用 Axes）
 
     **参考样例**
@@ -1027,13 +1059,24 @@ def ks_plot(score, target, title="", fontsize=14, figsize=(16, 8), save=None,
     if curve not in ('both', 'ks', 'roc'):
         raise ValueError("curve 仅支持 'both'/'ks'/'roc'")
 
-    # 兼容 axes 和 ax 参数
-    axes = axes or (ax if isinstance(ax, (list, tuple, np.ndarray)) else None)
+    # 兼容 axes 和 ax 参数；不能对 ndarray 使用布尔求值。
+    if axes is None and isinstance(ax, (list, tuple, np.ndarray)):
+        axes = ax
 
     # 转换 target 和 score 为 numpy 数组
     # 注意：函数签名是 ks_plot(score, target, ...)
     score_arr = np.asarray(score, dtype=float)
     target_arr = np.asarray(target)
+    if score_arr.ndim != 1 or target_arr.ndim != 1:
+        raise ValueError("score 和 target 必须是一维数组")
+    if len(score_arr) != len(target_arr):
+        raise ValueError(f"score 与 target 长度不一致: {len(score_arr)} != {len(target_arr)}")
+
+    valid_mask = ~pd.isna(score_arr) & ~pd.isna(target_arr)
+    score_arr = score_arr[valid_mask]
+    target_arr = target_arr[valid_mask]
+    if len(score_arr) == 0:
+        raise ValueError("score 和 target 没有可用的非缺失数据")
 
     # 检查 target 是否为二分类
     unique_labels = np.unique(target_arr[~pd.isna(target_arr)])  # 排除 NaN
@@ -1043,29 +1086,21 @@ def ks_plot(score, target, title="", fontsize=14, figsize=(16, 8), save=None,
             f"请确保传入正确的 y_test 标签（如 0/1 或 True/False），而不是预测概率。"
         )
 
-    # 确保 target 是数值型的 0/1 格式
-    # 检查是否已经是 0/1 数值
-    try:
-        unique_numeric = [float(x) for x in unique_labels]
-        is_01 = all(x in [0.0, 1.0] for x in unique_numeric)
-    except (ValueError, TypeError):
-        is_01 = False
+    if pos_label not in unique_labels:
+        raise ValueError(f"pos_label={pos_label!r} 不在 target 标签 {unique_labels.tolist()} 中")
+    target_arr = (target_arr == pos_label).astype(float)
 
-    if is_01:
-        # 已经是 0/1，直接转换类型
-        target_arr = target_arr.astype(float)
-    else:
-        # 非 0/1 标签（如 -1/1, 'good'/'bad', True/False），映射为 0/1
-        # 第一个唯一值映射为 0，第二个映射为 1
-        label_0 = unique_labels[0]
-        target_arr = np.where(target_arr == label_0, 0.0, 1.0)
-
-    auc_value = roc_auc_score(target_arr, score_arr)
-
-    if auc_value < 0.5:
-        warnings.warn('评分AUC指标小于50%, 推断数据值越大, 正样本率越高, 将数据值转为负数后进行绘图')
+    direction = str(score_direction).strip().lower()
+    valid_directions = {'auto', 'higher_risk', 'higher_safe'}
+    if direction not in valid_directions:
+        raise ValueError(f"score_direction 必须是 {sorted(valid_directions)} 之一")
+    if direction == 'higher_safe':
         score_arr = -score_arr
-        auc_value = 1 - auc_value
+    auc_value = roc_auc_score(target_arr, score_arr)
+    if direction == 'auto' and auc_value < 0.5:
+        warnings.warn('评分 AUC 小于 50%，已按“值越大越安全”自动反向后绘图')
+        score_arr = -score_arr
+        auc_value = roc_auc_score(target_arr, score_arr)
 
     df = pd.DataFrame({'label': target_arr, 'pred': score_arr})
 
@@ -1131,8 +1166,8 @@ def ks_plot(score, target, title="", fontsize=14, figsize=(16, 8), save=None,
         ax1.text(dfks['group'], dfks['ks'], f"KS: {round(dfks['ks'], 4)} at: {dfks.group:.2%}",
                  horizontalalignment='center', fontsize=fontsize)
 
-        ax1.set_xlabel('% of Population', fontsize=fontsize)
-        ax1.set_ylabel('% of Total Bad / Good', fontsize=fontsize)
+        ax1.set_xlabel('累计样本占比', fontsize=fontsize)
+        ax1.set_ylabel('累计坏/好样本占比', fontsize=fontsize)
         ax1.set_xlim((0, 1))
         ax1.set_ylim((0, 1))
         handles1, labels1 = ax1.get_legend_handles_labels()
@@ -1141,14 +1176,14 @@ def ks_plot(score, target, title="", fontsize=14, figsize=(16, 8), save=None,
     if need_roc:
         fpr, tpr, thresholds = roc_curve(target_arr, score_arr)
 
-        ax2.plot(fpr, tpr, color=colors[0], label="ROC Curve")
+        ax2.plot(fpr, tpr, color=colors[0], label="ROC 曲线")
         ax2.stackplot(fpr, tpr, color=colors[0], alpha=0.25)
         ax2.plot([0, 1], [0, 1], color=colors[1], lw=2, linestyle=':')
         ax2.text(0.5, 0.5, f"AUC: {auc_value:.4f}", fontsize=fontsize,
                  horizontalalignment="center", transform=ax2.transAxes)
 
-        ax2.set_xlabel("False Positive Rate", fontsize=fontsize)
-        ax2.set_ylabel('True Positive Rate', fontsize=fontsize)
+        ax2.set_xlabel("假正例率", fontsize=fontsize)
+        ax2.set_ylabel('真正例率', fontsize=fontsize)
         ax2.set_xlim((0, 1))
         ax2.set_ylim((0, 1))
         if curve == 'both':
@@ -1162,10 +1197,8 @@ def ks_plot(score, target, title="", fontsize=14, figsize=(16, 8), save=None,
 
     if not return_axes:
         if curve == 'both':
-            if title:
-                title += " "
             title_artist = fig.suptitle(
-                f"{title}K-S & ROC CURVE", fontsize=fontsize, fontweight="bold"
+                title or "K-S 与 ROC 曲线", fontsize=fontsize, fontweight="bold"
             )
             legend_anchor = 0.945 if anchor is None else anchor
             legend = fig.legend(handles1 + handles2, labels1 + labels2, loc='upper center',
@@ -1324,7 +1357,8 @@ def psi_plot(expected, actual, y=None, labels=None, desc="", save=None, colors=N
     :param expected: 期望分布（原始数据或分箱表）
     :param actual: 实际分布（原始数据或分箱表）
     :param y: 目标变量（pd.Series），用于绘制坏样本率折线图。当传入原始数据时，
-        应与 expected/actual 长度一致，按相同分箱计算坏样本率。
+        应与 expected/actual 长度之和一致，按相同分箱计算坏样本率；为 None 时仅展示
+        预期/实际样本占比，不创建坏样本率副轴和图例。
     :param labels: 标签
     :param desc: 描述
     :param save: 保存路径
@@ -1345,12 +1379,14 @@ def psi_plot(expected, actual, y=None, labels=None, desc="", save=None, colors=N
     >>> # 原始分数：自动分箱并计算 PSI
     >>> psi_plot(train_df['score'], test_df['score'], desc='评分')
     >>> # 叠加坏样本率折线，并返回统计表
-    >>> tbl = psi_plot(train_df['score'], test_df['score'], y=train_df['target'], result=True)
+    >>> combined_y = pd.concat([train_df['target'], test_df['target']], ignore_index=True)
+    >>> tbl = psi_plot(train_df['score'], test_df['score'], y=combined_y, result=True)
     """
     if labels is None:
         labels = ["预期", "实际"]
     if colors is None:
         colors = DEFAULT_COLORS
+    show_bad_rate = y is not None
 
     # 统一提取一维数值数组
     def _to_series(data):
@@ -1530,15 +1566,17 @@ def psi_plot(expected, actual, y=None, labels=None, desc="", save=None, colors=N
         ax1.set_xticklabels(x)
         ax1.tick_params(axis='x', labelrotation=90)
 
-        ax2 = ax1.twinx()
-        ax2.plot(x, df_psi[f"{labels[0]}坏样本率"], color=colors[0], 
-                label=f"{labels[0]}坏样本率", linestyle=(5, (10, 3)))
-        ax2.plot(x, df_psi[f"{labels[1]}坏样本率"], color=colors[1], 
-                label=f"{labels[1]}坏样本率", linestyle=(5, (10, 3)))
-        ax2.scatter(x, df_psi[f"{labels[0]}坏样本率"], marker=".")
-        ax2.scatter(x, df_psi[f"{labels[1]}坏样本率"], marker=".")
-        ax2.set_ylabel('坏样本率')
-        ax2.yaxis.set_major_formatter(PercentFormatter(1))
+        ax2 = None
+        if show_bad_rate:
+            ax2 = ax1.twinx()
+            ax2.plot(x, df_psi[f"{labels[0]}坏样本率"], color=colors[0],
+                    label=f"{labels[0]}坏样本率", linestyle=(5, (10, 3)))
+            ax2.plot(x, df_psi[f"{labels[1]}坏样本率"], color=colors[1],
+                    label=f"{labels[1]}坏样本率", linestyle=(5, (10, 3)))
+            ax2.scatter(x, df_psi[f"{labels[0]}坏样本率"], marker=".")
+            ax2.scatter(x, df_psi[f"{labels[1]}坏样本率"], marker=".")
+            ax2.set_ylabel('坏样本率')
+            ax2.yaxis.set_major_formatter(PercentFormatter(1))
 
         # 标题处理：优先使用 title 参数
         if title is not None:
@@ -1550,14 +1588,15 @@ def psi_plot(expected, actual, y=None, labels=None, desc="", save=None, colors=N
             )
 
         handles1, labels1 = ax1.get_legend_handles_labels()
-        handles2, labels2 = ax2.get_legend_handles_labels()
+        handles2, labels2 = ax2.get_legend_handles_labels() if ax2 is not None else ([], [])
         legend_anchor = 0.94 if anchor is None else anchor
         legend = fig.legend(handles1 + handles2, labels1 + labels2, loc='upper center',
                             ncol=len(labels1 + labels2), bbox_to_anchor=(0.5, legend_anchor), frameon=False)
 
         fig.tight_layout()
         if anchor is None:
-            _layout_top_center_legend(fig, legend, title=title_artist, axes=[ax1, ax2])
+            panel_axes = [ax1, ax2] if ax2 is not None else [ax1]
+            _layout_top_center_legend(fig, legend, title=title_artist, axes=panel_axes)
 
         if save:
             save_figure(fig, save)
@@ -1936,14 +1975,14 @@ def _compute_feature_bin_stats(
         # 计算 IV
         try:
             from ..metrics import iv as iv_metric
-            iv_val = iv_metric(X_valid, y_valid)
+            iv_val = iv_metric(y_valid, X_valid)
         except Exception:
             iv_val = 0
 
         # 计算 KS
         try:
             from ..metrics import ks as ks_metric
-            ks_val = ks_metric(X_valid, y_valid)
+            ks_val = ks_metric(y_valid, X_valid)
         except Exception:
             ks_val = 0
 
@@ -2063,6 +2102,66 @@ def _layout_bin_panel_rows(
         fig.subplots_adjust(hspace=fig.subplotpars.hspace + maximum_deficit / average_axis_height)
 
 
+def _layout_bin_panel_columns(
+    fig: plt.Figure,
+    axes: List[Any],
+    min_gap_points: float = 6.0,
+    max_iterations: int = 8,
+) -> None:
+    """按真实渲染边界为同一行的分箱面板保留最小水平间距。"""
+    panel_axes = [axis for axis in axes if axis.get_visible()]
+    panel_rows = []
+    for axis in panel_axes:
+        for row in panel_rows:
+            if np.isclose(axis.get_position().y0, row[0].get_position().y0):
+                row.append(axis)
+                break
+        else:
+            panel_rows.append([axis])
+    for row in panel_rows:
+        row.sort(key=lambda axis: axis.get_position().x0)
+
+    if not any(len(row) > 1 for row in panel_rows):
+        return
+
+    min_gap_pixels = float(min_gap_points) * fig.dpi / 72.0
+    for _ in range(max_iterations):
+        fig.canvas.draw()
+        renderer = fig.canvas.get_renderer()
+        maximum_deficit = 0.0
+
+        def panel_horizontal_bounds(owner):
+            x_bounds = []
+            owner_position = owner.get_position().bounds
+            for panel_axis in fig.axes:
+                if not panel_axis.get_visible():
+                    continue
+                if not np.allclose(panel_axis.get_position().bounds, owner_position, atol=1e-8):
+                    continue
+                axes_bbox = panel_axis.get_window_extent(renderer)
+                x_bounds.extend([axes_bbox.x0, axes_bbox.x1])
+                for component in (panel_axis.xaxis, panel_axis.yaxis):
+                    bbox = component.get_tightbbox(renderer)
+                    if bbox is not None and np.isfinite(bbox.x0) and np.isfinite(bbox.x1):
+                        x_bounds.extend([bbox.x0, bbox.x1])
+            return min(x_bounds), max(x_bounds)
+
+        for row in panel_rows:
+            for left_axis, right_axis in zip(row, row[1:]):
+                _, left_right = panel_horizontal_bounds(left_axis)
+                right_left, _ = panel_horizontal_bounds(right_axis)
+                actual_gap = right_left - left_right
+                maximum_deficit = max(maximum_deficit, min_gap_pixels - actual_gap)
+
+        if maximum_deficit <= 0.05:
+            return
+
+        average_axis_width = np.mean([axis.get_window_extent(renderer).width for axis in panel_axes])
+        if not np.isfinite(average_axis_width) or average_axis_width <= 0:
+            return
+        fig.subplots_adjust(wspace=fig.subplotpars.wspace + maximum_deficit / average_axis_width)
+
+
 def bin_trend_plot(
     data: pd.DataFrame,
     feature: str,
@@ -2115,7 +2214,7 @@ def bin_trend_plot(
     :param sort_by: 排序列名，None表示不排序，默认按维度值排序
     :param sort_order: 排序方向，'asc'/'desc'
     :param max_groups: 最大展示分组数，None表示全部展示
-    :param figsize: 图像尺寸，None时自动计算
+    :param figsize: 图像尺寸，None时自动计算；多列面板会按实际轴装饰自适应到最小安全间距
     :param colors: 配色方案
     :param title: 图表标题
     :param show_overall: 是否显示整体样本面板
@@ -2167,6 +2266,8 @@ def bin_trend_plot(
     if dimension_cols is not None:
         if isinstance(dimension_cols, str):
             dimension_cols = [dimension_cols]
+        else:
+            dimension_cols = list(dimension_cols)
     else:
         dimension_cols = []
 
@@ -2334,10 +2435,14 @@ def bin_trend_plot(
         left=0.08 if is_horizontal else 0.06,
         right=0.98 if is_horizontal else 0.94,
         hspace=0.62 if n_rows > 1 else 0.42,
-        wspace=0.28,
+        # 多列纵向面板从零间距起步，再由渲染感知布局增加到最小安全值；
+        # 避免宽画布沿用固定比例间距而产生大片空白。
+        wspace=0.0 if n_cols > 1 else 0.28,
     )
     if n_rows > 1:
         _layout_bin_panel_rows(fig, list(axes_flat[:n_panels]))
+    if n_cols > 1:
+        _layout_bin_panel_columns(fig, list(axes_flat[:n_panels]))
     if anchor is None:
         _layout_top_center_legend(fig, legend, title=fig._suptitle, axes=list(axes_flat[:n_panels]))
 
@@ -2370,7 +2475,8 @@ def batch_bin_trend_plot(
     :param date_freq: 日期聚合频率，``'D'`` 日 / ``'W'`` 周 / ``'M'`` 月 / ``'Q'`` 季度，默认 ``'M'``
     :param sort_by: 特征排序指标，``'iv'``（默认）/ ``'ks'`` / ``'auc'``，决定绘图先后顺序
     :param max_features: 最大绘制特征数，默认 10
-    :param figsize_per_feature: 每个特征的图尺寸，默认 None（由 bin_trend_plot 按面板数量和方向自动计算）
+    :param figsize_per_feature: 每个特征的图尺寸，默认 None（由 bin_trend_plot 按面板数量和方向自动计算，
+        并按实际轴装饰自适应相邻列间距）
     :param save_dir: 保存目录，提供时各特征图按特征名保存为图片
     :param kwargs: 其他参数传递给 bin_trend_plot
     :return: 特征名到 ``Figure`` 的字典

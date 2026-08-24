@@ -160,6 +160,40 @@ def _assert_bin_panel_rows_are_clear(fig):
         assert min(upper_bottoms) >= max(lower_header_tops) + gap_pixels - 1.0
 
 
+def _horizontal_panel_decoration_gaps(fig):
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+    owners = [summary.axes for summary in _metric_summary_artists(fig)]
+    panel_rows = []
+    for axis in owners:
+        for row in panel_rows:
+            if np.isclose(axis.get_position().y0, row[0].get_position().y0):
+                row.append(axis)
+                break
+        else:
+            panel_rows.append([axis])
+
+    def panel_bounds(owner):
+        x_bounds = []
+        for axis in fig.axes:
+            if not _same_panel(axis, owner):
+                continue
+            axes_bbox = axis.get_window_extent(renderer)
+            x_bounds.extend([axes_bbox.x0, axes_bbox.x1])
+            for component in (axis.xaxis, axis.yaxis):
+                bbox = component.get_tightbbox(renderer)
+                if bbox is not None:
+                    x_bounds.extend([bbox.x0, bbox.x1])
+        return min(x_bounds), max(x_bounds)
+
+    gaps = []
+    for row in panel_rows:
+        row.sort(key=lambda axis: axis.get_position().x0)
+        for left_axis, right_axis in zip(row, row[1:]):
+            gaps.append(panel_bounds(right_axis)[0] - panel_bounds(left_axis)[1])
+    return gaps
+
+
 def _assert_horizontal_panel_rows_are_clear(fig):
     _assert_bin_panel_rows_are_clear(fig)
 
@@ -304,6 +338,41 @@ def test_batch_bin_trend_plot_horizontal_rows_do_not_overlap():
     finally:
         for fig in figures.values():
             plt.close(fig)
+
+
+@pytest.mark.parametrize("figure_width", [15.6, 20.0, 30.0])
+def test_batch_bin_trend_plot_vertical_columns_use_minimal_non_overlapping_gap(figure_width):
+    """三列纵向面板应避开左右纵轴装饰，同时只保留必要的小间距。"""
+    periods = np.repeat(["2025-12", "2026-01", "2026-02"], 50)
+    values = 123450.123 + np.arange(10) * 17.111
+    data = pd.DataFrame(
+        {
+            "score": np.tile(values, 15),
+            "target": np.tile([0, 0, 0, 1, 0, 1, 1, 1, 0, 1], 15),
+            "period": periods,
+        }
+    )
+
+    figures = batch_bin_trend_plot(
+        data,
+        features=["score"],
+        target="target",
+        dimension_cols="period",
+        rules={"score": list(123450.123 + np.arange(1, 10) * 17.111)},
+        orientation="vertical",
+        show_stats=True,
+        max_features=1,
+        figsize_per_feature=(figure_width, 9),
+    )
+    fig = figures["score"]
+    try:
+        gaps = _horizontal_panel_decoration_gaps(fig)
+        minimum_gap = _minimum_gap_pixels(fig)
+        assert gaps
+        assert min(gaps) >= minimum_gap - 1.0
+        assert min(gaps) <= minimum_gap + 4.0
+    finally:
+        plt.close(fig)
 
 
 def test_vertical_bin_trend_plot_rows_do_not_overlap_with_long_bin_labels():

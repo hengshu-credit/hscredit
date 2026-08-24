@@ -4,6 +4,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+import hscredit
+import hscredit.database as database_api
+
 try:
     import tomllib
 except ImportError:  # pragma: no cover - Python 3.9/3.10
@@ -93,10 +96,35 @@ def test_database_query_result_types_are_shared_public_contract():
     assert RESULT_TYPES == frozenset({"dataframe", "records", "rows"})
 
 
+def test_shortcuts_are_explicit_database_api_without_polluting_hscredit_top_level():
+    shortcut_names = {
+        "query",
+        "execute",
+        "executemany",
+        "stream_query",
+        "read_query",
+        "export_schema",
+        "create_table",
+        "stream_write",
+        "read_one",
+        "read_many",
+        "read",
+        "write_one",
+        "write_many",
+        "write",
+        "delete_one",
+        "delete_many",
+        "delete",
+        "exists",
+    }
+
+    assert all(callable(getattr(database_api, name)) for name in shortcut_names)
+    assert shortcut_names.isdisjoint(database_api.__all__)
+    assert all(not hasattr(hscredit, name) for name in shortcut_names)
+
+
 def test_nosql_pool_options_translate_to_native_driver_names():
-    redis_options = RedisPoolOptions.from_mapping(
-        {"max_connections": 8, "blocking": True, "timeout": 2.5}
-    )
+    redis_options = RedisPoolOptions.from_mapping({"max_connections": 8, "blocking": True, "timeout": 2.5})
     mongo_options = MongoPoolOptions.from_mapping(
         {
             "min_pool_size": 2,

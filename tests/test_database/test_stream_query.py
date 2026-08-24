@@ -238,6 +238,24 @@ def test_native_dataframe_chunks_are_not_reconstructed():
     assert chunks[0] is native_chunk
 
 
+def test_close_callbacks_continue_after_an_earlier_callback_fails():
+    database = Database("observable_stream")
+    stream = database.stream_query("select id from t")
+    events = []
+
+    def failing_callback():
+        events.append("first")
+        raise RuntimeError("cleanup failed")
+
+    stream._add_close_callback(failing_callback)
+    stream._add_close_callback(lambda: events.append("second"))
+
+    with pytest.raises(RuntimeError, match="cleanup failed"):
+        stream.close()
+
+    assert events == ["first", "second"]
+
+
 def test_stream_query_projects_json_fields_without_returning_source_json():
     database = Database(
         "observable_stream",

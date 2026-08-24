@@ -333,6 +333,13 @@ def collect_validation_errors(build_dir: Path) -> list[str]:
     )
     if not all(method in database_api_html for method in required_database_methods):
         errors.append("数据库 API 页面必须包含 stream_query 与 QueryStream.to_result 方法锚点")
+    required_shortcuts = (
+        "hscredit.database.shortcuts.query",
+        "hscredit.database.shortcuts.read_query",
+        "hscredit.database.shortcuts.stream_write",
+    )
+    if not all(shortcut in database_api_html for shortcut in required_shortcuts):
+        errors.append("数据库 API 页面缺少 query、read_query 或 stream_write 类外快捷操作锚点")
     if 'href="database.html"' not in tooling_html or ">数据库" not in tooling_html:
         errors.append("数据库 API 导航未进入报告与工具侧边栏")
     if not _has_database_result(parsed_search_index):

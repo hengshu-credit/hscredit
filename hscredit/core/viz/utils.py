@@ -310,10 +310,12 @@ def save_figure(fig, save_path: Optional[str] = None, dpi: int = 240):
     >>> save_figure(fig, 'output/分箱图.png', dpi=300)
     """
     if save_path:
+        save_path = os.fspath(save_path)
         save_dir = os.path.dirname(save_path)
         if save_dir and not os.path.exists(save_dir):
             os.makedirs(save_dir, exist_ok=True)
-        fig.savefig(save_path, dpi=dpi, format="png", bbox_inches="tight")
+        save_kwargs = {'format': 'png'} if not os.path.splitext(save_path)[1] else {}
+        fig.savefig(save_path, dpi=dpi, bbox_inches="tight", **save_kwargs)
 
 
 def get_or_create_ax(figsize: Tuple[float, float] = (10, 6), 

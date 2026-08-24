@@ -138,7 +138,7 @@ def score_distribution_comparison_plot(
         color = colors[idx % len(colors)]
         ax.hist(arr, bins=bins, alpha=0.25, color=color, density=True,
                 label=f'{label}（n={len(arr):,}）')
-        if _has_scipy and len(arr) > 2:
+        if _has_scipy and len(arr) > 2 and np.unique(arr).size > 1:
             kde = gaussian_kde(arr, bw_method='scott')
             x_range = np.linspace(arr.min(), arr.max(), 300)
             ax.plot(x_range, kde(x_range), color=color, linewidth=2)

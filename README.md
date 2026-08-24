@@ -1193,6 +1193,28 @@ db = Database(
 )
 ```
 
+一次性操作可以直接使用类外快捷方法；配置中的类型键为 `db_type`，操作结束后自动释放
+配置创建的连接池：
+
+```python
+from hscredit.database import read_query, execute
+
+mysql_config = {
+    "db_type": "mysql",
+    "host": "127.0.0.1",
+    "user": "risk",
+    "password": "password",
+    "database": "risk",
+}
+
+frame = read_query(mysql_config, "SELECT id FROM events")
+execute(mysql_config, "DELETE FROM events WHERE id=%s", params=(1,))
+
+# 同样支持已有 Database 或原生 DB-API 连接
+frame = read_query(database, sql)
+frame = read_query(connection, sql, db_type="mysql")
+```
+
 流式读取默认产生 DataFrame 分块。`progress=True` 只显示累计读取行数、速度和耗时，默认不执行额外统计 SQL；只有显式设置 `count_total=True` 或传入 `count_sql` 时才查询总数。主动 `stop()` 或读取期间按 `Ctrl+C` 后，可直接合并当前已经读取的数据：
 
 ```python

@@ -28,6 +28,26 @@ from .registry import available_adapters, get_adapter_class, register_adapter
 from .stream import QueryStream
 from .metadata import METADATA_COLUMNS_ZH, MetadataInspection, QualifiedTarget
 from .writing import BatchWriteResult, iter_write_batches
+from .shortcuts import (  # noqa: F401 - 仅供 hscredit.database 显式导入，不进入 __all__
+    create_table,
+    delete,
+    delete_many,
+    delete_one,
+    execute,
+    executemany,
+    exists,
+    export_schema,
+    query,
+    read,
+    read_many,
+    read_one,
+    read_query,
+    stream_query,
+    stream_write,
+    write,
+    write_many,
+    write_one,
+)
 
 __all__ = [
     "RESULT_TYPES",

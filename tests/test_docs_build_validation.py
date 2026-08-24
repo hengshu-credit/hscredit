@@ -55,7 +55,10 @@ def test_accepts_complete_docs_artifacts(tmp_path):
         tmp_path / "api" / "database.html",
         '<dt id="hscredit.database.client.Database">Database</dt>'
         '<dt id="hscredit.database.client.Database.stream_query">stream_query</dt>'
-        '<dt id="hscredit.database.stream.QueryStream.to_result">to_result</dt>',
+        '<dt id="hscredit.database.stream.QueryStream.to_result">to_result</dt>'
+        '<dt id="hscredit.database.shortcuts.query">query</dt>'
+        '<dt id="hscredit.database.shortcuts.read_query">read_query</dt>'
+        '<dt id="hscredit.database.shortcuts.stream_write">stream_write</dt>',
     )
     _write(
         tmp_path / "api" / "tooling.html",
@@ -157,6 +160,20 @@ def test_rejects_database_docs_without_json_projection_and_public_method_anchors
 
     assert any("JSON 字段投影" in error for error in errors)
     assert any("stream_query" in error and "to_result" in error for error in errors)
+
+
+def test_rejects_database_api_without_shortcut_method_anchors(tmp_path):
+    """数据库 API 页面必须发布类外快捷查询和写入入口。"""
+    _write(
+        tmp_path / "api" / "database.html",
+        '<dt id="hscredit.database.client.Database">Database</dt>'
+        '<dt id="hscredit.database.client.Database.stream_query">stream_query</dt>'
+        '<dt id="hscredit.database.stream.QueryStream.to_result">to_result</dt>',
+    )
+
+    errors = collect_validation_errors(tmp_path)
+
+    assert any("类外快捷操作" in error for error in errors)
 
 
 def test_reports_current_nav_rule_that_drops_reserved_border(tmp_path):

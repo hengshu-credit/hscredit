@@ -30,22 +30,15 @@ from .utils import (
 
 def _quick_psi(base: np.ndarray, target: np.ndarray, n_bins: int = 10) -> float:
     """快速计算 PSI（内部辅助函数）."""
-    base = base[~np.isnan(base)]
-    target = target[~np.isnan(target)]
+    from ..metrics import psi
+
+    base = np.asarray(base)
+    target = np.asarray(target)
+    base = base[~pd.isna(base)]
+    target = target[~pd.isna(target)]
     if len(base) == 0 or len(target) == 0:
-        return 0.0
-    quantiles = np.linspace(0, 100, n_bins + 1)
-    bin_edges = np.percentile(base, quantiles)
-    bin_edges = np.unique(bin_edges)
-    if len(bin_edges) < 2:
-        return 0.0
-    base_counts = np.histogram(base, bins=bin_edges)[0]
-    target_counts = np.histogram(target, bins=bin_edges)[0]
-    eps = 1e-8
-    base_pct = base_counts / base_counts.sum() + eps
-    target_pct = target_counts / target_counts.sum() + eps
-    psi = np.sum((target_pct - base_pct) * np.log(target_pct / base_pct))
-    return float(psi)
+        return np.nan
+    return float(psi(base, target, max_n_bins=n_bins))
 
 
 def rule_swap_plot(
@@ -606,7 +599,7 @@ def segment_scorecard_comparison(
 ) -> Figure:
     """按客群分组的评分指标对比柱状图.
 
-    每个指标单独一个子图，对比 **同一指标在不同客群下的差异**（各指标量纲不同，
+    每个指标单独一个子图，对比 **同一指标在不同客群下的差异** （各指标量纲不同，
     分子图展示可避免 KS/AUC/LIFT 因量纲差异而无法横向比较）。
 
     :param df: 数据集

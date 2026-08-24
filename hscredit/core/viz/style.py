@@ -5,11 +5,14 @@
 提供主题管理、配色方案、字体配置等全局样式设置，
 确保所有图表风格一致。
 
+``import hscredit`` 会自动调用 :func:`hscredit.init_setting` 建立字体和基础样式。
+本模块的主题函数只在该基线上做可选覆盖。
+
 用法::
 
     from hscredit.core.viz import set_style, get_palette, get_font_sizes
 
-    # 应用风控主题（推荐）
+    # 在 init_setting 基线上应用可选风控主题
     set_style("risk")
 
     # 获取配色
@@ -20,6 +23,7 @@
     fonts = get_font_sizes()  # {'title': 14, 'subtitle': 13, ...}
 """
 
+import copy
 import platform
 import matplotlib as mpl
 from typing import Dict, List, Optional
@@ -92,9 +96,9 @@ def get_palette(name: str = "default"):
     :return: 颜色列表或字典
     """
     if name in _PALETTES:
-        return _PALETTES[name]
+        return copy.deepcopy(_PALETTES[name])
     if name in GRADIENT_PALETTES:
-        return GRADIENT_PALETTES[name]
+        return copy.deepcopy(GRADIENT_PALETTES[name])
     raise ValueError(f"未知配色方案 '{name}'，可选: {list(_PALETTES.keys()) + list(GRADIENT_PALETTES.keys())}")
 
 
@@ -260,8 +264,10 @@ def set_style(theme: str = "risk", chinese_font: bool = True):
     if theme not in _THEMES:
         raise ValueError(f"未知主题 '{theme}'，可选: {list(_THEMES.keys())}")
 
-    # 重置为 matplotlib 默认，再叠加主题
-    mpl.rcdefaults()
+    # 以 hscredit.init_setting 为全局样式基线，再叠加可选主题。
+    from ...utils.init import init_setting
+
+    init_setting()
 
     params = dict(_THEMES[theme])
 
@@ -282,7 +288,9 @@ def get_current_theme() -> Optional[str]:
 
 
 def reset_style():
-    """重置为 matplotlib 默认样式."""
+    """重置为 hscredit.init_setting 定义的默认样式."""
     global _current_theme
-    mpl.rcdefaults()
+    from ...utils.init import init_setting
+
+    init_setting()
     _current_theme = None

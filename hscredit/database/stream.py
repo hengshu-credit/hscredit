@@ -5,7 +5,7 @@
 
 from datetime import datetime, timezone
 from copy import deepcopy
-from typing import Any, List, Mapping, Optional, Sequence
+from typing import Any, Callable, List, Mapping, Optional, Sequence
 
 import pandas as pd
 from tqdm.auto import tqdm
@@ -82,6 +82,7 @@ class QueryStream:
         self._chunks: List[pd.DataFrame] = []
         self._columns = list(getattr(resource, "columns", ()))
         self._resource_closed = False
+        self._close_callbacks: List[Callable[[], Any]] = []
         self._progress_bar = tqdm(total=total_rows, desc="流式读取", unit="行") if progress else None
 
     def __iter__(self) -> "QueryStream":
@@ -169,14 +170,23 @@ class QueryStream:
             self._close_resource()
             raise StopIteration
 
-        frame, null_masks = self._to_frame(batch)
-        frame = self._apply_defaults(frame, null_masks)
-        self.rows_read += len(frame)
-        if self.retain:
-            self._chunks.append(frame)
-        if self._progress_bar is not None:
-            self._progress_bar.update(len(frame))
-        return self._format_frame(frame)
+        try:
+            frame, null_masks = self._to_frame(batch)
+            frame = self._apply_defaults(frame, null_masks)
+            self.rows_read += len(frame)
+            if self.retain:
+                self._chunks.append(frame)
+            if self._progress_bar is not None:
+                self._progress_bar.update(len(frame))
+            return self._format_frame(frame)
+        except KeyboardInterrupt:
+            self._interrupt("KeyboardInterrupt")
+            raise StopIteration
+        except Exception as exc:
+            self.state = StreamState.FAILED
+            self.interrupt_reason = str(exc)
+            self._close_resource()
+            raise DatabaseQueryError("流式读取失败") from exc
 
     def _close_resource(self) -> None:
         if self._resource_closed:
@@ -187,6 +197,27 @@ class QueryStream:
             self._resource_closed = True
             if self._progress_bar is not None:
                 self._progress_bar.close()
+            callbacks = self._close_callbacks
+            self._close_callbacks = []
+            callback_error = None
+            for callback in callbacks:
+                try:
+                    callback()
+                except BaseException as exc:
+                    if callback_error is None:
+                        callback_error = exc
+            if callback_error is not None:
+                raise callback_error
+
+    def _add_close_callback(self, callback: Callable[[], Any]) -> None:
+        """注册在查询资源关闭后执行一次的内部清理回调。"""
+
+        if not callable(callback):
+            raise TypeError("callback 必须可调用")
+        if self._resource_closed:
+            callback()
+            return
+        self._close_callbacks.append(callback)
 
     def _interrupt(self, reason: str) -> None:
         if self.state is not StreamState.RUNNING:

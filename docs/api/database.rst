@@ -11,6 +11,13 @@
    :members:
    :show-inheritance:
 
+类外快捷操作
+------------
+
+.. automodule:: hscredit.database.shortcuts
+   :members:
+   :show-inheritance:
+
 流式查询
 --------
 
