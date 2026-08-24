@@ -57,7 +57,8 @@ jobs:
         run: python -m sphinx -b html docs docs/_build/html
 
   # 全功能测试：在声明支持的全部 Python 版本上安装所有可选依赖，
-  # 执行 slow、integration 在内的完整测试集。仅允许缺失本地演示工作簿的用例按条件跳过。
+  # 执行 slow、integration 在内的完整测试集。仅允许缺失本地演示工作簿，
+  # 或未配置真实数据库服务的集成用例按条件跳过。
   test:
     name: 全功能测试 (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
