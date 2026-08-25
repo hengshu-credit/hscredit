@@ -6,6 +6,11 @@ import re
 import runpy
 from pathlib import Path
 
+import numpy as np
+import pandas as pd
+
+from hscredit.core.selectors import PSISelector
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -92,3 +97,35 @@ def test_model_interpretability_notebook_uses_new_explainability_api():
     assert "random_state=" not in counterfactual_source
     assert error_outputs == []
     assert str(PROJECT_ROOT) not in output_text
+
+
+def test_selectors_notebook_psi_example_compares_unequal_train_and_oot_splits():
+    """PSI 教程应能直接比较样本量不同的训练集与 OOT 集。"""
+    notebook_path = PROJECT_ROOT / "examples" / "03_selectors.ipynb"
+    notebook = json.loads(notebook_path.read_text(encoding="utf-8"))
+    psi_cells = [
+        "".join(cell.get("source", []))
+        for cell in notebook["cells"]
+        if cell.get("cell_type") == "code" and "psi_selector.fit" in "".join(cell.get("source", []))
+    ]
+    numeric_features = ["数值特征", "稳定特征"]
+    df_model = pd.DataFrame(
+        {
+            "数值特征": np.arange(264, dtype=float),
+            "稳定特征": np.tile([0.0, 1.0], 132),
+        }
+    )
+    namespace = {
+        "PSISelector": PSISelector,
+        "df_model": df_model,
+        "numeric_features": numeric_features,
+    }
+
+    assert len(psi_cells) == 1
+    exec(compile(psi_cells[0], str(notebook_path), "exec"), namespace)
+
+    selector = namespace["psi_selector"]
+    assert selector.n_features_in_ == 2
+    assert selector.scores_.index.tolist() == numeric_features
+    assert selector.oot_df.equals(df_model.iloc[158:][numeric_features])
+    assert np.isfinite(selector.scores_.to_numpy()).all()

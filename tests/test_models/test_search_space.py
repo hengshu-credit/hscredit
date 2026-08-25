@@ -123,6 +123,16 @@ class TestOptunaDistributionStyle:
             'type': 'int', 'low': 2, 'high': 10, 'step': 2,
         }
 
+    def test_int_distribution_rejects_log_with_non_unit_step(self):
+        with pytest.raises(ValueError, match='log=True.*step'):
+            IntDistribution(2, 256, log=True, step=2)
+
+    def test_int_dict_rejects_log_with_non_unit_step(self):
+        with pytest.raises(ValueError, match='log=True.*step'):
+            normalize_search_space({
+                'p': {'type': 'int', 'low': 2, 'high': 256, 'log': True, 'step': 2}
+            })
+
     def test_float_distribution(self):
         assert _norm(FloatDistribution(0.0, 1.0)) == {'type': 'float', 'low': 0.0, 'high': 1.0}
 

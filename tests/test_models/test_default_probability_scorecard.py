@@ -245,6 +245,26 @@ def test_tune_preserves_source_scorecard_params(binary_data):
     assert tuned.base_odds_ == pytest.approx(np.mean(y == 1) / np.mean(y == 0))
 
 
+def test_tune_preserves_source_random_state(binary_data):
+    """便捷调参创建的候选模型和最终模型必须复用源模型随机种子。"""
+    X, y = binary_data
+    source = RandomForest(n_estimators=5, random_state=42)
+
+    tuned = source.tune(
+        X,
+        y,
+        search_space={"max_depth": [2]},
+        fixed_params={"n_estimators": 5},
+        n_trials=1,
+        cv=2,
+        n_jobs=1,
+        verbose=False,
+    )
+
+    assert tuned.random_state == 42
+    assert tuned.tuner.best_params_["random_state"] == 42
+
+
 def test_artifact_round_trip_preserves_fitted_scorecard(binary_data, tmp_path):
     X, y = binary_data
     model = RandomForest(

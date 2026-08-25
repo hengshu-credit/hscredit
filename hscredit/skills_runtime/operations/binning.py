@@ -22,16 +22,28 @@ from ..errors import SkillExecutionError
 from ..registry import OperationSpec
 
 
-def _parameters(function, parameters: Mapping[str, Any], *, reserved: Iterable[str] = ("data",)) -> Dict[str, Any]:
-    """只接受目标函数显式声明的参数。"""
+def _parameters(
+    function,
+    parameters: Mapping[str, Any],
+    *,
+    reserved: Iterable[str] = ("data",),
+    allow_var_keyword: bool = False,
+) -> Dict[str, Any]:
+    """校验目标函数参数，并可按需放行 ``**kwargs``。"""
     signature = inspect.signature(function)
+    has_var_keyword = any(
+        parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values()
+    )
     allowed = {
         name
         for name, parameter in signature.parameters.items()
         if parameter.kind not in {inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD}
     }
+    reserved = set(reserved)
     allowed.difference_update(reserved)
     unknown = sorted(set(parameters) - allowed)
+    if allow_var_keyword and has_var_keyword:
+        unknown = [name for name in unknown if name in reserved]
     if unknown:
         raise SkillExecutionError(
             code="SCHEMA_INVALID",
@@ -62,7 +74,8 @@ def _as_parameter_list(value: Any) -> list:
 
 
 def _label_combinations(parameters: Mapping[str, Any]) -> list:
-    overdue_fields = _as_parameter_list(parameters.get("overdue"))
+    overdue = parameters.get("overdue")
+    overdue_fields = _as_parameter_list(overdue)
     dpds = _as_parameter_list(parameters.get("dpds"))
     return [{"overdue": overdue, "dpd": dpd} for overdue in overdue_fields for dpd in dpds]
 
@@ -121,10 +134,17 @@ def _feature_bin_stats(context) -> dict:
 
 
 def _benchmark_binning_methods(context) -> dict:
-    params = _parameters(benchmark_binning_methods, context.request.parameters)
+    params = _parameters(
+        benchmark_binning_methods,
+        context.request.parameters,
+        allow_var_keyword=True,
+    )
     table = benchmark_binning_methods(_data(context), **params)
     _write_workbook(context, [("方法对比", table)])
-    return {"summary": summarize_dataframe(table)}
+    summary_params = dict(params)
+    summary_params.setdefault("overdue", "MOB1")
+    summary_params.setdefault("dpds", [3, 0])
+    return {"summary": _summarize_binning_table(table, summary_params)}
 
 
 def _flatten_tables(tables: Mapping[str, Any]) -> Iterable[Tuple[str, pd.DataFrame]]:

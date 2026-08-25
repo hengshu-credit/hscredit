@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+import pandas as pd
 from openpyxl import load_workbook
 
 from hscredit.skills_runtime import execute_skill
@@ -87,10 +88,11 @@ def test_benchmark_binning_methods_writes_method_comparison(tmp_path, credit_fra
         "benchmark_binning_methods",
         {
             "feature": "score",
-            "overdue_col": "MOB1",
+            "overdue": "MOB1",
             "dpds": [0],
             "hscredit_methods": ["quantile", "tree"],
             "max_n_bins": 4,
+            "long_format": True,
             "n_jobs": 1,
         },
         "binning_benchmark",
@@ -100,6 +102,121 @@ def test_benchmark_binning_methods_writes_method_comparison(tmp_path, credit_fra
 
     assert result["summary"]["rows"] == 2
     assert _workbook(result).sheetnames == ["方法对比"]
+
+
+def test_benchmark_binning_methods_combines_overdue_labels_and_uses_chinese_columns(tmp_path, credit_frame):
+    """技能入口丢失多逾期组合元数据或返回英文指标名时，本测试必须失败。"""
+    data = credit_frame.copy()
+    data["MOB3"] = data["target"] * 10
+    request = _request(
+        tmp_path,
+        "benchmark_binning_methods",
+        {
+            "feature": "score",
+            "overdue": ["MOB1", "MOB3"],
+            "dpds": [0, 3],
+            "hscredit_methods": ["quantile"],
+            "prebinning": None,
+            "lift_refine": False,
+            "long_format": True,
+            "n_jobs": 1,
+        },
+        "multi_label_benchmark",
+    )
+
+    result = execute_skill("hsbin", request, objects={"data:credit": data})
+
+    assert result["summary"]["rows"] == 4
+    assert result["summary"]["label_combinations"] == [
+        {"overdue": "MOB1", "dpd": 0},
+        {"overdue": "MOB1", "dpd": 3},
+        {"overdue": "MOB3", "dpd": 0},
+        {"overdue": "MOB3", "dpd": 3},
+    ]
+    assert "分箱方法" in result["summary"]["preview"][0]
+    assert "逾期字段" in result["summary"]["preview"][0]
+    assert _workbook(result).sheetnames == ["方法对比"]
+
+
+def test_benchmark_binning_methods_forwards_method_specific_kwargs_through_skill(tmp_path, credit_frame):
+    """技能适配器拦截底层合法 kwargs 时，本测试必须失败。"""
+    request = _request(
+        tmp_path,
+        "benchmark_binning_methods",
+        {
+            "feature": "score",
+            "overdue": "MOB1",
+            "dpds": [3],
+            "hscredit_methods": ["quantile"],
+            "prebinning": None,
+            "lift_refine": False,
+            "quantiles": [0, 0.2, 0.8, 1],
+            "force_numerical": True,
+            "long_format": True,
+            "n_jobs": 1,
+        },
+        "benchmark_kwargs",
+    )
+
+    result = execute_skill("hsbin", request, objects={"data:credit": credit_frame})
+
+    assert result["status"] == "success"
+    assert result["summary"]["rows"] == 1
+    assert len(result["summary"]["preview"][0]["切分点"]) == 2
+
+
+def test_benchmark_binning_methods_exposes_default_label_combinations(tmp_path, credit_frame):
+    """默认逾期字段或阈值未进入技能摘要时，本测试必须失败。"""
+    request = _request(
+        tmp_path,
+        "benchmark_binning_methods",
+        {
+            "feature": "score",
+            "hscredit_methods": ["quantile"],
+            "prebinning": None,
+            "lift_refine": False,
+            "n_jobs": 1,
+        },
+        "benchmark_defaults",
+    )
+
+    result = execute_skill("hsbin", request, objects={"data:credit": credit_frame})
+
+    assert result["summary"]["rows"] == 1
+    assert ["分箱详情", "分箱方法"] in result["summary"]["columns"]
+    assert ["MOB1_3+", "综合评分"] in result["summary"]["columns"]
+    assert ["MOB1_0+", "综合评分"] in result["summary"]["columns"]
+    assert result["summary"]["preview"][0]["分箱详情 / 分箱方法"] == "hscredit-quantile"
+    assert result["summary"]["label_combinations"] == [
+        {"overdue": "MOB1", "dpd": 3},
+        {"overdue": "MOB1", "dpd": 0},
+    ]
+
+
+def test_benchmark_binning_methods_skill_exposes_quality_metrics_in_long_format(tmp_path, credit_frame):
+    """技能入口应接受 long_format 并在摘要中展示中文质量指标。"""
+    request = _request(
+        tmp_path,
+        "benchmark_binning_methods",
+        {
+            "feature": "score",
+            "overdue": "MOB1",
+            "dpds": [3],
+            "hscredit_methods": ["quantile"],
+            "prebinning": None,
+            "lift_refine": False,
+            "long_format": True,
+            "n_jobs": 1,
+        },
+        "benchmark_quality_metrics",
+    )
+
+    result = execute_skill("hsbin", request, objects={"data:credit": credit_frame})
+
+    preview = result["summary"]["preview"][0]
+    assert result["status"] == "success"
+    assert pd.isna(preview["错误信息"])
+    assert {"LIFT二次项系数", "综合评分", "LIFT序列", "坏样本率序列"}.issubset(preview)
 
 
 def test_feature_binning_summary_writes_summary_and_detail_sheets(tmp_path, credit_frame):

@@ -20,10 +20,15 @@ pip install ngboost
 >>> dist = model.pred_dist(X_test)
 """
 
+import inspect
 from typing import Any, Dict, List, Optional, Tuple, Union
+
 import numpy as np
 import pandas as pd
+from packaging.version import InvalidVersion, Version
 from threadpoolctl import threadpool_limits
+
+from ....exceptions import ValidationError
 
 try:
     import ngboost
@@ -40,6 +45,25 @@ except ImportError:
     LogScore = None
 
 from ..base import BaseRiskModel
+
+
+_NGB_CLASSIFIER_INIT_EARLY_STOPPING_MIN_VERSION = Version("0.5.11")
+
+
+def _classifier_init_supports_early_stopping() -> bool:
+    """判断当前 NGBClassifier 是否在构造器中接收早停配置。"""
+    raw_version = getattr(ngboost, "__version__", "")
+    try:
+        if Version(str(raw_version)) >= _NGB_CLASSIFIER_INIT_EARLY_STOPPING_MIN_VERSION:
+            return True
+    except InvalidVersion:
+        pass
+
+    try:
+        parameters = inspect.signature(NGBClassifier.__init__).parameters
+    except (TypeError, ValueError, AttributeError):
+        return False
+    return {"validation_fraction", "early_stopping_rounds"}.issubset(parameters)
 
 
 class NGBoost(BaseRiskModel):
@@ -156,6 +180,8 @@ class NGBoost(BaseRiskModel):
         natural_gradient = self._native_params.get("natural_gradient", natural_gradient)
         objective = self._native_params.get("objective", objective)
         random_state = self._native_params.get("random_state", random_state)
+        validation_fraction = self._native_params.get("validation_fraction", validation_fraction)
+        early_stopping_rounds = self._native_params.get("early_stopping_rounds", early_stopping_rounds)
 
         super().__init__(
             objective=objective,
@@ -206,6 +232,19 @@ class NGBoost(BaseRiskModel):
         # 准备数据（支持从X中提取target）
         X, y, sample_weight = self._prepare_data(X, y, sample_weight, extract_target=True, training=True)
         self._validate_probability_scorecard_labels(y)
+        fit_kwargs = dict(fit_params)
+        effective_early_stopping_rounds = fit_kwargs.pop(
+            "early_stopping_rounds", self.early_stopping_rounds
+        )
+        has_native_x_val = "X_val" in fit_kwargs
+        has_native_y_val = "Y_val" in fit_kwargs
+        native_x_val = fit_kwargs.pop("X_val", None)
+        native_y_val = fit_kwargs.pop("Y_val", None)
+        if has_native_x_val != has_native_y_val or (native_x_val is None) != (native_y_val is None):
+            raise ValidationError("NGBoost原生验证集参数 X_val 和 Y_val 必须同时提供")
+        native_validation_provided = native_x_val is not None and native_y_val is not None
+        if eval_set is not None and len(eval_set) > 0 and native_validation_provided:
+            raise ValidationError("验证集参数冲突：eval_set 与 X_val/Y_val 不能同时提供")
 
         # 保存特征信息
         self.n_features_in_ = X.shape[1]
@@ -221,11 +260,22 @@ class NGBoost(BaseRiskModel):
             if isinstance(y_val, pd.Series):
                 y_val = y_val.values
             X_train, y_train = X, y
-        elif self.validation_fraction > 0 and (self.early_stopping_rounds is not None):
+        elif native_validation_provided:
+            X_val, y_val = native_x_val, native_y_val
+            if isinstance(X_val, pd.DataFrame):
+                X_val = X_val.values
+            if isinstance(y_val, pd.Series):
+                y_val = y_val.values
+            X_train, y_train = X, y
+        elif self.validation_fraction > 0 and effective_early_stopping_rounds is not None:
             X_train, X_val, y_train, y_val, sw_train, sw_val = self._create_eval_set(X, y, sample_weight)
             sample_weight = sw_train
         else:
             X_train, y_train = X, y
+
+        native_early_stopping_rounds = (
+            effective_early_stopping_rounds if X_val is not None and y_val is not None else None
+        )
 
         # 构建基学习器
         base_learner = DecisionTreeRegressor(
@@ -233,6 +283,7 @@ class NGBoost(BaseRiskModel):
             max_depth=self.base_max_depth,
             min_samples_split=self.base_min_samples_split,
             min_samples_leaf=self.base_min_samples_leaf,
+            random_state=self.random_state,
         )
 
         # 构建NGBoost参数
@@ -248,20 +299,25 @@ class NGBoost(BaseRiskModel):
             "verbose": self.verbose,
             "random_state": self.random_state,
         }
+        constructor_handles_early_stopping = _classifier_init_supports_early_stopping()
+        if constructor_handles_early_stopping:
+            ngb_params.update(
+                validation_fraction=self.validation_fraction,
+                early_stopping_rounds=native_early_stopping_rounds,
+            )
 
         # 更新kwargs参数
         ngb_params.update(self.kwargs)
 
         # 最后更新原生params（优先级最高，但排除已处理的base参数）
         for k, v in self._native_params.items():
-            if not k.startswith("base_"):
+            if not k.startswith("base_") and k not in {"validation_fraction", "early_stopping_rounds"}:
                 ngb_params[k] = v
 
         # 创建模型
         self._model = NGBClassifier(**ngb_params)
 
         # 训练
-        fit_kwargs = dict(fit_params)
         if sample_weight is not None:
             fit_kwargs["sample_weight"] = sample_weight
         if X_val is not None and y_val is not None:
@@ -269,14 +325,22 @@ class NGBoost(BaseRiskModel):
             fit_kwargs["Y_val"] = y_val
             if sw_val is not None:
                 fit_kwargs.setdefault("val_sample_weight", sw_val)
-            if self.early_stopping_rounds is not None:
-                fit_kwargs["early_stopping_rounds"] = self.early_stopping_rounds
+            if effective_early_stopping_rounds is not None and not constructor_handles_early_stopping:
+                fit_kwargs["early_stopping_rounds"] = effective_early_stopping_rounds
 
         # NGBoost 的提升轮次存在顺序依赖，不能安全地在轮次层并行；其
         # 决策树/NumPy 原生计算仍会使用 OpenMP/BLAS。统一 n_jobs 在这里
         # 约束原生线程池，也防止调参或报告外层并行时发生线程超订阅。
-        with threadpool_limits(limits=max(1, int(self.n_jobs or 1))):
-            self._model.fit(X_train, y_train, **fit_kwargs)
+        try:
+            with threadpool_limits(limits=max(1, int(self.n_jobs or 1))):
+                self._model.fit(X_train, y_train, **fit_kwargs)
+        except np.linalg.LinAlgError as exc:
+            if not self.natural_gradient or "singular" not in str(exc).lower():
+                raise
+            raise ValidationError(
+                "NGBoost训练失败：自然梯度计算出现奇异矩阵，通常由预测概率饱和到0或1导致。"
+                "请降低学习率或基学习器深度，并增大叶节点最小样本数后重试。"
+            ) from exc
 
         # 保存结果
         self._best_iteration = getattr(self._model, "best_val_loss_itr", None)

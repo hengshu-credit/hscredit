@@ -618,7 +618,13 @@ def test_2d_successful_refit_replaces_all_previous_state(n_jobs, backend):
     y = pd.Series(np.tile([0, 1], 12), name="目标")
     old = pd.DataFrame({"old_x": np.arange(24, dtype=float), "old_y": np.arange(23, -1, -1, dtype=float)})
     new = pd.DataFrame({"new_x": np.arange(23, -1, -1, dtype=float), "new_y": np.arange(24, dtype=float)})
-    binner = OptimalBinning2D(method="uniform", n_jobs=n_jobs, parallel_backend=backend, random_state=17).fit(old, y)
+    binner = OptimalBinning2D(
+        method="uniform",
+        n_jobs=n_jobs,
+        parallel_backend=backend,
+        random_state=17,
+        retain_training_data=True,
+    ).fit(old, y)
 
     binner.fit(new, y)
 

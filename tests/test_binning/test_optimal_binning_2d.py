@@ -124,7 +124,7 @@ class TestOptimalBinning2DBasic:
             assert col in cross_table.columns, f"缺少列: {col}"
 
         bin_table = binner.get_bin_table()
-        assert list(cross_table.columns[8:]) == list(bin_table.columns[4:])
+        assert list(cross_table.columns[10:]) == list(bin_table.columns[4:])
 
         # 检查行数（应该是 n_bins1 * n_bins2）
         expected_rows = binner.n_bins_x_ * binner.n_bins_y_
@@ -143,7 +143,7 @@ class TestOptimalBinning2DBasic:
         binner.fit(sample_df, y=sample_df["target"], features=["age", "income"])
 
         assert len(calls) == 2
-        assert list(binner.get_cross_table().columns[8:]) == list(binner.get_bin_table().columns[4:])
+        assert list(binner.get_cross_table().columns[10:]) == list(binner.get_bin_table().columns[4:])
 
     def test_scorecardpipeline_style(self, sample_df_with_target):
         """测试scorecardpipeline风格（target在DataFrame中）."""
@@ -753,7 +753,7 @@ class TestOptimalBinning2DExport:
 
         before = binner.transform(sample_df[["age", "income"]], metric="indices")
         rules = {"age": [np.nan, 25, 35], "income": [5000, 10000]}
-        binner.import_rules(rules)
+        binner.import_rules(rules, X=sample_df[["age", "income"]], y=sample_df["target"])
 
         after = binner.transform(sample_df[["age", "income"]], metric="indices")
         assert pd.isna(binner.user_splits_x[0])
@@ -944,7 +944,7 @@ class TestOptimalBinning2DMerge:
         assert cross.loc[cross["特征2分箱"] == -1, "特征2标签"].eq("缺失值").all()
         assert cross["分箱"].ge(0).all()
         assert cross["分箱标签"].notna().all()
-        assert list(cross.columns[8:]) == list(binner.get_bin_table().columns[4:])
+        assert list(cross.columns[10:]) == list(binner.get_bin_table().columns[4:])
 
     def test_missing_row_and_column_follow_non_missing_axis_monotonicity(self, sample_df):
         df = sample_df.copy()
@@ -1083,6 +1083,7 @@ def test_inherits_sklearn_estimator_and_transformer():
     binner = OptimalBinning2D(x_params={"method": "quantile"})
     assert isinstance(binner, BaseEstimator)
     assert isinstance(binner, TransformerMixin)
+    assert not [name for name in vars(binner) if name.endswith("_") and not name.startswith("_")]
     cloned = clone(binner)
     assert cloned.get_params(deep=False) == binner.get_params(deep=False)
 
@@ -1099,3 +1100,364 @@ def test_sklearn_feature_metadata_and_artifact(tmp_path):
     path = binner.save_artifact(tmp_path / "binning_2d.joblib")
     restored = OptimalBinning2D.load_artifact(path)
     pd.testing.assert_frame_equal(restored.transform(X), binner.transform(X))
+
+
+def test_dataframe_without_features_requires_exactly_two_columns():
+    """未指定 features 时不得静默截取 DataFrame 前两列。"""
+    frame = pd.DataFrame(
+        {
+            "x": [1, 2, 3, 4],
+            "y": [4, 3, 2, 1],
+            "unused": [9, 9, 8, 8],
+        }
+    )
+    target = pd.Series([0, 0, 1, 1], name="目标")
+
+    with pytest.raises(ValueError, match="恰好包含 2 个特征"):
+        OptimalBinning2D(max_n_bins=2).fit(frame, target)
+
+
+@pytest.mark.parametrize(
+    ("features", "message"),
+    [
+        (["x"], "必须包含两个特征名"),
+        (["x", "x"], "两个特征必须不同"),
+    ],
+)
+def test_features_must_name_two_distinct_columns(features, message):
+    frame = pd.DataFrame({"x": [1, 2, 3, 4], "y": [4, 3, 2, 1]})
+    target = pd.Series([0, 0, 1, 1], name="目标")
+
+    with pytest.raises(ValueError, match=message):
+        OptimalBinning2D(max_n_bins=2).fit(frame, target, features=features)
+
+
+def test_input_rejects_misaligned_target_length_and_index():
+    frame = pd.DataFrame({"x": range(6), "y": range(6)}, index=range(10, 16))
+
+    with pytest.raises(ValueError, match="长度不一致"):
+        OptimalBinning2D(max_n_bins=2).fit(frame, np.array([0, 1, 0]))
+    with pytest.raises(ValueError, match="索引不一致"):
+        OptimalBinning2D(max_n_bins=2).fit(frame, pd.Series([0, 1, 0, 1, 0, 1]))
+
+
+def test_input_requires_zero_one_binary_target():
+    frame = pd.DataFrame({"x": range(6), "y": range(6)})
+
+    with pytest.raises(ValueError, match="0/1 二分类"):
+        OptimalBinning2D(max_n_bins=2).fit(frame, pd.Series([1, 2, 1, 2, 1, 2]))
+
+
+def test_explicit_axis_dtype_controls_child_binner_type():
+    frame = pd.DataFrame(
+        {
+            "code": [1, 2, 3, 1, 2, 3] * 20,
+            "amount": [str(value) for value in range(1, 121)],
+        }
+    )
+    target = pd.Series(([0, 1, 0, 1, 0, 1] * 20), name="目标")
+    binner = OptimalBinning2D(
+        max_n_bins=3,
+        min_bin_size=0.01,
+        dtype_x="categorical",
+        dtype_y="numerical",
+    ).fit(frame, target)
+
+    assert binner.binner_x_.feature_types_["code"] == "categorical"
+    assert binner.binner_y_.feature_types_["amount"] == "numerical"
+    assert binner.transform(frame).notna().all().all()
+
+
+def test_invalid_axis_dtype_and_unknown_child_parameter_raise():
+    frame = pd.DataFrame({"x": range(20), "y": range(20)})
+    target = pd.Series([0, 1] * 10, name="目标")
+
+    with pytest.raises(ValueError, match="dtype_x"):
+        OptimalBinning2D(dtype_x="number").fit(frame, target)
+    with pytest.raises(ValueError, match="x_params.*not_a_parameter"):
+        OptimalBinning2D(x_params={"not_a_parameter": 1}).fit(frame, target)
+
+
+@pytest.mark.parametrize("invalid", [-0.2, 0, True, np.nan, "0.1", 1.5])
+def test_invalid_2d_min_bin_size_raises_chinese_error(invalid):
+    frame = pd.DataFrame({"x": range(20), "y": range(20)[::-1]})
+    target = pd.Series([0, 1] * 10, name="目标")
+
+    with pytest.raises(ValueError, match="min_bin_size 必须是"):
+        OptimalBinning2D(max_n_bins=2, min_bin_size=invalid).fit(frame, target)
+
+
+def test_grid_table_keeps_cell_metrics_separate_from_final_2d_bins(sample_df):
+    """网格单元编号不得被最终二维区域编号覆盖。"""
+    binner = OptimalBinning2D(max_n_bins=4, max_n_bins_2d=2).fit(
+        sample_df,
+        sample_df["target"],
+        features=["age", "income"],
+    )
+
+    grid = binner.get_cross_table()
+    assert grid.equals(binner.grid_table_)
+    assert binner.cross_table_.equals(binner.grid_table_)
+    assert {"分箱", "分箱标签", "二维分箱", "二维分箱标签"}.issubset(grid.columns)
+    assert grid["分箱"].is_unique
+    assert grid["分箱"].tolist() == list(range(len(grid)))
+    assert grid["二维分箱"].nunique() == binner.n_bins_2d_
+
+    x_bins = binner.binner_x_.transform(sample_df[["age"]], metric="indices")["age"]
+    y_bins = binner.binner_y_.transform(sample_df[["income"]], metric="indices")["income"]
+    first = grid.iloc[0]
+    mask = (x_bins == first["特征1分箱"]) & (y_bins == first["特征2分箱"])
+    assert first["样本总数"] == int(mask.sum())
+    if mask.any():
+        assert first["坏样本率"] == pytest.approx(float(sample_df.loc[mask, "target"].mean()))
+
+
+def test_binning_table_label_exactly_describes_non_rectangular_region():
+    """阶梯形二维箱不能被轴投影标签错误扩大成完整矩形。"""
+    frame = pd.DataFrame(
+        {
+            "x": np.repeat([0.5, 1.5, 2.5], 30),
+            "y": np.tile(np.repeat([0.5, 1.5, 2.5], 10), 3),
+        }
+    )
+    target = pd.Series([0, 1] * 45, name="目标")
+    binner = OptimalBinning2D(
+        max_n_bins=3,
+        max_n_bins_2d=3,
+        min_bin_size=0.01,
+        user_splits_x=[1.0, 2.0],
+        user_splits_y=[1.0, 2.0],
+        user_splits_fixed_x=True,
+        user_splits_fixed_y=True,
+        retain_training_data=True,
+    ).fit(frame, target)
+
+    # 手工构造一个阶梯形区域 0；其精确范围由三个矩形条带组成。
+    binner.solution_ = np.array(
+        [
+            [0, 0, 0],
+            [0, 0, 1],
+            [0, 2, 1],
+        ]
+    )
+    binner.n_bins_2d_ = 3
+    binner._compute_binning_table()
+
+    labels = binner.binning_table_.set_index("分箱")["分箱标签"]
+    assert labels.loc[0] == (
+        "[-inf, 1) × [-inf, +inf) ∪ "
+        "[1, 2) × [-inf, 2) ∪ "
+        "[2, +inf) × [-inf, 1)"
+    )
+    assert labels.loc[1] == "[1, +inf) × [2, +inf)"
+    assert labels.loc[2] == "[2, +inf) × [1, 2)"
+
+
+def test_binning_table_label_keeps_interval_shaped_categories_literal():
+    """形似区间的类别文本不能按数值边界拆分或改写。"""
+    frame = pd.DataFrame(
+        {
+            "x": ["(A,B)", "(C,D)"] * 60,
+            "y": np.tile([0.5, 1.5, 2.5, 3.5], 30),
+        }
+    )
+    target = pd.Series([0, 1, 1, 0] * 30, name="目标")
+    binner = OptimalBinning2D(
+        max_n_bins=2,
+        max_n_bins_2d=2,
+        dtype_x="categorical",
+        user_splits_x=[["(A,B)"], ["(C,D)"]],
+        user_splits_y=[2.0],
+        user_splits_fixed_x=True,
+        user_splits_fixed_y=True,
+        retain_training_data=True,
+    ).fit(frame, target)
+
+    binner.solution_ = np.array([[0, 1], [0, 1]])
+    binner.n_bins_2d_ = 2
+    binner._compute_binning_table()
+
+    labels = binner.binning_table_.set_index("分箱")["分箱标签"]
+    assert labels.loc[0] == "((A,B) ∪ (C,D)) × [-inf, 2)"
+    assert labels.loc[1] == "((A,B) ∪ (C,D)) × [2, +inf)"
+
+
+def test_max_n_bins_2d_counts_observed_missing_regions():
+    rng = np.random.RandomState(2026)
+    size = 480
+    frame = pd.DataFrame({"x": rng.normal(size=size), "y": rng.normal(size=size)})
+    frame.loc[:39, "x"] = np.nan
+    frame.loc[40:79, "y"] = np.nan
+    frame.loc[80:119, ["x", "y"]] = np.nan
+    target = pd.Series(rng.randint(0, 2, size), name="目标")
+
+    binner = OptimalBinning2D(
+        max_n_bins=3,
+        max_n_bins_2d=4,
+        min_bin_size=0.01,
+        missing_separate=True,
+    ).fit(frame, target)
+
+    assert binner.n_bins_2d_ <= 4
+    assert binner.get_bin_table().query("分箱 >= 0")["分箱"].nunique() <= 4
+
+
+def test_unobserved_missing_combination_does_not_consume_bin_budget():
+    rng = np.random.RandomState(2030)
+    size = 360
+    frame = pd.DataFrame({"x": rng.normal(size=size), "y": rng.normal(size=size)})
+    frame.loc[:39, "x"] = np.nan
+    frame.loc[40:79, "y"] = np.nan
+    target = pd.Series(rng.randint(0, 2, size), name="目标")
+
+    binner = OptimalBinning2D(
+        max_n_bins=3,
+        max_n_bins_2d=3,
+        min_bin_size=0.01,
+        missing_separate=True,
+    ).fit(frame, target)
+
+    assert binner.n_bins_2d_ <= 3
+    unseen_combination = pd.DataFrame({"x": [np.nan], "y": [np.nan]})
+    assert binner.transform(unseen_combination, metric="indices").iloc[0, 0] == -3
+
+
+def test_impossible_2d_constraints_raise_clear_errors():
+    frame = pd.DataFrame(
+        {
+            "x": [1.0, np.nan, 2.0, np.nan] * 20,
+            "y": [1.0, 2.0, np.nan, np.nan] * 20,
+        }
+    )
+    target = pd.Series([0, 1, 0, 1] * 20, name="目标")
+
+    with pytest.raises(ValueError, match="缺失值语义组数量"):
+        OptimalBinning2D(max_n_bins=2, max_n_bins_2d=3, min_bin_size=0.01).fit(frame, target)
+
+    ordinary = pd.DataFrame({"x": np.arange(80), "y": np.arange(80)[::-1]})
+    with pytest.raises(ValueError, match="min_bin_size.*无法满足"):
+        OptimalBinning2D(max_n_bins=2, min_bin_size=1000).fit(ordinary, target)
+
+
+def test_special_values_are_included_in_tables_and_joint_iv():
+    rng = np.random.RandomState(17)
+    size = 240
+    frame = pd.DataFrame({"x": rng.normal(size=size), "y": rng.normal(size=size)})
+    frame.loc[:29, "x"] = -999
+    target = pd.Series(rng.randint(0, 2, size), name="目标")
+    binner = OptimalBinning2D(
+        max_n_bins=3,
+        max_n_bins_2d=3,
+        min_bin_size=0.01,
+        special_codes_x=[-999],
+    ).fit(frame, target)
+
+    final_table = binner.get_bin_table()
+    grid_table = binner.get_cross_table()
+    assert final_table["样本总数"].sum() == size
+    assert grid_table["样本总数"].sum() == size
+    assert final_table.loc[final_table["分箱"] == -2, "样本总数"].item() == 30
+    assert grid_table.loc[grid_table["分箱"] == -2, "样本总数"].item() == 30
+    expected_iv = float(final_table["分档IV值"].sum())
+    assert binner.iv_2d_ == pytest.approx(expected_iv)
+    assert binner.iv_joint_ == pytest.approx(expected_iv)
+    assert final_table["指标IV值"].iloc[0] == pytest.approx(expected_iv)
+
+
+def test_all_special_values_fit_without_empty_grid_crash():
+    size = 80
+    frame = pd.DataFrame({"x": [-999] * size, "y": [-888] * size})
+    target = pd.Series([0, 1] * (size // 2), name="目标")
+    binner = OptimalBinning2D(
+        max_n_bins=2,
+        special_codes_x=[-999],
+        special_codes_y=[-888],
+    ).fit(frame, target)
+
+    transformed = binner.transform(frame, metric="indices")
+    assert transformed.iloc[:, 0].eq(-2).all()
+    assert binner.get_bin_table()["样本总数"].sum() == size
+    assert binner.get_cross_table()["样本总数"].sum() == size
+
+
+def test_unknown_category_has_complete_neutral_metric_fallbacks():
+    frame = pd.DataFrame(
+        {
+            "city": ["A", "B", "A", "B"] * 30,
+            "amount": np.arange(120, dtype=float),
+        }
+    )
+    target = pd.Series([0, 1, 0, 1] * 30, name="目标")
+    binner = OptimalBinning2D(max_n_bins=2, min_bin_size=0.01).fit(frame, target)
+    unseen = pd.DataFrame({"city": ["C"], "amount": [12.0]})
+
+    assert binner.transform(unseen, metric="indices").iloc[0, 0] == -3
+    assert binner.transform(unseen, metric="bins").iloc[0, 0] == "未知值"
+    assert binner.transform(unseen, metric="woe").iloc[0, 0] == pytest.approx(0.0)
+    assert binner.transform(unseen, metric="event_rate").iloc[0, 0] == pytest.approx(float(target.mean()))
+
+
+def test_unobserved_single_axis_missing_uses_unknown_fallbacks():
+    frame = pd.DataFrame({"x": np.arange(80, dtype=float), "y": np.arange(80, dtype=float)})
+    target = pd.Series([0, 1] * 40, name="目标")
+    binner = OptimalBinning2D(max_n_bins=3).fit(frame, target)
+    unseen = pd.DataFrame({"x": [np.nan, 10.0], "y": [10.0, np.nan]})
+
+    assert binner.transform(unseen, metric="indices").iloc[:, 0].eq(-3).all()
+    assert binner.transform(unseen, metric="bins").iloc[:, 0].eq("未知值").all()
+    assert binner.transform(unseen, metric="woe").iloc[:, 0].eq(0.0).all()
+    assert binner.transform(unseen, metric="event_rate").iloc[:, 0].eq(float(target.mean())).all()
+
+
+def test_solver_metadata_does_not_claim_global_optimality(sample_df):
+    binner = OptimalBinning2D(max_n_bins=3).fit(
+        sample_df,
+        sample_df["target"],
+        features=["age", "income"],
+    )
+
+    assert binner.optimization_status_ == "HEURISTIC"
+    assert binner.is_optimal_ is False
+    assert binner.iv_joint_ == pytest.approx(binner.iv_2d_)
+    assert binner.iv_interaction_ == pytest.approx(binner.iv_joint_)
+
+
+def test_training_data_retention_is_opt_in_and_never_serialized(tmp_path):
+    frame = pd.DataFrame({"x": range(40), "y": range(40)[::-1]})
+    target = pd.Series([0, 1] * 20, name="目标")
+
+    default_binner = OptimalBinning2D(max_n_bins=2).fit(frame, target)
+    assert default_binner._X is None
+    assert default_binner._y is None
+
+    retained = OptimalBinning2D(max_n_bins=2, retain_training_data=True).fit(frame, target)
+    assert retained._X is not None
+    assert retained._y is not None
+    path = retained.save_artifact(tmp_path / "retained.joblib")
+    restored = OptimalBinning2D.load_artifact(path)
+    assert restored._X is None
+    assert restored._y is None
+    pd.testing.assert_frame_equal(restored.transform(frame), retained.transform(frame))
+
+
+def test_categorical_rules_round_trip_with_explicit_training_data():
+    frame = pd.DataFrame(
+        {
+            "city": ["北京", "上海", "广州", "深圳"] * 30,
+            "amount": np.tile([1000.0, 2000.0, 3000.0, 4000.0], 30),
+        }
+    )
+    target = pd.Series([0, 0, 1, 1] * 30, name="目标")
+    binner = OptimalBinning2D(max_n_bins=3, min_bin_size=0.01).fit(frame, target)
+    rules = binner.export_rules()
+
+    assert isinstance(rules["city"][0], list)
+    with pytest.raises(ValueError, match="训练数据已释放"):
+        binner.import_rules(rules)
+
+    before = binner.transform(frame, metric="indices")
+    binner.import_rules(rules, X=frame, y=target)
+    after = binner.transform(frame, metric="indices")
+    assert binner.binner_x_.feature_types_["city"] == "categorical"
+    assert binner.export_rules()["city"] == rules["city"]
+    pd.testing.assert_frame_equal(after, before)

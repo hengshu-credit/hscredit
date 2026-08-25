@@ -3144,6 +3144,50 @@ def _set_cross_heat_ticklabels(
         ax.set_yticks([])
 
 
+def _binned_ks_curve(bin_table: pd.DataFrame) -> pd.DataFrame:
+    """按 WOE 风险方向从分箱统计重建累计好坏样本与 KS 曲线。"""
+    required = ['样本总数', '好样本数', '坏样本数', '分档WOE值']
+    missing = [column for column in required if column not in bin_table.columns]
+    if missing:
+        raise ValueError(f"分箱表缺少 KS 曲线所需列: {missing}")
+
+    ordered = bin_table.copy()
+    for column in required:
+        ordered[column] = pd.to_numeric(ordered[column], errors='coerce')
+    ordered = (
+        ordered.dropna(subset=required)
+        .sort_values('分档WOE值', ascending=False, kind='stable')
+        .reset_index(drop=True)
+    )
+    # 相同 WOE 对 transform 而言是同一评分阈值。先聚合再累计，避免箱内行序
+    # 产生实际不可达到的中间阈值并高估 KS。
+    ordered = ordered.groupby('分档WOE值', sort=False, as_index=False)[
+        ['样本总数', '好样本数', '坏样本数']
+    ].sum()
+    total = float(ordered['样本总数'].sum())
+    total_good = float(ordered['好样本数'].sum())
+    total_bad = float(ordered['坏样本数'].sum())
+    if total <= 0 or total_good <= 0 or total_bad <= 0:
+        return pd.DataFrame(columns=['累计样本占比', '累积好样本占比', '累积坏样本占比', 'KS值'])
+
+    curve = pd.DataFrame(
+        {
+            '累计样本占比': ordered['样本总数'].cumsum() / total,
+            '累积好样本占比': ordered['好样本数'].cumsum() / total_good,
+            '累积坏样本占比': ordered['坏样本数'].cumsum() / total_bad,
+        }
+    ).assign(KS值=lambda table: (table['累积坏样本占比'] - table['累积好样本占比']).abs())
+    origin = pd.DataFrame(
+        {
+            '累计样本占比': [0.0],
+            '累积好样本占比': [0.0],
+            '累积坏样本占比': [0.0],
+            'KS值': [0.0],
+        }
+    )
+    return pd.concat([origin, curve], ignore_index=True)
+
+
 def bin_2d_plot(
     data,
     features: Optional[List[str]] = None,
@@ -3183,7 +3227,7 @@ def bin_2d_plot(
       （纵向，bin 落在 x 轴）置于第1行中列，与同列热力图（坏样本率/坏账改善）按列对齐；
       特征1分箱图（横向，bin 落在 y 轴）置于第2行右列，与同行热力图（样本占比/坏样本率）
       按行对齐
-    - 两个 KS 曲线复用 :func:`ks_plot` （``curve='ks'``，仅 KS 曲线，去掉 ROC），分置左上、右下角
+    - 两个 KS 曲线按一维分箱 WOE 风险方向，由分箱好坏样本计数重建，分置左上、右下角
     - 其余 5 格为两变量分箱交叉指标热力图（类似相关性图，均以百分数标注）：
       样本占比、坏样本率、LIFT、风险拒绝比、坏账改善
 
@@ -3272,12 +3316,12 @@ def bin_2d_plot(
     # cross_table_ 中 -1 表示缺失箱。二维联合图保留缺失行/列，
     # 并将其映射到普通箱之后，形成完整的笛卡尔积热力图。
     cross = cross[(cross['特征1分箱'] >= -1) & (cross['特征2分箱'] >= -1)].copy()
-    X = b2d._X
-    y_arr = np.asarray(b2d._y, dtype=float)
-
     # ---------- 计算交叉指标矩阵 M[i, j]（行=特征1 bin i, 列=特征2 bin j） ----------
-    total = float(cross['样本总数'].sum())
-    total_bad = float(cross['坏样本数'].sum())
+    # 总体口径来自最终二维表，包含特殊值；特殊值不进入矩形网格，但不能从样本占比、
+    # 拒绝后坏样本率等总体分母中消失。
+    final_table = b2d.get_bin_table()
+    total = float(final_table['样本总数'].sum())
+    total_bad = float(final_table['坏样本数'].sum())
     total_good = total - total_bad
     overall_bad_rate = total_bad / total if total > 0 else 0.0
 
@@ -3428,17 +3472,42 @@ def bin_2d_plot(
 
     # ---------- 两个 KS 曲线（仅 KS 曲线，去掉 ROC；按特征方向保留单侧坐标） ----------
     def _draw_feature_ks(ax, binner_1d, feat, show_x=False, show_y=False):
-        try:
-            woe = binner_1d.transform(X[[feat]], metric='woe')[feat].to_numpy(dtype=float)
-            mask = np.isfinite(woe) & np.isfinite(y_arr)
-            if mask.sum() > 0 and len(np.unique(y_arr[mask])) == 2:
-                ks_plot(woe[mask], y_arr[mask], curve='ks', ax=ax,
-                        fontsize=max(fontsize - 1, 9), title='', colors=colors)
-            else:
-                ax.text(0.5, 0.5, 'KS 不可用', ha='center', va='center', transform=ax.transAxes)
-        except Exception as exc:  # pragma: no cover - 防御性兜底
-            ax.text(0.5, 0.5, f'KS 异常: {exc}', ha='center', va='center',
-                    transform=ax.transAxes, fontsize=8)
+        """由一维分箱统计按 WOE 风险方向绘制 KS，避免依赖训练原始数据。"""
+        curve = _binned_ks_curve(binner_1d.get_bin_table(feat))
+        if not curve.empty:
+            positions = curve['累计样本占比'].to_numpy(dtype=float)
+            ks_values = curve['KS值'].to_numpy(dtype=float)
+            cumulative_good = curve['累积好样本占比'].to_numpy(dtype=float)
+            cumulative_bad = curve['累积坏样本占比'].to_numpy(dtype=float)
+            ax.plot(positions, ks_values, color=colors[0], linewidth=2, label='KS曲线')
+            ax.plot(positions, cumulative_good, color=colors[1], linewidth=1.5, label='累积好客户占比')
+            ax.plot(positions, cumulative_bad, color=colors[2], linewidth=1.5, label='累积坏客户占比')
+            ax.fill_between(positions, cumulative_bad, cumulative_good, color=colors[0], alpha=0.18)
+            max_index = int(np.argmax(ks_values))
+            ax.scatter([positions[max_index]], [ks_values[max_index]], color=colors[1], s=28, zorder=3)
+            gap_low = min(cumulative_good[max_index], cumulative_bad[max_index])
+            gap_high = max(cumulative_good[max_index], cumulative_bad[max_index])
+            ax.plot(
+                [positions[max_index], positions[max_index]],
+                [gap_low, gap_high],
+                color=colors[0],
+                linewidth=1.2,
+                linestyle='--',
+            )
+            ax.annotate(
+                f"KS={ks_values[max_index]:.2%}",
+                xy=(positions[max_index], gap_high),
+                xytext=(0, 4),
+                textcoords='offset points',
+                ha='center',
+                va='bottom',
+                fontsize=max(fontsize - 2, 7),
+                color=axis_color,
+            )
+            ax.set_xlim(0, 1)
+            ax.set_ylim(0, 1)
+        else:
+            ax.text(0.5, 0.5, 'KS 不可用', ha='center', va='center', transform=ax.transAxes)
         # 去图例；特征2保留纵坐标，特征1保留横坐标
         legend = ax.get_legend()
         if legend is not None:

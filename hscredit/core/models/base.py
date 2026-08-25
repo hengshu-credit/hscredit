@@ -741,6 +741,8 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, BaseE
         cv: int = 5,
         timeout: Optional[int] = None,
         verbose: Optional[bool] = None,
+        sample_weight: Optional[np.ndarray] = None,
+        show_progress_bar: Optional[bool] = None,
         **kwargs,
     ) -> "BaseRiskModel":
         """超参数调优并返回最佳模型.
@@ -757,6 +759,8 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, BaseE
         :param cv: 交叉验证折数
         :param timeout: 超时时间(秒)
         :param verbose: 是否输出详细信息
+        :param sample_weight: 样本权重，可选
+        :param show_progress_bar: 是否显示进度条；默认跟随 verbose，可显式覆盖
         :param kwargs: 其他传递给 ModelTuner 的参数
         :return: 使用最佳参数训练好的模型实例
 
@@ -774,14 +778,20 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, BaseE
 
         if verbose is None:
             verbose = self.verbose
+        if show_progress_bar is None:
+            show_progress_bar = bool(verbose)
 
-        effective_fixed_params = dict(fixed_params or {})
-        effective_fixed_params.setdefault("scorecard_params", self.scorecard_params)
+        model_params = dict(getattr(self, "kwargs", {}))
+        model_params.update(self.get_params(deep=False))
+        if self.target is not None:
+            model_params["target"] = self.target
+        model_params["scorecard_params"] = self.scorecard_params
 
         tuner = ModelTuner(
             model_class=self.__class__,
             search_space=search_space,
-            fixed_params=effective_fixed_params,
+            fixed_params=fixed_params,
+            model_params=model_params,
             metric=metric,
             direction=direction,
             target=self.target or "target",
@@ -792,7 +802,14 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, BaseE
         )
         self.tuner = tuner
 
-        tuner.fit(X, y, n_trials=n_trials, timeout=timeout)
+        tuner.fit(
+            X,
+            y,
+            n_trials=n_trials,
+            timeout=timeout,
+            sample_weight=sample_weight,
+            show_progress_bar=show_progress_bar,
+        )
         best_model = tuner.get_best_model()
 
         best_model.tuner = tuner
