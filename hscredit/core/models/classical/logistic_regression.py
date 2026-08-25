@@ -931,6 +931,8 @@ class LogisticRegression(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, 
         cv: int = 5,
         timeout: Optional[int] = None,
         verbose: bool = False,
+        sample_weight: Optional[np.ndarray] = None,
+        show_progress_bar: Optional[bool] = None,
         **kwargs
     ) -> 'LogisticRegression':
         """超参数调优并返回最佳模型（与 BaseRiskModel.tune 接口一致）.
@@ -948,6 +950,8 @@ class LogisticRegression(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, 
         :param cv: 交叉验证折数，默认 5
         :param timeout: 超时时间(秒)
         :param verbose: 是否输出详细信息
+        :param sample_weight: 样本权重，可选
+        :param show_progress_bar: 是否显示进度条；默认跟随 verbose，可显式覆盖
         :param kwargs: 其他传递给 ModelTuner 的参数（如 sampler/storage）
         :return: 使用最佳参数训练好的模型实例
 
@@ -959,10 +963,17 @@ class LogisticRegression(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, 
         """
         from ..tuning import ModelTuner
 
+        if show_progress_bar is None:
+            show_progress_bar = bool(verbose)
+
+        model_params = self.get_params(deep=False)
+        model_params["scorecard_params"] = self.scorecard_params
+
         tuner = ModelTuner(
             model_class=self.__class__,
             search_space=search_space,
             fixed_params=fixed_params,
+            model_params=model_params,
             metric=metric,
             direction=direction,
             target=self.target or 'target',
@@ -973,12 +984,15 @@ class LogisticRegression(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, 
         )
         self.tuner = tuner
 
-        best_params = tuner.fit(X, y, n_trials=n_trials, timeout=timeout)
-        best_model = self.__class__(**best_params)
-        # 透传 target，确保 scorecardpipeline 风格（y=None，从 X 提取 target）下重训正常
-        if self.target is not None and getattr(best_model, 'target', None) is None:
-            best_model.target = self.target
-        best_model.fit(X, y)
+        tuner.fit(
+            X,
+            y,
+            n_trials=n_trials,
+            timeout=timeout,
+            sample_weight=sample_weight,
+            show_progress_bar=show_progress_bar,
+        )
+        best_model = tuner.get_best_model()
         best_model.tuner = tuner
 
         return best_model

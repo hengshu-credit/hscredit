@@ -9,6 +9,23 @@ import pytest
 # tests/conftest.py -> 仓库根目录
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 HSCREDIT_DEMO_XLSX = PROJECT_ROOT / "examples" / "hscredit_yyp.xlsx"
+_DATABASE_TEST_ENVIRONMENTS = frozenset(
+    {
+        "HSCREDIT_TEST_CLICKHOUSE_HOST",
+        "HSCREDIT_TEST_HIVE_HOST",
+        "HSCREDIT_TEST_IMPALA_HOST",
+        "HSCREDIT_TEST_MAXCOMPUTE_PROJECT",
+        "HSCREDIT_TEST_MONGODB_URI",
+        "HSCREDIT_TEST_MYSQL_HOST",
+        "HSCREDIT_TEST_ORACLE_DSN",
+        "HSCREDIT_TEST_REDIS_URL",
+        "HSCREDIT_TEST_STARROCKS_HOST",
+    }
+)
+_ALLOWED_DATABASE_SKIP_REASONS = frozenset(
+    f"未配置 {environment_variable}"
+    for environment_variable in _DATABASE_TEST_ENVIRONMENTS
+)
 
 # 工作簿存在时不排除任何测试模块。
 collect_ignore = []
@@ -56,14 +73,30 @@ def pypmml_model():
     return pypmml.Model
 
 
+def _skip_reason(report):
+    """从 pytest skip report 中提取规范化原因。"""
+    longrepr = report.longrepr
+    reason = longrepr[2] if isinstance(longrepr, tuple) and len(longrepr) >= 3 else longrepr
+    reason = str(reason).strip()
+    prefix = "Skipped: "
+    return reason[len(prefix) :] if reason.startswith(prefix) else reason
+
+
+def _is_allowed_ci_skip(report):
+    """仅允许缺少演示工作簿或未配置真实数据库服务导致的跳过。"""
+    if "hscredit_yyp.xlsx" in str(report.longrepr):
+        return True
+    return _skip_reason(report) in _ALLOWED_DATABASE_SKIP_REASONS
+
+
 def pytest_sessionfinish(session, exitstatus):
-    """CI 仅允许因缺少本地演示工作簿而跳过测试。"""
+    """CI 拒绝白名单外的测试跳过。"""
     if os.environ.get("HSCREDIT_STRICT_CI_SKIPS") != "1":
         return
 
     terminal = session.config.pluginmanager.get_plugin("terminalreporter")
     skipped = terminal.stats.get("skipped", []) if terminal is not None else []
-    unexpected = [report for report in skipped if "hscredit_yyp.xlsx" not in str(report.longrepr)]
+    unexpected = [report for report in skipped if not _is_allowed_ci_skip(report)]
     if not unexpected:
         return
 

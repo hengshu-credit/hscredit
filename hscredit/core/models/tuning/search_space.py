@@ -134,6 +134,8 @@ class IntDistribution(Dimension):
         name: Optional[str] = None,
     ) -> None:
         super().__init__(name)
+        if log and step != 1:
+            raise ValueError("IntDistribution 使用 log=True 时 step 必须为 1")
         self.low = int(low)
         self.high = int(high)
         self.step = int(step)

@@ -498,6 +498,412 @@ def test_ngboost_forwards_fit_params(monkeypatch):
     assert fitted.fit_kwargs["train_loss_monitor"] is sentinel
 
 
+@pytest.mark.parametrize(
+    "ngboost_version, constructor_handles_early_stopping",
+    [("0.3.12", False), ("0.5.10", False), ("0.5.11", True)],
+)
+def test_ngboost_routes_early_stopping_parameters_by_installed_version(
+    monkeypatch, ngboost_version, constructor_handles_early_stopping
+):
+    """不同版本的分类器应从各自支持的入口接收早停参数。"""
+    try:
+        from hscredit.core.models.boosting import ngboost_model as module
+    except Exception as exc:
+        pytest.skip(f"当前环境无法导入NGBoost: {exc}")
+
+    class FakeNGBClassifier(_ProbabilityFake):
+        instance = None
+
+        def __init__(self, **params):
+            type(self).instance = self
+            self.params = params
+            self.best_val_loss_itr = None
+
+        def fit(self, X, y, **kwargs):
+            self.fit_kwargs = kwargs
+            return self
+
+    monkeypatch.setattr(module.ngboost, "__version__", ngboost_version)
+    monkeypatch.setattr(module, "NGBClassifier", FakeNGBClassifier)
+    X, y = _binary_data()
+
+    module.NGBoost(validation_fraction=0.2, early_stopping_rounds=2, random_state=23).fit(X, y)
+
+    fitted = FakeNGBClassifier.instance
+    if constructor_handles_early_stopping:
+        assert fitted.params["validation_fraction"] == pytest.approx(0.2)
+        assert fitted.params["early_stopping_rounds"] == 2
+        assert "early_stopping_rounds" not in fitted.fit_kwargs
+    else:
+        assert "validation_fraction" not in fitted.params
+        assert "early_stopping_rounds" not in fitted.params
+        assert fitted.fit_kwargs["early_stopping_rounds"] == 2
+
+
+@pytest.mark.parametrize(
+    "ngboost_version, constructor_handles_early_stopping",
+    [("0.5.10", False), ("0.5.11", True)],
+)
+def test_ngboost_fit_early_stopping_overrides_constructor_across_versions(
+    monkeypatch, ngboost_version, constructor_handles_early_stopping
+):
+    """fit 显式早停值必须在所有版本中覆盖构造器配置。"""
+    try:
+        from hscredit.core.models.boosting import ngboost_model as module
+    except Exception as exc:
+        pytest.skip(f"当前环境无法导入NGBoost: {exc}")
+
+    class FakeNGBClassifier(_ProbabilityFake):
+        instance = None
+
+        def __init__(self, **params):
+            type(self).instance = self
+            self.params = params
+            self.best_val_loss_itr = None
+
+        def fit(self, X, y, **kwargs):
+            self.n_rows = len(y)
+            self.fit_kwargs = kwargs
+            return self
+
+    monkeypatch.setattr(module.ngboost, "__version__", ngboost_version)
+    monkeypatch.setattr(module, "NGBClassifier", FakeNGBClassifier)
+    X, y = _binary_data()
+
+    module.NGBoost(validation_fraction=0.2, early_stopping_rounds=2, random_state=23).fit(
+        X, y, early_stopping_rounds=7
+    )
+
+    fitted = FakeNGBClassifier.instance
+    assert fitted.n_rows == 80
+    if constructor_handles_early_stopping:
+        assert fitted.params["early_stopping_rounds"] == 7
+        assert "early_stopping_rounds" not in fitted.fit_kwargs
+    else:
+        assert "early_stopping_rounds" not in fitted.params
+        assert fitted.fit_kwargs["early_stopping_rounds"] == 7
+
+
+@pytest.mark.parametrize(
+    "ngboost_version, constructor_handles_early_stopping",
+    [("0.5.10", False), ("0.5.11", True)],
+)
+def test_ngboost_fit_only_early_stopping_creates_validation_split_across_versions(
+    monkeypatch, ngboost_version, constructor_handles_early_stopping
+):
+    """仅在 fit 指定早停时也必须创建统一的内部验证集。"""
+    try:
+        from hscredit.core.models.boosting import ngboost_model as module
+    except Exception as exc:
+        pytest.skip(f"当前环境无法导入NGBoost: {exc}")
+
+    class FakeNGBClassifier(_ProbabilityFake):
+        instance = None
+
+        def __init__(self, **params):
+            type(self).instance = self
+            self.params = params
+            self.best_val_loss_itr = None
+
+        def fit(self, X, y, **kwargs):
+            self.n_rows = len(y)
+            self.fit_kwargs = kwargs
+            return self
+
+    monkeypatch.setattr(module.ngboost, "__version__", ngboost_version)
+    monkeypatch.setattr(module, "NGBClassifier", FakeNGBClassifier)
+    X, y = _binary_data()
+
+    module.NGBoost(validation_fraction=0.2, early_stopping_rounds=None, random_state=23).fit(
+        X, y, early_stopping_rounds=7
+    )
+
+    fitted = FakeNGBClassifier.instance
+    assert fitted.n_rows == 80
+    assert len(fitted.fit_kwargs["Y_val"]) == 20
+    if constructor_handles_early_stopping:
+        assert fitted.params["early_stopping_rounds"] == 7
+        assert "early_stopping_rounds" not in fitted.fit_kwargs
+    else:
+        assert fitted.fit_kwargs["early_stopping_rounds"] == 7
+
+
+@pytest.mark.parametrize(
+    "ngboost_version, constructor_handles_early_stopping",
+    [("0.5.10", False), ("0.5.11", True)],
+)
+def test_ngboost_disables_early_stopping_without_validation_data_across_versions(
+    monkeypatch, ngboost_version, constructor_handles_early_stopping
+):
+    """没有验证数据时各版本都应使用全量样本并禁用早停。"""
+    try:
+        from hscredit.core.models.boosting import ngboost_model as module
+    except Exception as exc:
+        pytest.skip(f"当前环境无法导入NGBoost: {exc}")
+
+    class FakeNGBClassifier(_ProbabilityFake):
+        instance = None
+
+        def __init__(self, **params):
+            type(self).instance = self
+            self.params = params
+            self.best_val_loss_itr = None
+
+        def fit(self, X, y, **kwargs):
+            self.n_rows = len(y)
+            self.fit_kwargs = kwargs
+            return self
+
+    monkeypatch.setattr(module.ngboost, "__version__", ngboost_version)
+    monkeypatch.setattr(module, "NGBClassifier", FakeNGBClassifier)
+    X, y = _binary_data()
+
+    module.NGBoost(validation_fraction=0, early_stopping_rounds=2, random_state=23).fit(
+        X, y, X_val=None, Y_val=None
+    )
+
+    fitted = FakeNGBClassifier.instance
+    assert fitted.n_rows == len(y)
+    assert "X_val" not in fitted.fit_kwargs
+    assert "Y_val" not in fitted.fit_kwargs
+    assert "early_stopping_rounds" not in fitted.fit_kwargs
+    if constructor_handles_early_stopping:
+        assert fitted.params["validation_fraction"] == 0
+        assert fitted.params["early_stopping_rounds"] is None
+    else:
+        assert "early_stopping_rounds" not in fitted.params
+
+
+@pytest.mark.parametrize(
+    "ngboost_version, constructor_handles_early_stopping",
+    [("0.5.10", False), ("0.5.11", True)],
+)
+def test_ngboost_preserves_native_validation_data_and_fit_early_stopping_across_versions(
+    monkeypatch, ngboost_version, constructor_handles_early_stopping
+):
+    """原生验证集参数不能被内部切分覆盖，fit 早停值仍应优先。"""
+    try:
+        from hscredit.core.models.boosting import ngboost_model as module
+    except Exception as exc:
+        pytest.skip(f"当前环境无法导入NGBoost: {exc}")
+
+    class FakeNGBClassifier(_ProbabilityFake):
+        instance = None
+
+        def __init__(self, **params):
+            type(self).instance = self
+            self.params = params
+            self.best_val_loss_itr = None
+
+        def fit(self, X, y, **kwargs):
+            self.n_rows = len(y)
+            self.fit_kwargs = kwargs
+            return self
+
+    monkeypatch.setattr(module.ngboost, "__version__", ngboost_version)
+    monkeypatch.setattr(module, "NGBClassifier", FakeNGBClassifier)
+    X, y = _binary_data()
+    X_val, y_val = X[:12], y[:12]
+
+    module.NGBoost(validation_fraction=0.2, early_stopping_rounds=2, random_state=23).fit(
+        X, y, X_val=X_val, Y_val=y_val, early_stopping_rounds=7
+    )
+
+    fitted = FakeNGBClassifier.instance
+    assert fitted.n_rows == len(y)
+    assert fitted.fit_kwargs["X_val"] is X_val
+    assert fitted.fit_kwargs["Y_val"] is y_val
+    if constructor_handles_early_stopping:
+        assert fitted.params["early_stopping_rounds"] == 7
+        assert "early_stopping_rounds" not in fitted.fit_kwargs
+    else:
+        assert fitted.fit_kwargs["early_stopping_rounds"] == 7
+
+
+@pytest.mark.parametrize(
+    "incomplete_validation",
+    [
+        {"X_val": np.zeros((2, 4))},
+        {"Y_val": np.array([0, 1])},
+        {"X_val": None, "Y_val": np.array([0, 1])},
+        {"X_val": np.zeros((2, 4)), "Y_val": None},
+    ],
+)
+def test_ngboost_rejects_incomplete_native_validation_data(monkeypatch, incomplete_validation):
+    """原生验证集的 X_val/Y_val 必须成对提供。"""
+    try:
+        from hscredit.core.models.boosting import ngboost_model as module
+    except Exception as exc:
+        pytest.skip(f"当前环境无法导入NGBoost: {exc}")
+
+    X, y = _binary_data()
+    with pytest.raises(module.ValidationError, match="X_val.*Y_val.*同时"):
+        module.NGBoost(validation_fraction=0, random_state=23).fit(X, y, **incomplete_validation)
+
+
+def test_ngboost_accepts_backported_constructor_early_stopping_api(monkeypatch):
+    """厂商回移新版构造器时应按实际签名兼容，不能只依赖版本字符串。"""
+    try:
+        from hscredit.core.models.boosting import ngboost_model as module
+    except Exception as exc:
+        pytest.skip(f"当前环境无法导入NGBoost: {exc}")
+
+    class BackportedNGBClassifier(_ProbabilityFake):
+        instance = None
+
+        def __init__(self, validation_fraction=None, early_stopping_rounds=None, **params):
+            type(self).instance = self
+            self.validation_fraction = validation_fraction
+            self.early_stopping_rounds = early_stopping_rounds
+            self.best_val_loss_itr = None
+
+        def fit(self, X, y, **kwargs):
+            self.fit_kwargs = kwargs
+            return self
+
+    monkeypatch.setattr(module.ngboost, "__version__", "vendor-build")
+    monkeypatch.setattr(module, "NGBClassifier", BackportedNGBClassifier)
+    X, y = _binary_data()
+
+    module.NGBoost(validation_fraction=0.2, early_stopping_rounds=2, random_state=23).fit(X, y)
+
+    fitted = BackportedNGBClassifier.instance
+    assert fitted.validation_fraction == pytest.approx(0.2)
+    assert fitted.early_stopping_rounds == 2
+    assert "early_stopping_rounds" not in fitted.fit_kwargs
+
+
+@pytest.mark.parametrize(
+    "ngboost_version, constructor_handles_early_stopping",
+    [("0.3.12", False), ("0.5.11", True)],
+)
+def test_ngboost_native_params_use_the_same_versioned_early_stopping_route(
+    monkeypatch, ngboost_version, constructor_handles_early_stopping
+):
+    """原生 params 的早停配置必须先归一化，再按版本进入正确入口。"""
+    try:
+        from hscredit.core.models.boosting import ngboost_model as module
+    except Exception as exc:
+        pytest.skip(f"当前环境无法导入NGBoost: {exc}")
+
+    class FakeNGBClassifier(_ProbabilityFake):
+        instance = None
+
+        def __init__(self, **params):
+            type(self).instance = self
+            self.params = params
+            self.best_val_loss_itr = None
+
+        def fit(self, X, y, **kwargs):
+            self.fit_kwargs = kwargs
+            return self
+
+    monkeypatch.setattr(module.ngboost, "__version__", ngboost_version)
+    monkeypatch.setattr(module, "NGBClassifier", FakeNGBClassifier)
+    X, y = _binary_data()
+    model = module.NGBoost(
+        validation_fraction=0.1,
+        early_stopping_rounds=1,
+        random_state=23,
+        params={"validation_fraction": 0.25, "early_stopping_rounds": 4},
+    )
+
+    model.fit(X, y)
+
+    fitted = FakeNGBClassifier.instance
+    assert model.validation_fraction == pytest.approx(0.25)
+    assert model.early_stopping_rounds == 4
+    if constructor_handles_early_stopping:
+        assert fitted.params["validation_fraction"] == pytest.approx(0.25)
+        assert fitted.params["early_stopping_rounds"] == 4
+        assert "early_stopping_rounds" not in fitted.fit_kwargs
+    else:
+        assert "validation_fraction" not in fitted.params
+        assert "early_stopping_rounds" not in fitted.params
+        assert fitted.fit_kwargs["early_stopping_rounds"] == 4
+
+
+def test_ngboost_base_learner_uses_public_random_state(monkeypatch):
+    """基学习器必须复用公开随机种子，避免相同参数产生随机分裂差异。"""
+    try:
+        from hscredit.core.models.boosting import ngboost_model as module
+    except Exception as exc:
+        pytest.skip(f"当前环境无法导入NGBoost: {exc}")
+
+    class FakeNGBClassifier(_ProbabilityFake):
+        instance = None
+
+        def __init__(self, **params):
+            type(self).instance = self
+            self.params = params
+            self.best_val_loss_itr = None
+
+        def fit(self, X, y, **kwargs):
+            return self
+
+    monkeypatch.setattr(module, "NGBClassifier", FakeNGBClassifier)
+    X, y = _binary_data()
+
+    module.NGBoost(validation_fraction=0, random_state=23).fit(X, y)
+
+    assert FakeNGBClassifier.instance.params["Base"].random_state == 23
+
+
+def test_ngboost_translates_singular_natural_gradient_error(monkeypatch):
+    """自然梯度奇异矩阵应转换成稳定、可操作的中文异常。"""
+    try:
+        from hscredit.core.models.boosting import ngboost_model as module
+        from hscredit.exceptions import ValidationError
+    except Exception as exc:
+        pytest.skip(f"当前环境无法导入NGBoost: {exc}")
+
+    class SingularNGBClassifier:
+        def __init__(self, **params):
+            self.best_val_loss_itr = None
+
+        def fit(self, X, y, **kwargs):
+            raise np.linalg.LinAlgError("Singular matrix")
+
+    monkeypatch.setattr(module, "NGBClassifier", SingularNGBClassifier)
+    X, y = _binary_data()
+
+    with pytest.raises(ValidationError, match="NGBoost训练失败.*自然梯度.*学习率.*叶节点") as error:
+        module.NGBoost(validation_fraction=0, random_state=23).fit(X, y)
+
+    assert isinstance(error.value.__cause__, np.linalg.LinAlgError)
+
+
+@pytest.mark.parametrize(
+    "natural_gradient, native_message",
+    [(False, "Singular matrix"), (True, "SVD did not converge")],
+)
+def test_ngboost_preserves_linalg_errors_outside_singular_natural_gradient(
+    monkeypatch, natural_gradient, native_message
+):
+    """非自然梯度或非奇异矩阵错误必须保留底层异常语义。"""
+    try:
+        from hscredit.core.models.boosting import ngboost_model as module
+    except Exception as exc:
+        pytest.skip(f"当前环境无法导入NGBoost: {exc}")
+
+    class FailingNGBClassifier:
+        def __init__(self, **params):
+            self.best_val_loss_itr = None
+
+        def fit(self, X, y, **kwargs):
+            raise np.linalg.LinAlgError(native_message)
+
+    monkeypatch.setattr(module, "NGBClassifier", FailingNGBClassifier)
+    X, y = _binary_data()
+
+    with pytest.raises(np.linalg.LinAlgError, match=native_message):
+        module.NGBoost(
+            validation_fraction=0,
+            natural_gradient=natural_gradient,
+            random_state=23,
+        ).fit(X, y)
+
+
 def test_ngboost_auto_split_preserves_validation_weights(monkeypatch):
     try:
         from hscredit.core.models.boosting import ngboost_model as module

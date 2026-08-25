@@ -6,8 +6,10 @@
 3. max_bin_size 约束
 """
 
+import inspect
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 import numpy as np
 import pandas as pd
 
@@ -191,27 +193,175 @@ class TestORBinningConstraintRegression(unittest.TestCase):
 class TestBinningMethodBenchmark(unittest.TestCase):
     """验证分箱方法基准只依赖 hscredit 内部实现。"""
 
-    def test_benchmark_binning_methods_returns_hscredit_methods_only(self):
-        X, y = TestBinningConstraintRegression.create_monotonic_test_data(n_samples=240, random_state=19)
+    @staticmethod
+    def create_benchmark_data(n_samples: int = 240, random_state: int = 19) -> pd.DataFrame:
+        """构造包含多个逾期字段的稳定基准样本。"""
+        X, y = TestBinningConstraintRegression.create_monotonic_test_data(
+            n_samples=n_samples,
+            random_state=random_state,
+        )
         df = X.copy()
         df['MOB1'] = np.where(y.to_numpy() > 0, 5, 0)
+        df['MOB3'] = np.where((np.arange(n_samples) % 5) == 0, 8, 0)
+        return df
+
+    def test_benchmark_binning_methods_returns_hscredit_methods_only(self):
+        df = self.create_benchmark_data()
 
         result = benchmark_binning_methods(
             df,
             feature='x',
-            overdue_col='MOB1',
+            overdue='MOB1',
             dpds=[3],
             max_n_bins=5,
             min_bin_size=0.05,
             monotonic='descending',
             hscredit_methods=['chi', 'cart', 'mdlp'],
+            long_format=True,
         )
 
         self.assertFalse(result.empty)
-        self.assertTrue(result['method'].str.startswith('hscredit-').all(), msg=result['method'].tolist())
-        self.assertFalse(result['method'].str.contains('toad|optbinning', regex=True).any())
-        self.assertEqual(set(result['dpd'].tolist()), {3})
-        self.assertTrue({'n_bins', 'head_lift', 'tail_lift', 'edge_gap', 'turns'}.issubset(result.columns))
+        self.assertTrue(result['分箱方法'].str.startswith('hscredit-').all(), msg=result['分箱方法'].tolist())
+        self.assertFalse(result['分箱方法'].str.contains('toad|optbinning', regex=True).any())
+        self.assertEqual(set(result['逾期阈值'].tolist()), {3})
+        self.assertTrue({'分箱数', '首箱LIFT值', '尾箱LIFT值', '头尾LIFT差', '趋势转折数'}.issubset(result.columns))
+
+    def test_benchmark_binning_methods_expands_all_overdue_and_dpd_combinations(self):
+        """多个逾期字段被压成二维标签时，本测试必须失败。"""
+        df = self.create_benchmark_data()
+
+        result = benchmark_binning_methods(
+            df,
+            feature='x',
+            overdue=['MOB1', 'MOB3'],
+            dpds=[3, 0],
+            hscredit_methods=['quantile'],
+            long_format=True,
+            n_jobs=1,
+        )
+
+        self.assertEqual(len(result), 4)
+        self.assertEqual(
+            set(zip(result['逾期字段'], result['逾期阈值'])),
+            {('MOB1', 3), ('MOB1', 0), ('MOB3', 3), ('MOB3', 0)},
+        )
+        self.assertTrue(result['错误信息'].isna().all(), msg=result.to_dict('records'))
+
+    def test_benchmark_binning_methods_defaults_to_all_registered_methods(self):
+        """默认方法列表再次被手工裁剪时，本测试必须失败。"""
+        df = self.create_benchmark_data(n_samples=120)
+        registered_methods = ['uniform', 'quantile', 'tree']
+
+        with patch.object(OptimalBinning, 'VALID_METHODS', registered_methods):
+            result = benchmark_binning_methods(
+                df,
+                feature='x',
+                overdue='MOB1',
+                dpds=[3],
+                max_n_bins=3,
+                long_format=True,
+                n_jobs=1,
+            )
+
+        self.assertEqual(
+            set(result['分箱方法']),
+            {f'hscredit-{method}' for method in registered_methods},
+        )
+
+    def test_benchmark_binning_methods_forwards_common_and_method_specific_parameters(self):
+        """公共配置被写死或方法专属 kwargs 未透传时，本测试必须失败。"""
+        df = pd.DataFrame(
+            {
+                'x': np.arange(100, dtype=float),
+                'MOB1': np.where((np.arange(100) % 7) == 0, 5, 0),
+            }
+        )
+
+        result = benchmark_binning_methods(
+            df,
+            feature='x',
+            overdue='MOB1',
+            dpds=[3],
+            hscredit_methods=['quantile'],
+            min_n_bins=2,
+            prebinning=None,
+            lift_refine=False,
+            quantiles=[0, 0.2, 0.8, 1],
+            force_numerical=True,
+            long_format=True,
+            n_jobs=1,
+        )
+
+        self.assertEqual(result.loc[0, '切分点'], [19.8, 79.2])
+        self.assertTrue(result['错误信息'].isna().all(), msg=result.to_dict('records'))
+
+    def test_benchmark_binning_methods_uses_feature_bin_stats_overdue_parameter_name(self):
+        """公开签名应与 feature_bin_stats 一致使用 overdue。"""
+        parameters = inspect.signature(benchmark_binning_methods).parameters
+
+        self.assertIn('overdue', parameters)
+        self.assertNotIn('overdue_col', parameters)
+
+    def test_benchmark_binning_methods_defaults_to_multiindex_columns(self):
+        """默认结果应按逾期标签展开为类似 feature_bin_stats 的两层列。"""
+        df = self.create_benchmark_data()
+
+        result = benchmark_binning_methods(
+            df,
+            feature='x',
+            overdue=['MOB1', 'MOB3'],
+            dpds=[3, 0],
+            hscredit_methods=['quantile', 'tree'],
+            prebinning=None,
+            lift_refine=False,
+            n_jobs=1,
+        )
+
+        self.assertIsInstance(result.columns, pd.MultiIndex)
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result.columns[0], ('分箱详情', '分箱方法'))
+        self.assertEqual(
+            result[('分箱详情', '分箱方法')].tolist(),
+            ['hscredit-quantile', 'hscredit-tree'],
+        )
+        for label in ['MOB1_3+', 'MOB1_0+', 'MOB3_3+', 'MOB3_0+']:
+            self.assertIn((label, '综合评分'), result.columns)
+            self.assertIn((label, 'LIFT序列'), result.columns)
+            self.assertIn((label, '错误信息'), result.columns)
+
+    def test_benchmark_binning_methods_returns_quality_metrics_and_accepts_long_format(self):
+        """质量指标缺失或 long_format 被误传给分箱器时，本测试必须失败。"""
+        df = pd.DataFrame(
+            {
+                'x': np.arange(12, dtype=float),
+                'MOB1': np.array([5, 5, 5, 5, 5, 0, 5, 0, 0, 0, 0, 0]),
+            }
+        )
+
+        result = benchmark_binning_methods(
+            df,
+            feature='x',
+            overdue='MOB1',
+            dpds=[3],
+            hscredit_methods=['quantile'],
+            monotonic='descending',
+            prebinning=None,
+            lift_refine=False,
+            quantiles=[0, 0.25, 0.5, 0.75, 1],
+            force_numerical=True,
+            long_format=True,
+            n_jobs=1,
+        )
+
+        self.assertTrue(result['错误信息'].isna().all(), msg=result.to_dict('records'))
+        self.assertNotIsInstance(result.columns, pd.MultiIndex)
+        self.assertTrue(
+            {'LIFT二次项系数', '综合评分', 'LIFT序列', '坏样本率序列'}.issubset(result.columns)
+        )
+        self.assertAlmostEqual(result.loc[0, 'LIFT二次项系数'], 0.0, places=6)
+        self.assertAlmostEqual(result.loc[0, '综合评分'], 5.318333, places=6)
+        np.testing.assert_allclose(result.loc[0, 'LIFT序列'], [2.0, 1.3333, 0.6667, 0.0], atol=1e-4)
+        np.testing.assert_allclose(result.loc[0, '坏样本率序列'], [1.0, 0.6667, 0.3333, 0.0], atol=1e-4)
 
 class TestNotebookTargetFieldRegression(unittest.TestCase):
     """覆盖 notebook 中暴露的目标字段问题。"""

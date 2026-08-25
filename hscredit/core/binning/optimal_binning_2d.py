@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 """二维分箱模块.
 
-对两个特征进行交叉分箱分析，生成二维分箱矩阵，用于分析特征间的交互效应。
-接口设计参考 optbinning 的 OptimalBinning2D，支持为两个特征分别传入独立参数。
+对两个特征进行交叉分箱分析，生成二维分箱矩阵，用于分析联合风险分层。
+接口设计参考 optbinning 的 OptimalBinning2D，当前求解器采用相邻区域贪心合并，
+属于启发式求解，不保证全局最优。
 
 **核心功能**
 
@@ -76,14 +77,16 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
     目标与分箱控制
         :param target: 目标变量列名，默认为 'target'
         :param max_n_bins: 两个特征的最大分箱数，默认 5
-        :param min_bin_size: 两个特征的每箱最小样本占比，默认 0.02
+        :param min_bin_size: 二维普通分箱的最小样本量；(0, 1) 浮点数表示占比，
+            正整数表示样本数，默认 0.02
         :param method: 分箱方法，默认 'quantile'（等频）
         :param monotonic: 单调性约束，默认 False。设为 'ascending'/'descending'/True 时，
             作为**硬约束**作用于二维合并：最终各轴向相邻分箱的坏样本率保证满足单调趋势
             （通过持续合并违例相邻分箱实现，可能使二维分箱数低于 max_n_bins_2d）
             ``ascending`` 表示特征值越大坏样本率越高（越大越差），``descending`` 表示
             特征值越大坏样本率越低（越大越好）；自动模式复用内部一维分箱器识别的方向。
-        :param max_n_bins_2d: 相邻格子合并后的最大二维分箱数，默认使用 max_n_bins
+        :param max_n_bins_2d: 相邻格子合并后的最大二维分箱数，默认使用 max_n_bins。
+            统计所有已观测普通/缺失组合，特殊值保留箱不计入
 
     特征1 专用参数（以 _x 后缀区分）
         :param max_n_bins_x: 特征1的最大分箱数
@@ -92,7 +95,7 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
         :param monotonic_x: 特征1的单调性约束
         :param user_splits_x: 特征1的自定义切分点，包含 np.nan/None 时显式预留缺失箱
         :param special_codes_x: 特征1的特殊值列表
-        :param dtype_x: 特征1的数据类型
+        :param dtype_x: 特征1的数据类型，支持 numerical/categorical/None（自动识别）
 
     特征2 专用参数（以 _y 后缀区分）
         :param max_n_bins_y: 特征2的最大分箱数
@@ -101,7 +104,7 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
         :param monotonic_y: 特征2的单调性约束
         :param user_splits_y: 特征2的自定义切分点，包含 np.nan/None 时显式预留缺失箱
         :param special_codes_y: 特征2的特殊值列表
-        :param dtype_y: 特征2的数据类型
+        :param dtype_y: 特征2的数据类型，支持 numerical/categorical/None（自动识别）
 
     扩展参数
         :param x_params: 额外参数仅传递给特征1的内部 OptimalBinning
@@ -117,6 +120,8 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
         :param decimal: 数值精度
         :param woe_clip: WOE截断阈值
         :param verbose: 是否输出详细信息
+        :param retain_training_data: 是否在内存实例中保留训练数据，默认 False；
+            任何 artifact/pickle 序列化都会剥离训练数据
 
     **属性**
 
@@ -129,8 +134,12 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
     - solution_: 预分箱网格到最终二维分箱索引的映射矩阵；存在缺失值时追加缺失行/列
     - n_bins_2d_: 合并后的最终二维分箱数
     - binning_table_: 合并后的二维分箱统计表
-    - cross_table_: 二维交叉分箱统计表
-    - iv_interaction_: 交互IV值
+    - grid_table_: 二维预分箱网格单元统计表
+    - cross_table_: ``grid_table_`` 的兼容别名
+    - iv_joint_: 最终二维联合分箱 IV
+    - iv_interaction_: ``iv_joint_`` 的兼容别名，不代表严格的交互增益
+    - optimization_status_: 当前为 ``HEURISTIC``
+    - is_optimal_: 当前为 False
 
     **参考样例**
 
@@ -154,7 +163,8 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
 
     **引用**
 
-    二维交互最优分箱接口与求解思路参考 optbinning 的 ``OptimalBinning2D``：
+    二维分箱接口参考 optbinning 的 ``OptimalBinning2D``；本实现使用相邻区域贪心合并，
+    不等同于其数学规划全局求解：
     Navas-Palencia, G. (2020). *Optimal binning: mathematical programming
     formulation.* arXiv:2001.08025. https://arxiv.org/abs/2001.08025 ；
     交互效应（feature interaction）背景见
@@ -180,7 +190,7 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
         monotonic_x: Optional[Union[bool, str]] = None,
         user_splits_x: Optional[List] = None,
         special_codes_x: Optional[List] = None,
-        dtype_x: str = "numerical",
+        dtype_x: Optional[str] = None,
         # 特征2专用参数
         max_n_bins_y: Optional[int] = None,
         min_bin_size_y: Optional[Union[float, int]] = None,
@@ -188,7 +198,7 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
         monotonic_y: Optional[Union[bool, str]] = None,
         user_splits_y: Optional[List] = None,
         special_codes_y: Optional[List] = None,
-        dtype_y: str = "numerical",
+        dtype_y: Optional[str] = None,
         # 扩展参数
         x_params: Optional[Dict] = None,
         y_params: Optional[Dict] = None,
@@ -205,6 +215,7 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
         parallel_config: Optional[Dict[str, Any]] = None,
         user_splits_fixed_x: Optional[Union[bool, List[bool]]] = None,
         user_splits_fixed_y: Optional[Union[bool, List[bool]]] = None,
+        retain_training_data: bool = False,
     ):
         # 目标变量
         self.target = target
@@ -252,28 +263,14 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
         self.parallel_config = parallel_config
         self.user_splits_fixed_x = user_splits_fixed_x
         self.user_splits_fixed_y = user_splits_fixed_y
+        self.retain_training_data = retain_training_data
 
         # 内部属性
-        self.binner_x_: Optional[OptimalBinning] = None
-        self.binner_y_: Optional[OptimalBinning] = None
-        self.splits_x_: Optional[np.ndarray] = None
-        self.splits_y_: Optional[np.ndarray] = None
-        self.n_bins_x_: int = 0
-        self.n_bins_y_: int = 0
-        self.feature_x_: str = ""
-        self.feature_y_: str = ""
-        self.feature_name_: str = ""
         self._is_fitted: bool = False
         self._X: Optional[pd.DataFrame] = None
         self._y: Optional[pd.Series] = None
-        self.cross_table_: Optional[pd.DataFrame] = None
-        self.iv_interaction_: float = 0.0
 
         # 二维合并分箱结果
-        self.solution_: Optional[np.ndarray] = None  # (n_bins_x_, n_bins_y_) 网格格子 -> 二维分箱编号
-        self.n_bins_2d_: int = 0  # 合并后的二维分箱数
-        self.binning_table_: Optional[pd.DataFrame] = None  # 合并后的二维分箱表
-        self.iv_2d_: float = 0.0  # 合并后二维分箱总IV
         self._grid_event_: Optional[np.ndarray] = None  # 网格坏样本数矩阵
         self._grid_nonevent_: Optional[np.ndarray] = None  # 网格好样本数矩阵
         self._woe_2d_: Optional[np.ndarray] = None  # 每个二维分箱的WOE（transform查表用）
@@ -325,50 +322,13 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
             >>> # 通过 get_cross_table() 访问交叉分箱表
 
         :param X: 训练数据（DataFrame 或二维数组）
-        :param y: 目标变量（可选，默认从 X 中提取 target 列）
+        :param y: 目标变量（可选，默认从 X 中提取 target 列）；Series 必须与 X 索引完全一致
         :param features: 两个特征名列表，如 ['age', 'income']（sklearn 风格不传）
         :return: self
         """
-        # sklearn 风格检测：X 是二维数组且 y 有值，features 未传
-        is_sklearn_style = features is None and y is not None and isinstance(X, (pd.DataFrame, np.ndarray))
-        if is_sklearn_style and isinstance(X, np.ndarray):
-            # 二维数组直接作为两个特征的数值矩阵
-            if X.ndim != 2 or X.shape[1] != 2:
-                raise HSCreditError(
-                    f"sklearn 风格需要 X 为二维数组且恰好有2列，" f"但得到 shape={X.shape}，请使用 features=['col1','col2'] 指定列名"
-                )
-            col_x = "feature_0"
-            col_y = "feature_1"
-            X_df = pd.DataFrame(X, columns=[col_x, col_y])
-            self.feature_x_ = col_x
-            self.feature_y_ = col_y
-            if isinstance(y, np.ndarray):
-                y = pd.Series(y, name=self.target)
-            # 不 drop target 列（因为不存在），直接拟合
-            X = X_df
-        elif is_sklearn_style and isinstance(X, pd.DataFrame):
-            # DataFrame：取前两列作为特征，不传 features
-            if len(X.columns) < 2:
-                raise HSCreditError(
-                    f"sklearn 风格需要 X 至少有2列，但只有 {len(X.columns)} 列，" f"请使用 features=['col1','col2'] 指定列名"
-                )
-            col_x, col_y = X.columns[0], X.columns[1]
-            self.feature_x_ = col_x
-            self.feature_y_ = col_y
-            X = X.copy()
-            # 从 X 提取 y
-            if isinstance(y, np.ndarray):
-                y = pd.Series(y, index=X.index, name=self.target)
-        else:
-            # scorecardpipeline 风格
-            X, y = self._check_input(X, y)
-            if features is None or len(features) != 2:
-                raise ValueError("必须提供包含两个特征名的列表，如 features=['age', 'income']")
-            self.feature_x_ = features[0]
-            self.feature_y_ = features[1]
-            for feat in features:
-                if feat not in X.columns:
-                    raise HSCreditError(f"特征 '{feat}' 不在数据中，可用列: {list(X.columns)}")
+        self._validate_2d_parameters()
+        X, y, selected_features = self._prepare_input(X, y, features)
+        self.feature_x_, self.feature_y_ = selected_features
 
         self._X = X
         self._y = y
@@ -411,7 +371,7 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
 
         # 对二维网格相邻格子进行合并分箱，得到最终二维分箱
         self.solution_ = self._merge_2d_bins(self._grid_event_, self._grid_nonevent_)
-        self.n_bins_2d_ = int(self.solution_.max()) + 1 if self.solution_.size else 0
+        self.n_bins_2d_ = len([bin_id for bin_id in np.unique(self.solution_) if int(bin_id) >= 0])
 
         # 基于合并结果生成二维分箱表（复用 compute_bin_stats 计算指标）
         self._compute_binning_table()
@@ -422,7 +382,20 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
             dtype=object,
         )
         self._is_fitted = True
+        if not self.retain_training_data:
+            self._X = None
+            self._y = None
         return self
+
+    def __getstate__(self) -> Dict[str, Any]:
+        """序列化时始终剥离训练原始数据。"""
+        state = self.__dict__.copy()
+        # loky 会在拟合过程中序列化尚未拟合的候选对象来执行轴任务，此时 _X/_y
+        # 是任务输入，不能剥离；完整拟合后的对象（artifact/pickle）始终剥离。
+        if state.get("_is_fitted", False):
+            state["_X"] = None
+            state["_y"] = None
+        return state
 
     def transform(
         self, X: Union[pd.DataFrame, np.ndarray], metric: Literal["indices", "bins", "woe", "event_rate"] = "indices"
@@ -461,8 +434,11 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
         if not isinstance(X, pd.DataFrame):
             X = pd.DataFrame(X)
 
-        bins_x = self.binner_x_.transform(X[[self.feature_x_]], metric="indices")[self.feature_x_].values
-        bins_y = self.binner_y_.transform(X[[self.feature_y_]], metric="indices")[self.feature_y_].values
+        missing = [feature for feature in (self.feature_x_, self.feature_y_) if feature not in X.columns]
+        if missing:
+            raise HSCreditError(f"待转换数据缺少特征: {missing}")
+        bins_x = self.binner_x_.transform(self._axis_input(X, is_x=True), metric="indices")[self.feature_x_].values
+        bins_y = self.binner_y_.transform(self._axis_input(X, is_x=False), metric="indices")[self.feature_y_].values
 
         merged = self._map_grid_to_2d_bins(bins_x, bins_y)
         if metric == "indices":
@@ -499,10 +475,11 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
         return np.asarray([self.feature_name_], dtype=object)
 
     def get_cross_table(self) -> pd.DataFrame:
-        """获取二维交叉分箱统计表.
+        """获取二维预分箱网格单元统计表.
 
         :return: 交叉分箱统计表，包含以下列：
-            - 分箱, 分箱标签: 最终二维分箱索引和标签
+            - 分箱, 分箱标签: 当前预分箱网格单元索引和标签
+            - 二维分箱, 二维分箱标签: 网格单元最终归属的二维区域
             - 特征1名称, 特征2名称: 特征名
             - 特征1分箱, 特征2分箱: 单特征分箱索引
             - 特征1标签, 特征2标签: 单特征分箱标签
@@ -568,7 +545,7 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
         - 若指定特征名，返回该特征的独立分箱表（等同于 OptimalBinning.get_bin_table）
         - 若不指定（默认 None），返回合并后的二维分箱表
 
-        :param feature: 特征名，None 时返回交叉分箱表
+        :param feature: 特征名，None 时返回最终二维分箱表
         :return: 分箱统计表
 
         **参考样例**
@@ -716,10 +693,17 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
             self.feature_y_: self.binner_y_.export_rules()[self.feature_y_],
         }
 
-    def import_rules(self, rules: Dict[str, List]) -> "OptimalBinning2D":
+    def import_rules(
+        self,
+        rules: Dict[str, List],
+        X: Optional[Union[pd.DataFrame, np.ndarray]] = None,
+        y: Optional[Union[pd.Series, np.ndarray]] = None,
+    ) -> "OptimalBinning2D":
         """导入分箱规则.
 
         :param rules: 分箱规则字典，格式同 export_rules
+        :param X: 可选的重新拟合特征数据；默认训练数据已释放时必须提供
+        :param y: 可选的重新拟合目标数据；必须与 X 同时提供
         :return: self
 
         **参考样例**
@@ -729,25 +713,39 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
         ...                          user_splits_y=[5000, 10000])
         >>> # 先 fit（用于初始化结构），再 import_rules 覆盖切分点
         >>> binner.fit(df, y=df['target'], features=['age', 'income'])
-        >>> binner.import_rules(rules)
+        >>> binner.import_rules(rules, X=df[['age', 'income']], y=df['target'])
         """
         if not self._is_fitted:
             raise NotFittedError("分箱器尚未拟合，请先调用 fit 方法")
 
+        if (X is None) != (y is None):
+            raise ValueError("import_rules 的 X 和 y 必须同时提供")
+        if X is None:
+            if self._X is None or self._y is None:
+                raise ValueError("训练数据已释放，请通过 import_rules(rules, X=..., y=...) 显式提供重新拟合数据")
+            training_X = self._X[[self.feature_x_, self.feature_y_]].copy()
+            training_y = self._y.copy()
+        else:
+            training_X, training_y, _ = self._prepare_input(
+                X,
+                y,
+                [self.feature_x_, self.feature_y_],
+            )
+
         candidate = clone(self)
         if self.feature_x_ in rules:
             vals = list(rules[self.feature_x_])
-            parse_numerical_user_splits(self.feature_x_, vals)
+            if self.binner_x_.feature_types_.get(self.feature_x_) == "numerical":
+                parse_numerical_user_splits(self.feature_x_, vals)
             candidate.user_splits_x = vals
             candidate.user_splits_fixed_x = True
         if self.feature_y_ in rules:
             vals = list(rules[self.feature_y_])
-            parse_numerical_user_splits(self.feature_y_, vals)
+            if self.binner_y_.feature_types_.get(self.feature_y_) == "numerical":
+                parse_numerical_user_splits(self.feature_y_, vals)
             candidate.user_splits_y = vals
             candidate.user_splits_fixed_y = True
 
-        training_X = self._X[[self.feature_x_, self.feature_y_]].copy()
-        training_y = self._y.copy()
         candidate.fit(training_X, training_y, features=[self.feature_x_, self.feature_y_])
         self.__dict__.clear()
         self.__dict__.update(candidate.__dict__)
@@ -1014,9 +1012,9 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
         valid_names = set(OptimalBinning().get_params(deep=False))
         for key, value in dict(extra_params or {}).items():
             if key not in valid_names:
-                warnings.warn(f"OptimalBinning 无此参数 '{key}'，将忽略")
-            else:
-                params[key] = value
+                axis_name = "x_params" if is_x else "y_params"
+                raise ValueError(f"{axis_name} 包含 OptimalBinning 不支持的参数: '{key}'")
+            params[key] = value
 
         axis_missing_separate = self.missing_separate_x if is_x else self.missing_separate_y
         explicit_params = {
@@ -1042,7 +1040,7 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
         """拟合单个轴的子分箱器，作为二维分箱的并行任务单元。"""
         feature = self.feature_x_ if is_x else self.feature_y_
         binner = self._create_binner(is_x=is_x)
-        binner.fit(self._X[[feature]], self._y)
+        binner.fit(self._axis_input(self._X, is_x=is_x), self._y)
         return binner
 
     def _create_binner(self, is_x: bool) -> OptimalBinning:
@@ -1053,32 +1051,106 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
         """
         return OptimalBinning(**self._resolve_axis_params(is_x))
 
-    def _check_input(
-        self, X: Union[pd.DataFrame, np.ndarray], y: Optional[Union[pd.Series, np.ndarray]] = None
-    ) -> Tuple[pd.DataFrame, pd.Series]:
-        """检查并准备输入数据."""
+    def _validate_2d_parameters(self) -> None:
+        """校验二维分箱器自身参数。"""
+        valid_dtypes = {None, "numerical", "categorical"}
+        for name, value in (("dtype_x", self.dtype_x), ("dtype_y", self.dtype_y)):
+            if value not in valid_dtypes:
+                raise ValueError(f"{name} 必须是 'numerical'、'categorical' 或 None，当前为 {value!r}")
+        if not isinstance(self.retain_training_data, (bool, np.bool_)):
+            raise ValueError("retain_training_data 必须是布尔值")
+        value = self.min_bin_size
+        valid_count = isinstance(value, (int, np.integer)) and not isinstance(value, (bool, np.bool_)) and value > 0
+        valid_ratio = (
+            isinstance(value, (float, np.floating))
+            and np.isfinite(value)
+            and 0 < float(value) < 1
+        )
+        if value is not None and not (valid_count or valid_ratio):
+            raise ValueError("min_bin_size 必须是 (0, 1) 内的有限浮点占比，或正整数样本数")
+
+    def _prepare_input(
+        self,
+        X: Union[pd.DataFrame, np.ndarray],
+        y: Optional[Union[pd.Series, np.ndarray]],
+        features: Optional[List[str]],
+    ) -> Tuple[pd.DataFrame, pd.Series, List[str]]:
+        """统一检查并准备 sklearn 与 scorecardpipeline 两种输入。"""
         if isinstance(X, np.ndarray):
-            X = pd.DataFrame(X, columns=[f"feature_{i}" for i in range(X.shape[1])])
-        if not isinstance(X, pd.DataFrame):
-            X = pd.DataFrame(X)
-
-        if y is not None:
-            if isinstance(y, np.ndarray):
-                y = pd.Series(y, index=X.index, name=self.target)
-            elif not isinstance(y, pd.Series):
-                y = pd.Series(y, index=X.index, name=self.target)
+            if X.ndim != 2:
+                raise ValueError(f"X 必须是二维数组，当前 shape={X.shape}")
+            if features is not None and len(features) != X.shape[1]:
+                raise ValueError("数组 X 的 features 数量必须与列数一致")
+            columns = list(features) if features is not None else [f"feature_{i}" for i in range(X.shape[1])]
+            X_df = pd.DataFrame(X, columns=columns)
+        elif isinstance(X, pd.DataFrame):
+            X_df = X.copy()
         else:
-            if self.target in X.columns:
-                y = X[self.target].copy()
-                X = X.drop(columns=[self.target])
+            try:
+                X_df = pd.DataFrame(X)
+            except Exception as exc:
+                raise ValueError("X 必须能转换为 DataFrame") from exc
+
+        if X_df.columns.duplicated().any():
+            duplicates = X_df.columns[X_df.columns.duplicated()].tolist()
+            raise ValueError(f"X 包含重复列名: {duplicates}")
+
+        if y is None:
+            if self.target not in X_df.columns:
+                raise ValueError(f"目标变量 '{self.target}' 未在数据中找到，请提供 y 参数或目标列")
+            y_series = X_df[self.target].copy()
+        else:
+            if isinstance(y, pd.Series):
+                if len(y) != len(X_df):
+                    raise ValueError(f"X 与 y 长度不一致: {len(X_df)} != {len(y)}")
+                if not y.index.equals(X_df.index):
+                    raise ValueError("X 与 y 的索引不一致，请先对齐后再拟合")
+                y_series = y.copy()
             else:
-                raise ValueError(f"目标变量 '{self.target}' 未在数据中找到。" f"请提供 y 参数或确保数据中包含 '{self.target}' 列。")
+                y_array = np.asarray(y).reshape(-1)
+                if len(y_array) != len(X_df):
+                    raise ValueError(f"X 与 y 长度不一致: {len(X_df)} != {len(y_array)}")
+                y_series = pd.Series(y_array, index=X_df.index, name=self.target)
 
-        unique_values = y.dropna().unique()
-        if len(unique_values) != 2:
-            raise ValueError(f"目标变量必须是二分类，但发现 {len(unique_values)} 个唯一值: {unique_values}")
+        if features is None:
+            feature_columns = [column for column in X_df.columns if column != self.target]
+            if len(feature_columns) != 2:
+                raise ValueError(
+                    f"未指定 features 时，X 必须恰好包含 2 个特征，当前为 {len(feature_columns)} 个: {feature_columns}"
+                )
+        else:
+            feature_columns = list(features)
+            if len(feature_columns) != 2:
+                raise ValueError("features 必须包含两个特征名，如 features=['age', 'income']")
+            if feature_columns[0] == feature_columns[1]:
+                raise ValueError("features 中的两个特征必须不同")
+            missing = [feature for feature in feature_columns if feature not in X_df.columns]
+            if missing:
+                raise HSCreditError(f"特征 {missing} 不在数据中，可用列: {list(X_df.columns)}")
 
-        return X, y
+        if y_series.isna().any():
+            raise ValueError("目标变量不能包含缺失值")
+        unique_values = set(pd.unique(y_series))
+        if unique_values != {0, 1}:
+            raise ValueError(f"目标变量必须是 0/1 二分类，当前唯一值为: {sorted(unique_values, key=str)}")
+
+        selected = X_df.loc[:, feature_columns].copy()
+        y_series = pd.Series(y_series.to_numpy(), index=selected.index, name=y_series.name or self.target)
+        return selected, y_series, feature_columns
+
+    def _axis_input(self, X: pd.DataFrame, is_x: bool) -> pd.DataFrame:
+        """按 dtype_x/dtype_y 构造单轴输入，使显式类型配置真正生效。"""
+        feature = self.feature_x_ if is_x else self.feature_y_
+        dtype = self.dtype_x if is_x else self.dtype_y
+        axis = X[[feature]].copy()
+        if dtype == "categorical":
+            axis[feature] = axis[feature].astype(object)
+        elif dtype == "numerical":
+            try:
+                axis[feature] = pd.to_numeric(axis[feature], errors="raise")
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"特征 '{feature}' 无法按 numerical 转换为数值") from exc
+        return axis
 
     def _normalize_missing_bins(self, bins: np.ndarray, is_x: bool) -> np.ndarray:
         """保留一维分箱器已经学习或保留的缺失箱结果."""
@@ -1089,11 +1161,11 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
         return bool(np.any(np.asarray(bins) == -1))
 
     def _compute_cross_table(self) -> None:
-        """计算二维交叉分箱统计表."""
+        """计算二维预分箱网格统计表。"""
         X, y = self._X, self._y
 
-        bins_x = self.binner_x_.transform(X[[self.feature_x_]], metric="indices")[self.feature_x_].values
-        bins_y = self.binner_y_.transform(X[[self.feature_y_]], metric="indices")[self.feature_y_].values
+        bins_x = self.binner_x_.transform(self._axis_input(X, is_x=True), metric="indices")[self.feature_x_].values
+        bins_y = self.binner_y_.transform(self._axis_input(X, is_x=False), metric="indices")[self.feature_y_].values
         bins_x = self._normalize_missing_bins(bins_x, is_x=True)
         bins_y = self._normalize_missing_bins(bins_y, is_x=False)
 
@@ -1111,7 +1183,8 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
         if self._has_missing_y_:
             grid_y[grid_y == -1] = self.n_bins_y_
 
-        # 特殊值仍沿用二维特殊箱；笛卡尔积统计包含普通值和缺失值组合。
+        # 特殊值沿用二维特殊箱；普通值和缺失值组合进入笛卡尔网格。
+        special_mask = (bins_x == -2) | (bins_y == -2)
         valid_mask = (grid_x >= 0) & (grid_x < grid_n_x) & (grid_y >= 0) & (grid_y < grid_n_y)
         bins_x_valid = grid_x[valid_mask]
         bins_y_valid = grid_y[valid_mask]
@@ -1135,11 +1208,17 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
             cell_id_grid[i, j] = cell_id
 
         cell_indices = cell_id_grid[bins_x_valid, bins_y_valid]
-        stats = self._compute_bin_stats(
-            cell_indices,
-            y_valid,
-        ).drop(columns="分箱标签", errors="ignore")
-        stats = stats.set_index("分箱").reindex(range(len(cells)))
+        detail_bins = np.full(len(y), UNKNOWN_BIN, dtype=int)
+        detail_bins[valid_mask] = cell_indices
+        detail_bins[special_mask] = -2
+        detail_mask = valid_mask | special_mask
+        expected_bins = list(range(len(cells))) + ([-2] if special_mask.any() else [])
+        if detail_mask.any():
+            stats = self._compute_bin_stats(detail_bins[detail_mask], y.to_numpy()[detail_mask])
+        else:
+            # compute_bin_stats 的空输入路径依赖 np.bincount；使用安全模板取得统一列结构。
+            stats = self._compute_bin_stats(np.array([0, 0]), np.array([0, 1])).iloc[0:0]
+        stats = stats.drop(columns="分箱标签", errors="ignore").set_index("分箱").reindex(expected_bins)
 
         # compute_bin_stats 不生成无样本箱；笛卡尔积要求保留这些组合。
         cumulative_columns = [
@@ -1163,31 +1242,50 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
         stats = stats.reset_index()
 
         descriptions = []
-        for i, j in cells:
+        for cell_id, (i, j) in enumerate(cells):
             mask = (bins_x_valid == i) & (bins_y_valid == j)
             bad = int(y_valid[mask].sum())
             count = int(mask.sum())
             grid_event[i, j] = bad
             grid_nonevent[i, j] = count - bad
+            x_label = self._get_grid_bin_label(i, is_x=True)
+            y_label = self._get_grid_bin_label(j, is_x=False)
             descriptions.append(
                 {
+                    "分箱": cell_id,
+                    "分箱标签": f"{x_label} × {y_label}",
                     "特征1名称": self.feature_x_,
                     "特征1分箱": -1 if i == self.n_bins_x_ else i,
-                    "特征1标签": self._get_grid_bin_label(i, is_x=True),
+                    "特征1标签": x_label,
                     "特征2名称": self.feature_y_,
                     "特征2分箱": -1 if j == self.n_bins_y_ else j,
-                    "特征2标签": self._get_grid_bin_label(j, is_x=False),
+                    "特征2标签": y_label,
+                }
+            )
+        if special_mask.any():
+            descriptions.append(
+                {
+                    "分箱": -2,
+                    "分箱标签": "特殊值",
+                    "特征1名称": self.feature_x_,
+                    "特征1分箱": -2,
+                    "特征1标签": "任一特征特殊值",
+                    "特征2名称": self.feature_y_,
+                    "特征2分箱": -2,
+                    "特征2标签": "任一特征特殊值",
                 }
             )
 
-        self.cross_table_ = pd.concat(
+        self.grid_table_ = pd.concat(
             [pd.DataFrame(descriptions), stats.drop(columns="分箱")],
             axis=1,
         )
-        self.iv_grid_ = float(self.cross_table_["分档IV值"].sum())
+        grid_iv = float(self.grid_table_["分档IV值"].sum())
+        self.grid_table_["指标IV值"] = grid_iv
+        self.cross_table_ = self.grid_table_
+        self.iv_grid_ = grid_iv
         self.iv_interaction_ = self.iv_grid_
-        # 保存展平的WOE数组供transform查表使用
-        self.woe_flat_ = self.cross_table_["分档WOE值"].to_numpy()
+        self.woe_flat_ = self.grid_table_.loc[self.grid_table_["分箱"] >= 0, "分档WOE值"].to_numpy()
         # 保存网格样本数矩阵供二维合并分箱使用
         self._grid_event_ = grid_event
         self._grid_nonevent_ = grid_nonevent
@@ -1212,8 +1310,7 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
         max_bins = self.max_n_bins_2d if self.max_n_bins_2d is not None else self.max_n_bins
         if isinstance(max_bins, (bool, np.bool_)) or not isinstance(max_bins, (int, np.integer)) or max_bins < 1:
             raise ValueError("max_n_bins_2d 必须是正整数")
-        normal_cells = self.n_bins_x_ * self.n_bins_y_
-        max_bins = min(int(max_bins), normal_cells)
+        max_bins = int(max_bins)
 
         total = float((event + nonevent)[: self.n_bins_x_, : self.n_bins_y_].sum())
         if self.min_bin_size is None:
@@ -1223,7 +1320,6 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
         else:
             min_count = max(1, int(self.min_bin_size))
 
-        solution = np.arange(n_cells, dtype=int).reshape(event.shape)
         trend_x = self._resolve_axis_monotonic_trend(is_x=True)
         trend_y = self._resolve_axis_monotonic_trend(is_x=False)
 
@@ -1233,6 +1329,8 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
         def region_counts(matrix: np.ndarray) -> Dict[int, Tuple[float, float]]:
             counts = {}
             for bin_id in np.unique(matrix):
+                if int(bin_id) < 0:
+                    continue
                 mask = matrix == bin_id
                 counts[int(bin_id)] = (float(event[mask].sum()), float(nonevent[mask].sum()))
             return counts
@@ -1246,6 +1344,23 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
                 return 2  # 特征1缺失，特征2正常
             return 3
 
+        observed_groups = {
+            cell_group(i, j)
+            for i in range(event.shape[0])
+            for j in range(event.shape[1])
+            if event[i, j] + nonevent[i, j] > 0
+        }
+        solution = np.full(event.shape, UNKNOWN_BIN, dtype=int)
+        next_id = 0
+        for i in range(event.shape[0]):
+            for j in range(event.shape[1]):
+                if cell_group(i, j) in observed_groups:
+                    solution[i, j] = next_id
+                    next_id += 1
+
+        if not observed_groups:
+            return solution
+
         def adjacent_pairs(matrix: np.ndarray, normal_only: bool = False) -> List[Tuple[int, int]]:
             pairs = set()
             for i in range(matrix.shape[0] - 1):
@@ -1255,7 +1370,7 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
                     if normal_only and cell_group(i, j) != 0:
                         continue
                     a, b = matrix[i, j], matrix[i + 1, j]
-                    if a != b:
+                    if a >= 0 and b >= 0 and a != b:
                         pairs.add(tuple(sorted((int(a), int(b)))))
             for i in range(matrix.shape[0]):
                 for j in range(matrix.shape[1] - 1):
@@ -1264,29 +1379,50 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
                     if normal_only and cell_group(i, j) != 0:
                         continue
                     a, b = matrix[i, j], matrix[i, j + 1]
-                    if a != b:
+                    if a >= 0 and b >= 0 and a != b:
                         pairs.add(tuple(sorted((int(a), int(b)))))
             return sorted(pairs)
 
         def normal_ids(matrix: np.ndarray) -> set:
-            return set(np.unique(matrix[: self.n_bins_x_, : self.n_bins_y_]).astype(int))
+            return {
+                int(bin_id)
+                for bin_id in np.unique(matrix[: self.n_bins_x_, : self.n_bins_y_])
+                if int(bin_id) >= 0
+            }
+
+        def active_ids(matrix: np.ndarray) -> set:
+            return {int(bin_id) for bin_id in np.unique(matrix) if int(bin_id) >= 0}
 
         def iv_part(ev: float, nev: float) -> float:
             p_event = max(ev / total_event, 1e-10)
             p_nonevent = max(nev / total_nonevent, 1e-10)
             return (p_event - p_nonevent) * np.log(p_event / p_nonevent)
 
-        # ---------------- 阶段一：样本量与分箱数约束 ----------------
+        represented_groups = observed_groups
+        if max_bins < len(represented_groups):
+            raise ValueError(
+                f"max_n_bins_2d={max_bins} 小于缺失值语义组数量 {len(represented_groups)}，"
+                "在保持缺失值独立语义时无法满足约束"
+            )
+        if total > 0 and min_count > total:
+            raise ValueError(
+                f"min_bin_size 要求每个普通二维分箱至少 {min_count} 个样本，"
+                f"但普通样本总数仅为 {int(total)}，无法满足约束"
+            )
+
+        # ---------------- 阶段一：样本量与全部非特殊分箱数约束 ----------------
         while True:
             counts = region_counts(solution)
             current_normal_ids = normal_ids(solution)
-            small = {k for k in current_normal_ids if sum(counts[k]) < min_count}
-            must_reduce = len(current_normal_ids) > max_bins
+            small = {k for k in current_normal_ids if total > 0 and sum(counts[k]) < min_count}
+            current_ids = active_ids(solution)
+            must_reduce = len(current_ids) > max_bins
             if not must_reduce and not small:
                 break
-            candidates = adjacent_pairs(solution, normal_only=True)
-            if not candidates or len(current_normal_ids) == 1:
-                break
+            candidates = adjacent_pairs(solution)
+            if not candidates:
+                reason = "最大分箱数" if must_reduce else "最小样本量"
+                raise ValueError(f"二维分箱在保持网格连通和缺失值语义时无法满足{reason}约束")
 
             ranked = []
             for left, right in candidates:
@@ -1311,6 +1447,14 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
                 )
             _, _, _, _, keep, remove = min(ranked)
             solution[solution == remove] = keep
+
+            if len(active_ids(solution)) == len(represented_groups):
+                counts = region_counts(solution)
+                remaining_small = {
+                    k for k in normal_ids(solution) if total > 0 and sum(counts[k]) < min_count
+                }
+                if len(active_ids(solution)) > max_bins or remaining_small:
+                    raise ValueError("二维分箱在保持缺失值独立语义时无法同时满足最大分箱数和最小样本量约束")
 
         # ---------------- 阶段二：单调性硬约束（合并违例相邻分箱至零违例） ----------------
         if trend_x is not None or trend_y is not None:
@@ -1344,17 +1488,26 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
                 _, _, _, keep, remove = min(ranked)
                 solution[solution == remove] = keep
 
-            if self.verbose and len(np.unique(solution)) <= 1:
+            if self.verbose and len(active_ids(solution)) <= 1:
                 warnings.warn("单调性硬约束将二维分箱合并为单一分箱，" "请考虑放宽单调性约束（monotonic_x/monotonic_y）或调整预分箱粒度")
+
+        final_counts = region_counts(solution)
+        if len(final_counts) > max_bins:
+            raise ValueError(f"二维分箱结果为 {len(final_counts)} 箱，超过 max_n_bins_2d={max_bins}")
+        remaining_small = {
+            k for k in normal_ids(solution) if total > 0 and sum(final_counts[k]) < min_count
+        }
+        if remaining_small:
+            raise ValueError(f"二维分箱无法满足 min_bin_size，仍有 {len(remaining_small)} 个普通分箱样本量不足")
 
         def order_key(bin_id: int) -> Tuple[int, int, int]:
             cells = np.argwhere(solution == bin_id)
             i, j = cells.min(axis=0)
             return cell_group(int(i), int(j)), int(i), int(j)
 
-        ordered_ids = sorted(np.unique(solution), key=order_key)
+        ordered_ids = sorted(active_ids(solution), key=order_key)
         remap = {int(old): new for new, old in enumerate(ordered_ids)}
-        return np.vectorize(remap.get, otypes=[int])(solution)
+        return np.vectorize(lambda value: remap.get(int(value), UNKNOWN_BIN), otypes=[int])(solution)
 
     def _resolve_axis_monotonic_trend(self, is_x: bool) -> Optional[str]:
         """复用内部一维分箱器的单调方向，转换为二维单向硬约束."""
@@ -1402,7 +1555,7 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
         violations = set()
 
         def check(a: int, b: int, trend: Optional[str]) -> None:
-            if trend is None or a == b:
+            if trend is None or a < 0 or b < 0 or a == b:
                 return
             invalid = rates[a] > rates[b] + 1e-12 if trend == "ascending" else rates[a] < rates[b] - 1e-12
             if invalid:
@@ -1425,7 +1578,9 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
         """将两个一维分箱索引映射到最终二维分箱."""
         bins_x = self._normalize_missing_bins(bins_x, is_x=True)
         bins_y = self._normalize_missing_bins(bins_y, is_x=False)
-        result = np.full(len(bins_x), -1, dtype=int)
+        # 未在训练网格中建立统计的组合（例如训练无缺失、预测首次出现缺失）
+        # 统一按未知组合处理，避免返回没有 WOE/坏样本率映射的裸 -1。
+        result = np.full(len(bins_x), UNKNOWN_BIN, dtype=int)
         special = (bins_x == -2) | (bins_y == -2)
         unknown = (bins_x == UNKNOWN_BIN) | (bins_y == UNKNOWN_BIN)
         grid_x = bins_x.copy()
@@ -1442,21 +1597,20 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
 
     def _compute_binning_table(self) -> None:
         """根据合并后的二维索引生成 hscredit 标准中文分箱表."""
-        bins_x = self.binner_x_.transform(self._X[[self.feature_x_]], metric="indices")[self.feature_x_].to_numpy()
-        bins_y = self.binner_y_.transform(self._X[[self.feature_y_]], metric="indices")[self.feature_y_].to_numpy()
+        bins_x = self.binner_x_.transform(self._axis_input(self._X, is_x=True), metric="indices")[
+            self.feature_x_
+        ].to_numpy()
+        bins_y = self.binner_y_.transform(self._axis_input(self._X, is_x=False), metric="indices")[
+            self.feature_y_
+        ].to_numpy()
         merged = self._map_grid_to_2d_bins(bins_x, bins_y)
 
         cells_by_bin = []
-        x_proj, y_proj, labels = [], [], []
+        labels = []
         for bin_id in range(self.n_bins_2d_):
             cells = [tuple(cell) for cell in np.argwhere(self.solution_ == bin_id)]
             cells_by_bin.append(cells)
-            # 将连通区域在各特征轴上投影为紧凑区间，作为可读分箱标签（参考 optbinning 的 Bin x / Bin y）
-            xp = self._axis_projection_label({i for i, _ in cells}, is_x=True)
-            yp = self._axis_projection_label({j for _, j in cells}, is_x=False)
-            x_proj.append(xp)
-            y_proj.append(yp)
-            labels.append(f"{xp} × {yp}")
+            labels.append(self._format_2d_region_label(cells))
         self._bin_cells_2d_ = cells_by_bin
         self._bin_labels_2d_ = labels
 
@@ -1516,6 +1670,8 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
                 *[column for column in table.columns if column not in {"指标名称", "指标含义", "分箱", "分箱标签", "样本总数", "样本占比"}],
             ]
         ]
+        joint_iv = float(table["分档IV值"].sum())
+        table["指标IV值"] = joint_iv
         self.binning_table_ = table
 
         normal = table[table["分箱"] >= 0].set_index("分箱")
@@ -1524,23 +1680,39 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
         indexed = table.set_index("分箱")
         self._woe_map_2d_ = indexed["分档WOE值"].astype(float).to_dict()
         self._event_rate_map_2d_ = indexed["坏样本率"].astype(float).to_dict()
-        self.iv_2d_ = float(normal["分档IV值"].sum())
+        self._woe_map_2d_[UNKNOWN_BIN] = 0.0
+        self._event_rate_map_2d_[UNKNOWN_BIN] = float(self._y.mean())
+        self.iv_2d_ = joint_iv
+        self.iv_joint_ = self.iv_2d_
         self.iv_interaction_ = self.iv_2d_
+        self.optimization_status_ = "HEURISTIC"
+        self.is_optimal_ = False
 
-        lookup = normal["分箱标签"]
+        lookup = indexed["分箱标签"].to_dict()
+        lookup.setdefault(UNKNOWN_BIN, "未知值")
 
         def grid_index(value: int, is_x: bool) -> int:
             normal_count = self.n_bins_x_ if is_x else self.n_bins_y_
             return normal_count if value == -1 else value
 
-        self.cross_table_["分箱"] = [
-            int(self.solution_[grid_index(i, True), grid_index(j, False)])
-            for i, j in zip(self.cross_table_["特征1分箱"], self.cross_table_["特征2分箱"])
-        ]
-        self.cross_table_["分箱标签"] = self.cross_table_["分箱"].map(lookup)
+        def final_bin_for_row(row: pd.Series) -> int:
+            if int(row["分箱"]) == -2:
+                return -2
+            return int(
+                self.solution_[
+                    grid_index(int(row["特征1分箱"]), True),
+                    grid_index(int(row["特征2分箱"]), False),
+                ]
+            )
+
+        grid = self.grid_table_.copy()
+        grid["二维分箱"] = grid.apply(final_bin_for_row, axis=1)
+        grid["二维分箱标签"] = grid["二维分箱"].map(lookup)
         leading = [
             "分箱",
             "分箱标签",
+            "二维分箱",
+            "二维分箱标签",
             "特征1名称",
             "特征1分箱",
             "特征1标签",
@@ -1550,16 +1722,17 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
             "样本总数",
             "样本占比",
         ]
-        self.cross_table_ = self.cross_table_[
-            leading + [column for column in self.cross_table_.columns if column not in leading]
-        ]
-        category = (self.cross_table_["特征1分箱"] == -1).astype(int) * 2 + (self.cross_table_["特征2分箱"] == -1).astype(int)
-        self.cross_table_ = (
-            self.cross_table_.assign(_组合顺序=category)
+        grid = grid[leading + [column for column in grid.columns if column not in leading]]
+        category = (grid["特征1分箱"] == -1).astype(int) * 2 + (grid["特征2分箱"] == -1).astype(int)
+        special_order = (grid["分箱"] == -2).astype(int) * 4
+        grid = (
+            grid.assign(_组合顺序=category + special_order)
             .sort_values(["_组合顺序", "特征1分箱", "特征2分箱"], kind="stable")
             .drop(columns="_组合顺序")
             .reset_index(drop=True)
         )
+        self.grid_table_ = grid
+        self.cross_table_ = self.grid_table_
 
     def _compute_bin_stats(
         self,
@@ -1601,7 +1774,10 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
         if idxs == [normal_count]:
             return "缺失值"
         label_of = [self._get_bin_label(feat, i, binner) for i in idxs]
-        interval_like = all(re.match(r"^[\[(].*,.*[\])]$", str(lab)) for lab in label_of)
+        feature_type = getattr(binner, "feature_types_", {}).get(feat)
+        interval_like = feature_type == "numerical" and all(
+            re.match(r"^[\[(].*,.*[\])]$", str(label)) for label in label_of
+        )
         if not interval_like:
             return " ∪ ".join(dict.fromkeys(label_of))
         # 合并连续预分箱区间
@@ -1621,6 +1797,45 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
                 left = first.split(",")[0].strip()
                 right = last.split(",")[-1].strip()
                 parts.append(f"{left}, {right}")
+        return " ∪ ".join(parts)
+
+    def _format_2d_region_label(self, cells: List[Tuple[int, int]]) -> str:
+        """将任意二维连通区域精确表示为不重叠矩形条带的并集。
+
+        先按特征1分箱逐行收集特征2的连续区间，再合并特征2区间完全相同的
+        相邻行。这样矩形区域仍保持简洁标签，L形或阶梯形区域也不会因轴投影
+        而扩大实际覆盖范围。
+        """
+        rows: Dict[int, Tuple[Tuple[int, ...], ...]] = {}
+        cells_by_row: Dict[int, List[int]] = {}
+        for i, j in sorted((int(i), int(j)) for i, j in cells):
+            cells_by_row.setdefault(i, []).append(j)
+
+        for i, indices in cells_by_row.items():
+            spans: List[List[int]] = []
+            for j in sorted(set(indices)):
+                if spans and j == spans[-1][-1] + 1:
+                    spans[-1].append(j)
+                else:
+                    spans.append([j])
+            rows[i] = tuple(tuple(span) for span in spans)
+
+        strips: List[Tuple[List[int], Tuple[Tuple[int, ...], ...]]] = []
+        for i in sorted(rows):
+            signature = rows[i]
+            if strips and i == strips[-1][0][-1] + 1 and signature == strips[-1][1]:
+                strips[-1][0].append(i)
+            else:
+                strips.append(([i], signature))
+
+        parts = []
+        for x_indices, y_spans in strips:
+            x_label = self._axis_projection_label(x_indices, is_x=True)
+            for y_indices in y_spans:
+                y_label = self._axis_projection_label(y_indices, is_x=False)
+                display_x = f"({x_label})" if " ∪ " in x_label else x_label
+                display_y = f"({y_label})" if " ∪ " in y_label else y_label
+                parts.append(f"{display_x} × {display_y}")
         return " ∪ ".join(parts)
 
     def _get_grid_bin_label(self, bin_idx: int, is_x: bool) -> str:

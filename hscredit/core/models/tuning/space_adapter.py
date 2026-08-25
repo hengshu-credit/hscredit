@@ -100,6 +100,8 @@ def _normalize_dict(name: str, raw: Mapping[str, Any]) -> Dict[str, Any]:
             if raw.get("log", False):
                 if int(low) <= 0:
                     raise ValueError(f"参数 {name!r} 使用 log=True 时下界必须大于 0")
+                if raw.get("step", 1) != 1:
+                    raise ValueError(f"参数 {name!r} 使用 log=True 时 step 必须为 1")
                 result["log"] = True
             elif raw.get("step") is not None:
                 step = _positive_step(name, raw["step"], "step")
@@ -297,6 +299,25 @@ class SearchSpaceAdapter:
     @staticmethod
     def latent_name(name: str) -> str:
         return f"{_LATENT_PREFIX}{name}"
+
+    def to_internal_name(self, name: str) -> str:
+        """把公开参数名转换为 Optuna Study 中实际记录的参数名。"""
+        if name not in (self.space or {}):
+            raise ValueError(f"搜索空间中不存在参数: {name!r}")
+        spec = (self.space or {})[name]
+        if spec["type"] in {"quniform", "qloguniform", "normal"} or (
+            spec["type"] == "categorical" and "prior" in spec
+        ):
+            return self.latent_name(name)
+        return name
+
+    def to_public_name(self, name: str) -> str:
+        """把 Optuna 内部潜变量名还原为公开参数名。"""
+        if name.startswith(_LATENT_PREFIX):
+            public_name = name[len(_LATENT_PREFIX) :]
+            if public_name in (self.space or {}):
+                return public_name
+        return name
 
     @staticmethod
     def _cast(value: Any, spec: Mapping[str, Any]) -> Any:

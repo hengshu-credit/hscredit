@@ -18,7 +18,12 @@ from ..core.binning import OptimalBinning
 from ..core.binning.base import BaseBinning
 from ..core.viz import bin_plot, bin_trend_plot, corr_plot, distribution_plot, hist_plot, ks_plot
 from ..core.viz.utils import _layout_top_center_legend
-from ..core.metrics._binning import compute_bin_stats, add_margins
+from ..core.metrics._binning import (
+    add_margins,
+    composite_binning_quality,
+    compute_bin_stats,
+    quadratic_curve_coefficient,
+)
 from ..excel import ExcelWriter, dataframe2excel
 from ..utils import init_setting
 from ..utils.parallel import ParallelWorkload, parallel_execute, resolve_n_jobs, validate_parallel_config
@@ -207,8 +212,13 @@ def _feature_group_summary_call(task):
 
 
 def _benchmark_binning_call(task):
-    """计算一个 ``DPD × 分箱方法`` 的基准结果。"""
-    x, y, feature, method, dpd, params = task
+    """计算一个 ``逾期字段 × DPD × 分箱方法`` 的基准结果。"""
+    x, y, feature, method, overdue_name, dpd, params = task
+    row = {
+        "method": f"hscredit-{method}",
+        "overdue": overdue_name,
+        "dpd": dpd,
+    }
     try:
         binner = OptimalBinning(method=method, **params)
         binner.fit(pd.DataFrame({feature: x}), y)
@@ -217,31 +227,89 @@ def _benchmark_binning_call(task):
         xv = x[mask].to_numpy(dtype=float)
         yv = y[mask].to_numpy(dtype=int)
         if len(xv) == 0:
-            return {"method": f"hscredit-{method}", "dpd": dpd, "error": "no valid samples"}
+            return {**row, "error": "没有有效样本"}
         bins = np.digitize(xv, splits, right=True)
-        counts = np.bincount(bins, minlength=len(splits) + 1).astype(float)
-        bad = np.bincount(bins, weights=yv, minlength=len(splits) + 1).astype(float)
-        bad_rate = bad / np.maximum(counts, 1.0)
-        lift = bad_rate / max(yv.mean(), 1e-12)
+        bin_stats = compute_bin_stats(bins, yv, round_digits=False)
+        valid_stats = bin_stats[bin_stats["分箱"] >= 0].reset_index(drop=True)
+        bad_rate = valid_stats["坏样本率"].to_numpy(dtype=float)
+        lift = valid_stats["LIFT值"].to_numpy(dtype=float)
+        metric_monotonic = params.get("monotonic")
+        if metric_monotonic not in {"ascending", "descending", "valley", "peak"}:
+            metric_monotonic = "descending" if lift[0] >= lift[-1] else "ascending"
+        quadratic_lift = quadratic_curve_coefficient(
+            bins=bins,
+            y=yv,
+            metric="lift",
+            monotonic=metric_monotonic,
+        )
+        composite_score = composite_binning_quality(
+            bins=bins,
+            y=yv,
+            metric="lift",
+            monotonic=metric_monotonic,
+        )
         diffs = np.diff(bad_rate)
         nonzero_signs = np.sign(diffs)
         nonzero_signs = nonzero_signs[nonzero_signs != 0]
         turns = 0 if len(nonzero_signs) <= 1 else int(np.sum(nonzero_signs[1:] * nonzero_signs[:-1] < 0))
         return {
-            "method": f"hscredit-{method}",
-            "dpd": dpd,
+            **row,
             "n_bins": int(len(splits) + 1),
             "head_lift": float(lift[0]),
             "tail_lift": float(lift[-1]),
             "edge_gap": float(abs(lift[-1] - lift[0])),
             "max_lift": float(np.max(lift)),
             "min_lift": float(np.min(lift)),
+            "quadratic_lift": round(float(quadratic_lift), 6),
+            "composite_score": round(float(composite_score), 6),
             "monotonic": bool(np.all(diffs >= -1e-12) or np.all(diffs <= 1e-12)),
             "turns": turns,
             "splits": splits.tolist(),
+            "lift_seq": np.round(lift, params.get("decimal", 4)).tolist(),
+            "bad_rate_seq": np.round(bad_rate, params.get("decimal", 4)).tolist(),
         }
     except Exception as exc:  # 保持基准报告逐方法展示失败原因的既有契约
-        return {"method": f"hscredit-{method}", "dpd": dpd, "error": str(exc)}
+        return {**row, "error": f"分箱失败：{exc}"}
+
+
+def _benchmark_binning_wide_table(
+    table: pd.DataFrame,
+    methods: List[str],
+    overdue_columns: List[str],
+    dpd_values: List[int],
+) -> pd.DataFrame:
+    """将方法基准长表转换为按逾期标签展开的两层列宽表。"""
+    key_columns = {"分箱方法", "逾期字段", "逾期阈值"}
+    metric_columns = [column for column in table.columns if column not in key_columns]
+    labels = [
+        (overdue_name, dpd, f"{overdue_name}_{dpd}+")
+        for overdue_name in overdue_columns
+        for dpd in dpd_values
+    ]
+    columns = [("分箱详情", "分箱方法")]
+    columns.extend((label, metric) for _, _, label in labels for metric in metric_columns)
+
+    method_names = table["分箱方法"].drop_duplicates().tolist() if "分箱方法" in table else []
+    method_names.extend(
+        method_name
+        for method_name in (f"hscredit-{method}" for method in methods)
+        if method_name not in method_names
+    )
+
+    rows = []
+    for method_name in method_names:
+        row = {("分箱详情", "分箱方法"): method_name}
+        method_table = table[table["分箱方法"] == method_name]
+        for overdue_name, dpd, label in labels:
+            matched = method_table[
+                (method_table["逾期字段"] == overdue_name) & (method_table["逾期阈值"] == dpd)
+            ]
+            values = matched.iloc[0] if not matched.empty else None
+            for metric in metric_columns:
+                row[(label, metric)] = values[metric] if values is not None else np.nan
+        rows.append(row)
+
+    return pd.DataFrame(rows, columns=pd.MultiIndex.from_tuples(columns))
 
 
 def _feature_missing_rate(data: pd.DataFrame, feature: str, dropna: Union[bool, float, int, str] = False) -> float:
@@ -1556,25 +1624,106 @@ def feature_bin_stats(
 def benchmark_binning_methods(
     data: pd.DataFrame,
     feature: str,
-    overdue_col: str = "MOB1",
-    dpds: Optional[List[int]] = None,
+    overdue: Union[str, List[str]] = "MOB1",
+    dpds: Optional[Union[int, List[int]]] = None,
     max_n_bins: int = 5,
-    min_bin_size: float = 0.01,
-    monotonic: str = "auto_asc_desc",
+    min_bin_size: Union[float, int] = 0.01,
+    monotonic: Union[bool, str] = "auto_asc_desc",
     hscredit_methods: Optional[List[str]] = None,
     n_jobs: Union[int, float] = -1,
     parallel_backend: Optional[str] = None,
     parallel_config: Optional[Dict[str, Any]] = None,
+    min_n_bins: int = 2,
+    max_bin_size: Optional[Union[float, int]] = None,
+    min_bad_rate: float = 0.0,
+    missing_separate: bool = True,
+    prebinning: Optional[Union[str, BaseBinning, Dict]] = "quantile",
+    prebinning_params: Optional[Dict[str, Any]] = None,
+    special_codes: Optional[List] = None,
+    cat_cutoff: Optional[Union[float, int]] = None,
+    random_state: Optional[int] = None,
+    verbose: Union[bool, int] = False,
+    decimal: int = 4,
+    woe_clip: Optional[float] = None,
+    lift_refine: bool = True,
+    long_format: bool = False,
+    **kwargs,
 ) -> pd.DataFrame:
     """逐方法对比 hscredit 内部分箱效果。
 
-    仅使用 hscredit 内置分箱器，不依赖额外第三方分箱库。
-    重点指标：头部/尾部 Lift、头尾差(edge_gap)、是否单调。
+    仅使用 hscredit 内置分箱器，不依赖额外第三方分箱库。传入多个
+    ``overdue`` 和多个 ``dpds`` 时，按全部组合分别执行基准测试。
+    ``hscredit_methods=None`` 时遍历 :attr:`OptimalBinning.VALID_METHODS`
+    登记的所有方法。方法专属参数可通过 ``kwargs`` 透传给
+    :class:`OptimalBinning`。
+
+    :param data: 包含特征和逾期字段的数据集
+    :param feature: 待比较的特征字段名
+    :param overdue: 逾期天数字段名或字段名列表
+    :param dpds: 逾期阈值或阈值列表，默认 ``[3, 0]``
+    :param max_n_bins: 最大分箱数，默认 5
+    :param min_bin_size: 每箱最小样本占比或样本数，默认 0.01
+    :param monotonic: 单调性约束，默认 ``auto_asc_desc``
+    :param hscredit_methods: 待比较方法；默认遍历全部已登记方法
+    :param min_n_bins: 最小分箱数，默认 2
+    :param max_bin_size: 每箱最大样本占比或样本数
+    :param min_bad_rate: 每箱最小坏样本率
+    :param missing_separate: 是否将缺失值单独分箱
+    :param prebinning: 预分箱方法或配置，默认 ``quantile``
+    :param prebinning_params: 预分箱参数；默认使用 ``{'max_n_bins': 100}``
+    :param special_codes: 特殊值列表
+    :param cat_cutoff: 类别合并阈值
+    :param random_state: 随机种子
+    :param verbose: 是否输出详细信息
+    :param decimal: 切分点保留小数位数
+    :param woe_clip: WOE 截断阈值
+    :param lift_refine: 是否启用 Lift 优化，默认 True
+    :param long_format: 是否返回平铺长表，默认 False，返回按逾期标签展开的两层列宽表
+    :param kwargs: 透传给 ``OptimalBinning`` 的方法专属参数
+    :return: 使用中文指标列名的分箱方法对比表
     """
+    column_names = {
+        "method": "分箱方法",
+        "overdue": "逾期字段",
+        "dpd": "逾期阈值",
+        "n_bins": "分箱数",
+        "head_lift": "首箱LIFT值",
+        "tail_lift": "尾箱LIFT值",
+        "edge_gap": "头尾LIFT差",
+        "max_lift": "最大LIFT值",
+        "min_lift": "最小LIFT值",
+        "quadratic_lift": "LIFT二次项系数",
+        "composite_score": "综合评分",
+        "monotonic": "是否单调",
+        "turns": "趋势转折数",
+        "splits": "切分点",
+        "lift_seq": "LIFT序列",
+        "bad_rate_seq": "坏样本率序列",
+        "error": "错误信息",
+    }
+    internal_columns = list(column_names)
+
+    if feature not in data.columns:
+        raise KeyError(f"数据中不存在特征字段：{feature}")
+
+    overdue_columns = [overdue] if isinstance(overdue, str) else list(overdue)
+    if not overdue_columns:
+        raise ValueError("overdue 不能为空")
+    missing_overdue = [name for name in overdue_columns if name not in data.columns]
+    if missing_overdue:
+        raise KeyError(f"数据中不存在逾期字段：{missing_overdue}")
+
     if dpds is None:
-        dpds = [3, 0]
+        dpd_values = [3, 0]
+    elif isinstance(dpds, (int, np.integer)):
+        dpd_values = [int(dpds)]
+    else:
+        dpd_values = list(dpds)
+    if not dpd_values:
+        raise ValueError("dpds 不能为空")
+
     if hscredit_methods is None:
-        hscredit_methods = ["mdlp", "cart", "chi", "tree", "kmeans", "best_ks", "best_iv", "quantile"]
+        hscredit_methods = list(OptimalBinning.VALID_METHODS)
 
     x = pd.to_numeric(data[feature], errors="coerce")
 
@@ -1616,30 +1765,45 @@ def benchmark_binning_methods(
             "splits": sp.tolist(),
         }
 
+    common_params = {
+        "max_n_bins": max_n_bins,
+        "min_n_bins": min_n_bins,
+        "min_bin_size": min_bin_size,
+        "max_bin_size": max_bin_size,
+        "min_bad_rate": min_bad_rate,
+        "monotonic": monotonic,
+        "missing_separate": missing_separate,
+        "prebinning": prebinning,
+        "prebinning_params": {"max_n_bins": 100} if prebinning_params is None else prebinning_params,
+        "special_codes": special_codes,
+        "cat_cutoff": cat_cutoff,
+        "random_state": random_state,
+        "verbose": verbose,
+        "decimal": decimal,
+        "woe_clip": woe_clip,
+        "lift_refine": lift_refine,
+        "n_jobs": n_jobs,
+        "parallel_backend": parallel_backend,
+        "parallel_config": parallel_config,
+        **kwargs,
+    }
+
     tasks = []
-    for d in dpds:
-        y = (data[overdue_col] > d).astype(int)
-        for method in hscredit_methods:
-            params = dict(
-                max_n_bins=max_n_bins,
-                min_bin_size=min_bin_size,
-                monotonic=monotonic,
-                prebinning="quantile",
-                prebinning_params={"max_n_bins": 100},
-                lift_refine=True,
-                n_jobs=-1,
-                parallel_backend=parallel_backend,
-                parallel_config=parallel_config,
-            )
-            tasks.append((x, y, feature, method, d, params))
-    has_parallel_children = any(_binning_has_parallel_children(task[3], task[5]) for task in tasks)
+    for overdue_name in overdue_columns:
+        overdue_values = pd.to_numeric(data[overdue_name], errors="coerce")
+        for dpd in dpd_values:
+            y = (overdue_values > dpd).astype(int)
+            for method in hscredit_methods:
+                tasks.append((x, y, feature, method, overdue_name, dpd, dict(common_params)))
+
+    has_parallel_children = any(_binning_has_parallel_children(task[3], task[6]) for task in tasks)
     rows = parallel_execute(
         _benchmark_binning_call,
         tasks,
         n_jobs=n_jobs,
         parallel_backend=parallel_backend,
         parallel_config=parallel_config,
-        task_labels=[f"{task[4]}:{task[3]}" for task in tasks],
+        task_labels=[f"{task[4]}:{task[5]}:{task[3]}" for task in tasks],
         default_backend="threading",
         has_parallel_children=has_parallel_children,
         workload=_feature_report_workload(
@@ -1653,18 +1817,29 @@ def benchmark_binning_methods(
 
     result = pd.DataFrame(rows)
     if result.empty:
-        return result
+        long_table = pd.DataFrame(columns=list(column_names.values()))
+        if long_format:
+            return long_table
+        return _benchmark_binning_wide_table(long_table, hscredit_methods, overdue_columns, dpd_values)
 
-    if "error" in result.columns:
-        ok = result[result["error"].isna()] if result["error"].notna().any() else result
-    else:
-        ok = result
-
-    if not ok.empty:
-        ok = ok.sort_values(["dpd", "monotonic", "edge_gap", "head_lift"], ascending=[True, False, False, False])
-        return ok.reset_index(drop=True)
-
-    return result.reset_index(drop=True)
+    for column in internal_columns:
+        if column not in result.columns:
+            result[column] = np.nan
+    result["_success"] = result["error"].isna()
+    result = result.sort_values(
+        ["overdue", "dpd", "_success", "monotonic", "edge_gap", "head_lift"],
+        ascending=[True, True, False, False, False, False],
+        na_position="last",
+    )
+    long_table = (
+        result[internal_columns]
+        .rename(columns=column_names)
+        .sort_values("综合评分", ascending=False)
+        .reset_index(drop=True)
+    )
+    if long_format:
+        return long_table
+    return _benchmark_binning_wide_table(long_table, hscredit_methods, overdue_columns, dpd_values)
 
 
 def _normalize_efficiency_rules(

@@ -361,6 +361,81 @@ def test_num_leaves_constraint_is_not_applied_to_unrelated_models():
     assert params == {"max_depth": 2, "num_leaves": 10}
 
 
+def test_ngboost_default_search_space_avoids_unstable_small_leaves_and_deep_trees():
+    """默认空间不得再次采样已证实会令自然梯度概率饱和的激进组合。"""
+
+    class NGBoostStub:
+        pass
+
+    tuner = ModelTuner(NGBoostStub, search_space=None, metric="ks", cv=2)
+    tuner._n_samples = 184
+    tuner._n_features = 8
+
+    space = tuner._get_adaptive_search_space()
+
+    assert space["learning_rate"]["high"] == pytest.approx(0.05)
+    assert space["base_max_depth"] == {"type": "int", "low": 2, "high": 3}
+    assert space["base_min_samples_leaf"]["low"] == 5
+    assert space["minibatch_frac"]["low"] == pytest.approx(0.7)
+
+
+def test_lightgbm_default_space_uses_class_ratio_and_effective_subsampling():
+    class LightGBMStub:
+        pass
+
+    tuner = ModelTuner(LightGBMStub, search_space=None, metric="ks", cv=2)
+    tuner._class_balance_ratio = 6.0
+
+    space = tuner._get_adaptive_search_space()
+
+    assert space["scale_pos_weight"] == {
+        "type": "float",
+        "low": pytest.approx(3.0),
+        "high": pytest.approx(9.0),
+    }
+    assert space["subsample_freq"] == {"type": "categorical", "choices": [1]}
+    assert space["min_split_gain"]["high"] <= 1.0
+    assert space["reg_lambda"]["high"] <= 10.0
+    assert space["learning_rate"]["log"] is True
+
+
+def test_xgboost_default_class_weight_uses_observed_class_ratio():
+    class XGBoostStub:
+        pass
+
+    tuner = ModelTuner(XGBoostStub, search_space=None, metric="ks", cv=2)
+    tuner._class_balance_ratio = 4.0
+
+    space = tuner._get_adaptive_search_space()
+
+    assert space["scale_pos_weight"]["low"] == pytest.approx(2.0)
+    assert space["scale_pos_weight"]["high"] == pytest.approx(6.0)
+
+
+def test_native_svc_and_unknown_models_do_not_receive_xgboost_space():
+    from sklearn.svm import SVC
+
+    svc_space = ModelTuner(SVC)._get_adaptive_search_space()
+
+    assert {"C", "kernel", "gamma"} <= set(svc_space)
+    assert "n_estimators" not in svc_space
+
+    class UnknownEstimator:
+        pass
+
+    with pytest.raises(ValueError, match="无法为模型.*自动生成搜索空间"):
+        ModelTuner(UnknownEstimator)._get_adaptive_search_space()
+
+
+def test_logistic_default_space_only_uses_persistable_class_weights():
+    class LogisticRegressionStub:
+        pass
+
+    space = ModelTuner(LogisticRegressionStub)._get_adaptive_search_space()
+
+    assert space["class_weight"]["choices"] == [None, "balanced"]
+
+
 def test_lightgbm_rejects_explicit_invalid_manual_leaf_point():
     class LightGBMStub:
         pass
@@ -607,7 +682,10 @@ class TestManualSearchPoints:
         tuner.fit(X, y, n_trials=1, show_progress_bar=False)
 
         assert tuner.study_.trials[0].params == {"C": 1.0, "solver": "liblinear"}
-        assert tuner.study_.trials[0].user_attrs == {"来源": "经验值"}
+        assert tuner.study_.trials[0].user_attrs["来源"] == "经验值"
+        assert {"LIFT@1%", "LIFT@3%", "LIFT@5%", "LIFT@10%"} <= set(
+            tuner.study_.trials[0].user_attrs
+        )
 
     def test_gridsearch_param_grid_expands_with_parameter_grid_order(self):
         X, y = _small_binary_data(as_frame=True)

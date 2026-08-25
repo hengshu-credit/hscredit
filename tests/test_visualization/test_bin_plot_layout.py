@@ -292,7 +292,7 @@ def test_draw_2d_bin_boundaries_rejects_invalid_solution_shape():
 
 
 @pytest.fixture(scope="module")
-def bin_2d_figure():
+def bin_2d_binner():
     rng = np.random.RandomState(42)
     size = 400
     frame = pd.DataFrame(
@@ -305,7 +305,12 @@ def bin_2d_figure():
     target = pd.Series((rng.random_sample(size) < probability).astype(int), name="目标")
     binner = OptimalBinning2D(max_n_bins=4, max_n_bins_2d=6, min_bin_size=0.05)
     binner.fit(frame, target, features=["特征1", "特征2"])
-    return bin_2d_plot(binner, figsize=(15, 13))
+    return binner
+
+
+@pytest.fixture(scope="module")
+def bin_2d_figure(bin_2d_binner):
+    return bin_2d_plot(bin_2d_binner, figsize=(15, 13))
 
 
 def test_bin_2d_plot_uses_requested_grid(bin_2d_figure):
@@ -541,3 +546,109 @@ def test_bin_2d_plot_includes_missing_bins_in_heatmaps():
             label.get_gid()
             for label in _bin_index_labels(axes[axis_index])
         } == expected_index_gids
+
+
+def test_bin_2d_plot_ks_does_not_require_retained_training_rows():
+    rng = np.random.RandomState(77)
+    size = 300
+    frame = pd.DataFrame({"x": rng.normal(size=size), "y": rng.normal(size=size)})
+    target = pd.Series(rng.randint(0, 2, size), name="目标")
+    binner = OptimalBinning2D(max_n_bins=3).fit(frame, target)
+    assert binner._X is None
+    assert binner._y is None
+
+    figure = bin_2d_plot(binner, figsize=(15, 13))
+    all_text = [text.get_text() for axis in figure.axes for text in axis.texts]
+    assert not any("KS 异常" in text for text in all_text)
+
+
+def test_binned_ks_curve_sorts_by_woe_and_includes_reserved_bins():
+    table = pd.DataFrame(
+        {
+            "分箱": [0, 1, 2, -2],
+            "样本总数": [90, 20, 90, 20],
+            "好样本数": [80, 10, 10, 10],
+            "坏样本数": [10, 10, 80, 10],
+            "分档WOE值": [-2.0, 0.0, 2.0, 1.0],
+        }
+    )
+
+    curve = binning_plots._binned_ks_curve(table)
+    assert len(curve) == 5
+    assert curve.iloc[0].tolist() == [0.0, 0.0, 0.0, 0.0]
+    assert curve.iloc[1]["累计样本占比"] == pytest.approx(90 / 220)
+    assert curve.iloc[1]["累积好样本占比"] == pytest.approx(10 / 110)
+    assert curve.iloc[1]["累积坏样本占比"] == pytest.approx(80 / 110)
+    assert curve.iloc[1]["KS值"] == pytest.approx(70 / 110)
+    assert curve.iloc[-1]["累计样本占比"] == pytest.approx(1.0)
+    assert curve.iloc[-1]["累积好样本占比"] == pytest.approx(1.0)
+    assert curve.iloc[-1]["累积坏样本占比"] == pytest.approx(1.0)
+    assert curve.iloc[-1]["KS值"] == pytest.approx(0.0)
+
+
+def test_binned_ks_curve_aggregates_equal_woe_as_one_threshold():
+    """相同 WOE 是同一评分阈值，不能用箱内顺序制造不可达到的 KS。"""
+    table = pd.DataFrame(
+        {
+            "分箱": [0, 1],
+            "样本总数": [100, 100],
+            "好样本数": [0, 100],
+            "坏样本数": [100, 0],
+            "分档WOE值": [0.0, 0.0],
+        }
+    )
+
+    curve = binning_plots._binned_ks_curve(table)
+    assert len(curve) == 2
+    assert curve["KS值"].max() == pytest.approx(0.0)
+    assert curve.iloc[-1].tolist() == [1.0, 1.0, 1.0, 0.0]
+
+
+def test_bin_2d_plot_ks_marks_maximum_gap_between_cumulative_curves(bin_2d_binner, bin_2d_figure):
+    """两个 KS 子图都应标出累计好坏样本曲线之间的最大垂直距离。"""
+    cases = [
+        (bin_2d_figure.axes[0], bin_2d_binner.binner_y_, "特征2"),
+        (bin_2d_figure.axes[8], bin_2d_binner.binner_x_, "特征1"),
+    ]
+    for axis, axis_binner, feature in cases:
+        curve = binning_plots._binned_ks_curve(axis_binner.get_bin_table(feature))
+        maximum = curve.iloc[int(curve["KS值"].to_numpy().argmax())]
+
+        annotations = [text.get_text() for text in axis.texts if text.get_text().startswith("KS=")]
+        assert annotations == [f"KS={maximum['KS值']:.2%}"]
+        gap_lines = [line for line in axis.lines if line.get_linestyle() == "--"]
+        assert len(gap_lines) == 1
+        x_data = np.asarray(gap_lines[0].get_xdata(), dtype=float)
+        y_data = np.asarray(gap_lines[0].get_ydata(), dtype=float)
+        assert x_data.tolist() == pytest.approx([maximum["累计样本占比"]] * 2)
+        assert y_data.tolist() == pytest.approx(
+            sorted([maximum["累积好样本占比"], maximum["累积坏样本占比"]])
+        )
+
+
+def test_bin_2d_plot_global_denominators_include_special_values(monkeypatch):
+    rng = np.random.RandomState(78)
+    size = 240
+    frame = pd.DataFrame({"x": rng.normal(size=size), "y": rng.normal(size=size)})
+    frame.loc[:29, "x"] = -999
+    target = pd.Series(rng.randint(0, 2, size), name="目标")
+    binner = OptimalBinning2D(max_n_bins=3, special_codes_x=[-999]).fit(frame, target)
+
+    captured = []
+    original = binning_plots._cross_heatmap_cell
+
+    def capture(ax, matrix, *args, **kwargs):
+        captured.append(np.asarray(matrix, dtype=float).copy())
+        return original(ax, matrix, *args, **kwargs)
+
+    monkeypatch.setattr(binning_plots, "_cross_heatmap_cell", capture)
+    bin_2d_plot(binner, figsize=(15, 13))
+
+    row = binner.get_cross_table().query("分箱 >= 0 and 样本总数 > 0").iloc[0]
+    total = float(binner.get_bin_table()["样本总数"].sum())
+    total_bad = float(binner.get_bin_table()["坏样本数"].sum())
+    overall_rate = total_bad / total
+    remaining_rate = (total_bad - row["坏样本数"]) / (total - row["样本总数"])
+    expected_improvement = (overall_rate - remaining_rate) / overall_rate
+    actual_improvement = captured[4][int(row["特征1分箱"]), int(row["特征2分箱"])]
+    assert actual_improvement == pytest.approx(expected_improvement)

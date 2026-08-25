@@ -82,7 +82,7 @@ import pandas as pd
 from ....utils.parallel import resolve_n_jobs
 from sklearn.base import clone
 from sklearn.model_selection import ParameterGrid, StratifiedKFold
-from sklearn.metrics import get_scorer, roc_auc_score, roc_curve
+from sklearn.metrics import get_scorer, log_loss, roc_auc_score, roc_curve
 
 logger = logging.getLogger(__name__)
 
@@ -968,6 +968,8 @@ class Metric:
             return ks_diff
         elif self._is_builtin and self.metric.lower() in TuningObjective.BUILTIN_OBJECTIVES:
             return TuningObjective.get(self.metric.lower())(y_true, y_pred)
+        elif self._is_builtin and self.metric.lower() == "logloss":
+            return -float(log_loss(y_true, y_pred))
         elif self._is_builtin:
             # 其他内置指标使用sklearn scorer
             if self.scorer is None:
@@ -1003,6 +1005,8 @@ class ModelTuner:
     :param model_class: 模型类 (如XGBoost)
     :param search_space: 参数搜索空间，默认None则使用预定义空间
     :param fixed_params: 固定参数，不参与搜索
+    :param model_params: 来源模型实例的构造参数；搜索空间同名参数会覆盖它，
+        ``fixed_params`` 的显式值具有最高优先级
     :param metric: 优化指标（决定评估计算逻辑），可选:
         - 字符串: 'auc', 'ks', 'ks_diff', 'accuracy', 'precision', 'recall', 'f1', 'logloss'
         - 列表: 多个指标，用于多目标优化，如 ['ks', 'ks_diff']
@@ -1101,6 +1105,7 @@ class ModelTuner:
         model_class: Type,
         search_space: Optional[Any] = None,
         fixed_params: Optional[Dict[str, Any]] = None,
+        model_params: Optional[Dict[str, Any]] = None,
         metric: Union[str, Callable, List[Union[str, Callable]]] = "ks",
         direction: Union[str, List[str]] = "maximize",
         metric_names: Optional[List[str]] = None,
@@ -1157,11 +1162,21 @@ class ModelTuner:
         self.model_class = model_class
         self._space_adapter = SearchSpaceAdapter(search_space)
         self.search_space = self._space_adapter.space
-        self.fixed_params = fixed_params or {}
-        self._validate_lightgbm_leaf_point(self.fixed_params)
+        self.model_params = dict(model_params or {})
+        self._explicit_fixed_params = dict(fixed_params or {})
+        self.fixed_params: Dict[str, Any] = {}
+        self._refresh_fixed_params()
         self.objective = objective
         self.objective_kwargs = objective_kwargs or {}
-        self.eval_ratios = eval_ratios or [0.01, 0.03, 0.05, 0.10]
+        self.eval_ratios = [0.01, 0.03, 0.05, 0.10] if eval_ratios is None else list(eval_ratios)
+        for ratio in self.eval_ratios:
+            if (
+                isinstance(ratio, (bool, np.bool_))
+                or not isinstance(ratio, (int, float, np.integer, np.floating))
+                or not np.isfinite(float(ratio))
+                or not 0 < float(ratio) <= 1
+            ):
+                raise ValueError("eval_ratios 中每个覆盖率必须是 (0, 1] 内的有限数值")
         initial_points = self._normalize_trial_points(trial_points)
         initial_points.extend(self._normalize_trial_points(points_to_evaluate))
         self.trial_points: List[Dict[str, Any]] = []
@@ -1193,7 +1208,6 @@ class ModelTuner:
                     metric = objective
             elif callable(objective):
                 metric = objective
-                direction = "maximize"
 
         # 处理metric和direction
         self._setup_metrics(metric, direction, metric_names)
@@ -1209,10 +1223,20 @@ class ModelTuner:
         # 存储数据信息用于自适应搜索空间
         self._n_samples = None
         self._n_features = None
+        self._class_balance_ratio = None
         self._is_multi_objective = len(self.metrics) > 1
 
         for point in initial_points:
             self.enqueue_trial(point)
+
+    def _refresh_fixed_params(self) -> None:
+        """按实例默认值 < 搜索参数 < 显式固定参数合并模型配置。"""
+        search_names = set(self.search_space or {})
+        self.fixed_params = {
+            name: value for name, value in self.model_params.items() if name not in search_names
+        }
+        self.fixed_params.update(self._explicit_fixed_params)
+        self._validate_lightgbm_leaf_point(self.fixed_params)
 
     def _setup_metrics(
         self,
@@ -1320,6 +1344,12 @@ class ModelTuner:
         # 记录数据信息
         self._n_samples = len(X)
         self._n_features = X.shape[1] if hasattr(X, "shape") else len(X[0])
+        y_array = y.to_numpy() if hasattr(y, "to_numpy") else np.asarray(y)
+        positive_count = int(np.sum(y_array == 1))
+        negative_count = int(np.sum(y_array == 0))
+        self._class_balance_ratio = (
+            float(negative_count / positive_count) if positive_count > 0 and negative_count > 0 else 1.0
+        )
         self._X = X
         self._y = y
         self._sample_weight = sample_weight
@@ -1329,25 +1359,30 @@ class ModelTuner:
             self.search_space = self._get_adaptive_search_space()
             self._space_adapter = SearchSpaceAdapter(self.search_space)
             self.search_space = self._space_adapter.space
+            self._refresh_fixed_params()
 
-        # 创建采样器（支持 optuna 内置及 optunahub 采样器，见 TuningSampler 码表）
-        sampler = TuningSampler.create(self.sampler, seed=self.random_state, **self.sampler_kwargs)
+        if self.study_ is None:
+            # 创建采样器（支持 optuna 内置及 optunahub 采样器，见 TuningSampler 码表）
+            sampler = TuningSampler.create(self.sampler, seed=self.random_state, **self.sampler_kwargs)
 
-        # 公共 study 参数（storage 指定后可用 optuna-dashboard 实时查看进度）
-        common_kwargs = dict(sampler=sampler)
-        if self.storage is not None:
-            common_kwargs.update(
-                storage=self.storage,
-                study_name=self.study_name,
-                load_if_exists=self.load_if_exists,
-            )
+            # 公共 study 参数（storage 指定后可用 optuna-dashboard 实时查看进度）
+            common_kwargs = dict(sampler=sampler)
+            if self.storage is not None:
+                common_kwargs.update(
+                    storage=self.storage,
+                    study_name=self.study_name,
+                    load_if_exists=self.load_if_exists,
+                )
 
-        if self._is_multi_objective:
-            # 多目标优化
-            self.study_ = optuna.create_study(directions=self.directions, **common_kwargs)
-        else:
-            # 单目标优化
-            self.study_ = optuna.create_study(direction=self.directions[0], **common_kwargs)
+            if self._is_multi_objective:
+                # 多目标优化
+                self.study_ = optuna.create_study(directions=self.directions, **common_kwargs)
+            else:
+                # 单目标优化
+                self.study_ = optuna.create_study(direction=self.directions[0], **common_kwargs)
+
+        if hasattr(self.study_, "set_metric_names"):
+            self.study_.set_metric_names(self.metric_names)
 
         # 入队预指定的超参数搜索点（优先评估）
         self._enqueue_trial_points()
@@ -1359,27 +1394,26 @@ class ModelTuner:
         model_workers = max(1, int(self.n_jobs or 1))
 
         def objective(trial):
-            # 从搜索空间采样参数
-            params = self._sample_params(trial)
-            params.update(self.fixed_params)
-            params = self._apply_model_param_constraints(params)
-
-            # 添加早停参数（仅当模型构造函数支持时，逻辑回归等不支持）
-            self._inject_fit_params(params)
-            self._inject_model_parallel_budget(params, model_workers)
-
-            # 创建模型
-            model = self.model_class(**params)
-
-            # 评估模型
-            return self._evaluate_model(model, X, y, sample_weight)
+            try:
+                params = self._build_model_params(self._sample_params(trial), workers=model_workers)
+                model = self.model_class(**params)
+                metric_values, diagnostics = self._evaluate_model(
+                    model, X, y, sample_weight, return_diagnostics=True
+                )
+                for name, value in diagnostics.items():
+                    trial.set_user_attr(name, value)
+                return metric_values
+            except Exception as exc:
+                trial.set_user_attr("错误类型", type(exc).__name__)
+                trial.set_user_attr("错误信息", str(exc))
+                raise
 
         # 运行优化
         self.study_.optimize(
             objective,
             n_trials=n_trials,
             timeout=timeout,
-            show_progress_bar=show_progress_bar and self.verbose,
+            show_progress_bar=show_progress_bar,
             n_jobs=1,
             callbacks=[self._print_trial_progress] if self.verbose else None,
             catch=(Exception,),
@@ -1391,7 +1425,12 @@ class ModelTuner:
             if trial.state == optuna.trial.TrialState.COMPLETE and trial.values is not None
         ]
         if not completed_trials:
-            raise ValueError("所有Trial均失败，请检查模型参数、数据和训练异常")
+            failed_trials = [trial for trial in self.study_.trials if trial.state == optuna.trial.TrialState.FAIL]
+            last_error = failed_trials[-1].user_attrs if failed_trials else {}
+            detail = ""
+            if last_error.get("错误信息"):
+                detail = f"；最后错误: {last_error.get('错误类型', 'Exception')}: {last_error['错误信息']}"
+            raise ValueError(f"所有Trial均失败，请检查模型参数、数据和训练异常{detail}")
 
         # 保存结果
         self._save_results()
@@ -1462,16 +1501,39 @@ class ModelTuner:
                     params[parameter_name] = workers
             return
 
+    def _inject_model_random_state(self, params: Dict[str, Any]) -> None:
+        """在模型显式支持且调用者未固定时注入调参随机种子。"""
+        if self.random_state is None or "random_state" in self._explicit_fixed_params:
+            return
+        try:
+            accepted = inspect.signature(self.model_class.__init__).parameters
+        except (TypeError, ValueError, AttributeError):
+            return
+        if "random_state" in accepted and params.get("random_state") is None:
+            params["random_state"] = self.random_state
+
+    def _build_model_params(self, params: Dict[str, Any], workers: Optional[int] = None) -> Dict[str, Any]:
+        """构建 Trial 评估和最终重训共用的完整模型参数。"""
+        full_params = dict(params)
+        full_params.update(self.fixed_params)
+        full_params = self._apply_model_param_constraints(full_params)
+        self._inject_fit_params(full_params)
+        self._inject_model_random_state(full_params)
+        self._inject_model_parallel_budget(full_params, workers or max(1, int(self.n_jobs or 1)))
+        return full_params
+
     def _evaluate_model(
         self,
         model: Any,
         X: Union[np.ndarray, pd.DataFrame],
         y: Union[np.ndarray, pd.Series],
         sample_weight: Optional[np.ndarray] = None,
-    ) -> Union[float, Tuple[float, ...]]:
+        return_diagnostics: bool = False,
+    ) -> Any:
         """评估模型，返回一个或多个指标值."""
         kf = StratifiedKFold(n_splits=self.cv, shuffle=True, random_state=self.random_state)
         fold_results = {i: [] for i in range(len(self.metrics))}
+        fold_lifts = {float(ratio): [] for ratio in self.eval_ratios}
 
         for train_idx, val_idx in kf.split(X, y):
             X_train_fold, X_val_fold = _safe_index(X, train_idx), _safe_index(X, val_idx)
@@ -1490,17 +1552,30 @@ class ModelTuner:
 
             y_train_pred = fold_model.predict_proba(X_train_fold)[:, 1]
             y_val_pred = fold_model.predict_proba(X_val_fold)[:, 1]
+            y_val_arr = y_val_fold.values if hasattr(y_val_fold, "values") else np.asarray(y_val_fold)
+            y_train_arr = y_train_fold.values if hasattr(y_train_fold, "values") else np.asarray(y_train_fold)
 
             for i, metric in enumerate(self.metrics):
-                y_val_arr = y_val_fold.values if hasattr(y_val_fold, "values") else np.asarray(y_val_fold)
-                y_train_arr = y_train_fold.values if hasattr(y_train_fold, "values") else np.asarray(y_train_fold)
                 value = metric(y_val_arr, y_val_pred, y_train=y_train_arr, y_train_pred=y_train_pred)
                 fold_results[i].append(value)
 
+            for ratio in fold_lifts:
+                fold_lifts[ratio].append(TuningObjective.lift_head(y_val_arr, y_val_pred, ratio=ratio))
+
         results = [np.mean(fold_results[i]) for i in range(len(self.metrics))]
-        if self._is_multi_objective:
-            return tuple(results)
-        return results[0]
+        metric_result = tuple(results) if self._is_multi_objective else results[0]
+        if not return_diagnostics:
+            return metric_result
+        diagnostics = {
+            self._lift_metric_name(ratio): float(np.mean(values))
+            for ratio, values in fold_lifts.items()
+        }
+        return metric_result, diagnostics
+
+    @staticmethod
+    def _lift_metric_name(ratio: float) -> str:
+        """生成稳定的公开 LIFT 覆盖率名称。"""
+        return f"LIFT@{float(ratio) * 100:g}%"
 
     def _save_results(self):
         """保存优化结果."""
@@ -1585,10 +1660,7 @@ class ModelTuner:
                 logger.info(f"评估 trial point {i+1}/{len(trial_points)}: {params}")
 
             # 合并固定参数
-            full_params = dict(params)
-            full_params.update(self.fixed_params)
-            full_params = self._apply_model_param_constraints(full_params)
-            self._inject_fit_params(full_params)
+            full_params = self._build_model_params(params)
 
             # 创建模型并评估
             model = self.model_class(**full_params)
@@ -1680,10 +1752,7 @@ class ModelTuner:
                 logger.info(f"评估 study trial #{idx} (state={trial.state.name}): {params}")
 
             # 合并固定参数并按模型签名注入早停参数
-            full_params = dict(params)
-            full_params.update(self.fixed_params)
-            full_params = self._apply_model_param_constraints(full_params)
-            self._inject_fit_params(full_params)
+            full_params = self._build_model_params(params)
 
             # 创建模型并评估
             model = self.model_class(**full_params)
@@ -1723,6 +1792,11 @@ class ModelTuner:
                 params.update(self.fixed_params)
                 values.append(self._apply_model_param_constraints(params).get(name))
             history[column] = values
+        for ratio in self.eval_ratios:
+            public_name = self._lift_metric_name(float(ratio))
+            internal_column = f"user_attrs_{public_name}"
+            if internal_column in history:
+                history[public_name] = history.pop(internal_column)
         return history
 
     def _get_adaptive_search_space(self) -> Dict[str, Dict[str, Any]]:
@@ -1748,13 +1822,19 @@ class ModelTuner:
             return self._get_ngboost_search_space()
         elif "logistic" in model_name or model_name in ("lr",):
             return self._get_logisticregression_search_space()
-        elif model_name == "svm":
+        elif model_name in ("svm", "svc"):
             return self._get_svm_search_space()
         elif model_name == "decisiontreeclassifier":
             return self._get_decisiontree_search_space()
         else:
-            # 默认使用XGBoost搜索空间
-            return self._get_xgboost_search_space()
+            raise ValueError(
+                f"无法为模型 {self.model_class.__name__} 自动生成搜索空间，请显式传入 search_space"
+            )
+
+    def _get_class_weight_range(self) -> Tuple[float, float]:
+        """根据训练标签负正样本比生成正样本权重范围。"""
+        ratio = float(np.clip(self._class_balance_ratio or 1.0, 0.1, 100.0))
+        return max(0.1, ratio * 0.5), min(100.0, max(ratio * 1.5, ratio * 0.5))
 
     def _get_xgboost_search_space(self) -> Dict[str, Dict[str, Any]]:
         """XGBoost搜索空间 - 基于内部建模经验.
@@ -1765,7 +1845,7 @@ class ModelTuner:
         - subsample: 0.35-0.85，行采样
         - colsample_bytree: 0.4-0.9，列采样
         - gamma: 0.0-32.0，分裂最小损失下降，越大越保守
-        - scale_pos_weight: 16.0-32.0，正样本权重（适配低坏率不平衡场景）
+        - scale_pos_weight: 围绕训练集负正样本比的 0.5-1.5 倍自适应
         - reg_alpha: 0.0-1.0（L1 正则）
         - reg_lambda: 32.0-128.0（L2 正则，强约束）
         - learning_rate: 0.0001-0.01，较小学习率更稳定
@@ -1775,6 +1855,7 @@ class ModelTuner:
         ``booster='gbtree'`` / ``importance_type='cover'`` 已是模型默认值，
         如需覆盖可通过 ``ModelTuner(fixed_params=...)`` 传入。
         """
+        class_weight_low, class_weight_high = self._get_class_weight_range()
         return {
             "max_depth": {"type": "int", "low": 2, "high": 4},
             "learning_rate": {"type": "float", "low": 0.0001, "high": 0.01},
@@ -1783,7 +1864,11 @@ class ModelTuner:
             "subsample": {"type": "float", "low": 0.35, "high": 0.85},
             "colsample_bytree": {"type": "float", "low": 0.4, "high": 0.9},
             "gamma": {"type": "float", "low": 0.0, "high": 32.0},
-            "scale_pos_weight": {"type": "float", "low": 16.0, "high": 32.0},
+            "scale_pos_weight": {
+                "type": "float",
+                "low": class_weight_low,
+                "high": class_weight_high,
+            },
             "reg_alpha": {"type": "float", "low": 0.0, "high": 1.0},
             "reg_lambda": {"type": "float", "low": 32.0, "high": 128.0},
         }
@@ -1791,31 +1876,37 @@ class ModelTuner:
     def _get_lightgbm_search_space(self) -> Dict[str, Dict[str, Any]]:
         """LightGBM搜索空间 - 与XGBoost搜索空间对齐.
 
-        参考内部代码（参数范围与 XGBoost 保持一致的建模经验）:
+        参考风控小中型样本经验，并避免强正则导致所有样本预测相同:
         - num_leaves: 与max_depth相关，受 ``2**max_depth`` 上界约束（见 _sample_params）
         - max_depth: 风控场景通常2-4，防止过拟合
-        - min_child_samples: 8-256（step 4），叶子最小样本数，越大越保守
-        - subsample: 0.35-0.85，行采样
+        - min_child_samples: 8-128（step 4），叶子最小样本数
+        - subsample: 0.35-0.85，配合 subsample_freq=1 启用行采样
         - colsample_bytree: 0.4-0.9，列采样
-        - min_split_gain: 0.0-32.0，分裂最小增益（对应 XGBoost 的 gamma）
-        - scale_pos_weight: 16.0-32.0，正样本权重
+        - min_split_gain: 0.0-1.0，保留小样本中的有效弱分裂
+        - scale_pos_weight: 围绕训练集负正样本比的 0.5-1.5 倍自适应
         - reg_alpha: 0.0-1.0（L1 正则）
-        - reg_lambda: 32.0-128.0（L2 正则，强约束）
-        - learning_rate: 0.0001-0.01，较小学习率更稳定
-        - n_estimators: 32-256（step 16）
+        - reg_lambda: 0.0-10.0（L2 正则）
+        - learning_rate: 0.005-0.1，对数采样
+        - n_estimators: 64-512（step 32）
         """
+        class_weight_low, class_weight_high = self._get_class_weight_range()
         return {
             "num_leaves": {"type": "int", "low": 8, "high": 64},
             "max_depth": {"type": "int", "low": 2, "high": 4},
-            "learning_rate": {"type": "float", "low": 0.0001, "high": 0.01},
-            "n_estimators": {"type": "int", "low": 32, "high": 256, "step": 16},
-            "min_child_samples": {"type": "int", "low": 8, "high": 256, "step": 4},
+            "learning_rate": {"type": "float", "low": 0.005, "high": 0.1, "log": True},
+            "n_estimators": {"type": "int", "low": 64, "high": 512, "step": 32},
+            "min_child_samples": {"type": "int", "low": 8, "high": 128, "step": 4},
             "subsample": {"type": "float", "low": 0.35, "high": 0.85},
+            "subsample_freq": {"type": "categorical", "choices": [1]},
             "colsample_bytree": {"type": "float", "low": 0.4, "high": 0.9},
-            "min_split_gain": {"type": "float", "low": 0.0, "high": 32.0},
-            "scale_pos_weight": {"type": "float", "low": 16.0, "high": 32.0},
+            "min_split_gain": {"type": "float", "low": 0.0, "high": 1.0},
+            "scale_pos_weight": {
+                "type": "float",
+                "low": class_weight_low,
+                "high": class_weight_high,
+            },
             "reg_alpha": {"type": "float", "low": 0.0, "high": 1.0},
-            "reg_lambda": {"type": "float", "low": 32.0, "high": 128.0},
+            "reg_lambda": {"type": "float", "low": 0.0, "high": 10.0},
         }
 
     def _get_logisticregression_search_space(self) -> Dict[str, Dict[str, Any]]:
@@ -1824,20 +1915,17 @@ class ModelTuner:
         参考内部代码:
         - C: 正则强度倒数，对数区间 0.01-32（越小正则越强）
         - penalty: 仅 'l2'（评分卡常用，兼容多数 solver）
-        - class_weight: None / 'balanced' / 自定义正负样本权重字典（适配不平衡场景）
+        - class_weight: None / 'balanced'（均可安全持久化到 Optuna storage）
         - max_iter: 16-256（对数区间），迭代上限
         - solver: liblinear / sag / lbfgs / newton-cg
 
-        .. note::
-            ``class_weight`` 的字典候选会触发 optuna 关于非基础类型 categorical 的
-            提示（内存存储下可正常工作）；若需持久化 study，可改用 None/'balanced'。
         """
         return {
             "C": {"type": "float", "low": 0.01, "high": 32.0, "log": True},
             "penalty": {"type": "categorical", "choices": ["l2"]},
             "class_weight": {
                 "type": "categorical",
-                "choices": [None, "balanced"] + [{1: i / 10.0, 0: 1 - i / 10.0} for i in range(1, 10, 2)],
+                "choices": [None, "balanced"],
             },
             "max_iter": {"type": "int", "low": 16, "high": 256, "log": True},
             "solver": {
@@ -1915,9 +2003,10 @@ class ModelTuner:
 
         NGBoost 使用 CART 作为基学习器，参数名与其他 boosting 不同：
         - n_estimators: 自然梯度提升轮数，较小学习率需更多轮
-        - learning_rate: 0.005-0.1，较小学习率更稳定
-        - base_max_depth: 基学习器（CART）最大深度，风控场景通常2-4
-        - minibatch_frac: 小批量采样比例（行采样）
+        - learning_rate: 0.005-0.05，避免小样本下概率过快饱和
+        - base_max_depth: 基学习器（CART）最大深度，风控场景通常2-3
+        - base_min_samples_leaf: 叶节点最小样本数，抑制单样本叶节点导致的奇异自然梯度
+        - minibatch_frac: 小批量采样比例（行采样），至少保留70%样本
         - col_sample: 特征采样比例
         """
         n_samples = self._n_samples or 10000
@@ -1928,9 +2017,10 @@ class ModelTuner:
 
         return {
             "n_estimators": {"type": "int", "low": n_estimators_low, "high": n_estimators_high},
-            "learning_rate": {"type": "float", "low": 0.005, "high": 0.1, "log": True},
-            "base_max_depth": {"type": "int", "low": 2, "high": 4},
-            "minibatch_frac": {"type": "float", "low": 0.5, "high": 1.0},
+            "learning_rate": {"type": "float", "low": 0.005, "high": 0.05, "log": True},
+            "base_max_depth": {"type": "int", "low": 2, "high": 3},
+            "base_min_samples_leaf": {"type": "int", "low": 5, "high": 20},
+            "minibatch_frac": {"type": "float", "low": 0.7, "high": 1.0},
             "col_sample": {"type": "float", "low": 0.5, "high": 1.0},
         }
 
@@ -2100,8 +2190,8 @@ class ModelTuner:
             "validation_fraction": 0.2,
         }
         for name, value in fit_params.items():
-            if name in accepted:
-                params.setdefault(name, value)
+            if name in accepted and name not in self._explicit_fixed_params and params.get(name) is None:
+                params[name] = value
 
     def _sample_params(self, trial: "Trial") -> Dict[str, Any]:
         """从搜索空间采样参数.
@@ -2169,7 +2259,7 @@ class ModelTuner:
         if self.best_params_ is None:
             raise ValueError("请先调用fit()进行调优")
 
-        model = self.model_class(**self.best_params_)
+        model = self.model_class(**self._build_model_params(self.best_params_))
         if self._sample_weight is None:
             model.fit(self._X, self._y)
         else:
@@ -2227,13 +2317,51 @@ class ModelTuner:
                 importance = optuna.importance.get_param_importances(self.study_, target=lambda t: t.values[target])
             else:
                 importance = optuna.importance.get_param_importances(self.study_)
-            return pd.Series(importance)
+            public_importance = {
+                self._space_adapter.to_public_name(name): value for name, value in importance.items()
+            }
+            return pd.Series(public_importance)
         except Exception as e:
             if self.verbose:
                 warnings.warn(f"无法计算参数重要性: {e}")
             return None
 
     # ==================== 可视化方法 ====================
+
+    def _publicize_plot_figure(self, figure: Any) -> Any:
+        """清理 Plotly 图对象中的 Optuna 内部潜变量名。"""
+        if not hasattr(figure, "to_plotly_json"):
+            return figure
+
+        replacements = {
+            self._space_adapter.latent_name(name): name for name in (self.search_space or {})
+        }
+
+        def rewrite(value: Any) -> Any:
+            if isinstance(value, str):
+                for internal_name, public_name in replacements.items():
+                    value = value.replace(internal_name, public_name)
+                return value
+            if isinstance(value, dict):
+                return {key: rewrite(item) for key, item in value.items()}
+            if isinstance(value, list):
+                return [rewrite(item) for item in value]
+            if isinstance(value, tuple):
+                return tuple(rewrite(item) for item in value)
+            return value
+
+        from plotly.graph_objects import Figure
+
+        return Figure(rewrite(figure.to_plotly_json()))
+
+    def _translate_plot_params(self, kwargs: Dict[str, Any]) -> Dict[str, Any]:
+        """把可视化方法 kwargs 中的公开 params 转为 Optuna 内部名。"""
+        translated = dict(kwargs)
+        if translated.get("params") is not None:
+            translated["params"] = [
+                self._space_adapter.to_internal_name(name) for name in translated["params"]
+            ]
+        return translated
 
     def plot_optimization_history(self, target: Optional[int] = None, **kwargs):
         """绘制优化历史.
@@ -2264,12 +2392,14 @@ class ModelTuner:
             raise ValueError("请先调用fit()进行调优")
 
         target = self._resolve_multi_objective_target(target)
+        kwargs = self._translate_plot_params(kwargs)
         if self._is_multi_objective:
-            return optuna.visualization.plot_param_importances(
+            figure = optuna.visualization.plot_param_importances(
                 self.study_, target=lambda t: t.values[target], target_name=self.metric_names[target], **kwargs
             )
-
-        return optuna.visualization.plot_param_importances(self.study_, **kwargs)
+        else:
+            figure = optuna.visualization.plot_param_importances(self.study_, **kwargs)
+        return self._publicize_plot_figure(figure)
 
     def plot_slice(self, target: Optional[int] = None, **kwargs):
         """绘制参数切片图.
@@ -2282,12 +2412,14 @@ class ModelTuner:
             raise ValueError("请先调用fit()进行调优")
 
         target = self._resolve_multi_objective_target(target)
+        kwargs = self._translate_plot_params(kwargs)
         if self._is_multi_objective:
-            return optuna.visualization.plot_slice(
+            figure = optuna.visualization.plot_slice(
                 self.study_, target=lambda t: t.values[target], target_name=self.metric_names[target], **kwargs
             )
-
-        return optuna.visualization.plot_slice(self.study_, **kwargs)
+        else:
+            figure = optuna.visualization.plot_slice(self.study_, **kwargs)
+        return self._publicize_plot_figure(figure)
 
     def plot_pareto_front(self, **kwargs):
         """绘制帕累托前沿（多目标优化时）.
@@ -2316,18 +2448,20 @@ class ModelTuner:
 
         if params is None:
             params = list(self.search_space.keys())[:2]
+        internal_params = [self._space_adapter.to_internal_name(name) for name in params]
 
         target = self._resolve_multi_objective_target(target)
         if self._is_multi_objective:
-            return optuna.visualization.plot_contour(
+            figure = optuna.visualization.plot_contour(
                 self.study_,
-                params=params,
+                params=internal_params,
                 target=lambda t: t.values[target],
                 target_name=self.metric_names[target],
                 **kwargs,
             )
-
-        return optuna.visualization.plot_contour(self.study_, params=params, **kwargs)
+        else:
+            figure = optuna.visualization.plot_contour(self.study_, params=internal_params, **kwargs)
+        return self._publicize_plot_figure(figure)
 
     def plot_parallel_coordinate(self, target: Optional[int] = None, **kwargs):
         """绘制平行坐标图.
@@ -2340,12 +2474,14 @@ class ModelTuner:
             raise ValueError("请先调用fit()进行调优")
 
         target = self._resolve_multi_objective_target(target)
+        kwargs = self._translate_plot_params(kwargs)
         if self._is_multi_objective:
-            return optuna.visualization.plot_parallel_coordinate(
+            figure = optuna.visualization.plot_parallel_coordinate(
                 self.study_, target=lambda t: t.values[target], target_name=self.metric_names[target], **kwargs
             )
-
-        return optuna.visualization.plot_parallel_coordinate(self.study_, **kwargs)
+        else:
+            figure = optuna.visualization.plot_parallel_coordinate(self.study_, **kwargs)
+        return self._publicize_plot_figure(figure)
 
     def plot_edf(self, target: Optional[int] = None, **kwargs):
         """绘制经验分布函数图.
