@@ -32,6 +32,7 @@ from .utils import (
 )
 from ..._lazy import LazyModule
 from ..._compat import normalize_seaborn_inf
+from ...utils.parallel import ParallelWorkload, parallel_execute
 
 # 延迟加载 seaborn：仅在首次实际绘图（访问 sns 属性）时才导入，
 # 避免 import hscredit 时即触发 seaborn（及其 ipywidgets/IPython 依赖）的加载。
@@ -1909,13 +1910,14 @@ def _compute_feature_bin_stats(
     X = df_sub[feature].copy()
     y = df_sub[target].copy()
 
-    # 移除缺失值
-    valid_mask = ~(pd.isna(X) | pd.isna(y))
+    # 目标缺失无法参与监督统计；特征缺失与显式配置为 np.nan 的特殊值
+    # 必须交给分箱器按统一保留箱契约处理。
+    valid_mask = ~pd.isna(y)
     X_valid = X[valid_mask]
     y_valid = y[valid_mask]
 
     if len(X_valid) == 0:
-        return pd.DataFrame()
+        raise ValueError(f"特征 '{feature}' 没有目标非缺失的有效样本")
 
     # 使用 OptimalBinning 进行分箱
     from ..binning import OptimalBinning
@@ -1939,65 +1941,54 @@ def _compute_feature_bin_stats(
             **kwargs
         )
 
+    binner.fit(X_valid.to_frame(), y_valid)
+    bin_indices = binner.transform(X_valid.to_frame(), metric='indices').values.flatten()
+
+    # compute_bin_stats 按实际箱号排序，因此标签也必须先按箱号建立映射；
+    # 不能直接传入已经排好版的 bin_table 行序，否则 -1/-2 保留箱会使标签错位。
+    bin_labels = None
+    if feature in binner.bin_tables_:
+        bin_table = binner.bin_tables_[feature]
+        if '分箱' in bin_table.columns and '分箱标签' in bin_table.columns:
+            label_by_bin = {}
+            for _, bin_row in bin_table.iterrows():
+                bin_id = int(bin_row['分箱'])
+                if bin_id == -1:
+                    label = '缺失值'
+                elif bin_id == -2:
+                    label = '特殊值'
+                else:
+                    label = bin_row['分箱标签']
+                label_by_bin[bin_id] = label
+            bin_labels = [
+                label_by_bin.get(int(bin_id), f'分箱_{int(bin_id)}')
+                for bin_id in np.unique(bin_indices)
+            ]
+
+    stats_df = compute_bin_stats(bin_indices, y_valid.values, bin_labels=bin_labels, round_digits=False)
+
+    # IV/KS 只使用特征和目标均非缺失的普通指标样本；保留箱统计仍在 stats_df 中。
+    metric_mask = ~pd.isna(X_valid)
+    X_metric = X_valid[metric_mask]
+    y_metric = y_valid[metric_mask]
     try:
-        binner.fit(X_valid.to_frame(), y_valid)
-        bin_indices = binner.transform(X_valid.to_frame(), metric='indices').values.flatten()
+        from ..metrics import iv as iv_metric
+        iv_val = iv_metric(y_metric, X_metric) if len(X_metric) > 0 else 0
+    except Exception:
+        iv_val = 0
 
-        # 获取分箱标签
-        bin_labels = None
-        if feature in binner.bin_tables_:
-            bin_table = binner.bin_tables_[feature]
-            if '分箱标签' in bin_table.columns:
-                bin_labels = bin_table['分箱标签'].tolist()
+    try:
+        from ..metrics import ks as ks_metric
+        ks_val = ks_metric(y_metric, X_metric) if len(X_metric) > 0 else 0
+    except Exception:
+        ks_val = 0
 
-        # 计算分箱统计
-        stats_df = compute_bin_stats(bin_indices, y_valid.values, bin_labels=bin_labels, round_digits=False)
-
-        # 添加缺失值统计
-        missing_count = (~valid_mask).sum()
-        if missing_count > 0:
-            missing_bad = y[~valid_mask].sum()
-            missing_row = pd.DataFrame([{
-                '分箱': -1,
-                '分箱标签': 'Missing',
-                '样本总数': missing_count,
-                '好样本数': missing_count - missing_bad,
-                '坏样本数': missing_bad,
-                '坏样本率': missing_bad / missing_count if missing_count > 0 else 0,
-                '样本占比': missing_count / len(df_sub),
-            }])
-            stats_df = pd.concat([stats_df, missing_row], ignore_index=True)
-
-        # 计算指标
-        total_bad = y_valid.sum()
-        total_count = len(df_sub)
-
-        # 计算 IV
-        try:
-            from ..metrics import iv as iv_metric
-            iv_val = iv_metric(y_valid, X_valid)
-        except Exception:
-            iv_val = 0
-
-        # 计算 KS
-        try:
-            from ..metrics import ks as ks_metric
-            ks_val = ks_metric(y_valid, X_valid)
-        except Exception:
-            ks_val = 0
-
-        # 添加统计列
-        stats_df['iv_bin'] = iv_val / len(stats_df) if len(stats_df) > 0 else 0
-        stats_df['ks_bin'] = ks_val
-        stats_df['total_count'] = total_count
-        stats_df['total_bad'] = total_bad
-        stats_df['feature'] = feature
-
-        return stats_df
-
-    except Exception as e:
-        warnings.warn(f"分箱计算失败: {e}")
-        return pd.DataFrame()
+    stats_df['iv_bin'] = iv_val / len(stats_df) if len(stats_df) > 0 else 0
+    stats_df['ks_bin'] = ks_val
+    stats_df['total_count'] = len(y_valid)
+    stats_df['total_bad'] = y_valid.sum()
+    stats_df['feature'] = feature
+    return stats_df
 
 
 def _bin_plot_legend_handles(colors: List[str]) -> List[Any]:
@@ -2162,6 +2153,400 @@ def _layout_bin_panel_columns(
         fig.subplots_adjust(wspace=fig.subplotpars.wspace + maximum_deficit / average_axis_width)
 
 
+def _layout_bin_panel_grid(
+    fig: plt.Figure,
+    axes: List[Any],
+    min_gap_points: float = 6.0,
+    max_iterations: int = 8,
+) -> None:
+    """在一次画布迭代中同时收敛多行、多列面板间距。"""
+    panel_axes = [axis for axis in axes if axis.get_visible()]
+    panel_rows = []
+    for axis in sorted(panel_axes, key=lambda item: item.get_position().y0, reverse=True):
+        for row in panel_rows:
+            if np.isclose(axis.get_position().y0, row[0].get_position().y0):
+                row.append(axis)
+                break
+        else:
+            panel_rows.append([axis])
+    for row in panel_rows:
+        row.sort(key=lambda item: item.get_position().x0)
+
+    if len(panel_rows) < 2 or not any(len(row) > 1 for row in panel_rows):
+        return
+
+    min_gap_pixels = float(min_gap_points) * fig.dpi / 72.0
+    for _ in range(max_iterations):
+        fig.canvas.draw()
+        renderer = fig.canvas.get_renderer()
+        vertical_deficit = 0.0
+        horizontal_deficit = 0.0
+
+        for upper_row, lower_row in zip(panel_rows, panel_rows[1:]):
+            upper_bottoms = []
+            for upper_axis in upper_row:
+                upper_bottoms.append(upper_axis.get_window_extent(renderer).y0)
+                xaxis_bbox = upper_axis.xaxis.get_tightbbox(renderer)
+                if xaxis_bbox is not None and np.isfinite(xaxis_bbox.y0):
+                    upper_bottoms.append(xaxis_bbox.y0)
+
+            lower_header_tops = []
+            for lower_axis in lower_row:
+                lower_header_tops.append(lower_axis.get_window_extent(renderer).y1)
+                if lower_axis.title.get_visible() and lower_axis.title.get_text().strip():
+                    title_bbox = lower_axis.title.get_window_extent(renderer)
+                    if np.isfinite(title_bbox.y1):
+                        lower_header_tops.append(title_bbox.y1)
+                for artist in [*lower_axis.texts, *lower_axis.artists]:
+                    if artist.get_visible() and artist.get_gid() == 'bin-metric-summary':
+                        summary_bbox = artist.get_window_extent(renderer)
+                        if np.isfinite(summary_bbox.y1):
+                            lower_header_tops.append(summary_bbox.y1)
+
+            actual_gap = min(upper_bottoms) - max(lower_header_tops)
+            vertical_deficit = max(vertical_deficit, min_gap_pixels - actual_gap)
+
+        def panel_horizontal_bounds(owner):
+            x_bounds = []
+            owner_position = owner.get_position().bounds
+            for panel_axis in fig.axes:
+                if not panel_axis.get_visible():
+                    continue
+                if not np.allclose(panel_axis.get_position().bounds, owner_position, atol=1e-8):
+                    continue
+                axes_bbox = panel_axis.get_window_extent(renderer)
+                x_bounds.extend([axes_bbox.x0, axes_bbox.x1])
+                for component in (panel_axis.xaxis, panel_axis.yaxis):
+                    bbox = component.get_tightbbox(renderer)
+                    if bbox is not None and np.isfinite(bbox.x0) and np.isfinite(bbox.x1):
+                        x_bounds.extend([bbox.x0, bbox.x1])
+            return min(x_bounds), max(x_bounds)
+
+        for row in panel_rows:
+            for left_axis, right_axis in zip(row, row[1:]):
+                _, left_right = panel_horizontal_bounds(left_axis)
+                right_left, _ = panel_horizontal_bounds(right_axis)
+                horizontal_deficit = max(horizontal_deficit, min_gap_pixels - (right_left - left_right))
+
+        if vertical_deficit <= 0.05 and horizontal_deficit <= 0.05:
+            return
+
+        adjustments = {}
+        if vertical_deficit > 0.05:
+            average_height = np.mean([axis.get_window_extent(renderer).height for axis in panel_axes])
+            if np.isfinite(average_height) and average_height > 0:
+                adjustments['hspace'] = fig.subplotpars.hspace + vertical_deficit / average_height
+        if horizontal_deficit > 0.05:
+            average_width = np.mean([axis.get_window_extent(renderer).width for axis in panel_axes])
+            if np.isfinite(average_width) and average_width > 0:
+                adjustments['wspace'] = fig.subplotpars.wspace + horizontal_deficit / average_width
+        if not adjustments:
+            return
+        fig.subplots_adjust(**adjustments)
+
+
+def _validate_plot_max_cols(max_cols: int) -> int:
+    """校验组合图每行最大子图数。"""
+    if isinstance(max_cols, (bool, np.bool_)) or not isinstance(max_cols, (int, np.integer)) or int(max_cols) < 1:
+        raise ValueError("max_cols 必须是正整数")
+    return int(max_cols)
+
+
+def _binning_plot_cost_per_item(method: str, rules: Optional[Dict] = None) -> float:
+    """为静态并行规划提供不试跑用户计算的分箱成本估计。"""
+    if rules:
+        return 12.0
+    method_key = str(method).strip().lower()
+    if method_key in {'mdlp', 'best_ks', 'best_iv', 'genetic', 'or_tools', 'cp_sat'}:
+        return 250.0
+    if method_key in {'tree', 'cart', 'chi', 'monotonic', 'smooth', 'kernel_density', 'best_lift'}:
+        return 80.0
+    return 12.0
+
+
+def _feature_bin_stats_worker(task):
+    """计算一个有序面板的分箱统计，并把业务异常交回主进程处理。"""
+    label, frame, feature, target, options = task
+    try:
+        stats = _compute_feature_bin_stats(frame, feature, target, **options)
+        return label, stats, None
+    except Exception as exc:
+        return label, pd.DataFrame(), exc
+
+
+def _prepare_bin_trend_panels(
+    data: pd.DataFrame,
+    feature: str,
+    target: str,
+    dimension_cols: Optional[Union[str, List[str]]] = None,
+    date_col: Optional[str] = None,
+    date_freq: str = 'M',
+    method: str = 'quantile',
+    max_n_bins: int = 10,
+    min_bin_size: float = 0.02,
+    rules: Optional[Dict] = None,
+    special_codes: Optional[List] = None,
+    shared_bins: Optional[Union[str, bool]] = 'max_samples',
+    sort_by: Optional[str] = None,
+    sort_order: str = 'asc',
+    max_groups: Optional[int] = None,
+    show_overall: bool = True,
+    n_jobs=-1,
+    parallel_backend=None,
+    parallel_config=None,
+    **kwargs,
+) -> Dict[str, Any]:
+    """准备趋势图全部面板的有序统计，过程不创建 Matplotlib 对象。"""
+    if dimension_cols is None:
+        dimensions = []
+    elif isinstance(dimension_cols, str):
+        dimensions = [dimension_cols]
+    else:
+        dimensions = list(dimension_cols)
+
+    working = data
+    if date_col is not None:
+        working = data.copy()
+        if not pd.api.types.is_datetime64_any_dtype(working[date_col]):
+            working[date_col] = pd.to_datetime(working[date_col])
+        try:
+            if date_freq == 'D':
+                working['_date_group'] = working[date_col].dt.strftime('%Y-%m-%d')
+            else:
+                working['_date_group'] = working[date_col].dt.to_period(date_freq).astype(str)
+        except Exception:
+            warnings.warn(f"无法识别 date_freq={date_freq}，已回退为按月分组")
+            working['_date_group'] = working[date_col].dt.to_period('M').astype(str)
+        dimensions.append('_date_group')
+
+    if dimensions:
+        if working is data:
+            working = data.copy()
+        working['_group_key'] = working[dimensions].astype(str).agg('_'.join, axis=1)
+        group_col = '_group_key'
+    else:
+        group_col = None
+
+    group_order = []
+    full_group_order = []
+    if group_col is not None:
+        groups = working[group_col].unique()
+        if sort_by is not None and sort_by in working.columns:
+            full_group_order = working.groupby(group_col)[sort_by].first().sort_values(
+                ascending=(sort_order == 'asc')
+            ).index.tolist()
+        else:
+            full_group_order = sorted(groups)
+        group_order = list(full_group_order)
+        if max_groups is not None and len(group_order) > max_groups:
+            group_order = group_order[:max_groups]
+
+    effective_rules = rules
+    binner_options = dict(kwargs)
+    binner_options.update(
+        n_jobs=n_jobs,
+        parallel_backend=parallel_backend,
+        parallel_config=parallel_config,
+    )
+
+    # 共享切分点依赖指定参考组，先完成这一步，再并行计算所有面板统计。
+    if shared_bins and group_col is not None and effective_rules is None:
+        if str(shared_bins).lower() == 'first':
+            ref_group = full_group_order[0] if full_group_order else None
+        elif str(shared_bins).lower() == 'last':
+            ref_group = full_group_order[-1] if full_group_order else None
+        else:
+            group_sizes = working.groupby(group_col).size()
+            ref_group = group_sizes.idxmax() if len(group_sizes) else None
+
+        if ref_group is not None:
+            from ..binning import OptimalBinning
+
+            ref_data = working[working[group_col] == ref_group]
+            valid = ~pd.isna(ref_data[target])
+            X_ref = ref_data.loc[valid, feature]
+            y_ref = ref_data.loc[valid, target]
+            if len(X_ref) > 0:
+                ref_binner = OptimalBinning(
+                    method=method,
+                    max_n_bins=max_n_bins,
+                    min_bin_size=min_bin_size,
+                    special_codes=special_codes,
+                    verbose=False,
+                    **binner_options,
+                )
+                try:
+                    ref_binner.fit(X_ref.to_frame(), y_ref)
+                    splits = ref_binner.splits_.get(feature, [])
+                    if len(splits) > 0:
+                        effective_rules = {feature: list(splits)}
+                except Exception:
+                    pass
+
+    stats_options = dict(
+        method=method,
+        max_n_bins=max_n_bins,
+        min_bin_size=min_bin_size,
+        rules=effective_rules,
+        special_codes=special_codes,
+        **binner_options,
+    )
+    tasks = [
+        (
+            'Overall',
+            working.loc[:, [feature, target]].copy(),
+            feature,
+            target,
+            stats_options,
+        )
+    ]
+    for group_value in group_order:
+        group_frame = working.loc[working[group_col] == group_value, [feature, target]].copy()
+        tasks.append((group_value, group_frame, feature, target, stats_options))
+
+    labels = [task[0] for task in tasks]
+    data_bytes = int(working.loc[:, [feature, target]].memory_usage(deep=True).sum())
+    task_results = parallel_execute(
+        _feature_bin_stats_worker,
+        tasks,
+        n_jobs=n_jobs,
+        parallel_backend=parallel_backend,
+        parallel_config=parallel_config,
+        task_labels=labels,
+        default_backend='loky',
+        has_parallel_children=True,
+        preserve_exceptions=True,
+        workload=ParallelWorkload(
+            task_count=len(tasks),
+            rows=len(working),
+            columns=2 if group_order else 1,
+            data_bytes=data_bytes,
+            cost_per_item=_binning_plot_cost_per_item(method, effective_rules),
+            capability='process_safe',
+            has_parallel_children=True,
+            operation='分箱趋势面板统计',
+        ),
+    )
+
+    overall_label, overall_stats, overall_error = task_results[0]
+    if overall_error is not None:
+        raise overall_error
+    if overall_stats.empty:
+        raise ValueError(f"无法计算特征 '{feature}' 的分箱统计")
+
+    panel_stats = [(overall_label, overall_stats.copy())] if show_overall else []
+    for group_label, stats, error in task_results[1:]:
+        if error is not None:
+            warnings.warn(f"分组 {group_label!r} 分箱计算失败: {error}")
+            continue
+        if not stats.empty:
+            panel_stats.append((group_label, stats.copy()))
+
+    if not panel_stats:
+        raise ValueError("没有可用的分箱统计数据")
+    return {
+        'feature': feature,
+        'overall_stats': overall_stats,
+        'panel_stats': panel_stats,
+    }
+
+
+def _render_bin_trend_panels(
+    feature: str,
+    panel_stats: List,
+    *,
+    figsize: Optional[tuple] = None,
+    colors: Optional[List[str]] = None,
+    title: Optional[str] = None,
+    show_stats: bool = True,
+    orientation: str = 'vertical',
+    dpi: int = 150,
+    save: Optional[str] = None,
+    anchor: Optional[float] = None,
+    max_cols: int = 3,
+) -> plt.Figure:
+    """在主进程按传入顺序渲染已经准备好的趋势面板。"""
+    if colors is None:
+        colors = DEFAULT_COLORS
+    max_cols = _validate_plot_max_cols(max_cols)
+    orientation_key = orientation.lower()
+    is_horizontal = orientation_key in ['horizontal', 'h', '横向']
+
+    n_panels = len(panel_stats)
+    if is_horizontal:
+        n_cols = 1
+        n_rows = n_panels
+    else:
+        n_cols = min(max_cols, n_panels)
+        n_rows = int(np.ceil(n_panels / n_cols))
+
+    if is_horizontal:
+        default_figsize = (10.5, max(4.8 * n_rows, 5.2))
+    else:
+        default_figsize = (max(5.2 * n_cols, 10.5), max(5.4 * n_rows, 5.2))
+    if figsize is None:
+        figsize = default_figsize
+
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=figsize, squeeze=False)
+    axes_flat = axes.flatten()
+    if title is None:
+        title = f"{feature} - Risk Trend Analysis"
+    fig.suptitle(title, fontsize=14, fontweight='bold', y=0.98)
+
+    summary_cols = ['指标IV值', '分档KS值', 'LIFT值']
+    panel_max_len = 22 if is_horizontal else 18
+    for idx, (group_name, group_df) in enumerate(panel_stats):
+        ax = axes_flat[idx]
+        group_total = group_df['样本总数'].sum()
+        group_bad = group_df['坏样本数'].sum()
+        group_bad_rate = group_bad / group_total if group_total > 0 else 0.0
+        panel_title = f"{group_name}\n({int(group_bad)}/{int(group_total)}, {group_bad_rate:.1%})"
+        panel_df = group_df.copy()
+        if not show_stats:
+            panel_df = panel_df.drop(columns=summary_cols, errors='ignore')
+        try:
+            bin_plot(
+                data=panel_df,
+                ax=ax,
+                title=panel_title,
+                colors=colors,
+                orientation='horizontal' if is_horizontal else 'vertical',
+                max_len=panel_max_len,
+                show_overall_bad_rate=True,
+                show_metric_summary=show_stats,
+                metric_summary_layout='full_width_center',
+            )
+        except Exception as exc:
+            ax.text(0.5, 0.5, f'Error: {exc}', ha='center', va='center', transform=ax.transAxes)
+            ax.set_title(panel_title)
+
+    for idx in range(n_panels, len(axes_flat)):
+        axes_flat[idx].axis('off')
+
+    legend_anchor = 0.94 if anchor is None else anchor
+    legend = _create_bin_plot_figure_legend(fig, colors, anchor=legend_anchor)
+    fig.subplots_adjust(
+        top=0.84 if n_rows > 1 else 0.80,
+        bottom=0.08,
+        left=0.08 if is_horizontal else 0.06,
+        right=0.98 if is_horizontal else 0.94,
+        hspace=0.62 if n_rows > 1 else 0.42,
+        wspace=0.0 if n_cols > 1 else 0.28,
+    )
+    panel_axes = list(axes_flat[:n_panels])
+    if n_rows > 1 and n_cols > 1:
+        _layout_bin_panel_grid(fig, panel_axes)
+    elif n_rows > 1:
+        _layout_bin_panel_rows(fig, panel_axes)
+    elif n_cols > 1:
+        _layout_bin_panel_columns(fig, panel_axes)
+    if anchor is None:
+        _layout_top_center_legend(fig, legend, title=fig._suptitle, axes=panel_axes)
+    if save:
+        save_figure(fig, save, dpi=dpi)
+    return fig
+
+
 def bin_trend_plot(
     data: pd.DataFrame,
     feature: str,
@@ -2187,6 +2572,10 @@ def bin_trend_plot(
     dpi: int = 150,
     save: Optional[str] = None,
     anchor: Optional[float] = None,
+    max_cols: int = 3,
+    n_jobs=-1,
+    parallel_backend=None,
+    parallel_config=None,
     **kwargs
 ) -> plt.Figure:
     """绘制特征分箱风险趋势图.
@@ -2223,6 +2612,10 @@ def bin_trend_plot(
     :param dpi: 图像分辨率
     :param save: 保存路径
     :param anchor: 图例位置；默认根据实际图高自适应，显式传入时以用户值为准
+    :param max_cols: 纵向布局每行最大子图数，默认 3；横向布局保持单列
+    :param n_jobs: 分箱统计并行工作数，默认 -1
+    :param parallel_backend: 并行后端，默认由共享并行运行时选择
+    :param parallel_config: 并行执行配置
     :param kwargs: 其他参数
     :return: matplotlib Figure
 
@@ -2256,200 +2649,50 @@ def bin_trend_plot(
     ...     shared_bins='first'
     ... )
     """
-    if colors is None:
-        colors = DEFAULT_COLORS
-
-    orientation_key = orientation.lower()
-    is_horizontal = orientation_key in ['horizontal', 'h', '横向']
-
-    # 处理维度列
-    if dimension_cols is not None:
-        if isinstance(dimension_cols, str):
-            dimension_cols = [dimension_cols]
-        else:
-            dimension_cols = list(dimension_cols)
-    else:
-        dimension_cols = []
-
-    # 处理日期列
-    if date_col is not None:
-        data = data.copy()
-        if not pd.api.types.is_datetime64_any_dtype(data[date_col]):
-            data[date_col] = pd.to_datetime(data[date_col])
-
-        try:
-            if date_freq == 'D':
-                data['_date_group'] = data[date_col].dt.strftime('%Y-%m-%d')
-            else:
-                data['_date_group'] = data[date_col].dt.to_period(date_freq).astype(str)
-        except Exception:
-            warnings.warn(f"无法识别 date_freq={date_freq}，已回退为按月分组")
-            data['_date_group'] = data[date_col].dt.to_period('M').astype(str)
-
-        dimension_cols.append('_date_group')
-
-    # 创建组合维度列
-    if len(dimension_cols) > 0:
-        data = data.copy()
-        data['_group_key'] = data[dimension_cols].astype(str).agg('_'.join, axis=1)
-        group_col = '_group_key'
-    else:
-        group_col = None
-
-    # 处理 shared_bins：从指定分组提取切分点，统一应用到所有分组
-    if shared_bins and group_col is not None and rules is None:
-        groups = data[group_col].unique()
-        _sort_by = sort_by if (sort_by is not None and sort_by in data.columns) else None
-        if _sort_by is not None:
-            _group_order = data.groupby(group_col)[_sort_by].first().sort_values(
-                ascending=(sort_order == 'asc')
-            ).index.tolist()
-        else:
-            _group_order = sorted(groups)
-
-        _shared_bins = str(shared_bins).lower()
-        if _shared_bins == 'first':
-            ref_group = _group_order[0] if _group_order else None
-        elif _shared_bins == 'last':
-            ref_group = _group_order[-1] if _group_order else None
-        else:  # 'max_samples' 或其他真值
-            group_sizes = data.groupby(group_col).size()
-            ref_group = group_sizes.idxmax()
-
-        if ref_group is not None:
-            from ..binning import OptimalBinning
-            ref_data = data[data[group_col] == ref_group]
-            _valid = ~(pd.isna(ref_data[feature]) | pd.isna(ref_data[target]))
-            X_ref = ref_data.loc[_valid, feature]
-            y_ref = ref_data.loc[_valid, target]
-            if len(X_ref) > 0:
-                _binner = OptimalBinning(
-                    method=method, max_n_bins=max_n_bins,
-                    min_bin_size=min_bin_size, verbose=False, **kwargs
-                )
-                try:
-                    _binner.fit(X_ref.to_frame(), y_ref)
-                    _splits = _binner.splits_.get(feature, [])
-                    if len(_splits) > 0:
-                        rules = {feature: list(_splits)}
-                except Exception:
-                    pass  # 回退到独立分箱
-
-    overall_stats = _compute_feature_bin_stats(
-        data, feature, target,
-        method=method, max_n_bins=max_n_bins, min_bin_size=min_bin_size,
-        rules=rules, special_codes=special_codes, **kwargs
+    prepared = _prepare_bin_trend_panels(
+        data,
+        feature,
+        target,
+        dimension_cols=dimension_cols,
+        date_col=date_col,
+        date_freq=date_freq,
+        method=method,
+        max_n_bins=max_n_bins,
+        min_bin_size=min_bin_size,
+        rules=rules,
+        special_codes=special_codes,
+        shared_bins=shared_bins,
+        sort_by=sort_by,
+        sort_order=sort_order,
+        max_groups=max_groups,
+        show_overall=show_overall,
+        n_jobs=n_jobs,
+        parallel_backend=parallel_backend,
+        parallel_config=parallel_config,
+        **kwargs,
+    )
+    return _render_bin_trend_panels(
+        feature,
+        prepared['panel_stats'],
+        figsize=figsize,
+        colors=colors,
+        title=title,
+        show_stats=show_stats,
+        orientation=orientation,
+        dpi=dpi,
+        save=save,
+        anchor=anchor,
+        max_cols=max_cols,
     )
 
-    if overall_stats.empty:
-        raise ValueError(f"无法计算特征 '{feature}' 的分箱统计")
 
-    panel_stats = [('Overall', overall_stats.copy())] if show_overall else []
-
-    if group_col is not None:
-        groups = data[group_col].unique()
-        if sort_by is not None and sort_by in data.columns:
-            group_order = data.groupby(group_col)[sort_by].first().sort_values(
-                ascending=(sort_order == 'asc')
-            ).index.tolist()
-        else:
-            group_order = sorted(groups)
-
-        if max_groups is not None and len(group_order) > max_groups:
-            group_order = group_order[:max_groups]
-
-        for group_val in group_order:
-            stats = _compute_feature_bin_stats(
-                data, feature, target,
-                group_col=group_col, group_value=group_val,
-                method=method, max_n_bins=max_n_bins, min_bin_size=min_bin_size,
-                rules=rules, special_codes=special_codes, **kwargs
-            )
-            if not stats.empty:
-                panel_stats.append((group_val, stats.copy()))
-
-    if not panel_stats:
-        raise ValueError("没有可用的分箱统计数据")
-
-    n_panels = len(panel_stats)
-    if is_horizontal:
-        n_cols = 1
-        n_rows = n_panels
-    else:
-        n_cols = min(3, n_panels)
-        n_rows = int(np.ceil(n_panels / n_cols))
-
-    if is_horizontal:
-        default_figsize = (10.5, max(4.8 * n_rows, 5.2))
-    else:
-        default_figsize = (max(5.2 * n_cols, 10.5), max(5.4 * n_rows, 5.2))
-    if figsize is None:
-        figsize = default_figsize
-
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=figsize, squeeze=False)
-    axes_flat = axes.flatten()
-
-    if title is None:
-        title = f"{feature} - Risk Trend Analysis"
-    fig.suptitle(title, fontsize=14, fontweight='bold', y=0.98)
-
-    summary_cols = ['指标IV值', '分档KS值', 'LIFT值']
-    panel_max_len = 22 if is_horizontal else 18
-
-    for idx, (group_name, group_df) in enumerate(panel_stats):
-        ax = axes_flat[idx]
-        group_total = group_df['样本总数'].sum()
-        group_bad = group_df['坏样本数'].sum()
-        group_bad_rate = group_bad / group_total if group_total > 0 else 0.0
-        panel_title = f"{group_name}\n({int(group_bad)}/{int(group_total)}, {group_bad_rate:.1%})"
-
-        panel_df = group_df.copy()
-        if not show_stats:
-            panel_df = panel_df.drop(columns=summary_cols, errors='ignore')
-
-        try:
-            bin_plot(
-                data=panel_df,
-                ax=ax,
-                title=panel_title,
-                colors=colors,
-                orientation='horizontal' if is_horizontal else 'vertical',
-                max_len=panel_max_len,
-                show_overall_bad_rate=True,
-                show_metric_summary=show_stats,
-                metric_summary_layout='full_width_center',
-            )
-        except Exception as e:
-            ax.text(0.5, 0.5, f'Error: {e}', ha='center', va='center', transform=ax.transAxes)
-            ax.set_title(panel_title)
-
-    for idx in range(n_panels, len(axes_flat)):
-        axes_flat[idx].axis('off')
-
-    legend_anchor = 0.94 if anchor is None else anchor
-    legend = _create_bin_plot_figure_legend(fig, colors, anchor=legend_anchor)
-
-    fig.subplots_adjust(
-        top=0.84 if n_rows > 1 else 0.80,
-        bottom=0.08,
-        left=0.08 if is_horizontal else 0.06,
-        right=0.98 if is_horizontal else 0.94,
-        hspace=0.62 if n_rows > 1 else 0.42,
-        # 多列纵向面板从零间距起步，再由渲染感知布局增加到最小安全值；
-        # 避免宽画布沿用固定比例间距而产生大片空白。
-        wspace=0.0 if n_cols > 1 else 0.28,
-    )
-    if n_rows > 1:
-        _layout_bin_panel_rows(fig, list(axes_flat[:n_panels]))
-    if n_cols > 1:
-        _layout_bin_panel_columns(fig, list(axes_flat[:n_panels]))
-    if anchor is None:
-        _layout_top_center_legend(fig, legend, title=fig._suptitle, axes=list(axes_flat[:n_panels]))
-
-    if save:
-        save_figure(fig, save)
-
-    return fig
+def _prepare_bin_trend_feature_worker(task):
+    """准备一个批量特征的趋势面板，不在 worker 中创建 Figure。"""
+    feature, frame, target, options = task
+    try:
+        return feature, _prepare_bin_trend_panels(frame, feature, target, **options), None
+    except Exception as exc:
+        return feature, None, exc
 
 
 def batch_bin_trend_plot(
@@ -2463,6 +2706,10 @@ def batch_bin_trend_plot(
     max_features: int = 10,
     figsize_per_feature: Optional[tuple] = None,
     save_dir: Optional[str] = None,
+    max_cols: int = 3,
+    n_jobs=-1,
+    parallel_backend=None,
+    parallel_config=None,
     **kwargs
 ) -> Dict[str, plt.Figure]:
     """批量绘制多个特征的风险趋势图.
@@ -2478,6 +2725,10 @@ def batch_bin_trend_plot(
     :param figsize_per_feature: 每个特征的图尺寸，默认 None（由 bin_trend_plot 按面板数量和方向自动计算，
         并按实际轴装饰自适应相邻列间距）
     :param save_dir: 保存目录，提供时各特征图按特征名保存为图片
+    :param max_cols: 每个特征趋势图每行最大子图数，默认 3
+    :param n_jobs: 特征及分组统计的并行工作数，默认 -1
+    :param parallel_backend: 并行后端，默认由共享并行运行时选择
+    :param parallel_config: 并行执行配置
     :param kwargs: 其他参数传递给 bin_trend_plot
     :return: 特征名到 ``Figure`` 的字典
 
@@ -2490,50 +2741,116 @@ def batch_bin_trend_plot(
     ... )
     >>> figs['score']   # 取单个特征的图
     """
-    results = {}
+    max_cols = _validate_plot_max_cols(max_cols)
+    options = dict(kwargs)
+    method = options.pop('method', 'quantile')
+    max_n_bins = options.pop('max_n_bins', 10)
+    min_bin_size = options.pop('min_bin_size', 0.02)
+    rules = options.pop('rules', None)
+    special_codes = options.pop('special_codes', None)
+    shared_bins = options.pop('shared_bins', 'max_samples')
+    sort_order = options.pop('sort_order', 'asc')
+    max_groups = options.pop('max_groups', None)
+    show_overall = options.pop('show_overall', True)
 
-    # 计算特征排序
-    feature_scores = []
-    for feat in features:
-        try:
-            stats = _compute_feature_bin_stats(data, feat, target, **kwargs)
-            if not stats.empty:
-                iv_val = stats['iv_bin'].sum()
-                ks_val = stats['ks_bin'].max()
-                score = iv_val if sort_by == 'iv' else ks_val
-                feature_scores.append({'feature': feat, 'score': score, 'iv': iv_val, 'ks': ks_val})
-        except Exception:
-            pass
+    colors = options.pop('colors', None)
+    title = options.pop('title', None)
+    show_stats = options.pop('show_stats', True)
+    orientation = options.pop('orientation', 'vertical')
+    dpi = options.pop('dpi', 150)
+    anchor = options.pop('anchor', None)
+    explicit_save = options.pop('save', None)
 
-    if feature_scores:
-        score_df = pd.DataFrame(feature_scores).sort_values('score', ascending=False)
-        sorted_features = score_df['feature'].tolist()[:max_features]
+    if isinstance(dimension_cols, str):
+        dimension_names = [dimension_cols]
     else:
-        sorted_features = features[:max_features]
+        dimension_names = list(dimension_cols or [])
+    shared_columns = list(dict.fromkeys([target, *dimension_names, *([date_col] if date_col else [])]))
 
-    # 批量绘制
-    for i, feat in enumerate(sorted_features):
-        logger.info("[%s/%s] 正在绘制 %s", i + 1, len(sorted_features), feat)
+    prepare_options = dict(
+        dimension_cols=dimension_cols,
+        date_col=date_col,
+        date_freq=date_freq,
+        method=method,
+        max_n_bins=max_n_bins,
+        min_bin_size=min_bin_size,
+        rules=rules,
+        special_codes=special_codes,
+        shared_bins=shared_bins,
+        sort_by=None,
+        sort_order=sort_order,
+        max_groups=max_groups,
+        show_overall=show_overall,
+        n_jobs=n_jobs,
+        parallel_backend=parallel_backend,
+        parallel_config=parallel_config,
+        **options,
+    )
+    tasks = []
+    for feature in features:
+        columns = list(dict.fromkeys([feature, *shared_columns]))
+        tasks.append((feature, data.loc[:, columns].copy(), target, prepare_options))
 
-        try:
-            fig = bin_trend_plot(
-                data, feature=feat, target=target,
-                dimension_cols=dimension_cols,
-                date_col=date_col, date_freq=date_freq,
-                figsize=figsize_per_feature,
-                **kwargs
-            )
+    required_columns = list(dict.fromkeys([*features, *shared_columns]))
+    data_bytes = int(data.loc[:, required_columns].memory_usage(deep=True).sum()) if required_columns else 0
+    prepared_results = parallel_execute(
+        _prepare_bin_trend_feature_worker,
+        tasks,
+        n_jobs=n_jobs,
+        parallel_backend=parallel_backend,
+        parallel_config=parallel_config,
+        task_labels=list(features),
+        default_backend='loky',
+        has_parallel_children=True,
+        preserve_exceptions=True,
+        workload=ParallelWorkload(
+            task_count=len(tasks),
+            rows=len(data),
+            columns=max(1, 2 * len(tasks)),
+            data_bytes=data_bytes,
+            cost_per_item=_binning_plot_cost_per_item(method, rules),
+            capability='process_safe',
+            has_parallel_children=True,
+            operation='批量分箱趋势统计',
+        ),
+    )
 
-            results[feat] = fig
+    scored = []
+    for input_order, (feature, prepared, error) in enumerate(prepared_results):
+        if error is not None:
+            warnings.warn(f"绘制特征 {feature} 失败: {error}")
+            continue
+        overall = prepared['overall_stats']
+        iv_value = float(overall['iv_bin'].sum())
+        ks_value = float(overall['ks_bin'].max())
+        score_value = iv_value if sort_by == 'iv' else ks_value
+        if not np.isfinite(score_value):
+            score_value = float('-inf')
+        scored.append((feature, prepared, score_value, input_order))
 
-            if save_dir:
-                os.makedirs(save_dir, exist_ok=True)
-                save_path = os.path.join(save_dir, f"{feat}_trend.png")
-                save_figure(fig, save_path, dpi=150)
-
-        except Exception as e:
-            warnings.warn(f"绘制特征 {feat} 失败: {e}")
-
+    # 并行完成顺序不影响展示；同分时继续遵循调用方 features 的输入顺序。
+    scored.sort(key=lambda item: (-item[2], item[3]))
+    selected = scored[:max_features]
+    results = {}
+    if save_dir:
+        os.makedirs(save_dir, exist_ok=True)
+    for index, (feature, prepared, _, _) in enumerate(selected):
+        logger.info("[%s/%s] 正在绘制 %s", index + 1, len(selected), feature)
+        save_path = os.path.join(save_dir, f"{feature}_trend.png") if save_dir else explicit_save
+        figure = _render_bin_trend_panels(
+            feature,
+            prepared['panel_stats'],
+            figsize=figsize_per_feature,
+            colors=colors,
+            title=title,
+            show_stats=show_stats,
+            orientation=orientation,
+            dpi=dpi,
+            save=save_path,
+            anchor=anchor,
+            max_cols=max_cols,
+        )
+        results[feature] = figure
     return results
 
 
@@ -2608,6 +2925,21 @@ def _get_stats_for_target(bin_table: pd.DataFrame, target_name: str) -> pd.DataF
     return stats_df
 
 
+def _overdue_bin_stats_worker(task):
+    """计算一个逾期定义的分箱统计，不在 worker 中创建 Figure。"""
+    label, frame, target_values, feature, options = task
+    try:
+        stats = _compute_bin_stats_from_raw_data(
+            data=frame,
+            target=target_values,
+            feature=feature,
+            **options,
+        )
+        return label, stats, None
+    except Exception as exc:
+        return label, pd.DataFrame(), exc
+
+
 def bin_overdues_plot(
     data: pd.DataFrame,
     feature: Optional[str] = None,
@@ -2625,6 +2957,9 @@ def bin_overdues_plot(
     show_stats: bool = True,
     max_cols: int = 3,
     save: Optional[str] = None,
+    n_jobs=-1,
+    parallel_backend=None,
+    parallel_config=None,
     **kwargs
 ) -> plt.Figure:
     """绘制多个逾期天数的分箱图（横向展示）.
@@ -2655,6 +2990,9 @@ def bin_overdues_plot(
     :param show_stats: 是否显示统计指标
     :param max_cols: 每行最多显示几个子图
     :param save: 保存路径
+    :param n_jobs: 多逾期统计的并行工作数，默认 -1
+    :param parallel_backend: 并行后端，默认由共享并行运行时选择
+    :param parallel_config: 并行执行配置
     :param kwargs: 其他参数
     :return: matplotlib Figure
 
@@ -2681,6 +3019,7 @@ def bin_overdues_plot(
     """
     if colors is None:
         colors = DEFAULT_COLORS
+    max_cols = _validate_plot_max_cols(max_cols)
     
     # 检查是否为分箱表模式
     if bin_table is not None:
@@ -2773,6 +3112,8 @@ def bin_overdues_plot(
     
     if len(overdue) != len(dpds):
         raise ValueError("overdue 和 dpds 长度必须一致")
+    if len(overdue) == 0:
+        raise ValueError("overdue 和 dpds 不能为空")
 
     n_plots = len(overdue)
 
@@ -2788,6 +3129,13 @@ def bin_overdues_plot(
 
     # 统一为一维 Axes 列表；单图时 axes 本身就是 Axes，不能再次包成 ndarray。
     axes = np.asarray(axes, dtype=object).reshape(-1).tolist()
+
+    binner_options = dict(kwargs)
+    binner_options.update(
+        n_jobs=n_jobs,
+        parallel_backend=parallel_backend,
+        parallel_config=parallel_config,
+    )
 
     # 计算全局分箱规则
     if rules is None or feature not in rules:
@@ -2809,11 +3157,17 @@ def bin_overdues_plot(
             dpd_col = overdue[ref_idx]
             threshold = dpds[ref_idx]
             y = (data[dpd_col] >= threshold).astype(int)
-            valid_mask = ~(pd.isna(data[feature]) | pd.isna(y))
+            valid_mask = ~pd.isna(y)
             X_valid = data.loc[valid_mask, feature]
             y_valid = y[valid_mask]
 
-            binner = OptimalBinning(method=method, max_n_bins=max_n_bins, min_bin_size=min_bin_size, verbose=False)
+            binner = OptimalBinning(
+                method=method,
+                max_n_bins=max_n_bins,
+                min_bin_size=min_bin_size,
+                verbose=False,
+                **binner_options,
+            )
             binner.fit(X_valid.to_frame(), y_valid)
 
             bin_edges = binner.splits_.get(feature, [])
@@ -2821,48 +3175,71 @@ def bin_overdues_plot(
     else:
         global_rules = rules
 
-    # 绘制每个逾期定义的分箱图
-    for idx, (dpd_col, threshold) in enumerate(zip(overdue, dpds)):
+    stats_options = dict(
+        method=method,
+        max_n_bins=max_n_bins,
+        min_bin_size=min_bin_size,
+        rules=global_rules.get(feature, None) if global_rules else None,
+        **binner_options,
+    )
+    tasks = []
+    labels = []
+    for dpd_col, threshold in zip(overdue, dpds):
+        label = f"{dpd_col} (>= {threshold})"
+        target_values = (data[dpd_col] >= threshold).astype(int)
+        tasks.append((label, data.loc[:, [feature]].copy(), target_values, feature, stats_options))
+        labels.append(label)
+
+    data_columns = list(dict.fromkeys([feature, *overdue]))
+    data_bytes = int(data.loc[:, data_columns].memory_usage(deep=True).sum())
+    overdue_results = parallel_execute(
+        _overdue_bin_stats_worker,
+        tasks,
+        n_jobs=n_jobs,
+        parallel_backend=parallel_backend,
+        parallel_config=parallel_config,
+        task_labels=labels,
+        default_backend='loky',
+        has_parallel_children=True,
+        preserve_exceptions=True,
+        workload=ParallelWorkload(
+            task_count=len(tasks),
+            rows=len(data),
+            columns=max(1, len(tasks)),
+            data_bytes=data_bytes,
+            cost_per_item=_binning_plot_cost_per_item(method, global_rules),
+            capability='process_safe',
+            has_parallel_children=True,
+            operation='多逾期分箱统计',
+        ),
+    )
+
+    # parallel_execute 按提交顺序返回；Matplotlib 仍只在主进程逐轴渲染。
+    for idx, (label, stats_df, error) in enumerate(overdue_results):
         ax = axes[idx]
-
+        if error is not None:
+            ax.text(0.5, 0.5, f'Error: {error}', ha='center', va='center', transform=ax.transAxes)
+            ax.set_title(label)
+            continue
+        if stats_df.empty:
+            ax.text(0.5, 0.5, 'No Data', ha='center', va='center', transform=ax.transAxes)
+            ax.set_title(label)
+            continue
         try:
-            # 创建二元目标变量
-            y = (data[dpd_col] >= threshold).astype(int)
-
-            # 计算分箱统计
-            stats_df = _compute_bin_stats_from_raw_data(
-                data=data,
-                target=y,
-                feature=feature,
-                method=method,
-                max_n_bins=max_n_bins,
-                min_bin_size=min_bin_size,
-                rules=global_rules.get(feature, None) if global_rules else None,
-                **kwargs
-            )
-
-            if stats_df.empty:
-                ax.text(0.5, 0.5, 'No Data', ha='center', va='center', transform=ax.transAxes)
-                ax.set_title(f"{dpd_col} (>= {threshold})")
-                continue
-
-            # 格式化分箱标签
-            stats_df['分箱'] = stats_df['分箱'].apply(lambda x: format_bin_label(x, 35))
-
-            # 使用 bin_plot 绘制单个子图
+            stats_df = stats_df.copy()
+            stats_df['分箱'] = stats_df['分箱'].apply(lambda value: format_bin_label(value, 35))
             bin_plot(
                 data=stats_df,
                 ax=ax,
-                title=f"{dpd_col} (>= {threshold})",
+                title=label,
                 colors=colors,
                 orientation='vertical',
                 show_metric_summary=show_stats,
                 metric_summary_layout='full_width_center',
             )
-
-        except Exception as e:
-            ax.text(0.5, 0.5, f'Error: {str(e)}', ha='center', va='center', transform=ax.transAxes)
-            ax.set_title(f"{dpd_col} (>= {threshold})")
+        except Exception as exc:
+            ax.text(0.5, 0.5, f'Error: {exc}', ha='center', va='center', transform=ax.transAxes)
+            ax.set_title(label)
 
     # 隐藏多余的子图
     for idx in range(n_plots, len(axes)):
