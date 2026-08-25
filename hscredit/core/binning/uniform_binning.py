@@ -19,7 +19,7 @@ class UniformBinning(BaseBinning):
 
     :param max_n_bins: 最大分箱数，默认为5
     :param min_n_bins: 最小分箱数，默认为2
-    :param min_bin_size: 每箱最小样本占比，默认为0.01
+    :param min_bin_size: 每箱最小样本数或占比，默认为0.01；None表示不限制
     :param max_bin_size: 每箱最大样本占比，默认为None
     :param min_bad_rate: 每箱最小坏样本率，默认为0.0
     :param monotonic: 是否要求单调性，默认为False
@@ -31,6 +31,10 @@ class UniformBinning(BaseBinning):
         - True: 将所有特征视为数值型进行等距分箱（默认，因为等距分箱适用于数值型）
         - False: 自动检测特征类型（根据dtype判断）
     :param random_state: 随机种子，默认为None
+    :param target: 使用完整数据框拟合时的目标列名，默认为 ``"target"``
+    :param verbose: 是否输出详细信息，默认为False
+    :param decimal: 数值切点保留的小数位数，默认为4
+    :param woe_clip: WOE 绝对值截断上限，默认为None
 
     **参考样例**
 
@@ -70,7 +74,7 @@ class UniformBinning(BaseBinning):
         self,
         max_n_bins: int = 5,
         min_n_bins: int = 2,
-        min_bin_size: Union[float, int] = 0.01,
+        min_bin_size: Optional[Union[float, int]] = 0.01,
         max_bin_size: Optional[Union[float, int]] = None,
         min_bad_rate: float = 0.0,
         monotonic: Union[bool, str] = False,
@@ -88,9 +92,14 @@ class UniformBinning(BaseBinning):
         parallel_config: Optional[Dict[str, Any]] = None,
         user_splits: Optional[Dict[str, List]] = None,
         user_splits_fixed: Optional[Union[bool, Dict[str, Union[bool, Sequence[bool]]]]] = None,
+        target: str = "target",
+        verbose: Union[bool, int] = False,
+        decimal: int = 4,
+        woe_clip: Optional[float] = None,
         **kwargs,
     ):
         super().__init__(
+            target=target,
             max_n_bins=max_n_bins,
             min_n_bins=min_n_bins,
             min_bin_size=min_bin_size,
@@ -105,6 +114,9 @@ class UniformBinning(BaseBinning):
             category_order=category_order,
             handle_unknown=handle_unknown,
             random_state=random_state,
+            verbose=verbose,
+            decimal=decimal,
+            woe_clip=woe_clip,
             n_jobs=n_jobs,
             parallel_backend=parallel_backend,
             parallel_config=parallel_config,
@@ -194,22 +206,13 @@ class UniformBinning(BaseBinning):
                 self.clip_bounds_ = getattr(self, "clip_bounds_", {})
                 self.clip_bounds_[feature] = (clip_lower, clip_upper)
 
-                # 计算切分点
-                n_bins = max(self.min_n_bins, min(self.max_n_bins, 10))
-
                 # 处理边界相同的情况（所有值相等）
                 if max_val == min_val:
                     self.splits_[feature] = np.array([])
                     self.n_bins_[feature] = 1
                 else:
-                    bin_width = (max_val - min_val) / n_bins
-
-                    # 生成切分点（不包括边界）
-                    splits = []
-                    for i in range(1, n_bins):
-                        split_point = min_val + i * bin_width
-                        splits.append(split_point)
-
+                    bin_width = (max_val - min_val) / self.max_n_bins
+                    splits = [min_val + i * bin_width for i in range(1, self.max_n_bins)]
                     self.splits_[feature] = self._round_splits(splits)
                     self.n_bins_[feature] = len(splits) + 1
 

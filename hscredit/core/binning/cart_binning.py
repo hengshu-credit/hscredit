@@ -220,7 +220,9 @@ class CartBinning(BaseBinning):
         n_samples = len(x_valid)
 
         # 计算最小样本数
-        if self.min_bin_size < 1:
+        if self.min_bin_size is None:
+            min_samples_leaf = 1
+        elif self.min_bin_size < 1:
             min_samples_leaf = max(int(n_samples * self.min_bin_size), 1)
         else:
             min_samples_leaf = int(self.min_bin_size)
@@ -325,7 +327,9 @@ class CartBinning(BaseBinning):
 
         # 过滤掉样本数过少的类别
         n_samples = len(x_valid)
-        if self.min_bin_size < 1:
+        if self.min_bin_size is None:
+            min_samples = 1
+        elif self.min_bin_size < 1:
             min_samples = max(int(n_samples * self.min_bin_size), 1)
         else:
             min_samples = int(self.min_bin_size)
@@ -564,7 +568,9 @@ class CartBinning(BaseBinning):
         n_samples = len(x)
 
         # 计算样本数约束
-        if self.min_bin_size < 1:
+        if self.min_bin_size is None:
+            min_samples = 1
+        elif self.min_bin_size < 1:
             min_samples = max(int(n_samples * self.min_bin_size), 1)
         else:
             min_samples = int(self.min_bin_size)

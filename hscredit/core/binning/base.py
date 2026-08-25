@@ -62,7 +62,7 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
     :param missing_separate: 是否将缺失值单独分为一箱，默认为True
     :param min_n_bins: 最小分箱数，默认为2
     :param max_n_bins: 最大分箱数，默认为5
-    :param min_bin_size: 每箱最小样本数或占比，默认为0.01
+    :param min_bin_size: 每箱最小样本数或占比，默认为0.01；None表示不限制最小样本数
         - 如果 < 1, 表示占比 (如 0.01 表示 1%)
         - 如果 >= 1, 表示绝对数量 (如 100 表示最少100个样本)
     :param max_bin_size: 每箱最大样本数或占比，默认为None
@@ -338,7 +338,7 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         missing_separate: bool = True,
         min_n_bins: int = 2,
         max_n_bins: int = 5,
-        min_bin_size: Union[float, int] = 0.01,
+        min_bin_size: Optional[Union[float, int]] = 0.01,
         max_bin_size: Optional[Union[float, int]] = None,
         min_bad_rate: float = 0.0,
         monotonic: Union[bool, str] = False,
@@ -1462,6 +1462,8 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         :param n_samples: 总样本数
         :return: 最小样本数
         """
+        if self.min_bin_size is None:
+            return 0
         if self.min_bin_size < 1:
             # 比例值，如0.05表示5%
             return max(1, int(n_samples * self.min_bin_size))

@@ -385,6 +385,8 @@ class KMeansBinning(BaseBinning):
         :param n_total: 总样本数
         :return: 最小样本数
         """
+        if self.min_bin_size is None:
+            return 1
         if self.min_bin_size < 1:
             return int(n_total * self.min_bin_size)
         return int(self.min_bin_size)

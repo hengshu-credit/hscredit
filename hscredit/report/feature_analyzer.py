@@ -571,7 +571,7 @@ def feature_binning_summary(
     desc: Optional[Union[str, Dict[str, str]]] = None,
     max_n_bins: int = 5,
     min_n_bins: int = 2,
-    min_bin_size: float = 0.05,
+    min_bin_size: Optional[Union[float, int]] = 0.01,
     max_bin_size: Optional[Union[float, int]] = None,
     min_bad_rate: float = 0.0,
     missing_separate: bool = True,
@@ -819,7 +819,7 @@ def feature_group_binning_summary(
     desc: Optional[Union[str, Dict[str, str]]] = None,
     max_n_bins: int = 5,
     min_n_bins: int = 2,
-    min_bin_size: float = 0.05,
+    min_bin_size: Optional[Union[float, int]] = 0.01,
     max_bin_size: Optional[Union[float, int]] = None,
     min_bad_rate: float = 0.0,
     missing_separate: bool = True,
@@ -1164,7 +1164,7 @@ def feature_bin_stats(
     desc: Optional[Union[str, Dict[str, str]]] = None,
     binner: Optional[Union[BaseBinning, Dict[str, BaseBinning]]] = None,
     max_n_bins: int = 5,
-    min_bin_size: float = 0.05,
+    min_bin_size: Optional[Union[float, int]] = 0.01,
     missing_separate: bool = True,
     prebinning: Optional[Union[str, BaseBinning, Dict]] = None,  # 默认禁用预分箱，保证分位数分箱准确性
     prebinning_params: Optional[Dict[str, Any]] = None,
@@ -1212,7 +1212,7 @@ def feature_bin_stats(
         - Dict[str, BaseBinning]: 按特征名映射的已训练分箱器字典，未包含的特征按 method 参数重新训练
         优先级: binner > rules > method
     :param max_n_bins: 最大分箱数，默认 5
-    :param min_bin_size: 每箱最小样本占比，默认 0.05
+    :param min_bin_size: 每箱最小样本数或占比，默认 0.01；None 表示不限制
     :param missing_separate: 是否将缺失值单独分箱，默认 True
     :param prebinning: 预分箱配置，参数格式与 OptimalBinning 保持一致，默认 'quantile'。
         - None: 不使用预分箱
@@ -1406,10 +1406,9 @@ def feature_bin_stats(
         default_binner_params.setdefault("monotonic_bonus_weight", 0.4)
         default_binner_params.setdefault("lift_refine_max_bins", max_n_bins)
 
-    # quantile 方法需禁用所有后处理，保证分位数切分点精确
+    # quantile 方法需禁用 Lift 后处理，保证分位数切分点精确
     if method == "quantile":
         default_binner_params.setdefault("lift_refine", False)
-        default_binner_params.setdefault("min_bin_size", 0)
 
     # 透传 monotonic 参数（优先级高于 kwargs）
     if monotonic is not None:

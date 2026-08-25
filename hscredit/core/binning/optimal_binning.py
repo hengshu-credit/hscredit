@@ -136,7 +136,7 @@ class OptimalBinning(BaseBinning):
         - ``'cp_sat'``：基于 CP-SAT 求解器的约束规划分箱
     :param max_n_bins: 最大分箱数，默认为5
     :param min_n_bins: 最小分箱数，默认为2
-    :param min_bin_size: 每箱最小样本数或占比，默认为0.01
+    :param min_bin_size: 每箱最小样本数或占比，默认为0.01；None表示不限制最小样本数
     :param max_bin_size: 每箱最大样本数或占比，默认为None（不限制）
     :param min_bad_rate: 每箱最小坏样本率，默认为0.0。坏样本率低于该值的分箱将与相邻
         分箱合并；无论该参数取值，坏样本率为 0/1 的退化分箱都会被合并以避免 WOE 异常
@@ -252,7 +252,7 @@ class OptimalBinning(BaseBinning):
         method: str = "mdlp",
         max_n_bins: int = 5,
         min_n_bins: int = 2,
-        min_bin_size: Union[float, int] = 0.01,
+        min_bin_size: Optional[Union[float, int]] = 0.01,
         max_bin_size: Optional[Union[float, int]] = None,
         min_bad_rate: float = 0.0,
         monotonic: Union[bool, str] = False,
@@ -501,7 +501,8 @@ class OptimalBinning(BaseBinning):
             # 使用指定方法
             self._fit_with_method(X, y)
 
-            # quantile 方法需保持分位数切分点精确，跳过所有后处理
+            # quantile 方法由底层按重复值和最小箱约束完成收口，保持分位切点语义。
+            # uniform 则先生成完整等距切点，再继续走通用约束合并；合并后允许不等宽。
             if self.method == "quantile":
                 if not self._reserved_bins_are_finalized(X.columns):
                     self._finalize_reserved_bins(X, y)
@@ -1535,12 +1536,14 @@ class OptimalBinning(BaseBinning):
         if self.method == "uniform":
             uniform_params = target_params.copy()
             uniform_params.setdefault("force_numerical", False)
+            uniform_params["woe_clip"] = self.woe_clip
             uniform_params["category_order"] = self.category_order
             uniform_params["handle_unknown"] = self.handle_unknown
             self._binner = UniformBinning(**uniform_params)
         elif self.method == "quantile":
             quantile_params = target_params.copy()
             quantile_params.setdefault("force_numerical", False)
+            quantile_params["woe_clip"] = self.woe_clip
             self._binner = QuantileBinning(**quantile_params)
         elif self.method == "tree":
             self._binner = TreeBinning(**target_params)
@@ -1658,7 +1661,7 @@ class OptimalBinning(BaseBinning):
         self.n_bins_ = self._binner.n_bins_
         self.bin_tables_ = self._binner.bin_tables_
         self.feature_types_ = self._binner.feature_types_
-        if self.method == "quantile":
+        if self.method in ("uniform", "quantile"):
             self._copy_finalized_bin_state_from(self._binner)
         else:
             self._copy_categorical_state_from(self._binner)

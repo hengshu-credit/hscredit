@@ -29,7 +29,7 @@ class QuantileBinning(BaseBinning):
     :param force_numerical: 是否强制作为数值型处理，默认为False（自动识别类别型）
         - True: 将所有特征视为数值型进行等频分箱
         - False: 自动检测特征类型
-    :param min_bin_size: 每箱最小样本数或占比，默认为0.01
+    :param min_bin_size: 每箱最小样本数或占比，默认为0.01；None表示不限制
     :param max_bin_size: 每箱最大样本数或占比，默认为None
     :param min_bad_rate: 每箱最小坏样本率，默认为0.0
     :param monotonic: 是否要求坏样本率单调，默认为False
@@ -37,6 +37,8 @@ class QuantileBinning(BaseBinning):
     :param missing_separate: 是否将缺失值单独分为一箱，默认为True
     :param random_state: 随机种子，默认为None
     :param verbose: 是否输出详细信息，默认为False
+    :param decimal: 数值切点保留的小数位数，默认为4
+    :param woe_clip: WOE 绝对值截断上限，默认为None
 
     **属性**
 
@@ -60,6 +62,8 @@ class QuantileBinning(BaseBinning):
 
     等频分箱为无监督方法，仅依据特征自身分布切分、不使用标签 ``y``（``y`` 仅用于
     生成分箱统计表），因此对异常值稳健、各箱样本量均衡，常用作有监督分箱的预分箱。
+    当多个分位点落在同一个重复值上时会合并重复边界，因此实际箱数可能少于
+    ``max_n_bins``，但不会生成空箱。
 
     **引用**
 
@@ -75,7 +79,7 @@ class QuantileBinning(BaseBinning):
         max_n_bins: int = 10,
         quantiles: Optional[List[float]] = None,
         force_numerical: bool = False,
-        min_bin_size: Union[float, int] = 0.01,
+        min_bin_size: Optional[Union[float, int]] = 0.01,
         max_bin_size: Optional[Union[float, int]] = None,
         min_bad_rate: float = 0.0,
         monotonic: Union[bool, str] = False,
@@ -87,6 +91,7 @@ class QuantileBinning(BaseBinning):
         random_state: Optional[int] = None,
         verbose: Union[bool, int] = False,
         decimal: int = 4,
+        woe_clip: Optional[float] = None,
         n_jobs: Union[int, float] = -1,
         parallel_backend: Optional[str] = None,
         parallel_config: Optional[Dict[str, Any]] = None,
@@ -111,6 +116,7 @@ class QuantileBinning(BaseBinning):
             random_state=random_state,
             verbose=verbose,
             decimal=decimal,
+            woe_clip=woe_clip,
             n_jobs=n_jobs,
             parallel_backend=parallel_backend,
             parallel_config=parallel_config,
@@ -247,26 +253,28 @@ class QuantileBinning(BaseBinning):
             quantiles_to_use = np.linspace(0, 1, target_n_bins + 1)
 
         # 获取唯一值
-        unique_values = np.unique(x_valid)
+        unique_values = np.unique(x_valid.to_numpy(dtype=float))
 
-        # 如果唯一值数量小于等于目标分箱数，直接使用唯一值作为切分点
-        if len(unique_values) <= target_n_bins:
-            return unique_values[:-1]  # 最后一个值不需要作为切分点
+        # 默认分位数下，唯一值不多于目标箱数时，每个唯一值各占一箱。
+        # 数值分箱统一使用左闭右开区间，因此切点必须落在相邻取值之间；
+        # 直接使用 unique_values[:-1] 会让最小值切点产生一个空的首箱。
+        if self.quantiles is None and len(unique_values) <= target_n_bins:
+            return unique_values[:-1] + (unique_values[1:] - unique_values[:-1]) / 2
 
-        # 计算分位数对应的切分点（排除0和1）
-        split_quantiles = quantiles_to_use[1:-1]
-        if len(split_quantiles) == 0:
+        # 先计算包含最小值/最大值的完整分位边界，再整体去重并移除两端。
+        # 这与 qcut(duplicates="drop") 的边界语义一致：当多个分位点都落在
+        # 最小值等重复值上时，不能把最小值本身保留为左闭切点。
+        quantile_edges = np.percentile(x_valid, np.asarray(quantiles_to_use) * 100)
+        unique_edges = np.unique(quantile_edges)
+        if len(unique_edges) <= 2:
             return np.array([])
-
-        splits = np.percentile(x_valid, np.array(split_quantiles) * 100)
+        splits = unique_edges[1:-1]
 
         if self.quantiles is not None:
-            # 自定义分位点：仅去除离散重复值导致的相同切分点以保证分箱有效，
+            # 自定义分位点：完整边界已去除离散重复值导致的相同切分点，
             # 不进行 max_n_bins / min_bin_size 的合并裁剪，确保严格按指定分位点切分
-            splits = np.unique(splits)
+            return splits
         else:
-            # 处理重复值边界问题
-            splits = self._handle_duplicate_boundaries(splits, x_valid)
             # 根据约束调整分箱数
             splits = self._adjust_bins(x_valid, y_valid, splits)
 
@@ -360,75 +368,28 @@ class QuantileBinning(BaseBinning):
             return splits
 
         min_samples = self._get_min_samples(len(x))
+        splits = np.unique(np.asarray(splits, dtype=float))
+        values = x.to_numpy(dtype=float)
 
-        # 迭代调整直到满足约束
-        max_iter = 20
-        for iteration in range(max_iter):
-            bins = pd.cut(x, bins=[-np.inf] + splits.tolist() + [np.inf], labels=False)
-
-            # 检查每箱样本数
-            bin_counts = bins.value_counts().sort_index()
-
-            # 合并样本数过少的箱
-            new_splits = []
-            skip_next = False
-
-            for i in range(len(splits)):
-                if skip_next:
-                    skip_next = False
-                    continue
-
-                # 当前箱的样本数
-                count = bin_counts.get(i, 0)
-
-                # 如果样本数过少且不是最后一个箱，尝试与下一个箱合并
-                if count < min_samples and i < len(splits) - 1:
-                    skip_next = True
-                else:
-                    new_splits.append(splits[i])
-
-            new_splits = np.array(new_splits)
-
-            # 如果切分点没有变化，退出循环
-            if len(new_splits) == len(splits):
+        # 按 transform 的左闭右开语义检查真实箱计数。发现小箱时仅删除其相邻
+        # 边界，每轮合并一个箱，避免旧实现隔一个切点删除一次并最终塌缩为两箱。
+        while len(splits) > 0:
+            bin_indices = np.searchsorted(splits, values, side="right")
+            counts = np.bincount(bin_indices, minlength=len(splits) + 1)
+            small_bins = np.flatnonzero(counts < min_samples)
+            if len(small_bins) == 0:
                 break
 
-            splits = new_splits
-
-            # 检查分箱数约束
-            n_bins = len(splits) + 1
-            if n_bins < self.min_n_bins:
-                # 需要增加分箱数，重新计算
-                if self.quantiles is None and iteration < max_iter - 1:
-                    quantiles = np.linspace(0, 1, self.min_n_bins + 1)
-                    splits = np.percentile(x, quantiles[1:-1] * 100)
-                    splits = self._handle_duplicate_boundaries(splits, x)
-                break
-
-        # 最终检查分箱数约束
-        n_bins = len(splits) + 1
-
-        # 如果分箱数超过最大值，减少分箱数
-        if n_bins > self.max_n_bins:
-            # 自定义分位点模式下，减少分箱数需要重新计算
-            if self.quantiles is not None:
-                # 保留首尾，均匀选择中间的分位点
-                n_splits_needed = self.max_n_bins - 1
-                if n_splits_needed > 0:
-                    indices = np.linspace(0, len(splits) - 1, n_splits_needed).astype(int)
-                    splits = splits[indices]
+            small_bin = int(small_bins[np.argmin(counts[small_bins])])
+            if small_bin == 0:
+                split_to_remove = 0
+            elif small_bin == len(counts) - 1:
+                split_to_remove = len(splits) - 1
+            elif counts[small_bin - 1] <= counts[small_bin + 1]:
+                split_to_remove = small_bin - 1
             else:
-                # 非自定义模式下，重新计算分位数
-                quantiles = np.linspace(0, 1, self.max_n_bins + 1)
-                splits = np.percentile(x, quantiles[1:-1] * 100)
-                splits = self._handle_duplicate_boundaries(splits, x)
-
-        # 如果分箱数少于最小值，增加分箱数
-        elif n_bins < self.min_n_bins:
-            if self.quantiles is None:
-                quantiles = np.linspace(0, 1, self.min_n_bins + 1)
-                splits = np.percentile(x, quantiles[1:-1] * 100)
-                splits = self._handle_duplicate_boundaries(splits, x)
+                split_to_remove = small_bin
+            splits = np.delete(splits, split_to_remove)
 
         return splits
 
@@ -438,9 +399,11 @@ class QuantileBinning(BaseBinning):
         :param n_total: 总样本数
         :return: 最小样本数
         """
+        if self.min_bin_size is None:
+            return 0
         if self.min_bin_size < 1:
-            return int(n_total * self.min_bin_size)
-        return int(self.min_bin_size)
+            return max(1, int(n_total * self.min_bin_size))
+        return max(1, int(self.min_bin_size))
 
     def _apply_bins(self, x: pd.Series, splits: Union[np.ndarray, List]) -> np.ndarray:
         """应用分箱.
