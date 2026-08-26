@@ -35,6 +35,7 @@ class BaseDatabaseAdapter:
 
     database_type = "base"
     identifier_quote = '"'
+    is_nosql = False
     capabilities = DatabaseCapabilities()
 
     def __init__(
@@ -167,6 +168,61 @@ class BaseDatabaseAdapter:
         """创建目标表。"""
 
         raise NotImplementedError
+
+    def ensure_table(
+        self,
+        data: Any,
+        table_name: str,
+        *,
+        dialect_options: Optional[Mapping[str, Any]] = None,
+        exists: Optional[bool] = None,
+    ) -> Any:
+        """目标表不存在时根据首批数据创建表，并容忍并发建表竞态。"""
+
+        known_exists = self.table_exists(table_name) if exists is None else exists
+        if known_exists is True:
+            return None
+
+        options = dict(dialect_options or {})
+        options["if_not_exists"] = True
+        try:
+            return self.create_table(data, table_name, dialect_options=options)
+        except Exception as exc:
+            if self.is_table_already_exists_error(exc):
+                try:
+                    concurrent_table_exists = self.table_exists(table_name) is True
+                except Exception:
+                    concurrent_table_exists = False
+                if concurrent_table_exists:
+                    return None
+            raise
+
+    def is_table_already_exists_error(self, exc: BaseException) -> bool:
+        """判断建表异常是否明确表示目标表已存在。"""
+
+        del exc
+        return False
+
+    def table_exists(self, table_name: str) -> Optional[bool]:
+        """只读判断目标表是否存在；无法通用判断时返回 ``None``。"""
+
+        del table_name
+        return None
+
+    def validate_write(
+        self,
+        table_name: str,
+        mode: str,
+        first_batch: Any,
+        *,
+        key_columns: Optional[Sequence[str]] = None,
+        dialect_options: Optional[Mapping[str, Any]] = None,
+        table_exists: Optional[bool] = None,
+    ) -> None:
+        """在任何建表、清空或删除动作之前校验写入能力。"""
+
+        del first_batch, key_columns, dialect_options, table_exists
+        self.require_write_mode(table_name, mode)
 
     def resolve_key_columns(
         self,

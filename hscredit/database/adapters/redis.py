@@ -13,6 +13,7 @@ class RedisAdapter(BaseDatabaseAdapter):
     """基于 redis-py 的 Redis 连接池适配器。"""
 
     database_type = "redis"
+    is_nosql = True
     pool_options_class = RedisPoolOptions
     capabilities = DatabaseCapabilities(
         transactions=False,

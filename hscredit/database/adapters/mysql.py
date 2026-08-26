@@ -239,6 +239,18 @@ class MySQLAdapter(DBAPIAdapter):
             raise ValidationError("未指定默认数据库，MySQL 表名必须使用 数据库名.表名")
         return str(schema), parts[-1]
 
+    def table_exists(self, table_name: str) -> bool:
+        """通过 information_schema 只读判断目标表是否存在。"""
+
+        schema, table = self._schema_and_table(table_name)
+        rows = self.query(
+            "SELECT 1 FROM information_schema.tables "
+            "WHERE TABLE_SCHEMA=%s AND TABLE_NAME=%s LIMIT 1",
+            params=(schema, table),
+            result="rows",
+        )
+        return bool(rows)
+
     def get_key_columns(self, table_name: str) -> Tuple[str, ...]:
         """读取目标表主键；没有主键时回退到第一个唯一索引。"""
 
@@ -322,9 +334,13 @@ ORDER BY CASE WHEN INDEX_NAME='PRIMARY' THEN 0 ELSE 1 END,
     ) -> None:
         """准备 MySQL 四种写入模式。"""
 
-        self.require_write_mode(table_name, mode)
-        if mode in {"a", "r"} and not key_columns:
-            raise DatabaseCapabilityError(f"MySQL 目标表 {table_name!r} 未解析到主键，无法执行模式 {mode!r}")
+        self.validate_write(
+            table_name,
+            mode,
+            first_batch,
+            key_columns=key_columns,
+            dialect_options=dialect_options,
+        )
         quoted_table = self.quote_qualified_name(table_name)
         if mode == "o":
             self.execute(f"TRUNCATE TABLE {quoted_table}")
@@ -336,6 +352,23 @@ ORDER BY CASE WHEN INDEX_NAME='PRIMARY' THEN 0 ELSE 1 END,
             ddl = self.build_create_table_sql(first_batch, table_name, options)
             self.execute(f"DROP TABLE IF EXISTS {quoted_table}")
             self.execute(ddl)
+
+    def validate_write(
+        self,
+        table_name: str,
+        mode: str,
+        first_batch: pd.DataFrame,
+        *,
+        key_columns: Optional[Sequence[str]] = None,
+        dialect_options: Optional[Mapping[str, Any]] = None,
+        table_exists: Optional[bool] = None,
+    ) -> None:
+        """无副作用校验 MySQL 写入模式和冲突键。"""
+
+        del first_batch, dialect_options, table_exists
+        self.require_write_mode(table_name, mode)
+        if mode in {"a", "r"} and not key_columns:
+            raise DatabaseCapabilityError(f"MySQL 目标表 {table_name!r} 未解析到主键，无法执行模式 {mode!r}")
 
     @staticmethod
     def _dbapi_value(value: Any) -> Any:
@@ -363,6 +396,11 @@ ORDER BY CASE WHEN INDEX_NAME='PRIMARY' THEN 0 ELSE 1 END,
                 return int(args[0])
             current = current.__cause__
         return None
+
+    def is_table_already_exists_error(self, exc: BaseException) -> bool:
+        """MySQL 1050 表示目标表已存在。"""
+
+        return self._mysql_error_code(exc) == 1050
 
     def write_batch(
         self,

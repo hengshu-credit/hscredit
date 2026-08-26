@@ -4,9 +4,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from hscredit.database import Database, DatabaseCapabilities, register_adapter
+from hscredit.database import Database, DatabaseCapabilities, WriteResult, register_adapter, write
 from hscredit.database.adapters.base import BaseDatabaseAdapter
-from hscredit.database.exceptions import DatabaseWriteError
+from hscredit.database.exceptions import DatabaseCapabilityError, DatabaseWriteError
 from hscredit.database.writing import BatchWriteResult, iter_write_batches, validate_sql_type
 from hscredit.exceptions import InputValidationError, ValidationError
 
@@ -22,11 +22,47 @@ class ObservableWriteAdapter(BaseDatabaseAdapter):
             adapter_options=adapter_options,
         )
         self.calls = []
+        self.create_attempts = 0
         self.fail_batch = connect_kwargs.get("fail_batch")
+        self.race_create = connect_kwargs.get("race_create", False)
+        self.unsupported_modes = set(connect_kwargs.get("unsupported_modes", ()))
+        self.tables = set(connect_kwargs.get("existing_tables", {"risk.events"}))
+
+    class ConcurrentTableExistsError(RuntimeError):
+        pass
+
+    def table_exists(self, table_name):
+        return table_name in self.tables
 
     def create_table(self, data, table_name, *, dialect_options=None):
-        self.calls.append(("create_table", table_name, data.copy(), dict(dialect_options or {})))
+        self.create_attempts += 1
+        options = dict(dialect_options or {})
+        if table_name in self.tables and options.get("if_not_exists"):
+            return "CREATE TABLE"
+        if self.race_create:
+            self.tables.add(table_name)
+            raise self.ConcurrentTableExistsError("concurrent creator won")
+        self.calls.append(("create_table", table_name, data.copy(), options))
+        self.tables.add(table_name)
         return "CREATE TABLE"
+
+    def is_table_already_exists_error(self, exc):
+        return isinstance(exc, self.ConcurrentTableExistsError)
+
+    def validate_write(
+        self,
+        table_name,
+        mode,
+        first_batch,
+        *,
+        key_columns=None,
+        dialect_options=None,
+        table_exists=None,
+    ):
+        del first_batch, key_columns, dialect_options, table_exists
+        if mode in self.unsupported_modes:
+            raise DatabaseCapabilityError(f"测试适配器不支持模式 {mode}")
+        self.require_write_mode(table_name, mode)
 
     def prepare_write(
         self,
@@ -38,6 +74,8 @@ class ObservableWriteAdapter(BaseDatabaseAdapter):
         dialect_options=None,
     ):
         self.require_write_mode(table_name, mode)
+        if mode != "d" and table_name not in self.tables:
+            raise RuntimeError("table missing")
         self.calls.append(
             (
                 "prepare",
@@ -52,6 +90,7 @@ class ObservableWriteAdapter(BaseDatabaseAdapter):
             self.calls.append(("clear", table_name))
         elif mode == "d":
             self.calls.append(("drop", table_name))
+            self.tables.discard(table_name)
             self.create_table(
                 first_batch,
                 table_name,
@@ -102,6 +141,136 @@ def test_write_pipeline_accepts_defined_modes(mode):
     assert result.batches_committed == 2
     assert database.adapter.calls[0][0] == "prepare"
     assert database.adapter.calls[-1] == ("finish", "risk.events", mode, 2)
+
+
+def test_sql_write_uses_append_mode_by_default():
+    database = Database("observable_write")
+
+    result = database.write(
+        "risk.events",
+        pd.DataFrame({"id": [1, 2]}),
+        key_columns="id",
+    )
+
+    assert result.mode == "a"
+    assert result.completed is True
+    assert result.rows_inserted == 2
+
+
+@pytest.mark.parametrize("mode", ["a", "r", "o", "d"])
+def test_sql_write_creates_missing_table_for_every_mode(mode):
+    database = Database("observable_write", existing_tables=())
+
+    result = database.write(
+        "risk.events",
+        pd.DataFrame({"id": [1], "name": ["新记录"]}),
+        mode=mode,
+        key_columns="id",
+    )
+
+    create_calls = [call for call in database.adapter.calls if call[0] == "create_table"]
+    assert len(create_calls) == 1
+    assert create_calls[0][1] == "risk.events"
+    assert create_calls[0][3]["key_columns"] == ["id"]
+    assert result.completed is True
+
+
+def test_sql_write_shortcut_uses_same_table_creation_pipeline():
+    result = write(
+        {"db_type": "observable_write", "existing_tables": ()},
+        "risk.events",
+        pd.DataFrame({"id": [1]}),
+        key_columns="id",
+    )
+
+    assert result.mode == "a"
+    assert result.completed is True
+
+
+def test_existing_sql_table_does_not_attempt_create_ddl():
+    database = Database("observable_write")
+
+    database.write(
+        "risk.events",
+        pd.DataFrame({"id": [1]}),
+        mode="o",
+    )
+
+    assert database.adapter.create_attempts == 0
+
+
+def test_unsupported_mode_does_not_leave_created_empty_table():
+    database = Database(
+        "observable_write",
+        existing_tables=(),
+        unsupported_modes=("r",),
+    )
+
+    with pytest.raises(DatabaseCapabilityError, match="不支持模式"):
+        database.write(
+            "risk.events",
+            pd.DataFrame({"id": [1]}),
+            mode="r",
+            key_columns="id",
+        )
+
+    assert database.adapter.create_attempts == 0
+    assert database.adapter.tables == set()
+
+
+def test_concurrent_table_creator_is_treated_as_successful_ensure():
+    database = Database(
+        "observable_write",
+        existing_tables=(),
+        race_create=True,
+    )
+
+    database.adapter.ensure_table(
+        pd.DataFrame({"id": [1]}),
+        "risk.events",
+    )
+
+    assert database.adapter.create_attempts == 1
+    assert database.adapter.tables == {"risk.events"}
+
+
+def test_post_create_failure_is_not_hidden_when_table_now_exists():
+    class PostCreateFailureAdapter(ObservableWriteAdapter):
+        def create_table(self, data, table_name, *, dialect_options=None):
+            del data, dialect_options
+            self.create_attempts += 1
+            self.tables.add(table_name)
+            raise RuntimeError("字段注释写入失败")
+
+    register_adapter("post_create_failure", PostCreateFailureAdapter, replace=True)
+    database = Database("post_create_failure", existing_tables=())
+
+    with pytest.raises(RuntimeError, match="字段注释"):
+        database.adapter.ensure_table(
+            pd.DataFrame({"id": [1]}),
+            "risk.events",
+        )
+
+    assert database.adapter.tables == {"risk.events"}
+
+
+def test_sql_adapter_native_write_method_does_not_bypass_sql_pipeline():
+    class SQLAdapterWithNativeWrite(ObservableWriteAdapter):
+        def write(self, *args, **kwargs):
+            del args, kwargs
+            raise AssertionError("SQL 适配器不能走 NoSQL 原生 write 分支")
+
+    register_adapter("sql_with_native_write", SQLAdapterWithNativeWrite, replace=True)
+    database = Database("sql_with_native_write")
+
+    result = database.write(
+        "risk.events",
+        pd.DataFrame({"id": [1]}),
+        key_columns="id",
+    )
+
+    assert isinstance(result, WriteResult)
+    assert result.completed is True
 
 
 def test_write_pipeline_rejects_unknown_mode_before_consuming_data():

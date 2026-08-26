@@ -177,9 +177,30 @@ class Database:
         return self._call_nosql("write_many", resource, data, **options)
 
     def write(self, resource: Any, data: Any = None, **options: Any) -> Any:
-        """根据输入形态自适应执行单条或批量写入。"""
+        """根据适配器类型写入 SQL 表或 NoSQL 资源。
 
-        return self._call_nosql("write", resource, data, **options)
+        SQL 数据库使用 ``write(表名, 数据, ...)``，默认按 ``mode="a"`` 进入
+        :meth:`stream_write` 流水线；目标表不存在时根据首批数据自动建表。Redis 和
+        MongoDB 保持原有自适应单条/批量写入语义。
+
+        :param resource: SQL 目标表限定名、Redis key/映射或 MongoDB collection。
+        :param data: SQL DataFrame/记录迭代器、Redis 值或 MongoDB 文档。
+        :param options: SQL 写入模式、批次、键字段和方言参数，或 NoSQL 后端选项。
+        :return: SQL 返回 :class:`WriteResult`；NoSQL 返回 :class:`NoSQLWriteResult`。
+        :raises StateError: 数据库门面已经关闭。
+        :raises DatabaseCapabilityError: 后端不能保证请求的写入语义。
+        :raises DatabaseWriteError: SQL 表准备或分批写入失败。
+
+        **参考样例**
+
+        >>> result = db.write("risk.events", frame, key_columns="id")
+        >>> result = db.write("risk.events", frame, mode="r", key_columns=["id"])
+        """
+
+        self._ensure_open()
+        if self.adapter.is_nosql:
+            return self._call_nosql("write", resource, data, **options)
+        return self.stream_write(data, resource, **options)
 
     def delete_one(self, resource: Any, selector: Any = None, **options: Any) -> Any:
         """删除单个 Redis key 或首个匹配 MongoDB 文档。"""
@@ -546,6 +567,9 @@ class Database:
     ) -> WriteResult:
         """把 DataFrame、DataFrame 分块或行记录迭代器流式写入目标表。
 
+        ``mode`` 默认为 ``a``。目标表不存在时，四种模式都会根据首个有效分块和
+        ``dialect_options`` 创建表；已有表继续执行各模式原有的追加、覆盖、清空或重建语义。
+
         :param data: DataFrame、DataFrame 分块、记录字典或位置行的可迭代对象。
         :param table_name: 目标表限定名。
         :param mode: 写入模式。``a`` 追加且主键重复不覆盖；``r`` 追加且主键重复覆盖；
@@ -583,17 +607,9 @@ class Database:
             key_columns,
             first_batch.columns,
         )
-        if mode in {"a", "r"}:
-            resolved_keys = self.adapter.resolve_key_columns(
-                table_name,
-                resolved_keys,
-                first_batch,
-                dialect_options=options,
-            )
-            resolved_keys = self._validate_key_columns(
-                resolved_keys,
-                first_batch.columns,
-            )
+        write_options = dict(options)
+        if resolved_keys:
+            write_options["key_columns"] = list(resolved_keys)
         result = WriteResult(
             mode=mode,
             completed=False,
@@ -602,12 +618,54 @@ class Database:
             rows_skipped=0,
         )
         try:
+            target_exists = self.adapter.table_exists(table_name)
+            if mode in {"a", "r"} and target_exists is True:
+                resolved_keys = self.adapter.resolve_key_columns(
+                    table_name,
+                    resolved_keys,
+                    first_batch,
+                    dialect_options=write_options,
+                )
+                resolved_keys = self._validate_key_columns(
+                    resolved_keys,
+                    first_batch.columns,
+                )
+                if resolved_keys:
+                    write_options["key_columns"] = list(resolved_keys)
+            self.adapter.validate_write(
+                table_name,
+                mode,
+                first_batch,
+                key_columns=resolved_keys,
+                dialect_options=write_options,
+                table_exists=target_exists,
+            )
+            if mode != "d":
+                self.adapter.ensure_table(
+                    first_batch,
+                    table_name,
+                    dialect_options=write_options,
+                    exists=target_exists,
+                )
+            if mode in {"a", "r"} and target_exists is not True:
+                resolved_keys = self.adapter.resolve_key_columns(
+                    table_name,
+                    resolved_keys,
+                    first_batch,
+                    dialect_options=write_options,
+                )
+                resolved_keys = self._validate_key_columns(
+                    resolved_keys,
+                    first_batch.columns,
+                )
+                if resolved_keys:
+                    write_options["key_columns"] = list(resolved_keys)
             self.adapter.prepare_write(
                 table_name,
                 mode,
                 first_batch,
                 key_columns=resolved_keys,
-                dialect_options=options,
+                dialect_options=write_options,
             )
         except (DatabaseCapabilityError, ValidationError, InputValidationError):
             raise
@@ -627,7 +685,7 @@ class Database:
                     mode,
                     batch_index,
                     key_columns=resolved_keys,
-                    dialect_options=options,
+                    dialect_options=write_options,
                 )
             except Exception as exc:
                 result.failed_batch = batch_index
@@ -661,7 +719,7 @@ class Database:
                 table_name,
                 mode,
                 result,
-                dialect_options=options,
+                dialect_options=write_options,
             )
         except Exception as exc:
             result.failed_batch = result.batches_committed + 1

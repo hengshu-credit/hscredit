@@ -16,6 +16,7 @@ from hscredit.exceptions import ValidationError
 
 class ShortcutAdapter(BaseDatabaseAdapter):
     database_type = "shortcut"
+    is_nosql = True
     instances = []
 
     def __init__(self, *, connect_kwargs, pool_options, adapter_options):
@@ -366,7 +367,7 @@ def test_pymysql_connection_can_explicitly_use_starrocks_dialect():
     assert connection.close_calls == 0
 
 
-def test_native_mysql_connection_supports_create_table_and_stream_write():
+def test_native_mysql_connection_supports_create_table_write_and_stream_write():
     connection = PyMySQLLikeConnection()
 
     ddl = shortcut_api.create_table(
@@ -380,10 +381,19 @@ def test_native_mysql_connection_supports_create_table_and_stream_write():
         "risk.events",
         mode="d",
     )
+    write_result = shortcut_api.write(
+        connection,
+        "risk.events",
+        pd.DataFrame({"id": [3]}),
+        mode="d",
+        key_columns="id",
+    )
 
     assert ddl.startswith("CREATE TABLE")
     assert result.completed is True
     assert result.rows_received == 2
+    assert write_result.completed is True
+    assert write_result.rows_received == 1
     assert connection.close_calls == 0
 
 
@@ -405,18 +415,25 @@ def test_native_dbapi_stream_closes_cursor_but_not_connection():
     assert connection.close_calls == 0
 
 
-@pytest.mark.parametrize("method_name", ["export_schema", "stream_write"])
+@pytest.mark.parametrize("method_name", ["export_schema", "stream_write", "write"])
 def test_native_maxcompute_connection_rejects_operations_that_require_odps_entry(method_name):
     connection = FakeConnection()
 
     with pytest.raises(DatabaseCapabilityError, match="MaxCompute.*配置|Database"):
         if method_name == "export_schema":
             shortcut_api.export_schema(connection, db_type="maxcompute")
-        else:
+        elif method_name == "stream_write":
             shortcut_api.stream_write(
                 connection,
                 pd.DataFrame({"id": [1]}),
                 "risk.events",
+                db_type="maxcompute",
+            )
+        else:
+            shortcut_api.write(
+                connection,
+                "risk.events",
+                pd.DataFrame({"id": [1]}),
                 db_type="maxcompute",
             )
 

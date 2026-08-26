@@ -1205,7 +1205,7 @@ db = Database(
 配置创建的连接池：
 
 ```python
-from hscredit.database import read_query, execute
+from hscredit.database import read_query, execute, write
 
 mysql_config = {
     "db_type": "mysql",
@@ -1217,6 +1217,7 @@ mysql_config = {
 
 frame = read_query(mysql_config, "SELECT id FROM events")
 execute(mysql_config, "DELETE FROM events WHERE id=%s", params=(1,))
+write(mysql_config, "risk.events", frame, key_columns="id")
 
 # 同样支持已有 Database 或原生 DB-API 连接
 frame = read_query(database, sql)
@@ -1248,7 +1249,20 @@ frame = db.read_query(sql, chunksize=50_000, progress=True)
 frame = db.read_query(sql, progress=True, count_total=True)
 ```
 
-流式写入支持单个 DataFrame、DataFrame 分块迭代器以及行记录迭代器：
+SQL 数据可直接使用统一的 `write(表名, 数据, ...)`，默认 `mode="a"`。目标表不存在时，
+`a/r/o/d` 都会根据首个有效数据分块自动建表；已有表继续保持对应模式语义。需要主键冲突
+语义的后端在新建表时应显式提供 `key_columns`：
+
+```python
+result = db.write(
+    "feature_db.user_profile",
+    dataframe,
+    key_columns="user_id",
+)
+```
+
+`write()` 与 `stream_write()` 使用同一套分批流水线；后者适合突出 DataFrame 分块迭代器或
+行记录迭代器输入：
 
 | mode | 语义 |
 |:---:|:---|

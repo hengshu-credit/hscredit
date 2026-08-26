@@ -26,6 +26,10 @@ class ObservableOracleAdapter(OracleAdapter):
             [{"OWNER": "RISK", "TABLE_NAME": "EVENTS", "COLUMN_NAME": "ID", "POSITION": 1}],
         )
         self.metadata_rows = connect_kwargs.get("metadata_rows", [])
+        self.existing_tables = {
+            str(name).upper()
+            for name in connect_kwargs.get("existing_tables", {"RISK.EVENTS"})
+        }
 
     def execute(self, sql, params=None):
         self.sql_calls.append(("execute", sql, params))
@@ -40,6 +44,9 @@ class ObservableOracleAdapter(OracleAdapter):
         self.sql_calls.append(("query", sql, params, result))
         if sql.startswith("SELECT cc.OWNER"):
             return list(self.key_rows)
+        if "FROM ALL_TABLES" in sql:
+            qualified_name = f"{params['owner']}.{params['table_name']}"
+            return [(1,)] if qualified_name in self.existing_tables else []
         return list(self.metadata_rows)
 
 
@@ -61,6 +68,14 @@ def test_oracle_count_wrapper_has_no_as_keyword(adapter):
     assert adapter.build_count_sql("select id from events;") == (
         "SELECT COUNT(1) FROM (select id from events) hscredit_count"
     )
+
+
+def test_oracle_recognizes_only_duplicate_table_error(adapter):
+    duplicate = RuntimeError(SimpleNamespace(code=955))
+    missing = RuntimeError(SimpleNamespace(code=942))
+
+    assert adapter.is_table_already_exists_error(duplicate) is True
+    assert adapter.is_table_already_exists_error(missing) is False
 
 
 def test_oracle_append_merge_has_no_matched_update(adapter):
@@ -156,6 +171,32 @@ def test_oracle_create_table_maps_types_and_primary_key(adapter):
     statements = [call[1] for call in adapter.sql_calls if call[0] == "execute"]
     assert any(statement.startswith("COMMENT ON COLUMN") for statement in statements)
     assert any(statement.startswith("COMMENT ON TABLE") for statement in statements)
+
+
+def test_oracle_ensure_table_creates_only_when_missing(adapter):
+    frame = pd.DataFrame({"ID": [1]})
+
+    assert adapter.table_exists("RISK.NEW_EVENTS") is False
+    adapter.ensure_table(
+        frame,
+        "RISK.NEW_EVENTS",
+        dialect_options={"key_columns": ["ID"]},
+    )
+
+    assert adapter.sql_calls[0][0] == "query"
+    assert "FROM ALL_TABLES" in adapter.sql_calls[0][1]
+    assert any(call[0] == "execute" and call[1].startswith('CREATE TABLE "RISK"."NEW_EVENTS"') for call in adapter.sql_calls)
+
+    existing = ObservableOracleAdapter(
+        connect_kwargs={"user": "risk", "existing_tables": {"RISK.EVENTS"}},
+        pool_options=PoolOptions(),
+        adapter_options={},
+    )
+    assert existing.table_exists("RISK.EVENTS") is True
+    existing.sql_calls.clear()
+    existing.ensure_table(frame, "RISK.EVENTS")
+
+    assert [call[0] for call in existing.sql_calls] == ["query"]
 
 
 def test_oracle_prepare_modes_clear_or_drop_then_create(adapter):

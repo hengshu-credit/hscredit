@@ -8,7 +8,7 @@ import pytest
 from hscredit.database import PoolOptions
 from hscredit.database.adapters.base import BaseDatabaseAdapter
 from hscredit.database.adapters.starrocks import StarRocksAdapter
-from hscredit.database.exceptions import DatabaseCapabilityError
+from hscredit.database.exceptions import DatabaseCapabilityError, DatabaseQueryError
 from hscredit.database.metadata import QualifiedTarget
 
 
@@ -24,6 +24,7 @@ class ObservableStarRocksAdapter(StarRocksAdapter):
         self.sql_calls = []
         self.metadata_rows = []
         self.table_model = (connect_kwargs or {}).get("table_model", "DUPLICATE KEY")
+        self.missing_table = bool((connect_kwargs or {}).get("missing_table"))
         self.key_rows = [{"COLUMN_NAME": "id", "ORDINAL_POSITION": 1}]
         self.stream_load_requests = []
 
@@ -39,6 +40,8 @@ class ObservableStarRocksAdapter(StarRocksAdapter):
     def query(self, sql, params=None, result="dataframe"):
         self.sql_calls.append(("query", sql, params, result))
         if sql.startswith("SHOW CREATE TABLE"):
+            if self.missing_table:
+                raise DatabaseQueryError("目标表不存在")
             return [{"Table": "events", "Create Table": f"CREATE TABLE events {self.table_model}(id)"}]
         if "FROM information_schema.columns" in sql and "COLUMN_KEY" in sql and "JOIN" not in sql:
             return list(self.key_rows)
@@ -112,6 +115,24 @@ def test_starrocks_rejects_append_on_primary_table(adapter):
             key_columns=["id"],
             dialect_options={"table_model": "PRIMARY KEY"},
         )
+
+
+def test_starrocks_drop_mode_creates_missing_table_with_default_model():
+    adapter = ObservableStarRocksAdapter(
+        connect_kwargs={"database": "risk", "missing_table": True}
+    )
+
+    adapter.prepare_write(
+        "risk.new_events",
+        "d",
+        pd.DataFrame({"id": [1], "name": ["新记录"]}),
+        key_columns=["id"],
+        dialect_options={},
+    )
+
+    statements = [call[1] for call in adapter.sql_calls if call[0] == "execute"]
+    assert statements[0] == "DROP TABLE IF EXISTS `risk`.`new_events`"
+    assert "DUPLICATE KEY (`id`)" in statements[1]
 
 
 def test_starrocks_stream_load_sends_utf8_csv_and_safe_headers():

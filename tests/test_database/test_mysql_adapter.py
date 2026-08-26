@@ -36,6 +36,7 @@ class ObservableMySQLAdapter(MySQLAdapter):
             ],
         )
         self.metadata_rows = connect_kwargs.get("metadata_rows", [])
+        self.existing_tables = set(connect_kwargs.get("existing_tables", {"risk.events"}))
 
     def execute(self, sql, params=None):
         self.sql_calls.append(("execute", sql, params))
@@ -50,6 +51,9 @@ class ObservableMySQLAdapter(MySQLAdapter):
         self.sql_calls.append(("query", sql, params, result))
         if "information_schema.statistics" in sql:
             return list(self.key_rows)
+        if sql.startswith("SELECT 1 FROM information_schema.tables"):
+            qualified_name = ".".join(str(part) for part in params)
+            return [(1,)] if qualified_name in self.existing_tables else []
         return list(self.metadata_rows)
 
 
@@ -96,6 +100,11 @@ def test_mysql_identifier_quoting_escapes_backticks(adapter):
     assert adapter.quote_qualified_name("risk.ev`ents") == "`risk`.`ev``ents`"
 
 
+def test_mysql_recognizes_only_duplicate_table_error(adapter):
+    assert adapter.is_table_already_exists_error(RuntimeError(1050, "Table already exists")) is True
+    assert adapter.is_table_already_exists_error(RuntimeError(1146, "Table does not exist")) is False
+
+
 def test_mysql_resolves_primary_key_before_unique_index(adapter):
     keys = adapter.resolve_key_columns(
         "risk.events",
@@ -108,6 +117,14 @@ def test_mysql_resolves_primary_key_before_unique_index(adapter):
     query_call = adapter.sql_calls[-1]
     assert query_call[0] == "query"
     assert query_call[2] == ("risk", "events")
+
+
+def test_mysql_checks_table_existence_without_create_ddl(adapter):
+    assert adapter.table_exists("risk.events") is True
+    assert "information_schema.tables" in adapter.sql_calls[-1][1]
+    assert adapter.sql_calls[-1][2] == ("risk", "events")
+
+    assert adapter.table_exists("risk.missing_events") is False
 
 
 def test_mysql_stream_write_uses_discovered_key_for_replace():

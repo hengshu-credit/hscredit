@@ -62,6 +62,10 @@ class ImpalaAdapter(HiveAdapter):
         dialect_options: Optional[Mapping[str, Any]] = None,
     ) -> str:
         options = dict(dialect_options or {})
+        if options.get("transactional"):
+            raise DatabaseCapabilityError(
+                "Impala 文件表只支持 insert-only 事务，不能保证 r/MERGE；覆盖写入请使用 storage='KUDU'"
+            )
         storage = self._storage(options)
         if storage != "KUDU":
             return super().build_create_table_sql(data, table_name, options)
@@ -92,13 +96,13 @@ class ImpalaAdapter(HiveAdapter):
     ) -> None:
         options = dict(dialect_options or {})
         storage = self._storage(options)
-        capabilities = self.capabilities_for_table(table_name, options)
-        if mode not in capabilities.write_modes:
-            raise DatabaseCapabilityError(f"Impala 目标表 {table_name!r} 不是 Kudu 表，无法执行 r/UPSERT 模式")
-        if mode == "a" and key_columns and storage != "KUDU":
-            raise DatabaseCapabilityError(f"Impala 非 Kudu 表 {table_name!r} 无法保证主键冲突忽略语义")
-        if mode == "r" and not key_columns:
-            raise DatabaseCapabilityError("Impala Kudu UPSERT 必须指定 key_columns")
+        self.validate_write(
+            table_name,
+            mode,
+            first_batch,
+            key_columns=key_columns,
+            dialect_options=options,
+        )
         quoted = self.quote_qualified_name(table_name)
         if mode == "o":
             command = f"DELETE FROM {quoted}" if storage == "KUDU" else f"TRUNCATE TABLE {quoted}"
@@ -110,6 +114,29 @@ class ImpalaAdapter(HiveAdapter):
             ddl = self.build_create_table_sql(first_batch, table_name, options)
             self.execute(f"DROP TABLE IF EXISTS {quoted}")
             self.execute(ddl)
+
+    def validate_write(
+        self,
+        table_name: str,
+        mode: str,
+        first_batch: pd.DataFrame,
+        *,
+        key_columns: Optional[Sequence[str]] = None,
+        dialect_options: Optional[Mapping[str, Any]] = None,
+        table_exists: Optional[bool] = None,
+    ) -> None:
+        """无副作用校验 Impala/Kudu 写入模式与冲突键。"""
+
+        del first_batch, table_exists
+        options = dict(dialect_options or {})
+        storage = self._storage(options)
+        capabilities = self.capabilities_for_table(table_name, options)
+        if mode not in capabilities.write_modes:
+            raise DatabaseCapabilityError(f"Impala 目标表 {table_name!r} 不是 Kudu 表，无法执行 r/UPSERT 模式")
+        if mode == "a" and key_columns and storage != "KUDU":
+            raise DatabaseCapabilityError(f"Impala 非 Kudu 表 {table_name!r} 无法保证主键冲突忽略语义")
+        if mode == "r" and not key_columns:
+            raise DatabaseCapabilityError("Impala Kudu UPSERT 必须指定 key_columns")
 
     def write_batch(
         self,

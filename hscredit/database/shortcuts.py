@@ -186,7 +186,7 @@ def _invoke(source: Any, method_name: str, *args: Any, db_type: Optional[str] = 
         if (
             getattr(resolved.database, "_shortcut_native_connection", False)
             and resolved.database.database_type == "maxcompute"
-            and method_name in {"export_schema", "stream_write"}
+            and method_name in {"export_schema", "stream_write", "write"}
         ):
             raise DatabaseCapabilityError(
                 "MaxCompute 原生 DB-API 连接不包含 ODPS 元数据和 Tunnel 入口，" "请改为传入连接配置或 Database 实例"
@@ -465,9 +465,17 @@ def write(
     db_type: Optional[str] = None,
     **options: Any,
 ) -> Any:
-    """快捷自适应执行单条或批量 NoSQL 写入。
+    """快捷写入 SQL 表，或自适应执行单条/批量 NoSQL 写入。
 
-    参数与 :func:`write_one` 一致，具体单条/批量语义由适配器确定。
+    SQL 用法为 ``write(source, 表名, 数据, ...)``，默认 ``mode="a"``；目标表不存在时
+    根据首批数据自动创建。NoSQL 参数与 :func:`write_one` 一致，具体单条/批量语义由适配器确定。
+
+    :param source: 数据库配置、Database 实例或原生 DB-API 连接。
+    :param resource: SQL 目标表限定名、Redis key/映射或 MongoDB collection。
+    :param data: SQL DataFrame/记录迭代器、Redis 值或 MongoDB 文档。
+    :param db_type: 可选数据库类型。
+    :param options: SQL 写入模式、批次、键字段和方言参数，或 NoSQL 后端选项。
+    :return: SQL WriteResult 或 NoSQLWriteResult。
     """
 
     return _invoke(source, "write", resource, data, db_type=db_type, **options)

@@ -13,7 +13,7 @@ from ...exceptions import DependencyError, InputValidationError, ValidationError
 from ..exceptions import DatabaseCapabilityError, DatabaseQueryError
 from ..metadata import MetadataInspection, QualifiedTarget
 from ..types import DatabaseCapabilities, PoolOptions
-from ..writing import BatchWriteResult, resolve_column_type, validate_column_mapping_keys
+from ..writing import BatchWriteResult, resolve_column_type, split_qualified_name, validate_column_mapping_keys
 from .dbapi import DBAPIAdapter
 
 _SAFE_STORAGE = re.compile(r"^[A-Za-z0-9_]+$")
@@ -140,6 +140,18 @@ class HiveAdapter(DBAPIAdapter):
         return "'" + str(value).replace("'", "''") + "'"
 
     @staticmethod
+    def is_table_already_exists_error(exc: BaseException) -> bool:
+        """识别 HiveServer2/Impala 返回的明确重复建表错误。"""
+
+        current: Optional[BaseException] = exc
+        while current is not None:
+            message = str(current).casefold()
+            if "table" in message and "already exists" in message:
+                return True
+            current = current.__cause__
+        return False
+
+    @staticmethod
     def _column_type(series: pd.Series) -> str:
         dtype = series.dtype
         if ptypes.is_bool_dtype(dtype):
@@ -202,9 +214,13 @@ class HiveAdapter(DBAPIAdapter):
         dialect_options: Optional[Mapping[str, Any]] = None,
     ) -> str:
         options = dict(dialect_options or {})
-        storage = str(options.get("storage", "PARQUET")).upper()
+        transactional = bool(options.get("transactional"))
+        configured_storage = options.get("storage")
+        storage = str(configured_storage or ("ORC" if transactional else "PARQUET")).upper()
         if not _SAFE_STORAGE.fullmatch(storage):
             raise ValidationError(f"Hive storage 参数无效: {storage!r}")
+        if transactional and storage != "ORC":
+            raise DatabaseCapabilityError("Hive 事务表必须使用 ORC 存储格式")
         definitions = self._column_definitions(data, options)
         if_not_exists = " IF NOT EXISTS" if options.get("if_not_exists", True) else ""
         ddl = (
@@ -216,6 +232,8 @@ class HiveAdapter(DBAPIAdapter):
         if table_comment is not None:
             ddl += f"\nCOMMENT {self._quote_literal(table_comment)}"
         ddl += f"\nSTORED AS {storage}"
+        if transactional:
+            ddl += '\nTBLPROPERTIES ("transactional"="true")'
         return ddl
 
     def create_table(
@@ -228,6 +246,25 @@ class HiveAdapter(DBAPIAdapter):
         ddl = self.build_create_table_sql(data, table_name, dialect_options)
         self.execute(ddl)
         return ddl
+
+    def table_exists(self, table_name: str) -> bool:
+        """通过 SHOW TABLES 只读判断 Hive/Impala 目标表是否存在。"""
+
+        parts = split_qualified_name(table_name)
+        database_name = parts[-2] if len(parts) >= 2 else self.connect_kwargs.get("database")
+        target_table = parts[-1].casefold()
+        sql = f"SHOW TABLES IN {self.quote_identifier(str(database_name))}" if database_name else "SHOW TABLES"
+        rows = self.query(sql, result="rows")
+        for row in rows:
+            if isinstance(row, Mapping):
+                value = next(iter(row.values()), None)
+            elif isinstance(row, (tuple, list)):
+                value = row[0] if row else None
+            else:
+                value = row
+            if value is not None and str(value).casefold() == target_table:
+                return True
+        return False
 
     def capabilities_for_table(
         self,
@@ -257,13 +294,13 @@ class HiveAdapter(DBAPIAdapter):
         dialect_options: Optional[Mapping[str, Any]] = None,
     ) -> None:
         options = dict(dialect_options or {})
-        capabilities = self.capabilities_for_table(table_name, options)
-        if mode not in capabilities.write_modes:
-            raise DatabaseCapabilityError(f"Hive 目标表 {table_name!r} 不是支持 MERGE 的事务表，无法执行 r 模式")
-        if mode == "a" and key_columns:
-            raise DatabaseCapabilityError(f"Hive 目标表 {table_name!r} 无法原生保证主键冲突忽略语义")
-        if mode == "r" and not key_columns:
-            raise DatabaseCapabilityError("Hive MERGE 必须指定 key_columns")
+        self.validate_write(
+            table_name,
+            mode,
+            first_batch,
+            key_columns=key_columns,
+            dialect_options=options,
+        )
         quoted = self.quote_qualified_name(table_name)
         if mode == "o":
             self.execute(f"TRUNCATE TABLE {quoted}")
@@ -275,6 +312,28 @@ class HiveAdapter(DBAPIAdapter):
             ddl = self.build_create_table_sql(first_batch, table_name, create_options)
             self.execute(f"DROP TABLE IF EXISTS {quoted}")
             self.execute(ddl)
+
+    def validate_write(
+        self,
+        table_name: str,
+        mode: str,
+        first_batch: pd.DataFrame,
+        *,
+        key_columns: Optional[Sequence[str]] = None,
+        dialect_options: Optional[Mapping[str, Any]] = None,
+        table_exists: Optional[bool] = None,
+    ) -> None:
+        """无副作用校验 Hive 写入模式、事务表和冲突键。"""
+
+        del first_batch, table_exists
+        options = dict(dialect_options or {})
+        capabilities = self.capabilities_for_table(table_name, options)
+        if mode not in capabilities.write_modes:
+            raise DatabaseCapabilityError(f"Hive 目标表 {table_name!r} 不是支持 MERGE 的事务表，无法执行 r 模式")
+        if mode == "a" and key_columns:
+            raise DatabaseCapabilityError(f"Hive 目标表 {table_name!r} 无法原生保证主键冲突忽略语义")
+        if mode == "r" and not key_columns:
+            raise DatabaseCapabilityError("Hive MERGE 必须指定 key_columns")
 
     def _insert_sql(self, table_name: str, columns: Sequence[str], prefix: str = "INSERT INTO") -> str:
         quoted = ", ".join(self.quote_identifier(str(column)) for column in columns)

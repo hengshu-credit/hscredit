@@ -14,7 +14,7 @@ import pandas as pd
 from pandas.api import types as ptypes
 
 from ...exceptions import DependencyError, InputValidationError, ValidationError
-from ..exceptions import DatabaseCapabilityError, DatabaseWriteError
+from ..exceptions import DatabaseCapabilityError, DatabaseQueryError, DatabaseWriteError
 from ..metadata import MetadataInspection, QualifiedTarget
 from ..type_inference import profile_string_series, resolve_bounded_string_length
 from ..types import DatabaseCapabilities, PoolOptions
@@ -77,6 +77,26 @@ class StarRocksAdapter(MySQLAdapter):
             if model in text:
                 return model
         return "UNKNOWN"
+
+    def _resolve_write_model(
+        self,
+        table_name: str,
+        options: Mapping[str, Any],
+        *,
+        table_exists: Optional[bool] = None,
+        allow_missing_default: bool = False,
+    ) -> str:
+        configured = options.get("table_model") or options.get("model")
+        if configured is not None:
+            return self._normalize_table_model(configured)
+        if table_exists is False:
+            return "DUPLICATE KEY"
+        try:
+            return self._normalize_table_model(self.get_table_model(table_name))
+        except DatabaseQueryError:
+            if allow_missing_default:
+                return "DUPLICATE KEY"
+            raise
 
     def capabilities_for_table(
         self,
@@ -318,20 +338,18 @@ ORDER BY ORDINAL_POSITION
         dialect_options: Optional[Mapping[str, Any]] = None,
     ) -> None:
         options = dict(dialect_options or {})
-        model = self._normalize_table_model(
-            options.get("table_model") or options.get("model") or self.get_table_model(table_name)
-        )
-        capabilities = self.capabilities_for_table(
+        model = self._resolve_write_model(
             table_name,
-            {"table_model": model},
+            options,
+            allow_missing_default=mode == "d",
         )
-        if mode not in capabilities.write_modes:
-            raise DatabaseCapabilityError(
-                f"StarRocks {model} 表 {table_name!r} 不支持模式 {mode!r}，"
-                f"当前可用模式: {sorted(capabilities.write_modes)}"
-            )
-        if mode == "r" and not key_columns:
-            raise DatabaseCapabilityError(f"StarRocks {model} 覆盖写入必须指定键字段")
+        self.validate_write(
+            table_name,
+            mode,
+            first_batch,
+            key_columns=key_columns,
+            dialect_options={**options, "table_model": model},
+        )
         quoted = self.quote_qualified_name(table_name)
         if mode == "o":
             json_columns = self.get_json_columns(table_name)
@@ -349,6 +367,37 @@ ORDER BY ORDINAL_POSITION
             json_columns = self.get_json_columns(table_name)
         if isinstance(dialect_options, MutableMapping):
             dialect_options[_RESOLVED_JSON_COLUMNS] = tuple(json_columns)
+
+    def validate_write(
+        self,
+        table_name: str,
+        mode: str,
+        first_batch: pd.DataFrame,
+        *,
+        key_columns: Optional[Sequence[str]] = None,
+        dialect_options: Optional[Mapping[str, Any]] = None,
+        table_exists: Optional[bool] = None,
+    ) -> None:
+        """无副作用校验 StarRocks 表模型和冲突语义。"""
+
+        del first_batch
+        options = dict(dialect_options or {})
+        model = self._resolve_write_model(
+            table_name,
+            options,
+            table_exists=table_exists,
+        )
+        capabilities = self.capabilities_for_table(
+            table_name,
+            {"table_model": model},
+        )
+        if mode not in capabilities.write_modes:
+            raise DatabaseCapabilityError(
+                f"StarRocks {model} 表 {table_name!r} 不支持模式 {mode!r}，"
+                f"当前可用模式: {sorted(capabilities.write_modes)}"
+            )
+        if mode == "r" and not key_columns:
+            raise DatabaseCapabilityError(f"StarRocks {model} 覆盖写入必须指定键字段")
 
     def _stream_load_request(
         self,

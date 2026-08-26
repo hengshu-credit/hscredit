@@ -39,6 +39,11 @@ class FakeODPS:
         self.kwargs = kwargs
         self.calls = []
         self.tables = [FakeTable()]
+        self.existing_tables = {"risk.events"}
+
+    def exist_table(self, table_name):
+        self.calls.append(("exist_table", table_name))
+        return table_name in self.existing_tables
 
     def write_table(self, table_name, frame, **kwargs):
         self.calls.append(("write_table", table_name, frame.copy(), dict(kwargs)))
@@ -113,6 +118,11 @@ def test_maxcompute_declares_no_transactions(adapter):
     assert adapter.capabilities.transactions is False
 
 
+def test_maxcompute_recognizes_only_duplicate_table_error(adapter):
+    assert adapter.is_table_already_exists_error(RuntimeError("Table already exists")) is True
+    assert adapter.is_table_already_exists_error(RuntimeError("Access denied")) is False
+
+
 def test_maxcompute_builds_dbapi_pool_and_native_entry_without_eager_dependency(adapter):
     assert adapter.state.pool_kwargs["project"] == "risk"
     assert adapter.odps.kwargs["project"] == "risk"
@@ -179,6 +189,61 @@ def test_maxcompute_drop_mode_recreates_schema_before_native_write(adapter):
     )
     assert adapter.sql_calls[0][0].startswith("CREATE TABLE `risk`.`events`")
     assert "LIFECYCLE 30" in adapter.sql_calls[0][0]
+
+
+def test_maxcompute_transactional_ddl_contains_acid_property(adapter):
+    ddl = adapter.build_create_table_sql(
+        pd.DataFrame({"id": [1], "name": ["A"]}),
+        "risk.transactional_events",
+        {"transactional": True},
+    )
+
+    assert 'TBLPROPERTIES ("transactional"="true")' in ddl
+
+
+def test_maxcompute_write_creates_missing_transactional_table_before_merge():
+    database = Database(
+        "observable_maxcompute",
+        access_id="id",
+        access_key="secret",
+        project="risk",
+        endpoint="https://service.odps.example/api",
+    )
+    database.adapter.odps.existing_tables.clear()
+
+    result = database.write(
+        "risk.transactional_events",
+        pd.DataFrame({"id": [1], "name": ["新记录"]}),
+        mode="r",
+        key_columns="id",
+        dialect_options={"transactional": True},
+    )
+
+    create_sql = database.adapter.sql_calls[0][0]
+    assert "`id` BIGINT NOT NULL" in create_sql
+    assert "PRIMARY KEY (`id`)" in create_sql
+    assert 'TBLPROPERTIES ("transactional"="true")' in create_sql
+    assert any(sql.startswith("MERGE INTO") for sql, _ in database.adapter.sql_calls)
+    assert result.completed is True
+
+
+def test_maxcompute_ensure_table_creates_only_when_missing(adapter):
+    frame = pd.DataFrame({"id": [1]})
+
+    assert adapter.table_exists("risk.events") is True
+    adapter.odps.calls.clear()
+    adapter.ensure_table(frame, "risk.events")
+    assert adapter.odps.calls == [("exist_table", "risk.events")]
+    assert adapter.sql_calls == []
+
+    adapter.odps.existing_tables.clear()
+    adapter.odps.calls.clear()
+    assert adapter.table_exists("risk.new_events") is False
+    adapter.odps.calls.clear()
+    adapter.ensure_table(frame, "risk.new_events")
+
+    assert adapter.odps.calls == [("exist_table", "risk.new_events")]
+    assert adapter.sql_calls[0][0].startswith("CREATE TABLE `risk`.`new_events`")
 
 
 def test_maxcompute_transactional_replace_uses_staging_merge_and_cleanup(adapter):

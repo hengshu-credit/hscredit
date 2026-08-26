@@ -172,6 +172,14 @@ class MaxComputeAdapter(DBAPIAdapter):
         missing = [column for column in partition_columns if column not in data.columns]
         if missing:
             raise InputValidationError(f"MaxCompute 数据缺少分区字段: {missing}")
+        key_value = options.get("key_columns") or options.get("primary_key") or ()
+        key_columns = (key_value,) if isinstance(key_value, str) else tuple(key_value)
+        missing_keys = [column for column in key_columns if column not in data.columns]
+        if missing_keys:
+            raise InputValidationError(f"MaxCompute 建表数据缺少主键字段: {missing_keys}")
+        partition_keys = [column for column in key_columns if column in partition_columns]
+        if options.get("transactional") and partition_keys:
+            raise DatabaseCapabilityError(f"MaxCompute Delta 表主键不能使用分区字段: {partition_keys}")
 
         def definition(column: Any) -> str:
             column_type = resolve_column_type(
@@ -181,6 +189,8 @@ class MaxComputeAdapter(DBAPIAdapter):
                 database_type="MaxCompute",
             )
             result = f"{self.quote_identifier(str(column))} {column_type}"
+            if options.get("transactional") and column in key_columns:
+                result += " NOT NULL"
             if column in comments:
                 result += f" COMMENT {self._quote_literal(comments[column])}"
             return result
@@ -188,9 +198,13 @@ class MaxComputeAdapter(DBAPIAdapter):
         regular = [column for column in data.columns if column not in partition_columns]
         if not regular:
             raise InputValidationError("MaxCompute 表必须至少包含一个非分区字段")
+        definitions = [definition(column) for column in regular]
+        if options.get("transactional") and key_columns:
+            quoted_keys = ", ".join(self.quote_identifier(str(column)) for column in key_columns)
+            definitions.append(f"PRIMARY KEY ({quoted_keys})")
         ddl = (
             f"CREATE TABLE {self.quote_qualified_name(table_name)} (\n  "
-            + ",\n  ".join(definition(column) for column in regular)
+            + ",\n  ".join(definitions)
             + "\n)"
         )
         table_comment = options.get("table_comment") or options.get("comment")
@@ -198,6 +212,8 @@ class MaxComputeAdapter(DBAPIAdapter):
             ddl += f"\nCOMMENT {self._quote_literal(table_comment)}"
         if partition_columns:
             ddl += "\nPARTITIONED BY (\n  " + ",\n  ".join(definition(column) for column in partition_columns) + "\n)"
+        if options.get("transactional"):
+            ddl += '\nTBLPROPERTIES ("transactional"="true")'
         lifecycle = options.get("lifecycle")
         if lifecycle is not None:
             if isinstance(lifecycle, bool) or not isinstance(lifecycle, int) or lifecycle <= 0:
@@ -215,6 +231,23 @@ class MaxComputeAdapter(DBAPIAdapter):
         ddl = self.build_create_table_sql(data, table_name, dialect_options)
         self.execute(ddl)
         return ddl
+
+    def table_exists(self, table_name: str) -> bool:
+        """通过 ODPS 元数据接口只读判断目标表是否存在。"""
+
+        return bool(self.odps.exist_table(table_name))
+
+    @staticmethod
+    def is_table_already_exists_error(exc: BaseException) -> bool:
+        """识别 PyODPS 返回的明确重复建表错误。"""
+
+        current: Optional[BaseException] = exc
+        while current is not None:
+            message = str(current).casefold()
+            if "table" in message and "already exists" in message:
+                return True
+            current = current.__cause__
+        return False
 
     def capabilities_for_table(
         self,
@@ -260,13 +293,13 @@ class MaxComputeAdapter(DBAPIAdapter):
         dialect_options: Optional[Mapping[str, Any]] = None,
     ) -> None:
         options = dict(dialect_options or {})
-        capabilities = self.capabilities_for_table(table_name, options)
-        if mode not in capabilities.write_modes:
-            raise DatabaseCapabilityError(f"MaxCompute 目标表 {table_name!r} 不是支持 MERGE 的事务表")
-        if mode == "a" and key_columns:
-            raise DatabaseCapabilityError(f"MaxCompute 目标表 {table_name!r} 无法原生保证主键冲突忽略语义")
-        if mode == "r" and not key_columns:
-            raise DatabaseCapabilityError("MaxCompute MERGE 必须指定 key_columns")
+        self.validate_write(
+            table_name,
+            mode,
+            first_batch,
+            key_columns=key_columns,
+            dialect_options=options,
+        )
         if mode == "d":
             ddl = self.build_create_table_sql(first_batch, table_name, options)
             try:
@@ -274,6 +307,28 @@ class MaxComputeAdapter(DBAPIAdapter):
             except Exception as exc:
                 raise DatabaseWriteError("删除 MaxCompute 目标表失败") from exc
             self.execute(ddl)
+
+    def validate_write(
+        self,
+        table_name: str,
+        mode: str,
+        first_batch: pd.DataFrame,
+        *,
+        key_columns: Optional[Sequence[str]] = None,
+        dialect_options: Optional[Mapping[str, Any]] = None,
+        table_exists: Optional[bool] = None,
+    ) -> None:
+        """无副作用校验 MaxCompute 事务表和冲突键语义。"""
+
+        del first_batch, table_exists
+        options = dict(dialect_options or {})
+        capabilities = self.capabilities_for_table(table_name, options)
+        if mode not in capabilities.write_modes:
+            raise DatabaseCapabilityError(f"MaxCompute 目标表 {table_name!r} 不是支持 MERGE 的事务表")
+        if mode == "a" and key_columns:
+            raise DatabaseCapabilityError(f"MaxCompute 目标表 {table_name!r} 无法原生保证主键冲突忽略语义")
+        if mode == "r" and not key_columns:
+            raise DatabaseCapabilityError("MaxCompute MERGE 必须指定 key_columns")
 
     def _merge_batch(
         self,

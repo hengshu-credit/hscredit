@@ -32,7 +32,7 @@ class ObservableClickHouseClient:
         self.closed = False
         self.stream_context = None
         self.metadata_frame = pd.DataFrame()
-        self.rows = []
+        self.rows = [(1,)]
         self.insert_summary = None
 
     def query_df_stream(self, sql, parameters=None, settings=None):
@@ -102,6 +102,16 @@ def test_clickhouse_progress_false_does_not_issue_count():
     assert database.adapter.client.stream_context.closed is True
 
 
+def test_clickhouse_recognizes_only_duplicate_table_error(adapter):
+    duplicate = RuntimeError("TABLE_ALREADY_EXISTS")
+    duplicate.code = 57
+    denied = RuntimeError("ACCESS_DENIED")
+    denied.code = 497
+
+    assert adapter.is_table_already_exists_error(duplicate) is True
+    assert adapter.is_table_already_exists_error(denied) is False
+
+
 def test_clickhouse_query_passes_parameters_to_native_client(adapter):
     adapter.client.metadata_frame = pd.DataFrame({"id": [2]})
 
@@ -113,6 +123,15 @@ def test_clickhouse_query_passes_parameters_to_native_client(adapter):
 
     assert frame["id"].tolist() == [2]
     assert adapter.client.queries[-1][2] == {"minimum": 1}
+
+
+def test_clickhouse_checks_table_existence_without_create_ddl(adapter):
+    adapter.client.rows = [(1,)]
+    assert adapter.table_exists("risk.events") is True
+    assert adapter.client.queries[-1][2] == {"database": "risk", "table": "events"}
+
+    adapter.client.rows = []
+    assert adapter.table_exists("risk.missing_events") is False
 
 
 def test_clickhouse_replace_requires_replacing_merge_tree(adapter):

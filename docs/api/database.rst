@@ -31,7 +31,7 @@ JSON 投影扩展
 -------------
 
 .. autoclass:: hscredit.database.adapters.base.BaseDatabaseAdapter
-   :members: json_extract_expression, build_json_projection_sql
+   :members: table_exists, validate_write, ensure_table, json_extract_expression, build_json_projection_sql
 
 适配器注册
 ----------

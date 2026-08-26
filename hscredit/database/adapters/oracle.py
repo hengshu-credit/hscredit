@@ -202,6 +202,17 @@ class OracleAdapter(DBAPIAdapter):
             )
         return ddl
 
+    def table_exists(self, table_name: str) -> bool:
+        """通过 Oracle 数据字典只读判断目标表是否存在。"""
+
+        owner, table = self._owner_and_table(table_name)
+        rows = self.query(
+            "SELECT 1 AS PRESENT FROM ALL_TABLES " "WHERE OWNER=:owner AND TABLE_NAME=:table_name",
+            params={"owner": owner.upper(), "table_name": table.upper()},
+            result="rows",
+        )
+        return bool(rows)
+
     def _owner_and_table(self, table_name: str) -> Tuple[str, str]:
         parts = split_qualified_name(table_name)
         if len(parts) >= 2:
@@ -301,6 +312,11 @@ ORDER BY cc.POSITION
             current = current.__cause__
         return None
 
+    def is_table_already_exists_error(self, exc: BaseException) -> bool:
+        """Oracle ORA-00955 表示对象名已经存在。"""
+
+        return self._oracle_error_code(exc) == 955
+
     def prepare_write(
         self,
         table_name: str,
@@ -310,9 +326,13 @@ ORDER BY cc.POSITION
         key_columns: Optional[Sequence[str]] = None,
         dialect_options: Optional[Mapping[str, Any]] = None,
     ) -> None:
-        self.require_write_mode(table_name, mode)
-        if mode in {"a", "r"} and not key_columns:
-            raise DatabaseCapabilityError(f"Oracle 目标表 {table_name!r} 未解析到主键，无法执行模式 {mode!r}")
+        self.validate_write(
+            table_name,
+            mode,
+            first_batch,
+            key_columns=key_columns,
+            dialect_options=dialect_options,
+        )
         quoted = self.quote_qualified_name(table_name)
         if mode == "o":
             self.execute(f"TRUNCATE TABLE {quoted}")
@@ -327,6 +347,23 @@ ORDER BY cc.POSITION
                 if self._oracle_error_code(exc) != 942:
                     raise
             self.create_table(first_batch, table_name, dialect_options=options)
+
+    def validate_write(
+        self,
+        table_name: str,
+        mode: str,
+        first_batch: pd.DataFrame,
+        *,
+        key_columns: Optional[Sequence[str]] = None,
+        dialect_options: Optional[Mapping[str, Any]] = None,
+        table_exists: Optional[bool] = None,
+    ) -> None:
+        """无副作用校验 Oracle 写入模式和主键。"""
+
+        del first_batch, dialect_options, table_exists
+        self.require_write_mode(table_name, mode)
+        if mode in {"a", "r"} and not key_columns:
+            raise DatabaseCapabilityError(f"Oracle 目标表 {table_name!r} 未解析到主键，无法执行模式 {mode!r}")
 
     @staticmethod
     def _dbapi_value(value: Any) -> Any:

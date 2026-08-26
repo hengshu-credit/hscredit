@@ -296,6 +296,31 @@ class ClickHouseAdapter(BaseDatabaseAdapter):
         database_name = self.connect_kwargs.get("database", "default")
         return str(database_name), parts[-1]
 
+    def table_exists(self, table_name: str) -> bool:
+        """通过 system.tables 只读判断目标表是否存在。"""
+
+        database_name, table = self._database_and_table(table_name)
+        rows = self.query(
+            "SELECT 1 FROM system.tables "
+            "WHERE database={database:String} AND name={table:String} LIMIT 1",
+            params={"database": database_name, "table": table},
+            result="rows",
+        )
+        return bool(rows)
+
+    @staticmethod
+    def is_table_already_exists_error(exc: BaseException) -> bool:
+        """ClickHouse 57/TABLE_ALREADY_EXISTS 表示重复建表。"""
+
+        current: Optional[BaseException] = exc
+        while current is not None:
+            code = getattr(current, "code", None)
+            args = getattr(current, "args", ())
+            if code == 57 or (args and args[0] == 57) or "TABLE_ALREADY_EXISTS" in str(current).upper():
+                return True
+            current = current.__cause__
+        return False
+
     def get_table_engine(self, table_name: str) -> str:
         database_name, table = self._database_and_table(table_name)
         rows = self.query(
@@ -369,7 +394,39 @@ class ClickHouseAdapter(BaseDatabaseAdapter):
         dialect_options: Optional[Mapping[str, Any]] = None,
     ) -> None:
         options = dict(dialect_options or {})
-        engine = str(options.get("engine") or self.get_table_engine(table_name))
+        self.validate_write(
+            table_name,
+            mode,
+            first_batch,
+            key_columns=key_columns,
+            dialect_options=options,
+        )
+        quoted = self.quote_qualified_name(table_name)
+        if mode == "o":
+            self.execute(f"TRUNCATE TABLE {quoted}")
+        elif mode == "d":
+            if key_columns:
+                options["key_columns"] = list(key_columns)
+            options["if_not_exists"] = False
+            ddl = self.build_create_table_sql(first_batch, table_name, options)
+            self.execute(f"DROP TABLE IF EXISTS {quoted}")
+            self.execute(ddl)
+
+    def validate_write(
+        self,
+        table_name: str,
+        mode: str,
+        first_batch: pd.DataFrame,
+        *,
+        key_columns: Optional[Sequence[str]] = None,
+        dialect_options: Optional[Mapping[str, Any]] = None,
+        table_exists: Optional[bool] = None,
+    ) -> None:
+        """无副作用校验 ClickHouse 引擎与冲突语义。"""
+
+        del first_batch
+        options = dict(dialect_options or {})
+        engine = str(options.get("engine") or ("MergeTree" if table_exists is False else self.get_table_engine(table_name)))
         capabilities = self.capabilities_for_table(table_name, {"engine": engine})
         if mode not in capabilities.write_modes:
             if mode == "r":
@@ -381,16 +438,6 @@ class ClickHouseAdapter(BaseDatabaseAdapter):
             raise DatabaseCapabilityError(f"ClickHouse MergeTree 表 {table_name!r} 无法原生保证主键冲突忽略语义")
         if mode == "r" and not key_columns:
             raise DatabaseCapabilityError("ClickHouse r 模式必须指定排序键")
-        quoted = self.quote_qualified_name(table_name)
-        if mode == "o":
-            self.execute(f"TRUNCATE TABLE {quoted}")
-        elif mode == "d":
-            if key_columns:
-                options["key_columns"] = list(key_columns)
-            options["if_not_exists"] = False
-            ddl = self.build_create_table_sql(first_batch, table_name, options)
-            self.execute(f"DROP TABLE IF EXISTS {quoted}")
-            self.execute(ddl)
 
     def write_batch(
         self,

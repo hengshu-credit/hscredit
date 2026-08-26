@@ -84,6 +84,13 @@ def test_hive_and_impala_apply_distinct_connection_defaults():
     assert impala.state.pool_kwargs["auth_mechanism"] == "NOSASL"
 
 
+def test_hive_protocol_recognizes_only_duplicate_table_error():
+    adapter = ObservableHiveAdapter()
+
+    assert adapter.is_table_already_exists_error(RuntimeError("Table already exists")) is True
+    assert adapter.is_table_already_exists_error(RuntimeError("Permission denied")) is False
+
+
 def test_impyla_cursor_arraysize_uses_adapter_option():
     adapter = ObservableHiveAdapter(adapter_options={"arraysize": 2048})
 
@@ -97,6 +104,18 @@ def test_impyla_cursor_arraysize_uses_adapter_option():
     cursor = adapter.create_cursor(Connection(), stream=True)
 
     assert cursor.arraysize == 2048
+
+
+@pytest.mark.parametrize("adapter_class", [ObservableHiveAdapter, ObservableImpalaAdapter])
+def test_hive_protocol_adapters_check_table_existence_without_ddl(adapter_class):
+    adapter = adapter_class(connect_kwargs={"database": "risk"})
+    adapter.metadata_rows = [("events",)]
+
+    assert adapter.table_exists("risk.events") is True
+    assert adapter.sql_calls[-1][1] == "SHOW TABLES IN `risk`"
+
+    adapter.metadata_rows = [("other_table",)]
+    assert adapter.table_exists("risk.events") is False
 
 
 def test_impala_kudu_exposes_conflict_modes():
@@ -156,6 +175,70 @@ def test_hive_default_ddl_is_parquet_and_preserves_comments():
     assert "STORED AS PARQUET" in ddl
 
 
+def test_hive_transactional_ddl_uses_orc_and_acid_property():
+    adapter = ObservableHiveAdapter()
+
+    ddl = adapter.build_create_table_sql(
+        pd.DataFrame({"id": [1], "name": ["A"]}),
+        "risk.transactional_events",
+        {"transactional": True, "key_columns": ["id"]},
+    )
+
+    assert "STORED AS ORC" in ddl
+    assert 'TBLPROPERTIES ("transactional"="true")' in ddl
+
+
+def test_hive_transactional_ddl_rejects_non_orc_storage():
+    adapter = ObservableHiveAdapter()
+
+    with pytest.raises(DatabaseCapabilityError, match="ORC"):
+        adapter.build_create_table_sql(
+            pd.DataFrame({"id": [1]}),
+            "risk.invalid_transactional_events",
+            {"transactional": True, "storage": "PARQUET"},
+        )
+
+
+def test_hive_missing_transactional_table_is_created_before_merge():
+    adapter = ObservableHiveAdapter(connect_kwargs={"database": "risk"})
+    frame = pd.DataFrame({"id": [1], "name": ["新记录"]})
+    options = {"transactional": True, "key_columns": ["id"]}
+
+    adapter.validate_write(
+        "risk.transactional_events",
+        "r",
+        frame,
+        key_columns=["id"],
+        dialect_options=options,
+        table_exists=False,
+    )
+    adapter.ensure_table(
+        frame,
+        "risk.transactional_events",
+        dialect_options=options,
+        exists=False,
+    )
+    adapter.prepare_write(
+        "risk.transactional_events",
+        "r",
+        frame,
+        key_columns=["id"],
+        dialect_options=options,
+    )
+    adapter.write_batch(
+        "risk.transactional_events",
+        frame,
+        "r",
+        1,
+        key_columns=["id"],
+        dialect_options=options,
+    )
+
+    assert 'TBLPROPERTIES ("transactional"="true")' in adapter.sql_calls[0][1]
+    assert adapter.sql_calls[-1][0] == "executemany"
+    assert adapter.sql_calls[-1][1].startswith("MERGE INTO")
+
+
 def test_impala_kudu_ddl_requires_primary_key_and_partition():
     adapter = ObservableImpalaAdapter()
     frame = pd.DataFrame({"id": [1], "name": ["A"]})
@@ -173,6 +256,17 @@ def test_impala_kudu_ddl_requires_primary_key_and_partition():
     assert "`id` BIGINT PRIMARY KEY" in ddl
     assert "PARTITION BY HASH (`id`) PARTITIONS 5" in ddl
     assert "STORED AS KUDU" in ddl
+
+
+def test_impala_rejects_hive_transactional_table_option():
+    adapter = ObservableImpalaAdapter()
+
+    with pytest.raises(DatabaseCapabilityError, match="insert-only|Kudu"):
+        adapter.build_create_table_sql(
+            pd.DataFrame({"id": [1]}),
+            "risk.transactional_events",
+            {"transactional": True},
+        )
 
 
 def test_impala_write_uses_insert_for_ignore_and_upsert_for_replace():

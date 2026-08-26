@@ -63,7 +63,7 @@ with Database("mysql", **connect_params) as db:
 配置中的数据库类型使用精简键 `db_type`：
 
 ```python
-from hscredit.database import read_query, execute, stream_write
+from hscredit.database import read_query, execute, write
 
 mysql_config = {
     "db_type": "mysql",
@@ -76,6 +76,12 @@ mysql_config = {
 
 frame = read_query(mysql_config, "SELECT id FROM events")
 affected = execute(mysql_config, "DELETE FROM events WHERE id=%s", params=(1,))
+result = write(
+    mysql_config,
+    "risk.events",
+    frame,
+    key_columns="id",  # mode 默认是 a
+)
 ```
 
 第一个参数也可以是已有 Database 实例或原生 DB-API 连接：
@@ -91,7 +97,7 @@ frame = read_query(connection, sql, db_type="starrocks")
 快捷层覆盖全部公开数据操作：
 
 - SQL：`query`、`execute`、`executemany`、`stream_query`、`read_query`、
-  `export_schema`、`create_table`、`stream_write`；
+  `export_schema`、`create_table`、`write`、`stream_write`；
 - Redis/MongoDB：`read_one`、`read_many`、`read`、`write_one`、`write_many`、
   `write`、`delete_one`、`delete_many`、`delete`、`exists`。
 
@@ -102,7 +108,7 @@ frame = read_query(connection, sql, db_type="starrocks")
 - 传入的 Database 实例和原生 DB-API 连接视为借用，不由快捷函数关闭；
 - 原生连接继续使用现有提交/回滚和游标关闭契约；不属于 DB-API 的原生客户端应使用配置或
   Database 实例。
-- MaxCompute 的 `export_schema` 和 `stream_write` 依赖 ODPS 元数据/Tunnel 入口，不能仅凭
+- MaxCompute 的 `export_schema`、`write` 和 `stream_write` 依赖 ODPS 元数据/Tunnel 入口，不能仅凭
   原生 DB-API 连接完成；这两项应传入配置或 Database 实例。
 
 快捷函数可从 `hscredit.database` 或 `hscredit.database.shortcuts` 显式导入，但不会注册成
@@ -356,7 +362,35 @@ db.create_table(
 
 由于推断只依据首个建表分块，生产任务应让首批数据具有代表性；字段容量或后端版本要求明确时，优先使用 `column_types` 覆盖。
 
-## 流式写入与 mode
+## 统一写入、流式写入与 mode
+
+SQL 数据库优先使用统一的 `write()`。第一个参数是目标表名，第二个参数是数据；默认
+`mode="a"`，因此通常不必显式写 mode：
+
+```python
+result = db.write(
+    "feature_db.user_profile",
+    dataframe,
+    key_columns="user_id",
+    batch_size=10_000,
+)
+```
+
+类外快捷方法保持相同顺序，只在最前面增加数据库配置、`Database` 实例或原生 DB-API 连接：
+
+```python
+from hscredit.database import write
+
+result = write(
+    mysql_config,
+    "feature_db.user_profile",
+    dataframe,
+    key_columns="user_id",
+)
+```
+
+`write()` 内部使用与 `stream_write()` 相同的分批写入流水线。需要强调数据源是 DataFrame
+分块或行记录迭代器时，也可以继续直接调用 `stream_write()`。
 
 `stream_write()` 接受单个 DataFrame、DataFrame 分块迭代器、映射记录迭代器或位置记录迭代器。位置记录必须同时提供 `columns`：
 
@@ -379,7 +413,26 @@ result = db.stream_write(
 | `o` | 保留目标表结构，清空数据后重新写入 |
 | `d` | 先校验新 DDL，再删除目标表、重建结构并写入 |
 
-`a/r` 只有在数据库及目标表模型能原生保证对应语义时才开放；不支持时抛出 `DatabaseCapabilityError`，不会使用并发不安全的客户端“先查再写”。
+目标表不存在时，`a/r/o/d` 都会根据首个有效数据分块调用建表逻辑，再执行写入；无需预先
+调用 `create_table()`。建表使用相同的 `key_columns` 和 `dialect_options`，因此主键、表模型、
+存储格式、分区、字段类型和注释等配置会保持一致。目标表已经存在时，`a/r/o` 不修改表结构，
+`d` 仍按定义删除并重建。自动推断只观察首个有效分块，长文本容量或字段类型有明确要求时应通过
+`dialect_options={"column_types": ...}` 显式指定。
+
+写入流水线会先用后端只读元数据判断表是否存在，并在任何建表、清空或删除动作前校验 mode、
+表模型和键字段能力。因此已有表写入不会额外要求 CREATE 权限，不支持的请求也不会遗留空表。
+若另一个任务恰好同时创建了目标表，建表失败后只会在二次确认该表已经存在时继续写入；其他
+DDL 错误仍按原异常返回。
+
+`a/r` 只有在数据库及目标表模型能原生保证对应语义时才开放；需要键语义的后端在新建表时应
+显式传入 `key_columns`。不支持时抛出 `DatabaseCapabilityError`，不会使用并发不安全的客户端
+“先查再写”。
+
+缺表执行 `r` 时，Hive 会自动使用 ORC 并生成 `TBLPROPERTIES ("transactional"="true")`；
+显式指定其他存储格式会在建表前拒绝。MaxCompute 同样会在 CREATE DDL 中写入 transactional
+表属性，并把 `key_columns` 生成为 `NOT NULL PRIMARY KEY`，创建可执行 upsert 的 Delta 表。
+Hive 集群本身还必须启用 `DbTxnManager` 等 ACID 配置；连接参数不能代替服务端配置。Impala
+文件表只支持 insert-only 事务，不接受 `transactional=True`；`r` 必须使用 `storage="KUDU"`。
 
 ### 后端写入能力
 
@@ -388,7 +441,7 @@ result = db.stream_write(
 | MySQL / MariaDB | ✓ | ✓ | ✓ | ✓ | `a` 仅捕获重复键错误；批次遇到其他错误时整体回滚 |
 | Oracle 主键表 | ✓ | ✓ | ✓ | ✓ | `a/r` 使用不同 MERGE 分支 |
 | Hive 普通表 | ✓ | — | ✓ | ✓ | 传入 `key_columns` 时不能保证冲突忽略 |
-| Hive 事务表 | ✓ | 条件支持 | ✓ | ✓ | `r` 需要事务表、MERGE 与 `key_columns` |
+| Hive 事务表 | ✓ | 条件支持 | ✓ | ✓ | `r` 需要 ORC、transactional 属性、MERGE 与 `key_columns` |
 | Impala Parquet 表 | ✓ | — | ✓ | ✓ | 不提供唯一键语义 |
 | Impala Kudu 表 | ✓ | ✓ | ✓ | ✓ | `INSERT` 丢弃重复主键行，`UPSERT` 覆盖 |
 | StarRocks Duplicate Key | — | — | ✓ | ✓ | 重复键模型不保证冲突忽略或覆盖 |
@@ -396,7 +449,7 @@ result = db.stream_write(
 | ClickHouse MergeTree | ✓ | — | ✓ | ✓ | `a` 不接受主键冲突保证 |
 | ClickHouse ReplacingMergeTree | — | ✓ | ✓ | ✓ | `r` 为最终一致性，读取可按场景使用 `FINAL` |
 | MaxCompute 普通表 | ✓ | — | ✓ | ✓ | 无主键唯一约束 |
-| MaxCompute 事务表 | ✓ | 条件支持 | ✓ | ✓ | `r` 使用临时表 MERGE，必须提供 `key_columns` |
+| MaxCompute 事务/Delta 表 | ✓ | 条件支持 | ✓ | ✓ | 缺表 `r` 创建 Delta 主键表；写入使用临时表 MERGE |
 
 `WriteResult` 记录接收行数、驱动可确认的插入/更新/跳过数、已提交批次数、失败批次和一致性。后端未返回权威行数时，相应字段保持 `None`，不会按批次长度伪造。
 
@@ -452,13 +505,14 @@ class CustomDatabaseAdapter(BaseDatabaseAdapter):
     database_type = "custom_db"
 
     # 实现 query、open_stream、create_table、write_batch、inspect_schema 等契约。
+    # SQL 适配器应覆盖 table_exists；方言能力校验放在 validate_write，不能产生副作用。
 
 
 register_adapter("custom_db", CustomDatabaseAdapter, aliases=("custom",))
 custom = Database("custom", endpoint="https://database.example")
 ```
 
-适配器应声明 `DatabaseCapabilities`，按需覆盖连接池、计数 SQL、标识符引用、类型映射、元数据扫描和写入模式。无法原生保证的能力应明确拒绝，不能静默降级。
+适配器应声明 `DatabaseCapabilities`，按需覆盖连接池、计数 SQL、标识符引用、类型映射、元数据扫描和写入模式。`table_exists()` 必须只读，`validate_write()` 必须在任何 DDL/DML 前完成无副作用校验；`ensure_table()` 负责按需建表和并发建表二次确认。NoSQL 适配器应显式声明 `is_nosql = True`，统一 `write()` 才会委托其原生自适应写入。无法原生保证的能力应明确拒绝，不能静默降级。
 
 ## 异常与集成验证
 
