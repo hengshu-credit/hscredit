@@ -175,7 +175,10 @@ report = ruleset_analysis(
 
 #### `rule_swap_analysis`
 
-评估策略规则置入、置出前后的通过率与风险变化。
+评估策略规则置入、置出前后的通过率与风险变化。分析顺序为：基础生产规则先剔除
+`OUT-OUT`，本次置出规则再形成 `IN-OUT` 和 `total通过样本`，最后只在
+`total通过样本` 内拆分 `IN-IN` 与 `OUT-IN`。`sample_survival_rate` 用于把有偏分析样本
+校准回生产通过率漏斗；除 `OUT-IN` 使用评分分箱预测风险并上浮外，其余客群使用实际表现。
 
 <details>
 <summary>代码示例：<code>rule_swap_analysis</code></summary>
@@ -189,19 +192,20 @@ swap = rule_swap_analysis(
     score="青云24",
     rules_in=[Rule("近六个月非银多头机构数 < 45", name="低多头置入")],
     rules_out=[Rule("CURRENT_DPD >= 30", name="高逾期置出")],
+    rules_base=[Rule("衡枢鉴真分老客版 >= 0.25", name="生产基础拒绝")],
     overdue="MOB1",
     dpds=[7, 3, 0],
     amount="放款金额",
+    sample_survival_rate=0.70,
+    out_in_uplift=2.0,
 )
 ```
 
 </details>
 
-| 指标 | 变化前 | 变化后 | 绝对变化 | 相对变化 |
-|:---|---:|---:|---:|---:|
-| 通过率 | `315,317.53` | `37,655.57` | `-277,661.96` | `-88.06%` |
-| 逾期率 | `2.17%` | `15.96%` | `+13.79%` | `+6.36x` |
-| 风险上浮系数 | `1.00` | `2.00` | `+1.00` | `+100.00%` |
+`swap_pipeline` 保留订单口径的 `样本总数`，金额另列为 `样本总额`；生产通过率按百分比输出。
+多 DPD 场景返回 MultiIndex 列，每个 `{逾期字段}_{DPD}+` 标签分别包含原始/调整后坏样本率。
+`swap_result` 比较不置入的 `IN-IN` 与置入后的 `ALL-IN`，且不受 `reverse_order` 展示顺序影响。
 
 #### `ManualTreeExtractor`
 
