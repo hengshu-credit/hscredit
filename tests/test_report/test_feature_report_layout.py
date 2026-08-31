@@ -1,7 +1,11 @@
+import contextlib
+import io
+import threading
 import types
 
 import matplotlib.pyplot as plt
 import pandas as pd
+import pytest
 from matplotlib._pylab_helpers import Gcf
 from matplotlib.backend_bases import FigureManagerBase
 from matplotlib.backends.backend_agg import FigureCanvasAgg
@@ -85,6 +89,155 @@ def _conditional_format_colors(ws):
             elif rule.type == "colorScale":
                 colors.update(color.rgb for color in rule.colorScale.color)
     return colors
+
+
+def test_auto_feature_analysis_reports_progress_before_current_feature_finishes(monkeypatch, tmp_path):
+    """字段任务仍在执行时，进度条就必须实时展示当前字段。"""
+    started = threading.Event()
+    release = threading.Event()
+    errors = []
+    stderr = io.StringIO()
+
+    def blocking_feature_bin_stats(data, feature, **kwargs):
+        started.set()
+        if not release.wait(timeout=10):
+            raise AssertionError("测试未及时释放字段任务")
+        return _fake_feature_bin_stats(data, feature, **kwargs)
+
+    monkeypatch.setattr(feature_analyzer_module, "feature_bin_stats", blocking_feature_bin_stats)
+
+    def run_analysis():
+        try:
+            with contextlib.redirect_stderr(stderr):
+                auto_feature_analysis(
+                    pd.DataFrame({"x": [1, 2, 3, 4], "target": [0, 1, 0, 1]}),
+                    features=["x"],
+                    target="target",
+                    excel_writer=ExcelWriter(system="windows"),
+                    pictures=[],
+                    output_dir=str(tmp_path / "images"),
+                    bin_params={"method": "quantile", "max_n_bins": 2},
+                    n_jobs=1,
+                )
+        except BaseException as exc:  # pragma: no cover - 仅用于把后台线程异常带回主线程
+            errors.append(exc)
+
+    worker = threading.Thread(target=run_analysis)
+    worker.start()
+    assert started.wait(timeout=10), "字段任务未启动"
+    live_output = stderr.getvalue()
+    release.set()
+    worker.join(timeout=10)
+
+    assert not worker.is_alive()
+    assert not errors
+    assert "当前处理字段=x" in live_output
+    assert "1/1" in stderr.getvalue()
+
+
+def test_auto_feature_analysis_can_disable_progress(capsys, monkeypatch, tmp_path):
+    monkeypatch.setattr(feature_analyzer_module, "feature_bin_stats", _fake_feature_bin_stats)
+
+    auto_feature_analysis(
+        pd.DataFrame({"x": [1, 2, 3, 4], "target": [0, 1, 0, 1]}),
+        features=["x"],
+        target="target",
+        excel_writer=ExcelWriter(system="windows"),
+        pictures=[],
+        output_dir=str(tmp_path / "images"),
+        bin_params={"method": "quantile", "max_n_bins": 2},
+        n_jobs=1,
+        show_progress=False,
+    )
+
+    assert "当前处理字段" not in capsys.readouterr().err
+
+
+def test_auto_feature_analysis_progress_cleanup_preserves_original_error(monkeypatch, tmp_path):
+    cleanup = {
+        "reporter_closed": False,
+        "monitor_started": False,
+        "monitor_join_timeouts": [],
+        "manager_shutdown": False,
+    }
+
+    class FailingStopQueue:
+        def put(self, event):
+            if event == ("stop", None):
+                raise RuntimeError("stop failed")
+
+    class FakeManager:
+        def __init__(self):
+            self.queue = FailingStopQueue()
+
+        def Queue(self):
+            return self.queue
+
+        def shutdown(self):
+            cleanup["manager_shutdown"] = True
+
+    class FakeContext:
+        def __init__(self):
+            self.manager = FakeManager()
+
+        def Manager(self):
+            return self.manager
+
+    class FakeReporter:
+        def __init__(self, enabled, total):
+            self.enabled = enabled
+            self.total = total
+
+        def close(self):
+            cleanup["reporter_closed"] = True
+
+    class FakeThread:
+        def __init__(self, *args, **kwargs):
+            self._alive = False
+
+        def start(self):
+            self._alive = True
+            cleanup["monitor_started"] = True
+
+        def join(self, timeout=None):
+            cleanup["monitor_join_timeouts"].append(timeout)
+            self._alive = False
+
+        def is_alive(self):
+            return self._alive
+
+    fake_context = FakeContext()
+    monkeypatch.setattr("joblib.externals.loky.backend.context.get_context", lambda: fake_context)
+    monkeypatch.setattr(feature_analyzer_module, "_FeatureProgressReporter", FakeReporter)
+    monkeypatch.setattr(
+        feature_analyzer_module,
+        "threading",
+        types.SimpleNamespace(Thread=FakeThread, Event=threading.Event),
+    )
+    monkeypatch.setattr(
+        feature_analyzer_module,
+        "parallel_execute",
+        lambda *args, **kwargs: (_ for _ in ()).throw(ValueError("feature failed")),
+    )
+
+    with pytest.raises(ValueError, match="feature failed"):
+        auto_feature_analysis(
+            pd.DataFrame({"x": [1, 2, 3, 4], "target": [0, 1, 0, 1]}),
+            features=["x"],
+            target="target",
+            excel_writer=ExcelWriter(system="windows"),
+            pictures=[],
+            output_dir=str(tmp_path / "images"),
+            bin_params={"method": "quantile", "max_n_bins": 2},
+            n_jobs=1,
+            parallel_backend="loky",
+        )
+
+    assert cleanup["monitor_started"] is True
+    assert cleanup["monitor_join_timeouts"]
+    assert all(timeout is not None for timeout in cleanup["monitor_join_timeouts"])
+    assert cleanup["manager_shutdown"] is True
+    assert cleanup["reporter_closed"] is True
 
 
 def test_auto_feature_analysis_closes_only_report_figures(monkeypatch, tmp_path):
@@ -588,6 +741,61 @@ def test_auto_feature_analysis_keeps_overdue_binning_mode(monkeypatch):
     assert calls[0]["columns"] == ["x", "mob 3+", "mob"]
 
 
+@pytest.mark.parametrize(
+    ("top_level_del_grey", "bin_param_del_grey", "expected_total"),
+    [
+        pytest.param(True, False, 2, id="top-level-true-overrides-false"),
+        pytest.param(False, True, 4, id="top-level-false-overrides-true"),
+        pytest.param(None, True, 2, id="omitted-top-level-preserves-bin-params"),
+    ],
+)
+def test_auto_feature_analysis_resolves_top_level_del_grey_precedence(
+    tmp_path,
+    top_level_del_grey,
+    bin_param_del_grey,
+    expected_total,
+):
+    data = pd.DataFrame(
+        {
+            "x": [1, 2, 3, 4],
+            "mob": [0.0, 0.5, 1.0, 0.5],
+        }
+    )
+    writer = ExcelWriter(system="windows")
+    top_level_params = {}
+    if top_level_del_grey is not None:
+        top_level_params["del_grey"] = top_level_del_grey
+
+    auto_feature_analysis(
+        data,
+        features=["x"],
+        overdue="mob",
+        dpds=[0.5],
+        excel_writer=writer,
+        sheet="top_level_del_grey",
+        pictures=[],
+        output_dir=str(tmp_path / "images"),
+        bin_params={"method": "quantile", "max_n_bins": 2, "del_grey": bin_param_del_grey},
+        margins=True,
+        n_jobs=1,
+        **top_level_params,
+    )
+
+    ws = writer.get_sheet_by_name("top_level_del_grey")
+    _, table_header_row = _get_feature_title_and_table_header_rows(ws)
+    headers = {
+        ws.cell(table_header_row, column).value: column
+        for column in range(1, ws.max_column + 1)
+    }
+    total_row = next(
+        row
+        for row in range(table_header_row + 1, ws.max_row + 1)
+        if ws.cell(row, headers["分箱标签"]).value == "合计"
+    )
+
+    assert ws.cell(total_row, headers["样本总数"]).value == expected_total
+
+
 def test_auto_feature_analysis_missing_rate_and_summary_links(monkeypatch):
     monkeypatch.setattr(feature_analyzer_module, "bin_plot", lambda *args, **kwargs: None)
 
@@ -709,3 +917,99 @@ def test_auto_feature_analysis_sample_distribution_uses_model_report_layout(monk
         if cell.value == "mob@3" and ws.cell(cell.row - 1, cell.column).value == "坏样本率"
     )
     assert ws.cell(bad_rate_header.row + 1, bad_rate_header.column).number_format == "0.00%"
+
+
+def test_auto_feature_analysis_removes_grey_samples_from_top_distributions(monkeypatch, tmp_path):
+    data = pd.DataFrame(
+        {
+            "x": [1, 2, 3, 4, 5, 6],
+            "date": pd.to_datetime(
+                [
+                    "2024-01-01",
+                    "2024-01-02",
+                    "2024-01-03",
+                    "2024-01-08",
+                    "2024-01-09",
+                    "2024-01-10",
+                ]
+            ),
+            "FPD7": [0.0, 0.5, 1.0, 0.0, 0.5, 1.0],
+            "FPD1": [0.0, 1.0, 0.0, 0.5, 1.0, 0.0],
+        }
+    )
+    writer = ExcelWriter(system="windows")
+    writer.insert_pic2sheet = types.MethodType(_mock_insert_pic2sheet, writer)
+    plotted_targets = []
+
+    def capture_distribution_plot(plot_data, **kwargs):
+        plotted_targets.extend(plot_data[kwargs["target"]].tolist())
+        return pd.DataFrame()
+
+    monkeypatch.setattr(feature_analyzer_module, "distribution_plot", capture_distribution_plot)
+
+    auto_feature_analysis(
+        data,
+        features=["x"],
+        overdue=["FPD7", "FPD1"],
+        dpds=[0.5],
+        del_grey=True,
+        date="date",
+        freq="W",
+        excel_writer=writer,
+        sheet="top_distributions_without_grey",
+        pictures=[],
+        output_dir=str(tmp_path / "images"),
+        bin_params={"method": "quantile", "max_n_bins": 2},
+        margins=True,
+        n_jobs=1,
+    )
+
+    ws = writer.get_sheet_by_name("top_distributions_without_grey")
+    header_rows = [
+        row
+        for row in range(1, ws.max_row)
+        if ws.cell(row + 1, 2).value == "数据集"
+    ]
+    sample_group_row, time_group_row = header_rows[:2]
+
+    def header_columns(group_row):
+        columns = {}
+        current_group = None
+        for column in range(2, ws.max_column + 1):
+            group = ws.cell(group_row, column).value
+            if group is not None:
+                current_group = group
+            label = ws.cell(group_row + 1, column).value
+            if label is not None:
+                columns[(current_group, label)] = column
+        return columns
+
+    sample_columns = header_columns(sample_group_row)
+    sample_row = sample_group_row + 2
+    assert ws.cell(sample_row, sample_columns[("样本总数", "FPD7@0.5")]).value == 4
+    assert ws.cell(sample_row, sample_columns[("样本总数", "FPD1@0.5")]).value == 5
+    assert ws.cell(sample_row, sample_columns[("好样本数", "FPD7@0.5")]).value == 2
+    assert ws.cell(sample_row, sample_columns[("坏样本数", "FPD1@0.5")]).value == 2
+
+    time_columns = header_columns(time_group_row)
+    time_group_col = time_columns[("统计详情", "数据分组")]
+    first_week_row = next(
+        row
+        for row in range(time_group_row + 2, ws.max_row + 1)
+        if ws.cell(row, time_group_col).value == "2024-01-01/2024-01-07"
+    )
+    second_week_row = next(
+        row
+        for row in range(time_group_row + 2, ws.max_row + 1)
+        if ws.cell(row, time_group_col).value == "2024-01-08/2024-01-14"
+    )
+    assert ws.cell(first_week_row, time_columns[("样本总数", "FPD7@0.5")]).value == 2
+    assert ws.cell(first_week_row, time_columns[("样本总数", "FPD1@0.5")]).value == 3
+    assert ws.cell(second_week_row, time_columns[("样本总数", "FPD7@0.5")]).value == 2
+    assert ws.cell(second_week_row, time_columns[("样本总数", "FPD1@0.5")]).value == 2
+    assert plotted_targets[0] == 0
+    assert pd.isna(plotted_targets[1])
+    assert plotted_targets[2] == 1
+    assert plotted_targets[3] == 0
+    assert pd.isna(plotted_targets[4])
+    assert plotted_targets[5] == 1

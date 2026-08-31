@@ -261,11 +261,15 @@ def _binary_metric_worker(task) -> Tuple[float, float, int, float]:
     from ..core.metrics import auc, ks
 
     y_true, y_proba = task
-    y_arr = np.asarray(y_true)
+    y_arr = np.asarray(y_true, dtype=float)
+    proba_arr = np.asarray(y_proba)
+    valid = np.isfinite(y_arr)
+    y_arr = y_arr[valid]
+    proba_arr = proba_arr[valid]
     bad_rate = float(y_arr.mean()) if len(y_arr) else np.nan
     return (
-        _safe_binary_metric(ks, y_arr, y_proba),
-        _safe_binary_metric(auc, y_arr, y_proba),
+        _safe_binary_metric(ks, y_arr, proba_arr),
+        _safe_binary_metric(auc, y_arr, proba_arr),
         len(y_arr),
         bad_rate,
     )
@@ -478,6 +482,7 @@ class ModelReport:
     :param target: 目标列名（sklearn/scorecardpipeline 风格）
     :param overdue: 逾期天数列名或列表，配合 ``dpds`` 自动构建 0/1 标签
     :param dpds: 逾期定义天数或列表（逾期天数 > dpds 记为坏样本）
+    :param del_grey: 是否按每个逾期标签独立剔除 ``(0, dpd]`` 灰样本
     :param feature_names: 特征名称列表，可选；None 时自动从模型 feature_names_ / feature_names_in_ 获取
 
     **属性**
@@ -522,6 +527,7 @@ class ModelReport:
         datasets: Optional[Union[List, Dict]] = None,
         overdue: Optional[Union[str, List[str]]] = None,
         dpds: Optional[Union[int, float, List[Union[int, float]]]] = None,
+        del_grey: bool = False,
         method: Union[str, Callable] = "predict_proba",
         method_kwargs: Optional[Dict[str, Any]] = None,
         explain_config: Optional[Dict[str, Any]] = None,
@@ -582,6 +588,7 @@ class ModelReport:
             - dict: {'overdue': col, 'dpds': threshold} 或 {'overdue': col, 'dpds': [15, 7, 0]}
         :param overdue: 逾期列名（str）或多个列名（List[str]），传入后忽略 target
         :param dpds: 逾期天数阈值（int/float）或多个阈值（List），与 overdue 配合使用
+        :param del_grey: overdue 模式下是否按各 DPD 独立剔除 ``(0, DPD]`` 灰样本
         :param method: 数据集唯一预测方法，支持 predict_proba/predict_prob/predict/predict_score/transform/callable
         :param method_kwargs: callable 同名参数的显式覆盖字典
         :param n_jobs: 并行工作数；-1 自动保留 CPU，None 使用兼容串行模式
@@ -615,6 +622,7 @@ class ModelReport:
         self.n_jobs = n_jobs
         self.parallel_backend = parallel_backend
         self.parallel_config = parallel_config
+        self.del_grey = bool(del_grey)
         self.init_params_ = {
             "model": model,
             "datasets": datasets,
@@ -628,6 +636,7 @@ class ModelReport:
             "target": target,
             "overdue": overdue,
             "dpds": dpds,
+            "del_grey": del_grey,
             "method": method,
             "method_kwargs": method_kwargs,
             "n_jobs": n_jobs,
@@ -948,22 +957,31 @@ class ModelReport:
                     raise ValueError(f"逾期列 '{col}' 不存在，请检查列名")
 
             # 每列 × 每阈值，生成全指标
-            indicators = pd.DataFrame(index=X.index)
+            indicators = pd.DataFrame(index=X.index, dtype=float)
             for col in overdue_cols:
                 for t in thresholds:
                     if dpds_col is not None and dpds_col in X.columns:
                         # dpds 列 > threshold
-                        indicators[f"{col}>{t}"] = X[dpds_col] > t
+                        overdue_values = X[dpds_col]
                     else:
                         # col 列 > threshold
-                        indicators[f"{col}>{t}"] = X[col] > t
+                        overdue_values = X[col]
+                    indicator = (overdue_values > t).astype(float)
+                    if self.del_grey:
+                        valid = (overdue_values == 0) | (overdue_values > t)
+                        indicator = indicator.where(valid, np.nan)
+                    indicators[f"{col}>{t}"] = indicator
 
-            # 聚合标签（任一指标为真则 y=1）
-            y = indicators.any(axis=1).astype(int)
+            # 单逾期标签保留 NaN 灰样本标记，数据集初始化阶段会连同特征一起剔除；
+            # 多标签则保留完整行并在各标签数组中分别标记，确保每个 DPD 可独立过滤。
+            if self.del_grey and indicators.shape[1] == 1:
+                y = indicators.iloc[:, 0].rename(label_name)
+            else:
+                y = indicators.fillna(0).astype(bool).any(axis=1).astype(int)
             # 多指标时返回各指标独立标签，供多标签报告使用
             y_dict: Optional[Dict[str, np.ndarray]] = None
             if len(overdue_cols) > 1 or (isinstance(dpds_vals, list) and len(dpds_vals) > 1):
-                y_dict = {col: indicators[col].values.astype(np.int8) for col in indicators.columns}
+                y_dict = {col: indicators[col].to_numpy(dtype=float) for col in indicators.columns}
             return _ensure_series(y, name=label_name), y_dict
 
         raise ValueError(f"target 参数格式错误：{target_cfg}")
@@ -1029,6 +1047,10 @@ class ModelReport:
             X_df = _ensure_dataframe(X_raw, feature_names=self._feature_names)
             if y_raw is None:
                 y_s, y_dict = self._build_y(X_df, self._target_cfg)
+                if self.del_grey and self._is_overdue_cfg() and not y_dict:
+                    valid = y_s.notna()
+                    X_df = X_df.loc[valid].copy()
+                    y_s = y_s.loc[valid].astype(int)
             else:
                 y_s = _ensure_series(y_raw, name=self._target_name)
                 y_dict = None
@@ -1090,6 +1112,10 @@ class ModelReport:
         # y=None 时从 X 中通过 overdue+dpds 自动构建标签（scorecardpipeline 风格）
         if y is None:
             y, y_dict = self._build_y(X, self._target_cfg)
+            if self.del_grey and self._is_overdue_cfg() and not y_dict:
+                valid = y.notna()
+                X = X.loc[valid].copy()
+                y = y.loc[valid].astype(int)
         else:
             y_dict = None
         y = _ensure_series(y, name=self._target_name)
@@ -1111,6 +1137,21 @@ class ModelReport:
         if label and ds.y_dict and label in ds.y_dict:
             return ds.y_dict[label]
         return ds.y.to_numpy()
+
+    def _get_valid_target_arrays(
+        self,
+        dataset_key: str,
+        label: Optional[str] = None,
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """返回同步剔除无效目标值后的标签与预测数组."""
+        y_arr = np.asarray(self._get_y(dataset_key, label), dtype=float)
+        prediction = np.asarray(self._datasets[dataset_key].y_proba)
+        valid = self._get_target_valid_mask(dataset_key, label)
+        return y_arr[valid], prediction[valid]
+
+    def _get_target_valid_mask(self, dataset_key: str, label: Optional[str] = None) -> np.ndarray:
+        """返回指定数据集和标签的有效样本掩码."""
+        return np.isfinite(np.asarray(self._get_y(dataset_key, label), dtype=float))
 
     @property
     def _train_key(self) -> str:
@@ -1335,6 +1376,7 @@ class ModelReport:
                 max_n_bins=max_n_bins,
                 missing_separate=True,
                 margins=margins,
+                del_grey=self.del_grey,
                 return_cols=score_return_cols,
                 n_jobs=self.n_jobs,
                 parallel_backend=self.parallel_backend,
@@ -2074,6 +2116,7 @@ class ModelReport:
                 method=method,
                 max_n_bins=max_n_bins,
                 margins=margins,
+                del_grey=self.del_grey,
                 missing_separate=True,
                 n_jobs=self.n_jobs,
                 parallel_backend=self.parallel_backend,
@@ -2176,11 +2219,12 @@ class ModelReport:
         rows: List[Dict[str, Any]] = []
         for ds_key, ds in self._datasets.items():
             tag = ds.label
-            y_arr = self._get_y(ds_key, label)
+            valid = self._get_target_valid_mask(ds_key, label)
+            y_arr, prediction = self._get_valid_target_arrays(ds_key, label)
             n = len(y_arr)
             overall_bad_rate = float(y_arr.mean())
 
-            sorted_idx = np.argsort(-ds.y_proba)
+            sorted_idx = np.argsort(-prediction)
             sorted_y = y_arr[sorted_idx]
 
             bad_rates: Dict[str, float] = {}
@@ -2207,7 +2251,7 @@ class ModelReport:
 
             # 金额口径替代订单口径；调用方会将两个结果并排展示。
             if amount_col and amount_col in ds.X.columns:
-                amounts = pd.to_numeric(ds.X[amount_col], errors="coerce").fillna(0).clip(lower=0).to_numpy(dtype=float)
+                amounts = pd.to_numeric(ds.X[amount_col], errors="coerce").fillna(0).clip(lower=0).to_numpy(dtype=float)[valid]
                 amounts_sorted = amounts[sorted_idx]
                 overall_bad_amount = float((sorted_y * amounts_sorted).sum() / amounts_sorted.sum()) if amounts_sorted.sum() > 0 else overall_bad_rate
 
@@ -3380,6 +3424,7 @@ class ModelReport:
         dataset_labels = [self._datasets[k].label for k in ds_keys_list]
 
         # ---- Step 2: 整体样本描述（多标签时逐标签展示坏样本率） ----
+        target_specific_totals = self.del_grey and self._is_overdue_cfg()
         overall_n = sum(len(self._datasets[k].y) for k in ds_keys_list)
         if overall_n > 0:
             if is_multi:
@@ -3387,8 +3432,17 @@ class ModelReport:
                 label_parts = []
                 for lbl in self._label_names:
                     all_y = np.concatenate([self._get_y(k, lbl) for k in ds_keys_list])
-                    label_parts.append(f"{display_labels.get(lbl, lbl)}: {round(float(all_y.mean()) * 100, 2)}%")
-                overall_desc = f"样本数: {overall_n}, " + ", ".join(label_parts)
+                    valid_y = all_y[np.isfinite(all_y)]
+                    bad_rate = round(float(valid_y.mean()) * 100, 2) if len(valid_y) else 0.0
+                    if target_specific_totals:
+                        label_parts.append(
+                            f"{display_labels.get(lbl, lbl)}: 样本数 {len(valid_y)}, 坏样本率 {bad_rate}%"
+                        )
+                    else:
+                        label_parts.append(f"{display_labels.get(lbl, lbl)}: {bad_rate}%")
+                overall_desc = ", ".join(label_parts)
+                if not target_specific_totals:
+                    overall_desc = f"样本数: {overall_n}, " + overall_desc
             else:
                 overall_bad = int(sum(int(self._datasets[k].y.sum()) for k in ds_keys_list))
                 overall_bad_rate = overall_bad / overall_n * 100
@@ -3412,8 +3466,20 @@ class ModelReport:
             n_samples = len(self._datasets[ds_key].y)
             if is_multi:
                 display_labels = self._overdue_label_map(separator="@")
-                label_parts = [f"{display_labels.get(lbl, lbl)}: {round(float(self._get_y(ds_key, lbl).mean()) * 100, 2)}%" for lbl in self._label_names]
-                content = f"样本数: {n_samples}, " + ", ".join(label_parts)
+                label_parts = []
+                for lbl in self._label_names:
+                    y_values = np.asarray(self._get_y(ds_key, lbl), dtype=float)
+                    valid_y = y_values[np.isfinite(y_values)]
+                    bad_rate = round(float(valid_y.mean()) * 100, 2) if len(valid_y) else 0.0
+                    if target_specific_totals:
+                        label_parts.append(
+                            f"{display_labels.get(lbl, lbl)}: 样本数 {len(valid_y)}, 坏样本率 {bad_rate}%"
+                        )
+                    else:
+                        label_parts.append(f"{display_labels.get(lbl, lbl)}: {bad_rate}%")
+                content = ", ".join(label_parts)
+                if not target_specific_totals:
+                    content = f"样本数: {n_samples}, " + content
             else:
                 bad_rate = round(float(self._datasets[ds_key].y.mean()) * 100, 2)
                 content = f"样本数: {n_samples}, {label_text}: {bad_rate}%"
@@ -3437,6 +3503,7 @@ class ModelReport:
             n_jobs=self.n_jobs,
             parallel_backend=self.parallel_backend,
             parallel_config=self.parallel_config,
+            target_specific_totals=target_specific_totals,
         )
         if is_multi:
             stat_start_row = end_row + 1
@@ -3483,6 +3550,7 @@ class ModelReport:
                     n_jobs=self.n_jobs,
                     parallel_backend=self.parallel_backend,
                     parallel_config=self.parallel_config,
+                    target_specific_totals=target_specific_totals,
                 )
                 result = dataframe2excel(
                     dist_df,
@@ -3555,8 +3623,7 @@ class ModelReport:
                 row: Dict[tuple, Any] = {}
                 for lbl in self._label_names:
                     for ds_key, ds_label in zip(ds_keys_list, dataset_labels):
-                        y_arr = self._get_y(ds_key, lbl)
-                        proba = self._datasets[ds_key].y_proba
+                        y_arr, proba = self._get_valid_target_arrays(ds_key, lbl)
                         if metric == "样本总数":
                             val = len(y_arr)
                         elif metric == "坏样本率":
@@ -4732,6 +4799,7 @@ def auto_model_report(
     target: Optional[Union[str, Dict]] = None,
     overdue: Optional[Union[str, List[str]]] = None,
     dpds: Optional[Union[int, float, List[Union[int, float]]]] = None,
+    del_grey: bool = False,
     excel_path: Optional[str] = None,
     verbose: bool = True,
     n_bins: int = 10,
@@ -4820,6 +4888,7 @@ def auto_model_report(
     :param target: 目标列配置，str 为列名，dict 为 {'overdue': col, 'dpds': threshold}
     :param overdue: 逾期列名（str）或多个列名（List[str]），与 dpds 配合自动构建标签
     :param dpds: 逾期天数阈值（int/float）或多个阈值（List），与 overdue 配合使用
+    :param del_grey: overdue 模式下是否按每个 DPD 独立剔除 ``(0, DPD]`` 灰样本
     :param excel_path: Excel 报告输出路径
     :param verbose: 是否打印控制台报告
     :param n_bins: 分箱数
@@ -4860,6 +4929,7 @@ def auto_model_report(
         target=target,
         overdue=overdue,
         dpds=dpds,
+        del_grey=del_grey,
         method=method,
         method_kwargs=method_kwargs,
         n_jobs=n_jobs,

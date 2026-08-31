@@ -33,6 +33,7 @@ from sklearn.metrics import f1_score, recall_score, accuracy_score, precision_sc
 
 from .expr_optimizer import optimize_expr, beautify_expr
 from ...exceptions import FeatureNotFoundError, InputTypeError, StateError
+from ...utils.input_utils import normalize_dpd_values
 from ...utils.parallel import ParallelizableMixin, ParallelWorkload
 
 if TYPE_CHECKING:
@@ -453,7 +454,7 @@ class Rule(ParallelizableMixin):
         prediction = self.predict(X)
         return X[prediction]
 
-    def report(self, datasets: pd.DataFrame, target: str = "target", overdue: Optional[Union[str, List[str]]] = None, dpds: Optional[Union[int, List[int]]] = None, del_grey: bool = False, desc: str = "", filter_cols: Optional[List[str]] = None, prior_rules: Optional["Rule"] = None, amount: Optional[str] = None, margins: bool = False, **kwargs) -> pd.DataFrame:
+    def report(self, datasets: pd.DataFrame, target: str = "target", overdue: Optional[Union[str, List[str]]] = None, dpds: Optional[Union[int, float, List[Union[int, float]]]] = None, del_grey: bool = False, desc: str = "", filter_cols: Optional[List[str]] = None, prior_rules: Optional["Rule"] = None, amount: Optional[str] = None, margins: bool = False, **kwargs) -> pd.DataFrame:
         """规则效果报告表格输出。
 
         将规则命中与否作为二分类，对数据集计算统计指标，
@@ -702,18 +703,7 @@ class Rule(ParallelizableMixin):
         if overdue is not None:
             if not isinstance(overdue, list):
                 overdue = [overdue]
-            if not isinstance(dpds, list):
-                dpds = [dpds] if dpds is not None else [0]
-            # 处理dpds中的None值并转换为整数
-            dpds = [0 if d is None else int(d) for d in dpds]
-            # 去重，保留顺序，保留第一个出现的
-            seen = set()
-            dpds_unique = []
-            for d in dpds:
-                if d not in seen:
-                    seen.add(d)
-                    dpds_unique.append(d)
-            dpds = dpds_unique
+            dpds = normalize_dpd_values(dpds)
 
             # 确定merge_columns（多标签时需要的列）
             if isinstance(del_grey, bool) and del_grey:

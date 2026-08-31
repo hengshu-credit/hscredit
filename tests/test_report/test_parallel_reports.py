@@ -293,6 +293,31 @@ def test_overdue_predictor_parallel_clone_pickle_and_parity(report_data, backend
     assert parallel.parallel_config is config
 
 
+def test_overdue_predictor_del_grey_uses_target_specific_totals():
+    """逾期率预测器应显式透传 del_grey，并保留各 DPD 的独立样本基数。"""
+    data = pd.DataFrame(
+        {
+            "score": np.arange(12, dtype=float),
+            "MOB1": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+        }
+    )
+
+    predictor = OverduePredictor(
+        feature="score",
+        overdue="MOB1",
+        dpds=[0, 3],
+        rules=[5.5],
+        del_grey=True,
+        n_jobs=1,
+    ).fit(data)
+
+    total = predictor.bin_table_.loc[
+        predictor.bin_table_[("分箱详情", "分箱标签")] == "合计"
+    ].iloc[0]
+    assert total[("MOB1_0+", "样本总数")] == 12
+    assert total[("MOB1_3+", "样本总数")] == 9
+
+
 def test_population_drift_parallel_excel_layout_matches_serial(report_data, tmp_path):
     actual = report_data.copy()
     actual["score"] += 10

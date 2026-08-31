@@ -14,6 +14,7 @@ from .feature_analyzer import (
     feature_binning_summary,
     feature_group_binning_summary,
     feature_bin_stats,
+    feature_bin_stats_2d,
     feature_efficiency_analysis,
 )
 from .rule_analysis import ruleset_analysis, multi_label_rule_analysis, rule_swap_analysis
@@ -56,6 +57,7 @@ __all__ = [
     "ExcelWriter",
     "dataframe2excel",
     "feature_bin_stats",
+    "feature_bin_stats_2d",
     "feature_binning_summary",
     "feature_group_binning_summary",
     "feature_efficiency_analysis",

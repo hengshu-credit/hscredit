@@ -17,6 +17,37 @@ from ..exceptions import FeatureNotFoundError, InputTypeError, InputValidationEr
 ArrayLike = Union[np.ndarray, pd.DataFrame, pd.Series, List]
 
 
+def normalize_dpd_values(dpds) -> List[Union[int, float]]:
+    """规范化 DPD 阈值，保留非整数小数并按首次出现顺序去重。
+
+    标量会转换为单元素列表，``None`` 按既有报告口径转换为 ``[0]``；
+    numpy/pandas 标量与常用序列输入均受支持。整数值统一输出为 Python
+    ``int``，非整数值输出为 Python ``float``。
+    """
+    if isinstance(dpds, (list, tuple, np.ndarray, pd.Index, pd.Series)):
+        values = list(dpds)
+    else:
+        values = [dpds] if dpds is not None else [0]
+
+    normalized_values: List[Union[int, float]] = []
+    seen = set()
+    for value in values:
+        if value is None:
+            normalized: Union[int, float] = 0
+        else:
+            try:
+                numeric = float(value)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"DPD 阈值必须是有限数值，收到: {value!r}") from exc
+            if not np.isfinite(numeric):
+                raise ValueError(f"DPD 阈值必须是有限数值，收到: {value!r}")
+            normalized = int(numeric) if numeric.is_integer() else numeric
+        if normalized not in seen:
+            seen.add(normalized)
+            normalized_values.append(normalized)
+    return normalized_values
+
+
 def check_xy_inputs(
     X: ArrayLike,
     y: Optional[Union[np.ndarray, pd.Series, List]] = None,

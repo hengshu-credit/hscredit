@@ -43,6 +43,7 @@ from .input_utils import (
     check_array_1d,
     get_feature_dtypes,
     check_missing_values,
+    normalize_dpd_values,
 )
 
 __all__ = [
@@ -95,4 +96,5 @@ __all__ = [
     "check_array_1d",
     "get_feature_dtypes",
     "check_missing_values",
+    "normalize_dpd_values",
 ]

@@ -10,6 +10,7 @@ import pandas as pd
 from openpyxl.styles import Alignment, Font, PatternFill
 
 from ..core.rules import Rule
+from ..utils.input_utils import normalize_dpd_values
 from ..utils.parallel import (
     _ACTIVE_BUDGET,
     ParallelBudget,
@@ -35,18 +36,7 @@ def _rule_report_task_count(overdue, dpds) -> int:
     if overdue is None:
         return 1
     overdue_values = overdue if isinstance(overdue, list) else [overdue]
-    if isinstance(dpds, list):
-        dpd_values = dpds
-    else:
-        dpd_values = [dpds] if dpds is not None else [0]
-    normalized_dpds = []
-    seen = set()
-    for value in dpd_values:
-        normalized = 0 if value is None else int(value)
-        if normalized not in seen:
-            seen.add(normalized)
-            normalized_dpds.append(normalized)
-    return len(overdue_values) * len(normalized_dpds)
+    return len(overdue_values) * len(normalize_dpd_values(dpds))
 
 
 def _plan_report_parallel(n_jobs, outer_task_count: int, inner_task_count: int) -> _ReportParallelPlan:
@@ -589,7 +579,7 @@ def rule_group_compare(
     group_col: Optional[str] = None,
     target: str = "target",
     overdue: Optional[Union[str, List[str]]] = None,
-    dpds: Optional[Union[int, List[int]]] = None,
+    dpds: Optional[Union[int, float, List[Union[int, float]]]] = None,
     rule_name: Optional[str] = None,
     target_names: Optional[Mapping[str, str]] = None,
     metrics: Optional[Mapping[str, str]] = None,
@@ -787,10 +777,18 @@ def _normalize_target_label(label: Any) -> str:
     text = str(label)
     if "@" in text:
         head, _, tail = text.rpartition("@")
-        return f"{head} {tail}+" if head and tail.isdigit() else text
+        try:
+            numeric_tail = float(tail)
+        except (TypeError, ValueError):
+            numeric_tail = np.nan
+        return f"{head} {tail}+" if head and np.isfinite(numeric_tail) else text
     if text.endswith("+") and "_" in text:
         head, _, tail = text.rpartition("_")
-        return f"{head} {tail}" if head and tail[:-1].isdigit() else text
+        try:
+            numeric_tail = float(tail[:-1])
+        except (TypeError, ValueError):
+            numeric_tail = np.nan
+        return f"{head} {tail}" if head and np.isfinite(numeric_tail) else text
     return text
 
 
@@ -858,7 +856,7 @@ def _resolve_swap_targets(
     data: pd.DataFrame,
     target: Optional[str],
     overdue: Optional[Union[str, List[str]]],
-    dpds: Optional[Union[int, List[int]]],
+    dpds: Optional[Union[int, float, List[Union[int, float]]]],
     del_grey: bool,
 ) -> "OrderedDict[str, Tuple[pd.DataFrame, pd.Series]]":
     """解析单标签或 ``overdue + dpds`` 多标签，返回标签到 ``(子样本, 0/1标签)`` 的映射.
@@ -870,7 +868,7 @@ def _resolve_swap_targets(
         if dpds is None:
             raise ValueError("传入 overdue 参数时必须同时传入 dpds")
         overdue_cols = [overdue] if isinstance(overdue, str) else list(overdue)
-        dpd_values = [dpds] if isinstance(dpds, (int, np.integer)) else list(dpds)
+        dpd_values = normalize_dpd_values(dpds)
         for col in overdue_cols:
             if col not in data.columns:
                 raise ValueError(f"数据集缺少逾期天数列: {col}")
@@ -1213,7 +1211,7 @@ def swap_out_report(
     impact: Optional[Union[str, List[str]]] = None,
     target: str = "target",
     overdue: Optional[Union[str, List[str]]] = None,
-    dpds: Optional[Union[int, List[int]]] = None,
+    dpds: Optional[Union[int, float, List[Union[int, float]]]] = None,
     save: Optional[str] = None,
     verbose: bool = False,
     methods: Union[str, List[str]] = "quantile",

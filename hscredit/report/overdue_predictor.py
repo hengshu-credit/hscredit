@@ -77,6 +77,8 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
     :param rules: 自定义分箱切分点列表，如 [300, 500, 700]
     :param desc: 特征描述，用于报告展示
     :param bin_params: 传递给feature_bin_stats的额外参数
+    :param del_grey: 是否按每个 DPD 独立删除灰样本 ``(0, dpd]``。未显式传入时
+        兼容读取 ``bin_params['del_grey']``，默认 False
 
     **属性**
 
@@ -141,6 +143,7 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
         n_jobs: Union[int, float] = -1,
         parallel_backend: Optional[str] = None,
         parallel_config: Optional[Dict[str, Any]] = None,
+        del_grey: Optional[bool] = None,
     ):
         self.feature = feature
         self.target = target
@@ -159,6 +162,7 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
         self.n_jobs = n_jobs
         self.parallel_backend = parallel_backend
         self.parallel_config = parallel_config
+        self.del_grey = del_grey
 
     def fit(self, X: Union[pd.DataFrame, pd.Series], y=None) -> "OverduePredictor":
         """拟合预估器.
@@ -271,6 +275,8 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
             bin_kwargs['rules'] = self.rules
         if self.bin_params:
             bin_kwargs.update(self.bin_params)
+        if self.del_grey is not None:
+            bin_kwargs['del_grey'] = bool(self.del_grey)
 
         result = feature_bin_stats(
             df,

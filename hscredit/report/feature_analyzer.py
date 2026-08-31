@@ -6,7 +6,9 @@
 
 import logging
 import os
+import threading
 from copy import deepcopy
+from queue import Empty
 from typing import Union, List, Dict, Optional, Tuple, Any
 
 import matplotlib.pyplot as plt
@@ -14,8 +16,12 @@ import numpy as np
 import pandas as pd
 from openpyxl.worksheet.worksheet import Worksheet
 
-from ..core.binning import OptimalBinning
+from ..core.binning import OptimalBinning, OptimalBinning2D
 from ..core.binning.base import BaseBinning
+from ..core.eda._feature_summary import (
+    _FeatureProgressReporter,
+    _QueueProgressReporter,
+)
 from ..core.viz import bin_plot, bin_trend_plot, corr_plot, distribution_plot, hist_plot, ks_plot
 from ..core.viz.utils import _layout_top_center_legend
 from ..core.metrics._binning import (
@@ -25,7 +31,7 @@ from ..core.metrics._binning import (
     quadratic_curve_coefficient,
 )
 from ..excel import ExcelWriter, dataframe2excel
-from ..utils import init_setting
+from ..utils import init_setting, normalize_dpd_values
 from ..utils.parallel import ParallelWorkload, parallel_execute, resolve_n_jobs, validate_parallel_config
 from ._sample_stats import build_group_distribution_table, build_sample_stats_table
 from .rule_strategy import GroupOrder, _resolve_group_labels
@@ -191,6 +197,80 @@ def _auto_feature_compute_call(task):
     }
 
 
+def _auto_feature_progress_call(task):
+    """执行单个自动报告特征任务，并实时上报开始与完成事件."""
+    compute_task, reporter = task
+    feature = compute_task[1]
+    if reporter is not None:
+        reporter.start(feature)
+    try:
+        return _auto_feature_compute_call(compute_task)
+    finally:
+        if reporter is not None:
+            reporter.complete(feature)
+
+
+def _monitor_auto_feature_progress(event_queue, reporter, stop_event) -> None:
+    """实时消费进程 worker 事件，并允许本地停止信号解除阻塞."""
+    while True:
+        try:
+            action, feature = event_queue.get(timeout=0.2)
+        except Empty:
+            if stop_event.is_set():
+                return
+            continue
+        except (EOFError, OSError):
+            return
+        if action == "stop":
+            return
+        if action == "start":
+            reporter.start(feature)
+        elif action == "complete":
+            reporter.complete(feature)
+
+
+def _cleanup_auto_feature_progress(reporter, event_queue, monitor, manager, stop_event) -> None:
+    """有界关闭进度资源；清理失败不得覆盖报告计算异常."""
+    try:
+        if event_queue is not None:
+            try:
+                event_queue.put(("stop", None))
+            except Exception as exc:
+                logger.warning("发送特征进度停止事件失败: %s", exc)
+                if stop_event is not None:
+                    stop_event.set()
+
+        if monitor is not None:
+            try:
+                monitor.join(timeout=2.0)
+                if monitor.is_alive():
+                    if stop_event is not None:
+                        stop_event.set()
+                    if manager is not None:
+                        try:
+                            manager.shutdown()
+                        except Exception as exc:
+                            logger.warning("关闭特征进度管理器失败: %s", exc)
+                        manager = None
+                    monitor.join(timeout=2.0)
+                    if monitor.is_alive():
+                        logger.warning("特征进度监控线程未在限定时间内退出")
+            except Exception as exc:
+                logger.warning("关闭特征进度监控线程失败: %s", exc)
+    finally:
+        if stop_event is not None:
+            stop_event.set()
+        if manager is not None:
+            try:
+                manager.shutdown()
+            except Exception as exc:
+                logger.warning("关闭特征进度管理器失败: %s", exc)
+        try:
+            reporter.close()
+        except Exception as exc:
+            logger.warning("关闭特征进度条失败: %s", exc)
+
+
 def _feature_group_summary_call(task):
     """计算一个 ``方法 × 特征`` 下的全部有序分组。"""
     data, labels, ordered_groups, feature_name, method, params = task
@@ -324,7 +404,8 @@ def _auto_feature_target_maps(
     data: pd.DataFrame,
     target: str,
     overdue: Optional[List[str]] = None,
-    dpds: Optional[List[int]] = None,
+    dpds: Optional[List[Union[int, float]]] = None,
+    del_grey: bool = False,
 ) -> Tuple[str, List[str], Dict[str, str], Dict[str, np.ndarray]]:
     """生成自动特征分析使用的目标列、展示标签和标签数组."""
     if overdue:
@@ -339,7 +420,11 @@ def _auto_feature_target_maps(
                 label = f"{mob_col}>{dpd}"
                 label_names.append(label)
                 display_labels[label] = f"{mob_col}@{dpd}"
-                y_map[label] = (data[mob_col] > dpd).astype(int).to_numpy()
+                y = (data[mob_col] > dpd).astype(float)
+                if del_grey:
+                    valid_mask = (data[mob_col] > dpd) | (data[mob_col] == 0)
+                    y = y.where(valid_mask, np.nan)
+                y_map[label] = y.to_numpy()
         return primary_target, label_names, display_labels, y_map
 
     return target, [target], {target: target}, {target: data[target].astype(int).to_numpy()}
@@ -567,7 +652,7 @@ def feature_binning_summary(
     bin_params: Optional[Dict[str, Any]] = None,
     target: Optional[str] = None,
     overdue: Optional[Union[str, List[str]]] = None,
-    dpds: Optional[Union[int, List[int]]] = None,
+    dpds: Optional[Union[int, float, List[Union[int, float]]]] = None,
     desc: Optional[Union[str, Dict[str, str]]] = None,
     max_n_bins: int = 5,
     min_n_bins: int = 2,
@@ -672,7 +757,7 @@ def feature_binning_summary(
     single_target_name = target or ""
     if overdue is not None:
         overdue_values = [overdue] if isinstance(overdue, str) else list(overdue)
-        dpd_values = [dpds] if isinstance(dpds, int) else list(dpds or [])
+        dpd_values = normalize_dpd_values(dpds)
         target_labels = [f"{overdue_name}@{dpd}" for overdue_name in overdue_values for dpd in dpd_values]
         if len(target_labels) == 1:
             single_target_name = target_labels[0]
@@ -741,7 +826,7 @@ def _fit_group_summary_binner(
         if dpds is None:
             raise ValueError("传入 overdue 参数时必须同时传入 dpds")
         overdue_col = overdue if isinstance(overdue, str) else list(overdue)[0]
-        dpd = dpds if isinstance(dpds, int) else list(dpds)[0]
+        dpd = normalize_dpd_values(dpds)[0]
         train_data = data[[feature, overdue_col]].copy()
         y_train = (train_data[overdue_col] > dpd).astype(int)
         if del_grey:
@@ -815,7 +900,7 @@ def feature_group_binning_summary(
     bin_params: Optional[Dict[str, Any]] = None,
     target: Optional[str] = None,
     overdue: Optional[Union[str, List[str]]] = None,
-    dpds: Optional[Union[int, List[int]]] = None,
+    dpds: Optional[Union[int, float, List[Union[int, float]]]] = None,
     desc: Optional[Union[str, Dict[str, str]]] = None,
     max_n_bins: int = 5,
     min_n_bins: int = 2,
@@ -921,7 +1006,7 @@ def feature_group_binning_summary(
     single_target_name = target or ""
     if overdue is not None:
         overdue_values = [overdue] if isinstance(overdue, str) else list(overdue)
-        dpd_values = [dpds] if isinstance(dpds, int) else list(dpds or [])
+        dpd_values = normalize_dpd_values(dpds)
         target_labels = [f"{overdue_name}@{dpd}" for overdue_name in overdue_values for dpd in dpd_values]
         if len(target_labels) == 1:
             single_target_name = target_labels[0]
@@ -1158,7 +1243,7 @@ def feature_bin_stats(
     feature: Union[str, List[str]],
     target: Optional[str] = None,
     overdue: Optional[Union[str, List[str]]] = None,
-    dpds: Optional[Union[int, List[int]]] = None,
+    dpds: Optional[Union[int, float, List[Union[int, float]]]] = None,
     rules: Optional[Union[List, Dict[str, List]]] = None,
     method: str = "mdlp",
     desc: Optional[Union[str, Dict[str, str]]] = None,
@@ -1366,8 +1451,7 @@ def feature_bin_stats(
         # 逾期分析模式
         if isinstance(overdue, str):
             overdue = [overdue]
-        if isinstance(dpds, int):
-            dpds = [dpds]
+        dpds = normalize_dpd_values(dpds)
 
         for mob_col in overdue:
             for d in dpds:
@@ -1617,6 +1701,175 @@ def feature_bin_stats(
 
     if return_rules:
         return final_table, all_feature_rules
+    return final_table
+
+
+def feature_bin_stats_2d(
+    data: pd.DataFrame,
+    features: List[str],
+    target: Optional[str] = None,
+    overdue: Optional[Union[str, List[str]]] = None,
+    dpds: Optional[Union[int, float, List[Union[int, float]]]] = None,
+    binner: Optional[OptimalBinning2D] = None,
+    method: str = "quantile",
+    desc: Optional[str] = None,
+    max_n_bins: int = 5,
+    min_bin_size: Union[float, int] = 0.02,
+    del_grey: bool = False,
+    margins: bool = False,
+    amount: Optional[str] = None,
+    return_cols: Optional[List[str]] = None,
+    return_binner: bool = False,
+    long_format: bool = False,
+    n_jobs: Union[int, float] = -1,
+    parallel_backend: Optional[str] = None,
+    parallel_config: Optional[Dict[str, Any]] = None,
+    **kwargs,
+) -> Union[pd.DataFrame, Tuple[pd.DataFrame, OptimalBinning2D]]:
+    """生成两个特征的联合二维分箱统计表.
+
+    二维区域在第一个目标口径上拟合一次，其余逾期目标复用同一套区域，并按各自
+    ``overdue × dpd`` 口径重新计算样本数、坏样本率、WOE、IV、KS 等指标。
+    ``del_grey=True`` 时每个目标独立剔除 ``(0, dpd]`` 灰样本。
+
+    :param data: 原始明细数据
+    :param features: 恰好两个特征名，顺序对应二维分箱的两个轴
+    :param target: 二分类目标列名，与 ``overdue`` 二选一
+    :param overdue: 逾期天数字段名或列表
+    :param dpds: DPD 阈值或列表，逾期天数大于阈值记为坏样本
+    :param binner: 可选的已拟合或未拟合 :class:`OptimalBinning2D`
+    :param method: 两个轴的一维分箱方法，默认 ``quantile``
+    :param desc: 指标含义，默认使用 ``特征1X特征2``
+    :param max_n_bins: 每个轴最大分箱数
+    :param min_bin_size: 二维普通分箱最小样本数或占比
+    :param del_grey: 是否按每个 DPD 独立删除灰样本
+    :param margins: 是否为每个目标追加合计行
+    :param amount: 金额字段；传入后按金额口径计算统计
+    :param return_cols: 指定保留的统计列
+    :param return_binner: 是否同时返回已拟合二维分箱器
+    :param long_format: 是否按逾期标签纵向堆叠输出
+    :return: 二维分箱统计表；``return_binner=True`` 时返回 ``(table, binner)``
+
+    **参考样例**
+
+    >>> table, binner = feature_bin_stats_2d(
+    ...     data, ['评分', '多头数'], overdue='MOB1', dpds=[7, 3, 0],
+    ...     del_grey=True, margins=True, return_binner=True,
+    ... )
+    """
+    _validate_report_parallel(n_jobs, parallel_backend, parallel_config)
+    if not isinstance(data, pd.DataFrame) or data.empty:
+        raise ValueError("data 必须是非空的 DataFrame")
+    features = list(features or [])
+    if len(features) != 2:
+        raise ValueError("features 必须且只能包含两个特征名")
+    missing = [column for column in features if column not in data.columns]
+    if missing:
+        raise KeyError(f"数据中不存在字段: {missing}")
+    if overdue is not None and dpds is None:
+        raise ValueError("传入 overdue 参数时必须同时传入 dpds")
+    if overdue is None and target is None:
+        raise ValueError("必须传入 target 或 overdue+dpds 参数")
+
+    target_configs: List[Dict[str, Any]] = []
+    if overdue is not None:
+        overdue_columns = [overdue] if isinstance(overdue, str) else list(overdue)
+        dpd_values = normalize_dpd_values(dpds)
+        missing_overdue = [column for column in overdue_columns if column not in data.columns]
+        if missing_overdue:
+            raise KeyError(f"数据中不存在逾期字段: {missing_overdue}")
+        target_configs = [
+            {"name": f"{column}_{dpd}+", "overdue": column, "dpd": dpd}
+            for column in overdue_columns
+            for dpd in dpd_values
+        ]
+    else:
+        if target not in data.columns:
+            raise KeyError(f"数据中不存在目标字段: {target}")
+        target_configs = [{"name": str(target), "overdue": None, "dpd": None}]
+
+    def target_view(config: Dict[str, Any]) -> Tuple[pd.DataFrame, pd.Series]:
+        columns = list(features)
+        if config["overdue"] is not None:
+            columns.append(config["overdue"])
+        else:
+            columns.append(str(target))
+        if amount is not None and amount in data.columns and amount not in columns:
+            columns.append(amount)
+        view = data[columns].copy()
+        if config["overdue"] is not None:
+            overdue_values = pd.to_numeric(view[config["overdue"]], errors="coerce")
+            y_values = (overdue_values > config["dpd"]).astype(int)
+            if del_grey:
+                valid = (overdue_values == 0) | (overdue_values > config["dpd"])
+                view = view.loc[valid]
+                y_values = y_values.loc[valid]
+        else:
+            y_values = view[str(target)]
+        return view, y_values
+
+    fitted_binner = deepcopy(binner) if binner is not None else None
+    if fitted_binner is not None and not isinstance(fitted_binner, OptimalBinning2D):
+        raise TypeError("binner 必须是 OptimalBinning2D 实例")
+    first_view, first_y = target_view(target_configs[0])
+    if fitted_binner is None:
+        fitted_binner = OptimalBinning2D(
+            method=method,
+            max_n_bins=max_n_bins,
+            min_bin_size=min_bin_size,
+            n_jobs=n_jobs,
+            parallel_backend=parallel_backend,
+            parallel_config=parallel_config,
+            **kwargs,
+        )
+    if not getattr(fitted_binner, "_is_fitted", False):
+        fitted_binner.fit(first_view[features], first_y, features=features)
+
+    feature_name = f"{features[0]}X{features[1]}"
+    description = desc or feature_name
+    tables: List[pd.DataFrame] = []
+    target_names: List[str] = []
+    for config in target_configs:
+        analysis_data, y_values = target_view(config)
+        indices = fitted_binner.transform(analysis_data[features], metric="indices").iloc[:, 0].to_numpy()
+        labels = fitted_binner.transform(analysis_data[features], metric="bins").iloc[:, 0].to_numpy()
+        label_lookup = {int(bin_id): label for bin_id, label in zip(indices, labels)}
+        bin_labels = [label_lookup[int(bin_id)] for bin_id in np.unique(indices)]
+        amount_values = (
+            analysis_data[amount].to_numpy()
+            if amount is not None and amount in analysis_data.columns
+            else None
+        )
+        table = _create_bin_table(
+            bins=indices,
+            y=y_values.to_numpy(),
+            feature_name=feature_name,
+            desc=description,
+            amount=amount_values,
+            bin_labels=bin_labels,
+        )
+        if return_cols is not None:
+            base_columns = ["指标名称", "指标含义", "分箱标签"]
+            table = table[[column for column in base_columns + list(return_cols) if column in table.columns]]
+        if long_format:
+            table.insert(2, "逾期标签", config["name"])
+        if margins:
+            table = add_margins(table)
+        tables.append(table)
+        target_names.append(config["name"])
+
+    if long_format:
+        final_table = _reorder_long_format_columns(pd.concat(tables, axis=0, ignore_index=True))
+    elif len(tables) > 1:
+        merge_columns = ["指标名称", "指标含义", "分箱标签"]
+        if not del_grey:
+            merge_columns.extend(["样本总数", "样本占比"])
+        final_table = _merge_multi_target_tables(tables, target_names, merge_columns)
+    else:
+        final_table = tables[0]
+
+    if return_binner:
+        return final_table, fitted_binner
     return final_table
 
 
@@ -2283,6 +2536,8 @@ def auto_feature_analysis(
     parallel_backend=None,
     parallel_config=None,
     condition_color="F76E6C",
+    del_grey: Optional[bool] = None,
+    show_progress: bool = True,
 ):
     """自动特征分析.
 
@@ -2313,6 +2568,10 @@ def auto_feature_analysis(
     :param amount: 放款金额或余额字段名称。传入后同时生成订单口径和金额口径两张分箱表
     :param image_table_gap_rows: 图片区与分箱表之间的额外空行数
     :param condition_color: 条件格式颜色，默认使用副主题色 ``"F76E6C"``；支持颜色字符串、色阶列表或按列配置的字典
+    :param del_grey: 是否删除逾期天数在 ``(0, dpds]`` 区间内的灰样本。
+        显式传入时优先于 ``bin_params['del_grey']``；默认 None 表示沿用 ``bin_params`` 配置。
+        启用后，样本总体分布、样本时间分布及时间分布图也会按各逾期口径剔除灰样本
+    :param show_progress: 是否实时显示特征处理进度和当前字段，默认 True
     :return: (end_row, end_col) 分析结束位置
 
     **参考样例**
@@ -2327,6 +2586,9 @@ def auto_feature_analysis(
         bin_params = {}
     else:
         bin_params = dict(bin_params)
+    if del_grey is not None:
+        bin_params["del_grey"] = del_grey
+    del_grey_enabled = bool(bin_params.get("del_grey", False))
     bin_params.setdefault("n_jobs", n_jobs)
     bin_params.setdefault("parallel_backend", parallel_backend)
     bin_params.setdefault("parallel_config", parallel_config)
@@ -2353,9 +2615,15 @@ def auto_feature_analysis(
     elif dpds is not None:
         dpds = list(dpds)
 
-    target, target_label_names, target_display_labels, target_y_map = _auto_feature_target_maps(data, target=target, overdue=overdue, dpds=dpds)
+    target, target_label_names, target_display_labels, target_y_map = _auto_feature_target_maps(
+        data,
+        target=target,
+        overdue=overdue,
+        dpds=dpds,
+        del_grey=del_grey_enabled,
+    )
     if overdue:
-        data[target] = target_y_map[target_label_names[0]]
+        data[target] = np.nan_to_num(target_y_map[target_label_names[0]], nan=0.0).astype(int)
 
     if features is None:
         excluded_features = {column for column in [date, requested_target, target, *(overdue or [])] if column is not None}
@@ -2391,6 +2659,7 @@ def auto_feature_analysis(
         n_jobs=n_jobs,
         parallel_backend=parallel_backend,
         parallel_config=parallel_config,
+        target_specific_totals=del_grey_enabled and bool(overdue),
     )
     time_distribution = None
     time_percent_cols = []
@@ -2409,6 +2678,7 @@ def auto_feature_analysis(
             n_jobs=n_jobs,
             parallel_backend=parallel_backend,
             parallel_config=parallel_config,
+            target_specific_totals=del_grey_enabled and bool(overdue),
         )
 
     feature_summary = data[features].summary(
@@ -2449,27 +2719,56 @@ def auto_feature_analysis(
 
     feature_method = bin_params.get("method", "mdlp")
     has_parallel_children = _binning_has_parallel_children(feature_method, bin_params)
-    feature_results = parallel_execute(
-        _auto_feature_compute_call,
-        iter_feature_tasks(),
-        n_jobs=n_jobs,
-        parallel_backend=parallel_backend,
-        parallel_config=parallel_config,
-        task_labels=list(features),
-        default_backend="threading",
-        has_parallel_children=has_parallel_children,
-        workload=ParallelWorkload(
-            task_count=len(features),
-            rows=len(data),
-            columns=len(features),
-            data_bytes=int(data.loc[:, list(dict.fromkeys(list(features) + [target]))].memory_usage(deep=True).sum()),
-            cost_per_item=12.0,
-            capability="thread_safe",
-            releases_gil=True,
+    progress_reporter = _FeatureProgressReporter(show_progress, len(features))
+    progress_manager = None
+    progress_queue = None
+    progress_monitor = None
+    progress_stop_event = None
+    try:
+        task_reporter = progress_reporter if show_progress else None
+        if show_progress and parallel_backend not in (None, "threading", "sequential"):
+            from joblib.externals.loky.backend.context import get_context
+
+            progress_manager = get_context().Manager()
+            progress_queue = progress_manager.Queue()
+            progress_stop_event = threading.Event()
+            task_reporter = _QueueProgressReporter(progress_queue)
+            progress_monitor = threading.Thread(
+                target=_monitor_auto_feature_progress,
+                args=(progress_queue, progress_reporter, progress_stop_event),
+                daemon=True,
+            )
+            progress_monitor.start()
+
+        feature_results = parallel_execute(
+            _auto_feature_progress_call,
+            ((task, task_reporter) for task in iter_feature_tasks()),
+            n_jobs=n_jobs,
+            parallel_backend=parallel_backend,
+            parallel_config=parallel_config,
+            task_labels=list(features),
+            default_backend="threading",
             has_parallel_children=has_parallel_children,
-            operation="自动特征分析",
-        ),
-    )
+            workload=ParallelWorkload(
+                task_count=len(features),
+                rows=len(data),
+                columns=len(features),
+                data_bytes=int(data.loc[:, list(dict.fromkeys(list(features) + [target]))].memory_usage(deep=True).sum()),
+                cost_per_item=12.0,
+                capability="thread_safe",
+                releases_gil=True,
+                has_parallel_children=has_parallel_children,
+                operation="自动特征分析",
+            ),
+        )
+    finally:
+        _cleanup_auto_feature_progress(
+            progress_reporter,
+            progress_queue,
+            progress_monitor,
+            progress_manager,
+            progress_stop_event,
+        )
 
     os.makedirs(output_dir, exist_ok=True)
 
@@ -2584,8 +2883,12 @@ def auto_feature_analysis(
     end_row += 2
 
     if date is not None and date in data.columns:
+        distribution_data = data
+        if del_grey_enabled and overdue:
+            distribution_data = data.copy()
+            distribution_data[target] = target_y_map[target_label_names[0]]
         distribution_figure = distribution_plot(
-            data,
+            distribution_data,
             date=date,
             freq=freq,
             target=target,

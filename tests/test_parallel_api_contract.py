@@ -141,6 +141,7 @@ PUBLIC_PARALLEL_ENTRIES = {
     },
     report: {
         "feature_bin_stats",
+        "feature_bin_stats_2d",
         "feature_binning_summary",
         "feature_group_binning_summary",
         "feature_efficiency_analysis",

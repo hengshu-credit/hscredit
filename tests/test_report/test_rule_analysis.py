@@ -1,5 +1,6 @@
 import pandas as pd
 from openpyxl import load_workbook
+from inspect import signature
 
 from hscredit.core.rules import Rule
 import hscredit.report.rule_analysis as rule_analysis_module
@@ -34,6 +35,11 @@ def test_ruleset_analysis_handles_multiindex_rule_report_columns():
     assert ("MOB1 3+", "坏样本率") in result.columns
     assert ("MOB1 1+", "LIFT值") in result.columns
     assert list(result[("分箱详情", "分箱")]) == ["原始样本", "age >= 21", "剩余样本", "所有规则"]
+
+
+def test_ruleset_analysis_exposes_del_grey_parameter():
+    """规则集分析应把灰样本控制作为可发现的正式参数。"""
+    assert "del_grey" in signature(ruleset_analysis).parameters
 
 
 def test_multi_label_rule_analysis_writes_excel(tmp_path, monkeypatch):

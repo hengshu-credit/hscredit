@@ -667,6 +667,187 @@ class TestModelReportOverdueDpdsSeparate:
 
         assert r1._datasets["训练集"].y.tolist() == r2._datasets["训练集"].y.tolist()
 
+    def test_del_grey_uses_independent_sample_base_for_each_dpd(self):
+        """删除灰样本时若模型摘要或评分分箱仍共用一个总样本数，本测试必须失败。"""
+        data = pd.DataFrame(
+            {
+                "f0": np.arange(12, dtype=float),
+                "MOB1": [0, 2, 0, 5, 0, 2, 5, 8, 0, 4, 2, 8],
+            }
+        )
+
+        report = ModelReport(
+            MockModel(["f0"]),
+            datasets={"样本": data},
+            overdue="MOB1",
+            dpds=[1, 3],
+            del_grey=True,
+            feature_names=["f0"],
+            n_jobs=1,
+        )
+
+        summary = report.summary()
+        assert summary.loc["MOB1@1", ("样本数", "样本")] == 12
+        assert summary.loc["MOB1@3", ("样本数", "样本")] == 9
+        assert summary.loc["MOB1@1", ("坏样本率", "样本")] == pytest.approx(8 / 12)
+        assert summary.loc["MOB1@3", ("坏样本率", "样本")] == pytest.approx(5 / 9)
+
+        score_table = report.get_bin_table(
+            "样本",
+            max_n_bins=2,
+            margins=True,
+            labels=report._label_names,
+        )
+        total = score_table.loc[score_table[("分箱详情", "分箱标签")] == "合计"].iloc[0]
+        assert total[("MOB1>1", "样本总数")] == 12
+        assert total[("MOB1>3", "样本总数")] == 9
+
+    def test_del_grey_filters_single_overdue_target_dataset(self):
+        """单个 overdue/DPD 口径若只支持多目标删灰，本测试必须失败。"""
+        data = pd.DataFrame(
+            {
+                "f0": [1.0, 2.0, 3.0, 4.0],
+                "MOB1": [0.0, 0.5, 1.0, 0.5],
+            }
+        )
+
+        report = ModelReport(
+            MockModel(["f0"]),
+            datasets={"样本": data},
+            overdue="MOB1",
+            dpds=[0.5],
+            del_grey=True,
+            feature_names=["f0"],
+            n_jobs=1,
+        )
+
+        dataset = report._datasets["样本"]
+        assert dataset.X.index.tolist() == [0, 2]
+        assert dataset.y.tolist() == [0, 1]
+        metrics = report.get_metrics().set_index("统计项")
+        assert metrics.loc["样本数", "样本"] == 2
+        assert metrics.loc["坏样本率", "样本"] == pytest.approx(0.5)
+
+    def test_auto_model_report_removes_grey_from_overall_time_and_group_tables(self, tmp_path):
+        """自动模型报告顶部任一分布表继续计入灰样本时，本测试必须失败。"""
+        from hscredit.report.model_report import auto_model_report
+
+        data = pd.DataFrame(
+            {
+                "f0": np.arange(12, dtype=float),
+                "MOB1": [0, 2, 0, 5, 0, 2, 5, 8, 0, 4, 2, 8],
+                "放款月份": pd.to_datetime(["2024-01-01"] * 6 + ["2024-02-01"] * 6),
+                "客群": ["A"] * 6 + ["B"] * 6,
+            }
+        )
+        output = tmp_path / "model-report-del-grey.xlsx"
+
+        report = auto_model_report(
+            MockModel(["f0"]),
+            datasets={"样本": data},
+            overdue="MOB1",
+            dpds=[1, 3],
+            del_grey=True,
+            feature_names=["f0"],
+            excel_path=str(output),
+            verbose=False,
+            with_plots=False,
+            date_col="放款月份",
+            date_freq="M",
+            group_col="客群",
+            n_bins=2,
+            n_jobs=1,
+        )
+
+        assert report.del_grey is True
+        worksheet = load_workbook(output)["1-基本信息"]
+        header_rows = [
+            row
+            for row in range(1, worksheet.max_row)
+            if worksheet.cell(row + 1, 2).value == "数据集"
+        ]
+        sample_header, time_header, group_header = header_rows[:3]
+
+        def header_columns(group_row):
+            columns = {}
+            current_group = None
+            for column in range(2, worksheet.max_column + 1):
+                group = worksheet.cell(group_row, column).value
+                if group is not None:
+                    current_group = group
+                label = worksheet.cell(group_row + 1, column).value
+                if label is not None:
+                    columns[(current_group, label)] = column
+            return columns
+
+        sample_columns = header_columns(sample_header)
+        sample_row = sample_header + 2
+        assert worksheet.cell(sample_row, sample_columns[("样本总数", "MOB1@1")]).value == 12
+        assert worksheet.cell(sample_row, sample_columns[("样本总数", "MOB1@3")]).value == 9
+
+        time_columns = header_columns(time_header)
+        time_group_col = time_columns[("统计详情", "数据分组")]
+        january_row = next(
+            row
+            for row in range(time_header + 2, worksheet.max_row + 1)
+            if worksheet.cell(row, time_group_col).value == "2024-01"
+        )
+        february_row = next(
+            row
+            for row in range(time_header + 2, worksheet.max_row + 1)
+            if worksheet.cell(row, time_group_col).value == "2024-02"
+        )
+        assert worksheet.cell(january_row, time_columns[("样本总数", "MOB1@1")]).value == 6
+        assert worksheet.cell(january_row, time_columns[("样本总数", "MOB1@3")]).value == 4
+        assert worksheet.cell(february_row, time_columns[("样本总数", "MOB1@1")]).value == 6
+        assert worksheet.cell(february_row, time_columns[("样本总数", "MOB1@3")]).value == 5
+
+        group_columns = header_columns(group_header)
+        group_value_col = group_columns[("统计详情", "数据分组")]
+        group_a_row = next(
+            row
+            for row in range(group_header + 2, worksheet.max_row + 1)
+            if worksheet.cell(row, group_value_col).value == "A"
+        )
+        group_b_row = next(
+            row
+            for row in range(group_header + 2, worksheet.max_row + 1)
+            if worksheet.cell(row, group_value_col).value == "B"
+        )
+        assert worksheet.cell(group_a_row, group_columns[("样本总数", "MOB1@1")]).value == 6
+        assert worksheet.cell(group_a_row, group_columns[("样本总数", "MOB1@3")]).value == 4
+        assert worksheet.cell(group_b_row, group_columns[("样本总数", "MOB1@1")]).value == 6
+        assert worksheet.cell(group_b_row, group_columns[("样本总数", "MOB1@3")]).value == 5
+
+    def test_del_grey_filters_labels_and_amounts_in_top_lift(self):
+        """TOP LIFT 的标签、预测和金额未同步删灰时，本测试必须失败。"""
+        data = pd.DataFrame(
+            {
+                "f0": np.arange(12, dtype=float),
+                "MOB1": [0, 2, 0, 5, 0, 2, 5, 8, 0, 4, 2, 8],
+                "金额": np.ones(12),
+            }
+        )
+        report = ModelReport(
+            MockModel(["f0"]),
+            datasets={"样本": data},
+            overdue="MOB1",
+            dpds=[1, 3],
+            del_grey=True,
+            feature_names=["f0"],
+            n_jobs=1,
+        )
+
+        table = report._compute_top_n_lift_table(
+            percentiles=(0.5,),
+            amount_col="金额",
+            label="MOB1>3",
+        ).set_index("统计项")
+
+        assert table.loc["坏样本率", "TOTAL"] == pytest.approx(5 / 9)
+        assert table.loc["坏样本率", "TOP 50%"] == pytest.approx(3 / 4)
+        assert table.loc["LIFT值", "TOP 50%"] == pytest.approx((3 / 4) / (5 / 9))
+
 
 class TestModelReportRegression:
     """Regression tests for report sections that previously exported blank."""

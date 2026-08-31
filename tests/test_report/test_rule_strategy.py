@@ -145,6 +145,53 @@ def test_rule_group_compare_groups_by_group_col_multi_label():
     assert result.loc[0, ("规则详情", "规则名称")] == "低分拒绝"
 
 
+def test_rule_tables_preserve_target_specific_totals_after_grey_filtering():
+    """规则表转换层错误合并不同 DPD 的删灰样本基数时，本测试必须失败。"""
+    data = pd.DataFrame(
+        {
+            "score": [400, 600] * 6,
+            "MOB1": [0, 2, 0, 5, 0, 2, 5, 8, 0, 4, 2, 8],
+            "客群": ["A"] * 6 + ["B"] * 6,
+        }
+    )
+    rule = Rule("score < 500", name="低分拒绝")
+    report = rule.report(
+        data,
+        overdue="MOB1",
+        dpds=[1, 3],
+        del_grey=True,
+        margins=True,
+        n_jobs=1,
+    )
+
+    wide = rule_report_table(report, n_jobs=1)
+    total = wide.loc[wide[("规则详情", "分箱")] == "合计"].iloc[0]
+    assert total[("MOB1 1+", "样本总数")] == 12
+    assert total[("MOB1 3+", "样本总数")] == 9
+
+    target_table = rule_target_analysis(report, rule_name=rule.name, n_jobs=1)
+    totals = dict(
+        zip(
+            target_table[("低分拒绝", "逾期指标")],
+            target_table[("样本总数", "合计")],
+        )
+    )
+    assert totals == {"MOB1 1+": 12, "MOB1 3+": 9}
+
+    group_table = rule_group_compare(
+        data,
+        rule,
+        group_col="客群",
+        overdue="MOB1",
+        dpds=[1, 3],
+        del_grey=True,
+        n_jobs=1,
+    )
+    dpd3 = group_table[group_table[("规则详情", "逾期指标")] == "MOB1 3+"]
+    assert dpd3[("样本总数", "A")].sum() == 4
+    assert dpd3[("样本总数", "B")].sum() == 5
+
+
 def test_rule_group_compare_requires_exactly_one_grouping():
     data = pd.DataFrame({"score": [400, 600], "target": [1, 0]})
     with pytest.raises(ValueError):
@@ -308,6 +355,94 @@ def test_swap_out_report_auto_width_preserves_template_column_fill(tmp_path):
             if isinstance(cell.value, (int, float)):
                 lift_formats.append(cell.number_format)
     assert "0.00%" in lift_formats
+
+
+def test_swap_out_report_supports_decimal_dpds_and_target_specific_grey_deletion(tmp_path):
+    """任一区块把 0.5 截断为 0 或复用全量分母时，本测试必须失败。"""
+    data = pd.DataFrame(
+        {
+            "score": [400, 600, 400, 600, 400, 600, 400, 600],
+            "MOB1": [0.0, 0.25, 0.5, 0.75, 1.0, 0.0, 0.25, 1.0],
+            "客群": ["A", "A", "A", "A", "B", "B", "B", "B"],
+        }
+    )
+    output = tmp_path / "swap-out-decimal-dpd-del-grey.xlsx"
+
+    swap_out_report(
+        data,
+        rules=Rule("score < 500", name="低分拒绝"),
+        features=["score"],
+        overdue="MOB1",
+        dpds=[0.5, 0],
+        del_grey=True,
+        group_col="客群",
+        methods="quantile",
+        save=str(output),
+        n_jobs=1,
+    )
+
+    workbook = load_workbook(output, data_only=True)
+    assert {"策略迭代", "变量分箱"}.issubset(workbook.sheetnames)
+    main = workbook["策略迭代"]
+    detail = workbook["变量分箱"]
+
+    decimal_headers = [
+        cell
+        for row in main.iter_rows()
+        for cell in row
+        if cell.value == "MOB1 0.5+"
+    ]
+    sample_headers = [
+        cell
+        for cell in decimal_headers
+        if main.cell(cell.row - 1, cell.column).value == "样本总数"
+    ]
+    assert len(sample_headers) == 1
+    sample_header = sample_headers[0]
+    zero_headers = [
+        cell
+        for cell in main[sample_header.row]
+        if cell.value == "MOB1 0+"
+        and cell.column == sample_header.column + 1
+    ]
+    assert len(zero_headers) == 1
+    zero_header = zero_headers[0]
+    assert main.cell(sample_header.row + 1, sample_header.column).value == 5
+    assert main.cell(zero_header.row + 1, zero_header.column).value == 8
+    assert len(decimal_headers) >= 4
+    assert any(cell.value == "MOB1 0.5+" for row in detail.iter_rows() for cell in row)
+
+
+def test_swap_out_report_accepts_scalar_decimal_dpd():
+    """标量浮点 DPD 被当作可迭代对象处理时，本测试必须失败。"""
+    data = pd.DataFrame(
+        {
+            "score": [400, 600, 400, 600],
+            "MOB1": [0.0, 0.25, 0.75, 1.0],
+        }
+    )
+
+    writer = swap_out_report(
+        data,
+        rules=Rule("score < 500", name="低分拒绝"),
+        features=["score"],
+        overdue="MOB1",
+        dpds=0.5,
+        del_grey=True,
+        n_jobs=1,
+    )
+
+    worksheet = writer.get_sheet_by_name("策略迭代")
+    sample_headers = [
+        cell
+        for row in worksheet.iter_rows()
+        for cell in row
+        if cell.value == "MOB1 0.5+"
+        and worksheet.cell(cell.row - 1, cell.column).value == "样本总数"
+    ]
+    assert len(sample_headers) == 1
+    header = sample_headers[0]
+    assert worksheet.cell(header.row + 1, header.column).value == 3
 
 
 @pytest.mark.parametrize("current_pass_rate", [-0.1, 1.1, "0.9"])

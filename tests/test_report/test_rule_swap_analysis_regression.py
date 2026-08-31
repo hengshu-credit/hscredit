@@ -177,6 +177,38 @@ def test_multi_dpd_pipeline_exposes_each_nonzero_target():
     assert pipeline[("MOB1_7+", "调整后坏样本率")].max() > 0
 
 
+def test_multi_dpd_swap_pipeline_removes_grey_per_target():
+    """del_grey=True 时每个 DPD 使用各自的有效样本分母。"""
+    _, _, kwargs = _swap_case()
+    kwargs["bin_table"] = pd.DataFrame(
+        [
+            ["[-inf, 35)", 0.10, 0.20, 0.30],
+            ["[35, +inf)", 0.40, 0.50, 0.60],
+        ],
+        columns=pd.MultiIndex.from_tuples(
+            [
+                ("分箱详情", "分箱标签"),
+                ("MOB1_7+", "坏样本率"),
+                ("MOB1_3+", "坏样本率"),
+                ("MOB1_0+", "坏样本率"),
+            ]
+        ),
+    )
+    kwargs.pop("target")
+
+    pipeline = rule_swap_analysis(
+        overdue="MOB1",
+        dpds=[7, 3, 0],
+        del_grey=True,
+        **kwargs,
+    )["swap_pipeline"]
+
+    full = pipeline.iloc[0]
+    assert full[("MOB1_7+", "样本总数")] == 5
+    assert full[("MOB1_3+", "样本总数")] == 6
+    assert full[("MOB1_0+", "样本总数")] == 6
+
+
 @pytest.mark.parametrize("label_col", ["分箱标签", "分箱"])
 def test_single_bin_and_legacy_label_predict_constant_bad_rate(label_col):
     """单箱及旧分箱列名必须映射为箱内坏率，不能静默返回零。"""

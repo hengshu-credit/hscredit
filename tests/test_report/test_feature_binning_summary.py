@@ -56,6 +56,43 @@ def test_feature_binning_summary_returns_tables_and_multi_target_summary(sample_
     assert row[('分档KS值', 'MOB1@3')] == valid[('MOB1_3+', '分档KS值')].max()
 
 
+def test_feature_bin_stats_margins_calculate_each_grey_filtered_target_independently():
+    """多标签合计行串用其他标签的计数或首箱指标时，本测试必须失败。"""
+    data = pd.DataFrame(
+        {
+            '特征': [1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6],
+            'MOB1': [0, 2, 0, 5, 0, 2, 5, 8, 0, 4, 2, 8],
+        }
+    )
+
+    table = feature_bin_stats(
+        data,
+        feature='特征',
+        overdue='MOB1',
+        dpds=[1, 3],
+        rules=[2, 4],
+        del_grey=True,
+        margins=True,
+        n_jobs=1,
+    )
+    total = table.loc[table[('分箱详情', '分箱标签')] == '合计'].iloc[0]
+
+    assert total[('MOB1_1+', '样本总数')] == 12
+    assert total[('MOB1_1+', '好样本数')] == 4
+    assert total[('MOB1_1+', '坏样本数')] == 8
+    assert total[('MOB1_1+', '坏样本率')] == pytest.approx(2 / 3)
+    assert total[('MOB1_1+', '分档WOE值')] == 0
+    assert total[('MOB1_1+', '分档IV值')] == 0
+
+    assert total[('MOB1_3+', '样本总数')] == 9
+    assert total[('MOB1_3+', '好样本数')] == 4
+    assert total[('MOB1_3+', '坏样本数')] == 5
+    assert total[('MOB1_3+', '坏样本率')] == pytest.approx(5 / 9)
+    assert total[('MOB1_3+', '分档WOE值')] == 0
+    assert total[('MOB1_3+', '分档IV值')] == 0
+    assert total[('MOB1_3+', '分档KS值')] == pytest.approx(0.55)
+
+
 def test_feature_binning_summary_bin_params_override_common_params(sample_data):
     tables, _ = feature_binning_summary(
         sample_data,

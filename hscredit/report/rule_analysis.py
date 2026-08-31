@@ -138,7 +138,7 @@ class _SwapStages:
 _SWAP_ATOMIC_GROUPS = ("out_out", "in_out", "in_in", "out_in")
 
 
-def _resolve_target_series(data, target, overdue, dpds):
+def _resolve_target_series(data, target, overdue, dpds, del_grey=False):
     """解析分析样本上的一个或多个实际表现标签。"""
     if target is not None:
         if target not in data.columns:
@@ -158,7 +158,11 @@ def _resolve_target_series(data, target, overdue, dpds):
             overdue_values = pd.to_numeric(data[overdue_col], errors="coerce")
         for threshold in thresholds:
             label = f"{overdue_col}_{threshold}+"
-            targets[label] = (overdue_values > threshold).where(overdue_values.notna()).astype(float)
+            values = (overdue_values > threshold).where(overdue_values.notna()).astype(float)
+            if del_grey:
+                valid = overdue_values.eq(0) | overdue_values.gt(threshold)
+                values = values.where(valid)
+            targets[label] = values
     return targets
 
 
@@ -259,7 +263,10 @@ def _build_swap_stages(
     )
 
 
-def _merge_swap_target_pipelines(pipelines: Dict[str, pd.DataFrame]) -> pd.DataFrame:
+def _merge_swap_target_pipelines(
+    pipelines: Dict[str, pd.DataFrame],
+    target_specific_totals: bool = False,
+) -> pd.DataFrame:
     """把多目标流水线合并为共享阶段列加目标指标列。"""
     shared_columns = [
         "规则分类",
@@ -279,6 +286,8 @@ def _merge_swap_target_pipelines(pipelines: Dict[str, pd.DataFrame]) -> pd.DataF
         "样本总额",
         "金额占比",
     ]
+    if target_specific_totals:
+        shared_columns = ["规则分类", "指标名称", "规则详情", "行类型"]
     first = next(iter(pipelines.values())).reset_index(drop=True)
     shared = [column for column in shared_columns if column in first.columns]
     pieces = [first[shared].copy()]
@@ -450,11 +459,9 @@ def _build_swap_pipeline(
     n_jobs=-1,
     parallel_backend=None,
     parallel_config=None,
+    del_grey=False,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """按显式阶段集合构建置入置出流水线。"""
-    n_total = len(data)
-    all_mask = pd.Series(True, index=data.index)
-
     if isinstance(y, dict):
         target_series = y
     elif y is not None:
@@ -490,14 +497,25 @@ def _build_swap_pipeline(
                 n_jobs=n_jobs,
                 parallel_backend=parallel_backend,
                 parallel_config=parallel_config,
+                del_grey=del_grey,
             )
             pipelines[target_name] = pipeline
             result = result.copy()
             result.insert(0, "目标标签", target_name)
             results.append(result)
-        return _merge_swap_target_pipelines(pipelines), pd.concat(results, ignore_index=True)
+        return _merge_swap_target_pipelines(
+            pipelines,
+            target_specific_totals=del_grey,
+        ), pd.concat(results, ignore_index=True)
 
     target_name, actual_risk = next(iter(target_series.items()))
+    if del_grey:
+        valid = pd.to_numeric(actual_risk, errors="coerce").notna()
+        data = data.loc[valid].copy()
+        actual_risk = actual_risk.loc[valid]
+
+    n_total = len(data)
+    all_mask = pd.Series(True, index=data.index)
 
     score_tasks = [
         (name, data, score_map[name], table, target_name)
@@ -971,6 +989,7 @@ def ruleset_analysis(
     n_jobs: Union[int, float] = -1,
     parallel_backend: Optional[str] = None,
     parallel_config: Optional[Dict] = None,
+    del_grey: bool = False,
     **kwargs,
 ) -> pd.DataFrame:
     """用于D类调优时的规则集效果分析.
@@ -985,6 +1004,7 @@ def ruleset_analysis(
     :param dpds: 逾期定义方式（支持多标签，传入列表）
     :param filter_cols: 指定返回的字段列表
     :param amount: 金额字段名称，用于金额口径分析
+    :param del_grey: 是否按每个 DPD 独立删除灰样本 ``(0, dpd]``，默认 False
     :return: 规则集效果评估表。单标签时返回单层列结构，多标签时返回多层列结构（MultiIndex）
 
     **参考样例**
@@ -1019,6 +1039,7 @@ def ruleset_analysis(
         n_jobs=report_plan.child_workers,
         parallel_backend=parallel_backend,
         parallel_config=parallel_config,
+        del_grey=del_grey,
         **kwargs,
     )
     table_total = _configured_rule_report(
@@ -1222,6 +1243,7 @@ def rule_swap_analysis(
     parallel_backend: Optional[str] = None,
     parallel_config: Optional[Dict] = None,
     risk_uplifts: Optional[Dict[str, float]] = None,
+    del_grey: Optional[bool] = None,
 ) -> Dict[str, pd.DataFrame]:
     """规则置入置出（Swap）分析。
 
@@ -1269,6 +1291,8 @@ def rule_swap_analysis(
     :param min_bin_size: 每箱最小样本占比，默认 0.05（仅 reference_data 模式生效）
     :param missing_separate: 是否将缺失值单独分箱，默认 True
     :param bin_params: 额外分箱参数 dict，会透传给 ``feature_bin_stats``
+    :param del_grey: 是否按每个 DPD 独立删除灰样本 ``(0, dpd]``。未显式传入时
+        兼容读取 ``bin_params['del_grey']``，默认 False
     :param rule_analysis_mode: 规则分析模式，默认 'independent'。
         - 'independent'：每条规则应用到所属阶段的同一父样本，明细可重叠，合计按命中并集去重。
         - 'sequential'：每条规则在同阶段前一条规则处理后的剩余样本上分析。
@@ -1359,6 +1383,11 @@ def rule_swap_analysis(
 
     # ── 第二步：解析与计算分箱表 ─────────────────────────────────────────
     resolved_bin_params = dict(bin_params) if bin_params else {}
+    if del_grey is None:
+        del_grey = bool(resolved_bin_params.get('del_grey', False))
+    else:
+        del_grey = bool(del_grey)
+        resolved_bin_params['del_grey'] = del_grey
     resolved_bin_params.setdefault('n_jobs', n_jobs)
     resolved_bin_params.setdefault('parallel_backend', parallel_backend)
     resolved_bin_params.setdefault('parallel_config', parallel_config)
@@ -1381,7 +1410,7 @@ def rule_swap_analysis(
     )
 
     # ── 第三步半：解析分析样本的实际表现标签 ──────────────────────────────
-    y = _resolve_target_series(data, target, overdue, dpds)
+    y = _resolve_target_series(data, target, overdue, dpds, del_grey=del_grey)
     for table in bin_table_result.values():
         _validate_swap_bin_labels(table)
     if len(y) > 1:
@@ -1413,6 +1442,7 @@ def rule_swap_analysis(
         n_jobs=n_jobs,
         parallel_backend=parallel_backend,
         parallel_config=parallel_config,
+        del_grey=del_grey,
     )
 
     # ── 返回结果 ────────────────────────────────────────────────────────────

@@ -1,78 +1,83 @@
 """报告样本统计表构造工具."""
 
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import pandas as pd
 
 from ..utils.parallel import ParallelWorkload, parallel_execute
 
+TargetValues = Union[Sequence[Union[int, float]], np.ndarray, pd.Series]
+
 
 def _sample_stats_row(task):
-    y_map, label_names, display_labels, is_multi, flat_total_col, dataset_label = task
+    y_map, label_names, display_labels, is_multi, flat_total_col, dataset_label, target_specific_totals = task
     if is_multi:
         row = {}
-        first_y = _as_array(y_map[label_names[0]])
-        row[("统计详情", "样本总数")] = len(first_y)
+        if not target_specific_totals:
+            first_y = _as_array(y_map[label_names[0]])
+            row[("统计详情", "样本总数")] = len(first_y)
         for label in label_names:
             y_arr = _as_array(y_map[label])
-            n = len(y_arr)
-            nb = int(np.nansum(y_arr))
+            n, nb, bad_rate = _target_stats(y_arr, drop_invalid=target_specific_totals)
             display = display_labels.get(label, label)
+            if target_specific_totals:
+                row[("样本总数", display)] = n
             row[("好样本数", display)] = n - nb
             row[("坏样本数", display)] = nb
-            row[("坏样本率", display)] = float(np.nanmean(y_arr)) if n else 0.0
+            row[("坏样本率", display)] = bad_rate
         return row
     y_arr = _as_array(y_map[label_names[0]])
-    n = len(y_arr)
-    nb = int(np.nansum(y_arr))
+    n, nb, bad_rate = _target_stats(y_arr, drop_invalid=target_specific_totals)
     return {
         "数据集": dataset_label,
         flat_total_col: n,
         "好样本数": n - nb,
         "坏样本数": nb,
-        "坏样本率": float(np.nanmean(y_arr)) if n else 0.0,
+        "坏样本率": bad_rate,
     }
 
 
 def _group_stats_row(task):
-    dataset_label, group, y_map, mask, label_names, display_labels, is_multi, group_name = task
+    dataset_label, group, y_map, mask, label_names, display_labels, is_multi, group_name, target_specific_totals = task
     if is_multi:
         row = {
             ("统计详情", "数据集"): dataset_label,
             ("统计详情", group_name): str(group),
         }
-        first_y = _as_array(y_map[label_names[0]])[mask]
-        row[("统计详情", "样本总数")] = int(len(first_y))
+        if not target_specific_totals:
+            first_y = _as_array(y_map[label_names[0]])[mask]
+            row[("统计详情", "样本总数")] = int(len(first_y))
         for label in label_names:
             y_group = _as_array(y_map[label])[mask]
-            n = len(y_group)
-            nb = int(np.nansum(y_group))
+            n, nb, bad_rate = _target_stats(y_group, drop_invalid=target_specific_totals)
             display = display_labels.get(label, label)
+            if target_specific_totals:
+                row[("样本总数", display)] = n
             row[("好样本数", display)] = n - nb
             row[("坏样本数", display)] = nb
-            row[("坏样本率", display)] = float(np.nanmean(y_group)) if n else 0.0
+            row[("坏样本率", display)] = bad_rate
         return (dataset_label, str(group)), row
     y_group = _as_array(y_map[label_names[0]])[mask]
-    n = len(y_group)
-    nb = int(np.nansum(y_group))
+    n, nb, bad_rate = _target_stats(y_group, drop_invalid=target_specific_totals)
     return (dataset_label, str(group)), {
         "样本总数": n,
         "好样本数": n - nb,
         "坏样本数": nb,
-        "坏样本率": float(np.nanmean(y_group)) if n else 0.0,
+        "坏样本率": bad_rate,
     }
 
 
 def build_sample_stats_table(
     dataset_labels: Sequence[str],
-    y_by_dataset: Sequence[Dict[str, Sequence[int]]],
+    y_by_dataset: Sequence[Dict[str, TargetValues]],
     label_names: Sequence[str],
     display_labels: Optional[Dict[str, str]] = None,
     flat_total_col: str = "样本总数",
     n_jobs=-1,
     parallel_backend=None,
     parallel_config=None,
+    target_specific_totals: bool = False,
 ) -> Tuple[pd.DataFrame, List[Any]]:
     """构造数据集样本统计表."""
     display_labels = display_labels or {}
@@ -80,9 +85,24 @@ def build_sample_stats_table(
     is_multi = len(label_names) > 1
 
     if is_multi:
-        columns = [("统计详情", "样本总数")] + [(metric, display_labels.get(label, label)) for metric in ["好样本数", "坏样本数", "坏样本率"] for label in label_names]
+        if target_specific_totals:
+            metrics = ["样本总数", "好样本数", "坏样本数", "坏样本率"]
+            columns = [
+                (metric, display_labels.get(label, label))
+                for metric in metrics
+                for label in label_names
+            ]
+        else:
+            columns = [("统计详情", "样本总数")] + [
+                (metric, display_labels.get(label, label))
+                for metric in ["好样本数", "坏样本数", "坏样本率"]
+                for label in label_names
+            ]
         multi_cols = pd.MultiIndex.from_tuples(columns, names=["统计详情", ""])
-        tasks = [(y_map, label_names, display_labels, True, flat_total_col, dataset_label) for dataset_label, y_map in zip(dataset_labels, y_by_dataset)]
+        tasks = [
+            (y_map, label_names, display_labels, True, flat_total_col, dataset_label, target_specific_totals)
+            for dataset_label, y_map in zip(dataset_labels, y_by_dataset)
+        ]
         rows = parallel_execute(
             _sample_stats_row,
             tasks,
@@ -104,7 +124,10 @@ def build_sample_stats_table(
         result.index.name = "数据集"
         return result, [c for c in multi_cols if c[0] == "坏样本率"]
 
-    tasks = [(y_map, label_names, display_labels, False, flat_total_col, dataset_label) for dataset_label, y_map in zip(dataset_labels, y_by_dataset)]
+    tasks = [
+        (y_map, label_names, display_labels, False, flat_total_col, dataset_label, target_specific_totals)
+        for dataset_label, y_map in zip(dataset_labels, y_by_dataset)
+    ]
     rows = parallel_execute(
         _sample_stats_row,
         tasks,
@@ -127,7 +150,7 @@ def build_sample_stats_table(
 
 def build_group_distribution_table(
     dataset_labels: Sequence[str],
-    y_by_dataset: Sequence[Dict[str, Sequence[int]]],
+    y_by_dataset: Sequence[Dict[str, TargetValues]],
     group_values_by_dataset: Sequence[Sequence[Any]],
     label_names: Sequence[str],
     display_labels: Optional[Dict[str, str]] = None,
@@ -135,6 +158,7 @@ def build_group_distribution_table(
     n_jobs=-1,
     parallel_backend=None,
     parallel_config=None,
+    target_specific_totals: bool = False,
 ) -> Tuple[pd.DataFrame, List[Any]]:
     """构造数据集分组分布表."""
     display_labels = display_labels or {}
@@ -146,7 +170,19 @@ def build_group_distribution_table(
         gvals = pd.Series(group_values).fillna("缺失").astype(str).to_numpy()
         for group in _sorted_unique(gvals):
             mask = gvals == group
-            tasks.append((dataset_label, group, y_map, mask, label_names, display_labels, is_multi, group_name))
+            tasks.append(
+                (
+                    dataset_label,
+                    group,
+                    y_map,
+                    mask,
+                    label_names,
+                    display_labels,
+                    is_multi,
+                    group_name,
+                    target_specific_totals,
+                )
+            )
 
     results = parallel_execute(
         _group_stats_row,
@@ -173,7 +209,17 @@ def build_group_distribution_table(
 
     index = pd.MultiIndex.from_tuples(index_tuples, names=["数据集", group_name])
     if is_multi:
-        columns = [("统计详情", "数据集"), ("统计详情", group_name), ("统计详情", "样本总数")] + [(metric, display_labels.get(label, label)) for metric in ["好样本数", "坏样本数", "坏样本率"] for label in label_names]
+        columns = [("统计详情", "数据集"), ("统计详情", group_name)]
+        if target_specific_totals:
+            metrics = ["样本总数", "好样本数", "坏样本数", "坏样本率"]
+        else:
+            columns.append(("统计详情", "样本总数"))
+            metrics = ["好样本数", "坏样本数", "坏样本率"]
+        columns.extend(
+            (metric, display_labels.get(label, label))
+            for metric in metrics
+            for label in label_names
+        )
         multi_cols = pd.MultiIndex.from_tuples(columns, names=["统计详情", ""])
         result = pd.DataFrame(rows, columns=multi_cols)
         return result, [c for c in multi_cols if c[0] == "坏样本率"]
@@ -181,8 +227,18 @@ def build_group_distribution_table(
     return pd.DataFrame(rows, index=index, columns=["样本总数", "好样本数", "坏样本数", "坏样本率"]), ["坏样本率"]
 
 
-def _as_array(values: Sequence[int]) -> np.ndarray:
+def _as_array(values: TargetValues) -> np.ndarray:
     return np.asarray(values, dtype=float)
+
+
+def _target_stats(values: np.ndarray, drop_invalid: bool = False) -> Tuple[int, int, float]:
+    """计算单个目标的样本数、坏样本数和坏样本率."""
+    if drop_invalid:
+        values = values[~np.isnan(values)]
+    n = len(values)
+    bad = int(np.nansum(values))
+    bad_rate = float(np.nanmean(values)) if n else 0.0
+    return n, bad, bad_rate
 
 
 def _sorted_unique(values: Sequence[Any]) -> List[Any]:

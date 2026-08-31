@@ -1018,19 +1018,30 @@ def add_margins(table: pd.DataFrame) -> pd.DataFrame:
     # 需要汇总的原始计数列（累计计数不能再次求和）
     numeric_cols = []
     cumulative_count_cols = []
-    sample_total_col = None
-    bad_sample_col = None
+    count_cols_by_name = {
+        '样本总数': {},
+        '好样本数': {},
+        '坏样本数': {},
+    }
+
+    def _column_group(column):
+        return column[0] if is_multi else None
+
+    def _resolve_count_column(metric_name, group):
+        grouped_columns = count_cols_by_name[metric_name]
+        if group in grouped_columns:
+            return grouped_columns[group]
+        if len(grouped_columns) == 1:
+            return next(iter(grouped_columns.values()))
+        return None
     
     for col in table.columns:
         col_name = col[1] if is_multi else col
         if col_name in ['样本总数', '好样本数', '坏样本数']:
             numeric_cols.append(col)
+            count_cols_by_name[col_name][_column_group(col)] = col
         if col_name in ['累积好样本数', '累积坏样本数']:
             cumulative_count_cols.append(col)
-        if col_name == '样本总数':
-            sample_total_col = col
-        if col_name == '坏样本数':
-            bad_sample_col = col
     
     # 对每一列求和
     for col in numeric_cols:
@@ -1041,13 +1052,7 @@ def add_margins(table: pd.DataFrame) -> pd.DataFrame:
     for cumulative_col in cumulative_count_cols:
         cumulative_name = cumulative_col[1] if is_multi else cumulative_col
         total_name = cumulative_to_total[cumulative_name]
-        matching_total_col = None
-        for col in table.columns:
-            col_name = col[1] if is_multi else col
-            same_group = not is_multi or col[0] == cumulative_col[0]
-            if col_name == total_name and same_group:
-                matching_total_col = col
-                break
+        matching_total_col = _resolve_count_column(total_name, _column_group(cumulative_col))
         if matching_total_col is not None:
             total_row[cumulative_col] = total_row[matching_total_col]
     
@@ -1062,14 +1067,11 @@ def add_margins(table: pd.DataFrame) -> pd.DataFrame:
         total_row[col] = 1.0
     
     # 计算坏样本率
-    bad_rate_col = None
-    for col in table.columns:
-        col_name = col[1] if is_multi else col
-        if col_name == '坏样本率':
-            bad_rate_col = col
-            break
-    
-    if bad_rate_col is not None:
+    bad_rate_cols = [col for col in table.columns if (col[1] if is_multi else col) == '坏样本率']
+    for bad_rate_col in bad_rate_cols:
+        group = _column_group(bad_rate_col)
+        bad_sample_col = _resolve_count_column('坏样本数', group)
+        sample_total_col = _resolve_count_column('样本总数', group)
         if (
             bad_sample_col is not None
             and sample_total_col is not None
@@ -1086,59 +1088,41 @@ def add_margins(table: pd.DataFrame) -> pd.DataFrame:
         '坏账改善': 0.0,
         '风险拒绝比': 0.0,
     }
-    cumulative_total_value = (
-        1.0
-        if (
-            bad_sample_col is not None
-            and sample_total_col is not None
-            and total_row[bad_sample_col] > 0
-            and total_row[sample_total_col] > 0
-        )
-        else 0.0
-    )
-    cumulative_metric_values = {
-        '累积LIFT值': cumulative_total_value,
-        '累积坏账改善': cumulative_total_value,
-        '累计风险拒绝比': cumulative_total_value,
-    }
+    cumulative_metric_names = {'累积LIFT值', '累积坏账改善', '累计风险拒绝比'}
     for col in table.columns:
         col_name = col[1] if is_multi else col
         if col_name in overall_metric_values:
             total_row[col] = overall_metric_values[col_name]
-        elif col_name in cumulative_metric_values:
-            total_row[col] = cumulative_metric_values[col_name]
+        elif col_name in cumulative_metric_names:
+            group = _column_group(col)
+            bad_sample_col = _resolve_count_column('坏样本数', group)
+            sample_total_col = _resolve_count_column('样本总数', group)
+            total_row[col] = (
+                1.0
+                if (
+                    bad_sample_col is not None
+                    and sample_total_col is not None
+                    and total_row[bad_sample_col] > 0
+                    and total_row[sample_total_col] > 0
+                )
+                else 0.0
+            )
     
     # WOE和IV值：分档WOE=0，分档IV=0，指标IV=各分档IV之和
-    woe_col = None
-    bin_iv_col = None
-    total_iv_col = None
-    
     for col in table.columns:
         col_name = col[1] if is_multi else col
         if col_name == '分档WOE值':
-            woe_col = col
+            total_row[col] = 0.0
         elif col_name == '分档IV值':
-            bin_iv_col = col
+            total_row[col] = 0.0
         elif col_name == '指标IV值':
-            total_iv_col = col
-    
-    if woe_col:
-        total_row[woe_col] = 0.0
-    if bin_iv_col:
-        total_row[bin_iv_col] = 0.0
-    if total_iv_col:
-        total_row[total_iv_col] = table[total_iv_col].iloc[0]
+            total_row[col] = table[col].iloc[0]
     
     # KS值：取最大KS
-    ks_col = None
     for col in table.columns:
         col_name = col[1] if is_multi else col
         if col_name == '分档KS值':
-            ks_col = col
-            break
-    
-    if ks_col:
-        total_row[ks_col] = table[ks_col].max()
+            total_row[col] = table[col].max()
     
     # 重新组合：正常分箱 -> 缺失值 -> 特殊值 -> 合计
     result_rows = []
