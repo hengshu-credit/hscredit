@@ -12,7 +12,7 @@ import pandas as pd
 from pandas.api import types as ptypes
 
 from ...exceptions import DependencyError, InputValidationError, ValidationError
-from ..exceptions import DatabaseCapabilityError, DatabaseQueryError
+from ..exceptions import DatabaseCapabilityError, DatabaseQueryError, database_error_from
 from ..metadata import MetadataInspection, QualifiedTarget
 from ..type_inference import profile_string_series, resolve_bounded_string_length
 from ..types import DatabaseCapabilities
@@ -440,11 +440,23 @@ ORDER BY CASE WHEN INDEX_NAME='PRIMARY' THEN 0 ELSE 1 END,
                         connection.commit()
                     except Exception as exc:
                         self._rollback_quietly(connection)
-                        raise DatabaseQueryError("MySQL追加写入失败") from exc
+                        raise database_error_from(
+                            DatabaseQueryError,
+                            "MySQL追加写入失败",
+                            cause=exc,
+                            sql=sql,
+                            params=values,
+                        )
             except DatabaseQueryError:
                 raise
             except Exception as exc:
-                raise DatabaseQueryError("MySQL追加写入失败") from exc
+                raise database_error_from(
+                    DatabaseQueryError,
+                    "MySQL追加写入失败",
+                    cause=exc,
+                    sql=sql,
+                    params=values,
+                )
             return BatchWriteResult(
                 inserted=inserted,
                 updated=0,

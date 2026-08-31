@@ -9,7 +9,7 @@ from typing import Any, Iterable, Iterator, List, Mapping, Optional, Sequence, T
 import pandas as pd
 
 from ...exceptions import DependencyError
-from ..exceptions import DatabaseConnectionError, DatabaseQueryError
+from ..exceptions import DatabaseConnectionError, DatabaseQueryError, database_error_from
 from ..types import DatabaseCapabilities, PoolOptions, validate_result_type
 from .base import BaseDatabaseAdapter
 
@@ -138,9 +138,21 @@ class DBAPIAdapter(BaseDatabaseAdapter):
                 columns = [column[0] for column in (cursor.description or ())]
                 rows = list(cursor.fetchall())
         except DatabaseConnectionError as exc:
-            raise DatabaseQueryError("SQL查询失败") from exc
+            raise database_error_from(
+                DatabaseQueryError,
+                "SQL查询失败",
+                cause=exc,
+                sql=sql,
+                params=params,
+            )
         except Exception as exc:
-            raise DatabaseQueryError("SQL查询失败") from exc
+            raise database_error_from(
+                DatabaseQueryError,
+                "SQL查询失败",
+                cause=exc,
+                sql=sql,
+                params=params,
+            )
 
         if result == "rows":
             return rows
@@ -166,11 +178,23 @@ class DBAPIAdapter(BaseDatabaseAdapter):
                     return int(cursor.rowcount)
                 except Exception as exc:
                     self._rollback_quietly(connection)
-                    raise DatabaseQueryError("SQL执行失败") from exc
+                    raise database_error_from(
+                        DatabaseQueryError,
+                        "SQL执行失败",
+                        cause=exc,
+                        sql=sql,
+                        params=params,
+                    )
         except DatabaseQueryError:
             raise
         except DatabaseConnectionError as exc:
-            raise DatabaseQueryError("SQL执行失败") from exc
+            raise database_error_from(
+                DatabaseQueryError,
+                "SQL执行失败",
+                cause=exc,
+                sql=sql,
+                params=params,
+            )
 
     def executemany(self, sql: str, values: Iterable[Any]) -> int:
         """批量执行 SQL，并在成功时提交、失败时回滚。"""
@@ -184,11 +208,23 @@ class DBAPIAdapter(BaseDatabaseAdapter):
                     return int(cursor.rowcount)
                 except Exception as exc:
                     self._rollback_quietly(connection)
-                    raise DatabaseQueryError("SQL批量执行失败") from exc
+                    raise database_error_from(
+                        DatabaseQueryError,
+                        "SQL批量执行失败",
+                        cause=exc,
+                        sql=sql,
+                        params=materialized,
+                    )
         except DatabaseQueryError:
             raise
         except DatabaseConnectionError as exc:
-            raise DatabaseQueryError("SQL批量执行失败") from exc
+            raise database_error_from(
+                DatabaseQueryError,
+                "SQL批量执行失败",
+                cause=exc,
+                sql=sql,
+                params=materialized,
+            )
 
     def open_stream(self, sql: str, params: Any = None) -> DBAPIQueryResource:
         """打开一个由调用方负责关闭的流式查询资源。"""
@@ -210,7 +246,13 @@ class DBAPIAdapter(BaseDatabaseAdapter):
                         connection.close()
             elif connection is not None:
                 connection.close()
-            raise DatabaseQueryError("打开流式SQL查询失败") from exc
+            raise database_error_from(
+                DatabaseQueryError,
+                "打开流式SQL查询失败",
+                cause=exc,
+                sql=sql,
+                params=params,
+            )
 
     def count_rows(self, sql: str, params: Any = None) -> int:
         """执行统计 SQL 并返回第一列。"""

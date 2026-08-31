@@ -524,4 +524,39 @@ custom = Database("custom", endpoint="https://database.example")
 - `DatabaseMetadataError`：元数据读取或 Excel 导出失败。
 - `DatabaseCapabilityError`：数据库或表模型不能保证所请求语义。
 
+SQL 查询、执行或写入失败时，异常文本会直接包含实际执行的 SQL 和数据库驱动返回的原始错误。
+即使 `stream_write()` 又包装了一层 `DatabaseWriteError`，SQL 上下文也会沿异常链透传到最外层：
+
+```python
+from hscredit.database import DatabaseError
+
+try:
+    db.execute(
+        "UPDATE risk.events SET score=%s WHERE id=%s",
+        params=(720, 1001),
+    )
+except DatabaseError as exc:
+    print(exc)
+    # SQL执行失败
+    # 执行SQL:
+    # UPDATE risk.events SET score=%s WHERE id=%s
+    # 数据库错误: OperationalError: ...数据库原始错误...
+
+    print(exc.sql)           # 实际执行 SQL
+    print(exc.driver_error)  # 原始驱动异常对象
+    print(exc.params)        # 绑定参数，仅在确有排查需要时显式读取
+```
+
+为避免密码、Token、身份证号等敏感值进入日志，`str(exc)` 和 traceback 不主动拼接绑定参数；
+若数据库驱动在错误文本中回显了某个绑定值，可见错误会整体替换为脱敏提示。原始驱动异常仍保留
+在 `exc.driver_error`，可能包含数据库回显的敏感值，因此不要直接写入日志。参数原样保存在
+`exc.params`，记录前同样应自行脱敏；`executemany()` 失败时该属性会保留当前失败批次已经物化的
+参数列表，异常格式化还会扫描该批参数以判断驱动文本是否需要脱敏，排查完成后不应长期持有异常
+对象。为保证 traceback 不回显原始驱动文本，`exc.__cause__` 是脱敏代理异常；需要错误码、原始
+类型或驱动专有属性的代码应迁移到 `exc.driver_error`。
+
+流式读取的取数/转换失败是主错误；即使随后关闭游标或连接也失败，主错误仍会抛出，清理异常可从
+`exc.cleanup_error` 查看。ClickHouse `insert_df`、StarRocks Stream Load、MaxCompute Tunnel 等
+不生成 SQL 的原生写入会显示数据库原始错误和目标操作，但 `exc.sql` 为 `None`。
+
 仓库为九类后端提供环境变量门控的真实集成测试。Redis 使用 `HSCREDIT_TEST_REDIS_URL`，MongoDB 使用 `HSCREDIT_TEST_MONGODB_URI` 和可选的 `HSCREDIT_TEST_MONGODB_DATABASE`。未配置服务时测试会明确 skip，不代表远程数据库已经验证。对应入口位于 `tests/test_database/integration/`。

@@ -14,6 +14,7 @@ from ..exceptions import (
     DatabaseCapabilityError,
     DatabaseQueryError,
     DatabaseWriteError,
+    database_error_from,
 )
 from ..metadata import MetadataInspection, QualifiedTarget
 from ..type_inference import profile_string_series
@@ -129,13 +130,25 @@ class ClickHouseAdapter(BaseDatabaseAdapter):
             columns = list(query_result.column_names)
             return [dict(zip(columns, row)) for row in rows]
         except Exception as exc:
-            raise DatabaseQueryError("ClickHouse SQL查询失败") from exc
+            raise database_error_from(
+                DatabaseQueryError,
+                "ClickHouse SQL查询失败",
+                cause=exc,
+                sql=sql,
+                params=params,
+            )
 
     def execute(self, sql: str, params: Any = None) -> Any:
         try:
             return self.client.command(sql, parameters=params)
         except Exception as exc:
-            raise DatabaseQueryError("ClickHouse SQL执行失败") from exc
+            raise database_error_from(
+                DatabaseQueryError,
+                "ClickHouse SQL执行失败",
+                cause=exc,
+                sql=sql,
+                params=params,
+            )
 
     def executemany(self, sql: str, values: Any) -> int:
         affected = 0
@@ -154,7 +167,13 @@ class ClickHouseAdapter(BaseDatabaseAdapter):
             )
             return ClickHouseQueryResource(context)
         except Exception as exc:
-            raise DatabaseQueryError("打开 ClickHouse 流式查询失败") from exc
+            raise database_error_from(
+                DatabaseQueryError,
+                "打开 ClickHouse 流式查询失败",
+                cause=exc,
+                sql=sql,
+                params=params,
+            )
 
     def count_rows(self, sql: str, params: Any = None) -> int:
         rows = self.query(sql, params=params, result="rows")

@@ -7,7 +7,7 @@ import pytest
 
 from hscredit.database import Database, PoolOptions, register_adapter
 from hscredit.database.adapters.clickhouse import ClickHouseAdapter
-from hscredit.database.exceptions import DatabaseCapabilityError
+from hscredit.database.exceptions import DatabaseCapabilityError, DatabaseQueryError
 from hscredit.database.metadata import QualifiedTarget
 
 
@@ -123,6 +123,36 @@ def test_clickhouse_query_passes_parameters_to_native_client(adapter):
 
     assert frame["id"].tolist() == [2]
     assert adapter.client.queries[-1][2] == {"minimum": 1}
+
+
+def test_clickhouse_query_error_displays_sql_and_driver_error(adapter):
+    driver_error = RuntimeError("Code: 62, syntax error")
+    adapter.client.query_df = lambda *args, **kwargs: (_ for _ in ()).throw(driver_error)
+    sql = "select id from events where token={token:String}"
+    params = {"token": "sensitive-token"}
+
+    with pytest.raises(DatabaseQueryError) as caught:
+        adapter.query(sql, params=params)
+
+    message = str(caught.value)
+    assert f"执行SQL:\n{sql}" in message
+    assert "数据库错误: RuntimeError: Code: 62, syntax error" in message
+    assert "sensitive-token" not in message
+    assert caught.value.params == params
+    assert caught.value.driver_error is driver_error
+
+
+def test_clickhouse_execute_error_displays_sql_and_driver_error(adapter):
+    driver_error = RuntimeError("Code: 60, table does not exist")
+    adapter.client.command = lambda *args, **kwargs: (_ for _ in ()).throw(driver_error)
+    sql = "truncate table risk.missing_events"
+
+    with pytest.raises(DatabaseQueryError) as caught:
+        adapter.execute(sql)
+
+    assert f"执行SQL:\n{sql}" in str(caught.value)
+    assert "数据库错误: RuntimeError: Code: 60, table does not exist" in str(caught.value)
+    assert caught.value.driver_error is driver_error
 
 
 def test_clickhouse_checks_table_existence_without_create_ddl(adapter):

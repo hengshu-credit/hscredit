@@ -11,7 +11,7 @@ import pandas as pd
 from tqdm.auto import tqdm
 
 from ..exceptions import StateError
-from .exceptions import DatabaseQueryError
+from .exceptions import DatabaseQueryError, database_error_from
 from .types import StreamState, validate_result_type
 
 
@@ -38,6 +38,10 @@ class QueryStream:
         每次迭代和最终合并使用的结果类型。
     defaults : mapping, optional
         JSON 投影字段在数据库返回 ``NULL`` 时使用的默认值。
+    sql : str, optional
+        当前流实际执行的 SQL，用于失败异常上下文。
+    params : Any, optional
+        SQL 绑定参数，仅作为失败异常属性保存。
 
     **属性**
 
@@ -66,6 +70,8 @@ class QueryStream:
         progress: bool = False,
         result: str = "dataframe",
         defaults: Optional[Mapping[str, Any]] = None,
+        sql: Optional[str] = None,
+        params: Any = None,
     ):
         validate_result_type(result)
         self.resource = resource
@@ -75,6 +81,8 @@ class QueryStream:
         self.progress = progress
         self.result = result
         self.defaults = dict(defaults or {})
+        self.sql = sql
+        self.params = params
         self.state = StreamState.RUNNING
         self.rows_read = 0
         self.interrupted_at: Optional[str] = None
@@ -162,8 +170,15 @@ class QueryStream:
         except Exception as exc:
             self.state = StreamState.FAILED
             self.interrupt_reason = str(exc)
-            self._close_resource()
-            raise DatabaseQueryError("流式读取失败") from exc
+            cleanup_error = self._close_after_failure()
+            raise database_error_from(
+                DatabaseQueryError,
+                "流式读取失败",
+                cause=exc,
+                sql=self.sql,
+                params=self.params,
+                cleanup_error=cleanup_error,
+            )
 
         if self._is_empty_batch(batch):
             self.state = StreamState.COMPLETED
@@ -185,8 +200,22 @@ class QueryStream:
         except Exception as exc:
             self.state = StreamState.FAILED
             self.interrupt_reason = str(exc)
+            cleanup_error = self._close_after_failure()
+            raise database_error_from(
+                DatabaseQueryError,
+                "流式读取失败",
+                cause=exc,
+                sql=self.sql,
+                params=self.params,
+                cleanup_error=cleanup_error,
+            )
+
+    def _close_after_failure(self) -> Optional[BaseException]:
+        try:
             self._close_resource()
-            raise DatabaseQueryError("流式读取失败") from exc
+        except Exception as exc:
+            return exc
+        return None
 
     def _close_resource(self) -> None:
         if self._resource_closed:

@@ -410,7 +410,7 @@ def test_mysql_append_rolls_back_whole_batch_on_non_duplicate_error(adapter):
 
     from hscredit.database.exceptions import DatabaseQueryError
 
-    with pytest.raises(DatabaseQueryError, match="MySQL追加写入失败"):
+    with pytest.raises(DatabaseQueryError, match="MySQL追加写入失败") as caught:
         adapter.write_batch(
             "risk.events",
             pd.DataFrame({"id": [1, 2], "name": ["先处理", "失败"]}),
@@ -419,6 +419,11 @@ def test_mysql_append_rolls_back_whole_batch_on_non_duplicate_error(adapter):
             key_columns=["id"],
         )
 
+    message = str(caught.value)
+    assert "执行SQL:\nINSERT INTO `risk`.`events` (`id`, `name`) VALUES (%s, %s)" in message
+    assert "数据库错误: DriverError: (1366, 'Incorrect value')" in message
+    assert "先处理" not in message
+    assert caught.value.params == [(1, "先处理"), (2, "失败")]
     assert connection.commit_calls == 0
     assert connection.rollback_calls == 1
 

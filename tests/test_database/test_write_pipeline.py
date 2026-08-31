@@ -6,7 +6,7 @@ import pytest
 
 from hscredit.database import Database, DatabaseCapabilities, WriteResult, register_adapter, write
 from hscredit.database.adapters.base import BaseDatabaseAdapter
-from hscredit.database.exceptions import DatabaseCapabilityError, DatabaseWriteError
+from hscredit.database.exceptions import DatabaseCapabilityError, DatabaseQueryError, DatabaseWriteError
 from hscredit.database.writing import BatchWriteResult, iter_write_batches, validate_sql_type
 from hscredit.exceptions import InputValidationError, ValidationError
 
@@ -374,6 +374,60 @@ def test_partial_failure_exposes_committed_batch_result():
     assert caught.value.result.rows_inserted == 1
     assert caught.value.result.batches_committed == 1
     assert caught.value.result.failed_batch == 2
+
+
+def test_outer_write_error_displays_inner_sql_and_driver_error():
+    driver_error = RuntimeError("1146 target table does not exist")
+    sql = "INSERT INTO `risk`.`events` (`id`) VALUES (%s)"
+    params = [("sensitive-id",)]
+
+    class SQLFailureAdapter(ObservableWriteAdapter):
+        def write_batch(self, *args, **kwargs):
+            del args, kwargs
+            try:
+                raise driver_error
+            except RuntimeError as exc:
+                raise DatabaseQueryError(
+                    "MySQL批量写入失败",
+                    sql=sql,
+                    params=params,
+                    driver_error=exc,
+                ) from exc
+
+    register_adapter("sql_failure", SQLFailureAdapter, replace=True)
+    database = Database("sql_failure")
+
+    with pytest.raises(DatabaseWriteError) as caught:
+        database.stream_write(
+            pd.DataFrame({"id": [1]}),
+            "risk.events",
+            mode="o",
+        )
+
+    message = str(caught.value)
+    assert "第 1 批数据失败" in message
+    assert f"执行SQL:\n{sql}" in message
+    assert "数据库错误: RuntimeError: 1146 target table does not exist" in message
+    assert "sensitive-id" not in message
+    assert caught.value.sql == sql
+    assert caught.value.params == params
+    assert caught.value.driver_error is driver_error
+
+
+def test_explicit_nested_database_error_resolves_raw_driver_error():
+    driver_error = RuntimeError("raw driver failure")
+    inner = DatabaseQueryError(
+        "内层失败",
+        sql="select 1",
+        driver_error=driver_error,
+    )
+    outer = DatabaseWriteError(
+        "外层失败",
+        driver_error=inner,
+    )
+
+    assert outer.driver_error is driver_error
+    assert "数据库错误: RuntimeError: raw driver failure" in str(outer)
 
 
 def test_create_table_delegates_validated_dataframe_and_options():

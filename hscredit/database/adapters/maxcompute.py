@@ -15,6 +15,7 @@ from ..exceptions import (
     DatabaseMetadataError,
     DatabaseQueryError,
     DatabaseWriteError,
+    database_error_from,
 )
 from ..metadata import MetadataInspection, QualifiedTarget
 from ..type_inference import profile_string_series
@@ -112,7 +113,13 @@ class MaxComputeAdapter(DBAPIAdapter):
         except Exception as exc:
             if isinstance(exc, DatabaseQueryError):
                 raise
-            raise DatabaseQueryError("MaxCompute SQL执行失败") from exc
+            raise database_error_from(
+                DatabaseQueryError,
+                "MaxCompute SQL执行失败",
+                cause=exc,
+                sql=sql,
+                params=params,
+            )
 
     def executemany(self, sql: str, values: Any) -> int:
         materialized = list(values)
@@ -121,7 +128,13 @@ class MaxComputeAdapter(DBAPIAdapter):
                 cursor.executemany(sql, materialized)
                 return int(getattr(cursor, "rowcount", -1))
         except Exception as exc:
-            raise DatabaseQueryError("MaxCompute SQL批量执行失败") from exc
+            raise database_error_from(
+                DatabaseQueryError,
+                "MaxCompute SQL批量执行失败",
+                cause=exc,
+                sql=sql,
+                params=materialized,
+            )
 
     @staticmethod
     def _column_type(

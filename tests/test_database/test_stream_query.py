@@ -13,11 +13,12 @@ from hscredit.exceptions import StateError, ValidationError
 
 
 class ObservableStreamResource:
-    def __init__(self, rows, columns, *, interrupt_on_call=None, fail_on_call=None):
+    def __init__(self, rows, columns, *, interrupt_on_call=None, fail_on_call=None, fail_close=False):
         self.rows = list(rows)
         self.columns = list(columns)
         self.interrupt_on_call = interrupt_on_call
         self.fail_on_call = fail_on_call
+        self.fail_close = fail_close
         self.position = 0
         self.fetch_calls = 0
         self.closed = False
@@ -39,6 +40,8 @@ class ObservableStreamResource:
 
     def close(self):
         self.closed = True
+        if self.fail_close:
+            raise RuntimeError("close driver error")
 
 
 class ObservableStreamAdapter(BaseDatabaseAdapter):
@@ -56,6 +59,7 @@ class ObservableStreamAdapter(BaseDatabaseAdapter):
             connect_kwargs.get("columns", ["id"]),
             interrupt_on_call=connect_kwargs.get("interrupt_on_call"),
             fail_on_call=connect_kwargs.get("fail_on_call"),
+            fail_close=connect_kwargs.get("fail_close", False),
         )
         self.count_calls = []
 
@@ -209,13 +213,37 @@ def test_retain_false_keeps_constant_memory_and_disables_merge():
 
 def test_stream_failure_closes_resource_and_raises_query_error():
     database = Database("observable_stream", fail_on_call=2)
-    stream = database.stream_query("select id from t", chunksize=2)
+    sql = "select id from t where token=%s"
+    params = ("sensitive-token",)
+    stream = database.stream_query(sql, params=params, chunksize=2)
 
     assert next(stream)["id"].tolist() == [1, 2]
     with pytest.raises(DatabaseQueryError, match="流式读取失败") as caught:
         next(stream)
 
     assert isinstance(caught.value.__cause__, RuntimeError)
+    assert f"执行SQL:\n{sql}" in str(caught.value)
+    assert "数据库错误: RuntimeError: stream failed" in str(caught.value)
+    assert "sensitive-token" not in str(caught.value)
+    assert caught.value.sql == sql
+    assert caught.value.params == params
+    assert stream.state is StreamState.FAILED
+    assert database.adapter.resource.closed is True
+
+
+def test_stream_fetch_error_is_not_replaced_by_cleanup_error():
+    database = Database("observable_stream", fail_on_call=1, fail_close=True)
+    sql = "select id from t"
+    stream = database.stream_query(sql, chunksize=2)
+
+    with pytest.raises(DatabaseQueryError) as caught:
+        next(stream)
+
+    assert caught.value.driver_error.args == ("stream failed",)
+    assert caught.value.cleanup_error.args == ("close driver error",)
+    assert f"执行SQL:\n{sql}" in str(caught.value)
+    assert "数据库错误: RuntimeError: stream failed" in str(caught.value)
+    assert "资源清理错误: RuntimeError: close driver error" in str(caught.value)
     assert stream.state is StreamState.FAILED
     assert database.adapter.resource.closed is True
 

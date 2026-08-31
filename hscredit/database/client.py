@@ -341,6 +341,8 @@ class Database:
             progress=progress,
             result=result,
             defaults=projection.defaults if projection is not None else None,
+            sql=projected_sql,
+            params=params,
         )
 
     def read_query(

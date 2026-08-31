@@ -7,7 +7,7 @@ import pytest
 
 from hscredit.database import Database, PoolOptions, register_adapter
 from hscredit.database.adapters.maxcompute import MaxComputeAdapter
-from hscredit.database.exceptions import DatabaseCapabilityError, DatabaseWriteError
+from hscredit.database.exceptions import DatabaseCapabilityError, DatabaseQueryError, DatabaseWriteError
 from hscredit.database.metadata import QualifiedTarget
 
 from .fakes import FakeDBAPIDriver, FakeDBAPIState, FakePooledDB
@@ -116,6 +116,35 @@ def adapter():
 
 def test_maxcompute_declares_no_transactions(adapter):
     assert adapter.capabilities.transactions is False
+
+
+def test_maxcompute_execute_error_displays_sql_and_driver_error(adapter):
+    driver_error = RuntimeError("ODPS-0130071 semantic analysis exception")
+    adapter.state.fail_execute = driver_error
+    sql = "drop table risk.missing_events"
+
+    with pytest.raises(DatabaseQueryError) as caught:
+        MaxComputeAdapter.execute(adapter, sql)
+
+    assert f"执行SQL:\n{sql}" in str(caught.value)
+    assert "数据库错误: RuntimeError: ODPS-0130071 semantic analysis exception" in str(caught.value)
+    assert caught.value.driver_error is driver_error
+
+
+def test_maxcompute_executemany_error_hides_bound_values(adapter):
+    driver_error = RuntimeError("ODPS-0123055 data conversion error")
+    adapter.state.fail_executemany = driver_error
+    sql = "insert into risk.events values (%s)"
+    values = [("sensitive-value",)]
+
+    with pytest.raises(DatabaseQueryError) as caught:
+        MaxComputeAdapter.executemany(adapter, sql, iter(values))
+
+    message = str(caught.value)
+    assert f"执行SQL:\n{sql}" in message
+    assert "数据库错误: RuntimeError: ODPS-0123055 data conversion error" in message
+    assert "sensitive-value" not in message
+    assert caught.value.params == values
 
 
 def test_maxcompute_recognizes_only_duplicate_table_error(adapter):
