@@ -1,6 +1,6 @@
 """零重要性筛选器（Null Importance）.
 
-使用实际重要性与随机目标下的 null 重要性差值识别真正有价值的特征。
+使用实际重要性与随机目标下的 null 重要性占比之差识别真正有价值的特征。
 
 **参考样例**
 
@@ -13,7 +13,7 @@
 >>> y = np.random.randint(0, 2, 200)  # 目标变量
 >>> selector = NullImportanceSelector(
 ...     RandomForestClassifier(n_estimators=50, random_state=42),  # 传入基模型
-...     threshold=0.0,  # 实际重要性-null重要性>0才保留
+...     threshold=0.0,  # 实际重要性占比-null重要性占比>0才保留
 ...     cv=3, n_runs=3  # 交叉验证次数
 ... )
 >>> selector.fit(X, y)
@@ -75,17 +75,28 @@ class NullImportanceSelector(BaseFeatureSelector):
 
     使用 null importance 识别真正有价值的特征。
     通过多次 shuffle 目标变量得到随机情况下的 null 重要性，
-    再用实际重要性减去 null 重要性作为特征得分。
+    对实际重要性和 null 重要性分别取各折、各次实验的均值，
+    再分别除以各自的特征重要性总和，得到 0～1 的占比。
+    特征得分为实际重要性占比减去 null 重要性占比；总重要性为 0 时占比全为 0。
 
     **参数**
 
     :param estimator: 评估器
     :param threshold: 阈值，默认为0.0
-        - 保留 ``实际重要性 - null重要性 > threshold`` 的特征
+        - 保留 ``实际重要性% - Null重要性% > threshold`` 的特征
+        - 阈值使用 0～1 的占比尺度，例如 0.01 表示实际占比需比 null 占比高出 1 个百分点
     :param cv: 交叉验证折数，默认为5
     :param n_runs: 置换次数，默认为5
     :param random_state: 随机种子
     :param target: 目标变量列名，默认为'target'
+
+    **属性**
+
+    :ivar actual_importances_: 各特征的原始实际重要性均值
+    :ivar null_importances_: 各特征的原始 null 重要性均值
+    :ivar scores_: 归一化后的实际重要性占比与 null 重要性占比之差
+    :ivar importance_details_: 包含原始重要性、两列重要性占比和特征得分的明细表；
+        ``实际重要性%``、``Null重要性%`` 为 0～1 的数值，例如 0.25 表示 25%
 
     **参考样例**
 
@@ -108,7 +119,7 @@ class NullImportanceSelector(BaseFeatureSelector):
     **注意**
 
     本方法通过多次打乱**目标变量**得到"零假设"下的重要性分布（null importances），
-    再以 ``实际重要性 - null重要性`` 判断特征是否显著优于随机，能有效剔除高基数/噪声特征的
+    再以 ``实际重要性% - Null重要性%`` 判断特征是否显著优于随机，能有效剔除高基数/噪声特征的
     虚高重要性。计算量为 ``n_runs × cv`` 次模型训练。
 
     **引用**
@@ -230,7 +241,11 @@ class NullImportanceSelector(BaseFeatureSelector):
 
         actual_mean = actual_importances.mean(axis=1)
         null_mean = null_importances.mean(axis=1)
-        scores = actual_mean - null_mean
+        actual_total = actual_mean.sum()
+        null_total = null_mean.sum()
+        actual_pct = actual_mean / actual_total if actual_total != 0 else np.zeros_like(actual_mean)
+        null_pct = null_mean / null_total if null_total != 0 else np.zeros_like(null_mean)
+        scores = actual_pct - null_pct
 
         self.actual_importances_ = pd.Series(actual_mean, index=X.columns)
         self.null_importances_ = pd.Series(null_mean, index=X.columns)
@@ -242,6 +257,8 @@ class NullImportanceSelector(BaseFeatureSelector):
                 "特征": X.columns,
                 "实际重要性": actual_mean,
                 "Null重要性": null_mean,
+                "实际重要性%": actual_pct,
+                "Null重要性%": null_pct,
                 "特征得分": scores,
             }
         )
@@ -249,7 +266,7 @@ class NullImportanceSelector(BaseFeatureSelector):
         # 筛选
         selected_mask = scores > self.threshold
         self.selected_features_ = X.columns[selected_mask].tolist()
-        self._drop_reason = f"实际重要性-Null重要性 <= {self.threshold}"
+        self._drop_reason = f"实际重要性%-Null重要性% <= {self.threshold}"
 
         dropped_cols = X.columns[~selected_mask].tolist()
         if len(dropped_cols) > 0:
@@ -260,18 +277,23 @@ class NullImportanceSelector(BaseFeatureSelector):
                     "剔除原因": [self._drop_reason] * len(dropped_cols),
                     "实际重要性": [details.loc[col, "实际重要性"] for col in dropped_cols],
                     "Null重要性": [details.loc[col, "Null重要性"] for col in dropped_cols],
+                    "实际重要性%": [details.loc[col, "实际重要性%"] for col in dropped_cols],
+                    "Null重要性%": [details.loc[col, "Null重要性%"] for col in dropped_cols],
                     "特征得分": [details.loc[col, "特征得分"] for col in dropped_cols],
                     "阈值": [self.threshold] * len(dropped_cols),
                 }
             )
         else:
-            self.dropped_ = pd.DataFrame(columns=["特征", "剔除原因", "实际重要性", "Null重要性", "特征得分", "阈值"])
+            self.dropped_ = pd.DataFrame(
+                columns=["特征", "剔除原因", "实际重要性", "Null重要性", "实际重要性%", "Null重要性%", "特征得分", "阈值"]
+            )
 
     def get_importance_details(self) -> pd.DataFrame:
-        """获取实际重要性、Null重要性和差值得分明细。
+        """获取原始重要性、重要性占比和占比差值得分明细。
 
-        :returns: 包含 ``特征``、``实际重要性``、``Null重要性``、``特征得分`` 的 DataFrame
+        :returns: 包含 ``特征``、``实际重要性``、``Null重要性``、``实际重要性%``、
+            ``Null重要性%``、``特征得分`` 的 DataFrame；百分比列为 0～1 的数值，得分为两列占比之差
         """
         if not hasattr(self, "importance_details_"):
-            return pd.DataFrame(columns=["特征", "实际重要性", "Null重要性", "特征得分"])
+            return pd.DataFrame(columns=["特征", "实际重要性", "Null重要性", "实际重要性%", "Null重要性%", "特征得分"])
         return self.importance_details_.copy()
