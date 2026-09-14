@@ -29,7 +29,6 @@ import numpy as np
 import pandas as pd
 from typing import Union, Tuple, Optional, Dict, Any
 from sklearn.metrics import (
-    roc_auc_score, roc_curve as sklearn_roc_curve,
     confusion_matrix as sk_confusion_matrix,
     classification_report as sk_classification_report,
     accuracy_score, precision_score, recall_score, f1_score
@@ -37,23 +36,27 @@ from sklearn.metrics import (
 
 from ._base import _validate_same_length, _validate_binary_target
 from ._binning import compute_bin_stats
+from ._ranking import _binary_ranking_curve, _binary_roc_statistics, _prepare_binary_scores
 from scipy.stats import ks_2samp as _ks_2samp
 
 
 def ks(y_true: Union[np.ndarray, pd.Series],
-       y_prob: Union[np.ndarray, pd.Series]) -> float:
+       y_prob: Union[np.ndarray, pd.Series], *, pos_label=1, sample_weight=None) -> float:
     """计算Kolmogorov-Smirnov统计量.
 
     KS值衡量模型区分正负样本的能力，值越大区分效果越好。
-    KS = max(TPR - FPR)，其中TPR为正样本累积率，FPR为负样本累积率。
+    KS = max(abs(TPR - FPR))，其中TPR为正样本累积率，FPR为负样本累积率。
+    同分样本按同一阈值整体累计，结果不受同分行顺序或分数方向影响。
 
     **参数**
 
     :param y_true: 真实标签 (0/1)，0为负样本，1为正样本
-    :param y_prob: 预测为正样本的概率值
+    :param y_prob: 预测为正样本的概率或评分；标签或分数缺失的样本成对删除
+    :param pos_label: 正样本标签，默认为1；非0/1标签需明确正样本
+    :param sample_weight: 可选非负样本权重；默认不加权
     :return: KS统计量，取值范围[0, 1]，越接近1区分能力越强
     :raises ValueError: 标签非二值或y_true/y_prob长度不一致时
-    :raises ValueError: y_true中全为正样本或全为负样本时
+    单一0/1类别时返回0.0。
 
     **参考样例**
 
@@ -61,7 +64,7 @@ def ks(y_true: Union[np.ndarray, pd.Series],
     >>> y_true = [0, 0, 1, 1, 1, 0, 1, 0]  # 真实标签序列
     >>> y_prob = [0.1, 0.3, 0.7, 0.6, 0.8, 0.2, 0.9, 0.4]  # 预测概率（高分对应坏样本）
     >>> ks(y_true, y_prob)
-    0.75
+    1.0
 
     **引用**
 
@@ -70,27 +73,13 @@ def ks(y_true: Union[np.ndarray, pd.Series],
     标准指标，定义见 Siddiqi, N. (2006). *Credit Risk Scorecards.* Wiley。
     经验阈值：KS<0.2 区分弱、0.2~0.4 可用、0.4~0.6 强、>0.75 需排查标签泄漏。
     """
-    y_true = np.asarray(y_true)
-    y_prob = np.asarray(y_prob)
-
-    _validate_same_length(y_true, y_prob, ("y_true", "y_prob"))
-    _validate_binary_target(y_true)
-
-    # 按预测概率降序排序
-    desc_score_indices = np.argsort(y_prob)[::-1]
-    y_true_sorted = y_true[desc_score_indices]
-
-    n_total = len(y_true)
-    n_pos = np.sum(y_true)
-    n_neg = n_total - n_pos
-
-    if n_pos == 0 or n_neg == 0:
+    y_true, y_prob, weights = _prepare_binary_scores(
+        y_true, y_prob, pos_label, allow_single_class=True, sample_weight=sample_weight
+    )
+    if np.unique(y_true).size < 2:
         return 0.0
-
-    cum_pos = np.cumsum(y_true_sorted) / n_pos
-    cum_neg = np.cumsum(1 - y_true_sorted) / n_neg
-
-    return np.max(np.abs(cum_pos - cum_neg))
+    _, cum_neg, cum_pos = _binary_ranking_curve(y_true, y_prob, weights)
+    return float(np.max(np.abs(cum_pos - cum_neg)))
 
 
 def ks_2samps(sample1: Union[np.ndarray, pd.Series],
@@ -128,17 +117,24 @@ def ks_2samps(sample1: Union[np.ndarray, pd.Series],
 
 
 def auc(y_true: Union[np.ndarray, pd.Series],
-        y_prob: Union[np.ndarray, pd.Series]) -> float:
+        y_prob: Union[np.ndarray, pd.Series], *, pos_label=1,
+        score_direction: str = 'auto', sample_weight=None) -> float:
     """计算ROC曲线下的面积(AUC).
 
     AUC值衡量模型在不同分类阈值下区分正负样本的综合能力，
-    值在0.5-1.0之间，越接近1.0模型效果越好。
+    默认与 ``ks_plot`` 一样自动识别分数方向，返回0.5-1.0的区分度。
+    评估具有固定方向的模型预测概率时，可用 ``score_direction='higher_risk'``
+    保留原始AUC（可能小于0.5）。
 
     **参数**
 
     :param y_true: 真实标签 (0/1)，0为负样本，1为正样本
-    :param y_prob: 预测为正样本的概率值
-    :return: AUC值，取值范围[0.5, 1.0]
+    :param y_prob: 预测为正样本的概率或评分；标签或分数缺失的样本成对删除
+    :param pos_label: 正样本标签，默认为1；非0/1标签需明确正样本
+    :param score_direction: auto（默认，原始AUC小于0.5时反向）、higher_risk（值越大正样本风险越高）
+        或higher_safe（值越大越安全）；显式方向不会自动反向
+    :param sample_weight: 可选非负样本权重，与标签、分数按位置对应；零权重样本不参与计算
+    :return: auto模式取值范围[0.5, 1.0]；显式方向模式取值范围[0.0, 1.0]
     :raises ValueError: y_true/y_prob长度不一致时
 
     **参考样例**
@@ -147,29 +143,35 @@ def auc(y_true: Union[np.ndarray, pd.Series],
     >>> y_true = [0, 0, 1, 1, 1, 0, 1, 0]
     >>> y_prob = [0.1, 0.3, 0.7, 0.6, 0.8, 0.2, 0.9, 0.4]
     >>> auc(y_true, y_prob)
-    0.875
+    1.0
 
     **引用**
 
-    封装自 :func:`sklearn.metrics.roc_auc_score`。AUC 的概率解释（随机抽取一正一负
+    基于 :func:`sklearn.metrics.roc_curve` 和 :func:`sklearn.metrics.auc`，
+    与绘图共享曲线及面积。AUC 的概率解释（随机抽取一正一负
     样本，正样本得分更高的概率）见 Fawcett, T. (2006). *An introduction to ROC
     analysis.* Pattern Recognition Letters, 27(8), 861-874。
     """
-    return roc_auc_score(y_true, y_prob)
+    return _binary_roc_statistics(y_true, y_prob, pos_label, score_direction, sample_weight).auc
 
 
 def gini(y_true: Union[np.ndarray, pd.Series],
-         y_prob: Union[np.ndarray, pd.Series]) -> float:
+         y_prob: Union[np.ndarray, pd.Series], *, pos_label=1,
+         score_direction: str = 'auto', sample_weight=None) -> float:
     """计算基尼系数 (Gini Coefficient).
 
     基尼系数是AUC的线性变换：基尼系数 = 2 * AUC - 1。
-    范围从-1到1，越接近1表示模型区分能力越强。
+    与 ``auc`` 使用相同分数方向，默认自动识别方向，范围从0到1。
+    指定方向后范围从-1到1，越接近1表示模型区分能力越强。
 
     **参数**
 
     :param y_true: 真实标签 (0/1)，0为负样本，1为正样本
     :param y_prob: 预测为正样本的概率值
-    :return: 基尼系数，取值范围[-1, 1]
+    :param pos_label: 正样本标签，默认为1
+    :param score_direction: 同 ``auc``，支持auto、higher_risk和higher_safe
+    :param sample_weight: 可选非负样本权重，同 ``auc``
+    :return: 基尼系数，auto模式取值范围[0, 1]，显式方向模式取值范围[-1, 1]
     :raises ValueError: y_true/y_prob长度不一致时
 
     **参考样例**
@@ -178,7 +180,7 @@ def gini(y_true: Union[np.ndarray, pd.Series],
     >>> y_true = [0, 0, 1, 1, 1, 0, 1, 0]
     >>> y_prob = [0.1, 0.3, 0.7, 0.6, 0.8, 0.2, 0.9, 0.4]
     >>> gini(y_true, y_prob)
-    0.75
+    1.0
 
     **引用**
 
@@ -186,7 +188,7 @@ def gini(y_true: Union[np.ndarray, pd.Series],
     Gini = 2·AUC − 1，是信用风险领域衡量区分度的常用指标，见
     Siddiqi, N. (2006). *Credit Risk Scorecards.* Wiley。
     """
-    return 2 * auc(y_true, y_prob) - 1
+    return 2 * auc(y_true, y_prob, pos_label=pos_label, score_direction=score_direction, sample_weight=sample_weight) - 1
 
 
 def accuracy(y_true: Union[np.ndarray, pd.Series],
@@ -395,19 +397,23 @@ def ks_bucket(y_true: Union[np.ndarray, pd.Series],
 
 
 def roc_curve(y_true: Union[np.ndarray, pd.Series],
-              y_prob: Union[np.ndarray, pd.Series]) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+              y_prob: Union[np.ndarray, pd.Series], *, pos_label=1,
+              score_direction: str = 'auto', sample_weight=None) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """计算ROC曲线数据.
 
-    返回ROC曲线绘制所需的FPR、TPR和阈值数据。
+    返回与 ``auc``、``ks_plot``、``roc_plot`` 同口径的FPR、TPR和阈值数据。
 
     **参数**
 
     :param y_true: 真实标签 (0/1)
     :param y_prob: 预测为正样本的概率值
+    :param pos_label: 正样本标签，默认为1
+    :param score_direction: 同 ``auc``，默认auto；higher_risk保留原始分数方向
+    :param sample_weight: 可选非负样本权重
     :return: 三元组 (fpr, tpr, thresholds)
         - fpr: 假阳性率（False Positive Rate）数组
         - tpr: 真阳性率（True Positive Rate）数组
-        - thresholds: 对应的概率阈值数组
+        - thresholds: 对应的分数阈值数组；反向时对应取负后的分数，首项为正无穷
 
     **参考样例**
 
@@ -416,7 +422,8 @@ def roc_curve(y_true: Union[np.ndarray, pd.Series],
     >>> y_prob = [0.1, 0.3, 0.7, 0.6, 0.8, 0.2, 0.9, 0.4]
     >>> fpr, tpr, thresholds = roc_curve(y_true, y_prob)
     """
-    return sklearn_roc_curve(y_true, y_prob)
+    result = _binary_roc_statistics(y_true, y_prob, pos_label, score_direction, sample_weight)
+    return result.fpr, result.tpr, result.thresholds
 
 
 def confusion_matrix(y_true: Union[np.ndarray, pd.Series],

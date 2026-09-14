@@ -69,6 +69,7 @@ def _evaluate_binary_predictions(
     *,
     metrics,
     sample_weight=None,
+    score_direction='auto',
 ) -> Dict[str, float]:
     """按统一模型评估契约计算二值标签指标。"""
     from sklearn.metrics import (
@@ -78,7 +79,6 @@ def _evaluate_binary_predictions(
         log_loss,
         precision_score,
         recall_score,
-        roc_auc_score,
     )
 
     y_true = np.asarray(y_true)
@@ -154,11 +154,11 @@ def _evaluate_binary_predictions(
     for name in normalized:
         try:
             if name == "auc":
-                results["AUC"] = roc_auc_score(y_true, y_proba, sample_weight=weights)
+                results["AUC"] = auc(y_true, y_proba, sample_weight=weights, score_direction=score_direction)
             elif name == "ks":
                 results["KS"] = ks(y_true, y_proba)
             elif name == "gini":
-                results["Gini"] = 2 * roc_auc_score(y_true, y_proba, sample_weight=weights) - 1
+                results["Gini"] = gini(y_true, y_proba, sample_weight=weights, score_direction=score_direction)
             elif name in aliases:
                 key, ratio = aliases[name]
                 results[key] = _lift_score(y_true, y_proba, top_ratio=ratio)
@@ -438,6 +438,7 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, BaseE
         sample_weight: Optional[np.ndarray] = None,
         metrics: Optional[List[str]] = None,
         positive_class: Optional[Any] = None,
+        score_direction: str = 'auto',
     ) -> Dict[str, float]:
         """评估模型性能.
 
@@ -446,6 +447,7 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, BaseE
         :param sample_weight: 样本权重
         :param metrics: 评估指标列表，默认全部
         :param positive_class: 显式正类标签；None 时使用 ``classes_[1]``
+        :param score_direction: AUC/Gini分数方向，同 ``metrics.auc``；higher_risk保留原始AUC
         :return: 评估结果字典
         """
         self._require_fitted()
@@ -474,6 +476,7 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, BaseE
             binary_predictions,
             metrics=requested_metrics,
             sample_weight=sample_weight,
+            score_direction=score_direction,
         )
 
     def generate_report(

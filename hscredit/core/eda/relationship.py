@@ -444,8 +444,8 @@ def feature_importance_ranking(df: pd.DataFrame,
         score_cols.append('IV得分')
     
     if 'AUC值' in result_df.columns:
-        # AUC需要处理倒置情况（AUC<0.5）
-        auc_norm = result_df['AUC值'].apply(lambda x: max(x, 1-x))
+        # 公共AUC已统一分数方向，此处只做排名得分的缩放。
+        auc_norm = result_df['AUC值']
         result_df['AUC得分'] = (auc_norm / auc_norm.max()).fillna(0)
         score_cols.append('AUC得分')
     

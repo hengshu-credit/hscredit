@@ -54,6 +54,21 @@ def test_supported_weight_metric_uses_sample_weight():
     assert result["AUC"] == pytest.approx(6 / 11)
 
 
+@pytest.mark.parametrize('direction', ['auto', 'higher_risk', 'higher_safe'])
+def test_model_auc_and_gini_match_public_metrics_with_weights_and_direction(direction):
+    from hscredit.core.metrics import auc, gini
+
+    scores = np.array([0.8, 0.2, 0.3, 0.1])
+    y = np.array([0, 0, 1, 1])
+    weights = np.array([1.0, 4.0, 3.0, 2.0])
+    model = _FixedRiskModel(scores)
+    result = model.evaluate(
+        np.zeros((4, 1)), y, sample_weight=weights, metrics=['auc', 'gini'], score_direction=direction
+    )
+    assert result['AUC'] == auc(y, scores, sample_weight=weights, score_direction=direction)
+    assert result['Gini'] == gini(y, scores, sample_weight=weights, score_direction=direction)
+
+
 def test_unsupported_weight_metrics_warn_once_and_return_unweighted_results():
     """KS 与 Lift 忽略权重时必须集中 warning，不能静默或逐项报警。"""
     model = _FixedRiskModel([0.9, 0.8, 0.7, 0.6])

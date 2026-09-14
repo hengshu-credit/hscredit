@@ -6,6 +6,7 @@
 import numpy as np
 from typing import Optional
 from .base import BaseMetric
+from ...metrics import auc as auc_metric, ks as ks_metric
 
 
 class KSMetric(BaseMetric):
@@ -62,29 +63,7 @@ class KSMetric(BaseMetric):
         y_true = np.ravel(y_true)
         y_pred = np.ravel(y_pred)
 
-        # 按预测分数排序
-        sorted_indices = np.argsort(y_pred)
-        sorted_y_true = y_true[sorted_indices]
-
-        # 计算累积分布
-        n_good = np.sum(y_true == 0)
-        n_bad = np.sum(y_true == 1)
-
-        if n_good == 0 or n_bad == 0:
-            return 0.0
-
-        # 累积好客户和坏客户数量
-        cum_good = np.cumsum(sorted_y_true == 0)
-        cum_bad = np.cumsum(sorted_y_true == 1)
-
-        # 累积比例
-        cum_good_rate = cum_good / n_good
-        cum_bad_rate = cum_bad / n_bad
-
-        # KS值
-        ks = np.max(np.abs(cum_good_rate - cum_bad_rate))
-
-        return float(ks)
+        return ks_metric(y_true, y_pred)
 
 
 class GiniMetric(BaseMetric):
@@ -95,6 +74,7 @@ class GiniMetric(BaseMetric):
     衡量模型区分能力，Gini越大越好。
 
     :param name: 指标名称，默认为"gini"
+    :param score_direction: 同 ``metrics.auc``，默认auto；higher_risk保留原始方向
 
     **参考样例**
 
@@ -103,8 +83,9 @@ class GiniMetric(BaseMetric):
     >>> gini_value = gini_metric(y_true, y_pred)
     """
 
-    def __init__(self, name: str = "gini"):
+    def __init__(self, name: str = "gini", score_direction: str = 'auto'):
         super().__init__(name, greater_is_better=True)
+        self.score_direction = score_direction
 
     def __call__(
         self,
@@ -115,7 +96,7 @@ class GiniMetric(BaseMetric):
 
         :param y_true: 真实标签
         :param y_pred: 预测概率
-        :return: Gini系数，范围[-1, 1]，越大越好
+        :return: Gini系数，默认范围[0, 1]；显式方向时范围[-1, 1]，越大越好
         """
         # 确保输入是一维数组
         y_true = np.ravel(y_true)
@@ -134,35 +115,10 @@ class GiniMetric(BaseMetric):
         y_true: np.ndarray,
         y_pred: np.ndarray
     ) -> float:
-        """计算AUC."""
-        # 按预测分数排序（降序）
-        sorted_indices = np.argsort(y_pred)[::-1]
-        sorted_y_true = y_true[sorted_indices]
-
-        # 计算TPR和FPR
-        n_pos = np.sum(y_true == 1)
-        n_neg = np.sum(y_true == 0)
-
-        if n_pos == 0 or n_neg == 0:
+        """调用公共AUC；保留单类别回调返回中性值的既有约定。"""
+        if np.unique(y_true).size < 2:
             return 0.5
-
-        # 使用梯形法则计算AUC
-        cum_pos = np.cumsum(sorted_y_true == 1)
-        cum_neg = np.cumsum(sorted_y_true == 0)
-
-        # TPR和FPR
-        tpr = cum_pos / n_pos
-        fpr = cum_neg / n_neg
-
-        # 添加原点
-        tpr = np.concatenate([[0], tpr])
-        fpr = np.concatenate([[0], fpr])
-
-        # 计算AUC（梯形法则，跨 NumPy 版本兼容）
-        from ....utils.misc import trapz
-        auc = trapz(tpr, fpr)
-
-        return float(auc)
+        return auc_metric(y_true, y_pred, score_direction=self.score_direction)
 
 
 class PSIMetric(BaseMetric):

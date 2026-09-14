@@ -17,6 +17,7 @@ import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
 from matplotlib.figure import Figure
+from ..metrics._ranking import _binary_ranking_curve, _prepare_binary_scores
 
 from .utils import (
     DEFAULT_COLORS, get_or_create_ax, save_figure, setup_axis_style,
@@ -59,19 +60,11 @@ def score_ks_plot(
     colors = get_series_colors(len(datasets))
 
     for idx, (label, (yt, yp)) in enumerate(datasets.items()):
-        yt = np.asarray(yt)
-        yp = np.asarray(yp)
-        sorted_idx = np.argsort(yp)[::-1]
-        yt_sorted = yt[sorted_idx]
-        n = len(yt)
-        total_bad = yt.sum()
-        total_good = n - total_bad
-        tpr = np.cumsum(yt_sorted) / total_bad if total_bad > 0 else np.zeros(n)
-        fpr = np.cumsum(1 - yt_sorted) / total_good if total_good > 0 else np.zeros(n)
+        yt, yp, _ = _prepare_binary_scores(yt, yp)
+        x_axis, fpr, tpr = _binary_ranking_curve(yt, yp)
         ks_vals = np.abs(tpr - fpr)
         ks = ks_vals.max()
         ks_idx = ks_vals.argmax()
-        x_axis = np.linspace(0, 1, n)
         color = colors[idx % len(colors)]
         ax.plot(x_axis, tpr, color=color, linewidth=2,
                 label=f'{label} 坏样本（KS={ks:.4f}）')

@@ -548,10 +548,10 @@ class StepwiseSelector(BaseFeatureSelector):
         :param y_pred: 预测概率
         :return: AUC值
         """
-        from sklearn.metrics import roc_auc_score
+        from ..metrics import auc
 
         try:
-            return roc_auc_score(y_true, y_pred)
+            return auc(y_true, y_pred)
         except Exception:
             return 0.5
 

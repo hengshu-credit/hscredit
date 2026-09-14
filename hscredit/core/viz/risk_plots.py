@@ -24,7 +24,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from typing import Union, Optional, List, Dict, Tuple, Any
 from sklearn.metrics import (
-    roc_curve, auc, precision_recall_curve,
+    precision_recall_curve,
     confusion_matrix, brier_score_loss,
     accuracy_score, precision_score, recall_score, f1_score,
 )
@@ -39,6 +39,7 @@ from .utils import (
     _layout_top_center_legend,
 )
 from ..._lazy import LazyModule
+from ..metrics._ranking import _binary_roc_statistics
 
 # 延迟加载 seaborn：仅在首次实际绘图（访问 sns 属性）时才导入，
 # 避免 import hscredit 时即触发 seaborn（及其 ipywidgets/IPython 依赖）的加载。
@@ -58,6 +59,9 @@ def roc_plot(
     show_diagonal: bool = True,
     label: Optional[str] = None,
     save: Optional[str] = None,
+    pos_label=1,
+    score_direction: str = 'auto',
+    sample_weight=None,
     **kwargs
 ) -> plt.Figure:
     """绘制ROC曲线.
@@ -72,6 +76,9 @@ def roc_plot(
     :param show_diagonal: 是否显示对角线（随机猜测线）
     :param label: 曲线标签（多模型对比时使用）
     :param save: 保存路径
+    :param pos_label: 正样本标签，默认为1
+    :param score_direction: 同 ``metrics.auc``，默认auto；higher_risk保留原始方向，higher_safe表示高分安全
+    :param sample_weight: 可选非负样本权重，与 ``metrics.auc`` 和 ``ks_plot`` 使用相同口径
     :param kwargs: 其他参数传递给plt.plot
     :return: matplotlib Figure对象
     
@@ -90,8 +97,8 @@ def roc_plot(
         colors = DEFAULT_COLORS
     
     # 计算ROC曲线
-    fpr, tpr, _ = roc_curve(y_true, y_score)
-    roc_auc = auc(fpr, tpr)
+    result = _binary_roc_statistics(y_true, y_score, pos_label, score_direction, sample_weight)
+    fpr, tpr, roc_auc = result.fpr, result.tpr, result.auc
     
     # 绘制对角线
     if show_diagonal:
@@ -101,7 +108,7 @@ def roc_plot(
     # 绘制ROC曲线
     label_str = label if label else 'Model'
     if show_auc:
-        label_str += f' (AUC = {roc_auc:.3f})'
+        label_str += f' (AUC = {roc_auc:.4f})'
     
     ax.plot(fpr, tpr, color=colors[0], lw=2, label=label_str, **kwargs)
     

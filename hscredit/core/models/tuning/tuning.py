@@ -82,7 +82,8 @@ import pandas as pd
 from ....utils.parallel import resolve_n_jobs
 from sklearn.base import clone
 from sklearn.model_selection import ParameterGrid, StratifiedKFold
-from sklearn.metrics import get_scorer, log_loss, roc_auc_score, roc_curve
+from sklearn.metrics import get_scorer, log_loss, roc_curve
+from ...metrics import auc as auc_metric
 
 logger = logging.getLogger(__name__)
 
@@ -639,9 +640,10 @@ class TuningObjective:
     def auc(y_true: np.ndarray, y_prob: np.ndarray, **kwargs) -> float:
         """ROC-AUC 目标."""
         try:
-            from sklearn.metrics import roc_auc_score
-
-            return float(roc_auc_score(y_true, y_prob))
+            return auc_metric(
+                y_true, y_prob, pos_label=kwargs.get('pos_label', 1),
+                score_direction=kwargs.get('score_direction', 'auto'), sample_weight=kwargs.get('sample_weight'),
+            )
         except Exception:
             return 0.0
 
@@ -981,7 +983,7 @@ class Metric:
             if self.scorer in get_scorer_names():
                 # 对于可以直接计算的指标
                 if self.scorer == "roc_auc":
-                    return roc_auc_score(y_true, y_pred)
+                    return auc_metric(y_true, y_pred)
                 # 其他指标需要类别预测
                 # 这里简化处理，实际使用时可能需要调整
                 return scorer._score_func(y_true, y_pred > 0.5)

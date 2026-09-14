@@ -808,6 +808,7 @@ class LogisticRegression(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, 
         y: Union[pd.Series, np.ndarray],
         sample_weight: Optional[np.ndarray] = None,
         metrics: Optional[List[str]] = None,
+        score_direction: str = 'auto',
     ) -> dict:
         """评估模型性能（与 BaseRiskModel.evaluate 接口一致）.
 
@@ -815,6 +816,7 @@ class LogisticRegression(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, 
         :param y: 真实标签
         :param sample_weight: 样本权重
         :param metrics: 评估指标列表
+        :param score_direction: AUC/Gini分数方向，同 ``metrics.auc``
         :return: 评估结果字典
         """
         from ..base import BaseRiskModel, _lift_score
@@ -834,11 +836,11 @@ class LogisticRegression(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, 
             metric_lower = metric.lower()
             try:
                 if metric_lower == 'auc':
-                    results['AUC'] = auc(y, y_proba)
+                    results['AUC'] = auc(y, y_proba, sample_weight=sample_weight, score_direction=score_direction)
                 elif metric_lower == 'ks':
                     results['KS'] = ks(y, y_proba)
                 elif metric_lower == 'gini':
-                    results['Gini'] = gini(y, y_proba)
+                    results['Gini'] = gini(y, y_proba, sample_weight=sample_weight, score_direction=score_direction)
                 elif metric_lower in ('lift@1%', 'lift_1'):
                     results['LIFT@1%'] = _lift_score(y, y_proba, top_ratio=0.01)
                 elif metric_lower in ('lift@3%', 'lift_3'):

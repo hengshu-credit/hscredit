@@ -145,25 +145,9 @@ _SKLEARN_NATIVE_MISSING = _sklearn_supports_native_missing()
 # 指标计算 — 优先使用 hscredit.core.metrics 中的统一实现
 # ============================================================================
 
-try:
-    from ...core.metrics import ks as _ks
-    from ...core.metrics import auc as _auc
-    from ...core.metrics import badrate as _badrate
-except ImportError:
-    # 降级：内联最小实现（仅在 metrics 未注册时使用）
-    def _ks(y_true, y_prob):
-        from sklearn.metrics import roc_curve
-        fpr, tpr, _ = roc_curve(y_true, y_prob)
-        return float((tpr - fpr).max())
-
-    def _auc(y_true, y_prob):
-        from sklearn.metrics import roc_auc_score
-        return float(roc_auc_score(y_true, y_prob))
-
-    def _badrate(y_true, mask):
-        if mask.sum() == 0:
-            return 0.0
-        return float(y_true[mask].mean())
+from ...core.metrics import ks as _ks
+from ...core.metrics import auc as _auc
+from ...core.metrics import badrate as _badrate
 
 
 def _lift_local(y_true, y_score, n_bins=10):

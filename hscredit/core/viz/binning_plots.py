@@ -20,7 +20,6 @@ from matplotlib.transforms import offset_copy
 from matplotlib.ticker import PercentFormatter
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
-from sklearn.metrics import roc_curve, roc_auc_score
 from typing import Union, Optional, List, Dict, Any
 
 from .utils import (
@@ -42,6 +41,7 @@ logger = logging.getLogger(__name__)
 
 # 从统一metrics模块导入分箱统计计算
 from ..metrics import compute_bin_stats
+from ..metrics._ranking import _binary_roc_statistics
 from ...exceptions import NotFittedError
 
 
@@ -1023,7 +1023,7 @@ def corr_plot(data, figure_size=None, fontsize=16, mask=False, save=None,
 
 def ks_plot(score, target, title="", fontsize=14, figsize=(16, 8), save=None,
             colors=None, anchor=None, axes=None, ax=None, curve='both',
-            pos_label=1, score_direction='auto'):
+            pos_label=1, score_direction='auto', sample_weight=None):
     """
     KS曲线和ROC曲线.
 
@@ -1046,6 +1046,9 @@ def ks_plot(score, target, title="", fontsize=14, figsize=(16, 8), save=None,
     :param pos_label: 正样本标签，默认 1；字符串或非 0/1 标签必须显式指定
     :param score_direction: 分数方向，可选 auto（默认，AUC 小于 0.5 时自动反向）、
         higher_risk（值越大正样本风险越高）或 higher_safe（值越大越安全）
+    :param sample_weight: 可选非负样本权重；传入后曲线、AUC和覆盖率均按权重计算
+
+    同分样本按同一阈值整体累计；标签或分数缺失的样本成对删除，同一权重下KS与 ``metrics.ks`` 一致。
 
     :return: matplotlib Figure 或 Axes（嵌入模式下返回所用 Axes）
 
@@ -1064,56 +1067,12 @@ def ks_plot(score, target, title="", fontsize=14, figsize=(16, 8), save=None,
     if axes is None and isinstance(ax, (list, tuple, np.ndarray)):
         axes = ax
 
-    # 转换 target 和 score 为 numpy 数组
-    # 注意：函数签名是 ks_plot(score, target, ...)
-    score_arr = np.asarray(score, dtype=float)
-    target_arr = np.asarray(target)
-    if score_arr.ndim != 1 or target_arr.ndim != 1:
-        raise ValueError("score 和 target 必须是一维数组")
-    if len(score_arr) != len(target_arr):
-        raise ValueError(f"score 与 target 长度不一致: {len(score_arr)} != {len(target_arr)}")
-
-    valid_mask = ~pd.isna(score_arr) & ~pd.isna(target_arr)
-    score_arr = score_arr[valid_mask]
-    target_arr = target_arr[valid_mask]
-    if len(score_arr) == 0:
-        raise ValueError("score 和 target 没有可用的非缺失数据")
-
-    # 检查 target 是否为二分类
-    unique_labels = np.unique(target_arr[~pd.isna(target_arr)])  # 排除 NaN
-    if len(unique_labels) != 2:
-        raise ValueError(
-            f"target 必须是二分类标签（包含2个唯一值），当前有 {len(unique_labels)} 个唯一值。"
-            f"请确保传入正确的 y_test 标签（如 0/1 或 True/False），而不是预测概率。"
-        )
-
-    if pos_label not in unique_labels:
-        raise ValueError(f"pos_label={pos_label!r} 不在 target 标签 {unique_labels.tolist()} 中")
-    target_arr = (target_arr == pos_label).astype(float)
-
-    direction = str(score_direction).strip().lower()
-    valid_directions = {'auto', 'higher_risk', 'higher_safe'}
-    if direction not in valid_directions:
-        raise ValueError(f"score_direction 必须是 {sorted(valid_directions)} 之一")
-    if direction == 'higher_safe':
-        score_arr = -score_arr
-    auc_value = roc_auc_score(target_arr, score_arr)
-    if direction == 'auto' and auc_value < 0.5:
+    result = _binary_roc_statistics(target, score, pos_label, score_direction, sample_weight)
+    auc_value = result.auc
+    if result.auto_reversed:
         warnings.warn('评分 AUC 小于 50%，已按“值越大越安全”自动反向后绘图')
-        score_arr = -score_arr
-        auc_value = roc_auc_score(target_arr, score_arr)
-
-    df = pd.DataFrame({'label': target_arr, 'pred': score_arr})
-
-    df_ks = df.sort_values('pred', ascending=False).reset_index(drop=True) \
-        .assign(group=lambda x: np.ceil((x.index + 1) / (len(x.index) / len(df.index)))) \
-        .groupby('group')['label'].agg([lambda x: sum(x == 0), lambda x: sum(x == 1)]) \
-        .reset_index().rename(columns={'<lambda_0>': 'good', '<lambda_1>': 'bad'}) \
-        .assign(
-            group=lambda x: (x.index + 1) / len(x.index),
-            cumgood=lambda x: np.cumsum(x.good) / sum(x.good),
-            cumbad=lambda x: np.cumsum(x.bad) / sum(x.bad)
-        ).assign(ks=lambda x: abs(x.cumbad - x.cumgood))
+    coverage, fpr, tpr = result.coverage, result.fpr, result.tpr
+    df_ks = pd.DataFrame({'group': coverage, 'cumgood': fpr, 'cumbad': tpr, 'ks': np.abs(tpr - fpr)})
 
     need_ks = curve in ('both', 'ks')
     need_roc = curve in ('both', 'roc')
@@ -1175,8 +1134,6 @@ def ks_plot(score, target, title="", fontsize=14, figsize=(16, 8), save=None,
 
     # ROC曲线
     if need_roc:
-        fpr, tpr, thresholds = roc_curve(target_arr, score_arr)
-
         ax2.plot(fpr, tpr, color=colors[0], label="ROC 曲线")
         ax2.stackplot(fpr, tpr, color=colors[0], alpha=0.25)
         ax2.plot([0, 1], [0, 1], color=colors[1], lw=2, linestyle=':')
