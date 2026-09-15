@@ -25,6 +25,7 @@ from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.exceptions import NotFittedError
 from sklearn.model_selection import train_test_split
 
+from ...utils.overdue import validate_overdue_operator
 from ..metrics.classification import ks, auc, gini
 from ..metrics.finance import lift_monotonicity_check
 from ...utils.serialization import ArtifactSerializableMixin
@@ -523,6 +524,8 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, BaseE
         amount_col: Optional[str] = None,
         date_col: Optional[str] = None,
         group_col: Optional[str] = None,
+        *,
+        overdue_operator: Optional[str] = None,
         **kwargs,
     ) -> "ModelReport":
         """生成风控建模报告（支持多数据集/overdue/dpds）.
@@ -561,7 +564,12 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, BaseE
         :param group_col: 分组字段
         :param kwargs: 传递给 auto_model_report 的其他参数
         :return: ModelReport 实例
+
+        :param overdue_operator: 逾期标签比较符，支持 ``>``、``>=``、``<``、``<=``，默认 ``>``。
+            满足比较条件记为坏样本(1)，否则为好样本(0)。
         """
+        if overdue_operator is not None:
+            validate_overdue_operator(overdue_operator)
         self._require_fitted()
         from ...report import auto_model_report
 
@@ -576,6 +584,7 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, BaseE
             target=target,
             overdue=overdue,
             dpds=dpds,
+            overdue_operator=overdue_operator,
             excel_path=excel_path,
             verbose=verbose,
             n_bins=n_bins,

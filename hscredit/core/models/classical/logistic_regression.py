@@ -31,6 +31,7 @@ import inspect
 from typing import Any, Dict, Union, Optional, List
 from sklearn.linear_model import LogisticRegression as SklearnLogisticRegression
 from sklearn.utils.validation import check_is_fitted
+from ....utils.overdue import validate_overdue_operator
 from ....utils.serialization import ArtifactSerializableMixin
 from ..scorecard_support import _ProbabilityScoreCardMixin
 
@@ -884,6 +885,8 @@ class LogisticRegression(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, 
         dpds=None,
         excel_path=None,
         verbose=True,
+        *,
+        overdue_operator: Optional[str] = None,
         **kwargs
     ):
         """生成风控建模报告（与 :meth:`BaseRiskModel.report` 接口一致）。
@@ -903,7 +906,12 @@ class LogisticRegression(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, 
         :param kwargs: 透传给报告生成器的其他参数
         :return: ``ModelReport`` 实例
         :raises NotFittedError: 模型尚未训练时
+
+        :param overdue_operator: 逾期标签比较符，支持 ``>``、``>=``、``<``、``<=``，默认 ``>``。
+            满足比较条件记为坏样本(1)，否则为好样本(0)。
         """
+        if overdue_operator is not None:
+            validate_overdue_operator(overdue_operator)
         check_is_fitted(self)
         from ....report import auto_model_report
 
@@ -916,6 +924,7 @@ class LogisticRegression(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, 
             y_test=y_test,
             overdue=overdue,
             dpds=dpds,
+            overdue_operator=overdue_operator,
             excel_path=excel_path,
             verbose=verbose,
             **kwargs

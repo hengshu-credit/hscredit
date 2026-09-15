@@ -166,14 +166,18 @@ def _auto_feature_analysis(context) -> dict:
     feature_summary = _extract_feature_summary(staged)
     _validate_and_publish_workbook(context, staged)
     _publish_report_images(context, image_dir)
-    return {
-        "summary": {
-            "end_row": int(end_row),
-            "end_col": int(end_col),
-            "label_combinations": _label_combinations(params),
-            "feature_summary": summarize_dataframe(feature_summary),
-        }
+    summary = {
+        "end_row": int(end_row),
+        "end_col": int(end_col),
+        "label_combinations": _label_combinations(params),
+        "feature_summary": summarize_dataframe(feature_summary),
     }
+    if summary["label_combinations"]:
+        overdue_operator = params.get("overdue_operator")
+        if overdue_operator is None:
+            overdue_operator = (params.get("bin_params") or {}).get("overdue_operator", ">")
+        summary["overdue_operator"] = overdue_operator
+    return {"summary": summary}
 
 
 def _resolve_model(context):

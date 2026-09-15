@@ -22,6 +22,7 @@ from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 from typing import Union, Optional, List, Dict, Any
 
+from ...utils.overdue import make_overdue_target, overdue_label, validate_overdue_operator
 from .utils import (
     DEFAULT_COLORS, setup_axis_style, save_figure,
     format_bin_label,
@@ -1642,7 +1643,9 @@ def dataframe_plot(df, row_height=0.4, font_size=14, header_color=None,
 
 def distribution_plot(data, date="date", target="target", save=None, figsize=(10, 6), 
                     colors=None, freq="M", anchor=None, result=False, hatch=True,
-                    overdue=None, dpds=None, title=None):
+                    overdue=None, dpds=None, title=None, del_grey: bool = False,
+    *,
+    overdue_operator: str = ">="):
     """
     样本时间分布图.
 
@@ -1675,7 +1678,13 @@ def distribution_plot(data, date="date", target="target", save=None, figsize=(10
     ...     df, date='apply_date',
     ...     overdue=['dpd7', 'dpd15', 'dpd30'], dpds=[1, 1, 1]
     ... )
+
+    :param overdue_operator: 逾期标签比较符，支持 ``>``、``>=``、``<``、``<=``，默认 ``>=``。
+        满足比较条件记为坏样本(1)，否则为好样本(0)。
+        ``del_grey=True`` 时，``>`` 剔除 ``(0, dpd]``，``>=`` 剔除 ``(0, dpd)``；
+        ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
     """
+    validate_overdue_operator(overdue_operator)
     if colors is None:
         colors = DEFAULT_COLORS
 
@@ -1725,13 +1734,13 @@ def distribution_plot(data, date="date", target="target", save=None, figsize=(10
 
         result_frames = []
         for i, (dpd_col, threshold) in enumerate(zip(overdue, dpds)):
-            y_target = (df[dpd_col] >= threshold).astype(int)
+            y_target = make_overdue_target(df[dpd_col], threshold, del_grey, overdue_operator)
             df_temp = df_indexed.copy()
             df_temp['_bad'] = y_target.values
             bad_rate = df_temp.resample(resample_freq)['_bad'].mean()
             bad_rate.index = [idx.strftime("%Y-%m-%d") for idx in bad_rate.index]
 
-            label = f"{dpd_col}>={threshold}"
+            label = overdue_label(dpd_col, threshold, overdue_operator, style="plain")
             style = line_styles[i % len(line_styles)]
             color = line_colors[i % len(line_colors)]
             bad_rate.plot(ax=ax2, color=color, style=style, linewidth=2,
@@ -2917,6 +2926,9 @@ def bin_overdues_plot(
     n_jobs=-1,
     parallel_backend=None,
     parallel_config=None,
+    del_grey: bool = False,
+    *,
+    overdue_operator: str = ">=",
     **kwargs
 ) -> plt.Figure:
     """绘制多个逾期天数的分箱图（横向展示）.
@@ -2973,7 +2985,13 @@ def bin_overdues_plot(
     ...     dpds=[0, 7]
     ... )
     >>> fig = bin_overdues_plot(bin_table=bin_table)
+
+    :param overdue_operator: 逾期标签比较符，支持 ``>``、``>=``、``<``、``<=``，默认 ``>=``。
+        满足比较条件记为坏样本(1)，否则为好样本(0)。
+        ``del_grey=True`` 时，``>`` 剔除 ``(0, dpd]``，``>=`` 剔除 ``(0, dpd)``；
+        ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
     """
+    validate_overdue_operator(overdue_operator)
     if colors is None:
         colors = DEFAULT_COLORS
     max_cols = _validate_plot_max_cols(max_cols)
@@ -3107,13 +3125,13 @@ def bin_overdues_plot(
             else:  # 'max_samples' 或其他真值
                 valid_counts = []
                 for dpd_col, threshold in zip(overdue, dpds):
-                    y_tmp = (data[dpd_col] >= threshold).astype(int)
+                    y_tmp = make_overdue_target(data[dpd_col], threshold, del_grey, overdue_operator)
                     valid_counts.append((~(pd.isna(data[feature]) | pd.isna(y_tmp))).sum())
                 ref_idx = int(np.argmax(valid_counts))
 
             dpd_col = overdue[ref_idx]
             threshold = dpds[ref_idx]
-            y = (data[dpd_col] >= threshold).astype(int)
+            y = make_overdue_target(data[dpd_col], threshold, del_grey, overdue_operator)
             valid_mask = ~pd.isna(y)
             X_valid = data.loc[valid_mask, feature]
             y_valid = y[valid_mask]
@@ -3142,8 +3160,8 @@ def bin_overdues_plot(
     tasks = []
     labels = []
     for dpd_col, threshold in zip(overdue, dpds):
-        label = f"{dpd_col} (>= {threshold})"
-        target_values = (data[dpd_col] >= threshold).astype(int)
+        label = f"{dpd_col} ({overdue_operator} {threshold})"
+        target_values = make_overdue_target(data[dpd_col], threshold, del_grey, overdue_operator)
         tasks.append((label, data.loc[:, [feature]].copy(), target_values, feature, stats_options))
         labels.append(label)
 

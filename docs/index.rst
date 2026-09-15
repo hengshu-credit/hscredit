@@ -112,6 +112,7 @@ hscredit 文档
    overview
    installation
    quickstart
+   overdue_labels
 
 .. toctree::
    :maxdepth: 2

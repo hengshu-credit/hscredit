@@ -23,6 +23,8 @@ from copy import deepcopy
 
 from sklearn.base import BaseEstimator, TransformerMixin
 
+from ..utils.overdue import overdue_label, validate_overdue_operator
+from ..utils.input_utils import normalize_dpd_values
 from .feature_analyzer import feature_bin_stats
 from .mining.base import _mining_workload
 from ..utils.parallel import ParallelizableMixin, resolve_n_jobs, validate_parallel_config
@@ -60,7 +62,7 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
     :param target: 目标变量名称，默认为'target'
     :param overdue: 逾期天数字段名称或列表，如 'MOB1' 或 ['MOB1', 'MOB3']
     :param dpds: 逾期定义天数或列表，如 7 或 [0, 7, 30]
-        - 逾期天数 > dpds 为坏样本(1)，其他为好样本(0)
+        - 默认逾期天数 > dpds 为坏样本(1)，可通过 overdue_operator 修改比较符
     :param method: 分箱方法，默认'mdlp'
     :param max_n_bins: 最大分箱数，默认5
     :param min_bin_size: 每箱最小样本占比，默认0.05
@@ -77,7 +79,9 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
     :param rules: 自定义分箱切分点列表，如 [300, 500, 700]
     :param desc: 特征描述，用于报告展示
     :param bin_params: 传递给feature_bin_stats的额外参数
-    :param del_grey: 是否按每个 DPD 独立删除灰样本 ``(0, dpd]``。未显式传入时
+    :param overdue_operator: 比较符（>、>=、<、<=）；None 时沿用 bin_params 配置，否则默认 >。
+        显式参数优先；> 的灰样本为 (0, dpd]，>= 为 (0, dpd)，< 和 <= 不剔灰。
+    :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本；``<``、``<=`` 下不剔除。
         兼容读取 ``bin_params['del_grey']``，默认 False
 
     **属性**
@@ -144,6 +148,8 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
         parallel_backend: Optional[str] = None,
         parallel_config: Optional[Dict[str, Any]] = None,
         del_grey: Optional[bool] = None,
+        *,
+        overdue_operator: Optional[str] = None,
     ):
         self.feature = feature
         self.target = target
@@ -163,6 +169,9 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
         self.parallel_backend = parallel_backend
         self.parallel_config = parallel_config
         self.del_grey = del_grey
+        if overdue_operator is not None:
+            validate_overdue_operator(overdue_operator)
+        self.overdue_operator = overdue_operator
 
     def fit(self, X: Union[pd.DataFrame, pd.Series], y=None) -> "OverduePredictor":
         """拟合预估器.
@@ -248,7 +257,7 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
 
         :param df: 含target或逾期天数的DataFrame
         """
-        if self.overdue is not None and self.target is None:
+        if self.overdue is not None:
             # 检查逾期天数字段是否存在
             overdue_cols = [self.overdue] if isinstance(self.overdue, str) else self.overdue
             missing_cols = [c for c in overdue_cols if c not in df.columns]
@@ -278,6 +287,7 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
         if self.del_grey is not None:
             bin_kwargs['del_grey'] = bool(self.del_grey)
 
+        bin_kwargs['overdue_operator'] = self._resolved_overdue_operator()
         result = feature_bin_stats(
             df,
             feature=self.feature,
@@ -310,6 +320,19 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
         self._extract_bin_rates_from_table(df)
         self._extract_splits_from_bin_table(df)
 
+    def _resolved_overdue_operator(self) -> str:
+        """显式比较符优先，否则沿用分箱配置。"""
+        value = self.overdue_operator
+        if value is None:
+            value = (self.bin_params or {}).get("overdue_operator", ">")
+        return validate_overdue_operator(value)
+
+    def __setstate__(self, state):
+        """兼容恢复新增比较符参数之前保存的预测器。"""
+        state = dict(state)
+        state.setdefault("overdue_operator", None)
+        super().__setstate__(state)
+
     def _build_target_names(self) -> List[str]:
         """构建目标变量名称列表.
 
@@ -317,11 +340,11 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
         """
         if self.overdue is not None and self.dpds is not None:
             overdue_list = [self.overdue] if isinstance(self.overdue, str) else self.overdue
-            dpd_list = [self.dpds] if isinstance(self.dpds, int) else self.dpds
+            dpd_list = normalize_dpd_values(self.dpds)
             names = []
             for mob in overdue_list:
                 for d in dpd_list:
-                    names.append(f"{mob}_{d}+")
+                    names.append(overdue_label(mob, d, self._resolved_overdue_operator()))
             return names
         elif self.target is not None:
             return [self.target]
@@ -603,8 +626,12 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
         :param rates: {分箱标签: 逾期率}
         :return: (分箱标签列表, 逾期率列表)
         """
-        # 解析分箱区间
+        # 类别箱只匹配类别值，不能把无法解析的标签视为覆盖全域的数值区间。
         bin_intervals = self._parse_rate_intervals(rates)
+        category_labels = [
+            label for label in rates
+            if label not in bin_intervals and label not in ('missing', 'special', 'unknown', '合计', '未知')
+        ]
 
         bin_labels = []
         base_rates = []
@@ -621,6 +648,17 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
                 continue
 
             assigned = False
+            value_text = str(val).strip()
+            category_label = next((label for label in category_labels if value_text == str(label).strip()), None)
+            if category_label is None:
+                category_label = next(
+                    (label for label in category_labels if value_text in [part.strip() for part in str(label).split(',')]),
+                    None,
+                )
+            if category_label is not None:
+                bin_labels.append(category_label)
+                base_rates.append(rates[category_label])
+                continue
             for label, (left, right, left_inc, right_inc) in bin_intervals.items():
                 if label in ('missing', 'special', '合计'):
                     continue
@@ -683,8 +721,6 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
                 right = None if right_str in ('+inf', 'inf', '-inf') else float(right_str)
 
                 intervals[label_str] = (left, right, left_inc, right_inc)
-            else:
-                intervals[label_str] = (None, None, False, False)
 
         return intervals
 
@@ -901,6 +937,8 @@ def overdue_prediction_report(
     n_jobs: Union[int, float] = -1,
     parallel_backend: Optional[str] = None,
     parallel_config: Optional[Dict[str, Any]] = None,
+    *,
+    overdue_operator: Optional[str] = None,
     **kwargs,
 ) -> pd.DataFrame:
     """逾期率预估报告便捷函数.
@@ -950,6 +988,9 @@ def overdue_prediction_report(
     ...     predict_data=test_df,
     ...     excel_writer='overdue_report.xlsx'
     ... )
+
+    :param overdue_operator: 逾期标签比较符，支持 ``>``、``>=``、``<``、``<=``，默认 ``>``。
+        满足比较条件记为坏样本(1)，否则为好样本(0)。
     """
     # 确定拟合数据来源
     fit_data = bin_table if bin_table is not None else data
@@ -959,6 +1000,7 @@ def overdue_prediction_report(
         target=target,
         overdue=overdue,
         dpds=dpds,
+        overdue_operator=overdue_operator,
         method=method,
         max_n_bins=max_n_bins,
         min_bin_size=min_bin_size,

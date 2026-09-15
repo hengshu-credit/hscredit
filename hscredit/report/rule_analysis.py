@@ -10,6 +10,7 @@ from typing import Dict, List, Optional, Union, Tuple
 import numpy as np
 import pandas as pd
 
+from ..utils.overdue import compare_overdue, overdue_grey_mask, overdue_label, validate_overdue_operator
 from ..core.rules import Rule
 from .mining.multi_label import MultiLabelRuleMiner
 from .feature_analyzer import feature_bin_stats
@@ -138,8 +139,10 @@ class _SwapStages:
 _SWAP_ATOMIC_GROUPS = ("out_out", "in_out", "in_in", "out_in")
 
 
-def _resolve_target_series(data, target, overdue, dpds, del_grey=False):
+def _resolve_target_series(data, target, overdue, dpds, del_grey=False, overdue_operator: str = ">"):
     """解析分析样本上的一个或多个实际表现标签。"""
+    validate_overdue_operator(overdue_operator)
+    del_grey = del_grey and overdue_operator in (">", ">=")
     if target is not None:
         if target not in data.columns:
             return {target: pd.Series(np.nan, index=data.index, dtype=float)}
@@ -157,10 +160,10 @@ def _resolve_target_series(data, target, overdue, dpds, del_grey=False):
         else:
             overdue_values = pd.to_numeric(data[overdue_col], errors="coerce")
         for threshold in thresholds:
-            label = f"{overdue_col}_{threshold}+"
-            values = (overdue_values > threshold).where(overdue_values.notna()).astype(float)
+            label = overdue_label(overdue_col, threshold, overdue_operator)
+            values = compare_overdue(overdue_values, threshold, overdue_operator).where(overdue_values.notna()).astype(float)
             if del_grey:
-                valid = overdue_values.eq(0) | overdue_values.gt(threshold)
+                valid = ~overdue_grey_mask(overdue_values, threshold, overdue_operator)
                 values = values.where(valid)
             targets[label] = values
     return targets
@@ -460,15 +463,18 @@ def _build_swap_pipeline(
     parallel_backend=None,
     parallel_config=None,
     del_grey=False,
+    overdue_operator: str = ">",
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """按显式阶段集合构建置入置出流水线。"""
+    validate_overdue_operator(overdue_operator)
+    del_grey = del_grey and overdue_operator in (">", ">=")
     if isinstance(y, dict):
         target_series = y
     elif y is not None:
         target_name = target or "目标标签"
         target_series = {target_name: pd.Series(y, index=data.index, dtype=float)}
     else:
-        target_series = _resolve_target_series(data, target, overdue, dpds)
+        target_series = _resolve_target_series(data, target, overdue, dpds, del_grey=del_grey, overdue_operator=overdue_operator)
 
     if len(target_series) > 1:
         pipelines = {}
@@ -497,7 +503,7 @@ def _build_swap_pipeline(
                 n_jobs=n_jobs,
                 parallel_backend=parallel_backend,
                 parallel_config=parallel_config,
-                del_grey=del_grey,
+                del_grey=del_grey, overdue_operator=overdue_operator,
             )
             pipelines[target_name] = pipeline
             result = result.copy()
@@ -990,6 +996,8 @@ def ruleset_analysis(
     parallel_backend: Optional[str] = None,
     parallel_config: Optional[Dict] = None,
     del_grey: bool = False,
+    *,
+    overdue_operator: str = ">",
     **kwargs,
 ) -> pd.DataFrame:
     """用于D类调优时的规则集效果分析.
@@ -1004,7 +1012,7 @@ def ruleset_analysis(
     :param dpds: 逾期定义方式（支持多标签，传入列表）
     :param filter_cols: 指定返回的字段列表
     :param amount: 金额字段名称，用于金额口径分析
-    :param del_grey: 是否按每个 DPD 独立删除灰样本 ``(0, dpd]``，默认 False
+    :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本；``<``、``<=`` 下不剔除。
     :return: 规则集效果评估表。单标签时返回单层列结构，多标签时返回多层列结构（MultiIndex）
 
     **参考样例**
@@ -1016,7 +1024,14 @@ def ruleset_analysis(
     >>> ruleset_analysis(df, rules, target='FPD')
     >>> # 多逾期标签 + 金额口径
     >>> ruleset_analysis(df, rules, overdue=['MOB1', 'MOB3'], dpds=[7, 0], amount='放款金额')
+
+    :param overdue_operator: 逾期标签比较符，支持 ``>``、``>=``、``<``、``<=``，默认 ``>``。
+        满足比较条件记为坏样本(1)，否则为好样本(0)。
+        ``del_grey=True`` 时，``>`` 剔除 ``(0, dpd]``，``>=`` 剔除 ``(0, dpd)``；
+        ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
     """
+    validate_overdue_operator(overdue_operator)
+    del_grey = del_grey and overdue_operator in (">", ">=")
     datasets = datasets.copy()
 
     feature_names_missing = set([f for rule in rules for f in rule.feature_names_in_]) - set(datasets.columns)
@@ -1039,7 +1054,7 @@ def ruleset_analysis(
         n_jobs=report_plan.child_workers,
         parallel_backend=parallel_backend,
         parallel_config=parallel_config,
-        del_grey=del_grey,
+        del_grey=del_grey, overdue_operator=overdue_operator,
         **kwargs,
     )
     table_total = _configured_rule_report(
@@ -1244,6 +1259,8 @@ def rule_swap_analysis(
     parallel_config: Optional[Dict] = None,
     risk_uplifts: Optional[Dict[str, float]] = None,
     del_grey: Optional[bool] = None,
+    *,
+    overdue_operator: Optional[str] = None,
 ) -> Dict[str, pd.DataFrame]:
     """规则置入置出（Swap）分析。
 
@@ -1291,7 +1308,7 @@ def rule_swap_analysis(
     :param min_bin_size: 每箱最小样本占比，默认 0.05（仅 reference_data 模式生效）
     :param missing_separate: 是否将缺失值单独分箱，默认 True
     :param bin_params: 额外分箱参数 dict，会透传给 ``feature_bin_stats``
-    :param del_grey: 是否按每个 DPD 独立删除灰样本 ``(0, dpd]``。未显式传入时
+    :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本；``<``、``<=`` 下不剔除。
         兼容读取 ``bin_params['del_grey']``，默认 False
     :param rule_analysis_mode: 规则分析模式，默认 'independent'。
         - 'independent'：每条规则应用到所属阶段的同一父样本，明细可重叠，合计按命中并集去重。
@@ -1330,6 +1347,12 @@ def rule_swap_analysis(
     ...     dpds=[0, 7, 30],
     ...     amount='放款金额',
     ... )
+
+    :param overdue_operator: 逾期标签比较符，支持 ``>``、``>=``、``<``、``<=``，默认 ``>``。
+        满足比较条件记为坏样本(1)，否则为好样本(0)。
+        ``del_grey=True`` 时，``>`` 剔除 ``(0, dpd]``，``>=`` 剔除 ``(0, dpd)``；
+        ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
+        默认 None 时沿用 ``bin_params`` 的比较符；显式参数优先。
     """
     # ── 第一步：校验轻量输入 ─────────────────────────────────────────────
     if not isinstance(data, pd.DataFrame):
@@ -1388,6 +1411,11 @@ def rule_swap_analysis(
     else:
         del_grey = bool(del_grey)
         resolved_bin_params['del_grey'] = del_grey
+    overdue_operator = resolved_bin_params.get("overdue_operator", ">") if overdue_operator is None else overdue_operator
+    validate_overdue_operator(overdue_operator)
+    del_grey = del_grey and overdue_operator in (">", ">=")
+    resolved_bin_params["overdue_operator"] = overdue_operator
+    resolved_bin_params["del_grey"] = del_grey
     resolved_bin_params.setdefault('n_jobs', n_jobs)
     resolved_bin_params.setdefault('parallel_backend', parallel_backend)
     resolved_bin_params.setdefault('parallel_config', parallel_config)
@@ -1410,7 +1438,7 @@ def rule_swap_analysis(
     )
 
     # ── 第三步半：解析分析样本的实际表现标签 ──────────────────────────────
-    y = _resolve_target_series(data, target, overdue, dpds, del_grey=del_grey)
+    y = _resolve_target_series(data, target, overdue, dpds, del_grey=del_grey, overdue_operator=overdue_operator)
     for table in bin_table_result.values():
         _validate_swap_bin_labels(table)
     if len(y) > 1:
@@ -1442,7 +1470,7 @@ def rule_swap_analysis(
         n_jobs=n_jobs,
         parallel_backend=parallel_backend,
         parallel_config=parallel_config,
-        del_grey=del_grey,
+        del_grey=del_grey, overdue_operator=overdue_operator,
     )
 
     # ── 返回结果 ────────────────────────────────────────────────────────────

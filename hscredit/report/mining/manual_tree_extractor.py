@@ -30,6 +30,7 @@ import pandas as pd
 import sklearn
 from sklearn.tree import DecisionTreeClassifier, export_graphviz
 
+from ...utils.overdue import validate_overdue_operator
 from ...core.rules.rule import Rule
 from ...exceptions import InputValidationError
 from ...utils.pandas_extensions import style_rule_table
@@ -771,7 +772,7 @@ def _node_hit_report(
     :param target: 目标变量列名
     :param overdue: 逾期天数字段名，参考 :meth:`Rule.report`
     :param dpds: 逾期定义方式，参考 :meth:`Rule.report`
-    :param del_grey: 是否删除灰度样本
+    :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本；``<``、``<=`` 下不剔除。
     :param leaf_only: 是否仅评估叶子节点
     :return: 各节点效果评估 DataFrame
     """
@@ -1277,6 +1278,8 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
         del_grey: bool = False,
         leaf_only: bool = False,
         feature_map: Optional[Dict[str, str]] = None,
+        *,
+        overdue_operator: str = ">",
         **kwargs: Any,
     ) -> Union[pd.DataFrame, List[pd.DataFrame], Dict[Any, pd.DataFrame]]:
         """在新数据集上评估决策树各节点规则的效果。
@@ -1292,9 +1295,9 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
         :param target: 目标变量列名，默认为None（使用拟合时的 ``self.target``）
         :param overdue: 逾期天数字段名（可选，传入时以逾期天数>DPD定义坏样本，
             支持多标签多DPD联合分析），参考 :meth:`Rule.report`
-        :param dpds: 逾期定义方式，逾期天数 > DPD 为坏样本，默认为0；
+        :param dpds: 逾期定义方式，默认逾期天数 > DPD 为坏样本（可通过 overdue_operator 调整），默认为0；
             传入列表时支持多DPD联合分析，参考 :meth:`Rule.report`
-        :param del_grey: 是否删除逾期天数在(0, DPD]区间内的灰度样本，默认为False
+        :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本；``<``、``<=`` 下不剔除。
         :param leaf_only: 是否仅评估叶子节点，默认 False（评估所有节点）
         :param feature_map: 字段名到字段含义的映射，显式传入时覆盖构造参数
         :param kwargs: 其余传递给 :meth:`Rule.report` 的参数（如 ``amount``、``margins``）
@@ -1309,7 +1312,14 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
         >>> results = fitter.report({'测试集1': df_test1, '测试集2': df_test2}, target='target')
         >>> # 多标签（逾期天数）联合分析
         >>> result = fitter.report(df_test, overdue=['MOB1'], dpds=[7, 3, 0])
+
+        :param overdue_operator: 逾期标签比较符，支持 ``>``、``>=``、``<``、``<=``，默认 ``>``。
+            满足比较条件记为坏样本(1)，否则为好样本(0)。
+            ``del_grey=True`` 时，``>`` 剔除 ``(0, dpd]``，``>=`` 剔除 ``(0, dpd)``；
+            ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
         """
+        validate_overdue_operator(overdue_operator)
+        kwargs["overdue_operator"] = overdue_operator
         self._check_fitted()
 
         if isinstance(datasets, dict):
@@ -1426,6 +1436,8 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
         dpds: Optional[Union[int, List[int]]] = None,
         del_grey: bool = False,
         leaf_only: bool = False,
+        *,
+        overdue_operator: str = ">",
         **kwargs: Any,
     ) -> pd.DataFrame:
         """获取决策树所有节点（分裂节点+叶子节点）的规则效果表。
@@ -1441,7 +1453,7 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
         :param target: 目标变量列名，默认 None（使用拟合时的 ``self.target``）
         :param overdue: 逾期天数字段名，参考 :meth:`Rule.report`
         :param dpds: 逾期定义方式，参考 :meth:`Rule.report`
-        :param del_grey: 是否删除灰度样本，默认 False
+        :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本；``<``、``<=`` 下不剔除。
         :param leaf_only: 是否仅返回叶子节点，默认 False
         :param kwargs: 其余传递给 :meth:`Rule.report` 的参数（如 ``amount``、``margins``）
         :return: 规则效果表，列结构与 :meth:`report` 一致（节点编号、是否叶子、
@@ -1452,7 +1464,14 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
 
         >>> table = fitter.get_rule_table()            # 在训练数据上评估
         >>> table = fitter.get_rule_table(df_test)     # 在新数据上评估
+
+        :param overdue_operator: 逾期标签比较符，支持 ``>``、``>=``、``<``、``<=``，默认 ``>``。
+            满足比较条件记为坏样本(1)，否则为好样本(0)。
+            ``del_grey=True`` 时，``>`` 剔除 ``(0, dpd]``，``>=`` 剔除 ``(0, dpd)``；
+            ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
         """
+        validate_overdue_operator(overdue_operator)
+        kwargs["overdue_operator"] = overdue_operator
         self._check_fitted()
         data = datasets if datasets is not None else self._data
         if data is None:
@@ -2288,6 +2307,8 @@ class ManualTreeExtractor(ParallelizableMixin):
         dpds: Optional[Union[int, List[int]]] = None,
         del_grey: bool = False,
         leaf_only: bool = False,
+        *,
+        overdue_operator: str = ">",
         **kwargs: Any,
     ) -> pd.DataFrame:
         """获取当前树各节点规则在数据集上的效果表。
@@ -2303,7 +2324,7 @@ class ManualTreeExtractor(ParallelizableMixin):
         :param target: 目标变量列名，默认 None（使用拟合时的 ``self.target``）
         :param overdue: 逾期天数字段名，参考 :meth:`Rule.report`
         :param dpds: 逾期定义方式，参考 :meth:`Rule.report`
-        :param del_grey: 是否删除灰度样本，默认 False
+        :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本；``<``、``<=`` 下不剔除。
         :param leaf_only: 是否仅返回叶子节点，默认 False
         :param kwargs: 其余传递给 :meth:`Rule.report` 的参数（如 ``amount``、``margins``）
         :return: 规则效果表，列结构与 :meth:`report` 一致（节点编号、是否叶子、
@@ -2319,7 +2340,14 @@ class ManualTreeExtractor(ParallelizableMixin):
         >>> ext.manual_split(df, feature='age', threshold=35)
         >>> print(ext.get_rule_table())          # 在训练数据上评估
         >>> print(ext.get_rule_table(df_test))   # 在新数据上评估
+
+        :param overdue_operator: 逾期标签比较符，支持 ``>``、``>=``、``<``、``<=``，默认 ``>``。
+            满足比较条件记为坏样本(1)，否则为好样本(0)。
+            ``del_grey=True`` 时，``>`` 剔除 ``(0, dpd]``，``>=`` 剔除 ``(0, dpd)``；
+            ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
         """
+        validate_overdue_operator(overdue_operator)
+        kwargs["overdue_operator"] = overdue_operator
         self._check_fitted()
         data = datasets if datasets is not None else self._data
         if data is None:
@@ -2418,6 +2446,8 @@ class ManualTreeExtractor(ParallelizableMixin):
         del_grey: bool = False,
         leaf_only: bool = False,
         feature_map: Optional[Dict[str, str]] = None,
+        *,
+        overdue_operator: str = ">",
         **kwargs,
     ) -> Union[pd.DataFrame, List[pd.DataFrame], Dict[Any, pd.DataFrame]]:
         """在新数据集上评估当前树各节点规则的效果。
@@ -2433,9 +2463,9 @@ class ManualTreeExtractor(ParallelizableMixin):
         :param target: 目标变量列名，默认为None（使用拟合时的 ``self.target``）
         :param overdue: 逾期天数字段名（可选，传入时以逾期天数>DPD定义坏样本，
             支持多标签多DPD联合分析），参考 :meth:`Rule.report`
-        :param dpds: 逾期定义方式，逾期天数 > DPD 为坏样本，默认为0；
+        :param dpds: 逾期定义方式，默认逾期天数 > DPD 为坏样本（可通过 overdue_operator 调整），默认为0；
             传入列表时支持多DPD联合分析，参考 :meth:`Rule.report`
-        :param del_grey: 是否删除逾期天数在(0, DPD]区间内的灰度样本，默认为False
+        :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本；``<``、``<=`` 下不剔除。
         :param leaf_only: 是否仅评估叶子节点，默认 False（评估所有节点）
         :param feature_map: 字段名到字段含义的映射，显式传入时覆盖构造参数
         :param kwargs: 其余传递给 :meth:`Rule.report` 的参数（如 ``amount``、``margins``）
@@ -2450,7 +2480,14 @@ class ManualTreeExtractor(ParallelizableMixin):
         >>> results = ext.report({'测试集1': df_test1, '测试集2': df_test2}, target='target')
         >>> # 多标签（逾期天数）联合分析
         >>> result = ext.report(df_test, overdue=['MOB1'], dpds=[7, 3, 0])
+
+        :param overdue_operator: 逾期标签比较符，支持 ``>``、``>=``、``<``、``<=``，默认 ``>``。
+            满足比较条件记为坏样本(1)，否则为好样本(0)。
+            ``del_grey=True`` 时，``>`` 剔除 ``(0, dpd]``，``>=`` 剔除 ``(0, dpd)``；
+            ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
         """
+        validate_overdue_operator(overdue_operator)
+        kwargs["overdue_operator"] = overdue_operator
         self._check_fitted()
 
         if isinstance(datasets, dict):

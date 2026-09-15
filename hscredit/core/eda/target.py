@@ -8,29 +8,31 @@ import numpy as np
 import pandas as pd
 from typing import List, Dict, Optional, Union, Tuple
 
+from ...utils.overdue import make_overdue_target, overdue_label, validate_overdue_operator
 from .utils import validate_dataframe, validate_binary_target, safe_divide
 
 
 def _build_overdue_labels(overdue: Union[str, List[str]],
-                          dpds: Union[int, List[int]]) -> List[Tuple[str, int, str]]:
+                          dpds: Union[int, List[int]], overdue_operator: str = ">") -> List[Tuple[str, int, str]]:
     """构建逾期标签列表.
     
     :param overdue: 逾期天数字段名或列表
     :param dpds: 逾期天数或列表
     :return: 标签列表 [(标签名, dpd天数, 逾期字段), ...]
     """
+    validate_overdue_operator(overdue_operator)
     if isinstance(overdue, str):
         overdue = [overdue]
-    if isinstance(dpds, int):
+    if np.isscalar(dpds):
         dpds = [dpds]
     
     labels = []
     for od_field in overdue:
         for dpd in dpds:
             if dpd == 0:
-                label_name = f"{od_field}>0"
+                label_name = overdue_label(od_field, 0, overdue_operator, style="plain")
             else:
-                label_name = f"{od_field}>{dpd}"
+                label_name = overdue_label(od_field, dpd, overdue_operator, style="plain")
             labels.append((label_name, dpd, od_field))
     
     return labels
@@ -39,27 +41,19 @@ def _build_overdue_labels(overdue: Union[str, List[str]],
 def _create_binary_target(df: pd.DataFrame,
                           overdue_col: str,
                           dpd: int,
-                          del_grey: bool = False) -> pd.Series:
+                          del_grey: bool = False,
+    overdue_operator: str = ">") -> pd.Series:
     """根据逾期天数创建二元目标变量.
     
     :param df: 输入数据
     :param overdue_col: 逾期天数字段名
     :param dpd: 逾期定义天数
-    :param del_grey: 是否删除灰样本
+    :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本；``<``、``<=`` 下不剔除。
     :return: 二元目标变量 (0/1)，灰样本为NaN
     """
-    overdue = df[overdue_col].copy()
-    
-    if del_grey:
-        # 删除灰样本：逾期天数在 (0, dpd] 区间设为NaN
-        target = pd.Series(np.nan, index=df.index)
-        target[overdue > dpd] = 1  # 坏样本
-        target[overdue <= 0] = 0   # 好样本
-    else:
-        # 保留灰样本作为好样本
-        target = (overdue > dpd).astype(int)
-    
-    return target
+    validate_overdue_operator(overdue_operator)
+    del_grey = del_grey and overdue_operator in (">", ">=")
+    return make_overdue_target(df[overdue_col], dpd, del_grey, overdue_operator)
 
 
 def target_distribution(df: pd.DataFrame,
@@ -105,7 +99,7 @@ def bad_rate_overall(df: pd.DataFrame,
                     dpds: Optional[Union[int, List[int]]] = None,
                     del_grey: bool = False,
                     *,
-                    target: Optional[str] = None) -> Union[Dict, pd.DataFrame]:
+                    target: Optional[str] = None, overdue_operator: str = ">") -> Union[Dict, pd.DataFrame]:
     """计算整体逾期率.
     
     支持单标签分析（通过target_col）或多标签分析（通过overdue+dpds）。
@@ -114,8 +108,8 @@ def bad_rate_overall(df: pd.DataFrame,
     :param target_col: 目标变量列名（单标签模式）
     :param overdue: 逾期天数字段名或列表，如 'MOB1' 或 ['MOB1', 'MOB3']
     :param dpds: 逾期定义天数或列表，如 7 或 [0, 7, 30]
-        - 逾期天数 > dpds 为坏样本(1)，其他为好样本(0)
-    :param del_grey: 是否删除逾期天数在 (0, dpd] 区间的灰样本
+        - 默认逾期天数 > dpds 为坏样本(1)，可通过 overdue_operator 修改比较符
+    :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本；``<``、``<=`` 下不剔除。
     :return: 单标签返回字典，多标签返回DataFrame
     
     **参考样例**
@@ -131,12 +125,19 @@ def bad_rate_overall(df: pd.DataFrame,
          标签      样本总数  好样本数  坏样本数  逾期率(%)
     0  MOB1>7     9800    8820     980    10.00
     1  MOB1>30    9800    9400     400     4.08
+
+    :param overdue_operator: 逾期标签比较符，支持 ``>``、``>=``、``<``、``<=``，默认 ``>``。
+        满足比较条件记为坏样本(1)，否则为好样本(0)。
+        ``del_grey=True`` 时，``>`` 剔除 ``(0, dpd]``，``>=`` 剔除 ``(0, dpd)``；
+        ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
     """
+    validate_overdue_operator(overdue_operator)
+    del_grey = del_grey and overdue_operator in (">", ">=")
     target_col = target or target_col
     validate_dataframe(df)
     
     # 单标签模式
-    if target_col is not None:
+    if target_col is not None and overdue is None:
         validate_binary_target(df[target_col])
         total = len(df)
         bad_count = df[target_col].sum()
@@ -154,11 +155,11 @@ def bad_rate_overall(df: pd.DataFrame,
     if overdue is None or dpds is None:
         raise ValueError("必须指定 target_col 或 (overdue + dpds)")
     
-    labels = _build_overdue_labels(overdue, dpds)
+    labels = _build_overdue_labels(overdue, dpds, overdue_operator=overdue_operator)
     results = []
     
     for label_name, dpd, od_field in labels:
-        target = _create_binary_target(df, od_field, dpd, del_grey)
+        target = _create_binary_target(df, od_field, dpd, del_grey, overdue_operator=overdue_operator)
         valid_mask = target.notna()
         
         total = valid_mask.sum()
@@ -196,7 +197,7 @@ def bad_rate_by_dimension(df: pd.DataFrame,
                          sort_by: str = 'bad_rate',
                          *,
                          target: Optional[str] = None,
-                         segment_col: Optional[str] = None) -> Union[pd.DataFrame, Dict[str, pd.DataFrame]]:
+                         segment_col: Optional[str] = None, overdue_operator: str = ">") -> Union[pd.DataFrame, Dict[str, pd.DataFrame]]:
     """分维度逾期率分析.
     
     支持单标签或多标签分析。
@@ -206,7 +207,7 @@ def bad_rate_by_dimension(df: pd.DataFrame,
     :param target_col: 目标变量列名（单标签模式）
     :param overdue: 逾期天数字段名或列表
     :param dpds: 逾期定义天数或列表
-    :param del_grey: 是否删除灰样本
+    :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本；``<``、``<=`` 下不剔除。
     :param sort_by: 排序方式，'bad_rate'或'count'
     :return: 单标签返回DataFrame，多标签返回{标签名: DataFrame}字典
     
@@ -218,7 +219,14 @@ def bad_rate_by_dimension(df: pd.DataFrame,
     >>> # 多标签
     >>> result = bad_rate_by_dimension(df, 'channel', overdue='MOB1', dpds=[7, 30])
     >>> print(result['MOB1>7'])
+
+    :param overdue_operator: 逾期标签比较符，支持 ``>``、``>=``、``<``、``<=``，默认 ``>``。
+        满足比较条件记为坏样本(1)，否则为好样本(0)。
+        ``del_grey=True`` 时，``>`` 剔除 ``(0, dpd]``，``>=`` 剔除 ``(0, dpd)``；
+        ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
     """
+    validate_overdue_operator(overdue_operator)
+    del_grey = del_grey and overdue_operator in (">", ">=")
     target_col = target or target_col
     dim_col = segment_col or dim_col
     if dim_col is None:
@@ -226,7 +234,7 @@ def bad_rate_by_dimension(df: pd.DataFrame,
     validate_dataframe(df, required_cols=[dim_col])
     
     # 单标签模式
-    if target_col is not None:
+    if target_col is not None and overdue is None:
         validate_binary_target(df[target_col])
         total = len(df)
         
@@ -252,11 +260,11 @@ def bad_rate_by_dimension(df: pd.DataFrame,
     if overdue is None or dpds is None:
         raise ValueError("必须指定 target_col 或 (overdue + dpds)")
     
-    labels = _build_overdue_labels(overdue, dpds)
+    labels = _build_overdue_labels(overdue, dpds, overdue_operator=overdue_operator)
     results = {}
     
     for label_name, dpd, od_field in labels:
-        target = _create_binary_target(df, od_field, dpd, del_grey)
+        target = _create_binary_target(df, od_field, dpd, del_grey, overdue_operator=overdue_operator)
         valid_mask = target.notna()
         
         df_valid = df[valid_mask].copy()
@@ -296,7 +304,7 @@ def bad_rate_trend(df: pd.DataFrame,
                   freq: str = 'M',
                   dimensions: Optional[List[str]] = None,
                   *,
-                  target: Optional[str] = None) -> Union[pd.DataFrame, Dict[str, pd.DataFrame]]:
+                  target: Optional[str] = None, overdue_operator: str = ">") -> Union[pd.DataFrame, Dict[str, pd.DataFrame]]:
     """逾期率时间趋势分析.
     
     支持单标签或多标签分析。
@@ -306,7 +314,7 @@ def bad_rate_trend(df: pd.DataFrame,
     :param target_col: 目标变量列名（单标签模式）
     :param overdue: 逾期天数字段名或列表
     :param dpds: 逾期定义天数或列表
-    :param del_grey: 是否删除灰样本
+    :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本；``<``、``<=`` 下不剔除。
     :param freq: 时间频率，'D'日/'W'周/'M'月/'Q'季度
     :param dimensions: 分维度分析列表
     :return: 单标签返回DataFrame，多标签返回{标签名: DataFrame}字典
@@ -319,7 +327,14 @@ def bad_rate_trend(df: pd.DataFrame,
     >>> # 多标签
     >>> trend = bad_rate_trend(df, 'apply_date', overdue=['MOB1', 'MOB3'], dpds=30, freq='M')
     >>> print(trend['MOB1>30'])
+
+    :param overdue_operator: 逾期标签比较符，支持 ``>``、``>=``、``<``、``<=``，默认 ``>``。
+        满足比较条件记为坏样本(1)，否则为好样本(0)。
+        ``del_grey=True`` 时，``>`` 剔除 ``(0, dpd]``，``>=`` 剔除 ``(0, dpd)``；
+        ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
     """
+    validate_overdue_operator(overdue_operator)
+    del_grey = del_grey and overdue_operator in (">", ">=")
     target_col = target or target_col
     validate_dataframe(df, required_cols=[date_col])
     
@@ -341,7 +356,7 @@ def bad_rate_trend(df: pd.DataFrame,
         raise ValueError("freq必须是'D'/'W'/'M'/'Q'之一")
     
     # 单标签模式
-    if target_col is not None:
+    if target_col is not None and overdue is None:
         validate_binary_target(df[target_col])
         
         grouped = df.groupby(period_col).agg({
@@ -366,11 +381,11 @@ def bad_rate_trend(df: pd.DataFrame,
     if overdue is None or dpds is None:
         raise ValueError("必须指定 target_col 或 (overdue + dpds)")
     
-    labels = _build_overdue_labels(overdue, dpds)
+    labels = _build_overdue_labels(overdue, dpds, overdue_operator=overdue_operator)
     results = {}
     
     for label_name, dpd, od_field in labels:
-        target = _create_binary_target(df, od_field, dpd, del_grey)
+        target = _create_binary_target(df, od_field, dpd, del_grey, overdue_operator=overdue_operator)
         valid_mask = target.notna()
         
         df_valid = df[valid_mask].copy()
@@ -406,7 +421,7 @@ def bad_rate_by_bins(df: pd.DataFrame,
                     dpds: Optional[Union[int, List[int]]] = None,
                     del_grey: bool = False,
                     n_bins: int = 10,
-                    method: str = 'quantile') -> Union[pd.DataFrame, Dict[str, pd.DataFrame]]:
+                    method: str = 'quantile', *, overdue_operator: str = ">") -> Union[pd.DataFrame, Dict[str, pd.DataFrame]]:
     """评分分箱逾期率分析.
     
     支持单标签或多标签分析。
@@ -416,7 +431,7 @@ def bad_rate_by_bins(df: pd.DataFrame,
     :param target_col: 目标变量列名（单标签模式）
     :param overdue: 逾期天数字段名或列表
     :param dpds: 逾期定义天数或列表
-    :param del_grey: 是否删除灰样本
+    :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本；``<``、``<=`` 下不剔除。
     :param n_bins: 分箱数
     :param method: 分箱方法，'quantile'等频/'uniform'等距
     :return: 单标签返回DataFrame，多标签返回{标签名: DataFrame}字典
@@ -429,7 +444,14 @@ def bad_rate_by_bins(df: pd.DataFrame,
     >>> # 多标签
     >>> bins = bad_rate_by_bins(df, 'score', overdue=['MOB1', 'MOB3'], dpds=30, n_bins=10)
     >>> print(bins['MOB1>30'])
+
+    :param overdue_operator: 逾期标签比较符，支持 ``>``、``>=``、``<``、``<=``，默认 ``>``。
+        满足比较条件记为坏样本(1)，否则为好样本(0)。
+        ``del_grey=True`` 时，``>`` 剔除 ``(0, dpd]``，``>=`` 剔除 ``(0, dpd)``；
+        ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
     """
+    validate_overdue_operator(overdue_operator)
+    del_grey = del_grey and overdue_operator in (">", ">=")
     validate_dataframe(df, required_cols=[score_col])
     
     series = df[score_col].dropna()
@@ -444,7 +466,7 @@ def bad_rate_by_bins(df: pd.DataFrame,
         bins = pd.cut(df[score_col], bins=n_bins)
     
     # 单标签模式
-    if target_col is not None:
+    if target_col is not None and overdue is None:
         validate_binary_target(df[target_col])
         
         total_bad_rate = df[target_col].mean()
@@ -467,11 +489,11 @@ def bad_rate_by_bins(df: pd.DataFrame,
     if overdue is None or dpds is None:
         raise ValueError("必须指定 target_col 或 (overdue + dpds)")
     
-    labels = _build_overdue_labels(overdue, dpds)
+    labels = _build_overdue_labels(overdue, dpds, overdue_operator=overdue_operator)
     results = {}
     
     for label_name, dpd, od_field in labels:
-        target = _create_binary_target(df, od_field, dpd, del_grey)
+        target = _create_binary_target(df, od_field, dpd, del_grey, overdue_operator=overdue_operator)
         valid_mask = target.notna()
         
         df_valid = df[valid_mask].copy()

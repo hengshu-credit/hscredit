@@ -16,6 +16,13 @@ import numpy as np
 import pandas as pd
 from openpyxl.worksheet.worksheet import Worksheet
 
+from ..utils.overdue import (
+    compare_overdue,
+    overdue_grey_mask,
+    make_overdue_target,
+    overdue_label,
+    validate_overdue_operator,
+)
 from ..core.binning import OptimalBinning, OptimalBinning2D
 from ..core.binning.base import BaseBinning
 from ..core.eda._feature_summary import (
@@ -160,7 +167,7 @@ def _auto_feature_compute_call(task):
 
     if isinstance(dropna, bool) and dropna is True:
         feature_data = feature_data.dropna(subset=feature).reset_index(drop=True)
-    elif isinstance(dropna, (float, int, str)):
+    elif not isinstance(dropna, bool) and isinstance(dropna, (float, int, str)):
         feature_data = feature_data[feature_data[feature] != dropna].reset_index(drop=True)
 
     sample_table = feature_bin_stats(
@@ -186,7 +193,13 @@ def _auto_feature_compute_call(task):
             margins=margins,
             **bin_params,
         )
-    actual_target = target if not overdue else f"{overdue[0]} {dpds[0]}+"
+    overdue_operator = bin_params.get("overdue_operator", ">")
+    actual_target = target if not overdue else overdue_label(overdue[0], dpds[0], overdue_operator, style="space")
+    if overdue:
+        # 图形与首个逾期口径的分箱表使用相同标签；灰样本保留 NaN 供绘图时排除。
+        feature_data[actual_target] = make_overdue_target(
+            feature_data[overdue[0]], dpds[0], bin_params.get("del_grey", False), overdue_operator
+        )
     return {
         "feature": feature,
         "data": feature_data,
@@ -301,7 +314,8 @@ def _benchmark_binning_call(task):
     }
     try:
         binner = OptimalBinning(method=method, **params)
-        binner.fit(pd.DataFrame({feature: x}), y)
+        valid_target = y.notna()
+        binner.fit(pd.DataFrame({feature: x.loc[valid_target]}), y.loc[valid_target])
         splits = np.asarray(binner.splits_.get(feature, []), dtype=float)
         mask = x.notna() & y.notna()
         xv = x[mask].to_numpy(dtype=float)
@@ -357,12 +371,14 @@ def _benchmark_binning_wide_table(
     methods: List[str],
     overdue_columns: List[str],
     dpd_values: List[int],
+    overdue_operator: str = ">",
 ) -> pd.DataFrame:
     """将方法基准长表转换为按逾期标签展开的两层列宽表。"""
+    validate_overdue_operator(overdue_operator)
     key_columns = {"分箱方法", "逾期字段", "逾期阈值"}
     metric_columns = [column for column in table.columns if column not in key_columns]
     labels = [
-        (overdue_name, dpd, f"{overdue_name}_{dpd}+")
+        (overdue_name, dpd, overdue_label(overdue_name, dpd, overdue_operator))
         for overdue_name in overdue_columns
         for dpd in dpd_values
     ]
@@ -395,7 +411,7 @@ def _benchmark_binning_wide_table(
 def _feature_missing_rate(data: pd.DataFrame, feature: str, dropna: Union[bool, float, int, str] = False) -> float:
     """计算变量缺失率，和 auto_feature_analysis 的剔除口径保持一致."""
     missing_mask = data[feature].isna()
-    if isinstance(dropna, (float, int, str)):
+    if not isinstance(dropna, bool) and isinstance(dropna, (float, int, str)):
         missing_mask = missing_mask | data[feature].eq(dropna)
     return float(missing_mask.mean()) if len(data) > 0 else 0.0
 
@@ -406,23 +422,26 @@ def _auto_feature_target_maps(
     overdue: Optional[List[str]] = None,
     dpds: Optional[List[Union[int, float]]] = None,
     del_grey: bool = False,
+    overdue_operator: str = ">",
 ) -> Tuple[str, List[str], Dict[str, str], Dict[str, np.ndarray]]:
     """生成自动特征分析使用的目标列、展示标签和标签数组."""
+    validate_overdue_operator(overdue_operator)
+    del_grey = del_grey and overdue_operator in (">", ">=")
     if overdue:
         if dpds is None:
             raise ValueError("传入 overdue 参数时必须同时传入 dpds")
-        primary_target = f"{overdue[0]} {dpds[0]}+"
+        primary_target = overdue_label(overdue[0], dpds[0], overdue_operator, style="space")
         label_names: List[str] = []
         display_labels: Dict[str, str] = {}
         y_map: Dict[str, np.ndarray] = {}
         for mob_col in overdue:
             for dpd in dpds:
-                label = f"{mob_col}>{dpd}"
+                label = overdue_label(mob_col, dpd, overdue_operator, style="plain")
                 label_names.append(label)
-                display_labels[label] = f"{mob_col}@{dpd}"
-                y = (data[mob_col] > dpd).astype(float)
+                display_labels[label] = overdue_label(mob_col, dpd, overdue_operator, style="at")
+                y = compare_overdue(data[mob_col], dpd, overdue_operator).astype(float)
                 if del_grey:
-                    valid_mask = (data[mob_col] > dpd) | (data[mob_col] == 0)
+                    valid_mask = ~overdue_grey_mask(data[mob_col], dpd, overdue_operator)
                     y = y.where(valid_mask, np.nan)
                 y_map[label] = y.to_numpy()
         return primary_target, label_names, display_labels, y_map
@@ -677,6 +696,8 @@ def feature_binning_summary(
     n_jobs: Union[int, float] = -1,
     parallel_backend: Optional[str] = None,
     parallel_config: Optional[Dict[str, Any]] = None,
+    *,
+    overdue_operator: str = ">",
     **kwargs,
 ) -> Tuple[Dict[str, Dict[str, pd.DataFrame]], pd.DataFrame]:
     """对一个或多个字段执行多种分箱，并生成跨方法摘要。
@@ -714,7 +735,14 @@ def feature_binning_summary(
     ...     overdue='MOB1', dpds=[3, 1, 0], max_n_bins=5,
     ...     bin_params={'mdlp': {'min_bin_size': 0.1}},
     ... )
+
+    :param overdue_operator: 逾期标签比较符，支持 ``>``、``>=``、``<``、``<=``，默认 ``>``。
+        满足比较条件记为坏样本(1)，否则为好样本(0)。
+        ``del_grey=True`` 时，``>`` 剔除 ``(0, dpd]``，``>=`` 剔除 ``(0, dpd)``；
+        ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
     """
+    validate_overdue_operator(overdue_operator)
+    del_grey = del_grey and overdue_operator in (">", ">=")
     features = [feature] if isinstance(feature, str) else list(feature)
     if not features:
         raise ValueError("feature 不能为空")
@@ -729,6 +757,7 @@ def feature_binning_summary(
         "target": target,
         "overdue": overdue,
         "dpds": dpds,
+        "overdue_operator": overdue_operator,
         "desc": desc,
         "max_n_bins": max_n_bins,
         "min_n_bins": min_n_bins,
@@ -758,13 +787,13 @@ def feature_binning_summary(
     if overdue is not None:
         overdue_values = [overdue] if isinstance(overdue, str) else list(overdue)
         dpd_values = normalize_dpd_values(dpds)
-        target_labels = [f"{overdue_name}@{dpd}" for overdue_name in overdue_values for dpd in dpd_values]
+        target_labels = [overdue_label(overdue_name, dpd, overdue_operator, style="at") for overdue_name in overdue_values for dpd in dpd_values]
         if len(target_labels) == 1:
             single_target_name = target_labels[0]
 
     tasks = []
     for method in normalized_methods:
-        method_params = {**common_params, **per_method_params[method]}
+        method_params = {**common_params, **per_method_params[method], "overdue_operator": overdue_operator}
         for reserved in ("data", "feature", "method", "return_rules"):
             method_params.pop(reserved, None)
         for name in features:
@@ -820,7 +849,8 @@ def _fit_group_summary_binner(
     overdue = params.get("overdue")
     dpds = params.get("dpds")
     target = params.get("target")
-    del_grey = bool(params.get("del_grey", False))
+    overdue_operator = params.get("overdue_operator", ">")
+    del_grey = bool(params.get("del_grey", False)) and overdue_operator in (">", ">=")
 
     if overdue is not None:
         if dpds is None:
@@ -828,9 +858,9 @@ def _fit_group_summary_binner(
         overdue_col = overdue if isinstance(overdue, str) else list(overdue)[0]
         dpd = normalize_dpd_values(dpds)[0]
         train_data = data[[feature, overdue_col]].copy()
-        y_train = (train_data[overdue_col] > dpd).astype(int)
+        y_train = compare_overdue(train_data[overdue_col], dpd, overdue_operator).astype(int)
         if del_grey:
-            mask = (train_data[overdue_col] > dpd) | (train_data[overdue_col] == 0)
+            mask = ~overdue_grey_mask(train_data[overdue_col], dpd, overdue_operator)
             train_data = train_data.loc[mask]
             y_train = y_train.loc[mask]
     elif target is not None:
@@ -861,6 +891,7 @@ def _fit_group_summary_binner(
         "target",
         "overdue",
         "dpds",
+        "overdue_operator",
         "desc",
         "del_grey",
         "margins",
@@ -925,6 +956,8 @@ def feature_group_binning_summary(
     n_jobs: Union[int, float] = -1,
     parallel_backend: Optional[str] = None,
     parallel_config: Optional[Dict[str, Any]] = None,
+    *,
+    overdue_operator: str = ">",
     **kwargs,
 ) -> Tuple[Dict[str, Dict[str, Dict[str, pd.DataFrame]]], pd.DataFrame]:
     """统计日期周期或类别分组下的特征分箱效果。
@@ -955,7 +988,14 @@ def feature_group_binning_summary(
     >>> category_tables, category_summary = feature_group_binning_summary(
     ...     data, feature='score', group_col='商品类别', target='FPD',
     ... )
+
+    :param overdue_operator: 逾期标签比较符，支持 ``>``、``>=``、``<``、``<=``，默认 ``>``。
+        满足比较条件记为坏样本(1)，否则为好样本(0)。
+        ``del_grey=True`` 时，``>`` 剔除 ``(0, dpd]``，``>=`` 剔除 ``(0, dpd)``；
+        ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
     """
+    validate_overdue_operator(overdue_operator)
+    del_grey = del_grey and overdue_operator in (">", ">=")
     if not isinstance(data, pd.DataFrame) or data.empty:
         raise ValueError("data 必须是非空的 DataFrame")
 
@@ -977,6 +1017,7 @@ def feature_group_binning_summary(
         "target": target,
         "overdue": overdue,
         "dpds": dpds,
+        "overdue_operator": overdue_operator,
         "desc": desc,
         "max_n_bins": max_n_bins,
         "min_n_bins": min_n_bins,
@@ -1007,13 +1048,13 @@ def feature_group_binning_summary(
     if overdue is not None:
         overdue_values = [overdue] if isinstance(overdue, str) else list(overdue)
         dpd_values = normalize_dpd_values(dpds)
-        target_labels = [f"{overdue_name}@{dpd}" for overdue_name in overdue_values for dpd in dpd_values]
+        target_labels = [overdue_label(overdue_name, dpd, overdue_operator, style="at") for overdue_name in overdue_values for dpd in dpd_values]
         if len(target_labels) == 1:
             single_target_name = target_labels[0]
 
     tasks = []
     for method in normalized_methods:
-        method_params = {**common_params, **per_method_params[method]}
+        method_params = {**common_params, **per_method_params[method], "overdue_operator": overdue_operator}
         for reserved in ("data", "feature", "method", "return_rules", "binner"):
             method_params.pop(reserved, None)
         method_params.setdefault("n_jobs", -1)
@@ -1264,6 +1305,8 @@ def feature_bin_stats(
     n_jobs: Union[int, float] = -1,
     parallel_backend: Optional[str] = None,
     parallel_config: Optional[Dict[str, Any]] = None,
+    *,
+    overdue_operator: str = ">",
     **kwargs,
 ) -> Union[pd.DataFrame, Tuple[pd.DataFrame, Dict]]:
     """特征分箱统计表，汇总统计特征每个分箱的各项指标信息.
@@ -1276,7 +1319,7 @@ def feature_bin_stats(
     :param target: 目标变量名称，默认 None
     :param overdue: 逾期天数字段名称或列表，如 'MOB1' 或 ['MOB1', 'MOB3']
     :param dpds: 逾期定义天数或列表，如 7 或 [0, 7, 30]
-        - 逾期天数 > dpds 为坏样本(1)，其他为好样本(0)
+        - 默认逾期天数 > dpds 为坏样本(1)，可通过 overdue_operator 修改比较符
     :param rules: 自定义分箱规则，支持 list（所有特征统一规则）或 dict（按特征名映射规则）。
         对 rules 中未包含的特征，按 method 参数重新训练分箱器。
         优先级: binner > rules > method
@@ -1308,7 +1351,7 @@ def feature_bin_stats(
         默认 None，此时会使用 {'max_n_bins': 100}，即先等频100箱再合并。
     :param return_cols: 指定返回的列名列表，默认返回所有列
     :param return_rules: 是否返回分箱规则，默认 False
-    :param del_grey: 是否删除逾期天数 (0, dpds] 的灰样本，仅 overdue 起作用时有用
+    :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本；``<``、``<=`` 下不剔除。
         - True: 剔除灰样本，不同目标下样本数不同，样本数相关列按目标单独显示
         - False: 保留灰样本，不同目标下样本数相同，样本数相关列作为公共列
     :param margins: 是否在分箱表最后添加合计行，默认 False
@@ -1363,7 +1406,14 @@ def feature_bin_stats(
     >>>
     >>> # 长格式输出：多逾期标签纵向堆叠，新增"逾期标签"列
     >>> table = feature_bin_stats(data, 'score', overdue='MOB1', dpds=[15, 0], long_format=True)
+
+    :param overdue_operator: 逾期标签比较符，支持 ``>``、``>=``、``<``、``<=``，默认 ``>``。
+        满足比较条件记为坏样本(1)，否则为好样本(0)。
+        ``del_grey=True`` 时，``>`` 剔除 ``(0, dpd]``，``>=`` 剔除 ``(0, dpd)``；
+        ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
     """
+    validate_overdue_operator(overdue_operator)
+    del_grey = del_grey and overdue_operator in (">", ">=")
     _validate_report_parallel(n_jobs, parallel_backend, parallel_config)
     # 统一处理 feature 参数
     if isinstance(feature, str):
@@ -1378,6 +1428,7 @@ def feature_bin_stats(
             "target": target,
             "overdue": overdue,
             "dpds": dpds,
+            "overdue_operator": overdue_operator,
             "rules": rules,
             "method": method,
             "desc": desc,
@@ -1455,7 +1506,7 @@ def feature_bin_stats(
 
         for mob_col in overdue:
             for d in dpds:
-                target_name = f"{mob_col}_{d}+"
+                target_name = overdue_label(mob_col, d, overdue_operator)
                 target_configs.append({"name": target_name, "mob_col": mob_col, "dpd": d})
     elif target is not None:
         # 普通目标模式
@@ -1545,10 +1596,10 @@ def feature_bin_stats(
             if first_target["mob_col"] is not None:
                 # 逾期模式
                 train_data = data[[feat, first_target["mob_col"]]].copy()
-                y_train = (train_data[first_target["mob_col"]] > first_target["dpd"]).astype(int)
+                y_train = compare_overdue(train_data[first_target["mob_col"]], first_target["dpd"], overdue_operator).astype(int)
 
                 if del_grey:
-                    mask = (train_data[first_target["mob_col"]] > first_target["dpd"]) | (train_data[first_target["mob_col"]] == 0)
+                    mask = ~overdue_grey_mask(train_data[first_target["mob_col"]], first_target["dpd"], overdue_operator)
                     train_data = train_data[mask]
                     y_train = y_train[mask]
             else:
@@ -1602,12 +1653,11 @@ def feature_bin_stats(
                 if amount is not None and amount in data.columns and amount not in cols_to_select:
                     cols_to_select.append(amount)
                 analysis_data = data[cols_to_select].copy()
-                y = (analysis_data[target_cfg["mob_col"]] > target_cfg["dpd"]).astype(int)
+                y = compare_overdue(analysis_data[target_cfg["mob_col"]], target_cfg["dpd"], overdue_operator).astype(int)
 
-                # 剔除灰客户：只保留好样本(overdue==0)和坏样本(overdue>dpd)
-                # 参考 scp: _datasets = _datasets.query(f"({col} > {d}) | ({col} == 0)")
+                # 按比较符对应的区间剔除灰客户。
                 if isinstance(del_grey, bool) and del_grey:
-                    mask = (analysis_data[target_cfg["mob_col"]] > target_cfg["dpd"]) | (analysis_data[target_cfg["mob_col"]] == 0)
+                    mask = ~overdue_grey_mask(analysis_data[target_cfg["mob_col"]], target_cfg["dpd"], overdue_operator)
                     analysis_data = analysis_data[mask].reset_index(drop=True)
                     y = y[mask].reset_index(drop=True)
             else:
@@ -1724,25 +1774,27 @@ def feature_bin_stats_2d(
     n_jobs: Union[int, float] = -1,
     parallel_backend: Optional[str] = None,
     parallel_config: Optional[Dict[str, Any]] = None,
+    *,
+    overdue_operator: str = ">",
     **kwargs,
 ) -> Union[pd.DataFrame, Tuple[pd.DataFrame, OptimalBinning2D]]:
     """生成两个特征的联合二维分箱统计表.
 
     二维区域在第一个目标口径上拟合一次，其余逾期目标复用同一套区域，并按各自
     ``overdue × dpd`` 口径重新计算样本数、坏样本率、WOE、IV、KS 等指标。
-    ``del_grey=True`` 时每个目标独立剔除 ``(0, dpd]`` 灰样本。
+    ``del_grey=True`` 时每个目标按 overdue_operator 对应区间独立剔除灰样本。
 
     :param data: 原始明细数据
     :param features: 恰好两个特征名，顺序对应二维分箱的两个轴
     :param target: 二分类目标列名，与 ``overdue`` 二选一
     :param overdue: 逾期天数字段名或列表
-    :param dpds: DPD 阈值或列表，逾期天数大于阈值记为坏样本
+    :param dpds: DPD 阈值或列表，默认逾期天数大于阈值记为坏样本，可通过 overdue_operator 调整
     :param binner: 可选的已拟合或未拟合 :class:`OptimalBinning2D`
     :param method: 两个轴的一维分箱方法，默认 ``quantile``
     :param desc: 指标含义，默认使用 ``特征1X特征2``
     :param max_n_bins: 每个轴最大分箱数
     :param min_bin_size: 二维普通分箱最小样本数或占比
-    :param del_grey: 是否按每个 DPD 独立删除灰样本
+    :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本；``<``、``<=`` 下不剔除。
     :param margins: 是否为每个目标追加合计行
     :param amount: 金额字段；传入后按金额口径计算统计
     :param return_cols: 指定保留的统计列
@@ -1756,7 +1808,14 @@ def feature_bin_stats_2d(
     ...     data, ['评分', '多头数'], overdue='MOB1', dpds=[7, 3, 0],
     ...     del_grey=True, margins=True, return_binner=True,
     ... )
+
+    :param overdue_operator: 逾期标签比较符，支持 ``>``、``>=``、``<``、``<=``，默认 ``>``。
+        满足比较条件记为坏样本(1)，否则为好样本(0)。
+        ``del_grey=True`` 时，``>`` 剔除 ``(0, dpd]``，``>=`` 剔除 ``(0, dpd)``；
+        ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
     """
+    validate_overdue_operator(overdue_operator)
+    del_grey = del_grey and overdue_operator in (">", ">=")
     _validate_report_parallel(n_jobs, parallel_backend, parallel_config)
     if not isinstance(data, pd.DataFrame) or data.empty:
         raise ValueError("data 必须是非空的 DataFrame")
@@ -1779,7 +1838,7 @@ def feature_bin_stats_2d(
         if missing_overdue:
             raise KeyError(f"数据中不存在逾期字段: {missing_overdue}")
         target_configs = [
-            {"name": f"{column}_{dpd}+", "overdue": column, "dpd": dpd}
+            {"name": overdue_label(column, dpd, overdue_operator), "overdue": column, "dpd": dpd}
             for column in overdue_columns
             for dpd in dpd_values
         ]
@@ -1799,9 +1858,9 @@ def feature_bin_stats_2d(
         view = data[columns].copy()
         if config["overdue"] is not None:
             overdue_values = pd.to_numeric(view[config["overdue"]], errors="coerce")
-            y_values = (overdue_values > config["dpd"]).astype(int)
+            y_values = compare_overdue(overdue_values, config["dpd"], overdue_operator).astype(int)
             if del_grey:
-                valid = (overdue_values == 0) | (overdue_values > config["dpd"])
+                valid = ~overdue_grey_mask(overdue_values, config["dpd"], overdue_operator)
                 view = view.loc[valid]
                 y_values = y_values.loc[valid]
         else:
@@ -1877,7 +1936,7 @@ def benchmark_binning_methods(
     data: pd.DataFrame,
     feature: str,
     overdue: Union[str, List[str]] = "MOB1",
-    dpds: Optional[Union[int, List[int]]] = None,
+    dpds: Optional[Union[int, float, List[Union[int, float]]]] = None,
     max_n_bins: int = 5,
     min_bin_size: Union[float, int] = 0.01,
     monotonic: Union[bool, str] = "auto_asc_desc",
@@ -1899,6 +1958,9 @@ def benchmark_binning_methods(
     woe_clip: Optional[float] = None,
     lift_refine: bool = True,
     long_format: bool = False,
+    del_grey: bool = False,
+    *,
+    overdue_operator: str = ">",
     **kwargs,
 ) -> pd.DataFrame:
     """逐方法对比 hscredit 内部分箱效果。
@@ -1933,7 +1995,13 @@ def benchmark_binning_methods(
     :param long_format: 是否返回平铺长表，默认 False，返回按逾期标签展开的两层列宽表
     :param kwargs: 透传给 ``OptimalBinning`` 的方法专属参数
     :return: 使用中文指标列名的分箱方法对比表
+
+    :param overdue_operator: 逾期标签比较符，支持 ``>``、``>=``、``<``、``<=``，默认 ``>``。
+        满足比较条件记为坏样本(1)，否则为好样本(0)。
+        ``del_grey=True`` 时，``>`` 剔除 ``(0, dpd]``，``>=`` 剔除 ``(0, dpd)``；
+        ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
     """
+    validate_overdue_operator(overdue_operator)
     column_names = {
         "method": "分箱方法",
         "overdue": "逾期字段",
@@ -1965,12 +2033,7 @@ def benchmark_binning_methods(
     if missing_overdue:
         raise KeyError(f"数据中不存在逾期字段：{missing_overdue}")
 
-    if dpds is None:
-        dpd_values = [3, 0]
-    elif isinstance(dpds, (int, np.integer)):
-        dpd_values = [int(dpds)]
-    else:
-        dpd_values = list(dpds)
+    dpd_values = normalize_dpd_values([3, 0] if dpds is None else dpds)
     if not dpd_values:
         raise ValueError("dpds 不能为空")
 
@@ -2044,7 +2107,7 @@ def benchmark_binning_methods(
     for overdue_name in overdue_columns:
         overdue_values = pd.to_numeric(data[overdue_name], errors="coerce")
         for dpd in dpd_values:
-            y = (overdue_values > dpd).astype(int)
+            y = make_overdue_target(overdue_values, dpd, del_grey, overdue_operator)
             for method in hscredit_methods:
                 tasks.append((x, y, feature, method, overdue_name, dpd, dict(common_params)))
 
@@ -2072,7 +2135,7 @@ def benchmark_binning_methods(
         long_table = pd.DataFrame(columns=list(column_names.values()))
         if long_format:
             return long_table
-        return _benchmark_binning_wide_table(long_table, hscredit_methods, overdue_columns, dpd_values)
+        return _benchmark_binning_wide_table(long_table, hscredit_methods, overdue_columns, dpd_values, overdue_operator=overdue_operator)
 
     for column in internal_columns:
         if column not in result.columns:
@@ -2091,7 +2154,7 @@ def benchmark_binning_methods(
     )
     if long_format:
         return long_table
-    return _benchmark_binning_wide_table(long_table, hscredit_methods, overdue_columns, dpd_values)
+    return _benchmark_binning_wide_table(long_table, hscredit_methods, overdue_columns, dpd_values, overdue_operator=overdue_operator)
 
 
 def _normalize_efficiency_rules(
@@ -2170,10 +2233,13 @@ def _prepare_efficiency_dataset(
     feature: str,
     target: str,
     overdue: Optional[Union[str, List[str]]] = None,
-    dpd: int = 0,
+    dpd: Union[int, float] = 0,
     del_grey: bool = False,
+    overdue_operator: str = ">",
 ) -> Tuple[pd.DataFrame, pd.DataFrame, str]:
     """为效率分析准备目标变量和可绘图数据。"""
+    validate_overdue_operator(overdue_operator)
+    del_grey = del_grey and overdue_operator in (">", ">=")
     if feature not in data.columns:
         raise ValueError(f"数据中不存在特征列 '{feature}'")
 
@@ -2188,11 +2254,11 @@ def _prepare_efficiency_dataset(
         if overdue not in working_data.columns:
             raise ValueError(f"数据中不存在 overdue 字段 '{overdue}'")
 
-        actual_target = f"{overdue} {int(dpd)}+"
-        working_data[actual_target] = (working_data[overdue] > int(dpd)).astype(int)
+        actual_target = overdue_label(overdue, dpd, overdue_operator, style="space")
+        working_data[actual_target] = compare_overdue(working_data[overdue], dpd, overdue_operator).astype(int)
 
         if del_grey:
-            working_data = working_data.loc[(working_data[overdue] > int(dpd)) | (working_data[overdue] == 0)].reset_index(drop=True)
+            working_data = working_data.loc[~overdue_grey_mask(working_data[overdue], dpd, overdue_operator)].reset_index(drop=True)
     else:
         actual_target = target
         if actual_target not in working_data.columns:
@@ -2218,7 +2284,7 @@ def feature_efficiency_analysis(
     manual_rules: Optional[Union[List, Tuple, np.ndarray, Dict[str, List]]] = None,
     target: str = "target",
     overdue: Optional[Union[str, List[str]]] = None,
-    dpd: int = 0,
+    dpd: Union[int, float] = 0,
     auto_method: str = "mdlp",
     desc: Optional[str] = None,
     date_col: Optional[str] = None,
@@ -2245,6 +2311,8 @@ def feature_efficiency_analysis(
     n_jobs: Union[int, float] = -1,
     parallel_backend: Optional[str] = None,
     parallel_config: Optional[Dict[str, Any]] = None,
+    *,
+    overdue_operator: str = ">",
 ) -> Dict[str, Any]:
     """特征效率分析：对比手工分箱与自动分箱效果，并输出趋势图。
 
@@ -2258,8 +2326,8 @@ def feature_efficiency_analysis(
     :param feature: 需要分析的特征名，建议为数值型指标/评分
     :param manual_rules: 手工分箱边界，支持 list 或 {feature: list}。默认 None，表示自动使用 quantiles 生成分箱边界
     :param target: 目标变量列名，默认 target
-    :param overdue: 逾期列名。传入后会基于 overdue > dpd 自动构造二分类目标
-    :param dpd: 逾期阈值，仅在 overdue 模式下使用，默认 0
+    :param overdue: 逾期列名。传入后会基于 overdue_operator 与 dpd 自动构造二分类目标
+    :param dpd: 逾期阈值，支持整数或小数，仅在 overdue 模式下使用，默认 0
     :param auto_method: 自动分箱方法，默认 mdlp
     :param desc: 特征中文描述，默认使用 feature
     :param date_col: 日期列，传入后生成按时间分组的趋势图
@@ -2270,7 +2338,7 @@ def feature_efficiency_analysis(
     :param missing_separate: 缺失值是否单独分箱，默认 True
     :param prebinning: 预分箱配置，默认 quantile
     :param prebinning_params: 预分箱参数，默认 None
-    :param del_grey: overdue 模式下是否剔除灰样本，默认 False
+    :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本；``<``、``<=`` 下不剔除。
     :param margins: 是否追加合计行，默认 False
     :param amount: 金额字段，传入后输出金额口径分箱表
     :param figsize: 2×2 组合图尺寸，默认 (15, 10)
@@ -2306,9 +2374,19 @@ def feature_efficiency_analysis(
         ...     target='target',
         ...     auto_method='mdlp'
         ... )
+
+    :param overdue_operator: 逾期标签比较符，支持 ``>``、``>=``、``<``、``<=``，默认 ``>``。
+        满足比较条件记为坏样本(1)，否则为好样本(0)。
+        ``del_grey=True`` 时，``>`` 剔除 ``(0, dpd]``，``>=`` 剔除 ``(0, dpd)``；
+        ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
     """
+    validate_overdue_operator(overdue_operator)
+    del_grey = del_grey and overdue_operator in (">", ">=")
     feature_desc = desc or feature
     auto_kwargs = auto_kwargs.copy() if auto_kwargs else {}
+    # 自动分箱与手工分箱比较的是同一标签，算法参数不能改写外层明确指定的比较符。
+    auto_kwargs["overdue_operator"] = overdue_operator
+    auto_kwargs["del_grey"] = del_grey
     trend_kwargs = trend_kwargs.copy() if trend_kwargs else {}
     for reserved_key in ["data", "feature", "target", "dimension_cols", "date_col", "date_freq", "figsize", "title", "rules", "method"]:
         trend_kwargs.pop(reserved_key, None)
@@ -2327,6 +2405,7 @@ def feature_efficiency_analysis(
         overdue=overdue,
         dpd=dpd,
         del_grey=del_grey,
+        overdue_operator=overdue_operator,
     )
 
     common_bin_params = dict(
@@ -2336,11 +2415,12 @@ def feature_efficiency_analysis(
         prebinning=prebinning,
         prebinning_params=prebinning_params,
         del_grey=del_grey,
+        overdue_operator=overdue_operator,
         margins=margins,
         amount=amount,
         desc=feature_desc,
     )
-    target_params = {"target": target} if overdue is None else {"target": target, "overdue": overdue, "dpds": int(dpd)}
+    target_params = {"target": target} if overdue is None else {"target": target, "overdue": overdue, "dpds": dpd}
 
     common_call = dict(
         data=working_data,
@@ -2538,6 +2618,8 @@ def auto_feature_analysis(
     condition_color="F76E6C",
     del_grey: Optional[bool] = None,
     show_progress: bool = True,
+    *,
+    overdue_operator: Optional[str] = None,
 ):
     """自动特征分析.
 
@@ -2548,7 +2630,7 @@ def auto_feature_analysis(
     :param features: 需要进行分析的特征名称，支持单个字符串或列表
     :param target: 目标变量名称
     :param overdue: 逾期天数字段名称，传入时会覆盖 target 参数
-    :param dpds: 逾期定义方式，逾期天数 > DPD 为坏样本
+    :param dpds: 逾期定义方式，默认逾期天数 > DPD 为坏样本（可通过 overdue_operator 调整）
     :param date: 日期列，用于时间维度分布分析
     :param freq: 日期统计粒度，默认按月 "M"
     :param data_summary_comment: 数据备注信息
@@ -2568,7 +2650,7 @@ def auto_feature_analysis(
     :param amount: 放款金额或余额字段名称。传入后同时生成订单口径和金额口径两张分箱表
     :param image_table_gap_rows: 图片区与分箱表之间的额外空行数
     :param condition_color: 条件格式颜色，默认使用副主题色 ``"F76E6C"``；支持颜色字符串、色阶列表或按列配置的字典
-    :param del_grey: 是否删除逾期天数在 ``(0, dpds]`` 区间内的灰样本。
+    :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本；``<``、``<=`` 下不剔除。
         显式传入时优先于 ``bin_params['del_grey']``；默认 None 表示沿用 ``bin_params`` 配置。
         启用后，样本总体分布、样本时间分布及时间分布图也会按各逾期口径剔除灰样本
     :param show_progress: 是否实时显示特征处理进度和当前字段，默认 True
@@ -2578,6 +2660,12 @@ def auto_feature_analysis(
 
     >>> from hscredit.report.feature_analyzer import auto_feature_analysis
     >>> auto_feature_analysis(data, features=['feature1'], target='target', excel_writer='分析结果.xlsx')
+
+    :param overdue_operator: 逾期标签比较符，支持 ``>``、``>=``、``<``、``<=``，默认 ``>``。
+        满足比较条件记为坏样本(1)，否则为好样本(0)。
+        ``del_grey=True`` 时，``>`` 剔除 ``(0, dpd]``，``>=`` 剔除 ``(0, dpd)``；
+        ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
+        默认 None 时沿用 ``bin_params`` 的比较符；显式参数优先。
     """
     _validate_report_parallel(n_jobs, parallel_backend, parallel_config)
     if writer_params is None:
@@ -2588,7 +2676,11 @@ def auto_feature_analysis(
         bin_params = dict(bin_params)
     if del_grey is not None:
         bin_params["del_grey"] = del_grey
-    del_grey_enabled = bool(bin_params.get("del_grey", False))
+    overdue_operator = bin_params.get("overdue_operator", ">") if overdue_operator is None else overdue_operator
+    validate_overdue_operator(overdue_operator)
+    bin_params["overdue_operator"] = overdue_operator
+    del_grey_enabled = bool(bin_params.get("del_grey", False)) and overdue_operator in (">", ">=")
+    bin_params["del_grey"] = del_grey_enabled
     bin_params.setdefault("n_jobs", n_jobs)
     bin_params.setdefault("parallel_backend", parallel_backend)
     bin_params.setdefault("parallel_config", parallel_config)
@@ -2621,6 +2713,7 @@ def auto_feature_analysis(
         overdue=overdue,
         dpds=dpds,
         del_grey=del_grey_enabled,
+        overdue_operator=overdue_operator,
     )
     if overdue:
         data[target] = np.nan_to_num(target_y_map[target_label_names[0]], nan=0.0).astype(int)
@@ -2981,7 +3074,10 @@ def auto_feature_analysis(
                 if "bin" in pictures:
                     if sample_table.columns.nlevels > 1:
                         level1_cols = sample_table.columns.get_level_values(0).unique().tolist()
-                        target_col = actual_target if actual_target in level1_cols else level1_cols[-1] if len(level1_cols) > 1 else level1_cols[0]
+                        primary_bin_target = overdue_label(overdue[0], dpds[0], overdue_operator) if overdue else actual_target
+                        target_col = primary_bin_target if primary_bin_target in level1_cols else next(
+                            name for name in level1_cols if name != "分箱详情"
+                        )
                         plot_table = sample_table[["分箱详情", target_col]]
                         plot_table.columns = [c[-1] for c in plot_table.columns]
                     else:
@@ -3000,7 +3096,7 @@ def auto_feature_analysis(
 
                 if temp[col].dtypes.name not in ["object", "str", "category"]:
                     if "ks" in pictures:
-                        plot_source = temp.dropna().reset_index(drop=True)
+                        plot_source = temp[[col, actual_target]].dropna().reset_index(drop=True)
                         has_ks = len(plot_source) > 0 and plot_source[col].nunique() > 1 and plot_source[actual_target].nunique() > 1
                         if has_ks:
                             ks_figure = ks_plot(
@@ -3012,7 +3108,7 @@ def auto_feature_analysis(
                             )
                             _safe_close_plot_result(ks_figure)
                     if "hist" in pictures:
-                        plot_source = temp.dropna().reset_index(drop=True)
+                        plot_source = temp[[col, actual_target]].dropna().reset_index(drop=True)
                         if len(plot_source) > 0:
                             hist_figure = hist_plot(
                                 plot_source[col],

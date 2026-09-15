@@ -95,6 +95,10 @@ monitor_table = (
 
 > **信贷业务原生口径：** `overdue + dpds` 可由逾期天数字段生成多 DPD 标签；`amount` 同时评估放款金额/风险敞口；`margins=True` 追加合计；`prior_rules` 先处理存量策略或限定客群，再评价当前规则。
 
+通过 `overdue_operator=">="` 可调整逾期标签比较符，支持 `>`、`>=`、`<`、`<=`。
+`del_grey=True` 时，`>` 剔除 `(0, DPD]`，`>=` 剔除 `(0, DPD)`，`<`、`<=` 不剔灰。
+默认值和各入口用法见 [逾期标签与灰客户](docs/overdue_labels.md)。
+
 ### 1. 分析报告：指标、图表与 Excel 一次交付
 
 | API | 核心能力 | 主要输出 |

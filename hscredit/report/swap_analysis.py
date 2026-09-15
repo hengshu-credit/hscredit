@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from enum import Enum
 from sklearn.base import BaseEstimator
 
+from ..utils.overdue import make_overdue_target, overdue_label, validate_overdue_operator
 from ..core.rules import Rule
 from .mining.base import _mining_workload
 from ..utils.parallel import parallel_execute, resolve_n_jobs, validate_parallel_config
@@ -44,7 +45,7 @@ def _reference_target_stats(task):
     df, target_col, amount_col = task
     stats = []
     for interval in df['bin'].cat.categories:
-        subset = df[df['bin'] == interval]
+        subset = df.loc[(df['bin'] == interval) & df[target_col].notna()]
         if subset.empty:
             continue
         sample_count = len(subset)
@@ -1186,6 +1187,9 @@ def swap_analysis(
     n_jobs: Union[int, float] = -1,
     parallel_backend: Optional[str] = None,
     parallel_config: Optional[Dict[str, Any]] = None,
+    del_grey: bool = False,
+    *,
+    overdue_operator: str = ">",
     **kwargs
 ) -> SwapAnalysisResult:
     """统一的Swap分析入口函数.
@@ -1198,7 +1202,7 @@ def swap_analysis(
     :param target: 目标变量字段名（可选），与overdue+dpds二选一
     :param overdue: 逾期天数字段名或列表（可选），如'MOB1'或['MOB1','MOB3']
     :param dpds: 逾期定义天数或列表（可选），如15或[15,30]
-        - 逾期天数>dpds为坏样本(1)，其他为好样本(0)
+        - 默认逾期天数>dpds为坏样本(1)，可通过 overdue_operator 调整
     :param swap_type_col: swap类型字段名
     :param amount_col: 金额字段名（可选），用于金额口径分析
     :param out_in_uplift: out-in风险上浮因子，默认2.0
@@ -1242,7 +1246,13 @@ def swap_analysis(
     >>> result.summary_report_amount
     >>> result.pass_rate_report
     >>> result.risk_rejection_report
+
+    :param overdue_operator: 逾期标签比较符，支持 ``>``、``>=``、``<``、``<=``，默认 ``>``。
+        满足比较条件记为坏样本(1)，否则为好样本(0)。
+        ``del_grey=True`` 时，``>`` 剔除 ``(0, dpd]``，``>=`` 剔除 ``(0, dpd)``；
+        ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
     """
+    validate_overdue_operator(overdue_operator)
     swap_df = _apply_swap_type_rule_sets(
         swap_df,
         swap_type_col=swap_type_col,
@@ -1266,13 +1276,13 @@ def swap_analysis(
         # 逾期分析模式
         if isinstance(overdue, str):
             overdue = [overdue]
-        if isinstance(dpds, int):
+        if np.isscalar(dpds):
             dpds = [dpds]
         
         for mob_col in overdue:
             for d in dpds:
-                target_name = f"{mob_col}_{d}+"
-                reference_df[target_name] = (reference_df[mob_col] > d).astype(int)
+                target_name = overdue_label(mob_col, d, overdue_operator)
+                reference_df[target_name] = make_overdue_target(reference_df[mob_col], d, del_grey, overdue_operator)
                 target_cols.append(target_name)
     elif target is not None:
         # 普通目标模式

@@ -41,6 +41,8 @@
 
 `feature_bin_stats`、`feature_binning_summary` 和 `feature_group_binning_summary` 的多标签逾期分析使用一次请求：`overdue` 和 `dpds` 都使用列表，由 hscredit 展开全部组合并生成一个 Excel。不要按单个逾期字段或单个阈值拆分请求。运行结果在原表格摘要之外通过 `summary.label_combinations` 返回实际组合。
 
+使用 `overdue_operator` 指定 `>`、`>=`、`<` 或 `<=`，表格分析默认 `>`。`del_grey=True` 时，`>` 剔除 `(0, dpd]`，`>=` 剔除 `(0, dpd)`，`<`、`<=` 不剔灰。`summary.overdue_operator` 记录本次组合使用的比较符；`bin_overdues_plot` 保留 `>=` 的历史默认值。
+
 ## 分箱器生命周期
 
 | operation | 必要参数 | 说明 |

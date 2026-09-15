@@ -32,6 +32,26 @@ def _workbook(result):
     return load_workbook(path, read_only=True)
 
 
+@pytest.mark.parametrize("explicit, expected", [(None, ">="), ("<=", "<=")])
+def test_feature_report_records_effective_overdue_operator(tmp_path, credit_frame, explicit, expected):
+    result = execute_skill(
+        "hsreport",
+        _base_request(tmp_path, "auto_feature_analysis", {
+            "features": ["score"], "overdue": ["MOB1"], "dpds": [3.0, 0.0],
+            "overdue_operator": explicit, "del_grey": True, "pictures": [], "n_jobs": 1, "show_progress": False,
+            "bin_params": {"method": "quantile", "max_n_bins": 2, "overdue_operator": ">="},
+        }, "operator_report"),
+        objects={"data:credit": credit_frame},
+    )
+    assert result["status"] == "success"
+    assert result["summary"]["overdue_operator"] == expected
+    workbook = _workbook(result)
+    values = [cell.value for row in workbook.active for cell in row]
+    assert f"MOB1{expected}3" in values
+    assert f"MOB1{expected}3.0" not in values
+    workbook.close()
+
+
 def test_auto_feature_analysis_writes_a_real_workbook(tmp_path, credit_frame):
     """防止特征报告适配器只返回坐标而不生成 Excel。"""
     request = _base_request(

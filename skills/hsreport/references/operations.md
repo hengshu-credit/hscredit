@@ -27,6 +27,8 @@
 
 多标签逾期分析使用一次 `auto_feature_analysis` 请求：`overdue` 和 `dpds` 都使用列表，报告按两者的全部组合展开字段分析，并只生成一个 Excel。不要按单个逾期字段或单个阈值拆分请求。运行结果的 `summary.label_combinations` 返回实际组合，`summary.feature_summary` 返回“变量综合统计”关键列的受限预览。
 
+`overdue_operator` 支持 `>`、`>=`、`<`、`<=`。`auto_feature_analysis` 的显式比较符优先于 `bin_params`，缺省为 `>`，最终值记录于 `summary.overdue_operator`。`del_grey=True` 时，`>` 剔除 `(0, dpd]`，`>=` 剔除 `(0, dpd)`，`<`、`<=` 不剔灰。
+
 ## auto_model_report
 
 需要 `inputs.model`，并在 `inputs` 中提供一个或多个数据集。`parameters.datasets` 的值是 `inputs` 键，不是隐藏的文件路径。

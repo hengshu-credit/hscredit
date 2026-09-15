@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 from openpyxl.styles import Alignment, Font, PatternFill
 
+from ..utils.overdue import compare_overdue, overdue_grey_mask, overdue_label, validate_overdue_operator
 from ..core.rules import Rule
 from ..utils.input_utils import normalize_dpd_values
 from ..utils.parallel import (
@@ -591,6 +592,8 @@ def rule_group_compare(
     n_jobs: Union[int, float] = -1,
     parallel_backend: Optional[str] = None,
     parallel_config: Optional[Dict[str, Any]] = None,
+    *,
+    overdue_operator: str = ">",
     **kwargs: Any,
 ) -> pd.DataFrame:
     """直接从原始数据生成分组下的规则命中效果对比表.
@@ -607,13 +610,13 @@ def rule_group_compare(
     :param group_col: 分组字段列名，按其取值分组（与 ``date_col`` 二选一）
     :param target: 目标变量列名，默认 ``"target"``，0=好样本，1=坏样本
     :param overdue: 逾期天数字段名（可选，传入时以逾期天数>DPD定义坏样本，支持多标签）
-    :param dpds: 逾期定义方式，逾期天数 > DPD 为坏样本，可传入列表支持多DPD联合分析
+    :param dpds: 逾期定义方式，默认逾期天数 > DPD 为坏样本（可通过 overdue_operator 调整），可传入列表支持多DPD联合分析
     :param rule_name: 展示用规则名称，默认使用规则自身名称或报告中的指标名称
     :param target_names: 逾期指标名称映射，如 ``{'MOB1 1+': 'fpd1'}``
     :param metrics: 顶层展示名称到 ``Rule.report`` 字段名的映射，默认 ``_DEFAULT_GROUP_METRICS``
     :param prior_rules: 先验规则（可选），每个分组内先排除命中先验规则的样本再评估
     :param amount: 金额字段名（可选），传入时以金额口径而非样本数口径统计
-    :param del_grey: 是否删除逾期天数在(0, DPD]区间内的灰度样本，默认为False
+    :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本；``<``、``<=`` 下不剔除。
     :param dropna: 是否丢弃分组依据缺失的样本，默认为True；为False时缺失样本归入“缺失”分组
     :param group_order: 分组排列方式，默认 ``"asc"`` 升序。支持：
 
@@ -639,7 +642,14 @@ def rule_group_compare(
     ...     data, "score < 600", group_col='商品类别', target='FPD',
     ...     amount='放款金额', group_order=['手机通讯', '电脑数码', '家用电器'],
     ... )
+
+    :param overdue_operator: 逾期标签比较符，支持 ``>``、``>=``、``<``、``<=``，默认 ``>``。
+        满足比较条件记为坏样本(1)，否则为好样本(0)。
+        ``del_grey=True`` 时，``>`` 剔除 ``(0, dpd]``，``>=`` 剔除 ``(0, dpd)``；
+        ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
     """
+    validate_overdue_operator(overdue_operator)
+    del_grey = del_grey and overdue_operator in (">", ">=")
     if not isinstance(data, pd.DataFrame) or data.empty:
         raise ValueError("data 必须是非空的 DataFrame")
 
@@ -651,7 +661,7 @@ def rule_group_compare(
     report_kwargs = dict(
         target=target,
         overdue=overdue,
-        dpds=dpds,
+        dpds=dpds, overdue_operator=overdue_operator,
         del_grey=del_grey,
         prior_rules=prior_rules,
         amount=amount,
@@ -858,11 +868,14 @@ def _resolve_swap_targets(
     overdue: Optional[Union[str, List[str]]],
     dpds: Optional[Union[int, float, List[Union[int, float]]]],
     del_grey: bool,
+    overdue_operator: str = ">",
 ) -> "OrderedDict[str, Tuple[pd.DataFrame, pd.Series]]":
     """解析单标签或 ``overdue + dpds`` 多标签，返回标签到 ``(子样本, 0/1标签)`` 的映射.
 
     标签命名与 :func:`~hscredit.report.feature_bin_stats` 保持一致（``MOB1_7+``）。
     """
+    validate_overdue_operator(overdue_operator)
+    del_grey = del_grey and overdue_operator in (">", ">=")
     result: "OrderedDict[str, Tuple[pd.DataFrame, pd.Series]]" = OrderedDict()
     if overdue is not None:
         if dpds is None:
@@ -874,11 +887,11 @@ def _resolve_swap_targets(
                 raise ValueError(f"数据集缺少逾期天数列: {col}")
             days = pd.to_numeric(data[col], errors="coerce")
             for dpd in dpd_values:
-                label = f"{col}_{dpd}+"
-                y = (days > dpd).astype(int)
+                label = overdue_label(col, dpd, overdue_operator)
+                y = compare_overdue(days, dpd, overdue_operator).astype(int)
                 subset = data
                 if del_grey:
-                    keep = ~((days > 0) & (days <= dpd))
+                    keep = ~overdue_grey_mask(days, dpd, overdue_operator)
                     subset = data[keep]
                     y = y[keep]
                 result[label] = (subset, y)
@@ -1230,6 +1243,8 @@ def swap_out_report(
     n_jobs: Union[int, float] = -1,
     parallel_backend: Optional[str] = None,
     parallel_config: Optional[Dict[str, Any]] = None,
+    *,
+    overdue_operator: str = ">",
     **kwargs: Any,
 ):
     """生成拒绝规则置换（策略迭代）分析报告，输出 hscredit 美化后的 Excel 文件.
@@ -1257,7 +1272,7 @@ def swap_out_report(
     :param impact: 业务影响情况说明文本，``str`` 或 ``list[str]``
     :param target: 目标变量列名，默认 ``"target"``，0=好样本，1=坏样本
     :param overdue: 逾期天数字段名（可选，传入时以逾期天数>DPD定义坏样本，支持多标签）
-    :param dpds: 逾期定义方式，逾期天数 > DPD 为坏样本，可传入列表支持多DPD联合分析
+    :param dpds: 逾期定义方式，默认逾期天数 > DPD 为坏样本（可通过 overdue_operator 调整），可传入列表支持多DPD联合分析
     :param save: 报告保存路径（``.xlsx``）；为 None 时不落盘，仅返回 ExcelWriter
     :param verbose: 是否打印计算进度，默认 False
     :param methods: 分箱详情所用分箱方法，``str`` 或 ``list[str]``，默认 ``"quantile"``
@@ -1269,7 +1284,7 @@ def swap_out_report(
     :param group_col: 分组字段列名，做规则稳定性分析（与 ``date_col`` 二选一）
     :param current_pass_rate: 规则执行前的当前通过率，取值 [0, 1]，默认 1.0
     :param prior_rules: 先验规则（可选），评估前先排除命中先验规则的样本
-    :param del_grey: 是否删除逾期天数在 (0, DPD] 区间内的灰度样本，默认 False
+    :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本；``<``、``<=`` 下不剔除。
     :param target_names: 逾期指标名称映射，如 ``{'MOB1 7+': 'fpd7'}``
     :param theme_color: Excel 主题色（不含 #），默认 ``"2639E9"``
     :param sheet_name: 报告工作表名称，默认 ``"策略迭代"``
@@ -1288,7 +1303,14 @@ def swap_out_report(
     ...     date_col="放款时间", freq="M", methods=["quantile", "mdlp"],
     ...     save="策略迭代报告.xlsx",
     ... )
+
+    :param overdue_operator: 逾期标签比较符，支持 ``>``、``>=``、``<``、``<=``，默认 ``>``。
+        满足比较条件记为坏样本(1)，否则为好样本(0)。
+        ``del_grey=True`` 时，``>`` 剔除 ``(0, dpd]``，``>=`` 剔除 ``(0, dpd)``；
+        ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
     """
+    validate_overdue_operator(overdue_operator)
+    del_grey = del_grey and overdue_operator in (">", ">=")
     from ..excel import ExcelWriter
 
     if not isinstance(data, pd.DataFrame) or data.empty:
@@ -1303,11 +1325,11 @@ def swap_out_report(
         features = _ordered_unique([col for rule in rule_objs for col in rule.feature_names_in_])
     features = [feat for feat in features if feat in data.columns]
 
-    targets = _resolve_swap_targets(data, target, overdue, dpds, del_grey)
+    targets = _resolve_swap_targets(data, target, overdue, dpds, del_grey, overdue_operator=overdue_operator)
     report_kwargs = dict(
         target=target,
         overdue=overdue,
-        dpds=dpds,
+        dpds=dpds, overdue_operator=overdue_operator,
         del_grey=del_grey,
         prior_rules=prior_rules,
         n_jobs=n_jobs,
@@ -1333,7 +1355,7 @@ def swap_out_report(
         binning_tables, binning_summary = feature_binning_summary(
             data, features, methods=methods_list, bin_params=bin_params,
             target=None if overdue is not None else target,
-            overdue=overdue, dpds=dpds, del_grey=del_grey, long_format=True, verbose=0,
+            overdue=overdue, dpds=dpds, overdue_operator=overdue_operator, del_grey=del_grey, long_format=True, verbose=0,
             n_jobs=n_jobs, parallel_backend=parallel_backend, parallel_config=parallel_config,
         )
         # 统一分箱详情的逾期标签形式（MOB1@7 → MOB1 7+）并套用 target_names 映射
@@ -1407,7 +1429,7 @@ def swap_out_report(
     if date_col is not None or group_col is not None:
         stability_kwargs = dict(
             date_col=date_col, freq=freq, group_col=group_col, target=target,
-            overdue=overdue, dpds=dpds, target_names=target_names,
+            overdue=overdue, dpds=dpds, overdue_operator=overdue_operator, target_names=target_names,
             prior_rules=prior_rules, del_grey=del_grey, n_jobs=-1,
             parallel_backend=parallel_backend, parallel_config=parallel_config,
         )

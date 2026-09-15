@@ -31,6 +31,7 @@ import pandas as pd
 from pandas import DataFrame
 from sklearn.metrics import f1_score, recall_score, accuracy_score, precision_score
 
+from ...utils.overdue import compare_overdue, overdue_grey_mask, overdue_label, validate_overdue_operator
 from .expr_optimizer import optimize_expr, beautify_expr
 from ...exceptions import FeatureNotFoundError, InputTypeError, StateError
 from ...utils.input_utils import normalize_dpd_values
@@ -147,14 +148,14 @@ class RuleUnAppliedError(RuleStateError):
 
 def _rule_report_target_worker(task: Tuple[Any, ...]) -> pd.DataFrame:
     """执行一个独立目标标签的规则报告任务。"""
-    rule, data, overdue, dpd, del_grey, desc, prior_rules, amount, margins = task
+    rule, data, overdue, dpd, del_grey, desc, prior_rules, amount, margins, overdue_operator = task
     target = f"{overdue}_{dpd}"
     # 浅拷贝共享原始列块，只为派生标签创建新列；避免每个 DPD 任务深拷贝
     # 完整混合类型 DataFrame。灰度过滤发生在派生视图上，不修改调用方数据。
     data = data.copy(deep=False)
-    data[target] = (data[overdue] > dpd).astype(int)
+    data[target] = compare_overdue(data[overdue], dpd, overdue_operator).astype(int)
     if isinstance(del_grey, bool) and del_grey:
-        data = data.query(f"({overdue} > {dpd}) | ({overdue} == 0)").reset_index(drop=True)
+        data = data.loc[~overdue_grey_mask(data[overdue], dpd, overdue_operator)].reset_index(drop=True)
     return rule.report(
         data,
         target=target,
@@ -454,7 +455,7 @@ class Rule(ParallelizableMixin):
         prediction = self.predict(X)
         return X[prediction]
 
-    def report(self, datasets: pd.DataFrame, target: str = "target", overdue: Optional[Union[str, List[str]]] = None, dpds: Optional[Union[int, float, List[Union[int, float]]]] = None, del_grey: bool = False, desc: str = "", filter_cols: Optional[List[str]] = None, prior_rules: Optional["Rule"] = None, amount: Optional[str] = None, margins: bool = False, **kwargs) -> pd.DataFrame:
+    def report(self, datasets: pd.DataFrame, target: str = "target", overdue: Optional[Union[str, List[str]]] = None, dpds: Optional[Union[int, float, List[Union[int, float]]]] = None, del_grey: bool = False, desc: str = "", filter_cols: Optional[List[str]] = None, prior_rules: Optional["Rule"] = None, amount: Optional[str] = None, margins: bool = False, *, overdue_operator: str = ">", **kwargs) -> pd.DataFrame:
         """规则效果报告表格输出。
 
         将规则命中与否作为二分类，对数据集计算统计指标，
@@ -467,9 +468,9 @@ class Rule(ParallelizableMixin):
         :param target: 目标变量列名，默认为"target"，0=好样本，1=坏样本
         :param overdue: 逾期天数字段名（可选，传入时以逾期天数>DPD定义坏样本，
             支持多标签多DPD联合分析）
-        :param dpds: 逾期定义方式，逾期天数 > DPD 为坏样本，默认为0；
+        :param dpds: 逾期定义方式，默认逾期天数 > DPD 为坏样本（可通过 overdue_operator 调整），默认为0；
             传入列表时支持多DPD联合分析
-        :param del_grey: 是否删除逾期天数在(0, DPD]区间内的灰度样本，默认为False
+        :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本；``<``、``<=`` 下不剔除。
         :param desc: 规则描述，用于报告的"指标含义"列，默认为空字符串
         :param filter_cols: 指定返回的字段列表（可选）
         :param prior_rules: 先验规则（可选），先对数据应用先验规则排除部分样本，
@@ -496,7 +497,14 @@ class Rule(ParallelizableMixin):
         >>> rule = Rule("age > 25 and income > 5000")
         >>> report = rule.report(df, target='target')
         >>> print(report)
+
+        :param overdue_operator: 逾期标签比较符，支持 ``>``、``>=``、``<``、``<=``，默认 ``>``。
+            满足比较条件记为坏样本(1)，否则为好样本(0)。
+            ``del_grey=True`` 时，``>`` 剔除 ``(0, dpd]``，``>=`` 剔除 ``(0, dpd)``；
+            ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
         """
+        validate_overdue_operator(overdue_operator)
+        del_grey = del_grey and overdue_operator in (">", ">=")
         detail_group_name = "分箱详情"
         return_cols = ["指标名称", "指标含义", "分箱", "样本总数", "样本占比", "好样本数", "好样本占比", "坏样本数", "坏样本占比", "坏样本率", "LIFT值", "坏账改善"]
         if not desc:
@@ -718,7 +726,7 @@ class Rule(ParallelizableMixin):
             combinations = []
             for col in overdue:
                 for d in dpds:
-                    labels.append(f"{col} {d}+")
+                    labels.append(overdue_label(col, d, overdue_operator, style="space"))
                     combinations.append((col, d))
 
             tasks = (
@@ -732,6 +740,7 @@ class Rule(ParallelizableMixin):
                     copy.deepcopy(prior_rules),
                     amount,
                     margins,
+                    overdue_operator,
                 )
                 for col, d in combinations
             )
@@ -753,7 +762,7 @@ class Rule(ParallelizableMixin):
                 ),
             )
             for position, ((col, d), _table) in enumerate(zip(combinations, tables)):
-                _table.columns = pd.MultiIndex.from_tuples([(detail_group_name, c) if c in merge_columns else (f"{col} {d}+", c) for c in _table.columns])
+                _table.columns = pd.MultiIndex.from_tuples([(detail_group_name, c) if c in merge_columns else (overdue_label(col, d, overdue_operator, style="space"), c) for c in _table.columns])
                 if position == 0:
                     table = _table
                 else:

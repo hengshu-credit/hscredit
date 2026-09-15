@@ -27,6 +27,8 @@ import numpy as np
 import pandas as pd
 from joblib.externals import cloudpickle
 
+from ..utils.overdue import compare_overdue, overdue_grey_mask, overdue_label, validate_overdue_operator
+from ..utils.input_utils import normalize_dpd_values
 from ._sample_stats import build_group_distribution_table, build_sample_stats_table
 from .model_explanation import build_model_explanation, explanation_to_dict, normalize_explain_config
 from ..exceptions import SerializationError, ValidationError
@@ -481,8 +483,9 @@ class ModelReport:
     :param X_train/y_train/X_test/y_test: 兼容 sklearn 风格的数据传入方式
     :param target: 目标列名（sklearn/scorecardpipeline 风格）
     :param overdue: 逾期天数列名或列表，配合 ``dpds`` 自动构建 0/1 标签
-    :param dpds: 逾期定义天数或列表（逾期天数 > dpds 记为坏样本）
-    :param del_grey: 是否按每个逾期标签独立剔除 ``(0, dpd]`` 灰样本
+    :param dpds: 逾期定义天数或列表（默认逾期天数 > dpds 记为坏样本）
+    :param overdue_operator: 比较符（>、>=、<、<=）；显式参数优先于 target 字典，缺省时使用 >。
+    :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本；``<``、``<=`` 下不剔除。
     :param feature_names: 特征名称列表，可选；None 时自动从模型 feature_names_ / feature_names_in_ 获取
 
     **属性**
@@ -534,6 +537,8 @@ class ModelReport:
         n_jobs=-1,
         parallel_backend: Optional[str] = None,
         parallel_config: Optional[Dict[str, Any]] = None,
+        *,
+        overdue_operator: Optional[str] = None,
         **kwargs,
     ):
         """初始化模型报告.
@@ -550,7 +555,7 @@ class ModelReport:
         - sklearn 风格：显式传入 y（如 ``X_train=X, y_train=y`` 或
           ``datasets={'train': (X, y)}``），y 优先使用
         - scorecardpipeline 风格：数据全部在 X 中，通过 ``target='列名'`` 提取标签
-        - overdue + dpds 组合：传入后直接忽略 target，按 逾期天数 > 阈值 构建标签
+        - overdue + dpds 组合：传入后直接忽略 target，按 overdue_operator 比较逾期天数与阈值构建标签
 
         示例::
 
@@ -588,7 +593,9 @@ class ModelReport:
             - dict: {'overdue': col, 'dpds': threshold} 或 {'overdue': col, 'dpds': [15, 7, 0]}
         :param overdue: 逾期列名（str）或多个列名（List[str]），传入后忽略 target
         :param dpds: 逾期天数阈值（int/float）或多个阈值（List），与 overdue 配合使用
-        :param del_grey: overdue 模式下是否按各 DPD 独立剔除 ``(0, DPD]`` 灰样本
+        :param overdue_operator: 比较符（>、>=、<、<=）；None 时沿用 target 字典配置，否则默认 >。
+            显式参数优先于 target 字典中的 overdue_operator。
+        :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本；``<``、``<=`` 下不剔除。
         :param method: 数据集唯一预测方法，支持 predict_proba/predict_prob/predict/predict_score/transform/callable
         :param method_kwargs: callable 同名参数的显式覆盖字典
         :param n_jobs: 并行工作数；-1 自动保留 CPU，None 使用兼容串行模式
@@ -596,6 +603,8 @@ class ModelReport:
         :param parallel_config: joblib 其他并行配置，保留调用者字典引用
         :param kwargs: 透传给 callable 的额外同名参数
         """
+        if overdue_operator is not None:
+            validate_overdue_operator(overdue_operator)
         self.model = model
         self.explain_config = normalize_explain_config(explain_config)
         self._feature_names = _normalize_feature_names(feature_names)
@@ -622,7 +631,10 @@ class ModelReport:
         self.n_jobs = n_jobs
         self.parallel_backend = parallel_backend
         self.parallel_config = parallel_config
-        self.del_grey = bool(del_grey)
+        if overdue_operator is None:
+            overdue_operator = target.get("overdue_operator", ">") if overdue is None and isinstance(target, dict) else ">"
+        self.overdue_operator = validate_overdue_operator(overdue_operator)
+        self.del_grey = bool(del_grey) and overdue_operator in (">", ">=")
         self.init_params_ = {
             "model": model,
             "datasets": datasets,
@@ -637,6 +649,7 @@ class ModelReport:
             "overdue": overdue,
             "dpds": dpds,
             "del_grey": del_grey,
+            "overdue_operator": overdue_operator,
             "method": method,
             "method_kwargs": method_kwargs,
             "n_jobs": n_jobs,
@@ -649,7 +662,7 @@ class ModelReport:
         validate_parallel_config(parallel_backend, parallel_config)
         resolve_n_jobs(n_jobs, task_count=1)
 
-        # 传入 overdue（配合 dpds）时直接忽略 target，按 逾期天数 > 阈值 构建标签
+        # 传入 overdue（配合 dpds）时直接忽略 target，按指定比较符构建标签。
         if overdue is not None:
             self._target_cfg: Optional[Union[str, Dict]] = {
                 "overdue": overdue,
@@ -778,8 +791,16 @@ class ModelReport:
 
     def __setstate__(self, state):
         """从可信制品恢复 callable method。"""
+        state = dict(state)
         payload = state.pop("_method_payload", None)
         self.__dict__.update(state)
+        # 新增比较符之前的报告按 > 生成标签，恢复时补齐配置以支持继续计算和添加数据集。
+        init_params = dict(state.get("init_params_", {}))
+        self.overdue_operator = validate_overdue_operator(
+            state.get("overdue_operator", init_params.get("overdue_operator") or ">")
+        )
+        init_params["overdue_operator"] = self.overdue_operator
+        self.init_params_ = init_params
         if payload is not None:
             try:
                 self.method = cloudpickle.loads(payload)
@@ -940,11 +961,9 @@ class ModelReport:
             if threshold is not None:
                 # 旧格式：dpds 为列名，threshold 为阈值
                 dpds_col = dpds_vals if isinstance(dpds_vals, str) else None
-                thresholds = [threshold]
+                thresholds = normalize_dpd_values(threshold)
             elif dpds_vals is not None:
-                if isinstance(dpds_vals, (int, float)):
-                    dpds_vals = [dpds_vals]
-                thresholds = dpds_vals
+                thresholds = normalize_dpd_values(dpds_vals)
                 dpds_col = None
             else:
                 # 只有 overdue，无 dpds/threshold：overdue 列值 > 0 → y=1
@@ -961,16 +980,16 @@ class ModelReport:
             for col in overdue_cols:
                 for t in thresholds:
                     if dpds_col is not None and dpds_col in X.columns:
-                        # dpds 列 > threshold
+                        # 旧格式使用 dpds 指定的列。
                         overdue_values = X[dpds_col]
                     else:
-                        # col 列 > threshold
+                        # 新格式使用 overdue 指定的列。
                         overdue_values = X[col]
-                    indicator = (overdue_values > t).astype(float)
+                    indicator = compare_overdue(overdue_values, t, self.overdue_operator).astype(float)
                     if self.del_grey:
-                        valid = (overdue_values == 0) | (overdue_values > t)
+                        valid = ~overdue_grey_mask(overdue_values, t, self.overdue_operator)
                         indicator = indicator.where(valid, np.nan)
-                    indicators[f"{col}>{t}"] = indicator
+                    indicators[overdue_label(col, t, self.overdue_operator, style="plain")] = indicator
 
             # 单逾期标签保留 NaN 灰样本标记，数据集初始化阶段会连同特征一起剔除；
             # 多标签则保留完整行并在各标签数组中分别标记，确保每个 DPD 可独立过滤。
@@ -980,7 +999,7 @@ class ModelReport:
                 y = indicators.fillna(0).astype(bool).any(axis=1).astype(int)
             # 多指标时返回各指标独立标签，供多标签报告使用
             y_dict: Optional[Dict[str, np.ndarray]] = None
-            if len(overdue_cols) > 1 or (isinstance(dpds_vals, list) and len(dpds_vals) > 1):
+            if indicators.shape[1] > 1:
                 y_dict = {col: indicators[col].to_numpy(dtype=float) for col in indicators.columns}
             return _ensure_series(y, name=label_name), y_dict
 
@@ -1197,17 +1216,13 @@ class ModelReport:
         if threshold is not None:
             # 旧格式：dpds 为列名，threshold 为阈值，实际阈值列为 dpds 列
             col = dpds_vals if isinstance(dpds_vals, str) else None
-            return ([col] if col else overdue_cols), [threshold]
-        if dpds_vals is None:
-            return overdue_cols, [0]
-        if isinstance(dpds_vals, (int, float)):
-            dpds_vals = [dpds_vals]
-        return overdue_cols, list(dpds_vals)
+            return ([col] if col else overdue_cols), normalize_dpd_values(threshold)
+        return overdue_cols, normalize_dpd_values(dpds_vals)
 
     def _overdue_label_map(self, separator: str = ">") -> Dict[str, str]:
         """返回内部标签到报告展示标签的映射。"""
         overdue_cols, dpds_vals = self._overdue_dpds()
-        display = [f"{col}{separator}{dpd}" for col in overdue_cols for dpd in dpds_vals]
+        display = [overdue_label(col, dpd, self.overdue_operator, style="at" if separator == "@" else "plain") for col in overdue_cols for dpd in dpds_vals]
         return dict(zip(self._label_names, display))
 
     def _normalize_overdue_bin_columns(self, table: pd.DataFrame) -> pd.DataFrame:
@@ -1215,7 +1230,7 @@ class ModelReport:
         if not isinstance(table.columns, pd.MultiIndex):
             return table
         overdue_cols, dpds_vals = self._overdue_dpds()
-        native_labels = [f"{col}_{dpd}+" for col in overdue_cols for dpd in dpds_vals]
+        native_labels = [overdue_label(col, dpd, self.overdue_operator) for col in overdue_cols for dpd in dpds_vals]
         rename_map = dict(zip(native_labels, self._label_names))
         renamed = table.copy()
         renamed.columns = pd.MultiIndex.from_tuples(
@@ -1377,6 +1392,7 @@ class ModelReport:
                 missing_separate=True,
                 margins=margins,
                 del_grey=self.del_grey,
+                overdue_operator=self.overdue_operator,
                 return_cols=score_return_cols,
                 n_jobs=self.n_jobs,
                 parallel_backend=self.parallel_backend,
@@ -2117,6 +2133,7 @@ class ModelReport:
                 max_n_bins=max_n_bins,
                 margins=margins,
                 del_grey=self.del_grey,
+                overdue_operator=self.overdue_operator,
                 missing_separate=True,
                 n_jobs=self.n_jobs,
                 parallel_backend=self.parallel_backend,
@@ -4823,6 +4840,8 @@ def auto_model_report(
     n_jobs=-1,
     parallel_backend: Optional[str] = None,
     parallel_config: Optional[Dict[str, Any]] = None,
+    *,
+    overdue_operator: Optional[str] = None,
     **kwargs,
 ) -> ModelReport:
     """一键生成模型报告.
@@ -4888,7 +4907,7 @@ def auto_model_report(
     :param target: 目标列配置，str 为列名，dict 为 {'overdue': col, 'dpds': threshold}
     :param overdue: 逾期列名（str）或多个列名（List[str]），与 dpds 配合自动构建标签
     :param dpds: 逾期天数阈值（int/float）或多个阈值（List），与 overdue 配合使用
-    :param del_grey: overdue 模式下是否按每个 DPD 独立剔除 ``(0, DPD]`` 灰样本
+    :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本；``<``、``<=`` 下不剔除。
     :param excel_path: Excel 报告输出路径
     :param verbose: 是否打印控制台报告
     :param n_bins: 分箱数
@@ -4915,7 +4934,14 @@ def auto_model_report(
     :param parallel_config: joblib 其他并行配置
     :param kwargs: 透传给 callable 的额外同名参数
     :return: ModelReport 实例
+
+    :param overdue_operator: 逾期标签比较符，支持 ``>``、``>=``、``<``、``<=``，默认 ``>``。
+        满足比较条件记为坏样本(1)，否则为好样本(0)。
+        ``del_grey=True`` 时，``>`` 剔除 ``(0, dpd]``，``>=`` 剔除 ``(0, dpd)``；
+        ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
     """
+    if overdue_operator is not None:
+        validate_overdue_operator(overdue_operator)
     report = ModelReport(
         model=model,
         datasets=datasets,
@@ -4930,6 +4956,7 @@ def auto_model_report(
         overdue=overdue,
         dpds=dpds,
         del_grey=del_grey,
+        overdue_operator=overdue_operator,
         method=method,
         method_kwargs=method_kwargs,
         n_jobs=n_jobs,

@@ -26,6 +26,25 @@ def _workbook(result):
     return load_workbook(path, read_only=True)
 
 
+def test_overdue_operator_is_forwarded_and_recorded(tmp_path, credit_frame):
+    result = execute_skill(
+        "hsbin",
+        _request(tmp_path, "feature_bin_stats", {
+            "feature": "score", "overdue": ["MOB1"], "dpds": [3.0, 0.0],
+            "overdue_operator": "<=", "del_grey": True, "method": "quantile", "max_n_bins": 2, "n_jobs": 1,
+        }, "operator_stats"),
+        objects={"data:credit": credit_frame},
+    )
+    assert result["status"] == "success"
+    assert result["summary"]["overdue_operator"] == "<="
+    assert result["summary"]["label_combinations"] == [{"overdue": "MOB1", "dpd": 3}, {"overdue": "MOB1", "dpd": 0}]
+    workbook = _workbook(result)
+    values = [cell.value for row in workbook.active for cell in row]
+    assert "MOB1<=3" in values
+    assert "MOB1<=3.0" not in values
+    workbook.close()
+
+
 def test_feature_bin_stats_executes_real_hscredit_and_writes_excel(tmp_path, credit_frame):
     """防止适配器返回空壳结果或跳过真实分箱统计。"""
     request = _request(

@@ -1269,7 +1269,10 @@ def test_configured_parent_rule_group_parallel_matches_serial_and_stays_unchange
 )
 def test_task11_model_report_entries_expose_common_parallel_parameters(entry):
     signature = inspect.signature(entry)
-    names = list(signature.parameters)
+    # 新增标签比较符只能通过关键字传入，原有并行参数的位置和连续顺序保持不变。
+    names = [name for name in signature.parameters if name != "overdue_operator"]
+    if "overdue_operator" in signature.parameters:
+        assert signature.parameters["overdue_operator"].kind is inspect.Parameter.KEYWORD_ONLY
     expected_slice = names[-4:-1] if names[-1] == "kwargs" else names[-3:]
     assert expected_slice == list(COMMON)
     assert signature.parameters["n_jobs"].default == -1

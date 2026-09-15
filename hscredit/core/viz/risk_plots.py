@@ -32,6 +32,7 @@ from sklearn.calibration import calibration_curve
 from matplotlib.colors import to_hex
 from matplotlib.ticker import PercentFormatter
 
+from ...utils.overdue import compare_overdue, overdue_grey_mask, overdue_label, validate_overdue_operator
 from .utils import (
     DEFAULT_COLORS, setup_axis_style, save_figure,
     get_or_create_ax, BAD_RATE_COLOR, NEUTRAL_COLOR,
@@ -1313,6 +1314,8 @@ def bad_rate_trend_plot(
     colors: Optional[List[str]] = None,
     show_sample_count: bool = True,
     save: Optional[str] = None,
+    *,
+    overdue_operator: str = ">",
     **kwargs
 ) -> plt.Figure:
     """绘制坏样本率趋势图（支持分维度和多逾期标签展示）.
@@ -1322,7 +1325,7 @@ def bad_rate_trend_plot(
     :param target: 目标变量列名（单标签模式）
     :param overdue: 逾期天数字段名或列表，优先于 target
     :param dpds: 逾期定义天数或列表，与 overdue 配合生成标签
-    :param del_grey: 是否排除逾期天数在 (0, dpd] 区间的灰样本
+    :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本；``<``、``<=`` 下不剔除。
     :param dimension_col: 维度列名（如客户等级），None时不分维度
     :param freq: 时间频率，'D'/'W'/'M'/'Q'
     :param ax: matplotlib Axes对象
@@ -1338,7 +1341,14 @@ def bad_rate_trend_plot(
 
     >>> fig = bad_rate_trend_plot(df, 'apply_date', target='target')
     >>> fig = bad_rate_trend_plot(df, 'apply_date', overdue='MOB1', dpds=[7, 30])
+
+    :param overdue_operator: 逾期标签比较符，支持 ``>``、``>=``、``<``、``<=``，默认 ``>``。
+        满足比较条件记为坏样本(1)，否则为好样本(0)。
+        ``del_grey=True`` 时，``>`` 剔除 ``(0, dpd]``，``>=`` 剔除 ``(0, dpd)``；
+        ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
     """
+    validate_overdue_operator(overdue_operator)
+    del_grey = del_grey and overdue_operator in (">", ">=")
     if 'target_col' in kwargs:
         raise TypeError("bad_rate_trend_plot 已统一使用 target 参数，请将 target_col 改为 target")
     df = df.copy()
@@ -1350,7 +1360,7 @@ def bad_rate_trend_plot(
         if dpds is None:
             raise ValueError("传入 overdue 参数时必须同时传入 dpds")
         overdue_cols = [overdue] if isinstance(overdue, str) else list(overdue)
-        dpd_values = [dpds] if isinstance(dpds, (int, np.integer)) else list(dpds)
+        dpd_values = [dpds] if np.isscalar(dpds) else list(dpds)
         if not overdue_cols or not dpd_values:
             raise ValueError("overdue 和 dpds 不能为空")
         for overdue_col in overdue_cols:
@@ -1359,10 +1369,10 @@ def bad_rate_trend_plot(
             overdue_days = pd.to_numeric(df[overdue_col], errors='coerce')
             overdue_targets = []
             for dpd in dpd_values:
-                label = f"{overdue_col}_{dpd}+"
-                generated_target = (overdue_days > dpd).astype(float)
+                label = overdue_label(overdue_col, dpd, overdue_operator)
+                generated_target = compare_overdue(overdue_days, dpd, overdue_operator).astype(float)
                 if del_grey:
-                    generated_target[(overdue_days > 0) & (overdue_days <= dpd)] = np.nan
+                    generated_target[overdue_grey_mask(overdue_days, dpd, overdue_operator)] = np.nan
                 overdue_targets.append((label, generated_target))
             target_groups[overdue_col] = overdue_targets
     else:

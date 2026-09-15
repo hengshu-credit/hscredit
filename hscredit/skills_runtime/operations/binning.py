@@ -85,6 +85,7 @@ def _summarize_binning_table(table: pd.DataFrame, parameters: Mapping[str, Any])
     combinations = _label_combinations(parameters)
     if combinations:
         summary["label_combinations"] = combinations
+        summary["overdue_operator"] = parameters.get("overdue_operator", ">")
     return summary
 
 
