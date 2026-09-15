@@ -4,7 +4,7 @@
 
 **筛选方法分类**
 
-- 过滤法: 方差、相关性、VIF、缺失率、单一值率、基数、IV、Lift、PSI
+- 过滤法: 方差、相关性、VIF、缺失率、单一值率、基数、IV、KS、Lift、PSI
 - 包装法: 穷举搜索、逐步回归、Boruta
 - 嵌入法: 特征重要性、Lasso、树模型重要性、Permutation Importance
 
@@ -41,6 +41,7 @@ from .mode_selector import ModeSelector
 from .corr_selector import CorrSelector
 from .vif_selector import VIFSelector
 from .iv_selector import IVSelector
+from .ks_selector import KSSelector
 from .lift_selector import LiftSelector
 from .psi_selector import PSISelector
 from .cardinality_selector import CardinalitySelector
@@ -78,6 +79,7 @@ __all__ = [
     
     # 过滤法 - 目标导向筛选
     'IVSelector',
+    'KSSelector',
     'LiftSelector',
     'PSISelector',
     

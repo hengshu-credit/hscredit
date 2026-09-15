@@ -269,7 +269,7 @@ class MDLPBinning(BaseBinning):
         # 获取唯一特征值数量和目标类别数
         u_x = np.unique(x)
         n_x = len(u_x)
-        n_y = len(np.bincount(y))
+        n_y = len(np.unique(y))
 
         # 基本可分割性检查
         if n_x < self.min_samples_split or n_y < 2 or len(x) < self.min_samples_split:
@@ -387,10 +387,10 @@ class MDLPBinning(BaseBinning):
         # 计算信息增益
         gain = self._entropy_gain(y, y_left, y_right)
 
-        # 获取类别数量
-        k = len(np.bincount(y))
-        k_left = len(np.bincount(y_left))
-        k_right = len(np.bincount(y_right))
+        # 统计实际出现的类别，兼容浮点型 0/1 标签和仅含一个类别的子区间。
+        k = len(np.unique(y))
+        k_left = len(np.unique(y_left))
+        k_right = len(np.unique(y_right))
 
         # 计算熵
         ent_y = self._entropy(y)
