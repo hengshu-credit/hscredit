@@ -2653,6 +2653,7 @@ def auto_feature_analysis(
     :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本；``<``、``<=`` 下不剔除。
         显式传入时优先于 ``bin_params['del_grey']``；默认 None 表示沿用 ``bin_params`` 配置。
         启用后，样本总体分布、样本时间分布及时间分布图也会按各逾期口径剔除灰样本
+        变量综合统计和单标签图形使用首个标签剔灰后的样本，包含样本数及 IV/KS。
     :param show_progress: 是否实时显示特征处理进度和当前字段，默认 True
     :return: (end_row, end_col) 分析结束位置
 
@@ -2667,6 +2668,7 @@ def auto_feature_analysis(
         ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
         默认 None 时沿用 ``bin_params`` 的比较符；显式参数优先。
     """
+
     _validate_report_parallel(n_jobs, parallel_backend, parallel_config)
     if writer_params is None:
         writer_params = {}
@@ -2697,15 +2699,13 @@ def auto_feature_analysis(
     if features is not None and not isinstance(features, (list, tuple)):
         features = [features]
 
-    if overdue and not isinstance(overdue, (list, tuple, np.ndarray)):
-        overdue = [overdue]
-    elif overdue is not None:
-        overdue = list(overdue)
-
-    if dpds is not None and not isinstance(dpds, (list, tuple, np.ndarray)):
-        dpds = [dpds]
-    elif dpds is not None:
-        dpds = list(dpds)
+    if overdue is not None:
+        overdue = [overdue] if isinstance(overdue, str) else list(overdue)
+        if dpds is None:
+            raise ValueError("传入 overdue 参数时必须同时传入 dpds")
+        dpds = normalize_dpd_values(dpds)
+        if not overdue or not dpds:
+            raise ValueError("overdue 和 dpds 不能为空")
 
     target, target_label_names, target_display_labels, target_y_map = _auto_feature_target_maps(
         data,
@@ -2716,7 +2716,7 @@ def auto_feature_analysis(
         overdue_operator=overdue_operator,
     )
     if overdue:
-        data[target] = np.nan_to_num(target_y_map[target_label_names[0]], nan=0.0).astype(int)
+        data[target] = target_y_map[target_label_names[0]]
 
     if features is None:
         excluded_features = {column for column in [date, requested_target, target, *(overdue or [])] if column is not None}
@@ -2774,8 +2774,10 @@ def auto_feature_analysis(
             target_specific_totals=del_grey_enabled and bool(overdue),
         )
 
-    feature_summary = data[features].summary(
-        y=data[target],
+    # 综合统计和单标签图形使用首个标签的有效样本；灰客户不能重新作为好客户参与 IV/KS。
+    summary_data = data.loc[data[target].notna()] if overdue else data
+    feature_summary = summary_data[features].summary(
+        y=summary_data[target],
         n_jobs=n_jobs,
         parallel_backend=parallel_backend,
         parallel_config=parallel_config,

@@ -109,6 +109,9 @@ def test_hsbin_plot_operations_render_real_images(
         _request(tmp_path, operation, parameters, name),
         objects={"data:credit": credit_frame},
     )
+    if operation == "bin_overdues_plot":
+        assert result["summary"]["overdue_operator"] == ">="
+        assert result["summary"]["label_combinations"] == [{"overdue": "MOB1", "dpd": 1}]
 
     _assert_images(result)
 

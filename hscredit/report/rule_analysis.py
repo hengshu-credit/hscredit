@@ -10,6 +10,7 @@ from typing import Dict, List, Optional, Union, Tuple
 import numpy as np
 import pandas as pd
 
+from ..utils.input_utils import normalize_dpd_values
 from ..utils.overdue import compare_overdue, overdue_grey_mask, overdue_label, validate_overdue_operator
 from ..core.rules import Rule
 from .mining.multi_label import MultiLabelRuleMiner
@@ -152,7 +153,7 @@ def _resolve_target_series(data, target, overdue, dpds, del_grey=False, overdue_
         raise ValueError("必须传入 target 或 overdue + dpds 才能计算规则置换风险")
 
     overdue_cols = [overdue] if isinstance(overdue, str) else list(overdue)
-    thresholds = [dpds] if np.isscalar(dpds) else list(dpds)
+    thresholds = normalize_dpd_values(dpds)
     targets = {}
     for overdue_col in overdue_cols:
         if overdue_col not in data.columns:
@@ -1368,10 +1369,11 @@ def rule_swap_analysis(
     if not np.isfinite(sample_survival_rate) or not 0 < sample_survival_rate <= 1:
         raise ValueError("样本集幸存比例必须位于 (0, 1] 区间")
     if target is None:
-        overdue_values = [overdue] if isinstance(overdue, str) else list(overdue or [])
-        dpd_values = [dpds] if np.isscalar(dpds) and dpds is not None else list(dpds or [])
+        overdue_values = [] if overdue is None else ([overdue] if isinstance(overdue, str) else list(overdue))
+        dpd_values = [] if dpds is None else normalize_dpd_values(dpds)
         if not overdue_values or not dpd_values:
             raise ValueError("overdue 和 dpds 不能为空")
+        overdue, dpds = overdue_values, dpd_values
 
     validate_parallel_config(parallel_backend, parallel_config)
     resolve_n_jobs(n_jobs, task_count=1)

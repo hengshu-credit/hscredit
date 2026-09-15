@@ -36,15 +36,27 @@ def _workbook(result):
 def test_feature_report_records_effective_overdue_operator(tmp_path, credit_frame, explicit, expected):
     result = execute_skill(
         "hsreport",
-        _base_request(tmp_path, "auto_feature_analysis", {
-            "features": ["score"], "overdue": ["MOB1"], "dpds": [3.0, 0.0],
-            "overdue_operator": explicit, "del_grey": True, "pictures": [], "n_jobs": 1, "show_progress": False,
-            "bin_params": {"method": "quantile", "max_n_bins": 2, "overdue_operator": ">="},
-        }, "operator_report"),
+        _base_request(
+            tmp_path,
+            "auto_feature_analysis",
+            {
+                "features": ["score"],
+                "overdue": ["MOB1"],
+                "dpds": [3.0, "3", 0.0],
+                "overdue_operator": explicit,
+                "del_grey": True,
+                "pictures": [],
+                "n_jobs": 1,
+                "show_progress": False,
+                "bin_params": {"method": "quantile", "max_n_bins": 2, "overdue_operator": ">="},
+            },
+            "operator_report",
+        ),
         objects={"data:credit": credit_frame},
     )
     assert result["status"] == "success"
     assert result["summary"]["overdue_operator"] == expected
+    assert result["summary"]["label_combinations"] == [{"overdue": "MOB1", "dpd": 3}, {"overdue": "MOB1", "dpd": 0}]
     workbook = _workbook(result)
     values = [cell.value for row in workbook.active for cell in row]
     assert f"MOB1{expected}3" in values
@@ -250,3 +262,67 @@ def test_failed_report_preserves_cause_and_publishes_no_workbook(tmp_path, credi
     assert exc_info.value.cause is not None
     assert not (tmp_path / "broken_report.xlsx").exists()
     assert not list(tmp_path.glob(".hscredit-skill-*"))
+
+
+@pytest.mark.parametrize("explicit, expected", [(None, ">="), ("<=", "<=")])
+def test_model_report_records_resolved_operator_and_generated_datasets(tmp_path, credit_frame, explicit, expected):
+    features = ["score", "age"]
+    model = LogisticRegression(max_iter=200).fit(credit_frame[features], credit_frame["target"])
+    result = execute_skill(
+        "hsreport",
+        _base_request(
+            tmp_path,
+            "auto_model_report",
+            {
+                "datasets": {"训练集": "train", "外部标签": "external"},
+                "feature_names": features,
+                "target": {"overdue": "MOB1", "dpds": [3.0, "3", 0], "overdue_operator": ">="},
+                "overdue_operator": explicit,
+                "with_plots": False,
+                "verbose": False,
+                "n_jobs": 1,
+            },
+            "model_operator",
+            inputs={
+                "model": {"kind": "object_ref", "ref": "model:lr"},
+                "train": {"kind": "object_ref", "ref": "data:credit"},
+                "external": {"kind": "object_ref", "ref": "data:external"},
+            },
+        ),
+        objects={
+            "model:lr": model,
+            "data:credit": credit_frame,
+            "data:external": (credit_frame, credit_frame["target"]),
+        },
+    )
+    assert result["summary"]["overdue_operator"] == expected
+    assert result["summary"]["label_combinations"] == [{"overdue": "MOB1", "dpd": 3}, {"overdue": "MOB1", "dpd": 0}]
+    assert result["summary"]["label_datasets"] == ["训练集"]
+    workbook = _workbook(result)
+    workbook.close()
+
+
+def test_strategy_report_records_normalized_overdue_definition(tmp_path, credit_frame):
+    result = execute_skill(
+        "hsreport",
+        _base_request(
+            tmp_path,
+            "swap_out_report",
+            {
+                "rules": ["score < 560"],
+                "features": ["score"],
+                "overdue": "MOB1",
+                "dpds": [3, "3.0"],
+                "overdue_operator": "<=",
+                "del_grey": True,
+                "methods": "quantile",
+                "n_jobs": 1,
+            },
+            "strategy_operator",
+        ),
+        objects={"data:credit": credit_frame},
+    )
+    assert result["summary"]["overdue_operator"] == "<="
+    assert result["summary"]["label_combinations"] == [{"overdue": "MOB1", "dpd": 3}]
+    workbook = _workbook(result)
+    workbook.close()

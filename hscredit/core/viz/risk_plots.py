@@ -33,6 +33,7 @@ from matplotlib.colors import to_hex
 from matplotlib.ticker import PercentFormatter
 
 from ...utils.overdue import compare_overdue, overdue_grey_mask, overdue_label, validate_overdue_operator
+from ...utils.input_utils import normalize_dpd_values
 from .utils import (
     DEFAULT_COLORS, setup_axis_style, save_figure,
     get_or_create_ax, BAD_RATE_COLOR, NEUTRAL_COLOR,
@@ -1360,7 +1361,7 @@ def bad_rate_trend_plot(
         if dpds is None:
             raise ValueError("传入 overdue 参数时必须同时传入 dpds")
         overdue_cols = [overdue] if isinstance(overdue, str) else list(overdue)
-        dpd_values = [dpds] if np.isscalar(dpds) else list(dpds)
+        dpd_values = normalize_dpd_values(dpds)
         if not overdue_cols or not dpd_values:
             raise ValueError("overdue 和 dpds 不能为空")
         for overdue_col in overdue_cols:
@@ -1420,7 +1421,7 @@ def bad_rate_trend_plot(
                                                           'hspace': 0.1})
     else:
         fig, ax_line = get_or_create_ax(figsize=figsize, ax=ax)
-    
+
     # 日期先转为周期，再用离散位置绘制；刻度只来自真实分组，不交给日期定位器补点。
     if date_col not in df.columns:
         raise ValueError(f"数据集缺少日期列: {date_col}")
@@ -1599,7 +1600,7 @@ def bad_rate_trend_plot(
                 lower_limit = max(0.0, upper_limit - 0.05)
             for rate_ax in rate_axes:
                 rate_ax.set_ylim(lower_limit, upper_limit)
-    
+
     if title is None:
         title = '坏样本率趋势' + (f'（按{dimension_col}）' if dimension_col else '')
     title_artist = fig.suptitle(title, fontsize=14, fontweight='bold')
@@ -1613,7 +1614,7 @@ def bad_rate_trend_plot(
         frameon=False,
     )
     ax_line.grid(True, axis='y', alpha=0.3, linestyle='--')
-    
+
     # 绘制样本数柱状图
     if show_sample_count:
         sample_counts = df.groupby('_period', observed=False).size().reindex(periods, fill_value=0)
@@ -1689,5 +1690,5 @@ def bad_rate_trend_plot(
 
     if save:
         save_figure(fig, save)
-    
+
     return fig

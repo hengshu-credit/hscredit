@@ -30,6 +30,7 @@ from enum import Enum
 from sklearn.base import BaseEstimator
 
 from ..utils.overdue import make_overdue_target, overdue_label, validate_overdue_operator
+from ..utils.input_utils import normalize_dpd_values
 from ..core.rules import Rule
 from .mining.base import _mining_workload
 from ..utils.parallel import parallel_execute, resolve_n_jobs, validate_parallel_config
@@ -1276,9 +1277,8 @@ def swap_analysis(
         # 逾期分析模式
         if isinstance(overdue, str):
             overdue = [overdue]
-        if np.isscalar(dpds):
-            dpds = [dpds]
-        
+        dpds = normalize_dpd_values(dpds)
+
         for mob_col in overdue:
             for d in dpds:
                 target_name = overdue_label(mob_col, d, overdue_operator)
@@ -1289,7 +1289,7 @@ def swap_analysis(
         target_cols = [target]
     else:
         raise ValueError("必须传入target或overdue+dpds参数")
-    
+
     # 构建配置
     config = SwapRiskConfig(
         score_col=score_col,
@@ -1301,7 +1301,7 @@ def swap_analysis(
         target_aliases=target_aliases or {},
         **{k: v for k, v in kwargs.items() if k in ['bin_method', 'max_n_bins', 'custom_bins']}
     )
-    
+
     # 创建参考数据提供者
     ref_provider = ReferenceDataProvider(
         score_col=score_col,
@@ -1313,7 +1313,7 @@ def swap_analysis(
         **{k: v for k, v in kwargs.items() if k in ['method', 'max_n_bins', 'custom_bins']}
     )
     ref_provider.fit(reference_df)
-    
+
     # 执行分析
     analyzer = SwapAnalyzer(
         config, ref_provider, n_jobs=n_jobs,

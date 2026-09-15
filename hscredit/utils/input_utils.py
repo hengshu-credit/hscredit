@@ -17,12 +17,13 @@ from ..exceptions import FeatureNotFoundError, InputTypeError, InputValidationEr
 ArrayLike = Union[np.ndarray, pd.DataFrame, pd.Series, List]
 
 
-def normalize_dpd_values(dpds) -> List[Union[int, float]]:
+def normalize_dpd_values(dpds, *, deduplicate: bool = True) -> List[Union[int, float]]:
     """规范化 DPD 阈值，保留非整数小数并按首次出现顺序去重。
 
     标量会转换为单元素列表，``None`` 按既有报告口径转换为 ``[0]``；
     numpy/pandas 标量与常用序列输入均受支持。整数值统一输出为 Python
-    ``int``，非整数值输出为 Python ``float``。
+    ``int``，非整数值输出为 Python ``float``。``deduplicate=False`` 保留重复
+    阈值，供逾期字段与阈值一一对应的绘图入口使用。
     """
     if isinstance(dpds, (list, tuple, np.ndarray, pd.Index, pd.Series)):
         values = list(dpds)
@@ -42,7 +43,7 @@ def normalize_dpd_values(dpds) -> List[Union[int, float]]:
             if not np.isfinite(numeric):
                 raise ValueError(f"DPD 阈值必须是有限数值，收到: {value!r}")
             normalized = int(numeric) if numeric.is_integer() else numeric
-        if normalized not in seen:
+        if not deduplicate or normalized not in seen:
             seen.add(normalized)
             normalized_values.append(normalized)
     return normalized_values

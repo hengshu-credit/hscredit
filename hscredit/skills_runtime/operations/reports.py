@@ -11,8 +11,7 @@ from ...report import auto_feature_analysis, auto_model_report, swap_out_report
 from ..artifacts import summarize_dataframe
 from ..errors import SkillExecutionError
 from ..registry import OperationSpec
-from .binning import _data, _parameters
-
+from .binning import _data, _parameters, _label_combinations, _overdue_summary
 
 _FEATURE_SUMMARY_COLUMNS = (
     "特征名",
@@ -64,20 +63,6 @@ def _publish_report_images(context, image_dir: Path) -> None:
             str(Path(f"{context.request.output.name}-assets") / relative),
             artifact_type="image",
         )
-
-
-def _as_parameter_list(value: Any) -> list:
-    if value is None:
-        return []
-    if isinstance(value, (list, tuple)):
-        return list(value)
-    return [value]
-
-
-def _label_combinations(parameters: Mapping[str, Any]) -> list:
-    overdue_fields = _as_parameter_list(parameters.get("overdue"))
-    dpds = _as_parameter_list(parameters.get("dpds"))
-    return [{"overdue": overdue, "dpd": dpd} for overdue in overdue_fields for dpd in dpds]
 
 
 def _extract_feature_summary(staged: Path) -> pd.DataFrame:
@@ -222,14 +207,28 @@ def _auto_model_report(context) -> dict:
     dataset_mapping = params.pop("datasets", None)
     datasets = _resolve_datasets(context, dataset_mapping)
     staged = _stage_workbook(context)
-    auto_model_report(
+    report = auto_model_report(
         _resolve_model(context),
         datasets=datasets,
         excel_path=str(staged),
         **params,
     )
     _validate_and_publish_workbook(context, staged)
-    return {"summary": {"datasets": list(datasets), "dataset_count": len(datasets)}}
+    summary = {"datasets": list(datasets), "dataset_count": len(datasets)}
+    if report._is_overdue_cfg():
+        # 外部 (X, y) 的 y 优先，不把其标签错误归因于逾期比较符。
+        generated_datasets = [
+            name
+            for name, value in datasets.items()
+            if isinstance(value, pd.DataFrame) or (len(value) == 2 and value[1] is None)
+        ]
+        if generated_datasets:
+            overdue, dpds = report._overdue_dpds()
+            summary.update(
+                _overdue_summary({"overdue": overdue, "dpds": dpds, "overdue_operator": report.overdue_operator})
+            )
+            summary["label_datasets"] = generated_datasets
+    return {"summary": summary}
 
 
 def _swap_out_report(context) -> dict:
@@ -245,7 +244,7 @@ def _swap_out_report(context) -> dict:
     staged = _stage_workbook(context)
     swap_out_report(_data(context), save=str(staged), **params)
     _validate_and_publish_workbook(context, staged)
-    return {"summary": {"rules": int(rule_count)}}
+    return {"summary": {"rules": int(rule_count), **_overdue_summary(params)}}
 
 
 def register_report_operations(registry) -> None:

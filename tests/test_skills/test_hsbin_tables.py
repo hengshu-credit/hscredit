@@ -29,10 +29,21 @@ def _workbook(result):
 def test_overdue_operator_is_forwarded_and_recorded(tmp_path, credit_frame):
     result = execute_skill(
         "hsbin",
-        _request(tmp_path, "feature_bin_stats", {
-            "feature": "score", "overdue": ["MOB1"], "dpds": [3.0, 0.0],
-            "overdue_operator": "<=", "del_grey": True, "method": "quantile", "max_n_bins": 2, "n_jobs": 1,
-        }, "operator_stats"),
+        _request(
+            tmp_path,
+            "feature_bin_stats",
+            {
+                "feature": "score",
+                "overdue": ["MOB1"],
+                "dpds": [3.0, "3", 0.0],
+                "overdue_operator": "<=",
+                "del_grey": True,
+                "method": "quantile",
+                "max_n_bins": 2,
+                "n_jobs": 1,
+            },
+            "operator_stats",
+        ),
         objects={"data:credit": credit_frame},
     )
     assert result["status"] == "success"

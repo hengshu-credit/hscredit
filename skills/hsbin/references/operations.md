@@ -32,7 +32,7 @@
 | operation | 主要输入 | 产物 |
 |---|---|---|
 | `feature_bin_stats` | `data`; `feature`, `target` 或 `overdue+dpds` | 分箱统计 Excel |
-| `benchmark_binning_methods` | `data`; `feature`, `overdue_col`, `dpds` | 方法对比 Excel |
+| `benchmark_binning_methods` | `data`; `feature`, `overdue`, `dpds` | 方法对比 Excel |
 | `feature_binning_summary` | `data`; `feature`, `methods`, 目标配置 | 摘要和各方法明细 Excel |
 | `feature_group_binning_summary` | `data`; 上述参数，加 `date_col` 或 `group_col` | 分组摘要和明细 Excel |
 | `feature_efficiency_analysis` | `data`; `feature`, 目标配置，可选日期/分组 | 手工/自动表、规则 JSON、比较图和趋势图 |
@@ -42,6 +42,8 @@
 `feature_bin_stats`、`feature_binning_summary` 和 `feature_group_binning_summary` 的多标签逾期分析使用一次请求：`overdue` 和 `dpds` 都使用列表，由 hscredit 展开全部组合并生成一个 Excel。不要按单个逾期字段或单个阈值拆分请求。运行结果在原表格摘要之外通过 `summary.label_combinations` 返回实际组合。
 
 使用 `overdue_operator` 指定 `>`、`>=`、`<` 或 `<=`，表格分析默认 `>`。`del_grey=True` 时，`>` 剔除 `(0, dpd]`，`>=` 剔除 `(0, dpd)`，`<`、`<=` 不剔灰。`summary.overdue_operator` 记录本次组合使用的比较符；`bin_overdues_plot` 保留 `>=` 的历史默认值。
+
+`summary.label_combinations` 中的阈值与计算值一致：整数小数和数值字符串会规范化，组合式表格分析去重阈值。`feature_efficiency_analysis` 使用单阈值 `dpd`（默认 0），也返回比较符和标签组合。原始数据 `bin_overdues_plot` 按逾期列和阈值一一对应记录，保留重复阈值；现成分箱表绘图不追加推测的比较符。
 
 ## 分箱器生命周期
 

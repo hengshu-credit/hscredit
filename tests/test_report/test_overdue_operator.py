@@ -400,7 +400,19 @@ def loan_data():
     path = Path(__file__).resolve().parents[2] / "examples" / "hscredit_yyp.xlsx"
     if not path.exists():
         pytest.skip("缺少真实放款数据 hscredit_yyp.xlsx")
-    return pd.read_excel(path, usecols=["衡枢鉴真分老客版", "MOB1", "放款金额"])
+    return pd.read_excel(
+        path,
+        usecols=[
+            "衡枢鉴真分老客版",
+            "近六个月非银多头机构数",
+            "青云24",
+            "FPD",
+            "MOB1",
+            "放款金额",
+            "放款时间",
+            "商品类别",
+        ],
+    )
 
 
 @pytest.mark.parametrize("op", LABELS)
@@ -595,3 +607,154 @@ def test_benchmark_accepts_scalar_decimal_threshold(data):
     sequence = benchmark_binning_methods(data, "评分", dpds=[0.5], **params)
     assert_frame_equal(scalar, sequence)
     assert ("MOB 1>=0.5", "坏样本率序列") in scalar.columns
+
+
+@pytest.mark.parametrize("op", LABELS)
+def test_normalized_thresholds_use_the_same_values_for_labels_and_comparisons(data, op):
+    params = dict(overdue="MOB 1", overdue_operator=op, del_grey=True)
+    expected = bad_rate_overall(data, dpds=[3, 0], **params)
+    actual = bad_rate_overall(data, dpds=pd.Index(["3.0", "0", 3]), **params)
+    assert_frame_equal(actual, expected)
+    assert make_overdue_target(data["MOB 1"], "3.0", overdue_operator=op).tolist() == LABELS[op]
+
+
+@pytest.mark.parametrize("container", [np.array, pd.Index, pd.Series])
+def test_swap_threshold_containers_match_normalized_list(data, container):
+    sample = data.dropna(subset=["MOB 1"])
+    params = dict(
+        score="评分",
+        reference_data=sample,
+        overdue="MOB 1",
+        overdue_operator=">=",
+        rules_out=[Rule("评分 >= 4")],
+        del_grey=True,
+        max_n_bins=2,
+        n_jobs=1,
+    )
+    expected = rule_swap_analysis(sample, dpds=[3, 0], **params)
+    actual = rule_swap_analysis(sample, dpds=container(["3.0", "0", "3"]), **params)
+    for key in expected:
+        assert_frame_equal(actual[key], expected[key])
+
+
+@pytest.mark.parametrize("op", LABELS)
+def test_auto_feature_summary_excludes_primary_grey_samples(data, op, monkeypatch, tmp_path):
+    from hscredit.report import auto_feature_analysis
+
+    original = pd.DataFrame.summary
+    observed = []
+
+    def capture(frame, *args, **kwargs):
+        result = original(frame, *args, **kwargs)
+        observed.append((frame.copy(), kwargs["y"].copy(), result.copy()))
+        return result
+
+    monkeypatch.setattr(pd.DataFrame, "summary", capture)
+    auto_feature_analysis(
+        data,
+        features=["评分"],
+        overdue="MOB 1",
+        dpds=[3, 0],
+        overdue_operator=op,
+        del_grey=True,
+        pictures=[],
+        show_progress=False,
+        bin_params={"method": "quantile", "max_n_bins": 2},
+        n_jobs=1,
+        excel_writer=str(tmp_path / "报告.xlsx"),
+        output_dir=str(tmp_path),
+    )
+    frame, target, summary = observed[0]
+    expected = expected_target(data, op, True)
+    assert frame.index.tolist() == expected.index.tolist()
+    assert target.tolist() == expected.tolist()
+    assert summary.iloc[0]["样本数"] == len(expected)
+
+
+def test_paired_overdue_plots_normalize_without_dropping_repeated_thresholds(data):
+    sample = data.assign(MOB2=data["MOB 1"])
+    figure = bin_overdues_plot(
+        sample,
+        feature="评分",
+        overdue=["MOB 1", "MOB2"],
+        dpds=["3.0", 3.0],
+        overdue_operator=">=",
+        rules={"评分": [3]},
+        n_jobs=1,
+    )
+    assert [ax.get_title() for ax in figure.axes[:2]] == ["MOB 1 (>= 3)", "MOB2 (>= 3)"]
+    actual = distribution_plot(sample, date="日期", overdue="MOB 1", dpds="3.0", overdue_operator=">=", result=True)
+    expected = distribution_plot(sample, date="日期", overdue=["MOB 1"], dpds=[3], overdue_operator=">=", result=True)
+    assert_frame_equal(actual, expected)
+    plt.close("all")
+
+
+@pytest.mark.parametrize("container", [np.array, pd.Index, pd.Series])
+def test_auto_feature_analysis_normalizes_and_deduplicates_thresholds(data, container, tmp_path):
+    from hscredit.excel import ExcelWriter
+    from hscredit.report import auto_feature_analysis
+
+    writer = ExcelWriter()
+    expected_writer = ExcelWriter()
+    try:
+        params = dict(
+            features=["评分"],
+            overdue=pd.Index(["MOB 1"]),
+            overdue_operator=">=",
+            del_grey=True,
+            pictures=[],
+            show_progress=False,
+            n_jobs=1,
+            bin_params={"method": "quantile", "max_n_bins": 2},
+            output_dir=str(tmp_path),
+        )
+        auto_feature_analysis(data, dpds=container(["3.0", "0", "3"]), excel_writer=writer, **params)
+        auto_feature_analysis(data, dpds=[3, 0], excel_writer=expected_writer, **params)
+        rows = list(writer.get_sheet_by_name("分析报告").values)
+        assert rows == list(expected_writer.get_sheet_by_name("分析报告").values)
+        assert any("MOB 1>=3" in row for row in rows)
+        assert not any("MOB 1>=3.0" in row for row in rows)
+    finally:
+        writer.workbook.close()
+        expected_writer.workbook.close()
+
+
+@pytest.mark.parametrize("op", LABELS)
+def test_real_loan_data_eda_model_rules_and_category_share_overdue_definition(loan_data, op):
+    from sklearn.dummy import DummyClassifier
+
+    features = ["衡枢鉴真分老客版", "近六个月非银多头机构数", "青云24"]
+    model = DummyClassifier(strategy="prior").fit(loan_data[features], loan_data["FPD"])
+    params = dict(overdue="MOB1", dpds=[7, 3, 0], overdue_operator=op, del_grey=True)
+    report = ModelReport(model, datasets={"放款数据": loan_data}, feature_names=features, n_jobs=1, **params)
+    summary = report.summary()
+    overall = bad_rate_overall(loan_data, **params)
+    by_date = bad_rate_trend(loan_data, "放款时间", **params)
+    category_table = feature_bin_stats(loan_data, "商品类别", method="quantile", margins=True, n_jobs=1, **params)
+    rule_table = Rule("放款金额 >= 0", n_jobs=1).report(loan_data, margins=True, **params)
+    days = loan_data["MOB1"]
+    for dpd in [7, 3, 0]:
+        bad = {">": days > dpd, ">=": days >= dpd, "<": days < dpd, "<=": days <= dpd}[op]
+        valid = pd.Series(True, index=days.index)
+        if op == ">":
+            valid = ~((days > 0) & (days <= dpd))
+        elif op == ">=":
+            valid = ~((days > 0) & (days < dpd))
+        count, bad_count = int(valid.sum()), int((valid & bad).sum())
+        label = f"MOB1{op}{dpd}"
+        display = f"MOB1@{dpd}" if op == ">" else label
+        assert summary.loc[display, ("样本数", "放款数据")] == count
+        assert summary.loc[display, ("坏样本率", "放款数据")] == pytest.approx(bad_count / count)
+        row = overall.loc[overall["标签"] == label].iloc[0]
+        assert row["样本总数"] == count
+        assert row["坏样本数"] == bad_count
+        dated = valid & loan_data["放款时间"].notna()
+        assert by_date[label]["样本数"].sum() == dated.sum()
+        assert by_date[label]["坏样本数"].sum() == (dated & bad).sum()
+        bin_label = f"MOB1_{dpd}+" if op == ">" else label
+        rule_label = f"MOB1 {dpd}+" if op == ">" else label
+        for table, target_label in [(category_table, bin_label), (rule_table, rule_label)]:
+            total = table.iloc[-1]
+            group = target_label if op in (">", ">=") else "分箱详情"
+            assert total[(group, "样本总数")] == count
+            assert total[(target_label, "坏样本数")] == bad_count

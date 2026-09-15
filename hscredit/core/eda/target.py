@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 from typing import List, Dict, Optional, Union, Tuple
 
+from ...utils.input_utils import normalize_dpd_values
 from ...utils.overdue import make_overdue_target, overdue_label, validate_overdue_operator
 from .utils import validate_dataframe, validate_binary_target, safe_divide
 
@@ -23,18 +24,14 @@ def _build_overdue_labels(overdue: Union[str, List[str]],
     validate_overdue_operator(overdue_operator)
     if isinstance(overdue, str):
         overdue = [overdue]
-    if np.isscalar(dpds):
-        dpds = [dpds]
-    
+    dpds = normalize_dpd_values(dpds)
+
     labels = []
     for od_field in overdue:
         for dpd in dpds:
-            if dpd == 0:
-                label_name = overdue_label(od_field, 0, overdue_operator, style="plain")
-            else:
-                label_name = overdue_label(od_field, dpd, overdue_operator, style="plain")
+            label_name = overdue_label(od_field, dpd, overdue_operator, style="plain")
             labels.append((label_name, dpd, od_field))
-    
+
     return labels
 
 

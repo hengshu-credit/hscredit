@@ -9,8 +9,7 @@ import pandas as pd
 from ...core.viz import bin_2d_plot, bin_overdues_plot, bin_plot, bin_trend_plot
 from ..errors import SkillExecutionError
 from ..registry import OperationSpec
-from .binning import _data, _parameters
-
+from .binning import _data, _parameters, _overdue_summary
 
 _PLOTS = OrderedDict(
     [
@@ -86,6 +85,8 @@ def _plot_handler(function):
             plt.close(figure)
         else:
             summary = {"format": output_format}
+        if function is bin_overdues_plot and "bin_table" not in context.request.inputs:
+            summary.update(_overdue_summary(params, default_operator=">=", paired=True))
         return {"summary": summary}
 
     return handler

@@ -29,6 +29,8 @@
 
 `overdue_operator` 支持 `>`、`>=`、`<`、`<=`。`auto_feature_analysis` 的显式比较符优先于 `bin_params`，缺省为 `>`，最终值记录于 `summary.overdue_operator`。`del_grey=True` 时，`>` 剔除 `(0, dpd]`，`>=` 剔除 `(0, dpd)`，`<`、`<=` 不剔灰。
 
+`summary.label_combinations` 返回规范化并去重后的实际阈值组合。“变量综合统计”及单标签图形使用第一个标签，开启剔灰时均基于该标签的有效样本；各标签分箱及样本分布独立剔灰。
+
 ## auto_model_report
 
 需要 `inputs.model`，并在 `inputs` 中提供一个或多个数据集。`parameters.datasets` 的值是 `inputs` 键，不是隐藏的文件路径。
@@ -56,9 +58,13 @@
 
 显式 `y`、`target`、`overdue+dpds` 的优先级继续由 hscredit 决定。不要在 Skill 层重新生成预测或标签。
 
+通过逾期配置生成标签时，摘要返回 `overdue_operator`、`label_combinations` 和 `label_datasets`。比较符取模型报告的最终配置，显式参数优先于 `target` 字典；`label_datasets` 只包含实际生成逾期标签的数据集，排除显式提供外部 `y` 的数据集。
+
 ## swap_out_report
 
 需要 `inputs.data` 和 `parameters.rules`。规则可以是表达式字符串；同进程调用也可通过运行时扩展使用 Rule 对象。
+
+传入 `overdue + dpds` 时，`overdue_operator` 默认为 `>`；运行摘要通过 `overdue_operator` 和 `label_combinations` 记录实际标签定义。
 
 ```json
 {

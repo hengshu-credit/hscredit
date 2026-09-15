@@ -10,6 +10,7 @@ import pandas as pd
 
 from ...core.binning import OptimalBinning, OptimalBinning2D
 from ...excel import ExcelWriter, dataframe2excel
+from ...utils.input_utils import normalize_dpd_values
 from ...report.feature_analyzer import (
     benchmark_binning_methods,
     feature_efficiency_analysis,
@@ -73,20 +74,29 @@ def _as_parameter_list(value: Any) -> list:
     return [value]
 
 
-def _label_combinations(parameters: Mapping[str, Any]) -> list:
+def _label_combinations(parameters: Mapping[str, Any], *, paired: bool = False) -> list:
     overdue = parameters.get("overdue")
     overdue_fields = _as_parameter_list(overdue)
-    dpds = _as_parameter_list(parameters.get("dpds"))
+    if not overdue_fields or parameters.get("dpds") is None:
+        return []
+    dpds = normalize_dpd_values(parameters["dpds"], deduplicate=not paired)
+    if paired:
+        return [{"overdue": overdue, "dpd": dpd} for overdue, dpd in zip(overdue_fields, dpds)]
     return [{"overdue": overdue, "dpd": dpd} for overdue in overdue_fields for dpd in dpds]
 
 
-def _summarize_binning_table(table: pd.DataFrame, parameters: Mapping[str, Any]) -> dict:
-    summary = summarize_dataframe(table)
-    combinations = _label_combinations(parameters)
+def _overdue_summary(parameters: Mapping[str, Any], *, default_operator: str = ">", paired: bool = False) -> dict:
+    """记录实际生成的逾期标签组合；配对图形保留一一对应的阈值。"""
+    summary = {}
+    combinations = _label_combinations(parameters, paired=paired)
     if combinations:
         summary["label_combinations"] = combinations
-        summary["overdue_operator"] = parameters.get("overdue_operator", ">")
+        summary["overdue_operator"] = parameters.get("overdue_operator", default_operator)
     return summary
+
+
+def _summarize_binning_table(table: pd.DataFrame, parameters: Mapping[str, Any]) -> dict:
+    return {**summarize_dataframe(table), **_overdue_summary(parameters)}
 
 
 def _safe_sheet_name(name: str, used: set) -> str:
@@ -232,6 +242,7 @@ def _feature_efficiency_analysis(context) -> dict:
             "target": result["target"],
             "manual_rows": int(len(manual_table)),
             "auto_rows": int(len(auto_table)),
+            **_overdue_summary({**params, "dpds": params.get("dpd", 0)}),
         }
     }
 

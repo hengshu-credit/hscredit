@@ -23,6 +23,7 @@ from matplotlib.patches import Patch
 from typing import Union, Optional, List, Dict, Any
 
 from ...utils.overdue import make_overdue_target, overdue_label, validate_overdue_operator
+from ...utils.input_utils import normalize_dpd_values
 from .utils import (
     DEFAULT_COLORS, setup_axis_style, save_figure,
     format_bin_label,
@@ -1702,8 +1703,12 @@ def distribution_plot(data, date="date", target="target", save=None, figsize=(10
 
     # ---------- 多逾期口径模式 ----------
     if overdue is not None and dpds is not None:
+        overdue = [overdue] if isinstance(overdue, str) else list(overdue)
+        dpds = normalize_dpd_values(dpds, deduplicate=False)
         if len(overdue) != len(dpds):
             raise ValueError("overdue 和 dpds 长度必须一致")
+        if not overdue:
+            raise ValueError("overdue 和 dpds 不能为空")
 
         # 按日期聚合样本总数
         df_indexed = df.set_index(date)
@@ -2995,57 +3000,57 @@ def bin_overdues_plot(
     if colors is None:
         colors = DEFAULT_COLORS
     max_cols = _validate_plot_max_cols(max_cols)
-    
+
     # 检查是否为分箱表模式
     if bin_table is not None:
         # 分箱表模式：直接解析多级表头分箱表
         if not _is_multiindex_bin_table(bin_table):
             raise ValueError("bin_table 必须是多级表头的分箱表（来自 feature_bin_stats）")
-        
+
         # 提取目标名称列表
         target_names = _extract_target_names_from_bin_table(bin_table)
-        
+
         if len(target_names) == 0:
             raise ValueError("分箱表中没有找到目标列（除了 '分箱详情'）")
-        
+
         # 从分箱详情中提取特征名（使用第一个分箱行）
         if ('分箱详情', '指标名称') in bin_table.columns:
             feature = bin_table[('分箱详情', '指标名称')].iloc[0]
         else:
             feature = 'Feature'
-        
+
         n_plots = len(target_names)
-        
+
         # 计算行列数
         n_cols = min(max_cols, n_plots)
         n_rows = (n_plots + n_cols - 1) // n_cols
-        
+
         # 自动计算图像尺寸
         if figsize is None:
             figsize = (5.2 * n_cols, 4 * n_rows)
-        
+
         fig, axes = plt.subplots(n_rows, n_cols, figsize=figsize)
-        
+
         # 统一为一维 Axes 列表；单图时 axes 本身就是 Axes，不能再次包成 ndarray。
         axes = np.asarray(axes, dtype=object).reshape(-1).tolist()
-        
+
         # 绘制每个目标的分箱图
         for idx, target_name in enumerate(target_names):
             ax = axes[idx]
-            
+
             try:
                 # 提取该目标的统计信息
                 stats_df = _get_stats_for_target(bin_table, target_name)
-                
+
                 if stats_df.empty:
                     ax.text(0.5, 0.5, 'No Data', ha='center', va='center', transform=ax.transAxes)
                     ax.set_title(target_name)
                     continue
-                
+
                 # 格式化分箱标签
                 if '分箱' in stats_df.columns:
                     stats_df['分箱'] = stats_df['分箱'].apply(lambda x: format_bin_label(x, 35))
-                
+
                 # 使用 bin_plot 绘制单个子图
                 bin_plot(
                     data=stats_df,
@@ -3056,35 +3061,37 @@ def bin_overdues_plot(
                     show_metric_summary=show_stats,
                     metric_summary_layout='full_width_center',
                 )
-                
+
             except Exception as e:
                 ax.text(0.5, 0.5, f'Error: {str(e)}', ha='center', va='center', transform=ax.transAxes)
                 ax.set_title(target_name)
-        
+
         # 隐藏多余的子图
         for idx in range(n_plots, len(axes)):
             axes[idx].axis('off')
-        
+
         # 设置总标题
         if title is None:
             title = f"{feature} - Multi DPD Binning Analysis"
         fig.suptitle(title, fontsize=14, fontweight='bold', y=0.98)
-        
+
         fig.tight_layout(rect=(0, 0, 1, 0.92))
         legend = _create_bin_plot_figure_legend(fig, colors)
         _layout_top_center_legend(fig, legend, title=fig._suptitle, axes=list(axes[:n_plots]))
-        
+
         if save:
             save_figure(fig, save)
-        
+
         return fig
-    
+
     # 原始数据模式
     if feature is None:
         raise ValueError("原始数据模式需要提供 feature 参数")
     if overdue is None or dpds is None:
         raise ValueError("原始数据模式需要提供 overdue 和 dpds 参数")
-    
+
+    overdue = [overdue] if isinstance(overdue, str) else list(overdue)
+    dpds = normalize_dpd_values(dpds, deduplicate=False)
     if len(overdue) != len(dpds):
         raise ValueError("overdue 和 dpds 长度必须一致")
     if len(overdue) == 0:

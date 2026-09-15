@@ -19,12 +19,14 @@ def validate_overdue_operator(overdue_operator: str) -> str:
 def compare_overdue(values: pd.Series, dpd, overdue_operator: str = ">") -> pd.Series:
     """按指定比较符生成坏样本布尔标记，缺失值不满足比较条件。"""
     validate_overdue_operator(overdue_operator)
+    dpd = normalize_dpd_values([dpd])[0]
     return _OVERDUE_OPERATORS[overdue_operator](values, dpd).fillna(False)
 
 
 def overdue_grey_mask(values: pd.Series, dpd, overdue_operator: str = ">") -> pd.Series:
     """返回灰客户标记：> 为 (0, dpd]，>= 为 (0, dpd)，< 和 <= 暂无灰客户。"""
     validate_overdue_operator(overdue_operator)
+    dpd = normalize_dpd_values([dpd])[0]
     if overdue_operator == ">":
         return (values.gt(0) & values.le(dpd)).fillna(False)
     if overdue_operator == ">=":
@@ -44,7 +46,7 @@ def overdue_label(column: str, dpd, overdue_operator: str = ">", style: str = "s
     """默认 > 沿用各入口的历史命名，其他比较符始终显式展示。"""
     validate_overdue_operator(overdue_operator)
     # 分箱入口会把 3.0 规范为 3；上层报告必须采用同一名称才能查找对应的坏样本率。
-    dpd = normalize_dpd_values(dpd)[0]
+    dpd = normalize_dpd_values([dpd])[0]
     if overdue_operator == ">":
         if style == "suffix":
             return f"{column}_{dpd}+"
