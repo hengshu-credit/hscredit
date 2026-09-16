@@ -1813,6 +1813,20 @@ class ModelTuner(ArtifactSerializableMixin):
                     if trial.should_prune():
                         raise optuna.TrialPruned(f"第 {fold_index} 折后停止本次试验")
         results = [float(np.mean(fold_results[i])) for i in range(len(self.metrics))]
+        if trial is not None and not self._is_multi_objective and len(fold_results[0]) > 1:
+            # Optuna 的终止改进图需要专用 CV 记录，仅写普通 user_attrs 无法供其读取。
+            # 旧版 Optuna 没有 terminator 时，原有逐折指标仍完整保留。
+            import importlib
+
+            try:
+                terminator = importlib.import_module("optuna.terminator")
+            except ModuleNotFoundError as exc:
+                if exc.name != "optuna.terminator":
+                    raise
+                terminator = None
+            report_cv = getattr(terminator, "report_cross_validation_scores", None)
+            if report_cv is not None:
+                report_cv(trial, [float(value) for value in fold_results[0]])
         metric_result = tuple(results) if self._is_multi_objective else results[0]
         if not return_diagnostics:
             return metric_result
@@ -2724,14 +2738,40 @@ class ModelTuner(ArtifactSerializableMixin):
 
     # ==================== 可视化方法 ====================
 
+    def get_study(self) -> Any:
+        """获取完整的原生 Optuna Study，不过滤试验、指标、属性或中间值。
+
+        两种训练入口使用同一契约：``model.tune(...)`` 之后可用
+        ``model.tuner.get_study()``；直接使用 ModelTuner 时用 ``tuner.get_study()``。
+        返回值与 ``study_`` 是同一对象，可交给任何 Optuna 原生分析和可视化函数。
+        """
+        if self.study_ is None:
+            raise ValueError("尚未创建超参数搜索 Study，请先调用 fit()、model.tune() 或传入已有 study")
+        return self.study_
+
+    @property
+    def visualization(self):
+        """当前 Optuna 版本的完整可视化入口，自动传入本次搜索的 Study。
+
+        例如 ``tuner.visualization.plot_timeline()``、``plot_intermediate_values()``、
+        ``plot_rank(params=[...])``；Matplotlib 后端使用
+        ``tuner.visualization.matplotlib.plot_optimization_history()``。
+        用 ``dir(tuner.visualization)`` 可查看当前版本的全部入口。
+
+        此入口保留 Optuna 原生语义：多目标的 target 使用函数，超体积图需要
+        reference_point；依赖、试验数量或指标条件不足时保留原生错误。
+        既有 ``tuner.plot_*`` 便捷方法和整数 target 用法继续保留。
+        """
+        from .visualization import _OptunaVisualization
+
+        return _OptunaVisualization(self)
+
     def _publicize_plot_figure(self, figure: Any) -> Any:
         """清理 Plotly 图对象中的 Optuna 内部潜变量名。"""
         if not hasattr(figure, "to_plotly_json"):
             return figure
 
-        replacements = {
-            self._space_adapter.latent_name(name): name for name in (self.search_space or {})
-        }
+        replacements = {self._space_adapter.latent_name(name): name for name in (self.search_space or {})}
 
         def rewrite(value: Any) -> Any:
             if isinstance(value, str):

@@ -202,7 +202,83 @@ SQLite 保留 Optuna 试验状态；`artifact_dir` 额外逐折写入模型过�
 可用 `get_best_model(refit=True, full_data=False)` 显式重训并保留内部验证。
 中断会继续抛出 `KeyboardInterrupt`，不会悄悄开始最终重训，但已经完成的试验和历史仍可检查、保存。
 
-## 6. 可运行的真实数据验证
+## 6. 两种调参入口都能查看完整搜索过程
+
+两种方式均保留同一个原生 Optuna Study，不只保留最佳参数。训练完成后，
+既可以通过 `visualization` 自动绑定 Study，也可以把 `get_study()` 的返回值直接交给 Optuna。
+
+```python
+from hscredit import RandomForest, ModelTuner
+
+# 方式一：model.tune。原模型和最佳模型均关联同一个搜索器。
+model = RandomForest(n_estimators=30, random_state=42, n_jobs=2)
+best = model.tune(
+    df[features], df["FPD"], search_space={"max_depth": [2, 3, 4, 5]},
+    n_trials=8, cv=3, n_jobs=2,
+)
+assert model.tuner is best.tuner
+best.tuner.visualization.plot_optimization_history().show()
+best.tuner.visualization.plot_intermediate_values().show()
+
+# 方式二：直接使用 ModelTuner，fit 后立即可分析，不需要先调用 get_best_model。
+tuner = ModelTuner(
+    RandomForest(n_estimators=30, random_state=42, n_jobs=2),
+    search_space={"max_depth": [2, 3, 4, 5]}, metric="auc", cv=3, n_jobs=2,
+)
+tuner.fit(df[features], df["FPD"], n_trials=8)
+tuner.visualization.plot_timeline().show()
+tuner.visualization.plot_rank(params=["max_depth"]).show()
+
+# 与原生 Optuna 完全互通。
+import optuna
+study = tuner.get_study()                 # 与 tuner.study_ 是同一对象
+optuna.visualization.plot_param_importances(study).show()
+study.trials_dataframe()                  # 全部试验的参数、状态、得分、时间及属性
+study.trials[0].intermediate_values        # 每折结束时的累计平均目标值
+study.trials[0].user_attrs["各折指标"]     # 每折、每个目标的实际分数
+study.sampler                            # 本次搜索的原生采样器
+study.pruner                             # 本次搜索的原生剪枝器
+```
+
+`visualization` 根据当前安装的 Optuna 动态提供全部公开入口，包括其后续新增的绘图函数。
+用 `dir(tuner.visualization)` 或 `dir(tuner.visualization.matplotlib)` 可查看当前版本提供的函数。
+原生参数和返回对象不变，只自动传入当前 Study；显式传 `study=[study1, study2]` 可比较多个搜索。
+
+| 可查看的内容 | 原生函数 |
+| --- | --- |
+| 搜索得分历史、中间值、时间轴 | `plot_optimization_history`、`plot_intermediate_values`、`plot_timeline` |
+| 参数重要性、切片、等高线、排名、平行坐标 | `plot_param_importances`、`plot_slice`、`plot_contour`、`plot_rank`、`plot_parallel_coordinate` |
+| 得分分布 | `plot_edf` |
+| 多目标 Pareto 前沿与超体积历史 | `plot_pareto_front`、`plot_hypervolume_history` |
+| 搜索终止改进诊断 | `plot_terminator_improvement` |
+
+Matplotlib 后端也完整开放，返回原生 Axes 或 Axes 数组：
+
+```python
+import matplotlib.pyplot as plt
+
+ax = tuner.visualization.matplotlib.plot_optimization_history()
+ax.figure.savefig("search-history.png", dpi=150, bbox_inches="tight")
+plt.show()
+```
+
+这些图仍遵循 [Optuna 原生绘图条件](https://optuna.readthedocs.io/en/stable/reference/visualization/index.html)：
+多目标单曲线图的 `target` 是函数，例如 `target=lambda trial: trial.values[1]`；
+超体积图需要多目标 Study 和显式 `reference_point`。
+终止改进图按 Optuna 版本和 evaluator 要求使用相应依赖与足够的试验；
+自动单目标交叉验证会通过 Optuna 官方接口记录各折分数，供其 CV 误差评估器直接使用。
+只有一折或用户完全接管的 `trial_objective`，需按原生要求提供适用的误差估计或记录。
+
+`plot_intermediate_values` 默认显示**各交叉验证折结束时的累计平均目标值**。
+每个模型的逐轮学习曲线在 `tuner.get_trial_result(编号)["各折"][折编号]["评估曲线"]` 中；
+失败、剪枝的 Trial、时间和已上报的中间值也保留在 Study，不会为绘图而过滤。
+多目标的逐折分数保存在 `各折指标`，不伪造 Optuna 不支持的多目标 intermediate_values。
+
+原有 `tuner.plot_*` 便捷方法继续支持整数 `target` 与 HSCredit 搜索空间参数名转换；
+`visualization` 则使用 Optuna 原生 `params` / `target` 语义。
+保存最佳模型或调参器后，重新加载仍可通过相同入口画图；访问绘图入口本身不会重新训练模型。
+
+## 7. 可运行的真实数据验证
 
 ```console
 python examples/28_model_workflow.py --output artifacts/model-workflow

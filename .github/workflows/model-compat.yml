@@ -23,12 +23,14 @@ jobs:
             lightgbm: "4.1.0"
             catboost: "1.2.2"
             ngboost: "0.3.12"
+            optuna: "3.6.1"
           - os: windows-latest
             sklearn: "1.7.2"
             xgboost: "3.0.5"
             lightgbm: "4.6.0"
             catboost: "1.2.8"
             ngboost: "0.5.8"
+            optuna: "4.9.0"
     env:
       MPLBACKEND: Agg
       PYTHONUTF8: "1"
@@ -46,7 +48,7 @@ jobs:
           "xgboost==${{ matrix.xgboost }}"
           "lightgbm==${{ matrix.lightgbm }}"
           "catboost==${{ matrix.catboost }}"
-          "ngboost==${{ matrix.ngboost }}" "optuna==4.9.0"
+          "ngboost==${{ matrix.ngboost }}" "optuna==${{ matrix.optuna }}"
       - name: 验证训练、保存和调参
         run: >-
           python -m pytest
@@ -55,6 +57,7 @@ jobs:
           tests/test_models/test_boosting_contract_repairs.py
           tests/test_models/test_tuning.py
           tests/test_models/test_tuning_contract_repairs.py
+          tests/test_models/test_tuning_visualization.py
           tests/test_models/test_default_probability_scorecard.py
           tests/test_feature_selection/test_selector_model_compat.py
           -q --tb=short
