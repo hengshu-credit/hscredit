@@ -23,6 +23,8 @@
     >>> print(summary)
 """
 
+from .._lifecycle import record_training
+
 import numpy as np
 import pandas as pd
 import scipy.special
@@ -211,8 +213,11 @@ class LogisticRegression(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, 
 
     def __sklearn_is_fitted__(self) -> bool:
         """按真实训练产物判断拟合状态，避免构造期配置属性造成误判。"""
-        return all(hasattr(self, attr) for attr in ('coef_', 'intercept_', 'classes_'))
+        return self.__dict__.get("_is_fitted", True) and all(
+            hasattr(self, attr) for attr in ("coef_", "intercept_", "classes_")
+        )
 
+    @record_training
     def fit(
         self,
         X: Union[pd.DataFrame, np.ndarray],
@@ -268,12 +273,30 @@ class LogisticRegression(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, 
             >>> model.fit(X_train)  # 从X_train中提取'label'列作为y
         """
         # 处理 scorecardpipeline 风格：从 X 中提取 y
-        if y is None and hasattr(self, 'target') and self.target is not None:
+        if hasattr(self, "target") and self.target is not None:
             if isinstance(X, pd.DataFrame) and self.target in X.columns:
-                y = X[self.target]
+                if y is None:
+                    y = X[self.target]
                 X = X.drop(columns=[self.target])
 
         self._validate_probability_scorecard_labels(y)
+
+        if self.warm_start and hasattr(self, "raw_coef_"):
+            self.coef_ = self.raw_coef_.copy()
+        for name in (
+            "woe_coef_signs_",
+            "raw_coef_",
+            "cov_matrix_",
+            "std_err_coef_",
+            "std_err_intercept_",
+            "p_val_coef_",
+            "p_val_intercept_",
+            "z_coef_",
+            "z_intercept_",
+            "vif_",
+            "names_",
+        ):
+            self.__dict__.pop(name, None)
 
         # 保存特征名
         if isinstance(X, pd.DataFrame):
@@ -286,6 +309,7 @@ class LogisticRegression(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, 
 
         if not self.calculate_stats:
             fitted_model = super().fit(X, y, sample_weight=sample_weight, **kwargs)
+            self._is_fitted = True
             if apply_positive_woe_coef:
                 self.ensure_positive_woe_coefficients()
             self._fit_probability_scorecard(X, y)
@@ -302,6 +326,7 @@ class LogisticRegression(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, 
 
         # 调用父类fit方法
         super().fit(X, y, sample_weight=sample_weight, **kwargs)
+        self._is_fitted = True
 
         if apply_positive_woe_coef:
             self.ensure_positive_woe_coefficients()
@@ -374,7 +399,16 @@ class LogisticRegression(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, 
         X: Union[pd.DataFrame, np.ndarray]
     ) -> Union[pd.DataFrame, np.ndarray]:
         """按 WOE 方向调整输入，使正向化后的系数仍保持原始预测结果."""
-        X_model = self._convert_sparse_matrix(X)
+        if isinstance(X, pd.DataFrame):
+            if not X.columns.is_unique:
+                raise ValueError("输入特征列名不能重复")
+            expected = getattr(self, "feature_names_in_", None)
+            if expected is not None:
+                missing = [name for name in expected if name not in X.columns]
+                if missing:
+                    raise ValueError(f"输入数据缺少训练字段: {missing}")
+                X = X.loc[:, list(expected)]
+        X_model = X
         signs = getattr(self, 'woe_coef_signs_', None)
         if signs is None:
             return X_model
@@ -387,6 +421,8 @@ class LogisticRegression(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, 
                 adjusted.iloc[:, feature_index] = adjusted.iloc[:, feature_index] * sign
             return adjusted
 
+        if scipy.sparse.issparse(X_model):
+            return X_model.multiply(signs).tocsr()
         adjusted = np.asarray(X_model).copy()
         adjusted = adjusted * signs
         return adjusted
@@ -460,12 +496,12 @@ class LogisticRegression(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, 
         """
         # 计算协方差矩阵: (X' * W * X)^(-1)
         p = np.prod(pred_probs, axis=1)
-        
+
         # 使用伪逆矩阵处理奇异矩阵问题
         # 当存在多重共线性时，矩阵可能不可逆，使用 pinv 更稳健
         try:
             XTWX = (X_design * p[..., np.newaxis]).T @ X_design
-            
+
             # 检查矩阵是否可逆
             cond_number = np.linalg.cond(XTWX)
             if cond_number > 1e10:  # 条件数过大，矩阵接近奇异
@@ -479,7 +515,7 @@ class LogisticRegression(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, 
                 self.cov_matrix_ = np.linalg.pinv(XTWX)
             else:
                 self.cov_matrix_ = np.linalg.inv(XTWX)
-                
+
         except np.linalg.LinAlgError as e:
             import warnings
             warnings.warn(
@@ -519,14 +555,14 @@ class LogisticRegression(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, 
 
         # 计算VIF（方差膨胀因子）
         self.vif_ = self._compute_vif(X_design)
-        
+
         # 检查是否存在多重共线性问题
         if hasattr(self, 'vif_') and self.vif_ is not None:
             # 检查是否有无限大的 VIF（完全共线性）
             inf_vif_count = np.sum(np.isinf(self.vif_))
             # 检查是否有高 VIF（> 10）
             high_vif_count = np.sum((self.vif_ > 10) & (self.vif_ != np.inf))
-            
+
             if inf_vif_count > 0 or high_vif_count > 0:
                 import warnings
                 if inf_vif_count > 0:
@@ -820,51 +856,17 @@ class LogisticRegression(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, 
         :param score_direction: AUC/Gini分数方向，同 ``metrics.auc``
         :return: 评估结果字典
         """
-        from ..base import BaseRiskModel, _lift_score
-        from ...metrics.classification import ks, auc, gini
-        from ...metrics.finance import lift_monotonicity_check
+        from ..base import BaseRiskModel, _evaluate_binary_predictions
 
         check_is_fitted(self)
-
-        y_pred = self.predict(X)
-        y_proba = self.predict_proba(X)[:, 1]
-
-        if metrics is None:
-            metrics = BaseRiskModel.DEFAULT_METRICS
-
-        results = {}
-        for metric in metrics:
-            metric_lower = metric.lower()
-            try:
-                if metric_lower == 'auc':
-                    results['AUC'] = auc(y, y_proba, sample_weight=sample_weight, score_direction=score_direction)
-                elif metric_lower == 'ks':
-                    results['KS'] = ks(y, y_proba)
-                elif metric_lower == 'gini':
-                    results['Gini'] = gini(y, y_proba, sample_weight=sample_weight, score_direction=score_direction)
-                elif metric_lower in ('lift@1%', 'lift_1'):
-                    results['LIFT@1%'] = _lift_score(y, y_proba, top_ratio=0.01)
-                elif metric_lower in ('lift@3%', 'lift_3'):
-                    results['LIFT@3%'] = _lift_score(y, y_proba, top_ratio=0.03)
-                elif metric_lower in ('lift@5%', 'lift_5'):
-                    results['LIFT@5%'] = _lift_score(y, y_proba, top_ratio=0.05)
-                elif metric_lower in ('lift@10%', 'lift_10', 'lift'):
-                    results['LIFT@10%'] = _lift_score(y, y_proba, top_ratio=0.10)
-                elif metric_lower == 'logloss':
-                    from sklearn.metrics import log_loss
-                    results['LogLoss'] = log_loss(y, y_proba, sample_weight=sample_weight)
-            except Exception:
-                continue
-
-        try:
-            mono = lift_monotonicity_check(y, y_proba, n_bins=10, direction='both')
-            results['头部LIFT单调'] = mono['head_monotonic']
-            results['头部违反单调比例'] = mono['head_violation_ratio']
-            results['尾部LIFT单调'] = mono['tail_monotonic']
-        except Exception:
-            pass
-
-        return results
+        return _evaluate_binary_predictions(
+            y,
+            self.predict_proba(X)[:, 1],
+            self.predict(X),
+            metrics=BaseRiskModel.DEFAULT_METRICS if metrics is None else metrics,
+            sample_weight=sample_weight,
+            score_direction=score_direction,
+        )
 
     def predict_score(self, X: Union[pd.DataFrame, np.ndarray]) -> np.ndarray:
         """使用训练坏好比对应的标准概率评分卡预测风险评分.
@@ -974,6 +976,10 @@ class LogisticRegression(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, 
         """
         from ..tuning import ModelTuner
 
+        fit_options = {name: kwargs.pop(name) for name in ("groups", "catch", "gc_after_trial") if name in kwargs}
+        fit_options.update(kwargs.pop("optimize_kwargs", {}))
+        kwargs.setdefault("random_state", self.random_state)
+
         if show_progress_bar is None:
             show_progress_bar = bool(verbose)
 
@@ -989,7 +995,6 @@ class LogisticRegression(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, 
             direction=direction,
             target=self.target or 'target',
             cv=cv,
-            random_state=self.random_state,
             verbose=verbose,
             **kwargs
         )
@@ -1002,6 +1007,7 @@ class LogisticRegression(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, 
             timeout=timeout,
             sample_weight=sample_weight,
             show_progress_bar=show_progress_bar,
+            **fit_options,
         )
         best_model = tuner.get_best_model()
         best_model.tuner = tuner
@@ -1016,7 +1022,8 @@ class LogisticRegression(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, 
         :return: 保存路径
         """
         check_is_fitted(self)
-        from ....utils import save_pickle
+        from .._lifecycle import atomic_save_pickle
+
         path_str = str(path)
         eng = engine
         if eng == 'auto':
@@ -1026,8 +1033,8 @@ class LogisticRegression(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, 
             elif path_lower.endswith('.cloudpickle'):
                 eng = 'cloudpickle'
             else:
-                eng = 'joblib'
-        save_pickle(self, path_str, engine=eng, **kwargs)
+                eng = "cloudpickle"
+        atomic_save_pickle(self, path_str, engine=eng, **kwargs)
         return path_str
 
     @classmethod
@@ -1075,6 +1082,10 @@ class LogisticRegression(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, 
         """
         check_is_fitted(self)
         return self
+
+    def get_native_params(self):
+        """返回当前 sklearn 版本支持的原生逻辑回归参数。"""
+        return {name: value for name, value in self.get_params(deep=False).items() if name in _SKLEARN_LOGISTIC_PARAMS}
 
     def __getstate__(self):
         """支持 pickle 序列化.

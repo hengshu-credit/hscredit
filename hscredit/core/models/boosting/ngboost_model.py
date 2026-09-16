@@ -23,6 +23,8 @@ pip install ngboost
 import inspect
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+from .._lifecycle import record_training
+
 import numpy as np
 import pandas as pd
 from packaging.version import InvalidVersion, Version
@@ -164,9 +166,14 @@ class NGBoost(BaseRiskModel):
         if not NGBOOST_AVAILABLE:
             raise ImportError("NGBoost未安装，请使用 pip install ngboost 安装")
 
+        # sklearn clone 必须能够原样往返构造输入，原生覆盖值只用于实际训练。
+        self._constructor_params = {
+            name: value for name, value in locals().items() if name not in {"self", "kwargs", "__class__"}
+        }
+        self._constructor_kwargs = dict(kwargs)
         # 保存原生params参数
         self.params = params  # 用于sklearn get_params兼容性
-        self._native_params = params or {}
+        self._native_params = dict(params or {})
 
         # 从params中提取参数（如果提供了原生参数）
         n_estimators = self._native_params.get("n_estimators", n_estimators)
@@ -206,6 +213,7 @@ class NGBoost(BaseRiskModel):
         self.base_min_samples_leaf = base_min_samples_leaf
         self.natural_gradient = natural_gradient
 
+    @record_training
     def fit(
         self,
         X: Union[np.ndarray, pd.DataFrame],
@@ -232,6 +240,7 @@ class NGBoost(BaseRiskModel):
         # 准备数据（支持从X中提取target）
         X, y, sample_weight = self._prepare_data(X, y, sample_weight, extract_target=True, training=True)
         self._validate_probability_scorecard_labels(y)
+        eval_set = self._prepare_eval_set(eval_set)
         fit_kwargs = dict(fit_params)
         effective_early_stopping_rounds = fit_kwargs.pop(
             "early_stopping_rounds", self.early_stopping_rounds
@@ -315,6 +324,7 @@ class NGBoost(BaseRiskModel):
                 ngb_params[k] = v
 
         # 创建模型
+        self.native_params_ = dict(ngb_params)
         self._model = NGBClassifier(**ngb_params)
 
         # 训练
@@ -345,7 +355,7 @@ class NGBoost(BaseRiskModel):
         # 保存结果
         self._best_iteration = getattr(self._model, "best_val_loss_itr", None)
         self._best_score = None
-        self._evals_result = {}
+        self._evals_result = getattr(self._model, "evals_result", {})
         self._is_fitted = True
         self._fit_probability_scorecard(X, y)
 
@@ -361,16 +371,18 @@ class NGBoost(BaseRiskModel):
         """最佳得分."""
         return self._best_score
 
-    def predict(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
+    def predict(self, X: Union[np.ndarray, pd.DataFrame], **predict_params) -> np.ndarray:
         """预测类别标签.
 
         支持传入包含target列的数据框（scorecardpipeline风格）。
         """
         self._require_fitted()
+        if predict_params:
+            return self._model.predict(self._prepare_data(X)[0], **predict_params)
         X, _, _ = self._prepare_data(X, extract_target=True)
         return self._model.predict(X)
 
-    def predict_proba(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
+    def predict_proba(self, X: Union[np.ndarray, pd.DataFrame], **predict_params) -> np.ndarray:
         """预测概率.
 
         支持传入包含target列的数据框（scorecardpipeline风格）。
@@ -380,7 +392,7 @@ class NGBoost(BaseRiskModel):
         """
         self._require_fitted()
         X, _, _ = self._prepare_data(X, extract_target=True)
-        return self._model.predict_proba(X)
+        return self._model.predict_proba(X, **predict_params)
 
     def pred_dist(self, X: Union[np.ndarray, pd.DataFrame]):
         """预测概率分布.
@@ -509,7 +521,11 @@ class NGBoost(BaseRiskModel):
 
         self._model = load_pickle(path)
         self._is_fitted = True
-        self.classes_ = getattr(self, "classes_", np.array([0, 1]))
+        self.classes_ = np.array([0, 1])
+        self.n_features_in_ = self._model.n_features
+        self.feature_names_in_ = [f"feature_{i}" for i in range(self.n_features_in_)]
+        self._feature_names_known_ = False
+        self._evals_result = getattr(self._model, "evals_result", {})
         self._load_score_transformer_sidecar(path)
         return self
 

@@ -133,10 +133,27 @@ class _ProbabilityScoreCardMixin:
             "base_odds": float(self.base_odds_),
             "scorecard_params": dict(self.scorecard_params or {}),
             "feature_names_in": list(feature_names) if feature_names is not None else [],
+            "feature_names_known": getattr(self, "_feature_names_known_", True),
             "n_features_in": getattr(self, "n_features_in_", None),
             "classes": np.asarray(getattr(self, "classes_", [0, 1])).tolist(),
         }
-        save_pickle(payload, sidecar, engine="joblib")
+        payload["model_state"] = {
+            name: getattr(self, name)
+            for name in (
+                "training_history_",
+                "training_summary_",
+                "native_params_",
+                "_evals_result",
+                "_best_iteration",
+                "_best_score",
+                "scale_pos_weight_",
+                "tuner",
+            )
+            if hasattr(self, name)
+        }
+        if hasattr(self, "get_params"):
+            payload["model_params"] = self.get_params(deep=False)
+        save_pickle(payload, sidecar, engine="cloudpickle")
         return sidecar
 
     def _load_score_transformer_sidecar(self, path, *, required: bool = False) -> bool:
@@ -163,7 +180,11 @@ class _ProbabilityScoreCardMixin:
         if payload.get("n_features_in") is not None:
             self.n_features_in_ = int(payload["n_features_in"])
         self.classes_ = np.asarray(payload.get("classes", [0, 1]))
+        self._feature_names_known_ = payload.get("feature_names_known", True)
         self._attach_score_transformer(payload["score_transformer"])
+        if payload.get("model_params") and hasattr(self, "set_params"):
+            self.set_params(**payload["model_params"])
+        self.__dict__.update(payload.get("model_state", {}))
         return True
 
     def _restore_probability_scorecard(self, state: Dict[str, Any]) -> None:

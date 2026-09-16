@@ -80,6 +80,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, TYPE_CHECKING,
 import numpy as np
 import pandas as pd
 from ....utils.parallel import resolve_n_jobs
+from ....utils.serialization import ArtifactSerializableMixin
 from sklearn.base import clone
 from sklearn.model_selection import ParameterGrid, StratifiedKFold
 from sklearn.metrics import get_scorer, log_loss, roc_curve
@@ -586,7 +587,9 @@ def _safe_index(data: Any, indices: np.ndarray) -> Any:
         return None
     if hasattr(data, "iloc"):
         return data.iloc[indices]
-    return np.asarray(data)[indices]
+    from scipy.sparse import issparse
+
+    return data[indices] if issparse(data) else np.asarray(data)[indices]
 
 
 class TuningObjective:
@@ -996,7 +999,7 @@ class Metric:
         return f"Metric(name='{self.name}', direction='{self.direction}')"
 
 
-class ModelTuner:
+class ModelTuner(ArtifactSerializableMixin):
     """模型超参数调优器 - 支持单/多目标优化.
 
     基于Optuna实现贝叶斯优化超参数搜索。
@@ -1127,6 +1130,14 @@ class ModelTuner:
         verbose: bool = False,
         early_stopping_rounds: int = 20,
         points_to_evaluate: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
+        study: Optional[Any] = None,
+        pruner: Optional[Any] = None,
+        callbacks: Optional[List[Callable]] = None,
+        fit_params: Optional[Dict[str, Any]] = None,
+        fit_params_factory: Optional[Callable] = None,
+        trial_objective: Optional[Callable] = None,
+        artifact_dir: Optional[str] = None,
+        store_models: bool = True,
     ):
         """初始化 ModelTuner.
 
@@ -1157,14 +1168,33 @@ class ModelTuner:
             调优进度；不指定则使用内存存储（进程结束即丢失）。
         :param study_name: study 名称，配合 storage 持久化时用于标识/复用同一 study。
         :param load_if_exists: storage 中已存在同名 study 时是否加载续跑，默认False。
+        :param study: 已有 Optuna Study；使用该 Study 自身的存储、采样器和剪枝器。
+        :param pruner: 创建 Study 时传递的原生 Optuna 剪枝器。
+        :param callbacks: 原生 Study.optimize 的试验完成回调。
+        :param fit_params: 每次模型训练的原生参数，样本级权重等会随交叉验证切分。
+        :param fit_params_factory: 函数 (trial, fold_index) -> dict；最终重训传入 (None, None)。
+        :param trial_objective: 原生函数 (trial) -> 数值或多目标序列，完全接管试验内容。
+        :param artifact_dir: 逐折保存试验制品的目录；None 时只保留内存记录。
+        :param store_models: 是否保留各折模型，默认 True；False 仍保留预测和指标。
         """
         if not OPTUNA_AVAILABLE:
             raise ImportError("Optuna未安装，请使用 pip install optuna 安装")
 
+        instance_params = {}
+        if not isinstance(model_class, type) and hasattr(model_class, "get_params"):
+            instance_params = model_class.get_params(deep=False)
+            model_class = type(model_class)
         self.model_class = model_class
-        self._space_adapter = SearchSpaceAdapter(search_space)
+        self.search_space_function = search_space if callable(search_space) else None
+        self._space_adapter = SearchSpaceAdapter({} if callable(search_space) else search_space)
         self.search_space = self._space_adapter.space
-        self.model_params = dict(model_params or {})
+        self.model_params = {**instance_params, **dict(model_params or {})}
+        # params 字典中的旧值不能在 Trial 构造模型时重新覆盖搜索结果。
+        native_params = self.model_params.pop("params", None)
+        if isinstance(native_params, dict):
+            self.model_params.update(native_params)
+        self.model_params = self._canonical_params(self.model_params, prefer_alias=True)
+        self.trial_objective = trial_objective
         self._explicit_fixed_params = dict(fixed_params or {})
         self.fixed_params: Dict[str, Any] = {}
         self._refresh_fixed_params()
@@ -1195,6 +1225,15 @@ class ModelTuner:
         self.random_state = random_state
         self.verbose = verbose
         self.early_stopping_rounds = early_stopping_rounds
+        self.pruner = pruner
+        self.callbacks = list(callbacks or [])
+        self.fit_params = dict(fit_params or {})
+        self.fit_params_factory = fit_params_factory
+        self.trial_objective = trial_objective
+        self.artifact_dir = artifact_dir
+        self.store_models = store_models
+        self.trial_results_ = {}
+        self.best_model_ = None
 
         # 若指定了 objective（TuningObjective 风格），将其转换为 metric callable
         if objective is not None:
@@ -1215,7 +1254,7 @@ class ModelTuner:
         self._setup_metrics(metric, direction, metric_names)
 
         # 存储结果
-        self.study_ = None
+        self.study_ = study
         self.best_params_ = None
         self.best_score_ = None
         self.best_scores_ = None  # 多目标时使用
@@ -1234,6 +1273,11 @@ class ModelTuner:
     def _refresh_fixed_params(self) -> None:
         """按实例默认值 < 搜索参数 < 显式固定参数合并模型配置。"""
         search_names = set(self.search_space or {})
+        for canonical, aliases in getattr(self.model_class, "_parameter_aliases", {}).items():
+            if search_names.intersection((canonical, *aliases)):
+                search_names.update((canonical, *aliases))
+        if self.search_space_function is not None or self.trial_objective is not None:
+            search_names.update(self.model_params)
         self.fixed_params = {
             name: value for name, value in self.model_params.items() if name not in search_names
         }
@@ -1308,6 +1352,14 @@ class ModelTuner:
             else:
                 raise ValueError("当y为None时，X必须是包含目标列的DataFrame")
 
+        if isinstance(X, pd.DataFrame) and self.target in X.columns:
+            X = X.drop(columns=[self.target])
+        if not hasattr(X, "shape"):
+            X = np.asarray(X)
+        if np.asarray(y).ndim != 1 or X.shape[0] != len(y):
+            raise ValueError("调参标签必须是一维且与特征样本等长")
+        if set(np.unique(y)) != {0, 1}:
+            raise ValueError("调参标签必须同时包含 0 和 1，且 1 表示坏样本")
         return X, y
 
     def fit(
@@ -1318,6 +1370,12 @@ class ModelTuner:
         timeout: Optional[int] = None,
         show_progress_bar: bool = True,
         sample_weight: Optional[np.ndarray] = None,
+        groups: Optional[Any] = None,
+        callbacks: Optional[List[Callable]] = None,
+        catch: Tuple[Type[Exception], ...] = (Exception,),
+        gc_after_trial: bool = False,
+        fit_params: Optional[Dict[str, Any]] = None,
+        **optimize_kwargs,
     ) -> Dict[str, Any]:
         """执行超参数调优.
 
@@ -1338,13 +1396,18 @@ class ModelTuner:
         :param timeout: 超时时间(秒)，默认None
         :param show_progress_bar: 是否显示进度条，默认True
         :param sample_weight: 样本权重，可选
+        :param groups: 传给自定义交叉验证分割器的分组标签。
+        :param callbacks: 本次运行额外追加的 Study.optimize 回调。
+        :param catch: 允许 Optuna 标记失败后继续执行的异常类型；默认保留历史行为。
+        :param gc_after_trial: 是否在每次试验后执行垃圾回收。
+        :param fit_params: 本次训练参数，覆盖构造时的同名 fit_params。
         :return: 最佳参数字典
         """
         # 检查并处理输入
         X, y = self._check_input(X, y)
 
         # 记录数据信息
-        self._n_samples = len(X)
+        self._n_samples = X.shape[0]
         self._n_features = X.shape[1] if hasattr(X, "shape") else len(X[0])
         y_array = y.to_numpy() if hasattr(y, "to_numpy") else np.asarray(y)
         positive_count = int(np.sum(y_array == 1))
@@ -1355,6 +1418,26 @@ class ModelTuner:
         self._X = X
         self._y = y
         self._sample_weight = sample_weight
+        self._groups = groups
+        self._fit_params = {**self.fit_params, **dict(fit_params or {})}
+        self.best_model_ = None
+        if sample_weight is not None:
+            weights = np.asarray(sample_weight, dtype=float)
+            if weights.ndim != 1 or len(weights) != len(y):
+                raise ValueError("sample_weight 必须是一维且与样本等长")
+            if not np.isfinite(weights).all() or np.any(weights < 0) or weights.sum() <= 0:
+                raise ValueError("sample_weight 必须是有限非负数且总和大于0")
+
+        self._cv_splits = list(self._splitter(X, y))
+        for train_indices, val_indices in self._cv_splits:
+            for indices in (train_indices, val_indices):
+                indices = np.asarray(indices)
+                if indices.ndim != 1 or not len(indices) or not np.issubdtype(indices.dtype, np.integer):
+                    raise ValueError("交叉验证索引必须是非空的一维整数数组")
+                if np.any(indices < 0) or np.any(indices >= self._n_samples):
+                    raise ValueError("交叉验证索引超出训练数据范围")
+            if np.intersect1d(train_indices, val_indices).size:
+                raise ValueError("交叉验证的训练集和验证集不能包含相同样本")
 
         # 如果没有指定搜索空间，使用自适应搜索空间
         if self.search_space is None:
@@ -1368,13 +1451,13 @@ class ModelTuner:
             sampler = TuningSampler.create(self.sampler, seed=self.random_state, **self.sampler_kwargs)
 
             # 公共 study 参数（storage 指定后可用 optuna-dashboard 实时查看进度）
-            common_kwargs = dict(sampler=sampler)
-            if self.storage is not None:
-                common_kwargs.update(
-                    storage=self.storage,
-                    study_name=self.study_name,
-                    load_if_exists=self.load_if_exists,
-                )
+            common_kwargs = dict(
+                sampler=sampler,
+                pruner=self.pruner,
+                storage=self.storage,
+                study_name=self.study_name,
+                load_if_exists=self.load_if_exists,
+            )
 
             if self._is_multi_objective:
                 # 多目标优化
@@ -1382,6 +1465,9 @@ class ModelTuner:
             else:
                 # 单目标优化
                 self.study_ = optuna.create_study(direction=self.directions[0], **common_kwargs)
+
+        if [direction.name.lower() for direction in self.study_.directions] != self.directions:
+            raise ValueError("传入 Study 的优化方向与 ModelTuner 的 direction 不一致")
 
         if hasattr(self.study_, "set_metric_names"):
             self.study_.set_metric_names(self.metric_names)
@@ -1396,30 +1482,47 @@ class ModelTuner:
         model_workers = max(1, int(self.n_jobs or 1))
 
         def objective(trial):
+            self.trial_results_[trial.number] = {"试验编号": trial.number, "各折": []}
             try:
+                if self.trial_objective is not None:
+                    return self.trial_objective(trial)
                 params = self._build_model_params(self._sample_params(trial), workers=model_workers)
-                model = self.model_class(**params)
+                self.trial_results_[trial.number]["模型参数"] = params
+                model = self._new_model(params)
                 metric_values, diagnostics = self._evaluate_model(
-                    model, X, y, sample_weight, return_diagnostics=True
+                    model, X, y, sample_weight, return_diagnostics=True, trial=trial
                 )
                 for name, value in diagnostics.items():
                     trial.set_user_attr(name, value)
                 return metric_values
+            except optuna.TrialPruned:
+                raise
             except Exception as exc:
                 trial.set_user_attr("错误类型", type(exc).__name__)
                 trial.set_user_attr("错误信息", str(exc))
                 raise
 
         # 运行优化
-        self.study_.optimize(
-            objective,
-            n_trials=n_trials,
-            timeout=timeout,
-            show_progress_bar=show_progress_bar,
-            n_jobs=1,
-            callbacks=[self._print_trial_progress] if self.verbose else None,
-            catch=(Exception,),
-        )
+        optimize_callbacks = [self._finish_trial] + self.callbacks + list(callbacks or [])
+        if self.verbose:
+            optimize_callbacks.append(self._print_trial_progress)
+        try:
+            self.study_.optimize(
+                objective,
+                n_trials=n_trials,
+                timeout=timeout,
+                show_progress_bar=show_progress_bar,
+                n_jobs=1,
+                callbacks=optimize_callbacks,
+                catch=catch,
+                gc_after_trial=gc_after_trial,
+                **optimize_kwargs,
+            )
+        finally:
+            # 中断、回调错误和全失败同样保留已完成的搜索过程。
+            self.optimization_history_ = self._build_public_history()
+            if any(t.state == optuna.trial.TrialState.COMPLETE for t in self.study_.trials):
+                self._save_results()
 
         completed_trials = [
             trial
@@ -1516,63 +1619,272 @@ class ModelTuner:
 
     def _build_model_params(self, params: Dict[str, Any], workers: Optional[int] = None) -> Dict[str, Any]:
         """构建 Trial 评估和最终重训共用的完整模型参数。"""
-        full_params = dict(params)
-        full_params.update(self.fixed_params)
+        full_params = dict(self.model_params)
+        full_params.update(self._canonical_params(params))
+        full_params.update(self._canonical_params(self.fixed_params))
         full_params = self._apply_model_param_constraints(full_params)
         self._inject_fit_params(full_params)
         self._inject_model_random_state(full_params)
         self._inject_model_parallel_budget(full_params, workers or max(1, int(self.n_jobs or 1)))
         return full_params
 
+    def _canonical_params(self, params, prefer_alias=False):
+        """搜索前统一同义参数，避免旧别名重新覆盖本次采样值。"""
+        result = dict(params)
+        for canonical, aliases in getattr(self.model_class, "_parameter_aliases", {}).items():
+            for alias in aliases:
+                if alias in result:
+                    value = result.pop(alias)
+                    if prefer_alias or canonical not in result:
+                        result[canonical] = value
+        return result
+
+    def _new_model(self, params):
+        """按 sklearn 约定分别传递构造参数和 Pipeline 嵌套参数。"""
+        direct = {name: value for name, value in params.items() if "__" not in name}
+        nested = {name: value for name, value in params.items() if "__" in name}
+        model = self.model_class(**copy.deepcopy(direct))
+        if nested:
+            model.set_params(**nested)
+        return model
+
+    def _splitter(self, X, y):
+        if isinstance(self.cv, (int, np.integer)):
+            splitter = StratifiedKFold(n_splits=int(self.cv), shuffle=True, random_state=self.random_state)
+        else:
+            splitter = self.cv
+        if hasattr(splitter, "split"):
+            return splitter.split(X, y, getattr(self, "_groups", None))
+        return iter(splitter)
+
+    @staticmethod
+    def _final_estimator(model):
+        """取得 Pipeline 最后一个估计器，保留其训练过程与早停配置。"""
+        from sklearn.pipeline import Pipeline
+
+        while isinstance(model, Pipeline):
+            model = model.steps[-1][1]
+        return model
+
+    def _fold_fit_params(self, indices, trial=None, fold=None):
+        params = copy.deepcopy(getattr(self, "_fit_params", self.fit_params))
+        row_names = {"sample_weight", "base_margin", "init_score", "baseline", "groups"}
+        for name, value in list(params.items()):
+            if name.rsplit("__", 1)[-1] in row_names and value is not None:
+                if len(value) != self._n_samples:
+                    raise ValueError(f"训练参数 {name} 必须与完整训练数据等长")
+                if indices is not None:
+                    params[name] = _safe_index(value, indices)
+        if self.fit_params_factory is not None:
+            extra = self.fit_params_factory(trial, fold)
+            if not isinstance(extra, dict):
+                raise TypeError("fit_params_factory 必须返回训练参数字典")
+            params.update(extra)
+        return params
+
+    def _fit_fold(self, model, X, y, params):
+        """原生提升器的早停使用训练折内部划分，外层验证折只用于评分。"""
+        module = type(model).__module__.split(".")[0]
+        if module not in {"xgboost", "lightgbm", "catboost", "ngboost"}:
+            return model.fit(X, y, **params)
+        configured = model.get_params(deep=False)
+        rounds = params.get("early_stopping_rounds", configured.get("early_stopping_rounds"))
+        if module not in {"xgboost", "lightgbm", "catboost", "ngboost"} or rounds is None:
+            return model.fit(X, y, **params)
+        if "eval_set" in params or "X_val" in params:
+            return model.fit(X, y, **params)
+        from sklearn.model_selection import train_test_split
+
+        train_idx, valid_idx = train_test_split(
+            np.arange(len(y)), test_size=0.2, stratify=y, random_state=self.random_state
+        )
+        runtime = dict(params)
+        validation_params = {}
+        weight_names = {
+            "xgboost": "sample_weight_eval_set",
+            "lightgbm": "eval_sample_weight",
+            "ngboost": "val_sample_weight",
+        }
+        for key in ("sample_weight", "base_margin", "init_score", "baseline"):
+            if key in runtime:
+                values = runtime[key]
+                runtime[key] = _safe_index(values, train_idx)
+                validation_params[key] = _safe_index(values, valid_idx)
+        X_val, y_val = _safe_index(X, valid_idx), _safe_index(y, valid_idx)
+        if module == "ngboost":
+            runtime.update(X_val=X_val, Y_val=y_val)
+        elif module == "catboost":
+            from catboost import Pool
+
+            pool_params = {
+                "weight" if key == "sample_weight" else key: value for key, value in validation_params.items()
+            }
+            categorical = runtime.get("cat_features", configured.get("cat_features"))
+            if categorical is not None:
+                pool_params["cat_features"] = categorical
+            runtime["eval_set"] = Pool(X_val, y_val, **pool_params)
+        else:
+            runtime["eval_set"] = [(X_val, y_val)]
+        if "sample_weight" in validation_params and module in weight_names:
+            value = validation_params["sample_weight"]
+            runtime[weight_names[module]] = value if module == "ngboost" else [value]
+        if "base_margin" in validation_params and module == "xgboost":
+            runtime["base_margin_eval_set"] = [validation_params["base_margin"]]
+        if "init_score" in validation_params and module == "lightgbm":
+            runtime["eval_init_score"] = [validation_params["init_score"]]
+        return model.fit(_safe_index(X, train_idx), _safe_index(y, train_idx), **runtime)
+
     def _evaluate_model(
         self,
-        model: Any,
-        X: Union[np.ndarray, pd.DataFrame],
-        y: Union[np.ndarray, pd.Series],
-        sample_weight: Optional[np.ndarray] = None,
-        return_diagnostics: bool = False,
-    ) -> Any:
-        """评估模型，返回一个或多个指标值."""
-        kf = StratifiedKFold(n_splits=self.cv, shuffle=True, random_state=self.random_state)
+        model,
+        X,
+        y,
+        sample_weight=None,
+        return_diagnostics=False,
+        trial=None,
+    ):
+        """交叉验证并保留逐折模型、预测、指标和学习曲线。"""
         fold_results = {i: [] for i in range(len(self.metrics))}
         fold_lifts = {float(ratio): [] for ratio in self.eval_ratios}
-
-        for train_idx, val_idx in kf.split(X, y):
+        splits = getattr(self, "_cv_splits", None)
+        if splits is None:
+            splits = list(self._splitter(X, y))
+        if not splits:
+            raise ValueError("交叉验证没有产生任何数据划分")
+        for fold_index, (train_idx, val_idx) in enumerate(splits):
             X_train_fold, X_val_fold = _safe_index(X, train_idx), _safe_index(X, val_idx)
             y_train_fold, y_val_fold = _safe_index(y, train_idx), _safe_index(y, val_idx)
             sample_weight_fold = _safe_index(sample_weight, train_idx)
-
             try:
                 fold_model = clone(model)
             except Exception:
+                # 兼容既有的非 sklearn 自定义模型；模板尚未训练，每折仍使用独立对象。
                 fold_model = copy.deepcopy(model)
-
-            if sample_weight_fold is None:
-                fold_model.fit(X_train_fold, y_train_fold)
-            else:
-                fold_model.fit(X_train_fold, y_train_fold, sample_weight=sample_weight_fold)
-
-            y_train_pred = fold_model.predict_proba(X_train_fold)[:, 1]
-            y_val_pred = fold_model.predict_proba(X_val_fold)[:, 1]
-            y_val_arr = y_val_fold.values if hasattr(y_val_fold, "values") else np.asarray(y_val_fold)
-            y_train_arr = y_train_fold.values if hasattr(y_train_fold, "values") else np.asarray(y_train_fold)
-
-            for i, metric in enumerate(self.metrics):
-                value = metric(y_val_arr, y_val_pred, y_train=y_train_arr, y_train_pred=y_train_pred)
-                fold_results[i].append(value)
-
-            for ratio in fold_lifts:
-                fold_lifts[ratio].append(TuningObjective.lift_head(y_val_arr, y_val_pred, ratio=ratio))
-
-        results = [np.mean(fold_results[i]) for i in range(len(self.metrics))]
+            fit_kwargs = self._fold_fit_params(train_idx, trial, fold_index)
+            if sample_weight_fold is not None:
+                fit_kwargs["sample_weight"] = sample_weight_fold
+            record = {"折编号": fold_index, "训练位置": np.asarray(train_idx), "验证位置": np.asarray(val_idx)}
+            if trial is not None:
+                self.trial_results_[trial.number]["各折"].append(record)
+            try:
+                self._fit_fold(fold_model, X_train_fold, y_train_fold, fit_kwargs)
+                positive = np.flatnonzero(np.asarray(fold_model.classes_) == 1)[0]
+                y_train_pred = fold_model.predict_proba(X_train_fold)[:, positive]
+                y_val_pred = fold_model.predict_proba(X_val_fold)[:, positive]
+                y_val_arr, y_train_arr = np.asarray(y_val_fold), np.asarray(y_train_fold)
+                record.update(
+                    真实标签=y_val_arr, 预测概率=y_val_pred, 训练真实标签=y_train_arr, 训练预测概率=y_train_pred
+                )
+                scores = {}
+                for i, metric in enumerate(self.metrics):
+                    value = metric(y_val_arr, y_val_pred, y_train=y_train_arr, y_train_pred=y_train_pred)
+                    if not np.isfinite(value):
+                        raise ValueError(f"第 {fold_index} 折的 {metric.name} 指标不是有限数")
+                    fold_results[i].append(value)
+                    scores[metric.name] = float(value)
+                record["指标"] = scores
+                for ratio in fold_lifts:
+                    fold_lifts[ratio].append(TuningObjective.lift_head(y_val_arr, y_val_pred, ratio=ratio))
+                record["状态"] = "完成"
+            except BaseException as exc:
+                record.update(状态="失败", 错误类型=type(exc).__name__, 错误信息=str(exc))
+                raise
+            finally:
+                trained = self._final_estimator(fold_model)
+                record["训练记录"] = getattr(trained, "training_summary_", {})
+                record["评估曲线"] = getattr(trained, "evals_result_", {})
+                record["最佳迭代"] = getattr(trained, "best_iteration_", getattr(trained, "best_iteration", None))
+                trained_params = trained.get_params(deep=False) if hasattr(trained, "get_params") else {}
+                record["启用早停"] = bool(
+                    fit_kwargs.get("early_stopping_rounds", trained_params.get("early_stopping_rounds"))
+                )
+                if hasattr(trained, "get_best_iteration"):
+                    record["最佳迭代"] = trained.get_best_iteration()
+                if self.store_models:
+                    record["模型"] = fold_model
+                if trial is not None and self.artifact_dir:
+                    self._persist_trial(trial.number)
+            if trial is not None:
+                trial.set_user_attr(
+                    "各折指标", [item.get("指标", {}) for item in self.trial_results_[trial.number]["各折"]]
+                )
+                if not self._is_multi_objective:
+                    trial.report(float(np.mean(fold_results[0])), step=fold_index)
+                    if trial.should_prune():
+                        raise optuna.TrialPruned(f"第 {fold_index} 折后停止本次试验")
+        results = [float(np.mean(fold_results[i])) for i in range(len(self.metrics))]
         metric_result = tuple(results) if self._is_multi_objective else results[0]
         if not return_diagnostics:
             return metric_result
-        diagnostics = {
-            self._lift_metric_name(ratio): float(np.mean(values))
-            for ratio, values in fold_lifts.items()
-        }
+        diagnostics = {self._lift_metric_name(ratio): float(np.mean(values)) for ratio, values in fold_lifts.items()}
         return metric_result, diagnostics
+
+    def _finish_trial(self, study, trial):
+        record = self.trial_results_.setdefault(trial.number, {"试验编号": trial.number, "各折": []})
+        states = {"COMPLETE": "完成", "FAIL": "失败", "PRUNED": "剪枝", "RUNNING": "运行中", "WAITING": "等待"}
+        record.update(
+            状态=states.get(trial.state.name, trial.state.name), 得分=trial.values, 用户属性=dict(trial.user_attrs)
+        )
+        self._persist_trial(trial.number)
+
+    def _persist_trial(self, number):
+        if self.artifact_dir is None:
+            return
+        from pathlib import Path
+        from ....utils import save_pickle
+        import hashlib
+
+        study_key = hashlib.sha256(self.study_.study_name.encode()).hexdigest()[:16]
+        path = Path(self.artifact_dir).resolve() / study_key / f"trial_{number}.pkl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        save_pickle(self.trial_results_[number], path, engine="cloudpickle")
+        self.trial_results_[number]["制品路径"] = str(path)
+        self.study_.set_user_attr(f"试验制品_{number}", str(path))
+
+    def get_trial_result(self, number):
+        """获取任意试验的逐折过程；可从共享 Study 的制品路径恢复。"""
+        if number not in self.trial_results_:
+            from ....utils import load_pickle
+
+            path = self.study_.user_attrs.get(f"试验制品_{number}") if self.study_ is not None else None
+            if not path:
+                raise ValueError(f"试验 {number} 没有保存逐折结果；请配置 artifact_dir 或加载完整调参制品")
+            self.trial_results_[number] = load_pickle(path, engine="cloudpickle")
+        return self.trial_results_[number]
+
+    def get_oof_predictions(self, trial_number=None):
+        """返回折外预测；重复验证取平均，未参加验证的位置保留缺失值。"""
+        if trial_number is None:
+            if self.best_params_ is None:
+                raise ValueError("请先完成至少一次成功试验")
+            trial_number = self.best_trial_.number
+        record = self.get_trial_result(trial_number)
+        sums, counts = np.zeros(self._n_samples), np.zeros(self._n_samples, dtype=int)
+        for fold in record["各折"]:
+            if "预测概率" in fold:
+                np.add.at(sums, fold["验证位置"], fold["预测概率"])
+                np.add.at(counts, fold["验证位置"], 1)
+        probability = np.divide(sums, counts, out=np.full(self._n_samples, np.nan), where=counts > 0)
+        return pd.DataFrame(
+            {
+                "样本位置": np.arange(self._n_samples),
+                "真实标签": np.asarray(self._y),
+                "预测概率": probability,
+                "验证次数": counts,
+            }
+        )
+
+    def save(self, path, **kwargs):
+        """保存可继续调参的完整对象，包括 Study、输入、预测、模型和自定义函数。"""
+        kwargs.setdefault("engine", "cloudpickle")
+        from .._lifecycle import atomic_save_pickle
+
+        return atomic_save_pickle({**self.get_artifact_metadata(), "object": self}, path, **kwargs)
+
+    @classmethod
+    def load(cls, path, **kwargs):
+        """加载完整调参过程，再次 fit 可继续同一个 Study。"""
+        return cls.load_artifact(path, **kwargs)
 
     @staticmethod
     def _lift_metric_name(ratio: float) -> str:
@@ -1597,6 +1909,11 @@ class ModelTuner:
             self.best_score_ = self.study_.best_value
             self.best_scores_ = [self.best_score_]
 
+        self.best_trial_ = (
+            self._select_best_pareto_trial(self.study_.best_trials)
+            if self._is_multi_objective
+            else self.study_.best_trial
+        )
         self.best_params_.update(self.fixed_params)
         self.best_params_ = self._apply_model_param_constraints(self.best_params_)
 
@@ -1779,18 +2096,28 @@ class ModelTuner:
 
     def _get_params_from_trial(self, trial) -> Dict[str, Any]:
         """从trial中获取参数."""
-        return self._apply_model_param_constraints(self._space_adapter.public_params(trial))
+        if self.search_space_function is not None or self.trial_objective is not None:
+            record = self.trial_results_.get(trial.number, {})
+            if not record and trial.user_attrs.get("搜索参数需制品"):
+                record = self.get_trial_result(trial.number)
+            params = dict(record.get("搜索参数", trial.user_attrs.get("搜索参数", trial.params)))
+        else:
+            params = self._space_adapter.public_params(trial)
+        return self._apply_model_param_constraints(params)
 
     def _build_public_history(self) -> pd.DataFrame:
         """生成只包含模型最终参数名和值的 Optuna 历史表。"""
         history = self.study_.trials_dataframe()
         latent_columns = [column for column in history if column.startswith("params___hscredit__")]
         history = history.drop(columns=latent_columns, errors="ignore")
-        for name in self.search_space:
+        names = set(self.search_space or {})
+        if self.search_space_function is not None or self.trial_objective is not None:
+            names.update(name for trial in self.study_.trials for name in self._get_params_from_trial(trial))
+        for name in sorted(names):
             column = f"params_{name}"
             values = []
             for trial in self.study_.trials:
-                params = self._space_adapter.public_params(trial)
+                params = self._get_params_from_trial(trial)
                 params.update(self.fixed_params)
                 values.append(self._apply_model_param_constraints(params).get(name))
             history[column] = values
@@ -2082,7 +2409,11 @@ class ModelTuner:
         if self.search_space is None:
             self._pending_public_trials.append((public_point, attrs, bool(skip_if_exists)))
             return self
-        internal_point = self._space_adapter.to_internal_point(public_point)
+        internal_point = (
+            public_point
+            if self.search_space_function is not None
+            else self._space_adapter.to_internal_point(public_point)
+        )
         if self.study_ is not None:
             self.study_.enqueue_trial(internal_point, user_attrs=attrs, skip_if_exists=skip_if_exists)
             if self.verbose:
@@ -2156,7 +2487,11 @@ class ModelTuner:
     def _enqueue_trial_points(self) -> None:
         """将 self.trial_points 入队到当前 study（fit 内部调用）."""
         for public_point, user_attrs, skip_if_exists in self._pending_public_trials:
-            internal_point = self._space_adapter.to_internal_point(public_point)
+            internal_point = (
+                public_point
+                if self.search_space_function is not None
+                else self._space_adapter.to_internal_point(public_point)
+            )
             self._pending_trials.append((internal_point, user_attrs, skip_if_exists))
         self._pending_public_trials.clear()
         for point, user_attrs, skip_if_exists in self._pending_trials:
@@ -2201,7 +2536,21 @@ class ModelTuner:
         :param trial: Optuna trial对象
         :return: 参数字典
         """
-        params = self._space_adapter.sample(trial)
+        if self.search_space_function is not None:
+            params = self.search_space_function(trial)
+            if not isinstance(params, dict):
+                raise TypeError("search_space 函数必须返回模型参数字典")
+            self.trial_results_.setdefault(trial.number, {})["搜索参数"] = params
+            import json
+
+            try:
+                json.dumps(params, allow_nan=False)
+            except (TypeError, ValueError):
+                trial.set_user_attr("搜索参数需制品", True)
+            else:
+                trial.set_user_attr("搜索参数", params)
+        else:
+            params = self._space_adapter.sample(trial)
         return self._apply_model_param_constraints(params)
 
     def _uses_lightgbm_leaf_constraint(self) -> bool:
@@ -2253,19 +2602,64 @@ class ModelTuner:
         """
         return self._space_adapter.sample_one(trial, param_name, param_config)
 
-    def get_best_model(self) -> Any:
-        """获取使用最佳参数的模型实例.
+    def get_best_model(self, refit=False, full_data=True, **fit_params):
+        """获取并缓存最佳模型；默认按各折最佳轮数使用全部输入重训。
 
-        :return: 训练好的模型实例
+        :param refit: True 时强制重新训练；默认复用已训练的 best_model_
+        :param full_data: 是否关闭最终模型的内部验证划分，使用完整输入
+        :param fit_params: 最终训练的额外原生参数
         """
         if self.best_params_ is None:
             raise ValueError("请先调用fit()进行调优")
-
-        model = self.model_class(**self._build_model_params(self.best_params_))
-        if self._sample_weight is None:
-            model.fit(self._X, self._y)
-        else:
-            model.fit(self._X, self._y, sample_weight=self._sample_weight)
+        if self.best_model_ is not None and not refit and not fit_params:
+            return self.best_model_
+        params = self._build_model_params(self.best_params_)
+        model = self._new_model(params)
+        estimator = self._final_estimator(model)
+        estimator_params = estimator.get_params(deep=False) if hasattr(estimator, "get_params") else dict(params)
+        name = type(estimator).__name__.lower()
+        boosting = any(
+            key in name
+            for key in (
+                "xgboost",
+                "xgbclassifier",
+                "lightgbm",
+                "lgbmclassifier",
+                "catboost",
+                "ngboost",
+                "ngbclassifier",
+            )
+        )
+        if full_data and boosting and hasattr(estimator, "set_params"):
+            folds = self.trial_results_.get(self.best_trial_.number, {}).get("各折", [])
+            iterations = [
+                fold["最佳迭代"]
+                for fold in folds
+                if fold.get("启用早停") and fold.get("最佳迭代") is not None and fold["最佳迭代"] >= 0
+            ]
+            if iterations:
+                offset = 0 if "lightgbm" in name or "lgbm" in name else 1
+                estimator_params["iterations" if "catboost" in name else "n_estimators"] = max(
+                    1, int(np.ceil(np.median(iterations))) + offset
+                )
+            if "early_stopping_rounds" in estimator_params:
+                estimator_params["early_stopping_rounds"] = None
+            if "validation_fraction" in estimator_params:
+                estimator_params["validation_fraction"] = 0.0
+            estimator.set_params(**estimator_params)
+            params = model.get_params(deep=False)
+        runtime = self._fold_fit_params(None)
+        runtime.update(fit_params)
+        if self._sample_weight is not None:
+            runtime["sample_weight"] = self._sample_weight
+        if full_data and boosting:
+            runtime.pop("early_stopping_rounds", None)
+        self.refit_model_ = model
+        self.refit_params_ = dict(params)
+        model.fit(self._X, self._y, **runtime)
+        self.best_model_ = model
+        if hasattr(model, "tuner"):
+            model.tuner = self
         return model
 
     def get_optimization_history(self) -> pd.DataFrame:
@@ -2359,6 +2753,8 @@ class ModelTuner:
     def _translate_plot_params(self, kwargs: Dict[str, Any]) -> Dict[str, Any]:
         """把可视化方法 kwargs 中的公开 params 转为 Optuna 内部名。"""
         translated = dict(kwargs)
+        if self.search_space_function is not None or self.trial_objective is not None:
+            return translated
         if translated.get("params") is not None:
             translated["params"] = [
                 self._space_adapter.to_internal_name(name) for name in translated["params"]
@@ -2450,7 +2846,9 @@ class ModelTuner:
 
         if params is None:
             params = list(self.search_space.keys())[:2]
-        internal_params = [self._space_adapter.to_internal_name(name) for name in params]
+            if self.search_space_function is not None or self.trial_objective is not None:
+                params = sorted({name for trial in self.study_.trials for name in trial.params})[:2]
+        internal_params = self._translate_plot_params({"params": params})["params"]
 
         target = self._resolve_multi_objective_target(target)
         if self._is_multi_objective:

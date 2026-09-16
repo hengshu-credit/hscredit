@@ -286,7 +286,7 @@ def test_model_tuner_keyboard_interrupt_returns_without_waiting_for_parallel_tri
     assert elapsed < 0.6
     assert _TUNER_INTERRUPT_FIT_CALLS == 1
     assert len(tuner.study_.trials) == 1
-    assert postprocessing_calls == []
+    assert postprocessing_calls == ["构建历史"]
 
 
 def test_risk_model_tune_does_not_refit_after_keyboard_interrupt(monkeypatch):

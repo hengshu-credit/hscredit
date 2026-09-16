@@ -217,7 +217,7 @@ def resolve_custom_objective(objective):
     return _sklearn_obj
 
 
-class BaseRiskModel(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, BaseEstimator, ClassifierMixin, ABC):
+class BaseRiskModel(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, ClassifierMixin, BaseEstimator, ABC):
     """风控模型基类.
 
     所有风控模型的抽象基类，定义统一接口。
@@ -320,6 +320,72 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, BaseE
         self._feature_importances = None
         self._is_fitted = False
         self.tuner = None
+
+    def get_params(self, deep: bool = True) -> Dict[str, Any]:
+        """保留原生扩展参数和 target，支持 clone、Pipeline 和参数搜索。"""
+        params = dict(getattr(self, "_constructor_kwargs", {}))
+        params.update(self.kwargs)
+        params.update(super().get_params(deep=False))
+        params.update(getattr(self, "_constructor_params", {}))
+        import inspect
+
+        if "target" in params or any(
+            parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in inspect.signature(self.__init__).parameters.values()
+        ):
+            params["target"] = self.target
+        if deep:
+            for name, value in list(params.items()):
+                if hasattr(value, "get_params") and not isinstance(value, type):
+                    params.update((f"{name}__{key}", item) for key, item in value.get_params().items())
+        return params
+
+    def set_params(self, **params):
+        """统一更新公开参数和原生参数；显式更新优先于旧 params 字典。"""
+        public = set(self._get_param_names()) | {"target"}
+        nested = {}
+        for name, value in params.items():
+            root, separator, child = name.partition("__")
+            if separator:
+                nested.setdefault(root, {})[child] = value
+                continue
+            if name in public:
+                setattr(self, name, resolve_n_jobs(value) if name == "n_jobs" else value)
+                if hasattr(self, "_constructor_params"):
+                    self._constructor_params[name] = value
+            else:
+                self.kwargs[name] = value
+            if name in self.kwargs:
+                self.kwargs[name] = value
+            if name != "params" and name in (getattr(self, "params", None) or {}):
+                self.params = {**self.params, name: value}
+        if hasattr(self, "params"):
+            self._native_params = dict(self.params or {})
+            if hasattr(self, "_constructor_params"):
+                self._constructor_params["params"] = self.params
+        for name, values in nested.items():
+            value = self.get_params(deep=False).get(name)
+            if not hasattr(value, "set_params"):
+                raise ValueError(f"参数 {name!r} 不支持嵌套参数设置")
+            value.set_params(**values)
+        return self
+
+    def get_native_params(self) -> Dict[str, Any]:
+        """返回最近训练实际使用的原生构造参数，可直接交给原生分类器。"""
+        if not hasattr(self, "native_params_"):
+            raise NotFittedError("请先训练模型，再获取实际使用的原生参数")
+        return dict(self.native_params_)
+
+    def _resolve_native_aliases(self, params, aliases):
+        """让显式原生别名覆盖包装器默认值，同一来源的标准名优先。"""
+        result = dict(params)
+        for source in (self.kwargs, getattr(self, "_native_params", {})):
+            for canonical, names in aliases.items():
+                for name in names:
+                    if name in source:
+                        result[canonical] = source.get(canonical, source[name])
+                        result.pop(name, None)
+        return result
 
     @abstractmethod
     def fit(
@@ -616,8 +682,6 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, BaseE
         >>> model.save('model.pkl', engine='dill')
         """
         self._require_fitted()
-        from ...utils import save_pickle
-
         path_str = str(path)
         if path_str.endswith(".json"):
             self._save_json(path_str)
@@ -630,8 +694,10 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, BaseE
                 elif path_lower.endswith(".cloudpickle"):
                     eng = "cloudpickle"
                 else:
-                    eng = "joblib"
-            save_pickle(self, path_str, engine=eng, **kwargs)
+                    eng = "cloudpickle"
+            from ._lifecycle import atomic_save_pickle
+
+            atomic_save_pickle(self, path_str, engine=eng, **kwargs)
 
         return path_str
 
@@ -665,7 +731,7 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, BaseE
         """保存模型参数和元数据为JSON."""
         import json
 
-        if self._model is None or not hasattr(self._model, "save_model"):
+        if self._model is None or not (hasattr(self._model, "save_model") or hasattr(self._model, "booster_")):
             raise ValueError(f"{self.__class__.__name__}不支持完整的JSON模型序列化，请使用joblib或pickle格式")
 
         meta = {
@@ -678,23 +744,32 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, BaseE
             "probability_scorecard": self._probability_scorecard_state(),
         }
 
-        params = self.get_params(deep=False)
-        for k, v in params.items():
-            if isinstance(v, (int, float, str, bool, type(None))):
-                meta["params"][k] = v
-            elif isinstance(v, np.integer):
-                meta["params"][k] = int(v)
-            elif isinstance(v, np.floating):
-                meta["params"][k] = float(v)
-            elif isinstance(v, (list, tuple)):
-                meta["params"][k] = list(v)
+        def metadata_value(value):
+            if isinstance(value, np.generic):
+                return value.item()
+            if isinstance(value, np.ndarray):
+                return value.tolist()
+            return {"类型": f"{type(value).__module__}.{type(value).__qualname__}", "完整值": "见完整状态文件"}
+
+        meta["params"] = json.loads(json.dumps(self.get_params(deep=False), default=metadata_value))
 
         # 保存底层模型到同级目录
         native_path = str(Path(path).with_suffix(".native"))
-        self._model.save_model(native_path)
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        self.save_model(native_path)
         meta["native_model_path"] = str(Path(native_path).name)
-        transformer_path = self._save_score_transformer_sidecar(native_path)
+        transformer_path = self._score_transformer_sidecar_path(native_path)
         meta["score_transformer_path"] = str(Path(transformer_path).name)
+
+        # JSON 是可读清单；完整 Python 状态单独保存，避免函数、字典和调参过程丢失。
+        from ...utils import save_pickle
+
+        state_path = str(Path(path).with_suffix(".state.pkl"))
+        save_pickle(self, state_path, engine="cloudpickle")
+        meta["state_path"] = Path(state_path).name
+        from ._lifecycle import dependency_versions
+
+        meta["dependency_versions"] = dependency_versions()
 
         with open(path, "w", encoding="utf-8") as f:
             json.dump(meta, f, ensure_ascii=False, indent=2)
@@ -707,6 +782,17 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, BaseE
 
         with open(path, "r", encoding="utf-8") as f:
             meta = json.load(f)
+
+        if meta.get("state_path"):
+            from ...utils import load_pickle
+
+            state_path = Path(path).parent / meta["state_path"]
+            if not state_path.exists():
+                raise ValueError(f"JSON模型引用的完整状态文件不存在: {state_path}")
+            model = load_pickle(state_path, engine="cloudpickle")
+            if not isinstance(model, cls):
+                raise TypeError(f"完整状态对象不能作为 {cls.__name__} 加载")
+            return model
 
         module_path, class_name = meta["model_class"].rsplit(".", 1)
         module = importlib.import_module(module_path)
@@ -788,6 +874,10 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, BaseE
         """
         from .tuning import ModelTuner
 
+        fit_options = {name: kwargs.pop(name) for name in ("groups", "catch", "gc_after_trial") if name in kwargs}
+        fit_options.update(kwargs.pop("optimize_kwargs", {}))
+        kwargs.setdefault("random_state", self.random_state)
+
         if verbose is None:
             verbose = self.verbose
         if show_progress_bar is None:
@@ -808,7 +898,6 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, BaseE
             direction=direction,
             target=self.target or "target",
             cv=cv,
-            random_state=self.random_state,
             verbose=verbose,
             **kwargs,
         )
@@ -821,6 +910,7 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, BaseE
             timeout=timeout,
             sample_weight=sample_weight,
             show_progress_bar=show_progress_bar,
+            **fit_options,
         )
         best_model = tuner.get_best_model()
 
@@ -849,6 +939,8 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, BaseE
         """
         # 处理DataFrame
         if isinstance(X, pd.DataFrame):
+            if not X.columns.is_unique:
+                raise ValueError("输入特征列名不能重复")
             # scorecardpipeline风格：从X中提取target列
             if extract_target and self.target is not None and self.target in X.columns:
                 if y is None:
@@ -857,6 +949,10 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, BaseE
 
             if training or not hasattr(self, "feature_names_in_"):
                 self.feature_names_in_ = X.columns.tolist()
+                self._feature_names_known_ = True
+            elif getattr(self, "_feature_names_known_", True) is False:
+                if X.shape[1] != self.n_features_in_:
+                    raise ValueError(f"输入特征数量不匹配：训练时为{self.n_features_in_}，当前为{X.shape[1]}")
             else:
                 expected = list(self.feature_names_in_)
                 missing = [column for column in expected if column not in X.columns]
@@ -865,27 +961,58 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, BaseE
                 # 只使用训练字段并恢复训练顺序；额外业务字段按约定忽略。
                 X = X.loc[:, expected]
 
-            X = X.values
+            if not getattr(self, "_preserve_dataframe", False):
+                X = X.values
         else:
-            X = np.asarray(X)
+            from scipy.sparse import issparse
+
+            if not issparse(X):
+                X = np.asarray(X)
             if X.ndim != 2:
                 raise ValueError(f"输入特征必须是二维数组，当前维度为{X.ndim}")
             if training or not hasattr(self, "feature_names_in_"):
                 self.feature_names_in_ = [f"feature_{i}" for i in range(X.shape[1])]
+                self._feature_names_known_ = False
             elif hasattr(self, "n_features_in_") and X.shape[1] != self.n_features_in_:
                 raise ValueError(f"输入特征数量不匹配：训练时为{self.n_features_in_}，当前为{X.shape[1]}")
 
         # 处理y
         if y is not None:
-            if isinstance(y, pd.Series):
-                y = y.values
+            y = np.asarray(y)
+            if y.ndim != 1 or len(y) != X.shape[0]:
+                raise ValueError("训练标签必须是一维且与特征样本等长")
+        elif training:
+            raise ValueError("请提供 y，或通过 target 指定数据中的目标列")
 
         # 处理样本权重
         if sample_weight is not None:
-            if isinstance(sample_weight, pd.Series):
-                sample_weight = sample_weight.values
+            sample_weight = np.asarray(sample_weight, dtype=float)
+            if sample_weight.ndim != 1 or len(sample_weight) != X.shape[0]:
+                raise ValueError("sample_weight 必须是一维且与样本等长")
+            if not np.isfinite(sample_weight).all() or np.any(sample_weight < 0) or sample_weight.sum() <= 0:
+                raise ValueError("sample_weight 必须是有限非负数且总和大于0")
+
+        if training and not 0 <= self.validation_fraction < 1:
+            raise ValueError("validation_fraction 必须在 [0, 1) 范围内")
 
         return X, y, sample_weight
+
+    def _prepare_eval_set(self, eval_set):
+        """验证集沿用训练字段顺序，支持原生 (X, y) 与列表两种形式。"""
+        if eval_set is None:
+            return None
+        if isinstance(eval_set, tuple) and len(eval_set) == 2 and hasattr(eval_set[0], "shape"):
+            eval_set = [eval_set]
+        if not isinstance(eval_set, (list, tuple)):
+            return eval_set  # CatBoost Pool 等原生容器由后端处理。
+        result = []
+        for item in eval_set:
+            if isinstance(item, (list, tuple)) and len(item) == 2:
+                eval_X, eval_y, _ = self._prepare_data(item[0], item[1], extract_target=True)
+                result.append((eval_X, eval_y))
+            else:
+                result.append(item)
+        return result
 
     def _create_eval_set(
         self, X: np.ndarray, y: np.ndarray, sample_weight: Optional[np.ndarray] = None
@@ -927,6 +1054,10 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, BaseE
             return None
         if hasattr(values, "iloc"):
             return values.iloc[indices]
+        from scipy.sparse import issparse
+
+        if issparse(values):
+            return values[indices]
         return np.asarray(values)[indices]
 
     def _split_row_aligned_value(self, values):

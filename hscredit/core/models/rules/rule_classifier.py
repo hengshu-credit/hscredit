@@ -16,7 +16,7 @@ from enum import Enum
 from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
-from sklearn.base import BaseEstimator, ClassifierMixin
+from sklearn.base import ClassifierMixin, BaseEstimator
 
 from ....exceptions import NotFittedError, ValidationError
 from ....utils.parallel import ParallelizableMixin, _ACTIVE_BUDGET, parallel_execute, resolve_n_jobs
@@ -371,7 +371,7 @@ def _classifier_component_worker(task: Tuple[Any, ...]) -> Tuple[np.ndarray, Rul
     return _rule_component_worker((index, "classifier", rule, X))
 
 
-class RulesClassifier(ArtifactSerializableMixin, ParallelizableMixin, BaseEstimator, ClassifierMixin):
+class RulesClassifier(ArtifactSerializableMixin, ParallelizableMixin, ClassifierMixin, BaseEstimator):
     artifact_kind = "风险模型"
     """规则分类器 - 统一入口.
     

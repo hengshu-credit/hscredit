@@ -13,6 +13,8 @@
 import inspect
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+from .._lifecycle import record_training
+
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import (
@@ -93,7 +95,9 @@ class SklearnRiskModel(BaseRiskModel):
             **kwargs,
         )
         self._estimator_class = estimator_class
+        self.estimator_class = estimator_class
 
+    @record_training
     def fit(
         self,
         X: Union[np.ndarray, pd.DataFrame],
@@ -118,21 +122,30 @@ class SklearnRiskModel(BaseRiskModel):
         self.classes_ = np.unique(y)
 
         # 只向底层模型传递其真实支持的统一参数，避免 SVC/决策树收到 n_jobs 等未知参数。
-        params = self.kwargs.copy()
+        self._estimator_class = self.estimator_class
+        params = {}
         supported = inspect.signature(self._estimator_class).parameters
         public_params = self.get_params(deep=False)
         for name in supported:
             if name in public_params:
                 params[name] = public_params[name]
 
+        # 扩展参数需由原生构造器校验，避免拼写错误被静默忽略。
+        for name, value in self.kwargs.items():
+            if name not in params:
+                params[name] = value
+
         # 创建模型
-        self._model = self._estimator_class(**params)
+        self.native_params_ = dict(params)
+        if params.get("warm_start") and isinstance(self._model, self._estimator_class):
+            self._model.set_params(**params)
+        else:
+            self._model = self._estimator_class(**params)
 
         # 训练
         if sample_weight is not None:
-            self._model.fit(X, y, sample_weight=sample_weight)
-        else:
-            self._model.fit(X, y)
+            fit_params["sample_weight"] = sample_weight
+        self._model.fit(X, y, **fit_params)
 
         # 底层模型已经完成拟合；先提交状态，确保 eval_set 走统一评估入口时
         # 能通过严格的布尔训练状态检查。
@@ -146,9 +159,15 @@ class SklearnRiskModel(BaseRiskModel):
                 scores = self.evaluate(X_val, y_val)
                 self._evals_result[f"validation_{i}"] = scores
 
+        for attr, dataset in (("train_score_", "train"), ("validation_score_", "validation")):
+            values = getattr(self._model, attr, None)
+            if values is not None and len(values):
+                self._evals_result[dataset] = {"loss": np.asarray(values).tolist()}
+        self._best_iteration = getattr(self._model, "n_estimators_", None)
+
         return self
 
-    def predict(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
+    def predict(self, X: Union[np.ndarray, pd.DataFrame], **predict_params) -> np.ndarray:
         """预测类别标签。
 
         :param X: 特征矩阵，DataFrame 或 ndarray
@@ -156,10 +175,12 @@ class SklearnRiskModel(BaseRiskModel):
         :raises NotFittedError: 模型尚未训练时
         """
         self._require_fitted()
+        if predict_params:
+            return self._model.predict(self._prepare_data(X)[0], **predict_params)
         X = self._prepare_data(X)[0]
         return self._model.predict(X)
 
-    def predict_proba(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
+    def predict_proba(self, X: Union[np.ndarray, pd.DataFrame], **predict_params) -> np.ndarray:
         """预测各类别概率。
 
         :param X: 特征矩阵，DataFrame 或 ndarray
@@ -168,7 +189,7 @@ class SklearnRiskModel(BaseRiskModel):
         """
         self._require_fitted()
         X = self._prepare_data(X)[0]
-        return self._model.predict_proba(X)
+        return self._model.predict_proba(X, **predict_params)
 
     def get_feature_importances(self, importance_type: str = "gain") -> pd.Series:
         """获取特征重要性（基于底层模型的不纯度下降）。
@@ -238,9 +259,11 @@ class SklearnRiskModel(BaseRiskModel):
         self.classes_ = getattr(self._model, "classes_", np.array([0, 1]))
         if hasattr(self._model, "n_features_in_"):
             self.n_features_in_ = self._model.n_features_in_
-        if not hasattr(self, "feature_names_in_"):
-            n_feat = getattr(self, "n_features_in_", 0)
-            self.feature_names_in_ = [f"feature_{i}" for i in range(n_feat)]
+        names = getattr(self._model, "feature_names_in_", None)
+        self._feature_names_known_ = names is not None
+        self.feature_names_in_ = (
+            list(names) if names is not None else [f"feature_{i}" for i in range(self.n_features_in_)]
+        )
         self._load_score_transformer_sidecar(path)
         return self
 
@@ -470,19 +493,7 @@ class GradientBoosting(SklearnRiskModel):
         1. 常规方式: fit(X, y)
         2. scorecardpipeline风格: fit(X) 在init中指定target
         """
-        result = super().fit(X, y, sample_weight, eval_set, **fit_params)
-
-        # 保存训练过程中的损失
-        if hasattr(self._model, "train_score_"):
-            self._evals_result["train"] = {"loss": self._model.train_score_}
-        if hasattr(self._model, "validation_score_") and self._model.validation_score_:
-            self._evals_result["validation"] = {"loss": self._model.validation_score_}
-
-        # 最佳迭代次数
-        if hasattr(self._model, "n_estimators_"):
-            self._best_iteration = self._model.n_estimators_
-
-        return result
+        return super().fit(X, y, sample_weight, eval_set, **fit_params)
 
 
 class SVM(SklearnRiskModel):

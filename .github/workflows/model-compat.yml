@@ -1,0 +1,60 @@
+name: 模型工作流兼容验证
+
+on:
+  pull_request:
+    paths:
+      - "hscredit/core/models/**"
+      - "tests/test_models/**"
+      - "pyproject.toml"
+      - ".github/workflows/model-compat.yml"
+  workflow_dispatch:
+
+jobs:
+  model-compat:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            sklearn: "1.6.1"
+            xgboost: "2.0.2"
+            lightgbm: "4.1.0"
+            catboost: "1.2.2"
+            ngboost: "0.3.12"
+          - os: windows-latest
+            sklearn: "1.7.2"
+            xgboost: "3.0.5"
+            lightgbm: "4.6.0"
+            catboost: "1.2.8"
+            ngboost: "0.5.8"
+    env:
+      MPLBACKEND: Agg
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: 安装指定组合
+        run: >-
+          python -m pip install -e ".[boost,tune,dev]"
+          "numpy==1.23.5" "pandas==2.2.3" "scipy==1.13.1"
+          "scikit-learn==${{ matrix.sklearn }}"
+          "xgboost==${{ matrix.xgboost }}"
+          "lightgbm==${{ matrix.lightgbm }}"
+          "catboost==${{ matrix.catboost }}"
+          "ngboost==${{ matrix.ngboost }}" "optuna==4.9.0"
+      - name: 验证训练、保存和调参
+        run: >-
+          python -m pytest
+          tests/test_models/test_model_workflow_contracts.py
+          tests/test_models/test_base_model_contract_repairs.py
+          tests/test_models/test_boosting_contract_repairs.py
+          tests/test_models/test_tuning.py
+          tests/test_models/test_tuning_contract_repairs.py
+          tests/test_models/test_default_probability_scorecard.py
+          tests/test_feature_selection/test_selector_model_compat.py
+          -q --tb=short

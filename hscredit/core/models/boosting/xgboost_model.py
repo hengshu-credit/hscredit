@@ -19,8 +19,12 @@ pip install xgboost
 >>> report = model.generate_report(X_train, y_train, X_test, y_test)  # 生成评估报告
 """
 
+import copy
+import inspect
 import logging
 from typing import Any, Dict, List, Optional, Tuple, Union
+from .._lifecycle import record_training
+
 import numpy as np
 import pandas as pd
 
@@ -35,6 +39,36 @@ except ImportError:
     xgb = None
 
 from ..base import BaseRiskModel, resolve_custom_objective
+
+
+class _KSEvaluationCallback(xgb.callback.TrainingCallback if XGBOOST_AVAILABLE else object):
+    """保留 KS 曲线；矩阵句柄只在训练时创建，不进入保存制品。"""
+
+    def __init__(self, eval_set, early_stopping=None):
+        self.eval_set = eval_set
+        self.early_stopping = early_stopping
+
+    def before_training(self, model):
+        self.matrices = [xgb.DMatrix(X, label=y, enable_categorical=True) for X, y in self.eval_set]
+        return self.early_stopping.before_training(model) if self.early_stopping else model
+
+    def after_iteration(self, model, epoch, evals_log):
+        from sklearn.metrics import roc_curve
+
+        for index, matrix in enumerate(self.matrices):
+            prediction = model.predict(matrix, iteration_range=(0, epoch + 1))
+            fpr, tpr, _ = roc_curve(matrix.get_label(), prediction, pos_label=1)
+            evals_log.setdefault(f"validation_{index}", {}).setdefault("ks", []).append(
+                float(np.max(np.abs(tpr - fpr)))
+            )
+        return self.early_stopping.after_iteration(model, epoch, evals_log) if self.early_stopping else False
+
+    def after_training(self, model):
+        self.__dict__.pop("matrices", None)
+        return self.early_stopping.after_training(model) if self.early_stopping else model
+
+    def __getstate__(self):
+        return {name: value for name, value in self.__dict__.items() if name != "matrices"}
 
 
 class XGBoost(BaseRiskModel):
@@ -150,6 +184,15 @@ class XGBoost(BaseRiskModel):
     文档 https://xgboost.readthedocs.io/ 。
     """
 
+    _preserve_dataframe = True
+    _parameter_aliases = {
+        "learning_rate": ("eta",),
+        "reg_alpha": ("alpha",),
+        "reg_lambda": ("lambda",),
+        "n_jobs": ("nthread",),
+        "random_state": ("seed",),
+    }
+
     def __init__(
         self,
         max_depth: int = 6,
@@ -181,9 +224,14 @@ class XGBoost(BaseRiskModel):
         if not XGBOOST_AVAILABLE:
             raise ImportError("XGBoost未安装，请使用 pip install xgboost 安装")
 
+        # sklearn clone 必须能够原样往返构造输入，原生覆盖值只用于实际训练。
+        self._constructor_params = {
+            name: value for name, value in locals().items() if name not in {"self", "kwargs", "__class__"}
+        }
+        self._constructor_kwargs = dict(kwargs)
         # 保存原生params参数
         self.params = params  # 用于sklearn get_params兼容性
-        self._native_params = params or {}
+        self._native_params = dict(params or {})
 
         # 从params中提取参数（如果提供了原生参数）
         max_depth = self._native_params.get("max_depth", max_depth)
@@ -232,12 +280,13 @@ class XGBoost(BaseRiskModel):
         self.reg_alpha = reg_alpha
         self.reg_lambda = reg_lambda
         self._scale_pos_weight_input = scale_pos_weight  # 保存原始输入
-        self.scale_pos_weight = scale_pos_weight if scale_pos_weight != "auto" else 1.0
+        self.scale_pos_weight = scale_pos_weight
         self.gamma = gamma
         self.max_delta_step = max_delta_step
         self.tree_method = tree_method
         self.scale_pos_weight_ = None  # 实际使用的值
 
+    @record_training
     def fit(
         self,
         X: Union[np.ndarray, pd.DataFrame],
@@ -259,31 +308,34 @@ class XGBoost(BaseRiskModel):
         :param fit_params: 其他fit参数
         :return: self
         """
+        eval_metric = fit_params.pop("eval_metric", self._native_params.get("eval_metric", self.eval_metric))
+        early_stopping_rounds = fit_params.pop(
+            "early_stopping_rounds", self._native_params.get("early_stopping_rounds", self.early_stopping_rounds)
+        )
         # 准备数据（支持从X中提取target）
         X, y, sample_weight = self._prepare_data(X, y, sample_weight, extract_target=True, training=True)
         self._validate_probability_scorecard_labels(y)
+        eval_set = self._prepare_eval_set(eval_set)
 
         # 保存特征信息
         self.n_features_in_ = X.shape[1]
         self.classes_ = np.unique(y)
 
         # 自动计算scale_pos_weight（内部建模经验：当bad_rate<0.05时）
-        if self._scale_pos_weight_input == "auto":
+        if self.scale_pos_weight == "auto":
             pos_ratio = np.mean(y == 1)
             if pos_ratio < 0.05:
                 # 内部经验: 0.05 * n_samples / n_positive
-                self.scale_pos_weight = 0.05 * len(y) / np.sum(y == 1)
+                self.scale_pos_weight_ = 0.05 * len(y) / np.sum(y == 1)
                 if self.verbose:
-                    logger.info(f"自动计算scale_pos_weight: {self.scale_pos_weight:.2f} (bad_rate={pos_ratio:.4f})")
+                    logger.info(f"自动计算scale_pos_weight: {self.scale_pos_weight_:.2f} (bad_rate={pos_ratio:.4f})")
             else:
-                self.scale_pos_weight = 1.0
+                self.scale_pos_weight_ = 1.0
         else:
-            self.scale_pos_weight = self._scale_pos_weight_input
-
-        self.scale_pos_weight_ = self.scale_pos_weight
+            self.scale_pos_weight_ = self.scale_pos_weight
 
         # 创建验证集
-        auto_eval_split = eval_set is None and self.validation_fraction > 0 and self.early_stopping_rounds is not None
+        auto_eval_split = eval_set is None and self.validation_fraction > 0 and early_stopping_rounds is not None
         sw_val = None
         if auto_eval_split:
             X_train, X_val, y_train, y_val, sw_train, sw_val = self._create_eval_set(X, y, sample_weight)
@@ -291,18 +343,6 @@ class XGBoost(BaseRiskModel):
             sample_weight = sw_train
         else:
             X_train, y_train = X, y
-            # 处理用户传入的 eval_set - 确保与训练数据格式一致（numpy数组）
-            if eval_set is not None:
-                processed_eval_set = []
-                for eval_X, eval_y in eval_set:
-                    # 将验证集转换为 numpy 数组（与训练数据保持一致）
-                    if isinstance(eval_X, pd.DataFrame):
-                        eval_X = eval_X.values
-                    if isinstance(eval_y, pd.Series):
-                        eval_y = eval_y.values
-                    processed_eval_set.append((eval_X, eval_y))
-                eval_set = processed_eval_set
-
         # 构建参数 - 在构造函数中传入所有参数
         params = {
             "max_depth": self.max_depth,
@@ -314,7 +354,7 @@ class XGBoost(BaseRiskModel):
             "colsample_bylevel": self.colsample_bylevel,
             "reg_alpha": self.reg_alpha,
             "reg_lambda": self.reg_lambda,
-            "scale_pos_weight": self.scale_pos_weight,
+            "scale_pos_weight": self.scale_pos_weight_,
             "gamma": self.gamma,
             "max_delta_step": self.max_delta_step,
             "tree_method": self.tree_method,
@@ -326,8 +366,10 @@ class XGBoost(BaseRiskModel):
 
         # 处理评估指标
         wants_ks = False
-        if self.eval_metric is not None:
-            converted_metrics = self._convert_metrics(self.eval_metric)
+        if callable(eval_metric):
+            params["eval_metric"] = eval_metric
+        elif eval_metric is not None:
+            converted_metrics = self._convert_metrics(eval_metric)
             metric_list = [converted_metrics] if isinstance(converted_metrics, str) else list(converted_metrics)
             wants_ks = any(str(metric).lower() == "ks" for metric in metric_list)
             native_metrics = [metric for metric in metric_list if str(metric).lower() != "ks"]
@@ -339,7 +381,7 @@ class XGBoost(BaseRiskModel):
         if wants_ks and eval_set:
             callbacks.append(self._create_ks_callback(eval_set))
 
-        if self.early_stopping_rounds is not None and eval_set:
+        if early_stopping_rounds is not None and eval_set:
             # 如果指定了早停指标，使用EarlyStopping回调
             if self.early_stopping_metric is not None:
                 try:
@@ -347,26 +389,27 @@ class XGBoost(BaseRiskModel):
 
                     callbacks.append(
                         EarlyStopping(
-                            rounds=self.early_stopping_rounds,
+                            rounds=early_stopping_rounds,
                             metric_name=self.early_stopping_metric,
                             data_name=self.early_stopping_data,
                             save_best=True,
+                            maximize=True if str(self.early_stopping_metric).lower() == "ks" else None,
                         )
                     )
                     if self.verbose:
                         logger.info(
-                            f"使用早停: rounds={self.early_stopping_rounds}, " f"metric='{self.early_stopping_metric}'"
+                            f"使用早停: rounds={early_stopping_rounds}, " f"metric='{self.early_stopping_metric}'"
                         )
                 except ImportError:
                     # 回退到旧方式
-                    params["early_stopping_rounds"] = self.early_stopping_rounds
+                    params["early_stopping_rounds"] = early_stopping_rounds
                     if self.verbose:
-                        logger.info(f"使用早停: rounds={self.early_stopping_rounds} (默认指标)")
+                        logger.info(f"使用早停: rounds={early_stopping_rounds} (默认指标)")
             else:
                 # 未指定早停指标，使用默认方式（第一个eval_metric）
-                params["early_stopping_rounds"] = self.early_stopping_rounds
+                params["early_stopping_rounds"] = early_stopping_rounds
                 if self.verbose:
-                    logger.info(f"使用早停: rounds={self.early_stopping_rounds} (默认使用第一个指标)")
+                    logger.info(f"使用早停: rounds={early_stopping_rounds} (默认使用第一个指标)")
 
         if callbacks:
             params["callbacks"] = callbacks
@@ -375,12 +418,62 @@ class XGBoost(BaseRiskModel):
         params.update(self.kwargs)
 
         # 最后更新原生params（优先级最高）
-        params.update(self._native_params)
+        params.update(
+            {
+                key: value
+                for key, value in self._native_params.items()
+                if key not in {"eval_metric", "early_stopping_rounds", "callbacks", "scale_pos_weight"}
+            }
+        )
+        user_callbacks = self._native_params.get("callbacks", self.kwargs.get("callbacks", []))
+        callbacks.extend(copy.deepcopy(list(user_callbacks or [])))
+        callbacks.extend(copy.deepcopy(list(fit_params.pop("callbacks", []) or [])))
+        if callbacks:
+            params["callbacks"] = callbacks
+        params["scale_pos_weight"] = self.scale_pos_weight_
+
+        # KS 的记录必须先于依赖它的早停，避免回调集合无序时随机报 KeyError。
+        if wants_ks and eval_set and early_stopping_rounds is not None:
+            requested = [eval_metric] if isinstance(eval_metric, str) else list(eval_metric)
+            selected = self.early_stopping_metric or requested[-1]
+            if str(selected).lower() == "ks":
+                stopper = xgb.callback.EarlyStopping(
+                    rounds=early_stopping_rounds,
+                    metric_name="ks",
+                    data_name=self.early_stopping_data,
+                    maximize=True,
+                    save_best=True,
+                )
+                callbacks = [
+                    callback
+                    for callback in callbacks
+                    if not isinstance(callback, (_KSEvaluationCallback, xgb.callback.EarlyStopping))
+                ]
+                callbacks.append(_KSEvaluationCallback(eval_set, stopper))
+                params["callbacks"] = callbacks
+                params.pop("early_stopping_rounds", None)
+
+        params = self._resolve_native_aliases(params, self._parameter_aliases)
 
         # 解析自定义损失（BaseLoss 实例 -> sklearn 包装器可用的目标函数）
         params["objective"] = resolve_custom_objective(params.get("objective"))
 
+        # 旧版在 fit 接收早停和回调，新版在构造器接收。
+        from packaging.version import Version
+
+        if Version(xgb.__version__) < Version("1.6"):
+            for name in ("callbacks", "early_stopping_rounds", "eval_metric"):
+                if name in params and name in inspect.signature(xgb.XGBClassifier.fit).parameters:
+                    fit_params[name] = params.pop(name)
+            if callable(fit_params.get("eval_metric")):
+                metric = fit_params["eval_metric"]
+                fit_params["eval_metric"] = lambda prediction, data: (
+                    metric.__name__,
+                    metric(data.get_label(), prediction),
+                )
+
         # 创建模型
+        self.native_params_ = dict(params)
         self._model = xgb.XGBClassifier(**params)
 
         # 训练 - fit时不传早停参数（已在构造函数中传入）
@@ -393,7 +486,7 @@ class XGBoost(BaseRiskModel):
             fit_kwargs["eval_set"] = eval_set
         if sample_weight is not None:
             fit_kwargs["sample_weight"] = sample_weight
-        fit_kwargs["verbose"] = self.verbose
+        fit_kwargs.setdefault("verbose", self.verbose)
 
         # 执行训练
         self._model.fit(X_train, y_train, **fit_kwargs)
@@ -432,35 +525,22 @@ class XGBoost(BaseRiskModel):
     @staticmethod
     def _create_ks_callback(eval_set):
         """创建逐轮计算 KS 的 XGBoost 回调，支持与原生指标并存。"""
-        from sklearn.metrics import roc_curve
+        return _KSEvaluationCallback(eval_set)
 
-        matrices = [xgb.DMatrix(eval_X, label=eval_y) for eval_X, eval_y in eval_set]
-
-        class KSEvaluationCallback(xgb.callback.TrainingCallback):
-            def after_iteration(self, model, epoch, evals_log):
-                for index, matrix in enumerate(matrices):
-                    prediction = model.predict(matrix, iteration_range=(0, epoch + 1))
-                    labels = matrix.get_label()
-                    fpr, tpr, _ = roc_curve(labels, prediction, pos_label=1)
-                    value = float(np.max(np.abs(tpr - fpr)))
-                    dataset_log = evals_log.setdefault(f"validation_{index}", {})
-                    dataset_log.setdefault("ks", []).append(value)
-                return False
-
-        return KSEvaluationCallback()
-
-    def predict(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
+    def predict(self, X: Union[np.ndarray, pd.DataFrame], **predict_params) -> np.ndarray:
         """预测类别标签.
 
         支持传入包含target列的数据框（scorecardpipeline风格）。
         基于 predict_proba 取阈值，确保自定义损失（原始分数输出）下也能返回正确类别。
         """
         self._require_fitted()
+        if predict_params:
+            return self._model.predict(self._prepare_data(X)[0], **predict_params)
         proba = self.predict_proba(X)
         indices = np.argmax(proba, axis=1)
         return np.asarray(self.classes_)[indices]
 
-    def predict_proba(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
+    def predict_proba(self, X: Union[np.ndarray, pd.DataFrame], **predict_params) -> np.ndarray:
         """预测概率.
 
         支持传入包含target列的数据框（scorecardpipeline风格）。
@@ -471,7 +551,7 @@ class XGBoost(BaseRiskModel):
         """
         self._require_fitted()
         X, _, _ = self._prepare_data(X, extract_target=True)
-        proba = np.asarray(self._model.predict_proba(X))
+        proba = np.asarray(self._model.predict_proba(X, **predict_params))
 
         # 自定义损失返回一维原始分数，应用 sigmoid 并补齐为两列概率
         if proba.ndim == 1:
@@ -493,7 +573,10 @@ class XGBoost(BaseRiskModel):
         """
         self._require_fitted()
 
-        importances = self._model.feature_importances_
+        booster = self._model.get_booster()
+        scores = booster.get_score(importance_type=importance_type)
+        names = booster.feature_names or [f"f{i}" for i in range(self.n_features_in_)]
+        importances = np.array([scores.get(name, 0.0) for name in names])
 
         # 创建Series
         importance_series = pd.Series(importances, index=self.feature_names_in_, name="importance").sort_values(
@@ -511,9 +594,7 @@ class XGBoost(BaseRiskModel):
         直接在包装类上暴露重要性，兼容sklearn RFE/SFS等组件的 importance_getter。
         """
         self._require_fitted()
-        if self._feature_importances is None:
-            self._feature_importances = self.get_feature_importances()
-        return self._feature_importances.values
+        return np.asarray(self._model.feature_importances_)
 
     def get_booster(self) -> "xgb.Booster":
         """获取底层XGBoost booster对象.
@@ -600,10 +681,12 @@ class XGBoost(BaseRiskModel):
         self._model = xgb.XGBClassifier()
         self._model.load_model(path)
         self._is_fitted = True
-        self.classes_ = getattr(self, "classes_", np.array([0, 1]))
-        if not hasattr(self, "feature_names_in_"):
-            n_feat = self._model.n_features_in_ if hasattr(self._model, "n_features_in_") else 0
-            self.feature_names_in_ = [f"feature_{i}" for i in range(n_feat)]
-            self.n_features_in_ = n_feat
+        self.classes_ = np.asarray(self._model.classes_)
+        self.n_features_in_ = self._model.n_features_in_
+        names = self._model.get_booster().feature_names
+        self._feature_names_known_ = names is not None
+        self.feature_names_in_ = (
+            list(names) if names is not None else [f"feature_{i}" for i in range(self.n_features_in_)]
+        )
         self._load_score_transformer_sidecar(path)
         return self

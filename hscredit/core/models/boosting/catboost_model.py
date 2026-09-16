@@ -18,6 +18,8 @@ pip install catboost
 """
 
 from typing import Any, Dict, List, Optional, Tuple, Union
+from .._lifecycle import record_training
+
 import numpy as np
 import pandas as pd
 from sklearn.metrics import roc_curve
@@ -135,6 +137,17 @@ class CatBoost(BaseRiskModel):
     categorical features.* NeurIPS；文档 https://catboost.ai/docs/ 。
     """
 
+    _preserve_dataframe = True
+    _parameter_aliases = {
+        "iterations": ("n_estimators", "num_boost_round", "num_trees"),
+        "depth": ("max_depth",),
+        "l2_leaf_reg": ("reg_lambda",),
+        "loss_function": ("objective",),
+        "random_seed": ("random_state",),
+        "border_count": ("max_bin",),
+        "min_data_in_leaf": ("min_child_samples",),
+    }
+
     def __init__(
         self,
         depth: int = 6,
@@ -162,9 +175,14 @@ class CatBoost(BaseRiskModel):
         if not CATBOOST_AVAILABLE:
             raise ImportError("CatBoost未安装，请使用 pip install catboost 安装")
 
+        # sklearn clone 必须能够原样往返构造输入，原生覆盖值只用于实际训练。
+        self._constructor_params = {
+            name: value for name, value in locals().items() if name not in {"self", "kwargs", "__class__"}
+        }
+        self._constructor_kwargs = dict(kwargs)
         # 保存原生params参数
         self.params = params  # 用于sklearn get_params兼容性
-        self._native_params = params or {}
+        self._native_params = dict(params or {})
 
         # 从params中提取参数（如果提供了原生参数）
         depth = self._native_params.get("depth", depth)
@@ -216,6 +234,7 @@ class CatBoost(BaseRiskModel):
         # 早停相关参数
         self.early_stopping_metric = early_stopping_metric
 
+    @record_training
     def fit(
         self,
         X: Union[np.ndarray, pd.DataFrame],
@@ -239,14 +258,10 @@ class CatBoost(BaseRiskModel):
         :param fit_params: 其他fit参数
         :return: self
         """
-        # CatBoost 在 numpy 矩阵上要求 cat_features 为列下标；若传入列名则先映射
-        if cat_features is not None and isinstance(X, pd.DataFrame):
-            cols = list(X.columns)
-            cat_features = [cols.index(c) if isinstance(c, str) else int(c) for c in cat_features]
-
         # 准备数据（支持从X中提取target）
         X, y, sample_weight = self._prepare_data(X, y, sample_weight, extract_target=True, training=True)
         self._validate_probability_scorecard_labels(y)
+        eval_set = self._prepare_eval_set(eval_set)
 
         # 保存特征信息
         self.n_features_in_ = X.shape[1]
@@ -282,7 +297,9 @@ class CatBoost(BaseRiskModel):
         # 处理评估指标
         requested_metrics = []
         if self.eval_metric is not None:
-            requested_metrics = [self.eval_metric] if isinstance(self.eval_metric, str) else list(self.eval_metric)
+            requested_metrics = (
+                list(self.eval_metric) if isinstance(self.eval_metric, (list, tuple)) else [self.eval_metric]
+            )
             wants_ks = any(str(metric).lower() == "ks" for metric in requested_metrics)
             if wants_ks:
                 params["eval_metric"] = CatBoostKSMetric()
@@ -293,7 +310,9 @@ class CatBoost(BaseRiskModel):
                     params["custom_metric"] = native_metrics
             else:
                 # CatBoost 只允许一个主评估指标，其余指标放入 custom_metric。
-                converted = [self._convert_metrics(metric) for metric in requested_metrics]
+                converted = [
+                    self._convert_metrics(metric) if isinstance(metric, str) else metric for metric in requested_metrics
+                ]
                 params["eval_metric"] = converted[0]
                 if len(converted) > 1:
                     params["custom_metric"] = converted[1:]
@@ -321,9 +340,23 @@ class CatBoost(BaseRiskModel):
 
         # 最后更新原生params（优先级最高）
         params.update(self._native_params)
+        aliases = self._parameter_aliases
+        for canonical, names in aliases.items():
+            for name in names:
+                if name in params:
+                    params[canonical] = params.pop(name)
+        if "class_weights" in params or "auto_class_weights" in params:
+            params.pop("scale_pos_weight", None)
+        if params.get("bootstrap_type", "Bayesian") != "Bayesian":
+            params.pop("bagging_temperature", None)
+        if "logging_level" in params or "silent" in params:
+            params.pop("verbose", None)
         # 公共 n_jobs 是 HSCredit 的统一总预算，优先于历史 thread_count=-1
         # 和 params/kwargs 中可能造成嵌套超额并发的设置。
-        params["thread_count"] = max(1, int(self.n_jobs or 1))
+        params["thread_count"] = min(
+            max(1, int(self.n_jobs or 1)),
+            int(params["thread_count"]) if params.get("thread_count", -1) > 0 else max(1, int(self.n_jobs or 1)),
+        )
 
         # 解析自定义损失（BaseLoss 实例 -> CatBoost 可用的损失对象）
         resolved_loss = self._resolve_catboost_loss(params.get("loss_function"))
@@ -334,6 +367,7 @@ class CatBoost(BaseRiskModel):
             params.pop("scale_pos_weight", None)
 
         # 创建模型
+        self.native_params_ = dict(params)
         self._model = cb.CatBoostClassifier(**params)
 
         # 准备训练参数
@@ -394,17 +428,19 @@ class CatBoost(BaseRiskModel):
             return CatBoostLossAdapter(loss_function).objective()
         return loss_function
 
-    def predict(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
+    def predict(self, X: Union[np.ndarray, pd.DataFrame], **predict_params) -> np.ndarray:
         """预测类别标签.
 
         基于 predict_proba 取阈值，确保自定义损失（原始分数输出）下也能返回正确类别。
         """
         self._require_fitted()
+        if predict_params:
+            return self._model.predict(self._prepare_data(X)[0], **predict_params)
         proba = self.predict_proba(X)
         indices = np.argmax(proba, axis=1)
         return np.asarray(self.classes_)[indices]
 
-    def predict_proba(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
+    def predict_proba(self, X: Union[np.ndarray, pd.DataFrame], **predict_params) -> np.ndarray:
         """预测概率.
 
         当使用自定义损失函数（loss_function 为可调用对象）时，CatBoost 返回的是
@@ -413,7 +449,7 @@ class CatBoost(BaseRiskModel):
         """
         self._require_fitted()
         X = self._prepare_data(X)[0]
-        proba = np.asarray(self._model.predict_proba(X))
+        proba = np.asarray(self._model.predict_proba(X, **predict_params))
 
         # 自定义损失返回一维原始分数，应用 sigmoid 并补齐为两列概率
         if proba.ndim == 1:
@@ -453,7 +489,7 @@ class CatBoost(BaseRiskModel):
         self._require_fitted()
         if self._feature_importances is None:
             self._feature_importances = self.get_feature_importances()
-        return self._feature_importances.values
+        return self.get_feature_importances().reindex(self.feature_names_in_).to_numpy()
 
     def plot_tree(self, tree_index: int = 0, **kwargs):
         """绘制树结构.
@@ -501,11 +537,10 @@ class CatBoost(BaseRiskModel):
         self._model = cb.CatBoostClassifier()
         self._model.load_model(path)
         self._is_fitted = True
-        self.classes_ = getattr(self, "classes_", np.array([0, 1]))
-        if not hasattr(self, "feature_names_in_"):
-            n_feat = self._model.feature_count_ if hasattr(self._model, "feature_count_") else 0
-            self.feature_names_in_ = [f"feature_{i}" for i in range(n_feat)]
-            self.n_features_in_ = n_feat
+        self.classes_ = np.asarray(self._model.classes_)
+        self.feature_names_in_ = list(self._model.feature_names_)
+        self.n_features_in_ = len(self.feature_names_in_)
+        self._feature_names_known_ = True
         self._load_score_transformer_sidecar(path)
         return self
 

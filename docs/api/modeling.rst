@@ -6,6 +6,8 @@
 .. toctree::
    :maxdepth: 2
 
+   ../articles/model-workflow
+   ../articles/models-design-review
    classical_models
    boosting
    model_rules

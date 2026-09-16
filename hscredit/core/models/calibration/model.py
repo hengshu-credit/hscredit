@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
-from sklearn.base import BaseEstimator, ClassifierMixin, clone
+from sklearn.base import ClassifierMixin, BaseEstimator, clone
 from sklearn.model_selection import train_test_split
 from sklearn.utils.validation import check_is_fitted
 
@@ -35,7 +35,7 @@ def _assemble_binary_probabilities(positive: np.ndarray, classes: np.ndarray, po
     return result
 
 
-class ProbabilityCalibrator(ArtifactSerializableMixin, BaseEstimator, ClassifierMixin):
+class ProbabilityCalibrator(ArtifactSerializableMixin, ClassifierMixin, BaseEstimator):
     """概率校准器 - 统一入口.
 
     提供统一的概率校准接口，支持多种校准方法。
@@ -405,7 +405,7 @@ class ProbabilityCalibrator(ArtifactSerializableMixin, BaseEstimator, Classifier
         return self.calibrator_.calibrate(y_prob)
 
 
-class CalibratedModel(ArtifactSerializableMixin, BaseEstimator, ClassifierMixin):
+class CalibratedModel(ArtifactSerializableMixin, ClassifierMixin, BaseEstimator):
     """已校准模型包装器.
 
     将基础模型和校准器组合在一起，提供统一的预测接口。
