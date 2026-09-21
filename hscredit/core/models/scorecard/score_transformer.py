@@ -92,6 +92,7 @@ import pandas as pd
 from sklearn.base import BaseEstimator
 from sklearn.utils.validation import check_is_fitted
 from ....utils.serialization import ArtifactSerializableMixin
+from .._contracts import ExtraParamsMixin
 
 
 class BaseScoreTransformer(ArtifactSerializableMixin, BaseEstimator, ABC):
@@ -1131,7 +1132,7 @@ class BoxCoxScoreTransformer(BaseScoreTransformer):
         return np.clip(proba, 0, 1)
 
 
-class ScoreTransformer(BaseScoreTransformer):
+class ScoreTransformer(ExtraParamsMixin, BaseScoreTransformer):
     """统一评分转换器接口.
 
     提供统一的接口，支持多种转换方法。
@@ -1209,6 +1210,8 @@ class ScoreTransformer(BaseScoreTransformer):
         self.method = method
         self.target = target
         self.transformer_params = kwargs
+
+    _extra_params_attribute = "transformer_params"
 
     def fit(self, proba: Union[np.ndarray, pd.Series], **kwargs) -> "ScoreTransformer":
         """拟合评分转换器.

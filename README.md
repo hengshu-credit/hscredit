@@ -1373,7 +1373,7 @@ custom = Database("custom", endpoint="https://database.example")
 git clone https://github.com/hengshu-credit/hscredit.git
 cd hscredit
 pip install -e .
-python examples/00_quickstart.py
+python scripts/validate_examples.py --pattern 00_quickstart.ipynb
 ```
 
 导入 `hscredit` 后会注册 pandas 扩展；既可以使用 sklearn 风格的 `(X, y)`，也可以从含目标列的 DataFrame 开始：
@@ -1409,7 +1409,8 @@ bin_table.save("分箱结果.xlsx", title="变量分箱")
 ## 文档与示例
 
 - [在线文档](https://hscredit.hengshucredit.com/)
-- [可执行快速开始](examples/00_quickstart.py)
+- [快速开始 Notebook](examples/00_quickstart.ipynb)
+- [模型公共契约与资源保留 Notebook](examples/28_model_workflow.ipynb)
 - [完整示例与 Notebook](examples/)
 - [项目迭代规划](docs/ROADMAP.md)
 - [问题反馈](https://github.com/hengshu-credit/hscredit/issues)

@@ -1,4 +1,4 @@
-"""可重复地执行 examples 目录中的 notebook 与 Python 示例。"""
+"""可重复执行 Notebook 示例；仅显式匹配 .py 时兼容旧脚本。"""
 
 from __future__ import annotations
 
@@ -39,14 +39,15 @@ class ExampleResult:
     duration: float = 0.0
 
 
-def discover_examples(examples_dir: Path) -> list[Path]:
-    """按稳定顺序发现目录下的 notebook 与 Python 示例。"""
+def discover_examples(examples_dir: Path, include_python: bool = False) -> list[Path]:
+    """默认只发现 Notebook，避免把辅助 Python 模块当作演示运行。"""
+    suffixes = EXAMPLE_SUFFIXES if include_python else {".ipynb"}
     return sorted(
         (
             path
             for path in examples_dir.rglob("*")
             if path.is_file()
-            and path.suffix.lower() in EXAMPLE_SUFFIXES
+            and path.suffix.lower() in suffixes
             and not EXCLUDED_EXAMPLE_DIRS.intersection(path.relative_to(examples_dir).parts[:-1])
         ),
         key=lambda path: path.relative_to(examples_dir).as_posix(),
@@ -214,7 +215,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print("示例目录不存在: {}".format(examples_dir))
         return 2
 
-    paths = _filter_examples(discover_examples(examples_dir), arguments.pattern)
+    paths = _filter_examples(discover_examples(examples_dir, include_python=arguments.pattern.endswith(".py")), arguments.pattern)
     if not paths:
         print("未找到匹配的示例: {}".format(arguments.pattern))
         return 0

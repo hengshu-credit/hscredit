@@ -12,6 +12,7 @@ from sklearn.base import clone
 from hscredit.exceptions import ValidationError
 
 from .result import ExplanationResult, coerce_explanation_frame, fingerprint_frame
+from .._contracts import positive_probability
 
 
 def _load_shap():
@@ -128,9 +129,26 @@ class ModelExplainer:
                 if output.ndim == 1:
                     return -output if class_index == 0 else output
                 return output[:, class_index]
-            return np.asarray(self.model.predict(frame), dtype=float).reshape(-1)
-        probabilities = np.asarray(self.model.predict_proba(frame))
-        return probabilities[:, class_index]
+            native = self._native_model()
+            module = type(native).__module__.split(".")[0]
+            if module == "xgboost":
+                output = np.asarray(self.model.predict(frame, output_margin=True))
+            elif module == "lightgbm":
+                output = np.asarray(self.model.predict(frame, raw_score=True))
+            elif module == "catboost":
+                output = np.asarray(self.model.predict(frame, prediction_type="RawFormulaVal"))
+            elif hasattr(native, "decision_function"):
+                output = np.asarray(native.decision_function(frame))
+            elif self._is_tree_model() and hasattr(self.model, "predict_proba"):
+                # sklearn 分类树的 raw 输出就是各类别概率，而非硬类别标签。
+                return np.asarray(self.model.predict_proba(frame))[:, class_index]
+            else:
+                raise ValidationError("模型未提供可解释的 raw 输出，请选择 probability 或 score")
+            if output.ndim == 1:
+                return -output if class_index == 0 else output
+            return output[:, class_index]
+        classes = getattr(self.model, "classes_", getattr(self._native_model(), "classes_", [0, 1]))
+        return positive_probability(self.model.predict_proba(frame), classes, classes[class_index])
 
     def _choose_algorithm(self):
         if self.algorithm != "auto":
@@ -146,10 +164,16 @@ class ModelExplainer:
     def _build_explainer(self, background: pd.DataFrame, class_index: Optional[int]):
         shap = _load_shap()
         algorithm = self._choose_algorithm()
-        signature = (algorithm, fingerprint_frame(background), self.model_output, class_index)
+        native = self._native_model()
+        model_version = (
+            id(native), getattr(self.model, "fit_revision_", None),
+            tuple(id(getattr(native, name, None)) for name in ("_Booster", "tree_", "estimators_", "coef_")),
+        )
+        signature = (algorithm, fingerprint_frame(background), self.model_output, class_index, model_version)
         if self._explainer is not None and self._explainer_signature == signature:
             return self._explainer, algorithm
-        native = self._native_model()
+        if self._explainer_signature is not None:
+            self._interaction_explainer = None
         if algorithm == "tree":
             kwargs = {}
             if self.model_output == "probability":
@@ -164,7 +188,9 @@ class ModelExplainer:
         elif algorithm == "linear":
             if self.model_output != "raw":
                 raise ValidationError("LinearExplainer 仅支持 raw 输出；概率尺度请使用 permutation")
-            backend = shap.LinearExplainer(native, background)
+            signs = getattr(native, "woe_coef_signs_", None)
+            explained_model = native if signs is None else (np.asarray(native.coef_) * signs, native.intercept_)
+            backend = shap.LinearExplainer(explained_model, background)
         elif algorithm == "permutation":
             predictor = lambda values: self._predict_selected(pd.DataFrame(values, columns=background.columns), class_index)  # noqa: E731
             backend = shap.Explainer(predictor, background, algorithm="permutation")
@@ -211,6 +237,14 @@ class ModelExplainer:
                 kwargs["max_evals"] = max_evals or max(2 * frame.shape[1] + 1, 50)
             explanation = backend(frame, **kwargs)
             output_index = class_index if np.asarray(explanation.values).ndim == 3 else None
+            if algorithm in {"tree", "linear"} and output_index is None and class_index == 0:
+                # 二分类单输出后端解释的是 classes_[1]，类别 0 必须显式反转。
+                explanation = shap.Explanation(
+                    values=-np.asarray(explanation.values),
+                    base_values=(1.0 if self.model_output == "probability" else 0.0) - np.asarray(explanation.base_values),
+                    data=explanation.data,
+                    feature_names=list(frame.columns),
+                )
         predictions = self._predict_selected(frame, class_index)
         metadata = {
             "模型类型": self.model.__class__.__name__,
@@ -238,6 +272,8 @@ class ModelExplainer:
             background_summary={"样本数": len(background), "来源": "解释数据" if self.background_data is None else "显式背景数据"},
             metadata=metadata,
         )
+        if check_additivity and not np.allclose(result.base_values + result.values.sum(axis=1), predictions, rtol=1e-4, atol=1e-5):
+            raise ValidationError("SHAP 贡献加总与所选类别/输出尺度不一致，请检查模型变换或重建解释器")
         self.last_result_ = result
         self._shap_values = result.values
         self._expected_value = result.base_values

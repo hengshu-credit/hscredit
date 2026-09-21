@@ -50,7 +50,7 @@ jobs:
       - name: 环境与公开示例验证
         run: |
           python scripts/validate_environment.py
-          python examples/00_quickstart.py
+          python scripts/validate_examples.py --pattern 00_quickstart.ipynb
           pytest tests/test_utils/test_documentation_examples.py -q
 
       - name: 构建文档

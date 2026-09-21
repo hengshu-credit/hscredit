@@ -74,6 +74,7 @@ from scipy.interpolate import interp1d
 from scipy.special import expit, logit
 from sklearn.base import BaseEstimator
 from sklearn.utils.validation import check_is_fitted
+from .._contracts import ExtraParamsMixin, extract_target
 
 logger = logging.getLogger(__name__)
 
@@ -116,21 +117,8 @@ class BaseDriftCalibrator(BaseEstimator, ABC):
         :param require_y: 是否必须有y，默认False
         :return: (X, y) 处理后的数据
         """
-        # scorecardpipeline风格：从X中提取target
-        if y is None:
-            if isinstance(X, pd.DataFrame) and target in X.columns:
-                y = X[target].values
-                X = X.drop(columns=[target])
-            elif require_y:
-                raise ValueError(f"y为None时，X必须是包含'{target}'列的DataFrame")
-        else:
-            if isinstance(y, pd.Series):
-                y = y.values
-
-        if isinstance(X, pd.DataFrame):
-            X = X.values
-
-        return X, y
+        X, y = extract_target(X, y, target, require_y=require_y)
+        return X, None if y is None else np.asarray(y)
 
     def _get_reference_scores(self, model: Any, X_ref: Optional[Union[np.ndarray, pd.DataFrame]] = None) -> np.ndarray:
         """获取参考评分.
@@ -759,7 +747,7 @@ class BinningRecalibrator(BaseDriftCalibrator):
         return scores_calibrated
 
 
-class ScoreDriftCalibrator(BaseDriftCalibrator):
+class ScoreDriftCalibrator(ExtraParamsMixin, BaseDriftCalibrator):
     """统一评分漂移校准器接口.
 
     提供统一的接口，支持多种漂移校准方法。
@@ -815,6 +803,8 @@ class ScoreDriftCalibrator(BaseDriftCalibrator):
         super().__init__(reference_scores, method, clip_bounds)
         self.target = target
         self.calibrator_params = kwargs
+
+    _extra_params_attribute = "calibrator_params"
 
     def fit(
         self,

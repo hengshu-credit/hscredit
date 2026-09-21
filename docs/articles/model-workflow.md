@@ -26,6 +26,15 @@ score = model.predict_score(df[features])
 也可以使用 `fit(X, y, sample_weight=weights)`；显式 `y` 优先，并从特征中移除 `target` 列。
 DataFrame 预测和验证集会按训练字段重新排序；缺字段、重名列、标签或权重长度不符会直接报中文错误。
 
+这一输入契约也适用于概率校准器、概率评分卡、传统评分卡和调参器：显式 `y` 优先，
+但 `target` 列始终剔除；样本参数按位置而不是 pandas 索引标签对齐。
+正类概率按真实 `classes_` 查找，`ProbabilityScoreCard(positive_class=1)` 默认选择坏样本类别 1，
+不能以“最后一列”代替正类。失败的重复训练不可继续使用旧的预测状态。
+
+`ScoreCard.fit` 会重新训练自身创建的 LR，并按当前 PDO 等配置刷新刻度；显式提供的预训练 LR 仍可复用。
+`ScoreCard(pipeline=...)` 要求 LR 前的输入确实是相同的 WOE；若 Pipeline 使用分箱索引、缩放或其他变换，
+请用 `ProbabilityScoreCard(model=pipeline)` 保留完整预处理，不能把它静默替换为 WOE。
+
 早停需要验证数据。包装模型未收到 `eval_set` 时，会按 `validation_fraction` 从训练输入划出验证集；
 不启用早停时使用全部输入。训练权重、XGBoost `base_margin`、LightGBM `init_score`、
 CatBoost `baseline` 会跟随自动划分同步切分。
@@ -90,6 +99,7 @@ restored.predict_score(df[features])
 | `save("model.json")` | 支持框架的 JSON 清单，配套原生模型、评分转换器和 `.state.pkl` 完整状态文件；需一起移动 |
 | `save_model(...)` | 原生模型文件与评分转换器附属文件，保留已有接口 |
 | `get_native_model()` | 直接调用底层框架的导出、树结构、叶节点、预测或其他专属能力 |
+| `save_inference("model.joblib")` | 风险模型/LR 的轻量推理对象：移除 tuner、训练历史和划分索引，保留预测、评分和字段契约；不修改原对象 |
 
 输入预处理也是复用的一部分：推荐把编码、标准化与模型放进 sklearn Pipeline 一起保存；
 如果预处理在外部完成，必须同时保存已拟合的预处理器和字段顺序。
@@ -194,8 +204,30 @@ SQLite 保留 Optuna 试验状态；`artifact_dir` 额外逐折写入模型过�
 只使用 SQLite、不保存完整对象或配置制品目录，不能恢复已丢失的 Python 模型和预测数组。
 同样，只调用原生 `trial_objective` 时，内部训练过程由用户函数管理，自动逐折记录不适用。
 
-默认 `store_models=True` 会保留所有训练折的模型，适合复盘；试验较大时可显式设置 `store_models=False`
-仅保留预测、指标和训练记录。配置 `artifact_dir` 会同时写磁盘，当前实现仍保留内存记录。
+通过 `ModelTuner(..., retention=...)` 或 `model.tune(..., retention=...)` 选择结果保留策略。
+所有策略都保留完整 Optuna Study、各试验指标、搜索参数、状态与最佳模型缓存，不改变训练和搜索计算。
+
+| retention | 常驻结果 | OOF 与折模型 |
+| --- | --- | --- |
+| `full` | 所有折模型、训练/验证预测、完整训练记录 | 全部可用，默认行为 |
+| `predictions` | 训练/验证预测、指标、精简训练记录 | OOF 可用，不保留折模型 |
+| `summary` | 指标、曲线、样本数、早停轮数、异常 | 不保留逐样本数组；请求 OOF 会明确报错 |
+| `best` | 当前最佳试验完整结果；其余仅摘要 | 最佳试验可用；其他试验的 OOF 不再保留 |
+| `disk` | 逐折制品索引与摘要 | 必须设置 artifact_dir，逐折写盘、按需读取 |
+
+未指定 `retention` 时继续兼容 `store_models=True/False`，分别对应 `full/predictions`。
+显式 `retention` 优先。`disk` 与“full 加 artifact_dir”不同：每折写入成功后就释放其常驻模型和数组，
+`get_trial_result(n, load=False)` 只返回摘要；默认 `load=True` 返回完整结果但不把折模型放回常驻缓存。
+`get_oof_predictions()` 逐折读取并聚合，重复验证仍取均值，未参加验证的样本保留缺失值。
+磁盘档的完整制品依赖其折文件，须同时保留 `artifact_dir`；缺失文件会明确报错，不重新训练补造结果。
+将整个折制品目录复制到其他位置后，可用 `ModelTuner.load(path, artifact_dir="新目录")` 恢复读取。
+若使用 SQLite 等外部 Study 存储，还需独立维护对应数据库的可访问性。
+
+输入数据默认仍保留以支持最终重训与续跑。取得最佳模型后可调用 `tuner.release_training_data()`，
+释放调参器持有的输入、标签、权重、CV 索引和已知样本级 fit 参数；该操作不删除折结果或磁盘制品。
+缓存最佳模型仍可预测；重训及完整标签的 OOF 需要重新 `fit`，续跑时也必须重新提供所需样本参数。
+`save_inference` 不携带整个搜索历史，适合部署；完整 `save` 继续满足复盘与续跑用途。
+上述清理仅针对库管理的字段，不会任意删除用户函数闭包捕获的数据或底层模型推理所需的状态。
 自定义函数返回不能放入 Optuna JSON 属性的模型对象或损失对象时，完整配置保存在调参制品中。
 
 最佳模型只训练一次并缓存。Boosting 最终默认使用各折最佳轮数的中位数关闭内部早停，在全部输入上训练；
@@ -278,12 +310,14 @@ plt.show()
 `visualization` 则使用 Optuna 原生 `params` / `target` 语义。
 保存最佳模型或调参器后，重新加载仍可通过相同入口画图；访问绘图入口本身不会重新训练模型。
 
-## 7. 可运行的真实数据验证
+## 7. 可执行 Notebook 演示
 
 ```console
-python examples/28_model_workflow.py --output artifacts/model-workflow
+python scripts/validate_examples.py --pattern 28_model_workflow.ipynb
 ```
 
-脚本使用 `examples/hscredit_yyp.xlsx` 的指定三项特征和 `FPD`，覆盖十类分类器、中文类别字段、
-概率/评分保存往返、学习曲线、报告入口、Optuna 持久化与继续搜索；同时保存标准化器和字段顺序。
-省略 `--output` 时输出到系统临时目录。
+在 Jupyter 中打开 [模型工作流 Notebook](../../examples/28_model_workflow.ipynb)，按单元格顺序执行即可。
+它优先使用 `examples/hscredit_yyp.xlsx` 的指定三项特征和 `FPD`；没有工作簿时使用固定种子的模拟数据。
+覆盖双 API 防泄漏、字段顺序、概率校准、五档结果保留的数值等价、按需读取、
+完整与推理制品保存恢复、续跑和显式资源释放。缺失值只使用训练集统计量处理。
+输出默认位于独立临时目录，可在配置单元格修改路径。示例不再依赖独立 `.py` 演示脚本。

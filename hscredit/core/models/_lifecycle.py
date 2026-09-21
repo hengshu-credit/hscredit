@@ -50,16 +50,20 @@ def record_training(method):
     """保留每次训练配置、划分、曲线和异常；不复制原始训练数据。"""
 
     @wraps(method)
-    def fit(self, X, *args, **kwargs):
+    def fit(self, X=None, *args, **kwargs):
+        data = args[0] if hasattr(X, "predict_proba") and args else X
+        if data is None:
+            data = kwargs.get("proba", [])
         record = {
             "开始时间": datetime.now(timezone.utc).isoformat(),
-            "样本数": X.shape[0] if hasattr(X, "shape") else len(X),
+            "样本数": data.shape[0] if hasattr(data, "shape") else len(data),
             "依赖版本": dict(dependency_versions()),
             "状态": "训练中",
         }
         history = self.__dict__.setdefault("training_history_", [])
         history.append(record)
         self.training_summary_ = record
+        self.fit_revision_ = getattr(self, "fit_revision_", 0) + 1
         self._is_fitted = False
         self._feature_importances = None
         self._best_iteration = None

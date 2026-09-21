@@ -11,6 +11,11 @@ from sklearn.utils.validation import check_is_fitted
 
 from ....utils.serialization import ArtifactSerializableMixin
 from ..base import _evaluate_binary_predictions
+from .._contracts import (
+    align_model_features, extract_target, positive_class_index, positive_probability,
+    record_feature_schema, split_sample_params, take_rows, validate_labels,
+)
+from .._lifecycle import record_training
 from .base import BaseCalibrator
 from .methods import BetaCalibrator, HistogramCalibrator, IsotonicCalibrator, PlattCalibrator
 
@@ -20,10 +25,7 @@ if TYPE_CHECKING:
 
 def _class_index(classes: np.ndarray, label: Any) -> int:
     """返回二分类标签的唯一概率列位置。"""
-    matches = np.flatnonzero(np.asarray(classes) == label)
-    if len(matches) != 1:
-        raise ValueError(f"基础模型概率列中不存在唯一正类标签: {label!r}")
-    return int(matches[0])
+    return positive_class_index(classes, label)
 
 
 def _assemble_binary_probabilities(positive: np.ndarray, classes: np.ndarray, positive_class: Any) -> np.ndarray:
@@ -139,6 +141,11 @@ class ProbabilityCalibrator(ArtifactSerializableMixin, ClassifierMixin, BaseEsti
         calibrator_class = self.CALIB_METHODS[self.method]
         return calibrator_class(n_bins=self.n_bins, **dict(self.calibrator_params or {}))
 
+    def __sklearn_is_fitted__(self):
+        """失败的重复拟合不能继续使用上一次的校准状态。"""
+        return bool(getattr(self, "_is_fitted", getattr(self, "is_fitted_", False)))
+
+    @record_training
     def fit(
         self,
         X: Union[np.ndarray, pd.DataFrame],
@@ -188,10 +195,12 @@ class ProbabilityCalibrator(ArtifactSerializableMixin, ClassifierMixin, BaseEsti
 
         # 处理两种传参风格
         X, y = self._prepare_data(X, y, target)
+        record_feature_schema(self, X)
 
         self.classes_ = np.asarray(getattr(model, "classes_", np.unique(y)))
         if len(self.classes_) != 2:
             raise ValueError("概率校准目前仅支持二分类模型")
+        validate_labels(y, classes=self.classes_)
         self.positive_class_ = self.classes_[1] if self.positive_class is None else self.positive_class
         if not np.any(self.classes_ == self.positive_class_):
             raise ValueError(f"positive_class={self.positive_class_!r} 不在模型类别 {self.classes_.tolist()!r} 中")
@@ -203,22 +212,14 @@ class ProbabilityCalibrator(ArtifactSerializableMixin, ClassifierMixin, BaseEsti
                 indices, test_size=self.calib_ratio, random_state=self.random_state, stratify=y
             )
 
-            def take(values, idx):
-                return values.iloc[idx] if hasattr(values, "iloc") else np.asarray(values)[idx]
-
-            X_train, y_train = take(X, train_indices), take(y, train_indices)
-            X, y = take(X, calib_indices), take(y, calib_indices)
+            X_train, y_train = take_rows(X, train_indices), take_rows(y, train_indices)
+            X, y = take_rows(X, calib_indices), take_rows(y, calib_indices)
             try:
                 fitted_model = clone(model)
             except (TypeError, RuntimeError):
                 fitted_model = copy.deepcopy(model)
 
-            model_fit_params = {}
-            for name, value in fit_params.items():
-                if hasattr(value, "__len__") and len(value) == len(indices):
-                    model_fit_params[name] = take(value, train_indices)
-                else:
-                    model_fit_params[name] = value
+            model_fit_params = split_sample_params(fit_params, train_indices, len(indices))
             fitted_model.fit(X_train, y_train, **model_fit_params)
             self.model_ = fitted_model
         else:
@@ -253,7 +254,7 @@ class ProbabilityCalibrator(ArtifactSerializableMixin, ClassifierMixin, BaseEsti
         :param X: 特征矩阵
         :return: 两列概率数组，shape ``(n_samples, 2)``
         """
-        check_is_fitted(self, "classes_")
+        check_is_fitted(self)
 
         # 获取原始概率
         y_prob = self._get_model_proba(X)
@@ -269,6 +270,7 @@ class ProbabilityCalibrator(ArtifactSerializableMixin, ClassifierMixin, BaseEsti
         :param threshold: 分类阈值，默认0.5
         :return: 预测类别
         """
+        check_is_fitted(self)
         if not 0 <= threshold <= 1:
             raise ValueError("threshold必须在[0, 1]范围内")
         positive_index = _class_index(self.classes_, self.positive_class_)
@@ -279,40 +281,23 @@ class ProbabilityCalibrator(ArtifactSerializableMixin, ClassifierMixin, BaseEsti
     def _get_model_proba(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
         """获取模型预测概率."""
         if hasattr(self.model_, "predict_proba"):
-            proba = np.asarray(self.model_.predict_proba(X))
-            if proba.ndim == 2 and proba.shape[1] == 2:
-                classes = np.asarray(getattr(self.model_, "classes_", self.classes_))
-                matches = np.flatnonzero(classes == self.positive_class_)
-                if len(matches) != 1:
-                    raise ValueError(f"基础模型概率列中不存在正类标签: {self.positive_class_!r}")
-                positive_index = int(matches[0])
-                return proba[:, positive_index]
-            return proba
+            X = align_model_features(self, X)
+            proba = self.model_.predict_proba(X)
+            return positive_probability(proba, getattr(self.model_, "classes_", self.classes_), self.positive_class_)
         else:
             raise ValueError("模型必须实现predict_proba方法")
 
     def _prepare_data(self, X: Union[np.ndarray, pd.DataFrame], y: Optional[Union[np.ndarray, pd.Series]], target: str):
         """准备数据，支持两种传参风格."""
-        # scorecardpipeline风格：从X中提取target
-        if y is None:
-            if isinstance(X, pd.DataFrame) and target in X.columns:
-                y = X[target].to_numpy()
-                X = X.drop(columns=[target])
-            else:
-                raise ValueError(f"y为None时，X必须是包含'{target}'列的DataFrame")
-        if isinstance(y, pd.Series):
-            y = y.to_numpy()
-        else:
-            y = np.asarray(y)
-
-        return X, y
+        X, y = extract_target(X, y, target)
+        return X, np.asarray(y)
 
     def get_calibration_metrics(self) -> Dict[str, Dict[str, float]]:
         """获取校准前后的指标对比.
 
         :return: 包含校准前后指标的字典
         """
-        check_is_fitted(self, "classes_")
+        check_is_fitted(self)
         return self.calib_metrics_
 
     def calibration_report(
@@ -325,7 +310,7 @@ class ProbabilityCalibrator(ArtifactSerializableMixin, ClassifierMixin, BaseEsti
 
         :return: 包含指标、校准前、校准后、改善值和改善率的中文 DataFrame
         """
-        check_is_fitted(self, "classes_")
+        check_is_fitted(self)
         X, y = self._prepare_data(X, y, target or self.target_)
         y_binary = (np.asarray(y) == self.positive_class_).astype(int)
         original = self.calibrator_.compute_calibration_metrics(
@@ -381,7 +366,7 @@ class ProbabilityCalibrator(ArtifactSerializableMixin, ClassifierMixin, BaseEsti
         :param show: 是否显示图表，默认True
         :return: matplotlib Figure对象
         """
-        check_is_fitted(self, "classes_")
+        check_is_fitted(self)
 
         # 处理两种传参风格
         X, y = self._prepare_data(X, y, target or self.target_)
@@ -401,7 +386,7 @@ class ProbabilityCalibrator(ArtifactSerializableMixin, ClassifierMixin, BaseEsti
         :param y_prob: 原始概率
         :return: 校准后的概率
         """
-        check_is_fitted(self, "classes_")
+        check_is_fitted(self)
         return self.calibrator_.calibrate(y_prob)
 
 

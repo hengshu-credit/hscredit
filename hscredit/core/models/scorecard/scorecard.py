@@ -36,6 +36,8 @@ from ....exceptions import DependencyError, NotFittedError, ValidationError
 from ...binning._contracts import validate_handle_unknown
 from ..classical.logistic_regression import LogisticRegression
 from .score_transformer import StandardScoreTransformer
+from .._contracts import ExtraParamsMixin, extract_target, validate_sample_weight
+from .._lifecycle import record_training
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +60,7 @@ class _ScoreCardLoadDispatcher:
         return load_model
 
 
-class ScoreCard(StandardScoreTransformer):
+class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
     """评分卡模型.
 
     将逻辑回归模型转换为评分卡，支持评分卡输出、保存和导出等功能。
@@ -185,6 +187,7 @@ class ScoreCard(StandardScoreTransformer):
         target: str = 'target',
         **kwargs
     ):
+        self.kwargs = dict(kwargs)
         # 构建父类参数，ScoreCard特有参数不传递给父类
         # 评分相关参数通过kwargs透传，允许用户覆盖默认值
         parent_kwargs = {
@@ -301,6 +304,8 @@ class ScoreCard(StandardScoreTransformer):
         """检查评分卡是否已具备可用的拟合/加载状态."""
         if getattr(self, '_is_fitted', False):
             return
+        if getattr(self, "training_summary_", {}).get("状态") in {"失败", "中断"}:
+            raise NotFittedError("ScoreCard 最近一次训练失败，请重新 fit")
 
         # 兼容 fit 内部已训练 LR、传入已训练 LR 或已训练 pipeline 后直接使用的路径。
         lr_model = self._get_lr_model()
@@ -325,11 +330,10 @@ class ScoreCard(StandardScoreTransformer):
         若无任何分箱信息，则基于 LR 系数生成回退规则，
         保证 scorecard_points 至少能展示每个变量及其系数贡献。
         """
-        if hasattr(self.lr_model, 'ensure_positive_woe_coefficients'):
-            self.lr_model.ensure_positive_woe_coefficients()
-
         if not hasattr(self.lr_model, 'coef_'):
             return
+        if hasattr(self.lr_model, 'ensure_positive_woe_coefficients'):
+            self.lr_model.ensure_positive_woe_coefficients()
 
         n_features = len(self.lr_model.coef_[0])
 
@@ -861,7 +865,7 @@ class ScoreCard(StandardScoreTransformer):
                 X_woe.attrs['hscredit_encoding'] = 'woe'
             if self.verbose:
                 logger.info(f"使用 binner + encoder 进行 WOE 转换")
-            return X_woe
+            return self._validate_pipeline_representation(X, X_woe)
 
         # 情况2：binner 支持直接 WOE 转换（hscredit 风格）
         if self._binner_is_woe_transformer and self.binner is not None:
@@ -872,7 +876,9 @@ class ScoreCard(StandardScoreTransformer):
                     X_woe.attrs['hscredit_encoding'] = 'woe'
                 if self.verbose:
                     logger.info(f"使用 binner.transform(X, metric='woe') 进行 WOE 转换")
-                return X_woe
+                return self._validate_pipeline_representation(X, X_woe)
+            except ValidationError:
+                raise
             except Exception as e:
                 if getattr(self.binner, 'handle_unknown', None) == 'raise':
                     raise
@@ -885,7 +891,9 @@ class ScoreCard(StandardScoreTransformer):
                         X_woe.attrs['hscredit_encoding'] = 'woe'
                     if self.verbose:
                         logger.info(f"使用 binner.transform_woe(X) 进行 WOE 转换")
-                    return X_woe
+                    return self._validate_pipeline_representation(X, X_woe)
+                except ValidationError:
+                    raise
                 except Exception:
                     pass
 
@@ -896,12 +904,33 @@ class ScoreCard(StandardScoreTransformer):
                 X_woe.attrs['hscredit_encoding'] = 'woe'
             if self.verbose:
                 logger.info(f"使用 encoder 进行 WOE 转换")
-            return X_woe
+            return self._validate_pipeline_representation(X, X_woe)
 
         raise ValidationError(
             "原始数据评分缺少可用的分箱器或WOE编码器；请配置 binner/encoder，"
             "或对已转换数据显式使用 input_type='woe'"
         )
+
+    def _validate_pipeline_representation(self, X, X_woe):
+        """逐项评分卡不能把 Pipeline 的索引、缩放值等静默替换为 WOE。"""
+        steps = getattr(self.pipeline, "steps", [])
+        if not steps:
+            return X_woe
+        from sklearn.pipeline import Pipeline
+
+        native_input = Pipeline(steps[:-1]).transform(X) if len(steps) > 1 else X
+        candidate = X_woe
+        if isinstance(native_input, pd.DataFrame) and isinstance(candidate, pd.DataFrame):
+            names = list(native_input.columns)
+            if all(name in candidate.columns for name in names):
+                candidate = candidate.loc[:, names]
+        same_shape = np.shape(native_input) == np.shape(candidate)
+        if not same_shape or not np.allclose(np.asarray(native_input, dtype=float), np.asarray(candidate, dtype=float), equal_nan=True):
+            raise ValidationError(
+                "pipeline 在 LR 前的输出与 WOE 不一致，无法转换为逐项评分卡；"
+                "请显式构造 WOE Pipeline，或使用 ProbabilityScoreCard(model=pipeline) 保留完整预处理"
+            )
+        return X_woe
 
     def _setup_rule_based_binner(self) -> None:
         """从加载的规则中设置基于规则的分箱器.
@@ -1085,6 +1114,7 @@ class ScoreCard(StandardScoreTransformer):
 
         raise ValueError("当前评分卡仅加载了规则，predict(input_type='raw') 需要提供支持 transform(metric='bins') 的 binner")
 
+    @record_training
     def fit(
         self,
         X: Union[pd.DataFrame, np.ndarray],
@@ -1133,6 +1163,13 @@ class ScoreCard(StandardScoreTransformer):
 
         if input_type not in ['woe', 'raw']:
             raise ValueError(f"input_type 必须是 'woe' 或 'raw'，当前为: {input_type}")
+        X, y = extract_target(X, y, self.target)
+        sample_weight = validate_sample_weight(sample_weight, len(y))
+        self.A_, self.B_ = self._compute_parameters()
+        self.direction_ = self._determine_direction()
+        if self.lr_model is None and self.pipeline is None:
+            # 自己训练出的模型不是外部预训练模型，重复 fit 必须重新拟合。
+            self.lr_model_ = None
 
         # 转换为 DataFrame
         if not isinstance(X, pd.DataFrame):
@@ -1147,19 +1184,8 @@ class ScoreCard(StandardScoreTransformer):
                     X = pd.DataFrame(X, columns=cols)
             else:
                 X = pd.DataFrame(X)
-
-        # 处理 scorecardpipeline 风格：从 X 中提取 y
-        if y is None and self.target is not None:
-            if self.target in X.columns:
-                y = X[self.target]
-                X = X.drop(columns=[self.target])
-                if self.verbose:
-                    logger.info(f"从X中提取target列 '{self.target}' 作为y")
-            else:
-                raise ValueError(f"指定的target列 '{self.target}' 不存在于X中")
-
-        if y is None:
-            raise ValueError("必须提供y参数或在__init__中指定target参数")
+            if not isinstance(X, pd.DataFrame):
+                X = pd.DataFrame(X)
 
         if not isinstance(y, pd.Series):
             y = pd.Series(y, index=X.index if len(y) == len(X) else None)
@@ -1511,8 +1537,7 @@ class ScoreCard(StandardScoreTransformer):
         >>> proba = scorecard.lr_model_.predict_proba(X_test_woe)[:, 1]
         >>> scores = scorecard.predict_score(proba=proba)
         """
-        if not self._skip_fit_check:
-            self._check_fitted()
+        self._check_fitted()
 
         if proba is None:
             if X is None:
@@ -1554,7 +1579,7 @@ class ScoreCard(StandardScoreTransformer):
         """
         # 检查是否需要fit
         # 如果未传入预训练模型且未调用fit，则报错
-        if not self._skip_fit_check:
+        if not self._skip_fit_check or getattr(self, "training_summary_", {}).get("状态") in {"失败", "中断"}:
             self._check_fitted()
         elif not hasattr(self, '_is_fitted') or not self._is_fitted:
             # 传入了预训练模型但未调用fit，使用预训练模型进行预测

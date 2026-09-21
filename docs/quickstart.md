@@ -1,9 +1,9 @@
 # 快速开始
 
-仓库提供了可直接运行的完整示例：
+仓库提供了可逐单元格运行的完整示例 `examples/00_quickstart.ipynb`，也可自动执行验证：
 
 ```bash
-python examples/00_quickstart.py
+python scripts/validate_examples.py --pattern 00_quickstart.ipynb
 ```
 
 下面的 Python 代码块按顺序执行即可完成同一条基础流程。示例只使用基础依赖。

@@ -103,11 +103,29 @@ GPU、分布式训练及任意 Python 制品的跨版本迁移未在本次本机
 当前包装器维持项目既有二分类、坏标签为 1 的边界；这不等同于覆盖原生框架的多分类、回归和排序模型。
 模型输出的概率和评分语义、现有损失/规则/解释/报告入口都保留。
 
+## 公共契约与资源保留的后续完善
+
+公共实现集中于 `core/models/_contracts.py`：目标列剔除、字段模式、类别概率、
+样本权重校验与按位置切分、拟合状态识别、扩展参数往返和轻量推理导出。
+模型包装器、LR、校准器、评分卡及调参器复用这些规则，不改变各框架的专属训练接口。
+SHAP 结果增加所选输出的加总校验，模型重复拟合会使解释缓存失效。
+
+调参结果的 `full/predictions/summary/best/disk` 策略由独立的 `_retention.py` 管理。
+默认保留完整历史及公开 `tuner`，磁盘档逐折写入并按需读取，
+摘要档仍保留最终重训所需的早停轮数，异常、剪枝和中断均保留诊断。
+完整保存用于续跑，`save_inference` 用于不携带调参历史的预测部署。
+
+回归测试以预测、评分、OOF、类别选择、参数克隆和重复拟合的等价性为依据，
+也检查非模型保留策略下折对象确实可以被垃圾回收，而不只是删除一个字典键。
+示例统一使用 Notebook，快速开始与模型解释教程不再依赖独立 Python 演示脚本。
+
 ## 参考依据
+
+以下引用为原有设计依据；上文历史验证数字不是本次新增验证数字。
 
 - [sklearn 估计器开发契约](https://scikit-learn.org/stable/developers/develop.html)：混入类顺序、构造参数和 clone 的要求。
 - [XGBoost 2.1 变更说明](https://xgboost.readthedocs.io/en/stable/changes/v2.1.0.html)：fit 中移除 eval_metric、early_stopping_rounds 和 callbacks。
 - [LightGBM early_stopping](https://lightgbm.readthedocs.io/en/v4.6.0/pythonapi/lightgbm.early_stopping.html)：回调和指标方向。
 - [Optuna Study 接口](https://optuna.readthedocs.io/en/stable/reference/generated/optuna.study.Study.html)：回调、catch、剪枝和 Study 复用。
 
-具体用法见 [模型工作流指南](model-workflow.md)，可运行示例为 `examples/28_model_workflow.py`。
+具体用法见 [模型工作流指南](model-workflow.md)，可运行示例为 `examples/28_model_workflow.ipynb`。

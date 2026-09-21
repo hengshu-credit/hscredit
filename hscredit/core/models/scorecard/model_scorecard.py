@@ -48,12 +48,17 @@ from sklearn.utils.validation import check_is_fitted
 
 from ....exceptions import NotFittedError, ValidationError
 from ....utils.serialization import ArtifactSerializableMixin
+from .._contracts import (
+    ExtraParamsMixin, align_model_features, extract_target, is_model_fitted,
+    positive_probability, record_feature_schema, validate_sample_weight,
+)
+from .._lifecycle import record_training
 from .score_transformer import ScoreTransformer
 
 logger = logging.getLogger(__name__)
 
 
-class ProbabilityScoreCard(ArtifactSerializableMixin, BaseEstimator):
+class ProbabilityScoreCard(ExtraParamsMixin, ArtifactSerializableMixin, BaseEstimator):
     artifact_kind = "评分卡"
     """通用模型评分卡（概率 → 评分）.
 
@@ -79,6 +84,7 @@ class ProbabilityScoreCard(ArtifactSerializableMixin, BaseEstimator):
     :param prefit: 是否将 model 视为已训练（跳过训练），默认 None（自动检测）
     :param target: 目标列名，默认 'target'（用于从 DataFrame 提取 y）
     :param verbose: 是否输出详细信息，默认 False
+    :param positive_class: 坏样本类别，默认 1；None 时沿用基础模型第 2 列的类别。
     :param kwargs: 透传给 ScoreTransformer 的其他参数（如 n_quantiles、lmbda）
 
     **属性**
@@ -105,6 +111,7 @@ class ProbabilityScoreCard(ArtifactSerializableMixin, BaseEstimator):
         prefit: Optional[bool] = None,
         target: str = 'target',
         verbose: bool = False,
+        positive_class: Optional[Any] = 1,
         **kwargs
     ):
         self.model = model
@@ -121,6 +128,7 @@ class ProbabilityScoreCard(ArtifactSerializableMixin, BaseEstimator):
         self.prefit = prefit
         self.target = target
         self.verbose = verbose
+        self.positive_class = positive_class
         self.kwargs = kwargs
 
         self._is_fitted = False
@@ -130,31 +138,14 @@ class ProbabilityScoreCard(ArtifactSerializableMixin, BaseEstimator):
     @staticmethod
     def _is_model_fitted(model: Any) -> bool:
         """判断模型是否已训练."""
-        if model is None:
-            return False
-        # hscredit BaseRiskModel / 评分卡 风格
-        if getattr(model, '_is_fitted', False):
-            return True
-        # sklearn 风格
-        try:
-            check_is_fitted(model)
-            return True
-        except Exception:
-            pass
-        # 兜底：常见的已训练标志属性
-        return any(
-            hasattr(model, attr)
-            for attr in ('coef_', 'classes_', 'feature_importances_', 'booster_')
-        )
+        return is_model_fitted(model)
 
-    @staticmethod
-    def _positive_proba(proba: np.ndarray) -> np.ndarray:
+    def _positive_proba(self, proba: np.ndarray) -> np.ndarray:
         """从 predict_proba 输出中提取正类（坏样本）概率."""
-        proba = np.asarray(proba)
-        if proba.ndim == 2:
-            # 二分类取第 2 列；多分类取最后一列
-            return proba[:, -1] if proba.shape[1] >= 2 else proba[:, 0]
-        return proba
+        model = getattr(self, "model_", None)
+        if model is None:
+            model = self.model
+        return positive_probability(proba, getattr(model, "classes_", None), getattr(self, "positive_class", None))
 
     def _model_proba(self, X: Union[pd.DataFrame, np.ndarray]) -> np.ndarray:
         """通过底层模型计算正类概率."""
@@ -165,7 +156,8 @@ class ProbabilityScoreCard(ArtifactSerializableMixin, BaseEstimator):
             raise ValidationError(
                 f"模型 {type(model).__name__} 不含 predict_proba 方法，无法转换为评分"
             )
-        return self._positive_proba(model.predict_proba(X))
+        X = align_model_features(self, X)
+        return positive_probability(model.predict_proba(X), getattr(model, "classes_", [0, 1]), getattr(self, "positive_class", None))
 
     def _build_transformer(self) -> ScoreTransformer:
         """根据当前参数构建 ScoreTransformer."""
@@ -197,6 +189,10 @@ class ProbabilityScoreCard(ArtifactSerializableMixin, BaseEstimator):
 
     # ==================== 训练 ====================
 
+    def __sklearn_is_fitted__(self):
+        return bool(getattr(self, "_is_fitted", False))
+
+    @record_training
     def fit(
         self,
         X: Optional[Union[pd.DataFrame, np.ndarray]] = None,
@@ -229,19 +225,10 @@ class ProbabilityScoreCard(ArtifactSerializableMixin, BaseEstimator):
         :param proba: 直接传入训练集正类概率（无模型时使用），可选
         :return: self
         """
-        # scorecardpipeline 风格：从 X 中提取 target
-        if (
-            proba is None
-            and y is None
-            and isinstance(X, pd.DataFrame)
-            and self.target is not None
-            and self.target in X.columns
-        ):
-            y = X[self.target]
-            X = X.drop(columns=[self.target])
-
-        if isinstance(X, pd.DataFrame):
-            self.feature_names_in_ = X.columns.tolist()
+        if X is not None:
+            X, y = extract_target(X, y, self.target, require_y=False)
+            record_feature_schema(self, X)
+            sample_weight = validate_sample_weight(sample_weight, X.shape[0])
 
         # 1. 确定训练概率
         if proba is not None:
@@ -263,11 +250,8 @@ class ProbabilityScoreCard(ArtifactSerializableMixin, BaseEstimator):
                     raise ValidationError("底层模型未训练，fit 需要提供 y 进行训练")
                 if self.verbose:
                     logger.info("训练底层模型: %s", type(self.model_).__name__)
-                try:
-                    self.model_.fit(X, y, sample_weight=sample_weight)
-                except TypeError:
-                    # 部分模型 fit 不支持 sample_weight
-                    self.model_.fit(X, y)
+                fit_params = {} if sample_weight is None else {"sample_weight": sample_weight}
+                self.model_.fit(X, y, **fit_params)
             elif self.verbose:
                 logger.info("复用已训练模型: %s", type(self.model_).__name__)
 
@@ -293,7 +277,7 @@ class ProbabilityScoreCard(ArtifactSerializableMixin, BaseEstimator):
         model = self.model_ if getattr(self, 'model_', None) is not None else self.model
         if model is None or not hasattr(model, 'predict_proba'):
             raise NotFittedError("当前评分卡无底层模型，无法 predict_proba，请使用 predict_score(proba=...)")
-        return model.predict_proba(X)
+        return model.predict_proba(align_model_features(self, X))
 
     def predict_score(
         self,

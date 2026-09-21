@@ -58,6 +58,8 @@ jobs:
           tests/test_models/test_tuning.py
           tests/test_models/test_tuning_contract_repairs.py
           tests/test_models/test_tuning_visualization.py
+          tests/test_models/test_shared_model_semantics.py
+          tests/test_models/test_tuning_retention_semantics.py
           tests/test_models/test_default_probability_scorecard.py
           tests/test_feature_selection/test_selector_model_compat.py
           -q --tb=short

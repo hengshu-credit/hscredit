@@ -122,7 +122,7 @@ quickstart: dev validate ## 快速开始（安装+验证）
 	@echo ""
 	@echo "下一步:"
 	@echo "  1. 运行 'make jupyter' 启动Jupyter"
-	@echo "  2. 运行 'python examples/00_quickstart.py' 验证完整流程"
+	@echo "  2. 打开 examples/00_quickstart.ipynb，或用 scripts/validate_examples.py 执行验证"
 	@echo ""
 
 # 克隆文档仓库

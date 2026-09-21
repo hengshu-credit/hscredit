@@ -22,6 +22,7 @@ from ....exceptions import NotFittedError, ValidationError
 from ....utils.parallel import ParallelizableMixin, _ACTIVE_BUDGET, parallel_execute, resolve_n_jobs
 from ....utils.serialization import ArtifactSerializableMixin
 from ...rules.rule import Rule, RuleState
+from .._contracts import extract_target
 
 logger = logging.getLogger(__name__)
 
@@ -48,12 +49,7 @@ def _check_input_data(
         else:
             X = pd.DataFrame(X)
 
-    # 如果y为None且target列存在于X中，提取target
-    if y is None and target in X.columns:
-        y = X[target]
-        X = X.drop(columns=[target])
-
-    return X, y
+    return extract_target(X, y, target, require_y=False)
 
 
 class LogicOperator(str, Enum):

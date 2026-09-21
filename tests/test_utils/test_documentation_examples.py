@@ -3,7 +3,6 @@
 import json
 import os
 import re
-import runpy
 from pathlib import Path
 
 import numpy as np
@@ -32,9 +31,16 @@ def test_quickstart_markdown_python_blocks_execute(tmp_path):
     assert len(blocks) == 8
 
 
-def test_executable_quickstart_script(tmp_path):
-    module = runpy.run_path(str(PROJECT_ROOT / "examples" / "00_quickstart.py"))
-    result = module["run_quickstart"](tmp_path)
+def test_executable_quickstart_notebook(tmp_path, monkeypatch):
+    monkeypatch.chdir(PROJECT_ROOT)
+    monkeypatch.setenv("HSCREDIT_EXAMPLE_OUTPUT", str(tmp_path))
+    notebook = json.loads((PROJECT_ROOT / "examples" / "00_quickstart.ipynb").read_text(encoding="utf-8"))
+    from IPython.display import display
+    namespace = {"__name__": "__notebook_example__", "display": display}
+    for cell in notebook["cells"]:
+        if cell["cell_type"] == "code":
+            exec(compile("".join(cell["source"]), "00_quickstart.ipynb", "exec"), namespace)
+    result = namespace["result"]
 
     assert result["train_rows"] == 300
     assert result["test_rows"] == 100
@@ -59,15 +65,17 @@ def test_active_docs_and_examples_use_new_model_subpackages():
         PROJECT_ROOT / "README.md",
         PROJECT_ROOT / "docs" / "quickstart.md",
         PROJECT_ROOT / "docs" / "articles" / "model-interpretability.md",
-        PROJECT_ROOT / "examples" / "00_quickstart.py",
-        PROJECT_ROOT / "examples" / "27_model_interpretability.py",
+        PROJECT_ROOT / "examples" / "00_quickstart.ipynb",
+        PROJECT_ROOT / "examples" / "27_model_interpretability.ipynb",
+        PROJECT_ROOT / "examples" / "28_model_workflow.ipynb",
     ]
     text = "\n".join(path.read_text(encoding="utf-8") for path in paths)
 
     assert "models.evaluation" not in text
-    assert "examples/27_model_interpretability.py" in text
+    assert "examples/27_model_interpretability.py" not in text
     assert "examples/27_model_interpretability.ipynb" in text
-    assert (PROJECT_ROOT / "examples" / "27_model_interpretability.py").is_file()
+    assert not (PROJECT_ROOT / "examples" / "27_model_interpretability.py").exists()
+    assert not (PROJECT_ROOT / "examples" / "00_quickstart.py").exists()
     assert (PROJECT_ROOT / "examples" / "27_model_interpretability.ipynb").is_file()
 
 

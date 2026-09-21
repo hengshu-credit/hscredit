@@ -443,9 +443,9 @@ class LightGBM(BaseRiskModel):
         基于 predict_proba 取阈值，确保自定义损失（原始分数输出）下也能返回正确类别。
         """
         self._require_fitted()
-        if predict_params:
+        if any(predict_params.get(name) for name in ("raw_score", "pred_leaf", "pred_contrib")):
             return self._model.predict(self._prepare_data(X)[0], **predict_params)
-        proba = self.predict_proba(X)
+        proba = self.predict_proba(X, **predict_params)
         indices = np.argmax(proba, axis=1)
         return np.asarray(self.classes_)[indices]
 

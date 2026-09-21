@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 
 from hscredit.exceptions import ValidationError
+from .._contracts import FeatureSchema
 
 COUNTERFACTUAL_COLUMNS = [
     "样本索引",
@@ -56,6 +57,7 @@ class CounterfactualExplainer:
             raise ValidationError("max_candidates 必须是正整数")
         self.model = model
         self.reference_data = reference_data.copy()
+        self.feature_schema_ = FeatureSchema.from_data(reference_data)
         self.positive_class = positive_class
         self.output_type = self._resolve_output_type(output_type)
         self.max_candidates = max_candidates
@@ -133,6 +135,7 @@ class CounterfactualExplainer:
 
     def _predict_many(self, frame):
         """批量返回当前输出尺度的一维预测。"""
+        frame = self.feature_schema_.align(frame, restore_dtypes=True)
         if self._uses_score_output():
             predictions = np.asarray(self.model.predict_score(frame), dtype=float).reshape(-1)
             if len(predictions) != len(frame):

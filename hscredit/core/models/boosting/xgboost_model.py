@@ -456,7 +456,8 @@ class XGBoost(BaseRiskModel):
         params = self._resolve_native_aliases(params, self._parameter_aliases)
 
         # 解析自定义损失（BaseLoss 实例 -> sklearn 包装器可用的目标函数）
-        params["objective"] = resolve_custom_objective(params.get("objective"))
+        # 旧版 sklearn 目标回调不传权重，已完成自动划分的训练权重作为兼容回退。
+        params["objective"] = resolve_custom_objective(params.get("objective"), sample_weight=sample_weight)
 
         # 旧版在 fit 接收早停和回调，新版在构造器接收。
         from packaging.version import Version

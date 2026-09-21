@@ -63,4 +63,5 @@ report.to_excel("模型解释报告.xlsx")
 ```
 
 完整教程见 `examples/27_model_interpretability.ipynb`；命令行生成报告可运行
-`examples/27_model_interpretability.py --input <数据.xlsx> --output <报告.xlsx>`。
+`examples/27_model_interpretability.ipynb`，在配置单元格设置输入工作簿、输出路径和解释样本数。
+也可用 `python scripts/validate_examples.py --pattern 27_model_interpretability.ipynb` 自动执行全部单元格。

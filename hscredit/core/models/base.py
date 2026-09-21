@@ -31,6 +31,10 @@ from ..metrics.finance import lift_monotonicity_check
 from ...utils.serialization import ArtifactSerializableMixin
 from ...utils.parallel import resolve_n_jobs
 from .scorecard_support import _ProbabilityScoreCardMixin
+from ._contracts import (
+    InferenceExportMixin, align_model_features, positive_probability,
+    record_feature_schema, take_rows, validate_sample_weight,
+)
 
 if TYPE_CHECKING:
     import matplotlib
@@ -185,7 +189,7 @@ def _evaluate_binary_predictions(
     return results
 
 
-def resolve_custom_objective(objective):
+def resolve_custom_objective(objective, sample_weight=None):
     """将自定义损失对象解析为各 boosting 框架 sklearn 包装器可用的目标函数.
 
     统一自定义 LOSS 入口：当用户直接传入 :class:`~hscredit.core.models.losses.BaseLoss`
@@ -208,16 +212,21 @@ def resolve_custom_objective(objective):
         return objective
 
     loss = objective
+    fallback_weight = sample_weight
 
-    def _sklearn_obj(y_true: np.ndarray, y_pred: np.ndarray):
+    def _sklearn_obj(y_true: np.ndarray, y_pred: np.ndarray, sample_weight=None):
         # boosting 框架回调传入原始分数，先 sigmoid 转概率再求梯度
         prob = 1.0 / (1.0 + np.exp(-np.asarray(y_pred, dtype=float)))
-        return _margin_derivatives(loss, y_true, prob)
+        gradient, hessian = _margin_derivatives(loss, y_true, prob)
+        weights = validate_sample_weight(fallback_weight if sample_weight is None else sample_weight, len(y_true))
+        if weights is not None:
+            gradient, hessian = gradient * weights, hessian * weights
+        return gradient, hessian
 
     return _sklearn_obj
 
 
-class BaseRiskModel(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, ClassifierMixin, BaseEstimator, ABC):
+class BaseRiskModel(_ProbabilityScoreCardMixin, InferenceExportMixin, ArtifactSerializableMixin, ClassifierMixin, BaseEstimator, ABC):
     """风控模型基类.
 
     所有风控模型的抽象基类，定义统一接口。
@@ -539,7 +548,7 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, Class
         binary_predictions = (predicted_labels == resolved_positive).astype(int)
         return _evaluate_binary_predictions(
             binary_labels,
-            probabilities[:, int(matches[0])],
+            positive_probability(probabilities, classes, resolved_positive),
             binary_predictions,
             metrics=requested_metrics,
             sample_weight=sample_weight,
@@ -937,60 +946,18 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, Class
         :param training: 是否为拟合阶段；仅拟合阶段记录输入字段契约
         :return: 处理后的X, y, sample_weight
         """
-        # 处理DataFrame
-        if isinstance(X, pd.DataFrame):
-            if not X.columns.is_unique:
-                raise ValueError("输入特征列名不能重复")
-            # scorecardpipeline风格：从X中提取target列
-            if extract_target and self.target is not None and self.target in X.columns:
-                if y is None:
-                    y = X[self.target].values
-                X = X.drop(columns=[self.target])
+        # 参数名 extract_target 为历史公开签名；公共函数使用别名避免遮蔽。
+        from ._contracts import extract_target as prepare_input
 
-            if training or not hasattr(self, "feature_names_in_"):
-                self.feature_names_in_ = X.columns.tolist()
-                self._feature_names_known_ = True
-            elif getattr(self, "_feature_names_known_", True) is False:
-                if X.shape[1] != self.n_features_in_:
-                    raise ValueError(f"输入特征数量不匹配：训练时为{self.n_features_in_}，当前为{X.shape[1]}")
-            else:
-                expected = list(self.feature_names_in_)
-                missing = [column for column in expected if column not in X.columns]
-                if missing:
-                    raise ValueError(f"输入数据缺少训练字段: {missing}")
-                # 只使用训练字段并恢复训练顺序；额外业务字段按约定忽略。
-                X = X.loc[:, expected]
-
-            if not getattr(self, "_preserve_dataframe", False):
-                X = X.values
+        X, y = prepare_input(X, y, self.target if extract_target else None, require_y=training)
+        if training or not hasattr(self, "feature_names_in_"):
+            record_feature_schema(self, X)
         else:
-            from scipy.sparse import issparse
-
-            if not issparse(X):
-                X = np.asarray(X)
-            if X.ndim != 2:
-                raise ValueError(f"输入特征必须是二维数组，当前维度为{X.ndim}")
-            if training or not hasattr(self, "feature_names_in_"):
-                self.feature_names_in_ = [f"feature_{i}" for i in range(X.shape[1])]
-                self._feature_names_known_ = False
-            elif hasattr(self, "n_features_in_") and X.shape[1] != self.n_features_in_:
-                raise ValueError(f"输入特征数量不匹配：训练时为{self.n_features_in_}，当前为{X.shape[1]}")
-
-        # 处理y
-        if y is not None:
-            y = np.asarray(y)
-            if y.ndim != 1 or len(y) != X.shape[0]:
-                raise ValueError("训练标签必须是一维且与特征样本等长")
-        elif training:
-            raise ValueError("请提供 y，或通过 target 指定数据中的目标列")
-
-        # 处理样本权重
-        if sample_weight is not None:
-            sample_weight = np.asarray(sample_weight, dtype=float)
-            if sample_weight.ndim != 1 or len(sample_weight) != X.shape[0]:
-                raise ValueError("sample_weight 必须是一维且与样本等长")
-            if not np.isfinite(sample_weight).all() or np.any(sample_weight < 0) or sample_weight.sum() <= 0:
-                raise ValueError("sample_weight 必须是有限非负数且总和大于0")
+            X = align_model_features(self, X)
+        if isinstance(X, pd.DataFrame) and not getattr(self, "_preserve_dataframe", False):
+            X = X.to_numpy()
+        y = None if y is None else np.asarray(y)
+        sample_weight = validate_sample_weight(sample_weight, X.shape[0])
 
         if training and not 0 <= self.validation_fraction < 1:
             raise ValueError("validation_fraction 必须在 [0, 1) 范围内")
@@ -1050,15 +1017,7 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, Class
     @staticmethod
     def _take_rows(values, indices):
         """按位置选取与样本逐行对齐的数据。"""
-        if values is None:
-            return None
-        if hasattr(values, "iloc"):
-            return values.iloc[indices]
-        from scipy.sparse import issparse
-
-        if issparse(values):
-            return values[indices]
-        return np.asarray(values)[indices]
+        return take_rows(values, indices)
 
     def _split_row_aligned_value(self, values):
         """使用最近一次自动验证集索引切分样本级参数。"""

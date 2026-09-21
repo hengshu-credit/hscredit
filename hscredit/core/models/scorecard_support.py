@@ -5,6 +5,7 @@ from typing import Any, Dict, Optional
 import numpy as np
 
 from ...exceptions import NotFittedError, SerializationError
+from ._contracts import positive_probability, validate_labels
 
 
 class _ProbabilityScoreCardMixin:
@@ -40,24 +41,11 @@ class _ProbabilityScoreCardMixin:
     @staticmethod
     def _validate_probability_scorecard_labels(y: np.ndarray) -> np.ndarray:
         """在原生模型训练前校验统一二分类标签。"""
-        labels = np.asarray(y).reshape(-1)
-        unique_labels = set(np.unique(labels).tolist())
-        if unique_labels != {0, 1}:
-            raise ValueError("训练标签必须同时包含 0 和 1，且 1 表示坏样本")
-        return labels
+        return validate_labels(y)
 
     def _positive_probability_values(self, proba: Any) -> np.ndarray:
         """按 classes_ 从概率结果提取类别 1。"""
-        proba = np.asarray(proba, dtype=float)
-        if proba.ndim != 2 or proba.shape[1] < 2:
-            raise ValueError("predict_proba 必须返回至少两列概率，类别 1 表示坏样本")
-        positive_index = 1
-        classes = getattr(self, "classes_", None)
-        if classes is not None:
-            positive = np.flatnonzero(np.asarray(classes) == 1)
-            if len(positive) == 1:
-                positive_index = int(positive[0])
-        return proba[:, positive_index]
+        return positive_probability(proba, getattr(self, "classes_", [0, 1]), 1)
 
     def _positive_probability(self, X: Any) -> np.ndarray:
         """调用模型概率方法并提取类别 1。"""
@@ -148,6 +136,8 @@ class _ProbabilityScoreCardMixin:
                 "_best_score",
                 "scale_pos_weight_",
                 "tuner",
+                "feature_schema_",
+                "fit_revision_",
             )
             if hasattr(self, name)
         }
@@ -161,6 +151,7 @@ class _ProbabilityScoreCardMixin:
         from pathlib import Path
         from ...utils import load_pickle
 
+        self.__dict__.pop("feature_schema_", None)
         sidecar = Path(self._score_transformer_sidecar_path(path))
         if not sidecar.exists():
             if required:

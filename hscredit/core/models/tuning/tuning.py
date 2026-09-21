@@ -85,6 +85,8 @@ from sklearn.base import clone
 from sklearn.model_selection import ParameterGrid, StratifiedKFold
 from sklearn.metrics import get_scorer, log_loss, roc_curve
 from ...metrics import auc as auc_metric
+from .._contracts import extract_target, positive_probability, split_sample_params, take_rows, validate_labels, validate_sample_weight
+from ._retention import compact_fold, load_fold, resolve_retention, retain_fold, trial_path
 
 logger = logging.getLogger(__name__)
 
@@ -583,13 +585,7 @@ def _calc_ks_with_diff(
 
 def _safe_index(data: Any, indices: np.ndarray) -> Any:
     """按行索引切分 pandas / numpy / list 数据."""
-    if data is None:
-        return None
-    if hasattr(data, "iloc"):
-        return data.iloc[indices]
-    from scipy.sparse import issparse
-
-    return data[indices] if issparse(data) else np.asarray(data)[indices]
+    return take_rows(data, indices)
 
 
 class TuningObjective:
@@ -1138,6 +1134,7 @@ class ModelTuner(ArtifactSerializableMixin):
         trial_objective: Optional[Callable] = None,
         artifact_dir: Optional[str] = None,
         store_models: bool = True,
+        retention: Optional[str] = None,
     ):
         """初始化 ModelTuner.
 
@@ -1176,6 +1173,8 @@ class ModelTuner(ArtifactSerializableMixin):
         :param trial_objective: 原生函数 (trial) -> 数值或多目标序列，完全接管试验内容。
         :param artifact_dir: 逐折保存试验制品的目录；None 时只保留内存记录。
         :param store_models: 是否保留各折模型，默认 True；False 仍保留预测和指标。
+        :param retention: 结果保留策略：full、predictions、summary、best、disk。
+            None 按 store_models 保持旧行为；disk 必须指定 artifact_dir，按需读取且不常驻折模型。
         """
         if not OPTUNA_AVAILABLE:
             raise ImportError("Optuna未安装，请使用 pip install optuna 安装")
@@ -1232,6 +1231,8 @@ class ModelTuner(ArtifactSerializableMixin):
         self.trial_objective = trial_objective
         self.artifact_dir = artifact_dir
         self.store_models = store_models
+        self.retention = retention
+        self.retention_ = resolve_retention(retention, store_models, artifact_dir)
         self.trial_results_ = {}
         self.best_model_ = None
 
@@ -1342,24 +1343,8 @@ class ModelTuner(ArtifactSerializableMixin):
         :param y: 目标变量，可选
         :return: (X, y) 处理后的特征和目标
         """
-        if y is None:
-            # scorecardpipeline风格：从X中提取target
-            if isinstance(X, pd.DataFrame):
-                if self.target not in X.columns:
-                    raise ValueError(f"X中不存在目标列 '{self.target}'，请检查target参数或传入y")
-                y = X[self.target]
-                X = X.drop(columns=[self.target])
-            else:
-                raise ValueError("当y为None时，X必须是包含目标列的DataFrame")
-
-        if isinstance(X, pd.DataFrame) and self.target in X.columns:
-            X = X.drop(columns=[self.target])
-        if not hasattr(X, "shape"):
-            X = np.asarray(X)
-        if np.asarray(y).ndim != 1 or X.shape[0] != len(y):
-            raise ValueError("调参标签必须是一维且与特征样本等长")
-        if set(np.unique(y)) != {0, 1}:
-            raise ValueError("调参标签必须同时包含 0 和 1，且 1 表示坏样本")
+        X, y = extract_target(X, y, self.target)
+        validate_labels(y)
         return X, y
 
     def fit(
@@ -1405,6 +1390,7 @@ class ModelTuner(ArtifactSerializableMixin):
         """
         # 检查并处理输入
         X, y = self._check_input(X, y)
+        self.retention_ = resolve_retention(getattr(self, "retention", None), self.store_models, self.artifact_dir)
 
         # 记录数据信息
         self._n_samples = X.shape[0]
@@ -1419,14 +1405,10 @@ class ModelTuner(ArtifactSerializableMixin):
         self._y = y
         self._sample_weight = sample_weight
         self._groups = groups
+        self._training_data_released_ = False
         self._fit_params = {**self.fit_params, **dict(fit_params or {})}
         self.best_model_ = None
-        if sample_weight is not None:
-            weights = np.asarray(sample_weight, dtype=float)
-            if weights.ndim != 1 or len(weights) != len(y):
-                raise ValueError("sample_weight 必须是一维且与样本等长")
-            if not np.isfinite(weights).all() or np.any(weights < 0) or weights.sum() <= 0:
-                raise ValueError("sample_weight 必须是有限非负数且总和大于0")
+        validate_sample_weight(sample_weight, len(y))
 
         self._cv_splits = list(self._splitter(X, y))
         for train_indices, val_indices in self._cv_splits:
@@ -1482,7 +1464,7 @@ class ModelTuner(ArtifactSerializableMixin):
         model_workers = max(1, int(self.n_jobs or 1))
 
         def objective(trial):
-            self.trial_results_[trial.number] = {"试验编号": trial.number, "各折": []}
+            self.trial_results_[trial.number] = {"试验编号": trial.number, "各折": [], "保留策略": self.retention_}
             try:
                 if self.trial_objective is not None:
                     return self.trial_objective(trial)
@@ -1520,9 +1502,23 @@ class ModelTuner(ArtifactSerializableMixin):
             )
         finally:
             # 中断、回调错误和全失败同样保留已完成的搜索过程。
+            # Optuna 在 KeyboardInterrupt 时可能不执行完成回调，仍需提交索引和状态。
+            import sys
+
+            interrupted = isinstance(sys.exc_info()[1], KeyboardInterrupt)
+            for trial in self.study_.trials:
+                record = self.trial_results_.get(trial.number)
+                if record is not None and "状态" not in record and trial.state.name in {"COMPLETE", "FAIL", "PRUNED"}:
+                    record.update(
+                        状态="中断" if interrupted and trial.state.name == "FAIL" else {"COMPLETE": "完成", "FAIL": "失败", "PRUNED": "剪枝"}[trial.state.name],
+                        得分=trial.values,
+                        用户属性=dict(trial.user_attrs),
+                    )
+                    self._persist_trial(trial.number)
             self.optimization_history_ = self._build_public_history()
             if any(t.state == optuna.trial.TrialState.COMPLETE for t in self.study_.trials):
                 self._save_results()
+            self._apply_retention()
 
         completed_trials = [
             trial
@@ -1667,14 +1663,8 @@ class ModelTuner(ArtifactSerializableMixin):
         return model
 
     def _fold_fit_params(self, indices, trial=None, fold=None):
-        params = copy.deepcopy(getattr(self, "_fit_params", self.fit_params))
-        row_names = {"sample_weight", "base_margin", "init_score", "baseline", "groups"}
-        for name, value in list(params.items()):
-            if name.rsplit("__", 1)[-1] in row_names and value is not None:
-                if len(value) != self._n_samples:
-                    raise ValueError(f"训练参数 {name} 必须与完整训练数据等长")
-                if indices is not None:
-                    params[name] = _safe_index(value, indices)
+        # 先切分再复制，避免每折复制一份完整训练样本参数。
+        params = copy.deepcopy(split_sample_params(getattr(self, "_fit_params", self.fit_params), indices, self._n_samples))
         if self.fit_params_factory is not None:
             extra = self.fit_params_factory(trial, fold)
             if not isinstance(extra, dict):
@@ -1760,17 +1750,17 @@ class ModelTuner(ArtifactSerializableMixin):
             except Exception:
                 # 兼容既有的非 sklearn 自定义模型；模板尚未训练，每折仍使用独立对象。
                 fold_model = copy.deepcopy(model)
-            fit_kwargs = self._fold_fit_params(train_idx, trial, fold_index)
-            if sample_weight_fold is not None:
-                fit_kwargs["sample_weight"] = sample_weight_fold
+            fit_kwargs = {}
             record = {"折编号": fold_index, "训练位置": np.asarray(train_idx), "验证位置": np.asarray(val_idx)}
             if trial is not None:
                 self.trial_results_[trial.number]["各折"].append(record)
             try:
+                fit_kwargs = self._fold_fit_params(train_idx, trial, fold_index)
+                if sample_weight_fold is not None:
+                    fit_kwargs["sample_weight"] = sample_weight_fold
                 self._fit_fold(fold_model, X_train_fold, y_train_fold, fit_kwargs)
-                positive = np.flatnonzero(np.asarray(fold_model.classes_) == 1)[0]
-                y_train_pred = fold_model.predict_proba(X_train_fold)[:, positive]
-                y_val_pred = fold_model.predict_proba(X_val_fold)[:, positive]
+                y_train_pred = positive_probability(fold_model.predict_proba(X_train_fold), fold_model.classes_, 1)
+                y_val_pred = positive_probability(fold_model.predict_proba(X_val_fold), fold_model.classes_, 1)
                 y_val_arr, y_train_arr = np.asarray(y_val_fold), np.asarray(y_train_fold)
                 record.update(
                     真实标签=y_val_arr, 预测概率=y_val_pred, 训练真实标签=y_train_arr, 训练预测概率=y_train_pred
@@ -1787,7 +1777,7 @@ class ModelTuner(ArtifactSerializableMixin):
                     fold_lifts[ratio].append(TuningObjective.lift_head(y_val_arr, y_val_pred, ratio=ratio))
                 record["状态"] = "完成"
             except BaseException as exc:
-                record.update(状态="失败", 错误类型=type(exc).__name__, 错误信息=str(exc))
+                record.update(状态="中断" if isinstance(exc, KeyboardInterrupt) else "失败", 错误类型=type(exc).__name__, 错误信息=str(exc))
                 raise
             finally:
                 trained = self._final_estimator(fold_model)
@@ -1800,8 +1790,10 @@ class ModelTuner(ArtifactSerializableMixin):
                 )
                 if hasattr(trained, "get_best_iteration"):
                     record["最佳迭代"] = trained.get_best_iteration()
-                if self.store_models:
+                if self.retention_ in {"full", "best", "disk"}:
                     record["模型"] = fold_model
+                if trial is not None:
+                    retain_fold(self, trial.number, record)
                 if trial is not None and self.artifact_dir:
                     self._persist_trial(trial.number)
             if trial is not None:
@@ -1839,32 +1831,54 @@ class ModelTuner(ArtifactSerializableMixin):
         record.update(
             状态=states.get(trial.state.name, trial.state.name), 得分=trial.values, 用户属性=dict(trial.user_attrs)
         )
+        self._apply_retention()
         self._persist_trial(trial.number)
+
+    def _apply_retention(self):
+        """best 档仅保留当前最佳试验的折模型，其他试验仍保留指标和诊断。"""
+        if getattr(self, "retention_", "full") != "best" or self.study_ is None:
+            return
+        completed = [trial for trial in self.study_.trials if trial.state == optuna.trial.TrialState.COMPLETE]
+        best = self._select_best_pareto_trial(self.study_.best_trials) if completed and self._is_multi_objective else None
+        if completed and not self._is_multi_objective:
+            best = self.study_.best_trial
+        for number, record in self.trial_results_.items():
+            if best is not None and number == best.number:
+                continue
+            if record.get("保留策略") == "summary":
+                continue
+            if record.get("状态") in {"完成", "失败", "剪枝", "中断"}:
+                record["各折"] = [compact_fold(fold) for fold in record["各折"]]
+                record["保留策略"] = "summary"
+                self._persist_trial(number)
 
     def _persist_trial(self, number):
         if self.artifact_dir is None:
             return
-        from pathlib import Path
-        from ....utils import save_pickle
-        import hashlib
+        from .._lifecycle import atomic_save_pickle
 
-        study_key = hashlib.sha256(self.study_.study_name.encode()).hexdigest()[:16]
-        path = Path(self.artifact_dir).resolve() / study_key / f"trial_{number}.pkl"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        save_pickle(self.trial_results_[number], path, engine="cloudpickle")
+        path = trial_path(self, number)
+        atomic_save_pickle(self.trial_results_[number], path, engine="cloudpickle")
         self.trial_results_[number]["制品路径"] = str(path)
         self.study_.set_user_attr(f"试验制品_{number}", str(path))
 
-    def get_trial_result(self, number):
-        """获取任意试验的逐折过程；可从共享 Study 的制品路径恢复。"""
+    def get_trial_result(self, number, *, load=True):
+        """获取逐折过程；disk 档 load=False 只读摘要，默认按需读取且不缓存折模型。"""
         if number not in self.trial_results_:
             from ....utils import load_pickle
 
             path = self.study_.user_attrs.get(f"试验制品_{number}") if self.study_ is not None else None
+            if self.artifact_dir is not None and self.study_ is not None:
+                relocated = trial_path(self, number)
+                if relocated.is_file():
+                    path = relocated
             if not path:
                 raise ValueError(f"试验 {number} 没有保存逐折结果；请配置 artifact_dir 或加载完整调参制品")
             self.trial_results_[number] = load_pickle(path, engine="cloudpickle")
-        return self.trial_results_[number]
+        record = self.trial_results_[number]
+        if load and any("制品路径" in fold for fold in record.get("各折", [])):
+            return {**record, "各折": [load_fold(fold, self) for fold in record["各折"]]}
+        return record
 
     def get_oof_predictions(self, trial_number=None):
         """返回折外预测；重复验证取平均，未参加验证的位置保留缺失值。"""
@@ -1872,9 +1886,14 @@ class ModelTuner(ArtifactSerializableMixin):
             if self.best_params_ is None:
                 raise ValueError("请先完成至少一次成功试验")
             trial_number = self.best_trial_.number
-        record = self.get_trial_result(trial_number)
+        if getattr(self, "_training_data_released_", False):
+            raise ValueError("训练数据已释放，无法组装完整标签的折外预测；请重新 fit")
+        record = self.get_trial_result(trial_number, load=False)
+        if not any("预测概率" in fold or "制品路径" in fold for fold in record.get("各折", [])):
+            raise ValueError("当前保留策略未保留该试验的折外预测，请使用 full、predictions、disk 或最佳试验")
         sums, counts = np.zeros(self._n_samples), np.zeros(self._n_samples, dtype=int)
-        for fold in record["各折"]:
+        for summary in record["各折"]:
+            fold = load_fold(summary, self)
             if "预测概率" in fold:
                 np.add.at(sums, fold["验证位置"], fold["预测概率"])
                 np.add.at(counts, fold["验证位置"], 1)
@@ -1888,6 +1907,23 @@ class ModelTuner(ArtifactSerializableMixin):
             }
         )
 
+    def release_training_data(self):
+        """显式释放续训输入和样本级 fit 参数；已缓存最佳模型仍可预测。
+
+        不删除已保留的折结果或磁盘制品，不清理用户函数闭包。
+        再次 fit 必须重新提供输入及所需的样本参数。
+        """
+        from .._contracts import SAMPLE_PARAMETER_NAMES
+
+        for name in ("_X", "_y", "_sample_weight", "_groups", "_cv_splits"):
+            setattr(self, name, None)
+        row_names = SAMPLE_PARAMETER_NAMES | {"eval_set", "X_val", "Y_val"}
+        for name in ("fit_params", "_fit_params"):
+            params = getattr(self, name, {})
+            setattr(self, name, {key: value for key, value in params.items() if key.rsplit("__", 1)[-1] not in row_names})
+        self._training_data_released_ = True
+        return self
+
     def save(self, path, **kwargs):
         """保存可继续调参的完整对象，包括 Study、输入、预测、模型和自定义函数。"""
         kwargs.setdefault("engine", "cloudpickle")
@@ -1896,9 +1932,16 @@ class ModelTuner(ArtifactSerializableMixin):
         return atomic_save_pickle({**self.get_artifact_metadata(), "object": self}, path, **kwargs)
 
     @classmethod
-    def load(cls, path, **kwargs):
-        """加载完整调参过程，再次 fit 可继续同一个 Study。"""
-        return cls.load_artifact(path, **kwargs)
+    def load(cls, path, *, artifact_dir=None, **kwargs):
+        """加载完整过程；移动折制品后可用 artifact_dir 指定新根目录。"""
+        tuner = cls.load_artifact(path, **kwargs)
+        if artifact_dir is not None:
+            tuner.artifact_dir = str(artifact_dir)
+        if not hasattr(tuner, "retention_"):
+            tuner.retention_ = resolve_retention(
+                getattr(tuner, "retention", None), getattr(tuner, "store_models", True), getattr(tuner, "artifact_dir", None)
+            )
+        return tuner
 
     @staticmethod
     def _lift_metric_name(ratio: float) -> str:
@@ -2627,6 +2670,8 @@ class ModelTuner(ArtifactSerializableMixin):
             raise ValueError("请先调用fit()进行调优")
         if self.best_model_ is not None and not refit and not fit_params:
             return self.best_model_
+        if getattr(self, "_training_data_released_", False):
+            raise ValueError("训练数据已释放，不能重训最佳模型；请重新 fit")
         params = self._build_model_params(self.best_params_)
         model = self._new_model(params)
         estimator = self._final_estimator(model)
@@ -2645,7 +2690,10 @@ class ModelTuner(ArtifactSerializableMixin):
             )
         )
         if full_data and boosting and hasattr(estimator, "set_params"):
-            folds = self.trial_results_.get(self.best_trial_.number, {}).get("各折", [])
+            try:
+                folds = self.get_trial_result(self.best_trial_.number, load=False).get("各折", [])
+            except ValueError:
+                folds = []
             iterations = [
                 fold["最佳迭代"]
                 for fold in folds

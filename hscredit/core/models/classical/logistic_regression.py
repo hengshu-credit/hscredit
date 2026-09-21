@@ -36,12 +36,15 @@ from sklearn.utils.validation import check_is_fitted
 from ....utils.overdue import validate_overdue_operator
 from ....utils.serialization import ArtifactSerializableMixin
 from ..scorecard_support import _ProbabilityScoreCardMixin
+from .._contracts import (
+    InferenceExportMixin, align_model_features, extract_target, record_feature_schema, validate_sample_weight,
+)
 
 
 _SKLEARN_LOGISTIC_PARAMS = set(inspect.signature(SklearnLogisticRegression.__init__).parameters)
 
 
-class LogisticRegression(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, SklearnLogisticRegression):
+class LogisticRegression(_ProbabilityScoreCardMixin, InferenceExportMixin, ArtifactSerializableMixin, SklearnLogisticRegression):
     artifact_kind = "风险模型"
     """扩展逻辑回归模型.
 
@@ -272,13 +275,9 @@ class LogisticRegression(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, 
             >>> model = LogisticRegression(target='label')
             >>> model.fit(X_train)  # 从X_train中提取'label'列作为y
         """
-        # 处理 scorecardpipeline 风格：从 X 中提取 y
-        if hasattr(self, "target") and self.target is not None:
-            if isinstance(X, pd.DataFrame) and self.target in X.columns:
-                if y is None:
-                    y = X[self.target]
-                X = X.drop(columns=[self.target])
-
+        X, y = extract_target(X, y, self.target)
+        record_feature_schema(self, X)
+        sample_weight = validate_sample_weight(sample_weight, len(y))
         self._validate_probability_scorecard_labels(y)
 
         if self.warm_start and hasattr(self, "raw_coef_"):
@@ -399,15 +398,7 @@ class LogisticRegression(_ProbabilityScoreCardMixin, ArtifactSerializableMixin, 
         X: Union[pd.DataFrame, np.ndarray]
     ) -> Union[pd.DataFrame, np.ndarray]:
         """按 WOE 方向调整输入，使正向化后的系数仍保持原始预测结果."""
-        if isinstance(X, pd.DataFrame):
-            if not X.columns.is_unique:
-                raise ValueError("输入特征列名不能重复")
-            expected = getattr(self, "feature_names_in_", None)
-            if expected is not None:
-                missing = [name for name in expected if name not in X.columns]
-                if missing:
-                    raise ValueError(f"输入数据缺少训练字段: {missing}")
-                X = X.loc[:, list(expected)]
+        X = align_model_features(self, X)
         X_model = X
         signs = getattr(self, 'woe_coef_signs_', None)
         if signs is None:
