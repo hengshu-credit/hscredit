@@ -1,6 +1,7 @@
 """调参入口的参数语义、数据隔离与简便使用回归测试。"""
 
 import importlib
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -161,7 +162,10 @@ def test_auto_tuner_loads_only_requested_model(monkeypatch):
 
 
 def test_dataset_example_validates_real_loan_data():
-    frame = pd.read_excel("examples/hscredit_yyp.xlsx", usecols=["衡枢鉴真分老客版", "FPD"]).dropna()
+    path = Path(__file__).resolve().parents[2] / "examples" / "hscredit_yyp.xlsx"
+    if not path.exists():
+        pytest.skip("缺少 examples/hscredit_yyp.xlsx")
+    frame = pd.read_excel(path, usecols=["衡枢鉴真分老客版", "FPD"]).dropna()
     frame = frame.iloc[:400]
     obj = AutoTuner.create(
         "lr",

@@ -270,8 +270,14 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
 
             if result is not candidate:
                 raise TypeError("分箱器 fit 必须返回自身")
+            # sklearn 父级 Pipeline 负责 callback 上下文的生命周期；
+            # 成功提交候选状态时不能提前清掉或复制该临时上下文。
+            parent_callback_ctx = self.__dict__.get("_parent_callback_ctx")
+            has_parent_callback_ctx = "_parent_callback_ctx" in self.__dict__
             self.__dict__.clear()
             self.__dict__.update(candidate.__dict__)
+            if has_parent_callback_ctx:
+                self.__dict__["_parent_callback_ctx"] = parent_callback_ctx
             return self
 
         transactional_fit._hscredit_transactional_fit = True

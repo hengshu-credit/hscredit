@@ -7,6 +7,7 @@ import warnings
 import numpy as np
 import optuna
 import pytest
+from packaging.version import Version
 from sklearn.linear_model import LogisticRegression
 from sklearn.datasets import make_classification
 
@@ -100,3 +101,37 @@ def test_existing_study_names_are_not_rewritten_on_resume(monkeypatch):
 def test_explicit_legacy_switch_rejects_ambiguous_values():
     with pytest.raises(ValueError, match="record_terminator_scores"):
         _tuner(record_terminator_scores="auto")
+
+
+@pytest.mark.parametrize("version,expected", [("1.7.2", 2), ("1.8.0", None), ("1.9.1", None)])
+def test_parallel_budget_preserves_logistic_regression_deprecated_default(monkeypatch, version, expected):
+    """按版本保留 LR 的 None 默认值，不修改调用者的显式设置。"""
+    module = importlib.import_module("hscredit.core.models.tuning.tuning")
+    monkeypatch.setattr(module, "installed_version", lambda *args: Version(version))
+    obj = _tuner()
+    params = {"n_jobs": None}
+    obj._inject_model_parallel_budget(params, 2)
+    assert params == {"n_jobs": expected}
+
+    explicit = {"n_jobs": 4}
+    obj._inject_model_parallel_budget(explicit, 2)
+    assert explicit == {"n_jobs": 2 if version == "1.7.2" else 4}
+
+
+def test_parallel_budget_still_caps_models_with_effective_n_jobs(monkeypatch):
+    """新版 sklearn 的其它模型仍使用调参预算，不受 LR 特例影响。"""
+    from sklearn.ensemble import RandomForestClassifier
+
+    module = importlib.import_module("hscredit.core.models.tuning.tuning")
+    monkeypatch.setattr(module, "installed_version", lambda *args: Version("1.9.1"))
+    obj = ModelTuner(RandomForestClassifier, search_space={}, n_jobs=2)
+    params = {"n_jobs": -1}
+    obj._inject_model_parallel_budget(params, 2)
+    assert params == {"n_jobs": 2}
+
+
+@pytest.mark.parametrize("version,expected", [("1.7.2", False), ("1.8", True), ("1.9.1", True), ("1.10", False)])
+def test_logistic_parallel_compatibility_has_explicit_bounds(version, expected):
+    from hscredit._compat import needs_logistic_regression_parallel_compat
+
+    assert needs_logistic_regression_parallel_compat(Version(version)) is expected

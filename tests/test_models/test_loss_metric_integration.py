@@ -16,7 +16,7 @@ def loan_data():
     """按仓库约定使用真实放款数据与三个建模字段。"""
     path = Path(__file__).resolve().parents[2] / "examples" / "hscredit_yyp.xlsx"
     if not path.exists():
-        pytest.skip("未提供真实放款验证工作簿")
+        pytest.skip("缺少 examples/hscredit_yyp.xlsx")
     features = ["衡枢鉴真分老客版", "近六个月非银多头机构数", "青云24"]
     data = pd.read_excel(path, usecols=features + ["FPD"], nrows=500)
     X = data[features].astype(float).fillna(0)

@@ -437,7 +437,8 @@ class _FullWidthBinMetricSummary(AnchoredOffsetbox):
         # 并在每次渲染时重算，覆盖外层布局随后收窄面板的情况。
         available = max(0.0, axes_width - 2.0 * padding_pixels - 2.0)
         variants = ['    '.join(self._metric_items), '  '.join(self._metric_items), ' '.join(self._metric_items)]
-        variants.append('  '.join(item.replace(' ', '') for item in self._metric_items))
+        compact_items = [item.replace(' ', '') for item in self._metric_items]
+        variants.extend(['  '.join(compact_items), ' '.join(compact_items)])
         for variant in variants:
             self.metric_text.set_text(variant)
             if self.metric_text.get_window_extent(renderer).width <= available:

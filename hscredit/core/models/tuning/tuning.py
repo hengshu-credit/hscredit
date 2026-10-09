@@ -79,11 +79,13 @@ import warnings
 from typing import Any, Callable, Dict, List, Optional, Sequence, TYPE_CHECKING, Tuple, Type, Union
 import numpy as np
 import pandas as pd
+from ...._compat import installed_version, needs_logistic_regression_parallel_compat
 from ....utils.parallel import resolve_n_jobs
 from ....utils.serialization import ArtifactSerializableMixin
 from sklearn.base import clone
 from sklearn.model_selection import ParameterGrid, StratifiedKFold
 from sklearn.metrics import get_scorer, log_loss, roc_curve
+from sklearn.linear_model import LogisticRegression as SklearnLogisticRegression
 from ...metrics import auc as auc_metric
 from .._contracts import (
     extract_target,
@@ -1168,6 +1170,14 @@ class ModelTuner(ArtifactSerializableMixin):
 
         for parameter_name in ("n_jobs", "thread_count", "num_workers"):
             if parameter_name not in signature.parameters:
+                continue
+            if (
+                parameter_name == "n_jobs"
+                and inspect.isclass(self.model_class)
+                and issubclass(self.model_class, SklearnLogisticRegression)
+                and needs_logistic_regression_parallel_compat(installed_version("sklearn", "scikit-learn"))
+            ):
+                # 不为无效参数注入预算；显式设置仍交给模型处理并保留其警告。
                 continue
             configured = params.get(parameter_name)
             if configured is None or configured == -1:

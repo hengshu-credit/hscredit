@@ -53,6 +53,11 @@ def needs_lightgbm_verbosity_compat(lightgbm_version: Optional[Version]) -> bool
     return lightgbm_version is not None and Version("4.0.0") <= lightgbm_version < Version("4.5.0")
 
 
+def needs_logistic_regression_parallel_compat(sklearn_version: Optional[Version]) -> bool:
+    """sklearn 1.8 至 1.10 移除前不再为逻辑回归注入无效的 n_jobs。"""
+    return sklearn_version is not None and Version("1.8") <= sklearn_version < Version("1.10")
+
+
 def needs_seaborn_pandas_compat(
     seaborn_version: Optional[Version], pandas_version: Optional[Version]
 ) -> bool:

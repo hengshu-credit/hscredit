@@ -170,9 +170,15 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
 
     def _adopt_fitted_state(self, candidate):
         public_params = {name: getattr(self, name) for name in self.get_params(deep=False)}
+        # 父级 Pipeline 会在调用期间挂载并最终清理 callback 上下文。
+        # 它属于当前调用，不是 clone 候选的拟合状态，提交时必须保留原对象。
+        parent_callback_ctx = self.__dict__.get("_parent_callback_ctx")
+        has_parent_callback_ctx = "_parent_callback_ctx" in self.__dict__
         self.__dict__.clear()
         self.__dict__.update(candidate.__dict__)
         self.__dict__.update(public_params)
+        if has_parent_callback_ctx:
+            self.__dict__["_parent_callback_ctx"] = parent_callback_ctx
 
     def _validate_public_policies(self):
         if not isinstance(self.passthrough_target, (bool, np.bool_)):

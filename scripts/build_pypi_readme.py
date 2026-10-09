@@ -5,7 +5,6 @@ from pathlib import Path
 import re
 from urllib.parse import quote, urlsplit
 
-
 ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY = "hengshu-credit/hscredit"
 
@@ -55,7 +54,7 @@ def render_readme(source, version):
     pieces = re.split(r"(```[^\n]*\n.*?```)", source, flags=re.S)
     for index in range(0, len(pieces), 2):
         piece = re.sub(r"(!?\[[^\]\n]*\]\()([^\)\n]+)\)", markdown_link, pieces[index])
-        pieces[index] = re.sub(r'''\b(href|src)=(["'])(.*?)\2''', html_link, piece)
+        pieces[index] = re.sub(r"""\b(href|src)=(["'])(.*?)\2""", html_link, piece)
     return "".join(pieces)
 
 
