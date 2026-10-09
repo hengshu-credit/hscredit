@@ -185,9 +185,13 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         calculate_stats: bool = True,
         verbose: bool = False,
         target: str = 'target',
+        history_policy: str = "summary",
+        max_history: int = 20,
         **kwargs
     ):
         self.kwargs = dict(kwargs)
+        self.history_policy = history_policy
+        self.max_history = max_history
         # 构建父类参数，ScoreCard特有参数不传递给父类
         # 评分相关参数通过kwargs透传，允许用户覆盖默认值
         parent_kwargs = {
@@ -442,6 +446,8 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
                         if '分箱标签' in bin_table.columns:
                             bin_labels = bin_table['分箱标签'].values
                             bins = self._parse_bin_labels(bin_labels)
+                            if self.encoder is not None:
+                                woe_values = self._inference_encoder_woe(col, bin_labels)
 
             # toad/scp 风格
             if woe_values is None and self._is_toad_like_combiner():
@@ -469,6 +475,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
                 'values': None
             }
         
+        self._rules_semantics_version_ = 2
         # 计算基础效应
         if self.rules_:
             self.base_effect_ = pd.Series(np.zeros(len(self._feature_names)), index=self._feature_names)
@@ -948,6 +955,9 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
                 self._cat_bins_: Dict[str, List[List[Any]]] = {}
                 self.special_codes: List[Any] = []
                 self.handle_unknown: Union[int, str] = -3
+                self.unknown_raise_features = set()
+                self.missing_raise_features = set()
+                self.missing_default_features = set()
 
             @staticmethod
             def _match_interval(value, label):
@@ -1022,6 +1032,42 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
 
                     # 创建分箱函数
                     def get_bin_label(value):
+                        descriptors = rule.get('descriptors')
+                        if descriptors is not None:
+                            # V2 规则以结构描述执行；稳定箱标识避免类别文字恰好叫
+                            # missing/special 或包含逗号时与保留箱、展示标签碰撞。
+                            for index, descriptor in enumerate(descriptors):
+                                if isinstance(descriptor, (list, tuple, np.ndarray)):
+                                    matched = any(
+                                        (pd.isna(value) and pd.isna(category))
+                                        or (not pd.isna(value) and not pd.isna(category)
+                                            and type(value) is type(category) and value == category)
+                                        for category in descriptor
+                                    )
+                                elif ScoreCard._is_missing_descriptor(descriptor):
+                                    matched = pd.isna(value)
+                                elif ScoreCard._is_special_descriptor(descriptor):
+                                    matched = any(
+                                        (pd.isna(value) and pd.isna(code))
+                                        or (not pd.isna(value) and not pd.isna(code) and value == code)
+                                        for code in self.special_codes
+                                    )
+                                elif ScoreCard._normalize_rule_label(descriptor) == 'else':
+                                    continue
+                                else:
+                                    matched = self._match_interval(value, descriptor) or self._match_category(value, descriptor)
+                                if matched:
+                                    return bin_labels[index]
+                            if pd.isna(value):
+                                if col in self.missing_raise_features and col not in self.missing_default_features:
+                                    raise ValueError(f"特征 '{col}' 的缺失值在实际编码器中属于未知类别")
+                                return 'missing'
+                            for index, descriptor in enumerate(descriptors):
+                                if not isinstance(descriptor, (list, tuple, np.ndarray)) and ScoreCard._normalize_rule_label(descriptor) == 'else':
+                                    return bin_labels[index]
+                            if self.handle_unknown == 'raise' or col in self.unknown_raise_features:
+                                raise ValueError(f"特征 '{col}' 在 transform 中出现训练期未知类别: {[value]}")
+                            return '其他'
                         if pd.isna(value):
                             if len(bins) == len(bin_labels):
                                 for index, descriptor in enumerate(bins):
@@ -1047,7 +1093,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
                             if ScoreCard._normalize_rule_label(label) == 'else':
                                 return label
 
-                        if self.handle_unknown == 'raise':
+                        if self.handle_unknown == 'raise' or col in self.unknown_raise_features:
                             raise ValueError(f"特征 '{col}' 在 transform 中出现训练期未知类别: {[value]}")
                         return '其他'
 
@@ -1075,6 +1121,12 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         self._rule_binner._cat_bins_ = categorical_bins
         self._rule_binner.special_codes = list(getattr(self, '_loaded_special_codes', []))
         self._rule_binner.handle_unknown = getattr(self, '_loaded_handle_unknown', -3)
+        self._rule_binner.unknown_raise_features = set(getattr(self, '_loaded_unknown_raise_features', []))
+        self._rule_binner.missing_raise_features = set(getattr(self, '_loaded_missing_raise_features', []))
+        self._rule_binner.missing_default_features = {
+            feature for feature, defaults in getattr(self, '_loaded_deployment_defaults', {}).items()
+            if 'missing_score' in defaults
+        }
         self.binner = self._rule_binner
         self._binner_is_woe_transformer = False
 
@@ -1097,6 +1149,20 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
 
         # 如果有外部 binner，优先使用
         if self.binner is not None and not hasattr(self, '_rule_binner'):
+            if self.rules_ and all(rule.get('bin_ids') is not None for rule in self.rules_.values()) and hasattr(self.binner, 'bin_tables_'):
+                indices = self.binner.transform(X, metric='indices')
+                output = indices.copy()
+                for feature, rule in self.rules_.items():
+                    mapping = dict(zip(rule['bin_ids'], rule['bin_labels']))
+                    labels = indices[feature].map(mapping)
+                    unknown = labels.isna() & ~indices[feature].eq(-1)
+                    if unknown.any() and self._feature_raises_on_unknown(feature):
+                        raise ValueError(f"特征 '{feature}' 在 transform 中出现训练期未知类别")
+                    if (labels.isna() & indices[feature].eq(-1)).any() and feature in getattr(self, '_loaded_missing_raise_features', []) and self._get_feature_missing_score(feature) is None:
+                        raise ValueError(f"特征 '{feature}' 的缺失值在实际编码器中属于未知类别")
+                    labels = labels.mask(labels.isna() & indices[feature].eq(-1), 'missing')
+                    output[feature] = labels.fillna('其他')
+                return output
             try:
                 return self.binner.transform(X, metric='bins')
             except Exception:
@@ -1108,7 +1174,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
             try:
                 return self._rule_binner.transform(X, metric='bins')
             except Exception as exc:
-                if getattr(self._rule_binner, 'handle_unknown', None) == 'raise':
+                if getattr(self._rule_binner, 'handle_unknown', None) == 'raise' or getattr(self._rule_binner, 'unknown_raise_features', set()):
                     raise
                 raise ValueError("基于规则的分箱失败") from exc
 
@@ -1220,7 +1286,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
                 logger.info("使用预训练的 LR 模型")
 
         if hasattr(self.lr_model_, 'ensure_positive_woe_coefficients'):
-            self.lr_model_.ensure_positive_woe_coefficients(X)
+            self.lr_model_.ensure_positive_woe_coefficients()
 
         # 5. 生成评分卡规则
         self._generate_rules(X)
@@ -1240,6 +1306,27 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
             logger.info("=" * 60)
 
         return self
+
+    def _inference_encoder_woe(self, feature, bin_labels):
+        """通过真实编码器转换小型分箱标签探针，不读取内部哨兵或训练折映射。"""
+        columns = list(getattr(self.encoder, 'cols_', None) or self._feature_names)
+        if feature not in columns:
+            raise ValidationError(f"实际 WOE 编码器没有拟合字段: {feature}")
+        tables = getattr(self.binner, 'bin_tables_', {})
+        probe = {}
+        for column in columns:
+            table = tables.get(column)
+            if table is None or table.empty or '分箱标签' not in table:
+                raise ValidationError(f"缺少字段 {column} 的分箱标签，无法验证实际编码器映射")
+            probe[column] = list(bin_labels) if column == feature else [table['分箱标签'].iloc[0]] * len(bin_labels)
+        transformed = self.encoder.transform(pd.DataFrame(probe))
+        if isinstance(transformed, pd.DataFrame):
+            values = transformed[feature].to_numpy(dtype=float)
+        else:
+            values = np.asarray(transformed, dtype=float)[:, columns.index(feature)]
+        if not np.isfinite(values).all():
+            raise ValidationError(f"字段 {feature} 的实际 WOE 编码包含非有限值，不能生成完整部署规则")
+        return values
 
     def _generate_rules(self, X: pd.DataFrame):
         """生成评分卡规则.
@@ -1269,6 +1356,8 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
                         if '分箱标签' in bin_table.columns:
                             bin_labels = bin_table['分箱标签'].values
                             bins = self._parse_bin_labels(bin_labels)
+                            if self.encoder is not None:
+                                woe_values = self._inference_encoder_woe(col, bin_labels)
 
             # 从 toad/scp Combiner + WOETransformer 获取分箱和 WOE
             if woe_values is None and self._is_toad_like_combiner():
@@ -1306,7 +1395,9 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
                     bt = self.binner.bin_tables_[col]
                     if '分箱标签' in bt.columns and '分档WOE值' in bt.columns:
                         bin_labels = bt['分箱标签'].values
-                        woe_values = bt['分档WOE值'].values
+                        woe_values = (self._inference_encoder_woe(col, bin_labels)
+                                      if self.encoder is not None else bt['分档WOE值'].values)
+                        woe_values = np.asarray(woe_values) * self._get_feature_woe_sign(i)
                         bins = self._parse_bin_labels(bin_labels)
 
             # 计算每个 WOE 对应的分数
@@ -1320,6 +1411,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
                 'coef': coef,
                 'values': values
             }
+        self._rules_semantics_version_ = 2
 
     def _parse_bin_labels(self, bin_labels: np.ndarray) -> list:
         """解析分箱标签为切分点或类别组.
@@ -1497,6 +1589,15 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
                 self._normalize_rule_label(label): float(score)
                 for label, score in zip(rule_labels, rule['scores'])
             }
+            display_labels = list(rule.get('display_labels', []))
+            if display_labels:
+                normalized_display = [self._normalize_rule_label(label) for label in display_labels]
+                for label, score in zip(normalized_display, rule['scores']):
+                    if normalized_display.count(label) == 1:
+                        score_map[label] = float(score)
+                ambiguous = {label for label in normalized_display if normalized_display.count(label) > 1}
+                if X_bins[col].map(self._normalize_rule_label).isin(ambiguous).any():
+                    raise ValidationError("外部分箱器返回了有歧义的展示标签；请不传外部分箱器，使用结构化规则直接评分")
 
             label_series = X_bins[col].map(self._normalize_rule_label)
             mapped_scores = label_series.map(score_map)
@@ -1833,7 +1934,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
             scores = rule['scores']
 
             # 优先使用 bin_labels（完整的分箱标签）
-            bin_labels = rule.get('bin_labels')
+            bin_labels = rule.get('display_labels', rule.get('bin_labels'))
             bins = rule.get('bins')
             # WOE 值可能缺失（如离线规则加载后无 woe），单独处理，
             # 不能放进 zip 否则空/短的 woe 会把整张分箱表截断为 0 行
@@ -2111,19 +2212,24 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
             if self.binner is not None
             else {}
         )
-        target = missing_targets.get(feature)
+        target = getattr(self.binner, '_user_missing_bin_targets_', {}).get(feature, missing_targets.get(feature))
         if target is None:
             return None
         return self._get_rule_score_for_bin_index(feature, int(target))
 
     def _feature_raises_on_unknown(self, feature: str) -> bool:
         """判断类别特征是否要求对未知类别直接报错."""
+        if feature in getattr(self, '_loaded_unknown_raise_features', []):
+            return True
+        if getattr(self.encoder, 'handle_unknown', None) == 'error':
+            return True
         if self.binner is None:
             return False
         feature_types = getattr(self.binner, 'feature_types_', {})
         return (
             feature_types.get(feature) == 'categorical'
-            and getattr(self.binner, 'handle_unknown', None) == 'raise'
+            and (getattr(self.binner, 'handle_unknown', None) == 'raise'
+                 or getattr(self.encoder, 'handle_unknown', None) == 'error')
         )
 
     def _features_raising_on_unknown(self) -> List[str]:
@@ -2153,8 +2259,59 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
                 defaults[feature] = feature_defaults
         return defaults
 
+    def _ensure_deployment_rule_semantics(self):
+        """旧完整评分卡必须重建显式编码器规则，不能把旧缓存静默标为 V2。"""
+        version = getattr(self, '_rules_semantics_version_', 0)
+        if version not in (0, 1, 2):
+            raise ValidationError(f"不支持的评分规则语义版本: {version}")
+        if version == 2 or self.encoder is None:
+            return
+        tables = getattr(self.binner, 'bin_tables_', {})
+        if not self._has_real_lr_model() or not tables or any(feature not in tables for feature in self.feature_names_):
+            raise ValidationError("旧评分卡的显式编码器映射无法完整验证，请保留 binner/encoder/LR 后重建或重新拟合，不能直接导出")
+        old_rules, old_effect = self.rules_, self.base_effect_
+        try:
+            self._generate_rules_from_binner()
+            if set(self.rules_) != set(self.feature_names_):
+                raise ValidationError("旧评分卡重建后缺少入模特征规则")
+        except Exception as exc:
+            self.rules_, self.base_effect_ = old_rules, old_effect
+            self.__dict__.pop('_rules_semantics_version_', None)
+            raise ValidationError("旧评分卡无法按实际推理映射重建，请重新拟合后导出") from exc
+        self.base_effect_ = old_effect
+        self.rule_migration_ = "已从保留的分箱器、实际编码器及模型系数重建部署规则"
+
+    def _deployment_descriptors(self, feature, rule, size):
+        """使用真实箱号/切点/类别集合，避免显示精度和特殊箱改变执行语义。"""
+        if rule.get('descriptors') is not None and len(rule['descriptors']) == size:
+            return rule['descriptors']
+        table = getattr(self.binner, 'bin_tables_', {}).get(feature)
+        feature_type = getattr(self.binner, 'feature_types_', {}).get(feature)
+        groups = getattr(self.binner, '_cat_bins_', {}).get(feature)
+        if table is not None and len(table) == size and '分箱' in table and '分箱标签' in table:
+            descriptors = []
+            splits = np.asarray(getattr(self.binner, 'splits_', {}).get(feature, [])) if feature_type == 'numerical' else None
+            for bin_id, label in zip(table['分箱'], table['分箱标签']):
+                index = int(bin_id)
+                if feature_type == 'categorical' and groups is not None and 0 <= index < len(groups):
+                    descriptors.append(list(groups[index]))
+                elif feature_type == 'numerical' and 0 <= index <= len(splits):
+                    lower = '-inf' if index == 0 else repr(float(splits[index - 1]))
+                    upper = '+inf' if index == len(splits) else repr(float(splits[index]))
+                    descriptors.append(f'[{lower}, {upper})')
+                else:
+                    descriptors.append(label)
+            return descriptors
+        if feature_type == 'categorical' and groups is not None and len(groups) == size:
+            return groups
+        for name in ('bin_labels', 'bins'):
+            if rule.get(name) is not None and len(rule[name]) == size:
+                return rule[name]
+        return None
+
     def _get_deployment_rules(self, decimal: int) -> Dict[str, List[Tuple[Any, float]]]:
         """获取部署导出时使用的精确规则定义."""
+        self._ensure_deployment_rule_semantics()
         deployment_rules: Dict[str, List[Tuple[Any, float]]] = {}
         feature_types = getattr(self.binner, 'feature_types_', {}) if self.binner is not None else {}
         cat_bins = getattr(self.binner, '_cat_bins_', {}) if self.binner is not None else {}
@@ -2165,14 +2322,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
                 continue
 
             scores = rule['scores']
-            descriptors = None
-
-            if feature_types.get(feature) == 'categorical' and feature in cat_bins and len(cat_bins[feature]) == len(scores):
-                descriptors = cat_bins[feature]
-            elif rule.get('bin_labels') is not None and len(rule['bin_labels']) == len(scores):
-                descriptors = rule['bin_labels']
-            elif rule.get('bins') is not None and len(rule['bins']) == len(scores):
-                descriptors = rule['bins']
+            descriptors = self._deployment_descriptors(feature, rule, len(scores))
 
             if descriptors is None:
                 continue
@@ -2181,6 +2331,8 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
                 (descriptor, round(float(score), decimal))
                 for descriptor, score in zip(descriptors, scores)
             ]
+            if feature_types.get(feature) == 'numerical':
+                feature_rules.sort(key=lambda item: not self._is_special_descriptor(item[0]))
             missing_score = self._get_feature_missing_score(feature)
             if (
                 missing_score is not None
@@ -3688,7 +3840,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
             for col in self.feature_names_:
                 rule = self.rules_[col]
                 bins = rule['bins']
-                bin_labels = rule.get('bin_labels')
+                bin_labels = rule.get('display_labels', rule.get('bin_labels'))
                 scores = rule['scores']
 
                 feature_rules = {}
@@ -3728,7 +3880,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
             handle_unknown = getattr(self.binner, 'handle_unknown', -3) if self.binner is not None else -3
             card['__meta__'] = {
                 'format': 'hscredit-scorecard-rules',
-                'version': 1,
+                'version': 2,
                 'intercept_score': intercept_score,
                 'base_score': float(self.base_score),
                 'direction': self.direction_,
@@ -3755,7 +3907,13 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
                     for value in special_codes
                 ],
                 'handle_unknown': handle_unknown,
+                'unknown_raise_features': self._features_raising_on_unknown(),
+                'missing_raise_features': (
+                    list(self.feature_names_) if getattr(self.encoder, 'handle_unknown', None) == 'error'
+                    else list(getattr(self, '_loaded_missing_raise_features', []))
+                ),
                 'deployment_defaults': self._get_export_deployment_defaults(),
+                'rule_records': self._structured_rule_records(decimal),
             }
 
         # 保存到 JSON 文件
@@ -3787,10 +3945,38 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
 
         return card
 
+    def _structured_rule_records(self, decimal):
+        """完整规则记录不以中文展示标签作字典键，保留重复/逗号类别。"""
+        def plain(value):
+            if isinstance(value, np.generic):
+                return value.item()
+            if isinstance(value, (list, tuple, np.ndarray)):
+                return [plain(item) for item in value]
+            return value
+        records = {}
+        for feature in self.feature_names_:
+            rule = self.rules_[feature]
+            descriptors = self._deployment_descriptors(feature, rule, len(rule['scores']))
+            if descriptors is None:
+                continue
+            labels = rule.get('display_labels', rule.get('bin_labels', descriptors))
+            table = getattr(self.binner, 'bin_tables_', {}).get(feature)
+            bin_ids = rule.get('bin_ids')
+            if bin_ids is None and table is not None and len(table) == len(rule['scores']) and '分箱' in table:
+                bin_ids = table['分箱'].astype(int).tolist()
+            records[feature] = [
+                {'label': str(label), 'descriptor': plain(descriptor), 'score': round(float(score), decimal)}
+                for label, descriptor, score in zip(labels, descriptors, rule['scores'])
+            ]
+            if bin_ids is not None:
+                for record, bin_id in zip(records[feature], bin_ids):
+                    record['bin_id'] = int(bin_id)
+        return records
+
     def _apply_export_metadata(self, meta: Dict[str, Any]) -> None:
         """应用导出文件中的评分卡元数据."""
         format_name = meta.get('format')
-        if format_name == 'hscredit-scorecard-rules' and meta.get('version', 1) != 1:
+        if format_name == 'hscredit-scorecard-rules' and meta.get('version', 1) not in (1, 2):
             raise ValueError(f"不支持的评分卡规则版本: {meta.get('version')}")
 
         self.pdo = meta.get('pdo', self.pdo)
@@ -3827,6 +4013,8 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         self._loaded_categorical_bins = dict(meta.get('categorical_bins', {}))
         self._loaded_special_codes = list(meta.get('special_codes', []))
         self._loaded_handle_unknown = validate_handle_unknown(meta.get('handle_unknown', -3))
+        self._loaded_unknown_raise_features = list(meta.get('unknown_raise_features', []))
+        self._loaded_missing_raise_features = list(meta.get('missing_raise_features', []))
         self._loaded_deployment_defaults = {
             str(feature): {
                 str(name): float(score)
@@ -4018,6 +4206,8 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
             self._loaded_categorical_bins = {}
             self._loaded_special_codes = []
             self._loaded_handle_unknown = -3
+            self._loaded_unknown_raise_features = []
+            self._loaded_missing_raise_features = []
             self._loaded_deployment_defaults = {}
         else:
             # update=True 同样表示后续评分以规则为准；保留现有分箱器用于产生箱标签，
@@ -4028,8 +4218,13 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
             self._pipeline_components = {}
 
         categorical_bins = meta.get('categorical_bins', {}) if meta else {}
+        structured_records = meta.get('rule_records', {}) if meta else {}
         if meta:
             self._apply_export_metadata(meta)
+            if meta.get('format') == 'hscredit-scorecard-rules' and meta.get('version') == 2:
+                expected = {feature for feature in card if feature != '基础分'}
+                if not isinstance(structured_records, dict) or not expected <= set(structured_records):
+                    raise ValueError("V2 评分卡制品缺少完整结构化规则，不能按展示标签降级加载")
 
         # 解析规则
         for feature, feature_rules in card.items():
@@ -4041,6 +4236,33 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
                 self._feature_names = []
             if feature not in self._feature_names:
                 self._feature_names.append(feature)
+
+            if feature in structured_records:
+                records = list(structured_records[feature])
+                if not records or any(not isinstance(record, dict) or not {'label', 'descriptor', 'score'} <= record.keys() for record in records):
+                    raise ValueError(f"字段 {feature} 的结构化评分规则不完整")
+                records = [dict(record) for record in records]
+                labels = [str(record['label']) for record in records]
+                for record in records:
+                    label = str(record['label'])
+                    # 无歧义的旧风格分数字典仍可直接调整分值；结构记录只负责
+                    # 保留边界/类别类型。碰撞标签不能靠一项字典值覆盖多个箱。
+                    if labels.count(label) == 1 and label in feature_rules:
+                        record['score'] = feature_rules[label]
+                if self._loaded_feature_types.get(feature) == 'numerical':
+                    records.sort(key=lambda record: not self._is_special_descriptor(record['descriptor']))
+                descriptors = [record['descriptor'] for record in records]
+                scores = np.asarray([record['score'] for record in records], dtype=float)
+                if not np.isfinite(scores).all():
+                    raise ValueError(f"字段 {feature} 的评分规则必须为有限分值")
+                self.rules_[feature] = {
+                    'bins': descriptors, 'descriptors': descriptors,
+                    'bin_labels': np.asarray([f'__hscredit_bin_{i}__' for i in range(len(records))], dtype=object),
+                    'display_labels': np.asarray([record['label'] for record in records], dtype=object),
+                    'bin_ids': [int(record['bin_id']) for record in records] if all('bin_id' in record for record in records) else None,
+                    'scores': scores,
+                }
+                continue
 
             bins = []
             numeric_splits = []
@@ -4153,6 +4375,8 @@ class RoundScoreCard(ScoreCard):
         calculate_stats: bool = True,
         verbose: bool = False,
         target: str = 'target',
+        history_policy: str = "summary",
+        max_history: int = 20,
         **kwargs
     ):
         super().__init__(
@@ -4173,6 +4397,8 @@ class RoundScoreCard(ScoreCard):
             calculate_stats=calculate_stats,
             verbose=verbose,
             target=target,
+            history_policy=history_policy,
+            max_history=max_history,
             **kwargs
         )
         self.decimal = decimal
@@ -4548,7 +4774,7 @@ class RoundScoreCard(ScoreCard):
 
             rule = self.rules_[col]
             rounded_scores = self._get_rounded_rule_scores(rule, decimal=digits)
-            bin_labels = rule.get('bin_labels')
+            bin_labels = rule.get('display_labels', rule.get('bin_labels'))
             bins = rule.get('bins')
             # WOE 可能缺失（离线规则加载），单独取值，避免 zip 截断分箱行
             woe_values = rule.get('woe')
@@ -4795,6 +5021,7 @@ class RoundScoreCard(ScoreCard):
 
     def _get_deployment_rules(self, decimal: int) -> Dict[str, List[Tuple[Any, float]]]:
         """获取基于调整后评分卡的部署规则定义."""
+        self._ensure_deployment_rule_semantics()
         deployment_rules: Dict[str, List[Tuple[Any, float]]] = {}
         feature_types = getattr(self.binner, 'feature_types_', {}) if self.binner is not None else {}
         cat_bins = getattr(self.binner, '_cat_bins_', {}) if self.binner is not None else {}
@@ -4804,15 +5031,8 @@ class RoundScoreCard(ScoreCard):
             if not rule:
                 continue
 
-            descriptors = None
             rounded_scores = self._get_rounded_rule_scores(rule, decimal=self.decimal)
-
-            if feature_types.get(feature) == 'categorical' and feature in cat_bins and len(cat_bins[feature]) == len(rounded_scores):
-                descriptors = cat_bins[feature]
-            elif rule.get('bin_labels') is not None and len(rule['bin_labels']) == len(rounded_scores):
-                descriptors = rule['bin_labels']
-            elif rule.get('bins') is not None and len(rule['bins']) == len(rounded_scores):
-                descriptors = rule['bins']
+            descriptors = self._deployment_descriptors(feature, rule, len(rounded_scores))
 
             if descriptors is None:
                 continue
@@ -4821,6 +5041,8 @@ class RoundScoreCard(ScoreCard):
                 (descriptor, float(score))
                 for descriptor, score in zip(descriptors, rounded_scores)
             ]
+            if feature_types.get(feature) == 'numerical':
+                feature_rules.sort(key=lambda item: not self._is_special_descriptor(item[0]))
             missing_score = self._get_feature_missing_score(feature)
             if (
                 missing_score is not None

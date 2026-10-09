@@ -22,6 +22,34 @@ from .base import BaseBinning
 logger = logging.getLogger(__name__)
 
 
+def _iv_from_counts(bad, good, total_bad, total_good):
+    """由充分统计量计算各箱IV；保持旧实现忽略纯好/纯坏箱的语义。"""
+    bad, good = np.broadcast_arrays(np.asarray(bad, dtype=float), np.asarray(good, dtype=float))
+    result = np.zeros(bad.shape, dtype=float)
+    if total_bad <= 0 or total_good <= 0:
+        return result
+    valid = (bad > 0) & (good > 0)
+    bad_rate = bad[valid] / total_bad
+    good_rate = good[valid] / total_good
+    result[valid] = (good_rate - bad_rate) * np.log((good_rate + 1e-10) / (bad_rate + 1e-10))
+    return result
+
+
+def _split_scores_from_prefix(prefix_bad, positions, n):
+    """全部候选只读取前缀计数，不反复切片扫描标签。"""
+    positions = np.asarray(positions, dtype=np.intp)
+    total_bad = prefix_bad[n]
+    total_good = n - total_bad
+    left_bad = prefix_bad[positions]
+    right_bad = total_bad - left_bad
+    left_good = positions - left_bad
+    right_good = n - positions - right_bad
+    valid = (left_bad > 0) & (right_bad > 0) & (left_good > 0) & (right_good > 0)
+    scores = _iv_from_counts(left_bad, left_good, total_bad, total_good)
+    scores += _iv_from_counts(right_bad, right_good, total_bad, total_good)
+    return np.where(valid, scores, 0.0)
+
+
 class MDLPBinning(BaseBinning):
     """MDLP 分箱算法.
 
@@ -223,12 +251,8 @@ class MDLPBinning(BaseBinning):
     def _find_all_candidates_v3(self, x: np.ndarray, y: np.ndarray) -> List[int]:
         """找到所有可能的候选切分点位置 - V3版本."""
         n = len(x)
-        candidates = []
-
-        # 找到所有类别变化的位置
-        for i in range(1, n):
-            if y[i] != y[i - 1]:
-                candidates.append(i)
+        # 保留原有候选顺序，避免逐样本Python循环。
+        candidates = (np.flatnonzero(y[1:] != y[:-1]) + 1).tolist()
 
         # 如果没有足够的类别变化点，使用动态策略
         if len(candidates) < self.min_n_bins * 2:
@@ -323,37 +347,19 @@ class MDLPBinning(BaseBinning):
             return None, None
 
         n = len(x)
-        max_score = -np.inf
-        best_split = None
-        best_idx = None
-
-        total_bad = y.sum()
-        total_good = n - total_bad
-
-        for idx in candidates:
-            if idx < self.min_samples_leaf or n - idx < self.min_samples_leaf:
-                continue
-
-            split = (x[idx - 1] + x[idx]) / 2
-
-            y_left, y_right = y[:idx], y[idx:]
-
-            if len(np.unique(y_left)) < 1 or len(np.unique(y_right)) < 1:
-                continue
-
-            # 计算IV增益
-            iv_gain = self._calculate_iv_gain_v3(y_left, y_right, total_bad, total_good)
-
-            # 如果IV增益太小，跳过
-            if iv_gain < self.min_iv_gain:
-                continue
-
-            if iv_gain > max_score:
-                max_score = iv_gain
-                best_split = split
-                best_idx = idx
-
-        return best_split, best_idx
+        positions = np.asarray(candidates, dtype=np.intp)
+        positions = positions[(positions >= self.min_samples_leaf) & (n - positions >= self.min_samples_leaf)]
+        if not len(positions):
+            return None, None
+        prefix_bad = np.r_[0, np.cumsum(y, dtype=np.int64)]
+        scores = _split_scores_from_prefix(prefix_bad, positions, n)
+        eligible = np.flatnonzero(scores >= self.min_iv_gain)
+        if not len(eligible):
+            return None, None
+        # argmax返回首次最大值，保持原for循环的平局选择顺序。
+        best = eligible[np.argmax(scores[eligible])]
+        idx = int(positions[best])
+        return (x[idx - 1] + x[idx]) / 2, idx
 
     def _calculate_iv_gain_v3(self, y_left: np.ndarray, y_right: np.ndarray, total_bad: int, total_good: int) -> float:
         """计算IV增益 - V3版本."""
@@ -413,7 +419,8 @@ class MDLPBinning(BaseBinning):
         splits = list(existing_splits)
         n = len(x)
 
-        total_bad = y.sum()
+        prefix_bad = np.r_[0, np.cumsum(y, dtype=np.int64)]
+        total_bad = prefix_bad[-1]
         total_good = n - total_bad
         min_samples = self._get_min_samples(n)
 
@@ -421,54 +428,35 @@ class MDLPBinning(BaseBinning):
         target_n_bins = self.max_n_bins - 1
 
         # 首先找到所有可能的候选切分点及其IV
-        candidates_with_iv = []
-        for idx in all_candidates:
-            if idx < min_samples or n - idx < min_samples:
-                continue
-
-            y_left = y[:idx]
-            y_right = y[idx:]
-
-            if len(np.unique(y_left)) < 1 or len(np.unique(y_right)) < 1:
-                continue
-
-            iv = self._calculate_iv_gain_v3(y_left, y_right, total_bad, total_good)
-            split = (x[idx - 1] + x[idx]) / 2
-            candidates_with_iv.append((split, idx, iv))
-
-        # 按IV排序
-        candidates_with_iv.sort(key=lambda x: x[2], reverse=True)
+        positions = np.asarray(all_candidates, dtype=np.intp)
+        positions = positions[(positions >= min_samples) & (n - positions >= min_samples)]
+        scores = _split_scores_from_prefix(prefix_bad, positions, n)
+        candidate_splits = (x[positions - 1] + x[positions]) / 2
+        candidate_splits = candidate_splits[np.argsort(-scores, kind='stable')]
 
         # 贪心选择：每次选择能最大化总IV的切分点
         while len(splits) < target_n_bins:
             best_total_iv = -np.inf
             best_split = None
 
-            for split, idx, single_iv in candidates_with_iv:
-                if split in splits:
-                    continue
-
-                # 测试添加这个切分点后的总IV
-                test_splits = sorted(splits + [split])
-                bins = np.digitize(x, test_splits)
-                total_iv = 0
-                epsilon = 1e-10
-
-                for b in range(len(test_splits) + 1):
-                    mask = bins == b
-                    if mask.sum() == 0:
-                        continue
-                    bad = y[mask].sum()
-                    good = mask.sum() - bad
-                    if bad > 0 and good > 0:
-                        bad_rate = bad / total_bad
-                        good_rate = good / total_good
-                        woe = np.log((good_rate + epsilon) / (bad_rate + epsilon))
-                        total_iv += (good_rate - bad_rate) * woe
-
-                if total_iv > best_total_iv:
-                    best_total_iv = total_iv
-                    best_split = split
+            candidates = candidate_splits[~np.isin(candidate_splits, splits)]
+            # 有界候选批次：工作区随4096×箱数增长，不构造候选数×样本数的mask。
+            for offset in range(0, len(candidates), 4096):
+                chunk = candidates[offset:offset + 4096]
+                proposed = np.sort(np.column_stack([np.broadcast_to(splits, (len(chunk), len(splits))), chunk]), axis=1)
+                cuts = np.searchsorted(x, proposed, side='left')
+                bounds = np.column_stack([np.zeros(len(chunk), dtype=np.intp), cuts, np.full(len(chunk), n, dtype=np.intp)])
+                bad = np.diff(prefix_bad[bounds], axis=1)
+                good = np.diff(bounds, axis=1) - bad
+                contributions = _iv_from_counts(bad, good, total_bad, total_good)
+                totals = np.zeros(len(chunk))
+                # 按旧实现的箱顺序逐列累加，避免改变浮点平局的优先候选。
+                for column in range(contributions.shape[1]):
+                    totals += contributions[:, column]
+                best = int(np.argmax(totals))
+                if totals[best] > best_total_iv:
+                    best_total_iv = totals[best]
+                    best_split = chunk[best]
 
             if best_split is not None:
                 splits.append(best_split)

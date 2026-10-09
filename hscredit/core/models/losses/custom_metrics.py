@@ -14,7 +14,7 @@ class KSMetric(BaseMetric):
 
     衡量模型区分好坏客户的能力，KS值越大表示模型区分能力越强。
 
-    KS = max(|累积好客户比例 - 累积坏客户比例|)
+    ``KS = max(|累积好客户比例 - 累积坏客户比例|)``
 
     :param name: 指标名称，默认为"ks"
 
@@ -35,7 +35,7 @@ class KSMetric(BaseMetric):
     >>> bst = lgb.train(
     ...     params={'objective': 'binary'},
     ...     train_set=train_data,
-    ...     feval=ks_metric.to_lightgbm(),
+    ...     feval=ks_metric.to_lightgbm(api="native"),
     ...     num_boost_round=100
     ... )
 
@@ -51,18 +51,31 @@ class KSMetric(BaseMetric):
     def __call__(
         self,
         y_true: np.ndarray,
-        y_pred: np.ndarray
+        y_pred: np.ndarray,
+        sample_weight=None,
     ) -> float:
         """计算KS值.
 
-        :param y_true: 真实标签
-        :param y_pred: 预测概率
+        :param y_true: 一维 0/1 标签，1 为坏样本。
+        :param y_pred: 同形状坏样本概率；统一输入校验请使用 evaluate。
+        :param sample_weight: 可选非负有限权重，须与标签等长且两类都有正权重。
         :return: KS值，范围[0, 1]，越大越好
+
+        >>> value = KSMetric().evaluate([0, 0, 1, 1], [0.1, 0.3, 0.7, 0.9])
         """
         # 确保输入是一维数组
         y_true = np.ravel(y_true)
         y_pred = np.ravel(y_pred)
 
+        if sample_weight is not None:
+            from sklearn.metrics import roc_curve
+            from .base import _validate_binary_inputs
+
+            y_true, y_pred, sample_weight = _validate_binary_inputs(y_true, y_pred, sample_weight)
+            if not all(np.sum(sample_weight[y_true == label]) > 0 for label in (0, 1)):
+                raise ValueError("计算加权KS需要有效权重下同时存在好样本和坏样本")
+            false_positive, true_positive, _ = roc_curve(y_true, y_pred, sample_weight=sample_weight)
+            return float(np.max(np.abs(true_positive - false_positive)))
         return ks_metric(y_true, y_pred)
 
 
@@ -83,27 +96,32 @@ class GiniMetric(BaseMetric):
     >>> gini_value = gini_metric(y_true, y_pred)
     """
 
-    def __init__(self, name: str = "gini", score_direction: str = 'auto'):
+    def __init__(self, name: str = "gini", score_direction: str = "auto"):
         super().__init__(name, greater_is_better=True)
         self.score_direction = score_direction
 
     def __call__(
         self,
         y_true: np.ndarray,
-        y_pred: np.ndarray
+        y_pred: np.ndarray,
+        sample_weight=None,
     ) -> float:
         """计算Gini系数.
 
-        :param y_true: 真实标签
-        :param y_pred: 预测概率
+        :param y_true: 一维 0/1 标签，1 为坏样本。
+        :param y_pred: 同形状坏样本概率；统一输入校验请使用 evaluate。
+        :param sample_weight: 可选非负有限权重，须与标签等长且总和大于 0。
         :return: Gini系数，默认范围[0, 1]；显式方向时范围[-1, 1]，越大越好
+
+        >>> value = GiniMetric(score_direction='higher_risk').evaluate(
+        ...     [0, 0, 1, 1], [0.1, 0.3, 0.7, 0.9])
         """
         # 确保输入是一维数组
         y_true = np.ravel(y_true)
         y_pred = np.ravel(y_pred)
 
         # 计算AUC
-        auc = self._compute_auc(y_true, y_pred)
+        auc = self._compute_auc(y_true, y_pred, sample_weight=sample_weight)
 
         # Gini = 2*AUC - 1
         gini = 2 * auc - 1
@@ -113,12 +131,13 @@ class GiniMetric(BaseMetric):
     def _compute_auc(
         self,
         y_true: np.ndarray,
-        y_pred: np.ndarray
+        y_pred: np.ndarray,
+        sample_weight=None,
     ) -> float:
         """调用公共AUC；保留单类别回调返回中性值的既有约定。"""
         if np.unique(y_true).size < 2:
             return 0.5
-        return auc_metric(y_true, y_pred, score_direction=self.score_direction)
+        return auc_metric(y_true, y_pred, sample_weight=sample_weight, score_direction=self.score_direction)
 
 
 class PSIMetric(BaseMetric):
@@ -128,8 +147,9 @@ class PSIMetric(BaseMetric):
 
     PSI = sum((实际占比 - 期望占比) * ln(实际占比/期望占比))
 
-    :param expected: 期望分布的预测分数（基准数据），默认为None。如果为None，需要在__call__时提供
-    :param n_bins: 分箱数量，默认为10
+    :param expected: 基准预测分数的一维非空有限数组，默认 None，
+        为 None 时需要在 __call__ 中提供；不要求与当前样本等长。
+    :param n_bins: 基准分位分箱的最大数量，整数且至少为 2，默认 10。
     :param name: 指标名称，默认为"psi"
 
     **参考样例**
@@ -145,68 +165,51 @@ class PSIMetric(BaseMetric):
 
     **注意**
 
+    复用 ``hscredit.core.metrics.psi`` 的冻结基准分箱，不丢弃落在基准
+    最小值和最大值之外的样本。低基数或常量基准遵循公共 PSI 的类别口径。
+    本指标不支持样本权重；它衡量分布漂移，不能单独代替 AUC 等区分度指标。
+
     PSI解释:
     - PSI < 0.1: 分布稳定
     - 0.1 <= PSI < 0.25: 分布有轻微变化
     - PSI >= 0.25: 分布变化显著，需要关注
     """
 
-    def __init__(
-        self,
-        expected: Optional[np.ndarray] = None,
-        n_bins: int = 10,
-        name: str = "psi"
-    ):
+    def __init__(self, expected: Optional[np.ndarray] = None, n_bins: int = 10, name: str = "psi"):
+        if isinstance(n_bins, (bool, np.bool_)) or not isinstance(n_bins, (int, np.integer)) or n_bins < 2:
+            raise ValueError("PSI 的 n_bins 必须是至少为 2 的整数")
         super().__init__(name, greater_is_better=False)  # PSI越小越好
-        self.expected = expected
-        self.n_bins = n_bins
+        self.expected = self._validate_distribution(expected, "基准分布") if expected is not None else None
+        self.n_bins = int(n_bins)
 
-    def __call__(
-        self,
-        y_true: np.ndarray,
-        y_pred: np.ndarray,
-        expected: Optional[np.ndarray] = None
-    ) -> float:
+    @staticmethod
+    def _validate_distribution(values, name):
+        """校验一维有限分布，返回独立副本以固定基准。"""
+        try:
+            values = np.asarray(values, dtype=float)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"PSI 的{name}必须是一维非空有限数值数组") from exc
+        if values.ndim != 1 or values.size == 0 or not np.isfinite(values).all():
+            raise ValueError(f"PSI 的{name}必须是一维非空有限数值数组")
+        return values.copy()
+
+    def __call__(self, y_true: np.ndarray, y_pred: np.ndarray, expected: Optional[np.ndarray] = None) -> float:
         """计算PSI.
 
-        :param y_true: 真实标签（此指标中未使用，保持接口一致性）
-        :param y_pred: 实际分布的预测分数
-        :param expected: 期望分布的预测分数
-        :return: PSI值，越小越好
-        """
-        # 使用传入的expected或初始化时的expected
-        expected = expected if expected is not None else self.expected
+        :param y_true: 真实标签，此方法中未使用；调用 evaluate 时仍须提供 0/1 标签。
+        :param y_pred: 当前分布的一维非空有限预测分数。
+        :param expected: 可选基准分布，覆盖构造时的基准，仅对本次计算生效。
+        :return: float，PSI 越小表示分布越接近；计算口径同公共 metrics.psi。
+        :raises ValueError: 未设置基准，或输入为空、多维、非有限数值。
 
+        >>> metric = PSIMetric(expected=[0.1, 0.2, 0.3, 0.4], n_bins=2)
+        >>> value = metric([0, 0, 1, 1], [0.1, 0.2, 0.8, 0.9])
+        """
+        expected = expected if expected is not None else self.expected
         if expected is None:
             raise ValueError("需要提供期望分布(expected)")
+        expected = self._validate_distribution(expected, "基准分布")
+        actual = self._validate_distribution(y_pred, "当前分布")
+        from ...metrics import psi
 
-        # 确保一维
-        expected = np.ravel(expected)
-        actual = np.ravel(y_pred)
-
-        # 计算分位数作为分箱边界
-        quantiles = np.linspace(0, 100, self.n_bins + 1)
-        bin_edges = np.percentile(expected, quantiles)
-
-        # 确保边界唯一
-        bin_edges = np.unique(bin_edges)
-
-        # 计算期望分布和实际分布的频率
-        expected_counts, _ = np.histogram(expected, bins=bin_edges)
-        actual_counts, _ = np.histogram(actual, bins=bin_edges)
-
-        # 转换为比例
-        expected_rates = expected_counts / len(expected)
-        actual_rates = actual_counts / len(actual)
-
-        # 避免除零和log(0)
-        expected_rates = np.clip(expected_rates, 1e-10, 1)
-        actual_rates = np.clip(actual_rates, 1e-10, 1)
-
-        # 计算PSI
-        psi = np.sum(
-            (actual_rates - expected_rates) *
-            np.log(actual_rates / expected_rates)
-        )
-
-        return float(psi)
+        return float(psi(expected, actual, method="quantile", max_n_bins=self.n_bins))

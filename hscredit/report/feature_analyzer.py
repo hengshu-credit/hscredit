@@ -107,8 +107,41 @@ def _feature_report_workload(
     has_parallel_children: bool,
     operation: str,
     cost_per_item: float = 12.0,
+    parameters: Optional[List[Dict[str, Any]]] = None,
+    table_copies: int = 1,
+    output_rows_per_task: Optional[int] = None,
 ) -> ParallelWorkload:
-    """构造特征报告任务的统一工作量描述。"""
+    """按真实dtype和配置估计任务空间，不是RSS硬上限。
+
+    工作区计入字段/标签副本及排序、箱号、掩码等线性数组；结果按配置箱数、
+    逾期标签和表副本数估计。求解器内部、Python分配器和绘图缓存不在此估计内。
+    """
+    column_bytes = data.memory_usage(index=False, deep=True)
+    largest_column = int(column_bytes.max()) if len(column_bytes) else 0
+    estimates = []
+    for params in parameters or [{}]:
+        overdue = params.get("overdue")
+        overdue_count = len(overdue) if isinstance(overdue, (list, tuple)) else int(overdue is not None)
+        dpds = params.get("dpds")
+        dpd_count = len(dpds) if isinstance(dpds, (list, tuple, np.ndarray)) else 1
+        target_count = max(1, overdue_count * dpd_count)
+        configured = params.get("max_n_bins")
+        configured_bins = int(configured) if isinstance(configured, (int, np.integer)) and configured > 0 else 5
+        for config_name in ("rules", "user_splits"):
+            rules = params.get(config_name)
+            collections = rules.values() if isinstance(rules, dict) else [rules]
+            configured_bins = max([configured_bins] + [len(values) + 1 for values in collections if isinstance(values, (list, tuple, np.ndarray))])
+        fitted = params.get("binner")
+        for item in fitted.values() if isinstance(fitted, dict) else [fitted]:
+            configured_bins = max([configured_bins] + list(getattr(item, "n_bins_", {}).values()))
+        # 三类保留箱与可选合计行，不能只按普通箱数计算返回表。
+        rows = min(len(data) + 3, configured_bins + 3) + int(bool(params.get("margins")))
+        table_rows = rows * (target_count if params.get("long_format") else 1)
+        outputs = table_rows * table_copies
+        metric_columns = 22 if params.get("long_format") else 5 + 17 * target_count
+        result_bytes = table_copies * (table_rows * (8 * metric_columns + 256) + 2048)
+        working = largest_column * (2 + max(1, overdue_count) + int(params.get("amount") is not None)) + len(data) * 64
+        estimates.append((working, result_bytes, outputs))
     return ParallelWorkload(
         task_count=task_count,
         rows=len(data),
@@ -119,6 +152,9 @@ def _feature_report_workload(
         releases_gil=True,
         has_parallel_children=has_parallel_children,
         operation=operation,
+        working_bytes_per_task=max(item[0] for item in estimates),
+        result_bytes_per_task=max(item[1] for item in estimates),
+        output_rows_per_task=max(item[2] for item in estimates) if output_rows_per_task is None else output_rows_per_task,
     )
 
 
@@ -202,7 +238,6 @@ def _auto_feature_compute_call(task):
         )
     return {
         "feature": feature,
-        "data": feature_data,
         "missing_rate": missing_rate,
         "sample_table": sample_table,
         "amount_table": amount_table,
@@ -819,6 +854,7 @@ def feature_binning_summary(
             len(tasks),
             has_parallel_children=has_parallel_children,
             operation="特征分箱汇总",
+            parameters=[task[2] for task in tasks],
         ),
     )
     for name, method, table in results:
@@ -1079,6 +1115,8 @@ def feature_group_binning_summary(
             has_parallel_children=has_parallel_children,
             operation="分组特征分箱汇总",
             cost_per_item=16.0,
+            parameters=[task[5] for task in tasks],
+            table_copies=max(1, len(ordered_groups)),
         ),
     )
     for name, method, group_results in results:
@@ -1124,6 +1162,7 @@ def _create_bin_table(
     splits: Optional[np.ndarray] = None,
     amount: Optional[np.ndarray] = None,
     bin_labels: Optional[List[str]] = None,
+    keep_bin_ids: bool = False,
 ) -> pd.DataFrame:
     """创建分箱统计表。"""
     if bin_labels is None:
@@ -1143,7 +1182,7 @@ def _create_bin_table(
     stats.insert(0, "指标含义", desc if desc else feature_name)
     stats.insert(0, "指标名称", feature_name)
 
-    if "分箱" in stats.columns:
+    if "分箱" in stats.columns and not keep_bin_ids:
         stats = stats.drop(columns=["分箱"])
 
     return stats
@@ -1307,6 +1346,7 @@ def feature_bin_stats(
     parallel_config: Optional[Dict[str, Any]] = None,
     *,
     overdue_operator: str = ">",
+    return_binner: bool = False,
     **kwargs,
 ) -> Union[pd.DataFrame, Tuple[pd.DataFrame, Dict]]:
     """特征分箱统计表，汇总统计特征每个分箱的各项指标信息.
@@ -1351,6 +1391,8 @@ def feature_bin_stats(
         默认 None，此时会使用 {'max_n_bins': 100}，即先等频100箱再合并。
     :param return_cols: 指定返回的列名列表，默认返回所有列
     :param return_rules: 是否返回分箱规则，默认 False
+    :param return_binner: 返回 (统计表, {特征: 已拟合分箱器})，并保留统计表中的稳定“分箱”编号；
+        与return_rules同时启用时返回 (统计表, 规则字典, 分箱器字典)
     :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本；``<``、``<=`` 下不剔除。
         - True: 剔除灰样本，不同目标下样本数不同，样本数相关列按目标单独显示
         - False: 保留灰样本，不同目标下样本数相同，样本数相关列作为公共列
@@ -1440,6 +1482,7 @@ def feature_bin_stats(
             "prebinning_params": prebinning_params,
             "return_cols": return_cols,
             "return_rules": True,
+            "return_binner": return_binner,
             "del_grey": del_grey,
             "margins": child_margins,
             "amount": amount,
@@ -1467,12 +1510,18 @@ def feature_bin_stats(
                 len(tasks),
                 has_parallel_children=has_parallel_children,
                 operation="多特征分箱统计",
+                parameters=[call_kwargs],
             ),
         )
         tables = []
         rules_by_feature = {}
+        binners_by_feature = {}
         for name, result in results:
-            table, learned_rules = result
+            if return_binner:
+                table, learned_rules, learned_binners = result
+                binners_by_feature.update(learned_binners)
+            else:
+                table, learned_rules = result
             tables.append(table)
             rules_by_feature[name] = learned_rules.get(name, [])
         final_table = pd.concat(tables, axis=0, ignore_index=True)
@@ -1480,6 +1529,10 @@ def feature_bin_stats(
             final_table = _reorder_long_format_columns(final_table)
         elif margins:
             final_table = add_margins(final_table)
+        if return_rules and return_binner:
+            return final_table, rules_by_feature, binners_by_feature
+        if return_binner:
+            return final_table, binners_by_feature
         if return_rules:
             return final_table, rules_by_feature
         return final_table
@@ -1517,6 +1570,7 @@ def feature_bin_stats(
     # 存储所有特征的结果
     all_feature_tables = []
     all_feature_rules = {}
+    all_feature_binners = {}
 
     # 构建默认分箱器参数（在循环外，避免重复计算）
     method_for_binner = "mdlp" if method == "optimal" else method
@@ -1634,6 +1688,8 @@ def feature_bin_stats(
         # 注意：样本占比也受 del_grey 影响，因为分母（总样本数）可能不同
         # 列名已统一，无论金额口径还是样本口径都使用相同的列名
         base_merge_cols = ["指标名称", "指标含义", "分箱标签"]
+        if return_binner:
+            base_merge_cols.append("分箱")
 
         if isinstance(del_grey, bool) and del_grey:
             # 剔除灰样本：只保留基础分箱信息作为公共列
@@ -1696,6 +1752,7 @@ def feature_bin_stats(
                 splits=splits,
                 amount=amount_values,
                 bin_labels=bin_labels,
+                keep_bin_ids=return_binner,
             )
 
             # 长格式：插入"逾期标签"列标识当前目标
@@ -1706,6 +1763,8 @@ def feature_bin_stats(
             if return_cols is not None:
                 # 确保基础列存在
                 base_cols = ["指标名称", "指标含义", "分箱标签"]
+                if return_binner:
+                    base_cols.append("分箱")
                 if long_format:
                     base_cols.insert(2, "逾期标签")
                 available_cols = [c for c in base_cols + return_cols if c in bin_table.columns]
@@ -1731,6 +1790,8 @@ def feature_bin_stats(
             merged_table = feat_tables[0]
 
         all_feature_tables.append(merged_table)
+        if return_binner:
+            all_feature_binners[feat] = current_binner
 
         # 保存分箱规则
         if return_rules:
@@ -1749,6 +1810,10 @@ def feature_bin_stats(
         # 添加合计行
         final_table = add_margins(final_table)
 
+    if return_rules and return_binner:
+        return final_table, all_feature_rules, all_feature_binners
+    if return_binner:
+        return final_table, all_feature_binners
     if return_rules:
         return final_table, all_feature_rules
     return final_table
@@ -2127,6 +2192,8 @@ def benchmark_binning_methods(
             has_parallel_children=has_parallel_children,
             operation="分箱方法基准",
             cost_per_item=16.0,
+            parameters=[common_params],
+            output_rows_per_task=1,
         ),
     )
 
@@ -2451,6 +2518,7 @@ def feature_efficiency_analysis(
                 len(table_tasks),
                 has_parallel_children=has_parallel_children,
                 operation="特征效率分箱对比",
+                parameters=[task[1] for task in table_tasks],
             ),
         )
     )
@@ -2620,6 +2688,72 @@ def auto_feature_analysis(
     show_progress: bool = True,
     *,
     overdue_operator: Optional[str] = None,
+    mode: Optional[str] = None,
+    return_result: bool = False,
+):
+    """自动特征分析，默认返回原有 (end_row, end_col)。
+
+    mode='strict' 或 'best_effort' 启用章节状态；return_result=True 返回
+    ReportResult。严格模式在必需章节失败时拒绝发布工作簿；不可继续的计算
+    错误在尽力模式下也不会发布空报告，只在结构化返回中保留失败原因。
+    """
+    parameters = dict(locals())
+    parameters.pop("mode")
+    parameters.pop("return_result")
+    from .result import ReportGenerationError, ReportResult
+
+    result = ReportResult(mode=mode or "best_effort", metadata={"报告类型": "特征报告", "输入行数": len(data)}) if mode is not None or return_result else None
+    if result is not None:
+        result.plan("输入与分箱计算", input_rows=len(data))
+        result.current_section = "输入与分箱计算"
+    try:
+        position = _auto_feature_analysis_impl(**parameters, _report_result=result)
+        if result is not None:
+            result.metadata["结束位置"] = position
+        return result if return_result else position
+    except Exception as exc:
+        if result is not None:
+            result.failure(getattr(result, "current_section", "报告执行或发布"), f"{type(exc).__name__}: {exc}")
+            if result.mode == "strict":
+                raise ReportGenerationError(f"特征报告未完成: {exc}", result) from exc
+            if return_result:
+                return result
+        raise
+
+
+def _auto_feature_analysis_impl(
+    data: pd.DataFrame,
+    features=None,
+    target="target",
+    overdue=None,
+    dpds=None,
+    date=None,
+    data_summary_comment="",
+    freq="M",
+    excel_writer=None,
+    sheet="分析报告",
+    start_col=2,
+    start_row=2,
+    dropna=False,
+    writer_params=None,
+    bin_params=None,
+    feature_map=None,
+    corr=False,
+    pictures=None,
+    suffix="",
+    output_dir="model_report",
+    margins=False,
+    amount=None,
+    image_table_gap_rows=None,
+    n_jobs=-1,
+    parallel_backend=None,
+    parallel_config=None,
+    condition_color="F76E6C",
+    del_grey: Optional[bool] = None,
+    show_progress: bool = True,
+    *,
+    overdue_operator: Optional[str] = None,
+    _report_result=None,
 ):
     """自动特征分析.
 
@@ -2670,6 +2804,14 @@ def auto_feature_analysis(
     """
 
     _validate_report_parallel(n_jobs, parallel_backend, parallel_config)
+    if _report_result is not None:
+        for name, column in (("日期字段", date), ("金额字段", amount)):
+            if column is not None and column not in data.columns:
+                _report_result.failure(name, f"请求字段不存在: {column}")
+        if date is not None and date in data.columns:
+            parsed = pd.to_datetime(data[date], errors="coerce")
+            if (data[date].notna() & parsed.isna()).any():
+                _report_result.failure("日期字段", f"日期字段 {date} 包含无法解析的值")
     if writer_params is None:
         writer_params = {}
     if bin_params is None:
@@ -2760,7 +2902,9 @@ def auto_feature_analysis(
         dates = pd.to_datetime(data[date], errors="coerce")
         try:
             period_values = dates.dt.to_period(freq).astype(str).values
-        except Exception:
+        except Exception as exc:
+            if _report_result is not None:
+                _report_result.failure("时间频率回退", f"日期频率 {freq} 无效，回退为月频: {exc}")
             period_values = dates.dt.to_period("M").astype(str).values
         time_distribution, time_percent_cols = build_group_distribution_table(
             dataset_labels,
@@ -2844,16 +2988,13 @@ def auto_feature_analysis(
             task_labels=list(features),
             default_backend="threading",
             has_parallel_children=has_parallel_children,
-            workload=ParallelWorkload(
-                task_count=len(features),
-                rows=len(data),
-                columns=len(features),
-                data_bytes=int(data.loc[:, list(dict.fromkeys(list(features) + [target]))].memory_usage(deep=True).sum()),
-                cost_per_item=12.0,
-                capability="thread_safe",
-                releases_gil=True,
+            workload=_feature_report_workload(
+                data,
+                len(features),
                 has_parallel_children=has_parallel_children,
                 operation="自动特征分析",
+                parameters=[{**bin_params, "overdue": overdue, "dpds": dpds, "margins": margins, "amount": amount}],
+                table_copies=2 if use_amount else 1,
             ),
         )
     finally:
@@ -2865,6 +3006,18 @@ def auto_feature_analysis(
             progress_stop_event,
         )
 
+    if _report_result is not None:
+        _report_result.success("输入与分箱计算")
+        _report_result.success("样本总体分布", sample_stats)
+        _report_result.success("变量综合统计", feature_summary)
+        if time_distribution is not None and "时间分布" not in _report_result.sections:
+            _report_result.success("时间分布", time_distribution)
+        for feature_result in feature_results:
+            _report_result.success(f"特征分箱：{feature_result['feature']}", feature_result['sample_table'])
+            if feature_result['amount_table'] is not None:
+                _report_result.success(f"金额分箱：{feature_result['feature']}", feature_result['amount_table'])
+        _report_result.ensure_publishable()
+        _report_result.current_section = "报告渲染"
     os.makedirs(output_dir, exist_ok=True)
 
     if isinstance(excel_writer, ExcelWriter):
@@ -3048,11 +3201,21 @@ def auto_feature_analysis(
 
     for feature_result in feature_results:
         col = feature_result["feature"]
-        temp = feature_result["data"]
+        # 计算阶段只保留聚合表，不为每个字段常驻一份完整标签/金额明细。
+        # 渲染时一次恢复当前字段所需的两列；所有计算仍已在接触writer前完成。
+        required_plot_columns = list(dict.fromkeys([col, overdue[0] if overdue else target]))
+        temp = data.loc[:, required_plot_columns].copy() if pictures else None
+        if temp is not None:
+            if isinstance(dropna, bool) and dropna:
+                temp = temp.dropna(subset=col).reset_index(drop=True)
+            elif not isinstance(dropna, bool) and isinstance(dropna, (float, int, str)):
+                temp = temp[temp[col] != dropna].reset_index(drop=True)
         missing_rate = feature_result["missing_rate"]
         sample_table = feature_result["sample_table"]
         amount_table = feature_result["amount_table"]
         actual_target = feature_result["actual_target"]
+        if temp is not None and overdue:
+            temp[actual_target] = make_overdue_target(temp[overdue[0]], dpds[0], bin_params.get("del_grey", False), overdue_operator)
 
         if sample_table is not None:
             sample_title_columns_len = len(sample_table.columns)
@@ -3221,7 +3384,23 @@ def auto_feature_analysis(
 
     _adjust_title_merges()
 
+    if _report_result is not None:
+        _report_result.success("报告渲染")
+        _report_result.ensure_publishable()
+        status_name = "报告执行状态"
+        suffix_number = 2
+        while status_name in writer.workbook.sheetnames:
+            status_name = f"报告执行状态_{suffix_number}"
+            suffix_number += 1
+        status_sheet = writer.get_sheet_by_name(status_name)
+        writer.move_sheet(status_sheet, index=0)
+        writer.insert_value2sheet(status_sheet, "B2", "报告完整" if _report_result.complete else "报告不完整：请检查失败章节", style="header")
+        writer.insert_df2sheet(status_sheet, _report_result.status_table(), "B4", index=False, auto_width=True)
     if not isinstance(excel_writer, ExcelWriter) and not isinstance(sheet, Worksheet):
+        if _report_result is not None:
+            _report_result.current_section = "工作簿发布"
         writer.save(excel_writer)
+        if _report_result is not None:
+            _report_result.artifacts.append({"类型": "Excel", "路径": str(excel_writer), "完整": _report_result.complete})
 
     return end_row, end_col

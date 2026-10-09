@@ -7,6 +7,7 @@
 import numpy as np
 from typing import Optional, Union
 from .base import BaseLoss
+from ._loss_math import binary_inputs, bce_terms, focal_terms, nonnegative, positive, unit_interval
 
 
 class WeightedBCELoss(BaseLoss):
@@ -31,13 +32,15 @@ class WeightedBCELoss(BaseLoss):
     >>> loss = WeightedBCELoss(auto_balance=True)
     >>> # 假设正样本占比10%，自动设置pos_weight=9, neg_weight=1
     >>>
-    >>> # 在LightGBM中使用
+    >>> # 同一目标的离线评估：越小越好
+    >>> value = loss.metric()(y_valid, p_valid)
+    >>> # 在LightGBM 4.x 原生接口中使用
     >>> import lightgbm as lgb
     >>> train_data = lgb.Dataset(X_train, label=y_train)
     >>> bst = lgb.train(
-    ...     params={'objective': 'binary'},
+    ...     params={'objective': loss.to_lightgbm(api='native'), 'metric': 'None'},
     ...     train_set=train_data,
-    ...     fobj=loss.to_lightgbm(),
+    ...     feval=loss.metric().to_lightgbm(api='native', raw_score=True),
     ...     num_boost_round=100
     ... )
 
@@ -49,13 +52,12 @@ class WeightedBCELoss(BaseLoss):
     """
 
     def __init__(
-        self,
-        pos_weight: float = 1.0,
-        neg_weight: float = 1.0,
-        auto_balance: bool = False,
-        name: str = "weighted_bce"
+        self, pos_weight: float = 1.0, neg_weight: float = 1.0, auto_balance: bool = False, name: str = "weighted_bce"
     ):
         super().__init__(name)
+        nonnegative(pos_weight=pos_weight, neg_weight=neg_weight)
+        positive(权重总和=pos_weight + neg_weight)
+        self.is_additive = not auto_balance
         self.pos_weight = pos_weight
         self.neg_weight = neg_weight
         self.auto_balance = auto_balance
@@ -70,87 +72,78 @@ class WeightedBCELoss(BaseLoss):
         n_neg = np.sum(y_true == 0)
 
         if n_pos == 0 or n_neg == 0:
+            self.pos_weight = self.neg_weight = 1.0
             return
 
         # 权重与样本数量成反比
         self.pos_weight = n_neg / n_pos
         self.neg_weight = 1.0
 
-    def __call__(
-        self,
-        y_true: np.ndarray,
-        y_pred: np.ndarray
-    ) -> float:
-        """计算加权BCE损失。
+    def __call__(self, y_true, y_pred) -> float:
+        """计算本损失的平均值，越小越好。
 
-        :param y_true: 真实标签
-        :param y_pred: 预测概率
-        :return: 平均损失值
+        :param y_true: 一维 0/1 标签，1 为坏样本。
+        :param y_pred: 同形状坏样本概率，范围 [0, 1]；不是原始分数。
+        :return: float；原始损失值，不根据调参方向改变符号。
+
+        **参考样例**
+
+        >>> from hscredit.core.models.losses import WeightedBCELoss
+        >>> loss = WeightedBCELoss()
+        >>> result = loss([0, 0, 1, 1], [0.1, 0.3, 0.7, 0.9])
         """
-        # 自动平衡权重
-        self._auto_balance_weights(y_true)
+        return float(np.mean(self.loss_values(y_true, y_pred)))
 
-        # 确保概率在合理范围
-        y_pred = np.clip(y_pred, 1e-7, 1 - 1e-7)
+    def gradient(self, y_true, y_pred):
+        """返回损失相对坏样本概率的一阶导数。
 
-        # 计算加权交叉熵
-        pos_loss = -self.pos_weight * y_true * np.log(y_pred)
-        neg_loss = -self.neg_weight * (1 - y_true) * np.log(1 - y_pred)
+        :param y_true: 一维 0/1 标签，1 为坏样本。
+        :param y_pred: 同形状坏样本概率，范围 [0, 1]；不是原始分数。
+        :return: 与输入等长的一阶导数组，标度为样本数乘以平均损失；详见 BaseLoss.gradient。
 
-        total_loss = pos_loss + neg_loss
-        return np.mean(total_loss)
+        **参考样例**
 
-    def gradient(
-        self,
-        y_true: np.ndarray,
-        y_pred: np.ndarray
-    ) -> np.ndarray:
-        """计算梯度。
-
-        :param y_true: 真实标签
-        :param y_pred: 预测概率
-        :return: 梯度数组
+        >>> from hscredit.core.models.losses import WeightedBCELoss
+        >>> loss = WeightedBCELoss()
+        >>> result = loss.gradient([0, 0, 1, 1], [0.1, 0.3, 0.7, 0.9])
         """
-        # 自动平衡权重
-        self._auto_balance_weights(y_true)
+        return self._terms(y_true, y_pred)[1]
 
-        # 确保概率在合理范围
-        y_pred = np.clip(y_pred, 1e-7, 1 - 1e-7)
+    def hessian(self, y_true, y_pred):
+        """返回损失相对坏样本概率的二阶导数。
 
-        # 计算梯度
-        grad = np.where(
-            y_true == 1,
-            -self.pos_weight / y_pred,
-            self.neg_weight / (1 - y_pred)
-        )
+        :param y_true: 一维 0/1 标签，1 为坏样本。
+        :param y_pred: 同形状坏样本概率，范围 [0, 1]；不是原始分数。
+        :return: 与输入等长的二阶导数组，标度同 BaseLoss.hessian；框架适配器再做链接函数转换。
 
-        return grad
+        **参考样例**
 
-    def hessian(
-        self,
-        y_true: np.ndarray,
-        y_pred: np.ndarray
-    ) -> np.ndarray:
-        """计算二阶导数。
-
-        :param y_true: 真实标签
-        :param y_pred: 预测概率
-        :return: 二阶导数数组
+        >>> from hscredit.core.models.losses import WeightedBCELoss
+        >>> loss = WeightedBCELoss()
+        >>> result = loss.hessian([0, 0, 1, 1], [0.1, 0.3, 0.7, 0.9])
         """
-        # 自动平衡权重
-        self._auto_balance_weights(y_true)
+        return self._terms(y_true, y_pred)[2]
 
-        # 确保概率在合理范围
-        y_pred = np.clip(y_pred, 1e-7, 1 - 1e-7)
+    def _terms(self, y_true, y_pred):
+        y, p = binary_inputs(y_true, y_pred)
+        self._auto_balance_weights(y)
+        weights = np.where(y == 1, self.pos_weight, self.neg_weight)
+        return tuple(weights * term for term in bce_terms(y, p))
 
-        # 计算二阶导
-        hess = np.where(
-            y_true == 1,
-            self.pos_weight / (y_pred ** 2),
-            self.neg_weight / ((1 - y_pred) ** 2)
-        )
+    def loss_values(self, y_true, y_pred):
+        """逐样本类别加权 BCE；自动权重按当前数据集重新计算。
 
-        return hess
+        :param y_true: 一维 0/1 标签，1 为坏样本。
+        :param y_pred: 同形状坏样本概率，范围 [0, 1]；不是原始分数。
+        :return: 与输入等长的数组，其均值等于本损失值；详见 BaseLoss.loss_values。
+
+        **参考样例**
+
+        >>> from hscredit.core.models.losses import WeightedBCELoss
+        >>> loss = WeightedBCELoss()
+        >>> result = loss.loss_values([0, 0, 1, 1], [0.1, 0.3, 0.7, 0.9])
+        """
+        return self._terms(y_true, y_pred)[0]
 
 
 class CostSensitiveLoss(BaseLoss):
@@ -178,93 +171,104 @@ class CostSensitiveLoss(BaseLoss):
 
     **注意**
 
-    损失矩阵:
-                预测负    预测正
-    实际负        0       fp_cost
-    实际正     fn_cost      0
+    损失矩阵::
+
+                    预测负    预测正
+        实际负        0       fp_cost
+        实际正     fn_cost      0
 
     我们希望最小化总成本: FP * fp_cost + FN * fn_cost
     """
 
-    def __init__(
-        self,
-        fn_cost: float = 1.0,
-        fp_cost: float = 1.0,
-        name: str = "cost_sensitive"
-    ):
+    def __init__(self, fn_cost: float = 1.0, fp_cost: float = 1.0, name: str = "cost_sensitive"):
         super().__init__(name)
+        nonnegative(fn_cost=fn_cost, fp_cost=fp_cost)
+        positive(成本总和=fn_cost + fp_cost)
+        self.is_additive = True
         self.fn_cost = fn_cost  # 假阴性成本（漏抓）
         self.fp_cost = fp_cost  # 假阳性成本（误拒）
 
-    def __call__(
-        self,
-        y_true: np.ndarray,
-        y_pred: np.ndarray,
-        threshold: float = 0.5
-    ) -> float:
-        """计算总成本。
+    def __call__(self, y_true, y_pred, threshold=None) -> float:
+        """默认返回可优化的成本加权 BCE；显式 threshold 返回历史硬分类成本。
 
-        :param y_true: 真实标签
-        :param y_pred: 预测概率
-        :param threshold: 分类阈值，默认为0.5
-        :return: 总成本
+        :param y_true: 一维 0/1 标签，1 为坏样本。
+        :param y_pred: 同形状坏样本概率，范围 [0, 1]；不是原始分数。
+        :param threshold: 默认 None 使用可微 BCE 代理；显式阈值返回历史硬分类成本，范围 [0, 1]。
+        :return: float；原始损失值，不根据调参方向改变符号。
+
+        **参考样例**
+
+        >>> from hscredit.core.models.losses import CostSensitiveLoss
+        >>> loss = CostSensitiveLoss()
+        >>> result = loss([0, 0, 1, 1], [0.1, 0.3, 0.7, 0.9])
         """
-        # 预测标签
-        y_pred_label = (y_pred >= threshold).astype(int)
+        if threshold is not None:
+            return self.classification_cost(y_true, y_pred, threshold)
+        return float(np.mean(self.loss_values(y_true, y_pred)))
 
-        # 计算FP和FN
-        fp = np.sum((y_true == 0) & (y_pred_label == 1))
-        fn = np.sum((y_true == 1) & (y_pred_label == 0))
+    def gradient(self, y_true, y_pred):
+        """返回损失相对坏样本概率的一阶导数。
 
-        # 总成本
-        total_cost = fp * self.fp_cost + fn * self.fn_cost
+        :param y_true: 一维 0/1 标签，1 为坏样本。
+        :param y_pred: 同形状坏样本概率，范围 [0, 1]；不是原始分数。
+        :return: 与输入等长的一阶导数组，标度为样本数乘以平均损失；详见 BaseLoss.gradient。
 
-        return total_cost / len(y_true)
+        **参考样例**
 
-    def gradient(
-        self,
-        y_true: np.ndarray,
-        y_pred: np.ndarray
-    ) -> np.ndarray:
-        """计算梯度，成本敏感的梯度计算。
-
-        :param y_true: 真实标签
-        :param y_pred: 预测概率
-        :return: 梯度数组
+        >>> from hscredit.core.models.losses import CostSensitiveLoss
+        >>> loss = CostSensitiveLoss()
+        >>> result = loss.gradient([0, 0, 1, 1], [0.1, 0.3, 0.7, 0.9])
         """
-        # 确保概率在合理范围
-        y_pred = np.clip(y_pred, 1e-7, 1 - 1e-7)
+        return self._terms(y_true, y_pred)[1]
 
-        # 对于正样本(y=1)，我们希望预测概率尽可能高，梯度: -fn_cost / p
-        # 对于负样本(y=0)，我们希望预测概率尽可能低，梯度: fp_cost / (1-p)
+    def hessian(self, y_true, y_pred):
+        """返回损失相对坏样本概率的二阶导数。
 
-        grad = np.where(
-            y_true == 1,
-            -self.fn_cost / y_pred,
-            self.fp_cost / (1 - y_pred)
-        )
+        :param y_true: 一维 0/1 标签，1 为坏样本。
+        :param y_pred: 同形状坏样本概率，范围 [0, 1]；不是原始分数。
+        :return: 与输入等长的二阶导数组，标度同 BaseLoss.hessian；框架适配器再做链接函数转换。
 
-        return grad
+        **参考样例**
 
-    def hessian(
-        self,
-        y_true: np.ndarray,
-        y_pred: np.ndarray
-    ) -> np.ndarray:
-        """计算二阶导数。
-
-        :param y_true: 真实标签
-        :param y_pred: 预测概率
-        :return: 二阶导数数组
+        >>> from hscredit.core.models.losses import CostSensitiveLoss
+        >>> loss = CostSensitiveLoss()
+        >>> result = loss.hessian([0, 0, 1, 1], [0.1, 0.3, 0.7, 0.9])
         """
-        # 确保概率在合理范围
-        y_pred = np.clip(y_pred, 1e-7, 1 - 1e-7)
+        return self._terms(y_true, y_pred)[2]
 
-        # 计算二阶导
-        hess = np.where(
-            y_true == 1,
-            self.fn_cost / (y_pred ** 2),
-            self.fp_cost / ((1 - y_pred) ** 2)
-        )
+    def _terms(self, y_true, y_pred):
+        y, p = binary_inputs(y_true, y_pred)
+        weights = np.where(y == 1, self.fn_cost, self.fp_cost)
+        return tuple(weights * term for term in bce_terms(y, p))
 
-        return hess
+    def classification_cost(self, y_true, y_pred, threshold=0.5) -> float:
+        """计算固定阈值下的实际人均误判成本，越小越好。
+
+        :param y_true: 一维 0/1 标签，1 为坏样本。
+        :param y_pred: 同形状的坏样本概率。
+        :param threshold: 拒绝阈值，范围 [0, 1]，默认 0.5；p >= threshold 拒绝。
+        :return: float，误拒好客户成本和漏抓坏客户成本之和除以全量人数。
+            这是硬决策评价，不作为可微训练目标。
+
+        >>> cost = CostSensitiveLoss(fn_cost=100, fp_cost=1).classification_cost(
+        ...     [0, 0, 1, 1], [0.1, 0.3, 0.7, 0.9], threshold=0.5)
+        """
+        y, p = binary_inputs(y_true, y_pred)
+        p = np.asarray(y_pred, dtype=float)
+        unit_interval(threshold=threshold)
+        return float(np.mean((y == 0) * (p >= threshold) * self.fp_cost + (y == 1) * (p < threshold) * self.fn_cost))
+
+    def loss_values(self, y_true, y_pred):
+        """成本加权 BCE 的逐样本贡献，其均值与默认调用一致。
+
+        :param y_true: 一维 0/1 标签，1 为坏样本。
+        :param y_pred: 同形状坏样本概率，范围 [0, 1]；不是原始分数。
+        :return: 与输入等长的数组，其均值等于本损失值；详见 BaseLoss.loss_values。
+
+        **参考样例**
+
+        >>> from hscredit.core.models.losses import CostSensitiveLoss
+        >>> loss = CostSensitiveLoss()
+        >>> result = loss.loss_values([0, 0, 1, 1], [0.1, 0.3, 0.7, 0.9])
+        """
+        return self._terms(y_true, y_pred)[0]

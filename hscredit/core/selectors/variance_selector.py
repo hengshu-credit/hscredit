@@ -16,9 +16,8 @@
 from typing import Union, List, Optional, Dict, Any
 import numpy as np
 import pandas as pd
-from sklearn.feature_selection import VarianceThreshold as SklearnVarianceThreshold
-
 from .base import BaseFeatureSelector
+from ._statistical_utils import record_conditions, record_counts, validate_real
 
 
 def _compute_variance_feature(task):
@@ -30,14 +29,14 @@ def _compute_variance_feature(task):
 class VarianceSelector(BaseFeatureSelector):
     """方差筛选器.
 
-    移除方差低于阈值的特征。
+    移除方差小于等于阈值的特征。
     常用于移除常量特征或近似常量特征。
 
     **参数**
 
     :param threshold: 方差阈值，默认为0.0
         - 0.0: 移除常量特征（方差为0）
-        - 其他值: 移除方差小于该值的特征
+        - 其他值: 移除方差小于等于该值的特征
 
     **参考样例**
 
@@ -76,7 +75,9 @@ class VarianceSelector(BaseFeatureSelector):
         binning_params: Optional[Dict[str, Any]] = None,
         parallel_backend: Optional[str] = None,
         parallel_config: Optional[Dict[str, Any]] = None,
+        target_rm: bool = False,
     ):
+        """初始化筛选器；默认透传已有目标列，仅target_rm=True移除。"""
         super().__init__(
             target=target,
             threshold=threshold,
@@ -88,7 +89,12 @@ class VarianceSelector(BaseFeatureSelector):
             binning_params=binning_params,
             parallel_backend=parallel_backend,
             parallel_config=parallel_config,
+            target_rm=target_rm,
         )
+
+    def _check_input(self, X, y=None):
+        validate_real(self.threshold, "方差阈值", minimum=0)
+        return super()._check_input(X, y)
 
     def _fit_impl(
         self,
@@ -103,16 +109,26 @@ class VarianceSelector(BaseFeatureSelector):
         self._get_feature_names(X)
 
         self._validate_parallel_configuration()
-        self.scores_ = X.var(axis=0, ddof=0, numeric_only=False).reindex(X.columns)
+        record_counts(self, X)
+        self.threshold_ = self.threshold
+        self.score_name_, self.score_direction_ = "方差", "越大越好"
+        non_numeric = [column for column in X if not pd.api.types.is_numeric_dtype(X[column])]
+        if non_numeric:
+            raise ValueError(f"方差筛选只支持数值字段，请先编码: {non_numeric}")
+        self.variances_ = X.var(axis=0, ddof=0, numeric_only=False).reindex(X.columns).astype(float)
+        self.scores_ = self.variances_.copy()
         peak_to_peak = (X.max(axis=0) - X.min(axis=0)).reindex(X.columns)
+        self.ranges_ = peak_to_peak
 
         # 根据阈值筛选
         if self.threshold == 0:
-            scores = np.minimum(self.scores_.fillna(0).values, peak_to_peak.fillna(0).values)
-            self.scores_ = pd.Series(scores, index=X.columns)
+            # 极差仅辅助识别数值舍入形成的伪常量，不覆盖真实方差指标。
+            selected_mask = (self.variances_.fillna(0) > 0) & (peak_to_peak.fillna(0) > 0)
+        else:
+            selected_mask = self.variances_ > self.threshold
 
         # 选择方差大于阈值的特征
-        selected_mask = self.scores_ > self.threshold
+        record_conditions(self, X.columns, 方差达标=selected_mask)
         self.selected_features_ = X.columns[selected_mask].tolist()
 
         # 构建详细的dropped_记录，包含方差值

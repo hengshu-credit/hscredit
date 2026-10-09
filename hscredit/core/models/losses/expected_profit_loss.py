@@ -2,8 +2,7 @@
 期望利润损失函数
 
 将收益、坏账损失和通过决策融合为连续可微的期望利润优化目标。
-相比 ProfitMaxLoss 使用硬阈值决策，本模块通过 sigmoid 软通过门
-实现全程可微的利润优化，梯度更平滑，收敛更稳定。
+本模块通过 sigmoid 软通过门构造可微的利润代理，并用交叉熵正则约束概率拟合。
 """
 
 from __future__ import annotations
@@ -11,6 +10,7 @@ from __future__ import annotations
 import numpy as np
 
 from .base import BaseLoss
+from ._loss_math import binary_inputs, bce_terms, nonnegative, positive, unit_interval
 
 
 def _sigmoid(x: np.ndarray) -> np.ndarray:
@@ -26,8 +26,8 @@ def _sigmoid(x: np.ndarray) -> np.ndarray:
 class ExpectedProfitLoss(BaseLoss):
     """期望利润损失函数，将收益、坏账损失和通过决策融合为连续可微的期望利润优化目标。
 
-    相比 :class:`ProfitMaxLoss` 使用硬阈值决策（不可微），本损失通过 sigmoid
-    软通过门实现全程可微的利润优化，梯度更平滑，收敛更稳定。
+    本损失通过 sigmoid 软通过门构造可微的利润代理。
+    :class:`ProfitMaxLoss` 则使用收益和坏账成本加权 BCE，两者目标不同。
 
     数学形式::
 
@@ -86,6 +86,10 @@ class ExpectedProfitLoss(BaseLoss):
         name: str = "expected_profit_loss",
     ):
         super().__init__(name)
+        nonnegative(revenue=revenue, default_cost=default_cost, bce_weight=bce_weight)
+        unit_interval(cutoff=cutoff)
+        positive(temperature=temperature)
+        self.is_additive = True
         self.revenue = revenue
         self.default_cost = default_cost
         self.cutoff = cutoff
@@ -101,93 +105,68 @@ class ExpectedProfitLoss(BaseLoss):
         """计算每个样本的利润标签（好客户正利润，坏客户负利润）。"""
         return (1 - y_true) * self.revenue - y_true * self.default_cost
 
-    def __call__(
-        self,
-        y_true: np.ndarray,
-        y_pred: np.ndarray,
-    ) -> float:
-        """计算期望利润损失。
+    def __call__(self, y_true, y_pred) -> float:
+        """计算本损失的平均值，越小越好。
 
-        :param y_true: 真实标签, shape (n_samples,)
-        :param y_pred: 预测概率, shape (n_samples,)
-        :return: 损失值（负期望利润 + BCE 正则）
+        :param y_true: 一维 0/1 标签，1 为坏样本。
+        :param y_pred: 同形状坏样本概率，范围 [0, 1]；不是原始分数。
+        :return: float；原始损失值，不根据调参方向改变符号。
+
+        **参考样例**
+
+        >>> from hscredit.core.models.losses import ExpectedProfitLoss
+        >>> loss = ExpectedProfitLoss()
+        >>> result = loss([0, 0, 1, 1], [0.1, 0.3, 0.7, 0.9])
         """
-        y_true = np.asarray(y_true, dtype=float)
-        y_pred = np.clip(np.asarray(y_pred, dtype=float), 1e-7, 1 - 1e-7)
+        return float(np.mean(self.loss_values(y_true, y_pred)))
 
-        approve = self._approve_gate(y_pred)
-        profit = self._sample_profit(y_true)
+    def gradient(self, y_true, y_pred):
+        """相对概率求导：利润项 + bce_weight × (p-y)/(p(1-p))。
 
-        # 负期望利润
-        profit_loss = -np.mean(approve * profit)
+        :param y_true: 一维 0/1 标签，1 为坏样本。
+        :param y_pred: 同形状坏样本概率，范围 [0, 1]；不是原始分数。
+        :return: 与输入等长的一阶导数组，标度为样本数乘以平均损失；详见 BaseLoss.gradient。
 
-        # BCE 正则
-        bce = -np.mean(
-            y_true * np.log(y_pred) + (1 - y_true) * np.log(1 - y_pred)
-        )
+        **参考样例**
 
-        return float(profit_loss + self.bce_weight * bce)
-
-    def gradient(
-        self,
-        y_true: np.ndarray,
-        y_pred: np.ndarray,
-    ) -> np.ndarray:
-        """计算梯度。
-
-        推导::
-
-            dL/dp_i = σ_i(1-σ_i)/T × profit_i  +  bce_weight × (p_i - y_i)
-
-        :param y_true: 真实标签
-        :param y_pred: 预测概率
-        :return: 梯度数组, shape (n_samples,)
+        >>> from hscredit.core.models.losses import ExpectedProfitLoss
+        >>> loss = ExpectedProfitLoss()
+        >>> result = loss.gradient([0, 0, 1, 1], [0.1, 0.3, 0.7, 0.9])
         """
-        y_true = np.asarray(y_true, dtype=float)
-        y_pred = np.clip(np.asarray(y_pred, dtype=float), 1e-7, 1 - 1e-7)
+        y, p = binary_inputs(y_true, y_pred)
+        gate = self._approve_gate(p)
+        return gate * (1 - gate) / self.temperature * self._sample_profit(y) + self.bce_weight * bce_terms(y, p)[1]
 
-        approve = self._approve_gate(y_pred)
-        profit = self._sample_profit(y_true)
+    def hessian(self, y_true, y_pred):
+        """返回真实概率二阶导；非凸区域可以为负，由训练适配器稳定化。
 
-        # 利润梯度: dL/dp = -d(approve)/dp × profit
-        # d(approve)/dp = -σ(1-σ)/T  →  dL/dp = σ(1-σ)/T × profit
-        grad_profit = approve * (1 - approve) / self.temperature * profit
+        :param y_true: 一维 0/1 标签，1 为坏样本。
+        :param y_pred: 同形状坏样本概率，范围 [0, 1]；不是原始分数。
+        :return: 与输入等长的二阶导数组，标度同 BaseLoss.hessian；框架适配器再做链接函数转换。
 
-        # BCE 梯度
-        grad_bce = self.bce_weight * (y_pred - y_true)
+        **参考样例**
 
-        return grad_profit + grad_bce
-
-    def hessian(
-        self,
-        y_true: np.ndarray,
-        y_pred: np.ndarray,
-    ) -> np.ndarray:
-        """计算二阶导数。
-
-        :param y_true: 真实标签
-        :param y_pred: 预测概率
-        :return: 二阶导数数组, shape (n_samples,)
+        >>> from hscredit.core.models.losses import ExpectedProfitLoss
+        >>> loss = ExpectedProfitLoss()
+        >>> result = loss.hessian([0, 0, 1, 1], [0.1, 0.3, 0.7, 0.9])
         """
-        y_true = np.asarray(y_true, dtype=float)
-        y_pred = np.clip(np.asarray(y_pred, dtype=float), 1e-7, 1 - 1e-7)
+        y, p = binary_inputs(y_true, y_pred)
+        gate = self._approve_gate(p)
+        profit_hess = -self._sample_profit(y) * gate * (1 - gate) * (1 - 2 * gate) / self.temperature**2
+        return profit_hess + self.bce_weight * bce_terms(y, p)[2]
 
-        approve = self._approve_gate(y_pred)
-        profit = self._sample_profit(y_true)
+    def loss_values(self, y_true, y_pred):
+        """负软通过利润与 BCE 正则的逐样本损失。
 
-        # d²L/dp² = -profit × σ(1-σ)(1-2σ) / T²
-        hess_profit = (
-            -profit
-            * approve
-            * (1 - approve)
-            * (1 - 2 * approve)
-            / (self.temperature ** 2)
-        )
+        :param y_true: 一维 0/1 标签，1 为坏样本。
+        :param y_pred: 同形状坏样本概率，范围 [0, 1]；不是原始分数。
+        :return: 与输入等长的数组，其均值等于本损失值；详见 BaseLoss.loss_values。
 
-        # BCE 二阶导
-        hess_bce = self.bce_weight * y_pred * (1 - y_pred)
+        **参考样例**
 
-        hess = hess_profit + hess_bce
-
-        # 确保非零正值
-        return np.maximum(np.abs(hess), 1e-6)
+        >>> from hscredit.core.models.losses import ExpectedProfitLoss
+        >>> loss = ExpectedProfitLoss()
+        >>> result = loss.loss_values([0, 0, 1, 1], [0.1, 0.3, 0.7, 0.9])
+        """
+        y, p = binary_inputs(y_true, y_pred)
+        return -self._approve_gate(p) * self._sample_profit(y) + self.bce_weight * bce_terms(y, p)[0]

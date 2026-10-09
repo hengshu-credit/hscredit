@@ -11,8 +11,7 @@
 
 **向量化约定**
 
-标量输入返回标量；如需对多组参数批量计算，须将 *所有* 数值参数（含 ``when``）
-统一传为等长 numpy 数组，函数对其逐元素并行求解。
+标量输入返回标量；数组与标量遵循 NumPy 广播规则，内部统一使用浮点数。
 
 **子函数**
 
@@ -45,12 +44,20 @@ def _convert_when(when):
         'finish': 0
     }
 
-    if isinstance(when, np.ndarray):
-        return when
     try:
-        return _when_to_num[when]
-    except (KeyError, TypeError):
-        return [_when_to_num[x] for x in when]
+        values = np.asarray(when)
+        converted = np.array([_when_to_num[value] for value in values.flat], dtype=float).reshape(values.shape)
+    except (KeyError, TypeError) as exc:
+        raise ValueError("when 必须为期初 begin/1 或期末 end/0") from exc
+    return converted.item() if converted.ndim == 0 else converted
+
+
+def _broadcast_financial(*values):
+    """金融计算统一浮点广播，防止 zeros_like 继承整数 dtype 截断。"""
+    try:
+        return np.broadcast_arrays(*[np.asarray(value, dtype=float) for value in values])
+    except (TypeError, ValueError) as exc:
+        raise ValueError("金融函数参数必须为可广播的数值") from exc
 
 
 def fv(rate, nper, pmt, pv, when='end'):
@@ -102,11 +109,7 @@ def fv(rate, nper, pmt, pv, when='end'):
     https://numpy.org/numpy-financial/latest/functions/fv.html
     """
     when = _convert_when(when)
-    rate = np.asarray(rate)
-    nper = np.asarray(nper)
-    pmt = np.asarray(pmt)
-    pv = np.asarray(pv)
-    when = np.asarray(when)
+    rate, nper, pmt, pv, when = _broadcast_financial(rate, nper, pmt, pv, when)
 
     if rate.ndim == 0:
         # 标量情况
@@ -173,11 +176,7 @@ def pv(rate, nper, pmt, fv=0, when='end'):
     https://numpy.org/numpy-financial/latest/functions/pv.html
     """
     when = _convert_when(when)
-    rate = np.asarray(rate)
-    nper = np.asarray(nper)
-    pmt = np.asarray(pmt)
-    fv = np.asarray(fv)
-    when = np.asarray(when)
+    rate, nper, pmt, fv, when = _broadcast_financial(rate, nper, pmt, fv, when)
 
     if rate.ndim == 0:
         if rate == 0:
@@ -231,11 +230,7 @@ def pmt(rate, nper, pv, fv=0, when='end'):
     https://numpy.org/numpy-financial/latest/functions/pmt.html
     """
     when = _convert_when(when)
-    rate = np.asarray(rate)
-    nper = np.asarray(nper)
-    pv = np.asarray(pv)
-    fv = np.asarray(fv)
-    when = np.asarray(when)
+    rate, nper, pv, fv, when = _broadcast_financial(rate, nper, pv, fv, when)
 
     if rate.ndim == 0:
         if rate == 0:
@@ -289,11 +284,7 @@ def nper(rate, pmt, pv, fv=0, when='end'):
     https://numpy.org/numpy-financial/latest/functions/nper.html
     """
     when = _convert_when(when)
-    rate = np.asarray(rate)
-    pmt = np.asarray(pmt)
-    pv = np.asarray(pv)
-    fv = np.asarray(fv)
-    when = np.asarray(when)
+    rate, pmt, pv, fv, when = _broadcast_financial(rate, pmt, pv, fv, when)
 
     if rate.ndim == 0:
         if rate == 0:
@@ -438,6 +429,14 @@ def rate(nper, pmt, pv, fv=0, when='end', guess=0.1, tol=1e-6, max_iter=100):
     https://numpy.org/numpy-financial/latest/functions/rate.html
     """
     when = _convert_when(when)
+
+    nper_a, pmt_a, pv_a, fv_a, when_a, guess_a = _broadcast_financial(nper, pmt, pv, fv, when, guess)
+    if nper_a.ndim:
+        output = np.empty(nper_a.shape, dtype=float)
+        for index in np.ndindex(output.shape):
+            output[index] = rate(nper_a[index], pmt_a[index], pv_a[index], fv_a[index], when_a[index], guess_a[index], tol, max_iter)
+        return output
+    nper, pmt, pv, fv, when, guess = (value.item() for value in (nper_a, pmt_a, pv_a, fv_a, when_a, guess_a))
 
     def _f(r):
         if r == 0:

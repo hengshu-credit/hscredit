@@ -1208,6 +1208,8 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
             cell_id_grid[i, j] = cell_id
 
         cell_indices = cell_id_grid[bins_x_valid, bins_y_valid]
+        cell_counts = np.bincount(cell_indices, minlength=len(cells))
+        cell_bad = np.bincount(cell_indices, weights=y_valid, minlength=len(cells))
         detail_bins = np.full(len(y), UNKNOWN_BIN, dtype=int)
         detail_bins[valid_mask] = cell_indices
         detail_bins[special_mask] = -2
@@ -1243,9 +1245,8 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
 
         descriptions = []
         for cell_id, (i, j) in enumerate(cells):
-            mask = (bins_x_valid == i) & (bins_y_valid == j)
-            bad = int(y_valid[mask].sum())
-            count = int(mask.sum())
+            bad = int(cell_bad[cell_id])
+            count = int(cell_counts[cell_id])
             grid_event[i, j] = bad
             grid_nonevent[i, j] = count - bad
             x_label = self._get_grid_bin_label(i, is_x=True)

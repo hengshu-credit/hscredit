@@ -113,6 +113,8 @@ def psi_rating(psi: float) -> str:
     :param psi: PSI值
     :return: 评级字符串
     """
+    if not np.isfinite(psi):
+        return '数据不足或不可计算'
     for low, high, rating in PSI_RATING:
         if low <= psi < high:
             return rating

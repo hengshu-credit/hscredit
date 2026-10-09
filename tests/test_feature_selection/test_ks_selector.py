@@ -39,7 +39,7 @@ def test_raw_ks_threshold_and_chinese_report(sample_df):
     assert selector.selected_features_ == ["正向", "反向", "边界"]
     pd.testing.assert_frame_equal(result, sample_df[["正向", "反向", "边界", "目标"]])
     assert selector.get_support().tolist() == [True, True, True, False, False]
-    assert selector.get_feature_names_out().tolist() == selector.selected_features_
+    assert selector.get_feature_names_out().tolist() == selector.selected_features_ + ["目标"]
     report = selector.get_selection_report()
     assert report["输入特征数"] == 5
     assert report["选中特征数"] == 3
@@ -63,6 +63,7 @@ def test_external_y_has_priority_without_target_leakage(sample_df):
     assert selector.selected_features_ == ["无效"]
     assert "目标" not in selector.scores_.index
     assert selector.n_features_in_ == 5
+    pd.testing.assert_series_equal(selector.transform(sample_df)["目标"], sample_df["目标"])
 
 
 @pytest.mark.parametrize("dtype", ["object", "category", "string"])

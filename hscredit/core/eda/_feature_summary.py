@@ -763,8 +763,6 @@ def _psi_for_feature(
         expected = df[feature].iloc[expected_positions]
         actual = df[feature].iloc[actual_positions]
         if context.kind in ("group_col", "date_col"):
-            expected = expected.dropna()
-            actual = actual.dropna()
             if len(expected) <= 10 or len(actual) <= 10:
                 continue
         try:

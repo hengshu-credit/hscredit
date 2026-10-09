@@ -42,7 +42,7 @@ extensions = [
 
 autosummary_generate = True
 templates_path = ["_templates"]
-exclude_patterns = ["_build", "Thumbs.db", ".DS_Store", "PACKAGING.md"]
+exclude_patterns = ["_build", "Thumbs.db", ".DS_Store", "PACKAGING.md", "audits/**"]
 
 # 中文界面
 language = "zh_CN"

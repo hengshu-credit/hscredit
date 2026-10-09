@@ -7,6 +7,7 @@
 import numpy as np
 from typing import Optional, Dict
 from .base import BaseLoss
+from ._loss_math import binary_inputs, bce_terms, nonnegative, positive, unit_interval
 
 
 class BadDebtLoss(BaseLoss):
@@ -14,7 +15,9 @@ class BadDebtLoss(BaseLoss):
 
     适用于信贷审批场景，希望降低通过客户的坏账比例。
 
-    :param target_approval_rate: 目标通过率，默认为0.3
+    业务惩罚依赖硬阈值，训练仅使用 BCE 代理导数；本类不直接对坏账率求导。
+
+    :param target_approval_rate: 目标通过率，范围 (0, 1]，默认为0.3
     :param bad_debt_weight: 坏账率权重，默认为1.0
     :param approval_weight: 通过率权重，默认为0.5
     :param name: 损失函数名称，默认为"bad_debt_loss"
@@ -30,12 +33,16 @@ class BadDebtLoss(BaseLoss):
     ...     approval_weight=0.3
     ... )
     >>>
-    >>> # 在CatBoost中使用
-    >>> from catboost import CatBoostClassifier
-    >>> model = CatBoostClassifier(
-    ...     iterations=1000,
-    ...     loss_function=loss.to_catboost(),
-    ...     eval_metric='AUC'
+    >>> # 该目标依赖全量排序，使用 LightGBM 的全量目标回调
+    >>> from lightgbm import LGBMClassifier
+    >>> model = LGBMClassifier(
+    ...     n_estimators=1000,
+    ...     objective=loss.to_lightgbm(),
+    ...     metric='None',
+    ... )
+    >>> model.fit(
+    ...     X_train, y_train, eval_set=[(X_valid, y_valid)],
+    ...     eval_metric=loss.metric().to_lightgbm(raw_score=True),
     ... )
 
     **引用**
@@ -49,119 +56,85 @@ class BadDebtLoss(BaseLoss):
         target_approval_rate: float = 0.3,
         bad_debt_weight: float = 1.0,
         approval_weight: float = 0.5,
-        name: str = "bad_debt_loss"
+        name: str = "bad_debt_loss",
     ):
         super().__init__(name)
+        unit_interval(target_approval_rate=target_approval_rate)
+        positive(target_approval_rate=target_approval_rate)
+        nonnegative(bad_debt_weight=bad_debt_weight, approval_weight=approval_weight)
         self.target_approval_rate = target_approval_rate
         self.bad_debt_weight = bad_debt_weight
         self.approval_weight = approval_weight
 
-    def _compute_metrics(
-        self,
-        y_true: np.ndarray,
-        y_pred: np.ndarray,
-        threshold: float
-    ) -> Dict[str, float]:
-        """计算通过率和坏账率。"""
-        # 预测标签
-        y_pred_label = (y_pred >= threshold).astype(int)
-
-        # 通过率
-        approval_rate = np.mean(y_pred_label == 1)
-
-        # 坏账率（通过客户中坏客户的比例）
-        approved_mask = y_pred_label == 1
-        if np.sum(approved_mask) == 0:
-            bad_debt_rate = 0.0
-        else:
-            bad_debt_rate = np.mean(y_true[approved_mask])
-
+    def _compute_metrics(self, y_true, y_pred, threshold):
+        """风险概率低于或等于阈值才通过；同分客户统一决策。"""
+        y, p = binary_inputs(y_true, y_pred)
+        approved = p <= threshold
         return {
-            'approval_rate': approval_rate,
-            'bad_debt_rate': bad_debt_rate
+            "approval_rate": float(np.mean(approved)),
+            "bad_debt_rate": float(np.mean(y[approved])) if np.any(approved) else 0.0,
         }
 
-    def __call__(
-        self,
-        y_true: np.ndarray,
-        y_pred: np.ndarray
-    ) -> float:
-        """计算损失。
+    def __call__(self, y_true, y_pred) -> float:
+        """BCE + 目标通过率处的硬坏账惩罚；业务项为分段常数。
 
-        :param y_true: 真实标签
-        :param y_pred: 预测概率
-        :return: 损失值
+        :param y_true: 一维 0/1 标签，1 为坏样本。
+        :param y_pred: 同形状坏样本概率，范围 [0, 1]；不是原始分数。
+        :return: float；原始损失值，不根据调参方向改变符号。
+
+        **参考样例**
+
+        >>> from hscredit.core.models.losses import BadDebtLoss
+        >>> loss = BadDebtLoss()
+        >>> result = loss([0, 0, 1, 1], [0.1, 0.3, 0.7, 0.9])
         """
-        # 确保概率在合理范围
-        y_pred = np.clip(y_pred, 1e-7, 1 - 1e-7)
-
-        # 标准交叉熵作为基础损失
-        ce_loss = -(
-            y_true * np.log(y_pred) +
-            (1 - y_true) * np.log(1 - y_pred)
+        y, p = binary_inputs(y_true, y_pred)
+        count = int(np.ceil(len(p) * self.target_approval_rate))
+        threshold = np.sort(p)[count - 1] if count else -1.0
+        metrics = self._compute_metrics(y, p, threshold)
+        return float(
+            np.mean(bce_terms(y, p)[0])
+            + self.bad_debt_weight * metrics["bad_debt_rate"]
+            + self.approval_weight * abs(metrics["approval_rate"] - self.target_approval_rate)
         )
 
-        # 找到使通过率接近目标的阈值
-        sorted_pred = np.sort(y_pred)[::-1]
-        threshold_idx = int(len(sorted_pred) * (1 - self.target_approval_rate))
-        threshold = sorted_pred[threshold_idx] if threshold_idx < len(sorted_pred) else sorted_pred[-1]
+    def gradient(self, y_true, y_pred):
+        """硬审批惩罚无连续导数，训练仅使用 BCE 代理梯度。
 
-        # 计算当前通过率和坏账率
-        metrics = self._compute_metrics(y_true, y_pred, threshold)
+        :param y_true: 一维 0/1 标签，1 为坏样本。
+        :param y_pred: 同形状坏样本概率，范围 [0, 1]；不是原始分数。
+        :return: 与输入等长的一阶导数组，标度为样本数乘以平均损失；详见 BaseLoss.gradient。
 
-        # 损失 = 坏账率损失 + 通过率偏离惩罚
-        bad_debt_loss = metrics['bad_debt_rate'] * self.bad_debt_weight
-        approval_loss = abs(metrics['approval_rate'] - self.target_approval_rate) * self.approval_weight
+        **参考样例**
 
-        # 总损失
-        total_loss = np.mean(ce_loss) + bad_debt_loss + approval_loss
-
-        return total_loss
-
-    def gradient(
-        self,
-        y_true: np.ndarray,
-        y_pred: np.ndarray
-    ) -> np.ndarray:
-        """计算梯度。
-
-        :param y_true: 真实标签
-        :param y_pred: 预测概率
-        :return: 梯度数组
+        >>> from hscredit.core.models.losses import BadDebtLoss
+        >>> loss = BadDebtLoss()
+        >>> result = loss.gradient([0, 0, 1, 1], [0.1, 0.3, 0.7, 0.9])
         """
-        # 确保概率在合理范围
-        y_pred = np.clip(y_pred, 1e-7, 1 - 1e-7)
+        y, p = binary_inputs(y_true, y_pred)
+        return bce_terms(y, p)[1]
 
-        # 基础梯度（交叉熵梯度）
-        grad = y_pred - y_true
+    def hessian(self, y_true, y_pred):
+        """返回 BCE 代理目标的概率二阶导。
 
-        return grad
+        :param y_true: 一维 0/1 标签，1 为坏样本。
+        :param y_pred: 同形状坏样本概率，范围 [0, 1]；不是原始分数。
+        :return: 与输入等长的二阶导数组，标度同 BaseLoss.hessian；框架适配器再做链接函数转换。
 
-    def hessian(
-        self,
-        y_true: np.ndarray,
-        y_pred: np.ndarray
-    ) -> np.ndarray:
-        """计算二阶导数。
+        **参考样例**
 
-        :param y_true: 真实标签
-        :param y_pred: 预测概率
-        :return: 二阶导数数组
+        >>> from hscredit.core.models.losses import BadDebtLoss
+        >>> loss = BadDebtLoss()
+        >>> result = loss.hessian([0, 0, 1, 1], [0.1, 0.3, 0.7, 0.9])
         """
-        # 确保概率在合理范围
-        y_pred = np.clip(y_pred, 1e-7, 1 - 1e-7)
-
-        # 交叉熵二阶导
-        hess = y_pred * (1 - y_pred)
-
-        # 确保非零
-        hess = np.maximum(hess, 1e-6)
-
-        return hess
+        y, p = binary_inputs(y_true, y_pred)
+        return bce_terms(y, p)[2]
 
 
 class ApprovalRateLoss(BaseLoss):
     """通过率优化损失函数，在保证坏账率不超过目标的前提下最大化通过率。
+
+    硬阈值通过率用于评估与模型选择；训练仅使用 BCE 代理导数。
 
     :param target_bad_debt_rate: 目标坏账率，默认为0.05
     :param name: 损失函数名称，默认为"approval_rate_loss"
@@ -174,57 +147,85 @@ class ApprovalRateLoss(BaseLoss):
     >>> loss = ApprovalRateLoss(target_bad_debt_rate=0.05)
     """
 
-    def __init__(
-        self,
-        target_bad_debt_rate: float = 0.05,
-        name: str = "approval_rate_loss"
-    ):
+    def __init__(self, target_bad_debt_rate: float = 0.05, name: str = "approval_rate_loss"):
         super().__init__(name)
+        unit_interval(target_bad_debt_rate=target_bad_debt_rate)
         self.target_bad_debt_rate = target_bad_debt_rate
 
-    def __call__(
-        self,
-        y_true: np.ndarray,
-        y_pred: np.ndarray
-    ) -> float:
-        """计算损失。"""
-        # 确保概率在合理范围
-        y_pred = np.clip(y_pred, 1e-7, 1 - 1e-7)
+    def __call__(self, y_true, y_pred) -> float:
+        """BCE + (1 - 可行通过率)，其中硬阈值通过率为分段常数。
 
-        # 基础交叉熵损失
-        ce_loss = -(
-            y_true * np.log(y_pred) +
-            (1 - y_true) * np.log(1 - y_pred)
-        )
+        :param y_true: 一维 0/1 标签，1 为坏样本。
+        :param y_pred: 同形状坏样本概率，范围 [0, 1]；不是原始分数。
+        :return: float；原始损失值，不根据调参方向改变符号。
 
-        return np.mean(ce_loss)
+        **参考样例**
 
-    def gradient(
-        self,
-        y_true: np.ndarray,
-        y_pred: np.ndarray
-    ) -> np.ndarray:
-        """计算梯度。"""
-        y_pred = np.clip(y_pred, 1e-7, 1 - 1e-7)
-        grad = y_pred - y_true
-        return grad
+        >>> from hscredit.core.models.losses import ApprovalRateLoss
+        >>> loss = ApprovalRateLoss()
+        >>> result = loss([0, 0, 1, 1], [0.1, 0.3, 0.7, 0.9])
+        """
+        y, p = binary_inputs(y_true, y_pred)
+        return float(np.mean(bce_terms(y, p)[0]) + 1 - self.approval_rate(y, p))
 
-    def hessian(
-        self,
-        y_true: np.ndarray,
-        y_pred: np.ndarray
-    ) -> np.ndarray:
-        """计算二阶导。"""
-        y_pred = np.clip(y_pred, 1e-7, 1 - 1e-7)
-        hess = y_pred * (1 - y_pred)
-        hess = np.maximum(hess, 1e-6)
-        return hess
+    def gradient(self, y_true, y_pred):
+        """硬阈值业务项用于评估，训练使用 BCE 代理梯度。
+
+        :param y_true: 一维 0/1 标签，1 为坏样本。
+        :param y_pred: 同形状坏样本概率，范围 [0, 1]；不是原始分数。
+        :return: 与输入等长的一阶导数组，标度为样本数乘以平均损失；详见 BaseLoss.gradient。
+
+        **参考样例**
+
+        >>> from hscredit.core.models.losses import ApprovalRateLoss
+        >>> loss = ApprovalRateLoss()
+        >>> result = loss.gradient([0, 0, 1, 1], [0.1, 0.3, 0.7, 0.9])
+        """
+        y, p = binary_inputs(y_true, y_pred)
+        return bce_terms(y, p)[1]
+
+    def hessian(self, y_true, y_pred):
+        """返回损失相对坏样本概率的二阶导数。
+
+        :param y_true: 一维 0/1 标签，1 为坏样本。
+        :param y_pred: 同形状坏样本概率，范围 [0, 1]；不是原始分数。
+        :return: 与输入等长的二阶导数组，标度同 BaseLoss.hessian；框架适配器再做链接函数转换。
+
+        **参考样例**
+
+        >>> from hscredit.core.models.losses import ApprovalRateLoss
+        >>> loss = ApprovalRateLoss()
+        >>> result = loss.hessian([0, 0, 1, 1], [0.1, 0.3, 0.7, 0.9])
+        """
+        y, p = binary_inputs(y_true, y_pred)
+        return bce_terms(y, p)[2]
+
+    def approval_rate(self, y_true, y_pred) -> float:
+        """在当前数据标签上回看、满足目标坏账率的最大阈值通过率。
+
+        用于离线评价，不应据此在测试集选择上线阈值；同分客户统一处理。
+
+        :param y_true: 一维 0/1 标签，1 为坏样本。
+        :param y_pred: 同形状的坏样本概率，低概率优先通过。
+        :return: float，范围 [0, 1]；没有满足约束的客户组时为 0。
+
+        >>> value = ApprovalRateLoss(target_bad_debt_rate=0.05).approval_rate(
+        ...     [0, 0, 1, 1], [0.1, 0.3, 0.7, 0.9])
+        """
+        y, p = binary_inputs(y_true, y_pred)
+        order = np.argsort(p, kind="stable")
+        counts = np.arange(1, len(y) + 1)
+        debt_rates = np.cumsum(y[order]) / counts
+        group_end = np.r_[p[order][1:] != p[order][:-1], True]
+        feasible = (debt_rates <= self.target_bad_debt_rate) & group_end
+        return float(np.max(counts[feasible]) / len(y)) if np.any(feasible) else 0.0
 
 
 class ProfitMaxLoss(BaseLoss):
     """利润最大化损失函数，综合考虑坏账损失和利息收益最大化总利润。
 
-    利润模型: 利润 = 通过客户数 * (利息收益 - 坏账率 * 坏账损失)
+    训练目标为成本加权 BCE 代理；``profit()`` 单独计算实际阈值利润。
+    需要连续软利润目标时使用 ``ExpectedProfitLoss``。
 
     :param interest_income: 单位利息收益，默认为1.0
     :param bad_debt_loss: 单位坏账损失，默认为10.0
@@ -238,95 +239,97 @@ class ProfitMaxLoss(BaseLoss):
     >>> loss = ProfitMaxLoss(interest_income=100, bad_debt_loss=1000)
     """
 
-    def __init__(
-        self,
-        interest_income: float = 1.0,
-        bad_debt_loss: float = 10.0,
-        name: str = "profit_max_loss"
-    ):
+    def __init__(self, interest_income: float = 1.0, bad_debt_loss: float = 10.0, name: str = "profit_max_loss"):
         super().__init__(name)
+        nonnegative(interest_income=interest_income, bad_debt_loss=bad_debt_loss)
+        positive(收益损失总和=interest_income + bad_debt_loss)
+        self.is_additive = True
         self.interest_income = interest_income
         self.bad_debt_loss = bad_debt_loss
 
-    def _compute_profit(
-        self,
-        y_true: np.ndarray,
-        y_pred: np.ndarray,
-        threshold: float
-    ) -> float:
-        """计算总利润。"""
-        # 预测标签
-        y_pred_label = (y_pred >= threshold).astype(int)
+    def _compute_profit(self, y_true, y_pred, threshold) -> float:
+        """兼容历史方法：返回低风险客户通过后的人均真实利润。"""
+        return self.profit(y_true, y_pred, threshold)
 
-        # 通过客户数
-        approved_mask = y_pred_label == 1
-        n_approved = np.sum(approved_mask)
+    def __call__(self, y_true, y_pred) -> float:
+        """利润成本加权 BCE 代理；实际硬决策利润通过 profit() 计算。
 
-        if n_approved == 0:
-            return 0.0
+        :param y_true: 一维 0/1 标签，1 为坏样本。
+        :param y_pred: 同形状坏样本概率，范围 [0, 1]；不是原始分数。
+        :return: float；原始损失值，不根据调参方向改变符号。
 
-        # 通过客户中的好客户和坏客户
-        y_true_approved = y_true[approved_mask]
-        n_good = np.sum(y_true_approved == 0)
-        n_bad = np.sum(y_true_approved == 1)
+        **参考样例**
 
-        # 总利润 = 好客户收益 - 坏客户损失
-        total_profit = (
-            n_good * self.interest_income -
-            n_bad * self.bad_debt_loss
-        )
+        >>> from hscredit.core.models.losses import ProfitMaxLoss
+        >>> loss = ProfitMaxLoss()
+        >>> result = loss([0, 0, 1, 1], [0.1, 0.3, 0.7, 0.9])
+        """
+        return float(np.mean(self.loss_values(y_true, y_pred)))
 
-        return total_profit / len(y_true)  # 人均利润
+    def gradient(self, y_true, y_pred):
+        """返回损失相对坏样本概率的一阶导数。
 
-    def __call__(
-        self,
-        y_true: np.ndarray,
-        y_pred: np.ndarray
-    ) -> float:
-        """计算损失（负利润）。"""
-        # 确保概率在合理范围
-        y_pred = np.clip(y_pred, 1e-7, 1 - 1e-7)
+        :param y_true: 一维 0/1 标签，1 为坏样本。
+        :param y_pred: 同形状坏样本概率，范围 [0, 1]；不是原始分数。
+        :return: 与输入等长的一阶导数组，标度为样本数乘以平均损失；详见 BaseLoss.gradient。
 
-        # 基础交叉熵损失
-        ce_loss = -(
-            y_true * np.log(y_pred) +
-            (1 - y_true) * np.log(1 - y_pred)
-        )
+        **参考样例**
 
-        return np.mean(ce_loss)
+        >>> from hscredit.core.models.losses import ProfitMaxLoss
+        >>> loss = ProfitMaxLoss()
+        >>> result = loss.gradient([0, 0, 1, 1], [0.1, 0.3, 0.7, 0.9])
+        """
+        return self._terms(y_true, y_pred)[1]
 
-    def gradient(
-        self,
-        y_true: np.ndarray,
-        y_pred: np.ndarray
-    ) -> np.ndarray:
-        """计算梯度。"""
-        y_pred = np.clip(y_pred, 1e-7, 1 - 1e-7)
+    def hessian(self, y_true, y_pred):
+        """返回损失相对坏样本概率的二阶导数。
 
-        # 根据利润模型调整梯度
-        # 好客户(y=0): 希望预测概率低（拒绝），如果预测高则惩罚
-        # 坏客户(y=1): 希望预测概率高（拒绝），如果预测低则重惩罚
+        :param y_true: 一维 0/1 标签，1 为坏样本。
+        :param y_pred: 同形状坏样本概率，范围 [0, 1]；不是原始分数。
+        :return: 与输入等长的二阶导数组，标度同 BaseLoss.hessian；框架适配器再做链接函数转换。
 
-        grad = np.where(
-            y_true == 0,
-            (y_pred - 0) * self.interest_income,  # 好客户梯度
-            (y_pred - 1) * self.bad_debt_loss      # 坏客户梯度
-        )
+        **参考样例**
 
-        return grad
+        >>> from hscredit.core.models.losses import ProfitMaxLoss
+        >>> loss = ProfitMaxLoss()
+        >>> result = loss.hessian([0, 0, 1, 1], [0.1, 0.3, 0.7, 0.9])
+        """
+        return self._terms(y_true, y_pred)[2]
 
-    def hessian(
-        self,
-        y_true: np.ndarray,
-        y_pred: np.ndarray
-    ) -> np.ndarray:
-        """计算二阶导。"""
-        y_pred = np.clip(y_pred, 1e-7, 1 - 1e-7)
+    def _terms(self, y_true, y_pred):
+        y, p = binary_inputs(y_true, y_pred)
+        weights = np.where(y == 1, self.bad_debt_loss, self.interest_income)
+        return tuple(weights * term for term in bce_terms(y, p))
 
-        hess = np.where(
-            y_true == 0,
-            self.interest_income,
-            self.bad_debt_loss
-        )
+    def loss_values(self, y_true, y_pred):
+        """逐样本利润成本加权 BCE，不等于实际货币利润。
 
-        return hess
+        :param y_true: 一维 0/1 标签，1 为坏样本。
+        :param y_pred: 同形状坏样本概率，范围 [0, 1]；不是原始分数。
+        :return: 与输入等长的数组，其均值等于本损失值；详见 BaseLoss.loss_values。
+
+        **参考样例**
+
+        >>> from hscredit.core.models.losses import ProfitMaxLoss
+        >>> loss = ProfitMaxLoss()
+        >>> result = loss.loss_values([0, 0, 1, 1], [0.1, 0.3, 0.7, 0.9])
+        """
+        return self._terms(y_true, y_pred)[0]
+
+    def profit(self, y_true, y_pred, threshold=0.5) -> float:
+        """计算审批决策后的全体申请客户人均实际利润，越大越好。
+
+        :param y_true: 一维 0/1 标签，1 为坏样本。
+        :param y_pred: 同形状的坏样本概率。
+        :param threshold: 通过阈值，范围 [0, 1]，默认 0.5；p < threshold 才通过。
+        :return: float，通过好客户计收益，通过坏客户计损失，拒绝计零；
+            分母是全量人数，不是通过人数。
+
+        >>> value = ProfitMaxLoss(interest_income=100, bad_debt_loss=1000).profit(
+        ...     [0, 0, 1, 1], [0.1, 0.3, 0.7, 0.9])
+        """
+        y, p = binary_inputs(y_true, y_pred)
+        p = np.asarray(y_pred, dtype=float)
+        unit_interval(threshold=threshold)
+        profit = (1 - y) * self.interest_income - y * self.bad_debt_loss
+        return float(np.mean((p < threshold) * profit))

@@ -112,6 +112,8 @@ class ProbabilityScoreCard(ExtraParamsMixin, ArtifactSerializableMixin, BaseEsti
         target: str = 'target',
         verbose: bool = False,
         positive_class: Optional[Any] = 1,
+        history_policy: str = "summary",
+        max_history: int = 20,
         **kwargs
     ):
         self.model = model
@@ -129,6 +131,8 @@ class ProbabilityScoreCard(ExtraParamsMixin, ArtifactSerializableMixin, BaseEsti
         self.target = target
         self.verbose = verbose
         self.positive_class = positive_class
+        self.history_policy = history_policy
+        self.max_history = max_history
         self.kwargs = kwargs
 
         self._is_fitted = False

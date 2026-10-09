@@ -25,6 +25,8 @@ from .base import (
     resolve_feature_map,
 )
 from ...core.rules.rule import Rule
+from ...core.rules.artifact import RuleArtifact
+from ...core.binning.spec import BinSpec, field_expression, value_expression
 from ...utils.parallel import _current_parallel_budget, resolve_n_jobs, validate_parallel_config
 
 # 从 hscredit.core.models 统一导入 sklearn 模型
@@ -89,6 +91,7 @@ def _tree_rule_report_worker(task):
         weight=float(rule_item.get("importance", 0)),
         n_jobs=1,
     )
+    rule.artifact_ = RuleArtifact(expression, preprocessing_version="tree-raw-v1", target_spec={"目标列": target})
     metadata = dict(rule_item)
     if feature_map is not None:
         used_features = [condition["feature"] for condition in rule_item.get("conditions", [])]
@@ -230,7 +233,8 @@ class TreeRuleExtractor(BaseRuleMiner):
         **kwargs
     ) -> 'TreeRuleExtractor':
         """在临时副本中拟合，成功后原子提交模型与编码状态。"""
-        working = copy.deepcopy(self)
+        working = copy.copy(self)
+        working.model_kwargs = dict(self.model_kwargs)
         working._fit_inplace(X, y, feature_names=feature_names, **kwargs)
         self._commit_fitted_state(working)
         return self
@@ -315,6 +319,7 @@ class TreeRuleExtractor(BaseRuleMiner):
         """清除上一轮模型派生状态；仅在事务 working 副本中调用。"""
         self.model_ = None
         self.encoders_ = {}
+        self._raw_category_values_ = {}
         self.feature_names_ = []
         self.rules_ = []
         self.is_fitted_ = False
@@ -347,12 +352,18 @@ class TreeRuleExtractor(BaseRuleMiner):
         """
         X_encoded = X.copy()
         self.encoders_ = {}
+        self._raw_category_values_ = {}
         
         for col in X.columns:
             if not pd.api.types.is_numeric_dtype(X[col]):
                 le = LabelEncoder()
                 X_encoded[col] = le.fit_transform(X[col].astype(str))
                 self.encoders_[col] = le
+                members = {}
+                for value in pd.unique(X[col]):
+                    code = int(le.transform([str(value)])[0])
+                    members.setdefault(code, []).append(value)
+                self._raw_category_values_[col] = members
         
         return X_encoded.fillna(0)
     
@@ -984,6 +995,8 @@ class TreeRuleExtractor(BaseRuleMiner):
         :return: pandas eval规则表达式
         """
         conditions = rule['conditions']
+        if getattr(self, 'chi2_bins_', {}):
+            raise ValueError("chi2 预处理暂不支持无损裸规则导出，请保留预处理模型后执行")
         
         if not conditions:
             return "True"
@@ -991,11 +1004,35 @@ class TreeRuleExtractor(BaseRuleMiner):
         parts = []
         for c in conditions:
             feature = c['feature']
-            feature_expr = f"`{feature}`" if not str(feature).isidentifier() else str(feature)
+            feature_expr = field_expression(feature)
             threshold = c['threshold']
             if isinstance(threshold, np.generic):
                 threshold = threshold.item()
-            parts.append(f"({feature_expr} {c['operator']} {repr(threshold)})")
+            operation = c['operator']
+            compare = {'<=': np.less_equal, '>': np.greater, '<': np.less, '>=': np.greater_equal,
+                       '==': np.equal}[operation]
+            categories = getattr(self, '_raw_category_values_', {}).get(feature)
+            if categories is not None:
+                selected = [value for code, members in categories.items() if compare(code, threshold) for value in members]
+                missing = any(pd.isna(value) for value in selected)
+                values = tuple(value for value in selected if not pd.isna(value))
+                expression = BinSpec(feature, 0, kind='categories', values=values, include_missing=missing).to_expression()
+            else:
+                # sklearn 树先将输入转 float32；将边界逆映射到原始 float64，
+                # 包括 midpoint 的 ties-to-even，保证贴边样本与叶节点一致。
+                bound, raw_operator = threshold, operation
+                if getattr(self, 'is_fitted_', False) and operation in ('<=', '>'):
+                    left = np.float32(threshold)
+                    if float(left) > threshold:
+                        left = np.nextafter(left, np.float32(-np.inf))
+                    right = np.nextafter(left, np.float32(np.inf))
+                    bound = (float(left) + float(right)) / 2
+                    tie_left = np.float32(bound) == left
+                    raw_operator = ('<=' if tie_left else '<') if operation == '<=' else ('>' if tie_left else '>=')
+                expression = f"({feature_expr} {raw_operator} {value_expression(bound)})"
+                if getattr(self, 'is_fitted_', False) and compare(0, threshold):
+                    expression = f"({expression} | ({feature_expr}.isna()))"
+            parts.append(f"({expression})" if categories is not None else expression)
         
         return " & ".join(parts)
     

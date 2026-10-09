@@ -12,17 +12,19 @@ from typing import Any, Callable, Sequence
 
 _BorderCandidate = tuple[bool, tuple[int, int, int], int, int, str]
 _EXPECTED_MODEL_MENU = (
+    "模型训练、调参与保存",
+    "models 模块设计复盘",
     "经典模型",
     "Boosting",
     "规则器",
     "评分卡",
     "概率校准",
     "模型可解释性",
-    "损失函数",
+    "损失函数与评估指标",
     "评估指标",
     "超参数调优",
 )
-_EXPECTED_DATABASE_GUIDE_TITLE = "数据库与 NoSQL 连接池、读写及表结构导出"
+_EXPECTED_DATABASE_GUIDE_TITLE = "数据库"
 
 
 class _LevelFiveLinkParser(HTMLParser):
@@ -306,7 +308,7 @@ def collect_validation_errors(build_dir: Path) -> list[str]:
     if tuple(model_menu_parser.items) != _EXPECTED_MODEL_MENU:
         expected = "、".join(_EXPECTED_MODEL_MENU)
         actual = "、".join(model_menu_parser.items) or "未生成"
-        errors.append(f"模型菜单必须依次生成九个直接子项：{expected}；实际为：{actual}")
+        errors.append(f"模型菜单必须依次生成 {len(_EXPECTED_MODEL_MENU)} 个直接子项：{expected}；实际为：{actual}")
 
     level_five_parser = _LevelFiveLinkParser()
     level_five_parser.feed(boosting_html)

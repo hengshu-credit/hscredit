@@ -741,8 +741,8 @@ def test_psi_keeps_full_precision():
     assert row["PSI"] == expected
 
 
-def test_default_psi_computes_final_bin_stats_once_per_feature(monkeypatch):
-    """重复收口不能让默认 PSI 为同一字段反复生成相同分箱统计。"""
+def test_default_psi_avoids_supervised_stats_for_frozen_categories(monkeypatch):
+    """数值基准仅收口一次；冻结原生类别频数无需拟合有监督统计表。"""
     from hscredit.core.binning.base import BaseBinning
 
     original = BaseBinning._compute_bin_stats
@@ -765,7 +765,7 @@ def test_default_psi_computes_final_bin_stats_once_per_feature(monkeypatch):
     assert result["特征名"].tolist() == ["first", "second"]
     assert result["样本数"].tolist() == [120, 120]
     assert result["PSI"].tolist() == [0.0, 0.0]
-    assert calls == ["value", "value"]
+    assert calls == ["value"]
 
 
 def test_model_importance_keeps_full_precision():

@@ -14,6 +14,7 @@ from abc import ABC, abstractmethod
 from collections import deque
 from copy import copy, deepcopy
 from functools import wraps
+from inspect import signature
 from typing import Union, List, Dict, Optional, Any, Tuple, Callable
 import numpy as np
 import pandas as pd
@@ -22,6 +23,7 @@ from sklearn.base import BaseEstimator, TransformerMixin, clone
 from ...exceptions import FeatureNotFoundError, NotFittedError, ParallelExecutionError
 from ...utils.misc import round_float
 from ...utils.parallel import ParallelizableMixin, ParallelWorkload
+from ...utils.data_contracts import prepare_xy
 from ...utils.serialization import ArtifactSerializableMixin
 from ._categorical import (
     CategoryOrder,
@@ -244,9 +246,15 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         fit_method = cls.__dict__.get("fit")
         if fit_method is None or getattr(fit_method, "_hscredit_transactional_fit", False):
             return
+        accepts_weight = "sample_weight" in signature(fit_method).parameters
 
         @wraps(fit_method)
         def transactional_fit(self, *args, **kwargs):
+            if kwargs.get("sample_weight") is not None and not accepts_weight:
+                raise ValueError(
+                    f"{self.__class__.__name__} 当前不支持 sample_weight；"
+                    "不能静默忽略样本权重，请移除该参数或使用明确支持权重的实现"
+                )
             # 子类 fit 可能委托 super().fit，此时由外层事务持有候选和提交边界。
             if getattr(self, "_fit_transaction_active", False):
                 return fit_method(self, *args, **kwargs)
@@ -950,68 +958,12 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         elif not isinstance(X, pd.DataFrame):
             X = pd.DataFrame(X)
 
-        if y is not None and self.target in X.columns:
-            X = X.drop(columns=[self.target])
-
-        original_index = X.index
-
-        # 获取目标变量
-        if y is not None:
-            # sklearn风格: 使用传入的y（优先）
-            if isinstance(y, np.ndarray):
-                if y.ndim != 1:
-                    raise ValueError(f"目标变量y必须是一维数组，但得到 {y.ndim} 维")
-                if len(y) != len(original_index):
-                    raise ValueError(f"特征和标签数量不匹配: {len(original_index)} != {len(y)}")
-                y = pd.Series(y, index=original_index, name=self.target)
-            elif isinstance(y, pd.Series):
-                y = y.copy()
-                if y.index.equals(original_index):
-                    pass
-                elif len(y) == len(original_index):
-                    # 长度一致但索引不同：按位置对齐
-                    y = y.reset_index(drop=True)
-                    y.index = original_index
-                else:
-                    # 长度不一致：尝试按索引交集对齐（常见于调用方先对y做过滤）
-                    common_index = original_index.intersection(y.index)
-                    if len(common_index) == 0:
-                        raise ValueError(f"特征和标签数量不匹配且无公共索引: {len(original_index)} != {len(y)}")
-                    X = X.loc[common_index].copy()
-                    original_index = X.index
-                    y = y.loc[common_index].copy()
-                y.name = self.target
-            else:
-                # 其他可迭代类型
-                if len(y) != len(original_index):
-                    raise ValueError(f"特征和标签数量不匹配: {len(original_index)} != {len(y)}")
-                y = pd.Series(y, index=original_index, name=self.target)
-        else:
-            # scorecardpipeline风格: 从X中提取target列
-            if self.target in X.columns:
-                y = X[self.target].copy()
-                y.name = self.target
-                X = X.drop(columns=[self.target])
-            else:
-                raise ValueError(
-                    f"目标变量 '{self.target}' 未在数据中找到。"
-                    f"请提供y参数（sklearn风格）或在数据中包含 '{self.target}' 列（scorecardpipeline风格）。"
-                    f"可用列: {list(X.columns)}"
-                )
-
-        # 验证数据长度
-        if len(X) != len(y):
-            raise ValueError(f"特征和标签数量不匹配: {len(X)} != {len(y)}")
-
-        # 验证目标变量
-        if y.isna().any():
-            raise ValueError("目标变量包含缺失值，请在拟合前完成处理")
-        unique_values = y.dropna().unique()
-        if len(unique_values) != 2:
-            raise ValueError(f"目标变量必须是二分类，但发现 {len(unique_values)} 个唯一值: {unique_values}")
-
-        if not set(unique_values).issubset({0, 1, False, True}):
-            raise ValueError(f"目标变量必须是 0/1 或 False/True，但发现 {unique_values}")
+        # 统一按位置对齐；异长标签必须由调用方显式筛选 X/y，不能按交集静默丢行。
+        prepared = prepare_xy(
+            X, y, target=self.target, require_y=True, target_type="binary",
+            allow_single_class=False, allow_empty_features=True,
+        )
+        X, y = prepared.X, prepared.y
 
         self._set_input_feature_attributes(X)
         return self._prepare_categorical_fit(X, y), y

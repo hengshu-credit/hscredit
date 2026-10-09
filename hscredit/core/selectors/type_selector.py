@@ -21,6 +21,7 @@ import numpy as np
 import pandas as pd
 
 from .base import BaseFeatureSelector
+from ._statistical_utils import record_conditions
 
 
 def _matches_dtype_feature(task):
@@ -80,7 +81,9 @@ class TypeSelector(BaseFeatureSelector):
         binning_params: Optional[Dict[str, Any]] = None,
         parallel_backend: Optional[str] = None,
         parallel_config: Optional[Dict[str, Any]] = None,
+        target_rm: bool = False,
     ):
+        """初始化筛选器；默认透传已有目标列，仅target_rm=True移除。"""
         super().__init__(
             target=target,
             include=include,
@@ -91,6 +94,7 @@ class TypeSelector(BaseFeatureSelector):
             binning_params=binning_params,
             parallel_backend=parallel_backend,
             parallel_config=parallel_config,
+            target_rm=target_rm,
         )
         self.dtype_include = dtype_include
         self.dtype_exclude = dtype_exclude
@@ -108,6 +112,10 @@ class TypeSelector(BaseFeatureSelector):
         self._get_feature_names(X)
 
         self._validate_parallel_configuration()
+        # 类型判断只读模式元数据，不为报告额外扫描整个数据集。
+        self.total_counts_ = pd.Series(len(X), index=X.columns, dtype=np.int64)
+        self.threshold_ = None
+        self.score_name_, self.score_direction_ = "类型匹配", "满足条件"
         if self.dtype_include is None and self.dtype_exclude is None:
             selected_cols = list(X.columns)
         else:
@@ -122,4 +130,6 @@ class TypeSelector(BaseFeatureSelector):
             index=X.columns,
         )
         self.selected_features_ = selected_cols
+        self.matches_ = self.scores_.astype(bool)
+        record_conditions(self, X.columns, 类型匹配=self.matches_)
         self._drop_reason = "数据类型不匹配"

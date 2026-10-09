@@ -63,6 +63,8 @@ from .regression import (
 
 # 分箱统计（供其他模块直接使用）
 from ._binning import compute_bin_stats, add_margins, quadratic_curve_coefficient, composite_binning_quality
+from .monitoring import MonitoringBaseline
+from .aggregation import BinStatsAccumulator, MetricSpec
 
 __all__ = [
     # 分类指标
@@ -92,4 +94,5 @@ __all__ = [
     
     # 分箱统计
     'compute_bin_stats', 'add_margins', 'quadratic_curve_coefficient', 'composite_binning_quality',
+    'MonitoringBaseline', 'BinStatsAccumulator', 'MetricSpec',
 ]

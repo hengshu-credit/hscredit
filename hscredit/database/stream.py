@@ -336,6 +336,13 @@ class QueryStream:
             return self.to_records()
         return self.to_rows()
 
+    def to_envelope(self) -> Mapping[str, Any]:
+        """返回包含完整性状态的结果信封，records/rows也不会丢失中断信息。"""
+        return {"结果": self.to_result(), "完成": self.state is StreamState.COMPLETED,
+                "状态": self.state.value, "已读取行数": self.rows_read,
+                "预期行数": self.total_rows, "中断时间": self.interrupted_at,
+                "中断原因": self.interrupt_reason}
+
     def __enter__(self) -> "QueryStream":
         return self
 

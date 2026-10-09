@@ -8,6 +8,7 @@ Focal Loss通过降低易分类样本的权重，专注于难分类样本，特�
 import numpy as np
 from typing import Optional
 from .base import BaseLoss
+from ._loss_math import binary_inputs, bce_terms, focal_terms, nonnegative, positive, unit_interval
 
 
 class FocalLoss(BaseLoss):
@@ -22,7 +23,7 @@ class FocalLoss(BaseLoss):
 
     :param alpha: 正样本权重，默认为0.25，用于平衡正负样本的总体权重
     :param gamma: 聚焦参数，默认为2.0，控制易分类样本的权重衰减程度
-        - gamma=0: 等价于标准交叉熵
+        - gamma=0: 等价于类别加权交叉熵
         - gamma越大，易分类样本权重越小
     :param name: 损失函数名称，默认为"focal_loss"
 
@@ -51,134 +52,77 @@ class FocalLoss(BaseLoss):
     Dense Object Detection.* ICCV 2017. https://arxiv.org/abs/1708.02002
     """
 
-    def __init__(
-        self,
-        alpha: float = 0.25,
-        gamma: float = 2.0,
-        name: str = "focal_loss"
-    ):
+    def __init__(self, alpha: float = 0.25, gamma: float = 2.0, name: str = "focal_loss"):
         super().__init__(name)
+        unit_interval(alpha=alpha)
+        nonnegative(gamma=gamma)
+        self.is_additive = True
         self.alpha = alpha
         self.gamma = gamma
 
-    def __call__(
-        self,
-        y_true: np.ndarray,
-        y_pred: np.ndarray
-    ) -> float:
-        """计算Focal Loss。
+    def __call__(self, y_true, y_pred) -> float:
+        """计算本损失的平均值，越小越好。
 
-        :param y_true: 真实标签, shape (n_samples,)
-        :param y_pred: 预测概率, shape (n_samples,)
-        :return: 平均损失值
+        :param y_true: 一维 0/1 标签，1 为坏样本。
+        :param y_pred: 同形状坏样本概率，范围 [0, 1]；不是原始分数。
+        :return: float；原始损失值，不根据调参方向改变符号。
+
+        **参考样例**
+
+        >>> from hscredit.core.models.losses import FocalLoss
+        >>> loss = FocalLoss()
+        >>> result = loss([0, 0, 1, 1], [0.1, 0.3, 0.7, 0.9])
         """
-        # 确保概率在[0, 1]范围内
-        y_pred = np.clip(y_pred, 1e-7, 1 - 1e-7)
+        return float(np.mean(self.loss_values(y_true, y_pred)))
 
-        # 计算p_t
-        p_t = np.where(y_true == 1, y_pred, 1 - y_pred)
+    def gradient(self, y_true, y_pred):
+        """逐样本损失相对坏样本概率的一阶导。
 
-        # 计算alpha_t
-        alpha_t = np.where(y_true == 1, self.alpha, 1 - self.alpha)
+        :param y_true: 一维 0/1 标签，1 为坏样本。
+        :param y_pred: 同形状坏样本概率，范围 [0, 1]；不是原始分数。
+        :return: 与输入等长的一阶导数组，标度为样本数乘以平均损失；详见 BaseLoss.gradient。
 
-        # 计算focal weight
-        focal_weight = (1 - p_t) ** self.gamma
+        **参考样例**
 
-        # 计算交叉熵
-        ce_loss = -np.log(p_t)
-
-        # 计算focal loss
-        focal_loss = alpha_t * focal_weight * ce_loss
-
-        return np.mean(focal_loss)
-
-    def gradient(
-        self,
-        y_true: np.ndarray,
-        y_pred: np.ndarray
-    ) -> np.ndarray:
-        """计算Focal Loss的梯度（一阶导数）。
-
-        推导过程: d(FL)/d(p) = d/dp [ -α_t * (1-p_t)^γ * log(p_t) ]
-
-        :param y_true: 真实标签
-        :param y_pred: 预测概率
-        :return: 梯度数组
+        >>> from hscredit.core.models.losses import FocalLoss
+        >>> loss = FocalLoss()
+        >>> result = loss.gradient([0, 0, 1, 1], [0.1, 0.3, 0.7, 0.9])
         """
-        # 确保概率在合理范围内
-        y_pred = np.clip(y_pred, 1e-7, 1 - 1e-7)
+        return self._terms(y_true, y_pred)[1]
 
-        # 计算alpha_t
-        alpha_t = np.where(y_true == 1, self.alpha, 1 - self.alpha)
+    def hessian(self, y_true, y_pred):
+        """逐样本损失相对坏样本概率的二阶导。
 
-        # 计算梯度
-        grad = np.zeros_like(y_pred)
+        :param y_true: 一维 0/1 标签，1 为坏样本。
+        :param y_pred: 同形状坏样本概率，范围 [0, 1]；不是原始分数。
+        :return: 与输入等长的二阶导数组，标度同 BaseLoss.hessian；框架适配器再做链接函数转换。
 
-        # 正样本梯度
-        pos_mask = y_true == 1
-        if np.any(pos_mask):
-            p = y_pred[pos_mask]
-            grad[pos_mask] = (
-                alpha_t[pos_mask] * (
-                    self.gamma * (1 - p) ** (self.gamma - 1) * np.log(p) -
-                    (1 - p) ** self.gamma / p
-                )
-            )
+        **参考样例**
 
-        # 负样本梯度
-        neg_mask = y_true == 0
-        if np.any(neg_mask):
-            p = y_pred[neg_mask]
-            grad[neg_mask] = (
-                alpha_t[neg_mask] * (
-                    -self.gamma * p ** (self.gamma - 1) * np.log(1 - p) +
-                    p ** self.gamma / (1 - p)
-                )
-            )
-
-        return grad
-
-    def hessian(
-        self,
-        y_true: np.ndarray,
-        y_pred: np.ndarray
-    ) -> np.ndarray:
-        """计算Focal Loss的二阶导数。
-
-        :param y_true: 真实标签
-        :param y_pred: 预测概率
-        :return: 二阶导数数组
+        >>> from hscredit.core.models.losses import FocalLoss
+        >>> loss = FocalLoss()
+        >>> result = loss.hessian([0, 0, 1, 1], [0.1, 0.3, 0.7, 0.9])
         """
-        # 确保概率在合理范围内
-        y_pred = np.clip(y_pred, 1e-7, 1 - 1e-7)
+        return self._terms(y_true, y_pred)[2]
 
-        # 计算alpha_t
-        alpha_t = np.where(y_true == 1, self.alpha, 1 - self.alpha)
+    def _terms(self, y_true, y_pred):
+        y, p = binary_inputs(y_true, y_pred)
+        pt = np.where(y == 1, p, 1 - p)
+        alpha = np.where(y == 1, self.alpha, 1 - self.alpha)
+        value, grad, hess = focal_terms(pt, self.gamma)
+        return alpha * value, alpha * grad * (2 * y - 1), alpha * hess
 
-        # 计算二阶导数（简化版本）
-        hess = np.zeros_like(y_pred)
+    def loss_values(self, y_true, y_pred):
+        """逐样本 Focal 损失，其均值等于本损失。
 
-        # 正样本二阶导
-        pos_mask = y_true == 1
-        if np.any(pos_mask):
-            p = y_pred[pos_mask]
-            hess[pos_mask] = alpha_t[pos_mask] * (
-                self.gamma * (self.gamma - 1) * (1 - p) ** (self.gamma - 2) * np.log(p) +
-                2 * self.gamma * (1 - p) ** (self.gamma - 1) / p +
-                (1 - p) ** self.gamma / (p ** 2)
-            )
+        :param y_true: 一维 0/1 标签，1 为坏样本。
+        :param y_pred: 同形状坏样本概率，范围 [0, 1]；不是原始分数。
+        :return: 与输入等长的数组，其均值等于本损失值；详见 BaseLoss.loss_values。
 
-        # 负样本二阶导
-        neg_mask = y_true == 0
-        if np.any(neg_mask):
-            p = y_pred[neg_mask]
-            hess[neg_mask] = alpha_t[neg_mask] * (
-                self.gamma * (self.gamma - 1) * p ** (self.gamma - 2) * np.log(1 - p) +
-                2 * self.gamma * p ** (self.gamma - 1) / (1 - p) +
-                p ** self.gamma / ((1 - p) ** 2)
-            )
+        **参考样例**
 
-        # 确保二阶导为正
-        hess = np.abs(hess) + 1e-6
-
-        return hess
+        >>> from hscredit.core.models.losses import FocalLoss
+        >>> loss = FocalLoss()
+        >>> result = loss.loss_values([0, 0, 1, 1], [0.1, 0.3, 0.7, 0.9])
+        """
+        return self._terms(y_true, y_pred)[0]

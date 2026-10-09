@@ -3,7 +3,7 @@ Top-K 坏样本捕获损失函数
 
 专门优化 top x% 坏样本捕获率（Bad Capture Rate），
 很适合策略、催收、名单筛选场景。通过软 top-k 选择门
-实现全程可微的捕获率优化。
+构造分段光滑的捕获率代理；排序切换和同分边界不可微。
 """
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ from __future__ import annotations
 import numpy as np
 
 from .base import BaseLoss
+from ._loss_math import binary_inputs, bce_terms, nonnegative, positive, unit_interval
 
 
 def _sigmoid(x: np.ndarray) -> np.ndarray:
@@ -28,7 +29,8 @@ class TopKBadCaptureLoss(BaseLoss):
 
     在策略、催收、反欺诈名单筛选场景中，核心目标是在有限资源
     （如 top 5% 的高风险名单）下尽可能多地覆盖坏样本。本损失
-    直接面向该业务目标进行优化。
+    直接面向该业务目标构造代理。分位数使用线性插值，其依赖纳入导数；
+    排序切换和同分边界处不可微。Hessian 只返回对角项，框架忽略跨样本项。
 
     核心机制:
 
@@ -70,9 +72,9 @@ class TopKBadCaptureLoss(BaseLoss):
     >>> import lightgbm as lgb
     >>> train_data = lgb.Dataset(X_train, label=y_train)
     >>> bst = lgb.train(
-    ...     {'objective': 'binary'},
+    ...     {'objective': loss.to_lightgbm(api='native'), 'metric': 'None'},
     ...     train_data,
-    ...     fobj=loss.to_lightgbm(),
+    ...     feval=loss.metric().to_lightgbm(api='native', raw_score=True),
     ...     num_boost_round=200
     ... )
 
@@ -93,6 +95,9 @@ class TopKBadCaptureLoss(BaseLoss):
         name: str = "topk_bad_capture_loss",
     ):
         super().__init__(name)
+        unit_interval(top_ratio=top_ratio)
+        positive(top_ratio=top_ratio, temperature=temperature)
+        nonnegative(miss_penalty=miss_penalty, fa_penalty=fa_penalty, bce_weight=bce_weight)
         self.top_ratio = top_ratio
         self.miss_penalty = miss_penalty
         self.fa_penalty = fa_penalty
@@ -124,8 +129,7 @@ class TopKBadCaptureLoss(BaseLoss):
         :param y_pred: 预测概率, shape (n_samples,)
         :return: 损失值
         """
-        y_true = np.asarray(y_true, dtype=float)
-        y_pred = np.clip(np.asarray(y_pred, dtype=float), 1e-7, 1 - 1e-7)
+        y_true, y_pred = binary_inputs(y_true, y_pred)
 
         threshold = self._topk_threshold(y_pred)
         gate = self._topk_gate(y_pred, threshold)
@@ -139,73 +143,59 @@ class TopKBadCaptureLoss(BaseLoss):
         capture_loss = np.mean(miss_cost + fa_cost)
 
         # BCE 正则
-        bce = -np.mean(
-            y_true * np.log(y_pred) + (1 - y_true) * np.log(1 - y_pred)
-        )
+        bce = -np.mean(y_true * np.log(y_pred) + (1 - y_true) * np.log(1 - y_pred))
 
         return float(capture_loss + self.bce_weight * bce)
 
-    def gradient(
-        self,
-        y_true: np.ndarray,
-        y_pred: np.ndarray,
-    ) -> np.ndarray:
-        """计算梯度。
+    def gradient(self, y_true, y_pred):
+        """分段光滑区间的完整概率导数，包含分位阈值的依赖。
 
-        对坏样本: 推高预测值以进入头部（负梯度）。
-        对好样本: 抑制预测值以离开头部（正梯度）。
+        :param y_true: 一维 0/1 标签，1 为坏样本。
+        :param y_pred: 同形状坏样本概率，范围 [0, 1]；不是原始分数。
+        :return: 与输入等长的一阶导数组，标度为样本数乘以平均损失；详见 BaseLoss.gradient。
 
-        :param y_true: 真实标签
-        :param y_pred: 预测概率
-        :return: 梯度数组, shape (n_samples,)
+        **参考样例**
+
+        >>> from hscredit.core.models.losses import TopKBadCaptureLoss
+        >>> loss = TopKBadCaptureLoss()
+        >>> result = loss.gradient([0, 0, 1, 1], [0.1, 0.3, 0.7, 0.9])
         """
-        y_true = np.asarray(y_true, dtype=float)
-        y_pred = np.clip(np.asarray(y_pred, dtype=float), 1e-7, 1 - 1e-7)
+        y, p = binary_inputs(y_true, y_pred)
+        threshold = self._topk_threshold(p)
+        gate = self._topk_gate(p, threshold)
+        threshold_grad = self._threshold_gradient(p)
+        cost = (1 - y) * self.fa_penalty - y * self.miss_penalty
+        direct = cost * gate * (1 - gate) / self.temperature
+        return direct - threshold_grad * np.sum(direct) + self.bce_weight * bce_terms(y, p)[1]
 
-        threshold = self._topk_threshold(y_pred)
-        gate = self._topk_gate(y_pred, threshold)
+    def hessian(self, y_true, y_pred):
+        """分段光滑区间的 Hessian 对角项，不包含跨样本项。
 
-        # d(gate)/dp = gate(1-gate) / T
-        d_gate = gate * (1 - gate) / self.temperature
+        :param y_true: 一维 0/1 标签，1 为坏样本。
+        :param y_pred: 同形状坏样本概率，范围 [0, 1]；不是原始分数。
+        :return: 与输入等长的二阶导数组，标度同 BaseLoss.hessian；框架适配器再做链接函数转换。
 
-        # 漏捕梯度: d/dp[(1-gate)*y*penalty] = -d_gate * y * penalty
-        grad_miss = -d_gate * y_true * self.miss_penalty
+        **参考样例**
 
-        # 误报梯度: d/dp[gate*(1-y)*penalty] = d_gate * (1-y) * penalty
-        grad_fa = d_gate * (1 - y_true) * self.fa_penalty
-
-        # BCE 梯度
-        grad_bce = self.bce_weight * (y_pred - y_true)
-
-        return grad_miss + grad_fa + grad_bce
-
-    def hessian(
-        self,
-        y_true: np.ndarray,
-        y_pred: np.ndarray,
-    ) -> np.ndarray:
-        """计算二阶导数。
-
-        :param y_true: 真实标签
-        :param y_pred: 预测概率
-        :return: 二阶导数数组, shape (n_samples,)
+        >>> from hscredit.core.models.losses import TopKBadCaptureLoss
+        >>> loss = TopKBadCaptureLoss()
+        >>> result = loss.hessian([0, 0, 1, 1], [0.1, 0.3, 0.7, 0.9])
         """
-        y_true = np.asarray(y_true, dtype=float)
-        y_pred = np.clip(np.asarray(y_pred, dtype=float), 1e-7, 1 - 1e-7)
+        y, p = binary_inputs(y_true, y_pred)
+        gate = self._topk_gate(p, self._topk_threshold(p))
+        threshold_grad = self._threshold_gradient(p)
+        cost = (1 - y) * self.fa_penalty - y * self.miss_penalty
+        direct = cost * gate * (1 - gate) * (1 - 2 * gate) / self.temperature**2
+        diagonal = (1 - 2 * threshold_grad) * direct + threshold_grad**2 * np.sum(direct)
+        return diagonal + self.bce_weight * bce_terms(y, p)[2]
 
-        threshold = self._topk_threshold(y_pred)
-        gate = self._topk_gate(y_pred, threshold)
-
-        # d²(gate)/dp² = gate(1-gate)(1-2gate) / T²
-        d2_gate = gate * (1 - gate) * (1 - 2 * gate) / (self.temperature ** 2)
-
-        # 二阶导
-        hess_miss = -d2_gate * y_true * self.miss_penalty
-        hess_fa = d2_gate * (1 - y_true) * self.fa_penalty
-
-        # BCE 二阶导
-        hess_bce = self.bce_weight * y_pred * (1 - y_pred)
-
-        hess = hess_miss + hess_fa + hess_bce
-
-        return np.maximum(np.abs(hess), 1e-6)
+    def _threshold_gradient(self, y_pred):
+        """线性分位数在排序不变区间的一阶导；同分和排序切换处不可微。"""
+        position = (len(y_pred) - 1) * (1 - self.top_ratio)
+        lower, upper = int(np.floor(position)), int(np.ceil(position))
+        fraction = position - lower
+        order = np.argsort(y_pred, kind="stable")
+        derivative = np.zeros_like(y_pred)
+        derivative[order[lower]] += 1 - fraction
+        derivative[order[upper]] += fraction
+        return derivative

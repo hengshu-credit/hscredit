@@ -18,11 +18,23 @@
 """
 
 from typing import Union, List, Optional, Dict, Any
+import warnings
 import numpy as np
 import pandas as pd
-from sklearn.feature_selection import chi2, SelectKBest
+from sklearn.feature_selection import chi2
+from sklearn.utils.multiclass import check_classification_targets
+from scipy.stats import chi2_contingency
 
 from .base import BaseFeatureSelector
+from ._statistical_utils import (
+    is_categorical,
+    rank_scores,
+    record_conditions,
+    record_counts,
+    top_k_mask,
+    validate_k,
+    validate_real,
+)
 
 
 def _compute_chi2_feature(task):
@@ -48,6 +60,10 @@ class Chi2Selector(BaseFeatureSelector):
     :param missing: 缺失值处理方式。数值则直接填充；字符串 ``'mean'``/``'min'``/``'max'`` 按列统计量填充；
         ``None`` 或 ``False`` 则删除含缺失值的行。默认为 ``-99.0``
     :param target: 目标变量列名，默认为'target'
+    :param categorical_strategy: 默认 'contingency' 对 object/string/category/bool 使用 Pearson
+        列联表检验（无连续性校正），不受类别编码或样本排列影响；'legacy_ordinal' 恢复旧版
+        首次出现顺序编码再计算的口径，结果依赖样本顺序。类别缺失在默认策略中独立成类，
+        missing=None/False 时与数值列统一删除含缺失的行，其他填充值不与真实类别合并。
 
     **参考样例**
 
@@ -90,7 +106,10 @@ class Chi2Selector(BaseFeatureSelector):
         binning_params: Optional[Dict[str, Any]] = None,
         parallel_backend: Optional[str] = None,
         parallel_config: Optional[Dict[str, Any]] = None,
+        target_rm: bool = False,
+        categorical_strategy: str = "contingency",
     ):
+        """初始化筛选器；默认透传已有目标列，仅target_rm=True移除。"""
         super().__init__(
             target=target,
             threshold=threshold,
@@ -102,9 +121,41 @@ class Chi2Selector(BaseFeatureSelector):
             binning_params=binning_params,
             parallel_backend=parallel_backend,
             parallel_config=parallel_config,
+            target_rm=target_rm,
         )
         self.k = k
         self.missing = missing
+        self.categorical_strategy = categorical_strategy
+
+    def __setstate__(self, state):
+        legacy = "categorical_strategy" not in state
+        super().__setstate__(state)
+        if legacy:
+            self.categorical_strategy = "legacy_ordinal"
+            warnings.warn(
+                "旧卡方筛选器保留类别序号检验；新训练建议显式使用 categorical_strategy='contingency'",
+                UserWarning,
+                stacklevel=2,
+            )
+
+    def _check_input(self, X, y=None):
+        validate_real(self.threshold, "卡方阈值", allow_infinite=True)
+        validate_k(self.k)
+        if self.categorical_strategy not in {"contingency", "legacy_ordinal"}:
+            raise ValueError("categorical_strategy 必须是 'contingency' 或 'legacy_ordinal'")
+        if isinstance(self.missing, str):
+            if self.missing not in {"mean", "min", "max"}:
+                raise ValueError("missing 仅支持 'mean'/'min'/'max'、有限数值或 None/False")
+        elif self.missing is not None and self.missing is not False:
+            validate_real(self.missing, "missing")
+        X, y = super()._check_input(X, y)
+        if y is None or np.asarray(y).ndim != 1 or pd.isna(np.asarray(y)).any():
+            raise ValueError("卡方筛选需要无缺失的一维分类目标 y")
+        try:
+            check_classification_targets(y)
+        except ValueError as exc:
+            raise ValueError("卡方筛选的目标 y 必须是离散分类标签，不能为连续数值") from exc
+        return X, y
 
     def _fit_impl(
         self,
@@ -118,49 +169,60 @@ class Chi2Selector(BaseFeatureSelector):
         """
         self._get_feature_names(X)
 
-        if isinstance(self.k, (int, np.integer)) and not isinstance(self.k, (bool, np.bool_)):
-            if int(self.k) <= 0:
-                raise ValueError("k 必须大于 0")
-        elif self.k != "all":
-            raise ValueError("k 必须是大于 0 的整数或 'all'")
-
-        # 处理类别变量
-        X_pos = X.copy()
-        for col in X_pos.columns:
-            if X_pos[col].dtype == "object":
-                X_pos[col] = pd.factorize(X_pos[col])[0]
-
-        # 处理缺失值
+        record_counts(self, X)
+        self.threshold_ = self.threshold
+        self.score_name_, self.score_direction_ = "卡方统计量", "越大越好"
+        categorical = [column for column in X if is_categorical(X[column])]
+        processed = X.copy()
+        if self.categorical_strategy == "legacy_ordinal":
+            for column in categorical:
+                processed[column] = pd.factorize(processed[column])[0]
         if self.missing is None or self.missing is False:
-            mask = X_pos.notna().all(axis=1)
-            X_pos = X_pos.loc[mask]
-            y = np.asarray(y)[mask.values] if not isinstance(mask, np.ndarray) else np.asarray(y)[mask]
-        elif isinstance(self.missing, str):
-            fill_funcs = {"mean": X_pos.mean, "min": X_pos.min, "max": X_pos.max}
-            if self.missing not in fill_funcs:
-                raise ValueError(f"missing 仅支持 'mean'/'min'/'max'，收到: '{self.missing}'")
-            X_pos = X_pos.fillna(fill_funcs[self.missing]())
+            mask = processed.notna().all(axis=1)
+            processed = processed.loc[mask]
+            y = np.asarray(y)[mask.to_numpy()]
         else:
-            X_pos = X_pos.fillna(float(self.missing))
-
-        # 确保非负
-        X_array = np.maximum(X_pos.values, 0)
-
+            y = np.asarray(y)
+        if processed.empty:
+            raise ValueError("缺失值处理后没有可用于卡方检验的样本")
+        self.effective_counts_ = pd.Series(len(processed), index=X.columns, dtype=np.int64)
+        categorical_tests = categorical if self.categorical_strategy == "contingency" else []
+        numeric = [column for column in X if column not in categorical_tests]
+        scores = pd.Series(np.nan, index=X.columns, dtype=float)
+        p_values = pd.Series(np.nan, index=X.columns, dtype=float)
+        methods = pd.Series("非负数值卡方检验", index=X.columns, dtype=object)
+        if numeric:
+            numeric_frame = processed[numeric].astype(float)
+            if isinstance(self.missing, str):
+                numeric_frame = numeric_frame.fillna(getattr(numeric_frame, self.missing)())
+            elif self.missing is not None and self.missing is not False:
+                numeric_frame = numeric_frame.fillna(float(self.missing))
+            if numeric_frame.isna().any().any():
+                raise ValueError("数值字段全缺失，无法按列统计量填充；请提供有限数值 missing")
+            numeric_scores, numeric_p = chi2(np.maximum(numeric_frame.to_numpy(), 0), y)
+            scores.loc[numeric], p_values.loc[numeric] = numeric_scores, numeric_p
+            if self.categorical_strategy == "legacy_ordinal":
+                methods.loc[categorical] = "旧版类别序号卡方检验"
+        target_codes, target_labels = pd.factorize(y, sort=False)
+        for column in categorical_tests:
+            codes, labels = pd.factorize(processed[column], sort=False, use_na_sentinel=False)
+            table = np.bincount(
+                codes * len(target_labels) + target_codes,
+                minlength=len(labels) * len(target_labels),
+            ).reshape(len(labels), len(target_labels))
+            if min(table.shape) < 2:
+                score, probability = 0.0, 1.0
+            else:
+                score, probability, _, _ = chi2_contingency(table, correction=False)
+            scores[column], p_values[column] = score, probability
+            methods[column] = "类别列联表卡方检验"
         self._validate_parallel_configuration()
-        # sklearn 已能在一次矩阵调用中计算所有字段；拆成列级 joblib
-        # 任务只会重复校验和调度，宽表上反而更慢。
-        chi2_scores, _ = chi2(X_array, np.asarray(y))
-
-        self.scores_ = pd.Series(chi2_scores, index=X.columns)
-
-        # 选择特征
-        selected_mask = chi2_scores >= self.threshold
-        if isinstance(self.k, (int, np.integer)) and not isinstance(self.k, (bool, np.bool_)):
-            top_k = min(int(self.k), len(X.columns))
-            ranking = np.argsort(-chi2_scores, kind="stable")
-            top_mask = np.zeros(len(X.columns), dtype=bool)
-            top_mask[ranking[:top_k]] = True
-            selected_mask &= top_mask
+        self.scores_, self.p_values_, self.test_methods_ = scores, p_values, methods
+        self.ranks_ = rank_scores(scores)
+        threshold_mask = scores.to_numpy() >= self.threshold
+        quantity_mask = top_k_mask(scores.to_numpy(), self.k)
+        record_conditions(self, X.columns, 阈值达标=threshold_mask, 数量限制达标=quantity_mask)
+        selected_mask = threshold_mask & quantity_mask
         selected_cols = X.columns[selected_mask].tolist()
 
         self.selected_features_ = selected_cols
@@ -168,15 +230,20 @@ class Chi2Selector(BaseFeatureSelector):
         # 构建详细的dropped_记录，包含卡方得分
         dropped_cols = [c for c in X.columns if c not in selected_cols]
         if len(dropped_cols) > 0:
-            if isinstance(self.k, int):
-                # top-k模式
-                reason = f"未进入前{self.k}名"
-            else:
-                reason = f"卡方得分 < {self.threshold}"
+            reasons = []
+            for column in dropped_cols:
+                parts = []
+                if not np.isfinite(scores[column]):
+                    parts.append("卡方统计量无效（全零或无有效变异）")
+                elif not bool(self.condition_results_.loc[column, "阈值达标"]):
+                    parts.append(f"卡方统计量 < {self.threshold}")
+                if not bool(self.condition_results_.loc[column, "数量限制达标"]):
+                    parts.append(f"未进入前{self.k}名")
+                reasons.append("；".join(parts))
             self.dropped_ = pd.DataFrame(
                 {
                     "特征": dropped_cols,
-                    "剔除原因": [f"{reason} (得分: {self.scores_[col]:.4f})" for col in dropped_cols],
+                    "剔除原因": reasons,
                     "卡方得分": [self.scores_[col] for col in dropped_cols],
                 }
             )

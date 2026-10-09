@@ -239,6 +239,7 @@ class NGBoost(BaseRiskModel):
 
         # 准备数据（支持从X中提取target）
         X, y, sample_weight = self._prepare_data(X, y, sample_weight, extract_target=True, training=True)
+        scorecard_sample_weight = sample_weight
         self._validate_probability_scorecard_labels(y)
         eval_set = self._prepare_eval_set(eval_set)
         fit_kwargs = dict(fit_params)
@@ -357,7 +358,7 @@ class NGBoost(BaseRiskModel):
         self._best_score = None
         self._evals_result = getattr(self._model, "evals_result", {})
         self._is_fitted = True
-        self._fit_probability_scorecard(X, y)
+        self._fit_probability_scorecard(X, y, sample_weight=scorecard_sample_weight)
 
         return self
 

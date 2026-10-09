@@ -1,0 +1,26 @@
+[
+  {
+    "file": "dataframe-save.xlsx",
+    "sheet": "分箱统计",
+    "range": "B2:U8",
+    "freeze": null,
+    "conditional_formats": 3,
+    "pivots": 0
+  },
+  {
+    "file": "excel-features.xlsx",
+    "sheet": "分箱统计",
+    "range": "B2:U10",
+    "freeze": "D7",
+    "conditional_formats": 3,
+    "pivots": 0
+  },
+  {
+    "file": "excel-features.xlsx",
+    "sheet": "透视分析",
+    "range": "A1:A1",
+    "freeze": null,
+    "conditional_formats": 1,
+    "pivots": 1
+  }
+]

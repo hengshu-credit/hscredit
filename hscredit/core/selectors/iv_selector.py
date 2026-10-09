@@ -20,6 +20,7 @@ import numpy as np
 import pandas as pd
 
 from .base import BaseFeatureSelector
+from ._statistical_utils import record_conditions, record_counts, validate_binary_target, validate_real
 from ...utils.parallel import ParallelWorkload
 
 
@@ -31,11 +32,12 @@ def _compute_iv_single(x: np.ndarray, y: np.ndarray, regularization: float = 1.0
     :param regularization: 正则化参数，避免除零
     :return: IV值
     """
+    validate_real(regularization, "regularization", minimum=0)
     if regularization <= 0:
         raise ValueError("regularization 必须大于 0")
 
     x = np.asarray(x)
-    y = np.asarray(y)
+    y = validate_binary_target(y, "IV 计算")
     if x.shape[0] != y.shape[0]:
         raise ValueError("特征与目标变量长度不一致")
 
@@ -59,7 +61,7 @@ def _compute_iv_single(x: np.ndarray, y: np.ndarray, regularization: float = 1.0
         return 0.0
 
     # 获取唯一值
-    uniques = np.unique(x_valid)
+    codes, uniques = pd.factorize(x_valid, sort=False)
     n_cats = len(uniques)
 
     if n_cats <= 1:
@@ -72,22 +74,12 @@ def _compute_iv_single(x: np.ndarray, y: np.ndarray, regularization: float = 1.0
         return 0.0
 
     # 统计好坏样本
-    event_mask = y_valid == 1
-    nonevent_mask = y_valid == 0
-
-    event_tot = np.count_nonzero(event_mask) + n_cats * regularization
-    nonevent_tot = np.count_nonzero(nonevent_mask) + n_cats * regularization
-
-    event_rates = np.zeros(n_cats, dtype=np.float64)
-    nonevent_rates = np.zeros(n_cats, dtype=np.float64)
-
-    for i, cat in enumerate(uniques):
-        mask = x_valid == cat
-        event_rates[i] = np.count_nonzero(mask & event_mask) + regularization
-        nonevent_rates[i] = np.count_nonzero(mask & nonevent_mask) + regularization
-
-    event_rates /= event_tot
-    nonevent_rates /= nonevent_tot
+    # 一次编码和聚合，避免每个唯一值重新扫描全列造成 O(n × 基数)。
+    event_counts = np.bincount(codes, weights=(y_valid == 1), minlength=n_cats)
+    total_counts = np.bincount(codes, minlength=n_cats)
+    nonevent_counts = total_counts - event_counts
+    event_rates = (event_counts + regularization) / (event_counts.sum() + n_cats * regularization)
+    nonevent_rates = (nonevent_counts + regularization) / (nonevent_counts.sum() + n_cats * regularization)
 
     # 计算IV
     ivs = (event_rates - nonevent_rates) * np.log(np.maximum(event_rates, 1e-10) / np.maximum(nonevent_rates, 1e-10))
@@ -125,7 +117,7 @@ class IVSelector(BaseFeatureSelector):
     **参数**
 
     :param threshold: IV阈值，默认为0.02
-        - 0.02: 仅保留IV值大于0.02的特征
+        - 0.02: 仅保留IV值大于等于0.02的特征
     :param target: 目标变量列名，默认为'target'
     :param regularization: 正则化参数，默认为1.0
     :param n_jobs: 并行计算的任务数
@@ -203,7 +195,9 @@ class IVSelector(BaseFeatureSelector):
         binning_params: Optional[Dict[str, Any]] = None,
         parallel_backend: Optional[str] = None,
         parallel_config: Optional[Dict[str, Any]] = None,
+        target_rm: bool = False,
     ):
+        """初始化筛选器；默认透传已有目标列，仅target_rm=True移除。"""
         super().__init__(
             target=target,
             threshold=threshold,
@@ -215,8 +209,17 @@ class IVSelector(BaseFeatureSelector):
             binning_params=binning_params,
             parallel_backend=parallel_backend,
             parallel_config=parallel_config,
+            target_rm=target_rm,
         )
         self.regularization = regularization
+
+    def _check_input(self, X, y=None):
+        validate_real(self.threshold, "IV阈值", allow_infinite=True)
+        validate_real(self.regularization, "regularization", minimum=0)
+        if self.regularization == 0:
+            raise ValueError("regularization 必须大于 0")
+        X, y = super()._check_input(X, y)
+        return X, validate_binary_target(y, "IVSelector")
 
     def _fit_impl(
         self,
@@ -229,6 +232,10 @@ class IVSelector(BaseFeatureSelector):
         :param y: 目标变量
         """
         self._get_feature_names(X)
+        record_counts(self, X)
+        self.threshold_ = self.threshold
+        self.score_name_, self.score_direction_ = "IV值", "越大越好"
+        self.category_counts_ = X.nunique(dropna=True)
 
         if y is None:
             raise ValueError("IVSelector 需要目标变量 y")
@@ -256,6 +263,7 @@ class IVSelector(BaseFeatureSelector):
 
         # 选择IV值大于等于阈值的特征
         selected_mask = iv_values >= self.threshold
+        record_conditions(self, X.columns, IV达标=selected_mask)
         self.selected_features_ = X.columns[selected_mask].tolist()
 
         # 构建详细的dropped_记录，包含IV值
@@ -264,7 +272,7 @@ class IVSelector(BaseFeatureSelector):
             self.dropped_ = pd.DataFrame(
                 {
                     "特征": dropped_cols,
-                    "剔除原因": [f"IV值({self.scores_[col]:.4f}) <= 阈值({self.threshold})" for col in dropped_cols],
+                    "剔除原因": [f"IV值({self.scores_[col]:.4f}) < 阈值({self.threshold})" for col in dropped_cols],
                     "IV值": [self.scores_[col] for col in dropped_cols],
                     "阈值": [self.threshold] * len(dropped_cols),
                 }
@@ -292,5 +300,11 @@ class IVSelector(BaseFeatureSelector):
             else:
                 return "极强预测能力（可能过拟合）"
 
-        df = pd.DataFrame({"特征": self.scores_.index, "IV值": self.scores_.values, "预测能力": [interpret_iv(iv) for iv in self.scores_.values]})
+        df = pd.DataFrame(
+            {
+                "特征": self.scores_.index,
+                "IV值": self.scores_.values,
+                "预测能力": [interpret_iv(iv) for iv in self.scores_.values],
+            }
+        )
         return df.sort_values("IV值", ascending=False)

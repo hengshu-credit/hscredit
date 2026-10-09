@@ -22,6 +22,7 @@ from typing import Union, List, Optional, Dict, Any, Callable
 import numpy as np
 import pandas as pd
 from .base import BaseFeatureSelector, get_feature_importances
+from ._selection_history import initialize_history, record_event
 
 
 class FeatureImportanceSelector(BaseFeatureSelector):
@@ -71,14 +72,14 @@ class FeatureImportanceSelector(BaseFeatureSelector):
     https://scikit-learn.org/stable/modules/generated/sklearn.feature_selection.SelectFromModel.html
     """
 
-    method_name = '特征重要性筛选'
+    method_name = "特征重要性筛选"
 
     def __init__(
         self,
         estimator,
         threshold: Union[float, int] = 0.0,
-        importance_getter: Union[str, Callable[[Any], Any]] = 'auto',
-        target: str = 'target',
+        importance_getter: Union[str, Callable[[Any], Any]] = "auto",
+        target: str = "target",
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
         force_drop: Optional[List[str]] = None,
@@ -87,15 +88,29 @@ class FeatureImportanceSelector(BaseFeatureSelector):
         binning_params: Optional[Dict[str, Any]] = None,
         parallel_backend: Optional[str] = None,
         parallel_config: Optional[Dict[str, Any]] = None,
+        target_rm: bool = False,
+        report_history: str = "summary",
+        max_report_events: int = 10000,
+        max_report_bytes: int = 8 * 1024 * 1024,
     ):
         super().__init__(
-            target=target, threshold=threshold, include=include,
-            exclude=exclude, force_drop=force_drop, n_jobs=n_jobs,
-            binner=binner, binning_params=binning_params,
-            parallel_backend=parallel_backend, parallel_config=parallel_config,
+            target=target,
+            threshold=threshold,
+            include=include,
+            exclude=exclude,
+            force_drop=force_drop,
+            n_jobs=n_jobs,
+            binner=binner,
+            binning_params=binning_params,
+            parallel_backend=parallel_backend,
+            parallel_config=parallel_config,
+            target_rm=target_rm,
         )
         self.estimator = estimator
         self.importance_getter = importance_getter
+        self.report_history = report_history
+        self.max_report_events = max_report_events
+        self.max_report_bytes = max_report_bytes
 
     def _fit_impl(
         self,
@@ -114,12 +129,15 @@ class FeatureImportanceSelector(BaseFeatureSelector):
             X = X.drop(columns=self.target)
 
         self._get_feature_names(X)
+        initialize_history(self)
 
         if isinstance(self.threshold, (bool, np.bool_)):
             raise ValueError("threshold 不能是布尔值")
         if isinstance(self.threshold, (int, np.integer)) and not isinstance(self.threshold, (bool, np.bool_)):
             if int(self.threshold) <= 0:
                 raise ValueError("top-k 特征数必须大于 0")
+        elif not isinstance(self.threshold, (float, np.floating)) or not np.isfinite(self.threshold):
+            raise ValueError("重要性阈值必须为有限浮点数，或表示 top-k 的正整数")
 
         # 克隆并训练模型；调用者 estimator 保持不变。
         model = self._clone_estimator_for_parallel(self.estimator)
@@ -145,20 +163,54 @@ class FeatureImportanceSelector(BaseFeatureSelector):
         importances = np.ravel(importances)
         if importances.shape[0] != X.shape[1]:
             raise ValueError(f"重要性数量 {importances.shape[0]} 与特征数 {X.shape[1]} 不一致")
+        if not np.isfinite(importances).all():
+            raise ValueError("模型返回的特征重要性必须全部为有限数值")
+        self.estimator_ = model
         self.scores_ = pd.Series(importances, index=X.columns)
+        self.score_name_ = "模型特征重要性"
+        self.score_direction_ = "越大越好"
+        ranking = np.argsort(-importances, kind="stable")
+        ranks = np.empty(len(importances), dtype=int)
+        ranks[ranking] = np.arange(1, len(importances) + 1)
+        self.ranking_ = pd.Series(ranks, index=X.columns)
 
         # 根据阈值筛选
         if isinstance(self.threshold, (int, np.integer)) and not isinstance(self.threshold, (bool, np.bool_)):
             # 保留top-k
             top_k = min(int(self.threshold), len(X.columns))
-            ranking = np.argsort(-importances, kind="stable")
             selected_mask = np.zeros(len(X.columns), dtype=bool)
             selected_mask[ranking[:top_k]] = True
             selected_cols = X.columns[selected_mask].tolist()
+            self.effective_threshold_ = top_k
+            self.selection_mode_ = "前K个"
+            self._drop_reason = f"重要性排名未进入前 {top_k} 个（并列按输入顺序）"
         else:
             # 保留重要性 >= threshold
             selected_mask = importances >= self.threshold
             selected_cols = X.columns[selected_mask].tolist()
+            self.effective_threshold_ = self.threshold
+            self.selection_mode_ = "指标阈值"
+            self._drop_reason = f"特征重要性 < {self.threshold}"
 
         self.selected_features_ = selected_cols
-        self._drop_reason = f'特征重要性 < {self.threshold}'
+        self.selection_stopping_reason_ = "模型重要性判定完成"
+        for feature, value in self.scores_.items():
+            selected = feature in selected_cols
+            record_event(
+                self,
+                {
+                    "轮次": 1,
+                    "特征": feature,
+                    "动作": "保留" if selected else "剔除",
+                    "指标名称": self.score_name_,
+                    "指标值": value,
+                    "有效阈值": self.threshold if self.selection_mode_ == "指标阈值" else None,
+                    "是否有效": True,
+                    "原因": self.selection_mode_ if selected else self._drop_reason,
+                    "补充信息": {
+                        "重要性排名": int(self.ranking_[feature]),
+                        "判定方式": self.selection_mode_,
+                        "保留数量预算": self.effective_threshold_ if self.selection_mode_ == "前K个" else None,
+                    },
+                },
+            )

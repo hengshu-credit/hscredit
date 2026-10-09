@@ -34,7 +34,7 @@ def compact_training_record(record):
 
 def compact_fold(record):
     """保留指标/曲线/异常与样本数，不保留逐样本数组和折模型。"""
-    keys = {"折编号", "状态", "指标", "评估曲线", "最佳迭代", "启用早停", "错误类型", "错误信息", "制品路径"}
+    keys = {"折编号", "状态", "指标", "评估曲线", "最佳迭代", "启用早停", "错误类型", "错误信息", "制品路径", "评估口径", "补充LIFT口径"}
     result = {name: value for name, value in record.items() if name in keys}
     for name, size_name in (("训练位置", "训练样本数"), ("验证位置", "验证样本数")):
         result[size_name] = len(record[name]) if name in record else record.get(size_name, 0)

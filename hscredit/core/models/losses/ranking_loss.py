@@ -11,6 +11,7 @@ from typing import Tuple
 import numpy as np
 
 from .base import BaseLoss
+from ._loss_math import binary_inputs, bce_terms, nonnegative, positive, unit_interval
 
 
 class OrdinalRankLoss(BaseLoss):
@@ -18,6 +19,7 @@ class OrdinalRankLoss(BaseLoss):
 
     该损失在标准二元交叉熵基础上增加成对排序惩罚项，
     鼓励坏样本（label=1）的预测风险高于好样本（label=0）。
+    导数按 n × 平均损失计算，返回 Hessian 的对角项；框架不使用跨样本二阶项。
 
     :param rank_weight: 排序惩罚项权重，默认 1.0
     :param bce_weight: 交叉熵权重，默认 1.0
@@ -54,31 +56,29 @@ class OrdinalRankLoss(BaseLoss):
         name: str = "ordinal_rank_loss",
     ):
         super().__init__(name)
+        nonnegative(rank_weight=rank_weight, bce_weight=bce_weight)
+        positive(temperature=temperature, max_pairs=max_pairs)
+        if not isinstance(max_pairs, (int, np.integer)):
+            raise ValueError("max_pairs 必须为正整数。")
         self.rank_weight = rank_weight
         self.bce_weight = bce_weight
         self.temperature = temperature
         self.max_pairs = max_pairs
         self.random_state = random_state
 
-    def _prepare_pairs(
-        self,
-        y_true: np.ndarray,
-    ) -> Tuple[np.ndarray, np.ndarray]:
+    def _prepare_pairs(self, y_true):
+        """直接采样组合编号，避免在 max_pairs 截断前构造平方级数组。"""
         pos_idx = np.flatnonzero(y_true == 1)
         neg_idx = np.flatnonzero(y_true == 0)
-
-        if len(pos_idx) == 0 or len(neg_idx) == 0:
+        total = len(pos_idx) * len(neg_idx)
+        if not total:
             return np.array([], dtype=int), np.array([], dtype=int)
-
-        pos_grid = np.repeat(pos_idx, len(neg_idx))
-        neg_grid = np.tile(neg_idx, len(pos_idx))
-
-        if len(pos_grid) <= self.max_pairs:
-            return pos_grid, neg_grid
-
-        rng = np.random.default_rng(self.random_state)
-        chosen = rng.choice(len(pos_grid), size=self.max_pairs, replace=False)
-        return pos_grid[chosen], neg_grid[chosen]
+        if total <= self.max_pairs:
+            indices = np.arange(total)
+        else:
+            rng = np.random.default_rng(self.random_state)
+            indices = rng.choice(total, size=self.max_pairs, replace=False)
+        return pos_idx[indices // len(neg_idx)], neg_idx[indices % len(neg_idx)]
 
     def _pairwise_rank_loss(
         self,
@@ -90,15 +90,26 @@ class OrdinalRankLoss(BaseLoss):
             return 0.0
 
         diff = (y_pred[pos_pairs] - y_pred[neg_pairs]) / self.temperature
-        return float(np.mean(np.log1p(np.exp(-diff))))
+        return float(np.mean(np.logaddexp(0.0, -diff)))
 
     def __call__(
         self,
         y_true: np.ndarray,
         y_pred: np.ndarray,
     ) -> float:
-        y_true = np.asarray(y_true, dtype=float)
-        y_pred = np.clip(np.asarray(y_pred, dtype=float), 1e-7, 1 - 1e-7)
+        """计算本损失的平均值，越小越好。
+
+        :param y_true: 一维 0/1 标签，1 为坏样本。
+        :param y_pred: 同形状坏样本概率，范围 [0, 1]；不是原始分数。
+        :return: float；原始损失值，不根据调参方向改变符号。
+
+        **参考样例**
+
+        >>> from hscredit.core.models.losses import OrdinalRankLoss
+        >>> loss = OrdinalRankLoss()
+        >>> result = loss([0, 0, 1, 1], [0.1, 0.3, 0.7, 0.9])
+        """
+        y_true, y_pred = binary_inputs(y_true, y_pred)
 
         bce = -np.mean(y_true * np.log(y_pred) + (1 - y_true) * np.log(1 - y_pred))
         rank = self._pairwise_rank_loss(y_true, y_pred)
@@ -109,18 +120,29 @@ class OrdinalRankLoss(BaseLoss):
         y_true: np.ndarray,
         y_pred: np.ndarray,
     ) -> np.ndarray:
-        y_true = np.asarray(y_true, dtype=float)
-        y_pred = np.clip(np.asarray(y_pred, dtype=float), 1e-7, 1 - 1e-7)
+        """返回损失相对坏样本概率的一阶导数。
 
-        grad = self.bce_weight * (y_pred - y_true)
+        :param y_true: 一维 0/1 标签，1 为坏样本。
+        :param y_pred: 同形状坏样本概率，范围 [0, 1]；不是原始分数。
+        :return: 与输入等长的一阶导数组，标度为样本数乘以平均损失；详见 BaseLoss.gradient。
+
+        **参考样例**
+
+        >>> from hscredit.core.models.losses import OrdinalRankLoss
+        >>> loss = OrdinalRankLoss()
+        >>> result = loss.gradient([0, 0, 1, 1], [0.1, 0.3, 0.7, 0.9])
+        """
+        y_true, y_pred = binary_inputs(y_true, y_pred)
+
+        grad = self.bce_weight * bce_terms(y_true, y_pred)[1]
 
         pos_pairs, neg_pairs = self._prepare_pairs(y_true)
         if len(pos_pairs) == 0 or self.rank_weight == 0:
             return grad
 
         diff = (y_pred[pos_pairs] - y_pred[neg_pairs]) / self.temperature
-        pair_grad = -1.0 / (1.0 + np.exp(diff))
-        pair_grad = (self.rank_weight / len(pos_pairs)) * (pair_grad / self.temperature)
+        pair_grad = -np.exp(-np.logaddexp(0.0, diff))
+        pair_grad = (len(y_true) * self.rank_weight / len(pos_pairs)) * (pair_grad / self.temperature)
 
         np.add.at(grad, pos_pairs, pair_grad)
         np.add.at(grad, neg_pairs, -pair_grad)
@@ -131,21 +153,32 @@ class OrdinalRankLoss(BaseLoss):
         y_true: np.ndarray,
         y_pred: np.ndarray,
     ) -> np.ndarray:
-        y_true = np.asarray(y_true, dtype=float)
-        y_pred = np.clip(np.asarray(y_pred, dtype=float), 1e-7, 1 - 1e-7)
+        """返回损失相对坏样本概率的二阶导数。
 
-        hess = self.bce_weight * y_pred * (1 - y_pred)
+        :param y_true: 一维 0/1 标签，1 为坏样本。
+        :param y_pred: 同形状坏样本概率，范围 [0, 1]；不是原始分数。
+        :return: 与输入等长的二阶导数组，标度同 BaseLoss.hessian；框架适配器再做链接函数转换。
+
+        **参考样例**
+
+        >>> from hscredit.core.models.losses import OrdinalRankLoss
+        >>> loss = OrdinalRankLoss()
+        >>> result = loss.hessian([0, 0, 1, 1], [0.1, 0.3, 0.7, 0.9])
+        """
+        y_true, y_pred = binary_inputs(y_true, y_pred)
+
+        hess = self.bce_weight * bce_terms(y_true, y_pred)[2]
 
         pos_pairs, neg_pairs = self._prepare_pairs(y_true)
         if len(pos_pairs) > 0 and self.rank_weight != 0:
             diff = (y_pred[pos_pairs] - y_pred[neg_pairs]) / self.temperature
-            sig = 1.0 / (1.0 + np.exp(-diff))
+            sig = np.exp(-np.logaddexp(0.0, -diff))
             pair_hess = sig * (1 - sig)
-            pair_hess = (self.rank_weight / len(pos_pairs)) * (pair_hess / (self.temperature ** 2))
+            pair_hess = (len(y_true) * self.rank_weight / len(pos_pairs)) * (pair_hess / (self.temperature**2))
             np.add.at(hess, pos_pairs, pair_hess)
             np.add.at(hess, neg_pairs, pair_hess)
 
-        return np.maximum(hess, 1e-6)
+        return hess
 
 
 class LiftFocusedLoss(BaseLoss):
@@ -153,6 +186,7 @@ class LiftFocusedLoss(BaseLoss):
 
     该损失基于加权二元交叉熵，按照预测风险从高到低分配更大的样本权重，
     并在头部区间进一步放大坏样本的惩罚，提升模型在高风险头部样本上的区分能力。
+    排名权重在每次求导时固定，样本排名切换或同分边界处不可微。
 
     :param top_ratio: 头部样本占比，默认 0.10
     :param penalty_factor: 头部惩罚倍数，默认 3.0
@@ -179,6 +213,13 @@ class LiftFocusedLoss(BaseLoss):
         name: str = "lift_focused_loss",
     ):
         super().__init__(name)
+        unit_interval(top_ratio=top_ratio)
+        positive(
+            top_ratio=top_ratio,
+            penalty_factor=penalty_factor,
+            positive_class_boost=positive_class_boost,
+            base_weight=base_weight,
+        )
         self.top_ratio = top_ratio
         self.penalty_factor = penalty_factor
         self.positive_class_boost = positive_class_boost
@@ -212,8 +253,19 @@ class LiftFocusedLoss(BaseLoss):
         y_true: np.ndarray,
         y_pred: np.ndarray,
     ) -> float:
-        y_true = np.asarray(y_true, dtype=float)
-        y_pred = np.clip(np.asarray(y_pred, dtype=float), 1e-7, 1 - 1e-7)
+        """计算本损失的平均值，越小越好。
+
+        :param y_true: 一维 0/1 标签，1 为坏样本。
+        :param y_pred: 同形状坏样本概率，范围 [0, 1]；不是原始分数。
+        :return: float；原始损失值，不根据调参方向改变符号。
+
+        **参考样例**
+
+        >>> from hscredit.core.models.losses import LiftFocusedLoss
+        >>> loss = LiftFocusedLoss()
+        >>> result = loss([0, 0, 1, 1], [0.1, 0.3, 0.7, 0.9])
+        """
+        y_true, y_pred = binary_inputs(y_true, y_pred)
         weights = self._get_sample_weights(y_true, y_pred)
 
         loss = -(y_true * np.log(y_pred) + (1 - y_true) * np.log(1 - y_pred))
@@ -224,18 +276,40 @@ class LiftFocusedLoss(BaseLoss):
         y_true: np.ndarray,
         y_pred: np.ndarray,
     ) -> np.ndarray:
-        y_true = np.asarray(y_true, dtype=float)
-        y_pred = np.clip(np.asarray(y_pred, dtype=float), 1e-7, 1 - 1e-7)
+        """返回损失相对坏样本概率的一阶导数。
+
+        :param y_true: 一维 0/1 标签，1 为坏样本。
+        :param y_pred: 同形状坏样本概率，范围 [0, 1]；不是原始分数。
+        :return: 与输入等长的一阶导数组，标度为样本数乘以平均损失；详见 BaseLoss.gradient。
+
+        **参考样例**
+
+        >>> from hscredit.core.models.losses import LiftFocusedLoss
+        >>> loss = LiftFocusedLoss()
+        >>> result = loss.gradient([0, 0, 1, 1], [0.1, 0.3, 0.7, 0.9])
+        """
+        y_true, y_pred = binary_inputs(y_true, y_pred)
         weights = self._get_sample_weights(y_true, y_pred)
-        return weights * (y_pred - y_true)
+        return (weights / np.mean(weights)) * bce_terms(y_true, y_pred)[1]
 
     def hessian(
         self,
         y_true: np.ndarray,
         y_pred: np.ndarray,
     ) -> np.ndarray:
-        y_true = np.asarray(y_true, dtype=float)
-        y_pred = np.clip(np.asarray(y_pred, dtype=float), 1e-7, 1 - 1e-7)
+        """返回损失相对坏样本概率的二阶导数。
+
+        :param y_true: 一维 0/1 标签，1 为坏样本。
+        :param y_pred: 同形状坏样本概率，范围 [0, 1]；不是原始分数。
+        :return: 与输入等长的二阶导数组，标度同 BaseLoss.hessian；框架适配器再做链接函数转换。
+
+        **参考样例**
+
+        >>> from hscredit.core.models.losses import LiftFocusedLoss
+        >>> loss = LiftFocusedLoss()
+        >>> result = loss.hessian([0, 0, 1, 1], [0.1, 0.3, 0.7, 0.9])
+        """
+        y_true, y_pred = binary_inputs(y_true, y_pred)
         weights = self._get_sample_weights(y_true, y_pred)
-        hess = weights * y_pred * (1 - y_pred)
-        return np.maximum(hess, 1e-6)
+        hess = (weights / np.mean(weights)) * bce_terms(y_true, y_pred)[2]
+        return hess

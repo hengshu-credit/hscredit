@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 
 from .base import BaseEncoder
+from ._category_protocol import MISSING, UNKNOWN
 
 
 class CatBoostEncoder(BaseEncoder):
@@ -55,6 +56,7 @@ class CatBoostEncoder(BaseEncoder):
 
     # global_mean_ 是 transform 时未知/缺失类别的填充值，须随映射一并序列化
     _EXTRA_STATE_ATTRS = ["global_mean_"]
+    _TARGET_TYPE = "continuous"
 
     def _get_category_cols(self, X: pd.DataFrame) -> List[str]:
         """自动识别需要编码的列。
@@ -79,6 +81,7 @@ class CatBoostEncoder(BaseEncoder):
         n_jobs: Optional[Union[int, float]] = -1,
         parallel_backend: Optional[str] = None,
         parallel_config: Optional[Dict[str, Any]] = None,
+        passthrough_target: bool = False,
     ):
         """初始化CatBoost编码器。
 
@@ -101,6 +104,7 @@ class CatBoostEncoder(BaseEncoder):
             n_jobs=n_jobs,
             parallel_backend=parallel_backend,
             parallel_config=parallel_config,
+            passthrough_target=passthrough_target,
         )
         self.sigma = sigma
         self.random_state = random_state
@@ -129,14 +133,14 @@ class CatBoostEncoder(BaseEncoder):
         mapping = category_stats["mean"].to_dict()
 
         if self.handle_missing == "value":
-            mapping[np.nan] = self.global_mean_
+            mapping[MISSING] = self.global_mean_
         elif self.handle_missing == "return_nan":
-            mapping[np.nan] = np.nan
+            mapping[MISSING] = np.nan
 
         if self.handle_unknown == "value":
-            mapping["__UNKNOWN__"] = self.global_mean_
+            mapping[UNKNOWN] = self.global_mean_
         elif self.handle_unknown == "return_nan":
-            mapping["__UNKNOWN__"] = np.nan
+            mapping[UNKNOWN] = np.nan
 
         return {"mapping_": mapping}
 
@@ -164,12 +168,9 @@ class CatBoostEncoder(BaseEncoder):
             result = self._transform_ordered(values, y, mapping, random_order=order)
         else:
             noise = None
-            result = values.map(mapping)
+            result = self._map_values(values, mapping)
 
-        if self.handle_unknown == "value":
-            result = result.fillna(self.global_mean_)
-        elif self.handle_unknown == "error" and result.isna().any():
-            raise ValueError(f"列'{column}'包含未知类别")
+        result = self._apply_missing_unknown(column, values, result, self.global_mean_)
 
         if noise is not None:
             result = result * (1 + noise)
@@ -201,33 +202,14 @@ class CatBoostEncoder(BaseEncoder):
                 rng = np.random.RandomState(self.random_state)
             random_order = rng.permutation(n)
 
-        result = pd.Series(index=x.index, dtype=float)
-
-        result[:] = self.global_mean_
-
-        category_sums = {}
-        category_counts = {}
-
-        for idx in random_order:
-            category = x.iloc[idx]
-
-            if pd.isna(category):
-                result.iloc[idx] = mapping.get(np.nan, self.global_mean_)
-                continue
-
-            if category in category_counts and category_counts[category] > 0:
-                prior = self.global_mean_
-                posterior = category_sums[category] / category_counts[category]
-                count = category_counts[category]
-                a = 1.0
-                result.iloc[idx] = (count * posterior + a * prior) / (count + a)
-            else:
-                result.iloc[idx] = self.global_mean_
-
-            if category not in category_sums:
-                category_sums[category] = 0
-                category_counts[category] = 0
-            category_sums[category] += y.iloc[idx]
-            category_counts[category] += 1
-
-        return result
+        ordered_x = x.iloc[random_order].reset_index(drop=True)
+        ordered_y = pd.Series(np.asarray(y)[random_order])
+        codes, _ = pd.factorize(ordered_x, sort=False)
+        grouped = ordered_y.groupby(codes, sort=False)
+        previous_sum = grouped.cumsum() - ordered_y
+        previous_count = grouped.cumcount()
+        encoded = (previous_sum + self.global_mean_) / (previous_count + 1.0)
+        encoded.loc[codes < 0] = mapping.get(MISSING, mapping.get(np.nan, self.global_mean_))
+        restored = np.empty(n, dtype=float)
+        restored[random_order] = encoded.to_numpy()
+        return pd.Series(restored, index=x.index)

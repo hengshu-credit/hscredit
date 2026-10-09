@@ -55,11 +55,12 @@ def irr(values):
 
     求解使净现值（NPV）恰好为零的每期折现率，即项目隐含的真实回报率。
     内部使用二分法（bisection）在 ``[-0.99, +∞)`` 区间搜索，要求现金流同时包含
-    正值与负值（至少一次变号）以保证解存在。
+    正值与负值（必要条件，并非多次变号现金流有实根的充分条件）。
 
     .. note::
         IRR 仅在现金流方向单次变号时唯一；多次变号可能存在多个解，本实现返回
-        二分法在默认区间内找到的第一个根。
+        二分法在默认括根区间找到的一个根，不保证唯一或覆盖全部根。
+        无法括根时显式报错，不能把失败值当作收益率。
 
     :param values: 现金流序列（类数组），通常 ``values[0]`` 为初始投资（负值），
         且序列中至少各有一个正值与一个负值
@@ -78,7 +79,9 @@ def irr(values):
     对应 ``numpy_financial.irr``：
     https://numpy.org/numpy-financial/latest/functions/irr.html
     """
-    values = np.asarray(values)
+    values = np.asarray(values, dtype=float)
+    if values.ndim != 1 or len(values) < 2 or not np.isfinite(values).all():
+        raise ValueError("现金流必须为至少两期的有限一维数值")
 
     # 使用 numpy_financial 的实现思路
     # 解决 NPV = 0 的方程
@@ -97,12 +100,17 @@ def irr(values):
     # 使用二分法寻找 IRR
     # 确定搜索范围
     low, high = -0.99, 1.0
+    npv_low = _npv(low)
+    if npv_low == 0:
+        return low
 
     # 调整 high 直到 NPV 变号
     max_iter = 100
     for _ in range(max_iter):
         npv_high = _npv(high)
-        if npv_high < 0:
+        if npv_high == 0:
+            return high
+        if np.signbit(npv_low) != np.signbit(npv_high):
             break
         high *= 2
         if high > 1e10:
@@ -114,13 +122,14 @@ def irr(values):
         mid = (low + high) / 2
         npv_mid = _npv(mid)
 
-        if abs(npv_mid) < tol:
+        if abs(npv_mid) < tol or high - low < tol:
             return mid
 
-        if _npv(low) * npv_mid < 0:
+        if np.signbit(npv_low) != np.signbit(npv_mid):
             high = mid
         else:
             low = mid
+            npv_low = npv_mid
 
     raise ValueError(f"迭代 {max_iter} 次后仍未收敛")
 

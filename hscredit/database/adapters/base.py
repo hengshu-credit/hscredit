@@ -277,6 +277,10 @@ class BaseDatabaseAdapter:
 
         del table_name, mode, result, dialect_options
 
+    def atomic_replace_session(self, table_name: str):
+        """显式暂存/原子替换会话；默认后端不承诺该能力。"""
+        raise DatabaseCapabilityError(f"数据库 {self.database_type} 不支持暂存表原子替换")
+
     def query(self, sql: str, params: Any = None, result: str = "dataframe") -> Any:
         """执行查询。"""
 

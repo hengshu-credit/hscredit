@@ -8,16 +8,11 @@
 from __future__ import annotations
 
 import math
+import sys
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 
 import numpy as np
 from scipy.stats import norm
-
-try:
-    import optuna
-except ImportError:  # pragma: no cover - ModelTuner 会给出面向用户的依赖提示
-    optuna = None
-
 
 _LATENT_PREFIX = "__hscredit__"
 _NORMAL_TAIL = 4.0
@@ -51,6 +46,8 @@ def _check_bounds(name: str, low: Any, high: Any) -> None:
 
 
 def _positive_step(name: str, value: Any, field: str) -> float:
+    if not _is_number(value):
+        raise ValueError(f"参数 {name!r} 的 {field} 必须是大于 0 的有限数值")
     try:
         step = float(value)
     except (TypeError, ValueError) as exc:
@@ -61,16 +58,22 @@ def _positive_step(name: str, value: Any, field: str) -> float:
 
 
 def _categorical_spec(name: str, choices: Sequence[Any], prior: Optional[Sequence[float]] = None) -> Dict[str, Any]:
+    if isinstance(choices, (str, bytes)) or not isinstance(choices, (Sequence, np.ndarray)):
+        raise ValueError(f"参数 {name!r} 的 choices 必须是候选值序列，例如 ['a', 'b']")
     choices = list(choices)
     if not choices:
         raise ValueError(f"参数 {name!r} 的 choices 不能为空列表")
     result: Dict[str, Any] = {"type": "categorical", "choices": choices}
     if prior is not None:
-        weights = np.asarray(prior, dtype=float)
-        if len(weights) != len(choices):
+        try:
+            weights = np.asarray(prior, dtype=float)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"参数 {name!r} 的 prior 必须是一维数值序列") from exc
+        if weights.ndim != 1 or len(weights) != len(choices):
             raise ValueError(f"参数 {name!r} 的 prior 长度必须与 choices 一致")
-        if not np.all(np.isfinite(weights)) or np.any(weights < 0) or weights.sum() <= 0:
+        if not np.all(np.isfinite(weights)) or np.any(weights < 0) or not np.any(weights > 0):
             raise ValueError(f"参数 {name!r} 的 prior 必须是总和大于 0 的非负有限数值")
+        weights = weights / weights.max()
         result["prior"] = (weights / weights.sum()).tolist()
     return result
 
@@ -124,6 +127,10 @@ def _normalize_dict(name: str, raw: Mapping[str, Any]) -> Dict[str, Any]:
             return result
 
         if kind == "qloguniform":
+            with np.errstate(over="ignore", under="ignore"):
+                value_low, value_high = np.exp(float(low)), np.exp(float(high))
+            if not np.isfinite(value_high) or value_low <= 0:
+                raise ValueError(f"参数 {name!r} 的 qloguniform 对数边界转换后必须是正有限数值")
             return {
                 "type": "qloguniform",
                 "low": float(low),
@@ -155,16 +162,24 @@ def _normalize_dict(name: str, raw: Mapping[str, Any]) -> Dict[str, Any]:
     if kind in {"normal", "qnormal", "lognormal", "qlognormal"}:
         if "mu" not in raw or "sigma" not in raw:
             raise ValueError(f"参数 {name!r} 的 {kind} 类型必须提供 'mu' 和 'sigma'")
+        if not _is_number(raw["mu"]) or not _is_number(raw["sigma"]):
+            raise ValueError(f"参数 {name!r} 的 mu 和 sigma 必须为有限数值，且 sigma 大于 0")
         mu, sigma = float(raw["mu"]), float(raw["sigma"])
         if not math.isfinite(mu) or not math.isfinite(sigma) or sigma <= 0:
             raise ValueError(f"参数 {name!r} 的 sigma 必须是大于 0 的有限数值")
         is_log = kind in {"lognormal", "qlognormal"} or bool(raw.get("log", False))
+        lower, upper = mu - _NORMAL_TAIL * sigma, mu + _NORMAL_TAIL * sigma
+        with np.errstate(over="ignore", under="ignore"):
+            lower = float(np.exp(lower)) if is_log else lower
+            upper = float(np.exp(upper)) if is_log else upper
+        if not math.isfinite(lower) or not math.isfinite(upper) or (is_log and lower <= 0):
+            raise ValueError(f"参数 {name!r} 的正态截断区间必须为有限数值，对数正态区间必须大于 0")
         result = {
             "type": "normal",
             "mu": mu,
             "sigma": sigma,
-            "low": float(np.exp(mu - _NORMAL_TAIL * sigma)) if is_log else mu - _NORMAL_TAIL * sigma,
-            "high": float(np.exp(mu + _NORMAL_TAIL * sigma)) if is_log else mu + _NORMAL_TAIL * sigma,
+            "low": lower,
+            "high": upper,
         }
         if is_log:
             result["log"] = True
@@ -212,12 +227,16 @@ def _normalize_scipy(name: str, raw: Any) -> Dict[str, Any]:
     args = getattr(raw, "args", ())
     kwds = getattr(raw, "kwds", {}) or {}
     if dist_name == "randint":
-        low = int(args[0] if args else kwds.get("low"))
-        high_arg = int(args[1] if len(args) > 1 else kwds.get("high"))
-        return {"type": "int", "low": low, "high": high_arg - 1}
+        low, high = raw.support()
+        _check_bounds(name, low, high)
+        if not float(low).is_integer() or not float(high).is_integer():
+            raise ValueError(f"参数 {name!r} 的 scipy randint 位移后边界必须为整数")
+        return _normalize_dict(name, {"type": "int", "low": int(low), "high": int(high)})
     if dist_name in {"loguniform", "reciprocal"}:
-        low = float(args[0] if args else kwds.get("a"))
-        high = float(args[1] if len(args) > 1 else kwds.get("b"))
+        loc = args[2] if len(args) > 2 else kwds.get("loc", 0.0)
+        if loc != 0:
+            raise ValueError(f"参数 {name!r} 的 scipy loguniform 暂不支持非零 loc；请使用未平移的对数分布")
+        low, high = raw.support()
         return _normalize_dict(name, {"type": "float", "low": low, "high": high, "log": True})
     if dist_name == "uniform":
         loc = float(args[0] if args else kwds.get("loc", 0.0))
@@ -227,6 +246,8 @@ def _normalize_scipy(name: str, raw: Any) -> Dict[str, Any]:
 
 
 def _normalize_optuna(name: str, raw: Any) -> Dict[str, Any]:
+    import optuna
+
     distributions = optuna.distributions
     if isinstance(raw, distributions.IntDistribution):
         result: Dict[str, Any] = {"type": "int", "low": int(raw.low), "high": int(raw.high)}
@@ -248,13 +269,31 @@ def _normalize_optuna(name: str, raw: Any) -> Dict[str, Any]:
 
 
 def normalize_space_param(name: str, raw: Any) -> Dict[str, Any]:
-    """将一个参数声明转换为统一内部规格。"""
+    """将一个参数声明转换为经过校验的内部规格。
+
+    :param name: 非空模型参数名，不能使用保留前缀 ``__hscredit__``。
+    :param raw: ``Integer``、``Real``、``Categorical``，或兼容的列表、元组、
+        字典、SciPy 分布及 Optuna 分布。元组 ``(1, 5)`` 是闭区间，
+        列表 ``[1, 5]`` 只有两个候选值。
+    :return: 描述分布类型、边界及采样约束的新字典。
+    :raises ValueError: 参数名、边界或分布声明无效。
+
+    **参考样例**
+
+    >>> normalize_space_param('max_depth', (2, 6))
+    {'type': 'int', 'low': 2, 'high': 6}
+    """
+    if not isinstance(name, str) or not name.strip():
+        raise ValueError("搜索空间参数名必须是非空字符串")
+    if name.startswith(_LATENT_PREFIX):
+        raise ValueError(f"搜索空间参数名 {name!r} 不能使用内部保留前缀 {_LATENT_PREFIX!r}")
     declared_name = getattr(raw, "name", None)
     if declared_name is not None and declared_name != name:
         raise ValueError(f"搜索空间字典参数名 {name!r} 与声明中的参数名 {declared_name!r} 不一致")
     if hasattr(raw, "to_spec") and callable(raw.to_spec):
         return _normalize_dict(name, raw.to_spec())
-    if optuna is not None and isinstance(raw, optuna.distributions.BaseDistribution):
+    optuna_module = sys.modules.get("optuna")
+    if optuna_module is not None and isinstance(raw, optuna_module.distributions.BaseDistribution):
         return _normalize_optuna(name, raw)
     if hasattr(raw, "dist") and callable(getattr(raw, "rvs", None)):
         return _normalize_scipy(name, raw)
@@ -264,11 +303,33 @@ def normalize_space_param(name: str, raw: Any) -> Dict[str, Any]:
         return _categorical_spec(name, raw)
     if isinstance(raw, Mapping):
         return _normalize_dict(name, raw)
-    raise ValueError(f"参数 {name!r} 的搜索空间定义无法识别: {raw!r}。支持字典、元组、列表、" "hscredit 同名维度、SciPy 分布或 Optuna 分布对象")
+    raise ValueError(
+        f"参数 {name!r} 的搜索空间定义无法识别: {raw!r}。支持字典、元组、列表、"
+        "hscredit 同名维度、SciPy 分布或 Optuna 分布对象"
+    )
 
 
 def normalize_search_space(search_space: Optional[Any]) -> Optional[Dict[str, Dict[str, Any]]]:
-    """把支持框架的搜索空间声明统一为内部规格字典。"""
+    """校验并统一搜索空间，不执行采样。
+
+    :param search_space: 参数名到分布的字典，或带 ``name`` 的 hscredit
+        维度列表；``None`` 表示交由调用方选择模型默认空间。
+    :return: 规范化字典；输入为 ``None`` 时返回 ``None``。
+    :raises ValueError: 出现重复名称、无效边界、不支持的分布或保留参数名。
+
+    推荐仅使用 ``Integer``、``Real``、``Categorical`` 三种声明。
+    其他风格用于兼容已有代码。SciPy ``randint`` 的上界不包含，
+    ``Integer`` 和数值元组的上界包含；带非零 ``loc`` 的 SciPy
+    对数均匀分布无法保持原分布语义，会明确报错。
+
+    **参考样例**
+
+    >>> from hscredit.core.models.tuning.search_space import Integer, Real
+    >>> space = normalize_search_space({'max_depth': Integer(2, 6),
+    ...                                 'learning_rate': Real(0.01, 0.1)})
+    >>> space['max_depth']['type']
+    'int'
+    """
     if search_space is None:
         return None
     if isinstance(search_space, (list, tuple)):
@@ -276,28 +337,47 @@ def normalize_search_space(search_space: Optional[Any]) -> Optional[Dict[str, Di
         for dimension in search_space:
             name = getattr(dimension, "name", None)
             if not name:
-                raise ValueError("skopt Dimension 列表中的每个维度都必须设置 name")
+                raise ValueError("搜索空间维度列表中的每个维度都必须设置 name")
             if name in result:
-                raise ValueError(f"skopt Dimension 列表包含重复参数名: {name!r}")
+                raise ValueError(f"搜索空间维度列表包含重复参数名: {name!r}")
             result[name] = normalize_space_param(name, dimension)
         return result
     if not isinstance(search_space, Mapping):
-        raise ValueError("search_space 必须是参数字典或带 name 的 skopt Dimension 列表，" f"当前类型: {type(search_space).__name__}")
-    return {str(name): normalize_space_param(str(name), raw) for name, raw in search_space.items()}
+        raise ValueError("search_space 必须是参数字典或带 name 的维度列表，" f"当前类型: {type(search_space).__name__}")
+    return {name: normalize_space_param(name, raw) for name, raw in search_space.items()}
 
 
 class SearchSpaceAdapter:
-    """统一搜索空间的 Optuna 采样和手工点转换器。"""
+    """统一搜索空间的内部采样与手工点转换器。
+
+    **参数**
+
+    :param search_space: 与 normalize_search_space 相同的搜索空间声明。
+
+    **属性**
+
+    ``space`` 为规范化规格；``names`` 为用户定义的参数名列表。
+    非原生分布在 Optuna 中存储潜变量，使用 ``public_params`` 还原模型参数。
+
+    **参考样例**
+
+    >>> import optuna
+    >>> adapter = SearchSpaceAdapter({'max_depth': (2, 6)})
+    >>> adapter.sample(optuna.trial.FixedTrial({'max_depth': 3}))
+    {'max_depth': 3}
+    """
 
     def __init__(self, search_space: Optional[Any]) -> None:
         self.space = normalize_search_space(search_space)
 
     @property
     def names(self) -> List[str]:
+        """按声明顺序返回公开参数名列表，空空间返回空列表。"""
         return list((self.space or {}).keys())
 
     @staticmethod
     def latent_name(name: str) -> str:
+        """返回供 Optuna 记录变换分布的内部参数名，不应用于模型构造。"""
         return f"{_LATENT_PREFIX}{name}"
 
     def to_internal_name(self, name: str) -> str:
@@ -305,9 +385,7 @@ class SearchSpaceAdapter:
         if name not in (self.space or {}):
             raise ValueError(f"搜索空间中不存在参数: {name!r}")
         spec = (self.space or {})[name]
-        if spec["type"] in {"quniform", "qloguniform", "normal"} or (
-            spec["type"] == "categorical" and "prior" in spec
-        ):
+        if spec["type"] in {"quniform", "qloguniform", "normal"} or (spec["type"] == "categorical" and "prior" in spec):
             return self.latent_name(name)
         return name
 
@@ -333,7 +411,22 @@ class SearchSpaceAdapter:
     def _quantize(value: float, q: float) -> float:
         return float(np.round(float(value) / q) * q)
 
+    @staticmethod
+    def _weighted_choice(value: float, spec: Mapping[str, Any]) -> Any:
+        """逆累积分布采样，区间右端点也不能选中零权重类别。"""
+        cumulative = np.cumsum(spec["prior"])
+        limit = np.nextafter(float(cumulative[-1]), 0.0)
+        index = int(np.searchsorted(cumulative, min(float(value), limit), side="right"))
+        return spec["choices"][index]
+
     def sample_one(self, trial: Any, name: str, spec: Optional[Mapping[str, Any]] = None) -> Any:
+        """采样一个参数并还原为模型接收的值。
+
+        :param trial: 提供 suggest_int/float/categorical 的 Optuna trial。
+        :param name: 公开参数名。
+        :param spec: 可选的规范化规格；省略时使用实例中的规格。
+        :return: 模型参数值，可与 trial.params 记录的潜变量不同。
+        """
         spec = dict(spec or (self.space or {})[name])
         kind = spec["type"]
         if kind == "int":
@@ -360,9 +453,7 @@ class SearchSpaceAdapter:
         latent = self.latent_name(name)
         if kind == "categorical":
             u = trial.suggest_float(latent, 0.0, 1.0)
-            cumulative = np.cumsum(spec["prior"])
-            index = min(int(np.searchsorted(cumulative, u, side="right")), len(spec["choices"]) - 1)
-            return spec["choices"][index]
+            return self._weighted_choice(u, spec)
         if kind == "quniform":
             raw = trial.suggest_float(latent, spec["low"], spec["high"])
             return self._quantize(raw, spec["q"])
@@ -380,12 +471,23 @@ class SearchSpaceAdapter:
         raise ValueError(f"未知参数类型: {kind}")
 
     def sample(self, trial: Any, skip: Optional[Iterable[str]] = None) -> Dict[str, Any]:
+        """批量采样空间，返回可直接传给模型的参数字典。
+
+        :param trial: Optuna Trial 或 FixedTrial。
+        :param skip: 本次不采样的公开参数名，例如由条件空间单独决定的参数。
+        :return: 公开参数名到实际模型值的字典。
+        """
         skipped = set(skip or ())
         return {
             name: self.sample_one(trial, name, spec) for name, spec in (self.space or {}).items() if name not in skipped
         }
 
     def public_params(self, params_or_trial: Any) -> Dict[str, Any]:
+        """还原试验记录中的潜变量，保留本空间已记录的参数。
+
+        :param params_or_trial: Optuna Trial/FrozenTrial，或其 params 字典。
+        :return: 参数字典，供最佳参数、结果表和模型重新训练使用。
+        """
         raw_params = params_or_trial.params if hasattr(params_or_trial, "params") else params_or_trial
         result: Dict[str, Any] = {}
         for name, spec in (self.space or {}).items():
@@ -399,9 +501,7 @@ class SearchSpaceAdapter:
     def _materialize_latent(self, latent: Any, spec: Mapping[str, Any]) -> Any:
         kind = spec["type"]
         if kind == "categorical":
-            cumulative = np.cumsum(spec["prior"])
-            index = min(int(np.searchsorted(cumulative, float(latent), side="right")), len(spec["choices"]) - 1)
-            return spec["choices"][index]
+            return self._weighted_choice(float(latent), spec)
         if kind == "quniform":
             return self._quantize(float(latent), spec["q"])
         if kind == "qloguniform":
@@ -437,13 +537,13 @@ class SearchSpaceAdapter:
             raise ValueError(f"参数 {name!r} 的值 {value!r} 超出搜索区间")
         if kind == "float" and spec.get("step") is not None:
             steps = (float(value) - spec["low"]) / spec["step"]
-            if not np.isclose(steps, round(steps), atol=1e-8):
+            if not np.isclose(steps, round(steps), atol=1e-8, rtol=0):
                 raise ValueError(f"参数 {name!r} 的值 {value!r} 不符合 step={spec['step']}")
         if kind == "normal" and not spec.get("q"):
             if float(value) < spec["low"] or float(value) > spec["high"]:
                 raise ValueError(f"参数 {name!r} 的值 {value!r} 超出截断搜索区间")
         if spec.get("q") is not None and not np.isclose(
-            float(value), self._quantize(float(value), spec["q"]), atol=1e-8
+            float(value), self._quantize(float(value), spec["q"]), atol=1e-8, rtol=0
         ):
             raise ValueError(f"参数 {name!r} 的值 {value!r} 不符合 q={spec['q']} 的量化规则")
 
@@ -465,6 +565,8 @@ class SearchSpaceAdapter:
             upper_value = float(value) + q / 2.0
             if kind == "qloguniform":
                 lower_value = max(lower_value, np.finfo(float).tiny)
+                if upper_value <= 0:
+                    raise ValueError(f"手工搜索点 {value!r} 无法由当前量化搜索空间生成")
                 left, right = math.log(lower_value), math.log(upper_value)
             else:
                 left, right = lower_value, upper_value
@@ -491,6 +593,17 @@ class SearchSpaceAdapter:
         raise ValueError(f"参数类型 {kind!r} 不使用潜变量")
 
     def to_internal_point(self, point: Mapping[str, Any]) -> Dict[str, Any]:
+        """将手工模型参数点转换为 Study.enqueue_trial 可使用的参数。
+
+        :param point: 完整或部分参数点，取值须在空间内并满足 step/q；
+            未指定的参数在执行 trial 时继续采样。
+        :return: 已通过可达性验证的内部参数字典。
+        :raises ValueError: 参数未知、候选不可达或权重为零。
+
+        >>> adapter = SearchSpaceAdapter({'max_depth': (2, 6)})
+        >>> adapter.to_internal_point({'max_depth': 4})
+        {'max_depth': 4}
+        """
         if not isinstance(point, Mapping):
             raise ValueError(f"手工搜索点必须是字典，收到: {type(point).__name__}")
         unknown = set(point) - set(self.names)
@@ -503,7 +616,11 @@ class SearchSpaceAdapter:
             if spec["type"] in {"quniform", "qloguniform", "normal"} or (
                 spec["type"] == "categorical" and "prior" in spec
             ):
-                result[self.latent_name(name)] = self._inverse_transformed(value, spec)
+                internal = self._inverse_transformed(value, spec)
+                restored = self._materialize_latent(internal, spec)
+                if spec["type"] != "categorical" and not np.isclose(restored, value, atol=1e-8, rtol=0):
+                    raise ValueError(f"参数 {name!r} 的手工搜索点 {value!r} 无法由当前量化搜索空间生成")
+                result[self.latent_name(name)] = internal
             else:
                 result[name] = value
         return result

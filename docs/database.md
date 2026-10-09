@@ -1,4 +1,4 @@
-# 数据库与 NoSQL 连接池、读写及表结构导出
+# 数据库
 
 `hscredit.database` 为风控建模和数据分析流程提供统一的数据存储入口，覆盖 SQL 数据库以及 Redis、MongoDB 的连接池。SQL 后端支持参数化查询、可中断流式读取、DataFrame 建表、分批写入和全库字段清单导出；NoSQL 后端提供同名的单条、批量和自适应 CRUD 方法。数据库驱动均为可选依赖；普通 `import hscredit` 不会加载任何数据库驱动。
 

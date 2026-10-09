@@ -39,6 +39,7 @@ except ImportError:
     xgb = None
 
 from ..base import BaseRiskModel, resolve_custom_objective
+from ..losses.base import BaseLoss, BaseMetric
 
 
 class _KSEvaluationCallback(xgb.callback.TrainingCallback if XGBOOST_AVAILABLE else object):
@@ -107,7 +108,7 @@ class XGBoost(BaseRiskModel):
         - 'approx': 近似算法
         - 'gpu_hist': GPU直方图算法
     :param objective: 目标函数，默认'binary:logistic'
-    :param eval_metric: 评估指标，可选列表
+    :param eval_metric: 评估指标，可选名称、名称列表或 BaseMetric 对象；自定义损失默认使用其配套指标
         - 支持'ks'作为自定义评估指标（风控常用）
         - 多个指标时，默认使用第一个指标进行早停
     :param early_stopping_rounds: 早停轮数，默认None
@@ -209,7 +210,7 @@ class XGBoost(BaseRiskModel):
         max_delta_step: float = 0,
         tree_method: str = "hist",
         objective: str = "binary:logistic",
-        eval_metric: Union[str, List[str], None] = None,
+        eval_metric: Union[str, List[str], BaseMetric, None] = None,
         early_stopping_rounds: Optional[int] = None,
         early_stopping_metric: Optional[str] = None,
         early_stopping_data: Optional[str] = None,
@@ -309,11 +310,16 @@ class XGBoost(BaseRiskModel):
         :return: self
         """
         eval_metric = fit_params.pop("eval_metric", self._native_params.get("eval_metric", self.eval_metric))
+        objective = self._native_params.get("objective", self.kwargs.get("objective", self.objective))
+        if eval_metric is None and isinstance(objective, BaseLoss):
+            eval_metric = objective.metric()
+        metric_object = eval_metric if isinstance(eval_metric, BaseMetric) else None
         early_stopping_rounds = fit_params.pop(
             "early_stopping_rounds", self._native_params.get("early_stopping_rounds", self.early_stopping_rounds)
         )
         # 准备数据（支持从X中提取target）
         X, y, sample_weight = self._prepare_data(X, y, sample_weight, extract_target=True, training=True)
+        scorecard_sample_weight = sample_weight
         self._validate_probability_scorecard_labels(y)
         eval_set = self._prepare_eval_set(eval_set)
 
@@ -366,9 +372,13 @@ class XGBoost(BaseRiskModel):
 
         # 处理评估指标
         wants_ks = False
-        if callable(eval_metric):
+        if metric_object is not None:
+            params["eval_metric"] = metric_object.to_xgboost(api="sklearn", raw_score=callable(objective))
+        elif callable(eval_metric):
             params["eval_metric"] = eval_metric
         elif eval_metric is not None:
+            if not isinstance(eval_metric, str) and any(isinstance(item, BaseMetric) for item in eval_metric):
+                raise ValueError("XGBoost 的 eval_metric 请直接传入一个指标对象；多个指标可在训练后统一评估")
             converted_metrics = self._convert_metrics(eval_metric)
             metric_list = [converted_metrics] if isinstance(converted_metrics, str) else list(converted_metrics)
             wants_ks = any(str(metric).lower() == "ks" for metric in metric_list)
@@ -383,17 +393,22 @@ class XGBoost(BaseRiskModel):
 
         if early_stopping_rounds is not None and eval_set:
             # 如果指定了早停指标，使用EarlyStopping回调
-            if self.early_stopping_metric is not None:
+            if self.early_stopping_metric is not None or metric_object is not None:
                 try:
                     from xgboost.callback import EarlyStopping
 
                     callbacks.append(
                         EarlyStopping(
                             rounds=early_stopping_rounds,
-                            metric_name=self.early_stopping_metric,
+                            metric_name=self.early_stopping_metric or metric_object.name,
                             data_name=self.early_stopping_data,
                             save_best=True,
-                            maximize=True if str(self.early_stopping_metric).lower() == "ks" else None,
+                            maximize=(
+                                metric_object.greater_is_better
+                                if metric_object is not None
+                                and self.early_stopping_metric in (None, metric_object.name)
+                                else (True if str(self.early_stopping_metric).lower() == "ks" else None)
+                            ),
                         )
                     )
                     if self.verbose:
@@ -467,11 +482,16 @@ class XGBoost(BaseRiskModel):
                 if name in params and name in inspect.signature(xgb.XGBClassifier.fit).parameters:
                     fit_params[name] = params.pop(name)
             if callable(fit_params.get("eval_metric")):
-                metric = fit_params["eval_metric"]
-                fit_params["eval_metric"] = lambda prediction, data: (
-                    metric.__name__,
-                    metric(data.get_label(), prediction),
-                )
+                if metric_object is not None:
+                    fit_params["eval_metric"] = metric_object.to_xgboost(
+                        api="native", raw_score=callable(params.get("objective"))
+                    )
+                else:
+                    metric = fit_params["eval_metric"]
+                    fit_params["eval_metric"] = lambda prediction, data: (
+                        metric.__name__,
+                        metric(data.get_label(), prediction),
+                    )
 
         # 创建模型
         self.native_params_ = dict(params)
@@ -497,7 +517,7 @@ class XGBoost(BaseRiskModel):
         self._best_score = getattr(self._model, "best_score", None)
         self._evals_result = getattr(self._model, "evals_result_", {})
         self._is_fitted = True
-        self._fit_probability_scorecard(X, y)
+        self._fit_probability_scorecard(X, y, sample_weight=scorecard_sample_weight)
 
         return self
 

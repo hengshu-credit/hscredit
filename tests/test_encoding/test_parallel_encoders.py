@@ -267,7 +267,8 @@ def test_missing_like_keys_keep_serial_mapping_export_import_and_transform(name,
     serial = factory(1, None).fit(X, y)
     parallel = factory(2, backend).fit(X, y)
     assert _missing_key_signature(serial.mapping_["a"]) == _missing_key_signature(parallel.mapping_["a"])
-    assert _missing_key_signature(serial.export_mapping()["mapping_"]["a"]) == _missing_key_signature(parallel.export_mapping()["mapping_"]["a"])
+    # R07协议迁移：JSON映射使用类型记录，不再以JSON对象键承载原始类别。
+    assert serial.export_mapping()["mapping_"] == parallel.export_mapping()["mapping_"]
 
     expected = serial.transform(X)
     pd.testing.assert_frame_equal(expected, parallel.transform(X), check_exact=True)
@@ -353,7 +354,7 @@ def test_count_encoder_preserves_typed_float_nan_buckets_through_roundtrips(n_jo
     assert encoder.transform(X)["a"].tolist() == expected_values
 
     exported = pickle.loads(pickle.dumps(encoder.export_mapping()))
-    assert _typed_float_nan_signature(exported["mapping_"]["a"]) == expected_signature
+    assert exported["format"] == "hscredit-encoder-mapping" and exported["version"] == 2
     restored = CountEncoder(cols=["a"]).import_mapping(exported)
     assert _typed_float_nan_signature(restored.mapping_["a"]) == expected_signature
     assert restored.transform(X)["a"].tolist() == expected_values

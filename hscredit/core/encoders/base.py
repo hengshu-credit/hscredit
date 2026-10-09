@@ -15,6 +15,9 @@ API风格说明:
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from copy import deepcopy
+import inspect
+import warnings
 from typing import List, Optional, Tuple, Union, Dict, Any
 import numpy as np
 import pandas as pd
@@ -23,6 +26,8 @@ from sklearn.base import BaseEstimator, TransformerMixin, clone
 from ...exceptions import FeatureNotFoundError, NotFittedError
 from ...utils.parallel import ParallelizableMixin, ParallelWorkload
 from ...utils.serialization import ArtifactSerializableMixin
+from ...utils.data_contracts import prepare_xy
+from ._category_protocol import CategoryToken, MISSING, UNKNOWN, OTHER, pack, unpack
 
 
 @dataclass(frozen=True)
@@ -74,6 +79,8 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         - 'error': 抛出错误
         - 'return_nan': 返回NaN
     :param target: scorecardpipeline风格的目标列名。如果提供，fit时从X中提取该列作为y
+    :param passthrough_target: 默认False，转换仅输出特征，可安全连接原生sklearn模型；
+        True显式恢复旧表格流程的目标列透传，不能用于无需标签预测的Pipeline
     :param n_jobs: 并行工作数，默认为-1；None沿用旧串行行为
     :param parallel_backend: joblib并行后端，默认为None
     :param parallel_config: joblib扩展配置，默认为None
@@ -111,6 +118,8 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
     #: 子类声明的“额外拟合状态”属性名。这些状态是 transform 正确性所必需，
     #: 但不在 mapping_ 中（如均值/类别清单），需随 export_mapping/import_mapping 一并往返。
     _EXTRA_STATE_ATTRS: List[str] = []
+    _TARGET_TYPE = None
+    _OUTPUT_ATTRS = {}
 
     def __init__(
         self,
@@ -123,6 +132,7 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         n_jobs: Optional[Union[int, float]] = -1,
         parallel_backend: Optional[str] = None,
         parallel_config: Optional[Dict[str, Any]] = None,
+        passthrough_target: bool = False,
     ):
         """初始化编码器基类。
 
@@ -145,6 +155,7 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         self.n_jobs = n_jobs
         self.parallel_backend = parallel_backend
         self.parallel_config = parallel_config
+        self.passthrough_target = passthrough_target
 
         self.mapping_: Dict = {}
         self.cols_: Optional[List[str]] = None
@@ -156,6 +167,52 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         feature_names = list(X.columns)
         self.n_features_in_ = len(feature_names)
         self.feature_names_in_ = np.asarray(feature_names, dtype=object)
+
+    def _adopt_fitted_state(self, candidate):
+        public_params = {name: getattr(self, name) for name in self.get_params(deep=False)}
+        self.__dict__.clear()
+        self.__dict__.update(candidate.__dict__)
+        self.__dict__.update(public_params)
+
+    def _validate_public_policies(self):
+        if not isinstance(self.passthrough_target, (bool, np.bool_)):
+            raise ValueError("passthrough_target 必须为布尔值")
+        if not isinstance(self.return_df, (bool, np.bool_)):
+            raise ValueError("return_df 必须为布尔值")
+        if self.handle_missing not in ("value", "return_nan", "error"):
+            raise ValueError("handle_missing 必须为 value、return_nan 或 error")
+        if self.handle_unknown not in ("value", "return_nan", "error", "ignore", "other"):
+            raise ValueError("handle_unknown 配置无效")
+
+    def __setstate__(self, state):
+        """补齐新增配置，保留旧完整制品的既有变换语义和已学习状态。"""
+        legacy_target_mode = "passthrough_target" not in state
+        super().__setstate__(state)
+        for name, parameter in inspect.signature(type(self).__init__).parameters.items():
+            if name != "self" and parameter.default is not inspect.Parameter.empty and not hasattr(self, name):
+                setattr(self, name, deepcopy(parameter.default))
+        self.__dict__.setdefault("_dropped_cols", [])
+        self.__dict__.setdefault("_target_in_fit_", bool(getattr(self, "target", None)))
+        if legacy_target_mode and getattr(self, "target", None) is not None:
+            self.passthrough_target = True
+            warnings.warn("旧编码器制品沿用目标透传；用于纯特征Pipeline前请设置 passthrough_target=False 并重新训练下游模型", FutureWarning)
+        if type(self).__name__ == "WOEEncoder":
+            self.__dict__.setdefault("_legacy_string_keys_", True)
+        if type(self).__name__ == "CountEncoder":
+            self.__dict__.setdefault("infrequent_categories_", {})
+            self.__dict__.setdefault("_legacy_other_routing_", any("__OTHER__" in mapping for mapping in self.mapping_.values()))
+        for mapping in getattr(self, "mapping_", {}).values():
+            if not isinstance(mapping, dict):
+                continue
+            if legacy_target_mode and "__UNKNOWN__" in mapping:
+                mapping[UNKNOWN] = mapping.pop("__UNKNOWN__")
+            if type(self).__name__ == "CountEncoder":
+                if legacy_target_mode and "__OTHER__" in mapping:
+                    mapping[OTHER] = mapping.pop("__OTHER__")
+            elif legacy_target_mode:
+                for key in list(mapping):
+                    if self._is_float_nan_key(key):
+                        mapping[MISSING] = mapping.pop(key)
 
     def fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None) -> "BaseEncoder":
         """拟合编码器。
@@ -186,27 +243,23 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
             candidate.__dict__.pop("_fit_transaction_active", None)
 
             # 拟合不得替换调用方传入的可变构造参数；仅提交候选对象的学习状态。
-            public_params = {name: getattr(self, name) for name in self.get_params(deep=False)}
-            fitted_state = candidate.__dict__.copy()
-            fitted_state.update(public_params)
-            self.__dict__.clear()
-            self.__dict__.update(fitted_state)
+            self._adopt_fitted_state(candidate)
             return self
 
         X = self._check_input(X)
+        self._validate_public_policies()
+        self._target_in_fit_ = self.target is not None and self.target in X.columns
 
         # 处理两种API风格：如果y为None且提供了target参数，从X中提取目标列
         X, y = self._extract_target(X, y)
+        if getattr(self, "training_mode", "in_sample") not in ("in_sample", "oof"):
+            raise ValueError("training_mode 必须为 in_sample 或 oof")
         self._set_input_feature_attributes(X)
 
         if self.cols is None:
             self.cols_ = self._get_category_cols(X)
         else:
             self.cols_ = [c for c in self.cols if c in X.columns]
-
-        if len(self.cols_) == 0:
-            self._is_fitted = True
-            return self
 
         if self.drop_invariant:
             self._dropped_cols = self._find_invariant_cols(X)
@@ -219,7 +272,7 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
                 if col in X.columns and X[col].isna().any():
                     raise ValueError(f"列'{col}'包含缺失值，但 handle_missing='error'")
 
-        self._fit(X, y)
+        self._fit(X.drop(columns=self._dropped_cols, errors="ignore"), y)
 
         self._is_fitted = True
         return self
@@ -356,6 +409,8 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
 
         if not hasattr(self, "cols_") or self.cols_ is None:
             raise NotFittedError("编码器尚未拟合，请先调用fit()")
+        original = X
+        X = self._prepare_transform_input(X)
 
         # 统一缺失值策略校验：handle_missing='error' 时，任一编码列含缺失即报错
         if self.handle_missing == "error":
@@ -366,12 +421,40 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         X_transformed = X.copy()
         X_transformed = self._transform(X_transformed, y)
 
-        # scorecardpipeline 风格: 如果输入的 X 中包含 target 列，透传到输出
-        target_col = getattr(self, "target", None)
-        if target_col is not None and isinstance(X_transformed, pd.DataFrame) and target_col not in X_transformed.columns and target_col in X.columns:
-            # 按位置赋值，避免非默认索引下 concat 对齐错位
-            X_transformed[target_col] = np.asarray(X[target_col])
+        return self._finalize_output(X_transformed, original)
 
+    def _prepare_transform_input(self, X):
+        """默认纯特征输出；目标和已删除列永远不参与后续转换。"""
+        self._validate_public_policies()
+        removed = list(getattr(self, "_dropped_cols", []))
+        if self.target is not None:
+            removed.append(self.target)
+        X = X.drop(columns=removed, errors="ignore")
+        fitted = getattr(self, "feature_names_in_", None)
+        if fitted is not None:
+            columns = [column for column in fitted if column not in removed]
+            # 显式cols调用保留历史的“仅转换已选择列”用法；待编码列必须完整。
+            missing = [column for column in self.cols_ or [] if column not in X.columns]
+            if missing:
+                raise FeatureNotFoundError(f"转换输入缺少拟合特征: {missing}")
+            X = X.loc[:, [column for column in columns if column in X.columns]]
+        return X
+
+    def _finalize_output(self, X_transformed, original):
+        target_col = getattr(self, "target", None)
+        if getattr(self, "passthrough_target", False) and target_col is not None and target_col in original.columns:
+            if isinstance(X_transformed, pd.DataFrame):
+                X_transformed[target_col] = np.asarray(original[target_col])
+            else:
+                from scipy import sparse
+                if sparse.issparse(X_transformed):
+                    try:
+                        labels = np.asarray(original[target_col], dtype=float).reshape(-1, 1)
+                    except (ValueError, TypeError) as exc:
+                        raise ValueError("稀疏输出的兼容目标透传要求目标为数值") from exc
+                    X_transformed = sparse.hstack([X_transformed, sparse.csr_matrix(labels)], format="csr")
+        if isinstance(X_transformed, pd.DataFrame):
+            X_transformed.attrs.update(self._OUTPUT_ATTRS)
         if not self.return_df:
             # 处理稀疏矩阵的情况
             if hasattr(X_transformed, "toarray"):
@@ -380,7 +463,17 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
             return X_transformed.values
         return X_transformed
 
-    def fit_transform(self, X: pd.DataFrame, y: Optional[pd.Series] = None) -> Union[pd.DataFrame, np.ndarray]:
+    def get_feature_names_out(self, input_features=None):
+        """返回固定学习schema；兼容透传模式仅在拟合表含目标时附加其列名。"""
+        if not getattr(self, "_is_fitted", False):
+            raise NotFittedError("编码器尚未拟合，请先调用fit()")
+        columns = list(getattr(self, "feature_names_in_", self.cols_ or []))
+        columns = [column for column in columns if column not in self._dropped_cols and column != self.target]
+        if getattr(self, "passthrough_target", False) and getattr(self, "_target_in_fit_", False):
+            columns.append(self.target)
+        return np.asarray(columns, dtype=object)
+
+    def fit_transform(self, X: pd.DataFrame, y: Optional[pd.Series] = None, *, groups=None) -> Union[pd.DataFrame, np.ndarray]:
         """拟合并转换数据。
 
         支持两种API风格:
@@ -392,7 +485,57 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
                   如果为None且初始化时提供了target参数，则从X中提取target列
         :return: 编码后的数据
         """
-        return self.fit(X, y).transform(X, y)
+        original = self._check_input(X)
+        features, target = self._extract_target(original, y)
+        if getattr(self, "training_mode", "in_sample") == "oof":
+            return self._fit_transform_oof(original, features, target, groups=groups)
+        return self.fit(original, y).transform(original, target)
+
+    def _fit_transform_oof(self, original, features, target, groups=None):
+        """折外训练编码；最终映射在全训练集拟合，未被验证折覆盖的行保留 NaN。"""
+        from sklearn.model_selection import KFold
+
+        if target is None:
+            raise ValueError("折外编码必须提供目标变量")
+        cv = getattr(self, "cv", 5)
+        if isinstance(cv, (int, np.integer)) and not isinstance(cv, (bool, np.bool_)):
+            cv = KFold(n_splits=int(cv), shuffle=True, random_state=getattr(self, "random_state", 42))
+        if not hasattr(cv, "split"):
+            raise ValueError("cv 必须是至少两折的整数或具有 split 方法的切分器")
+        # 全训练集只决定最终推理状态与无监督列schema；每行训练编码仍只来自其训练折。
+        fitted = clone(self).fit(original, target)
+        features = fitted._prepare_transform_input(features)
+        columns = list(fitted.cols_)
+        output = features.copy()
+        if not columns:
+            self._adopt_fitted_state(fitted)
+            self.oof_coverage_ = np.ones(len(features), dtype=bool)
+            return self._finalize_output(output, original)
+        for column in columns:
+            output[column] = np.nan
+        covered = np.zeros(len(features), dtype=bool)
+        for train, valid in cv.split(features, target, groups):
+            train, valid = np.asarray(train), np.asarray(valid)
+            for indices in (train, valid):
+                if indices.ndim != 1 or indices.dtype.kind not in "iu" or len(indices) == 0:
+                    raise ValueError("折外编码的训练/验证位置必须为非空一维整数数组")
+                if (indices < 0).any() or (indices >= len(features)).any() or len(np.unique(indices)) != len(indices):
+                    raise ValueError("折外编码切分位置越界或重复")
+            if np.intersect1d(train, valid).size or covered[valid].any():
+                raise ValueError("折外编码训练/验证位置重叠或验证位置重复")
+            fold = clone(self).set_params(training_mode="in_sample", return_df=True, drop_invariant=False, cols=columns, passthrough_target=False)
+            fold.fit(features.iloc[train], target.iloc[train])
+            transformed = fold.transform(features.iloc[valid])
+            output.iloc[valid, output.columns.get_indexer(columns)] = transformed[columns].to_numpy()
+            covered[valid] = True
+        if not covered.any():
+            raise ValueError("折外编码切分器未提供任何验证样本")
+        self._adopt_fitted_state(fitted)
+        self.oof_coverage_ = covered
+        if not covered.all():
+            import warnings
+            warnings.warn("部分行未被折外验证集覆盖（例如时间切分的起始窗口），编码结果保留 NaN", UserWarning)
+        return self._finalize_output(output, original)
 
     @abstractmethod
     def _fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None):
@@ -435,21 +578,34 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
                   X_features: 不包含目标列的特征数据框
                   y_target: 目标变量Series或None
         """
-        # 如果y不为None，直接使用sklearn风格
-        if y is not None:
-            return X, y
+        prepared = prepare_xy(X, y, target=self.target, target_type=self._TARGET_TYPE)
+        return prepared.X, prepared.y
 
-        # 如果y为None且提供了target参数，从X中提取目标列（scorecardpipeline风格）
-        if self.target is not None:
-            if self.target not in X.columns:
-                raise ValueError(f"目标列'{self.target}'不在数据框中。可用的列: {list(X.columns)}")
+    def _apply_missing_unknown(self, column, values, result, default):
+        """以原始缺失掩码区分缺失与未知；两项策略互不覆盖。"""
+        missing = values.isna()
+        unknown = result.isna() & ~missing
+        if self.handle_unknown == "error" and unknown.any():
+            raise ValueError(f"列'{column}'包含未知类别")
+        if self.handle_unknown == "value":
+            result = result.mask(unknown, default)
+        if self.handle_missing == "error" and missing.any():
+            raise ValueError(f"列'{column}'包含缺失值")
+        if self.handle_missing == "return_nan":
+            result = result.mask(missing, np.nan)
+        elif self.handle_missing == "value":
+            result = result.mask(missing & result.isna(), default)
+        return result
 
-            y_extracted = X[self.target].copy()
-            X_features = X.drop(columns=[self.target])
-            return X_features, y_extracted
-
-        # y为None且没有提供target参数，返回原数据
-        return X, None
+    @staticmethod
+    def _map_values(values, mapping):
+        """映射真实类别并单独应用类型化缺失桶，不占用业务类别键。"""
+        mapped = values.map(mapping)
+        if isinstance(mapped.dtype, pd.CategoricalDtype):
+            mapped = pd.Series(np.asarray(mapped), index=values.index, name=values.name)
+        if MISSING in mapping:
+            mapped = mapped.mask(values.isna(), mapping[MISSING])
+        return mapped
 
     def _get_category_cols(self, X: pd.DataFrame) -> List[str]:
         """自动识别类别型列。
@@ -483,7 +639,7 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         """
         invariant_cols = []
         for col in self.cols_:
-            if X[col].nunique() <= 1:
+            if X[col].nunique(dropna=False) <= 1:
                 invariant_cols.append(col)
         return invariant_cols
 
@@ -534,8 +690,12 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
 
         return self.mapping_[feature]
 
-    def export_mapping(self) -> Dict[str, Any]:
-        """导出编码映射（可序列化）。
+    def export_mapping(self, *, legacy: bool = False) -> Dict[str, Any]:
+        """导出严格JSON兼容的v2类型记录映射。
+
+        :param legacy: True返回旧Python字典结构（可能含NaN/非字符串键，不承诺JSON
+            保真）；遇业务类别与旧保留键冲突时拒绝。默认v2保留类别类型、schema及
+            推理参数。自定义cv对象只记录省略说明，完整重训状态应使用save_artifact。
 
         :return: 可序列化的编码映射字典
 
@@ -547,6 +707,31 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         >>> with open('encoder_mapping.json', 'w') as f:
         ...     json.dump(mapping, f)
         """
+        if not getattr(self, "_is_fitted", False):
+            raise NotFittedError("编码器尚未拟合，不能导出推理映射")
+        if not legacy:
+            parameters = {}
+            omitted = []
+            for name, value in self.get_params(deep=False).items():
+                if name in {"n_jobs", "parallel_backend", "parallel_config"}:
+                    continue
+                try:
+                    parameters[name] = pack(value)
+                except ValueError:
+                    if name == "cv":
+                        omitted.append(name)
+                    else:
+                        raise
+            return {
+                "format": "hscredit-encoder-mapping", "version": 2,
+                "encoder_type": type(self).__name__, "parameters": parameters,
+                "mapping_": pack(self.mapping_), "cols_": pack(self.cols_),
+                "extra_state": pack(self._export_extra_state()),
+                "schema": pack({"feature_names_in_": getattr(self, "feature_names_in_", None),
+                                "_dropped_cols": self._dropped_cols,
+                                "_target_in_fit_": getattr(self, "_target_in_fit_", False)}),
+                "omitted_refit_parameters": omitted,
+            }
         return {
             "encoder_type": self.__class__.__name__,
             "cols": self.cols,
@@ -572,13 +757,58 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         ...     mapping = json.load(f)
         >>> encoder.import_mapping(mapping)
         """
+        if mapping.get("format") == "hscredit-encoder-mapping":
+            if type(mapping.get("version")) is not int or mapping["version"] != 2:
+                raise ValueError("不支持的编码映射协议版本")
+            if mapping.get("encoder_type") != type(self).__name__:
+                raise ValueError("编码映射类型与当前编码器不一致")
+            # 完整解析到候选对象后提交；损坏制品不得破坏现有映射。
+            candidate = clone(self)
+            parameters = {name: unpack(value) for name, value in mapping["parameters"].items()}
+            candidate.set_params(**parameters)
+            candidate._validate_public_policies()
+            candidate.mapping_ = unpack(mapping["mapping_"])
+            candidate.cols_ = unpack(mapping["cols_"])
+            if not isinstance(candidate.mapping_, dict) or not isinstance(candidate.cols_, list):
+                raise ValueError("编码映射状态结构无效")
+            if any(column not in candidate.mapping_ or not isinstance(candidate.mapping_[column], dict) for column in candidate.cols_):
+                raise ValueError("编码映射缺少已学习字段状态")
+            candidate._import_extra_state(unpack(mapping["extra_state"]))
+            schema = unpack(mapping["schema"])
+            candidate._dropped_cols = schema["_dropped_cols"]
+            candidate._target_in_fit_ = schema["_target_in_fit_"]
+            if schema["feature_names_in_"] is not None:
+                candidate.feature_names_in_ = schema["feature_names_in_"]
+                candidate.n_features_in_ = len(candidate.feature_names_in_)
+            candidate._is_fitted = True
+            if mapping.get("omitted_refit_parameters"):
+                warnings.warn("此推理映射未保存自定义cv切分器；重拟合前请显式配置cv，完整训练对象请使用save_artifact", UserWarning)
+            self.__dict__.clear()
+            self.__dict__.update(candidate.__dict__)
+            return self
+        if "version" in mapping and mapping.get("format") is not None:
+            raise ValueError("不支持的编码映射格式或版本")
         self.cols = mapping.get("cols")
         self.cols_ = mapping.get("cols_")
         self.mapping_ = self._deserialize_mapping(mapping.get("mapping_", {}))
+        # 旧格式无法区分同名业务类别和保留键；仅在旧协议入口按旧含义迁移。
+        for column_mapping in self.mapping_.values():
+            if isinstance(column_mapping, dict):
+                if "__UNKNOWN__" in column_mapping:
+                    column_mapping[UNKNOWN] = column_mapping.pop("__UNKNOWN__")
+                if type(self).__name__ == "CountEncoder" and "__OTHER__" in column_mapping:
+                    column_mapping[OTHER] = column_mapping.pop("__OTHER__")
+                    self._legacy_other_routing_ = True
+                if type(self).__name__ != "CountEncoder":
+                    for key in list(column_mapping):
+                        if self._is_float_nan_key(key):
+                            column_mapping[MISSING] = column_mapping.pop(key)
         self.drop_invariant = mapping.get("drop_invariant", False)
         self.handle_unknown = mapping.get("handle_unknown", "value")
         self.handle_missing = mapping.get("handle_missing", "value")
         self._import_extra_state(mapping.get("extra_state", {}))
+        if type(self).__name__ == "WOEEncoder" and "_legacy_string_keys_" not in mapping.get("extra_state", {}):
+            self._legacy_string_keys_ = True
         self._is_fitted = True
         return self
 
@@ -613,6 +843,10 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         """
         serialized = {}
         for key, value in mapping.items():
+            if isinstance(key, CategoryToken):
+                key = {MISSING: np.nan, UNKNOWN: "__UNKNOWN__", OTHER: "__OTHER__"}.get(key, key)
+            if key in serialized:
+                raise ValueError("传统映射存在保留键冲突，请使用默认类型化 export_mapping()")
             if self._is_float_nan_key(key):
                 key = np.nan
             if isinstance(value, pd.Series):

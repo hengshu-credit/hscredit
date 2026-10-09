@@ -13,10 +13,10 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Dict, Mapping, Optional, Tuple
 
+import cloudpickle
 import numpy as np
 import pandas as pd
 from joblib import wrap_non_picklable_objects
-from joblib.externals import cloudpickle
 from joblib.externals.loky.backend.reduction import get_loky_pickler_name
 
 from ..exceptions import ValidationError

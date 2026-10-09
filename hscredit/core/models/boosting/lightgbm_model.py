@@ -25,14 +25,17 @@ from .._lifecycle import record_training
 import numpy as np
 import pandas as pd
 from packaging.version import Version
+from scipy.special import expit
 from sklearn.metrics import roc_curve
 
 from ...._compat import (
     install_lightgbm_sklearn_compat,
+    install_lightgbm_verbosity_compat,
     installed_version,
     prepare_dependency,
 )
 from ..base import BaseRiskModel, resolve_custom_objective
+from ..losses.base import BaseLoss, BaseMetric
 
 prepare_dependency("lightgbm")
 LIGHTGBM_VERSION = installed_version("lightgbm")
@@ -41,6 +44,7 @@ if util.find_spec("lightgbm") is not None:
     import lightgbm as lgb
 
     LIGHTGBM_AVAILABLE = True
+    install_lightgbm_verbosity_compat(lgb, LIGHTGBM_VERSION)
     install_lightgbm_sklearn_compat(
         lgb,
         LIGHTGBM_VERSION,
@@ -123,7 +127,7 @@ class LightGBM(BaseRiskModel):
         - 'goss': Gradient-based One-Side Sampling
         - 'rf': 随机森林
     :param objective: 目标函数，默认'binary'
-    :param eval_metric: 评估指标，可选列表
+    :param eval_metric: 评估指标，可选名称、BaseMetric 对象或列表；自定义损失默认使用其配套指标
         - 多个指标时，默认使用第一个指标进行早停
     :param early_stopping_rounds: 早停轮数，默认None
     :param early_stopping_metric: 用于早停的评估指标名称，默认None（使用第一个指标）
@@ -195,7 +199,7 @@ class LightGBM(BaseRiskModel):
         min_split_gain: float = 0,
         boosting_type: str = "gbdt",
         objective: str = "binary",
-        eval_metric: Union[str, List[str], None] = None,
+        eval_metric: Union[str, BaseMetric, List[Union[str, BaseMetric]], None] = None,
         early_stopping_rounds: Optional[int] = None,
         early_stopping_metric: Optional[str] = None,
         first_metric_only: bool = True,
@@ -292,12 +296,16 @@ class LightGBM(BaseRiskModel):
         """
         fit_kwargs = dict(fit_params)
         eval_metric = fit_kwargs.pop("eval_metric", self._native_params.get("eval_metric", self.eval_metric))
+        objective = self._native_params.get("objective", self.kwargs.get("objective", self.objective))
+        if eval_metric is None and isinstance(objective, BaseLoss):
+            eval_metric = objective.metric()
         early_stopping_rounds = fit_kwargs.pop(
             "early_stopping_rounds", self._native_params.get("early_stopping_rounds", self.early_stopping_rounds)
         )
         fit_verbose = fit_kwargs.pop("verbose", self.verbose)
         # 准备数据（支持从X中提取target）
         X, y, sample_weight = self._prepare_data(X, y, sample_weight, extract_target=True, training=True)
+        scorecard_sample_weight = sample_weight
         self._validate_probability_scorecard_labels(y)
         eval_set = self._prepare_eval_set(eval_set)
 
@@ -344,14 +352,21 @@ class LightGBM(BaseRiskModel):
         )
         if self.early_stopping_metric is not None:
             selected = self.early_stopping_metric
-            if selected not in requested and not any(callable(item) for item in requested):
+            matches = [
+                item for item in requested
+                if item == selected or isinstance(item, BaseMetric) and item.name == selected
+            ]
+            if not matches and not any(callable(item) for item in requested):
                 raise ValueError("early_stopping_metric 必须包含在 eval_metric 中")
-            requested = [selected] + [item for item in requested if item != selected]
+            selected_item = matches[0] if matches else selected
+            requested = [selected_item] + [item for item in requested if item is not selected_item and item != selected_item]
         native_metrics = [
             self._convert_metrics(item) for item in requested if isinstance(item, str) and item.lower() != "ks"
         ]
         custom_metrics = [
-            _lightgbm_ks_metric if isinstance(item, str) and item.lower() == "ks" else item
+            item.to_lightgbm(api="sklearn", raw_score=callable(objective))
+            if isinstance(item, BaseMetric)
+            else (_lightgbm_ks_metric if isinstance(item, str) and item.lower() == "ks" else item)
             for item in requested
             if callable(item) or str(item).lower() == "ks"
         ]
@@ -413,12 +428,19 @@ class LightGBM(BaseRiskModel):
             if early_stopping_rounds is not None and eval_set:
                 stopping_callback = lgb.early_stopping(
                     stopping_rounds=early_stopping_rounds,
-                    first_metric_only=self.first_metric_only,
+                    first_metric_only=self.first_metric_only or self.early_stopping_metric is not None,
                     verbose=fit_verbose,
                 )
-                if self.early_stopping_metric is not None:
+                selected_metric = self.early_stopping_metric
+                if selected_metric is None and self.first_metric_only and requested:
+                    first_metric = requested[0]
+                    if isinstance(first_metric, BaseMetric):
+                        selected_metric = first_metric.name
+                    elif isinstance(first_metric, str):
+                        selected_metric = first_metric
+                if selected_metric is not None:
                     stopping_callback = _SelectedMetricEarlyStopping(
-                        stopping_callback, self._convert_metrics(self.early_stopping_metric)
+                        stopping_callback, self._convert_metrics(selected_metric)
                     )
                 callbacks.append(stopping_callback)
             if fit_verbose:
@@ -433,7 +455,7 @@ class LightGBM(BaseRiskModel):
         self._best_score = getattr(self._model, "best_score_", None)
         self._evals_result = getattr(self._model, "evals_result_", {})
         self._is_fitted = True
-        self._fit_probability_scorecard(X, y)
+        self._fit_probability_scorecard(X, y, sample_weight=scorecard_sample_weight)
 
         return self
 
@@ -452,25 +474,41 @@ class LightGBM(BaseRiskModel):
     def predict_proba(self, X: Union[np.ndarray, pd.DataFrame], **predict_params) -> np.ndarray:
         """预测概率.
 
-        当使用自定义损失函数（objective 为可调用对象）时，LightGBM 返回的是
-        未经过链接函数转换的原始分数（raw margin，一维数组），此处自动应用
-        sigmoid 转换为概率并补齐为二维 (n_samples, 2) 输出，与内置目标保持一致。
+        自定义损失函数下显式向 LightGBM 请求原始分数，再使用稳定的 sigmoid
+        转换为两列概率，避免原生接口无法直接计算自定义目标概率的警告。
+
+        :param X: 特征矩阵。
+        :param predict_params: LightGBM 原生预测参数，例如 ``num_iteration``。
+            显式设置 ``raw_score=True``、``pred_leaf=True`` 或 ``pred_contrib=True``
+            时返回对应原生结果，不转换为概率。
+        :return: 默认返回形状为 ``(n_samples, 2)`` 的类别概率，列顺序为 ``classes_``。
+
+        **参考样例**
+
+        >>> probability = model.predict_proba(X_test)[:, 1]
+        >>> raw_margin = model.predict_proba(X_test, raw_score=True)
         """
         self._require_fitted()
         X = self._prepare_data(X)[0]
         if isinstance(X, np.ndarray) and hasattr(self._model, "feature_name_"):
             X = pd.DataFrame(X, columns=list(self._model.feature_name_))
+        native_output_requested = any(
+            predict_params.get(name) for name in ("raw_score", "pred_leaf", "pred_contrib")
+        )
         if getattr(self, "_native_margin_output_", False):
             proba = self._model.booster_.predict(X, **predict_params)
         else:
-            proba = self._model.predict_proba(X, **predict_params)
+            native_predict_params = dict(predict_params)
+            if callable(getattr(self._model, "_objective", None)) and not native_output_requested:
+                native_predict_params["raw_score"] = True
+            proba = self._model.predict_proba(X, **native_predict_params)
         proba = np.asarray(proba)
-        if any(predict_params.get(name) for name in ("raw_score", "pred_leaf", "pred_contrib")):
+        if native_output_requested:
             return proba
 
         # 自定义损失返回一维原始分数，应用 sigmoid 并补齐为两列概率
         if proba.ndim == 1:
-            p1 = 1.0 / (1.0 + np.exp(-proba))
+            p1 = expit(proba)
             proba = np.column_stack([1.0 - p1, p1])
 
         return proba

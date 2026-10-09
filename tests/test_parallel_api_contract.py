@@ -101,6 +101,7 @@ PUBLIC_PARALLEL_ENTRIES = {
         "CorrSelector",
         "VIFSelector",
         "IVSelector",
+        "KSSelector",
         "LiftSelector",
         "PSISelector",
         "FeatureImportanceSelector",
@@ -176,10 +177,12 @@ PUBLIC_PARALLEL_ENTRIES = {
 }
 
 NON_BATCH_EXPORTS = {
-    binning: {"CustomObjectives"},
-    selectors: {"SelectionReportCollector"},
+    binning: {"CustomObjectives", "BinSpec"},
+    selectors: {"SelectionReportCollector", "SelectionReport", "collect_selection_report"},
     encoders: set(),
     rules: {
+        "RuleArtifact",
+        "RuleAccumulator",
         "get_columns_from_query",
         "optimize_expr",
         "beautify_expr",
@@ -190,7 +193,7 @@ NON_BATCH_EXPORTS = {
     },
     model_rules: {"LogicOperator", "RuleResult", "create_and_ruleset", "create_or_ruleset", "combine_rules"},
     mining: {"calculate_rule_metrics"},
-    report: {"ExcelWriter", "dataframe2excel", "SwapAnalysisResult", "SwapRiskConfig", "SwapType", "calculate_rule_metrics"},
+    report: {"ExcelWriter", "dataframe2excel", "SwapAnalysisResult", "SwapRiskConfig", "SwapType", "calculate_rule_metrics", "ReportResult", "ReportSectionResult", "ReportGenerationError", "save_selection_report", "load_selection_report"},
 }
 
 
@@ -463,9 +466,13 @@ def test_base_binning_feature_loop_uses_shared_parallel_configuration():
         binner.fit(pd.DataFrame({"特征A": [1, 2]}), [0, 1])
 
 
-def test_base_encoder_parallel_parameters_do_not_change_dual_api():
+@pytest.mark.parametrize('passthrough_target', [False, True])
+def test_base_encoder_parallel_parameters_do_not_change_dual_api(passthrough_target):
     frame = pd.DataFrame({"类别": ["甲", "乙"], "FPD": [0, 1]})
     encoder = _CloneableEncoder(
-        cols=["类别"], target="FPD", n_jobs=None, parallel_config={"batch_size": 1}
+        cols=["类别"], target="FPD", n_jobs=None, parallel_config={"batch_size": 1},
+        passthrough_target=passthrough_target,
     )
-    pd.testing.assert_frame_equal(encoder.fit_transform(frame), frame)
+    expected = frame if passthrough_target else frame.drop(columns=['FPD'])
+    pd.testing.assert_frame_equal(encoder.fit_transform(frame), expected)
+    pd.testing.assert_frame_equal(encoder.fit_transform(frame, frame['FPD']), expected)

@@ -11,6 +11,8 @@ import pandas as pd
 from typing import Union, List, Dict, Optional, Any
 from .base import BaseRuleMiner, _mining_workload
 from .single_feature import SingleFeatureRuleMiner
+from ...core.rules.rule import Rule
+from ...utils.data_contracts import validate_target
 
 
 def _multi_label_mining_worker(task):
@@ -138,13 +140,13 @@ class MultiLabelRuleMiner(BaseRuleMiner):
         :param features: 需要挖掘的特征列表，为 None 时自动选择数值特征
         :return: self
         """
-        working = copy.deepcopy(self)
+        working = copy.copy(self)
         working._rules = []
 
         if not isinstance(X, pd.DataFrame):
             raise ValueError("X 必须为 DataFrame，且须包含标签列")
 
-        df = X.copy()
+        df = X.copy(deep=False)
         labels = working._resolved_labels()
         label_names = working._resolved_label_names()
         if getattr(working, '_target_is_auto', True):
@@ -154,11 +156,21 @@ class MultiLabelRuleMiner(BaseRuleMiner):
         missing_labels = [lb for lb in labels if lb not in df.columns]
         if missing_labels:
             raise ValueError(f"标签列缺失: {missing_labels}")
+        if len(labels) != len(set(labels)):
+            raise ValueError("标签列不能重复")
+        if not isinstance(working.max_rules, int) or working.max_rules < 1:
+            raise ValueError("max_rules 必须为正整数")
+        if not 0 <= working.min_support <= 1:
+            raise ValueError("min_support 必须在 [0, 1] 范围内")
+        for label in labels:
+            validate_target(df[label], target_type="binary")
 
         # 确定特征列
         if features is None:
             exclude = set(labels) | set(working.exclude_cols or [])
             features = [c for c in df.columns if c not in exclude and pd.api.types.is_numeric_dtype(df[c])]
+        elif set(features) & set(labels):
+            raise ValueError("挖掘特征不能包含标签列")
 
         # 对每个标签独立运行单特征规则挖掘
         label_rules = {}  # {label: {rule_expr: rule}}
@@ -196,7 +208,7 @@ class MultiLabelRuleMiner(BaseRuleMiner):
         # 合并规则，为每条规则计算各标签的指标
         merged_rules = []
         for expr in all_rule_exprs:
-            mask = df.eval(expr)
+            mask = Rule(expr).predict(df)
 
             n_match = mask.sum()
             support = n_match / len(df)
@@ -207,6 +219,7 @@ class MultiLabelRuleMiner(BaseRuleMiner):
                 '规则': expr,
                 '覆盖样本数': int(n_match),
                 '覆盖率': round(support * 100, 2),
+                '入参字段': tuple(Rule(expr).feature_names_in_),
             }
 
             effective_labels = []
@@ -234,6 +247,8 @@ class MultiLabelRuleMiner(BaseRuleMiner):
                 rule_info['规则类型'] = '无效规则'
                 rule_info['建议'] = '放弃'
 
+            rule_info['有效标签'] = tuple(effective_labels)
+
             merged_rules.append(rule_info)
 
         # 按第一个标签的 LIFT 降序排序
@@ -245,7 +260,15 @@ class MultiLabelRuleMiner(BaseRuleMiner):
             )
             merged_rules.sort(key=lambda r: r.get(first_lift_col, 0), reverse=True)
 
-        working._rules = merged_rules
+        counts = {}
+        retained = []
+        for rule in merged_rules:
+            fields = rule['入参字段']
+            if counts.get(fields, 0) >= working.max_rules:
+                continue
+            counts[fields] = counts.get(fields, 0) + 1
+            retained.append(rule)
+        working._rules = retained
         working._is_fitted = True
         self._commit_fitted_state(working)
         return self
@@ -289,9 +312,11 @@ class MultiLabelRuleMiner(BaseRuleMiner):
         elif effectiveness == 'any':
             rules = [rule for rule in rules if any(effective(rule))]
         elif effectiveness == 'short_only':
-            rules = [rule for rule in rules if effective(rule)[0]]
+            rules = [rule for rule in rules if effective(rule) and effective(rule)[0] and not any(effective(rule)[1:])]
         elif effectiveness == 'long_only':
-            rules = [rule for rule in rules if effective(rule)[-1]]
+            rules = [rule for rule in rules if effective(rule) and effective(rule)[-1] and not any(effective(rule)[:-1])]
+        elif effectiveness != 'all':
+            raise ValueError("effectiveness 必须为 both、any、short_only、long_only 或 all")
 
         if top_n:
             rules = rules[:top_n]

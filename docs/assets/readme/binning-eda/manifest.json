@@ -1,0 +1,789 @@
+{
+  "summary": {
+    "tables": [
+      {
+        "label": "summary",
+        "rows": 4,
+        "columns": 30,
+        "html": "docs/assets/readme/binning-eda/summary-table-01.html",
+        "workbook": "docs/assets/readme/binning-eda/summary-tables.xlsx",
+        "sheet": "原始表1"
+      }
+    ],
+    "images": [],
+    "workbooks": []
+  },
+  "method-comparison": {
+    "tables": [
+      {
+        "label": "method_summary",
+        "rows": 9,
+        "columns": 7,
+        "html": "docs/assets/readme/binning-eda/method-comparison-table-01.html",
+        "workbook": "docs/assets/readme/binning-eda/method-comparison-tables.xlsx",
+        "sheet": "原始表1"
+      },
+      {
+        "label": "method_tables/衡枢鉴真分老客版/quantile",
+        "rows": 5,
+        "columns": 22,
+        "html": "docs/assets/readme/binning-eda/method-comparison-table-02.html",
+        "workbook": "docs/assets/readme/binning-eda/method-comparison-tables.xlsx",
+        "sheet": "原始表2"
+      },
+      {
+        "label": "method_tables/衡枢鉴真分老客版/cart",
+        "rows": 5,
+        "columns": 22,
+        "html": "docs/assets/readme/binning-eda/method-comparison-table-03.html",
+        "workbook": "docs/assets/readme/binning-eda/method-comparison-tables.xlsx",
+        "sheet": "原始表3"
+      },
+      {
+        "label": "method_tables/衡枢鉴真分老客版/best_iv",
+        "rows": 5,
+        "columns": 22,
+        "html": "docs/assets/readme/binning-eda/method-comparison-table-04.html",
+        "workbook": "docs/assets/readme/binning-eda/method-comparison-tables.xlsx",
+        "sheet": "原始表4"
+      },
+      {
+        "label": "method_tables/近六个月非银多头机构数/quantile",
+        "rows": 5,
+        "columns": 22,
+        "html": "docs/assets/readme/binning-eda/method-comparison-table-05.html",
+        "workbook": "docs/assets/readme/binning-eda/method-comparison-tables.xlsx",
+        "sheet": "原始表5"
+      },
+      {
+        "label": "method_tables/近六个月非银多头机构数/cart",
+        "rows": 5,
+        "columns": 22,
+        "html": "docs/assets/readme/binning-eda/method-comparison-table-06.html",
+        "workbook": "docs/assets/readme/binning-eda/method-comparison-tables.xlsx",
+        "sheet": "原始表6"
+      },
+      {
+        "label": "method_tables/近六个月非银多头机构数/best_iv",
+        "rows": 4,
+        "columns": 22,
+        "html": "docs/assets/readme/binning-eda/method-comparison-table-07.html",
+        "workbook": "docs/assets/readme/binning-eda/method-comparison-tables.xlsx",
+        "sheet": "原始表7"
+      },
+      {
+        "label": "method_tables/手机号近一个月非银多头机构数/quantile",
+        "rows": 5,
+        "columns": 22,
+        "html": "docs/assets/readme/binning-eda/method-comparison-table-08.html",
+        "workbook": "docs/assets/readme/binning-eda/method-comparison-tables.xlsx",
+        "sheet": "原始表8"
+      },
+      {
+        "label": "method_tables/手机号近一个月非银多头机构数/cart",
+        "rows": 5,
+        "columns": 22,
+        "html": "docs/assets/readme/binning-eda/method-comparison-table-09.html",
+        "workbook": "docs/assets/readme/binning-eda/method-comparison-tables.xlsx",
+        "sheet": "原始表9"
+      },
+      {
+        "label": "method_tables/手机号近一个月非银多头机构数/best_iv",
+        "rows": 5,
+        "columns": 22,
+        "html": "docs/assets/readme/binning-eda/method-comparison-table-10.html",
+        "workbook": "docs/assets/readme/binning-eda/method-comparison-tables.xlsx",
+        "sheet": "原始表10"
+      }
+    ],
+    "images": [],
+    "workbooks": [
+      {
+        "path": "docs/assets/readme/binning-eda/method-summary.xlsx",
+        "sheets": {
+          "Sheet1": {
+            "rows": 12,
+            "columns": 9,
+            "images": 0
+          }
+        }
+      }
+    ]
+  },
+  "multi-dpd": {
+    "tables": [
+      {
+        "label": "multi_dpd_table",
+        "rows": 13,
+        "columns": 56,
+        "html": "docs/assets/readme/binning-eda/multi-dpd-table-01.html",
+        "workbook": "docs/assets/readme/binning-eda/multi-dpd-tables.xlsx",
+        "sheet": "原始表1"
+      },
+      {
+        "label": "category_table",
+        "rows": 3,
+        "columns": 22,
+        "html": "docs/assets/readme/binning-eda/multi-dpd-table-02.html",
+        "workbook": "docs/assets/readme/binning-eda/multi-dpd-tables.xlsx",
+        "sheet": "原始表2"
+      }
+    ],
+    "images": [],
+    "workbooks": []
+  },
+  "group-comparison": {
+    "tables": [
+      {
+        "label": "monthly_summary",
+        "rows": 24,
+        "columns": 9,
+        "html": "docs/assets/readme/binning-eda/group-comparison-table-01.html",
+        "workbook": "docs/assets/readme/binning-eda/group-comparison-tables.xlsx",
+        "sheet": "原始表1"
+      },
+      {
+        "label": "category_summary",
+        "rows": 18,
+        "columns": 9,
+        "html": "docs/assets/readme/binning-eda/group-comparison-table-02.html",
+        "workbook": "docs/assets/readme/binning-eda/group-comparison-tables.xlsx",
+        "sheet": "原始表2"
+      },
+      {
+        "label": "monthly_tables/衡枢鉴真分老客版/quantile/2025-11",
+        "rows": 5,
+        "columns": 22,
+        "html": "docs/assets/readme/binning-eda/group-comparison-table-03.html",
+        "workbook": "docs/assets/readme/binning-eda/group-comparison-tables.xlsx",
+        "sheet": "原始表3"
+      },
+      {
+        "label": "monthly_tables/衡枢鉴真分老客版/quantile/2025-12",
+        "rows": 5,
+        "columns": 22,
+        "html": "docs/assets/readme/binning-eda/group-comparison-table-04.html",
+        "workbook": "docs/assets/readme/binning-eda/group-comparison-tables.xlsx",
+        "sheet": "原始表4"
+      },
+      {
+        "label": "monthly_tables/衡枢鉴真分老客版/quantile/2026-01",
+        "rows": 5,
+        "columns": 22,
+        "html": "docs/assets/readme/binning-eda/group-comparison-table-05.html",
+        "workbook": "docs/assets/readme/binning-eda/group-comparison-tables.xlsx",
+        "sheet": "原始表5"
+      },
+      {
+        "label": "monthly_tables/衡枢鉴真分老客版/quantile/2026-02",
+        "rows": 5,
+        "columns": 22,
+        "html": "docs/assets/readme/binning-eda/group-comparison-table-06.html",
+        "workbook": "docs/assets/readme/binning-eda/group-comparison-tables.xlsx",
+        "sheet": "原始表6"
+      },
+      {
+        "label": "monthly_tables/衡枢鉴真分老客版/cart/2025-11",
+        "rows": 5,
+        "columns": 22,
+        "html": "docs/assets/readme/binning-eda/group-comparison-table-07.html",
+        "workbook": "docs/assets/readme/binning-eda/group-comparison-tables.xlsx",
+        "sheet": "原始表7"
+      },
+      {
+        "label": "monthly_tables/衡枢鉴真分老客版/cart/2025-12",
+        "rows": 5,
+        "columns": 22,
+        "html": "docs/assets/readme/binning-eda/group-comparison-table-08.html",
+        "workbook": "docs/assets/readme/binning-eda/group-comparison-tables.xlsx",
+        "sheet": "原始表8"
+      },
+      {
+        "label": "monthly_tables/衡枢鉴真分老客版/cart/2026-01",
+        "rows": 5,
+        "columns": 22,
+        "html": "docs/assets/readme/binning-eda/group-comparison-table-09.html",
+        "workbook": "docs/assets/readme/binning-eda/group-comparison-tables.xlsx",
+        "sheet": "原始表9"
+      },
+      {
+        "label": "monthly_tables/衡枢鉴真分老客版/cart/2026-02",
+        "rows": 5,
+        "columns": 22,
+        "html": "docs/assets/readme/binning-eda/group-comparison-table-10.html",
+        "workbook": "docs/assets/readme/binning-eda/group-comparison-tables.xlsx",
+        "sheet": "原始表10"
+      },
+      {
+        "label": "monthly_tables/近六个月非银多头机构数/quantile/2025-11",
+        "rows": 5,
+        "columns": 22,
+        "html": "docs/assets/readme/binning-eda/group-comparison-table-11.html",
+        "workbook": "docs/assets/readme/binning-eda/group-comparison-tables.xlsx",
+        "sheet": "原始表11"
+      },
+      {
+        "label": "monthly_tables/近六个月非银多头机构数/quantile/2025-12",
+        "rows": 5,
+        "columns": 22,
+        "html": "docs/assets/readme/binning-eda/group-comparison-table-12.html",
+        "workbook": "docs/assets/readme/binning-eda/group-comparison-tables.xlsx",
+        "sheet": "原始表12"
+      },
+      {
+        "label": "monthly_tables/近六个月非银多头机构数/quantile/2026-01",
+        "rows": 5,
+        "columns": 22,
+        "html": "docs/assets/readme/binning-eda/group-comparison-table-13.html",
+        "workbook": "docs/assets/readme/binning-eda/group-comparison-tables.xlsx",
+        "sheet": "原始表13"
+      },
+      {
+        "label": "monthly_tables/近六个月非银多头机构数/quantile/2026-02",
+        "rows": 5,
+        "columns": 22,
+        "html": "docs/assets/readme/binning-eda/group-comparison-table-14.html",
+        "workbook": "docs/assets/readme/binning-eda/group-comparison-tables.xlsx",
+        "sheet": "原始表14"
+      },
+      {
+        "label": "monthly_tables/近六个月非银多头机构数/cart/2025-11",
+        "rows": 5,
+        "columns": 22,
+        "html": "docs/assets/readme/binning-eda/group-comparison-table-15.html",
+        "workbook": "docs/assets/readme/binning-eda/group-comparison-tables.xlsx",
+        "sheet": "原始表15"
+      },
+      {
+        "label": "monthly_tables/近六个月非银多头机构数/cart/2025-12",
+        "rows": 5,
+        "columns": 22,
+        "html": "docs/assets/readme/binning-eda/group-comparison-table-16.html",
+        "workbook": "docs/assets/readme/binning-eda/group-comparison-tables.xlsx",
+        "sheet": "原始表16"
+      },
+      {
+        "label": "monthly_tables/近六个月非银多头机构数/cart/2026-01",
+        "rows": 4,
+        "columns": 22,
+        "html": "docs/assets/readme/binning-eda/group-comparison-table-17.html",
+        "workbook": "docs/assets/readme/binning-eda/group-comparison-tables.xlsx",
+        "sheet": "原始表17"
+      },
+      {
+        "label": "monthly_tables/近六个月非银多头机构数/cart/2026-02",
+        "rows": 5,
+        "columns": 22,
+        "html": "docs/assets/readme/binning-eda/group-comparison-table-18.html",
+        "workbook": "docs/assets/readme/binning-eda/group-comparison-tables.xlsx",
+        "sheet": "原始表18"
+      },
+      {
+        "label": "monthly_tables/手机号近一个月非银多头机构数/quantile/2025-11",
+        "rows": 5,
+        "columns": 22,
+        "html": "docs/assets/readme/binning-eda/group-comparison-table-19.html",
+        "workbook": "docs/assets/readme/binning-eda/group-comparison-tables.xlsx",
+        "sheet": "原始表19"
+      },
+      {
+        "label": "monthly_tables/手机号近一个月非银多头机构数/quantile/2025-12",
+        "rows": 5,
+        "columns": 22,
+        "html": "docs/assets/readme/binning-eda/group-comparison-table-20.html",
+        "workbook": "docs/assets/readme/binning-eda/group-comparison-tables.xlsx",
+        "sheet": "原始表20"
+      },
+      {
+        "label": "monthly_tables/手机号近一个月非银多头机构数/quantile/2026-01",
+        "rows": 5,
+        "columns": 22,
+        "html": "docs/assets/readme/binning-eda/group-comparison-table-21.html",
+        "workbook": "docs/assets/readme/binning-eda/group-comparison-tables.xlsx",
+        "sheet": "原始表21"
+      },
+      {
+        "label": "monthly_tables/手机号近一个月非银多头机构数/quantile/2026-02",
+        "rows": 5,
+        "columns": 22,
+        "html": "docs/assets/readme/binning-eda/group-comparison-table-22.html",
+        "workbook": "docs/assets/readme/binning-eda/group-comparison-tables.xlsx",
+        "sheet": "原始表22"
+      },
+      {
+        "label": "monthly_tables/手机号近一个月非银多头机构数/cart/2025-11",
+        "rows": 5,
+        "columns": 22,
+        "html": "docs/assets/readme/binning-eda/group-comparison-table-23.html",
+        "workbook": "docs/assets/readme/binning-eda/group-comparison-tables.xlsx",
+        "sheet": "原始表23"
+      },
+      {
+        "label": "monthly_tables/手机号近一个月非银多头机构数/cart/2025-12",
+        "rows": 5,
+        "columns": 22,
+        "html": "docs/assets/readme/binning-eda/group-comparison-table-24.html",
+        "workbook": "docs/assets/readme/binning-eda/group-comparison-tables.xlsx",
+        "sheet": "原始表24"
+      },
+      {
+        "label": "monthly_tables/手机号近一个月非银多头机构数/cart/2026-01",
+        "rows": 5,
+        "columns": 22,
+        "html": "docs/assets/readme/binning-eda/group-comparison-table-25.html",
+        "workbook": "docs/assets/readme/binning-eda/group-comparison-tables.xlsx",
+        "sheet": "原始表25"
+      },
+      {
+        "label": "monthly_tables/手机号近一个月非银多头机构数/cart/2026-02",
+        "rows": 5,
+        "columns": 22,
+        "html": "docs/assets/readme/binning-eda/group-comparison-table-26.html",
+        "workbook": "docs/assets/readme/binning-eda/group-comparison-tables.xlsx",
+        "sheet": "原始表26"
+      },
+      {
+        "label": "category_tables/衡枢鉴真分老客版/quantile/家用电器",
+        "rows": 2,
+        "columns": 22,
+        "html": "docs/assets/readme/binning-eda/group-comparison-table-27.html",
+        "workbook": "docs/assets/readme/binning-eda/group-comparison-tables.xlsx",
+        "sheet": "原始表27"
+      },
+      {
+        "label": "category_tables/衡枢鉴真分老客版/quantile/手机通讯",
+        "rows": 5,
+        "columns": 22,
+        "html": "docs/assets/readme/binning-eda/group-comparison-table-28.html",
+        "workbook": "docs/assets/readme/binning-eda/group-comparison-tables.xlsx",
+        "sheet": "原始表28"
+      },
+      {
+        "label": "category_tables/衡枢鉴真分老客版/quantile/智能设备",
+        "rows": 4,
+        "columns": 22,
+        "html": "docs/assets/readme/binning-eda/group-comparison-table-29.html",
+        "workbook": "docs/assets/readme/binning-eda/group-comparison-tables.xlsx",
+        "sheet": "原始表29"
+      },
+      {
+        "label": "category_tables/衡枢鉴真分老客版/quantile/珠宝首饰",
+        "rows": 5,
+        "columns": 22,
+        "html": "docs/assets/readme/binning-eda/group-comparison-table-30.html",
+        "workbook": "docs/assets/readme/binning-eda/group-comparison-tables.xlsx",
+        "sheet": "原始表30"
+      },
+      {
+        "label": "category_tables/衡枢鉴真分老客版/quantile/电脑数码",
+        "rows": 5,
+        "columns": 22,
+        "html": "docs/assets/readme/binning-eda/group-comparison-table-31.html",
+        "workbook": "docs/assets/readme/binning-eda/group-comparison-tables.xlsx",
+        "sheet": "原始表31"
+      },
+      {
+        "label": "category_tables/衡枢鉴真分老客版/quantile/礼包",
+        "rows": 5,
+        "columns": 22,
+        "html": "docs/assets/readme/binning-eda/group-comparison-table-32.html",
+        "workbook": "docs/assets/readme/binning-eda/group-comparison-tables.xlsx",
+        "sheet": "原始表32"
+      },
+      {
+        "label": "category_tables/近六个月非银多头机构数/quantile/家用电器",
+        "rows": 2,
+        "columns": 22,
+        "html": "docs/assets/readme/binning-eda/group-comparison-table-33.html",
+        "workbook": "docs/assets/readme/binning-eda/group-comparison-tables.xlsx",
+        "sheet": "原始表33"
+      },
+      {
+        "label": "category_tables/近六个月非银多头机构数/quantile/手机通讯",
+        "rows": 5,
+        "columns": 22,
+        "html": "docs/assets/readme/binning-eda/group-comparison-table-34.html",
+        "workbook": "docs/assets/readme/binning-eda/group-comparison-tables.xlsx",
+        "sheet": "原始表34"
+      },
+      {
+        "label": "category_tables/近六个月非银多头机构数/quantile/智能设备",
+        "rows": 5,
+        "columns": 22,
+        "html": "docs/assets/readme/binning-eda/group-comparison-table-35.html",
+        "workbook": "docs/assets/readme/binning-eda/group-comparison-tables.xlsx",
+        "sheet": "原始表35"
+      },
+      {
+        "label": "category_tables/近六个月非银多头机构数/quantile/珠宝首饰",
+        "rows": 5,
+        "columns": 22,
+        "html": "docs/assets/readme/binning-eda/group-comparison-table-36.html",
+        "workbook": "docs/assets/readme/binning-eda/group-comparison-tables.xlsx",
+        "sheet": "原始表36"
+      },
+      {
+        "label": "category_tables/近六个月非银多头机构数/quantile/电脑数码",
+        "rows": 5,
+        "columns": 22,
+        "html": "docs/assets/readme/binning-eda/group-comparison-table-37.html",
+        "workbook": "docs/assets/readme/binning-eda/group-comparison-tables.xlsx",
+        "sheet": "原始表37"
+      },
+      {
+        "label": "category_tables/近六个月非银多头机构数/quantile/礼包",
+        "rows": 5,
+        "columns": 22,
+        "html": "docs/assets/readme/binning-eda/group-comparison-table-38.html",
+        "workbook": "docs/assets/readme/binning-eda/group-comparison-tables.xlsx",
+        "sheet": "原始表38"
+      },
+      {
+        "label": "category_tables/手机号近一个月非银多头机构数/quantile/家用电器",
+        "rows": 2,
+        "columns": 22,
+        "html": "docs/assets/readme/binning-eda/group-comparison-table-39.html",
+        "workbook": "docs/assets/readme/binning-eda/group-comparison-tables.xlsx",
+        "sheet": "原始表39"
+      },
+      {
+        "label": "category_tables/手机号近一个月非银多头机构数/quantile/手机通讯",
+        "rows": 5,
+        "columns": 22,
+        "html": "docs/assets/readme/binning-eda/group-comparison-table-40.html",
+        "workbook": "docs/assets/readme/binning-eda/group-comparison-tables.xlsx",
+        "sheet": "原始表40"
+      },
+      {
+        "label": "category_tables/手机号近一个月非银多头机构数/quantile/智能设备",
+        "rows": 4,
+        "columns": 22,
+        "html": "docs/assets/readme/binning-eda/group-comparison-table-41.html",
+        "workbook": "docs/assets/readme/binning-eda/group-comparison-tables.xlsx",
+        "sheet": "原始表41"
+      },
+      {
+        "label": "category_tables/手机号近一个月非银多头机构数/quantile/珠宝首饰",
+        "rows": 5,
+        "columns": 22,
+        "html": "docs/assets/readme/binning-eda/group-comparison-table-42.html",
+        "workbook": "docs/assets/readme/binning-eda/group-comparison-tables.xlsx",
+        "sheet": "原始表42"
+      },
+      {
+        "label": "category_tables/手机号近一个月非银多头机构数/quantile/电脑数码",
+        "rows": 5,
+        "columns": 22,
+        "html": "docs/assets/readme/binning-eda/group-comparison-table-43.html",
+        "workbook": "docs/assets/readme/binning-eda/group-comparison-tables.xlsx",
+        "sheet": "原始表43"
+      },
+      {
+        "label": "category_tables/手机号近一个月非银多头机构数/quantile/礼包",
+        "rows": 5,
+        "columns": 22,
+        "html": "docs/assets/readme/binning-eda/group-comparison-table-44.html",
+        "workbook": "docs/assets/readme/binning-eda/group-comparison-tables.xlsx",
+        "sheet": "原始表44"
+      }
+    ],
+    "images": [],
+    "workbooks": []
+  },
+  "bin-plot": {
+    "tables": [
+      {
+        "label": "single_bin_table",
+        "rows": 5,
+        "columns": 22,
+        "html": "docs/assets/readme/binning-eda/bin-plot-table-01.html",
+        "workbook": "docs/assets/readme/binning-eda/bin-plot-tables.xlsx",
+        "sheet": "原始表1"
+      }
+    ],
+    "images": [
+      {
+        "path": "docs/assets/readme/binning-eda/bin-plot.png",
+        "size": [
+          2855,
+          1657
+        ],
+        "sha256": "aec1df478544d420644f3deaec5f24dfe59248d25e22ffbd0d24562ba564990a"
+      }
+    ],
+    "workbooks": []
+  },
+  "bin-2d": {
+    "tables": [],
+    "images": [
+      {
+        "path": "docs/assets/readme/binning-eda/bin-2d.png",
+        "size": [
+          3548,
+          2744
+        ],
+        "sha256": "a610cfa623d3a83413c1ea8c76c9e4c20942018c621bdc5bacc892c08f68e1f2"
+      }
+    ],
+    "workbooks": []
+  },
+  "bin-trend": {
+    "tables": [],
+    "images": [
+      {
+        "path": "docs/assets/readme/binning-eda/bin-trend.png",
+        "size": [
+          2265,
+          1670
+        ],
+        "sha256": "9c63399a2a4446595382ac9c957afbeca0d1e44ca55fbd8d08245bf91728f7ac"
+      }
+    ],
+    "workbooks": []
+  },
+  "bin-overdues": {
+    "tables": [
+      {
+        "label": "overdue_table",
+        "rows": 5,
+        "columns": 56,
+        "html": "docs/assets/readme/binning-eda/bin-overdues-table-01.html",
+        "workbook": "docs/assets/readme/binning-eda/bin-overdues-tables.xlsx",
+        "sheet": "原始表1"
+      }
+    ],
+    "images": [
+      {
+        "path": "docs/assets/readme/binning-eda/bin-overdues.png",
+        "size": [
+          3718,
+          953
+        ],
+        "sha256": "9543d556e131541f752cd4d78b19bb850aca3b050e9a655504fd6be3d7bacc6c"
+      }
+    ],
+    "workbooks": []
+  },
+  "efficiency": {
+    "tables": [
+      {
+        "label": "efficiency/manual_table",
+        "rows": 17,
+        "columns": 22,
+        "html": "docs/assets/readme/binning-eda/efficiency-table-01.html",
+        "workbook": "docs/assets/readme/binning-eda/efficiency-tables.xlsx",
+        "sheet": "原始表1"
+      },
+      {
+        "label": "efficiency/auto_table",
+        "rows": 5,
+        "columns": 22,
+        "html": "docs/assets/readme/binning-eda/efficiency-table-02.html",
+        "workbook": "docs/assets/readme/binning-eda/efficiency-tables.xlsx",
+        "sheet": "原始表2"
+      }
+    ],
+    "images": [
+      {
+        "path": "docs/assets/readme/binning-eda/efficiency/feature_efficiency_comparison_衡枢鉴真分老客版.png",
+        "size": [
+          3574,
+          2361
+        ],
+        "sha256": "8890593bc45ec27a4cbb32ef829ed571e211f2b19c26f4e47d2a38ec2ac5f65c"
+      },
+      {
+        "path": "docs/assets/readme/binning-eda/efficiency/feature_efficiency_trend_auto_衡枢鉴真分老客版.png",
+        "size": [
+          3627,
+          2673
+        ],
+        "sha256": "18c94ee22d03f0c7eb6fe5c500bf4f8820ee3a08a9e18d01e07932623d587652"
+      },
+      {
+        "path": "docs/assets/readme/binning-eda/efficiency/feature_efficiency_trend_manual_衡枢鉴真分老客版.png",
+        "size": [
+          3626,
+          2680
+        ],
+        "sha256": "39040c6b5cb8d7f44cc3cecdb5f3eb9ee03321bbf87ea0f74a88570e197bc4e2"
+      }
+    ],
+    "workbooks": []
+  },
+  "auto-feature": {
+    "tables": [
+      {
+        "label": "feature_report/样本总体分布",
+        "rows": 1,
+        "columns": 10,
+        "html": "docs/assets/readme/binning-eda/auto-feature-table-01.html",
+        "workbook": "docs/assets/readme/binning-eda/auto-feature-tables.xlsx",
+        "sheet": "原始表1"
+      },
+      {
+        "label": "feature_report/变量综合统计",
+        "rows": 3,
+        "columns": 30,
+        "html": "docs/assets/readme/binning-eda/auto-feature-table-02.html",
+        "workbook": "docs/assets/readme/binning-eda/auto-feature-tables.xlsx",
+        "sheet": "原始表2"
+      },
+      {
+        "label": "feature_report/时间分布",
+        "rows": 4,
+        "columns": 12,
+        "html": "docs/assets/readme/binning-eda/auto-feature-table-03.html",
+        "workbook": "docs/assets/readme/binning-eda/auto-feature-tables.xlsx",
+        "sheet": "原始表3"
+      },
+      {
+        "label": "feature_report/特征分箱：衡枢鉴真分老客版",
+        "rows": 5,
+        "columns": 56,
+        "html": "docs/assets/readme/binning-eda/auto-feature-table-04.html",
+        "workbook": "docs/assets/readme/binning-eda/auto-feature-tables.xlsx",
+        "sheet": "原始表4"
+      },
+      {
+        "label": "feature_report/金额分箱：衡枢鉴真分老客版",
+        "rows": 5,
+        "columns": 56,
+        "html": "docs/assets/readme/binning-eda/auto-feature-table-05.html",
+        "workbook": "docs/assets/readme/binning-eda/auto-feature-tables.xlsx",
+        "sheet": "原始表5"
+      },
+      {
+        "label": "feature_report/特征分箱：近六个月非银多头机构数",
+        "rows": 5,
+        "columns": 56,
+        "html": "docs/assets/readme/binning-eda/auto-feature-table-06.html",
+        "workbook": "docs/assets/readme/binning-eda/auto-feature-tables.xlsx",
+        "sheet": "原始表6"
+      },
+      {
+        "label": "feature_report/金额分箱：近六个月非银多头机构数",
+        "rows": 5,
+        "columns": 56,
+        "html": "docs/assets/readme/binning-eda/auto-feature-table-07.html",
+        "workbook": "docs/assets/readme/binning-eda/auto-feature-tables.xlsx",
+        "sheet": "原始表7"
+      },
+      {
+        "label": "feature_report/特征分箱：手机号近一个月非银多头机构数",
+        "rows": 5,
+        "columns": 56,
+        "html": "docs/assets/readme/binning-eda/auto-feature-table-08.html",
+        "workbook": "docs/assets/readme/binning-eda/auto-feature-tables.xlsx",
+        "sheet": "原始表8"
+      },
+      {
+        "label": "feature_report/金额分箱：手机号近一个月非银多头机构数",
+        "rows": 5,
+        "columns": 56,
+        "html": "docs/assets/readme/binning-eda/auto-feature-table-09.html",
+        "workbook": "docs/assets/readme/binning-eda/auto-feature-tables.xlsx",
+        "sheet": "原始表9"
+      }
+    ],
+    "images": [
+      {
+        "path": "docs/assets/readme/binning-eda/auto-feature-plots/feature_bins_plot_手机号近一个月非银多头机构数.png",
+        "size": [
+          2375,
+          1187
+        ],
+        "sha256": "323f8d654c5e8c49e1e5a9f5ef307d61a9f565c51bce6c52fc9158c412b4da4b"
+      },
+      {
+        "path": "docs/assets/readme/binning-eda/auto-feature-plots/feature_bins_plot_衡枢鉴真分老客版.png",
+        "size": [
+          2376,
+          1187
+        ],
+        "sha256": "fc5d7c913646f075299ba86da3c8c882f44321574817f837da79a2d90ff484bd"
+      },
+      {
+        "path": "docs/assets/readme/binning-eda/auto-feature-plots/feature_bins_plot_近六个月非银多头机构数.png",
+        "size": [
+          2375,
+          1187
+        ],
+        "sha256": "5928f976058da08ab3beea978ba921d9d8e7a55a7d9f35c905f6226929fa212d"
+      },
+      {
+        "path": "docs/assets/readme/binning-eda/auto-feature-plots/feature_hist_plot_手机号近一个月非银多头机构数.png",
+        "size": [
+          2374,
+          1420
+        ],
+        "sha256": "e7ba09a4830dabd2394b8c7e1b44de4fb13890144cee90c3e890037ed60d978e"
+      },
+      {
+        "path": "docs/assets/readme/binning-eda/auto-feature-plots/feature_hist_plot_衡枢鉴真分老客版.png",
+        "size": [
+          2374,
+          1420
+        ],
+        "sha256": "3a8449cef71f4c74e2fcfa8a678d778853a6bc94f275d92247214288acbe4add"
+      },
+      {
+        "path": "docs/assets/readme/binning-eda/auto-feature-plots/feature_hist_plot_近六个月非银多头机构数.png",
+        "size": [
+          2374,
+          1420
+        ],
+        "sha256": "ce13341e22d100ea6106bf28e5c85f785e0bbc0a56e0d6daa6d940d6c0506cc5"
+      },
+      {
+        "path": "docs/assets/readme/binning-eda/auto-feature-plots/feature_ks_plot_手机号近一个月非银多头机构数.png",
+        "size": [
+          2372,
+          1185
+        ],
+        "sha256": "382dee5d87ec2c9f8ac145528632e6b1d508ac3e7bf8d85c75824fe24b1a62ba"
+      },
+      {
+        "path": "docs/assets/readme/binning-eda/auto-feature-plots/feature_ks_plot_衡枢鉴真分老客版.png",
+        "size": [
+          2372,
+          1185
+        ],
+        "sha256": "9e918c8faf2787587dd32e89e8aee89c40aa368a6d8a81ffedb2cf7d45059044"
+      },
+      {
+        "path": "docs/assets/readme/binning-eda/auto-feature-plots/feature_ks_plot_近六个月非银多头机构数.png",
+        "size": [
+          2372,
+          1185
+        ],
+        "sha256": "6df3a348a237c62678aac9335f2432c81fc39d4f5013a2ce494b52fde0e8ce8d"
+      },
+      {
+        "path": "docs/assets/readme/binning-eda/auto-feature-plots/sample_time_distribution.png",
+        "size": [
+          2375,
+          1422
+        ],
+        "sha256": "d405c2531405e6015940bea0644b52807ef900a20bd9d216d35f82201423f8f5"
+      }
+    ],
+    "workbooks": [
+      {
+        "path": "docs/assets/readme/binning-eda/auto-feature-report.xlsx",
+        "sheets": {
+          "报告执行状态": {
+            "rows": 15,
+            "columns": 8,
+            "images": 0
+          },
+          "分析报告": {
+            "rows": 159,
+            "columns": 114,
+            "images": 10
+          }
+        }
+      }
+    ]
+  }
+}

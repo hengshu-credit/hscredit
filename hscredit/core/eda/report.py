@@ -21,13 +21,55 @@ from ...excel import ExcelWriter, dataframe2excel
 logger = logging.getLogger(__name__)
 
 
+def _execute_eda_report(df, target, features, date_col, config, n_jobs, parallel_backend, parallel_config, mode, full):
+    # 延迟导入，避免 core.eda 初始化时反向触发 report 包聚合。
+    from ...report.result import ReportResult
+
+    validate_dataframe(df)
+    if features is None:
+        features = [c for c in df.columns if c != target and (not full or c != date_col)]
+    parallel = dict(n_jobs=n_jobs, parallel_backend=parallel_backend, parallel_config=parallel_config)
+    result = ReportResult(mode=mode, metadata={"目标": target, "日期字段": date_col, "特征": list(features), "输入行数": len(df)})
+    names = ["数据基础信息", "缺失值分析", "特征描述统计", "数据质量问题", "目标变量分布", "整体逾期率", "逾期率趋势"]
+    if full:
+        names += ["IV分析", "高相关性特征对"]
+    keys = {name: f"{i + 1}.{name}" if full else name for i, name in enumerate(names)}
+    for key in keys.values():
+        result.plan(key, input_rows=len(df))
+
+    def iv_table():
+        table = batch_iv_analysis(df, features, target, **parallel)
+        return table[table['IV值'] >= config.get('iv_threshold', 0.02)]
+
+    operations = {
+        "数据基础信息": lambda: data_info(df),
+        "缺失值分析": lambda: missing_analysis(df, threshold=0.0),
+        "特征描述统计": lambda: feature_summary(df, features, **parallel),
+        "数据质量问题": lambda: data_quality_report(df),
+        "目标变量分布": lambda: target_distribution(df, target),
+        "整体逾期率": lambda: pd.DataFrame([bad_rate_overall(df, target)]),
+        "逾期率趋势": lambda: bad_rate_trend(df, date_col=date_col, target_col=target),
+        "IV分析": iv_table,
+        "高相关性特征对": lambda: high_correlation_pairs(df, features, threshold=config.get('corr_threshold', 0.8)),
+    }
+    for name in names:
+        if name in {"目标变量分布", "整体逾期率", "逾期率趋势", "IV分析"} and target is None:
+            result.skip(keys[name], "未指定目标变量")
+        elif name == "逾期率趋势" and date_col is None:
+            result.skip(keys[name], "未指定日期字段")
+        else:
+            result.run(keys[name], operations[name])
+    return result
+
+
 def eda_summary(df: pd.DataFrame,
                target: str = None,
                features: List[str] = None,
                date_col: str = None,
                n_jobs=-1,
                parallel_backend=None,
-               parallel_config=None) -> Dict[str, pd.DataFrame]:
+               parallel_config=None,
+               *, mode: str = "best_effort", return_result: bool = False) -> Dict[str, pd.DataFrame]:
     """EDA分析摘要.
     
     快速生成数据集的关键分析结果
@@ -36,6 +78,8 @@ def eda_summary(df: pd.DataFrame,
     :param target: 目标变量名（可选）
     :param features: 特征列表（可选）
     :param date_col: 日期列名（可选）
+    :param mode: strict 遇必需章节失败抛异常；best_effort 记录原因并继续
+    :param return_result: True 返回兼容字典的 ReportResult，含完整章节状态
     :return: EDA摘要字典
     
     **参考样例**
@@ -45,44 +89,8 @@ def eda_summary(df: pd.DataFrame,
     ...     print(f"\n=== {key} ===")
     ...     print(value)
     """
-    validate_dataframe(df)
-    
-    if features is None:
-        features = [c for c in df.columns if c != target]
-    
-    summary = {}
-    
-    # 1. 数据基础信息
-    summary['数据基础信息'] = data_info(df)
-    
-    # 2. 缺失值分析
-    summary['缺失值分析'] = missing_analysis(df, threshold=0.0)
-    
-    # 3. 特征描述统计
-    summary['特征描述统计'] = feature_summary(
-        df,
-        features,
-        n_jobs=n_jobs,
-        parallel_backend=parallel_backend,
-        parallel_config=parallel_config,
-    )
-    
-    # 4. 数据质量问题
-    summary['数据质量问题'] = data_quality_report(df)
-    
-    # 5. 目标变量分析
-    if target and target in df.columns:
-        summary['目标变量分布'] = target_distribution(df, target)
-        summary['整体逾期率'] = pd.DataFrame([bad_rate_overall(df, target)])
-        
-        # 时间趋势
-        if date_col and date_col in df.columns:
-            try:
-                summary['逾期率趋势'] = bad_rate_trend(df, target, date_col)
-            except Exception:
-                pass
-    
-    return summary
+    result = _execute_eda_report(df, target, features, date_col, {}, n_jobs, parallel_backend, parallel_config, mode, False)
+    return result if return_result else dict(result)
 
 
 def generate_report(df: pd.DataFrame,
@@ -92,7 +100,8 @@ def generate_report(df: pd.DataFrame,
                    config: Dict = None,
                    n_jobs=-1,
                    parallel_backend=None,
-                   parallel_config=None) -> Dict[str, pd.DataFrame]:
+                   parallel_config=None,
+                   *, mode: str = "best_effort", return_result: bool = False) -> Dict[str, pd.DataFrame]:
     """生成完整EDA报告.
     
     :param df: 输入数据
@@ -100,6 +109,8 @@ def generate_report(df: pd.DataFrame,
     :param features: 特征列表
     :param date_col: 日期列名
     :param config: 配置参数
+    :param mode: strict 拒绝必需章节失败；best_effort 保留成功结果并记录原因
+    :param return_result: True 返回含章节状态和发布清单的 ReportResult
     :return: 完整报告字典
     
     **参考样例**
@@ -108,65 +119,8 @@ def generate_report(df: pd.DataFrame,
     ...                          config={'iv_threshold': 0.02})
     >>> export_report_to_excel(report, 'eda_report.xlsx')
     """
-    validate_dataframe(df)
-    
-    if features is None:
-        features = [c for c in df.columns if c != target and c != date_col]
-    
-    if config is None:
-        config = {}
-    
-    iv_threshold = config.get('iv_threshold', 0.02)
-    corr_threshold = config.get('corr_threshold', 0.8)
-    
-    report = {}
-    
-    # 1. 数据概览
-    report['1.数据基础信息'] = data_info(df)
-    report['2.缺失值分析'] = missing_analysis(df)
-    report['3.特征描述统计'] = feature_summary(
-        df,
-        features,
-        n_jobs=n_jobs,
-        parallel_backend=parallel_backend,
-        parallel_config=parallel_config,
-    )
-    report['4.数据质量问题'] = data_quality_report(df)
-    
-    # 2. 目标变量分析
-    if target and target in df.columns:
-        report['5.目标变量分布'] = target_distribution(df, target)
-        report['6.整体逾期率'] = pd.DataFrame([bad_rate_overall(df, target)])
-        
-        if date_col and date_col in df.columns:
-            try:
-                report['7.逾期率趋势'] = bad_rate_trend(df, target, date_col)
-            except Exception:
-                pass
-        
-        # 3. IV分析
-        try:
-            iv_result = batch_iv_analysis(
-                df,
-                features,
-                target,
-                n_jobs=n_jobs,
-                parallel_backend=parallel_backend,
-                parallel_config=parallel_config,
-            )
-            report['8.IV分析'] = iv_result[iv_result['IV值'] >= iv_threshold]
-        except Exception:
-            pass
-    
-    # 4. 相关性分析
-    try:
-        corr_pairs = high_correlation_pairs(df, features, threshold=corr_threshold)
-        if '信息' not in corr_pairs.columns:
-            report['9.高相关性特征对'] = corr_pairs
-    except Exception:
-        pass
-    
-    return report
+    result = _execute_eda_report(df, target, features, date_col, config or {}, n_jobs, parallel_backend, parallel_config, mode, True)
+    return result if return_result else dict(result)
 
 
 def export_report_to_excel(report: Dict[str, pd.DataFrame],
@@ -189,15 +143,35 @@ def export_report_to_excel(report: Dict[str, pd.DataFrame],
     >>> export_report_to_excel(report, 'eda_report.xlsx')
     >>> export_report_to_excel(report, 'eda_report.xlsx', theme_color='00A651')
     """
-    # 处理sheet名称（Excel限制：最多31个字符，不能包含特殊字符）
+    from ...report.result import ReportResult
+
+    structured = isinstance(report, ReportResult)
+    if structured:
+        report.ensure_publishable()
+    # 清洗后再做不区分大小写的唯一化，避免截断/特殊字符碰撞覆盖章节。
+    used_names = set()
     def clean_sheet_name(name: str) -> str:
+        name = str(name)
         # 移除特殊字符
         name = name.replace('/', '_').replace('\\', '_').replace(':', '_')
         name = name.replace('?', '').replace('*', '').replace('[', '').replace(']', '')
         # 截取前31个字符
-        return name[:31]
-    
+        base = name.strip().strip("'")[:31] or "章节"
+        candidate = base
+        count = 2
+        while candidate.casefold() in used_names:
+            suffix = f"_{count}"
+            candidate = base[:31 - len(suffix)] + suffix
+            count += 1
+        used_names.add(candidate.casefold())
+        return candidate
+
+    sheet_mapping = {}
     with ExcelWriter(theme_color=theme_color) as writer:
+        if structured:
+            status_sheet = writer.get_sheet_by_name(clean_sheet_name("报告执行状态"))
+            writer.insert_value2sheet(status_sheet, "B2", "报告完整" if report.complete else "报告不完整：请检查失败或未执行章节", style="header")
+            writer.insert_df2sheet(status_sheet, report.status_table(), "B4", index=False, auto_width=auto_width)
         for section_name, df in report.items():
             if df is None or df.empty:
                 continue
@@ -207,6 +181,7 @@ def export_report_to_excel(report: Dict[str, pd.DataFrame],
                 sheet_name = clean_sheet_name(sheet_name_mapping[section_name])
             else:
                 sheet_name = clean_sheet_name(section_name)
+            sheet_mapping[section_name] = sheet_name
             
             # 获取或创建工作表
             worksheet = writer.get_sheet_by_name(sheet_name)
@@ -229,6 +204,9 @@ def export_report_to_excel(report: Dict[str, pd.DataFrame],
         
         # 保存文件
         writer.save(filepath)
+    if structured:
+        report.sheet_mapping = sheet_mapping
+        report.artifacts.append({"类型": "Excel", "路径": str(filepath), "完整": report.complete, "章节工作表": dict(sheet_mapping)})
     
     logger.info("报告已导出至: %s", filepath)
 

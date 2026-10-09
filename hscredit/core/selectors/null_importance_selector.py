@@ -28,6 +28,7 @@ from sklearn.base import clone
 from sklearn.utils import check_random_state
 
 from .base import BaseFeatureSelector, _set_estimator_parallel_budget, get_feature_importances
+from ._selection_history import initialize_history, record_event
 from ...utils.parallel import ParallelWorkload, _current_parallel_budget
 
 
@@ -47,7 +48,7 @@ def _run_null_importance_experiment(task):
     X_ordered = X.iloc[order].reset_index(drop=True)
     y_ordered = y[order]
     cv = check_cv(cv_spec, y_ordered, classifier=True)
-    n_splits = cv.get_n_splits()
+    n_splits = cv.get_n_splits(X_ordered, y_ordered)
     actual = np.zeros((X.shape[1], n_splits))
     null = np.zeros((X.shape[1], n_splits))
 
@@ -78,6 +79,8 @@ class NullImportanceSelector(BaseFeatureSelector):
     对实际重要性和 null 重要性分别取各折、各次实验的均值，
     再分别除以各自的特征重要性总和，得到 0～1 的占比。
     特征得分为实际重要性占比减去 null 重要性占比；总重要性为 0 时占比全为 0。
+    ``actual_importance_runs_`` / ``null_importance_runs_`` 为有界诊断前缀；
+    截断数量见 ``importance_runs_truncated_``，最终重要性始终使用全部实验。
 
     **参数**
 
@@ -147,6 +150,10 @@ class NullImportanceSelector(BaseFeatureSelector):
         binning_params: Optional[Dict[str, Any]] = None,
         parallel_backend: Optional[str] = None,
         parallel_config: Optional[Dict[str, Any]] = None,
+        target_rm: bool = False,
+        report_history: str = "summary",
+        max_report_events: int = 10000,
+        max_report_bytes: int = 8 * 1024 * 1024,
     ):
         super().__init__(
             target=target,
@@ -159,11 +166,15 @@ class NullImportanceSelector(BaseFeatureSelector):
             binning_params=binning_params,
             parallel_backend=parallel_backend,
             parallel_config=parallel_config,
+            target_rm=target_rm,
         )
         self.estimator = estimator
         self.cv = cv
         self.n_runs = n_runs
         self.random_state = random_state
+        self.report_history = report_history
+        self.max_report_events = max_report_events
+        self.max_report_bytes = max_report_bytes
 
     def _fit_impl(
         self,
@@ -175,6 +186,19 @@ class NullImportanceSelector(BaseFeatureSelector):
         :param X: 输入特征DataFrame
         :param y: 目标变量
         """
+        initialize_history(self)
+        if (
+            isinstance(self.n_runs, (bool, np.bool_))
+            or not isinstance(self.n_runs, (int, np.integer))
+            or self.n_runs < 1
+        ):
+            raise ValueError("n_runs 必须为正整数")
+        if (
+            isinstance(self.threshold, (bool, np.bool_))
+            or not isinstance(self.threshold, (int, float, np.number))
+            or not np.isfinite(self.threshold)
+        ):
+            raise ValueError("Null Importance 阈值必须为有限数值")
         if y is None:
             if self.target not in X.columns:
                 raise ValueError(f"需要传入y或X中包含{self.target}列")
@@ -195,11 +219,19 @@ class NullImportanceSelector(BaseFeatureSelector):
         cv = check_cv(self.cv, y, classifier=True)
 
         n_samples, n_features = X.shape
-        n_splits = cv.get_n_splits()
+        n_splits = cv.get_n_splits(X, y)
+        if n_splits < 1:
+            raise ValueError("交叉验证至少需要一个有效拆分")
 
         # 计算实际标签下的重要性和 shuffle 目标后的 null 重要性。
-        actual_importances = np.zeros((n_features, n_splits * self.n_runs))
-        null_importances = np.zeros((n_features, n_splits * self.n_runs))
+        total_fits = n_splits * self.n_runs
+        retained_fits = min(
+            total_fits, self.max_report_events // max(1, n_features), self.max_report_bytes // (16 * max(1, n_features))
+        )
+        actual_importances = np.zeros((n_features, retained_fits))
+        null_importances = np.zeros((n_features, retained_fits))
+        actual_sum = np.zeros(n_features)
+        null_sum = np.zeros(n_features)
 
         if self.random_state is None:
             base_seed = int(check_random_state(None).randint(0, np.iinfo(np.int32).max))
@@ -210,37 +242,66 @@ class NullImportanceSelector(BaseFeatureSelector):
         estimator_params = self.estimator.get_params(deep=True) if hasattr(self.estimator, "get_params") else {}
         worker_aliases = {"n_jobs", "thread_count", "num_workers"}
         has_parallel_children = any(
-            name.rsplit("__", 1)[-1] in worker_aliases
-            and isinstance(value, (int, np.integer))
-            and value not in (0, 1)
+            name.rsplit("__", 1)[-1] in worker_aliases and isinstance(value, (int, np.integer)) and value not in (0, 1)
             for name, value in estimator_params.items()
         )
         cv_cost = float(self.cv) if isinstance(self.cv, (int, np.integer)) else 5.0
-        results = self._parallel_execute(
-            _run_null_importance_experiment,
-            tasks,
-            task_labels=[f"实验{run + 1}" for run in range(self.n_runs)],
-            has_parallel_children=has_parallel_children,
-            default_backend="loky",
-            workload=ParallelWorkload(
-                task_count=self.n_runs,
-                rows=len(X),
-                columns=X.shape[1],
-                data_bytes=int(X.memory_usage(deep=True).sum()),
-                cost_per_item=max(10.0, cv_cost * 10.0),
-                capability="process_safe",
+        # 实验分批归并：最终均值利用全部实验，诊断矩阵仅保留明确上限内的前缀。
+        for batch_start in range(0, self.n_runs, 32):
+            batch = tasks[batch_start : batch_start + 32]
+            results = self._parallel_execute(
+                _run_null_importance_experiment,
+                batch,
+                task_labels=[f"实验{task[0] + 1}" for task in batch],
                 has_parallel_children=has_parallel_children,
-                operation="Null Importance重复实验",
-            ),
-        )
-        for run, actual, null in results:
-            start = n_splits * run
-            stop = start + n_splits
-            actual_importances[:, start:stop] = actual
-            null_importances[:, start:stop] = null
+                default_backend="loky",
+                workload=ParallelWorkload(
+                    task_count=len(batch),
+                    rows=len(X),
+                    columns=X.shape[1],
+                    data_bytes=int(X.memory_usage(deep=True).sum()),
+                    cost_per_item=max(10.0, cv_cost * 10.0),
+                    capability="process_safe",
+                    has_parallel_children=has_parallel_children,
+                    operation="Null Importance重复实验",
+                ),
+            )
+            for run, actual, null in results:
+                if (
+                    actual.shape != (n_features, n_splits)
+                    or null.shape != actual.shape
+                    or not np.isfinite(actual).all()
+                    or not np.isfinite(null).all()
+                ):
+                    raise ValueError("Null Importance 实验返回的模型重要性形状或数值无效")
+                actual_sum += actual.sum(axis=1)
+                null_sum += null.sum(axis=1)
+                start = n_splits * run
+                stop = min(start + n_splits, retained_fits)
+                if stop > start:
+                    actual_importances[:, start:stop] = actual[:, : stop - start]
+                    null_importances[:, start:stop] = null[:, : stop - start]
+                for position, feature in enumerate(X.columns):
+                    record_event(
+                        self,
+                        {
+                            "轮次": run + 1,
+                            "特征": feature,
+                            "动作": "实际与随机重要性实验",
+                            "指标名称": "实际重要性",
+                            "指标值": float(actual[position].mean()),
+                            "是否有效": True,
+                            "原因": "本轮交叉验证训练折均值",
+                            "补充信息": {"随机标签重要性": float(null[position].mean())},
+                        },
+                        diagnostic=True,
+                    )
 
-        actual_mean = actual_importances.mean(axis=1)
-        null_mean = null_importances.mean(axis=1)
+        actual_mean = actual_sum / total_fits
+        null_mean = null_sum / total_fits
+        self.importance_runs_total_ = total_fits
+        self.importance_runs_stored_ = retained_fits
+        self.importance_runs_truncated_ = total_fits - retained_fits
         actual_total = actual_mean.sum()
         null_total = null_mean.sum()
         actual_pct = actual_mean / actual_total if actual_total != 0 else np.zeros_like(actual_mean)
@@ -250,6 +311,12 @@ class NullImportanceSelector(BaseFeatureSelector):
         self.actual_importances_ = pd.Series(actual_mean, index=X.columns)
         self.null_importances_ = pd.Series(null_mean, index=X.columns)
         self.scores_ = pd.Series(scores, index=X.columns)
+        if not np.isfinite(scores).all():
+            raise ValueError("Null Importance 模型重要性产生非有限得分")
+        self.score_name_ = "实际与随机重要性占比差"
+        self.score_direction_ = "越大越好"
+        self.effective_threshold_ = self.threshold
+        self.selection_stopping_reason_ = "完成全部实际与随机标签实验"
         self.actual_importance_runs_ = pd.DataFrame(actual_importances.T, columns=X.columns)
         self.null_importance_runs_ = pd.DataFrame(null_importances.T, columns=X.columns)
         self.importance_details_ = pd.DataFrame(
@@ -267,6 +334,20 @@ class NullImportanceSelector(BaseFeatureSelector):
         selected_mask = scores > self.threshold
         self.selected_features_ = X.columns[selected_mask].tolist()
         self._drop_reason = f"实际重要性%-Null重要性% <= {self.threshold}"
+        for feature, value in self.scores_.items():
+            record_event(
+                self,
+                {
+                    "轮次": self.n_runs,
+                    "特征": feature,
+                    "动作": "保留" if feature in self.selected_features_ else "剔除",
+                    "指标名称": self.score_name_,
+                    "指标值": value,
+                    "有效阈值": self.threshold,
+                    "是否有效": True,
+                    "原因": "占比差严格大于阈值" if value > self.threshold else self._drop_reason,
+                },
+            )
 
         dropped_cols = X.columns[~selected_mask].tolist()
         if len(dropped_cols) > 0:
@@ -285,7 +366,16 @@ class NullImportanceSelector(BaseFeatureSelector):
             )
         else:
             self.dropped_ = pd.DataFrame(
-                columns=["特征", "剔除原因", "实际重要性", "Null重要性", "实际重要性%", "Null重要性%", "特征得分", "阈值"]
+                columns=[
+                    "特征",
+                    "剔除原因",
+                    "实际重要性",
+                    "Null重要性",
+                    "实际重要性%",
+                    "Null重要性%",
+                    "特征得分",
+                    "阈值",
+                ]
             )
 
     def get_importance_details(self) -> pd.DataFrame:

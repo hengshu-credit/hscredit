@@ -11,6 +11,7 @@ from hscredit._compat import (
     _install_pandas_string_methods_alias,
     needs_lightgbm_dask_pandas_compat,
     needs_lightgbm_sklearn_compat,
+    needs_lightgbm_verbosity_compat,
     needs_seaborn_pandas_compat,
     prepare_dependency,
     prepare_runtime_compatibility,
@@ -35,8 +36,10 @@ def test_lightgbm_dask_pandas_matrix_has_explicit_boundaries():
 def test_lightgbm_sklearn_matrix_has_explicit_boundaries():
     """LightGBM 与 scikit-learn 适配使用明确版本上下界。"""
     assert needs_lightgbm_sklearn_compat(_version("4.5.0"), _version("1.8.0"))
+    assert needs_lightgbm_sklearn_compat(_version("4.5.0"), _version("1.6.0"))
+    assert needs_lightgbm_sklearn_compat(_version("4.5.0"), _version("1.7.2"))
     assert not needs_lightgbm_sklearn_compat(_version("4.6.0"), _version("1.8.0"))
-    assert not needs_lightgbm_sklearn_compat(_version("4.5.0"), _version("1.7.2"))
+    assert not needs_lightgbm_sklearn_compat(_version("4.5.0"), _version("1.5.2"))
     assert not needs_lightgbm_sklearn_compat(None, _version("1.8.0"))
 
 
@@ -155,8 +158,9 @@ def test_lightgbm_fit_strategy_is_version_based():
     assert _lightgbm_fit_api(Version("4.6.0")) == "callbacks"
 
 
-def test_lightgbm_sklearn_adapter_renames_keyword_in_version_matrix():
-    """命中矩阵时将旧参数名转为 sklearn 1.8 的新参数名。"""
+@pytest.mark.parametrize("sklearn_version", ["1.6.0", "1.7.2", "1.8.0"])
+def test_lightgbm_sklearn_adapter_renames_keyword_in_version_matrix(sklearn_version):
+    """弃用期与移除后均将旧参数名转为 sklearn 1.6 起的新参数名。"""
     from hscredit._compat import install_lightgbm_sklearn_compat
 
     received = []
@@ -169,8 +173,8 @@ def test_lightgbm_sklearn_adapter_renames_keyword_in_version_matrix():
     sklearn_module = SimpleNamespace(_LGBMCheckXY=check_xy, _LGBMCheckArray=check_xy)
     lightgbm_module = SimpleNamespace(compat=compat_module, sklearn=sklearn_module)
 
-    install_lightgbm_sklearn_compat(lightgbm_module, Version("4.5.0"), Version("1.8.0"))
-    install_lightgbm_sklearn_compat(lightgbm_module, Version("4.5.0"), Version("1.8.0"))
+    install_lightgbm_sklearn_compat(lightgbm_module, Version("4.5.0"), Version(sklearn_version))
+    install_lightgbm_sklearn_compat(lightgbm_module, Version("4.5.0"), Version(sklearn_version))
     lightgbm_module.compat._LGBMCheckXY("X", force_all_finite=False)
 
     assert received == [{"ensure_all_finite": False}]
@@ -191,6 +195,86 @@ def test_lightgbm_sklearn_adapter_is_noop_outside_version_matrix():
 
     assert lightgbm_module.compat._LGBMCheckXY is check_xy
     assert lightgbm_module.sklearn._LGBMCheckArray is check_xy
+
+
+def test_lightgbm_verbosity_matrix_has_explicit_boundaries():
+    """仅兼容已有上游确认的 4.0–4.4 日志重置缺陷。"""
+    assert needs_lightgbm_verbosity_compat(Version("4.0.0"))
+    assert needs_lightgbm_verbosity_compat(Version("4.4.0"))
+    assert not needs_lightgbm_verbosity_compat(Version("3.3.5"))
+    assert not needs_lightgbm_verbosity_compat(Version("4.5.0"))
+    assert not needs_lightgbm_verbosity_compat(None)
+
+
+@pytest.mark.parametrize("name", ["verbose", "verbosity"])
+@pytest.mark.parametrize("level", [-1, 0, 1])
+def test_lightgbm_reset_preserves_existing_verbosity_and_explicit_changes(name, level):
+    """目标函数重置保留原日志级别，显式日志更新仍生效，不改调用者字典。"""
+    from hscredit._compat import install_lightgbm_verbosity_compat
+
+    class Booster:
+        def __init__(self):
+            self.params = {name: level}
+            self.received = []
+
+        def reset_parameter(self, params):
+            self.received.append(dict(params))
+            self.params.update(params)
+            return self
+
+    module = SimpleNamespace(Booster=Booster)
+    install_lightgbm_verbosity_compat(module, Version("4.1.0"))
+    wrapped = Booster.reset_parameter
+    install_lightgbm_verbosity_compat(module, Version("4.1.0"))
+    assert Booster.reset_parameter is wrapped
+    booster = Booster()
+    objective = {"objective": "none"}
+    assert booster.reset_parameter(objective) is booster
+    assert objective == {"objective": "none"}
+    assert booster.received[-1] == {"objective": "none", name: level}
+    booster.reset_parameter({name: 2})
+    booster.reset_parameter({"learning_rate": 0.05})
+    assert booster.received[-1] == {"learning_rate": 0.05, name: 2}
+    other_alias = "verbosity" if name == "verbose" else "verbose"
+    booster.reset_parameter({other_alias: 0})
+    booster.reset_parameter({"objective": "none"})
+    assert booster.received[-1] == {"objective": "none", other_alias: 0}
+
+
+@pytest.mark.parametrize("version", ["3.3.5", "4.5.0", "4.6.0"])
+def test_lightgbm_verbosity_adapter_is_noop_outside_version_matrix(version):
+    """修复范围之外不包装原生方法。"""
+    from hscredit._compat import install_lightgbm_verbosity_compat
+
+    class Booster:
+        def reset_parameter(self, params):
+            return self
+
+    original = Booster.reset_parameter
+    install_lightgbm_verbosity_compat(SimpleNamespace(Booster=Booster), Version(version))
+    assert Booster.reset_parameter is original
+
+
+def test_lightgbm_custom_objective_respects_quiet_and_verbose(capsys):
+    """真实训练中 quiet 不泄露 C++ 日志，verbose 仍输出训练消息。"""
+    import numpy as np
+    import warnings
+    from hscredit.core.models import LightGBM
+    from hscredit.core.models.losses import FocalLoss
+
+    X = np.arange(400).reshape(200, 2)
+    y = np.tile([0, 1], 100)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        model = LightGBM(objective=FocalLoss(), n_estimators=3, num_leaves=7, n_jobs=1)
+        model.fit(X, y)
+        model.predict_proba(X)
+    quiet = capsys.readouterr()
+    assert not caught
+    assert "[LightGBM]" not in quiet.out + quiet.err
+    LightGBM(objective=FocalLoss(), n_estimators=3, num_leaves=7, n_jobs=1, verbose=True).fit(X, y)
+    verbose = capsys.readouterr()
+    assert "[LightGBM] [Info]" in verbose.out + verbose.err
 
 
 def test_lazy_module_prepares_dependency_before_import(monkeypatch):

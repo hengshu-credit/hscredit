@@ -10,6 +10,7 @@ from __future__ import annotations
 import numpy as np
 
 from .base import BaseLoss
+from ._loss_math import binary_inputs, bce_terms, focal_terms, nonnegative, positive, unit_interval
 
 
 class BalancedFocalLoss(BaseLoss):
@@ -27,11 +28,14 @@ class BalancedFocalLoss(BaseLoss):
 
         y_smooth = y × (1-ε) + ε/2
         p_t      = y_smooth × p + (1-y_smooth) × (1-p)
-        w_t      = (1-β) / (1-β^n_t)      # 有效样本数的倒数
+        E_pos    = (1-β^n_pos) / (1-β)
+        E_neg    = (1-β^n_neg) / (1-β)
+        alpha    = E_neg / (E_pos+E_neg)
+        w_t      = alpha if y=1 else 1-alpha
         Loss     = -w_t × (1-p_t)^γ × log(p_t)
 
     :param gamma: 聚焦参数，默认 2.0
-        - gamma=0 退化为加权交叉熵
+        - gamma=0 且 label_smoothing=0 时退化为类别加权交叉熵
         - gamma 越大，易分类样本权重衰减越快
     :param beta: 有效样本数衰减因子，默认 0.999
         - 内部经验: 0.99~0.9999 之间；样本量越大建议 beta 越接近 1
@@ -77,6 +81,11 @@ class BalancedFocalLoss(BaseLoss):
         name: str = "balanced_focal_loss",
     ):
         super().__init__(name)
+        unit_interval(alpha=alpha, beta=beta, label_smoothing=label_smoothing)
+        nonnegative(gamma=gamma)
+        if beta >= 1:
+            raise ValueError("beta 必须小于 1。")
+        self.is_additive = not auto_alpha
         self.gamma = gamma
         self.beta = beta
         self.label_smoothing = label_smoothing
@@ -92,8 +101,8 @@ class BalancedFocalLoss(BaseLoss):
         n_neg = max(int(np.sum(y_true == 0)), 1)
 
         # 有效样本数
-        e_pos = (1 - self.beta ** n_pos) / (1 - self.beta + 1e-12)
-        e_neg = (1 - self.beta ** n_neg) / (1 - self.beta + 1e-12)
+        e_pos = (1 - self.beta**n_pos) / (1 - self.beta + 1e-12)
+        e_neg = (1 - self.beta**n_neg) / (1 - self.beta + 1e-12)
 
         # alpha 为负样本有效数占比（给少数类更大权重）
         alpha = e_neg / (e_pos + e_neg + 1e-12)
@@ -105,118 +114,72 @@ class BalancedFocalLoss(BaseLoss):
             return y_true
         return y_true * (1 - self.label_smoothing) + self.label_smoothing / 2
 
-    def __call__(
-        self,
-        y_true: np.ndarray,
-        y_pred: np.ndarray,
-    ) -> float:
-        """计算平衡 Focal Loss。
+    def __call__(self, y_true, y_pred) -> float:
+        """计算本损失的平均值，越小越好。
 
-        :param y_true: 真实标签, shape (n_samples,)
-        :param y_pred: 预测概率, shape (n_samples,)
-        :return: 平均损失值
+        :param y_true: 一维 0/1 标签，1 为坏样本。
+        :param y_pred: 同形状坏样本概率，范围 [0, 1]；不是原始分数。
+        :return: float；原始损失值，不根据调参方向改变符号。
+
+        **参考样例**
+
+        >>> from hscredit.core.models.losses import BalancedFocalLoss
+        >>> loss = BalancedFocalLoss()
+        >>> result = loss([0, 0, 1, 1], [0.1, 0.3, 0.7, 0.9])
         """
-        y_true = np.asarray(y_true, dtype=float)
-        y_pred = np.clip(np.asarray(y_pred, dtype=float), 1e-7, 1 - 1e-7)
+        return float(np.mean(self.loss_values(y_true, y_pred)))
 
-        alpha = self._compute_alpha(y_true)
-        y_smooth = self._smooth_labels(y_true)
+    def gradient(self, y_true, y_pred):
+        """返回损失相对坏样本概率的一阶导数。
 
-        # p_t 和 alpha_t
-        p_t = np.where(y_smooth >= 0.5, y_pred, 1 - y_pred)
-        alpha_t = np.where(y_smooth >= 0.5, alpha, 1 - alpha)
+        :param y_true: 一维 0/1 标签，1 为坏样本。
+        :param y_pred: 同形状坏样本概率，范围 [0, 1]；不是原始分数。
+        :return: 与输入等长的一阶导数组，标度为样本数乘以平均损失；详见 BaseLoss.gradient。
 
-        # Focal weight
-        focal_weight = (1 - p_t) ** self.gamma
+        **参考样例**
 
-        # 交叉熵
-        ce = -np.log(np.clip(p_t, 1e-7, 1.0))
-
-        loss = alpha_t * focal_weight * ce
-        return float(np.mean(loss))
-
-    def gradient(
-        self,
-        y_true: np.ndarray,
-        y_pred: np.ndarray,
-    ) -> np.ndarray:
-        """计算梯度。
-
-        :param y_true: 真实标签
-        :param y_pred: 预测概率
-        :return: 梯度数组, shape (n_samples,)
+        >>> from hscredit.core.models.losses import BalancedFocalLoss
+        >>> loss = BalancedFocalLoss()
+        >>> result = loss.gradient([0, 0, 1, 1], [0.1, 0.3, 0.7, 0.9])
         """
-        y_true = np.asarray(y_true, dtype=float)
-        y_pred = np.clip(np.asarray(y_pred, dtype=float), 1e-7, 1 - 1e-7)
+        return self._terms(y_true, y_pred)[1]
 
-        alpha = self._compute_alpha(y_true)
-        y_smooth = self._smooth_labels(y_true)
+    def hessian(self, y_true, y_pred):
+        """返回损失相对坏样本概率的二阶导数。
 
-        grad = np.zeros_like(y_pred, dtype=float)
+        :param y_true: 一维 0/1 标签，1 为坏样本。
+        :param y_pred: 同形状坏样本概率，范围 [0, 1]；不是原始分数。
+        :return: 与输入等长的二阶导数组，标度同 BaseLoss.hessian；框架适配器再做链接函数转换。
 
-        # 正样本 (y_smooth >= 0.5)
-        pos_mask = y_smooth >= 0.5
-        if np.any(pos_mask):
-            p = y_pred[pos_mask]
-            a = alpha
-            g = self.gamma
-            grad[pos_mask] = a * (
-                g * (1 - p) ** (g - 1) * np.log(np.clip(p, 1e-7, 1.0))
-                - (1 - p) ** g / p
-            )
+        **参考样例**
 
-        # 负样本 (y_smooth < 0.5)
-        neg_mask = ~pos_mask
-        if np.any(neg_mask):
-            p = y_pred[neg_mask]
-            a = 1 - alpha
-            g = self.gamma
-            grad[neg_mask] = a * (
-                -g * p ** (g - 1) * np.log(np.clip(1 - p, 1e-7, 1.0))
-                + p ** g / (1 - p)
-            )
-
-        return grad
-
-    def hessian(
-        self,
-        y_true: np.ndarray,
-        y_pred: np.ndarray,
-    ) -> np.ndarray:
-        """计算二阶导数。
-
-        :param y_true: 真实标签
-        :param y_pred: 预测概率
-        :return: 二阶导数数组, shape (n_samples,)
+        >>> from hscredit.core.models.losses import BalancedFocalLoss
+        >>> loss = BalancedFocalLoss()
+        >>> result = loss.hessian([0, 0, 1, 1], [0.1, 0.3, 0.7, 0.9])
         """
-        y_true = np.asarray(y_true, dtype=float)
-        y_pred = np.clip(np.asarray(y_pred, dtype=float), 1e-7, 1 - 1e-7)
+        return self._terms(y_true, y_pred)[2]
 
-        alpha = self._compute_alpha(y_true)
-        y_smooth = self._smooth_labels(y_true)
+    def _terms(self, y_true, y_pred):
+        y, p = binary_inputs(y_true, y_pred)
+        alpha = self._compute_alpha(y)
+        smooth = self._smooth_labels(y)
+        pt = smooth * p + (1 - smooth) * (1 - p)
+        weight = np.where(y == 1, alpha, 1 - alpha)
+        slope = 2 * smooth - 1
+        value, grad, hess = focal_terms(pt, self.gamma)
+        return weight * value, weight * grad * slope, weight * hess * slope**2
 
-        hess = np.zeros_like(y_pred, dtype=float)
-        g = self.gamma
+    def loss_values(self, y_true, y_pred):
+        """逐样本贡献；auto_alpha=True 时权重依赖整个评估数据集。
 
-        pos_mask = y_smooth >= 0.5
-        if np.any(pos_mask):
-            p = y_pred[pos_mask]
-            a = alpha
-            hess[pos_mask] = a * (
-                g * (g - 1) * (1 - p) ** (g - 2) * np.log(np.clip(p, 1e-7, 1.0))
-                + 2 * g * (1 - p) ** (g - 1) / p
-                + (1 - p) ** g / (p ** 2)
-            )
+        :param y_true: 一维 0/1 标签，1 为坏样本。
+        :param y_pred: 同形状坏样本概率，范围 [0, 1]；不是原始分数。
+        :return: 与输入等长的数组，其均值等于本损失值；详见 BaseLoss.loss_values。
 
-        neg_mask = ~pos_mask
-        if np.any(neg_mask):
-            p = y_pred[neg_mask]
-            a = 1 - alpha
-            hess[neg_mask] = a * (
-                g * (g - 1) * p ** (g - 2) * np.log(np.clip(1 - p, 1e-7, 1.0))
-                + 2 * g * p ** (g - 1) / (1 - p)
-                + p ** g / ((1 - p) ** 2)
-            )
+        **参考样例**
 
-        # 确保正定
-        return np.abs(hess) + 1e-6
+        >>> from hscredit.core.models.losses import BalancedFocalLoss
+        >>> loss = BalancedFocalLoss()
+        >>> result = loss.loss_values([0, 0, 1, 1], [0.1, 0.3, 0.7, 0.9])
+        """
+        return self._terms(y_true, y_pred)[0]

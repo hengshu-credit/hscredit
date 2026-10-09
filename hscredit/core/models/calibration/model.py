@@ -106,6 +106,8 @@ class ProbabilityCalibrator(ArtifactSerializableMixin, ClassifierMixin, BaseEsti
         model: Optional[Any] = None,
         positive_class: Optional[Any] = None,
         calibrator_params: Optional[Dict[str, Any]] = None,
+        history_policy: str = "summary",
+        max_history: int = 20,
     ):
         self.method = method
         self.calib_ratio = calib_ratio
@@ -115,6 +117,8 @@ class ProbabilityCalibrator(ArtifactSerializableMixin, ClassifierMixin, BaseEsti
         self.model = model
         self.positive_class = positive_class
         self.calibrator_params = calibrator_params
+        self.history_policy = history_policy
+        self.max_history = max_history
         self._validate_parameters()
 
     def _validate_parameters(self) -> None:

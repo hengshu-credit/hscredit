@@ -64,6 +64,8 @@ class ExcelWriter:
     :param opacity: 颜色填充的透明度，默认为0.85
     :param system: 操作系统类型，可选'mac'、'windows'、'linux'，默认自动检测
     :param condition_color: 条件格式颜色（不包含#），默认为副主题色"F76E6C"
+    :param max_table_cells: 单次表格写入的单元格数量上限，None不额外限制；
+        包括表头和可选索引，始终检查Excel工作表行列上限
 
     **参考样例**
 
@@ -101,7 +103,8 @@ class ExcelWriter:
         theme_color: str = '2639E9',
         opacity: float = 0.85,
         system: Optional[str] = None,
-        condition_color: str = "F76E6C"
+        condition_color: str = "F76E6C",
+        max_table_cells: Optional[int] = None,
     ):
         # 系统检测
         self.system = system
@@ -122,6 +125,9 @@ class ExcelWriter:
         self.fontsize = fontsize
         self.theme_color = theme_color
         self.condition_color = condition_color
+        if max_table_cells is not None and (isinstance(max_table_cells, bool) or not isinstance(max_table_cells, (int, np.integer)) or max_table_cells < 1):
+            raise ValueError("max_table_cells 必须为正整数或 None")
+        self.max_table_cells = max_table_cells
 
         # 加载模板或已有工作簿
         if style_excel is None:
@@ -184,13 +190,15 @@ class ExcelWriter:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
-        """退出上下文管理器时自动保存文件。
+        """正常退出时自动保存；异常退出不发布半成品。
 
         :param exc_type: 异常类型
         :param exc_val: 异常值
         :param exc_tb: 异常追踪信息
         """
-        if self._filename is not None:
+        if exc_type is not None:
+            self.workbook.close()
+        elif self._filename is not None:
             self.save(self._filename)
 
     def set_filename(self, filename: str) -> 'ExcelWriter':
@@ -1028,7 +1036,6 @@ class ExcelWriter:
         self._validate_decimal(decimal)
         resolved_speed = self._resolve_write_speed(data, speed, index=index)
         fast = resolved_speed == "fast"
-        df = data if fast else data.copy()
 
         # 解析起始位置
         if isinstance(insert_space, str):
@@ -1041,6 +1048,13 @@ class ExcelWriter:
             start_col = get_column_letter(start_col)
 
         table_end_col_idx = start_col_idx + len(data.columns) + (data.index.nlevels if index else 0)
+        row_count = len(data) + (data.columns.nlevels if header else 0)
+        column_count = table_end_col_idx - start_col_idx
+        if start_row < 1 or start_col_idx < 1 or start_row + max(row_count, 1) - 1 > 1_048_576 or table_end_col_idx - 1 > 16_384:
+            raise ValueError("表格超出Excel单工作表上限（1,048,576行、16,384列），请分表或导出明细文件")
+        if self.max_table_cells is not None and row_count * column_count > self.max_table_cells:
+            raise ValueError(f"表格预计写入 {row_count * column_count} 个单元格，超过 max_table_cells={self.max_table_cells}")
+        df = data if fast else data.copy()
         fast_widths = (
             self._initial_fast_widths(worksheet, start_col_idx, table_end_col_idx - 1)
             if fast and auto_width
@@ -1150,7 +1164,7 @@ class ExcelWriter:
         # 迭代行数据
         def _iter_rows(df, header=True, index=True):
             columns = df.columns.tolist()
-            indexs = df.index.tolist()
+            indexs = df.index if index else None
             for i, row in enumerate(dataframe_to_rows(df, header=header, index=False)):
                 if header:
                     if i < df.columns.nlevels:
@@ -3035,6 +3049,9 @@ class ExcelWriter:
             ``mode='append'`` 合并另一个目标文件时，只复制单元格值/样式，不保证保留该目标
             文件中的迷你图、透视表、原生图与图片。
 
+        所有 XML 注入和可读性校验在同目录临时文件完成，最后一次原子替换。
+        保存失败不会覆盖此前成功文件。
+
         :param filename: 保存路径
         :param close: 是否关闭workbook，默认为True
         """
@@ -3064,20 +3081,26 @@ class ExcelWriter:
         if os.path.dirname(filename) != "" and not os.path.exists(os.path.dirname(filename)):
             os.makedirs(os.path.dirname(filename), exist_ok=True)
 
-        # 保存文件
-        self.workbook.save(filename)
-
-        # 注入迷你图（openpyxl 不支持写入 sparkline，需在保存后修改 xlsx XML）
-        self._inject_sparklines(filename)
-
-        # 注入数据透视表/透视图（openpyxl 不支持创建透视表，需在保存后修改 xlsx XML）
-        self._inject_pivots(filename)
-
-        # 关闭数字样文本的“以文本形式存储的数字”错误提示；openpyxl 不会写出 ignoredErrors。
-        self._inject_number_stored_as_text_ignored_errors(filename)
-
-        if close:
-            self.workbook.close()
+        destination = os.path.abspath(os.fspath(filename))
+        descriptor, temporary = tempfile.mkstemp(prefix=".hscredit-", suffix=".xlsx", dir=os.path.dirname(destination))
+        os.close(descriptor)
+        try:
+            self.workbook.save(temporary)
+            self._inject_sparklines(temporary)
+            self._inject_pivots(temporary)
+            self._inject_number_stored_as_text_ignored_errors(temporary)
+            with zipfile.ZipFile(temporary, "r") as package:
+                broken = package.testzip()
+                if broken is not None:
+                    raise ValueError(f"Excel 文件校验失败，损坏部件: {broken}")
+            validation_workbook = load_workbook(temporary, read_only=True)
+            validation_workbook.close()
+            os.replace(temporary, destination)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
+            if close:
+                self.workbook.close()
 
 
 def resolve_condition_color(

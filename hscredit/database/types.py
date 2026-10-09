@@ -263,6 +263,8 @@ class DatabaseCapabilities:
         是否支持表结构扫描。
     write_modes : frozenset[str]
         可保证的 ``a/r/o/d`` 写入模式集合。
+    atomic_replace : bool
+        是否提供显式暂存替换协议；True仍须运行时验证版本、表结构及可见性前提。
     """
 
     transactions: bool = True
@@ -270,6 +272,7 @@ class DatabaseCapabilities:
     native_bulk_write: bool = False
     metadata_export: bool = True
     write_modes: FrozenSet[str] = field(default_factory=lambda: frozenset({"o", "d"}))
+    atomic_replace: bool = False
 
     def __post_init__(self) -> None:
         normalized = frozenset(self.write_modes)
@@ -299,6 +302,14 @@ class WriteResult:
         后端最终一致性说明。
     details : dict
         适配器附加的原始统计信息。
+    rows_staged、batches_staged : int
+        atomic_replace_table确认提交至暂存表的历史数量，不表示目标已经更新。
+    target_published : bool, optional
+        原子替换入口的未发布/已确认发布/未知状态；普通stream_write不使用此字段。
+    rows_published : int, optional
+        确认发布至目标的行数；发布结果未知时为None。
+    phase : str, optional
+        preparing/staging/publishing/published/publication_unknown等操作阶段。
     """
 
     mode: str
@@ -311,6 +322,13 @@ class WriteResult:
     failed_batch: Optional[int] = None
     consistency: Optional[str] = None
     details: Dict[str, Any] = field(default_factory=dict)
+    staging_table: Optional[str] = None
+    backup_table: Optional[str] = None
+    rows_staged: int = 0
+    batches_staged: int = 0
+    target_published: Optional[bool] = None
+    rows_published: Optional[int] = None
+    phase: Optional[str] = None
 
     def __post_init__(self) -> None:
         if self.mode not in WRITE_MODES:

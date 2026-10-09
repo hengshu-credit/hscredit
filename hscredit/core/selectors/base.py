@@ -27,9 +27,10 @@ from abc import ABC, abstractmethod
 from contextlib import contextmanager
 from typing import Union, List, Dict, Optional, Any, Tuple
 from datetime import datetime
-from pathlib import Path
 import copy
 import inspect
+from time import perf_counter
+from uuid import uuid4
 import numpy as np
 import pandas as pd
 from pandas.api.types import is_complex_dtype
@@ -37,10 +38,12 @@ from pandas.api.types import is_numeric_dtype
 from joblib import parallel_backend as joblib_parallel_backend
 from sklearn.exceptions import NotFittedError as SklearnNotFittedError
 from sklearn.base import BaseEstimator, TransformerMixin, clone
+from sklearn import get_config
 from sklearn.utils.validation import check_is_fitted
 from scipy.sparse import issparse
 
-from ...exceptions import NotFittedError, ValidationError
+from ...exceptions import NotFittedError, ValidationError, DependencyError
+from ...utils.data_contracts import prepare_xy
 from ...utils.parallel import (
     ParallelWorkload,
     ParallelizableMixin,
@@ -139,7 +142,11 @@ def get_feature_importances(estimator) -> np.ndarray:
         except Exception:
             pass
 
-    raise ValidationError(f"无法从 {type(estimator).__name__} 中提取特征重要性。" f"模型需要提供 feature_importances_、coef_ 属性，" f"或 get_score / feature_importance / get_feature_importance 方法。")
+    raise ValidationError(
+        f"无法从 {type(estimator).__name__} 中提取特征重要性。"
+        f"模型需要提供 feature_importances_、coef_ 属性，"
+        f"或 get_score / feature_importance / get_feature_importance 方法。"
+    )
 
 
 class SelectionReportCollector:
@@ -176,7 +183,7 @@ class SelectionReportCollector:
         >>> df = collector.to_dataframe()
     """
 
-    def __init__(self, name: str = "特征筛选流程"):
+    def __init__(self, name: str = "特征筛选流程", *, source=None, relation="auto", strict=True):
         """初始化报告收集器。
 
         **参数**
@@ -188,12 +195,25 @@ class SelectionReportCollector:
         >>> from hscredit.core.selectors.base import SelectionReportCollector
         >>> collector = SelectionReportCollector(name="我的筛选流程")
         """
+        if not isinstance(name, str):
+            if source is not None:
+                raise ValidationError("请只通过一个参数提供报告来源")
+            source, name = name, "特征筛选流程"
+        if relation not in {"auto", "independent", "sequential", "intersection", "union"}:
+            raise ValidationError("未知筛选报告关系类型")
         self.name = name
+        self.relation = relation
+        self.strict = strict
+        self._snapshots = []
         self.reports: List[Dict[str, Any]] = []
         self.created_at = datetime.now()
         self._feature_origin_count: Optional[int] = None
+        if source is not None:
+            self.add_report(source)
 
-    def add_report(self, selector: "BaseFeatureSelector", stage_name: Optional[str] = None) -> "SelectionReportCollector":
+    def add_report(
+        self, selector: "BaseFeatureSelector", stage_name: Optional[str] = None
+    ) -> "SelectionReportCollector":
         """添加筛选器报告。
 
         将已拟合的筛选器结果添加到收集器中，并生成阶段名称。阶段名称默认为"阶段{序号}"。
@@ -222,10 +242,18 @@ class SelectionReportCollector:
         >>> collector.add_report(selector, stage_name="粗筛")
         SelectionReportCollector(name='特征筛选流程', stages=1)
         """
-        if not hasattr(selector, "get_selection_report"):
-            raise ValidationError("selector 必须实现 get_selection_report() 方法")
+        from .reporting import collect_selection_report
 
-        report = selector.get_selection_report()
+        snapshot = collect_selection_report(selector, relation=self.relation, strict=self.strict)
+        if hasattr(selector, "get_selection_report"):
+            report = copy.deepcopy(selector.get_selection_report())
+        else:
+            summary = snapshot.summary
+            roots = summary[summary["父路径"].isna()]
+            report = {"筛选器": type(selector).__name__, "输入特征数": 0, "选中特征数": 0}
+            if len(roots) == 1:
+                row = roots.iloc[0]
+                report.update({"输入特征数": row["输入特征数"], "选中特征数": row["选中特征数"]})
 
         # 添加阶段名称
         if stage_name:
@@ -237,8 +265,26 @@ class SelectionReportCollector:
         if self._feature_origin_count is None and len(self.reports) == 0:
             self._feature_origin_count = report.get("输入特征数")
 
-        self.reports.append(report)
+        self.reports.append(copy.deepcopy(report))
+        self._snapshots.append((report["stage_name"], snapshot.copy()))
         return self
+
+    def add_source(self, source, stage_name=None):
+        """添加已拟合单项、Pipeline、列表或完整报告，保存隔离快照。"""
+        return self.add_report(source, stage_name=stage_name)
+
+    def get_report(self):
+        """返回完整统一报告，列表默认独立比较而非伪造顺序漏斗。"""
+        from .reporting import collect_selection_report, SelectionReport
+
+        if not self._snapshots:
+            return SelectionReport(metadata={"关系类型": "independent", "完整": False, "诊断": ["无筛选记录"]})
+        if len(self._snapshots) == 1:
+            return self._snapshots[0][1].copy()
+        return collect_selection_report(self._snapshots, relation=self.relation, strict=self.strict)
+
+    def get_details(self):
+        return self.get_report().details
 
     def get_summary(self) -> Dict[str, Any]:
         """获取汇总报告。
@@ -278,6 +324,49 @@ class SelectionReportCollector:
         if len(self.reports) == 0:
             return {"状态": "无筛选记录", "message": "请先添加筛选器报告"}
 
+        if self._snapshots:
+            current = self.get_report()
+            stages = current.summary
+            roots = stages[stages["父路径"].isna()]
+            relation = current.metadata.get("关系类型", "independent")
+            single = len(roots) == 1
+            sequential = relation == "sequential"
+            comparable = single or sequential or relation in {"intersection", "union"}
+            first = roots.iloc[0] if len(roots) else None
+            last = roots.iloc[-1] if len(roots) else None
+            original = None if first is None or pd.isna(first["输入特征数"]) else int(first["输入特征数"])
+            final_row = first if single or relation in {"intersection", "union"} else last
+            final = (
+                None
+                if not comparable or final_row is None or pd.isna(final_row["选中特征数"])
+                else int(final_row["选中特征数"])
+            )
+            counts_comparable = original is not None and final is not None and final <= original
+            if single and pd.isna(first["剔除特征数"]):
+                counts_comparable = False
+            return {
+                "流程名称": self.name,
+                "创建时间": self.created_at.strftime("%Y-%m-%d %H:%M:%S"),
+                "关系类型": relation,
+                "状态": "完整" if current.metadata.get("完整", True) else "不完整",
+                "筛选轮次": len(stages),
+                "原始特征数": original if comparable else None,
+                "最终特征数": final,
+                "累计剔除特征数": original - final if counts_comparable else None,
+                "特征保留率": f"{final / original * 100:.2f}%" if original and counts_comparable else "不适用",
+                "筛选器列表": [
+                    {
+                        "阶段": row["阶段名称"],
+                        "筛选器": row["筛选器"],
+                        "输入": row["输入特征数"],
+                        "输出": row["选中特征数"],
+                        "剔除": row["剔除特征数"],
+                        "执行状态": row["执行状态"],
+                    }
+                    for _, row in stages.iterrows()
+                ],
+            }
+
         # 计算统计信息
         total_selected = self.reports[-1].get("选中特征数", 0) if self.reports else 0
         total_dropped = sum(r.get("输入特征数", 0) - r.get("选中特征数", 0) for r in self.reports)
@@ -289,7 +378,9 @@ class SelectionReportCollector:
             "原始特征数": self._feature_origin_count,
             "最终特征数": total_selected,
             "累计剔除特征数": total_dropped,
-            "特征保留率": f"{total_selected / self._feature_origin_count * 100:.2f}%" if self._feature_origin_count else "N/A",
+            "特征保留率": (
+                f"{total_selected / self._feature_origin_count * 100:.2f}%" if self._feature_origin_count else "N/A"
+            ),
             "筛选器列表": [
                 {
                     "阶段": r.get("stage_name", f"阶段{i+1}"),
@@ -336,6 +427,8 @@ class SelectionReportCollector:
         >>> trace = collector.get_feature_trace()
         >>> print(trace.head())
         """
+        if self._snapshots:
+            return self.get_report().get_feature_trace()
         if len(self.reports) == 0:
             return pd.DataFrame()
 
@@ -358,6 +451,7 @@ class SelectionReportCollector:
             dropped_set = set(dropped_list)
             scores = r.get("特征得分", {})
             dropped_reasons = r.get("剔除原因", [])
+            reason_by_feature = dict(zip(dropped_list, dropped_reasons))
 
             for feat in all_features:
                 status = "选中" if feat in selected else ("剔除" if feat in dropped_set else "未处理")
@@ -366,15 +460,19 @@ class SelectionReportCollector:
                 if status == "选中":
                     score_value = scores.get(feat, "N/A")
                 elif status == "剔除":
-                    try:
-                        idx = dropped_list.index(feat)
-                        score_value = dropped_reasons[idx] if idx < len(dropped_reasons) else "N/A"
-                    except (ValueError, IndexError):
-                        score_value = "N/A"
+                    score_value = reason_by_feature.get(feat, "N/A")
                 else:
                     score_value = "N/A"
 
-                trace_data.append({"特征": feat, "阶段": stage, "筛选器": r.get("筛选器", "Unknown"), "状态": status, "得分/原因": score_value})
+                trace_data.append(
+                    {
+                        "特征": feat,
+                        "阶段": stage,
+                        "筛选器": r.get("筛选器", "Unknown"),
+                        "状态": status,
+                        "得分/原因": score_value,
+                    }
+                )
 
         return pd.DataFrame(trace_data)
 
@@ -409,6 +507,12 @@ class SelectionReportCollector:
         >>> dropped = collector.get_dropped_summary()
         >>> print(f"共剔除 {len(dropped)} 个特征")
         """
+        if self._snapshots:
+            details = self.get_report().details
+            dropped = details.loc[
+                details["筛选结果"] == "剔除", ["特征", "阶段路径", "筛选器", "筛选原因", "指标值"]
+            ].copy()
+            return dropped.rename(columns={"阶段路径": "阶段", "筛选原因": "剔除原因", "指标值": "得分"})
         if len(self.reports) == 0:
             return pd.DataFrame()
 
@@ -419,11 +523,19 @@ class SelectionReportCollector:
 
             for j, feat in enumerate(dropped_features):
                 reason = dropped_reasons[j] if j < len(dropped_reasons) else "Unknown"
-                dropped_records.append({"特征": feat, "阶段": r.get("stage_name", f"阶段{i+1}"), "筛选器": r.get("筛选器", "Unknown"), "剔除原因": reason, "得分": r.get("特征得分", {}).get(feat, "N/A")})
+                dropped_records.append(
+                    {
+                        "特征": feat,
+                        "阶段": r.get("stage_name", f"阶段{i+1}"),
+                        "筛选器": r.get("筛选器", "Unknown"),
+                        "剔除原因": reason,
+                        "得分": r.get("特征得分", {}).get(feat, "N/A"),
+                    }
+                )
 
         return pd.DataFrame(dropped_records)
 
-    def to_dataframe(self) -> pd.DataFrame:
+    def to_dataframe(self, kind: str = "summary") -> pd.DataFrame:
         """转换为 DataFrame 格式。
 
         将收集到的各筛选阶段报告汇总为一个 DataFrame，每行对应一个筛选阶段。
@@ -455,6 +567,11 @@ class SelectionReportCollector:
         >>> df = collector.to_dataframe()
         >>> print(df)
         """
+        if kind not in {"summary", "details"}:
+            raise ValidationError("kind 必须为 summary 或 details")
+        if self._snapshots or kind == "details":
+            result = self.get_report()
+            return result.summary if kind == "summary" else result.details
         if len(self.reports) == 0:
             return pd.DataFrame()
 
@@ -472,78 +589,9 @@ class SelectionReportCollector:
 
         return pd.DataFrame(rows)
 
-    def to_excel(self, filepath: str) -> None:
-        """导出为 Excel 文件。
-
-        将筛选报告导出为多 Sheet 的 Excel 文件，同时生成一份 JSON 格式的详细报告。
-
-        **Excel 文件内容**
-
-        - **筛选汇总** Sheet: 各筛选阶段的统计汇总
-        - **特征追踪** Sheet: 每个特征在各阶段的状态变化（仅在有记录时生成）
-        - **剔除特征** Sheet: 被剔除特征的详细信息（仅在有记录时生成）
-        - **JSON 报告**: 与 Excel 同目录的 `{文件名}_report.json`，包含完整汇总信息
-
-        :param filepath: 保存路径，必须以 `.xlsx` 结尾
-
-        **参考样例**
-
-        >>> from hscredit.core.selectors.base import SelectionReportCollector
-        >>> from hscredit.core.selectors import VarianceSelector
-        >>> import pandas as pd
-        >>> import numpy as np
-        >>> np.random.seed(42)
-        >>> X = pd.DataFrame(np.random.randn(100, 5), columns=[f'f{i}' for i in range(5)])
-        >>> y = pd.Series(np.random.randint(0, 2, 100))
-        >>> collector = SelectionReportCollector()
-        >>> selector = VarianceSelector(threshold=0.1)
-        >>> selector.fit(X, y)
-        >>> collector.add_report(selector)
-        >>> collector.to_excel("筛选报告.xlsx")
-        """
-        output_path = Path(filepath)
-        if output_path.suffix.lower() != ".xlsx":
-            output_path = output_path.with_suffix(".xlsx")
-
-        with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
-            # 写入汇总表
-            summary_df = self.to_dataframe()
-            summary_df.to_excel(writer, sheet_name="筛选汇总", index=False)
-
-            # 写入特征追踪表
-            trace_df = self.get_feature_trace()
-            if len(trace_df) > 0:
-                trace_df.to_excel(writer, sheet_name="特征追踪", index=False)
-
-            # 写入剔除特征表
-            dropped_df = self.get_dropped_summary()
-            if len(dropped_df) > 0:
-                dropped_df.to_excel(writer, sheet_name="剔除特征", index=False)
-
-            # 写入详细报告（JSON格式）
-            import json
-
-            summary = self.get_summary()
-            # 将numpy类型转换为Python原生类型
-
-            def convert(obj):
-                if isinstance(obj, np.integer):
-                    return int(obj)
-                elif isinstance(obj, np.floating):
-                    return float(obj)
-                elif isinstance(obj, np.ndarray):
-                    return obj.tolist()
-                elif isinstance(obj, dict):
-                    return {k: convert(v) for k, v in obj.items()}
-                elif isinstance(obj, list):
-                    return [convert(v) for v in obj]
-                return obj
-
-            summary = convert(summary)
-            summary_json = json.dumps(summary, ensure_ascii=False, indent=2)
-            report_path = output_path.with_name(f"{output_path.stem}_report.json")
-            with report_path.open("w", encoding="utf-8") as f:
-                f.write(summary_json)
+    def to_excel(self, filepath: str, **kwargs):
+        """以版本目录和完成清单发布完整Excel/JSON，返回实际产物路径与状态。"""
+        return self.get_report().save(filepath, formats=("xlsx", "json"), **kwargs)
 
     def print_summary(self) -> None:
         """打印汇总报告到控制台。
@@ -600,7 +648,9 @@ class SelectionReportCollector:
         print(f"{_cjk_ljust('阶段', 10)} {_cjk_ljust('筛选器', 20)} {'输入':>6} {'输出':>6} {'剔除':>6}")
         print("-" * 60)
         for item in summary["筛选器列表"]:
-            print(f"{_cjk_ljust(str(item['阶段']), 10)} {_cjk_ljust(str(item['筛选器']), 20)} {item['输入']:>6} {item['输出']:>6} {item['剔除']:>6}")
+            print(
+                f"{_cjk_ljust(str(item['阶段']), 10)} {_cjk_ljust(str(item['筛选器']), 20)} {str(item['输入']):>6} {str(item['输出']):>6} {str(item['剔除']):>6}"
+            )
         print("=" * 60)
 
     def __len__(self) -> int:
@@ -689,6 +739,38 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
         输入: 2, 输出: 1
     """
 
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        # 目标列是否存在由本次transform输入决定，不能让sklearn按fit时的
+        # 固定字段名再次重命名。容器转换由本类使用本次实际输出完成。
+        cls._sklearn_auto_wrap_output_keys = set()
+
+    def set_output(self, *, transform=None):
+        """配置输出容器；按本次输入决定目标列，不改写拟合字段或报告快照。"""
+        if transform is not None:
+            if transform not in {"default", "pandas", "polars"}:
+                raise ValidationError("transform 必须为 default、pandas 或 polars")
+            self._sklearn_output_config = {"transform": transform}
+        return self
+
+    def _format_transform_output(self, result):
+        mode = getattr(self, "_sklearn_output_config", {}).get(
+            "transform", get_config().get("transform_output", "default")
+        )
+        if mode == "default":
+            return result
+        if not isinstance(result, pd.DataFrame):
+            result = pd.DataFrame(result, columns=list(self.selected_features_))
+        if mode == "pandas":
+            return result
+        if mode == "polars":
+            try:
+                import polars as pl
+            except ImportError as exc:
+                raise DependencyError("polars 输出需要安装可选依赖 polars") from exc
+            return pl.from_pandas(result, include_index=False)
+        raise ValidationError("输出容器只支持 default、pandas 或 polars")
+
     def __init__(
         self,
         target: str = "target",
@@ -701,6 +783,7 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
         force_drop: Optional[List[str]] = None,
         parallel_backend: Optional[str] = None,
         parallel_config: Optional[Dict[str, Any]] = None,
+        target_rm: bool = False,
     ):
         """初始化特征筛选器。
 
@@ -716,6 +799,7 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
         :param force_drop: 强制剔除的特征列表，效果与 exclude 合并
         :param parallel_backend: joblib 并行后端，默认为 None
         :param parallel_config: joblib 扩展配置，默认为 None
+        :param target_rm: 默认False保留输入中的目标列；仅显式True时移除，不影响拟合时目标隔离
         """
         self.target = target
         self.include = include
@@ -727,6 +811,14 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
         self.force_drop = force_drop
         self.parallel_backend = parallel_backend
         self.parallel_config = parallel_config
+        self.target_rm = target_rm
+
+    def __setstate__(self, state):
+        """补齐旧制品构造参数；未声明target_rm的对象默认保留目标列。"""
+        super().__setstate__(state)
+        for name, parameter in inspect.signature(type(self).__init__).parameters.items():
+            if name not in self.__dict__ and parameter.default is not inspect.Parameter.empty:
+                self.__dict__[name] = copy.deepcopy(parameter.default)
 
     def __sklearn_tags__(self):
         """声明筛选器支持缺失值，由具体算法按自身语义处理。"""
@@ -803,6 +895,8 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
         >>> X_out.shape
         (5, 3)
         """
+        if not isinstance(self.target_rm, (bool, np.bool_)):
+            raise ValidationError("target_rm 必须为布尔值")
         if issparse(X):
             raise ValidationError("Sparse input is not supported（不支持稀疏矩阵输入）")
 
@@ -810,11 +904,11 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
         if not isinstance(X, pd.DataFrame):
             values = np.asarray(X)
             if values.ndim != 2:
-                raise ValidationError(
-                    f"Expected 2D array, got {values.ndim}D array instead（特征矩阵必须为二维）"
-                )
+                raise ValidationError(f"Expected 2D array, got {values.ndim}D array instead（特征矩阵必须为二维）")
             X = pd.DataFrame(values)
 
+        if not X.columns.is_unique:
+            raise ValidationError("输入字段名不能重复")
         if any(is_complex_dtype(dtype) for dtype in X.dtypes):
             raise ValidationError("Complex data not supported（不支持复数特征）")
         for column in X.columns:
@@ -827,27 +921,8 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
                 f"0 feature(s) (shape=({len(X)}, 0)) while a minimum of 1 is required.（至少需要一个特征）"
             )
 
-        # 如果y不为None,使用sklearn风格
-        if y is not None:
-            y_array = np.asarray(y)
-            if len(y_array) != len(X):
-                raise ValidationError(f"输入特征与目标变量的样本数量不一致: [{len(X)}, {len(y_array)}]")
-            return X, y_array
-
-        # y为None时,检查是否是scorecardpipeline风格
-        if isinstance(X, pd.DataFrame) and self.target in X.columns:
-            # 从X中分离目标列
-            y = X[self.target]
-            X = X.drop(columns=[self.target])
-            if X.shape[1] == 0:
-                raise ValidationError(
-                    f"0 feature(s) (shape=({len(X)}, 0)) while a minimum of 1 is required."
-                    "（目标列之外至少需要一个特征）"
-                )
-            return X, y
-
-        # 没有目标变量(如无监督筛选器)
-        return X, None
+        prepared = prepare_xy(X, y, target=self.target)
+        return prepared.X, prepared.y
 
     def fit(
         self,
@@ -855,10 +930,20 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
         y: Optional[Union[pd.Series, np.ndarray]] = None,
     ) -> "BaseFeatureSelector":
         """事务式拟合筛选器，失败时恢复进入本次拟合前的完整状态。"""
+        started = perf_counter()
         candidate = clone(self)
+        if hasattr(self, "_sklearn_output_config"):
+            candidate._sklearn_output_config = copy.deepcopy(self._sklearn_output_config)
         self._prepare_fit_candidate(candidate)
         candidate._fit_once(X, y)
         candidate._finalize_fit()
+        candidate.fit_id_ = uuid4().hex
+        candidate.fit_duration_seconds_ = perf_counter() - started
+        candidate._selection_dropped_columns_ = list(getattr(candidate, "dropped_", pd.DataFrame()).columns)
+        candidate._selection_report_dict_ = copy.deepcopy(candidate.get_selection_report())
+        from .reporting import capture_selection_report
+
+        candidate.selection_report_ = capture_selection_report(candidate)
         self._adopt_fitted_candidate(candidate)
         return self
 
@@ -1043,7 +1128,9 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
                 seen[target_key] = item
                 normalized.append(item)
                 continue
-            if previous["candidate_source"] is item["candidate_source"] or cls._payloads_deep_equal(previous["payload"], item["payload"]):
+            if previous["candidate_source"] is item["candidate_source"] or cls._payloads_deep_equal(
+                previous["payload"], item["payload"]
+            ):
                 continue
             raise ValidationError("共享外部对象产生了冲突的候选状态，无法原子提交")
         return normalized
@@ -1084,7 +1171,9 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
             for original_item, candidate_item in zip(original_selectors, candidate_selectors):
                 original_child = self._selector_from_item(original_item)
                 candidate_child = self._selector_from_item(candidate_item)
-                if not (isinstance(original_child, BaseFeatureSelector) and isinstance(candidate_child, BaseFeatureSelector)):
+                if not (
+                    isinstance(original_child, BaseFeatureSelector) and isinstance(candidate_child, BaseFeatureSelector)
+                ):
                     raise ValidationError("候选子筛选器类型与原配置不一致，无法提交拟合状态")
                 # 子级非默认配置优先；只有对应项未配置时才继承父级。
                 child_parallel = self._resolve_child_parallel_config(original_child)
@@ -1110,10 +1199,27 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
                 "is_selector": True,
                 "success_param_refs": success_param_refs,
                 "rollback_param_refs": dict(original_params),
-                "rollback_param_snapshots": {name: (list(value) if name == "selectors" and isinstance(value, list) else copy.deepcopy(value) if isinstance(value, (list, dict, set)) else value) for name, value in original_params.items()},
-                "rollback_param_shallow": {name: list(value) for name, value in original_params.items() if name == "selectors" and isinstance(value, list)},
-                "active_binner": (candidate_params.get("binner") is not None and getattr(candidate, "_binner_instance", None) is candidate_params.get("binner")),
-                "rollback_active_binner": (original_params.get("binner") is not None and getattr(self, "_binner_instance", None) is original_params.get("binner")),
+                "rollback_param_snapshots": {
+                    name: (
+                        list(value)
+                        if name == "selectors" and isinstance(value, list)
+                        else copy.deepcopy(value) if isinstance(value, (list, dict, set)) else value
+                    )
+                    for name, value in original_params.items()
+                },
+                "rollback_param_shallow": {
+                    name: list(value)
+                    for name, value in original_params.items()
+                    if name == "selectors" and isinstance(value, list)
+                },
+                "active_binner": (
+                    candidate_params.get("binner") is not None
+                    and getattr(candidate, "_binner_instance", None) is candidate_params.get("binner")
+                ),
+                "rollback_active_binner": (
+                    original_params.get("binner") is not None
+                    and getattr(self, "_binner_instance", None) is original_params.get("binner")
+                ),
             }
         )
 
@@ -1169,7 +1275,9 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
         """逐项解析子级有效并行配置，非默认子级值拥有最高优先级。"""
         return {
             "n_jobs": child.n_jobs if child.n_jobs != -1 else self.n_jobs,
-            "parallel_backend": (child.parallel_backend if child.parallel_backend is not None else self.parallel_backend),
+            "parallel_backend": (
+                child.parallel_backend if child.parallel_backend is not None else self.parallel_backend
+            ),
             "parallel_config": (child.parallel_config if child.parallel_config is not None else self.parallel_config),
         }
 
@@ -1235,7 +1343,18 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
         ...
         """
         # 检查输入并分离特征和目标
+        self.target_present_at_fit_ = (
+            isinstance(X, pd.DataFrame) and self.target is not None and self.target in X.columns
+        )
+        self.input_columns_at_fit_ = list(X.columns) if isinstance(X, pd.DataFrame) else None
         X_processed, y_processed = self._check_input(X, y)
+        if hasattr(self, "report_history"):
+            from ._selection_history import initialize_history
+
+            initialize_history(self)
+        self.n_samples_in_ = len(X_processed)
+        self.input_dtypes_ = X_processed.dtypes.astype(str).to_dict()
+        self._selection_input_names_ = list(X_processed.columns)
 
         # 保存特征名
         self._get_feature_names(X_processed)
@@ -1277,6 +1396,7 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
         # include 必须作为基准变量继续参与后续计算。
         original_X = X_processed
         selection_columns = self._get_selection_input_columns(original_X)
+        self.selection_input_features_ = list(selection_columns)
         if selection_columns == list(original_X.columns):
             # 最常见路径不创建全量列副本；高维数据上一次无意义的 DataFrame
             # 复制就可能额外占用数 GB 内存。
@@ -1340,7 +1460,11 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
         excluded = set(self.exclude_)
         included = set(self.include_)
         include_participates = self._included_features_participate_in_selection()
-        return [column for column in X.columns if column not in excluded and (include_participates or column not in included)]
+        return [
+            column
+            for column in X.columns
+            if column not in excluded and (include_participates or column not in included)
+        ]
 
     def _initialize_empty_selection_result(self) -> None:
         """当所有输入列都已被强制处理时建立最小、完整的拟合结果。"""
@@ -1407,7 +1531,10 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
         if callable(transform_method):
             try:
                 parameters = inspect.signature(transform_method).parameters.values()
-                supports_metric = any(parameter.name == "metric" or parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters)
+                supports_metric = any(
+                    parameter.name == "metric" or parameter.kind == inspect.Parameter.VAR_KEYWORD
+                    for parameter in parameters
+                )
             except (TypeError, ValueError):
                 supports_metric = False
             if supports_metric:
@@ -1511,7 +1638,11 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
                         self.dropped_ = self.dropped_.loc[~self.dropped_["特征"].isin(self.selected_features_)].copy()
                     if len(self.dropped_) == 0 and len(dropped_cols) == 0:
                         self.dropped_ = pd.DataFrame(columns=self.dropped_.columns)
-                    self.removed_features_ = self.dropped_["特征"].tolist() if len(self.dropped_) > 0 and "特征" in self.dropped_.columns else []
+                    self.removed_features_ = (
+                        self.dropped_["特征"].tolist()
+                        if len(self.dropped_) > 0 and "特征" in self.dropped_.columns
+                        else []
+                    )
                 else:
                     if len(dropped_cols) > 0:
                         reason = getattr(self, "_drop_reason", "不满足筛选条件")
@@ -1581,7 +1712,9 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
                         self.dropped_.loc[self.dropped_["特征"] == col, "剔除原因"] = f"{current_reason} [强制剔除]"
         elif len(self.forced_dropped_) > 0:
             # 创建新的dropped_记录
-            self.dropped_ = pd.DataFrame({"特征": self.forced_dropped_, "剔除原因": ["强制剔除"] * len(self.forced_dropped_)})
+            self.dropped_ = pd.DataFrame(
+                {"特征": self.forced_dropped_, "剔除原因": ["强制剔除"] * len(self.forced_dropped_)}
+            )
 
         # 更新 removed_features_
         if hasattr(self, "dropped_") and len(self.dropped_) > 0:
@@ -1602,7 +1735,8 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
         :param X: 输入数据，支持 DataFrame、numpy 数组或特征名列表
 
         :returns: 筛选后的数据，类型与输入一致
-            - DataFrame/ndarray 输入：返回仅包含选中特征的 DataFrame（若包含 target 列则透传）
+            - DataFrame输入：默认选中特征加输入中已有的target列；target_rm=True时只输出特征
+            - ndarray输入：返回选中列的ndarray
             - 列表输入：返回筛选后的特征名列表
 
         :raises NotFittedError: 当筛选器尚未拟合时
@@ -1626,8 +1760,12 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
             raise NotFittedError("筛选器尚未拟合，请先调用fit方法")
 
         # 如果传入的是列表，返回筛选后的特征列表
+        if not isinstance(self.target_rm, (bool, np.bool_)):
+            raise ValidationError("target_rm 必须为布尔值")
         if isinstance(X, list) and (len(X) == 0 or all(isinstance(item, str) for item in X)):
             selected = [c for c in X if c in self.selected_features_]
+            if not self.target_rm and self.target in X and self.target not in selected:
+                selected.append(self.target)
             return selected
 
         if isinstance(X, pd.DataFrame):
@@ -1641,10 +1779,10 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
 
             # scorecardpipeline 风格: 如果 X 中包含 target 列，透传到输出
             target_col = getattr(self, "target", None)
-            if target_col and target_col in X.columns and target_col not in selected:
-                return X.loc[:, selected + [target_col]]
+            if not self.target_rm and target_col is not None and target_col in X.columns and target_col not in selected:
+                return self._format_transform_output(X.loc[:, selected + [target_col]])
 
-            return X.loc[:, selected]
+            return self._format_transform_output(X.loc[:, selected])
 
         values = np.asarray(X)
         if values.ndim != 2:
@@ -1654,7 +1792,7 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
                 f"X has {values.shape[1]} features, but {self.__class__.__name__} is expecting "
                 f"{self.n_features_in_} features as input（转换数据特征数与拟合时不一致）"
             )
-        return values[:, self.get_support()]
+        return self._format_transform_output(values[:, self.get_support()])
 
     def fit_transform(
         self,
@@ -1701,12 +1839,10 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
         if not hasattr(self, "_is_fitted"):
             raise NotFittedError("筛选器尚未拟合，请先调用fit方法")
 
-        mask = np.zeros(self.n_features_in_, dtype=bool)
-        for col in self.selected_features_:
-            if col in self._feature_names:
-                idx = self._feature_names.index(col)
-                mask[idx] = True
-        return mask
+        selected = set(self.selected_features_)
+        return np.fromiter(
+            (column in selected for column in self._feature_names), dtype=bool, count=self.n_features_in_
+        )
 
     def _get_support_mask(self) -> np.ndarray:
         """实现 sklearn 特征选择器的标准支持掩码接口。"""
@@ -1721,11 +1857,24 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
         """返回转换后的字段名，兼容 sklearn Pipeline。"""
         if not hasattr(self, "_is_fitted"):
             raise NotFittedError("筛选器尚未拟合，请先调用fit方法")
+        if not isinstance(self.target_rm, (bool, np.bool_)):
+            raise ValidationError("target_rm 必须为布尔值")
+        include_target = bool(getattr(self, "target_present_at_fit_", False))
         if input_features is not None:
-            provided = np.asarray(input_features, dtype=object)
-            if provided.shape != self.feature_names_in_.shape or not np.array_equal(provided, self.feature_names_in_):
+            try:
+                provided = list(input_features)
+                include_target = self.target in provided
+                equal = pd.Index([field for field in provided if field != self.target], tupleize_cols=False).equals(
+                    pd.Index(self._feature_names, tupleize_cols=False)
+                )
+            except (TypeError, ValueError):
+                equal = False
+            if not equal:
                 raise ValidationError("input_features 与拟合字段不一致")
-        return np.asarray(self.selected_features_, dtype=object)
+        output = list(self.selected_features_)
+        if not self.target_rm and include_target and self.target not in output:
+            output.append(self.target)
+        return np.fromiter(iter(output), dtype=object, count=len(output))
 
     def get_selection_report(self) -> Dict[str, Any]:
         """获取中文筛选报告。
@@ -1768,13 +1917,21 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
         >>> print(f"输入: {report['输入特征数']}, 选中: {report['选中特征数']}")
         输入: 5, 选中: ...
         """
-        if not hasattr(self, "_is_fitted"):
+        if hasattr(self, "_selection_report_dict_"):
+            return copy.deepcopy(self._selection_report_dict_)
+        if not getattr(self, "_is_fitted", False):
             return {"状态": "未拟合", "message": "请先调用fit方法"}
 
         # 收集参数
         params = {}
         for key, value in self.__dict__.items():
-            if not key.startswith("_") and key not in ["n_features_in_", "selected_features_", "removed_features_", "scores_", "dropped_"]:
+            if not key.startswith("_") and key not in [
+                "n_features_in_",
+                "selected_features_",
+                "removed_features_",
+                "scores_",
+                "dropped_",
+            ]:
                 if isinstance(value, (str, int, float, bool, type(None))):
                     params[key] = value
 
@@ -1785,7 +1942,7 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
         # 添加强制保留/剔除的特征信息
         force_info = {}
         if hasattr(self, "include_") and self.include_:
-            force_info["强制保留"] = self.include_
+            force_info["强制保留"] = [feature for feature in self.include_ if feature in self.selected_features_]
         if hasattr(self, "forced_dropped_") and self.forced_dropped_:
             force_info["强制剔除"] = self.forced_dropped_
 
@@ -1804,9 +1961,11 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
             "输入特征数": self.n_features_in_,
             "选中特征数": len(self.selected_features_),
             "剔除特征数": self.n_features_in_ - len(self.selected_features_),
-            "特征保留率": f"{len(self.selected_features_) / self.n_features_in_ * 100:.2f}%" if self.n_features_in_ > 0 else "0%",
+            "特征保留率": (
+                f"{len(self.selected_features_) / self.n_features_in_ * 100:.2f}%" if self.n_features_in_ > 0 else "0%"
+            ),
             # 特征列表
-            "选中特征": self.selected_features_,
+            "选中特征": list(self.selected_features_),
         }
 
         # 添加dropped信息（DataFrame格式,便于后续分析）
@@ -1821,7 +1980,9 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
             if isinstance(scores_raw, pd.Series):
                 raw_dict = scores_raw.to_dict()
             elif isinstance(scores_raw, np.ndarray):
-                feature_names = getattr(self, "feature_names_", None) or [f"f{i}" for i in range(len(scores_raw))]
+                feature_names = getattr(self, "feature_names_", None)
+                if feature_names is None:
+                    feature_names = getattr(self, "selection_input_features_", self._feature_names)
                 raw_dict = dict(zip(feature_names, scores_raw))
             elif isinstance(scores_raw, dict):
                 raw_dict = scores_raw
@@ -1836,23 +1997,41 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
             report["特征得分"] = scores_dict
 
             # 添加得分统计
-            valid_scores = [v for v in scores_dict.values() if isinstance(v, (int, float))]
+            valid_scores = [v for v in scores_dict.values() if isinstance(v, (int, float)) and np.isfinite(v)]
             if valid_scores:
                 report["得分统计"] = {
                     "最大值": max(valid_scores),
                     "最小值": min(valid_scores),
                     "平均值": sum(valid_scores) / len(valid_scores),
-                    "中位数": sorted(valid_scores)[len(valid_scores) // 2],
+                    "中位数": float(np.median(valid_scores)),
                 }
 
-        return report
+        return copy.deepcopy(report)
 
-    def get_selection_report_df(self) -> pd.DataFrame:
-        """获取简化的 DataFrame 格式报告。
+    def get_selection_result(self):
+        """返回与模型状态隔离的完整报告；读取报告不重新拟合或计算指标。"""
+        if not getattr(self, "_is_fitted", False):
+            raise NotFittedError("筛选器尚未拟合，请先调用fit方法")
+        from .reporting import capture_selection_report
+
+        report = getattr(self, "selection_report_", None)
+        if report is None:
+            report = capture_selection_report(self)
+        return report.copy()
+
+    def get_selection_details(self) -> pd.DataFrame:
+        """统一逐特征决策表，含强制操作和未计算指标，所有筛选器列结构一致。"""
+        if not getattr(self, "_is_fitted", False):
+            raise NotFittedError("筛选器尚未拟合，请先调用fit方法")
+        report = getattr(self, "selection_report_", None)
+        return report.details if report is not None else self.get_selection_result().details
+
+    def get_selection_report_df(self, kind: str = "details") -> pd.DataFrame:
+        """获取固定列明细；kind='summary'兼容原有单行汇总。
 
         适用于快速查看和导出到 Excel 等场景。
 
-        **返回 DataFrame 列说明**
+        **summary 模式返回列说明**
 
         - **筛选器** (`str`): 筛选器类名
         - **筛选方法** (`str`): 筛选方法名称
@@ -1862,7 +2041,8 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
         - **剔除特征数** (`int`): 剔除特征数量
         - **保留率** (`str`): 特征保留比例
 
-        :returns: 包含筛选报告关键指标的 DataFrame（单行）
+        :param kind: details返回完整逐特征决策表，summary返回单行统计
+        :returns: 与其它筛选器相同结构的明细，或显式选择的单行汇总
 
         **参考样例**
 
@@ -1878,6 +2058,12 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
         >>> report_df = selector.get_selection_report_df()
         >>> print(report_df)
         """
+        if kind == "details":
+            return self.get_selection_details()
+        if kind != "summary":
+            raise ValidationError("kind 必须为 details 或 summary")
+        if not getattr(self, "_is_fitted", False):
+            raise NotFittedError("筛选器尚未拟合，请先调用fit方法")
         report = self.get_selection_report()
 
         # 提取关键信息
@@ -1902,7 +2088,7 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
         - **得分** (`float`): 特征在筛选器中的得分
         - **状态** (`str`): 特征状态，取值为 '选中' 或 '剔除'
 
-        DataFrame 按得分降序排列。
+        按拟合输入顺序排列；不同算法得分方向不同，完整语义见get_selection_details。
 
         :returns: 包含特征得分的 DataFrame，无得分时返回仅含列名的空 DataFrame
 
@@ -1920,14 +2106,15 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
         >>> scores_df = selector.get_scores_df()
         >>> print(scores_df.head())
         """
-        if not hasattr(self, "scores_") or self.scores_ is None:
-            return pd.DataFrame(columns=["特征", "得分", "状态"])
-
-        scores = self.scores_.copy()
-        selected = set(self.selected_features_)
+        if not getattr(self, "_is_fitted", False):
+            raise NotFittedError("筛选器尚未拟合，请先调用fit方法")
+        report = self.get_selection_report()
+        scores = report.get("特征得分", {})
+        selected = set(report.get("选中特征", []))
 
         records = []
-        for feat, score in scores.items():
+        for feat in getattr(self, "_selection_input_names_", self._feature_names):
+            score = scores.get(feat, np.nan)
             # 转换numpy类型
             if isinstance(score, (np.integer, np.floating)):
                 score = float(score)
@@ -1935,10 +2122,7 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
             status = "选中" if feat in selected else "剔除"
             records.append({"特征": feat, "得分": score, "状态": status})
 
-        df = pd.DataFrame(records)
-        if len(df) > 0:
-            df = df.sort_values("得分", ascending=False)
-
+        df = pd.DataFrame(records, columns=["特征", "得分", "状态"])
         return df
 
     def get_dropped_df(self) -> pd.DataFrame:
@@ -1965,8 +2149,13 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
         >>> dropped_df = selector.get_dropped_df()
         >>> print(f"共剔除 {len(dropped_df)} 个特征")
         """
+        if hasattr(self, "_selection_report_dict_"):
+            return pd.DataFrame(
+                copy.deepcopy(self._selection_report_dict_.get("剔除详情", [])),
+                columns=self._selection_dropped_columns_,
+            )
         if hasattr(self, "dropped_"):
-            return self.dropped_
+            return self.dropped_.copy(deep=True)
         return pd.DataFrame(columns=["特征", "剔除原因"])
 
     def _get_feature_names(self, X: pd.DataFrame) -> List[str]:
@@ -1983,7 +2172,7 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
         else:
             self._feature_names = [f"feature_{i}" for i in range(X.shape[1])]
         # sklearn 兼容：设置 feature_names_in_ 属性
-        self.feature_names_in_ = np.array(self._feature_names)
+        self.feature_names_in_ = np.fromiter(iter(self._feature_names), dtype=object, count=len(self._feature_names))
         return self._feature_names
 
 
@@ -2039,6 +2228,7 @@ class CompositeFeatureSelector(BaseFeatureSelector):
         n_jobs: Optional[Union[int, float]] = -1,
         parallel_backend: Optional[str] = None,
         parallel_config: Optional[Dict[str, Any]] = None,
+        target_rm: bool = False,
     ):
         """初始化组合特征筛选器。
 
@@ -2061,9 +2251,33 @@ class CompositeFeatureSelector(BaseFeatureSelector):
             n_jobs=n_jobs,
             parallel_backend=parallel_backend,
             parallel_config=parallel_config,
+            target_rm=target_rm,
         )
         self.selectors = selectors
         self.strategy = strategy
+
+    def _check_input(self, X, y=None):
+        if self.strategy not in {"sequential", "intersection"}:
+            raise ValidationError("strategy 必须为 sequential 或 intersection")
+        if not isinstance(self.selectors, (list, tuple)) or not self.selectors:
+            raise ValidationError("selectors 必须是非空筛选器列表")
+        for item in self.selectors:
+            if isinstance(item, tuple):
+                if len(item) != 2 or not isinstance(item[0], str) or not item[0]:
+                    raise ValidationError("具名筛选器必须为 (非空名称, 筛选器)")
+                child = item[1]
+            else:
+                child = item
+            if not isinstance(child, BaseFeatureSelector):
+                raise ValidationError("组合子步骤必须为BaseFeatureSelector实例")
+        self.executed_stages_ = []
+        self.skipped_stages_ = {}
+        return super()._check_input(X, y)
+
+    def _initialize_empty_selection_result(self):
+        super()._initialize_empty_selection_result()
+        self.executed_stages_ = []
+        self.skipped_stages_ = {i: "父级强制操作后无待筛选特征" for i in range(len(self.selectors))}
 
     def _fit_impl(
         self,
@@ -2109,6 +2323,7 @@ class CompositeFeatureSelector(BaseFeatureSelector):
             # 使用当前特征进行筛选；阶段串行执行，每阶段获得完整预算。
             self._configure_child_selector(selector)
             selector.fit(current_X, y)
+            self.executed_stages_.append(i)
 
             # 获取选中特征
             selected = selector.selected_features_
@@ -2127,6 +2342,7 @@ class CompositeFeatureSelector(BaseFeatureSelector):
                     current_X = current_X.loc[:, selected]
             else:
                 current_X = current_X.iloc[:, 0:0]
+                self.skipped_stages_.update({j: "上游无剩余特征" for j in range(i + 1, len(self.selectors))})
                 break
 
         # 最终选中的特征
@@ -2184,6 +2400,7 @@ class CompositeFeatureSelector(BaseFeatureSelector):
         all_dropped = []
         fitted_selectors = list(self.selectors)
         for position, selector_name, selector, named, selected, dropped in results:
+            self.executed_stages_.append(position)
             fitted_selectors[position] = (selector_name, selector) if named else selector
             selected_sets.append(selected)
             if dropped is not None:
@@ -2237,198 +2454,6 @@ class CompositeFeatureSelector(BaseFeatureSelector):
         """
         self._bind_parallel_config_to_child(selector)
 
-    def get_selection_report_df(self) -> pd.DataFrame:
-        """获取详细的 DataFrame 格式报告，穿透底层筛选器。
-
-        记录每一步具体的筛选情况和筛选原因，包括每个特征在各阶段的状态变化、
-        被剔除的原因和具体数值指标、以及每个子筛选器的详细信息。
-
-        **返回 DataFrame 列说明**
-
-        - **状态** (`str`): 报告生成状态，未拟合时为 '未拟合'
-        - **message** (`str`): 状态消息，未拟合时为 '请先调用fit方法'
-
-        未拟合时返回包含状态和消息的单行 DataFrame。
-
-        :returns: 详细的筛选报告 DataFrame
-        """
-        if not hasattr(self, "_is_fitted"):
-            return pd.DataFrame({"状态": ["未拟合"], "message": ["请先调用fit方法"]})
-
-        records = []
-
-        # 获取原始特征列表（从第一个筛选器的输入）
-        all_features = set()
-        for item in self.selectors:
-            if isinstance(item, tuple) and len(item) == 2:
-                selector = item[1]
-            else:
-                selector = item
-            if hasattr(selector, "_feature_names"):
-                all_features.update(selector._feature_names)
-
-        all_features = sorted(list(all_features))
-
-        if self.strategy == "sequential":
-            # 顺序策略：记录每个特征在每个阶段的状态变化
-            current_features = set(all_features)
-
-            for i, item in enumerate(self.selectors):
-                if isinstance(item, tuple) and len(item) == 2:
-                    selector_name = item[0]
-                    selector = item[1]
-                else:
-                    selector_name = item.__class__.__name__
-                    selector = item
-
-                input_count = len(current_features)
-                selected = set(selector.selected_features_) if hasattr(selector, "selected_features_") else set()
-
-                # 获取该筛选器的详细报告
-                selector_report = selector.get_selection_report() if hasattr(selector, "get_selection_report") else {}
-                scores = selector_report.get("特征得分", {}) if isinstance(selector_report, dict) else {}
-
-                # 获取剔除详情
-                dropped_details = {}
-                if hasattr(selector, "dropped_") and len(selector.dropped_) > 0:
-                    for _, row in selector.dropped_.iterrows():
-                        feat = row.get("特征", "")
-                        reason = row.get("剔除原因", "不满足筛选条件")
-                        dropped_details[feat] = reason
-
-                # 为每个特征创建记录
-                for feat in sorted(current_features):
-                    score = scores.get(feat, "N/A") if isinstance(scores, dict) else "N/A"
-
-                    if feat in selected:
-                        status = "选中"
-                        reason = "满足筛选条件"
-                    else:
-                        status = "剔除"
-                        reason = dropped_details.get(feat, "不满足筛选条件")
-
-                    records.append(
-                        {
-                            "特征": feat,
-                            "筛选轮次": i + 1,
-                            "筛选器": selector_name,
-                            "筛选器类型": selector.__class__.__name__,
-                            "策略": self.strategy,
-                            "状态": status,
-                            "得分": score if isinstance(score, (int, float)) else "N/A",
-                            "剔除原因": reason if status == "剔除" else "",
-                            "该轮输入特征数": input_count,
-                            "该轮输出特征数": len(selected),
-                            "该轮剔除特征数": input_count - len(selected),
-                        }
-                    )
-
-                # 更新当前特征集
-                current_features = selected
-
-        else:  # intersection 策略
-            # 收集每个筛选器的结果
-            selector_results = []
-
-            for item in self.selectors:
-                if isinstance(item, tuple) and len(item) == 2:
-                    selector_name = item[0]
-                    selector = item[1]
-                else:
-                    selector_name = item.__class__.__name__
-                    selector = item
-
-                selected = set(selector.selected_features_) if hasattr(selector, "selected_features_") else set()
-
-                # 获取剔除详情
-                dropped_details = {}
-                if hasattr(selector, "dropped_") and len(selector.dropped_) > 0:
-                    for _, row in selector.dropped_.iterrows():
-                        feat = row.get("特征", "")
-                        reason = row.get("剔除原因", "不满足筛选条件")
-                        dropped_details[feat] = reason
-
-                selector_results.append({"name": selector_name, "type": selector.__class__.__name__, "selected": selected, "dropped_details": dropped_details, "report": selector.get_selection_report() if hasattr(selector, "get_selection_report") else {}})
-
-            final_selected = set(self.selected_features_) if hasattr(self, "selected_features_") else set()
-
-            # 为每个原始特征创建记录
-            for feat in all_features:
-                # 确定最终状态
-                if feat in final_selected:
-                    final_status = "选中"
-                    final_reason = "被所有筛选器同时选中"
-                else:
-                    final_status = "剔除"
-                    rejected_by = []
-                    for result in selector_results:
-                        if feat not in result["selected"]:
-                            rejected_by.append(result["name"])
-                    final_reason = f"被以下筛选器剔除: {', '.join(rejected_by)}" if rejected_by else "未被所有筛选器同时选中"
-
-                # 为每个筛选器创建一行记录
-                for i, result in enumerate(selector_results):
-                    scores = result["report"].get("特征得分", {}) if isinstance(result["report"], dict) else {}
-                    score = scores.get(feat, "N/A") if isinstance(scores, dict) else "N/A"
-
-                    if feat in result["selected"]:
-                        stage_status = "选中"
-                        stage_reason = "满足筛选条件"
-                    else:
-                        stage_status = "剔除"
-                        stage_reason = result["dropped_details"].get(feat, "不满足筛选条件")
-
-                    records.append(
-                        {
-                            "特征": feat,
-                            "筛选轮次": i + 1,
-                            "筛选器": result["name"],
-                            "筛选器类型": result["type"],
-                            "策略": self.strategy,
-                            "状态": stage_status,
-                            "得分": score if isinstance(score, (int, float)) else "N/A",
-                            "剔除原因": stage_reason if stage_status == "剔除" else "",
-                            "该轮输入特征数": len(all_features),
-                            "该轮输出特征数": len(result["selected"]),
-                            "该轮剔除特征数": len(all_features) - len(result["selected"]),
-                            "最终状态": final_status,
-                            "最终剔除原因": final_reason if final_status == "剔除" else "",
-                        }
-                    )
-
-        df = pd.DataFrame(records)
-
-        # 添加汇总信息行
-        summary_records = []
-        for i, item in enumerate(self.selectors):
-            if isinstance(item, tuple) and len(item) == 2:
-                selector_name = item[0]
-                selector = item[1]
-            else:
-                selector_name = item.__class__.__name__
-                selector = item
-
-            report = selector.get_selection_report() if hasattr(selector, "get_selection_report") else {}
-            if isinstance(report, dict):
-                summary_records.append(
-                    {
-                        "特征": "[SUMMARY]",
-                        "筛选轮次": i + 1,
-                        "筛选器": selector_name,
-                        "筛选器类型": selector.__class__.__name__,
-                        "策略": self.strategy,
-                        "状态": "汇总",
-                        "得分": "",
-                        "剔除原因": "",
-                        "该轮输入特征数": report.get("输入特征数", "N/A"),
-                        "该轮输出特征数": report.get("选中特征数", "N/A"),
-                        "该轮剔除特征数": report.get("剔除特征数", "N/A"),
-                        "阈值": report.get("阈值", "N/A"),
-                    }
-                )
-
-        if summary_records:
-            summary_df = pd.DataFrame(summary_records)
-            df = pd.concat([df, summary_df], ignore_index=True)
-
-        return df
+    def get_selection_report_df(self, kind: str = "details") -> pd.DataFrame:
+        """与单项筛选器相同的固定列明细；完整子步骤使用collect_selection_report。"""
+        return super().get_selection_report_df(kind=kind)

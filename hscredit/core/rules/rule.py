@@ -406,10 +406,34 @@ class Rule(ParallelizableMixin):
             raise FeatureNotFoundError(f"输入数据缺少列: {missing_cols}")
 
         result = X.eval(self.expr)
+        if np.isscalar(result):
+            if not isinstance(result, (bool, np.bool_)):
+                raise ValueError("规则表达式必须返回布尔命中结果")
+            result = pd.Series(bool(result), index=X.index)
+        if not isinstance(result, pd.Series) or len(result) != len(X):
+            raise ValueError("规则表达式必须为每个样本返回一个命中结果")
+        result = result.fillna(False).astype(bool)
         self.result_ = result
         self._state = RuleState.APPLIED
 
         return result
+
+    def predict_batches(self, data: DataFrame, batch_size: int = 10000):
+        """逐块返回命中结果，不拼接全量明细；保留原始索引与行顺序。"""
+        if not isinstance(batch_size, int) or isinstance(batch_size, bool) or batch_size < 1:
+            raise ValueError("batch_size 必须为正整数")
+        if not isinstance(data, DataFrame):
+            raise InputTypeError("Rule 只能对 DataFrame 执行预测")
+        for start in range(0, len(data), batch_size):
+            yield self.predict(data.iloc[start:start + batch_size])
+
+    def aggregate(self, batches, target=None):
+        """只保留固定规则的可合并命中计数，不保存逐行结果。"""
+        from .accumulator import RuleAccumulator
+        accumulator = RuleAccumulator(self, target=target)
+        for batch in batches:
+            accumulator.update(batch)
+        return accumulator.finalize()
 
     def result(self):
         """获取规则预测结果。

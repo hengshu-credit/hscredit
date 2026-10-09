@@ -52,6 +52,9 @@ format: ## 格式化代码
 	black hscredit tests
 	@echo "✅ 代码格式化完成"
 
+format-check: ## 只读格式检查
+	black --check hscredit tests
+
 # 代码检查
 lint: ## 检查代码质量
 	flake8 hscredit tests --select=E9,F63,F7,F82,F601
@@ -82,6 +85,7 @@ docs: ## 构建文档
 
 # 构建发布包（包含文档构建）
 build: docs ## 构建发布包（同时构建文档）
+	python scripts/build_pypi_readme.py
 	python -m pip install --upgrade build twine
 	rm -rf dist/ build/
 	python -m build
@@ -112,7 +116,7 @@ tox-test: ## 多版本测试
 	@echo "✅ 多版本测试完成"
 
 # 完整检查
-check: format lint type-check test ## 完整检查（格式化+lint+类型+测试）
+check: format-check lint type-check test ## 完整只读检查（格式+lint+类型+测试）
 	@echo "✅ 完整检查通过"
 
 # 快速开始

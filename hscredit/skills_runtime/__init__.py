@@ -4,7 +4,7 @@ import sys
 from typing import Any, Mapping, Optional
 
 from .. import __version__
-from .artifacts import ArtifactTransaction
+from .artifacts import ArtifactTransaction, _json_value
 from .contracts import ExecutionContext, validate_request
 from .errors import SkillExecutionError
 from .io import InputResolver
@@ -47,6 +47,7 @@ def execute_skill(
                     "extras": list(spec.extras),
                 },
             }
+        result['manifest'] = str(transaction.manifest_path) if transaction.artifacts else None
     except SkillExecutionError:
         raise
     except Exception as exc:
@@ -60,7 +61,7 @@ def execute_skill(
             code="HSCREDIT_EXECUTION_FAILED",
             message=f"操作“{normalized.operation}”返回了不支持的结果类型 {type(result).__name__}",
         )
-    return result
+    return _json_value(result)
 
 
 __all__ = ["execute_skill", "SkillExecutionError"]

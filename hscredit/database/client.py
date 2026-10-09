@@ -12,6 +12,7 @@ from .exceptions import (
     DatabaseConnectionError,
     DatabaseMetadataError,
     DatabaseWriteError,
+    database_error_from,
 )
 from .metadata import MetadataInspection, metadata_frame, parse_targets
 from .json_projection import normalize_json_projection
@@ -678,7 +679,23 @@ class Database:
                 result=result,
             ) from exc
 
-        for batch_index, batch in enumerate(chain((first_batch,), batches), start=1):
+        iterator = iter(chain((first_batch,), batches))
+        batch_index = 0
+        while True:
+            batch_index += 1
+            try:
+                batch = next(iterator)
+            except StopIteration:
+                break
+            except KeyboardInterrupt as exc:
+                result.failed_batch = batch_index
+                exc.result = result
+                raise
+            except Exception as exc:
+                result.failed_batch = batch_index
+                raise DatabaseWriteError(
+                    f"读取或校验目标表 {table_name!r} 的第 {batch_index} 批输入失败", result=result,
+                ) from exc
             result.rows_received += len(batch)
             try:
                 batch_result = self.adapter.write_batch(
@@ -689,6 +706,10 @@ class Database:
                     key_columns=resolved_keys,
                     dialect_options=write_options,
                 )
+            except KeyboardInterrupt as exc:
+                result.failed_batch = batch_index
+                exc.result = result
+                raise
             except Exception as exc:
                 result.failed_batch = batch_index
                 raise DatabaseWriteError(
@@ -698,6 +719,7 @@ class Database:
             if batch_result is None:
                 batch_result = BatchWriteResult()
             if not isinstance(batch_result, BatchWriteResult):
+                result.failed_batch = batch_index
                 raise DatabaseWriteError(
                     "数据库适配器 write_batch() 必须返回 BatchWriteResult",
                     result=result,
@@ -731,6 +753,113 @@ class Database:
             ) from exc
         result.completed = True
         return result
+
+    def atomic_replace_table(
+        self,
+        data: Any,
+        table_name: str,
+        *,
+        batch_size: int = 10_000,
+        columns: Optional[Sequence[str]] = None,
+        keep_backup: bool = True,
+    ) -> WriteResult:
+        """显式选择暂存完整写入后的一次原子整表替换，不改变stream_write。
+
+        首版仅支持Oracle MySQL 8.0.13+/8.4中已存在的InnoDB基础表；拒绝
+        入向/出向外键、触发器和无法证明完整元数据可见性的连接。适用于受控
+        维护连接，不自动改变权限，也不建议为日常业务账号扩大权限。
+
+        CREATE TABLE LIKE保留列属性/索引及MySQL支持复制的定义；CHECK约束名称
+        由服务器重新生成，不保证元数据名称不变。拒绝DATA DIRECTORY/INDEX
+        DIRECTORY表选项。暂存和备份均为同schema的随机托管名。
+        分批数据仅提交到暂存表，最终在写锁内一次RENAME交换。构建期间对旧表
+        的并发写入不会合并到新数据，调用方应安排维护窗口；默认保留旧表备份。
+        MySQL原子DDL不是包含全部DML的外部事务。需要CREATE/INSERT/ALTER/DROP/
+        LOCK TABLES及可验证的元数据可见性；暂不展开角色授权证明。
+        专用会话启用严格sql_mode并禁用ALLOW_INVALID_DATES；每条单语句批量
+        INSERT后核查警告，无警告才提交。每批不自动拆语句，超出服务器包大小
+        时明确失败，调用方需减小batch_size。lock_wait_timeout固定为30秒/次
+        元数据锁申请，并非整个操作总超时；不修改全局配置。
+
+        rows_staged/batches_staged表示确认提交到暂存的数量；rows_inserted和
+        rows_published只表示目标发布后行数。target_published为False/True/None，
+        分别表示未发布/已确认发布/请求后结果未知，未知时禁止自动重试。
+        batches_committed在此入口表示已确认目标发布次数（0或1），不是暂存批数。
+        清理失败记录在details，不掩盖主异常；成功发布但清理失败仍返回已发布收据。
+        """
+        self._ensure_open()
+        capabilities = getattr(self.adapter, "capabilities", None)
+        if getattr(self.adapter, "database_type", None) != "mysql" or not getattr(capabilities, "atomic_replace", False):
+            raise DatabaseCapabilityError("当前后端不支持经验证的暂存表原子替换；不会退回清空或删除重建")
+        if not isinstance(keep_backup, bool):
+            raise ValidationError("keep_backup 必须为布尔值")
+        result = WriteResult(mode="o", completed=False, rows_inserted=0, rows_updated=0,
+                             rows_skipped=0, target_published=False, rows_published=0, phase="preparing")
+        session = None
+
+        def update_receipt():
+            if session is None:
+                return
+            result.target_published = session.target_published
+            result.details.update({"publication_attempted": session.publish_attempted,
+                                   "staging_created": session.staging_created,
+                                   "staging_creation_unknown": session.staging_creation_unknown,
+                                   "staging_commit_unknown": session.staging_commit_unknown,
+                                   "cleanup_error_types": [type(error).__name__ for error in session.cleanup_errors],
+                                   "automatic_retry": False})
+            if result.target_published is True:
+                result.rows_inserted = result.rows_published = result.rows_staged
+                result.batches_committed = 1
+            elif result.target_published is None:
+                result.rows_inserted = result.rows_published = None
+                result.phase = "publication_unknown"
+                result.consistency = "发布结果未知，需核查目标/暂存/备份；未重试，未删除不确定对象"
+
+        try:
+            batches = iter(iter_write_batches(data, batch_size=batch_size, columns=columns))
+            try:
+                first_batch = next(batches)
+            except StopIteration as exc:
+                raise InputValidationError("原子替换不接受空输入，以防意外清空目标表") from exc
+            if len(first_batch) == 0 or len(first_batch.columns) == 0 or first_batch.columns.duplicated().any():
+                raise InputValidationError("原子替换需要非空数据和唯一字段名")
+            result.rows_received = len(first_batch)
+            session = self.adapter.atomic_replace_session(table_name)
+            session.keep_backup = keep_backup
+            result.staging_table, result.backup_table = session.staging, session.backup
+            with session:
+                session.prepare()
+                result.phase = "staging"
+                for index, batch in enumerate(chain((first_batch,), batches), 1):
+                    if index > 1:
+                        result.rows_received += len(batch)
+                    session.write_batch(batch)
+                    result.rows_staged += len(batch)
+                    result.batches_staged += 1
+                result.phase = "publishing"
+                session.publish(result.rows_received)
+                result.completed = True
+                result.phase = "published"
+            update_receipt()
+            if session.cleanup_errors:
+                result.phase = "published_cleanup_warning"
+                result.consistency = "目标已发布，但资源或备份清理未全部完成；不要重放数据"
+            else:
+                result.consistency = "全部数据确认写入暂存后，通过一次多表RENAME发布；旧表备份" + ("保留" if keep_backup else "已清理")
+            return result
+        except BaseException as exc:
+            update_receipt()
+            result.failed_batch = 0 if result.phase == "preparing" else result.batches_staged + 1
+            result.completed = False
+            cleanup_error = session.cleanup_errors[0] if session is not None and session.cleanup_errors else None
+            if isinstance(exc, (KeyboardInterrupt, SystemExit, DatabaseCapabilityError, ValidationError, InputValidationError)):
+                exc.result = result
+                if cleanup_error is not None:
+                    exc.cleanup_errors = tuple(session.cleanup_errors)
+                raise
+            raise database_error_from(DatabaseWriteError, f"原子替换失败（阶段={result.phase}）；请按发布收据核查，不要自动重试",
+                                      cause=exc, result=result, sql=getattr(exc, "sql", None),
+                                      params=getattr(exc, "params", None), cleanup_error=cleanup_error)
 
     def close(self) -> None:
         """关闭连接池或原生客户端；重复调用不产生副作用。

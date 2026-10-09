@@ -5,6 +5,7 @@
 
 import gzip
 import pickle
+from contextlib import nullcontext
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Optional, Union
@@ -44,20 +45,23 @@ def _open_file(
         except ImportError:
             raise DependencyError("缺少可选依赖 zstandard，请先安装: pip install zstandard")
     else:
-        return open(file, mode)
+        return nullcontext(file) if hasattr(file, 'read') else open(file, mode)
 
 
 def load_pickle(
     file: Union[str, Path],
     engine: str = "auto",
-    compression: Optional[str] = None
+    compression: Optional[str] = None,
+    *,
+    source_name: Optional[str] = None,
 ) -> Any:
     """导入 pickle 文件。
 
     支持多种序列化引擎（joblib/dill/cloudpickle/pickle）和压缩格式
     （gzip/bz2/xz/lz4/zstd）。支持根据文件扩展名自动检测。
 
-    :param file: pickle 文件路径，支持 .pkl, .pkl.gz, .joblib, .dill 等格式
+    :param file: pickle 文件路径或可定位的二进制文件对象
+    :param source_name: 文件对象的原始文件名，仅用于格式推断，不会重新打开该路径
     :param engine: 使用的序列化引擎，可选：
         - 'auto': 自动检测（根据文件内容和扩展名推断，默认）
         - 'joblib': 使用 joblib（推荐用于 numpy/scipy/sklearn 对象）
@@ -81,7 +85,7 @@ def load_pickle(
     >>> data = load_pickle('model.pkl', engine='cloudpickle')
     >>> data = load_pickle('model.pkl', compression='gzip')
     """
-    file_str = str(file).lower()
+    file_str = str(source_name if source_name is not None else file).lower()
 
     # 自动检测压缩格式
     comp = compression
@@ -114,11 +118,9 @@ def load_pickle(
     # 使用指定引擎加载
     if eng == "joblib":
         if comp:
-            # joblib 需要特殊处理压缩文件
+            # 直接读取解压流，避免再分配一份完整解压字节缓冲。
             with _open_file(file, 'rb', comp) as f:
-                data: bytes = f.read()  # type: ignore
-                buf = BytesIO(data)
-                return joblib.load(buf)
+                return joblib.load(f)
         return joblib.load(file)
 
     elif eng == "dill":

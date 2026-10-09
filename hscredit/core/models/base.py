@@ -130,14 +130,18 @@ def _evaluate_binary_predictions(
         "lift_monotonicity",
         *aliases,
     }
-    normalized = [str(metric).lower() for metric in metrics]
-    unknown = [metric for metric, name in zip(metrics, normalized) if name not in supported]
+    from .losses.base import BaseMetric
+
+    normalized = [metric if isinstance(metric, BaseMetric) else str(metric).lower() for metric in metrics]
+    unknown = [metric for metric, name in zip(metrics, normalized) if not isinstance(name, BaseMetric) and name not in supported]
     if unknown:
         raise ValueError(f"不支持的评估指标: {unknown}")
 
     if weights is not None:
         unsupported = []
         for name in normalized:
+            if isinstance(name, BaseMetric):
+                continue
             if name == "ks":
                 label = "KS"
             elif name in aliases:
@@ -158,7 +162,11 @@ def _evaluate_binary_predictions(
     results = {}
     for name in normalized:
         try:
-            if name == "auc":
+            if isinstance(name, BaseMetric):
+                if name.name in results:
+                    raise ValueError(f"指标名称重复: {name.name}")
+                results[name.name] = name.evaluate(y_true, y_proba, sample_weight=weights)
+            elif name == "auc":
                 results["AUC"] = auc(y_true, y_proba, sample_weight=weights, score_direction=score_direction)
             elif name == "ks":
                 results["KS"] = ks(y_true, y_proba)
@@ -204,7 +212,7 @@ def resolve_custom_objective(objective, sample_weight=None):
     :return: 解析后的目标函数（字符串/可调用对象）
     """
     try:
-        from .losses.base import BaseLoss, _margin_derivatives
+        from .losses.base import BaseLoss, _objective_derivatives
     except Exception:
         return objective
 
@@ -215,13 +223,8 @@ def resolve_custom_objective(objective, sample_weight=None):
     fallback_weight = sample_weight
 
     def _sklearn_obj(y_true: np.ndarray, y_pred: np.ndarray, sample_weight=None):
-        # boosting 框架回调传入原始分数，先 sigmoid 转概率再求梯度
-        prob = 1.0 / (1.0 + np.exp(-np.asarray(y_pred, dtype=float)))
-        gradient, hessian = _margin_derivatives(loss, y_true, prob)
-        weights = validate_sample_weight(fallback_weight if sample_weight is None else sample_weight, len(y_true))
-        if weights is not None:
-            gradient, hessian = gradient * weights, hessian * weights
-        return gradient, hessian
+        weights = fallback_weight if sample_weight is None else sample_weight
+        return _objective_derivatives(loss, y_true, y_pred, weights)
 
     return _sklearn_obj
 
@@ -257,6 +260,11 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, InferenceExportMixin, ArtifactSe
     :param verbose: 是否输出详细信息，默认False
     :param scorecard_params: 概率评分卡参数，可传部分配置覆盖默认值；默认使用
         PDO=50、基准分=600、坏好比由训练标签计算、分数范围0-1000且分越高风险越低
+    :param history_policy: 训练记录保留策略，summary 默认仅保留有界摘要；
+        diagnostics 保留更长诊断摘要；full 显式允许复制逐行训练参数
+    :param max_history: 最多保留训练修订数，默认20，必须为正整数
+    :param weight_type: cost（默认）只将 sample_weight 用于训练，评分先验仍按原始样本；
+        frequency 按频数加权先验定评分刻度。scorecard_params.base_bad_rate 可显式指定业务先验。
     :param kwargs: 模型特定参数
 
     **属性**
@@ -308,6 +316,9 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, InferenceExportMixin, ArtifactSe
         n_jobs: int = -1,
         verbose: bool = False,
         scorecard_params: Optional[Dict[str, Any]] = None,
+        history_policy: str = "summary",
+        max_history: int = 20,
+        weight_type: str = "cost",
         **kwargs,
     ):
         self.objective = objective
@@ -318,6 +329,9 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, InferenceExportMixin, ArtifactSe
         self.random_state = random_state
         self.n_jobs = resolve_n_jobs(n_jobs)
         self.verbose = verbose
+        self.history_policy = history_policy
+        self.max_history = max_history
+        self.weight_type = weight_type
         self.kwargs = kwargs
         self._initialize_scorecard_params(scorecard_params)
 
@@ -343,6 +357,9 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, InferenceExportMixin, ArtifactSe
             for parameter in inspect.signature(self.__init__).parameters.values()
         ):
             params["target"] = self.target
+            params["history_policy"] = getattr(self, "history_policy", "summary")
+            params["max_history"] = getattr(self, "max_history", 20)
+            params["weight_type"] = getattr(self, "weight_type", "cost")
         if deep:
             for name, value in list(params.items()):
                 if hasattr(value, "get_params") and not isinstance(value, type):
@@ -351,7 +368,7 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, InferenceExportMixin, ArtifactSe
 
     def set_params(self, **params):
         """统一更新公开参数和原生参数；显式更新优先于旧 params 字典。"""
-        public = set(self._get_param_names()) | {"target"}
+        public = set(self._get_param_names()) | {"target", "history_policy", "max_history", "weight_type"}
         nested = {}
         for name, value in params.items():
             root, separator, child = name.partition("__")
@@ -512,7 +529,7 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, InferenceExportMixin, ArtifactSe
         X: Union[np.ndarray, pd.DataFrame],
         y: Union[np.ndarray, pd.Series],
         sample_weight: Optional[np.ndarray] = None,
-        metrics: Optional[List[str]] = None,
+        metrics: Optional[List[Any]] = None,
         positive_class: Optional[Any] = None,
         score_direction: str = 'auto',
     ) -> Dict[str, float]:
@@ -521,13 +538,19 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, InferenceExportMixin, ArtifactSe
         :param X: 特征矩阵
         :param y: 真实标签
         :param sample_weight: 样本权重
-        :param metrics: 评估指标列表，默认全部
+        :param metrics: 指标名称、BaseMetric 对象或其列表；可传 loss.metric()
         :param positive_class: 显式正类标签；None 时使用 ``classes_[1]``
         :param score_direction: AUC/Gini分数方向，同 ``metrics.auc``；higher_risk保留原始AUC
         :return: 评估结果字典
         """
         self._require_fitted()
-        requested_metrics = list(self.DEFAULT_METRICS if metrics is None else metrics)
+        from .losses.base import BaseMetric
+
+        requested_metrics = (
+            list(self.DEFAULT_METRICS) if metrics is None
+            else [metrics] if isinstance(metrics, (str, BaseMetric))
+            else list(metrics)
+        )
         probabilities = np.asarray(self.predict_proba(X), dtype=float)
         classes = np.asarray(getattr(self, "classes_", []))
         if classes.shape != (2,) or probabilities.ndim != 2 or probabilities.shape[1] != 2:
@@ -843,13 +866,14 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, InferenceExportMixin, ArtifactSe
         search_space: Optional[Dict[str, Dict[str, Any]]] = None,
         fixed_params: Optional[Dict[str, Any]] = None,
         metric: Union[str, Callable, List] = "ks",
-        direction: Union[str, List[str]] = "maximize",
+        direction: Optional[Union[str, List[str]]] = None,
         n_trials: int = 100,
         cv: int = 5,
         timeout: Optional[int] = None,
         verbose: Optional[bool] = None,
         sample_weight: Optional[np.ndarray] = None,
         show_progress_bar: Optional[bool] = None,
+        loss=None,
         **kwargs,
     ) -> "BaseRiskModel":
         """超参数调优并返回最佳模型.
@@ -860,14 +884,15 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, InferenceExportMixin, ArtifactSe
         :param y: 目标变量，可选
         :param search_space: 参数搜索空间，默认使用自适应空间
         :param fixed_params: 固定参数
-        :param metric: 优化指标
-        :param direction: 优化方向
+        :param metric: 搜索比较指标，可为名称、BaseMetric或概率函数；设为None时使用loss配套指标。
+        :param direction: 优化方向；None按内置/指标对象推断。裸函数必须指定方向。
         :param n_trials: 搜索次数
         :param cv: 交叉验证折数
         :param timeout: 超时时间(秒)
         :param verbose: 是否输出详细信息
-        :param sample_weight: 样本权重，可选
+        :param sample_weight: 训练权重，可选；需要加权评分时另传evaluation_weight。
         :param show_progress_bar: 是否显示进度条；默认跟随 verbose，可显式覆盖
+        :param loss: 可选BaseLoss训练损失，便利入口支持HSCredit XGBoost/LightGBM/CatBoost。
         :param kwargs: 其他传递给 ModelTuner 的参数
         :return: 使用最佳参数训练好的模型实例
 
@@ -880,10 +905,19 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, InferenceExportMixin, ArtifactSe
         >>> # scorecardpipeline风格
         >>> model = LightGBM(target='target')
         >>> best_model = model.tune(df, n_trials=50)
+        >>> # 训练损失与搜索指标分别声明；统一指标对象自带优化方向。
+        >>> from hscredit.core.models.losses import FocalLoss, make_metric
+        >>> loss = FocalLoss(alpha=0.75)
+        >>> best = LightGBM(n_estimators=30).tune(
+        ...     X_train, y_train, loss=loss, metric=loss.metric(),
+        ...     search_space={"max_depth": [2, 3], "num_leaves": [4, 8]}, n_trials=3,
+        ... )
+        >>> best.tuner.get_best_model() is best  # 最佳模型已重训并缓存
+        True
         """
         from .tuning import ModelTuner
 
-        fit_options = {name: kwargs.pop(name) for name in ("groups", "catch", "gc_after_trial") if name in kwargs}
+        fit_options = {name: kwargs.pop(name) for name in ("groups", "catch", "gc_after_trial", "evaluation_weight") if name in kwargs}
         fit_options.update(kwargs.pop("optimize_kwargs", {}))
         kwargs.setdefault("random_state", self.random_state)
 
@@ -908,6 +942,7 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, InferenceExportMixin, ArtifactSe
             target=self.target or "target",
             cv=cv,
             verbose=verbose,
+            loss=loss,
             **kwargs,
         )
         self.tuner = tuner
@@ -961,6 +996,8 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, InferenceExportMixin, ArtifactSe
 
         if training and not 0 <= self.validation_fraction < 1:
             raise ValueError("validation_fraction 必须在 [0, 1) 范围内")
+        if training and getattr(self, "weight_type", "cost") not in ("frequency", "cost"):
+            raise ValueError("weight_type 必须为 frequency 或 cost")
 
         return X, y, sample_weight
 

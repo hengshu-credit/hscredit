@@ -11,6 +11,7 @@ from __future__ import annotations
 import numpy as np
 
 from .base import BaseLoss
+from ._loss_math import binary_inputs, bce_terms, nonnegative, positive, unit_interval
 
 
 class KSFocusedLoss(BaseLoss):
@@ -26,11 +27,13 @@ class KSFocusedLoss(BaseLoss):
 
     数学形式::
 
-        L = bce_weight × BCE
+        overlap_i = exp(-(p_i-midpoint)^2 / (2*bandwidth^2))
+        L = bce_weight × mean((1 + focus_weight × overlap_i) × BCE_i)
           - ks_weight × [μ₁ - μ₀]
           + var_weight × [σ₁² + σ₀²]
 
-        梯度在重叠区通过 focus_weight 放大。
+        midpoint = (μ₁ + μ₀) / 2；导数包含该均值对所有概率的依赖。
+        导数按 n × 平均损失计算；训练框架仅使用 Hessian 的对角项。
 
     :param ks_weight: 分布分离项权重，默认 1.0
         - 内部经验: 0.5~2.0 之间，越大分布分离越强但可能牺牲概率校准
@@ -56,9 +59,9 @@ class KSFocusedLoss(BaseLoss):
     >>> import lightgbm as lgb
     >>> train_data = lgb.Dataset(X_train, label=y_train)
     >>> bst = lgb.train(
-    ...     {'objective': 'binary'},
+    ...     {'objective': loss.to_lightgbm(api='native'), 'metric': 'None'},
     ...     train_data,
-    ...     fobj=loss.to_lightgbm(),
+    ...     feval=loss.metric().to_lightgbm(api='native', raw_score=True),
     ...     num_boost_round=200
     ... )
 
@@ -79,6 +82,8 @@ class KSFocusedLoss(BaseLoss):
         name: str = "ks_focused_loss",
     ):
         super().__init__(name)
+        nonnegative(ks_weight=ks_weight, bce_weight=bce_weight, var_weight=var_weight, focus_weight=focus_weight)
+        positive(bandwidth=bandwidth)
         self.ks_weight = ks_weight
         self.bce_weight = bce_weight
         self.var_weight = var_weight
@@ -124,109 +129,90 @@ class KSFocusedLoss(BaseLoss):
         midpoint: float,
     ) -> np.ndarray:
         """计算重叠区聚焦权重（高斯核）。"""
-        bw_sq = self.bandwidth ** 2 + 1e-12
+        bw_sq = self.bandwidth**2 + 1e-12
         proximity = np.exp(-((y_pred - midpoint) ** 2) / (2 * bw_sq))
         return 1.0 + self.focus_weight * proximity
 
-    def __call__(
-        self,
-        y_true: np.ndarray,
-        y_pred: np.ndarray,
-    ) -> float:
-        """计算 KS 导向损失。
+    def __call__(self, y_true, y_pred) -> float:
+        """高斯重叠区加权 BCE + 均值分离 + 类内方差代理，不等于真实 KS。
 
-        :param y_true: 真实标签, shape (n_samples,)
-        :param y_pred: 预测概率, shape (n_samples,)
-        :return: 损失值
+        :param y_true: 一维 0/1 标签，1 为坏样本。
+        :param y_pred: 同形状坏样本概率，范围 [0, 1]；不是原始分数。
+        :return: float；原始损失值，不根据调参方向改变符号。
+
+        **参考样例**
+
+        >>> from hscredit.core.models.losses import KSFocusedLoss
+        >>> loss = KSFocusedLoss()
+        >>> result = loss([0, 0, 1, 1], [0.1, 0.3, 0.7, 0.9])
         """
-        y_true = np.asarray(y_true, dtype=float)
-        y_pred = np.clip(np.asarray(y_pred, dtype=float), 1e-7, 1 - 1e-7)
+        return self._terms(y_true, y_pred)[0]
 
-        stats = self._distribution_stats(y_true, y_pred)
+    def gradient(self, y_true, y_pred):
+        """包含数据依赖 midpoint 的完整链式导数。
 
-        # 基础 BCE
-        bce = -np.mean(
-            y_true * np.log(y_pred) + (1 - y_true) * np.log(1 - y_pred)
+        :param y_true: 一维 0/1 标签，1 为坏样本。
+        :param y_pred: 同形状坏样本概率，范围 [0, 1]；不是原始分数。
+        :return: 与输入等长的一阶导数组，标度为样本数乘以平均损失；详见 BaseLoss.gradient。
+
+        **参考样例**
+
+        >>> from hscredit.core.models.losses import KSFocusedLoss
+        >>> loss = KSFocusedLoss()
+        >>> result = loss.gradient([0, 0, 1, 1], [0.1, 0.3, 0.7, 0.9])
+        """
+        return self._terms(y_true, y_pred)[1]
+
+    def hessian(self, y_true, y_pred):
+        """返回真实概率 Hessian 对角项，非凸区可为负；不包含跨样本项。
+
+        :param y_true: 一维 0/1 标签，1 为坏样本。
+        :param y_pred: 同形状坏样本概率，范围 [0, 1]；不是原始分数。
+        :return: 与输入等长的二阶导数组，标度同 BaseLoss.hessian；框架适配器再做链接函数转换。
+
+        **参考样例**
+
+        >>> from hscredit.core.models.losses import KSFocusedLoss
+        >>> loss = KSFocusedLoss()
+        >>> result = loss.hessian([0, 0, 1, 1], [0.1, 0.3, 0.7, 0.9])
+        """
+        return self._terms(y_true, y_pred)[2]
+
+    def _terms(self, y_true, y_pred):
+        """返回标量及 n 倍均值的精确一阶导、Hessian 对角项。"""
+        y, p = binary_inputs(y_true, y_pred)
+        n = len(y)
+        stats = self._distribution_stats(y, p)
+        bce, bce_grad, bce_hess = bce_terms(y, p)
+        pos = y == 1
+        neg = ~pos
+        count = np.where(pos, stats["n_pos"], stats["n_neg"])
+        # midpoint 对每个概率的偏导，单类时缺失类的均值保持为 0.5。
+        center_grad = 0.5 / count
+        offset = p - stats["midpoint"]
+        bandwidth_sq = self.bandwidth**2
+        kernel = np.exp(-(offset**2) / (2 * bandwidth_sq))
+        kernel_grad = -offset * kernel / bandwidth_sq
+        kernel_hess = (offset**2 / bandwidth_sq**2 - 1 / bandwidth_sq) * kernel
+        focus = self.focus_weight
+        bce_value = np.mean((1 + focus * kernel) * bce)
+        focus_grad = kernel * bce_grad + kernel_grad * bce - center_grad * np.sum(kernel_grad * bce)
+        focus_hess = (
+            kernel * bce_hess
+            + 2 * (1 - center_grad) * kernel_grad * bce_grad
+            + (1 - 2 * center_grad) * kernel_hess * bce
+            + center_grad**2 * np.sum(kernel_hess * bce)
         )
-
-        # 分布分离项（负号表示最大化间距）
-        separation = -(stats["mu_pos"] - stats["mu_neg"])
-
-        # 类内方差惩罚
-        variance_penalty = stats["var_pos"] + stats["var_neg"]
-
-        return float(
-            self.bce_weight * bce
+        grad = self.bce_weight * (bce_grad + focus * focus_grad)
+        hess = self.bce_weight * (bce_hess + focus * focus_hess)
+        separation = stats["mu_neg"] - stats["mu_pos"]
+        grad += n * self.ks_weight * np.where(pos, -1.0 / count, 1.0 / count)
+        means = np.where(pos, stats["mu_pos"], stats["mu_neg"])
+        grad += n * self.var_weight * 2 * (p - means) / count
+        hess += n * self.var_weight * 2 * (1 - 1 / count) / count
+        value = (
+            self.bce_weight * bce_value
             + self.ks_weight * separation
-            + self.var_weight * variance_penalty
+            + self.var_weight * (stats["var_pos"] + stats["var_neg"])
         )
-
-    def gradient(
-        self,
-        y_true: np.ndarray,
-        y_pred: np.ndarray,
-    ) -> np.ndarray:
-        """计算梯度。
-
-        对于正样本: 推高预测值（增大 μ₁），在重叠区加权。
-        对于负样本: 压低预测值（减小 μ₀），在重叠区加权。
-
-        :param y_true: 真实标签
-        :param y_pred: 预测概率
-        :return: 梯度数组, shape (n_samples,)
-        """
-        y_true = np.asarray(y_true, dtype=float)
-        y_pred = np.clip(np.asarray(y_pred, dtype=float), 1e-7, 1 - 1e-7)
-
-        stats = self._distribution_stats(y_true, y_pred)
-        overlap_w = self._overlap_weight(y_pred, stats["midpoint"])
-
-        # BCE 梯度
-        grad = self.bce_weight * (y_pred - y_true)
-
-        # 分离梯度: 正样本往上推, 负样本往下压
-        pos_mask = y_true == 1
-        neg_mask = y_true == 0
-
-        ks_grad = np.zeros_like(y_pred)
-        ks_grad[pos_mask] = -self.ks_weight / stats["n_pos"]
-        ks_grad[neg_mask] = self.ks_weight / stats["n_neg"]
-
-        # 方差梯度: 向类均值靠拢
-        var_grad = np.zeros_like(y_pred)
-        if stats["n_pos"] > 1:
-            var_grad[pos_mask] = (
-                2 * self.var_weight
-                * (y_pred[pos_mask] - stats["mu_pos"])
-                / stats["n_pos"]
-            )
-        if stats["n_neg"] > 1:
-            var_grad[neg_mask] = (
-                2 * self.var_weight
-                * (y_pred[neg_mask] - stats["mu_neg"])
-                / stats["n_neg"]
-            )
-
-        # 重叠区聚焦加权（仅对 KS 分离梯度）
-        grad += overlap_w * ks_grad + var_grad
-
-        return grad
-
-    def hessian(
-        self,
-        y_true: np.ndarray,
-        y_pred: np.ndarray,
-    ) -> np.ndarray:
-        """计算二阶导数。
-
-        :param y_true: 真实标签
-        :param y_pred: 预测概率
-        :return: 二阶导数数组, shape (n_samples,)
-        """
-        y_true = np.asarray(y_true, dtype=float)
-        y_pred = np.clip(np.asarray(y_pred, dtype=float), 1e-7, 1 - 1e-7)
-
-        # 使用 BCE 二阶导作为基础近似
-        hess = self.bce_weight * y_pred * (1 - y_pred)
-
-        return np.maximum(hess, 1e-6)
+        return float(value), grad, hess

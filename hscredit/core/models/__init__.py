@@ -86,6 +86,16 @@ from .losses import (
     # 基类
     BaseLoss,
     BaseMetric,
+    LossMetric,
+    CallableMetric,
+    make_metric,
+    AUCMetric,
+    TopKCaptureMetric,
+    TopKLiftMetric,
+    BadDebtMetric,
+    ApprovalRateMetric,
+    ProfitMetric,
+    ClassificationCostMetric,
     # 不平衡数据处理
     FocalLoss,
     AsymmetricFocalLoss,
@@ -183,7 +193,7 @@ from .explainability import (
 )
 
 # 导入超参数调优 (tuning/, 可选重依赖 optuna，懒加载)
-_LAZY_TUNING_MODELS = ("ModelTuner", "AutoTuner", "TuningObjective", "TuningSampler")
+_LAZY_TUNING_MODELS = ("ModelTuner", "AutoTuner", "TuningObjective", "TuningSampler", "Metric")
 
 # 搜索空间兼容符号本身不依赖 Optuna，可安全地作为模型模块常规公开 API 导出。
 from .tuning.search_space import (  # noqa: E402
@@ -231,6 +241,16 @@ __all__ = [
     # 损失函数基类
     "BaseLoss",
     "BaseMetric",
+    "LossMetric",
+    "CallableMetric",
+    "make_metric",
+    "AUCMetric",
+    "TopKCaptureMetric",
+    "TopKLiftMetric",
+    "BadDebtMetric",
+    "ApprovalRateMetric",
+    "ProfitMetric",
+    "ClassificationCostMetric",
     # 不平衡数据处理
     "FocalLoss",
     "AsymmetricFocalLoss",

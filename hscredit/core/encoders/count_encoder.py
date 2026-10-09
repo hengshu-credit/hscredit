@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 
 from .base import BaseEncoder
+from ._category_protocol import CategoryToken, MISSING, UNKNOWN, OTHER
 
 
 class CountEncoder(BaseEncoder):
@@ -58,7 +59,7 @@ class CountEncoder(BaseEncoder):
     """
 
     # total_count_ 为训练样本总数，随映射一并序列化
-    _EXTRA_STATE_ATTRS = ["total_count_"]
+    _EXTRA_STATE_ATTRS = ["total_count_", "infrequent_categories_", "_legacy_other_routing_"]
 
     def _get_category_cols(self, X: pd.DataFrame) -> List[str]:
         """自动识别需要编码的列。
@@ -83,6 +84,7 @@ class CountEncoder(BaseEncoder):
         n_jobs: Optional[Union[int, float]] = -1,
         parallel_backend: Optional[str] = None,
         parallel_config: Optional[Dict[str, Any]] = None,
+        passthrough_target: bool = False,
     ):
         """初始化计数编码器。
 
@@ -105,11 +107,14 @@ class CountEncoder(BaseEncoder):
             n_jobs=n_jobs,
             parallel_backend=parallel_backend,
             parallel_config=parallel_config,
+            passthrough_target=passthrough_target,
         )
         self.normalize = normalize
         self.min_group_size = min_group_size
 
         self.total_count_: int = 0
+        self.infrequent_categories_ = {}
+        self._legacy_other_routing_ = False
 
     @classmethod
     def _canonicalize_nan_keys(cls, mapping: Dict) -> Dict:
@@ -124,6 +129,10 @@ class CountEncoder(BaseEncoder):
         serialized = {}
         for key, value in mapping.items():
             key = self._float_nan_representative(key)
+            if isinstance(key, CategoryToken):
+                key = {MISSING: np.nan, UNKNOWN: "__UNKNOWN__", OTHER: "__OTHER__"}.get(key, key)
+            if key in serialized:
+                raise ValueError("传统映射存在保留键冲突，请使用默认类型化 export_mapping()")
             if isinstance(value, pd.Series):
                 serialized[key] = value.to_dict()
             elif isinstance(value, dict):
@@ -139,18 +148,19 @@ class CountEncoder(BaseEncoder):
         :param y: 目标变量（可选），计数编码器不需要
         """
         total_count = len(X)
-        self._fit_columns(X, y, shared_state={"total_count_": total_count})
+        self._fit_columns(X, y, state_attrs=("mapping_", "infrequent_categories_"), shared_state={"total_count_": total_count})
         self.total_count_ = total_count
 
     def _fit_column(self, column, values, y=None):
         counts = values.value_counts(dropna=False)
+        small_categories = []
 
         if self.min_group_size is not None:
-            small_categories = counts[counts < self.min_group_size].index
+            small_categories = [value for value in counts[counts < self.min_group_size].index if not pd.isna(value)]
             if len(small_categories) > 0:
                 other_count = counts[small_categories].sum()
-                counts = counts[counts >= self.min_group_size]
-                counts['__OTHER__'] = other_count
+                counts = counts.drop(index=small_categories)
+                counts[OTHER] = other_count
 
         if self.normalize:
             counts = counts / self.total_count_
@@ -166,21 +176,21 @@ class CountEncoder(BaseEncoder):
 
         if self.handle_missing == 'value':
             if not any(self._is_float_nan_key(key) for key in mapping):
-                mapping[np.nan] = 0 if not self.normalize else 0.0
+                mapping[MISSING] = 0 if not self.normalize else 0.0
         elif self.handle_missing == 'return_nan':
             typed_nan_keys = [key for key in mapping if self._is_float_nan_key(key)]
             if typed_nan_keys:
                 for key in typed_nan_keys:
                     mapping[key] = np.nan
             else:
-                mapping[np.nan] = np.nan
+                mapping[MISSING] = np.nan
 
         if self.handle_unknown == 'value':
-            mapping['__UNKNOWN__'] = 0 if not self.normalize else 0.0
+            mapping[UNKNOWN] = 0 if not self.normalize else 0.0
         elif self.handle_unknown == 'return_nan':
-            mapping['__UNKNOWN__'] = np.nan
+            mapping[UNKNOWN] = np.nan
 
-        return {"mapping_": mapping}
+        return {"mapping_": mapping, "infrequent_categories_": list(small_categories)}
 
     def _transform(self, X: pd.DataFrame, y: Optional[pd.Series] = None) -> pd.DataFrame:
         """转换数据。
@@ -195,14 +205,15 @@ class CountEncoder(BaseEncoder):
         mapping = self.mapping_[column]
         result = values.copy()
 
-        if self.min_group_size is not None and '__OTHER__' in mapping:
+        if self.min_group_size is not None and OTHER in mapping:
             known_categories = set(mapping.keys())
-            known_categories.discard('__OTHER__')
-            known_categories.discard('__UNKNOWN__')
+            known_categories.discard(OTHER)
+            known_categories.discard(UNKNOWN)
 
-            result = result.apply(
-                lambda x: '__OTHER__' if x not in known_categories and pd.notna(x) else x
-            )
+            if getattr(self, "_legacy_other_routing_", False):
+                result = result.apply(lambda x: OTHER if x not in known_categories and pd.notna(x) else x)
+            else:
+                result = result.astype(object).mask(result.isin(self.infrequent_categories_.get(column, [])), OTHER)
 
         result = self._map_with_typed_float_nan(result, mapping)
         typed_missing = pd.Series(

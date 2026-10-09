@@ -115,6 +115,13 @@ hscredit 文档
    overdue_labels
 
 .. toctree::
+   :maxdepth: 1
+   :caption: 建模实践
+
+   articles/losses-guide
+   articles/tuning-guide
+
+.. toctree::
    :maxdepth: 2
    :caption: 数据接入
 

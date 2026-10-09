@@ -1,0 +1,25 @@
+{
+  "状态": "完成",
+  "协议版本": 1,
+  "版本目录": "E:\\workspace\\hscredit\\docs\\assets\\readme\\strategy\\组合筛选完整报告-e4bda04e61a44d15ba6a93bbc7cd7418",
+  "制品": [
+    {
+      "type": "selection_report_json",
+      "path": "E:\\workspace\\hscredit\\docs\\assets\\readme\\strategy\\组合筛选完整报告-e4bda04e61a44d15ba6a93bbc7cd7418\\组合筛选完整报告.json",
+      "sha256": "946244a01df1ae61f3ad6431804bf75231e05c8c850dde2ec516587b45f783d6",
+      "bytes": 35140
+    },
+    {
+      "type": "selection_report_excel",
+      "path": "E:\\workspace\\hscredit\\docs\\assets\\readme\\strategy\\组合筛选完整报告-e4bda04e61a44d15ba6a93bbc7cd7418\\组合筛选完整报告.xlsx",
+      "sha256": "b7e9881bf94641dd1e73658a7f2a813d40bcebec85163cf5f23bf6ac0878e76c",
+      "bytes": 16902
+    },
+    {
+      "type": "selection_report_index",
+      "path": "E:\\workspace\\hscredit\\docs\\assets\\readme\\strategy\\组合筛选完整报告-e4bda04e61a44d15ba6a93bbc7cd7418\\组合筛选完整报告.index.json",
+      "sha256": "61243a737c4529c21c24922eb6ad7fbf4a3f4e543244215b553bd3f0cab4d030",
+      "bytes": 791
+    }
+  ]
+}

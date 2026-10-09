@@ -22,6 +22,7 @@ import numpy as np
 import pandas as pd
 
 from .base import BaseFeatureSelector
+from ._statistical_utils import record_conditions
 
 
 def _matches_regex_feature(task):
@@ -73,7 +74,9 @@ class RegexSelector(BaseFeatureSelector):
         binning_params: Optional[Dict[str, Any]] = None,
         parallel_backend: Optional[str] = None,
         parallel_config: Optional[Dict[str, Any]] = None,
+        target_rm: bool = False,
     ):
+        """初始化筛选器；默认透传已有目标列，仅target_rm=True移除。"""
         super().__init__(
             target=target,
             include=include,
@@ -84,10 +87,20 @@ class RegexSelector(BaseFeatureSelector):
             binning_params=binning_params,
             parallel_backend=parallel_backend,
             parallel_config=parallel_config,
+            target_rm=target_rm,
         )
         self.pattern = pattern
         self.invert = invert
         self.flags = flags
+
+    def _check_input(self, X, y=None):
+        if not isinstance(self.invert, (bool, np.bool_)):
+            raise ValueError("invert 必须是布尔值")
+        try:
+            re.compile(self.pattern, flags=self.flags)
+        except (TypeError, ValueError, re.error) as exc:
+            raise ValueError(f"正则表达式配置无效: {exc}") from exc
+        return super()._check_input(X, y)
 
     def _fit_impl(
         self,
@@ -102,6 +115,10 @@ class RegexSelector(BaseFeatureSelector):
         self._get_feature_names(X)
 
         self._validate_parallel_configuration()
+        # 字段名匹配不需要访问样本值，避免额外全表缺失扫描。
+        self.total_counts_ = pd.Series(len(X), index=X.columns, dtype=np.int64)
+        self.threshold_ = None
+        self.score_name_, self.score_direction_ = "正则匹配", "满足条件"
         matches = np.array(
             [_matches_regex_feature((col, self.pattern, self.flags))[1] for col in X.columns],
             dtype=bool,
@@ -115,4 +132,6 @@ class RegexSelector(BaseFeatureSelector):
             self.scores_ = pd.Series(matches.astype(int), index=X.columns)
 
         self.selected_features_ = selected_cols
-        self._drop_reason = f"特征名不匹配正则表达式: {self.pattern}"
+        self.matches_ = pd.Series(matches, index=X.columns)
+        record_conditions(self, X.columns, 正则策略达标=self.scores_.astype(bool))
+        self._drop_reason = f"特征名{'匹配排除' if self.invert else '不匹配'}正则表达式: {self.pattern}"

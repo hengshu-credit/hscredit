@@ -69,6 +69,14 @@ class LogisticRegression(_ProbabilityScoreCardMixin, InferenceExportMixin, Artif
         - 'saga': 支持 'elasticnet'
     :param calculate_stats: 是否在训练时计算统计信息，默认 True
         设置为 False 可提高训练速度，但无法使用 summary() 方法
+    :param statistics_level: none/coef/full，分别不计算统计、系数推断、不省略VIF；
+        None 时沿用 calculate_stats。coef 的 VIF 列为 NaN
+    :param max_dense_bytes: 统计设计矩阵与协方差的预计字节上限，默认256MiB；
+        超限跳过诊断并记录 statistics_status_，不会中止有效模型预测
+    :param weight_type: frequency 为频数权重，标准误使用加权信息矩阵；cost 为成本权重，
+        暂不提供显著性推断。正则化模型统计标记为近似，VIF仍为未加权设计矩阵诊断
+    :param history_policy: summary/diagnostics/full；默认摘要不复制逐行训练参数
+    :param max_history: 有界训练历史条数，默认20
     :param dual: 是否使用对偶形式，默认 False
         仅当 solver='liblinear' 时有效
     :param tol: 优化算法的收敛容差，默认 1e-4
@@ -103,6 +111,7 @@ class LogisticRegression(_ProbabilityScoreCardMixin, InferenceExportMixin, Artif
         - False: 禁用，保持 sklearn 原始系数符号
     :param target: scorecardpipeline 风格的目标列名，默认 None
     :param scorecard_params: 概率评分卡部分覆盖参数，默认 PDO=50、基准分=600、范围0-1000
+        可用 base_bad_rate 显式指定 (0,1) 内的业务先验；优先于训练样本坏率。
 
     **属性**
 
@@ -185,6 +194,11 @@ class LogisticRegression(_ProbabilityScoreCardMixin, InferenceExportMixin, Artif
         positive_woe_coef: Union[bool, str] = 'auto',
         target: Optional[str] = None,
         scorecard_params: Optional[Dict[str, Any]] = None,
+        history_policy: str = "summary",
+        max_history: int = 20,
+        statistics_level: Optional[str] = None,
+        max_dense_bytes: Optional[int] = 268435456,
+        weight_type: str = "frequency",
     ):
         init_kwargs = {
             "penalty": penalty,
@@ -211,6 +225,11 @@ class LogisticRegression(_ProbabilityScoreCardMixin, InferenceExportMixin, Artif
         self.multi_class = multi_class
         self.positive_woe_coef = positive_woe_coef
         self.target = target
+        self.history_policy = history_policy
+        self.max_history = max_history
+        self.statistics_level = statistics_level
+        self.max_dense_bytes = max_dense_bytes
+        self.weight_type = weight_type
         self._initialize_scorecard_params(scorecard_params)
         self.tuner = None
 
@@ -279,6 +298,15 @@ class LogisticRegression(_ProbabilityScoreCardMixin, InferenceExportMixin, Artif
         record_feature_schema(self, X)
         sample_weight = validate_sample_weight(sample_weight, len(y))
         self._validate_probability_scorecard_labels(y)
+        level = self.statistics_level if self.statistics_level is not None else ("full" if self.calculate_stats else "none")
+        if level not in ("none", "coef", "full"):
+            raise ValueError("statistics_level 必须为 none、coef、full 或 None")
+        if self.weight_type not in ("frequency", "cost"):
+            raise ValueError("weight_type 必须为 frequency 或 cost")
+        if self.max_dense_bytes is not None and (isinstance(self.max_dense_bytes, (bool, np.bool_)) or not isinstance(self.max_dense_bytes, (int, np.integer)) or self.max_dense_bytes < 1):
+            raise ValueError("max_dense_bytes 必须为正整数或 None")
+        self.statistics_status_ = {"状态": "未执行", "级别": level, "权重口径": self.weight_type}
+        self._statistics_requires_weights_ = sample_weight is not None
 
         if self.warm_start and hasattr(self, "raw_coef_"):
             self.coef_ = self.raw_coef_.copy()
@@ -306,22 +334,19 @@ class LogisticRegression(_ProbabilityScoreCardMixin, InferenceExportMixin, Artif
         # 如果不计算统计信息，直接调用父类方法
         apply_positive_woe_coef = self._should_apply_positive_woe_coef(X)
 
-        if not self.calculate_stats:
+        if level == "none":
             fitted_model = super().fit(X, y, sample_weight=sample_weight, **kwargs)
             self._is_fitted = True
             if apply_positive_woe_coef:
                 self.ensure_positive_woe_coefficients()
-            self._fit_probability_scorecard(X, y)
+            self._fit_probability_scorecard(X, y, sample_weight=sample_weight)
             return fitted_model
-
-        # 转换稀疏矩阵
-        X = self._convert_sparse_matrix(X)
 
         # 准备特征名列表（用于summary输出）
         if self.feature_names_in_ is not None:
-            self.names_ = ["const"] + self.feature_names_in_
+            self.names_ = (["const"] if self.fit_intercept else []) + self.feature_names_in_
         else:
-            self.names_ = ["const"] + [f"x{i}" for i in range(X.shape[1])]
+            self.names_ = (["const"] if self.fit_intercept else []) + [f"x{i}" for i in range(X.shape[1])]
 
         # 调用父类fit方法
         super().fit(X, y, sample_weight=sample_weight, **kwargs)
@@ -330,22 +355,39 @@ class LogisticRegression(_ProbabilityScoreCardMixin, InferenceExportMixin, Artif
         if apply_positive_woe_coef:
             self.ensure_positive_woe_coefficients()
 
-        X_model = self._prepare_input_for_model(X)
-
-        # 获取预测概率
-        pred_probs = self._predict_proba_from_prepared_input(X_model)
-
-        # 构建设计矩阵（添加截距列）
-        if self.fit_intercept:
-            X_design = np.hstack([np.ones((X_model.shape[0], 1)), X_model])
-        else:
-            X_design = X_model
-
-        # 计算协方差矩阵和统计信息
-        self._compute_statistics(X_design, pred_probs)
-        self._fit_probability_scorecard(X, y)
+        self._compute_fitted_statistics(X, sample_weight=sample_weight, level=level)
+        self._fit_probability_scorecard(X, y, sample_weight=sample_weight)
 
         return self
+
+    def _compute_fitted_statistics(self, X, sample_weight=None, level="full"):
+        """预测拟合成功后单独计算有预算的诊断，诊断失败不破坏模型。"""
+        import warnings
+
+        if self.coef_.shape[0] != 1 or (sample_weight is not None and self.weight_type == "cost") or self.class_weight is not None:
+            self.statistics_status_.update(状态="不适用", 原因="当前仅支持二分类、无 class_weight 的频数权重统计；成本权重推断未实现")
+            return
+        n, p = X.shape
+        width = p + int(self.fit_intercept)
+        estimate = n * width * 8 * 2 + width * width * 8 * 3
+        self.statistics_status_["预计字节"] = estimate
+        if self.max_dense_bytes is not None and estimate > self.max_dense_bytes:
+            self.statistics_status_.update(状态="超出预算", 原因=f"统计预计 {estimate} 字节，超过 max_dense_bytes={self.max_dense_bytes}")
+            warnings.warn(self.statistics_status_["原因"], UserWarning)
+            return
+        try:
+            prepared = self._prepare_input_for_model(X)
+            probabilities = self._predict_proba_from_prepared_input(prepared)
+            prepared = np.asarray(self._convert_sparse_matrix(prepared), dtype=float)
+            design = np.hstack([np.ones((n, 1)), prepared]) if self.fit_intercept else prepared
+            self._compute_statistics(design, probabilities, sample_weight=sample_weight, compute_vif=level == "full")
+            penalized = self.penalty not in (None, "none")
+            self.statistics_status_.update(状态="近似" if penalized else "完成", 原因="正则化估计下的未惩罚信息矩阵近似，不作严格显著性推断" if penalized else "非正则二分类频数权重信息矩阵")
+        except (ValueError, TypeError, ArithmeticError, MemoryError, np.linalg.LinAlgError) as exc:
+            for name in ("cov_matrix_", "std_err_coef_", "std_err_intercept_", "p_val_coef_", "p_val_intercept_", "z_coef_", "z_intercept_", "vif_"):
+                self.__dict__.pop(name, None)
+            self.statistics_status_.update(状态="失败", 原因=f"{type(exc).__name__}: {exc}")
+            warnings.warn(f"模型训练成功，但统计信息计算失败: {exc}", UserWarning)
 
     def _should_apply_positive_woe_coef(
         self,
@@ -364,11 +406,13 @@ class LogisticRegression(_ProbabilityScoreCardMixin, InferenceExportMixin, Artif
     def ensure_positive_woe_coefficients(
         self,
         X: Optional[Union[pd.DataFrame, np.ndarray]] = None,
+        sample_weight: Optional[np.ndarray] = None,
     ) -> "LogisticRegression":
         """将 WOE 逻辑回归的负系数归一为正，并保持预测结果不变.
 
         做法是：对负系数对应的输入列乘以 -1，同时把系数改成绝对值。
         这样线性预测值保持不变，但模型摘要和评分卡解释更符合 WOE 场景。
+        如果提供 X 重新计算诊断，仍遵守统计预算；原训练带权时需显式提供对应权重。
         """
         check_is_fitted(self)
 
@@ -379,17 +423,23 @@ class LogisticRegression(_ProbabilityScoreCardMixin, InferenceExportMixin, Artif
             if np.any(self.woe_coef_signs_ < 0):
                 self.coef_ = self.coef_.copy()
                 self.coef_[0] = np.abs(coef_vector)
+                # 坐标变换 X'=X*S、beta'=S*beta；无须原始数据也能精确转换
+                # 已有协方差与 z，不能留下正系数/负 z 的矛盾摘要。
+                signs = self.woe_coef_signs_
+                if hasattr(self, "cov_matrix_"):
+                    coordinates = np.r_[1., signs] if self.fit_intercept else signs
+                    self.cov_matrix_ = self.cov_matrix_ * coordinates[:, None] * coordinates[None, :]
+                if hasattr(self, "z_coef_"):
+                    self.z_coef_ = self.z_coef_ * signs
         elif X is None:
             return self
 
-        if X is not None and self.calculate_stats:
-            X_model = self._prepare_input_for_model(X)
-            pred_probs = self._predict_proba_from_prepared_input(X_model)
-            if self.fit_intercept:
-                X_design = np.hstack([np.ones((X_model.shape[0], 1)), X_model])
-            else:
-                X_design = X_model
-            self._compute_statistics(X_design, pred_probs)
+        level = self.statistics_level if self.statistics_level is not None else ("full" if self.calculate_stats else "none")
+        if X is not None and level != "none":
+            if getattr(self, "_statistics_requires_weights_", False) and sample_weight is None:
+                raise ValueError("原模型带权训练，重新计算统计信息时必须提供对应 sample_weight")
+            weights = validate_sample_weight(sample_weight, len(X))
+            self._compute_fitted_statistics(X, sample_weight=weights, level=level)
 
         return self
 
@@ -474,7 +524,9 @@ class LogisticRegression(_ProbabilityScoreCardMixin, InferenceExportMixin, Artif
     def _compute_statistics(
         self,
         X_design: np.ndarray,
-        pred_probs: np.ndarray
+        pred_probs: np.ndarray,
+        sample_weight: Optional[np.ndarray] = None,
+        compute_vif: bool = True,
     ) -> None:
         """计算模型统计信息.
 
@@ -487,6 +539,8 @@ class LogisticRegression(_ProbabilityScoreCardMixin, InferenceExportMixin, Artif
         """
         # 计算协方差矩阵: (X' * W * X)^(-1)
         p = np.prod(pred_probs, axis=1)
+        if sample_weight is not None:
+            p = p * np.asarray(sample_weight, dtype=float)
 
         # 使用伪逆矩阵处理奇异矩阵问题
         # 当存在多重共线性时，矩阵可能不可逆，使用 pinv 更稳健
@@ -545,7 +599,7 @@ class LogisticRegression(_ProbabilityScoreCardMixin, InferenceExportMixin, Artif
             self.p_val_coef_ = scipy.stats.norm.sf(abs(self.z_coef_)) * 2
 
         # 计算VIF（方差膨胀因子）
-        self.vif_ = self._compute_vif(X_design)
+        self.vif_ = self._compute_vif(X_design) if compute_vif else np.full(X_design.shape[1], np.nan)
 
         # 检查是否存在多重共线性问题
         if hasattr(self, 'vif_') and self.vif_ is not None:
@@ -702,17 +756,17 @@ class LogisticRegression(_ProbabilityScoreCardMixin, InferenceExportMixin, Artif
         check_is_fitted(self)
 
         if not hasattr(self, "std_err_coef_"):
-            msg = "统计信息未计算。解决方法:\n"
+            msg = f"统计信息未计算（{getattr(self, 'statistics_status_', {})}）。解决方法:\n"
             msg += "  1. 使用 model.fit(X, y) 重新训练（calculate_stats=True）\n"
             msg += "  2. 初始化时设置 calculate_stats=True"
             raise AssertionError(msg)
 
         # 构建统计表
         data = {
-            "Coef.": np.concatenate([self.intercept_.flatten(), self.coef_.flatten()]),
-            "Std.Err": np.concatenate([self.std_err_intercept_.flatten(), self.std_err_coef_.flatten()]),
-            "z": np.concatenate([self.z_intercept_.flatten(), self.z_coef_.flatten()]),
-            "P>|z|": np.concatenate([self.p_val_intercept_.flatten(), self.p_val_coef_.flatten()]),
+            "Coef.": np.concatenate([self.intercept_.flatten(), self.coef_.flatten()]) if self.fit_intercept else self.coef_.flatten(),
+            "Std.Err": np.concatenate([self.std_err_intercept_.flatten(), self.std_err_coef_.flatten()]) if self.fit_intercept else self.std_err_coef_.flatten(),
+            "z": np.concatenate([self.z_intercept_.flatten(), self.z_coef_.flatten()]) if self.fit_intercept else self.z_coef_.flatten(),
+            "P>|z|": np.concatenate([self.p_val_intercept_.flatten(), self.p_val_coef_.flatten()]) if self.fit_intercept else self.p_val_coef_.flatten(),
         }
 
         summary_df = pd.DataFrame(data, index=self.names_)
@@ -723,6 +777,7 @@ class LogisticRegression(_ProbabilityScoreCardMixin, InferenceExportMixin, Artif
 
         # 添加VIF
         summary_df["VIF"] = self.vif_
+        summary_df.attrs["统计状态"] = dict(getattr(self, "statistics_status_", {}))
 
         return summary_df
 
@@ -967,7 +1022,7 @@ class LogisticRegression(_ProbabilityScoreCardMixin, InferenceExportMixin, Artif
         """
         from ..tuning import ModelTuner
 
-        fit_options = {name: kwargs.pop(name) for name in ("groups", "catch", "gc_after_trial") if name in kwargs}
+        fit_options = {name: kwargs.pop(name) for name in ("groups", "catch", "gc_after_trial", "evaluation_weight") if name in kwargs}
         fit_options.update(kwargs.pop("optimize_kwargs", {}))
         kwargs.setdefault("random_state", self.random_state)
 
@@ -1089,6 +1144,8 @@ class LogisticRegression(_ProbabilityScoreCardMixin, InferenceExportMixin, Artif
     def __setstate__(self, state):
         """支持 pickle 反序列化."""
         self.__dict__.update(state)
+        from .._lifecycle import restore_model_defaults
+        restore_model_defaults(self)
         # 确保父类状态正确恢复
         if not hasattr(self, 'classes_'):
             # 如果模型未拟合，不需要额外处理

@@ -48,7 +48,7 @@ def _feature_drift_worker(task):
     tgt_col = pd.to_numeric(target_series, errors="coerce")
     base_arr = base_col.dropna().values
     tgt_arr = tgt_col.dropna().values
-    if len(base_arr) == 0 or len(tgt_arr) == 0:
+    if len(base_series) == 0 or len(target_series) == 0:
         return {
             "特征名": feature,
             "PSI": np.nan,
@@ -59,7 +59,7 @@ def _feature_drift_worker(task):
     try:
         from ..metrics import psi_table as _psi_table
 
-        psi_df = _psi_table(pd.Series(base_arr), pd.Series(tgt_arr), max_n_bins=psi_bins)
+        psi_df = _psi_table(base_series, target_series, max_n_bins=psi_bins)
         psi_val = float(psi_df["PSI贡献"].sum())
     except Exception:
         psi_val = np.nan
@@ -93,9 +93,9 @@ def _psi_cross_feature_worker(task):
             if index == other_index:
                 psi_matrix.loc[group1, group2] = 0.0
                 stability_matrix.loc[group1, group2] = "相同组"
-            elif index < other_index:
-                data1 = frame.loc[frame[group_col] == group1, feature].dropna()
-                data2 = frame.loc[frame[group_col] == group2, feature].dropna()
+            else:
+                data1 = frame.loc[frame[group_col] == group1, feature]
+                data2 = frame.loc[frame[group_col] == group2, feature]
                 if len(data1) == 0 or len(data2) == 0:
                     psi_value, stability = np.nan, "数据不足"
                 else:
@@ -106,9 +106,7 @@ def _psi_cross_feature_worker(task):
                     except Exception:
                         psi_value, stability = np.nan, "计算失败"
                 psi_matrix.loc[group1, group2] = psi_value
-                psi_matrix.loc[group2, group1] = psi_value
                 stability_matrix.loc[group1, group2] = stability
-                stability_matrix.loc[group2, group1] = stability
     if return_matrix:
         return feature, psi_matrix
     rows = []
@@ -152,7 +150,7 @@ def psi_analysis(base_df: pd.DataFrame,
     psi_df = psi_table(base_df[feature], current_df[feature], max_n_bins=n_bins)
     
     # 计算总PSI
-    psi_value = psi_df['PSI贡献'].sum()
+    psi_value = psi_df['PSI贡献'].sum(min_count=1)
     
     return {
         '特征名': feature,

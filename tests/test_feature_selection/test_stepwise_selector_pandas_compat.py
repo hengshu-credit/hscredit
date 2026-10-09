@@ -54,4 +54,4 @@ def test_calculate_scores_supports_string_indexed_pvalues(monkeypatch):
     )
 
     assert selector.scores_["特征A"] == 0.99
-    assert selector.scores_["特征B"] == 0.0
+    assert np.isnan(selector.scores_["特征B"])

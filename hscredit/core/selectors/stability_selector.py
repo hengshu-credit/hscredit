@@ -28,6 +28,7 @@ import numpy as np
 import pandas as pd
 
 from .base import BaseFeatureSelector
+from ._statistical_utils import record_conditions, record_counts, validate_binary_target, validate_real
 from .iv_selector import _compute_iv_feature, _compute_iv_single
 from .psi_selector import _compute_psi_single
 from ...exceptions import ValidationError
@@ -146,7 +147,9 @@ class StabilityAwareSelector(BaseFeatureSelector):
         binning_params: Optional[Dict[str, Any]] = None,
         parallel_backend: Optional[str] = None,
         parallel_config: Optional[Dict[str, Any]] = None,
+        target_rm: bool = False,
     ):
+        """初始化筛选器；默认透传已有目标列，仅target_rm=True移除。"""
         super().__init__(
             target=target,
             threshold=iv_threshold,
@@ -158,6 +161,7 @@ class StabilityAwareSelector(BaseFeatureSelector):
             binning_params=binning_params,
             parallel_backend=parallel_backend,
             parallel_config=parallel_config,
+            target_rm=target_rm,
         )
         self.iv_threshold = iv_threshold
         self.psi_threshold = psi_threshold
@@ -167,6 +171,21 @@ class StabilityAwareSelector(BaseFeatureSelector):
         self.oot_df = oot_df
         self.psi_bins = psi_bins
         self.random_state = random_state
+
+    def _check_input(self, X, y=None):
+        for name in ("iv_threshold", "psi_threshold", "iv_weight", "psi_weight"):
+            validate_real(getattr(self, name), name, minimum=0)
+        validate_real(self.score_threshold, "score_threshold")
+        if self.iv_weight + self.psi_weight <= 0:
+            raise ValueError("iv_weight 和 psi_weight 至少一个大于 0")
+        if (
+            isinstance(self.psi_bins, (bool, np.bool_))
+            or not isinstance(self.psi_bins, (int, np.integer))
+            or self.psi_bins < 2
+        ):
+            raise ValueError("psi_bins 必须是大于等于 2 的整数")
+        X, y = super()._check_input(X, y)
+        return X, validate_binary_target(y, "StabilityAwareSelector")
 
     # ----------------------------------------------------------
     def _fit_impl(
@@ -178,7 +197,11 @@ class StabilityAwareSelector(BaseFeatureSelector):
             raise ValueError("iv_threshold 和 psi_threshold 不能小于 0")
         if self.iv_weight < 0 or self.psi_weight < 0 or self.iv_weight + self.psi_weight <= 0:
             raise ValueError("iv_weight 和 psi_weight 必须非负且至少一个大于 0")
-        if isinstance(self.psi_bins, (bool, np.bool_)) or not isinstance(self.psi_bins, (int, np.integer)) or int(self.psi_bins) < 2:
+        if (
+            isinstance(self.psi_bins, (bool, np.bool_))
+            or not isinstance(self.psi_bins, (int, np.integer))
+            or int(self.psi_bins) < 2
+        ):
             raise ValueError("psi_bins 必须是大于等于 2 的整数")
         if y is None:
             if self.target not in X.columns:
@@ -187,6 +210,9 @@ class StabilityAwareSelector(BaseFeatureSelector):
             X = X.drop(columns=self.target)
 
         self._get_feature_names(X)
+        record_counts(self, X)
+        self.threshold_ = self.score_threshold
+        self.score_name_, self.score_direction_ = "稳定性综合评分", "越大越好"
         y = np.asarray(y)
 
         iv_source = X
@@ -202,9 +228,14 @@ class StabilityAwareSelector(BaseFeatureSelector):
             if missing:
                 raise ValidationError(f"OOT 数据缺少拟合字段: {missing}")
             oot_source = oot.loc[:, X.columns]
+            if len(oot_source) == 0:
+                raise ValidationError("OOT 数据不能为空")
+            if not oot_source.columns.is_unique:
+                raise ValidationError("OOT 数据字段名不能重复")
             if self._binner_instance is not None:
                 oot_source = self._transform_with_fitted_binner(oot_source)
             expected_source = X
+            self.comparison_mode_ = "训练集与OOT"
         else:
             # 随机对半拆分
             n = len(X)
@@ -214,6 +245,9 @@ class StabilityAwareSelector(BaseFeatureSelector):
             idx = rng.permutation(n)
             expected_source = X.iloc[idx[: n // 2]]
             oot_source = X.iloc[idx[n // 2 :]]
+            self.comparison_mode_ = "随机对半拆分"
+        self.reference_counts_ = pd.Series(len(expected_source), index=X.columns, dtype=np.int64)
+        self.comparison_counts_ = pd.Series(len(oot_source), index=X.columns, dtype=np.int64)
 
         def iter_tasks():
             for col in X.columns:
@@ -238,8 +272,10 @@ class StabilityAwareSelector(BaseFeatureSelector):
         psi_vals = np.array([psi for _, _, psi in results])
 
         # --- 综合评分 ---
-        iv_norm = iv_vals / max(iv_vals.max(), 1e-10)
-        psi_norm = psi_vals / max(psi_vals.max(), 1e-10)
+        self.iv_normalizer_ = max(iv_vals.max(), 1e-10)
+        self.psi_normalizer_ = max(psi_vals.max(), 1e-10)
+        iv_norm = iv_vals / self.iv_normalizer_
+        psi_norm = psi_vals / self.psi_normalizer_
         combined = self.iv_weight * iv_norm - self.psi_weight * psi_norm
 
         self.iv_scores_ = pd.Series(iv_vals, index=X.columns)
@@ -249,6 +285,13 @@ class StabilityAwareSelector(BaseFeatureSelector):
 
         # --- 筛选 ---
         mask = (iv_vals >= self.iv_threshold) & (psi_vals <= self.psi_threshold) & (combined >= self.score_threshold)
+        record_conditions(
+            self,
+            X.columns,
+            IV达标=iv_vals >= self.iv_threshold,
+            PSI达标=psi_vals <= self.psi_threshold,
+            综合评分达标=combined >= self.score_threshold,
+        )
         self.selected_features_ = X.columns[mask].tolist()
 
         dropped_cols = X.columns[~mask].tolist()

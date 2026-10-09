@@ -19,6 +19,7 @@ pip install catboost
 
 from typing import Any, Dict, List, Optional, Tuple, Union
 from .._lifecycle import record_training
+from ..losses.base import BaseLoss, BaseMetric
 
 import numpy as np
 import pandas as pd
@@ -97,7 +98,7 @@ class CatBoost(BaseRiskModel):
         - 'Depthwise': 逐层生长
         - 'Lossguide': 按损失导向生长
     :param objective: 目标函数，默认'Logloss'
-    :param eval_metric: 评估指标，默认'AUC'
+    :param eval_metric: 评估指标，支持 BaseMetric 对象，默认'AUC'；设为 None 时使用自定义损失的配套指标
         - 支持字符串或列表（多个评估指标）
     :param early_stopping_rounds: 早停轮数，默认None
         - 当验证集指标连续N轮没有提升时停止训练
@@ -161,7 +162,7 @@ class CatBoost(BaseRiskModel):
         min_data_in_leaf: int = 1,
         grow_policy: str = "SymmetricTree",
         objective: str = "Logloss",
-        eval_metric: Union[str, List[str], None] = "AUC",
+        eval_metric: Union[str, List[str], BaseMetric, None] = "AUC",
         early_stopping_rounds: Optional[int] = None,
         early_stopping_metric: Optional[str] = None,
         validation_fraction: float = 0.2,
@@ -258,8 +259,10 @@ class CatBoost(BaseRiskModel):
         :param fit_params: 其他fit参数
         :return: self
         """
+        eval_metric = fit_params.pop("eval_metric", self._native_params.get("eval_metric", self.eval_metric))
         # 准备数据（支持从X中提取target）
         X, y, sample_weight = self._prepare_data(X, y, sample_weight, extract_target=True, training=True)
+        scorecard_sample_weight = sample_weight
         self._validate_probability_scorecard_labels(y)
         eval_set = self._prepare_eval_set(eval_set)
 
@@ -296,12 +299,18 @@ class CatBoost(BaseRiskModel):
 
         # 处理评估指标
         requested_metrics = []
-        if self.eval_metric is not None:
+        if eval_metric is not None:
             requested_metrics = (
-                list(self.eval_metric) if isinstance(self.eval_metric, (list, tuple)) else [self.eval_metric]
+                list(eval_metric) if isinstance(eval_metric, (list, tuple)) else [eval_metric]
             )
+            if not requested_metrics:
+                raise ValueError("eval_metric 列表不能为空")
+            if any(isinstance(metric, BaseMetric) for metric in requested_metrics[1:]):
+                raise ValueError("CatBoost 的指标对象必须作为首个主评估指标，其余指标请使用内置指标名称")
             wants_ks = any(str(metric).lower() == "ks" for metric in requested_metrics)
             if wants_ks:
+                if any(isinstance(metric, BaseMetric) for metric in requested_metrics):
+                    raise ValueError("CatBoost 仅支持一个自定义主评估指标，请在 KS 与指标对象中选择一个")
                 params["eval_metric"] = CatBoostKSMetric()
                 native_metrics = [
                     self._convert_metrics(metric) for metric in requested_metrics if str(metric).lower() != "ks"
@@ -323,23 +332,31 @@ class CatBoost(BaseRiskModel):
 
             # 如果指定了专门的早停指标，覆盖eval_metric
             if self.early_stopping_metric is not None:
-                if str(self.early_stopping_metric).lower() == "ks":
+                if (
+                    isinstance(params.get("eval_metric"), BaseMetric)
+                    and self.early_stopping_metric == params["eval_metric"].name
+                ):
+                    pass  # 指标对象同时承担早停，保留其方向与适配信息。
+                elif str(self.early_stopping_metric).lower() == "ks":
                     params["eval_metric"] = CatBoostKSMetric()
                 else:
                     params["eval_metric"] = self._convert_metrics(self.early_stopping_metric)
             # 如果有多个评估指标且没有指定早停指标，使用第一个
             elif (
-                isinstance(self.eval_metric, list)
-                and len(self.eval_metric) > 0
-                and not any(str(metric).lower() == "ks" for metric in self.eval_metric)
+                isinstance(eval_metric, (list, tuple))
+                and len(eval_metric) > 0
+                and not any(str(metric).lower() == "ks" for metric in eval_metric)
             ):
-                params["eval_metric"] = self._convert_metrics(self.eval_metric[0])
+                first_metric = eval_metric[0]
+                params["eval_metric"] = (
+                    first_metric if isinstance(first_metric, BaseMetric) else self._convert_metrics(first_metric)
+                )
 
         # 更新kwargs参数
         params.update(self.kwargs)
 
         # 最后更新原生params（优先级最高）
-        params.update(self._native_params)
+        params.update({key: value for key, value in self._native_params.items() if key != "eval_metric"})
         aliases = self._parameter_aliases
         for canonical, names in aliases.items():
             for name in names:
@@ -359,7 +376,13 @@ class CatBoost(BaseRiskModel):
         )
 
         # 解析自定义损失（BaseLoss 实例 -> CatBoost 可用的损失对象）
-        resolved_loss = self._resolve_catboost_loss(params.get("loss_function"))
+        loss_object = params.get("loss_function")
+        if params.get("eval_metric") is None and isinstance(loss_object, BaseLoss):
+            params["eval_metric"] = loss_object.metric()
+        metric_object = params.get("eval_metric")
+        if isinstance(metric_object, BaseMetric):
+            params["eval_metric"] = metric_object.to_catboost()
+        resolved_loss = self._resolve_catboost_loss(loss_object)
         params["loss_function"] = resolved_loss
 
         # CatBoost 自定义损失（非内置字符串）不支持 scale_pos_weight，需移除以避免报错
@@ -401,12 +424,20 @@ class CatBoost(BaseRiskModel):
         for dataset_metrics in self._evals_result.values():
             if "CatBoostKSMetric" in dataset_metrics:
                 dataset_metrics["ks"] = dataset_metrics.pop("CatBoostKSMetric")
+            if isinstance(metric_object, BaseMetric):
+                native_name = type(params["eval_metric"]).__name__
+                if native_name in dataset_metrics:
+                    dataset_metrics[metric_object.name] = dataset_metrics.pop(native_name)
         if isinstance(self._best_score, dict):
             for dataset_metrics in self._best_score.values():
                 if isinstance(dataset_metrics, dict) and "CatBoostKSMetric" in dataset_metrics:
                     dataset_metrics["ks"] = dataset_metrics.pop("CatBoostKSMetric")
+                if isinstance(dataset_metrics, dict) and isinstance(metric_object, BaseMetric):
+                    native_name = type(params["eval_metric"]).__name__
+                    if native_name in dataset_metrics:
+                        dataset_metrics[metric_object.name] = dataset_metrics.pop(native_name)
         self._is_fitted = True
-        self._fit_probability_scorecard(X, y)
+        self._fit_probability_scorecard(X, y, sample_weight=scorecard_sample_weight)
 
         return self
 

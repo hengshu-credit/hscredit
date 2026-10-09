@@ -7,20 +7,15 @@ import numpy as np
 import pandas as pd
 from scipy.sparse import issparse
 from sklearn.utils.validation import check_is_fitted
+from ...utils.data_contracts import extract_target_column, validate_target
 
 SAMPLE_PARAMETER_NAMES = frozenset({"sample_weight", "base_margin", "init_score", "baseline", "groups"})
 
 
 def extract_target(X, y=None, target=None, *, require_y=True):
     """显式 y 优先；目标列无论是否提供 y 都不能成为特征。"""
-    if isinstance(X, pd.DataFrame):
-        if not X.columns.is_unique:
-            raise ValueError("输入特征列名不能重复")
-        if target is not None and target in X.columns:
-            if y is None:
-                y = X[target]
-            X = X.drop(columns=[target])
-    elif not issparse(X):
+    X, y = extract_target_column(X, y, target)
+    if not isinstance(X, pd.DataFrame) and not issparse(X):
         X = np.asarray(X)
     if getattr(X, "ndim", None) != 2:
         raise ValueError("输入特征必须是二维数组或 DataFrame")
@@ -33,9 +28,7 @@ def extract_target(X, y=None, target=None, *, require_y=True):
 
 def validate_labels(y, *, classes=(0, 1), require_both=True):
     """校验二分类标签域，不展平二维标签，也不把未知标签默认为负类。"""
-    values = np.asarray(y)
-    if values.ndim != 1 or values.size == 0:
-        raise ValueError("标签必须是一维非空数组")
+    values = validate_target(y)
     observed = set(np.unique(values))
     allowed = set(classes)
     if not observed.issubset(allowed) or (require_both and observed != allowed):
@@ -186,6 +179,11 @@ class ExtraParamsMixin:
 
     _extra_params_attribute = "kwargs"
 
+    def __setstate__(self, state):
+        super().__setstate__(state)
+        from ._lifecycle import restore_model_defaults
+        restore_model_defaults(self)
+
     def get_params(self, deep=True):
         params = dict(getattr(self, self._extra_params_attribute, {}))
         params.update(super().get_params(deep=False))
@@ -222,6 +220,11 @@ class ExtraParamsMixin:
 
 class InferenceExportMixin:
     """显式导出不携带 tuner 和训练记录的推理对象，不改变当前实例。"""
+
+    def __setstate__(self, state):
+        super().__setstate__(state)
+        from ._lifecycle import restore_model_defaults
+        restore_model_defaults(self)
 
     def save_inference(self, path, *, engine="cloudpickle", **kwargs):
         """保留预测/评分状态，移除已知训练历史；不清理自定义函数捕获的数据。"""

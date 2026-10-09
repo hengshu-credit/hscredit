@@ -428,6 +428,29 @@ def composite_binning_quality(
     )
 
 
+def _validate_bin_arrays(bins, y, target_type='binary'):
+    """公共统计输入按位置对齐，禁止非法标签污染样本计数。"""
+    bins = np.asarray(bins)
+    try:
+        y = np.asarray(y, dtype=np.float64)
+        numeric_bins = np.asarray(bins, dtype=np.float64)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("分箱索引和目标必须是有效数值") from exc
+    if bins.ndim != 1 or y.ndim != 1 or len(bins) != len(y):
+        raise ValueError("分箱索引和目标必须是一维等长数组")
+    if not np.isfinite(numeric_bins).all() or np.any(numeric_bins != np.floor(numeric_bins)):
+        raise ValueError("分箱索引必须是有限整数")
+    if bins.dtype.kind not in 'iu':
+        if np.any(numeric_bins >= 2.0 ** 63) or np.any(numeric_bins < -(2.0 ** 63)):
+            raise ValueError("分箱索引超出64位整数范围")
+        bins = numeric_bins.astype(np.int64)
+    if not np.isfinite(y).all():
+        raise ValueError("目标不能包含缺失或无穷值")
+    if target_type in {'binary', 'amount_weighted'} and not np.isin(y, [0, 1]).all():
+        raise ValueError("二分类目标只能包含0和1，1表示坏样本")
+    return bins, y
+
+
 def compute_bin_stats(
     bins: np.ndarray,
     y: np.ndarray,
@@ -499,8 +522,11 @@ def compute_bin_stats(
     WOE / IV 的定义见 Siddiqi, N. (2006). *Credit Risk Scorecards.* Wiley；
     本函数的 WOE 取 ``ln(坏样本占比 / 好样本占比)``，与 toad、scorecardpipeline 口径一致。
     """
-    bins = np.asarray(bins)
-    y = np.asarray(y, dtype=np.float64)
+    bins, y = _validate_bin_arrays(bins, y, target_type)
+    if not np.isfinite(epsilon) or epsilon <= 0:
+        raise ValueError("epsilon 必须为有限正数")
+    if woe_clip is not None and (not np.isfinite(woe_clip) or woe_clip <= 0):
+        raise ValueError("woe_clip 必须为有限正数或None")
     
     if target_type == 'binary':
         return _compute_bin_stats_binary(bins, y, epsilon, bin_labels, round_digits, woe_clip)
@@ -510,6 +536,8 @@ def compute_bin_stats(
         if amount is None:
             raise ValueError("target_type='amount_weighted'时必须提供amount参数")
         amount = np.asarray(amount, dtype=np.float64)
+        if amount.ndim != 1 or len(amount) != len(y) or not np.isfinite(amount).all() or np.any(amount < 0):
+            raise ValueError("amount 必须为与目标等长的有限非负一维数组")
         return _compute_bin_stats_amount_weighted(bins, y, amount, epsilon, bin_labels, round_digits, woe_clip)
     else:
         raise ValueError(f"target_type必须是'binary'/'continuous'/'amount_weighted'，得到: {target_type}")
@@ -548,10 +576,11 @@ def _compute_bin_stats_binary(
 
     # 使用 Python int 计算排序键，避免 numpy 2.x（NEP 50）下窄整型（如分类编码 int8）
     # 与大整数运算溢出抛出 OverflowError
-    sort_order = np.argsort([int(sk[0]) * 10000 + int(sk[1]) for sk in sort_keys])
-    old_to_new = {int(old_pos): new_pos for new_pos, old_pos in enumerate(sort_order)}
+    sort_order = np.asarray(sorted(range(len(sort_keys)), key=lambda i: sort_keys[i]), dtype=np.intp)
+    old_to_new = np.empty(len(sort_order), dtype=np.intp)
+    old_to_new[sort_order] = np.arange(len(sort_order))
     unique_bins_sorted = unique_bins[sort_order]
-    bin_indices_sorted = np.array([old_to_new[int(idx)] for idx in bin_indices])
+    bin_indices_sorted = old_to_new[bin_indices]
 
     if bin_labels is not None and len(bin_labels) == len(unique_bins):
         bin_labels = [bin_labels[int(sort_order[i])] for i in range(len(sort_order))]
@@ -562,6 +591,13 @@ def _compute_bin_stats_binary(
     n_bins = len(unique_bins)
     good_counts = np.bincount(bin_indices, weights=(y == 0).astype(int), minlength=n_bins)
     bad_counts = np.bincount(bin_indices, weights=y, minlength=n_bins)
+    return _binary_stats_from_counts(unique_bins, good_counts, bad_counts, epsilon, bin_labels, round_digits, woe_clip)
+
+
+def _binary_stats_from_counts(unique_bins, good_counts, bad_counts, epsilon=1e-10, bin_labels=None,
+                              round_digits=True, woe_clip=None):
+    """行级与分块聚合共用的二分类派生指标内核。"""
+    n_bins = len(unique_bins)
     counts = good_counts + bad_counts
 
     bad_rate = _safe_divide(bad_counts, counts)
@@ -622,9 +658,9 @@ def _compute_bin_stats_binary(
         data['分箱标签'] = bin_labels
 
     data.update({
-        '样本总数': counts.astype(int),
-        '好样本数': good_counts.astype(int),
-        '坏样本数': bad_counts.astype(int),
+        '样本总数': counts.astype(np.int64),
+        '好样本数': good_counts.astype(np.int64),
+        '坏样本数': bad_counts.astype(np.int64),
         '样本占比': count_distr,
         '好样本占比': good_distr,
         '坏样本占比': bad_distr,
@@ -638,8 +674,8 @@ def _compute_bin_stats_binary(
         '累积LIFT值': cum_lift,
         '累积坏账改善': cum_bad_improve,
         '累计风险拒绝比': cum_risk_reject,
-        '累积好样本数': cum_good.astype(int),
-        '累积坏样本数': cum_bad.astype(int),
+        '累积好样本数': cum_good.astype(np.int64),
+        '累积坏样本数': cum_bad.astype(np.int64),
         '分档KS值': ks_values,
     })
 
@@ -692,10 +728,11 @@ def _compute_bin_stats_continuous(
 
     # 使用 Python int 计算排序键，避免 numpy 2.x（NEP 50）下窄整型（如分类编码 int8）
     # 与大整数运算溢出抛出 OverflowError
-    sort_order = np.argsort([int(sk[0]) * 10000 + int(sk[1]) for sk in sort_keys])
-    old_to_new = {int(old_pos): new_pos for new_pos, old_pos in enumerate(sort_order)}
+    sort_order = np.asarray(sorted(range(len(sort_keys)), key=lambda i: sort_keys[i]), dtype=np.intp)
+    old_to_new = np.empty(len(sort_order), dtype=np.intp)
+    old_to_new[sort_order] = np.arange(len(sort_order))
     unique_bins_sorted = unique_bins[sort_order]
-    bin_indices_sorted = np.array([old_to_new[int(idx)] for idx in bin_indices])
+    bin_indices_sorted = old_to_new[bin_indices]
 
     if bin_labels is not None and len(bin_labels) == len(unique_bins):
         bin_labels = [bin_labels[int(sort_order[i])] for i in range(len(sort_order))]
@@ -708,18 +745,23 @@ def _compute_bin_stats_continuous(
     # 计算每箱的样本数
     counts = np.bincount(bin_indices, minlength=n_bins)
     
-    # 计算每箱的目标值统计
-    y_sum = np.bincount(bin_indices, weights=y, minlength=n_bins)
-    y_mean = _safe_divide(y_sum, counts)
-    
-    # 计算每箱的方差和标准差
-    y_squared_sum = np.bincount(bin_indices, weights=y**2, minlength=n_bins)
-    y_var = _safe_divide(y_squared_sum, counts) - y_mean**2
+    # 先按每箱真实观测中心化，再对残差做二次中心化；避免大金额下
+    # E[y²]-E[y]² 的灾难性消减，也不需要每个箱重复扫描完整样本。
+    first_positions = np.full(n_bins, len(y), dtype=np.intp)
+    np.minimum.at(first_positions, bin_indices, np.arange(len(y), dtype=np.intp))
+    origins = y[first_positions]
+    offsets = y - origins[bin_indices]
+    offset_sums = np.bincount(bin_indices, weights=offsets, minlength=n_bins)
+    offset_means = _safe_divide(offset_sums, counts)
+    y_mean = origins + offset_means
+    y_sum = origins * counts + offset_sums
+    deviations = offsets - offset_means[bin_indices]
+    y_var = _safe_divide(np.bincount(bin_indices, weights=deviations**2, minlength=n_bins), counts)
     y_std = np.sqrt(np.maximum(y_var, 0))
-    
-    # 计算每箱的最小值和最大值
-    y_min = np.array([y[bin_indices == i].min() if counts[i] > 0 else 0 for i in range(n_bins)])
-    y_max = np.array([y[bin_indices == i].max() if counts[i] > 0 else 0 for i in range(n_bins)])
+    y_min = np.full(n_bins, np.inf)
+    y_max = np.full(n_bins, -np.inf)
+    np.minimum.at(y_min, bin_indices, y)
+    np.maximum.at(y_max, bin_indices, y)
     
     # 计算占比
     total = counts.sum()
@@ -770,7 +812,7 @@ def _compute_bin_stats_continuous(
         data['分箱标签'] = bin_labels
 
     data.update({
-        '样本总数': counts.astype(int),
+        '样本总数': counts.astype(np.int64),
         '样本占比': count_distr,
         '目标值总和': y_sum,
         '目标值均值': y_mean,
@@ -848,10 +890,11 @@ def _compute_bin_stats_amount_weighted(
     
     # 使用 Python int 计算排序键，避免 numpy 2.x（NEP 50）下窄整型（如分类编码 int8）
     # 与大整数运算溢出抛出 OverflowError
-    sort_order = np.argsort([int(sk[0]) * 10000 + int(sk[1]) for sk in sort_keys])
-    old_to_new = {int(old_pos): new_pos for new_pos, old_pos in enumerate(sort_order)}
+    sort_order = np.asarray(sorted(range(len(sort_keys)), key=lambda i: sort_keys[i]), dtype=np.intp)
+    old_to_new = np.empty(len(sort_order), dtype=np.intp)
+    old_to_new[sort_order] = np.arange(len(sort_order))
     unique_bins_sorted = unique_bins[sort_order]
-    bin_indices_sorted = np.array([old_to_new[int(idx)] for idx in bin_indices])
+    bin_indices_sorted = old_to_new[bin_indices]
     
     if bin_labels is not None and len(bin_labels) == len(unique_bins):
         bin_labels = [bin_labels[int(sort_order[i])] for i in range(len(sort_order))]

@@ -6,6 +6,7 @@
 
 from itertools import combinations
 from time import perf_counter
+import warnings
 from typing import List, Optional, Sequence, Union
 
 import numpy as np
@@ -64,6 +65,7 @@ def _search_additive_iv(
     max_n_bins: int,
     min_samples: int,
     max_samples: Optional[int],
+    deadline: float = float("inf"),
 ) -> List[float]:
     """以动态规划求解任意候选边界组合的全局最优 IV 分区。"""
     boundaries = np.asarray([0, *positions.tolist(), int(prefix_bad.size - 1)], dtype=int)
@@ -74,10 +76,17 @@ def _search_additive_iv(
 
     n_boundaries = len(boundaries)
     states = {(0, 0): (0.0, tuple())}
+    timed_out = False
     for n_bins in range(1, max_n_bins + 1):
         for end_index in range(1, n_boundaries):
+            if perf_counter() >= deadline:
+                timed_out = True
+                break
             best = None
             for start_index in range(end_index):
+                if start_index % 64 == 0 and perf_counter() >= deadline:
+                    timed_out = True
+                    break
                 previous = states.get((n_bins - 1, start_index))
                 if previous is None:
                     continue
@@ -96,6 +105,10 @@ def _search_additive_iv(
                     best = (key, candidate)
             if best is not None:
                 states[(n_bins, end_index)] = best[1]
+            if timed_out:
+                break
+        if timed_out:
+            break
 
     best = None
     for n_bins in range(max(1, min_n_bins), max_n_bins + 1):
@@ -106,6 +119,10 @@ def _search_additive_iv(
         key = (result[0], -len(values), tuple(-value for value in values))
         if best is None or key > best[0]:
             best = (key, values)
+    if timed_out:
+        if best is None:
+            raise TimeoutError("候选 IV 搜索达到 time_limit，尚未找到满足最小箱数的可行解")
+        warnings.warn("候选 IV 搜索达到 time_limit，返回当前可行解，未证明全局最优", RuntimeWarning, stacklevel=2)
     return [] if best is None else best[1]
 
 
@@ -123,6 +140,9 @@ def search_candidate_splits(
     time_limit: float = 30.0,
 ) -> List[float]:
     """在候选边界子集中搜索满足硬约束的最优分箱。"""
+    if isinstance(time_limit, (bool, np.bool_)) or not np.isfinite(time_limit) or time_limit <= 0:
+        raise ValueError("time_limit 必须为有限正数")
+    deadline = perf_counter() + float(time_limit)
     x_values = np.asarray(x_sorted, dtype=float)
     y_values = np.asarray(y_sorted, dtype=int)
     candidate_values = np.unique(np.sort(np.asarray(candidates, dtype=float)))
@@ -152,17 +172,20 @@ def search_candidate_splits(
             max_n_bins=max_n_bins,
             min_samples=min_samples,
             max_samples=max_samples,
+            deadline=deadline,
         )
 
     min_splits = max(0, min_n_bins - 1)
     max_splits = min(len(candidate_values), max(0, max_n_bins - 1))
-    deadline = perf_counter() + max(0.01, float(time_limit))
     best_key = None
     best_values: List[float] = []
 
     for n_splits in range(min_splits, max_splits + 1):
         for selected in combinations(range(len(candidate_values)), n_splits):
             if perf_counter() >= deadline:
+                if best_key is None:
+                    raise TimeoutError("候选搜索达到 time_limit，尚未找到满足约束的可行解")
+                warnings.warn("候选搜索达到 time_limit，返回当前可行解，未证明全局最优", RuntimeWarning, stacklevel=2)
                 return best_values
             boundaries = np.asarray([0, *[int(positions[index]) for index in selected], len(x_values)], dtype=int)
             counts = np.diff(boundaries)

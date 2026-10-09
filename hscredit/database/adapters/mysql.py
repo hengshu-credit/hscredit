@@ -38,6 +38,7 @@ class MySQLAdapter(DBAPIAdapter):
         native_bulk_write=False,
         metadata_export=True,
         write_modes={"a", "r", "o", "d"},
+        atomic_replace=True,
     )
 
     def json_extract_expression(self, column_sql: str, path: str) -> str:
@@ -54,6 +55,13 @@ class MySQLAdapter(DBAPIAdapter):
         except ImportError as exc:
             raise DependencyError("缺少 MySQL 可选依赖，请安装: pip install hscredit[db-mysql]") from exc
         return pymysql
+
+    def atomic_replace_session(self, table_name: str):
+        """仅为明确验证的MySQL/InnoDB目标创建专用、无自动重试的替换会话。"""
+        if self.database_type != "mysql":
+            raise DatabaseCapabilityError("MySQL协议兼容后端不等于MySQL原子DDL，当前后端不支持此入口")
+        from .mysql_atomic import MySQLAtomicReplaceSession
+        return MySQLAtomicReplaceSession(self, table_name)
 
     def create_cursor(self, connection: Any, *, stream: bool = False) -> Any:
         """流式读取时使用 PyMySQL ``SSCursor``。"""

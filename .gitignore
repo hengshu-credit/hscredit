@@ -250,3 +250,10 @@ CLAUDE.md
 outputs
 *.db
 examples/26_test_model.ipynb
+examples/*.joblib
+examples/建模模板-*.ipynb
+examples/28_model_workflow.py
+examples/*/*.csv
+examples/*/*.xlsx
+tmp_outputs
+.audit_tmp

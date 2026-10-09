@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "hscredit"
 dynamic = ["version"]
 description = "hscredit 面向金融信贷风控策略分析与评分模型研发场景，提供符合 sklearn Pipeline 范式的量化建模工具箱，覆盖数据探索、特征筛选、分箱编码、有效性评估、模型训练、参数调优与报告生成，支持从策略验证到模型落地的端到端风险决策流程。鉴真伪，斟信用，衡风险，枢定策 —— 衡枢真信，智能风控，一站掌控。"
-readme = "README.md"
+readme = "README-PYPI.md"
 license = "MIT"
 authors = [
     {name = "hscredit team", email = "hscredit@hengshucredit.com"}
@@ -127,7 +127,8 @@ dev = [
     "nbclient>=0.5",
     "nbformat>=5",
     "ipykernel>=6.0",
-    "black>=21.0",
+    "pyzmq>=26.2; platform_system == 'Windows'",
+    "black>=24.10",
     "flake8>=3.9.0",
     "mypy>=1.8",
     "build>=1.0.0",
@@ -146,10 +147,10 @@ all = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/hscredit/hscredit"
-Documentation = "https://hscredit.readthedocs.io"
-Repository = "https://github.com/hscredit/hscredit.git"
-Issues = "https://github.com/hscredit/hscredit/issues"
+Homepage = "https://github.com/hengshu-credit/hscredit"
+Documentation = "https://hscredit.hengshucredit.com/"
+Repository = "https://github.com/hengshu-credit/hscredit.git"
+Issues = "https://github.com/hengshu-credit/hscredit/issues"
 
 [tool.setuptools.dynamic]
 # 版本号手动维护，唯一来源为 hscredit/__init__.py 的 __version__。
@@ -157,6 +158,7 @@ Issues = "https://github.com/hscredit/hscredit/issues"
 version = {attr = "hscredit.__version__"}
 
 [tool.setuptools.packages.find]
+include = ["hscredit", "hscredit.*"]
 exclude = [
     "tests", "tests.*",
     "docs", "docs.*",
@@ -174,8 +176,8 @@ zip-safe = false
 hscredit = ["py.typed", "resources/**/*"]
 
 [tool.black]
-line-length = 512
-target-version = ['py39', 'py310', 'py311', 'py312', 'py313', 'py314']
+line-length = 120
+target-version = ['py39']
 include = '\.pyi?$'
 extend-exclude = '''
 /(

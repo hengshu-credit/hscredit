@@ -26,18 +26,21 @@ from typing import List, Optional, Tuple
 from ..excel import ExcelWriter, dataframe2excel
 from ..exceptions import ValidationError
 from ..utils.parallel import ParallelWorkload, parallel_execute
+from ..core.metrics.monitoring import MonitoringBaseline
+from ..core.metrics import compute_bin_stats
 
 
 def _population_feature_task(task):
     """计算单个特征的 PSI、分布和可选坏样本率表。"""
-    expected, actual, feature, target_col, n_bins, window = task
-    expected_values = expected[feature].dropna()
-    actual_values = actual[feature].dropna()
-    psi_value = _calc_psi(expected_values, actual_values, n_bins)
-    distribution = _feature_distribution_compare(expected_values, actual_values, feature, n_bins)
+    expected, actual, feature, target_col, n_bins, window, baseline = task
+    expected_values = expected[feature]
+    actual_values = actual[feature]
+    result = baseline.evaluate(actual_values)
+    psi_value = result['PSI']
+    distribution = _feature_distribution_compare(expected_values, actual_values, feature, n_bins, baseline=baseline)
     badrate = None
     if target_col and target_col in expected.columns and target_col in actual.columns:
-        badrate = _badrate_compare(expected, actual, feature, target_col, n_bins)
+        badrate = _badrate_compare(expected, actual, feature, target_col, n_bins, baseline=baseline)
     return feature, window, psi_value, distribution, badrate
 
 
@@ -107,7 +110,9 @@ def population_drift(
         ordered_periods = sorted(periods.dropna().unique())
         windows = [(str(period), actual.loc[periods == period].copy()) for period in ordered_periods]
 
-    tasks = [(expected, window_data, feature, target_col, n_bins, window) for feature in valid_features for window, window_data in windows]
+    baselines = {feature: MonitoringBaseline(max_n_bins=n_bins).fit(expected[feature]) for feature in valid_features}
+    tasks = [(expected, window_data, feature, target_col, n_bins, window, baselines[feature])
+             for feature in valid_features for window, window_data in windows]
     feature_results = parallel_execute(
         _population_feature_task,
         tasks,
@@ -242,21 +247,12 @@ def _format_bin_labels(breakpoints: np.ndarray) -> List[str]:
 
 def _calc_psi(expected: pd.Series, actual: pd.Series, n_bins: int = 10) -> float:
     """计算 PSI."""
-    breakpoints = _build_numeric_bin_edges(expected, actual, n_bins)
-    if breakpoints is None:
-        return 0.0
-
-    exp_pct, act_pct = _compute_distribution_percentages(expected, actual, breakpoints)
-
-    # 避免 0 值
-    exp_pct = np.where(exp_pct == 0, _PSI_EPSILON, exp_pct)
-    act_pct = np.where(act_pct == 0, _PSI_EPSILON, act_pct)
-
-    psi = np.sum((act_pct - exp_pct) * np.log(act_pct / exp_pct))
-    return float(psi)
+    return MonitoringBaseline(max_n_bins=n_bins).fit(expected).evaluate(actual)['PSI']
 
 
 def _psi_rating(psi: float) -> str:
+    if not np.isfinite(psi):
+        return "数据不足或不可计算"
     if psi < 0.1:
         return "稳定"
     elif psi < 0.25:
@@ -265,14 +261,14 @@ def _psi_rating(psi: float) -> str:
         return "显著漂移"
 
 
-def _feature_distribution_compare(expected: pd.Series, actual: pd.Series, feat_name: str, n_bins: int) -> pd.DataFrame:
+def _feature_distribution_compare(expected: pd.Series, actual: pd.Series, feat_name: str, n_bins: int, baseline=None) -> pd.DataFrame:
     """对比单特征在两个数据集的分箱分布."""
-    breakpoints = _build_numeric_bin_edges(expected, actual, n_bins)
-    if breakpoints is None:
-        return pd.DataFrame()
-
-    exp_pct, act_pct = _compute_distribution_percentages(expected, actual, breakpoints)
-    labels = _format_bin_labels(breakpoints)
+    baseline = baseline or MonitoringBaseline(max_n_bins=n_bins).fit(expected)
+    result = baseline.evaluate(actual)
+    table = result['分箱明细']
+    exp_pct = table['期望占比'].to_numpy()
+    act_pct = table['实际占比'].to_numpy()
+    labels = table['分箱'].tolist()
 
     df = pd.DataFrame(
         {
@@ -292,22 +288,25 @@ def _badrate_compare(
     feat: str,
     target_col: str,
     n_bins: int,
+    baseline=None,
 ) -> pd.DataFrame:
     """对比单特征分箱下的逾期率差异."""
-    breakpoints = _build_numeric_bin_edges(expected[feat], actual[feat], n_bins)
-    if breakpoints is None:
-        return pd.DataFrame()
-
-    exp_cut = pd.cut(expected[feat], bins=breakpoints, right=False, include_lowest=True)
-    act_cut = pd.cut(actual[feat], bins=breakpoints, right=False, include_lowest=True)
-
-    exp_br = expected.groupby(exp_cut, observed=False)[target_col].mean()
-    act_br = actual.groupby(act_cut, observed=False)[target_col].mean()
+    baseline = baseline or MonitoringBaseline(max_n_bins=n_bins).fit(expected[feat])
+    def rates(frame):
+        valid = frame[target_col].notna()
+        if not valid.any():
+            return pd.Series(dtype=float)
+        codes = baseline.transform(frame.loc[valid, feat])
+        table = compute_bin_stats(codes, frame.loc[valid, target_col].to_numpy(), round_digits=False)
+        return table.set_index('分箱')['坏样本率']
+    exp_br, act_br = rates(expected), rates(actual)
+    codes = exp_br.index.union(act_br.index)
+    exp_br, act_br = exp_br.reindex(codes), act_br.reindex(codes)
 
     df = pd.DataFrame(
         {
             "特征名": feat,
-            "分箱": [str(x) for x in exp_br.index],
+            "分箱": [baseline._label(int(x)) for x in codes],
             "基准逾期率": np.round(exp_br.values, 4),
             "实际逾期率": np.round(act_br.values, 4),
             "逾期率偏移": np.round(act_br.values - exp_br.values, 4),

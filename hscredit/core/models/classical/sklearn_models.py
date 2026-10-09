@@ -150,7 +150,7 @@ class SklearnRiskModel(BaseRiskModel):
         # 底层模型已经完成拟合；先提交状态，确保 eval_set 走统一评估入口时
         # 能通过严格的布尔训练状态检查。
         self._is_fitted = True
-        self._fit_probability_scorecard(X, y)
+        self._fit_probability_scorecard(X, y, sample_weight=sample_weight)
 
         # 保存评估结果
         self._evals_result = {}

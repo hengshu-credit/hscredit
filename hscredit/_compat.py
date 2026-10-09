@@ -44,8 +44,13 @@ def needs_lightgbm_sklearn_compat(
         lightgbm_version is not None
         and lightgbm_version < Version("4.6.0")
         and sklearn_version is not None
-        and sklearn_version >= Version("1.8.0")
+        and sklearn_version >= Version("1.6.0")
     )
+
+
+def needs_lightgbm_verbosity_compat(lightgbm_version: Optional[Version]) -> bool:
+    """判断是否需要保留 LightGBM 4.0–4.4 重置参数时的日志级别。"""
+    return lightgbm_version is not None and Version("4.0.0") <= lightgbm_version < Version("4.5.0")
 
 
 def needs_seaborn_pandas_compat(
@@ -61,7 +66,7 @@ def needs_seaborn_pandas_compat(
 
 
 def _wrap_lightgbm_validation_keyword(func):
-    """把旧 LightGBM 校验参数名转换为 scikit-learn 1.8 的新名称。"""
+    """把旧 LightGBM 校验参数名转换为 scikit-learn 1.6 起支持的新名称。"""
     if getattr(func, "_hscredit_finite_compat", False):
         return func
 
@@ -86,6 +91,40 @@ def install_lightgbm_sklearn_compat(
         for attribute in ("_LGBMCheckXY", "_LGBMCheckArray"):
             checker = getattr(module, attribute)
             setattr(module, attribute, _wrap_lightgbm_validation_keyword(checker))
+
+
+def install_lightgbm_verbosity_compat(lightgbm_module, lightgbm_version) -> None:
+    """为旧 LightGBM 保留重置参数之前显式配置的日志级别。
+
+    LightGBM 4.0–4.4 的自定义目标函数会执行 ``reset_parameter``，其 C++
+    实现在没有日志参数时意外重置为 INFO，导致 ``verbose=False`` 失效。
+    4.5.0 已通过上游 PR #6428 修复；这里仅给受影响版本补传已有日志设置，
+    不修改全局 logger，也不拦截 Python 警告。显式重置日志级别仍优先。
+    """
+    if not needs_lightgbm_verbosity_compat(lightgbm_version):
+        return
+    reset_parameter = lightgbm_module.Booster.reset_parameter
+    if getattr(reset_parameter, "_hscredit_verbosity_compat", False):
+        return
+
+    @wraps(reset_parameter)
+    def wrapper(self, params):
+        updated = dict(params)
+        if "verbosity" not in updated and "verbose" not in updated:
+            for name in ("verbosity", "verbose"):
+                if name in self.params:
+                    updated[name] = self.params[name]
+                    break
+        result = reset_parameter(self, updated)
+        # 原生方法会更新 self.params；移除旧别名，确保后续重置沿用本次显式设置。
+        if "verbosity" in updated:
+            self.params.pop("verbose", None)
+        elif "verbose" in updated:
+            self.params.pop("verbosity", None)
+        return result
+
+    wrapper._hscredit_verbosity_compat = True
+    lightgbm_module.Booster.reset_parameter = wrapper
 
 
 def normalize_seaborn_inf(values):

@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 
 from .base import BaseEncoder
+from ._category_protocol import CategoryToken, MISSING, UNKNOWN
 from ...exceptions import NotFittedError
 
 
@@ -75,6 +76,7 @@ class OrdinalEncoder(BaseEncoder):
         n_jobs: Optional[Union[int, float]] = -1,
         parallel_backend: Optional[str] = None,
         parallel_config: Optional[Dict[str, Any]] = None,
+        passthrough_target: bool = False,
     ):
         """初始化序数编码器。
 
@@ -96,6 +98,7 @@ class OrdinalEncoder(BaseEncoder):
             n_jobs=n_jobs,
             parallel_backend=parallel_backend,
             parallel_config=parallel_config,
+            passthrough_target=passthrough_target,
         )
         self.mapping = mapping
 
@@ -118,14 +121,14 @@ class OrdinalEncoder(BaseEncoder):
             mapping = {cat: i for i, cat in enumerate(categories)}
 
             if self.handle_missing == "value":
-                mapping[np.nan] = -1
+                mapping[MISSING] = -1
             elif self.handle_missing == "return_nan":
-                mapping[np.nan] = np.nan
+                mapping[MISSING] = np.nan
 
             if self.handle_unknown == "value":
-                mapping["__UNKNOWN__"] = -1
+                mapping[UNKNOWN] = -1
             elif self.handle_unknown == "return_nan":
-                mapping["__UNKNOWN__"] = np.nan
+                mapping[UNKNOWN] = np.nan
 
         return {"mapping_": mapping}
 
@@ -140,14 +143,9 @@ class OrdinalEncoder(BaseEncoder):
 
     def _transform_column(self, column, values, y=None, context=None):
         mapping = self.mapping_[column]
-        result = values.map(mapping)
+        result = self._map_values(values, mapping)
 
-        if self.handle_unknown == "value":
-            result = result.fillna(-1)
-        elif self.handle_unknown == "error" and result.isna().any():
-            raise ValueError(f"列'{column}'包含未知类别")
-
-        return result
+        return self._apply_missing_unknown(column, values, result, -1)
 
     def inverse_transform(self, X: pd.DataFrame) -> pd.DataFrame:
         """逆编码，将整数编码还原为原始类别值。
@@ -171,7 +169,7 @@ class OrdinalEncoder(BaseEncoder):
             # 构建逆映射：仅对真实类别（排除缺失/未知哨兵）有效
             inverse_mapping = {}
             for orig, code in self.mapping_[col].items():
-                if orig in ("__UNKNOWN__",) or (isinstance(orig, float) and pd.isna(orig)):
+                if isinstance(orig, CategoryToken) or (isinstance(orig, float) and pd.isna(orig)):
                     continue
                 inverse_mapping[code] = orig
 

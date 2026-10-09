@@ -8,6 +8,7 @@ import pandas as pd
 from pandas.api.types import is_numeric_dtype
 
 from .base import BaseFeatureSelector
+from ._statistical_utils import record_conditions, record_counts
 from ..metrics import compute_bin_stats, ks_2samps
 from ...exceptions import ValidationError
 from ...utils.parallel import ParallelWorkload
@@ -80,7 +81,7 @@ class KSSelector(BaseFeatureSelector):
     >>> import pandas as pd
     >>> df = pd.DataFrame({'评分': [10, 20, 80, 90], '常量': [1, 1, 1, 1], 'FPD': [0, 0, 1, 1]})
     >>> selector = KSSelector(target='FPD', threshold=0.2)
-    >>> selected_df = selector.fit_transform(df)  # 输出保留原始字段值，并透传 FPD
+    >>> selected_df = selector.fit_transform(df)  # 仅输出保留的原始字段值，不透传 FPD
     >>> selector.selected_features_
     ['评分']
     >>> selector.fit(df.drop(columns='FPD'), df['FPD'])  # sklearn 风格
@@ -105,7 +106,9 @@ class KSSelector(BaseFeatureSelector):
         binning_params: Optional[Dict[str, Any]] = None,
         parallel_backend: Optional[str] = None,
         parallel_config: Optional[Dict[str, Any]] = None,
+        target_rm: bool = False,
     ):
+        """初始化筛选器；默认透传已有目标列，仅target_rm=True移除。"""
         super().__init__(
             target=target,
             threshold=threshold,
@@ -117,6 +120,7 @@ class KSSelector(BaseFeatureSelector):
             binning_params=binning_params,
             parallel_backend=parallel_backend,
             parallel_config=parallel_config,
+            target_rm=target_rm,
         )
 
     def _check_input(self, X, y=None):
@@ -148,6 +152,19 @@ class KSSelector(BaseFeatureSelector):
     def _fit_impl(self, X: pd.DataFrame, y: Optional[Union[pd.Series, np.ndarray]]) -> None:
         """并行计算字段 KS，并记录满足阈值的特征及中文剔除详情。"""
         binned = self._binner_instance is not None
+        record_counts(self, X)
+        self.threshold_ = self.threshold
+        self.score_name_, self.score_direction_ = "KS值", "越大越好"
+        self.metric_methods_ = pd.Series(
+            {
+                column: (
+                    "分箱累计KS"
+                    if binned
+                    else ("原始数值KS" if is_numeric_dtype(X[column].dtype) else "类别坏率排序KS")
+                )
+                for column in X
+            }
+        )
         results = self._parallel_execute(
             _compute_ks_feature,
             ((column, X[column], y, binned) for column in X.columns),
@@ -166,6 +183,7 @@ class KSSelector(BaseFeatureSelector):
         )
         self.scores_ = pd.Series([score for _, score in results], index=X.columns, dtype=float, name="KS值")
         selected_mask = self.scores_ >= self.threshold
+        record_conditions(self, X.columns, KS达标=selected_mask)
         self.selected_features_ = X.columns[selected_mask].tolist()
         dropped_columns = X.columns[~selected_mask].tolist()
         self.dropped_ = pd.DataFrame(

@@ -22,6 +22,8 @@ from .base import (
 )
 from ...core.rules.rule import Rule
 from ...core.binning import OptimalBinning
+from ...core.binning.spec import field_expression, value_expression
+from ...core.rules.artifact import RuleArtifact
 
 
 def _single_feature_worker(task):
@@ -159,7 +161,7 @@ class SingleFeatureRuleMiner(BaseRuleMiner):
         :return: self
         """
         # 在临时副本中完成本轮拟合，全部成功后再一次性提交状态。
-        working = copy.deepcopy(self)
+        working = copy.copy(self)
 
         # 更新参数
         for key, value in kwargs.items():
@@ -270,27 +272,24 @@ class SingleFeatureRuleMiner(BaseRuleMiner):
 
         binner = self._get_binning_instance()
         X_feature = pd.DataFrame({feature: valid_values})
-        y_valid = self.y_.loc[valid_values.index]
+        y_valid = self.y_.iloc[np.flatnonzero(feature_values.notna().to_numpy())]
         binner.fit(X_feature, y_valid)
 
         if hasattr(binner, 'splits_') and feature in binner.splits_:
             thresholds = binner.splits_[feature]
         elif hasattr(binner, 'bin_edges_'):
-            thresholds = sorted(set(binner.bin_edges_))
+            thresholds = sorted(set(binner.bin_edges_))[1:-1]
         else:
-            thresholds = self._get_quantile_thresholds(valid_values)
+            thresholds = self._get_quantile_thresholds(valid_values)[1:-1]
 
         if isinstance(thresholds, np.ndarray):
             thresholds = thresholds.tolist()
-        if len(thresholds) > 2:
-            thresholds = thresholds[1:-1]
+        thresholds = sorted({float(value) for value in thresholds if np.isfinite(value)})
 
         results = []
-        for i, threshold in enumerate(thresholds):
-            if i < len(thresholds) - 1:
-                results.append(self._calculate_metrics(feature, threshold, '>='))
-            if i > 0:
-                results.append(self._calculate_metrics(feature, threshold, '<='))
+        for threshold in thresholds:
+            results.append(self._calculate_metrics(feature, threshold, '>='))
+            results.append(self._calculate_metrics(feature, threshold, '<='))
 
         if feature_values.isna().any():
             results.append(self._calculate_metrics(feature, None, 'isna'))
@@ -307,9 +306,6 @@ class SingleFeatureRuleMiner(BaseRuleMiner):
         results = []
 
         feature_values = self.X_[feature].copy()
-        if self.special_codes:
-            for code in self.special_codes:
-                feature_values = feature_values.replace(code, f'SPECIAL_{code}')
 
         value_counts = feature_values.value_counts(dropna=False)
         if self.cat_cutoff is not None:
@@ -431,8 +427,8 @@ self, feature_values: pd.Series) -> List[float]:
         """获取Top规则（使用Rule.expr与Rule.report命中结果，支持缺失值规则）."""
         self._check_fitted()
 
-        min_lift = min_lift or self.min_lift
-        min_samples = min_samples or self.min_samples
+        min_lift = self.min_lift if min_lift is None else min_lift
+        min_samples = self.min_samples if min_samples is None else min_samples
 
         if feature is not None:
             if feature not in self.results_:
@@ -465,14 +461,14 @@ self, feature_values: pd.Series) -> List[float]:
             feature_name = row['feature']
             operator = row['operator']
             threshold = row['threshold']
-            feature_expr = f"`{feature_name}`" if not str(feature_name).isidentifier() else str(feature_name)
+            feature_expr = field_expression(feature_name)
 
             if operator == 'isna':
-                expr = f"{feature_expr} != {feature_expr}"
+                expr = f"{feature_expr}.isna()"
             elif operator == 'notna':
-                expr = f"{feature_expr} == {feature_expr}"
+                expr = f"{feature_expr}.notna()"
             else:
-                expr = f"{feature_expr} {operator} {repr(threshold)}"
+                expr = f"{feature_expr} {operator} {value_expression(threshold)}"
 
             rule = Rule(expr=expr, name=expr, description=expr, weight=1.0)
             report_df = rule.report(datasets=datasets, target=target_col)
@@ -545,7 +541,8 @@ self, feature_values: pd.Series) -> List[float]:
         for _, row in rules_df.iterrows():
             expr = row['规则表达式']
             rule = Rule(expr=expr, name=row.get('规则名称', expr), description=expr, weight=1.0)
-            report_df = rule.report(datasets=datasets, target=target_col)
+            rule.artifact_ = RuleArtifact(expr, target_spec={"目标列": target_col})
+            report_df = row['规则报告']
             hit_rows = report_df[report_df['分箱'] == '命中'] if '分箱' in report_df.columns else pd.DataFrame()
             hit = hit_rows.iloc[0].to_dict() if not hit_rows.empty else {}
             metadata = {

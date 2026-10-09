@@ -24,9 +24,9 @@ import pandas as pd
 from threadpoolctl import threadpool_limits
 
 from .base import BaseFeatureSelector
+from ._selection_history import initialize_history, record_event
 from ...exceptions import ValidationError
 from ...utils.parallel import ParallelWorkload, _resolve_current_n_jobs
-
 
 # bin_tables_ 中指标列名 → 聚合方式的映射
 _METRIC_COL_MAP = {
@@ -35,6 +35,7 @@ _METRIC_COL_MAP = {
     "lift": ("LIFT值", "max"),  # 取最大LIFT
     "bad_rate": ("坏样本率", "max"),  # 取最大坏样本率
 }
+
 
 class _DefaultBinningParams(dict):
     """可被 sklearn clone 保留身份的不可变默认配置标记。"""
@@ -231,6 +232,10 @@ class CorrSelector(BaseFeatureSelector):
         parallel_backend: Optional[str] = None,
         parallel_config: Optional[Dict[str, Any]] = None,
         corr_block_size: int = 512,
+        target_rm: bool = False,
+        report_history: str = "summary",
+        max_report_events: int = 10000,
+        max_report_bytes: int = 8 * 1024 * 1024,
     ):
         super().__init__(
             target=target,
@@ -243,11 +248,15 @@ class CorrSelector(BaseFeatureSelector):
             binning_params=binning_params,
             parallel_backend=parallel_backend,
             parallel_config=parallel_config,
+            target_rm=target_rm,
         )
         self.method = method
         self.metric = metric
         self.weights = weights
         self.corr_block_size = corr_block_size
+        self.report_history = report_history
+        self.max_report_events = max_report_events
+        self.max_report_bytes = max_report_bytes
 
     @property
     def _uses_default_binning_params(self) -> bool:
@@ -256,7 +265,11 @@ class CorrSelector(BaseFeatureSelector):
 
     def _validate_corr_block_size(self) -> int:
         """校验并返回相关计算块大小。"""
-        if isinstance(self.corr_block_size, (bool, np.bool_)) or not isinstance(self.corr_block_size, numbers.Integral) or int(self.corr_block_size) < 1:
+        if (
+            isinstance(self.corr_block_size, (bool, np.bool_))
+            or not isinstance(self.corr_block_size, numbers.Integral)
+            or int(self.corr_block_size) < 1
+        ):
             raise ValidationError("corr_block_size 必须为正整数")
         return int(self.corr_block_size)
 
@@ -380,7 +393,11 @@ class CorrSelector(BaseFeatureSelector):
                 continue
             current_value = max_values[index]
             current_other = max_indices[index]
-            if np.isnan(current_value) or value > current_value or (value == current_value and (current_other < 0 or other < current_other)):
+            if (
+                np.isnan(current_value)
+                or value > current_value
+                or (value == current_value and (current_other < 0 or other < current_other))
+            ):
                 max_values[index] = float(value)
                 max_indices[index] = other
 
@@ -402,7 +419,9 @@ class CorrSelector(BaseFeatureSelector):
             raise ValidationError("CorrSelector 相关计算仅支持可转换为数值的特征") from exc
 
         fast_matrix = self.method in ("pearson", "spearman") and np.isfinite(values).all()
-        has_inner_thread_limit = isinstance(self.parallel_config, dict) and self.parallel_config.get("inner_max_num_threads") is not None
+        has_inner_thread_limit = (
+            isinstance(self.parallel_config, dict) and self.parallel_config.get("inner_max_num_threads") is not None
+        )
         default_backend = "threading" if fast_matrix and not has_inner_thread_limit else "loky"
         if fast_matrix:
             if self.method == "spearman":
@@ -531,7 +550,9 @@ class CorrSelector(BaseFeatureSelector):
         binner = getattr(self, "_binner_instance", None)
         bin_tables = getattr(binner, "bin_tables_", {}) if binner is not None else {}
         if not bin_tables:
-            raise ValidationError("CorrSelector 使用指标权重时需要配置 binner 或 binning_params，" "也可以显式传入 weights")
+            raise ValidationError(
+                "CorrSelector 使用指标权重时需要配置 binner 或 binning_params，" "也可以显式传入 weights"
+            )
 
         scores = {}
         for col in feature_names:
@@ -586,7 +607,17 @@ class CorrSelector(BaseFeatureSelector):
         :param y: 目标变量
         """
         self._get_feature_names(X)
+        initialize_history(self)
         self._validate_corr_block_size()
+        if self.method not in {"pearson", "spearman", "kendall"}:
+            raise ValidationError("method 必须为 'pearson'、'spearman' 或 'kendall'")
+        if (
+            isinstance(self.threshold, (bool, np.bool_))
+            or not isinstance(self.threshold, numbers.Real)
+            or not np.isfinite(self.threshold)
+            or not 0 <= self.threshold <= 1
+        ):
+            raise ValidationError("相关系数阈值必须为 [0, 1] 内的有限数值")
 
         n_features = X.shape[1]
         feature_names = X.columns.tolist()
@@ -619,15 +650,28 @@ class CorrSelector(BaseFeatureSelector):
             weight_arr = weight_series.to_numpy(dtype=np.float64)
         except (TypeError, ValueError) as exc:
             raise ValidationError("CorrSelector 的 weights 或 metric 必须为数值") from exc
+        if not np.isfinite(weight_arr).all():
+            raise ValidationError("CorrSelector 的 weights 或 metric 必须全部为有限数值")
         self.feature_scores_ = weight_series.copy()
         self.scores_ = weight_series.copy()
+        self.score_name_ = (
+            self.metric.upper()
+            if self.weights is None and getattr(self, "_binner_instance", None) is not None
+            else "保留优先权重"
+        )
+        self.score_direction_ = "越大越好"
+        self.effective_threshold_ = self.threshold
 
         # ── 强制保留优先，其余特征按权重稳定降序排列 ──
         forced_exclude = set(getattr(self, "exclude_", []))
         forced_include = set(getattr(self, "include_", [])).difference(forced_exclude)
         included_names = [name for name in feature_names if name in forced_include]
         sort_idx = np.argsort(-weight_arr, kind="stable")
-        sorted_names = included_names + [feature_names[index] for index in sort_idx if feature_names[index] not in forced_include and feature_names[index] not in forced_exclude]
+        sorted_names = included_names + [
+            feature_names[index]
+            for index in sort_idx
+            if feature_names[index] not in forced_include and feature_names[index] not in forced_exclude
+        ]
         forced_keep_count = len(included_names)
 
         # ── 分块计算相关性，不再分配完整 p×p 相关矩阵 ──
@@ -648,6 +692,36 @@ class CorrSelector(BaseFeatureSelector):
 
         # 保存 scores（与原始列顺序一致）
         self.scores_ = weight_series
+        self.decision_correlations_ = pd.Series(max_corr_by_index, index=sorted_names)
+        self.association_features_ = pd.Series(
+            [sorted_names[index] if index >= 0 else None for index in max_corr_feature_index],
+            index=sorted_names,
+            dtype=object,
+        )
+        self.selection_reasons_ = pd.Series(index=feature_names, dtype=object)
+        self.selection_stopping_reason_ = "按保留优先权重完成相关冲突筛选"
+        for index, feature in enumerate(sorted_names):
+            reason = (
+                "强制保留字段"
+                if feature in forced_include
+                else ("与已保留变量存在超阈值相关冲突" if index in drops else "与已保留变量无超阈值相关冲突")
+            )
+            self.selection_reasons_[feature] = reason
+            record_event(
+                self,
+                {
+                    "轮次": index + 1,
+                    "特征": feature,
+                    "动作": "剔除" if index in drops else "保留",
+                    "指标名称": "淘汰相关系数绝对值",
+                    "指标值": max_corr_by_index[index],
+                    "有效阈值": self.threshold,
+                    "是否有效": True,
+                    "原因": reason,
+                    "关联特征": self.association_features_[feature],
+                    "补充信息": {"优先权重": float(weight_series[feature]), "权重指标": self.score_name_},
+                },
+            )
 
         # ── 构建 dropped_ 报告 ──
         if len(drops) > 0:
@@ -665,7 +739,11 @@ class CorrSelector(BaseFeatureSelector):
                 max_corr_features.append(max_corr_feat)
                 metric_values.append(weight_series.get(col_name, 0.0))
 
-            metric_label = self.metric.upper() if self.weights is None and getattr(self, "_binner_instance", None) is not None else "权重"
+            metric_label = (
+                self.metric.upper()
+                if self.weights is None and getattr(self, "_binner_instance", None) is not None
+                else "权重"
+            )
             drop_reasons = []
             for index, col_name in enumerate(dropped_cols):
                 related_name = max_corr_features[index]
@@ -673,7 +751,9 @@ class CorrSelector(BaseFeatureSelector):
                     suffix = "相关特征为强制保留变量"
                 else:
                     suffix = f"{metric_label}({metric_values[index]:.4f})不高于相关特征"
-                drop_reasons.append(f"与{related_name}相关系数({max_corr_values[index]:.4f})>" f"{self.threshold}，{suffix}")
+                drop_reasons.append(
+                    f"与{related_name}相关系数({max_corr_values[index]:.4f})>" f"{self.threshold}，{suffix}"
+                )
 
             self.dropped_ = pd.DataFrame(
                 {

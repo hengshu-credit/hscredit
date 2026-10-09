@@ -5,7 +5,7 @@ from typing import Any, Dict, Optional
 import numpy as np
 
 from ...exceptions import NotFittedError, SerializationError
-from ._contracts import positive_probability, validate_labels
+from ._contracts import positive_probability, validate_labels, validate_sample_weight
 
 
 class _ProbabilityScoreCardMixin:
@@ -30,10 +30,13 @@ class _ProbabilityScoreCardMixin:
             raise TypeError("scorecard_params 必须是字典或 None")
 
         supplied = dict(scorecard_params or {})
-        allowed = set(self.DEFAULT_SCORECARD_PARAMS) | self.SCORE_TRANSFORMER_OPTION_KEYS
+        allowed = set(self.DEFAULT_SCORECARD_PARAMS) | self.SCORE_TRANSFORMER_OPTION_KEYS | {"base_bad_rate"}
         invalid = sorted(set(supplied) - allowed)
         if invalid:
             raise ValueError(f"不支持的评分卡参数: {invalid}")
+        prior = supplied.get("base_bad_rate")
+        if prior is not None and (isinstance(prior, (bool, np.bool_)) or not isinstance(prior, (int, float, np.integer, np.floating)) or not np.isfinite(prior) or not 0 < prior < 1):
+            raise ValueError("base_bad_rate 必须为 (0, 1) 内的有限业务先验坏率")
 
         self.scorecard_params = scorecard_params
         self.scorecard_config_ = {**self.DEFAULT_SCORECARD_PARAMS, **supplied}
@@ -51,19 +54,35 @@ class _ProbabilityScoreCardMixin:
         """调用模型概率方法并提取类别 1。"""
         return self._positive_probability_values(self.predict_proba(X))
 
-    def _fit_probability_scorecard(self, X: Any, y: np.ndarray, proba: Any = None) -> None:
+    def _fit_probability_scorecard(self, X: Any, y: np.ndarray, proba: Any = None, *, sample_weight=None) -> None:
         """使用完整训练概率拟合模型自己的概率评分转换器。"""
         # sklearn 的 set_params/clone 会直接更新构造参数；训练时重新合并以保持契约。
         self._initialize_scorecard_params(self.scorecard_params)
         labels = self._validate_probability_scorecard_labels(y)
 
-        self.bad_rate_ = float(np.mean(labels == 1))
+        weight_type = getattr(self, "weight_type", "cost")
+        if weight_type not in ("frequency", "cost"):
+            raise ValueError("weight_type 必须为 frequency 或 cost")
+        weights = validate_sample_weight(sample_weight, len(labels))
+        explicit_prior = self.scorecard_config_.get("base_bad_rate")
+        if explicit_prior is not None:
+            self.bad_rate_ = float(explicit_prior)
+            self.score_prior_source_ = "显式业务先验"
+        elif weight_type == "frequency" and weights is not None:
+            self.bad_rate_ = float(np.average(labels == 1, weights=weights))
+            self.score_prior_source_ = "频数加权坏率"
+        else:
+            self.bad_rate_ = float(np.mean(labels == 1))
+            self.score_prior_source_ = "原始样本坏率"
+        if not 0 < self.bad_rate_ < 1:
+            raise ValueError("评分刻度需要同时有正权重的好坏样本，或显式配置 base_bad_rate")
         self.base_odds_ = self.bad_rate_ / (1.0 - self.bad_rate_)
 
         # 延迟导入，避免评分卡包初始化期间与模型基类形成循环依赖。
         from .scorecard.model_scorecard import ProbabilityScoreCard
 
         config = dict(self.scorecard_config_)
+        config.pop("base_bad_rate", None)
         train_probability = (
             self._positive_probability(X)
             if proba is None
@@ -84,6 +103,7 @@ class _ProbabilityScoreCardMixin:
             "bad_rate": float(self.bad_rate_),
             "base_odds": float(self.base_odds_),
             "scorecard_params": dict(self.scorecard_params or {}),
+            "prior_source": getattr(self, "score_prior_source_", "旧版刻度"),
         }
 
     @staticmethod
@@ -95,10 +115,12 @@ class _ProbabilityScoreCardMixin:
         from .scorecard.model_scorecard import ProbabilityScoreCard
 
         self.score_transformer_ = transformer
+        config = dict(self.scorecard_config_)
+        config.pop("base_bad_rate", None)
         self.scorecard_ = ProbabilityScoreCard(
             model=None,
             base_odds=self.base_odds_,
-            **dict(self.scorecard_config_),
+            **config,
         )
         self.scorecard_.model_ = None
         self.scorecard_.transformer_ = transformer
@@ -119,6 +141,7 @@ class _ProbabilityScoreCardMixin:
             "score_transformer": self.score_transformer_,
             "bad_rate": float(self.bad_rate_),
             "base_odds": float(self.base_odds_),
+            "prior_source": getattr(self, "score_prior_source_", "旧版刻度"),
             "scorecard_params": dict(self.scorecard_params or {}),
             "feature_names_in": list(feature_names) if feature_names is not None else [],
             "feature_names_known": getattr(self, "_feature_names_known_", True),
@@ -165,6 +188,7 @@ class _ProbabilityScoreCardMixin:
         self._initialize_scorecard_params(payload.get("scorecard_params"))
         self.bad_rate_ = float(payload["bad_rate"])
         self.base_odds_ = float(payload["base_odds"])
+        self.score_prior_source_ = payload.get("prior_source", "旧版刻度")
         feature_names = payload.get("feature_names_in")
         if feature_names:
             self.feature_names_in_ = list(feature_names)
@@ -186,13 +210,14 @@ class _ProbabilityScoreCardMixin:
         self._initialize_scorecard_params(state.get("scorecard_params"))
         self.bad_rate_ = float(state["bad_rate"])
         self.base_odds_ = float(state["base_odds"])
+        self.score_prior_source_ = state.get("prior_source", "旧版刻度")
 
         from .scorecard.model_scorecard import ProbabilityScoreCard
 
         scorecard = ProbabilityScoreCard(
             model=None,
             base_odds=self.base_odds_,
-            **dict(self.scorecard_config_),
+            **{key: value for key, value in self.scorecard_config_.items() if key != "base_bad_rate"},
         ).fit(proba=np.asarray([self.bad_rate_], dtype=float))
         self._attach_score_transformer(scorecard.transformer_)
 

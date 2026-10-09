@@ -2,8 +2,8 @@
 排序 AUC 代理损失函数
 
 面向 AUC / 排序质量优化，使用平方铰链（squared hinge）代理，
-相比 OrdinalRankLoss 的 logistic 代理提供更紧的排序界。
-支持硬负例挖掘与自适应 margin。
+提供与 OrdinalRankLoss 的 logistic 代理不同的间隔惩罚。
+支持硬负例挖掘与固定 margin。
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ from typing import Tuple
 import numpy as np
 
 from .base import BaseLoss
+from ._loss_math import binary_inputs, bce_terms, nonnegative, positive, unit_interval
 
 
 class RankingAUCProxyLoss(BaseLoss):
@@ -21,10 +22,13 @@ class RankingAUCProxyLoss(BaseLoss):
     作为 :class:`OrdinalRankLoss` 的增强版本，核心改进:
 
     1. **平方铰链代理**: ``max(0, margin - Δ)²`` 比 logistic 代理
-       ``log(1+exp(-Δ))`` 提供更紧的排序界，收敛更快。
+       ``log(1+exp(-Δ))`` 使用不同的间隔惩罚；效果需在验证集比较。
     2. **硬负例挖掘**: 优先选择违反 margin 的样本对（``p_pos - p_neg < margin``），
        避免在已充分排序的 pair 上浪费梯度。
-    3. **自适应 margin**: 可选根据训练进度动态调整 margin。
+    3. **固定 margin**: 通过参数控制目标间距；未实现训练进度调度。
+
+    硬挖掘选中样本对改变、同分或 hinge 边界处不可微；其余区间按 n × 平均损失
+    计算概率导数和 Hessian 对角项，不返回跨样本二阶项。
 
     数学形式::
 
@@ -77,6 +81,11 @@ class RankingAUCProxyLoss(BaseLoss):
         name: str = "ranking_auc_proxy_loss",
     ):
         super().__init__(name)
+        nonnegative(rank_weight=rank_weight, bce_weight=bce_weight, margin=margin)
+        positive(max_pairs=max_pairs, hard_mining_ratio=hard_mining_ratio)
+        unit_interval(hard_mining_ratio=hard_mining_ratio)
+        if not isinstance(max_pairs, (int, np.integer)):
+            raise ValueError("max_pairs 必须为正整数。")
         self.rank_weight = rank_weight
         self.bce_weight = bce_weight
         self.margin = margin
@@ -98,7 +107,7 @@ class RankingAUCProxyLoss(BaseLoss):
 
         rng = np.random.default_rng(self.random_state)
 
-        # 全组合或���样
+        # 全组合或采样
         total_pairs = len(pos_idx) * len(neg_idx)
         if total_pairs <= self.max_pairs:
             pos_grid = np.repeat(pos_idx, len(neg_idx))
@@ -145,7 +154,7 @@ class RankingAUCProxyLoss(BaseLoss):
 
         diff = y_pred[pos_pairs] - y_pred[neg_pairs]
         violation = np.maximum(0, self.margin - diff)
-        return float(np.mean(violation ** 2))
+        return float(np.mean(violation**2))
 
     def __call__(
         self,
@@ -158,12 +167,9 @@ class RankingAUCProxyLoss(BaseLoss):
         :param y_pred: 预测概率, shape (n_samples,)
         :return: 损失值
         """
-        y_true = np.asarray(y_true, dtype=float)
-        y_pred = np.clip(np.asarray(y_pred, dtype=float), 1e-7, 1 - 1e-7)
+        y_true, y_pred = binary_inputs(y_true, y_pred)
 
-        bce = -np.mean(
-            y_true * np.log(y_pred) + (1 - y_true) * np.log(1 - y_pred)
-        )
+        bce = -np.mean(y_true * np.log(y_pred) + (1 - y_true) * np.log(1 - y_pred))
         rank_loss = self._squared_hinge_loss(y_true, y_pred)
 
         return float(self.bce_weight * bce + self.rank_weight * rank_loss)
@@ -184,11 +190,10 @@ class RankingAUCProxyLoss(BaseLoss):
         :param y_pred: 预测概率
         :return: 梯度数组, shape (n_samples,)
         """
-        y_true = np.asarray(y_true, dtype=float)
-        y_pred = np.clip(np.asarray(y_pred, dtype=float), 1e-7, 1 - 1e-7)
+        y_true, y_pred = binary_inputs(y_true, y_pred)
 
         # BCE 梯度
-        grad = self.bce_weight * (y_pred - y_true)
+        grad = self.bce_weight * bce_terms(y_true, y_pred)[1]
 
         # 排序梯度
         pos_pairs, neg_pairs = self._prepare_pairs(y_true, y_pred)
@@ -199,7 +204,7 @@ class RankingAUCProxyLoss(BaseLoss):
         violation = np.maximum(0, self.margin - diff)
 
         # 平方铰链梯度: d/dp[max(0,m-d)²] = -2*max(0,m-d) for pos, +2*... for neg
-        pair_grad = 2 * violation * (self.rank_weight / len(pos_pairs))
+        pair_grad = 2 * violation * (len(y_true) * self.rank_weight / len(pos_pairs))
 
         np.add.at(grad, pos_pairs, -pair_grad)
         np.add.at(grad, neg_pairs, pair_grad)
@@ -217,21 +222,18 @@ class RankingAUCProxyLoss(BaseLoss):
         :param y_pred: 预测概率
         :return: 二阶导数数组, shape (n_samples,)
         """
-        y_true = np.asarray(y_true, dtype=float)
-        y_pred = np.clip(np.asarray(y_pred, dtype=float), 1e-7, 1 - 1e-7)
+        y_true, y_pred = binary_inputs(y_true, y_pred)
 
         # BCE 二阶导
-        hess = self.bce_weight * y_pred * (1 - y_pred)
+        hess = self.bce_weight * bce_terms(y_true, y_pred)[2]
 
         # 排序二阶导: d²/dp²[max(0,m-d)²] = 2 where violation > 0
         pos_pairs, neg_pairs = self._prepare_pairs(y_true, y_pred)
         if len(pos_pairs) > 0 and self.rank_weight != 0:
             diff = y_pred[pos_pairs] - y_pred[neg_pairs]
             active = (self.margin - diff) > 0
-            pair_hess = 2.0 * active.astype(float) * (
-                self.rank_weight / len(pos_pairs)
-            )
+            pair_hess = 2.0 * active.astype(float) * (len(y_true) * self.rank_weight / len(pos_pairs))
             np.add.at(hess, pos_pairs, pair_hess)
             np.add.at(hess, neg_pairs, pair_hess)
 
-        return np.maximum(hess, 1e-6)
+        return hess

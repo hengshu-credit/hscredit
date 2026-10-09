@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 
 from .base import BaseEncoder
+from ._category_protocol import CategoryToken, UNKNOWN
 
 
 class CardinalityEncoder(BaseEncoder):
@@ -80,7 +81,7 @@ class CardinalityEncoder(BaseEncoder):
     """
 
     # top_categories_ 供 get_top_categories/get_summary 使用，随映射一并序列化
-    _EXTRA_STATE_ATTRS = ["top_categories_"]
+    _EXTRA_STATE_ATTRS = ["top_categories_", "category_counts_", "special_counts_"]
 
     def __init__(
         self,
@@ -96,6 +97,7 @@ class CardinalityEncoder(BaseEncoder):
         n_jobs: Optional[Union[int, float]] = -1,
         parallel_backend: Optional[str] = None,
         parallel_config: Optional[Dict[str, Any]] = None,
+        passthrough_target: bool = False,
     ):
         """初始化高基数降维编码器。
 
@@ -119,6 +121,7 @@ class CardinalityEncoder(BaseEncoder):
             n_jobs=n_jobs,
             parallel_backend=parallel_backend,
             parallel_config=parallel_config,
+            passthrough_target=passthrough_target,
         )
         self.max_categories = max_categories
         self.other_label = other_label
@@ -166,9 +169,9 @@ class CardinalityEncoder(BaseEncoder):
 
         # 未知类别处理
         if self.handle_unknown == "other":
-            mapping["__UNKNOWN__"] = self.other_label
+            mapping[UNKNOWN] = self.other_label
         elif self.handle_unknown == "return_nan":
-            mapping["__UNKNOWN__"] = np.nan
+            mapping[UNKNOWN] = np.nan
 
         return {
             "mapping_": mapping,
@@ -232,7 +235,7 @@ class CardinalityEncoder(BaseEncoder):
             # 构建逆映射：只对保留类别和特殊值有效
             inverse_mapping = {}
             for orig, encoded in mapping.items():
-                if orig == "__UNKNOWN__":
+                if isinstance(orig, CategoryToken):
                     continue
                 # 保留类别和特殊值映射回自身；other_label 保持不变
                 if encoded != self.other_label:

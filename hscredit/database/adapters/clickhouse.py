@@ -38,13 +38,26 @@ class ClickHouseQueryResource:
         else:
             self._entered = stream_context
         self._iterator = iter(self._entered)
+        self._buffer = None
+        self._offset = 0
 
     def fetchmany(self, size: int) -> pd.DataFrame:
-        del size
-        try:
-            return next(self._iterator)
-        except StopIteration:
-            return pd.DataFrame()
+        if isinstance(size, bool) or not isinstance(size, int) or size <= 0:
+            raise ValidationError("分块大小必须为正整数")
+        if self.closed:
+            return pd.DataFrame(columns=self.columns)
+        while self._buffer is None or self._offset >= len(self._buffer):
+            try:
+                self._buffer = next(self._iterator)
+            except StopIteration:
+                self._buffer = None
+                return pd.DataFrame(columns=self.columns)
+            self._offset = 0
+            self.columns = list(self._buffer.columns)
+        end = min(self._offset + size, len(self._buffer))
+        result = self._buffer.iloc[self._offset:end].copy()
+        self._offset = end
+        return result
 
     def close(self) -> None:
         if self.closed:
@@ -55,6 +68,7 @@ class ClickHouseQueryResource:
             elif hasattr(self.stream_context, "close"):
                 self.stream_context.close()
         finally:
+            self._buffer = None
             self.closed = True
 
 

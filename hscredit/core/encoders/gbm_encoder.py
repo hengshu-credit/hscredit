@@ -21,6 +21,7 @@ import numpy as np
 import pandas as pd
 
 from .base import BaseEncoder
+from ._category_protocol import MISSING, pack
 from ...utils.parallel import _resolve_current_n_jobs
 
 logger = logging.getLogger(__name__)
@@ -167,6 +168,7 @@ class GBMEncoder(BaseEncoder):
         n_jobs: Optional[Union[int, float]] = -1,
         parallel_backend: Optional[str] = None,
         parallel_config: Optional[Dict[str, Any]] = None,
+        passthrough_target: bool = False,
     ):
         """初始化GBM编码器。
 
@@ -199,6 +201,7 @@ class GBMEncoder(BaseEncoder):
             n_jobs=n_jobs,
             parallel_backend=parallel_backend,
             parallel_config=parallel_config,
+            passthrough_target=passthrough_target,
         )
         self.model_type = model_type
         self.n_estimators = n_estimators
@@ -243,6 +246,7 @@ class GBMEncoder(BaseEncoder):
 
         y = pd.Series(y)
         self.classes_ = np.unique(y)
+        self._catboost_category_protocol_ = 2
 
         # 确定使用的列
         if self.cols is None:
@@ -274,6 +278,11 @@ class GBMEncoder(BaseEncoder):
 
         # 生成特征名
         self._generate_feature_names()
+        if self.output_type == 'onehot':
+            fitted_input = self._preprocess_catboost_missing(X_train) if self.model_type == 'catboost' else X_train
+            leaves = self._transform_to_leaves(fitted_input)
+            self.leaf_categories_ = {i: np.unique(leaves.iloc[:, i]).tolist() for i in range(leaves.shape[1])}
+            self.feature_names_ = [f'gbm_tree{i}_leaf{leaf}' for i, categories in self.leaf_categories_.items() for leaf in categories]
 
     def _compute_missing_stats(self, X: pd.DataFrame):
         """计算缺失值统计信息。
@@ -350,10 +359,13 @@ class GBMEncoder(BaseEncoder):
         cat_cols = X.select_dtypes(include=['object', 'category']).columns
 
         for col in cat_cols:
-            # 将缺失值转换为特殊字符串
-            X[col] = X[col].fillna('__MISSING__')
-            # 确保列为字符串类型
-            X[col] = X[col].astype(str)
+            if getattr(self, '_catboost_category_protocol_', 1) == 1:
+                # 旧完整模型按旧词典预测；新的类型化词典只能通过重新拟合建立。
+                X[col] = X[col].astype(object).fillna('__MISSING__').astype(str)
+                continue
+            # CatBoost需要字符串；以类型记录编码，真实'__MISSING__'不与缺失混淆。
+            import json
+            X[col] = X[col].astype(object).map(lambda value: json.dumps(pack(MISSING if pd.isna(value) else value), ensure_ascii=False, sort_keys=True))
 
         return X
 
@@ -464,11 +476,7 @@ class GBMEncoder(BaseEncoder):
         cat_features = X_cb.select_dtypes(include=['object', 'category']).columns.tolist()
 
         # CatBoost要求类别特征中的缺失值必须是字符串
-        for col in cat_features:
-            # 将缺失值转换为字符串 "missing"
-            X_cb[col] = X_cb[col].fillna('__MISSING__')
-            # 确保列为字符串类型
-            X_cb[col] = X_cb[col].astype(str)
+        X_cb = self._preprocess_catboost_missing(X_cb)
 
         # 基础参数 (CatBoost使用不同的参数名)
         params = {
@@ -614,7 +622,9 @@ class GBMEncoder(BaseEncoder):
 
         for tree_idx in range(leaf_df.shape[1]):
             tree_col = leaf_df.iloc[:, tree_idx]
-            unique_leaves = np.unique(tree_col)
+            if not hasattr(self, "leaf_categories_"):
+                raise ValueError("旧GBM独热制品没有冻结叶子schema，请重新拟合后再转换")
+            unique_leaves = self.leaf_categories_[tree_idx]
 
             for leaf in unique_leaves:
                 col_name = f'gbm_tree{tree_idx}_leaf{leaf}'
@@ -689,6 +699,21 @@ class GBMEncoder(BaseEncoder):
         :return: 训练好的GBM模型对象
         """
         return self.model_
+
+    def get_feature_names_out(self, input_features=None):
+        original = [name for name in getattr(self, "feature_names_in_", []) if name not in self._dropped_cols]
+        if self.drop_origin:
+            original = [name for name in original if name not in self.cols_]
+        names = original + list(self.feature_names_)
+        if self.passthrough_target and getattr(self, "_target_in_fit_", False):
+            names.append(self.target)
+        return np.asarray(names, dtype=object)
+
+    def export_mapping(self, *, legacy=False):
+        raise NotImplementedError("GBM编码依赖已训练模型，类别映射不足以还原转换；请使用 save_artifact/load_artifact")
+
+    def import_mapping(self, mapping):
+        raise NotImplementedError("GBM编码依赖已训练模型，请使用 load_artifact，不能只导入类别映射")
 
     def get_feature_importance(self) -> pd.DataFrame:
         """获取特征重要性。

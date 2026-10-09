@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 
 from .base import BaseEncoder
+from ._category_protocol import CategoryToken, MISSING, UNKNOWN
 from ...exceptions import NotFittedError, FeatureNotFoundError
 
 
@@ -43,6 +44,10 @@ class WOEEncoder(BaseEncoder):
     :param drop_invariant: 是否删除方差为0的列，默认为False
     :param return_df: 是否返回DataFrame，默认为True
     :param target: scorecardpipeline 风格的目标列名，提供后 fit 时从 X 中提取该列作为 y
+    :param training_mode: 默认 in_sample；oof 时 fit_transform 生成折外训练编码，
+        transform 使用全训练集映射。时间切分未覆盖的起始行保留 NaN，见 oof_coverage_。
+    :param cv: 折外编码的折数或 sklearn 切分器；fit_transform 的 groups 参数按位置传入
+    :param random_state: 整数 cv 随机分折的种子，默认 42
 
     **属性**
 
@@ -80,7 +85,9 @@ class WOEEncoder(BaseEncoder):
     """
 
     # iv_ 为各特征信息价值，随映射一并序列化以便 import_mapping 后仍可查
-    _EXTRA_STATE_ATTRS = ["iv_"]
+    _EXTRA_STATE_ATTRS = ["iv_", "_legacy_string_keys_"]
+    _TARGET_TYPE = "binary"
+    _OUTPUT_ATTRS = {"hscredit_encoding": "woe", "hscredit_source": "WOEEncoder"}
 
     def __init__(
         self,
@@ -95,6 +102,10 @@ class WOEEncoder(BaseEncoder):
         n_jobs: Optional[Union[int, float]] = -1,
         parallel_backend: Optional[str] = None,
         parallel_config: Optional[Dict[str, Any]] = None,
+        training_mode: str = "in_sample",
+        cv: Any = 5,
+        random_state: Optional[int] = 42,
+        passthrough_target: bool = False,
     ):
         """初始化WOE编码器。
 
@@ -121,11 +132,16 @@ class WOEEncoder(BaseEncoder):
             n_jobs=n_jobs,
             parallel_backend=parallel_backend,
             parallel_config=parallel_config,
+            passthrough_target=passthrough_target,
         )
         self.regularization = regularization
         self.woe_clip = woe_clip
+        self.training_mode = training_mode
+        self.cv = cv
+        self.random_state = random_state
 
         self.iv_: Dict[str, float] = {}
+        self._legacy_string_keys_ = False
 
     def _get_category_cols(self, X: pd.DataFrame) -> List[str]:
         """自动识别需要编码的列。
@@ -176,28 +192,27 @@ class WOEEncoder(BaseEncoder):
         """
         woe_map = {}
 
-        for category in x.unique():
-            if pd.isna(category):
-                continue
-
-            mask = x == category
-            good_count = (y[mask] == 0).sum()
-            bad_count = (y[mask] == 1).sum()
-
+        codes, categories = pd.factorize(x, sort=False)
+        valid = codes >= 0
+        good_counts = np.bincount(codes[valid], weights=(np.asarray(y)[valid] == 0), minlength=len(categories))
+        bad_counts = np.bincount(codes[valid], weights=(np.asarray(y)[valid] == 1), minlength=len(categories))
+        iv = 0.0
+        for category, good_count, bad_count in zip(categories, good_counts, bad_counts):
             woe = self._compute_woe(good_count, bad_count, total_good, total_bad)
             woe_map[category] = woe
+            good_dist = (good_count + self.regularization) / (total_good + 2 * self.regularization)
+            bad_dist = (bad_count + self.regularization) / (total_bad + 2 * self.regularization)
+            iv += (bad_dist - good_dist) * np.log(bad_dist / good_dist)
 
         if self.handle_missing == 'value':
-            woe_map[np.nan] = 0.0
+            woe_map[MISSING] = 0.0
         elif self.handle_missing == 'return_nan':
-            woe_map[np.nan] = np.nan
+            woe_map[MISSING] = np.nan
 
         if self.handle_unknown == 'value':
-            woe_map['__UNKNOWN__'] = 0.0
+            woe_map[UNKNOWN] = 0.0
         elif self.handle_unknown == 'return_nan':
-            woe_map['__UNKNOWN__'] = np.nan
-
-        iv = self._compute_iv_categorical(x, y, total_good, total_bad)
+            woe_map[UNKNOWN] = np.nan
 
         return woe_map, iv
 
@@ -269,27 +284,30 @@ class WOEEncoder(BaseEncoder):
 
     def _transform_column(self, column, values, y=None, context=None):
         woe_map = self.mapping_[column]
-        mapped = values.map(woe_map)
+        mapped = self._map_values(values, woe_map)
 
-        # 类型鲁棒回退：对“未命中且非缺失”的原始值，用字符串键再映射一次。
-        # 覆盖两类键/输入类型不一致的场景，保证 export→load 往返一致：
-        #   1) load() 后 woe_map 为字符串键，而 transform 输入为数值（如 int 100）；
-        #   2) fit() 后 woe_map 为数值键，而 transform 输入为数字型字符串 '100'。
+        # 仅旧格式允许数字字符串回退，维持传统export→load互操作。
+        # fit及v2类型映射按真实类别类型匹配，不将未见字符串悄悄当数值类别。
         unmapped = mapped.isna() & values.notna()
-        if unmapped.any():
+        if unmapped.any() and getattr(self, "_legacy_string_keys_", False):
             str_map = {
                 str(k): v
                 for k, v in woe_map.items()
-                if k != '__UNKNOWN__' and not (isinstance(k, float) and pd.isna(k))
+                if not isinstance(k, CategoryToken) and not (isinstance(k, float) and pd.isna(k))
             }
             if str_map:
                 mapped.loc[unmapped] = values.loc[unmapped].astype(str).map(str_map)
+                # 旧JSON的整数键是"1"；Excel/pandas遇缺失可能把输入提升为1.0。
+                # 仅在显式旧格式且普通字符串回退仍未命中时，兼容这类整数浮点值。
+                remaining = mapped.isna() & values.notna()
+                if remaining.any():
+                    def legacy_key(value):
+                        if isinstance(value, (float, np.floating)) and np.isfinite(value) and float(value).is_integer():
+                            return str(int(value))
+                        return str(value)
+                    mapped.loc[remaining] = values.loc[remaining].map(legacy_key).map(str_map)
 
-        if self.handle_unknown == 'value':
-            mapped = mapped.fillna(0.0)
-        elif self.handle_unknown == 'error' and mapped.isna().any():
-            raise ValueError(f"列'{column}'包含未知类别")
-        return mapped
+        return self._apply_missing_unknown(column, values, mapped, 0.0)
 
     def get_iv(self) -> Dict[str, float]:
         """获取各特征的IV值。
@@ -403,12 +421,17 @@ class WOEEncoder(BaseEncoder):
             col_rules = {}
             for value, woe in woe_map.items():
                 # 处理特殊值
-                if value == '__UNKNOWN__':
+                if value == UNKNOWN:
                     continue  # toad 不保存 __UNKNOWN__
-                if pd.isna(value):
+                if value == MISSING or pd.isna(value):
+                    if 'nan' in col_rules:
+                        raise ValueError("传统 WOE JSON 缺失键与业务类别冲突，请使用 export_mapping()")
                     col_rules['nan'] = woe  # toad 使用字符串 'nan'
                 else:
-                    col_rules[str(value)] = float(woe)
+                    key = str(value)
+                    if key in col_rules:
+                        raise ValueError("传统 WOE JSON 字符串键存在类型碰撞，请使用 export_mapping() 的类型化协议")
+                    col_rules[key] = float(woe)
             rules[col] = col_rules
         
         if to_json is not None:
@@ -462,6 +485,7 @@ class WOEEncoder(BaseEncoder):
         >>> encoder.load(rules)
         """
         import json
+        self._legacy_string_keys_ = True
         
         if isinstance(from_json, str):
             # 从文件加载
@@ -491,7 +515,7 @@ class WOEEncoder(BaseEncoder):
             for value, woe in col_rules.items():
                 # toad/scorecardpipeline 用字符串 'nan' 表示缺失键
                 if value == 'nan':
-                    self.mapping_[col][np.nan] = woe
+                    self.mapping_[col][MISSING] = woe
                 else:
                     # 保持原始（字符串）键，不做 int/float 强转：
                     # 否则数字型字符串类别（如城市码/商品码 '100'）会被转成 int，
@@ -501,9 +525,9 @@ class WOEEncoder(BaseEncoder):
 
             # 添加未知值处理
             if self.handle_unknown == 'value':
-                self.mapping_[col]['__UNKNOWN__'] = 0.0
+                self.mapping_[col][UNKNOWN] = 0.0
             elif self.handle_unknown == 'return_nan':
-                self.mapping_[col]['__UNKNOWN__'] = np.nan
+                self.mapping_[col][UNKNOWN] = np.nan
 
         self._is_fitted = True
         return self

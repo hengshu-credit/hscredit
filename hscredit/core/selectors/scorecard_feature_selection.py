@@ -23,6 +23,7 @@
 """
 
 from typing import Union, List, Optional, Dict, Any
+import copy
 import numpy as np
 import pandas as pd
 
@@ -79,7 +80,7 @@ class ScorecardFeatureSelection(BaseFeatureSelector):
     :param include: 强制保留特征列表
     :param exclude: 强制剔除特征列表
     :param force_drop: 强制剔除特征列表，最终会合并到exclude
-    :param target_rm: transform时是否移除目标列，默认为False
+    :param target_rm: 默认False保留已有目标列；仅显式True时移除目标
     :param n_jobs: 并行任务数
 
     **参考样例**
@@ -101,7 +102,7 @@ class ScorecardFeatureSelection(BaseFeatureSelector):
     >>> print(selector.stage_report_df_)
     """
 
-    method_name = '评分卡特征粗筛'
+    method_name = "评分卡特征粗筛"
 
     def __init__(
         self,
@@ -109,13 +110,13 @@ class ScorecardFeatureSelection(BaseFeatureSelector):
         iv_threshold: Optional[float] = 0.02,
         corr_threshold: Optional[float] = 0.7,
         mode_threshold: Optional[float] = 0.95,
-        corr_method: str = 'pearson',
-        corr_metric: str = 'iv',
+        corr_method: str = "pearson",
+        corr_metric: str = "iv",
         corr_weights: Optional[Union[pd.Series, Dict[str, float], List[float]]] = None,
         corr_binning_params: Optional[Dict[str, Any]] = None,
         iv_regularization: float = 1.0,
         mode_dropna: bool = True,
-        target: str = 'target',
+        target: str = "target",
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
         force_drop: Optional[List[str]] = None,
@@ -131,12 +132,13 @@ class ScorecardFeatureSelection(BaseFeatureSelector):
             include=include,
             exclude=exclude,
             force_drop=force_drop,
-            threshold='multi-stage',
+            threshold="multi-stage",
             n_jobs=n_jobs,
             binner=binner,
             binning_params=binning_params,
             parallel_backend=parallel_backend,
             parallel_config=parallel_config,
+            target_rm=target_rm,
         )
         self.null_threshold = null_threshold
         self.iv_threshold = iv_threshold
@@ -150,11 +152,40 @@ class ScorecardFeatureSelection(BaseFeatureSelector):
         self.mode_dropna = mode_dropna
         self.target_rm = target_rm
 
+    def _check_input(self, X, y=None):
+        X, y = super()._check_input(X, y)
+        self._validate_configuration(y, check_target=False)
+        if not isinstance(self.target_rm, (bool, np.bool_)):
+            raise ValueError("target_rm 必须为布尔值")
+        self.planned_stages_ = [
+            {"key": key, "name": name, "selector": selector, "enabled": self._is_stage_enabled(threshold)}
+            for key, name, selector, threshold in [
+                ("empty", "缺失率筛选", "NullSelector", self.null_threshold),
+                ("iv", "IV值筛选", "IVSelector", self.iv_threshold),
+                ("corr", "相关性筛选", "CorrSelector", self.corr_threshold),
+                ("identical", "单一值筛选", "ModeSelector", self.mode_threshold),
+            ]
+        ]
+        self.executed_stages_ = []
+        self.skipped_stages_ = {
+            i: "配置关闭该阶段" for i, stage in enumerate(self.planned_stages_) if not stage["enabled"]
+        }
+        return X, y
+
+    def _initialize_empty_selection_result(self):
+        super()._initialize_empty_selection_result()
+        self.stage_selectors_ = {}
+        self.stage_reports_ = []
+        self.stage_report_df_ = pd.DataFrame()
+        self.skipped_stages_.update(
+            {i: "父级强制操作后无待筛选特征" for i, stage in enumerate(self.planned_stages_) if stage["enabled"]}
+        )
+
     def fit(
         self,
         X: Union[pd.DataFrame, np.ndarray],
         y: Optional[Union[pd.Series, np.ndarray]] = None,
-    ) -> 'ScorecardFeatureSelection':
+    ) -> "ScorecardFeatureSelection":
         """拟合评分卡风格筛选器并同步兼容属性。"""
         return super().fit(X, y)
 
@@ -193,8 +224,8 @@ class ScorecardFeatureSelection(BaseFeatureSelector):
 
         if self._is_stage_enabled(self.null_threshold) and len(current_X.columns) > 0:
             current_X = self._run_stage(
-                stage_key='empty',
-                stage_name='缺失率筛选',
+                stage_key="empty",
+                stage_name="缺失率筛选",
                 selector=NullSelector(
                     threshold=self.null_threshold,
                     target=self.target,
@@ -218,26 +249,23 @@ class ScorecardFeatureSelection(BaseFeatureSelector):
                 parallel_config=self.parallel_config,
             )
             current_X = self._run_stage(
-                stage_key='iv',
-                stage_name='IV值筛选',
+                stage_key="iv",
+                stage_name="IV值筛选",
                 selector=iv_selector,
                 current_X=current_X,
                 y=y,
                 all_dropped=all_dropped,
             )
-            iv_scores = getattr(iv_selector, 'scores_', None)
+            iv_scores = getattr(iv_selector, "scores_", None)
 
         if self._is_stage_enabled(self.corr_threshold) and len(current_X.columns) > 0:
             corr_weights = self._resolve_corr_weights(current_X, y, iv_scores)
             corr_binning_kwargs = {}
             if self.corr_binning_params is not None:
-                corr_binning_kwargs['binning_params'] = self.corr_binning_params
-            elif (
-                getattr(self, '_binner_instance', None) is not None
-                or corr_weights is not None
-            ):
+                corr_binning_kwargs["binning_params"] = self.corr_binning_params
+            elif getattr(self, "_binner_instance", None) is not None or corr_weights is not None:
                 # 外层已分箱或已有明确权重时，关闭内部 CorrSelector 的构造默认分箱。
-                corr_binning_kwargs['binning_params'] = None
+                corr_binning_kwargs["binning_params"] = None
             corr_selector = CorrSelector(
                 threshold=self.corr_threshold,
                 method=self.corr_method,
@@ -250,8 +278,8 @@ class ScorecardFeatureSelection(BaseFeatureSelector):
                 **corr_binning_kwargs,
             )
             current_X = self._run_stage(
-                stage_key='corr',
-                stage_name='相关性筛选',
+                stage_key="corr",
+                stage_name="相关性筛选",
                 selector=corr_selector,
                 current_X=current_X,
                 y=y,
@@ -260,8 +288,8 @@ class ScorecardFeatureSelection(BaseFeatureSelector):
 
         if self._is_stage_enabled(self.mode_threshold) and len(current_X.columns) > 0:
             current_X = self._run_stage(
-                stage_key='identical',
-                stage_name='单一值筛选',
+                stage_key="identical",
+                stage_name="单一值筛选",
                 selector=ModeSelector(
                     threshold=self.mode_threshold,
                     dropna=self.mode_dropna,
@@ -281,14 +309,19 @@ class ScorecardFeatureSelection(BaseFeatureSelector):
         if len(all_dropped) > 0:
             self.dropped_ = pd.concat(all_dropped, ignore_index=True)
         else:
-            self.dropped_ = pd.DataFrame(
-                columns=['特征', '剔除原因', '筛选阶段', '筛选阶段名称', '筛选器']
-            )
+            self.dropped_ = pd.DataFrame(columns=["特征", "剔除原因", "筛选阶段", "筛选阶段名称", "筛选器"])
 
-        self.removed_features_ = self.dropped_['特征'].tolist() if len(self.dropped_) > 0 else []
+        self.removed_features_ = self.dropped_["特征"].tolist() if len(self.dropped_) > 0 else []
 
         if self.stage_reports_:
             self.stage_report_df_ = pd.DataFrame(self.stage_reports_)
+        self.skipped_stages_.update(
+            {
+                i: "上游无剩余特征"
+                for i, stage in enumerate(self.planned_stages_)
+                if stage["enabled"] and i not in self.executed_stages_
+            }
+        )
 
     def _run_stage(
         self,
@@ -302,23 +335,28 @@ class ScorecardFeatureSelection(BaseFeatureSelector):
         """执行单个筛选阶段并记录结果。"""
         input_count = current_X.shape[1]
         selector.fit(current_X, y)
+        self.executed_stages_.append(
+            next(i for i, stage in enumerate(self.planned_stages_) if stage["key"] == stage_key)
+        )
 
         self.stage_selectors_[stage_key] = selector
-        self.stage_reports_.append({
-            '阶段键': stage_key,
-            '阶段名称': stage_name,
-            '筛选器': selector.__class__.__name__,
-            '输入特征数': input_count,
-            '选中特征数': len(selector.selected_features_),
-            '剔除特征数': len(getattr(selector, 'removed_features_', [])),
-            '阈值': getattr(selector, 'threshold', None),
-        })
+        self.stage_reports_.append(
+            {
+                "阶段键": stage_key,
+                "阶段名称": stage_name,
+                "筛选器": selector.__class__.__name__,
+                "输入特征数": input_count,
+                "选中特征数": len(selector.selected_features_),
+                "剔除特征数": len(getattr(selector, "removed_features_", [])),
+                "阈值": getattr(selector, "threshold", None),
+            }
+        )
 
-        if hasattr(selector, 'dropped_') and selector.dropped_ is not None and len(selector.dropped_) > 0:
+        if hasattr(selector, "dropped_") and selector.dropped_ is not None and len(selector.dropped_) > 0:
             dropped = selector.dropped_.copy(deep=False)
-            dropped['筛选阶段'] = stage_key
-            dropped['筛选阶段名称'] = stage_name
-            dropped['筛选器'] = selector.__class__.__name__
+            dropped["筛选阶段"] = stage_key
+            dropped["筛选阶段名称"] = stage_name
+            dropped["筛选器"] = selector.__class__.__name__
             all_dropped.append(dropped)
 
         selected = selector.selected_features_
@@ -339,15 +377,15 @@ class ScorecardFeatureSelection(BaseFeatureSelector):
         if self.corr_weights is not None:
             return self.corr_weights
 
-        if iv_scores is not None and str(self.corr_metric).lower() == 'iv':
+        if iv_scores is not None and str(self.corr_metric).lower() == "iv":
             return iv_scores.reindex(X.columns).fillna(0.0)
 
-        if str(self.corr_metric).lower() == 'iv':
+        if str(self.corr_metric).lower() == "iv":
             if y is None:
-                raise ValueError('启用 corr_threshold 且使用 IV 作为保留指标时，需要传入 y 或 target 列')
+                raise ValueError("启用 corr_threshold 且使用 IV 作为保留指标时，需要传入 y 或 target 列")
 
             iv_selector = IVSelector(
-                threshold=float('-inf'),
+                threshold=float("-inf"),
                 target=self.target,
                 regularization=self.iv_regularization,
                 n_jobs=self.n_jobs,
@@ -363,29 +401,40 @@ class ScorecardFeatureSelection(BaseFeatureSelector):
     def _validate_configuration(
         self,
         y: Optional[Union[pd.Series, np.ndarray]],
+        check_target: bool = True,
     ) -> None:
         """校验配置合法性。"""
-        self._validate_ratio_threshold(self.null_threshold, 'null_threshold')
-        self._validate_ratio_threshold(self.corr_threshold, 'corr_threshold')
-        self._validate_ratio_threshold(self.mode_threshold, 'mode_threshold')
+        self._validate_ratio_threshold(self.null_threshold, "null_threshold")
+        self._validate_ratio_threshold(self.corr_threshold, "corr_threshold")
+        self._validate_ratio_threshold(self.mode_threshold, "mode_threshold")
 
-        if self._is_stage_enabled(self.iv_threshold) and self.iv_threshold < 0:
-            raise ValueError('iv_threshold 不能小于 0')
+        if self._is_stage_enabled(self.iv_threshold) and (
+            not isinstance(self.iv_threshold, (int, float, np.number))
+            or not np.isfinite(self.iv_threshold)
+            or self.iv_threshold < 0
+        ):
+            raise ValueError("iv_threshold 必须是非负有限数值")
+        if (
+            not isinstance(self.iv_regularization, (int, float, np.number))
+            or not np.isfinite(self.iv_regularization)
+            or self.iv_regularization <= 0
+        ):
+            raise ValueError("iv_regularization 必须是正有限数值")
 
         requires_target = self._is_stage_enabled(self.iv_threshold)
         requires_target = requires_target or (
             self._is_stage_enabled(self.corr_threshold)
             and self.corr_weights is None
-            and str(self.corr_metric).lower() == 'iv'
+            and str(self.corr_metric).lower() == "iv"
         )
         requires_target = requires_target or (
             self._is_stage_enabled(self.corr_threshold)
             and self.corr_weights is None
-            and str(self.corr_metric).lower() != 'iv'
+            and str(self.corr_metric).lower() != "iv"
         )
 
-        if requires_target and y is None:
-            raise ValueError('当前筛选配置需要目标变量，请使用 fit(X, y) 或 fit(df) 且 df 包含 target 列')
+        if check_target and requires_target and y is None:
+            raise ValueError("当前筛选配置需要目标变量，请使用 fit(X, y) 或 fit(df) 且 df 包含 target 列")
 
     @staticmethod
     def _is_stage_enabled(threshold: Optional[float]) -> bool:
@@ -397,8 +446,8 @@ class ScorecardFeatureSelection(BaseFeatureSelector):
         """校验 0-1 比例阈值。"""
         if threshold is None or threshold is False:
             return
-        if not 0 <= threshold <= 1:
-            raise ValueError(f'{name} 必须在 [0, 1] 范围内')
+        if not isinstance(threshold, (int, float, np.number)) or not np.isfinite(threshold) or not 0 <= threshold <= 1:
+            raise ValueError(f"{name} 必须在 [0, 1] 范围内")
 
     def _finalize_selection_result(self) -> None:
         """整理最终选择结果并补齐兼容属性。"""
@@ -406,52 +455,58 @@ class ScorecardFeatureSelection(BaseFeatureSelector):
         self.selected_features_ = [c for c in self._feature_names if c in selected_set]
         self.n_features_ = len(self.selected_features_)
 
-        if hasattr(self, 'dropped_') and self.dropped_ is not None and len(self.dropped_) > 0:
+        if hasattr(self, "dropped_") and self.dropped_ is not None and len(self.dropped_) > 0:
             dropped_df = self.dropped_.copy()
 
-            if '筛选阶段' not in dropped_df.columns:
-                dropped_df['筛选阶段'] = None
-            if '筛选阶段名称' not in dropped_df.columns:
-                dropped_df['筛选阶段名称'] = None
-            if '筛选器' not in dropped_df.columns:
-                dropped_df['筛选器'] = None
+            if "筛选阶段" not in dropped_df.columns:
+                dropped_df["筛选阶段"] = None
+            if "筛选阶段名称" not in dropped_df.columns:
+                dropped_df["筛选阶段名称"] = None
+            if "筛选器" not in dropped_df.columns:
+                dropped_df["筛选器"] = None
 
-            force_drop_mask = dropped_df['剔除原因'].astype(str).str.contains('强制剔除', na=False)
-            dropped_df.loc[force_drop_mask, '筛选阶段'] = 'force_drop'
-            dropped_df.loc[force_drop_mask, '筛选阶段名称'] = '强制剔除'
+            force_drop_mask = dropped_df["剔除原因"].astype(str).str.contains("强制剔除", na=False)
+            dropped_df.loc[force_drop_mask, "筛选阶段"] = "force_drop"
+            dropped_df.loc[force_drop_mask, "筛选阶段名称"] = "强制剔除"
 
-            dropped_df = dropped_df.loc[~dropped_df['特征'].isin(self.selected_features_)].copy()
-            dropped_df = dropped_df.drop_duplicates(subset=['特征'], keep='first').reset_index(drop=True)
+            dropped_df = dropped_df.loc[~dropped_df["特征"].isin(self.selected_features_)].copy()
+            dropped_df = dropped_df.drop_duplicates(subset=["特征"], keep="first").reset_index(drop=True)
 
             self.dropped_ = dropped_df
-            self.removed_features_ = dropped_df['特征'].tolist()
+            self.removed_features_ = dropped_df["特征"].tolist()
         else:
-            self.dropped_ = pd.DataFrame(
-                columns=['特征', '剔除原因', '筛选阶段', '筛选阶段名称', '筛选器']
-            )
+            self.dropped_ = pd.DataFrame(columns=["特征", "剔除原因", "筛选阶段", "筛选阶段名称", "筛选器"])
             self.removed_features_ = []
 
         self.select_columns = list(self.selected_features_)
-        if not self.target_rm and self.target not in self.select_columns:
+        if (
+            not self.target_rm
+            and getattr(self, "target_present_at_fit_", False)
+            and self.target not in self.select_columns
+        ):
             self.select_columns.append(self.target)
 
-        self.dropped = pd.DataFrame({
-            'variable': self.dropped_['特征'] if len(self.dropped_) > 0 else pd.Series(dtype=object),
-            'rm_reason': self.dropped_['筛选阶段'] if len(self.dropped_) > 0 else pd.Series(dtype=object),
-        })
+        self.dropped = pd.DataFrame(
+            {
+                "variable": self.dropped_["特征"] if len(self.dropped_) > 0 else pd.Series(dtype=object),
+                "rm_reason": self.dropped_["筛选阶段"] if len(self.dropped_) > 0 else pd.Series(dtype=object),
+            }
+        )
 
     def get_selection_report(self) -> Dict[str, Any]:
         """获取包含阶段明细的筛选报告。"""
+        if hasattr(self, "_selection_report_dict_"):
+            return copy.deepcopy(self._selection_report_dict_)
         report = super().get_selection_report()
-        if report.get('状态') == '未拟合':
+        if report.get("状态") == "未拟合":
             return report
 
-        report['阈值'] = {
-            'null_threshold': self.null_threshold,
-            'iv_threshold': self.iv_threshold,
-            'corr_threshold': self.corr_threshold,
-            'mode_threshold': self.mode_threshold,
+        report["阈值"] = {
+            "null_threshold": self.null_threshold,
+            "iv_threshold": self.iv_threshold,
+            "corr_threshold": self.corr_threshold,
+            "mode_threshold": self.mode_threshold,
         }
-        if hasattr(self, 'stage_reports_'):
-            report['阶段明细'] = self.stage_reports_
+        if hasattr(self, "stage_reports_"):
+            report["阶段明细"] = copy.deepcopy(self.stage_reports_)
         return report

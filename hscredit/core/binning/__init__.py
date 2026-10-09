@@ -82,6 +82,7 @@ from .kernel_density_binning import KernelDensityBinning
 from .best_lift_binning import BestLiftBinning
 from .target_bad_rate_binning import TargetBadRateBinning
 from .optimal_binning_2d import OptimalBinning2D
+from .spec import BinSpec
 
 __all__ = [
     'BaseBinning',
@@ -105,4 +106,5 @@ __all__ = [
     'BestLiftBinning',
     'TargetBadRateBinning',
     'OptimalBinning2D',
+    'BinSpec',
 ]

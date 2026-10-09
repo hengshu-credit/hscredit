@@ -31,6 +31,7 @@ from sklearn.linear_model import LogisticRegression, LinearRegression
 import warnings
 
 from .base import BaseFeatureSelector, _set_estimator_parallel_budget
+from ._selection_history import event_bytes, initialize_history, record_event
 from ..._lazy import LazyModule
 from ...utils.parallel import ParallelWorkload, _current_parallel_budget
 
@@ -139,6 +140,10 @@ class StepwiseSelector(BaseFeatureSelector):
         binning_params: Optional[Dict[str, Any]] = None,
         parallel_backend: Optional[str] = None,
         parallel_config: Optional[Dict[str, Any]] = None,
+        target_rm: bool = False,
+        report_history: str = "summary",
+        max_report_events: int = 10000,
+        max_report_bytes: int = 8 * 1024 * 1024,
     ):
         super().__init__(
             target=target,
@@ -151,6 +156,7 @@ class StepwiseSelector(BaseFeatureSelector):
             binning_params=binning_params,
             parallel_backend=parallel_backend,
             parallel_config=parallel_config,
+            target_rm=target_rm,
         )
         self.estimator = estimator
         self.direction = direction
@@ -162,6 +168,9 @@ class StepwiseSelector(BaseFeatureSelector):
         self.intercept = intercept
         self.max_iter = max_iter
         self.verbose = verbose
+        self.report_history = report_history
+        self.max_report_events = max_report_events
+        self.max_report_bytes = max_report_bytes
 
     def _included_features_participate_in_selection(self) -> bool:
         """逐步回归必须把强制保留字段放入固定起始模型。"""
@@ -195,6 +204,28 @@ class StepwiseSelector(BaseFeatureSelector):
             X = X.drop(columns=self.target)
 
         self._get_feature_names(X)
+        initialize_history(self)
+        for name in ("p_enter", "p_remove", "p_value_enter"):
+            value = getattr(self, name)
+            if (
+                isinstance(value, (bool, np.bool_))
+                or not isinstance(value, (int, float, np.number))
+                or not np.isfinite(value)
+                or value < 0
+            ):
+                raise ValueError(f"{name} 必须为有限的非负数")
+        if self.p_value_enter > 1:
+            raise ValueError("p_value_enter 必须在 [0, 1] 范围内")
+        self.score_name_ = "最终模型1-p值"
+        self.score_direction_ = "越大越好"
+        self.effective_threshold_ = None
+        self.decision_criteria_ = {
+            "前向最小改善": self.p_enter,
+            "后向最小改善": self.p_remove,
+            "双向剔除p值上限": self.p_value_enter,
+        }
+        self.candidate_failures_ = 0
+        self.selection_stopping_reason_ = "未发现满足改善阈值的候选"
 
         # 解析 max_features
         max_features = self._parse_max_features(X)
@@ -203,7 +234,7 @@ class StepwiseSelector(BaseFeatureSelector):
         X = X.drop(columns=[c for c in self.exclude_ if c in X.columns])
 
         # 强制保留的特征
-        forced_include = [c for c in self.include_ if c in X.columns]
+        forced_include = [c for c in X.columns if c in self.include_]
         if max_features is not None and len(forced_include) > max_features:
             raise ValueError("include 特征数不能超过 max_features")
 
@@ -213,6 +244,8 @@ class StepwiseSelector(BaseFeatureSelector):
 
         # 记录历史
         self.history_ = []
+        self.history_bytes_ = 0
+        self.history_truncated_ = 0
         self.iteration_info_ = []
 
         # 根据方向初始化
@@ -227,19 +260,43 @@ class StepwiseSelector(BaseFeatureSelector):
             else:
                 best_score = self._get_initial_score(y)
         else:
-            # 前向/双向：从空模型开始
-            best_score = self._get_initial_score(y)
+            # 固定变量构成真正的起始模型，不能把已拟合基准误写为无穷大。
+            if selected:
+                initial_result = self._fit_model(X, y, selected)
+                if initial_result["result"] is None:
+                    raise ValueError(
+                        f"强制保留特征的起始模型拟合失败：{initial_result.get('failure_reason', '统计量不可得')}"
+                    )
+                best_score = initial_result["criterion"]
+            else:
+                best_score = self._get_initial_score(y)
+        self.initial_criterion_ = best_score
+        record_event(
+            self,
+            {
+                "轮次": 0,
+                "特征": None,
+                "动作": "起始模型",
+                "指标名称": self.criterion.upper(),
+                "指标值": best_score,
+                "有效阈值": None,
+                "是否有效": bool(np.isfinite(best_score)),
+                "原因": "强制保留字段基准" if forced_include else "初始基准",
+            },
+        )
 
         iter_count = 0
         improved = True
 
         while improved and iter_count < self.max_iter:
             iter_count += 1
+            self._selection_iteration = iter_count
 
             # 检查是否达到最大特征数
             if self.direction != "backward" and max_features is not None and len(selected) >= max_features:
                 if self.verbose:
                     logger.info(f"已达到最大特征数 {max_features}，停止迭代")
+                self.selection_stopping_reason_ = "达到最大特征数"
                 break
 
             if self.direction == "backward":
@@ -269,10 +326,15 @@ class StepwiseSelector(BaseFeatureSelector):
                 # 双向选择：后向检验
                 if self.direction == "both" and len(selected) > len(forced_include):
                     selected, remaining = self._backward_check(X, y, selected, remaining, forced_include)
+                    updated = self._fit_model(X, y, selected)
+                    if updated["result"] is not None:
+                        best_score = updated["criterion"]
 
         # ``max_features`` 是结果契约，不应因为 ``max_iter`` 较小或候选模型拟合失败而失效。
         # 常规迭代结束后继续执行强制后退，直到满足上限；forced_include 已在前面校验不会超过上限。
         while self.direction == "backward" and max_features is not None and len(selected) > max_features:
+            iter_count += 1
+            self._selection_iteration = iter_count
             removed, selected, remaining, best_score = self._backward_step(
                 X,
                 y,
@@ -293,6 +355,10 @@ class StepwiseSelector(BaseFeatureSelector):
 
         # 记录特征数量
         self.n_features_ = len(selected)
+        self.n_iterations_ = iter_count
+        self.final_criterion_ = getattr(self, "final_model_criterion_", np.nan)
+        if iter_count >= self.max_iter and improved:
+            self.selection_stopping_reason_ = "达到最大迭代次数"
 
         self._drop_reason = "逐步回归筛选后被剔除"
 
@@ -350,7 +416,7 @@ class StepwiseSelector(BaseFeatureSelector):
         else:
             X_model = X[features].values
             if self.intercept:
-                X_model = sm.add_constant(X_model)
+                X_model = sm.add_constant(X_model, has_constant="add")
 
         try:
             # 根据评估器类型拟合模型
@@ -366,6 +432,8 @@ class StepwiseSelector(BaseFeatureSelector):
 
             # 计算准则
             criterion_value = self._calculate_criterion(result, y, X_model)
+            if not np.isfinite(criterion_value):
+                raise ValueError("模型准则值不是有限数值")
 
             return {
                 "criterion": criterion_value,
@@ -382,6 +450,7 @@ class StepwiseSelector(BaseFeatureSelector):
                 "result": None,
                 "p_values": None,
                 "params": None,
+                "failure_reason": f"{type(e).__name__}: {str(e)[:500]}",
             }
 
     def _fit_custom_estimator(self, X: pd.DataFrame, y, features: List[str]) -> Dict[str, Any]:
@@ -407,11 +476,10 @@ class StepwiseSelector(BaseFeatureSelector):
         model = sklearn_clone(self.estimator)
         _set_estimator_parallel_budget(model, _current_parallel_budget().available)
 
-        if self.intercept:
-            if hasattr(model, "fit_intercept"):
-                model.fit_intercept = self.intercept
-            else:
-                X_model = sm.add_constant(X_model)
+        if hasattr(model, "fit_intercept"):
+            model.fit_intercept = self.intercept
+        elif self.intercept:
+            X_model = sm.add_constant(X_model, has_constant="add")
 
         try:
             model.fit(X_model, y)
@@ -429,6 +497,8 @@ class StepwiseSelector(BaseFeatureSelector):
                 len(features),
                 is_classifier_model=is_classifier(model),
             )
+            if not np.isfinite(criterion_value):
+                raise ValueError("模型准则值不是有限数值")
 
             return {
                 "criterion": criterion_value,
@@ -445,6 +515,7 @@ class StepwiseSelector(BaseFeatureSelector):
                 "result": None,
                 "p_values": None,
                 "params": None,
+                "failure_reason": f"{type(e).__name__}: {str(e)[:500]}",
             }
 
     def _calculate_criterion(self, result, y, X_model) -> float:
@@ -606,6 +677,9 @@ class StepwiseSelector(BaseFeatureSelector):
         for candidate in candidate_results:
             if candidate is None:
                 continue
+            self._record_candidate(candidate, "前向候选")
+            if not candidate.get("valid", True):
+                continue
             test_results.append(candidate)
             criterion = candidate["criterion"]
             if self._is_improvement(criterion, best_criterion):
@@ -630,7 +704,7 @@ class StepwiseSelector(BaseFeatureSelector):
                 f"当前特征数: {len(selected)}"
             )
 
-        self.history_.append(
+        self._append_history(
             {
                 "step": len(self.history_) + 1,
                 "action": "add",
@@ -647,12 +721,18 @@ class StepwiseSelector(BaseFeatureSelector):
         feature, X, y, selected = task
         result = self._fit_model(X, y, selected + [feature])
         if result["result"] is None:
-            return None
+            return {
+                "feature": feature,
+                "criterion": np.nan,
+                "valid": False,
+                "reason": result.get("failure_reason", "候选模型未产生有效结果"),
+            }
         p_values = result["p_values"]
         return {
             "feature": feature,
             "criterion": result["criterion"],
-            "p_value": np.asarray(p_values)[-1] if p_values is not None else 1.0,
+            "p_value": np.asarray(p_values)[-1] if p_values is not None else np.nan,
+            "valid": True,
         }
 
     def _backward_step(
@@ -690,6 +770,7 @@ class StepwiseSelector(BaseFeatureSelector):
         worst_feature = None
         worst_criterion = current_criterion
         best_candidate_criterion = None
+        used_fallback = False
 
         candidates = [feature for feature in selected if feature not in forced_include]
         tasks = [(feature, X, y, list(selected)) for feature in candidates if len(selected) > 1]
@@ -713,6 +794,9 @@ class StepwiseSelector(BaseFeatureSelector):
         for candidate in candidate_results:
             if candidate is None:
                 continue
+            self._record_candidate(candidate, "后向候选")
+            if not candidate.get("valid", True):
+                continue
             criterion = candidate["criterion"]
             if force_remove and (
                 best_candidate_criterion is None or self._is_improvement(criterion, best_candidate_criterion)
@@ -731,6 +815,21 @@ class StepwiseSelector(BaseFeatureSelector):
             # 剔除一个非 include 特征；分数沿用当前值，且不伪造统计改进。
             worst_feature = candidates[-1]
             worst_criterion = current_criterion
+            used_fallback = True
+            record_event(
+                self,
+                {
+                    "轮次": getattr(self, "_selection_iteration", 0),
+                    "特征": worst_feature,
+                    "动作": "数量约束回退",
+                    "指标名称": self.criterion.upper(),
+                    "指标值": np.nan,
+                    "有效阈值": None,
+                    "是否有效": False,
+                    "原因": "所有候选拟合失败；按输入逆序强制满足数量上限，不表示统计改善",
+                    "补充信息": {"最大特征数": self.max_features},
+                },
+            )
 
         # 判断改善是否显著
         if not force_remove and not self._is_significant_improvement(
@@ -749,12 +848,13 @@ class StepwiseSelector(BaseFeatureSelector):
                 f"当前特征数: {len(selected)}"
             )
 
-        self.history_.append(
+        self._append_history(
             {
                 "step": len(self.history_) + 1,
                 "action": "remove",
                 "feature": worst_feature,
-                "criterion": worst_criterion,
+                "criterion": np.nan if used_fallback else worst_criterion,
+                "reason": "数量上限回退，删除后模型统计量不可得" if used_fallback else "后向模型判定",
                 "selected": selected.copy(),
             }
         )
@@ -769,8 +869,64 @@ class StepwiseSelector(BaseFeatureSelector):
             return None
         result = self._fit_model(X, y, test_features)
         if result["result"] is None:
-            return None
-        return {"feature": feature, "criterion": result["criterion"]}
+            return {
+                "feature": feature,
+                "criterion": np.nan,
+                "valid": False,
+                "reason": result.get("failure_reason", "候选模型未产生有效结果"),
+            }
+        return {"feature": feature, "criterion": result["criterion"], "valid": True}
+
+    def _record_candidate(self, candidate, action):
+        """显式记录有效和失败候选；失败不再伪装成一个低分。"""
+        valid = bool(candidate.get("valid", True) and np.isfinite(candidate["criterion"]))
+        self.candidate_failures_ = getattr(self, "candidate_failures_", 0) + int(not valid)
+        record_event(
+            self,
+            {
+                "轮次": getattr(self, "_selection_iteration", 0),
+                "特征": candidate["feature"],
+                "动作": action,
+                "指标名称": self.criterion.upper(),
+                "指标值": candidate["criterion"],
+                "有效阈值": None,
+                "是否有效": valid,
+                "原因": candidate.get("reason", "候选模型评估"),
+                "补充信息": {"最小改善幅度": self.p_enter if action == "前向候选" else self.p_remove},
+            },
+            diagnostic=valid,
+        )
+
+    def _append_history(self, item):
+        """兼容动作历史并同时建立中文事件；完整特征子集仅在 full 模式保存。"""
+        selected = item.get("selected", [])
+        if self.report_history != "full":
+            item = {key: value for key, value in item.items() if key != "selected"}
+            item["n_features"] = len(selected)
+        size = event_bytes(item, self.max_report_bytes)
+        if (
+            len(self.history_) < self.max_report_events
+            and getattr(self, "history_bytes_", 0) + size <= self.max_report_bytes
+        ):
+            self.history_.append(item)
+            self.history_bytes_ = getattr(self, "history_bytes_", 0) + size
+        else:
+            self.history_truncated_ = getattr(self, "history_truncated_", 0) + 1
+        value = item.get("p_value", item.get("criterion", np.nan))
+        record_event(
+            self,
+            {
+                "轮次": getattr(self, "_selection_iteration", item["step"]),
+                "特征": item["feature"],
+                "动作": {"add": "加入", "remove": "剔除", "both_remove": "显著性剔除"}[item["action"]],
+                "指标名称": "p值" if "p_value" in item else self.criterion.upper(),
+                "指标值": value,
+                "有效阈值": self.p_value_enter if "p_value" in item else None,
+                "是否有效": bool(np.isfinite(value)),
+                "原因": item.get("reason", "逐步模型判定"),
+                "补充信息": {"前向最小改善": self.p_enter, "后向最小改善": self.p_remove},
+            },
+        )
 
     def _backward_check(
         self,
@@ -823,7 +979,7 @@ class StepwiseSelector(BaseFeatureSelector):
             if self.verbose:
                 logger.info(f"  双向选择: 剔除特征 '{feature}' (p-value = {pval:.4f})")
 
-            self.history_.append(
+            self._append_history(
                 {
                     "step": len(self.history_) + 1,
                     "action": "both_remove",
@@ -883,16 +1039,29 @@ class StepwiseSelector(BaseFeatureSelector):
         :param y: 目标变量
         :param selected: 选中的特征
         """
+        self.scores_ = pd.Series(np.nan, index=X.columns, dtype=float)
+        self.p_values_ = pd.Series(np.nan, index=X.columns, dtype=float)
         if not selected:
-            self.scores_ = pd.Series(dtype=float)
             return
 
         # 拟合最终模型
         result = self._fit_model(X, y, selected)
 
+        self.model_results_ = result["result"]
+        self.final_model_criterion_ = result["criterion"] if result["result"] is not None else np.nan
         if result["result"] is None or result["p_values"] is None:
-            # 如果模型拟合失败，使用默认得分
-            self.scores_ = pd.Series(1.0, index=selected)
+            record_event(
+                self,
+                {
+                    "轮次": getattr(self, "_selection_iteration", 0),
+                    "特征": None,
+                    "动作": "最终统计量",
+                    "指标名称": "p值",
+                    "指标值": np.nan,
+                    "是否有效": False,
+                    "原因": result.get("failure_reason", "模型不提供有效 p 值；未计算，不填充虚构得分"),
+                },
+            )
             return
 
         # 使用p值作为得分（p值越小越好，得分越高）
@@ -905,17 +1074,12 @@ class StepwiseSelector(BaseFeatureSelector):
         for i, feature in enumerate(selected):
             if i + offset < len(p_values):
                 # p值越小，得分越高（用1-p作为得分）
-                scores[feature] = 1 - p_values[i + offset]
-            else:
-                scores[feature] = 0.5
-
-        # 对于未选中的特征，得分为0
-        all_features = list(X.columns)
-        for feature in all_features:
-            if feature not in scores:
-                scores[feature] = 0.0
-
-        self.scores_ = pd.Series(scores)
+                value = p_values[i + offset]
+                if np.isfinite(value):
+                    scores[feature] = 1 - value
+                    self.p_values_[feature] = value
+        for feature, score in scores.items():
+            self.scores_[feature] = score
 
         # 保存模型结果
         self.model_results_ = result["result"]
@@ -933,8 +1097,17 @@ class StepwiseSelector(BaseFeatureSelector):
         # 格式化
         if "selected" in df.columns:
             df["n_features"] = df["selected"].apply(len)
-
-        return df
+        return df.rename(
+            columns={
+                "step": "步骤",
+                "action": "动作",
+                "feature": "特征",
+                "criterion": "模型准则值",
+                "p_value": "p值",
+                "selected": "当前特征",
+                "n_features": "当前特征数",
+            }
+        ).replace({"动作": {"add": "加入", "remove": "剔除", "both_remove": "显著性剔除"}})
 
     def summary(self) -> str:
         """生成筛选结果摘要。

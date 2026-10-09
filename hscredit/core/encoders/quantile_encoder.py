@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 
 from .base import BaseEncoder
+from ._category_protocol import MISSING, UNKNOWN
 
 
 class QuantileEncoder(BaseEncoder):
@@ -56,6 +57,7 @@ class QuantileEncoder(BaseEncoder):
 
     # global_quantile_ 是 transform 时未知/缺失类别的填充值，须随映射一并序列化
     _EXTRA_STATE_ATTRS = ["global_quantile_"]
+    _TARGET_TYPE = "continuous"
 
     def _get_category_cols(self, X: pd.DataFrame) -> List[str]:
         """自动识别需要编码的列。
@@ -81,6 +83,7 @@ class QuantileEncoder(BaseEncoder):
         n_jobs: Optional[Union[int, float]] = -1,
         parallel_backend: Optional[str] = None,
         parallel_config: Optional[Dict[str, Any]] = None,
+        passthrough_target: bool = False,
     ):
         """初始化分位数编码器。
 
@@ -104,6 +107,7 @@ class QuantileEncoder(BaseEncoder):
             n_jobs=n_jobs,
             parallel_backend=parallel_backend,
             parallel_config=parallel_config,
+            passthrough_target=passthrough_target,
         )
         self.quantile = quantile
         self.smoothing = smoothing
@@ -143,14 +147,14 @@ class QuantileEncoder(BaseEncoder):
             mapping[category] = smoothed_quantile
 
         if self.handle_missing == 'value':
-            mapping[np.nan] = self.global_quantile_
+            mapping[MISSING] = self.global_quantile_
         elif self.handle_missing == 'return_nan':
-            mapping[np.nan] = np.nan
+            mapping[MISSING] = np.nan
 
         if self.handle_unknown == 'value':
-            mapping['__UNKNOWN__'] = self.global_quantile_
+            mapping[UNKNOWN] = self.global_quantile_
         elif self.handle_unknown == 'return_nan':
-            mapping['__UNKNOWN__'] = np.nan
+            mapping[UNKNOWN] = np.nan
 
         return {"mapping_": mapping}
 
@@ -165,11 +169,6 @@ class QuantileEncoder(BaseEncoder):
 
     def _transform_column(self, column, values, y=None, context=None):
         mapping = self.mapping_[column]
-        result = values.map(mapping)
+        result = self._map_values(values, mapping)
 
-        if self.handle_unknown == 'value':
-            result = result.fillna(self.global_quantile_)
-        elif self.handle_unknown == 'error' and result.isna().any():
-            raise ValueError(f"列'{column}'包含未知类别")
-
-        return result
+        return self._apply_missing_unknown(column, values, result, self.global_quantile_)

@@ -27,13 +27,15 @@ def test_accepts_complete_docs_artifacts(tmp_path):
     _write(
         tmp_path / "api" / "modeling.html",
         '<li class="toctree-l2 current"><a href="#">模型</a><ul>'
+        '<li class="toctree-l3"><a href="../articles/model-workflow.html">模型训练、调参与保存</a></li>'
+        '<li class="toctree-l3"><a href="../articles/models-design-review.html">models 模块设计复盘</a></li>'
         '<li class="toctree-l3"><a href="classical_models.html">经典模型</a></li>'
         '<li class="toctree-l3"><a href="boosting.html">Boosting</a></li>'
         '<li class="toctree-l3"><a href="model_rules.html">规则器</a></li>'
         '<li class="toctree-l3"><a href="scorecard.html">评分卡</a></li>'
         '<li class="toctree-l3"><a href="calibration.html">概率校准</a></li>'
         '<li class="toctree-l3"><a href="explainability.html">模型可解释性</a></li>'
-        '<li class="toctree-l3"><a href="losses.html">损失函数</a></li>'
+        '<li class="toctree-l3"><a href="losses.html">损失函数与评估指标</a></li>'
         '<li class="toctree-l3"><a href="model_metrics.html">评估指标</a></li>'
         '<li class="toctree-l3"><a href="tuning.html">超参数调优</a></li>'
         "</ul></li>",
@@ -51,7 +53,7 @@ def test_accepts_complete_docs_artifacts(tmp_path):
     )
     _write(
         tmp_path / "database.html",
-        "数据库与 NoSQL 连接池、读写及表结构导出 大 JSON 字段按路径读取 json_fields",
+        "数据库 大 JSON 字段按路径读取 json_fields",
     )
     _write(
         tmp_path / "api" / "database.html",
@@ -84,7 +86,7 @@ def test_accepts_complete_docs_artifacts(tmp_path):
 
 
 def test_rejects_nested_or_reordered_model_menu(tmp_path):
-    """模型菜单必须移除包级中间页，并按产品顺序生成九个直接子项。"""
+    """模型菜单必须按顺序直接生成两篇指南和九个 API 入口。"""
     _write(
         tmp_path / "api" / "modeling.html",
         '<li class="toctree-l2 current"><a href="#">模型</a><ul>'
@@ -101,7 +103,7 @@ def test_rejects_nested_or_reordered_model_menu(tmp_path):
 
     assert any(
         "模型菜单" in error
-        and "经典模型、Boosting、规则器、评分卡、概率校准、模型可解释性、损失函数、评估指标、超参数调优" in error
+        and "经典模型、Boosting、规则器、评分卡、概率校准、模型可解释性、损失函数与评估指标、评估指标、超参数调优" in error
         for error in errors
     )
 
@@ -137,7 +139,7 @@ def test_reports_missing_database_guide_and_api_artifacts(tmp_path):
 def test_rejects_database_docs_without_navigation_or_search_result(tmp_path):
     """页面存在但未进入 API 导航和搜索对象表时仍应阻止发布。"""
 
-    _write(tmp_path / "database.html", "数据库与 NoSQL 连接池、读写及表结构导出")
+    _write(tmp_path / "database.html", "数据库")
     _write(
         tmp_path / "api" / "database.html",
         '<dt id="hscredit.database.client.Database">Database</dt>',
@@ -153,7 +155,7 @@ def test_rejects_database_docs_without_navigation_or_search_result(tmp_path):
 
 def test_rejects_database_docs_without_json_projection_and_public_method_anchors(tmp_path):
     """数据库指南与 API 页面必须发布 JSON 投影和流式结果方法。"""
-    _write(tmp_path / "database.html", "数据库与 NoSQL 连接池、读写及表结构导出")
+    _write(tmp_path / "database.html", "数据库")
     _write(
         tmp_path / "api" / "database.html",
         '<dt id="hscredit.database.client.Database">Database</dt>',

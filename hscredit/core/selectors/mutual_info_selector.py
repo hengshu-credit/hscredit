@@ -22,6 +22,7 @@ from pandas.api.types import is_bool_dtype, is_object_dtype, is_string_dtype
 from sklearn.feature_selection import mutual_info_classif
 
 from .base import BaseFeatureSelector
+from ._statistical_utils import is_categorical, record_conditions, record_counts, validate_real
 from ...utils.parallel import ParallelWorkload
 
 
@@ -112,7 +113,9 @@ class MutualInfoSelector(BaseFeatureSelector):
         binning_params: Optional[Dict[str, Any]] = None,
         parallel_backend: Optional[str] = None,
         parallel_config: Optional[Dict[str, Any]] = None,
+        target_rm: bool = False,
     ):
+        """初始化筛选器；默认透传已有目标列，仅target_rm=True移除。"""
         super().__init__(
             target=target,
             threshold=threshold,
@@ -124,9 +127,24 @@ class MutualInfoSelector(BaseFeatureSelector):
             binning_params=binning_params,
             parallel_backend=parallel_backend,
             parallel_config=parallel_config,
+            target_rm=target_rm,
         )
         self.n_neighbors = n_neighbors
         self.random_state = random_state
+
+    def _check_input(self, X, y=None):
+        validate_real(self.threshold, "互信息阈值", allow_infinite=True)
+        if (
+            isinstance(self.n_neighbors, (bool, np.bool_))
+            or not isinstance(self.n_neighbors, (int, np.integer))
+            or self.n_neighbors < 1
+        ):
+            raise ValueError("n_neighbors 必须是正整数")
+        if self.random_state is not None and (
+            isinstance(self.random_state, (bool, np.bool_)) or not isinstance(self.random_state, (int, np.integer))
+        ):
+            raise ValueError("random_state 必须是整数或 None")
+        return super()._check_input(X, y)
 
     def _fit_impl(
         self,
@@ -145,8 +163,16 @@ class MutualInfoSelector(BaseFeatureSelector):
             X = X.drop(columns=self.target)
 
         self._get_feature_names(X)
+        record_counts(self, X)
+        self.threshold_ = self.threshold
+        self.score_name_, self.score_direction_ = "互信息值", "越大越好"
+        self.discrete_features_ = pd.Series({column: is_categorical(X[column]) for column in X})
 
-        if isinstance(self.n_neighbors, (bool, np.bool_)) or not isinstance(self.n_neighbors, (int, np.integer)) or int(self.n_neighbors) < 1:
+        if (
+            isinstance(self.n_neighbors, (bool, np.bool_))
+            or not isinstance(self.n_neighbors, (int, np.integer))
+            or int(self.n_neighbors) < 1
+        ):
             raise ValueError("n_neighbors 必须是正整数")
 
         seed_modulus = 2**32 - 1
@@ -178,5 +204,6 @@ class MutualInfoSelector(BaseFeatureSelector):
 
         # 选择互信息大于阈值的特征
         selected_mask = mi_scores >= self.threshold
+        record_conditions(self, X.columns, 互信息达标=selected_mask)
         self.selected_features_ = X.columns[selected_mask].tolist()
         self._drop_reason = f"互信息值 < {self.threshold}"

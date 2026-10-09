@@ -9,6 +9,7 @@ from __future__ import annotations
 import numpy as np
 
 from .base import BaseLoss
+from ._loss_math import binary_inputs, bce_terms, focal_terms, nonnegative, positive, unit_interval
 
 
 class AsymmetricFocalLoss(BaseLoss):
@@ -53,69 +54,86 @@ class AsymmetricFocalLoss(BaseLoss):
         name: str = "asymmetric_focal_loss",
     ):
         super().__init__(name)
+        unit_interval(alpha=alpha, clip_value=clip_value)
+        nonnegative(gamma_pos=gamma_pos, gamma_neg=gamma_neg)
+        if clip_value >= 1:
+            raise ValueError("clip_value 必须小于 1。")
+        self.is_additive = True
         self.alpha = alpha
         self.gamma_pos = gamma_pos
         self.gamma_neg = gamma_neg
         self.clip_value = clip_value
 
-    def _clip_probabilities(self, y_pred: np.ndarray) -> np.ndarray:
-        y_pred = np.clip(np.asarray(y_pred, dtype=float), 1e-7, 1 - 1e-7)
-        if self.clip_value > 0:
-            y_pred = np.minimum(y_pred + self.clip_value, 1 - 1e-7)
-        return y_pred
+    def _clip_probabilities(self, y_pred):
+        """仅负类使用 p_minus=max(p-clip_value, 0)。"""
+        return np.clip(np.asarray(y_pred, dtype=float) - self.clip_value, 1e-7, 1 - 1e-7)
 
-    def __call__(self, y_true: np.ndarray, y_pred: np.ndarray) -> float:
-        y_true = np.asarray(y_true, dtype=float)
-        y_pred = self._clip_probabilities(y_pred)
+    def __call__(self, y_true, y_pred) -> float:
+        """计算本损失的平均值，越小越好。
 
-        pos_loss = -self.alpha * y_true * ((1 - y_pred) ** self.gamma_pos) * np.log(y_pred)
-        neg_loss = -(1 - self.alpha) * (1 - y_true) * (y_pred ** self.gamma_neg) * np.log(1 - y_pred)
-        return float(np.mean(pos_loss + neg_loss))
+        :param y_true: 一维 0/1 标签，1 为坏样本。
+        :param y_pred: 同形状坏样本概率，范围 [0, 1]；不是原始分数。
+        :return: float；原始损失值，不根据调参方向改变符号。
 
-    def gradient(self, y_true: np.ndarray, y_pred: np.ndarray) -> np.ndarray:
-        y_true = np.asarray(y_true, dtype=float)
-        y_pred = self._clip_probabilities(y_pred)
-        grad = np.zeros_like(y_pred, dtype=float)
+        **参考样例**
 
-        pos_mask = y_true == 1
-        if np.any(pos_mask):
-            p = y_pred[pos_mask]
-            grad[pos_mask] = self.alpha * (
-                self.gamma_pos * (1 - p) ** (self.gamma_pos - 1) * np.log(p)
-                - ((1 - p) ** self.gamma_pos) / p
-            )
+        >>> from hscredit.core.models.losses import AsymmetricFocalLoss
+        >>> loss = AsymmetricFocalLoss()
+        >>> result = loss([0, 0, 1, 1], [0.1, 0.3, 0.7, 0.9])
+        """
+        return float(np.mean(self.loss_values(y_true, y_pred)))
 
-        neg_mask = y_true == 0
-        if np.any(neg_mask):
-            p = y_pred[neg_mask]
-            grad[neg_mask] = (1 - self.alpha) * (
-                -self.gamma_neg * (p ** (self.gamma_neg - 1)) * np.log(1 - p)
-                + (p ** self.gamma_neg) / (1 - p)
-            )
+    def gradient(self, y_true, y_pred):
+        """返回损失相对坏样本概率的一阶导数。
 
-        return grad
+        :param y_true: 一维 0/1 标签，1 为坏样本。
+        :param y_pred: 同形状坏样本概率，范围 [0, 1]；不是原始分数。
+        :return: 与输入等长的一阶导数组，标度为样本数乘以平均损失；详见 BaseLoss.gradient。
 
-    def hessian(self, y_true: np.ndarray, y_pred: np.ndarray) -> np.ndarray:
-        y_true = np.asarray(y_true, dtype=float)
-        y_pred = self._clip_probabilities(y_pred)
-        hess = np.zeros_like(y_pred, dtype=float)
+        **参考样例**
 
-        pos_mask = y_true == 1
-        if np.any(pos_mask):
-            p = y_pred[pos_mask]
-            hess[pos_mask] = self.alpha * (
-                self.gamma_pos * (self.gamma_pos - 1) * (1 - p) ** (self.gamma_pos - 2) * np.log(p)
-                + 2 * self.gamma_pos * (1 - p) ** (self.gamma_pos - 1) / p
-                + (1 - p) ** self.gamma_pos / (p ** 2)
-            )
+        >>> from hscredit.core.models.losses import AsymmetricFocalLoss
+        >>> loss = AsymmetricFocalLoss()
+        >>> result = loss.gradient([0, 0, 1, 1], [0.1, 0.3, 0.7, 0.9])
+        """
+        return self._terms(y_true, y_pred)[1]
 
-        neg_mask = y_true == 0
-        if np.any(neg_mask):
-            p = y_pred[neg_mask]
-            hess[neg_mask] = (1 - self.alpha) * (
-                self.gamma_neg * (self.gamma_neg - 1) * p ** (self.gamma_neg - 2) * np.log(1 - p)
-                + 2 * self.gamma_neg * p ** (self.gamma_neg - 1) / (1 - p)
-                + p ** self.gamma_neg / ((1 - p) ** 2)
-            )
+    def hessian(self, y_true, y_pred):
+        """返回损失相对坏样本概率的二阶导数。
 
-        return np.abs(hess) + 1e-6
+        :param y_true: 一维 0/1 标签，1 为坏样本。
+        :param y_pred: 同形状坏样本概率，范围 [0, 1]；不是原始分数。
+        :return: 与输入等长的二阶导数组，标度同 BaseLoss.hessian；框架适配器再做链接函数转换。
+
+        **参考样例**
+
+        >>> from hscredit.core.models.losses import AsymmetricFocalLoss
+        >>> loss = AsymmetricFocalLoss()
+        >>> result = loss.hessian([0, 0, 1, 1], [0.1, 0.3, 0.7, 0.9])
+        """
+        return self._terms(y_true, y_pred)[2]
+
+    def _terms(self, y_true, y_pred):
+        y, p = binary_inputs(y_true, y_pred)
+        negative_p = self._clip_probabilities(p)
+        pt = np.where(y == 1, p, 1 - negative_p)
+        gamma = np.where(y == 1, self.gamma_pos, self.gamma_neg)
+        alpha = np.where(y == 1, self.alpha, 1 - self.alpha)
+        value, grad, hess = focal_terms(pt, gamma)
+        active = (y == 1) | (p > self.clip_value + 1e-7)
+        return alpha * value, alpha * grad * (2 * y - 1) * active, alpha * hess * active
+
+    def loss_values(self, y_true, y_pred):
+        """逐样本不对称 Focal 损失；负类截断区内导数为零。
+
+        :param y_true: 一维 0/1 标签，1 为坏样本。
+        :param y_pred: 同形状坏样本概率，范围 [0, 1]；不是原始分数。
+        :return: 与输入等长的数组，其均值等于本损失值；详见 BaseLoss.loss_values。
+
+        **参考样例**
+
+        >>> from hscredit.core.models.losses import AsymmetricFocalLoss
+        >>> loss = AsymmetricFocalLoss()
+        >>> result = loss.loss_values([0, 0, 1, 1], [0.1, 0.3, 0.7, 0.9])
+        """
+        return self._terms(y_true, y_pred)[0]

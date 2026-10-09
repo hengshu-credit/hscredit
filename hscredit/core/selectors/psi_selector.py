@@ -18,10 +18,8 @@
 from typing import Union, List, Optional, Dict, Any
 import numpy as np
 import pandas as pd
-from sklearn.model_selection import KFold
-from pandas.api.types import is_numeric_dtype
-
 from .base import BaseFeatureSelector
+from ._statistical_utils import record_conditions, record_counts, validate_real
 from ...exceptions import ValidationError
 from ...utils.parallel import ParallelWorkload
 
@@ -46,55 +44,26 @@ def _compute_psi_single(expected: np.ndarray, actual: np.ndarray, n_bins: int = 
     if isinstance(n_bins, (bool, np.bool_)) or not isinstance(n_bins, (int, np.integer)) or int(n_bins) < 2:
         raise ValueError("n_bins 必须是大于等于 2 的整数")
 
-    expected_series = pd.Series(expected)
-    actual_series = pd.Series(actual)
-    expected_missing = int(expected_series.isna().sum())
-    actual_missing = int(actual_series.isna().sum())
-    expected_valid = expected_series.dropna()
-    actual_valid = actual_series.dropna()
+    from ..metrics.monitoring import MonitoringBaseline
 
-    if expected_valid.empty and actual_valid.empty:
-        return 0.0
-
-    numeric = is_numeric_dtype(expected_valid.dtype) and is_numeric_dtype(actual_valid.dtype)
-    expected_unique = expected_valid.nunique(dropna=True)
-
-    if numeric and expected_unique > int(n_bins):
-        expected_values = expected_valid.to_numpy(dtype=float)
-        actual_values = actual_valid.to_numpy(dtype=float)
-        cuts = np.unique(np.quantile(expected_values, np.linspace(0, 1, int(n_bins) + 1)[1:-1]))
-        bins = np.concatenate(([-np.inf], cuts, [np.inf]))
-        expected_counts = np.histogram(expected_values, bins=bins)[0]
-        actual_counts = np.histogram(actual_values, bins=bins)[0]
-    else:
-        categories = []
-        seen = set()
-        for value in pd.concat([expected_valid.astype(object), actual_valid.astype(object)], ignore_index=True):
-            key = (type(value), value)
-            if key not in seen:
-                seen.add(key)
-                categories.append(value)
-        expected_counts = np.array([(expected_valid == value).sum() for value in categories], dtype=float)
-        actual_counts = np.array([(actual_valid == value).sum() for value in categories], dtype=float)
-
-    expected_counts = np.append(expected_counts, expected_missing)
-    actual_counts = np.append(actual_counts, actual_missing)
-    return _psi_from_counts(expected_counts, actual_counts)
+    return MonitoringBaseline(max_n_bins=int(n_bins)).fit(expected).evaluate(actual)["PSI"]
 
 
 def _compute_psi_feature(task):
     """按既定折序计算单个特征的平均 PSI。"""
-    feature, values, splits, n_bins = task
-    total = 0.0
-    for train_idx, test_idx in splits:
-        total += _compute_psi_single(values[train_idx], values[test_idx], n_bins=n_bins)
-    return feature, total / len(splits)
+    feature, values, fold_ids, n_bins = task
+    scores = []
+    for fold in range(int(fold_ids.max()) + 1):
+        actual = fold_ids == fold
+        scores.append(_compute_psi_single(values[~actual], values[actual], n_bins=n_bins))
+    return feature, float(np.mean(scores)), scores
 
 
 def _compute_psi_pair_feature(task):
     """计算一个训练/OOT字段对的 PSI。"""
     feature, expected, actual, n_bins = task
-    return feature, _compute_psi_single(expected, actual, n_bins=n_bins)
+    value = _compute_psi_single(expected, actual, n_bins=n_bins)
+    return feature, value, [value]
 
 
 class PSISelector(BaseFeatureSelector):
@@ -112,7 +81,7 @@ class PSISelector(BaseFeatureSelector):
     **参数**
 
     :param threshold: PSI阈值，默认为0.25
-        - 0.25: 移除PSI值超过0.25的特征
+        - 0.25: 移除PSI值达到或超过0.25的特征
     :param n_splits: 交叉验证折数，用于计算PSI
     :param oot_df: 可选的真实 OOT 对照集；传入时直接计算训练集与 OOT 的 PSI
     :param psi_bins: 连续变量分箱数，默认为10；低基数/类别变量按类别对齐
@@ -159,7 +128,9 @@ class PSISelector(BaseFeatureSelector):
         binning_params: Optional[Dict[str, Any]] = None,
         parallel_backend: Optional[str] = None,
         parallel_config: Optional[Dict[str, Any]] = None,
+        target_rm: bool = False,
     ):
+        """初始化筛选器；默认透传已有目标列，仅target_rm=True移除。"""
         super().__init__(
             target=target,
             threshold=threshold,
@@ -171,11 +142,22 @@ class PSISelector(BaseFeatureSelector):
             binning_params=binning_params,
             parallel_backend=parallel_backend,
             parallel_config=parallel_config,
+            target_rm=target_rm,
         )
         self.n_splits = n_splits
         self.oot_df = oot_df
         self.psi_bins = psi_bins
         self.random_state = random_state
+
+    def _check_input(self, X, y=None):
+        validate_real(self.threshold, "PSI阈值", minimum=0)
+        if (
+            isinstance(self.psi_bins, (bool, np.bool_))
+            or not isinstance(self.psi_bins, (int, np.integer))
+            or self.psi_bins < 2
+        ):
+            raise ValueError("psi_bins 必须是大于等于 2 的整数")
+        return super()._check_input(X, y)
 
     def _fit_impl(
         self,
@@ -190,6 +172,9 @@ class PSISelector(BaseFeatureSelector):
         :param y: 目标变量
         """
         self._get_feature_names(X)
+        record_counts(self, X)
+        self.threshold_ = self.threshold
+        self.score_name_, self.score_direction_ = "PSI值", "越小越好"
 
         if isinstance(self.psi_bins, (bool, np.bool_)) or not isinstance(self.psi_bins, (int, np.integer)):
             raise ValueError("psi_bins 必须是整数")
@@ -210,23 +195,44 @@ class PSISelector(BaseFeatureSelector):
             if missing:
                 raise ValidationError(f"OOT 数据缺少拟合字段: {missing}")
             oot = oot.loc[:, X.columns]
+            if len(oot) == 0:
+                raise ValidationError("OOT 数据不能为空")
+            if not oot.columns.is_unique:
+                raise ValidationError("OOT 数据字段名不能重复")
             if self._binner_instance is not None:
                 oot = self._transform_with_fitted_binner(oot)
             worker = _compute_psi_pair_feature
             tasks = ((col, X[col].values, oot[col].values, self.psi_bins) for col in X.columns)
             operation = "训练集与OOT的PSI计算"
             cost = 6.0
+            self.comparison_mode_ = "训练集与OOT"
+            reference_counts = [len(X)]
+            comparison_counts = [len(oot)]
         else:
             if isinstance(self.n_splits, (bool, np.bool_)) or not isinstance(self.n_splits, (int, np.integer)):
                 raise ValueError("n_splits 必须是整数")
             if not 2 <= int(self.n_splits) <= len(X):
                 raise ValueError("n_splits 必须在 [2, 样本数] 范围内")
-            kfold = KFold(n_splits=int(self.n_splits), shuffle=True, random_state=self.random_state)
-            splits = list(kfold.split(X))
+            # 等价于 KFold(shuffle=True) 的折分配，仅保存 O(n) 整数标记；
+            # 不在宽表并行任务间复制 O(n × 折数) 的训练/验证索引列表。
+            from sklearn.utils import check_random_state
+
+            order = np.arange(len(X))
+            check_random_state(self.random_state).shuffle(order)
+            fold_ids = np.empty(len(X), dtype=np.int32)
+            sizes = np.full(int(self.n_splits), len(X) // int(self.n_splits), dtype=int)
+            sizes[: len(X) % int(self.n_splits)] += 1
+            start = 0
+            for ordinal, size in enumerate(sizes):
+                fold_ids[order[start : start + size]] = ordinal
+                start += size
             worker = _compute_psi_feature
-            tasks = ((col, X[col].values, splits, self.psi_bins) for col in X.columns)
+            tasks = ((col, X[col].values, fold_ids, self.psi_bins) for col in X.columns)
             operation = "PSI交叉验证"
             cost = max(4.0, float(self.n_splits) * 2.0)
+            self.comparison_mode_ = "随机交叉折"
+            reference_counts = (len(X) - sizes).tolist()
+            comparison_counts = sizes.tolist()
 
         results = self._parallel_execute(
             worker,
@@ -244,11 +250,18 @@ class PSISelector(BaseFeatureSelector):
                 operation=operation,
             ),
         )
-        psi_values = np.array([score for _, score in results])
+        psi_values = np.array([result[1] for result in results])
         self.scores_ = pd.Series(psi_values, index=X.columns)
+        fold_names = [f"第{ordinal + 1}折PSI" for ordinal in range(len(reference_counts))]
+        self.fold_scores_ = pd.DataFrame([result[2] for result in results], index=X.columns, columns=fold_names)
+        self.psi_std_ = self.fold_scores_.std(axis=1, ddof=0)
+        self.psi_max_ = self.fold_scores_.max(axis=1)
+        self.reference_counts_ = pd.Series(reference_counts, index=fold_names, dtype=np.int64)
+        self.comparison_counts_ = pd.Series(comparison_counts, index=fold_names, dtype=np.int64)
 
         # 选择PSI值小于阈值的特征（PSI越小越稳定）
         selected_mask = psi_values < self.threshold
+        record_conditions(self, X.columns, PSI达标=selected_mask)
         self.selected_features_ = X.columns[selected_mask].tolist()
 
         # 构建详细的dropped_记录，包含PSI值

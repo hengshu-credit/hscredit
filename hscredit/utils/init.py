@@ -14,10 +14,10 @@ from matplotlib import font_manager
 from .fonts import FONT_NAME, get_bundled_font_path, initialize_bundled_font
 
 
-def init_setting(font_path=None, seed=None, freeze_torch=False, logger=False, **kwargs):
+def init_setting(font_path=None, seed=None, freeze_torch=False, logger=False, suppress_warnings=False, **kwargs):
     """初始化环境配置。
 
-    去除警告信息、修改 pandas 默认配置、固定随机种子。
+    修改 pandas 默认配置、固定随机种子；默认保留警告。
 
     :param font_path: 画图时图像使用的字体，支持系统已注册字体名称或本地 ``.ttf``
         字体文件路径；为 None 时自动安装并使用包内置字体，安装不可用时回退到“楷体”
@@ -25,13 +25,14 @@ def init_setting(font_path=None, seed=None, freeze_torch=False, logger=False, **
         :func:`~hscredit.utils.seed_everything`
     :param freeze_torch: 是否同时固定 PyTorch 随机种子，默认 False（仅 seed 非 None 时生效）
     :param logger: 是否返回一个日志器，默认为 False
+    :param suppress_warnings: 显式屏蔽全局警告，默认False；库导入不应隐藏数据与模型警告
     :param kwargs: 当 logger 为 True 时传给 ``logging.getLogger`` 的参数
     :return: 当 logger 为 True 时返回 ``logging.Logger``，否则返回 None
 
     **注意**
 
     本函数在 ``import hscredit`` 时被自动调用，会尝试将内置字体安装到当前用户字体目录，
-    全局执行 ``warnings.filterwarnings("ignore")`` 屏蔽所有警告，并修改 pandas/matplotlib 全局配置。
+    修改 pandas/matplotlib 全局配置；仅显式 suppress_warnings=True 时屏蔽全局警告。
     字体安装失败不会阻断导入，系统不存在品牌字体时将回退到“楷体”。
 
     **参考样例**
@@ -42,7 +43,10 @@ def init_setting(font_path=None, seed=None, freeze_torch=False, logger=False, **
     >>> init_setting(font_path='SimHei')     # 指定系统字体
     >>> logger = init_setting(logger=True)   # 返回日志器
     """
-    warnings.filterwarnings("ignore")
+    if not isinstance(suppress_warnings, (bool, np.bool_)):
+        raise ValueError("suppress_warnings 必须为布尔值")
+    if suppress_warnings:
+        warnings.filterwarnings("ignore")
 
     default_font_name = initialize_bundled_font()
 
@@ -83,7 +87,7 @@ def init_setting(font_path=None, seed=None, freeze_torch=False, logger=False, **
 
     plt.rcParams['axes.unicode_minus'] = False
 
-    if seed:
+    if seed is not None:
         from .random import seed_everything
         seed_everything(seed, freeze_torch=freeze_torch)
 

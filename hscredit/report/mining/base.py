@@ -7,6 +7,7 @@ from typing import Union, List, Dict, Optional, Tuple, Any
 from sklearn.base import BaseEstimator
 
 from ...utils.parallel import ParallelizableMixin, ParallelWorkload
+from ...utils.data_contracts import prepare_xy
 
 
 _NESTED_BINNING_METHODS = frozenset({"genetic", "or_tools", "cp_sat"})
@@ -177,12 +178,8 @@ class BaseRuleMiner(ParallelizableMixin, BaseEstimator, ABC):
         if not isinstance(X, pd.DataFrame):
             X = pd.DataFrame(X)
         
-        X = X.copy()
-        
-        # 如果y为None且target列存在于X中，提取target
-        if y is None and self.target in X.columns:
-            y = X[self.target].copy()
-            X = X.drop(columns=[self.target])
+        prepared = prepare_xy(X, y, target=self.target, target_type="binary", allow_empty_features=True)
+        X, y = prepared.X, prepared.y
         
         # 排除指定列
         for col in self.exclude_cols or []:

@@ -35,6 +35,7 @@ import numpy as np
 import pandas as pd
 
 from .base import BaseFeatureSelector, CompositeFeatureSelector, SelectionReportCollector
+from .reporting import SelectionReport, collect_selection_report
 from .variance_selector import VarianceSelector
 from .null_selector import NullSelector
 from .mode_selector import ModeSelector
@@ -62,42 +63,38 @@ from .scorecard_feature_selection import ScorecardFeatureSelection
 # 导出所有筛选器
 __all__ = [
     # 基类
-    'BaseFeatureSelector',
-    'SelectionReportCollector',
-    
+    "BaseFeatureSelector",
+    "SelectionReportCollector",
+    "SelectionReport",
+    "collect_selection_report",
     # 过滤法 - 基础筛选
-    'TypeSelector',
-    'RegexSelector',
-    'NullSelector',
-    'ModeSelector',
-    'CardinalitySelector',
-    'VarianceSelector',
-    
+    "TypeSelector",
+    "RegexSelector",
+    "NullSelector",
+    "ModeSelector",
+    "CardinalitySelector",
+    "VarianceSelector",
     # 过滤法 - 相关性筛选
-    'CorrSelector',
-    'VIFSelector',
-    
+    "CorrSelector",
+    "VIFSelector",
     # 过滤法 - 目标导向筛选
-    'IVSelector',
-    'KSSelector',
-    'LiftSelector',
-    'PSISelector',
-    
+    "IVSelector",
+    "KSSelector",
+    "LiftSelector",
+    "PSISelector",
     # 嵌入法 - 特征重要性
-    'FeatureImportanceSelector',
-    'NullImportanceSelector',
-    'RFESelector',
-    'SequentialFeatureSelector',
-    'StepwiseSelector',
-    
+    "FeatureImportanceSelector",
+    "NullImportanceSelector",
+    "RFESelector",
+    "SequentialFeatureSelector",
+    "StepwiseSelector",
     # 高级方法
-    'BorutaSelector',
-    'MutualInfoSelector',
-    'Chi2Selector',
-    'FTestSelector',
-    'StabilityAwareSelector',
-    'ScorecardFeatureSelection',
-    
+    "BorutaSelector",
+    "MutualInfoSelector",
+    "Chi2Selector",
+    "FTestSelector",
+    "StabilityAwareSelector",
+    "ScorecardFeatureSelection",
     # 组合筛选器
-    'CompositeFeatureSelector',
+    "CompositeFeatureSelector",
 ]

@@ -381,6 +381,7 @@ class _FullWidthBinMetricSummary(AnchoredOffsetbox):
     """与所属坐标轴等宽、文字居中的单行分箱指标摘要。"""
 
     def __init__(self, ax: Any, text: str, fontsize: float, color: str) -> None:
+        self._metric_items = text.split('    ')
         text_area = TextArea(
             text,
             textprops={
@@ -432,6 +433,15 @@ class _FullWidthBinMetricSummary(AnchoredOffsetbox):
         axes_width = self.axes.get_window_extent(renderer).width
         fontsize_pixels = renderer.points_to_pixels(self.prop.get_size_in_points())
         padding_pixels = self.pad * fontsize_pixels
+        # 字体/主题切换会改变文字度量。优先压缩指标间空白，不缩小文字，
+        # 并在每次渲染时重算，覆盖外层布局随后收窄面板的情况。
+        available = max(0.0, axes_width - 2.0 * padding_pixels - 2.0)
+        variants = ['    '.join(self._metric_items), '  '.join(self._metric_items), ' '.join(self._metric_items)]
+        variants.append('  '.join(item.replace(' ', '') for item in self._metric_items))
+        for variant in variants:
+            self.metric_text.set_text(variant)
+            if self.metric_text.get_window_extent(renderer).width <= available:
+                break
         self._full_width_child.set_width(max(0.0, axes_width - 2.0 * padding_pixels))
 
 
@@ -905,6 +915,29 @@ def bin_plot(
                 preferred_fontsize=summary_fontsize,
                 minimum_fontsize=summary_fontsize,
             )
+            # 达到轴标题字号下限后仍可能没有足够横向空间（如12pt主题+6英寸图）。
+            # 使用画布左侧留白，不通过缩小字号或侵入居中图例解决。
+            summary_bbox = summary_text.get_window_extent(renderer)
+            deficit = summary_bbox.x1 + gap_pixels - legend.get_window_extent(renderer).x0
+            if deficit > 0:
+                left = max(gap_pixels, summary_bbox.x0 - deficit)
+                summary_text.set_x(left / fig.bbox.width)
+            padding_pixels = 0.28 * summary_fontsize * fig.dpi / 72.0
+            top_overflow = summary_bbox.y1 + padding_pixels + gap_pixels - fig.bbox.y1
+            if top_overflow > 0:
+                summary_text.set_y(summary_text.get_position()[1] - top_overflow / fig.bbox.height)
+            for _ in range(2):
+                fig.canvas.draw()
+                renderer = fig.canvas.get_renderer()
+                summary_bottom = summary_text.get_window_extent(renderer).y0 - padding_pixels
+                decoration_top = _embedded_bin_plot_decoration_top(ax1, ax2, renderer)
+                deficit = decoration_top + gap_pixels - summary_bottom
+                if deficit <= 0.5:
+                    break
+                top = fig.subplotpars.top - deficit / fig.bbox.height
+                if top <= fig.subplotpars.bottom:
+                    break
+                fig.subplots_adjust(top=top)
         save_figure(fig, save)
 
         if return_frame:

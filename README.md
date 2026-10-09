@@ -4,1442 +4,1565 @@
   <img src="https://hengshucredit.com/images/hengshucredit_animated.svg" alt="衡枢真信" width="180">
 </p>
 
-<div align="center">
-
-<img src="https://img.shields.io/badge/Python-3.9--3.14-3776AB?style=flat-square&amp;logo=python&amp;logoColor=white" alt="Python 3.9–3.14">
-<a href="https://pypi.org/project/hscredit/"><img src="https://img.shields.io/pypi/v/hscredit?style=flat-square" alt="PyPI"></a>
-<a href="https://hscredit.hengshucredit.com/"><img src="https://img.shields.io/badge/Docs-GitHub%20Pages-0F766E?style=flat-square" alt="Documentation"></a>
-<img src="https://img.shields.io/badge/License-MIT-green?style=flat-square" alt="MIT License">
-
-<p><strong>面向信贷风控的全流程量化工具箱</strong></p>
-<p>🔍 鉴真伪 · 📊 斟信用 · ⚖️ 衡风险 · 🎯 枢定策</p>
-
-</div>
-
-## 为什么选择 hscredit？
-
-`hscredit` 面向风控策略与模型研发，贯通数据探索、变量工程、评分建模、规则策略、模型监控和报告交付。统一的 `sklearn` 与 `scorecardpipeline` 风格 API、中文业务输出与 Excel 报告能力，让分析结果可以直接进入评审、汇报和归档流程。
-
-| 能力域 | 能力规模 | 代表能力 | 业务价值与输出 |
-|:---|:---:|:---|:---|
-| 数据分析 | **57 种 EDA** | 数据质量、目标分布、坏率趋势、客群画像、Vintage、Roll Rate、策略仿真 | 快速判断样本质量、标签合理性与客群稳定性，输出 DataFrame、图表与分析报告 |
-| 变量分箱 | **18 种分箱器** | 等频、等宽、卡方、树/CART、Best IV/KS/Lift、MDLP、单调、遗传算法、二维分箱 | 支持变量离散化、坏率趋势、单调性控制与评分卡开发 |
-| 特征编码 | **9 种编码器** | WOE、Target、Count、OneHot、Ordinal、Quantile、CatBoost、Cardinality、GBM | 同时服务评分卡、树模型和高基数类别变量处理 |
-| 特征筛选 | **23 种筛选器** | 缺失率、众数率、方差、相关性、VIF、IV、Lift、PSI、RFE、Boruta、逐步回归、组合筛选 | 从区分度、稳定性、共线性、贡献度与业务解释多角度筛选变量 |
-| 风控指标 | **43 种指标** | KS、AUC、Gini、Lift、坏样本率、IV、PSI、CSI、分箱统计、分类与回归指标 | 建模、变量、策略和监控使用统一指标口径 |
-| 模型训练 | **38 个建模组件** | 逻辑回归、ScoreCard、RandomForest、DecisionTree、SVM、GBDT、XGBoost、LightGBM、CatBoost、NGBoost、风控损失、调参 | 覆盖传统评分卡、机器学习风控模型与业务目标导向建模 |
-| 可视化分析 | **46 种图表** | 分箱趋势、KS/ROC/PR/Lift/Gain、评分分布、策略阈值、Vintage、稳定性、客群漂移、树图 | 将分析结论直接转为评审、沟通和复盘材料 |
-| 报告交付 | **28 种报告工具** | 特征分析、规则分析、Swap、逾期预测、模型报告、模型对比 | 输出中文明细表、图表与多 Sheet Excel 报告 |
-| Excel 报表 | **10+ 种 Excel 操作** | 数据写入、图片、超链接、条件格式、样式、数字格式、冻结窗格、列宽、Sheet 复制 | 生成可直接评审、汇报和归档的样式化报表 |
-| 规则挖掘 | **8 种挖掘工具** | 单变量规则、多变量交叉规则、多标签规则、树规则提取、手工树、规则指标 | 从数据和模型中发现可解释的风险模式 |
-| Rule 规则体系 | **8 类规则能力** | Rule 表达式、任意层级嵌套、与/或/非、变量解析、命中评估、规则集、SWAP 分析 | 将零散策略条件沉淀为可组合、可评估、可追踪的规则资产 |
-
-> **核心优势：** 信贷业务原生 · `sklearn` 与 `scorecardpipeline` 双 API · 中文指标与报告 · 评分卡/机器学习/规则统一 · 分析结果可直接交付
-
-## 从数据到决策交付的完整链路
-
 <p align="center">
-  <img src="docs/assets/models.png" alt="hscredit 风控建模链路" width="100%">
+  <img src="https://img.shields.io/badge/Python-3.9--3.14-3776AB?style=flat-square&amp;logo=python&amp;logoColor=white" alt="Python 3.9–3.14">
+  <a href="https://pypi.org/project/hscredit/"><img src="https://img.shields.io/pypi/v/hscredit?style=flat-square" alt="PyPI"></a>
+  <a href="https://hscredit.hengshucredit.com/"><img src="https://img.shields.io/badge/Docs-GitHub%20Pages-0F766E?style=flat-square" alt="在线文档"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green?style=flat-square" alt="MIT License"></a>
 </p>
 
-<p align="center">
-  <img src="docs/assets/celue.png" alt="hscredit 风控策略分析链路" width="100%">
-</p>
+<p align="center"><strong>面向信贷风控的全流程量化工具箱</strong></p>
 
-## 核心能力实战展示
+<p align="center">🔍 鉴真伪 · 📊 斟信用 · ⚖️ 衡风险 · 🎯 枢定策</p>
 
-所有代码示例共用下面的数据准备步骤。运行一次后，可以独立展开任意 API 示例。
 
-<details>
-<summary><strong>公共数据准备</strong></summary>
+hscredit（衡枢真信）将数据探索、分箱编码、特征筛选、评分卡与机器学习、规则分析和 Excel 报告串成一套工作流。分箱、编码和筛选组件兼容 sklearn Pipeline，分析结果以中文指标、表格和图表返回。
 
-```python
-import hscredit
-import numpy as np
-import pandas as pd
-from sklearn.model_selection import train_test_split
+[为什么选择 hscredit](#为什么选择-hscredit) · [功能模块](#核心功能模块) · [安装](#安装) · [功能演示](#核心功能演示) · [在线文档](https://hscredit.hengshucredit.com/)
 
-hscredit.init_setting()
-df = pd.read_excel("examples/hscredit_yyp.xlsx")
-df["target"] = df["FPD"].astype(int)
-df["date"] = pd.to_datetime(df["放款时间"])
 
-features = [
-    "青云24",
-    "天创小额网贷分",
-    "近六个月非银多头机构数",
-    "手机号近一个月非银多头机构数",
-    "身份证近一个月非银多头机构数",
-    "衡枢鉴真分老客版",
-]
-X = df[features].apply(pd.to_numeric, errors="coerce")
-X = X.fillna(X.median())
-y = df["target"]
-X_train, X_test, y_train, y_test = train_test_split(
-    X, y, test_size=0.25, stratify=y, random_state=42
-)
+## 为什么选择 hscredit
 
-monitor_table = (
-    df.assign(月份=df["date"].dt.to_period("M").astype(str))
-    .groupby("月份", as_index=False)
-    .agg(
-        放款笔数=("客户编号", "size"),
-        放款金额=("放款金额", "sum"),
-        MOB1_DPD7率=("MOB1", lambda x: (x > 7).mean()),
-        当前DPD30率=("CURRENT_DPD", lambda x: (x > 30).mean()),
-    )
-)
-```
+- **面向信贷业务。** 在同一套分析中处理逾期标签、灰客户、金额口径、账龄、客群和规则置换，减少分析与报告之间的重复计算。
+- **贯通变量、模型与策略。** 从 EDA、分箱编码、组合筛选到逻辑回归、评分卡、集成模型和规则挖掘，复用相同的指标与报告入口。
+- **兼容现有建模流程。** 分箱、编码、筛选等组件遵循 sklearn 接口；既支持 `fit(X, y)`，也可用 `target` 指定 DataFrame 中的标签列。
+- **保留过程，便于复盘。** 可查看筛选决策、模型统计、试验指标、Pareto 候选、SHAP 解释和规则效果，并保存模型与训练记录。
+- **分析结果直接交付。** 方法返回的 DataFrame、原生图表和多 Sheet Excel 可继续用于评审、监控和归档，支持百分比、条件格式、冻结窗格、超链接与透视表。
 
-</details>
+## 核心功能模块
 
-> **信贷业务原生口径：** `overdue + dpds` 可由逾期天数字段生成多 DPD 标签；`amount` 同时评估放款金额/风险敞口；`margins=True` 追加合计；`prior_rules` 先处理存量策略或限定客群，再评价当前规则。
-
-通过 `overdue_operator=">="` 可调整逾期标签比较符，支持 `>`、`>=`、`<`、`<=`。
-`del_grey=True` 时，`>` 剔除 `(0, DPD]`，`>=` 剔除 `(0, DPD)`，`<`、`<=` 不剔灰。
-默认值和各入口用法见 [逾期标签与灰客户](docs/overdue_labels.md)。
-
-### 1. 分析报告：指标、图表与 Excel 一次交付
-
-| API | 核心能力 | 主要输出 |
+| 模块 | 具体功能点 | 演示 |
 |:---|:---|:---|
-| `auto_feature_analysis` | 变量质量、分箱、跨期稳定性 | 带表格和图表的 Excel |
-| `ruleset_analysis` | 规则集命中、坏率、Lift、金额口径 | 多 DPD 规则效果表 |
-| `rule_swap_analysis` | 策略置入/置出前后的通过率和风险变化 | 流水线表、置换结果表 |
-| `ManualTreeExtractor` | 将人工经验切点注入可执行决策树 | 叶节点规则表、Rule 对象 |
-| `plot_tree_matplotlib` | 将 sklearn/hscredit 树转为可解释图 | Matplotlib Figure |
-| `auto_model_report` | KS/AUC/PSI、Lift、排序性、变量表现 | 带图表的多 Sheet Excel |
-
-#### `auto_feature_analysis`
-
-整合样本分布、变量质量、分箱表现、跨期稳定性和多 DPD 金额口径。
+| 数据探索 EDA | 数据质量、缺失与分布、IV/KS/PSI、跨期稳定性、客群、Vintage、Roll Rate、自动特征报告 | [EDA](#eda) |
+| 分箱与编码 | 等频、等宽、卡方、树/CART、Best IV/KS/Lift、单调、二维分箱；WOE、Target、Count、OneHot 等编码 | [分箱对比与指标](#binning) |
+| 分箱可视化 | 单变量分箱、二维交互、跨月趋势、多 DPD 风险、手工与自动分箱效率对比 | [四类分箱图](#binning-plots) |
+| 特征筛选 | 缺失率、集中度、IV、KS、PSI、相关性、VIF、模型重要性、RFE、Boruta、组合筛选及完整过程报告 | [组合筛选](#selection) |
+| 逻辑回归 | 系数、标准误、显著性、置信区间、VIF、权重误差图 | [逻辑回归](#logistic) |
+| 评分卡 | WOE 转换、基础分/基准 odds/PDO 配置、完整 points 表、评分分布、保存与 PMML 导出 | [评分卡](#scorecard) |
+| 规则评估 | `Rule` 逻辑组合、先验规则、规则集、多标签金额评估、Swap 置入置出、策略迭代报告 | [规则与策略](#rules) |
+| 规则挖掘 | 单变量、多变量、多标签、树规则提取；自动训练与人工干预决策树 | [手工树](#manual-tree) |
+| 模型训练 | RandomForest、ExtraTrees、GradientBoosting、XGBoost、LightGBM、CatBoost、NGBoost、校准、自定义损失与完整评估 | [模型与报告](#models) |
+| 超参数搜索 | 多框架空间声明适配、单/多目标 CV、剪枝、Pareto、试验复盘、Optuna Dashboard | [搜索与训练过程](#tuning) |
+| 模型可解释性 | 全局重要性、SHAP 分布与依赖、单样本贡献、原因码与反事实分析 | [模型解释](#explainability) |
+| 报告与 Excel | 自动变量/模型/策略报告、DataFrame 导出、自动列宽、数字格式、图片、条件格式、冻结、超链接、透视表 | [Excel](#excel) |
+| 数据接入与计算 | SQL / NoSQL 连接池、流式读写、表结构导出；表达式衍生、现金流与金融计算 | [数据库](docs/database.md) · [特征工程](examples/09_feature_engineering.ipynb) · [金融计算](examples/10_financial.ipynb) |
 
 <details>
-<summary>代码示例：<code>auto_feature_analysis</code></summary>
+<summary>查看建模与策略分析流程</summary>
 
-```python
-from hscredit.excel import ExcelWriter
-from hscredit.report import auto_feature_analysis
+![hscredit 建模流程](docs/assets/models.png)
 
-writer = ExcelWriter()
-auto_feature_analysis(
-    df,
-    features=features[:3],
-    overdue=["MOB1", "CURRENT_DPD"],
-    dpds=[30, 7, 3, 0],
-    date="date",
-    amount="放款金额",
-    margins=True,
-    excel_writer=writer,
-    pictures=["bin", "ks", "hist"],
-)
-writer.save("特征分析报告.xlsx")
-```
+![hscredit 策略分析流程](docs/assets/celue.png)
 
 </details>
 
-<p align="center"><a href="docs/assets/readme/api-gallery/report-auto-feature-analysis-overview.png"><img src="docs/assets/readme/api-gallery/report-auto-feature-analysis-overview.png" alt="auto_feature_analysis 多 DPD 特征分析概览" width="100%"></a></p>
-
-<p align="center"><sub>订单口径 + 图表</sub><br><a href="docs/assets/readme/api-gallery/report-auto-feature-analysis-order.png"><img src="docs/assets/readme/api-gallery/report-auto-feature-analysis-order.png" alt="auto_feature_analysis 订单口径与图表" width="100%"></a></p>
-
-<p align="center"><sub>金额口径</sub><br><a href="docs/assets/readme/api-gallery/report-auto-feature-analysis-amount.png"><img src="docs/assets/readme/api-gallery/report-auto-feature-analysis-amount.png" alt="auto_feature_analysis 放款金额口径" width="100%"></a></p>
-
-#### `ruleset_analysis`
-
-对比多个规则的命中规模、坏样本率、Lift 和金额表现。
-
-<details>
-<summary>代码示例：<code>ruleset_analysis</code></summary>
-
-```python
-from hscredit.core.rules import Rule
-from hscredit.report import ruleset_analysis
-
-rules = [
-    Rule("青云24 < 560", name="低评分"),
-    Rule("近六个月非银多头机构数 >= 55", name="高多头"),
-]
-report = ruleset_analysis(
-    df,
-    rules,
-    overdue="MOB1",
-    dpds=[7, 3, 0],
-    amount="放款金额",
-    margins=True,
-)
-```
-
-</details>
-
-| 规则/阶段 | 金额口径 | MOB1 7+ 坏样本率 | MOB1 7+ Lift | MOB1 3+ 坏样本率 | MOB1 0+ 坏样本率 |
-|:---|---:|---:|---:|---:|---:|
-| 原始样本 | `4,087,203` | `15.13%` | `1.00` | `16.33%` | `20.45%` |
-| `青云24 < 560` | `840,691` | `18.78%` | `1.24` | `20.77%` | `25.57%` |
-| `近六个月非银多头机构数 >= 55` | `2,256,786` | `15.70%` | `1.11` | `16.85%` | `19.92%` |
-
-#### `rule_swap_analysis`
-
-评估策略规则置入、置出前后的通过率与风险变化。分析顺序为：基础生产规则先剔除
-`OUT-OUT`，本次置出规则再形成 `IN-OUT` 和 `total通过样本`，最后只在
-`total通过样本` 内拆分 `IN-IN` 与 `OUT-IN`。`sample_survival_rate` 用于把有偏分析样本
-校准回生产通过率漏斗；除 `OUT-IN` 使用评分分箱预测风险并上浮外，其余客群使用实际表现。
-
-<details>
-<summary>代码示例：<code>rule_swap_analysis</code></summary>
-
-```python
-from hscredit.core.rules import Rule
-from hscredit.report import rule_swap_analysis
-
-swap = rule_swap_analysis(
-    data=df,
-    score="青云24",
-    rules_in=[Rule("近六个月非银多头机构数 < 45", name="低多头置入")],
-    rules_out=[Rule("CURRENT_DPD >= 30", name="高逾期置出")],
-    rules_base=[Rule("衡枢鉴真分老客版 >= 0.25", name="生产基础拒绝")],
-    overdue="MOB1",
-    dpds=[7, 3, 0],
-    amount="放款金额",
-    sample_survival_rate=0.70,
-    out_in_uplift=2.0,
-)
-```
-
-</details>
-
-`swap_pipeline` 保留订单口径的 `样本总数`，金额另列为 `样本总额`；生产通过率按百分比输出。
-多 DPD 场景返回 MultiIndex 列，每个 `{逾期字段}_{DPD}+` 标签分别包含原始/调整后坏样本率。
-`swap_result` 比较不置入的 `IN-IN` 与置入后的 `ALL-IN`，且不受 `reverse_order` 展示顺序影响。
-
-#### `ManualTreeExtractor`
-
-将业务经验切点加入决策树，并导出叶节点规则。
-
-<details>
-<summary>代码示例：<code>ManualTreeExtractor</code></summary>
-
-```python
-from hscredit.report.mining import ManualTreeExtractor
-
-tree = ManualTreeExtractor(
-    target="target",
-    features="青云24",
-    feature_map={"青云24": "青云信用评分"},
-    max_depth=3,
-    min_samples_leaf=25,
-)
-tree.fit(df, feature_names=features[:3])
-tree.manual_split(df, feature="青云24", threshold=600, node=0)
-rules = tree.get_rule_table(df, target="target", amount="放款金额", leaf_only=True)
-```
-
-</details>
-
-| 节点 | 叶节点 | 入参字段 | 字段含义 | 人工规则 | 样本金额 | 坏样本率 | Lift | 风险拒绝比 |
-|---:|:---:|:---|:---|:---|---:|---:|---:|---:|
-| `1` | 是 | `青云24` | 青云信用评分 | `青云24 <= 600` | `1,724,221` | `16.89%` | `1.1892` | `0.3273` |
-| `2` | 是 | `青云24` | 青云信用评分 | `青云24 > 600（含缺失）` | `2,362,982` | `12.24%` | `0.8619` | `-0.3273` |
-
-#### `plot_tree_matplotlib`
-
-<details>
-<summary>代码示例：<code>plot_tree_matplotlib</code></summary>
-
-```python
-from sklearn.tree import DecisionTreeClassifier
-from hscredit.core.viz import plot_tree_matplotlib
-
-tree_model = DecisionTreeClassifier(max_depth=3, min_samples_leaf=25, random_state=42)
-tree_model.fit(X_train, y_train)
-figure = plot_tree_matplotlib(
-    tree_model,
-    feature_names=features,
-    title="风险决策树",
-)
-```
-
-</details>
-
-<p align="center"><a href="docs/assets/readme/api-gallery/report-plot-tree-matplotlib.png"><img src="docs/assets/readme/api-gallery/report-plot-tree-matplotlib.png" alt="plot_tree_matplotlib 风险决策树" width="100%"></a></p>
-
-#### `auto_model_report`
-
-汇总训练集与验证集的 KS、AUC、PSI、Lift、排序性、变量表现和金额口径。
-
-<details>
-<summary>代码示例：<code>auto_model_report</code></summary>
-
-```python
-from sklearn.linear_model import LogisticRegression
-from hscredit.report import auto_model_report
-
-model = LogisticRegression(max_iter=1000).fit(X_train, y_train)
-report_columns = features + ["MOB1", "CURRENT_DPD", "放款金额", "date"]
-auto_model_report(
-    model,
-    datasets={
-        "建模集": df.loc[X_train.index, report_columns],
-        "验证集": df.loc[X_test.index, report_columns],
-    },
-    overdue=["MOB1", "CURRENT_DPD"],
-    dpds=[30, 7, 3, 0],
-    amount_col="放款金额",
-    date_col="date",
-    feature_names=features,
-    method="predict_proba",  # 每个数据集只调用这一个方法
-    excel_path="模型报告.xlsx",
-    with_plots=True,
-)
-
-# callable 中 self 是最终返回的 ModelReport，模型通过 self.model 访问
-custom_report = auto_model_report(
-    model,
-    X_train=X_test,
-    y_train=y_test,
-    method=lambda self, x, scale: self.model.predict_proba(x)[:, 1] * scale,
-    scale=100,
-    verbose=False,
-)
-```
-
-</details>
-
-<p align="center"><sub>多 DPD 样本概览</sub><br><a href="docs/assets/readme/api-gallery/report-auto-model-report-overview.png"><img src="docs/assets/readme/api-gallery/report-auto-model-report-overview.png" alt="auto_model_report 多 DPD 样本概览" width="100%"></a></p>
-
-<p align="center"><a href="docs/assets/readme/api-gallery/report-auto-model-report-performance.png"><img src="docs/assets/readme/api-gallery/report-auto-model-report-performance.png" alt="auto_model_report KS ROC Lift 与排序性" width="100%"></a></p>
-
-<p align="center"><sub>金额口径</sub><br><a href="docs/assets/readme/api-gallery/report-auto-model-report-amount.png"><img src="docs/assets/readme/api-gallery/report-auto-model-report-amount.png" alt="auto_model_report 放款金额表现" width="100%"></a></p>
-
-`ModelReport` 不自动创建评分转换器，也不额外预测概率；指标、分箱和 PSI 全部使用 `method` 单次调用的结果。
-
-### 2. 数据分析与 pandas 扩展
-
-导入 `hscredit` 后即可使用 DataFrame 分析、Excel 输出和链式并行扩展；`feature_summary` 也可作为独立函数调用。
-
-<details>
-<summary>代码示例：<code>DataFrame.hscredit.apply</code></summary>
-
-```python
-result = df[features].hscredit.apply(np.sum, axis=1)
-mapped = df["放款金额"].hscredit(n_jobs=4).apply(np.log1p)
-```
-
-</details>
-
-并行后端、任务预算与回退规则详见[并行执行契约](docs/parallelism.md#pandas-apply-并行扩展)。
-
-#### `pd.DataFrame.summary`
-
-<details>
-<summary>代码示例：<code>pd.DataFrame.summary</code></summary>
-
-```python
-summary = df.summary(
-    features=features,
-    y="target",
-    max_n_bins=5,
-    psi_method="date_col",
-    psi_date_col="date",
-    psi_freq="M",
-)
-```
-
-</details>
-
-| 特征名 | 字段类型 | 样本数 | 缺失率 | IV | KS | PSI | 唯一值数 |
-|:---|:---:|---:|---:|---:|---:|---:|---:|
-| 青云24 | numerical | `970` | `0.00%` | `0.0546` | `0.1399` | `0.1297` | `272` |
-| 天创小额网贷分 | numerical | `970` | `0.00%` | `0.0294` | `0.1075` | `0.0403` | `152` |
-| 近六个月非银多头机构数 | numerical | `970` | `0.00%` | `0.0649` | `0.1153` | `0.0301` | `69` |
-| 衡枢鉴真分老客版 | id | `970` | `0.00%` | `0.1860` | `0.1840` | `0.0316` | `970` |
-
-#### `feature_summary`
-
-<details>
-<summary>代码示例：<code>feature_summary</code></summary>
-
-```python
-from hscredit.core.eda import feature_summary
-
-summary = feature_summary(
-    df,
-    features=features,
-    y="target",
-    psi_method="date_col",
-    psi_date_col="date",
-    psi_freq="M",
-)
-```
-
-</details>
-
-| 特征名 | 平均值 | 标准差 | IV | KS | PSI | 趋势 |
-|:---|---:|---:|---:|---:|---:|:---:|
-| 青云24 | `604.33` | `64.93` | `0.0546` | `0.1399` | `0.1297` | unknown |
-| 天创小额网贷分 | `710.34` | `52.54` | `0.0294` | `0.1075` | `0.0403` | valley |
-| 近六个月非银多头机构数 | `60.85` | `12.13` | `0.0649` | `0.1153` | `0.0301` | unknown |
-| 衡枢鉴真分老客版 | `0.0946` | `0.0524` | `0.1860` | `0.1840` | `0.0316` | unknown |
-
-#### `pd.DataFrame.save`
-
-将 DataFrame、数字格式、条件格式和图表写入样式化 Excel。
-
-<details>
-<summary>代码示例：<code>pd.DataFrame.save</code></summary>
-
-```python
-monitor_table.save(
-    "特征摘要.xlsx",
-    sheet_name="特征摘要",
-    title="特征质量与跨期稳定性",
-    condition_cols=["放款金额"],
-    percent_cols=["MOB1_DPD7率", "当前DPD30率"],
-    auto_width=True,
-    index=False,
-)
-```
-
-</details>
-
-<p align="center"><a href="docs/assets/readme/api-gallery/pandas-dataframe-save.png"><img src="docs/assets/readme/api-gallery/pandas-dataframe-save.png" alt="pd.DataFrame.save 带图表的 Excel 输出" width="100%"></a></p>
-
-### 3. 分箱与分箱分析
-
-#### `OptimalBinning`
-
-<details>
-<summary>代码示例：<code>OptimalBinning</code></summary>
-
-```python
-from hscredit.core.binning import OptimalBinning
-
-binner = OptimalBinning(method="best_iv", max_n_bins=5, min_bin_size=0.05)
-binner.fit(X_train, y_train)
-bin_table = binner.get_bin_table("青云24")
-X_woe = binner.transform(X_test, metric="woe")
-```
-
-</details>
-
-`min_bin_size` 默认 `0.01`：小于 1 按样本占比解释，大于等于 1 按样本数解释，
-传入 `None` 表示不限制最小样本数。`uniform` 先等距切分再按约束合并，合并后允许不等宽；
-`quantile` 遇到重复分位边界会自然减少箱数。完整约束说明见[分箱 API](docs/api/binning.rst)。
-
-| 分箱标签 | 样本数 | 样本占比 | 坏样本率 | WOE | IV | KS |
-|:---|---:|---:|---:|---:|---:|---:|
-| `[-inf, 552.00)` | `190` | `19.59%` | `18.42%` | `0.3255` | `0.0808` | `0.0715` |
-| `[552.00, 609.57)` | `324` | `33.40%` | `16.36%` | `0.1818` | `0.0808` | `0.1363` |
-| `[609.57, 656.00)` | `255` | `26.29%` | `10.98%` | `-0.2792` | `0.0808` | `0.0700` |
-| `[656.00, +inf)` | `201` | `20.72%` | `9.95%` | `-0.3892` | `0.0808` | `0.0000` |
-
-#### `feature_bin_stats`：多 DPD + 金额口径 + 合计
-
-<details>
-<summary>代码示例：<code>feature_bin_stats</code></summary>
-
-```python
-from hscredit.report import feature_bin_stats
-
-bin_table = feature_bin_stats(
-    df,
-    feature="青云24",
-    overdue="MOB1",
-    dpds=[7, 3, 0],
-    amount="放款金额",
-    margins=True,
-    method="best_iv",
-    max_n_bins=5,
-)
-```
-
-</details>
-
-| 分箱 | 放款金额 | MOB1 7+ 坏样本率 / Lift | MOB1 3+ 坏样本率 / Lift | MOB1 0+ 坏样本率 / Lift |
-|:---|---:|---:|---:|---:|
-| `[-inf, 552.00)` | `687,309` | `20.44% / 1.35` | `21.63% / 1.32` | `26.31% / 1.29` |
-| `[552.00, 609.57)` | `1,191,582` | `18.22% / 1.20` | `19.31% / 1.18` | `22.39% / 1.09` |
-| `[609.57, 673.03)` | `1,534,445` | `12.93% / 0.85` | `14.11% / 0.86` | `19.31% / 0.94` |
-| `[673.03, +inf)` | `673,867` | `9.24% / 0.61` | `10.70% / 0.66` | `13.64% / 0.67` |
-
-#### `feature_binning_summary`
-
-<details>
-<summary>代码示例：<code>feature_binning_summary</code></summary>
-
-```python
-from hscredit.report import feature_binning_summary
-
-details, summary = feature_binning_summary(
-    df,
-    feature=features[:2],
-    methods=["quantile", "cart", "best_iv"],
-    target="target",
-    max_n_bins=5,
-    margins=True,
-)
-```
-
-</details>
-
-| 分箱方法 | 指标 | KS | Lift | IV | 坏样本数 | 坏样本率 |
-|:---|:---|---:|---:|---:|---:|---:|
-| quantile | 青云24 | `0.0930` | `1.31` | `0.0546` | `136` | `14.02%` |
-| quantile | 天创小额网贷分 | `0.0674` | `1.17` | `0.0294` | `136` | `14.02%` |
-| cart | 青云24 | `0.1375` | `1.37` | `0.0866` | `136` | `14.02%` |
-| cart | 天创小额网贷分 | `0.1074` | `1.28` | `0.0500` | `136` | `14.02%` |
-
-#### `feature_group_binning_summary`
-
-<details>
-<summary>代码示例：<code>feature_group_binning_summary</code></summary>
-
-```python
-from hscredit.report import feature_group_binning_summary
-
-details, summary = feature_group_binning_summary(
-    df,
-    feature=features[:2],
-    methods=["quantile", "cart"],
-    date_col="date",
-    freq="M",
-    target="target",
-    max_n_bins=5,
-    margins=True,
-)
-```
-
-</details>
-
-| 方法 | 指标 | 分组 | KS | Lift | IV | 坏样本率 |
-|:---|:---|:---:|---:|---:|---:|---:|
-| quantile | 青云24 | `2025-11` | `0.1402` | `1.24` | `0.1720` | `14.61%` |
-| quantile | 青云24 | `2025-12` | `0.0705` | `1.26` | `0.0362` | `14.59%` |
-| quantile | 青云24 | `2026-01` | `0.2166` | `2.00` | `0.2678` | `18.42%` |
-| quantile | 青云24 | `2026-02` | `0.1470` | `1.51` | `0.4949` | `8.29%` |
-
-<details>
-<summary>代码示例：<code>bin_plot</code></summary>
-
-```python
-from hscredit.core.viz import bin_plot
-from hscredit.report import feature_bin_stats
-
-bin_table = feature_bin_stats(df, feature="青云24", target="target", margins=True)
-figure = bin_plot(bin_table, desc="青云24", title="样本结构与坏样本率")
-```
-
-</details>
-
-<details>
-<summary>代码示例：<code>bin_trend_plot</code></summary>
-
-```python
-from hscredit.core.viz import bin_trend_plot
-
-figure = bin_trend_plot(
-    df,
-    feature="青云24",
-    target="target",
-    date_col="date",
-    date_freq="M",
-    method="quantile",
-    max_n_bins=5,
-)
-```
-
-</details>
-
-<details>
-<summary>代码示例：<code>bin_2d_plot</code></summary>
-
-```python
-from hscredit.core.viz import bin_2d_plot
-
-figure = bin_2d_plot(
-    df,
-    features=["青云24", "近六个月非银多头机构数"],
-    target="target",
-    method="quantile",
-    max_n_bins=5,
-)
-```
-
-</details>
-
-<details>
-<summary>代码示例：<code>feature_efficiency_analysis</code></summary>
-
-```python
-from hscredit.report import feature_efficiency_analysis
-
-result = feature_efficiency_analysis(
-    df,
-    feature="青云24",
-    target="target",
-    date_col="date",
-    auto_method="quantile",
-    max_n_bins=5,
-)
-figure = result["comparison_figure"]
-```
-
-</details>
-
-<table>
-<tr>
-<td width="50%" valign="top"><strong><code>bin_plot</code></strong><br><sub>单变量样本结构、坏率和分箱指标。</sub><br><a href="docs/assets/readme/api-gallery/binning-bin-plot.png"><img src="docs/assets/readme/api-gallery/binning-bin-plot.png" alt="bin_plot 输出"></a></td>
-<td width="50%" valign="top"><strong><code>bin_trend_plot</code></strong><br><sub>跨月份分箱坏率趋势与稳定性。</sub><br><a href="docs/assets/readme/api-gallery/binning-bin-trend-plot.png"><img src="docs/assets/readme/api-gallery/binning-bin-trend-plot.png" alt="bin_trend_plot 输出"></a></td>
-</tr>
-<tr>
-<td width="50%" valign="top"><strong><code>bin_2d_plot</code></strong><br><sub>两个变量交叉后的二维风险热力图。</sub><br><a href="docs/assets/readme/api-gallery/binning-bin-2d-plot.png"><img src="docs/assets/readme/api-gallery/binning-bin-2d-plot.png" alt="bin_2d_plot 输出"></a></td>
-<td width="50%" valign="top"><strong><code>feature_efficiency_analysis</code></strong><br><sub>手工切点、自动分箱、KS 与 ROC 一体对比。</sub><br><a href="docs/assets/readme/api-gallery/binning-feature-efficiency-analysis.png"><img src="docs/assets/readme/api-gallery/binning-feature-efficiency-analysis.png" alt="feature_efficiency_analysis 输出"></a></td>
-</tr>
-</table>
-
-### 4. 特征筛选与过程追踪
-
-<details>
-<summary>代码示例：<code>NullImportanceSelector</code></summary>
-
-```python
-from sklearn.ensemble import RandomForestClassifier
-from hscredit.core.selectors import NullImportanceSelector
-
-selector = NullImportanceSelector(
-    estimator=RandomForestClassifier(n_estimators=100, random_state=42),
-    threshold=0.0,
-    cv=3,
-    n_runs=5,
-)
-X_selected = selector.fit_transform(X_train, y_train)
-report = selector.get_selection_report_df()
-```
-
-</details>
-
-<details>
-<summary>代码示例：<code>BorutaSelector</code></summary>
-
-```python
-from sklearn.ensemble import RandomForestClassifier
-from hscredit.core.selectors import BorutaSelector
-
-selector = BorutaSelector(
-    estimator=RandomForestClassifier(n_estimators=100, max_depth=5, random_state=42),
-    n_estimators=100,
-    max_iter=20,
-    random_state=42,
-)
-X_selected = selector.fit_transform(X_train, y_train)
-report = selector.get_selection_report_df()
-```
-
-</details>
-
-<details>
-<summary>代码示例：<code>RFESelector</code></summary>
-
-```python
-from sklearn.linear_model import LogisticRegression
-from hscredit.core.selectors import RFESelector
-
-selector = RFESelector(
-    LogisticRegression(max_iter=1000),
-    n_features_to_select=5,
-    step=1,
-)
-X_selected = selector.fit_transform(X_train, y_train)
-report = selector.get_selection_report_df()
-```
-
-</details>
-
-<details>
-<summary>代码示例：<code>CompositeFeatureSelector</code></summary>
-
-```python
-from hscredit.core.selectors import CompositeFeatureSelector, CorrSelector, IVSelector, NullSelector
-
-selector = CompositeFeatureSelector(
-    [
-        ("缺失", NullSelector(threshold=0.95)),
-        ("IV", IVSelector(threshold=0.02)),
-        ("相关性", CorrSelector(threshold=0.85)),
-    ],
-    strategy="sequential",
-)
-X_selected = selector.fit_transform(X_train, y_train)
-report = selector.get_selection_report_df()
-```
-
-</details>
-
-<details>
-<summary>代码示例：<code>ScorecardFeatureSelection</code></summary>
-
-```python
-from hscredit.core.selectors import ScorecardFeatureSelection
-
-selector = ScorecardFeatureSelection(
-    null_threshold=0.95,
-    mode_threshold=0.98,
-    iv_threshold=0.02,
-    corr_threshold=0.85,
-    binning_params={"method": "quantile", "max_n_bins": 5},
-)
-X_selected = selector.fit_transform(X_train, y_train)
-report = selector.get_selection_report_df()
-```
-
-</details>
-
-<details>
-<summary>代码示例：<code>SelectionReportCollector</code></summary>
-
-```python
-from hscredit.core.selectors import IVSelector, NullSelector, SelectionReportCollector
-
-collector = SelectionReportCollector(name="特征筛选流程")
-current = X_train
-for selector in [NullSelector(threshold=0.95), IVSelector(threshold=0.02)]:
-    selector.fit(current, y_train)
-    collector.add_report(selector)
-    current = selector.transform(current)
-
-summary = collector.to_dataframe()
-feature_trace = collector.get_feature_trace()
-```
-
-</details>
-
-| API | 输入特征 | 保留特征 | 结果摘要 |
-|:---|---:|---:|:---|
-| `NullImportanceSelector` | `6` | `3` | 模型重要性超过随机标签基线 |
-| `BorutaSelector` | `6` | `2` | 与 Shadow Features 对照筛选 |
-| `RFESelector` | `6` | `5` | 递归消除至目标变量数 |
-| `CompositeFeatureSelector` | `6` | 分阶段 | 缺失率 → IV → 相关性顺序漏斗 |
-| `ScorecardFeatureSelection` | `6` | `5` | 缺失、集中度、IV、相关性联合粗筛 |
-| `SelectionReportCollector` | `4` 个阶段 | `1` 份报告 | 汇总阶段结果并追踪变量去向 |
-
-`CompositeFeatureSelector` 的逐轮明细直接返回 DataFrame：
-
-| 特征 | 轮次 | 筛选器 | 策略 | 状态 | 得分 | 本轮输入 | 本轮输出 |
-|:---|---:|:---|:---:|:---:|---:|---:|---:|
-| 天创小额网贷分 | `1` | NullSelector | sequential | 选中 | `0.0000` | `6` | `6` |
-| 近六个月非银多头机构数 | `1` | NullSelector | sequential | 选中 | `0.0000` | `6` | `6` |
-| 天创小额网贷分 | `2` | IVSelector | sequential | 选中 | `1.28` | `6` | `6` |
-| 青云24 | `2` | IVSelector | sequential | 选中 | `1.75` | `6` | `6` |
-
-`SelectionReportCollector` 汇总多个筛选器后仍保留阶段边界：
-
-| 阶段 | 筛选器 | 阈值 | 输入特征数 | 选中特征数 | 剔除特征数 |
-|:---|:---|---:|---:|---:|---:|
-| 阶段1 | VarianceSelector | `0.00` | `6` | `6` | `0` |
-| 阶段2 | NullSelector | `0.95` | `6` | `6` | `0` |
-| 阶段3 | IVSelector | `0.00` | `6` | `6` | `0` |
-| 阶段4 | CorrSelector | `0.85` | `6` | `6` | `0` |
-
-### 5. Rule：任意嵌套、先验规则与多业务口径
-
-<details>
-<summary>代码示例：<code>Rule</code> 交、并、非与多层嵌套</summary>
-
-```python
-from hscredit.core.rules import Rule
-
-score_rule = Rule("青云24 < 580", name="评分偏低")
-multi_rule = Rule("近六个月非银多头机构数 >= 55", name="多头偏高")
-dpd_rule = Rule("CURRENT_DPD >= 30", name="当前逾期")
-whitelist = Rule("衡枢鉴真分老客版 < 0.03", name="低风险白名单")
-
-rule = (score_rule & multi_rule) | (dpd_rule & ~whitelist)
-hit_mask = rule.predict(df)
-```
-
-</details>
-
-<details>
-<summary>代码示例：<code>Rule.report</code></summary>
-
-```python
-from hscredit.core.rules import Rule
-
-prior = Rule("商品类别 == '礼包'", name="存量先验规则")
-rule = (Rule("青云24 < 580") & Rule("近六个月非银多头机构数 >= 55")) | Rule(
-    "CURRENT_DPD >= 30"
-)
-report = rule.report(
-    df,
-    overdue="MOB1",
-    dpds=[7, 3, 0],
-    prior_rules=prior,
-    amount="放款金额",
-    margins=True,
-)
-```
-
-</details>
-
-交、并、非和多层嵌套均保持为可执行 `Rule` 对象：
-
-| 青云24 | 六月多头数 | CURRENT_DPD | 目标 | 组合规则结果 |
-|---:|---:|---:|---:|:---:|
-| `656` | `51` | `0` | `0` | 未命中 |
-| `565` | `56` | `0` | `0` | 命中 |
-| `708` | `68` | `0` | `0` | 未命中 |
-| `555` | `45` | `0` | `0` | 未命中 |
-
-`prior_rules`、`amount`、`margins` 与多 DPD 可以在一次报告中组合：
-
-| 规则分类 | 口径 | 分箱 | 总量 | MOB1 7+ 坏样本率 / Lift | MOB1 3+ 坏样本率 / Lift | MOB1 0+ 坏样本率 / Lift |
-|:---|:---:|:---:|---:|---:|---:|---:|
-| 先验规则 | 订单 | 命中 | `189` | `13.23% / 0.88` | `16.93% / 1.01` | `19.58% / 0.95` |
-| 先验规则 | 订单 | **合计** | `970` | `14.95% / 1.00` | `16.70% / 1.00` | `20.52% / 1.00` |
-| 验证规则 | 订单 | 命中 | `333` | `33.33% / 2.17` | `34.53% / 2.07` | `39.04% / 1.88` |
-| 先验规则 | 金额 | 命中 | `262,527` | `13.23% / 0.88` | `16.94% / 1.04` | `19.58% / 0.96` |
-| 先验规则 | 金额 | **合计** | `4,087,203` | `15.13% / 1.00` | `16.33% / 1.00` | `20.45% / 1.00` |
-| 验证规则 | 金额 | 命中 | `1,517,099` | `35.49% / 2.33` | `36.57% / 2.25` | `41.51% / 2.02` |
-
-### 6. 模型、风控 Loss 与统一调优
-
-> **破坏性命名变更：** 七个具体模型现已统一使用 `XGBoost`、`LightGBM`、`CatBoost`、`NGBoost`、`RandomForest`、`ExtraTrees` 和 `GradientBoosting`。不再提供旧 `RiskModel` 后缀类名。引用旧类路径的 pickle、joblib 或 JSON 制品需先用旧版 hscredit 加载并重新训练或导出，再升级使用。
-
-#### Boosting
-
-统一 `fit / predict_proba / evaluate`，同时输出评估指标和特征贡献。
-
-<details>
-<summary>代码示例：<code>GradientBoosting</code></summary>
-
-```python
-from hscredit.core.models import GradientBoosting
-
-model = GradientBoosting(
-    n_estimators=100,
-    learning_rate=0.05,
-    max_depth=3,
-    random_state=42,
-)
-model.fit(X_train, y_train)
-probability = model.predict_proba(X_test)[:, 1]
-metrics = model.evaluate(X_test, y_test, metrics=["auc", "ks", "gini", "accuracy"])
-```
-
-</details>
-
-| 指标 | 测试集 |
-|:---|---:|
-| AUC | `0.4980` |
-| KS | `0.1095` |
-| Gini | `-0.0039` |
-| Accuracy | `0.8519` |
-
-<p align="center"><a href="docs/assets/readme/api-gallery/model-boosting.png"><img src="docs/assets/readme/api-gallery/model-boosting.png" alt="Boosting ROC 与特征重要性" width="100%"></a></p>
-
-#### sklearn 分类模型
-
-```python
-from hscredit.core.models import DecisionTreeClassifier, SVM
-
-svm = SVM(C=1.0, kernel="rbf", random_state=42).fit(X_train, y_train)
-tree = DecisionTreeClassifier(max_depth=4, min_samples_leaf=20, random_state=42).fit(X_train, y_train)
-
-svm_probability = svm.predict_proba(X_test)[:, 1]
-tree_probability = tree.predict_proba(X_test)[:, 1]
-```
-
-#### `ScoreCard`
-
-<details>
-<summary>代码示例：<code>ScoreCard</code></summary>
-
-```python
-from hscredit.core.binning import OptimalBinning
-from hscredit.core.models import ScoreCard
-
-binner = OptimalBinning(method="best_iv", max_n_bins=5)
-binner.fit(X_train, y_train)
-X_train_woe = binner.transform(X_train, metric="woe")
-
-scorecard = ScoreCard(binner=binner, base_score=650, pdo=50)
-scorecard.fit(X_train_woe, y_train)
-scores = scorecard.predict(X_test)
-score_table = scorecard.export(to_frame=True)
-```
-
-</details>
-
-| 统计项 | 测试集评分 |
-|:---|---:|
-| 最低分 | `354.73` |
-| 中位数 | `541.63` |
-| 平均分 | `532.06` |
-| 最高分 | `594.99` |
-
-<p align="center"><a href="docs/assets/readme/api-gallery/model-scorecard.png"><img src="docs/assets/readme/api-gallery/model-scorecard.png" alt="ScoreCard 好坏样本评分分布" width="100%"></a></p>
-
-#### `RulesClassifier`
-
-<details>
-<summary>代码示例：<code>RulesClassifier</code></summary>
-
-```python
-from hscredit.core.models import RulesClassifier
-from hscredit.core.rules import Rule
-
-rules = [
-    Rule("青云24 < 580", name="评分偏低"),
-    Rule("近六个月非银多头机构数 >= 55", name="多头偏高"),
-]
-classifier = RulesClassifier(rules=rules, logic="or", output_mode="final")
-classifier.fit(X_train, y_train)
-prediction, reason = classifier.predict(X_test, return_reason=True)
-```
-
-</details>
-
-| 青云24 | 六月多头数 | 预测 | 命中原因 |
-|---:|---:|---:|:---|
-| `597` | `50` | `0` | 规则组合结果 |
-| `611` | `60` | `1` | 规则组合命中 |
-| `543` | `61` | `1` | 规则组合命中 |
-| `549` | `79` | `1` | 规则组合命中 |
-
-#### 自定义 Loss
-
-内置 Focal、利润、通过率、坏账、Top-K 捕获及 `AmountWeightedLoss` 等风控目标，并提供 XGBoost、LightGBM、CatBoost、NGBoost 适配器。
-
-<details>
-<summary>代码示例：<code>FocalLoss</code> 与框架适配器</summary>
-
-```python
-from hscredit.core.models.losses import FocalLoss
-
-loss = FocalLoss(alpha=0.25, gamma=2.0)
-xgb_objective = loss.to_xgboost()
-lgb_objective = loss.to_lightgbm()
-catboost_objective = loss.to_catboost()
-ngboost_score = loss.to_ngboost()
-```
-
-</details>
-
-<p align="center"><a href="docs/assets/readme/api-gallery/model-custom-loss.png"><img src="docs/assets/readme/api-gallery/model-custom-loss.png" alt="自定义风控 Loss 曲线" width="100%"></a></p>
-
-#### `ModelTuner`：搜索框架无缝切换 + 自定义评价方法
-
-同一个调优入口接受多种原生搜索空间声明，并统一进入采样、交叉验证和业务评价流程：
-
-<details>
-<summary>代码示例：<code>ModelTuner</code></summary>
-
-```python
-from sklearn.linear_model import LogisticRegression
-from hscredit import ModelTuner, Real, loguniform, suggest_float
-
-
-def approval_quality(y_true, y_prob, approval_rate=0.4):
-    approved = np.asarray(y_true)[
-        np.asarray(y_prob) <= np.quantile(y_prob, approval_rate)
-    ]
-    return 1.0 - approved.mean()
-
-
-search_spaces = {
-    "optuna": {"C": suggest_float("C", 0.1, 1.0, log=True)},
-    "grid": {"C": [0.1, 0.3, 1.0]},
-    "scikit-optimize": [Real(0.1, 1.0, prior="log-uniform", name="C")],
-    "bayesian-optimization": {"C": (0.1, 1.0, float)},
-    "hyperopt": {"C": loguniform("C", np.log(0.1), np.log(1.0))},
-}
-
-tuner = ModelTuner(
-    LogisticRegression,
-    search_space=search_spaces["optuna"],  # 切换 key 即可更换搜索空间声明
-    metric=approval_quality,
-    direction="maximize",
-    cv=5,
-)
-best_params = tuner.fit(X_train, y_train, n_trials=50)
-```
-
-</details>
-
-| 搜索空间声明 | 统一后端 | 自定义评价 | 最优 C | solver | 最佳得分 |
-|:---|:---:|:---|---:|:---:|---:|
-| Optuna | Optuna | 审批客群质量 | `1.0` | liblinear | `0.8667` |
-| GridSearch | Optuna | 审批客群质量 | `1.0` | liblinear | `0.8667` |
-| scikit-optimize | Optuna | 审批客群质量 | `1.0` | liblinear | `0.8667` |
-| bayesian-optimization | Optuna | 审批客群质量 | `1.0` | liblinear | `0.8667` |
-| Hyperopt | Optuna | 审批客群质量 | `1.0` | liblinear | `0.8667` |
-
-### 7. Excel：从 DataFrame 到可评审报告
-
-<details>
-<summary>代码示例：<code>dataframe2excel</code></summary>
-
-```python
-from hscredit.excel import ExcelWriter, dataframe2excel
-
-writer = ExcelWriter()
-dataframe2excel(
-    monitor_table,
-    writer,
-    sheet_name="监控摘要",
-    title="经营与模型监控摘要",
-    percent_cols=["MOB1_DPD7率", "当前DPD30率"],
-    auto_width=True,
-)
-writer.save("风控监控报告.xlsx")
-```
-
-</details>
-
-<details>
-<summary>代码示例：<code>condition_cols</code></summary>
-
-```python
-from hscredit.excel import ExcelWriter, dataframe2excel
-
-writer = ExcelWriter()
-dataframe2excel(
-    monitor_table,
-    writer,
-    sheet_name="条件格式",
-    percent_cols=["MOB1_DPD7率"],
-    condition_cols=["MOB1_DPD7率"],
-    condition_color="F76E6C",
-    auto_width=True,
-)
-writer.save("条件格式.xlsx")
-```
-
-</details>
-
-<details>
-<summary>代码示例：<code>color_cols</code></summary>
-
-```python
-from hscredit.excel import ExcelWriter, dataframe2excel
-
-writer = ExcelWriter()
-dataframe2excel(
-    monitor_table,
-    writer,
-    sheet_name="色阶格式",
-    percent_cols=["当前DPD30率"],
-    color_cols=["当前DPD30率"],
-    auto_width=True,
-)
-writer.save("色阶格式.xlsx")
-```
-
-</details>
-
-<details>
-<summary>代码示例：<code>percent_cols</code></summary>
-
-```python
-from hscredit.excel import dataframe2excel
-
-dataframe2excel(
-    monitor_table,
-    "百分比.xlsx",
-    sheet_name="风险指标",
-    percent_cols=["MOB1_DPD7率", "当前DPD30率"],
-    auto_width=True,
-)
-```
-
-</details>
-
-<details>
-<summary>代码示例：<code>ExcelWriter.set_freeze_panes</code></summary>
-
-```python
-from hscredit.excel import ExcelWriter, dataframe2excel
-
-writer = ExcelWriter()
-dataframe2excel(monitor_table, writer, sheet_name="监控明细", auto_width=True)
-writer.set_freeze_panes("监控明细", "C5")
-writer.save("冻结窗口.xlsx")
-```
-
-</details>
-
-<details>
-<summary>代码示例：<code>ExcelWriter.insert_hyperlink2sheet</code></summary>
-
-```python
-from hscredit.excel import ExcelWriter, dataframe2excel
-
-writer = ExcelWriter()
-dataframe2excel(
-    monitor_table,
-    writer,
-    sheet_name="监控明细",
-    start_row=4,
-    auto_width=True,
-)
-sheet = writer.workbook["监控明细"]
-sheet["B2"] = "跳转到明细表"
-writer.insert_hyperlink2sheet(sheet, "B2", sheet="监控明细", target_space="B4")
-writer.save("超链接.xlsx")
-```
-
-</details>
-
-<details>
-<summary>代码示例：<code>ExcelWriter.add_sparkline</code></summary>
-
-```python
-from hscredit.excel import ExcelWriter, dataframe2excel
-
-sparkline_table = monitor_table.set_index("月份").T
-sparkline_table["折线趋势"] = ""
-sparkline_table["盈亏柱状图"] = ""
-
-writer = ExcelWriter()
-dataframe2excel(
-    sparkline_table,
-    writer,
-    sheet_name="迷你图",
-    start_row=2,
-    start_col=2,
-    auto_width=True,
-    index=True,
-)
-sheet = writer.workbook["迷你图"]
-for row in range(5, 5 + len(sparkline_table)):
-    writer.add_sparkline(
-        sheet, f"G{row}", f"C{row}:F{row}",
-        type="line", series_color="2639E9", markers=True,
-    )
-    writer.add_sparkline(
-        sheet, f"H{row}", f"C{row}:F{row}",
-        type="win_loss", series_color="2639E9",
-        negative_color="F76E6C", negative_points=True,
-    )
-writer.save("迷你图.xlsx")
-```
-
-</details>
-
-ExcelWriter 支持样式、图表、条件格式、数字格式、冻结窗格、超链接、迷你图和自动列宽，可用于生成多 Sheet 分析报告。
-
-<table>
-<tr>
-<td width="50%" valign="top"><strong><code>dataframe2excel</code></strong><br><sub>DataFrame、数字格式、Figure 与 ExcelWriter 原生自动列宽一次写入。</sub><br><a href="docs/assets/readme/api-gallery/excel-dataframe2excel.png"><img src="docs/assets/readme/api-gallery/excel-dataframe2excel.png" alt="dataframe2excel 带图表工作簿"></a></td>
-<td width="50%" valign="top"><strong>条件格式</strong><br><sub>副主题色数据条与色阶分列展示，避免同一列样式叠加。</sub><br><a href="docs/assets/readme/api-gallery/excel-conditional-formatting.png"><img src="docs/assets/readme/api-gallery/excel-conditional-formatting.png" alt="Excel 条件格式"></a></td>
-</tr>
-<tr>
-<td width="50%" valign="top"><strong>百分比</strong><br><sub>保持数值类型与业务显示精度。</sub><br><a href="docs/assets/readme/api-gallery/excel-percent-format.png"><img src="docs/assets/readme/api-gallery/excel-percent-format.png" alt="Excel 百分比格式"></a></td>
-<td width="50%" valign="top"><strong>冻结窗口</strong><br><sub>滚动长表时保留标题和定位列。</sub><br><a href="docs/assets/readme/api-gallery/excel-freeze-panes.png"><img src="docs/assets/readme/api-gallery/excel-freeze-panes.png" alt="Excel 冻结窗口"></a></td>
-</tr>
-<tr>
-<td width="50%" valign="top"><strong>超链接</strong><br><sub>支持 Sheet 内、跨 Sheet 与在线文档跳转。</sub><br><a href="docs/assets/readme/api-gallery/excel-hyperlink.png"><img src="docs/assets/readme/api-gallery/excel-hyperlink.png" alt="Excel 超链接"></a></td>
-<td width="50%" valign="top"><strong>迷你图</strong><br><sub>每一行同时展示趋势折线和盈亏柱；正值使用主题色、负值使用副主题色。</sub><br><a href="docs/assets/readme/api-gallery/excel-sparkline.png"><img src="docs/assets/readme/api-gallery/excel-sparkline.png" alt="Excel 迷你图"></a></td>
-</tr>
-</table>
-
-## 适用场景
-
-| 场景 | hscredit 能力 | 典型输出 |
-|:---|:---|:---|
-| 贷前评分卡建模 | IV/WOE、最优/单调分箱、VIF/PSI 筛选、逻辑回归、ScoreCard | 分箱表、评分映射、KS/AUC/Lift、模型报告 |
-| 机器学习风控 | RandomForest、DecisionTree、SVM、GBDT、XGBoost、LightGBM、CatBoost、NGBoost、调参、校准 | 模型指标、特征重要性、概率/评分分布、模型制品 |
-| 策略规则分析 | Rule、规则挖掘、规则集、命中评估、Swap 置换 | 命中率、坏样本率、Lift、通过率变化、置换报告 |
-| 贷后表现分析 | Vintage、Roll Rate、MOB 逾期预测、坏率趋势 | 账龄表现、迁徙矩阵、逾期预测与趋势图 |
-| 模型与客群监控 | PSI/CSI、分数漂移、变量漂移、客群迁移 | 稳定性指标、漂移明细、分月和分群监控图 |
-| 建模报告交付 | 模型、特征、规则、Swap、ExcelWriter、pandas 扩展 | 中文 DataFrame、PNG 图表、样式化多 Sheet Excel |
 
 ## 安装
+
+支持 Python **3.9–3.14**。
 
 ```bash
 pip install hscredit
 ```
 
-Python 支持范围：**3.9–3.14**。Boosting、深度学习、调参、解释和 PMML 能力可按需安装：
+基础安装包含分箱、编码、筛选、评分卡、经典模型、SHAP 解释、可视化与 Excel 报告。其他能力按需安装：
 
-| 安装命令 | 增强能力 |
+| 安装命令 | 能力 |
 |:---|:---|
-| `pip install hscredit[boost]` | XGBoost、LightGBM、CatBoost、NGBoost |
-| `pip install hscredit[net]` | PyTorch、TabNet |
-| `pip install hscredit[tune]` | Optuna、调参看板 |
-| `pip install hscredit` | 已内置 SHAP 模型解释、特征重要性和单样本分析 |
-| `pip install hscredit[pmml]` | PMML 导出与加载 |
-| `pip install hscredit[db-mysql]` | MySQL / MariaDB 连接池与流式读写 |
-| `pip install hscredit[db-hive]` | HiveServer2 连接池与流式读写 |
-| `pip install hscredit[db-impala]` | Impala / Kudu 连接池与流式读写 |
-| `pip install hscredit[db-oracle]` | Oracle 原生连接池与流式读写 |
-| `pip install hscredit[db-starrocks]` | StarRocks MySQL 协议与 Stream Load |
-| `pip install hscredit[db-clickhouse]` | ClickHouse 原生 DataFrame 流式读写 |
-| `pip install hscredit[db-maxcompute]` | MaxCompute DB-API、原生写入与元数据 |
-| `pip install hscredit[db-redis]` | Redis 连接池与统一 NoSQL 读写 |
-| `pip install hscredit[db-mongodb]` | MongoDB 连接池与统一 NoSQL 读写 |
-| `pip install hscredit[database-all]` | 全部数据库适配器 |
-| `pip install hscredit[all]` | 全部可选能力、开发和文档依赖 |
+| `pip install "hscredit[boost]"` | XGBoost、LightGBM、CatBoost、NGBoost |
+| `pip install "hscredit[tune]"` | Optuna 调参、搜索空间与调参看板 |
+| `pip install "hscredit[net]"` | PyTorch、TabNet |
+| `pip install "hscredit[pmml]"` | PMML 导出与加载 |
+| `pip install "hscredit[database-all]"` | 全部数据库与 NoSQL 适配器 |
+| `pip install "hscredit[all]"` | 上述所有依赖安装 |
 
-SHAP 已是基础依赖。可直接使用 `ModelExplainer.explain()` 生成带样本索引、目标类别、输出尺度和数据指纹的结构化结果，并继续下钻全局重要性、单样本贡献、代表样本、交互、稳定性和不利原因码。`CounterfactualExplainer` 提供遵守不可变字段、上下界和变化方向约束的非因果候选建议；`ModelReport` 通过 `explain_config={"enabled": True, ...}` 追加 `7-模型解释`。完整示例见 `examples/27_model_interpretability.ipynb`。
+数据库驱动也可单独安装，例如 `hscredit[db-mysql]`、`hscredit[db-clickhouse]`。全部选项见[安装指南](docs/installation.md)，连接池、流式读写和表结构导出见[数据库指南](docs/database.md)。
 
-### 数据库连接、流式读写与表结构导出
 
-数据库驱动均为可选依赖；普通 `import hscredit` 不会加载 PyMySQL、Impyla、python-oracledb、clickhouse-connect、PyODPS、redis-py 或 PyMongo。所有连接参数直接交给对应驱动，连接池参数单独放在 `pool_options` 中：
+## 核心功能演示
 
-```python
-from hscredit import Database
+[分箱评估](#binning) · [分箱图](#binning-plots) · [EDA](#eda) · [筛选](#selection) · [逻辑回归](#logistic) · [评分卡](#scorecard) · [规则评估](#rules) · [手工树](#manual-tree) · [模型训练](#models) · [超参数搜索](#tuning) · [模型解释](#explainability) · [Excel](#excel)
 
-db = Database(
-    "mysql",
-    host="127.0.0.1",
-    port=3306,
-    user="risk_user",
-    password="从环境变量读取",
-    database="risk_db",
-    pool_options={
-        "mincached": 1,
-        "maxcached": 5,
-        "maxconnections": 10,
-        "blocking": True,
-    },
-)
-```
+以下演示使用本地真实放款工作簿 `examples/hscredit_yyp.xlsx`，该文件不随仓库和安装包分发。替换路径及字段名即可使用自己的数据；无需本地工作簿的入门流程见[快速开始 Notebook](examples/00_quickstart.ipynb)。
 
-一次性操作可以直接使用类外快捷方法；配置中的类型键为 `db_type`，操作结束后自动释放
-配置创建的连接池：
-
-```python
-from hscredit.database import read_query, execute, write
-
-mysql_config = {
-    "db_type": "mysql",
-    "host": "127.0.0.1",
-    "user": "risk",
-    "password": "password",
-    "database": "risk",
-}
-
-frame = read_query(mysql_config, "SELECT id FROM events")
-execute(mysql_config, "DELETE FROM events WHERE id=%s", params=(1,))
-write(mysql_config, "risk.events", frame, key_columns="id")
-
-# 同样支持已有 Database 或原生 DB-API 连接
-frame = read_query(database, sql)
-frame = read_query(connection, sql, db_type="mysql")
-```
-
-流式读取默认产生 DataFrame 分块。`progress=True` 只显示累计读取行数、速度和耗时，默认不执行额外统计 SQL；只有显式设置 `count_total=True` 或传入 `count_sql` 时才查询总数。主动 `stop()` 或读取期间按 `Ctrl+C` 后，可直接合并当前已经读取的数据：
-
-```python
-stream = db.stream_query(
-    "SELECT * FROM feature_db.user_profile WHERE created_at >= %s",
-    params=("2026-01-01",),
-    chunksize=50_000,
-    progress=True,
-)
-
-for chunk in stream:
-    consume(chunk)
-    if should_stop():
-        stream.stop()
-
-partial = stream.to_dataframe()
-print(partial.attrs["completed"], partial.attrs["rows_read"])
-
-# 便捷接口会自动消费流；Ctrl+C 后直接返回部分 DataFrame
-frame = db.read_query(sql, chunksize=50_000, progress=True)
-
-# 明确需要完成百分比时，额外执行一次 COUNT(1)
-frame = db.read_query(sql, progress=True, count_total=True)
-```
-
-SQL 数据可直接使用统一的 `write(表名, 数据, ...)`，默认 `mode="a"`。目标表不存在时，
-`a/r/o/d` 都会根据首个有效数据分块自动建表；已有表继续保持对应模式语义。需要主键冲突
-语义的后端在新建表时应显式提供 `key_columns`：
-
-```python
-result = db.write(
-    "feature_db.user_profile",
-    dataframe,
-    key_columns="user_id",
-)
-```
-
-`write()` 与 `stream_write()` 使用同一套分批流水线；后者适合突出 DataFrame 分块迭代器或
-行记录迭代器输入：
-
-| mode | 语义 |
-|:---:|:---|
-| `a` | 追加；已有主键记录保持不变 |
-| `r` | 追加；主键冲突时用新记录覆盖 |
-| `o` | 保留表结构，清空数据后重写 |
-| `d` | 删除表，根据输入数据重建结构后写入 |
-
-```python
-result = db.stream_write(
-    dataframe_chunks,
-    "feature_db.user_profile",
-    mode="r",
-    batch_size=10_000,
-    key_columns=["user_id"],
-)
-```
-
-也可以显式建表；`dialect_options` 负责数据库专有的表引擎、分区、排序和生命周期参数。`d` 模式等价于“校验新 DDL → 删除旧表 → 重建 → 写入”，适合希望根据首批数据自动重建结构的场景：
-
-```python
-db.create_table(
-    first_chunk,
-    "feature_db.user_profile",
-    dialect_options={
-        "key_columns": ["user_id"],
-        "engine": "InnoDB",
-        "table_comment": "用户特征宽表",
-    },
-)
-```
-
-`column_types` 仅接受由字母、数字、空格及平衡的 `()` / `<>` 组成的安全类型表达式（如 `DECIMAL(18, 2)`、`ARRAY<STRING>`、`Nullable(String)`），不接受引号、注释或 SQL 片段。带引号参数的特殊类型应使用对应数据库适配器的专用方言参数配置。
-
-未显式指定类型时会分析当前建表 DataFrame：短文本使用带余量的自适应 VARCHAR，MySQL 长文本按容量使用 `TEXT/MEDIUMTEXT/LONGTEXT`，Oracle 长文本使用 `CLOB`。只有全部非空字符串都能解析为 JSON 对象或数组时才推断 JSON；混合普通文本会回退字符串类型。各后端规则、版本开关和长度上限见[数据库完整指南](docs/database.md#字符串长度与-json-内容推断)。
-
-流式读取超大 JSON 字段时，可将少量路径直接下推到数据库，避免传输完整 JSON。字段定义使用“JSON 源字段 → 输出字段名 → JSONPath 或 `(JSONPath, 默认值)`”，结果类型继续使用 `dataframe/records/rows`：
-
-```python
-records = db.read_query(
-    "SELECT id, huge_json FROM user_profile",
-    columns=["id"],
-    json_fields={
-        "huge_json": {
-            "customer_id": "$.customer.id",
-            "city": ("$.address.city", "未知"),
-        }
-    },
-    result="records",
-)
-```
-
-`a/r` 仅在数据库和当前表模型可以原生保证冲突语义时开放。例如 Impala Kudu 的 `a` 会保留已有主键行、`r` 使用 UPSERT；StarRocks 主键/唯一键表只支持 `r`，没有可靠冲突忽略能力，因此不开放 `a`；ClickHouse 的 `r` 要求 ReplacingMergeTree 且属于最终一致性。不支持时会抛出中文 `DatabaseCapabilityError`，不会使用并发不安全的客户端“先查再写”替代。
-
-表结构导出按“每个字段一行”返回中文列名 DataFrame，数据库返回值保持原样。可指定整个数据库或 `数据库.表`；Excel 仅通过 `dataframe2excel` 导出，不提供 CSV/TSV：
-
-```python
-schema = db.export_schema(
-    targets=["risk_db", "feature_db.user_profile"],
-    output="数据库表结构.xlsx",
-    excel_params={
-        "sheet_name": "字段清单",
-        "title": "数据库字段信息",
-        "auto_width": True,
-    },
-)
-
-db.close()
-```
-
-Redis 与 MongoDB 使用统一的 `read_one/read_many`、`write_one/write_many`、`delete_one/delete_many` 和 `exists` 方法，并提供自适应 `read/write/delete`：
-
-```python
-redis_db = Database("redis", url="redis://127.0.0.1:6379/0")
-redis_db.write({"score:1": "720", "score:2": "680"})
-scores = redis_db.read(["score:1", "score:2"])
-
-mongo_db = Database(
-    "mongodb",
-    uri="mongodb://127.0.0.1:27017/risk",
-    database="risk",
-)
-mongo_db.write("model_score", {"user_id": 1, "score": 720})
-documents = mongo_db.read("model_score", {"score": {"$gte": 700}})
-mongo_db.delete("model_score", {"user_id": 1})  # 默认只删除一个匹配文档
-```
-
-MongoDB 的 `read()` 默认返回列表，`limit=1` 或 `many=False` 返回单个文档；`write()` 根据单个映射或文档序列自动选择单条/批量写入；`delete()` 默认单条，批量删除必须显式设置 `many=True`。完整连接池参数、更新/替换模式和安全删除规则见[数据库完整指南](docs/database.md#redis-与-mongodb-的统一-nosql-方法)。
-
-第三方数据库通过适配器注册表扩展，注册动作不会加载其他内置数据库驱动：
-
-```python
-from hscredit import register_adapter
-
-register_adapter("custom_db", CustomDatabaseAdapter, aliases=("custom",))
-custom = Database("custom", endpoint="https://database.example")
-```
-
-## 5 分钟上手
-
-仓库提供不依赖外部数据的可执行示例，覆盖时间切分、分箱、筛选、评分卡、机器学习、规则挖掘和模型报告：
-
-```bash
-git clone https://github.com/hengshu-credit/hscredit.git
-cd hscredit
-pip install -e .
-python scripts/validate_examples.py --pattern 00_quickstart.ipynb
-```
-
-导入 `hscredit` 后会注册 pandas 扩展；既可以使用 sklearn 风格的 `(X, y)`，也可以从含目标列的 DataFrame 开始：
-
-```python
-import hscredit
-
-# 数据摘要：返回中文指标表，可继续保存或展示
-summary = df.summary(y="target")
-summary.save("数据质量摘要.xlsx", title="数据概览")
-
-# 常规 DataFrame 也可以直接输出为样式化 Excel
-bin_table.save("分箱结果.xlsx", title="变量分箱")
-```
-
-## 模块能力矩阵
-
-| 模块 | 主要内容 | 使用入口 | 典型输出 |
-|:---|:---|:---|:---|
-| 数据探索 `eda` | 数据质量、目标分析、坏率趋势、Vintage、Roll Rate、客群与漂移 | `hscredit.core.eda`、`df.summary()` | DataFrame、报告字典、Figure、Excel |
-| 分箱 `binning` | 18 种一维/二维分箱，用户切点、单调和最小样本约束 | `OptimalBinning`、各独立分箱器 | 分箱规则、WOE 数据、分箱统计与图表 |
-| 编码 `encoders` | WOE、Target、Count、OneHot、Ordinal、Quantile、CatBoost/GBM | `WOEEncoder` 等 sklearn Transformer | 编码后的 DataFrame、可序列化编码器 |
-| 筛选 `selectors` | 23 种单项与组合筛选，支持筛选报告汇总 | `IVSelector`、`VIFSelector`、`CompositeFeatureSelector` | 入选变量、淘汰原因、中文筛选报告 |
-| 模型 `models` | ScoreCard、树模型、SVM、Boosting、概率校准、风控损失、调参 | `ScoreCard`、`RandomForest`、`DecisionTreeClassifier`、`SVM`、Boosting 模型 | 预测概率/评分、评估指标、模型制品 |
-| 指标 `metrics` | `ks`、`auc`、`gini`、`iv`、`psi`、`csi`、`lift`、回归指标 | `hscredit.core.metrics` | 标量指标、分箱/稳定性明细表 |
-| 可视化 `viz` | 模型、分箱、评分、规则、稳定性、Vintage 与树图 | `hscredit.core.viz` | Matplotlib Figure、Pyecharts 图表、PNG/SVG |
-| 规则 `rules` | Rule 表达式、逻辑组合、规则集分类器、树规则 | `Rule`、`RuleFlow`、`hscredit.core.models.RulesClassifier` | 命中标记、规则报告、规则树与策略结果 |
-| 报告 `report` | 模型、特征、规则、Swap、逾期预测、模型对比 | `auto_model_report`、`feature_bin_stats`、`rule_swap_analysis` | 中文 DataFrame、报告字典、多 Sheet Excel |
-| Excel `excel` | 样式、图片、条件格式、超链接、数字格式、模板化写入 | `ExcelWriter`、`dataframe2excel`、`df.save()` | 样式化 `.xlsx` 工作簿 |
-| 金融计算 `financial` | FV/PV/PMT/NPER、NPV/IRR/MIRR 等 | `hscredit.core.financial` | 现金流、现值终值与收益率结果 |
-| 特征工程 `feature_engineering` | numexpr 表达式衍生、条件逻辑与数学函数 | `NumExprDerive` | 可进入 Pipeline 的派生特征 DataFrame |
-
-## 文档与示例
-
-- [在线文档](https://hscredit.hengshucredit.com/)
-- [快速开始 Notebook](examples/00_quickstart.ipynb)
-- [模型公共契约与资源保留 Notebook](examples/28_model_workflow.ipynb)
-- [完整示例与 Notebook](examples/)
-- [项目迭代规划](docs/ROADMAP.md)
-- [问题反馈](https://github.com/hengshu-credit/hscredit/issues)
+图表由 API 直接生成，保留方法原生格式。表格保留完整返回字段和多级表头；Excel 截图展示整张返回表，宽表可点击原图或下载工作簿查看。导出参数使用 `auto_width=True`，比例字段配置百分比，评估指标配置条件格式。
 
 <details>
-<summary>参与开发与本地验证</summary>
+<summary>公共数据准备：在仓库根目录运行，后续示例共用这些变量</summary>
 
-```bash
-git clone https://github.com/hengshu-credit/hscredit.git
-cd hscredit
-pip install -e ".[dev]"
-pytest tests/ -m "not slow and not integration"
+```python
+from pathlib import Path
+
+import hscredit
+import pandas as pd
+from IPython.display import display
+from sklearn.model_selection import train_test_split
+from hscredit.core.viz import bin_plot, bin_2d_plot, bin_trend_plot, bin_overdues_plot
+from hscredit.report import (
+    feature_bin_stats, feature_binning_summary, feature_group_binning_summary,
+    feature_efficiency_analysis, auto_feature_analysis,
+)
+
+df = pd.read_excel("examples/hscredit_yyp.xlsx")
+features = ["衡枢鉴真分老客版", "近六个月非银多头机构数", "手机号近一个月非银多头机构数"]
+X, y = df[features], df["FPD"]
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.25, stratify=y, random_state=42,
+)
+train_df = df.loc[X_train.index]
+test_df = df.loc[X_test.index]
+
+ASSET_DIR = Path("docs/assets/readme/binning-eda")
+strategy_dir = Path("docs/assets/readme/strategy")
+model_assets = Path("docs/assets/readme/models")
+for directory in (ASSET_DIR, strategy_dir, model_assets):
+    directory.mkdir(parents=True, exist_ok=True)
 ```
-
-项目版本唯一来源是 `hscredit/__init__.py` 中的 `__version__`；依赖和可选能力统一维护在 `pyproject.toml`。
 
 </details>
 
-## 联系方式
 
-邮箱：`hscredit@hengshucredit.com`
+<a id="binning"></a>
+
+### 1. 分箱方法对比与指标评估
+
+#### 不同分箱方法：完整分箱明细与 KS、Lift、IV 评估
+
+在相同数据、目标和最大箱数下比较等频、CART 和最优 IV；summary 的指标聚合由 feature_binning_summary 原生完成。
+
+```python
+method_tables, method_summary = feature_binning_summary(
+    df, feature=features, methods=["quantile", "cart", "best_iv"],
+    target="FPD", max_n_bins=4, margins=True, random_state=42, n_jobs=1,
+)
+display(method_summary)
+method_summary.save(
+    str(ASSET_DIR / "method-summary.xlsx"), index=True, auto_width=True,
+    percent_cols=[("分档KS值", "FPD"), ("坏样本率", "FPD")],
+    condition_cols=[("LIFT值", "FPD"), ("指标IV值", "FPD")],
+)
+for feature_name, by_method in method_tables.items():
+    for method_name, table in by_method.items():
+        print(feature_name, method_name)
+        display(table)
+```
+
+[下载完整原生 Excel](docs/assets/readme/binning-eda/method-summary.xlsx)
+
+<details>
+<summary>查看所有完整返回表与 Excel</summary>
+
+- `method_summary`：9 行 × 7 列；[完整 HTML](docs/assets/readme/binning-eda/method-comparison-table-01.html) · [Excel：原始表1](docs/assets/readme/binning-eda/method-comparison-tables.xlsx)
+- `method_tables/衡枢鉴真分老客版/quantile`：5 行 × 22 列；[完整 HTML](docs/assets/readme/binning-eda/method-comparison-table-02.html) · [Excel：原始表2](docs/assets/readme/binning-eda/method-comparison-tables.xlsx)
+- `method_tables/衡枢鉴真分老客版/cart`：5 行 × 22 列；[完整 HTML](docs/assets/readme/binning-eda/method-comparison-table-03.html) · [Excel：原始表3](docs/assets/readme/binning-eda/method-comparison-tables.xlsx)
+- `method_tables/衡枢鉴真分老客版/best_iv`：5 行 × 22 列；[完整 HTML](docs/assets/readme/binning-eda/method-comparison-table-04.html) · [Excel：原始表4](docs/assets/readme/binning-eda/method-comparison-tables.xlsx)
+- `method_tables/近六个月非银多头机构数/quantile`：5 行 × 22 列；[完整 HTML](docs/assets/readme/binning-eda/method-comparison-table-05.html) · [Excel：原始表5](docs/assets/readme/binning-eda/method-comparison-tables.xlsx)
+- `method_tables/近六个月非银多头机构数/cart`：5 行 × 22 列；[完整 HTML](docs/assets/readme/binning-eda/method-comparison-table-06.html) · [Excel：原始表6](docs/assets/readme/binning-eda/method-comparison-tables.xlsx)
+- `method_tables/近六个月非银多头机构数/best_iv`：4 行 × 22 列；[完整 HTML](docs/assets/readme/binning-eda/method-comparison-table-07.html) · [Excel：原始表7](docs/assets/readme/binning-eda/method-comparison-tables.xlsx)
+- `method_tables/手机号近一个月非银多头机构数/quantile`：5 行 × 22 列；[完整 HTML](docs/assets/readme/binning-eda/method-comparison-table-08.html) · [Excel：原始表8](docs/assets/readme/binning-eda/method-comparison-tables.xlsx)
+- `method_tables/手机号近一个月非银多头机构数/cart`：5 行 × 22 列；[完整 HTML](docs/assets/readme/binning-eda/method-comparison-table-09.html) · [Excel：原始表9](docs/assets/readme/binning-eda/method-comparison-tables.xlsx)
+- `method_tables/手机号近一个月非银多头机构数/best_iv`：5 行 × 22 列；[完整 HTML](docs/assets/readme/binning-eda/method-comparison-table-10.html) · [Excel：原始表10](docs/assets/readme/binning-eda/method-comparison-tables.xlsx)
+
+</details>
+
+<details>
+<summary>展开 method_summary 完整原始表</summary>
+
+![完整原生 Excel 结果](docs/assets/readme/binning-eda/method-comparison-excel.png)
+
+[查看完整方法返回表](docs/assets/readme/binning-eda/method-comparison-table-01.html)
+
+</details>
+
+
+#### feature_bin_stats：多标签、金额口径与类别特征
+
+MOB1 与 7、3、0 三个阈值在同一次调用中展开；amount 加入放款金额口径，margins=True 保留方法生成的合计。
+
+```python
+multi_dpd_table = feature_bin_stats(
+    df, feature=features, overdue=["MOB1"], dpds=[7, 3, 0],
+    amount="放款金额", method="quantile", max_n_bins=4, margins=True, n_jobs=1,
+)
+category_table = feature_bin_stats(
+    df, feature="商品类别", target="FPD", method="quantile",
+    max_n_bins=4, margins=True, n_jobs=1,
+)
+display(multi_dpd_table)
+display(category_table)
+```
+
+![feature_bin_stats 完整多 DPD 金额表](docs/assets/readme/binning-eda/multi-dpd-excel.png)
+
+<details>
+<summary>查看所有完整返回表与 Excel</summary>
+
+- `multi_dpd_table`：13 行 × 56 列；[完整 HTML](docs/assets/readme/binning-eda/multi-dpd-table-01.html) · [Excel：原始表1](docs/assets/readme/binning-eda/multi-dpd-tables.xlsx)
+- `category_table`：3 行 × 22 列；[完整 HTML](docs/assets/readme/binning-eda/multi-dpd-table-02.html) · [Excel：原始表2](docs/assets/readme/binning-eda/multi-dpd-tables.xlsx)
+
+</details>
+
+
+#### feature_group_binning_summary：跨月份与商品类别比较
+
+同一特征和方法在全量数据上拟合一次，各月份或商品类别复用切点，完整返回每组明细与汇总。
+
+```python
+monthly_tables, monthly_summary = feature_group_binning_summary(
+    df, feature=features, methods=["quantile", "cart"],
+    date_col="放款时间", freq="M", target="FPD",
+    max_n_bins=4, margins=True, random_state=42, n_jobs=1,
+)
+category_tables, category_summary = feature_group_binning_summary(
+    df, feature=features, methods="quantile", group_col="商品类别", target="FPD",
+    max_n_bins=4, margins=True, n_jobs=1,
+)
+display(monthly_summary)
+display(category_summary)
+for grouped_result in (monthly_tables, category_tables):
+    for feature_name, by_method in grouped_result.items():
+        for method_name, by_group in by_method.items():
+            for group_name, table in by_group.items():
+                print(feature_name, method_name, group_name)
+                display(table)
+```
+
+![跨月份完整原生汇总](docs/assets/readme/binning-eda/group-comparison-excel.png)
+
+<details>
+<summary>查看所有完整返回表与 Excel</summary>
+
+- `monthly_summary`：24 行 × 9 列；[完整 HTML](docs/assets/readme/binning-eda/group-comparison-table-01.html) · [Excel：原始表1](docs/assets/readme/binning-eda/group-comparison-tables.xlsx)
+- `category_summary`：18 行 × 9 列；[完整 HTML](docs/assets/readme/binning-eda/group-comparison-table-02.html) · [Excel：原始表2](docs/assets/readme/binning-eda/group-comparison-tables.xlsx)
+- `monthly_tables/衡枢鉴真分老客版/quantile/2025-11`：5 行 × 22 列；[完整 HTML](docs/assets/readme/binning-eda/group-comparison-table-03.html) · [Excel：原始表3](docs/assets/readme/binning-eda/group-comparison-tables.xlsx)
+- `monthly_tables/衡枢鉴真分老客版/quantile/2025-12`：5 行 × 22 列；[完整 HTML](docs/assets/readme/binning-eda/group-comparison-table-04.html) · [Excel：原始表4](docs/assets/readme/binning-eda/group-comparison-tables.xlsx)
+- `monthly_tables/衡枢鉴真分老客版/quantile/2026-01`：5 行 × 22 列；[完整 HTML](docs/assets/readme/binning-eda/group-comparison-table-05.html) · [Excel：原始表5](docs/assets/readme/binning-eda/group-comparison-tables.xlsx)
+- `monthly_tables/衡枢鉴真分老客版/quantile/2026-02`：5 行 × 22 列；[完整 HTML](docs/assets/readme/binning-eda/group-comparison-table-06.html) · [Excel：原始表6](docs/assets/readme/binning-eda/group-comparison-tables.xlsx)
+- `monthly_tables/衡枢鉴真分老客版/cart/2025-11`：5 行 × 22 列；[完整 HTML](docs/assets/readme/binning-eda/group-comparison-table-07.html) · [Excel：原始表7](docs/assets/readme/binning-eda/group-comparison-tables.xlsx)
+- `monthly_tables/衡枢鉴真分老客版/cart/2025-12`：5 行 × 22 列；[完整 HTML](docs/assets/readme/binning-eda/group-comparison-table-08.html) · [Excel：原始表8](docs/assets/readme/binning-eda/group-comparison-tables.xlsx)
+- `monthly_tables/衡枢鉴真分老客版/cart/2026-01`：5 行 × 22 列；[完整 HTML](docs/assets/readme/binning-eda/group-comparison-table-09.html) · [Excel：原始表9](docs/assets/readme/binning-eda/group-comparison-tables.xlsx)
+- `monthly_tables/衡枢鉴真分老客版/cart/2026-02`：5 行 × 22 列；[完整 HTML](docs/assets/readme/binning-eda/group-comparison-table-10.html) · [Excel：原始表10](docs/assets/readme/binning-eda/group-comparison-tables.xlsx)
+- `monthly_tables/近六个月非银多头机构数/quantile/2025-11`：5 行 × 22 列；[完整 HTML](docs/assets/readme/binning-eda/group-comparison-table-11.html) · [Excel：原始表11](docs/assets/readme/binning-eda/group-comparison-tables.xlsx)
+- `monthly_tables/近六个月非银多头机构数/quantile/2025-12`：5 行 × 22 列；[完整 HTML](docs/assets/readme/binning-eda/group-comparison-table-12.html) · [Excel：原始表12](docs/assets/readme/binning-eda/group-comparison-tables.xlsx)
+- `monthly_tables/近六个月非银多头机构数/quantile/2026-01`：5 行 × 22 列；[完整 HTML](docs/assets/readme/binning-eda/group-comparison-table-13.html) · [Excel：原始表13](docs/assets/readme/binning-eda/group-comparison-tables.xlsx)
+- `monthly_tables/近六个月非银多头机构数/quantile/2026-02`：5 行 × 22 列；[完整 HTML](docs/assets/readme/binning-eda/group-comparison-table-14.html) · [Excel：原始表14](docs/assets/readme/binning-eda/group-comparison-tables.xlsx)
+- `monthly_tables/近六个月非银多头机构数/cart/2025-11`：5 行 × 22 列；[完整 HTML](docs/assets/readme/binning-eda/group-comparison-table-15.html) · [Excel：原始表15](docs/assets/readme/binning-eda/group-comparison-tables.xlsx)
+- `monthly_tables/近六个月非银多头机构数/cart/2025-12`：5 行 × 22 列；[完整 HTML](docs/assets/readme/binning-eda/group-comparison-table-16.html) · [Excel：原始表16](docs/assets/readme/binning-eda/group-comparison-tables.xlsx)
+- `monthly_tables/近六个月非银多头机构数/cart/2026-01`：4 行 × 22 列；[完整 HTML](docs/assets/readme/binning-eda/group-comparison-table-17.html) · [Excel：原始表17](docs/assets/readme/binning-eda/group-comparison-tables.xlsx)
+- `monthly_tables/近六个月非银多头机构数/cart/2026-02`：5 行 × 22 列；[完整 HTML](docs/assets/readme/binning-eda/group-comparison-table-18.html) · [Excel：原始表18](docs/assets/readme/binning-eda/group-comparison-tables.xlsx)
+- `monthly_tables/手机号近一个月非银多头机构数/quantile/2025-11`：5 行 × 22 列；[完整 HTML](docs/assets/readme/binning-eda/group-comparison-table-19.html) · [Excel：原始表19](docs/assets/readme/binning-eda/group-comparison-tables.xlsx)
+- `monthly_tables/手机号近一个月非银多头机构数/quantile/2025-12`：5 行 × 22 列；[完整 HTML](docs/assets/readme/binning-eda/group-comparison-table-20.html) · [Excel：原始表20](docs/assets/readme/binning-eda/group-comparison-tables.xlsx)
+- `monthly_tables/手机号近一个月非银多头机构数/quantile/2026-01`：5 行 × 22 列；[完整 HTML](docs/assets/readme/binning-eda/group-comparison-table-21.html) · [Excel：原始表21](docs/assets/readme/binning-eda/group-comparison-tables.xlsx)
+- `monthly_tables/手机号近一个月非银多头机构数/quantile/2026-02`：5 行 × 22 列；[完整 HTML](docs/assets/readme/binning-eda/group-comparison-table-22.html) · [Excel：原始表22](docs/assets/readme/binning-eda/group-comparison-tables.xlsx)
+- `monthly_tables/手机号近一个月非银多头机构数/cart/2025-11`：5 行 × 22 列；[完整 HTML](docs/assets/readme/binning-eda/group-comparison-table-23.html) · [Excel：原始表23](docs/assets/readme/binning-eda/group-comparison-tables.xlsx)
+- `monthly_tables/手机号近一个月非银多头机构数/cart/2025-12`：5 行 × 22 列；[完整 HTML](docs/assets/readme/binning-eda/group-comparison-table-24.html) · [Excel：原始表24](docs/assets/readme/binning-eda/group-comparison-tables.xlsx)
+- `monthly_tables/手机号近一个月非银多头机构数/cart/2026-01`：5 行 × 22 列；[完整 HTML](docs/assets/readme/binning-eda/group-comparison-table-25.html) · [Excel：原始表25](docs/assets/readme/binning-eda/group-comparison-tables.xlsx)
+- `monthly_tables/手机号近一个月非银多头机构数/cart/2026-02`：5 行 × 22 列；[完整 HTML](docs/assets/readme/binning-eda/group-comparison-table-26.html) · [Excel：原始表26](docs/assets/readme/binning-eda/group-comparison-tables.xlsx)
+- `category_tables/衡枢鉴真分老客版/quantile/家用电器`：2 行 × 22 列；[完整 HTML](docs/assets/readme/binning-eda/group-comparison-table-27.html) · [Excel：原始表27](docs/assets/readme/binning-eda/group-comparison-tables.xlsx)
+- `category_tables/衡枢鉴真分老客版/quantile/手机通讯`：5 行 × 22 列；[完整 HTML](docs/assets/readme/binning-eda/group-comparison-table-28.html) · [Excel：原始表28](docs/assets/readme/binning-eda/group-comparison-tables.xlsx)
+- `category_tables/衡枢鉴真分老客版/quantile/智能设备`：4 行 × 22 列；[完整 HTML](docs/assets/readme/binning-eda/group-comparison-table-29.html) · [Excel：原始表29](docs/assets/readme/binning-eda/group-comparison-tables.xlsx)
+- `category_tables/衡枢鉴真分老客版/quantile/珠宝首饰`：5 行 × 22 列；[完整 HTML](docs/assets/readme/binning-eda/group-comparison-table-30.html) · [Excel：原始表30](docs/assets/readme/binning-eda/group-comparison-tables.xlsx)
+- `category_tables/衡枢鉴真分老客版/quantile/电脑数码`：5 行 × 22 列；[完整 HTML](docs/assets/readme/binning-eda/group-comparison-table-31.html) · [Excel：原始表31](docs/assets/readme/binning-eda/group-comparison-tables.xlsx)
+- `category_tables/衡枢鉴真分老客版/quantile/礼包`：5 行 × 22 列；[完整 HTML](docs/assets/readme/binning-eda/group-comparison-table-32.html) · [Excel：原始表32](docs/assets/readme/binning-eda/group-comparison-tables.xlsx)
+- `category_tables/近六个月非银多头机构数/quantile/家用电器`：2 行 × 22 列；[完整 HTML](docs/assets/readme/binning-eda/group-comparison-table-33.html) · [Excel：原始表33](docs/assets/readme/binning-eda/group-comparison-tables.xlsx)
+- `category_tables/近六个月非银多头机构数/quantile/手机通讯`：5 行 × 22 列；[完整 HTML](docs/assets/readme/binning-eda/group-comparison-table-34.html) · [Excel：原始表34](docs/assets/readme/binning-eda/group-comparison-tables.xlsx)
+- `category_tables/近六个月非银多头机构数/quantile/智能设备`：5 行 × 22 列；[完整 HTML](docs/assets/readme/binning-eda/group-comparison-table-35.html) · [Excel：原始表35](docs/assets/readme/binning-eda/group-comparison-tables.xlsx)
+- `category_tables/近六个月非银多头机构数/quantile/珠宝首饰`：5 行 × 22 列；[完整 HTML](docs/assets/readme/binning-eda/group-comparison-table-36.html) · [Excel：原始表36](docs/assets/readme/binning-eda/group-comparison-tables.xlsx)
+- `category_tables/近六个月非银多头机构数/quantile/电脑数码`：5 行 × 22 列；[完整 HTML](docs/assets/readme/binning-eda/group-comparison-table-37.html) · [Excel：原始表37](docs/assets/readme/binning-eda/group-comparison-tables.xlsx)
+- `category_tables/近六个月非银多头机构数/quantile/礼包`：5 行 × 22 列；[完整 HTML](docs/assets/readme/binning-eda/group-comparison-table-38.html) · [Excel：原始表38](docs/assets/readme/binning-eda/group-comparison-tables.xlsx)
+- `category_tables/手机号近一个月非银多头机构数/quantile/家用电器`：2 行 × 22 列；[完整 HTML](docs/assets/readme/binning-eda/group-comparison-table-39.html) · [Excel：原始表39](docs/assets/readme/binning-eda/group-comparison-tables.xlsx)
+- `category_tables/手机号近一个月非银多头机构数/quantile/手机通讯`：5 行 × 22 列；[完整 HTML](docs/assets/readme/binning-eda/group-comparison-table-40.html) · [Excel：原始表40](docs/assets/readme/binning-eda/group-comparison-tables.xlsx)
+- `category_tables/手机号近一个月非银多头机构数/quantile/智能设备`：4 行 × 22 列；[完整 HTML](docs/assets/readme/binning-eda/group-comparison-table-41.html) · [Excel：原始表41](docs/assets/readme/binning-eda/group-comparison-tables.xlsx)
+- `category_tables/手机号近一个月非银多头机构数/quantile/珠宝首饰`：5 行 × 22 列；[完整 HTML](docs/assets/readme/binning-eda/group-comparison-table-42.html) · [Excel：原始表42](docs/assets/readme/binning-eda/group-comparison-tables.xlsx)
+- `category_tables/手机号近一个月非银多头机构数/quantile/电脑数码`：5 行 × 22 列；[完整 HTML](docs/assets/readme/binning-eda/group-comparison-table-43.html) · [Excel：原始表43](docs/assets/readme/binning-eda/group-comparison-tables.xlsx)
+- `category_tables/手机号近一个月非银多头机构数/quantile/礼包`：5 行 × 22 列；[完整 HTML](docs/assets/readme/binning-eda/group-comparison-table-44.html) · [Excel：原始表44](docs/assets/readme/binning-eda/group-comparison-tables.xlsx)
+
+</details>
+
+
+#### feature_efficiency_analysis：手工与自动分箱效率
+
+手工规则未传入时使用方法内置分位数切点；自动分箱最多四箱。返回两张完整统计表、原始规则、2×2 对比图及两张月份趋势图。
+
+```python
+efficiency = feature_efficiency_analysis(
+    df, feature="衡枢鉴真分老客版", target="FPD", auto_method="quantile",
+    max_n_bins=4, date_col="放款时间", margins=True, n_jobs=1,
+    trend_kwargs={"n_jobs": 1}, output_dir=str(ASSET_DIR / "efficiency"),
+)
+display(efficiency["manual_table"])
+display(efficiency["auto_table"])
+display(efficiency["manual_rules"])
+display(efficiency["auto_rules"])
+display(efficiency["comparison_figure"])
+for figure in efficiency["trend_figures"].values():
+    display(figure)
+```
+
+![efficiency 原生输出](docs/assets/readme/binning-eda/efficiency/feature_efficiency_comparison_衡枢鉴真分老客版.png)
+
+![efficiency 原生输出](docs/assets/readme/binning-eda/efficiency/feature_efficiency_trend_auto_衡枢鉴真分老客版.png)
+
+![efficiency 原生输出](docs/assets/readme/binning-eda/efficiency/feature_efficiency_trend_manual_衡枢鉴真分老客版.png)
+
+<details>
+<summary>查看所有完整返回表与 Excel</summary>
+
+- `efficiency/manual_table`：17 行 × 22 列；[完整 HTML](docs/assets/readme/binning-eda/efficiency-table-01.html) · [Excel：原始表1](docs/assets/readme/binning-eda/efficiency-tables.xlsx)
+- `efficiency/auto_table`：5 行 × 22 列；[完整 HTML](docs/assets/readme/binning-eda/efficiency-table-02.html) · [Excel：原始表2](docs/assets/readme/binning-eda/efficiency-tables.xlsx)
+
+</details>
+
+
+<a id="binning-plots"></a>
+
+### 2. 四类原生分箱图
+
+#### bin_plot：单变量的样本结构与坏率
+
+直接传入完整原生分箱统计表；图片通过 save 参数输出。
+
+```python
+single_bin_table = feature_bin_stats(
+    df, feature="衡枢鉴真分老客版", target="FPD",
+    method="quantile", max_n_bins=4, margins=True, n_jobs=1,
+)
+figure = bin_plot(
+    single_bin_table, desc="衡枢鉴真分老客版",
+    save=str(ASSET_DIR / "bin-plot.png"),
+)
+display(single_bin_table)
+display(figure)
+```
+
+![bin-plot 原生输出](docs/assets/readme/binning-eda/bin-plot.png)
+
+<details>
+<summary>查看所有完整返回表与 Excel</summary>
+
+- `single_bin_table`：5 行 × 22 列；[完整 HTML](docs/assets/readme/binning-eda/bin-plot-table-01.html) · [Excel：原始表1](docs/assets/readme/binning-eda/bin-plot-tables.xlsx)
+
+</details>
+
+
+#### bin_2d_plot：两变量交叉风险与二维分箱
+
+原生九宫格同时展示单变量分箱、分箱后的 KS 曲线和五类交叉指标。
+
+```python
+figure = bin_2d_plot(
+    df, features=["衡枢鉴真分老客版", "近六个月非银多头机构数"],
+    target="FPD", method="quantile", max_n_bins=4,
+    binner_kwargs={"n_jobs": 1}, save=str(ASSET_DIR / "bin-2d.png"),
+)
+display(figure)
+```
+
+![bin-2d 原生输出](docs/assets/readme/binning-eda/bin-2d.png)
+
+
+#### bin_trend_plot：按放款月份检查分箱风险趋势
+
+保留方法默认分箱行为和完整月份，不缩减分组或二次调整图片；各月份的实际切点以原图标签为准。
+
+```python
+figure = bin_trend_plot(
+    df, feature="衡枢鉴真分老客版", target="FPD", date_col="放款时间",
+    method="quantile", max_n_bins=4, n_jobs=1,
+    save=str(ASSET_DIR / "bin-trend.png"),
+)
+display(figure)
+```
+
+![bin-trend 原生输出](docs/assets/readme/binning-eda/bin-trend.png)
+
+
+#### bin_overdues_plot：对比 MOB1 的三种逾期口径
+
+feature_bin_stats 默认按 MOB1 > DPD 生成三种标签。完整多级表头统计表直接传给 bin_table；没有在方法外拆标签、筛字段或重算指标。当前表模式能绘制三种坏率，但其适配器未识别当前统计表的 IV/KS/Lift 列名，因此图顶摘要仅显示趋势；完整指标仍保留在下方原始表和 Excel。
+
+```python
+overdue_table = feature_bin_stats(
+    df, feature="衡枢鉴真分老客版", overdue=["MOB1"], dpds=[7, 3, 0],
+    method="quantile", max_n_bins=4, margins=True, n_jobs=1,
+)
+figure = bin_overdues_plot(
+    overdue_table, bin_table=overdue_table, n_jobs=1,
+    save=str(ASSET_DIR / "bin-overdues.png"),
+)
+display(overdue_table)
+display(figure)
+```
+
+![bin-overdues 原生输出](docs/assets/readme/binning-eda/bin-overdues.png)
+
+<details>
+<summary>查看所有完整返回表与 Excel</summary>
+
+- `overdue_table`：5 行 × 56 列；[完整 HTML](docs/assets/readme/binning-eda/bin-overdues-table-01.html) · [Excel：原始表1](docs/assets/readme/binning-eda/bin-overdues-tables.xlsx)
+
+</details>
+
+
+<a id="eda"></a>
+
+### 3. EDA 与自动特征分析
+
+#### DataFrame.summary：数据质量、区分度与跨月稳定性
+
+一次返回三个数值特征和商品类别的完整综合统计；字段类型交由原生 API 判断。本数据中唯一值较多的评分被原生识别为 id，趋势返回 unknown，结果原样保留。
+
+```python
+summary = df.summary(
+    features=features + ["商品类别"], y="FPD",
+    max_n_bins=4, psi_method="date_col", psi_date_col="放款时间", n_jobs=1,
+)
+display(summary)
+```
+
+<details>
+<summary>查看所有完整返回表与 Excel</summary>
+
+- `summary`：4 行 × 30 列；[完整 HTML](docs/assets/readme/binning-eda/summary-table-01.html) · [Excel：原始表1](docs/assets/readme/binning-eda/summary-tables.xlsx)
+
+</details>
+
+<details>
+<summary>展开 summary 完整原始表</summary>
+
+![完整原生 Excel 结果](docs/assets/readme/binning-eda/summary-excel.png)
+
+[查看完整方法返回表](docs/assets/readme/binning-eda/summary-table-01.html)
+
+</details>
+
+
+#### auto_feature_analysis：多 DPD、金额与时间分析报告
+
+三特征和三种 MOB1 阈值放入一个报告，原生生成样本概况、月份分布、综合统计、图表及订单/金额分箱表。strict 模式只有必需章节成功才发布工作簿。工作簿保留报告方法本身的格式，包括其将 Lift 显示为百分比的默认行为；下方完整返回表另存的 Excel 则把 Lift 保持为倍率。
+
+```python
+feature_report = auto_feature_analysis(
+    df, features=features, overdue=["MOB1"], dpds=[7, 3, 0],
+    amount="放款金额", date="放款时间", margins=True,
+    bin_params={"method": "quantile", "max_n_bins": 4, "n_jobs": 1},
+    excel_writer=str(ASSET_DIR / "auto-feature-report.xlsx"),
+    output_dir=str(ASSET_DIR / "auto-feature-plots"),
+    n_jobs=1, mode="strict", return_result=True,
+)
+display(feature_report.status_table())
+```
+
+<details>
+<summary>展开自动报告生成的全部原生图表</summary>
+
+![auto-feature 原生输出](docs/assets/readme/binning-eda/auto-feature-plots/feature_bins_plot_手机号近一个月非银多头机构数.png)
+
+![auto-feature 原生输出](docs/assets/readme/binning-eda/auto-feature-plots/feature_bins_plot_衡枢鉴真分老客版.png)
+
+![auto-feature 原生输出](docs/assets/readme/binning-eda/auto-feature-plots/feature_bins_plot_近六个月非银多头机构数.png)
+
+![auto-feature 原生输出](docs/assets/readme/binning-eda/auto-feature-plots/feature_hist_plot_手机号近一个月非银多头机构数.png)
+
+![auto-feature 原生输出](docs/assets/readme/binning-eda/auto-feature-plots/feature_hist_plot_衡枢鉴真分老客版.png)
+
+![auto-feature 原生输出](docs/assets/readme/binning-eda/auto-feature-plots/feature_hist_plot_近六个月非银多头机构数.png)
+
+![auto-feature 原生输出](docs/assets/readme/binning-eda/auto-feature-plots/feature_ks_plot_手机号近一个月非银多头机构数.png)
+
+![auto-feature 原生输出](docs/assets/readme/binning-eda/auto-feature-plots/feature_ks_plot_衡枢鉴真分老客版.png)
+
+![auto-feature 原生输出](docs/assets/readme/binning-eda/auto-feature-plots/feature_ks_plot_近六个月非银多头机构数.png)
+
+![auto-feature 原生输出](docs/assets/readme/binning-eda/auto-feature-plots/sample_time_distribution.png)
+
+</details>
+
+[下载完整原生 Excel](docs/assets/readme/binning-eda/auto-feature-report.xlsx)
+
+<details>
+<summary>查看所有完整返回表与 Excel</summary>
+
+- `feature_report/样本总体分布`：1 行 × 10 列；[完整 HTML](docs/assets/readme/binning-eda/auto-feature-table-01.html) · [Excel：原始表1](docs/assets/readme/binning-eda/auto-feature-tables.xlsx)
+- `feature_report/变量综合统计`：3 行 × 30 列；[完整 HTML](docs/assets/readme/binning-eda/auto-feature-table-02.html) · [Excel：原始表2](docs/assets/readme/binning-eda/auto-feature-tables.xlsx)
+- `feature_report/时间分布`：4 行 × 12 列；[完整 HTML](docs/assets/readme/binning-eda/auto-feature-table-03.html) · [Excel：原始表3](docs/assets/readme/binning-eda/auto-feature-tables.xlsx)
+- `feature_report/特征分箱：衡枢鉴真分老客版`：5 行 × 56 列；[完整 HTML](docs/assets/readme/binning-eda/auto-feature-table-04.html) · [Excel：原始表4](docs/assets/readme/binning-eda/auto-feature-tables.xlsx)
+- `feature_report/金额分箱：衡枢鉴真分老客版`：5 行 × 56 列；[完整 HTML](docs/assets/readme/binning-eda/auto-feature-table-05.html) · [Excel：原始表5](docs/assets/readme/binning-eda/auto-feature-tables.xlsx)
+- `feature_report/特征分箱：近六个月非银多头机构数`：5 行 × 56 列；[完整 HTML](docs/assets/readme/binning-eda/auto-feature-table-06.html) · [Excel：原始表6](docs/assets/readme/binning-eda/auto-feature-tables.xlsx)
+- `feature_report/金额分箱：近六个月非银多头机构数`：5 行 × 56 列；[完整 HTML](docs/assets/readme/binning-eda/auto-feature-table-07.html) · [Excel：原始表7](docs/assets/readme/binning-eda/auto-feature-tables.xlsx)
+- `feature_report/特征分箱：手机号近一个月非银多头机构数`：5 行 × 56 列；[完整 HTML](docs/assets/readme/binning-eda/auto-feature-table-08.html) · [Excel：原始表8](docs/assets/readme/binning-eda/auto-feature-tables.xlsx)
+- `feature_report/金额分箱：手机号近一个月非银多头机构数`：5 行 × 56 列；[完整 HTML](docs/assets/readme/binning-eda/auto-feature-table-09.html) · [Excel：原始表9](docs/assets/readme/binning-eda/auto-feature-tables.xlsx)
+
+</details>
+
+完整可重跑代码：[binning_eda.py](scripts/readme_examples/binning_eda.py)。
+
+
+<a id="selection"></a>
+
+### 4. 多个筛选器组合与筛选报告
+
+#### 多个筛选器组合与完整过程报告
+
+依次应用缺失率、集中度、IV 和相关性筛选。`get_selection_report_df()` 返回包含各子步骤的完整决策，`collect_selection_report()` 直接收集已拟合步骤的汇总、逐特征决策、指标明细和迭代事件；下面保留每张表的全部行列，未将多阶段结果改写为手工摘要。
+
+```python
+from hscredit.core.selectors import (
+    CompositeFeatureSelector, NullSelector, ModeSelector,
+    IVSelector, CorrSelector, collect_selection_report,
+)
+from hscredit.excel import ExcelWriter
+
+selector = CompositeFeatureSelector(
+    [
+        ("缺失率", NullSelector(threshold=0.95)),
+        ("集中度", ModeSelector(threshold=0.98)),
+        ("区分度", IVSelector(threshold=0.02)),
+        ("相关性", CorrSelector(threshold=0.85)),
+    ],
+    strategy="sequential",
+    n_jobs=1,
+).fit(X_train, y_train)
+
+selection_details = selector.get_selection_report_df()
+selection_report = collect_selection_report(selector)
+display(selection_details)
+display(selection_report.summary)
+display(selection_report.metrics)
+display(selection_report.history)
+
+X_train_selected = selector.transform(X_train)
+X_test_selected = selector.transform(X_test)
+
+selection_paths = selection_report.save(strategy_dir / "组合筛选完整报告", overwrite=True)
+
+
+# 读取完整原生工作簿，将显示样式另存为展示工作簿。
+selection_file = selection_paths["路径"]["xlsx"]
+selection_display_file = strategy_dir / "组合筛选展示.xlsx"
+with ExcelWriter(style_excel=selection_file) as style_writer:
+    for sheet_name, column_name, number_format in (
+        ("筛选汇总", "保留率", "0.00%"),
+        ("特征决策", "指标值", "0.0000"),
+    ):
+        worksheet = style_writer.get_sheet_by_name(sheet_name)
+        column = next(cell.column_letter for cell in worksheet[1]
+                      if cell.value == column_name)
+        start, end = f"{column}2", f"{column}{worksheet.max_row}"
+        style_writer.set_number_format(worksheet, f"{start}:{end}", number_format)
+        style_writer.add_conditional_formatting(worksheet, start, end)
+        style_writer.adjust_columns_width(worksheet)
+    style_writer.save(selection_display_file)
+```
+
+<details>
+<summary>组合器完整决策（15 行 × 20 列，完整返回）</summary>
+
+![完整原生 Excel 结果](docs/assets/readme/strategy/selection-details-excel.png)
+
+[查看完整方法返回表](docs/assets/readme/strategy/selection-root.html)
+
+</details>
+
+
+<details>
+<summary>完整阶段汇总（5 行 × 13 列，完整返回）</summary>
+
+![完整原生 Excel 结果](docs/assets/readme/strategy/selection-summary-excel.png)
+
+[查看完整方法返回表](docs/assets/readme/strategy/selection-summary.html)
+
+</details>
+
+
+<details>
+<summary>完整指标明细（66 行 × 12 列，完整返回）</summary>
+
+[查看完整方法返回表](docs/assets/readme/strategy/selection-metrics.html)
+
+</details>
+
+
+<details>
+<summary>完整迭代事件（3 行 × 18 列，完整返回）</summary>
+
+[查看完整方法返回表](docs/assets/readme/strategy/selection-history.html)
+
+</details>
+
+
+[下载带格式的完整展示工作簿](docs/assets/readme/strategy/组合筛选展示.xlsx) · [下载组合筛选原生完整工作簿](docs/assets/readme/strategy/组合筛选完整报告-e4bda04e61a44d15ba6a93bbc7cd7418/组合筛选完整报告.xlsx)
+
+
+<a id="logistic"></a>
+
+### 5. 逻辑回归：summary 与权重图
+
+#### 逻辑回归：系数、置信区间与 VIF
+
+`hscredit.LogisticRegression` 在 sklearn 接口基础上提供统计摘要；`plot_weights` 直接读取同一模型的系数与置信区间。
+
+```python
+from pathlib import Path
+from hscredit import LogisticRegression
+from hscredit.core.viz import plot_weights
+
+model_assets = Path("docs/assets/readme/models")
+model_assets.mkdir(parents=True, exist_ok=True)
+
+lr = LogisticRegression(
+    solver="liblinear", max_iter=1000, n_jobs=1, random_state=42
+).fit(X_train, y_train)
+lr.summary()
+```
+
+<table border="1" class="dataframe">
+  <thead>
+    <tr style="text-align: right;">
+      <th></th>
+      <th>Coef.</th>
+      <th>Std.Err</th>
+      <th>z</th>
+      <th>P&gt;|z|</th>
+      <th>[0.025</th>
+      <th>0.975]</th>
+      <th>VIF</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <th>const</th>
+      <td>-1.7819</td>
+      <td>0.5435</td>
+      <td>-3.2787</td>
+      <td>0.0010</td>
+      <td>-2.8471</td>
+      <td>-0.7167</td>
+      <td>26.4228</td>
+    </tr>
+    <tr>
+      <th>衡枢鉴真分老客版</th>
+      <td>1.5860</td>
+      <td>2.0179</td>
+      <td>0.7860</td>
+      <td>0.4319</td>
+      <td>-2.3690</td>
+      <td>5.5410</td>
+      <td>1.0633</td>
+    </tr>
+    <tr>
+      <th>近六个月非银多头机构数</th>
+      <td>-0.0055</td>
+      <td>0.0107</td>
+      <td>-0.5185</td>
+      <td>0.6041</td>
+      <td>-0.0265</td>
+      <td>0.0154</td>
+      <td>1.4954</td>
+    </tr>
+    <tr>
+      <th>手机号近一个月非银多头机构数</th>
+      <td>0.0077</td>
+      <td>0.0150</td>
+      <td>0.5103</td>
+      <td>0.6098</td>
+      <td>-0.0218</td>
+      <td>0.0372</td>
+      <td>1.4667</td>
+    </tr>
+  </tbody>
+</table>
+
+```python
+figure = plot_weights(lr, save=str(model_assets / "logistic-weights.png"))
+```
+
+![逻辑回归原生系数误差图](docs/assets/readme/models/logistic-weights.png)
+
+`summary()` 原生字段名为 `Coef.`、`Std.Err`、`z`、`P>|z|`、置信区间和 `VIF`；这里保持原样。正则化模型的显著性推断属于近似诊断，具体状态见返回表的 `attrs["统计状态"]`。
+
+
+<a id="scorecard"></a>
+
+### 6. 评分卡：基础参数与 points
+
+#### ScoreCard：WOE 分箱到完整分值表
+
+评分参数决定评分刻度：`base_score=650` 是基准分，`base_odds=35` 在 ScoreCard 中表示好坏比 `35:1`，`pdo=50` 与 `rate=2` 表示坏好比每翻倍，信用分下降 50 分。`fit(..., input_type="raw")` 使用已配置的分箱器完成 WOE 转换；预测时仍传原始特征。
+
+```python
+from hscredit import ScoreCard
+from hscredit.core.binning import OptimalBinning
+from hscredit.core.viz import score_distribution_comparison_plot
+
+card_binner = OptimalBinning(method="quantile", max_n_bins=4, n_jobs=1)
+card_binner.fit(X_train, y_train)
+card = ScoreCard(
+    binner=card_binner,
+    base_score=650,
+    pdo=50,
+    rate=2,
+    base_odds=35,
+    lr_kwargs={
+        "solver": "liblinear", "max_iter": 1000,
+        "n_jobs": 1, "random_state": 42,
+    },
+)
+card.fit(X_train, y_train, input_type="raw")
+card.export(to_frame=True)
+```
+
+<table border="1" class="dataframe">
+  <thead>
+    <tr style="text-align: right;">
+      <th></th>
+      <th>name</th>
+      <th>value</th>
+      <th>score</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <th>0</th>
+      <td>衡枢鉴真分老客版</td>
+      <td>[-inf, 0.0532)</td>
+      <td>18.3759</td>
+    </tr>
+    <tr>
+      <th>1</th>
+      <td>衡枢鉴真分老客版</td>
+      <td>[0.0532, 0.0840)</td>
+      <td>7.5274</td>
+    </tr>
+    <tr>
+      <th>2</th>
+      <td>衡枢鉴真分老客版</td>
+      <td>[0.0840, 0.1244)</td>
+      <td>22.1584</td>
+    </tr>
+    <tr>
+      <th>3</th>
+      <td>衡枢鉴真分老客版</td>
+      <td>[0.1244, +inf)</td>
+      <td>-35.9394</td>
+    </tr>
+    <tr>
+      <th>4</th>
+      <td>近六个月非银多头机构数</td>
+      <td>[-inf, 52)</td>
+      <td>-0.6933</td>
+    </tr>
+    <tr>
+      <th>5</th>
+      <td>近六个月非银多头机构数</td>
+      <td>[52, 61)</td>
+      <td>0.5677</td>
+    </tr>
+    <tr>
+      <th>6</th>
+      <td>近六个月非银多头机构数</td>
+      <td>[61, 69)</td>
+      <td>17.6398</td>
+    </tr>
+    <tr>
+      <th>7</th>
+      <td>近六个月非银多头机构数</td>
+      <td>[69, +inf)</td>
+      <td>-12.7307</td>
+    </tr>
+    <tr>
+      <th>8</th>
+      <td>手机号近一个月非银多头机构数</td>
+      <td>[-inf, 16)</td>
+      <td>4.0360</td>
+    </tr>
+    <tr>
+      <th>9</th>
+      <td>手机号近一个月非银多头机构数</td>
+      <td>[16, 22)</td>
+      <td>-2.0554</td>
+    </tr>
+    <tr>
+      <th>10</th>
+      <td>手机号近一个月非银多头机构数</td>
+      <td>[22, 28)</td>
+      <td>8.9923</td>
+    </tr>
+    <tr>
+      <th>11</th>
+      <td>手机号近一个月非银多头机构数</td>
+      <td>[28, +inf)</td>
+      <td>-7.3485</td>
+    </tr>
+  </tbody>
+</table>
+
+```python
+figure = score_distribution_comparison_plot(
+    {"训练集": card.predict(X_train), "测试集": card.predict(X_test)},
+    save=str(model_assets / "scorecard-distribution.png"),
+)
+```
+
+![ScoreCard 原生评分分布](docs/assets/readme/models/scorecard-distribution.png)
+
+[下载完整分值表 Excel](docs/assets/readme/models/scorecard-points.xlsx)。表中的 `name / value / score` 来自 `ScoreCard.export(to_frame=True)` 的原始返回。
+
+
+<a id="rules"></a>
+
+### 7. 规则集评估与策略置换
+
+#### Rule 组合、先验规则与规则集分析
+
+通过 `&`、`|`、`~` 将衡枢风险分、近六个月多头、手机号近期多头和白名单组合为可执行规则，并用 `商品类别` 规则评估存量策略。`amount="放款金额"` 使用金额口径；保留方法原始列名与多级表头，不将金额数值改写为人数。`ruleset_analysis` 展示逐规则与整体规则效果。
+
+```python
+from hscredit.core.rules import Rule
+from hscredit.report import ruleset_analysis
+
+risk_score = Rule("衡枢鉴真分老客版 >= 0.15", name="风险分偏高")
+high_multi = Rule("近六个月非银多头机构数 >= 70", name="多头偏高")
+phone_multi = Rule("手机号近一个月非银多头机构数 >= 28", name="近期多头偏高")
+whitelist = Rule("衡枢鉴真分老客版 < 0.03", name="低风险白名单")
+prior_rule = Rule("商品类别 == '礼包'", name="存量商品规则")
+combined_rule = ((risk_score & high_multi) | phone_multi) & ~whitelist
+
+rule_report = combined_rule.report(
+    df, target="FPD", overdue=["MOB1"], dpds=[7, 3, 0],
+    prior_rules=prior_rule, amount="放款金额", margins=True, n_jobs=1,
+)
+display(rule_report)
+rule_report.save(
+    strategy_dir / "组合规则完整评估.xlsx", auto_width=True,
+    percent_cols=["样本占比", "好样本占比", "坏样本占比", "坏样本率",
+                  "坏账改善", "准确率", "精确率", "召回率", "F1分数"],
+    condition_cols=["LIFT值"],
+)
+
+ruleset_report = ruleset_analysis(
+    df, rules=[risk_score, high_multi, phone_multi], target="FPD",
+    overdue=["MOB1"], dpds=[7, 3, 0], amount="放款金额", n_jobs=1,
+)
+display(ruleset_report)
+ruleset_report.save(
+    strategy_dir / "规则集完整评估.xlsx", auto_width=True,
+    percent_cols=["样本占比", "好样本占比", "坏样本占比", "坏样本率",
+                  "坏账改善", "准确率", "精确率", "召回率", "F1分数"],
+    condition_cols=["LIFT值"],
+)
+```
+
+<details>
+<summary>Rule.report 完整结果（6 行 × 41 列，完整返回）</summary>
+
+![完整原生 Excel 结果](docs/assets/readme/strategy/rule-report-excel.png)
+
+[查看完整方法返回表](docs/assets/readme/strategy/rule-report.html)
+
+</details>
+
+
+<details>
+<summary>ruleset_analysis 完整结果（8 行 × 39 列，完整返回）</summary>
+
+![完整原生 Excel 结果](docs/assets/readme/strategy/ruleset-excel.png)
+
+[查看完整方法返回表](docs/assets/readme/strategy/ruleset-report.html)
+
+</details>
+
+
+[组合规则工作簿](docs/assets/readme/strategy/组合规则完整评估.xlsx) · [规则集工作簿](docs/assets/readme/strategy/规则集完整评估.xlsx)
+
+
+#### 规则置入与置出
+
+衡枢鉴真分老客版在本例按高值偏高风险使用，高值规则用于拒绝，低值规则用于白名单。置入风险按历史训练样本各分箱的真实坏样本率估计，不将高风险分当作高信用分。验证样本用于策略置换。生产基础拒绝、置出与置入按方法原生流程依次分析；`sample_survival_rate=0.70` 和 `out_in_uplift=2.0` 是本例的情景输入，后者上浮置入客群的预测风险。返回字典中的两张表均完整展示。
+
+```python
+from hscredit.report import rule_swap_analysis
+
+swap = rule_swap_analysis(
+    data=test_df,
+    score="衡枢鉴真分老客版",
+    rules_base=[Rule("衡枢鉴真分老客版 >= 0.25", name="生产基础拒绝")],
+    rules_out=[high_multi, phone_multi],
+    rules_in=[Rule("近六个月非银多头机构数 < 50", name="低多头置入")],
+    reference_data=train_df,
+    overdue=["MOB1"], dpds=[7, 3, 0],
+    amount="放款金额", sample_survival_rate=0.70,
+    out_in_uplift=2.0, max_n_bins=4, n_jobs=1,
+)
+display(swap["swap_pipeline"])
+display(swap["swap_result"])
+
+with ExcelWriter() as writer:
+    swap["swap_pipeline"].save(
+        writer, sheet_name="完整置换流水线", auto_width=True,
+        percent_cols=["样本占比", "金额占比", "通过率(相对值)",
+                      "好样本占比", "坏样本占比", "坏样本率",
+                      "原始坏样本率", "调整后坏样本率", "坏账改善",
+                      "原始坏样本率(金额)", "调整后坏样本率(金额)"],
+        condition_cols=["LIFT值"],
+    )
+    swap["swap_result"].save(
+        writer, sheet_name="完整置换对比", auto_width=True,
+        percent_cols=["相对变化"], condition_cols=["相对变化"],
+    )
+    writer.save(strategy_dir / "规则置换完整分析.xlsx")
+```
+
+<details>
+<summary>swap_pipeline 完整结果（12 行 × 73 列，完整返回）</summary>
+
+![完整原生 Excel 结果](docs/assets/readme/strategy/swap-pipeline-excel.png)
+
+[查看完整方法返回表](docs/assets/readme/strategy/swap-pipeline.html)
+
+</details>
+
+
+<details>
+<summary>swap_result 完整结果（12 行 × 6 列，完整返回）</summary>
+
+![完整原生 Excel 结果](docs/assets/readme/strategy/swap-result-excel.png)
+
+[查看完整方法返回表](docs/assets/readme/strategy/swap-result.html)
+
+</details>
+
+
+[规则置换完整工作簿](docs/assets/readme/strategy/规则置换完整分析.xlsx)
+
+
+#### 策略迭代报告：swap_out_report
+
+直接生成包含样本描述、相关性、变量分箱、业务影响、规则效果、金额口径和分月稳定性的 Excel。该方法原生返回 `ExcelWriter`，完整工作簿即报告产物。
+
+```python
+from hscredit.report import swap_out_report
+
+strategy_writer = swap_out_report(
+    df,
+    rules=[risk_score, high_multi, phone_multi],
+    background="比较衡枢风险分、近六个月多头和手机号近期多头规则的覆盖与风险表现。",
+    target="FPD", overdue=["MOB1"], dpds=[7, 3, 0],
+    amount="放款金额", date_col="放款时间", freq="M",
+    features=features, methods="quantile",
+    bin_params={"max_n_bins": 4},
+    current_pass_rate=0.70, n_jobs=1,
+    save=str(strategy_dir / "策略迭代完整报告.xlsx"),
+)
+display(strategy_writer)
+```
+
+<details>
+<summary>查看策略迭代工作表完整截图</summary>
+
+![swap_out_report 原生策略迭代工作表](docs/assets/readme/strategy/swap-out-report-excel.png)
+
+</details>
+
+[下载策略迭代完整报告](docs/assets/readme/strategy/策略迭代完整报告.xlsx)
+
+
+<a id="manual-tree"></a>
+
+### 8. 手工树规则挖掘
+
+#### 自动训练决策树，再手工指定分裂
+
+先在训练集自动拟合深度为 2 的树，并在验证集按 `MOB1` 的 7 / 3 / 0 天逾期阈值评估所有节点。下图由 `plot_tree_matplotlib` 直接保存，使用原生尺寸、配色和指标布局。
+
+```python
+from hscredit.report.mining import ManualTreeExtractor
+from hscredit.core.viz import plot_tree_matplotlib
+
+manual_tree = ManualTreeExtractor(
+    target="FPD", features=features,
+    max_depth=2, min_samples_leaf=40, random_state=42, n_jobs=1,
+)
+manual_tree.fit(train_df)
+automatic_figure = plot_tree_matplotlib(
+    manual_tree, save=str(strategy_dir / "manual-tree-auto.png"),
+)
+display(automatic_figure)
+automatic_rules = manual_tree.get_rule_table(
+    test_df, overdue=["MOB1"], dpds=[7, 3, 0], amount="放款金额",
+)
+display(automatic_rules)
+automatic_rules.save(
+    strategy_dir / "自动决策树完整规则.xlsx", auto_width=True,
+    percent_cols=["样本占比", "好样本占比", "坏样本占比", "坏样本率",
+                  "坏账改善", "准确率", "精确率", "召回率", "F1分数"],
+    condition_cols=["LIFT值"],
+)
+```
+
+![ManualTreeExtractor 自动训练原图](docs/assets/readme/strategy/manual-tree-auto.png)
+
+<details>
+<summary>自动训练后的完整节点规则（6 行 × 44 列，完整返回）</summary>
+
+[查看完整方法返回表](docs/assets/readme/strategy/manual-tree-auto-rules.html)
+
+</details>
+
+
+再把根节点改为 `衡枢鉴真分老客版 <= 0.10`，把左节点改为 `近六个月非银多头机构数 <= 55`。`manual_split()` 修改可执行树结构，并重新生成规则效果表与原生树图；表格继续使用相同验证集和金额口径，保留方法返回的全部节点行。当前版本对人工创建节点的 GINI 使用 1.0000 占位，下面保留原图；判断节点风险时应读取原生坏样本率和规则评估表，不能把该占位值理解为重算的 GINI。
+
+```python
+manual_tree.manual_split(train_df, feature="衡枢鉴真分老客版", threshold=0.10, node=0)
+manual_tree.manual_split(
+    train_df, feature="近六个月非银多头机构数", threshold=55, node=1,
+)
+manual_figure = plot_tree_matplotlib(
+    manual_tree, save=str(strategy_dir / "manual-tree-intervention.png"),
+)
+display(manual_figure)
+manual_rules = manual_tree.get_rule_table(
+    test_df, overdue=["MOB1"], dpds=[7, 3, 0], amount="放款金额",
+)
+display(manual_rules)
+manual_rules.save(
+    strategy_dir / "手工决策树完整规则.xlsx", auto_width=True,
+    percent_cols=["样本占比", "好样本占比", "坏样本占比", "坏样本率",
+                  "坏账改善", "准确率", "精确率", "召回率", "F1分数"],
+    condition_cols=["LIFT值"],
+)
+```
+
+![ManualTreeExtractor 人工分裂原图](docs/assets/readme/strategy/manual-tree-intervention.png)
+
+<details>
+<summary>人工分裂后的完整节点规则（4 行 × 44 列，完整返回）</summary>
+
+[查看完整方法返回表](docs/assets/readme/strategy/manual-tree-intervention-rules.html)
+
+</details>
+
+
+[自动树完整规则工作簿](docs/assets/readme/strategy/自动决策树完整规则.xlsx) · [手工树完整规则工作簿](docs/assets/readme/strategy/手工决策树完整规则.xlsx)
+
+
+<a id="models"></a>
+
+### 9. 集成模型、损失、评估与自动报告
+
+#### 集成模型：自定义训练损失与完整评估
+
+`objective=loss` 指定训练损失；`loss.metric()` 提供同口径评估，`loss.business_metric()` 提供对应业务指标。FocalLoss 的业务入口仍返回聚焦损失本身；它们不会自动变成 AUC 或利润。
+
+```python
+from hscredit import LightGBM
+from hscredit.core.models.losses import FocalLoss
+
+loss = FocalLoss(alpha=0.75, gamma=2.0)
+model = LightGBM(
+    objective=loss,
+    n_estimators=60,
+    num_leaves=7,
+    learning_rate=0.05,
+    validation_fraction=0.0,
+    n_jobs=1,
+    random_state=42,
+    verbosity=-1,
+).fit(X_train, y_train)
+model.evaluate(X_test, y_test)
+```
+
+```text
+{'AUC': 0.5656487475372924, 'KS': 0.16014635519279483, 'Gini': 0.13129749507458488, 'LIFT@1%': 0.0, 'LIFT@3%': 0.8933823529411765, 'LIFT@5%': 1.0995475113122173, 'LIFT@10%': 1.7152941176470586}
+```
+
+```python
+loss.metric().evaluate(y_test, model.predict_proba(X_test))
+```
+
+```text
+0.051850166590956315
+```
+
+<details>
+<summary>XGBoost 与 CatBoost：同一个损失对象的框架适配</summary>
+
+HSCredit 包装器将损失转换为各框架的目标回调；CatBoost 的自定义评估指标在这里显式指定。以下两个配置均实际训练并完成默认全指标评估。
+
+```python
+from hscredit import XGBoost, CatBoost
+from hscredit.core.models.losses import WeightedBCELoss
+
+weighted_loss = WeightedBCELoss(pos_weight=3, neg_weight=1)
+xgb = XGBoost(
+    objective=weighted_loss,
+    n_estimators=40, max_depth=3, scale_pos_weight=1,
+    validation_fraction=0.0, n_jobs=1, random_state=42,
+).fit(X_train, y_train)
+xgb.evaluate(X_test, y_test)
+```
+
+```text
+{'AUC': 0.5879538418238108, 'KS': 0.20025330706445255, 'Gini': 0.17590768364762166, 'LIFT@1%': 2.3823529411764706, 'LIFT@3%': 0.8933823529411765, 'LIFT@5%': 1.0995475113122173, 'LIFT@10%': 1.7152941176470586}
+```
+
+```python
+cat = CatBoost(
+    objective=weighted_loss,
+    eval_metric=weighted_loss.metric(),
+    iterations=40, depth=3, validation_fraction=0.0,
+    n_jobs=1, random_state=42, allow_writing_files=False,
+).fit(X_train, y_train)
+cat.evaluate(X_test, y_test)
+```
+
+```text
+{'AUC': 0.6179285111173656, 'KS': 0.27723050942865185, 'Gini': 0.23585702223473115, 'LIFT@1%': 0.0, 'LIFT@3%': 2.6801470588235294, 'LIFT@5%': 2.748868778280543, 'LIFT@10%': 2.0011764705882356}
+```
+
+</details>
+
+
+#### auto_model_report：从模型直接交付 Excel
+
+```python
+from hscredit.report import auto_model_report
+
+model_report = auto_model_report(
+    model,
+    X_train=X_train, y_train=y_train,
+    X_test=X_test, y_test=y_test,
+    excel_path=str(model_assets / "ensemble-model-report.xlsx"),
+    n_jobs=1,
+    verbose=False,
+)
+model_report.get_metrics()
+```
+
+<table border="1" class="dataframe">
+  <thead>
+    <tr style="text-align: right;">
+      <th></th>
+      <th>统计项</th>
+      <th>训练集</th>
+      <th>测试集</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <th>0</th>
+      <td>KS</td>
+      <td>0.5461</td>
+      <td>0.1601</td>
+    </tr>
+    <tr>
+      <th>1</th>
+      <td>AUC</td>
+      <td>0.8290</td>
+      <td>0.5656</td>
+    </tr>
+    <tr>
+      <th>2</th>
+      <td>样本数</td>
+      <td>727</td>
+      <td>243.0000</td>
+    </tr>
+    <tr>
+      <th>3</th>
+      <td>坏样本率</td>
+      <td>0.1403</td>
+      <td>0.1399</td>
+    </tr>
+    <tr>
+      <th>4</th>
+      <td>PSI</td>
+      <td>\</td>
+      <td>0.0568</td>
+    </tr>
+  </tbody>
+</table>
+
+[下载原生模型报告 Excel](docs/assets/readme/models/ensemble-model-report.xlsx)。本示例生成目录、基本信息、模型性能、入模变量分析、稳定性分析、模型参数与模型部署需求 7 张工作表，图表由报告 API 自动生成。
+
+
+<a id="tuning"></a>
+
+### 10. 超参数搜索与训练过程
+
+#### 直接从模型发起调参
+
+`.tune()` 返回已重训的最佳模型，`best.tuner` 保留搜索器和试验过程。`loss` 控制训练目标，`metric` 控制搜索评价；也可以直接使用下面的 `ModelTuner` 管理搜索。
+
+```python
+quick_model = LightGBM(
+    n_estimators=30, num_leaves=7, n_jobs=1, random_state=42,
+    validation_fraction=0.0, verbosity=-1,
+)
+best = quick_model.tune(
+    X_train, y_train,
+    search_space={"max_depth": [2, 3], "learning_rate": [0.03, 0.05]},
+    loss=FocalLoss(alpha=0.75), metric="auc",
+    cv=3, n_trials=4, n_jobs=1, show_progress_bar=False,
+)
+display(best.tuner.best_params_)
+```
+
+
+`ModelTuner` 统一使用 Optuna。sklearn 列表、skopt、Hyperopt 和 Bayesian Optimization 风格是搜索空间声明的兼容形式；`sampler` 才决定 Optuna 的采样算法。列表不会自动穷举全部参数组合。
+
+<details>
+<summary>六种空间声明写法，都运行相同的 Optuna 搜索流程</summary>
+
+```python
+from hscredit import ModelTuner
+from hscredit.core.models.tuning import (
+    Integer, Real, Categorical, IntDistribution, FloatDistribution,
+    choice, uniform, suggest_int, suggest_categorical,
+)
+
+spaces = {
+    "sklearn 列表": {
+        "max_depth": [2, 3, 4], "learning_rate": [0.03, 0.05, 0.08],
+    },
+    "skopt 风格": {
+        "max_depth": Integer(2, 4), "learning_rate": Real(0.03, 0.08),
+    },
+    "Hyperopt 风格": {
+        "max_depth": choice("max_depth", [2, 3, 4]),
+        "learning_rate": uniform("learning_rate", 0.03, 0.08),
+    },
+    "Bayesian Optimization 边界": {
+        "max_depth": (2, 4), "learning_rate": (0.03, 0.08),
+    },
+    "Optuna suggest 风格": {
+        "max_depth": suggest_int("max_depth", 2, 4),
+        "learning_rate": suggest_categorical("learning_rate", [0.03, 0.05, 0.08]),
+    },
+    "Optuna 分布对象": {
+        "max_depth": IntDistribution(2, 4),
+        "learning_rate": FloatDistribution(0.03, 0.08),
+    },
+}
+
+for space in spaces.values():
+    search = ModelTuner(
+        LightGBM, search_space=space,
+        fixed_params={
+            "n_estimators": 30, "num_leaves": 7,
+            "validation_fraction": 0.0, "verbosity": -1,
+        },
+        metric="auc", cv=3, n_jobs=1, random_state=42,
+        early_stopping_rounds=None, retention="summary",
+    )
+    best_params = search.fit(
+        X_train, y_train, n_trials=2, show_progress_bar=False, catch=()
+    )
+```
+
+上述声明对象直接从 hscredit 导入；不需要另外安装 skopt、Hyperopt 或 Bayesian Optimization 来构造这些声明。`fit()` 返回完整最佳参数字典，随后调用 `get_best_model()` 得到重训模型。
+
+</details>
+
+<details>
+<summary>六种声明的完整 fit() 返回值</summary>
+
+**sklearn 列表**
+
+```text
+{'max_depth': 3, 'learning_rate': 0.03, 'n_estimators': 30, 'num_leaves': 7, 'validation_fraction': 0.0, 'verbosity': -1}
+```
+
+**scikit-optimize 风格**
+
+```text
+{'max_depth': 3, 'learning_rate': 0.0775357153204958, 'n_estimators': 30, 'num_leaves': 7, 'validation_fraction': 0.0, 'verbosity': -1}
+```
+
+**Hyperopt 风格**
+
+```text
+{'max_depth': 3, 'learning_rate': 0.05993292420985183, 'n_estimators': 30, 'num_leaves': 7, 'validation_fraction': 0.0, 'verbosity': -1}
+```
+
+**Bayesian Optimization 边界**
+
+```text
+{'max_depth': 3, 'learning_rate': 0.0775357153204958, 'n_estimators': 30, 'num_leaves': 7, 'validation_fraction': 0.0, 'verbosity': -1}
+```
+
+**Optuna suggest 风格**
+
+```text
+{'max_depth': 3, 'learning_rate': 0.03, 'n_estimators': 30, 'num_leaves': 7, 'validation_fraction': 0.0, 'verbosity': -1}
+```
+
+**Optuna 分布对象**
+
+```text
+{'max_depth': 3, 'learning_rate': 0.0775357153204958, 'n_estimators': 30, 'num_leaves': 7, 'validation_fraction': 0.0, 'verbosity': -1}
+```
+
+</details>
+
+#### 多目标搜索与 Pareto 点的模型表现
+
+这里同时最大化 AUC、最小化均方概率误差。只在训练集内部进行 3 折 CV；独立测试集不参与参数搜索。
+
+```python
+from sklearn.metrics import brier_score_loss
+from hscredit.core.models.losses import AUCMetric, make_metric
+
+brier = make_metric(
+    brier_score_loss, name="均方概率误差", greater_is_better=False
+)
+tuner = ModelTuner(
+    LightGBM,
+    search_space={
+        "max_depth": Integer(2, 4),
+        "learning_rate": Real(0.02, 0.15, prior="log-uniform"),
+        "reg_lambda": Categorical([0.0, 1.0, 3.0]),
+    },
+    fixed_params={
+        "n_estimators": 30, "num_leaves": 7,
+        "validation_fraction": 0.0, "verbosity": -1,
+    },
+    metric=[AUCMetric(), brier],
+    cv=3, n_jobs=1, random_state=42,
+    early_stopping_rounds=None, retention="summary",
+)
+tuner.fit(X_train, y_train, n_trials=12, show_progress_bar=False, catch=())
+pareto_figure = tuner.plot_pareto_front()
+pareto_figure.write_html(str(model_assets / "pareto-front.html"))
+```
+
+![plot_pareto_front 原生交互图页面](docs/assets/readme/models/pareto-front.jpg)
+
+[下载原生 Pareto 交互 HTML](docs/assets/readme/models/pareto-front.html)，用浏览器打开后悬停在点上，可查看试验编号、参数与 CV 指标。该原生图不会在点击时自动重训模型。按点中的编号继续复盘：
+
+```python
+tuner.evaluate_study_trials([0, 1])
+```
+
+<table border="1" class="dataframe">
+  <thead>
+    <tr style="text-align: right;">
+      <th></th>
+      <th>trial索引</th>
+      <th>trial状态</th>
+      <th>max_depth</th>
+      <th>learning_rate</th>
+      <th>reg_lambda</th>
+      <th>AUC曲线下面积</th>
+      <th>均方概率误差</th>
+      <th>study记录值</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <th>0</th>
+      <td>0</td>
+      <td>COMPLETE</td>
+      <td>3</td>
+      <td>0.1358</td>
+      <td>0.0000</td>
+      <td>0.5506</td>
+      <td>0.1230</td>
+      <td>[0.5506338991246112, 0.12302751710027503]</td>
+    </tr>
+    <tr>
+      <th>1</th>
+      <td>1</td>
+      <td>COMPLETE</td>
+      <td>2</td>
+      <td>0.0225</td>
+      <td>0.0000</td>
+      <td>0.5599</td>
+      <td>0.1182</td>
+      <td>[0.5598866432844761, 0.11820021482946517]</td>
+    </tr>
+  </tbody>
+</table>
+
+这张表是方法的完整原始返回；它会重新运行对应参数的 CV，`study记录值` 保留原试验得分用于核对。`tuner.get_trial_result(0)` 可直接查看各折指标、训练记录和保留状态；`tuner.get_best_model().evaluate(X_test, y_test)` 则评估默认选中的最终模型。
+
+#### Optuna Dashboard：查看真实 Study 与折级进度
+
+执行下列脚本会创建 SQLite Study，其中有 12 次多目标试验，以及 10 次单目标搜索记录。Dashboard 展示真实的试验状态、参数、CV 目标值与折级中间值；剪枝试验保留其停止状态。
+
+```bash
+python scripts/readme_examples/models.py --section tuning
+python scripts/readme_examples/models.py --dashboard --port 8091
+```
+
+在浏览器打开 `http://127.0.0.1:8091/`，选择 `README-训练过程-*` 或 `README-多目标模型-*`。对应数据库位于 `.audit_tmp/readme-complete/models/optuna-multiloan-study.sqlite3`；每次运行使用新的 Study 名称。SQLite 保存搜索记录，Python 模型制品另外保存。
+
+<details>
+<summary>查看 Optuna Dashboard 完整训练过程页面</summary>
+
+![Optuna Dashboard 实际训练历史与中间值](docs/assets/readme/models/optuna-dashboard.jpg)
+
+</details>
+
+[下载原生优化历史交互 HTML](docs/assets/readme/models/optimization-history.html)。空间、指标、训练损失、保存与续跑的完整用法见[调参指南](docs/articles/tuning-guide.md)与[损失指南](docs/articles/losses-guide.md)。
+
+
+<a id="explainability"></a>
+
+### 11. 模型可解释性
+
+`plot_model_feature_importance` 在一张原生图中展示模型重要性、SHAP 分布和特征依赖；`plot_model_sample_shap` 将同一个样本的力图与瀑布图组合展示。以下图均解释 `predict_proba` 的坏样本概率，没有裁剪字段或调整画布、样式与分辨率。
+
+```python
+from hscredit.core.viz import plot_model_feature_importance, plot_model_sample_shap
+
+figure = plot_model_feature_importance(
+    model, X_test, y_test,
+    save=str(model_assets / "model-feature-importance.png"),
+    show=False,
+)
+```
+
+![模型原生特征重要性与 SHAP 综合图](docs/assets/readme/models/model-feature-importance.png)
+
+```python
+figure = plot_model_sample_shap(
+    model,
+    sample=X_test.iloc[0],
+    background_data=X_train,
+    save=str(model_assets / "model-sample-shap.png"),
+    show=False,
+)
+```
+
+![原生单样本 SHAP 力图与瀑布图](docs/assets/readme/models/model-sample-shap.png)
+
+全部模型示例和原生输出可通过 [scripts/readme_examples/models.py](scripts/readme_examples/models.py) 复现。
+
+
+<a id="excel"></a>
+
+### 12. Excel 功能
+
+`dataframe2excel` 和 `DataFrame.save` 都可保留整张返回表，并在导出时设置自动列宽、百分比和条件格式。`percent_cols`、`condition_cols` 只指定格式应用位置，不会筛掉其他列；多级表头使用完整列标签元组。
+
+#### dataframe2excel、百分比与条件格式
+
+```python
+from hscredit.core.binning import OptimalBinning
+from hscredit.excel import ExcelWriter, dataframe2excel
+
+excel_dir = Path("docs/assets/readme/excel")
+excel_dir.mkdir(parents=True, exist_ok=True)
+excel_binner = OptimalBinning(method="quantile", max_n_bins=4, n_jobs=1)
+excel_binner.fit(df[features], df["FPD"])
+excel_table = excel_binner.get_bin_table("衡枢鉴真分老客版")
+percent_cols = [
+    "样本占比", "好样本占比", "坏样本占比", "坏样本率",
+    "坏账改善", "累积坏账改善", "分档KS值",
+]
+condition_cols = ["样本总数", "分档IV值", "LIFT值"]
+
+writer = ExcelWriter()
+dataframe2excel(
+    excel_table, writer,
+    sheet_name="分箱统计", title="dataframe2excel 完整分箱表",
+    start_row=4, index=True, auto_width=True,
+    percent_cols=percent_cols, condition_cols=condition_cols,
+)
+```
+
+#### 冻结窗格与超链接
+
+```python
+sheet = writer.get_sheet_by_name("分箱统计")
+writer.set_freeze_panes(sheet, "D7")
+writer.insert_value2sheet(sheet, "B2", value="查看数据透视表")
+writer.insert_hyperlink2sheet(
+    sheet, "B2", sheet="透视分析", target_space="B2",
+)
+```
+
+本例从第 4 行写标题，方法在标题下保留空行，第 6 行为字段名。冻结 `D7` 后，向下或向右滚动时保留表头、索引与分箱编号。`B2` 可跳到同一工作簿的透视分析页。
+
+#### 原生数据透视表
+
+```python
+writer.insert_pivot_table2sheet(
+    worksheet="透视分析", data=excel_table, pivot_anchor="B2",
+    rows="分箱标签",
+    values=[
+        ("样本总数", "sum"),
+        ("坏样本数", "sum"),
+        {
+            "field": "样本总数", "agg": "sum", "show_as": "全局占比",
+            "name": "样本占比", "number_format": "0.00%",
+        },
+    ],
+    source_sheet=sheet, source_anchor="C6", write_source=False,
+    name="分箱样本透视表",
+)
+writer.save(str(excel_dir / "excel-features.xlsx"))
+```
+
+透视表直接引用已写入的完整分箱表；保存的文件包含原生 PivotTable 与缓存，Excel 打开后刷新，可调整字段、聚合方式和占比口径。下面是工作簿完整表格，以及在 Excel 中刷新后的透视表。
+
+![dataframe2excel 完整表格、百分比、条件格式与跳转链接](docs/assets/readme/excel/excel-features.png)
+
+![Excel 原生透视表刷新结果](docs/assets/readme/excel/pivot-table.png)
+
+[下载 Excel 功能演示工作簿](docs/assets/readme/excel/excel-features.xlsx)
+
+#### DataFrame.save：一行入口导出同一张完整表
+
+```python
+excel_table.save(
+    str(excel_dir / "dataframe-save.xlsx"),
+    sheet_name="分箱统计", title="DataFrame.save 完整分箱表",
+    index=True, auto_width=True,
+    percent_cols=percent_cols, condition_cols=condition_cols,
+)
+```
+
+![DataFrame.save 原生导出的完整表格](docs/assets/readme/excel/dataframe-save.png)
+
+[下载 DataFrame.save 工作簿](docs/assets/readme/excel/dataframe-save.xlsx) · [完整 Excel 示例](examples/23_excel_writer.ipynb) · [生成代码](scripts/readme_examples/excel.py)
+
+
+## 文档与复现
+
+[在线文档](https://hscredit.hengshucredit.com/) · [全部 Notebook](examples/) · [模型工作流](examples/28_model_workflow.ipynb) · [损失与指标](examples/losses_workflow.ipynb) · [超参数搜索](examples/tuning_workflow.ipynb) · [迭代规划](docs/ROADMAP.md)
+
+本页演示可用以下脚本重新生成。脚本保留原始返回值，输出完整工作簿、原生图及 HTML；Optuna Dashboard 从真实 SQLite Study 读取训练过程。
+
+```bash
+pip install -e ".[all]"
+python scripts/readme_examples/binning_eda.py
+python scripts/readme_examples/strategy.py
+python scripts/readme_examples/models.py
+python scripts/readme_examples/excel.py
+```
+
+开发验证：
+
+```bash
+python scripts/validate_examples.py --pattern 00_quickstart.ipynb
+pytest tests/ -m "not slow and not integration"
+```
+
+问题与建议请提交到 [GitHub Issues](https://github.com/hengshu-credit/hscredit/issues)。
+
+
+## 联系与许可
+
+邮箱：`hscredit@hengshucredit.com` · 微信：`itlubber` · 公众号：**衡枢风控**（回复 `入群` 加入技术交流群）。
+
+<details>
+<summary>微信与公众号二维码</summary>
 
 | 微信 | 微信公众号 |
 |:---:|:---:|
 | <img src="https://itlubber.art/upload/itlubber.png" alt="微信 itlubber" width="180"> | <img src="https://itlubber.art/upload/hengshucredit-com.png" alt="微信公众号 衡枢风控" width="180"> |
-| `itlubber` | `hengshucredit-com` |
 
-关注公众号 **衡枢风控**，回复 `入群` 加入 hscredit 技术交流群。
+</details>
 
-## 许可证
-
-[MIT License](LICENSE)。可按许可证条款用于商业和非商业场景。
+本项目采用 [MIT License](LICENSE)。

@@ -21,8 +21,14 @@ optuna / skopt / hyperopt，只需::
 * **GridSearchCV / bayesian-optimization** —— 直接用列表（离散候选）或元组（上下界），
   无需额外符号
 
+新代码建议只用 ``Integer`` / ``Real`` / ``Categorical``，例如
+``{'max_depth': Integer(2, 6), 'learning_rate': Real(0.01, 0.1)}``。
+以上符号均为 hscredit 的声明对象，不会在构造时执行采样。
+
 注：``normal`` / ``lognormal`` / ``qnormal`` / ``qlognormal`` 因 optuna 无原生
-正态采样，通过在截断区间均匀采样后逆 CDF 变换实现（截断区间取 [mu-4σ, mu+4σ]）。
+正态采样，通过在 [Φ(-4), Φ(4)] 均匀采样后逆 CDF 变换实现；未量化值
+截断在 [mu-4σ, mu+4σ]（对数正态取指数）。量化始终使用
+``round(value / q) * q``，量化结果可超出未量化区间，最多约半个 q。
 
 **参考样例**
 
@@ -47,6 +53,8 @@ from __future__ import annotations
 from typing import Any, List, Optional, Sequence
 
 import numpy as np
+
+from .space_adapter import _normalize_dict
 
 __all__ = [
     # 基类（skopt 风格）
@@ -94,13 +102,25 @@ class Dimension:
     **属性**
 
     - ``name``: 维度名
+
+    **参考样例**
+
+    >>> Integer(2, 6, name='max_depth').to_spec()
+    {'type': 'int', 'low': 2, 'high': 6}
     """
 
     def __init__(self, name: Optional[str] = None) -> None:
         self.name = name
 
     def to_spec(self) -> dict:
-        """返回内部 DSL 字典，供 :func:`normalize_search_space` 消费."""
+        """返回内部搜索空间声明，不采样。
+
+        :return: 包含 ``type`` 和该分布参数的新字典。
+        :raises NotImplementedError: 基类没有具体分布，须使用子类。
+
+        >>> Real(0.01, 0.1).to_spec()['type']
+        'float'
+        """
         raise NotImplementedError
 
     def __repr__(self) -> str:
@@ -123,6 +143,11 @@ class IntDistribution(Dimension):
     **属性**
 
     - ``low`` / ``high`` / ``step`` / ``log`` / ``name``
+
+    **参考样例**
+
+    >>> IntDistribution(2, 8, step=2).to_spec()
+    {'type': 'int', 'low': 2, 'high': 8, 'step': 2}
     """
 
     def __init__(
@@ -134,14 +159,14 @@ class IntDistribution(Dimension):
         name: Optional[str] = None,
     ) -> None:
         super().__init__(name)
-        if log and step != 1:
-            raise ValueError("IntDistribution 使用 log=True 时 step 必须为 1")
+        _normalize_dict(name or "整数参数", {"type": "int", "low": low, "high": high, "step": step, "log": log})
         self.low = int(low)
         self.high = int(high)
         self.step = int(step)
         self.log = bool(log)
 
     def to_spec(self) -> dict:
+        """返回整数闭区间和可选步长、对数采样标记，参见 ``Dimension.to_spec``。"""
         spec: dict = {"type": "int", "low": self.low, "high": self.high}
         if self.log:
             spec["log"] = True
@@ -164,6 +189,11 @@ class FloatDistribution(Dimension):
     **属性**
 
     - ``low`` / ``high`` / ``step`` / ``log`` / ``name``
+
+    **参考样例**
+
+    >>> FloatDistribution(0.001, 0.1, log=True).to_spec()['log']
+    True
     """
 
     def __init__(
@@ -177,6 +207,10 @@ class FloatDistribution(Dimension):
         _q: Optional[float] = None,
     ) -> None:
         super().__init__(name)
+        spec = {"type": _distribution or "float", "low": low, "high": high, "log": log, "step": step}
+        if _q is not None:
+            spec["q"] = _q
+        _normalize_dict(name or "浮点参数", spec)
         self.low = float(low)
         self.high = float(high)
         self.step = float(step) if step is not None else None
@@ -185,6 +219,7 @@ class FloatDistribution(Dimension):
         self._q = float(_q) if _q is not None else None
 
     def to_spec(self) -> dict:
+        """返回浮点边界与分布参数，参见 ``Dimension.to_spec``。"""
         if self._distribution is not None:
             spec = {"type": self._distribution, "low": self.low, "high": self.high}
             if self._q is not None:
@@ -209,6 +244,11 @@ class CategoricalDistribution(Dimension):
     **属性**
 
     - ``choices`` / ``name``
+
+    **参考样例**
+
+    >>> CategoricalDistribution(['gbtree', 'dart']).to_spec()['choices']
+    ['gbtree', 'dart']
     """
 
     def __init__(
@@ -217,17 +257,20 @@ class CategoricalDistribution(Dimension):
         name: Optional[str] = None,
     ) -> None:
         super().__init__(name)
+        _normalize_dict(name or "类别参数", {"type": "categorical", "choices": choices})
         self.choices = list(choices)
 
     def to_spec(self) -> dict:
+        """返回类别候选值的副本，参见 ``Dimension.to_spec``。"""
         return {"type": "categorical", "choices": list(self.choices)}
 
 
 class NormalDistribution(Dimension):
     """正态/对数正态维度（仿 hyperopt ``hp.normal`` / ``hp.lognormal``）。
 
-    optuna 无原生正态采样，搜索时在截断区间 [mu-4σ, mu+4σ] 均匀采样后经逆
-    CDF 变换为目标分布（``log=True`` 时在对数空间变换后取指数）。
+    Optuna 无原生正态采样，在 [Φ(-4), Φ(4)] 区间采样后经逆 CDF
+    变换为截断正态分布；``log=True`` 时对结果取指数。
+    量化发生在最终值空间，结果允许超出未量化区间约半个 q。
 
     **参数**
 
@@ -240,6 +283,11 @@ class NormalDistribution(Dimension):
     **属性**
 
     - ``mu`` / ``sigma`` / ``q`` / ``log`` / ``name``
+
+    **参考样例**
+
+    >>> normal('learning_rate', 0.1, 0.01).to_spec()['mu']
+    0.1
     """
 
     def __init__(
@@ -251,21 +299,23 @@ class NormalDistribution(Dimension):
         name: Optional[str] = None,
     ) -> None:
         super().__init__(name)
+        _normalize_dict(name or "正态参数", {"type": "normal", "mu": mu, "sigma": sigma, "q": q, "log": log})
         self.mu = float(mu)
         self.sigma = float(sigma)
         self.q = float(q) if q is not None else None
         self.log = bool(log)
 
     def to_spec(self) -> dict:
+        """返回正态参数及未量化的截断区间，参见 ``Dimension.to_spec``。"""
         # 按状态返回具体类型字符串，便于 _space_param_from_dict 的 param_type 分支识别
         if self.log and self.q is not None:
-            param_type = 'qlognormal'
+            param_type = "qlognormal"
         elif self.log:
-            param_type = 'lognormal'
+            param_type = "lognormal"
         elif self.q is not None:
-            param_type = 'qnormal'
+            param_type = "qnormal"
         else:
-            param_type = 'normal'
+            param_type = "normal"
         lo = self.mu - 4 * self.sigma
         hi = self.mu + 4 * self.sigma
         low = float(np.exp(lo)) if self.log else float(lo)
@@ -287,14 +337,28 @@ class NormalDistribution(Dimension):
 class Integer(IntDistribution):
     """整数维度（仿 ``skopt.space.Integer``）。
 
-    等价于 :class:`IntDistribution` 的无 step/log 形式，保留 ``Integer`` 名以便
-    与 skopt 代码风格一致。
+    推荐用于整数超参数。上下界均包含，只接受整数，避免静默截断。
 
     **参数**
 
     :param low: 下界（含）
     :param high: 上界（含）
-    :param name: 维度名，仅用于记录，可选
+    :param prior: ``'uniform'`` 或 ``'log-uniform'``；对数模式要求 low > 0。
+    :param base: 对数底数兼容字段，须为正数且不为 1；不影响对数均匀分布。
+    :param transform: 兼容字段，允许 None、``'identity'``、``'normalize'``；
+        输出始终为原始参数值，不做模型输入变换。
+    :param name: 维度名；字典中可省略，维度列表中必须指定。
+    :param dtype: 采样结果的数值类型，默认 ``np.int64``（返回 Python int）。
+
+    **属性**
+
+    ``low``、``high``、``prior``、``base``、``transform``、``name``、``dtype``。
+
+    **参考样例**
+
+    >>> space = {'max_depth': Integer(2, 8), 'n_estimators': Integer(50, 300)}
+    >>> space['max_depth'].to_spec()
+    {'type': 'int', 'low': 2, 'high': 8}
     """
 
     def __init__(
@@ -321,6 +385,7 @@ class Integer(IntDistribution):
         self.dtype = dtype
 
     def to_spec(self) -> dict:
+        """返回整数区间及可选 dtype，参见 ``Dimension.to_spec``。"""
         spec = super().to_spec()
         if self.dtype is not np.int64:
             spec["dtype"] = self.dtype
@@ -335,11 +400,22 @@ class Real(FloatDistribution):
     :param low: 下界（含）
     :param high: 上界（含）
     :param prior: 采样先验，``'uniform'``（默认）或 ``'log-uniform'``（对数均匀）
-    :param name: 维度名，仅用于记录，可选
+    :param base: 对数底数兼容字段，须为正数且不为 1；不影响对数均匀分布。
+    :param transform: 兼容字段，允许 None、``'identity'``、``'normalize'``；
+        输出始终为原始参数值，不做模型输入变换。
+    :param name: 维度名；字典中可省略，维度列表中必须指定。
+    :param dtype: 返回参数的数值类型，默认 float。
 
     **属性**
 
-    - ``low`` / ``high`` / ``prior`` / ``name``
+    ``low``、``high``、``prior``、``base``、``transform``、``name``、``dtype``。
+
+    **参考样例**
+
+    >>> space = {'learning_rate': Real(0.001, 0.1, prior='log-uniform')}
+    >>> space['learning_rate'].to_spec()['log']
+    True
+
     """
 
     def __init__(
@@ -367,6 +443,7 @@ class Real(FloatDistribution):
         self.dtype = dtype
 
     def to_spec(self) -> dict:
+        """返回实数闭区间及可选对数标记、dtype，参见 ``Dimension.to_spec``。"""
         spec: dict = {"type": "float", "low": self.low, "high": self.high}
         if self.log:
             spec["log"] = True
@@ -381,7 +458,21 @@ class Categorical(CategoricalDistribution):
     **参数**
 
     :param categories: 候选值列表
-    :param name: 维度名，仅用于记录，可选
+    :param prior: 与候选等长的非负权重；不必归一化，总和必须大于 0。
+        权重为 0 的候选不会被采样，也不能作为手工搜索点。
+    :param transform: 兼容字段，支持 None、``'identity'``、``'onehot'``、
+        ``'string'``、``'label'``；输出仍为原始候选值。
+    :param name: 维度名；字典中可省略，维度列表中必须指定。
+
+    **属性**
+
+    ``choices``、``prior``、``transform``、``name``。
+
+    **参考样例**
+
+    >>> space = {'booster': Categorical(['gbtree', 'dart'], prior=[0.8, 0.2])}
+    >>> space['booster'].to_spec()['choices']
+    ['gbtree', 'dart']
     """
 
     def __init__(
@@ -392,14 +483,14 @@ class Categorical(CategoricalDistribution):
         name: Optional[str] = None,
     ) -> None:
         if transform not in {None, "identity", "onehot", "string", "label"}:
-            raise ValueError(
-                "Categorical 的 transform 仅支持 None、'identity'、'onehot'、'string' 或 'label'"
-            )
+            raise ValueError("Categorical 的 transform 仅支持 None、'identity'、'onehot'、'string' 或 'label'")
         super().__init__(categories, name=name)
+        _normalize_dict(name or "类别参数", {"type": "categorical", "choices": categories, "prior": prior})
         self.prior = list(prior) if prior is not None else None
         self.transform = transform
 
     def to_spec(self) -> dict:
+        """返回候选值及可选先验权重，参见 ``Dimension.to_spec``。"""
         spec = super().to_spec()
         if self.prior is not None:
             spec["prior"] = list(self.prior)
@@ -427,6 +518,10 @@ def suggest_int(
     :param step: 采样步长，默认 1
     :param log: 是否对数尺度采样，默认 False
     :return: 整数维度对象
+
+    **参考样例**
+
+    >>> space = {'max_depth': suggest_int('max_depth', 2, 8)}
     """
     return IntDistribution(low, high, step=step, log=log, name=name)
 
@@ -446,6 +541,10 @@ def suggest_float(
     :param step: 采样步长，默认 None（连续）
     :param log: 是否对数尺度采样，默认 False
     :return: 浮点维度对象
+
+    **参考样例**
+
+    >>> space = {'learning_rate': suggest_float('learning_rate', 0.001, 0.1, log=True)}
     """
     return FloatDistribution(low, high, step=step, log=log, name=name)
 
@@ -456,6 +555,10 @@ def suggest_categorical(name: str, choices: Sequence[Any]) -> CategoricalDistrib
     :param name: 参数名
     :param choices: 候选值列表
     :return: 类别维度对象
+
+    **参考样例**
+
+    >>> space = {'booster': suggest_categorical('booster', ['gbtree', 'dart'])}
     """
     return CategoricalDistribution(choices, name=name)
 
@@ -468,6 +571,10 @@ def suggest_discrete_uniform(name: str, low: float, high: float, q: float) -> Fl
     :param high: 上界（含）
     :param q: 步长
     :return: 浮点维度对象（带 step）
+
+    **参考样例**
+
+    >>> space = {'subsample': suggest_discrete_uniform('subsample', 0.6, 1.0, 0.1)}
     """
     return FloatDistribution(low, high, step=q, log=False, name=name)
 
@@ -479,6 +586,10 @@ def suggest_uniform(name: str, low: float, high: float) -> FloatDistribution:
     :param low: 下界（含）
     :param high: 上界（含）
     :return: 连续浮点维度对象
+
+    **参考样例**
+
+    >>> space = {'subsample': suggest_uniform('subsample', 0.6, 1.0)}
     """
     return FloatDistribution(low, high, log=False, step=None, name=name)
 
@@ -490,6 +601,10 @@ def suggest_loguniform(name: str, low: float, high: float) -> FloatDistribution:
     :param low: 下界（含，需 > 0）
     :param high: 上界（含）
     :return: 浮点维度对象（log=True）
+
+    **参考样例**
+
+    >>> space = {'learning_rate': suggest_loguniform('learning_rate', 0.001, 0.1)}
     """
     return FloatDistribution(low, high, step=None, log=True, name=name)
 
@@ -507,6 +622,10 @@ def uniform(name: str, low: float, high: float) -> FloatDistribution:
     :param low: 下界（含）
     :param high: 上界（含）
     :return: 浮点维度对象
+
+    **参考样例**
+
+    >>> space = {'subsample': uniform('subsample', 0.6, 1.0)}
     """
     return FloatDistribution(low, high, name=name, _distribution="uniform")
 
@@ -518,6 +637,10 @@ def loguniform(name: str, low: float, high: float) -> FloatDistribution:
     :param low: 对数空间下界（含）
     :param high: 对数空间上界（含）
     :return: 浮点维度对象（log=True）
+
+    **参考样例**
+
+    >>> space = {'learning_rate': loguniform('learning_rate', np.log(0.001), np.log(0.1))}
     """
     return FloatDistribution(low, high, name=name, _distribution="loguniform")
 
@@ -530,6 +653,10 @@ def quniform(name: str, low: float, high: float, q: float) -> FloatDistribution:
     :param high: 上界（含）
     :param q: 量化步长
     :return: 浮点维度对象（带 step）
+
+    **参考样例**
+
+    >>> space = {'subsample': quniform('subsample', 0.6, 1.0, 0.1)}
     """
     return FloatDistribution(low, high, name=name, _distribution="quniform", _q=q)
 
@@ -542,6 +669,10 @@ def qloguniform(name: str, low: float, high: float, q: float) -> FloatDistributi
     :param high: 对数空间上界（含）
     :param q: 最终值空间的量化步长
     :return: 量化对数均匀维度对象
+
+    **参考样例**
+
+    >>> space = {'reg_lambda': qloguniform('reg_lambda', np.log(0.01), np.log(1.0), 0.01)}
     """
     return FloatDistribution(low, high, name=name, _distribution="qloguniform", _q=q)
 
@@ -552,6 +683,10 @@ def choice(name: str, options: Sequence[Any]) -> CategoricalDistribution:
     :param name: 参数名
     :param options: 候选值列表
     :return: 类别维度对象
+
+    **参考样例**
+
+    >>> space = {'booster': choice('booster', ['gbtree', 'dart'])}
     """
     return CategoricalDistribution(options, name=name)
 
@@ -571,20 +706,25 @@ def randint(
     :param upper: 上界（不含）
     :param low: 下界（含），默认 0
     :return: 整数维度对象
+
+    **参考样例**
+
+    >>> space = {'max_depth': randint('max_depth', 2, 9)}  # 2 至 8，9 不包含
     """
     if upper is not None:
         if args:
             raise TypeError("randint 同时使用位置参数和 upper 关键字时含义不明确")
-        lower = 0 if low is None else int(low)
-        upper_value = int(upper)
+        lower = 0 if low is None else low
+        upper_value = upper
     elif len(args) == 1:
-        upper_value = int(args[0])
-        lower = 0 if low is None else int(low)
+        upper_value = args[0]
+        lower = 0 if low is None else low
     elif len(args) == 2 and low is None:
-        lower, upper_value = map(int, args)
+        lower, upper_value = args
     else:
         raise TypeError("randint 用法为 randint(name, upper) 或 randint(name, low, upper)")
-    high = upper_value - 1
+    _normalize_dict(name, {"type": "int", "low": lower, "high": upper_value})
+    high = int(upper_value) - 1
     if high < lower:
         raise ValueError(f"参数 {name!r} 的 randint 上界({upper_value})需大于下界({lower})")
     return IntDistribution(lower, high, step=1, log=False, name=name)
@@ -597,6 +737,10 @@ def normal(name: str, mu: float, sigma: float) -> NormalDistribution:
     :param mu: 均值
     :param sigma: 标准差（> 0）
     :return: 正态维度对象
+
+    **参考样例**
+
+    >>> space = {'learning_rate': normal('learning_rate', 0.1, 0.01)}
     """
     return NormalDistribution(mu, sigma, q=None, log=False, name=name)
 
@@ -609,6 +753,10 @@ def qnormal(name: str, mu: float, sigma: float, q: float) -> NormalDistribution:
     :param sigma: 标准差（> 0）
     :param q: 量化步长
     :return: 正态维度对象（带 q）
+
+    **参考样例**
+
+    >>> space = {'learning_rate': qnormal('learning_rate', 0.1, 0.01, 0.01)}
     """
     return NormalDistribution(mu, sigma, q=q, log=False, name=name)
 
@@ -620,6 +768,10 @@ def lognormal(name: str, mu: float, sigma: float) -> NormalDistribution:
     :param mu: 对数空间均值
     :param sigma: 对数空间标准差（> 0）
     :return: 正态维度对象（log=True）
+
+    **参考样例**
+
+    >>> space = {'reg_lambda': lognormal('reg_lambda', -2.0, 0.5)}
     """
     return NormalDistribution(mu, sigma, q=None, log=True, name=name)
 
@@ -632,5 +784,9 @@ def qlognormal(name: str, mu: float, sigma: float, q: float) -> NormalDistributi
     :param sigma: 对数空间标准差（> 0）
     :param q: 量化步长
     :return: 正态维度对象（log=True，带 q）
+
+    **参考样例**
+
+    >>> space = {'reg_lambda': qlognormal('reg_lambda', -2.0, 0.5, 0.01)}
     """
     return NormalDistribution(mu, sigma, q=q, log=True, name=name)

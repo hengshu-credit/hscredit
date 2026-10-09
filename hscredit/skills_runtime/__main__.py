@@ -37,7 +37,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         )
         print(json.dumps(error.to_dict(debug=args.debug), ensure_ascii=False))
         return 1
-    print(json.dumps(result, ensure_ascii=False, default=str))
+    print(json.dumps(result, ensure_ascii=False, allow_nan=False))
     return 0
 
 

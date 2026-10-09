@@ -19,6 +19,7 @@ import numpy as np
 import pandas as pd
 
 from .base import BaseFeatureSelector
+from ._statistical_utils import record_conditions, record_counts, validate_real
 
 
 def _compute_cardinality_feature(task):
@@ -68,7 +69,9 @@ class CardinalitySelector(BaseFeatureSelector):
         binning_params: Optional[Dict[str, Any]] = None,
         parallel_backend: Optional[str] = None,
         parallel_config: Optional[Dict[str, Any]] = None,
+        target_rm: bool = False,
     ):
+        """初始化筛选器；默认透传已有目标列，仅target_rm=True移除。"""
         super().__init__(
             target=target,
             threshold=threshold,
@@ -80,8 +83,17 @@ class CardinalitySelector(BaseFeatureSelector):
             binning_params=binning_params,
             parallel_backend=parallel_backend,
             parallel_config=parallel_config,
+            target_rm=target_rm,
         )
         self.dropna = dropna
+
+    def _check_input(self, X, y=None):
+        validate_real(self.threshold, "基数阈值", minimum=0)
+        if int(self.threshold) != self.threshold:
+            raise ValueError("基数阈值必须是非负整数")
+        if not isinstance(self.dropna, (bool, np.bool_)):
+            raise ValueError("dropna 必须是布尔值")
+        return super()._check_input(X, y)
 
     def _fit_impl(
         self,
@@ -96,11 +108,16 @@ class CardinalitySelector(BaseFeatureSelector):
         self._get_feature_names(X)
 
         self._validate_parallel_configuration()
+        record_counts(self, X)
+        self.threshold_ = self.threshold
+        self.score_name_, self.score_direction_ = "唯一值数量", "越小越好"
         cardinalities = X.nunique(axis=0, dropna=self.dropna).reindex(X.columns)
         self.scores_ = cardinalities
+        self.cardinalities_ = cardinalities.copy()
 
         # 选择基数低于阈值的特征
         selected_mask = cardinalities <= self.threshold
+        record_conditions(self, X.columns, 基数达标=selected_mask)
         self.selected_features_ = X.columns[selected_mask].tolist()
 
         # 构建详细的dropped_记录，包含基数信息

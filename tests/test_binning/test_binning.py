@@ -347,14 +347,16 @@ class TestOptimalBinning(unittest.TestCase):
             np.array([0.12, 0.99])
         )
 
-    def test_check_input_align_by_common_index(self):
-        """测试X/y长度不一致时按共同索引自动对齐."""
+    def test_check_input_rejects_implicit_common_index_filtering(self):
+        """W01契约迁移：异长标签拒绝隐式交集，避免静默改变建模总体。"""
         X = self.X[['feature_1']].copy()
         y_filtered = self.y.loc[X['feature_1'] > 0]
 
         binner = OptimalBinning(method='mdlp', max_n_bins=5)
-        # 不应抛出长度不匹配错误
-        binner.fit(X, y_filtered)
+        with self.assertRaisesRegex(ValueError, "样本数量不一致"):
+            binner.fit(X, y_filtered)
+        # 需要筛选总体时，调用方必须显式同步筛选特征和标签。
+        binner.fit(X.loc[y_filtered.index], y_filtered)
         self.assertTrue(binner._is_fitted)
 
     def test_getitem_returns_feature_rules(self):

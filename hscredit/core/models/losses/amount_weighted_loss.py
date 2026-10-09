@@ -15,6 +15,7 @@ from typing import Optional, Union
 import numpy as np
 
 from .base import BaseLoss
+from ._loss_math import binary_inputs, bce_terms, nonnegative, positive, unit_interval
 
 
 class AmountWeightedLoss(BaseLoss):
@@ -67,9 +68,9 @@ class AmountWeightedLoss(BaseLoss):
         name: str = "amount_weighted_loss",
     ):
         super().__init__(name)
-        self.amounts_ = (
-            np.asarray(amounts, dtype=float) if amounts is not None else None
-        )
+        self.amounts_ = np.asarray(amounts, dtype=float) if amounts is not None else None
+        nonnegative(floor_weight=floor_weight)
+        self.is_additive = amounts is None
         self.normalize = normalize
         self.floor_weight = floor_weight
 
@@ -80,9 +81,15 @@ class AmountWeightedLoss(BaseLoss):
         """设置样本级金额参数。
 
         :param amounts: 金额数组, shape (n_samples,)
-        :return: self
+            必须非负且有限，顺序与当前输入样本一致。
+        :return: self，原地更新；评估验证集时优先用 ``loss.metric(amounts=...)``
+            创建副本，避免覆盖训练金额。
+
+        >>> loss = AmountWeightedLoss().set_sample_params(amounts=[1000, 2000])
+        >>> metric = loss.metric(amounts=[3000, 4000])
         """
         self.amounts_ = np.asarray(amounts, dtype=float)
+        self.is_additive = False
         return self
 
     def _get_weights(self, n_samples: int) -> np.ndarray:
@@ -91,10 +98,11 @@ class AmountWeightedLoss(BaseLoss):
             return np.ones(n_samples, dtype=float)
 
         w = self.amounts_.copy()
+        if w.ndim != 1 or not np.all(np.isfinite(w)) or np.any(w < 0):
+            raise ValueError("金额必须是一维非负有限数组。")
         if len(w) != n_samples:
             raise ValueError(
-                f"金额数组长度 ({len(w)}) 与样本数 ({n_samples}) 不一致，"
-                f"请通过 set_sample_params() 更新金额数组。"
+                f"金额数组长度 ({len(w)}) 与样本数 ({n_samples}) 不一致，" f"请通过 set_sample_params() 更新金额数组。"
             )
 
         # 下限截断
@@ -109,67 +117,89 @@ class AmountWeightedLoss(BaseLoss):
 
         return w
 
-    def __call__(
-        self,
-        y_true: np.ndarray,
-        y_pred: np.ndarray,
-    ) -> float:
-        """计算金额加权损失。
+    def __call__(self, y_true, y_pred) -> float:
+        """计算本损失的平均值，越小越好。
 
-        :param y_true: 真实标签, shape (n_samples,)
-        :param y_pred: 预测概率, shape (n_samples,)
-        :return: 加权平均损失值
+        :param y_true: 一维 0/1 标签，1 为坏样本。
+        :param y_pred: 同形状坏样本概率，范围 [0, 1]；不是原始分数。
+        :return: float；原始损失值，不根据调参方向改变符号。
+
+        **参考样例**
+
+        >>> from hscredit.core.models.losses import AmountWeightedLoss
+        >>> loss = AmountWeightedLoss()
+        >>> result = loss([0, 0, 1, 1], [0.1, 0.3, 0.7, 0.9])
         """
-        y_true = np.asarray(y_true, dtype=float)
-        y_pred = np.clip(np.asarray(y_pred, dtype=float), 1e-7, 1 - 1e-7)
+        return float(np.mean(self.loss_values(y_true, y_pred)))
 
-        weights = self._get_weights(len(y_true))
+    def gradient(self, y_true, y_pred):
+        """返回损失相对坏样本概率的一阶导数。
 
-        bce = -(y_true * np.log(y_pred) + (1 - y_true) * np.log(1 - y_pred))
-        return float(np.average(bce, weights=weights))
+        :param y_true: 一维 0/1 标签，1 为坏样本。
+        :param y_pred: 同形状坏样本概率，范围 [0, 1]；不是原始分数。
+        :return: 与输入等长的一阶导数组，标度为样本数乘以平均损失；详见 BaseLoss.gradient。
 
-    def gradient(
-        self,
-        y_true: np.ndarray,
-        y_pred: np.ndarray,
-    ) -> np.ndarray:
-        """计算梯度。
+        **参考样例**
 
-        :param y_true: 真实标签
-        :param y_pred: 预测概率
-        :return: 梯度数组, shape (n_samples,)
+        >>> from hscredit.core.models.losses import AmountWeightedLoss
+        >>> loss = AmountWeightedLoss()
+        >>> result = loss.gradient([0, 0, 1, 1], [0.1, 0.3, 0.7, 0.9])
         """
-        y_true = np.asarray(y_true, dtype=float)
-        y_pred = np.clip(np.asarray(y_pred, dtype=float), 1e-7, 1 - 1e-7)
+        return self._terms(y_true, y_pred)[1]
 
-        weights = self._get_weights(len(y_true))
-        return weights * (y_pred - y_true)
+    def hessian(self, y_true, y_pred):
+        """返回损失相对坏样本概率的二阶导数。
 
-    def hessian(
-        self,
-        y_true: np.ndarray,
-        y_pred: np.ndarray,
-    ) -> np.ndarray:
-        """计算二阶导数。
+        :param y_true: 一维 0/1 标签，1 为坏样本。
+        :param y_pred: 同形状坏样本概率，范围 [0, 1]；不是原始分数。
+        :return: 与输入等长的二阶导数组，标度同 BaseLoss.hessian；框架适配器再做链接函数转换。
 
-        :param y_true: 真实标签
-        :param y_pred: 预测概率
-        :return: 二阶导数数组, shape (n_samples,)
+        **参考样例**
+
+        >>> from hscredit.core.models.losses import AmountWeightedLoss
+        >>> loss = AmountWeightedLoss()
+        >>> result = loss.hessian([0, 0, 1, 1], [0.1, 0.3, 0.7, 0.9])
         """
-        y_true = np.asarray(y_true, dtype=float)
-        y_pred = np.clip(np.asarray(y_pred, dtype=float), 1e-7, 1 - 1e-7)
+        return self._terms(y_true, y_pred)[2]
 
+    def _external_weight_normalizer(self, y_true, sample_weight):
         weights = self._get_weights(len(y_true))
-        hess = weights * y_pred * (1 - y_pred)
-        return np.maximum(hess, 1e-6)
+        normalizer = np.average(weights / np.mean(weights), weights=sample_weight)
+        if not np.isfinite(normalizer) or normalizer <= 0:
+            raise ValueError("金额与额外样本权重相乘后的权重总和必须为有限正数")
+        return normalizer
+
+    def _terms(self, y_true, y_pred):
+        y, p = binary_inputs(y_true, y_pred)
+        weights = self._get_weights(len(y))
+        mean_weight = np.mean(weights)
+        if not np.isfinite(mean_weight) or mean_weight <= 0:
+            raise ValueError("样本权重的平均值必须是有限正数。")
+        weights = weights / mean_weight
+        return tuple(weights * term for term in bce_terms(y, p))
+
+    def loss_values(self, y_true, y_pred):
+        """逐样本贡献已按整体平均权重归一化；其均值等于加权平均 BCE。
+
+        :param y_true: 一维 0/1 标签，1 为坏样本。
+        :param y_pred: 同形状坏样本概率，范围 [0, 1]；不是原始分数。
+        :return: 与输入等长的数组，其均值等于本损失值；详见 BaseLoss.loss_values。
+
+        **参考样例**
+
+        >>> from hscredit.core.models.losses import AmountWeightedLoss
+        >>> loss = AmountWeightedLoss()
+        >>> result = loss.loss_values([0, 0, 1, 1], [0.1, 0.3, 0.7, 0.9])
+        """
+        return self._terms(y_true, y_pred)[0]
 
 
 class ExpectedValueLoss(BaseLoss):
     """期望价值损失函数，结合 LGD / EAD / 利率 / 成本进行期望价值优化。
 
     在信贷全生命周期管理中，不同客户的风险敞口（EAD）、违约损失率（LGD）、
-    收益率各不相同。本损失将这些金融参数融入损失函数，使模型直接优化
-    期望经济价值而非简单的分类准确率。
+    收益率各不相同。本损失以这些金融参数构造成本加权 BCE 代理，
+    返回值不是实际货币利润；metric() 与 business_metric() 均按同一期望价值加权损失评估。
 
     样本级权重::
 
@@ -227,6 +257,7 @@ class ExpectedValueLoss(BaseLoss):
         name: str = "expected_value_loss",
     ):
         super().__init__(name)
+        nonnegative(floor_weight=floor_weight)
         self.lgd = lgd
         self.ead = ead
         self.rate = rate
@@ -242,11 +273,14 @@ class ExpectedValueLoss(BaseLoss):
     ) -> "ExpectedValueLoss":
         """设置样本级金融参数。
 
-        :param lgd: 违约损失率
-        :param ead: 违约风险敞口
-        :param rate: 年化收益率
-        :param cost: 单客运营成本
-        :return: self
+        :param lgd: 违约损失率，标量或一维数组，范围 [0, 1]；None 保持原值。
+        :param ead: 违约风险敞口，非负标量或一维数组；None 保持原值。
+        :param rate: 年化收益率，非负标量或一维数组；None 保持原值。
+        :param cost: 单客运营成本，非负标量或一维数组；None 保持原值。
+        :return: self，原地更新；数组须有限且与之后计算的样本顺序一致。
+
+        >>> loss = ExpectedValueLoss().set_sample_params(lgd=0.5, ead=[1000, 2000])
+        >>> metric = loss.metric(ead=[3000, 4000])
         """
         if lgd is not None:
             self.lgd = lgd
@@ -258,18 +292,13 @@ class ExpectedValueLoss(BaseLoss):
             self.cost = cost
         return self
 
-    def _broadcast(
-        self,
-        value: Union[float, np.ndarray, None],
-        n: int,
-        default: float = 1.0,
-    ) -> np.ndarray:
-        """将标量或数组广播为 (n,) 数组。"""
-        if value is None:
-            return np.full(n, default, dtype=float)
-        arr = np.asarray(value, dtype=float)
+    def _broadcast(self, value, n, default=1.0):
+        """检查并广播标量/长度严格匹配的一维金融参数。"""
+        arr = np.asarray(default if value is None else value, dtype=float)
         if arr.ndim == 0:
-            return np.full(n, float(arr), dtype=float)
+            arr = np.full(n, float(arr))
+        if arr.shape != (n,) or not np.all(np.isfinite(arr)) or np.any(arr < 0):
+            raise ValueError(f"金融参数必须为非负有限标量或长度为 {n} 的一维数组。")
         return arr
 
     def _get_weights(self, y_true: np.ndarray) -> np.ndarray:
@@ -277,6 +306,8 @@ class ExpectedValueLoss(BaseLoss):
         n = len(y_true)
 
         lgd = self._broadcast(self.lgd, n, 0.5)
+        if np.any(lgd > 1):
+            raise ValueError("违约损失率 lgd 必须在 [0, 1] 范围内。")
         ead = self._broadcast(self.ead, n, 1.0)
         rate = self._broadcast(self.rate, n, 0.08)
         cost = self._broadcast(self.cost, n, 0.0)
@@ -299,56 +330,78 @@ class ExpectedValueLoss(BaseLoss):
 
         return weights
 
-    def __call__(
-        self,
-        y_true: np.ndarray,
-        y_pred: np.ndarray,
-    ) -> float:
-        """计算期望价值损失。
+    def __call__(self, y_true, y_pred) -> float:
+        """计算本损失的平均值，越小越好。
 
-        :param y_true: 真实标签, shape (n_samples,)
-        :param y_pred: 预测概率, shape (n_samples,)
-        :return: 加权平均损失值
+        :param y_true: 一维 0/1 标签，1 为坏样本。
+        :param y_pred: 同形状坏样本概率，范围 [0, 1]；不是原始分数。
+        :return: float；原始损失值，不根据调参方向改变符号。
+
+        **参考样例**
+
+        >>> from hscredit.core.models.losses import ExpectedValueLoss
+        >>> loss = ExpectedValueLoss()
+        >>> result = loss([0, 0, 1, 1], [0.1, 0.3, 0.7, 0.9])
         """
-        y_true = np.asarray(y_true, dtype=float)
-        y_pred = np.clip(np.asarray(y_pred, dtype=float), 1e-7, 1 - 1e-7)
+        return float(np.mean(self.loss_values(y_true, y_pred)))
 
-        weights = self._get_weights(y_true)
+    def gradient(self, y_true, y_pred):
+        """返回损失相对坏样本概率的一阶导数。
 
-        bce = -(y_true * np.log(y_pred) + (1 - y_true) * np.log(1 - y_pred))
-        return float(np.average(bce, weights=weights))
+        :param y_true: 一维 0/1 标签，1 为坏样本。
+        :param y_pred: 同形状坏样本概率，范围 [0, 1]；不是原始分数。
+        :return: 与输入等长的一阶导数组，标度为样本数乘以平均损失；详见 BaseLoss.gradient。
 
-    def gradient(
-        self,
-        y_true: np.ndarray,
-        y_pred: np.ndarray,
-    ) -> np.ndarray:
-        """计算梯度。
+        **参考样例**
 
-        :param y_true: 真实标签
-        :param y_pred: 预测概率
-        :return: 梯度数组, shape (n_samples,)
+        >>> from hscredit.core.models.losses import ExpectedValueLoss
+        >>> loss = ExpectedValueLoss()
+        >>> result = loss.gradient([0, 0, 1, 1], [0.1, 0.3, 0.7, 0.9])
         """
-        y_true = np.asarray(y_true, dtype=float)
-        y_pred = np.clip(np.asarray(y_pred, dtype=float), 1e-7, 1 - 1e-7)
+        return self._terms(y_true, y_pred)[1]
 
-        weights = self._get_weights(y_true)
-        return weights * (y_pred - y_true)
+    def hessian(self, y_true, y_pred):
+        """返回损失相对坏样本概率的二阶导数。
 
-    def hessian(
-        self,
-        y_true: np.ndarray,
-        y_pred: np.ndarray,
-    ) -> np.ndarray:
-        """计算二阶导数。
+        :param y_true: 一维 0/1 标签，1 为坏样本。
+        :param y_pred: 同形状坏样本概率，范围 [0, 1]；不是原始分数。
+        :return: 与输入等长的二阶导数组，标度同 BaseLoss.hessian；框架适配器再做链接函数转换。
 
-        :param y_true: 真实标签
-        :param y_pred: 预测概率
-        :return: 二阶导数数组, shape (n_samples,)
+        **参考样例**
+
+        >>> from hscredit.core.models.losses import ExpectedValueLoss
+        >>> loss = ExpectedValueLoss()
+        >>> result = loss.hessian([0, 0, 1, 1], [0.1, 0.3, 0.7, 0.9])
         """
-        y_true = np.asarray(y_true, dtype=float)
-        y_pred = np.clip(np.asarray(y_pred, dtype=float), 1e-7, 1 - 1e-7)
+        return self._terms(y_true, y_pred)[2]
 
+    def _external_weight_normalizer(self, y_true, sample_weight):
         weights = self._get_weights(y_true)
-        hess = weights * y_pred * (1 - y_pred)
-        return np.maximum(hess, 1e-6)
+        normalizer = np.average(weights / np.mean(weights), weights=sample_weight)
+        if not np.isfinite(normalizer) or normalizer <= 0:
+            raise ValueError("金融参数与额外样本权重相乘后的权重总和必须为有限正数")
+        return normalizer
+
+    def _terms(self, y_true, y_pred):
+        y, p = binary_inputs(y_true, y_pred)
+        weights = self._get_weights(y)
+        mean_weight = np.mean(weights)
+        if not np.isfinite(mean_weight) or mean_weight <= 0:
+            raise ValueError("样本权重的平均值必须是有限正数。")
+        weights = weights / mean_weight
+        return tuple(weights * term for term in bce_terms(y, p))
+
+    def loss_values(self, y_true, y_pred):
+        """逐样本贡献已按整体平均权重归一化；其均值等于加权平均 BCE。
+
+        :param y_true: 一维 0/1 标签，1 为坏样本。
+        :param y_pred: 同形状坏样本概率，范围 [0, 1]；不是原始分数。
+        :return: 与输入等长的数组，其均值等于本损失值；详见 BaseLoss.loss_values。
+
+        **参考样例**
+
+        >>> from hscredit.core.models.losses import ExpectedValueLoss
+        >>> loss = ExpectedValueLoss()
+        >>> result = loss.loss_values([0, 0, 1, 1], [0.1, 0.3, 0.7, 0.9])
+        """
+        return self._terms(y_true, y_pred)[0]

@@ -298,7 +298,10 @@ plt.show()
 多目标单曲线图的 `target` 是函数，例如 `target=lambda trial: trial.values[1]`；
 超体积图需要多目标 Study 和显式 `reference_point`。
 终止改进图按 Optuna 版本和 evaluator 要求使用相应依赖与足够的试验；
-自动单目标交叉验证会通过 Optuna 官方接口记录各折分数，供其 CV 误差评估器直接使用。
+Optuna 低于 4.9 时，自动单目标交叉验证会通过官方接口记录专用 CV 分数。
+Optuna 4.9 起弃用了 `terminator`，默认不再为此调用弃用接口；常规各折指标、
+中间值和曲线仍完整保留。若确需旧终止改进图，可显式配置
+`ModelTuner(..., record_terminator_scores=True)`，此时保留上游弃用提示。
 只有一折或用户完全接管的 `trial_objective`，需按原生要求提供适用的误差估计或记录。
 
 `plot_intermediate_values` 默认显示**各交叉验证折结束时的累计平均目标值**。

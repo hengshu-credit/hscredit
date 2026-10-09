@@ -114,7 +114,17 @@ def test_pareto_hypervolume_and_callable_target_preserve_native_semantics(multi_
 
 
 @pytest.mark.parametrize("backend", ["plotly", "matplotlib"])
-def test_terminator_plot_can_read_automatically_recorded_cv_scores(tuner, backend):
+def test_terminator_plot_can_read_explicitly_recorded_cv_scores(data, backend):
+    tuner = ModelTuner(
+        RandomForest(n_estimators=3, n_jobs=1, random_state=44),
+        search_space={"max_depth": [2, 4]},
+        metric="auc",
+        cv=3,
+        n_jobs=1,
+        random_state=44,
+        record_terminator_scores=True,
+    )
+    tuner.fit(*data, n_trials=2, show_progress_bar=False)
     namespace = _namespace(tuner, backend)
     if not hasattr(namespace, "plot_terminator_improvement"):
         pytest.skip("当前 Optuna 版本没有终止改进图")
@@ -228,6 +238,7 @@ def test_reloaded_database_study_can_be_visualized_without_refitting(data, tmp_p
         n_jobs=1,
         storage=storage,
         study_name="搜索过程",
+        record_terminator_scores=True,
     )
     tuner.fit(*data, n_trials=2, show_progress_bar=False)
     study = optuna.load_study(storage=storage, study_name="搜索过程")
@@ -244,6 +255,7 @@ def test_old_optuna_without_terminator_keeps_existing_training_contract(monkeypa
     import importlib
 
     original = importlib.import_module
+    monkeypatch.setattr(optuna, "__version__", "3.1.0")
 
     def import_without_terminator(name, *args, **kwargs):
         if name == "optuna.terminator":

@@ -23,9 +23,9 @@ from datetime import date
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
+import cloudpickle
 import numpy as np
 import pandas as pd
-from joblib.externals import cloudpickle
 
 from ..utils.overdue import compare_overdue, overdue_grey_mask, overdue_label, validate_overdue_operator
 from ..utils.input_utils import normalize_dpd_values
@@ -747,6 +747,14 @@ class ModelReport:
         self._features_summary_cache = None
         self._model_explanation_cache = None
 
+    def _report_warning(self, message, *args) -> None:
+        """保留现有日志，同时把导出中的降级明确记录为失败章节。"""
+        logger.warning(message, *args)
+        result = getattr(self, "_execution_result", None)
+        if result is not None:
+            rendered = message % args if args else str(message)
+            result.failure("降级：" + str(message).split("[")[0].strip(), rendered)
+
     def _run_cache_transaction(self, function, *args, **kwargs):
         """隔离派生缓存写入；仅在整个公共输出操作成功后提交。"""
         cache_names = (
@@ -895,6 +903,10 @@ class ModelReport:
                 capability="process_safe",
                 has_parallel_children=True,
                 operation="模型报告数据集预测",
+                # 输入投影、概率临时数组和返回的逐行预测；不包含模型原生内部工作区。
+                working_bytes_per_task=max((int(spec[3].memory_usage(deep=True).sum()) + len(spec[3]) * 32 for spec in specs), default=0),
+                result_bytes_per_task=max((int(spec[3].memory_usage(deep=True).sum()) + len(spec[3]) * 16 + sum(np.asarray(values).nbytes for values in (spec[5] or {}).values()) for spec in specs), default=0),
+                output_rows_per_task=max((len(spec[3]) for spec in specs), default=0),
             ),
         )
         results = (
@@ -1110,6 +1122,9 @@ class ModelReport:
                 capability="process_safe",
                 has_parallel_children=True,
                 operation="模型报告新增数据集预测",
+                working_bytes_per_task=int(X.memory_usage(deep=True).sum()) + len(X) * 32,
+                result_bytes_per_task=int(X.memory_usage(deep=True).sum()) + len(X) * 16 + sum(np.asarray(values).nbytes for values in (y_dict or {}).values()),
+                output_rows_per_task=len(X),
             ),
         )[0]
         dataset = self._dataset_from_prepared(prepared) if callable(self.method) else prepared
@@ -1270,6 +1285,9 @@ class ModelReport:
                 capability="thread_safe",
                 releases_gil=True,
                 operation="模型报告二分类指标",
+                working_bytes_per_task=max((len(task[0]) * 64 for task in tasks), default=0),
+                result_bytes_per_task=32,
+                output_rows_per_task=1,
             ),
         )
 
@@ -1301,6 +1319,9 @@ class ModelReport:
                     capability="thread_safe",
                     releases_gil=True,
                     operation="模型报告评分PSI",
+                    working_bytes_per_task=max(((len(task[0]) + len(task[1])) * 64 for task in psi_tasks), default=0),
+                    result_bytes_per_task=8,
+                    output_rows_per_task=1,
                 ),
             )
             psi_row: Dict[str, Any] = {"统计项": "PSI", labels_map[base_key]: "\\"}
@@ -1706,6 +1727,9 @@ class ModelReport:
                         capability="thread_safe",
                         releases_gil=True,
                         operation="模型报告字段IV KS PSI",
+                        working_bytes_per_task=max((int(task[1].memory_usage(deep=True)) * 2 + (len(task[0]) + (len(task[2]) if task[2] is not None else 0)) * 64 for task in metric_tasks), default=0),
+                        result_bytes_per_task=24,
+                        output_rows_per_task=1,
                     ),
                 )
                 importance_df["IV"] = [values[0] for values in metric_values]
@@ -1856,10 +1880,10 @@ class ModelReport:
         try:
             summary = self.model.summary()
         except Exception as exc:
-            logger.warning("读取逻辑回归统计摘要失败 [模型=%s]: %s", type(self.model).__name__, exc)
+            self._report_warning("读取逻辑回归统计摘要失败 [模型=%s]: %s", type(self.model).__name__, exc)
             return pd.DataFrame()
         if not isinstance(summary, pd.DataFrame):
-            logger.warning("逻辑回归 summary() 未返回 DataFrame [模型=%s]", type(self.model).__name__)
+            self._report_warning("逻辑回归 summary() 未返回 DataFrame [模型=%s]", type(self.model).__name__)
             return pd.DataFrame()
 
         table = summary.copy()
@@ -1997,8 +2021,8 @@ class ModelReport:
                             self._datasets[left_key].score,
                             self._datasets[right_key].score,
                         )
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        self._report_warning("评分PSI计算失败 [基准=%s, 对比=%s]: %s", left_key, right_key, exc)
         matrix.index.name = "基准数据集"
         return matrix
 
@@ -2360,7 +2384,8 @@ class ModelReport:
             )
             self._features_summary_cache = summary_result.copy()
             return summary_result
-        except Exception:
+        except Exception as exc:
+            self._report_warning("变量综合统计失败，已回退描述统计: %s", exc)
             result = self.get_features_describe()
             self._features_summary_cache = result.copy()
             return result
@@ -2413,7 +2438,7 @@ class ModelReport:
                         row[q_col] = float(q_val)
                     rows.append(row)
                 except Exception as exc:
-                    logger.warning("生成 %s %s 的分月模型效果失败: %s", ds.label, month, exc)
+                    self._report_warning("生成 %s %s 的分月模型效果失败: %s", ds.label, month, exc)
         return pd.DataFrame(rows) if rows else pd.DataFrame()
 
     def _get_monthly_psi_matrix(self, date_col: str) -> pd.DataFrame:
@@ -2451,8 +2476,8 @@ class ModelReport:
             for j, m2 in enumerate(labels):
                 try:
                     matrix.loc[m1, m2] = psi(month_scores[m1], month_scores[m2])
-                except Exception:
-                    pass
+                except Exception as exc:
+                    self._report_warning("分月PSI计算失败 [基准=%s, 对比=%s]: %s", m1, m2, exc)
         return matrix
 
     # ---------- 8. 图表导出 ----------
@@ -2487,7 +2512,7 @@ class ModelReport:
                 _safe_close_figs()
                 model_figs.append(p)
             except Exception as exc:
-                logger.warning("生成模型评分分箱图失败 [数据集=%s, 文件=%s]: %s", tag, p, exc)
+                self._report_warning("生成模型评分分箱图失败 [数据集=%s, 文件=%s]: %s", tag, p, exc)
 
             p = str(output_dir / f"ks_{ds_key}.png")
             try:
@@ -2495,7 +2520,7 @@ class ModelReport:
                 _safe_close_figs()
                 model_figs.append(p)
             except Exception as exc:
-                logger.warning("生成模型 KS 图失败 [数据集=%s, 文件=%s]: %s", tag, p, exc)
+                self._report_warning("生成模型 KS 图失败 [数据集=%s, 文件=%s]: %s", tag, p, exc)
 
             if show_lift:
                 p = str(output_dir / f"lift_{ds_key}.png")
@@ -2504,7 +2529,7 @@ class ModelReport:
                     _safe_close_figs()
                     model_figs.append(p)
                 except Exception as exc:
-                    logger.warning("生成模型 LIFT 图失败 [数据集=%s, 文件=%s]: %s", tag, p, exc)
+                    self._report_warning("生成模型 LIFT 图失败 [数据集=%s, 文件=%s]: %s", tag, p, exc)
 
             p = str(output_dir / f"hist_{ds_key}.png")
             try:
@@ -2512,7 +2537,7 @@ class ModelReport:
                 _safe_close_figs()
                 model_figs.append(p)
             except Exception as exc:
-                logger.warning("生成模型评分分布图失败 [数据集=%s, 文件=%s]: %s", tag, p, exc)
+                self._report_warning("生成模型评分分布图失败 [数据集=%s, 文件=%s]: %s", tag, p, exc)
 
             if model_figs:
                 paths[f"model_{ds_key}"] = model_figs
@@ -2531,7 +2556,7 @@ class ModelReport:
                 _safe_close_plot_result(figure)
                 paths["feature_contribution"] = [p]
             except Exception as exc:
-                logger.warning("生成入模特征贡献图失败 [文件=%s]: %s", p, exc)
+                self._report_warning("生成入模特征贡献图失败 [文件=%s]: %s", p, exc)
 
         # --- 特征相关性图 ---
         importance = self.get_feature_importance()
@@ -2543,7 +2568,7 @@ class ModelReport:
                 _safe_close_figs()
                 paths["feature_corr"] = [p]
             except Exception as exc:
-                logger.warning("生成特征相关性图失败 [数据集=训练集, 文件=%s]: %s", p, exc)
+                self._report_warning("生成特征相关性图失败 [数据集=训练集, 文件=%s]: %s", p, exc)
 
         # --- 逐特征图表（分箱图、分布图、PSI图） ---
         ds_keys = list(self._datasets.keys())
@@ -2559,7 +2584,7 @@ class ModelReport:
                     _safe_close_figs()
                     bin_figs.append(p)
                 except Exception as exc:
-                    logger.warning(
+                    self._report_warning(
                         "生成特征分箱图失败 [特征=%s, 数据集=%s, 文件=%s]: %s",
                         feat,
                         ds.label,
@@ -2590,7 +2615,7 @@ class ModelReport:
                     _safe_close_figs()
                     ks_figs.append(p)
                 except Exception as exc:
-                    logger.warning(
+                    self._report_warning(
                         "生成特征 KS 图失败 [特征=%s, 数据集=%s, 文件=%s]: %s",
                         feat,
                         ds.label,
@@ -2631,7 +2656,7 @@ class ModelReport:
                     if isinstance(psi_result, pd.DataFrame):
                         tables[f"feat_psi_{feat}"] = psi_result
                 except Exception as exc:
-                    logger.warning("生成特征 PSI 图表失败 [特征=%s, 文件=%s]: %s", feat, p, exc)
+                    self._report_warning("生成特征 PSI 图表失败 [特征=%s, 文件=%s]: %s", feat, p, exc)
 
         # --- 评分卡专属图表 ---
         if self._is_scorecard_model():
@@ -2645,7 +2670,7 @@ class ModelReport:
                     _safe_close_plot_result(figure)
                     paths["model_weights"] = [p]
                 except Exception as exc:
-                    logger.warning("生成评分卡权重图失败 [文件=%s]: %s", p, exc)
+                    self._report_warning("生成评分卡权重图失败 [文件=%s]: %s", p, exc)
 
             if len(ds_keys) >= 2:
                 p = str(output_dir / "score_psi.png")
@@ -2679,7 +2704,7 @@ class ModelReport:
                     if isinstance(score_psi_df, pd.DataFrame):
                         tables["score_psi"] = score_psi_df
                 except Exception as exc:
-                    logger.warning("生成模型评分 PSI 图表失败 [文件=%s]: %s", p, exc)
+                    self._report_warning("生成模型评分 PSI 图表失败 [文件=%s]: %s", p, exc)
 
         return paths, tables
 
@@ -2724,7 +2749,7 @@ class ModelReport:
                     _safe_close_plot_result(figure)
                     model_figs.append(path)
                 except Exception as exc:
-                    logger.warning("生成模型评分分箱图失败 [数据集=%s, 文件=%s]: %s", tag, path, exc)
+                    self._report_warning("生成模型评分分箱图失败 [数据集=%s, 文件=%s]: %s", tag, path, exc)
 
                 path = str(output_dir / f"ks_{ds_key}.png")
                 try:
@@ -2732,7 +2757,7 @@ class ModelReport:
                     _safe_close_plot_result(figure)
                     model_figs.append(path)
                 except Exception as exc:
-                    logger.warning("生成模型 KS 图失败 [数据集=%s, 文件=%s]: %s", tag, path, exc)
+                    self._report_warning("生成模型 KS 图失败 [数据集=%s, 文件=%s]: %s", tag, path, exc)
 
                 if show_lift:
                     path = str(output_dir / f"lift_{ds_key}.png")
@@ -2748,7 +2773,7 @@ class ModelReport:
                         _safe_close_plot_result(figure)
                         model_figs.append(path)
                     except Exception as exc:
-                        logger.warning("生成模型 LIFT 图失败 [数据集=%s, 文件=%s]: %s", tag, path, exc)
+                        self._report_warning("生成模型 LIFT 图失败 [数据集=%s, 文件=%s]: %s", tag, path, exc)
 
                 path = str(output_dir / f"hist_{ds_key}.png")
                 try:
@@ -2762,7 +2787,7 @@ class ModelReport:
                     _safe_close_plot_result(figure)
                     model_figs.append(path)
                 except Exception as exc:
-                    logger.warning("生成模型评分分布图失败 [数据集=%s, 文件=%s]: %s", tag, path, exc)
+                    self._report_warning("生成模型评分分布图失败 [数据集=%s, 文件=%s]: %s", tag, path, exc)
 
                 if model_figs:
                     group_paths[f"model_{ds_key}"] = model_figs
@@ -2786,7 +2811,7 @@ class ModelReport:
                     _safe_close_plot_result(figure)
                     group_paths["feature_contribution"] = [path]
                 except Exception as exc:
-                    logger.warning("生成入模特征贡献图失败 [文件=%s]: %s", path, exc)
+                    self._report_warning("生成入模特征贡献图失败 [文件=%s]: %s", path, exc)
                 return group_paths, {}
 
             add_plot_group("入模特征贡献图", render_contribution_group)
@@ -2802,7 +2827,7 @@ class ModelReport:
                     _safe_close_plot_result(figure)
                     group_paths["feature_corr"] = [path]
                 except Exception as exc:
-                    logger.warning("生成特征相关性图失败 [数据集=训练集, 文件=%s]: %s", path, exc)
+                    self._report_warning("生成特征相关性图失败 [数据集=训练集, 文件=%s]: %s", path, exc)
                 return group_paths, {}
 
             add_plot_group("特征相关性图", render_corr_group)
@@ -2835,7 +2860,7 @@ class ModelReport:
                         _safe_close_plot_result(figure)
                         bin_figs.append(path)
                     except Exception as exc:
-                        logger.warning(
+                        self._report_warning(
                             "生成特征分箱图失败 [特征=%s, 数据集=%s, 文件=%s]: %s",
                             feature,
                             ds.label,
@@ -2868,7 +2893,7 @@ class ModelReport:
                         _safe_close_plot_result(figure)
                         ks_figs.append(path)
                     except Exception as exc:
-                        logger.warning(
+                        self._report_warning(
                             "生成特征 KS 图失败 [特征=%s, 数据集=%s, 文件=%s]: %s",
                             feature,
                             ds.label,
@@ -2907,7 +2932,7 @@ class ModelReport:
                         if isinstance(psi_result, pd.DataFrame):
                             group_tables[f"feat_psi_{feature}"] = psi_result
                     except Exception as exc:
-                        logger.warning("生成特征 PSI 图表失败 [特征=%s, 文件=%s]: %s", feature, path, exc)
+                        self._report_warning("生成特征 PSI 图表失败 [特征=%s, 文件=%s]: %s", feature, path, exc)
 
                 return group_paths, group_tables
 
@@ -2927,7 +2952,7 @@ class ModelReport:
                         _safe_close_plot_result(figure)
                         group_paths["model_weights"] = [path]
                     except Exception as exc:
-                        logger.warning("生成评分卡权重图失败 [文件=%s]: %s", path, exc)
+                        self._report_warning("生成评分卡权重图失败 [文件=%s]: %s", path, exc)
 
                 if len(ds_keys) >= 2:
                     path = str(output_dir / "score_psi.png")
@@ -2960,7 +2985,7 @@ class ModelReport:
                         if isinstance(score_psi, pd.DataFrame):
                             group_tables["score_psi"] = score_psi
                     except Exception as exc:
-                        logger.warning("生成模型评分 PSI 图表失败 [文件=%s]: %s", path, exc)
+                        self._report_warning("生成模型评分 PSI 图表失败 [文件=%s]: %s", path, exc)
 
                 return group_paths, group_tables
 
@@ -3191,9 +3216,44 @@ class ModelReport:
         feature_contribution_label_max_features: Optional[int] = 10,
         data_source: Optional[str] = None,
         loc_cols: Optional[Union[str, List[str]]] = None,
+        mode: Optional[str] = None,
+        return_result: bool = False,
+        transactional: bool = False,
+        include_sample_records: bool = True,
     ) -> str:
-        """事务性生成 Excel；失败时恢复进入调用前的全部派生缓存。"""
-        return self._run_cache_transaction(
+        """事务性生成 Excel；失败时恢复派生缓存。
+
+        mode为strict或best_effort时启用章节状态协议；默认保留原返回路径。
+        return_result=True 返回 ReportResult，并在失败时保留结构化诊断。
+        transactional=True 使用不可变版本目录＋完成清单统一发布Excel和图片，
+        默认按strict检查；返回实际版本文件路径，不覆盖原filepath或旧版本。
+        include_sample_records=False 不导出生产订单样例及逐行模型分数，章节标记为不适用；
+        此开关不替代显式模型解释配置中对个体解释的选择。
+        """
+        if not isinstance(include_sample_records, (bool, np.bool_)):
+            raise ValueError("include_sample_records 必须为布尔值")
+        if transactional:
+            options = dict(locals())
+            for key in ("self", "filepath", "transactional"):
+                options.pop(key)
+            return self._to_excel_transactional(filepath, options)
+        from .result import ReportGenerationError, ReportResult
+
+        result = ReportResult(mode=mode or "best_effort", metadata={"报告类型": "模型报告"}) if mode is not None or return_result else None
+        previous = getattr(self, "_execution_result", None)
+        self._execution_result = result
+        if result is not None:
+            result.metadata["包含订单样例明细"] = bool(include_sample_records)
+            result.plan("核心数据计算")
+            result.current_section = "核心数据计算"
+            result.plan("图形生成")
+            if not with_plots:
+                result.skip("图形生成", "with_plots=False")
+            result.plan("生产订单测试用例")
+            if not include_sample_records:
+                result.skip("生产订单测试用例", "include_sample_records=False，未导出逐行订单及模型分数")
+        try:
+            path = self._run_cache_transaction(
             self._to_excel_impl,
             filepath,
             n_bins=n_bins,
@@ -3212,7 +3272,69 @@ class ModelReport:
             feature_contribution_label_max_features=feature_contribution_label_max_features,
             data_source=data_source,
             loc_cols=loc_cols,
-        )
+            include_sample_records=include_sample_records,
+            )
+            if result is not None:
+                result.artifacts.append({"类型": "Excel", "路径": str(path), "完整": result.complete})
+            return result if return_result else path
+        except Exception as exc:
+            if result is not None:
+                result.failure(getattr(result, "current_section", "报告执行或发布"), f"{type(exc).__name__}: {exc}")
+                if result.mode == "strict":
+                    raise ReportGenerationError(f"模型报告未完成: {exc}", result) from exc
+                if return_result:
+                    return result
+            raise
+        finally:
+            if result is not None:
+                self.last_report_result_ = result
+            self._execution_result = previous
+
+    def _to_excel_transactional(self, filepath, options):
+        """复用Skills层已验证的整批发布协议，不逐个覆盖正式图片。"""
+        from ..skills_runtime.artifacts import ArtifactTransaction
+        from .result import ReportGenerationError, ReportResult
+
+        destination = Path(filepath).resolve()
+        if destination.suffix.lower() != ".xlsx":
+            raise ValueError("事务模型报告路径必须使用 .xlsx 后缀")
+        options = dict(options)
+        return_result = options.pop("return_result")
+        mode = options.pop("mode") or "strict"
+        result = ReportResult(mode=mode, metadata={"报告类型": "模型报告", "事务发布": True})
+
+        def publish_bundle():
+            nonlocal result
+            with ArtifactTransaction({"directory": str(destination.parent), "name": destination.stem, "overwrite": True}) as transaction:
+                staged = transaction.stage_path(destination.name)
+                result = self.to_excel(str(staged), mode=mode, return_result=True, **options)
+                if not staged.is_file():
+                    raise ReportGenerationError("模型报告计算失败，未生成可发布工作簿", result)
+                # 内层记录的只是暂存文件，不应暴露为已发布制品。
+                result.artifacts = []
+                workbook = transaction.publish(staged, destination.name, artifact_type="excel")
+                assets = sorted(path for path in transaction.staging_dir.rglob("*") if path.is_file() and path != staged)
+                for asset in assets:
+                    transaction.publish(asset, str(asset.relative_to(transaction.staging_dir)), artifact_type="image" if asset.suffix.lower() in {".png", ".jpg", ".jpeg", ".svg"} else "file")
+                status_file = transaction.write_json("report-status.json", {"报告完整": result.complete, "运行口径": result.metadata, "章节": result.status_table().to_dict(orient="records")})
+                transaction.publish(status_file, "report-status.json", artifact_type="json")
+            # 只有成功退出事务（完成清单已原子发布）才公布正式路径。
+            result.metadata.update({"事务发布": True, "完成清单": str(transaction.manifest_path), "版本目录": str(transaction.run_dir)})
+            result.artifacts = [{"类型": item["type"], "路径": item["path"], "完整": result.complete} for item in transaction.artifacts]
+            self.last_report_result_ = result
+            return result if return_result else workbook["path"]
+
+        try:
+            return self._run_cache_transaction(publish_bundle)
+        except Exception as exc:
+            if isinstance(exc, ReportGenerationError):
+                result = exc.result
+            result.artifacts = []
+            result.failure("整批产物发布", f"{type(exc).__name__}: {exc}")
+            self.last_report_result_ = result
+            if return_result and mode == "best_effort":
+                return result
+            raise ReportGenerationError(f"模型报告整批发布失败: {exc}", result) from exc
 
     def _to_excel_impl(
         self,
@@ -3234,6 +3356,7 @@ class ModelReport:
         feature_contribution_label_max_features: Optional[int] = 10,
         data_source: Optional[str] = None,
         loc_cols: Optional[Union[str, List[str]]] = None,
+        include_sample_records: bool = True,
     ) -> str:
         """生成多 Sheet 结构的 Excel 模型报告.
 
@@ -3248,6 +3371,7 @@ class ModelReport:
         :param feature_contribution_label_max_features: 贡献图显示数据标签的最大特征数；默认 10，
             ``None`` 始终显示，0 始终隐藏
         :param loc_cols: 定位字段（订单号等），支持 str 或 List[str]，仅用于生产订单测试用例
+        :param include_sample_records: 是否导出生产订单样例；False保留不适用说明，不写逐行数据
         """
         from ..excel import ExcelWriter, dataframe2excel as _dataframe2excel
 
@@ -3271,6 +3395,14 @@ class ModelReport:
             date_col=date_col,
             show_importance=show_importance,
         )
+        execution_result = getattr(self, "_execution_result", None)
+        if execution_result is not None:
+            execution_result.success("核心数据计算")
+            for column, label in ((date_col, "日期字段"), (group_col, "分组字段"), (amount_col, "金额字段")):
+                if column is not None:
+                    missing = [ds.label for ds in self._datasets.values() if column not in ds.X.columns]
+                    if missing:
+                        execution_result.failure(label, f"请求字段 {column} 在以下数据集中缺失: {missing}")
         feature_contribution_label_max_features = self._validate_feature_contribution_label_limit(
             feature_contribution_label_max_features
         )
@@ -3279,6 +3411,8 @@ class ModelReport:
         plot_paths: Dict[str, List[str]] = {}
         psi_tables: Dict[str, pd.DataFrame] = {}
         if with_plots:
+            if execution_result is not None:
+                execution_result.current_section = "图形生成"
             plot_dir = Path(filepath).parent / f"{Path(filepath).stem}_assets"
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
@@ -3290,7 +3424,15 @@ class ModelReport:
                     show_lift=show_lift,
                     feature_contribution_label_max_features=feature_contribution_label_max_features,
                 )
+            if execution_result is not None:
+                missing_plots = [ds.label for key, ds in self._datasets.items() if not plot_paths.get(f"model_{key}")]
+                if missing_plots:
+                    execution_result.failure("图形生成", f"以下数据集未生成模型图: {missing_plots}")
+                else:
+                    execution_result.success("图形生成")
 
+        if execution_result is not None:
+            execution_result.current_section = "工作簿渲染"
         writer = ExcelWriter()
         title_pattern = re.compile(r"^(?:[一二三四五六七八九十]+|\d+(?:\.\d+)*)、")
 
@@ -3863,7 +4005,7 @@ class ModelReport:
                     current_col = _next_image_col(ws, current_col, 500)
                     max_img_end_row = max(max_img_end_row, img_end_row)
                 except Exception as exc:
-                    logger.warning("插入可选图表失败 [工作表=%s, 文件=%s]: %s", ws.title, fig, exc)
+                    self._report_warning("插入可选图表失败 [工作表=%s, 文件=%s]: %s", ws.title, fig, exc)
             if figs:
                 end_row = max_img_end_row
 
@@ -4098,7 +4240,7 @@ class ModelReport:
                     current_col = _next_image_col(ws, current_col, 500)
                     max_img_end_row = max(max_img_end_row, img_end_row)
                 except Exception as exc:
-                    logger.warning("插入可选图表失败 [工作表=%s, 文件=%s]: %s", ws.title, fig, exc)
+                    self._report_warning("插入可选图表失败 [工作表=%s, 文件=%s]: %s", ws.title, fig, exc)
             if all_figs:
                 end_row = max_img_end_row  # 跳过图片占用的所有行，避免重叠
 
@@ -4175,7 +4317,7 @@ class ModelReport:
                     try:
                         end_row, _ = writer.insert_pic2sheet(ws, fig_path, (end_row + 1, 2), figsize=(500, 300))
                     except Exception as exc:
-                        logger.warning(
+                        self._report_warning(
                             "插入可选图表失败 [工作表=%s, 文件=%s]: %s",
                             ws.title,
                             fig_path,
@@ -4265,7 +4407,7 @@ class ModelReport:
                         try:
                             psi_matrix.iloc[i, j] = _psi(self._datasets[k1].score, self._datasets[k2].score)
                         except Exception as exc:
-                            logger.warning(
+                            self._report_warning(
                                 "计算评分 PSI 失败 [基准数据集=%s, 对比数据集=%s]: %s",
                                 self._datasets[k1].label,
                                 self._datasets[k2].label,
@@ -4356,7 +4498,8 @@ class ModelReport:
                             psi_val = _psi_feat(base_ds.X[feat], self._datasets[dk].X[feat])
                             row[f"PSI({self._datasets[dk].label})"] = psi_val
                             has_psi = True
-                        except Exception:
+                        except Exception as exc:
+                            self._report_warning("特征PSI计算失败 [特征=%s, 数据集=%s]: %s", feat, dk, exc)
                             row[f"PSI({self._datasets[dk].label})"] = np.nan
                 if has_psi:
                     psi_rows.append(row)
@@ -4403,7 +4546,7 @@ class ModelReport:
             try:
                 params_str = str(self.model.get_params())
             except Exception as exc:
-                logger.warning("读取模型参数失败 [模型=%s]: %s", model_name, exc)
+                self._report_warning("读取模型参数失败 [模型=%s]: %s", model_name, exc)
         if not params_str and hasattr(self.model, "__dict__"):
             params_str = str({k: v for k, v in self.model.__dict__.items() if not k.startswith("_") and not callable(v)})
         end_row, _ = writer.insert_value2sheet(ws, (end_row, 2), value=params_str or "N/A", style="middle", align={"horizontal": "left"})
@@ -4440,7 +4583,7 @@ class ModelReport:
                 )
                 end_row = max(end_row, contribution_end_row)
             except Exception as exc:
-                logger.warning(
+                self._report_warning(
                     "插入入模特征贡献图失败 [工作表=%s, 文件=%s]: %s",
                     ws.title,
                     contribution_figures[0],
@@ -4506,7 +4649,7 @@ class ModelReport:
                     try:
                         end_row, _ = writer.insert_pic2sheet(ws, fig_path, (end_row + 1, 2), figsize=(500, 300))
                     except Exception as exc:
-                        logger.warning(
+                        self._report_warning(
                             "插入可选图表失败 [工作表=%s, 文件=%s]: %s",
                             ws.title,
                             fig_path,
@@ -4621,7 +4764,7 @@ class ModelReport:
                         try:
                             end_row, _ = writer.insert_pic2sheet(ws, fig_path, (end_row + 1, 2), figsize=(500, 300))
                         except Exception as exc:
-                            logger.warning(
+                            self._report_warning(
                                 "插入可选图表失败 [工作表=%s, 文件=%s]: %s",
                                 ws.title,
                                 fig_path,
@@ -4657,35 +4800,39 @@ class ModelReport:
                 )
             end_row, _ = dataframe2excel(pd.DataFrame(fi_rows), writer, sheet_name=ws, start_row=end_row + 1)
 
-        # 6.2 生产订单测试用例
-        end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value="2、生产订单测试用例", style="header_middle", align={"horizontal": "left"})
-        try:
-            train_ds = self._datasets[self._train_key]
-            sample_n = min(5, len(train_ds.X))
-            sample_X = train_ds.X[self.feature_names].iloc[:sample_n].copy()
+        # 6.2 生产订单测试用例；关闭时不创建、读取或写入逐行样例表。
+        sample_title = "2、生产订单测试用例" if include_sample_records else "2、生产订单测试用例（不适用：已关闭明细输出）"
+        end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value=sample_title, style="header_middle", align={"horizontal": "left"})
+        if include_sample_records:
+            try:
+                train_ds = self._datasets[self._train_key]
+                sample_n = min(5, len(train_ds.X))
+                sample_X = train_ds.X[self.feature_names].iloc[:sample_n].copy()
 
-            # 支持定位字段（订单号等）显示在最前方
-            if loc_cols:
-                if isinstance(loc_cols, str):
-                    loc_cols = [loc_cols]
-                loc_cols = [c for c in loc_cols if c in train_ds.X.columns]
+                # 支持定位字段（订单号等）显示在最前方
+                if loc_cols:
+                    if isinstance(loc_cols, str):
+                        loc_cols = [loc_cols]
+                    loc_cols = [c for c in loc_cols if c in train_ds.X.columns]
 
-            test_cases = sample_X.reset_index(drop=True)
-            if loc_cols:
-                loc_df = train_ds.X[loc_cols].iloc[:sample_n].reset_index(drop=True)
-                for i, col in enumerate(loc_cols):
-                    test_cases.insert(i, col, loc_df[col])
-            test_cases.insert(0, "序号", range(1, sample_n + 1))
-            test_cases["模型分数"] = train_ds.score[:sample_n]
-            end_row, _ = dataframe2excel(
-                test_cases,
-                writer,
-                sheet_name=ws,
-                start_row=end_row + 1,
-                auto_filter=True,
-            )
-        except Exception as exc:
-            raise RuntimeError("生成生产订单测试用例失败") from exc
+                test_cases = sample_X.reset_index(drop=True)
+                if loc_cols:
+                    loc_df = train_ds.X[loc_cols].iloc[:sample_n].reset_index(drop=True)
+                    for i, col in enumerate(loc_cols):
+                        test_cases.insert(i, col, loc_df[col])
+                test_cases.insert(0, "序号", range(1, sample_n + 1))
+                test_cases["模型分数"] = train_ds.score[:sample_n]
+                end_row, _ = dataframe2excel(
+                    test_cases,
+                    writer,
+                    sheet_name=ws,
+                    start_row=end_row + 1,
+                    auto_filter=True,
+                )
+                if execution_result is not None:
+                    execution_result.success("生产订单测试用例")
+            except Exception as exc:
+                raise RuntimeError("生成生产订单测试用例失败") from exc
 
         # ============================================================
         # 7-模型解释 Sheet（显式启用）
@@ -4696,6 +4843,8 @@ class ModelReport:
             end_row, _ = writer.insert_value2sheet(ws, (2, 2), value="七、模型解释", style="header_middle")
             _insert_required_hyperlink(ws, (2, 2), hyperlink="#'目录'!B2", purpose="返回目录链接")
             if "失败原因" in explanation:
+                if execution_result is not None:
+                    execution_result.failure("模型解释", str(explanation["失败原因"]))
                 end_row, _ = dataframe2excel(
                     pd.DataFrame([{"失败原因": explanation["失败原因"]}]),
                     writer,
@@ -4775,6 +4924,17 @@ class ModelReport:
         ]:
             if sheet_name in writer.workbook.sheetnames:
                 _adjust_report_title_merges(writer.workbook[sheet_name])
+        if execution_result is not None:
+            for sheet_name in writer.workbook.sheetnames:
+                if sheet_name != "初始化":
+                    execution_result.success(f"工作表：{sheet_name}")
+            execution_result.ensure_publishable()
+            status_sheet = writer.get_sheet_by_name("报告执行状态")
+            writer.move_sheet(status_sheet, index=0)
+            writer.insert_value2sheet(status_sheet, "B2", "报告完整" if execution_result.complete else "报告不完整：请检查失败章节", style="header")
+            writer.insert_df2sheet(status_sheet, execution_result.status_table(), "B4", index=False, auto_width=True)
+        if execution_result is not None:
+            execution_result.current_section = "工作簿发布"
         writer.save(filepath)
         return filepath
 
@@ -4842,6 +5002,10 @@ def auto_model_report(
     parallel_config: Optional[Dict[str, Any]] = None,
     *,
     overdue_operator: Optional[str] = None,
+    mode: Optional[str] = None,
+    return_result: bool = False,
+    transactional: bool = False,
+    include_sample_records: bool = True,
     **kwargs,
 ) -> ModelReport:
     """一键生成模型报告.
@@ -4927,6 +5091,7 @@ def auto_model_report(
         ``None`` 始终显示，0 始终隐藏
     :param data_source: 数据源描述
     :param loc_cols: 定位字段（订单号等），支持 str 或 List[str]，用于生产测试用例列
+    :param include_sample_records: 是否输出逐行订单/模型分数测试用例，默认True；False标记该章节不适用
     :param method: 数据集唯一预测方法，默认 ``predict_proba``，也支持 callable
     :param method_kwargs: callable 同名参数的显式覆盖字典
     :param n_jobs: 并行工作数；-1 自动保留 CPU，None 使用兼容串行模式
@@ -4940,6 +5105,8 @@ def auto_model_report(
         ``del_grey=True`` 时，``>`` 剔除 ``(0, dpd]``，``>=`` 剔除 ``(0, dpd)``；
         ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
     """
+    if mode is not None and mode not in {"strict", "best_effort"}:
+        raise ValueError("报告 mode 必须为 'strict' 或 'best_effort'")
     if overdue_operator is not None:
         validate_overdue_operator(overdue_operator)
     report = ModelReport(
@@ -4969,7 +5136,7 @@ def auto_model_report(
         report.print_report(n_bins=n_bins)
 
     if excel_path:
-        report.to_excel(
+        execution_result = report.to_excel(
             excel_path,
             n_bins=n_bins,
             bin_method=bin_method,
@@ -4987,10 +5154,23 @@ def auto_model_report(
             feature_contribution_label_max_features=feature_contribution_label_max_features,
             data_source=data_source,
             loc_cols=loc_cols,
+            mode=mode,
+            return_result=return_result,
+            transactional=transactional,
+            include_sample_records=include_sample_records,
         )
         if verbose:
             logger.info(f"\nExcel 报告已保存: {excel_path}")
 
+        if return_result:
+            return execution_result
+    if return_result:
+        from .result import ReportResult
+        result = ReportResult(mode=mode or "best_effort", metadata={"报告类型": "模型报告", "未导出": True})
+        result.plan("模型摘要")
+        result.run("模型摘要", report.summary)
+        report.last_report_result_ = result
+        return result
     return report
 
 

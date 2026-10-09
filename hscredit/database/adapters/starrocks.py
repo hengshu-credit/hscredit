@@ -6,6 +6,7 @@
 import base64
 import json
 import uuid
+from dataclasses import replace
 from collections.abc import MutableMapping
 from typing import Any, List, Mapping, Optional, Sequence, Tuple
 from urllib import request as urllib_request
@@ -28,6 +29,7 @@ class StarRocksAdapter(MySQLAdapter):
     """StarRocks MySQL 协议与 Stream Load 适配器。"""
 
     database_type = "starrocks"
+    capabilities = replace(MySQLAdapter.capabilities, atomic_replace=False)
 
     def json_extract_expression(self, column_sql: str, path: str) -> str:
         """使用 StarRocks ``GET_JSON_STRING`` 提取 JSON 路径。"""

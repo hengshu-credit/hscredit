@@ -1,0 +1,1 @@
+{'max_depth': 3, 'learning_rate': 0.0775357153204958, 'n_estimators': 30, 'num_leaves': 7, 'validation_fraction': 0.0, 'verbosity': -1}

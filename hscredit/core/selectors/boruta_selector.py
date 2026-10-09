@@ -37,6 +37,7 @@ except ImportError:  # scipy 1.5/1.6 兼容路径
 
 
 from .base import BaseFeatureSelector, get_feature_importances
+from ._selection_history import initialize_history, record_event
 
 
 class BorutaSelector(BaseFeatureSelector):
@@ -103,6 +104,10 @@ class BorutaSelector(BaseFeatureSelector):
         binning_params: Optional[Dict[str, Any]] = None,
         parallel_backend: Optional[str] = None,
         parallel_config: Optional[Dict[str, Any]] = None,
+        target_rm: bool = False,
+        report_history: str = "summary",
+        max_report_events: int = 10000,
+        max_report_bytes: int = 8 * 1024 * 1024,
     ):
         super().__init__(
             target=target,
@@ -114,12 +119,16 @@ class BorutaSelector(BaseFeatureSelector):
             binning_params=binning_params,
             parallel_backend=parallel_backend,
             parallel_config=parallel_config,
+            target_rm=target_rm,
         )
         self.estimator = estimator
         self.n_estimators = n_estimators
         self.max_iter = max_iter
         self.alpha = alpha
         self.random_state = random_state
+        self.report_history = report_history
+        self.max_report_events = max_report_events
+        self.max_report_bytes = max_report_bytes
 
         # 默认使用随机森林
 
@@ -134,6 +143,7 @@ class BorutaSelector(BaseFeatureSelector):
         :param y: 目标变量
         """
         self._get_feature_names(X)
+        initialize_history(self)
 
         if y is None:
             raise ValueError("BorutaSelector 需要目标变量 y")
@@ -159,7 +169,7 @@ class BorutaSelector(BaseFeatureSelector):
         # 保持与 chi2/mutual_info/f_test 等筛选器对原始信贷数据的鲁棒性一致
         X_prepared = X.copy()
         for col in X_prepared.columns:
-            if X_prepared[col].dtype == "object":
+            if not pd.api.types.is_numeric_dtype(X_prepared[col].dtype):
                 X_prepared[col] = pd.factorize(X_prepared[col])[0]
         if X_prepared.isna().any().any():
             X_prepared = X_prepared.fillna(X_prepared.median(numeric_only=True)).fillna(0)
@@ -180,8 +190,14 @@ class BorutaSelector(BaseFeatureSelector):
         # 每一轮都让全部真实特征与本轮最大影子重要性比较。最终通过命中次数
         # 的单侧二项检验作决定，避免早期一次失手导致永久剔除。
         hits = np.zeros(n_features, dtype=int)
-        importance_history = np.zeros((int(self.max_iter), n_features), dtype=float)
-        shadow_thresholds = np.zeros(int(self.max_iter), dtype=float)
+        retained_rounds = min(
+            int(self.max_iter),
+            self.max_report_events // max(1, n_features),
+            self.max_report_bytes // (16 * max(1, n_features) + 256),
+        )
+        importance_history = np.zeros((retained_rounds, n_features), dtype=float)
+        shadow_thresholds = np.zeros(retained_rounds, dtype=float)
+        importance_sum = np.zeros(n_features, dtype=float)
         history = []
 
         for iteration in range(int(self.max_iter)):
@@ -203,7 +219,12 @@ class BorutaSelector(BaseFeatureSelector):
             # 获取特征重要性（兼容所有模型类型）
             importances = np.asarray(get_feature_importances(model), dtype=float).reshape(-1)
             if importances.size != 2 * n_features:
-                raise ValueError("Boruta 基模型返回的特征重要性长度与真实特征和影子特征总数不一致: " f"期望 {2 * n_features}，实际 {importances.size}")
+                raise ValueError(
+                    "Boruta 基模型返回的特征重要性长度与真实特征和影子特征总数不一致: "
+                    f"期望 {2 * n_features}，实际 {importances.size}"
+                )
+            if not np.isfinite(importances).all():
+                raise ValueError("Boruta 模型重要性必须全部为有限数值")
 
             # 分离真实和影子特征重要性
             real_importances = importances[:n_features]
@@ -213,24 +234,48 @@ class BorutaSelector(BaseFeatureSelector):
             shadow_max = np.max(shadow_importances) if len(shadow_importances) > 0 else 0.0
             round_hits = real_importances > shadow_max
             hits += round_hits.astype(int)
-            importance_history[iteration] = real_importances
-            shadow_thresholds[iteration] = shadow_max
+            importance_sum += real_importances
+            if iteration < retained_rounds:
+                importance_history[iteration] = real_importances
+                shadow_thresholds[iteration] = shadow_max
+            for index, feature in enumerate(feature_names):
+                record_event(
+                    self,
+                    {
+                        "轮次": iteration + 1,
+                        "特征": feature,
+                        "动作": "影子比较",
+                        "指标名称": "模型特征重要性",
+                        "指标值": float(real_importances[index]),
+                        "有效阈值": float(shadow_max),
+                        "是否有效": True,
+                        "原因": "超过最大影子重要性" if round_hits[index] else "未超过最大影子重要性",
+                    },
+                    diagnostic=True,
+                )
 
             # 记录历史
-            history.append(
-                {
-                    "iteration": iteration,
-                    "selected": int(round_hits.sum()),
-                    "shadow_max": float(shadow_max),
-                    "hits": hits.copy(),
-                }
-            )
+            if iteration < retained_rounds:
+                history.append(
+                    {
+                        "iteration": iteration,
+                        "selected": int(round_hits.sum()),
+                        "shadow_max": float(shadow_max),
+                        "hits": hits.copy(),
+                    }
+                )
 
         p_values = np.array(
             [_binomial_greater_pvalue(int(hit), int(self.max_iter)) for hit in hits],
             dtype=float,
         )
         corrected_alpha = float(self.alpha) / max(1, n_features)
+        self.corrected_alpha_ = corrected_alpha
+        self.effective_threshold_ = corrected_alpha
+        self.score_name_ = "影子重要性胜出比例"
+        self.score_direction_ = "越大越好"
+        self.selection_stopping_reason_ = "完成固定轮数并执行多重比较校正二项检验"
+        self.history_truncated_ = int(self.max_iter) - retained_rounds
         support = p_values <= corrected_alpha
         weak_support = (~support) & (hits > int(self.max_iter) / 2)
 
@@ -245,8 +290,26 @@ class BorutaSelector(BaseFeatureSelector):
         self.history_ = history
         self.importance_history_ = pd.DataFrame(importance_history, columns=feature_names)
         self.shadow_thresholds_ = pd.Series(shadow_thresholds, name="最大影子重要性")
-        self.importance_scores_ = self.importance_history_.mean(axis=0)
+        self.importance_scores_ = pd.Series(importance_sum / int(self.max_iter), index=feature_names)
         self.scores_ = self.hits_.astype(float) / int(self.max_iter)
         self.selected_features_ = [feature for feature in feature_names if bool(self.support_[feature])]
         self.tentative_features_ = [feature for feature in feature_names if bool(self.support_weak_[feature])]
         self._drop_reason = "Boruta 二项检验未显著优于影子特征"
+        for feature in feature_names:
+            record_event(
+                self,
+                {
+                    "轮次": int(self.max_iter),
+                    "特征": feature,
+                    "动作": "保留" if self.support_[feature] else "剔除",
+                    "指标名称": "二项检验p值",
+                    "指标值": float(self.p_values_[feature]),
+                    "有效阈值": corrected_alpha,
+                    "是否有效": True,
+                    "原因": (
+                        "多重比较校正后显著"
+                        if self.support_[feature]
+                        else ("待确认，未达到显著性要求" if self.support_weak_[feature] else "未显著优于影子特征")
+                    ),
+                },
+            )

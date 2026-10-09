@@ -18,264 +18,162 @@
 
 from typing import Callable, Tuple
 import numpy as np
-from .base import BaseLoss, BaseMetric, _margin_derivatives
+from .base import BaseLoss, BaseMetric
+from scipy.special import expit
 
 
 class XGBoostLossAdapter:
-    """XGBoost损失函数适配器.
+    """XGBoost 目标与配套指标，默认使用原生 train 接口。
 
-    将自定义损失函数转换为XGBoost可用的格式。
+    **参数**
 
-    :param loss: 损失函数对象
+    :param loss: BaseLoss 实例，训练接收一维原始分数并自动处理样本权重。
+
+    **属性**
+
+    ``loss`` 保存目标对象；指标默认使用独立的损失参数快照。
 
     **参考样例**
 
-    >>> import xgboost as xgb
     >>> from hscredit.core.models.losses import FocalLoss, XGBoostLossAdapter
-    >>>
-    >>> # 创建损失函数
-    >>> loss = FocalLoss(alpha=0.75, gamma=2.0)
-    >>> adapter = XGBoostLossAdapter(loss)
-    >>>
-    >>> # 在XGBoost中使用
-    >>> dtrain = xgb.DMatrix(X_train, label=y_train)
-    >>> params = {
-    ...     'objective': 'binary:logistic',
-    ...     'eval_metric': 'auc'
-    ... }
-    >>> bst = xgb.train(
-    ...     params,
-    ...     dtrain,
-    ...     obj=adapter.objective(),
-    ...     num_boost_round=100
-    ... )
+    >>> adapter = XGBoostLossAdapter(FocalLoss(alpha=0.75))
+    >>> objective = adapter.objective(api='sklearn')
+    >>> eval_metric = adapter.metric(api='sklearn')
     """
 
     def __init__(self, loss: BaseLoss):
         self.loss = loss
 
-    def objective(self) -> Callable:
-        """获取XGBoost目标函数.
+    def objective(self, api="native"):
+        """生成训练目标。
 
-        :return: XGBoost格式的目标函数
+        :param api: ``'native'`` 接收 (preds, DMatrix)，``'sklearn'`` 接收
+            (y_true, y_pred, sample_weight=None)；预测均为原始分数。
+        :return: 回调，返回对原始分数求导的 (grad, hess) 数组。
+
+        >>> from hscredit.core.models.losses import FocalLoss, XGBoostLossAdapter
+        >>> objective = XGBoostLossAdapter(FocalLoss()).objective()
         """
+        return self.loss.to_xgboost(api=api)
 
-        def xgb_objective(preds: np.ndarray, dtrain) -> Tuple[np.ndarray, np.ndarray]:
-            """XGBoost目标函数格式.
+    def metric(self, metric=None, api="native"):
+        """生成配合本自定义目标使用的评估回调，自动转换原始分数。
 
-            :param preds: 预测值（原始分数，需要转换为概率）
-            :param dtrain: 训练数据
-            :return: (梯度, 二阶导数)
-            """
-            # 获取标签
-            labels = dtrain.get_label()
+        :param metric: BaseMetric 实例，默认 ``loss.metric()``。
+        :param api: ``'native'`` 或 ``'sklearn'``，须与训练接口相同。
+        :return: native 返回 (name, value)，sklearn 返回 value 的回调。
+            不改变指标符号，早停方向须按 metric.greater_is_better 配置。
 
-            # 将原始分数转换为概率（sigmoid）
-            probs = 1.0 / (1.0 + np.exp(-preds))
-
-            return _margin_derivatives(self.loss, labels, probs)
-
-        return xgb_objective
-
-    def metric(self, metric: BaseMetric) -> Callable:
-        """获取XGBoost评估指标.
-
-        :param metric: 评估指标对象
-        :return: XGBoost格式的评估指标
+        >>> from hscredit.core.models.losses import FocalLoss, AUCMetric, XGBoostLossAdapter
+        >>> callback = XGBoostLossAdapter(FocalLoss()).metric(AUCMetric())
         """
-
-        def xgb_metric(preds: np.ndarray, dtrain) -> Tuple[str, float]:
-            """XGBoost评估指标格式.
-
-            :param preds: 预测值（原始分数）
-            :param dtrain: 数据
-            :return: (指标名称, 指标值)
-            """
-            labels = dtrain.get_label()
-            probs = 1.0 / (1.0 + np.exp(-preds))
-            value = metric(labels, probs)
-            return metric.name, value
-
-        return xgb_metric
+        metric = self.loss.metric() if metric is None else metric
+        return metric.to_xgboost(api=api, raw_score=True)
 
 
 class LightGBMLossAdapter:
-    """LightGBM损失函数适配器.
+    """LightGBM 目标与配套指标，原生 train 需指定 api='native'。
 
-    将自定义损失函数转换为LightGBM可用的格式。
+    **参数**
 
-    :param loss: 损失函数对象
+    :param loss: BaseLoss 实例，训练输入为一维原始分数。
+
+    **属性**
+
+    ``loss`` 保存损失对象，样本权重与链接函数由目标回调统一处理。
 
     **参考样例**
 
-    >>> import lightgbm as lgb
-    >>> from hscredit.core.models.losses import CostSensitiveLoss, LightGBMLossAdapter
-    >>>
-    >>> loss = CostSensitiveLoss(fn_cost=100, fp_cost=1)
-    >>> adapter = LightGBMLossAdapter(loss)
-    >>>
-    >>> train_data = lgb.Dataset(X_train, label=y_train)
-    >>> # objective() 采用 (y_true, y_pred) -> (grad, hess) 约定，
-    >>> # 通过 params['objective'] 传入（LightGBM 4.0 起已移除 fobj 参数）
-    >>> bst = lgb.train(
-    ...     params={'objective': adapter.objective(), 'metric': 'auc'},
-    ...     train_set=train_data,
-    ...     num_boost_round=100
-    ... )
+    >>> from hscredit.core.models.losses import FocalLoss, LightGBMLossAdapter
+    >>> adapter = LightGBMLossAdapter(FocalLoss())
+    >>> objective, eval_metric = adapter.objective(), adapter.metric()
     """
 
     def __init__(self, loss: BaseLoss):
         self.loss = loss
 
-    def objective(self) -> Callable:
-        """获取LightGBM目标函数.
+    def objective(self, api="sklearn"):
+        """生成接收原始分数并返回 (grad, hess) 的训练回调。
 
-        :return: LightGBM格式的目标函数
+        :param api: 默认 ``'sklearn'`` 接收 (y_true, y_pred, sample_weight=None)；
+            ``'native'`` 接收 (preds, Dataset)，用于 params['objective']。
+        :return: 目标回调，自动应用 sigmoid 和数据集权重。
+
+        >>> from hscredit.core.models.losses import FocalLoss, LightGBMLossAdapter
+        >>> objective = LightGBMLossAdapter(FocalLoss()).objective(api='native')
         """
+        return self.loss.to_lightgbm(api=api)
 
-        def lgb_objective(y_true: np.ndarray, y_pred: np.ndarray):
-            """LightGBM目标函数格式.
+    def metric(self, metric=None, api="sklearn"):
+        """生成自动转换原始分数的评估回调，和自定义目标配套使用。
 
-            :param y_true: 真实标签
-            :param y_pred: 预测值（原始分数）
-            :return: (梯度, 二阶导数)
-            """
-            # 将原始分数转换为概率
-            probs = 1.0 / (1.0 + np.exp(-y_pred))
+        :param metric: BaseMetric 实例，默认 ``loss.metric()``。
+        :param api: ``'sklearn'`` 或 ``'native'``，须与训练接口相同。
+        :return: 回调，返回 (name, value, greater_is_better)。
 
-            return _margin_derivatives(self.loss, y_true, probs)
-
-        return lgb_objective
-
-    def metric(self, metric: BaseMetric) -> Callable:
-        """获取LightGBM评估指标.
-
-        :param metric: 评估指标对象
-        :return: LightGBM格式的评估指标
+        >>> from hscredit.core.models.losses import FocalLoss, KSMetric, LightGBMLossAdapter
+        >>> callback = LightGBMLossAdapter(FocalLoss()).metric(KSMetric())
         """
-
-        def lgb_metric(y_true: np.ndarray, y_pred: np.ndarray):
-            """LightGBM评估指标格式.
-
-            :param y_true: 真实标签
-            :param y_pred: 预测值（原始分数）
-            :return: (指标名称, 指标值, 是否越大越好)
-            """
-            probs = 1.0 / (1.0 + np.exp(-y_pred))
-            value = metric(y_true, probs)
-            return metric.name, value, metric.greater_is_better
-
-        return lgb_metric
+        metric = self.loss.metric() if metric is None else metric
+        return metric.to_lightgbm(api=api, raw_score=True)
 
 
 class CatBoostLossAdapter:
-    """CatBoost损失函数适配器.
+    """CatBoost 逐样本损失与配套指标。
 
-    将自定义损失函数转换为CatBoost可用的格式。
+    **参数**
 
-    :param loss: 损失函数对象
+    :param loss: 支持独立逐行计算的 BaseLoss，例如固定类别权重的 FocalLoss。
+
+    **属性**
+
+    ``loss`` 保存损失对象；非可加损失会在生成训练目标时拒绝。
 
     **参考样例**
 
-    >>> from catboost import CatBoostClassifier
-    >>> from hscredit.core.models.losses import BadDebtLoss, CatBoostLossAdapter
-    >>>
-    >>> loss = BadDebtLoss(target_approval_rate=0.3)
-    >>> adapter = CatBoostLossAdapter(loss)
-    >>>
-    >>> model = CatBoostClassifier(
-    ...     iterations=1000,
-    ...     loss_function=adapter.objective(),
-    ...     eval_metric='AUC'
-    ... )
-    >>> model.fit(X_train, y_train)
+    >>> from hscredit.core.models.losses import FocalLoss, CatBoostLossAdapter
+    >>> adapter = CatBoostLossAdapter(FocalLoss())
+    >>> objective, eval_metric = adapter.objective(), adapter.metric()
     """
 
     def __init__(self, loss: BaseLoss):
         self.loss = loss
 
     def objective(self):
-        """获取CatBoost目标函数.
+        """生成 CatBoost 目标对象。
 
-        :return: CatBoost格式的目标函数类
+        :return: 对象，calc_ders_range 接收原始分数、0/1 标签和可选权重，
+            输出逐样本 (-grad, -hess)，符合 CatBoost 的符号约定。
+        :raises ValueError: 损失依赖全量排序、动态类别权重或绑定逐行数组。
+
+        >>> from hscredit.core.models.losses import FocalLoss, CatBoostLossAdapter
+        >>> objective = CatBoostLossAdapter(FocalLoss()).objective()
         """
-        loss_obj = self.loss
+        from .base import _objective_derivatives
+
+        if not self.loss.is_additive:
+            raise ValueError("CatBoost会分批计算梯度，不支持依赖全量排序、动态类别权重或样本金额数组的损失")
+        loss = self.loss
 
         class CatBoostLoss:
             def calc_ders_range(self, approxes, targets, weights):
-                """计算梯度和二阶导.
-
-                CatBoost 对一批样本调用本方法，``approxes``/``targets``/``weights``
-                均为与样本一一对应的原始分数/标签/权重数组（二分类单目标）。
-
-                注意符号约定：CatBoost 执行梯度上升以最小化损失，要求返回
-                ``der1 = -dL/dapprox``、``der2 = -d²L/dapprox²``，因此对 ``BaseLoss``
-                给出的（定义在概率上的）梯度/二阶导取负。
-
-                :param approxes: 预测原始分数数组（每个样本一个值）
-                :param targets: 真实标签数组
-                :param weights: 样本权重数组，可为 None
-                :return: 每个元素为 (一阶导, 二阶导) 的列表
-                """
-                approx = np.asarray(approxes, dtype=float)
-                target = np.asarray(targets, dtype=float)
-
-                # 将原始分数转换为概率
-                probs = 1.0 / (1.0 + np.exp(-approx))
-
-                # 转换为相对于 raw margin 的真实导数。
-                grad, hess = _margin_derivatives(loss_obj, target, probs)
-
-                # CatBoost 约定：梯度上升最小化损失，取负
-                der1 = -grad
-                der2 = -hess
-
-                # 应用样本权重
-                if weights is not None:
-                    w = np.asarray(weights, dtype=float)
-                    der1 = der1 * w
-                    der2 = der2 * w
-
-                return list(zip(der1.tolist(), der2.tolist()))
+                grad, hess = _objective_derivatives(loss, targets, approxes, weights)
+                return list(zip((-grad).tolist(), (-hess).tolist()))
 
         return CatBoostLoss()
 
-    def metric(self, metric: BaseMetric):
-        """获取CatBoost评估指标.
+    def metric(self, metric=None):
+        """生成 CatBoost 指标对象，按全量验证集保留指标语义。
 
-        :param metric: 评估指标对象
-        :return: CatBoost格式的评估指标类
+        :param metric: BaseMetric 实例，默认 loss.metric()。
+        :return: 对象，evaluate 接收原始分数并返回 (误差和, 权重和)，
+            get_final_error 还原指标值，is_max_optimal 返回优化方向。
+
+        >>> from hscredit.core.models.losses import FocalLoss, CatBoostLossAdapter
+        >>> callback = CatBoostLossAdapter(FocalLoss()).metric()
         """
-        metric_obj = metric
-
-        class CatBoostMetric:
-            def get_final_error(self, error, weight):
-                return error
-
-            def is_max_optimal(self):
-                return metric_obj.greater_is_better
-
-            def evaluate(self, approxes, target, weight):
-                """计算指标值.
-
-                :param approxes: 预测值列表
-                :param target: 真实标签列表
-                :param weight: 样本权重
-                :return: (指标值, 样本数量)
-                """
-                assert len(approxes) == 1
-                approx = np.array(approxes[0])
-                target = np.array(target)
-
-                # 转换为概率
-                probs = 1.0 / (1.0 + np.exp(-approx))
-
-                # 计算指标值
-                value = metric_obj(target, probs)
-
-                return value, len(target)
-
-        return CatBoostMetric()
+        metric = self.loss.metric() if metric is None else metric
+        return metric.to_catboost()
 
 
 def _tabnet_binary_loss_and_gradient(loss_obj: BaseLoss, logits, y_true):
@@ -286,13 +184,13 @@ def _tabnet_binary_loss_and_gradient(loss_obj: BaseLoss, logits, y_true):
     if logits.ndim == 1:
         if len(logits) != len(y_true):
             raise ValueError("TabNet预测行数与标签行数不一致")
-        probability = 1.0 / (1.0 + np.exp(-logits))
+        probability = expit(logits)
         probability_gradient = np.asarray(loss_obj.gradient(y_true, probability), dtype=float) / max(1, len(y_true))
         gradient = probability_gradient * probability * (1.0 - probability)
     elif logits.ndim == 2 and logits.shape[1] == 1:
         if logits.shape[0] != len(y_true):
             raise ValueError("TabNet预测行数与标签行数不一致")
-        probability = 1.0 / (1.0 + np.exp(-logits[:, 0]))
+        probability = expit(logits[:, 0])
         probability_gradient = np.asarray(loss_obj.gradient(y_true, probability), dtype=float) / max(1, len(y_true))
         gradient = (probability_gradient * probability * (1.0 - probability))[:, None]
     elif logits.ndim == 2 and logits.shape[1] == 2:
@@ -341,10 +239,19 @@ class TabNetLossAdapter:
         self.loss = loss
 
     def loss_fn(self):
-        """获取PyTorch损失函数.
+        """获取支持 PyTorch 反向传播的二分类损失模块。
 
-        :return: PyTorch格式的损失函数
+        :return: ``nn.Module``，调用签名为 (y_pred, y_true)。y_pred 是一维、
+            单列或两列原始 logits，y_true 是同批 0/1 标签；返回平均损失张量。
+            NumPy 计算的解析梯度由自定义 autograd 返回到 logits。
+        :raises ImportError: 未安装 PyTorch。
+        :raises ValueError: 损失依赖全量排序、动态类别权重或绑定样本数组。
+
+        >>> from hscredit.core.models.losses import FocalLoss, TabNetLossAdapter
+        >>> loss_fn = TabNetLossAdapter(FocalLoss()).loss_fn()  # doctest: +SKIP
         """
+        if not self.loss.is_additive:
+            raise ValueError("TabNet按小批次训练，不支持依赖全量排序、动态类别权重或绑定样本数组的损失")
         try:
             import torch
             import torch.nn as nn
@@ -405,7 +312,7 @@ class NGBoostLossAdapter:
     >>> adapter = NGBoostLossAdapter(loss)
     >>>
     >>> model = NGBClassifier(
-    ...     Score=adapter.score_class(),
+    ...     **loss.ngboost_params(),
     ...     n_estimators=500,
     ...     learning_rate=0.01
     ... )
@@ -413,18 +320,26 @@ class NGBoostLossAdapter:
 
     **注意**
 
-    - 仅支持 ``Dist=Bernoulli``（NGBoost默认二分类分布）
-    - ``score()`` 使用标准BCE作为监控/早停指标
+    - 仅支持二分类 Bernoulli 分布；需使用本损失提供的分布子类。
+    - ``score()`` 与 ``d_score()`` 使用同一个自定义损失
     - ``d_score()`` 使用自定义loss的梯度驱动自然梯度更新
-    - 也可直接使用 ``BaseLoss.to_ngboost()`` 快捷方法
+    - 推荐使用 ``loss.ngboost_params()`` 同时配套 Score 与 Dist。
     """
 
     def __init__(self, loss: BaseLoss):
         self.loss = loss
 
     def score_class(self):
-        """获取NGBoost Score子类.
+        """生成 NGBoost Score 子类，必须搭配返回类的 distribution。
 
-        :return: NGBoost Score子类（未实例化），可直接传给 ``NGBClassifier(Score=...)``
+        :return: Score 类，score 返回逐行损失，d_score 返回 logit 导数，
+            metric 返回 Bernoulli Fisher 信息；不直接接收框架外部预测。
+        :raises ImportError: 未安装 NGBoost。
+        :raises ValueError: 损失不支持独立逐行计算。
+
+        >>> from hscredit.core.models.losses import FocalLoss, NGBoostLossAdapter
+        >>> from ngboost import NGBClassifier
+        >>> score = NGBoostLossAdapter(FocalLoss()).score_class()
+        >>> model = NGBClassifier(Score=score, Dist=score.distribution)
         """
         return self.loss.to_ngboost()

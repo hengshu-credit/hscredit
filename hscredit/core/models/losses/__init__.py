@@ -18,10 +18,11 @@
 - KS 分布分离 (KSFocusedLoss)
 - 头部捕获优化 (TopKBadCaptureLoss)
 - 金额/敞口加权 (AmountWeightedLoss, ExpectedValueLoss)
-- 自定义评估指标 (KS, Gini, PSI等)
+- 每种损失的配套评估指标、真实业务指标及 sklearn 评分器
 """
 
-from .base import BaseLoss, BaseMetric
+from .base import BaseLoss, BaseMetric, LossMetric
+from .functional import CallableMetric, make_metric
 from .focal_loss import FocalLoss
 from .asymmetric_focal_loss import AsymmetricFocalLoss
 from .balanced_focal_loss import BalancedFocalLoss
@@ -34,6 +35,15 @@ from .ks_focused_loss import KSFocusedLoss
 from .topk_bad_capture_loss import TopKBadCaptureLoss
 from .amount_weighted_loss import AmountWeightedLoss, ExpectedValueLoss
 from .custom_metrics import KSMetric, GiniMetric, PSIMetric
+from .business_metrics import (
+    AUCMetric,
+    TopKCaptureMetric,
+    TopKLiftMetric,
+    BadDebtMetric,
+    ApprovalRateMetric,
+    ProfitMetric,
+    ClassificationCostMetric,
+)
 from .adapters import (
     XGBoostLossAdapter,
     LightGBMLossAdapter,
@@ -46,6 +56,16 @@ __all__ = [
     # 基类
     "BaseLoss",
     "BaseMetric",
+    "LossMetric",
+    "CallableMetric",
+    "make_metric",
+    "AUCMetric",
+    "TopKCaptureMetric",
+    "TopKLiftMetric",
+    "BadDebtMetric",
+    "ApprovalRateMetric",
+    "ProfitMetric",
+    "ClassificationCostMetric",
     # 不平衡数据处理
     "FocalLoss",
     "AsymmetricFocalLoss",

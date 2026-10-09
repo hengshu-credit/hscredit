@@ -140,29 +140,50 @@ def score_strategy_simulation(
     >>> result = score_strategy_simulation(df, score_col='score', target='fpd15',
     ...     thresholds=[500, 520, 540, 560], amount_col='loan_amount')
     """
-    validate_dataframe(df, required_cols=[score_col, target])
-    df = df.copy()
+    required = list(dict.fromkeys([score_col, target] + ([amount_col] if amount_col is not None else [])))
+    validate_dataframe(df, required_cols=required)
+    if score_low_risk not in ('high', 'low'):
+        raise ValueError("score_low_risk 必须为 'high' 或 'low'")
+    df = df[required].copy()
     df[score_col] = pd.to_numeric(df[score_col], errors='coerce')
     df[target] = pd.to_numeric(df[target], errors='coerce')
     df = df.dropna(subset=[score_col, target])
     _check_binary_target(df[target], target)
 
+    # 在所有阈值计算前规范化金额；此前先切片再转换会把字符串相加。
+    if amount_col is not None:
+        try:
+            df[amount_col] = pd.to_numeric(df[amount_col], errors='raise').fillna(0.0)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"金额列 '{amount_col}' 必须为数值或数值字符串") from exc
+        if not np.isfinite(df[amount_col].to_numpy(dtype=float)).all():
+            raise ValueError(f"金额列 '{amount_col}' 不能包含无穷值")
+
     total = len(df)
     total_bad = int(df[target].sum())
 
+    # 排序一次，通过前缀和回答每个阈值；不再按阈值复制通过/拒绝全表。
+    order = np.argsort(df[score_col].to_numpy(), kind='stable')
+    scores = df[score_col].to_numpy()[order]
+    bad = df[target].to_numpy(dtype=float)[order]
+    bad_prefix = np.r_[0.0, np.cumsum(bad)]
+    if amount_col is not None:
+        amounts = df[amount_col].to_numpy(dtype=float)[order]
+        amount_prefix = np.r_[0.0, np.cumsum(amounts)]
+        bad_amount_prefix = np.r_[0.0, np.cumsum(amounts * bad)]
+
     rows = []
     for thr in thresholds:
+        if not isinstance(thr, (int, float, np.number)) or pd.isna(thr):
+            raise ValueError("评分阈值必须为非缺失数值")
         if score_low_risk == 'high':
-            approved = df[score_col] >= thr
+            start, end = int(np.searchsorted(scores, thr, side='left')), total
         else:
-            approved = df[score_col] <= thr
-        app_df = df[approved]
-        rej_df = df[~approved]
-
-        app_n = len(app_df)
-        app_bad = int(app_df[target].sum())
-        rej_n = len(rej_df)
-        rej_bad = int(rej_df[target].sum())
+            start, end = 0, int(np.searchsorted(scores, thr, side='right'))
+        app_n = end - start
+        app_bad = int(bad_prefix[end] - bad_prefix[start])
+        rej_n = total - app_n
+        rej_bad = total_bad - app_bad
 
         row: Dict[str, Any] = {
             '评分阈值': thr,
@@ -176,10 +197,9 @@ def score_strategy_simulation(
             '坏样本拦截率(%)': round(_safe_div(rej_bad, total_bad) * 100, 2) if total_bad > 0 else np.nan,
         }
 
-        if amount_col is not None and amount_col in df.columns:
-            df[amount_col] = pd.to_numeric(df[amount_col], errors='coerce')
-            app_amt = float(app_df[amount_col].sum())
-            app_bad_amt = float(app_df.loc[app_df[target] == 1, amount_col].sum())
+        if amount_col is not None:
+            app_amt = float(amount_prefix[end] - amount_prefix[start])
+            app_bad_amt = float(bad_amount_prefix[end] - bad_amount_prefix[start])
             row['通过金额'] = round(app_amt, 2)
             row['通过人群坏账金额'] = round(app_bad_amt, 2)
             row['坏账率(金额,%)'] = round(_safe_div(app_bad_amt, app_amt) * 100, 4)

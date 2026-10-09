@@ -103,6 +103,8 @@ def ensure_environment(
         except (OSError, ValueError):
             pass
 
+    if not plan.install_missing:
+        raise SkillExecutionError(code="DEPENDENCY_MISSING", message="没有可复用的隔离环境，且 install_missing=false 禁止安装", field="environment.install_missing")
     python = install_requirement(environment_dir, _requirement(source, plan.extras))
     marker.write_text(json.dumps(expected, ensure_ascii=False, indent=2), encoding="utf-8")
     return python

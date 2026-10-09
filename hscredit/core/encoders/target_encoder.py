@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 
 from .base import BaseEncoder
+from ._category_protocol import MISSING, UNKNOWN
 
 
 class TargetEncoder(BaseEncoder):
@@ -30,6 +31,9 @@ class TargetEncoder(BaseEncoder):
     :param handle_missing: 处理缺失值的方式，默认为'value'
     :param drop_invariant: 是否删除方差为0的列，默认为False
     :param return_df: 是否返回DataFrame，默认为True
+    :param training_mode: 默认 in_sample；oof 时 fit_transform 返回折外编码，
+        transform 仍使用全训练集最终映射，时间起始窗口未覆盖行保留 NaN
+    :param cv: 折数或 sklearn 切分器；分组通过 fit_transform(..., groups=...) 提供
 
     **属性**
 
@@ -61,6 +65,7 @@ class TargetEncoder(BaseEncoder):
 
     # global_mean_ 是 transform 时未知/缺失类别的填充值，须随映射一并序列化
     _EXTRA_STATE_ATTRS = ["global_mean_"]
+    _TARGET_TYPE = "continuous"
 
     def _get_category_cols(self, X: pd.DataFrame) -> List[str]:
         """自动识别需要编码的列。
@@ -87,6 +92,9 @@ class TargetEncoder(BaseEncoder):
         n_jobs: Optional[Union[int, float]] = -1,
         parallel_backend: Optional[str] = None,
         parallel_config: Optional[Dict[str, Any]] = None,
+        training_mode: str = "in_sample",
+        cv: Any = 5,
+        passthrough_target: bool = False,
     ):
         """初始化目标编码器。
 
@@ -111,11 +119,14 @@ class TargetEncoder(BaseEncoder):
             n_jobs=n_jobs,
             parallel_backend=parallel_backend,
             parallel_config=parallel_config,
+            passthrough_target=passthrough_target,
         )
         self.smoothing = smoothing
         self.min_samples_leaf = min_samples_leaf
         self.noise = noise
         self.random_state = random_state
+        self.training_mode = training_mode
+        self.cv = cv
 
         self.global_mean_: float = 0.0
 
@@ -148,14 +159,14 @@ class TargetEncoder(BaseEncoder):
         mapping = smoothed_means.to_dict()
 
         if self.handle_missing == "value":
-            mapping[np.nan] = self.global_mean_
+            mapping[MISSING] = self.global_mean_
         elif self.handle_missing == "return_nan":
-            mapping[np.nan] = np.nan
+            mapping[MISSING] = np.nan
 
         if self.handle_unknown == "value":
-            mapping["__UNKNOWN__"] = self.global_mean_
+            mapping[UNKNOWN] = self.global_mean_
         elif self.handle_unknown == "return_nan":
-            mapping["__UNKNOWN__"] = np.nan
+            mapping[UNKNOWN] = np.nan
 
         return {"mapping_": mapping}
 
@@ -174,12 +185,9 @@ class TargetEncoder(BaseEncoder):
 
     def _transform_column(self, column, values, y=None, context=None):
         mapping = self.mapping_[column]
-        result = values.map(mapping)
+        result = self._map_values(values, mapping)
 
-        if self.handle_unknown == "value":
-            result = result.fillna(self.global_mean_)
-        elif self.handle_unknown == "error" and result.isna().any():
-            raise ValueError(f"列'{column}'包含未知类别")
+        result = self._apply_missing_unknown(column, values, result, self.global_mean_)
 
         if context is not None:
             result = result * (1 + context)

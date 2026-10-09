@@ -9,6 +9,7 @@
 - overdue_estimator: 逾期数据预估
 """
 from ..excel import ExcelWriter, dataframe2excel
+from .result import ReportResult, ReportSectionResult, ReportGenerationError
 from .feature_analyzer import (
     auto_feature_analysis,
     feature_binning_summary,
@@ -39,6 +40,7 @@ from .swap_analysis import (
 
 from .overdue_predictor import OverduePredictor, overdue_prediction_report
 from .model_report import ModelReport, QuickModelReport, auto_model_report, compare_models
+from .selection_report import save_selection_report, load_selection_report
 from .mining import (
     SingleFeatureRuleMiner,
     MultiFeatureRuleMiner,
@@ -55,6 +57,11 @@ except ImportError:
 
 __all__ = [
     "ExcelWriter",
+    "ReportResult",
+    "ReportSectionResult",
+    "ReportGenerationError",
+    "save_selection_report",
+    "load_selection_report",
     "dataframe2excel",
     "feature_bin_stats",
     "feature_bin_stats_2d",
