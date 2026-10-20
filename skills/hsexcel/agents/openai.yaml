@@ -1,0 +1,4 @@
+interface:
+  display_name: "HSCredit Excel"
+  short_description: "导出带样式的单表和多 Sheet Excel"
+  default_prompt: "Use $hsexcel to export these hscredit tables into a styled Excel workbook."

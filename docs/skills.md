@@ -3,15 +3,20 @@
 hscredit 提供可被 AI Agent 发现和调用的 Skills。Agent 负责理解分析目标、组装数据与参数，
 Skill 负责校验请求、调用真实 hscredit API，并交付 Excel、图片、JSON 或可复用制品。
 
-当前已实现两个 Skill：
+当前已实现八个 Skill：
 
 | Skill | 适用任务 | 主要产物 |
 |:---|:---|:---|
 | `$hsbin` | 变量分箱、分箱统计、效率评估、分箱器拟合与分箱图 | Excel、PNG/SVG、规则 JSON、分箱器 artifact |
 | `$hsreport` | 特征分析、模型评估和策略迭代完整报告 | 多 Sheet Excel 报告及报告图片 |
+| `$hscredit` | 查询并路由当前领域操作 | 能力目录摘要 |
+| `$hsmodel` | 模型训练、调参、Loss、评分卡、校准和解释 | 模型/tuner artifact、预测和解释表 |
+| `$hsrule` | Rule、RuleFlow、规则报告和 Swap 分析 | 规则分析 Excel |
+| `$hsselect` | 公开 Selector 拟合和筛选报告 | 选中特征 Excel、JSON 报告 |
+| `$hsviz` | 模型、评分、策略、稳定性和树图 | PNG/SVG |
+| `$hsexcel` | DataFrame 与多表工作簿导出 | 样式 Excel |
 
-`hscredit`、`hsmodel`、`hsrule`、`hsselect`、`hsviz` 和 `hsexcel` 当前只是规划目录，
-没有 `SKILL.md`，不能被 Agent 调用。
+其他尚未拆分为独立 Skill 的方向见 `skills/ROADMAP.md`。
 
 ## 安装 Skills
 
@@ -28,6 +33,11 @@ python skills/install.py --suite hscredit
 ```bash
 python skills/install.py --skills hsbin
 python skills/install.py --skills hsreport
+python skills/install.py --skills hsmodel
+python skills/install.py --skills hsrule
+python skills/install.py --skills hsselect
+python skills/install.py --skills hsviz
+python skills/install.py --skills hsexcel
 ```
 
 指定 Agent 的 Skills 目录：
@@ -47,8 +57,14 @@ python skills/install.py --skills hsbin hsreport --target-dir /path/to/agent/ski
 
 ```text
 请从 GitHub 仓库 hengshu-credit/hscredit 的 main 分支安装：
+skills/hscredit
 skills/hsbin
 skills/hsreport
+skills/hsmodel
+skills/hsrule
+skills/hsselect
+skills/hsviz
+skills/hsexcel
 ```
 
 也可以只安装需要的目录：
@@ -58,12 +74,12 @@ skills/hsreport
 ```
 
 公开仓库可直接下载；私有仓库需要 Agent 已具备相应 Git 凭证或访问令牌。Skill 目录是独立安装单位，
-无需同时复制规划中的空目录。
+每个 Skill 目录都包含自己的 `SKILL.md`、Schema 和操作参考。
 
 ### OpenAI 项目 Skills API
 
 OpenAI Skills API 支持以文件目录集合或 ZIP 创建 Skill，并提供独立的 Skill ID 和版本管理。
-发布时分别上传 `skills/hsbin` 与 `skills/hsreport`，不要把两个目录合并成一个不可区分的 Skill。
+发布时分别上传每个 `skills/<skill-name>` 目录，不要把多个目录合并成一个不可区分的 Skill。
 
 参考 [OpenAI Skills API](https://developers.openai.com/api/reference/python/resources/skills/methods/create)。
 

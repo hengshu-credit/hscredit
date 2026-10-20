@@ -32,6 +32,7 @@
 | operation | 主要输入 | 产物 |
 |---|---|---|
 | `feature_bin_stats` | `data`; `feature`, `target` 或 `overdue+dpds` | 分箱统计 Excel |
+| `feature_bin_stats_2d` | `data`; 两个 `features`, `target` | 二维分箱统计 Excel |
 | `benchmark_binning_methods` | `data`; `feature`, `overdue`, `dpds` | 方法对比 Excel |
 | `feature_binning_summary` | `data`; `feature`, `methods`, 目标配置 | 摘要和各方法明细 Excel |
 | `feature_group_binning_summary` | `data`; 上述参数，加 `date_col` 或 `group_col` | 分组摘要和明细 Excel |

@@ -12,7 +12,11 @@ from .errors import SkillExecutionError
 def build_parser() -> argparse.ArgumentParser:
     """创建 Skills 运行时命令行解析器。"""
     parser = argparse.ArgumentParser(prog="python -m hscredit.skills_runtime")
-    parser.add_argument("--skill", required=True, choices=["hsbin", "hsreport"])
+    parser.add_argument(
+        "--skill",
+        required=True,
+        choices=["hscredit", "hsbin", "hsreport", "hsmodel", "hsrule", "hsselect", "hsviz", "hsexcel"],
+    )
     parser.add_argument("--request", required=True)
     parser.add_argument("--debug", action="store_true")
     return parser

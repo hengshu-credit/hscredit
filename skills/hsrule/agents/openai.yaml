@@ -1,0 +1,4 @@
+interface:
+  display_name: "HSCredit 规则"
+  short_description: "构建规则并生成规则策略分析"
+  default_prompt: "Use $hsrule to evaluate these credit-risk rules and save the analysis."

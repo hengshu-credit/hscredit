@@ -1,0 +1,4 @@
+interface:
+  display_name: "HSCredit 特征筛选"
+  short_description: "运行筛选器并输出选中特征与中文报告"
+  default_prompt: "Use $hsselect to select stable credit-risk features and save the selection report."

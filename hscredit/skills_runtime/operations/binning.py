@@ -15,6 +15,7 @@ from ...report.feature_analyzer import (
     benchmark_binning_methods,
     feature_efficiency_analysis,
     feature_bin_stats,
+    feature_bin_stats_2d,
     feature_binning_summary,
     feature_group_binning_summary,
 )
@@ -141,6 +142,14 @@ def _feature_bin_stats(context) -> dict:
     result = feature_bin_stats(_data(context), **params)
     table = result[0] if isinstance(result, tuple) else result
     _write_workbook(context, [("分箱统计", table)])
+    return {"summary": _summarize_binning_table(table, params)}
+
+
+def _feature_bin_stats_2d(context) -> dict:
+    params = _parameters(feature_bin_stats_2d, context.request.parameters)
+    result = feature_bin_stats_2d(_data(context), **params)
+    table = result[0] if isinstance(result, tuple) else result
+    _write_workbook(context, [("二维分箱统计", table)])
     return {"summary": _summarize_binning_table(table, params)}
 
 
@@ -411,6 +420,7 @@ def register_binning_operations(registry) -> None:
     handlers = OrderedDict(
         [
             ("feature_bin_stats", _feature_bin_stats),
+            ("feature_bin_stats_2d", _feature_bin_stats_2d),
             ("benchmark_binning_methods", _benchmark_binning_methods),
             ("feature_binning_summary", _feature_binning_summary),
             ("feature_group_binning_summary", _feature_group_binning_summary),
