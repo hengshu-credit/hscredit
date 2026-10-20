@@ -1,0 +1,4 @@
+interface:
+  display_name: "HSCredit 可视化"
+  short_description: "生成模型、评分、策略和稳定性图表"
+  default_prompt: "Use $hsviz to render the requested hscredit chart and save it as an image artifact."

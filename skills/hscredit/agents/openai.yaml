@@ -1,0 +1,4 @@
+interface:
+  display_name: "HSCredit Skills 总入口"
+  short_description: "选择并调用当前 hscredit 领域 Skill"
+  default_prompt: "Use $hscredit to choose the correct hscredit Skill for this request."

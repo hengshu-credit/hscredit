@@ -38,6 +38,8 @@ def _contains_object_ref(value):
 
 def _extras(request):
     extras = {"skills"}
+    if request.get("operation") == "model_tune":
+        extras.add("tune")
 
     def inspect(value):
         if isinstance(value, dict):

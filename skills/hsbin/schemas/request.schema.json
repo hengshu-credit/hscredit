@@ -9,6 +9,7 @@
     "operation": {
       "enum": [
         "feature_bin_stats",
+        "feature_bin_stats_2d",
         "feature_efficiency_analysis",
         "benchmark_binning_methods",
         "feature_binning_summary",

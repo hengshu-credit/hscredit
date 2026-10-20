@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Optional, Sequence
 
 
-IMPLEMENTED_SKILLS = ("hsbin", "hsreport")
+IMPLEMENTED_SKILLS = ("hscredit", "hsbin", "hsreport", "hsmodel", "hsrule", "hsselect", "hsviz", "hsexcel")
 
 
 def _default_target() -> Path:
@@ -48,7 +48,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     target_root.mkdir(parents=True, exist_ok=True)
     for (name, source), (_, destination) in zip(sources, destinations):
-        shutil.copytree(source, destination)
+        shutil.copytree(
+            source,
+            destination,
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+        )
         print(f"已安装 {name}：{destination}")
     print("Skill 将在 Agent 的下一轮对话中可用。")
     return 0

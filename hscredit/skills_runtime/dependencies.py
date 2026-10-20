@@ -14,6 +14,15 @@ from .errors import SkillExecutionError
 _OPERATION_EXTRAS = {
     "hsbin": {"*": ("skills",)},
     "hsreport": {"*": ("skills",)},
+    "hscredit": {"*": ("skills",)},
+    "hsmodel": {
+        "model_tune": ("skills", "tune"),
+        "*": ("skills",),
+    },
+    "hsrule": {"*": ("skills",)},
+    "hsselect": {"*": ("skills",)},
+    "hsviz": {"*": ("skills",)},
+    "hsexcel": {"*": ("skills",)},
 }
 
 

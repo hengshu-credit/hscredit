@@ -10,7 +10,7 @@ from jsonschema import Draft202012Validator
 
 
 ROOT = Path(__file__).parents[2]
-PLANNED = ("hscredit", "hsmodel", "hsrule", "hsselect", "hsviz", "hsexcel")
+IMPLEMENTED = ("hscredit", "hsbin", "hsreport", "hsmodel", "hsrule", "hsselect", "hsviz", "hsexcel")
 
 
 def _install(target, *args):
@@ -33,11 +33,11 @@ def test_repository_installer_installs_only_the_requested_skill(tmp_path):
 
 
 def test_repository_installer_suite_installs_only_implemented_skills(tmp_path):
-    """防止规划中目录被当作已实现 Skill 安装。"""
+    """整套安装应覆盖当前所有已实现 Skill。"""
     result = _install(tmp_path, "--suite", "hscredit")
 
     assert result.returncode == 0, result.stderr
-    assert sorted(path.name for path in tmp_path.iterdir()) == ["hsbin", "hsreport"]
+    assert sorted(path.name for path in tmp_path.iterdir()) == sorted(IMPLEMENTED)
 
 
 def test_repository_installer_preserves_an_existing_directory(tmp_path):
@@ -54,13 +54,14 @@ def test_repository_installer_preserves_an_existing_directory(tmp_path):
     assert marker.read_text(encoding="utf-8") == "keep"
 
 
-def test_planned_skill_directories_are_non_discoverable_placeholders():
-    """防止空壳目录被 Agent 误识别为可调用 Skill。"""
-    for name in PLANNED:
+def test_all_skill_directories_are_discoverable_packages():
+    """每个当前实现的 Skill 都必须有完整入口文件。"""
+    for name in IMPLEMENTED:
         directory = ROOT / "skills" / name
         assert directory.is_dir(), name
-        assert sorted(path.name for path in directory.iterdir()) == [".gitkeep"]
-        assert not (directory / "SKILL.md").exists()
+        assert (directory / "SKILL.md").is_file()
+        assert (directory / "runtime.json").is_file()
+        assert (directory / "scripts" / "run.py").is_file()
 
 
 @pytest.mark.parametrize(
@@ -84,6 +85,56 @@ def test_planned_skill_directories_are_non_discoverable_placeholders():
                 "inputs": {"data": {"kind": "file", "path": "sample.xlsx", "sheet_name": "样本"}},
                 "parameters": {"features": ["score"], "target": "target"},
                 "output": {"directory": "outputs", "name": "report", "overwrite": False},
+            },
+        ),
+        (
+            "hsmodel",
+            {
+                "version": "1",
+                "operation": "model_fit",
+                "inputs": {"data": {"kind": "file", "path": "sample.csv"}},
+                "parameters": {"model": "LogisticRegression", "target": "target"},
+                "output": {"directory": "outputs", "name": "model", "overwrite": False},
+            },
+        ),
+        (
+            "hsrule",
+            {
+                "version": "1",
+                "operation": "rule_report",
+                "inputs": {"data": {"kind": "file", "path": "sample.csv"}},
+                "parameters": {"rules": ["score < 560"], "target": "target"},
+                "output": {"directory": "outputs", "name": "rules", "overwrite": False},
+            },
+        ),
+        (
+            "hsselect",
+            {
+                "version": "1",
+                "operation": "selector_fit",
+                "inputs": {"data": {"kind": "file", "path": "sample.csv"}},
+                "parameters": {"selector": "IVSelector", "selector_params": {"threshold": 0.02}},
+                "output": {"directory": "outputs", "name": "selection", "overwrite": False},
+            },
+        ),
+        (
+            "hsviz",
+            {
+                "version": "1",
+                "operation": "plot",
+                "inputs": {"data": {"kind": "file", "path": "sample.csv"}},
+                "parameters": {"plot": "hist_plot"},
+                "output": {"directory": "outputs", "name": "hist", "format": "png", "overwrite": False},
+            },
+        ),
+        (
+            "hsexcel",
+            {
+                "version": "1",
+                "operation": "dataframe_to_excel",
+                "inputs": {"data": {"kind": "file", "path": "sample.csv"}},
+                "parameters": {},
+                "output": {"directory": "outputs", "name": "table", "overwrite": False},
             },
         ),
     ],

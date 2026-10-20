@@ -1,0 +1,4 @@
+interface:
+  display_name: "HSCredit 模型"
+  short_description: "训练、调优、校准和解释 hscredit 模型"
+  default_prompt: "Use $hsmodel to train or analyze an hscredit model and save the artifacts."
