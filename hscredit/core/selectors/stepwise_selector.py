@@ -422,7 +422,19 @@ class StepwiseSelector(BaseFeatureSelector):
             # 根据评估器类型拟合模型
             if self.estimator == "logit":
                 model = sm.Logit(y, X_model)
-                result = model.fit(disp=0, method="newton", maxiter=100)
+                # 完全分离时，较新的 statsmodels 会发出
+                # ``PerfectSeparationWarning`` 后继续返回一个参数不可识别的结果。
+                # 该结果不能用于 AIC/BIC 或 p 值比较；把这类预期的候选失败
+                # 转成当前统一的失败返回，避免运行时刷屏，也避免把无效模型
+                # 当作有效候选参与逐步选择。旧版 statsmodels 直接抛出
+                # ``PerfectSeparationError``，仍由下面的通用异常处理兼容。
+                with warnings.catch_warnings():
+                    warnings.filterwarnings(
+                        "error",
+                        message=r"^Perfect separation(?: or prediction)? detected",
+                        category=Warning,
+                    )
+                    result = model.fit(disp=0, method="newton", maxiter=100)
             elif self.estimator == "ols":
                 model = sm.OLS(y, X_model)
                 result = model.fit()
