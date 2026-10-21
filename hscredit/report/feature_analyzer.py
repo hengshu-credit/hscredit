@@ -822,6 +822,8 @@ def feature_binning_summary(
     if overdue is not None:
         overdue_values = [overdue] if isinstance(overdue, str) else list(overdue)
         dpd_values = normalize_dpd_values(dpds)
+        if not overdue_values or not dpd_values:
+            raise ValueError("overdue 和 dpds 不能为空")
         target_labels = [overdue_label(overdue_name, dpd, overdue_operator, style="at") for overdue_name in overdue_values for dpd in dpd_values]
         if len(target_labels) == 1:
             single_target_name = target_labels[0]
@@ -1084,6 +1086,8 @@ def feature_group_binning_summary(
     if overdue is not None:
         overdue_values = [overdue] if isinstance(overdue, str) else list(overdue)
         dpd_values = normalize_dpd_values(dpds)
+        if not overdue_values or not dpd_values:
+            raise ValueError("overdue 和 dpds 不能为空")
         target_labels = [overdue_label(overdue_name, dpd, overdue_operator, style="at") for overdue_name in overdue_values for dpd in dpd_values]
         if len(target_labels) == 1:
             single_target_name = target_labels[0]
@@ -1313,7 +1317,23 @@ def _merge_multi_target_tables(
         table_copy.columns = pd.MultiIndex.from_tuples(table_multi_cols)
 
         merge_on = [("分箱详情", column) for column in available_merge_cols]
-        base_table = base_table.merge(table_copy, on=merge_on)
+        # 剔灰后不同目标可能缺少不同的分箱（例如某个 DPD 的灰样本
+        # 恰好占满一个箱）。使用内连接会把该箱从所有目标一起删掉，
+        # 进而改变另一个目标的分母。按分箱详情做外连接，保留所有
+        # 目标出现过的箱；缺失目标的统计量再按零样本处理。
+        base_table = base_table.merge(table_copy, on=merge_on, how="outer", sort=False)
+
+    # 外连接后，某个目标没有观测到某个分箱时，该目标在该箱的计数和
+    # 派生统计应为零。公共分箱信息保持原样，避免把 NaN 传给下游
+    # 透视、绘图和合计计算。
+    target_columns = [
+        column
+        for column in base_table.columns
+        if isinstance(column, tuple) and column[0] != "分箱详情"
+    ]
+    for column in target_columns:
+        if pd.api.types.is_numeric_dtype(base_table[column]):
+            base_table[column] = base_table[column].fillna(0)
 
     return base_table
 
@@ -1556,6 +1576,8 @@ def feature_bin_stats(
         if isinstance(overdue, str):
             overdue = [overdue]
         dpds = normalize_dpd_values(dpds)
+        if not overdue or not dpds:
+            raise ValueError("overdue 和 dpds 不能为空")
 
         for mob_col in overdue:
             for d in dpds:
@@ -1644,22 +1666,31 @@ def feature_bin_stats(
 
         # 需要训练或应用规则时，准备训练数据
         if need_fit or feat_rule is not None:
-            first_target = target_configs[0]
+            def _training_view(config):
+                if config["mob_col"] is not None:
+                    view = data[[feat, config["mob_col"]]].copy()
+                    values = compare_overdue(
+                        view[config["mob_col"]], config["dpd"], overdue_operator
+                    ).astype(int)
+                    if del_grey:
+                        keep = ~overdue_grey_mask(
+                            view[config["mob_col"]], config["dpd"], overdue_operator
+                        )
+                        view = view.loc[keep]
+                        values = values.loc[keep]
+                    return view, values
+                view = data[[feat, config["name"]]].copy()
+                return view, view[config["name"]]
 
-            # 准备训练数据
-            if first_target["mob_col"] is not None:
-                # 逾期模式
-                train_data = data[[feat, first_target["mob_col"]]].copy()
-                y_train = compare_overdue(train_data[first_target["mob_col"]], first_target["dpd"], overdue_operator).astype(int)
-
-                if del_grey:
-                    mask = ~overdue_grey_mask(train_data[first_target["mob_col"]], first_target["dpd"], overdue_operator)
-                    train_data = train_data[mask]
-                    y_train = y_train[mask]
-            else:
-                # 普通目标模式
-                train_data = data[[feat, first_target["name"]]].copy()
-                y_train = train_data[first_target["name"]]
+            # 某个 DPD 剔灰后可能没有有效样本或只剩一个类别。
+            # 分箱器只需在一个可用目标上拟合，后续目标仍按各自
+            # 标签统计；不能因第一个 DPD 不可拟合而放弃整组报告。
+            train_data, y_train = _training_view(target_configs[0])
+            for config in target_configs:
+                candidate_data, candidate_y = _training_view(config)
+                if len(candidate_data) and candidate_y.dropna().nunique() >= 2:
+                    train_data, y_train = candidate_data, candidate_y
+                    break
 
             if feat_rule is not None:
                 # 从规则生成分箱器
@@ -1899,6 +1930,8 @@ def feature_bin_stats_2d(
     if overdue is not None:
         overdue_columns = [overdue] if isinstance(overdue, str) else list(overdue)
         dpd_values = normalize_dpd_values(dpds)
+        if not overdue_columns or not dpd_values:
+            raise ValueError("overdue 和 dpds 不能为空")
         missing_overdue = [column for column in overdue_columns if column not in data.columns]
         if missing_overdue:
             raise KeyError(f"数据中不存在逾期字段: {missing_overdue}")
@@ -1936,6 +1969,11 @@ def feature_bin_stats_2d(
     if fitted_binner is not None and not isinstance(fitted_binner, OptimalBinning2D):
         raise TypeError("binner 必须是 OptimalBinning2D 实例")
     first_view, first_y = target_view(target_configs[0])
+    for config in target_configs:
+        candidate_view, candidate_y = target_view(config)
+        if len(candidate_view) and candidate_y.dropna().nunique() >= 2:
+            first_view, first_y = candidate_view, candidate_y
+            break
     if fitted_binner is None:
         fitted_binner = OptimalBinning2D(
             method=method,

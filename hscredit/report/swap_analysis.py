@@ -1273,11 +1273,15 @@ def swap_analysis(
 
     # 构建目标变量列表
     target_cols = []
-    if overdue is not None and dpds is not None:
+    if overdue is not None:
         # 逾期分析模式
+        if dpds is None:
+            raise ValueError("传入 overdue 参数时必须同时传入 dpds")
         if isinstance(overdue, str):
             overdue = [overdue]
         dpds = normalize_dpd_values(dpds)
+        if not overdue or not dpds:
+            raise ValueError("overdue 和 dpds 不能为空")
 
         for mob_col in overdue:
             for d in dpds:

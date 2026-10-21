@@ -882,6 +882,8 @@ def _resolve_swap_targets(
             raise ValueError("传入 overdue 参数时必须同时传入 dpds")
         overdue_cols = [overdue] if isinstance(overdue, str) else list(overdue)
         dpd_values = normalize_dpd_values(dpds)
+        if not overdue_cols or not dpd_values:
+            raise ValueError("overdue 和 dpds 不能为空")
         for col in overdue_cols:
             if col not in data.columns:
                 raise ValueError(f"数据集缺少逾期天数列: {col}")

@@ -25,6 +25,8 @@ def _build_overdue_labels(overdue: Union[str, List[str]],
     if isinstance(overdue, str):
         overdue = [overdue]
     dpds = normalize_dpd_values(dpds)
+    if not overdue or not dpds:
+        raise ValueError("overdue 和 dpds 不能为空")
 
     labels = []
     for od_field in overdue:

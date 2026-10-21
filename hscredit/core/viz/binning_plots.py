@@ -2909,6 +2909,11 @@ def _get_stats_for_target(bin_table: pd.DataFrame, target_name: str) -> pd.DataF
     
     # 添加目标列（重命名以匹配标准格式）
     target_col_mapping = {
+        # 剔灰后的多目标表不会把样本总数/占比放在“分箱详情”
+        # 公共层级；此时它们仍属于当前目标，必须一并提取，
+        # 否则 bin_plot 会误判为原始数据而要求 target 参数。
+        '样本总数': '样本总数',
+        '样本占比': '样本占比',
         '好样本数': '好样本数',
         '坏样本数': '坏样本数',
         '坏样本率': '坏样本率',
@@ -2920,7 +2925,7 @@ def _get_stats_for_target(bin_table: pd.DataFrame, target_name: str) -> pd.DataF
     }
     
     for orig_col, std_col in target_col_mapping.items():
-        if orig_col in target_cols:
+        if orig_col in target_cols and std_col not in stats_df.columns:
             stats_df[std_col] = bin_table[(target_name, orig_col)].values
     
     # 计算 KS 值（如果坏样本率和累计占比存在）
@@ -2946,7 +2951,7 @@ def _overdue_bin_stats_worker(task):
 
 
 def bin_overdues_plot(
-    data: pd.DataFrame,
+    data: Optional[pd.DataFrame] = None,
     feature: Optional[str] = None,
     overdue: Optional[List[str]] = None,
     dpds: Optional[List[int]] = None,

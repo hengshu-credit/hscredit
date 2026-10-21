@@ -981,6 +981,8 @@ class ModelReport:
                 # 只有 overdue，无 dpds/threshold：overdue 列值 > 0 → y=1
                 thresholds = [0]
                 dpds_col = None
+            if not overdue_cols or not thresholds:
+                raise ValueError("overdue 和 dpds 不能为空")
 
             # 验证列名
             for col in overdue_cols:
@@ -1008,7 +1010,12 @@ class ModelReport:
             if self.del_grey and indicators.shape[1] == 1:
                 y = indicators.iloc[:, 0].rename(label_name)
             else:
-                y = indicators.fillna(0).astype(bool).any(axis=1).astype(int)
+                # 多标签的 combined 视图也要遵守删灰语义：当一行在
+                # 所有阈值下都是灰样本时，不能把它重新当成好样本。
+                # 某一阈值有效时，仍保留其它阈值的独立标签口径。
+                y = indicators.fillna(0).astype(bool).any(axis=1).astype(float)
+                if self.del_grey:
+                    y = y.where(indicators.notna().any(axis=1))
             # 多指标时返回各指标独立标签，供多标签报告使用
             y_dict: Optional[Dict[str, np.ndarray]] = None
             if indicators.shape[1] > 1:
@@ -1443,6 +1450,13 @@ class ModelReport:
 
         target_col = "__target__"
         df[target_col] = self._get_y(dataset, label)
+        # 多标签删灰时，按单个标签生成分箱表必须同步剔除该标签的
+        # NaN 灰样本；否则 feature_bin_stats 会把 NaN 传给分箱器并报
+        # “目标变量不能包含缺失值”，或在不同入口产生不一致分母。
+        valid_target = df[target_col].notna()
+        df = df.loc[valid_target].copy()
+        if df.empty:
+            raise ValueError(f"数据集 '{dataset}' 在目标标签 {label or self._target_name or 'target'} 下没有有效样本")
 
         kw = dict(
             feature=score_col,

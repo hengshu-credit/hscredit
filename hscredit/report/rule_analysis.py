@@ -144,16 +144,24 @@ def _resolve_target_series(data, target, overdue, dpds, del_grey=False, overdue_
     """解析分析样本上的一个或多个实际表现标签。"""
     validate_overdue_operator(overdue_operator)
     del_grey = del_grey and overdue_operator in (">", ">=")
-    if target is not None:
+    # 与分箱表和其它报告入口保持一致：显式传入 overdue 时，逾期
+    # 组合优先于 target。此前这里反向优先 target，导致 bin_table
+    # 按 overdue 构建而实际标签按 target 计算，最终出现目标列找不到
+    # 或风险分母错配。
+    if overdue is None:
+        if target is None:
+            raise ValueError("必须传入 target 或 overdue + dpds 才能计算规则置换风险")
         if target not in data.columns:
             return {target: pd.Series(np.nan, index=data.index, dtype=float)}
         return {target: pd.to_numeric(data[target], errors="coerce").astype(float)}
 
-    if overdue is None or dpds is None:
+    if dpds is None:
         raise ValueError("必须传入 target 或 overdue + dpds 才能计算规则置换风险")
 
     overdue_cols = [overdue] if isinstance(overdue, str) else list(overdue)
     thresholds = normalize_dpd_values(dpds)
+    if not overdue_cols or not thresholds:
+        raise ValueError("overdue 和 dpds 不能为空")
     targets = {}
     for overdue_col in overdue_cols:
         if overdue_col not in data.columns:
@@ -1368,7 +1376,7 @@ def rule_swap_analysis(
         raise ValueError("样本集幸存比例必须位于 (0, 1] 区间") from exc
     if not np.isfinite(sample_survival_rate) or not 0 < sample_survival_rate <= 1:
         raise ValueError("样本集幸存比例必须位于 (0, 1] 区间")
-    if target is None:
+    if overdue is not None:
         overdue_values = [] if overdue is None else ([overdue] if isinstance(overdue, str) else list(overdue))
         dpd_values = [] if dpds is None else normalize_dpd_values(dpds)
         if not overdue_values or not dpd_values:

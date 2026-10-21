@@ -736,6 +736,8 @@ class Rule(ParallelizableMixin):
             if not isinstance(overdue, list):
                 overdue = [overdue]
             dpds = normalize_dpd_values(dpds)
+            if not overdue or not dpds:
+                raise ValueError("overdue 和 dpds 不能为空")
 
             # 确定merge_columns（多标签时需要的列）
             if isinstance(del_grey, bool) and del_grey:
