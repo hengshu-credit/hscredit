@@ -22,6 +22,10 @@
 Author: hscredit
 """
 
+from hscredit.utils.arguments import analysis_inputs, bind_column
+
+from ..utils.targets import TargetInput, bind_targets, reject_legacy_target_keywords
+
 import numpy as np
 import pandas as pd
 from typing import Union, List, Dict, Optional, Any
@@ -29,8 +33,7 @@ from dataclasses import dataclass
 from enum import Enum
 from sklearn.base import BaseEstimator
 
-from ..utils.overdue import make_overdue_target, overdue_label, validate_overdue_operator
-from ..utils.input_utils import normalize_dpd_values
+from ..utils.overdue import validate_overdue_operator
 from ..core.rules import Rule
 from .mining.base import _mining_workload
 from ..utils.parallel import parallel_execute, resolve_n_jobs, validate_parallel_config
@@ -43,7 +46,7 @@ def _validate_report_parallel(n_jobs, parallel_backend, parallel_config) -> None
 
 def _reference_target_stats(task):
     """计算参考数据中一个目标的有序分箱统计。"""
-    df, target_col, amount_col = task
+    df, target_col, amount = task
     stats = []
     for interval in df['bin'].cat.categories:
         subset = df.loc[(df['bin'] == interval) & df[target_col].notna()]
@@ -58,7 +61,7 @@ def _reference_target_stats(task):
             'sample_count': sample_count,
             'bad_count': bad_count,
             'bad_rate': bad_count / sample_count if sample_count > 0 else 0.0,
-            'amount_sum': subset[amount_col].sum() if amount_col else None,
+            'amount_sum': subset[amount].sum() if amount else None,
         })
     return target_col, stats
 
@@ -92,22 +95,22 @@ class SwapRiskConfig:
     
     :param score_col: 评分字段名，用于风险预估
     :param swap_type_col: swap类型字段名
-    :param amount_col: 金额字段名（可选）
+    :param amount: 金额字段名（可选）
     :param out_in_uplift: out-in样本风险上浮因子，默认2.0
-    :param bin_method: 分箱方法，默认'quantile'
+    :param method: 分箱方法，默认'quantile'
     :param max_n_bins: 最大分箱数，默认10
-    :param custom_bins: 自定义分箱边界（可选）
+    :param rules: 自定义分箱边界（可选）
     :param original_pass_rate: 原策略通过率（可选，用于无out-out数据场景）
     :param targets: 目标变量列表（可选）
     :param target_aliases: 目标变量别名（可选），用于报告展示
     """
     score_col: str = "score"
     swap_type_col: str = "swap_type"
-    amount_col: Optional[str] = None
+    amount: Optional[str] = None
     out_in_uplift: float = 2.0
-    bin_method: str = "quantile"
+    method: str = "quantile"
     max_n_bins: int = 10
-    custom_bins: Optional[List[float]] = None
+    rules: Optional[List[float]] = None
     original_pass_rate: Optional[float] = None
     targets: Optional[List[str]] = None
     target_aliases: Optional[Dict[str, str]] = None
@@ -192,30 +195,30 @@ class ReferenceDataProvider(BaseEstimator):
     
     :param score_col: 评分字段名
     :param target_cols: 目标变量字段名或列表
-    :param amount_col: 金额字段名（可选）
+    :param amount: 金额字段名（可选）
     :param method: 分箱方法，默认'quantile'
     :param max_n_bins: 最大分箱数，默认10
-    :param custom_bins: 自定义分箱边界（可选）
+    :param rules: 自定义分箱边界（可选）
     """
     
     def __init__(
         self,
         score_col: str = "score",
         target_cols: Union[str, List[str]] = "target",
-        amount_col: Optional[str] = None,
+        amount: Optional[str] = None,
         method: str = "quantile",
         max_n_bins: int = 10,
-        custom_bins: Optional[List[float]] = None,
+        rules: Optional[List[float]] = None,
         n_jobs: Union[int, float] = -1,
         parallel_backend: Optional[str] = None,
         parallel_config: Optional[Dict[str, Any]] = None,
     ):
         self.score_col = score_col
         self.target_cols = target_cols
-        self.amount_col = amount_col
+        self.amount = amount
         self.method = method
         self.max_n_bins = max_n_bins
-        self.custom_bins = custom_bins
+        self.rules = rules
         self.n_jobs = n_jobs
         self.parallel_backend = parallel_backend
         self.parallel_config = parallel_config
@@ -230,15 +233,16 @@ class ReferenceDataProvider(BaseEstimator):
         :return: self
         """
         df = df.copy()
+        df, amount = bind_column(df, self.amount, 'amount')
         
         target_cols = [self.target_cols] if isinstance(self.target_cols, str) else list(self.target_cols)
-        if self.custom_bins is not None:
-            bins = self.custom_bins
+        if self.rules is not None:
+            bins = self.rules
         else:
             bins = self._generate_bins(df[self.score_col])
         
         df['bin'] = pd.cut(df[self.score_col], bins=bins, include_lowest=True)
-        tasks = [(df, target_col, self.amount_col) for target_col in target_cols]
+        tasks = [(df, target_col, amount) for target_col in target_cols]
         results = parallel_execute(
             _reference_target_stats,
             tasks,
@@ -271,27 +275,26 @@ class ReferenceDataProvider(BaseEstimator):
             bins = scores.quantile(quantiles).values
         elif self.method == "uniform":
             bins = np.linspace(scores.min(), scores.max(), self.max_n_bins + 1)
-        elif self.method == "custom" and self.custom_bins:
-            bins = self.custom_bins
+        elif self.method == "custom" and self.rules:
+            bins = self.rules
         else:
-            quantiles = np.linspace(0, 1, self.max_n_bins + 1)
-            bins = scores.quantile(quantiles).values
+            raise ValueError("method 必须为 quantile、uniform，或在提供 rules 时使用 custom")
         
         bins = np.unique(bins)
         return bins.tolist()
     
-    def predict_bad_rate(self, scores: Union[float, pd.Series], target_col: str = None) -> Union[float, pd.Series]:
+    def predict_bad_rate(self, scores: Union[float, pd.Series], target: str = None) -> Union[float, pd.Series]:
         """根据评分预估坏样本率.
         
         :param scores: 单个评分或评分序列
-        :param target_col: 目标变量名（可选，默认使用第一个）
+        :param target: 目标变量名（可选，默认使用第一个）
         :return: 预估坏样本率
         """
         if not self._is_fitted:
             raise ValueError("需要先调用fit方法")
         
         target_names = [self.target_cols] if isinstance(self.target_cols, str) else self.target_cols
-        target = target_col or target_names[0]
+        target = target or target_names[0]
         stats = self.bin_stats[target]
         
         is_scalar = np.isscalar(scores)
@@ -412,14 +415,14 @@ class SwapAnalyzer(BaseEstimator):
         
         # 计算金额口径统计（如果有金额字段）
         amount_stats = None
-        if cfg.amount_col:
+        if cfg.amount:
             amount_stats = self._calculate_stats_by_metric(df, targets, metric='amount')
         
         # 计算组合统计
         count_combined = self._calculate_combined_stats(count_stats, total_samples, metric='count')
         amount_combined = None
         if amount_stats:
-            total_amount = df[cfg.amount_col].sum()
+            total_amount = df[cfg.amount].sum()
             amount_combined = self._calculate_combined_stats(amount_stats, total_samples, metric='amount', total_amount=total_amount)
         
         # 计算通过率分析
@@ -471,8 +474,8 @@ class SwapAnalyzer(BaseEstimator):
                 stat['total_count'] = len(subset)
                 stat['sample_ratio'] = len(subset) / len(df)
             else:
-                total_amount = df[cfg.amount_col].sum()
-                subset_amount = subset[cfg.amount_col].sum()
+                total_amount = df[cfg.amount].sum()
+                subset_amount = subset[cfg.amount].sum()
                 stat['total_count'] = subset_amount
                 stat['sample_ratio'] = subset_amount / total_amount if total_amount > 0 else 0
             
@@ -483,9 +486,9 @@ class SwapAnalyzer(BaseEstimator):
                     adjusted_bad = subset[f'adjusted_bad_rate_{target}'].sum()
                     count = len(subset)
                 else:
-                    predicted_bad = (subset[f'predicted_bad_rate_{target}'] * subset[cfg.amount_col]).sum()
-                    adjusted_bad = (subset[f'adjusted_bad_rate_{target}'] * subset[cfg.amount_col]).sum()
-                    count = subset[cfg.amount_col].sum()
+                    predicted_bad = (subset[f'predicted_bad_rate_{target}'] * subset[cfg.amount]).sum()
+                    adjusted_bad = (subset[f'adjusted_bad_rate_{target}'] * subset[cfg.amount]).sum()
+                    count = subset[cfg.amount].sum()
                 
                 stat[f'predicted_bad_count_{target}'] = predicted_bad
                 stat[f'adjusted_bad_count_{target}'] = adjusted_bad
@@ -953,13 +956,14 @@ class SwapAnalysisResult:
         return pd.DataFrame()
 
 
+@analysis_inputs('df', roles=('amount',))
 def create_swap_dataset(
     df: pd.DataFrame,
     original_rule_col: str,
     new_rule_col: str,
     score_col: str,
     swap_type_col: str = "swap_type",
-    amount_col: Optional[str] = None,
+    amount: Optional[str] = None,
     rule_type: str = "reject",
     n_jobs: Union[int, float] = -1,
     parallel_backend: Optional[str] = None,
@@ -972,7 +976,7 @@ def create_swap_dataset(
     :param new_rule_col: 新策略规则字段
     :param score_col: 评分字段
     :param swap_type_col: swap类型输出字段名
-    :param amount_col: 金额字段（可选）
+    :param amount: 金额字段（可选）
     :param rule_type: 规则类型，"reject"表示拒绝规则（1=拒绝,0=通过），
                       "pass"表示通过规则（1=通过,0=拒绝）
     :return: 包含swap_type的数据集
@@ -1002,19 +1006,20 @@ def create_swap_dataset(
     df[swap_type_col] = np.select(conditions, choices, default="unknown")
     
     cols = [score_col, swap_type_col]
-    if amount_col:
-        cols.append(amount_col)
+    if amount:
+        cols.append(amount)
     
     return df[cols]
 
 
+@analysis_inputs('df', roles=('amount',))
 def create_swap_dataset_from_rules(
     df: pd.DataFrame,
     original_rule,
     new_rule,
     score_col: str,
     swap_type_col: str = "swap_type",
-    amount_col: Optional[str] = None,
+    amount: Optional[str] = None,
     rule_type: str = "reject",
     original_rule_name: str = "original_reject",
     new_rule_name: str = "new_reject",
@@ -1029,7 +1034,7 @@ def create_swap_dataset_from_rules(
     :param new_rule: 新策略Rule对象
     :param score_col: 评分字段
     :param swap_type_col: swap类型输出字段名
-    :param amount_col: 金额字段（可选）
+    :param amount: 金额字段（可选）
     :param rule_type: 规则类型，"reject"表示拒绝规则，"pass"表示通过规则
     :param original_rule_name: 原策略规则结果临时字段名
     :param new_rule_name: 新策略规则结果临时字段名
@@ -1062,7 +1067,7 @@ def create_swap_dataset_from_rules(
         new_rule_name, 
         score_col, 
         swap_type_col, 
-        amount_col,
+        amount,
         rule_type,
         n_jobs=n_jobs,
         parallel_backend=parallel_backend,
@@ -1168,15 +1173,16 @@ def _apply_swap_type_rule_sets(
     return result
 
 
+@analysis_inputs('swap_df', roles=('amount',), shared_frames=('reference_df',))
 def swap_analysis(
     swap_df: pd.DataFrame,
     reference_df: pd.DataFrame,
     score_col: str = "score",
-    target: Optional[str] = None,
+    target: Optional[TargetInput] = None,
     overdue: Optional[Union[str, List[str]]] = None,
     dpds: Optional[Union[int, List[int]]] = None,
     swap_type_col: str = "swap_type",
-    amount_col: Optional[str] = None,
+    amount: Optional[str] = None,
     out_in_uplift: float = 2.0,
     original_pass_rate: Optional[float] = None,
     target_aliases: Optional[Dict[str, str]] = None,
@@ -1191,6 +1197,9 @@ def swap_analysis(
     del_grey: bool = False,
     *,
     overdue_operator: str = ">",
+    method: str = "quantile",
+    max_n_bins: int = 10,
+    rules=None,
     **kwargs
 ) -> SwapAnalysisResult:
     """统一的Swap分析入口函数.
@@ -1205,7 +1214,7 @@ def swap_analysis(
     :param dpds: 逾期定义天数或列表（可选），如15或[15,30]
         - 默认逾期天数>dpds为坏样本(1)，可通过 overdue_operator 调整
     :param swap_type_col: swap类型字段名
-    :param amount_col: 金额字段名（可选），用于金额口径分析
+    :param amount: 金额字段名（可选），用于金额口径分析
     :param out_in_uplift: out-in风险上浮因子，默认2.0
     :param original_pass_rate: 原策略通过率（可选），用于无out-out数据场景
     :param target_aliases: 目标变量别名（可选），如{'target_dpd15': 'DPD15+'}
@@ -1271,50 +1280,38 @@ def swap_analysis(
 
     reference_df = reference_df.copy()
 
-    # 构建目标变量列表
-    target_cols = []
-    if overdue is not None:
-        # 逾期分析模式
-        if dpds is None:
-            raise ValueError("传入 overdue 参数时必须同时传入 dpds")
-        if isinstance(overdue, str):
-            overdue = [overdue]
-        dpds = normalize_dpd_values(dpds)
-        if not overdue or not dpds:
-            raise ValueError("overdue 和 dpds 不能为空")
-
-        for mob_col in overdue:
-            for d in dpds:
-                target_name = overdue_label(mob_col, d, overdue_operator)
-                reference_df[target_name] = make_overdue_target(reference_df[mob_col], d, del_grey, overdue_operator)
-                target_cols.append(target_name)
-    elif target is not None:
-        # 普通目标模式
-        target_cols = [target]
-    else:
-        raise ValueError("必须传入target或overdue+dpds参数")
+    reject_legacy_target_keywords(kwargs)
+    if kwargs:
+        raise TypeError(f"不支持的参数: {list(kwargs)}；分箱请使用 method/max_n_bins/rules")
+    reference_df, targets = bind_targets(reference_df, target, overdue, dpds, del_grey, overdue_operator)
+    # ReferenceDataProvider 接收实际列；仅在内部副本上物化展示名。
+    target_cols = targets.names()
+    for name, values in targets.y_map(reference_df).items():
+        if name == score_col or name == amount:
+            raise ValueError("标签名称不能与评分或金额字段相同")
+        reference_df[name] = values.to_numpy()
 
     # 构建配置
     config = SwapRiskConfig(
         score_col=score_col,
         swap_type_col=swap_type_col,
-        amount_col=amount_col,
+        amount=amount,
         out_in_uplift=out_in_uplift,
         original_pass_rate=original_pass_rate,
         targets=target_cols,
         target_aliases=target_aliases or {},
-        **{k: v for k, v in kwargs.items() if k in ['bin_method', 'max_n_bins', 'custom_bins']}
+        method=method, max_n_bins=max_n_bins, rules=rules
     )
 
     # 创建参考数据提供者
     ref_provider = ReferenceDataProvider(
         score_col=score_col,
         target_cols=target_cols,
-        amount_col=amount_col,
+        amount=amount,
         n_jobs=n_jobs,
         parallel_backend=parallel_backend,
         parallel_config=parallel_config,
-        **{k: v for k, v in kwargs.items() if k in ['method', 'max_n_bins', 'custom_bins']}
+        method=method, max_n_bins=max_n_bins, rules=rules
     )
     ref_provider.fit(reference_df)
 

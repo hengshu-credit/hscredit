@@ -5,6 +5,8 @@
 代码风格参考hscredit的binning模块，fit方法兼容scorecardpipeline风格。
 """
 
+from hscredit.utils.arguments import analysis_inputs
+
 import copy
 
 import numpy as np
@@ -60,7 +62,7 @@ class SingleFeatureRuleMiner(BaseRuleMiner):
         - 'descending': 强制坏样本率递减
         - 'peak': 允许单峰形态(先升后降)
         - 'valley': 允许单谷形态(先降后升)
-    :param chi2_threshold: 卡方分箱合并阈值，默认3.841 (p=0.05, df=1)
+    :param min_chi2_threshold: 卡方分箱合并阈值，默认3.841 (p=0.05, df=1)
     :param significance_level: 卡方显著性水平，默认0.05
     :param min_lift: 最小lift阈值，用于筛选规则，默认1.1
     :param min_samples: 最小样本数，默认10。同binning模块的约束
@@ -75,7 +77,7 @@ class SingleFeatureRuleMiner(BaseRuleMiner):
     >>> miner = SingleFeatureRuleMiner(target='ISBAD', method='quantile', max_n_bins=20)  # 等频分箱：每箱样本数大致相等
     >>> miner.fit(df)
     >>> rules = miner.get_top_rules(top_n=10, metric='lift')  # 获取TOP10规则，按LIFT降序
-    >>> miner = SingleFeatureRuleMiner(target='ISBAD', method='chi', max_n_bins=10, chi2_threshold=3.841)  # 卡方分箱：相近坏率的箱自动合并
+    >>> miner = SingleFeatureRuleMiner(target='ISBAD', method='chi', max_n_bins=10, min_chi2_threshold=3.841)  # 卡方分箱：相近坏率的箱自动合并
     >>> miner.fit(df)
     >>> miner = SingleFeatureRuleMiner(target='ISBAD', method='best_iv', max_n_bins=5, monotonic=True)  # 最优IV分箱：自动选择IV最大且坏率单调的分箱方案
     >>> miner.fit(df)
@@ -94,7 +96,7 @@ class SingleFeatureRuleMiner(BaseRuleMiner):
         min_bin_size: Union[float, int] = 0.01,
         max_bin_size: Optional[Union[float, int]] = None,
         monotonic: Union[bool, str] = False,
-        chi2_threshold: float = 3.841,
+        min_chi2_threshold: float = 3.841,
         significance_level: float = 0.05,
         min_lift: float = 1.5,
         min_samples: int = 10,
@@ -128,7 +130,7 @@ class SingleFeatureRuleMiner(BaseRuleMiner):
         self.min_bin_size = min_bin_size
         self.max_bin_size = max_bin_size
         self.monotonic = monotonic
-        self.chi2_threshold = chi2_threshold
+        self.min_chi2_threshold = min_chi2_threshold
         self.significance_level = significance_level
         self.min_lift = min_lift
         self.min_samples = min_samples
@@ -145,18 +147,19 @@ class SingleFeatureRuleMiner(BaseRuleMiner):
         self.overall_badrate_ = 0.0
         self._binning_instances_ = {}
     
+    @analysis_inputs('X', roles=())
     def fit(
         self,
         X: Union[pd.DataFrame, np.ndarray],
         y: Optional[Union[pd.Series, np.ndarray]] = None,
-        feature_names: FeatureNames = None,
+        features: FeatureNames = None,
         **kwargs
     ) -> 'SingleFeatureRuleMiner':
         """拟合挖掘器.
         
         :param X: 训练数据，DataFrame或numpy数组
         :param y: 目标变量（可选）
-        :param feature_names: 本次拟合使用的字段名或字段名列表，优先于构造参数 ``features``
+        :param features: 本次拟合使用的字段名或字段名列表，优先于构造参数 ``features``
         :param kwargs: 额外参数，可覆盖初始化参数
         :return: self
         """
@@ -170,8 +173,8 @@ class SingleFeatureRuleMiner(BaseRuleMiner):
 
         working.method = OptimalBinning.validate_method(working.method)
 
-        features_explicit = feature_names is not None or working.features is not None
-        X, y = working._check_input_data(X, y, feature_names=feature_names)
+        features_explicit = features is not None or working.features is not None
+        X, y = working._check_input_data(X, y, features=features)
 
         if y is None:
             raise ValueError("单特征规则挖掘需要目标变量y")
@@ -234,7 +237,7 @@ class SingleFeatureRuleMiner(BaseRuleMiner):
         :return: hscredit分箱器实例
         """
         # 构建分箱器参数
-        binning_params = {
+        bin_params = {
             'target': self.target,
             'max_n_bins': self.max_n_bins,
             'min_n_bins': self.min_n_bins,
@@ -253,10 +256,10 @@ class SingleFeatureRuleMiner(BaseRuleMiner):
         
         # 卡方分箱特殊参数
         if self.method == 'chi':
-            binning_params['min_chi2_threshold'] = self.chi2_threshold
-            binning_params['significance_level'] = self.significance_level
+            bin_params['min_chi2_threshold'] = self.min_chi2_threshold
+            bin_params['significance_level'] = self.significance_level
 
-        return OptimalBinning(method=self.method, **binning_params)
+        return OptimalBinning(method=self.method, **bin_params)
     
     def _analyze_numerical_feature(self, feature: str) -> Tuple[pd.DataFrame, Any]:
         """分析数值型特征.
@@ -694,7 +697,8 @@ self, feature_values: pd.Series) -> List[float]:
         metric: str = 'lift',
         figsize: Tuple[int, int] = (12, 6),
         title: Optional[str] = None,
-        save_path: Optional[str] = None
+        save: Optional[str] = None, *,
+        dpi: int = 240,
     ):
         """绘制特征分析图.
         
@@ -702,7 +706,7 @@ self, feature_values: pd.Series) -> List[float]:
         :param metric: 可视化指标
         :param figsize: 图大小
         :param title: 自定义标题
-        :param save_path: 保存路径
+        :param save: 保存路径
         :return: matplotlib.pyplot对象
         """
         try:
@@ -746,7 +750,7 @@ self, feature_values: pd.Series) -> List[float]:
         
         plt.tight_layout()
         
-        if save_path:
-            fig.savefig(save_path, dpi=240, bbox_inches='tight')
+        if save:
+            fig.savefig(save, dpi=dpi, bbox_inches='tight')
         
         return fig

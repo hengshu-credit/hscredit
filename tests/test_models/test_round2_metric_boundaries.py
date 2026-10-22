@@ -9,8 +9,8 @@ from hscredit.core.metrics.aggregation import BinStatsAccumulator
 
 def test_baseline_version_includes_transform_policy_and_raw_unknown_rate():
     config = {"user_splits": [["A"], ["B"]]}
-    a = MonitoringBaseline(binning_params={**config, "handle_unknown": -3}).fit(["A", "B"])
-    b = MonitoringBaseline(binning_params={**config, "handle_unknown": 0}).fit(["A", "B"])
+    a = MonitoringBaseline(bin_params={**config, "handle_unknown": -3}).fit(["A", "B"])
+    b = MonitoringBaseline(bin_params={**config, "handle_unknown": 0}).fit(["A", "B"])
     assert a.version_ != b.version_
     assert a.evaluate(["C"])["未知类别率"] == b.evaluate(["C"])["未知类别率"] == 1.0
     assert b.evaluate_batches([["C"], ["A"]])["未知类别率"] == .5
@@ -18,7 +18,7 @@ def test_baseline_version_includes_transform_policy_and_raw_unknown_rate():
 
 @pytest.mark.parametrize('policy', [-3, -1, 0])
 def test_unknown_merged_into_missing_does_not_change_raw_missing_count(policy):
-    baseline = MonitoringBaseline(binning_params={'user_splits': [['A'], ['B']], 'handle_unknown': policy}).fit(['A', 'B', None])
+    baseline = MonitoringBaseline(bin_params={'user_splits': [['A'], ['B']], 'handle_unknown': policy}).fit(['A', 'B', None])
     result = baseline.evaluate(['C', None, 'A'], include_missing=False)
     assert result['未知类别率'] == result['实际缺失率'] == pytest.approx(1 / 3)
     assert result['有效样本数'] == result['分箱明细']['实际样本数'].sum() == 2
@@ -68,7 +68,7 @@ def test_accumulator_rejects_different_bin_identity():
 
 
 def test_refitting_ambiguous_legacy_baseline_clears_migration_block():
-    baseline = MonitoringBaseline(binning_params={'user_splits': [['A'], ['B']], 'handle_unknown': -1}).fit(['A', 'B', None])
+    baseline = MonitoringBaseline(bin_params={'user_splits': [['A'], ['B']], 'handle_unknown': -1}).fit(['A', 'B', None])
     old_state = dict(baseline.__dict__)
     old_state.pop('schema_version_')
     migrated = MonitoringBaseline()
@@ -85,7 +85,7 @@ def test_refitting_ambiguous_legacy_baseline_clears_migration_block():
 
 @pytest.mark.parametrize('reference', [['A', 'B'], ['A']])
 def test_special_unknown_bin_never_uses_negative_category_index(reference):
-    baseline = MonitoringBaseline(binning_params={'handle_unknown': -2}).fit(reference)
+    baseline = MonitoringBaseline(bin_params={'handle_unknown': -2}).fit(reference)
     result = baseline.evaluate(['C'])
     table = result['分箱明细']
     current = table.loc[table['实际样本数'] == 1]
@@ -96,7 +96,7 @@ def test_special_unknown_bin_never_uses_negative_category_index(reference):
 @pytest.mark.parametrize('invalid', [-4, -100])
 def test_monitoring_rejects_unsupported_negative_unknown_bins(invalid):
     with pytest.raises(ValueError, match='未知类别'):
-        MonitoringBaseline(binning_params={'handle_unknown': invalid}).fit(['A', 'B'])
+        MonitoringBaseline(bin_params={'handle_unknown': invalid}).fit(['A', 'B'])
 
 
 @pytest.mark.parametrize('expected,actual', [([np.nan], [1.]), ([1.], [np.nan]), ([np.nan], [np.nan]), ([1.], [])])

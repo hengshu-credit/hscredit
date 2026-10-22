@@ -4,6 +4,8 @@
 并分析规则在不同标签下的有效性差异。
 """
 
+from hscredit.utils.arguments import analysis_inputs
+
 import copy
 
 import numpy as np
@@ -22,7 +24,7 @@ def _multi_label_mining_worker(task):
     child_n_jobs = 1 if miner.n_jobs is None or miner.n_jobs in (1, 1.0) else -1
     child = SingleFeatureRuleMiner(
         target=label,
-        max_n_bins=miner.n_bins,
+        max_n_bins=miner.max_n_bins,
         min_lift=1.0,
         min_samples=candidate_min_samples,
         exclude_cols=[lb for lb in labels if lb != label] + (miner.exclude_cols or []),
@@ -59,7 +61,7 @@ class MultiLabelRuleMiner(BaseRuleMiner):
     :param min_support: 最小支持度（规则覆盖率），默认 0.02
     :param min_lift: 最小 LIFT 值，默认 1.5
     :param max_rules: 每个特征最大规则数，默认 10
-    :param n_bins: 数值特征分箱数，默认 10
+    :param max_n_bins: 数值特征分箱数，默认 10
     :param exclude_cols: 需要排除的列名列表
 
     **参考样例**
@@ -88,7 +90,7 @@ class MultiLabelRuleMiner(BaseRuleMiner):
         min_support: float = 0.02,
         min_lift: float = 1.5,
         max_rules: int = 10,
-        n_bins: int = 10,
+        max_n_bins: int = 10,
         exclude_cols: Optional[List[str]] = None,
         n_jobs: Optional[Union[int, float]] = -1,
         parallel_backend: Optional[str] = None,
@@ -109,7 +111,7 @@ class MultiLabelRuleMiner(BaseRuleMiner):
         self.min_support = min_support
         self.min_lift = min_lift
         self.max_rules = max_rules
-        self.n_bins = n_bins
+        self.max_n_bins = max_n_bins
         self._rules: List[Dict[str, Any]] = []
 
     def _resolved_labels(self) -> List[str]:
@@ -127,6 +129,7 @@ class MultiLabelRuleMiner(BaseRuleMiner):
         object.__setattr__(self, '_auto_target_value', target)
         object.__setattr__(self, '_target_is_auto', True)
 
+    @analysis_inputs('X', roles=())
     def fit(
         self,
         X: Union[pd.DataFrame, np.ndarray],

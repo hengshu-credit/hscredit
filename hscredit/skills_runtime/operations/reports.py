@@ -1,5 +1,7 @@
 """hsreport 完整 Excel 报告操作适配器。"""
 
+from .binning import _target_parameters
+
 from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Mapping
@@ -140,6 +142,7 @@ def _auto_feature_analysis(context) -> dict:
         context.request.parameters,
         reserved=("data", "excel_writer", "output_dir"),
     )
+    params = _target_parameters(context, params)
     staged = _stage_workbook(context)
     image_dir = context.artifacts.stage_path("report-images/.anchor").parent
     end_row, end_col = auto_feature_analysis(
@@ -157,6 +160,7 @@ def _auto_feature_analysis(context) -> dict:
         "label_combinations": _label_combinations(params),
         "feature_summary": summarize_dataframe(feature_summary),
     }
+    summary.update(_overdue_summary(params))
     if summary["label_combinations"]:
         overdue_operator = params.get("overdue_operator")
         if overdue_operator is None:
@@ -204,6 +208,7 @@ def _auto_model_report(context) -> dict:
         context.request.parameters,
         reserved=("model", "excel_path"),
     )
+    params = _target_parameters(context, params)
     dataset_mapping = params.pop("datasets", None)
     datasets = _resolve_datasets(context, dataset_mapping)
     staged = _stage_workbook(context)
@@ -228,6 +233,8 @@ def _auto_model_report(context) -> dict:
                 _overdue_summary({"overdue": overdue, "dpds": dpds, "overdue_operator": report.overdue_operator})
             )
             summary["label_datasets"] = generated_datasets
+    if not report._is_overdue_cfg():
+        summary.update(_overdue_summary(params))
     return {"summary": summary}
 
 
@@ -237,6 +244,7 @@ def _swap_out_report(context) -> dict:
         context.request.parameters,
         reserved=("data", "save"),
     )
+    params = _target_parameters(context, params)
     rules = params.get("rules")
     rule_count = 1 if isinstance(rules, str) else len(rules or [])
     if rule_count == 0:

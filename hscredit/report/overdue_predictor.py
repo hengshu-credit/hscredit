@@ -16,6 +16,8 @@
 3. 支持多逾期标签（overdue+dpds）场景
 """
 
+from ..utils.targets import TargetInput, bind_targets, validate_target_mode, reject_legacy_target_keywords
+
 import numpy as np
 import pandas as pd
 import warnings
@@ -135,7 +137,7 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
     def __init__(
         self,
         feature: str,
-        target: Optional[str] = None,
+        target: Optional[TargetInput] = None,
         overdue: Optional[Union[str, List[str]]] = None,
         dpds: Optional[Union[int, List[int]]] = None,
         method: str = 'mdlp',
@@ -158,6 +160,7 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
         bin_specs=None,
         table_mode: str = "legacy",
     ):
+        validate_target_mode(target, overdue, dpds)
         self.feature = feature
         self.target = target
         self.overdue = overdue
@@ -274,20 +277,10 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
         """
         if self.bin_specs is not None:
             raise ValueError("原始数据拟合请使用 binner 或 rules；bin_specs 用于已有分箱统计表")
-        if self.overdue is not None:
-            # 检查逾期天数字段是否存在
-            overdue_cols = [self.overdue] if isinstance(self.overdue, str) else self.overdue
-            missing_cols = [c for c in overdue_cols if c not in df.columns]
-            if missing_cols:
-                raise ValueError(f"数据集缺少逾期天数字段: {missing_cols}")
-        elif self.target is not None:
-            if self.target not in df.columns:
-                raise ValueError(f"数据集缺少目标变量字段: {self.target}")
-        else:
-            raise ValueError("必须传入 target 或 overdue+dpds 参数")
-
-        # 构建目标变量名称列表
-        self.target_names_ = self._build_target_names()
+        reject_legacy_target_keywords(self.bin_params or {})
+        grey = (self.bin_params or {}).get("del_grey", False) if self.del_grey is None else self.del_grey
+        df, targets = bind_targets(df, self.target, self.overdue, self.dpds, grey, self._resolved_overdue_operator())
+        self.target_names_ = targets.names()
 
         # 调用 feature_bin_stats 生成分箱表
         bin_kwargs = {
@@ -312,9 +305,7 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
         result = feature_bin_stats(
             df,
             feature=self.feature,
-            target=self.target,
-            overdue=self.overdue,
-            dpds=self.dpds,
+            target=targets,
             desc=self.desc or self.feature,
             n_jobs=self.n_jobs,
             parallel_backend=self.parallel_backend,
@@ -1053,7 +1044,7 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
 def overdue_prediction_report(
     data: pd.DataFrame,
     feature: str,
-    target: Optional[str] = None,
+    target: Optional[TargetInput] = None,
     overdue: Optional[Union[str, List[str]]] = None,
     dpds: Optional[Union[int, List[int]]] = None,
     predict_data: Optional[pd.DataFrame] = None,
@@ -1071,6 +1062,7 @@ def overdue_prediction_report(
     parallel_backend: Optional[str] = None,
     parallel_config: Optional[Dict[str, Any]] = None,
     *,
+    del_grey: Optional[bool] = None,
     overdue_operator: Optional[str] = None,
     **kwargs,
 ) -> pd.DataFrame:
@@ -1134,6 +1126,7 @@ def overdue_prediction_report(
         overdue=overdue,
         dpds=dpds,
         overdue_operator=overdue_operator,
+        del_grey=del_grey,
         method=method,
         max_n_bins=max_n_bins,
         min_bin_size=min_bin_size,

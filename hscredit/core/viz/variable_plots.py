@@ -11,6 +11,8 @@
 
 from __future__ import annotations
 
+from hscredit.utils.arguments import analysis_inputs
+
 from typing import List, Optional, Tuple
 
 import matplotlib.pyplot as plt
@@ -45,7 +47,7 @@ def metric_comparison_plot(
     data: pd.DataFrame,
     label_col: str,
     value_col: str,
-    horizontal: bool = True,
+    orientation: str = 'horizontal',
     sort_values: bool = False,
     ascending: bool = True,
     color_scheme: Optional[str] = None,
@@ -57,7 +59,7 @@ def metric_comparison_plot(
     xlabel: Optional[str] = None,
     ylabel: Optional[str] = None,
     save: Optional[str] = None,
-    **kwargs,
+    dpi: int = 240, **kwargs,
 ) -> Figure:
     """绘制指标对比柱状图.
 
@@ -66,7 +68,7 @@ def metric_comparison_plot(
     :param data: 指标结果表
     :param label_col: 分类标签列名
     :param value_col: 指标数值列名
-    :param horizontal: 是否绘制横向柱状图
+    :param orientation: 是否绘制横向柱状图
     :param sort_values: 是否按指标值排序
     :param ascending: 排序方向
     :param color_scheme: 语义配色，可选 ``'iv'`` 或 ``'psi'``
@@ -84,6 +86,8 @@ def metric_comparison_plot(
 
     >>> fig = metric_comparison_plot(iv_table, '特征', 'IV', color_scheme='iv')
     """
+    if orientation not in ('horizontal', 'vertical'):
+        raise ValueError("orientation 必须是 horizontal 或 vertical")
     missing_cols = [col for col in (label_col, value_col) if col not in data.columns]
     if missing_cols:
         raise ValueError(f"data 缺少必要列: {missing_cols}")
@@ -114,7 +118,7 @@ def metric_comparison_plot(
 
     fig, ax = get_or_create_ax(figsize=figsize, ax=ax)
     positions = np.arange(len(labels))
-    if horizontal:
+    if orientation == 'horizontal':
         bars = ax.barh(positions, values, color=colors, alpha=0.85, edgecolor='white')
         ax.set_yticks(positions)
         ax.set_yticklabels(labels)
@@ -132,13 +136,13 @@ def metric_comparison_plot(
     max_abs = max(float(np.nanmax(np.abs(values))), 1e-12)
     for bar, value in zip(bars, values):
         text = value_format.format(value)
-        if horizontal:
+        if orientation == 'horizontal':
             ax.text(value + max_abs * 0.01, bar.get_y() + bar.get_height() / 2, text, va='center', fontsize=9)
         else:
             ax.text(bar.get_x() + bar.get_width() / 2, value + max_abs * 0.01, text, ha='center', va='bottom', fontsize=9)
 
     for value, label, color in reference_lines or []:
-        if horizontal:
+        if orientation == 'horizontal':
             ax.axvline(value, color=color, linestyle='--', linewidth=1, alpha=0.8, label=label)
         else:
             ax.axhline(value, color=color, linestyle='--', linewidth=1, alpha=0.8, label=label)
@@ -147,12 +151,13 @@ def metric_comparison_plot(
 
     ax.set_title(title or f'{value_col}对比', fontsize=13, fontweight='bold')
     setup_axis_style(ax, hide_top_right=True)
-    ax.grid(True, alpha=0.3, axis='x' if horizontal else 'y')
+    ax.grid(True, alpha=0.3, axis='x' if orientation == 'horizontal' else 'y')
     fig.tight_layout()
-    save_figure(fig, save)
+    save_figure(fig, save, dpi=dpi)
     return fig
 
 
+@analysis_inputs('df', roles=())
 def variable_iv_plot(
     df: pd.DataFrame,
     features: List[str],
@@ -162,7 +167,7 @@ def variable_iv_plot(
     figsize: Tuple[float, float] = (12, 8),
     title: str = '特征IV值排名',
     save: Optional[str] = None,
-    **kwargs,
+    dpi: int = 240, **kwargs,
 ) -> Figure:
     """特征IV值横向柱状图.
 
@@ -232,7 +237,7 @@ def variable_iv_plot(
     ax.set_title(title, fontsize=13, fontweight='bold')
     setup_axis_style(ax, hide_top_right=True)
     fig.tight_layout()
-    save_figure(fig, save)
+    save_figure(fig, save, dpi=dpi)
     return fig
 
 
@@ -243,7 +248,7 @@ def variable_woe_trend_plot(
     figsize: Tuple[float, float] = (10, 5),
     title: Optional[str] = None,
     save: Optional[str] = None,
-    **kwargs,
+    dpi: int = 240, **kwargs,
 ) -> Figure:
     """WOE折线图 + 坏率柱状图（双轴）.
 
@@ -313,7 +318,7 @@ def variable_woe_trend_plot(
 
     setup_axis_style(ax1, hide_top_right=False)
     fig.tight_layout()
-    save_figure(fig, save)
+    save_figure(fig, save, dpi=dpi)
     return fig
 
 
@@ -323,7 +328,7 @@ def variable_psi_heatmap(
     figsize: Tuple[float, float] = (14, 8),
     title: str = '特征PSI热力图',
     save: Optional[str] = None,
-    **kwargs,
+    dpi: int = 240, **kwargs,
 ) -> Figure:
     """特征PSI矩阵热力图.
 
@@ -378,7 +383,7 @@ def variable_psi_heatmap(
 
     ax.set_title(title, fontsize=13, fontweight='bold')
     fig.tight_layout()
-    save_figure(fig, save)
+    save_figure(fig, save, dpi=dpi)
     return fig
 
 
@@ -386,20 +391,20 @@ def variable_importance_grouped_plot(
     importance_df: pd.DataFrame,
     feature_col: str = 'feature',
     value_col: str = 'importance',
-    group_col: Optional[str] = 'category',
+    group: Optional[str] = 'category',
     top_n: int = 30,
     ax: Optional[plt.Axes] = None,
     figsize: Tuple[float, float] = (12, 8),
     title: str = '特征重要性（分类）',
     save: Optional[str] = None,
-    **kwargs,
+    dpi: int = 240, **kwargs,
 ) -> Figure:
     """按特征类别分组的重要性横向柱状图.
 
     :param importance_df: 特征重要性 DataFrame，需含 feature_col 和 value_col 列
     :param feature_col: 特征名列名，默认 'feature'
     :param value_col: 重要性值列名，默认 'importance'
-    :param group_col: 分组列名，默认 'category'；None 时不分组
+    :param group: 分组列名，默认 'category'；None 时不分组
     :param top_n: 显示前N个，默认30
     :param ax: matplotlib Axes
     :param figsize: 图像尺寸
@@ -421,8 +426,8 @@ def variable_importance_grouped_plot(
     vals = df[value_col].values
 
     # 分组颜色
-    if group_col and group_col in df.columns:
-        groups = df[group_col].tolist()
+    if group and group in df.columns:
+        groups = df[group].tolist()
         unique_groups = list(dict.fromkeys(groups))
         palette = get_series_colors(len(unique_groups))
         group_colors = {g: palette[i] for i, g in enumerate(unique_groups)}
@@ -450,10 +455,11 @@ def variable_importance_grouped_plot(
     ax.set_title(title, fontsize=13, fontweight='bold')
     setup_axis_style(ax, hide_top_right=True)
     fig.tight_layout()
-    save_figure(fig, save)
+    save_figure(fig, save, dpi=dpi)
     return fig
 
 
+@analysis_inputs('df', roles=())
 def variable_missing_badrate_plot(
     df: pd.DataFrame,
     features: List[str],
@@ -462,7 +468,7 @@ def variable_missing_badrate_plot(
     figsize: Tuple[float, float] = (10, 7),
     title: str = '缺失率 vs 坏账率（缺失样本）',
     save: Optional[str] = None,
-    **kwargs,
+    dpi: int = 240, **kwargs,
 ) -> Figure:
     """缺失率 vs 坏账率散点图.
 
@@ -533,7 +539,7 @@ def variable_missing_badrate_plot(
     ax.legend(fontsize=9)
     setup_axis_style(ax, hide_top_right=True)
     fig.tight_layout()
-    save_figure(fig, save)
+    save_figure(fig, save, dpi=dpi)
     return fig
 
 

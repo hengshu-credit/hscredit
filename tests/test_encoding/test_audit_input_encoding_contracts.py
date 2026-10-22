@@ -96,7 +96,7 @@ def test_onehot_dropped_class_known_and_names_unique():
     X = pd.DataFrame({"x": ["a", "b"]})
     OneHotEncoder(drop="first", handle_unknown="error", n_jobs=1).fit_transform(X)
     X = pd.DataFrame({"x": ["a-b", "a b", "missing", None], "x_a_b": [1, 2, 3, 4]})
-    enc = OneHotEncoder(cols=["x"], n_jobs=1).fit(X)
+    enc = OneHotEncoder(features=["x"], n_jobs=1).fit(X)
     result = enc.transform(X)
     assert result.columns.is_unique
     assert len(enc.feature_names_) == 4

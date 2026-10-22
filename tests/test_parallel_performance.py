@@ -145,7 +145,7 @@ def test_corr_selector_spearman_ranking_reaches_speedup_gate():
         return CorrSelector(
             method="spearman",
             weights=weights,
-            binning_params=None,
+            bin_params=None,
             corr_block_size=feature_count,
             n_jobs=1,
             parallel_backend="threading",
@@ -155,7 +155,7 @@ def test_corr_selector_spearman_ranking_reaches_speedup_gate():
         return CorrSelector(
             method="spearman",
             weights=weights,
-            binning_params=None,
+            bin_params=None,
             corr_block_size=feature_count,
             n_jobs=PARALLEL_WORKERS,
             parallel_backend="threading",

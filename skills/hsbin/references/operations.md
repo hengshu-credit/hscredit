@@ -33,9 +33,9 @@
 |---|---|---|
 | `feature_bin_stats` | `data`; `feature`, `target` 或 `overdue+dpds` | 分箱统计 Excel |
 | `feature_bin_stats_2d` | `data`; 两个 `features`, `target` | 二维分箱统计 Excel |
-| `benchmark_binning_methods` | `data`; `feature`, `overdue`, `dpds` | 方法对比 Excel |
+| `benchmark_methods` | `data`; `feature`, `overdue`, `dpds` | 方法对比 Excel |
 | `feature_binning_summary` | `data`; `feature`, `methods`, 目标配置 | 摘要和各方法明细 Excel |
-| `feature_group_binning_summary` | `data`; 上述参数，加 `date_col` 或 `group_col` | 分组摘要和明细 Excel |
+| `feature_group_binning_summary` | `data`; 上述参数，加 `date` 或 `group` | 分组摘要和明细 Excel |
 | `feature_efficiency_analysis` | `data`; `feature`, 目标配置，可选日期/分组 | 手工/自动表、规则 JSON、比较图和趋势图 |
 
 这些操作只接受对应 hscredit 函数显式声明的参数。底层函数的 `**kwargs` 不作为开放的任意参数入口。
@@ -44,7 +44,7 @@
 
 使用 `overdue_operator` 指定 `>`、`>=`、`<` 或 `<=`，表格分析默认 `>`。`del_grey=True` 时，`>` 剔除 `(0, dpd]`，`>=` 剔除 `(0, dpd)`，`<`、`<=` 不剔灰。`summary.overdue_operator` 记录本次组合使用的比较符；`bin_overdues_plot` 保留 `>=` 的历史默认值。
 
-`summary.label_combinations` 中的阈值与计算值一致：整数小数和数值字符串会规范化，组合式表格分析去重阈值。`feature_efficiency_analysis` 使用单阈值 `dpd`（默认 0），也返回比较符和标签组合。原始数据 `bin_overdues_plot` 按逾期列和阈值一一对应记录，保留重复阈值；现成分箱表绘图不追加推测的比较符。
+`summary.label_combinations` 中的阈值与计算值一致：整数小数和数值字符串会规范化，组合式表格分析去重阈值。`feature_efficiency_analysis` 使用统一参数 `dpds`（标量或列表），同时支持 `target` 字典，也返回比较符和标签组合。原始数据 `bin_overdues_plot` 按逾期列和阈值一一对应记录，保留重复阈值；现成分箱表绘图不追加推测的比较符。
 
 ## 分箱器生命周期
 
@@ -85,3 +85,5 @@
 - Parquet 会触发受控 `parquet` extra。
 - `object_ref` 只在同进程 Python 调用中可用，不能由独立 CLI JSON 自行解析。
 - Pickle/joblib 可能执行代码，未设置 `trusted=true` 时必须拒绝。
+
+自定义标签使用 `target=列名/Series/ndarray/list/callable/{标签名: 数据或callable}`。CLI 可通过 `inputs.target` 或字典值 `{"input": "输入名"}` 引用对象；lambda 通过同进程 object_ref 提供，不执行代码字符串。`del_grey=True` 剔除非 0/1 值，否则按负样本 0 计算。旧 `target_col`、`dpd` 和逾期配置字典已移除。

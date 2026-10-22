@@ -83,7 +83,7 @@ def test_baseline_smoothing_is_frozen_and_part_of_version():
 
 def test_baseline_accepts_array_user_splits():
     from hscredit.core.metrics import MonitoringBaseline
-    baseline = MonitoringBaseline(binning_params={'user_splits': np.array([.5, 1.5])}).fit([0., 1., 2., 3.])
+    baseline = MonitoringBaseline(bin_params={'user_splits': np.array([.5, 1.5])}).fit([0., 1., 2., 3.])
     assert baseline.evaluate([0., 1., 2., 3.])['PSI'] == 0
 
 
@@ -98,12 +98,12 @@ def test_empty_window_and_all_missing_population_have_explicit_status(method):
 
 def test_monitoring_honors_explicit_categorical_groups():
     from hscredit.core.metrics import MonitoringBaseline
-    base = MonitoringBaseline(binning_params={'user_splits': {'value': [['a', 'b'], ['c']]}}).fit(['a', 'b', 'c', 'a'])
+    base = MonitoringBaseline(bin_params={'user_splits': {'value': [['a', 'b'], ['c']]}}).fit(['a', 'b', 'c', 'a'])
     codes = base.transform(['a', 'b', 'c', 'z'])
     assert codes[0] == codes[1] != codes[2]
     assert codes[3] == -3
     with pytest.raises(TypeError):
-        MonitoringBaseline(binning_params={'unknown_option': 42}).fit(['a', 'b'])
+        MonitoringBaseline(bin_params={'unknown_option': 42}).fit(['a', 'b'])
 
 
 def test_cross_psi_uses_each_row_group_as_reference_instead_of_mirroring():

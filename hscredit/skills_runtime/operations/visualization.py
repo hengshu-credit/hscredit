@@ -1,5 +1,7 @@
 """hsbin 分箱可视化操作适配器。"""
 
+from .binning import _target_parameters
+
 from collections import OrderedDict
 from pathlib import Path
 
@@ -44,7 +46,9 @@ def _plot_handler(function):
             function,
             context.request.parameters,
             reserved=("data", "save", "bin_table", "binner"),
+            allow_var_keyword=True,
         )
+        params = _target_parameters(context, params)
         staged = context.artifacts.stage_path(f"{context.request.output.name}.{output_format}")
 
         if function is bin_overdues_plot and "bin_table" in context.request.inputs:

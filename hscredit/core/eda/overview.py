@@ -4,6 +4,8 @@
 主要复用 hscredit.utils.describe 的功能.
 """
 
+from hscredit.utils.arguments import analysis_inputs
+
 import numpy as np
 import pandas as pd
 from typing import List, Dict, Optional, Union, Literal, Any, Callable, Tuple
@@ -14,7 +16,7 @@ from .utils import _eda_workload, infer_feature_types, validate_dataframe
 
 def _psm_binning_worker(task):
     """为单个客群分层字段计算分箱边界。"""
-    series, column, method, n_bins, child_n_jobs, parallel_backend, parallel_config = task
+    series, column, method, max_n_bins, child_n_jobs, parallel_backend, parallel_config = task
     from ..binning import QuantileBinning, TreeBinning, UniformBinning
 
     common = {
@@ -23,11 +25,11 @@ def _psm_binning_worker(task):
         "parallel_config": parallel_config,
     }
     if method == "uniform":
-        binner = UniformBinning(max_n_bins=n_bins, **common)
+        binner = UniformBinning(max_n_bins=max_n_bins, **common)
     elif method == "tree":
-        binner = TreeBinning(max_depth=int(np.log2(n_bins)) + 1, **common)
+        binner = TreeBinning(max_depth=int(np.log2(max_n_bins)) + 1, **common)
     else:
-        binner = QuantileBinning(max_n_bins=n_bins, **common)
+        binner = QuantileBinning(max_n_bins=max_n_bins, **common)
     if len(series) < 2:
         return column, []
     # BaseBinning 的双 API 要求二元 y；Quantile/Uniform 不使用 y 决定切点，
@@ -137,6 +139,7 @@ def data_info(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(info_data)
 
 
+@analysis_inputs('df', roles=())
 def missing_analysis(df: pd.DataFrame, threshold: float = 0.0, features: List[str] = None) -> pd.DataFrame:
     """缺失值分析.
 
@@ -186,6 +189,7 @@ def missing_analysis(df: pd.DataFrame, threshold: float = 0.0, features: List[st
     return result_df
 
 
+@analysis_inputs('df', roles=('date', 'group'))
 def feature_summary(
     df: pd.DataFrame,
     features: List[str] = None,
@@ -195,10 +199,10 @@ def feature_summary(
     model_type: Optional[Literal["xgboost", "lightgbm", "catboost", "randomforest"]] = None,
     model_params: Optional[Dict] = None,
     max_n_bins: int = 10,
-    psi_method: Literal["random_split", "group_col", "date_col"] = "random_split",
-    psi_group_col: Optional[str] = None,
-    psi_date_col: Optional[str] = None,
-    psi_freq: str = "M",
+    psi_method: Literal["random_split", "group", "date"] = "random_split",
+    group: Optional[str] = None,
+    date: Optional[str] = None,
+    freq: str = "M",
     psi_test_size: float = 0.3,
     percentiles: List[float] = None,
     random_state: int = 42,
@@ -208,8 +212,8 @@ def feature_summary(
     parallel_backend: Optional[str] = None,
     parallel_config: Optional[Dict[str, Any]] = None,
     show_progress: bool = False,
-    binning_method: str = "quantile",
-    binning_params: Optional[Dict[str, Any]] = None,
+    method: str = "quantile",
+    bin_params: Optional[Dict[str, Any]] = None,
 ) -> pd.DataFrame:
     """综合特征描述统计.
 
@@ -230,11 +234,11 @@ def feature_summary(
     :param max_n_bins: IV、趋势和PSI共用的最大分箱数，默认10
     :param psi_method: PSI计算方式
         - 'random_split': 随机拆分两份数据计算PSI（默认）
-        - 'group_col': 按psi_group_col指定的分组列计算PSI
-        - 'date_col': 按psi_date_col指定的日期列分组计算PSI
-    :param psi_group_col: 分组列名（当psi_method='group_col'时使用）
-    :param psi_date_col: 日期列名（当psi_method='date_col'时使用）
-    :param psi_freq: 时间频率，'D'/'W'/'M'/'Q'，默认'M'
+        - 'group': 按psi_group_col指定的分组列计算PSI
+        - 'date': 按psi_date_col指定的日期列分组计算PSI
+    :param group: 分组列名（当psi_method='group'时使用）
+    :param date: 日期列名（当psi_method='date'时使用）
+    :param freq: 时间频率，'D'/'W'/'M'/'Q'，默认'M'
     :param psi_test_size: 随机拆分比例（当psi_method='random_split'时使用），默认0.3
     :param percentiles: 分位数点，默认[0.01, 0.05, 0.25, 0.5, 0.75, 0.95, 0.99]
     :param random_state: 随机种子
@@ -244,8 +248,8 @@ def feature_summary(
     :param parallel_backend: 显式 joblib 后端；指定后优先于自动后端选择
     :param parallel_config: 统一并行扩展配置，不会被函数原地修改
     :param show_progress: 是否显示已处理字段数、总字段数和当前处理字段
-    :param binning_method: IV、趋势和PSI共用的分箱方法，默认'quantile'（等频分箱）
-    :param binning_params: 传给OptimalBinning的扩展参数。外层 binning_method、max_n_bins、
+    :param method: IV、趋势和PSI共用的分箱方法，默认'quantile'（等频分箱）
+    :param bin_params: 传给OptimalBinning的扩展参数。外层 method、max_n_bins、
         random_state 的优先级高于其中的同名键；user_splits 字典按原字段名配置
     :return: 综合特征描述DataFrame，包含以下列：
         - 基础统计: 特征名、字段类型、样本数、缺失数/率、唯一值数、众数等
@@ -278,7 +282,7 @@ def feature_summary(
     >>> summary = feature_summary(df, y='target', psi_method='random_split')
 
     >>> # 按日期分组计算PSI
-    >>> summary = feature_summary(df, y='target', psi_method='date_col', psi_date_col='apply_date')
+    >>> summary = feature_summary(df, y='target', psi_method='date', date='apply_date')
 
     >>> # 传入已训练模型获取特征重要性
     >>> models = {'XGB': xgb_model, 'LGB': lgb_model}
@@ -290,13 +294,13 @@ def feature_summary(
     >>> # 指定数值列视为分类变量（如年龄分段编码）
     >>> summary = feature_summary(df, y='target', numeric_as_categorical=['age_group'])
 
-    >>> # 三项指标共用显式分箱；外层参数覆盖 binning_params 中的同名参数
+    >>> # 三项指标共用显式分箱；外层参数覆盖 bin_params 中的同名参数
     >>> summary = feature_summary(
     ...     df,
     ...     y='target',
-    ...     binning_method='quantile',
+    ...     method='quantile',
     ...     max_n_bins=10,
-    ...     binning_params={
+    ...     bin_params={
     ...         'min_bin_size': 0.05,
     ...         'user_splits': {'age': [25, 35, 45]},
     ...         'user_splits_fixed': True,
@@ -336,17 +340,17 @@ def feature_summary(
         val_df=val_df,
         max_n_bins=max_n_bins,
         psi_method=psi_method,
-        psi_group_col=psi_group_col,
-        psi_date_col=psi_date_col,
-        psi_freq=psi_freq,
+        group=group,
+        date=date,
+        freq=freq,
         psi_test_size=psi_test_size,
         random_state=random_state,
         n_jobs=n_jobs,
         parallel_backend=parallel_backend,
         parallel_config=parallel_config,
         show_progress=show_progress,
-        binning_method=binning_method,
-        binning_params=binning_params,
+        method=method,
+        bin_params=bin_params,
     )
 
     # 特征重要性（传入已训练模型）
@@ -456,6 +460,7 @@ def feature_summary(
     return results_df
 
 
+@analysis_inputs('df', roles=())
 def numeric_summary(df: pd.DataFrame, features: List[str] = None, percentiles: List[float] = None) -> pd.DataFrame:
     """数值特征详细统计.
 
@@ -516,6 +521,7 @@ def numeric_summary(df: pd.DataFrame, features: List[str] = None, percentiles: L
     return pd.DataFrame(results)
 
 
+@analysis_inputs('df', roles=())
 def category_summary(df: pd.DataFrame, features: List[str] = None, max_categories: int = 10) -> pd.DataFrame:
     """类别特征统计.
 
@@ -569,6 +575,7 @@ def category_summary(df: pd.DataFrame, features: List[str] = None, max_categorie
     return pd.DataFrame(results)
 
 
+@analysis_inputs('df', roles=())
 def data_quality_report(df: pd.DataFrame, features: List[str] = None, missing_threshold: float = 0.5, constant_threshold: float = 0.95) -> pd.DataFrame:
     """数据质量综合报告.
 
@@ -650,7 +657,8 @@ def data_quality_report(df: pd.DataFrame, features: List[str] = None, missing_th
     return pd.DataFrame(issues)
 
 
-def population_stability_monitor(expected: pd.DataFrame, actual: pd.DataFrame, segment_cols: Union[str, List[str]], binning_method: str = "quantile", n_bins: int = 5, bin_edges: Optional[Dict[str, List]] = None, date_col: Optional[str] = None, date_freq: str = "M", group_col: Optional[str] = None, metrics: Union[str, List[str]] = "占比", sort_by: Optional[str] = None, sort_order: Literal["desc", "asc"] = "desc", n_jobs=-1, parallel_backend=None, parallel_config=None) -> pd.DataFrame:
+@analysis_inputs('actual', roles=('date', 'group'))
+def population_stability_monitor(expected: pd.DataFrame, actual: pd.DataFrame, segment_cols: Union[str, List[str]], method: str = "quantile", max_n_bins: int = 5, rules: Optional[Dict[str, List]] = None, date: Optional[str] = None, freq: str = "M", group: Optional[str] = None, metrics: Union[str, List[str]] = "占比", sort_by: Optional[str] = None, sort_order: Literal["desc", "asc"] = "desc", n_jobs=-1, parallel_backend=None, parallel_config=None) -> pd.DataFrame:
     """群体稳定性监控分析（Population Stability Monitor）.
 
     金融风控中监控客群分布变化的核心方法，基于期望样本（expected）构建客群分层标准，
@@ -673,16 +681,16 @@ def population_stability_monitor(expected: pd.DataFrame, actual: pd.DataFrame, s
     :param segment_cols: 客群分层变量，支持单变量或多变量交叉
         - 字符串: 单一变量（如'收入'）
         - 列表: 多变量交叉（如['收入层级', '信用等级']）
-    :param binning_method: 分箱方法（当传入bin_edges时此参数忽略）
+    :param method: 分箱方法（当传入bin_edges时此参数忽略）
         - 'quantile': 等频分箱（默认，客群规模相近）
         - 'uniform': 等距分箱
         - 'tree': 决策树分箱
-    :param n_bins: 分箱数，默认5层
-    :param bin_edges: 自定义分箱边界，格式{变量名: [边界列表]}
+    :param max_n_bins: 分箱数，默认5层
+    :param rules: 自定义分箱边界，格式{变量名: [边界列表]}
         - 传入后直接使用，无需expected数据集计算分箱
-    :param date_col: 时间列，用于时间维度监控（如各月对比）
-    :param date_freq: 时间频率，'D'日/'W'周/'M'月/'Q'季，默认'M'
-    :param group_col: 分类列，用于分类维度监控（如各渠道对比）
+    :param date: 时间列，用于时间维度监控（如各月对比）
+    :param freq: 时间频率，'D'日/'W'周/'M'月/'Q'季，默认'M'
+    :param group: 分类列，用于分类维度监控（如各渠道对比）
     :param metrics: 统计指标，支持单选或多选
         - '占比': 占比百分比（默认）
         - '样本数': 样本数量
@@ -709,8 +717,8 @@ def population_stability_monitor(expected: pd.DataFrame, actual: pd.DataFrame, s
     ...     expected=historical_df,
     ...     actual=prod_df,
     ...     segment_cols='risk_score',
-    ...     date_col='apply_date',
-    ...     date_freq='M'
+    ...     date='apply_date',
+    ...     freq='M'
     ... )
     >>>
     >>> # 3. 多维度交叉：收入+信用等级
@@ -721,12 +729,12 @@ def population_stability_monitor(expected: pd.DataFrame, actual: pd.DataFrame, s
     ... )
     >>>
     >>> # 4. 自定义分箱边界（expected可传可不传）
-    >>> bin_edges = {'age': [0, 25, 35, 45, 55, 100]}
+    >>> rules = {'age': [0, 25, 35, 45, 55, 100]}
     >>> result = population_stability_monitor(
     ...     expected=None,                  # 传入bin_edges后可不传
     ...     actual=prod_df,
     ...     segment_cols='age',
-    ...     bin_edges=bin_edges
+    ...     rules=rules
     ... )
     >>>
     >>> # 5. 多指标显示
@@ -742,7 +750,7 @@ def population_stability_monitor(expected: pd.DataFrame, actual: pd.DataFrame, s
     ...     expected=train_df,
     ...     actual=current_df,
     ...     segment_cols='customer_type',
-    ...     group_col='channel'
+    ...     group='channel'
     ... )
     """
     validate_dataframe(actual)
@@ -767,7 +775,7 @@ def population_stability_monitor(expected: pd.DataFrame, actual: pd.DataFrame, s
             raise ValueError(f"客群分层变量 '{col}' 不存在于expected数据集")
 
     # 确定分箱标准来源
-    use_custom_edges = bin_edges is not None and any(col in bin_edges for col in segment_cols)
+    use_custom_edges = rules is not None and any(col in rules for col in segment_cols)
 
     if not use_custom_edges and expected is None:
         raise ValueError("必须传入expected数据集或bin_edges分箱边界")
@@ -779,11 +787,11 @@ def population_stability_monitor(expected: pd.DataFrame, actual: pd.DataFrame, s
     child_n_jobs = 1 if n_jobs is None or n_jobs in (1, 1.0) else -1
     binning_tasks = []
     for col in segment_cols:
-        if use_custom_edges and col in bin_edges:
-            edges_by_column[col] = bin_edges[col]
+        if use_custom_edges and col in rules:
+            edges_by_column[col] = rules[col]
         elif expected is not None and pd.api.types.is_numeric_dtype(expected[col]):
             binning_tasks.append(
-                (expected[col], col, binning_method, n_bins, child_n_jobs, parallel_backend, parallel_config)
+                (expected[col], col, method, max_n_bins, child_n_jobs, parallel_backend, parallel_config)
             )
         else:
             edges_by_column[col] = []
@@ -832,22 +840,22 @@ def population_stability_monitor(expected: pd.DataFrame, actual: pd.DataFrame, s
     # 构建监控维度
     monitor_dims = []
 
-    if date_col and date_col in actual.columns:
-        actual_copy[date_col] = pd.to_datetime(actual_copy[date_col])
-        if date_freq == "M":
-            actual_copy["_period"] = actual_copy[date_col].dt.to_period("M").astype(str)
-        elif date_freq == "W":
-            actual_copy["_period"] = actual_copy[date_col].dt.to_period("W").astype(str)
-        elif date_freq == "Q":
-            actual_copy["_period"] = actual_copy[date_col].dt.to_period("Q").astype(str)
-        elif date_freq == "D":
-            actual_copy["_period"] = actual_copy[date_col].dt.date.astype(str)
+    if date and date in actual.columns:
+        actual_copy[date] = pd.to_datetime(actual_copy[date])
+        if freq == "M":
+            actual_copy["_period"] = actual_copy[date].dt.to_period("M").astype(str)
+        elif freq == "W":
+            actual_copy["_period"] = actual_copy[date].dt.to_period("W").astype(str)
+        elif freq == "Q":
+            actual_copy["_period"] = actual_copy[date].dt.to_period("Q").astype(str)
+        elif freq == "D":
+            actual_copy["_period"] = actual_copy[date].dt.date.astype(str)
         else:
-            actual_copy["_period"] = actual_copy[date_col].dt.to_period("M").astype(str)
+            actual_copy["_period"] = actual_copy[date].dt.to_period("M").astype(str)
         monitor_dims.append(("date", "_period"))
 
-    if group_col and group_col in actual.columns:
-        monitor_dims.append(("group", group_col))
+    if group and group in actual.columns:
+        monitor_dims.append(("group", group))
 
     # 计算统计
     results = []
@@ -1014,12 +1022,13 @@ def _calc_psm_stats(df, segment_cols, segment_labels, dim_name, metrics):
     return results
 
 
+@analysis_inputs('df', roles=('date', 'group'), multi_group=True)
 def feature_group_analysis(
     df: pd.DataFrame,
     features: List[str] = None,
-    group_cols: Union[str, List[str]] = None,
-    date_col: Optional[str] = None,
-    date_freq: str = "M",
+    group: Union[str, List[str]] = None,
+    date: Optional[str] = None,
+    freq: str = "M",
     stats: Union[str, List[str], Callable, Dict[str, Callable]] = "default",
     y: Optional[Union[str, pd.Series]] = None,
     y_stats: List[str] = None,
@@ -1040,9 +1049,9 @@ def feature_group_analysis(
 
     :param df: 输入数据
     :param features: 分析的特征列表，None则分析全部数值型特征
-    :param group_cols: 客群分组列（单级或多级），如 'segment' 或 ['segment', 'channel']
-    :param date_col: 时间列，用于时间分组分析，支持日期格式
-    :param date_freq: 时间频率，'D'日/'W'周/'M'月/'Q'季/'Y'年，默认'M'
+    :param group: 客群分组列（单级或多级），如 'segment' 或 ['segment', 'channel']
+    :param date: 时间列，用于时间分组分析，支持日期格式
+    :param freq: 时间频率，'D'日/'W'周/'M'月/'Q'季/'Y'年，默认'M'
     :param stats: 统计指标
         - 'default': 默认统计[均值、中位数、标准差、缺失率、唯一值数]
         - 'all': 全部基础统计指标
@@ -1068,7 +1077,7 @@ def feature_group_analysis(
     >>> result = feature_group_analysis(
     ...     df,
     ...     features=['age', 'income'],
-    ...     group_cols='customer_segment',
+    ...     group='customer_segment',
     ...     stats=['均值', '中位数', '缺失率']
     ... )
     >>>
@@ -1076,8 +1085,8 @@ def feature_group_analysis(
     >>> result = feature_group_analysis(
     ...     df,
     ...     features=['age', 'income'],
-    ...     date_col='apply_date',
-    ...     date_freq='M',
+    ...     date='apply_date',
+    ...     freq='M',
     ...     stats='default'
     ... )
     >>>
@@ -1085,9 +1094,9 @@ def feature_group_analysis(
     >>> result = feature_group_analysis(
     ...     df,
     ...     features=['age', 'income'],
-    ...     group_cols='segment',
-    ...     date_col='apply_date',
-    ...     date_freq='M'
+    ...     group='segment',
+    ...     date='apply_date',
+    ...     freq='M'
     ... )
     >>>
     >>> # 自定义统计指标
@@ -1102,7 +1111,7 @@ def feature_group_analysis(
     >>> result = feature_group_analysis(
     ...     df,
     ...     features=['age', 'income'],
-    ...     group_cols='segment',
+    ...     group='segment',
     ...     y='fpd15',
     ...     y_stats=['逾期率', '样本数']
     ... )
@@ -1111,7 +1120,7 @@ def feature_group_analysis(
     >>> result = feature_group_analysis(
     ...     df,
     ...     features=['age', 'income'],
-    ...     group_cols='segment',
+    ...     group='segment',
     ...     sort_by=('age', '均值'),
     ...     sort_order='desc'
     ... )
@@ -1146,30 +1155,30 @@ def feature_group_analysis(
     group_keys = []
 
     # 处理客群分组
-    if group_cols is not None:
-        if isinstance(group_cols, str):
-            group_cols = [group_cols]
-        for col in group_cols:
+    if group is not None:
+        if isinstance(group, str):
+            group = [group]
+        for col in group:
             if col in df.columns:
                 group_keys.append(col)
 
     # 处理时间分组
-    if date_col is not None and date_col in df.columns:
+    if date is not None and date in df.columns:
         df = df.copy()
-        df[date_col] = pd.to_datetime(df[date_col])
+        df[date] = pd.to_datetime(df[date])
 
-        if date_freq == "M":
-            df["_time_group"] = df[date_col].dt.to_period("M").astype(str)
-        elif date_freq == "W":
-            df["_time_group"] = df[date_col].dt.to_period("W").astype(str)
-        elif date_freq == "Q":
-            df["_time_group"] = df[date_col].dt.to_period("Q").astype(str)
-        elif date_freq == "Y":
-            df["_time_group"] = df[date_col].dt.to_period("Y").astype(str)
-        elif date_freq == "D":
-            df["_time_group"] = df[date_col].dt.date.astype(str)
+        if freq == "M":
+            df["_time_group"] = df[date].dt.to_period("M").astype(str)
+        elif freq == "W":
+            df["_time_group"] = df[date].dt.to_period("W").astype(str)
+        elif freq == "Q":
+            df["_time_group"] = df[date].dt.to_period("Q").astype(str)
+        elif freq == "Y":
+            df["_time_group"] = df[date].dt.to_period("Y").astype(str)
+        elif freq == "D":
+            df["_time_group"] = df[date].dt.date.astype(str)
         else:
-            df["_time_group"] = df[date_col].dt.to_period("M").astype(str)
+            df["_time_group"] = df[date].dt.to_period("M").astype(str)
 
         group_keys.append("_time_group")
 

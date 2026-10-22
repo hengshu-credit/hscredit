@@ -19,7 +19,7 @@ class QuantileEncoder(BaseEncoder):
 
     **参数**
 
-    :param cols: 需要编码的列名列表。如果为None，则自动识别所有列（支持类别型和数值型）
+    :param features: 需要编码的列名列表。如果为None，则自动识别所有列（支持类别型和数值型）
     :param quantile: 分位数，范围[0, 1]，默认为0.5（中位数）
     :param smoothing: 平滑参数，默认为1.0
     :param m: 先验权重参数，默认为1.0
@@ -36,11 +36,11 @@ class QuantileEncoder(BaseEncoder):
     **参考样例**
 
     >>> from hscredit.core.encoders import QuantileEncoder
-    >>> encoder = QuantileEncoder(cols=['category'], quantile=0.5)
+    >>> encoder = QuantileEncoder(features=['category'], quantile=0.5)
     >>> X_encoded = encoder.fit_transform(X, y)
     >>>
     >>> # 使用第90百分位数
-    >>> encoder = QuantileEncoder(cols=['category'], quantile=0.9)
+    >>> encoder = QuantileEncoder(features=['category'], quantile=0.9)
     >>> X_encoded = encoder.fit_transform(X, y)
 
     **注意**
@@ -71,7 +71,7 @@ class QuantileEncoder(BaseEncoder):
 
     def __init__(
         self,
-        cols: Optional[List[str]] = None,
+        features: Optional[List[str]] = None,
         quantile: float = 0.5,
         smoothing: float = 1.0,
         m: float = 1.0,
@@ -87,7 +87,7 @@ class QuantileEncoder(BaseEncoder):
     ):
         """初始化分位数编码器。
 
-        :param cols: 需要编码的列名列表
+        :param features: 需要编码的列名列表
         :param quantile: 分位数，范围[0, 1]，默认为0.5（中位数）
         :param smoothing: 平滑参数，默认为1.0
         :param m: 先验权重参数，默认为1.0
@@ -98,7 +98,7 @@ class QuantileEncoder(BaseEncoder):
         :param target: scorecardpipeline风格的目标列名。如果提供，fit时从X中提取该列作为y
         """
         super().__init__(
-            cols=cols,
+            features=features,
             drop_invariant=drop_invariant,
             return_df=return_df,
             handle_unknown=handle_unknown,

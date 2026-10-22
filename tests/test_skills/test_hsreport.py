@@ -192,7 +192,7 @@ def test_auto_model_report_writes_a_real_workbook(tmp_path, credit_frame):
         {
             "datasets": {"训练集": "train"},
             "target": "target",
-            "feature_names": ["score", "age"],
+            "features": ["score", "age"],
             "with_plots": False,
             "verbose": False,
             "n_jobs": 1,
@@ -226,7 +226,7 @@ def test_swap_out_report_writes_strategy_and_binning_sheets(tmp_path, credit_fra
             "target": "target",
             "features": ["score", "age"],
             "amount": "amount",
-            "date_col": "apply_date",
+            "date": "apply_date",
             "methods": "quantile",
             "n_jobs": 1,
         },
@@ -264,7 +264,7 @@ def test_failed_report_preserves_cause_and_publishes_no_workbook(tmp_path, credi
     assert not list(tmp_path.glob(".hscredit-skill-*"))
 
 
-@pytest.mark.parametrize("explicit, expected", [(None, ">="), ("<=", "<=")])
+@pytest.mark.parametrize("explicit, expected", [(None, ">"), ("<=", "<=")])
 def test_model_report_records_resolved_operator_and_generated_datasets(tmp_path, credit_frame, explicit, expected):
     features = ["score", "age"]
     model = LogisticRegression(max_iter=200).fit(credit_frame[features], credit_frame["target"])
@@ -275,8 +275,8 @@ def test_model_report_records_resolved_operator_and_generated_datasets(tmp_path,
             "auto_model_report",
             {
                 "datasets": {"训练集": "train", "外部标签": "external"},
-                "feature_names": features,
-                "target": {"overdue": "MOB1", "dpds": [3.0, "3", 0], "overdue_operator": ">="},
+                "features": features,
+                "overdue": "MOB1", "dpds": [3.0, "3", 0],
                 "overdue_operator": explicit,
                 "with_plots": False,
                 "verbose": False,

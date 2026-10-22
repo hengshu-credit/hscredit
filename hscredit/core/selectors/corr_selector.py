@@ -47,7 +47,7 @@ class _DefaultBinningParams(dict):
         return _get_default_binning_params, ()
 
     def _immutable(self, *args, **kwargs):
-        raise TypeError("默认分箱配置不可变；如需修改请显式传入新的 binning_params 字典")
+        raise TypeError("默认分箱配置不可变；如需修改请显式传入新的 bin_params 字典")
 
     __setitem__ = _immutable
     __delitem__ = _immutable
@@ -173,7 +173,7 @@ class CorrSelector(BaseFeatureSelector):
         指标通过分箱后的 bin_tables_ 计算得到。
     :param weights: 特征权重，用于决定保留哪个特征，默认为None
         如果同时传入 weights 和 metric，weights 优先。
-    :param binning_params: 透传给 OptimalBinning 的筛选前分箱参数，例如:
+    :param bin_params: 透传给 OptimalBinning 的筛选前分箱参数，例如:
         - method: 分箱方法，默认'best_iv'
         - max_n_bins: 最大分箱数，默认5
         - min_bin_size: 最小分箱比例，默认0.01
@@ -198,7 +198,7 @@ class CorrSelector(BaseFeatureSelector):
     >>> selector = CorrSelector(
     ...     threshold=0.7,
     ...     metric='iv',
-    ...     binning_params={'method': 'cart', 'max_n_bins': 8}
+    ...     bin_params={'method': 'cart', 'max_n_bins': 8}
     ... )
     >>> selector.fit(X, y)
     >>>
@@ -222,7 +222,7 @@ class CorrSelector(BaseFeatureSelector):
         method: str = "spearman",
         metric: str = "iv",
         weights: Optional[Union[pd.Series, Dict[str, float], List[float]]] = None,
-        binning_params: Optional[Dict[str, Any]] = DEFAULT_BINNING_PARAMS,
+        bin_params: Optional[Dict[str, Any]] = DEFAULT_BINNING_PARAMS,
         target: str = "target",
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
@@ -245,7 +245,7 @@ class CorrSelector(BaseFeatureSelector):
             force_drop=force_drop,
             n_jobs=n_jobs,
             binner=binner,
-            binning_params=binning_params,
+            bin_params=bin_params,
             parallel_backend=parallel_backend,
             parallel_config=parallel_config,
             target_rm=target_rm,
@@ -261,7 +261,7 @@ class CorrSelector(BaseFeatureSelector):
     @property
     def _uses_default_binning_params(self) -> bool:
         """区分隐式默认配置与内容相同的显式用户配置。"""
-        return isinstance(self.binning_params, _DefaultBinningParams)
+        return isinstance(self.bin_params, _DefaultBinningParams)
 
     def _validate_corr_block_size(self) -> int:
         """校验并返回相关计算块大小。"""
@@ -551,7 +551,7 @@ class CorrSelector(BaseFeatureSelector):
         bin_tables = getattr(binner, "bin_tables_", {}) if binner is not None else {}
         if not bin_tables:
             raise ValidationError(
-                "CorrSelector 使用指标权重时需要配置 binner 或 binning_params，" "也可以显式传入 weights"
+                "CorrSelector 使用指标权重时需要配置 binner 或 bin_params，" "也可以显式传入 weights"
             )
 
         scores = {}
@@ -582,7 +582,7 @@ class CorrSelector(BaseFeatureSelector):
         if binner is None or self.binner is not None:
             return binner
 
-        configured = self.binning_params if isinstance(self.binning_params, dict) else {}
+        configured = self.bin_params if isinstance(self.bin_params, dict) else {}
         if "n_jobs" not in configured:
             binner.n_jobs = self.n_jobs
         if "parallel_backend" not in configured:

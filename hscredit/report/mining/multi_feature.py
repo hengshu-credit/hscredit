@@ -3,6 +3,9 @@
 支持双特征交叉分析，生成交叉矩阵和交叉规则。
 支持hscredit所有分箱方法。
 """
+from hscredit.utils.arguments import analysis_inputs
+from hscredit.utils.arguments import normalize_features
+
 
 import copy
 
@@ -156,18 +159,19 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
         self._prepared_features_ = {}
         self._feature_specs_ = {}
     
+    @analysis_inputs('X', roles=())
     def fit(
         self,
         X: Union[pd.DataFrame, np.ndarray],
         y: Optional[Union[pd.Series, np.ndarray]] = None,
-        feature_names: FeatureNames = None,
+        features: FeatureNames = None,
         **kwargs
     ) -> 'MultiFeatureRuleMiner':
         """拟合挖掘器.
         
         :param X: 训练数据
         :param y: 目标变量（可选）
-        :param feature_names: 本次拟合使用的字段名或字段名列表，优先于构造参数 ``features``
+        :param features: 本次拟合使用的字段名或字段名列表，优先于构造参数 ``features``
         :param kwargs: 额外参数，可覆盖初始化参数
         :return: self
         """
@@ -184,8 +188,8 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
 
         working.method = OptimalBinning.validate_method(working.method)
 
-        working._features_explicit_ = feature_names is not None or working.features is not None
-        X, y = working._check_input_data(X, y, feature_names=feature_names)
+        working._features_explicit_ = features is not None or working.features is not None
+        X, y = working._check_input_data(X, y, features=features)
 
         if y is None:
             raise ValueError("多特征规则挖掘需要目标变量y")
@@ -216,7 +220,7 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
         :return: hscredit分箱器实例
         """
         # 构建分箱器参数
-        binning_params = {
+        bin_params = {
             'target': self.target,
             'method': self.method,
             'max_n_bins': self.max_n_bins,
@@ -235,7 +239,7 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
             **override_params
         }
         
-        return OptimalBinning(**binning_params)
+        return OptimalBinning(**bin_params)
     
     def _prepare_feature(
         self,
@@ -328,11 +332,11 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
     
     def generate_cross_matrix(
         self,
-        feature1: str,
-        feature2: str,
+        x1: str = None,
+        x2: str = None,
         custom_splits1: Optional[List[float]] = None,
         custom_splits2: Optional[List[float]] = None,
-        **kwargs
+        features=None, **kwargs
     ) -> pd.DataFrame:
         """生成双特征交叉矩阵.
         
@@ -345,6 +349,7 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
 
         自定义边界必须包含 -inf/inf，数值区间与统一分箱器一致为左闭右开。
         """
+        feature1, feature2 = normalize_features(features, x1=x1, x2=x2, size=2, required=True)
         self._check_fitted()
         
         # 更新参数
@@ -439,16 +444,17 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
 
     def get_cross_rules(
         self,
-        feature1: str,
-        feature2: str,
+        x1: str = None,
+        x2: str = None,
         top_n: int = 10,
         metric: str = 'lift',
         min_samples: Optional[int] = None,
         min_lift: Optional[float] = None,
         datasets: Optional[pd.DataFrame] = None,
-        target: Optional[str] = None
-    ) -> pd.DataFrame:
+        target: Optional[str] = None, features=None
+) -> pd.DataFrame:
         """获取双特征交叉的top规则（使用rule_expr+Rule.report命中结果）."""
+        feature1, feature2 = normalize_features(features, x1=x1, x2=x2, size=2, required=True)
         min_samples = self.min_samples if min_samples is None else min_samples
         min_lift = self.min_lift if min_lift is None else min_lift
 
@@ -798,13 +804,14 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
     
     def plot_cross_heatmap(
         self,
-        feature1: str,
-        feature2: str,
+        x1: str = None,
+        x2: str = None,
         metric: str = 'lift',
         figsize: Tuple[int, int] = (12, 10),
         title: Optional[str] = None,
-        save_path: Optional[str] = None,
-        cmap: Optional[str] = None
+        save: Optional[str] = None,
+        cmap: Optional[str] = None, features=None, *,
+        dpi: int = 240,
     ):
         """绘制交叉热力图.
         
@@ -813,10 +820,11 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
         :param metric: 指标
         :param figsize: 图大小
         :param title: 自定义标题
-        :param save_path: 保存路径
+        :param save: 保存路径
         :param cmap: 颜色映射，默认使用RdYlGn
         :return: matplotlib Figure对象
         """
+        feature1, feature2 = normalize_features(features, x1=x1, x2=x2, size=2, required=True)
         try:
             import matplotlib.pyplot as plt
             import seaborn as sns
@@ -857,20 +865,21 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
         
         plt.tight_layout()
         
-        if save_path:
-            fig.savefig(save_path, dpi=240, bbox_inches='tight')
+        if save:
+            fig.savefig(save, dpi=dpi, bbox_inches='tight')
         
         return fig
 
     def plot_2d_binning(
         self,
-        feature1: str,
-        feature2: str,
+        x1: str = None,
+        x2: str = None,
         metric: str = 'lift',
         figsize: Tuple[int, int] = (14, 10),
         title: Optional[str] = None,
-        save_path: Optional[str] = None,
-        cmap: Optional[str] = None
+        save: Optional[str] = None,
+        cmap: Optional[str] = None, features=None, *,
+        dpi: int = 240,
     ):
         """绘制二维分箱图（主图+上下文分箱轴）.
 
@@ -878,6 +887,7 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
         - 顶部：feature2 分箱轴（与主图共享x轴）
         - 右侧：feature1 分箱轴（与主图共享y轴）
         """
+        feature1, feature2 = normalize_features(features, x1=x1, x2=x2, size=2, required=True)
         try:
             import matplotlib.pyplot as plt
             import seaborn as sns
@@ -971,8 +981,8 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
 
         plt.tight_layout()
 
-        if save_path:
-            fig.savefig(save_path, dpi=240, bbox_inches='tight')
+        if save:
+            fig.savefig(save, dpi=dpi, bbox_inches='tight')
 
         return fig
     

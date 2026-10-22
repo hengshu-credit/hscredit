@@ -33,7 +33,7 @@ def score_ks_plot(
     figsize=(10, 6),
     title: str = 'KS曲线',
     save: Optional[str] = None,
-    **kwargs,
+    dpi: int = 240, **kwargs,
 ) -> Figure:
     """KS曲线图，支持多数据集叠加.
 
@@ -89,7 +89,7 @@ def score_ks_plot(
     ax.yaxis.set_major_formatter(mticker.PercentFormatter(1.0))
     setup_axis_style(ax, hide_top_right=True)
     fig.tight_layout()
-    save_figure(fig, save)
+    save_figure(fig, save, dpi=dpi)
     return fig
 
 
@@ -100,7 +100,7 @@ def score_distribution_comparison_plot(
     title: str = '评分分布对比',
     bins: int = 50,
     save: Optional[str] = None,
-    **kwargs,
+    dpi: int = 240, **kwargs,
 ) -> Figure:
     """多数据集评分分布对比图（KDE + 直方图）.
 
@@ -142,25 +142,25 @@ def score_distribution_comparison_plot(
     ax.legend(fontsize=9)
     setup_axis_style(ax, hide_top_right=True)
     fig.tight_layout()
-    save_figure(fig, save)
+    save_figure(fig, save, dpi=dpi)
     return fig
 
 
 def score_badrate_bin_plot(
     y_true,
     score,
-    n_bins: int = 10,
+    max_n_bins: int = 10,
     ax=None,
     figsize=(12, 6),
     title: str = '评分分箱坏率',
     save: Optional[str] = None,
-    **kwargs,
+    dpi: int = 240, **kwargs,
 ) -> Figure:
     """评分分箱坏率图：柱=样本量，折线=坏率.
 
     :param y_true: 真实标签
     :param score: 评分
-    :param n_bins: 分箱数，默认10
+    :param max_n_bins: 分箱数，默认10
     :param ax: matplotlib Axes
     :param figsize: 图像尺寸
     :param title: 图标题
@@ -176,7 +176,7 @@ def score_badrate_bin_plot(
     mask = ~np.isnan(s)
     y, s = y[mask], s[mask]
 
-    quantiles = np.linspace(0, 100, n_bins + 1)
+    quantiles = np.linspace(0, 100, max_n_bins + 1)
     bin_edges = np.percentile(s, quantiles)
     bin_edges = np.unique(bin_edges)
     labels_cut = pd.cut(s, bins=bin_edges, include_lowest=True)
@@ -220,7 +220,7 @@ def score_badrate_bin_plot(
     ax1.legend(h1 + h2, l1 + l2, loc='upper right', fontsize=9)
     setup_axis_style(ax1, hide_top_right=False)
     fig.tight_layout()
-    save_figure(fig, save)
+    save_figure(fig, save, dpi=dpi)
     return fig
 
 
@@ -233,7 +233,7 @@ def score_lift_plot(
     figsize=(10, 6),
     title: str = 'LIFT曲线',
     save: Optional[str] = None,
-    **kwargs,
+    dpi: int = 240, **kwargs,
 ) -> Figure:
     """LIFT曲线图，支持多数据集叠加，标注关键点.
 
@@ -293,7 +293,7 @@ def score_lift_plot(
     ax.legend(fontsize=9)
     setup_axis_style(ax, hide_top_right=True)
     fig.tight_layout()
-    save_figure(fig, save)
+    save_figure(fig, save, dpi=dpi)
     return fig
 
 
@@ -306,7 +306,7 @@ def score_approval_badrate_curve(
     figsize=(10, 6),
     title: str = '通过率 - 坏率权衡曲线',
     save: Optional[str] = None,
-    **kwargs,
+    dpi: int = 240, **kwargs,
 ) -> Figure:
     """审批通过率 vs 坏账率曲线（策略人员必备）.
 
@@ -370,7 +370,7 @@ def score_approval_badrate_curve(
     ax1.legend(h1 + h2, l1 + l2, fontsize=9, loc='upper right')
     setup_axis_style(ax1, hide_top_right=False)
     fig.tight_layout()
-    save_figure(fig, save)
+    save_figure(fig, save, dpi=dpi)
     return fig
 
 

@@ -119,7 +119,7 @@ def test_model_report_multilabel_counts_labels_and_config_roundtrip(data, op):
     report = ModelReport(
         ProbabilityModel(),
         datasets={"样本": data},
-        feature_names=["评分"],
+        features=["评分"],
         overdue="MOB 1",
         dpds=[3, 0],
         overdue_operator=op,
@@ -141,14 +141,12 @@ def test_model_report_multilabel_counts_labels_and_config_roundtrip(data, op):
     assert_frame_equal(restored.summary(), summary)
 
 
-def test_model_dict_operator_and_explicit_override(data):
-    config = {"overdue": "MOB 1", "dpds": 3, "overdue_operator": "<="}
-    kwargs = dict(model=ProbabilityModel(), datasets={"样本": data}, feature_names=["评分"], target=config, n_jobs=1)
-    inherited = ModelReport(**kwargs)
-    overridden = ModelReport(**kwargs, overdue_operator=">")
-    assert inherited._datasets["样本"].y.tolist() == LABELS["<="]
-    assert overridden._datasets["样本"].y.tolist() == LABELS[">"]
-    assert config["overdue_operator"] == "<="
+def test_model_target_dict_is_explicit_labels_and_not_overdue_configuration(data):
+    kwargs = dict(model=ProbabilityModel(), datasets={"样本": data}, feature_names=["评分"], n_jobs=1)
+    with pytest.raises(TypeError):
+        ModelReport(**kwargs, target={"overdue": "MOB 1", "dpds": 3, "overdue_operator": "<="})
+    report = ModelReport(**kwargs, target={"自定义": lambda frame: frame["MOB 1"].le(3)})
+    assert report._datasets["样本"].y.tolist() == LABELS["<="]
 
 
 @pytest.mark.parametrize("op", [">=", "<", "<="])
@@ -166,7 +164,7 @@ def test_summary_group_and_2d_use_the_same_operator(data, op):
         data,
         "评分",
         methods="quantile",
-        group_col="客群",
+        group="客群",
         max_n_bins=2,
         **params,
     )
@@ -181,7 +179,7 @@ def test_eda_dimension_trend_and_bins(data, op):
     tables = [
         bad_rate_by_dimension(data, "客群", **params),
         bad_rate_trend(data, "日期", **params),
-        bad_rate_by_bins(data, "评分", n_bins=2, **params),
+        bad_rate_by_bins(data, "评分", max_n_bins=2, **params),
     ]
     for table in tables:
         assert table["样本数"].sum() == len(expected)
@@ -266,7 +264,7 @@ def test_swap_pipeline_reference_and_actual_labels_agree(data, op):
         dpds=[3, 0],
         overdue_operator=op,
         del_grey=True,
-        bin_method="quantile",
+        method="quantile",
         max_n_bins=2,
         bin_params={"overdue_operator": ">"},
         rules_out=[Rule("评分 >= 4")],
@@ -292,7 +290,7 @@ def test_swap_out_workbook_contains_consistent_labels(data, op, tmp_path):
         dpds=[3, 0],
         overdue_operator=op,
         del_grey=True,
-        group_col="客群",
+        group="客群",
         methods="quantile",
         n_jobs=1,
         save=str(path),
@@ -375,7 +373,7 @@ def test_benchmark_fits_only_target_valid_rows(data, op):
         dpds=[3],
         overdue_operator=op,
         del_grey=True,
-        hscredit_methods=["quantile"],
+        methods=["quantile"],
         max_n_bins=2,
         prebinning=None,
         min_bin_size=0.01,
@@ -461,7 +459,7 @@ def test_swap_reference_rates_exclude_only_operator_grey(data, op):
         dpds=[3],
         overdue_operator=op,
         del_grey=True,
-        custom_bins=[-np.inf, np.inf],
+        rules=[-np.inf, np.inf],
         n_jobs=1,
     )
     label = "MOB 1_3+" if op == ">" else f"MOB 1{op}3"
@@ -477,24 +475,24 @@ def test_efficiency_dataset_preserves_decimal_threshold(data, op):
     working, _, label = _prepare_efficiency_dataset(
         data,
         "评分",
-        "target",
+        None,
         overdue="MOB 1",
-        dpd=1.5,
+        dpds=1.5,
         overdue_operator=op,
         del_grey=True,
     )
     expected = expected_target(data, op, True)
-    assert label == f"MOB 1{op}1.5"
+    assert label in working.columns
     assert working[label].tolist() == expected.tolist()
     result = feature_efficiency_analysis(
         data,
         "评分",
         overdue="MOB 1",
-        dpd=1.5,
+        dpds=1.5,
         overdue_operator=op,
         del_grey=True,
-        manual_rules=[3],
-        auto_method="quantile",
+        rules=[3],
+        method="quantile",
         prebinning=None,
         max_n_bins=2,
         n_jobs=1,
@@ -507,7 +505,7 @@ def test_legacy_model_report_restores_default_operator(data):
     report = ModelReport(
         ProbabilityModel(),
         datasets={"样本": data},
-        feature_names=["评分"],
+        features=["评分"],
         overdue="MOB 1",
         dpds=[3, 0],
         del_grey=True,
@@ -561,7 +559,7 @@ def test_model_report_normalizes_threshold_containers(data, dpds):
     report = ModelReport(
         ProbabilityModel(),
         datasets={"样本": data},
-        feature_names=["评分"],
+        features=["评分"],
         overdue="MOB 1",
         dpds=dpds,
         overdue_operator=">=",
@@ -581,16 +579,16 @@ def test_efficiency_auto_kwargs_cannot_override_label_definition(data, op):
         data,
         "评分",
         overdue="MOB 1",
-        dpd=3,
+        dpds=3,
         overdue_operator=op,
         del_grey=False,
-        manual_rules=[3],
-        auto_method="quantile",
+        rules=[3],
+        method="quantile",
         prebinning=None,
         max_n_bins=2,
         margins=True,
         n_jobs=1,
-        auto_kwargs=auto_kwargs,
+        bin_params=auto_kwargs,
     )
     for key in ["manual_table", "auto_table"]:
         assert result[key].iloc[-1]["坏样本数"] == sum(LABELS[op])
@@ -726,7 +724,7 @@ def test_real_loan_data_eda_model_rules_and_category_share_overdue_definition(lo
     features = ["衡枢鉴真分老客版", "近六个月非银多头机构数", "青云24"]
     model = DummyClassifier(strategy="prior").fit(loan_data[features], loan_data["FPD"])
     params = dict(overdue="MOB1", dpds=[7, 3, 0], overdue_operator=op, del_grey=True)
-    report = ModelReport(model, datasets={"放款数据": loan_data}, feature_names=features, n_jobs=1, **params)
+    report = ModelReport(model, datasets={"放款数据": loan_data}, features=features, n_jobs=1, **params)
     summary = report.summary()
     overall = bad_rate_overall(loan_data, **params)
     by_date = bad_rate_trend(loan_data, "放款时间", **params)

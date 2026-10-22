@@ -20,6 +20,8 @@
   https://pandas.pydata.org/docs/user_guide/enhancingperf.html#expression-evaluation-via-eval
 """
 
+from ...utils.targets import TargetInput, bind_targets, reject_legacy_target_keywords
+
 import ast
 import copy
 import os
@@ -31,10 +33,9 @@ import pandas as pd
 from pandas import DataFrame
 from sklearn.metrics import f1_score, recall_score, accuracy_score, precision_score
 
-from ...utils.overdue import compare_overdue, overdue_grey_mask, overdue_label, validate_overdue_operator
+from ...utils.overdue import validate_overdue_operator
 from .expr_optimizer import optimize_expr, beautify_expr
 from ...exceptions import FeatureNotFoundError, InputTypeError, StateError
-from ...utils.input_utils import normalize_dpd_values
 from ...utils.parallel import ParallelizableMixin, ParallelWorkload
 
 if TYPE_CHECKING:
@@ -148,22 +149,9 @@ class RuleUnAppliedError(RuleStateError):
 
 def _rule_report_target_worker(task: Tuple[Any, ...]) -> pd.DataFrame:
     """执行一个独立目标标签的规则报告任务。"""
-    rule, data, overdue, dpd, del_grey, desc, prior_rules, amount, margins, overdue_operator = task
-    target = f"{overdue}_{dpd}"
-    # 浅拷贝共享原始列块，只为派生标签创建新列；避免每个 DPD 任务深拷贝
-    # 完整混合类型 DataFrame。灰度过滤发生在派生视图上，不修改调用方数据。
-    data = data.copy(deep=False)
-    data[target] = compare_overdue(data[overdue], dpd, overdue_operator).astype(int)
-    if isinstance(del_grey, bool) and del_grey:
-        data = data.loc[~overdue_grey_mask(data[overdue], dpd, overdue_operator)].reset_index(drop=True)
-    return rule.report(
-        data,
-        target=target,
-        desc=desc,
-        prior_rules=prior_rules,
-        amount=amount,
-        margins=margins,
-    )
+    rule, data, column, desc, prior_rules, amount, margins = task
+    data = data.loc[data[column].notna()]
+    return rule.report(data, target=column, desc=desc, prior_rules=prior_rules, amount=amount, margins=margins)
 
 
 class Rule(ParallelizableMixin):
@@ -479,7 +467,7 @@ class Rule(ParallelizableMixin):
         prediction = self.predict(X)
         return X[prediction]
 
-    def report(self, datasets: pd.DataFrame, target: str = "target", overdue: Optional[Union[str, List[str]]] = None, dpds: Optional[Union[int, float, List[Union[int, float]]]] = None, del_grey: bool = False, desc: str = "", filter_cols: Optional[List[str]] = None, prior_rules: Optional["Rule"] = None, amount: Optional[str] = None, margins: bool = False, *, overdue_operator: str = ">", **kwargs) -> pd.DataFrame:
+    def report(self, datasets: pd.DataFrame, target: Optional[TargetInput] = None, overdue: Optional[Union[str, List[str]]] = None, dpds: Optional[Union[int, float, List[Union[int, float]]]] = None, del_grey: bool = False, desc: str = "", filter_cols: Optional[List[str]] = None, prior_rules: Optional["Rule"] = None, amount: Optional[str] = None, margins: bool = False, *, overdue_operator: str = ">", **kwargs) -> pd.DataFrame:
         """规则效果报告表格输出。
 
         将规则命中与否作为二分类，对数据集计算统计指标，
@@ -528,7 +516,9 @@ class Rule(ParallelizableMixin):
             ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
         """
         validate_overdue_operator(overdue_operator)
-        del_grey = del_grey and overdue_operator in (">", ">=")
+        reject_legacy_target_keywords(kwargs)
+        datasets, targets = bind_targets(datasets, target, overdue, dpds, del_grey, overdue_operator, default_target="target")
+        del_grey = targets.needs_filtering(datasets) or (del_grey and (targets.mode == "target" or targets.operator in (">", ">=")))
         detail_group_name = "分箱详情"
         return_cols = ["指标名称", "指标含义", "分箱", "样本总数", "样本占比", "好样本数", "好样本占比", "坏样本数", "坏样本占比", "坏样本率", "LIFT值", "坏账改善"]
         if not desc:
@@ -731,71 +721,42 @@ class Rule(ParallelizableMixin):
 
             return table
 
-        # 处理 overdue 参数 - 构建多层级列结构
-        if overdue is not None:
-            if not isinstance(overdue, list):
-                overdue = [overdue]
-            dpds = normalize_dpd_values(dpds)
-            if not overdue or not dpds:
-                raise ValueError("overdue 和 dpds 不能为空")
-
-            # 确定merge_columns（多标签时需要的列）
-            if isinstance(del_grey, bool) and del_grey:
-                merge_columns = ["规则分类", "指标名称", "分箱"]
-            else:
-                merge_columns = ["规则分类", "指标名称", "分箱", "样本总数", "样本占比"]
-            if "指标含义" in return_cols and "指标含义" not in merge_columns:
-                merge_columns = ["指标含义"] + merge_columns
-
-            # 目标标签相互独立，worker 仅计算单标签表；列层级与合并顺序由主线程确定。
-            labels = []
-            combinations = []
-            for col in overdue:
-                for d in dpds:
-                    labels.append(overdue_label(col, d, overdue_operator, style="space"))
-                    combinations.append((col, d))
-
+        if len(targets) > 1 or targets.mode == "overdue":
+            merge_columns = ["规则分类", "指标名称", "分箱"]
+            if not del_grey:
+                merge_columns += ["样本总数", "样本占比"]
+            if "指标含义" in return_cols:
+                merge_columns.append("指标含义")
+            labels = targets.names("space")
             tasks = (
-                (
-                    copy.deepcopy(self),
-                    datasets,
-                    col,
-                    d,
-                    del_grey,
-                    desc,
-                    copy.deepcopy(prior_rules),
-                    amount,
-                    margins,
-                    overdue_operator,
-                )
-                for col, d in combinations
+                (copy.deepcopy(self), datasets, definition.column, desc, copy.deepcopy(prior_rules), amount, margins)
+                for definition in targets.labels
             )
-
             tables = self._parallel_execute(
-                _rule_report_target_worker,
-                tasks,
-                task_labels=labels,
-                default_backend="threading",
+                _rule_report_target_worker, tasks, task_labels=labels, default_backend="threading",
                 workload=ParallelWorkload(
-                    task_count=len(combinations),
-                    rows=len(datasets),
-                    columns=len(combinations),
-                    data_bytes=int(datasets.memory_usage(deep=True).sum()),
-                    cost_per_item=6.0,
-                    capability="thread_safe",
-                    releases_gil=True,
-                    operation="规则多标签报告",
+                    task_count=len(targets), rows=len(datasets), columns=len(targets),
+                    data_bytes=int(datasets.memory_usage(deep=True).sum()), cost_per_item=6.0,
+                    capability="thread_safe", releases_gil=True, operation="规则多标签报告",
                 ),
             )
-            for position, ((col, d), _table) in enumerate(zip(combinations, tables)):
-                _table.columns = pd.MultiIndex.from_tuples([(detail_group_name, c) if c in merge_columns else (overdue_label(col, d, overdue_operator, style="space"), c) for c in _table.columns])
-                if position == 0:
-                    table = _table
-                else:
-                    table = table.merge(_table, on=[(detail_group_name, c) for c in merge_columns])
+            merge_keys = pd.concat([item[merge_columns] for item in tables], ignore_index=True).drop_duplicates()
+            merge_keys.columns = pd.MultiIndex.from_tuples([(detail_group_name, column) for column in merge_columns])
+            table = pd.DataFrame()
+            for position, (label, current) in enumerate(zip(labels, tables)):
+                current.columns = pd.MultiIndex.from_tuples([
+                    (detail_group_name if column in merge_columns else label, column) for column in current.columns
+                ])
+                table = current if position == 0 else table.merge(
+                    current, on=[(detail_group_name, column) for column in merge_columns], how="outer", sort=False
+                )
+            table = merge_keys.merge(table, on=list(merge_keys.columns), how="left", sort=False)
         else:
-            # 单标签情况
-            table = _report_one_rule(datasets, target, desc=desc, prior_rules=prior_rules)
+            column = targets.columns[0]
+            valid = datasets[column].notna()
+            table = _report_one_rule(datasets.loc[valid], column, desc=desc, prior_rules=prior_rules)
+        table.attrs["target_mode"] = targets.mode
+        table.attrs["target_names"] = targets.names("space")
 
         # 处理 filter_cols
         if filter_cols:

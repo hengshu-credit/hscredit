@@ -142,15 +142,15 @@ class RuleMetrics(ParallelizableMixin):
         # Rule.report 计算规则效果
         data = X.copy()
         data['__target__'] = y.values
-        amount_col = None
+        amount = None
         if amount is not None:
-            amount_col = '__amount__'
-            data[amount_col] = amount.values if isinstance(amount, pd.Series) else amount
+            amount = '__amount__'
+            data[amount] = amount.values if isinstance(amount, pd.Series) else amount
 
         report_df = rule.report(
             datasets=data,
             target='__target__',
-            amount=amount_col
+            amount=amount
         )
 
         hit = report_df[report_df['分箱'] == '命中'].iloc[0].to_dict() if '分箱' in report_df.columns and not report_df[report_df['分箱'] == '命中'].empty else {}
@@ -196,8 +196,8 @@ class RuleMetrics(ParallelizableMixin):
         }
 
         # 金额口径指标（当传入amount时，Rule.report已按金额口径计算）
-        if amount_col is not None:
-            total_amount = float(data[amount_col].sum())
+        if amount is not None:
+            total_amount = float(data[amount].sum())
             selected_amount = float(hit.get('样本总数', 0))
             bad_amount = float(hit.get('坏样本数', 0))
             metrics.update({
@@ -271,7 +271,7 @@ class RuleMetrics(ParallelizableMixin):
         self,
         feature: pd.Series,
         target: pd.Series,
-        n_bins: int = 10
+        max_n_bins: int = 10
     ) -> float:
         """计算IV值（信息价值）.
         
@@ -279,10 +279,10 @@ class RuleMetrics(ParallelizableMixin):
         
         :param feature: 特征值
         :param target: 目标变量
-        :param n_bins: 分箱数
+        :param max_n_bins: 分箱数
         :return: IV值
         """
-        return iv(target, feature, max_n_bins=n_bins)
+        return iv(target, feature, max_n_bins=max_n_bins)
     
     def calculate_gini(self, y_true: np.ndarray, y_score: np.ndarray) -> float:
         """计算Gini系数.

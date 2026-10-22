@@ -20,7 +20,7 @@ class OrdinalEncoder(BaseEncoder):
 
     **参数**
 
-    :param cols: 需要编码的列名列表。如果为None，则自动识别所有列（支持类别型和数值型）
+    :param features: 需要编码的列名列表。如果为None，则自动识别所有列（支持类别型和数值型）
     :param mapping: 自定义映射字典，如{'col': {'a': 1, 'b': 2}}，默认为None
     :param handle_unknown: 处理未知类别的方式，默认为'value'
     :param handle_missing: 处理缺失值的方式，默认为'value'
@@ -34,12 +34,12 @@ class OrdinalEncoder(BaseEncoder):
     **参考样例**
 
     >>> from hscredit.core.encoders import OrdinalEncoder
-    >>> encoder = OrdinalEncoder(cols=['education'])
+    >>> encoder = OrdinalEncoder(features=['education'])
     >>> X_encoded = encoder.fit_transform(X)
     >>>
     >>> # 自定义映射
     >>> mapping = {'education': {'high': 3, 'medium': 2, 'low': 1}}
-    >>> encoder = OrdinalEncoder(cols=['education'], mapping=mapping)
+    >>> encoder = OrdinalEncoder(features=['education'], mapping=mapping)
     >>> X_encoded = encoder.fit_transform(X)
 
     **注意**
@@ -66,7 +66,7 @@ class OrdinalEncoder(BaseEncoder):
 
     def __init__(
         self,
-        cols: Optional[List[str]] = None,
+        features: Optional[List[str]] = None,
         mapping: Optional[Dict[str, Dict[Any, int]]] = None,
         handle_unknown: str = "value",
         handle_missing: str = "value",
@@ -80,7 +80,7 @@ class OrdinalEncoder(BaseEncoder):
     ):
         """初始化序数编码器。
 
-        :param cols: 需要编码的列名列表
+        :param features: 需要编码的列名列表
         :param mapping: 自定义映射字典，如{'col': {'a': 1, 'b': 2}}，默认为None
         :param handle_unknown: 处理未知类别的方式，默认为'value'
         :param handle_missing: 处理缺失值的方式，默认为'value'
@@ -89,7 +89,7 @@ class OrdinalEncoder(BaseEncoder):
         :param target: scorecardpipeline风格的目标列名。序数编码器不使用此参数，仅为API一致性保留
         """
         super().__init__(
-            cols=cols,
+            features=features,
             drop_invariant=drop_invariant,
             return_df=return_df,
             handle_unknown=handle_unknown,

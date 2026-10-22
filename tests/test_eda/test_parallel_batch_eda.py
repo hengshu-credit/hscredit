@@ -70,7 +70,7 @@ def test_stability_batch_parallel_matches_serial_exactly(batch_eda_data, backend
     data = batch_eda_data.copy()
     data["month"] = data["date"].dt.to_period("M").astype(str)
     periods = sorted(data["month"].unique())
-    common = dict(features=["x1", "x2"], date_col="month", base_period=periods[0], compare_periods=periods[1:])
+    common = dict(features=["x1", "x2"], date="month", base_period=periods[0], compare_periods=periods[1:])
     serial = batch_psi_analysis(data, n_jobs=1, **common)
     parallel = batch_psi_analysis(
         data,
@@ -195,7 +195,7 @@ def test_population_batch_analysis_matches_serial_exactly(batch_eda_data, backen
 def test_segment_and_cross_effectiveness_parallel_match_serial(batch_eda_data):
     common = dict(
         df=batch_eda_data,
-        date_col="date",
+        date="date",
         segment_col="category",
         features=["x1", "x2"],
         target="target",
@@ -282,7 +282,7 @@ def test_generate_report_forwards_parallel_config_and_preserves_sections(batch_e
         batch_eda_data,
         target="target",
         features=["x1", "x2"],
-        date_col="date",
+        date="date",
         n_jobs=3,
         parallel_backend="threading",
         parallel_config=config,
@@ -301,7 +301,7 @@ def test_overview_population_and_group_analysis_parallel_match_serial(batch_eda_
         expected,
         actual,
         ["x1", "x2"],
-        date_col="date",
+        date="date",
         metrics=["占比", "样本数", "绝对变化率"],
         n_jobs=1,
     )
@@ -309,7 +309,7 @@ def test_overview_population_and_group_analysis_parallel_match_serial(batch_eda_
         expected,
         actual,
         ["x1", "x2"],
-        date_col="date",
+        date="date",
         metrics=["占比", "样本数", "绝对变化率"],
         n_jobs=2,
         parallel_backend="threading",
@@ -320,7 +320,7 @@ def test_overview_population_and_group_analysis_parallel_match_serial(batch_eda_
     serial_group = feature_group_analysis(
         batch_eda_data,
         features=["x1", "x2"],
-        group_cols="category",
+        group="category",
         y="target",
         y_stats=["逾期率", "坏样本数"],
         n_jobs=1,
@@ -328,7 +328,7 @@ def test_overview_population_and_group_analysis_parallel_match_serial(batch_eda_
     parallel_group = feature_group_analysis(
         batch_eda_data,
         features=["x1", "x2"],
-        group_cols="category",
+        group="category",
         y="target",
         y_stats=["逾期率", "坏样本数"],
         n_jobs=2,
@@ -342,13 +342,13 @@ def test_psi_cross_parallel_matches_serial_exactly(batch_eda_data):
     serial = psi_cross_analysis(
         batch_eda_data,
         ["x1", "x2"],
-        group_col="category",
+        group="category",
         n_jobs=1,
     )
     parallel = psi_cross_analysis(
         batch_eda_data,
         ["x1", "x2"],
-        group_col="category",
+        group="category",
         n_jobs=2,
         parallel_backend="loky",
         parallel_config={"batch_size": 1},

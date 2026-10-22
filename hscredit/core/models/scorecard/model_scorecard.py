@@ -351,7 +351,7 @@ class ProbabilityScoreCard(ExtraParamsMixin, ArtifactSerializableMixin, BaseEsti
         scores: Optional[np.ndarray] = None,
         y: Optional[Union[np.ndarray, pd.Series]] = None,
         X: Optional[Union[pd.DataFrame, np.ndarray]] = None,
-        n_bins: int = 10,
+        max_n_bins: int = 10,
         method: str = 'quantile',
     ) -> pd.DataFrame:
         """生成评分区间与坏样本率/odds/KS 的对照表.
@@ -359,7 +359,7 @@ class ProbabilityScoreCard(ExtraParamsMixin, ArtifactSerializableMixin, BaseEsti
         :param scores: 评分数组；为 None 时通过 X 计算
         :param y: 真实标签（坏=1）
         :param X: 特征矩阵（scores 为 None 时用于计算评分）
-        :param n_bins: 分箱数，默认 10
+        :param max_n_bins: 分箱数，默认 10
         :param method: 分箱方式，'quantile'（等频）或 'uniform'（等宽）
         :return: 中文列名的评分-坏率对照表
         """
@@ -385,9 +385,9 @@ class ProbabilityScoreCard(ExtraParamsMixin, ArtifactSerializableMixin, BaseEsti
             score_value = float(pd.Series(scores).dropna().iloc[0]) if pd.Series(scores).notna().any() else np.nan
             df['score_bin'] = f"[{score_value:.2f}, {score_value:.2f}]"
         elif method == 'quantile':
-            df['score_bin'] = pd.qcut(df['score'], q=n_bins, duplicates='drop', precision=2)
+            df['score_bin'] = pd.qcut(df['score'], q=max_n_bins, duplicates='drop', precision=2)
         else:
-            df['score_bin'] = pd.cut(df['score'], bins=n_bins, precision=2)
+            df['score_bin'] = pd.cut(df['score'], bins=max_n_bins, precision=2)
 
         grouped = df.groupby('score_bin', observed=True)
         rows = []
@@ -421,7 +421,7 @@ class ProbabilityScoreCard(ExtraParamsMixin, ArtifactSerializableMixin, BaseEsti
         X: Optional[Union[pd.DataFrame, np.ndarray]] = None,
         y: Optional[Union[np.ndarray, pd.Series]] = None,
         scores: Optional[np.ndarray] = None,
-        n_bins: int = 10,
+        max_n_bins: int = 10,
         method: str = 'quantile',
     ) -> pd.DataFrame:
         """生成评分维度报告（评分-坏率对照表）.
@@ -432,12 +432,12 @@ class ProbabilityScoreCard(ExtraParamsMixin, ArtifactSerializableMixin, BaseEsti
         :param X: 特征矩阵（scores 为 None 时用于计算评分）
         :param y: 真实标签（坏=1）
         :param scores: 评分数组，可选
-        :param n_bins: 分箱数，默认 10
+        :param max_n_bins: 分箱数，默认 10
         :param method: 分箱方式，'quantile' 或 'uniform'
         :return: 评分-坏率对照表 DataFrame
         """
         return self.score_to_bad_rate_table(
-            scores=scores, y=y, X=X, n_bins=n_bins, method=method
+            scores=scores, y=y, X=X, max_n_bins=max_n_bins, method=method
         )
 
     def model_report(self, *args, **kwargs):

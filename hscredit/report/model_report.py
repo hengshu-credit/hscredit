@@ -11,7 +11,12 @@
 - 模型部署需求
 """
 
+
 from __future__ import annotations
+
+from hscredit.utils.arguments import analysis_inputs, report_inputs
+
+from ..utils.targets import TargetInput, bind_targets, validate_target_mode, reject_legacy_target_keywords
 
 import logging
 import inspect
@@ -19,7 +24,7 @@ import re
 import warnings
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import date
+from datetime import date as calendar_date
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
@@ -27,7 +32,7 @@ import cloudpickle
 import numpy as np
 import pandas as pd
 
-from ..utils.overdue import compare_overdue, overdue_grey_mask, overdue_label, validate_overdue_operator
+from ..utils.overdue import overdue_label, validate_overdue_operator
 from ..utils.input_utils import normalize_dpd_values
 from ._sample_stats import build_group_distribution_table, build_sample_stats_table
 from .model_explanation import build_model_explanation, explanation_to_dict, normalize_explain_config
@@ -117,20 +122,22 @@ def _execute_model_comparison_plan(function, tasks, plan, **kwargs):
 # ---------------------------------------------------------------------------
 
 
-def _normalize_feature_names(feature_names) -> Optional[List[str]]:
+def _normalize_feature_names(features) -> Optional[List[str]]:
     """将特征名入参统一规整为 Python ``str`` 列表.
 
     兼容 numpy 数组、``np.str_`` 标量、pandas Index 等输入，
     避免对 numpy 数组直接做真值判断（``if``/``or``）时报错。
     """
-    if feature_names is None:
+    if features is None:
         return None
-    if isinstance(feature_names, (np.ndarray, pd.Index)):
-        feature_names = feature_names.tolist()
-    return [str(name) for name in list(feature_names)]
+    if isinstance(features, str):
+        return [features]
+    if isinstance(features, (np.ndarray, pd.Index)):
+        features = features.tolist()
+    return [str(name) for name in list(features)]
 
 
-def _ensure_dataframe(X, feature_names: Optional[List[str]] = None) -> pd.DataFrame:
+def _ensure_dataframe(X, features: Optional[List[str]] = None) -> pd.DataFrame:
     if isinstance(X, pd.DataFrame):
         out = X.copy()
         # numpy 字符串标量（np.str_）列名统一为 Python str，保证下游比较/索引一致
@@ -140,7 +147,7 @@ def _ensure_dataframe(X, feature_names: Optional[List[str]] = None) -> pd.DataFr
     arr = np.asarray(X)
     if arr.ndim == 1:
         arr = arr.reshape(-1, 1)
-    cols = _normalize_feature_names(feature_names)
+    cols = _normalize_feature_names(features)
     if cols is None:
         cols = [f"feature_{i}" for i in range(arr.shape[1])]
     return pd.DataFrame(arr, columns=cols)
@@ -191,24 +198,24 @@ def _summary_percent_cols(columns) -> List[Any]:
 
 def _prepare_report_dataset(task):
     """校验并准备单个报告数据集；worker 不执行模型方法。"""
-    model, key, label, X, y, y_dict, feature_names = task
+    model, key, label, X, y, y_dict, features = task
     required_features: Optional[List[str]] = None
     if hasattr(model, "feature_names_") and model.feature_names_ is not None:
         required_features = _normalize_feature_names(model.feature_names_)
     elif hasattr(model, "feature_names_in_") and model.feature_names_in_ is not None:
         required_features = _normalize_feature_names(model.feature_names_in_)
-    feature_names = _normalize_feature_names(feature_names)
+    features = _normalize_feature_names(features)
 
     if required_features:
         missing = set(required_features).difference(X.columns)
         if missing:
             raise ValueError(f"数据集缺少以下模型特征: {missing}")
         X_for_pred = X[required_features]
-    elif feature_names:
-        missing = set(feature_names).difference(X.columns)
+    elif features:
+        missing = set(features).difference(X.columns)
         if missing:
             raise ValueError(f"数据集缺少以下模型特征: {missing}")
-        X_for_pred = X[feature_names]
+        X_for_pred = X[features]
     else:
         X_for_pred = X
 
@@ -484,14 +491,14 @@ class ModelReport:
     :param target: 目标列名（sklearn/scorecardpipeline 风格）
     :param overdue: 逾期天数列名或列表，配合 ``dpds`` 自动构建 0/1 标签
     :param dpds: 逾期定义天数或列表（默认逾期天数 > dpds 记为坏样本）
-    :param overdue_operator: 比较符（>、>=、<、<=）；显式参数优先于 target 字典，缺省时使用 >。
+    :param overdue_operator: 比较符（>、>=、<、<=）；独立逾期参数，缺省时使用 >。
     :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本；``<``、``<=`` 下不剔除。
-    :param feature_names: 特征名称列表，可选；None 时自动从模型 feature_names_ / feature_names_in_ 获取
+    :param features: 特征名称列表，可选；None 时自动从模型 feature_names_ / feature_names_in_ 获取
 
     **属性**
 
     - model: 传入的已训练模型
-    - feature_names: 最终使用的特征名称列表
+    - features: 最终使用的特征名称列表
     - _datasets: 解析后的各数据集（key -> :class:`ReportDataset`）
 
     **参考样例**
@@ -525,14 +532,14 @@ class ModelReport:
         y_test=None,
         X_oot=None,
         y_oot=None,
-        feature_names: Optional[List[str]] = None,
-        target: Optional[Union[str, Dict]] = None,
+        features: Optional[List[str]] = None,
+        target: Optional[TargetInput] = None,
         datasets: Optional[Union[List, Dict]] = None,
         overdue: Optional[Union[str, List[str]]] = None,
         dpds: Optional[Union[int, float, List[Union[int, float]]]] = None,
         del_grey: bool = False,
-        method: Union[str, Callable] = "predict_proba",
-        method_kwargs: Optional[Dict[str, Any]] = None,
+        prediction_method: Union[str, Callable] = "predict_proba",
+        prediction_kwargs: Optional[Dict[str, Any]] = None,
         explain_config: Optional[Dict[str, Any]] = None,
         n_jobs=-1,
         parallel_backend: Optional[str] = None,
@@ -555,7 +562,7 @@ class ModelReport:
         - sklearn 风格：显式传入 y（如 ``X_train=X, y_train=y`` 或
           ``datasets={'train': (X, y)}``），y 优先使用
         - scorecardpipeline 风格：数据全部在 X 中，通过 ``target='列名'`` 提取标签
-        - overdue + dpds 组合：传入后直接忽略 target，按 overdue_operator 比较逾期天数与阈值构建标签
+        - overdue + dpds 组合：与 target 模式互斥，按 overdue_operator 比较逾期天数与阈值构建标签
 
         示例::
 
@@ -565,7 +572,7 @@ class ModelReport:
             # 方式2: datasets list（自动命名为 数据集1、数据集2）
             report = ModelReport(model, datasets=[train_df, test_df], target='target')
 
-            # overdue/dpds 自动构建标签（X 中不含目标列，忽略 target）
+            # overdue/dpds 自动构建标签（X 中不含目标列，与 target 模式互斥）
             report = ModelReport(
                 model,
                 datasets={'建模集': df},
@@ -587,17 +594,17 @@ class ModelReport:
         :param y_test: 测试集标签，None 时从 X_test 中通过 target / overdue+dpds 构建
         :param X_oot: 跨时间验证集特征（命名为 跨时间验证集）
         :param y_oot: 跨时间验证集标签，None 时从 X_oot 中通过 target / overdue+dpds 构建
-        :param feature_names: 特征名称列表，可选；None 时自动从模型 feature_names_ / feature_names_in_ 获取
+        :param features: 特征名称列表，可选；None 时自动从模型 feature_names_ / feature_names_in_ 获取
         :param target: 目标列配置
             - str: 列名，如 'target'，数据全部在 X 中时使用
-            - dict: {'overdue': col, 'dpds': threshold} 或 {'overdue': col, 'dpds': [15, 7, 0]}
-        :param overdue: 逾期列名（str）或多个列名（List[str]），传入后忽略 target
+            - dict: {标签名: Series/ndarray/list/callable}，每个标签独立统计
+        :param overdue: 逾期列名（str）或多个列名（List[str]），与 target 模式互斥
         :param dpds: 逾期天数阈值（int/float）或多个阈值（List），与 overdue 配合使用
-        :param overdue_operator: 比较符（>、>=、<、<=）；None 时沿用 target 字典配置，否则默认 >。
-            显式参数优先于 target 字典中的 overdue_operator。
+        :param overdue_operator: 比较符（>、>=、<、<=）；None 时默认 >。
+            target 模式不解释 overdue_operator。
         :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本；``<``、``<=`` 下不剔除。
-        :param method: 数据集唯一预测方法，支持 predict_proba/predict_prob/predict/predict_score/transform/callable
-        :param method_kwargs: callable 同名参数的显式覆盖字典
+        :param prediction_method: 数据集唯一预测方法，支持 predict_proba/predict_prob/predict/predict_score/transform/callable
+        :param prediction_kwargs: callable 同名参数的显式覆盖字典
         :param n_jobs: 并行工作数；-1 自动保留 CPU，None 使用兼容串行模式
         :param parallel_backend: joblib 后端，如 ``threading`` 或 ``loky``
         :param parallel_config: joblib 其他并行配置，保留调用者字典引用
@@ -605,36 +612,39 @@ class ModelReport:
         """
         if overdue_operator is not None:
             validate_overdue_operator(overdue_operator)
+        validate_target_mode(target, overdue, dpds)
+        reject_legacy_target_keywords(kwargs)
+        self.overdue, self.dpds = overdue, dpds
         self.model = model
         self.explain_config = normalize_explain_config(explain_config)
-        self._feature_names = _normalize_feature_names(feature_names)
-        if not isinstance(method, str) and not callable(method):
-            raise ValidationError("method 必须是方法名字符串或 callable")
-        if isinstance(method, str):
-            normalized_method = "predict_proba" if method == "predict_prob" else method
+        self._feature_names = _normalize_feature_names(features)
+        if not isinstance(prediction_method, str) and not callable(prediction_method):
+            raise ValidationError("prediction_method 必须是方法名字符串或 callable")
+        if isinstance(prediction_method, str):
+            normalized_method = "predict_proba" if prediction_method == "predict_prob" else prediction_method
             allowed_methods = {"predict_proba", "predict", "predict_score", "transform"}
             if normalized_method not in allowed_methods:
-                raise ValidationError(f"不支持的 method: {method!r}，可选: {sorted(allowed_methods)}")
+                raise ValidationError(f"不支持的 prediction_method: {prediction_method!r}，可选: {sorted(allowed_methods)}")
             if not callable(getattr(model, normalized_method, None)):
                 raise ValidationError(f"模型 {type(model).__name__} 不支持方法 {normalized_method}")
-        if method_kwargs is not None and not isinstance(method_kwargs, dict):
-            raise ValidationError("method_kwargs 必须是字典或 None")
-        self.method = method
-        self.method_kwargs = dict(method_kwargs or {})
+        if prediction_kwargs is not None and not isinstance(prediction_kwargs, dict):
+            raise ValidationError("prediction_kwargs 必须是字典或 None")
+        self.prediction_method = prediction_method
+        self.prediction_kwargs = dict(prediction_kwargs or {})
         self.kwargs = dict(kwargs)
         self.method_source_ = None
-        if callable(method):
+        if callable(prediction_method):
             try:
-                self.method_source_ = inspect.getsource(method).strip()
+                self.method_source_ = inspect.getsource(prediction_method).strip()
             except (OSError, TypeError):
                 pass
         self.n_jobs = n_jobs
         self.parallel_backend = parallel_backend
         self.parallel_config = parallel_config
         if overdue_operator is None:
-            overdue_operator = target.get("overdue_operator", ">") if overdue is None and isinstance(target, dict) else ">"
+            overdue_operator = ">"
         self.overdue_operator = validate_overdue_operator(overdue_operator)
-        self.del_grey = bool(del_grey) and overdue_operator in (">", ">=")
+        self.del_grey = bool(del_grey)
         self.init_params_ = {
             "model": model,
             "datasets": datasets,
@@ -644,14 +654,14 @@ class ModelReport:
             "y_test": y_test,
             "X_oot": X_oot,
             "y_oot": y_oot,
-            "feature_names": feature_names,
+            "features": features,
             "target": target,
             "overdue": overdue,
             "dpds": dpds,
             "del_grey": del_grey,
             "overdue_operator": overdue_operator,
-            "method": method,
-            "method_kwargs": method_kwargs,
+            "prediction_method": prediction_method,
+            "prediction_kwargs": prediction_kwargs,
             "n_jobs": n_jobs,
             "parallel_backend": parallel_backend,
             "parallel_config": parallel_config,
@@ -662,14 +672,7 @@ class ModelReport:
         validate_parallel_config(parallel_backend, parallel_config)
         resolve_n_jobs(n_jobs, task_count=1)
 
-        # 传入 overdue（配合 dpds）时直接忽略 target，按指定比较符构建标签。
-        if overdue is not None:
-            self._target_cfg: Optional[Union[str, Dict]] = {
-                "overdue": overdue,
-                "dpds": dpds,
-            }
-        else:
-            self._target_cfg = target
+        self._target_cfg = target
 
         # 构建数据集
         self._datasets: Dict[str, ReportDataset] = {}
@@ -710,7 +713,7 @@ class ModelReport:
         self._init_from_normalized(normalized)
 
         # 解析最终使用的特征名列表
-        # 优先级：显式传入 feature_names > 模型自带 feature_names_ / feature_names_in_ > 数据集列名
+        # 优先级：显式传入 features > 模型自带 feature_names_ / feature_names_in_ > 数据集列名
         model_required: Optional[List[str]] = None
         if hasattr(self.model, "feature_names_") and self.model.feature_names_ is not None:
             model_required = _normalize_feature_names(self.model.feature_names_)
@@ -786,22 +789,36 @@ class ModelReport:
     def __getstate__(self):
         """把 callable method 转为 cloudpickle 载荷，避免执行源码字符串。"""
         state = dict(self.__dict__)
-        if callable(self.method):
+        if callable(self.prediction_method):
             try:
-                state["_method_payload"] = cloudpickle.dumps(self.method)
+                state["_method_payload"] = cloudpickle.dumps(self.prediction_method)
             except Exception as exc:
                 raise SerializationError(f"method callable 无法序列化: {exc}") from exc
-            state["method"] = None
+            state["prediction_method"] = None
             init_params = dict(state.get("init_params_", {}))
-            init_params["method"] = None
+            init_params["prediction_method"] = None
             state["init_params_"] = init_params
+        try:
+            state["_target_payload"] = cloudpickle.dumps(self._target_cfg)
+        except Exception as exc:
+            raise SerializationError(f"target 标签定义无法序列化: {exc}") from exc
+        state["_target_cfg"] = None
+        init_params = dict(state.get("init_params_", {}))
+        init_params["target"] = None
+        state["init_params_"] = init_params
         return state
 
     def __setstate__(self, state):
         """从可信制品恢复 callable method。"""
         state = dict(state)
         payload = state.pop("_method_payload", None)
+        target_payload = state.pop("_target_payload", None)
         self.__dict__.update(state)
+        self.overdue = state.get("overdue", state.get("init_params_", {}).get("overdue"))
+        self.dpds = state.get("dpds", state.get("init_params_", {}).get("dpds"))
+        if target_payload is not None:
+            self._target_cfg = cloudpickle.loads(target_payload)
+            self.init_params_["target"] = self._target_cfg
         # 新增比较符之前的报告按 > 生成标签，恢复时补齐配置以支持继续计算和添加数据集。
         init_params = dict(state.get("init_params_", {}))
         self.overdue_operator = validate_overdue_operator(
@@ -811,19 +828,19 @@ class ModelReport:
         self.init_params_ = init_params
         if payload is not None:
             try:
-                self.method = cloudpickle.loads(payload)
+                self.prediction_method = cloudpickle.loads(payload)
             except Exception as exc:
                 raise SerializationError(f"method callable 无法恢复: {exc}") from exc
-            self.init_params_["method"] = self.method
+            self.init_params_["prediction_method"] = self.prediction_method
 
     def _call_custom_method(self, X: pd.DataFrame):
         """按签名同名注入上下文并严格调用 callable 一次。"""
-        signature = inspect.signature(self.method)
+        signature = inspect.signature(self.prediction_method)
         available: Dict[str, Any] = dict(self.init_params_)
         for name, value in vars(self).items():
             available.setdefault(name, value)
         available.update(self.kwargs)
-        available.update(self.method_kwargs)
+        available.update(self.prediction_kwargs)
         available.update({"self": self, "report": self, "x": X, "X": X})
 
         args: List[Any] = []
@@ -852,7 +869,7 @@ class ModelReport:
             )
         if accepts_kwargs:
             call_kwargs.update({name: value for name, value in available.items() if name not in consumed})
-        return self.method(*args, **call_kwargs)
+        return self.prediction_method(*args, **call_kwargs)
 
     def _normalize_method_result(self, result, X: pd.DataFrame, probability: bool) -> np.ndarray:
         """把唯一方法结果规整为与数据集等长的一维有限数组。"""
@@ -860,10 +877,10 @@ class ModelReport:
 
     def _calculate_prediction(self, X: pd.DataFrame) -> np.ndarray:
         """调用一次指定 method 并返回唯一数据集结果。"""
-        if callable(self.method):
+        if callable(self.prediction_method):
             return self._normalize_method_result(self._call_custom_method(X), X, probability=False)
 
-        return _invoke_named_prediction(self.model, X, self.method)
+        return _invoke_named_prediction(self.model, X, self.prediction_method)
 
     def _dataset_from_prepared(self, prepared) -> ReportDataset:
         """在主进程调用 method，并在成功后构建数据集。"""
@@ -883,7 +900,7 @@ class ModelReport:
         total_rows = sum(len(spec[3]) for spec in specs)
         max_columns = max((spec[3].shape[1] for spec in specs), default=1)
         data_bytes = sum(int(spec[3].memory_usage(deep=True).sum()) for spec in specs)
-        worker_method = None if callable(self.method) else self.method
+        worker_method = None if callable(self.prediction_method) else self.prediction_method
         tasks = [(*spec, worker_method) for spec in specs]
         prepared = parallel_execute(
             _build_report_dataset,
@@ -911,118 +928,36 @@ class ModelReport:
         )
         results = (
             [self._dataset_from_prepared(item) for item in prepared]
-            if callable(self.method)
+            if callable(self.prediction_method)
             else prepared
         )
         self._datasets = {dataset.name: dataset for dataset in results}
         self._datasets_info = {dataset.name: dataset.label for dataset in results}
 
     def _resolve_target_name(self, target) -> str:
-        """解析目标配置，返回标签列名.
-
-        overdue/dpds 作为单独参数传入时，target 参数将被忽略，
-        标签列名默认为 'target'。
-        """
+        """显式标签保持名称；逾期配置始终通过独立参数传入。"""
         if isinstance(target, str):
             return target
-        if isinstance(target, dict) and "overdue" in target:
-            return target.get("label", "target")
-        return "target"
+        if isinstance(target, dict) and target:
+            return next(iter(target))
+        return getattr(target, "name", None) or "target"
 
-    def _build_y(self, X: pd.DataFrame, target_cfg) -> Tuple[pd.Series, Optional[Dict[str, np.ndarray]]]:
-        """根据 target 配置从 X 构建 y 标签.
-
-        支持三种配置：
-        - None: 从 X 中查找 'target' 列
-        - str: 直接取 X[target] 作为标签
-        - dict: 联合构建标签
-            - 单逾期列:  target={'overdue': col, 'dpds': threshold} 或
-                        target={'overdue': col, 'dpds': [t1, t2, ...]}
-            - 多逾期列:  target={'overdue': [col1, col2], 'dpds': [t1, t2, ...]}
-                          每列 × 每阈值生成指标，任一为真则 label=1
-
-        返回 (y_series, y_dict)：
-        - y_series: 聚合标签（任一指标为真则 y=1）
-        - y_dict: 多标签场景下各指标的独立标签数组（key 如 'dpds_m1>15'）
-                  单标签或非多指标场景下返回 None
-        """
-        if target_cfg is None:
-            for col in ("target", "label", "y", "flag", "overdue"):
-                if col in X.columns:
-                    return _ensure_series(X[col], name="target"), None
-            raise ValueError("未找到目标列（target），请通过 target 参数指定标签列名，" "或传入 dict={'overdue': col, 'dpds': threshold} 联合构建")
-
-        if isinstance(target_cfg, str):
-            if target_cfg in X.columns:
-                return _ensure_series(X[target_cfg], name=target_cfg), None
-            raise ValueError(f"目标列 '{target_cfg}' 不存在于数据中")
-
-        if isinstance(target_cfg, dict) and "overdue" in target_cfg:
-            overdue_cols = target_cfg["overdue"]
-            dpds_vals = target_cfg.get("dpds")
-            threshold = target_cfg.get("threshold")
-            label_name = target_cfg.get("label", "target")
-
-            # 统一为列表
-            if isinstance(overdue_cols, str):
-                overdue_cols = [overdue_cols]
-
-            # 支持旧格式 threshold 键，或新格式 dpds 作为阈值
-            # 旧格式: {'overdue': col, 'dpds': col, 'threshold': 3}
-            # 新格式: {'overdue': col, 'dpds': [15, 7, 0]}
-            if threshold is not None:
-                # 旧格式：dpds 为列名，threshold 为阈值
-                dpds_col = dpds_vals if isinstance(dpds_vals, str) else None
-                thresholds = normalize_dpd_values(threshold)
-            elif dpds_vals is not None:
-                thresholds = normalize_dpd_values(dpds_vals)
-                dpds_col = None
-            else:
-                # 只有 overdue，无 dpds/threshold：overdue 列值 > 0 → y=1
-                thresholds = [0]
-                dpds_col = None
-            if not overdue_cols or not thresholds:
-                raise ValueError("overdue 和 dpds 不能为空")
-
-            # 验证列名
-            for col in overdue_cols:
-                if col not in X.columns:
-                    raise ValueError(f"逾期列 '{col}' 不存在，请检查列名")
-
-            # 每列 × 每阈值，生成全指标
-            indicators = pd.DataFrame(index=X.index, dtype=float)
-            for col in overdue_cols:
-                for t in thresholds:
-                    if dpds_col is not None and dpds_col in X.columns:
-                        # 旧格式使用 dpds 指定的列。
-                        overdue_values = X[dpds_col]
-                    else:
-                        # 新格式使用 overdue 指定的列。
-                        overdue_values = X[col]
-                    indicator = compare_overdue(overdue_values, t, self.overdue_operator).astype(float)
-                    if self.del_grey:
-                        valid = ~overdue_grey_mask(overdue_values, t, self.overdue_operator)
-                        indicator = indicator.where(valid, np.nan)
-                    indicators[overdue_label(col, t, self.overdue_operator, style="plain")] = indicator
-
-            # 单逾期标签保留 NaN 灰样本标记，数据集初始化阶段会连同特征一起剔除；
-            # 多标签则保留完整行并在各标签数组中分别标记，确保每个 DPD 可独立过滤。
-            if self.del_grey and indicators.shape[1] == 1:
-                y = indicators.iloc[:, 0].rename(label_name)
-            else:
-                # 多标签的 combined 视图也要遵守删灰语义：当一行在
-                # 所有阈值下都是灰样本时，不能把它重新当成好样本。
-                # 某一阈值有效时，仍保留其它阈值的独立标签口径。
-                y = indicators.fillna(0).astype(bool).any(axis=1).astype(float)
-                if self.del_grey:
-                    y = y.where(indicators.notna().any(axis=1))
-            # 多指标时返回各指标独立标签，供多标签报告使用
-            y_dict: Optional[Dict[str, np.ndarray]] = None
-            if indicators.shape[1] > 1:
-                y_dict = {col: indicators[col].to_numpy(dtype=float) for col in indicators.columns}
-            return _ensure_series(y, name=label_name), y_dict
-
-        raise ValueError(f"target 参数格式错误：{target_cfg}")
+    def _build_y(self, X: pd.DataFrame, target_cfg, *, dataset_name=None):
+        """在本数据集上解析标签；显式多标签默认使用首标签作单标签视图。"""
+        if target_cfg is None and self.overdue is None:
+            target_cfg = next((name for name in ("target", "label", "y", "flag", "overdue") if name in X), None)
+        frame, targets = bind_targets(
+            X, target_cfg, self.overdue, self.dpds, self.del_grey, self.overdue_operator, dataset_name=dataset_name
+        )
+        values = targets.y_map(frame, "plain")
+        y_dict = {name: value.to_numpy(dtype=float) for name, value in values.items()}
+        if targets.mode == "overdue" and len(targets) > 1:
+            indicators = pd.DataFrame(y_dict, index=X.index)
+            y = indicators.eq(1).any(axis=1).astype(float).where(indicators.notna().any(axis=1))
+        else:
+            y = next(iter(values.values())).copy()
+        y.name = self._target_name
+        return y, y_dict if len(targets) > 1 or targets.explicit_multi else None
 
     def _normalize_datasets(
         self,
@@ -1082,10 +1017,10 @@ class ModelReport:
         specs: List[Tuple[Any, ...]] = []
         candidate_labels: List[str] = []
         for name, (X_raw, y_raw) in normalized.items():
-            X_df = _ensure_dataframe(X_raw, feature_names=self._feature_names)
+            X_df = _ensure_dataframe(X_raw, features=self._feature_names)
             if y_raw is None:
-                y_s, y_dict = self._build_y(X_df, self._target_cfg)
-                if self.del_grey and self._is_overdue_cfg() and not y_dict:
+                y_s, y_dict = self._build_y(X_df, self._target_cfg, dataset_name=name)
+                if not y_dict:
                     valid = y_s.notna()
                     X_df = X_df.loc[valid].copy()
                     y_s = y_s.loc[valid].astype(int)
@@ -1110,7 +1045,7 @@ class ModelReport:
         y_dict: Optional[Dict[str, np.ndarray]] = None,
     ):
         spec = (self.model, key, label, X, y, y_dict, self._feature_names)
-        worker_method = None if callable(self.method) else self.method
+        worker_method = None if callable(self.prediction_method) else self.prediction_method
         prepared = parallel_execute(
             _build_report_dataset,
             [(*spec, worker_method)],
@@ -1134,26 +1069,27 @@ class ModelReport:
                 output_rows_per_task=len(X),
             ),
         )[0]
-        dataset = self._dataset_from_prepared(prepared) if callable(self.method) else prepared
+        dataset = self._dataset_from_prepared(prepared) if callable(self.prediction_method) else prepared
         # worker 成功后才提交；已有数据集与缓存不会被失败任务破坏。
         self._datasets[key] = dataset
         self._datasets_info[key] = label
         self._invalidate_caches()
 
-    def add_dataset(self, key: str, label: str, X, y=None, feature_names: Optional[List[str]] = None):
+    @analysis_inputs('X', roles=())
+    def add_dataset(self, key: str, label: str, X, y=None, features: Optional[List[str]] = None):
         """添加额外数据集（如 OOT）用于报告.
 
         :param key: 数据集标识
         :param label: 数据集标签
         :param X: DataFrame（含目标列时 y 可为 None，自动构建标签）
         :param y: 标签列，None 时从 X 中通过 target / overdue+dpds 自动构建
-        :param feature_names: 特征名列表
+        :param features: 特征名列表
         """
-        X = _ensure_dataframe(X, feature_names=_normalize_feature_names(feature_names) or self.feature_names)
+        X = _ensure_dataframe(X, features=_normalize_feature_names(features) or self.feature_names)
         # y=None 时从 X 中通过 overdue+dpds 自动构建标签（scorecardpipeline 风格）
         if y is None:
-            y, y_dict = self._build_y(X, self._target_cfg)
-            if self.del_grey and self._is_overdue_cfg() and not y_dict:
+            y, y_dict = self._build_y(X, self._target_cfg, dataset_name=key)
+            if not y_dict:
                 valid = y.notna()
                 X = X.loc[valid].copy()
                 y = y.loc[valid].astype(int)
@@ -1175,9 +1111,29 @@ class ModelReport:
         :param label: 标签名，None 时返回 combined y
         """
         ds = self._datasets[dataset_key]
-        if label and ds.y_dict and label in ds.y_dict:
+        if label is not None:
+            if label not in self._label_names:
+                raise ValueError(f"数据集 '{dataset_key}' 不存在标签 '{label}'")
+            if ds.y_dict is None:
+                return ds.y.to_numpy()  # 显式提供的外部 y 保持优先。
+            if label not in ds.y_dict:
+                raise ValueError(f"数据集 '{dataset_key}' 不存在标签 '{label}'")
             return ds.y_dict[label]
         return ds.y.to_numpy()
+
+    def _primary_dataset_view(self, key):
+        """默认标签的监督统计视图；标签、评分和辅助字段同步剔灰。"""
+        ds = self._datasets[key]
+        valid = np.isfinite(np.asarray(ds.y, dtype=float))
+        if valid.all() and ds.X.index.is_unique:
+            return ds
+        return ReportDataset(
+            name=ds.name, label=ds.label,
+            X=ds.X.iloc[valid].reset_index(drop=True),
+            y=pd.Series(np.asarray(ds.y)[valid], name=ds.y.name),
+            prediction=np.asarray(ds.prediction)[valid],
+            y_dict={name: np.asarray(values)[valid] for name, values in ds.y_dict.items()} if ds.y_dict else None,
+        )
 
     def _get_valid_target_arrays(
         self,
@@ -1222,27 +1178,18 @@ class ModelReport:
         raise KeyError(f"数据集 '{dataset}' 不存在，可用数据集: {list(self._datasets)}")
 
     def _is_overdue_cfg(self) -> bool:
-        """目标配置是否为 overdue + dpds 逾期联合标签模式."""
-        return isinstance(self._target_cfg, dict) and "overdue" in self._target_cfg
+        """是否为独立 overdue+dpds 模式。"""
+        return self.overdue is not None
 
-    def _overdue_dpds(self) -> Tuple[List[str], List[Union[int, float]]]:
-        """从 target 配置解析逾期列与逾期天数阈值列表（与 ``_build_y`` 保持一致）。
-
-        返回 (overdue_cols, dpds_thresholds)，可直接透传给 ``feature_bin_stats``。
-        """
-        cfg = self._target_cfg or {}
-        overdue = cfg.get("overdue")
-        overdue_cols = [overdue] if isinstance(overdue, str) else list(overdue or [])
-        dpds_vals = cfg.get("dpds")
-        threshold = cfg.get("threshold")
-        if threshold is not None:
-            # 旧格式：dpds 为列名，threshold 为阈值，实际阈值列为 dpds 列
-            col = dpds_vals if isinstance(dpds_vals, str) else None
-            return ([col] if col else overdue_cols), normalize_dpd_values(threshold)
-        return overdue_cols, normalize_dpd_values(dpds_vals)
+    def _overdue_dpds(self):
+        """读取独立逾期参数，不解释 target 字典。"""
+        columns = [self.overdue] if isinstance(self.overdue, str) else list(self.overdue or [])
+        return columns, normalize_dpd_values(self.dpds) if self.dpds is not None else []
 
     def _overdue_label_map(self, separator: str = ">") -> Dict[str, str]:
         """返回内部标签到报告展示标签的映射。"""
+        if not self._is_overdue_cfg():
+            return {name: name for name in self._label_names}
         overdue_cols, dpds_vals = self._overdue_dpds()
         display = [overdue_label(col, dpd, self.overdue_operator, style="at" if separator == "@" else "plain") for col in overdue_cols for dpd in dpds_vals]
         return dict(zip(self._label_names, display))
@@ -1341,18 +1288,19 @@ class ModelReport:
 
     # ---------- 2. 评分分箱效果表 ----------
 
+    @report_inputs
     def get_bin_table(
         self,
         dataset: str = "train",
         method: str = "quantile",
         max_n_bins: int = 10,
-        amount_col: Optional[str] = None,
+        amount: Optional[str] = None,
         margins: bool = True,
         label: Optional[str] = None,
         labels: Optional[List[str]] = None,
     ) -> pd.DataFrame:
         """返回评分分箱表，并缓存同一报告调用中的确定性结果。"""
-        cache_key = (dataset, method, max_n_bins, amount_col, margins, label, tuple(labels or ()))
+        cache_key = (dataset, method, max_n_bins, amount, margins, label, tuple(labels or ()))
         cached = self._bin_table_cache.get(cache_key)
         if cached is not None:
             return cached.copy()
@@ -1360,7 +1308,7 @@ class ModelReport:
             dataset=dataset,
             method=method,
             max_n_bins=max_n_bins,
-            amount_col=amount_col,
+            amount=amount,
             margins=margins,
             label=label,
             labels=labels,
@@ -1373,7 +1321,7 @@ class ModelReport:
         dataset: str = "train",
         method: str = "quantile",
         max_n_bins: int = 10,
-        amount_col: Optional[str] = None,
+        amount: Optional[str] = None,
         margins: bool = True,
         label: Optional[str] = None,
         labels: Optional[List[str]] = None,
@@ -1406,61 +1354,13 @@ class ModelReport:
             "分档KS值",
         ]
 
-        # 多标签合并模式：直接通过 feature_bin_stats 的 overdue + dpds 计算多目标合并分箱表，
-        # 由其原生输出多级表头（公共列归入「分箱详情」），并去除「指标名称 / 指标含义」列。
-        if labels and self._is_multi_label() and self._is_overdue_cfg():
-            overdue_cols, dpds_vals = self._overdue_dpds()
-            kw: Dict[str, Any] = dict(
-                feature=score_col,
-                overdue=overdue_cols,
-                dpds=dpds_vals,
-                method=method,
-                desc="模型评分",
-                max_n_bins=max_n_bins,
-                missing_separate=True,
-                margins=margins,
-                del_grey=self.del_grey,
-                overdue_operator=self.overdue_operator,
-                return_cols=score_return_cols,
-                n_jobs=self.n_jobs,
-                parallel_backend=self.parallel_backend,
-                parallel_config=self.parallel_config,
-            )
-            if amount_col and amount_col in df.columns:
-                kw["amount"] = amount_col
-            table = feature_bin_stats(df, **kw)
-            if isinstance(table, tuple):
-                table = table[0]
-            return _drop_bin_meta_cols(self._normalize_overdue_bin_columns(table))
-
-        # 其他多标签合并模式（非 overdue 配置）：逐标签计算后合并
-        if labels and self._is_multi_label():
-            tables: List[pd.DataFrame] = []
-            for lbl in labels:
-                t = self.get_bin_table(
-                    dataset=dataset,
-                    method=method,
-                    max_n_bins=max_n_bins,
-                    amount_col=amount_col,
-                    margins=margins,
-                    label=lbl,
-                )
-                tables.append(t)
-            return _drop_bin_meta_cols(_merge_multi_label_bin_tables(tables, labels))
-
-        target_col = "__target__"
-        df[target_col] = self._get_y(dataset, label)
-        # 多标签删灰时，按单个标签生成分箱表必须同步剔除该标签的
-        # NaN 灰样本；否则 feature_bin_stats 会把 NaN 传给分箱器并报
-        # “目标变量不能包含缺失值”，或在不同入口产生不一致分母。
-        valid_target = df[target_col].notna()
-        df = df.loc[valid_target].copy()
-        if df.empty:
-            raise ValueError(f"数据集 '{dataset}' 在目标标签 {label or self._target_name or 'target'} 下没有有效样本")
+        chosen = labels if labels is not None else [label]
+        explicit = {name: self._get_y(dataset, name) for name in chosen} if labels is not None else self._get_y(dataset, label)
+        df, targets = bind_targets(df, target=explicit, del_grey=True)
 
         kw = dict(
             feature=score_col,
-            target=target_col,
+            target=targets,
             method=method,
             desc="模型评分",
             max_n_bins=max_n_bins,
@@ -1471,8 +1371,8 @@ class ModelReport:
             parallel_backend=self.parallel_backend,
             parallel_config=self.parallel_config,
         )
-        if amount_col and amount_col in df.columns:
-            kw["amount"] = amount_col
+        if amount and amount in df.columns:
+            kw["amount"] = amount
 
         table = feature_bin_stats(df, **kw)
         if isinstance(table, tuple):
@@ -1716,7 +1616,7 @@ class ModelReport:
                 importance_df = pd.DataFrame(index=importances.index)
                 importance_df["特征重要性"] = importances.abs().values / total if total else importances.values
 
-                train_ds = self._datasets[self._train_key]
+                train_ds = self._primary_dataset_view(self._train_key)
                 test_key = self._test_key
                 y_arr = train_ds.y.to_numpy()
                 metric_tasks = []
@@ -1781,7 +1681,7 @@ class ModelReport:
 
     def _get_score_conversion_sections(self) -> Optional[Dict[str, pd.DataFrame]]:
         """返回普通模型已拟合概率评分转换器的选型、参数与公式。"""
-        if self.method != "predict_score" or self._is_scorecard_model():
+        if self.prediction_method != "predict_score" or self._is_scorecard_model():
             return None
 
         owner = getattr(self.model, "scorecard_", None)
@@ -1874,9 +1774,9 @@ class ModelReport:
         except Exception:
             return pd.DataFrame()
         coefficients = coefficients.mean(axis=0) if coefficients.ndim > 1 else coefficients
-        feature_names = getattr(lr_model, "feature_names_in_", self.feature_names)
-        feature_names = list(feature_names) if len(feature_names) == len(coefficients) else self.feature_names
-        rows = [{"变量": name, "系数": float(value)} for name, value in zip(feature_names, coefficients)]
+        features = getattr(lr_model, "feature_names_in_", self.feature_names)
+        features = list(features) if len(features) == len(coefficients) else self.feature_names
+        rows = [{"变量": name, "系数": float(value)} for name, value in zip(features, coefficients)]
         intercept = np.asarray(getattr(lr_model, "intercept_", []), dtype=float).reshape(-1)
         if len(intercept):
             rows.insert(0, {"变量": "截距", "系数": float(intercept[0])})
@@ -2107,6 +2007,7 @@ class ModelReport:
 
     # ---------- 6. 特征分箱分析 ----------
 
+    @report_inputs
     def get_feature_bin_table(
         self,
         feature: str,
@@ -2114,12 +2015,12 @@ class ModelReport:
         max_n_bins: int = 10,
         method: str = "quantile",
         margins: bool = True,
-        amount_col: Optional[str] = None,
+        amount: Optional[str] = None,
         label: Optional[str] = None,
         labels: Optional[List[str]] = None,
     ) -> pd.DataFrame:
         """返回特征分箱表，并缓存同一报告调用中的确定性结果。"""
-        cache_key = (feature, dataset, max_n_bins, method, margins, amount_col, label, tuple(labels or ()))
+        cache_key = (feature, dataset, max_n_bins, method, margins, amount, label, tuple(labels or ()))
         cached = self._feature_bin_table_cache.get(cache_key)
         if cached is not None:
             return cached.copy()
@@ -2129,7 +2030,7 @@ class ModelReport:
             max_n_bins=max_n_bins,
             method=method,
             margins=margins,
-            amount_col=amount_col,
+            amount=amount,
             label=label,
             labels=labels,
         )
@@ -2143,7 +2044,7 @@ class ModelReport:
         max_n_bins: int = 10,
         method: str = "quantile",
         margins: bool = True,
-        amount_col: Optional[str] = None,
+        amount: Optional[str] = None,
         label: Optional[str] = None,
         labels: Optional[List[str]] = None,
     ) -> pd.DataFrame:
@@ -2159,55 +2060,13 @@ class ModelReport:
         df = ds.X.copy()
         binner = getattr(self.model, "binner", None)
 
-        # 多标签合并模式：通过 feature_bin_stats 的 overdue + dpds 计算多目标合并分箱表，
-        # 多级表头由其原生输出（公共列归入「分箱详情」），并去除「指标名称 / 指标含义」列。
-        if labels and self._is_multi_label() and self._is_overdue_cfg():
-            overdue_cols, dpds_vals = self._overdue_dpds()
-            kw: Dict[str, Any] = dict(
-                feature=feature,
-                overdue=overdue_cols,
-                dpds=dpds_vals,
-                method=method,
-                max_n_bins=max_n_bins,
-                margins=margins,
-                del_grey=self.del_grey,
-                overdue_operator=self.overdue_operator,
-                missing_separate=True,
-                n_jobs=self.n_jobs,
-                parallel_backend=self.parallel_backend,
-                parallel_config=self.parallel_config,
-            )
-            if binner is not None:
-                kw["binner"] = binner
-            if amount_col and amount_col in df.columns:
-                kw["amount"] = amount_col
-            table = feature_bin_stats(df, **kw)
-            if isinstance(table, tuple):
-                table = table[0]
-            return _drop_bin_meta_cols(self._normalize_overdue_bin_columns(table))
-
-        # 其他多标签合并模式（非 overdue 配置）：逐标签计算后合并
-        if labels and self._is_multi_label():
-            tables: List[pd.DataFrame] = []
-            for lbl in labels:
-                t = self.get_feature_bin_table(
-                    feature=feature,
-                    dataset=dataset,
-                    max_n_bins=max_n_bins,
-                    method=method,
-                    margins=margins,
-                    amount_col=amount_col,
-                    label=lbl,
-                )
-                tables.append(t)
-            return _drop_bin_meta_cols(_merge_multi_label_bin_tables(tables, labels))
-
-        target_col = "__target__"
-        df[target_col] = self._get_y(dataset, label)
+        chosen = labels if labels is not None else [label]
+        explicit = {name: self._get_y(dataset, name) for name in chosen} if labels is not None else self._get_y(dataset, label)
+        df, targets = bind_targets(df, target=explicit, del_grey=True)
 
         kw = dict(
             feature=feature,
-            target=target_col,
+            target=targets,
             method=method,
             max_n_bins=max_n_bins,
             margins=margins,
@@ -2219,8 +2078,8 @@ class ModelReport:
         if binner is not None:
             kw["binner"] = binner
 
-        if amount_col and amount_col in df.columns:
-            kw["amount"] = amount_col
+        if amount and amount in df.columns:
+            kw["amount"] = amount
 
         table = feature_bin_stats(df, **kw)
         if isinstance(table, tuple):
@@ -2232,17 +2091,17 @@ class ModelReport:
     def _get_top_n_lift_table(
         self,
         percentiles: Tuple[float, ...] = (0.01, 0.03, 0.05, 0.10),
-        amount_col: Optional[str] = None,
+        amount: Optional[str] = None,
         label: Optional[str] = None,
         labels: Optional[List[str]] = None,
     ) -> pd.DataFrame:
-        cache_key = (tuple(percentiles), amount_col, label, tuple(labels or ()))
+        cache_key = (tuple(percentiles), amount, label, tuple(labels or ()))
         cached = self._lift_table_cache.get(cache_key)
         if cached is not None:
             return cached.copy()
         result = self._compute_top_n_lift_table(
             percentiles=percentiles,
-            amount_col=amount_col,
+            amount=amount,
             label=label,
             labels=labels,
         )
@@ -2252,14 +2111,14 @@ class ModelReport:
     def _compute_top_n_lift_table(
         self,
         percentiles: Tuple[float, ...] = (0.01, 0.03, 0.05, 0.10),
-        amount_col: Optional[str] = None,
+        amount: Optional[str] = None,
         label: Optional[str] = None,
         labels: Optional[List[str]] = None,
     ) -> pd.DataFrame:
         """构建 TOP n% 尾部区分能力表。
 
         :param percentiles: TOP n% 的百分位列表
-        :param amount_col: 金额字段名（可选），指定时输出金额口径
+        :param amount: 金额字段名（可选），指定时输出金额口径
         :param label: 单标签模式下指定标签名，None 时使用 combined y
         :param labels: 多标签合并模式，返回 MultiIndex 列合并表
         """
@@ -2267,7 +2126,7 @@ class ModelReport:
         if labels and self._is_multi_label():
             return self._get_top_n_lift_table_multi(
                 percentiles=percentiles,
-                amount_col=amount_col,
+                amount=amount,
                 labels=labels,
             )
 
@@ -2305,8 +2164,8 @@ class ModelReport:
             rows.append({"数据集": tag, "统计项": "坏账改善", **improvements})
 
             # 金额口径替代订单口径；调用方会将两个结果并排展示。
-            if amount_col and amount_col in ds.X.columns:
-                amounts = pd.to_numeric(ds.X[amount_col], errors="coerce").fillna(0).clip(lower=0).to_numpy(dtype=float)[valid]
+            if amount and amount in ds.X.columns:
+                amounts = pd.to_numeric(ds.X[amount], errors="coerce").fillna(0).clip(lower=0).to_numpy(dtype=float)[valid]
                 amounts_sorted = amounts[sorted_idx]
                 overall_bad_amount = float((sorted_y * amounts_sorted).sum() / amounts_sorted.sum()) if amounts_sorted.sum() > 0 else overall_bad_rate
 
@@ -2341,7 +2200,7 @@ class ModelReport:
     def _get_top_n_lift_table_multi(
         self,
         percentiles: Tuple[float, ...] = (0.01, 0.03, 0.05, 0.10),
-        amount_col: Optional[str] = None,
+        amount: Optional[str] = None,
         labels: Optional[List[str]] = None,
     ) -> pd.DataFrame:
         """多标签合并模式的 LIFT 表。
@@ -2358,7 +2217,7 @@ class ModelReport:
         for lbl in labels:
             sub = self._get_top_n_lift_table(
                 percentiles=percentiles,
-                amount_col=amount_col,
+                amount=amount,
                 label=lbl,
             )
             per_label[lbl] = sub.set_index(["数据集", "统计项"])
@@ -2375,15 +2234,17 @@ class ModelReport:
         importance = self.get_feature_importance()
         features = importance.index.tolist() if not importance.empty else self.feature_names
 
-        target_col = self._target_name or "target"
-        train_ds = self._datasets[self._train_key]
+        target_col = "__report_target__"
+        while target_col in features:
+            target_col = "_" + target_col
+        train_ds = self._primary_dataset_view(self._train_key)
         train_df = train_ds.X[features].copy()
         train_df[target_col] = train_ds.y.values
 
         test_df = None
         test_key = self._test_key
         if test_key is not None:
-            test_ds = self._datasets[test_key]
+            test_ds = self._primary_dataset_view(test_key)
             test_df = test_ds.X[features].copy()
             test_df[target_col] = test_ds.y.values
 
@@ -2407,25 +2268,26 @@ class ModelReport:
     # 分月评分分布分位数（与特征效率分析保持一致的分位数口径）
     _SCORE_DIST_QUANTILES = [0.01, 0.03, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.97, 0.99]
 
-    def _get_monthly_metrics(self, date_col: str) -> pd.DataFrame:
-        cached = self._monthly_metrics_cache.get(date_col)
+    def _get_monthly_metrics(self, date: str) -> pd.DataFrame:
+        cached = self._monthly_metrics_cache.get(date)
         if cached is not None:
             return cached.copy()
-        result = self._compute_monthly_metrics(date_col)
-        self._monthly_metrics_cache[date_col] = result.copy()
+        result = self._compute_monthly_metrics(date)
+        self._monthly_metrics_cache[date] = result.copy()
         return result
 
-    def _compute_monthly_metrics(self, date_col: str) -> pd.DataFrame:
+    def _compute_monthly_metrics(self, date: str) -> pd.DataFrame:
         """分月计算 KS/AUC 及评分分布（均值/标准差/极值/分位数）."""
         from ..core.metrics import ks, auc
 
         q_cols = [f"{int(round(q * 100))}%" for q in self._SCORE_DIST_QUANTILES]
 
         rows: List[Dict[str, Any]] = []
-        for ds_key, ds in self._datasets.items():
-            if date_col not in ds.X.columns:
+        for ds_key in self._datasets:
+            ds = self._primary_dataset_view(ds_key)
+            if date not in ds.X.columns:
                 continue
-            dates = pd.to_datetime(ds.X[date_col])
+            dates = pd.to_datetime(ds.X[date])
             months = dates.dt.to_period("M")
             for month in sorted(months.unique()):
                 mask = months == month
@@ -2455,23 +2317,23 @@ class ModelReport:
                     self._report_warning("生成 %s %s 的分月模型效果失败: %s", ds.label, month, exc)
         return pd.DataFrame(rows) if rows else pd.DataFrame()
 
-    def _get_monthly_psi_matrix(self, date_col: str) -> pd.DataFrame:
-        cached = self._monthly_psi_cache.get(date_col)
+    def _get_monthly_psi_matrix(self, date: str) -> pd.DataFrame:
+        cached = self._monthly_psi_cache.get(date)
         if cached is not None:
             return cached.copy()
-        result = self._compute_monthly_psi_matrix(date_col)
-        self._monthly_psi_cache[date_col] = result.copy()
+        result = self._compute_monthly_psi_matrix(date)
+        self._monthly_psi_cache[date] = result.copy()
         return result
 
-    def _compute_monthly_psi_matrix(self, date_col: str) -> pd.DataFrame:
+    def _compute_monthly_psi_matrix(self, date: str) -> pd.DataFrame:
         """分月 PSI 交叉矩阵."""
         from ..core.metrics import psi
 
         month_scores: Dict[str, np.ndarray] = {}
         for ds in self._datasets.values():
-            if date_col not in ds.X.columns:
+            if date not in ds.X.columns:
                 continue
-            dates = pd.to_datetime(ds.X[date_col])
+            dates = pd.to_datetime(ds.X[date])
             months = dates.dt.to_period("M")
             for month in sorted(months.unique()):
                 mask = months == month
@@ -2499,28 +2361,29 @@ class ModelReport:
     def _export_plots_serial(
         self,
         output_dir: Path,
-        n_bins: int = 10,
-        bin_method: str = "quantile",
-        amount_col: Optional[str] = None,
+        max_n_bins: int = 10,
+        method: str = "quantile",
+        amount: Optional[str] = None,
         show_lift: bool = True,
         feature_contribution_label_max_features: Optional[int] = 10,
     ) -> Tuple[Dict[str, List[str]], Dict[str, pd.DataFrame]]:
         """串行导出全部图表，作为线程实现的结果与性能参考."""
         from ..core.viz import ks_plot, bin_plot, corr_plot, psi_plot, lift_plot, hist_plot
 
+        plot_datasets = {key: self._primary_dataset_view(key) for key in self._datasets}
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         paths: Dict[str, List[str]] = {}
         tables: Dict[str, pd.DataFrame] = {}
 
         # --- 模型级图表（用于模型性能 Sheet） ---
-        for ds_key, ds in self._datasets.items():
+        for ds_key, ds in plot_datasets.items():
             tag = ds.label
             model_figs: List[str] = []
 
             p = str(output_dir / f"bin_{ds_key}.png")
             try:
-                bt = self.get_bin_table(ds_key, method=bin_method, max_n_bins=n_bins, margins=True)
+                bt = self.get_bin_table(ds_key, method=method, max_n_bins=max_n_bins, margins=True)
                 bd = bt.iloc[:-1].reset_index(drop=True) if len(bt) > 1 else bt
                 bin_plot(bd, desc="模型评分", ending=f" {tag}", save=p, figsize=(12, 7))
                 _safe_close_figs()
@@ -2578,21 +2441,21 @@ class ModelReport:
         if len(top_features) >= 2:
             p = str(output_dir / "feature_corr.png")
             try:
-                corr_plot(self._datasets[self._train_key].X[top_features], annot=False, save=p)
+                corr_plot(plot_datasets[self._train_key].X[top_features], annot=False, save=p)
                 _safe_close_figs()
                 paths["feature_corr"] = [p]
             except Exception as exc:
                 self._report_warning("生成特征相关性图失败 [数据集=训练集, 文件=%s]: %s", p, exc)
 
         # --- 逐特征图表（分箱图、分布图、PSI图） ---
-        ds_keys = list(self._datasets.keys())
+        ds_keys = list(plot_datasets.keys())
         for feat in top_features or self.feature_names:
             # 分箱图：按 train/test 顺序分组
             bin_figs: List[str] = []
-            for ds_key, ds in self._datasets.items():
+            for ds_key, ds in plot_datasets.items():
                 p = str(output_dir / f"bin_{feat}_{ds_key}.png")
                 try:
-                    ft = self.get_feature_bin_table(feat, ds_key, max_n_bins=n_bins, method=bin_method, margins=True)
+                    ft = self.get_feature_bin_table(feat, ds_key, max_n_bins=max_n_bins, method=method, margins=True)
                     fd = ft.iloc[:-1].reset_index(drop=True) if len(ft) > 1 else ft
                     bin_plot(fd, desc=feat, ending=f" {ds.label}", save=p, figsize=(12, 7))
                     _safe_close_figs()
@@ -2611,7 +2474,7 @@ class ModelReport:
             # 特征KS分布图（替换直方图，显示特征对好坏样本的区分能力）
             # 处理缺失值和类别特征
             ks_figs: List[str] = []
-            for ds_key, ds in self._datasets.items():
+            for ds_key, ds in plot_datasets.items():
                 p = str(output_dir / f"ks_{feat}_{ds_key}.png")
                 try:
                     col_raw = ds.X[feat]
@@ -2643,8 +2506,8 @@ class ModelReport:
             if len(ds_keys) >= 2:
                 p = str(output_dir / f"psi_{feat}.png")
                 try:
-                    train_ds = self._datasets[ds_keys[0]]
-                    test_ds = self._datasets[ds_keys[1]]
+                    train_ds = plot_datasets[ds_keys[0]]
+                    test_ds = plot_datasets[ds_keys[1]]
                     train_mask = train_ds.X[feat].notna()
                     test_mask = test_ds.X[feat].notna()
                     train_vals = train_ds.X[feat][train_mask]
@@ -2689,8 +2552,8 @@ class ModelReport:
             if len(ds_keys) >= 2:
                 p = str(output_dir / "score_psi.png")
                 try:
-                    train_ds = self._datasets[ds_keys[0]]
-                    test_ds = self._datasets[ds_keys[1]]
+                    train_ds = plot_datasets[ds_keys[0]]
+                    test_ds = plot_datasets[ds_keys[1]]
                     score_train = pd.Series(train_ds.score)
                     score_test = pd.Series(test_ds.score)
                     train_mask = score_train.notna()
@@ -2725,15 +2588,16 @@ class ModelReport:
     def _export_plots(
         self,
         output_dir: Path,
-        n_bins: int = 10,
-        bin_method: str = "quantile",
-        amount_col: Optional[str] = None,
+        max_n_bins: int = 10,
+        method: str = "quantile",
+        amount: Optional[str] = None,
         show_lift: bool = True,
         feature_contribution_label_max_features: Optional[int] = 10,
     ) -> Tuple[Dict[str, List[str]], Dict[str, pd.DataFrame]]:
         """使用线程并行导出全部图表，并按原报告顺序汇总结果."""
         from ..core.viz import bin_plot, corr_plot, hist_plot, ks_plot, lift_plot, psi_plot
 
+        plot_datasets = {key: self._primary_dataset_view(key) for key in self._datasets}
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         plot_groups = []
@@ -2743,7 +2607,7 @@ class ModelReport:
             plot_groups.append(group)
             task_labels.append(label)
 
-        for ds_key, ds in self._datasets.items():
+        for ds_key, ds in plot_datasets.items():
             def render_model_group(ds_key=ds_key, ds=ds):
                 group_paths: Dict[str, List[str]] = {}
                 model_figs: List[str] = []
@@ -2751,7 +2615,7 @@ class ModelReport:
 
                 path = str(output_dir / f"bin_{ds_key}.png")
                 try:
-                    table = self.get_bin_table(ds_key, method=bin_method, max_n_bins=n_bins, margins=True)
+                    table = self.get_bin_table(ds_key, method=method, max_n_bins=max_n_bins, margins=True)
                     plot_data = table.iloc[:-1].reset_index(drop=True) if len(table) > 1 else table
                     figure = bin_plot(
                         plot_data,
@@ -2837,7 +2701,7 @@ class ModelReport:
                 group_paths: Dict[str, List[str]] = {}
                 path = str(output_dir / "feature_corr.png")
                 try:
-                    figure = corr_plot(self._datasets[self._train_key].X[top_features], annot=False, save=path)
+                    figure = corr_plot(plot_datasets[self._train_key].X[top_features], annot=False, save=path)
                     _safe_close_plot_result(figure)
                     group_paths["feature_corr"] = [path]
                 except Exception as exc:
@@ -2846,21 +2710,21 @@ class ModelReport:
 
             add_plot_group("特征相关性图", render_corr_group)
 
-        ds_keys = list(self._datasets.keys())
+        ds_keys = list(plot_datasets.keys())
         for feature in top_features or self.feature_names:
             def render_feature_group(feature=feature):
                 group_paths: Dict[str, List[str]] = {}
                 group_tables: Dict[str, pd.DataFrame] = {}
 
                 bin_figs: List[str] = []
-                for ds_key, ds in self._datasets.items():
+                for ds_key, ds in plot_datasets.items():
                     path = str(output_dir / f"bin_{feature}_{ds_key}.png")
                     try:
                         table = self.get_feature_bin_table(
                             feature,
                             ds_key,
-                            max_n_bins=n_bins,
-                            method=bin_method,
+                            max_n_bins=max_n_bins,
+                            method=method,
                             margins=True,
                         )
                         plot_data = table.iloc[:-1].reset_index(drop=True) if len(table) > 1 else table
@@ -2885,7 +2749,7 @@ class ModelReport:
                     group_paths[f"feat_bin_{feature}"] = bin_figs
 
                 ks_figs: List[str] = []
-                for ds_key, ds in self._datasets.items():
+                for ds_key, ds in plot_datasets.items():
                     path = str(output_dir / f"ks_{feature}_{ds_key}.png")
                     try:
                         column = ds.X[feature].dropna()
@@ -2920,8 +2784,8 @@ class ModelReport:
                 if len(ds_keys) >= 2:
                     path = str(output_dir / f"psi_{feature}.png")
                     try:
-                        train_ds = self._datasets[ds_keys[0]]
-                        test_ds = self._datasets[ds_keys[1]]
+                        train_ds = plot_datasets[ds_keys[0]]
+                        test_ds = plot_datasets[ds_keys[1]]
                         train_mask = train_ds.X[feature].notna()
                         test_mask = test_ds.X[feature].notna()
                         train_values = train_ds.X[feature][train_mask]
@@ -2971,8 +2835,8 @@ class ModelReport:
                 if len(ds_keys) >= 2:
                     path = str(output_dir / "score_psi.png")
                     try:
-                        train_ds = self._datasets[ds_keys[0]]
-                        test_ds = self._datasets[ds_keys[1]]
+                        train_ds = plot_datasets[ds_keys[0]]
+                        test_ds = plot_datasets[ds_keys[1]]
                         score_train = pd.Series(train_ds.score)
                         score_test = pd.Series(test_ds.score)
                         train_mask = score_train.notna()
@@ -3079,7 +2943,7 @@ class ModelReport:
 
     # ---------- 10. 控制台输出 ----------
 
-    def print_report(self, n_bins: int = 10, **kwargs) -> None:
+    def print_report(self, max_n_bins: int = 10, **kwargs) -> None:
         is_multi = self._is_multi_label()
         labels_arg = self._label_names if is_multi else None
 
@@ -3100,7 +2964,7 @@ class ModelReport:
 
         for ds_key, ds in self._datasets.items():
             print(f"\n【{ds.label}评分分箱效果】")
-            print(self.get_bin_table(ds_key, max_n_bins=n_bins, labels=labels_arg).to_string(index=False))
+            print(self.get_bin_table(ds_key, max_n_bins=max_n_bins, labels=labels_arg).to_string(index=False))
         print("\n" + "=" * 72)
 
     # ---------- 11. to_excel ----------
@@ -3108,10 +2972,10 @@ class ModelReport:
     def _precompute_excel_tables(
         self,
         *,
-        n_bins: int,
-        bin_method: str,
-        amount_col: Optional[str],
-        date_col: Optional[str],
+        max_n_bins: int,
+        method: str,
+        amount: Optional[str],
+        date: Optional[str],
         show_importance: bool,
     ) -> None:
         """在创建绘图与工作簿对象前完成报告核心数据计算。"""
@@ -3131,31 +2995,31 @@ class ModelReport:
             try:
                 self.get_bin_table(
                     dataset,
-                    method=bin_method,
-                    max_n_bins=n_bins,
+                    method=method,
+                    max_n_bins=max_n_bins,
                     margins=True,
                     labels=labels_arg,
                 )
             except Exception as exc:
                 raise RuntimeError(f"生成评分分箱失败 [数据集={ds.label}]") from exc
-            if amount_col:
+            if amount:
                 try:
                     self.get_bin_table(
                         dataset,
-                        method=bin_method,
-                        max_n_bins=n_bins,
-                        amount_col=amount_col,
+                        method=method,
+                        max_n_bins=max_n_bins,
+                        amount=amount,
                         margins=True,
                         labels=labels_arg,
                     )
                 except Exception as exc:
-                    raise RuntimeError(f"生成金额口径评分分箱失败 [数据集={ds.label}, 金额字段={amount_col}]") from exc
+                    raise RuntimeError(f"生成金额口径评分分箱失败 [数据集={ds.label}, 金额字段={amount}]") from exc
         self._get_top_n_lift_table(labels=labels_arg)
-        if amount_col:
-            self._get_top_n_lift_table(amount_col=amount_col, labels=labels_arg)
-        if date_col:
-            self._get_monthly_metrics(date_col)
-            self._get_monthly_psi_matrix(date_col)
+        if amount:
+            self._get_top_n_lift_table(amount=amount, labels=labels_arg)
+        if date:
+            self._get_monthly_metrics(date)
+            self._get_monthly_psi_matrix(date)
 
         feature_list = importance.index.tolist() if not importance.empty else self.feature_names
         for feature in feature_list:
@@ -3164,26 +3028,26 @@ class ModelReport:
                     self.get_feature_bin_table(
                         feature,
                         dataset,
-                        max_n_bins=n_bins,
-                        method=bin_method,
+                        max_n_bins=max_n_bins,
+                        method=method,
                         margins=True,
                         labels=labels_arg,
                     )
                 except Exception as exc:
                     raise RuntimeError(f"生成特征有效性分箱失败 [特征={feature}, 数据集={ds.label}]") from exc
-                if amount_col:
+                if amount:
                     try:
                         self.get_feature_bin_table(
                             feature,
                             dataset,
-                            max_n_bins=n_bins,
-                            method=bin_method,
+                            max_n_bins=max_n_bins,
+                            method=method,
                             margins=True,
-                            amount_col=amount_col,
+                            amount=amount,
                             labels=labels_arg,
                         )
                     except Exception as exc:
-                        raise RuntimeError(f"生成金额口径特征分箱失败 [特征={feature}, 数据集={ds.label}, 金额字段={amount_col}]") from exc
+                        raise RuntimeError(f"生成金额口径特征分箱失败 [特征={feature}, 数据集={ds.label}, 金额字段={amount}]") from exc
 
     def get_model_explanation(self) -> Dict[str, Any]:
         """返回显式配置的结构化模型解释结果。"""
@@ -3193,33 +3057,34 @@ class ModelReport:
             return self._model_explanation_cache
         config = dict(self.explain_config)
         train = self._datasets[self._train_key].X
-        feature_names = self.feature_names or list(train.columns)
+        features = self.feature_names or list(train.columns)
         if config["data"] is None:
-            config["data"] = train[feature_names]
+            config["data"] = train[features]
         elif isinstance(config["data"], pd.DataFrame):
-            config["data"] = config["data"][feature_names]
+            config["data"] = config["data"][features]
         if config["background_data"] is None:
-            config["background_data"] = train[feature_names]
+            config["background_data"] = train[features]
         elif isinstance(config["background_data"], pd.DataFrame):
-            config["background_data"] = config["background_data"][feature_names]
+            config["background_data"] = config["background_data"][features]
         if config["stability_mode"] == "refit":
-            config["X_train"] = train[feature_names] if config["X_train"] is None else config["X_train"]
+            config["X_train"] = train[features] if config["X_train"] is None else config["X_train"]
             config["y_train"] = self._datasets[self._train_key].y if config["y_train"] is None else config["y_train"]
             config["X_validation"] = config["data"] if config["X_validation"] is None else config["X_validation"]
         explanation = build_model_explanation(self.model, config)
         self._model_explanation_cache = explanation
         return explanation
 
+    @report_inputs
     def to_excel(
         self,
         filepath: str,
         *,
-        n_bins: int = 10,
-        bin_method: str = "quantile",
-        amount_col: Optional[str] = None,
-        date_col: Optional[str] = None,
-        date_freq: Optional[str] = None,
-        group_col: Optional[str] = None,
+        max_n_bins: int = 10,
+        method: str = "quantile",
+        amount: Optional[str] = None,
+        date: Optional[str] = None,
+        freq: Optional[str] = None,
+        group: Optional[str] = None,
         with_plots: bool = True,
         model_name: Optional[str] = None,
         project_desc: Optional[str] = None,
@@ -3270,12 +3135,12 @@ class ModelReport:
             path = self._run_cache_transaction(
             self._to_excel_impl,
             filepath,
-            n_bins=n_bins,
-            bin_method=bin_method,
-            amount_col=amount_col,
-            date_col=date_col,
-            date_freq=date_freq,
-            group_col=group_col,
+            max_n_bins=max_n_bins,
+            method=method,
+            amount=amount,
+            date=date,
+            freq=freq,
+            group=group,
             with_plots=with_plots,
             model_name=model_name,
             project_desc=project_desc,
@@ -3354,12 +3219,12 @@ class ModelReport:
         self,
         filepath: str,
         *,
-        n_bins: int = 10,
-        bin_method: str = "quantile",
-        amount_col: Optional[str] = None,
-        date_col: Optional[str] = None,
-        date_freq: Optional[str] = None,
-        group_col: Optional[str] = None,
+        max_n_bins: int = 10,
+        method: str = "quantile",
+        amount: Optional[str] = None,
+        date: Optional[str] = None,
+        freq: Optional[str] = None,
+        group: Optional[str] = None,
         with_plots: bool = True,
         model_name: Optional[str] = None,
         project_desc: Optional[str] = None,
@@ -3403,16 +3268,16 @@ class ModelReport:
             return _dataframe2excel(*args, **kwargs)
 
         self._precompute_excel_tables(
-            n_bins=n_bins,
-            bin_method=bin_method,
-            amount_col=amount_col,
-            date_col=date_col,
+            max_n_bins=max_n_bins,
+            method=method,
+            amount=amount,
+            date=date,
             show_importance=show_importance,
         )
         execution_result = getattr(self, "_execution_result", None)
         if execution_result is not None:
             execution_result.success("核心数据计算")
-            for column, label in ((date_col, "日期字段"), (group_col, "分组字段"), (amount_col, "金额字段")):
+            for column, label in ((date, "日期字段"), (group, "分组字段"), (amount, "金额字段")):
                 if column is not None:
                     missing = [ds.label for ds in self._datasets.values() if column not in ds.X.columns]
                     if missing:
@@ -3432,9 +3297,9 @@ class ModelReport:
                 warnings.simplefilter("ignore")
                 plot_paths, psi_tables = self._export_plots(
                     plot_dir,
-                    n_bins=n_bins,
-                    bin_method=bin_method,
-                    amount_col=amount_col,
+                    max_n_bins=max_n_bins,
+                    method=method,
+                    amount=amount,
                     show_lift=show_lift,
                     feature_contribution_label_max_features=feature_contribution_label_max_features,
                 )
@@ -3550,7 +3415,7 @@ class ModelReport:
         _, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value="版本号:", style="middle", end_space=(end_row + 1, 2))
         end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 3), value="V1.0", style="middle", end_space=(end_row + 1, 4))
         _, _ = writer.insert_value2sheet(ws, (end_row, 2), value="创建日期:", style="middle", end_space=(end_row, 2))
-        end_row, _ = writer.insert_value2sheet(ws, (end_row, 3), value=date.today().strftime("%Y-%m-%d"), style="middle", end_space=(end_row, 4))
+        end_row, _ = writer.insert_value2sheet(ws, (end_row, 3), value=calendar_date.today().strftime("%Y-%m-%d"), style="middle", end_space=(end_row, 4))
         _, _ = writer.insert_value2sheet(ws, (end_row, 2), value="模型名称:", style="middle", end_space=(end_row, 2))
         end_row, _ = writer.insert_value2sheet(ws, (end_row, 3), value=model_name, style="middle", end_space=(end_row, 4))
         writer.adjust_columns_width(ws, start_col=2, end_col=4)
@@ -3581,11 +3446,11 @@ class ModelReport:
         # ---- Step 2: 合并所有数据集，计算整体各逾期标签的逾期数据 ----
         # 如果有日期字段，先提取全局日期范围
         global_date_prefix = ""
-        if date_col:
+        if date:
             all_dates = []
             for ds in self._datasets.values():
-                if ds is not None and date_col in ds.X.columns:
-                    all_dates.append(pd.to_datetime(ds.X[date_col]))
+                if ds is not None and date in ds.X.columns:
+                    all_dates.append(pd.to_datetime(ds.X[date]))
             if all_dates:
                 all_dates_combined = pd.concat(all_dates, ignore_index=True).dropna()
                 if not all_dates_combined.empty:
@@ -3597,7 +3462,10 @@ class ModelReport:
         dataset_labels = [self._datasets[k].label for k in ds_keys_list]
 
         # ---- Step 2: 整体样本描述（多标签时逐标签展示坏样本率） ----
-        target_specific_totals = self.del_grey and self._is_overdue_cfg()
+        target_specific_totals = any(
+            np.isnan(np.asarray(values, dtype=float)).any()
+            for ds in self._datasets.values() for values in (ds.y_dict or {"target": ds.y}).values()
+        )
         overall_n = sum(len(self._datasets[k].y) for k in ds_keys_list)
         if overall_n > 0:
             if is_multi:
@@ -3693,7 +3561,7 @@ class ModelReport:
 
         # 1.4 样本分布情况
         freq_label_map = {"D": "日", "W": "周", "M": "月", "Q": "季度", "Y": "年"}
-        if date_col or group_col:
+        if date or group:
             end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value="4、样本分布情况", style="header_middle", align={"horizontal": "left"})
 
             def _write_distribution(group_of_ds, title: str):
@@ -3737,14 +3605,14 @@ class ModelReport:
                 return result
 
             # 时间分布
-            if date_col:
-                freq = date_freq or "M"
-                period_col_name = freq_label_map.get(freq, freq)
+            if date:
+                resolved_freq = freq or "M"
+                period_col_name = freq_label_map.get(resolved_freq, resolved_freq)
 
-                def _period_of(ds_key, ds, _freq=freq):
-                    if date_col not in ds.X.columns:
+                def _period_of(ds_key, ds, _freq=resolved_freq):
+                    if date not in ds.X.columns:
                         return None
-                    dates = pd.to_datetime(ds.X[date_col])
+                    dates = pd.to_datetime(ds.X[date])
                     try:
                         return dates.dt.to_period(_freq).astype(str).values
                     except Exception:
@@ -3755,14 +3623,14 @@ class ModelReport:
                     end_row, _ = ret
 
             # 分组分布
-            if group_col:
+            if group:
 
                 def _group_of(ds_key, ds):
-                    if group_col not in ds.X.columns:
+                    if group not in ds.X.columns:
                         return None
-                    return ds.X[group_col].values
+                    return ds.X[group].values
 
-                ret = _write_distribution(_group_of, title=f"{group_col}分布")
+                ret = _write_distribution(_group_of, title=f"{group}分布")
                 if ret is not None:
                     end_row, _ = ret
 
@@ -3835,8 +3703,8 @@ class ModelReport:
         section_idx += 1
 
         # 2.2 分月模型效果
-        if date_col:
-            monthly_metrics = self._get_monthly_metrics(date_col)
+        if date:
+            monthly_metrics = self._get_monthly_metrics(date)
             if not monthly_metrics.empty:
                 end_row, _ = writer.insert_value2sheet(
                     ws,
@@ -3865,7 +3733,7 @@ class ModelReport:
         pct_keys = ["TOP 1%", "TOP 3%", "TOP 5%", "TOP 10%", "TOTAL"]
         if is_multi:
             # 多标签合并模式：一次性生成 MultiIndex 列的 LIFT 表
-            if amount_col:
+            if amount:
                 # 订单口径 + 金额口径左右并排
                 lift_table = self._get_top_n_lift_table(
                     percentiles=(0.01, 0.03, 0.05, 0.10),
@@ -3873,7 +3741,7 @@ class ModelReport:
                 )
                 lift_amt = self._get_top_n_lift_table(
                     percentiles=(0.01, 0.03, 0.05, 0.10),
-                    amount_col=amount_col,
+                    amount=amount,
                     labels=self._label_names,
                 )
                 table_start = end_row + 1
@@ -3938,9 +3806,9 @@ class ModelReport:
                     f"B{table_start + lift_table.columns.nlevels}:" f"{get_column_letter(filter_end_col)}{end_row - 1}",
                 )
             section_idx += 1
-        elif amount_col:
-            lift_table = self._get_top_n_lift_table(percentiles=(0.01, 0.03, 0.05, 0.10), amount_col=None)
-            lift_amt = self._get_top_n_lift_table(percentiles=(0.01, 0.03, 0.05, 0.10), amount_col=amount_col)
+        elif amount:
+            lift_table = self._get_top_n_lift_table(percentiles=(0.01, 0.03, 0.05, 0.10), amount=None)
+            lift_amt = self._get_top_n_lift_table(percentiles=(0.01, 0.03, 0.05, 0.10), amount=amount)
             table_start = end_row + 1
             end_row1, end_col1 = dataframe2excel(
                 lift_table,
@@ -3983,8 +3851,8 @@ class ModelReport:
             section_idx += 1
 
         # 2.4 分月PSI矩阵
-        if date_col:
-            psi_matrix = self._get_monthly_psi_matrix(date_col)
+        if date:
+            psi_matrix = self._get_monthly_psi_matrix(date)
             if not psi_matrix.empty:
                 end_row, _ = writer.insert_value2sheet(
                     ws,
@@ -4025,19 +3893,19 @@ class ModelReport:
 
             if is_multi:
                 # 多标签合并模式：所有标签合并为一个 MultiIndex 列的分箱表
-                if amount_col:
+                if amount:
                     order_table = self.get_bin_table(
                         ds_key,
-                        method=bin_method,
-                        max_n_bins=n_bins,
+                        method=method,
+                        max_n_bins=max_n_bins,
                         margins=True,
                         labels=self._label_names,
                     )
                     amount_table = self.get_bin_table(
                         ds_key,
-                        method=bin_method,
-                        max_n_bins=n_bins,
-                        amount_col=amount_col,
+                        method=method,
+                        max_n_bins=max_n_bins,
+                        amount=amount,
                         margins=True,
                         labels=self._label_names,
                     )
@@ -4073,8 +3941,8 @@ class ModelReport:
                 else:
                     order_table = self.get_bin_table(
                         ds_key,
-                        method=bin_method,
-                        max_n_bins=n_bins,
+                        method=method,
+                        max_n_bins=max_n_bins,
                         margins=True,
                         labels=self._label_names,
                     )
@@ -4090,9 +3958,9 @@ class ModelReport:
                         condition_cols=cond_cols,
                         condition_color="F76E6C",
                     )
-            elif amount_col:
+            elif amount:
                 # 订单口径和金额口径左右并排（参考3-入模变量分析的分箱表布局）
-                order_table = self.get_bin_table(ds_key, method=bin_method, max_n_bins=n_bins, margins=True)
+                order_table = self.get_bin_table(ds_key, method=method, max_n_bins=max_n_bins, margins=True)
                 order_start_row = end_row + 1
                 pct_cols = [c for c in self._PERCENT_COLS if c in order_table.columns]
                 cond_cols = [c for c in self._CONDITION_COLS if c in order_table.columns]
@@ -4108,7 +3976,7 @@ class ModelReport:
                     condition_color="F76E6C",
                 )
                 try:
-                    amount_table = self.get_bin_table(ds_key, method=bin_method, max_n_bins=n_bins, amount_col=amount_col, margins=True)
+                    amount_table = self.get_bin_table(ds_key, method=method, max_n_bins=max_n_bins, amount=amount, margins=True)
                     amt_pct = [c for c in self._PERCENT_COLS if c in amount_table.columns]
                     amt_cond = [c for c in self._CONDITION_COLS if c in amount_table.columns]
                     amount_end_row, _ = dataframe2excel(
@@ -4124,9 +3992,9 @@ class ModelReport:
                     )
                     end_row = max(order_end_row, amount_end_row)
                 except Exception as exc:
-                    raise RuntimeError(f"生成金额口径评分分箱失败 [数据集={tag}, 金额字段={amount_col}]") from exc
+                    raise RuntimeError(f"生成金额口径评分分箱失败 [数据集={tag}, 金额字段={amount}]") from exc
             else:
-                order_table = self.get_bin_table(ds_key, method=bin_method, max_n_bins=n_bins, margins=True)
+                order_table = self.get_bin_table(ds_key, method=method, max_n_bins=max_n_bins, margins=True)
                 pct_cols = [c for c in self._PERCENT_COLS if c in order_table.columns]
                 cond_cols = [c for c in self._CONDITION_COLS if c in order_table.columns]
                 end_row, _ = dataframe2excel(
@@ -4265,15 +4133,15 @@ class ModelReport:
                     ft = self.get_feature_bin_table(
                         feat,
                         ds_key,
-                        max_n_bins=n_bins,
-                        method=bin_method,
+                        max_n_bins=max_n_bins,
+                        method=method,
                         margins=True,
                         labels=labels_arg,
                     )
                     ft_pct = [c for c in ft.columns if c[-1] in self._PERCENT_COLS] if isinstance(ft.columns, pd.MultiIndex) else [c for c in self._PERCENT_COLS if c in ft.columns]
                     ft_cond = [c for c in ft.columns if c[-1] in self._CONDITION_COLS] if isinstance(ft.columns, pd.MultiIndex) else [c for c in self._CONDITION_COLS if c in ft.columns]
 
-                    if amount_col:
+                    if amount:
                         table_start = end_row + 1
                         order_end_row, order_end_col = dataframe2excel(
                             ft,
@@ -4289,10 +4157,10 @@ class ModelReport:
                         ft_amt = self.get_feature_bin_table(
                             feat,
                             ds_key,
-                            max_n_bins=n_bins,
-                            method=bin_method,
+                            max_n_bins=max_n_bins,
+                            method=method,
                             margins=True,
-                            amount_col=amount_col,
+                            amount=amount,
                             labels=labels_arg,
                         )
                         amt_pct = [c for c in ft_amt.columns if c[-1] in self._PERCENT_COLS] if isinstance(ft_amt.columns, pd.MultiIndex) else [c for c in self._PERCENT_COLS if c in ft_amt.columns]
@@ -4986,19 +4854,19 @@ def auto_model_report(
     y_test=None,
     X_oot=None,
     y_oot=None,
-    feature_names: Optional[List[str]] = None,
-    target: Optional[Union[str, Dict]] = None,
+    features: Optional[List[str]] = None,
+    target: Optional[TargetInput] = None,
     overdue: Optional[Union[str, List[str]]] = None,
     dpds: Optional[Union[int, float, List[Union[int, float]]]] = None,
     del_grey: bool = False,
     excel_path: Optional[str] = None,
     verbose: bool = True,
-    n_bins: int = 10,
-    bin_method: str = "quantile",
-    amount_col: Optional[str] = None,
-    date_col: Optional[str] = None,
-    date_freq: Optional[str] = None,
-    group_col: Optional[str] = None,
+    max_n_bins: int = 10,
+    method: str = "quantile",
+    amount: Optional[str] = None,
+    date: Optional[str] = None,
+    freq: Optional[str] = None,
+    group: Optional[str] = None,
     with_plots: bool = True,
     model_name: Optional[str] = None,
     project_desc: Optional[str] = None,
@@ -5009,8 +4877,8 @@ def auto_model_report(
     feature_contribution_label_max_features: Optional[int] = 10,
     data_source: Optional[str] = None,
     loc_cols: Optional[Union[str, List[str]]] = None,
-    method: Union[str, Callable] = "predict_proba",
-    method_kwargs: Optional[Dict[str, Any]] = None,
+    prediction_method: Union[str, Callable] = "predict_proba",
+    prediction_kwargs: Optional[Dict[str, Any]] = None,
     n_jobs=-1,
     parallel_backend: Optional[str] = None,
     parallel_config: Optional[Dict[str, Any]] = None,
@@ -5033,7 +4901,7 @@ def auto_model_report(
 
     标签解析遵循 hscredit 统一传参风格：显式传入 y 优先（sklearn 风格）；
     否则通过 target 列名从 X 中提取（scorecardpipeline 风格）；
-    传入 overdue+dpds 组合时直接忽略 target。
+    target 与 overdue+dpds 两种模式互斥，混用时抛出中文错误。
 
     overdue/dpds 用法（自动从 X 构建二分类标签）::
 
@@ -5081,19 +4949,19 @@ def auto_model_report(
     :param y_test: 测试集标签，None 时从 X_test 中自动构建
     :param X_oot: 跨时间验证集特征（命名为 跨时间验证集）
     :param y_oot: 跨时间验证集标签，None 时从 X_oot 中自动构建
-    :param feature_names: 特征名称列表，可选；None 时自动从模型 feature_names_ / feature_names_in_ 获取
-    :param target: 目标列配置，str 为列名，dict 为 {'overdue': col, 'dpds': threshold}
+    :param features: 特征名称列表，可选；None 时自动从模型 feature_names_ / feature_names_in_ 获取
+    :param target: 目标列配置，str 为列名，dict 为 {标签名: 一维数据或 callable}
     :param overdue: 逾期列名（str）或多个列名（List[str]），与 dpds 配合自动构建标签
     :param dpds: 逾期天数阈值（int/float）或多个阈值（List），与 overdue 配合使用
     :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本；``<``、``<=`` 下不剔除。
     :param excel_path: Excel 报告输出路径
     :param verbose: 是否打印控制台报告
-    :param n_bins: 分箱数
-    :param bin_method: 分箱方法
-    :param amount_col: 金额字段（用于金额口径分析）
-    :param date_col: 日期字段（用于分月分析）
-    :param date_freq: 日期频率，支持 'D', 'W', 'M', 'Q' 等（默认自动推断）
-    :param group_col: 分组字段（用于分组坏样本率分析）
+    :param max_n_bins: 分箱数
+    :param method: 分箱方法
+    :param amount: 金额字段（用于金额口径分析）
+    :param date: 日期字段（用于分月分析）
+    :param freq: 日期频率，支持 'D', 'W', 'M', 'Q' 等（默认自动推断）
+    :param group: 分组字段（用于分组坏样本率分析）
     :param with_plots: 是否生成图表
     :param model_name: 模型名称
     :param project_desc: 项目描述
@@ -5106,8 +4974,8 @@ def auto_model_report(
     :param data_source: 数据源描述
     :param loc_cols: 定位字段（订单号等），支持 str 或 List[str]，用于生产测试用例列
     :param include_sample_records: 是否输出逐行订单/模型分数测试用例，默认True；False标记该章节不适用
-    :param method: 数据集唯一预测方法，默认 ``predict_proba``，也支持 callable
-    :param method_kwargs: callable 同名参数的显式覆盖字典
+    :param prediction_method: 数据集唯一预测方法，默认 ``predict_proba``，也支持 callable
+    :param prediction_kwargs: callable 同名参数的显式覆盖字典
     :param n_jobs: 并行工作数；-1 自动保留 CPU，None 使用兼容串行模式
     :param parallel_backend: joblib 后端，如 ``threading`` 或 ``loky``
     :param parallel_config: joblib 其他并行配置
@@ -5132,14 +5000,14 @@ def auto_model_report(
         y_test=y_test,
         X_oot=X_oot,
         y_oot=y_oot,
-        feature_names=feature_names,
+        features=features,
         target=target,
         overdue=overdue,
         dpds=dpds,
         del_grey=del_grey,
         overdue_operator=overdue_operator,
-        method=method,
-        method_kwargs=method_kwargs,
+        prediction_method=prediction_method,
+        prediction_kwargs=prediction_kwargs,
         n_jobs=n_jobs,
         parallel_backend=parallel_backend,
         parallel_config=parallel_config,
@@ -5147,17 +5015,17 @@ def auto_model_report(
     )
 
     if verbose:
-        report.print_report(n_bins=n_bins)
+        report.print_report(max_n_bins=max_n_bins)
 
     if excel_path:
         execution_result = report.to_excel(
             excel_path,
-            n_bins=n_bins,
-            bin_method=bin_method,
-            amount_col=amount_col,
-            date_col=date_col,
-            date_freq=date_freq,
-            group_col=group_col,
+            max_n_bins=max_n_bins,
+            method=method,
+            amount=amount,
+            date=date,
+            freq=freq,
+            group=group,
             with_plots=with_plots,
             model_name=model_name,
             project_desc=project_desc,

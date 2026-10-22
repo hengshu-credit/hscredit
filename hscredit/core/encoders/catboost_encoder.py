@@ -19,7 +19,7 @@ class CatBoostEncoder(BaseEncoder):
 
     **参数**
 
-    :param cols: 需要编码的列名列表。如果为None，则自动识别所有列（支持类别型和数值型）
+    :param features: 需要编码的列名列表。如果为None，则自动识别所有列（支持类别型和数值型）
     :param sigma: 添加的高斯噪声标准差，默认为None
     :param handle_unknown: 处理未知类别的方式，默认为'value'
     :param handle_missing: 处理缺失值的方式，默认为'value'
@@ -35,11 +35,11 @@ class CatBoostEncoder(BaseEncoder):
     **参考样例**
 
     >>> from hscredit.core.encoders import CatBoostEncoder
-    >>> encoder = CatBoostEncoder(cols=['category'])
+    >>> encoder = CatBoostEncoder(features=['category'])
     >>> X_encoded = encoder.fit_transform(X, y)
     >>>
     >>> # 添加噪声
-    >>> encoder = CatBoostEncoder(cols=['category'], sigma=0.05, random_state=42)
+    >>> encoder = CatBoostEncoder(features=['category'], sigma=0.05, random_state=42)
     >>> X_encoded = encoder.fit_transform(X, y)
 
     **注意**
@@ -70,7 +70,7 @@ class CatBoostEncoder(BaseEncoder):
 
     def __init__(
         self,
-        cols: Optional[List[str]] = None,
+        features: Optional[List[str]] = None,
         sigma: Optional[float] = None,
         handle_unknown: str = "value",
         handle_missing: str = "value",
@@ -85,7 +85,7 @@ class CatBoostEncoder(BaseEncoder):
     ):
         """初始化CatBoost编码器。
 
-        :param cols: 需要编码的列名列表
+        :param features: 需要编码的列名列表
         :param sigma: 添加的高斯噪声标准差，默认为None
         :param handle_unknown: 处理未知类别的方式，默认为'value'
         :param handle_missing: 处理缺失值的方式，默认为'value'
@@ -95,7 +95,7 @@ class CatBoostEncoder(BaseEncoder):
         :param target: scorecardpipeline风格的目标列名。如果提供，fit时从X中提取该列作为y
         """
         super().__init__(
-            cols=cols,
+            features=features,
             drop_invariant=drop_invariant,
             return_df=return_df,
             handle_unknown=handle_unknown,

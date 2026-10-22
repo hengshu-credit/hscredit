@@ -258,7 +258,8 @@ def plot_model_feature_importance(
     show: bool = True,
     importance_source: str = "raw",
     shap_by_label: bool = True,
-    hatch: bool = True,
+    hatch: bool = True, *,
+    dpi: int = 240,
 ):
     """绘制模型的 SHAP 特征重要性综合看板。
 
@@ -571,7 +572,7 @@ def plot_model_feature_importance(
 
     model_name = model.__class__.__name__
     fig.suptitle(title or f"SHAP 综合特征重要性：{model_name}（{method_name}）", fontsize=16, fontweight="bold")
-    save_figure(fig, save)
+    save_figure(fig, save, dpi=dpi)
     if show:
         plt.show()
     return fig
@@ -590,7 +591,8 @@ def plot_model_sample_shap(
     title: Optional[str] = None,
     save: Optional[str] = None,
     random_state: Optional[int] = 42,
-    show: bool = True,
+    show: bool = True, *,
+    dpi: int = 240,
 ):
     """绘制单样本 SHAP 力图与瀑布图组合图。
 
@@ -953,13 +955,15 @@ def plot_model_sample_shap(
             )
             for text_artist in native_top_texts:
                 text_artist.set_transform(text_artist.get_transform() + offset)
-    save_figure(fig, save)
+    save_figure(fig, save, dpi=dpi)
     if show:
         plt.show()
     return fig
 
 
-def plot_weights(summary, save=None, figsize=(15, 8), fontsize=14, colors=None, ax=None):
+def plot_weights(summary, save=None, figsize=(15, 8), fontsize=14, colors=None, ax=None, *,
+    dpi: int = 240,
+):
     """
     逻辑回归模型系数误差图.
     
@@ -1127,7 +1131,7 @@ def plot_weights(summary, save=None, figsize=(15, 8), fontsize=14, colors=None, 
     if not return_ax:
         # 自动调整布局
         _tight_layout(fig)
-        save_figure(fig, save)
+        save_figure(fig, save, dpi=dpi)
         return fig
     else:
         return ax

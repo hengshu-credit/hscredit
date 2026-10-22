@@ -101,7 +101,7 @@ def test_cross_shared_tasks_fit_each_numeric_column_once(monkeypatch):
 def test_multilabel_only_is_exclusive_and_max_rules_is_enforced():
     x = np.arange(100)
     data = pd.DataFrame({"x": x, "short": (x > 50).astype(int), "long": (x > 60).astype(int)})
-    miner = MultiLabelRuleMiner(labels=["short", "long"], min_lift=0, max_rules=1, n_bins=5, n_jobs=1).fit(data)
+    miner = MultiLabelRuleMiner(labels=["short", "long"], min_lift=0, max_rules=1, max_n_bins=5, n_jobs=1).fit(data)
     assert len(miner.get_rules(effectiveness="all")) == 1
     miner._rules = [{"规则": "x>0", "short_LIFT": 2, "long_LIFT": 2}, {"规则": "x>1", "short_LIFT": 2, "long_LIFT": 0}]
     assert miner.get_rules(effectiveness="short_only", min_lift_per_label=1).规则.tolist() == ["x>1"]

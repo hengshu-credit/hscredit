@@ -123,7 +123,7 @@ class ScorecardFeatureSelection(BaseFeatureSelector):
         target_rm: bool = False,
         n_jobs: Optional[Union[int, float]] = -1,
         binner: Optional[Any] = None,
-        binning_params: Optional[Dict[str, Any]] = None,
+        bin_params: Optional[Dict[str, Any]] = None,
         parallel_backend: Optional[str] = None,
         parallel_config: Optional[Dict[str, Any]] = None,
     ):
@@ -135,7 +135,7 @@ class ScorecardFeatureSelection(BaseFeatureSelector):
             threshold="multi-stage",
             n_jobs=n_jobs,
             binner=binner,
-            binning_params=binning_params,
+            bin_params=bin_params,
             parallel_backend=parallel_backend,
             parallel_config=parallel_config,
             target_rm=target_rm,
@@ -262,10 +262,10 @@ class ScorecardFeatureSelection(BaseFeatureSelector):
             corr_weights = self._resolve_corr_weights(current_X, y, iv_scores)
             corr_binning_kwargs = {}
             if self.corr_binning_params is not None:
-                corr_binning_kwargs["binning_params"] = self.corr_binning_params
+                corr_binning_kwargs["bin_params"] = self.corr_binning_params
             elif getattr(self, "_binner_instance", None) is not None or corr_weights is not None:
                 # 外层已分箱或已有明确权重时，关闭内部 CorrSelector 的构造默认分箱。
-                corr_binning_kwargs["binning_params"] = None
+                corr_binning_kwargs["bin_params"] = None
             corr_selector = CorrSelector(
                 threshold=self.corr_threshold,
                 method=self.corr_method,

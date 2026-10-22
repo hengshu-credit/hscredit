@@ -140,7 +140,7 @@ def test_optional_binning_and_raw_transform(sample_df, pretrained):
     if pretrained:
         selector = selectors.KSSelector(threshold=0.5, binner=OptimalBinning(**params).fit(X, y))
     else:
-        selector = selectors.KSSelector(threshold=0.5, binning_params=params)
+        selector = selectors.KSSelector(threshold=0.5, bin_params=params)
     selector.fit(X, y)
     assert selector.scores_.to_dict() == pytest.approx({"正向": 1, "反向": 1, "无效": 0})
     pd.testing.assert_frame_equal(selector.transform(X), X[["正向", "反向"]])
@@ -160,7 +160,7 @@ def test_binned_perfect_separation_keeps_threshold_one_without_divide_errors(sam
     with np.errstate(divide="raise", invalid="raise"):
         selector = selectors.KSSelector(
             threshold=1,
-            binning_params={"method": "uniform", "max_n_bins": 2, "n_jobs": 1},
+            bin_params={"method": "uniform", "max_n_bins": 2, "n_jobs": 1},
         ).fit(sample_df[["正向", "反向"]], sample_df["目标"])
     assert selector.selected_features_ == ["正向", "反向"]
     assert selector.scores_.tolist() == [1, 1]

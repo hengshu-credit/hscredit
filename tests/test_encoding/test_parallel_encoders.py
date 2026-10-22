@@ -107,10 +107,10 @@ def test_encoder_parallel_params_survive_get_params_clone_and_pickle(cls):
 @pytest.mark.parametrize(
     "encoder_factory",
     [
-        lambda n, b: CountEncoder(cols=["a", "b"], n_jobs=n, parallel_backend=b),
-        lambda n, b: WOEEncoder(cols=["a", "b"], n_jobs=n, parallel_backend=b),
-        lambda n, b: TargetEncoder(cols=["a", "b"], n_jobs=n, parallel_backend=b),
-        lambda n, b: OneHotEncoder(cols=["a", "b"], n_jobs=n, parallel_backend=b),
+        lambda n, b: CountEncoder(features=["a", "b"], n_jobs=n, parallel_backend=b),
+        lambda n, b: WOEEncoder(features=["a", "b"], n_jobs=n, parallel_backend=b),
+        lambda n, b: TargetEncoder(features=["a", "b"], n_jobs=n, parallel_backend=b),
+        lambda n, b: OneHotEncoder(features=["a", "b"], n_jobs=n, parallel_backend=b),
     ],
 )
 @pytest.mark.parametrize("backend", ["threading", "loky"])
@@ -136,7 +136,7 @@ def test_automatic_encoder_transform_uses_shared_memory_strategy(monkeypatch, en
         return original(self, function, tasks, **kwargs)
 
     monkeypatch.setattr(BaseEncoder, "_parallel_execute", recording_execute)
-    encoder = CountEncoder(cols=["a", "b"], n_jobs=-1).fit(X)
+    encoder = CountEncoder(features=["a", "b"], n_jobs=-1).fit(X)
     encoder.transform(X)
 
     transform_calls = [call for call in calls if call[0] == "_transform_encoder_column_worker"]
@@ -158,14 +158,14 @@ def test_parallel_missing_unknown_dtype_index_and_onehot_order(backend, encoder_
     )
     n_jobs = 1 if backend is None else 2
 
-    count = CountEncoder(cols=["a", "b"], n_jobs=n_jobs, parallel_backend=backend).fit(train)
+    count = CountEncoder(features=["a", "b"], n_jobs=n_jobs, parallel_backend=backend).fit(train)
     count_out = count.transform(probe)
     assert count_out.index.equals(probe.index)
     assert list(count_out.columns) == ["a", "b", "透传"]
     assert count_out["透传"].dtype == np.dtype("int64")
     assert count_out.loc[101, ["a", "b"]].tolist() == [0, 0]
 
-    onehot = OneHotEncoder(cols=["a", "b"], n_jobs=n_jobs, parallel_backend=backend).fit(train)
+    onehot = OneHotEncoder(features=["a", "b"], n_jobs=n_jobs, parallel_backend=backend).fit(train)
     out = onehot.transform(probe)
     assert out.index.equals(probe.index)
     assert list(out.columns) == ["透传"] + onehot.feature_names_
@@ -185,11 +185,11 @@ class _FailingCountEncoder(CountEncoder):
 def test_failed_parallel_refit_preserves_complete_previous_model():
     """worker 失败后若提交部分新状态或破坏旧模型，本测试应失败。"""
     X1 = pd.DataFrame({"好列": ["a", "a", "b", "b"], "坏列": [1, 1, 2, 2]})
-    encoder = _FailingCountEncoder(cols=["好列"], n_jobs=2, parallel_backend="threading").fit(X1)
+    encoder = _FailingCountEncoder(features=["好列"], n_jobs=2, parallel_backend="threading").fit(X1)
     before_mapping = encoder.export_mapping()["mapping_"]
     before_output = encoder.transform(X1[["好列"]])
 
-    encoder.cols = ["好列", "坏列"]
+    encoder.features = ["好列", "坏列"]
     with pytest.raises(ParallelExecutionError, match="坏列"):
         encoder.fit(X1)
 
@@ -200,10 +200,10 @@ def test_failed_parallel_refit_preserves_complete_previous_model():
 @pytest.mark.parametrize(
     "factory",
     [
-        lambda n, b: OrdinalEncoder(cols=["a", "b"], n_jobs=n, parallel_backend=b),
-        lambda n, b: QuantileEncoder(cols=["a", "b"], n_jobs=n, parallel_backend=b),
-        lambda n, b: CatBoostEncoder(cols=["a", "b"], sigma=0.05, random_state=42, n_jobs=n, parallel_backend=b),
-        lambda n, b: CardinalityEncoder(cols=["a", "b"], max_categories=3, special_values=[3], n_jobs=n, parallel_backend=b),
+        lambda n, b: OrdinalEncoder(features=["a", "b"], n_jobs=n, parallel_backend=b),
+        lambda n, b: QuantileEncoder(features=["a", "b"], n_jobs=n, parallel_backend=b),
+        lambda n, b: CatBoostEncoder(features=["a", "b"], sigma=0.05, random_state=42, n_jobs=n, parallel_backend=b),
+        lambda n, b: CardinalityEncoder(features=["a", "b"], max_categories=3, special_values=[3], n_jobs=n, parallel_backend=b),
     ],
 )
 @pytest.mark.parametrize("backend", ["threading", "loky"])
@@ -242,14 +242,14 @@ def test_remaining_column_encoders_match_all_learned_state(factory, backend, enc
 
 
 MISSING_LIKE_FACTORIES = [
-    ("count", lambda n, b: CountEncoder(cols=["a"], n_jobs=n, parallel_backend=b)),
-    ("woe", lambda n, b: WOEEncoder(cols=["a"], n_jobs=n, parallel_backend=b)),
-    ("target", lambda n, b: TargetEncoder(cols=["a"], n_jobs=n, parallel_backend=b)),
-    ("onehot", lambda n, b: OneHotEncoder(cols=["a"], n_jobs=n, parallel_backend=b)),
-    ("ordinal", lambda n, b: OrdinalEncoder(cols=["a"], n_jobs=n, parallel_backend=b)),
-    ("quantile", lambda n, b: QuantileEncoder(cols=["a"], n_jobs=n, parallel_backend=b)),
-    ("catboost", lambda n, b: CatBoostEncoder(cols=["a"], n_jobs=n, parallel_backend=b)),
-    ("cardinality", lambda n, b: CardinalityEncoder(cols=["a"], n_jobs=n, parallel_backend=b)),
+    ("count", lambda n, b: CountEncoder(features=["a"], n_jobs=n, parallel_backend=b)),
+    ("woe", lambda n, b: WOEEncoder(features=["a"], n_jobs=n, parallel_backend=b)),
+    ("target", lambda n, b: TargetEncoder(features=["a"], n_jobs=n, parallel_backend=b)),
+    ("onehot", lambda n, b: OneHotEncoder(features=["a"], n_jobs=n, parallel_backend=b)),
+    ("ordinal", lambda n, b: OrdinalEncoder(features=["a"], n_jobs=n, parallel_backend=b)),
+    ("quantile", lambda n, b: QuantileEncoder(features=["a"], n_jobs=n, parallel_backend=b)),
+    ("catboost", lambda n, b: CatBoostEncoder(features=["a"], n_jobs=n, parallel_backend=b)),
+    ("cardinality", lambda n, b: CardinalityEncoder(features=["a"], n_jobs=n, parallel_backend=b)),
 ]
 
 
@@ -342,7 +342,7 @@ def test_count_encoder_preserves_typed_float_nan_buckets_through_roundtrips(n_jo
             )
         }
     )
-    encoder = CountEncoder(cols=["a"], n_jobs=n_jobs, parallel_backend=backend).fit(X)
+    encoder = CountEncoder(features=["a"], n_jobs=n_jobs, parallel_backend=backend).fit(X)
     expected_signature = [
         ("builtins", "float", 2),
         ("numpy", "float32", 1),
@@ -355,7 +355,7 @@ def test_count_encoder_preserves_typed_float_nan_buckets_through_roundtrips(n_jo
 
     exported = pickle.loads(pickle.dumps(encoder.export_mapping()))
     assert exported["format"] == "hscredit-encoder-mapping" and exported["version"] == 2
-    restored = CountEncoder(cols=["a"]).import_mapping(exported)
+    restored = CountEncoder(features=["a"]).import_mapping(exported)
     assert _typed_float_nan_signature(restored.mapping_["a"]) == expected_signature
     assert restored.transform(X)["a"].tolist() == expected_values
 
@@ -398,7 +398,7 @@ def test_non_float_nan_scalars_keep_pandas_count_and_map_semantics(n_jobs, backe
     ]
     assert X["a"].map(baseline).tolist() == [1, 1, 2, 2, 1, 1, 1]
 
-    encoder = CountEncoder(cols=["a"], n_jobs=n_jobs, parallel_backend=backend).fit(X)
+    encoder = CountEncoder(features=["a"], n_jobs=n_jobs, parallel_backend=backend).fit(X)
     learned = [item for item in _missing_key_signature(encoder.mapping_["a"]) if item[2] != "'__UNKNOWN__'"]
     assert Counter(learned[:6]) == Counter(baseline_signature)
     assert encoder.transform(X)["a"].tolist() == [1, 1, 2, 2, 1, 1, 1]
@@ -435,7 +435,7 @@ def test_count_typed_nan_obeys_missing_policy_before_unknown_policy(
         }
     )
     kwargs = {
-        "cols": ["a"],
+        "features": ["a"],
         "handle_missing": handle_missing,
         "handle_unknown": handle_unknown,
         "n_jobs": n_jobs,
@@ -493,17 +493,17 @@ def test_count_typed_nan_obeys_missing_policy_before_unknown_policy(
 
     assert_policy(encoder)
     exported = pickle.loads(pickle.dumps(encoder.export_mapping()))
-    assert_policy(CountEncoder(cols=["a"]).import_mapping(exported))
+    assert_policy(CountEncoder(features=["a"]).import_mapping(exported))
     assert_policy(pickle.loads(pickle.dumps(encoder)))
 
 
 def test_target_noise_fixed_seed_matches_thread_and_loky(encoder_xy):
     X, y = encoder_xy
     columns = ["a", "b"]
-    serial = TargetEncoder(cols=columns, noise=0.1, random_state=42, n_jobs=1).fit(X, y)
+    serial = TargetEncoder(features=columns, noise=0.1, random_state=42, n_jobs=1).fit(X, y)
     expected = serial.transform(X, y)
     for backend in ("threading", "loky"):
-        parallel = TargetEncoder(cols=columns, noise=0.1, random_state=42, n_jobs=2, parallel_backend=backend).fit(X, y)
+        parallel = TargetEncoder(features=columns, noise=0.1, random_state=42, n_jobs=2, parallel_backend=backend).fit(X, y)
         pd.testing.assert_frame_equal(expected, parallel.transform(X, y), check_exact=True)
 
 
@@ -511,7 +511,7 @@ def test_target_noise_fixed_seed_matches_thread_and_loky(encoder_xy):
 def test_none_random_state_uses_local_rng_without_consuming_global_state(cls, encoder_xy):
     X, y = encoder_xy
     kwargs = {"noise": 0.1} if cls is TargetEncoder else {"sigma": 0.1}
-    encoder = cls(cols=["a", "b"], random_state=None, n_jobs=2, parallel_backend="threading", **kwargs).fit(X, y)
+    encoder = cls(features=["a", "b"], random_state=None, n_jobs=2, parallel_backend="threading", **kwargs).fit(X, y)
     np.random.seed(20260805)
     before = np.random.get_state()
     encoder.transform(X, y)
@@ -523,7 +523,7 @@ def test_none_random_state_uses_local_rng_without_consuming_global_state(cls, en
 
 def test_first_failed_fit_has_no_partial_state():
     X = pd.DataFrame({"好列": ["a", "b"], "坏列": [1, 2]})
-    encoder = _FailingCountEncoder(cols=["好列", "坏列"], n_jobs=2, parallel_backend="threading")
+    encoder = _FailingCountEncoder(features=["好列", "坏列"], n_jobs=2, parallel_backend="threading")
     with pytest.raises(ParallelExecutionError, match="坏列"):
         encoder.fit(X)
     assert encoder.mapping_ == {}
@@ -540,9 +540,9 @@ class _FinalizeFailingCountEncoder(CountEncoder):
 
 def test_finalize_failure_preserves_previous_complete_model():
     X = pd.DataFrame({"a": ["x", "x", "y"], "最终列": [1, 2, 3]})
-    encoder = _FinalizeFailingCountEncoder(cols=["a"], n_jobs=2, parallel_backend="threading").fit(X)
+    encoder = _FinalizeFailingCountEncoder(features=["a"], n_jobs=2, parallel_backend="threading").fit(X)
     before = encoder.export_mapping()
-    encoder.cols = ["a", "最终列"]
+    encoder.features = ["a", "最终列"]
     with pytest.raises(RuntimeError, match="最终提交前失败"):
         encoder.fit(X)
     assert encoder.export_mapping()["mapping_"] == before["mapping_"]
@@ -550,9 +550,9 @@ def test_finalize_failure_preserves_previous_complete_model():
 
 def test_loky_refit_failure_preserves_previous_complete_model():
     X = pd.DataFrame({"好列": ["a", "a", "b"], "坏列": [1, 2, 3]})
-    encoder = _FailingCountEncoder(cols=["好列"], n_jobs=2, parallel_backend="loky").fit(X)
+    encoder = _FailingCountEncoder(features=["好列"], n_jobs=2, parallel_backend="loky").fit(X)
     before = encoder.export_mapping()["mapping_"]
-    encoder.cols = ["好列", "坏列"]
+    encoder.features = ["好列", "坏列"]
     with pytest.raises(ParallelExecutionError, match="坏列"):
         encoder.fit(X)
     assert encoder.export_mapping()["mapping_"] == before
@@ -560,11 +560,11 @@ def test_loky_refit_failure_preserves_previous_complete_model():
 
 def test_successful_fit_preserves_mutable_parameter_identity():
     ordinal_mapping = {"a": {"x": 1, "y": 2}}
-    ordinal = OrdinalEncoder(cols=["a"], mapping=ordinal_mapping, n_jobs=2).fit(pd.DataFrame({"a": ["x", "y"]}))
+    ordinal = OrdinalEncoder(features=["a"], mapping=ordinal_mapping, n_jobs=2).fit(pd.DataFrame({"a": ["x", "y"]}))
     assert ordinal.mapping is ordinal_mapping
 
     special_values = ["特殊"]
-    cardinality = CardinalityEncoder(cols=["a"], special_values=special_values, n_jobs=2).fit(pd.DataFrame({"a": ["特殊", "x", "y"]}))
+    cardinality = CardinalityEncoder(features=["a"], special_values=special_values, n_jobs=2).fit(pd.DataFrame({"a": ["特殊", "x", "y"]}))
     assert cardinality.special_values is special_values
 
 
@@ -671,7 +671,7 @@ def test_xgboost_serial_thread_loky_raw_model_parity():
 
     def factory(n_jobs, backend):
         return GBMEncoder(
-            cols=list(X.columns),
+            features=list(X.columns),
             model_type="xgboost",
             n_estimators=5,
             max_depth=2,

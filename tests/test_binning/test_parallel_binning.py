@@ -640,7 +640,7 @@ def test_2d_transaction_preserves_signature_clone_and_pickle(mixed_xy):
     X, y = mixed_xy
     features = ["数值一", "数值二"]
     params = inspect.signature(OptimalBinning2D.fit).parameters
-    assert list(params) == ["self", "X", "y", "features"]
+    assert list(params) == ["self", "X", "y", "features", "x1", "x2"]
     source = OptimalBinning2D(method="uniform", max_n_bins=3, n_jobs=1, random_state=17)
     assert clone(source).get_params(deep=False) == source.get_params(deep=False)
 

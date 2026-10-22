@@ -209,7 +209,7 @@ def test_rule_reports_parallel_match_serial(report_data, backend):
     serial_group = rule_group_compare(
         report_data,
         rules[0],
-        group_col="group",
+        group="group",
         overdue="MOB1",
         dpds=[7, 3, 0],
         amount="amount",
@@ -218,7 +218,7 @@ def test_rule_reports_parallel_match_serial(report_data, backend):
     parallel_group = rule_group_compare(
         report_data,
         rules[0],
-        group_col="group",
+        group="group",
         overdue="MOB1",
         dpds=[7, 3, 0],
         amount="amount",
@@ -250,9 +250,9 @@ def _swap_inputs():
 @pytest.mark.parametrize("backend", ["threading", "loky"])
 def test_swap_analyzer_parallel_match_and_is_transactional(backend, monkeypatch):
     reference, swap = _swap_inputs()
-    cfg = SwapRiskConfig(score_col="score", amount_col="amount", targets=["t1", "t2"])
+    cfg = SwapRiskConfig(score_col="score", amount="amount", targets=["t1", "t2"])
     provider = ReferenceDataProvider(
-        score_col="score", target_cols=["t1", "t2"], amount_col="amount", n_jobs=2,
+        score_col="score", target_cols=["t1", "t2"], amount="amount", n_jobs=2,
         parallel_backend=backend,
     ).fit(reference)
     serial = SwapAnalyzer(cfg, provider, n_jobs=1).analyze(swap)
@@ -327,7 +327,7 @@ def test_population_drift_parallel_excel_layout_matches_serial(report_data, tmp_
         report_data,
         actual,
         ["score", "multi"],
-        target_col="target",
+        target="target",
         score_col="score",
         output=str(serial_path),
         n_jobs=1,
@@ -336,7 +336,7 @@ def test_population_drift_parallel_excel_layout_matches_serial(report_data, tmp_
         report_data,
         actual,
         ["score", "multi"],
-        target_col="target",
+        target="target",
         score_col="score",
         output=str(parallel_path),
         n_jobs=2,
@@ -464,7 +464,7 @@ def test_rule_group_compare_declares_real_nested_children(report_data, monkeypat
     rule_group_compare(
         report_data,
         Rule("score < 600"),
-        group_col="group",
+        group="group",
         overdue="MOB1",
         dpds=[7, 3, 0],
         n_jobs=4,
@@ -650,7 +650,7 @@ def test_population_drift_month_windows_are_ordered_and_parallel_exact(tmp_path,
     )
     serial_path = tmp_path / "window_serial.xlsx"
     parallel_path = tmp_path / f"window_{backend}.xlsx"
-    kwargs = dict(expected=expected, actual=actual, features=["x", "y"], target_col="target", date_col="放款时间")
+    kwargs = dict(expected=expected, actual=actual, features=["x", "y"], target="target", date="放款时间")
     population_drift(output=str(serial_path), n_jobs=1, **kwargs)
     population_drift(output=str(parallel_path), n_jobs=2, parallel_backend=backend, **kwargs)
 
@@ -682,7 +682,7 @@ def test_population_drift_date_col_validation_is_chinese(tmp_path, actual, messa
             expected,
             actual,
             ["x"],
-            date_col="date",
+            date="date",
             output=str(tmp_path / "invalid.xlsx"),
         )
 
@@ -820,7 +820,7 @@ def test_rule_group_nested_flag_requires_outer_and_inner_parallelism(monkeypatch
     rule_group_compare(
         data,
         Rule("score < 6"),
-        group_col="group",
+        group="group",
         overdue="MOB1",
         dpds=dpds,
         n_jobs=1,
@@ -847,7 +847,7 @@ def test_swap_out_nested_flags_require_multiple_outer_sections(monkeypatch):
         data,
         rules=[Rule("score < 6", name="低分")],
         features=[],
-        group_col="group",
+        group="group",
         overdue="MOB1",
         dpds=[7, 3],
         n_jobs=1,
@@ -896,7 +896,7 @@ def test_rule_group_budget_uses_resolved_total_and_real_inner_tasks(monkeypatch,
     rule_group_compare(
         data,
         Rule("score < 6"),
-        group_col="group",
+        group="group",
         overdue="MOB1",
         dpds=[7, 3],
         n_jobs=n_jobs,
@@ -920,6 +920,11 @@ def test_rule_group_budget_uses_resolved_total_and_real_inner_tasks(monkeypatch,
     [[7, 7], [None, 0], None],
 )
 def test_rule_group_duplicate_or_default_dpds_have_one_real_child(monkeypatch, dpds):
+    if dpds is None:
+        with pytest.raises(ValueError, match="必须同时传入"):
+            rule_group_compare(pd.DataFrame({"score": [0, 1], "MOB1": [0, 1], "group": ["A", "B"]}),
+                               Rule("score < 1"), group="group", overdue="MOB1", dpds=None)
+        return
     captured = _capture_rule_strategy_parallel(monkeypatch)
     data = pd.DataFrame(
         {"score": np.arange(12), "MOB1": [0, 1, 3, 7, 15, 0] * 2, "group": ["A", "B"] * 6}
@@ -927,7 +932,7 @@ def test_rule_group_duplicate_or_default_dpds_have_one_real_child(monkeypatch, d
     rule_group_compare(
         data,
         Rule("score < 6"),
-        group_col="group",
+        group="group",
         overdue="MOB1",
         dpds=dpds,
         n_jobs=4,
@@ -947,7 +952,7 @@ def test_rule_group_single_outer_gives_full_budget_to_deduplicated_inner(monkeyp
     rule_group_compare(
         data,
         Rule("score < 6"),
-        group_col="group",
+        group="group",
         overdue=["MOB1"],
         dpds=[7, 3, 3],
         n_jobs=4,
@@ -971,7 +976,7 @@ def test_rule_group_budget_respects_active_parent(monkeypatch):
         rule_group_compare(
             data,
             Rule("score < 6"),
-            group_col="group",
+            group="group",
             overdue="MOB1",
             dpds=[7, 3],
             n_jobs=4,
@@ -1025,7 +1030,7 @@ def test_swap_out_stability_budget_uses_real_deduplicated_targets(
         data,
         rules=[Rule("score < 4", name="规则1"), Rule("score > 8", name="规则2")],
         features=[],
-        group_col="group",
+        group="group",
         overdue="MOB1",
         dpds=unique_dpds,
         n_jobs=4,
@@ -1103,7 +1108,7 @@ def test_rule_group_executes_isolated_rule_copies_with_planned_config(monkeypatc
         rule_group_compare(
             data,
             rule,
-            group_col="group",
+            group="group",
             overdue="MOB1",
             dpds=[7, 3],
             n_jobs=4,
@@ -1173,7 +1178,7 @@ def test_swap_stability_executes_section_rules_as_isolated_planned_copies(monkey
             data,
             rules=rules,
             features=[],
-            group_col="group",
+            group="group",
             overdue="MOB1",
             dpds=[7, 3],
             n_jobs=4,
@@ -1229,7 +1234,7 @@ def test_configured_rule_worker_failure_preserves_direct_cause(monkeypatch):
         rule_group_compare(
             data,
             Rule("score < 6", name="失败规则", n_jobs=9, parallel_backend="loky"),
-            group_col="group",
+            group="group",
             overdue="MOB1",
             dpds=[7, 3],
             n_jobs=4,
@@ -1246,7 +1251,7 @@ def test_configured_parent_rule_group_parallel_matches_serial_and_stays_unchange
     data = pd.DataFrame(
         {"score": np.arange(12), "MOB1": [0, 1, 3, 7, 15, 0] * 2, "group": ["A", "B"] * 6}
     )
-    kwargs = dict(data=data, rule=rule, group_col="group", overdue="MOB1", dpds=[7, 3])
+    kwargs = dict(data=data, rule=rule, group="group", overdue="MOB1", dpds=[7, 3])
     serial = rule_group_compare(n_jobs=1, **kwargs)
     parallel = rule_group_compare(
         n_jobs=4,
@@ -1743,10 +1748,10 @@ def test_model_report_late_excel_save_failure_restores_all_cache_objects(monkeyp
     with pytest.raises(RuntimeError, match="后期保存失败"):
         report.to_excel(
             str(tmp_path / "late-save.xlsx"),
-            n_bins=4,
-            amount_col="amount",
-            date_col="date",
-            group_col="group",
+            max_n_bins=4,
+            amount="amount",
+            date="date",
+            group="group",
             with_plots=False,
         )
     _assert_cache_snapshot(report, snapshot)

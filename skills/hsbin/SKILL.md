@@ -15,7 +15,7 @@ description: Use hscredit to bin credit-risk variables, calculate bin statistics
 
 - 单个或多个变量的分箱统计：`feature_bin_stats`
 - 手工与自动分箱效率对比：`feature_efficiency_analysis`
-- 多方法或跨分组摘要：`benchmark_binning_methods`、`feature_binning_summary`、`feature_group_binning_summary`
+- 多方法或跨分组摘要：`benchmark_methods`、`feature_binning_summary`、`feature_group_binning_summary`
 - 可复用分箱器：`optimal_binning_fit`、`optimal_binning_transform`、`optimal_binning_2d_fit`
 - 分箱图片：`bin_plot`、`bin_trend_plot`、`bin_overdues_plot`、`bin_2d_plot`
 

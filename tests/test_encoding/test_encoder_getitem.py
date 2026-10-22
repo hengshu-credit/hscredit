@@ -11,7 +11,7 @@ def test_encoder_getitem_returns_feature_mapping_ordinal():
         'target': [0, 1, 0, 1, 0]
     })
 
-    enc = OrdinalEncoder(cols=['city'])
+    enc = OrdinalEncoder(features=['city'])
     enc.fit(df[['city']])
 
     mapping = enc['city']
@@ -25,7 +25,7 @@ def test_encoder_getitem_returns_feature_mapping_woe():
         'target': [0, 1, 0, 1, 0, 1]
     })
 
-    enc = WOEEncoder(cols=['city'])
+    enc = WOEEncoder(features=['city'])
     enc.fit(df[['city']], df['target'])
 
     mapping = enc['city']
@@ -34,14 +34,14 @@ def test_encoder_getitem_returns_feature_mapping_woe():
 
 
 def test_encoder_getitem_raises_before_fit():
-    enc = OrdinalEncoder(cols=['city'])
+    enc = OrdinalEncoder(features=['city'])
     with pytest.raises(ValueError):
         _ = enc['city']
 
 
 def test_encoder_getitem_raises_key_error_for_unknown_feature():
     df = pd.DataFrame({'city': ['A', 'B', 'A']})
-    enc = OrdinalEncoder(cols=['city'])
+    enc = OrdinalEncoder(features=['city'])
     enc.fit(df)
 
     with pytest.raises(KeyError):

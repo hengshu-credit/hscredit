@@ -148,7 +148,7 @@ def test_multi_label_parallel_labels_match_serial(mining_data, backend):
         min_support=0.01,
         min_lift=1.0,
         max_rules=5,
-        n_bins=3,
+        max_n_bins=3,
     )
     features = ["score", "debt"]
     serial = MultiLabelRuleMiner(n_jobs=1, **kwargs).fit(mining_data, features=features)
@@ -175,7 +175,7 @@ def test_multi_label_declares_real_parallel_children(monkeypatch, mining_data):
         labels=["target", "long_target"],
         min_support=0.01,
         min_lift=1.0,
-        n_bins=3,
+        max_n_bins=3,
         n_jobs=1,
     ).fit(mining_data, features=["score", "debt"])
     assert nested_flags[0] is True
@@ -416,7 +416,7 @@ def test_multi_label_successful_fit_preserves_constructor_parameter_identity(
         min_support=0.01,
         min_lift=1.0,
         max_rules=3,
-        n_bins=3,
+        max_n_bins=3,
         n_jobs=1,
         parallel_config=config,
     ).fit(mining_data, features=["score"])
@@ -671,7 +671,7 @@ def test_multi_label_successful_refit_matches_fresh_instance(mining_data):
         min_support=0.01,
         min_lift=1.0,
         max_rules=3,
-        n_bins=3,
+        max_n_bins=3,
         n_jobs=1,
     )
     refit_labels = MultiLabelRuleMiner(labels=labels, label_names=label_names, **label_kwargs).fit(
@@ -703,7 +703,7 @@ def test_multi_label_auto_target_tracks_current_labels_and_empty_fallback(mining
         labels=labels,
         min_support=0.01,
         min_lift=1.0,
-        n_bins=3,
+        max_n_bins=3,
         n_jobs=1,
     ).fit(mining_data, features=["score"])
     assert miner.target == "target"
@@ -726,7 +726,7 @@ def test_multi_label_direct_target_assignment_enables_explicit_mode(mining_data)
         labels=labels,
         min_support=0.01,
         min_lift=1.0,
-        n_bins=3,
+        max_n_bins=3,
         n_jobs=1,
     )
     miner.target = "target"

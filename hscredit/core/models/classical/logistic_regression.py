@@ -34,6 +34,7 @@ from typing import Any, Dict, Union, Optional, List
 from sklearn.linear_model import LogisticRegression as SklearnLogisticRegression
 from sklearn.utils.validation import check_is_fitted
 from ....utils.overdue import validate_overdue_operator
+from ....utils.targets import TargetInput
 from ....utils.serialization import ArtifactSerializableMixin
 from ..scorecard_support import _ProbabilityScoreCardMixin
 from .._contracts import (
@@ -934,6 +935,8 @@ class LogisticRegression(_ProbabilityScoreCardMixin, InferenceExportMixin, Artif
         excel_path=None,
         verbose=True,
         *,
+        target: Optional[TargetInput] = None,
+        del_grey: bool = False,
         overdue_operator: Optional[str] = None,
         **kwargs
     ):
@@ -970,9 +973,11 @@ class LogisticRegression(_ProbabilityScoreCardMixin, InferenceExportMixin, Artif
             y_train=y_train,
             X_test=X_test,
             y_test=y_test,
+            target=target,
             overdue=overdue,
             dpds=dpds,
             overdue_operator=overdue_operator,
+            del_grey=del_grey,
             excel_path=excel_path,
             verbose=verbose,
             **kwargs

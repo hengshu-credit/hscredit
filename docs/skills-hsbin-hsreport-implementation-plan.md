@@ -406,7 +406,7 @@ Inspect subprocess calls and confirm no request value can become a package name,
 **Interfaces:**
 
 - Registers `feature_bin_stats`.
-- Registers `benchmark_binning_methods`.
+- Registers `benchmark_methods`.
 - Registers `feature_binning_summary`.
 - Registers `feature_group_binning_summary`.
 - Every handler consumes a resolved DataFrame named `data`, passes validated parameters unchanged to the matching hscredit function, and returns styled Excel plus compact manifest data.
@@ -443,7 +443,7 @@ def test_feature_bin_stats_executes_real_hscredit_and_writes_excel(tmp_path, cre
 
 Add table-driven tests for the other three operations. Assert literal artifact sheet names:
 
-- `benchmark_binning_methods`: `方法对比`.
+- `benchmark_methods`: `方法对比`.
 - `feature_binning_summary`: `分箱摘要` plus sanitized feature-method sheets.
 - `feature_group_binning_summary`: `分组摘要` plus sanitized feature-method-group sheets.
 
@@ -591,10 +591,10 @@ def test_bin_plot_renders_a_decodable_nonempty_png(tmp_path, credit_frame):
 
 Add real render cases for:
 
-- `bin_trend_plot` with `date_col="apply_date"`.
+- `bin_trend_plot` with `date="apply_date"`.
 - `bin_overdues_plot` with `overdue=["MOB1"]` and `dpds=[0]`.
 - `bin_2d_plot` with `features=["score", "age"]`.
-- `feature_efficiency_analysis` with `date_col="apply_date"`, asserting comparison and trend images plus two table sheets.
+- `feature_efficiency_analysis` with `date="apply_date"`, asserting comparison and trend images plus two table sheets.
 
 - [ ] **Step 2: Run and verify RED**
 

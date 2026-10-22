@@ -232,7 +232,7 @@ def test_model_report_excel_tables_always_use_fast_writer(tmp_path, monkeypatch)
     monkeypatch.setattr(ExcelWriter, "insert_df2sheet", capture_speed)
     X = pd.DataFrame({"f0": np.linspace(0.0, 1.0, 20)})
     y = pd.Series([0, 1] * 10)
-    report = ModelReport(MockModel(["f0"]), X_train=X, y_train=y, feature_names=["f0"], n_jobs=1)
+    report = ModelReport(MockModel(["f0"]), X_train=X, y_train=y, features=["f0"], n_jobs=1)
 
     report.to_excel(str(tmp_path / "fast-report.xlsx"), with_plots=False)
 
@@ -245,7 +245,7 @@ def test_model_report_does_not_freeze_any_worksheet(tmp_path):
     X = pd.DataFrame({"f0": np.linspace(0.0, 1.0, 20)})
     y = pd.Series([0, 1] * 10)
     output = tmp_path / "no-freeze-report.xlsx"
-    report = ModelReport(MockModel(["f0"]), X_train=X, y_train=y, feature_names=["f0"], n_jobs=1)
+    report = ModelReport(MockModel(["f0"]), X_train=X, y_train=y, features=["f0"], n_jobs=1)
 
     report.to_excel(str(output), with_plots=False)
 
@@ -305,7 +305,7 @@ def test_export_plots_runs_all_plot_groups_concurrently_and_preserves_order(tmp_
         MockModel(["f0", "f1"]),
         datasets={"train": X, "test": X.copy()},
         target="target",
-        feature_names=["f0", "f1"],
+        features=["f0", "f1"],
         n_jobs=4,
     )
 
@@ -397,7 +397,7 @@ def test_feature_summary_inherits_model_report_parallel_configuration(monkeypatc
         MockModel(["f0"]),
         X_train=X,
         y_train=y,
-        feature_names=["f0"],
+        features=["f0"],
         n_jobs=3,
         parallel_backend="threading",
         parallel_config={"batch_size": 2},
@@ -443,7 +443,7 @@ class TestModelReportTarget:
             }
         )
         model = MockModel(feature_names=["f0"])
-        report = ModelReport(model=model, X_train=X, y_train=None, target="label", feature_names=["f0"])
+        report = ModelReport(model=model, X_train=X, y_train=None, target="label", features=["f0"])
         assert report._datasets["训练集"].y.tolist() == [0, 0, 1, 1]
 
     def test_target_dict_overdue_dpds(self):
@@ -456,8 +456,8 @@ class TestModelReportTarget:
             }
         )
         model = MockModel(feature_names=["f0"])
-        report = ModelReport(model=model, X_train=X, y_train=None, target={"overdue": "overdue", "dpds": "dpds", "threshold": 3}, feature_names=["f0"])
-        assert report._datasets["训练集"].y.tolist() == [0, 0, 0, 1, 1, 1]
+        with pytest.raises(TypeError):
+            ModelReport(model=model, X_train=X, y_train=None, target={"overdue": "overdue", "dpds": "dpds", "threshold": 3}, features=["f0"])
 
     def test_target_dict_overdue_only(self):
         """target as dict with overdue only (no dpds): overdue col > 0 → y=1."""
@@ -468,9 +468,8 @@ class TestModelReportTarget:
             }
         )
         model = MockModel(feature_names=["f0"])
-        report = ModelReport(model=model, X_train=X, y_train=None, target={"overdue": "overdue"}, feature_names=["f0"])
-        # overdue > 0 → [0, 0, 1, 1]
-        assert report._datasets["训练集"].y.tolist() == [0, 0, 1, 1]
+        with pytest.raises(TypeError):
+            ModelReport(model=model, X_train=X, y_train=None, target={"overdue": "overdue"}, features=["f0"])
 
     def test_datasets_y_none(self):
         """datasets dict with y=None derives y from target config."""
@@ -481,7 +480,7 @@ class TestModelReportTarget:
             }
         )
         model = MockModel(feature_names=["f0"])
-        report = ModelReport(model=model, datasets={"train": (X, None)}, target="target", feature_names=["f0"])
+        report = ModelReport(model=model, datasets={"train": (X, None)}, target="target", features=["f0"])
         assert report._datasets["train"].y.tolist() == [0, 0, 1, 1]
 
     def test_datasets_y_none_dict_target(self):
@@ -501,7 +500,7 @@ class TestModelReportTarget:
             }
         )
         model = MockModel(feature_names=["f0"])
-        report = ModelReport(model=model, datasets={"train": (X_train, None), "test": (X_test, None)}, target={"overdue": "overdue", "dpds": "dpds", "threshold": 3}, feature_names=["f0"])
+        report = ModelReport(model=model, datasets={"train": (X_train, None), "test": (X_test, None)}, target={"实际标签": lambda frame: frame["dpds"].gt(3)}, features=["f0"])
         assert report._datasets["train"].y.tolist() == [0, 0, 1, 1]
         assert report._datasets["test"].y.tolist() == [1, 1]
 
@@ -509,7 +508,7 @@ class TestModelReportTarget:
         """Model produces y_proba after init."""
         X = pd.DataFrame({"f0": [1, 2, 3, 4], "label": [0, 0, 1, 1]})
         model = MockModel(feature_names=["f0"])
-        report = ModelReport(model=model, X_train=X, y_train=None, target="label", feature_names=["f0"])
+        report = ModelReport(model=model, X_train=X, y_train=None, target="label", features=["f0"])
         proba = report._datasets["训练集"].y_proba
         assert proba is not None
         assert len(proba) == 4
@@ -519,7 +518,7 @@ class TestModelReportTarget:
         """get_metrics returns DataFrame with expected columns."""
         X = pd.DataFrame({"f0": [1, 2, 3, 4], "label": [0, 0, 1, 1]})
         model = MockModel(feature_names=["f0"])
-        report = ModelReport(model=model, X_train=X, y_train=None, target="label", feature_names=["f0"])
+        report = ModelReport(model=model, X_train=X, y_train=None, target="label", features=["f0"])
         metrics = report.get_metrics()
         assert "统计项" in metrics.columns
         assert "KS" in metrics["统计项"].values
@@ -536,7 +535,7 @@ class TestModelReportTarget:
             }
         )
         model = MockModel(feature_names=["f0"])
-        report = ModelReport(model=model, X_train=X, y_train=None, target=None, feature_names=["f0"])
+        report = ModelReport(model=model, X_train=X, y_train=None, target=None, features=["f0"])
         # Should find 'flag' column as fallback
         assert report._datasets["训练集"].y.tolist() == [0, 0, 1, 1]
 
@@ -553,7 +552,7 @@ class TestModelReportOverdueDpdsSeparate:
             }
         )
         model = MockModel(feature_names=["f0"])
-        report = ModelReport(model=model, X_train=X, y_train=None, overdue="dpds", dpds=3, feature_names=["f0"])
+        report = ModelReport(model=model, X_train=X, y_train=None, overdue="dpds", dpds=3, features=["f0"])
         # dpds > 3 → [0, 0, 1, 1]
         assert report._datasets["训练集"].y.tolist() == [0, 0, 1, 1]
 
@@ -566,7 +565,7 @@ class TestModelReportOverdueDpdsSeparate:
             }
         )
         model = MockModel(feature_names=["f0"])
-        report = ModelReport(model=model, X_train=X, y_train=None, overdue="dpds", dpds=[15, 7, 0], feature_names=["f0"])
+        report = ModelReport(model=model, X_train=X, y_train=None, overdue="dpds", dpds=[15, 7, 0], features=["f0"])
         # dpds > 15 or > 7 or > 0:
         #   0: 0>15? 0>7? 0>0? → false → 0
         #   3: 3>15? 3>7? 3>0? → false, false, true → 1 ← FAILS: test says [0,1,...]
@@ -584,7 +583,7 @@ class TestModelReportOverdueDpdsSeparate:
             }
         )
         model = MockModel(feature_names=["f0"])
-        report = ModelReport(model=model, X_train=X, y_train=None, overdue=["dpds_m1", "dpds_m3"], dpds=[3, 0], feature_names=["f0"])
+        report = ModelReport(model=model, X_train=X, y_train=None, overdue=["dpds_m1", "dpds_m3"], dpds=[3, 0], features=["f0"])
         # dpds_m1 > 3 or > 0 → [0, 0, 0, 0, 0, 0]
         # dpds_m3 > 3 or > 0 → [0, 0, 0, 0, 1, 1]
         # any true → y=1 → [0, 0, 0, 0, 1, 1]
@@ -600,9 +599,8 @@ class TestModelReportOverdueDpdsSeparate:
             }
         )
         model = MockModel(feature_names=["f0"])
-        report = ModelReport(model=model, X_train=X, y_train=None, target="label", overdue="dpds", dpds=3, feature_names=["f0"])  # ignored because overdue/dpds provided
-        # dpds > 3 → [0, 0, 1, 1]
-        assert report._datasets["训练集"].y.tolist() == [0, 0, 1, 1]
+        with pytest.raises(ValueError, match="不能同时指定"):
+            ModelReport(model=model, X_train=X, target="label", overdue="dpds", dpds=3, features=["f0"])
 
     def test_overdue_dpds_with_datasets_dict(self):
         """overdue/dpds works with datasets dict."""
@@ -619,7 +617,7 @@ class TestModelReportOverdueDpdsSeparate:
             }
         )
         model = MockModel(feature_names=["f0"])
-        report = ModelReport(model=model, datasets={"train": (X_train, None), "test": (X_test, None)}, overdue="dpds", dpds=3, feature_names=["f0"])
+        report = ModelReport(model=model, datasets={"train": (X_train, None), "test": (X_test, None)}, overdue="dpds", dpds=3, features=["f0"])
         # train: dpds > 3 → [0, 0, 1, 1]
         # test:  dpds > 3 → [0, 1]
         assert report._datasets["train"].y.tolist() == [0, 0, 1, 1]
@@ -641,7 +639,7 @@ class TestModelReportOverdueDpdsSeparate:
             X_train=X,
             overdue="dpds",
             dpds=[30, 15, 7],
-            feature_names=["f0"],
+            features=["f0"],
             verbose=False,
             with_plots=False,
         )
@@ -660,10 +658,10 @@ class TestModelReportOverdueDpdsSeparate:
         model = MockModel(feature_names=["f0"])
 
         # via dict target
-        r1 = ModelReport(model=model, X_train=X, y_train=None, target={"overdue": "dpds", "dpds": [10, 5, 0]}, feature_names=["f0"])
+        r1 = ModelReport(model=model, X_train=X, y_train=None, target={"聚合标签": lambda frame: frame["dpds"].gt(0)}, features=["f0"])
 
         # via separate params
-        r2 = ModelReport(model=model, X_train=X, y_train=None, overdue="dpds", dpds=[10, 5, 0], feature_names=["f0"])
+        r2 = ModelReport(model=model, X_train=X, y_train=None, overdue="dpds", dpds=[10, 5, 0], features=["f0"])
 
         assert r1._datasets["训练集"].y.tolist() == r2._datasets["训练集"].y.tolist()
 
@@ -682,7 +680,7 @@ class TestModelReportOverdueDpdsSeparate:
             overdue="MOB1",
             dpds=[1, 3],
             del_grey=True,
-            feature_names=["f0"],
+            features=["f0"],
             n_jobs=1,
         )
 
@@ -717,7 +715,7 @@ class TestModelReportOverdueDpdsSeparate:
             overdue="MOB1",
             dpds=[0.5],
             del_grey=True,
-            feature_names=["f0"],
+            features=["f0"],
             n_jobs=1,
         )
 
@@ -748,14 +746,14 @@ class TestModelReportOverdueDpdsSeparate:
             overdue="MOB1",
             dpds=[1, 3],
             del_grey=True,
-            feature_names=["f0"],
+            features=["f0"],
             excel_path=str(output),
             verbose=False,
             with_plots=False,
-            date_col="放款月份",
-            date_freq="M",
-            group_col="客群",
-            n_bins=2,
+            date="放款月份",
+            freq="M",
+            group="客群",
+            max_n_bins=2,
             n_jobs=1,
         )
 
@@ -834,13 +832,13 @@ class TestModelReportOverdueDpdsSeparate:
             overdue="MOB1",
             dpds=[1, 3],
             del_grey=True,
-            feature_names=["f0"],
+            features=["f0"],
             n_jobs=1,
         )
 
         table = report._compute_top_n_lift_table(
             percentiles=(0.5,),
-            amount_col="金额",
+            amount="金额",
             label="MOB1>3",
         ).set_index("统计项")
 
@@ -868,7 +866,7 @@ class TestModelReportRegression:
         y = pd.Series([0, 0, 1, 1])
         model = ReversedClassModel(feature_names=["f0"])
 
-        report = ModelReport(model, X_train=X, y_train=y, feature_names=["f0"])
+        report = ModelReport(model, X_train=X, y_train=y, features=["f0"])
 
         expected = model.predict_proba(X)[:, 0]
         np.testing.assert_allclose(report._datasets["训练集"].y_proba, expected)
@@ -889,7 +887,7 @@ class TestModelReportRegression:
             datasets={"训练集": X, "测试集": X.copy()},
             overdue=["MOB1"],
             dpds=[7, 3, 0],
-            feature_names=["f0"],
+            features=["f0"],
             n_jobs=1,
         )
         for label in report._label_names:
@@ -908,13 +906,13 @@ class TestModelReportRegression:
             datasets={"训练集": X, "测试集": X.copy()},
             overdue=["MOB1"],
             dpds=[7, 3, 0],
-            feature_names=["f0"],
+            features=["f0"],
         )
 
         order_table = report._get_top_n_lift_table(labels=report._label_names)
         amount_table = report._get_top_n_lift_table(
             labels=report._label_names,
-            amount_col="放款金额",
+            amount="放款金额",
         )
 
         assert report.feature_names == ["f0"]
@@ -934,7 +932,7 @@ class TestModelReportRegression:
             RankedImportanceModel(),
             X_train=X,
             y_train=y,
-            feature_names=["f0", "f1"],
+            features=["f0", "f1"],
             n_jobs=1,
         )
 
@@ -986,7 +984,7 @@ class TestModelReportRegression:
             model,
             X_train=X,
             y_train=y,
-            feature_names=["f0", "f1"],
+            features=["f0", "f1"],
             excel_path=str(output),
             feature_map=feature_map,
             with_plots=False,
@@ -1016,7 +1014,7 @@ class TestModelReportRegression:
             RankedImportanceModel(),
             X_train=X,
             y_train=y,
-            feature_names=["f0", "f1"],
+            features=["f0", "f1"],
             n_jobs=1,
         )
         table = pd.DataFrame(
@@ -1057,7 +1055,7 @@ class TestModelReportRegression:
             ZeroImportanceModel(),
             X_train=X,
             y_train=y,
-            feature_names=["f0", "f1"],
+            features=["f0", "f1"],
             n_jobs=1,
         )
 
@@ -1078,7 +1076,7 @@ class TestModelReportRegression:
             RankedImportanceModel(),
             X_train=X,
             y_train=y,
-            feature_names=["f0", "f1"],
+            features=["f0", "f1"],
             n_jobs=1,
         )
         table = pd.DataFrame(
@@ -1143,7 +1141,7 @@ class TestModelReportRegression:
             MockModel(feature_names),
             X_train=X,
             y_train=y,
-            feature_names=feature_names,
+            features=feature_names,
             n_jobs=1,
         )
         importance_ratio = np.repeat(1 / feature_count, feature_count)
@@ -1180,7 +1178,7 @@ class TestModelReportRegression:
             RankedImportanceModel(),
             X_train=X,
             y_train=y,
-            feature_names=["f0", "f1"],
+            features=["f0", "f1"],
             n_jobs=1,
         )
         contribution_path = tmp_path / "feature_contribution.png"
@@ -1221,8 +1219,8 @@ class TestModelReportRegression:
             ScoreConversionModel(),
             X_train=X,
             y_train=y,
-            feature_names=["f0", "f1"],
-            method="predict_score",
+            features=["f0", "f1"],
+            prediction_method="predict_score",
             n_jobs=1,
         )
         output = tmp_path / "score_conversion_report.xlsx"
@@ -1260,8 +1258,8 @@ class TestModelReportRegression:
             y_train=train_y,
             X_test=test_X,
             y_test=test_y,
-            feature_names=["f0", "f1"],
-            method="predict",
+            features=["f0", "f1"],
+            prediction_method="predict",
             n_jobs=1,
         )
         output = tmp_path / f"{scorecard_type.__name__}.xlsx"
@@ -1294,14 +1292,14 @@ class TestModelReportRegression:
             datasets={"训练集": X, "测试集": X.copy()},
             overdue=["MOB1"],
             dpds=[7, 3, 0],
-            feature_names=["f0"],
+            features=["f0"],
         )
         output = tmp_path / "model_report.xlsx"
 
         report.to_excel(
             str(output),
             with_plots=False,
-            amount_col="放款金额",
+            amount="放款金额",
             project_desc="测试项目描述",
             data_source="测试数据源",
         )
@@ -1360,7 +1358,7 @@ class TestModelReportRegression:
             MockModel(["f0"]),
             datasets={"train": X},
             target="target",
-            feature_names=["f0"],
+            features=["f0"],
         )
         output = tmp_path / "model_report_contents_width.xlsx"
 
@@ -1385,7 +1383,7 @@ class TestModelReportRegression:
             datasets={"数据集名称非常非常长用于验证自动列宽": X, "测试集": X.copy()},
             overdue=overdue_col,
             dpds=[7, 3],
-            feature_names=[feature_col],
+            features=[feature_col],
         )
         output = tmp_path / "model_report_auto_width.xlsx"
 
@@ -1408,15 +1406,15 @@ class TestModelReportRegression:
             datasets={"训练集": X, "测试集": X.copy()},
             overdue=["MOB1"],
             dpds=[7, 3, 0],
-            feature_names=["f0"],
+            features=["f0"],
         )
         output = tmp_path / "model_report_dynamic_title_merges.xlsx"
 
         report.to_excel(
             str(output),
             with_plots=False,
-            amount_col="放款金额",
-            date_col="放款时间",
+            amount="放款金额",
+            date="放款时间",
         )
 
         workbook = load_workbook(output)
@@ -1447,7 +1445,7 @@ class TestModelReportRegression:
             datasets={"训练集": X, "测试集": X.copy()},
             overdue=["MOB1"],
             dpds=[7, 3, 0],
-            feature_names=["f0"],
+            features=["f0"],
         )
 
         original_summary = report._get_features_summary
@@ -1458,7 +1456,7 @@ class TestModelReportRegression:
         )
 
         output = tmp_path / "model_report_missing_feature.xlsx"
-        report.to_excel(str(output), with_plots=False, amount_col="放款金额")
+        report.to_excel(str(output), with_plots=False, amount="放款金额")
 
         feature_sheet = load_workbook(output)["3-入模变量分析"]
         feature_title_cell = next(cell for row in feature_sheet.iter_rows() for cell in row if cell.value == "3.1、f0 有效性分析")
@@ -1471,11 +1469,11 @@ class TestModelReportRegression:
             datasets={"训练集": X, "测试集": X.copy()},
             overdue=["MOB1"],
             dpds=[7, 3, 0],
-            feature_names=["f0"],
+            features=["f0"],
         )
 
         output = tmp_path / "model_report_time_distribution.xlsx"
-        report.to_excel(str(output), with_plots=False, date_col="放款时间")
+        report.to_excel(str(output), with_plots=False, date="放款时间")
 
         basic = load_workbook(output)["1-基本信息"]
         data_group_header = next(cell for row in basic.iter_rows() for cell in row if cell.value == "数据分组")
@@ -1493,7 +1491,7 @@ class TestModelReportRegression:
             X_train=X,
             y_train=None,
             target="target",
-            feature_names=["f0"],
+            features=["f0"],
         )
 
         output = tmp_path / "single_label_report.xlsx"
@@ -1543,7 +1541,7 @@ class TestModelReportRegression:
             datasets={"train": X, "test": X.copy()},
             overdue="MOB1",
             dpds=3,
-            feature_names=["f0"],
+            features=["f0"],
         )
 
         paths, tables = report._export_plots(tmp_path)
@@ -1562,7 +1560,7 @@ class TestModelReportRegression:
             datasets={"训练集": X, "测试集": X.copy()},
             overdue="MOB1",
             dpds=[7, 3, 0],
-            feature_names=["f0"],
+            features=["f0"],
         )
 
         bin_table = report.get_bin_table(labels=report._label_names)
@@ -1574,7 +1572,7 @@ class TestModelReportRegression:
             assert "指标含义" not in table.columns.get_level_values(-1)
 
         output = tmp_path / "multi_layout.xlsx"
-        report.to_excel(str(output), with_plots=False, amount_col="放款金额")
+        report.to_excel(str(output), with_plots=False, amount="放款金额")
         workbook = load_workbook(output)
         performance = workbook["2-模型性能"]
         basic = workbook["1-基本信息"]
@@ -1608,7 +1606,7 @@ class TestModelReportRegression:
             MockModel(["f0"]),
             datasets={"train": X, "test": X.copy()},
             target="target",
-            feature_names=["f0"],
+            features=["f0"],
         )
         psi_table = pd.DataFrame(
             {
@@ -1671,7 +1669,7 @@ class TestModelReportRegression:
             MockModel(["f0"]),
             datasets={"train": X, "test": X.copy()},
             target="target",
-            feature_names=["f0"],
+            features=["f0"],
         )
         output = tmp_path / "score_psi_reference.xlsx"
 
@@ -1740,13 +1738,13 @@ class TestModelReportRealDataContract:
         report = auto_model_report(
             model=RealDataContractModel(self.FEATURE_NAMES),
             datasets=frames,
-            feature_names=self.FEATURE_NAMES,
+            features=self.FEATURE_NAMES,
             overdue=["MOB1"],
             dpds=[7, 3, 0],
             excel_path=str(output),
-            amount_col="放款金额",
-            date_col="放款时间",
-            group_col="商品类别",
+            amount="放款金额",
+            date="放款时间",
+            group="商品类别",
             with_plots=True,
             verbose=False,
             model_name="真实数据契约模型",
@@ -1849,7 +1847,7 @@ class TestModelReportRealDataContract:
 
     def test_optional_plot_insert_failure_is_logged(self, tmp_path, monkeypatch, caplog):
         X = pd.DataFrame({"f0": range(20), "target": [0, 1] * 10})
-        report = ModelReport(MockModel(["f0"]), datasets={"train": X}, target="target", feature_names=["f0"])
+        report = ModelReport(MockModel(["f0"]), datasets={"train": X}, target="target", features=["f0"])
         missing_plot = tmp_path / "missing-model-plot.png"
         monkeypatch.setattr(report, "_export_plots", lambda *args, **kwargs: ({"model_train": [str(missing_plot)]}, {}))
 
@@ -1860,7 +1858,7 @@ class TestModelReportRealDataContract:
 
     def test_optional_plot_generation_failure_is_logged_with_context(self, tmp_path, monkeypatch, caplog):
         X = pd.DataFrame({"f0": range(20), "target": [0, 1] * 10})
-        report = ModelReport(MockModel(["f0"]), datasets={"train": X}, target="target", feature_names=["f0"])
+        report = ModelReport(MockModel(["f0"]), datasets={"train": X}, target="target", features=["f0"])
 
         def fail_bin_plot(*args, **kwargs):
             raise RuntimeError("injected model bin plot failure")
@@ -1875,7 +1873,7 @@ class TestModelReportRealDataContract:
 
     def test_required_feature_effectiveness_table_failure_surfaces(self, tmp_path, monkeypatch):
         X = pd.DataFrame({"f0": range(20), "target": [0, 1] * 10})
-        report = ModelReport(MockModel(["f0"]), datasets={"train": X}, target="target", feature_names=["f0"])
+        report = ModelReport(MockModel(["f0"]), datasets={"train": X}, target="target", features=["f0"])
 
         def fail_feature_table(*args, **kwargs):
             raise ValueError("injected feature table failure")
@@ -1890,7 +1888,7 @@ class TestModelReportRealDataContract:
 
     def test_visibility_flags_hide_lift_and_importance_sections(self, tmp_path):
         X = pd.DataFrame({"f0": range(20), "target": [0, 1] * 10})
-        report = ModelReport(MockModel(["f0"]), datasets={"train": X}, target="target", feature_names=["f0"])
+        report = ModelReport(MockModel(["f0"]), datasets={"train": X}, target="target", features=["f0"])
         output = tmp_path / "visibility-flags.xlsx"
 
         report.to_excel(
@@ -1908,7 +1906,7 @@ class TestModelReportRealDataContract:
 
     def test_export_plots_respects_show_lift(self, tmp_path, monkeypatch):
         X = pd.DataFrame({"f0": range(20), "target": [0, 1] * 10})
-        report = ModelReport(MockModel(["f0"]), datasets={"train": X}, target="target", feature_names=["f0"])
+        report = ModelReport(MockModel(["f0"]), datasets={"train": X}, target="target", features=["f0"])
 
         def fail_if_called(*args, **kwargs):
             raise AssertionError("show_lift=False 时不应生成 LIFT 曲线")
@@ -1934,7 +1932,7 @@ class TestModelReportRealDataContract:
             MockModel(["f0"]),
             X_train=X,
             y_train=y,
-            feature_names=["f0"],
+            features=["f0"],
             excel_path=str(tmp_path / "forwarding.xlsx"),
             show_lift=False,
             show_importance=False,
@@ -1950,7 +1948,7 @@ class TestModelReportRealDataContract:
         from hscredit.excel import ExcelWriter
 
         X = pd.DataFrame({"f0": range(20), "target": [0, 1] * 10})
-        report = ModelReport(MockModel(["f0"]), datasets={"train": X}, target="target", feature_names=["f0"])
+        report = ModelReport(MockModel(["f0"]), datasets={"train": X}, target="target", features=["f0"])
 
         def fail_hyperlink(*args, **kwargs):
             raise ValueError("injected hyperlink failure")
@@ -1969,11 +1967,11 @@ class TestModelReportRealDataContract:
                 "放款金额": np.linspace(1000, 2000, 20),
             }
         )
-        report = ModelReport(MockModel(["f0"]), datasets={"train": X}, target="target", feature_names=["f0"])
+        report = ModelReport(MockModel(["f0"]), datasets={"train": X}, target="target", features=["f0"])
         original_get_bin_table = report.get_bin_table
 
         def fail_amount_table(*args, **kwargs):
-            if kwargs.get("amount_col") is not None:
+            if kwargs.get("amount") is not None:
                 raise ValueError("injected amount table failure")
             return original_get_bin_table(*args, **kwargs)
 
@@ -1982,7 +1980,7 @@ class TestModelReportRealDataContract:
             report.to_excel(
                 str(tmp_path / "required-amount-table.xlsx"),
                 with_plots=False,
-                amount_col="放款金额",
+                amount="放款金额",
             )
 
         assert isinstance(exc_info.value.__cause__, ValueError)
@@ -2008,7 +2006,7 @@ class TestModelReportCustomDatasetKeys:
             datasets=self._custom_datasets(),
             overdue=["MOB1"],
             dpds=[7, 3, 0],
-            feature_names=["f0"],
+            features=["f0"],
         )
 
     def test_train_test_key_fallback(self):
@@ -2041,7 +2039,7 @@ class TestModelReportCustomDatasetKeys:
         assert not report._get_features_summary().empty
 
     def test_print_report_custom_keys(self, capsys):
-        self._make_report().print_report(n_bins=5)
+        self._make_report().print_report(max_n_bins=5)
         out = capsys.readouterr().out
         assert "建模集" in out
         assert "OOT" in out
@@ -2049,7 +2047,7 @@ class TestModelReportCustomDatasetKeys:
     def test_to_excel_custom_keys(self, tmp_path):
         report = self._make_report()
         output = tmp_path / "model_report_custom_keys.xlsx"
-        report.to_excel(str(output), with_plots=False, amount_col="放款金额")
+        report.to_excel(str(output), with_plots=False, amount="放款金额")
 
         workbook = load_workbook(output)
         assert "4-稳定性分析" in workbook.sheetnames
@@ -2069,7 +2067,7 @@ class TestModelReportDatasetNaming:
             MockModel(["f0"]),
             datasets=[self._data(), self._data(), self._data()],
             target="target",
-            feature_names=["f0"],
+            features=["f0"],
         )
         assert list(report._datasets.keys()) == ["数据集1", "数据集2", "数据集3"]
         assert [ds.label for ds in report._datasets.values()] == ["数据集1", "数据集2", "数据集3"]
@@ -2081,7 +2079,7 @@ class TestModelReportDatasetNaming:
             X_test=self._data(),
             X_oot=self._data(),
             target="target",
-            feature_names=["f0"],
+            features=["f0"],
         )
         assert list(report._datasets.keys()) == ["训练集", "测试集", "跨时间验证集"]
 
@@ -2096,7 +2094,7 @@ class TestModelReportDatasetNaming:
             X_oot=X,
             y_oot=y,
             target="target",
-            feature_names=["f0"],
+            features=["f0"],
         )
         assert report._datasets["训练集"].y.tolist() == [1, 1, 1, 0, 0, 0]
         assert report._datasets["跨时间验证集"].y.tolist() == [1, 1, 1, 0, 0, 0]
@@ -2106,7 +2104,7 @@ class TestModelReportDatasetNaming:
             MockModel(["f0"]),
             datasets={"建模集": self._data(), "OOT": self._data()},
             target="target",
-            feature_names=["f0"],
+            features=["f0"],
         )
         assert list(report._datasets.keys()) == ["建模集", "OOT"]
         assert [ds.label for ds in report._datasets.values()] == ["建模集", "OOT"]
@@ -2120,20 +2118,12 @@ class TestModelReportDatasetNaming:
                 "dpds": [0, 0, 5, 10],
             }
         )
-        report = ModelReport(
-            MockModel(["f0"]),
-            X_train=X,
-            y_train=None,
-            target="label",
-            overdue="dpds",
-            feature_names=["f0"],
-        )
-        # dpds > 0 → [0, 0, 1, 1]，而非 target 列的全 1
-        assert report._datasets["训练集"].y.tolist() == [0, 0, 1, 1]
+        with pytest.raises(ValueError, match="必须同时传入"):
+            ModelReport(MockModel(["f0"]), X_train=X, overdue="dpds", features=["f0"])
 
     def test_no_datasets_raises(self):
         with pytest.raises(ValueError, match="未提供任何数据集"):
-            ModelReport(MockModel(["f0"]), target="target", feature_names=["f0"])
+            ModelReport(MockModel(["f0"]), target="target", features=["f0"])
 
 
 class NumpyFeatureModel(MockModel):
@@ -2163,7 +2153,7 @@ class TestModelReportNumpyInputs:
             NumpyFeatureModel(["f0", "f1"]),
             X_train=self._data(),
             target="target",
-            feature_names=np.array(["f0", "f1"]),
+            features=np.array(["f0", "f1"]),
         )
         assert report.feature_names == ["f0", "f1"]
         assert all(type(f) is str for f in report.feature_names)
@@ -2174,7 +2164,7 @@ class TestModelReportNumpyInputs:
             NumpyFeatureModel(["f0", "f1"]),
             X_train=self._data(),
             target="target",
-            feature_names=["f0", "f1"],
+            features=["f0", "f1"],
         )
         assert report.feature_names == ["f0", "f1"]
 
@@ -2186,7 +2176,7 @@ class TestModelReportNumpyInputs:
             NumpyFeatureModel(["f0", "f1"]),
             X_train=df,
             target="target",
-            feature_names=np.array(["f0", "f1"]),
+            features=np.array(["f0", "f1"]),
         )
         train_X = report._datasets["训练集"].X
         assert all(type(c) is str for c in train_X.columns)
@@ -2199,7 +2189,7 @@ class TestModelReportNumpyInputs:
             NumpyFeatureModel(["f0", "f1"]),
             X_train=df[["f0", "f1"]].to_numpy(),
             y_train=df["target"],
-            feature_names=np.array(["f0", "f1"]),
+            features=np.array(["f0", "f1"]),
         )
         assert list(report._datasets["训练集"].X.columns) == ["f0", "f1"]
         assert report.feature_names == ["f0", "f1"]
@@ -2210,9 +2200,9 @@ class TestModelReportNumpyInputs:
             NumpyFeatureModel(["f0", "f1"]),
             X_train=self._data(),
             target="target",
-            feature_names=["f0", "f1"],
+            features=["f0", "f1"],
         )
-        report.add_dataset("验证集", "验证集", self._data(), feature_names=np.array(["f0", "f1"]))
+        report.add_dataset("验证集", "验证集", self._data(), features=np.array(["f0", "f1"]))
         assert "验证集" in report._datasets
 
 
@@ -2248,7 +2238,7 @@ class TestModelReportFeatureNamesResolution:
             NumpyFeatureModel(["f0", "f1"]),
             X_train=df,
             target="target",
-            feature_names=["f1", "f0", "extra"],
+            features=["f1", "f0", "extra"],
         )
         assert report.feature_names == ["f1", "f0"]
 

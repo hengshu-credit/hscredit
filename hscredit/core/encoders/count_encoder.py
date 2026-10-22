@@ -19,7 +19,7 @@ class CountEncoder(BaseEncoder):
 
     **参数**
 
-    :param cols: 需要编码的列名列表。如果为None，则自动识别所有列（支持类别型和数值型）
+    :param features: 需要编码的列名列表。如果为None，则自动识别所有列（支持类别型和数值型）
     :param normalize: 是否返回频率而不是计数，默认为False
     :param min_group_size: 将频次低于此值的类别合并为"其他"，默认为None
     :param handle_unknown: 处理未知类别的方式，默认为'value'
@@ -35,15 +35,15 @@ class CountEncoder(BaseEncoder):
     **参考样例**
 
     >>> from hscredit.core.encoders import CountEncoder
-    >>> encoder = CountEncoder(cols=['category'])
+    >>> encoder = CountEncoder(features=['category'])
     >>> X_encoded = encoder.fit_transform(X)
     >>>
     >>> # 返回频率
-    >>> encoder = CountEncoder(cols=['category'], normalize=True)
+    >>> encoder = CountEncoder(features=['category'], normalize=True)
     >>> X_encoded = encoder.fit_transform(X)
     >>>
     >>> # 合并低频类别
-    >>> encoder = CountEncoder(cols=['category'], min_group_size=10)
+    >>> encoder = CountEncoder(features=['category'], min_group_size=10)
     >>> X_encoded = encoder.fit_transform(X)
 
     **注意**
@@ -73,7 +73,7 @@ class CountEncoder(BaseEncoder):
 
     def __init__(
         self,
-        cols: Optional[List[str]] = None,
+        features: Optional[List[str]] = None,
         normalize: bool = False,
         min_group_size: Optional[int] = None,
         handle_unknown: str = 'value',
@@ -88,7 +88,7 @@ class CountEncoder(BaseEncoder):
     ):
         """初始化计数编码器。
 
-        :param cols: 需要编码的列名列表
+        :param features: 需要编码的列名列表
         :param normalize: 是否返回频率，默认为False
         :param min_group_size: 将频次低于此值的类别合并为"其他"，默认为None
         :param handle_unknown: 处理未知类别的方式，默认为'value'
@@ -98,7 +98,7 @@ class CountEncoder(BaseEncoder):
         :param target: scorecardpipeline风格的目标列名。计数编码器不使用此参数，仅为API一致性保留
         """
         super().__init__(
-            cols=cols,
+            features=features,
             drop_invariant=drop_invariant,
             return_df=return_df,
             handle_unknown=handle_unknown,

@@ -23,7 +23,7 @@ class TargetEncoder(BaseEncoder):
 
     **参数**
 
-    :param cols: 需要编码的列名列表。如果为None，则自动识别所有列（支持类别型和数值型）
+    :param features: 需要编码的列名列表。如果为None，则自动识别所有列（支持类别型和数值型）
     :param smoothing: 平滑参数，值越大收缩到全局均值的程度越大，默认为1.0
     :param min_samples_leaf: 每个类别的最小样本数，少于该值则使用全局均值，默认为1
     :param noise: 添加的高斯噪声标准差，用于防止过拟合，默认为None
@@ -43,11 +43,11 @@ class TargetEncoder(BaseEncoder):
     **参考样例**
 
     >>> from hscredit.core.encoders import TargetEncoder
-    >>> encoder = TargetEncoder(cols=['category'])
+    >>> encoder = TargetEncoder(features=['category'])
     >>> X_encoded = encoder.fit_transform(X, y)
     >>>
     >>> # 添加噪声防止过拟合
-    >>> encoder = TargetEncoder(cols=['category'], noise=0.05)
+    >>> encoder = TargetEncoder(features=['category'], noise=0.05)
     >>> X_encoded = encoder.fit_transform(X, y)
 
     **注意**
@@ -79,7 +79,7 @@ class TargetEncoder(BaseEncoder):
 
     def __init__(
         self,
-        cols: Optional[List[str]] = None,
+        features: Optional[List[str]] = None,
         smoothing: float = 1.0,
         min_samples_leaf: int = 1,
         noise: Optional[float] = None,
@@ -98,7 +98,7 @@ class TargetEncoder(BaseEncoder):
     ):
         """初始化目标编码器。
 
-        :param cols: 需要编码的列名列表
+        :param features: 需要编码的列名列表
         :param smoothing: 平滑参数，值越大收缩到全局均值的程度越大，默认为1.0
         :param min_samples_leaf: 每个类别的最小样本数，少于该值则使用全局均值，默认为1
         :param noise: 添加的高斯噪声标准差，用于防止过拟合，默认为None
@@ -110,7 +110,7 @@ class TargetEncoder(BaseEncoder):
         :param target: scorecardpipeline风格的目标列名。如果提供，fit时从X中提取该列作为y
         """
         super().__init__(
-            cols=cols,
+            features=features,
             drop_invariant=drop_invariant,
             return_df=return_df,
             handle_unknown=handle_unknown,

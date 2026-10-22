@@ -105,13 +105,13 @@ def test_scorecard_reports_keep_single_bin_for_constant_scores():
     scores = np.array([600.0, 600.0, 600.0])
     y = np.array([0, 1, 0])
 
-    bad_rate = card.score_to_bad_rate_table(scores, y, n_bins=5)
+    bad_rate = card.score_to_bad_rate_table(scores, y, max_n_bins=5)
     assert len(bad_rate) == 1
     assert bad_rate.loc[0, '评分区间'] == '[600.0000, 600.0000]'
     assert bad_rate.loc[0, '样本数'] == 3
     assert bad_rate.loc[0, '坏样本率'] == '33.33%'
 
-    probability = card.score_to_probability_table(scores=scores, y=y, n_bins=5)
+    probability = card.score_to_probability_table(scores=scores, y=y, max_n_bins=5)
     assert len(probability) == 1
     assert probability.loc[0, '评分区间'] == '[600.00, 600.00]'
     assert probability.loc[0, '样本数'] == 3
@@ -131,13 +131,13 @@ def test_score_to_bad_rate_table_formats_score_intervals_without_float_tail():
     ])
     y = np.array([1, 0, 1, 0, 0, 1])
 
-    bad_rate = card.score_to_bad_rate_table(scores, y, n_bins=3)
+    bad_rate = card.score_to_bad_rate_table(scores, y, max_n_bins=3)
 
     assert bad_rate['评分区间'].str.contains('000000').sum() == 0
     assert bad_rate['评分区间'].str.contains(r'\d+\.\d{5,}', regex=True).sum() == 0
     assert bad_rate.loc[0, '评分区间'].startswith('(')
 
-    bad_rate_2 = card.score_to_bad_rate_table(scores, y, n_bins=3, score_decimal=2)
+    bad_rate_2 = card.score_to_bad_rate_table(scores, y, max_n_bins=3, score_decimal=2)
     assert bad_rate_2['评分区间'].str.contains(r'\d+\.\d{3,}', regex=True).sum() == 0
 
 

@@ -3,6 +3,8 @@
 提供特征分布、异常值检测、集中度分析等功能.
 """
 
+from hscredit.utils.arguments import analysis_inputs
+
 import numpy as np
 import pandas as pd
 from typing import List, Dict, Optional, Union, Literal, Any
@@ -279,6 +281,7 @@ def categorical_distribution(df: pd.DataFrame,
     return result_df
 
 
+@analysis_inputs('df', roles=())
 def outlier_detection(df: pd.DataFrame,
                      features: List[str] = None,
                      method: Literal['iqr', 'zscore', 'mad'] = 'iqr',
@@ -324,6 +327,7 @@ def outlier_detection(df: pd.DataFrame,
     return pd.DataFrame(results).sort_values('异常值率(%)', ascending=False)
 
 
+@analysis_inputs('df', roles=())
 def rare_category_detection(df: pd.DataFrame,
                            features: List[str] = None,
                            threshold: float = 0.01,
@@ -368,6 +372,7 @@ def rare_category_detection(df: pd.DataFrame,
     return pd.DataFrame(results).sort_values('频率(%)')
 
 
+@analysis_inputs('df', roles=())
 def concentration_analysis(df: pd.DataFrame,
                           features: List[str] = None,
                           n_jobs=-1,
@@ -411,9 +416,10 @@ def concentration_analysis(df: pd.DataFrame,
     return pd.DataFrame(results).sort_values('Gini系数', ascending=False)
 
 
+@analysis_inputs('df', roles=('date',))
 def feature_stability_over_time(df: pd.DataFrame,
                                features: List[str],
-                               date_col: str,
+                               date: str,
                                freq: str = 'M',
                                n_jobs=-1,
                                parallel_backend=None,
@@ -422,7 +428,7 @@ def feature_stability_over_time(df: pd.DataFrame,
     
     :param df: 输入数据
     :param features: 指定分析的特征列表
-    :param date_col: 日期列名
+    :param date: 日期列名
     :param freq: 时间聚合频率，``'D'`` 日 / ``'W'`` 周 / ``'M'`` 月 / ``'Q'`` 季度，默认 ``'M'``
     :return: 时序稳定性DataFrame
     
@@ -431,19 +437,19 @@ def feature_stability_over_time(df: pd.DataFrame,
     >>> stability = feature_stability_over_time(df, ['age', 'income'], 'apply_date')
     >>> print(stability[['特征名', '均值标准差', '变异系数', '稳定性评级']])
     """
-    validate_dataframe(df, required_cols=[date_col])
+    validate_dataframe(df, required_cols=[date])
     
     df = df.copy()
-    df[date_col] = pd.to_datetime(df[date_col])
+    df[date] = pd.to_datetime(df[date])
     
     # 创建时间周期
     period_col = '时间周期'
     if freq == 'M':
-        df[period_col] = df[date_col].dt.to_period('M').astype(str)
+        df[period_col] = df[date].dt.to_period('M').astype(str)
     elif freq == 'W':
-        df[period_col] = df[date_col].dt.to_period('W').astype(str)
+        df[period_col] = df[date].dt.to_period('W').astype(str)
     elif freq == 'Q':
-        df[period_col] = df[date_col].dt.to_period('Q').astype(str)
+        df[period_col] = df[date].dt.to_period('Q').astype(str)
     
     valid_features = [
         col for col in features

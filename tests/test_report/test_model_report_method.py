@@ -58,12 +58,12 @@ def test_auto_model_report_uses_only_selected_method(method, expected_method, ex
     X, y = report_data
     model = _TrackingModel()
 
-    report = auto_model_report(model, X_train=X, y_train=y, method=method, verbose=False, n_jobs=1)
+    report = auto_model_report(model, X_train=X, y_train=y, prediction_method=method, verbose=False, n_jobs=1)
     dataset = report._datasets["训练集"]
 
     assert isinstance(report, ModelReport)
     assert report.model is model
-    assert report.method == method
+    assert report.prediction_method == method
     assert model.calls == [expected_method]
     np.testing.assert_allclose(dataset.prediction, expected)
     assert dataset.y_proba is dataset.prediction
@@ -77,7 +77,7 @@ def test_default_method_is_predict_proba(report_data):
 
     report = auto_model_report(model, X_train=X, y_train=y, verbose=False, n_jobs=1)
 
-    assert report.method == "predict_proba"
+    assert report.prediction_method == "predict_proba"
     assert model.calls == ["predict_proba"]
 
 
@@ -96,8 +96,8 @@ def test_callable_receives_real_report_and_named_parameters_once(report_data):
         model,
         X_train=X,
         y_train=y,
-        method=scorer,
-        method_kwargs={"scale": 10.0},
+        prediction_method=scorer,
+        prediction_kwargs={"scale": 10.0},
         offset=2.0,
         n_jobs=1,
         verbose=False,
@@ -118,7 +118,7 @@ def test_callable_copy_and_pickle_restore_executable_method(report_data):
         _TrackingModel(),
         X_train=X,
         y_train=y,
-        method=lambda self, x: np.arange(len(x), dtype=float) * factor,
+        prediction_method=lambda self, x: np.arange(len(x), dtype=float) * factor,
         verbose=False,
         n_jobs=1,
     )
@@ -126,10 +126,10 @@ def test_callable_copy_and_pickle_restore_executable_method(report_data):
     copied = copy.deepcopy(report)
     restored = pickle.loads(pickle.dumps(report))
 
-    assert callable(copied.method)
-    assert callable(restored.method)
-    np.testing.assert_allclose(copied.method(copied, X), [0.0, 7.0, 14.0])
-    np.testing.assert_allclose(restored.method(restored, X), [0.0, 7.0, 14.0])
+    assert callable(copied.prediction_method)
+    assert callable(restored.prediction_method)
+    np.testing.assert_allclose(copied.prediction_method(copied, X), [0.0, 7.0, 14.0])
+    np.testing.assert_allclose(restored.prediction_method(restored, X), [0.0, 7.0, 14.0])
 
 
 @pytest.mark.parametrize(
@@ -147,4 +147,4 @@ def test_method_validation_is_chinese_and_transactional(method, message, report_
     X, y = report_data
 
     with pytest.raises((ValidationError, SerializationError), match=message):
-        ModelReport(_TrackingModel(), X_train=X, y_train=y, method=method, n_jobs=1)
+        ModelReport(_TrackingModel(), X_train=X, y_train=y, prediction_method=method, n_jobs=1)

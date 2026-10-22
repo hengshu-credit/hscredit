@@ -120,7 +120,7 @@ def psi_table(expected: Union[np.ndarray, pd.Series],
         from .monitoring import MonitoringBaseline
         reference = pd.Series(expected)
         current = pd.Series(actual)
-        return MonitoringBaseline(max_n_bins=max_n_bins, min_bin_size=min_bin_size, binning_params=kwargs).fit(reference).evaluate(current, include_missing=include_missing)['分箱明细']
+        return MonitoringBaseline(max_n_bins=max_n_bins, min_bin_size=min_bin_size, bin_params=kwargs).fit(reference).evaluate(current, include_missing=include_missing)['分箱明细']
     # 先验证公开方法和构造参数；空/全缺失数据只改变统计路径，不能绕过配置校验。
     from ..binning import OptimalBinning
     binner = OptimalBinning(

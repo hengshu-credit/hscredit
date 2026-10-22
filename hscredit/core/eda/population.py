@@ -11,6 +11,8 @@
 - feature_cross_segment_effectiveness: 特征在不同客群下的有效性矩阵
 """
 
+from hscredit.utils.arguments import analysis_inputs
+
 import warnings
 import numpy as np
 import pandas as pd
@@ -24,7 +26,7 @@ from .utils import _eda_workload, validate_dataframe, psi_rating, iv_rating
 # 内部辅助
 # ---------------------------------------------------------------------------
 
-def _quick_psi(base: np.ndarray, target: np.ndarray, n_bins: int = 10) -> float:
+def _quick_psi(base: np.ndarray, target: np.ndarray, max_n_bins: int = 10) -> float:
     """两个分布之间的快速 PSI 计算."""
     base = np.asarray(base, dtype=float)
     target = np.asarray(target, dtype=float)
@@ -32,7 +34,7 @@ def _quick_psi(base: np.ndarray, target: np.ndarray, n_bins: int = 10) -> float:
     target = target[~np.isnan(target)]
     if len(base) == 0 or len(target) == 0:
         return np.nan
-    quantiles = np.linspace(0, 100, n_bins + 1)
+    quantiles = np.linspace(0, 100, max_n_bins + 1)
     bin_edges = np.percentile(base, quantiles)
     bin_edges = np.unique(bin_edges)
     if len(bin_edges) < 2:
@@ -90,7 +92,7 @@ def _population_shift_worker(task):
         base_series,
         target_series,
         feature,
-        psi_n_bins,
+        max_n_bins,
         warning_threshold,
         alert_threshold,
         base_bad_rate,
@@ -98,7 +100,7 @@ def _population_shift_worker(task):
     ) = task
     base_col = pd.to_numeric(base_series, errors="coerce")
     target_col = pd.to_numeric(target_series, errors="coerce")
-    psi_value = _quick_psi(base_col.dropna().values, target_col.dropna().values, psi_n_bins)
+    psi_value = _quick_psi(base_col.dropna().values, target_col.dropna().values, max_n_bins)
     mean_base = float(base_col.mean()) if base_col.notna().sum() > 0 else np.nan
     mean_target = float(target_col.mean()) if target_col.notna().sum() > 0 else np.nan
     mean_change = (
@@ -138,22 +140,22 @@ def _population_shift_worker(task):
 
 def _monitoring_psi_worker(task):
     """计算监控期和特征的快速 PSI。"""
-    base_series, compare_series, feature, label, n_bins = task
+    base_series, compare_series, feature, label, max_n_bins = task
     value = _quick_psi(
         pd.to_numeric(base_series, errors="coerce").dropna().values,
         pd.to_numeric(compare_series, errors="coerce").dropna().values,
-        n_bins,
+        max_n_bins,
     )
     return feature, label, round(value, 4) if not np.isnan(value) else np.nan
 
 
 def _monitoring_distribution_worker(task):
     """生成单个 Top 偏移特征的多期分布明细。"""
-    feature, base, comparisons, labels, n_bins = task
+    feature, base, comparisons, labels, max_n_bins = task
     base_col = pd.to_numeric(base.get(feature), errors="coerce").dropna()
     if len(base_col) == 0:
         return feature, pd.DataFrame()
-    edges = np.unique(np.percentile(base_col, np.linspace(0, 100, n_bins + 1)))
+    edges = np.unique(np.percentile(base_col, np.linspace(0, 100, max_n_bins + 1)))
     if len(edges) < 2:
         return feature, pd.DataFrame()
     rows = []
@@ -177,11 +179,11 @@ def _monitoring_distribution_worker(task):
 
 def _segment_drift_worker(task):
     """计算一个客群、时期和特征的漂移行。"""
-    base_frame, target_frame, feature, segment, period, base_period, target, n_bins = task
+    base_frame, target_frame, feature, segment, period, base_period, target, max_n_bins = task
     psi_value = _quick_psi(
         pd.to_numeric(base_frame[feature], errors="coerce").dropna().values,
         pd.to_numeric(target_frame[feature], errors="coerce").dropna().values,
-        n_bins,
+        max_n_bins,
     )
     row: Dict[str, Any] = {
         "特征名": feature,
@@ -224,11 +226,12 @@ def _cross_segment_metric_worker(task):
 # 1. population_profile
 # ---------------------------------------------------------------------------
 
+@analysis_inputs('df', roles=('date',))
 def population_profile(
     df: pd.DataFrame,
     features: List[str],
     segment_col: Optional[str] = None,
-    date_col: Optional[str] = None,
+    date: Optional[str] = None,
     target: Optional[str] = None,
     freq: str = 'M',
     percentiles: List[float] = [0.25, 0.5, 0.75],
@@ -239,14 +242,14 @@ def population_profile(
     """客群画像分析.
 
     计算各特征的均值、分位数、缺失率，以及坏率（若提供标签），
-    支持按客群维度（segment_col）或时间（date_col）分组对比。
+    支持按客群维度（segment_col）或时间（date）分组对比。
 
     :param df: 输入数据
     :param features: 需要分析的特征列表
     :param segment_col: 客群分组列（如渠道、产品线），为 None 时不分组
-    :param date_col: 时间列，为 None 时不按时间分组；与 segment_col 互斥，优先 segment_col
+    :param date: 时间列，为 None 时不按时间分组；与 segment_col 互斥，优先 segment_col
     :param target: 目标变量列名（0/1），提供时输出各组坏率
-    :param freq: 时间聚合粒度，'M'=月，'Q'=季度，'Y'=年，仅 date_col 非 None 时有效
+    :param freq: 时间聚合粒度，'M'=月，'Q'=季度，'Y'=年，仅 date 非 None 时有效
     :param percentiles: 分位数列表，默认 [0.25, 0.5, 0.75]
     :return: 客群画像 DataFrame
 
@@ -259,22 +262,22 @@ def population_profile(
     df = df.copy()
 
     # 确定分组列
-    group_col: Optional[str] = None
+    group: Optional[str] = None
     if segment_col is not None and segment_col in df.columns:
-        group_col = segment_col
-    elif date_col is not None and date_col in df.columns:
+        group = segment_col
+    elif date is not None and date in df.columns:
         freq_map = {'M': 'M', 'Q': 'Q', 'Y': 'A'}
         pf = freq_map.get(freq, 'M')
-        df['__period__'] = pd.to_datetime(df[date_col]).dt.to_period(pf).astype(str)
-        group_col = '__period__'
+        df['__period__'] = pd.to_datetime(df[date]).dt.to_period(pf).astype(str)
+        group = '__period__'
 
     pct_labels = [f'p{int(p * 100)}' for p in percentiles]
     stat_cols = ['均值', '标准差', '缺失率(%)'] + pct_labels + ['样本数']
     if target is not None and target in df.columns:
         stat_cols.append('坏率(%)')
 
-    if group_col is not None:
-        groups = list(df.groupby(group_col, sort=True))
+    if group is not None:
+        groups = list(df.groupby(group, sort=True))
     else:
         groups = [('全量', df)]
 
@@ -311,8 +314,8 @@ def population_profile(
 
     result = pd.DataFrame(rows)
     # 清理临时列
-    if '__period__' in df.columns and group_col == '__period__':
-        result = result.rename(columns={'分组': date_col or '时间周期'})
+    if '__period__' in df.columns and group == '__period__':
+        result = result.rename(columns={'分组': date or '时间周期'})
     return result
 
 
@@ -325,7 +328,7 @@ def population_shift_analysis(
     df_target: pd.DataFrame,
     features: List[str],
     target: Optional[str] = None,
-    psi_n_bins: int = 10,
+    max_n_bins: int = 10,
     psi_threshold_warn: float = 0.1,
     psi_threshold_alert: float = 0.25,
     n_jobs=-1,
@@ -341,7 +344,7 @@ def population_shift_analysis(
     :param df_target: 目标数据集（如生产数据/近期月份）
     :param features: 需要分析的特征列表
     :param target: 目标变量列名（0/1），提供时输出坏率变化
-    :param psi_n_bins: PSI 分箱数，默认 10
+    :param max_n_bins: PSI 分箱数，默认 10
     :param psi_threshold_warn: PSI 警告阈值，默认 0.1（黄色）
     :param psi_threshold_alert: PSI 告警阈值，默认 0.25（红色）
     :return: 偏移摘要 DataFrame，含 特征名/PSI/均值变化/偏移等级/建议
@@ -364,7 +367,7 @@ def population_shift_analysis(
                 df_base[feature],
                 df_target[feature],
                 feature,
-                psi_n_bins,
+                max_n_bins,
                 psi_threshold_warn,
                 psi_threshold_alert,
                 base_bad_rate,
@@ -402,7 +405,7 @@ def population_monitoring_report(
     compare_labels: List[str],
     features: List[str],
     target: Optional[str] = None,
-    psi_n_bins: int = 10,
+    max_n_bins: int = 10,
     top_drift_n: int = 10,
     output_path: str = 'population_monitor.xlsx',
     n_jobs=-1,
@@ -421,7 +424,7 @@ def population_monitoring_report(
     :param compare_labels: 各期标签（与 df_compare_list 一一对应）
     :param features: 监控特征列表
     :param target: 目标变量列名
-    :param psi_n_bins: PSI 计算分箱数
+    :param max_n_bins: PSI 计算分箱数
     :param top_drift_n: 输出偏移最大的 N 个特征
     :param output_path: 输出 Excel 路径
     :return: 输出文件路径
@@ -457,7 +460,7 @@ def population_monitoring_report(
     psi_results = parallel_execute(
         _monitoring_psi_worker,
         (
-            (df_base[feature], compare_frame[feature], feature, label, psi_n_bins)
+            (df_base[feature], compare_frame[feature], feature, label, max_n_bins)
             for label, compare_frame, feature in valid_pairs
         ),
         n_jobs=n_jobs,
@@ -526,7 +529,7 @@ def population_monitoring_report(
     distribution_results = parallel_execute(
         _monitoring_distribution_worker,
         (
-            (feature, df_base, tuple(df_compare_list), tuple(compare_labels), psi_n_bins)
+            (feature, df_base, tuple(df_compare_list), tuple(compare_labels), max_n_bins)
             for feature in top_features
         ),
         n_jobs=n_jobs,
@@ -559,15 +562,16 @@ def population_monitoring_report(
 # 4. segment_drift_analysis
 # ---------------------------------------------------------------------------
 
+@analysis_inputs('df', roles=('date',))
 def segment_drift_analysis(
     df: pd.DataFrame,
-    date_col: str,
+    date: str,
     segment_col: str,
     features: List[str],
     target: Optional[str] = None,
     base_period: Optional[str] = None,
     freq: str = 'M',
-    psi_n_bins: int = 10,
+    max_n_bins: int = 10,
     n_jobs=-1,
     parallel_backend=None,
     parallel_config=None,
@@ -577,28 +581,28 @@ def segment_drift_analysis(
     计算每个 (客群, 时间) 组合相对于基准期（或第一期）的特征 PSI，
     输出长格式三维结果表，列为 [特征名, 客群, 时间, PSI, 偏移等级]。
 
-    :param df: 输入数据（须含 date_col 和 segment_col）
-    :param date_col: 日期列名
+    :param df: 输入数据（须含 date 和 segment_col）
+    :param date: 日期列名
     :param segment_col: 客群分组列名
     :param features: 分析特征列表
     :param target: 目标变量（可选，用于输出各组坏率）
     :param base_period: 基准期字符串（如 '2024-01'），None 时取最早一期
     :param freq: 时间聚合频率，'M'=月，'Q'=季度，'Y'=年
-    :param psi_n_bins: PSI 计算分箱数
+    :param max_n_bins: PSI 计算分箱数
     :return: 长格式 DataFrame，含 特征名/客群/时间/PSI/偏移等级
 
     **参考样例**
 
-    >>> result = segment_drift_analysis(df, date_col='apply_month',
+    >>> result = segment_drift_analysis(df, date='apply_month',
     ...     segment_col='channel', features=['age', 'income'], base_period='2024-01')
     >>> print(result.pivot_table(index=['客群', '时间'], columns='特征名', values='PSI'))
     """
-    validate_dataframe(df, required_cols=[date_col, segment_col] + features)
+    validate_dataframe(df, required_cols=[date, segment_col] + features)
 
     df = df.copy()
     freq_map = {'M': 'M', 'Q': 'Q', 'Y': 'A'}
     pf = freq_map.get(freq, 'M')
-    df['__period__'] = pd.to_datetime(df[date_col]).dt.to_period(pf).astype(str)
+    df['__period__'] = pd.to_datetime(df[date]).dt.to_period(pf).astype(str)
 
     all_periods = sorted(df['__period__'].unique())
     if base_period is None:
@@ -621,7 +625,7 @@ def segment_drift_analysis(
 
             for feat in features:
                 if feat in base_seg.columns:
-                    task_specs.append((base_seg, period_seg, feat, seg, period, base_period, target, psi_n_bins))
+                    task_specs.append((base_seg, period_seg, feat, seg, period, base_period, target, max_n_bins))
 
     rows = parallel_execute(
         _segment_drift_worker,
@@ -644,13 +648,14 @@ def segment_drift_analysis(
 # 5. feature_cross_segment_effectiveness
 # ---------------------------------------------------------------------------
 
+@analysis_inputs('df', roles=())
 def feature_cross_segment_effectiveness(
     df: pd.DataFrame,
     features: List[str],
     target: str,
     segment_col: str,
     metric: str = 'iv',
-    n_bins: int = 10,
+    max_n_bins: int = 10,
     min_segment_size: int = 50,
     n_jobs=-1,
     parallel_backend=None,
@@ -667,7 +672,7 @@ def feature_cross_segment_effectiveness(
     :param target: 目标变量列名（0/1）
     :param segment_col: 客群分组列名
     :param metric: 有效性指标，'iv' / 'ks' / 'auc'
-    :param n_bins: 分箱数（iv/ks 计算使用）
+    :param max_n_bins: 分箱数（iv/ks 计算使用）
     :param min_segment_size: 最小客群样本量，低于此值跳过
     :return: 宽格式有效性矩阵 DataFrame
 

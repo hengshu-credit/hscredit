@@ -27,7 +27,7 @@ def test_bin_plot_excludes_total_row(orientation):
     fig, plotted_table = bin_plot(
         _feature_table_with_total(),
         orientation=orientation,
-        return_frame=True,
+        result=True,
     )
 
     assert plotted_table["分箱标签"].tolist() == ["[0, 100)", "[100, 200)"]

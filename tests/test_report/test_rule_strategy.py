@@ -113,7 +113,7 @@ def test_rule_group_compare_groups_by_date_freq():
         }
     )
 
-    result = rule_group_compare(data, "score < 500", date_col="放款时间", freq="M", target="target", rule_name="低分拒绝")
+    result = rule_group_compare(data, "score < 500", date="放款时间", freq="M", target="target", rule_name="低分拒绝")
 
     assert isinstance(result.columns, pd.MultiIndex)
     assert list(result[("规则详情", "是否命中")]) == ["命中", "未命中"]
@@ -134,7 +134,7 @@ def test_rule_group_compare_groups_by_group_col_multi_label():
     result = rule_group_compare(
         data,
         Rule("score < 500", name="低分拒绝"),
-        group_col="渠道",
+        group="渠道",
         overdue="MOB1",
         dpds=[3, 1],
     )
@@ -181,7 +181,7 @@ def test_rule_tables_preserve_target_specific_totals_after_grey_filtering():
     group_table = rule_group_compare(
         data,
         rule,
-        group_col="客群",
+        group="客群",
         overdue="MOB1",
         dpds=[1, 3],
         del_grey=True,
@@ -213,22 +213,22 @@ def _group_columns(result, level0="样本总数"):
 
 
 def test_rule_group_compare_group_order_default_ascending():
-    result = rule_group_compare(_group_order_data(), "score < 500", group_col="渠道", target="target")
+    result = rule_group_compare(_group_order_data(), "score < 500", group="渠道", target="target")
     assert _group_columns(result) == ["A", "B", "C"]
 
 
 def test_rule_group_compare_group_order_desc_and_appearance():
     data = _group_order_data()
-    desc = rule_group_compare(data, "score < 500", group_col="渠道", target="target", group_order="desc")
+    desc = rule_group_compare(data, "score < 500", group="渠道", target="target", group_order="desc")
     assert _group_columns(desc) == ["C", "B", "A"]
 
-    appearance = rule_group_compare(data, "score < 500", group_col="渠道", target="target", group_order="appearance")
+    appearance = rule_group_compare(data, "score < 500", group="渠道", target="target", group_order="appearance")
     assert _group_columns(appearance) == ["B", "C", "A"]
 
 
 def test_rule_group_compare_group_order_explicit_sequence_appends_remaining():
     result = rule_group_compare(
-        _group_order_data(), "score < 500", group_col="渠道", target="target", group_order=["C", "A"]
+        _group_order_data(), "score < 500", group="渠道", target="target", group_order=["C", "A"]
     )
     assert _group_columns(result) == ["C", "A", "B"]
 
@@ -237,7 +237,7 @@ def test_rule_group_compare_group_order_callable():
     result = rule_group_compare(
         _group_order_data(),
         "score < 500",
-        group_col="渠道",
+        group="渠道",
         target="target",
         group_order=lambda g: {"A": 2, "B": 0, "C": 1}[g],
     )
@@ -254,7 +254,7 @@ def test_rule_group_compare_amount_and_kwargs_passthrough():
         }
     )
 
-    result = rule_group_compare(data, "score < 500", group_col="渠道", target="target", amount="金额", margins=True)
+    result = rule_group_compare(data, "score < 500", group="渠道", target="target", amount="金额", margins=True)
 
     # 金额口径下 样本总数 为金额加权
     assert result.loc[0, ("样本总数", "A")] == 100
@@ -375,7 +375,7 @@ def test_swap_out_report_supports_decimal_dpds_and_target_specific_grey_deletion
         overdue="MOB1",
         dpds=[0.5, 0],
         del_grey=True,
-        group_col="客群",
+        group="客群",
         methods="quantile",
         save=str(output),
         n_jobs=1,

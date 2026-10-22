@@ -26,7 +26,7 @@ def _card(training_mode="oof"):
     y = (rng.uniform(size=200) < 0.1 + 0.8 * X.x / 200).astype(int)
     X.loc[1, "x"], X.loc[2, "x"] = np.nan, -999
     binner = OptimalBinning(method="quantile", max_n_bins=4, special_codes=[-999], n_jobs=1).fit(X, y)
-    encoder = WOEEncoder(cols=["x"], regularization=50, training_mode=training_mode, cv=4, n_jobs=1)
+    encoder = WOEEncoder(features=["x"], regularization=50, training_mode=training_mode, cv=4, n_jobs=1)
     encoded = encoder.fit_transform(binner.transform(X, metric="bins"), y)
     card = ScoreCard(binner=binner, encoder=encoder, calculate_stats=False, decimal=8, clip=False).fit(encoded, y)
     return X, card
@@ -181,7 +181,7 @@ def test_multifeature_encoder_category_unknown_special_and_rule_roundtrip(missin
     binner = OptimalBinning(
         method="quantile", max_n_bins=3, special_codes=[-999, "SPECIAL"], missing_separate=missing_separate, n_jobs=1
     ).fit(X, y)
-    encoder = WOEEncoder(cols=["x", "c"], regularization=25, training_mode="oof", cv=3, n_jobs=1)
+    encoder = WOEEncoder(features=["x", "c"], regularization=25, training_mode="oof", cv=3, n_jobs=1)
     encoded = encoder.fit_transform(binner.transform(X, metric="bins"), y)
     card = ScoreCard(binner=binner, encoder=encoder, calculate_stats=False, clip=False).fit(encoded, y)
     raw = pd.concat(
@@ -292,7 +292,7 @@ def test_scorecard_deployment_uses_exact_split_not_rounded_display_label():
         special_codes=[-999.0],
         n_jobs=1,
     ).fit(X, y)
-    encoder = WOEEncoder(cols=["x"], regularization=5, n_jobs=1)
+    encoder = WOEEncoder(features=["x"], regularization=5, n_jobs=1)
     encoded = encoder.fit_transform(binner.transform(X, metric="bins"), y)
     card = ScoreCard(binner=binner, encoder=encoder, calculate_stats=False, clip=False).fit(encoded, y)
     raw = pd.DataFrame({"x": [cut - 1e-8, cut, cut + 1e-8, np.nan, -999.0]})
@@ -311,7 +311,7 @@ def test_encoder_unknown_error_policy_survives_rule_export():
     X = pd.DataFrame({"c": ["A", "B", "C"] * 30})
     y = (np.arange(len(X)) % 4 == 0).astype(int)
     binner = OptimalBinning(method="quantile", max_n_bins=3, n_jobs=1).fit(X, y)
-    encoder = WOEEncoder(cols=["c"], handle_unknown="error", n_jobs=1)
+    encoder = WOEEncoder(features=["c"], handle_unknown="error", n_jobs=1)
     encoded = encoder.fit_transform(binner.transform(X, metric="bins"), y)
     card = ScoreCard(binner=binner, encoder=encoder, calculate_stats=False).fit(encoded, y)
     for value in ("未见类别", None):

@@ -7,6 +7,10 @@
 注：分箱统计计算已统一收口到hscredit.core.metrics.compute_bin_stats
 """
 
+from hscredit.utils.arguments import analysis_inputs, binning_options
+
+from ...utils.targets import TargetInput, bind_targets, reject_legacy_target_keywords
+
 import logging
 import re
 import warnings
@@ -22,8 +26,7 @@ from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 from typing import Union, Optional, List, Dict, Any
 
-from ...utils.overdue import make_overdue_target, overdue_label, validate_overdue_operator
-from ...utils.input_utils import normalize_dpd_values
+from ...utils.overdue import validate_overdue_operator
 from .utils import (
     DEFAULT_COLORS, setup_axis_style, save_figure,
     format_bin_label,
@@ -549,6 +552,7 @@ def _auto_rotate_horizontal_xticks(fig, ax, threshold: int = 35) -> None:
             label.set_rotation_mode('anchor')
 
 
+@binning_options
 def bin_plot(
     data: Union[pd.DataFrame, pd.Series],
     target: Optional[Union[str, pd.Series, np.ndarray]] = None,
@@ -563,7 +567,7 @@ def bin_plot(
     hatch: bool = True,
     ending: str = "分箱图",
     title: Optional[str] = None,
-    n_bins: int = 10,
+    max_n_bins: int = 10,
     method: str = 'quantile',
     rules: Optional[List] = None,
     show_data_points: bool = True,
@@ -572,10 +576,10 @@ def bin_plot(
     metric_summary_layout: str = 'compact',
     show_rate_axis: bool = True,
     iv: bool = True,
-    return_frame: bool = False,
+    result: bool = False,
     ax: Optional[Any] = None,
     orientation: str = 'horizontal',
-    **kwargs
+    dpi: int = 240, bin_params=None, **kwargs
 ):
     """
     特征分箱可视化图.
@@ -617,7 +621,7 @@ def bin_plot(
     :param hatch: 是否显示斜线
     :param ending: 标题后缀
     :param title: 完整标题（优先级高于 desc + ending）
-    :param n_bins: 分箱数量（仅用于方式1）
+    :param max_n_bins: 分箱数量（仅用于方式1）
     :param method: 分箱方法（仅用于方式1），可选 'quantile' 或 'uniform'
     :param rules: 自定义分箱边界（仅用于方式1）
     :param show_data_points: 是否显示数据点标记
@@ -627,18 +631,18 @@ def bin_plot(
         ``'full_width_center'`` 为与坐标轴等宽的单行居中摘要条
     :param show_rate_axis: 是否显示坏样本率坐标轴刻度与标签（趋势线本身始终保留），默认显示
     :param iv: 是否显示 IV 值（暂不支持）
-    :param return_frame: 是否返回分箱统计表
+    :param result: 是否返回分箱统计表
     :param ax: 可选的 matplotlib Axes 对象，用于在已有画布上绘图
     :param orientation: 图表方向，'horizontal'/'h'(横向，默认) 或 'vertical'/'v'(纵向)
     :param kwargs: 其他参数（兼容性）
     :return: 独立绘图时返回 Figure 或 (Figure, DataFrame)；传入 ax 时返回
-        Axes，``return_frame=True`` 时返回 (Axes, DataFrame)
+        Axes，``result=True`` 时返回 (Axes, DataFrame)
 
     **参考样例**
 
     >>> from hscredit.core.viz import bin_plot
     >>> # 方式1：原始数据（自动分箱）
-    >>> bin_plot(df, feature='score', target='target', n_bins=10, method='quantile')
+    >>> bin_plot(df, feature='score', target='target', max_n_bins=10, method='quantile')
     >>> # Series + 目标数组
     >>> bin_plot(df['score'], target=df['target'])
     >>> # 方式2：传入已算好的分箱统计表
@@ -647,7 +651,7 @@ def bin_plot(
     >>> bin_plot(table, desc='衡枢鉴真分')
     >>> # 纵向 + 返回统计表
     >>> fig, stat = bin_plot(df, feature='score', target='target',
-    ...                      orientation='vertical', return_frame=True)
+    ...                      orientation='vertical', result=True)
     """
     if colors is None:
         colors = DEFAULT_COLORS
@@ -673,15 +677,16 @@ def bin_plot(
         
         # 兼容 toad 的参数命名（x 参数）
         if 'x' in kwargs:
-            feature = kwargs.pop('x')
+            raise TypeError("x 参数已移除，请使用 feature")
         
         feature_table = _compute_bin_stats_from_raw_data(
             data=data,
             target=target,
             feature=feature,
-            max_n_bins=n_bins,
+            max_n_bins=max_n_bins,
             method=method,
             rules=rules,
+            **kwargs,
         )
 
     # margins=True 生成的合计行不属于实际分箱，不参与绘图及指标计算
@@ -739,7 +744,7 @@ def bin_plot(
     # 重新组合：普通分箱(升序) + 特殊值分箱 + 缺失值分箱(最后)
     feature_table = pd.concat([normal_rows, special_rows, missing_rows], ignore_index=True)
 
-    # 保存升序排列的表用于 return_frame（不受横向反转影响）
+    # 保存升序排列的表用于 result（不受横向反转影响）
     _sorted_table = feature_table.copy()
 
     if is_horizontal:
@@ -939,9 +944,9 @@ def bin_plot(
                 if top <= fig.subplotpars.bottom:
                     break
                 fig.subplots_adjust(top=top)
-        save_figure(fig, save)
+        save_figure(fig, save, dpi=dpi)
 
-        if return_frame:
+        if result:
             return fig, _sorted_table.drop(columns=['_plot_bin_label'], errors='ignore')
         return fig
     else:
@@ -988,19 +993,19 @@ def bin_plot(
             _layout_embedded_bin_plot_header(fig, ax1, ax2, summary_text, title_text)
         else:
             ax1.set_title(title_text)
-        if return_frame:
+        if result:
             return ax1, _sorted_table.drop(columns=['_plot_bin_label'], errors='ignore')
         return ax1
 
 
-def corr_plot(data, figure_size=None, fontsize=16, mask=False, save=None, 
+def corr_plot(data, fontsize=16, mask=False, save=None, 
               annot=True, max_len=35, linewidths=0.1, fmt='.2f', step=11, linecolor='white', 
-              ax=None, figsize=(16, 8), **kwargs):
+              ax=None, figsize=(16, 8), dpi: int = 240, **kwargs):
     """
     特征相关性热力图.
 
     :param data: 特征数据
-    :param figure_size: 图像尺寸（创建新图时使用）
+    :param figsize: 图像尺寸（创建新图时使用）
     :param fontsize: 字体大小
     :param mask: 是否只显示下三角
     :param save: 保存路径
@@ -1029,7 +1034,6 @@ def corr_plot(data, figure_size=None, fontsize=16, mask=False, save=None,
     corr_mask[np.triu_indices_from(corr_mask)] = True
 
     # 获取或创建 Axes
-    figsize = figure_size or figsize
     if ax is None:
         fig, ax = _create_subplots(figsize=figsize)
         return_ax = False
@@ -1051,7 +1055,7 @@ def corr_plot(data, figure_size=None, fontsize=16, mask=False, save=None,
         setup_axis_style(map_plot.collections[0].colorbar.ax)
 
     if not return_ax:
-        save_figure(fig, save)
+        save_figure(fig, save, dpi=dpi)
         return fig
     else:
         return ax
@@ -1059,7 +1063,9 @@ def corr_plot(data, figure_size=None, fontsize=16, mask=False, save=None,
 
 def ks_plot(score, target, title="", fontsize=14, figsize=(16, 8), save=None,
             colors=None, anchor=None, axes=None, ax=None, curve='both',
-            pos_label=1, score_direction='auto', sample_weight=None):
+            pos_label=1, score_direction='auto', sample_weight=None, *,
+    dpi: int = 240,
+):
     """
     KS曲线和ROC曲线.
 
@@ -1208,7 +1214,7 @@ def ks_plot(score, target, title="", fontsize=14, figsize=(16, 8), save=None,
         _tight_layout(fig)
         if curve == 'both' and anchor is None:
             _layout_top_center_legend(fig, legend, title=title_artist, axes=[ax1, ax2])
-        save_figure(fig, save)
+        save_figure(fig, save, dpi=dpi)
         return fig
     else:
         if curve == 'both':
@@ -1225,7 +1231,7 @@ def ks_plot(score, target, title="", fontsize=14, figsize=(16, 8), save=None,
 
 def hist_plot(score, y_true=None, figsize=(15, 10), bins=30, save=None,
               labels=None, desc="", anchor=None, fontsize=14, kde=False, title=None,
-              ax=None, **kwargs):
+              ax=None, dpi: int = 240, **kwargs):
     """
     特征值分布直方图.
 
@@ -1332,15 +1338,16 @@ def hist_plot(score, y_true=None, figsize=(15, 10), bins=30, save=None,
         fig.tight_layout()
         if y_true is not None and anchor is None:
             _layout_top_center_legend(fig, ax.get_legend(), title=title_artist, axes=[ax])
-        save_figure(fig, save)
+        save_figure(fig, save, dpi=dpi)
         return fig
     else:
         return ax
 
 
+@binning_options
 def psi_plot(expected, actual, y=None, labels=None, desc="", save=None, colors=None,
              figsize=(15, 8), anchor=None, width=0.35, result=False, plot=True,
-             max_len=None, hatch=True, title=None, **kwargs):
+             max_len=None, hatch=True, title=None, dpi: int = 240, bin_params=None, **kwargs):
     """
     PSI稳定性分析图.
 
@@ -1593,7 +1600,7 @@ def psi_plot(expected, actual, y=None, labels=None, desc="", save=None, colors=N
             _layout_top_center_legend(fig, legend, title=title_artist, axes=panel_axes)
 
         if save:
-            save_figure(fig, save)
+            save_figure(fig, save, dpi=dpi)
 
     if result:
         return df_psi[["指标名称", "分箱", f"{labels[0]}样本数", f"{labels[0]}样本占比", 
@@ -1604,15 +1611,15 @@ def psi_plot(expected, actual, y=None, labels=None, desc="", save=None, colors=N
         return fig
 
 
-def dataframe_plot(df, row_height=0.4, font_size=14, header_color=None,
+def dataframe_plot(df, row_height=0.4, fontsize=14, header_color=None,
                   row_colors=None, edge_color='w', bbox=[0, 0, 1, 1], header_columns=0, 
-                  ax=None, save=None, **kwargs):
+                  ax=None, save=None, dpi: int = 240, **kwargs):
     """
     将DataFrame转换为图像.
 
     :param df: 数据框
     :param row_height: 行高
-    :param font_size: 字体大小
+    :param fontsize: 字体大小
     :param header_color: 表头颜色
     :param row_colors: 行颜色
     :param edge_color: 边框颜色
@@ -1659,7 +1666,7 @@ def dataframe_plot(df, row_height=0.4, font_size=14, header_color=None,
     )
 
     mpl_table.auto_set_font_size(False)
-    mpl_table.set_fontsize(font_size)
+    mpl_table.set_fontsize(fontsize)
 
     for k, cell in mpl_table._cells.items():
         cell.set_edgecolor(edge_color)
@@ -1671,16 +1678,19 @@ def dataframe_plot(df, row_height=0.4, font_size=14, header_color=None,
 
     fig.tight_layout()
 
-    save_figure(fig, save)
+    save_figure(fig, save, dpi=dpi)
 
     return fig
 
 
-def distribution_plot(data, date="date", target="target", save=None, figsize=(10, 6), 
+@analysis_inputs('data', roles=('date',))
+def distribution_plot(data, date="date", target: Optional[TargetInput] = None, save=None, figsize=(10, 6),
                     colors=None, freq="M", anchor=None, result=False, hatch=True,
                     overdue=None, dpds=None, title=None, del_grey: bool = False,
     *,
-    overdue_operator: str = ">="):
+    overdue_operator: str = ">=",
+    dpi: int = 240,
+):
     """
     样本时间分布图.
 
@@ -1723,7 +1733,8 @@ def distribution_plot(data, date="date", target="target", save=None, figsize=(10
     if colors is None:
         colors = DEFAULT_COLORS
 
-    df = data.copy()
+    df, targets = bind_targets(data, target, overdue, dpds, del_grey, overdue_operator, default_target="target", paired=True)
+    target = targets.columns[0]
 
     if 'time' not in str(df[date].dtype):
         df[date] = pd.to_datetime(df[date])
@@ -1736,14 +1747,7 @@ def distribution_plot(data, date="date", target="target", save=None, figsize=(10
     }.get(freq.upper(), freq) if isinstance(freq, str) else freq
 
     # ---------- 多逾期口径模式 ----------
-    if overdue is not None and dpds is not None:
-        overdue = [overdue] if isinstance(overdue, str) else list(overdue)
-        dpds = normalize_dpd_values(dpds, deduplicate=False)
-        if len(overdue) != len(dpds):
-            raise ValueError("overdue 和 dpds 长度必须一致")
-        if not overdue:
-            raise ValueError("overdue 和 dpds 不能为空")
-
+    if targets.mode == "overdue" or len(targets) > 1:
         # 按日期聚合样本总数
         df_indexed = df.set_index(date)
         total_counts = df_indexed.resample(resample_freq).size()
@@ -1768,18 +1772,16 @@ def distribution_plot(data, date="date", target="target", save=None, figsize=(10
         # 多条逾期口径折线统一使用 hscredit 扩展色板（坏样本率/基线语义色打头），保持整体风格一致
         line_colors = colors[1:] if len(colors) > 1 else ([BAD_RATE_COLOR, REFERENCE_COLOR] + list(EXTENDED_COLORS))
         # 确保颜色足够
-        if len(line_colors) < len(overdue):
-            line_colors = get_series_colors(len(overdue))
+        if len(line_colors) < len(targets):
+            line_colors = get_series_colors(len(targets))
 
         result_frames = []
-        for i, (dpd_col, threshold) in enumerate(zip(overdue, dpds)):
-            y_target = make_overdue_target(df[dpd_col], threshold, del_grey, overdue_operator)
+        for i, (label, y_target) in enumerate(targets.y_map(df, "plain").items()):
             df_temp = df_indexed.copy()
             df_temp['_bad'] = y_target.values
             bad_rate = df_temp.resample(resample_freq)['_bad'].mean()
             bad_rate.index = [idx.strftime("%Y-%m-%d") for idx in bad_rate.index]
 
-            label = overdue_label(dpd_col, threshold, overdue_operator, style="plain")
             style = line_styles[i % len(line_styles)]
             color = line_colors[i % len(line_colors)]
             bad_rate.plot(ax=ax2, color=color, style=style, linewidth=2,
@@ -1805,7 +1807,7 @@ def distribution_plot(data, date="date", target="target", save=None, figsize=(10
         if anchor is None:
             _layout_top_center_legend(fig, legend, title=title_artist, axes=[ax1, ax2])
 
-        save_figure(fig, save)
+        save_figure(fig, save, dpi=dpi)
 
         if result:
             counts_df = total_counts.reset_index()
@@ -1855,7 +1857,7 @@ def distribution_plot(data, date="date", target="target", save=None, figsize=(10
     if anchor is None:
         _layout_top_center_legend(fig, legend, title=title_artist, axes=[ax1, ax2])
 
-    save_figure(fig, save)
+    save_figure(fig, save, dpi=dpi)
 
     if result:
         temp = temp.reset_index().rename(
@@ -1880,7 +1882,7 @@ def _compute_feature_bin_stats(
     data: pd.DataFrame,
     feature: str,
     target: str,
-    group_col: Optional[str] = None,
+    group: Optional[str] = None,
     group_value: Optional[Any] = None,
     method: str = 'quantile',
     max_n_bins: int = 10,
@@ -1894,7 +1896,7 @@ def _compute_feature_bin_stats(
     :param data: 输入数据
     :param feature: 特征列名
     :param target: 目标变量列名
-    :param group_col: 分组列名
+    :param group: 分组列名
     :param group_value: 分组值
     :param method: 分箱方法
     :param max_n_bins: 最大分箱数
@@ -1904,8 +1906,8 @@ def _compute_feature_bin_stats(
     :return: 分箱统计表
     """
     # 筛选分组数据
-    if group_col is not None and group_value is not None:
-        df_sub = data[data[group_col] == group_value].copy()
+    if group is not None and group_value is not None:
+        df_sub = data[data[group] == group_value].copy()
     else:
         df_sub = data.copy()
 
@@ -2283,9 +2285,9 @@ def _prepare_bin_trend_panels(
     data: pd.DataFrame,
     feature: str,
     target: str,
-    dimension_cols: Optional[Union[str, List[str]]] = None,
-    date_col: Optional[str] = None,
-    date_freq: str = 'M',
+    group: Optional[Union[str, List[str]]] = None,
+    date: Optional[str] = None,
+    freq: str = 'M',
     method: str = 'quantile',
     max_n_bins: int = 10,
     min_bin_size: float = 0.02,
@@ -2302,42 +2304,42 @@ def _prepare_bin_trend_panels(
     **kwargs,
 ) -> Dict[str, Any]:
     """准备趋势图全部面板的有序统计，过程不创建 Matplotlib 对象。"""
-    if dimension_cols is None:
+    if group is None:
         dimensions = []
-    elif isinstance(dimension_cols, str):
-        dimensions = [dimension_cols]
+    elif isinstance(group, str):
+        dimensions = [group]
     else:
-        dimensions = list(dimension_cols)
+        dimensions = list(group)
 
     working = data
-    if date_col is not None:
+    if date is not None:
         working = data.copy()
-        if not pd.api.types.is_datetime64_any_dtype(working[date_col]):
-            working[date_col] = pd.to_datetime(working[date_col])
+        if not pd.api.types.is_datetime64_any_dtype(working[date]):
+            working[date] = pd.to_datetime(working[date])
         try:
-            if date_freq == 'D':
-                working['_date_group'] = working[date_col].dt.strftime('%Y-%m-%d')
+            if freq == 'D':
+                working['_date_group'] = working[date].dt.strftime('%Y-%m-%d')
             else:
-                working['_date_group'] = working[date_col].dt.to_period(date_freq).astype(str)
+                working['_date_group'] = working[date].dt.to_period(freq).astype(str)
         except Exception:
-            warnings.warn(f"无法识别 date_freq={date_freq}，已回退为按月分组")
-            working['_date_group'] = working[date_col].dt.to_period('M').astype(str)
+            warnings.warn(f"无法识别 freq={freq}，已回退为按月分组")
+            working['_date_group'] = working[date].dt.to_period('M').astype(str)
         dimensions.append('_date_group')
 
     if dimensions:
         if working is data:
             working = data.copy()
         working['_group_key'] = working[dimensions].astype(str).agg('_'.join, axis=1)
-        group_col = '_group_key'
+        partition_data = '_group_key'
     else:
-        group_col = None
+        partition_data = None
 
     group_order = []
     full_group_order = []
-    if group_col is not None:
-        groups = working[group_col].unique()
+    if partition_data is not None:
+        groups = working[partition_data].unique()
         if sort_by is not None and sort_by in working.columns:
-            full_group_order = working.groupby(group_col)[sort_by].first().sort_values(
+            full_group_order = working.groupby(partition_data)[sort_by].first().sort_values(
                 ascending=(sort_order == 'asc')
             ).index.tolist()
         else:
@@ -2355,19 +2357,19 @@ def _prepare_bin_trend_panels(
     )
 
     # 共享切分点依赖指定参考组，先完成这一步，再并行计算所有面板统计。
-    if shared_bins and group_col is not None and effective_rules is None:
+    if shared_bins and partition_data is not None and effective_rules is None:
         if str(shared_bins).lower() == 'first':
             ref_group = full_group_order[0] if full_group_order else None
         elif str(shared_bins).lower() == 'last':
             ref_group = full_group_order[-1] if full_group_order else None
         else:
-            group_sizes = working.groupby(group_col).size()
+            group_sizes = working.groupby(partition_data).size()
             ref_group = group_sizes.idxmax() if len(group_sizes) else None
 
         if ref_group is not None:
             from ..binning import OptimalBinning
 
-            ref_data = working[working[group_col] == ref_group]
+            ref_data = working[working[partition_data] == ref_group]
             valid = ~pd.isna(ref_data[target])
             X_ref = ref_data.loc[valid, feature]
             y_ref = ref_data.loc[valid, target]
@@ -2406,7 +2408,7 @@ def _prepare_bin_trend_panels(
         )
     ]
     for group_value in group_order:
-        group_frame = working.loc[working[group_col] == group_value, [feature, target]].copy()
+        group_frame = working.loc[working[partition_data] == group_value, [feature, target]].copy()
         tasks.append((group_value, group_frame, feature, target, stats_options))
 
     labels = [task[0] for task in tasks]
@@ -2552,13 +2554,15 @@ def _render_bin_trend_panels(
     return fig
 
 
+@binning_options
+@analysis_inputs('data', roles=('date', 'group'), multi_group=True)
 def bin_trend_plot(
     data: pd.DataFrame,
     feature: str,
     target: str,
-    dimension_cols: Optional[Union[str, List[str]]] = None,
-    date_col: Optional[str] = None,
-    date_freq: str = 'M',
+    group: Optional[Union[str, List[str]]] = None,
+    date: Optional[str] = None,
+    freq: str = 'M',
     method: str = 'quantile',
     max_n_bins: int = 10,
     min_bin_size: float = 0.02,
@@ -2581,7 +2585,7 @@ def bin_trend_plot(
     n_jobs=-1,
     parallel_backend=None,
     parallel_config=None,
-    **kwargs
+    bin_params=None, **kwargs
 ) -> plt.Figure:
     """绘制特征分箱风险趋势图.
 
@@ -2591,9 +2595,9 @@ def bin_trend_plot(
     :param data: 输入数据
     :param feature: 特征列名
     :param target: 目标变量列名（0/1）
-    :param dimension_cols: 维度列名（单维或多维），用于分组展示
-    :param date_col: 日期列名，如提供则按日期分组
-    :param date_freq: 日期聚合频率，'D'/'W'/'M'/'Q'，默认'M'
+    :param group: 维度列名（单维或多维），用于分组展示
+    :param date: 日期列名，如提供则按日期分组
+    :param freq: 日期聚合频率，'D'/'W'/'M'/'Q'，默认'M'
     :param method: 分箱方法，取值与 OptimalBinning.VALID_METHODS 一致（共17种），
         如 'quantile'/'uniform'/'cart' 等，默认 'quantile'
     :param max_n_bins: 最大分箱数，默认10
@@ -2628,18 +2632,18 @@ def bin_trend_plot(
 
     >>> # 按月份查看特征趋势
     >>> fig = bin_trend_plot(
-    ...     df, feature='age', target='bad', date_col='apply_date'
+    ...     df, feature='age', target='bad', date='apply_date'
     ... )
 
     >>> # 按客群维度查看
     >>> fig = bin_trend_plot(
-    ...     df, feature='score', target='bad', dimension_cols='customer_type'
+    ...     df, feature='score', target='bad', group='customer_type'
     ... )
 
     >>> # 多维度交叉
     >>> fig = bin_trend_plot(
     ...     df, feature='income', target='bad',
-    ...     dimension_cols=['region', 'channel']
+    ...     group=['region', 'channel']
     ... )
 
     >>> # 自定义分箱规则
@@ -2650,7 +2654,7 @@ def bin_trend_plot(
 
     >>> # 各分组使用第一个分组的切分点
     >>> fig = bin_trend_plot(
-    ...     df, feature='score', target='bad', date_col='apply_date',
+    ...     df, feature='score', target='bad', date='apply_date',
     ...     shared_bins='first'
     ... )
     """
@@ -2658,9 +2662,9 @@ def bin_trend_plot(
         data,
         feature,
         target,
-        dimension_cols=dimension_cols,
-        date_col=date_col,
-        date_freq=date_freq,
+        group=group,
+        date=date,
+        freq=freq,
         method=method,
         max_n_bins=max_n_bins,
         min_bin_size=min_bin_size,
@@ -2700,13 +2704,14 @@ def _prepare_bin_trend_feature_worker(task):
         return feature, None, exc
 
 
+@analysis_inputs('data', roles=('date', 'group'), multi_group=True)
 def batch_bin_trend_plot(
     data: pd.DataFrame,
     features: List[str],
     target: str,
-    dimension_cols: Optional[Union[str, List[str]]] = None,
-    date_col: Optional[str] = None,
-    date_freq: str = 'M',
+    group: Optional[Union[str, List[str]]] = None,
+    date: Optional[str] = None,
+    freq: str = 'M',
     sort_by: str = 'iv',
     max_features: int = 10,
     figsize_per_feature: Optional[tuple] = None,
@@ -2722,9 +2727,9 @@ def batch_bin_trend_plot(
     :param data: 输入数据
     :param features: 特征列表
     :param target: 目标变量列名
-    :param dimension_cols: 维度列名
-    :param date_col: 日期列名
-    :param date_freq: 日期聚合频率，``'D'`` 日 / ``'W'`` 周 / ``'M'`` 月 / ``'Q'`` 季度，默认 ``'M'``
+    :param group: 维度列名
+    :param date: 日期列名
+    :param freq: 日期聚合频率，``'D'`` 日 / ``'W'`` 周 / ``'M'`` 月 / ``'Q'`` 季度，默认 ``'M'``
     :param sort_by: 特征排序指标，``'iv'``（默认）/ ``'ks'`` / ``'auc'``，决定绘图先后顺序
     :param max_features: 最大绘制特征数，默认 10
     :param figsize_per_feature: 每个特征的图尺寸，默认 None（由 bin_trend_plot 按面板数量和方向自动计算，
@@ -2742,7 +2747,7 @@ def batch_bin_trend_plot(
     >>> from hscredit.core.viz import batch_bin_trend_plot
     >>> figs = batch_bin_trend_plot(
     ...     df, features=['score', 'age', 'income'], target='target',
-    ...     date_col='放款时间', date_freq='M', sort_by='iv', max_features=5,
+    ...     date='放款时间', freq='M', sort_by='iv', max_features=5,
     ... )
     >>> figs['score']   # 取单个特征的图
     """
@@ -2766,16 +2771,16 @@ def batch_bin_trend_plot(
     anchor = options.pop('anchor', None)
     explicit_save = options.pop('save', None)
 
-    if isinstance(dimension_cols, str):
-        dimension_names = [dimension_cols]
+    if isinstance(group, str):
+        dimension_names = [group]
     else:
-        dimension_names = list(dimension_cols or [])
-    shared_columns = list(dict.fromkeys([target, *dimension_names, *([date_col] if date_col else [])]))
+        dimension_names = list(group or [])
+    shared_columns = list(dict.fromkeys([target, *dimension_names, *([date] if date else [])]))
 
     prepare_options = dict(
-        dimension_cols=dimension_cols,
-        date_col=date_col,
-        date_freq=date_freq,
+        group=group,
+        date=date,
+        freq=freq,
         method=method,
         max_n_bins=max_n_bins,
         min_bin_size=min_bin_size,
@@ -2950,6 +2955,7 @@ def _overdue_bin_stats_worker(task):
         return label, pd.DataFrame(), exc
 
 
+@binning_options
 def bin_overdues_plot(
     data: Optional[pd.DataFrame] = None,
     feature: Optional[str] = None,
@@ -2972,8 +2978,9 @@ def bin_overdues_plot(
     parallel_config=None,
     del_grey: bool = False,
     *,
+    target: Optional[TargetInput] = None,
     overdue_operator: str = ">=",
-    **kwargs
+    dpi: int = 240, bin_params=None, **kwargs
 ) -> plt.Figure:
     """绘制多个逾期天数的分箱图（横向展示）.
 
@@ -3035,6 +3042,7 @@ def bin_overdues_plot(
         ``del_grey=True`` 时，``>`` 剔除 ``(0, dpd]``，``>=`` 剔除 ``(0, dpd)``；
         ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
     """
+    reject_legacy_target_keywords(kwargs)
     validate_overdue_operator(overdue_operator)
     if colors is None:
         colors = DEFAULT_COLORS
@@ -3119,24 +3127,15 @@ def bin_overdues_plot(
         _layout_top_center_legend(fig, legend, title=fig._suptitle, axes=list(axes[:n_plots]))
 
         if save:
-            save_figure(fig, save)
+            save_figure(fig, save, dpi=dpi)
 
         return fig
 
     # 原始数据模式
     if feature is None:
         raise ValueError("原始数据模式需要提供 feature 参数")
-    if overdue is None or dpds is None:
-        raise ValueError("原始数据模式需要提供 overdue 和 dpds 参数")
-
-    overdue = [overdue] if isinstance(overdue, str) else list(overdue)
-    dpds = normalize_dpd_values(dpds, deduplicate=False)
-    if len(overdue) != len(dpds):
-        raise ValueError("overdue 和 dpds 长度必须一致")
-    if len(overdue) == 0:
-        raise ValueError("overdue 和 dpds 不能为空")
-
-    n_plots = len(overdue)
+    data, targets = bind_targets(data, target, overdue, dpds, del_grey, overdue_operator, paired=True)
+    n_plots = len(targets)
 
     # 计算行列数
     n_cols = min(max_cols, n_plots)
@@ -3167,17 +3166,14 @@ def bin_overdues_plot(
             if _shared == 'first':
                 ref_idx = 0
             elif _shared == 'last':
-                ref_idx = len(overdue) - 1
+                ref_idx = len(targets) - 1
             else:  # 'max_samples' 或其他真值
                 valid_counts = []
-                for dpd_col, threshold in zip(overdue, dpds):
-                    y_tmp = make_overdue_target(data[dpd_col], threshold, del_grey, overdue_operator)
+                for y_tmp in targets.y_map(data).values():
                     valid_counts.append((~(pd.isna(data[feature]) | pd.isna(y_tmp))).sum())
                 ref_idx = int(np.argmax(valid_counts))
 
-            dpd_col = overdue[ref_idx]
-            threshold = dpds[ref_idx]
-            y = make_overdue_target(data[dpd_col], threshold, del_grey, overdue_operator)
+            y = data[targets.columns[ref_idx]]
             valid_mask = ~pd.isna(y)
             X_valid = data.loc[valid_mask, feature]
             y_valid = y[valid_mask]
@@ -3205,13 +3201,13 @@ def bin_overdues_plot(
     )
     tasks = []
     labels = []
-    for dpd_col, threshold in zip(overdue, dpds):
-        label = f"{dpd_col} ({overdue_operator} {threshold})"
-        target_values = make_overdue_target(data[dpd_col], threshold, del_grey, overdue_operator)
+    for name, definition in zip(targets.names(), targets.labels):
+        label = f"{definition.overdue} ({targets.operator} {definition.dpd})" if definition.overdue is not None else name
+        target_values = data[definition.column]
         tasks.append((label, data.loc[:, [feature]].copy(), target_values, feature, stats_options))
         labels.append(label)
 
-    data_columns = list(dict.fromkeys([feature, *overdue]))
+    data_columns = list(dict.fromkeys([feature, *targets.columns]))
     data_bytes = int(data.loc[:, data_columns].memory_usage(deep=True).sum())
     overdue_results = parallel_execute(
         _overdue_bin_stats_worker,
@@ -3276,7 +3272,7 @@ def bin_overdues_plot(
     _layout_top_center_legend(fig, legend, title=fig._suptitle, axes=list(axes[:n_plots]))
 
     if save:
-        save_figure(fig, save)
+        save_figure(fig, save, dpi=dpi)
 
     return fig
 
@@ -3586,6 +3582,8 @@ def _binned_ks_curve(bin_table: pd.DataFrame) -> pd.DataFrame:
     return pd.concat([origin, curve], ignore_index=True)
 
 
+@binning_options
+@analysis_inputs('data', roles=(), dimensions=2)
 def bin_2d_plot(
     data,
     features: Optional[List[str]] = None,
@@ -3601,7 +3599,11 @@ def bin_2d_plot(
     annot: bool = True,
     fontsize: int = 10,
     save: Optional[str] = None,
-    binner_kwargs: Optional[Dict] = None,
+    bin_params: Optional[Dict] = None,
+    x1=None,
+    x2=None,
+    dpi: int = 240,
+    **kwargs,
 ):
     """两个变量交叉分箱联合分析图（3×3 布局）.
 
@@ -3654,7 +3656,7 @@ def bin_2d_plot(
     :param annot: 热力图是否标注数值
     :param fontsize: 单元格字体大小
     :param save: 保存路径
-    :param binner_kwargs: 透传给 OptimalBinning2D 的其他参数（方式1）
+    :param bin_params: 透传给 OptimalBinning2D 的其他参数（方式1）
     :return: matplotlib Figure
 
     **参考样例**
@@ -3686,7 +3688,7 @@ def bin_2d_plot(
             raise ValueError("方式1需提供两个特征名: features=['特征1', '特征2']")
         if target is None:
             raise ValueError("方式1需提供 target（目标列名或数组）")
-        _kw = dict(binner_kwargs or {})
+        _kw = dict(kwargs)
         b2d = OptimalBinning2D(
             method=_kw.pop('method', method),
             max_n_bins=_kw.pop('max_n_bins', max_n_bins),
@@ -3934,5 +3936,5 @@ def bin_2d_plot(
     ax_prop.set_ylabel(f'特征1：{feat_x}', fontsize=fontsize + 3, color=axis_color,
                        fontweight='semibold', labelpad=12)
 
-    save_figure(fig, save)
+    save_figure(fig, save, dpi=dpi)
     return fig

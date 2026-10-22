@@ -58,7 +58,7 @@ def _target_policy_selector(kind, **options):
     if kind is selectors.RegexSelector:
         kwargs["pattern"] = "甲|乙"
     if kind is selectors.CorrSelector:
-        kwargs.update(weights={"甲": 2, "乙": 1}, binning_params=None)
+        kwargs.update(weights={"甲": 2, "乙": 1}, bin_params=None)
     if kind is selectors.StepwiseSelector:
         kwargs.update(estimator="ols", max_features=2)
     if kind is CompositeFeatureSelector:

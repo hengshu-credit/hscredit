@@ -34,7 +34,7 @@ def test_feature_summaries_keep_target_specific_totals_by_customer_group():
         data,
         feature="特征",
         methods="quantile",
-        group_col="客群",
+        group="客群",
         overdue="MOB1",
         dpds=[1, 3],
         del_grey=True,

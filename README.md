@@ -210,11 +210,11 @@ display(category_table)
 ```python
 monthly_tables, monthly_summary = feature_group_binning_summary(
     df, feature=features, methods=["quantile", "cart"],
-    date_col="放款时间", freq="M", target="FPD",
+    date="放款时间", freq="M", target="FPD",
     max_n_bins=4, margins=True, random_state=42, n_jobs=1,
 )
 category_tables, category_summary = feature_group_binning_summary(
-    df, feature=features, methods="quantile", group_col="商品类别", target="FPD",
+    df, feature=features, methods="quantile", group="商品类别", target="FPD",
     max_n_bins=4, margins=True, n_jobs=1,
 )
 display(monthly_summary)
@@ -286,8 +286,8 @@ for grouped_result in (monthly_tables, category_tables):
 
 ```python
 efficiency = feature_efficiency_analysis(
-    df, feature="衡枢鉴真分老客版", target="FPD", auto_method="quantile",
-    max_n_bins=4, date_col="放款时间", margins=True, n_jobs=1,
+    df, feature="衡枢鉴真分老客版", target="FPD", method="quantile",
+    max_n_bins=4, date="放款时间", margins=True, n_jobs=1,
     trend_kwargs={"n_jobs": 1}, output_dir=str(ASSET_DIR / "efficiency"),
 )
 display(efficiency["manual_table"])
@@ -367,7 +367,7 @@ display(figure)
 
 ```python
 figure = bin_trend_plot(
-    df, feature="衡枢鉴真分老客版", target="FPD", date_col="放款时间",
+    df, feature="衡枢鉴真分老客版", target="FPD", date="放款时间",
     method="quantile", max_n_bins=4, n_jobs=1,
     save=str(ASSET_DIR / "bin-trend.png"),
 )
@@ -415,7 +415,7 @@ display(figure)
 ```python
 summary = df.summary(
     features=features + ["商品类别"], y="FPD",
-    max_n_bins=4, psi_method="date_col", psi_date_col="放款时间", n_jobs=1,
+    max_n_bins=4, psi_method="date", date="放款时间", n_jobs=1,
 )
 display(summary)
 ```
@@ -829,7 +829,7 @@ prior_rule = Rule("商品类别 == '礼包'", name="存量商品规则")
 combined_rule = ((risk_score & high_multi) | phone_multi) & ~whitelist
 
 rule_report = combined_rule.report(
-    df, target="FPD", overdue=["MOB1"], dpds=[7, 3, 0],
+    df, overdue=["MOB1"], dpds=[7, 3, 0],
     prior_rules=prior_rule, amount="放款金额", margins=True, n_jobs=1,
 )
 display(rule_report)
@@ -947,8 +947,8 @@ strategy_writer = swap_out_report(
     df,
     rules=[risk_score, high_multi, phone_multi],
     background="比较衡枢风险分、近六个月多头和手机号近期多头规则的覆盖与风险表现。",
-    target="FPD", overdue=["MOB1"], dpds=[7, 3, 0],
-    amount="放款金额", date_col="放款时间", freq="M",
+    overdue=["MOB1"], dpds=[7, 3, 0],
+    amount="放款金额", date="放款时间", freq="M",
     features=features, methods="quantile",
     bin_params={"max_n_bins": 4},
     current_pass_rate=0.70, n_jobs=1,
@@ -1566,3 +1566,5 @@ pytest tests/ -m "not slow and not integration"
 </details>
 
 本项目采用 [MIT License](LICENSE)。
+
+分析参数的统一命名、数据输入与迁移说明见 [分析参数约定](docs/analysis_parameters.md)。

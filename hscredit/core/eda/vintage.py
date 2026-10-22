@@ -15,19 +15,23 @@ import warnings
 from typing import List, Dict, Optional, Union
 
 from .utils import validate_dataframe, validate_binary_target
+from ...utils.targets import reject_legacy_target_keywords
 
 
-def vintage_analysis(df: pd.DataFrame,
-                    vintage_col: str,
-                    mob_col: str,
-                    target_col: str,
-                    max_mob: int = 12,
-                    *, entity_col: Optional[str] = None,
-                    input_mode: str = "legacy",
-                    label_mode: Optional[str] = None,
-                    observation_end=None,
-                    cohort_sizes: Optional[Dict] = None,
-                    exposure_col: Optional[str] = None) -> pd.DataFrame:
+def vintage_analysis(
+    df: pd.DataFrame,
+    vintage_col: str,
+    mob_col: str,
+    target: str,
+    max_mob: int = 12,
+    *,
+    entity_col: Optional[str] = None,
+    input_mode: str = "legacy",
+    label_mode: Optional[str] = None,
+    observation_end=None,
+    cohort_sizes: Optional[Dict] = None,
+    exposure_col: Optional[str] = None
+) -> pd.DataFrame:
     """Vintage账龄分析.
     
     追踪不同放款批次（Vintage）随账龄（MOB）的风险表现变化
@@ -35,7 +39,7 @@ def vintage_analysis(df: pd.DataFrame,
     :param df: 输入数据
     :param vintage_col: Vintage批次列（如放款月份）
     :param mob_col: 账龄列（Month on Book）
-    :param target_col: 目标变量列（如是否逾期）
+    :param target: 目标变量列（如是否逾期）
     :param max_mob: 最大账龄
     :param entity_col: 显式 panel/snapshot/event 模式所需的唯一账户或合同字段
     :param input_mode: legacy 保留旧累计行口径（不是账户面板）；panel 为账户×MOB；
@@ -53,14 +57,14 @@ def vintage_analysis(df: pd.DataFrame,
     >>> vintage = vintage_analysis(df, 'issue_month', 'mob', 'ever_dpd30', max_mob=12)
     >>> print(vintage.pivot(index='MOB', columns='Vintage批次', values='累积坏账率(%)'))
     """
-    validate_dataframe(df, required_cols=[vintage_col, mob_col, target_col], check_empty=input_mode != "event")
-    validate_binary_target(df[target_col])
+    validate_dataframe(df, required_cols=[vintage_col, mob_col, target], check_empty=input_mode != "event")
+    validate_binary_target(df[target])
     if isinstance(max_mob, bool) or not isinstance(max_mob, (int, np.integer)) or max_mob < 0:
         raise ValueError("max_mob 必须为非负整数")
     if input_mode not in {"legacy", "panel", "snapshot", "event"}:
         raise ValueError("input_mode 必须为 legacy、panel、snapshot 或 event")
     if input_mode != "legacy":
-        return _explicit_vintage(df, vintage_col, mob_col, target_col, max_mob,
+        return _explicit_vintage(df, vintage_col, mob_col, target, max_mob,
                                  entity_col, input_mode, label_mode, observation_end, cohort_sizes, exposure_col)
     if entity_col is not None or observation_end is not None or cohort_sizes is not None or label_mode is not None or exposure_col is not None:
         raise ValueError("指定账户、标签或成熟度口径时必须显式选择 input_mode，不能混用 legacy")
@@ -68,7 +72,7 @@ def vintage_analysis(df: pd.DataFrame,
     
     # 按Vintage和MOB汇总
     grouped = df.groupby([vintage_col, mob_col]).agg({
-        target_col: ['count', 'sum']
+        target: ['count', 'sum']
     }).reset_index()
     
     grouped.columns = ['Vintage批次', 'MOB', '开户数', '坏账户数']
@@ -215,17 +219,15 @@ def _explicit_vintage(df, vintage_col, mob_col, target_col, max_mob, entity_col,
     return result
 
 
-def vintage_summary(df: pd.DataFrame,
-                   vintage_col: str,
-                   mob_col: str,
-                   target_col: str,
-                   max_mob: int = 12, **kwargs) -> pd.DataFrame:
+def vintage_summary(
+    df: pd.DataFrame, vintage_col: str, mob_col: str, target: str, max_mob: int = 12, **kwargs
+) -> pd.DataFrame:
     """Vintage汇总统计.
     
     :param df: 输入数据
     :param vintage_col: Vintage批次列
     :param mob_col: 账龄列
-    :param target_col: 目标变量列
+    :param target: 目标变量列
     :param max_mob: 最大账龄
     :return: Vintage汇总DataFrame
     
@@ -234,7 +236,8 @@ def vintage_summary(df: pd.DataFrame,
     >>> summary = vintage_summary(df, 'issue_month', 'mob', 'ever_dpd30')
     >>> print(summary[['Vintage批次', '总开户数', f'MOB{max_mob}坏账率']])
     """
-    vintage_df = vintage_analysis(df, vintage_col, mob_col, target_col, max_mob, **kwargs)
+    reject_legacy_target_keywords(kwargs)
+    vintage_df = vintage_analysis(df, vintage_col, mob_col, target, max_mob, **kwargs)
     
     if vintage_df.empty:
         return pd.DataFrame()
@@ -268,9 +271,7 @@ def vintage_summary(df: pd.DataFrame,
     return pd.DataFrame(results)
 
 
-def roll_rate_analysis(df: pd.DataFrame,
-                      overdue_cols: List[str],
-                      labels: List[str] = None) -> pd.DataFrame:
+def roll_rate_analysis(df: pd.DataFrame, overdue_cols: List[str], labels: List[str] = None) -> pd.DataFrame:
     """滚动率分析.
     
     分析不同逾期状态之间的转化情况

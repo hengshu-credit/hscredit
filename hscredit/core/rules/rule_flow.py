@@ -1,5 +1,7 @@
 """生产规则流转一致性校验."""
 
+from hscredit.utils.arguments import analysis_inputs
+
 import copy
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
@@ -70,8 +72,8 @@ class RuleFlow(ParallelizableMixin):
     >>> from hscredit.core.rules import Rule, RuleFlow
     >>> flow = RuleFlow([Rule("score < 500", name="低分"), Rule("cnt > 5", name="多头")])
     >>> result = flow.predict(data)
-    >>> report = flow.report(data, date_col="放款时间", freq="M", group_cols="商品类别")
-    >>> summary = flow.summary(data, group_cols="商品类别")
+    >>> report = flow.report(data, date="放款时间", freq="M", group="商品类别")
+    >>> summary = flow.summary(data, group="商品类别")
     """
 
     _SERIAL_MODES = {"serial", "sequential", "串行"}
@@ -465,32 +467,32 @@ class RuleFlow(ParallelizableMixin):
     def _group_slices(
         self,
         data: DataFrame,
-        date_col: Optional[str],
+        date: Optional[str],
         freq: str,
-        group_cols: Optional[Union[str, Sequence[str]]],
+        group: Optional[Union[str, Sequence[str]]],
         dropna: bool,
     ) -> List[Tuple[Dict[str, object], pd.Index]]:
         group_keys: Dict[str, pd.Series] = {}
 
-        if date_col is not None:
-            if date_col not in data.columns:
-                raise ValueError(f"数据集缺少日期列: {date_col}")
-            parsed = pd.to_datetime(data[date_col], errors="coerce")
+        if date is not None:
+            if date not in data.columns:
+                raise ValueError(f"数据集缺少日期列: {date}")
+            parsed = pd.to_datetime(data[date], errors="coerce")
             try:
                 period = parsed.dt.to_period(freq).astype(str)
             except ValueError as exc:
                 raise ValueError(f"freq={freq!r} 无法转换为 pandas Period 频率") from exc
             group_keys["统计周期"] = period.where(parsed.notna(), other=np.nan)
 
-        if group_cols is not None:
-            if isinstance(group_cols, str):
-                group_cols = [group_cols]
+        if group is not None:
+            if isinstance(group, str):
+                group = [group]
             else:
-                group_cols = list(group_cols)
-            missing = [col for col in group_cols if col not in data.columns]
+                group = list(group)
+            missing = [col for col in group if col not in data.columns]
             if missing:
                 raise ValueError(f"数据集缺少分组字段列: {missing}")
-            for col in group_cols:
+            for col in group:
                 group_keys[col] = data[col]
 
         if not group_keys:
@@ -509,11 +511,11 @@ class RuleFlow(ParallelizableMixin):
         slices = []
         group_names = list(groups.columns)
         grouped = groups.groupby(group_names, sort=True, dropna=False)
-        for values, group in grouped:
+        for values, partition_data in grouped:
             if not isinstance(values, tuple):
                 values = (values,)
             prefix = dict(zip(group_names, values))
-            slices.append((prefix, group.index))
+            slices.append((prefix, partition_data.index))
         return slices
 
     @staticmethod
@@ -521,12 +523,12 @@ class RuleFlow(ParallelizableMixin):
         return numerator / denominator if denominator else 0.0
 
     @staticmethod
-    def _group_key_names(date_col: Optional[str], group_cols: Optional[Union[str, Sequence[str]]]) -> List[str]:
+    def _group_key_names(date: Optional[str], group: Optional[Union[str, Sequence[str]]]) -> List[str]:
         group_names = []
-        if date_col is not None:
+        if date is not None:
             group_names.append("统计周期")
-        if group_cols is not None:
-            group_names.extend([group_cols] if isinstance(group_cols, str) else list(group_cols))
+        if group is not None:
+            group_names.extend([group] if isinstance(group, str) else list(group))
         return group_names
 
     def _report_one(self, data: DataFrame) -> pd.DataFrame:
@@ -587,27 +589,28 @@ class RuleFlow(ParallelizableMixin):
             ]
         )
 
+    @analysis_inputs('data', roles=('date', 'group'), multi_group=True)
     def report(
         self,
         data: DataFrame,
-        date_col: Optional[str] = None,
+        date: Optional[str] = None,
         freq: str = "M",
-        group_cols: Optional[Union[str, Sequence[str]]] = None,
+        group: Optional[Union[str, Sequence[str]]] = None,
         dropna: bool = True,
     ) -> pd.DataFrame:
         """输出每条规则的流转命中报表。
 
         :param data: 生产拼表后的变量取值明细
-        :param date_col: 日期列名，传入后按 ``freq`` 生成 ``统计周期`` 分组
+        :param date: 日期列名，传入后按 ``freq`` 生成 ``统计周期`` 分组
         :param freq: pandas Period 频率，默认 ``"M"`` 月
-        :param group_cols: 类别分组字段，支持单列或多列；可与 ``date_col`` 同时使用
+        :param group: 类别分组字段，支持单列或多列；可与 ``date`` 同时使用
         :param dropna: 是否丢弃分组字段缺失样本，默认为 True；False 时归入 ``"缺失"``
         :return: 规则级流转命中报表
         """
         self._validate_data(data)
         rows = []
-        group_names = self._group_key_names(date_col, group_cols)
-        slices = self._group_slices(data, date_col, freq, group_cols, dropna)
+        group_names = self._group_key_names(date, group)
+        slices = self._group_slices(data, date, freq, group, dropna)
         if self.mode == "parallel":
             tasks = ((copy.deepcopy(self), data.loc[index], prefix) for prefix, index in slices)
             slice_tables = self._parallel_execute(
@@ -668,12 +671,13 @@ class RuleFlow(ParallelizableMixin):
             row = {"统计类型": row_type, **row}
         return row
 
+    @analysis_inputs('data', roles=('date', 'group'), multi_group=True)
     def summary(
         self,
         data: DataFrame,
-        date_col: Optional[str] = None,
+        date: Optional[str] = None,
         freq: str = "M",
-        group_cols: Optional[Union[str, Sequence[str]]] = None,
+        group: Optional[Union[str, Sequence[str]]] = None,
         dropna: bool = True,
     ) -> pd.DataFrame:
         """输出规则集整体通过与命中汇总。
@@ -682,8 +686,8 @@ class RuleFlow(ParallelizableMixin):
         """
         self._validate_data(data)
         rows = []
-        group_names = self._group_key_names(date_col, group_cols)
-        slices = self._group_slices(data, date_col, freq, group_cols, dropna)
+        group_names = self._group_key_names(date, group)
+        slices = self._group_slices(data, date, freq, group, dropna)
         if self.mode == "parallel":
             tasks = ((copy.deepcopy(self), data.loc[index], prefix) for prefix, index in slices)
             rows.extend(

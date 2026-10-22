@@ -255,7 +255,7 @@ def test_byte_budget_changes_history_not_selection(xy, kind):
     X, y = xy
     kwargs = {"n_jobs": 1}
     if kind is CorrSelector:
-        kwargs.update(weights={name: 1 for name in X.columns}, binning_params=None)
+        kwargs.update(weights={name: 1 for name in X.columns}, bin_params=None)
     elif kind is FeatureImportanceSelector:
         kwargs.update(estimator=LogisticRegression(), threshold=2)
     elif kind is NullImportanceSelector:

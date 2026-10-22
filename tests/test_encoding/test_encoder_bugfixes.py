@@ -36,10 +36,10 @@ def test_woe_export_load_roundtrip_numeric_string_categories():
     X = pd.DataFrame({"code": ["100", "200", "100", "300", "200", "300"]})
     y = pd.Series([0, 1, 0, 1, 1, 0])
 
-    enc = WOEEncoder(cols=["code"]).fit(X, y)
+    enc = WOEEncoder(features=["code"]).fit(X, y)
     before = enc.transform(X.copy())["code"].round(8).tolist()
 
-    enc2 = WOEEncoder(cols=["code"]).load(enc.export())
+    enc2 = WOEEncoder(features=["code"]).load(enc.export())
     after = enc2.transform(X.copy())["code"].round(8).tolist()
 
     assert before == after
@@ -50,10 +50,10 @@ def test_woe_export_load_roundtrip_numeric_categories():
     X = pd.DataFrame({"age_bin": [1, 2, 1, 3, 2, 3]})
     y = pd.Series([0, 1, 0, 1, 1, 0])
 
-    enc = WOEEncoder(cols=["age_bin"]).fit(X, y)
+    enc = WOEEncoder(features=["age_bin"]).fit(X, y)
     before = enc.transform(X.copy())["age_bin"].round(8).tolist()
 
-    enc2 = WOEEncoder(cols=["age_bin"]).load(enc.export())
+    enc2 = WOEEncoder(features=["age_bin"]).load(enc.export())
     after = enc2.transform(X.copy())["age_bin"].round(8).tolist()
 
     assert before == after
@@ -63,8 +63,8 @@ def test_woe_unknown_still_handled_after_load():
     """load 后未知类别仍按 handle_unknown='value' 编码为 0.0。"""
     X = pd.DataFrame({"city": ["A", "B", "A", "C"]})
     y = pd.Series([0, 1, 0, 1])
-    enc = WOEEncoder(cols=["city"]).fit(X, y)
-    enc2 = WOEEncoder(cols=["city"]).load(enc.export())
+    enc = WOEEncoder(features=["city"]).fit(X, y)
+    enc2 = WOEEncoder(features=["city"]).load(enc.export())
 
     out = enc2.transform(pd.DataFrame({"city": ["__new__"]}))["city"].tolist()
     assert out == [0.0]
@@ -74,7 +74,7 @@ def test_encoder_sets_sklearn_input_feature_attributes():
     """编码器 fit 后应提供 sklearn 兼容的输入特征元数据。"""
     X = pd.DataFrame({"city": ["A", "B", "A", "C"], "channel": ["app", "web", "app", "api"]})
     y = pd.Series([0, 1, 0, 1])
-    enc = WOEEncoder(cols=["city"]).fit(X, y)
+    enc = WOEEncoder(features=["city"]).fit(X, y)
 
     assert enc.n_features_in_ == X.shape[1]
     np.testing.assert_array_equal(enc.feature_names_in_, X.columns.to_numpy(dtype=object))
@@ -87,7 +87,7 @@ def test_encoder_sets_sklearn_input_feature_attributes():
 def test_mixed_type_categories_no_crash(cls):
     """类别同时含 int 与 str 时不再因 sorted 抛 TypeError。"""
     X = pd.DataFrame({"mix": [1, "a", 2, "b", 1]})
-    out = cls(cols=["mix"]).fit_transform(X)
+    out = cls(features=["mix"]).fit_transform(X)
     assert len(out) == len(X)
 
 
@@ -107,7 +107,7 @@ def test_woe_load_update_on_fresh_encoder():
 # --------------------------------------------------------------------------- #
 def test_import_mapping_keeps_dict_contract():
     X = pd.DataFrame({"city": ["A", "B", "A", "C", "B"]})
-    enc = OrdinalEncoder(cols=["city"]).fit(X)
+    enc = OrdinalEncoder(features=["city"]).fit(X)
     assert isinstance(enc.mapping_["city"], dict)
 
     enc2 = OrdinalEncoder()
@@ -124,7 +124,7 @@ def test_target_encoder_noise_independent_across_columns():
     """相同输入的两列，加噪后不应得到完全相同的序列（噪声应各列独立）。"""
     X = pd.DataFrame({"c1": ["A", "B", "A", "C", "B"], "c2": ["A", "B", "A", "C", "B"]})
     y = pd.Series([0, 1, 0, 1, 1])
-    enc = TargetEncoder(cols=["c1", "c2"], noise=0.1, random_state=42)
+    enc = TargetEncoder(features=["c1", "c2"], noise=0.1, random_state=42)
     enc.fit(X, y)
     out = enc.transform(X.copy(), y)
     assert not np.allclose(out["c1"], out["c2"])
@@ -137,7 +137,7 @@ def test_handle_missing_error_raises_on_fit():
     X = pd.DataFrame({"city": ["A", np.nan, "B", "A"]})
     y = pd.Series([0, 1, 0, 1])
     with pytest.raises(ValueError):
-        WOEEncoder(cols=["city"], handle_missing="error").fit(X, y)
+        WOEEncoder(features=["city"], handle_missing="error").fit(X, y)
 
 
 # --------------------------------------------------------------------------- #
@@ -147,14 +147,14 @@ def test_handle_missing_error_raises_on_fit():
 def test_get_mapping_unknown_col_raises_feature_not_found(cls):
     X = pd.DataFrame({"city": ["A", "B", "A", "C"]})
     y = pd.Series([0, 1, 0, 1])
-    enc = cls(cols=["city"])
+    enc = cls(features=["city"])
     enc.fit(X, y) if cls in (WOEEncoder, TargetEncoder) else enc.fit(X)
     with pytest.raises(FeatureNotFoundError):
         enc.get_mapping("not_a_col")
 
 
 def test_get_mapping_before_fit_raises_not_fitted():
-    enc = OrdinalEncoder(cols=["city"])
+    enc = OrdinalEncoder(features=["city"])
     with pytest.raises(NotFittedError):
         enc.get_mapping("city")
 
@@ -166,7 +166,7 @@ def test_get_mapping_before_fit_raises_not_fitted():
 def test_inverse_transform_unsupported_raises_not_implemented(cls):
     X = pd.DataFrame({"city": ["A", "B", "A"]})
     y = pd.Series([0, 1, 0])
-    enc = cls(cols=["city"]).fit(X, y)
+    enc = cls(features=["city"]).fit(X, y)
     with pytest.raises(NotImplementedError):
         enc.inverse_transform(enc.transform(X.copy()))
 
@@ -178,8 +178,8 @@ def test_import_mapping_restores_global_mean_for_unknown_fill():
     """Target/CatBoost/Quantile：import 后未知类别须用真实全局均值填充，而非 0。"""
     X = pd.DataFrame({"city": ["A", "B", "A", "C", "B"]})
     y = pd.Series([0, 1, 0, 1, 1])
-    enc = TargetEncoder(cols=["city"]).fit(X, y)
-    enc2 = TargetEncoder(cols=["city"])
+    enc = TargetEncoder(features=["city"]).fit(X, y)
+    enc2 = TargetEncoder(features=["city"])
     enc2.import_mapping(enc.export_mapping())
 
     unknown = pd.DataFrame({"city": ["__unseen__"]})
@@ -192,7 +192,7 @@ def test_import_mapping_restores_global_mean_for_unknown_fill():
 def test_import_mapping_restores_onehot_categories():
     """OneHot：import 后 transform 须仍生成完整独热列。"""
     X = pd.DataFrame({"city": ["A", "B", "A", "C", "B"]})
-    enc = OneHotEncoder(cols=["city"]).fit(X)
+    enc = OneHotEncoder(features=["city"]).fit(X)
     enc2 = OneHotEncoder()
     enc2.import_mapping(enc.export_mapping())
 

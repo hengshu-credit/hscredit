@@ -50,7 +50,7 @@ def test_probability_scorecard_proba_only_scoring_report_and_roundtrip(tmp_path)
     assert np.all(np.isfinite(scores))
     assert scores[0] > scores[-1]
 
-    report = card.report(scores=scores, y=y, n_bins=3)
+    report = card.report(scores=scores, y=y, max_n_bins=3)
     assert {'评分区间', '样本数', '坏样本率', 'KS'}.issubset(report.columns)
 
     path = tmp_path / 'probability_scorecard.pkl'
@@ -63,7 +63,7 @@ def test_probability_scorecard_report_keeps_single_bin_for_constant_scores():
     card = ProbabilityScoreCard(model=None, decimal=2)
     card.fit(proba=[0.1, 0.1, 0.1])
 
-    report = card.report(scores=np.array([600.0, 600.0, 600.0]), y=np.array([0, 1, 0]), n_bins=5)
+    report = card.report(scores=np.array([600.0, 600.0, 600.0]), y=np.array([0, 1, 0]), max_n_bins=5)
 
     assert len(report) == 1
     assert report.loc[0, '评分区间'] == '[600.00, 600.00]'

@@ -127,7 +127,7 @@ def test_fit_feature_names_accepts_str_and_overrides_constructor(
     feature_data, factory, state_attribute, feature_names, expected
 ):
     """fit 的 feature_names 若未覆盖构造配置，最终仍会使用构造器中的 score 字段。"""
-    miner = factory(features=["score"]).fit(feature_data, feature_names=feature_names)
+    miner = factory(features=["score"]).fit(feature_data, features=feature_names)
 
     assert getattr(miner, state_attribute) == expected
 

@@ -10,6 +10,8 @@ Siddiqi, N. (2006). *Credit Risk Scorecards.* Wiley；单变量 AUC 见
 Fawcett, T. (2006). *An introduction to ROC analysis.* Pattern Recognition Letters。
 """
 
+from hscredit.utils.arguments import analysis_inputs
+
 import numpy as np
 import pandas as pd
 from typing import Any, List, Dict, Optional, Union
@@ -23,9 +25,9 @@ _NESTED_BINNING_METHODS = frozenset({"genetic", "or_tools", "cp_sat"})
 
 def _batch_iv_worker(task):
     """计算单个特征 IV，并保留批量接口原有的容错行。"""
-    feature_df, feature, target, n_bins, method = task
+    feature_df, feature, target, max_n_bins, method = task
     try:
-        result = iv_analysis(feature_df, feature, target, n_bins, method)
+        result = iv_analysis(feature_df, feature, target, max_n_bins, method)
         return (
             {
                 "特征名": result["特征名"],
@@ -61,7 +63,7 @@ def _feature_importance_worker(task):
 def iv_analysis(df: pd.DataFrame,
                 feature: str,
                 target: str,
-                n_bins: int = 10,
+                max_n_bins: int = 10,
                 method: str = 'quantile') -> Dict[str, Union[str, float, pd.DataFrame]]:
     """单变量IV分析.
     
@@ -70,7 +72,7 @@ def iv_analysis(df: pd.DataFrame,
     :param df: 输入数据
     :param feature: 特征名
     :param target: 目标变量名
-    :param n_bins: 分箱数
+    :param max_n_bins: 分箱数
     :param method: 分箱方法，取值同 :class:`~hscredit.core.binning.OptimalBinning`
         （如 ``'quantile'`` 等频、``'tree'`` 决策树、``'chi'`` 卡方、``'mdlp'`` 信息论、
         ``'best_iv'`` 最优IV 等），默认 ``'quantile'``
@@ -89,7 +91,7 @@ def iv_analysis(df: pd.DataFrame,
     from ..metrics import iv_table
     
     # 计算IV表
-    iv_df = iv_table(df[target], df[feature], method=method, max_n_bins=n_bins)
+    iv_df = iv_table(df[target], df[feature], method=method, max_n_bins=max_n_bins)
     
     # 计算总IV
     iv_value = iv_df['分档IV值'].sum()
@@ -103,10 +105,11 @@ def iv_analysis(df: pd.DataFrame,
     }
 
 
+@analysis_inputs('df', roles=())
 def batch_iv_analysis(df: pd.DataFrame,
                      features: List[str],
                      target: str,
-                     n_bins: int = 10,
+                     max_n_bins: int = 10,
                      method: str = 'quantile',
                      return_details: bool = False,
                      n_jobs=-1,
@@ -119,7 +122,7 @@ def batch_iv_analysis(df: pd.DataFrame,
     :param df: 输入数据
     :param features: 特征列表
     :param target: 目标变量名
-    :param n_bins: 分箱数
+    :param max_n_bins: 分箱数
     :param method: 分箱方法，取值同 :class:`~hscredit.core.binning.OptimalBinning`
         （如 ``'quantile'`` 等频、``'tree'`` 决策树、``'chi'`` 卡方、``'mdlp'`` 信息论、
         ``'best_iv'`` 最优IV 等），默认 ``'quantile'``
@@ -138,7 +141,7 @@ def batch_iv_analysis(df: pd.DataFrame,
 
     def iter_tasks():
         for feature in valid_features:
-            yield (df.loc[:, [feature, target]], feature, target, n_bins, method)
+            yield (df.loc[:, [feature, target]], feature, target, max_n_bins, method)
 
     has_parallel_children = method.strip().lower() in _NESTED_BINNING_METHODS
     analyzed = parallel_execute(
@@ -177,7 +180,7 @@ def batch_iv_analysis(df: pd.DataFrame,
 def woe_analysis(df: pd.DataFrame,
                 feature: str,
                 target: str,
-                n_bins: int = 10,
+                max_n_bins: int = 10,
                 method: str = 'quantile') -> pd.DataFrame:
     """WOE分箱分析.
     
@@ -186,7 +189,7 @@ def woe_analysis(df: pd.DataFrame,
     :param df: 输入数据
     :param feature: 特征名
     :param target: 目标变量名
-    :param n_bins: 分箱数
+    :param max_n_bins: 分箱数
     :param method: 分箱方法，取值同 :class:`~hscredit.core.binning.OptimalBinning`
         （如 ``'quantile'`` 等频、``'tree'`` 决策树、``'chi'`` 卡方、``'mdlp'`` 信息论、
         ``'best_iv'`` 最优IV 等），默认 ``'quantile'``
@@ -204,7 +207,7 @@ def woe_analysis(df: pd.DataFrame,
     from ..metrics import iv_table
     
     # 计算IV表（包含WOE值）
-    iv_df = iv_table(df[target], df[feature], method=method, max_n_bins=n_bins)
+    iv_df = iv_table(df[target], df[feature], method=method, max_n_bins=max_n_bins)
     
     # 选择关键列并重命名
     result = iv_df[['分箱标签', '样本总数', '好样本数', '坏样本数', 
@@ -222,7 +225,7 @@ def woe_analysis(df: pd.DataFrame,
 def binning_bad_rate(df: pd.DataFrame,
                     feature: str,
                     target: str,
-                    n_bins: int = 10,
+                    max_n_bins: int = 10,
                     method: str = 'quantile') -> pd.DataFrame:
     """分箱逾期率分析.
     
@@ -231,7 +234,7 @@ def binning_bad_rate(df: pd.DataFrame,
     :param df: 输入数据
     :param feature: 特征名
     :param target: 目标变量名
-    :param n_bins: 分箱数
+    :param max_n_bins: 分箱数
     :param method: 分箱方法，取值同 :class:`~hscredit.core.binning.OptimalBinning`
         （如 ``'quantile'`` 等频、``'tree'`` 决策树、``'chi'`` 卡方、``'mdlp'`` 信息论、
         ``'best_iv'`` 最优IV 等），默认 ``'quantile'``
@@ -239,7 +242,7 @@ def binning_bad_rate(df: pd.DataFrame,
     
     **参考样例**
 
-    >>> bin_df = binning_bad_rate(df, 'score', 'fpd15', n_bins=10)
+    >>> bin_df = binning_bad_rate(df, 'score', 'fpd15', max_n_bins=10)
     >>> print(bin_df[['分箱', '样本数', '逾期率', 'LIFT值']])
     """
     validate_dataframe(df, required_cols=[feature, target])
@@ -256,7 +259,7 @@ def binning_bad_rate(df: pd.DataFrame,
     
     # 分箱 - 使用DataFrame保持列名一致性
     X_df = X.to_frame(name=feature)
-    binner = OptimalBinning(method=method, max_n_bins=n_bins, verbose=False)
+    binner = OptimalBinning(method=method, max_n_bins=max_n_bins, verbose=False)
     binner.fit(X_df, y.values)
     bins = binner.transform(X_df, metric='indices')
     
@@ -277,7 +280,7 @@ def binning_bad_rate(df: pd.DataFrame,
 def monotonicity_check(df: pd.DataFrame,
                       feature: str,
                       target: str,
-                      n_bins: int = 10) -> Dict[str, Union[str, float]]:
+                      max_n_bins: int = 10) -> Dict[str, Union[str, float]]:
     """单调性检验.
     
     检查特征分箱后的逾期率是否单调变化
@@ -285,7 +288,7 @@ def monotonicity_check(df: pd.DataFrame,
     :param df: 输入数据
     :param feature: 特征名
     :param target: 目标变量名
-    :param n_bins: 分箱数
+    :param max_n_bins: 分箱数
     :return: 单调性检验结果
     
     **参考样例**
@@ -297,7 +300,7 @@ def monotonicity_check(df: pd.DataFrame,
     validate_binary_target(df[target])
     
     # 获取分箱统计
-    bin_stats = binning_bad_rate(df, feature, target, n_bins)
+    bin_stats = binning_bad_rate(df, feature, target, max_n_bins)
     
     if len(bin_stats) < 3:
         return {
@@ -387,6 +390,7 @@ def univariate_auc(df: pd.DataFrame,
     }
 
 
+@analysis_inputs('df', roles=())
 def feature_importance_ranking(df: pd.DataFrame,
                               features: List[str],
                               target: str,

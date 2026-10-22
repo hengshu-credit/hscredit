@@ -160,7 +160,7 @@ class BaseRuleMiner(ParallelizableMixin, BaseEstimator, ABC):
         self,
         X: Union[pd.DataFrame, np.ndarray],
         y: Optional[Union[pd.Series, np.ndarray]] = None,
-        feature_names: FeatureNames = None,
+        features: FeatureNames = None,
     ) -> Tuple[pd.DataFrame, Optional[pd.Series]]:
         """检查并处理输入数据.
         
@@ -171,7 +171,7 @@ class BaseRuleMiner(ParallelizableMixin, BaseEstimator, ABC):
         
         :param X: 输入数据
         :param y: 目标变量（可选）
-        :param feature_names: 本次拟合使用的字段，优先于构造参数 ``features``
+        :param features: 本次拟合使用的字段，优先于构造参数 ``features``
         :return: (处理后的X, y)
         """
         # 转换为DataFrame
@@ -186,8 +186,8 @@ class BaseRuleMiner(ParallelizableMixin, BaseEstimator, ABC):
             if col in X.columns:
                 X = X.drop(columns=[col])
 
-        requested = feature_names if feature_names is not None else self.features
-        parameter_name = "feature_names" if feature_names is not None else "features"
+        requested = features if features is not None else self.features
+        parameter_name = "features" if features is not None else "features"
         selected = normalize_feature_names(requested, parameter_name)
         if selected is not None:
             check_features_valid(X, selected)

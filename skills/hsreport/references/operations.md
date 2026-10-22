@@ -56,9 +56,9 @@
 }
 ```
 
-显式 `y`、`target`、`overdue+dpds` 的优先级继续由 hscredit 决定。不要在 Skill 层重新生成预测或标签。
+`target` 与 `overdue+dpds` 互斥；模型报告显式 `y` 保留优先级。不要在 Skill 层重新生成预测或标签。
 
-通过逾期配置生成标签时，摘要返回 `overdue_operator`、`label_combinations` 和 `label_datasets`。比较符取模型报告的最终配置，显式参数优先于 `target` 字典；`label_datasets` 只包含实际生成逾期标签的数据集，排除显式提供外部 `y` 的数据集。
+通过逾期配置生成标签时，摘要返回 `overdue_operator`、`label_combinations` 和 `label_datasets`。比较符取模型报告的最终配置，比较符由独立参数指定，`target` 字典仅用于自定义标签；`label_datasets` 只包含实际生成逾期标签的数据集，排除显式提供外部 `y` 的数据集。
 
 ## swap_out_report
 
@@ -78,7 +78,7 @@
     "target": "target",
     "features": ["score", "age"],
     "amount": "amount",
-    "date_col": "apply_date",
+    "date": "apply_date",
     "methods": "quantile",
     "n_jobs": 1
   },
@@ -95,3 +95,5 @@
 - 输出参数不允许出现在 `parameters`。
 - 请求不能指定安装包、包索引、Git URL、Python 文件或 shell 命令。
 - 大表只返回摘要和受限预览，完整结果留在 Excel。
+
+自定义标签使用 `target=列名/Series/ndarray/list/callable/{标签名: 数据或callable}`。CLI 可通过 `inputs.target` 或字典值 `{"input": "输入名"}` 引用对象；lambda 通过同进程 object_ref 提供，不执行代码字符串。`del_grey=True` 剔除非 0/1 值，否则按负样本 0 计算。旧 `target_col`、`dpd` 和逾期配置字典已移除。

@@ -1,6 +1,9 @@
 """hscredit 其余 Skills 的统一、白名单化操作适配器。"""
 
+
 from __future__ import annotations
+
+from .binning import _target_parameters, _overdue_summary
 
 import inspect
 from collections import OrderedDict
@@ -203,7 +206,15 @@ def _rule_objects(value):
 def _rule_report(context) -> dict:
     data = _data(context)
     params = dict(context.request.parameters)
+    params = _target_parameters(context, params)
     rules = _rule_objects(params.pop("rules"))
+    from ...utils.targets import bind_targets
+
+    data, targets = bind_targets(
+        data, params.get("target"), params.pop("overdue", None), params.pop("dpds", None),
+        params.get("del_grey", False), params.get("overdue_operator", ">"), default_target="target",
+    )
+    params["target"] = targets
     reports = {rule.name or f"规则{i + 1}": rule.report(data, **params) for i, rule in enumerate(rules)}
     _write_tables(context, reports)
     return {"summary": {"rules": len(rules), "rows": len(data)}}
@@ -213,6 +224,7 @@ def _ruleset_analysis(context) -> dict:
     from hscredit.report import ruleset_analysis
 
     params = dict(context.request.parameters)
+    params = _target_parameters(context, params)
     rules = _rule_objects(params.pop("rules"))
     table = ruleset_analysis(_data(context), rules, **params)
     _write_table(context, table, "规则集分析")
@@ -223,6 +235,7 @@ def _rule_swap_analysis(context) -> dict:
     from hscredit.report import rule_swap_analysis
 
     params = dict(context.request.parameters)
+    params = _target_parameters(context, params)
     for key in ("rules_in", "rules_out", "rules_base"):
         if key in params:
             params[key] = _rule_objects(params[key])
@@ -372,9 +385,21 @@ def _viz_plot(context) -> dict:
 
     function = getattr(viz, plot_name)
     kwargs = dict(params.pop("kwargs", {}))
-    for key, spec in context.request.inputs.items():
-        kwargs[key] = context.resolver.resolve(spec)
     signature = inspect.signature(function)
+
+    def target_references(value):
+        if isinstance(value, Mapping):
+            if set(value) == {"input"}:
+                return {value["input"]}
+            return set().union(*(target_references(item) for item in value.values()))
+        return set()
+
+    references = set().union(*(target_references(kwargs.get(name)) for name in ("target", "date", "group", "amount")))
+    for key, spec in context.request.inputs.items():
+        if key in ("target", "date", "group", "amount") or (key in references and key not in signature.parameters):
+            continue
+        kwargs[key] = context.resolver.resolve(spec)
+    kwargs = _target_parameters(context, kwargs)
     fmt = (context.request.output.format or "png").lower()
     if fmt not in {"png", "svg"}:
         raise SkillExecutionError(code="SCHEMA_INVALID", message="图片格式只支持 png 或 svg", field="output.format")
@@ -397,7 +422,12 @@ def _viz_plot(context) -> dict:
             figure.savefig(child, format=fmt, bbox_inches="tight")
             context.artifacts.publish(child, f"{context.request.output.name}-{key}.{fmt}", artifact_type="image")
         plt.close(figure)
-    return {"summary": {"plot": plot_name, "format": fmt, "figures": len(figures)}}
+    operator_parameter = signature.parameters.get("overdue_operator")
+    label_summary = {} if kwargs.get("bin_table") is not None else _overdue_summary(
+        kwargs, default_operator=operator_parameter.default if operator_parameter else ">",
+        paired=plot_name in {"bin_overdues_plot", "distribution_plot"},
+    )
+    return {"summary": {"plot": plot_name, "format": fmt, "figures": len(figures), **label_summary}}
 
 
 def register_viz_operations(registry) -> None:

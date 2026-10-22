@@ -14,10 +14,12 @@
         actual=prod_df,
         features=['age', 'income', 'credit_score'],
         target_col='fpd15',
-        date_col='apply_month',
+        date='apply_month',
         output='客群偏移监控报告.xlsx',
     )
 """
+
+from hscredit.utils.arguments import analysis_inputs
 
 import numpy as np
 import pandas as pd
@@ -32,29 +34,29 @@ from ..core.metrics import compute_bin_stats
 
 def _population_feature_task(task):
     """计算单个特征的 PSI、分布和可选坏样本率表。"""
-    expected, actual, feature, target_col, n_bins, window, baseline = task
+    expected, actual, feature, target_col, max_n_bins, window, baseline = task
     expected_values = expected[feature]
     actual_values = actual[feature]
     result = baseline.evaluate(actual_values)
     psi_value = result['PSI']
-    distribution = _feature_distribution_compare(expected_values, actual_values, feature, n_bins, baseline=baseline)
+    distribution = _feature_distribution_compare(expected_values, actual_values, feature, max_n_bins, baseline=baseline)
     badrate = None
     if target_col and target_col in expected.columns and target_col in actual.columns:
-        badrate = _badrate_compare(expected, actual, feature, target_col, n_bins, baseline=baseline)
+        badrate = _badrate_compare(expected, actual, feature, target_col, max_n_bins, baseline=baseline)
     return feature, window, psi_value, distribution, badrate
 
 
+@analysis_inputs('actual', roles=('date',))
 def population_drift(
     expected: pd.DataFrame,
     actual: pd.DataFrame,
     features: List[str],
-    target_col: Optional[str] = None,
-    date_col: Optional[str] = None,
+    target: Optional[str] = None,
+    date: Optional[str] = None,
     score_col: Optional[str] = None,
-    n_bins: int = 10,
+    max_n_bins: int = 10,
     output: str = "客群偏移监控报告.xlsx",
     *,
-    target: Optional[str] = None,
     n_jobs=-1,
     parallel_backend=None,
     parallel_config=None,
@@ -70,12 +72,12 @@ def population_drift(
     :param expected: 基准数据集（如训练集）
     :param actual: 实际/监控数据集（如生产数据）
     :param features: 监控特征列表
-    :param target_col: 目标变量列名（如有，则生成逾期率对比Sheet）
-    :param date_col: 时间列名（如有，用于按时间拆分实际数据）
+    :param target: 目标变量列名（如有，则生成逾期率对比Sheet）
+    :param date: 时间列名（如有，用于按时间拆分实际数据）
     :param score_col: 评分列名（如有，则生成评分分布Sheet）
-    :param n_bins: 分箱数
+    :param max_n_bins: 分箱数
     :param output: 输出文件路径
-    :param target: target_col 的别名
+    :param target: target 的别名
     :return: 输出文件路径（即 ``output``）
 
     **参考样例**
@@ -88,30 +90,29 @@ def population_drift(
     >>> population_drift(
     ...     train_df, prod_df,
     ...     features=['score', 'age'],
-    ...     target_col='FPD',
+    ...     target='FPD',
     ...     score_col='model_score',
     ...     output='客群偏移监控报告.xlsx',
     ... )
     """
-    target_col = target or target_col
 
     valid_features = [feature for feature in features if feature in expected.columns and feature in actual.columns]
     windows = [(None, actual)]
-    if date_col is not None:
-        if date_col not in actual.columns:
-            raise ValidationError(f"实际数据集缺少日期列: {date_col}")
-        parsed_dates = pd.to_datetime(actual[date_col], errors="coerce")
-        invalid_mask = actual[date_col].notna() & parsed_dates.isna()
+    if date is not None:
+        if date not in actual.columns:
+            raise ValidationError(f"实际数据集缺少日期列: {date}")
+        parsed_dates = pd.to_datetime(actual[date], errors="coerce")
+        invalid_mask = actual[date].notna() & parsed_dates.isna()
         if invalid_mask.any():
-            raise ValidationError(f"日期列 {date_col} 包含无效日期")
+            raise ValidationError(f"日期列 {date} 包含无效日期")
         if not parsed_dates.notna().any():
-            raise ValidationError(f"日期列 {date_col} 没有有效日期")
+            raise ValidationError(f"日期列 {date} 没有有效日期")
         periods = parsed_dates.dt.to_period("M")
         ordered_periods = sorted(periods.dropna().unique())
         windows = [(str(period), actual.loc[periods == period].copy()) for period in ordered_periods]
 
-    baselines = {feature: MonitoringBaseline(max_n_bins=n_bins).fit(expected[feature]) for feature in valid_features}
-    tasks = [(expected, window_data, feature, target_col, n_bins, window, baselines[feature])
+    baselines = {feature: MonitoringBaseline(max_n_bins=max_n_bins).fit(expected[feature]) for feature in valid_features}
+    tasks = [(expected, window_data, feature, target, max_n_bins, window, baselines[feature])
              for feature in valid_features for window, window_data in windows]
     feature_results = parallel_execute(
         _population_feature_task,
@@ -143,19 +144,19 @@ def population_drift(
             "PSI": round(psi_val, 4),
             "稳定性": _psi_rating(psi_val),
         }
-        if date_col is not None:
+        if date is not None:
             row["时间窗口"] = window
             row = {"特征名": row["特征名"], "时间窗口": row["时间窗口"], "PSI": row["PSI"], "稳定性": row["稳定性"]}
         psi_rows.append(row)
     psi_df = pd.DataFrame(psi_rows)
-    if not psi_df.empty and date_col is None:
+    if not psi_df.empty and date is None:
         psi_df = psi_df.sort_values("PSI", ascending=False).reset_index(drop=True)
     dataframe2excel(psi_df, writer, sheet_name="PSI总览")
 
     # ---------- Sheet 2: 特征分布对比 ----------
     dist_rows = []
     for _, window, _, detail, _ in feature_results:
-        if date_col is not None and not detail.empty:
+        if date is not None and not detail.empty:
             detail = detail.copy()
             detail.insert(1, "时间窗口", window)
         dist_rows.append(detail)
@@ -164,11 +165,11 @@ def population_drift(
         dataframe2excel(dist_df, writer, sheet_name="特征分布对比")
 
     # ---------- Sheet 3: 逾期率对比 (可选) ----------
-    if target_col and target_col in expected.columns and target_col in actual.columns:
+    if target and target in expected.columns and target in actual.columns:
         br_rows = []
         for _, window, _, _, br_detail in feature_results:
             if br_detail is not None:
-                if date_col is not None and not br_detail.empty:
+                if date is not None and not br_detail.empty:
                     br_detail = br_detail.copy()
                     br_detail.insert(1, "时间窗口", window)
                 br_rows.append(br_detail)
@@ -195,7 +196,7 @@ _PSI_EPSILON = 1e-6
 def _build_numeric_bin_edges(
     expected: pd.Series,
     actual: pd.Series,
-    n_bins: int,
+    max_n_bins: int,
 ) -> Optional[np.ndarray]:
     """为两个数值序列构建统一的分箱边界。"""
     try:
@@ -208,7 +209,7 @@ def _build_numeric_bin_edges(
         return None
 
     try:
-        bin_count = max(int(n_bins), 1)
+        bin_count = max(int(max_n_bins), 1)
     except (TypeError, ValueError):
         bin_count = 10
 
@@ -245,9 +246,9 @@ def _format_bin_labels(breakpoints: np.ndarray) -> List[str]:
     return labels
 
 
-def _calc_psi(expected: pd.Series, actual: pd.Series, n_bins: int = 10) -> float:
+def _calc_psi(expected: pd.Series, actual: pd.Series, max_n_bins: int = 10) -> float:
     """计算 PSI."""
-    return MonitoringBaseline(max_n_bins=n_bins).fit(expected).evaluate(actual)['PSI']
+    return MonitoringBaseline(max_n_bins=max_n_bins).fit(expected).evaluate(actual)['PSI']
 
 
 def _psi_rating(psi: float) -> str:
@@ -261,9 +262,9 @@ def _psi_rating(psi: float) -> str:
         return "显著漂移"
 
 
-def _feature_distribution_compare(expected: pd.Series, actual: pd.Series, feat_name: str, n_bins: int, baseline=None) -> pd.DataFrame:
+def _feature_distribution_compare(expected: pd.Series, actual: pd.Series, feat_name: str, max_n_bins: int, baseline=None) -> pd.DataFrame:
     """对比单特征在两个数据集的分箱分布."""
-    baseline = baseline or MonitoringBaseline(max_n_bins=n_bins).fit(expected)
+    baseline = baseline or MonitoringBaseline(max_n_bins=max_n_bins).fit(expected)
     result = baseline.evaluate(actual)
     table = result['分箱明细']
     exp_pct = table['期望占比'].to_numpy()
@@ -287,11 +288,11 @@ def _badrate_compare(
     actual: pd.DataFrame,
     feat: str,
     target_col: str,
-    n_bins: int,
+    max_n_bins: int,
     baseline=None,
 ) -> pd.DataFrame:
     """对比单特征分箱下的逾期率差异."""
-    baseline = baseline or MonitoringBaseline(max_n_bins=n_bins).fit(expected[feat])
+    baseline = baseline or MonitoringBaseline(max_n_bins=max_n_bins).fit(expected[feat])
     def rates(frame):
         valid = frame[target_col].notna()
         if not valid.any():

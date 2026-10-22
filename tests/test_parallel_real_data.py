@@ -121,9 +121,9 @@ def test_real_selector_exact_across_backends(yyp_data, backend):
 def test_real_encoder_exact_across_backends(yyp_data, backend):
     """真实商品类别的映射、列顺序、dtype 与编码值完全一致。"""
     inputs = yyp_data[[CATEGORY, FEATURES[0]]]
-    serial = WOEEncoder(cols=[CATEGORY], regularization=1.0, n_jobs=1).fit(inputs, yyp_data[TARGET])
+    serial = WOEEncoder(features=[CATEGORY], regularization=1.0, n_jobs=1).fit(inputs, yyp_data[TARGET])
     parallel = WOEEncoder(
-        cols=[CATEGORY], regularization=1.0, n_jobs=2, parallel_backend=backend
+        features=[CATEGORY], regularization=1.0, n_jobs=2, parallel_backend=backend
     ).fit(inputs, yyp_data[TARGET])
 
     _assert_nested_value_exact(serial.export_mapping(), parallel.export_mapping())
@@ -153,8 +153,8 @@ def test_real_rule_analysis_exact_across_backends(yyp_data, backend):
     )
     _assert_frame_exact(serial, parallel)
 
-    # API 约定 date_col 与 group_col 互斥，因此分别覆盖月份和商品类别两种分组。
-    for grouping in ({"date_col": DATE, "freq": "M"}, {"group_col": CATEGORY}):
+    # API 约定 date 与 group 互斥，因此分别覆盖月份和商品类别两种分组。
+    for grouping in ({"date": DATE, "freq": "M"}, {"group": CATEGORY}):
         serial_group = rule_group_compare(
             yyp_data,
             _real_rules()[0],
@@ -253,7 +253,7 @@ def _model_report(model, data, n_jobs, backend=None):
     return ModelReport(
         model,
         datasets=datasets,
-        feature_names=FEATURES,
+        features=FEATURES,
         overdue=OVERDUE,
         dpds=DPDS,
         n_jobs=n_jobs,
@@ -273,6 +273,6 @@ def test_real_model_report_exact_across_backends(yyp_data, yyp_model, backend):
     for label in serial._label_names:
         _assert_frame_exact(serial.get_metrics(label=label), parallel.get_metrics(label=label))
     _assert_frame_exact(
-        serial.get_bin_table(max_n_bins=5, amount_col=AMOUNT, labels=serial._label_names),
-        parallel.get_bin_table(max_n_bins=5, amount_col=AMOUNT, labels=parallel._label_names),
+        serial.get_bin_table(max_n_bins=5, amount=AMOUNT, labels=serial._label_names),
+        parallel.get_bin_table(max_n_bins=5, amount=AMOUNT, labels=parallel._label_names),
     )

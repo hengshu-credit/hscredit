@@ -4,13 +4,17 @@
 专注于金融风控场景.
 """
 
+from hscredit.utils.arguments import analysis_inputs
+
+from ...utils.targets import TargetInput, bind_targets
+
 import numpy as np
 import pandas as pd
 from typing import List, Dict, Optional, Union, Tuple
 
 from ...utils.input_utils import normalize_dpd_values
 from ...utils.overdue import make_overdue_target, overdue_label, validate_overdue_operator
-from .utils import validate_dataframe, validate_binary_target, safe_divide
+from .utils import validate_dataframe
 
 
 def _build_overdue_labels(overdue: Union[str, List[str]],
@@ -55,12 +59,11 @@ def _create_binary_target(df: pd.DataFrame,
     return make_overdue_target(df[overdue_col], dpd, del_grey, overdue_operator)
 
 
-def target_distribution(df: pd.DataFrame,
-                       target_col: str) -> pd.DataFrame:
+def target_distribution(df: pd.DataFrame, target: str) -> pd.DataFrame:
     """目标变量分布统计.
     
     :param df: 输入数据
-    :param target_col: 目标变量列名
+    :param target: 目标变量列名
     :return: 目标分布DataFrame，列包括[类别, 样本数, 占比, 累计占比]
     
     **参考样例**
@@ -71,40 +74,32 @@ def target_distribution(df: pd.DataFrame,
     0   0    8500   85.00      85.00
     1   1    1500   15.00     100.00
     """
-    validate_dataframe(df, required_cols=[target_col])
-    
-    value_counts = df[target_col].value_counts().sort_index()
-    total = len(df)
-    
-    results = []
-    cumsum = 0
-    
-    for value, count in value_counts.items():
-        ratio = count / total * 100
-        cumsum += ratio
-        results.append({
-            '类别': value,
-            '样本数': int(count),
-            '占比(%)': round(ratio, 2),
-            '累计占比(%)': round(cumsum, 2),
-        })
-    
-    return pd.DataFrame(results)
+
+    frame, targets = bind_targets(df, target=target)
+    results = {}
+    for name, values in targets.y_map(frame).items():
+        counts = values.value_counts().sort_index()
+        ratios = counts / counts.sum() * 100
+        results[name] = pd.DataFrame({"类别": counts.index, "样本数": counts.values,
+                                      "占比(%)": ratios.round(2).values, "累计占比(%)": ratios.cumsum().round(2).values})
+    return results if len(results) > 1 else next(iter(results.values()))
 
 
-def bad_rate_overall(df: pd.DataFrame,
-                    target_col: Optional[str] = None,
-                    overdue: Optional[Union[str, List[str]]] = None,
-                    dpds: Optional[Union[int, List[int]]] = None,
-                    del_grey: bool = False,
-                    *,
-                    target: Optional[str] = None, overdue_operator: str = ">") -> Union[Dict, pd.DataFrame]:
+def bad_rate_overall(
+    df: pd.DataFrame,
+    target: Optional[TargetInput] = None,
+    overdue: Optional[Union[str, List[str]]] = None,
+    dpds: Optional[Union[int, List[int]]] = None,
+    del_grey: bool = False,
+    *,
+    overdue_operator: str = ">"
+) -> Union[Dict, pd.DataFrame]:
     """计算整体逾期率.
     
-    支持单标签分析（通过target_col）或多标签分析（通过overdue+dpds）。
+    支持单标签分析（通过target）或多标签分析（通过overdue+dpds）。
     
     :param df: 输入数据
-    :param target_col: 目标变量列名（单标签模式）
+    :param target: 目标变量列名（单标签模式）
     :param overdue: 逾期天数字段名或列表，如 'MOB1' 或 ['MOB1', 'MOB3']
     :param dpds: 逾期定义天数或列表，如 7 或 [0, 7, 30]
         - 默认逾期天数 > dpds 为坏样本(1)，可通过 overdue_operator 修改比较符
@@ -114,7 +109,7 @@ def bad_rate_overall(df: pd.DataFrame,
     **参考样例**
 
     >>> # 单标签分析
-    >>> result = bad_rate_overall(df, target_col='fpd15')
+    >>> result = bad_rate_overall(df, target='fpd15')
     >>> print(result)
     {'样本总数': 10000, '好样本数': 8500, '坏样本数': 1500, '逾期率(%)': 15.0}
 
@@ -130,80 +125,39 @@ def bad_rate_overall(df: pd.DataFrame,
         ``del_grey=True`` 时，``>`` 剔除 ``(0, dpd]``，``>=`` 剔除 ``(0, dpd)``；
         ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
     """
-    validate_overdue_operator(overdue_operator)
-    del_grey = del_grey and overdue_operator in (">", ">=")
-    target_col = target or target_col
+
     validate_dataframe(df)
-    
-    # 单标签模式
-    if target_col is not None and overdue is None:
-        validate_binary_target(df[target_col])
-        total = len(df)
-        bad_count = df[target_col].sum()
-        good_count = total - bad_count
-        bad_rate = bad_count / total * 100
-        
-        return {
-            '样本总数': int(total),
-            '好样本数': int(good_count),
-            '坏样本数': int(bad_count),
-            '逾期率(%)': round(bad_rate, 2),
-        }
-    
-    # 多标签模式
-    if overdue is None or dpds is None:
-        raise ValueError("必须指定 target_col 或 (overdue + dpds)")
-    
-    labels = _build_overdue_labels(overdue, dpds, overdue_operator=overdue_operator)
-    results = []
-    
-    for label_name, dpd, od_field in labels:
-        target = _create_binary_target(df, od_field, dpd, del_grey, overdue_operator=overdue_operator)
-        valid_mask = target.notna()
-        
-        total = valid_mask.sum()
-        if total == 0:
-            results.append({
-                '标签': label_name,
-                '样本总数': 0,
-                '好样本数': 0,
-                '坏样本数': 0,
-                '逾期率(%)': np.nan,
-            })
-            continue
-        
-        bad_count = target[valid_mask].sum()
-        good_count = total - bad_count
-        bad_rate = bad_count / total * 100
-        
-        results.append({
-            '标签': label_name,
-            '样本总数': int(total),
-            '好样本数': int(good_count),
-            '坏样本数': int(bad_count),
-            '逾期率(%)': round(bad_rate, 2),
-        })
-    
-    return pd.DataFrame(results)
+    frame, targets = bind_targets(df, target, overdue, dpds, del_grey, overdue_operator)
+    rows = []
+    for name, values in targets.y_map(frame, "plain").items():
+        valid = values.dropna()
+        total, bad = len(valid), int(valid.sum())
+        rows.append({"标签": name, "样本总数": total, "好样本数": total - bad,
+                     "坏样本数": bad, "逾期率(%)": round(bad / total * 100, 2) if total else np.nan})
+    if targets.mode == "target" and not targets.explicit_multi and len(targets) == 1:
+        return {key: value for key, value in rows[0].items() if key != "标签"}
+    return pd.DataFrame(rows)
 
 
-def bad_rate_by_dimension(df: pd.DataFrame,
-                         dim_col: str = None,
-                         target_col: Optional[str] = None,
-                         overdue: Optional[Union[str, List[str]]] = None,
-                         dpds: Optional[Union[int, List[int]]] = None,
-                         del_grey: bool = False,
-                         sort_by: str = 'bad_rate',
-                         *,
-                         target: Optional[str] = None,
-                         segment_col: Optional[str] = None, overdue_operator: str = ">") -> Union[pd.DataFrame, Dict[str, pd.DataFrame]]:
+def bad_rate_by_dimension(
+    df: pd.DataFrame,
+    dim_col: str = None,
+    target: Optional[TargetInput] = None,
+    overdue: Optional[Union[str, List[str]]] = None,
+    dpds: Optional[Union[int, List[int]]] = None,
+    del_grey: bool = False,
+    sort_by: str = "bad_rate",
+    *,
+    segment_col: Optional[str] = None,
+    overdue_operator: str = ">"
+) -> Union[pd.DataFrame, Dict[str, pd.DataFrame]]:
     """分维度逾期率分析.
     
     支持单标签或多标签分析。
     
     :param df: 输入数据
     :param dim_col: 维度列名（如渠道、产品类型）
-    :param target_col: 目标变量列名（单标签模式）
+    :param target: 目标变量列名（单标签模式）
     :param overdue: 逾期天数字段名或列表
     :param dpds: 逾期定义天数或列表
     :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本；``<``、``<=`` 下不剔除。
@@ -213,7 +167,7 @@ def bad_rate_by_dimension(df: pd.DataFrame,
     **参考样例**
 
     >>> # 单标签
-    >>> result = bad_rate_by_dimension(df, 'channel', target_col='fpd15')
+    >>> result = bad_rate_by_dimension(df, 'channel', target='fpd15')
 
     >>> # 多标签
     >>> result = bad_rate_by_dimension(df, 'channel', overdue='MOB1', dpds=[7, 30])
@@ -224,93 +178,45 @@ def bad_rate_by_dimension(df: pd.DataFrame,
         ``del_grey=True`` 时，``>`` 剔除 ``(0, dpd]``，``>=`` 剔除 ``(0, dpd)``；
         ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
     """
-    validate_overdue_operator(overdue_operator)
-    del_grey = del_grey and overdue_operator in (">", ">=")
-    target_col = target or target_col
+
     dim_col = segment_col or dim_col
     if dim_col is None:
         raise ValueError("必须指定 dim_col 或 segment_col 参数")
     validate_dataframe(df, required_cols=[dim_col])
-    
-    # 单标签模式
-    if target_col is not None and overdue is None:
-        validate_binary_target(df[target_col])
-        total = len(df)
-        
-        grouped = df.groupby(dim_col).agg({
-            target_col: ['count', 'sum', 'mean']
-        }).reset_index()
-        
-        grouped.columns = ['维度值', '样本数', '坏样本数', '逾期率']
-        grouped['好样本数'] = grouped['样本数'] - grouped['坏样本数']
-        grouped['逾期率(%)'] = (grouped['逾期率'] * 100).round(2)
-        grouped['样本占比(%)'] = (grouped['样本数'] / total * 100).round(2)
-        
-        grouped = grouped.drop('逾期率', axis=1)
-        
-        if sort_by == 'bad_rate':
-            grouped = grouped.sort_values('逾期率(%)', ascending=False)
-        else:
-            grouped = grouped.sort_values('样本数', ascending=False)
-        
-        return grouped.reset_index(drop=True)
-    
-    # 多标签模式
-    if overdue is None or dpds is None:
-        raise ValueError("必须指定 target_col 或 (overdue + dpds)")
-    
-    labels = _build_overdue_labels(overdue, dpds, overdue_operator=overdue_operator)
+    frame, targets = bind_targets(df, target, overdue, dpds, del_grey, overdue_operator)
     results = {}
-    
-    for label_name, dpd, od_field in labels:
-        target = _create_binary_target(df, od_field, dpd, del_grey, overdue_operator=overdue_operator)
-        valid_mask = target.notna()
-        
-        df_valid = df[valid_mask].copy()
-        df_valid['_target'] = target[valid_mask]
-        
-        total = len(df_valid)
-        if total == 0:
-            results[label_name] = pd.DataFrame()
-            continue
-        
-        grouped = df_valid.groupby(dim_col).agg({
-            '_target': ['count', 'sum', 'mean']
-        }).reset_index()
-        
-        grouped.columns = ['维度值', '样本数', '坏样本数', '逾期率']
-        grouped['好样本数'] = grouped['样本数'] - grouped['坏样本数']
-        grouped['逾期率(%)'] = (grouped['逾期率'] * 100).round(2)
-        grouped['样本占比(%)'] = (grouped['样本数'] / total * 100).round(2)
-        grouped = grouped.drop('逾期率', axis=1)
-        
-        if sort_by == 'bad_rate':
-            grouped = grouped.sort_values('逾期率(%)', ascending=False)
-        else:
-            grouped = grouped.sort_values('样本数', ascending=False)
-        
-        results[label_name] = grouped.reset_index(drop=True)
-    
-    return results if len(results) > 1 else list(results.values())[0]
+    for name, definition in zip(targets.names("plain"), targets.labels):
+        valid = frame.loc[frame[definition.column].notna()]
+        grouped = valid.groupby(dim_col)[definition.column].agg(["count", "sum", "mean"]).reset_index()
+        grouped.columns = ["维度值", "样本数", "坏样本数", "逾期率"]
+        grouped["好样本数"] = grouped["样本数"] - grouped["坏样本数"]
+        grouped["逾期率(%)"] = (grouped.pop("逾期率") * 100).round(2)
+        grouped["样本占比(%)"] = (grouped["样本数"] / len(valid) * 100).round(2) if len(valid) else np.nan
+        grouped = grouped.sort_values("逾期率(%)" if sort_by == "bad_rate" else "样本数", ascending=False)
+        results[name] = grouped.reset_index(drop=True)
+    return results if len(results) > 1 else next(iter(results.values()))
 
 
-def bad_rate_trend(df: pd.DataFrame,
-                  date_col: str,
-                  target_col: Optional[str] = None,
-                  overdue: Optional[Union[str, List[str]]] = None,
-                  dpds: Optional[Union[int, List[int]]] = None,
-                  del_grey: bool = False,
-                  freq: str = 'M',
-                  dimensions: Optional[List[str]] = None,
-                  *,
-                  target: Optional[str] = None, overdue_operator: str = ">") -> Union[pd.DataFrame, Dict[str, pd.DataFrame]]:
+@analysis_inputs('df', roles=('date',))
+def bad_rate_trend(
+    df: pd.DataFrame,
+    date: str,
+    target: Optional[TargetInput] = None,
+    overdue: Optional[Union[str, List[str]]] = None,
+    dpds: Optional[Union[int, List[int]]] = None,
+    del_grey: bool = False,
+    freq: str = "M",
+    dimensions: Optional[List[str]] = None,
+    *,
+    overdue_operator: str = ">"
+) -> Union[pd.DataFrame, Dict[str, pd.DataFrame]]:
     """逾期率时间趋势分析.
     
     支持单标签或多标签分析。
     
     :param df: 输入数据
-    :param date_col: 日期列名
-    :param target_col: 目标变量列名（单标签模式）
+    :param date: 日期列名
+    :param target: 目标变量列名（单标签模式）
     :param overdue: 逾期天数字段名或列表
     :param dpds: 逾期定义天数或列表
     :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本；``<``、``<=`` 下不剔除。
@@ -321,7 +227,7 @@ def bad_rate_trend(df: pd.DataFrame,
     **参考样例**
 
     >>> # 单标签
-    >>> trend = bad_rate_trend(df, 'apply_date', target_col='fpd15', freq='M')
+    >>> trend = bad_rate_trend(df, 'apply_date', target='fpd15', freq='M')
 
     >>> # 多标签
     >>> trend = bad_rate_trend(df, 'apply_date', overdue=['MOB1', 'MOB3'], dpds=30, freq='M')
@@ -332,116 +238,57 @@ def bad_rate_trend(df: pd.DataFrame,
         ``del_grey=True`` 时，``>`` 剔除 ``(0, dpd]``，``>=`` 剔除 ``(0, dpd)``；
         ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
     """
-    validate_overdue_operator(overdue_operator)
-    del_grey = del_grey and overdue_operator in (">", ">=")
-    target_col = target or target_col
-    validate_dataframe(df, required_cols=[date_col])
-    
-    # 确保日期格式正确
-    df = df.copy()
-    df[date_col] = pd.to_datetime(df[date_col])
-    
-    # 创建时间周期
-    period_col = '时间周期'
-    if freq == 'D':
-        df[period_col] = df[date_col].dt.date
-    elif freq == 'W':
-        df[period_col] = df[date_col].dt.to_period('W').astype(str)
-    elif freq == 'M':
-        df[period_col] = df[date_col].dt.to_period('M').astype(str)
-    elif freq == 'Q':
-        df[period_col] = df[date_col].dt.to_period('Q').astype(str)
-    else:
+
+    validate_dataframe(df, required_cols=[date])
+    frame, targets = bind_targets(df, target, overdue, dpds, del_grey, overdue_operator)
+    if freq not in ("D", "W", "M", "Q"):
         raise ValueError("freq必须是'D'/'W'/'M'/'Q'之一")
-    
-    # 单标签模式
-    if target_col is not None and overdue is None:
-        validate_binary_target(df[target_col])
-        
-        grouped = df.groupby(period_col).agg({
-            target_col: ['count', 'sum', 'mean']
-        }).reset_index()
-        grouped.columns = [period_col, '样本数', '坏样本数', '逾期率']
-        grouped['好样本数'] = grouped['样本数'] - grouped['坏样本数']
-        grouped['逾期率(%)'] = (grouped['逾期率'] * 100).round(2)
-        
-        # 计算环比变化
-        grouped['环比变化(%)'] = grouped['逾期率(%)'].diff().round(2)
-        
-        # 计算同比变化（如果数据跨度足够）
-        if len(grouped) > 12:
-            grouped['同比变化(%)'] = (grouped['逾期率(%)'] - 
-                                     grouped['逾期率(%)'].shift(12)).round(2)
-        
-        return grouped[[period_col, '样本数', '好样本数', '坏样本数', 
-                       '逾期率(%)', '环比变化(%)']].reset_index(drop=True)
-    
-    # 多标签模式
-    if overdue is None or dpds is None:
-        raise ValueError("必须指定 target_col 或 (overdue + dpds)")
-    
-    labels = _build_overdue_labels(overdue, dpds, overdue_operator=overdue_operator)
+    dates = pd.to_datetime(frame[date])
+    periods = dates.dt.date if freq == "D" else dates.dt.to_period(freq).astype(str)
     results = {}
-    
-    for label_name, dpd, od_field in labels:
-        target = _create_binary_target(df, od_field, dpd, del_grey, overdue_operator=overdue_operator)
-        valid_mask = target.notna()
-        
-        df_valid = df[valid_mask].copy()
-        df_valid['_target'] = target[valid_mask]
-        
-        grouped = df_valid.groupby(period_col).agg({
-            '_target': ['count', 'sum', 'mean']
-        }).reset_index()
-        
-        if grouped.empty:
-            results[label_name] = pd.DataFrame()
-            continue
-        
-        grouped.columns = [period_col, '样本数', '坏样本数', '逾期率']
-        grouped['好样本数'] = grouped['样本数'] - grouped['坏样本数']
-        grouped['逾期率(%)'] = (grouped['逾期率'] * 100).round(2)
-        grouped['环比变化(%)'] = grouped['逾期率(%)'].diff().round(2)
-        
-        if len(grouped) > 12:
-            grouped['同比变化(%)'] = (grouped['逾期率(%)'] - 
-                                     grouped['逾期率(%)'].shift(12)).round(2)
-        
-        results[label_name] = grouped[[period_col, '样本数', '好样本数', '坏样本数', 
-                                      '逾期率(%)', '环比变化(%)']].reset_index(drop=True)
-    
-    return results if len(results) > 1 else list(results.values())[0]
+    for name, values in targets.y_map(frame, "plain").items():
+        grouped = values.groupby(periods).agg(["count", "sum", "mean"]).reset_index()
+        grouped.columns = ["时间周期", "样本数", "坏样本数", "逾期率"]
+        grouped["好样本数"] = grouped["样本数"] - grouped["坏样本数"]
+        grouped["逾期率(%)"] = (grouped["逾期率"] * 100).round(2)
+        grouped["环比变化(%)"] = grouped["逾期率(%)"].diff().round(2)
+        results[name] = grouped[["时间周期", "样本数", "好样本数", "坏样本数", "逾期率(%)", "环比变化(%)"]]
+    return results if len(results) > 1 else next(iter(results.values()))
 
 
-def bad_rate_by_bins(df: pd.DataFrame,
-                    score_col: str,
-                    target_col: Optional[str] = None,
-                    overdue: Optional[Union[str, List[str]]] = None,
-                    dpds: Optional[Union[int, List[int]]] = None,
-                    del_grey: bool = False,
-                    n_bins: int = 10,
-                    method: str = 'quantile', *, overdue_operator: str = ">") -> Union[pd.DataFrame, Dict[str, pd.DataFrame]]:
+def bad_rate_by_bins(
+    df: pd.DataFrame,
+    feature: str,
+    target: Optional[TargetInput] = None,
+    overdue: Optional[Union[str, List[str]]] = None,
+    dpds: Optional[Union[int, List[int]]] = None,
+    del_grey: bool = False,
+    max_n_bins: int = 10,
+    method: str = "quantile",
+    *,
+    overdue_operator: str = ">"
+) -> Union[pd.DataFrame, Dict[str, pd.DataFrame]]:
     """评分分箱逾期率分析.
     
     支持单标签或多标签分析。
     
     :param df: 输入数据
-    :param score_col: 评分列名
-    :param target_col: 目标变量列名（单标签模式）
+    :param feature: 评分列名
+    :param target: 目标变量列名（单标签模式）
     :param overdue: 逾期天数字段名或列表
     :param dpds: 逾期定义天数或列表
     :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本；``<``、``<=`` 下不剔除。
-    :param n_bins: 分箱数
+    :param max_n_bins: 分箱数
     :param method: 分箱方法，'quantile'等频/'uniform'等距
     :return: 单标签返回DataFrame，多标签返回{标签名: DataFrame}字典
     
     **参考样例**
 
     >>> # 单标签
-    >>> bins = bad_rate_by_bins(df, 'score', target_col='fpd15', n_bins=10)
+    >>> bins = bad_rate_by_bins(df, 'score', target='fpd15', max_n_bins=10)
 
     >>> # 多标签
-    >>> bins = bad_rate_by_bins(df, 'score', overdue=['MOB1', 'MOB3'], dpds=30, n_bins=10)
+    >>> bins = bad_rate_by_bins(df, 'score', overdue=['MOB1', 'MOB3'], dpds=30, max_n_bins=10)
     >>> print(bins['MOB1>30'])
 
     :param overdue_operator: 逾期标签比较符，支持 ``>``、``>=``、``<``、``<=``，默认 ``>``。
@@ -449,129 +296,56 @@ def bad_rate_by_bins(df: pd.DataFrame,
         ``del_grey=True`` 时，``>`` 剔除 ``(0, dpd]``，``>=`` 剔除 ``(0, dpd)``；
         ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
     """
-    validate_overdue_operator(overdue_operator)
-    del_grey = del_grey and overdue_operator in (">", ">=")
-    validate_dataframe(df, required_cols=[score_col])
-    
-    series = df[score_col].dropna()
-    
-    if len(series) == 0:
+
+    validate_dataframe(df, required_cols=[feature])
+    frame, targets = bind_targets(df, target, overdue, dpds, del_grey, overdue_operator)
+    if frame[feature].notna().sum() == 0:
         return pd.DataFrame()
-    
-    # 分箱
-    if method == 'quantile':
-        bins = pd.qcut(df[score_col], q=n_bins, duplicates='drop')
-    else:
-        bins = pd.cut(df[score_col], bins=n_bins)
-    
-    # 单标签模式
-    if target_col is not None and overdue is None:
-        validate_binary_target(df[target_col])
-        
-        total_bad_rate = df[target_col].mean()
-        
-        result = df.groupby(bins).agg({
-            target_col: ['count', 'sum', 'mean']
-        }).reset_index()
-        
-        result.columns = ['分箱区间', '样本数', '坏样本数', '逾期率']
-        result['好样本数'] = result['样本数'] - result['坏样本数']
-        result['逾期率(%)'] = (result['逾期率'] * 100).round(2)
-        result['样本占比(%)'] = (result['样本数'] / len(df) * 100).round(2)
-        result['提升度'] = (result['逾期率'] / total_bad_rate).round(4)
-        result['分箱'] = range(1, len(result) + 1)
-        
-        return result[['分箱', '分箱区间', '样本数', '好样本数', '坏样本数',
-                      '逾期率(%)', '样本占比(%)', '提升度']].reset_index(drop=True)
-    
-    # 多标签模式
-    if overdue is None or dpds is None:
-        raise ValueError("必须指定 target_col 或 (overdue + dpds)")
-    
-    labels = _build_overdue_labels(overdue, dpds, overdue_operator=overdue_operator)
+    bins = pd.qcut(frame[feature], q=max_n_bins, duplicates="drop") if method == "quantile" else pd.cut(frame[feature], bins=max_n_bins)
     results = {}
-    
-    for label_name, dpd, od_field in labels:
-        target = _create_binary_target(df, od_field, dpd, del_grey, overdue_operator=overdue_operator)
-        valid_mask = target.notna()
-        
-        df_valid = df[valid_mask].copy()
-        df_valid['_target'] = target[valid_mask]
-        
-        bins_valid = bins[valid_mask]
-        total_bad_rate = df_valid['_target'].mean()
-        
-        result = df_valid.groupby(bins_valid).agg({
-            '_target': ['count', 'sum', 'mean']
-        }).reset_index()
-        
-        if result.empty:
-            results[label_name] = pd.DataFrame()
-            continue
-        
-        result.columns = ['分箱区间', '样本数', '坏样本数', '逾期率']
-        result['好样本数'] = result['样本数'] - result['坏样本数']
-        result['逾期率(%)'] = (result['逾期率'] * 100).round(2)
-        result['样本占比(%)'] = (result['样本数'] / len(df_valid) * 100).round(2)
-        result['提升度'] = (result['逾期率'] / total_bad_rate).round(4)
-        result['分箱'] = range(1, len(result) + 1)
-        
-        results[label_name] = result[['分箱', '分箱区间', '样本数', '好样本数', '坏样本数',
-                                     '逾期率(%)', '样本占比(%)', '提升度']].reset_index(drop=True)
-    
-    return results if len(results) > 1 else list(results.values())[0]
+    for name, values in targets.y_map(frame, "plain").items():
+        grouped = values.groupby(bins, observed=False).agg(["count", "sum", "mean"]).reset_index()
+        grouped.columns = ["分箱区间", "样本数", "坏样本数", "逾期率"]
+        grouped["好样本数"] = grouped["样本数"] - grouped["坏样本数"]
+        grouped["逾期率(%)"] = (grouped["逾期率"] * 100).round(2)
+        total = values.notna().sum()
+        grouped["样本占比(%)"] = (grouped["样本数"] / total * 100).round(2) if total else np.nan
+        grouped["提升度"] = (grouped["逾期率"] / values.mean()).round(4)
+        grouped["分箱"] = range(1, len(grouped) + 1)
+        results[name] = grouped[["分箱", "分箱区间", "样本数", "好样本数", "坏样本数", "逾期率(%)", "样本占比(%)", "提升度"]]
+    return results if len(results) > 1 else next(iter(results.values()))
 
 
-def sample_distribution(df: pd.DataFrame,
-                       date_col: str,
-                       freq: str = 'M',
-                       target_col: Optional[str] = None,
-                       *,
-                       target: Optional[str] = None) -> pd.DataFrame:
+@analysis_inputs('df', roles=('date',))
+def sample_distribution(
+    df: pd.DataFrame, date: str, freq: str = "M", target: Optional[TargetInput] = None
+) -> pd.DataFrame:
     """样本时间分布分析.
     
     :param df: 输入数据
-    :param date_col: 日期列名
+    :param date: 日期列名
     :param freq: 时间聚合频率，``'D'`` 日 / ``'W'`` 周 / ``'M'`` 月 / ``'Q'`` 季度，默认 ``'M'``
-    :param target_col: 目标变量列名（如有）
+    :param target: 目标变量列名（如有）
     :return: 样本分布DataFrame
     
     **参考样例**
 
-    >>> dist = sample_distribution(df, 'apply_date', target_col='fpd15')
+    >>> dist = sample_distribution(df, 'apply_date', target='fpd15')
     >>> print(dist[['时间周期', '样本数', '坏样本数', '逾期率(%)']])
     """
-    target_col = target or target_col
-    validate_dataframe(df, required_cols=[date_col])
-    
-    df = df.copy()
-    df[date_col] = pd.to_datetime(df[date_col])
-    
-    # 创建时间周期
-    period_col = '时间周期'
-    if freq == 'D':
-        df[period_col] = df[date_col].dt.date
-    elif freq == 'W':
-        df[period_col] = df[date_col].dt.to_period('W').astype(str)
-    elif freq == 'M':
-        df[period_col] = df[date_col].dt.to_period('M').astype(str)
-    elif freq == 'Q':
-        df[period_col] = df[date_col].dt.to_period('Q').astype(str)
-    
-    # 计算分布
-    if target_col:
-        validate_binary_target(df[target_col])
-        grouped = df.groupby(period_col).agg({
-            target_col: ['count', 'sum', 'mean']
-        }).reset_index()
-        grouped.columns = [period_col, '样本数', '坏样本数', '逾期率']
-        grouped['好样本数'] = grouped['样本数'] - grouped['坏样本数']
-        grouped['逾期率(%)'] = (grouped['逾期率'] * 100).round(2)
-        grouped = grouped.drop('逾期率', axis=1)
-    else:
-        grouped = df.groupby(period_col).size().reset_index(name='样本数')
-    
-    # 计算环比
-    grouped['样本环比(%)'] = (grouped['样本数'].pct_change() * 100).round(2)
-    
-    return grouped.reset_index(drop=True)
+
+    validate_dataframe(df, required_cols=[date])
+    if target is not None:
+        result = bad_rate_trend(df, date, target=target, freq=freq)
+
+        def convert(table):
+            table = table.drop(columns=["环比变化(%)"]).copy()
+            table["样本环比(%)"] = (table["样本数"].pct_change() * 100).round(2)
+            return table
+        return {name: convert(table) for name, table in result.items()} if isinstance(result, dict) else convert(result)
+    dates = pd.to_datetime(df[date])
+    periods = dates.dt.date if freq == "D" else dates.dt.to_period(freq).astype(str)
+    table = periods.groupby(periods).size().reset_index(name="样本数")
+    table.columns = ["时间周期", "样本数"]
+    table["样本环比(%)"] = (table["样本数"].pct_change() * 100).round(2)
+    return table

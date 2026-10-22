@@ -36,7 +36,7 @@ def test_binner_artifact_roundtrip(tmp_path, binary_data):
 
 def test_encoder_artifact_roundtrip(tmp_path, binary_data):
     X, y = binary_data
-    encoder = WOEEncoder(cols=["城市"]).fit(X, y)
+    encoder = WOEEncoder(features=["城市"]).fit(X, y)
     expected = encoder.transform(X)
 
     path = encoder.save_artifact(tmp_path / "encoder.joblib")
@@ -73,7 +73,7 @@ def test_scorecard_artifact_roundtrip(tmp_path, binary_data):
 
 def test_artifact_rejects_incompatible_target_type(tmp_path, binary_data):
     X, y = binary_data
-    encoder = WOEEncoder(cols=["城市"]).fit(X, y)
+    encoder = WOEEncoder(features=["城市"]).fit(X, y)
     path = encoder.save_artifact(tmp_path / "encoder.joblib")
 
     with pytest.raises(SerializationError, match="不能作为 UniformBinning 加载"):

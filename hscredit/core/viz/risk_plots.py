@@ -19,6 +19,10 @@
 采用函数式API设计，与hscredit.core.viz模块风格保持一致。
 """
 
+from hscredit.utils.arguments import analysis_inputs
+
+from ...utils.targets import TargetInput, bind_targets, reject_legacy_target_keywords
+
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -32,8 +36,6 @@ from sklearn.calibration import calibration_curve
 from matplotlib.colors import to_hex
 from matplotlib.ticker import PercentFormatter
 
-from ...utils.overdue import compare_overdue, overdue_grey_mask, overdue_label, validate_overdue_operator
-from ...utils.input_utils import normalize_dpd_values
 from .utils import (
     DEFAULT_COLORS, setup_axis_style, save_figure,
     get_or_create_ax, BAD_RATE_COLOR, NEUTRAL_COLOR,
@@ -64,7 +66,7 @@ def roc_plot(
     pos_label=1,
     score_direction: str = 'auto',
     sample_weight=None,
-    **kwargs
+    dpi: int = 240, **kwargs
 ) -> plt.Figure:
     """绘制ROC曲线.
     
@@ -126,7 +128,7 @@ def roc_plot(
     ax.grid(True, alpha=0.3)
     
     if save:
-        save_figure(fig, save)
+        save_figure(fig, save, dpi=dpi)
     
     return fig
 
@@ -142,7 +144,7 @@ def pr_plot(
     show_baseline: bool = True,
     label: Optional[str] = None,
     save: Optional[str] = None,
-    **kwargs
+    dpi: int = 240, **kwargs
 ) -> plt.Figure:
     """绘制Precision-Recall曲线.
     
@@ -198,7 +200,7 @@ def pr_plot(
     ax.grid(True, alpha=0.3)
     
     if save:
-        save_figure(fig, save)
+        save_figure(fig, save, dpi=dpi)
     
     return fig
 
@@ -213,7 +215,7 @@ def lift_plot(
     colors: Optional[List[str]] = None,
     show_baseline: bool = True,
     save: Optional[str] = None,
-    **kwargs
+    dpi: int = 240, **kwargs
 ) -> plt.Figure:
     """绘制Lift提升图.
     
@@ -300,7 +302,7 @@ def lift_plot(
     ax.grid(True, alpha=0.3, axis='y')
     
     if save:
-        save_figure(fig, save)
+        save_figure(fig, save, dpi=dpi)
     
     return fig
 
@@ -315,7 +317,7 @@ def gain_plot(
     colors: Optional[List[str]] = None,
     show_baseline: bool = True,
     save: Optional[str] = None,
-    **kwargs
+    dpi: int = 240, **kwargs
 ) -> plt.Figure:
     """绘制累积Gain增益图.
     
@@ -384,7 +386,7 @@ def gain_plot(
     ax.grid(True, alpha=0.3)
     
     if save:
-        save_figure(fig, save)
+        save_figure(fig, save, dpi=dpi)
     
     return fig
 
@@ -400,7 +402,7 @@ def confusion_matrix_plot(
     show_values: bool = True,
     show_metrics: bool = True,
     save: Optional[str] = None,
-    **kwargs
+    dpi: int = 240, **kwargs
 ) -> plt.Figure:
     """绘制混淆矩阵热力图.
     
@@ -472,7 +474,7 @@ def confusion_matrix_plot(
         ax.set_title(f'{title}\n{metrics_text}', fontsize=12, fontweight='bold')
     
     if save:
-        save_figure(fig, save)
+        save_figure(fig, save, dpi=dpi)
     
     return fig
 
@@ -487,7 +489,7 @@ def calibration_plot(
     colors: Optional[List[str]] = None,
     show_histogram: bool = True,
     save: Optional[str] = None,
-    **kwargs
+    dpi: int = 240, **kwargs
 ) -> plt.Figure:
     """绘制校准曲线（可靠性图）.
     
@@ -566,7 +568,7 @@ def calibration_plot(
     ax.grid(True, alpha=0.3)
     
     if save:
-        save_figure(fig, save)
+        save_figure(fig, save, dpi=dpi)
     
     return fig
 
@@ -575,8 +577,8 @@ def calibration_plot(
 
 def score_dist_plot(
     df: Union[pd.DataFrame, pd.Series],
-    score_col: Optional[str] = None,
-    target_col: Optional[str] = None,
+    feature: Optional[str] = None,
+    target: Optional[TargetInput] = None,
     ax: Optional[plt.Axes] = None,
     figsize: Tuple[float, float] = (12, 6),
     title: Optional[str] = None,
@@ -585,13 +587,13 @@ def score_dist_plot(
     kde: bool = True,
     show_stats: bool = True,
     save: Optional[str] = None,
-    **kwargs
+    dpi: int = 240, **kwargs
 ) -> plt.Figure:
     """绘制评分分布对比图（好/坏样本分布对比）.
     
     :param df: 数据DataFrame
-    :param score_col: 评分列名
-    :param target_col: 目标变量列名，None时不区分好坏
+    :param feature: 评分列名
+    :param target: 目标变量列名，None时不区分好坏
     :param ax: matplotlib Axes对象
     :param figsize: 图像尺寸
     :param title: 图表标题
@@ -607,6 +609,7 @@ def score_dist_plot(
 
     >>> fig = score_dist_plot(df, 'score', 'target')
     """
+    reject_legacy_target_keywords(kwargs)
     created_ax = ax is None
     fig, ax = get_or_create_ax(figsize=figsize, ax=ax)
 
@@ -618,17 +621,17 @@ def score_dist_plot(
     # 1. score_dist_plot(df, 'score', 'target')        # 原始：df + 列名
     # 2. score_dist_plot(scores_series, targets_series)  # 简化：直接传 Series
     if isinstance(df, pd.Series):
-        score_series = df.dropna() if score_col is None and target_col is None else df
-        target_series = score_col if isinstance(score_col, pd.Series) else None
-        score_col = df.name or "评分"
+        score_series = df.dropna() if feature is None and target is None else df
+        target_series = feature if isinstance(feature, pd.Series) else None
+        feature = df.name or "评分"
     else:
-        if target_col is not None:
-            score_series = df[score_col]
-            target_series = df[target_col]
+        if target is not None:
+            score_series = df[feature]
+            target_series = df[target]
         else:
-            score_series = df[score_col]
+            score_series = df[feature]
             target_series = None
-        score_col = score_col or "评分"
+        feature = feature or "评分"
 
     # 对齐好/坏样本：复用 hist_plot 的 step + probability 风格
     has_target = target_series is not None
@@ -660,13 +663,13 @@ def score_dist_plot(
 
     # 坐标轴样式（与 hist_plot 一致）
     setup_axis_style(ax)
-    ax.set_xlabel(f"{score_col}区间", fontsize=fontsize)
+    ax.set_xlabel(f"{feature}区间", fontsize=fontsize)
     ax.set_ylabel("样本占比", fontsize=fontsize)
     ax.yaxis.set_major_formatter(PercentFormatter(1))
 
     # 标题
     if title is None:
-        title = f"{score_col}分布情况"
+        title = f"{feature}分布情况"
     if created_ax:
         title_artist = fig.suptitle(title, fontsize=fontsize)
     else:
@@ -700,34 +703,34 @@ def score_dist_plot(
         _layout_top_center_legend(fig, ax.get_legend(), title=title_artist, axes=[ax])
 
     if save:
-        save_figure(fig, save)
+        save_figure(fig, save, dpi=dpi)
 
     return fig
 
 
 def score_bin_plot(
     df: pd.DataFrame,
-    score_col: str,
-    target_col: str,
-    n_bins: int = 10,
-    bin_type: str = 'quantile',
+    feature: str,
+    target: str,
+    max_n_bins: int = 10,
+    method: str = 'quantile',
     ax: Optional[plt.Axes] = None,
     figsize: Tuple[float, float] = (12, 6),
     title: Optional[str] = None,
     colors: Optional[List[str]] = None,
     show_table: bool = True,
     save: Optional[str] = None,
-    **kwargs
+    dpi: int = 240, **kwargs
 ) -> plt.Figure:
     """绘制评分分箱效果图（分箱区间+坏样本率）.
 
     使用 bin_plot（横向） + dataframe_plot 实现。
 
     :param df: 数据DataFrame
-    :param score_col: 评分列名
-    :param target_col: 目标变量列名
-    :param n_bins: 分箱数，默认10
-    :param bin_type: 分箱方式，'quantile'(等频)或'uniform'(等宽)
+    :param feature: 评分列名
+    :param target: 目标变量列名
+    :param max_n_bins: 分箱数，默认10
+    :param method: 分箱方式，'quantile'(等频)或'uniform'(等宽)
     :param ax: matplotlib Axes对象
     :param figsize: 图像尺寸
     :param title: 图表标题
@@ -739,19 +742,20 @@ def score_bin_plot(
 
     **参考样例**
 
-    >>> fig = score_bin_plot(df, 'score', 'target', n_bins=10)
+    >>> fig = score_bin_plot(df, 'score', 'target', max_n_bins=10)
     """
+    reject_legacy_target_keywords(kwargs)
     # 导入需要的函数
     from .binning_plots import bin_plot, dataframe_plot
 
     if colors is None:
         colors = DEFAULT_COLORS
-    if bin_type not in {'quantile', 'uniform'}:
-        raise ValueError("bin_type 仅支持 'quantile' 或 'uniform'")
+    if method not in {'quantile', 'uniform'}:
+        raise ValueError("method 仅支持 'quantile' 或 'uniform'")
 
     # 提取数据
-    score_series = df[score_col]
-    target_series = df[target_col]
+    score_series = df[feature]
+    target_series = df[target]
 
     # 传入 ax 时复用调用方画布；未传 ax 时按是否展示表格创建一栏或两栏布局。
     if ax is not None:
@@ -779,16 +783,16 @@ def score_bin_plot(
     _, bin_stats = bin_plot(
         score_series,
         target=target_series,
-        desc=title or f'{score_col}分箱',
+        desc=title or f'{feature}分箱',
         figsize=(figsize[0] * 0.65, figsize[1]),
         colors=colors,
         ax=ax_chart,
         orientation='horizontal',
-        n_bins=n_bins,
-        method=bin_type,
+        max_n_bins=max_n_bins,
+        method=method,
         show_data_points=True,
         show_overall_bad_rate=True,
-        return_frame=True,
+        result=True,
         save=None,
     )
 
@@ -803,7 +807,7 @@ def score_bin_plot(
         dataframe_plot(
             table_df,
             row_height=0.35,
-            font_size=10,
+            fontsize=10,
             header_color=colors[0],
             ax=ax_table,
             save=None,
@@ -811,7 +815,7 @@ def score_bin_plot(
     fig_charts.tight_layout()
 
     if save:
-        save_figure(fig_charts, save)
+        save_figure(fig_charts, save, dpi=dpi)
 
     return fig_charts
 
@@ -828,7 +832,7 @@ def threshold_analysis_plot(
     colors: Optional[List[str]] = None,
     metrics: List[str] = ['precision', 'recall', 'f1', 'approval_rate'],
     save: Optional[str] = None,
-    **kwargs
+    dpi: int = 240, **kwargs
 ) -> plt.Figure:
     """绘制决策阈值分析图.
     
@@ -912,7 +916,7 @@ def threshold_analysis_plot(
     ax.grid(True, alpha=0.3)
     
     if save:
-        save_figure(fig, save)
+        save_figure(fig, save, dpi=dpi)
     
     return fig
 
@@ -925,7 +929,7 @@ def strategy_compare_plot(
     colors: Optional[List[str]] = None,
     metrics: List[str] = ['approval_rate', 'bad_rate', 'ks'],
     save: Optional[str] = None,
-    **kwargs
+    dpi: int = 240, **kwargs
 ) -> plt.Figure:
     """绘制多策略效果对比图.
     
@@ -996,7 +1000,7 @@ def strategy_compare_plot(
                    ha='center', va='bottom', fontsize=8)
     
     if save:
-        save_figure(fig, save)
+        save_figure(fig, save, dpi=dpi)
     
     return fig
 
@@ -1004,7 +1008,7 @@ def strategy_compare_plot(
 def vintage_plot(
     df: pd.DataFrame,
     mob_col: str,
-    target_col: str,
+    target: str,
     vintage_col: Optional[str] = None,
     ax: Optional[plt.Axes] = None,
     figsize: Tuple[float, float] = (14, 8),
@@ -1013,7 +1017,7 @@ def vintage_plot(
     max_mob: Optional[int] = None,
     show_heatmap: bool = False,
     save: Optional[str] = None,
-    **kwargs
+    dpi: int = 240, **kwargs
 ) -> plt.Figure:
     """绘制Vintage账龄曲线图.
     
@@ -1021,7 +1025,7 @@ def vintage_plot(
     
     :param df: 数据DataFrame
     :param mob_col: MOB（账龄）列名
-    :param target_col: 目标变量列名（逾期标识）
+    :param target: 目标变量列名（逾期标识）
     :param vintage_col: 放款月份/批次列名，None时不区分批次
     :param ax: matplotlib Axes对象
     :param figsize: 图像尺寸
@@ -1037,13 +1041,14 @@ def vintage_plot(
 
     >>> fig = vintage_plot(df, 'mob', 'ever_dpd30', 'issue_month')
     """
+    reject_legacy_target_keywords(kwargs)
     # 创建透视表
     if vintage_col:
-        vintage_data = df.groupby([vintage_col, mob_col])[target_col].mean().reset_index()
-        vintage_pivot = vintage_data.pivot(index=vintage_col, columns=mob_col, values=target_col)
+        vintage_data = df.groupby([vintage_col, mob_col])[target].mean().reset_index()
+        vintage_pivot = vintage_data.pivot(index=vintage_col, columns=mob_col, values=target)
     else:
         # 不区分批次，计算整体
-        vintage_overall = df.groupby(mob_col)[target_col].mean()
+        vintage_overall = df.groupby(mob_col)[target].mean()
         vintage_pivot = vintage_overall.to_frame().T
         vintage_pivot.index = ['Overall']
     if colors is None:
@@ -1097,7 +1102,7 @@ def vintage_plot(
         ax_heat.set_ylabel('Vintage', fontsize=10)
     
     if save:
-        save_figure(fig, save)
+        save_figure(fig, save, dpi=dpi)
     
     return fig
 
@@ -1110,10 +1115,10 @@ def feature_importance_plot(
     title: str = "Feature Importance",
     colors: Optional[List[str]] = None,
     top_n: Optional[int] = 20,
-    horizontal: bool = True,
+    orientation: str = 'horizontal',
     show_values: bool = True,
     save: Optional[str] = None,
-    **kwargs
+    dpi: int = 240, **kwargs
 ) -> plt.Figure:
     """绘制特征重要性图.
     
@@ -1124,7 +1129,7 @@ def feature_importance_plot(
     :param title: 图表标题
     :param colors: 配色方案
     :param top_n: 显示前N个特征，None时显示全部
-    :param horizontal: 是否水平显示
+    :param orientation: 是否水平显示
     :param show_values: 是否显示数值
     :param save: 保存路径
     :param kwargs: 其他参数
@@ -1136,6 +1141,8 @@ def feature_importance_plot(
     >>> importance = model.feature_importances_
     >>> fig = feature_importance_plot(features, importance, top_n=15)
     """
+    if orientation not in ('horizontal', 'vertical'):
+        raise ValueError("orientation 必须是 horizontal 或 vertical")
     fig, ax = get_or_create_ax(figsize=figsize, ax=ax)
     
     if colors is None:
@@ -1150,7 +1157,7 @@ def feature_importance_plot(
     sorted_importance = [importance[i] for i in sorted_indices]
     
     # 绘制
-    if horizontal:
+    if orientation == 'horizontal':
         y_pos = np.arange(len(sorted_features))
         bars = ax.barh(y_pos, sorted_importance, color=colors[0], alpha=0.8)
         ax.set_yticks(y_pos)
@@ -1169,7 +1176,7 @@ def feature_importance_plot(
     # 添加数值标签
     if show_values:
         for bar, val in zip(bars, sorted_importance):
-            if horizontal:
+            if orientation == 'horizontal':
                 ax.text(val + 0.01 * max(sorted_importance), bar.get_y() + bar.get_height()/2,
                        f'{val:.3f}', va='center', fontsize=9)
             else:
@@ -1177,17 +1184,18 @@ def feature_importance_plot(
                        f'{val:.3f}', ha='center', fontsize=9)
     
     setup_axis_style(ax, colors, hide_top_right=True)
-    ax.grid(True, alpha=0.3, axis='x' if horizontal else 'y')
+    ax.grid(True, alpha=0.3, axis='x' if orientation == 'horizontal' else 'y')
     
     if save:
-        save_figure(fig, save)
+        save_figure(fig, save, dpi=dpi)
     
     return fig
 
 
+@analysis_inputs('df', roles=('date',))
 def approval_rate_trend_plot(
     df: pd.DataFrame,
-    date_col: str,
+    date: str,
     decision_col: Optional[str] = None,
     score_col: Optional[str] = None,
     threshold: Optional[float] = None,
@@ -1197,14 +1205,14 @@ def approval_rate_trend_plot(
     title: Optional[str] = None,
     colors: Optional[List[str]] = None,
     show_bad_rate: bool = True,
-    target_col: Optional[str] = None,
+    target: Optional[TargetInput] = None,
     save: Optional[str] = None,
-    **kwargs
+    dpi: int = 240, **kwargs
 ) -> plt.Figure:
     """绘制审批通过率趋势图.
     
     :param df: 数据DataFrame
-    :param date_col: 日期列名
+    :param date: 日期列名
     :param decision_col: 决策结果列名（通过/拒绝），None时使用score_col+threshold
     :param score_col: 评分列名（用于计算通过/拒绝）
     :param threshold: 通过阈值（分数>=threshold为通过）
@@ -1214,7 +1222,7 @@ def approval_rate_trend_plot(
     :param title: 图表标题
     :param colors: 配色方案
     :param show_bad_rate: 是否同时显示逾期率趋势
-    :param target_col: 目标变量列名（show_bad_rate=True时需要）
+    :param target: 目标变量列名（show_bad_rate=True时需要）
     :param save: 保存路径
     :param kwargs: 其他参数
     :return: matplotlib Figure对象
@@ -1224,6 +1232,7 @@ def approval_rate_trend_plot(
     >>> fig = approval_rate_trend_plot(df, 'apply_date', decision_col='is_approved')
     >>> fig = approval_rate_trend_plot(df, 'apply_date', score_col='score', threshold=500)
     """
+    reject_legacy_target_keywords(kwargs)
     df = df.copy()
     fig, ax = get_or_create_ax(figsize=figsize, ax=ax)
     
@@ -1231,7 +1240,7 @@ def approval_rate_trend_plot(
         colors = DEFAULT_COLORS
     
     # 确保日期格式正确
-    df[date_col] = pd.to_datetime(df[date_col])
+    df[date] = pd.to_datetime(df[date])
     
     # 计算通过标识
     if decision_col:
@@ -1242,15 +1251,15 @@ def approval_rate_trend_plot(
         raise ValueError("必须提供decision_col或(score_col+threshold)")
     
     # 按时间聚合
-    df['_period'] = df[date_col].dt.to_period(freq)
+    df['_period'] = df[date].dt.to_period(freq)
     
-    # 仅当提供 target_col 时才聚合逾期率，避免对 None 列聚合导致 KeyError
+    # 仅当提供 target 时才聚合逾期率，避免对 None 列聚合导致 KeyError
     agg_spec = {'_approved': ['count', 'sum', 'mean']}
-    if target_col:
-        agg_spec[target_col] = 'mean'
+    if target:
+        agg_spec[target] = 'mean'
     trend_data = df.groupby('_period').agg(agg_spec).reset_index()
 
-    if target_col:
+    if target:
         trend_data.columns = ['period', 'total', 'approved_count', 'approval_rate', 'bad_rate']
     else:
         trend_data.columns = ['period', 'total', 'approved_count', 'approval_rate']
@@ -1268,7 +1277,7 @@ def approval_rate_trend_plot(
     ax.yaxis.set_major_formatter(PercentFormatter())
     
     # 绘制逾期率（双轴）
-    if show_bad_rate and target_col:
+    if show_bad_rate and target:
         ax2 = ax.twinx()
         ax2.plot(trend_data['period'], trend_data['bad_rate'] * 100,
                 's-', color=BAD_RATE_COLOR, lw=2, markersize=4, label='Bad Rate')
@@ -1282,7 +1291,7 @@ def approval_rate_trend_plot(
     
     # 合并图例
     lines1, labels1 = ax.get_legend_handles_labels()
-    if show_bad_rate and target_col:
+    if show_bad_rate and target:
         lines2, labels2 = ax2.get_legend_handles_labels()
         ax.legend(lines1 + lines2, labels1 + labels2, loc='best', frameon=True)
     else:
@@ -1295,19 +1304,20 @@ def approval_rate_trend_plot(
     df.drop(columns=['_approved', '_period'], inplace=True, errors='ignore')
     
     if save:
-        save_figure(fig, save)
+        save_figure(fig, save, dpi=dpi)
     
     return fig
 
 
+@analysis_inputs('df', roles=('date', 'group'))
 def bad_rate_trend_plot(
     df: pd.DataFrame,
-    date_col: str,
-    target: Optional[str] = None,
+    date: str,
+    target: Optional[TargetInput] = None,
     overdue: Optional[Union[str, List[str]]] = None,
     dpds: Optional[Union[int, List[int]]] = None,
     del_grey: bool = False,
-    dimension_col: Optional[str] = None,
+    group: Optional[str] = None,
     freq: str = 'M',
     ax: Optional[plt.Axes] = None,
     figsize: Tuple[float, float] = (14, 6),
@@ -1317,17 +1327,17 @@ def bad_rate_trend_plot(
     save: Optional[str] = None,
     *,
     overdue_operator: str = ">",
-    **kwargs
+    dpi: int = 240, **kwargs
 ) -> plt.Figure:
     """绘制坏样本率趋势图（支持分维度和多逾期标签展示）.
     
     :param df: 数据DataFrame
-    :param date_col: 日期列名
+    :param date: 日期列名
     :param target: 目标变量列名（单标签模式）
     :param overdue: 逾期天数字段名或列表，优先于 target
     :param dpds: 逾期定义天数或列表，与 overdue 配合生成标签
     :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本；``<``、``<=`` 下不剔除。
-    :param dimension_col: 维度列名（如客户等级），None时不分维度
+    :param group: 维度列名（如客户等级），None时不分维度
     :param freq: 时间频率，'D'/'W'/'M'/'Q'
     :param ax: matplotlib Axes对象
     :param figsize: 图像尺寸
@@ -1348,42 +1358,13 @@ def bad_rate_trend_plot(
         ``del_grey=True`` 时，``>`` 剔除 ``(0, dpd]``，``>=`` 剔除 ``(0, dpd)``；
         ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
     """
-    validate_overdue_operator(overdue_operator)
-    del_grey = del_grey and overdue_operator in (">", ">=")
-    if 'target_col' in kwargs:
-        raise TypeError("bad_rate_trend_plot 已统一使用 target 参数，请将 target_col 改为 target")
-    df = df.copy()
-
-    # 全库统一标签入口：overdue + dpds 显式传入时优先于 target。
+    reject_legacy_target_keywords(kwargs)
+    df, targets = bind_targets(df, target, overdue, dpds, del_grey, overdue_operator)
+    using_overdue = targets.mode == "overdue"
     target_groups = {}
-    using_overdue = overdue is not None
-    if using_overdue:
-        if dpds is None:
-            raise ValueError("传入 overdue 参数时必须同时传入 dpds")
-        overdue_cols = [overdue] if isinstance(overdue, str) else list(overdue)
-        dpd_values = normalize_dpd_values(dpds)
-        if not overdue_cols or not dpd_values:
-            raise ValueError("overdue 和 dpds 不能为空")
-        for overdue_col in overdue_cols:
-            if overdue_col not in df.columns:
-                raise ValueError(f"数据集缺少逾期天数列: {overdue_col}")
-            overdue_days = pd.to_numeric(df[overdue_col], errors='coerce')
-            overdue_targets = []
-            for dpd in dpd_values:
-                label = overdue_label(overdue_col, dpd, overdue_operator)
-                generated_target = compare_overdue(overdue_days, dpd, overdue_operator).astype(float)
-                if del_grey:
-                    generated_target[overdue_grey_mask(overdue_days, dpd, overdue_operator)] = np.nan
-                overdue_targets.append((label, generated_target))
-            target_groups[overdue_col] = overdue_targets
-    else:
-        if target is None or target not in df.columns:
-            raise ValueError("必须传入数据集中存在的 target 或 overdue+dpds 参数")
-        target_values = pd.to_numeric(df[target], errors='coerce')
-        invalid_values = target_values.dropna()[~target_values.dropna().isin([0, 1])]
-        if not invalid_values.empty:
-            raise ValueError(f"target 列 {target} 必须是 0/1 二分类标签")
-        target_groups[target] = [(target, target_values)]
+    for name, definition in zip(targets.names(), targets.labels):
+        partition_data = definition.overdue if using_overdue else "标签"
+        target_groups.setdefault(partition_data, []).append((name, df[definition.column]))
 
     all_targets = [
         (target_label, target_values)
@@ -1423,13 +1404,13 @@ def bad_rate_trend_plot(
         fig, ax_line = get_or_create_ax(figsize=figsize, ax=ax)
 
     # 日期先转为周期，再用离散位置绘制；刻度只来自真实分组，不交给日期定位器补点。
-    if date_col not in df.columns:
-        raise ValueError(f"数据集缺少日期列: {date_col}")
-    df[date_col] = pd.to_datetime(df[date_col])
+    if date not in df.columns:
+        raise ValueError(f"数据集缺少日期列: {date}")
+    df[date] = pd.to_datetime(df[date])
     freq = str(freq).upper()
     if freq not in {'D', 'W', 'M', 'Q'}:
         raise ValueError("freq 必须是 'D'/'W'/'M'/'Q' 之一")
-    df['_period'] = df[date_col].dt.to_period(freq)
+    df['_period'] = df[date].dt.to_period(freq)
     periods = sorted(df['_period'].dropna().unique())
     positions = np.arange(len(periods))
 
@@ -1470,10 +1451,10 @@ def bad_rate_trend_plot(
 
     dimensions = None
     dimension_series_colors = None
-    if dimension_col:
-        if dimension_col not in df.columns:
-            raise ValueError(f"数据集缺少维度列: {dimension_col}")
-        dimensions = list(pd.unique(df[dimension_col].dropna()))
+    if group:
+        if group not in df.columns:
+            raise ValueError(f"数据集缺少维度列: {group}")
+        dimensions = list(pd.unique(df[group].dropna()))
         required_dimension_colors = len(all_targets) * len(dimensions)
         requested_dimension_colors = (
             get_series_colors(required_dimension_colors)
@@ -1503,8 +1484,8 @@ def bad_rate_trend_plot(
                 '_period': df['_period'],
                 '_target': target_values,
             }, index=df.index)
-            if dimension_col:
-                working['_dimension'] = df[dimension_col]
+            if group:
+                working['_dimension'] = df[group]
                 for dimension_index, dimension in enumerate(dimensions):
                     dimension_rates = (
                         working[working['_dimension'] == dimension]
@@ -1602,7 +1583,7 @@ def bad_rate_trend_plot(
                 rate_ax.set_ylim(lower_limit, upper_limit)
 
     if title is None:
-        title = '坏样本率趋势' + (f'（按{dimension_col}）' if dimension_col else '')
+        title = '坏样本率趋势' + (f'（按{group}）' if group else '')
     title_artist = fig.suptitle(title, fontsize=14, fontweight='bold')
     max_legend_columns = max(1, int(fig.get_figwidth() // 2.2))
     legend = fig.legend(
@@ -1689,6 +1670,6 @@ def bad_rate_trend_plot(
         )
 
     if save:
-        save_figure(fig, save)
+        save_figure(fig, save, dpi=dpi)
 
     return fig

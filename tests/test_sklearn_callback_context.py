@@ -25,14 +25,14 @@ def transformer(request):
         return GBMEncoder(target="FPD", model_type="xgboost", n_estimators=3, max_depth=2, n_jobs=1)
     if request.param in {"target", "target_oof"}:
         return TargetEncoder(
-            cols=["特征"],
+            features=["特征"],
             target="FPD",
             training_mode="oof" if request.param == "target_oof" else "in_sample",
             cv=2,
             n_jobs=1,
         )
     if request.param == "woe":
-        return WOEEncoder(cols=["特征"], target="FPD", n_jobs=1)
+        return WOEEncoder(features=["特征"], target="FPD", n_jobs=1)
     cls = OptimalBinning if request.param == "optimal" else QuantileBinning
     kwargs = {"method": "quantile"} if request.param == "optimal" else {}
     return cls(target="FPD", max_n_bins=3, n_jobs=1, **kwargs)

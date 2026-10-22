@@ -23,7 +23,7 @@ class CardinalityEncoder(BaseEncoder):
 
     **参数**
 
-    :param cols: 需要编码的列名列表。如果为None，则自动识别所有类别型列
+    :param features: 需要编码的列名列表。如果为None，则自动识别所有类别型列
     :param max_categories: 每列最大类别数（含 other 标签，不含缺失及特殊值），默认为10
     :param other_label: 合并后的标签名称，默认为 'other'，支持自定义
     :param special_values: 需要独立成类的特殊值列表（如 [-999, 'unknown']），默认为None
@@ -47,18 +47,18 @@ class CardinalityEncoder(BaseEncoder):
     **参考样例**
 
     >>> from hscredit.core.encoders import CardinalityEncoder
-    >>> encoder = CardinalityEncoder(cols=['city'], max_categories=10)
+    >>> encoder = CardinalityEncoder(features=['city'], max_categories=10)
     >>> X_encoded = encoder.fit_transform(X)
     >>>
     >>> # 自定义标签
     >>> encoder = CardinalityEncoder(
-    ...     cols=['city'], max_categories=5, other_label='其他城市'
+    ...     features=['city'], max_categories=5, other_label='其他城市'
     ... )
     >>> X_encoded = encoder.fit_transform(X)
     >>>
     >>> # 特殊值独立成类
     >>> encoder = CardinalityEncoder(
-    ...     cols=['score_level'],
+    ...     features=['score_level'],
     ...     max_categories=8,
     ...     special_values=[-999, 'missing'],
     ... )
@@ -85,7 +85,7 @@ class CardinalityEncoder(BaseEncoder):
 
     def __init__(
         self,
-        cols: Optional[List[str]] = None,
+        features: Optional[List[str]] = None,
         max_categories: int = 10,
         other_label: Any = "other",
         special_values: Optional[List[Any]] = None,
@@ -101,7 +101,7 @@ class CardinalityEncoder(BaseEncoder):
     ):
         """初始化高基数降维编码器。
 
-        :param cols: 需要编码的列名列表
+        :param features: 需要编码的列名列表
         :param max_categories: 每列最大类别数（含 other，不含缺失及特殊值），默认为10
         :param other_label: 合并后的标签名称，默认为 'other'
         :param special_values: 需要独立成类的特殊值列表，默认为None
@@ -112,7 +112,7 @@ class CardinalityEncoder(BaseEncoder):
         :param target: scorecardpipeline风格的目标列名。本编码器不使用此参数，仅为API一致性保留
         """
         super().__init__(
-            cols=cols,
+            features=features,
             drop_invariant=drop_invariant,
             return_df=return_df,
             handle_unknown=handle_unknown,

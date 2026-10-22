@@ -19,7 +19,7 @@ class MonitoringBaseline(ArtifactSerializableMixin, BaseEstimator):
         零占比平滑下限；原始占比仍在输出中保留。
     min_bin_size : float, default=0.01
         数值分箱的最小样本占比。
-    binning_params : dict, optional
+    bin_params : dict, optional
         传递给QuantileBinning的配置；不支持依赖真实标签的约束。
 
     **属性**
@@ -31,11 +31,11 @@ class MonitoringBaseline(ArtifactSerializableMixin, BaseEstimator):
     """
     artifact_kind = "监控基准"
 
-    def __init__(self, max_n_bins=10, epsilon=1e-10, min_bin_size=0.01, binning_params=None, feature_name=None):
+    def __init__(self, max_n_bins=10, epsilon=1e-10, min_bin_size=0.01, bin_params=None, feature_name=None):
         self.max_n_bins = max_n_bins
         self.epsilon = epsilon
         self.min_bin_size = min_bin_size
-        self.binning_params = binning_params
+        self.bin_params = bin_params
         self.feature_name = feature_name
 
     @staticmethod
@@ -60,9 +60,9 @@ class MonitoringBaseline(ArtifactSerializableMixin, BaseEstimator):
             raise ValueError("epsilon 必须为有限正数")
         if not isinstance(self.min_bin_size, (int, float, np.number)) or not np.isfinite(self.min_bin_size) or self.min_bin_size <= 0:
             raise ValueError("min_bin_size 必须为有限正数")
-        if self.binning_params is not None and not isinstance(self.binning_params, dict):
-            raise ValueError("binning_params 必须是字典或None")
-        if (self.binning_params or {}).get('min_bad_rate', 0) or (self.binning_params or {}).get('monotonic', False):
+        if self.bin_params is not None and not isinstance(self.bin_params, dict):
+            raise ValueError("bin_params 必须是字典或None")
+        if (self.bin_params or {}).get('min_bad_rate', 0) or (self.bin_params or {}).get('monotonic', False):
             raise ValueError("冻结分布基准不接受依赖目标标签的坏率或单调约束")
         values = self._series(expected)
         if len(values) == 0:
@@ -82,14 +82,14 @@ class MonitoringBaseline(ArtifactSerializableMixin, BaseEstimator):
         if candidate.numeric_ and not np.isfinite(nonmissing.to_numpy(dtype=float)).all():
             raise ValueError("监控基准不能包含无穷值")
         # 常量/低基数数值保留原生类别，否则单个[-inf,+inf)会隐藏常量迁移。
-        user_splits = (self.binning_params or {}).get('user_splits')
+        user_splits = (self.bin_params or {}).get('user_splits')
         has_splits = user_splits is not None and (not hasattr(user_splits, '__len__') or len(user_splits) > 0)
         if candidate.numeric_ and 0 < nonmissing.nunique() <= self.max_n_bins and not has_splits:
             candidate.numeric_ = False
         from ..binning import QuantileBinning
         options = dict(max_n_bins=self.max_n_bins, min_n_bins=1, force_numerical=candidate.numeric_,
                        n_jobs=1, min_bin_size=self.min_bin_size)
-        options.update(self.binning_params or {})
+        options.update(self.bin_params or {})
         if isinstance(options.get('user_splits'), (list, tuple, np.ndarray)):
             options['user_splits'] = {'value': options['user_splits']}
         # 对类别/空基准也先验证构造配置，不能静默忽略拼写错误。

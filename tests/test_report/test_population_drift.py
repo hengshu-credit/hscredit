@@ -39,7 +39,7 @@ def test_population_drift_generates_expected_sheets(tmp_path):
         expected=expected,
         actual=actual,
         features=["age", "const_feature", "missing_feature"],
-        target_col="target",
+        target="target",
         score_col="score",
         output=str(output),
     )

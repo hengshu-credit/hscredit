@@ -88,7 +88,7 @@ def test_model_report_single_label_bin_table_filters_grey_rows():
     report = ModelReport(
         Model(),
         datasets={"样本": _data()},
-        feature_names=["score"],
+        features=["score"],
         overdue="MOB1",
         dpds=[0, 3],
         del_grey=True,
@@ -110,7 +110,7 @@ def test_model_report_combined_metrics_exclude_rows_grey_for_every_label():
     report = ModelReport(
         Model(),
         datasets={"样本": data},
-        feature_names=["score"],
+        features=["score"],
         overdue="MOB1",
         dpds=[3, 7],
         del_grey=True,
@@ -140,22 +140,9 @@ def test_grey_filtered_bin_table_can_be_rendered_as_overdue_plot():
     assert not any("Error:" in text.get_text() for axis in figure.axes for text in axis.texts)
 
 
-def test_rule_swap_analysis_uses_overdue_when_target_is_also_supplied():
-    result = rule_swap_analysis(
-        _data(),
-        score="score",
-        reference_data=_data(),
-        target="target",
-        overdue="MOB1",
-        dpds=[3],
-        rules_out=[Rule("score >= 4")],
-        del_grey=True,
-        bin_method="quantile",
-        max_n_bins=2,
-        n_jobs=1,
-    )
-
-    assert not result["swap_pipeline"].empty
+def test_rule_swap_analysis_rejects_mixed_target_modes():
+    with pytest.raises(ValueError, match="不能同时指定"):
+        rule_swap_analysis(_data(), score="score", target="target", overdue="MOB1", dpds=[3], n_jobs=1)
 
 
 @pytest.mark.parametrize(

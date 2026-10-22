@@ -67,7 +67,7 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
 
     **参数**
 
-    :param cols: 需要编码的列名列表。如果为None，则自动识别所有类别型列
+    :param features: 需要编码的列名列表。如果为None，则自动识别所有类别型列
     :param drop_invariant: 是否删除方差为0的列，默认为False
     :param return_df: 是否返回DataFrame，默认为True
     :param handle_unknown: 处理未知类别的方式，默认为'value'
@@ -98,17 +98,17 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
 
         >>> from hscredit.core.encoders import WOEEncoder
         >>> # sklearn 风格：X、y 分开传
-        >>> enc = WOEEncoder(cols=['city'])
+        >>> enc = WOEEncoder(features=['city'])
         >>> X_enc = enc.fit_transform(X, y)
         >>> # scorecardpipeline 风格：目标列在 df 中，初始化指定 target
-        >>> enc = WOEEncoder(target='target', cols=['city'])
+        >>> enc = WOEEncoder(target='target', features=['city'])
         >>> X_enc = enc.fit_transform(df)
         >>> enc.get_mapping('city')        # 查看某列的类别→编码映射
         >>> enc.export_mapping()           # 导出可序列化映射
 
     **引用**
 
-    接口约定（``cols`` / ``drop_invariant`` / ``handle_unknown`` / ``handle_missing`` /
+    接口约定（``features`` / ``drop_invariant`` / ``handle_unknown`` / ``handle_missing`` /
     ``return_df``）对齐 category_encoders 库：
     https://contrib.scikit-learn.org/category_encoders/
     """
@@ -123,7 +123,7 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
 
     def __init__(
         self,
-        cols: Optional[List[str]] = None,
+        features: Optional[List[str]] = None,
         drop_invariant: bool = False,
         return_df: bool = True,
         handle_unknown: str = "value",
@@ -136,7 +136,7 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
     ):
         """初始化编码器基类。
 
-        :param cols: 需要编码的列名列表。如果为None，则自动识别所有类别型列
+        :param features: 需要编码的列名列表。如果为None，则自动识别所有类别型列
         :param drop_invariant: 是否删除方差为0的列，默认为False
         :param return_df: 是否返回DataFrame，默认为True
         :param handle_unknown: 处理未知类别的方式，默认为'value'
@@ -146,7 +146,7 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         :param parallel_backend: joblib并行后端，默认为None
         :param parallel_config: joblib扩展配置，默认为None
         """
-        self.cols = cols
+        self.features = features
         self.drop_invariant = drop_invariant
         self.return_df = return_df
         self.handle_unknown = handle_unknown
@@ -262,10 +262,16 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
             raise ValueError("training_mode 必须为 in_sample 或 oof")
         self._set_input_feature_attributes(X)
 
-        if self.cols is None:
+        if self.features is None:
             self.cols_ = self._get_category_cols(X)
         else:
-            self.cols_ = [c for c in self.cols if c in X.columns]
+            from hscredit.utils.arguments import normalize_features
+
+            selected = normalize_features(self.features)
+            missing = [name for name in selected if name not in X.columns]
+            if missing:
+                raise ValueError(f"features 指定的字段不存在: {missing}")
+            self.cols_ = selected
 
         if self.drop_invariant:
             self._dropped_cols = self._find_invariant_cols(X)
@@ -529,7 +535,7 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
                     raise ValueError("折外编码切分位置越界或重复")
             if np.intersect1d(train, valid).size or covered[valid].any():
                 raise ValueError("折外编码训练/验证位置重叠或验证位置重复")
-            fold = clone(self).set_params(training_mode="in_sample", return_df=True, drop_invariant=False, cols=columns, passthrough_target=False)
+            fold = clone(self).set_params(training_mode="in_sample", return_df=True, drop_invariant=False, features=columns, passthrough_target=False)
             fold.fit(features.iloc[train], target.iloc[train])
             transformed = fold.transform(features.iloc[valid])
             output.iloc[valid, output.columns.get_indexer(columns)] = transformed[columns].to_numpy()
@@ -740,7 +746,7 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
             }
         return {
             "encoder_type": self.__class__.__name__,
-            "cols": self.cols,
+            "features": self.features,
             "cols_": self.cols_,
             "mapping_": self._serialize_mapping(self.mapping_),
             "drop_invariant": self.drop_invariant,
@@ -794,7 +800,7 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
             return self
         if "version" in mapping and mapping.get("format") is not None:
             raise ValueError("不支持的编码映射格式或版本")
-        self.cols = mapping.get("cols")
+        self.features = mapping.get("features")
         self.cols_ = mapping.get("cols_")
         self.mapping_ = self._deserialize_mapping(mapping.get("mapping_", {}))
         # 旧格式无法区分同名业务类别和保留键；仅在旧协议入口按旧含义迁移。

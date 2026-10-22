@@ -21,7 +21,7 @@ def test_bin_plot_aligns_array_target_positionally_and_keeps_missing_bin():
     )
     target = np.array([1, 0, 1, 0, 0, 1])
 
-    fig, table = bin_plot(score, target=target, n_bins=3, return_frame=True)
+    fig, table = bin_plot(score, target=target, max_n_bins=3, result=True)
 
     assert table["样本总数"].sum() == len(score)
     missing = table.loc[table["分箱标签"].eq("缺失值")].iloc[0]
@@ -32,12 +32,12 @@ def test_bin_plot_aligns_array_target_positionally_and_keeps_missing_bin():
 
 
 def test_bin_plot_returns_frame_when_drawing_on_existing_axes():
-    """嵌入已有 Axes 时，return_frame=True 仍应返回绘图轴和统计表。"""
+    """嵌入已有 Axes 时，result=True 仍应返回绘图轴和统计表。"""
     score = pd.Series(np.arange(20, dtype=float), name="评分")
     target = pd.Series([0, 1] * 10, name="目标")
     fig, ax = plt.subplots()
 
-    returned_ax, table = bin_plot(score, target=target, n_bins=4, ax=ax, return_frame=True)
+    returned_ax, table = bin_plot(score, target=target, max_n_bins=4, ax=ax, result=True)
 
     assert returned_ax is ax
     assert table["样本总数"].sum() == len(score)

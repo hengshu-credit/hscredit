@@ -53,7 +53,7 @@ def test_bin_trend_stats_use_target_first_metric_contract():
 )
 def test_quick_psi_detects_outside_range_and_categorical_drift(base, target):
     """范围外和类别漂移都必须得到有限的正 PSI，不能返回 NaN/零。"""
-    value = _quick_psi(base, target, n_bins=3)
+    value = _quick_psi(base, target, max_n_bins=3)
 
     assert np.isfinite(value)
     assert value > 0
@@ -108,8 +108,8 @@ def test_score_bin_plot_honors_ax_and_n_bins():
         data,
         "评分",
         "目标",
-        n_bins=3,
-        bin_type="uniform",
+        max_n_bins=3,
+        method="uniform",
         ax=ax,
         show_table=False,
     )
@@ -150,11 +150,11 @@ def test_save_figure_preserves_extensionless_path(tmp_path):
     [
         (
             approval_rate_trend_plot,
-            {"date_col": "日期", "decision_col": "通过", "target_col": "目标"},
+            {"date": "日期", "decision_col": "通过", "target": "目标"},
         ),
         (
             bad_rate_trend_plot,
-            {"date_col": "日期", "target": "目标", "show_sample_count": False},
+            {"date": "日期", "target": "目标", "show_sample_count": False},
         ),
     ],
 )
@@ -176,7 +176,7 @@ def test_trend_plots_do_not_mutate_input_dataframe(plotter, kwargs):
 
 
 def test_bin_trend_plot_does_not_mutate_dimension_list():
-    """日期分组不能向用户复用的 dimension_cols 列表追加内部字段。"""
+    """日期分组不能向用户复用的 group 列表追加内部字段。"""
     data = pd.DataFrame(
         {
             "日期": pd.date_range("2026-01-01", periods=40),
@@ -191,8 +191,8 @@ def test_bin_trend_plot_does_not_mutate_dimension_list():
         data,
         "特征",
         "目标",
-        dimension_cols=dimensions,
-        date_col="日期",
+        group=dimensions,
+        date="日期",
         max_n_bins=3,
         show_stats=False,
     )

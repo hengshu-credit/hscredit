@@ -287,7 +287,7 @@ def test_bin_trend_plot_reserves_space_for_every_metric_summary(orientation):
         _trend_data(),
         feature="评分",
         target="目标",
-        dimension_cols="渠道",
+        group="渠道",
         rules={"评分": [2, 4, 6, 8]},
         orientation=orientation,
         show_stats=True,
@@ -307,7 +307,7 @@ def test_batch_bin_trend_plot_preserves_embedded_header_layout():
         _trend_data(),
         features=["评分"],
         target="目标",
-        dimension_cols="渠道",
+        group="渠道",
         rules={"评分": [2, 4, 6, 8]},
         show_stats=True,
         max_features=1,
@@ -327,7 +327,7 @@ def test_batch_bin_trend_plot_horizontal_rows_do_not_overlap():
         _trend_data(),
         features=["评分"],
         target="目标",
-        dimension_cols="渠道",
+        group="渠道",
         rules={"评分": [2, 4, 6, 8]},
         orientation="horizontal",
         show_stats=True,
@@ -357,7 +357,7 @@ def test_batch_bin_trend_plot_vertical_columns_use_minimal_non_overlapping_gap(f
         data,
         features=["score"],
         target="target",
-        dimension_cols="period",
+        group="period",
         rules={"score": list(123450.123 + np.arange(1, 10) * 17.111)},
         orientation="vertical",
         show_stats=True,
@@ -391,7 +391,7 @@ def test_vertical_bin_trend_plot_rows_do_not_overlap_with_long_bin_labels():
         data,
         feature="score",
         target="target",
-        dimension_cols="period",
+        group="period",
         rules={"score": list(123450.123 + np.arange(1, 10) * 17.111)},
         orientation="vertical",
         show_stats=True,
@@ -440,7 +440,7 @@ def test_bin_overdues_plot_table_mode_preserves_embedded_header_layout():
 
 def test_score_bin_plot_preserves_embedded_header_layout():
     data = _trend_data().rename(columns={"评分": "score", "目标": "target"})
-    fig = score_bin_plot(data, "score", "target", n_bins=5, show_table=True)
+    fig = score_bin_plot(data, "score", "target", max_n_bins=5, show_table=True)
     try:
         _assert_embedded_bin_headers_are_clear(fig)
         _assert_axis_decorations_are_inside_canvas(fig)
@@ -454,9 +454,9 @@ def test_feature_efficiency_comparison_uses_concise_titles_and_full_width_metric
     result = feature_efficiency_analysis(
         data,
         feature="score",
-        manual_rules=[2, 4, 6, 8],
+        rules=[2, 4, 6, 8],
         target="target",
-        auto_method="quantile",
+        method="quantile",
         comparison_orientation=orientation,
         n_jobs=1,
     )
@@ -478,9 +478,9 @@ def test_feature_efficiency_comparison_uses_two_by_two_layout():
     result = feature_efficiency_analysis(
         data,
         feature="score",
-        manual_rules=[2, 4, 6, 8],
+        rules=[2, 4, 6, 8],
         target="target",
-        auto_method="quantile",
+        method="quantile",
         n_jobs=1,
     )
     fig = result["comparison_figure"]
@@ -510,9 +510,9 @@ def test_feature_efficiency_comparison_places_unified_bin_legend_below_figure_ti
     result = feature_efficiency_analysis(
         data,
         feature="score",
-        manual_rules=[2, 4, 6, 8],
+        rules=[2, 4, 6, 8],
         target="target",
-        auto_method="quantile",
+        method="quantile",
         n_jobs=1,
     )
     fig = result["comparison_figure"]

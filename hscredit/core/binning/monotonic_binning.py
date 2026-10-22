@@ -1133,14 +1133,15 @@ class MonotonicBinning(BaseBinning):
         feature: str,
         metric: str = "bad_rate",
         figsize: Tuple[int, int] = (10, 6),
-        save_path: Optional[str] = None,
+        save: Optional[str] = None, *,
+        dpi: int = 240,
     ):
         """绘制分箱结果可视化.
 
         :param feature: 特征名
         :param metric: 绘制的指标，'bad_rate' 或 'woe'
         :param figsize: 图形大小
-        :param save_path: 保存路径
+        :param save: 保存路径
         :return: matplotlib图形对象
         """
         try:
@@ -1181,8 +1182,8 @@ class MonotonicBinning(BaseBinning):
 
         plt.tight_layout()
 
-        if save_path:
-            plt.savefig(save_path, dpi=300, bbox_inches="tight")
+        if save:
+            plt.savefig(save, dpi=dpi, bbox_inches="tight")
 
         return fig, ax
 

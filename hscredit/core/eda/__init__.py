@@ -22,10 +22,10 @@
     >>> iv_result = eda.batch_iv_analysis(df, features=['age', 'income'], target='fpd15')
     >>> 
     >>> # 逾期率趋势
-    >>> trend = eda.bad_rate_trend(df, target_col='fpd15', date_col='apply_month')
+    >>> trend = eda.bad_rate_trend(df, target='fpd15', date='apply_month')
     >>> 
     >>> # Vintage分析
-    >>> vintage = eda.vintage_analysis(df, vintage_col='issue_month', mob_col='mob', target_col='ever_dpd30')
+    >>> vintage = eda.vintage_analysis(df, vintage_col='issue_month', mob_col='mob', target='ever_dpd30')
 """
 
 # 数据概览

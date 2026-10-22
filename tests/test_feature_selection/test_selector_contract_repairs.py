@@ -304,15 +304,15 @@ def test_corr_default_binning_config_cannot_cross_contaminate_instances():
     mutated = False
     try:
         try:
-            first.binning_params["method"] = "cart"
+            first.bin_params["method"] = "cart"
             mutated = True
         except TypeError:
             pass
         if mutated:
-            assert second.binning_params["method"] == original
+            assert second.bin_params["method"] == original
     finally:
         if mutated:
-            first.binning_params["method"] = original
+            first.bin_params["method"] = original
 
 
 def test_corr_treats_explicit_default_valued_dict_as_explicit(monkeypatch):
@@ -326,7 +326,7 @@ def test_corr_treats_explicit_default_valued_dict_as_explicit(monkeypatch):
     X = pd.DataFrame({"甲": [0.0, 1.0, 2.0], "乙": [0.0, 1.0, 2.0]})
 
     CorrSelector(
-        binning_params=dict(DEFAULT_BINNING_PARAMS),
+        bin_params=dict(DEFAULT_BINNING_PARAMS),
         weights={"甲": 1.0, "乙": 0.5},
         n_jobs=1,
     ).fit(X)

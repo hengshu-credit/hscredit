@@ -637,7 +637,7 @@ def test_round_based_selector_matches_serial(selector_xy):
 def test_generic_selector_binner_inherits_parallel_configuration():
     """非 Corr 筛选器创建的内部 OptimalBinning 也必须继承公共并行预算。"""
     selector = IVSelector(
-        binning_params={"method": "quantile"},
+        bin_params={"method": "quantile"},
         n_jobs=3,
         parallel_backend="threading",
         parallel_config={"batch_size": 2},
@@ -651,9 +651,9 @@ def test_generic_selector_binner_inherits_parallel_configuration():
 
 
 def test_generic_selector_binner_keeps_more_specific_parallel_overrides():
-    """binning_params 中的显式子级配置应优先于筛选器默认值。"""
+    """bin_params 中的显式子级配置应优先于筛选器默认值。"""
     selector = IVSelector(
-        binning_params={
+        bin_params={
             "method": "quantile",
             "n_jobs": 2,
             "parallel_backend": "loky",

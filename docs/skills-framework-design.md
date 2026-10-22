@@ -141,7 +141,7 @@ hscredit/skills_runtime/
 
 - `feature_bin_stats`
 - `feature_efficiency_analysis`
-- `benchmark_binning_methods`
+- `benchmark_methods`
 - `feature_binning_summary`
 - `feature_group_binning_summary`
 - `OptimalBinning` 的创建、拟合、转换、分箱表和 artifact 生命周期

@@ -8,6 +8,8 @@
 - 孤立森林 (Isolation Forest)
 """
 
+from hscredit.utils.arguments import analysis_inputs
+
 import copy
 
 import numpy as np
@@ -225,17 +227,18 @@ class TreeRuleExtractor(BaseRuleMiner):
         self.rules_ = []
         self.is_fitted_ = False
     
+    @analysis_inputs('X', roles=())
     def fit(
         self,
         X: Union[pd.DataFrame, np.ndarray],
         y: Optional[Union[pd.Series, np.ndarray]] = None,
-        feature_names: FeatureNames = None,
+        features: FeatureNames = None,
         **kwargs
     ) -> 'TreeRuleExtractor':
         """在临时副本中拟合，成功后原子提交模型与编码状态。"""
         working = copy.copy(self)
         working.model_kwargs = dict(self.model_kwargs)
-        working._fit_inplace(X, y, feature_names=feature_names, **kwargs)
+        working._fit_inplace(X, y, features=features, **kwargs)
         self._commit_fitted_state(working)
         return self
 
@@ -243,14 +246,14 @@ class TreeRuleExtractor(BaseRuleMiner):
         self,
         X: Union[pd.DataFrame, np.ndarray],
         y: Optional[Union[pd.Series, np.ndarray]] = None,
-        feature_names: FeatureNames = None,
+        features: FeatureNames = None,
         **kwargs
     ) -> 'TreeRuleExtractor':
         """拟合提取器.
         
         :param X: 训练数据
         :param y: 目标变量（监督学习需要）
-        :param feature_names: 本次拟合使用的字段名或字段名列表，优先于构造参数 ``features``
+        :param features: 本次拟合使用的字段名或字段名列表，优先于构造参数 ``features``
         :param kwargs: 额外参数，可覆盖初始化参数
         :return: self
         """
@@ -266,7 +269,7 @@ class TreeRuleExtractor(BaseRuleMiner):
         
         validate_parallel_config(self.parallel_backend, self.parallel_config)
         self._effective_model_workers()
-        X, y = self._check_input_data(X, y, feature_names=feature_names)
+        X, y = self._check_input_data(X, y, features=features)
         
         # 保存特征名
         self.feature_names_ = list(X.columns)

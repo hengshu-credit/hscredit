@@ -136,8 +136,8 @@ def test_rule_flow_report_and_summary_support_date_and_category_groups():
         mode="serial",
     )
 
-    report = flow.report(data, date_col="apply_date", freq="M", group_cols="channel")
-    summary = flow.summary(data, date_col="apply_date", freq="M", group_cols="channel")
+    report = flow.report(data, date="apply_date", freq="M", group="channel")
+    summary = flow.summary(data, date="apply_date", freq="M", group="channel")
 
     assert set(["统计周期", "channel"]).issubset(report.columns)
     assert report.loc[report["统计类型"] != "整体合计", ["统计周期", "channel"]].drop_duplicates().to_dict("records") == [

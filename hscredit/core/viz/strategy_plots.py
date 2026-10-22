@@ -12,6 +12,8 @@
 
 from __future__ import annotations
 
+from hscredit.utils.arguments import analysis_inputs, normalize_features
+
 from typing import List, Optional, Tuple
 
 import matplotlib.pyplot as plt
@@ -28,7 +30,7 @@ from .utils import (
 )
 
 
-def _quick_psi(base: np.ndarray, target: np.ndarray, n_bins: int = 10) -> float:
+def _quick_psi(base: np.ndarray, target: np.ndarray, max_n_bins: int = 10) -> float:
     """快速计算 PSI（内部辅助函数）."""
     from ..metrics import psi
 
@@ -38,7 +40,7 @@ def _quick_psi(base: np.ndarray, target: np.ndarray, n_bins: int = 10) -> float:
     target = target[~pd.isna(target)]
     if len(base) == 0 or len(target) == 0:
         return np.nan
-    return float(psi(base, target, max_n_bins=n_bins))
+    return float(psi(base, target, max_n_bins=max_n_bins))
 
 
 def rule_swap_plot(
@@ -47,7 +49,7 @@ def rule_swap_plot(
     figsize: Tuple[float, float] = (15, 5),
     title: str = '规则置换分析',
     save: Optional[str] = None,
-    **kwargs,
+    dpi: int = 240, **kwargs,
 ) -> Figure:
     """绘制规则置换分析三联图.
 
@@ -124,7 +126,7 @@ def rule_swap_plot(
         ax.grid(True, alpha=0.3, axis='y')
     fig.suptitle(title, fontsize=14, fontweight='bold')
     fig.tight_layout()
-    save_figure(fig, save)
+    save_figure(fig, save, dpi=dpi)
     return fig
 
 
@@ -137,7 +139,7 @@ def strategy_simulation_plot(
     figsize: Tuple[float, float] = (10, 5),
     title: str = '评分阈值策略仿真',
     save: Optional[str] = None,
-    **kwargs,
+    dpi: int = 240, **kwargs,
 ) -> Figure:
     """绘制候选评分阈值的通过率与坏率双轴图.
 
@@ -194,14 +196,15 @@ def strategy_simulation_plot(
     ax1.grid(True, alpha=0.3, axis='y')
     ax2.grid(False)
     fig.tight_layout()
-    save_figure(fig, save)
+    save_figure(fig, save, dpi=dpi)
     return fig
 
 
+@analysis_inputs('df', roles=('date',))
 def feature_trend_by_time(
     df: pd.DataFrame,
     feature: str,
-    date_col: str,
+    date: str,
     target: Optional[str] = None,
     stat: str = 'mean',
     freq: str = 'M',
@@ -209,13 +212,13 @@ def feature_trend_by_time(
     figsize=(12, 5),
     title: Optional[str] = None,
     save: Optional[str] = None,
-    **kwargs,
+    dpi: int = 240, **kwargs,
 ) -> Figure:
     """特征随时间的统计趋势图，检测特征偏移.
 
     :param df: 数据集
     :param feature: 特征列名
-    :param date_col: 日期列名
+    :param date: 日期列名
     :param target: 目标变量（stat='badrate'时必需）
     :param stat: 'mean'/'median'/'psi'/'badrate'
     :param freq: 'M'月/'Q'季/'W'周
@@ -230,8 +233,8 @@ def feature_trend_by_time(
     >>> fig = feature_trend_by_time(df, 'age', 'apply_date', stat='mean')
     """
     df = df.copy()
-    df[date_col] = pd.to_datetime(df[date_col])
-    df['_period'] = df[date_col].dt.to_period(freq).astype(str)
+    df[date] = pd.to_datetime(df[date])
+    df['_period'] = df[date].dt.to_period(freq).astype(str)
     periods = sorted(df['_period'].unique())
     base_vals = df[df['_period'] == periods[0]][feature].dropna().values if periods else np.array([])
 
@@ -274,7 +277,7 @@ def feature_trend_by_time(
     ax.set_title(title or f'{feature} {stat_label}趋势', fontsize=12, fontweight='bold')
     setup_axis_style(ax, hide_top_right=True)
     fig.tight_layout()
-    save_figure(fig, save)
+    save_figure(fig, save, dpi=dpi)
     return fig
 
 
@@ -287,7 +290,7 @@ def feature_drift_comparison(
     figsize=(12, 8),
     title: str = '特征分布偏移（PSI）',
     save: Optional[str] = None,
-    **kwargs,
+    dpi: int = 240, **kwargs,
 ) -> Figure:
     """多特征偏移瀑布图：颜色标注偏移等级.
 
@@ -351,7 +354,7 @@ def feature_drift_comparison(
     ax.set_title(title, fontsize=13, fontweight='bold')
     setup_axis_style(ax, hide_top_right=True)
     fig.tight_layout()
-    save_figure(fig, save)
+    save_figure(fig, save, dpi=dpi)
     return fig
 
 
@@ -365,7 +368,7 @@ def feature_effectiveness_by_segment(
     figsize=(10, 6),
     title: Optional[str] = None,
     save: Optional[str] = None,
-    **kwargs,
+    dpi: int = 240, **kwargs,
 ) -> Figure:
     """特征在不同客群下的有效性对比柱状图.
 
@@ -422,22 +425,23 @@ def feature_effectiveness_by_segment(
                  fontsize=12, fontweight='bold')
     setup_axis_style(ax, hide_top_right=True)
     fig.tight_layout()
-    save_figure(fig, save)
+    save_figure(fig, save, dpi=dpi)
     return fig
 
 
+@analysis_inputs('df', roles=())
 def feature_cross_heatmap(
     df: pd.DataFrame,
-    feature_x: str,
-    feature_y: str,
-    target: str,
+    x1: str = None,
+    x2: str = None,
+    target: str = None,
     stat: str = 'badrate',
-    n_bins: int = 5,
+    max_n_bins: int = 5,
     ax=None,
     figsize=(10, 8),
     title: Optional[str] = None,
     save: Optional[str] = None,
-    **kwargs,
+    features=None, dpi: int = 240, **kwargs,
 ) -> Figure:
     """两特征交叉分析热力图：行=feature_x，列=feature_y，格=坏率/样本数/LIFT.
 
@@ -446,7 +450,7 @@ def feature_cross_heatmap(
     :param feature_y: 列特征
     :param target: 目标变量
     :param stat: 'badrate'/'count'/'lift'
-    :param n_bins: 数值型特征分箱数
+    :param max_n_bins: 数值型特征分箱数
     :param ax: matplotlib Axes
     :param figsize: 图像尺寸
     :param title: 图标题
@@ -457,6 +461,7 @@ def feature_cross_heatmap(
 
     >>> fig = feature_cross_heatmap(df, 'age', 'income', 'fpd30')
     """
+    feature_x, feature_y = normalize_features(features, x1=x1, x2=x2, size=2, required=True)
     df = df[[feature_x, feature_y, target]].dropna().copy()
     overall_br = df[target].mean()
 
@@ -468,8 +473,8 @@ def feature_cross_heatmap(
                 return pd.cut(series, bins=nbins, duplicates='drop').astype(str)
         return series.astype(str)
 
-    df['_bx'] = _bin(df[feature_x], n_bins)
-    df['_by'] = _bin(df[feature_y], n_bins)
+    df['_bx'] = _bin(df[feature_x], max_n_bins)
+    df['_by'] = _bin(df[feature_y], max_n_bins)
 
     if stat == 'count':
         matrix = df.groupby(['_bx', '_by'])[target].count().unstack().fillna(0)
@@ -504,7 +509,7 @@ def feature_cross_heatmap(
     ax.set_title(title or f'{feature_x} × {feature_y} 交叉（{cbar_label}）',
                  fontsize=12, fontweight='bold')
     fig.tight_layout()
-    save_figure(fig, save)
+    save_figure(fig, save, dpi=dpi)
     return fig
 
 
@@ -517,7 +522,7 @@ def population_drift_monitor(
     figsize=(14, 10),
     title: str = '客群偏移监控',
     save: Optional[str] = None,
-    **kwargs,
+    dpi: int = 240, **kwargs,
 ) -> Figure:
     """多期客群偏移监控大图（PSI热力图 + 趋势折线）.
 
@@ -581,7 +586,7 @@ def population_drift_monitor(
     setup_axis_style(ax_trend, hide_top_right=True)
     fig.suptitle(title, fontsize=14, fontweight='bold')
     fig.tight_layout()
-    save_figure(fig, save)
+    save_figure(fig, save, dpi=dpi)
     return fig
 
 
@@ -595,7 +600,7 @@ def segment_scorecard_comparison(
     figsize=(14, 6),
     title: str = '分客群评分效果对比',
     save: Optional[str] = None,
-    **kwargs,
+    dpi: int = 240, **kwargs,
 ) -> Figure:
     """按客群分组的评分指标对比柱状图.
 
@@ -678,7 +683,7 @@ def segment_scorecard_comparison(
 
     fig.suptitle(title, fontsize=13, fontweight='bold')
     fig.tight_layout()
-    save_figure(fig, save)
+    save_figure(fig, save, dpi=dpi)
     return fig
 
 

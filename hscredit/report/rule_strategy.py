@@ -1,5 +1,9 @@
 """拒绝规则策略文档表格转换工具."""
 
+from hscredit.utils.arguments import analysis_inputs
+
+from ..utils.targets import TargetInput, bind_targets, target_count, reject_legacy_target_keywords
+
 from collections import OrderedDict
 from copy import deepcopy
 from dataclasses import dataclass
@@ -9,9 +13,8 @@ import numpy as np
 import pandas as pd
 from openpyxl.styles import Alignment, Font, PatternFill
 
-from ..utils.overdue import compare_overdue, overdue_grey_mask, overdue_label, validate_overdue_operator
+from ..utils.overdue import validate_overdue_operator
 from ..core.rules import Rule
-from ..utils.input_utils import normalize_dpd_values
 from ..utils.parallel import (
     _ACTIVE_BUDGET,
     ParallelBudget,
@@ -32,12 +35,9 @@ class _ReportParallelPlan:
     has_parallel_children: bool
 
 
-def _rule_report_task_count(overdue, dpds) -> int:
-    """严格复刻 ``Rule.report`` 的逾期列和 DPD 规范化，返回真实任务数。"""
-    if overdue is None:
-        return 1
-    overdue_values = overdue if isinstance(overdue, list) else [overdue]
-    return len(overdue_values) * len(normalize_dpd_values(dpds))
+def _rule_report_task_count(overdue, dpds, target=None) -> int:
+    """返回逾期或显式标签的真实任务数。"""
+    return target_count(target, overdue, dpds)
 
 
 def _plan_report_parallel(n_jobs, outer_task_count: int, inner_task_count: int) -> _ReportParallelPlan:
@@ -539,26 +539,26 @@ def _order_groups(present: Sequence[Any], group_order: GroupOrder) -> list:
 
 def _resolve_group_labels(
     data: pd.DataFrame,
-    date_col: Optional[str],
+    date: Optional[str],
     freq: str,
-    group_col: Optional[str],
+    group: Optional[str],
     dropna: bool,
     group_order: GroupOrder,
 ) -> Tuple[pd.Series, list]:
     """根据日期+频率或分组字段，解析每条样本所属的分组标签与有序分组列表."""
-    if (date_col is None) == (group_col is None):
-        raise ValueError("date_col 与 group_col 必须且只能指定其中一个")
+    if (date is None) == (group is None):
+        raise ValueError("date 与 group 必须且只能指定其中一个")
 
-    if group_col is not None:
-        if group_col not in data.columns:
-            raise ValueError(f"数据集缺少分组字段列: {group_col}")
-        labels = data[group_col]
+    if group is not None:
+        if group not in data.columns:
+            raise ValueError(f"数据集缺少分组字段列: {group}")
+        labels = data[group]
     else:
-        if date_col not in data.columns:
-            raise ValueError(f"数据集缺少日期列: {date_col}")
+        if date not in data.columns:
+            raise ValueError(f"数据集缺少日期列: {date}")
         if freq not in _FREQ_LABELS:
             raise ValueError("freq必须是'D'/'W'/'M'/'Q'之一")
-        parsed = pd.to_datetime(data[date_col], errors="coerce")
+        parsed = pd.to_datetime(data[date], errors="coerce")
         labels = parsed.dt.to_period(freq).astype(str)
         labels = labels.where(parsed.notna(), other=np.nan)
 
@@ -572,13 +572,14 @@ def _resolve_group_labels(
     return labels, _order_groups(unique_values, group_order)
 
 
+@analysis_inputs('data', roles=('date', 'group', 'amount'))
 def rule_group_compare(
     data: pd.DataFrame,
     rule: Union[str, Rule],
-    date_col: Optional[str] = None,
+    date: Optional[str] = None,
     freq: str = "M",
-    group_col: Optional[str] = None,
-    target: str = "target",
+    group: Optional[str] = None,
+    target: Optional[TargetInput] = None,
     overdue: Optional[Union[str, List[str]]] = None,
     dpds: Optional[Union[int, float, List[Union[int, float]]]] = None,
     rule_name: Optional[str] = None,
@@ -605,9 +606,9 @@ def rule_group_compare(
 
     :param data: 原始明细数据 DataFrame，需包含规则所需字段、目标/逾期字段及分组依据列
     :param rule: 规则表达式字符串或 :class:`~hscredit.core.rules.Rule` 实例
-    :param date_col: 日期列名，与 ``freq`` 配合按时间周期分组（与 ``group_col`` 二选一）
+    :param date: 日期列名，与 ``freq`` 配合按时间周期分组（与 ``group`` 二选一）
     :param freq: 时间频率，``'D'`` 日 / ``'W'`` 周 / ``'M'`` 月 / ``'Q'`` 季度，默认 ``'M'``
-    :param group_col: 分组字段列名，按其取值分组（与 ``date_col`` 二选一）
+    :param group: 分组字段列名，按其取值分组（与 ``date`` 二选一）
     :param target: 目标变量列名，默认 ``"target"``，0=好样本，1=坏样本
     :param overdue: 逾期天数字段名（可选，传入时以逾期天数>DPD定义坏样本，支持多标签）
     :param dpds: 逾期定义方式，默认逾期天数 > DPD 为坏样本（可通过 overdue_operator 调整），可传入列表支持多DPD联合分析
@@ -627,19 +628,19 @@ def rule_group_compare(
 
     :param kwargs: 透传给 ``Rule.report`` 的其他参数（如 ``desc``、``filter_cols``、``margins`` 等）
     :return: 两层列头的分组命中对比表，不包含合计行；列头第二层为各分组名称
-    :raises ValueError: ``date_col`` 与 ``group_col`` 未二选一，或所需列缺失时
+    :raises ValueError: ``date`` 与 ``group`` 未二选一，或所需列缺失时
 
     **参考样例**
 
     >>> from hscredit.report import rule_group_compare
     >>> # 按放款月份对比同一拒绝规则在各月样本上的命中效果（多标签口径）
     >>> rule_group_compare(
-    ...     data, "score < 600", date_col='放款时间', freq='M',
+    ...     data, "score < 600", date='放款时间', freq='M',
     ...     overdue=['MOB1'], dpds=[7, 0], rule_name='低分拒绝',
     ... )
     >>> # 按商品类别分组、金额口径，并自定义分组展示顺序
     >>> rule_group_compare(
-    ...     data, "score < 600", group_col='商品类别', target='FPD',
+    ...     data, "score < 600", group='商品类别', target='FPD',
     ...     amount='放款金额', group_order=['手机通讯', '电脑数码', '家用电器'],
     ... )
 
@@ -649,14 +650,16 @@ def rule_group_compare(
         ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
     """
     validate_overdue_operator(overdue_operator)
-    del_grey = del_grey and overdue_operator in (">", ">=")
+    reject_legacy_target_keywords(kwargs)
+    data, target = bind_targets(data, target, overdue, dpds, del_grey, overdue_operator, default_target="target")
+    overdue, dpds = None, None
     if not isinstance(data, pd.DataFrame) or data.empty:
         raise ValueError("data 必须是非空的 DataFrame")
 
     rule = rule if isinstance(rule, Rule) else Rule(rule)
-    labels, ordered_groups = _resolve_group_labels(data, date_col, freq, group_col, dropna, group_order)
+    labels, ordered_groups = _resolve_group_labels(data, date, freq, group, dropna, group_order)
     if not ordered_groups:
-        raise ValueError("根据 date_col/group_col 未能切分出任何有效分组")
+        raise ValueError("根据 date/group 未能切分出任何有效分组")
 
     report_kwargs = dict(
         target=target,
@@ -671,16 +674,16 @@ def rule_group_compare(
         **kwargs,
     )
     tasks = []
-    for group in ordered_groups:
-        subset = data.loc[labels == group]
+    for group_values in ordered_groups:
+        subset = data.loc[labels == group_values]
         if subset.empty:
             continue
-        tasks.append((str(group), rule, subset, report_kwargs))
+        tasks.append((str(group_values), rule, subset, report_kwargs))
 
     plan = _plan_report_parallel(
         n_jobs,
         outer_task_count=len(tasks),
-        inner_task_count=_rule_report_task_count(overdue, dpds),
+        inner_task_count=_rule_report_task_count(overdue, dpds, target),
     )
     report_kwargs["n_jobs"] = plan.child_workers
     group_results = _execute_report_plan(
@@ -699,7 +702,7 @@ def rule_group_compare(
         rule_name=rule_name or rule.name,
         target_names=target_names,
         metrics=metrics,
-        target_name=target,
+        target_name=target.names()[0],
         n_jobs=n_jobs,
         parallel_backend=parallel_backend,
         parallel_config=parallel_config,
@@ -778,6 +781,10 @@ def _method_display(method: str) -> str:
     return _METHOD_DISPLAY_NAMES.get(method, f"{method}分箱")
 
 
+class _ExplicitTargetNames(dict):
+    """自定义标签名按原文展示，不进行逾期格式转换。"""
+
+
 def _normalize_target_label(label: Any) -> str:
     """将逾期标签的三种生成形式统一为 ``Rule.report`` 的空格形式 ``MOB1 7+``。
 
@@ -804,13 +811,15 @@ def _normalize_target_label(label: Any) -> str:
 
 def _normalize_target_names(target_names: Optional[Mapping[str, str]]) -> Optional[Dict[str, str]]:
     """将 ``target_names`` 的键统一为空格形式，使任意写法的键都能匹配到标签。"""
-    if not target_names:
+    if isinstance(target_names, _ExplicitTargetNames) or not target_names:
         return target_names
     return {_normalize_target_label(key): value for key, value in target_names.items()}
 
 
 def _display_target_label(label: Any, target_names: Optional[Mapping[str, str]]) -> str:
     """规整单个逾期标签：先统一为空格形式，再套用 ``target_names`` 映射。"""
+    if isinstance(target_names, _ExplicitTargetNames):
+        return target_names.get(label, label)
     normalized = _normalize_target_label(label)
     return target_names.get(normalized, normalized) if target_names else normalized
 
@@ -864,7 +873,7 @@ def _resolve_swap_rules(
 
 def _resolve_swap_targets(
     data: pd.DataFrame,
-    target: Optional[str],
+    target: Optional[TargetInput],
     overdue: Optional[Union[str, List[str]]],
     dpds: Optional[Union[int, float, List[Union[int, float]]]],
     del_grey: bool,
@@ -874,39 +883,16 @@ def _resolve_swap_targets(
 
     标签命名与 :func:`~hscredit.report.feature_bin_stats` 保持一致（``MOB1_7+``）。
     """
-    validate_overdue_operator(overdue_operator)
-    del_grey = del_grey and overdue_operator in (">", ">=")
-    result: "OrderedDict[str, Tuple[pd.DataFrame, pd.Series]]" = OrderedDict()
-    if overdue is not None:
-        if dpds is None:
-            raise ValueError("传入 overdue 参数时必须同时传入 dpds")
-        overdue_cols = [overdue] if isinstance(overdue, str) else list(overdue)
-        dpd_values = normalize_dpd_values(dpds)
-        if not overdue_cols or not dpd_values:
-            raise ValueError("overdue 和 dpds 不能为空")
-        for col in overdue_cols:
-            if col not in data.columns:
-                raise ValueError(f"数据集缺少逾期天数列: {col}")
-            days = pd.to_numeric(data[col], errors="coerce")
-            for dpd in dpd_values:
-                label = overdue_label(col, dpd, overdue_operator)
-                y = compare_overdue(days, dpd, overdue_operator).astype(int)
-                subset = data
-                if del_grey:
-                    keep = ~overdue_grey_mask(days, dpd, overdue_operator)
-                    subset = data[keep]
-                    y = y[keep]
-                result[label] = (subset, y)
-    else:
-        if target is None or target not in data.columns:
-            raise ValueError("必须传入数据集中存在的 target 或 overdue+dpds 参数")
-        result[target] = (data, data[target].astype(int))
-    return result
+    frame, targets = bind_targets(data, target, overdue, dpds, del_grey, overdue_operator)
+    return OrderedDict(
+        (name, (frame.loc[values.notna()], values.loc[values.notna()]))
+        for name, values in targets.y_map(frame).items()
+    )
 
 
 def _swap_sample_overview(
     targets: "OrderedDict[str, Tuple[pd.DataFrame, pd.Series]]",
-    date_col: Optional[str],
+    date: Optional[str],
     data: pd.DataFrame,
     target_names: Optional[Mapping[str, str]] = None,
 ) -> pd.DataFrame:
@@ -914,8 +900,8 @@ def _swap_sample_overview(
     labels = [_display_target_label(label, target_names) for label in targets.keys()]
     columns: List[Tuple[str, str]] = [("样本情况", "数据集")]
     values: List[Any] = ["全量数据"]
-    if date_col is not None and date_col in data.columns:
-        parsed = pd.to_datetime(data[date_col], errors="coerce").dropna()
+    if date is not None and date in data.columns:
+        parsed = pd.to_datetime(data[date], errors="coerce").dropna()
         if not parsed.empty:
             columns.append(("样本情况", "时间区间"))
             values.append(f"{parsed.min():%Y-%m-%d} 至 {parsed.max():%Y-%m-%d}")
@@ -1161,9 +1147,9 @@ def _write_caliber_pair(
         writer, worksheet, order_table, row, start_col, f"{prefix}：订单口径", bar_names=bar_names, **kwargs,
     )
     if amount_table is not None:
-        amount_col = start_col + _table_display_width(order_table) + 1
+        amount = start_col + _table_display_width(order_table) + 1
         amount_end, _ = _write_swap_table(
-            writer, worksheet, amount_table, row, amount_col, f"{prefix}：金额口径", bar_names=bar_names, **kwargs,
+            writer, worksheet, amount_table, row, amount, f"{prefix}：金额口径", bar_names=bar_names, **kwargs,
         )
         end_row = max(end_row, amount_end)
     return end_row + _GAP_INNER
@@ -1216,6 +1202,7 @@ def _write_binning_detail_sheet(
         writer.add_auto_filter(worksheet, first_block_ref)
 
 
+@analysis_inputs('data', roles=('date', 'group', 'amount'))
 def swap_out_report(
     data: pd.DataFrame,
     rules: Union[str, "Rule", Sequence[Union[str, "Rule"]]],
@@ -1224,7 +1211,7 @@ def swap_out_report(
     describe: Optional[Union[str, List[str]]] = None,
     rule_summary: Optional[Union[str, List[str]]] = None,
     impact: Optional[Union[str, List[str]]] = None,
-    target: str = "target",
+    target: Optional[TargetInput] = None,
     overdue: Optional[Union[str, List[str]]] = None,
     dpds: Optional[Union[int, float, List[Union[int, float]]]] = None,
     save: Optional[str] = None,
@@ -1233,9 +1220,9 @@ def swap_out_report(
     bin_params: Optional[Union[Dict[str, Any], Dict[str, Dict[str, Any]]]] = None,
     features: Optional[List[str]] = None,
     amount: Optional[str] = None,
-    date_col: Optional[str] = None,
+    date: Optional[str] = None,
     freq: str = "M",
-    group_col: Optional[str] = None,
+    group: Optional[str] = None,
     current_pass_rate: float = 1.0,
     prior_rules: Optional["Rule"] = None,
     del_grey: bool = False,
@@ -1281,9 +1268,9 @@ def swap_out_report(
     :param bin_params: 分箱参数，``dict``（所有方法统一）或 ``dict[method: dict]``（按方法名映射）
     :param features: 参与相关系数与分箱详情的指标列表，默认取所有规则引用到的字段
     :param amount: 金额字段名（可选），传入时额外输出金额口径的业务影响与规则效果
-    :param date_col: 日期列名，与 ``freq`` 配合做规则稳定性分析（与 ``group_col`` 二选一）
+    :param date: 日期列名，与 ``freq`` 配合做规则稳定性分析（与 ``group`` 二选一）
     :param freq: 稳定性分析的时间频率，``'D'/'W'/'M'/'Q'``，默认 ``'M'``
-    :param group_col: 分组字段列名，做规则稳定性分析（与 ``date_col`` 二选一）
+    :param group: 分组字段列名，做规则稳定性分析（与 ``date`` 二选一）
     :param current_pass_rate: 规则执行前的当前通过率，取值 [0, 1]，默认 1.0
     :param prior_rules: 先验规则（可选），评估前先排除命中先验规则的样本
     :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本；``<``、``<=`` 下不剔除。
@@ -1302,7 +1289,7 @@ def swap_out_report(
     ...     background="为压降逾期，筛选近期放款老客样本进行策略迭代验证",
     ...     summary=["低分拒绝规则性价比最高", "多头机构数规则作为补充收紧尾部"],
     ...     overdue=["MOB1"], dpds=[7, 0], amount="放款金额",
-    ...     date_col="放款时间", freq="M", methods=["quantile", "mdlp"],
+    ...     date="放款时间", freq="M", methods=["quantile", "mdlp"],
     ...     save="策略迭代报告.xlsx",
     ... )
 
@@ -1312,7 +1299,9 @@ def swap_out_report(
         ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
     """
     validate_overdue_operator(overdue_operator)
-    del_grey = del_grey and overdue_operator in (">", ">=")
+    reject_legacy_target_keywords(kwargs)
+    data, target = bind_targets(data, target, overdue, dpds, del_grey, overdue_operator, default_target="target")
+    overdue, dpds = None, None
     from ..excel import ExcelWriter
 
     if not isinstance(data, pd.DataFrame) or data.empty:
@@ -1321,7 +1310,7 @@ def swap_out_report(
     combined_rule, rule_objs, multi = _resolve_swap_rules(rules)
     methods_list = [methods] if isinstance(methods, str) else list(methods)
     # 统一 target_names 的键形式（兼容 MOB1_7+ / MOB1@7 / MOB1 7+ 三种写法）
-    target_names = _normalize_target_names(target_names)
+    target_names = _ExplicitTargetNames(target_names or {}) if target.mode == "target" else _normalize_target_names(target_names)
 
     if features is None:
         features = _ordered_unique([col for rule in rule_objs for col in rule.feature_names_in_])
@@ -1370,7 +1359,7 @@ def swap_out_report(
         rule_report_tasks.append(((label, 'count'), rule, data, None, report_kwargs))
         if has_amount:
             rule_report_tasks.append(((label, 'amount'), rule, data, amount, report_kwargs))
-    target_task_count = _rule_report_task_count(overdue, dpds)
+    target_task_count = _rule_report_task_count(overdue, dpds, target)
     report_plan = _plan_report_parallel(
         n_jobs,
         outer_task_count=len(rule_report_tasks),
@@ -1395,13 +1384,13 @@ def swap_out_report(
         impact_order = _rename_hit_labels(
             rule_target_analysis(
                 order_rep, current_pass_rate=current_pass_rate, rule_name=rule.name,
-                target_names=target_names, target_name=target,
+                target_names=target_names, target_name=target.names()[0],
             )
         )
         effect_order = _drop_total_rows(
             rule_target_table(
                 order_rep, rule_name=rule.name, target_names=target_names,
-                metrics=_SWAP_EFFECT_METRICS, target_name=target,
+                metrics=_SWAP_EFFECT_METRICS, target_name=target.names()[0],
             )
         )
         impact_amount = None
@@ -1412,7 +1401,7 @@ def swap_out_report(
                 _rename_hit_labels(
                     rule_target_analysis(
                         amount_rep, current_pass_rate=current_pass_rate, rule_name=rule.name,
-                        target_names=target_names, target_name=target,
+                        target_names=target_names, target_name=target.names()[0],
                     )
                 )
             )
@@ -1420,7 +1409,7 @@ def swap_out_report(
                 _drop_total_rows(
                     rule_target_table(
                         amount_rep, rule_name=rule.name, target_names=target_names,
-                        metrics=_SWAP_EFFECT_METRICS, target_name=target,
+                        metrics=_SWAP_EFFECT_METRICS, target_name=target.names()[0],
                     )
                 )
             )
@@ -1428,9 +1417,9 @@ def swap_out_report(
         effect_tables[label] = (effect_order, effect_amount)
 
     stability_blocks: List[Tuple[str, pd.DataFrame]] = []
-    if date_col is not None or group_col is not None:
+    if date is not None or group is not None:
         stability_kwargs = dict(
-            date_col=date_col, freq=freq, group_col=group_col, target=target,
+            date=date, freq=freq, group=group, target=target,
             overdue=overdue, dpds=dpds, overdue_operator=overdue_operator, target_names=target_names,
             prior_rules=prior_rules, del_grey=del_grey, n_jobs=-1,
             parallel_backend=parallel_backend, parallel_config=parallel_config,
@@ -1441,9 +1430,9 @@ def swap_out_report(
         ]
         _, stability_groups = _resolve_group_labels(
             data,
-            date_col,
+            date,
             freq,
-            group_col,
+            group,
             False,
             None,
         )
@@ -1473,7 +1462,7 @@ def swap_out_report(
     row = 2
 
     # 各模块的内容宽度：保证标题横幅与文本宽度同模块内最宽表格一致
-    overview = _swap_sample_overview(targets, date_col, data, target_names)
+    overview = _swap_sample_overview(targets, date, data, target_names)
     corr = None
     if len(features) >= 2:
         corr = data[features].apply(pd.to_numeric, errors="coerce").corr().round(4)
@@ -1565,7 +1554,7 @@ def swap_out_report(
     row += _GAP_MODULE - _GAP_INNER
 
     # —— 8. 规则稳定性分析（按时间或分组对比）——
-    if date_col is not None or group_col is not None:
+    if date is not None or group is not None:
         if stability_blocks:
             stability_width = max(_table_display_width(tbl) for _, tbl in stability_blocks)
             row = _write_banner(writer, worksheet, row, "规则稳定性分析", start_col, stability_width, "swap_title")

@@ -26,6 +26,7 @@ from sklearn.exceptions import NotFittedError
 from sklearn.model_selection import train_test_split
 
 from ...utils.overdue import validate_overdue_operator
+from ...utils.targets import TargetInput
 from ..metrics.classification import ks, auc, gini
 from ..metrics.finance import lift_monotonicity_check
 from ...utils.serialization import ArtifactSerializableMixin
@@ -188,7 +189,7 @@ def _evaluate_binary_predictions(
             elif name == "f1":
                 results["F1"] = f1_score(y_true, y_pred, sample_weight=weights, zero_division=0)
             elif name == "lift_monotonicity":
-                monotonicity = lift_monotonicity_check(y_true, y_proba, n_bins=10, direction="both")
+                monotonicity = lift_monotonicity_check(y_true, y_proba, max_n_bins=10, direction="both")
                 results["头部LIFT单调"] = monotonicity["head_monotonic"]
                 results["头部违反单调比例"] = monotonicity["head_violation_ratio"]
                 results["尾部LIFT单调"] = monotonicity["tail_monotonic"]
@@ -584,7 +585,7 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, InferenceExportMixin, ArtifactSe
         y_train: Union[np.ndarray, pd.Series],
         X_test: Optional[Union[np.ndarray, pd.DataFrame]] = None,
         y_test: Optional[Union[np.ndarray, pd.Series]] = None,
-        feature_names: Optional[List[str]] = None,
+        features: Optional[List[str]] = None,
     ) -> "ModelReport":
         """生成模型评估报告.
 
@@ -596,13 +597,13 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, InferenceExportMixin, ArtifactSe
         :param y_train: 训练集标签
         :param X_test: 测试集特征，可选
         :param y_test: 测试集标签，可选
-        :param feature_names: 特征名称列表，可选
+        :param features: 特征名称列表，可选
         :return: ModelReport 对象
         """
         from ...report import ModelReport
 
         return ModelReport(
-            model=self, X_train=X_train, y_train=y_train, X_test=X_test, y_test=y_test, feature_names=feature_names
+            model=self, X_train=X_train, y_train=y_train, X_test=X_test, y_test=y_test, features=features
         )
 
     def report(
@@ -612,17 +613,18 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, InferenceExportMixin, ArtifactSe
         y_train=None,
         X_test=None,
         y_test=None,
-        feature_names: Optional[List[str]] = None,
-        target: Optional[Union[str, Dict]] = None,
+        features: Optional[List[str]] = None,
+        target: Optional[TargetInput] = None,
         overdue: Optional[Union[str, List[str]]] = None,
         dpds: Optional[Union[int, float, List[Union[int, float]]]] = None,
         excel_path: Optional[str] = None,
         verbose: bool = True,
-        n_bins: int = 10,
-        amount_col: Optional[str] = None,
-        date_col: Optional[str] = None,
-        group_col: Optional[str] = None,
+        max_n_bins: int = 10,
+        amount: Optional[str] = None,
+        date: Optional[str] = None,
+        group: Optional[str] = None,
         *,
+        del_grey: bool = False,
         overdue_operator: Optional[str] = None,
         **kwargs,
     ) -> "ModelReport":
@@ -650,16 +652,16 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, InferenceExportMixin, ArtifactSe
         :param y_train: 训练集标签（兼容旧API）
         :param X_test: 测试集特征（兼容旧API）
         :param y_test: 测试集标签（兼容旧API）
-        :param feature_names: 特征名称列表
+        :param features: 特征名称列表
         :param target: 目标列配置
         :param overdue: 逾期列名
         :param dpds: 逾期天数阈值
         :param excel_path: Excel 报告输出路径
         :param verbose: 是否打印控制台报告
-        :param n_bins: 分箱数
-        :param amount_col: 金额字段
-        :param date_col: 日期字段
-        :param group_col: 分组字段
+        :param max_n_bins: 分箱数
+        :param amount: 金额字段
+        :param date: 日期字段
+        :param group: 分组字段
         :param kwargs: 传递给 auto_model_report 的其他参数
         :return: ModelReport 实例
 
@@ -678,17 +680,18 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, InferenceExportMixin, ArtifactSe
             y_train=y_train,
             X_test=X_test,
             y_test=y_test,
-            feature_names=feature_names,
+            features=features,
             target=target,
             overdue=overdue,
             dpds=dpds,
             overdue_operator=overdue_operator,
+            del_grey=del_grey,
             excel_path=excel_path,
             verbose=verbose,
-            n_bins=n_bins,
-            amount_col=amount_col,
-            date_col=date_col,
-            group_col=group_col,
+            max_n_bins=max_n_bins,
+            amount=amount,
+            date=date,
+            group=group,
             **kwargs,
         )
 

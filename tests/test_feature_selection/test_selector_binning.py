@@ -118,7 +118,7 @@ def test_binner_priority_ignores_invalid_binning_params(sample_xy):
 
     selector = CaptureSelector(
         binner=binner,
-        binning_params="该参数应被忽略",
+        bin_params="该参数应被忽略",
     ).fit(X, y)
 
     assert selector._binner_instance is binner
@@ -139,7 +139,7 @@ def test_binning_params_create_independent_optimal_binner(sample_xy):
     params = {"method": "uniform", "max_n_bins": 2, "min_n_bins": 2}
     snapshot = params.copy()
 
-    selector = CaptureSelector(binning_params=params).fit(X, y)
+    selector = CaptureSelector(bin_params=params).fit(X, y)
 
     assert isinstance(selector._binner_instance, OptimalBinning)
     assert selector._binner_instance.method == "uniform"
@@ -152,8 +152,8 @@ def test_invalid_binning_params_are_rejected(bad_params, sample_xy):
     """防止非字典参数进入 OptimalBinning 构造流程。"""
     X, y = sample_xy
 
-    with pytest.raises(ValidationError, match="binning_params 分箱参数必须是字典"):
-        CaptureSelector(binning_params=bad_params).fit(X, y)
+    with pytest.raises(ValidationError, match="bin_params 分箱参数必须是字典"):
+        CaptureSelector(bin_params=bad_params).fit(X, y)
 
 
 def test_binner_without_transform_or_apply_is_rejected(sample_xy):
@@ -210,7 +210,7 @@ def test_corr_include_participates_but_force_drop_skips_pre_binning():
         include=["强制保留"],
         force_drop=["强制删除"],
         binner=binner,
-        binning_params=None,
+        bin_params=None,
         n_jobs=1,
     ).fit(X, y)
 
@@ -248,7 +248,7 @@ def test_iv_selector_computes_iv_from_uniform_bin_indices():
     selector = IVSelector(
         threshold=0.0,
         regularization=1.0,
-        binning_params={"method": "uniform", "max_n_bins": 2, "min_n_bins": 2},
+        bin_params={"method": "uniform", "max_n_bins": 2, "min_n_bins": 2},
     ).fit(X, y)
 
     assert selector.scores_["连续变量"] == pytest.approx(0.462098, rel=1e-5)
@@ -316,7 +316,7 @@ def test_all_exported_selectors_expose_common_binning_parameters():
         if not issubclass(selector_class, BaseFeatureSelector):
             continue
         parameters = inspect.signature(selector_class.__init__).parameters
-        if "binner" not in parameters or "binning_params" not in parameters:
+        if "binner" not in parameters or "bin_params" not in parameters:
             missing.append(name)
 
     assert missing == []
@@ -326,7 +326,7 @@ def test_selector_clone_preserves_independent_binning_configuration():
     """防止 sklearn clone 丢失或共享可变分箱参数。"""
     selector = IVSelector(
         threshold=0.01,
-        binning_params={"method": "uniform", "max_n_bins": 3},
+        bin_params={"method": "uniform", "max_n_bins": 3},
         n_jobs=0.5,
         parallel_backend="threading",
         parallel_config={"batch_size": 1},
@@ -335,8 +335,8 @@ def test_selector_clone_preserves_independent_binning_configuration():
     cloned = clone(selector)
 
     assert cloned.binner is None
-    assert cloned.binning_params == {"method": "uniform", "max_n_bins": 3}
-    assert cloned.binning_params is not selector.binning_params
+    assert cloned.bin_params == {"method": "uniform", "max_n_bins": 3}
+    assert cloned.bin_params is not selector.bin_params
     assert cloned.n_jobs == 0.5
     assert cloned.parallel_backend == "threading"
     assert cloned.parallel_config == {"batch_size": 1}

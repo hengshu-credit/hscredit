@@ -78,7 +78,7 @@ def test_corr_selector_exposes_cloneable_block_size(correlated_frame):
     X, weights = correlated_frame
     selector = CorrSelector(
         weights=weights,
-        binning_params=None,
+        bin_params=None,
         corr_block_size=3,
         n_jobs=2,
         parallel_backend="threading",
@@ -97,7 +97,7 @@ def test_block_parallel_pearson_matches_serial_and_dense_reference(correlated_fr
         threshold=0.8,
         method="pearson",
         weights=weights,
-        binning_params=None,
+        bin_params=None,
         corr_block_size=2,
         n_jobs=1,
     ).fit(X)
@@ -105,7 +105,7 @@ def test_block_parallel_pearson_matches_serial_and_dense_reference(correlated_fr
         threshold=0.8,
         method="pearson",
         weights=weights,
-        binning_params=None,
+        bin_params=None,
         corr_block_size=2,
         n_jobs=2,
         parallel_backend=backend,
@@ -128,7 +128,7 @@ def test_fast_pearson_does_not_build_full_dataframe_correlation(correlated_frame
         threshold=0.8,
         method="pearson",
         weights=weights,
-        binning_params=None,
+        bin_params=None,
         corr_block_size=2,
         n_jobs=2,
         parallel_backend="threading",
@@ -151,7 +151,7 @@ def test_finite_fast_path_defaults_to_shared_memory_threading(correlated_frame, 
         threshold=0.8,
         method="pearson",
         weights=weights,
-        binning_params=None,
+        bin_params=None,
         corr_block_size=2,
         n_jobs=2,
     ).fit(X)
@@ -171,7 +171,7 @@ def test_default_spearman_uses_fast_block_path_and_matches_dense(correlated_fram
     selector = CorrSelector(
         threshold=0.8,
         weights=weights,
-        binning_params=None,
+        bin_params=None,
         corr_block_size=2,
         n_jobs=2,
         parallel_backend="threading",
@@ -210,7 +210,7 @@ def test_default_block_spearman_ranking_uses_multiple_worker_threads(monkeypatch
     CorrSelector(
         method="spearman",
         weights=weights,
-        binning_params=None,
+        bin_params=None,
         n_jobs=4,
         parallel_backend="threading",
     ).fit(X)
@@ -225,7 +225,7 @@ def test_spearman_ranking_reuses_the_input_buffer():
     original = values.copy()
     selector = CorrSelector(
         method="spearman",
-        binning_params=None,
+        bin_params=None,
         corr_block_size=4,
         n_jobs=3,
         parallel_backend="threading",
@@ -244,7 +244,7 @@ def test_threaded_spearman_ranking_starts_the_executor_once(monkeypatch):
     values = rng.normal(size=(120, 13))
     selector = CorrSelector(
         method="spearman",
-        binning_params=None,
+        bin_params=None,
         corr_block_size=4,
         n_jobs=3,
         parallel_backend="threading",
@@ -280,7 +280,7 @@ def test_corr_threading_divides_total_budget_between_outer_and_native_threads(mo
     CorrSelector(
         method="pearson",
         weights=weights,
-        binning_params=None,
+        bin_params=None,
         corr_block_size=2,
         n_jobs=4,
         parallel_backend="threading",
@@ -316,7 +316,7 @@ def test_removed_rows_are_not_multiplied_in_later_correlation_blocks(monkeypatch
         threshold=0.7,
         method="pearson",
         weights=weights,
-        binning_params=None,
+        bin_params=None,
         corr_block_size=2,
         n_jobs=2,
         parallel_backend="threading",
@@ -341,7 +341,7 @@ def test_missing_values_and_all_methods_match_dense_reference(method, backend):
         threshold=0.75,
         method=method,
         weights=weights,
-        binning_params=None,
+        bin_params=None,
         corr_block_size=2,
         n_jobs=2,
         parallel_backend=backend,
@@ -353,7 +353,7 @@ def test_missing_values_and_all_methods_match_dense_reference(method, backend):
 def test_internal_metric_binner_inherits_corr_parallel_configuration():
     parallel_config = {"batch_size": 4, "inner_max_num_threads": 1}
     selector = CorrSelector(
-        binning_params={"method": "best_iv", "max_n_bins": 3},
+        bin_params={"method": "best_iv", "max_n_bins": 3},
         n_jobs=3,
         parallel_backend=None,
         parallel_config=parallel_config,
@@ -369,7 +369,7 @@ def test_internal_metric_binner_inherits_corr_parallel_configuration():
 
 def test_internal_metric_binner_preserves_explicit_parallel_overrides():
     selector = CorrSelector(
-        binning_params={
+        bin_params={
             "method": "best_iv",
             "n_jobs": 1,
             "parallel_backend": "threading",
@@ -396,7 +396,7 @@ def test_fitted_internal_binner_receives_corr_parallel_configuration():
     )
     y = pd.Series([0, 0, 0, 1, 1, 1])
     selector = CorrSelector(
-        binning_params={"method": "uniform", "max_n_bins": 2, "min_n_bins": 2},
+        bin_params={"method": "uniform", "max_n_bins": 2, "min_n_bins": 2},
         n_jobs=2,
         parallel_backend="threading",
         parallel_config={"batch_size": 1},
@@ -426,7 +426,7 @@ def test_generic_block_path_never_correlates_more_than_two_blocks(monkeypatch):
         threshold=0.8,
         method="kendall",
         weights=weights,
-        binning_params=None,
+        bin_params=None,
         corr_block_size=2,
         n_jobs=2,
         parallel_backend="threading",
@@ -442,7 +442,7 @@ def test_corr_block_size_validation_is_chinese(value, correlated_frame):
     with pytest.raises(ValidationError, match="corr_block_size.*正整数"):
         CorrSelector(
             weights=weights,
-            binning_params=None,
+            bin_params=None,
             corr_block_size=value,
             n_jobs=1,
         ).fit(X)
@@ -453,7 +453,7 @@ def test_threshold_remains_strictly_greater_than():
     selector = CorrSelector(
         threshold=1.0,
         weights={"甲": 2.0, "乙": 1.0},
-        binning_params=None,
+        bin_params=None,
         corr_block_size=1,
         n_jobs=2,
         parallel_backend="threading",
@@ -484,7 +484,7 @@ def test_correlation_chain_does_not_drop_feature_only_related_to_removed_feature
         threshold=0.7,
         method="pearson",
         weights={"A": 3.0, "B": 2.0, "C": 1.0},
-        binning_params=None,
+        bin_params=None,
         corr_block_size=2,
         n_jobs=2,
         parallel_backend="threading",
@@ -507,7 +507,7 @@ def test_equal_metric_uses_original_column_order_as_stable_tie_breaker():
         threshold=0.7,
         method="pearson",
         weights={"先出现": 1.0, "后出现": 1.0},
-        binning_params=None,
+        bin_params=None,
         n_jobs=1,
     ).fit(X)
 
@@ -529,7 +529,7 @@ def test_every_correlation_drop_references_retained_not_worse_metric_feature():
         threshold=0.7,
         method="pearson",
         weights=weights,
-        binning_params=None,
+        bin_params=None,
         corr_block_size=2,
         n_jobs=2,
         parallel_backend="loky",
@@ -554,7 +554,7 @@ def test_force_drop_feature_cannot_eliminate_feature_that_will_be_retained():
         method="pearson",
         weights={"将强制删除": 5.0, "应保留": 1.0},
         force_drop=["将强制删除"],
-        binning_params=None,
+        bin_params=None,
         n_jobs=1,
     ).fit(X)
 
@@ -576,7 +576,7 @@ def test_force_include_has_priority_and_report_does_not_claim_lower_metric():
         method="pearson",
         weights={"强制保留": 1.0, "高metric": 5.0},
         include=["强制保留"],
-        binning_params=None,
+        bin_params=None,
         n_jobs=1,
     ).fit(X)
 

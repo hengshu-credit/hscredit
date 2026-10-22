@@ -30,7 +30,7 @@ def test_model_drift_report_combines_score_and_feature_drift():
         y_base=y_base,
         y_target=y_target,
         features=["x1", "x2"],
-        psi_bins=5,
+        max_n_bins=5,
     )
 
     assert set(report) == {"评分漂移", "特征漂移", "漂移摘要"}

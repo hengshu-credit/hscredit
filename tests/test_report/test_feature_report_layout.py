@@ -308,7 +308,6 @@ def test_auto_feature_analysis_defaults_to_non_role_columns(monkeypatch, tmp_pat
     auto_feature_analysis(
         data,
         features=None,
-        target="target",
         overdue="mob",
         dpds=3,
         date="apply_date",
@@ -705,7 +704,7 @@ def test_auto_feature_analysis_keeps_overdue_binning_mode(monkeypatch):
     calls = []
 
     def fake_feature_bin_stats(data, feature, **kwargs):
-        calls.append({"columns": list(data.columns), **kwargs})
+        calls.append({"columns": list(data.columns), "values": data[kwargs["target"].columns[0]].tolist(), **kwargs})
         return pd.DataFrame({
             "指标名称": [feature],
             "指标含义": [feature],
@@ -734,11 +733,11 @@ def test_auto_feature_analysis_keeps_overdue_binning_mode(monkeypatch):
         output_dir="model_report",
     )
 
-    assert calls
-    assert calls[0]["overdue"] == ["mob"]
-    assert calls[0]["dpds"] == [3]
-    assert calls[0]["target"] == "mob 3+"
-    assert calls[0]["columns"] == ["x", "mob 3+", "mob"]
+    assert len(calls) == 1
+    assert calls[0]["overdue"] is None and calls[0]["dpds"] is None
+    assert calls[0]["target"].names() == ["mob_3+"]
+    assert calls[0]["values"] == [0, 0, 1, 1]
+    assert calls[0]["columns"] == ["x", *calls[0]["target"].columns]
 
 
 @pytest.mark.parametrize(
@@ -942,7 +941,7 @@ def test_auto_feature_analysis_removes_grey_samples_from_top_distributions(monke
     plotted_targets = []
 
     def capture_distribution_plot(plot_data, **kwargs):
-        plotted_targets.extend(plot_data[kwargs["target"]].tolist())
+        plotted_targets.extend(plot_data[kwargs["target"].columns[0]].tolist())
         return pd.DataFrame()
 
     monkeypatch.setattr(feature_analyzer_module, "distribution_plot", capture_distribution_plot)

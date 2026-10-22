@@ -43,6 +43,8 @@
 
 from __future__ import annotations
 
+from hscredit.utils.arguments import analysis_inputs
+
 import re
 import warnings
 from typing import Union, List, Dict, Optional, Any, Tuple, Literal
@@ -284,11 +286,14 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
     # 公共接口
     # -------------------------------------------------------------------------
 
+    @analysis_inputs('X', roles=(), dimensions=2)
     def fit(
         self,
         X: Union[pd.DataFrame, np.ndarray],
         y: Optional[Union[pd.Series, np.ndarray]] = None,
         features: Optional[List[str]] = None,
+        x1=None,
+        x2=None,
     ) -> "OptimalBinning2D":
         """在干净候选对象上完整拟合并于成功后一次提交。"""
         candidate = clone(self)

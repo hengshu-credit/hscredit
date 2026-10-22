@@ -9,6 +9,8 @@ VIF（方差膨胀因子，VIF = 1/(1−R²)）用于多重共线性诊断，经
 Pearson / Spearman 相关系数封装自 pandas ``DataFrame.corr``。
 """
 
+from hscredit.utils.arguments import analysis_inputs
+
 import numpy as np
 import pandas as pd
 from typing import List, Dict, Optional, Union, Literal
@@ -16,6 +18,7 @@ from typing import List, Dict, Optional, Union, Literal
 from .utils import validate_dataframe, vif_rating
 
 
+@analysis_inputs('df', roles=())
 def correlation_matrix(df: pd.DataFrame,
                        features: List[str] = None,
                        method: Literal['pearson', 'spearman', 'kendall'] = 'pearson') -> pd.DataFrame:
@@ -52,6 +55,7 @@ def correlation_matrix(df: pd.DataFrame,
     return corr_matrix
 
 
+@analysis_inputs('df', roles=())
 def high_correlation_pairs(df: pd.DataFrame,
                           features: List[str] = None,
                           threshold: float = 0.8,
@@ -104,6 +108,7 @@ def high_correlation_pairs(df: pd.DataFrame,
     return pd.DataFrame(results).sort_values('绝对相关系数', ascending=False)
 
 
+@analysis_inputs('df', roles=())
 def correlation_filter(df: pd.DataFrame,
                       features: List[str],
                       target: str,
@@ -161,6 +166,7 @@ def correlation_filter(df: pd.DataFrame,
     return selected
 
 
+@analysis_inputs('df', roles=())
 def vif_analysis(df: pd.DataFrame,
                 features: List[str] = None,
                 threshold: float = 10.0) -> pd.DataFrame:

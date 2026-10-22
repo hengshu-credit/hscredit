@@ -39,11 +39,10 @@ def _trend_data():
 
 
 def test_overdue_dpds_take_priority_and_share_one_axis_per_overdue():
-    """错误采用 target 或同一 overdue 的 dpds 被拆成多轴时，本测试必须失败。"""
+    """同一 overdue 的 dpds 必须共享一个坏率坐标轴。"""
     fig = bad_rate_trend_plot(
         _trend_data(),
-        date_col="日期",
-        target="目标",
+        date="日期",
         overdue="MOB1",
         dpds=[7, 30],
         show_sample_count=False,
@@ -64,7 +63,7 @@ def test_different_overdue_fields_use_different_rate_axes():
 
     fig = bad_rate_trend_plot(
         data,
-        date_col="日期",
+        date="日期",
         overdue=["MOB1", "MOB3"],
         dpds=[7, 30],
         show_sample_count=False,
@@ -83,7 +82,7 @@ def test_date_ticks_match_real_groups_and_align_with_sample_bars():
     """让日期定位器插入额外刻度或使上下图错位时，本测试必须失败。"""
     fig = bad_rate_trend_plot(
         _trend_data(),
-        date_col="日期",
+        date="日期",
         target="目标",
         freq="M",
         show_sample_count=True,
@@ -110,7 +109,7 @@ def test_explicit_colors_apply_to_hscredit_axes_bars_and_grid():
     """样本数面板遗留黑轴、实线网格或忽略显式颜色时，本测试必须失败。"""
     fig = bad_rate_trend_plot(
         _trend_data(),
-        date_col="日期",
+        date="日期",
         target="目标",
         colors=["#112233", "#445566"],
         show_sample_count=True,
@@ -141,7 +140,7 @@ def test_multilabel_legend_sits_between_title_and_content_without_axis_clipping(
     data["MOB3"] = [0, 20, 60, 0, 10, 40, 0, 35, 80, 0, 8, 50]
     fig = bad_rate_trend_plot(
         data,
-        date_col="日期",
+        date="日期",
         overdue=["MOB1", "MOB3"],
         dpds=[7, 30],
         show_sample_count=True,
@@ -196,7 +195,7 @@ def test_target_col_keyword_is_rejected_with_target_migration_message():
     with pytest.raises(TypeError, match="target_col.*target"):
         bad_rate_trend_plot(
             _trend_data(),
-            date_col="日期",
+            date="日期",
             target_col="目标",
             show_sample_count=False,
         )
@@ -206,7 +205,7 @@ def test_default_multilabel_lines_on_same_overdue_axis_use_distinct_hscredit_col
     """同一 overdue 轴内多个 dpds 退化成同色曲线时，本测试必须失败。"""
     fig = bad_rate_trend_plot(
         _trend_data(),
-        date_col="日期",
+        date="日期",
         overdue="MOB1",
         dpds=[0, 7, 30],
         show_sample_count=False,
@@ -237,7 +236,7 @@ def test_multilabel_axes_keep_distinct_series_visually_separated():
     )
     fig = bad_rate_trend_plot(
         data,
-        date_col="日期",
+        date="日期",
         overdue="MOB1",
         dpds=[0, 7, 15, 30],
         show_sample_count=False,
@@ -262,9 +261,9 @@ def test_single_target_dimension_series_keep_distinct_colors():
 
     fig = bad_rate_trend_plot(
         data,
-        date_col="日期",
+        date="日期",
         target="目标",
-        dimension_col="渠道",
+        group="渠道",
         show_sample_count=False,
     )
 
@@ -285,7 +284,7 @@ def test_overdue_missing_values_follow_library_binary_target_semantics():
 
     fig = bad_rate_trend_plot(
         data,
-        date_col="日期",
+        date="日期",
         overdue="MOB1",
         dpds=7,
         show_sample_count=False,
@@ -302,10 +301,10 @@ def test_same_overdue_multidpd_dimension_series_share_axis_and_keep_distinct_col
 
     fig = bad_rate_trend_plot(
         data,
-        date_col="日期",
+        date="日期",
         overdue="MOB1",
         dpds=[7, 30],
-        dimension_col="渠道",
+        group="渠道",
         show_sample_count=False,
     )
 
@@ -326,7 +325,7 @@ def test_supplied_axis_keeps_rate_and_count_panels_equal_width_without_overlap()
 
     returned = bad_rate_trend_plot(
         data,
-        date_col="日期",
+        date="日期",
         overdue=["MOB1", "MOB3"],
         dpds=[7, 30],
         ax=supplied_ax,
@@ -350,7 +349,7 @@ def test_short_custom_palette_is_extended_with_unique_hscredit_colors():
 
     fig = bad_rate_trend_plot(
         data,
-        date_col="日期",
+        date="日期",
         overdue=["MOB1", "MOB3"],
         dpds=[7, 30],
         colors=["#112233", "#445566"],

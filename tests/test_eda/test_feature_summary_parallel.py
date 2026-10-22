@@ -97,14 +97,14 @@ def test_dataframe_summary_forwards_binning_configuration():
     expected = feature_summary(
         df,
         y=y,
-        binning_method="uniform",
-        binning_params={"max_n_bins": 3, "min_bin_size": 0.05},
+        method="uniform",
+        bin_params={"max_n_bins": 3, "min_bin_size": 0.05},
         n_jobs=1,
     )
     actual = df.summary(
         y=y,
-        binning_method="uniform",
-        binning_params={"max_n_bins": 3, "min_bin_size": 0.05},
+        method="uniform",
+        bin_params={"max_n_bins": 3, "min_bin_size": 0.05},
         n_jobs=1,
     )
 
@@ -174,7 +174,7 @@ def test_series_summary_forwards_binning_configuration():
 
     result = series.summary(
         y=y,
-        binning_params={
+        bin_params={
             "user_splits": {"score": [1.5, 3.5]},
             "user_splits_fixed": True,
         },
@@ -195,10 +195,10 @@ def test_outer_binning_args_override_binning_params_without_mutation():
     snapshot = params.copy()
 
     result = feature_summary_impl._normalize_binning_config(
-        binning_method="quantile",
+        method="quantile",
         max_n_bins=10,
         random_state=42,
-        binning_params=params,
+        bin_params=params,
     )
 
     assert result["method"] == "quantile"
@@ -212,7 +212,7 @@ def test_all_summary_apis_default_to_quantile_ten_bins():
     """三个公开入口必须统一默认使用等频10分箱。"""
     for summary_api in (feature_summary, pd.DataFrame.summary, pd.Series.summary):
         parameters = inspect.signature(summary_api).parameters
-        assert parameters["binning_method"].default == "quantile"
+        assert parameters["method"].default == "quantile"
         assert parameters["max_n_bins"].default == 10
 
 
@@ -231,7 +231,7 @@ def test_batch_binning_config_only_keeps_current_user_splits():
 
 
 @pytest.mark.parametrize(
-    "binning_params",
+    "bin_params",
     [
         {"n_bins": 3},
         {"prebinning": "missing_method"},
@@ -239,7 +239,7 @@ def test_batch_binning_config_only_keeps_current_user_splits():
         {"user_splits": "x:1,2,3"},
     ],
 )
-def test_invalid_binning_config_is_rejected_before_feature_work(binning_params):
+def test_invalid_binning_config_is_rejected_before_feature_work(bin_params):
     """最终生效的非法分箱配置应在进入字段任务前给出中文错误。"""
     df = pd.DataFrame({"x": [1.0, 2.0, 3.0, 4.0]})
 
@@ -247,7 +247,7 @@ def test_invalid_binning_config_is_rejected_before_feature_work(binning_params):
         feature_summary(
             df,
             y=[0, 0, 1, 1],
-            binning_params=binning_params,
+            bin_params=bin_params,
             n_jobs=1,
         )
 
@@ -255,7 +255,7 @@ def test_invalid_binning_config_is_rejected_before_feature_work(binning_params):
 @pytest.mark.parametrize(
     "outer_params",
     [
-        {"binning_method": "missing_method"},
+        {"method": "missing_method"},
         {"max_n_bins": 0},
         {"max_n_bins": -1},
     ],
@@ -550,8 +550,8 @@ def test_predictive_metrics_run_in_joblib_worker_threads(monkeypatch):
 @pytest.mark.parametrize(
     "psi_method, extra",
     [
-        ("group_col", {"psi_group_col": "group"}),
-        ("date_col", {"psi_date_col": "date", "psi_freq": "M"}),
+        ("group", {"group": "group"}),
+        ("date", {"date": "date", "freq": "M"}),
     ],
 )
 def test_parallel_grouped_psi_matches_serial(psi_method, extra):
@@ -639,10 +639,10 @@ def test_outer_binning_args_control_iv_and_keep_extension_params():
     result = feature_summary(
         df,
         y=y,
-        binning_method="quantile",
+        method="quantile",
         max_n_bins=10,
         random_state=42,
-        binning_params=params,
+        bin_params=params,
         n_jobs=1,
     )
 
@@ -659,7 +659,7 @@ def test_shared_binning_user_splits_control_trend():
     result = feature_summary(
         df,
         y=y,
-        binning_params={
+        bin_params={
             "user_splits": {"x": [1.5, 3.5]},
             "user_splits_fixed": True,
         },
@@ -690,9 +690,9 @@ def test_custom_binning_user_splits_are_mapped_to_psi():
     result = feature_summary(
         train,
         val_df=valid,
-        binning_method="quantile",
+        method="quantile",
         max_n_bins=10,
-        binning_params={
+        bin_params={
             "method": "uniform",
             "max_n_bins": 4,
             "min_bin_size": 0.05,
@@ -712,7 +712,7 @@ def test_multi_feature_user_splits_match_between_serial_and_loky():
     columns = [f"f{index}" for index in range(128)]
     df = pd.DataFrame(rng.normal(size=(80, len(columns))), columns=columns)
     y = rng.integers(0, 2, size=len(df))
-    binning_params = {
+    bin_params = {
         "user_splits": {
             "f0": [-0.5, 0.25],
             "f63": [-0.25, 0.75],
@@ -721,8 +721,8 @@ def test_multi_feature_user_splits_match_between_serial_and_loky():
         "user_splits_fixed": True,
     }
 
-    serial = feature_summary(df, y=y, binning_params=binning_params, n_jobs=1)
-    parallel = feature_summary(df, y=y, binning_params=binning_params, n_jobs=2)
+    serial = feature_summary(df, y=y, bin_params=bin_params, n_jobs=1)
+    parallel = feature_summary(df, y=y, bin_params=bin_params, n_jobs=2)
 
     pdt.assert_frame_equal(parallel, serial)
 
@@ -879,17 +879,17 @@ def test_feature_summary_marks_nested_binning_children(monkeypatch):
         val_df=None,
         max_n_bins=5,
         psi_method="split",
-        psi_group_col=None,
-        psi_date_col=None,
-        psi_freq="M",
+        group=None,
+        date=None,
+        freq="M",
         psi_test_size=0.2,
         random_state=42,
         n_jobs=1,
         parallel_backend=None,
         parallel_config=None,
         show_progress=False,
-        binning_method="genetic",
-        binning_params={"population_size": 10, "generations": 2},
+        method="genetic",
+        bin_params={"population_size": 10, "generations": 2},
     )
 
     assert len(captured) == 1

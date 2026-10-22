@@ -63,7 +63,7 @@ class KSSelector(BaseFeatureSelector):
     :param force_drop: 额外强制剔除字段，与 exclude 合并
     :param n_jobs: 并行工作数，默认为 -1；1 或 None 表示串行
     :param binner: 可选分箱器实例，未拟合时自动训练，已拟合时复用规则
-    :param binning_params: 可选 OptimalBinning 构造参数，binner 优先
+    :param bin_params: 可选 OptimalBinning 构造参数，binner 优先
     :param parallel_backend: 可选 joblib 并行后端
     :param parallel_config: 可选 joblib 并行配置
 
@@ -103,7 +103,7 @@ class KSSelector(BaseFeatureSelector):
         force_drop: Optional[List[str]] = None,
         n_jobs: Optional[Union[int, float]] = -1,
         binner: Optional[Any] = None,
-        binning_params: Optional[Dict[str, Any]] = None,
+        bin_params: Optional[Dict[str, Any]] = None,
         parallel_backend: Optional[str] = None,
         parallel_config: Optional[Dict[str, Any]] = None,
         target_rm: bool = False,
@@ -117,7 +117,7 @@ class KSSelector(BaseFeatureSelector):
             force_drop=force_drop,
             n_jobs=n_jobs,
             binner=binner,
-            binning_params=binning_params,
+            bin_params=bin_params,
             parallel_backend=parallel_backend,
             parallel_config=parallel_config,
             target_rm=target_rm,

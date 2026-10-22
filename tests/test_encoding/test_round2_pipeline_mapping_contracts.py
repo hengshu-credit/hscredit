@@ -94,7 +94,7 @@ def test_typed_json_roundtrip_keeps_numeric_string_and_real_reserved_names(cls):
 def test_drop_invariant_schema_and_woe_metadata(mode):
     X = pd.DataFrame({"constant": ["fixed"] * 12, "x": ["a", "b"] * 6, "n": np.arange(12), "target": [0, 1] * 6})
     encoder = WOEEncoder(
-        cols=["constant", "x"], target="target", drop_invariant=True, training_mode=mode, cv=3, n_jobs=1
+        features=["constant", "x"], target="target", drop_invariant=True, training_mode=mode, cv=3, n_jobs=1
     )
     trained = encoder.fit_transform(X)
     inference = encoder.transform(X.drop(columns="target"))
@@ -106,7 +106,7 @@ def test_drop_invariant_schema_and_woe_metadata(mode):
 def test_legacy_mapping_import_remains_supported():
     payload = {
         "encoder_type": "TargetEncoder",
-        "cols": ["x"],
+        "features": ["x"],
         "cols_": ["x"],
         "mapping_": {"x": {"a": 0.2, "b": 0.8, "__UNKNOWN__": 0.5}},
         "handle_unknown": "value",

@@ -22,7 +22,7 @@ class WOEEncoder(BaseEncoder):
 
     **参数**
 
-    :param cols: 需要编码的列名列表。如果为None，则自动识别所有类别型列
+    :param features: 需要编码的列名列表。如果为None，则自动识别所有类别型列
     :param regularization: 正则化参数，防止除零，默认为1.0
     :param woe_clip: WOE值截断阈值，默认为5.0
         当某个分箱无坏样本或无好样本时，WOE可能变得极大（如±10以上），
@@ -57,7 +57,7 @@ class WOEEncoder(BaseEncoder):
     **参考样例**
 
     >>> from hscredit.core.encoders import WOEEncoder
-    >>> encoder = WOEEncoder(cols=['category', 'score'])
+    >>> encoder = WOEEncoder(features=['category', 'score'])
     >>> X_encoded = encoder.fit_transform(X, y)
     >>> print(encoder.iv_)
     >>>
@@ -91,7 +91,7 @@ class WOEEncoder(BaseEncoder):
 
     def __init__(
         self,
-        cols: Optional[List[str]] = None,
+        features: Optional[List[str]] = None,
         regularization: float = 1.0,
         woe_clip: Optional[float] = 5.0,
         handle_unknown: str = 'value',
@@ -109,7 +109,7 @@ class WOEEncoder(BaseEncoder):
     ):
         """初始化WOE编码器。
 
-        :param cols: 需要编码的列名列表
+        :param features: 需要编码的列名列表
         :param regularization: 正则化参数，防止除零，默认为1.0
         :param woe_clip: WOE值截断阈值，默认为5.0
             当某个分箱的WOE绝对值超过此阈值时会被截断。
@@ -123,7 +123,7 @@ class WOEEncoder(BaseEncoder):
         :param target: scorecardpipeline风格的目标列名。如果提供，fit时从X中提取该列作为y
         """
         super().__init__(
-            cols=cols,
+            features=features,
             drop_invariant=drop_invariant,
             return_df=return_df,
             handle_unknown=handle_unknown,
@@ -388,7 +388,7 @@ class WOEEncoder(BaseEncoder):
         **参考样例**
 
         >>> from hscredit.core.encoders import WOEEncoder
-        >>> encoder = WOEEncoder(cols=['category', 'city'])
+        >>> encoder = WOEEncoder(features=['category', 'city'])
         >>> encoder.fit(X, y)
         >>>
         >>> # 导出为字典

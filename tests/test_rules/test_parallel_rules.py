@@ -507,7 +507,7 @@ def test_rule_flow_group_reports_match_serial(rule_data, backend):
             parallel_backend=selected_backend,
         )
 
-    kwargs = {"date_col": "放款时间", "freq": "M", "group_cols": "商品类别"}
+    kwargs = {"date": "放款时间", "freq": "M", "group": "商品类别"}
     serial_flow = build(1, None)
     parallel_flow = build(2, backend)
     pd.testing.assert_frame_equal(

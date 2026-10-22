@@ -189,7 +189,7 @@ def test_feature_group_binning_summary_by_month_reuses_rules(sample_data):
         sample_data,
         feature='特征1',
         methods='quantile',
-        date_col='申请日期',
+        date='申请日期',
         freq='M',
         overdue='MOB1',
         dpds=3,
@@ -226,7 +226,7 @@ def test_feature_group_binning_summary_by_category_supports_categorical_feature(
         data,
         feature='职业',
         methods='quantile',
-        group_col='渠道',
+        group='渠道',
         target='FPD',
         group_order=['线下', '线上'],
     )
@@ -248,7 +248,7 @@ def test_feature_group_binning_summary_keeps_missing_group(sample_data):
     tables, summary = feature_group_binning_summary(
         sample_data,
         feature='特征1',
-        group_col='渠道',
+        group='渠道',
         overdue='MOB1',
         dpds=3,
         dropna=False,
@@ -272,8 +272,8 @@ def test_feature_group_binning_summary_requires_one_grouping_mode(sample_data):
             sample_data,
             '特征1',
             target='MOB1',
-            date_col='申请日期',
-            group_col='渠道',
+            date='申请日期',
+            group='渠道',
         )
 
 

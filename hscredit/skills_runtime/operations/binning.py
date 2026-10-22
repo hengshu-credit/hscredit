@@ -67,6 +67,23 @@ def _data(context) -> pd.DataFrame:
     return value
 
 
+def _target_parameters(context, parameters):
+    """统一装配标签和 date/group/amount 的数据对象引用。"""
+    from .common import resolve
+
+    params = dict(parameters)
+    for name in ("target", "date", "group", "amount"):
+        if name in context.request.inputs:
+            if params.get(name) is not None:
+                raise SkillExecutionError(
+                    code="SCHEMA_INVALID", message=f"inputs.{name} 与 parameters.{name} 不能重复指定"
+                )
+            params[name] = context.resolver.resolve(context.request.inputs[name])
+        elif name in params:
+            params[name] = resolve(context, params[name])
+    return params
+
+
 def _as_parameter_list(value: Any) -> list:
     if value is None:
         return []
@@ -89,6 +106,10 @@ def _label_combinations(parameters: Mapping[str, Any], *, paired: bool = False) 
 def _overdue_summary(parameters: Mapping[str, Any], *, default_operator: str = ">", paired: bool = False) -> dict:
     """记录实际生成的逾期标签组合；配对图形保留一一对应的阈值。"""
     summary = {}
+    target = parameters.get("target")
+    if target is not None:
+        names = list(target) if isinstance(target, Mapping) else [target if isinstance(target, str) else getattr(target, "name", None) or "target"]
+        summary.update(target_mode="target", target_names=names, del_grey=bool(parameters.get("del_grey", False)))
     combinations = _label_combinations(parameters, paired=paired)
     if combinations:
         summary["label_combinations"] = combinations
@@ -138,7 +159,8 @@ def _write_workbook(context, tables: Iterable[Tuple[str, pd.DataFrame]]) -> None
 
 
 def _feature_bin_stats(context) -> dict:
-    params = _parameters(feature_bin_stats, context.request.parameters)
+    params = _parameters(feature_bin_stats, context.request.parameters, allow_var_keyword=True)
+    params = _target_parameters(context, params)
     result = feature_bin_stats(_data(context), **params)
     table = result[0] if isinstance(result, tuple) else result
     _write_workbook(context, [("分箱统计", table)])
@@ -146,7 +168,8 @@ def _feature_bin_stats(context) -> dict:
 
 
 def _feature_bin_stats_2d(context) -> dict:
-    params = _parameters(feature_bin_stats_2d, context.request.parameters)
+    params = _parameters(feature_bin_stats_2d, context.request.parameters, allow_var_keyword=True)
+    params = _target_parameters(context, params)
     result = feature_bin_stats_2d(_data(context), **params)
     table = result[0] if isinstance(result, tuple) else result
     _write_workbook(context, [("二维分箱统计", table)])
@@ -159,11 +182,13 @@ def _benchmark_binning_methods(context) -> dict:
         context.request.parameters,
         allow_var_keyword=True,
     )
+    params = _target_parameters(context, params)
     table = benchmark_binning_methods(_data(context), **params)
     _write_workbook(context, [("方法对比", table)])
     summary_params = dict(params)
-    summary_params.setdefault("overdue", "MOB1")
-    summary_params.setdefault("dpds", [3, 0])
+    if summary_params.get("target") is None:
+        summary_params.setdefault("overdue", "MOB1")
+        summary_params.setdefault("dpds", [3, 0])
     return {"summary": _summarize_binning_table(table, summary_params)}
 
 
@@ -183,6 +208,7 @@ def _flatten_tables(tables: Mapping[str, Any]) -> Iterable[Tuple[str, pd.DataFra
 
 def _feature_binning_summary(context) -> dict:
     params = _parameters(feature_binning_summary, context.request.parameters)
+    params = _target_parameters(context, params)
     tables, summary = feature_binning_summary(_data(context), **params)
     workbook_tables = [("分箱摘要", summary), *_flatten_tables(tables)]
     _write_workbook(context, workbook_tables)
@@ -191,6 +217,7 @@ def _feature_binning_summary(context) -> dict:
 
 def _feature_group_binning_summary(context) -> dict:
     params = _parameters(feature_group_binning_summary, context.request.parameters)
+    params = _target_parameters(context, params)
     tables, summary = feature_group_binning_summary(_data(context), **params)
     workbook_tables = [("分组摘要", summary), *_flatten_tables(tables)]
     _write_workbook(context, workbook_tables)
@@ -203,6 +230,7 @@ def _feature_efficiency_analysis(context) -> dict:
         context.request.parameters,
         reserved=("data", "save", "output_dir"),
     )
+    params = _target_parameters(context, params)
     comparison = context.artifacts.stage_path(f"{context.request.output.name}-comparison.png")
     trend_dir = context.artifacts.stage_path("efficiency-trends/.anchor").parent
     result = feature_efficiency_analysis(
@@ -241,7 +269,7 @@ def _feature_efficiency_analysis(context) -> dict:
 
     import matplotlib.pyplot as plt
 
-    figures = [result.get("comparison_figure"), *result.get("trend_figures", {}).values()]
+    figures = [result.get("comparison_figure"), *result.get("trend_figures", {}).values(), *result.get("comparison_figures", {}).values()]
     for figure in figures:
         if figure is not None:
             plt.close(figure)
@@ -251,20 +279,23 @@ def _feature_efficiency_analysis(context) -> dict:
             "target": result["target"],
             "manual_rows": int(len(manual_table)),
             "auto_rows": int(len(auto_table)),
-            **_overdue_summary({**params, "dpds": params.get("dpd", 0)}),
+            **_overdue_summary({**params, "dpds": params.get("dpds")}),
         }
     }
 
 
 def _fit_inputs(context, parameters: Dict[str, Any]) -> Tuple[pd.DataFrame, pd.Series, list, str]:
+    from ...utils.arguments import normalize_features
+
     data = _data(context)
-    features = parameters.pop("features", None)
-    if not isinstance(features, list) or not features or not all(isinstance(item, str) for item in features):
+    try:
+        features = normalize_features(parameters.pop("features", None), required=True)
+    except (TypeError, ValueError) as exc:
         raise SkillExecutionError(
             code="SCHEMA_INVALID",
-            message="parameters.features 必须是非空字段名列表",
+            message=str(exc),
             field="parameters.features",
-        )
+        ) from exc
     missing = [column for column in features if column not in data.columns]
     if missing:
         raise SkillExecutionError(
@@ -360,10 +391,12 @@ def _resolve_binner(context, expected_type):
 
 
 def _optimal_binning_transform(context) -> dict:
+    from ...utils.arguments import normalize_features
+
     binner = _resolve_binner(context, OptimalBinning)
     data = _data(context)
     params = dict(context.request.parameters)
-    features = params.pop("features", list(binner.feature_names_in_))
+    features = normalize_features(params.pop("features", list(binner.feature_names_in_)), required=True)
     metric = params.pop("metric", "indices")
     if params:
         unknown = sorted(params)
@@ -379,8 +412,13 @@ def _optimal_binning_transform(context) -> dict:
 
 
 def _optimal_binning_2d_fit(context) -> dict:
+    from ...utils.arguments import normalize_features
+
     params = dict(context.request.parameters)
     metric = params.pop("metric", "indices")
+    params["features"] = normalize_features(
+        params.get("features"), x1=params.pop("x1", None), x2=params.pop("x2", None), size=2, required=True
+    )
     X, y, features, target = _fit_inputs(context, params)
     if len(features) != 2:
         raise SkillExecutionError(
@@ -398,10 +436,16 @@ def _optimal_binning_2d_fit(context) -> dict:
 
 
 def _optimal_binning_2d_transform(context) -> dict:
+    from ...utils.arguments import normalize_features
+
     binner = _resolve_binner(context, OptimalBinning2D)
     data = _data(context)
     params = dict(context.request.parameters)
-    features = params.pop("features", [binner.feature_x_, binner.feature_y_])
+    selected = params.pop("features", None)
+    x1, x2 = params.pop("x1", None), params.pop("x2", None)
+    if selected is None and x1 is None and x2 is None:
+        selected = [binner.feature_x_, binner.feature_y_]
+    features = normalize_features(selected, x1=x1, x2=x2, size=2, required=True)
     metric = params.pop("metric", "indices")
     if params:
         unknown = sorted(params)

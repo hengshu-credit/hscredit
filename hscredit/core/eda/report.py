@@ -4,6 +4,8 @@
 整合所有模块的分析结果.
 """
 
+from hscredit.utils.arguments import analysis_inputs
+
 import logging
 import numpy as np
 import pandas as pd
@@ -21,15 +23,15 @@ from ...excel import ExcelWriter, dataframe2excel
 logger = logging.getLogger(__name__)
 
 
-def _execute_eda_report(df, target, features, date_col, config, n_jobs, parallel_backend, parallel_config, mode, full):
+def _execute_eda_report(df, target, features, date, config, n_jobs, parallel_backend, parallel_config, mode, full):
     # 延迟导入，避免 core.eda 初始化时反向触发 report 包聚合。
     from ...report.result import ReportResult
 
     validate_dataframe(df)
     if features is None:
-        features = [c for c in df.columns if c != target and (not full or c != date_col)]
+        features = [c for c in df.columns if c != target and (not full or c != date)]
     parallel = dict(n_jobs=n_jobs, parallel_backend=parallel_backend, parallel_config=parallel_config)
-    result = ReportResult(mode=mode, metadata={"目标": target, "日期字段": date_col, "特征": list(features), "输入行数": len(df)})
+    result = ReportResult(mode=mode, metadata={"目标": target, "日期字段": date, "特征": list(features), "输入行数": len(df)})
     names = ["数据基础信息", "缺失值分析", "特征描述统计", "数据质量问题", "目标变量分布", "整体逾期率", "逾期率趋势"]
     if full:
         names += ["IV分析", "高相关性特征对"]
@@ -48,24 +50,25 @@ def _execute_eda_report(df, target, features, date_col, config, n_jobs, parallel
         "数据质量问题": lambda: data_quality_report(df),
         "目标变量分布": lambda: target_distribution(df, target),
         "整体逾期率": lambda: pd.DataFrame([bad_rate_overall(df, target)]),
-        "逾期率趋势": lambda: bad_rate_trend(df, date_col=date_col, target_col=target),
+        "逾期率趋势": lambda: bad_rate_trend(df, date=date, target=target),
         "IV分析": iv_table,
         "高相关性特征对": lambda: high_correlation_pairs(df, features, threshold=config.get('corr_threshold', 0.8)),
     }
     for name in names:
         if name in {"目标变量分布", "整体逾期率", "逾期率趋势", "IV分析"} and target is None:
             result.skip(keys[name], "未指定目标变量")
-        elif name == "逾期率趋势" and date_col is None:
+        elif name == "逾期率趋势" and date is None:
             result.skip(keys[name], "未指定日期字段")
         else:
             result.run(keys[name], operations[name])
     return result
 
 
+@analysis_inputs('df', roles=('date',))
 def eda_summary(df: pd.DataFrame,
                target: str = None,
                features: List[str] = None,
-               date_col: str = None,
+               date: str = None,
                n_jobs=-1,
                parallel_backend=None,
                parallel_config=None,
@@ -77,26 +80,27 @@ def eda_summary(df: pd.DataFrame,
     :param df: 输入数据
     :param target: 目标变量名（可选）
     :param features: 特征列表（可选）
-    :param date_col: 日期列名（可选）
+    :param date: 日期列名（可选）
     :param mode: strict 遇必需章节失败抛异常；best_effort 记录原因并继续
     :param return_result: True 返回兼容字典的 ReportResult，含完整章节状态
     :return: EDA摘要字典
     
     **参考样例**
 
-    >>> summary = eda_summary(df, target='fpd15', date_col='apply_date')
+    >>> summary = eda_summary(df, target='fpd15', date='apply_date')
     >>> for key, value in summary.items():
     ...     print(f"\n=== {key} ===")
     ...     print(value)
     """
-    result = _execute_eda_report(df, target, features, date_col, {}, n_jobs, parallel_backend, parallel_config, mode, False)
+    result = _execute_eda_report(df, target, features, date, {}, n_jobs, parallel_backend, parallel_config, mode, False)
     return result if return_result else dict(result)
 
 
+@analysis_inputs('df', roles=('date',))
 def generate_report(df: pd.DataFrame,
                    target: str = None,
                    features: List[str] = None,
-                   date_col: str = None,
+                   date: str = None,
                    config: Dict = None,
                    n_jobs=-1,
                    parallel_backend=None,
@@ -107,7 +111,7 @@ def generate_report(df: pd.DataFrame,
     :param df: 输入数据
     :param target: 目标变量名
     :param features: 特征列表
-    :param date_col: 日期列名
+    :param date: 日期列名
     :param config: 配置参数
     :param mode: strict 拒绝必需章节失败；best_effort 保留成功结果并记录原因
     :param return_result: True 返回含章节状态和发布清单的 ReportResult
@@ -115,11 +119,11 @@ def generate_report(df: pd.DataFrame,
     
     **参考样例**
 
-    >>> report = generate_report(df, target='fpd15', date_col='apply_date',
+    >>> report = generate_report(df, target='fpd15', date='apply_date',
     ...                          config={'iv_threshold': 0.02})
     >>> export_report_to_excel(report, 'eda_report.xlsx')
     """
-    result = _execute_eda_report(df, target, features, date_col, config or {}, n_jobs, parallel_backend, parallel_config, mode, True)
+    result = _execute_eda_report(df, target, features, date, config or {}, n_jobs, parallel_backend, parallel_config, mode, True)
     return result if return_result else dict(result)
 
 

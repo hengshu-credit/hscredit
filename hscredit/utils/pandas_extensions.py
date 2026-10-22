@@ -57,10 +57,10 @@ def _summary_method(
     model_type: Optional[Literal["xgboost", "lightgbm", "catboost", "randomforest"]] = None,
     model_params: Optional[Dict] = None,
     max_n_bins: int = 10,
-    psi_method: Literal["random_split", "group_col", "date_col"] = "random_split",
-    psi_group_col: Optional[str] = None,
-    psi_date_col: Optional[str] = None,
-    psi_freq: str = "M",
+    psi_method: Literal["random_split", "group", "date"] = "random_split",
+    group: Optional[str] = None,
+    date: Optional[str] = None,
+    freq: str = "M",
     psi_test_size: float = 0.3,
     percentiles: List[float] = None,
     random_state: int = 42,
@@ -71,8 +71,8 @@ def _summary_method(
     parallel_backend: Optional[str] = None,
     parallel_config: Optional[Dict[str, Any]] = None,
     show_progress: bool = False,
-    binning_method: str = "quantile",
-    binning_params: Optional[Dict[str, Any]] = None,
+    method: str = "quantile",
+    bin_params: Optional[Dict[str, Any]] = None,
 ) -> Union[pd.DataFrame, List[Dict[str, Any]]]:
     """DataFrame 数据分布摘要统计.
 
@@ -86,9 +86,9 @@ def _summary_method(
     :param model_params: 模型参数
     :param max_n_bins: IV、趋势和PSI共用的最大分箱数，默认10
     :param psi_method: PSI计算方式
-    :param psi_group_col: 分组列名（当psi_method='group_col'时使用）
-    :param psi_date_col: 日期列名（当psi_method='date_col'时使用）
-    :param psi_freq: 时间频率
+    :param group: 分组列名（当psi_method='group'时使用）
+    :param date: 日期列名（当psi_method='date'时使用）
+    :param freq: 时间频率
     :param psi_test_size: 随机拆分比例
     :param percentiles: 分位数点，默认[0.01, 0.05, 0.25, 0.5, 0.75, 0.95, 0.99]
     :param random_state: 随机种子
@@ -97,8 +97,8 @@ def _summary_method(
     :param force_numeric: 强制标记为数值变量的列
     :param n_jobs: 并行工作数，-1为保守自动推断
     :param show_progress: 是否显示字段级处理进度
-    :param binning_method: IV、趋势和PSI共用的分箱方法，默认'quantile'（等频分箱）
-    :param binning_params: 传给OptimalBinning的完整参数；内层method覆盖外层binning_method，
+    :param method: IV、趋势和PSI共用的分箱方法，默认'quantile'（等频分箱）
+    :param bin_params: 传给OptimalBinning的完整参数；内层method覆盖外层binning_method，
         max_n_bins、random_state等重复键也直接覆盖外层参数。user_splits字典按原DataFrame字段名配置
     :return: 综合特征描述DataFrame或字典
 
@@ -110,7 +110,7 @@ def _summary_method(
         >>> summary = df.summary(y='target')
 
         >>> # 按日期分组计算PSI
-        >>> summary = df.summary(y='target', psi_method='date_col', psi_date_col='apply_date')
+        >>> summary = df.summary(y='target', psi_method='date', date='apply_date')
     """
     from ..core.eda import feature_summary
 
@@ -124,9 +124,9 @@ def _summary_method(
         model_params=model_params,
         max_n_bins=max_n_bins,
         psi_method=psi_method,
-        psi_group_col=psi_group_col,
-        psi_date_col=psi_date_col,
-        psi_freq=psi_freq,
+        group=group,
+        date=date,
+        freq=freq,
         psi_test_size=psi_test_size,
         percentiles=percentiles,
         random_state=random_state,
@@ -136,8 +136,8 @@ def _summary_method(
         parallel_backend=parallel_backend,
         parallel_config=parallel_config,
         show_progress=show_progress,
-        binning_method=binning_method,
-        binning_params=binning_params,
+        method=method,
+        bin_params=bin_params,
     )
 
     if return_type == "dict":
@@ -153,10 +153,10 @@ def _series_summary_method(
     model_type: Optional[Literal["xgboost", "lightgbm", "catboost", "randomforest"]] = None,
     model_params: Optional[Dict] = None,
     max_n_bins: int = 10,
-    psi_method: Literal["random_split", "group_col", "date_col"] = "random_split",
-    psi_group_col: Optional[str] = None,
-    psi_date_col: Optional[str] = None,
-    psi_freq: str = "M",
+    psi_method: Literal["random_split", "group", "date"] = "random_split",
+    group: Optional[str] = None,
+    date: Optional[str] = None,
+    freq: str = "M",
     psi_test_size: float = 0.3,
     percentiles: List[float] = None,
     random_state: int = 42,
@@ -167,13 +167,13 @@ def _series_summary_method(
     parallel_config: Optional[Dict[str, Any]] = None,
     show_progress: bool = False,
     return_type: Literal["dataframe", "dict"] = "dataframe",
-    binning_method: str = "quantile",
-    binning_params: Optional[Dict[str, Any]] = None,
+    method: str = "quantile",
+    bin_params: Optional[Dict[str, Any]] = None,
 ) -> Union[pd.DataFrame, List[Dict[str, Any]]]:
     """Series 单字段综合摘要统计。
 
     y 支持数组、列表、元组或 Series。IV、趋势和 PSI 默认共用 quantile 等频
-    10 分箱；binning_params 中的重复键会直接覆盖 binning_method、max_n_bins
+    10 分箱；bin_params 中的重复键会直接覆盖 method、max_n_bins
     和 random_state，user_splits 字典使用当前 Series 名称作为字段键。
     """
     if isinstance(y, str):
@@ -192,9 +192,9 @@ def _series_summary_method(
         model_params=model_params,
         max_n_bins=max_n_bins,
         psi_method=psi_method,
-        psi_group_col=psi_group_col,
-        psi_date_col=psi_date_col,
-        psi_freq=psi_freq,
+        group=group,
+        date=date,
+        freq=freq,
         psi_test_size=psi_test_size,
         percentiles=percentiles,
         random_state=random_state,
@@ -205,8 +205,8 @@ def _series_summary_method(
         parallel_config=parallel_config,
         show_progress=show_progress,
         return_type=return_type,
-        binning_method=binning_method,
-        binning_params=binning_params,
+        method=method,
+        bin_params=bin_params,
     )
 
 

@@ -2025,18 +2025,18 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         self,
         scores: np.ndarray,
         y: np.ndarray,
-        n_bins: int = 10,
+        max_n_bins: int = 10,
         method: str = 'quantile',
         score_decimal: int = 4,
     ) -> pd.DataFrame:
         """生成评分分箱对应坏样本率、Odds、KS 的对照表（评分卡校验/划档常用）。
 
-        将分数切成 ``n_bins`` 档，逐档统计样本数、坏样本率、Odds，并累计计算 KS，
+        将分数切成 ``max_n_bins`` 档，逐档统计样本数、坏样本率、Odds，并累计计算 KS，
         用于检查"分数越高坏率越低"的单调性与整体区分度。
 
         :param scores: 模型输出的分数数组（如 :meth:`predict` 的结果）
         :param y: 对应的真实标签数组（0=好/1=坏），与 ``scores`` 等长
-        :param n_bins: 分数分档数量，默认为 ``10``
+        :param max_n_bins: 分数分档数量，默认为 ``10``
         :param method: 分档方式，默认为 ``'quantile'``。可取以下枚举值：
 
             - ``'quantile'``：等频分档（每档样本量大致相等），用 ``pd.qcut``
@@ -2049,7 +2049,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         **参考样例**
 
         >>> s = scorecard.predict(X_test)
-        >>> scorecard.score_to_bad_rate_table(s, y_test, n_bins=10)
+        >>> scorecard.score_to_bad_rate_table(s, y_test, max_n_bins=10)
         """
         df = pd.DataFrame({'score': scores, 'y': y})
 
@@ -2063,9 +2063,9 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
             score_value = float(df['score'].dropna().iloc[0]) if df['score'].notna().any() else np.nan
             df['score_bin'] = f"[{score_value:.{score_decimal}f}, {score_value:.{score_decimal}f}]"
         elif method == 'quantile':
-            df['score_bin'] = pd.qcut(df['score'], q=n_bins, duplicates='drop')
+            df['score_bin'] = pd.qcut(df['score'], q=max_n_bins, duplicates='drop')
         else:
-            df['score_bin'] = pd.cut(df['score'], bins=n_bins)
+            df['score_bin'] = pd.cut(df['score'], bins=max_n_bins)
         
         stats = df.groupby('score_bin', observed=False).agg({
             'y': ['count', 'sum', 'mean']
@@ -3517,7 +3517,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         scores: Optional[np.ndarray] = None,
         X: Optional[Union[pd.DataFrame, np.ndarray]] = None,
         y: Optional[np.ndarray] = None,
-        n_bins: int = 10,
+        max_n_bins: int = 10,
         method: str = 'quantile',
         score_bins: Optional[list] = None
     ) -> pd.DataFrame:
@@ -3530,7 +3530,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         :param scores: 分数数组；若为 ``None`` 则用 ``X`` 经 :meth:`predict` 计算
         :param X: 输入数据，当 ``scores`` 未提供时用于预测分数
         :param y: 可选真实标签，提供后表中追加各档实际坏样本率以对比理论值
-        :param n_bins: 分数分档数量，默认为 ``10``
+        :param max_n_bins: 分数分档数量，默认为 ``10``
         :param method: 分档方式，默认为 ``'quantile'``。可取以下枚举值：
 
             - ``'quantile'``：等频分档（``pd.qcut``）
@@ -3543,7 +3543,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
 
         **参考样例**
 
-        >>> scorecard.score_to_probability_table(X=X_test, y=y_test, n_bins=10)
+        >>> scorecard.score_to_probability_table(X=X_test, y=y_test, max_n_bins=10)
         """
         self._check_fitted()
 
@@ -3566,9 +3566,9 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
             score_value = float(score_series.dropna().iloc[0]) if score_series.notna().any() else np.nan
             score_bin = pd.Series([f"[{score_value:.2f}, {score_value:.2f}]"] * len(score_series))
         elif method == 'uniform':
-            score_bin = pd.cut(score_series, bins=n_bins, include_lowest=True)
+            score_bin = pd.cut(score_series, bins=max_n_bins, include_lowest=True)
         else:
-            score_bin = pd.qcut(score_series, q=n_bins, duplicates='drop')
+            score_bin = pd.qcut(score_series, q=max_n_bins, duplicates='drop')
 
         result = []
         categories = score_bin.cat.categories if hasattr(score_bin, 'cat') else pd.Series(score_bin).unique()

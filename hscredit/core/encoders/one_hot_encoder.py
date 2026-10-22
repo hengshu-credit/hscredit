@@ -26,7 +26,7 @@ class OneHotEncoder(BaseEncoder):
 
     **参数**
 
-    :param cols: 需要编码的列名列表。如果为None，则编码所有列
+    :param features: 需要编码的列名列表。如果为None，则编码所有列
     :param drop: 是否删除某一列以避免多重共线性，默认为None
         - None: 保留所有列
         - 'first': 删除第一列
@@ -54,11 +54,11 @@ class OneHotEncoder(BaseEncoder):
     **参考样例**
 
     >>> from hscredit.core.encoders import OneHotEncoder
-    >>> encoder = OneHotEncoder(cols=['color'])
+    >>> encoder = OneHotEncoder(features=['color'])
     >>> X_encoded = encoder.fit_transform(X)
     >>>
     >>> # 删除第一列避免多重共线性
-    >>> encoder = OneHotEncoder(cols=['color'], drop='first')
+    >>> encoder = OneHotEncoder(features=['color'], drop='first')
     >>> X_encoded = encoder.fit_transform(X)
 
     **注意**
@@ -79,7 +79,7 @@ class OneHotEncoder(BaseEncoder):
 
     def __init__(
         self,
-        cols: Optional[List[str]] = None,
+        features: Optional[List[str]] = None,
         drop: Optional[str] = None,
         handle_unknown: str = "ignore",
         handle_missing: str = "value",
@@ -97,7 +97,7 @@ class OneHotEncoder(BaseEncoder):
     ):
         """初始化独热编码器。
 
-        :param cols: 需要编码的列名列表
+        :param features: 需要编码的列名列表
         :param drop: 是否删除某一列以避免多重共线性
         :param handle_unknown: 处理未知类别的方式
         :param handle_missing: 处理缺失值的方式
@@ -106,7 +106,7 @@ class OneHotEncoder(BaseEncoder):
         :param target: scorecardpipeline风格的目标列名
         """
         super().__init__(
-            cols=cols,
+            features=features,
             drop_invariant=False,
             return_df=return_df,
             handle_unknown=handle_unknown,
@@ -138,8 +138,8 @@ class OneHotEncoder(BaseEncoder):
         :param X: 输入数据
         :return: 列名列表
         """
-        if self.cols is not None:
-            return [c for c in self.cols if c in X.columns]
+        if self.features is not None:
+            return [c for c in self.features if c in X.columns]
         return X.columns.tolist()
 
     def _fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None):

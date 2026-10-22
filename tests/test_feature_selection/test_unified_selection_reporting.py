@@ -38,7 +38,7 @@ def make_selector(name):
     special = {
         "RegexSelector": {"pattern": "信号|噪声"},
         "TypeSelector": {"dtype_include": "number"},
-        "CorrSelector": {"weights": {"信号": 1, "噪声": 2, "强保": 3, "强删": 4}, "binning_params": None},
+        "CorrSelector": {"weights": {"信号": 1, "噪声": 2, "强保": 3, "强删": 4}, "bin_params": None},
         "FeatureImportanceSelector": {"estimator": model},
         "NullImportanceSelector": {"estimator": model, "n_runs": 2, "cv": 2},
         "RFESelector": {"estimator": model, "n_features_to_select": 2},

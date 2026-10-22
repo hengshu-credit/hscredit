@@ -140,7 +140,7 @@ class IVSelector(BaseFeatureSelector):
         >>> # 仅传分箱参数：内部创建并训练 OptimalBinning
         >>> selector = IVSelector(
         ...     threshold=0.02,
-        ...     binning_params={'method': 'best_iv', 'max_n_bins': 5},
+        ...     bin_params={'method': 'best_iv', 'max_n_bins': 5},
         ... )
         >>> selector.fit(X, y)
 
@@ -154,7 +154,7 @@ class IVSelector(BaseFeatureSelector):
         >>> selector = IVSelector(
         ...     threshold=0.02,
         ...     binner=trained_binner,
-        ...     binning_params={'method': 'uniform'},  # binner 优先，本参数被忽略
+        ...     bin_params={'method': 'uniform'},  # binner 优先，本参数被忽略
         ... ).fit(X, y)
 
     **参数**
@@ -166,7 +166,7 @@ class IVSelector(BaseFeatureSelector):
     :param regularization: 计算 WOE/IV 时的加性平滑系数，避免某类别好/坏样本数为 0
         导致取对数发散，默认为 ``1.0``
     :param binner: 可选的已配置分箱器实例。未训练实例会自动训练，已训练实例直接复用
-    :param binning_params: 可选的 ``OptimalBinning`` 构造参数字典。未传 ``binner`` 时，
+    :param bin_params: 可选的 ``OptimalBinning`` 构造参数字典。未传 ``binner`` 时，
         内部创建分箱器并将原始数据转换为分箱 index 后计算 IV
 
     .. note::
@@ -192,7 +192,7 @@ class IVSelector(BaseFeatureSelector):
         force_drop: Optional[List[str]] = None,
         n_jobs: Optional[Union[int, float]] = -1,
         binner: Optional[Any] = None,
-        binning_params: Optional[Dict[str, Any]] = None,
+        bin_params: Optional[Dict[str, Any]] = None,
         parallel_backend: Optional[str] = None,
         parallel_config: Optional[Dict[str, Any]] = None,
         target_rm: bool = False,
@@ -206,7 +206,7 @@ class IVSelector(BaseFeatureSelector):
             force_drop=force_drop,
             n_jobs=n_jobs,
             binner=binner,
-            binning_params=binning_params,
+            bin_params=bin_params,
             parallel_backend=parallel_backend,
             parallel_config=parallel_config,
             target_rm=target_rm,

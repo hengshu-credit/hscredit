@@ -1,5 +1,7 @@
 """综合特征摘要的输入归一化与并行计算实现。"""
 
+from hscredit.utils.arguments import analysis_inputs
+
 import math
 import threading
 import time
@@ -19,20 +21,20 @@ _NESTED_BINNING_METHODS = frozenset({"genetic", "or_tools", "cp_sat"})
 
 
 def _normalize_binning_config(
-    binning_method: str,
+    method: str,
     max_n_bins: int,
     random_state: int,
-    binning_params: Optional[Dict[str, Any]],
+    bin_params: Optional[Dict[str, Any]],
 ) -> Dict[str, Any]:
     """合并并校验摘要指标共用的分箱配置。"""
-    if binning_params is not None and not isinstance(binning_params, dict):
-        raise ValueError("binning_params 分箱参数必须是字典")
+    if bin_params is not None and not isinstance(bin_params, dict):
+        raise ValueError("bin_params 分箱参数必须是字典")
 
-    effective = dict(binning_params or {})
+    effective = dict(bin_params or {})
     # 外层便捷参数表达调用者在当前入口的最终选择，优先于 params 中的同名透传值。
     effective.update(
         {
-            "method": binning_method,
+            "method": method,
             "max_n_bins": max_n_bins,
             "random_state": random_state,
         }
@@ -580,9 +582,9 @@ def _prepare_psi_context(
     features: Sequence[Any],
     val_df: Optional[pd.DataFrame],
     psi_method: str,
-    psi_group_col: Optional[str],
-    psi_date_col: Optional[str],
-    psi_freq: str,
+    group: Optional[str],
+    date: Optional[str],
+    freq: str,
     psi_test_size: float,
     random_state: int,
 ) -> Optional[_PsiContext]:
@@ -602,29 +604,29 @@ def _prepare_psi_context(
         )
         return _PsiContext(kind="random_split", pairs=[(expected_positions, actual_positions)])
 
-    if psi_method == "group_col" and psi_group_col is not None and psi_group_col in df.columns:
-        groups = df[psi_group_col].dropna().unique().tolist()
-        positions = _positions_by_value(df[psi_group_col], groups)
+    if psi_method == "group" and group is not None and group in df.columns:
+        groups = df[group].dropna().unique().tolist()
+        positions = _positions_by_value(df[group], groups)
         pairs = [(positions[first], positions[second]) for index, first in enumerate(groups) for second in groups[index + 1 :]]
-        return _PsiContext(kind="group_col", pairs=pairs)
+        return _PsiContext(kind="group", pairs=pairs)
 
-    if psi_method == "date_col" and psi_date_col is not None and psi_date_col in df.columns:
+    if psi_method == "date" and date is not None and date in df.columns:
         try:
-            dates = pd.to_datetime(df[psi_date_col])
-            if psi_freq == "M":
+            dates = pd.to_datetime(df[date])
+            if freq == "M":
                 periods = dates.dt.to_period("M").astype(str)
-            elif psi_freq == "W":
+            elif freq == "W":
                 periods = dates.dt.to_period("W").astype(str)
-            elif psi_freq == "Q":
+            elif freq == "Q":
                 periods = dates.dt.to_period("Q").astype(str)
             else:
                 periods = dates.dt.date.astype(str)
             ordered_periods = sorted(periods.dropna().unique().tolist())
             positions = _positions_by_value(periods, ordered_periods)
             pairs = [(positions[first], positions[second]) for index, first in enumerate(ordered_periods) for second in ordered_periods[index + 1 :]]
-            return _PsiContext(kind="date_col", pairs=pairs)
+            return _PsiContext(kind="date", pairs=pairs)
         except Exception:
-            return _PsiContext(kind="date_col", pairs=[])
+            return _PsiContext(kind="date", pairs=[])
 
     return None
 
@@ -762,7 +764,7 @@ def _psi_for_feature(
     for expected_positions, actual_positions in context.pairs:
         expected = df[feature].iloc[expected_positions]
         actual = df[feature].iloc[actual_positions]
-        if context.kind in ("group_col", "date_col"):
+        if context.kind in ("group", "date"):
             if len(expected) <= 10 or len(actual) <= 10:
                 continue
         try:
@@ -876,6 +878,7 @@ def _run_feature_summary_batch(
     )
 
 
+@analysis_inputs('df', roles=())
 def build_feature_summary_fields(
     df: pd.DataFrame,
     features: Sequence[Any],
@@ -886,27 +889,27 @@ def build_feature_summary_fields(
     val_df: Optional[pd.DataFrame],
     max_n_bins: int,
     psi_method: str,
-    psi_group_col: Optional[str],
-    psi_date_col: Optional[str],
-    psi_freq: str,
+    group: Optional[str],
+    date: Optional[str],
+    freq: str,
     psi_test_size: float,
     random_state: int,
     n_jobs: int,
     parallel_backend: Optional[str],
     parallel_config: Optional[Dict[str, Any]],
     show_progress: bool,
-    binning_method: str,
-    binning_params: Optional[Dict[str, Any]],
+    method: str,
+    bin_params: Optional[Dict[str, Any]],
 ) -> pd.DataFrame:
     """按字段批次并行计算全部字段级摘要指标。"""
     # 在任何全表 PSI 预处理前校验，避免非法参数触发无意义的大表扫描。
     _resolve_n_jobs(n_jobs, len(features))
-    # 默认等频 10 箱；外层便捷参数在此覆盖 binning_params 中的同名透传值。
+    # 默认等频 10 箱；外层便捷参数在此覆盖 bin_params 中的同名透传值。
     effective_binning_config = _normalize_binning_config(
-        binning_method,
+        method,
         max_n_bins,
         random_state,
-        binning_params,
+        bin_params,
     )
     numeric_as_categorical = set(numeric_as_categorical or [])
     force_numeric = set(force_numeric or [])
@@ -915,9 +918,9 @@ def build_feature_summary_fields(
         features,
         val_df,
         psi_method,
-        psi_group_col,
-        psi_date_col,
-        psi_freq,
+        group,
+        date,
+        freq,
         psi_test_size,
         random_state,
     )

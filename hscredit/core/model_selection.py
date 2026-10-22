@@ -4,6 +4,8 @@
 时间穿越或同一客户、订单组同时进入训练集和测试集。
 """
 
+from hscredit.utils.arguments import analysis_inputs
+
 from typing import Optional, Tuple, Union
 
 import numpy as np
@@ -132,12 +134,13 @@ def oot_split(
     return development, oot
 
 
+@analysis_inputs('X', roles=('group',))
 def group_train_test_split(
     X,
     y=None,
     *,
     groups=None,
-    group_col: Optional[str] = None,
+    group: Optional[str] = None,
     test_size: float = 0.2,
     random_state: Optional[int] = None,
 ):
@@ -146,22 +149,22 @@ def group_train_test_split(
     :param X: 特征数据
     :param y: 可选目标变量
     :param groups: 与 X 等长的分组数组
-    :param group_col: X 为 DataFrame 时可直接指定分组列
+    :param group: X 为 DataFrame 时可直接指定分组列
     :param test_size: 测试组比例
     :param random_state: 随机种子
     :return: 未传 y 时返回 ``X_train, X_test``；传 y 时返回
         ``X_train, X_test, y_train, y_test``
     """
-    if groups is not None and group_col is not None:
-        raise ValueError("groups 和 group_col 只能指定一个")
-    if group_col is not None:
+    if groups is not None and group is not None:
+        raise ValueError("groups 和 group 只能指定一个")
+    if group is not None:
         if not isinstance(X, pd.DataFrame):
-            raise TypeError("使用 group_col 时 X 必须是 DataFrame")
-        if group_col not in X.columns:
-            raise KeyError(f"分组列 {group_col!r} 不在 X 中")
-        groups = X[group_col]
+            raise TypeError("使用 group 时 X 必须是 DataFrame")
+        if group not in X.columns:
+            raise KeyError(f"分组列 {group!r} 不在 X 中")
+        groups = X[group]
     if groups is None:
-        raise ValueError("必须提供 groups 或 group_col")
+        raise ValueError("必须提供 groups 或 group")
     if len(X) != len(groups):
         raise ValueError("X 与 groups 的长度必须一致")
     if y is not None and len(X) != len(y):

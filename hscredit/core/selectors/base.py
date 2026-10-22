@@ -681,7 +681,7 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
     :param include: 强制保留的特征列表，这些特征无论如何都会被保留
     :param exclude: 强制剔除的特征列表，这些特征无论如何都会被剔除
     :param binner: 可选的已配置分箱器实例，支持已训练或待训练状态，不接受分箱器类
-    :param binning_params: 可选的 ``OptimalBinning`` 构造参数字典。未传入 ``binner`` 时，
+    :param bin_params: 可选的 ``OptimalBinning`` 构造参数字典。未传入 ``binner`` 时，
         基类使用该字典创建分箱器；同时传入时 ``binner`` 优先
     :param threshold: 筛选阈值，不同筛选器含义不同
     :param n_jobs: 并行工作数，默认为 -1；None 沿用旧串行行为
@@ -777,7 +777,7 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
         binner: Optional[Any] = None,
-        binning_params: Optional[Dict[str, Any]] = None,
+        bin_params: Optional[Dict[str, Any]] = None,
         threshold: Union[float, int, str] = 0.0,
         n_jobs: Optional[Union[int, float]] = -1,
         force_drop: Optional[List[str]] = None,
@@ -793,7 +793,7 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
         :param include: 强制保留的特征列表，这些特征无论如何都会被保留
         :param exclude: 强制剔除的特征列表，这些特征无论如何都会被剔除
         :param binner: 可选的已配置分箱器实例，支持已训练或未训练状态，不接受分箱器类
-        :param binning_params: 可选的 ``OptimalBinning`` 构造参数字典；``binner`` 优先
+        :param bin_params: 可选的 ``OptimalBinning`` 构造参数字典；``binner`` 优先
         :param threshold: 筛选阈值，不同筛选器含义不同
         :param n_jobs: 并行工作数，默认为 -1；None 沿用旧串行行为
         :param force_drop: 强制剔除的特征列表，效果与 exclude 合并
@@ -805,7 +805,7 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
         self.include = include
         self.exclude = exclude
         self.binner = binner
-        self.binning_params = binning_params
+        self.bin_params = bin_params
         self.threshold = threshold
         self.n_jobs = n_jobs
         self.force_drop = force_drop
@@ -1549,29 +1549,29 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
         return self._normalize_binned_output(X_binned, X)
 
     def _resolve_binner(self) -> Optional[Any]:
-        """按 ``binner > binning_params`` 解析有效分箱器。"""
+        """按 ``binner > bin_params`` 解析有效分箱器。"""
         if self.binner is not None:
             if isinstance(self.binner, type):
                 raise ValidationError("binner 必须传入配置好的分箱器实例，不能传入分箱器类")
             return self.binner
 
-        if self.binning_params is None:
+        if self.bin_params is None:
             return None
-        if not isinstance(self.binning_params, dict):
-            raise ValidationError("binning_params 分箱参数必须是字典")
+        if not isinstance(self.bin_params, dict):
+            raise ValidationError("bin_params 分箱参数必须是字典")
 
         from ..binning import OptimalBinning
 
-        binning_params = dict(self.binning_params)
+        bin_params = dict(self.bin_params)
         # 内部分箱器属于筛选器调用树的一部分。只有子级未显式配置时才
-        # 继承父级预算；用户在 binning_params 中给出的更具体配置优先。
-        binning_params.setdefault("n_jobs", self.n_jobs)
-        binning_params.setdefault("parallel_backend", self.parallel_backend)
-        binning_params.setdefault(
+        # 继承父级预算；用户在 bin_params 中给出的更具体配置优先。
+        bin_params.setdefault("n_jobs", self.n_jobs)
+        bin_params.setdefault("parallel_backend", self.parallel_backend)
+        bin_params.setdefault(
             "parallel_config",
             dict(self.parallel_config) if self.parallel_config is not None else None,
         )
-        return OptimalBinning(**binning_params)
+        return OptimalBinning(**bin_params)
 
     def _is_binner_fitted(self, binner: Any) -> bool:
         """兼容 HSCredit 与常见 sklearn 风格的分箱器拟合状态。"""
@@ -1593,7 +1593,7 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
         y: Optional[Union[pd.Series, np.ndarray]],
     ) -> bool:
         """判断当前拟合是否需要执行前置分箱。"""
-        return self.binner is not None or self.binning_params is not None
+        return self.binner is not None or self.bin_params is not None
 
     @staticmethod
     def _normalize_binned_output(X_binned: Any, X: pd.DataFrame) -> pd.DataFrame:
@@ -2224,7 +2224,7 @@ class CompositeFeatureSelector(BaseFeatureSelector):
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
         binner: Optional[Any] = None,
-        binning_params: Optional[Dict[str, Any]] = None,
+        bin_params: Optional[Dict[str, Any]] = None,
         n_jobs: Optional[Union[int, float]] = -1,
         parallel_backend: Optional[str] = None,
         parallel_config: Optional[Dict[str, Any]] = None,
@@ -2240,14 +2240,14 @@ class CompositeFeatureSelector(BaseFeatureSelector):
         :param include: 强制保留的特征列表
         :param exclude: 强制剔除的特征列表
         :param binner: 可选的分箱器
-        :param binning_params: 可选的 OptimalBinning 构造参数
+        :param bin_params: 可选的 OptimalBinning 构造参数
         """
         super().__init__(
             target=target,
             include=include,
             exclude=exclude,
             binner=binner,
-            binning_params=binning_params,
+            bin_params=bin_params,
             n_jobs=n_jobs,
             parallel_backend=parallel_backend,
             parallel_config=parallel_config,

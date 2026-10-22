@@ -44,7 +44,7 @@ import hscredit.core.eda as eda
 
 summary = eda.data_info(train_df)
 iv_result = eda.batch_iv_analysis(train_df, features=features, target="target")
-trend = eda.bad_rate_trend(train_df, target_col="target", date_col="apply_date")
+trend = eda.bad_rate_trend(train_df, target="target", date="apply_date")
 ```
 
 ## 3. 分箱与变量筛选

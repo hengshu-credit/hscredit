@@ -45,11 +45,11 @@ def test_feature_efficiency_analysis_returns_tables_figures_and_paths(tmp_path, 
     result = feature_efficiency_analysis(
         data=data,
         feature="score",
-        manual_rules=[460, 560, 700],
+        rules=[460, 560, 700],
         target="target",
-        auto_method="quantile",
-        date_col="apply_date",
-        group_cols="channel",
+        method="quantile",
+        date="apply_date",
+        group="channel",
         output_dir=str(tmp_path),
         suffix="_case",
     )
@@ -81,11 +81,11 @@ def test_feature_efficiency_analysis_supports_overdue_target_building(monkeypatc
     result = feature_efficiency_analysis(
         data=data,
         feature="score",
-        manual_rules=[450, 600],
+        rules=[450, 600],
         overdue="MOB1",
-        dpd=3,
-        auto_method="tree",
-        group_cols="segment",
+        dpds=3,
+        method="tree",
+        group="segment",
     )
 
     assert result["target"] == "MOB1 3+"
@@ -115,9 +115,9 @@ def test_feature_efficiency_analysis_skips_shared_legend_without_handles(monkeyp
                 }
             ),
             feature="score",
-            manual_rules=[450, 600],
+            rules=[450, 600],
             target="target",
-            auto_method="quantile",
+            method="quantile",
             n_jobs=1,
         )
 

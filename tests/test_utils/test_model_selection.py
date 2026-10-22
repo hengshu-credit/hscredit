@@ -64,7 +64,7 @@ def test_group_split_has_no_group_overlap(dated_data):
     X_train, X_test, y_train, y_test = group_train_test_split(
         X,
         y,
-        group_col="客户编号",
+        group="客户编号",
         test_size=0.4,
         random_state=42,
     )
@@ -77,7 +77,7 @@ def test_group_split_has_no_group_overlap(dated_data):
 
 
 def test_group_split_requires_group_information(dated_data):
-    with pytest.raises(ValueError, match="必须提供 groups 或 group_col"):
+    with pytest.raises(ValueError, match="必须提供 groups 或 group"):
         group_train_test_split(dated_data, test_size=0.2)
 
 

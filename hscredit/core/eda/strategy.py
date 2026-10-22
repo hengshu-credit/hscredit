@@ -13,6 +13,8 @@
 - multi_label_correlation: 多标签相关性矩阵
 """
 
+from hscredit.utils.arguments import analysis_inputs
+
 import warnings
 import numpy as np
 import pandas as pd
@@ -113,12 +115,13 @@ def approval_badrate_tradeoff(
 # 2. score_strategy_simulation
 # ---------------------------------------------------------------------------
 
+@analysis_inputs('df', roles=('amount',))
 def score_strategy_simulation(
     df: pd.DataFrame,
     score_col: str,
     target: str,
     thresholds: List[float],
-    amount_col: Optional[str] = None,
+    amount: Optional[str] = None,
     score_low_risk: str = 'high',
 ) -> pd.DataFrame:
     """评分阈值策略仿真.
@@ -131,16 +134,16 @@ def score_strategy_simulation(
     :param score_col: 评分列名
     :param target: 目标变量列名（0/1）
     :param thresholds: 评分阈值列表（通过/拒绝切割点）
-    :param amount_col: 金额列名（可选），提供时计算通过金额和坏账金额
+    :param amount: 金额列名（可选），提供时计算通过金额和坏账金额
     :param score_low_risk: 'high' 表示高分为低风险，'low' 表示低分为低风险
     :return: 各阈值下的策略仿真结果 DataFrame
 
     **参考样例**
 
     >>> result = score_strategy_simulation(df, score_col='score', target='fpd15',
-    ...     thresholds=[500, 520, 540, 560], amount_col='loan_amount')
+    ...     thresholds=[500, 520, 540, 560], amount='loan_amount')
     """
-    required = list(dict.fromkeys([score_col, target] + ([amount_col] if amount_col is not None else [])))
+    required = list(dict.fromkeys([score_col, target] + ([amount] if amount is not None else [])))
     validate_dataframe(df, required_cols=required)
     if score_low_risk not in ('high', 'low'):
         raise ValueError("score_low_risk 必须为 'high' 或 'low'")
@@ -151,13 +154,13 @@ def score_strategy_simulation(
     _check_binary_target(df[target], target)
 
     # 在所有阈值计算前规范化金额；此前先切片再转换会把字符串相加。
-    if amount_col is not None:
+    if amount is not None:
         try:
-            df[amount_col] = pd.to_numeric(df[amount_col], errors='raise').fillna(0.0)
+            df[amount] = pd.to_numeric(df[amount], errors='raise').fillna(0.0)
         except (TypeError, ValueError) as exc:
-            raise ValueError(f"金额列 '{amount_col}' 必须为数值或数值字符串") from exc
-        if not np.isfinite(df[amount_col].to_numpy(dtype=float)).all():
-            raise ValueError(f"金额列 '{amount_col}' 不能包含无穷值")
+            raise ValueError(f"金额列 '{amount}' 必须为数值或数值字符串") from exc
+        if not np.isfinite(df[amount].to_numpy(dtype=float)).all():
+            raise ValueError(f"金额列 '{amount}' 不能包含无穷值")
 
     total = len(df)
     total_bad = int(df[target].sum())
@@ -167,8 +170,8 @@ def score_strategy_simulation(
     scores = df[score_col].to_numpy()[order]
     bad = df[target].to_numpy(dtype=float)[order]
     bad_prefix = np.r_[0.0, np.cumsum(bad)]
-    if amount_col is not None:
-        amounts = df[amount_col].to_numpy(dtype=float)[order]
+    if amount is not None:
+        amounts = df[amount].to_numpy(dtype=float)[order]
         amount_prefix = np.r_[0.0, np.cumsum(amounts)]
         bad_amount_prefix = np.r_[0.0, np.cumsum(amounts * bad)]
 
@@ -197,7 +200,7 @@ def score_strategy_simulation(
             '坏样本拦截率(%)': round(_safe_div(rej_bad, total_bad) * 100, 2) if total_bad > 0 else np.nan,
         }
 
-        if amount_col is not None:
+        if amount is not None:
             app_amt = float(amount_prefix[end] - amount_prefix[start])
             app_bad_amt = float(bad_amount_prefix[end] - bad_amount_prefix[start])
             row['通过金额'] = round(app_amt, 2)
@@ -214,13 +217,14 @@ def score_strategy_simulation(
 # 3. vintage_performance_summary
 # ---------------------------------------------------------------------------
 
+@analysis_inputs('df', roles=('amount',))
 def vintage_performance_summary(
     df: pd.DataFrame,
     vintage_col: str,
     mob_col: str,
-    target_col: str,
+    target: str,
     mob_points: Optional[List[int]] = None,
-    amount_col: Optional[str] = None,
+    amount: Optional[str] = None,
 ) -> pd.DataFrame:
     """Vintage 账龄绩效汇总表.
 
@@ -231,22 +235,22 @@ def vintage_performance_summary(
     :param df: 输入 DataFrame
     :param vintage_col: Vintage 列名（如放款年月 '2024-01'）
     :param mob_col: 当前账龄（月）列名
-    :param target_col: 坏标签列名（0/1）
+    :param target: 坏标签列名（0/1）
     :param mob_points: 关注的 MOB 观测点列表，None 时自动取所有整数 MOB
-    :param amount_col: 金额列名（可选），提供时输出金额加权坏率
+    :param amount: 金额列名（可选），提供时输出金额加权坏率
     :return: Vintage 绩效汇总宽表，行=vintage，列=MOB_X_坏率
 
     **参考样例**
 
     >>> summary = vintage_performance_summary(df, vintage_col='loan_month',
-    ...     mob_col='mob', target_col='fpd15', mob_points=[3,6,9,12])
+    ...     mob_col='mob', target='fpd15', mob_points=[3,6,9,12])
     """
-    validate_dataframe(df, required_cols=[vintage_col, mob_col, target_col])
+    validate_dataframe(df, required_cols=[vintage_col, mob_col, target])
     df = df.copy()
     df[mob_col] = pd.to_numeric(df[mob_col], errors='coerce')
-    df[target_col] = pd.to_numeric(df[target_col], errors='coerce')
-    df = df.dropna(subset=[mob_col, target_col])
-    _check_binary_target(df[target_col], target_col)
+    df[target] = pd.to_numeric(df[target], errors='coerce')
+    df = df.dropna(subset=[mob_col, target])
+    _check_binary_target(df[target], target)
 
     all_mobs = sorted(df[mob_col].dropna().astype(int).unique())
     if mob_points is None:
@@ -264,17 +268,17 @@ def vintage_performance_summary(
             n = len(mob_df)
             if n == 0:
                 row[f'MOB{mob}_坏率(%)'] = np.nan
-                if amount_col and amount_col in df.columns:
+                if amount and amount in df.columns:
                     row[f'MOB{mob}_坏账率(金额,%)'] = np.nan
                 row[f'MOB{mob}_样本数'] = 0
                 continue
-            bad_n = int(mob_df[target_col].sum())
+            bad_n = int(mob_df[target].sum())
             row[f'MOB{mob}_样本数'] = n
             row[f'MOB{mob}_坏率(%)'] = round(_safe_div(bad_n, n) * 100, 4)
-            if amount_col is not None and amount_col in df.columns:
-                amt_col = pd.to_numeric(mob_df[amount_col], errors='coerce')
+            if amount is not None and amount in df.columns:
+                amt_col = pd.to_numeric(mob_df[amount], errors='coerce')
                 total_amt = float(amt_col.sum())
-                bad_amt = float(amt_col[mob_df[target_col] == 1].sum())
+                bad_amt = float(amt_col[mob_df[target] == 1].sum())
                 row[f'MOB{mob}_坏账率(金额,%)'] = round(_safe_div(bad_amt, total_amt) * 100, 4)
         records.append(row)
 
@@ -331,6 +335,7 @@ def _roll_build_matrix(
     return pd.DataFrame(data, index=row_idx, columns=col_idx)
 
 
+@analysis_inputs('df', roles=('amount',))
 def roll_rate_matrix(
     df: pd.DataFrame,
     dpd_t0: str,
@@ -341,7 +346,7 @@ def roll_rate_matrix(
     mob_t1: Optional[int] = None,
     date_t0: Optional[str] = None,
     date_t1: Optional[str] = None,
-    amount_col: Optional[str] = None,
+    amount: Optional[str] = None,
 ) -> Dict[str, pd.DataFrame]:
     """DPD 滚动率矩阵.
 
@@ -365,21 +370,21 @@ def roll_rate_matrix(
     :param mob_t1: 表现点账龄（MOB），用于表头标注，如 18 表示 "MOB18"
     :param date_t0: 观察点日期字符串（可选），如 '2023-06'，用于表头描述
     :param date_t1: 表现点日期字符串（可选），如 '2023-12'，用于表头描述
-    :param amount_col: 贷款金额列名（可选），提供时额外输出金额口径矩阵与比例矩阵
+    :param amount: 贷款金额列名（可选），提供时额外输出金额口径矩阵与比例矩阵
     :return: 包含以下键的字典：
 
         - ``'元信息'``: 观察点/表现点描述、总订单数、订单口径变好/保持/变坏笔数
-          及占比；若提供 amount_col 则同时包含金额口径汇总
+          及占比；若提供 amount 则同时包含金额口径汇总
         - ``'计数矩阵'``: 多层列索引的迁移计数宽表，含变好/保持/变坏/合计汇总列
         - ``'订单比例矩阵'``: 基于订单数行归一化的迁移概率（原始小数），含变好/保持/变坏汇总列
-        - ``'金额矩阵'``: 当 ``amount_col`` 提供时，金额口径的迁移宽表，含汇总列
-        - ``'金额比例矩阵'``: 当 ``amount_col`` 提供时，基于金额行归一化的迁移比例（原始小数）
+        - ``'金额矩阵'``: 当 ``amount`` 提供时，金额口径的迁移宽表，含汇总列
+        - ``'金额比例矩阵'``: 当 ``amount`` 提供时，基于金额行归一化的迁移比例（原始小数）
 
     **参考样例**
 
     >>> result = roll_rate_matrix(
     ...     df, dpd_t0='dpd_mob12', dpd_t1='dpd_mob18',
-    ...     mob_t0=12, mob_t1=18, amount_col='loan_amount'
+    ...     mob_t0=12, mob_t1=18, amount='loan_amount'
     ... )
     >>> display(result['元信息'])
     >>> display(result['计数矩阵'])
@@ -485,11 +490,11 @@ def roll_rate_matrix(
     }
 
     # ── Amount matrices ────────────────────────────────────────────────────
-    if amount_col is not None and amount_col in df.columns:
-        df[amount_col] = pd.to_numeric(df[amount_col], errors='coerce').fillna(0.0)
+    if amount is not None and amount in df.columns:
+        df[amount] = pd.to_numeric(df[amount], errors='coerce').fillna(0.0)
 
         amt_raw = (
-            df.groupby(['__state_t0__', '__state_t1__'], observed=True)[amount_col]
+            df.groupby(['__state_t0__', '__state_t1__'], observed=True)[amount]
             .sum()
             .unstack(fill_value=0.0)
         )
@@ -521,10 +526,10 @@ def roll_rate_matrix(
         result['金额比例矩阵'] = amt_prop_mat
 
         # 金额口径元信息行
-        total_amt = float(df[amount_col].sum())
-        back_amt = float(df.loc[back_mask, amount_col].sum())
-        keep_amt = float(df.loc[keep_mask, amount_col].sum())
-        fwd_amt  = float(df.loc[fwd_mask, amount_col].sum())
+        total_amt = float(df[amount].sum())
+        back_amt = float(df.loc[back_mask, amount].sum())
+        keep_amt = float(df.loc[keep_mask, amount].sum())
+        fwd_amt  = float(df.loc[fwd_mask, amount].sum())
         amt_meta_row: Dict[str, Any] = {
             '口径': '金额',
             '观察点': obs_label,
@@ -555,13 +560,14 @@ def roll_rate_matrix(
 # 5. label_leakage_check
 # ---------------------------------------------------------------------------
 
+@analysis_inputs('df', roles=())
 def label_leakage_check(
     df: pd.DataFrame,
     features: List[str],
     target: str,
     threshold_iv: float = 0.5,
     threshold_auc: float = 0.9,
-    n_bins: int = 10,
+    max_n_bins: int = 10,
 ) -> pd.DataFrame:
     """标签泄露检测.
 
@@ -573,7 +579,7 @@ def label_leakage_check(
     :param target: 目标变量列名（0/1）
     :param threshold_iv: IV 泄露阈值，超过则告警，默认 0.5
     :param threshold_auc: AUC 泄露阈值，超过则告警，默认 0.9
-    :param n_bins: IV 计算分箱数
+    :param max_n_bins: IV 计算分箱数
     :return: 标签泄露检测结果 DataFrame
 
     **参考样例**

@@ -19,7 +19,7 @@ from hscredit.report.result import ReportGenerationError, ReportResult
 def test_strategy_prefix_matches_independent_masks(direction):
     data = pd.DataFrame({"score": [100, 100, 200, 300], "y": [0, 1, 1, 0], "amount": ["100", "200", "300", "400"]})
     thresholds = [100, 300, 0, 100, 999]
-    actual = score_strategy_simulation(data, "score", "y", thresholds, amount_col="amount", score_low_risk=direction)
+    actual = score_strategy_simulation(data, "score", "y", thresholds, amount="amount", score_low_risk=direction)
     for i, threshold in enumerate(thresholds):
         mask = data.score.ge(threshold) if direction == "high" else data.score.le(threshold)
         assert actual.loc[i, "通过量(笔)"] == int(mask.sum())
@@ -30,7 +30,7 @@ def test_strategy_prefix_matches_independent_masks(direction):
 
 
 def test_strategy_string_amount_regression():
-    result = score_strategy_simulation(pd.DataFrame({"score": [100, 200], "y": [0, 1], "amount": ["100", "200"]}), "score", "y", [0, 0], amount_col="amount")
+    result = score_strategy_simulation(pd.DataFrame({"score": [100, 200], "y": [0, 1], "amount": ["100", "200"]}), "score", "y", [0, 0], amount="amount")
     assert result["通过金额"].tolist() == [300.0, 300.0]
     assert result["坏账率(金额,%)"].tolist() == [66.6667, 66.6667]
 
@@ -142,7 +142,7 @@ def eda_data():
 
 @pytest.mark.parametrize("function,key", [(eda_summary, "逾期率趋势"), (generate_report, "7.逾期率趋势")])
 def test_eda_trend_sections_are_present_with_valid_dates(function, key):
-    result = function(eda_data(), target="y", date_col="date", features=["x"], n_jobs=1, mode="strict", return_result=True)
+    result = function(eda_data(), target="y", date="date", features=["x"], n_jobs=1, mode="strict", return_result=True)
     assert isinstance(result, dict)
     assert isinstance(result, ReportResult)
     assert len(result[key]) == 2
@@ -152,12 +152,12 @@ def test_eda_trend_sections_are_present_with_valid_dates(function, key):
 
 def test_eda_best_effort_exposes_failure_strict_raises_and_preserves_status():
     data = eda_data().assign(date="invalid")
-    result = eda_summary(data, target="y", date_col="date", features=["x"], n_jobs=1, return_result=True)
+    result = eda_summary(data, target="y", date="date", features=["x"], n_jobs=1, return_result=True)
     assert not result.complete
     assert result.sections["逾期率趋势"].status == "失败"
     assert result.sections["逾期率趋势"].reason
     with pytest.raises(ReportGenerationError) as error:
-        eda_summary(data, target="y", date_col="date", features=["x"], n_jobs=1, mode="strict")
+        eda_summary(data, target="y", date="date", features=["x"], n_jobs=1, mode="strict")
     assert error.value.result.sections["逾期率趋势"].status == "失败"
 
 
@@ -195,7 +195,7 @@ def test_excel_exception_and_xml_failure_preserve_old_file(tmp_path, monkeypatch
 
 
 def test_report_export_discloses_partial_status(tmp_path):
-    result = eda_summary(eda_data().assign(date="invalid"), target="y", date_col="date", features=["x"], n_jobs=1, return_result=True)
+    result = eda_summary(eda_data().assign(date="invalid"), target="y", date="date", features=["x"], n_jobs=1, return_result=True)
     output = tmp_path / "partial.xlsx"
     export_report_to_excel(result, str(output))
     workbook = load_workbook(output)

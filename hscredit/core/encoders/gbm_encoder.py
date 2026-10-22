@@ -41,7 +41,7 @@ class GBMEncoder(BaseEncoder):
 
     **参数**
 
-    :param cols: 需要编码的列名列表。如果为None，则使用所有特征列
+    :param features: 需要编码的列名列表。如果为None，则使用所有特征列
     :param model_type: GBM模型类型，可选 'xgboost'、'lightgbm'、'catboost'，默认为'xgboost'
     :param n_estimators: 树的数量，默认为100
     :param max_depth: 树的最大深度，默认为5
@@ -147,7 +147,7 @@ class GBMEncoder(BaseEncoder):
 
     def __init__(
         self,
-        cols: Optional[List[str]] = None,
+        features: Optional[List[str]] = None,
         model_type: Literal['xgboost', 'lightgbm', 'catboost'] = 'xgboost',
         n_estimators: int = 100,
         max_depth: int = 5,
@@ -172,7 +172,7 @@ class GBMEncoder(BaseEncoder):
     ):
         """初始化GBM编码器。
 
-        :param cols: 需要编码的列名列表
+        :param features: 需要编码的列名列表
         :param model_type: GBM模型类型，默认为'xgboost'
         :param n_estimators: 树的数量，默认为100
         :param max_depth: 树的最大深度，默认为5
@@ -192,7 +192,7 @@ class GBMEncoder(BaseEncoder):
         :param target: scorecardpipeline风格的目标列名。如果提供，fit时从X中提取该列作为y
         """
         super().__init__(
-            cols=cols,
+            features=features,
             drop_invariant=drop_invariant,
             return_df=return_df,
             handle_unknown=handle_unknown,
@@ -249,10 +249,10 @@ class GBMEncoder(BaseEncoder):
         self._catboost_category_protocol_ = 2
 
         # 确定使用的列
-        if self.cols is None:
+        if self.features is None:
             self.cols_ = X.columns.tolist()
         else:
-            self.cols_ = [c for c in self.cols if c in X.columns]
+            self.cols_ = [c for c in self.features if c in X.columns]
 
         self.n_features_ = len(self.cols_)
 

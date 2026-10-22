@@ -323,7 +323,7 @@ def lift_at(
 def lift_monotonicity_check(
     y_true: Union[np.ndarray, pd.Series],
     y_prob: Union[np.ndarray, pd.Series],
-    n_bins: int = 10,
+    max_n_bins: int = 10,
     direction: str = 'both',
 ) -> Dict[str, Any]:
     """检查LIFT单调性.
@@ -335,7 +335,7 @@ def lift_monotonicity_check(
 
     :param y_true: 真实标签 (0/1)，0为负样本（好样本），1为正样本（坏样本）
     :param y_prob: 预测概率或评分（高值表示高风险）
-    :param n_bins: 分箱数，默认为10
+    :param max_n_bins: 分箱数，默认为10
     :param direction: 检验方向，默认为'both'
         - 'head': 仅检验头部（高概率→低概率坏率是否递减）
         - 'tail': 仅检验尾部
@@ -359,7 +359,7 @@ def lift_monotonicity_check(
     >>> np.random.seed(42)
     >>> y_true = np.random.randint(0, 2, 1000)
     >>> y_prob = np.random.uniform(0, 1, 1000)
-    >>> result = lift_monotonicity_check(y_true, y_prob, n_bins=10)
+    >>> result = lift_monotonicity_check(y_true, y_prob, max_n_bins=10)
     >>> print(result['head_monotonic'])
     """
     y_true = np.asarray(y_true)
@@ -374,14 +374,14 @@ def lift_monotonicity_check(
         """对给定排序（头部/尾部）计算各分箱坏率和单调性."""
         y_sorted = y_true[sorted_indices]
         prob_sorted = y_prob[sorted_indices]
-        bin_size = total // n_bins
+        bin_size = total // max_n_bins
 
         bin_badrates = []
         bin_lifts = []
         bin_rows = []
-        for i in range(n_bins):
+        for i in range(max_n_bins):
             start = i * bin_size
-            end = (i + 1) * bin_size if i < n_bins - 1 else total
+            end = (i + 1) * bin_size if i < max_n_bins - 1 else total
             seg = y_sorted[start:end]
             seg_prob = prob_sorted[start:end]
             n = len(seg)
@@ -408,7 +408,7 @@ def lift_monotonicity_check(
                 diff = bin_badrates[i] - bin_badrates[i - 1]
                 violations.append((i, i + 1, round(diff, 6)))
 
-        n_pairs = n_bins - 1
+        n_pairs = max_n_bins - 1
         violation_ratio = len(violations) / n_pairs if n_pairs > 0 else 0.0
         is_monotonic = len(violations) == 0
 
@@ -450,7 +450,7 @@ def lift_monotonicity_check(
         for i in range(1, len(br_list)):
             if br_list[i] < br_list[i - 1] - 1e-8:
                 tail_violations.append((i, i + 1, round(br_list[i - 1] - br_list[i], 6)))
-        n_pairs = n_bins - 1
+        n_pairs = max_n_bins - 1
         tail_vr = len(tail_violations) / n_pairs if n_pairs > 0 else 0.0
         result['tail_monotonic'] = len(tail_violations) == 0
         result['tail_lift_values'] = tail['lift_values']

@@ -3,6 +3,10 @@
 提供规则集综合评估与多标签规则分析功能，以及规则置入置出分析。
 """
 
+from hscredit.utils.arguments import analysis_inputs
+
+from ..utils.targets import TargetInput, bind_targets, reject_legacy_target_keywords, validate_target_mode
+
 from dataclasses import dataclass
 from functools import reduce
 from typing import Dict, List, Optional, Union, Tuple
@@ -11,7 +15,7 @@ import numpy as np
 import pandas as pd
 
 from ..utils.input_utils import normalize_dpd_values
-from ..utils.overdue import compare_overdue, overdue_grey_mask, overdue_label, validate_overdue_operator
+from ..utils.overdue import validate_overdue_operator
 from ..core.rules import Rule
 from .mining.multi_label import MultiLabelRuleMiner
 from .feature_analyzer import feature_bin_stats
@@ -142,40 +146,8 @@ _SWAP_ATOMIC_GROUPS = ("out_out", "in_out", "in_in", "out_in")
 
 def _resolve_target_series(data, target, overdue, dpds, del_grey=False, overdue_operator: str = ">"):
     """解析分析样本上的一个或多个实际表现标签。"""
-    validate_overdue_operator(overdue_operator)
-    del_grey = del_grey and overdue_operator in (">", ">=")
-    # 与分箱表和其它报告入口保持一致：显式传入 overdue 时，逾期
-    # 组合优先于 target。此前这里反向优先 target，导致 bin_table
-    # 按 overdue 构建而实际标签按 target 计算，最终出现目标列找不到
-    # 或风险分母错配。
-    if overdue is None:
-        if target is None:
-            raise ValueError("必须传入 target 或 overdue + dpds 才能计算规则置换风险")
-        if target not in data.columns:
-            return {target: pd.Series(np.nan, index=data.index, dtype=float)}
-        return {target: pd.to_numeric(data[target], errors="coerce").astype(float)}
-
-    if dpds is None:
-        raise ValueError("必须传入 target 或 overdue + dpds 才能计算规则置换风险")
-
-    overdue_cols = [overdue] if isinstance(overdue, str) else list(overdue)
-    thresholds = normalize_dpd_values(dpds)
-    if not overdue_cols or not thresholds:
-        raise ValueError("overdue 和 dpds 不能为空")
-    targets = {}
-    for overdue_col in overdue_cols:
-        if overdue_col not in data.columns:
-            overdue_values = pd.Series(np.nan, index=data.index, dtype=float)
-        else:
-            overdue_values = pd.to_numeric(data[overdue_col], errors="coerce")
-        for threshold in thresholds:
-            label = overdue_label(overdue_col, threshold, overdue_operator)
-            values = compare_overdue(overdue_values, threshold, overdue_operator).where(overdue_values.notna()).astype(float)
-            if del_grey:
-                valid = ~overdue_grey_mask(overdue_values, threshold, overdue_operator)
-                values = values.where(valid)
-            targets[label] = values
-    return targets
+    frame, targets = bind_targets(data, target, overdue, dpds, del_grey, overdue_operator, allow_missing=True)
+    return targets.y_map(frame)
 
 
 def _resolve_risk_uplifts(out_in_uplift, risk_uplifts):
@@ -340,10 +312,10 @@ def _resolve_bin_table(
     reference_data: Optional[pd.DataFrame],
     bin_table: Optional[Union[pd.DataFrame, Dict[str, pd.DataFrame]]],
     score: Union[str, Dict[str, str]],
-    target: Optional[str],
+    target: Optional[TargetInput],
     overdue: Optional[Union[str, List[str]]],
     dpds: Optional[Union[int, List[int]]],
-    bin_method: str,
+    method: str,
     max_n_bins: int,
     min_bin_size: float,
     missing_separate: bool,
@@ -406,7 +378,7 @@ def _resolve_bin_table(
             if target is None and (overdue is None or dpds is None):
                 raise ValueError("从 data 自动生成 bin_table 时，必须传入 target 或 (overdue + dpds) 参数")
             reference_data = data.copy()
-            ref_col = target if target else overdue[0] if isinstance(overdue, list) else overdue
+            ref_col = target if isinstance(target, str) else overdue[0] if isinstance(overdue, list) else overdue
             if ref_col and ref_col in reference_data.columns:
                 reference_data = reference_data.dropna(subset=[ref_col])
         else:
@@ -416,17 +388,22 @@ def _resolve_bin_table(
         raise ValueError("从 reference_data 计算分箱表时，必须传入 target 或 (overdue + dpds) 参数")
 
     extra_params = dict(bin_params) if bin_params else {}
-    merged_params = {**extra_params, 'method': bin_method, 'max_n_bins': max_n_bins,
+    merged_params = {**extra_params, 'method': method, 'max_n_bins': max_n_bins,
                       'min_bin_size': min_bin_size, 'missing_separate': missing_separate}
     merged_params.setdefault("n_jobs", -1)
     merged_params.setdefault("parallel_backend", parallel_backend)
     merged_params.setdefault("parallel_config", parallel_config)
 
+    reference_data, target = bind_targets(
+        reference_data, target, overdue, dpds,
+        merged_params.get("del_grey", False), merged_params.get("overdue_operator", ">")
+    )
+    overdue, dpds = None, None
     tasks = [
         (name, col, reference_data, target, overdue, dpds, merged_params)
         for name, col in score_map.items()
     ]
-    has_parallel_children = _binning_has_parallel_children(bin_method, merged_params)
+    has_parallel_children = _binning_has_parallel_children(method, merged_params)
     return dict(
         parallel_execute(
             _swap_score_bin_table_call,
@@ -456,7 +433,7 @@ def _build_swap_pipeline(
     rules_base: List[Rule],
     rules_out: Optional[List[Rule]],
     rules_in: Optional[List[Rule]],
-    target: Optional[str],
+    target: Optional[TargetInput],
     overdue: Optional[Union[str, List[str]]],
     dpds: Optional[Union[int, List[int]]],
     amount: Optional[str],
@@ -476,7 +453,6 @@ def _build_swap_pipeline(
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """按显式阶段集合构建置入置出流水线。"""
     validate_overdue_operator(overdue_operator)
-    del_grey = del_grey and overdue_operator in (">", ">=")
     if isinstance(y, dict):
         target_series = y
     elif y is not None:
@@ -921,8 +897,8 @@ def _make_swap_row(
     n_bad_full: float,
     full_bad_rate: float,
     rule_detail: str = '',
+    amount_values: Optional[str] = None,
     amount: Optional[str] = None,
-    amount_col: Optional[str] = None,
     data: Optional[pd.DataFrame] = None,
     y: Optional[Union[np.ndarray, pd.Series]] = None,
     n_good: Optional[int] = None,
@@ -939,8 +915,8 @@ def _make_swap_row(
     :param n_bad_full: 全量坏样本数
     :param full_bad_rate: 全量坏样本率
     :param rule_detail: 规则详情（表达式）
-    :param amount: 金额字段名
-    :param amount_col: 金额字段名（别名）
+    :param amount_values: 金额字段名
+    :param amount: 金额字段名（别名）
     :param data: 数据集
     :param y: 目标变量（0/1），用于计算金额口径指标
     :param n_good: 好样本数（订单口径），自动计算或显式传入
@@ -954,8 +930,8 @@ def _make_swap_row(
     # - 好样本数 = 好样本金额
     # - 坏样本数 = 坏样本金额
     # - 坏样本率 = 坏样本金额 / 金额总数
-    if amount and data is not None and amount in data.columns and y is not None:
-        amt_values = data[amount].values
+    if amount_values and data is not None and amount_values in data.columns and y is not None:
+        amt_values = data[amount_values].values
         amt_total = float(amt_values.sum())
         # 好样本金额 = 金额 * (1 - target)
         good_amt = float((amt_values * (1 - y)).sum())
@@ -996,7 +972,7 @@ def _make_swap_row(
 def ruleset_analysis(
     datasets: pd.DataFrame,
     rules: List[Rule],
-    target: str = "target",
+    target: Optional[TargetInput] = None,
     overdue: Optional[Union[str, List[str]]] = None,
     dpds: Optional[Union[int, List[int]]] = None,
     filter_cols: Optional[List[str]] = None,
@@ -1040,7 +1016,9 @@ def ruleset_analysis(
         ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
     """
     validate_overdue_operator(overdue_operator)
-    del_grey = del_grey and overdue_operator in (">", ">=")
+    reject_legacy_target_keywords(kwargs)
+    datasets, target = bind_targets(datasets, target, overdue, dpds, del_grey, overdue_operator, default_target="target")
+    overdue, dpds = None, None
     datasets = datasets.copy()
 
     feature_names_missing = set([f for rule in rules for f in rule.feature_names_in_]) - set(datasets.columns)
@@ -1052,7 +1030,7 @@ def ruleset_analysis(
     report_plan = _plan_report_parallel(
         n_jobs,
         outer_task_count=1,
-        inner_task_count=_rule_report_task_count(overdue, dpds),
+        inner_task_count=_rule_report_task_count(overdue, dpds, target),
     )
     execution_kwargs = dict(
         target=target,
@@ -1121,6 +1099,7 @@ def ruleset_analysis(
     return report
 
 
+@analysis_inputs('df', roles=())
 def multi_label_rule_analysis(
     df: pd.DataFrame,
     features: List[str],
@@ -1239,6 +1218,7 @@ def _merge_label_tables(tables: List[pd.DataFrame], label_names: List[str]) -> p
     return base_table
 
 
+@analysis_inputs('data', roles=('amount',), shared_frames=('reference_data',))
 def rule_swap_analysis(
     data: pd.DataFrame,
     score: Union[str, Dict[str, str]],
@@ -1247,7 +1227,7 @@ def rule_swap_analysis(
     rules_base: Optional[List[Rule]] = None,
     reference_data: Optional[pd.DataFrame] = None,
     bin_table: Optional[Union[pd.DataFrame, Dict[str, pd.DataFrame]]] = None,
-    target: Optional[str] = None,
+    target: Optional[TargetInput] = None,
     overdue: Optional[Union[str, List[str]]] = None,
     dpds: Optional[Union[int, List[int]]] = None,
     score_weights: Optional[Dict[str, float]] = None,
@@ -1257,7 +1237,7 @@ def rule_swap_analysis(
     reverse_order: bool = False,
     out_in_amount_fill: Optional[float] = None,
     out_in_amount_col: Optional[str] = None,
-    bin_method: str = 'quantile',
+    method: str = 'quantile',
     max_n_bins: int = 10,
     min_bin_size: float = 0.05,
     missing_separate: bool = True,
@@ -1312,7 +1292,7 @@ def rule_swap_analysis(
     :param reverse_order: 是否逆序展示；仅改变流水线行顺序，不影响置换结论
     :param out_in_amount_fill: out_in 置入样本额度填充定值（可选）
     :param out_in_amount_col: out_in 置入样本额度填充字段名（可选）
-    :param bin_method: 分箱方法，默认 'quantile'（仅 reference_data 模式生效）
+    :param method: 分箱方法，默认 'quantile'（仅 reference_data 模式生效）
     :param max_n_bins: 最大分箱数，默认 10（仅 reference_data 模式生效）
     :param min_bin_size: 每箱最小样本占比，默认 0.05（仅 reference_data 模式生效）
     :param missing_separate: 是否将缺失值单独分箱，默认 True
@@ -1364,12 +1344,19 @@ def rule_swap_analysis(
         默认 None 时沿用 ``bin_params`` 的比较符；显式参数优先。
     """
     # ── 第一步：校验轻量输入 ─────────────────────────────────────────────
+    validate_target_mode(target, overdue, dpds)
     if not isinstance(data, pd.DataFrame):
         raise TypeError("data 必须为 pandas DataFrame")
     if data.empty:
         raise ValueError("data 不能为空")
     if not data.index.is_unique:
+        # 标签先绑定到原始行，索引归一化不能改变 callable 的作用数据。
+        effective_operator = overdue_operator or (bin_params or {}).get("overdue_operator", ">")
+        effective_grey = (bin_params or {}).get("del_grey", False) if del_grey is None else del_grey
+        data, actual_targets = bind_targets(data, target, overdue, dpds, effective_grey, effective_operator, allow_missing=True)
         data = data.reset_index(drop=True)
+    else:
+        actual_targets = None
     try:
         sample_survival_rate = float(sample_survival_rate)
     except (TypeError, ValueError) as exc:
@@ -1423,7 +1410,8 @@ def rule_swap_analysis(
         resolved_bin_params['del_grey'] = del_grey
     overdue_operator = resolved_bin_params.get("overdue_operator", ">") if overdue_operator is None else overdue_operator
     validate_overdue_operator(overdue_operator)
-    del_grey = del_grey and overdue_operator in (">", ">=")
+    if overdue is not None:
+        del_grey = del_grey and overdue_operator in (">", ">=")
     resolved_bin_params["overdue_operator"] = overdue_operator
     resolved_bin_params["del_grey"] = del_grey
     resolved_bin_params.setdefault('n_jobs', n_jobs)
@@ -1436,7 +1424,7 @@ def rule_swap_analysis(
         target=target,
         overdue=overdue,
         dpds=dpds,
-        bin_method=bin_method,
+        method=method,
         max_n_bins=max_n_bins,
         min_bin_size=min_bin_size,
         missing_separate=missing_separate,
@@ -1448,7 +1436,7 @@ def rule_swap_analysis(
     )
 
     # ── 第三步半：解析分析样本的实际表现标签 ──────────────────────────────
-    y = _resolve_target_series(data, target, overdue, dpds, del_grey=del_grey, overdue_operator=overdue_operator)
+    y = _resolve_target_series(data, actual_targets if actual_targets is not None else target, None if actual_targets is not None else overdue, None if actual_targets is not None else dpds, del_grey=del_grey, overdue_operator=overdue_operator)
     for table in bin_table_result.values():
         _validate_swap_bin_labels(table)
     if len(y) > 1:
