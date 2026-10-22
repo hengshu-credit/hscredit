@@ -1,0 +1,176 @@
+{
+  "date": "2026-10-22",
+  "baseline_commit": "24d39ea39449c0501a0d04ac40ae79e58f86abba",
+  "scope": "F01-F12、追加兼容修复以及提交前评分分布/无私有数据CI边界",
+  "source_fingerprint": {
+    "algorithm": "SHA256(path + NUL + SHA256(LF-normalized bytes) + LF), sorted paths",
+    "file_count": 563,
+    "sha256": "0b6c792497935f7440107865100e90d1e72d4746186762ac1a8dae6d165c712d"
+  },
+  "environment": {
+    "Python": "3.11.5",
+    "NumPy": "2.4.6",
+    "Pandas": "2.3.3",
+    "scikit-learn": "1.6.1",
+    "SHAP": "0.51.0",
+    "Numba": "0.68.0",
+    "CatBoost": "1.2.10",
+    "statsmodels": "0.15.0",
+    "NGBoost": "0.5.11",
+    "lifelines": "0.30.3",
+    "PyZMQ": "27.2.0"
+  },
+  "partitions": [
+    {
+      "group": "core.junit",
+      "tests": 5597,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 9,
+      "seconds": 520.619,
+      "passed": 5588
+    },
+    {
+      "group": "real-matrix",
+      "tests": 534,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 153.706,
+      "passed": 534
+    },
+    {
+      "group": "native.junit",
+      "tests": 7,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 2.751,
+      "passed": 7
+    },
+    {
+      "group": "notebooks_interpretability_example.junit",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 6.118,
+      "passed": 1
+    },
+    {
+      "group": "notebooks_model_workflow_notebook.junit",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 4.665,
+      "passed": 1
+    },
+    {
+      "group": "notebooks_pandas_parallel_interrupt.junit",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 7.921,
+      "passed": 1
+    },
+    {
+      "group": "notebooks_validate_examples.junit",
+      "tests": 11,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 8.387,
+      "passed": 11
+    },
+    {
+      "group": "slow",
+      "tests": 8,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 57.244,
+      "passed": 8
+    }
+  ],
+  "totals": {
+    "tests": 6160,
+    "passed": 6151,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 9
+  },
+  "skips": [
+    {
+      "test": "tests.test_database.integration.test_clickhouse_integration::test_clickhouse_real_native_stream_and_write",
+      "reason": "未配置 HSCREDIT_TEST_CLICKHOUSE_HOST"
+    },
+    {
+      "test": "tests.test_database.integration.test_hive_integration::test_hive_real_pool_stream_and_metadata",
+      "reason": "未配置 HSCREDIT_TEST_HIVE_HOST"
+    },
+    {
+      "test": "tests.test_database.integration.test_impala_integration::test_impala_real_pool_stream_and_metadata",
+      "reason": "未配置 HSCREDIT_TEST_IMPALA_HOST"
+    },
+    {
+      "test": "tests.test_database.integration.test_maxcompute_integration::test_maxcompute_real_query_write_and_metadata",
+      "reason": "未配置 HSCREDIT_TEST_MAXCOMPUTE_PROJECT"
+    },
+    {
+      "test": "tests.test_database.integration.test_mongodb_integration::test_mongodb_real_pool_and_adaptive_crud",
+      "reason": "未配置 HSCREDIT_TEST_MONGODB_URI"
+    },
+    {
+      "test": "tests.test_database.integration.test_mysql_integration::test_mysql_real_pool_stream_and_write_modes",
+      "reason": "未配置 HSCREDIT_TEST_MYSQL_HOST"
+    },
+    {
+      "test": "tests.test_database.integration.test_oracle_integration::test_oracle_real_pool_stream_and_merge_modes",
+      "reason": "未配置 HSCREDIT_TEST_ORACLE_DSN"
+    },
+    {
+      "test": "tests.test_database.integration.test_redis_integration::test_redis_real_pool_and_adaptive_crud",
+      "reason": "未配置 HSCREDIT_TEST_REDIS_URL"
+    },
+    {
+      "test": "tests.test_database.integration.test_starrocks_integration::test_starrocks_real_pool_stream_and_table_models",
+      "reason": "未配置 HSCREDIT_TEST_STARROCKS_HOST"
+    }
+  ],
+  "pandas3_compatibility": {
+    "tests": "425",
+    "failures": "0",
+    "errors": "0",
+    "skipped": "0"
+  },
+  "clean_checkout_without_private_workbook": {
+    "tests": "631",
+    "failures": "0",
+    "errors": "0",
+    "skipped": "543"
+  },
+  "real_data_workflows": {
+    "rows": 970,
+    "checks_passed": 8,
+    "million_row_aggregation": true,
+    "sparse_encoding_rows": 100000,
+    "sparse_encoding_categories": 1000
+  },
+  "quality": {
+    "black": "passed",
+    "critical_flake8": "passed",
+    "mypy_infrastructure_3_files": "passed",
+    "clean_wheel": "passed",
+    "twine": "passed"
+  },
+  "reproduce": {
+    "focused": "python -m pytest tests/test_current_state_repairs.py tests/test_report/test_population_drift.py tests/test_report/test_target_inputs.py -q",
+    "real_data": "python scripts/validate_current_state_repairs.py",
+    "complete_partitioned": "python scripts/validate_supervised.py --groups core native notebooks --include-slow",
+    "matrix_parallel": "python -m pytest tests/test_report/test_real_data_parameter_matrix.py -n 4 -q",
+    "note": "完整分组命令包含矩阵及slow；本次为降低耗时将这两部分另行执行，计数时互不重叠。远程无私有工作簿时按测试契约跳过对应用例。"
+  },
+  "prepush_review_completed": "2026-10-23"
+}

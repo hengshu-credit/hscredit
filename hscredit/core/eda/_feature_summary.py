@@ -16,7 +16,6 @@ from sklearn.model_selection import train_test_split
 
 from ...utils.parallel import ParallelWorkload, parallel_execute, resolve_n_jobs
 
-
 TargetLike = Union[str, Sequence[Any], np.ndarray, pd.Series]
 _NESTED_BINNING_METHODS = frozenset({"genetic", "or_tools", "cp_sat"})
 
@@ -71,7 +70,9 @@ def _normalize_binning_config(
         try:
             normalized_prebinning_method = OptimalBinning.validate_method(prebinning_method)
         except ValueError:
-            raise ValueError(f"无效的预分箱方法: {prebinning_method!r}，可选值为 {OptimalBinning.VALID_METHODS}") from None
+            raise ValueError(
+                f"无效的预分箱方法: {prebinning_method!r}，可选值为 {OptimalBinning.VALID_METHODS}"
+            ) from None
         if isinstance(prebinning, str):
             effective["prebinning"] = normalized_prebinning_method
         elif isinstance(prebinning, dict):
@@ -262,7 +263,13 @@ class _FeatureProgressReporter:
             from tqdm.auto import tqdm
 
             count_width = max(1, len(str(self.total)))
-            bar_format = "{desc}: {percentage:3.0f}%|{bar:20}| " f"{{n_fmt:>{count_width}}}/{{total_fmt}} " f"[{{elapsed:>{self._TIME_WIDTH}.{self._TIME_WIDTH}}}" f"<{{remaining:>{self._TIME_WIDTH}.{self._TIME_WIDTH}}}, " f"{{rate_fmt:>{self._RATE_WIDTH}.{self._RATE_WIDTH}}}]{{postfix}}"
+            bar_format = (
+                "{desc}: {percentage:3.0f}%|{bar:20}| "
+                f"{{n_fmt:>{count_width}}}/{{total_fmt}} "
+                f"[{{elapsed:>{self._TIME_WIDTH}.{self._TIME_WIDTH}}}"
+                f"<{{remaining:>{self._TIME_WIDTH}.{self._TIME_WIDTH}}}, "
+                f"{{rate_fmt:>{self._RATE_WIDTH}.{self._RATE_WIDTH}}}]{{postfix}}"
+            )
             self._bar = tqdm(
                 total=self.total,
                 desc="特征计算",
@@ -433,12 +440,14 @@ def _infer_feature_type(
     force_numeric: Sequence[Any],
 ) -> str:
     """复用摘要唯一值数，并保持公共类型推断的判定顺序。"""
-    if unique_count <= 1:
-        return "constant"
-    if total and unique_count / total > 0.95:
-        return "id"
+    if feature in force_numeric:
+        return "numerical"
+    if feature in numeric_as_categorical:
+        return "categorical"
     if pd.api.types.is_datetime64_any_dtype(series):
         return "datetime"
+    if unique_count <= 1:
+        return "constant"
     if series.dtype == "object":
         try:
             pd.to_datetime(series.dropna().iloc[:100], format="mixed")
@@ -446,8 +455,10 @@ def _infer_feature_type(
         except Exception:
             pass
     if pd.api.types.is_numeric_dtype(series):
-        return "categorical" if feature in numeric_as_categorical else "numerical"
-    return "numerical" if feature in force_numeric else "categorical"
+        return "numerical"
+    if total and unique_count / total > 0.95:
+        return "id"
+    return "categorical"
 
 
 def _summarize_basic_feature(
@@ -608,7 +619,11 @@ def _prepare_psi_context(
     if psi_method == "group" and group is not None and group in df.columns:
         groups = df[group].dropna().unique().tolist()
         positions = _positions_by_value(df[group], groups)
-        pairs = [(positions[first], positions[second]) for index, first in enumerate(groups) for second in groups[index + 1 :]]
+        pairs = [
+            (positions[first], positions[second])
+            for index, first in enumerate(groups)
+            for second in groups[index + 1 :]
+        ]
         return _PsiContext(kind="group", pairs=pairs)
 
     if psi_method == "date" and date is not None and date in df.columns:
@@ -617,7 +632,11 @@ def _prepare_psi_context(
             periods = date_groups(dates, freq)
             ordered_periods = sorted(periods.dropna().unique().tolist())
             positions = _positions_by_value(periods, ordered_periods)
-            pairs = [(positions[first], positions[second]) for index, first in enumerate(ordered_periods) for second in ordered_periods[index + 1 :]]
+            pairs = [
+                (positions[first], positions[second])
+                for index, first in enumerate(ordered_periods)
+                for second in ordered_periods[index + 1 :]
+            ]
             return _PsiContext(kind="date", pairs=pairs)
         except Exception:
             return _PsiContext(kind="date", pairs=[])
@@ -872,7 +891,7 @@ def _run_feature_summary_batch(
     )
 
 
-@analysis_inputs('df', roles=())
+@analysis_inputs("df", roles=())
 def build_feature_summary_fields(
     df: pd.DataFrame,
     features: Sequence[Any],
@@ -987,7 +1006,9 @@ def build_feature_summary_fields(
             n_jobs=1 if backend == "sequential" else workers,
             parallel_backend=backend_name,
             parallel_config=execution_config,
-            task_labels=[f"字段批次 {index + 1}: {task.batch[0] if task.batch else ''}" for index, task in enumerate(tasks)],
+            task_labels=[
+                f"字段批次 {index + 1}: {task.batch[0] if task.batch else ''}" for index, task in enumerate(tasks)
+            ],
             workload=ParallelWorkload(
                 task_count=len(tasks),
                 rows=len(df),

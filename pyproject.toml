@@ -79,7 +79,8 @@ boost = [
     "xgboost>=1.4.0; python_version >= '3.11'",
     "lightgbm>=3.2.0",
     "catboost>=1.0.0",
-    "ngboost>=0.3.0",
+    # 旧版自然梯度调用不兼容 NumPy 2 的批量 solve 语义。
+    "ngboost>=0.5.11",
 ]
 net = [
     "torch>=1.8.0",

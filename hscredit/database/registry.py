@@ -77,18 +77,30 @@ def register_adapter(
     """
 
     canonical = _normalize_name(name)
-    if not isinstance(adapter_class, type):
-        raise ValidationError("adapter_class 必须是适配器类")
+    if not isinstance(adapter_class, type) or not (
+        issubclass(adapter_class, BaseDatabaseAdapter)
+        or all(
+            callable(getattr(adapter_class, method, None)) for method in ("query", "execute", "executemany", "close")
+        )
+    ):
+        raise ValidationError("adapter_class 必须是实现 query、execute、executemany、close 的适配器类")
     if canonical in _ADAPTERS and not replace:
         raise ValidationError(f"数据库适配器 {canonical!r} 已经注册")
+    if canonical in _ALIASES and not replace:
+        raise ValidationError(f"数据库名称 {canonical!r} 已经注册为别名")
 
     normalized_aliases = tuple(_normalize_name(alias) for alias in aliases)
+    if len(set(normalized_aliases)) != len(normalized_aliases) or canonical in normalized_aliases:
+        raise ValidationError("数据库别名不能重复或与自身规范名称相同")
     for alias in normalized_aliases:
+        if alias in _ADAPTERS:
+            raise ValidationError(f"别名 {alias!r} 与已注册规范名称冲突，请按规范名称替换适配器")
         owner = _ALIASES.get(alias)
         if owner is not None and owner != canonical and not replace:
             raise ValidationError(f"数据库适配器别名 {alias!r} 已经注册给 {owner!r}")
 
     if replace:
+        _ALIASES.pop(canonical, None)
         for alias in _REGISTERED_ALIASES.get(canonical, ()):
             if _ALIASES.get(alias) == canonical:
                 _ALIASES.pop(alias, None)

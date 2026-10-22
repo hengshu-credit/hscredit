@@ -9,6 +9,7 @@ from hscredit.utils.arguments import analysis_inputs, binning_options
 
 import numpy as np
 import pandas as pd
+import warnings
 from typing import List, Dict, Optional, Union, Literal, Any, Callable, Tuple
 
 from ...utils.parallel import parallel_execute
@@ -140,7 +141,7 @@ def data_info(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(info_data)
 
 
-@analysis_inputs('df', roles=())
+@analysis_inputs("df", roles=())
 def missing_analysis(df: pd.DataFrame, threshold: float = 0.0, features: List[str] = None) -> pd.DataFrame:
     """缺失值分析.
 
@@ -191,7 +192,7 @@ def missing_analysis(df: pd.DataFrame, threshold: float = 0.0, features: List[st
 
 
 @binning_options(keep_config=True)
-@analysis_inputs('df', roles=('date', 'group'))
+@analysis_inputs("df", roles=("date", "group"))
 def feature_summary(
     df: pd.DataFrame,
     features: List[str] = None,
@@ -216,6 +217,9 @@ def feature_summary(
     show_progress: bool = False,
     method: str = "quantile",
     bin_params: Optional[Dict[str, Any]] = None,
+    *,
+    mode: str = "best_effort",
+    return_result: bool = False,
 ) -> pd.DataFrame:
     """综合特征描述统计.
 
@@ -226,6 +230,8 @@ def feature_summary(
     - 类别型特征：分位数返回按类别样本数逆序排列后对应分位点的类别值
 
     :param df: 训练/基准数据集
+    :param mode: 模型重要性失败策略，strict 抛出含章节状态的异常，best_effort 警告并保留成功结果
+    :param return_result: True 返回 ReportResult；默认 DataFrame 的 attrs 保留分析状态及完整性
     :param features: 特征列表，None则分析全部
     :param y: 目标变量，支持列名、数组、列表、元组或Series，不传则不计算IV/KS/特征重要性
     :param val_df: 验证集，用于计算PSI，不传则使用psi_method指定的方式
@@ -309,6 +315,9 @@ def feature_summary(
     ...     },
     ... )
     """
+    from ...report.result import ReportResult
+
+    report_result = ReportResult(mode=mode, metadata={"报告类型": "特征摘要"})
     validate_dataframe(df)
 
     if percentiles is None:
@@ -355,22 +364,34 @@ def feature_summary(
         bin_params=bin_params,
     )
 
+    def add_importance(name, calculate):
+        """显式请求的模型计算必须留下成功或失败状态。"""
+        section = f"模型重要性:{name}"
+        report_result.plan(section, input_rows=len(df))
+
+        def compute():
+            values = calculate()
+            if not isinstance(values, pd.Series) or not values.index.is_unique:
+                raise TypeError("模型重要性必须返回以唯一特征名为索引的 Series")
+            return values.reindex(features).to_frame(name=f"{name}重要性")
+
+        report_result.run(section, compute)
+        if report_result.sections[section].status == "成功":
+            results_df[f"{name}重要性"] = report_result[section].iloc[:, 0]
+        else:
+            warnings.warn(f"{section}失败: {report_result.sections[section].reason}", UserWarning, stacklevel=3)
+
     # 特征重要性（传入已训练模型）
     if models is not None:
         for model_name, model in models.items():
-            # 统一使用 BaseRiskModel 的 get_feature_importances() 方法
-            if hasattr(model, "get_feature_importances"):
-                try:
-                    importances = model.get_feature_importances()
-                    if isinstance(importances, pd.Series):
-                        # Series索引为特征名，值为重要性
-                        results_df[f"{model_name}重要性"] = importances.reindex(features)
-                except Exception:
-                    pass
+            add_importance(model_name, lambda model=model: model.get_feature_importances())
 
     # 自动训练模型获取特征重要性（使用hscredit统一封装模型）
-    if model_type is not None and y_series is not None:
-        try:
+    if model_type is not None:
+
+        def train_importance():
+            if y_series is None:
+                raise ValueError("自动训练模型重要性必须提供目标变量 y")
             # 过滤有效特征：存在于df中、且有非空值
             valid_features = [f for f in features if f in df.columns and df[f].notna().sum() > 0]
 
@@ -388,55 +409,25 @@ def feature_summary(
                 default_params.update(model_params)
 
             # 根据模型类型使用hscredit统一封装的模型类
-            model_class = None
-            if model_type == "xgboost":
-                try:
-                    from ..models import XGBoost
+            from .. import models as model_module
 
-                    model_class = XGBoost
-                except ImportError:
-                    pass
-            elif model_type == "lightgbm":
-                try:
-                    from ..models import LightGBM
-
-                    model_class = LightGBM
-                except ImportError:
-                    pass
-            elif model_type == "catboost":
-                try:
-                    from ..models import CatBoost
-
-                    model_class = CatBoost
-                except ImportError:
-                    pass
-            elif model_type in ("randomforest", "rf"):
-                try:
-                    from ..models import RandomForest
-
-                    model_class = RandomForest
-                except ImportError:
-                    pass
-            elif model_type == "logistic":
-                try:
-                    from ..models import LogisticRegression
-
-                    model_class = LogisticRegression
-                except ImportError:
-                    pass
-
-            # 使用统一接口训练并获取特征重要性
-            if model_class is None:
-                raise ImportError(f"无法导入模型类: {model_type}")
+            model_names = {
+                "xgboost": "XGBoost",
+                "lightgbm": "LightGBM",
+                "catboost": "CatBoost",
+                "randomforest": "RandomForest",
+                "rf": "RandomForest",
+                "logistic": "LogisticRegression",
+            }
+            if model_type not in model_names:
+                raise ValueError(f"不支持模型类型: {model_type}")
+            model_class = getattr(model_module, model_names[model_type])
 
             model = model_class(**default_params)
             model.fit(X_train, y_series)
-            importances = model.get_feature_importances()
-            if isinstance(importances, pd.Series):
-                results_df[f"{model_type}重要性"] = importances.reindex(numeric_features)
-        except Exception:
-            # 训练失败不中断
-            pass
+            return model.get_feature_importances()
+
+        add_importance(model_type, train_importance)
 
     # 重置索引，使特征名成为列
     results_df = results_df.reset_index()
@@ -459,10 +450,13 @@ def feature_summary(
     # 保持原有顺序：特征重要性 -> KS/IV/PSI/趋势 -> 其他
     results_df = results_df[base_cols + importance_cols + metric_cols + other_effect]
 
-    return results_df
+    results_df.attrs["分析状态"] = report_result.status_table().to_dict("records")
+    results_df.attrs["完整"] = report_result.complete
+    report_result.success("特征摘要", results_df)
+    return report_result if return_result else results_df
 
 
-@analysis_inputs('df', roles=())
+@analysis_inputs("df", roles=())
 def numeric_summary(df: pd.DataFrame, features: List[str] = None, percentiles: List[float] = None) -> pd.DataFrame:
     """数值特征详细统计.
 
@@ -523,7 +517,7 @@ def numeric_summary(df: pd.DataFrame, features: List[str] = None, percentiles: L
     return pd.DataFrame(results)
 
 
-@analysis_inputs('df', roles=())
+@analysis_inputs("df", roles=())
 def category_summary(df: pd.DataFrame, features: List[str] = None, max_categories: int = 10) -> pd.DataFrame:
     """类别特征统计.
 
@@ -577,8 +571,10 @@ def category_summary(df: pd.DataFrame, features: List[str] = None, max_categorie
     return pd.DataFrame(results)
 
 
-@analysis_inputs('df', roles=())
-def data_quality_report(df: pd.DataFrame, features: List[str] = None, missing_threshold: float = 0.5, constant_threshold: float = 0.95) -> pd.DataFrame:
+@analysis_inputs("df", roles=())
+def data_quality_report(
+    df: pd.DataFrame, features: List[str] = None, missing_threshold: float = 0.5, constant_threshold: float = 0.95
+) -> pd.DataFrame:
     """数据质量综合报告.
 
     :param df: 输入数据
@@ -659,8 +655,24 @@ def data_quality_report(df: pd.DataFrame, features: List[str] = None, missing_th
     return pd.DataFrame(issues)
 
 
-@analysis_inputs('actual', roles=('date', 'group'))
-def population_stability_monitor(expected: pd.DataFrame, actual: pd.DataFrame, segment_cols: Union[str, List[str]], method: str = "quantile", max_n_bins: int = 5, rules: Optional[Dict[str, List]] = None, date: Optional[str] = None, freq: str = "M", group: Optional[str] = None, metrics: Union[str, List[str]] = "占比", sort_by: Optional[str] = None, sort_order: Literal["desc", "asc"] = "desc", n_jobs=-1, parallel_backend=None, parallel_config=None) -> pd.DataFrame:
+@analysis_inputs("actual", roles=("date", "group"))
+def population_stability_monitor(
+    expected: pd.DataFrame,
+    actual: pd.DataFrame,
+    segment_cols: Union[str, List[str]],
+    method: str = "quantile",
+    max_n_bins: int = 5,
+    rules: Optional[Dict[str, List]] = None,
+    date: Optional[str] = None,
+    freq: str = "M",
+    group: Optional[str] = None,
+    metrics: Union[str, List[str]] = "占比",
+    sort_by: Optional[str] = None,
+    sort_order: Literal["desc", "asc"] = "desc",
+    n_jobs=-1,
+    parallel_backend=None,
+    parallel_config=None,
+) -> pd.DataFrame:
     """群体稳定性监控分析（Population Stability Monitor）.
 
     金融风控中监控客群分布变化的核心方法，基于期望样本（expected）构建客群分层标准，
@@ -862,7 +874,9 @@ def population_stability_monitor(expected: pd.DataFrame, actual: pd.DataFrame, s
             if f"{col}_分层" in actual_copy.columns and col in expected_copy.columns:
                 edges = edges_by_column[col]
                 if pd.api.types.is_numeric_dtype(expected_copy[col]) and len(edges) >= 2:
-                    expected_copy[f"{col}_分层"] = pd.cut(expected_copy[col], bins=edges, labels=segment_labels[col], include_lowest=True)
+                    expected_copy[f"{col}_分层"] = pd.cut(
+                        expected_copy[col], bins=edges, labels=segment_labels[col], include_lowest=True
+                    )
                 else:
                     expected_copy[f"{col}_分层"] = expected_copy[col]
 
@@ -1015,7 +1029,7 @@ def _calc_psm_stats(df, segment_cols, segment_labels, dim_name, metrics):
     return results
 
 
-@analysis_inputs('df', roles=('date', 'group'), multi_group=True)
+@analysis_inputs("df", roles=("date", "group"), multi_group=True)
 def feature_group_analysis(
     df: pd.DataFrame,
     features: List[str] = None,
@@ -1300,7 +1314,9 @@ def feature_group_analysis(
 
     # 特征顺序处理
     if feature_order is not None:
-        result_df["_feat_order"] = result_df["特征名"].apply(lambda x: feature_order.index(x) if x in feature_order else 9999)
+        result_df["_feat_order"] = result_df["特征名"].apply(
+            lambda x: feature_order.index(x) if x in feature_order else 9999
+        )
         result_df = result_df.sort_values(["_feat_order", "统计项"]).drop(columns=["_feat_order"])
 
     # 透视处理

@@ -240,7 +240,9 @@ class OptimalBinning(BaseBinning):
         :raises ValueError: method 不是字符串或不在 ``VALID_METHODS`` 中时抛出
         """
         if not isinstance(method, str):
-            raise ValueError(f"method 必须是字符串，当前类型为 {type(method).__name__}: {method!r}，" f"可选: {cls.VALID_METHODS}")
+            raise ValueError(
+                f"method 必须是字符串，当前类型为 {type(method).__name__}: {method!r}，" f"可选: {cls.VALID_METHODS}"
+            )
         normalized = method.strip().lower()
         if normalized not in cls.VALID_METHODS:
             raise ValueError(f"不支持的method: {method}，可选: {cls.VALID_METHODS}")
@@ -1949,9 +1951,11 @@ class OptimalBinning(BaseBinning):
             metric,
             lambda feature: self._apply_bins(
                 X[feature],
-                self._cat_bins_[feature]
-                if self.feature_types_[feature] == "categorical" and feature in self._cat_bins_
-                else self.splits_[feature],
+                (
+                    self._cat_bins_[feature]
+                    if self.feature_types_[feature] == "categorical" and feature in self._cat_bins_
+                    else self.splits_[feature]
+                ),
                 self.feature_types_[feature],
                 feature,
             ),
@@ -2054,6 +2058,8 @@ class OptimalBinning(BaseBinning):
         >>> binner = OptimalBinning(method=best_method)
         >>> binner.fit(X[[feature]], y)
         """
+        if criterion not in ("iv", "ks"):
+            raise ValueError("criterion 必须为 iv 或 ks")
         if methods is None:
             methods = ["uniform", "quantile", "tree", "chi", "best_ks", "best_iv", "mdlp", "cart", "kmeans"]
         else:
@@ -2062,10 +2068,14 @@ class OptimalBinning(BaseBinning):
             # 统一校验并归一化，避免非法方法被逐个 warn 后返回无效结果
             methods = [OptimalBinning.validate_method(m) for m in methods]
 
-        tasks = [(method, X, y, feature, criterion, parallel_backend, parallel_config) for method in methods]
-        data_bytes = int(X[[feature]].memory_usage(deep=True).sum())
+        # 在提交任务前投影，避免进程传输无关宽表并低估输入预算。
+        selected = X[[feature]]
+        tasks = [(method, selected, y, feature, criterion, parallel_backend, parallel_config) for method in methods]
+        data_bytes = int(selected.memory_usage(deep=True).sum())
         if hasattr(y, "memory_usage"):
             data_bytes += int(y.memory_usage(deep=True))
+        else:
+            data_bytes += np.asarray(y).nbytes
         results = parallel_execute(
             _auto_method_score_worker,
             tasks,

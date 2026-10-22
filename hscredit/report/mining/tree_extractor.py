@@ -11,6 +11,7 @@
 from hscredit.utils.arguments import analysis_inputs
 
 import copy
+import json
 
 import numpy as np
 import pandas as pd
@@ -27,6 +28,7 @@ from .base import (
     resolve_feature_map,
 )
 from ...core.rules.rule import Rule
+from ...core.encoders._category_protocol import MISSING, pack
 from ...core.rules.artifact import RuleArtifact
 from ...core.binning.spec import BinSpec, field_expression, value_expression
 from ...utils.parallel import _current_parallel_budget, resolve_n_jobs, validate_parallel_config
@@ -46,9 +48,7 @@ def _normalize_tree_algorithm(algorithm: str) -> str:
         resolved = "gbdt"
         warnings.warn("'xgb'算法已弃用，请使用'gbdt'", DeprecationWarning)
     if resolved not in TreeRuleExtractor.VALID_ALGORITHMS:
-        raise ValueError(
-            f"不支持的算法: {resolved}，可选: {TreeRuleExtractor.VALID_ALGORITHMS}"
-        )
+        raise ValueError(f"不支持的算法: {resolved}，可选: {TreeRuleExtractor.VALID_ALGORITHMS}")
     return resolved
 
 
@@ -78,9 +78,7 @@ def _gbdt_tree_extract_worker(task):
 def _isolation_tree_extract_worker(task):
     """从一棵独立孤立树提取异常路径规则。"""
     extractor, estimator, tree_id, scores, anomaly_mask = task
-    return extractor._extract_from_isolation_tree(
-        estimator, tree_id, scores, anomaly_mask
-    )
+    return extractor._extract_from_isolation_tree(estimator, tree_id, scores, anomaly_mask)
 
 
 def _tree_rule_report_worker(task):
@@ -101,11 +99,7 @@ def _tree_rule_report_worker(task):
         metadata.update({"入参字段": input_fields, "字段含义": field_meanings})
     if datasets is not None:
         report_df = rule.report(datasets=datasets, target=target)
-        hit_rows = (
-            report_df[report_df["分箱"] == "命中"]
-            if "分箱" in report_df.columns
-            else pd.DataFrame()
-        )
+        hit_rows = report_df[report_df["分箱"] == "命中"] if "分箱" in report_df.columns else pd.DataFrame()
         if not hit_rows.empty:
             hit = hit_rows.iloc[0].to_dict()
             metadata.update(
@@ -125,12 +119,12 @@ def _tree_rule_report_worker(task):
 
 class TreeRuleExtractor(BaseRuleMiner):
     """树模型规则提取器.
-    
+
     支持多种树模型的规则提取，包括决策树、随机森林、GBDT、XGBoost和孤立森林。
-    
+
     代码风格参考hscredit的binning模块，fit方法兼容scorecardpipeline风格。
     支持通过**kwargs传入任意sklearn树模型参数。
-    
+
     :param algorithm: 算法类型，'dt', 'rf', 'chi2', 'gbdt', 'xgb', 'isf'
     :param target: 目标变量列名，默认为'target'
     :param exclude_cols: 需要排除的列名列表
@@ -150,7 +144,7 @@ class TreeRuleExtractor(BaseRuleMiner):
         - RandomForestClassifier: bootstrap, oob_score, class_weight, etc.
         - GradientBoostingClassifier: learning_rate, subsample, loss, etc.
         - IsolationForest: contamination, max_samples, etc.
-    
+
     **参考样例**
 
     >>> extractor = TreeRuleExtractor(algorithm='dt', max_depth=5)  # 决策树提取：从单棵树提取可解释规则
@@ -174,19 +168,19 @@ class TreeRuleExtractor(BaseRuleMiner):
     >>> extractor.fit(X)  # 无监督，不需要y
     >>> anomaly_rules = extractor.extract_rules()
     """
-    
-    VALID_ALGORITHMS = {'dt', 'rf', 'chi2', 'gbdt', 'xgb', 'isf'}
-    
+
+    VALID_ALGORITHMS = {"dt", "rf", "chi2", "gbdt", "xgb", "isf"}
+
     def __init__(
         self,
-        algorithm: str = 'dt',
-        target: str = 'target',
+        algorithm: str = "dt",
+        target: str = "target",
         exclude_cols: Optional[List[str]] = None,
         max_depth: int = 5,
         min_samples_split: int = 10,
         min_samples_leaf: int = 5,
         n_estimators: int = 10,
-        max_features: str = 'sqrt',
+        max_features: str = "sqrt",
         test_size: float = 0.3,
         random_state: int = 42,
         feature_trends: Optional[Dict[str, int]] = None,
@@ -196,7 +190,7 @@ class TreeRuleExtractor(BaseRuleMiner):
         parallel_config: Optional[Dict[str, Any]] = None,
         features: FeatureNames = None,
         feature_map: Optional[Dict[str, str]] = None,
-        **kwargs
+        **kwargs,
     ):
         super().__init__(
             target=target,
@@ -207,7 +201,7 @@ class TreeRuleExtractor(BaseRuleMiner):
             features=features,
             feature_map=feature_map,
         )
-        
+
         self.algorithm = algorithm
         self._resolved_algorithm = _normalize_tree_algorithm(algorithm)
         self.max_depth = max_depth
@@ -220,21 +214,21 @@ class TreeRuleExtractor(BaseRuleMiner):
         self.feature_trends = feature_trends
         self.chi2_threshold = chi2_threshold
         self.model_kwargs = kwargs  # 存储额外的模型参数
-        
+
         self.model_ = None
         self.encoders_ = {}
         self.feature_names_ = []
         self.rules_ = []
         self.is_fitted_ = False
-    
-    @analysis_inputs('X', roles=())
+
+    @analysis_inputs("X", roles=())
     def fit(
         self,
         X: Union[pd.DataFrame, np.ndarray],
         y: Optional[Union[pd.Series, np.ndarray]] = None,
         features: FeatureNames = None,
-        **kwargs
-    ) -> 'TreeRuleExtractor':
+        **kwargs,
+    ) -> "TreeRuleExtractor":
         """在临时副本中拟合，成功后原子提交模型与编码状态。"""
         working = copy.copy(self)
         working.model_kwargs = dict(self.model_kwargs)
@@ -247,10 +241,10 @@ class TreeRuleExtractor(BaseRuleMiner):
         X: Union[pd.DataFrame, np.ndarray],
         y: Optional[Union[pd.Series, np.ndarray]] = None,
         features: FeatureNames = None,
-        **kwargs
-    ) -> 'TreeRuleExtractor':
+        **kwargs,
+    ) -> "TreeRuleExtractor":
         """拟合提取器.
-        
+
         :param X: 训练数据
         :param y: 目标变量（监督学习需要）
         :param features: 本次拟合使用的字段名或字段名列表，优先于构造参数 ``features``
@@ -266,21 +260,21 @@ class TreeRuleExtractor(BaseRuleMiner):
             elif key in self.model_kwargs:
                 self.model_kwargs[key] = value
         self._resolved_algorithm = _normalize_tree_algorithm(self.algorithm)
-        
+
         validate_parallel_config(self.parallel_backend, self.parallel_config)
         self._effective_model_workers()
         X, y = self._check_input_data(X, y, features=features)
-        
+
         # 保存特征名
         self.feature_names_ = list(X.columns)
-        
+
         # 编码类别型特征
         X_encoded = self._encode_categorical_features(X)
-        
+
         # 初始化模型
         self.model_ = self._initialize_model()
-        
-        if self._resolved_algorithm == 'isf':
+
+        if self._resolved_algorithm == "isf":
             # 孤立森林不需要y
             self.model_.fit(X_encoded)
             self.X_train_ = X_encoded
@@ -289,32 +283,30 @@ class TreeRuleExtractor(BaseRuleMiner):
             # 监督学习需要y
             if y is None:
                 raise ValueError(f"算法 '{self._resolved_algorithm}' 需要目标变量y")
-            
+
             # 划分训练集和测试集
             X_train, X_test, y_train, y_test = train_test_split(
-                X_encoded, y,
-                test_size=self.test_size,
-                random_state=self.random_state
+                X_encoded, y, test_size=self.test_size, random_state=self.random_state
             )
-            
+
             self.X_train_ = X_train
             self.X_test_ = X_test
             self.y_train_ = y_train
             self.y_test_ = y_test
             self.X_ = X
-            
+
             # 卡方分箱预处理
-            if self._resolved_algorithm == 'chi2':
+            if self._resolved_algorithm == "chi2":
                 X_train = self._chi2_preprocess(X_train, y_train)
                 X_test = self._chi2_preprocess(X_test, y_test, fit=False)
-            
+
             # 训练模型
             self.model_.fit(X_train, y_train)
-            
+
             # 保存训练后的数据
             self.X_train_ = X_train
             self.X_test_ = X_test
-        
+
         self.is_fitted_ = True
         return self
 
@@ -339,220 +331,226 @@ class TreeRuleExtractor(BaseRuleMiner):
     def _effective_model_workers(self) -> int:
         """解析底层树模型的工作数，并遵守活跃的父层预算。"""
         budget = _current_parallel_budget()
-        workers = resolve_n_jobs(
-            self.n_jobs,
-            available_budget=budget.available,
-        ) or 1
+        workers = (
+            resolve_n_jobs(
+                self.n_jobs,
+                available_budget=budget.available,
+            )
+            or 1
+        )
         if budget.depth > 0:
             workers = min(workers, budget.available)
         return max(1, workers)
-    
+
     def _encode_categorical_features(self, X: pd.DataFrame) -> pd.DataFrame:
         """编码类别型特征.
-        
+
         :param X: 输入数据
         :return: 编码后的数据
         """
         X_encoded = X.copy()
         self.encoders_ = {}
         self._raw_category_values_ = {}
-        
+
         for col in X.columns:
             if not pd.api.types.is_numeric_dtype(X[col]):
                 le = LabelEncoder()
-                X_encoded[col] = le.fit_transform(X[col].astype(str))
+
+                # 训练与规则还原共用类型化类别键；缺失不能与 "nan" 等业务字符串混淆。
+                def category_key(value):
+                    return json.dumps(pack(MISSING if pd.isna(value) else value), sort_keys=True, ensure_ascii=False)
+
+                values = pd.unique(X[col])
+                keys = [category_key(value) for value in values]
+                le.fit(keys)
+                X_encoded[col] = le.transform([category_key(value) for value in X[col]])
                 self.encoders_[col] = le
                 members = {}
-                for value in pd.unique(X[col]):
-                    code = int(le.transform([str(value)])[0])
+                for value, key in zip(values, keys):
+                    code = int(le.transform([key])[0])
                     members.setdefault(code, []).append(value)
                 self._raw_category_values_[col] = members
-        
+
         return X_encoded.fillna(0)
-    
+
     def _initialize_model(self):
         """初始化模型，支持通过**kwargs传入任意参数.
-        
+
         从 hscredit.core.models 导入模型，通过 get_native_model() 获取底层 sklearn 模型。
         """
         # 构建基础参数字典
-        base_params = {
-            'random_state': self.random_state
-        }
-        
-        if self._resolved_algorithm == 'dt':
-            base_params.update({
-                'max_depth': self.max_depth,
-                'min_samples_split': self.min_samples_split,
-                'min_samples_leaf': self.min_samples_leaf,
-                'n_jobs': self._effective_model_workers(),
-            })
+        base_params = {"random_state": self.random_state}
+
+        if self._resolved_algorithm == "dt":
+            base_params.update(
+                {
+                    "max_depth": self.max_depth,
+                    "min_samples_split": self.min_samples_split,
+                    "min_samples_leaf": self.min_samples_leaf,
+                    "n_jobs": self._effective_model_workers(),
+                }
+            )
             base_params.update(self.model_kwargs)
             return DecisionTreeClassifier(**base_params)
-        
-        elif self._resolved_algorithm in ['rf', 'chi2']:
-            base_params.update({
-                'n_estimators': self.n_estimators,
-                'max_depth': self.max_depth,
-                'min_samples_split': self.min_samples_split,
-                'min_samples_leaf': self.min_samples_leaf,
-                'max_features': self.max_features,
-                'n_jobs': self._effective_model_workers()
-            })
+
+        elif self._resolved_algorithm in ["rf", "chi2"]:
+            base_params.update(
+                {
+                    "n_estimators": self.n_estimators,
+                    "max_depth": self.max_depth,
+                    "min_samples_split": self.min_samples_split,
+                    "min_samples_leaf": self.min_samples_leaf,
+                    "max_features": self.max_features,
+                    "n_jobs": self._effective_model_workers(),
+                }
+            )
             base_params.update(self.model_kwargs)
             # 使用 hscredit 的 RandomForest
             return RandomForest(**base_params)
-        
-        elif self._resolved_algorithm == 'gbdt':
-            base_params.update({
-                'n_estimators': self.n_estimators,
-                'max_depth': self.max_depth,
-                'min_samples_split': self.min_samples_split,
-                'min_samples_leaf': self.min_samples_leaf,
-                'max_features': self.max_features,
-            })
+
+        elif self._resolved_algorithm == "gbdt":
+            base_params.update(
+                {
+                    "n_estimators": self.n_estimators,
+                    "max_depth": self.max_depth,
+                    "min_samples_split": self.min_samples_split,
+                    "min_samples_leaf": self.min_samples_leaf,
+                    "max_features": self.max_features,
+                }
+            )
             base_params.update(self.model_kwargs)
             # 使用 hscredit 的 GradientBoosting
             return GradientBoosting(**base_params)
-        
-        elif self._resolved_algorithm == 'isf':
+
+        elif self._resolved_algorithm == "isf":
             # 孤立森林直接使用 sklearn（hscredit 暂无 IsolationForestRiskModel）
             from sklearn.ensemble import IsolationForest
-            base_params.update({
-                'n_estimators': self.n_estimators,
-                'max_samples': min(256, 1000),  # 限制最大样本数
-                'contamination': 0.1,
-                'n_jobs': self._effective_model_workers()
-            })
+
+            base_params.update(
+                {
+                    "n_estimators": self.n_estimators,
+                    "max_samples": min(256, 1000),  # 限制最大样本数
+                    "contamination": 0.1,
+                    "n_jobs": self._effective_model_workers(),
+                }
+            )
             base_params.update(self.model_kwargs)
             return IsolationForest(**base_params)
-    
-    def _chi2_preprocess(
-        self,
-        X: pd.DataFrame,
-        y: pd.Series,
-        fit: bool = True
-    ) -> pd.DataFrame:
+
+    def _chi2_preprocess(self, X: pd.DataFrame, y: pd.Series, fit: bool = True) -> pd.DataFrame:
         """卡方分箱预处理.
-        
+
         :param X: 特征数据
         :param y: 目标变量
         :param fit: 是否拟合
         :return: 分箱后的数据
         """
         from scipy.stats import chi2_contingency
-        
+
         if fit:
             self.chi2_bins_ = {}
-        
+
         X_binned = X.copy()
-        
+
         for col in X.columns:
             if not pd.api.types.is_numeric_dtype(X[col]):
                 continue
-            
+
             if fit:
                 # 初始等频分箱
                 from sklearn.preprocessing import KBinsDiscretizer
-                discretizer = KBinsDiscretizer(
-                    n_bins=10,
-                    encode='ordinal',
-                    strategy='quantile'
-                )
-                
+
+                discretizer = KBinsDiscretizer(n_bins=10, encode="ordinal", strategy="quantile")
+
                 try:
                     bins = discretizer.fit_transform(X[[col]].dropna()).flatten()
                     bin_edges = discretizer.bin_edges_[0].copy()
-                    
+
                     # 合并相似分箱
                     while len(bin_edges) > 2:
                         chi2_scores = []
-                        
+
                         for i in range(len(bin_edges) - 2):
                             merged_bins = bins.copy()
                             merged_bins[merged_bins == i + 1] = i
-                            
+
                             try:
                                 contingency = pd.crosstab(merged_bins, y)
                                 chi2_stat, _, _, _ = chi2_contingency(contingency)
                                 chi2_scores.append((i, chi2_stat))
                             except Exception:
-                                chi2_scores.append((i, float('inf')))
-                        
+                                chi2_scores.append((i, float("inf")))
+
                         if not chi2_scores:
                             break
-                        
+
                         min_idx, min_chi2 = min(chi2_scores, key=lambda x: x[1])
-                        
+
                         if min_chi2 < self.chi2_threshold:
                             bins[bins > min_idx] -= 1
                             bin_edges = np.delete(bin_edges, min_idx + 1)
                         else:
                             break
-                    
+
                     self.chi2_bins_[col] = bin_edges
                 except Exception:
                     continue
-            
+
             # 应用分箱
-            if col in getattr(self, 'chi2_bins_', {}):
+            if col in getattr(self, "chi2_bins_", {}):
                 X_binned[col] = pd.cut(X[col], bins=self.chi2_bins_[col], labels=False)
-        
+
         return X_binned.fillna(0)
-    
+
     def extract_rules(self) -> List[Dict[str, Any]]:
         """提取规则.
-        
+
         :return: 规则列表
         """
         self._check_fitted()
-        
-        if self._resolved_algorithm == 'dt':
+
+        if self._resolved_algorithm == "dt":
             self.rules_ = self._extract_from_tree(self.model_, tree_id=0)
-        
-        elif self._resolved_algorithm in ['rf', 'chi2']:
+
+        elif self._resolved_algorithm in ["rf", "chi2"]:
             self.rules_ = self._extract_from_forest()
-        
-        elif self._resolved_algorithm == 'gbdt':
+
+        elif self._resolved_algorithm == "gbdt":
             self.rules_ = self._extract_from_gbdt()
-        
-        elif self._resolved_algorithm == 'isf':
+
+        elif self._resolved_algorithm == "isf":
             self.rules_ = self._extract_from_isolation_forest()
-        
+
         # 过滤规则
         self.rules_ = self._filter_rules(self.rules_)
-        
+
         # 去重
         self.rules_ = self._deduplicate_rules(self.rules_)
-        
+
         # 计算重要性
         for rule in self.rules_:
-            rule['importance'] = self._calculate_rule_importance(rule)
-        
+            rule["importance"] = self._calculate_rule_importance(rule)
+
         # 排序
-        self.rules_.sort(key=lambda x: x.get('importance', 0), reverse=True)
-        
+        self.rules_.sort(key=lambda x: x.get("importance", 0), reverse=True)
+
         return self.rules_
-    
-    def _extract_from_tree(
-        self,
-        tree_model,
-        tree_id: int = 0
-    ) -> List[Dict[str, Any]]:
+
+    def _extract_from_tree(self, tree_model, tree_id: int = 0) -> List[Dict[str, Any]]:
         """从单棵树提取规则.
-        
+
         :param tree_model: 树模型 (sklearn Tree 或 hscredit RiskModel)
         :param tree_id: 树ID
         :return: 规则列表
         """
         # 如果是 hscredit 模型，获取底层 sklearn 模型
-        if hasattr(tree_model, 'get_native_model'):
+        if hasattr(tree_model, "get_native_model"):
             native_model = tree_model.get_native_model()
             tree = native_model.tree_
         else:
             tree = tree_model.tree_
         rules = []
-        
+
         def recurse(node_id, conditions):
             """递归遍历树."""
             if tree.feature[node_id] == -2:  # 叶子节点
@@ -566,55 +564,47 @@ class TreeRuleExtractor(BaseRuleMiner):
 
                 if total == 0:
                     return
-                
+
                 predicted_class = 1 if badrate > 0.5 else 0
-                
+
                 rule = {
-                    'rule_id': len(rules),
-                    'conditions': conditions.copy(),
-                    'predicted_class': predicted_class,
-                    'class_name': 'bad' if predicted_class == 1 else 'good',
-                    'class_probability': badrate,
-                    'sample_count': int(total),
-                    'tree_id': tree_id
+                    "rule_id": len(rules),
+                    "conditions": conditions.copy(),
+                    "predicted_class": predicted_class,
+                    "class_name": "bad" if predicted_class == 1 else "good",
+                    "class_probability": badrate,
+                    "sample_count": int(total),
+                    "tree_id": tree_id,
                 }
                 rules.append(rule)
             else:
                 # 非叶子节点
                 feature = self.feature_names_[tree.feature[node_id]]
                 threshold = tree.threshold[node_id]
-                
+
                 # 左子树 (<=)
-                left_conditions = conditions + [{
-                    'feature': feature,
-                    'threshold': threshold,
-                    'operator': '<='
-                }]
+                left_conditions = conditions + [{"feature": feature, "threshold": threshold, "operator": "<="}]
                 recurse(tree.children_left[node_id], left_conditions)
-                
+
                 # 右子树 (>)
-                right_conditions = conditions + [{
-                    'feature': feature,
-                    'threshold': threshold,
-                    'operator': '>'
-                }]
+                right_conditions = conditions + [{"feature": feature, "threshold": threshold, "operator": ">"}]
                 recurse(tree.children_right[node_id], right_conditions)
-        
+
         recurse(0, [])
         return rules
-    
+
     def _get_native_model(self):
         """获取底层 sklearn 模型.
-        
+
         :return: 底层 sklearn 模型对象
         """
-        if hasattr(self.model_, 'get_native_model'):
+        if hasattr(self.model_, "get_native_model"):
             return self.model_.get_native_model()
         return self.model_
-    
+
     def _extract_from_forest(self) -> List[Dict[str, Any]]:
         """从随机森林提取规则.
-        
+
         :return: 规则列表
         """
         native_model = self._get_native_model()
@@ -634,17 +624,14 @@ class TreeRuleExtractor(BaseRuleMiner):
             ),
         )
         return [rule for tree_rules in extracted for rule in tree_rules]
-    
+
     def _extract_from_gbdt(self) -> List[Dict[str, Any]]:
         """从GBDT提取规则.
-        
+
         :return: 规则列表
         """
         native_model = self._get_native_model()
-        tasks = [
-            (self, native_model.estimators_[index, 0], index)
-            for index in range(native_model.n_estimators_)
-        ]
+        tasks = [(self, native_model.estimators_[index, 0], index) for index in range(native_model.n_estimators_)]
         extracted = self._parallel_execute(
             _gbdt_tree_extract_worker,
             tasks,
@@ -660,20 +647,20 @@ class TreeRuleExtractor(BaseRuleMiner):
             ),
         )
         return [rule for tree_rules in extracted for rule in tree_rules]
-    
+
     def _extract_from_isolation_forest(self) -> List[Dict[str, Any]]:
         """从孤立森林提取规则.
-        
+
         :return: 规则列表
         """
         native_model = self._get_native_model()
-        
+
         # 计算异常分数
         scores = native_model.score_samples(self.X_train_)
         threshold = np.percentile(scores, 10)  # 取异常分数最低的10%
-        
+
         anomaly_mask = scores < threshold
-        
+
         tasks = [
             (self, estimator, tree_idx, scores, anomaly_mask)
             for tree_idx, estimator in enumerate(native_model.estimators_)
@@ -713,14 +700,14 @@ class TreeRuleExtractor(BaseRuleMiner):
 
                     if purity >= 0.3:  # 异常纯度要求
                         rule = {
-                            'rule_id': len(rules),
-                            'conditions': conditions.copy(),
-                            'predicted_class': 1,
-                            'class_name': 'anomaly',
-                            'class_probability': purity,
-                            'sample_count': int(hit_count),
-                            'tree_id': tree_idx,
-                            'anomaly_score': scores[mask].mean()
+                            "rule_id": len(rules),
+                            "conditions": conditions.copy(),
+                            "predicted_class": 1,
+                            "class_name": "anomaly",
+                            "class_probability": purity,
+                            "sample_count": int(hit_count),
+                            "tree_id": tree_idx,
+                            "anomaly_score": scores[mask].mean(),
                         }
                         rules.append(rule)
             else:
@@ -728,163 +715,151 @@ class TreeRuleExtractor(BaseRuleMiner):
                 thresh = tree.threshold[node_id]
 
                 # 左子树
-                left_cond = conditions + [{
-                    'feature': feature,
-                    'threshold': thresh,
-                    'operator': '<='
-                }]
+                left_cond = conditions + [{"feature": feature, "threshold": thresh, "operator": "<="}]
                 extract_path(tree.children_left[node_id], left_cond, depth + 1)
 
                 # 右子树
-                right_cond = conditions + [{
-                    'feature': feature,
-                    'threshold': thresh,
-                    'operator': '>'
-                }]
+                right_cond = conditions + [{"feature": feature, "threshold": thresh, "operator": ">"}]
                 extract_path(tree.children_right[node_id], right_cond, depth + 1)
-            
+
         extract_path(0, [], 0)
         return rules
-    
-    def _apply_conditions(
-        self,
-        conditions: List[Dict],
-        X: pd.DataFrame
-    ) -> pd.Series:
+
+    def _apply_conditions(self, conditions: List[Dict], X: pd.DataFrame) -> pd.Series:
         """应用条件到数据.
-        
+
         :param conditions: 条件列表
         :param X: 数据
         :return: 布尔掩码
         """
         mask = pd.Series(True, index=X.index)
-        
+
         for cond in conditions:
-            feature = cond['feature']
-            threshold = cond['threshold']
-            operator = cond['operator']
-            
-            if operator == '<=':
+            feature = cond["feature"]
+            threshold = cond["threshold"]
+            operator = cond["operator"]
+
+            if operator == "<=":
                 mask &= X[feature] <= threshold
-            elif operator == '>':
+            elif operator == ">":
                 mask &= X[feature] > threshold
-            elif operator == '<':
+            elif operator == "<":
                 mask &= X[feature] < threshold
-            elif operator == '>=':
+            elif operator == ">=":
                 mask &= X[feature] >= threshold
-            elif operator == '==':
+            elif operator == "==":
                 mask &= X[feature] == threshold
-        
+
         return mask
-    
+
     def _calculate_leaf_badrate(self, conditions: List[Dict]) -> float:
         """计算叶子节点的坏账率.
-        
+
         :param conditions: 条件列表
         :return: 坏账率
         """
-        if not hasattr(self, 'y_train_'):
+        if not hasattr(self, "y_train_"):
             return 0.5
-        
+
         mask = self._apply_conditions(conditions, self.X_train_)
         hit_count = mask.sum()
-        
+
         if hit_count == 0:
             return 0.0
-        
+
         hit_bad = self.y_train_[mask].sum()
         return hit_bad / hit_count
-    
+
     def _filter_rules(self, rules: List[Dict]) -> List[Dict]:
         """根据feature_trends过滤规则.
-        
+
         :param rules: 规则列表
         :return: 过滤后的规则列表
         """
         if not self.feature_trends:
             return rules
-        
+
         filtered = []
-        
+
         for rule in rules:
             valid = True
-            
-            for cond in rule['conditions']:
-                feature = cond['feature']
-                operator = cond['operator']
-                
+
+            for cond in rule["conditions"]:
+                feature = cond["feature"]
+                operator = cond["operator"]
+
                 if feature in self.feature_trends:
                     trend = self.feature_trends[feature]
-                    
+
                     # 正相关：只保留>方向的规则
-                    if trend == 1 and operator in ['<=', '<']:
+                    if trend == 1 and operator in ["<=", "<"]:
                         valid = False
                         break
-                    
+
                     # 负相关：只保留<=方向的规则
-                    if trend == -1 and operator in ['>', '>=']:
+                    if trend == -1 and operator in [">", ">="]:
                         valid = False
                         break
-            
+
             if valid:
                 filtered.append(rule)
-        
+
         return filtered
-    
-    def _deduplicate_rules(
-        self,
-        rules: List[Dict],
-        similarity_threshold: float = 0.9
-    ) -> List[Dict]:
+
+    def _deduplicate_rules(self, rules: List[Dict], similarity_threshold: float = 0.9) -> List[Dict]:
         """规则去重.
-        
+
         :param rules: 规则列表
         :param similarity_threshold: 相似度阈值
         :return: 去重后的规则列表
         """
         if not rules:
             return []
-        
+
         unique_rules = []
-        
+
         for rule in rules:
             # 生成规则签名
-            conditions = rule['conditions']
-            signature = '|'.join([
-                f"{c['feature']}{c['operator']}{c['threshold']:.4f}"
-                for c in sorted(conditions, key=lambda x: x['feature'])
-            ])
-            
+            conditions = rule["conditions"]
+            signature = "|".join(
+                [
+                    f"{c['feature']}{c['operator']}{c['threshold']:.4f}"
+                    for c in sorted(conditions, key=lambda x: x["feature"])
+                ]
+            )
+
             # 检查是否已存在相似规则
             is_duplicate = False
             for existing in unique_rules:
-                existing_sig = '|'.join([
-                    f"{c['feature']}{c['operator']}{c['threshold']:.4f}"
-                    for c in sorted(existing['conditions'], key=lambda x: x['feature'])
-                ])
-                
+                existing_sig = "|".join(
+                    [
+                        f"{c['feature']}{c['operator']}{c['threshold']:.4f}"
+                        for c in sorted(existing["conditions"], key=lambda x: x["feature"])
+                    ]
+                )
+
                 # 计算相似度
                 if signature == existing_sig:
                     is_duplicate = True
                     break
-            
+
             if not is_duplicate:
                 unique_rules.append(rule)
-        
+
         return unique_rules
-    
+
     def _calculate_rule_importance(self, rule: Dict) -> float:
         """计算规则重要性.
-        
+
         :param rule: 规则字典
         :return: 重要性分数
         """
-        sample_count = rule.get('sample_count', 0)
-        class_prob = rule.get('class_probability', 0)
-        
+        sample_count = rule.get("sample_count", 0)
+        class_prob = rule.get("class_probability", 0)
+
         # 坏样本权重更高
-        weight = 2.0 if rule.get('class_name') in ['bad', 'anomaly'] else 1.0
-        
+        weight = 2.0 if rule.get("class_name") in ["bad", "anomaly"] else 1.0
+
         return sample_count * class_prob * weight
 
     def get_rules(
@@ -893,7 +868,7 @@ class TreeRuleExtractor(BaseRuleMiner):
         min_samples: int = 10,
         min_confidence: float = 0.0,
         target: Optional[str] = None,
-        datasets: Optional[pd.DataFrame] = None
+        datasets: Optional[pd.DataFrame] = None,
     ) -> List[Rule]:
         """获取挖掘规则（直接返回Rule对象）.
 
@@ -907,9 +882,9 @@ class TreeRuleExtractor(BaseRuleMiner):
         tasks = []
         labels = []
         for rule_item in self.rules_[:top_n]:
-            if rule_item['sample_count'] < min_samples:
+            if rule_item["sample_count"] < min_samples:
                 continue
-            if rule_item['class_probability'] < min_confidence:
+            if rule_item["class_probability"] < min_confidence:
                 continue
 
             expr = self._rule_to_string(rule_item)
@@ -937,15 +912,11 @@ class TreeRuleExtractor(BaseRuleMiner):
         min_samples: int = 10,
         min_confidence: float = 0.0,
         target: Optional[str] = None,
-        datasets: Optional[pd.DataFrame] = None
+        datasets: Optional[pd.DataFrame] = None,
     ) -> List[Rule]:
         """获取Rule对象列表（与get_rules保持一致）."""
         return self.get_rules(
-            top_n=top_n,
-            min_samples=min_samples,
-            min_confidence=min_confidence,
-            target=target,
-            datasets=datasets
+            top_n=top_n, min_samples=min_samples, min_confidence=min_confidence, target=target, datasets=datasets
         )
 
     def get_rules_dataframe(
@@ -954,7 +925,7 @@ class TreeRuleExtractor(BaseRuleMiner):
         datasets: Optional[pd.DataFrame] = None,
         target: Optional[str] = None,
         min_samples: int = 10,
-        min_confidence: float = 0.0
+        min_confidence: float = 0.0,
     ) -> pd.DataFrame:
         """获取规则DataFrame（以rule_expr+Rule.report命中结果为准）."""
         rule_objs = self.get_rules(
@@ -970,98 +941,102 @@ class TreeRuleExtractor(BaseRuleMiner):
 
         data = []
         for i, rule in enumerate(rule_objs):
-            md = getattr(rule, 'metadata_', {}) or {}
+            md = getattr(rule, "metadata_", {}) or {}
             report_row = {
-                '规则编号': md.get('rule_id', i),
-                '规则表达式': rule.expr,
-                '命中样本数': md.get('命中样本数'),
-                '命中样本占比': md.get('命中样本占比'),
-                '命中坏样本率': md.get('命中坏样本率'),
-                '命中LIFT值': md.get('命中LIFT值'),
-                '坏账改善': md.get('坏账改善'),
-                '风险拒绝比': md.get('风险拒绝比'),
+                "规则编号": md.get("rule_id", i),
+                "规则表达式": rule.expr,
+                "命中样本数": md.get("命中样本数"),
+                "命中样本占比": md.get("命中样本占比"),
+                "命中坏样本率": md.get("命中坏样本率"),
+                "命中LIFT值": md.get("命中LIFT值"),
+                "坏账改善": md.get("坏账改善"),
+                "风险拒绝比": md.get("风险拒绝比"),
             }
-            if '入参字段' in md:
+            if "入参字段" in md:
                 report_row = {
-                    '规则编号': report_row.pop('规则编号'),
-                    '入参字段': md['入参字段'],
-                    '字段含义': md['字段含义'],
+                    "规则编号": report_row.pop("规则编号"),
+                    "入参字段": md["入参字段"],
+                    "字段含义": md["字段含义"],
                     **report_row,
                 }
             data.append(report_row)
         return pd.DataFrame(data)
-    
+
     def _rule_to_string(self, rule: Dict) -> str:
         """将规则转换为可用于Rule的表达式字符串.
-        
+
         :param rule: 规则字典
         :return: pandas eval规则表达式
         """
-        conditions = rule['conditions']
-        if getattr(self, 'chi2_bins_', {}):
+        conditions = rule["conditions"]
+        if getattr(self, "chi2_bins_", {}):
             raise ValueError("chi2 预处理暂不支持无损裸规则导出，请保留预处理模型后执行")
-        
+
         if not conditions:
             return "True"
-        
+
         parts = []
         for c in conditions:
-            feature = c['feature']
+            feature = c["feature"]
             feature_expr = field_expression(feature)
-            threshold = c['threshold']
+            threshold = c["threshold"]
             if isinstance(threshold, np.generic):
                 threshold = threshold.item()
-            operation = c['operator']
-            compare = {'<=': np.less_equal, '>': np.greater, '<': np.less, '>=': np.greater_equal,
-                       '==': np.equal}[operation]
-            categories = getattr(self, '_raw_category_values_', {}).get(feature)
+            operation = c["operator"]
+            compare = {"<=": np.less_equal, ">": np.greater, "<": np.less, ">=": np.greater_equal, "==": np.equal}[
+                operation
+            ]
+            categories = getattr(self, "_raw_category_values_", {}).get(feature)
             if categories is not None:
-                selected = [value for code, members in categories.items() if compare(code, threshold) for value in members]
+                selected = [
+                    value for code, members in categories.items() if compare(code, threshold) for value in members
+                ]
                 missing = any(pd.isna(value) for value in selected)
                 values = tuple(value for value in selected if not pd.isna(value))
-                expression = BinSpec(feature, 0, kind='categories', values=values, include_missing=missing).to_expression()
+                expression = BinSpec(
+                    feature, 0, kind="categories", values=values, include_missing=missing
+                ).to_expression()
             else:
                 # sklearn 树先将输入转 float32；将边界逆映射到原始 float64，
                 # 包括 midpoint 的 ties-to-even，保证贴边样本与叶节点一致。
                 bound, raw_operator = threshold, operation
-                if getattr(self, 'is_fitted_', False) and operation in ('<=', '>'):
+                if getattr(self, "is_fitted_", False) and operation in ("<=", ">"):
                     left = np.float32(threshold)
                     if float(left) > threshold:
                         left = np.nextafter(left, np.float32(-np.inf))
                     right = np.nextafter(left, np.float32(np.inf))
                     bound = (float(left) + float(right)) / 2
                     tie_left = np.float32(bound) == left
-                    raw_operator = ('<=' if tie_left else '<') if operation == '<=' else ('>' if tie_left else '>=')
+                    raw_operator = ("<=" if tie_left else "<") if operation == "<=" else (">" if tie_left else ">=")
                 expression = f"({feature_expr} {raw_operator} {value_expression(bound)})"
-                if getattr(self, 'is_fitted_', False) and compare(0, threshold):
+                if getattr(self, "is_fitted_", False) and compare(0, threshold):
                     expression = f"({expression} | ({feature_expr}.isna()))"
             parts.append(f"({expression})" if categories is not None else expression)
-        
+
         return " & ".join(parts)
-    
+
     def get_feature_importance(self) -> pd.DataFrame:
         """获取特征重要性.
-        
+
         :return: 特征重要性DataFrame
         """
         # 获取底层模型
         native_model = self._get_native_model()
-        
-        if not hasattr(native_model, 'feature_importances_'):
+
+        if not hasattr(native_model, "feature_importances_"):
             raise ValueError(f"算法 '{self._resolved_algorithm}' 不支持特征重要性")
-        
+
         importance = native_model.feature_importances_
-        
-        result = pd.DataFrame({
-            'feature': self.feature_names_,
-            'importance': importance
-        }).sort_values('importance', ascending=False)
+
+        result = pd.DataFrame({"feature": self.feature_names_, "importance": importance}).sort_values(
+            "importance", ascending=False
+        )
         feature_map = resolve_feature_map(self.feature_map)
         if feature_map is not None:
-            result.insert(1, '入参字段', result['feature'])
-            result.insert(2, '字段含义', result['feature'].map(feature_map).fillna(''))
+            result.insert(1, "入参字段", result["feature"])
+            result.insert(2, "字段含义", result["feature"].map(feature_map).fillna(""))
         return result
-    
+
     def _check_fitted(self):
         """检查是否已拟合."""
         if not self.is_fitted_:

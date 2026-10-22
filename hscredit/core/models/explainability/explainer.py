@@ -86,7 +86,11 @@ class ModelExplainer:
     def _is_tree_model(self) -> bool:
         native = self._native_model()
         name = native.__class__.__name__.lower()
-        return hasattr(native, "tree_") or hasattr(native, "estimators_") or any(token in name for token in ("forest", "tree", "boost", "xgb", "lgbm", "catboost"))
+        return (
+            hasattr(native, "tree_")
+            or hasattr(native, "estimators_")
+            or any(token in name for token in ("forest", "tree", "boost", "xgb", "lgbm", "catboost"))
+        )
 
     def _is_linear_model(self) -> bool:
         native = self._native_model()
@@ -116,7 +120,11 @@ class ModelExplainer:
         return frame.sample(n=limit, random_state=self.random_state).sort_index()
 
     def _resolve_background(self, frame: pd.DataFrame) -> pd.DataFrame:
-        source = frame if self.background_data is None else coerce_explanation_frame(self.background_data, feature_names=frame.columns)
+        source = (
+            frame
+            if self.background_data is None
+            else coerce_explanation_frame(self.background_data, feature_names=frame.columns)
+        )
         return self._sample(source, self.max_background)
 
     def _predict_selected(self, frame, class_index):
@@ -166,7 +174,8 @@ class ModelExplainer:
         algorithm = self._choose_algorithm()
         native = self._native_model()
         model_version = (
-            id(native), getattr(self.model, "fit_revision_", None),
+            id(native),
+            getattr(self.model, "fit_revision_", None),
             tuple(id(getattr(native, name, None)) for name in ("_Booster", "tree_", "estimators_", "coef_")),
         )
         signature = (algorithm, fingerprint_frame(background), self.model_output, class_index, model_version)
@@ -192,10 +201,14 @@ class ModelExplainer:
             explained_model = native if signs is None else (np.asarray(native.coef_) * signs, native.intercept_)
             backend = shap.LinearExplainer(explained_model, background)
         elif algorithm == "permutation":
-            predictor = lambda values: self._predict_selected(pd.DataFrame(values, columns=background.columns), class_index)  # noqa: E731
+            predictor = lambda values: self._predict_selected(
+                pd.DataFrame(values, columns=background.columns), class_index
+            )  # noqa: E731
             backend = shap.Explainer(predictor, background, algorithm="permutation")
         elif algorithm == "kernel":
-            predictor = lambda values: self._predict_selected(pd.DataFrame(values, columns=background.columns), class_index)  # noqa: E731
+            predictor = lambda values: self._predict_selected(
+                pd.DataFrame(values, columns=background.columns), class_index
+            )  # noqa: E731
             backend = shap.KernelExplainer(predictor, background)
         else:
             raise ValidationError(f"不支持的解释算法: {algorithm}")
@@ -241,7 +254,8 @@ class ModelExplainer:
                 # 二分类单输出后端解释的是 classes_[1]，类别 0 必须显式反转。
                 explanation = shap.Explanation(
                     values=-np.asarray(explanation.values),
-                    base_values=(1.0 if self.model_output == "probability" else 0.0) - np.asarray(explanation.base_values),
+                    base_values=(1.0 if self.model_output == "probability" else 0.0)
+                    - np.asarray(explanation.base_values),
                     data=explanation.data,
                     feature_names=list(frame.columns),
                 )
@@ -269,10 +283,15 @@ class ModelExplainer:
             output_index=output_index,
             model_output=self.model_output,
             explainer_type=algorithm,
-            background_summary={"样本数": len(background), "来源": "解释数据" if self.background_data is None else "显式背景数据"},
+            background_summary={
+                "样本数": len(background),
+                "来源": "解释数据" if self.background_data is None else "显式背景数据",
+            },
             metadata=metadata,
         )
-        if check_additivity and not np.allclose(result.base_values + result.values.sum(axis=1), predictions, rtol=1e-4, atol=1e-5):
+        if check_additivity and not np.allclose(
+            result.base_values + result.values.sum(axis=1), predictions, rtol=1e-4, atol=1e-5
+        ):
             raise ValidationError("SHAP 贡献加总与所选类别/输出尺度不一致，请检查模型变换或重建解释器")
         self.last_result_ = result
         self._shap_values = result.values
@@ -293,7 +312,9 @@ class ModelExplainer:
         """返回按平均绝对 SHAP 值稳定降序排列的重要性 Series。"""
         result = self.explain(X) if X is not None else self._require_result()
         values = np.abs(result.values).mean(axis=0)
-        return pd.Series(values, index=result.feature_names, name="SHAP重要性").sort_values(ascending=False, kind="mergesort")
+        return pd.Series(values, index=result.feature_names, name="SHAP重要性").sort_values(
+            ascending=False, kind="mergesort"
+        )
 
     def _native_importance(self, names):
         native = self._native_model()
@@ -414,9 +435,12 @@ class ModelExplainer:
         reasons = {}
         for position, reason in candidates:
             reasons.setdefault(position, []).append(reason)
-        ranks = pd.Series(outputs).rank(
-            method="min", ascending=direction == "higher_output_lower_risk"
-        ).astype(int).to_numpy()
+        ranks = (
+            pd.Series(outputs)
+            .rank(method="min", ascending=direction == "higher_output_lower_risk")
+            .astype(int)
+            .to_numpy()
+        )
         return pd.DataFrame(
             [
                 {
@@ -450,7 +474,7 @@ class ModelExplainer:
             raise ValidationError("max_clusters 必须是正整数或 None")
         if n_features == 1:
             return pd.DataFrame({"特征": result.feature_names, "叶序": [1], "聚类编号": [1]})
-        corr = pd.DataFrame(result.values).corr(method="spearman").fillna(0).to_numpy()
+        corr = pd.DataFrame(result.values).corr(method="spearman").fillna(0).to_numpy(copy=True)
         np.fill_diagonal(corr, 1.0)
         distance = np.clip(1 - np.abs(corr), 0, 1)
         tree = linkage(squareform(distance, checks=False), method="average", optimal_ordering=True)
@@ -458,13 +482,23 @@ class ModelExplainer:
         count = max_clusters or min(4, n_features)
         labels = fcluster(tree, t=count, criterion="maxclust")
         leaf_order = {int(feature): position + 1 for position, feature in enumerate(leaves)}
-        return pd.DataFrame({"特征": result.feature_names, "叶序": [leaf_order[i] for i in range(n_features)], "聚类编号": labels}).sort_values("叶序").reset_index(drop=True)
+        return (
+            pd.DataFrame(
+                {"特征": result.feature_names, "叶序": [leaf_order[i] for i in range(n_features)], "聚类编号": labels}
+            )
+            .sort_values("叶序")
+            .reset_index(drop=True)
+        )
 
     def get_feature_interactions(self, X=None, top_n=10, result=None) -> pd.DataFrame:
         """返回树模型精确交互或非树模型近似交互的前 N 个特征对。"""
         if not isinstance(top_n, int) or isinstance(top_n, bool) or top_n <= 0:
             raise ValidationError("top_n 必须是正整数")
-        result = self._require_result(result) if result is not None else (self.explain(X) if X is not None else self._require_result())
+        result = (
+            self._require_result(result)
+            if result is not None
+            else (self.explain(X) if X is not None else self._require_result())
+        )
         if not self._is_tree_model():
             return self.get_approximate_interactions(result, top_n=top_n)
         shap = _load_shap()
@@ -484,11 +518,22 @@ class ModelExplainer:
         rows = []
         for left in range(strength.shape[0]):
             for right in range(left + 1, strength.shape[1]):
-                rows.append({"特征1": result.feature_names[left], "特征2": result.feature_names[right], "交互强度": strength[left, right]})
+                rows.append(
+                    {
+                        "特征1": result.feature_names[left],
+                        "特征2": result.feature_names[right],
+                        "交互强度": strength[left, right],
+                    }
+                )
         columns = ["特征1", "特征2", "交互强度"]
         if not rows:
             return pd.DataFrame(columns=columns)
-        return pd.DataFrame(rows, columns=columns).sort_values(["交互强度", "特征1", "特征2"], ascending=[False, True, True]).head(top_n).reset_index(drop=True)
+        return (
+            pd.DataFrame(rows, columns=columns)
+            .sort_values(["交互强度", "特征1", "特征2"], ascending=[False, True, True])
+            .head(top_n)
+            .reset_index(drop=True)
+        )
 
     def get_approximate_interactions(self, result=None, top_n=10) -> pd.DataFrame:
         """根据 SHAP 贡献 Spearman 相关性返回近似交互特征对。"""
@@ -499,11 +544,23 @@ class ModelExplainer:
         rows = []
         for left in range(len(result.feature_names)):
             for right in range(left + 1, len(result.feature_names)):
-                rows.append({"特征1": result.feature_names[left], "特征2": result.feature_names[right], "交互强度": corr.iloc[left, right], "交互类型": "近似"})
+                rows.append(
+                    {
+                        "特征1": result.feature_names[left],
+                        "特征2": result.feature_names[right],
+                        "交互强度": corr.iloc[left, right],
+                        "交互类型": "近似",
+                    }
+                )
         columns = ["特征1", "特征2", "交互强度", "交互类型"]
         if not rows:
             return pd.DataFrame(columns=columns)
-        return pd.DataFrame(rows, columns=columns).sort_values(["交互强度", "特征1", "特征2"], ascending=[False, True, True]).head(top_n).reset_index(drop=True)
+        return (
+            pd.DataFrame(rows, columns=columns)
+            .sort_values(["交互强度", "特征1", "特征2"], ascending=[False, True, True])
+            .head(top_n)
+            .reset_index(drop=True)
+        )
 
     def get_stability_report(
         self,
@@ -529,7 +586,10 @@ class ModelExplainer:
         if mode == "sample":
             resolved = self._require_result(result)
             names = resolved.feature_names
-            runs = [np.abs(resolved.values[rng.integers(0, len(resolved.data), len(resolved.data))]).mean(axis=0) for _ in range(n_bootstrap)]
+            runs = [
+                np.abs(resolved.values[rng.integers(0, len(resolved.data), len(resolved.data))]).mean(axis=0)
+                for _ in range(n_bootstrap)
+            ]
             label = "样本Bootstrap"
         elif mode == "refit":
             if X_train is None or y_train is None or X_validation is None:
@@ -640,7 +700,9 @@ class ModelExplainer:
 
     def plot_shap_summary(self, X=None, plot_type="dot", max_display=20, show=True, **kwargs):
         """绘制 SHAP summary 图；支持 ``dot``、``violin`` 和 ``bar``。"""
-        result = X if isinstance(X, ExplanationResult) else (self.explain(X) if X is not None else self._require_result())
+        result = (
+            X if isinstance(X, ExplanationResult) else (self.explain(X) if X is not None else self._require_result())
+        )
         if plot_type == "bar":
             return self.plot_shap_bar(result, max_display=max_display, show=show, **kwargs)
         if plot_type not in {"dot", "violin"}:
@@ -667,7 +729,9 @@ class ModelExplainer:
 
     def plot_shap_bar(self, X=None, max_display=20, show=True, **kwargs):
         """绘制单面板平均绝对 SHAP 重要性条形图。"""
-        result = X if isinstance(X, ExplanationResult) else (self.explain(X) if X is not None else self._require_result())
+        result = (
+            X if isinstance(X, ExplanationResult) else (self.explain(X) if X is not None else self._require_result())
+        )
         from .plots import plot_shap_result_importance
 
         return plot_shap_result_importance(result, max_display=max_display, show=show, **kwargs)

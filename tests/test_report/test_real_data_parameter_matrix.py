@@ -38,7 +38,10 @@ ALL_KINDS = KINDS + ["overdue_gt", "overdue_ge", "overdue_lt", "overdue_le"]
 
 @pytest.fixture(scope="module")
 def loans():
-    data = pd.read_excel(Path(__file__).resolve().parents[2] / "examples/hscredit_yyp.xlsx")
+    path = Path(__file__).resolve().parents[2] / "examples/hscredit_yyp.xlsx"
+    if not path.exists():
+        pytest.skip("缺少 examples/hscredit_yyp.xlsx")
+    data = pd.read_excel(path)
     data = data.loc[:, FEATURES + ["FPD", "MOB1", DATE, AMOUNT, GROUP]].copy()
     assert len(data) == 970
     data[TARGET] = data.FPD.astype(float)

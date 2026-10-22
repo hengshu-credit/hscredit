@@ -35,6 +35,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[all]"
 
+      - name: 代码格式检查（与 make check 一致）
+        run: black --check hscredit tests
+
       - name: 关键静态错误检查
         run: flake8 hscredit tests --select=E9,F63,F7,F82,F601
 

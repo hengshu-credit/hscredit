@@ -21,7 +21,6 @@ from ...utils.parallel import (
 )
 from .rule import Rule, RuleState
 
-
 RuleInput = Union[Rule, Sequence[Rule]]
 
 
@@ -376,6 +375,37 @@ class RuleFlow(ParallelizableMixin):
             detail = pd.concat([data.loc[diff_mask].copy(), detail], axis=1)
         return report, detail
 
+    def _check_prediction_budget(self, data: DataFrame) -> None:
+        """在任何命中计算前检查完整结果（含字符串说明）的行数和内存预算。"""
+        rows, rules = len(data), len(self.rules)
+        # Python Unicode 最多每字符四字节，另计对象头、指针、布尔掩码及索引。
+        # 串行至多命中一条；并行最坏情况下全部命中。
+        if self.mode == "serial":
+            text_length = max(map(len, self.rule_labels_)) + len(str(rules))
+        else:
+            text_length = (
+                sum(map(len, self.rule_labels_)) + sum(len(str(i)) for i in range(1, rules + 1)) + 2 * (rules - 1)
+            )
+        output_bytes = rows * (2 * rules + 2 + 16 + 160 + 4 * text_length) + int(data.index.memory_usage(deep=True))
+        workload = ParallelWorkload(
+            task_count=1,
+            rows=rows,
+            columns=rules,
+            data_bytes=int(data.memory_usage(deep=True).sum()),
+            capability="vectorized",
+            operation="规则流命中明细",
+            working_bytes_per_task=2 * output_bytes + rows * 32,
+            result_bytes_per_task=output_bytes,
+            output_rows_per_task=rows,
+        )
+        plan_parallel_execution(
+            self.n_jobs,
+            workload,
+            parallel_backend=self.parallel_backend,
+            parallel_config=self.parallel_config,
+            default_backend="threading",
+        )
+
     def predict(self, data: DataFrame) -> pd.DataFrame:
         """计算每笔样本在每条规则上的命中结果。
 
@@ -387,6 +417,7 @@ class RuleFlow(ParallelizableMixin):
         :return: 每条规则命中明细以及规则集汇总列
         """
         self._validate_data(data)
+        self._check_prediction_budget(data)
 
         result = pd.DataFrame(index=data.index)
         hit_any = pd.Series(False, index=data.index, dtype=bool)
@@ -434,7 +465,11 @@ class RuleFlow(ParallelizableMixin):
             )
             batch_count = min(len(self.rules), plan.workers)
             rule_indices = np.array_split(np.arange(len(self.rules)), batch_count) if batch_count else []
-            batches = [[copy.deepcopy(self.rules[int(index)]) for index in indices] for indices in rule_indices if len(indices) > 0]
+            batches = [
+                [copy.deepcopy(self.rules[int(index)]) for index in indices]
+                for indices in rule_indices
+                if len(indices) > 0
+            ]
             batch_results = self._parallel_execute(
                 _rule_flow_mask_batch_worker,
                 ((batch, data) for batch in batches),
@@ -587,7 +622,7 @@ class RuleFlow(ParallelizableMixin):
             ]
         )
 
-    @analysis_inputs('data', roles=('date', 'group'), multi_group=True)
+    @analysis_inputs("data", roles=("date", "group"), multi_group=True)
     def report(
         self,
         data: DataFrame,
@@ -669,7 +704,7 @@ class RuleFlow(ParallelizableMixin):
             row = {"统计类型": row_type, **row}
         return row
 
-    @analysis_inputs('data', roles=('date', 'group'), multi_group=True)
+    @analysis_inputs("data", roles=("date", "group"), multi_group=True)
     def summary(
         self,
         data: DataFrame,

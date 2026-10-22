@@ -142,13 +142,13 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
         target: Optional[TargetInput] = None,
         overdue: Optional[Union[str, List[str]]] = None,
         dpds: Optional[Union[int, List[int]]] = None,
-        method: str = 'mdlp',
+        method: str = "mdlp",
         max_n_bins: int = 5,
         min_bin_size: float = 0.05,
         missing_separate: bool = True,
         coefficients: Optional[Union[float, Dict[str, float], str]] = None,
-        bad_rate_col: str = '坏样本率',
-        bin_label_col: str = '分箱标签',
+        bad_rate_col: str = "坏样本率",
+        bin_label_col: str = "分箱标签",
         rules: Optional[List] = None,
         desc: Optional[str] = None,
         bin_params: Optional[Dict] = None,
@@ -210,9 +210,18 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
             raise ValueError("binner 与 bin_specs 只能指定一个，避免分箱语义冲突")
 
         learned_attrs = (
-            'feature_names_in_', 'target_names_', 'bin_table_', 'bin_rates_',
-            'splits_', 'coefficients_', 'bin_weights_', 'overall_rates_',
-            'binner_', 'bin_specs_', 'bin_labels_', 'prediction_mode_',
+            "feature_names_in_",
+            "target_names_",
+            "bin_table_",
+            "bin_rates_",
+            "splits_",
+            "coefficients_",
+            "bin_weights_",
+            "overall_rates_",
+            "binner_",
+            "bin_specs_",
+            "bin_labels_",
+            "prediction_mode_",
         )
         candidate = deepcopy(self)
         for name in learned_attrs:
@@ -254,7 +263,7 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
                 return True
             # 检查是否有含"坏样本率"的列（多标签时）
             for c in cols:
-                if isinstance(c, str) and '坏样本率' in c:
+                if isinstance(c, str) and "坏样本率" in c:
                     return True
             return False  # 有分箱标签列但无坏样本率列，不是有效分箱表
 
@@ -266,7 +275,7 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
                     # 多级表头时也检查是否有坏样本率
                     for c2 in df.columns:
                         col_name2 = c2[-1] if isinstance(c2, (tuple, list)) else c2
-                        if isinstance(col_name2, str) and '坏样本率' in col_name2:
+                        if isinstance(col_name2, str) and "坏样本率" in col_name2:
                             return True
                     return False
 
@@ -292,19 +301,19 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
             min_bin_size=self.min_bin_size,
             missing_separate=self.missing_separate,
         )
-        bin_kwargs.setdefault('margins', True)
+        bin_kwargs.setdefault("margins", True)
         if self.rules is not None:
-            bin_kwargs['rules'] = self.rules
+            bin_kwargs["rules"] = self.rules
         if self.binner is not None:
-            bin_kwargs['binner'] = self.binner
-        bin_kwargs.pop('return_rules', None)
-        for name in ('n_jobs', 'parallel_backend', 'parallel_config', 'desc'):
+            bin_kwargs["binner"] = self.binner
+        bin_kwargs.pop("return_rules", None)
+        for name in ("n_jobs", "parallel_backend", "parallel_config", "desc"):
             bin_kwargs.pop(name, None)
-        bin_kwargs['return_binner'] = True
+        bin_kwargs["return_binner"] = True
         if self.del_grey is not None:
-            bin_kwargs['del_grey'] = bool(self.del_grey)
+            bin_kwargs["del_grey"] = bool(self.del_grey)
 
-        bin_kwargs['overdue_operator'] = self._resolved_overdue_operator()
+        bin_kwargs["overdue_operator"] = self._resolved_overdue_operator()
         result = feature_bin_stats(
             df,
             feature=self.feature,
@@ -343,17 +352,21 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
         from ..core.binning.spec import BinSpec
 
         label_col = next(c for c in table.columns if (c[-1] if isinstance(c, tuple) else c) == self.bin_label_col)
-        rows = table.loc[table[label_col].astype(str).ne('合计')]
+        rows = table.loc[table[label_col].astype(str).ne("合计")]
         labels = rows[label_col].astype(str)
         if labels.duplicated().any():
             raise ValueError("分箱标签重复，无法唯一关联风险率；请保留稳定箱号并提供唯一展示标签")
-        id_col = next((c for c in table.columns if (c[-1] if isinstance(c, tuple) else c) == '分箱'), None)
+        id_col = next((c for c in table.columns if (c[-1] if isinstance(c, tuple) else c) == "分箱"), None)
         supplied = self.bin_specs
         if supplied is None and binner is None:
-            if self.table_mode == 'strict':
+            if self.table_mode == "strict":
                 raise ValueError("strict分箱表预测必须提供 binner 或 bin_specs，不能从展示字符串推断精确边界")
-            self.prediction_mode_ = 'legacy_labels'
-            warnings.warn("当前使用legacy分箱展示标签解析；舍入边界及含逗号类别可能不精确，请提供binner/bin_specs", FutureWarning, stacklevel=3)
+            self.prediction_mode_ = "legacy_labels"
+            warnings.warn(
+                "当前使用legacy分箱展示标签解析；舍入边界及含逗号类别可能不精确，请提供binner/bin_specs",
+                FutureWarning,
+                stacklevel=3,
+            )
             return
         specs = BinSpec.from_binner(binner, self.feature) if supplied is None else dict(supplied)
         if not specs or not all(isinstance(spec, BinSpec) and spec.feature == self.feature for spec in specs.values()):
@@ -363,8 +376,10 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
             if any(int(key) != spec.bin_id for key, spec in specs.items()):
                 raise ValueError("bin_specs键必须与BinSpec.bin_id一致")
             if id_col is None:
-                raise ValueError("编号型bin_specs/binner需要统计表保留稳定的“分箱”列；请使用feature_bin_stats(return_binner=True)")
-            ids = pd.to_numeric(rows[id_col], errors='coerce')
+                raise ValueError(
+                    "编号型bin_specs/binner需要统计表保留稳定的“分箱”列；请使用feature_bin_stats(return_binner=True)"
+                )
+            ids = pd.to_numeric(rows[id_col], errors="coerce")
             if ids.isna().any() or ids.duplicated().any() or (ids % 1 != 0).any():
                 raise ValueError("统计表中的分箱编号必须为唯一整数")
             self.bin_labels_ = dict(zip(ids.astype(int), labels))
@@ -380,7 +395,7 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
             self.bin_labels_ = {spec.bin_id: label for label, spec in specs.items()}
         if binner is not None:
             self.binner_ = binner
-        self.prediction_mode_ = 'structured'
+        self.prediction_mode_ = "structured"
 
     def _resolved_overdue_operator(self) -> str:
         """显式比较符优先，否则沿用分箱配置。"""
@@ -398,7 +413,7 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
         state.setdefault("table_mode", "legacy")
         state.setdefault("prediction_mode_", "legacy_labels")
         super().__setstate__(state)
-        if hasattr(self, 'bin_table_') and not hasattr(self, 'bin_weights_'):
+        if hasattr(self, "bin_table_") and not hasattr(self, "bin_weights_"):
             self._capture_reference_weights(self.bin_table_)
 
     def _build_target_names(self) -> List[str]:
@@ -429,11 +444,11 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
             names = []
             for col in df.columns:
                 top_level = col[0] if isinstance(col, tuple) else col
-                if top_level != '分箱详情' and top_level not in names:
+                if top_level != "分箱详情" and top_level not in names:
                     names.append(top_level)
-            return names if names else ['target']
+            return names if names else ["target"]
         else:
-            return ['target']
+            return ["target"]
 
     def _extract_bin_rates_from_table(self, table: pd.DataFrame) -> None:
         """从分箱表中提取各分箱逾期率.
@@ -450,11 +465,11 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
 
             # 单标签时提供便捷访问
             if len(self.target_names_) == 1:
-                self.bin_rates_['_default'] = self.bin_rates_[self.target_names_[0]]
+                self.bin_rates_["_default"] = self.bin_rates_[self.target_names_[0]]
         else:
             # 单层表头
             rates = self._extract_single_target_rates_flat(table)
-            self.bin_rates_['_default'] = rates
+            self.bin_rates_["_default"] = rates
             if self.target_names_:
                 for name in self.target_names_:
                     self.bin_rates_[name] = rates
@@ -468,38 +483,42 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
         def find_column(name, target_name):
             if not isinstance(table.columns, pd.MultiIndex):
                 return name if name in table.columns else None
-            for group in (target_name, '分箱详情'):
+            for group in (target_name, "分箱详情"):
                 for column in table.columns:
                     if column[0] == group and column[-1] == name:
                         return column
             return None
 
-        label_col = next((c for c in table.columns if (c[-1] if isinstance(c, tuple) else c) == self.bin_label_col), None)
+        label_col = next(
+            (c for c in table.columns if (c[-1] if isinstance(c, tuple) else c) == self.bin_label_col), None
+        )
         if label_col is None:
             return
         labels = table[label_col].astype(str)
         for name, rates in self.bin_rates_.items():
-            target = self.target_names_[0] if name == '_default' and self.target_names_ else name
-            weight_col = find_column('样本总数', target)
+            target = self.target_names_[0] if name == "_default" and self.target_names_ else name
+            weight_col = find_column("样本总数", target)
             if weight_col is None:
-                weight_col = find_column('样本占比', target)
+                weight_col = find_column("样本占比", target)
             weights = {}
             if weight_col is not None:
-                values = pd.to_numeric(table[weight_col], errors='coerce')
+                values = pd.to_numeric(table[weight_col], errors="coerce")
                 for label, value in zip(labels, values):
-                    if label == '合计':
+                    if label == "合计":
                         continue
                     if pd.isna(value) or not np.isfinite(value) or value < 0:
                         raise ValueError(f"分箱 '{label}' 的样本权重必须为非负有限数值")
                     weights[label] = float(value)
             self.bin_weights_[name] = weights
             rate_col = find_column(self.bad_rate_col, target)
-            if rate_col is not None and labels.eq('合计').any():
-                value = table.loc[labels.eq('合计'), rate_col].iloc[0]
+            if rate_col is not None and labels.eq("合计").any():
+                value = table.loc[labels.eq("合计"), rate_col].iloc[0]
                 if pd.notna(value):
                     self.overall_rates_[name] = float(value)
             if name not in self.overall_rates_ and sum(weights.values()) > 0:
-                self.overall_rates_[name] = sum(weights.get(label, 0.0) * rate for label, rate in rates.items()) / sum(weights.values())
+                self.overall_rates_[name] = sum(weights.get(label, 0.0) * rate for label, rate in rates.items()) / sum(
+                    weights.values()
+                )
             for rate in rates.values():
                 if not np.isfinite(rate) or not 0 <= rate <= 1:
                     raise ValueError("分箱坏样本率必须为0到1之间的有限数值")
@@ -545,7 +564,7 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
             for col in table.columns:
                 if isinstance(col, tuple) and col[0] == target_name:
                     col_sub = col[-1] if isinstance(col, (tuple, list)) else col
-                    if '坏样本率' in str(col_sub):
+                    if "坏样本率" in str(col_sub):
                         bad_rate_col = col
                         break
 
@@ -555,7 +574,7 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
         # 提取逾期率（排除合计行）
         for idx, row in table.iterrows():
             label = row[bin_label_col]
-            if label == '合计':
+            if label == "合计":
                 continue
             rate = row[bad_rate_col]
             rates[str(label)] = float(rate) if pd.notna(rate) else 0.0
@@ -577,7 +596,7 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
             # 尝试模糊匹配
             rate_col = None
             for c in table.columns:
-                if '坏样本率' in str(c):
+                if "坏样本率" in str(c):
                     rate_col = c
                     break
             if rate_col is None:
@@ -587,7 +606,7 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
 
         for idx, row in table.iterrows():
             label = row[self.bin_label_col]
-            if label == '合计':
+            if label == "合计":
                 continue
             rate = row[rate_col]
             rates[str(label)] = float(rate) if pd.notna(rate) else 0.0
@@ -632,15 +651,15 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
         splits = []
         for label in labels:
             label = str(label).strip()
-            if label in ('missing', 'special', '合计', ''):
+            if label in ("missing", "special", "合计", ""):
                 continue
 
             # 匹配区间格式: (left, right] 或 [left, right)
-            pattern = r'[\(\[]\s*([^\s,]+)\s*,\s*([^\s\)]+)\s*[\)\]]'
+            pattern = r"[\(\[]\s*([^\s,]+)\s*,\s*([^\s\)]+)\s*[\)\]]"
             match = re.match(pattern, label)
             if match:
                 right = match.group(2)
-                if right not in ('+inf', 'inf'):
+                if right not in ("+inf", "inf"):
                     try:
                         val = float(right)
                         if val not in splits:
@@ -665,7 +684,7 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
             - '{feature}_预测逾期率': 调整后的逾期率
             - 多标签时每个目标分别输出上述三列
         """
-        if not hasattr(self, 'bin_rates_'):
+        if not hasattr(self, "bin_rates_"):
             raise ValueError("预估器尚未拟合，请先调用fit方法")
 
         X = X.copy()
@@ -686,7 +705,9 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
         :param X: 待预估数据
         :return: 包含预估结果的数据
         """
-        rates = self.bin_rates_.get('_default', self.bin_rates_.get(self.target_names_[0] if self.target_names_ else 'target', {}))
+        rates = self.bin_rates_.get(
+            "_default", self.bin_rates_.get(self.target_names_[0] if self.target_names_ else "target", {})
+        )
 
         # 为每个样本分配分箱和逾期率
         bin_labels, base_rates = self._assign_bins_and_rates(X[self.feature], rates)
@@ -696,9 +717,9 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
         adjusted_rates = self._apply_coefficients(bin_labels, base_rates, coefficients_map)
 
         # 写入结果
-        X[f'{self.feature}_分箱'] = bin_labels
-        X[f'{self.feature}_基础逾期率'] = base_rates
-        X[f'{self.feature}_预测逾期率'] = adjusted_rates
+        X[f"{self.feature}_分箱"] = bin_labels
+        X[f"{self.feature}_基础逾期率"] = base_rates
+        X[f"{self.feature}_预测逾期率"] = adjusted_rates
 
         return X
 
@@ -712,7 +733,7 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
         first_target = self.target_names_[0]
         first_rates = self.bin_rates_.get(first_target, {})
         bin_labels, _ = self._assign_bins_and_rates(X[self.feature], first_rates)
-        X[f'{self.feature}_分箱'] = bin_labels
+        X[f"{self.feature}_分箱"] = bin_labels
 
         tasks = [(self, X[self.feature], target_name, bin_labels) for target_name in self.target_names_]
         target_results = self._parallel_execute(
@@ -728,8 +749,8 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
             ),
         )
         for target_name, base_rates, adjusted_rates in target_results:
-            X[f'{self.feature}_{target_name}_基础逾期率'] = base_rates
-            X[f'{self.feature}_{target_name}_预测逾期率'] = adjusted_rates
+            X[f"{self.feature}_{target_name}_基础逾期率"] = base_rates
+            X[f"{self.feature}_{target_name}_预测逾期率"] = adjusted_rates
 
         return X
 
@@ -744,37 +765,38 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
         :param rates: {分箱标签: 逾期率}
         :return: (分箱标签列表, 逾期率列表)
         """
-        if getattr(self, 'prediction_mode_', None) == 'structured':
+        if getattr(self, "prediction_mode_", None) == "structured":
             return self._assign_structured_bins(values, rates)
         # 类别箱只匹配类别值，不能把无法解析的标签视为覆盖全域的数值区间。
         bin_intervals = self._parse_rate_intervals(rates)
         category_labels = [
-            label for label in rates
-            if label not in bin_intervals and label not in ('missing', 'special', 'unknown', '合计', '未知')
+            label
+            for label in rates
+            if label not in bin_intervals and label not in ("missing", "special", "unknown", "合计", "未知")
         ]
 
         # 按箱矢量化匹配，避免每个样本重复解析类别和遍历Python区间。
         values = values.reset_index(drop=True)
         missing = values.isna().to_numpy()
-        fallback_label = 'unknown' if 'unknown' in rates else ('special' if 'special' in rates else '未知')
+        fallback_label = "unknown" if "unknown" in rates else ("special" if "special" in rates else "未知")
         labels = np.full(len(values), fallback_label, dtype=object)
         fallback_rate = rates.get(fallback_label, self._get_overall_rate(rates))
         base = np.full(len(values), fallback_rate, dtype=float)
         assigned = missing.copy()
-        labels[missing] = 'missing'
-        base[missing] = rates.get('missing', self._get_overall_rate(rates))
+        labels[missing] = "missing"
+        base[missing] = rates.get("missing", self._get_overall_rate(rates))
         category_map = {str(label).strip(): label for label in category_labels}
         for label in category_labels:
-            for part in str(label).split(','):
+            for part in str(label).split(","):
                 category_map.setdefault(part.strip(), label)
         mapped = values.astype(str).str.strip().map(category_map)
         selected = mapped.notna().to_numpy() & ~assigned
         labels[selected] = mapped[selected].to_numpy()
         base[selected] = mapped[selected].map(rates).to_numpy(dtype=float)
         assigned |= selected
-        numeric = pd.to_numeric(values, errors='coerce').to_numpy(dtype=float, na_value=np.nan)
+        numeric = pd.to_numeric(values, errors="coerce").to_numpy(dtype=float, na_value=np.nan)
         for label, (left, right, left_inc, right_inc) in bin_intervals.items():
-            if label in ('missing', 'special', 'unknown', '合计', '未知'):
+            if label in ("missing", "special", "unknown", "合计", "未知"):
                 continue
             selected = ~assigned & ~np.isnan(numeric)
             if left is not None:
@@ -789,8 +811,10 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
     def _assign_structured_bins(self, values, rates):
         """先用真实分箱器/语义取得箱号，再取风险率，完全不解析展示文本。"""
         values = values.reset_index(drop=True)
-        if hasattr(self, 'binner_'):
-            codes = self.binner_.transform(values.to_frame(name=self.feature), metric='indices')[self.feature].to_numpy()
+        if hasattr(self, "binner_"):
+            codes = self.binner_.transform(values.to_frame(name=self.feature), metric="indices")[
+                self.feature
+            ].to_numpy()
         else:
             codes = np.full(len(values), None, dtype=object)
             assigned = np.zeros(len(values), dtype=bool)
@@ -800,7 +824,14 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
                     raise ValueError("bin_specs存在重叠分箱，同一样本不能匹配多个箱")
                 codes[mask] = bin_id
                 assigned |= mask
-        labels = [self.bin_labels_.get(int(code), 'missing' if int(code) == -1 else '未知') if code is not None and not pd.isna(code) else '未知' for code in codes]
+        labels = [
+            (
+                self.bin_labels_.get(int(code), "missing" if int(code) == -1 else "未知")
+                if code is not None and not pd.isna(code)
+                else "未知"
+            )
+            for code in codes
+        ]
         baseline = self._get_overall_rate(rates)
         return labels, [rates.get(label, baseline) for label in labels]
 
@@ -815,20 +846,20 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
         intervals = {}
         for label in rates:
             label_str = str(label).strip()
-            if label_str in ('missing', 'special', '合计', '未知'):
+            if label_str in ("missing", "special", "合计", "未知"):
                 intervals[label_str] = (None, None, False, False)
                 continue
 
             # 匹配 (left, right] 或 [left, right)
-            pattern = r'([\(\[])\s*([^\s,]+)\s*,\s*([^\s\)]+)\s*([\)\]])'
+            pattern = r"([\(\[])\s*([^\s,]+)\s*,\s*([^\s\)]+)\s*([\)\]])"
             match = re.match(pattern, label_str)
             if match:
                 left_bracket, left_str, right_str, right_bracket = match.groups()
-                left_inc = left_bracket == '['
-                right_inc = right_bracket == ']'
+                left_inc = left_bracket == "["
+                right_inc = right_bracket == "]"
 
-                left = None if left_str in ('-inf', 'inf') else float(left_str)
-                right = None if right_str in ('+inf', 'inf', '-inf') else float(right_str)
+                left = None if left_str in ("-inf", "inf") else float(left_str)
+                right = None if right_str in ("+inf", "inf", "-inf") else float(right_str)
 
                 intervals[label_str] = (left, right, left_inc, right_inc)
 
@@ -858,7 +889,7 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
                     result[label] = float(coef)
             return result
 
-        if self.coefficients == 'auto':
+        if self.coefficients == "auto":
             overall_rate = self._get_overall_rate(rates)
             weights = np.array([self._estimate_weight(label, rates) for label in rates], dtype=float)
             if not weights.sum() > 0:
@@ -896,7 +927,7 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
         :param rates: 逾期率字典
         :return: 权重
         """
-        return getattr(self, 'bin_weights_', {}).get(self._reference_key(rates), {}).get(label, 0.0)
+        return getattr(self, "bin_weights_", {}).get(self._reference_key(rates), {}).get(label, 0.0)
 
     def _get_overall_rate(self, rates: Dict[str, float]) -> float:
         """获取整体逾期率（从分箱率加权计算或从合计行获取）.
@@ -904,13 +935,13 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
         :param rates: 逾期率字典
         :return: 整体逾期率
         """
-        if '合计' in rates:
-            return rates['合计']
-        reference = getattr(self, 'overall_rates_', {}).get(self._reference_key(rates))
+        if "合计" in rates:
+            return rates["合计"]
+        reference = getattr(self, "overall_rates_", {}).get(self._reference_key(rates))
         if reference is not None:
             return reference
         # 简单平均
-        valid_rates = [r for l, r in rates.items() if l not in ('合计', 'missing', 'special')]
+        valid_rates = [r for l, r in rates.items() if l not in ("合计", "missing", "special")]
         return np.mean(valid_rates) if valid_rates else 0.0
 
     def _apply_coefficients(
@@ -948,7 +979,7 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
         self.coefficients_ = coefficients
         return self
 
-    def get_report(self, metric: str = 'count') -> pd.DataFrame:
+    def get_report(self, metric: str = "count") -> pd.DataFrame:
         """获取逾期率预估报告.
 
         输出各分箱的逾期率、样本分布及预估信息。
@@ -963,7 +994,7 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
         >>> report = predictor.get_report()  # 获取分箱统计报告（含逾期率、样本数等）
         >>> print(report)
         """
-        if not hasattr(self, 'bin_table_'):
+        if not hasattr(self, "bin_table_"):
             raise ValueError("预估器尚未拟合，请先调用fit方法")
 
         table = self.bin_table_.copy()
@@ -971,14 +1002,14 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
         # 添加系数信息
         if self.coefficients is not None:
             coefficients_map = self._resolve_coefficients(
-                self.bin_rates_.get('_default', list(self.bin_rates_.values())[0] if self.bin_rates_ else {})
+                self.bin_rates_.get("_default", list(self.bin_rates_.values())[0] if self.bin_rates_ else {})
             )
 
             if isinstance(table.columns, pd.MultiIndex):
                 # 多级表头：在第一个目标下添加系数列
                 first_target = self.target_names_[0] if self.target_names_ else table.columns[1][0]
-                coef_col = (first_target, '调整系数')
-                adjusted_col = (first_target, '调整后逾期率')
+                coef_col = (first_target, "调整系数")
+                adjusted_col = (first_target, "调整后逾期率")
 
                 rates = self.bin_rates_.get(first_target, {})
                 bin_col = None
@@ -1002,18 +1033,18 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
                     table[adjusted_col] = adjusted
             else:
                 # 单层表头
-                rates = self.bin_rates_.get('_default', {})
+                rates = self.bin_rates_.get("_default", {})
                 coefs = []
                 adjusted = []
                 for _, row in table.iterrows():
-                    label = str(row.get(self.bin_label_col, ''))
+                    label = str(row.get(self.bin_label_col, ""))
                     coef = coefficients_map.get(label, 1.0)
                     coefs.append(coef)
                     rate = rates.get(label, 0.0)
                     adjusted.append(min(rate * coef, 1.0))
 
-                table['调整系数'] = coefs
-                table['调整后逾期率'] = adjusted
+                table["调整系数"] = coefs
+                table["调整后逾期率"] = adjusted
 
         return table
 
@@ -1034,12 +1065,12 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
         result = self.transform(X)
 
         if len(self.target_names_) <= 1:
-            rate_col = f'{self.feature}_预测逾期率'
+            rate_col = f"{self.feature}_预测逾期率"
             return result[rate_col]
         else:
             output = {}
             for target_name in self.target_names_:
-                rate_col = f'{self.feature}_{target_name}_预测逾期率'
+                rate_col = f"{self.feature}_{target_name}_预测逾期率"
                 output[target_name] = result[rate_col]
             return output
 
@@ -1053,7 +1084,7 @@ def overdue_prediction_report(
     dpds: Optional[Union[int, List[int]]] = None,
     predict_data: Optional[pd.DataFrame] = None,
     coefficients: Optional[Union[float, Dict[str, float], str]] = None,
-    method: str = 'mdlp',
+    method: str = "mdlp",
     max_n_bins: int = 5,
     min_bin_size: float = 0.05,
     missing_separate: bool = True,
@@ -1156,7 +1187,11 @@ def overdue_prediction_report(
         predict_result = predictor.transform(predict_data)
         # 将预测结果附加到报告
         predict_summary = _build_prediction_summary(predict_result, predictor)
-        report = pd.concat([report, pd.DataFrame([{'_section': '分隔'}]), predict_summary], ignore_index=True)
+        if isinstance(report.columns, pd.MultiIndex):
+            # 组合表含分箱元组列和预测汇总普通列，显式保留元组键，避免不同层数的索引合并。
+            report = report.copy()
+            report.columns = report.columns.to_flat_index()
+        report = pd.concat([report, pd.DataFrame([{"_section": "分隔"}]), predict_summary], ignore_index=True)
 
     # 输出到Excel
     if excel_writer is not None:
@@ -1168,11 +1203,12 @@ def overdue_prediction_report(
         writer = ExcelWriter() if owns_writer else excel_writer
         worksheet = writer.get_sheet_by_name(sheet)
         dataframe2excel(
-            report, writer, worksheet,
+            report,
+            writer,
+            worksheet,
             sheet_name=sheet if owns_writer else None,
-            percent_cols=['坏样本率', '样本占比', '好样本占比', '坏样本占比',
-                          '调整后逾期率', '预测逾期率'],
-            condition_cols=['坏样本率', '调整后逾期率'],
+            percent_cols=["坏样本率", "样本占比", "好样本占比", "坏样本占比", "调整后逾期率", "预测逾期率"],
+            condition_cols=["坏样本率", "调整后逾期率"],
             start_row=2,
         )
         if owns_writer:
@@ -1192,44 +1228,52 @@ def _build_prediction_summary(predict_result: pd.DataFrame, predictor: OverduePr
     feature = predictor.feature
 
     if len(predictor.target_names_) <= 1:
-        rate_col = f'{feature}_预测逾期率'
-        bin_col = f'{feature}_分箱'
+        rate_col = f"{feature}_预测逾期率"
+        bin_col = f"{feature}_分箱"
 
         if rate_col in predict_result.columns:
-            rows.append({
-                '指标名称': feature,
-                '指标含义': '预测汇总',
-                '分箱标签': '预测样本总数',
-                '预测逾期率': len(predict_result),
-            })
-            rows.append({
-                '指标名称': feature,
-                '指标含义': '预测汇总',
-                '分箱标签': '平均预测逾期率',
-                '预测逾期率': predict_result[rate_col].mean(),
-            })
+            rows.append(
+                {
+                    "指标名称": feature,
+                    "指标含义": "预测汇总",
+                    "分箱标签": "预测样本总数",
+                    "预测逾期率": len(predict_result),
+                }
+            )
+            rows.append(
+                {
+                    "指标名称": feature,
+                    "指标含义": "预测汇总",
+                    "分箱标签": "平均预测逾期率",
+                    "预测逾期率": predict_result[rate_col].mean(),
+                }
+            )
 
             if bin_col in predict_result.columns:
                 bin_dist = predict_result[bin_col].value_counts()
                 for bin_label, count in bin_dist.items():
                     subset = predict_result[predict_result[bin_col] == bin_label]
                     avg_rate = subset[rate_col].mean()
-                    rows.append({
-                        '指标名称': feature,
-                        '指标含义': '分箱预测',
-                        '分箱标签': str(bin_label),
-                        '样本总数': count,
-                        '预测逾期率': avg_rate,
-                    })
+                    rows.append(
+                        {
+                            "指标名称": feature,
+                            "指标含义": "分箱预测",
+                            "分箱标签": str(bin_label),
+                            "样本总数": count,
+                            "预测逾期率": avg_rate,
+                        }
+                    )
     else:
         for target_name in predictor.target_names_:
-            rate_col = f'{feature}_{target_name}_预测逾期率'
+            rate_col = f"{feature}_{target_name}_预测逾期率"
             if rate_col in predict_result.columns:
-                rows.append({
-                    '指标名称': feature,
-                    '指标含义': f'{target_name} 预测汇总',
-                    '分箱标签': '平均预测逾期率',
-                    '预测逾期率': predict_result[rate_col].mean(),
-                })
+                rows.append(
+                    {
+                        "指标名称": feature,
+                        "指标含义": f"{target_name} 预测汇总",
+                        "分箱标签": "平均预测逾期率",
+                        "预测逾期率": predict_result[rate_col].mean(),
+                    }
+                )
 
     return pd.DataFrame(rows)

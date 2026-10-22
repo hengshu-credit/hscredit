@@ -383,7 +383,10 @@ def test_skill_resolves_label_arrays_and_callable_object_references(frame, tmp_p
 def test_explicit_labels_match_overdue_count_and_amount_on_real_loans():
     from pathlib import Path
 
-    data = pd.read_excel(Path(__file__).resolve().parents[2] / "examples" / "hscredit_yyp.xlsx")
+    path = Path(__file__).resolve().parents[2] / "examples" / "hscredit_yyp.xlsx"
+    if not path.exists():
+        pytest.skip("缺少 examples/hscredit_yyp.xlsx")
+    data = pd.read_excel(path)
     from hscredit.utils.overdue import make_overdue_target
 
     for operator in (">", ">=", "<", "<="):
@@ -427,9 +430,7 @@ def test_benchmark_efficiency_and_strategy_preserve_target_definitions(frame, tm
     from openpyxl import load_workbook
 
     targets = definitions(frame)
-    benchmark = benchmark_binning_methods(
-        frame, "score", target=targets, del_grey=True, methods=["quantile"], n_jobs=1
-    )
+    benchmark = benchmark_binning_methods(frame, "score", target=targets, del_grey=True, methods=["quantile"], n_jobs=1)
     assert set(benchmark.columns.get_level_values(0)) == {"分箱详情", *targets}
     assert all(pd.isna(benchmark.iloc[0][(name, "错误信息")]) for name in targets)
     results = feature_efficiency_analysis(

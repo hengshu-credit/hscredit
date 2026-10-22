@@ -26,7 +26,6 @@ from hscredit.core.encoders import (
 from hscredit.exceptions import ParallelExecutionError
 from hscredit.utils.parallel import ParallelBudget, _ACTIVE_BUDGET, parallel_execute
 
-
 ENCODER_CLASSES = [
     WOEEncoder,
     TargetEncoder,
@@ -80,7 +79,11 @@ def test_all_exported_encoders_expose_explicit_parallel_parameters():
     for cls in concrete:
         params = inspect.signature(cls.__init__).parameters
         absent = [name for name in ("n_jobs", "parallel_backend", "parallel_config") if name not in params]
-        wrong_default = [name for name, expected in (("n_jobs", -1), ("parallel_backend", None), ("parallel_config", None)) if name in params and params[name].default != expected]
+        wrong_default = [
+            name
+            for name, expected in (("n_jobs", -1), ("parallel_backend", None), ("parallel_config", None))
+            if name in params and params[name].default != expected
+        ]
         if absent or wrong_default:
             missing[cls.__name__] = {"缺失": absent, "默认值错误": wrong_default}
     assert missing == {}
@@ -203,7 +206,9 @@ def test_failed_parallel_refit_preserves_complete_previous_model():
         lambda n, b: OrdinalEncoder(features=["a", "b"], n_jobs=n, parallel_backend=b),
         lambda n, b: QuantileEncoder(features=["a", "b"], n_jobs=n, parallel_backend=b),
         lambda n, b: CatBoostEncoder(features=["a", "b"], sigma=0.05, random_state=42, n_jobs=n, parallel_backend=b),
-        lambda n, b: CardinalityEncoder(features=["a", "b"], max_categories=3, special_values=[3], n_jobs=n, parallel_backend=b),
+        lambda n, b: CardinalityEncoder(
+            features=["a", "b"], max_categories=3, special_values=[3], n_jobs=n, parallel_backend=b
+        ),
     ],
 )
 @pytest.mark.parametrize("backend", ["threading", "loky"])
@@ -278,7 +283,7 @@ def test_missing_like_keys_keep_serial_mapping_export_import_and_transform(name,
     if name == "count":
         signature = _missing_key_signature(serial.mapping_["a"])
         assert ("builtins", "NoneType", "None", 2) in signature
-        assert any(module == "pandas._libs.tslibs.nattype" for module, _, _, _ in signature)
+        assert any(key is pd.NaT for key in serial.mapping_["a"])
         assert any(type_name == "NAType" for _, type_name, _, _ in signature)
         assert expected["a"].tolist() == [2, 2, 1, 1, 1, 1]
 
@@ -293,7 +298,12 @@ def test_float_nan_normalization_does_not_capture_other_scalar_types():
 
 
 def _typed_float_nan_signature(mapping):
-    return [(type(key).__module__, type(key).__name__, value) for key, value in mapping.items() if type(key) is float or isinstance(key, np.floating) if np.isnan(key)]
+    return [
+        (type(key).__module__, type(key).__name__, value)
+        for key, value in mapping.items()
+        if type(key) is float or isinstance(key, np.floating)
+        if np.isnan(key)
+    ]
 
 
 def test_pandas_value_counts_keeps_float_nan_buckets_by_scalar_type():
@@ -503,7 +513,9 @@ def test_target_noise_fixed_seed_matches_thread_and_loky(encoder_xy):
     serial = TargetEncoder(features=columns, noise=0.1, random_state=42, n_jobs=1).fit(X, y)
     expected = serial.transform(X, y)
     for backend in ("threading", "loky"):
-        parallel = TargetEncoder(features=columns, noise=0.1, random_state=42, n_jobs=2, parallel_backend=backend).fit(X, y)
+        parallel = TargetEncoder(features=columns, noise=0.1, random_state=42, n_jobs=2, parallel_backend=backend).fit(
+            X, y
+        )
         pd.testing.assert_frame_equal(expected, parallel.transform(X, y), check_exact=True)
 
 
@@ -564,7 +576,9 @@ def test_successful_fit_preserves_mutable_parameter_identity():
     assert ordinal.mapping is ordinal_mapping
 
     special_values = ["特殊"]
-    cardinality = CardinalityEncoder(features=["a"], special_values=special_values, n_jobs=2).fit(pd.DataFrame({"a": ["特殊", "x", "y"]}))
+    cardinality = CardinalityEncoder(features=["a"], special_values=special_values, n_jobs=2).fit(
+        pd.DataFrame({"a": ["特殊", "x", "y"]})
+    )
     assert cardinality.special_values is special_values
 
 
